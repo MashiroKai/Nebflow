@@ -145,7 +145,7 @@
       "tests": [
         {
           "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
-          "name": "F1 Ask has exactly ten tools"
+          "name": "F1 Ask has exactly twelve tools (the registry-derived face)"
         },
         {
           "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
@@ -198,7 +198,7 @@
       "tests": [
         {
           "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
-          "name": "F5 Ask prompt advertises the query-only Bash face and the proposal tools"
+          "name": "F5 Ask prompt derives the tool list from the registry and states both hard constraints"
         }
       ]
     }

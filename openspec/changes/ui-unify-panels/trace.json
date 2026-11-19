@@ -14,7 +14,7 @@
       "tests": [
         {
           "path": "scripts/check-panel-uniform.mjs",
-          "name": "PASS panel-uniform: registered identity, contact controls, six settings groups and shared model cards"
+          "name": "PASS panel-uniform: registered identity, contact controls, five settings groups (no account bar) and shared model cards"
         }
       ]
     },

@@ -33,11 +33,11 @@
       "tests": [
         {
           "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
-          "name": "capture refuses other paths, relative paths, traversal and foreign sessions"
+          "name": "capture refuses other documents and foreign sessions, and normalises `..` / relative spellings"
         },
         {
           "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
-          "name": "capture refuses symlinks, binary content and missing files"
+          "name": "capture follows identity through symlinks: same document passes, another target is refused"
         },
         {
           "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
