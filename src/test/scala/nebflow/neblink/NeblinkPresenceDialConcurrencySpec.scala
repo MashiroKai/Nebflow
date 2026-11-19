@@ -329,6 +329,39 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     }
   }
 
+  test("gated real-socket smoke: release live leg before its budget and select it".tag(munit.Tag("host-smoke"))) {
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for real socket smoke")
+    val srv = new NeblinkPresenceDialConcurrencySpec.FixtureServer(handshakeDelayMs = 0L)
+    val entered = new java.util.concurrent.CountDownLatch(1)
+    val gate = new java.util.concurrent.CountDownLatch(1)
+    val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val hook: (String, Int, Long) => Unit = (_, _, budget) =>
+      events.add(s"start:$budget")
+      entered.countDown()
+      if !gate.await(budget, java.util.concurrent.TimeUnit.MILLISECONDS) then
+        throw new java.util.concurrent.TimeoutException("fixture gate budget expired")
+      events.add("released-within-budget")
+    withStack(srv.port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialHook = hook) { (_, ps) =>
+      (for
+        fiber <- ps.connect(peer("gated-success", List(srv.endpoint))).start
+        _ <- IO.blocking {
+          assert(entered.await(5, java.util.concurrent.TimeUnit.SECONDS), "dial leg must start")
+          gate.countDown()
+        }
+        _ <- fiber.joinWithNever
+        _ <- IO {
+          import scala.jdk.CollectionConverters.*
+          assertEquals(events.iterator().asScala.toList, List("start:1500", "released-within-budget"))
+          val round = roundOf(ps, "gated-success")
+          assertEquals(round.attempted, List(srv.endpoint))
+          assertEquals(round.failures, Nil)
+          assert(ps.isConnected("gated-success"))
+          assertEquals(ps.chosenEndpoint("gated-success"), Some(srv.endpoint))
+        }
+      yield ()).guarantee(IO(gate.countDown()))
+    }.guarantee(IO(srv.close()))
+  }
+
   // ===== P2 搬离 compute-blocker =====
 
   test("C3 收口确定性：并发全败时 dialStatus.endpoint 恒 = 择优序末尾候选（一轮写一次，不是竞速）".tag(munit.Tag("host-smoke"))) {
@@ -363,8 +396,10 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
     val completed = new java.util.concurrent.LinkedBlockingQueue[String]()
     val hook: (String, Int, Long) => Unit = (host, _, _) =>
-      events.add(s"start:$host")
-      starts.put(host)
+      events.synchronized {
+        events.add(s"start:$host")
+        starts.put(host)
+      }
       if !releases(host).tryAcquire(8, java.util.concurrent.TimeUnit.SECONDS) then
         throw new IllegalStateException("C3 gate timed out")
       events.add(s"complete:$host")
