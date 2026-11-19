@@ -381,7 +381,8 @@ object PromptSections:
     PromptSection(
       375,
       condition = ctx => ctx.isRootAgent,
-      body = nebflow.shared.Defaults.OutputBlockRule
+      body = """── User-visible reports ──
+        |Only content inside paired `<report>...</report>` blocks is shown to the user. Zero blocks is allowed. Outside text is process detail folded into the existing turn badge. Multiple blocks appear in order. Agent-to-agent handoffs remain complete and unfiltered.""".stripMargin
     ),
 
     // --- SendMessage/Pop 边界（渠道文件出站+工具说明批 2026-10-31，作者 22:10

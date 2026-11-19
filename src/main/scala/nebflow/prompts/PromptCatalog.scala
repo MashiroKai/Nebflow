@@ -383,7 +383,7 @@ Read / Glob / Grep / WebSearch / WebFetch / Bash. Bash uses the normal shell exe
 
     val OutputBlockRule: String =
       """── Output discipline ──
-      |ONLY content in paired `<report>...</report>` tags is shown to the user. Zero blocks is allowed; process detail outside is folded into the existing turn badge. Agent-to-agent handoffs remain complete and unfiltered. Use concise direct language suited to the user's profile.""".stripMargin
+      |ONLY the content you wrap in paired `<output>...</output>` tags is shown to the user — write it WeChat-style: short direct paragraphs, conclusion first, zero filler. Everything outside the tags (reasoning, tool narration, machine detail) stays in your message but is stripped from display; the user expands a badge to see the full raw text. Adjust tone/length to the user's profile (their `~/.stand/User.md` communication-style answers); with no profile, default to concise direct Chinese.""".stripMargin
 
     val SendMessageScopeRule: String =
       """── SendMessage scope ──

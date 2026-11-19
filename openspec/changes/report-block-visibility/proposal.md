@@ -2,7 +2,11 @@
 
 ## Change
 
-Agent messages expose only paired `<report>...</report>` bodies on user-facing console and social channels. Text outside is process material accessible through the existing turn badge; zero blocks is valid. Node handoffs, mail and delegate results remain complete and unfiltered. The former `<output>` syntax is ordinary text, without a transitional alias. The old outputBlock kill switch is retired rather than allowing a full-text leak.
+Only root-session messages expose paired `<report>...</report>` bodies on the user-facing console and social channels. Text outside is process material accessible through the existing turn badge; zero blocks is valid. Other sessions retain their existing presentation. Node handoffs, mail and delegate results remain complete and unfiltered. For root messages the former `<output>` syntax is ordinary text, without a transitional alias. The old outputBlock kill switch is retired for root rather than allowing a full-text leak.
+
+## Scope and unresolved implementation
+
+The root-only prompt is assembled in the `isRootAgent` section, not the shared prefix. Frontend scope must be derived from the owning session's verified agent identity, not the primary window, because the primary view may display non-root sessions. The session-agent map is populated from session lists, so loading and unknown-identity states require explicit handling. Social bindings accept arbitrary session identifiers; root identity must be verified before filtering rather than inferred from channel membership. These scope controls are not yet implemented in the current draft.
 
 ## Parsing and acceptance
 
