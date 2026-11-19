@@ -2991,7 +2991,7 @@ class WebSocketRoutes(
                       sessionId,
                       List(
                         UiMessage
-                          .Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis())
+                          .Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis(), isRoot = hc.get[Boolean]("isRoot").toOption)
                       )
                     )
                   }
@@ -3020,7 +3020,7 @@ class WebSocketRoutes(
                     sessionId,
                     List(
                       UiMessage
-                        .Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis())
+                        .Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis(), isRoot = hc.get[Boolean]("isRoot").toOption)
                     )
                   )
                 }
@@ -3059,7 +3059,7 @@ class WebSocketRoutes(
                         // 回放折叠不再靠渲染期徽章启发式反推（裸面 1/2/5 根治）。
                         List(
                           UiMessage
-                            .Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true))
+                            .Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true), isRoot = hc.get[Boolean]("isRoot").toOption)
                         )
                       )
                     else if durationMs.isDefined then
