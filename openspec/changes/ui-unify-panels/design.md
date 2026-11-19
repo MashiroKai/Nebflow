@@ -17,9 +17,10 @@ acceptance evidence for them.
 ## Note (author ruling, 2026-11-19): settings groups are five, not six
 
 The release line carries five settings groups — `general`, `models`, `runtime`, `advanced`, `about`
-(`scripts/check-panel-uniform.mjs:34`) — because the account bar was retired by author order
+(`scripts/check-panel-uniform.mjs:27`) — because the account bar was retired by author order
 2026-11-18: the gate now asserts that no account section, account card, account render/bind export or
-settings device slot is rendered (`scripts/check-panel-uniform.mjs:38-56`). The requirement text,
+settings device slot is rendered (`scripts/check-panel-uniform.mjs:37-43`), and its PASS literal says
+so (`:52`). The requirement text,
 scenario, task list and trace literal above are written to that current state. `proposal.md` is left
 verbatim as the original ask it was; nothing in the code was changed to match the older six-group
 wording.
