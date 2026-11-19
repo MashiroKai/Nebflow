@@ -83,12 +83,18 @@ case class FreezeTruth(
    */
   def notWakableWhy: String =
     if frozen then
-      s"it is frozen but needs no human action (${labelEn}, reason=${if reasonWire.isEmpty then "unknown" else reasonWire}) — " +
+      s"it is frozen but needs no human action (${labelEn}, reason=${
+          if reasonWire.isEmpty then "unknown" else reasonWire
+        }) — " +
         "the engine resumes it on its own at the scheduled window/backoff"
     else
-      s"it is NOT frozen any more (status=$status, frozenReason=${if reasonWire.isEmpty then "none" else reasonWire}) — " +
+      s"it is NOT frozen any more (status=$status, frozenReason=${
+          if reasonWire.isEmpty then "none" else reasonWire
+        }) — " +
         "something already resumed it (a Mail wake, the panel wake action, an automatic recovery, or a fresh turn). " +
         "The console row was showing a stale freeze badge: this reply carries the live freeze state so the panel can drop it."
+
+end FreezeTruth
 
 object FreezeTruth:
 
@@ -148,6 +154,10 @@ object FreezeTruth:
         asOf = now
       )
 
+    end if
+
+  end of
+
   /** 帧/快照块 → 回读（前端帧回传面与单测用；坏数据 = 非冻结，绝不假装冻结）。 */
   def fromJson(json: Json, now: Long = System.currentTimeMillis()): FreezeTruth =
     val c = json.hcursor
@@ -166,5 +176,6 @@ object FreezeTruth:
       source = s("source"),
       asOf = c.downField("asOf").as[Long].getOrElse(now)
     )
+  end fromJson
 
 end FreezeTruth

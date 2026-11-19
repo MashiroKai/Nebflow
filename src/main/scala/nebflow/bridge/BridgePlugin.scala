@@ -116,7 +116,12 @@ trait BridgeContext:
   def forwardInteractionAnswer(requestId: String, rootSessionId: String, payload: Json): IO[Unit] = IO.unit
 
   /** Acknowledged exact-slot permission decision; unavailable implementations refuse. */
-  def decidePermission(requestId: String, rootSessionId: String, kind: nebflow.actor.InteractionKind, approved: Boolean): IO[Boolean] =
+  def decidePermission(
+    requestId: String,
+    rootSessionId: String,
+    kind: nebflow.actor.InteractionKind,
+    approved: Boolean
+  ): IO[Boolean] =
     IO.pure(false)
 
   /**

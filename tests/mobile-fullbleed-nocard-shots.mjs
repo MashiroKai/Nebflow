@@ -26,7 +26,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = process.env.TODOFULL_WEB_ROOT
   ? normalize(resolve(process.env.TODOFULL_WEB_ROOT))
   : join(HERE, '..', 'src', 'main', 'resources', 'web');
-// dist 脸：bundle 里没有 /js/*.js 模块路径，但要给夹具留一条 __seed 通道 —— 
+// dist 脸：bundle 里没有 /js/*.js 模块路径，但要给夹具留一条 __seed 通道 ——
 // TODOFULL_WEB_FALLBACK 指向源树，dist 里没有的文件回落到源树取。
 const FALLBACK = process.env.TODOFULL_WEB_FALLBACK
   ? normalize(resolve(process.env.TODOFULL_WEB_FALLBACK)) : null;

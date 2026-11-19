@@ -113,13 +113,14 @@ object ConfigService:
    */
   def revealProviderApiKeys: IO[Json] = IO.blocking {
     val raw = if os.exists(configPath) then os.read(configPath) else "{}"
-    val providers = parse(raw)
-      .toOption
+    val providers = parse(raw).toOption
       .flatMap(_.hcursor.downField("llm").downField("providers").as[Map[String, Json]].toOption)
       .getOrElse(Map.empty[String, Json])
     Json.obj("providers" -> Json.fromFields(providers.flatMap { case (id, p) =>
       p.hcursor.downField("apiKey").as[String].toOption.filter(_.nonEmpty).map { key =>
-        id -> Json.fromString(nebflow.core.secrets.ConfigCredentialStore.resolveManaged(PathUtil.dataRoot, key, "provider-settings"))
+        id -> Json.fromString(
+          nebflow.core.secrets.ConfigCredentialStore.resolveManaged(PathUtil.dataRoot, key, "provider-settings")
+        )
       }
     }))
   }
@@ -130,7 +131,9 @@ object ConfigService:
     parse(raw).toOption
       .flatMap(_.hcursor.downField("llm").downField("providers").downField(id).downField("apiKey").as[String].toOption)
       .filter(_.nonEmpty)
-      .map(key => nebflow.core.secrets.ConfigCredentialStore.resolveManaged(PathUtil.dataRoot, key, "provider-settings"))
+      .map(key =>
+        nebflow.core.secrets.ConfigCredentialStore.resolveManaged(PathUtil.dataRoot, key, "provider-settings")
+      )
   }
 
   def getConfig: IO[String] = IO.blocking {
@@ -161,7 +164,11 @@ object ConfigService:
               val updated = JsonObject.fromIterable(providers.toIterable.map { case (id, provider) =>
                 id -> provider.mapObject { obj =>
                   obj("apiKey").flatMap(_.asString) match
-                    case Some(value) => obj.add("apiKey", Json.fromString(nebflow.core.secrets.ConfigCredentialStore.persist(PathUtil.dataRoot, value)))
+                    case Some(value) =>
+                      obj.add(
+                        "apiKey",
+                        Json.fromString(nebflow.core.secrets.ConfigCredentialStore.persist(PathUtil.dataRoot, value))
+                      )
                     case None => obj
                 }
               })
@@ -174,8 +181,11 @@ object ConfigService:
         case None => root
         case Some(search) =>
           val secured = search("apiKey").flatMap(_.asString) match
-            case Some(value) => search.add("apiKey", Json.fromString(
-              nebflow.core.secrets.ConfigCredentialStore.persist(PathUtil.dataRoot, value)))
+            case Some(value) =>
+              search.add(
+                "apiKey",
+                Json.fromString(nebflow.core.secrets.ConfigCredentialStore.persist(PathUtil.dataRoot, value))
+              )
             case None => search
           root.add("search", Json.fromJsonObject(secured))
     }
@@ -287,8 +297,12 @@ object ConfigService:
                 // provider apiKeys in cleartext — the file lands 0600 instead
                 // of the umask default 0644 (legacy files converge on their
                 // next save; no migration script).
-                val persisted = persistSearchCredentials(persistProviderCredentials(
-                  parse(merged).fold(_ => throw new IllegalArgumentException("Invalid merged configuration"), identity)))
+                val persisted = persistSearchCredentials(
+                  persistProviderCredentials(
+                    parse(merged)
+                      .fold(_ => throw new IllegalArgumentException("Invalid merged configuration"), identity)
+                  )
+                )
                 AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), persisted.spaces2)
               }
               .attempt
@@ -320,6 +334,7 @@ object ConfigService:
                       rewriteAgentModelRefs(renames) *>
                       scrubPresetRefs(pureDeletes) *>
                       rewritePresetRefs(renames).as(Right(()))
+                  end if
               }
         end if
       }
@@ -398,8 +413,10 @@ object ConfigService:
                       "(the config file is now the single source of the chain)"
                   )
                   (updated, true)
+                end if
             if windowsChanged || withFallback._2 then
               AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), withFallback._1.spaces2)
+        end match
       }
     }
 
@@ -464,7 +481,9 @@ object ConfigService:
         else
           fallbackLog.warnSync(
             s"[fallback-chain] pruned ${dropped.mkString(", ")} from llm.fallback " +
-              s"(provider deleted from llm.providers; kept: ${if kept.isEmpty then "<empty>" else kept.mkString(" → ")})"
+              s"(provider deleted from llm.providers; kept: ${
+                  if kept.isEmpty then "<empty>" else kept.mkString(" → ")
+                })"
           )
           val nextLlm =
             if kept.isEmpty then llm.remove("fallback")
@@ -477,6 +496,7 @@ object ConfigService:
                 )
               )
           Json.fromJsonObject(root.add("llm", Json.fromJsonObject(nextLlm)))
+        end if
       ).getOrElse(json)
 
   /**
@@ -643,7 +663,8 @@ object ConfigService:
 
   /** Update one model under the same lock as all other config writes. */
   def setExecutorModel(id: String, model: String): IO[Either[String, Unit]] =
-    if !Set("claude-code", "codex").contains(id) then IO.pure(Left("Executor does not support headless model selection"))
+    if !Set("claude-code", "codex").contains(id) then
+      IO.pure(Left("Executor does not support headless model selection"))
     else if model.length > 200 || model.exists(_.isControl) || model.trim.startsWith("-") then
       IO.pure(Left("Invalid model ID"))
     else
@@ -657,7 +678,9 @@ object ConfigService:
               val models = section("models").flatMap(_.asObject).getOrElse(JsonObject.empty)
               val value = model.trim
               val updatedModels = if value.isEmpty then models.remove(id) else models.add(id, value.asJson)
-              val updated = parsed.mapObject(_.add("executor", Json.fromJsonObject(section.add("models", Json.fromJsonObject(updatedModels)))))
+              val updated = parsed.mapObject(
+                _.add("executor", Json.fromJsonObject(section.add("models", Json.fromJsonObject(updatedModels))))
+              )
               AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
               Right(())
         }
@@ -704,8 +727,7 @@ object ConfigService:
       case None => Left("imagegen section must be a JSON object")
       case Some(o) =>
         val unknown = o.keys.toSet.diff(IMAGEGEN_WRITABLE_KEYS.toSet)
-        if unknown.nonEmpty then
-          Left(s"imagegen section write refused — unknown key(s): ${unknown.mkString(", ")}")
+        if unknown.nonEmpty then Left(s"imagegen section write refused — unknown key(s): ${unknown.mkString(", ")}")
         else
           json.as[ImageGenConfig] match
             case Left(err) => Left(s"imagegen section undecodable: ${err.getMessage}")
@@ -742,7 +764,7 @@ object ConfigService:
                 // degrade 方向与删节同义）；非空 = 整节替换。
                 val updated = section.asObject.filter(_.isEmpty) match
                   case Some(_) => parsed.mapObject(_.remove(IMAGEGEN_SECTION))
-                  case None    => parsed.mapObject(_.add(IMAGEGEN_SECTION, section))
+                  case None => parsed.mapObject(_.add(IMAGEGEN_SECTION, section))
                 AtomicJson.writeSyncRestricted(PathUtil.configJsonWritePath(PathUtil.dataRoot), updated.spaces2)
                 Right(())
           }
@@ -795,9 +817,11 @@ object ConfigService:
     )
   }
 
-  /** keyRef 指针的**在位性**判定（存在且非空即已配——与
+  /**
+   * keyRef 指针的**在位性**判定（存在且非空即已配——与
    * [[nebflow.llm.imagegen.ImageGenService.readSecret]] 的腿关判据逐字同源，
-   * 面板显示与引擎判定永不漂移）。只 stat/读空判，不回传值。 */
+   * 面板显示与引擎判定永不漂移）。只 stat/读空判，不回传值。
+   */
   private def imagegenKeyConfigured(keyRef: Option[String]): Boolean =
     keyRef.filter(_.trim.nonEmpty).exists { name =>
       try

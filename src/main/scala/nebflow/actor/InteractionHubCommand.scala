@@ -138,8 +138,7 @@ object InteractionHubCommand:
    * 旁路落盘）。与 [[SecretSlotsOf]] 同一纪律：只读（不碰 pending/渲染/广播）、
    * hub 是槽位唯一权威。
    */
-  final case class AttachGateOf(requestId: String, reply: ActorRef[Option[AttachGate]])
-      extends InteractionHubCommand
+  final case class AttachGateOf(requestId: String, reply: ActorRef[Option[AttachGate]]) extends InteractionHubCommand
 
   /**
    * 作答落库归属批（2026-11-03，作者报障「回答后台智能体的提问泄漏进主会话」）：
@@ -155,8 +154,7 @@ object InteractionHubCommand:
    * 与 [[SecretSlotsOf]] / [[AttachGateOf]] 同一纪律：只读（不碰 pending/渲染/
    * 广播），`None` = 无此槽位（已答/已收/从未存在 —— 网关回落改前落库路径）。
    */
-  final case class AskOriginOf(requestId: String, reply: ActorRef[Option[AskOrigin]])
-      extends InteractionHubCommand
+  final case class AskOriginOf(requestId: String, reply: ActorRef[Option[AskOrigin]]) extends InteractionHubCommand
 end InteractionHubCommand
 
 /**
@@ -184,8 +182,10 @@ final case class AskOrigin(
   askerLabel: String
 ):
 
-  /** 自己问自己（根会话自问 / 无 sourceSession 的旧槽位）⇒ 作答行落在卡片会话，
-    * 与改前逐字同路径。子代理/节点提问 ⇒ false（全文只落提问会话）。 */
+  /**
+   * 自己问自己（根会话自问 / 无 sourceSession 的旧槽位）⇒ 作答行落在卡片会话，
+   * 与改前逐字同路径。子代理/节点提问 ⇒ false（全文只落提问会话）。
+   */
   def isSelfAsk: Boolean = sourceSession.isEmpty || sourceSession == rootSessionId
 
 /**
