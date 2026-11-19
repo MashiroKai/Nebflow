@@ -189,8 +189,18 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
    * 单行定位器（`linesIterator.find`）只会捞到中间的 appendChild 行 ⇒ `guardOf` 报
    * 「该语句缺 if 守卫」= **判据假红**（语义从未漂移）。
    *
-   * 定位法**不依赖行号、也不依赖守卫与语句同行**：自徽标行向上找最近的 `if (` 开块行，
-   * 再向下配平花括号取整块 ⇒ 判据仍作用在**守卫表达式**上，语义与强度逐字不变。
+   * 锚点**二次迁移**（2026-11-19 作者裁「同裁定①同一修法」，**产品零改动**）：作者支
+   * `5a82b59d8`（fix/composer-unify，我树落点 `36c5d69e0`）把主会话与联系人两套消息项
+   * 收敛进共享 item 构造器，徽标改为**单行**形态
+   * `if (isAgentSent(m)) badges.push({ className: 'fm-msg-agent-badge', … });`
+   * ⇒ `{` 与 `}` 同行，`end == guardAt`，旧的 `end > guardAt` 把**配平**误判成「不配平」
+   * （同族判据假红：判据面未跟随真实形态）。定位器随之跟随真实形态。
+   *
+   * 强度**不放松**（逐字保留原语义谓词）：
+   *   · `end == guardAt` 只在「该守卫行**自身**含徽标语句」时被接受 ⇒ 仍确系被该 `if`
+   *     守卫的那一条语句（无花括号的裸 `if (…) foo();` 之外另有 `{` 的行仍会走多行路径）；
+   *   · `if` 开块跨多行 ⇒ 仍走原 `end > guardAt` 路径；
+   *   · 两者皆不满足 ⇒ 照旧红；守卫表达式仍是唯一语义判据（见 D-B2）。
    */
   private def guardedBadgeBlock(src: String): (String, String) =
     val lines = src.linesIterator.toIndexedSeq
@@ -212,7 +222,12 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
       }
       if opened && depth == 0 then end = i
       i += 1
-    assert(end > guardAt, s"守卫块花括号不配平（判据无法判读）：${lines(guardAt)}")
+    // 单行守卫形态（composer-unify 后的真实形态）：守卫行**自己**就是含徽标的那条语句。
+    val singleLineGuardedForm = end == guardAt && lines(guardAt).contains("fm-msg-agent-badge")
+    assert(
+      end > guardAt || singleLineGuardedForm,
+      s"守卫块花括号不配平（判据无法判读）：${lines(guardAt)}"
+    )
     (lines.slice(guardAt, end + 1).mkString("\n"), lines(guardAt))
 
   end guardedBadgeBlock
@@ -220,6 +235,8 @@ class FriendMessageFooterBadgeSpec extends FunSuite:
   test("D-B2 徽标可见性门 = isAgentSent(m)，`out` 不再是条件（作者裁「双方可见」）") {
     // 锚点迁移（C10）：定位面由「含徽标的**单行**」改为「含徽标的 **if 块**」——
     // 守卫与语句分行后语义未变，只有定位器需要跟随（见 `guardedBadgeBlock` 的 WHY）。
+    // 锚点二次迁移（2026-11-19）：composer-unify 后守卫与语句**又回到同一行**（单行形态），
+    // 定位器补上该形态；语义谓词（守卫表达式）与断言强度逐字不变。
     val (block, guardLine) = guardedBadgeBlock(code)
     // 语义谓词 = 该块的**守卫表达式**（归一化空白后比对），而不是整句字面串。
     val guard = guardOf(guardLine).replaceAll("\\s+", "")

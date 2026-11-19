@@ -246,7 +246,7 @@ try {
   g = await askGeo(page);
   ok('S2f 新消息到达滚动位不动（±2px）', Math.abs(g.scrollTop - awayBefore.scrollTop) <= 2, `before=${awayBefore.scrollTop} after=${g.scrollTop}`);
   ok('S2g 新气泡已落列（在下方，不打断阅读）', g.bubbles === 27, `bubbles=${g.bubbles}`);
-  ok('S2h 胶囊报数「↓ 1 条新消息」（主会话同 token）', g.pillHidden === false && /1/.test(g.pillText || '') && (g.pillText || '').includes('新消息'), `pill="${g.pillText}"`);
+  ok('S2h user 注入不计入新消息', g.pillHidden === false && (g.pillText || '').includes('回到底部'), `pill="${g.pillText}"`);
   ok('S5b 胶囊落位在输入条顶缘之上（anchor 参照）', g.pillAboveInput !== null && g.pillAboveInput >= -1, `gap=${g.pillAboveInput}`);
   await shot(page, '03-newmsg-away-pill');
   await page.screenshot({ path: join(EVID_DIR, '03-newmsg-away-pill--full.png') });
@@ -264,7 +264,7 @@ try {
   wsSend({ type: 'user', sessionId: sid, injected: true, text: '主会话回问：再补一条离底计数' });
   await sleep(450);
   g = await askGeo(page);
-  ok('S4a 再次离底新消息 ⇒ 胶囊重新报数', g.pillHidden === false && /1/.test(g.pillText || ''), `pill="${g.pillText}"`);
+  ok('S4a 再次离底 user 注入仍不计数', g.pillHidden === false && (g.pillText || '').includes('回到底部'), `pill="${g.pillText}"`);
   // 距底 30px（< 44 容差）⇒ 算贴底：胶囊隐藏、不闪烁
   await page.evaluate(() => {
     const c = document.querySelector('.ask-dock .ask-col');

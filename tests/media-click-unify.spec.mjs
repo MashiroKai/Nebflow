@@ -150,6 +150,47 @@ async function renderRealPopRow(page, att) {
   }, att);
 }
 
+/** 「描画已落定」判据（同 tests/media-viewer-zoom.spec.mjs，本批判定名：
+ *  *用墙钟时间/固定毫秒顶替可观测状态条件*）：
+ *  元素 computed transform == 浮层已写下的状态（`data-nf-lb-zoom/pan-x/pan-y`）。
+ *  候选元素必须**真的在画**：computed opacity === 1 且有盒 —— 视频/音频腿里
+ *  `ensureDom` 建的 `.nf-lightbox-img` 常驻但 `opacity:0`、零盒（实测），盯着它必误超时。
+ *  本 spec 的手势面不含缩放 ⇒ 不变式退化为「恒等 transform 且已 `loaded`」。 */
+async function waitPainted(page) {
+  await page.waitForFunction(() => {
+    const lb = document.querySelector('.nf-lightbox');
+    if (!lb || !lb.classList.contains('on')) return false;
+    const z = Number(lb.getAttribute('data-nf-lb-zoom') || 1);
+    const tx = Number(lb.getAttribute('data-nf-lb-pan-x') || 0);
+    const ty = Number(lb.getAttribute('data-nf-lb-pan-y') || 0);
+    if (!Number.isFinite(z) || !Number.isFinite(tx) || !Number.isFinite(ty)) return false;
+    const cands = [lb.querySelector('.nf-lightbox-av'), lb.querySelector('.nf-lightbox-img')]
+      .filter(Boolean)
+      .filter((el) => { const cs = getComputedStyle(el); return cs.opacity === '1' && el.getBoundingClientRect().width > 0; });
+    if (!cands.length) return false;
+    return cands.some((el) => {
+      const m = getComputedStyle(el).transform;
+      let a = 1, b = 0, c = 0, d = 1, e = 0, f = 0;
+      if (m && m !== 'none') { const hit = /^matrix\(([^)]+)\)$/.exec(m); if (!hit) return false; [a, b, c, d, e, f] = hit[1].split(',').map(Number); }
+      return Math.abs(a - z) < 1e-3 && Math.abs(d - z) < 1e-3 && Math.abs(b) < 1e-9 && Math.abs(c) < 1e-9
+          && Math.abs(e - tx) <= 0.5 && Math.abs(f - ty) <= 0.5;
+    });
+  }, null, { timeout: 8000 });
+}
+
+/** 收起态的可观测终态：浮层 `.nf-lightbox` 的 `display` 已回到 `none`（或元素已移除）。
+ *  关闭是**瞬时** display 切换（`.nf-lightbox{display:none}` / `.on{display:flex}`），
+ *  所以这条通常立刻成立 —— 它的价值是把「等 300ms 再截图」变成「等状态」，
+ *  机器慢时不会截到半关的画面。 */
+async function waitClosedPainted(page) {
+  await page.waitForFunction(() => {
+    const lb = document.querySelector('.nf-lightbox');
+    if (!lb) return true;
+    if (lb.classList.contains('on')) return false;
+    return getComputedStyle(lb).display === 'none';
+  }, null, { timeout: 8000 });
+}
+
 test.describe('P16 media click unify matrix', () => {
   test.describe.configure({ mode: 'serial' });
 
@@ -256,7 +297,7 @@ test.describe('P16 media click unify matrix', () => {
     expect(st.chips).toBe(0);
     expect(errors).toEqual([]);
     if (SHOTS_DIR) {
-      await page.waitForTimeout(400);
+      await waitPainted(page);
       await page.screenshot({ path: join(SHOTS_DIR, 'combo3-mobile-gallery-chat.png') });
     }
   });

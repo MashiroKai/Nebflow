@@ -94,14 +94,14 @@ object AskEditTool extends Tool:
   override def name: String = Name
 
   override def description: String =
-    """Apply a search-and-replace edit to THE file this ask session is bound to (the only editable path; absolute path required). The edit is applied to the file IMMEDIATELY; the user reviews it as an inline diff in the canvas file tab (per-block accept/reject — rejecting a block reverts it). Rejects: any other path, `..` traversal, symlinks, binary content, old_str not found / ambiguous without replace_all. Prefer ask_edit for targeted changes; use ask_write to rewrite the whole file."""
+    """Apply a search-and-replace edit to THE file this ask session is bound to. That document is the ONLY editable path in this session — the engine normalises the path (relative spellings resolve against the bound file's directory; `.`, `..`, symlinks, case variants and alias mounts are all canonicalised) and refuses anything that does not resolve to the same document, with an explicit reason plus a handoff suggestion. The edit is applied to the file IMMEDIATELY; the user reviews it as an inline diff in the canvas file tab (per-block accept/reject — rejecting a block reverts it). Prefer ask_edit for targeted changes; use ask_write to rewrite the whole file. For a task that spans several files, several steps or shell commands, hand it to the main session with send_message_to_main_chat instead of trying another path here."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "path" -> Json.obj(
         "type" -> "string".asJson,
-        "description" -> "Absolute path of the bound file (the ask session's file — the only accepted value).".asJson
+        "description" -> "Path of the bound file (the ask session's only editable document). Any spelling that normalises to that same document is accepted (relative to its directory, `.`/`..`, symlink, case variant); anything else is refused with an explicit reason and a handoff suggestion.".asJson
       ),
       "old_str" -> Json.obj(
         "type" -> "string".asJson,
@@ -155,7 +155,7 @@ object AskEditTool extends Tool:
             else
               val i = snapshot.indexOf(oldStr)
               Right(snapshot.substring(0, i) + newStr + snapshot.substring(i + oldStr.length))
-          AskEditReviews.applyChange(sid, binding, path, transform).flatMap {
+          AskEditReviews.applyChange(sid, binding, path, "ask_edit", transform).flatMap {
             case Left(why) => IO.pure(Left(ToolError(why)))
             case Right(review) =>
               AskEditTools.pushAppliedFrame(review, ctx).as(Right(AskEditTools.appliedReply("edit", review)))
@@ -179,14 +179,14 @@ object AskWriteTool extends Tool:
   override def name: String = Name
 
   override def description: String =
-    """Apply a whole-file rewrite of THE file this ask session is bound to (absolute path required; the only editable path). The new content is written IMMEDIATELY; the user reviews it as an inline diff in the canvas file tab (per-block accept/reject — rejecting a block reverts it). Use for restructuring that is larger than a few replacements; otherwise prefer ask_edit."""
+    """Apply a whole-file rewrite of THE file this ask session is bound to. That document is the ONLY editable path in this session — the engine normalises the path (relative spellings resolve against the bound file's directory; `.`, `..`, symlinks, case variants and alias mounts are all canonicalised) and refuses anything that does not resolve to the same document, with an explicit reason plus a handoff suggestion. The new content is written IMMEDIATELY; the user reviews it as an inline diff in the canvas file tab (per-block accept/reject — rejecting a block reverts it). Use for restructuring that is larger than a few replacements; otherwise prefer ask_edit. For a task that spans several files, several steps or shell commands, hand it to the main session with send_message_to_main_chat instead of trying another path here."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
       "path" -> Json.obj(
         "type" -> "string".asJson,
-        "description" -> "Absolute path of the bound file (the ask session's file — the only accepted value).".asJson
+        "description" -> "Path of the bound file (the ask session's only editable document). Any spelling that normalises to that same document is accepted (relative to its directory, `.`/`..`, symlink, case variant); anything else is refused with an explicit reason and a handoff suggestion.".asJson
       ),
       "content" -> Json.obj(
         "type" -> "string".asJson,
@@ -216,7 +216,7 @@ object AskWriteTool extends Tool:
         case None =>
           IO.pure(Left(ToolError("ask_write: this ask session has no file binding — open the file card in canvas first. (ASK_EDIT_NO_BINDING)")))
         case Some(binding) =>
-          AskEditReviews.applyChange(sid, binding, path, _ => Right(content)).flatMap {
+          AskEditReviews.applyChange(sid, binding, path, "ask_write", _ => Right(content)).flatMap {
             case Left(why) => IO.pure(Left(ToolError(why)))
             case Right(review) =>
               AskEditTools.pushAppliedFrame(review, ctx).as(Right(AskEditTools.appliedReply("rewrite", review)))

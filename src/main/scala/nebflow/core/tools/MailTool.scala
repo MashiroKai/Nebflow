@@ -1607,6 +1607,7 @@ Delivery follows recipient state (there is no delivery parameter to set):
               res.agentRegistry.get.flatMap { reg =>
                 reg
                   .get(id)
+                  .filter(entry => nebflow.actor.ExternalAgentRecord.isMessagable(entry.kind) && entry.ref != null)
                   .fold(IO.pure(Option.empty[AgentRecord]))(entry =>
                     sys.isAlive(entry.ref.path).map(alive => Option.when(alive)(entry))
                   )
@@ -1649,7 +1650,10 @@ Delivery follows recipient state (there is no delivery parameter to set):
                               message,
                               parentRef = parentRef,
                               wsSend = ctx.wsSend,
-                              resources = res
+                              resources = res,
+                              messageId = Option(ctx.toolCallId).filter(_.nonEmpty)
+                                .map(call => s"mail:${ctx.sessionId.getOrElse("")}:$call")
+                                .getOrElse(java.util.UUID.randomUUID().toString)
                             )
                             .map(_.left.map(ToolError(_)))
                         else continueDelegate(record, id, message, ctx, sys, res, parentRef, blocks)
@@ -1670,7 +1674,12 @@ Delivery follows recipient state (there is no delivery parameter to set):
     record: DelegateRegistry.Record
   ): IO[Option[ActorRef[AgentCommand]]] =
     if record.parentSessionId.isEmpty then IO.pure(None)
-    else res.agentRegistry.get.map(_.get(record.parentSessionId).map(_.ref))
+    else
+      res.agentRegistry.get.map(
+        _.get(record.parentSessionId)
+          .filter(entry => nebflow.actor.ExternalAgentRecord.isMessagable(entry.kind))
+          .flatMap(entry => Option(entry.ref))
+      )
 
   /**
    * Verified continuation keeps the original identity and scope. Missing context,

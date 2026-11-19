@@ -153,6 +153,14 @@ class SchemePolicySpec extends FunSuite:
     }
   }
 
+  test("unconfigured model never derives authorization from provider inventory") {
+    withRoot("fail-closed") { root =>
+      os.write.over(root / nebflow.shared.Branding.configFileName, providersJson("Z" -> "m2"))
+      val (chain, _) = SchemePolicy.resolveModel("Nebula", None)
+      assertEquals(chain.preferred, None)
+    }
+  }
+
   // ── level 3: seed chain ──────────────────────────────────
 
   test("unconfigured Nebula falls to the providers-derived seed chain") {
@@ -160,7 +168,7 @@ class SchemePolicySpec extends FunSuite:
       os.write.over(root / nebflow.shared.Branding.configFileName, providersJson("Z" -> "m2", "A" -> "m1"))
       writeNebula(root, None)
       val (chain, from) = SchemePolicy.resolveModel("Nebula", None)
-      assertEquals(chain, AgentModelConfig(Some("Z/m2"), Nil)) // first provider in field order
+      assertEquals(chain, AgentModelConfig.empty) // first provider in field order
       assertEquals(from, SchemePolicy.SeedSource)
     }
   }
@@ -169,7 +177,7 @@ class SchemePolicySpec extends FunSuite:
     withRoot("seed-no-root") { root =>
       os.write.over(root / nebflow.shared.Branding.configFileName, providersJson("Z" -> "m2"))
       val (chain, from) = SchemePolicy.resolveModel(executorName, None)
-      assertEquals(chain, AgentModelConfig(Some("Z/m2"), Nil))
+      assertEquals(chain, AgentModelConfig.empty)
       assertEquals(from, SchemePolicy.SeedSource)
     }
   }
@@ -187,7 +195,7 @@ class SchemePolicySpec extends FunSuite:
       writeAgent(root, "Nebula", "{not json")
       os.write.over(root / nebflow.shared.Branding.configFileName, providersJson("Z" -> "m2"))
       val (chain, from) = SchemePolicy.resolveModel(executorName, None)
-      assertEquals(chain, AgentModelConfig(Some("Z/m2"), Nil))
+      assertEquals(chain, AgentModelConfig.empty)
       assertEquals(from, SchemePolicy.SeedSource)
     }
   }
@@ -199,14 +207,16 @@ class SchemePolicySpec extends FunSuite:
         """{"llm":{"providers":{"Z":{"baseUrl":"http://127.0.0.1:1","apiKey":"k","protocol":"openai","models":[{"id":"m2","contextWindow":8192}]}},"""
           + """"model":{"default":"Z/m9","fallbacks":["A/m1"]}}}"""
       )
-      assertEquals(SchemePolicy.readSeedChain(), List("Z/m9", "A/m1"))
+      assertEquals(SchemePolicy.readSeedChain(), Nil)
+      assertEquals(SchemePolicy.legacySeedCandidate(), Some("Z/m9"))
     }
   }
 
   test("seed chain: absent llm.model falls to providers; empty install yields Nil") {
     withRoot("seed-order") { root =>
       os.write.over(root / nebflow.shared.Branding.configFileName, providersJson("Y" -> "y1", "X" -> "x1"))
-      assertEquals(SchemePolicy.readSeedChain(), List("Y/y1"))
+      assertEquals(SchemePolicy.readSeedChain(), Nil)
+      assertEquals(SchemePolicy.legacySeedCandidate(), Some("Y/y1"))
       os.write.over(root / nebflow.shared.Branding.configFileName, """{"llm":{"providers":{}}}""")
       assertEquals(SchemePolicy.readSeedChain(), Nil)
       os.remove(root / nebflow.shared.Branding.configFileName)

@@ -63,7 +63,7 @@ export { enterAskMode, cancelAskMode, enterSkillMode, cancelSkillMode, enterComp
 import { addFileAttachment, pendingAttCount, isRefOnlyFrame, syncRefOnlyGate, showAttError, joinAbsPath } from './input/attachments.js';
 export { addFileAttachment, wireAttachmentsOf, isRefOnlyFrame, syncRefOnlyGate, appendRefToActiveView, initGlobalFileDrop } from './input/attachments.js';
 // 输入行为包（2026-11-02 作者令）：键盘契约装配 + 中断帧单点（ask 与主会话共用）。
-import { bindComposerKeys, requestTurnInterrupt } from './input/composer.js';
+import { bindComposerKeys, requestTurnInterrupt, growComposerInput, composerPlaceholder } from './input/composer.js';
 
 // ---------- 真人消息 turn 标志（2026-09-16 msunread-r2；作者裁定 ①）----------
 // 「本机派发了一条真人消息 = 本 turn 的起点」的 per-session turn 级标志。
@@ -1630,7 +1630,7 @@ export function initInput(view) {
   // Auto-resize textarea + 同步纯引用帧闸（文本变化会改变闸判据）。
   input.addEventListener('input', () => {
     input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+    growComposerInput(input);
     syncRefOnlyGate(view);
     // 输入使闸解除时（blocked→false）占位符立即回到附件/通用文案 ——
     // 闸文案由输入框自身 placeholder 承担（#531，2026-10-18）。
@@ -1676,15 +1676,17 @@ export function initInput(view) {
    *  为状态钩子，CSS 消费面已零）。发送清空动画窗内（chat.js，~160ms）计数含
    *  退场 chip，落定后由本观察器再同步一次 —— 短暂窗口零行为影响。 */
   function updateInputPlaceholder() {
-    if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
+    // 占位文案单点 = js/input/composer.js composerPlaceholder（composer 统一批
+    // 2026-11-18）：语音 / 纯引用帧 / 附件计数 / 通用四条分支的**判据**在那一份，
+    // 本处只供状态（语音态 + 闸态 + 渲染条计数）。分支顺序与既有产品态逐字相同。
     const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
     input.parentElement?.classList.toggle('has-attachments', n > 0);
-    // 纯引用帧（blocked）：发送被闸禁用，「请附一句话后发送」直接落在输入框自己的
-    // placeholder 位（#531 作者令 2026-10-18：不新增独立占位行；清空附件/输入附言
-    // 后由下方分支恢复原文案）。
-    if (isRefOnlyFrame(view)) { input.placeholder = t('input.refOnlyHint'); return; }
-    if (n > 0) { input.placeholder = attachmentPlaceholder(n); return; }
-    input.placeholder = t('input.placeholder');
+    input.placeholder = composerPlaceholder({
+      baseToken: 'input.placeholder',
+      voiceActive,
+      refOnly: isRefOnlyFrame(view),
+      attachments: n,
+    });
   }
 
   // Send button —— 入口①（点击）。纯引用帧在此不产帧（网关 4055 会静默丢弃它）。
@@ -1884,7 +1886,7 @@ export function initInput(view) {
         input.value = state.inputHistory[view.historyIndex];
         recallHistoryAttachments(view);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
         input.setSelectionRange(input.value.length, input.value.length);
         return true;
       }
@@ -1900,7 +1902,7 @@ export function initInput(view) {
         }
         recallHistoryAttachments(view);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
         input.setSelectionRange(input.value.length, input.value.length);
         return true;
       }
@@ -1959,7 +1961,7 @@ export function initInput(view) {
         input.focus();
         input.setSelectionRange(voiceAnchor + text.length, voiceAnchor + text.length);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
       },
       onText: (text) => {
         // Replace interim with final text + trailing space
@@ -1972,7 +1974,7 @@ export function initInput(view) {
         voiceBaseline = input.value;
         input.setSelectionRange(voiceAnchor, voiceAnchor);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
       },
       onState: (state, data) => {
         updateVoiceUI(state, data);
@@ -2060,7 +2062,7 @@ export function initInput(view) {
   }
 
   async function startVoice() {
-    input.placeholder = t('input.ph.listening');
+    input.placeholder = composerPlaceholder({ voiceActive: true });
     voiceActive = true;
     voiceAnchor = input.selectionStart ?? input.value.length;
     voiceInterimLen = 0;
@@ -2184,13 +2186,16 @@ export function initInput(view) {
   // global pendingAttCount is an in-flight counter (already 0 when this runs),
   // so it could never hold has-attachments open (composer-typing fix).
   const refreshPlaceholder = () => {
-    if (voiceActive) { input.placeholder = t('input.ph.listening'); return; }
+    // 同上：文案判据单点在 js/input/composer.js composerPlaceholder（本作用域只是
+    // 第二个调用点，不再持一份分支副本 —— composer 统一批 2026-11-18）。
     const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
     input.parentElement?.classList.toggle('has-attachments', n > 0);
-    // 纯引用帧分支同 updateInputPlaceholder：闸文案落在输入框自身 placeholder
-    // （#531，2026-10-18；无独立提示行）。
-    if (isRefOnlyFrame(view)) { input.placeholder = t('input.refOnlyHint'); return; }
-    input.placeholder = n > 0 ? attachmentPlaceholder(n) : t('input.placeholder');
+    input.placeholder = composerPlaceholder({
+      baseToken: 'input.placeholder',
+      voiceActive,
+      refOnly: isRefOnlyFrame(view),
+      attachments: n,
+    });
   };
   voiceBtn.addEventListener('pointerdown', (e) => {
     // #513 纠正：拖动手势 = 全双工入口（面 A），默认封存态整个 dead ——
@@ -2203,7 +2208,7 @@ export function initInput(view) {
     try { voiceBtn.setPointerCapture(e.pointerId); } catch (_) {}
     voiceDrag = { x: e.clientX, y: e.clientY, fired: false };
     micOrbWrap?.classList.add('dragging');
-    input.placeholder = t('input.ph.drag');
+    input.placeholder = composerPlaceholder({ dragActive: true });
   });
   voiceBtn.addEventListener('pointermove', (e) => {
     if (!voiceDrag || voiceDrag.fired) return;
@@ -2367,22 +2372,13 @@ async function addPathAttachment({ path, rootPath }, view, target) {
 }
 
 /* ── 附件态占位文案（输入框附件图标化批，作者令 2026-11-02）─────────────
-   **模块级单点**：initInput 的 updateInputPlaceholder 与 voice 作用域的
-   refreshPlaceholder 两处消费（零第二份判据）。
-
    令文口径：「添加附件后占位提示文字不变，仍是『请输入消息...』」。手机层
    （body.mobile-layer）附件条已改为扩展名族图标盒 —— 附件不再以文字占名，
    「已附加文件——输入一句话一起发送」这条文字提示在手机层随之退场，占位恒为
    通用文案 `input.placeholder`（=「输入消息...」）；桌面层逐字沿用既有
    `input.ph.attachments`（%n 计数），按令「桌面共组件先不动」。
 
-   🔴 放置纪律：本函数刻意追加在**文件尾**（函数声明提升 ⇒ 两处消费点照常可用）
-   —— 上方 1698-1699 是 ime-guard 哨兵允许清单的锚行（scripts/check-ime-guard.mjs
-   ALLOWLIST 的 lines 元数据 + tests/ime-guard.spec.mjs 的 G4 组），正文插入会把
-   该对逐行下推打红哨兵；追加尾部 = 行号零漂移（本批实证：1698/1699 原值）。 */
-function attachmentPlaceholder(n) {
-  const mobile = typeof document !== 'undefined'
-    && document.body && document.body.classList.contains('mobile-layer');
-  if (mobile) return t('input.placeholder');
-  return t('input.ph.attachments').replace('%n', String(n));
-}
+   🔴 composer 统一批（2026-11-18）：本判据的**实现**已整体上移到全站单点
+   `js/input/composer.js` 的 `composerPlaceholder()`（含 mobile-layer 判定），
+   本文件不再持有第二份副本 —— 原 `attachmentPlaceholder(n)` 模块级函数随批删除
+   （消费点改为直接调 `composerPlaceholder`，语句等价）。此处只留口径记录。 */

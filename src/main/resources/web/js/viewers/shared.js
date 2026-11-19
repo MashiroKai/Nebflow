@@ -904,12 +904,23 @@ export function measureBottomClearance(pane) {
   return Math.max(0, Math.round(v * 100) / 100);
 }
 
-/** 重算并写 --canvas-bottom-clearance（值不变则不写，避免无谓重排）。 */
+/** 重算并写 --canvas-bottom-clearance（值不变则不写，避免无谓重排）。
+ *
+ *  同一个实测值服务两个消费域，源仍是本函数唯一一次实测：
+ *    · pane 内联 style —— 正文滚动让位（split.css 文件尾）+ --cv-safe-bottom；
+ *    · documentElement —— body 级浮层（全站唯一瞬时通知 css/modal.css
+ *      `.nebflow-toast`）读得到的同一刻度，通知在 canvas 打开时抬到底部控件带之上
+ *      （与 `--canvas-overlay-top` / `--canvas-width` 同一条「canvas 几何发布到
+ *      documentElement」的既存做法，不是第二套定位）。canvas 关上后该值不再刷新，
+ *      消费侧以 `body.canvas-open` 守卫，陈旧值零消费。 */
 export function syncBottomClearance(pane) {
   if (!pane) return null;
   const px = measureBottomClearance(pane);
   if (px === null) return null;
   const next = px + 'px';
+  if (document.documentElement.style.getPropertyValue('--canvas-bottom-clearance') !== next) {
+    document.documentElement.style.setProperty('--canvas-bottom-clearance', next);
+  }
   if (pane.style.getPropertyValue('--canvas-bottom-clearance') === next) return px;
   pane.style.setProperty('--canvas-bottom-clearance', next);
   return px;

@@ -61,6 +61,12 @@ class WebSocketRoutes(
    */
   nfTicketStore: NfTicketStore = NfTicketStore.unsafeDefault(),
   /**
+   * 按对象复用批（2026-11-18）：`GET /api/nf-obj/<cid>/<name>` 的内容寻址索引。
+   * 铸票面（nfTicketRoutes）与取字节面（nfObjRoutes）必须共享同一个实例，否则
+   * 铸票时注册的 cid 在取数面查不到。缺省 = memoized 单例（既有构造点零改动）。
+   */
+  nfObjStore: NfObjStore = NfObjStore.memoized,
+  /**
    * C1-5 injection seam: the credential-namespace policy the read and the
    * signing endpoints share. Memoized so the R2 inode scan is a one-off.
    */
@@ -1014,15 +1020,18 @@ class WebSocketRoutes(
             // 不进模型上下文）。地址 = MailAddress.AskPrefix + 会话 id（单源，零推导）。
             val mailAddress =
               nebflow.core.delegate.MailAddress.AskPrefix + req.askSessionId
-            val rendered =
-              s"来自文件问答 · ${req.fileName}\n\n${req.question}\n\n（续聊该问答会话：Mail(address=\"$mailAddress\")）"
+            // ask-scope 批（2026-11-18）：人读正文 = 结构化块（AskHandoffWire 单点），
+            // 机器可读面 = metadata.handoff（同一份编码）；主会话两条腿拿同一份数据。
+            val handoff = nebflow.core.ask.AskHandoffWire.of(req)
+            val rendered = nebflow.core.ask.AskHandoffWire.injectedBody(handoff, mailAddress)
             val metadata = io.circe.JsonObject(
               "askSession" -> req.askSessionId.asJson,
               "file" -> req.file.asJson,
               "fileName" -> req.fileName.asJson,
               "leg" -> req.leg.asJson,
               "contextRefs" -> Json.fromValues(req.contextRefs).asJson,
-              "askMailAddress" -> mailAddress.asJson
+              "askMailAddress" -> mailAddress.asJson,
+              "handoff" -> nebflow.core.ask.AskHandoffWire.json(handoff)
             )
             handleBridgeAgentCommand(
               mainSid,
@@ -1040,7 +1049,12 @@ class WebSocketRoutes(
     ) <+> StaticRoutes.jsRoutes <+> StaticRoutes.assetsRoutes <+> NfFileRoutes.nfFileRoutes(
       nfTicketStore,
       nfPathPolicy
-    ) <+> NfFileRoutes.nfTicketRoutes(tokenRef, nfTicketStore, nfPathPolicy, sessions) <+> NfFileRoutes
+    ) <+> NfFileRoutes.nfTicketRoutes(tokenRef, nfTicketStore, nfPathPolicy, sessions, objects = nfObjStore) <+> NfFileRoutes
+      .nfObjRoutes(
+        tokenRef,
+        nfObjStore,
+        sessions
+      ) <+> NfFileRoutes
       .nfAuthcheckRoutes(
         tokenRef,
         sessions
@@ -1453,8 +1467,9 @@ class WebSocketRoutes(
           // the closing head tag. The served body therefore differs from the
           // source bytes, which is why this route does not use StaticFile's
           // conditional-request handling (a jar-entry Last-Modified must not
-          // vouch for content we mutated) — the response stays no-cache with
-          // no validators.
+          // vouch for content we mutated) — the validator is the served-bytes
+          // WEAK ETag computed by StaticRoutes.brandInjectedResponse
+          // (静态面重验证批 2026-11-18: no-cache + If-None-Match ⇒ 304).
           // console-fastpath 批 2026-10-23·腿②：隧道脸（TunnelOriginMark）分发到
           // 首开内联打包面（[[StaticRoutes.indexResponseFor]]），直连脸逐字原应答。
           StaticRoutes.indexResponseFor(req)
@@ -2057,6 +2072,21 @@ class WebSocketRoutes(
                         val ownerAccess = handshakeCredential.collect { case Credential.ViaSession(record) =>
                           OwnerAccess.fromAuthenticatedSession(record, attachmentOwnerStore)
                         }
+                        // attachment-persistence 批（2026-11-18，P0「已发送的文件过一会失效」）：
+                        // 落盘身份必须与**读取面**（StaticRoutes.uploadsRoutes 的
+                        // `ownsResource("attachment", "<sid>/<file>")`）同一把钥匙。
+                        // 修前两处错：① 准入用 `access.ownsSession(msgSessionId)` 拿**聊天会话
+                        // id**去查 owner 台账的 `session:<id>` 行 —— 那些行按**网关会话 id**
+                        // （GatewaySessionStore.newSessionId()，32B base64url，例
+                        // `1lau2fyJhwUO_C0UMypAVqHwFLKOx7YteP0-uzocQjo`）注册，而 msgSessionId 是
+                        // 会话 UUID（例 `1b3416b2-09df-44a8-b8b3-d15aa75dfa98`），两个 id 空间从不
+                        // 相交 ⇒ 恒 false ⇒ 附件永不落盘；② 落盘登记用 2 参 commit（resourceId
+                        // = 裸文件名），而读取面要的是 `<sid>/<file>` ⇒ 即使落了盘也 403（2 参
+                        // commit 见 AttachmentCommitService.commit(access,key,content)）。
+                        // 现在：准入 = 已认证会话主体（ownerAccess 在场；Bearer/未知主体由
+                        // OwnerStore.createResource 的 fail-closed 拦下），落盘登记一律用
+                        // **URL 形状**的 resourceId —— 读取面的按账号授权因此真正生效。
+                        val attachmentScope: Option[String] = AttachmentScope.segmentOf(msgSessionId)
                         val uploadRoot = Config.NebflowHome.toNIO.resolve("uploads").resolve(msgSessionId)
                         val attachmentWrites = attachments.zipWithIndex.traverse_ { case (att, attIdx) =>
                           val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
@@ -2072,31 +2102,28 @@ class WebSocketRoutes(
                             val stem = name.replaceAll("\\.[a-zA-Z0-9]+$", "").replaceAll("[^A-Za-z0-9._-]", "_")
                             val keyResult = ResourceKey.from(s"${System.nanoTime()}_$stem.$ext")
                             val decoded = scala.util.Try(java.util.Base64.getDecoder.decode(data)).toOption
-                            (ownerAccess, decoded, keyResult.toOption) match
-                              case (Some(access), Some(bytes), Some(key)) =>
-                                access.ownsSession(msgSessionId).flatMap {
-                                  case false =>
-                                    blocks += ContentBlock.Image(data, mimeType)
-                                    IO(
-                                      logger
-                                        .warn(s"Image '$name' rejected: session is not owned by handshake principal")
-                                    )
-                                  case true =>
-                                    AttachmentCommitService
-                                      .at(uploadRoot)
-                                      .commit(access, key, new java.io.ByteArrayInputStream(bytes))
-                                      .attempt
-                                      .map {
-                                        case Right(path) =>
-                                          savedPaths(attIdx) = path.toString
-                                          blocks += ContentBlock.Image(data, mimeType)
-                                          blocks += ContentBlock.Text(s"[用户附加图片: $path]")
-                                          logger.info(s"Saved image '$name' to $path")
-                                        case Left(error) =>
-                                          blocks += ContentBlock.Image(data, mimeType)
-                                          logger.warn(s"Image '$name' was not persisted: ${error.getMessage}")
-                                      }
-                                }
+                            (ownerAccess, attachmentScope, decoded, keyResult.toOption) match
+                              case (Some(access), Some(sid), Some(bytes), Some(key)) =>
+                                AttachmentCommitService
+                                  .at(uploadRoot)
+                                  .commit(access, key, s"$sid/${key.value}", new java.io.ByteArrayInputStream(bytes))
+                                  .attempt
+                                  // flatMap（不是 map）：分支体必须**产出** IO 而不是被
+                                  // 顺手当成值丢掉。修前用 `.map { … logger.info(…) }`，
+                                  // 分支末表达式是 IO[Unit] ⇒ 整个 map 变成 IO[IO[Unit]]，
+                                  // 内层 IO 永不被执行 ⇒ "Saved image/not persisted" 两条
+                                  // 日志在落盘腿静默消失（本 P0 因此 9 天不可见）。
+                                  .flatMap {
+                                    case Right(path) =>
+                                      IO {
+                                        savedPaths(attIdx) = path.toString
+                                        blocks += ContentBlock.Image(data, mimeType)
+                                        blocks += ContentBlock.Text(s"[用户附加图片: $path]")
+                                      } *> logger.info(s"Saved image '$name' to $path")
+                                    case Left(error) =>
+                                      IO(blocks += ContentBlock.Image(data, mimeType)) *>
+                                        logger.warn(s"Image '$name' was not persisted: ${error.getMessage}")
+                                  }
                               case _ =>
                                 blocks += ContentBlock.Image(data, mimeType)
                                 IO(
@@ -2143,29 +2170,21 @@ class WebSocketRoutes(
                                 val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
                                 val keyResult = ResourceKey.from(s"${System.nanoTime()}_$safeName")
                                 val decoded = scala.util.Try(java.util.Base64.getDecoder.decode(data)).toOption
-                                (ownerAccess, decoded, keyResult.toOption) match
-                                  case (Some(access), Some(bytes), Some(key)) =>
-                                    access.ownsSession(msgSessionId).flatMap {
-                                      case false =>
-                                        IO(
-                                          logger.warn(
-                                            s"Attachment '$name' rejected: session is not owned by handshake principal"
-                                          )
-                                        )
-                                      case true =>
-                                        AttachmentCommitService
-                                          .at(uploadRoot)
-                                          .commit(access, key, new java.io.ByteArrayInputStream(bytes))
-                                          .attempt
-                                          .map {
-                                            case Right(path) =>
-                                              savedPaths(attIdx) = path.toString
-                                              blocks += ContentBlock.Text(s"[用户附加文件: $path]")
-                                              logger.info(s"Saved attachment '$name' to $path")
-                                            case Left(error) =>
-                                              logger.warn(s"Failed to save attachment '$name': ${error.getMessage}")
-                                          }
-                                    }
+                                (ownerAccess, attachmentScope, decoded, keyResult.toOption) match
+                                  case (Some(access), Some(sid), Some(bytes), Some(key)) =>
+                                    AttachmentCommitService
+                                      .at(uploadRoot)
+                                      .commit(access, key, s"$sid/${key.value}", new java.io.ByteArrayInputStream(bytes))
+                                      .attempt
+                                      .flatMap {
+                                        case Right(path) =>
+                                          IO {
+                                            savedPaths(attIdx) = path.toString
+                                            blocks += ContentBlock.Text(s"[用户附加文件: $path]")
+                                          } *> logger.info(s"Saved attachment '$name' to $path")
+                                        case Left(error) =>
+                                          logger.warn(s"Failed to save attachment '$name': ${error.getMessage}")
+                                      }
                                   case _ =>
                                     IO(
                                       logger.warn(
@@ -2182,7 +2201,13 @@ class WebSocketRoutes(
                           end if
                         }
 
-                        attachmentWrites *> {
+                        // IO.defer：本块**必须**在 attachmentWrites 跑完之后才求值。
+                        // `*>` 的右参数是 by-value 的 IO（cats-effect `def *>[B](that: IO[B])`），
+                        // 直接写 `attachmentWrites *> { … val attJson = … savedPaths … }` 会在
+                        // **构造**期就 eager 求值整块 —— 那时 savedPaths 还是空 Map，attJson
+                        // 落 path:null，即使落盘成功也照样断裂。这正是本 P0 的第二处根因
+                        // （第一处是上面的 owner 身份错配）；defer 之后读盘与写盘才同序。
+                        attachmentWrites *> IO.defer {
                           val sessionName = metaOpt.map(_.name).getOrElse("-")
                           val agentName = metaOpt.flatMap(_.agentName).getOrElse("")
                           logger.info(s"${logger.hl(sessionName)} User message: ${content
@@ -3324,9 +3349,11 @@ object WebSocketRoutes:
   /**
    * Which AgentRegistry entries getActiveAgents should report as running.
    *
-   * Task-lifecycle kinds (Delegate/Flow/SubTask) are reported
-   * as-is: their presence in the registry means the task is in flight
-   * (they unregister on completion).
+   * **本函数交付的是「在册行」，不是「在跑行」**（方案 A 批 2026-11-18 更正旧注释）：
+   * 它按 kind 全量导出注册表条目，**没有第二个判据**——行集一字不动（刷新复原、复原
+   * 入口、唤醒徽标都靠它）。「在册即飞」只对短命子代理成立；delegate 后来长出长命停靠态
+   * （待命 / 错误冻结 / 重启中断），行内 `status` 又只是 turn 相位 ⇒ 活性位必须另给：
+   * 每行随帧出 [[panelRowActivity]] 的 `active` / `activeState`，呈现面照读、不许自造第二权威。
    *
    * Team agents are LONG-LIVED: activateAgent registers them on the first
    * Mail and they stay in the registry while idle, waiting for the next
@@ -3343,6 +3370,48 @@ object WebSocketRoutes:
   def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
     val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
     IO.pure(registry.values.toList.filter(r => taskKinds.contains(r.kind)))
+
+  /**
+   * 面板行活性档（方案 A 批 2026-11-18 · 作者令「行集一字不动，只加一个权威活性位」）：
+   * 后台智能体面板**每一行**「此刻是否真在跑」的落点分类。`active` 是本仓唯一的活性布尔位，
+   * `wire` 是同一判据的分类线值（取证 / 前端读词用）。
+   */
+  enum PanelActivity(val wire: String, val active: Boolean):
+    case Running extends PanelActivity("running", true)
+    case Standby extends PanelActivity("standby", false)
+    case Frozen extends PanelActivity("frozen", false)
+    case PendingRecovery extends PanelActivity("pending-recovery", false)
+    case Idle extends PanelActivity("idle", false)
+
+  /**
+   * 面板行「权威活性位」的**唯一判据**（根因见
+   * `<数据根>/projects/stand/.stand/docs/agent-panel-active-source__20261118_163504.md`）。
+   *
+   * 为什么必须由引擎给：[[filterActiveAgents]] 按 kind 全量导出内存注册表条目——它是
+   * **行集导入器**，不是活性判据；行内既有的 `status` 是 **turn 相位**
+   * （Idle/Processing/Waiting/Frozen…），也不是「是否在跑」。两条进料（注册表快照 ∪
+   * 落盘任务行）都不带活性位，前端只能对未知值走保守侧（一律折成 active）——长命停靠态
+   * （待命 / 错误冻结 / 重启中断）于是被画成「进行中」并挂上运行时钟。
+   *
+   * 判据（与 [[sessionBusyStates]] 同一条单点，再叠「停靠 / 冻结 / 重启中断」分类）：
+   *   - 停靠事实（待命槽 / 冻结槽 / 重启中断行）优先 ⇒ 对应非活跃档——注册表相位与落盘槽
+   *     打架时取保守侧（「不在跑」比「在跑」代价小：错了只是少挂一枚时钟，反过来是幽灵行）；
+   *   - 否则 `status == Processing` ⇒ [[PanelActivity.Running]]（active = true）；
+   *   - 其余（Idle / Waiting / WaitingForUser / Error…）⇒ [[PanelActivity.Idle]]（非活跃）。
+   *
+   * 只读投影：纯函数、零 IO、零类依赖，不改行集、不改注册表生命周期、不动唤醒/恢复入口。
+   */
+  def panelRowActivity(
+    status: AgentStatus,
+    standbySince: Option[Long] = None,
+    frozen: Boolean = false,
+    pendingRecovery: Boolean = false
+  ): PanelActivity =
+    if pendingRecovery then PanelActivity.PendingRecovery
+    else if frozen then PanelActivity.Frozen
+    else if standbySince.exists(_ > 0) then PanelActivity.Standby
+    else if status == AgentStatus.Processing then PanelActivity.Running
+    else PanelActivity.Idle
 
   /**
    * 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：activeAgents 快照面
@@ -3372,6 +3441,44 @@ object WebSocketRoutes:
     if kind == AgentKind.Delegate then registryTitle.filter(_.trim.nonEmpty).orElse(store)
     else if kind == AgentKind.SubTask then store
     else None
+
+  /**
+   * 陈旧后台代理面板批（2026-11-08）：子代理**任务记录的终态词表**——面板行的
+   * 「已结束」硬事实来源。
+   *
+   * 病灶（面板滞留 + 荒谬时长）：`filterActiveAgents` 只按 `kind` 过滤注册表
+   * （Delegate/Flow/SubTask），**不看这一行背后是否早就干完了**——任务记录已
+   * `completed` 而注册表行仍在册（收殓腿失败 / 重启竞态 / 长尾）时，快照照旧把它
+   * 当「在飞」下发；前端行仍在 `!terminal` 分支 ⇒ 运行时长 `now - startedAt` 无上界
+   * 地走表（作者实证：一行挂着 690h）。本词表把「任务记录已终态」这一**硬事实**
+   * 随快照出帧，前端据此冻结为「已结束 + 真实时长」。
+   *
+   * 只收 SubAgentTask.status 的终态词（见 `SubAgentTaskModels`）——`running` /
+   * `restarting` / `ready-to-merge` / `removed` 都不是「干完了」，一律不标。
+   */
+  val TerminalTaskStatuses: Set[String] = Set("completed", "failed", "cancelled")
+
+  /**
+   * 时长合理性上界（面板「拒绝荒谬时长」的唯一尺子）：7 天（604800000 ms）。超过即
+   * 视为不可信读数（时钟漂移 / 时间戳错配 / 陈旧行）——面板一律**不渲染时长**，而不是
+   * 显示一个荒谬值（作者实证的 690h = 28.75 天正是本尺子要拦下的形态）。
+   * 前端同一把尺子：`bgAgents.js` 的 `BG_DURATION_MAX_MS`（同值同理由）。
+   */
+  val MaxPlausibleDurationMs: Long = 7L * 24L * 60L * 60L * 1000L
+
+  /**
+   * 面板行的「真实时长」单一推导缝（纯函数，可直接单测）：
+   * 需要逐字满足 THEN 条件才出值——起点已知（>0）、终点已知、终点不早于起点、
+   * 且时长不超过 [[MaxPlausibleDurationMs]]；任一不满足 ⇒ None（前端零渲染，
+   * 绝不显示负数 / null / 荒谬时长）。
+   */
+  def endedDurationMs(startedAt: Long, endedAt: Option[Long]): Option[Long] =
+    endedAt.flatMap { end =>
+      if startedAt <= 0L || end < startedAt then None
+      else
+        val dur = end - startedAt
+        if dur > MaxPlausibleDurationMs then None else Some(dur)
+    }
 
   /**
    * One entry of the getActiveAgents ("activeAgents") restore reply.
@@ -3416,7 +3523,19 @@ object WebSocketRoutes:
     // 两个推导点就是两种形态的温床）。None = 本 kind 无 Mail 面 ⇒ 空串（falsy 契约）。
     mailAddress: Option[String] = None,
     freezeTruth: Option[nebflow.actor.FreezeTruth] =
-      None // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
+      None, // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
+    // 陈旧后台代理面板批（2026-11-08）：**底层任务记录的终态硬事实**。任务记录
+    // （SubAgentTaskStore）已终态而注册表行仍在册 = 这一行其实早就干完了；面板据此
+    // 「显式结束 + 真实时长」而不是让运行时长无上界地走表（作者实证 690h 滞留行）。
+    // 缺省 None = 无任务记录（node-/dispatcher- 等 Flow 行从不落任务记录）/ 旧调用方
+    // ⇒ ended=false，行为与旧版逐字节一致（向后兼容）。
+    //
+    // 同一字段亦为面板行活性位批（2026-11-18 · 方案 A）的载体：重启中断标记
+    // （`pending-recovery`）据此把「执行已停、等人工恢复」的行判成非活跃（见下方
+    // [[panelRowActivity]] 调用）。两批对 `taskStatus` 的读法互不冲突（读法 = 词表
+    // 判终态 / 等值判 `pending-recovery`），故单字段双用途保留。
+    taskStatus: Option[String] = None,
+    taskEndedAt: Option[Long] = None
   ): Json =
     // 冻结态诚实呈现批（2026-11-05）：快照行的**呈现分类**随快照出帧——与线包
     // （AgentStreamEvent.Frozen）/ 工具面（AgentControl status）同判定单点
@@ -3438,6 +3557,21 @@ object WebSocketRoutes:
       if truth.frozen then
         Some(nebflow.actor.FreezeDisplay.ofWire(truth.reasonWire, truth.since, System.currentTimeMillis()))
       else None
+    // 面板行活性位批（2026-11-18 · 方案 A · 作者令「行集一字不动，只加一个权威活性位」）：
+    // 本行的「此刻是否真在跑」由 [[panelRowActivity]] 单点给（与 sessionBusyStates 同一条
+    // 轴：`status == Processing`），再叠停靠/冻结/重启中断分类——三者任一在场即非活跃。
+    // 行集、既有字段、待命/冻结徽标与恢复/唤醒入口一律不动：本轮**只加位**。
+    val activity: PanelActivity = panelRowActivity(
+      rec.status,
+      standbySince = standbySince,
+      frozen = truth.frozen,
+      pendingRecovery = taskStatus.contains(SubAgentStartupRecovery.PendingRecoveryStatus)
+    )
+    // 陈旧后台代理面板批（2026-11-08）：终态硬事实（任务记录终态 ⇒ 行其实已结束），单点判定。
+    // 与上面的活性位**正交共存**：activity 答「此刻是否真在跑」，isEnded 答「底层任务记录
+    // 是否已终态」（冻结/停靠的未终态行两个读数都为真，互不覆盖）。
+    val isEnded: Boolean =
+      taskStatus.map(s => TerminalTaskStatuses.contains(s.trim.toLowerCase)).getOrElse(false)
     Json.obj(
       "sessionId" -> rec.sessionId.asJson,
       "agentId" -> rec.sessionId.asJson,
@@ -3480,8 +3614,28 @@ object WebSocketRoutes:
       // Ephemeral 不落 taskStore）。不加 agentStatus 变更广播（改动面大，裁定
       // 不做——快照轮询由前端按需刷新）。
       "status" -> rec.status.toString.asJson,
+      // 面板行活性位批（2026-11-18 · 方案 A）：**权威活性位**随行出帧——`active` 是唯一的
+      // 「是否在跑」布尔位（判据单点 [[panelRowActivity]]，与 sessionBusyStates 同轴），
+      // `activeState` 是同一判据的分类线值（running / standby / frozen / pending-recovery /
+      // idle）供取证与前端读词。与上面 `status`（turn 相位）显式分家：相位说「actor 在哪个
+      // 阶段」，活性位说「它此刻是不是真在跑」——呈现面只许读这位，不许再从相位猜
+      // （猜错的样子就是作者报障：29 天龄待恢复行标着「进行中」+ 690h 时钟）。
+      // 缺省调用方（旧测试）不传 taskStatus ⇒ 仍得一位（非停靠行 = status==Processing），
+      // 故本键**恒在**，前端「未提供」只对旧后端成立。
+      "active" -> activity.active.asJson,
+      "activeState" -> activity.wire.asJson,
       "startedAt" -> rec.startedAt.asJson,
       "retryCount" -> retryCount.getOrElse(0).asJson,
+      // ── 陈旧后台代理面板批（2026-11-08）：终态硬事实 + 真实时长 ──────────────
+      // taskStatus = 底层 SubAgentTask.status 原样（"" = 无任务记录，falsy 契约同
+      // project/taskId）；ended = 该 status ∈ TerminalTaskStatuses（任务记录说「干完了」
+      // ——注册表行滞留不再冒充在飞）；endedAt = 任务记录的 completedAt；
+      // durationMs = 由 endedDurationMs 单点推导的真实时长（起点/终点/上界任一不合
+      // ⇒ null = 「荒谬时长」被拒收，前端零渲染）。
+      "taskStatus" -> taskStatus.getOrElse("").asJson,
+      "ended" -> isEnded.asJson,
+      "endedAt" -> (if isEnded then taskEndedAt else None).asJson,
+      "durationMs" -> (if isEnded then endedDurationMs(rec.startedAt, taskEndedAt) else None).asJson,
       // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 待命停靠时刻（epoch ms；
       // null = 非待命）。快照行的「待命」徽标数据源——delegateWaiting 实时帧
       // （mode=standby）在浏览器刷新后靠本字段复原（delegateTitle 同款读面一次

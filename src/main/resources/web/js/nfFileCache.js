@@ -363,8 +363,14 @@ export async function nfCachePut(cacheKey, blob, version, opts) {
 export async function nfCacheDrop(cacheKey) {
   if (!cacheKey) return false;
   loadIndex();
-  if (!index.meta[cacheKey]) return false;
+  if (!index.meta[cacheKey]) {
+    // 账本无此条但仍要求逐出（坏字节自愈腿）：内容不可信的信号照样交给下一取数
+    // ——绕过 HTTP 缓存取新字节（否则同一份坏字节可能再从浏览器缓存回来）。
+    freshOnce.add(cacheKey);
+    return false;
+  }
   await dropEntry(cacheKey);
+  freshOnce.add(cacheKey);
   return true;
 }
 
@@ -386,6 +392,7 @@ export async function nfCacheInvalidatePath(path) {
     if (meta && meta.srcPath && meta.srcPath === path && !hits.includes(k)) hits.push(k);
   }
   for (const k of hits) await dropEntry(k);
+  for (const k of hits) freshOnce.add(k);   // 内容已变 ⇒ 下一取数绕过 HTTP 缓存
   return hits.length;
 }
 
@@ -413,6 +420,7 @@ export async function nfCacheReconcile(entries) {
     if (meta.ver !== current) hits.push(k);
   }
   for (const k of hits) await dropEntry(k);
+  for (const k of hits) freshOnce.add(k);   // version 不符 ⇒ 内容已变，下一取数绕过 HTTP 缓存
   return hits.length;
 }
 
@@ -506,6 +514,11 @@ function ensureBlobType(blob, absPath) {
 /** @type {Map<string, string>} 键 = 'nf:<absPath>' → hash16 */
 const knownHashes = new Map();
 
+/** 内容已变、下一次取数必须绕过 HTTP 缓存的键（按对象复用批 2026-11-18）。
+ *  只有**内容变更信号**（引擎 `nf-cache-invalidate` / 列目录 version 对账不符）
+ *  会入本集；TTL 过期与预算淘汰**不入**（字节没变 ⇒ 允许 HTTP 缓存复用）。 */
+const freshOnce = new Set();
+
 /**
  * 记一条路径的整件 hash（explorer.js `fileContent` 成功腿调用；会话级，无持久化）。
  * @param {string} absPath @param {string} hash16
@@ -563,7 +576,12 @@ export async function nfViewerSource(p) {
   if (!shared) {
     shared = (async () => {
       const nfTicket = await import('./nfTicket.js');
-      const ticketedUrl = await nfTicket.queuedTicketUrl(absPath);
+      // 按对象复用批（2026-11-18·第 1 件）：URL 取**内容寻址优先**形态 ——
+      // `contentAddressedUrl` 在铸票应答带回 cid（且非流式件）时给
+      // `/api/nf-obj/<cid>/<name>`，与 Card/iframe 腿（injectTickets 同一升级）
+      // **逐字同 URL** ⇒ 第二条腿是浏览器 HTTP 缓存命中（零字节、零请求）。
+      // cid 缺席（旧 mock / 大件）⇒ 逐字回落既有票据 URL，行为零差异。
+      const ticketedUrl = await nfTicket.contentAddressedUrl(absPath);
       let url = (await nfTicket.largeFileDirectUrl(absPath)) || ticketedUrl;
       // ── 票链自愈 + 升级路径（Pop 图片 403 批 2026-10-24）────────────────────
       // 修前形态：取数腿 401/403 直抛「HTTP 403」进各 viewer 终态错误面板——无重试
@@ -578,7 +596,9 @@ export async function nfViewerSource(p) {
       let res = null;
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          res = await fetchBlobWithProgress(url, onProgress || null);
+          // 按对象复用批：内容未变 ⇒ 允许浏览器 HTTP 缓存承接（同一 URL 的第二条腿
+          // 零网络）；本键刚被判「内容已变/坏字节」（freshOnce）⇒ 本次强制取新字节。
+          res = await fetchBlobWithProgress(url, onProgress || null, { revalidate: freshOnce.has(cacheKey) });
           break;
         } catch (e) {
           const status = e && /** @type {any} */ (e).status;
@@ -600,6 +620,7 @@ export async function nfViewerSource(p) {
         }
       }
       if (!res) throw new Error('nfViewerSource: fetch failed');
+      freshOnce.delete(cacheKey);   // 新字节已到手 ⇒ 复用面重新放行
       // 入账带 hash（设备取件腿已知时）+ srcPath（事件失效/对账的路径锚）。
       void nfCachePut(cacheKey, res.blob, res.version, {
         hash: knownHashes.get(cacheKey) || '',
@@ -716,12 +737,35 @@ function overloadRetryDelayMs(resp) {
  *
  * 返回 `version` = `size:mtimeMs`（Last-Modified 头可得时；不可得 = `size:0`）——
  * 档2 条目的版本读数（`nfCacheReconcile` 对账用；命中判据见上「TTL」）。
+ *
+ * 按对象复用批（2026-11-18 · 作者令逐字：「我们这些网络数据传输 能不能也是按对象
+ * 传输这样 文件存储复用 也是按对象来 这样 加载过的内容 不会重复加载」）：
+ * 本取数腿此前恒 `cache:'no-store'` —— 账本**自己**的复用面不受影响（命中根本不
+ * 发请求），但它把**浏览器 HTTP 缓存**整条关掉，于是**同一对象经另一条腿**已经
+ * 在页里落过地（Card/iframe 的裸 `<img src="/api/nf-file?…&ticket=…">` 直显、
+ * `<video>` 自身加载、新标签页导航）时，账本腿仍会**整件重下**。而服务端本就为
+ * 「重复消费」发了确定性缓存头（`NfFileRoutes.NfCacheControl = "private,
+ * max-age=300"` + ETag + Last-Modified；`StaticRoutes` 的 `/uploads/` 同值）——
+ * 两边口径此前是矛盾的。
+ * 现在：默认走浏览器缓存（`cache:'default'`）⇒ 同一 URL 的第二条腿零字节、零请求；
+ * **内容真的变了**（引擎 `nf-cache-invalidate` 广播 / 列目录对账发现 version 不符）
+ * 的那一次取数改 `cache:'no-store'` 强制取新字节（`revalidate` 入参，见下方
+ * `freshOnce`），失效语义不降档。陈旧上界 = 服务端自己标的 `max-age=300`（5 分钟），
+ * 远低于票据 TTL（默认 1800s），且与任何普通 `<img src>` 消费同一份策略。
  * @param {string} url
  * @param {((loaded: number, total: number) => void)|null} [onProgress]
+ * @param {{ revalidate?: boolean, signal?: AbortSignal }} [opts] revalidate=true ⇒ 本次强制绕过 HTTP
+ *   缓存（`cache: 'no-store'`，缺省 'default'）；`signal`（pop-optimistic-canvas 批
+ *   2026-11-18）：关页签 / 超时腿据此**真 abort** 在飞取件（不许后台继续下）。
+ *   两个开关各自缺席 = 逐字现状。落队并集口径（作者裁 2026-11-19）：两腿同一条
+ *   fetch —— 不许第二份取件实现。
  * @returns {Promise<{blob: Blob, total: number, lastModified: string, version: string}>}
  */
-export async function fetchBlobWithProgress(url, onProgress) {
-  const send = () => fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+export async function fetchBlobWithProgress(url, onProgress, opts) {
+  const o = opts || {};
+  const cacheMode = o.revalidate ? 'no-store' : 'default';
+  const signal = o.signal ? o.signal : undefined;
+  const send = () => fetch(url, { credentials: 'same-origin', cache: cacheMode, signal });
   let resp = await send();
   // #750：过载腿（429/503）退避后恰一次重试。失败 body 先 cancel 归还连接，
   // 再按 Retry-After 等一拍——等待时长是服务端建议，不是本端测时。

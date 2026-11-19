@@ -165,28 +165,40 @@ async function shot(page, name) {
 }
 
 // ── 审阅面快照（结构断言面）──
+// 迁移批 2026-11-19（作者裁定「手机diff 按推荐」）：审阅面渲染权移交共享组件
+// （js/diffView，CodeMirror 6 + @codemirror/merge）⇒ 断言选择器随底座更新
+// （旧 .nf-ar-line/.nf-ar-hunk/.nf-ar-fold 系随自研渲染器退役）。语义不变：
+// 原文档全文在场、就地增删、逐块接受/拒绝、折叠、防双发、冲突条。
 const reviewOf = (page, sid) => page.evaluate((tabId) => {
   const pane = document.querySelector(`.canvas-tab-pane[data-tab-id="${tabId}"]`);
   if (!pane || !pane.isConnected) return { open: false };
-  const lineText = (sel) => [...pane.querySelectorAll(sel)].map((l) => l.textContent || '');
+  const txt = (sel) => [...pane.querySelectorAll(sel)].map((l) => l.textContent || '');
+  const content = pane.querySelector('.cm-content');
+  const dv = pane.querySelector('.nf-dv');
   return {
     open: true,
     head: (pane.querySelector('.nf-ar-file') || {}).textContent || '',
     counts: (pane.querySelector('.nf-ar-counts') || {}).textContent || '',
-    ctx: lineText('.nf-ar-line.ctx'),
-    dels: lineText('.nf-ar-line.del'),
-    adds: lineText('.nf-ar-line.add'),
-    hunks: [...pane.querySelectorAll('.nf-ar-hunk')].map((h) => ({
-      id: h.getAttribute('data-hunk-id') || '',
-      state: h.getAttribute('data-state') || '',
-      acceptDisabled: (h.querySelector('.nf-ar-hunk-accept') || {}).disabled === true,
-      rejectDisabled: (h.querySelector('.nf-ar-hunk-reject') || {}).disabled === true,
-    })),
-    acceptAllDisabled: (pane.querySelector('.nf-ar-accept-all') || {}).disabled === true,
-    rejectAllDisabled: (pane.querySelector('.nf-ar-reject-all') || {}).disabled === true,
+    hasEditor: !!pane.querySelector('.cm-editor'),
+    ctx: txt('.cm-line:not(.cm-changedLine)'),
+    dels: txt('.cm-deletedLine'),
+    adds: txt('.cm-line.cm-changedLine'),
+    wordCount: pane.querySelectorAll('.cm-changedText').length,
+    chunks: pane.querySelectorAll('.cm-deletedChunk').length,
+    chunkAccept: pane.querySelectorAll('.nf-dv-chunkbtn-accept').length,
+    chunkReject: pane.querySelectorAll('.nf-dv-chunkbtn-reject').length,
+    // 同义重锚（作者令 2026-11-19：审阅动作区单源落共享组件 js/diffView 的 review
+    // 模式）：全量钮由头部 `.nf-ar-accept-all` / `.nf-ar-reject-all`（已删净）迁到
+    // 组件内 `.nf-dv-accept-all` / `.nf-dv-reject-all`。语义与断言强度不变，且补齐
+    // 「在场」显式断言（旧写法用 `!disabled` 兼判存在，元素缺失时也恒真 = 隐性弱化）。
+    acceptAllPresent: !!pane.querySelector('.nf-dv-accept-all'),
+    rejectAllPresent: !!pane.querySelector('.nf-dv-reject-all'),
+    acceptAllDisabled: (pane.querySelector('.nf-dv-accept-all') || {}).disabled === true,
+    rejectAllDisabled: (pane.querySelector('.nf-dv-reject-all') || {}).disabled === true,
     conflict: !!pane.querySelector('.nf-ar-conflict[role="alert"]'),
-    folds: pane.querySelectorAll('.nf-ar-fold').length,
-    ctxVisible: [...pane.querySelectorAll('.nf-ar-line.ctx')].filter((l) => l.style.display !== 'none').length,
+    folds: pane.querySelectorAll('.cm-collapsedLines').length,
+    waiting: !!(dv && dv.getAttribute('data-waiting') === '1'),
+    text: content ? (content.textContent || '') : '',
   };
 }, `askreview:${sid}`);
 
@@ -246,10 +258,10 @@ try {
     rv.open && rv.dels.length === 1 && rv.dels[0].includes('beta')
       && rv.adds.length === 2 && rv.adds.some((t) => t.includes('BETA')) && rv.adds.some((t) => t.includes('DELTA')),
     JSON.stringify({ dels: rv.dels, adds: rv.adds }));
-  ok('R1d 动作面在场：逐块接受/拒绝钮 + 全量接受/拒绝钮（均可点）',
-    rv.open && rv.hunks.length === 1 && rv.hunks[0].id === 'h0' && rv.hunks[0].state === 'pending'
-      && !rv.hunks[0].acceptDisabled && !rv.hunks[0].rejectDisabled && !rv.acceptAllDisabled && !rv.rejectAllDisabled,
-    JSON.stringify(rv.hunks));
+  ok('R1d 动作面在场：逐块接受/拒绝钮（共享组件改壳）+ 全量接受/拒绝钮（均在组件内且可点）',
+    rv.open && rv.chunkAccept === 1 && rv.chunkReject === 1
+      && rv.acceptAllPresent && rv.rejectAllPresent && !rv.acceptAllDisabled && !rv.rejectAllDisabled,
+    JSON.stringify({ accept: rv.chunkAccept, reject: rv.chunkReject, allPresent: rv.acceptAllPresent, all: rv.acceptAllDisabled }));
 
   // ── R1e 长未变段折叠（原文档全文的可读性面，非硬截断）──────────────────
   const LONG_BASE = Array.from({ length: 40 }, (_, i) => `line-${i}`).join('\n') + '\n';
@@ -261,28 +273,26 @@ try {
   rv = await reviewOf(page, sid);
   ok('R1e1 长未变段折叠：头尾两段各 >14 行 → 2 条折叠带在场',
     rv.open && rv.folds === 2, JSON.stringify(rv.folds));
-  const ctxVisibleBeforeFold = rv.ctxVisible;
-  await page.click('.nf-ar-fold');
-  await sleep(150);
+  await page.locator('.cm-collapsedLines').first().click();
+  await sleep(200);
   rv = await reviewOf(page, sid);
-  ok('R1e2 点击折叠带 → 中间行展开（可见 ctx 行数增长）',
-    rv.open && rv.ctxVisible > ctxVisibleBeforeFold && rv.folds === 1, `${ctxVisibleBeforeFold} → ${rv.ctxVisible}，剩余折叠带 ${rv.folds}`);
+  ok('R1e2 点击折叠带 → 中间行展开（折叠带数减少）',
+    rv.open && rv.folds < 2, `剩余折叠带 ${rv.folds}（点前 2）`);
   await shot(page, 'r1-applied');
 
   // ── R2 逐块接受 → 余块重渲 → 末块清账收页签 ─────────────────────────────
   wsSend(appliedFrame(sid, abs, 'notes.md', TWO_BASE, TWO_CUR, TWO_HUNKS));
   await sleep(300);
   const readsOf = () => inbound.filter((m) => m.type === 'pop.readFile' && m.path === abs).length;
-  await page.click('.nf-ar-hunk[data-hunk-id="h0"] .nf-ar-hunk-accept');
-  await sleep(300);
+  await page.locator('.nf-dv-chunkbtn-accept').first().click();
+  await sleep(400);
   const hunkAccept = inbound.find((m) => m.type === 'askEditAccept' && m.hunkId === 'h0');
   ok('R2a 逐块接受 → askEditAccept {sessionId, hunkId:h0} 外发',
     !!hunkAccept && hunkAccept.sessionId === sid, JSON.stringify(hunkAccept));
   rv = await reviewOf(page, sid);
-  ok('R2b 防双发：h0 waiting 态 + 逐块钮 disabled + 全量钮 disabled',
-    rv.open && rv.hunks.find((h) => h.id === 'h0')?.state === 'waiting'
-      && rv.hunks.find((h) => h.id === 'h0')?.acceptDisabled && rv.acceptAllDisabled && rv.rejectAllDisabled,
-    JSON.stringify(rv.hunks));
+  ok('R2b 防双发：waiting 面在场 + 全量钮 disabled',
+    rv.open && rv.waiting && rv.acceptAllDisabled && rv.rejectAllDisabled,
+    JSON.stringify({ waiting: rv.waiting, all: rv.acceptAllDisabled }));
   // 服务端应答：h0 已审清出（基线前移），仅余 h1。
   wsSend({
     type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'done',
@@ -293,22 +303,24 @@ try {
       count: 1, updatedAt: Date.now(),
     },
   });
-  await sleep(300);
+  await sleep(400);
   rv = await reviewOf(page, sid);
-  ok('R2c resolved(done, 余块) → h0 消失、h1 仍待审、waiting 解锁',
-    rv.open && !rv.hunks.some((h) => h.id === 'h0') && rv.hunks.some((h) => h.id === 'h1' && h.state === 'pending')
-      && !rv.acceptAllDisabled,
-    JSON.stringify(rv.hunks));
+  ok('R2c resolved(done, 余块) → 只剩 1 块待审、waiting 解锁',
+    rv.open && rv.chunks === 1 && !rv.acceptAllDisabled,
+    JSON.stringify({ chunks: rv.chunks, all: rv.acceptAllDisabled }));
   await shot(page, 'r2-hunk-accepted');
   // 接受最后一块 → 清账：页签关 + 文件页签按路径重载。
   const readsBeforeClear = readsOf();
-  await page.click('.nf-ar-hunk[data-hunk-id="h1"] .nf-ar-hunk-accept');
-  await sleep(300);
+  await page.locator('.nf-dv-chunkbtn-accept').first().click();
+  await sleep(400);
+  const lastAccept = inbound.filter((m) => m.type === 'askEditAccept').pop();
+  ok('R2d 末块接受 → hunkId=h1 外发（余块映射）',
+    !!lastAccept && lastAccept.hunkId === 'h1', JSON.stringify(lastAccept));
   wsSend({ type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'done', review: null });
   await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { state: 'detached', timeout: 5000 });
   let cleared = false;
   for (let i = 0; i < 40 && !cleared; i++) { await sleep(100); cleared = readsOf() > readsBeforeClear; }
-  ok('R2d 末块接受 → 清账收页签 + 该路径 pop.readFile 重取（refreshFileTabByPath 腿）',
+  ok('R2e 末块接受 → 清账收页签 + 该路径 pop.readFile 重取（refreshFileTabByPath 腿）',
     cleared, `pop.readFile ${readsBeforeClear} → ${readsOf()}`);
 
   // ── R3 全量接受（⌘Enter 快捷键路）──────────────────────────────────────
@@ -316,6 +328,22 @@ try {
   wsSend(appliedFrame(sid, abs, 'notes.md', TWO_BASE, TWO_CUR, TWO_HUNKS));
   await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
   await sleep(200);
+  // R3a0 全量接受·**点击路**（组件内全量钮）：点击 → askEditAccept 无 hunkId 外发
+  //      （同一动作面、同一语义，非第二套协议）→ resolved(done, 余块) → 审阅保持。
+  await page.click('.nf-dv-accept-all');
+  await sleep(300);
+  const clickAllAccept = inbound.filter((m) => m.type === 'askEditAccept').pop();
+  ok('R3a0 点击「全部接受」（组件内全量钮）→ askEditAccept 无 hunkId 外发（既有全量语义）',
+    !!clickAllAccept && clickAllAccept.sessionId === sid && !('hunkId' in clickAllAccept),
+    JSON.stringify(clickAllAccept));
+  wsSend({
+    type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'done',
+    review: {
+      path: abs, fileName: 'notes.md', baseText: TWO_BASE, currentText: TWO_CUR,
+      hunks: TWO_HUNKS, count: 1, updatedAt: Date.now(),
+    },
+  });
+  await sleep(400);
   const readsBeforeAll = readsOf();
   await page.keyboard.press('Meta+Enter');
   await sleep(300);
@@ -338,7 +366,7 @@ try {
   await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
   await sleep(200);
   const readsBeforeRejectAll = readsOf();
-  await page.click('.nf-ar-reject-all');
+  await page.click('.nf-dv-reject-all');
   await sleep(300);
   const rejectAll = inbound.filter((m) => m.type === 'askEditReject').pop();
   ok('R4a 全量拒绝 → askEditReject 无 hunkId 外发',
@@ -353,8 +381,8 @@ try {
   wsSend(appliedFrame(sid, abs, 'notes.md', TWO_BASE, TWO_CUR, TWO_HUNKS));
   await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
   await sleep(200);
-  await page.click('.nf-ar-hunk[data-hunk-id="h0"] .nf-ar-hunk-reject');
-  await sleep(300);
+  await page.locator('.nf-dv-chunkbtn-reject').first().click();
+  await sleep(400);
   const hunkReject = inbound.find((m) => m.type === 'askEditReject' && m.hunkId === 'h0');
   ok('R5a 逐块拒绝 → askEditReject {sessionId, hunkId:h0} 外发',
     !!hunkReject && hunkReject.sessionId === sid, JSON.stringify(hunkReject));
@@ -367,15 +395,14 @@ try {
       count: 1, updatedAt: Date.now(),
     },
   });
-  await sleep(300);
+  await sleep(400);
   rv = await reviewOf(page, sid);
-  ok('R5b resolved(done, 余块) → h0 消失（回退该块）、h1 仍待审',
-    rv.open && !rv.hunks.some((h) => h.id === 'h0') && rv.hunks.some((h) => h.id === 'h1' && h.state === 'pending'),
-    JSON.stringify(rv.hunks));
+  ok('R5b resolved(done, 余块) → 只剩 1 块（该块回退后基线前移）',
+    rv.open && rv.chunks === 1, JSON.stringify({ chunks: rv.chunks }));
   await shot(page, 'r5-hunk-rejected');
 
   // ── R6 冲突过期（显式提示，绝不静默覆盖）─────────────────────────────────
-  await page.click('.nf-ar-accept-all');
+  await page.click('.nf-dv-accept-all');
   await sleep(300);
   wsSend({
     type: 'askEditResolved', sessionId: sid, action: 'accept', outcome: 'error',
@@ -388,7 +415,7 @@ try {
   await sleep(300);
   rv = await reviewOf(page, sid);
   ok('R6a resolved(error) → 显式冲突条在场（role=alert），审阅块仍待审（不静默清账）',
-    rv.open && rv.conflict && rv.hunks.length === 2, JSON.stringify({ conflict: rv.conflict, hunks: rv.hunks.length }));
+    rv.open && rv.conflict && rv.chunks === 2, JSON.stringify({ conflict: rv.conflict, chunks: rv.chunks }));
   await shot(page, 'r6-conflict');
   await page.click('.nf-ar-retry');
   await sleep(300);
@@ -429,7 +456,7 @@ try {
   await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
   rv = await reviewOf(page, sid);
   ok('R7 askState.review 播种 → 审阅页签重建（重载/换端回放面），块待审',
-    rv.open && rv.hunks.some((h) => h.id === 'h0' && h.state === 'pending'), JSON.stringify(rv.hunks && rv.hunks.length));
+    rv.open && rv.chunkAccept === 1 && !rv.waiting, JSON.stringify({ accept: rv.chunkAccept, waiting: rv.waiting }));
   // 收尾清账（下一断言面干净）。清账腿会排一个 300ms 的文件页签刷新（防抖），
   // 等它落地再进 R8/R9——避免刷新腿与下一个 applied 帧的页签生命周期竞态。
   wsSend({ type: 'askEditResolved', sessionId: sid, action: 'dismiss', outcome: 'done', review: null });

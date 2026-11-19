@@ -153,6 +153,23 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
       _ <- release
     yield (res, chain.map(c => s"${c.providerId}/${c.model}"))
 
+  /** 跑一次**流面**（`sendStream`）调用（模型路由记账批 2026-11-18：流面账本 parity
+   *  的读数腿）——装配与 [[runOnce]] 逐字相同，差别只在出口是流编译成 List。
+   *  返回 (错误面, 链 refs)：失败用 .left（本 spec 的断言全在终局处置表上）。 */
+  private def runStreamOnce(
+    cfg: NebflowServiceConfig,
+    r: LlmRequest
+  ): IO[(Either[Throwable, List[StreamChunk]], List[String])] =
+    for
+      cfgRef <- Ref.of[IO, NebflowServiceConfig](cfg)
+      overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
+      triple <- LlmInterface.createLlm(overrides, None, Some(cfgRef))
+      (handle, registry, _, release) = triple
+      chain <- registry.getCandidatesForAgent(r.agentModel)
+      res <- handle.sendStream(r).compile.toList.attempt
+      _ <- release
+    yield (res, chain.map(c => s"${c.providerId}/${c.model}"))
+
   // =====================================================================
   // 验收 1（重写，fallback 废除批）：链深恒 1——唯一候选必败 ⇒ all-providers-failed；
   // 配置里未被引用的 provider 不得被暗中启用（核心新断言）；静默排除审计按
@@ -424,6 +441,60 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
           Nil,
           s"授权面 = preferred 后不得再报静默排除：${ledger.render()}"
         )
+    }
+  }
+
+  // A9（模型路由记账批 2026-11-18）：**流面账本必须与非流面同口径**——终局处置表
+  // 里「expected from config」的差额只许是**带原因的** `not-configured (not in
+  // selected chain)`（即：不在本请求实际生效路由上的配置模型如实标注），**不许**
+  // 出现 `SILENTLY EXCLUDED (… this is a bug)`。
+  //
+  // 修复前实测形态（现网 4036 行/日）：`sendStream` 的 seeded 层漏掉
+  // `allowlistExclusionsFor` 一腿 ⇒ 配置里未被本请求链引用的 provider 全部无原因
+  // ⇒ silentExclusions 恒非空 ⇒ 每个流式请求一行 ERROR 假报，且链穷尽时处置表对
+  // 作者谎称「有人偷偷把候选扔了」。非流面（A1/A4/A5）同形请求零告警 ⇒ 两面分叉是
+  // 缺陷本身。断言口径与非流面 A1 逐条对齐（3 根配置：链 1 + 未引用 2）。
+  // =====================================================================
+  test("A9(流面 parity): 流式请求的处置表不得把未入选链的配置 provider 误报为 SILENTLY EXCLUDED") {
+    val spec = List("t1" -> "fail404", "t2" -> "ok", "t3" -> "ok")
+    val chain = AgentModelConfig(preferred = Some("t1/m1"), fallbacks = Nil)
+    withFarm(spec) { (ports, hits) =>
+      runStreamOnce(mkConfig(ports), req("eligible-a9", Some(chain))).map { case (res, chainRefs) =>
+        assertEquals(chainRefs, List("t1/m1"), "流面链同样恒 = preferred 单根")
+        val err = res.left.getOrElse(fail(s"A9 必须失败（唯一根 404），实际 = $res"))
+        val msg = err.getMessage
+        assert(err.isInstanceOf[FallbackExhaustedError], s"流面终局必须带处置账本：$err")
+        assert(msg.contains("reason: all-providers-failed"), msg)
+        assert(
+          msg.contains("[tried]   t1/m1 — model ModelNotFound"),
+          s"唯一根必须带处置进表：\n$msg"
+        )
+        assert(
+          msg.contains("chain 1: tried 1, skipped 2"),
+          s"流面处置表计数必须与非流面同口径（链条目 + 两条带原因跳过）：\n$msg"
+        )
+        List("t2", "t3").foreach { p =>
+          assert(
+            msg.contains(s"[skipped] $p/m1 — not-configured (not in selected chain)"),
+            s"流面同口径：未入选生效路由的配置 provider 必须带原因进表，不得静默：$p\n$msg"
+          )
+        }
+        assert(
+          msg.contains("expected from config: 3 ref(s) — none silently excluded"),
+          s"流面零静默排除（修复前 = 2 SILENTLY EXCLUDED 假报）：\n$msg"
+        )
+        assert(
+          !msg.contains("SILENTLY EXCLUDED"),
+          s"流面不得谎称「this is a bug, not provider failure」（那是从未进过路由的配置模型）：\n$msg"
+        )
+        // 流面轮次上限 = Fallback.MaxChainRounds(2)：唯一根是 Permanent(404, evict=false)，
+        // 因此它在轮内被真实试 1~2 次（日志实证 round 1/2 → 2/2）。本断言的面 = 「真的
+        // 试过」（账本 [tried] 行由它产生），精确次数不是本批判据。
+        assertEquals(hits("t1").get() >= 1, true, s"唯一根必须被真实试过（流面轮次上限 2），实际 ${hits("t1").get()} 次")
+        List("t2", "t3").foreach { p =>
+          assertEquals(hits(p).get(), 0, s"$p 不在生效路由上 ⇒ 一根请求都不该收到")
+        }
+      }
     }
   }
 

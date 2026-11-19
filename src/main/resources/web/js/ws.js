@@ -378,6 +378,9 @@ const TERMINAL_MSG_TYPES = new Set([
   // 会话帧被入口过滤器丢弃，活跃会话帧无订阅者 no-op（后端照发，零触碰）。
   'backgroundTaskUpdate',
   'askUser', 'askPermission',
+  // model-fallback-card 批（2026-11-18 作者裁定 14:37）：统一「模型不可用」卡
+  // （任何槽：small-llm / kernel / node / dispatcher / subagent 共用同一张）。
+  'modelUnavailable',
   // askUserAnswered 已摘（uiclean 批 2026-09-15）：该帧的唯一生产者（hub
   // handleChatInputAnswer）随输入框直通腿退役（e59ed251d），接收点亦已摘除 ⇒
   // 路由表项冗余且不再被引用（详见本批报告 C 项引用读数）。

@@ -28,7 +28,11 @@
 import { t } from '../i18n.js';
 import { composer } from '../chatUi.js';
 import { startDictation, stopDictation, sttEnabled } from '../voiceEngine.js';
-import { bindImeGuard, isImeComposing } from '../imeGuard.js';
+// 键盘 / 自适应行高 = 主会话同一底座（composer 统一批 2026-11-18）：本文件不再
+// 自带注册 IME 守卫与 Enter 判定 —— `bindComposerKeys` 就是主会话 `input.js` 走的
+// 那一份契约（组字前置短路 → cascade → commitEnter），Shift+Enter 交还浏览器默认
+// 换行（textarea），本文件只留 `onSend` 接线；autosize 同走 `growComposerInput`。
+import { bindComposerKeys, growComposerInput, composerPlaceholder } from '../input/composer.js';
 
 /**
  * 装配一条 fm 输入条（三面同款）。返回引用给宿主（messages.js）挂状态收敛。
@@ -69,7 +73,7 @@ export function buildFmComposer(opts) {
   const { bar, input, micBtn, sendBtn, attachBtn, attachInput } = composer({
     variant: 'compact',
     micLabel: t('messages.voiceInput'),
-    placeholder: t('messages.inputPlaceholder'),
+    placeholder: composerPlaceholder({ baseToken: 'messages.inputPlaceholder' }),
     sendLabel: t('messages.send'),
     attachLabel: t('dropbox.attachFile'),
     canAttach: opts.canAttach === true,
@@ -88,10 +92,21 @@ export function buildFmComposer(opts) {
   let voiceAnchor = 0;      // 当前语音段插入锚点（字符偏移）
   let voiceInterimLen = 0;  // 当前占位 interim 文本长度
   // micBtn 由工厂装配（形态/属性/字形单源在 chatUi.js）；反馈态类在此切换。
+  // 占位文案 = 全站单点 composerPlaceholder（composer 统一批 2026-11-18）：本面
+  // 声明自己的 baseToken（`messages.inputPlaceholder`），语音/引用帧/附件/通用四条
+  // 分支的**判据**与主会话共用同一份实现（含 mobile-layer 附件恒文案档）。本面
+  // 无附件条与纯引用帧闸 ⇒ 两个上下文参数恒为默认；语音态随麦克风态机刷新。
+  const refreshPlaceholder = () => {
+    input.placeholder = composerPlaceholder({
+      baseToken: 'messages.inputPlaceholder',
+      voiceActive,
+    });
+  };
   const setMicState = (s) => {
     micBtn.classList.toggle('recording', s === 'listening' || s === 'speaking');
     micBtn.classList.toggle('processing', s === 'processing');
     micBtn.setAttribute('aria-pressed', String(s === 'listening' || s === 'speaking'));
+    refreshPlaceholder();
   };
   const stopVoice = () => {
     if (!voiceActive) return;
@@ -146,7 +161,10 @@ export function buildFmComposer(opts) {
         voiceInterimLen = 0;
         voiceAnchor = before.length + insert.length;
         input.setSelectionRange(voiceAnchor, voiceAnchor);
-        onTextChange(); // 程序化写入不触发 input 事件 ⇒ 发送键可用态就地同步
+        // 程序化写入不触发 input 事件 ⇒ 行高与发送键可用态就地同步（同主窗契约）
+        input.style.height = 'auto';
+        growComposerInput(input);
+        onTextChange();
       },
       onState: (s, data) => {
         if (s === 'error') {
@@ -187,14 +205,15 @@ export function buildFmComposer(opts) {
   // ── 发送 + 键盘契约（④；三面同款）────────────────────────────────────────
   sendBtn.addEventListener('click', () => onSend());
   // ③ 输入非空 ↔ 发送键可用态即时同步（含发送后清空 ⇒ 回禁用态；禁两态分叉）
-  input.addEventListener('input', onTextChange);
-  // ⑤ 中文输入（作者点名的面）：组字期间 Enter 属于输入法（确认候选），不得
-  // 触发发送；组字结束后的 Enter 照旧发送（⑤A3）。
-  bindImeGuard(input);
-  input.addEventListener('keydown', (e) => {
-    if (isImeComposing(e, input)) return;
-    if (e.key === 'Enter') { e.preventDefault(); onSend(); }
+  input.addEventListener('input', () => {
+    input.style.height = 'auto';
+    growComposerInput(input);
+    onTextChange();
   });
+  // ⑤ 键盘契约 = 主会话**同一份**（js/input/composer.js bindComposerKeys）：组字
+  // 期间每一个键都属于输入法（中文 IME 确认候选的 Enter 绝不触发发送），裸 Enter
+  // 提交、Shift+Enter 走浏览器默认换行 —— 与主输入条逐条同序，禁本面另写一份判定。
+  bindComposerKeys(input, { onSend: () => onSend() });
 
   return { bar, input, sendBtn, stopVoice };
 }

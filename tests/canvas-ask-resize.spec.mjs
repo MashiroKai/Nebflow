@@ -28,6 +28,11 @@
 //      圆角 = 半边长 **22**，图标按 40 档 18:40 比例等比收（44×18/40 = 19.8 → **20**），
 //      内距 **0**；send ≡ stop 四项（宽/高/圆角/图标）逐项相等；热区 ≥44 且零外溢。
 //      桌面 40 档（c9/c10/c13）本批零触碰。
+//      ★ 再锚（2026-11-18 ask-button-unify 批，作者令「发送按钮也和主会话一致吧」）：
+//      13:52 那条「面板底钮手机档 44/20（--mcv-* 供源）」已整体退役，两腿改由
+//      mobileLayer.css 输入条圆钮档**一条声明两个宿主**供源（视觉 40/18 + ::after -4
+//      ⇒ 热区 46）。故 m5–m10 的判据改为**相对** dock ≡ main（本文件不抄数）；
+//      m9 的 ≥44 挂**命中盒**（Apple HIG 是热区下限），视觉边 40 < 44 属正确。
 //   z) 零 pageerror。
 //
 // 数据面 = 自包含（route 静态 + routeWebSocket 夹具 + 票据腿）：零后端、零 sbt。
@@ -103,9 +108,14 @@ function sourceLegs() {
   const geomRe = /(^|;|\s)(width|height|min-width|min-height|border-radius)\s*:/;
   const sendGeom = geomRe.test(sendBlock);
   const stopGeom = /\S/.test(stopBlock) && geomRe.test(stopBlock);
-  const html = readWeb('index.html');
-  const sendTag = (html.match(/<button id="send-btn"[^>]*>/) || [''])[0];
-  const stopTag = (html.match(/<button id="stop-btn"[^>]*>/) || [''])[0];
+  // ★ 读取面再锚（2026-11-18 ask-button-unify 回批）：主会话 send/stop 标记的**真实
+  //   出生地**是 `js/chatUi.js` 的模板字面量（自 523a21209 起由 index.html 静态迁走，
+  //   见该文件 `#send-btn` / `#stop-btn` 两行）—— 旧腿读 index.html 只能得空串，
+  //   属**查找面过期**的假红，非产品缺陷。改读出生地；断言语义与原来逐条同义
+  //   （两钮都挂同一组件类）并补上同一份字形的 lucide 名（同源证据更硬）。
+  const chatUi = readWeb('js/chatUi.js');
+  const sendTag = (chatUi.match(/<button id="send-btn"[^>]*>[\s\S]*?<\/button>/) || [''])[0];
+  const stopTag = (chatUi.match(/<button id="stop-btn"[^>]*>[\s\S]*?<\/button>/) || [''])[0];
   const dockJs = readWeb('js/askDock.js');
   return {
     turnDefs, turnDefFiles,
@@ -349,7 +359,7 @@ const buttonProps = (page) => page.evaluate(() => {
     return {
       cls: String(el.className || ''),
       width: cs.width, height: cs.height, borderRadius: cs.borderRadius,
-      padding: cs.padding, flexShrink: cs.flexShrink,
+      padding: cs.padding, flexShrink: cs.flexShrink, display: cs.display,
       bg: cs.backgroundColor, borderColor: cs.borderColor, color: cs.color,
       iconW: ss ? ss.width : null, iconH: ss ? ss.height : null, strokeW: ss ? ss.strokeWidth : null,
       hitInset: { top: af.top, right: af.right, bottom: af.bottom, left: af.left },
@@ -419,8 +429,10 @@ test('a,b,c · 拖拽改尺寸 + send/stop 与主会话完全统一', async ({ p
   check('c4 input.css `#send-btn` 块零几何声明（宽高/圆角已上抬组件层）',
     !src.sendGeom, `geom=${src.sendGeom}`);
   check('c5 input.css `#stop-btn` 无几何块残留', !src.stopGeom, `geom=${src.stopGeom}`);
-  check('c6 主会话 DOM 挂同一组件类（index.html #send-btn/#stop-btn）',
-    /ds-turn-btn ds-turn-btn--send/.test(src.sendTag) && /ds-turn-btn ds-turn-btn--stop/.test(src.stopTag),
+  check('c6 主会话 DOM 挂同一组件类（js/chatUi.js #send-btn/#stop-btn；标记出生地）',
+    /ds-turn-btn ds-turn-btn--send/.test(src.sendTag) && /ds-turn-btn ds-turn-btn--stop/.test(src.stopTag)
+    // 同源证据加硬：主会话两钮的字形占位名 = 面板腿同一份（lucide send / square）
+    && /data-lucide="send"/.test(src.sendTag) && /data-lucide="square"/.test(src.stopTag),
     `${src.sendTag} | ${src.stopTag}`);
   check('c7 面板 DOM 挂同一组件类（askDock.js）', src.dockSend && src.dockStop,
     JSON.stringify({ send: src.dockSend, stop: src.dockStop }));
@@ -515,29 +527,93 @@ test('a,b,c · 拖拽改尺寸 + send/stop 与主会话完全统一', async ({ p
   const dSend = diffProps(bp.mainSend, bp.dockSend);
   const dStop = diffProps(bp.mainStop, bp.dockStop);
   readings.diff = { send: dSend, stop: dStop };
-  // 12:52 ② 改判（作者令「底部按钮毛玻璃照抄顶部两个按钮」）：「与主会话逐属性
-  // 全等」这条令被新令覆盖 —— 桌面 dock 底钮改吃画布 chrome 档（40 圆 + 玻璃材质
-  // + 18 图标），主会话腿 36 实底不动。留下的不变量：同一组件类 + 圆形 + 语义绿
-  // 走墨色 + 图标档 18。
-  check('c9 send：同组件类 + 圆形 + 语义绿墨 + 画布 chrome 40 档（12:52 ② 改判）',
+  // ★ 判据再锚（2026-11-18 ask-button-unify 批）：作者令逐字「Ask 的中止按钮中间
+  //   的方框应该和主会话的一致 发送按钮也和主会话一致吧」⇒ 12:52 ② 的「桌面 dock
+  //   吃画布 chrome 40 档」被新令覆盖，桌面两腿回到**同源同值**（组件类同一份，
+  //   几何/图标档/线宽/命中胶囊逐值相等）。不变量：同一组件类 + 圆形 + 语义色 +
+  //   与主会话逐值同档（改为相对判据，值单源在 design-system.css，不在本文件抄数）。
+  // ★ 回批再锚（2026-11-18 第二条；整合批实测的三条假红，**只按原意重锚**）：
+  //   ① 「语义绿/红」原先挂在 `color`（墨色）通道 —— 实现里语义色在 **background**、
+  //      墨是白（主会话腿同）。把该谓词**移到它真实所在的通道**：`bg === 语义色` 且
+  //      `bg ≡ main.bg`，另补 `color ≡ main.color` 钉住墨色逐值同档。断言语义（语义色
+  //      在场 + 两腿同档）与原来同义 —— 不是放宽到「无颜色断言」。
+  //   ② c9 补**命中面实证**：先让遮挡的独立 toast 退场（环境性遮挡，非钮不可点），
+  //      再在**同一条**钮中心/底缘坐标取 elementFromPoint —— 不许挪点、不许退回
+  //      「元素存在即通过」。
+  //   ③ c10 的 rest 态 stop 为 0×0 是**产品口径**：design-system.css
+  //      `.ds-turn-btn--stop{display:none}`（两处共用初始态；busy 由
+  //      js/input/composer.js applyTurnChrome 以内联 display:flex 上位）⇒ rest 断言改为
+  //      「隐藏（display:none 且 0×0）」；「几何不缩水」改到 **busy 臂**上量（与 m 腿同式）。
+  const hitProbe = await page.evaluate(() => {
+    const btn = document.querySelector('.ask-dock .ask-send');
+    if (!btn) return { missing: true };
+    const r = btn.getBoundingClientRect();
+    const cx = r.left + r.width / 2;
+    const desc = (el) => (el ? el.tagName.toLowerCase() + (typeof el.className === 'string' && el.className
+      ? '.' + el.className.split(/\s+/).filter(Boolean).join('.') : '') : 'null');
+    const probe = (x, y) => {
+      const el = document.elementFromPoint(x, y);
+      return { x: Math.round(x), y: Math.round(y), at: desc(el), own: !!(el && (el === btn || btn.contains(el))) };
+    };
+    const center = [cx, r.top + r.height / 2];
+    const bottom = [cx, r.bottom - 2];
+    const withToast = { center: probe(center[0], center[1]), bottom: probe(bottom[0], bottom[1]) };
+    const toasts = [...document.querySelectorAll('.nebflow-toast')].filter((t) => t.classList.contains('show'));
+    const toastTexts = toasts.map((t) => (t.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 80));
+    toasts.forEach((t) => t.remove());                     // 退场后仍在**同一对坐标**上量
+    const afterDismiss = { center: probe(center[0], center[1]), bottom: probe(bottom[0], bottom[1]) };
+    return {
+      box: { left: +r.left.toFixed(2), top: +r.top.toFixed(2), w: +r.width.toFixed(2), h: +r.height.toFixed(2) },
+      toastTexts, withToast, afterDismiss,
+    };
+  });
+  readings.hitProbe = hitProbe;
+  // busy 臂（与 m 腿同式；rest 态 stop 是 display:none ⇒ 几何比较要有非零读数才不空洞）
+  await page.evaluate(() => {
+    const s = document.querySelector('.ask-dock .ask-send');
+    const t = document.querySelector('.ask-dock .ask-stop');
+    if (s && t) { s.style.display = 'none'; t.style.display = 'flex'; }
+  });
+  await page.waitForTimeout(120);
+  const bpBusy = await buttonProps(page);
+  readings.buttonsBusy = bpBusy;
+  await page.evaluate(() => {
+    const s = document.querySelector('.ask-dock .ask-send');
+    const t = document.querySelector('.ask-dock .ask-stop');
+    if (s && t) { s.style.display = ''; t.style.display = ''; }
+  });
+  await page.waitForTimeout(120);
+  check('c9 send：同组件类 + 圆形 + 语义绿 + 与主会话逐值同档（2026-11-18 同源令）',
     /ds-turn-btn/.test(bp.dockSend.cls) && bp.dockSend.borderRadius === '50%'
-    && bp.dockSend.width === '40px' && bp.dockSend.color === 'rgb(7, 193, 96)'
-    && bp.dockSend.iconW === '18px',
-    JSON.stringify({ dock: bp.dockSend, diff: dSend }));
-  check('c10 stop：同组件类 + 圆形 + 语义红墨 + 画布 chrome 40 档',
+    && bp.dockSend.bg === 'rgb(7, 193, 96)' && bp.dockSend.bg === bp.mainSend.bg
+    && bp.dockSend.color === bp.mainSend.color
+    && bp.dockSend.width === bp.mainSend.width && bp.dockSend.height === bp.mainSend.height
+    && bp.dockSend.iconW === bp.mainSend.iconW && bp.dockSend.strokeW === bp.mainSend.strokeW
+    && !!hitProbe.afterDismiss && hitProbe.afterDismiss.center.own && hitProbe.afterDismiss.bottom.own,
+    JSON.stringify({ main: bp.mainSend, dock: bp.dockSend, diff: dSend, hit: hitProbe }));
+  check('c10 stop：同组件类 + 圆形 + 语义红 + 与主会话逐值同档（rest 隐藏 / busy 不缩水）',
     /ds-turn-btn/.test(bp.dockStop.cls) && bp.dockStop.borderRadius === '50%'
-    && bp.dockStop.width === '40px' && bp.dockStop.color === 'rgb(244, 67, 54)',
-    JSON.stringify({ dock: bp.dockStop, diff: dStop }));
+    && bp.dockStop.bg === 'rgb(244, 67, 54)' && bp.dockStop.bg === bp.mainStop.bg
+    && bp.dockStop.color === bp.mainStop.color
+    // rest 口径：stop 隐藏（display:none 且 0×0）—— 产品口径见上方 ★ ③
+    && bp.dockStop.display === 'none' && bp.dockStop.box.w === 0 && bp.dockStop.box.h === 0
+    && bp.mainStop.display === 'none' && bp.mainStop.box.w === 0 && bp.mainStop.box.h === 0
+    // busy 臂：stop 上位时几何/图标/线宽与主会话**逐值同档**（不缩水）
+    && bpBusy.dockStop.display !== 'none' && bpBusy.dockStop.box.w > 0
+    && bpBusy.dockStop.width === bp.mainSend.width && bpBusy.dockStop.height === bp.mainSend.height
+    && bpBusy.dockStop.iconW === bp.mainSend.iconW && bpBusy.dockStop.strokeW === bp.mainSend.strokeW
+    && bpBusy.dockStop.borderRadius === '50%',
+    JSON.stringify({ main: bp.mainStop, dock: bp.dockStop, dockBusy: bpBusy.dockStop, diff: dStop }));
   check('c11 两处都挂同一 .ds-* 组件类（send）',
     /(^|\s)ds-turn-btn(\s|$)/.test(bp.mainSend.cls) && /(^|\s)ds-turn-btn(\s|$)/.test(bp.dockSend.cls),
     `${bp.mainSend.cls} | ${bp.dockSend.cls}`);
   check('c12 两处都挂同一 .ds-* 组件类（stop）',
     /(^|\s)ds-turn-btn(\s|$)/.test(bp.mainStop.cls) && /(^|\s)ds-turn-btn(\s|$)/.test(bp.dockStop.cls),
     `${bp.mainStop.cls} | ${bp.dockStop.cls}`);
-  check('c13 圆形几何两处成立（主会话 36 档不动；dock = 画布 chrome 40 档，12:52 ②）',
+  check('c13 圆形几何两处成立且同档（主会话 36 档不动；dock 随主会话 —— 2026-11-18 同源令）',
     bp.mainSend.borderRadius === '50%' && bp.dockSend.borderRadius === '50%'
-    && bp.mainSend.width === '36px' && bp.dockSend.width === '40px'
-    && bp.mainSend.iconW === '18px' && bp.dockSend.iconW === '18px',
+    && bp.mainSend.width === '36px' && bp.dockSend.width === bp.mainSend.width
+    && bp.mainSend.iconW === '18px' && bp.dockSend.iconW === bp.mainSend.iconW,
     JSON.stringify({ main: [bp.mainSend.width, bp.mainSend.borderRadius, bp.mainSend.iconW], dock: [bp.dockSend.width, bp.dockSend.borderRadius, bp.dockSend.iconW] }));
 
   check('z1 页面零 pageerror', !readings.pageErrors || readings.pageErrors.length === 0,
@@ -617,47 +693,56 @@ test('m · 手机腿：同一实现同一组件（两处逐属性相等 + 拖柄
   // 12:52 ② 改判：dock 底钮材质改吃**玻璃 token**（顶部两钮为准），主会话腿
   // 保持实底绿/红 ⇒ 逐属性全等这条令已作废；保留的契约是「同一组件类 + 同尺寸
   // 档 + 语义色仍在（墨色通道）」。
-  // 13:52 收档令（本批判据来源，逐字）：「手机端的发送按钮和终止按钮 小一点」
-  // ⇒ 面板底钮手机档 48 → 44 / 圆角 22（= 半边长）/ 图标 20（= 44×18/40 取整）/
-  //    内距 0；桌面 40 档（c9/c10/c13）零触碰；主会话腿手机档 48/22 不动（那是
-  //    2026-11-03 22:15 作者报障批的成果，本令只收面板底钮这一档）。
+  // ★ 判据再锚（2026-11-18 ask-button-unify 批，同上）：作者令逐字「Ask 的中止按钮
+  //   中间的方框应该和主会话的一致 发送按钮也和主会话一致吧」⇒ 13:52 的「面板底钮
+  //   手机档 44/20（--mcv-* 供源）」这条第二组供源整体退役；两腿现由 mobileLayer.css
+  //   输入条圆钮档**一条声明两个宿主**供源（40/18 + ::after -4），与主会话逐值相等。
+  //   本腿的判据改为**相对**：dock ≡ main（值单源在 mobileLayer.css，本文件不抄数）。
   // 圆角判据：组件层写 50%（边长的一半，随档自动跟随），计算值保留百分数 ⇒
-  //    判据取「解析为 px 后的半径」= 半边长 22（宽容写成 22px 的实现）。
-  const MOBILE_TIER = 44;
-  const MOBILE_ICON = 20;   // 44 × 18/40 = 19.8 → 取整 20（报告里说明取整口径）
+  //   判据取「解析为 px 后的半径」= 半边长。
   const radiusPx = (b) => (b && b.borderRadius === '50%' ? parseFloat(b.width) / 2 : parseFloat(b && b.borderRadius));
   const geo4 = (b) => (b ? { w: b.width, h: b.height, r: radiusPx(b), icon: b.iconW, pad: b.padding } : null);
-  readings.tier = { mobile: MOBILE_TIER, icon: MOBILE_ICON, tokenSize: bp.tokenSize, tokenIcon: bp.tokenIcon };
+  readings.tier = { source: 'input-bar turn-button tier (mobileLayer.css)', tokenSize: bp.tokenSize, tokenIcon: bp.tokenIcon };
 
-  check('m5 手机层 send：同组件类 + 44 档（作者令 13:52：48 → 44）+ 语义绿走墨色',
-    /ds-turn-btn/.test(bp.dockSend.cls || 'ds-turn-btn') && bp.dockSend.width === '44px'
+  check('m5 手机层 send：同组件类 + 语义绿 + 与主会话逐值同档（2026-11-18 同源令）',
+    /ds-turn-btn/.test(bp.dockSend.cls || 'ds-turn-btn')
+    && bp.dockSend.width === bp.mainSend.width && bp.dockSend.height === bp.mainSend.height
+    && bp.dockSend.iconW === bp.mainSend.iconW && bp.dockSend.strokeW === bp.mainSend.strokeW
     && (bp.dockSend.color === bp.mainSend.color || bp.dockSend.color === 'rgb(7, 193, 96)'),
-    JSON.stringify({ dock: bp.dockSend, diff: dSend }));
-  check('m6 手机层 stop：同组件类 + 44 档 + 语义红走墨色',
-    bp.dockStop.width === '44px' && /2/.test(String(bp.dockStop.strokeW)) === /2/.test(String(bp.mainStop.strokeW)),
-    JSON.stringify({ dock: bp.dockStop, diff: dStop }));
-  check('m7 手机档 send ≡ stop 四项逐项相等（宽/高/圆角/图标边长）+ 圆角 = 半边长 22 + 内距 0',
-    bp.dockSend.width === '44px' && bp.dockSend.height === '44px'
-    && bp.dockStop.width === '44px' && bp.dockStop.height === '44px'
-    && radiusPx(bp.dockSend) === 22 && radiusPx(bp.dockStop) === 22
+    JSON.stringify({ main: bp.mainSend, dock: bp.dockSend, diff: dSend }));
+  check('m6 手机层 stop：同组件类 + 语义红 + 与主会话逐值同档',
+    /ds-turn-btn/.test(bp.dockStop.cls || 'ds-turn-btn')
+    && bp.dockStop.width === bp.mainStop.width && bp.dockStop.height === bp.mainStop.height
+    && bp.dockStop.iconW === bp.mainStop.iconW && bp.dockStop.strokeW === bp.mainStop.strokeW
+    && bp.dockStop.color === bp.mainStop.color,
+    JSON.stringify({ main: bp.mainStop, dock: bp.dockStop, diff: dStop }));
+  check('m7 手机档 send ≡ stop 四项逐项相等（宽/高/圆角/图标边长）+ 圆角 = 半边长 + 内距 0',
+    bp.dockSend.width === bp.dockStop.width && bp.dockSend.height === bp.dockStop.height
+    && radiusPx(bp.dockSend) === parseFloat(bp.dockSend.width) / 2
+    && radiusPx(bp.dockStop) === parseFloat(bp.dockStop.width) / 2
     && bp.dockSend.iconW === bp.dockStop.iconW && bp.dockSend.iconH === bp.dockStop.iconH
     && bp.dockSend.padding === '0px' && bp.dockStop.padding === '0px',
     JSON.stringify({ send: geo4(bp.dockSend), stop: geo4(bp.dockStop) }));
-  check(`m8 手机档几何 = token 单源（--mcv-size-circle ${MOBILE_TIER} / --mcv-icon ${MOBILE_ICON}，零组件字面量）`,
-    bp.tokenSize === `${MOBILE_TIER}px` && bp.tokenIcon === `${MOBILE_ICON}px`
-    && bp.dockSend.width === bp.tokenSize && bp.dockSend.iconW === bp.tokenIcon
-    && bp.dockStop.width === bp.tokenSize && bp.dockStop.iconW === bp.tokenIcon,
-    JSON.stringify({ tokenSize: bp.tokenSize, tokenIcon: bp.tokenIcon, send: geo4(bp.dockSend), stop: geo4(bp.dockStop) }));
+  check('m8 手机档几何 = 输入条圆钮档单源（dock ≡ 主会话；--mcv-* 不再是面板这一档的供源）',
+    bp.dockSend.width === bp.mainSend.width && bp.dockSend.iconW === bp.mainSend.iconW
+    && bp.dockStop.width === bp.mainStop.width && bp.dockStop.iconW === bp.mainStop.iconW
+    && bp.mainSend.width === '40px' && bp.mainSend.iconW === '18px',
+    JSON.stringify({ send: geo4(bp.dockSend), stop: geo4(bp.dockStop), main: geo4(bp.mainSend), tokens: [bp.tokenSize, bp.tokenIcon] }));
   const hitStop = bpBusy.dockStop;   // busy 态上位时的 stop（rest 态 display:none）
-  check('m9 手机档热区 ≥44 且零外溢（::after 解析命中盒 = 44×44 视觉边框盒；5 点命中实证 + 全在输入条内）',
-    bp.dockSend.box.w >= 44 && bp.dockSend.box.h >= 44
-    && hitStop.box.w >= 44 && hitStop.box.h >= 44
-    && !!bp.dockSend.hitBox && !!hitStop.hitBox
+  // ★ 判据再锚（2026-11-18 ask-button-unify 批）：≥44 这条令挂在**命中盒**（::after 解析
+  //   出的手部热区），不挂视觉边长 —— Apple HIG 的 44 是热区下限，热区 = 视觉边 + 外扩。
+  //   作者令 2026-11-18 把面板底钮归到输入条圆钮档（视觉 40/18）与主会话逐值相等 ⇒
+  //   视觉 40 < 44 属**正确**（旧判据把 44 挂在视觉边，是 2026-11-04 13:52「面板底钮
+  //   手机档 44」那条已被覆盖的令的残留）；现 40 边 + ::after(-4) 在 1px 边框下解析出
+  //   46 热区，≥44 成立，且两侧与主会话同值。
+  check('m9 手机档热区 ≥44 且与主会话**同一命中胶囊**（::after 解析命中盒两侧同值；5 点命中实证 + 全在输入条内）',
+    !!bp.dockSend.hitBox && !!hitStop.hitBox && !!bp.mainSend.hitBox
     && bp.dockSend.hitBox.w >= 44 && bp.dockSend.hitBox.h >= 44
     && hitStop.hitBox.w >= 44 && hitStop.hitBox.h >= 44
-    // 零外溢：命中盒不得大于视觉边框盒（否则热区会压到邻居/越出输入条）
-    && bp.dockSend.hitBox.w <= bp.dockSend.box.w + 0.5 && bp.dockSend.hitBox.h <= bp.dockSend.box.h + 0.5
-    && hitStop.hitBox.w <= hitStop.box.w + 0.5 && hitStop.hitBox.h <= hitStop.box.h + 0.5
+    && bp.mainSend.hitBox.w >= 44 && bp.mainSend.hitBox.h >= 44
+    // 同源：两侧命中胶囊逐值相等（值由 ::after 的同一条声明供源）
+    && bp.dockSend.hitBox.w === bp.mainSend.hitBox.w && bp.dockSend.hitBox.h === bp.mainSend.hitBox.h
+    && hitStop.hitBox.w === bp.dockSend.hitBox.w && hitStop.hitBox.h === bp.dockSend.hitBox.h
     && bp.dockSend.insideInput === true && hitStop.insideInput === true
     && bp.dockSend.hitPoints.length === 5 && hitStop.hitPoints.length === 5
     && bp.dockSend.hitPoints.every((p) => p.ok)
@@ -665,10 +750,12 @@ test('m · 手机腿：同一实现同一组件（两处逐属性相等 + 拖柄
     JSON.stringify({
       send: { box: bp.dockSend.box, hitBox: bp.dockSend.hitBox, inset: bp.dockSend.hitInset, inside: bp.dockSend.insideInput, hit: bp.dockSend.hitPoints.map((p) => p.ok) },
       stop: { box: hitStop.box, hitBox: hitStop.hitBox, inset: hitStop.hitInset, inside: hitStop.insideInput, hit: hitStop.hitPoints.map((p) => p.ok) },
+      mainHit: bp.mainSend.hitBox,
     }));
-  check('m10 主会话腿手机档不随本批（48/22 原档 —— 2026-11-03 22:15 报障批成果，本令只收面板底钮）',
-    bp.mainSend.width === '48px' && bp.mainSend.iconW === '22px',
-    JSON.stringify({ main: [bp.mainSend.width, bp.mainSend.iconW] }));
+  check('m10 主会话腿手机档 40/18（输入条圆钮档；dock 与之同源同值）',
+    bp.mainSend.width === '40px' && bp.mainSend.iconW === '18px'
+    && bp.dockSend.width === '40px' && bp.dockSend.iconW === '18px',
+    JSON.stringify({ main: [bp.mainSend.width, bp.mainSend.iconW], dock: [bp.dockSend.width, bp.dockSend.iconW] }));
 
   await page.screenshot({ path: join(OUT, 'mobile-after-drag.png') }).catch(() => {});
   writeFileSync(join(OUT, 'readings-mobile.json'), JSON.stringify(readings, null, 2));

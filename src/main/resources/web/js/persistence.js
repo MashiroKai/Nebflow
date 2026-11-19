@@ -16,6 +16,7 @@ import { dropDeviceMessageCache } from './fmDropboxCache.js';
 import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
+import { permissionDetails } from './permissionDetails.js';
 import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
 // output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
 // 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
@@ -946,6 +947,7 @@ export function restoreFromStorage(opts = {}) {
       chat.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
+      box.appendChild(permissionDetails(m.toolName, m.input));
       const q = document.createElement('div');
       q.className = 'option-q';
       q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
@@ -1443,6 +1445,7 @@ function buildHistoryRow(m, i, ctx) {
       fragment.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
+      box.appendChild(permissionDetails(m.toolName, m.input));
       const q = document.createElement('div');
       q.className = 'option-q';
       q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
@@ -1670,6 +1673,24 @@ const MOUNT_BUILD_CHUNK = 8;
 /** 升级批宽：每帧 4 个任务（md 升级 + 大工具正文混排）。 */
 const MOUNT_UPGRADE_BATCH = 4;
 
+// Capture immediately before each DOM mutation, so intervening user scrolling wins.
+export function captureHistoryAnchor(chat) {
+  if (!chat || !chat.isConnected) return null;
+  const bounds = chat.getBoundingClientRect();
+  const row = [...chat.querySelectorAll('.row')].find((el) => {
+    const rect = el.getBoundingClientRect();
+    return rect.bottom > bounds.top && rect.top < bounds.bottom;
+  });
+  return row ? { chat, row, top: row.getBoundingClientRect().top - bounds.top } : null;
+}
+
+export function restoreHistoryAnchor(anchor) {
+  if (!anchor || !anchor.chat.isConnected || !anchor.chat.contains(anchor.row)) return;
+  const { chat, row, top } = anchor;
+  const delta = row.getBoundingClientRect().top - chat.getBoundingClientRect().top - top;
+  chat.scrollTop += delta;
+}
+
 /** rAF 换帧（后台标签 rAF 节流时 120ms 兜底 —— 挂载永不卡死）。 */
 function nextMountFrame() {
   return new Promise((resolve) => {
@@ -1728,14 +1749,7 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
     syncQuoteJumpStates(container);
     buildTurnSummariesForHistory(container, { busyTail: false });
     if (hooks.onBuilt && hooks.onBuilt(container) === false) return;
-    // 升级批基线在挂载后取（挂载 Δ 已由调用方补偿，批间只吃自己的增量）。
-    const anchor = opts.scrollAnchor || null;
-    let hPrev = anchor ? anchor.scrollHeight : 0;
-    const reanchor = () => {
-      if (!anchor) return;
-      const h1 = anchor.scrollHeight;
-      if (h1 !== hPrev) { anchor.scrollTop += (h1 - hPrev); hPrev = h1; }
-    };
+    const anchorChat = opts.scrollAnchor || null;
     const jobs = [];
     for (const j of pendingToolBodies) jobs.push(() => { j.el.innerHTML = j.build(); });
     for (const j of pendingRenders) jobs.push(() => {
@@ -1747,10 +1761,14 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
       const end = Math.min(ji + MOUNT_UPGRADE_BATCH, jobs.length);
       // 冷启动批⑤：同上护栏 —— 单片失败不拖垮整页升级批（病态输入回落
       // 其 textContent 纯文本，链继续）。
+      const anchor = captureHistoryAnchor(anchorChat);
+      const previousOverflowAnchor = anchorChat?.style.overflowAnchor;
+      if (anchorChat) anchorChat.style.overflowAnchor = 'none';
       for (; ji < end; ji++) {
         try { jobs[ji](); } catch (e) { /* 单元素回落：元素保持 textContent 原样 */ }
       }
-      reanchor();
+      restoreHistoryAnchor(anchor);
+      if (anchorChat) anchorChat.style.overflowAnchor = previousOverflowAnchor;
       if (end < jobs.length) await nextMountFrame();
     }
     if (hooks.onDone) hooks.onDone();

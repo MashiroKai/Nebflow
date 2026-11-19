@@ -206,8 +206,8 @@ body {
   --panel-ease: cubic-bezier(0.32, 0.72, 0, 1);
   --panel-duration: 0.32s;
 
-  /* ── 设计语言动效 token（design-language 批 2026-10-21；账本：
-     seed/plugins/design-language/skills/design-language/）──
+  /* ── 设计语言动效 token（设计语言批 2026-10-21；账本唯一一份在 stand-dev
+     插件包 assets/design-system/，本仓不保留第二份）──
      --dur-1 微变换（icon scale/按下）· --dur-2 hover 色彩/边框/底纹（官网
      160ms 同源）· --dur-3 主题与表面切换（官网 240ms 同源）· 入场 200ms
      modalIn 家族（--ease-enter）· 几何属性用 --ease-std（官网

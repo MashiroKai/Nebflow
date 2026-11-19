@@ -65,7 +65,8 @@ const server = createServer((req, res) => {
 await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
 
 // ── 重历史夹具：300 条，每页 50，页内 = 重工具正文 + 重 markdown + 卡片图 ──
-const TOTAL = 300;
+const benchmark20 = process.env.NB_BENCHMARK_20 === '1';
+const TOTAL = benchmark20 ? 5000 : 300;
 const LIMIT = 50;
 // ~60KB 的「文件读取」工具正文（真实形态：Read 大文件全量进 frontendContent）。
 const BIG = (seed) => {
@@ -89,18 +90,30 @@ const cardRow = (n) => ({
   }),
 });
 /** 诊断旋钮：NB_NO_CARDS=1 换小工具行（卡片 iframe 渲染是否为长任务主元的对照腿）。 */
-const WITH_CARDS = !process.env.NB_NO_CARDS;
+const WITH_CARDS = !process.env.NB_NO_CARDS && process.env.NB_SEQUENCE_FIXTURE !== '1';
 const ROWS_PER_PAGE = WITH_CARDS ? 60 : 50;   // 卡片消息产出 2 行（工具行 + card-content 行）
 const FINAL_ROWS = ROWS_PER_PAGE * (TOTAL / LIMIT);
 /** 一页 50 行：10 组 × [user 2KB, ai md 2.5KB, tool 60KB, ai 短, card 图]。
  *  idx = 会话内绝对下标（同一 idx 恒同内容 ⇒ 跨页确定性）。 */
-const rowAt = (idx) => {
+const rawRowAt = (idx) => {
+  // Every message carries an independently visible, unique sequence token in
+  // the logical-order fixture. The mixed fixture remains the performance case.
+  if (process.env.NB_SEQUENCE_FIXTURE === '1') return { type: 'user', text: `SEQ-${idx}-END`, timestamp: 1750000000000 + idx * 1000 };
   const k = idx % 5;
   if (k === 0) return { type: 'user', text: `用户消息 ${idx}：` + '这段正文提供真实行高与渲染面。'.repeat(40), timestamp: 1750000000000 + idx * 1000 };
   if (k === 1) return { type: 'ai', text: MD(idx), timestamp: 1750000000000 + idx * 1000 };
   if (k === 2) return { type: 'tool', label: 'Read', summary: `读取 /data/node_${idx}.json`, isError: false, content: BIG(idx) };
   if (k === 3) return { type: 'ai', text: `收到，第 ${idx} 条小结。`, timestamp: 1750000000000 + idx * 1000 };
   return WITH_CARDS ? cardRow(idx) : { type: 'tool', label: 'Note', summary: `备注 ${idx}`, isError: false, content: '小工具正文 ' + idx };
+};
+const rowAt = (idx) => {
+  const row = rawRowAt(idx);
+  if (process.env.NB_MIXED_SEQUENCE !== '1') return row;
+  const marker = ` SEQ-${idx}-END`;
+  if (row.type === 'user' || row.type === 'ai') row.text += marker;
+  else if (idx % 5 === 4) row.label += marker;
+  else row.summary += marker;
+  return row;
 };
 const pageMessages = (offset, n) => Array.from({ length: n }, (_, i) => rowAt(offset + i));
 /** 初载（无 beforeIndex）= 最旧在视页 offset=TOTAL-LIMIT；上滑 = 更旧一页。 */
@@ -118,13 +131,19 @@ const pageFor = (m) => {
 let wsConnections = 0;
 let initialHistorySends = 0;   // 每次（重）连接的初载 getHistory —— >1 即发生了重连
 let initSendAt = 0;            // 首屏时延锚：stub 收到**第一条** init getHistory 的时刻
+let heldHistory = null;
 let holdPongMs = 0;            // 遮蔽腿：把下一窗 pong 压住 N ms（模拟大帧占道/主线程阻塞）
 const histReqs = [];           // 诊断：每次 getHistory 的 beforeIndex 轨迹
 
 const browser = await chromium.launch(process.env.NB_CHROME_PATH
   ? { executablePath: process.env.NB_CHROME_PATH }   // 本机缓存的全量 chromium（headless shell 未装时的旁路）
   : {});
-const ctx = await browser.newContext({ viewport: { width: 1600, height: 1000 }, colorScheme: 'dark' });
+const mobileNoise = process.env.NB_MOBILE_NOISE === '1';
+const ctx = await browser.newContext({
+  viewport: mobileNoise ? { width: 390, height: 844 } : { width: 1600, height: 1000 },
+  deviceScaleFactor: mobileNoise ? 2 : 1,
+  colorScheme: 'dark',
+});
 await ctx.addInitScript(() => {
   localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
   localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
@@ -165,7 +184,11 @@ await page.routeWebSocket(/\/ws/, (ws) => {
         if (!initSendAt) initSendAt = Date.now();
       }
       histReqs.push(m.beforeIndex === undefined ? 'init' : m.beforeIndex);
-      ws.send(JSON.stringify(pageFor(m)));
+      if ((process.env.NB_SWITCH_RACE === '1' || process.env.NB_BOUNDARY_POINTS === '1') && m.sessionId === 'sess-1' && m.beforeIndex !== undefined) {
+        heldHistory = () => ws.send(JSON.stringify(pageFor(m)));
+      } else {
+        ws.send(JSON.stringify({ ...pageFor(m), sessionId: m.sessionId }));
+      }
     }
   });
   ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
@@ -178,8 +201,8 @@ const rowCount = () => page.evaluate(() => document.querySelectorAll('#chat .row
 const bannerUp = () => page.evaluate(() => !!document.getElementById('stand-session-gate'));
 const ltSnap = () => page.evaluate(() => ({ ...window.__lt }));
 
-await page.goto(BASE + '/index.html');
-await page.waitForSelector('#activity-bar', { timeout: 20000 });
+await page.goto(BASE + '/index.html' + (process.env.NB_RAPID_GESTURES === '1' ? '?rapid=1' : ''));
+await page.waitForSelector('#activity-bar', { state: 'attached', timeout: 20000 });
 // P0 首屏（#923）：初载恰好一页的行数落定（卡片行双计）。等「≥ 期望行数」后
 // 立刻读数——首屏若健康则恒等；若发生双挂载会一次性越过，行数读数留给 F1 判。
 let firstRows = 0;
@@ -207,6 +230,28 @@ try {
   await browser.close(); server.close(); process.exit(1);
 }
 await sleep(600); // 初载 md 升级批落地
+if (mobileNoise) {
+  await page.evaluate(() => { document.documentElement.style.zoom = '1.25'; });
+  await sleep(600);
+}
+// Empty operation control: same row and scroll position across animation frames.
+const noise = await page.evaluate(async () => {
+  const chat = document.getElementById('chat');
+  const bounds = chat.getBoundingClientRect();
+  const row = [...chat.querySelectorAll('.row')].find((r) => {
+    const rect = r.getBoundingClientRect();
+    return rect.bottom > bounds.top && rect.top < bounds.bottom;
+  });
+  if (!row) return [];
+  const top = row.getBoundingClientRect().top - bounds.top;
+  const samples = [];
+  for (let i = 0; i < 30; i++) {
+    await new Promise(requestAnimationFrame);
+    samples.push(row.getBoundingClientRect().top - chat.getBoundingClientRect().top - top);
+  }
+  return samples;
+});
+console.log('[noise-css-px] ' + JSON.stringify(noise));
 const firstScreenMs = initSendAt ? firstScreenAt - initSendAt : -1;
 // P0 判据读数（首屏零双挂载/零重复请求的三件证）：
 //   ① 行数恰等一页（双挂载会一次性 ×2）——firstRows 本体；
@@ -229,10 +274,169 @@ const firstDup = await page.evaluate(() => {
 await page.evaluate(() => { window.__noReloadMarker = { at: Date.now() }; window.__lt = { n: 0, total: 0, max: 0 }; });
 const navAtBoot = navigated;
 
+if (process.env.NB_BOUNDARY_POINTS === '1') {
+  const chat = page.locator('#chat');
+  await chat.hover();
+  await page.mouse.wheel(0, -1);
+  await chat.evaluate((c) => { c.scrollTop = 1000; });
+  await page.waitForTimeout(200);
+  await page.mouse.wheel(0, -650);
+  for (let i = 0; i < 100 && !heldHistory; i++) await page.waitForTimeout(20);
+  if (!heldHistory || histReqs.length < 2) throw new Error('boundary history request missing');
+  const anchors = await chat.evaluate((c) => {
+    const rows = [...c.querySelectorAll('.row')].filter((r) => /SEQ-\d+-END/.test(r.textContent));
+    const first = rows[0], last = rows[rows.length - 1];
+    if (!first || !last) throw new Error('boundary anchors missing');
+    window.__boundary = [first, last].map((row) => ({ row, id: row.textContent.match(/SEQ-\d+-END/)[0], before: row.getBoundingClientRect().top }));
+    return window.__boundary.map(({ id, before }) => ({ id, before }));
+  });
+  heldHistory();
+  await page.waitForFunction(() => document.querySelectorAll('#chat .row').length > 60, null, { timeout: 20000 });
+  const after = await chat.evaluate((c) => window.__boundary.map((a) => ({ id: a.id, same: c.contains(a.row) && a.row.textContent.includes(a.id), before: a.before, after: a.row.getBoundingClientRect().top, error: Math.abs(a.row.getBoundingClientRect().top - a.before) })));
+  const pass = after.every((a) => a.same && a.error <= 2);
+  console.log('[boundary-edges] ' + JSON.stringify({ anchors, after, requests: histReqs, pass }));
+  await browser.close(); server.close(); process.exit(pass ? 0 : 1);
+}
+
+if (process.env.NB_SWITCH_RACE === '1') {
+  const chat = page.locator('#chat');
+  await chat.hover();
+  await page.mouse.wheel(0, -1);
+  await chat.evaluate((c) => { c.scrollTop = 1000; });
+  await page.waitForTimeout(200);
+  await page.mouse.wheel(0, -650);
+  for (let i = 0; i < 100 && !heldHistory; i++) await page.waitForTimeout(20);
+  if (!heldHistory) throw new Error('old session history request was not captured');
+  await page.evaluate(async () => (await import('/js/sidebar.js')).switchToSession('sess-2'));
+  await page.waitForTimeout(1000);
+  const before = await chat.evaluate((c) => ({ scrollTop: c.scrollTop, texts: [...c.querySelectorAll('.row')].map((r) => r.textContent) }));
+  heldHistory();
+  await page.waitForTimeout(1000);
+  const after = await chat.evaluate((c) => ({ scrollTop: c.scrollTop, texts: [...c.querySelectorAll('.row')].map((r) => r.textContent) }));
+  const sequences = after.texts.map((text) => text.match(/SEQ-(\d+)-END/)).filter(Boolean).map((match) => Number(match[1]));
+  const unique = new Set(sequences).size === sequences.length && sequences.length === LIMIT;
+  const pass = before.scrollTop === after.scrollTop && JSON.stringify(before.texts) === JSON.stringify(after.texts) && unique;
+  console.log('[switch-race] ' + JSON.stringify({ beforeTop: before.scrollTop, afterTop: after.scrollTop, beforeRows: before.texts.length, afterRows: after.texts.length, sameRows: JSON.stringify(before.texts) === JSON.stringify(after.texts), sequenceCount: sequences.length, unique, requests: histReqs, pass }));
+  await browser.close(); server.close(); process.exit(pass ? 0 : 1);
+}
+
+// Five real upward wheel inputs. Read the same element after each actual scroll,
+// then compare after two frames; the last input crosses the prefetch threshold.
+if (process.env.NB_FIVE_WHEELS === '1') {
+  const chat = page.locator('#chat');
+  await chat.hover();
+  await page.mouse.wheel(0, -1);
+  await chat.evaluate((c) => { c.scrollTop = 1000; });
+  await page.waitForTimeout(300);
+  const observations = [];
+  let finalAnchor = false;
+  for (let i = 0; i < 5; i++) {
+    const before = await chat.evaluate((c) => c.scrollTop);
+    await page.mouse.wheel(0, -130);
+    const sample = await chat.evaluate(async (c) => {
+      await new Promise(requestAnimationFrame);
+      const bounds = c.getBoundingClientRect();
+      const row = [...c.querySelectorAll('.row')].find((r) => { const b = r.getBoundingClientRect(); return b.bottom > bounds.top && b.top < bounds.bottom; });
+      const after = c.scrollTop;
+      const top = row?.getBoundingClientRect().top - bounds.top;
+      window.__fiveLastAnchor = row && { row, top };
+      await new Promise(requestAnimationFrame);
+      await new Promise(requestAnimationFrame);
+      return { after, error: row && c.contains(row) ? Math.abs(row.getBoundingClientRect().top - c.getBoundingClientRect().top - top) : null };
+    });
+    observations.push({ before, ...sample });
+  }
+  await page.waitForTimeout(700);
+  const finalError = await chat.evaluate((c) => {
+    const a = window.__fiveLastAnchor;
+    return a && c.contains(a.row) ? Math.abs(a.row.getBoundingClientRect().top - c.getBoundingClientRect().top - a.top) : null;
+  });
+  finalAnchor = finalError !== null && finalError <= 2;
+  const pass = observations.every((o) => o.after < o.before && o.error !== null && o.error <= 2) && histReqs.length > 1 && finalAnchor;
+  console.log('[five-wheels] ' + JSON.stringify({ observations, finalError, requests: histReqs, pass }));
+  await browser.close(); server.close(); process.exit(pass ? 0 : 1);
+}
+
+// Dedicated real-input pagination probe; no test scrollTop writes after input.
+if (process.env.NB_WHEEL_PAGE === '1') {
+  const chat = page.locator('#chat');
+  await chat.hover();
+  await page.mouse.wheel(0, -1);
+  await chat.evaluate((c) => { c.scrollTop = 1000; });
+  await page.waitForTimeout(300);
+  const n0 = await rowCount();
+  const before = await chat.evaluate((c) => c.scrollTop);
+  await page.mouse.wheel(0, -650);
+  const capture = await chat.evaluate(async (c) => {
+    await new Promise(requestAnimationFrame);
+    const bounds = c.getBoundingClientRect();
+    const row = [...c.querySelectorAll('.row')].find((r) => { const b = r.getBoundingClientRect(); return b.bottom > bounds.top && b.top < bounds.bottom; });
+    window.__realPageAnchor = row && { row, top: row.getBoundingClientRect().top - bounds.top };
+    return { scrollTop: c.scrollTop, anchorTop: window.__realPageAnchor?.top };
+  });
+  await page.waitForFunction((n) => document.querySelectorAll('#chat .row').length > n, n0, { timeout: 20000 });
+  await page.waitForTimeout(700);
+  const after = await chat.evaluate((c) => {
+    const a = window.__realPageAnchor;
+    return { scrollTop: c.scrollTop, error: a && c.contains(a.row) ? Math.abs(a.row.getBoundingClientRect().top - c.getBoundingClientRect().top - a.top) : null };
+  });
+  const pass = capture.scrollTop < before && after.error !== null && after.error <= 2;
+  console.log('[real-page] ' + JSON.stringify({ before, capture, after, requests: histReqs, pass }));
+  await browser.close(); server.close(); process.exit(pass ? 0 : 1);
+}
+
+// Trusted browser input: move the viewport by five upward wheel ticks, then
+// retain the visible element while the resulting pagination completes.
+let realWheelResult = null;
+if (process.env.NB_REAL_WHEEL === '1') {
+  const chat = page.locator('#chat');
+  await chat.hover();
+  const start = await chat.evaluate((c) => c.scrollTop);
+  for (let i = 0; i < 5; i++) await page.mouse.wheel(0, -80);
+  await page.waitForTimeout(150);
+  const end = await chat.evaluate((c) => c.scrollTop);
+  const anchor = await chat.evaluate((c) => {
+    const bounds = c.getBoundingClientRect();
+    const row = [...c.querySelectorAll('.row')].find((r) => { const rect = r.getBoundingClientRect(); return rect.bottom > bounds.top && rect.top < bounds.bottom; });
+    window.__wheelAnchor = row && { row, top: row.getBoundingClientRect().top - bounds.top };
+    return !!row;
+  });
+  realWheelResult = { start, end, moved: end < start, anchor };
+  console.log('[real-wheel] ' + JSON.stringify(realWheelResult));
+}
+
 /** 上滑一页（滚到 250px —— 预取带内、停顶续拉阈值上方）并等行数落定。 */
 async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
   const t0 = Date.now();
-  await page.evaluate(() => { const c = document.getElementById('chat'); c.scrollTop = 250; c.dispatchEvent(new Event('scroll')); });
+  const before = await page.evaluate(async () => {
+    const c = document.getElementById('chat');
+    // A real upward gesture cancels the initial bottom-settle window; a synthetic
+    // scroll event alone does not, and can be overwritten before the response.
+    // The resulting first-sample error was 9510.84375px: diagnostic frames show
+    // settleBottom moved scrollTop 250 -> 9796 before the history page mounted.
+    // This timing hazard also warrants scrutiny of older single-sample timings;
+    // it does not establish that those timings were actually affected.
+    // Five synthetic wheel events exercise intent cancellation only; they have
+    // no default scroll action and do not prove five real swipes or single-flight.
+    for (let i = 0; i < (location.search.includes('rapid=1') ? 5 : 1); i++) c.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -1 }));
+    await document.fonts.ready;
+    c.scrollTop = 250;
+    const bounds = c.getBoundingClientRect();
+    const row = [...c.querySelectorAll('.row')].find((r) => {
+      const rect = r.getBoundingClientRect();
+      return rect.bottom > bounds.top && rect.top < bounds.bottom;
+    });
+    window.__historyTestAnchor = row && { row, top: row.getBoundingClientRect().top - bounds.top };
+    const snapshot = () => ({ scrollTop: c.scrollTop, scrollHeight: c.scrollHeight, rect: row?.getBoundingClientRect().toJSON(), fonts: document.fonts.status });
+    const start = snapshot();
+    c.dispatchEvent(new Event('scroll'));
+    await new Promise(requestAnimationFrame);
+    const frame1 = snapshot();
+    await new Promise(requestAnimationFrame);
+    const frame2 = snapshot();
+    return { ...start, twoFramesStable: frame1.scrollTop === frame2.scrollTop && frame1.scrollHeight === frame2.scrollHeight && frame1.rect?.top === frame2.rect?.top, frame1, frame2 };
+  });
+  console.log('[anchor-before] ' + JSON.stringify({ first: expectRows === ROWS_PER_PAGE * 2, ...before }));
   let stable = 0, last = -1;
   for (;;) {
     await sleep(60);
@@ -241,18 +445,51 @@ async function scrollUpOnePage(expectRows, deadlineMs = 20000) {
     last = n;
     if (Date.now() - t0 > deadlineMs) break;
   }
-  return { ms: Date.now() - t0, rows: last };
+  const after = await page.evaluate(async () => {
+    const c = document.getElementById('chat');
+    const a = window.__historyTestAnchor;
+    const snapshot = () => ({ scrollTop: c.scrollTop, scrollHeight: c.scrollHeight, rect: a?.row.getBoundingClientRect().toJSON(), fonts: document.fonts.status });
+    const start = snapshot();
+    await new Promise(requestAnimationFrame);
+    const frame1 = snapshot();
+    await new Promise(requestAnimationFrame);
+    const frame2 = snapshot();
+    return { ...start, twoFramesStable: frame1.scrollTop === frame2.scrollTop && frame1.scrollHeight === frame2.scrollHeight && frame1.rect?.top === frame2.rect?.top, frame1, frame2,
+      error: a && c.contains(a.row) ? Math.abs(a.row.getBoundingClientRect().top - c.getBoundingClientRect().top - a.top) : null };
+  });
+  console.log('[anchor-after] ' + JSON.stringify({ first: expectRows === ROWS_PER_PAGE * 2, ...after }));
+  return { ms: Date.now() - t0, rows: last, error: after.error };
 }
 
 // ── P1+P2：前 4 页手动上滑（每页 60 .row：卡片行双计），逐页计时 ──────────
+// NB_BENCHMARK_20 measures the 20th prepend only, using the identical real
+// renderer and stable-row wait on either source tree. Setup pages are not samples.
+if (benchmark20) {
+  for (let i = 1; i <= 20; i++) {
+    const r = await scrollUpOnePage(ROWS_PER_PAGE * (1 + i));
+    console.log(`[benchmark-page] ${i} ${JSON.stringify(r)}`);
+    if (r.rows < ROWS_PER_PAGE * (1 + i)) throw new Error(`page ${i} timed out`);
+  }
+  await browser.close();
+  server.close();
+  process.exit(0);
+}
 const pageTimes = [];
+const anchorErrors = [];
+// 30 empty-frame samples were zero in both measured viewports; allow CSS pixel rounding.
+const ANCHOR_TOLERANCE_CSS_PX = 2;
 let rows = await rowCount();
 for (let i = 1; i <= 4; i++) {
   const expect = ROWS_PER_PAGE * (1 + i);
   const r = await scrollUpOnePage(expect);
   pageTimes.push(r.ms);
+  anchorErrors.push(r.error);
   rows = await rowCount();
 }
+if (realWheelResult) realWheelResult.errorAfterPagination = await page.evaluate(() => {
+  const c = document.getElementById('chat'), a = window.__wheelAnchor;
+  return a && c.contains(a.row) ? Math.abs(a.row.getBoundingClientRect().top - c.getBoundingClientRect().top - a.top) : null;
+});
 const manualRows = rows;
 // 末段：停在顶部 ⇒ 停顶续拉腿把剩余页自动补齐到全量收口（卡片行双计）。
 const parkT0 = Date.now();
@@ -263,6 +500,13 @@ for (;;) {
   if (rows >= FINAL_ROWS || Date.now() - parkT0 > 25000) break;
 }
 const maxPageMs = Math.max(...pageTimes);
+// Only user messages carry this fixture's unambiguous sequence marker.
+const sequenceFixture = process.env.NB_SEQUENCE_FIXTURE === '1' || process.env.NB_MIXED_SEQUENCE === '1';
+const userSequence = await page.evaluate((sequenceFixture) => [...document.querySelectorAll('#chat .row')]
+  .map((row) => (row.textContent || '').match(sequenceFixture ? /SEQ-(\d+)-END/ : /用户消息 (\d+)：/))
+  .filter(Boolean).map((match) => Number(match[1])), sequenceFixture);
+const expectedUsers = Array.from({ length: TOTAL }, (_, i) => i).filter((i) => sequenceFixture || i % 5 === 0);
+const userSequenceComplete = JSON.stringify(userSequence) === JSON.stringify(expectedUsers);
 
 // ── P4：心跳遮蔽腿 —— 持门 + 桩端压 pong 6.5s（> 5s 宽限）⇒ miss 被遮蔽 ──
 // 真实 hbProbe（spec 缝 _hbTestHooks）发 ping 武装宽限；门在宽限到期时仍 busy
@@ -308,6 +552,13 @@ ok('P0-a 首屏恰一页（行数 = ' + ROWS_PER_PAGE + '，init 恰一发，内
   `firstRows=${firstRows} initReqs=${bootInitCount} contentDup=${firstDup} histReqs=${JSON.stringify(bootHistReqs)}`);
 ok('P0-b 首屏时延 < ' + FIRST_MS + 'ms（init getHistory → 行落定）',
   firstScreenMs >= 0 && firstScreenMs < FIRST_MS, `firstScreen=${firstScreenMs}ms`);
+ok('A1 前插后保持同一可见行位置', anchorErrors.every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX),
+  `errors=${JSON.stringify(anchorErrors)} tolerance=${ANCHOR_TOLERANCE_CSS_PX} CSS px`);
+if (process.env.NB_REAL_WHEEL === '1') ok('A3 真实 wheel 后滚动及锚定', !!realWheelResult?.moved && realWheelResult.errorAfterPagination !== null && realWheelResult.errorAfterPagination <= ANCHOR_TOLERANCE_CSS_PX, `wheel=${JSON.stringify(realWheelResult)} errors=${JSON.stringify(anchorErrors)}`);
+ok('A2 已标记消息序号连续无缺口', userSequenceComplete,
+  `observed=${JSON.stringify(userSequence)} expected=${JSON.stringify(expectedUsers)}`);
+ok('A4 相邻页边界补页不跳', anchorErrors.slice(1, 3).every((v) => v !== null && v <= ANCHOR_TOLERANCE_CSS_PX),
+  `errors=${JSON.stringify(anchorErrors.slice(1, 3))}`);
 ok('P1 手动上滑 4 页补进 + 停顶续拉收口全量（卡片行双计）',
   manualRows === ROWS_PER_PAGE * 5 && rows === FINAL_ROWS, `manual=${manualRows} final=${rows}/${FINAL_ROWS} times=${pageTimes.join(',')}ms`);
 ok('P2 单页落定 < ' + PAGE_MS + 'ms', maxPageMs < PAGE_MS, `maxPage=${maxPageMs}ms`);

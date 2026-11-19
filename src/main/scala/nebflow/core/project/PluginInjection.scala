@@ -15,6 +15,7 @@ import nebflow.core.jev.{
   PluginAllocator,
   PluginCatalog
 }
+import nebflow.core.model.ModelUnavailableCard
 import nebflow.core.plugin.{PluginRegistry, PluginsConfig}
 import nebflow.shared.{NebflowLogger, PathUtil}
 
@@ -102,7 +103,39 @@ object PluginInjection:
                     Right(NodeEngine.PluginPreparation.empty -> AllocatedSet(Nil, "empty-catalog"))
                   )
               else
-                PluginAllocator.allocatePlugins(subject, taskText, catalog).flatMap { result =>
+                // model-fallback-card 批（2026-11-18 作者裁定 14:37）：「小模型槽模型
+                // 不可用」的**单点**落位——分配腿（本件唯一 LLM 调用点）的失败结果先过
+                // 统一卡片组合子：弹**同一张**「模型不可用」卡（`ModelUnavailableCard`，
+                // 全槽共用一套实现）→ 用户在卡内测试/手动切换 ⇒ **就地写回该槽
+                // `model.preferred` 并重试本分配（原请求继续完成）**；无人作答
+                // 300s ⇒ 回报根会话。未装配卡片链路（测试/early boot）⇒ 逐字回既有
+                // 行为（fail-closed 的 Left 不变）。
+                val allocAttempt = PluginAllocator.allocatePlugins(subject, taskText, catalog)
+                ModelUnavailableCard
+                  .withUnavailableCard(
+                    attempt = allocAttempt,
+                    // 只有「调用层失败（候选链耗尽/传输异常）」= 槽模型不可用；解析类
+                    // 失败（回文不可用）不是模型不可用，不进卡片。
+                    failureOf = r =>
+                      r.allocation match
+                        case JevAllocation.FellBack(JevFallbackKind.LlmError, reason) =>
+                          val ref = nebflow.core.SchemePolicy.smallLlmModel().preferred.getOrElse("")
+                          val (pid, mid) = ref.split("/", 2).toList match
+                            case p :: m :: Nil => (p, m)
+                            case p :: Nil      => (p, "")
+                            case _             => ("", "")
+                          Some(
+                            ModelUnavailableCard.reportFor(
+                              slot = nebflow.core.ModelRoles.SmallLlmWire,
+                              providerId = pid,
+                              model = mid,
+                              failure = ModelUnavailableCard.FailureClass.fromDetail(reason),
+                              detail = reason
+                            )
+                          )
+                        case _ => None
+                  )
+                  .flatMap { result =>
                   // 归因精确化批（2026-10-29 作者追问）：LLM 兜底腿的两类可恢复
                   // 失败各归各词（llm-error=调用层/候选链耗尽；parse-fail=回文不可
                   // 用），fail-open 只留「无可尝试之物」的结构态——四态此前混记

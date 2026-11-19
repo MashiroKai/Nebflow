@@ -30,6 +30,14 @@ import nebflow.shared.*
  */
 enum InteractionKind:
   case Permission, AskUser, McpPermission
+  /**
+   * Unified **model-unavailable** card (model-fallback-card batch, author ruling
+   * 2026-11-18 14:37): ONE card kind for EVERY model slot (`small-llm` / `kernel`
+   * / `node` / `dispatcher` / `subagent`) when that slot's model is unavailable.
+   * Not a per-slot card — the slot is a payload field, the implementation is this
+   * single kind. Wire type = `modelUnavailable`.
+   */
+  case ModelUnavailable
 
 /**
  * Reply target for an interaction request (P2). Held by the InteractionHub —
@@ -50,6 +58,16 @@ object InteractionReply:
    * （内置工具审批链逐字不动，A1-8 零回归）。
    */
   final case class McpPermissionReply(deferred: cats.effect.Deferred[IO, nebflow.shared.McpPermissionAnswer])
+      extends InteractionReply
+
+  /**
+   * model-fallback-card batch: the unified model-unavailable card's reply face.
+   * The requester holds the Deferred via the hub (D3: it survives the requesting
+   * agent's turn) and waits at most [[nebflow.core.model.ModelUnavailableCard]]
+   * `timeoutSec` (default 300s) for the user's manual `test` / `switch` /
+   * `dismiss` — a `switch` then lets the ORIGINAL request continue.
+   */
+  final case class ModelUnavailableReply(deferred: cats.effect.Deferred[IO, nebflow.shared.ModelUnavailableAnswer])
       extends InteractionReply
 
 /**

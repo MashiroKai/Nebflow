@@ -81,6 +81,8 @@
 .nf-findbar-input,
 .wg-search-input,
 .mh-search-input,
+.sf-field-input,
+.fm-search-input,
 .to-input,
 .subject-input,
 .reminder-inline-input,
@@ -88,6 +90,10 @@
 .reminder-inline-project input,
 .tfl-row-title-input,
 .tfl-hit-reply,
+/* 待办详情页回复输入框内芯（todo-mobile 批 2026-11-18）：与 `.tfl-hit-reply`
+   同族 —— 外壳 `.ta-reply-input` = nf-glass 输入条（复刻 ask 输入条），内芯按
+   裸件收编（同一个 js/input/secondaryComposer.js 模板产出）。 */
+.ta-reply-input textarea,
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
@@ -188,7 +194,11 @@ html[data-nf-modality="pointer"] .nf-field:focus-visible {
    `.tfl-hit-replyrow`（ui-unify-panels E 批 2026-11-17）：待办互动框的回复
    输入条外壳，复刻 ask 卡片输入（材质同样由 JS 挂 `.nf-glass` 供）。 */
 .ask-input,
-.tfl-hit-replyrow {
+.tfl-hit-replyrow,
+/* 待办详情页「回复这个待办」（todo-mobile 批 2026-11-18）：与 `.ask-input` 同一个
+   装配点 —— js/input/secondaryComposer.js 的「次级 LLM 输入框」模板（材质同样由
+   JS 挂 `.nf-glass` 供），故取同一条外壳圆角。 */
+.ta-reply-input {
   border-radius: var(--nf-field-shell-radius, var(--ds-radius-xl));
 }
 

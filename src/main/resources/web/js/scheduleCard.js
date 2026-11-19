@@ -32,6 +32,15 @@ import { t } from './i18n.js';
 import { createIconsIn } from './utils.js';
 import { msToLocalInput } from './timeWheel.js';
 import { updateEntry, cancelEntry, readEntry, transport } from './scheduleApi.js';
+// 行角色单点（todo-card-click-left 批，2026-11-18 作者令「待办卡片应该靠左 这是
+// 你发出的」）：卡片落在消息流哪一侧**只由发出者决定**，由 js/bubbleSide.js 的
+// rowRoleOf 把「谁发的」翻成既有角色类 `.row.user` / `.row.ai`（对齐规则仍单点在
+// css/chat.css，本文件不写第二套几何）。
+import { rowRoleOf } from './bubbleSide.js';
+// `#` 待办引用单点（同一批作者令「点卡片 → 对话框有 # 的待办引用」）：引用形态、
+// 数据面、插入目标全部复用既有 `#` 补全那条腿（js/todoComplete.js），本文件只做
+// 「点哪儿算点了卡片」的判定。
+import { todoRefIdentity, insertTodoReference } from './todoComplete.js';
 
 /**
  * 组件内部结构类名（单点声明；门禁 scripts/check-component-contract.mjs R4 的
@@ -107,6 +116,11 @@ export function scheduleCardModelFromTool({ label, inputJson, content, isError, 
   return {
     id,
     kind,
+    // 发出者（todo-card-click-left 批 2026-11-18）：本 builder 的入口是 **Schedule
+    // 工具调用**（agent 面）⇒ 恒 'agent'。行对齐由 emitter 经 bubbleSide.rowRoleOf
+    // 落成 `.row.ai`（左），**不再**写死 `.row user`。作者本人发出的卡片形态若出现，
+    // 由调用方给 `emitter:'user'`（落 `.row.user`，右）——两侧都要正确，不许一刀切。
+    emitter: 'agent',
     sessionId: sessionId || null,
     name: typeof input.name === 'string' && input.name.trim() ? input.name.trim() : null,
     content: typeof input.content === 'string' && input.content.trim() ? input.content.trim() : null,
@@ -257,9 +271,54 @@ function render(host, st) {
       st.mode === 'confirm' ? confirmFace(host, st) : null,
       !terminal && st.mode === 'view' ? actionsFace(host, st) : null,
     ));
+  // 点击腿（todo-card-click-left 批 2026-11-18）：**待办卡**整卡可点 ⇒ 当前对话框
+  // 落一条 `#<待办名>·<id>` 引用（形态/数据面/插入全部复用 `#` 补全那条腿）。
+  // 只挂待办卡：定时任务（kind='task'）不在 `#` 引用的词表里，给它塞一个 `#名字`
+  // 只会被渲染侧当成普通井号文本 —— 宁可无动作，不造假引用。
+  if (m.kind === 'todo') attachRefClick(card, m);
   host.appendChild(card);
   // 家族图标面（铃铛/时钟…）走全仓单点 createIconsIn（与既有触发卡同法）。
   try { createIconsIn(card); } catch { /* 图标失败不阻断卡片 */ }
+}
+
+/**
+ * 卡内**既有交互件**白名单：命中其一即让路（各自原样行为，绝不被整卡点击吞掉）。
+ * 覆盖：编辑/取消/保存/放弃/二次确认钮（button 全域）、快速决策/选项入口
+ * （[role=button]）、勾选圈与标签这类带 tabindex 的可聚焦 chip（[tabindex]）、
+ * 编辑表单里的 textarea/input/select 与其 label、以及折展钮。
+ */
+const CARD_INTERACTIVE_SEL = [
+  'button', 'a[href]', 'input', 'textarea', 'select', 'label',
+  '[role="button"]', '[tabindex]', '[data-sched-act]',
+  '.schedule-card-form', '.schedule-card-actions',
+].join(',');
+
+/**
+ * 挂「点非交互区 = 补 `#` 引用」的委托。
+ *
+ * 命中判定走 **click**（不是 pointerdown）：手机上的滑动/长按不产生 click
+ * ⇒ 滑动滚动不会误触发；卡内按钮自己的 handler 先跑，且这里再兜一层
+ * `closest(CARD_INTERACTIVE_SEL)` 显式让路（双保险 —— 不靠 stopPropagation 的
+ * 自觉，也不靠事件顺序的巧合）。
+ * @param {HTMLElement} card 卡体（.bubble.injected.schedule-card）
+ * @param {any} m 卡片模型
+ */
+function attachRefClick(card, m) {
+  card.classList.add('schedule-card-refable');
+  card.setAttribute('title', t('schedCard.refHint'));
+  card.addEventListener('click', (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    if (target && target.closest(CARD_INTERACTIVE_SEL)) return;
+    const identity = todoRefIdentity(m.id) || refFromCardFace(m);
+    if (!identity) return;
+    insertTodoReference(identity);
+  });
+}
+
+/** 兜底身份：待办库里查不到（已关闭/跨会话未在册）时用卡片自己显示的名字 + 卡 id。 */
+function refFromCardFace(m) {
+  const name = String(m.name || m.content || '').split('\n')[0].trim();
+  return name ? { name, id: m.id } : null;
 }
 
 function headFace(m, st) {
@@ -525,6 +584,10 @@ define({ tag: 'nf-sched-card', template, mount: mountCard });
 
 /**
  * 建一行卡片（供 chat.js renderTool / persistence.js 两条重放腿共用）。
+ *
+ * 行侧（左/右）由 `model.emitter` 决定（缺省 = agent 侧，见 bubbleSide.rowRoleOf）：
+ * 卡片的工具进程行本身就是 `.row.tool`（左），卡片行过去却写死 `.row user`（右）
+ * ⇒ agent 亲手创建的待办卡看着像作者自己发的（todo-card-click-left 批作者报障）。
  * @param {any} model scheduleCardModelFromTool 的返回值
  * @returns {HTMLElement|null} 卡片行（`.row` + `.sched-row`）；模型不可用 ⇒ null
  */
@@ -532,7 +595,11 @@ export function buildScheduleCardRow(model) {
   if (!model || !model.id) return null;
   const el = document.createElement('nf-sched-card');
   /** @type {any} */ (el).schedModel = model;
-  return h('div', { class: 'row user sched-card-row', 'data-sched-row-id': model.id }, el);
+  return h('div', {
+    class: 'row ' + rowRoleOf(model.emitter) + ' sched-card-row',
+    'data-sched-row-id': model.id,
+    'data-sched-emitter': model.emitter === 'user' ? 'user' : 'agent',
+  }, el);
 }
 
 /**

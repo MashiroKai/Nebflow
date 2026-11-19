@@ -956,6 +956,20 @@ nf-sched-card { display: contents; }
 }
 /* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 
+/* ── 点击腿（todo-card-click-left 批，2026-11-18 作者令「待办卡片要支持可以直接
+   点击 然后就到对话框有 # 的待办引用」）───────────────────────────────────────
+   待办卡整卡可点（非交互区 ⇒ 补 `#` 引用）。可点性只由 `cursor` 表达：卡的**视觉
+   语言一个字都不改**——底色/圆角/内距仍归上面 `.bubble.schedule-card` 家族块，
+   本块零几何、零颜色声明（scripts/check-design-tokens.mjs 对本文件「只降不增」）。
+   触控命中区 = 卡体自身（含头行/正文/元信息条），实测高 ≫ --ds-hit-control，
+   故不加 min-height（加了会改家族几何）。
+   卡内既有交互件仍各自为政：它们在 JS 侧被显式让路（scheduleCard.js 的
+   CARD_INTERACTIVE_SEL），本处只把它们的 cursor 拨回各自原本的值。 */
+.schedule-card-refable { cursor: pointer; }
+/* 编辑表单里的文本控件仍是文本光标（它们是输入面，不是"可点的卡"）。 */
+.schedule-card-refable textarea.schedule-card-input,
+.schedule-card-refable input.schedule-card-input { cursor: text; }
+
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
   #reminder-btn svg {

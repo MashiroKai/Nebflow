@@ -3,7 +3,10 @@
 // cfg-modal chat window (560px glass), forward-to-agent (one-way), agent-sent
 // chips, pure-badge notifications (no sound/banner/title — [U3]).
 import { t } from './i18n.js';
-import { chatFooter, chatFooterDivider, chatFooterTime, fmBubbleRowClass } from './chatUi.js';
+import { fmBubbleRowClass } from './chatUi.js';
+// 消息条目统一批 2026-11-18：气泡节点 / 附件区 / footer 基座 / 叠卡 footer 分态
+// 四条腿的基座单点（chatItem.js）——本文件只给字段与排列变体。
+import { messageFooter, messageBubbleNode, attachmentArea, stackGroupFooter, stackCardFooter } from './chatItem.js';
 // bubble-side-color 批（2026-11-06）：气泡归属方判定/类名工厂单点（收编前本处
 // 直接拼 `bubble ${out ? 'user' : 'peer'}`，归属方语义散在模板串里）。
 import { bubbleClass, bubbleSideOfOutgoing } from './bubbleSide.js';
@@ -41,6 +44,11 @@ import { showPopupMenu, isPopupMenuOpen } from './contextMenu.js';
 import { createSessionIdentityHead } from './mobile/sessionHead.js';
 // 媒体点击统一批 P16（2026-11-11）：三窗媒体附件卡手机层 = 系统直开——层判定单点。
 import { isMobileLayer } from './mobile/popSheet.js';
+// mobile-download 批（2026-11-18 作者令「手机端的下载我不知道存哪去了」）：下载落点
+// 单点——手机层图片/视频走系统分享（可入相册）/ 其它文件分享到「存储到文件」（可指定
+// 位置）；能力不支持 ⇒ 保留原 `<a download>` 行为 + 落点提示。本文件原 `saveBlob`
+// 落点逻辑整体收编进该模块（禁第二套落点逻辑）。
+import { saveFileBlob, notifyLanding } from './downloadSave.js';
 // ⑥ 信任好友封存（作者裁定 2026-09-12）：静态常量，非配置读取、不过 latch。
 import { TRUST_SEALED } from './featureFlags.js';
 // 认知二期产品批②角标可行动判据（设计稿 §5 P6）：messages 徽标只报「需要
@@ -74,7 +82,7 @@ import { readPreviewField, previewDataUrlOf } from './attachPreviewField.js';
 // 日期行上移批（2026-11-06 作者令②）：footer 时间回归纯时钟 formatHm（日期层
 // 上移到跨天居中日期行 fm-day-sep，formatFooterDay 单点）——formatFooterTime 的
 // 分层日期档不再进本文件。
-import { formatHm, formatFooterDay, bindTimeToggle, TIME_FORMAT_CHANGED } from './timeFormat.js';
+import { formatHm, formatFooterDay, TIME_FORMAT_CHANGED } from './timeFormat.js';
 // ⑩ 合并期滚动位保持（与 Dropbox 面**共用一份实现**，无第二个公式）。
 // follow 批（2026-10-08）：贴底判定 `isAtBottom`（AT_BOTTOM_PX 单源）也从这一份
 // 实现出 —— 到达跟随、锚点补偿、回底胶囊三处共用同一判据，本面内禁第二个数。
@@ -2099,17 +2107,8 @@ function attSig(m) {
     : `${(x && x.id) || ''}:${(x && x.state) || ''}`).join(',');
 }
 
-function saveBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename || 'attachment';
-  a.style.display = 'none';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10000);
-}
+// saveBlob（原落点原语）已收编进 `./downloadSave.js`（`saveFileBlob` / `downloadViaAnchor`，
+// mobile-download 批 2026-11-18）——本文件不再持有第二份落点逻辑。
 
 /** 整件 sha256（64 位小写 hex）。拿不到字节 / 无 WebCrypto（非安全上下文）⇒ `null`。
  *
@@ -2306,11 +2305,22 @@ function buildMediaStackGroup(entrys) {
         .then(need => { if (need) modalToast(t('messages.attachPreviewFailed')); })
         .catch(() => modalToast(t('messages.attachPreviewFailed')));
     },
-    cornerFor: (item, index) => {
+    // 展开态每卡独立 footer 的下载键（消息条目统一批 2026-11-18）：fm 鉴权下载腿
+    // 由 cardFooterFor 供给 → 基座 stackCardFooter 装配（不再走角标位——作者令
+    // 「展开后每卡独立 footer 且有下载按钮」）。
+    cardFooterFor: (item, index) => {
       const e = entrys[index];
       if (!e || !e.downloadable) return null;
-      return buildDownloadKey(e.att, e.kind, e.src, { corner: true });
+      return buildDownloadKey(e.att, e.kind, e.src);
     },
+  });
+  // 合起态整组 footer（属**整组**）：基座 = chatItem.stackGroupFooter（整组下载键，
+  // 逐件走既有下载腿）。作为**兄弟节点**交宿主追加（不塞进 `.pop-stack-area` 横排行
+  // ——保折叠卡几何与「展开 N」钮位）；分态由组件 NF_POP_EXPANDED 事件驱动（宿主
+  // bubbleEl 只听不另判）。
+  /** @type {any} */ (area).nfStackGroupFooter = stackGroupFooter({
+    items: entrys,
+    downloadFor: () => buildStackGroupDownloadKey(entrys),
   });
   // 🔴 只挂 fm-att（QA/下载键宿主）+ fm-att-stack（叠卡标记）；禁挂 fm-att-media
   // （平面媒体卡根语义 —— 见本函数头注 fm-stack-pill-align 批口径：挂上即被宿主
@@ -2326,6 +2336,43 @@ function buildMediaStackGroup(entrys) {
     });
   });
   return area;
+}
+
+/** 叠卡**合起**态整组下载键（消息条目统一批 2026-11-18）：一枚键作用于整组
+ *  （逐件走既有下载腿——好友/群 = 鉴权路由，设备 = 本机件/票据），基座 =
+ *  chatItem.stackGroupFooter 的 downloadFor 供给。任一件不可下载 ⇒ 整键禁用
+ *  （零假按钮，与主会话 groupDownloadUnavailable 同纪律）。 */
+function buildStackGroupDownloadKey(entrys) {
+  const all = entrys || [];
+  const list = all.filter(e => e && e.downloadable);
+  const btn = el('button', 'fm-att-dl msg-copy msg-dl msg-group-dl');
+  btn.type = 'button';
+  setDownloadIcon(btn);
+  const label = t('messages.attachDownload');
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+  if (!list.length || list.length !== all.length) {
+    btn.disabled = true;
+    btn.title = t('messages.groupDownloadUnavailable');
+    btn.setAttribute('aria-label', btn.title);
+    return btn;
+  }
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const host = btn.closest('.fm-att');
+    if (!host) return;
+    list.forEach((en) => {
+      if (en.kind === 'device') void downloadDeviceSavedAttachment(en.att, host, btn, en.src);
+      else void downloadAttachment(en.att, host, btn);
+    });
+  });
+  return btn;
+}
+
+// 下载键字形单点（唯一行内写入点，裸 innerHTML 计数不增）：叠卡整组键与单件键
+// 共用同一枚字形，禁第二处 `innerHTML = DOWNLOAD_SVG`。
+function setDownloadIcon(btn) {
+  btn.innerHTML = DOWNLOAD_SVG;
 }
 
 /** 文件/状态附件卡：主会话文件面（`.file-card`：图标 + 名称 + footer 信息行）。
@@ -2454,7 +2501,7 @@ function buildDownloadKey(att, kind, src, opts = {}) {
   const label = t('messages.attachDownload');
   btn.title = label;
   btn.setAttribute('aria-label', `${label}: ${(att && att.name) || ''}`);
-  btn.innerHTML = DOWNLOAD_SVG;
+  setDownloadIcon(btn);
   btn.addEventListener('click', (e) => {
     // 角标位在可点面（媒体面/叠卡展开行）内：阻止冒泡成宿主的预览/翻页动作。
     e.stopPropagation();
@@ -2473,7 +2520,7 @@ function flashDownloadKey(btn, ok) {
   btn.classList.add(ok ? 'copied' : 'copy-failed');
   setTimeout(() => {
     if (!btn.isConnected) return;
-    btn.innerHTML = DOWNLOAD_SVG;
+    setDownloadIcon(btn);
     btn.classList.remove(ok ? 'copied' : 'copy-failed');
   }, ok ? 1500 : 2000);
 }
@@ -3139,11 +3186,14 @@ async function downloadAttachment(att, card, btn) {
   btn.disabled = true;
   try {
     const { blob, filename } = await api.downloadAttachment(att.id);
-    saveBlob(blob, filename || (att && att.name));
-    flashDownloadKey(btn, true);
-    // 4b1 · E4（§F.1b）：**落盘尝试完成之后**才取证回执（saveBlob 抛 ⇒ 走下面的 catch ⇒ 零 E4）。
+    const landed = await saveFileBlob(blob, filename || (att && att.name));
+    // mobile-download 批：分享面板取消 ⇒ 不是「已下载」，不闪绿勾、不发 E4、不发落点提示。
+    if (landed.route !== 'cancelled') flashDownloadKey(btn, true);
+    notifyLanding(landed);
+    // 4b1 · E4（§F.1b）：**落盘尝试完成之后**才取证回执（saveFileBlob 抛 ⇒ 走下面的
+    // catch ⇒ 零 E4）。取消腿零回执（未交给任何保存面，禁造「已落盘」的假回执）。
     // 🔴 `void` = 故意 **不 await**：回执面绝不阻塞/影响下载与 UI（失败静默容忍）。
-    void ackAttachmentLanded(att, blob);
+    if (landed.route !== 'cancelled') void ackAttachmentLanded(att, blob);
   } catch (err) {
     if (err && err.status === 410) {
       // 服务端权威：元数据说 ready 但字节已按瞬态口径删除（§B.7 ③ 表）——
@@ -3297,14 +3347,16 @@ async function downloadDeviceSavedAttachment(att, card, btn, src) {
   btn.disabled = true;
   try {
     if (s.kind === 'blob') {
-      saveBlob(s.file, (att && att.name) || '');
-      flashDownloadKey(btn, true);
+      const landed = await saveFileBlob(s.file, (att && att.name) || '');
+      if (landed.route !== 'cancelled') flashDownloadKey(btn, true);
+      notifyLanding(landed);
       return;
     }
     const blob = await savedPathBlob(s.path);
     if (!blob) throw new Error('nf-file refused');
-    saveBlob(blob, (att && att.name) || String(s.path).split('/').pop());
-    flashDownloadKey(btn, true);
+    const landed = await saveFileBlob(blob, (att && att.name) || String(s.path).split('/').pop());
+    if (landed.route !== 'cancelled') flashDownloadKey(btn, true);
+    notifyLanding(landed);
   } catch {
     // 可重试（图标红态，不升终态、不动传输状态位：下载面与传输面互不覆盖）。
     flashDownloadKey(btn, false);
@@ -3400,7 +3452,7 @@ function attachmentGroup(atts) {
     }
   }
   if (!mediaEntrys.length && !fileAtts.length) return null;
-  const list = el('div', 'fm-att-list');
+  const list = attachmentArea('fm-att-list');
   if (mediaEntrys.length >= 2) {
     const stack = buildMediaStackGroup(mediaEntrys);
     if (stack) list.appendChild(stack);
@@ -3539,7 +3591,7 @@ export function bubbleEl(m, conv) {
   const side = bubbleSideOfOutgoing(out);
   // 外壳类拼写走 chatUi.fmBubbleRowClass()（chat-ui-package 批④词表收口：
   // `fm-msg-bubble` 不再本文件直写）；内芯（角色/归属方类）仍由 bubbleClass() 单点。
-  const bubble = el('div', fmBubbleRowClass(bubbleClass(out ? 'user' : 'peer', side)));
+  const bubble = messageBubbleNode(fmBubbleRowClass(bubbleClass(out ? 'user' : 'peer', side)));
   bubble.dataset.bubbleSide = side;
   // 群气泡发送者名：仅群窗、仅入站（他人）消息挂名（本机消息右侧不挂，微信式）。
   // 成员名册未到时留空槽（data-sender-id），hydrateGroupSenderNames 到达后回填。
@@ -3559,6 +3611,17 @@ export function bubbleEl(m, conv) {
     // 卡区加宽标记（叠卡盒 220 + 扇形出画 + 「展开 N」角标 ≈ 350px > 行 78% 上限）：
     // 行放开 max-width（泡宽 = 内容自适应不受影响），CSS 侧 `.fm-msg.fm-msg-atts`。
     wrap.classList.add('fm-msg-atts');
+    // 叠卡 footer 分态（消息条目统一批 2026-11-18）：合起态**整组** footer 在场；
+    // 展开态退场（每卡自己的 footer 承担）。态机唯一 = 叠卡组件派发的
+    // NF_POP_EXPANDED 事件，本处只听不另判。
+    const gf = /** @type {any} */ (attGroup).nfStackGroupFooter;
+    if (gf) {
+      wrap.appendChild(gf);
+      attGroup.addEventListener(EVENTS.NF_POP_EXPANDED, (e) => {
+        const d = /** @type {CustomEvent} */ (e).detail;
+        gf.style.display = d && d.expanded ? 'none' : '';
+      });
+    }
   }
 
   // msgmenu 一期：被引消息 id 挂**气泡节点** dataset（🔴「跳转」的**唯一**预留挂点；
@@ -3584,7 +3647,7 @@ export function bubbleEl(m, conv) {
   // `.duration-badge`（chat.css 单点：内距/圆角/戒指影/暗档）+ 时间 `.duration-badge-time`
   // + 分隔 `.duration-badge-divider` + 复制键 `.msg-copy`。旧 `.fm-msg-*` 类保留为
   // 宿主钩子（断言面/滚动面引用），几何与配色不再由本文件另写一份。
-  const meta = chatFooter('fm-msg-meta');
+  const badges = [];
   // 批 D（作者裁定 2026-09-14 20:5x「双方可见」）：徽标**两端渲染**、无抑制逻辑
   // —— 修前判据 `out && isAgentSent(m)` 让接收侧（`out === false`）**永不进入**
   // 本分支（即便 `origin` 已修复到位，对方也看不到）⇒ 与作者诉求相左。
@@ -3595,10 +3658,8 @@ export function bubbleEl(m, conv) {
   // 选键（`messages.agentGroupBadge` 已删，禁死键/禁两套表述），全站一个键
   // `AGENT_BADGE_TEXT_KEY`；`isAgentSent` 判据零改动，附件帧与徽章同帧共存
   // （fillBubble 附件卡渲染与本分支正交 ⇒ 结构性支持 A③ 翻案）。
-  if (isAgentSent(m)) {
-    meta.appendChild(el('span', 'fm-msg-agent-badge', t(AGENT_BADGE_TEXT_KEY)));
-  }
-  if (hasForwarded(fwdKeyOf(conv, m.id))) meta.appendChild(el('span', 'fm-msg-forwarded-badge', t('messages.forwarded')));
+  if (isAgentSent(m)) badges.push({ className: 'fm-msg-agent-badge', text: t(AGENT_BADGE_TEXT_KEY) });
+  if (hasForwarded(fwdKeyOf(conv, m.id))) badges.push({ className: 'fm-msg-forwarded-badge', text: t('messages.forwarded') });
   const timeMs = toEpochMs(m.createdAt);
   // 日期行上移批（2026-11-06 作者令②「会话流里日期行每条都显……跨天只显示一次」）：
   //   · footer 时间 = **纯时钟** `formatHm`（12/24 偏好同档）——日期层不再落在
@@ -3609,13 +3670,10 @@ export function bubbleEl(m, conv) {
   //   · `data-ts`（跳转锚）+ `data-ts-text`（时钟就地重排）两契约保留；去掉
   //     `data-ts-text-format="day"` ⇒ 12/24 切换按纯时钟重排（timeFormat 契约）；
   //   · `bindTimeToggle` 恒绑（主会话恒绑 ⇒ 热区/键盘/aria 语义三面同款）。
-  const timeSpan = chatFooterTime('fm-msg-time', timeMs ? formatHm(timeMs) : '');
-  if (timeMs) {
-    timeSpan.setAttribute('data-ts', String(timeMs));
-    timeSpan.setAttribute('data-ts-text', String(timeMs));
-    bindTimeToggle(timeSpan);
-  }
-  meta.appendChild(timeSpan);
+  // 时间/分隔/动作的 DOM 装配收归 chatItem.messageFooter（消息条目统一基座）——
+  // 本处只给**字段**（纯时钟档 formatHm）与**排列**（fm-msg-time / fm-msg-divider）。
+  // data-ts（跳转锚）/ data-ts-text（时钟就地重排）/ bindTimeToggle 恒绑三条契约
+  // 由基座按 spec 落定（与改前逐字同形）。
 
   const actions = el('span', 'fm-msg-actions');
   const copyBtn = el('button', 'fm-msg-act msg-copy');
@@ -3658,8 +3716,17 @@ export function bubbleEl(m, conv) {
   // @.2 + flex-shrink:0）—— fm-footer-align 批 2026-11-02：旧形态用
   // `.fm-msg-actions::before` 伪元素（视觉等价、结构不同），现与主会话同构：真节点、
   // 同几何、同间距档（pill gap 6 + 1 + 6 = 13px，主会话实测同档）。
-  meta.appendChild(chatFooterDivider('fm-msg-divider'));
-  meta.appendChild(actions);
+  const meta = messageFooter({
+    extraClass: 'fm-msg-meta',
+    dividerClass: 'fm-msg-divider',
+    timeClass: 'fm-msg-time',
+    alwaysTime: true,
+    timestamp: timeMs,
+    timeText: timeMs ? formatHm(timeMs) : '',
+    timeFormat: 'clock',
+    badges,
+    actions,
+  });
 
   wrap.appendChild(meta);
   // 多选态下新到/新渲染的消息也带勾选面（与既有节点同一条 `attachCheck`）。
@@ -4026,16 +4093,18 @@ async function loadOlderMessages() {
 /**
  * 搜索批（2026-10-31）会话名册快照：与消息列表同一份 `conversations`
  * （refreshConversations 合并口径：单聊 + 群 + 设备，已排序）。
- * 唯手机层消息页搜索调用；桌面零行为改动（加性只读导出）。
+ * 调用方 = 手机消息页搜索 + 桌面「消息」面板搜索（desktop-search-field 批
+ * 2026-11-17 起，两端同一引擎 js/socialSearchCore.js）；加性只读导出。
  * @returns {Array<any>} 快照（浅拷贝，元素为列表行对象引用）
  */
 export function conversationSnapshot() { return conversations.slice(); }
 
 /**
- * 搜索批（2026-10-31 作者令 16:03）跳转定位缝：唯手机层消息页搜索调用——
- * 窗口内未载则按既有 keyset 回退链自动翻旧页（每轮 = 一次 loadOlderMessages
- * 语义，上限 25 轮防呆），命中节点滚动居中 + 1.6s 闪烁（CSS 手机层块）。
- * 桌面零行为改动：无调用方即不生效；会话换/窗关中途退出返回 false。
+ * 搜索批（2026-10-31 作者令 16:03）跳转定位缝：手机消息页搜索 + 桌面「消息」
+ * 面板搜索（desktop-search-field 批 2026-11-17 起）调用——窗口内未载则按既有
+ * keyset 回退链自动翻旧页（每轮 = 一次 loadOlderMessages 语义，上限 25 轮防呆），
+ * 命中节点滚动居中 + 1.6s 闪烁（CSS 手机层块）。
+ * 会话换/窗关中途退出返回 false。
  * @param {string|number} messageId
  * @returns {Promise<boolean>} 是否定位成功
  */
@@ -6221,139 +6290,17 @@ export function devicePeers() {
   return [...self, ...peers.filter((p) => String(p.deviceId) !== selfId)];
 }
 
-// ── Settings-page device expansion area (friendseal batch ①-A, 2026-09-25) ──
-// The device face's way back to the settings page (author ruling ①: the
-// expansion area under the settings avatar; the 2026-09-15 order that had
-// moved the device entry to the contacts panel is archived by the same
-// ruling). Form = reuse the contacts host's device block classes verbatim
-// (`.fm-nf-entry` entry row + `.neblink-peer` rows; friends.css /
-// neblink.css load unconditionally — zero new CSS, zero new view), with ONE
-// implementation: this module owns devicePeers / deviceLabel / openDeviceChat
-// and renders from them; contacts.js keeps its own host copy untouched
-// (zero diff — with the friends seal as the default that host simply never
-// renders). Rows carry NO remote-update entry (the settings area is the chat
-// entry face: click a row → openDeviceChat; the hotupdate entry stays owned
-// by the contacts host). sidebar.js mounts the slot via a lazy import (no new
-// static cycle) and the settings refresh tick re-mounts it, so peer/presence
-// changes keep the area current while settings is open.
-let settingsDevicesExpanded = true; // one click into a chat is the point (ruling ①)
-let settingsDevicesBound = false;
-
-/** The area's HTML ('' when logged out — the neblink logged-out hint above
- *  owns that face). Dataset attributes are the QA assertion face (same
- *  contract family as the contacts device block). */
-export function settingsDevicesHTML() {
-  if (!getNeblinkState().loggedIn) return '';
-  const devs = devicePeers();
-  const chevron = settingsDevicesExpanded ? 'chevron-down' : 'chevron-right';
-  const entry =
-    `<div class="fm-nf-entry fm-devices-entry" data-settings-devices-entry="1" role="button" tabindex="0"` +
-    ` aria-expanded="${settingsDevicesExpanded}">` +
-    `<span class="fm-nf-icon"><i data-lucide="laptop"></i></span>` +
-    `<span class="fm-nf-label">${escapeHtml(t('contacts.sectionDevices'))}</span>` +
-    `<span class="fm-nf-chevron"><i data-lucide="${chevron}"></i></span>` +
-    `</div>`;
-  let rows = '';
-  if (settingsDevicesExpanded) {
-    const list = devs.length === 0
-      ? `<div class="fm-empty">${escapeHtml(t('contacts.devicesEmpty'))}</div>`
-      : devs.map(settingsDeviceRowHTML).join('');
-    // 全设备统一更新（fleet 批 2026-11-01，作者令：控制台设置·设备页要有「全部更新」）：
-    // 动作入口 = 本行；实际渲染/进度全在 `fleetUpdate.js` 的阻塞式状态卡里（本段只管
-    // 一个键，不复制卡片、不复制任何进度状态）。
-    const fleetBar =
-      `<div class="fm-device-fleet-bar" data-fleet-entry="1">` +
-      `<button class="fleet-btn" data-fleet-open="1" type="button">${escapeHtml(t('fleet.startAction'))}</button>` +
-      `</div>`;
-    rows = fleetBar +
-      `<div class="fm-device-list" data-settings-device-section="1" data-device-count="${devs.length}">${list}</div>`;
-  }
-  return entry + rows;
-}
-
-function settingsDeviceRowHTML(d) {
-  const icon = platformDisplay(d.platform).icon;
-  const statusText = escapeHtml(platformDisplay(d.platform).text || '');
-  const cls = 'neblink-peer fm-device-row' + (d.online === true ? '' : ' neblink-peer-offline');
-  // 每行「更新此设备」（作者令：每台设备单行也有更新动作）。本机行不挂——本机更新
-  // 由「全部更新」腿统一交编排器，单挂一个键只会出重复入口。
-  const updateBtn = d.isLocal
-    ? ''
-    : `<button class="neblink-peer-update-btn" data-settings-device-update="${escapeHtml(String(d.deviceName || ''))}" type="button">${escapeHtml(t('neblink.update'))}</button>`;
-  return `<div class="${cls}" role="button" tabindex="0" data-settings-device-row="1" data-device-id="${escapeHtml(String(d.deviceId || ''))}">` +
-    `<span class="neblink-peer-icon">${icon}</span>` +
-    `<span class="neblink-peer-name">${escapeHtml(deviceLabel(d))}</span>` +
-    presenceBadgeHTML({ ...d, isLocal: false }) +
-    `<span class="neblink-peer-status">${statusText}</span>` +
-    updateBtn +
-    `</div>`;
-}
-
-/** Mount (idempotent) the settings device area into the sidebar slot. */
-export function mountSettingsDevices(slot) {
-  if (!slot) return;
-  bindSettingsDevicesOnce();
-  slot.innerHTML = settingsDevicesHTML();
-  createIconsIn(slot);
-}
-
-function bindSettingsDevicesOnce() {
-  if (settingsDevicesBound) return;
-  settingsDevicesBound = true;
-  // Document-level delegation (the bindSettingsAccountEntry precedent in
-  // activityBar.js): the settings refresh tick replaces this area's DOM on
-  // every beat, so binding per-mount would stack listeners; one delegated
-  // pair follows re-renders for free.
-  document.addEventListener('click', (e) => {
-    const target = e.target instanceof Element ? e.target : null;
-    if (!target) return;
-    // 全设备统一更新（fleet 批 2026-11-01）：本区的两个键都只是**打开入口**——
-    // 「全部更新」开阻塞卡（确认 + 进度 + 收口全在那张卡里），「更新此设备」走既有
-    // `remoteUpdate` 单台腿再开同一张卡。动态 import 规避 messages↔fleetUpdate 的
-    // 静态环（fleetUpdate 依赖 neblink.js，而本文件已在环上）。
-    if (target.closest('[data-fleet-open]')) {
-      e.stopPropagation();
-      import('./fleetUpdate.js').then((m) => m.openFleetUpdatePanel()).catch(() => {});
-      return;
-    }
-    const updateBtn = target.closest('[data-settings-device-update]');
-    if (updateBtn instanceof HTMLElement) {
-      e.stopPropagation(); // 行激活（→ 开设备会话窗）让位：更新键只做更新
-      const dn = updateBtn.dataset.settingsDeviceUpdate || '';
-      if (dn) {
-        import('./fleetUpdate.js').then((m) => m.updateSingleDevice(dn)).catch(() => {});
-      }
-      return;
-    }
-    const row = target.closest('[data-settings-device-row]');
-    if (row instanceof HTMLElement) {
-      // checkJs gate fix (mention-routing batch, 2026-09-27): Element has no
-      // `dataset` — narrow to HTMLElement. Runtime-equivalent: the selector
-      // only ever matches this HTML row div.
-      const d = devicePeers().find((p) => String(p.deviceId || '') === row.dataset.deviceId);
-      if (!d) return;
-      ensureDeviceChatWiring();
-      openDeviceChat(d);
-      return;
-    }
-    if (target.closest('[data-settings-devices-entry]')) {
-      settingsDevicesExpanded = !settingsDevicesExpanded;
-      mountSettingsDevices(document.getElementById('settings-devices-slot'));
-    }
-  });
-  document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const target = e.target instanceof Element ? e.target : null;
-    if (!target) return;
-    if (target.closest('[data-settings-device-row]') || target.closest('[data-settings-devices-entry]')) {
-      e.preventDefault();
-      // checkJs gate fix (mention-routing batch, 2026-09-27): Element has no
-      // `click()` — type assertion only; the code already assumed HTMLElement
-      // (SVG targets have no .click() at runtime either).
-      /** @type {HTMLElement} */ (target).click();
-    }
-  });
-}
+// ── Settings-page device expansion area — 整件退役（作者令 2026-11-18）──────
+// 原 「设置账号卡」内的设备展开区（`settingsDevicesHTML` / `mountSettingsDevices` /
+// `bindSettingsDevicesOnce` / `settingsDeviceRowHTML` + `#settings-devices-slot`）随
+// 「登录账号」账户卡整件移除（2026-11-18 16:36/16:45 作者令）——卡片没了，槽位永不
+// 存在 ⇒ 整组不可达。设备会话入口仍在联系人面板（`contacts.js` 的
+// `[data-devices-entry]` → `openDeviceChat`），本模块的 `devicePeers` /
+// `openDeviceChat` / `ensureDeviceChatWiring` 保留（联系人面板与别处共用）。
+// 连带退役的独占面：`[data-settings-devices-entry]` / `[data-settings-device-row]` /
+// `[data-settings-device-section]` / `[data-settings-device-update]` / `[data-fleet-entry]`
+// / `[data-fleet-open]` 及 `.fm-device-fleet-bar` 与 i18n `neblink.update` /
+// `fleet.startAction`（本区唯一消费者）。
 
 /** 本机设备 id（MVP-2 方向重算 P2 的**比对基准**）。
  *  数据源 = `getNeblinkState().device.deviceId`（与 `devicePeers` 同一 state 单点，

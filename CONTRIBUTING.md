@@ -82,6 +82,35 @@ CI runs the smoke suite against a freshly built JAR, so a green local run plus g
 
 For the main composer at the mobile viewport, the send button's circular border box must be 0.625 times the voice button's circular border-box height, in both dimensions (tolerance 0.5 CSS px). The author confirmed the 40px size and 0.625 coefficient on 2026-11-17. The reference is the voice button's stable 64px interaction box, not the animated canvas sphere diameter. Send and stop remain the same size. The hit boundary must extend at least N=2 CSS px beyond the visual border on all four sides, giving a minimum 44px edge-to-edge reach for the 40px button. The browser gate actually clicks the four axis points 2px outside and checks delivery; the 4px-outside points are recorded but need not hit. This axis-point contract does not claim that the corners of a 44px square are clickable. Desktop and other composers are outside this rule. The self-contained browser gate `node tests/mobile-send-scale.mjs` runs after the Playwright setup above; CI's `mobile-send-scale-lint` is blocking. It samples light and dark at 390×844; it is not a replacement for broader visual and interaction testing.
 
+### Rendered row-center check
+
+Run locally after the Playwright setup above; CI runs the same command in the
+`row-center-lint` job without `continue-on-error` (the wider `frontend-specs`
+job is currently non-blocking; branch protection is configured separately):
+
+```sh
+npx playwright test tests/ask-mail-channel.spec.mjs -g 'row-center' --reporter=line
+```
+
+The check audits visible DOM in its mocked main-chat and open Canvas/Ask dock
+states; it does not claim to cover unvisited screens or states. A content row is
+an in-flow horizontal flex row or single-row grid with at least two visible
+items sharing a vertical interval. Legacy inline text plus inline elements is
+also measured so unwrapped text cannot evade the check. Text fragments use a
+Range; elements use their bounding boxes. The maximum pairwise vertical-center
+spread above 1 CSS px fails, with selectors and measurements. One pixel allows
+layout rounding (the corrected ASK row measured 0.016px), while a 4px defect
+still fails. Absolutely/fixed positioned elements are not row layout items.
+
+Explicit exemption: `body`, the page-level shell whose children are full panels
+rather than adjacent content items. Its differing panel heights are reported as
+an exemption, not silently dropped or hidden by a larger tolerance. A single
+row is a collection of adjacent content items, not a whole page or panel layout.
+Add any further exemption with a specific selector and rationale, not a blanket
+threshold change. Dynamic, hidden, unrendered and unvisited states require their
+own harnesses; an empty report is not a product-wide geometry guarantee.
+
+
 ## Branches and commits
 
 The author designated `feat/base` on 2026-11-17 as this repository's **only long-lived feat base branch** and feature integration baseline, created from local `main` at `0f9f5aab762f601d382e8121fc7c994f366d4c06`. It is reserved: only the author may create or delete it. New development branch names must use scoped `feat/*` or `bug/*`; `fix/*` remains rejected for new branches. Existing `fix/*` development branches are grandfathered for integration into `feat/base`.

@@ -4,7 +4,14 @@ import cats.effect.IO
 import cats.syntax.foldable.toFoldableOps
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.core.scheduler.{DoneRecord, ScheduledTask, ScheduledTaskService, ScheduledTaskStore}
+import nebflow.core.scheduler.{
+  DoneRecord,
+  ScheduledTask,
+  ScheduledTaskService,
+  ScheduledTaskStore,
+  TodoDecision,
+  TodoTaxonomy
+}
 import nebflow.shared.TimeAnchor
 
 import java.time.*
@@ -18,13 +25,21 @@ todo (待办) on the USER's inbox until they write it off — or manage existing
 (list / cancel / done). At the scheduled time the content is injected into your conversation
 as an instruction — you then execute it.
 
-Semantic split (two faces, one ledger):
-- kind="task" = YOUR reminder: fires into your conversation at the time — the agent face
-  (unchanged semantics).
-- kind="todo" = the USER's face: it lands in the user's todo inbox (消息列表 → 待办事项),
-  surfaces in the daily morning digest on your side, and waits there until the user checks
-  it off or cancels it. The user answers WHEN FREE — never expect an immediate reply to a
-  todo. Non-blocking decisions/approvals belong here, NOT in an AskUser popup.
+Semantic split (three names, one ledger — 待办数据模型与命名规范批 2026-11-18):
+- 提醒 Reminder = what the AUTHOR creates FOR HIMSELF. Never created by you (the server
+  records source="user" on the frontend reminder entry). No options needed.
+- 待办 Todo = what YOU dispatch to the author (kind="todo"). It lands in the user's todo
+  inbox (消息列表 → 待办事项), surfaces in the daily morning digest on your side, and waits
+  until the user decides/checks it off. **Every 待办 MUST carry `decision.options`** —
+  a decision item without options is rejected at the write side. The user answers WHEN
+  FREE — never expect an immediate reply. Non-blocking decisions/approvals belong here,
+  NOT in an AskUser popup.
+- 定时任务 ScheduledTask = a timed task (kind="task", the default): fires into your
+  conversation at triggerAt. Not a todo, no options. (This face is what the code calls
+  kind="task"; it is NOT called a "reminder" any more — the word 提醒 is reserved for the
+  author's own items.)
+A todo (待办) and a scheduled task (定时任务) live in the SAME store and the SAME list
+query — one inbox, two faces.
 
 ## When to Use
 
@@ -38,7 +53,8 @@ Semantic split (two faces, one ledger):
   re-injected every morning at 09:00 as one digest until done/cancelled. Persist it — never
   let an unfinished todo rot in context memory.
 - 待决策/待批准（非阻塞）— you need the user's decision or approval but CAN keep working
-  without it: create with kind="todo" (content = the decision to make). It appears in the
+  without it: create with kind="todo" (content = the decision to make) **plus a `decision`
+  with the concrete options** — a 待办 without options is rejected. It appears in the
   user's todo inbox; they batch-approve when free. Use AskUserQuestion ONLY when truly
   blocked (the next step is impossible without the answer).
 
@@ -115,6 +131,14 @@ Semantic split (two faces, one ledger):
   "stand"…) — the user's todo inbox groups and filters by it, so ALWAYS tag a todo with its
   project when one is obvious from context. Omit = ungrouped; on edit, "" clears the label.
 - **id** (cancel/done/edit): Entry id — from action=list.
+- **decision** (create, **REQUIRED for kind="todo"**): the structured options the author
+  will choose from. `{"question": "...", "options": [{"id":"o1", "title": "<REQUIRED>",
+  "detail": "...", "media": [{"kind":"image"|"video", "refType":"attachment"|"path"|"url",
+  "ref": "<id|abs path|url>", "caption": "...", "role": "cover"}]}]}`.
+  At least one option; every option needs a non-blank `title`. Media is OPTIONAL (an
+  option with no media is a legal shape) and one option may carry MULTIPLE media (they
+  render as stacked cards; `role:"cover"` marks the top one). Media is a reference — it is
+  not checked for reachability, and a dead reference only degrades to "no media".
 
 ## Establish "now" before calling (top failure cause)
 
@@ -132,8 +156,8 @@ Your context does NOT show the current date/time — never invent an absolute da
 {"action":"create", "content":"整理记忆并输出明日三件事", "triggerAt":"tomorrow at 09:00", "repeat":"daily", "name":"morning-review"}
 {"action":"create", "content":"提醒用户 review PR #42", "triggerAt":"2026-10-10T17:00:00+08:00", "name":"pr42-review-reminder"}
 {"action":"create", "content":"检查 CI 状态并向用户汇报", "triggerAt":"21:30", "repeat":"hourly", "condition":"test -f /tmp/ci-red && exit 0 || exit 1", "name":"ci-red-watch"}
-{"action":"create", "kind":"todo", "content":"用户说过要把周报模板整理进 memory", "name":"weekly-report-template"}
-{"action":"create", "kind":"todo", "content":"等 CI 绿后合并 release 分支（需用户批准）", "name":"release-merge-approval", "project":"stand"}
+{"action":"create", "kind":"todo", "content":"选择周报模板的落地位置", "name":"weekly-report-template", "decision":{"question":"周报模板放哪？", "options":[{"id":"o1","title":"整理进 memory"},{"id":"o2","title":"落到 design/ 目录"}]}}
+{"action":"create", "kind":"todo", "content":"等 CI 绿后合并 release 分支（需用户批准）", "name":"release-merge-approval", "project":"stand", "decision":{"question":"是否合并 release 分支？", "options":[{"id":"o1","title":"批准合并"},{"id":"o2","title":"先不合并","detail":"等下一个窗口"},{"id":"o3","title":"看截图再定","media":[{"kind":"image","refType":"attachment","ref":"<attachment-id>","role":"cover"},{"kind":"image","refType":"attachment","ref":"<attachment-id-2>"}]}]}}
 {"action":"edit", "id":"af17698a", "content":"改为：整理周报模板进 design/", "project":"stand"}
 {"action":"list"}
 {"action":"done", "id":"af17698a"}
@@ -149,6 +173,11 @@ Your context does NOT show the current date/time — never invent an absolute da
   occurrence for you).
 - Routine duplicated after a restart → you omitted `name`, so upsert could not converge it.
 - action="done" on a scheduled task id → done is todo-only; use cancel for scheduled tasks.
+- kind="todo" without `decision` → REJECTED (TODO_OPTIONS_REQUIRED): every 待办 must carry at
+  least one option with a non-blank title. Add `decision`, or use kind="task" if it really
+  is a timed task, or tell the user to create it himself (that is a 提醒, options optional).
+- An option's `media` is a reference, not bytes → pass a ref (attachment id / absolute path
+  / URL); never inline base64. A missing/expired ref is fine (renders as no media).
 - Condition probe that always exits 0 → the task fires unconditionally; a probe that never
   does → one-shot goes PAUSED after 24h. Test the probe with Bash first.
 
@@ -219,6 +248,19 @@ Your context does NOT show the current date/time — never invent an absolute da
         "id" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "(cancel/done/edit) Entry id — from action=list.".asJson
+        ),
+        "decision" -> Json.obj(
+          "type" -> "object".asJson,
+          "description" ->
+            """(create, REQUIRED for kind="todo") The todo's DECISION — every agent-dispatched todo must carry options (the user decides, not just reads). Shape:
+              |{"question":"<one line>", "multiSelect":false, "allowOther":false, "secret":false, "expiresAt":<epoch ms|null>,
+              | "options":[{"id":"o1","title":"<REQUIRED short label>","detail":"<optional long text>",
+              |             "media":[{"kind":"image|video","refType":"attachment|path|url","ref":"<id|abs path|url>",
+              |                       "mime":null,"caption":null,"role":"cover"}]}]}
+              |Rules: >=1 option; each option needs a non-blank `title` (media is OPTIONAL — an option with no media is legal);
+              |one option may carry MULTIPLE media (they render as stacked cards, `role:"cover"` = the top one).
+              |Media is a REFERENCE, never inline bytes, and is NOT checked for reachability — a dead reference degrades to "no media"; it never invalidates the todo.
+              |Omit `decision` on kind="task" (定时任务) — it is not consumed there.""".stripMargin.asJson
         )
       )
       // required 刻意留空（2026-09-06）：action=list/cancel 不携带 content/triggerAt，
@@ -302,8 +344,22 @@ Your context does NOT show the current date/time — never invent an absolute da
                   // 双面化（2026-10-24）：kind="todo" 走待办面（无 triggerAt，
                   // 每日浮出直至 done/cancel）；默认/缺省走定时任务面（现状零变化）。
                   val isTodo = input("kind").flatMap(_.asString).map(_.trim.toLowerCase).contains("todo")
-                  if isTodo then createTodoAction(taskStore, taskService, input, ctx, sessionId)
-                  else createAction(taskStore, taskService, input, ctx, sessionId)
+                  // 待办数据模型批（2026-11-18）：「待办必须有选项」的**唯一写侧强制点**。
+                  // 判定依据 = 本工具的创建一律 source="tool" ⇒ 落入 TodoClass.Todo
+                  // （作者令「你创建的是待办和定时任务」）⇒ 选项必备。定时任务面
+                  // （kind≠todo）不强制，但带了 decision 就必须成形。
+                  val createKind = Option.when(isTodo)(ScheduledTask.KindTodo)
+                  TodoTaxonomy.decodeDecision(Json.fromJsonObject(input)) match
+                    case Left(v) => IO.pure(Left(ToolError(v.message)))
+                    case Right(decision) =>
+                      TodoTaxonomy.validateCreate(createKind, Some(TodoTaxonomy.SourceTool), decision) match
+                        case Left(v) => IO.pure(Left(ToolError(v.message)))
+                        case Right(_) =>
+                          // 只在通过校验后归一化（空白选项 id 补齐 / title 定案），
+                          // 保证落库形态干净且与校验所见一致。
+                          val normalized = decision.map(TodoTaxonomy.normalizeDecision)
+                          if isTodo then createTodoAction(taskStore, taskService, input, ctx, sessionId, normalized)
+                          else createAction(taskStore, taskService, input, ctx, sessionId, normalized)
             case other => IO.pure(Left(ToolError(s"Unhandled action $other"))) // unreachable (guarded above)
     end if
   end call
@@ -611,7 +667,8 @@ Your context does NOT show the current date/time — never invent an absolute da
     taskService: Option[ScheduledTaskService],
     input: JsonObject,
     ctx: ToolContext,
-    sessionId: String
+    sessionId: String,
+    decision: Option[TodoDecision] = None
   ): IO[Either[ToolError, String]] =
     val content = input("content").flatMap(_.asString).getOrElse("")
     val repeat = input("repeat").flatMap(_.asString).filter(validRepeat.contains)
@@ -651,9 +708,10 @@ Your context does NOT show the current date/time — never invent an absolute da
             taskName,
             None,
             input("condition").flatMap(_.asString),
-            input("project").flatMap(_.asString)
+            input("project").flatMap(_.asString),
+            decision = decision
           )
-          val ownedTask = task.copy(source = Some("tool"))
+          val ownedTask = task.copy(source = Some(TodoTaxonomy.SourceTool))
           for
             rearm <- taskName match
               case Some(n) => taskStore.upsertTaskByName(ownedTask, ScheduledTaskStore.toolOwnsLegacyNamedTask)
@@ -722,7 +780,8 @@ Your context does NOT show the current date/time — never invent an absolute da
     taskService: Option[ScheduledTaskService],
     input: JsonObject,
     ctx: ToolContext,
-    sessionId: String
+    sessionId: String,
+    decision: Option[TodoDecision] = None
   ): IO[Either[ToolError, String]] =
     val content = input("content").flatMap(_.asString).getOrElse("")
     val taskName = input("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
@@ -743,9 +802,9 @@ Your context does NOT show the current date/time — never invent an absolute da
       val todo = ScheduledTask.create(
         sessionId, content, surfaceAt, None, None, taskName,
         Some(ScheduledTask.KindTodo), None, project,
-        0, todoDetail
+        0, todoDetail, decision
       )
-      val ownedTodo = todo.copy(source = Some("tool"))
+      val ownedTodo = todo.copy(source = Some(TodoTaxonomy.SourceTool))
       for
         rearm <- taskName match
           case Some(n) => taskStore.upsertTaskByName(ownedTodo, ScheduledTaskStore.toolOwnsLegacyNamedTask)

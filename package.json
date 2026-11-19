@@ -8,7 +8,7 @@
     "check:sdd": "node scripts/check-sdd.mjs",
     "check:openspec": "node scripts/check-openspec.mjs",
     "test:scripts": "node --test scripts/tests/*.test.mjs",
-    "lint:tools": "eslint eslint.config.mjs scripts/check-js-types.mjs scripts/run-checks.mjs scripts/check-sdd.mjs scripts/check-openspec.mjs scripts/tests/",
+    "lint:tools": "eslint eslint.config.mjs scripts/check-js-types.mjs scripts/run-checks.mjs scripts/check-sdd.mjs scripts/check-openspec.mjs scripts/check-message-item-unify.mjs scripts/check-ui-structure.mjs scripts/check-copy-budget.mjs scripts/check-button-source.mjs scripts/lib/ scripts/tests/",
     "check:wt": "python3 -B scripts/check-delivery.py --manifest-only",
     "check:static": "node scripts/run-checks.mjs --profile static",
     "check:frontend": "node scripts/check-provider-buttons.mjs && node scripts/run-checks.mjs --profile frontend && npm run check:panel-uniform",
@@ -17,6 +17,7 @@
     "check:canvas-families": "node scripts/check-canvas-families.mjs",
     "check:canvas-button-geom": "node tests/canvas-button-unify-geom.spec.mjs",
     "check:canvas-button-diff": "node tests/canvas-button-unify-diff.spec.mjs",
+    "check:message-item-unify": "node scripts/check-message-item-unify.mjs",
     "check:mobile-band-ruler": "node tests/mobile-band-ruler.spec.mjs",
     "check:mobile-touch-target": "node tests/mobile-touch-target.spec.mjs",
     "check:askinput-off-pending-text": "node tests/askinput-off-pending-text.spec.mjs",
@@ -67,6 +68,16 @@
         "sha256": "717bc9ae7853b61f0f76455dddf0ecd4f527a783f42de2ac24684899c1c46258",
         "bytes": 23335,
         "loadedBy": "js/mathRender.js（与 katex.min.js 同一次注入 <link data-nf-katex>）"
+      },
+      "vendor/codemirror-merge/codemirror-merge.min.js": {
+        "package": "@codemirror/state + @codemirror/view + @codemirror/merge",
+        "version": "6.7.6 + 6.43.15 + 6.12.3",
+        "source": "https://registry.npmjs.org/@codemirror/merge/-/merge-6.12.3.tgz (+ state 6.7.6 / view 6.43.15 传递依赖)",
+        "license": "MIT",
+        "sha256": "dad7dcb9444f503f2f85a3dacb16c7bad2796e27c978066051852a021afd5156",
+        "bytes": 276192,
+        "loadedBy": "js/diffView/cmLoader.js（共享差异组件首次挂载时注入一次；globalThis.NfCodeMirror）",
+        "build": "scripts/build-vendor-codemirror-merge.mjs"
       }
     },
     "noNewBareDependencies": "```svg 围栏（js/svgFence.js）零第三方依赖：解析与白名单重建用浏览器原生 DOMParser + createElementNS。"

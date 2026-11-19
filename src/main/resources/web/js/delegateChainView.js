@@ -420,7 +420,8 @@ function renderStructureBody(pane) {
         if (!external) {
           card.setAttribute('role', 'button');
           card.addEventListener('click', () => {
-            if (dispositionUndo) dispositionUndo.remove();
+            // notice-unify 批：原「下钻前先撤掉撤销 toast」的手工清理随本地 toast 一并
+            // 退役 —— showToast 自带生命周期（可关闭时 8s 自动收走），无需外部句柄。
             openDelegateChainTask(p.key, {
               taskNo: r.taskNo, delegateId: r.delegateId, title: r.title,
               status: r.status, executor: r.executor, project: r.project,
@@ -479,33 +480,24 @@ export function rerenderDelegateChainPane(pane) {
 // 唯一主动作 = 抽屉「恢复」。
 // 样式自注入（本视图无独立 CSS 载体；flowMap.css 的 .fm-fab 定位在 .fm-float-layer
 // 宿主语境，本视图 body 直接宿主——不挪用其类名，避免层叠面耦合）。
-let dispositionUndo = null;
+// notice-unify 批（2026-11-18）：本处曾是**第三份 toast**（自绘 .delegate-archive-toast，
+// 绝对定位在本抽屉 pane 内）——并回全站唯一瞬时提示源 showToast；原「撤销」按钮 =
+// toast 的 action 形状开关（不再是第二套按钮 DOM / 第二份样式）。
 function showDispositionUndo(pane, id, label) {
-  if (dispositionUndo) dispositionUndo.remove();
-  const toast = document.createElement('div');
-  dispositionUndo = toast;
-  toast.className = 'delegate-archive-toast';
-  const text = document.createElement('span');
-  text.textContent = t('delegate.archive.toast', { n: label });
-  const undo = document.createElement('button');
-  undo.type = 'button';
-  undo.dataset.dispositionUndo = id;
-  undo.textContent = t('delegate.disposition.undo');
-  toast.append(text, undo);
-  pane.appendChild(toast);
-  const timer = setTimeout(() => toast.remove(), 5000);
-  undo.addEventListener('click', async () => {
-    undo.disabled = true;
-    const result = await setDelegateDisposition(id, '');
-    if (result.state !== 'ok') {
-      undo.disabled = false;
-      undo.title = t('delegate.disposition.error');
-      return;
-    }
-    clearTimeout(timer);
-    toast.remove();
-    refreshMirror();
-    rerenderDelegateChainPane(pane);
+  window.__showToast?.(t('delegate.archive.toast', { n: label }), 'info', {
+    closable: true,
+    action: {
+      label: t('delegate.disposition.undo'),
+      onClick: async () => {
+        const result = await setDelegateDisposition(id, '');
+        if (result.state !== 'ok') {
+          window.__showToast?.(t('delegate.disposition.error'), 'error');
+          return;
+        }
+        refreshMirror();
+        rerenderDelegateChainPane(pane);
+      },
+    },
   });
 }
 
@@ -619,18 +611,8 @@ const STRUCT_ARCHIVE_CSS = `
 .delegate-archive-act:hover:not(:disabled) { background: var(--color-frame-hover, rgba(128,128,128,0.12)); color: rgb(var(--sapphire)); border-color: rgb(var(--sapphire) / 0.4); }
 .delegate-archive-act:disabled { opacity: 0.5; cursor: default; }
 .delegate-archive-empty { padding: var(--ds-space-block-y) var(--ds-space-1h); font: 400 var(--ds-fs-hint)/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text-muted); }
-/* 自动归档到达 toast（§D：fm-exit 到达反馈——「#N 已完成并归档」+ 5s 撤销）。 */
-.delegate-archive-toast {
-  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
-  z-index: 47; display: flex; align-items: center; gap: var(--ds-space-inline-gap); min-width: 0;
-  padding: var(--ds-space-2) 14px; border-radius: var(--ds-radius-xl);
-  background: var(--glass-bg, var(--color-surface));
-  border: 1px solid var(--color-border);
-  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.35);
-  font: 400 var(--ds-fs-hint)/1.5 -apple-system, BlinkMacSystemFont, sans-serif; color: var(--color-text);
-  animation: delegate-drawer-in 0.18s ease;
-}
-.delegate-archive-toast[hidden] { display: none; }
+/* notice-unify 批（2026-11-18）：原「自动归档到达 toast」.delegate-archive-toast 样式
+   整块删除 —— 该提示并回全站唯一瞬时提示源 showToast（css/modal.css 单源）。 */
 /* L2 卡内子代理/flow 徽标（§D：与 §B 行内徽标同件同语言）。 */
 .delegate-card-kids, .delegate-card-flow {
   flex-shrink: 0; display: inline-flex; align-items: center; gap: var(--ds-space-half);
@@ -687,33 +669,16 @@ export function attachStructureArchive(body) {
   drawer.hidden = true;
   body.appendChild(drawer);
 
-  let toastEl = null;
-  let toastTimer = null;
-  const hideToast = () => {
-    if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
-    if (toastEl) { toastEl.remove(); toastEl = null; }
-  };
-
   /**
-   * 收口到达 toast（§D：单一在飞实例；自动退场，**主动作已退役**）。
+   * 收口到达提示（§D：一过性；**主动作已退役**）。
    *
-   * 阶段②（delegate-lifecycle-reform）：原「5s 撤销」按钮（= 反归档回平铺面，
-   * `POST /delegates/:id/unarchive`）随手动归档/反归档整体退役——引擎侧端点与
-   * `DelegateRegistry.archive/unarchive` 写点已删除，钮再在就是死交互。本 toast
-   * 收敛为**纯通知**（无按钮，不产生任何写请求）。
+   * 阶段②（delegate-lifecycle-reform）：原「5s 撤销」按钮随反归档整体退役。本提示
+   * 收敛为**纯通知**；notice-unify 批（2026-11-18）再并回全站唯一瞬时提示源
+   * showToast —— 本文件零 toast 样式（原 .delegate-archive-toast 已删除）。
    */
   const showToast = (detail) => {
-    if (!pane) return;
-    hideToast();
     const label = detail.taskNo ? `#${detail.taskNo}` : String(detail.title || detail.delegateId || '');
-    toastEl = document.createElement('div');
-    toastEl.className = 'delegate-archive-toast';
-    toastEl.dataset.archiveToast = String(detail.delegateId || '');
-    const text = document.createElement('span');
-    text.textContent = t('delegate.archive.toast', { n: label });
-    toastEl.appendChild(text);
-    pane.appendChild(toastEl);
-    toastTimer = setTimeout(hideToast, 5000);
+    window.__showToast?.(t('delegate.archive.toast', { n: label }), 'info');
   };
 
   /** 拉历史窗进抽屉（fail-soft：null = 静默缺席，空态文案兜底）。行动作 ×1 =

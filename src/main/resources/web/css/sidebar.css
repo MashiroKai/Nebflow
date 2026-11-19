@@ -1173,7 +1173,7 @@
 }
 
 /* ── Config Buttons ────────────────────────────────────────────────────────
-   设计语言批 2026-10-21（账本 design-language §2/§4/§5/§7）：面板按钮档 =
+   设计语言批 2026-10-21（账本在 stand-dev 插件包 tokens 章 §2/§4/§5/§7）：面板按钮档 =
    12px 字（11px 判偏整改）/ 6px 16px 栅格距（5px 判偏）；主档墨族实底
    （--btn-primary-* 墨族 token 单源，2026-10-30 按钮体系批：原绿实底
    --color-primary 降级为身份/状态绿）；sm 档 12px 字 4px 12px。
@@ -1337,7 +1337,7 @@
   /* 面板标题条唯一版式（panel-language 批 2026-11-06，作者令 3(e)「顶部文字大小等
      面板设计……统一整理出一套面板的设计语言」）：cfg-modal 族所有面板头统一
      15px/600/1.4 三令牌（--ds-panel-title-*，design-system.css §⑲；
-     机检 = scripts/check-panel-unify.mjs P1，规范 = design-language panel-spec.md）。
+     机检 = scripts/check-panel-unify.mjs P1，规范 = stand-dev 插件包 panel-spec.md）。
      改前 = --ds-fs-subtitle(14px)/600 裸字重，同族各面各写。 */
   font-size: var(--ds-panel-title-fs);
   font-weight: var(--ds-panel-title-fw);
@@ -1515,30 +1515,10 @@
 }
 
 
-/* ── Config Toast (validation errors) ─────────────────────────────── */
-/* ui-status-redesign（分叉④=A，S7 全站归一）：全站唯一违规件「实心红底白字」
-   并入 nebflow-toast（modal.css:1140）玻璃规范——同一毛玻璃材质（--glass-control-*
-   token 系）、行首 circle-x 红图标（--status-error-icon，图标载体）+ 中性正文。
-   布局钩子（fixed/bottom/z-index/动画）保留，正文可读性回到主题 token。 */
-.cfg-toast {
-  position: fixed; bottom: 20px; right: 20px; z-index: 10000;
-  max-width: 400px; padding: var(--ds-space-block-y) var(--ds-space-4); border-radius: var(--ds-radius-xl);
-  font-size: var(--ds-fs-body); line-height: 1.4;
-  display: flex; align-items: flex-start; gap: var(--ds-space-2);
-  background: var(--glass-control-bg);
-  border: 1px solid var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge),
-    0 1px 3px var(--glass-control-glow),
-    0 2px 8px var(--glass-control-shadow),
-    0 8px 24px var(--glass-control-glow);
-  color: var(--color-text);
-  animation: cfg-toast-in 0.2s ease-out;
-}
-.cfg-toast-error .st-ic { width: 15px; height: 15px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
-.cfg-toast-error .cfg-toast-msg { color: var(--ds-status-word); min-width: 0; overflow-wrap: anywhere; }
-@keyframes cfg-toast-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+/* ── Config validation errors ─────────────────────────────────────── */
+/* notice-unify 批（2026-11-18）：原 .cfg-toast 自绘玻璃卡（含 .cfg-toast-error /
+   .cfg-toast-msg 与 cfg-toast-in 动画）已删除 —— 该处通知并回全站唯一瞬时提示源
+   式样 .nebflow-toast（css/modal.css）；单源由 scripts/check-notice-unify.mjs 钉死。 */
 
 /* ── Agent Manager ────────────────────────────────────────────────────── */
 /* 提示文字统一（canvas-hint-text 批）：loading / empty 两态同为

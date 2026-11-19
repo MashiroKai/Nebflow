@@ -86,6 +86,13 @@ class AnthropicThinkingWireSpec extends CatsEffectSuite:
   private def thinkingKeyOf(fragment: Json): Option[Json] =
     fragment.hcursor.downField("thinking").focus
 
+  test("haiku 5.5 uses adaptive thinking without a budget; older Claude retains budget") {
+    val adaptive = adapter().wireThinkingFragment(params("claude-haiku-5-5", budgetOn))
+    assertEquals(thinkingKeyOf(adaptive), Some(Json.obj("type" -> "adaptive".asJson)))
+    val legacy = adapter().wireThinkingFragment(params("claude-sonnet-x", budgetOn))
+    assertEquals(thinkingKeyOf(legacy), Some(Json.obj("type" -> "enabled".asJson, "budget_tokens" -> 32000.asJson)))
+  }
+
   // ── W1/W2：Budget 族（未知模型兜底）─────────────────────────────────────
 
   test("historically documented endpoint is fail-closed without explicit allowlist") {

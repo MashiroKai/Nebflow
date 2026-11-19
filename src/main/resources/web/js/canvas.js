@@ -123,11 +123,36 @@ function writerChanged(role, lost = false) {
   }
 }
 const writerRejectionNotices = new Set();
+// 「保存失败」通知同因只报一次（2026-11-18 P0 作者报障「现在怎么老是出现 canvas
+// 保存失败的通知 好烦」）。页内 Set 只挡同一页里的重复；刷新页面时模块重建、
+// Set 清空 —— 而写者席位被别的控制台窗口占住（或占位者已消失、席位无人回收）时
+// 失败是**持久的**，于是每次加载都重弹一遍。去重账落到 sessionStorage（同一浏览器
+// 页签内跨刷新存活）：同因每会话只报一次；换页签/换窗口是新会话，各自的首次真实
+// 失败照报。去重只压缩重复，绝不吞掉首次失败。
+const NOTICE_SEEN_KEY = key('canvas_notice_seen');
+function noticeSeenBefore(reason) {
+  if (writerRejectionNotices.has(reason)) return true;
+  try {
+    const seen = JSON.parse(sessionStorage.getItem(NOTICE_SEEN_KEY) || '{}');
+    return !!seen[reason];
+  } catch { return false; } // storage 不可用 ⇒ 退化回页内 Set
+}
+function markNoticeSeen(reason) {
+  writerRejectionNotices.add(reason);
+  try {
+    const seen = JSON.parse(sessionStorage.getItem(NOTICE_SEEN_KEY) || '{}');
+    seen[reason] = Date.now();
+    sessionStorage.setItem(NOTICE_SEEN_KEY, JSON.stringify(seen));
+  } catch { /* 页内 Set 已覆盖本次会话 */ }
+}
+// 真失败要给**可执行的下一步**，而不是一句「保存失败」：席位是单写者、非抢占的，
+// 唯一可执行的恢复 = 让占位窗口让位。正文保持作者裁定的原句（字符串逐字不动），
+// 下一步进 toast 的 hint 次级行；通知带亲手关闭钮。
+const SAVE_FAIL_HINT = '若已打开多个控制台窗口，请关闭其他窗口后重试；仍失败请稍后重新加载页面。';
 function writerNotice(message, reason) {
-  if (reason && !writerRejectionNotices.has(reason)) {
-    writerRejectionNotices.add(reason);
-    window.__showToast?.(message, 'info');
-  }
+  if (!reason || noticeSeenBefore(reason)) return;
+  markNoticeSeen(reason);
+  window.__showToast?.(message, 'info', { closable: true, hint: SAVE_FAIL_HINT });
 }
 const canvasWriter = createCanvasWriterClient({
   changed: writerChanged,
@@ -1644,6 +1669,51 @@ function renderFilePlaceholder(paneEl, errorMsg, absPath) {
   paneEl.appendChild(wrap);
 }
 
+/** 乐观打开腿的取数超时（pop-optimistic-canvas 批）：到期即 abort + 「超时」可读
+ *  原因 + 重试键（占位不再永远转圈）。 */
+const OPTIMISTIC_FILE_TIMEOUT_MS = 30000;
+
+/** Pop 文件卡的**乐观打开**单点（pop-optimistic-canvas 批 2026-11-18 · 作者令逐字
+ *  「先乐观打开在canvas占位防丢失 然后在canvas用一个环来显示加载进度」）。
+ *
+ *  形态 = 复用 attachmentPreview.previewWithProgress 这一既有单点 —— 它已实现
+ *  「openTab **同步**先出占位 + 进度环 → 取数 → 渲染 / 失败可见 + 重试」，并且进度环
+ *  的 DOM/样式单源是 progressPane.js + css/split.css `.nf-progress-*`（本批不许新起
+ *  第二套环体系 ⇒ 这里是**引用**不是复制）。动态 import 是防静态环的既有先例
+ *  （attachmentPreview.js 静态 import 本模块）。
+ *
+ *  字节腿 = 既有 nf-file 逐路径票据路（`ticketUrl` ⇒ `/api/nf-file?path&ticket`），
+ *  `fetchBlobWithProgress` 流式读并回进度（Content-Length 可得 ⇒ 确定性环，否则
+ *  不定环）；`nfFileCache` 账本命中 ⇒ 零取数直渲染（二次打开即显）。
+ *  `signal` 由 previewWithProgress 下发：关页签 / 超时即**真 abort** 在飞 fetch。
+ * @param {{ id: string, title: string, absPath: string, pinned: boolean }} p
+ * @returns {Promise<'ok'|'unsupported'|'failed'|'aborted'>}
+ */
+async function openOptimisticFile({ id, title, absPath, pinned }) {
+  const { previewWithProgress } = await import('./attachmentPreview.js');
+  return previewWithProgress({
+    id,
+    title,
+    fileName: title,
+    absPath,
+    pinned,
+    cacheKey: 'nf:' + absPath,
+    // Pop 交付件常是 HTML 动画：html 在附件预览腿被排除（不受信远端内容），
+    // 但 Pop 文件是用户自己的本机交付件（explorer 双击同一文件即走同一 html
+    // viewer，信任域一致）⇒ 本腿显式放开排除面。
+    allowExcluded: true,
+    timeoutMs: OPTIMISTIC_FILE_TIMEOUT_MS,
+    load: async ({ onProgress, signal }) => {
+      const [{ ticketUrl }, { fetchBlobWithProgress }] = await Promise.all([
+        import('./nfTicket.js'),
+        import('./nfFileCache.js'),
+      ]);
+      const res = await fetchBlobWithProgress(await ticketUrl(absPath), onProgress, { signal });
+      return { blob: res.blob, version: res.version };
+    },
+  });
+}
+
 /** Open a file or workspace item in a Canvas tab.
  *  Uses the file viewer registry for rendering all file types.
  *  Text files open in Monaco editor (editable). Binary files are read-only.
@@ -1843,6 +1913,19 @@ export async function openWorkspaceItem(item) {
         (/** @type {any} */ (window)).__nfPendingCanvasOpen = Date.now();
         document.dispatchEvent(new CustomEvent('nf:canvas-open-intent'));
       } catch { /* ignore */ }
+    }
+    // ── Pop 文件卡乐观打开（pop-optimistic-canvas 批 2026-11-18）──────────────
+    // 唯一发射点 = popArtifacts/chat.popArtifact 的 openPopArtifact（detail 上的
+    // `optimisticOpen`）。走**单点** openOptimisticFile：占位标签 + 进度环在任何
+    // 请求**之前**出现（改前形态把「开标签」押在 pop.readFile 应答之后 ⇒ 手机端/
+    // 慢网络/票过期/判定拒绝时点击零反馈 = 本批要修的缺陷本体）。取数失败/超时/取消
+    // 全在占位里可读可见 + 重试键，**绝不**静默回落到下面那条老腿（禁「取不到就
+    // 悄悄什么都不做」）。其余调用方（引用跳转 anchor / previewLocalPath / 恢复腿）
+    // 不置该旗标 ⇒ 逐字走下方既有 pop.readFile 老路，零回归。
+    if (item.optimisticOpen) {
+      const fileName = title || absPath.split('/').pop() || absPath;
+      await openOptimisticFile({ id, title: fileName, absPath, pinned: !!pinned });
+      return;
     }
     // #303 C3: a document-reference jump carries a page anchor — stash it so
     // it survives the readFile round trip (the response item has no anchor)
@@ -4874,14 +4957,26 @@ function initCapsuleRing() {
 
 /** 手机长按引用通路（navController 卡头长按钮消费）：引用当前活动卡片进聊天，
  *  与桌面右键菜单「引用当前页」同一 appendRefToActiveView 通路（动态 import
- *  防 input.js 静态回边）。无文件可引（面板页签等）toast 与菜单同文案。 */
+ *  防 input.js 静态回边）。无文件可引（面板页签等）toast 与菜单同文案。
+ *
+ *  canvas-tab-reference 批（2026-11-18）：改前「没有可用 composer」那一腿是
+ *  **静默**的 —— `appendRefToActiveView` 的 view 空臂返回 false，调用方不读返回值
+ *  ⇒ 点了引用钮什么也看不到。本批把该腿补成**明确提示**：复用既有 toast 单源
+ *  （`window.__showToast`，modal.js 挂的站内唯一提示面 —— 零第四种通知形态）。
+ *  返回值随之升为 `Promise<boolean>`（false = 没进框，且屏上已有提示）；两个调用点
+ *  （手机看板页展开档引用钮 / 卡头长按）都不读返回值，行为不回退。
+ *  @returns {Promise<boolean>} */
 export function quoteActiveCardRef() {
   const entry = activeTabId ? tabs.get(activeTabId) : null;
-  if (!entry) return false;
+  if (!entry) return Promise.resolve(false);
   const ref = refForTab(entry);
-  if (!ref) { window.__showToast?.(t('canvas.noRef'), 'info'); return false; }
-  import('./input.js').then(({ appendRefToActiveView }) => appendRefToActiveView(ref));
-  return true;
+  if (!ref) { window.__showToast?.(t('canvas.noRef'), 'info'); return Promise.resolve(false); }
+  return import('./input.js').then(({ appendRefToActiveView }) => {
+    const ok = appendRefToActiveView(ref);
+    // 无可用 composer（对话输入框未在场）：明确提示，绝不静默什么都不做。
+    if (!ok) window.__showToast?.(t('canvas.refNoComposer'), 'info');
+    return ok;
+  });
 }
 
 /** Initialize canvas event listeners. Call on DOM ready. */

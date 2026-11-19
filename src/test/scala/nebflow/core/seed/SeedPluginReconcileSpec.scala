@@ -363,9 +363,10 @@ class SeedPluginReconcileSpec extends FunSuite:
 
     ensure()
 
-    // 种子树里但不在默认集的 6 包：零安装（种子文件保留可手动装；
-    // 默认集 = 6 包：作者裁定 2026-10-05 方案A 锚点 4→7，2026-11-01 源化批 stand-dev 迁出 seed ⇒ 6）
-    for name <- List("design-language", "design-cards", "engineering-methods", "explorer-toolkit", "design-spec")
+    // 种子树里但不在默认集的 5 包：零安装（种子文件保留可手动装；
+    // 默认集 = 6 包：作者裁定 2026-10-05 方案A 锚点 4→7，2026-11-01 源化批 stand-dev 迁出 seed ⇒ 6。
+    // 2026-11-18 single-source-rehome 批：原设计语言整包迁进 stand-dev 插件（seed 树 -1 ⇒ 非默认集 5 包）。
+    for name <- List("design-cards", "engineering-methods", "explorer-toolkit", "design-spec")
     do
       assert(
         !os.exists(home / "plugins" / name),

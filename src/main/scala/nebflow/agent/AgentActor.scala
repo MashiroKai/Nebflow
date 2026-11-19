@@ -453,6 +453,18 @@ object AgentActor extends AgentCore with AgentSession:
         s"held=${plan.events.size}"
       )
     ) *>
+      plan.events.traverse_ { event =>
+        visibleExternalEventSource(event.source, event.eventType).fold(IO.unit) { source =>
+          val sender = event.metadata("agentName").flatMap(_.asString)
+            .orElse(event.metadata("taskId").flatMap(_.asString)).orElse(event.correlationId)
+          emitInjectedUserEvent(
+            resources, plan.state.wsSend, plan.state.sessionId, event.payload, source,
+            Some(event.eventType), sender, sessionProject = plan.state.projectName,
+            fileChanges = event.metadata("fileChanges"), dedup = true,
+            askAddress = event.metadata("askMailAddress").flatMap(_.asString)
+          )
+        }
+      } *>
       touchBarrierSnapshot(resources, plan.state.sessionId, 0, 0) *>
       syncHeldReceipts(resources, plan.state.sessionId, Nil).flatMap((held, unread) =>
         emitHeldReceiptsBadge(plan.state, held, unread)
@@ -484,6 +496,19 @@ object AgentActor extends AgentCore with AgentSession:
     /** 补投的账目条目（日志/断言输入）。 */
     entries: List[nebflow.core.tools.BgTaskLedger.Entry]
   )
+
+  private[agent] def emitLedgerReplay(
+    resources: SharedResources,
+    state: AgentState,
+    plan: LedgerFlushPlan
+  )(using ActorContext[AgentCommand]): IO[Unit] =
+    plan.entries.traverse_ { entry =>
+      val text = s"Background task ${entry.jobId}: ${entry.description}\n${entry.payload.take(2000)}"
+      emitInjectedUserEvent(
+        resources, state.wsSend, state.sessionId, text, "background", Some(entry.eventType),
+        Some(entry.jobId), sessionProject = state.projectName
+      )
+    }
 
   private[agent] def flushPendingLedgerCompletions(
     state: AgentState,
@@ -1339,6 +1364,21 @@ object AgentActor extends AgentCore with AgentSession:
             val pvFields = scala.collection.mutable.ListBuffer("type" -> pv.`type`.asJson)
             pv.colors.foreach(cs => pvFields += "colors" -> cs.asJson)
             pv.src.foreach(s => pvFields += "src" -> s.asJson)
+            // askuser-media 批 2026-11-18：两个新键**只在场发**（`poster` / `items`）
+            // —— swatch / 单图 / 无预览的旧载荷逐字节不变（`AskUserBuildJsonSpec`
+            // 字节契约 V11a–V11c 不受影响）。`items` 走**与消息面媒体件同形**的
+            // 字段名（kind/src/poster/name/path），前端直接喂叠卡组件。
+            pv.poster.foreach(p => pvFields += "poster" -> p.asJson)
+            pv.items.filter(_.nonEmpty).foreach { list =>
+              pvFields += "items" -> Json.fromValues(list.map { m =>
+                val mf = scala.collection.mutable.ListBuffer("kind" -> m.kind.asJson)
+                m.src.foreach(s => mf += "src" -> s.asJson)
+                m.poster.foreach(p => mf += "poster" -> p.asJson)
+                m.name.foreach(n => mf += "name" -> n.asJson)
+                m.path.foreach(p => mf += "path" -> p.asJson)
+                Json.obj(mf.toList*)
+              })
+            }
             optFields += "preview" -> Json.obj(pvFields.toList*)
           }
           Json.obj(optFields.toList*)
@@ -1370,6 +1410,11 @@ object AgentActor extends AgentCore with AgentSession:
         if item.ephemeral then
           base += "ephemeral" -> true.asJson
           item.ttlSec.foreach(t => base += "ttlSec" -> t.asJson)
+        // 可查询批（2026-11-18）：说明与关键词标签只在场发——没有它们的历史
+        // 载荷逐字节不变（与上面四个键同一条「只在场发」纪律）。两者都是
+        // 元数据（这个凭据干什么用），与值无关。
+        item.secretDescription.foreach(d => base += "secretDescription" -> d.asJson)
+        if item.secretTags.nonEmpty then base += "secretTags" -> item.secretTags.asJson
       Json.obj(base.toList*)
     })
     Json.obj(fields.toList*)

@@ -405,6 +405,17 @@ body.mobile-layer {
   --mpad-y: 12px;
   --mgap: 8px;
   --mstack-gap: 12px;
+  /* 提问卡宿主泡横向预算 —— 手机层把 design-system.css 的同一槽
+     （`--ds-ask-card-max-w`，桌面缺省 = 消息列宽 80%）放宽到**整列**
+     （= #chat 内容盒宽，左右各 16 留白）。
+     作者令 2026-11-18 逐字：「手机端的叠卡显示有些不完整 允许它问题卡片横向占用
+     空间大一点 让内容能完整显示」。375×812 实测：80% 列宽 ⇒ 卡身 274.4 / 内容盒
+     242.4 < 叠卡行固有宽 265.3（展开钮 81.3 + 缝 16 + 卡脸 168），扇形末层再向右
+     探 32.4 ⇒ 右缘被 `.option-scroll` 裁掉 28.9px；整列 ⇒ 卡身 343 / 内容盒 311.9，
+     叠卡行与扇形露边全数落在盒内。
+     单源：本槽的名字与缺省只在 design-system.css 出生，**手机值只在本行出生**
+     （同块其它 --m* 槽同一纪律），消费面零数值。 */
+  --ds-ask-card-max-w: 100%;
   /* ── 页面级悬浮加号（todo-fullbleed 批 2026-11-05）────────────────────
      待办页 / 定时任务页右下角那颗加号的**唯一几何尺**（两页共用，禁第二把）：
        · 钮径不另立 —— 直接吃 Canvas 圆钮档 `--mtap-lg`（48 = .g2-fab 手机档
@@ -483,6 +494,11 @@ body.mobile-layer {
   --dock-inset-x: 12px;
   --dock-inset-b: 8px;
   --dock-gap: 10px;
+  /* 社交对话悬浮输入条足迹（浮层三件批 2026-11-18）：输入条本体实测高 62px
+     （内距 6/12 + 单行输入 + 1px 描边，js/messages/fmComposer.js 恒单行）。
+     消息流的末端净空 = 本值 + --mobile-dock-clearance ⇒ 滚到底时最后一条
+     正好停在输入条顶缘之上（闸 mobile-overlay-glass G2 断言本关系成立）。 */
+  --mobile-composer-reserve: 62px;
   /* 悬浮面板底距（心跳配置浮层仍锚输入卡上方）。 */
   --mobile-float-bottom: 92px;
   /* ④ 动态视口：100vh（base.css）在浏览器工具栏展开时把输入卡压到底栏之下
@@ -594,7 +610,41 @@ body.mobile-layer .mh-chrome-badge[hidden] { display: none; }
 body.mobile-layer {
   --dock-center-size: 44px;
   --dock-center-lift: 0px;
-  --mobile-dock-clearance: calc(var(--mobile-dock-measured, var(--dock-h)) + var(--dock-gap) + var(--dock-inset-b) + env(safe-area-inset-bottom, 0px));
+  /* ── dock 座 / dock 让位 / 滚域末端净空：三层单源（滚域末端净空批 2026-11-18）
+     ① `--mobile-dock-top` = 屏底 → dock 上缘的距离 = dock 高（JS 实测优先）
+        + 底内距 + 设备安全区。**所有「离 dock 多远的浮件座位」消费本值**
+        （ask 气泡钮 / 记事本窗 / 插件加号 / 输入卡 / dock 背板带），
+        禁再手写 `--dock-h + --dock-inset-b + env(safe-area-inset-bottom)`
+        —— 改前一式在 ask.css（两处）与 mobileLayer.css（两处）各写一份，
+        改一处必须同步另一处的既存重复（作者令 2026-11-18 点名的就是它）。
+     ② `--mobile-dock-clearance` = ① + 呼吸缝 --dock-gap = 浮在 dock 之上
+        那一件（输入条等）的座位；dock 等高的消费面照旧。
+     ③ `--mobile-scroll-end` = **滚域末端净空唯一来源**：任何自持滚动面
+        （页体自身 / 收编面内滚区）的内容末尾垫高都消费这一个值，页面里
+        零字面量。层叠 = dock 让位（恒在）+ 底右悬浮钮带（--mobile-fab-layer，
+        仅钮页改写成 --mpage-fab-clearance）+ 输入条层（--mobile-composer-layer，
+        仅会话页）—— 三种浮件互不共面，同 canvas 侧「控件行 + 呼吸」的做法相加
+        （见 L4915 块：`--mf-ctrl-row` + 12px 呼吸）。 */
+  --mobile-dock-top: calc(var(--mobile-dock-measured, var(--dock-h)) + var(--dock-inset-b) + env(safe-area-inset-bottom, 0px));
+  --mobile-dock-clearance: calc(var(--mobile-dock-top) + var(--dock-gap));
+  --mobile-fab-layer: 0px;
+  --mobile-composer-layer: 0px;
+}
+/* 末端净空**声明在页壳上**：两层改写（钮带/输入条）也挂在同一个 `.mobile-page`
+   元素上 ⇒ `var()` 在该元素上解析，页级改写即时生效（写在 body 上会被 body 层
+   的 0 冻结，后代改层无效 —— 自定义属性在声明元素上完成替换）。 */
+body.mobile-layer .mobile-page {
+  --mobile-scroll-end: calc(var(--mobile-dock-clearance) + var(--mobile-fab-layer) + var(--mobile-composer-layer));
+}
+/* ① 底右悬浮钮页：浮钮出现即自动加一层钮带（项名 = 页内真实的浮钮类，
+   不枚举页 id —— 新页接同族钮类即自动纳入）。 */
+body.mobile-layer .mobile-page:has(:is(.ta-fab, .tfl-fab-add, .reminder-fab-add, .proj-create-fab, [data-plugins-add])) {
+  --mobile-fab-layer: var(--mpage-fab-clearance);
+}
+/* ② 会话页：输入条浮在 dock 之上（另一件浮件，另占一条带）⇒ 末端净空再叠
+   输入条本体高（--mobile-composer-reserve，见 L486 注）。 */
+body.mobile-layer .mobile-page[data-page='conversation'] {
+  --mobile-composer-layer: var(--mobile-composer-reserve);
 }
 body.mobile-layer #mobile-dock {
   position: fixed;
@@ -802,14 +852,27 @@ body.mobile-layer #mobile-pages {
    收编根页（.mobile-page 止于胶囊上缘）的带区不再透出下层聊天根；聊天根页
    本底同 token，视觉零差。胶囊毛玻璃 backdrop 即采样该平坦底（浅暗双主题
    自适应）。::before 先于子节点绘制（页 section 几何上不与本带重叠），
-   pointer-events 随容器继承 none，零交互感知。 */
+   pointer-events 随容器继承 none，零交互感知。
+   ── 社交对话浮层三件批修订（作者令 2026-11-18 16:36「不是真透过」）──────
+   实测（375×812，修前）：本带**盖在页 section 之上**（不再是「先于子节点绘制」）
+   ⇒ dock 的 backdrop 在这一带恒为**平坦的 --color-bg**：
+     · 隐藏消息流（visibility:hidden）前后，dock 带像素逐值相同
+       （mean 24.86 → 24.86，sd 8.72 → 8.72）；把 backdrop-filter 关掉同样零变化
+       ⇒ 玻璃无内容可糊，读起来就是作者说的「半透明实底覆盖」；
+     · 把本带摘掉并把 .mobile-page 底色改红，dock 带立刻跟着变
+       （mean 24.86 → 48.12）⇒ 本带就是挡住内容的那个面。
+   修法 = 只把本带压到**页 section 之下**（z-index:-1，仍在本容器内、仍在聊天根
+   之上）：live 页是全高不透明面，天然盖住它（内容于是真正滚到 dock 玻璃背后）；
+   聊天根（无 .live 页）时本带照旧挡住宿主 #chat —— 原守卫语义一字不动。 */
 body.mobile-layer #mobile-pages::before {
   content: '';
   position: absolute;
   left: 0;
   right: 0;
   bottom: 0;
-  height: calc(var(--dock-h) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px));
+  z-index: -1;
+  /* dock 座 = 单源 token（改前 = dock-h + inset-b + safe 的手写展开）。 */
+  height: var(--mobile-dock-top);
   background: var(--color-bg);
 }
 body.mobile-layer .mobile-page {
@@ -942,9 +1005,14 @@ body.mobile-layer .mobile-page:not(.mobile-page-nohead) .mobile-page-body {
 body.mobile-layer .mobile-page-nohead .mobile-page-body {
   padding-top: calc(var(--mtitle-lead) + env(safe-area-inset-top, 0px));
 }
-/* 滚动面末端净空：实测 dock 高度、呼吸缝、底缘内距及设备安全区。 */
+/* 滚动面末端净空（滚域内容级 reserve 单源，见文件上方 --mobile-scroll-end 注）：
+   写在**滚动内容**上（页体自身滚动时即页体 padding-bottom；页体只是外壳时
+   本值归零、净空内收进真滚域，见文件尾「滚域末端净空单源批」）。
+   语义 = 滚到底时最后一行完整可见（≥ dock 上缘 + 呼吸缝），滚动态内容仍从
+   浮件下方穿过。 */
 body.mobile-layer .mobile-page-body {
-  padding-bottom: var(--mobile-dock-clearance);
+  padding-bottom: var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
 }
 body.mobile-layer .mobile-page-body::-webkit-scrollbar { display: none; }
 /* 设备平级批 2026-10-31（作者令：会话窗 = 单一固定对话窗「像微信聊天页」，禁横向
@@ -1054,18 +1122,86 @@ body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
   /* Clearance belongs to scroll content, not a permanently clipped page body. */
   padding-top: calc(104px + env(safe-area-inset-top, 0px));
 }
-/* mobile-page-body carries a bottom scroll clearance on every page (from the
-   mobile-top-clearance pass). The conversation page's input bar is not scroll
-   content and the page shell already ends at the dock's top edge, so that
-   generic 72px pad joins the flex free-height math and lifts the input bar
-   off the dock, leaving the large blank gap seen in screenshots. The message
-   flow keeps its own scroll margin; clear the page-body bottom pad on the
-   conversation page only so the input bar stays seated. */
+/* ═══ 社交对话浮层三件批（作者令 2026-11-18 16:36 手机端实拍三条）═══════════
+   ①「消息联系人对话（以后统称社交对话）下方输入框 手机端和 dock 重叠了 而且
+      还是有截断 不是真透过 真透过是类似 canvas 这样的」
+   ②「底部 dock / 输入框改成与 canvas 同一套真毛玻璃（同一配方与 α 档）」
+   ─────────────────────────────────────────────────────────────────────
+   实测根因（375×812，修前读数）：
+     · `.fm-input-bar` in-flow，页体底让位被清零 ⇒ 它的盒子 y 738–800，
+       dock 胶囊 y 750–804 ⇒ **纵向相交 50px**（输入框 62px 里只有顶 12px
+       露在 dock 上缘之上，其余 50px 被 dock 压住 = 「截断」的实底）；
+     · dock 的 `backdrop-filter: blur(24px) saturate(1.15)` 采样的是
+       `--color-bg #13161c` 平面（消息流在 y=738 就被裁剪掉，dock 带内
+       什么都没有）⇒ 模糊常量色 = 常量色，dock 读起来是「半透明实底覆盖」
+       而不是「透过」。canvas 那套玻璃同一个配方却「真透过」，差别不在
+       令牌而在**backdrop 里有没有内容**。
+   本批落位（两条同源，均只动手机层）：
+     · 输入条改为**悬浮件**：绝对定位于页面壳，底缘 = `--mobile-dock-clearance`
+       （= dock 高 54 + 呼吸缝 10 + 底内距 8 + safe）⇒ 输入框底缘 740、
+       dock 上缘 750，**留 10px 呼吸缝、零相交**；
+     · 消息流回到**满幅**（页体底让位保持 0）⇒ 气泡滚过输入条与 dock 的
+       背后，两件玻璃采样的都是真实内容 ⇒ 与 canvas 同一种「真透过」；
+       末端净空由 `.fm-flow` 的 `padding-bottom` + `scroll-padding-bottom`
+       承担（= 输入条足迹 + dock 让位），因此最后一条消息**可以滚到**
+       输入条之上完整可读（不靠遮挡换净空）。 */
 body.mobile-layer .mobile-page[data-page='conversation'] .mobile-page-body {
   padding-bottom: 0;
 }
 body.mobile-layer .mobile-page[data-page='conversation'] .fm-input-bar {
-  margin-bottom: var(--ds-space-3);
+  position: absolute;
+  left: var(--dock-inset-x);
+  right: var(--dock-inset-x);
+  bottom: var(--mobile-dock-clearance);
+  margin: 0;
+  z-index: 2;
+}
+/* 玻璃 backdrop 捕获修复（浮层三件批实测）：`overflow: hidden` 的祖先会把
+   `backdrop-filter` 的取材截断到该祖先自己的底面上（实测：输入条玻璃带在
+   背后气泡可见/不可见两态下像素逐值相同、sd=0.00 ⇒ 玻璃其实取到的是**平坦的
+   页底**，正是作者说的「实底覆盖」）。会话窗内只有 .fm-flow 需要裁剪（它自带
+   overflow），窗体自身不必裁 ⇒ 手机层对会话窗放开 overflow，玻璃才拿得到
+   窗内兄弟内容。 */
+body.mobile-layer .mobile-page[data-page='conversation'] .fm-modal {
+  overflow: visible;
+}
+body.mobile-layer .mobile-page[data-page='conversation'] .fm-flow {
+  padding-bottom: var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
+}
+
+/* ═══ 设置页顶栏悬空批（作者令 2026-11-18 16:36 第②条）══════════════════════
+   「设置的顶部还是有截断 就顶部返回按钮那一栏 **返回按钮应该也是悬空的按钮**」
+   ─────────────────────────────────────────────────────────────────────────
+   实测根因（375×812，修前读数）：
+     · 详情页档页体 padding-top = --mchrome-clear 72 ⇒ `#settings-modal`
+       （overflow:hidden）盒子 y 72–740，真滚域 `#settings-content`（overflow-y
+       auto，clientHeight 668 / scrollHeight 1820）**同一 72 上缘** ⇒ 滚动时行
+       在 y=72 被切出一条硬线（返回钮底缘 64 之下仅 8px）——这就是「顶部返回
+       按钮那一栏被裁掉」：切线与钮之间没有承接物，行像被一条看不见的实底栏
+       压断，而钮下没有任何内容可穿过（「不悬空」的读数）。
+     · 钮本体已是悬浮形态（`.mobile-back-btn`，absolute 16/16 · 48 圆 ·
+       g2-fab 玻璃 blur24/sat1.15），缺的只是**它下面没有可穿过的内容**。
+   本批落位（只动手机层、只动设置页；桌面零命中）：
+     · 滚域上提到页面顶缘（页体 padding-top 归零）⇒ 行从返回钮**背后穿过**，
+       钮成为悬空钮：内容经 1px 玻璃 + blur(24px) saturate(1.15) 洗过（真透过），
+       y=72 那条硬切线消失（新的内容边界 = 屏幕顶缘，滚动的正常边界）；
+     · 静止态首行仍不被钮压住：让位从「页体级」搬到「滚域内容级」
+       （同值 --mchrome-clear）—— 静止态视觉零位移，判定式记在闸
+       mobile-overlay-glass G4（scrollTop=0 时首行顶 ≥ 钮底缘）；
+     · 底部（滚域末端净空批 2026-11-18 18:17 补）：让位**同顶一样搬到滚域
+       内容级** —— 页体底垫归零（`#settings-modal` 吃满到屏底，内容从 dock
+       下方穿过），`#settings-content` 的 padding-bottom = `--mobile-scroll-end`
+       （见 L2738 与文件尾「滚域末端净空单源批」）。改前页体底垫把
+       `#settings-modal` 钳到 y740（dock 上缘 750 之上 10px）⇒ 行在同一条
+       水平线上被硬切，作者读作「底部还是被 dock 截断」。 */
+body.mobile-layer .mobile-page[data-page='settings'] .mobile-page-body {
+  padding-top: 0;
+  padding-bottom: 0;
+}
+body.mobile-layer .mobile-page[data-page='settings'] #settings-content {
+  padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
+  scroll-padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
 }
 
 /* ── 任务页面板（taskPanel.js 数据/卡渲染同源；浮层几何退役）────────── */
@@ -1779,19 +1915,37 @@ body.mobile-layer .mf-strip-chip {
      于是「模糊感应」与桌面同源、同一份数值、同一时长曲线（--ds-ring-dur/ease），
      手机端零新配方；旧档 `--rbl`（MAX 2.40、|k|=1 只有 0.40px）退役 ——
      作者实拍读作「手机端没有电脑端那种糊感」的根因就是它把邻位压到了 1/4 档。 */
+  /* ── 环邻位模糊**不许挂宿主**（glass-runtime 批 2026-11-18，P0 作者报障）──
+     宿主带 `filter` ⇒ 宿主成为 **backdrop root**（值恒非 none：连环心档也是
+     `blur(0px) saturate(1)`）。它的子件 `.mf-strip-chip.on::after` 是主胶囊的
+     材质层 ⇒ 那层 `backdrop-filter` 只能采「宿主自己绘制的内容」（宿主零绘制）
+     ⇒ **毛玻璃整条失效**：台上只剩 α .16 洗色底，正文原文从中穿出（作者实拍
+     「canvas 手机端的标题…像这样透明的」）。同一处 `will-change` 里的 `opacity`
+     是第二个 backdrop root 触发点（实测 `will-change: transform` 不触发）。
+     修法：模糊腿**下沉到 label**（「环邻位深度」本来就是给字的），宿主两个触发点
+     一起撤 —— 配方值/令牌/时长曲线逐字未动，只是换了挂载点。
+     实测 A/B（同一面开/关自己的 backdrop-filter，其余全等）：改前 meanΔ 1.38
+     （= 没在采样），改后 40.15（= 真采样）；判定脚本 scripts/check-glass-runtime.mjs。 */
+  transition:
+    /* 切签位移/旋转仍取 280ms（既有裁定「旋转过渡 ≤300ms、不阻塞输入」，
+       见下方 --dur-switch 注释）；**透明一条腿照抄桌面环的时长曲线**
+       （opacity 320ms ease）—— 作者口径 ④「同一配方、同一时长曲线，不重写一份」。 */
+    transform var(--dur-switch, 280ms) cubic-bezier(0.22, 0.61, 0.36, 1),
+    opacity 320ms ease,
+    max-width 220ms ease;
+  will-change: transform;
+}
+/* 环邻位深度改挂 label（本批 2026-11-18）：半径与饱和仍取 design-system.css ⑯b
+   槽的两枚令牌（`--ds-ring-blur` / `--ds-ring-saturate`，与桌面 hover 上下选项
+   `.cr-capsule.is-edge` 同源），仍只乘一枚位姿系数 `--rblf`（0 = 环心全清、
+   1 = 邻位拿满一档，layoutRing 按 |k| 写）。视觉语义零变化：旧档宿主上的 filter
+   只对「字」（label）有可见作用（宿主本体/热区/透明材质层都无可见像素），
+   故下沉 = 同一张糊感，只是不再把主胶囊的 backdrop 一起关掉。 */
+body.mobile-layer .mf-strip-chip .mf-strip-label {
   filter:
     blur(calc(var(--ds-ring-blur) * var(--rblf, 0)))
     saturate(calc(1 + (var(--ds-ring-saturate) - 1) * var(--rblf, 0)));
-  transition:
-    /* 切签位移/旋转仍取 280ms（既有裁定「旋转过渡 ≤300ms、不阻塞输入」，
-       见下方 --dur-switch 注释）；**模糊与透明两条腿照抄桌面环的时长曲线**
-       （--ds-ring-dur 360ms + 同一缓出曲线 / opacity 320ms ease）——
-       作者口径 ④「同一配方、同一时长曲线，不重写一份」。 */
-    transform var(--dur-switch, 280ms) cubic-bezier(0.22, 0.61, 0.36, 1),
-    opacity 320ms ease,
-    filter var(--ds-ring-dur) var(--ds-ring-ease),
-    max-width 220ms ease;
-  will-change: transform, opacity;
+  transition: filter var(--ds-ring-dur) var(--ds-ring-ease);
 }
 /* 切换动效时长单源（作者令「旋转过渡时长 ≤300ms、不阻塞输入」）：旧 --dur-2
    档 320ms 超限，签面切换独立取 280ms —— 位移+旋转在窗内完成，输入永不阻塞
@@ -1827,10 +1981,15 @@ body.mobile-layer .mf-strip-chip::after {
   box-shadow: none;
   pointer-events: none;
 }
-/* 主胶囊 = 完整毛玻璃档（材质四件套；blur 由 glass.css 成员表供给）。 */
+/* 主胶囊 = 完整毛玻璃档（材质四件套；blur 由 glass.css 成员表供给）。
+   ── 边框四边闭合（glass-runtime 批 2026-11-18，作者报障「边框还没完全包裹住」）──
+   旧档有一句 `border-bottom-color: transparent`（桌面 `.canvas-header` 的「底缘
+   透明化」同款语言，split.css:1606）。手机端这一面**下缘没有任何承托**（正文在
+   胶囊底下滚动穿过），透明底边被读成「边框没包住」；改前实测（375×812 暗档，
+   dsf=2）：胶囊盒 device y 44.8…115.2，上缘 y44-48 有亮线（边框 + 顶缘折射线），
+   下缘 y112-116 逐行 lum 22.8 = 页面底色（**零边框行**）。本批四边同色闭合。 */
 body.mobile-layer .mf-strip-chip.on::after {
   border: 1px solid var(--glass-border);
-  border-bottom-color: transparent;
   background:
     linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
     var(--glass-bg);
@@ -1875,20 +2034,71 @@ body.mobile-layer .mf-strip-chip.on {
    文字宽，长标题才吃到 max-width 上限 ⇒ 只有真溢出时才发生淡化）。
    text-overflow 显式钉 clip：任何继承或浏览器默认都不会再画「…」。
    DOM 不动 ⇒ title / aria-selected / 读屏全名全保留（模糊只是视觉）。 */
-/* 引用操作在展开标签内出现，独立 ≥44px 触控热区。 */
+/* 引用操作落在展开签内，独立 ≥44px 触控热区。
+   ══ canvas-tab-reference 批（2026-11-18；作者令逐字「手机端我现在无法引用 canvas
+   标签页 我需要点击标签页顶部 展开之后 我可以有一个引用按钮 现在是一个箭头 没什么
+   意义」）═══════════════════════════════════════════════════════════════════
+   病根两条（改前实测，见本批报告 §①）：
+    ① **死控件** —— 改前 `.mf-strip-quote` 是**静态流内**的 span，而签的 ::before
+       热区伪元素（下方 `.mf-strip-chip::before`：position:absolute / z-index:auto）
+       在绘制序与命中序上都压它一头 ⇒ 展开态里箭头盒内 9/9 采样点（3×3 网格）的
+       elementFromPoint 顶层恒为**签本体**：真手指点下去命中的是签（只收/放展开），
+       span 上的 click 处理器**永不可达**。合成 `el.click()` 有效（证明线还在）——
+       所以它不是「没接线」，是「手指点不到」，这正是作者读到的「没什么意义」。
+    ② **装饰符** —— 可见内容只有 `↗` 一枚箭头字形：零文字、零钮面，读不出「这是引用」。
+   修法：
+    ① 本钮升为定位元素 + `z-index:1`（签本身 z-index:2/3 是 z 序上下文；1 > ::before
+       的 auto）⇒ 命中面归钮。签自己的 44×44 外扩热区（`.mf-strip-chip::before`）在
+       钮以外**原样保留** —— 签规则零改动，只有钮占的那一块让给钮（这正是「钮要能点」）。
+    ② 可见内容换成**单源引用入口图标**（js/quoteLogo.js `QUOTE_ENTRY_ICON`，与
+       composer footer 引用键 / 气泡引用牌同一枚），**无可见文字、无文本子节点**
+       （作者令 2026-11-18 22:10 逐字「引用只需要一个小图标就行了 不需要文字」——
+       同日早些的「保留可见文字」裁定以此为准）。钮面 = 全站唯一毛玻璃配方（blur 由
+       css/glass.css 成员表供给，本文件零 backdrop-filter 字样）+ 发丝边，**零投影**
+       （flat-button 契约：按钮面禁厚度道具）。箭头 `↗` 整条退役。
+       语义/可达性：aria-label（唯一名字源）+ role=button + tabindex=0（见 navController）。
+   几何：**视觉只有图标、热区不缩** —— 命中盒 = 钮自身盒（`--mhit` 44，网页内容无
+   障碍指南（WCAG）2.5.5 的触控下限）；钮**不带可见面**（见下条退役说明）。签的内容宽
+   预算按**实测量**扣减（chipInnerWidth 读钮 getBoundingClientRect，见上方展开档注释），
+   故钮宽只会挤窄 label、不会让签越预算外借 44px（canvas-overlap-guard 批 2026-11-17
+   修过的那条病根）。
+
+   ══ 内侧胶囊面退役（作者令 2026-11-18 飞书，逐字「canvas引用按钮不要边框」）═══════
+   原档这里还有 `::after` 内侧 28px 胶囊面（`background: var(--nf-glass-input-bg)` +
+   `border: … solid var(--glass-border)`）。作者令去边框后，那层面**没有可留的东西**：
+   实测（tests/canvas-tab-quote-shots.mjs 的 faces 读数，暗亮两档）它计算出的底色与它
+   正下方、签自己的主胶囊面**逐值相同** —— 暗档都是 `rgba(24,28,38,0.16)`、亮档都是
+   `rgba(255,255,255,0.16)`（两处都取同一份唯一材质，见 css/glass.css）⇒ 去掉那条发丝
+   边之后，它画的是一块与自己底下一模一样颜色的面，肉眼零贡献。故按作者令允许的那一腿
+   （「若整块内侧胶囊面都只是为『框』服务，就一并撤掉，只留图标本身」）整块退役，
+   只留图标 + 44px 命中盒；`css/glass.css` 的成员行同步移除（面没了，成员不许空转）。
+   留痕：去边框前的读数与特写帧在 evidence 的 `compare/bordered-*`（有面）与
+   `compare/noborder-*`（无面）两组，闸侧由 canvas-tab-reference 的 R12 兜底（钮的可见面
+   零边框，含伪元素）。 */
 body.mobile-layer .mf-strip-quote {
   display: none;
-  flex: 0 0 44px;
-  width: 44px;
-  height: 44px;
+  /* ① 命中层修复（本批）：定位 + z-index 1 ⇒ 居于签 ::before（z-index:auto）之上。 */
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: 999px;
-  color: var(--color-text-primary);
+  min-width: var(--mhit, 44px);
+  height: var(--mhit, 44px);
+  padding: 0;
+  border-radius: var(--ds-radius-pill);
+  color: var(--ds-text);
   cursor: pointer;
   touch-action: manipulation;
   user-select: none;
+  -webkit-user-select: none;
 }
+/* 按下反馈：亮度档（扁平契约允许；不用投影/浮雕造厚度）。 */
+body.mobile-layer .mf-strip-quote:active { filter: brightness(0.92); }
+/* 钮内字形（单源 QUOTE_ENTRY_ICON 只带 viewBox，尺寸由宿主单点）—— 本钮**只有**这枚
+   图标，无文字（作者令 2026-11-18 22:10）；故此前那条 `.mf-strip-quote-label` 规则
+   已随可见文字一并删除。 */
+body.mobile-layer .mf-strip-quote svg { width: 16px; height: 16px; flex: 0 0 auto; }
 body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-quote { display: inline-flex; }
 body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label { flex: 1 1 auto; }
 body.mobile-layer .mf-strip-label {
@@ -1938,6 +2148,11 @@ body.mobile-layer .mf-strip-chip.is-expanded {
   z-index: 3;
   max-width: min(calc((100vw - 2 * var(--mchrome-inset)) / var(--rsc, 1)), 260px);
   opacity: 1;
+}
+/* 展开腿的「全名清晰」= 环邻位糊感归零（旧档写在本条的 `filter: none` 上；环邻位
+   模糊腿已在 glass-runtime 批下沉到 label，故这一档跟着下移 —— 语义不变：
+   展开签的**字**必须是清的）。 */
+body.mobile-layer .mf-strip-chip.is-expanded .mf-strip-label {
   filter: none;
 }
 /* 展开期两侧签退到幕后：邻签常态 opacity 0.66、底是半透明玻璃，展开签压上去会
@@ -2642,8 +2857,8 @@ body.mobile-layer .mf-me-entry .mf-me-meta {
   width: 100%;
 }
 body.mobile-layer .mf-me-entry :is(.mf-me-name, .mf-me-sub) { max-width: 100%; }
-body.mobile-layer .mf-account-card { margin: var(--ds-space-6) var(--ds-space-4); }
-body.mobile-layer .mf-account-card .neblink-account-actions { padding: var(--ds-space-4); }
+/* `body.mobile-layer .mf-account-card`（个人主页底部「登录账号」重复栏）与其
+   `.neblink-account-actions` 子件随账户卡整件退役（作者令 2026-11-18）——零发射点。 */
 /* Adopted secondary faces are pages, never desktop glass skirts. */
 body.mobile-layer #mobile-pages .mobile-page-body > :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #daemon-panel, #bg-dropdown, #memory-modal, .canvas-tab-pane, .fm-modal)::after,
 body.mobile-layer #mobile-pages .mobile-page-body > :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #daemon-panel, #bg-dropdown, #memory-modal, .canvas-tab-pane, .fm-modal)::before {
@@ -2655,7 +2870,10 @@ body.mobile-layer #mobile-pages .mobile-page-body > #settings-modal #settings-co
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding-bottom: max(var(--mpage-fab-clearance), var(--mobile-dock-clearance));
+  /* 末端净空 = 单源 token；`--mpage-fab-clearance` 是钮带层，本页无浮钮 ⇒ 不加
+     （改前 max() 里那 80 是复制来的钮带值，比真需求多 8px）。 */
+  padding-bottom: var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
 }
 /* 个人主页（me）：资料卡。 */
 body.mobile-layer .mf-me-card {
@@ -2700,16 +2918,13 @@ body.mobile-layer .mobile-page[data-page="me"] .mf-hub-rows { margin: 0 14px; }
    超出部分交给页体滚动，与同页 `.mf-me-card` / `.mf-hub` 的「块级件不收缩」口径
    一致（器械读数见 tests/profile-devices-geometry.spec.mjs）。 */
 body.mobile-layer .mobile-page[data-page="me"] .mf-me-fields { flex: none; }
-/* 逐设备退出键的手机档触控面（同批评审判定延伸）：`.glass-control` 只给材质不给
-   尺寸，修前行内退出键实测 50.9×17 —— 高度不足 --mtap（= --ds-hit-row 44px），
-   低于本仓手机触控下限（tests/mobile-touch-target.spec.mjs 的作者令判据）。
-   补 --mtap 高 + 横向内距后命中盒 50.9×44 达标；规则限定手机层与个人主页，
-   桌面个人资料面（鼠标档）不动。 */
-body.mobile-layer .mobile-page[data-page="me"] .pd-device-signout {
-  min-height: var(--mtap);
-  padding-left: var(--ds-space-3);
-  padding-right: var(--ds-space-3);
-}
+/* 逐设备退出键的手机档触控面 —— 🔴 按钮形态统一批（2026-11-18）本规则**整条撤除**：
+   它的历史原因是「.glass-control 只给材质不给尺寸」，而该键现在挂设置页动作族
+   （.cfg-btn.set-btn），几何已由令牌单源给出（--set-btn-h = var(--mtap,44px) /
+   --set-btn-pad-x = --ds-space-3 / --ds-radius-pill）——本规则逐值等于族令牌，
+   留着就是同一件事的第二个真相（改一处忘一处必然分叉）。真渲染复核：删后手机层
+   命中盒仍为 44 高（tests/settings-structure-shots.mjs 读数），
+   tests/mobile-touch-target.spec.mjs 的下限判据不回归。 */
 /* 入口行右值（当前读数，如用户名/绑定的邮箱）。 */
 body.mobile-layer .mf-hub-row-val {
   flex: none;
@@ -2775,6 +2990,15 @@ body.mobile-layer .mf-me-edit {
 }
 /* 提示文案（账号服务能力口径；件四起 = 「只展示真实读数」）。 */
 body.mobile-layer .mf-me-hint {
+  margin: var(--ds-space-3) var(--ds-space-6) 0;
+  font-size: var(--mfs-min);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+}
+/* 绑定读数缺口说明（profile-complete 批，作者令「不许留『未知』而不解释」）：
+   与 .mf-me-hint 同一排版族，但**独立类名** —— 两条提示句各有各的判据（这条解释
+   读不到绑定、那条给编辑落点），合成一个类会让「哪句在说哪件事」不可机检。 */
+body.mobile-layer .mf-me-gapnote {
   margin: var(--ds-space-3) var(--ds-space-6) 0;
   font-size: var(--mfs-min);
   line-height: 1.5;
@@ -2888,10 +3112,9 @@ body.mobile-layer #input-area {
      两套语言。留白走本层外距，条内 padding 不动。 */
   padding-left: var(--dock-inset-x);
   padding-right: var(--dock-inset-x);
-  padding-bottom: calc(
-    var(--dock-h) + var(--dock-center-lift, 0px) + var(--dock-inset-b, 0px) +
-    var(--dock-gap, 0px) + env(safe-area-inset-bottom, 0px)
-  );
+  /* dock 座位消费单源 token（改前 = `--dock-h + lift + --dock-inset-b +
+     --dock-gap + env(safe)` 的手写展开，与 --mobile-dock-clearance 同值两份）。 */
+  padding-bottom: calc(var(--mobile-dock-clearance) + var(--dock-center-lift, 0px));
 }
 
 /* ── 发送钮退回纯圆（收形批⑥，作者令 10-31 22:50）──────────────────────
@@ -2909,44 +3132,51 @@ body.mobile-layer #input-area {
    input.css 基类 18px 档在手机层被覆盖）。热区 48 天然 ≥44（HIG）。
    转回合按钮单源批（ui-unification-20261103-canvas-ask-resize）：选择器由
    `#send-btn/#stop-btn` 改挂 `.ds-turn-btn` —— 桌面/手机两档现在**只改组件变量**
-   （--ds-turn-btn-size / --ds-turn-btn-icon），几何声明全部归 design-system.css；
-   同一组件同时服务主会话与 Canvas Ask 面板两处（面板内钮一并升到 48/22，与主
-   会话逐属性相等 = 作者令「完全统一」的手机腿）。 */
+   （--ds-turn-btn-size / --ds-turn-btn-icon），几何声明全部归 design-system.css。
+   本块只是**全族 48/22 档**；输入条（主会话 + Canvas Ask 面板）是更窄的 40/18
+   档，见紧随其后的「输入条转回合圆钮手机档」块——两者以宿主选择器区分，不互相
+   覆盖。 */
 body.mobile-layer .ds-turn-btn {
   --ds-turn-btn-size: var(--mtap-lg);
   --ds-turn-btn-icon: var(--micon);
 }
 
-/* ── Ask 面板底钮手机档收窄（作者令 2026-11-04 13:52 逐字「手机端的发送按钮和
-   终止按钮 小一点」；ui-unification-20261103 mobile-send-stop）──────────────
-   只收**面板底钮**这一档：48 → 44（圆角随组件层 50% 恒等于半边长 22，图标
-   18 → 20 = 44×18/40 取整，内距 0 不变）；桌面 40 档一个字不动。
-   落地形状 = **只换组件槽的供源**（--ds-turn-btn-size / --ds-turn-btn-icon 改喂
-   上一段的手机档 token --mcv-size-circle/--mcv-icon），几何声明仍全部归
-   design-system.css ⇒ 组件零字面量，改数值只改 token 一处。
-   ① 为何不是改 `--mtap-lg`：那是手机层全族悬浮钮的 48 档（返回钮/chrome 键/
-      canvas 工具钮/光球/dock 同尺，canvas-chrome-size-align 钉死），动它 = 全站
-      手机腿一起变。
-   ② 为何本块加 `.ask-dock` 宿主：上面 `body.mobile-layer .ds-turn-btn` 是**全组件**
-      手机档（主会话 #send-btn/#stop-btn 48/22 —— 2026-11-03 22:15 作者报障批
-      的成果，本令不撤），本块更具体 ⇒ 只命中 Canvas Ask 面板输入条那两钮。
-   ③ ask.css 的 `max(画布 chrome 档 40, 组件槽)` 取大者：桌面腿取 40（未变），
-      手机腿取本块 44（> 40）⇒ 桌面/手机两档各走各的，互不牵动。 */
+/* ── 输入条转回合圆钮手机档（主会话 + Canvas Ask 面板**同一条声明**）─────────
+   ask-button-unify 2026-11-18（作者令逐字「Ask 的中止按钮中间的方框应该和主会话
+   的一致 发送按钮也和主会话一致吧」）：此前同一对按钮在输入条两侧各有**自己的
+   供源** —— 主会话腿 = 本块的 40/18 + `::after{-4px}`；Ask 面板腿 = 另一块
+   `body.mobile-layer .ask-dock .ds-turn-btn` 改喂 --mcv-size-circle/--mcv-icon
+   （视口 clamp 族，375w 解析 37.5/16.875）⇒ 同一轮里主会话 40/18/线宽 2.5、
+   面板 40/16.875/线宽 2，作者所见「不一致」正是这条分叉。
+   现态 = **一份声明、两个宿主**（选择器只多一枚成员，没有第二组值）：两腿的
+   圆钮边长 / 图标档 / ::after 命中外扩逐值同源，改一处两边同时变。
+   ① 40/18 的来历（主会话侧，逐字未动）：主输入条与光球共享 40:64 视觉盒比例，
+      send 与 stop 必须同档（busy 互换，js/input/composer.js applyTurnChrome）——
+      作者报障 2026-11-03 22:15「手机端输入框的发送按钮和终止按钮，大小怎么没有
+      统一？」之后的成果。
+   ② 2026-11-04 13:52「手机端的发送按钮和终止按钮 小一点」的语义**由本声明继续
+      满足**：面板底钮从该令的 44 档落到 40（= 主会话同档，且 ≤ 44，比原来更小），
+      不再需要第二组 token。
+   ③ `--mcv-size-circle` / `--mcv-icon` 两枚 token 仍有另一消费点（`.tfl-hit-send`
+      手机待办行内回复钮，见本文件下方同名块）⇒ 保留不撤；本块只是不再有 Ask
+      面板这一消费点。
+   ④ 为何不整体改 `body.mobile-layer .ds-turn-btn`（48/22）：那是手机层全族悬浮钮
+      档（返回钮/chrome 键/canvas 工具钮/光球/dock 同尺，canvas-chrome-size-align
+      钉死），动它 = 全站手机腿一起变；输入条这一族是独立的「40:64 视觉盒」档。 */
 /* The main composer shares a 40:64 visual-box scale with the voice orb.
-   Keep send and stop equal; the component retains its 44px expanded hit area. */
-body.mobile-layer #input-bar > .ds-turn-btn {
+   Keep send and stop equal; the component retains its 44px expanded hit area.
+   The Canvas Ask dock's input row consumes the same declaration. */
+body.mobile-layer #input-bar > .ds-turn-btn,
+body.mobile-layer .ask-dock .ds-turn-btn {
   --ds-turn-btn-size: 40px;
   --ds-turn-btn-icon: 18px;
 }
 /* Absolute insets use the padding box, one pixel inside the 1px border.
-   Four pixels there give a symmetric 3px expansion beyond the border box. */
-body.mobile-layer #input-bar > .ds-turn-btn::after {
+   Four pixels there give a symmetric 3px expansion beyond the border box.
+   Same two hosts: the hit capsule is one value, not one per surface. */
+body.mobile-layer #input-bar > .ds-turn-btn::after,
+body.mobile-layer .ask-dock .ds-turn-btn::after {
   inset: -4px;
-}
-
-body.mobile-layer .ask-dock .ds-turn-btn {
-  --ds-turn-btn-size: var(--mcv-size-circle);
-  --ds-turn-btn-icon: var(--mcv-icon);
 }
 
 /* ── 输入卡垂直收窄批（2026-11-01 22:1x 作者令「收窄输入框的上下高度，
@@ -2969,8 +3199,14 @@ body.mobile-layer .ask-dock .ds-turn-btn {
    几何契约钉 + 双主题实拍：tests/composer-mobile-slim-shots.mjs（G 腿
    before 78 / after 58）。canvas 页 ask 输入条为独立组件（ask.css .ask-input
    自带几何，与主会话不共组件/几何 token）——按令分开实现先不动。 */
-body.mobile-layer #input-bar {
-  padding: var(--ds-space-1) var(--ds-space-2);
+/* composer 统一批（2026-11-18）：手机档的垂直收窄**同一条规则同时命名两面** ——
+   视口级的差异（手机/桌面）不是组件差异，两面必须一起变（改前只写 #input-bar，
+   消息面 .fm-input-bar 停在 6px，两面在手机上差 2px = 作者点名的分叉）。 */
+body.mobile-layer #input-bar,
+body.mobile-layer .fm-input-bar {
+  /* 内距收紧批（2026-11-18 作者令）：横向 8px → 6px，与桌面档同档同值 ——
+     视口差异只留纵向（4px），横向两面/两档一致（两侧各让 2px）。 */
+  padding: var(--ds-space-1) var(--ds-space-1h);
 }
 body.mobile-layer #mic-orb-wrap {
   margin: -8px 0;
@@ -3030,7 +3266,10 @@ body.mobile-layer #mobile-pages .team-scroll {
   flex-direction: column;
   flex-wrap: nowrap;
   gap: var(--ds-space-3);
-  padding: var(--ds-space-3) var(--ds-space-3) calc(24px + env(safe-area-inset-bottom, 0px));
+  /* 末端净空 = 单源 token（滚域末端净空单源批 2026-11-18）：改前裸 24px + safe
+     —— 比真需求短一档（本页有 .proj-create-fab ⇒ token 自动含钮带层）。 */
+  padding: var(--ds-space-3) var(--ds-space-3) var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
 }
 body.mobile-layer #mobile-pages .team-scroll::-webkit-scrollbar { display: none; }
 body.mobile-layer #mobile-pages .team-card.project-card {
@@ -3114,12 +3353,15 @@ body.mobile-layer #mobile-pages #plugins-content {
      与本批报障的桌面形态同一个病（各面板各写裸顶垫）。 */
   padding-right: var(--ds-space-3);
   padding-left: var(--ds-space-3);
-  padding-bottom: calc(24px + env(safe-area-inset-bottom, 0px));
+  /* 末端净空 = 单源 token（改前裸 24px + safe：既漏掉钮带层、又比真实需求少）。 */
+  padding-bottom: var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
 }
 body.mobile-layer #mobile-pages [data-plugins-add] {
   min-width: var(--mtap);
   min-height: var(--mtap);
-  bottom: calc(var(--dock-h) + var(--dock-inset-b) + var(--dock-gap) + env(safe-area-inset-bottom, 0px)) !important;
+  /* dock 座位消费单源 token（改前 = dock 足迹的手写展开，与 clearance 同值两份）。 */
+  bottom: var(--mobile-dock-clearance) !important;
 }
 body.mobile-layer #mobile-pages .plugins-card-list {
   display: flex;
@@ -3226,6 +3468,11 @@ body.mobile-layer .note-dock { --ask-seed-size: var(--mtap-lg, 48px); }
    （60 = 48 钮 + 8 缝 + 4 钉差）；JS syncNoteSeed 的实测值优先于这条。 */
 body.mobile-layer .note-dock {
   --note-seed-x0: calc(-1 * (var(--ask-fab-size) + var(--ds-space-2) + (16px - var(--ask-fab-gap))));
+}
+/* Ask's morph seed shares the dock's 12px anchor, while its FAB uses 16px.
+   Offset only the closed seed, preserving the expanded panel's alignment. */
+body.mobile-layer .ask-dock.closed .ask-input {
+  transform: translate(calc(var(--ask-fab-gap) - 16px), calc(10px + var(--ask-seed-size)));
 }
 /* ── 建群面板（统一面板批 2026-11-06）：顶栏返回圆钮 / 右下悬浮加号 = 手机 48 档 ──
    尺寸档与页面壳返回钮 `.mobile-back-btn`、手机 `.ask-fab` 同一档
@@ -4442,6 +4689,15 @@ body.mobile-layer .proj-flowmap-fab {
   min-width: var(--mtap-lg);
   min-height: var(--mtap-lg);
 }
+/* 落位改锚 dock（滚域末端净空单源批 2026-11-18）：桌面档 `bottom:16px` 锚的是
+   **pane 底缘**；手机页面态里 pane 现在吃满到屏底（内容从 dock 下方穿过）
+   ⇒ 16px 会把钮推进 dock 带里（改前实测 748–796，dock 750–804 压住整颗）。
+   手机腿锚 dock 座：`--mobile-dock-clearance` = dock 上缘 + 呼吸缝
+   ⇒ 钮底缘 740、与 dock 顶 750 留 10px，与 .ta-fab-wrap 同一条座位语言。
+   桌面零命中（规则挂 body.mobile-layer）。 */
+body.mobile-layer .proj-create-fab {
+  bottom: var(--mobile-dock-clearance);
+}
 body.mobile-layer .proj-create-fab svg,
 body.mobile-layer .proj-flowmap-fab svg {
   width: var(--micon);
@@ -4954,7 +5210,7 @@ body.mobile-layer :is(
   .tfl-empty, .tfl-empty-all,
   /* 设置面 */
   .cfg-label, .cfg-hint, .entry-sub, .st-badge, .set-card-title, .set-row-hint,
-  .neblink-logged-out-hint, .mchain-empty, .mp-note,
+  .mchain-empty, .mp-note,
   /* 插件面 */
   .plugins-stats-item, .plugins-section-hint, .plugins-section-title,
   .plugins-card-meta, .plugins-item-summary,
@@ -5243,7 +5499,7 @@ body.mobile-layer .tfl-mobile .tfl-undo {
 body.mobile-layer .tfl-mobile .tfl-list {
   flex: 1 1 auto;
   min-height: 0;
-  padding-bottom: max(var(--mpage-fab-clearance), var(--canvas-bottom-clearance, 0px));
+  padding-bottom: max(var(--mobile-scroll-end), var(--canvas-bottom-clearance, 0px));
 }
 /* 底部 Add footer 在手机页面态退场：新建入口收敛到右下那颗加号（一条入口，
    不在页底再摆一条通栏「添加提醒」——它会把满铺的列表顶起 30px+）。 */
@@ -5296,7 +5552,10 @@ body.mobile-layer #reminder-panel .reminder-create-btn { display: none; }
 body.mobile-layer #reminder-panel .reminder-panel-body {
   flex: 1 1 auto;
   min-height: 0;
-  padding: 0 0 max(calc(var(--mobile-dock-clearance) + var(--mpage-fab-clearance)), var(--canvas-bottom-clearance, 0px));
+  /* 末端净空 = 单源 token（本页有 .reminder-fab-add ⇒ 自动含钮带层）。
+     改前 = calc(--mobile-dock-clearance + --mpage-fab-clearance) 的手写相加。 */
+  padding: 0 0 max(var(--mobile-scroll-end), var(--canvas-bottom-clearance, 0px));
+  scroll-padding-bottom: max(var(--mobile-scroll-end), var(--canvas-bottom-clearance, 0px));
 }
 /* 空载页脚条（桌面版 2px 呼吸垫，手机页面态零用）⇒ 隐去，列表直抵页底缘。 */
 body.mobile-layer #reminder-panel .reminder-panel-footer { display: none; }
@@ -6034,14 +6293,19 @@ body.mobile-layer .bgagent-overlay .bgagent-sheet-actions {
   border-top: var(--ds-border-width) dashed var(--ds-border-hairline);
 }
 body.mobile-layer .bgagent-overlay .bgagent-sheet-actions[hidden] { display: none; }
-body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn {
-  width: var(--ds-hit-row);
-  height: var(--ds-hit-row);
-  border: 1px solid var(--glass-border);
-  background: var(--glass-control-bg);
-}
-body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn svg { width: 16px; height: 16px; }
+/* 按钮形态统一批（2026-11-18 作者实拍「包括后台智能体的恢复按钮也是」）本规则瘦身：
+   `width/height: --ds-hit-row` + 自写 `1px 描边 + 玻璃底` 整件撤除 —— 那三行与桌面
+   flowAgentPopup.js 注入串里的 `28px × 28px / 50%` 是**两处像素真相**，也正是
+   「桌面圆钮（描边透明底）/ 手机方钮（玻璃底描边）」的成因。几何与配色现在都从
+   动作族令牌来（标记挂 .cfg-btn.set-btn ⇒ 44 命中盒 / pill 圆角 / 次操作描边档），
+   本层只保留本面自有的两件事：retry 的蓝 tint（该钮已迁出页脚 ⇒ 页脚作用域的
+   tint 规则够不着它）与图标本体档。 */
 body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-retry { color: rgb(var(--sapphire)); }
+body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn svg {
+  width: var(--set-icon-size);
+  height: var(--set-icon-size);
+  stroke-width: 2.5;
+}
 body.mobile-layer .bgagent-overlay .bgagent-sheet-actions .fa-mgmt-btn.readonly { opacity: 0.35; }
 body.mobile-layer .bgagent-overlay .bgagent-sheet-retries {
   font-size: var(--ds-fs-meta);
@@ -6112,8 +6376,8 @@ body.mobile-layer .mobile-page[data-page="canvas"] .mobile-page-body {
 }
 body.mobile-layer .mobile-page[data-page="canvas"] :is(.canvas-md-scroll, .canvas-txt-scroll, .canvas-tab-pane.scrollable) {
   bottom: 0;
-  padding-bottom: max(var(--canvas-bottom-clearance, 0px), var(--mobile-dock-clearance));
-  scroll-padding-bottom: max(var(--canvas-bottom-clearance, 0px), var(--mobile-dock-clearance));
+  padding-bottom: max(var(--canvas-bottom-clearance, 0px), var(--mobile-scroll-end));
+  scroll-padding-bottom: max(var(--canvas-bottom-clearance, 0px), var(--mobile-scroll-end));
 }
 /* ── ① 消息/联系人：页体底垫撤、净空内收进收编滚区 ───────────────────── */
 body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body,
@@ -6122,16 +6386,66 @@ body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body {
 }
 body.mobile-layer .mobile-page[data-page="messages"] .mobile-page-body > #fm-conversations,
 body.mobile-layer .mobile-page[data-page="contacts"] .mobile-page-body > #fm-contacts-body {
-  padding-bottom: var(--mobile-dock-clearance);
+  padding-bottom: var(--mobile-scroll-end);
 }
 /* 消息页查询态：结果场吃页体余量，dock 自带底净空（脚注/末条不贴 dock 缘）。 */
 body.mobile-layer .mobile-page[data-page="messages"] .mh-search-dock.has-query {
-  padding-bottom: var(--mobile-dock-clearance);
+  padding-bottom: var(--mobile-scroll-end);
 }
 /* ── ① 用量页：同法内收（P11 直子形同特异性、源序在后）────────────────── */
 body.mobile-layer .mobile-page[data-page="usage"] .mobile-page-body {
   padding-bottom: 0;
 }
 body.mobile-layer #mobile-pages .mobile-page-body > #usage-dashboard {
-  padding-bottom: var(--mobile-dock-clearance);
+  padding-bottom: var(--mobile-scroll-end);
+}
+
+/* ═══ 滚域末端净空单源批（作者令 2026-11-18 18:17 复看对照图）══════════════════
+   作者逐字：「这张图我看底部还是被dock截断了 就是这种设计逻辑就是跟canvas一样
+   可以从下方过 但是上滑下滑的时候 要能保证底部内容完整显示」
+   ─────────────────────────────────────────────────────────────────────────
+   实测根因（375×812，逐页读数 evidence/.../raw/bottoms-*.json）：末端净空
+   加在**页体**上时只对「页体自身滚动」的页语义正确；对「页体只是外壳、真滚域
+   是收编面内滚区」的页，它是**截视口** —— 内滚区被页体内容盒钳短 72px，滚动
+   视口提前在 dock 上缘**之上 10px** 结束 ⇒ 滚动态与滚到底都在同一条水平线被
+   硬切（对照图里「密钥」卡被切平），作者读作「底部还是被 dock 截断」。
+   本批把净空**归还给真正滚动的容器**：页体归零（内容得以滚到屏底、从 dock 玻璃
+   下方穿过 = 作者「可以从下方过」），净空落在真滚域的内容级（滚到底末行完整
+   可见 = 「要能保证底部内容完整显示」）。值全部来自 --mobile-scroll-end
+   （单源，见 L599 块）——**页面里零字面量**。
+
+   ① 页体只是外壳（直子 = 收编面）：底垫归零。名单 = 「收编面统一页面化几何」
+      块（L1008）的同一串收编面 + `.ta-root`（待办三页的外壳）。三条例外，
+      逐页理由：
+        · `.wiki-graph-pane`（图谱页）：全屏画布视图（pan/zoom），**没有滚动
+          内容也没有末行**，净空无对象 ⇒ 不参与（保持既有几何，零位移）。
+        · 会话页 `.fm-modal`：由会话页块单点处理（输入条是第二件浮件，
+          净空 = 输入条层 + dock 让位，见 L1097 块）。
+        · `#daemon-panel`（心跳页）：它的底件是**面板脚注条**
+          `.daemon-panel-footer`（daemonFace.js 填的真实 chrome，不是内容）——
+          页体底垫撤掉后脚注被推到屏底 = 整条压在 dock 之下（改后实测
+          756–812）。该页的「最后一件」不需要从 dock 下方穿过（它是一根
+          脚注，不是滚动的行）⇒ 保留页体底垫，面板整体止于 dock 上缘之上
+          （脚注 684–740），滚动末行仍满足「≤ dock 上缘 − 呼吸缝」。 */
+body.mobile-layer .mobile-page-body:has(> :is(#settings-modal, #usage-dashboard, #search-modal, #reminder-panel, #bg-dropdown, #memory-modal, #mobile-task-panel, .fm-modal, .ta-root, .canvas-tab-pane:not(.wiki-graph-pane))) {
+  padding-bottom: 0;
+  scroll-padding-bottom: 0;
+}
+/* ② 真滚域的末端净空（同一 token）：每种面一条，值零字面量。
+      改前读数（各页自负尾垫）：搜索 12px / 心跳 8px / 后台 12px / 项目 24px /
+      智能体页 ap-pane 10px / 记忆卡 12px —— 全都不够（< dock 让位 72），
+      即这几页滚到底末行都被 dock 压住一档。 */
+body.mobile-layer #search-results,
+body.mobile-layer .daemon-panel-body,
+body.mobile-layer #mobile-pages .mobile-page-body > #bg-dropdown,
+body.mobile-layer #memory-modal > .ap-pane,
+body.mobile-layer #mh-memory-cards {
+  padding-bottom: var(--mobile-scroll-end);
+  scroll-padding-bottom: var(--mobile-scroll-end);
+}
+/* 智能体页（profile）外壳：`#memory-modal` 自带 20px 内垫会把内滚域钳到
+   792（dock 上缘 750 之下 42px 全是死带）⇒ 外壳内垫归零，让位交内滚域内容级
+   （上一条规则）。 */
+body.mobile-layer #mobile-pages .mobile-page-body > #memory-modal {
+  padding-bottom: 0;
 }

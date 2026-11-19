@@ -30,6 +30,24 @@
 //     绑定）显示「未知」+ 一句「账号服务暂未提供该接口」，并在交付报告里列卡点。
 //     禁 window.open/跳官网伪装「编辑」，禁假开关，禁本地造值回显。
 //
+// ══ profile-complete 批（2026-11-18 作者令「个人主页信息很多都没获取全 比如
+//    github 绑定信息」）════════════════════════════════════════════════════
+// 上一条「GitHub 绑定不可读」的结论**被本批实测推翻一半**，逐条更正：
+//   · GitHub 绑定**可读**：`GET /api/neblink/status` 的 `device.githubLogin`
+//     一直在返回（`NeblinkRoutes.scala:296`），本机 `device.json` 也一直存着
+//     （实测值 = 该账号的 GitHub 用户名）。前端此前**刻意不映射**它（neblink.js
+//     旧注：无消费方）⇒ 是「取到了没渲染」，不是「拿不到」。本批映射并渲染。
+//   · Google 绑定**仍不可读**，但原因已查清到层：登录 id_token 的 claim 只有
+//     sub/email/name/username/preferred_username/picture（无 identities/无 provider）；
+//     社交 provider 身份在 OIDC 往返后**不落地**（`AuthRoutes.beginPkceLogin` 注释
+//     逐字：「provider identity is gone after the OIDC round-trip」）；
+//     upstream 用户档案契约（friend-search-contract / NeblinkModel 用户解码器）
+//     只有 username / display_name / avatar；官网账号页的绑定数据本仓不可达。
+//     ⇒ 界面显「未知」+ 明确的缺口说明（谁维护、卡在哪层），不留无解释的未知。
+//
+// 手机个人主页的第二个缺口（同批修）：`mobile/meFace.js` 从不触发自证探针 ⇒
+// 用户名恒「未知」。修法 = 导出 `ensureIdentityLive()`，消费面建面时调一次。
+//
 // ══ 头像点击语义（作者令「点击头像就是直接换头像」）════════════════════════
 // 点头像 ≠ 进 profile 面。已登录 ⇒ 触发现役换头像流程的**同一机械形态**
 // （隐藏 `<input type="file" accept="image/*">` + `.click()`，与
@@ -144,19 +162,41 @@ function orUnknown(v) {
 }
 
 /**
+ * 绑定读数缺口说明的**单点**（桌面资料面 + 手机个人主页共用；禁第二份文案拼接）。
+ * 规则：只对**确实读不到**的字段出句 —— 「不许留『未知』而不解释」（作者令
+ * 2026-11-18）。未登录态不出句：那种「未知」由页面自身的未登录读数解释。
+ * @param {{loggedIn?: boolean, github?: string|null, google?: null}} id
+ * @returns {string} 空串 = 两个绑定位都读到了
+ */
+export function bindingGapNote(id) {
+  if (!id || !id.loggedIn) return '';
+  const notes = [];
+  if (!id.github) notes.push(t('profile.githubUnavailable'));
+  if (!id.google) notes.push(t('profile.googleUnavailable'));
+  return notes.join(' ');
+}
+
+/**
  * 身份读数**单点**（身份卡 / 资料面 / 手机 me 页共用，禁第二份取数链）。
  * 六个能力位与交付报告的能力矩阵一一对应：
  *   username   自证探针（`relation_status==='self'`）——读不到 = 未知
  *   nickname   status.device.displayName（id_token name claim，只读）
  *   email      status.device.email（id_token email claim，只读）
  *   avatarUrl  status.device.avatarUrl（只读；写面无端点）
- *   github     绑定态**无接口** ⇒ 恒 null（禁拿 legacy githubLogin 冒充）
- *   google     绑定态**无接口** ⇒ 恒 null
+ *   github     status.device.githubLogin —— GitHub 绑定账号名（profile-complete
+ *              批 2026-11-18 **改为真实取数**：该字段一直在 `/api/neblink/status`
+ *              的 device 块里返回、也一直落在本机 `device.json`，只是前端刻意
+ *              未映射。来源 = 服务端 `github_username`（enroll 响应，由
+ *              `NeblinkEnrollment` 写入本机身份）。空串 ⇒ 该账号没有绑定读数，
+ *              界面显「未知」+ 一句缺口说明。
+ *   google     无任何可读来源 ⇒ 恒 null（缺口见 profile.googleUnavailable：
+ *              该读数只由官网账号页维护，本机账号服务与登录 id_token 都不含它）
  * @returns {{loggedIn: boolean, userId: string, username: string, nickname: string,
- *   email: string, avatarUrl: string, github: null, google: null}}
+ *   email: string, avatarUrl: string, github: string|null, google: null}}
  */
 export function getIdentityReadout() {
   const st = getNeblinkState();
+  const github = String(st.device?.githubLogin || '').trim();
   return {
     loggedIn: !!st.loggedIn,
     userId: selfState.status === 'ok' ? selfState.userId : '',
@@ -164,9 +204,25 @@ export function getIdentityReadout() {
     nickname: String(st.device?.displayName || '').trim(),
     email: String(st.device?.email || '').trim(),
     avatarUrl: String(st.device?.avatarUrl || '').trim(),
-    github: null,
+    github: github || null,
     google: null,
   };
+}
+
+/**
+ * 保证身份读数**活着**（自证探针 + 状态订阅就位）。
+ *
+ * 为什么必须由消费面显式调用：`username` 的唯一权威读路是自证探针
+ * （`GET /api/users/search?q=<email>`，`relation_status==='self'`），而探针原本只在
+ * 设置页身份卡与桌面资料面打开时才发起。手机个人主页（`mobile/meFace.js`）直接
+ * 读 `getIdentityReadout()` 却从不触发它 —— 于是自证探针从未跑过、`selfState`
+ * 停在 `idle`，「用户名」恒显「未知」（作者 2026-11-18 手机端截图实证）。本函数
+ * 是那条缺口的**单点入口**：任何消费身份的页面建面时调一次即可（幂等、单飞）。
+ * @returns {void}
+ */
+export function ensureIdentityLive() {
+  subscribeOnce();
+  ensureSelfProbe();
 }
 
 // ── ① 身份卡（设置页账号段顶部）──────────────────────────────────────────
@@ -313,8 +369,7 @@ export function paintSettingsIdentity() {
   const sep = root.querySelector('.settings-identity-sep');
   if (sep instanceof HTMLElement) sep.hidden = !id.loggedIn;
 
-  subscribeOnce();
-  ensureSelfProbe();
+  ensureIdentityLive();
 }
 
 /** 状态订阅 + 两个绘制器注册（模块级单飞；**禁**在每次绘制里 add 新闭包，
@@ -384,6 +439,7 @@ function ensureProfileFace() {
       <p class="sp-note" role="note">${escapeHtml(t('settings.profileReadonlyNote'))}</p>
       <p class="sp-note" role="note">${escapeHtml(t('profile.editOnWebsite', { where: profileUrlText() }))}</p>
       <p class="sp-note sp-note-warn" role="note">${escapeHtml(t('settings.accountServiceUnavailable'))}</p>
+      <p class="sp-note sp-note-bind" id="settings-profile-bindnote" role="note" hidden></p>
       <div class="pd-section-label" role="heading" aria-level="3">${escapeHtml(t('profile.deviceSection'))}</div>
       <div class="sp-fields" id="settings-profile-devices"></div>
     </div>`;
@@ -412,8 +468,7 @@ function ensureProfileFace() {
 }
 
 /** 资料面重绘（读数全部走单点：状态拍 + 自证探针）。 */
-function paintProfileFace() {
-  const overlay = profileOverlay && profileOverlay.isConnected
+function paintProfileFace() {  const overlay = profileOverlay && profileOverlay.isConnected
     ? profileOverlay
     : document.getElementById('settings-profile-overlay');
   if (!(overlay instanceof HTMLElement) || overlay.hidden) return;
@@ -455,13 +510,15 @@ function paintProfileFace() {
   //   username → 自证探针（relation_status==='self'）；读不到 = 未知（不冒充）
   //   nickname → status.device.displayName（id_token name claim，只读）
   //   email    → status.device.email（id_token email claim，只读）
-  //   github / google 绑定 → **无接口**：恒「未知」（禁拿 legacy githubLogin 冒充，
-  //              neblink.js 明确该字段不映射）
+  //   github   → status.device.githubLogin（GitHub 绑定账号名；profile-complete 批
+  //              2026-11-18 起改为真实取数，空 ⇒ 未知 + 缺口说明）
+  //   google   → 无任何可读来源 ⇒ 未知 + 缺口说明（见 getIdentityReadout 的注）
   setField('username', id.username || t('settings.identityUnknown'), !id.username);
   setField('nickname', orUnknown(id.nickname));
   setField('email', orUnknown(id.email));
-  setField('github', t('settings.identityUnknown'), true);
+  setField('github', id.github || t('settings.identityUnknown'), !id.github);
   setField('google', t('settings.identityUnknown'), true);
+  paintBindingGapNote(overlay, id);
 
   // 设备清单（profile-multidevice 批）：设备集合变了才重建行（重建会吃掉正在进行的
   // 退出动作的禁用态），文本读数每次拍都刷。
@@ -477,6 +534,15 @@ function paintProfileFace() {
   }
 }
 
+/** 绑定缺口说明节点刷新（文案单点 = [[bindingGapNote]]；无缺口则整句收起）。 */
+function paintBindingGapNote(overlay, id) {
+  const note = overlay.querySelector('#settings-profile-bindnote');
+  if (!(note instanceof HTMLElement)) return;
+  const text = bindingGapNote(id);
+  note.textContent = text;
+  note.hidden = !text;
+}
+
 /** 打开 App 内个人资料面（唯一入口：身份卡胶囊 / activityBar 账号菜单 / 手机 me 页）。 */
 export function openProfileFace() {
   const overlay = ensureProfileFace();
@@ -487,8 +553,7 @@ export function openProfileFace() {
   // = popSheet.isMobileLayer）。同一行守卫+选择器相邻（机检 P2 = check-panel-unify.mjs）。
   if (isMobileLayer()) overlay.querySelector('#settings-profile-close')?.remove();
   paintProfileFace();
-  subscribeOnce();
-  ensureSelfProbe();
+  ensureIdentityLive();
   return overlay;
 }
 

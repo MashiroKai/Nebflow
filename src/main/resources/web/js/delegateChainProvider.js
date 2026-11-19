@@ -83,7 +83,14 @@ export async function refreshScopedTasks(rootSessionId = state.activeSessionId) 
   const request = (async () => {
     try {
       const response = await fetch(`/api/subagent-tasks/${encodeURIComponent(root)}`, {
-        headers: authHeaders(), credentials: 'same-origin', cache: 'no-store',
+        // 滚动面重验证批（2026-11-18）：改前本腿显式关掉浏览器 HTTP 缓存 ⇒ 每
+        // 5s 一拍都全量收整个行集。服务端此腿已发内容 ETag + `private, no-cache`
+        // （PresenceRoutes `/subagent-tasks/:id` 走 HttpCache），前端只需允许缓存
+        // 参与：`'no-cache'` = **存、但每次先重验证**（有验证器就发 If-None-Match）
+        // ——未变 ⇒ 304 零体、`fetch` 自动复用已存体，JS 侧拿到的仍是同一份 JSON；
+        // 服务端缺席验证器（旧引擎）⇒ 照旧整取，**零陈旧风险**（绝不引入启发式
+        // 新鲜度）。
+        headers: authHeaders(), credentials: 'same-origin', cache: 'no-cache',
         signal: AbortSignal.timeout(10000),
       });
       if (response.status === 401 || response.status === 403) {

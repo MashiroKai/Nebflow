@@ -78,6 +78,12 @@ private[gateway] object WsConfigHandlers:
     // 冻结段照常冻结）。无 payload、无回执（fire-and-forget）。
     skipCurrentFreezeWindow
 
+  private[gateway] def decodeGlobalThinkingEffort(thinking: Option[Json]): Either[String, Option[ThinkingEffort]] =
+    thinking match
+      case None => Right(None)
+      case Some(value) if value.isNull => Right(None)
+      case Some(value) => value.hcursor.downField("effort").as[Option[ThinkingEffort]].left.map(_.message)
+
   private def handleSetThinking(
     ctx: WsDispatchCtx,
     text: String,
@@ -103,22 +109,24 @@ private[gateway] object WsConfigHandlers:
         val budgetTokens = thinkingOpt match
           case None | Some(io.circe.Json.Null) => 32000
           case Some(v) => v.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
-        // 新字段（可选）：effort 档位 + GLM 保留式思考位——旧前端不发 ⇒ None。
-        val effort = thinkingOpt.flatMap(_.hcursor.downField("effort").as[Option[ThinkingEffort]].toOption.flatten)
-        val clearThinking =
-          thinkingOpt.flatMap(_.hcursor.downField("clearThinking").as[Option[Boolean]].toOption.flatten)
-        val tc = ThinkingConfig(enabled, budgetTokens, effort, clearThinking)
-        logger.info(
-          s"Thinking mode set to: enabled=$enabled budgetTokens=$budgetTokens effort=${effort.map(_.wireName)}"
-        ) *>
-          // 冻结修复（2026-08-27）：同族排序——persist 成功才热更，失败回执。
-          nebflow.service.ConfigService.writeLocked(persistThinkingConfig(tc)).attempt.flatMap {
-            case Left(e) =>
-              logger.warn(s"Failed to persist thinking config: ${e.getMessage}") *>
-                wsSend(ApiJson.configUpdateFailed(s"思考模式保存失败: ${e.getMessage}"))
-            case Right(_) =>
-              sharedResources.thinkingConfigRef.set(tc) *> broadcastServerConfig
-          }
+        decodeGlobalThinkingEffort(thinkingOpt) match
+          case Left(error) =>
+            wsSend(ApiJson.configUpdateFailed(s"思考模式保存失败: $error"))
+          case Right(effort) =>
+            val clearThinking =
+              thinkingOpt.flatMap(_.hcursor.downField("clearThinking").as[Option[Boolean]].toOption.flatten)
+            val tc = ThinkingConfig(enabled, budgetTokens, effort, clearThinking)
+            logger.info(
+              s"Thinking mode set to: enabled=$enabled budgetTokens=$budgetTokens effort=${effort.map(_.wireName)}"
+            ) *>
+              nebflow.service.ConfigService.writeLocked(persistThinkingConfig(tc)).attempt.flatMap {
+                case Left(e) =>
+                  logger.warn(s"Failed to persist thinking config: ${e.getMessage}") *>
+                    wsSend(ApiJson.configUpdateFailed(s"思考模式保存失败: ${e.getMessage}"))
+                case Right(_) =>
+                  sharedResources.thinkingConfigRef.set(tc) *> broadcastServerConfig
+              }
+        end match
     end match
   end handleSetThinking
 

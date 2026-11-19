@@ -47,10 +47,29 @@ object InjectionChannel:
 
   private val logger = NebflowLogger.forName("nebflow.core.injection-channel")
 
+  /** Read-only diagnostic; never records event payloads. Disable with -Dnebflow.injection.decisionLog=false. */
+  def logSuppressed(sessionId: String, source: String, eventType: String, sourceId: String,
+    gate: String, basis: JsonObject): IO[Unit] =
+    if sys.props.get("nebflow.injection.decisionLog").contains("false") then IO.unit
+    else
+      val row = Json.obj(
+        "timestampMs" -> System.currentTimeMillis().asJson,
+        "sessionId" -> sessionId.asJson,
+        "source" -> source.asJson,
+        "eventType" -> eventType.asJson,
+        "sourceId" -> sourceId.asJson,
+        "gate" -> gate.asJson,
+        "basis" -> Json.fromJsonObject(basis)
+      )
+      logger.info(s"[injection-decision] ${row.noSpaces}").handleError(_ => ())
+
   /** 投递结果（审计/测试读数面）。 */
   enum Outcome:
     /** 已落盘 + 已广播。 */
     case Emitted
+
+    /** One or both delivery legs failed; successful append is cache acceptance, not a disk flush. */
+    case Failed(appendFailed: Boolean, broadcastFailed: Boolean)
 
     /** 去重命中 ⇒ 本轮**零落盘零广播**（同一条通知的第二、三次）。 */
     case Collapsed
@@ -169,7 +188,7 @@ object InjectionChannel:
    * **唯一投递入口**：去重闸 → 落盘 → 广播。
    *
    * 纪律（逐条与改前单腿行为等价，禁回退）：
-   *  · 落盘失败/广播失败各自 WARN 兜底，永不向上抛（注入路径绝不因呈现面失败中断 turn）；
+   *  · 落盘失败/广播失败各自 WARN 并返回 Failed，不向上抛（注入路径不因呈现面失败中断 turn）；
    *  · 顺序恒为「先落盘、后广播」（live 帧时序与 `.ui.json` 行序同前）；
    *  · `text` 为空 ⇒ 只广播不落盘（旧录制层同款判据）；
    *  · `dedup = true` 且命中 ⇒ 零落盘零广播（[[Outcome.Collapsed]]）。
@@ -189,20 +208,25 @@ object InjectionChannel:
       if dedup && hasText then admit(dedupKey(sessionId, row))
       else true
     if !admitted then
-      logger.info(
-        s"[injection-channel] collapsed duplicate injection (source=${row.source.getOrElse("")} " +
-          s"eventType=${row.eventType.getOrElse("")} session=${sessionId.take(24)}) — same notice within ${windowMs}ms"
+      logSuppressed(sessionId, row.source.getOrElse(""), row.eventType.getOrElse(""),
+        row.sender.getOrElse(""), "injection-window-dedup",
+        JsonObject("windowMs" -> windowMs.asJson, "fingerprint" -> fingerprint(row.text).asJson)
       ).as(Outcome.Collapsed)
     else
       val persist =
         if hasText then
-          store
-            .appendUiMessages(sessionId, List(row))
-            .handleErrorWith(e => logger.warn(s"injected user event persist failed: ${e.getMessage}"))
-        else IO.unit
-      persist *>
-        send(frame(sessionId, row, extra))
-          .handleErrorWith(e => logger.warn(s"injected user event failed: ${e.getMessage}"))
-          .as(Outcome.Emitted)
+          IO.defer(store.appendUiMessages(sessionId, List(row))).attempt.flatMap {
+            case Right(_) => IO.pure(false)
+            case Left(e) => logger.warn(s"injected user event persist failed: ${e.getMessage}").as(true)
+          }
+        else IO.pure(false)
+      persist.flatMap { appendFailed =>
+        IO.defer(send(frame(sessionId, row, extra))).attempt.flatMap {
+          case Right(_) => IO.pure(if appendFailed then Outcome.Failed(true, false) else Outcome.Emitted)
+          case Left(e) =>
+            logger.warn(s"injected user event failed: ${e.getMessage}")
+              .as(Outcome.Failed(appendFailed, true))
+        }
+      }
 
 end InjectionChannel

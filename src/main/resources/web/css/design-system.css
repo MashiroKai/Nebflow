@@ -2,7 +2,8 @@
    design-system.css — Stand 设计体系**令牌层 + 组件类层**（单源）
    ═══════════════════════════════════════════════════════════════════════
 
-   规范权威 = seed/plugins/design-language/skills/design-language/SKILL.md
+   规范权威 = stand-dev 插件包 `references/frontend/`（令牌账本 design-tokens-ledger.md
+   + 组件契约 component-contract.md；本仓不保留第二份拷贝）
    （八节：配色/字体/字距行高/圆角阴影/间距栅格/动画/组件固定尺寸档/文案 tone），
    基准 = mystand.space 官网 design tokens × 客户端 Sapphire Glass。
 
@@ -31,7 +32,7 @@
    ── 谁在消费 ─────────────────────────────────────────────────
    · 设置页（sidebar.css §Settings Modal content / modal.css cfg-input 族）——
      本批已改走 `--ds-*`（示范面）；
-   · 设计体系文档页 docs/design-language/design-system-token-batch/kit.html
+   · 设计体系文档页样张（历史 kit.html，随本批文档归档，仓内已无该目录）
      的五组件样张；
    · 后续新面（面板/卡片/列表）按 SKILL.md §10 使用流三步取值取形。
    ═══════════════════════════════════════════════════════════════════════ */
@@ -267,6 +268,15 @@
        被 scripts/check-msgstyle-single-source.mjs A3 规则逐字钉死在 sapphire.css，
        两档两制并存是门禁钉死的单源现状，禁在本层起同值第二槽。 */
   --ds-bubble-max-w: 80%;        /* 主对话气泡列宽（chat.css .bubble 既有值档） */
+  /* 提问卡宿主泡（AskUser / 权限 / onboarding 的 `.bubble.ai.ob-ghost-seat`）的
+     横向预算槽 —— 与 .bubble 分开，因为卡内要装消息面叠卡（展开钮 + 卡脸 +
+     右侧扇形露边），比一条纯文字气泡需要更多横向空间。
+     值的家**只有本行**：缺省 = `var(--ds-bubble-max-w)`（＝桌面既盘计算值逐字，
+     不是新值、零漂移）；手机层在 css/mobileLayer.css 的手机令牌块里把**同一个
+     槽**放宽到整列（作者令 2026-11-18「手机端的叠卡显示有些不完整…允许它问题卡片
+     横向占用空间大一点，让内容能完整显示」）。
+     消费面（chat.css `.bubble.ai.ob-ghost-seat`）只写 `var()`，零第二份数值。 */
+  --ds-ask-card-max-w: var(--ds-bubble-max-w);
   --ds-bubble-pad: 10px 14px;    /* 主对话气泡内距既有值档 */
   --ds-fs-bubble: 14.5px;        /* 主对话气泡字档（2026-09-12 ③-4 裁定：主对话 14.5px、
                                     好友面 13px 保持——档外既有值以具名槽收编，禁再派生） */
@@ -349,6 +359,9 @@
   --ds-media-letterbox: #17191f;             /* 媒体卡留黑底（墨常量：亮暗各一档） */
   --ds-shadow-media-card: 0 5px 16px rgb(0 0 0 / 0.16);      /* 叠卡卡层投影（墨α） */
   --ds-dur-stack: 0.42s;                     /* 叠卡收放/翻页既有时长档 */
+  /* Media-stack switch: sampled critically damped response, shared by all viewports. */
+  --ds-dur-stack-switch: 0.55s;
+  --ds-ease-stack-switch: linear(0, 0.18 10%, 0.42 20%, 0.62 30%, 0.77 40%, 0.87 50%, 0.93 60%, 0.965 70%, 0.984 80%, 0.995 90%, 1);
 
   /* ── ⑭ 弹层层族槽（ui-unification-20261103-overlays）──
      缺槽先扩再消费：⑦门入场加载卡/接管卡与⑧命令面板+弹层族的**层级带 /
@@ -507,8 +520,8 @@
   --ds-resize-step: 16px;            /* 键盘步进（←→ 改宽 / ↑↓ 改高；4px 栅格的 4 倍档） */
 
   /* ── ⑲ 面板设计语言槽（panel-language 批 2026-11-06，作者令 3(c)(d)(e)）──
-     面板族唯一版式令牌。规范单点 = seed/plugins/design-language/skills/design-language/
-     references/panel-spec.md（与 glass-spec.md 并列）；机检 = scripts/check-panel-unify.mjs
+     面板族唯一版式令牌。规范单点 = stand-dev 插件包 `<包根>/references/frontend/
+     panel-spec.md（与 glass-spec.md 并列）；机检 = scripts/check-panel-unify.mjs
      （make panel-unify / FRONTEND_GATES）。纪律：**本段只做面板语义命名，值全部 =
      既有刻度的别名或既有读数**（唯一新数值 = --ds-panel-title-lh 1.4，作者令逐字
      「15px/600/1.4 档」，按 --ds-fs-bubble 14.5 具名例外槽先例出生）——
@@ -657,8 +670,7 @@
   /* ══ 组件类层（`.ds-*`）══════════════════════════════════════════════
      五组件 = 按钮 / 行 / 徽标 / 输入 / 卡（SKILL.md §7 固定尺寸档）。
      所有值走 `--ds-*`；本层不覆盖任何既有类，只在 `.ds-*` 命名空间内生效
-     ⇒ 引入即用，零回归面。文档页样张 = docs/design-language/
-     design-system-token-batch/kit.html（本批 kit 段）。 */
+     ⇒ 引入即用，零回归面。文档页样张 = 历史 kit.html（随本批文档归档）。 */
   
   /* ① 按钮：主 = 墨族实心（2026-10-30 作者令「按钮不要绿色」），次级 = 玻璃，
      危险 = ghost + hover 红。三档，禁第二实色族。
@@ -741,10 +753,20 @@
    padding / 图标 18px 圆内切换（send 纸飞机 ⇄ stop 方块）。两态几何逐值相等，
    主次只由配色表达 —— 尺寸永远不承担语义。
    消费面（两处，零第二套）：
-     · 主会话  index.html `#send-btn` / `#stop-btn`（+ `.ds-turn-btn`）
+     · 主会话  js/chatUi.js `#send-btn` / `#stop-btn`（+ `.ds-turn-btn`；标记
+              自 523a21209 起由 index.html 静态迁至此模板字面量）
      · 面板    js/askDock.js `.ask-send` / `.ask-stop`（+ `.ds-turn-btn`）
    `.ask-send` / `.ask-stop` 在 ask.css 里**已无任何规则**（纯身份钩子，供既有
-   spec 定位）；一切形态来自本块 ⇒ 「同名类改一处两边同时改」。
+   spec 定位）；一切形态来自本块 ⇒ 「同名类改一处两边同时改」。几何/线宽收口批
+   （ask-button-unify 2026-11-18）另退役了面板侧残留的三条本地覆盖（尺寸 max()
+   取 40、svg 档兜底 + stroke 2、:disabled），面板腿手机档改与主会话**同一条**
+   声明（mobileLayer.css「输入条转回合圆钮手机档」）。
+   字形也在同一批收口：圆内两枚几何 = vendored lucide 的 `send`（纸飞机）与
+   `square`（方块），两处消费面都只产出 `<i data-lucide=…>` 占位（主会话
+   js/chatUi.js 的 `#send-btn` / `#stop-btn` 标记 / 面板 js/input/secondaryComposer.js
+   的 `sendBtn` / `stopBtn`），由 utils.js `createIconsIn` 这一条转换通路换成同一份
+   几何 —— 面板侧此前的自建 `composerSendIcon()`（向上箭头）/
+   `composerStopIcon()`（12×12 内缩方块）已退役。
    热区：`::after` 外扩到 --ds-turn-hit 44（本体 36 时 inset -4；本体 ≥44 的手机层
    48 用 min() 收到 0 —— 不外溢到邻居钮，busy↔idle 显隐互换时热区与几何都对称）。 */
 .ds-turn-btn {

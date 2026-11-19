@@ -296,8 +296,10 @@ try {
       };
     });
     // 设备区 label 子句已除名（设备列表 2026-09-15 迁联系人面板，label 随之消失——
-    // 该子句自迁址起误红，基线复核 2026-10-20）；auth-trim：登出键退役 + 只读身份行在位。
-    ok('D7 设置面板：NL 号修改入口零残留 + 登出键已退役（auth-trim）+ 只读身份行在位', !nl.nlidValue && !nl.editBtn && !nl.input && !nl.logout && nl.roLine, JSON.stringify(nl));
+    // 该子句自迁址起误红，基线复核 2026-10-20）；auth-trim：登出键退役。
+    // 账户栏整件退役（作者令 2026-11-18）：只读身份行 `roLine` 随之删除 ⇒ 判据反转，
+    // 「在位」改为「不存在」（不隐藏，DOM 零命中）。
+    ok('D7 设置面板：NL 号修改入口零残留 + 登出键已退役（auth-trim）+ 账户栏整件退役', !nl.nlidValue && !nl.editBtn && !nl.input && !nl.logout && !nl.roLine, JSON.stringify(nl));
     await ctx.close();
   }
 

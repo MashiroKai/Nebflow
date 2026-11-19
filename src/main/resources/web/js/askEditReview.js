@@ -26,6 +26,7 @@ import { sendWs } from './ws.js';
 import { h } from './dom.js';
 import { key } from './branding.js';
 import { esc } from './diffRender.js';
+import { mountDiff } from './diffView/index.js';
 
 // ── 文案（askDock tt 同源：locale 键 + 中英双文）────────────────────────────
 
@@ -91,105 +92,52 @@ function ensureTab(sid) {
 
 // ── 动作（WS 外发；waiting 防双发）──────────────────────────────────────────
 
+/** 当前在列的组件 api（sid → api）。动作发出时用它在**原位**落等待面 —— 不整页
+ *  重渲，否则「已接受/已拒绝」的就地状态与等待面会被刚建好的树立刻抹掉。 */
+/** @type {Map<string, any>} */
+const liveApi = new Map();
+
 function send(action, sid, hunkId) {
   const st = reviewState(sid);
   if (!st || st.waiting) return;
   st.waiting = { action, hunkId };
   st.error = '';
-  render(sid);
+  // waiting 面就地落地（组件已就绪）；组件尚在装载 ⇒ 回退整页重渲（状态不丢）。
+  const api = liveApi.get(sid);
+  if (api && typeof api.setWaiting === 'function') api.setWaiting(true);
+  else render(sid);
   const frame = { type: action === 'dismiss' ? 'askEditDismiss' : action === 'accept' ? 'askEditAccept' : 'askEditReject', sessionId: sid };
   if (hunkId) frame.hunkId = hunkId;
   sendWs(frame);
 }
 
-// ── 渲染 ────────────────────────────────────────────────────────────────────
+// ── 渲染（迁移批 2026-11-19：渲染权移交共享组件 js/diffView）─────────────────
+//
+// 作者裁定 2026-11-18「手机diff 按推荐」：本面自研的「整树重建 + 手工折叠 +
+// 手工行渲染」退役，改调共享组件（与 delegate 面同一组件 = 单源，硬不变式①）。
+// 组件底座 CodeMirror 6 + @codemirror/merge 自带逐块接受/拒绝（既有语义不变：
+// 逐块钮仍发 askEditAccept/askEditReject {sessionId, hunkId}，只是按钮由组件
+// 按 ≥44px 改壳渲染，D6）；行号/词级/未变段折叠/视口虚拟化全部由底座承接
+// （D2/D3/D8/D9 —— 1380 行文档不再一次性进 DOM、每次接受/拒绝不再重建整棵树）。
 
-/** 上下文折叠阈：长未变段只露头尾各 FOLD_EDGE 行（点击展开——「原文档内联」
- *  的可读性面，不是硬截断）。 */
-const FOLD_MIN = 14;
-const FOLD_EDGE = 6;
-
-function lineRow(cls, text, prefix) {
-  return h('div', { class: 'nf-ar-line ' + cls }, (prefix ? prefix + (text === '' ? '' : ' ' + text) : text));
-}
-
-/** 一段未变行 →（可能折叠的）行节点数组。 */
-function contextRows(lines, from, to) {
-  const run = to - from;
-  if (run <= FOLD_MIN) {
-    const rows = [];
-    for (let i = from; i < to; i++) rows.push(lineRow('ctx', lines[i], ''));
-    return rows;
-  }
-  const rows = [];
-  for (let i = from; i < from + FOLD_EDGE; i++) rows.push(lineRow('ctx', lines[i], ''));
-  const hidden = run - FOLD_EDGE * 2;
-  const fold = h('button', {
-    type: 'button',
-    class: 'nf-ar-fold',
-    'aria-label': tt(`展开中间 ${hidden} 行未变内容`, `expand ${hidden} unchanged lines`),
-  }, tt(`⋯ ${hidden} 行未变（点击展开）`, `⋯ ${hidden} unchanged lines (click to expand)`));
-  const wrap = h('div', { class: 'nf-ar-foldwrap' }, fold);
-  const hiddenRows = [];
-  for (let i = from + FOLD_EDGE; i < to - FOLD_EDGE; i++) {
-    const row = lineRow('ctx', lines[i], '');
-    row.style.display = 'none';
-    hiddenRows.push(row);
-  }
-  fold.addEventListener('click', () => {
-    for (const r of hiddenRows) r.style.display = '';
-    wrap.remove();
-  });
-  rows.push(wrap, ...hiddenRows);
-  for (let i = to - FOLD_EDGE; i < to; i++) rows.push(lineRow('ctx', lines[i], ''));
-  return rows;
-}
-
-/** 一个可审块：块动作条 + del（基线行）/ add（现文行）。行文本一律
- *  textContent——文件原文绝不进 innerHTML（红线）。 */
-function hunkNode(st, hunk) {
-  const baseL = st.baseText.split(/\r?\n/);
-  const curL = st.currentText.split(/\r?\n/);
-  const dels = baseL.slice(hunk.oldStart, hunk.oldStart + hunk.oldCount);
-  const adds = curL.slice(hunk.newStart, hunk.newStart + hunk.newCount);
-  const disabled = !!st.waiting;
-  const bar = h('div', { class: 'nf-ar-hunkbar' }, [
-    h('span', { class: 'nf-ar-hunkmeta' }, `+${adds.length} −${dels.length}`),
-    h('button', {
-      type: 'button',
-      class: 'nf-ar-btn nf-ar-hunk-accept',
-      'data-hunk-id': hunk.id,
-      'aria-label': tt('接受本块（保留该改动）', 'Accept this block (keep the change)'),
-      ...(disabled ? { disabled: '' } : {}),
-    }, tt('接受本块', 'Accept')),
-    h('button', {
-      type: 'button',
-      class: 'nf-ar-btn nf-ar-btn-danger nf-ar-hunk-reject',
-      'data-hunk-id': hunk.id,
-      'aria-label': tt('拒绝本块（回退该改动）', 'Reject this block (revert the change)'),
-      ...(disabled ? { disabled: '' } : {}),
-    }, tt('拒绝本块', 'Reject')),
-  ]);
-  const lines = h('div', { class: 'nf-ar-hunklines' }, [
-    ...dels.map((l) => lineRow('del', l, '−')),
-    ...adds.map((l) => lineRow('add', l, '+')),
-  ]);
-  return h('div', { class: 'nf-ar-hunk', 'data-hunk-id': hunk.id, 'data-state': disabled ? 'waiting' : 'pending' }, [bar, lines]);
-}
-
-/** 整页渲染（幂等：整树重建）。 */
+/** 整页渲染（幂等：状态变化重挂组件；组件自身按视口虚拟化）。 */
 function render(sid) {
   const st = reviewState(sid);
   if (!st) return;
   const pane = getTabPane(tabIdOf(sid));
   if (!pane || !pane.isConnected) return;
   pane.textContent = '';
-  const baseL = st.baseText.split(/\r?\n/);
   const added = st.hunks.reduce((a, x) => a + (Number(x.newCount) || 0), 0);
   const removed = st.hunks.reduce((a, x) => a + (Number(x.oldCount) || 0), 0);
   const waiting = !!st.waiting;
 
-  // 顶栏：文件 + 计数 + 全量动作（快捷键 ⌘↩ / ⌘⌫ 同一动作面）。
+  // 让位带壳（D4：审阅标题条此前从 y=0 起排，被画布浮钮压住；本壳沿用 delegate
+  // 面同一条 56px 常量 --nf-dv-top-band，两个面共用同一层壳）。
+  const shell = h('div', { class: 'nf-ar-shell' });
+
+  // 顶栏：文件 + 计数。（全量动作钮 + 等待面**不在这里** —— 作者令 2026-11-19
+  // 把审阅动作区收进共享组件 js/diffView 的 review 模式（单源）；头部重复的那两颗
+  // 已删净，避免同屏出现两处「全部接受」。）
   const head = h('div', { class: 'nf-ar-head' }, [
     h('div', { class: 'nf-ar-headpill' }, [
       h('span', { class: 'nf-ar-file', title: st.path }, st.fileName || st.path),
@@ -200,28 +148,13 @@ function render(sid) {
         ` · ${tt(`${st.hunks.length} 块待审`, `${st.hunks.length} block${st.hunks.length === 1 ? '' : 's'} to review`)}`,
       ]),
     ]),
-    h('div', { class: 'nf-ar-actions' }, [
-      waiting ? h('span', { class: 'nf-ar-waiting' }, tt('已发送…', 'Sent…')) : null,
-      h('button', {
-        type: 'button',
-        class: 'nf-ar-btn nf-ar-accept-all',
-        'aria-label': tt('全部接受（保留全部改动）', 'Accept all (keep every change)'),
-        ...(waiting ? { disabled: '' } : {}),
-      }, tt('全部接受 ⌘↩', 'Accept all ⌘↩')),
-      h('button', {
-        type: 'button',
-        class: 'nf-ar-btn nf-ar-btn-danger nf-ar-reject-all',
-        'aria-label': tt('全部拒绝（回退全部改动）', 'Reject all (revert every change)'),
-        ...(waiting ? { disabled: '' } : {}),
-      }, tt('全部拒绝 ⌘⌫', 'Reject all ⌘⌫')),
-    ]),
   ]);
-  pane.appendChild(head);
+  shell.appendChild(head);
 
   // 冲突条（显式提示，绝不静默覆盖）：重试 + 保留盘上现状关闭。
   if (st.error) {
     const retry = st.waiting || null;
-    pane.appendChild(h('div', { class: 'nf-ar-conflict', role: 'alert' }, [
+    shell.appendChild(h('div', { class: 'nf-ar-conflict', role: 'alert' }, [
       h('span', { class: 'nf-ar-conflict-text' }, tt('文件在审阅期间被修改，为避免覆盖，操作未执行。', 'The file changed during review — the action was NOT applied to avoid overwriting.')),
       h('span', { class: 'nf-ar-conflict-err', title: st.error }, st.error),
       h('div', { class: 'nf-ar-conflict-actions' }, [
@@ -240,20 +173,25 @@ function render(sid) {
     ]));
   }
 
-  // 文档体：原文档全文 + 就地增删（折叠长未变段）。
-  const body = h('div', { class: 'nf-ar-body' });
-  const rows = [];
-  let prevEnd = 0;
-  for (const hunk of st.hunks) {
-    rows.push(...contextRows(baseL, prevEnd, hunk.oldStart));
-    rows.push(hunkNode(st, hunk));
-    prevEnd = hunk.oldStart + hunk.oldCount;
-  }
-  // 尾段：文件以换行结尾时 split 末位是空串——不渲染该伪行。
-  const tailEnd = /(^|\n)$/.test(st.baseText) ? baseL.length - 1 : baseL.length;
-  rows.push(...contextRows(baseL, prevEnd, Math.max(prevEnd, tailEnd)));
-  body.append(...rows);
-  pane.appendChild(body);
+  // 文档体：共享组件（原文档全文 + 就地增删 + 逐块动作；折叠/虚拟化内置）。
+  const editor = h('div', { class: 'nf-ar-editor' });
+  shell.appendChild(editor);
+  pane.appendChild(shell);
+
+  const baseText = st.baseText;
+  const currentText = st.currentText;
+  const hunks = st.hunks.slice();
+  mountDiff(editor, {
+    original: baseText,
+    current: currentText,
+    mode: 'review',
+    hunks,
+    waiting,
+    onChunkAction: (hunkId, action) => send(action, sid, hunkId),
+  }).then((api) => {
+    liveApi.set(sid, api);
+    api.setWaiting(waiting);   // waiting 面（防双发）：动作钮（逐块 + 全量）整组禁用
+  }).catch(() => { /* 组件装载失败：head 仍在（可见响应面），不静默炸页 */ });
 }
 
 // ── 帧消费（askDock 路由进来；会话已在本页建账的前提下）────────────────────
@@ -292,6 +230,7 @@ export function consumeResolved(msg) {
     // 审阅页签收起。
     refreshFileTabByPath(st.path);
     reviews.delete(sid);
+    liveApi.delete(sid);
     closeTab(tabIdOf(sid));
   }
 }
@@ -323,14 +262,9 @@ export function initAskEditReview() {
     if (!pane) return;
     const sid = (pane.dataset.tabId || '').slice('askreview:'.length);
     if (!sid) return;
-    const hunkBtn = /** @type {HTMLButtonElement|null} */ (target.closest('.nf-ar-hunk-accept, .nf-ar-hunk-reject'));
-    if (hunkBtn && !hunkBtn.disabled) {
-      const hunkId = hunkBtn.getAttribute('data-hunk-id') || '';
-      send(hunkBtn.classList.contains('nf-ar-hunk-accept') ? 'accept' : 'reject', sid, hunkId);
-      return;
-    }
-    if (target.closest('.nf-ar-accept-all') && !target.disabled) { send('accept', sid); return; }
-    if (target.closest('.nf-ar-reject-all') && !target.disabled) { send('reject', sid); return; }
+    // 逐块接受/拒绝 **与** 全量接受/拒绝全部由共享组件（js/diffView）经
+    // onChunkAction 回调上抛（作者令 2026-11-19：审阅动作区单源落在组件）；此处只留
+    // 冲突条动作（重试 / 保留现状并关闭）。
     if (target.closest('.nf-ar-retry')) {
       const st = reviewState(sid);
       if (st && st.waiting === null) {

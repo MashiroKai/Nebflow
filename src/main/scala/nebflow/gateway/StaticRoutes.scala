@@ -221,10 +221,13 @@ object StaticRoutes:
    * L1 rebrand: serve the index entry with the brand script injected.
    * Blocking classpath read of a tiny resource (a few KB) per request —
    * the same order of cost as the StaticFile.fromResource lookup it
-   * replaces. Response contract: no-cache, no validators (the body is
-   * content-generated, not a static file), text/html in UTF-8. The gzip
-   * middleware wraps this route from the Router "/" mount, so it sees the
-   * final injected bytes — compression order is correct by construction.
+   * replaces. Response contract: `no-cache` + the served-bytes WEAK ETag
+   * (`If-None-Match` ⇒ 304; 静态面重验证批 2026-11-18 — the body is
+   * content-generated so the validator is computed over the exact bytes we
+   * serve, never borrowed from the source file). text/html in UTF-8. The
+   * gzip middleware wraps this route from the Router "/" mount, so it sees
+   * the final injected bytes — compression order is correct by construction,
+   * and the weak tag survives the coding switch (see [[GzipMiddleware]]).
    *
    * The entity is written as a raw byte stream with an explicit
    * Content-Length — deliberately NOT Ok(String)/withEntity(String):
@@ -236,10 +239,10 @@ object StaticRoutes:
    * entity-encoder resolution entirely; pinned at the HTTP response
    * layer by IndexWithBrandServeSpec.
    */
-  def indexWithBrand(indexResource: String): IO[Response[IO]] =
+  def indexWithBrand(indexResource: String, inm: Option[String] = None): IO[Response[IO]] =
     IO.blocking(readClasspathResourceUtf8(indexResource)).flatMap {
       case None => NotFound()
-      case Some(html) => brandInjectedResponse(html)
+      case Some(html) => brandInjectedResponse(html, inm)
     }
   end indexWithBrand
 
@@ -250,14 +253,27 @@ object StaticRoutes:
    * A read failure (dist vanished mid-boot, permissions) degrades to 404
    * rather than a 500 — the entry must stay a clean miss.
    */
-  def indexWithBrandFile(file: os.Path): IO[Response[IO]] =
+  def indexWithBrandFile(file: os.Path, inm: Option[String] = None): IO[Response[IO]] =
     IO.blocking(new String(os.read.bytes(file), java.nio.charset.StandardCharsets.UTF_8))
-      .flatMap(brandInjectedResponse)
+      .flatMap(html => brandInjectedResponse(html, inm))
       .handleErrorWith(_ => NotFound())
   end indexWithBrandFile
 
-  /** Shared index response build: brand injection + raw-bytes no-cache response. */
-  private def brandInjectedResponse(html: String): IO[Response[IO]] =
+  /** Shared index response build: brand injection + raw-bytes response with the
+    * served-bytes weak validator (see [[weakEtagOf]]).
+    *
+    * 静态面重验证批（2026-11-18，作者令「尽量节省资源」）：修前本应答带
+    * `Cache-Control: no-cache` 却**零验证器**——`no-cache` 要求每次导航都先对
+    * 服务端核对，而既无 ETag 又无 Last-Modified（体是逐请求注入生成的，不是
+    * StaticFile 的盘上字节）⇒ 浏览器无法发条件请求，**整页体每次导航全量重下**
+    * （实测 dev 树 index 88 304 B / gzip 33 510 B，隧道腿每跳都过境）。
+    * 现在按**实际出向字节**算一个弱验证器并接条件请求：`If-None-Match` 命中
+    * ⇒ 304（零体），未命中/陈旧 ⇒ 200 全量且带同一 ETag。体字节不变（本批
+    * 不改注入内容），故 ETag 与内容一一对应——内容一变（重建/换静态面/换品牌
+    * 配置）ETag 即变，绝无陈旧服务。**弱**标签是必须的形态：GzipMiddleware 会
+    * 把可压缩应答换成 gzip 表示，而弱比较（RFC 9110 §8.8.3）忽略内容编码。
+    */
+  private def brandInjectedResponse(html: String, inm: Option[String] = None): IO[Response[IO]] =
     // 陈旧 SPA 指纹提示批（方案 B 小刀③，2026-10-28）：brand 脚本同点追加指纹
     // 注入——本页被 serve 时拿到引擎当前的前端资源指纹（webFingerprint 惰性单值，
     // 与此处注入值恒同源），serverConfig 帧下行新值后 ws/main 面比对不等 ⇒ 顶栏
@@ -267,16 +283,53 @@ object StaticRoutes:
     // 标签页判据）、NF_HOME（家目录缩写的取值来源，见 [[homeScriptTag]]）。
     val served = injectBeforeHeadClose(html, brandScriptTag + fingerprintScriptTag + homeScriptTag).getOrElse(html)
     val bytes = served.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-    IO.pure(
-      Response[IO](Status.Ok)
-        .withBodyStream(Stream.emits(bytes))
-        .withContentType(`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
-        .putHeaders(
-          "Content-Length" -> bytes.length.toString,
-          "Cache-Control" -> "no-cache"
-        )
-    )
+    val etag = weakEtagOf(bytes)
+    if ifNoneMatchHits(inm, etag) then
+      IO.pure(
+        Response[IO](Status.NotModified)
+          .putHeaders("ETag" -> etag, "Cache-Control" -> "no-cache")
+      )
+    else
+      IO.pure(
+        Response[IO](Status.Ok)
+          .withBodyStream(Stream.emits(bytes))
+          .withContentType(`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
+          .putHeaders(
+            "Content-Length" -> bytes.length.toString,
+            "Cache-Control" -> "no-cache",
+            "ETag" -> etag
+          )
+      )
+    end if
   end brandInjectedResponse
+
+  /**
+   * 出向 index 字节的**弱验证器**：`W/"<sha256 前 16 hex>"`。弱标签 = 同一实体
+   * 的内容编码变体（identity / gzip）共享一枚验证器——GzipMiddleware 因此**不再
+   * 剥掉**它（只剥强标签），条件重验证在压缩面同样成立（见 [[GzipMiddleware]]）。
+   * 摘要对象 = 实际出向字节（brand/指纹/版本化注入后的体），与 [[fingerprintOf]]
+   * 的「规范源字节」刻意不同：那个是陈旧标签页判据，这个是本应答的缓存键。
+   */
+  private[gateway] def weakEtagOf(bytes: Array[Byte]): String =
+    val md = java.security.MessageDigest.getInstance("SHA-256")
+    "W/\"" + md.digest(bytes).take(8).map(b => f"${b & 0xff}%02x").mkString + "\""
+
+  /**
+   * 条件请求命中判据：`If-None-Match` 列表里任一项与当前弱标签**弱比较**相等，
+   * 或为 `*`。弱比较 = 忽略 `W/` 前缀与两侧引号（本面只发弱标签，客户端原样回寄；
+   * 少数中间件会退回强形态，故两侧都归一化——严格相等只在同形态时成立）。
+   */
+  private[gateway] def ifNoneMatchHits(inm: Option[String], etag: String): Boolean =
+    inm.exists { raw =>
+      val target = normalizeEtag(etag)
+      raw.split(',').map(_.trim).exists(t => t == "*" || normalizeEtag(t) == target)
+    }
+
+  /** `W/"abc"` / `"abc"` → `abc`（弱比较的归一形态）。 */
+  private def normalizeEtag(tag: String): String =
+    val t = tag.trim
+    val noWeak = if t.startsWith("W/") || t.startsWith("w/") then t.substring(2).trim else t
+    noWeak.stripPrefix("\"").stripSuffix("\"")
 
   /**
    * 陈旧 SPA 指纹提示批（方案 B 小刀③，2026-10-28 作者令④）：前端资源指纹 =
@@ -356,11 +409,11 @@ object StaticRoutes:
    * classpath dist, fresh disk dist, or the dev tree. Same brand injection
    * and response contract on every branch.
    */
-  def indexResponse: IO[Response[IO]] = staticSource match
-    case StaticSource.BundledDist => indexWithBrand("web-dist/index.html")
-    case StaticSource.DiskDist(root) => indexWithBrandFile(root / "index.html")
+  def indexResponse(inm: Option[String] = None): IO[Response[IO]] = staticSource match
+    case StaticSource.BundledDist => indexWithBrand("web-dist/index.html", inm)
+    case StaticSource.DiskDist(root) => indexWithBrandFile(root / "index.html", inm)
     // 缓存击穿批：dev 树 index 走版本化改写（dist 树已是内容寻址形态，不动）。
-    case StaticSource.DevTree => devIndexWithBrand
+    case StaticSource.DevTree => devIndexWithBrand(inm)
   end indexResponse
 
   // ── 隧道首开内联打包面（console-fastpath 批 2026-10-23·腿②「请求打包」）─────
@@ -392,19 +445,20 @@ object StaticRoutes:
 
   /** `/` 与 `/index.html` 的请求分派面：隧道脸打包、直连脸原应答。 */
   def indexResponseFor(req: Request[IO]): IO[Response[IO]] =
-    if nebflow.shared.TunnelOriginMark.isMarked(req) then packedIndexResponse
-    else indexResponse
+    val inm = req.headers.get(org.typelevel.ci.CIString("If-None-Match")).map(_.head.value)
+    if nebflow.shared.TunnelOriginMark.isMarked(req) then packedIndexResponse(inm)
+    else indexResponse(inm)
 
-  private def packedIndexResponse: IO[Response[IO]] =
+  private def packedIndexResponse(inm: Option[String] = None): IO[Response[IO]] =
     staticSource match
       case StaticSource.DevTree =>
         IO.blocking(readClasspathResourceUtf8("web/index.html")).flatMap {
           case None => NotFound()
           // 打包在前（干净路径供 Pack*Re 捕获），版本化在后（css/vendor 已内联，
           // 只剩 module 入口 src 可版本化 —— 与 dev 脸同一改写函数，幂等形状类）。
-          case Some(html) => brandInjectedResponse(versionedIndexHtml(packedIndexHtml(html)))
+          case Some(html) => brandInjectedResponse(versionedIndexHtml(packedIndexHtml(html)), inm)
         }
-      case _ => indexResponse
+      case _ => indexResponse(inm)
   end packedIndexResponse
 
   private val PackStylesheetRe = """<link rel="stylesheet" href="((?:css|vendor)/[^"]+)"([^>]*)>""".r
@@ -518,10 +572,10 @@ object StaticRoutes:
   end versionedIndexHtml
 
   /** dev 树 index 应答：版本化 + brand 注入（响应契约同 [[indexWithBrand]]）。 */
-  private[gateway] def devIndexWithBrand: IO[Response[IO]] =
+  private[gateway] def devIndexWithBrand(inm: Option[String] = None): IO[Response[IO]] =
     IO.blocking(readClasspathResourceUtf8("web/index.html")).flatMap {
       case None => NotFound()
-      case Some(html) => brandInjectedResponse(versionedIndexHtml(html))
+      case Some(html) => brandInjectedResponse(versionedIndexHtml(html), inm)
     }
   end devIndexWithBrand
 

@@ -381,7 +381,17 @@ class TodoScheduleSpec extends CatsEffectSuite:
   test("tool create kind=todo needs no triggerAt and lands in engine storage at next 09:00"):
     for
       _ <- reset()
-      res <- IO(callTool(Json.obj("kind" -> "todo".asJson, "content" -> "整理会议纪要".asJson), mkCtx()))
+      res <- IO(
+        callTool(
+          Json.obj(
+            "kind" -> "todo".asJson,
+            "content" -> "整理会议纪要".asJson,
+            // 待办数据模型批（2026-11-18）：工具面待办必须带选项。
+            "decision" -> TodoTaxonomySpec.sampleDecision
+          ),
+          mkCtx()
+        )
+      )
       stored <- taskStore.loadTasks("s-tool")
     yield
       val text = res.toOption.get
@@ -496,10 +506,26 @@ class TodoScheduleSpec extends CatsEffectSuite:
     for
       _ <- reset()
       r1 <- IO(
-        callTool(Json.obj("kind" -> "todo".asJson, "content" -> "v1".asJson, "name" -> "pack-bag".asJson), mkCtx())
+        callTool(
+          Json.obj(
+            "kind" -> "todo".asJson,
+            "content" -> "v1".asJson,
+            "name" -> "pack-bag".asJson,
+            "decision" -> TodoTaxonomySpec.sampleDecision
+          ),
+          mkCtx()
+        )
       )
       r2 <- IO(
-        callTool(Json.obj("kind" -> "todo".asJson, "content" -> "v2".asJson, "name" -> "pack-bag".asJson), mkCtx())
+        callTool(
+          Json.obj(
+            "kind" -> "todo".asJson,
+            "content" -> "v2".asJson,
+            "name" -> "pack-bag".asJson,
+            "decision" -> TodoTaxonomySpec.sampleDecision
+          ),
+          mkCtx()
+        )
       )
       todos <- taskStore.getAllTodos
     yield

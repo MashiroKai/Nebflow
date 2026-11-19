@@ -606,6 +606,9 @@ button.dev-chip {
   flex: 0 0 0;
   min-width: 0;
   position: relative;
+  /* 壳底色留在壳本体上；**模糊**已挪到 `::before`（见紧随本块的「材质层重排」
+     注：壳本体挂 backdrop-filter ⇒ 壳成 backdrop root ⇒ 面板内那枚表头的模糊
+     整条失效）。 */
   background: var(--glass-bg);
   border: var(--ds-border-width) solid var(--ds-border-glass);
   border-radius: var(--ds-radius-shell);
@@ -620,6 +623,37 @@ button.dev-chip {
               opacity var(--panel-duration) var(--panel-ease),
               transform var(--deck-morph-duration, 0.28s) var(--deck-morph-ease, cubic-bezier(0.32, 0, 0.18, 1)),
               box-shadow var(--deck-morph-duration, 0.28s) ease;
+}
+/* ── 材质层重排：壳的模糊落在伪元素上，不落在壳本体（glass-desktop-header 批
+   2026-11-18）────────────────────────────────────────────────────────────
+   症状（作者报障面）：桌面 canvas 顶部那枚 `.canvas-header` 的毛玻璃是**玻璃纸**
+   —— `blur(0px) ≡ blur(24px) ≡ blur(60px)`，正文原文从胶囊里直接穿出。
+   根因（本机 chromium 实测，证据见 glass-runtime 批 diag + glass-desktop-header
+   批 micro-test）：`#canvas-panel` 自己挂着 `backdrop-filter`（成员登记表在册）
+   ⇒ 它成为一个 **backdrop root** ⇒ 它的**后代**（`.canvas-header`）的
+   `backdrop-filter` 只能采到该 root **自己绘制**的像素，**采不到** root 的同级
+   子件（`#canvas-slide > #canvas-content` 里的正文）⇒ 那层模糊采到的是常量
+   （平色），档位怎么调都不改变像素。
+   修法：把壳的模糊挪到 `#canvas-panel::before`。**伪元素不是任何后代的祖先**，
+   所以它做 backdrop root 也切不到表头；壳本体不再挂 backdrop-filter ⇒ 表头回到
+   视口级 backdrop root 下，正文恢复被真糊。壳的观感逐值不变（壳仍持 α .16 底色
+   + 描边 + 面影，::before 只加一层零底的模糊；模糊的是「壳底色之上的页面」，
+   与改前「页面被壳模糊后再叠壳底色」结果同值）。
+   落位用**在流子件**而不是绝对定位浮层：壳是 `display:flex; flex-direction:column`，
+   唯一的 DOM 子件 `#canvas-slide` 是 `position:absolute`（出流）⇒ 这枚伪元素就是
+   壳里**唯一的在流项**，`flex:1` 即铺满壳的 content box；它在流 ⇒ 画在 positioned
+   子件之下、壳背景/描边之上。**有意不写 `position`**：本仓 `check-floating-discovery`
+   是「新增定位盒必须人工复核」的棘轮，而材质背衬不是浮层（它不浮在任何东西之上，
+   只占壳的堆叠底层），不该被算作一个新的定位盒。
+   降级档（`@supports not` / `html.no-backdrop`）随材质一起收口到同一处（glass.css）。
+   几何（内容/落位/裁切）留在本文件，与壳本体同一裁剪盒。 */
+#canvas-panel::before {
+  content: '';
+  flex: 1 1 auto;                /* 壳里唯一的在流项 ⇒ 铺满壳 content box */
+  min-height: 0;
+  width: 100%;
+  border-radius: inherit;        /* 与壳同圆角（伪元素自身裁剪其 backdrop） */
+  pointer-events: none;
 }
 body.canvas-open #canvas-panel {
   flex-basis: var(--canvas-width, 45vw);

@@ -19,8 +19,13 @@
 //   判据：状态真相在引擎侧（哪些实例在跑），呈现面只许**照抄**，不许把「记录存在」
 //   读成「正在跑」。本闸把这条判据变成可执行断言——破坏实现即红。
 //
-// 提取方式（与 tests/subagent-visibility.test.mjs 同法）：从真实源文件切出被闸的
-// 函数体进 vm —— 闸吃的是**真代码**，不是复刻件（复刻件会与实现一起漂移）。
+//   提取方式（与 tests/subagent-visibility.test.mjs 同法）：从真实源文件切出被闸的
+//   函数体进 vm —— 闸吃的是**真代码**，不是复刻件（复刻件会与实现一起漂移）。
+//
+// 方案 A 批（2026-11-18 · 作者令「行集一字不动，只加一个权威活性位 + 闸」）追加断言⑤：
+//   引擎权威活性位 `active` 的**消费面**——位为假的行不画成「进行中」、不挂运行时钟；
+//   位为真 / 缺席（旧后端）逐字与今天相同。位由引擎单点派生（WebSocketRoutes.panelRowActivity，
+//   与 sessionBusyStates 同轴），呈现面只许照读——本闸的 ①③⑤ 合起来把这条不变量的两侧都钉住。
 //
 // Run: node scripts/check-bg-panel-active-liveness.mjs    （exit 0 = 绿，1 = 红）
 
@@ -154,6 +159,41 @@ const tzA = fmtUnderTz('Asia/Shanghai');
 const tzB = fmtUnderTz('America/New_York');
 if (tzA === tzB && tzA === '0s|59s|1h 0m|24h 0m') ok('跨时区一致（Asia/Shanghai vs America/New_York）', tzA);
 else bad('跨时区一致', `Shanghai=${tzA} New_York=${tzB}`);
+
+// ── 断言⑤：引擎权威活性位（方案 A 批 2026-11-18 · 作者令「行集一字不动，只加一个权威
+// 活性位 + 闸」）────────────────────────────────────────────────────────────
+// 「活跃行 ⊆ 引擎活跃快照」这条不变量的右边必须由**引擎**给：快照行每行随帧带
+// `active`（后端 WebSocketRoutes.panelRowActivity 单点 = 注册表在册 ∧ status==Processing
+// ∧ 未停靠/未冻结/未重启中断）。本断言把**真代码**的两处消费判据切出来实跑：
+//   · bgRowState：位为假 ⇒ 不画成「进行中」（末档 'active' 只留给引擎说在跑的行）；
+//     位为真 / 缺席 ⇒ 与今天逐字相同（**不许把「未提供」当 false**）；
+//   · bgTaskRowHtml 的 uptime 判据：位为假 ⇒ 不挂运行时钟；位为真 / 缺席 ⇒ 照旧挂。
+const rowStateOfInfo = (info) => vm.runInContext(`bgRowState(${JSON.stringify(info)})`, ctx);
+const bitCases = [
+  ['位为假 ⇒ 不画成在跑', { status: 'Processing', engineActive: false }, 'idle'],
+  ['位为真 ⇒ 照旧在跑', { status: 'Processing', engineActive: true }, 'active'],
+  ['位缺席（旧后端）⇒ 与今天逐字相同', { status: 'Processing' }, 'active'],
+];
+for (const [name, info, want] of bitCases) {
+  const got = rowStateOfInfo(info);
+  if (got === want) ok(`bgRowState·${name}`, `engineActive=${String(info.engineActive)} → ${got}`);
+  else bad(`bgRowState·${name}`, `期望 ${want}，实得 ${got}（info=${JSON.stringify(info)}）`);
+}
+
+const notRunningExpr = slice(bgSrc, 'const notRunning = ', ';').slice('const notRunning = '.length);
+const clockCtx = vm.createContext({});
+vm.runInContext(`function hangsClock(terminal, rowState, info) { return !(${notRunningExpr}); }`, clockCtx);
+const hangs = (info) => vm.runInContext(`hangsClock(false, 'active', ${JSON.stringify(info)})`, clockCtx);
+const clockCases = [
+  ['位为假 ⇒ 不挂运行时钟', { engineActive: false }, false],
+  ['位为真 ⇒ 照旧挂运行时钟', { engineActive: true }, true],
+  ['位缺席（旧后端 / durable store 行）⇒ 与今天逐字相同', {}, true],
+];
+for (const [name, info, want] of clockCases) {
+  const got = hangs(info);
+  if (got === want) ok(`运行时钟·${name}`, `engineActive=${String(info.engineActive)} → 挂表=${got}`);
+  else bad(`运行时钟·${name}`, `期望 挂表=${want}，实得 ${got}`);
+}
 
 console.log(`\ncheck-bg-panel-active-liveness: ${failures.length === 0 ? 'PASS (exit 0)' : `FAIL (exit 1) — ${failures.length} 项`}`);
 if (failures.length) { for (const f of failures) console.log('  · ' + f); process.exit(1); }

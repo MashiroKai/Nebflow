@@ -255,8 +255,12 @@ private[agent] object MailboxDrain:
       def family(e: AgentCommand.ExternalEvent): String = e.eventType
       def member(e: AgentCommand.ExternalEvent): String =
         str(e, "taskId").orElse(str(e, "failedSessionId")).orElse(e.correlationId).getOrElse(e.payload)
+      // Completion generations distinguish subsequent rounds of the same delegate.
+      // Legacy events retain their original member-only deduplication key.
+      def announcementKey(e: AgentCommand.ExternalEvent): String =
+        str(e, "completionGeneration").fold(member(e))(generation => s"${member(e)}#$generation")
       val terminals = events.filter(terminal)
-      if terminals.isEmpty then events
+      if terminals.isEmpty then (events, List.empty[(AgentCommand.ExternalEvent, String, String)])
       else
         val previous: Map[String, List[String]] =
           if !os.exists(ledger) then Map.empty
@@ -267,7 +271,7 @@ private[agent] object MailboxDrain:
               .flatMap(_.hcursor.get[Map[String, List[String]]]("families").toOption)
               .getOrElse(Map.empty)
         val currentMembers =
-          terminals.groupBy(family).view.mapValues(_.map(member).distinct.sorted).toMap
+          terminals.groupBy(family).view.mapValues(_.map(announcementKey).distinct.sorted).toMap
         // Delta semantics: a member announces exactly once ever (one-shot fact).
         // Crash-window replays and boot sweeps of already-announced members stay
         // silent; the ledger accumulates announced members across restarts.
@@ -275,11 +279,12 @@ private[agent] object MailboxDrain:
           fam -> ids.filterNot(previous.getOrElse(fam, Nil).contains)
         }
         val deltaMembers = delta.filter(_._2.nonEmpty)
-        val announce = terminals.filter(e => deltaMembers.get(family(e)).exists(_.contains(member(e))))
+        val announce = terminals.filter(e => deltaMembers.get(family(e)).exists(_.contains(announcementKey(e))))
+        val suppressed = terminals.filterNot(announce.contains)
         val output =
           if announce.isEmpty then events.filterNot(terminal)
           else
-            val unique = announce.distinctBy(e => (family(e), member(e)))
+            val unique = announce.distinctBy(e => (family(e), announcementKey(e)))
             val merged =
               if unique.size == 1 then unique.head
               else
@@ -309,8 +314,17 @@ private[agent] object MailboxDrain:
           ledger,
           io.circe.Json.obj("v" -> 1.asJson, "families" -> nextLedger.asJson).noSpaces
         )
-        output
+        (output, suppressed.map(e => (e,
+          str(e, "taskId").orElse(str(e, "failedSessionId")).orElse(e.correlationId).getOrElse(""),
+          nebflow.core.InjectionChannel.fingerprint(announcementKey(e)))))
       end if
+    }
+    .flatMap { case (output, suppressed) =>
+      suppressed.traverse_ { case (e, id, key) =>
+        nebflow.core.InjectionChannel.logSuppressed((ledger / os.up).last, e.source, e.eventType, id, "delegate-terminal-ledger",
+          io.circe.JsonObject("announcementKeyFingerprint" -> key.asJson)
+        )
+      }.as(output)
     }
     .handleErrorWith { error =>
       logger.warn(s"terminal notification ledger unavailable: ${error.getMessage}").as(events)

@@ -132,9 +132,16 @@ function compactComposer(opts) {
   micBtn.setAttribute('aria-label', opts.micLabel || '');
   micBtn.setAttribute('aria-pressed', 'false');
   micBtn.appendChild(lucideIcon('mic'));
-  const input = document.createElement('input');
+  // 输入件 = `#input` 的同档裸件（composer 统一批 2026-11-18）：主会话输入件是
+  // `<textarea id="input" rows="1" placeholder=…>`，消息面此前是单行 `<input
+  // type="text">` —— 元素类型/行高/自适应两条分叉。现在两件同型：可换行 textarea、
+  // 同一 bare 类（`.cfg-input.fm-input.nf-field--bare`，nf-field--bare 与 #input
+  // 同列 css/inputSurface.css 裸件成员表）、同一 placeholder 来源、同一 autosize
+  // （js/input/composer.js growComposerInput）。几何（padding/字阶/max-height）由
+  // css/input.css 的 `#input, .fm-input` 单块供。
+  const input = document.createElement('textarea');
   input.className = 'cfg-input fm-input nf-field--bare';
-  input.type = 'text';
+  input.rows = 1;
   input.placeholder = opts.placeholder || '';
   input.maxLength = 2000;
   input.autocomplete = 'off';

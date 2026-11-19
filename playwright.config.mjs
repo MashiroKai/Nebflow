@@ -63,6 +63,10 @@ const instanceBacked = [
   'queuepos-detail.spec.mjs',
   // session-rail / clientconn-wake / askuser-lockline-history / askinput-off-pending-text
   // 是独立脚本（②），本就不在收集面；其 CI 编排见 ci.yml frontend-smoke。
+  // attachment-persistence：P0「已发送的文件过一会失效」回归批（2026-11-18）——
+  // 断言面横跨服务端落盘授权（/uploads/<sid>/<file> 200）与前端历史恢复腿，
+  // 自足 mock 表达不了（需真 WS 发件 + 真 owner 台账 + 真 403/200）。
+  'attachment-persistence.spec.mjs',
 ];
 
 const testIgnore = [...standaloneScripts];

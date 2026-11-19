@@ -736,7 +736,9 @@ export function buildInjectedRow(text, source, timestamp, eventType, sender, sou
       bubble.appendChild(details);
     }
   } else {
-    label.appendChild(document.createTextNode(renderedLabel));
+    const labelText = document.createElement('span');
+    labelText.textContent = renderedLabel;
+    label.appendChild(labelText);
     appendDeliveryBadge(label, delivery);
     // ask-mail 批（2026-11-16）：ask 会话的续聊地址 chip（在场才渲染；引擎字段
     // 唯一真源）。挂标签行尾、停冒泡——点击复制不触发折叠切换。

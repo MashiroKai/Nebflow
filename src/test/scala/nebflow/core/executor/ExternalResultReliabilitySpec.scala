@@ -132,6 +132,7 @@ class ExternalResultReliabilitySpec extends CatsEffectSuite:
          |[ "$$HOME" = ${quote(home.toString)} ] || exit 92
          |[ "$$PATH" = ${quote(emptyPath.toString)} ] || exit 93
          |printf '%s\\n' "$$$$" > ${quote(script.pid.toString)}
+         |printf '%s\\n' "$$@" > ${quote((dir / "argv").toString)}
          |$gate$output
          |exit 0
          |""".stripMargin)
@@ -235,6 +236,58 @@ class ExternalResultReliabilitySpec extends CatsEffectSuite:
     ).noSpaces
 
   private val codexEnd = """{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}"""
+
+  test("live external supplement is queued and becomes a subsequent process input") {
+    fixture.use { f =>
+      for
+        run <- spawn(f, "codex", List(codexMessage("reply", "fixture response"), codexEnd), gated = true)
+        _ <- eventually("fixture start")(IO.blocking(os.exists(run.script.pid)))(identity)
+        record <- IO.blocking(nebflow.core.delegate.DelegateRegistry.find(run.id).get)
+        receipt <- ExternalSessionRunner.continueExternal(record, "recognizable queued supplement", None, None, f.resources)
+        _ = assert(receipt.isRight, receipt.toString)
+        _ = assert(receipt.toOption.get.toLowerCase.contains("queued"), receipt.toString)
+        _ <- IO.blocking(os.write(run.script.release, "release"))
+        messages <- eventually("supplement input in next run")(
+          f.freshSessions.loadMessagesForSession(run.id)
+        )(_.exists(m => m.role == MessageRole.User && m.textContent == "recognizable queued supplement"))
+        _ = assert(messages.exists(_.textContent == "recognizable queued supplement"))
+        argv <- eventually("supplement reaches subprocess argv")(
+          IO.blocking(os.read(run.script.bin / os.up / "argv"))
+        )(_.contains("recognizable queued supplement"))
+        _ = assert(argv.contains("recognizable queued supplement"))
+      yield ()
+    }
+  }
+
+  test("finished external session continues in a new subprocess and deduplicates the message id") {
+    fixture.use { f =>
+      val marker = "finished continuation input marker"
+      val key = "finished-continuation-test-id"
+      for
+        run <- spawn(f, "codex", List(
+          """{"type":"thread.started","thread_id":"synthetic-finished-thread"}""",
+          codexMessage("reply", "first report"), codexEnd))
+        first <- settle(f, run)
+        record <- IO.blocking(nebflow.core.delegate.DelegateRegistry.find(run.id).get)
+        resolve = (_: String) => Right(ExecutorRegistry.ResolvedSelection.External(
+          ExecutorRegistry.defs.find(_.id == "codex").get, run.script.bin.toString))
+        receipt <- ExternalSessionRunner.continueExternalResolved(record, marker, None, None, f.resources, key, resolve)
+        _ = assert(receipt.isRight, receipt.toString)
+        argv <- eventually("finished continuation subprocess argv")(
+          IO.blocking(os.read(run.script.bin / os.up / "argv"))
+        )(_.contains(marker))
+        row <- eventually("second terminal run")(
+          f.freshTasks.findByTaskId(run.id)
+        )(_.exists(t => t.runId != first.row.runId && t.executionStatus.contains("finished") && t.notificationPending.contains(false)))
+        _ <- eventually("second run detachment")(f.resources.agentRegistry.get)(r => !r.contains(run.id))
+        messages <- f.freshSessions.loadMessagesForSession(run.id)
+        duplicate <- ExternalSessionRunner.continueExternalResolved(record, marker, None, None, f.resources, key, resolve)
+        _ = assert(duplicate.toOption.exists(_.contains("Duplicate")), duplicate.toString)
+        _ = assert(argv.contains(marker), argv)
+        _ = assert(messages.exists(m => m.role == MessageRole.User && m.textContent == marker && m.runId == row.flatMap(_.runId)))
+      yield ()
+    }
+  }
 
   test("Codex assistant text survives a textless turn.completed and a missing parent") {
     fixture.use { f =>

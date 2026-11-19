@@ -260,6 +260,8 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     assert(!stable.contains("catalog-probe"), "fixture skill must not leak into node session prompt")
     for name <- List("stand-recall", "stand-messages", "stand-plugins", "stand-terms", "stand-profile") do
       assert(stable.contains(s"tools/$name"), s"embedded prefix must contain $name")
+    // 密钥 CLI 行（2026-11-18 作者令）：CLI 段第六条，非 tools/ 脚本而是产品 CLI 子命令。
+    assert(stable.contains("stand secrets list"), "embedded prefix must carry the secrets CLI line")
     assert(!stable.contains("stand-branch-guard"))
     assert(stable.contains("EVERY agent on ANY project"))
 

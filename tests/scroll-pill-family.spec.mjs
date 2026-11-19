@@ -377,9 +377,27 @@ try {
           chatEl.appendChild(row);
         });
         await page.waitForTimeout(320);
+        const own = await op(page, BASE, '#input-area');
+        check('S1-main', '本机 user 不计入新消息', !!own && own.unread === '0', own && JSON.stringify({ text: own.text, unread: own.unread }));
+        await page.evaluate(() => {
+          const row = document.createElement('div');
+          row.className = 'row ai';
+          row.textContent = '离底期间到达的助手消息';
+          document.querySelector('#chat').appendChild(row);
+        });
+        await page.waitForTimeout(320);
         const unread = await op(page, BASE, '#input-area');
         check('S1-main', '新消息 ⇒ 同节点换「↓ 1 条新消息」（data-unread=1）',
           !!unread && unread.text.includes('1') && unread.unread === '1', unread && JSON.stringify({ text: unread.text, unread: unread.unread }));
+        await page.evaluate(() => document.querySelector('#chat > .row.ai:last-child').remove());
+        await page.waitForTimeout(100);
+        const removed = await op(page, BASE, '#input-area');
+        check('S1-main', '撤回未读助手行回退计数', !!removed && removed.unread === '0', removed && JSON.stringify({ text: removed.text, unread: removed.unread }));
+        await page.evaluate(() => {
+          const row = document.createElement('div'); row.className = 'row ai'; row.textContent = '另一条助手消息';
+          document.querySelector('#chat').appendChild(row);
+        });
+        await page.waitForTimeout(100);
         check('S1-main', '同形：计数档与「回到底部」档样式逐项相等', !!base && !!unread && Object.keys(styleDiff(base, unread)).length === 0,
           base && unread && JSON.stringify(styleDiff(base, unread)));
         REF.main = base;

@@ -34,7 +34,10 @@ export function openPopArtifact(filePath, title) {
       itemType: '',
       content: '',
       absPath: filePath,
-      pinned: true
+      pinned: true,
+      // Pop 文件卡乐观打开（pop-optimistic-canvas 批 2026-11-18）：见
+      // popArtifacts.js::openPopArtifact 的同旗标注释 —— 两处发射点同一契约。
+      optimisticOpen: true
     }
   }));
 }

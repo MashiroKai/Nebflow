@@ -511,12 +511,17 @@ object AgentCore:
     "Bash",
     "Write",
     "Edit",
-    // Card **已退役**（pop-upgrade 批 2026-10-03 作者令「去掉card工具」）：从本集
-    // 摘除（19 → 18，见 RootOrchestrationToolsExpectedSize），工具本体与注册表
-    // 注册一并删除。其「向用户展示成果」职责并入 Pop（媒体对话内直显叠卡 / 文件
-    // 卡片转发 Canvas，见 PopTool 的 pop-upgrade 批注）。迁移指引 =
-    // RetiredToolGuides("Card")。历史沿革（史实）：commit 793f62c1（2026-08-11）
-    // 曾整体删除，2026-09-05 08:40 作者裁定解封恢复，本批终裁退役。
+    // Card **曾退役**（pop-upgrade 批 2026-10-03 作者令「去掉card工具」）：从本集
+    // 摘除（19 → 18，见 RootOrchestrationToolsExpectedSize）。**card-tool-revive
+    // 批（2026-11-18 作者令「找到我们 git 历史中的 card 工具 让 canvas ask 可以使用
+    // card 工具」）复活了工具本体，但本集逐字不含它**——复活后的授权面 = Canvas Ask
+    // 唯一（`AskSessions.AskExclusiveTools` 单点；见 registry.scala 的 "Card" 条目）。
+    // Nebula 面的「向用户展示成果」职责仍在 Pop（媒体对话内直显叠卡 / 文件卡片转发
+    // Canvas，见 PopTool 的 pop-upgrade 批注）；两张牌职责不重叠：Card = 提问者在
+    // ask 里让 agent 直接出 HTML 卡；Pop = Nebula root 展示已完成工件。
+    // 历史沿革（史实）：commit 793f62c1（2026-08-11）曾整体删除，2026-09-05 08:40
+    // 作者裁定解封恢复，2026-10-03 本集终裁摘除（工具本体同批删除），2026-11-18
+    // 复活但只给 ask。
     // 用户面（Pop = Nebula 专属可视化出口，2026-09-10 作者裁定——Nebula 本体
     // 专属保留；非 Nebula 身份由 NebulaExclusiveTools 剥 + PopTool 身份闸兜底）
     "AskUserQuestion",
@@ -691,8 +696,12 @@ object AgentCore:
       """TaskList is not available — the task ledger is `Task`, the one task-ledger tool (one ledger, one id space): `Task(action="list", assignee=..., project=...)` renders entries with state and dependencies, `Task(action="show", id=...)` renders one entry in full, and create/update/complete/close take the same `action` face.""",
     "TaskBoard" ->
       """TaskBoard is not available — the board's contents live in the single `Task` ledger, and the per-session face is the read-only `TaskInfo` (zero parameters — it renders the one task your session is attached to, note timeline included); any write belongs to Nebula's `Task` tool.""",
-    "Card" ->
-      """Card is not available — its show face is Pop: media (image/video) renders directly in the chat (one call may batch several paths), and every other file renders as a file card whose forward button opens Canvas. To present HTML/visuals, write the HTML to a file (Write/Bash) and `Pop` that file's path; to open a web page, `Pop` its URL (Canvas iframe).""",
+    // 旧 "Card" 墓碑条目随 card-tool-revive 批（2026-11-18）删除：`Card` 名已在
+    // 注册表重新注册（`ToolRegistry`，"Card" -> CardTool）⇒ 本表对该名永不可达
+    // （「registry 注册即令 RetiredToolGuides 对该名失效」既有教义，Task/Project/
+    // AgentFlow 同型）——留条目＝死文本，违表零膨胀纪律。**注意本批不是复活
+    // Nebula 面**：Card 的授权面收窄为 Canvas Ask 唯一，`RootOrchestrationTools`
+    // 逐字不含本名。
     // Workflow（N1 复名批 v2 §6.F 候选，ChainEdit 引用随 v3 作废改 ChainWrite）：
     // 名字退役产生的新墓碑——Workflow 名已注册删除，打旧名的调用落本指引。
     // 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：中转站 AgentFlow

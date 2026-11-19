@@ -25,8 +25,9 @@
 //     键盘可见焦点规则（那是无障碍，不是第二套）。
 //  I5 JS 注入面：`js/**/*.js` 里对输入件 `style.border*/background*/borderRadius/
 //     boxShadow` 的赋值同样算「第二套」（CSS 属性串直接写进内联样式）。
-//  I6 豁免清单：真需要不同造型的场合逐条具名登记在规范文件
-//     `seed/plugins/design-language/skills/design-language/references/input-surface-spec.md`
+//  I6 豁免清单：真需要不同造型的场合逐条具名登记在**规范文件**（单源在 stand-dev
+//     插件包内 `<包根>/references/frontend/input-surface-spec.md`，包根定位见
+//     scripts/lib/design-spec-source.mjs；本仓不再保留第二份拷贝）
 //     的「例外清单」表里（选择器 + 判据号 + 理由）。脚本内零硬编码豁免；
 //     表里空理由 = 红，缺表 = 红（没有规范就没有约束）。
 //
@@ -50,6 +51,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.mjs';
 
 const ROOT_OVERRIDE = (process.argv.slice(2).find((a) => a.startsWith('--root=')) || '').slice(7);
 const ROOT = ROOT_OVERRIDE
@@ -61,10 +63,12 @@ const JS_DIR = join(WEB, 'js');
 const TOKENS = join(CSS_DIR, 'stand-tokens.css');
 /** 唯一造型点：输入面的背景/边框/圆角/阴影/焦点态只许在这里写 */
 const STANDARD_FILE = join(CSS_DIR, 'inputSurface.css');
-const SPEC_FILE = join(
-  ROOT, 'src', 'main', 'resources', 'seed', 'plugins', 'design-language',
-  'skills', 'design-language', 'references', 'input-surface-spec.md',
-);
+/** 规范正文（单源，在 stand-dev 插件包内；本仓无第二份拷贝）。 */
+const SPEC_FILE = resolveDesignSpec('references/frontend/input-surface-spec.md');
+if (!SPEC_FILE) {
+  console.error(`input-surface: ${specMissingMessage('references/frontend/input-surface-spec.md')}`);
+  process.exit(2);
+}
 
 const JSON_OUT = process.argv.includes('--json');
 const INVENTORY = process.argv.includes('--inventory');
@@ -178,7 +182,7 @@ function isInputFace(sel) {
 
 // ── 豁免清单（读规范文件，不在脚本里硬编码）──────────────────────────────
 function loadExceptions() {
-  if (!existsSync(SPEC_FILE)) return { ok: false, rows: [], error: `规范文件缺失：${rel(SPEC_FILE)}` };
+  if (!existsSync(SPEC_FILE)) return { ok: false, rows: [], error: `规范文件缺失：${SPEC_FILE}` };
   const text = readFileSync(SPEC_FILE, 'utf8');
   const headingMatch = /^##+[^\n]*例外清单[^\n]*$/m.exec(text);
   if (!headingMatch) return { ok: false, rows: [], error: '规范文件里没有「## 例外清单」节' };

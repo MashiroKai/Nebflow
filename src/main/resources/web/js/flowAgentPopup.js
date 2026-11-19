@@ -308,17 +308,30 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   display: flex; align-items: center; gap: var(--ds-space-2);
   flex-shrink: 0;
 }
+/* 🔴 按钮形态统一批（2026-11-18 作者逐字：「包括后台智能体的恢复按钮也是」）——
+   本块**几何整件上交设置页动作族**：两枚钮的标记挂 .cfg-btn.set-btn（配色 +
+   几何令牌 --set-btn-h / --set-btn-pad-x / --ds-radius-pill / --ds-fs-btn），
+   这里只留「页脚这一行的落位 + 图标档」。修前是自写的 28px × 28px / 50%（写死在
+   本注入串里，与手机层 mobileLayer.css 的 --ds-hit-row 方钮 = 两处像素真相，
+   桌面圆钮 / 手机方钮、28 与 44 两档并存）——那正是作者实拍里「不统一的按钮」。
+   判据：scripts/check-settings-button-uniform.mjs（按钮规则禁字面量几何，只认令牌）。
+   图标本体走 --set-icon-size（与设置页图标位同源）。 */
 .flow-agent-footer .fa-mgmt-btn {
-  width: 28px; height: 28px;
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  padding: 0;
-  transition: background 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
+  transition: background var(--dur-2) ease, border-color var(--dur-2) ease, opacity var(--dur-2) ease;
 }
-.flow-agent-footer .fa-mgmt-btn svg { width: 13px; height: 13px; stroke-width: 2.5; }
-.flow-agent-footer .fa-mgmt-stop { color: var(--color-error); }
-.flow-agent-footer .fa-mgmt-retry { color: rgb(var(--sapphire)); }
+/* 色调：.cfg-btn:not(.cfg-btn-primary)（sapphire.css，后面加载）会在同特异度平局里
+   胜出 ⇒ 本行加一个类型选择器 button（(0,2,1) > (0,2,0)）保住危险/蓝两档 tint。 */
+.flow-agent-footer button.fa-mgmt-stop { color: var(--color-error); }
+.flow-agent-footer button.fa-mgmt-retry { color: rgb(var(--sapphire)); }
+.flow-agent-footer .fa-mgmt-btn svg {
+  width: var(--set-icon-size);
+  height: var(--set-icon-size);
+  stroke-width: 2.5;
+}
 .flow-agent-footer .fa-mgmt-btn.readonly {
   opacity: 0.35;
   cursor: not-allowed;

@@ -327,8 +327,12 @@ object CliRouter:
     // 密钥 CLI 批（密钥能力三件套 A 件，2026-11-01）：`secrets list`/`usage`
     // 是本机元数据读面（SecretsStore.list 零值读，与网关 REST 同一单点）——
     // 网关不在时恰恰更该可用（health/logs 同款判据），离线归类。
+    // 可查询批（2026-11-18）：同一判据推及 `show`（本机元数据读）与 `meta`
+    // （只写本机侧车，值面零触碰）——四个子命令同为本机面，整命令离线。
     ("secrets", "list"),
-    ("secrets", "usage")
+    ("secrets", "usage"),
+    ("secrets", "show"),
+    ("secrets", "meta")
   )
 
   private[cli] def isOffline(cmdName: String, subName: String): Boolean =

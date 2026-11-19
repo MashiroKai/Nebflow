@@ -46,10 +46,13 @@
 //                                                          # 合并里用；升基线 = 放水）
 // 退出码：0 = 绿；1 = 红；2 = 环境错误。
 
-import { readFileSync, writeFileSync, readdirSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+// 文案判定面（locale 值 + index.html 文本行、剔注释保行号）的唯一实现：
+// 同批 `check-copy-budget.mjs` import 同一份，两处各正则一遍 = 下一批分叉。
+import { readLocales, htmlTextLines } from './lib/locale-entries.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
@@ -80,39 +83,8 @@ const RULES = [
   },
 ];
 
-/**
- * 去掉注释但**保留行号**（把注释内容换成等长空白/换行）。
- * - JS（locale）：块注释 `/* … *\/` + 行注释 `// …`（只认行首或前置空白的 `//`）。
- * - HTML（index.html）：`<!-- … -->`（外加其内联脚本里的块注释）。
- * @param {string} src
- * @param {'js'|'html'} kind
- */
-function stripComments(src, kind) {
-  const blank = (m) => m.replace(/[^\n]/g, ' ');
-  let out = src;
-  if (kind === 'html') out = out.replace(/<!--[\s\S]*?-->/g, blank);
-  out = out.replace(/\/\*[\s\S]*?\*\//g, blank);
-  out = out.split('\n').map((line) => {
-    const m = line.match(/^(\s*)\/\//);
-    return m ? m[1] + ' '.repeat(line.length - m[1].length) : line;
-  }).join('\n');
-  return out;
-}
-
-/**
- * locale 文件的文案值行 → [{line, key, value}]。
- * 只认单行 `'key': 'value'` 形态（本仓 locale 全是这个形态）。
- * @param {string} src 已剔注释的源码
- */
-function localeEntries(src) {
-  const out = [];
-  src.split('\n').forEach((line, i) => {
-    const m = line.match(/^\s*(['"])([^'"]+)\1\s*:\s*(['"`])([\s\S]*)\3\s*,?\s*$/);
-    if (!m) return;
-    out.push({ line: i + 1, key: m[2], value: m[4] });
-  });
-  return out;
-}
+// stripComments / localeEntries 已移入 scripts/lib/locale-entries.mjs（判定面单源，
+// 见文件头 import）。本脚本只保留「哪些词算教学句」这一条自有口径。
 
 /** 一行里命中的全部判据类别。 */
 function hitsOf(text) {
@@ -124,9 +96,7 @@ const notes = [];
 const hits = [];   // {file, line, rule, key, text}
 
 // ── ① locale 面 ───────────────────────────────────────────────────────
-const localeFiles = existsSync(LOCALES_DIR)
-  ? readdirSync(LOCALES_DIR).filter((n) => n.endsWith('.js')).sort()
-  : [];
+const { names: localeFiles, byFile: localeByFile } = readLocales(LOCALES_DIR);
 if (localeFiles.length === 0) {
   console.error(`环境错误：找不到 ${relative(ROOT, LOCALES_DIR)} 下的 locale 文件`);
   process.exit(2);
@@ -134,8 +104,7 @@ if (localeFiles.length === 0) {
 
 for (const name of localeFiles) {
   const rel = `src/main/resources/web/js/locales/${name}`;
-  const src = stripComments(readFileSync(join(LOCALES_DIR, name), 'utf8'), 'js');
-  for (const e of localeEntries(src)) {
+  for (const e of localeByFile.get(name)) {
     for (const rule of hitsOf(e.value)) {
       hits.push({ file: rel, line: e.line, rule: rule.id, key: e.key, text: e.value });
     }
@@ -143,18 +112,15 @@ for (const name of localeFiles) {
 }
 
 // ── ② index.html 文本面 ───────────────────────────────────────────────
-if (existsSync(INDEX_HTML)) {
+{
   const rel = 'src/main/resources/web/index.html';
-  const src = stripComments(readFileSync(INDEX_HTML, 'utf8'), 'html');
-  src.split('\n').forEach((line, i) => {
-    const text = line.trim();
-    if (!text) return;
+  for (const { line, text } of htmlTextLines(INDEX_HTML)) {
     for (const rule of hitsOf(text)) {
       // key = 行指纹（HTML 没有键名；行漂移即要求重新判定，宁可红得吵一点）
       const fp = createHash('sha1').update(text).digest('hex').slice(0, 10);
-      hits.push({ file: rel, line: i + 1, rule: rule.id, key: `line:${fp}`, text });
+      hits.push({ file: rel, line, rule: rule.id, key: `line:${fp}`, text });
     }
-  });
+  }
 }
 
 // ── 报告辅助 ──────────────────────────────────────────────────────────

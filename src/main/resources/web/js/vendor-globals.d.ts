@@ -59,9 +59,28 @@ interface Window {
   copyCode(btn: HTMLElement): void;
 }
 
-/** Global toast helper (set by main.js) */
+/** Global toast helper (set by modal.js initModals). Signature mirrors
+ *  modal.js showToast — the single transient-notice source (notice-unify batch
+ *  2026-11-18): `opts` carries the shape switches only (closable = hand-close
+ *  button; hint = secondary "next step" line; action = action button inside the
+ *  body column, e.g. Undo). Absent `opts` the toast DOM is byte-identical to the
+ *  legacy plain toast. */
 interface Window {
-  __showToast?: (message: string, kind?: string) => void;
+  __showToast?: (
+    message: string,
+    kind?: string,
+    /** 富通知选项（canvas 保存失败批 2026-11-18，镜像 modal.js showToast）：
+     *  closable = 加亲手关闭钮；hint = 次级一行「可执行的下一步」。缺省时
+     *  toast 的 DOM 与旧版逐字节一致。
+     *  三型通知批（notice-unify 2026-11-18）：action = 正文列里的可选动作钮
+     *  （如「撤销」），与 closable/hint 同为形状开关（不改类型数）。 */
+    opts?: {
+      closable?: boolean,
+      hint?: string,
+      closeLabel?: string,
+      action?: { label: string, onClick?: () => void },
+    },
+  ) => void;
 }
 
 /** Global confirm dialog (set by modal.js initModals). Signature mirrors

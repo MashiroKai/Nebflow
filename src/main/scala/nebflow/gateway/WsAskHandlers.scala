@@ -246,10 +246,16 @@ private[gateway] object WsAskHandlers:
   ): IO[Unit] =
     val raw = WsDispatch.parsedJson(text)
     val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
-    val question = raw.hcursor.downField("question").as[String].getOrElse("")
+    val task = raw.hcursor.downField("task").as[String].toOption
+      .map(_.trim).filter(_.nonEmpty)
+      .orElse(raw.hcursor.downField("question").as[String].toOption.map(_.trim).filter(_.nonEmpty))
+      .getOrElse("")
+    val paths = raw.hcursor.downField("paths").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
+    val reason = raw.hcursor.downField("reason").as[String].toOption.getOrElse("")
+    val expected = raw.hcursor.downField("expected").as[String].toOption.getOrElse("")
 
     if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askHandoff: sessionId must be an ask- session")
-    else if question.trim.isEmpty then askError(wsSend, sid, "askHandoff: empty question")
+    else if task.isEmpty then askError(wsSend, sid, "askHandoff: empty task")
     else
       AskGatewayServices.instance match
         case None => askError(wsSend, sid, "ask mode unavailable on this instance")
@@ -257,28 +263,23 @@ private[gateway] object WsAskHandlers:
           svc.registry.byId(sid).flatMap {
             case None => askError(wsSend, sid, "askHandoff: no file binding for this session")
             case Some(binding) =>
-              val deliver = AskHandoffPort.deliver(
-                AskHandoffPort.Request(
-                  askSessionId = sid,
-                  file = binding.file,
-                  fileName = binding.fileName,
-                  question = question.trim,
-                  leg = "ask-dock"
-                )
+              // ask-scope 批（2026-11-18）：dock 腿与工具腿同一份结构化请求 + 同一帧。
+              val req = AskHandoffPort.Request(
+                askSessionId = sid,
+                file = binding.file,
+                fileName = binding.fileName,
+                question = AskHandoffPort.handoffSummary(task, paths, reason, expected),
+                leg = "ask-dock",
+                task = task,
+                paths = paths,
+                reason = reason,
+                expected = expected
               )
-              deliver.flatMap {
+              AskHandoffPort.deliver(req).flatMap {
                 case Right(_) =>
-                  send(
-                    wsSend,
-                    Json.obj(
-                      "type" -> "askHandoffAck".asJson,
-                      "sessionId" -> sid.asJson,
-                      "ok" -> true.asJson,
-                      "question" -> question.trim.asJson
-                    )
-                  )
+                  send(wsSend, nebflow.core.ask.AskHandoffWire.ackFrame(sid, ok = true, "", nebflow.core.ask.AskHandoffWire.of(req)))
                 case Left(err) =>
-                  askError(wsSend, sid, err.message)
+                  send(wsSend, nebflow.core.ask.AskHandoffWire.ackFrame(sid, ok = false, err.message, nebflow.core.ask.AskHandoffWire.of(req)))
               }
           }
     end if

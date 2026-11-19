@@ -356,7 +356,36 @@ const headerInfo = (page) => page.evaluate(() => {
       && info.panelDisplay === 'none' && !info.cardsLive,
     `chips=${info.chips.map((c) => c.label).join(',')} adopted=${info.adopted} panel=${info.panelDisplay} paneHead=${info.paneHeaderDisplay}`);
 
-  const activeLabel = () => page.evaluate(() => document.querySelector('.mf-strip-chip.on')?.textContent || '');
+  /* 可见文字口径（canvas-tab-reference 作者令 2026-11-18 22:10 后回到**严格形态**）：
+     引用钮改成**图标钮**（无文本子节点、无可见文字）之后，签的**可见文字应严格等于
+     文件名** —— 这就是本条要断的不变式，不再需要「名字归名字」的让步。
+     读数用**具名**方式取（不用 `chip.textContent` 一把抓）：
+       · `NAME_SEL` = 承载文件名的具名元素（`.mf-strip-label`），其 textContent 读数；
+       · `chipVisibleText()` = 递归收集签的**文本节点集合**（跳过引用钮子树
+         `.mf-strip-quote`），拼接后即「签面上真正画出来的字」——应严格等于文件名。
+     钮自身的断言（图标在挂 / 零文本子节点 / 可达 aria-label / 命中盒 ≥44px /
+     elementFromPoint 顶层 / tap 后 composer 出 `.att-ref`）由
+     tests/canvas-tab-reference.spec.mjs 的 R1–R4、R11 承担（含 zh/en 两档），此处不重复造。 */
+  const NAME_SEL = '.mf-strip-chip.on .mf-strip-label';
+  const QUOTE_SEL = '.mf-strip-quote';
+  const activeName = () => page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    return el ? el.textContent : '';
+  }, NAME_SEL);
+  /** 签的可见文字 = 文本节点集合拼接（跳过引用钮子树；图标钮不加字）。 */
+  const chipVisibleText = () => page.evaluate(({ chipSel, skipSel }) => {
+    const chip = document.querySelector(chipSel);
+    if (!chip) return null;
+    const out = [];
+    const walk = (n) => {
+      for (const c of n.childNodes) {
+        if (c.nodeType === Node.TEXT_NODE) out.push(c.nodeValue);
+        else if (c.nodeType === Node.ELEMENT_NODE && !c.matches(skipSel)) walk(c);
+      }
+    };
+    walk(chip);
+    return out.join('');
+  }, { chipSel: '.mf-strip-chip.on', skipSel: QUOTE_SEL });
 
   /** 文档区合成 touch PointerEvent 序列（down → 步进 move → up；轴锁/阈同真机）。 */
   async function swipeHost(x, y, dx, dy, steps = 8) {
@@ -382,15 +411,20 @@ const headerInfo = (page) => page.evaluate(() => {
   await page.locator('#mobile-dock .dock-key[data-dock="canvas"]').click();
   await page.waitForSelector('.mobile-page[data-page="canvas"].live', { timeout: 8000 });
   await sleep(400);
-  const tRe = await activeLabel();
-  ok('CC6-1b 回页 = 状态保留（活动卡 bravo.md 不变，页 live）',
-    tRe === 'bravo.md', `label=${tRe}`);
+  const tRe = await activeName();
+  const vRe = await chipVisibleText();
+  ok('CC6-1b 回页 = 状态保留（活动卡可见文字严格 = bravo.md，页 live）',
+    vRe === 'bravo.md' && tRe === 'bravo.md',
+    `visText=${JSON.stringify(vRe)} nameEl(${NAME_SEL})=${JSON.stringify(tRe)}`);
 
   // CC6-2 文档区横滑 = 换下一张（前「卡头上滑换卡」迁入 host；bravo → alpha 环绕）
   const hb = await page.locator('.mf-cv-host').boundingBox();
   await swipeHost(hb.x + hb.width - 40, hb.y + hb.height / 2, -120, 0);
-  const t2 = await activeLabel();
-  ok('CC6-2 文档区横滑左 = 下一张文档卡（bravo→alpha 环绕）', t2 === 'alpha.md', `label=${t2}`);
+  const t2 = await activeName();
+  const v2 = await chipVisibleText();
+  ok('CC6-2 文档区横滑左 = 下一张文档卡（bravo→alpha 环绕，可见文字严格 = alpha.md）',
+    v2 === 'alpha.md' && t2 === 'alpha.md',
+    `visText=${JSON.stringify(v2)} nameEl(${NAME_SEL})=${JSON.stringify(t2)}`);
   const sAfterSwipe = await stateOf(page);
   ok('CC6-2b 横滑零关卡（tabCount 2 不变）', sAfterSwipe.tabCount === 2, `n=${sAfterSwipe.tabCount}`);
 

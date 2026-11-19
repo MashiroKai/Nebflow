@@ -14,6 +14,32 @@ class SubAgentRunLifecycleSpec extends CatsEffectSuite:
     IO.blocking(os.temp.dir(prefix = "task-lifecycle-")).bracket(dir => f(new SubAgentTaskStore(dir), dir))(
       dir => IO.blocking(os.remove.all(dir)))
 
+  test("two store instances for the same directory share the write lock") {
+    isolated { (store, dir) =>
+      IO {
+        val other = new SubAgentTaskStore(dir)
+        val field = classOf[SubAgentTaskStore].getDeclaredFields.find(_.getType == classOf[java.util.concurrent.locks.ReentrantLock]).get
+        field.setAccessible(true)
+        assert(field.get(store) eq field.get(other), "same directory must serialize read-modify-write across stores")
+      }
+    }
+  }
+
+  test("concurrent writes across two stores preserve both tasks") {
+    isolated { (store, dir) =>
+      val other = new SubAgentTaskStore(dir)
+      for
+        results <- List(store.beginRun(task.copy(taskId = "one"), "r1", "root", "nebflow"),
+          other.beginRun(task.copy(taskId = "two"), "r2", "root", "nebflow")).parSequence
+        one <- store.findByTaskId("one")
+        two <- other.findByTaskId("two")
+      yield
+        assert(results.forall(_.isRight))
+        assertEquals(one.flatMap(_.runId), Some("r1"))
+        assertEquals(two.flatMap(_.runId), Some("r2"))
+    }
+  }
+
   test("legacy records decode without execution fields and remain writable") {
     isolated { (store, _) =>
       val legacy = task.asJson.mapObject(o => o.filter { case (key, _) =>

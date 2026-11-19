@@ -16,22 +16,11 @@
 //   ③ 懒加载 —— 只渲染当前聚焦文件的 diff。
 
 import { openTab, setActiveTab } from './canvas.js';
-import { esc, classifyDiffLine, diffRowHtml } from './diffRender.js';
+import { esc } from './diffRender.js';
 import { t } from './i18n.js';
+import { mountDiff } from './diffView/index.js';
 
-/** Rows mounted per animation frame while a (huge) diff body renders in. */
-const CHUNK_ROWS = 4000;
-/** 二次加载清剿批 2026-10-24（作者报障「点 diff … 打开的体验还是很慢，甚至点了
- *  没反应」）：修前形态 = `parseUnifiedDiff(diffText)` 先把**整份 diff** split 成
- *  行数组（十几 MB 的 diff = 数十万字符串一次性物化 + 主线程秒级冻结——首帧之前
- *  的「点了没反应」正是这段），然后才 rAF 分块挂行。修后 = **流式行走**：
- *  每帧按时间预算（FRAME_BUDGET_MS，先到为准）从原串上 `slice` 出一段行挂载，
- *  永不整份物化；壳 + 文件头 + 「渲染中」装载态在**首次调用帧同步落地**（点击
- *  → 首帧必有响应面），行随帧渐进抵达，全量内容必达（作者 2026-10-10 裁定
- *  「无硬截断」的承接腿——分块渐进渲染——现在是真渐进，含解析）。 */
-const FRAME_BUDGET_MS = 10;
-
-/** pane → render generation; a newer selection invalidates in-flight chunks. */
+/** pane → render generation; a newer selection invalidates in-flight mounts. */
 const renderGen = new WeakMap();
 
 /** Basename for the canvas card title (path's last segment; '' for empty). */
@@ -41,47 +30,28 @@ function baseName(path) {
   return i >= 0 ? p.slice(i + 1) : p;
 }
 
-/** Streaming, cancelable full render of one unified diff body into `host`.
- *  Line-walks `diffText` in place (no whole-body split); each frame mounts up
- *  to CHUNK_ROWS rows within FRAME_BUDGET_MS, then yields. A loading face
- *  (`nf-diff-loading`) is mounted synchronously by the caller's first paint
- *  and removed on completion — 点击 → 首帧必有可见响应（作者令②）。 */
-function renderDiffChunked(host, diffText) {
-  const text = String(diffText ?? '');
-  const wrap = document.createElement('div');
-  wrap.className = 'nf-diff';
-  const body = document.createElement('pre');
-  body.className = 'nf-diff-body';
+/** Mount the shared diff component (js/diffView) for one unified diff body.
+ *  迁移批 2026-11-19（作者裁定「手机diff 按推荐」）：自研**按帧分块渲染器
+ *  退役**，改调共享组件 —— 两个差异面单源（硬不变式①）；行号/词级/折叠/虚拟化
+ *  由组件底座（CodeMirror 6 + @codemirror/merge）承接（D2/D3/D8/D9），VCS 元信息
+ *  在组件的统一差异转换期丢弃（D8）。装载态在**首次调用帧同步落地**（点击 →
+ *  首帧必有响应面，作者令②不变），组件就位后移除；失败进可见错误面（禁静默）。 */
+function renderDiffShared(host, diffText) {
   const loading = document.createElement('div');
   loading.className = 'nf-diff-loading';
   loading.textContent = t('panel.diffRendering');
-  wrap.append(body, loading);
-  host.appendChild(wrap);
-  const gen = (renderGen.get(host) || 0) + 1;
-  renderGen.set(host, gen);
-  let pos = 0;
-  const step = () => {
-    if (renderGen.get(host) !== gen) return; // superseded by a newer selection
-    const t0 = performance.now();
-    const frag = document.createDocumentFragment();
-    let rows = 0;
-    while (pos < text.length && rows < CHUNK_ROWS && performance.now() - t0 < FRAME_BUDGET_MS) {
-      const nl = text.indexOf('\n', pos);
-      const line = nl === -1 ? text.slice(pos) : text.slice(pos, nl);
-      pos = nl === -1 ? text.length : nl + 1;
-      const tpl = document.createElement('template');
-      tpl.innerHTML = diffRowHtml({ kind: classifyDiffLine(line), text: line });
-      frag.appendChild(tpl.content.firstElementChild);
-      rows += 1;
-    }
-    body.appendChild(frag);
-    if (pos < text.length) {
-      requestAnimationFrame(step);
-    } else {
-      loading.remove(); // 全量抵达（含末行无换尾形态）
-    }
-  };
-  requestAnimationFrame(step);
+  host.appendChild(loading);
+  mountDiff(host, { diffText: String(diffText ?? ''), mode: 'read' })
+    .then(() => { loading.remove(); })
+    .catch((err) => {
+      loading.remove();
+      const fail = document.createElement('div');
+      fail.className = 'nf-fc-empty';
+      fail.setAttribute('data-cv-hint', 'empty');
+      fail.setAttribute('data-diff-mount-fail', '1');
+      fail.textContent = `Diff not available (${String((err && err.message) || err)}).`;
+      host.appendChild(fail);
+    });
 }
 
 /** Ensure the pane carries the reader shell (single .fcv-view column, created
@@ -152,7 +122,13 @@ function renderReader(pane, payload, focus) {
     view.appendChild(strip);
   }
   if (typeof f?.diffText === 'string' && f.diffText.length > 0) {
-    renderDiffChunked(view, f.diffText);
+    // 共享组件的挂载宿主：.fcv-view（= 文件头 + 文件条 + 组件）为弹性列，滚动由
+    // 组件底座（CodeMirror .cm-scroller）自持 —— 虚拟化要在编辑面自己手里才成立
+    // （D9），外层容器因此不再滚（见 diffView.css `.fcv-view` 段注）。
+    const host = document.createElement('div');
+    host.className = 'fcv-dvhost';
+    view.appendChild(host);
+    renderDiffShared(host, f.diffText);
   } else if (f?.diffText === '') {
     const empty = document.createElement('div');
     empty.className = 'nf-fc-empty';

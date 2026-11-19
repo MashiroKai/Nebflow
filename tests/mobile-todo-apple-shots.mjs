@@ -215,9 +215,12 @@ async function mainLeg() {
     const d = getComputedStyle(document.body).getPropertyValue('--band-d') || '48px';
     return { w: r.width, h: r.height, right: innerWidth - r.right, bg: getComputedStyle(f).backgroundColor, bandD: d.trim() };
   });
-  // ui-unify-panels 批（2026-11-17）：带直径档 48 字面量退役 → --band-d
-  // clamp(36px,10vw,44px)（375 视宽 = 37.5），FAB 与顶带圆钮同一把尺。
-  ok('(2) bottom-right blue FAB (--band-d, = top band circle tier)', !!fab && Math.abs(fab.w - 37.5) < 1 && Math.abs(fab.h - 37.5) < 1, JSON.stringify(fab));
+  // ui-unify-panels 批（2026-11-17）：带直径档字面量退役 → 令牌 `--band-d`
+  // （手机层 = --mcap-h/--band-d 档链，实测 48）。本断言此前钉死 37.5（旧
+  // clamp(36px,10vw,44px) 档），随档改版失准 —— 改读**当前档**并与 FAB 实测比。
+  ok('(2) bottom-right blue FAB (--band-d, = top band circle tier)',
+    !!fab && Math.abs(fab.w - parseFloat(fab.bandD)) < 1 && Math.abs(fab.h - parseFloat(fab.bandD)) < 1,
+    JSON.stringify(fab));
 
   await page.screenshot({ path: join(SHOTS, 'light-01-tasks.png') });
 
@@ -291,10 +294,37 @@ async function mainLeg() {
   await page.locator('.mobile-page[data-page="todo-apple-list"] .mobile-back-btn').click();
   await page.waitForTimeout(260);
 
-  // (5)(6) create state: FAB -> item page; 3-key toolbar; type + save persists
+  // (5)(6) create state: FAB -> mobile **create sheet** (a sheet laying over the
+  // list page, not a second page: js/mobile/todoAppleFace.js openCreateSheet),
+  // then the item page in create state; 3-key toolbar; type + save persists.
   await page.locator('.mobile-page[data-page="tasks"] .ta-fab').click();
-  await page.waitForSelector('.mobile-page[data-page="todo-apple-item"].live', { timeout: 10000 });
-  await page.waitForTimeout(300);
+  await page.waitForSelector('.ta-create-overlay .ta-create-sheet', { timeout: 10000 });
+  await page.waitForTimeout(220);
+  const sheetGeom = await page.evaluate(() => {
+    const sheet = document.querySelector('.mobile-page[data-page="tasks"] .ta-create-sheet');
+    const dock = document.getElementById('mobile-dock');
+    const s = sheet.getBoundingClientRect();
+    const d = dock.getBoundingClientRect();
+    const overlapY = Math.max(0, Math.min(s.bottom, d.bottom) - Math.max(s.top, d.top));
+    const overlapX = Math.max(0, Math.min(s.right, d.right) - Math.max(s.left, d.left));
+    return {
+      sheet: { top: Math.round(s.top), bottom: Math.round(s.bottom), h: Math.round(s.height) },
+      dock: { top: Math.round(d.top), bottom: Math.round(d.bottom) },
+      overlap: Math.round(overlapX * overlapY),
+      viewportH: window.innerHeight,
+    };
+  });
+  ok('(3) create sheet clears the dock (author bug 2026-11-18 图3: dock occluded the sheet bottom)',
+    sheetGeom.overlap === 0 && sheetGeom.sheet.bottom <= sheetGeom.dock.top + 0.5, JSON.stringify(sheetGeom));
+  await page.screenshot({ path: join(SHOTS, 'light-04a-todo-create-sheet.png') });
+  await page.locator('.mobile-page[data-page="tasks"] .ta-create-cancel').click();
+  await page.waitForTimeout(200);
+  ok('(3) create sheet closes on cancel',
+    await page.locator('.ta-create-overlay').count() === 0);
+  // Create-state item page (no item target set): push directly, same as the
+  // shell's page registry (navController PAGES).
+  await push(page, 'todo-apple-item');
+  await page.waitForTimeout(200);
   const itemPage = await page.evaluate(() => {
     const sec = document.querySelector('.mobile-page[data-page="todo-apple-item"].live');
     const tool = sec.querySelector('.ta-tool');
@@ -328,13 +358,39 @@ async function mainLeg() {
     JSON.stringify(itemPage.pillBtns));
   await page.screenshot({ path: join(SHOTS, 'light-04-todo-apple-new.png') });
 
-  // Toolbar interaction: date cycle + flag cycle (both write to the draft)
-  await page.locator('.mobile-page[data-page="todo-apple-item"] .ta-tool-btn').nth(0).click();
-  await page.locator('.mobile-page[data-page="todo-apple-item"] .ta-tool-btn').nth(1).click();
-  await page.waitForTimeout(160);
+  // Toolbar interaction (作者令 2026-11-18 三条): date key = 站内统一定时器
+  // （时间滚轮单点面，手机层 sheet 皮）；flag key = 点击循环（作者明示可保留）；
+  // tag key = 站内列表菜单（不再是点击循环）。
+  const itemTool = '.mobile-page[data-page="todo-apple-item"] .ta-tool-btn';
+  await page.locator(itemTool).nth(0).click();
+  await page.waitForSelector('.tw-panel.in', { timeout: 6000 });
+  const picker = await page.evaluate(() => ({
+    sheet: document.querySelector('.tw-panel')?.classList.contains('sheet'),
+    body: document.querySelector('.tw-panel .tw-body-point')?.hidden === false,
+    expanded: document.querySelector('.mobile-page[data-page="todo-apple-item"] .ta-tool-btn')?.getAttribute('aria-expanded'),
+  }));
+  ok('(6) date key opens the station time-wheel point picker (sheet skin on the mobile layer)',
+    picker.sheet === true && picker.body === true && picker.expanded === 'true', JSON.stringify(picker));
+  await page.locator('.tw-panel .tw-confirm').click();
+  await page.waitForTimeout(260);
+  const confirmedDue = await page.evaluate(() => document.querySelector('.mobile-page[data-page="todo-apple-item"] .ta-chip-due')?.textContent || null);
+  ok('(6) confirming the unified picker writes the draft due (due chip appears)', !!confirmedDue, String(confirmedDue));
+
+  await page.locator(itemTool).nth(1).click();
+  await page.waitForTimeout(140);
+
+  await page.locator(itemTool).nth(2).click();
+  await page.waitForSelector('.fm-context-menu', { timeout: 6000 });
+  const menuRows = await page.evaluate(() => [...document.querySelectorAll('.fm-context-menu button:not(.mfs-back)')]
+    .map((b) => ({ label: b.textContent, checked: b.getAttribute('aria-checked') })));
+  ok('(6) tag key opens the station list menu (every tag listed + current one checked)',
+    menuRows.length === 3 && menuRows[2].label === '无' && menuRows[0].checked === 'true', JSON.stringify(menuRows));
+  await page.locator('.fm-context-menu button:not(.mfs-back)').nth(1).click();
+  await page.waitForTimeout(220);
   const chips = await page.evaluate(() => [...document.querySelectorAll('.mobile-page[data-page="todo-apple-item"] .ta-chip')]
     .map((c) => c.textContent));
-  ok('(6) toolbar writes take effect (date/flag/tag chips all appear)', chips.length === 3, JSON.stringify(chips));
+  ok('(6) toolbar writes take effect (date / flag / tag chips all appear)',
+    chips.length === 3 && chips.some((c) => c === '生活'), JSON.stringify(chips));
 
   // Type a title + save -> createItem persists + pop
   const before = await store(page, 'return todoStore.allItems().length;');
@@ -390,10 +446,16 @@ async function mainLeg() {
   await page.screenshot({ path: join(SHOTS, 'dark-02-todo-apple-list.png') });
   await page.locator('.mobile-page[data-page="todo-apple-list"] .mobile-back-btn').click();
   await page.waitForTimeout(200);
+  // FAB -> create sheet (same as the light leg: a sheet over the home page).
   await page.locator('.mobile-page[data-page="tasks"] .ta-fab').click();
-  await page.waitForSelector('.mobile-page[data-page="todo-apple-item"].live', { timeout: 10000 });
+  await page.waitForSelector('.ta-create-overlay .ta-create-sheet', { timeout: 10000 });
   await page.waitForTimeout(220);
-  await page.screenshot({ path: join(SHOTS, 'dark-03-todo-apple-new.png') });
+  await page.screenshot({ path: join(SHOTS, 'dark-03-todo-create-sheet.png') });
+  await page.locator('.mobile-page[data-page="tasks"] .ta-create-cancel').click();
+  await page.waitForTimeout(200);
+  await push(page, 'todo-apple-item');
+  await page.waitForTimeout(220);
+  await page.screenshot({ path: join(SHOTS, 'dark-04-todo-apple-item.png') });
 
   // Keyboard avoidance geometry (--ta-kb write channel; a real keyboard cannot
   // be simulated headless, so assert the token channel + the resting position)

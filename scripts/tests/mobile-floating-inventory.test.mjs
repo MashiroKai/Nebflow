@@ -11,12 +11,14 @@ test('todo scroll root cannot shrink below its content and clearance', () => {
 });
 for (const [name, file, pattern] of [
   ['todo top capsule', 'mobile-todo-apple.css', /padding-top: calc\(var\(--mchrome-clear\)/g],
-  ['todo bottom FAB', 'mobile-todo-apple.css', /padding-bottom: calc\(var\(--mobile-dock-clearance\) \+ var\(--mpage-fab-clearance/g],
+  ['todo bottom FAB', 'mobile-todo-apple.css', /padding-bottom: var\(--mobile-scroll-end\)/g],
+  ['reminder FAB', 'mobileLayer.css', /padding: 0 0 max\(var\(--mobile-scroll-end\)/g],
   ['todo editor tool', 'mobile-todo-apple.css', /--ta-kb/g],
+  ['todo reply footer', 'mobile-todo-apple.css', /--ta-band-stack/g],
   ['message search', 'mobileSearchFlat.css', /padding-top: calc\(var\(--mhsc-band\)/g],
   ['session identity', 'mobileLayer.css', /padding-top: calc\(104px/g],
   ['modal drawer', 'mobileLayer.css', /overflow-y: auto/g],
-  ['selection Ask dialog (source occlusion exempt)', 'ask.css', /overflow: auto/g],
+  ['selection Ask dialog (source occlusion exempt)', 'ask.css', /overflow-y: auto/g],
 ]) test(`rejects missing ${name} responsibility`, () => {
   const errors = checkInventory(f => f === file ? source(f).replace(pattern, 'removed') : source(f));
   assert.ok(errors.some(e => e.startsWith(`${name}:`)), errors.join('\n'));

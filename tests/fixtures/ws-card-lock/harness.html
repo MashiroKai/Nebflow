@@ -41,6 +41,7 @@
     const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
     const state = (await import(`${WEB}/state.js`)).default;
     const chat = await import(`${WEB}/chat.js`);
+    const { showGlobalPermissionToast } = await import(`${WEB}/main/permToast.js`);
 
     const SID = 'harness-lock-session';
     const RID = 'req-lock-1';
@@ -150,6 +151,16 @@
       chatEl.appendChild(row);
       chat.renderAskUserHistory(bubble, [DIR_ITEM], answerText);
       row.appendChild(chat.createMsgFooterBadge(Date.now(), 'askuser-copy-payload'));
+      await raf();
+    };
+    window.__renderPermFallback = async (tool, input) => {
+      document.querySelectorAll('.global-perm-toast').forEach(el => el.remove());
+      showGlobalPermissionToast({ toolName: tool, input, sessionId: SID, requestId: 'fallback-1' });
+      await raf();
+    };
+    window.__renderPermInput = async (tool, input) => {
+      window.__reset();
+      chat.renderPermissionPrompt(tool, '', input, SID, 1, null, null, null, 'req-perm-details', 'confirm-edits');
       await raf();
     };
     /** 权限卡（renderPermissionPrompt 真入口；作答后整行移除）。 */

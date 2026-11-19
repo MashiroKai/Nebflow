@@ -40,6 +40,8 @@ import java.util.concurrent.atomic.AtomicReference
  */
 trait AgentRuntimePort extends AgentRegistryPort:
 
+  def externalThinkingConfig: IO[ThinkingConfig] = IO.pure(ThinkingConfig())
+
   def executionCommitPort: ExecutionCommitPort = ExecutionCommitPort.unsupported
   def delegateRecoveryMode: Option[String] = None
   def isProtectedExecution(sessionId: String): Boolean = false
@@ -434,8 +436,31 @@ object AskHandoffPort:
     /** 来源腿："ask-tool"（分身工具）/ "ask-dock"（输入条转交钮）/ "main-reply"（主会话回问）。 */
     leg: String,
     /** 检索引用（§7 context_refs，形状引擎不解释、随注入帧透传）。 */
-    contextRefs: List[io.circe.Json] = Nil
+    contextRefs: List[io.circe.Json] = Nil,
+    /**
+     * ask-scope 批（2026-11-18）· 结构化转交请求四件（作者令「复杂任务转交主会话：
+     * 做什么、涉及哪些路径、为什么需要主会话、期望产出」）。机器可读面 = 本四字段
+     * （注入帧 metadata.handoff + askHandoffAck.handoff 同一单源）；人读面 =
+     * `question`（缺省由四件渲染，见 handoffSummary）。
+     */
+    task: String = "",
+    paths: List[String] = Nil,
+    reason: String = "",
+    expected: String = ""
   )
+
+  /**
+   * 结构化转交请求的人读单行（`question` 缺省值单点）：四件齐全时按
+   * 「任务 + 涉及路径数 + 期望产出」压缩，缺件按现有信息降级，全空 = ""。
+   */
+  def handoffSummary(task: String, paths: List[String], reason: String, expected: String): String =
+    val head = Option(task).map(_.trim).filter(_.nonEmpty).getOrElse("")
+    val pathNote =
+      if paths.isEmpty then ""
+      else s"（涉及 ${paths.length} 个路径：${paths.take(3).mkString(", ")}${if paths.length > 3 then ", …" else ""}）"
+    val tail = Option(expected).map(_.trim).filter(_.nonEmpty).map(e => s" 期望产出：$e").getOrElse("")
+    (head + pathNote + tail).trim
+
 
   /** Face：投递进主会话（injected 呈现 + 限频已在工具侧收敛）。 */
   trait Face:

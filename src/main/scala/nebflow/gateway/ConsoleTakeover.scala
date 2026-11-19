@@ -81,10 +81,43 @@ import nebflow.shared.{Branding, NebflowLogger}
  *   2. Canvas 写者席位另行独占（[[ConsoleTakeover.claimCanvas]]，2026-11-18 作者令）：
  *      **单写者、非抢占**——无写者才授予（单实例正常写），已有写者时第二个窗口
  *      的申请被拒（只读可看），零卡片零提示；拒写走真实「保存失败」文案。
+ *      唯一例外 = 持有者**已不在**（[[ConsoleTakeover.seatExpiryReason]] 活性判据，见下
+ *      「Canvas 席位活性判定」）——只有判死才准许重新授予，绝不因「后来者想写」而让位。
  * 旧主回连（owner==他会话 且 本实例 ∈ pastOwners）**不自动反抢**：回连是机器自动
  * 行为（休眠唤醒/抖动重连），不携带用户意图；若回连即反抢，则 B 操作中 A 的后台
  * 标签醒来即可隐身夺权——正是要防的误踢。回连方落被踢面（本连接收 `takeover`
  * 帧），一键 retake 可预期。
+ *
+ * == Canvas 席位活性判定（席位活性批 2026-11-18；「席位被永久占住」的根治） ==
+ * 缺口：席位只有两个写入点——授予（[[ConsoleTakeover.claimCanvas]]）与清除
+ * （[[ConsoleTakeover.releaseCanvas]]，前端 `pagehide` 的 best-effort POST）；两者之间
+ * **没有任何活性判据**。持有窗口非正常退出（强杀 / 后台冻结 / 多设备）而那次 POST 丢掉时，
+ * 席位被永久占住：其他窗口写入一律 409 `writer_already_held`，**且无自愈**
+ * （[[ConsoleTakeover.sweepStale]] 只在下一次**无关的** `onConnect` 上跑，还要求「零连接 +
+ * 超 `StaleTtl`」——已开的第二窗口不再触发 onConnect，故永远等不到那次清扫）。
+ * 修法（只加判据，非抢占语义一个字不动）：**申请时**判一次当前写者的持有者是否已不在，
+ * 判死 ⇒ 席位清空 ⇒ 本次申请走「无写者」这条正常路。三条设计选择：
+ *   ① **惰性判定**（不加后台定时器、不做主动清扫）：席位只在**有人来要**的时候才可能被判
+ *      失效 ⇒ 无人竞争时席位一动不动，「把活写者悄悄踢成只读」在结构上不可表达。
+ *   ② 判据是「持有者**不在**」而不是「后来者想写」：[[ConsoleTakeover.seatExpiryReason]]
+ *      两条腿各自独立充分，都不成立就不判死（宁可多等，不可误夺）：
+ *        · **无活连接腿**：账上零连接，且「最后一个连接走掉」起已超 `activityTtlMs`
+ *          （缺省 120s = 客户端重连退避上限 30s 的 4 倍）。`onDisconnect` 只记这一时刻，
+ *          **不判死**——「掉线 ≠ 让位」逐字保住。
+ *        · **连接但静默腿**：连接还在，但距最近一次入站帧已超 `staleTtlMs`（缺省 600s =
+ *          20 拍丢心跳；客户端自己连续 3 拍没 pong 就强断重连 ⇒ 连着却 10 分钟零帧只可能
+ *          是冻结/僵尸）。此窗取本类**既有**陈旧窗同一个数：全类只有一个「明确超时」读数，
+ *          不新增第三个钮。
+ *      账缺席（`None` = 持有者从未上过 ws 账，如老缓存页/直构面）⇒ **不判死**：不可证即
+ *      当活着。残余面：账被摘空、`owner` 已翻别人时席位会失去证据（见下清扫互补腿）。
+ *   ③ 失效只清 `writer`、**不动 `owner`**：画布席位与控制台所有权解耦（2026-11-18 作者令），
+ *      控制台侧的陈旧账仍由 [[ConsoleTakeover.settle]] / [[ConsoleTakeover.sweepStale]]
+ *      自己的钟管；授予路径本来就会把 owner 翻到新写者，并因旧主已不活跃
+ *      （[[ConsoleTakeover.isLive]] 同窗）而零出帧。
+ * 互补的一个洞（同批一并打）：[[ConsoleTakeover.sweepStale]] 原先只在「被扫的键**正在当
+ * owner**」时清席位——owner 与席位持有者解耦之后（owner 已翻别人），持有者的账户被扫掉时
+ * 席位就**永远**没人解：账已不存在，评价性活性判据再也拿不到证据。故扫掉的键若是**席位持有者**
+ * 也一并清席位（扫掉的前提就是「零活连接 + 超 StaleTtl」，与判死同档保守）。
  *
  * == 陈旧账清理（误报根修批第二条：不靠长 TTL 兜底） ==
  * 实例账在**每次连接入账时**做机会式清扫（[[ConsoleTakeover.sweepStale]]）：
@@ -114,9 +147,17 @@ final class ConsoleTakeover(
   logger: NebflowLogger,
   /** 总闸读数（进程级常量，boot 一次）：false = 全 no-op。路由侧读此值决定是否拦截 retake 帧。 */
   val enabled: Boolean = ConsoleTakeover.defaultEnabled,
-  /** 实例账陈旧窗（零活连接 + 超此窗无入账 ⇒ 摘账；owner 随之清空）。 */
+  /**
+   * 实例账陈旧窗（零活连接 + 超此窗无入账 ⇒ 摘账；owner 随之清空）。席位活性批起**同时**
+   * 是画布席位「连接但静默腿」的明确超时窗（[[ConsoleTakeover.seatExpiryReason]]）——全类
+   * 只有一个「明确超时」读数，不新增第三个钮。
+   */
   staleTtlMs: Long = ConsoleTakeover.StaleTtlMs,
-  /** 可见活动窗（同端判据批 B；spec 注入短窗以钉「静默让位」判据）。 */
+  /**
+   * 可见活动窗（同端判据批 B；spec 注入短窗以钉「静默让位」判据）。席位活性批起**同时**
+   * 是画布席位「无活连接腿」的宽限（[[ConsoleTakeover.seatExpiryReason]]）：同一枚「这个端
+   * 还有活证据吗」的读数，两个消费点同源。
+   */
   activityTtlMs: Long = ConsoleTakeover.ActivityTtlMs,
   /** 自动化端观察位开关（同端判据批 C；缺省读 env，spec 可显式开/关）。 */
   automationSpectator: Boolean = ConsoleTakeover.automationSpectator
@@ -136,23 +177,27 @@ final class ConsoleTakeover(
   // 授予条件 = 当前无写者，或写者就是本标签（刷新/重连的自我续位）；已有别的写者
   // ⇒ None（只读），绝不翻位。expectedEpoch 仍是严格 compare-and-set（并发同 epoch
   // 只有一个赢家）。旧口径「缺省抢占」随「取回控制权」状态机一并退役。
+  // 席位活性批（2026-11-18）：授予前先判一次持有者是否**已不在**
+  // （[[ConsoleTakeover.seatExpiryReason]]，惰性判定）；判死才把席位清空、按「无写者」
+  // 正常授予——这是非抢占语义下**唯一**允许的重新授予前提，绝不因「后来者想写」让位。
   def claimCanvas(principal: String, client: String, tab: String, expectedEpoch: Option[Long] = None): IO[Option[Long]] =
     val key = ConsoleTakeover.holderOf(principal, Some(client))
     canvasExclusive {
-      controlRef.modify { state =>
-        val mine = state.writer.exists(w => w.principal == principal && w.clientId == client && w.tabInstanceId == tab)
-        if expectedEpoch.exists(_ != state.canvasEpoch) then (state, None)
-        else if state.writer.isDefined && !mine then (state, None)
-        else
-          val next = Math.addExact(state.canvasEpoch, 1L)
-          val writer = ConsoleTakeover.CanvasWriter(principal, client, tab, next)
-          (state.copy(owner = Some(key), canvasEpoch = next, writer = Some(writer)), Some((next, state.owner)))
-      }.flatMap {
-        case None => IO.pure(None)
-        case Some((epoch, previous)) =>
-          (if previous.contains(key) then recordOwner(key)
-           else reverseKickAfterClaim(key, previous).void).as(Some(epoch))
-      }
+      nowMs().flatMap(expireCanvasSeatIfHolderVanished) *>
+        controlRef.modify { state =>
+          val mine = state.writer.exists(w => w.principal == principal && w.clientId == client && w.tabInstanceId == tab)
+          if expectedEpoch.exists(_ != state.canvasEpoch) then (state, None)
+          else if state.writer.isDefined && !mine then (state, None)
+          else
+            val next = Math.addExact(state.canvasEpoch, 1L)
+            val writer = ConsoleTakeover.CanvasWriter(principal, client, tab, next)
+            (state.copy(owner = Some(key), canvasEpoch = next, writer = Some(writer)), Some((next, state.owner)))
+        }.flatMap {
+          case None => IO.pure(None)
+          case Some((epoch, previous)) =>
+            (if previous.contains(key) then recordOwner(key)
+             else reverseKickAfterClaim(key, previous).void).as(Some(epoch))
+        }
     }
 
   def canvasRole(principal: String, client: String, tab: String): IO[Option[Long]] =
@@ -323,12 +368,24 @@ final class ConsoleTakeover(
    * 实例账条目保留（不因零连接立刻删键）：同 clientId 的重连必须还能认出「这就是
    * 我」——键被删了就会退化成一次 fresh claim。真正失效交给
    * [[ConsoleTakeover.sweepStale]]（零连接 + 超窗）。
+   *
+   * 席位活性批（2026-11-18）：这里**只记**一个事实——「最后一个连接也走掉的时刻」
+   * （`goneSince`），**不判死、不清席位、零出帧**。判死留给申请侧
+   * （[[ConsoleTakeover.seatExpiryReason]] 惰性判定）：掉线本身照旧不等于让位，只有
+   * 「零活连接**持续**超过宽限」才是判死的充分条件之一，且仍要等持有者之外的人来要。
    */
   def onDisconnect(connId: String): IO[Unit] =
     if !enabled then IO.unit
     else
-      instancesRef.update { m =>
-        m.map { case (k, inst) => k -> (if inst.conns.contains(connId) then inst.copy(conns = inst.conns - connId) else inst) }
+      nowMs().flatMap { now =>
+        instancesRef.update { m =>
+          m.map { case (k, inst) =>
+            if inst.conns.contains(connId) then
+              val left = inst.copy(conns = inst.conns - connId)
+              k -> (if left.conns.isEmpty then left.copy(goneSince = Some(now)) else left.copy(goneSince = None))
+            else k -> inst
+          }
+        }
       }
 
   // ── 内部 ────────────────────────────────────────────────────────────────
@@ -525,12 +582,52 @@ final class ConsoleTakeover(
       .flatMap { dead =>
         if dead.isEmpty then IO.unit
         else
-          canvasExclusive(controlRef.update(s => if s.owner.exists(dead.contains) then s.copy(owner = None, writer = None) else s)) *>
+          // 席位活性批（2026-11-18）：席位与控制台 owner 已解耦（作者令「控制台首实例即位
+          // 不清画布席位」），故这里**分别**判两件事——owner 是被扫的键 ⇒ 清 owner（既有
+          // 语义，逐字不变）；**席位持有者**是被扫的键 ⇒ 一并清席位。不清的话：账户都已
+          // 不存在，评价性活性判据（[[ConsoleTakeover.seatExpiryReason]]）再也拿不到证据，
+          // 席位就永远没人解得开。两者都以「零活连接 + 超 StaleTtl」为前提，保守同档。
+          canvasExclusive(
+            controlRef.update { s =>
+              val ownerGone = s.owner.exists(dead.contains)
+              val seatGone = s.writer.exists(w => dead.contains(ConsoleTakeover.holderOf(w.principal, Some(w.clientId))))
+              if !ownerGone && !seatGone then s
+              else s.copy(owner = if ownerGone then None else s.owner, writer = if seatGone then None else s.writer)
+            }
+          ) *>
             logger.info(
               s"console-takeover: swept ${dead.size} stale instance(s) " +
-                s"[${dead.toList.sorted.map(label).mkString(", ")}] — owner cleared if it was one of them"
+                s"[${dead.toList.sorted.map(label).mkString(", ")}] — owner/seat cleared if among them"
             )
       }
+
+  /**
+   * 席位活性判定的落点（席位活性批 2026-11-18）：[[ConsoleTakeover.claimCanvas]] 授予前
+   * 唯一调入点。当前写者的**持有者**已被判不在（[[ConsoleTakeover.seatExpiryReason]]）
+   * ⇒ 席位清空 + 记一行日志；否则一动不动（零副作用、零出帧）。
+   *
+   * 只清 `writer`、不碰 `owner`：控制台所有权与画布席位解耦（2026-11-18 作者令）；紧随的
+   * 授予本来就会把 owner 翻到新写者，而旧主此刻已不活跃 ⇒ 反向踢零目标（[[reverseKickAfterClaim]]
+   * 的 `isLive` 同窗），与「掉线 ≠ 让位」的零出帧语义一致。
+   * 判死证据必须落日志：谁被解、依据哪条腿、超窗多少毫秒——「凭什么解」要能事后复核。
+   */
+  private def expireCanvasSeatIfHolderVanished(now: Long): IO[Unit] =
+    controlRef.get.map(_.writer).flatMap {
+      case None => IO.unit
+      case Some(w) =>
+        val holderKey = ConsoleTakeover.holderOf(w.principal, Some(w.clientId))
+        instancesRef.get.flatMap { m =>
+          ConsoleTakeover.seatExpiryReason(m.get(holderKey), now, activityTtlMs, staleTtlMs) match
+            case None => IO.unit
+            case Some(why) =>
+              controlRef.update(s => if s.writer.contains(w) then s.copy(writer = None) else s) *>
+                logWith(
+                  s"console-takeover: canvas seat expired — holder ${label(holderKey)} $why; " +
+                    s"seat reopened for a non-preemptive claim (epoch ${w.epoch} kept, next claim bumps it)",
+                  holderKey
+                )
+        }
+    }
 
   /**
    * 翻位 + 反向踢共享核（ws 腿 / HTTP 腿单源，接管必达批抽出）：推送面在翻位前
@@ -589,7 +686,11 @@ object ConsoleTakeover:
    *   · `uaClass` / `ip` —— 日志证据位（批③：谁顶了谁，一眼可判）；
    *   · `automated` —— 自动化端标记（webdriver/headless UA，批 C）；
    *   · `spectator` —— 观察位（自动化端不夺权，见 [[ConsoleTakeover.settle]]）；
-   *   · `lastActivity` —— 最近一次入站帧时刻（可见活动闸，批 B）。
+   *   · `lastActivity` —— 最近一次入站帧时刻（可见活动闸，批 B）；
+   *   · `goneSince` —— 「最后一个活连接也走掉的时刻」（席位活性批 2026-11-18：无活连接腿的
+   *     计时起点，只在 `onDisconnect` 摘空时落值、任何一次入账即清）。缺省 `None` 保既有
+   *     构造面逐字不变（旧口径下它恒 `None` ⇒ 无活连接腿只凭 `lastSeen` 无从判死，
+   *     判据宁可不判）。
    */
   final case class Instance(
     holder: String,
@@ -602,7 +703,8 @@ object ConsoleTakeover:
     ip: Option[String] = None,
     automated: Boolean = false,
     spectator: Boolean = false,
-    lastActivity: Long = 0L
+    lastActivity: Long = 0L,
+    goneSince: Option[Long] = None
   )
 
   /**
@@ -631,12 +733,40 @@ object ConsoleTakeover:
       automated = prev.automated || meta.automated,
       conns = prev.conns ++ added,
       lastSeen = now,
-      lastActivity = now
+      lastActivity = now,
+      // 有连接入账 ⇒ 不再「无活连接」（席位活性批：无活连接腿的计时清零）。
+      goneSince = None
     )
 
   /** 「此刻真有可见活动」：存在活连接 且 `ttlMs` 内有过入站帧（同端判据批 B 的唯一判据）。 */
   def isLive(inst: Instance, nowMs: Long, ttlMs: Long): Boolean =
     inst.conns.nonEmpty && (nowMs - inst.lastActivity) <= ttlMs
+
+  /**
+   * **席位持有者判死判据**（席位活性批 2026-11-18 单源；[[ConsoleTakeover.claimCanvas]] 与
+   * spec 共此一条）。返回 `Some(证据串)` = 持有者已不在（可解席位）；`None` = 不可证或活着。
+   *
+   * 两条腿（各自独立充分；成立一条即判死，都不成立就不判——**宁可多等，不可误夺**）：
+   *   ① **无活连接腿**：账上零连接，且「最后一个连接走掉」起已超 `goneGraceMs`。
+   *      「无活连接」是作者裁定的两个允许失效条件之一（另一个 = 明确超时）；宽限只用来吃
+   *      掉 ws 重连抖动——客户端退避上限 30s（`ws.js` scheduleReconnect 2s→4s→…→30s 封顶），
+   *      缺省 120s = 其 4 倍。`goneSince` 缺席（旧键/直构面）⇒ 不判死。
+   *   ② **连接但静默腿**：账上还有连接，但距最近一次入站帧已超 `silentTtlMs`。缺省 600s =
+   *      20 拍丢心跳（心跳 30s/拍，`ws.js` HB_INTERVAL_MS）；客户端自己连续 3 拍（90–180s）
+   *      没 pong 就强断重连 ⇒ 连接还在却 10 分钟零帧只可能是冻结/僵尸。
+   *
+   * `inst = None`（账缺席：持有者从未上过 ws 账，或账已被摘）⇒ `None`（不判死）：不可证即
+   * 当活着。残余面已在批报告登记（同一浏览器另一标签仍连着、或账键与席位键不同源时判不出）。
+   */
+  def seatExpiryReason(inst: Option[Instance], nowMs: Long, goneGraceMs: Long, silentTtlMs: Long): Option[String] =
+    inst match
+      case None => None
+      case Some(i) if i.conns.isEmpty =>
+        i.goneSince.filter(t => (nowMs - t) > goneGraceMs)
+          .map(t => s"has no live connection for ${nowMs - t}ms (> $goneGraceMs)")
+      case Some(i) =>
+        val silent = nowMs - i.lastActivity
+        if silent > silentTtlMs then Some(s"is connected but silent for ${silent}ms (> $silentTtlMs)") else None
 
   /** 可见活动窗（缺省 120s）：手机端心跳 30s 一拍 ⇒ 连续两拍丢失才算「没在看」。 */
   val ActivityTtlMs: Long = 120L * 1000L

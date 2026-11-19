@@ -163,7 +163,30 @@ object AskContextAssembler:
   end renderBlock
 
   /**
-   * 系统提示（机制稿 §6 草案全文 + 上下文块；2026-10-31 换装批更新工具面描述）。
+   * ask 面工具清单（ask-scope 批 2026-11-18，作者令「清单不许手写第二份：由注册表
+   * 派生（单一来源，工具 schema/description 已经由 buildToolList 发模型了）」）。
+   *
+   * 唯一来源 = `ToolRegistry`：成员集合由 [[AskSessions.AllowedTools]] 给出（授权
+   * 单点不变），逐条取该工具的 `description` 首句。**本文件零工具名清单**——新工具
+   * 进注册表 + 进 AllowedTools 即自动出现在提示词里，不存在第二份手抄名单。
+   * 描述缺失（名字进集但注册表无 schema）= 显式标注，不静默漏行。
+   */
+  def toolListSection(): String =
+    val map = nebflow.core.tools.ToolRegistry.TOOL_MAP
+    AskSessions.AllowedTools.toList.sorted
+      .map { n =>
+        val first = map
+          .get(n)
+          .map(_.description.trim.linesIterator.find(_.trim.nonEmpty).getOrElse("").trim)
+          .getOrElse("(not registered — no schema is delivered to the model)")
+        val capped = if first.length > 200 then first.take(197) + "..." else first
+        s"- $n: $capped"
+      }
+      .mkString("\n")
+
+  /**
+   * 系统提示（机制稿 §6 草案全文 + 上下文块；2026-10-31 换装批更新工具面描述；
+   * ask-scope 批 2026-11-18 按作者裁定重写 `[Tools]` 段：清单派生 + 两条硬约束）。
    * {file_name}/{file_path} 占位在此渲染；终稿评审（§9-6 开放项）落地时只改本函数。
    */
   def promptFor(fileName: String, absPath: String, contextBlock: String): String =
@@ -180,31 +203,28 @@ object AskContextAssembler:
 ——文件原文可随时用 Read 工具重读（不止依赖组装快照；被问细节/原文引用时优先
 用它，不要答「读不到文件」）。
 
-[Tools]
-- Read / Glob / Grep: read and search the current file and related files in its
-  directory or repository. Cite the source file when using related content.
-- WebSearch / WebFetch: look up external facts when the answer needs them.
-- Bash: a QUERY-ONLY, fail-closed shell face. Allowed first words: grep, rg, ls,
-  cat, head, tail, find, wc, stand-recall, stand-messages, and git with only
-  log/show/diff/status (pager disabled). Pipelines of allowed commands are fine.
-  Redirection (>/>>/<), $$(), backticks, ; && ||, background jobs and unknown
-  commands are REFUSED with an explicit error. Never use Bash to change anything —
-  make edits with ask_edit/ask_write instead.
-- ask_edit / ask_write: edit THIS file only (absolute path of the bound file).
-  Changes are applied to the file IMMEDIATELY; the user reviews them as an inline
-  diff in the canvas file tab and may accept or reject each block (rejecting a
-  block reverts it). Prefer ask_edit for targeted replacements (old_str → new_str,
-  replace_all for renames); ask_write rewrites the whole file. After applying,
-  briefly tell the user the change is in place and can be reviewed in canvas.
-- message_record_search: recall earlier discussions and decisions from main-session history.
-- send_message_to_main_chat: the message channel to the main session. Use it only
-  when the user explicitly requests that the main session handle, follow up or execute something.
+[Tools] 本会话工具面（清单由注册表派生，唯一来源 = nebflow.core.tools.ToolRegistry
+的 name + description；`buildToolList` 已把同一份 schema 发给模型——此处不手抄第二份）
+${toolListSection()}
+
+[本会话的两条硬约束]
+1. 写面只有一个：**本会话只能编辑它对应的那份文档**（$absPath）。引擎对路径做
+   归一（相对拼写按本文档所在目录解析；`.`、`..`、符号链接、大小写变体、别名挂载
+   全部收成同一身份），归一后不指向本文档的一切目标一律拒绝，并给出可读理由 + 转交
+   建议。Bash 是 QUERY-ONLY, fail-closed 的只读执行面（白名单首词：grep, rg, ls,
+   cat, head, tail, find, wc, stand-recall, stand-messages，以及 git 的
+   log/show/diff/status；重定向、命令替换、组合算符、后台作业、未知命令一律拒），
+   **它不是第二条写通道**——不要试图用任何手段改别的文件。
+2. 复杂任务转交主会话：多步、跨文件、命令/构建/安装类任务**不在本窗自行承担**。
+   用 send_message_to_main_chat 产出**结构化转交请求**（task = 做什么、paths = 涉及
+   哪些路径、reason = 为什么需要主会话、expected = 期望产出），交出去后告知用户
+   「已转交主会话（它可回问）」，然后留在本窗继续服务本文档。宁可转交，不要越界。
 
 【边界】
-1. 对主会话只有一条通道：send_message_to_main_chat（转交请求）。仅当用户明确要
-   「让主会话处理/跟进/执行」时使用；转交后告知用户「已发送，它可回问」，然后留在
-   本窗继续服务。
+1. 对主会话只有一条通道：send_message_to_main_chat（结构化转交请求）。
 2. 主会话的回问会以用户消息形态出现（前缀「主会话回问：」），照常作答即可。
+3. 越界（写别的文件 / 跑复杂命令 / 自行承担跨文件任务）不是「失败」，是**用错了
+   通道**——转交即可，不许挂死、不许空转、不许静默。
 
 【透明】只以消息气泡说话：不描述工具调用过程、不展示检索流水；检索引用以来源
 标注内联在答案里。答不出时直说「这份文件与检索范围内没有依据」，并给出最接近

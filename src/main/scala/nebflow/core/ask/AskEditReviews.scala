@@ -34,8 +34,12 @@ import scala.util.control.NonFatal
  * 盖**。外部改动后的**下一次** ask_edit/ask_write 落盘前会把基线 rebase 到
  * 外部改后的内容（旧基线对应的回退已不安全——回写会抹掉外部改动）。
  *
- * 路径纪律（承接 CAE-SCN-002）：仅接受与绑定文件**逐字相等**的绝对路径；
- * 绑定文件是符号链接 → 拒；内容二进制 → 拒；不创建、不删除、不移动文件。
+ * 路径纪律（ask 写面收窄批 2026-11-18 修订；原 CAE-SCN-002 的「逐字相等 + 拒软链」
+ * 换装为**身份归一**）：目标判决单一来源 = [[AskPathBoundary]]——`..` / 相对拼写 /
+ * 绝对拼写 / 符号链接 / 大小写变体 / 别名挂载全部先归一（realpath + isSameFile），
+ * 归一后 == 绑定文档 ⇒ 放行，其余一律拒（拒绝文案带「只编辑绑定文档」规则 + 转交
+ * 主会话建议）。二进制/超帽/不存在仍拒；不创建、不删除、不移动文件。
+ * 每条判决（放行 ∧ 拒绝）经 [[AskWriteAudit]] 落 `<dataRoot>/ask/audit.jsonl`。
  * 账本只在内存（进程重启即清——未决审阅是会话内语义）。
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -101,41 +105,60 @@ object AskEditReviews:
     final case class Kept(review: AskEditReview) extends ResolveResult
     final case class Cleared(path: String) extends ResolveResult
 
-  // ── capture：目标闸 + 快照（承接 CAE 逐字判据，语义零改动）────────────────
+  // ── capture：目标闸 + 快照 ────────────────────────────────────────────────
+  // 目标闸（ask 写面收窄批 2026-11-18）：路径判决**单一来源** =
+  // AskPathBoundary.decide（归一后同一份文档才放行；`..` / 相对 / 绝对 / 软链 /
+  // 大小写 / 别名挂载全部收成同一身份读数）。本函数不再持任何字符串相等或
+  // startsWith 判据——那是绕过面（静态闸 check-ask-write-scope.mjs 钉住）。
+  // 每条判决（放行 ∧ 拒绝）都经 AskWriteAudit 留痕：身份/工具/目标/时间/结果。
 
   final case class Capture(path: String, fileName: String, oldText: String)
 
-  def capture(sid: String, binding: AskBinding, path: String): IO[Either[String, Capture]] =
+  def capture(sid: String, binding: AskBinding, path: String, tool: String): IO[Either[String, Capture]] =
     IO.blocking {
-      val target = binding.file
-      val normalized = Option(path).map(_.trim).getOrElse("")
-      def refuse(why: String): Left[String, Capture] =
-        Left(s"ask edit refused: $why (bound file: $target)")
+      def audit(canonical: String, allowed: Boolean, reason: String): Unit =
+        AskWriteAudit.record(
+          identity = sid,
+          tool = tool,
+          requested = Option(path).map(_.trim).getOrElse(""),
+          canonical = canonical,
+          allowed = allowed,
+          reason = reason
+        )
+      def refuseMsg(msg: String, canonical: String): Left[String, Capture] =
+        audit(canonical, allowed = false, reason = msg)
+        Left(msg)
+      def refuse(why: String, canonical: String = ""): Left[String, Capture] =
+        refuseMsg(AskPathBoundary.refusal(why), canonical)
       if sid != binding.id then refuse("session does not own this binding")
-      else if normalized.isEmpty then refuse("path is required")
-      else if !normalized.startsWith("/") then refuse("path must be absolute")
-      else if normalized.split('/').contains("..") then refuse("path traversal (`..`) is not accepted")
-      else if normalized != target then refuse("only the bound file of this ask session is editable")
       else
-        try
-          val p: Path = Path.of(normalized)
-          if !Files.exists(p) then refuse("bound file no longer exists")
-          else if Files.isSymbolicLink(p) then refuse("symbolic links are not editable")
-          else if !Files.isRegularFile(p) then refuse("bound file is not a regular file")
-          else
-            val bytes = Files.readAllBytes(p)
-            if bytes.length > MaxFileChars then refuse(s"file larger than ${MaxFileChars} chars (ask edit face cap)")
-            else if bytes.contains(0.toByte) then refuse("binary content (NUL byte) is not editable")
-            else
-              val decoder = StandardCharsets.UTF_8.newDecoder()
-              try
-                val text = decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString
-                Right(Capture(normalized, binding.fileName, text))
-              catch case NonFatal(_) => refuse("binary content (not valid UTF-8) is not editable")
-        catch
-          case NonFatal(e) =>
-            logger.warn(s"ask edit capture failed: ${e.getMessage}")
-            refuse(s"could not read the bound file (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})")
+        AskPathBoundary.decideSync(binding.file, path) match
+          case d if d.refused => refuseMsg(d.reason, d.canonical)
+          case d =>
+            try
+              val p: Path = Path.of(d.canonical)
+              if !Files.isRegularFile(p) then refuse("the bound document is not a regular file", d.canonical)
+              else
+                val bytes = Files.readAllBytes(p)
+                if bytes.length > MaxFileChars then
+                  refuse(s"the document is larger than ${MaxFileChars} chars (ask edit face cap)", d.canonical)
+                else if bytes.contains(0.toByte) then
+                  refuse("binary content (NUL byte) is not editable", d.canonical)
+                else
+                  val decoder = StandardCharsets.UTF_8.newDecoder()
+                  try
+                    val text = decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString
+                    audit(d.canonical, allowed = true, reason = "")
+                    Right(Capture(d.canonical, binding.fileName, text))
+                  catch
+                    case NonFatal(_) => refuse("binary content (not valid UTF-8) is not editable", d.canonical)
+            catch
+              case NonFatal(e) =>
+                logger.warn(s"ask edit capture failed: ${e.getMessage}")
+                refuse(
+                  s"could not read the bound document (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})",
+                  d.canonical
+                )
       end if
     }
   end capture
@@ -198,9 +221,10 @@ object AskEditReviews:
     sid: String,
     binding: AskBinding,
     path: String,
+    tool: String,
     transform: String => Either[String, String]
   ): IO[Either[String, AskEditReview]] =
-    capture(sid, binding, path).flatMap {
+    capture(sid, binding, path, tool).flatMap {
       case Left(why) => IO.pure(Left(why))
       case Right(cap) =>
         IO.blocking {

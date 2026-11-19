@@ -29,12 +29,30 @@ object ToolRegistry:
       "Curl" -> CurlTool,
       // Canvas file display
       "Pop" -> PopTool,
-      // Card retired 2026-10-03 (pop-upgrade batch, author ruling 「去掉card工具」):
-      // the chat-stream HTML card tool is gone — its show-face duties moved to
-      // Pop (media renders in the chat; files render as file cards). Calling the
-      // retired name hits AgentCore.RetiredToolGuides (error text only, zero
-      // execution surface). cardRegistry.js keeps rendering legacy `___*_HTML___`
-      // payloads already stored in old session histories.
+      // Card **revived 2026-11-18** (card-tool-revive batch, author ruling
+      // 「找到我们 git 历史中的 card 工具 让 canvas ask 可以使用 card 工具」).
+      // The body is restored byte-for-byte from the last pre-retirement
+      // revision (`02d781530^` — the file the pop-upgrade batch deleted) and
+      // registered again under its original name; the sentinel
+      // (`___CARD_HTML___`), the `FileRefs` shared policy and the frontend
+      // consumer (`cardRegistry.js` → sandboxed iframe) all survived the
+      // retirement untouched, so the revived tool renders with zero frontend
+      // change. 呼号语义 [[nebflow.core.tools.CardTool]] 一字未改。
+      //
+      // 🔴 授权面 = **Canvas Ask 唯一**：名字进 `AskSessions.AskExclusiveTools`
+      // （单点），由此同时得到两件事——① ask 会话的早退面（`buildAllowedToolSet`
+      // 的 `askSession` 分支返回 `AskSessions.AllowedTools`）把它带上；② 该函数
+      // 尾段的 `-- AskExclusiveTools` 把它从**其余一切身份**（Nebula root /
+      // 项目节点 / 分发器 / delegate / subagent / kernel）剥净。声明（含 `"*"`）
+      // 与插件白名单（`PluginRegistry.BuiltinToolWhitelist`）均不含本名，且
+      // 工具内侧另有 `AskSessions.isAskSession` 身份闸（双保险）。
+      // Pop 不动：Nebula 专属面逐字不变，两件职责不重叠（见 CardTool 顶注）。
+      //
+      // History (史实)：`793f62c1`（2026-08-11）整体删除 471 行 → 2026-09-05 08:40
+      // 作者裁定解封（`21bc2e74a`，回归后长到 1238 行）→ `02d781530`（2026-10-03
+      // pop-upgrade 批，作者令「去掉card工具,然后对Pop工具进行升级」）退役 →
+      // 2026-11-18 本批复活并收窄给 ask。
+      "Card" -> CardTool,
       // User interaction
       "AskUserQuestion" -> AskUserQuestionTool,
       "AskHost" -> AskHostTool,

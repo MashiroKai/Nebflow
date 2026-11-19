@@ -140,13 +140,17 @@ export function buildManageBar() {
   const uptimeEl = document.createElement('span');
   uptimeEl.className = 'fa-uptime';
   uptimeEl.style.display = 'none';
+  // 按钮形态统一批（2026-11-18）：两枚管理钮挂设置页动作族（.cfg-btn 配色 +
+  // .set-btn 几何令牌），**不再**挂 .glass-control（材质类只给配方不给几何 ⇒ 修前
+  // 桌面 28px 圆钮 / 手机 44px 方钮两档并存，且带 glass 投影）。族类落地见
+  // scripts/check-settings-button-uniform.mjs 的登记表。
   const stopBtn = document.createElement('button');
-  stopBtn.className = 'fa-mgmt-btn fa-mgmt-stop glass-control';
+  stopBtn.className = 'fa-mgmt-btn fa-mgmt-stop cfg-btn set-btn';
   stopBtn.title = t('manage.stop');
   stopBtn.setAttribute('aria-label', t('manage.stop'));
   stopBtn.innerHTML = '<i data-lucide="square"></i>';
   const retryBtn = document.createElement('button');
-  retryBtn.className = 'fa-mgmt-btn fa-mgmt-retry glass-control';
+  retryBtn.className = 'fa-mgmt-btn fa-mgmt-retry cfg-btn set-btn';
   retryBtn.title = t('manage.retry');
   retryBtn.setAttribute('aria-label', t('manage.retry'));
   retryBtn.innerHTML = '<i data-lucide="rotate-cw"></i>';

@@ -76,6 +76,7 @@ import {
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
   renderCompactDoneCard,
   showOptions, renderAskUser, renderPermissionPrompt, closeAskUserCard,
+  renderModelUnavailable,
   reclaimAskUserCards,
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
@@ -111,7 +112,7 @@ import {
   showDeleteFolderModal,
   initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, mountHistoryPageChunked, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, mountHistoryPageChunked, captureHistoryAnchor, restoreHistoryAnchor, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
 // delegate 链真 provider（N1 刀3 · #1228 setSource 换源）：模块副作用 = setSource
 // 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
@@ -186,6 +187,9 @@ import { initFleetUpdate } from './fleetUpdate.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
+// desktop-search-field 批（2026-11-17）：「消息」面板顶部搜索框（社交消息检索，
+// 与手机常驻条同一引擎 js/socialSearchCore.js）；随好友门控同拍装配。
+import { initPanelSearch } from './panelSearch.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
 import { initAskDock } from './askDock.js';
@@ -1874,6 +1878,23 @@ onMessage('maxTokens', (msg, view) => {
 });
 
 // --- AskUser / Permission ---
+onMessage('modelUnavailable', (msg, view) => {
+  // model-fallback-card 批（2026-11-18 作者裁定 14:37）：统一「模型不可用」卡
+  // ——任何槽共用同一张（`msg.slot` 是载荷字段）。best-effort 追加进当前会话流
+  // （容器缺失 = 不抛，卡仍可就地由调用方挂载）。
+  try {
+    const host =
+      document.getElementById('chat-stream') ||
+      document.querySelector('.chat-stream') ||
+      document.getElementById('messages');
+    const card = renderModelUnavailable(msg);
+    if (host && card) host.appendChild(card);
+    else console.warn('[modelUnavailable] no chat container; card not mounted', msg && msg.slot);
+  } catch (e) {
+    console.warn('[modelUnavailable] render failed', e);
+  }
+});
+
 onMessage('askUser', (msg, view) => {
   const sid = msg.sessionId;
   // AskUser is an interactive question, not an unread message arrival.
@@ -2200,7 +2221,7 @@ onMessage('historyPage', (msg, view) => {
     // 遮蔽门横跨全程（门内宽限窗 miss 走 ws.js 遮蔽旁路）。`loading` 闸保持
     // 到 onDone（升级批 drain 完）才放行 —— 期间不会发出第二页请求。
     const chat = activeView.dom.chat;
-    const prevScrollHeight = chat.scrollHeight;
+    // The anchor is captured at prepend time, after any intervening user gesture.
     // 进场落底武装窗（2026-11-02 手机端进场落顶修复批）：**回看补页腿撤窗**——
     // 本腿以 `chat.prepend + scrollTop += 增量` 相对补偿把读者钉在原来读的那一行，
     // 而武装窗的每帧钉底会把这笔补偿直接抹掉（把回看的人拽回底部）。撤窗放在
@@ -2224,10 +2245,12 @@ onMessage('historyPage', (msg, view) => {
           }
           fragment.appendChild(child);
         }
+        const anchor = captureHistoryAnchor(chat);
+        const previousOverflowAnchor = chat.style.overflowAnchor;
+        chat.style.overflowAnchor = 'none';
         chat.prepend(fragment);
-        // 相对补偿：+整页新增高度（绝对值式会夺走构建切片期间用户的手势滚动）。
-        const newScrollHeight = chat.scrollHeight;
-        chat.scrollTop += (newScrollHeight - prevScrollHeight);
+        restoreHistoryAnchor(anchor);
+        chat.style.overflowAnchor = previousOverflowAnchor;
         view.pagination.offset = msg.offset;
         view.pagination.hasMore = msg.hasMore;
         if (!view.pagination.hasMore) showHistoryEnd();
@@ -3036,6 +3059,7 @@ onMessage('configData', (msg, view) => {
       enableFriendPanels();
       initContacts();
       initMessages();
+      initPanelSearch();
     }
   }
   // Voice seal latch（voiceseal 批 #508 → 纠正批 #513 双参化）：分面受控。
@@ -4138,7 +4162,7 @@ onMessage('bgRateAlert', (msg) => {
 });
 
 // --- /ask command ---
-import { selectionAskFrame } from './selectionAsk.js';
+import { selectionAskFrame, initSelectionAsk } from './selectionAsk.js';
 onMessage('askTextDelta', (msg, view) => {
   if (selectionAskFrame('askTextDelta', msg)) return;
   const sid = msg.sessionId || state.activeSessionId;
@@ -4720,6 +4744,7 @@ initBackSwipe();
   depth: Number(document.documentElement.dataset.backSwipeDepth || 0),
 });
 initAskDock(); // canvas ask mode 批（2026-10-28）：右下角入口 + 每文件独立会话气泡列
+initSelectionAsk(); // 选区 Ask 批（2026-11-18）：气泡同侧选区按钮 + 共用件 Ask 对话框
 initAskEditReview(); // canvas-inline-diff-review（2026-11-16）：审阅页签动作/快捷键接线
 initColResizers();
 // #27: Project 标签页按钮（取代 Team/Flow 主导位置）——打开发布 projects 标签页
@@ -5161,6 +5186,18 @@ onMessage('activeAgents', (msg) => {
       taskTitle: a.taskTitle || '',
       startedAt: a.startedAt || (prev && prev.startedAt) || null,
       status: a.status || '',
+      // 面板行活性位批（2026-11-18 · 方案 A）：引擎**权威活性位**随快照出帧（后端
+      // WebSocketRoutes.panelRowActivity 单点派生：注册表在册 ∧ status==Processing ∧
+      // 未停靠/未冻结/未重启中断 ⇒ true）。与上一行 `status`（turn 相位）显式分家——
+      // 相位说「actor 在哪个阶段」，本键说「此刻是不是真在跑」。快照是权威（同
+      // project/kind 合并类）；旧后端无此键 ⇒ undefined，呈现面行为与今天逐字一致
+      // （**禁止把「未提供」当 false**，见 bgRowState / bgTaskRowHtml 的判据）。
+      engineActive: typeof a.active === 'boolean'
+        ? a.active
+        : (prev && typeof prev.engineActive === 'boolean' ? prev.engineActive : undefined),
+      // 同一判据的分类线值（running / standby / frozen / pending-recovery / idle）——
+      // 取证与副行读词用；缺席 = 空串（falsy 契约同 project/taskId）。
+      engineActiveState: a.activeState || (prev && prev.engineActiveState) || '',
       // 案A 待命批 2026-10-31（状态矩阵批收编）：快照行带 standbySince（DelegateRegistry
       // 待命停靠时刻）⇒ 待命徽标随刷新复原（delegateWaiting 实时帧的恢复脸；快照缺席
       // ⇒ 保留本地 waiting 值，不降级已渲染行）。
@@ -5233,6 +5270,14 @@ onMessage('activeAgents', (msg) => {
       unreadReceipts: typeof a.unreadReceipts === 'number' ? a.unreadReceipts : ((prev && prev.unreadReceipts) || 0),
       outstandingSubagents: typeof a.outstandingSubagents === 'number' ? a.outstandingSubagents : ((prev && prev.outstandingSubagents) || 0),
       lastActivityMs: typeof a.lastActivityMs === 'number' ? a.lastActivityMs : ((prev && prev.lastActivityMs) || 0),
+      // 陈旧后台代理面板批（2026-11-08）：终态硬事实随快照落行（引擎侧 = 底层
+      // SubAgentTask 记录已终态 ⇒ 这一行其实早就干完了；注册表行滞留不再冒充在飞）。
+      // 合并纪律：ended 单调（本地已收到的终态事实优先于缺席的快照行），时长/终点
+      // 以快照为准、快照缺席回落本地（同 project/kind 合并类——不降级已渲染行）。
+      taskStatus: a.taskStatus || ((prev && prev.taskStatus) || ''),
+      ended: a.ended === true || !!(prev && prev.ended),
+      endedAt: (typeof a.endedAt === 'number' ? a.endedAt : ((prev && prev.endedAt) || null)),
+      durationMs: (typeof a.durationMs === 'number' ? a.durationMs : ((prev && prev.durationMs) || null)),
       // 本行已被本次快照覆盖 ⇒ 陈旧窗关闭（陈旧判据见下方分类 ③）。
       _missSince: null,
     };

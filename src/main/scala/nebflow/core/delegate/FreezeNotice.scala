@@ -1,6 +1,7 @@
 package nebflow.core.delegate
 
 import cats.effect.IO
+import cats.syntax.all.*
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import nebflow.actor.{AgentCommand, FreezeDisplay, FreezeKind}
@@ -967,7 +968,15 @@ object FreezeNotice:
             events.zipWithIndex.flatMap { case (e, i) =>
               if isWaitingRow(e) then (if i == firstIdx then List(mergedRow) else Nil) else List(e)
             }
-        IO(writeWaitingAnnounces(parent, nextLedger)).as((out, suppressedCount))
+        IO(writeWaitingAnnounces(parent, nextLedger)) *>
+          verdicts.filter { case (_, _, eff, announced) => eff.isEmpty || announced }.traverse_ {
+            case (fam, rows, eff, announced) => rows.traverse_ { row =>
+              nebflow.core.InjectionChannel.logSuppressed(parent, row.source, row.eventType,
+                row.correlationId.getOrElse(""), "frozen-waiting-ledger",
+                JsonObject("family" -> fam.asJson, "effectiveCount" -> eff.size.asJson,
+                  "alreadyAnnounced" -> announced.asJson))
+            }
+          }.as((out, suppressedCount))
       }
     end if
 
