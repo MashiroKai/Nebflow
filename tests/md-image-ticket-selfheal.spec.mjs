@@ -40,14 +40,18 @@ const ROOT = resolve(HERE, '..');
 const WEB_DIR = resolve(ROOT, 'src/main/resources/web');
 const PORT = Number(process.env.PORT || 8184);
 const BASE = `http://127.0.0.1:${PORT}`;
-const BREAK = process.env.BREAK === '1';
+const BREAK = process.env.BREAK === '1' ? '1' : (process.env.BREAK === 'i18n' ? 'i18n' : '');
+const BREAK_ANY = !!BREAK;
+const MOBILE = process.env.MOBILE === '1';
 const SHOTS_DIR = process.env.SHOTS_DIR
   || join(ROOT, '.nebflow', 'evidence', '20261119_md-image-ticket-selfheal', BREAK ? 'break' : 'fixed', 'shots');
-const VIEWPORT = { width: 1280, height: 900 };
+const VIEWPORT = MOBILE ? { width: 375, height: 812 } : { width: 1280, height: 900 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* 作者逐字那句（占位文案 = canvas.imgFailDenied）：控制组必须命中它。 */
-const AUTHOR_STRING = /无权读取，票据被拒（HTTP 401）/;
+const STR_401 = /未取得读取凭据（HTTP 401）/;      // 401 = 根本没拿到票（真因：没有凭据）
+const STR_403 = /无权读取，票据被拒（HTTP 403）/;   // 403 = 带了票但票被判据拒绝
+const LEGACY_SHARED = /无权读取，票据被拒（HTTP 401）/;  // 拆分前的共用串（负控之下会重新出现）
 
 /* ───────── 夹具：一个真 vault（布局照 md-image-in-doc.spec.mjs）───────── */
 const FIX = join(tmpdir(), `qa-mdimg-heal-${process.pid}`);
@@ -85,6 +89,9 @@ const MIME = {
 };
 const BREAK_FIND = "if (rerolls < 3 && !carryingBlob) {";
 const BREAK_REPL = "if (false && rerolls < 3 && !carryingBlob) {";
+// 负控（BREAK=i18n）：把 401 分支改回**共用** 403 那句 ⇒ 401 文案断言必红。
+const BREAK_I18N_FIND = "if (s === 401) return t('canvas.imgFailNoCredential', { status: String(s) });";
+const BREAK_I18N_REPL = "if (s === 401) return t('canvas.imgFailDenied', { status: String(s) });";
 let brokeApplied = false;
 const webServer = createServer((req, res) => {
   const u = new URL(req.url, BASE);
@@ -95,9 +102,19 @@ const webServer = createServer((req, res) => {
   try {
     let body = readFileSync(file);
     if (BREAK && p === '/js/viewers/markdown.js') {
-      const src = body.toString('utf8');
-      if (!src.includes(BREAK_FIND)) throw new Error('BREAK anchor not found — 控制组不可信');
-      body = Buffer.from(src.replace(BREAK_FIND, BREAK_REPL));
+      let src = body.toString('utf8');
+      if (BREAK === 'i18n') {
+        // 负控 = **两处都打断**：①′ 自愈腿改死代码（否则 401 态会自愈、占位不出现）
+        // + 401 分支改回共用串（正是要证明「改回共用串必红」的那一处）。
+        if (!src.includes(BREAK_FIND) || !src.includes(BREAK_I18N_FIND)) {
+          throw new Error('BREAK=i18n anchor not found — 控制组不可信');
+        }
+        src = src.replace(BREAK_FIND, BREAK_REPL).replace(BREAK_I18N_FIND, BREAK_I18N_REPL);
+      } else {
+        if (!src.includes(BREAK_FIND)) throw new Error('BREAK anchor not found — 控制组不可信');
+        src = src.replace(BREAK_FIND, BREAK_REPL);
+      }
+      body = Buffer.from(src);
       brokeApplied = true;
     }
     res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
@@ -118,7 +135,7 @@ const mintTicket = (g) => `tk-g${g}-${++issued}`;
 function restartStore() { gen++; valid.clear(); return gen; }   // 网关重启 / TTL 过期等价物
 
 async function boot(browser) {
-  const ctx = await browser.newContext({ viewport: VIEWPORT });
+  const ctx = await browser.newContext({ viewport: VIEWPORT, ...(MOBILE ? { colorScheme: 'dark' } : {}) });
   await ctx.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
     localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
@@ -212,7 +229,7 @@ async function openMdTab(page, { absPath, content, title }) {
       detail: { id: 'file:' + absPath, itemType: 'markdown', title, content, absPath, pinned: true },
     }));
   }, { absPath, content, title });
-  await page.waitForSelector(`${V}`);
+  await page.waitForSelector(`${V}`, MOBILE ? { state: 'attached' } : {});
   await sleep(1500);
 }
 /** 读一次渲染面读数（每张图 + 失败占位）。 */
@@ -243,14 +260,14 @@ const forceSrc = (page, mode) => page.evaluate(({ sel, mode, base }) => {
   for (const im of root.querySelectorAll('img')) {
     const p = im.dataset.nfMdPath || '';
     if (!p) continue;
-    if (mode === 'terminal') {
+    if (mode === 'terminal' || mode === 'terminal-stale') {
       im.setAttribute('data-nf-md-alt', '[]');
       im.removeAttribute('data-nf-md-fb');
       im.setAttribute('data-nf-md-err', '');
       im.dataset.nfMdRerolls = '0';
     }
     const q = `${base}/api/nf-file?path=${encodeURIComponent(p)}`;
-    im.setAttribute('src', mode === 'stale' ? `${q}&ticket=tk-g1-1` : q);
+    im.setAttribute('src', (mode === 'stale' || mode === 'terminal-stale') ? `${q}&ticket=tk-g1-1` : q);
     n++;
   }
   return n;
@@ -268,7 +285,13 @@ const browser = await chromium.launch();
 const readings = { break_mode: BREAK, phases: {} };
 try {
   const { page, pageErrors, consoleErrors } = await boot(browser);
-  if (BREAK) ok(brokeApplied, 'BREAK 模式：①′ 自愈腿已改为死代码（锚点命中）');
+  if (BREAK_ANY) ok(brokeApplied, `BREAK=${BREAK}：对应分支已按控制档改写（锚点命中）`);
+  if (MOBILE) {
+    // 375 全屏暗档：移动壳把 canvas 面放在抽屉后（元素在但不可见）⇒ 只把**该面**
+    // 强置全屏（产品 CSS 一字不改），以便真机截图读到真实占位排版。
+    await page.addStyleTag({ content: '.canvas-tab-pane.active{display:block!important;visibility:visible!important;'
+      + 'position:fixed!important;inset:0!important;z-index:9999!important;width:100vw!important}' });
+  }
   await openMdTab(page, { absPath: MD_PATH, content: MD_CONTENT, title: 'doc-heal.md' });
 
   // ── B0 基线 ──
@@ -321,18 +344,51 @@ try {
   st = await readState(page);
   readings.phases.after_terminal401 = { forced: n3, state: st, mints: mints.slice(mintsBeforeB3) };
   const texts = (st && st.fails.map((f) => f.reason)) || [];
-  if (BREAK) {
+  if (BREAK_ANY) {
     ok(st && st.fails.length >= 1, 'B3(控制组) 无票终局 ⇒ 失败占位（作者实拍态）', JSON.stringify(st && st.fails.length));
-    ok(texts.length > 0 && texts.every((x) => AUTHOR_STRING.test(x) || /票据|无读取|失败/.test(x)),
-      'B3b(控制组) 占位文案 = 作者逐字「无权读取，票据被拒（HTTP 401）」', JSON.stringify(texts));
-    ok(texts.some((x) => AUTHOR_STRING.test(x)), 'B3c(控制组) 拿到 **401** 那一句（不是 403）', JSON.stringify(texts));
+    // 拆分后：401 态必须是「未取得读取凭据」，**不得**再出现「票据被拒（HTTP 401）」
+    ok(texts.length > 0 && texts.every((x) => STR_401.test(x) || /凭据|票据|无读取|失败/.test(x)),
+      'B3b(控制组) 401 态文案存在', JSON.stringify(texts));
+    ok(texts.some((x) => STR_401.test(x)), 'B3c(控制组) 401 态 = 「未取得读取凭据（HTTP 401）」', JSON.stringify(texts));
+    ok(!texts.some((x) => LEGACY_SHARED.test(x)), 'B3d(控制组) 401 态**不再**沿用共用串「票据被拒（HTTP 401）」', JSON.stringify(texts));
   } else {
     ok(st && st.imgs.length === 3 && st.imgs.every((i) => i.nw > 0),
       'B3 无票终局自愈：3 张图全部恢复出图（与作者实拍态同一起点）', JSON.stringify(st && st.imgs.map((i) => i.nw)));
     ok(st && st.fails.length === 0, 'B3b 无票终局自愈后零失败占位', JSON.stringify(st && st.fails));
     ok(mints.length > mintsBeforeB3, 'B3c 自愈靠**重铸新票**', `mints ${mintsBeforeB3} → ${mints.length}`);
   }
-  await page.screenshot({ path: join(SHOTS_DIR, BREAK ? 'B3-terminal401-BREAK.png' : 'B3-terminal401-healed.png') });
+  await page.screenshot({ path: join(SHOTS_DIR, MOBILE ? 'mobile-dark-401-state.png' : (BREAK ? 'B3-terminal401-BREAK.png' : 'B3-terminal401-healed.png')) });
+
+  // ── V7 401/403 文案分叉（作者裁「区分」）：直接问真 i18n 模块要两句 ──
+  const copy = await page.evaluate(async () => {
+    const m = await import('/js/i18n.js');
+    return {
+      s401: m.t('canvas.imgFailNoCredential', { status: '401' }),
+      s403: m.t('canvas.imgFailDenied', { status: '403' }),
+      missing401: m.t('canvas.imgFailMissing', { status: '404' }),
+    };
+  });
+  readings.phases.copy = copy;
+  ok(!!copy.s401 && STR_401.test(copy.s401), 'V7 401 有独立文案「未取得读取凭据（HTTP 401）」', JSON.stringify(copy.s401));
+  ok(!!copy.s403 && STR_403.test(copy.s403), 'V7b 403 仍是「无权读取，票据被拒（HTTP 403）」', JSON.stringify(copy.s403));
+  ok(copy.s401 !== copy.s403, 'V7c 两态**不再共用一句**（401≠403）', JSON.stringify(copy));
+
+  // ── V8 403 终局态（控制档才看得到占位）：真 403 ⇒ 占位必须报 403 那句 ──
+  if (BREAK_ANY) {
+    restartStore();
+    const md3Body = MD_CONTENT.replace('票据自愈验收', '票据自愈验收（403 复现）');
+    const MD3 = join(VAULT, 'doc-heal-403.md');
+    writeFileSync(MD3, md3Body);
+    await openMdTab(page, { absPath: MD3, content: md3Body, title: 'doc-heal-403.md' });
+    await forceSrc(page, 'terminal-stale');
+    await sleep(2500);
+    const st403 = await readState(page);
+    const t403 = (st403 && st403.fails.map((f) => f.reason)) || [];
+    readings.phases.terminal403 = st403;
+    ok(t403.some((x) => STR_403.test(x)), 'V8 403 终局态占位 = 「无权读取，票据被拒（HTTP 403）」', JSON.stringify(t403));
+    ok(!t403.some((x) => STR_401.test(x)), 'V8b 403 态**不得**被写成「未取得读取凭据」', JSON.stringify(t403));
+    await page.screenshot({ path: join(SHOTS_DIR, MOBILE ? 'mobile-dark-403-state.png' : 'terminal-403-state.png') });
+  }
 
   // ── 控制组判据比对 ──
   const failTexts = (st && st.fails.map((f) => f.reason)) || [];
@@ -367,11 +423,10 @@ try {
 }
 
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAIL`);
-if (BREAK) {
-  // 控制组：把 ①′ 自愈腿改成死代码后**必须红**（作者实拍态复现）。红 = 控制组有效。
+if (BREAK_ANY) {
   console.log(failed > 0
-    ? 'CONTROL OK — 自愈腿被打断 ⇒ 必红（复现作者逐字「无权读取，票据被拒（HTTP 401）」）'
-    : 'CONTROL BROKEN — 打断自愈腿竟然全绿 ⇒ 判据不可信，须重写');
+    ? `CONTROL OK (BREAK=${BREAK}) — 打断 ⇒ 必红`
+    : 'CONTROL BROKEN — 打断后竟然全绿 ⇒ 判据不可信，须重写');
   process.exit(failed > 0 ? 0 : 1);
 }
 process.exit(failed === 0 ? 0 : 1);

@@ -37,7 +37,8 @@ const ROOT = resolve(HERE, '..');
 const WEB_DIR = resolve(ROOT, 'src/main/resources/web');
 const PORT = Number(process.env.PORT || 8186);
 const BASE = `http://127.0.0.1:${PORT}`;
-const BREAK = process.env.BREAK === '1';
+const BREAK = process.env.BREAK === '1' ? '1' : (process.env.BREAK === 'blob' ? 'blob' : '');
+const BREAK_ANY = !!BREAK;
 const SHOTS_DIR = process.env.SHOTS_DIR
   || join(ROOT, '.nebflow', 'evidence', '20261119_video-ticket-selfheal', BREAK ? 'break' : 'fixed', 'shots');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -49,9 +50,11 @@ mkdirSync(FIX_DIR, { recursive: true });
 const VIDEO = join(FIX_DIR, 'clip.webm');
 execFileSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=duration=3:size=320x240:rate=12',
   '-c:v', 'libvpx-vp9', '-b:v', '200k', '-an', VIDEO], { stdio: 'ignore' });
-for (const c of ['clipB.webm', 'clipC.webm']) execFileSync('cp', [VIDEO, join(FIX_DIR, c)]);
+for (const c of ['clipB.webm', 'clipC.webm', 'clipD.webm']) execFileSync('cp', [VIDEO, join(FIX_DIR, c)]);
 const VIDEO_B = join(FIX_DIR, 'clipB.webm');
 const VIDEO_C = join(FIX_DIR, 'clipC.webm');
+const VIDEO_D = join(FIX_DIR, 'clipD.webm');   // 账本 blob 腿（≤64MiB）：首次投递**坏字节**
+const BAD_CT = { 'video/webm': 'video/webm' };
 const MISSING = join(FIX_DIR, 'nope.webm');   // 不存在 ⇒ 真 404（非票因）
 
 /* ───────── 静态服务（真 web/ 树；BREAK=1 把自愈分支改死代码）───────── */
@@ -63,6 +66,9 @@ const MIME = {
 };
 const BREAK_FIND = 'if (pane.isConnected && absPath && rerolls < 3) {';
 const BREAK_REPL = 'if (false && pane.isConnected && absPath && rerolls < 3) {';
+// 账本 blob 腿自愈分支（第二控制档 BREAK=blob）
+const BREAK_BLOB_FIND = "if (failing.startsWith('blob:')) {";
+const BREAK_BLOB_REPL = "if (false && failing.startsWith('blob:')) {";
 let brokeApplied = false;
 const webServer = createServer((req, res) => {
   const u = new URL(req.url, BASE);
@@ -73,10 +79,17 @@ const webServer = createServer((req, res) => {
   try {
     let body = readFileSync(file);
     if (BREAK && p === '/js/viewers/video.js') {
-      const src = body.toString('utf8');
-      if (!src.includes(BREAK_FIND)) throw new Error('BREAK anchor not found — 控制组不可信');
-      body = Buffer.from(src.replace(BREAK_FIND, BREAK_REPL));
-      brokeApplied = true;
+      let src = body.toString('utf8');
+      if (BREAK === '1') {
+        if (!src.includes(BREAK_FIND)) throw new Error('BREAK anchor not found — 控制组不可信');
+        src = src.replace(BREAK_FIND, BREAK_REPL);
+        brokeApplied = true;
+      } else if (BREAK === 'blob') {
+        if (!src.includes(BREAK_BLOB_FIND)) throw new Error('BREAK-blob anchor not found');
+        src = src.replace(BREAK_BLOB_FIND, BREAK_BLOB_REPL);
+        brokeApplied = true;
+      }
+      body = Buffer.from(src);
     }
     res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream', 'Cache-Control': 'no-store' });
     res.end(body);
@@ -90,6 +103,7 @@ let issued = 0;
 const valid = new Set();
 const mints = [];
 const nfReqs = [];
+const badDelivered = new Set();   // clipD 首投坏字节只发一次
 function restartStore() { gen++; valid.clear(); return gen; }
 const VLIVE_CT = { '.webm': 'video/webm', '.mp4': 'video/mp4' };
 
@@ -107,6 +121,13 @@ async function nfFileRoute(route) {
   let body = null;
   try { body = readFileSync(p); } catch { body = null; }
   if (!body) { rec.status = 404; nfReqs.push(rec); return route.fulfill({ status: 404, contentType: 'text/plain', body: 'not found' }); }
+  // 账本坏字节夹具：clipD 的**首次**投递给坏字节（其后一律真字节）⇒ 账本键里落一份
+  // 解不开的 blob；重试腿（票 URL）拿到的才是真字节。
+  if (p === VIDEO_D && !badDelivered.has(p)) {
+    badDelivered.add(p);
+    rec.status = 200; rec.corrupt = true; nfReqs.push(rec);
+    return route.fulfill({ status: 200, contentType: 'video/webm', body: Buffer.from('NOT A VIDEO — corrupt ledger bytes') });
+  }
   const headers = { 'Accept-Ranges': 'bytes', 'Content-Type': VLIVE_CT[extname(p).toLowerCase()] || 'application/octet-stream' };
   let status = 200;
   if (range) {
@@ -227,7 +248,7 @@ mkdirSync(SHOTS_DIR, { recursive: true });
 const browser = await chromium.launch();
 try {
   const { page, pageErrors } = await boot(browser);
-  if (BREAK) ok(brokeApplied, 'BREAK 模式：视频自愈分支已改为死代码（锚点命中）');
+  if (BREAK_ANY) ok(brokeApplied, `BREAK=${BREAK} 模式：对应自愈分支已改为死代码（锚点命中）`);
 
   // ── V0 基线（流式腿）──
   await openVideo(page, VIDEO, 70 * 1024 * 1024);
@@ -312,7 +333,23 @@ try {
   ok(nfReqs.some((r) => r.status === 404), 'V2c 确实收到 404（非票因起点真实）');
   await page.screenshot({ path: join(SHOTS_DIR, BREAK ? 'V2-404-BREAK.png' : 'V2-404-no-reroll.png') });
 
-  if (!BREAK) ok(pageErrors.length === 0, 'V5 零 pageerror', pageErrors.join(' | '));
+  // ── V6 账本 blob 腿（≤64MiB）坏字节：**逐出账本 + 换票重试一次**（与 <img> ① 同构）· 元素 D ──
+  await openVideo(page, VIDEO_D, 1000);          // ≤64MiB ⇒ 走账本（blob URL）腿
+  await sleep(3000);
+  const v6ok = await waitReady(page, 12000);
+  st = await vstate(page);
+  const ledger = await page.evaluate(async (p) => {
+    const m = await import('/js/nfFileCache.js');
+    const hit = await m.nfCachedBlob('nf:' + p);
+    return { hasEntry: !!hit, size: hit ? hit.size : 0 };
+  }, VIDEO_D);
+  ok(st && st.scheme === 'ticket', 'V6(前置) 账本腿坏字节后已换票 URL（blob 解不开 ⇒ 自愈腿给票 URL）', JSON.stringify(st));
+  ok(v6ok, 'V6 账本坏字节 ⇒ 逐出 + 重试后仍解码', JSON.stringify(st));
+  ok(!ledger.hasEntry, 'V6b **坏字节已逐出账本**（不逐出则 TTL 内每次渲染都命中同一份坏字节）', JSON.stringify(ledger));
+  ok(nfReqs.some((r) => r.corrupt), 'V6c 确实先投递过坏字节（夹具真实）');
+  await page.screenshot({ path: join(SHOTS_DIR, BREAK ? 'V6-BREAK.png' : 'V6-ledger-dropped.png') });
+
+  if (!BREAK_ANY) ok(pageErrors.length === 0, 'V5 零 pageerror', pageErrors.join(' | '));
   writeFileSync(join(SHOTS_DIR, 'readings.json'), JSON.stringify({
     break_mode: BREAK, mints, nfReqs,
     summary: {
@@ -331,8 +368,8 @@ try {
   try { rmSync(FIX_DIR, { recursive: true, force: true }); } catch { /* best effort */ }
 }
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} FAIL`);
-if (BREAK) {
-  console.log(failed > 0 ? 'CONTROL OK — 自愈分支被打断 ⇒ 必红' : 'CONTROL BROKEN — 打断后竟然全绿 ⇒ 判据不可信');
+if (BREAK_ANY) {
+  console.log(failed > 0 ? `CONTROL OK (BREAK=${BREAK}) — 自愈分支被打断 ⇒ 必红` : 'CONTROL BROKEN — 打断后竟然全绿 ⇒ 判据不可信');
   process.exit(failed > 0 ? 0 : 1);
 }
 process.exit(failed === 0 ? 0 : 1);

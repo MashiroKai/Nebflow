@@ -42,7 +42,7 @@
 
 import { h } from '../dom.js';
 import { reMint } from '../nfTicket.js';
-import { nfViewerUrl } from '../nfFileCache.js';
+import { nfViewerUrl, nfCacheDrop } from '../nfFileCache.js';
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import { KEYS, provideContextKey } from '../keyContext.js';
@@ -420,8 +420,13 @@ async function viewVideo(pane, { absPath, fileName, size, objectUrl }) {
       const retryWithFreshTicket = () => reMint(absPath).then((next) => {
         if (pane.isConnected && !started()) video.src = next;
       }).catch(() => fatal());
-      // 账本 blob 腿（≤64MiB）：坏字节只能换票 URL 再试（既有语义，加闸不改成环）。
-      if (failing.startsWith('blob:')) { retryWithFreshTicket(); return; }
+      // 账本 blob 腿（≤64MiB）：坏字节 ⇒ **先逐出该账本键**再换票 URL 重试 ——
+      // 与 `<img>` ①（markdown.js）**同构**。不逐出的话，账本里那份解不开的字节会在
+      // TTL 内被每次渲染命中 ⇒ 每次开都「先失败一次」（作者报障的粘滞形态）。
+      if (failing.startsWith('blob:')) {
+        nfCacheDrop('nf:' + absPath).then(() => retryWithFreshTicket()).catch(() => fatal());
+        return;
+      }
       probeAuth(failing).then((st) => {
         if (!pane.isConnected) return;
         if (st === 401 || st === 403) { retryWithFreshTicket(); return; }

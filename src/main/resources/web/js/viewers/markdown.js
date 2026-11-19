@@ -1050,7 +1050,12 @@ function readAltUrls(ds) {
 function mdImageFailReason(status, detail) {
   const s = Number(status) || 0;
   if (s === 404 || s === 410) return t('canvas.imgFailMissing', { status: String(s) });
-  if (s === 401 || s === 403) return t('canvas.imgFailDenied', { status: String(s) });
+  // 401 / 403 **分叉**（作者裁 2026-11-19「区分」）：401 = 请求根本没带票（真因 =
+  // 没有凭据：铸票面没给票 / 退避窗内无票 / URL 形状问题），403 = 带了票但票被判据
+  // 拒绝（`X-Nf-Reason`：invalid-ticket / expired / path-mismatch / credential-*）。
+  // 共用一句会把「没有票」误报成「票被拒」—— 服务端语义未动，只拆文案与分支。
+  if (s === 403) return t('canvas.imgFailDenied', { status: String(s) });
+  if (s === 401) return t('canvas.imgFailNoCredential', { status: String(s) });
   if (s === 429 || s === 503) return t('canvas.imgFailBusy', { status: String(s) });
   if (s === 400) return t('canvas.imgFailBadPath', { status: String(s) });
   if (s === 415) return t('canvas.imgFailUnsupported', { status: String(s) });

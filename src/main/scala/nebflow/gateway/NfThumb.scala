@@ -115,10 +115,15 @@ object NfThumb:
   private def sweep(cacheDir: os.Path): Unit =
     try
       if os.exists(cacheDir) then
-        val entries = os.list(cacheDir).sortBy(f => os.mtime(f))
+        val entries = os.list(cacheDir).sortBy(f => os.mtime(f))   // 最旧在前
         val now = System.currentTimeMillis()
         entries.filter(f => os.mtime(f) < now - SweepAgeMs).foreach(os.remove.all)
-        entries.drop(SweepCap).foreach(os.remove.all)
+        // 容量腿：保留**最新** SweepCap 条 ⇒ 删最旧的 (n - SweepCap) 条。
+        // 原形态 `entries.drop(SweepCap)` 删的是**最旧的前 200 条、留下最新 51 条**
+        // 之外的语义在这里反了向 —— 实测（[[NfThumbSweepSpec]] T2/T5）：250+1 条时
+        // 留下的是**最旧 200 条**、刚落盘的那份缩略当场被清（缓存越用越冷）。
+        val excess = entries.size - SweepCap
+        if excess > 0 then entries.take(excess).foreach(os.remove.all)
     catch case _: Throwable => () // 清理面永不拖垮主腿
 
 end NfThumb

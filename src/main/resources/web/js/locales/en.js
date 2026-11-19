@@ -2225,6 +2225,9 @@ export default {
   'canvas.imgFailTitle': 'Image failed to load',
   'canvas.imgFailMissing': 'File not found (HTTP {status})',
   'canvas.imgFailDenied': 'No read access — ticket rejected (HTTP {status})',
+  // 401/403 split (author ruling 2026-11-19): 401 = no ticket was ever obtained;
+  // 403 = a ticket was presented and rejected (X-Nf-Reason).
+  'canvas.imgFailNoCredential': 'No read credential obtained (HTTP {status})',
   'canvas.imgFailBusy': 'Service busy (HTTP {status})',
   'canvas.imgFailBadPath': 'Invalid path (HTTP {status})',
   'canvas.imgFailUnsupported': 'This type is not served as image bytes (HTTP {status})',
