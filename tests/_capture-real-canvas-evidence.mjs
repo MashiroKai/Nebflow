@@ -554,12 +554,64 @@ async function main() {
     await switchTo(`askreview:${sid}`); await sleep(400); await grab(); await sleep(300); await grab();
     await page.waitForSelector(`${reviewSel} .nf-dv-allbtn.nf-dv-accept-all`, { state: 'visible', timeout: 10000 }).catch((e) => log('accept-all visible wait err', String(e).slice(0, 140)));
     await page.locator(`${reviewSel} .nf-dv-allbtn.nf-dv-accept-all`).first().click({ timeout: 6000 }).catch((e) => log('accept-all click err', String(e).slice(0, 140)));
-    await sleep(1600); await grab(); await sleep(1200); await grab();
+    // 收口后渲染面读数（真读数，不靠目视）：body/html 类、手机层是否还在、前台页签、
+    // 每个 pane 的父容器与几何 —— 「切页签后内容区空白」的机制诊断就靠这一串。
+    const RESOLVED_DIAG = `(async () => {
+      const m = await import('/js/canvas.js');
+      const R = (el) => { if (!el) return null; const r = el.getBoundingClientRect(); return { w: Math.round(r.width), h: Math.round(r.height) }; };
+      const host = document.querySelector('.mf-cv-host');
+      const cp = document.querySelector('.mobile-page[data-page="canvas"]');
+      const panes = [...document.querySelectorAll('.canvas-tab-pane')];
+      const hostPanes = host ? [...host.querySelectorAll(':scope > .canvas-tab-pane')] : [];
+      const visHost = hostPanes.filter((p) => { const r = p.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && getComputedStyle(p).display !== 'none'; });
+      const visText = visHost.map((p) => (p.textContent || '').replace(/\\s+/g, ' ').trim()).join(' ').length;
+      const hr = host ? host.getBoundingClientRect() : null;
+      const hit = (hr && hr.width > 0 && hr.height > 0) ? document.elementFromPoint(hr.x + hr.width / 2, hr.y + hr.height / 2) : null;
+      const empty = document.querySelector('.mf-cv-empty');
+      return {
+        // 判据面（作者令）：切过去后内容区必须非空 —— 可见 pane ≥1 + 文本非空 +
+        // 内容区中心点命中的元素在该 pane 内（「真看得见」，不是 DOM 存在性）。
+        visibleHostPanes: visHost.length,
+        visibleHostTextLen: visText,
+        centreHit: hit ? (hit.tagName || '').toLowerCase() + (hit.className && typeof hit.className === 'string' ? '.' + hit.className.trim().split(/\\s+/).slice(0, 2).join('.') : '') : null,
+        centreHitInsidePane: !!(hit && visHost.some((p) => p === hit || p.contains(hit))),
+        emptyShown: !!(empty && !empty.hidden && empty.getBoundingClientRect().height > 0),
+        contentNonEmpty: visHost.length > 0 && visText > 0,
+        selfHealEvents: ((window.__nfMobileLayerEvents || []).map((e) => (e && e.kind) || '')).filter((k) => k === 'canvas-page-selfheal').length,
+        bodyClass: document.body.className,
+        htmlClass: document.documentElement.className,
+        mobileActive: !!(window.__nfMobileLayer && window.__nfMobileLayer.active),
+        canvasOpen: !!(m.isCanvasOpen && m.isCanvasOpen()),
+        active: ((m.activeCanvasEntry && m.activeCanvasEntry()) || {}).id || null,
+        panelDisplay: getComputedStyle(document.getElementById('canvas-panel')).display,
+        mobilePagesDisplay: document.getElementById('mobile-pages') ? getComputedStyle(document.getElementById('mobile-pages')).display : null,
+        canvasPageDisplay: cp ? getComputedStyle(cp).display : null,
+        hostRect: R(host), hostKids: host ? host.children.length : null,
+        panes: panes.map((p) => ({ id: p.dataset.tabId, parent: p.parentElement ? (p.parentElement.id ? '#' + p.parentElement.id : '.' + String(p.parentElement.className).trim().split(/\\s+/)[0]) : null, active: p.classList.contains('active'), display: getComputedStyle(p).display, rect: R(p), kids: p.children.length, text: (p.textContent || '').replace(/\\s+/g, ' ').trim().slice(0, 40) })),
+      };
+    })()`;
+    const resolvedDiag = [];
+    for (const afterMs of [200, 800, 2000, 5000]) {
+      await sleep(afterMs);
+      const d = await page.evaluate(RESOLVED_DIAG).catch((e) => ({ err: String(e).slice(0, 160) }));
+      resolvedDiag.push({ afterMs, ...d });
+      log('[resolved-diag +' + afterMs + 'ms]', JSON.stringify(d));
+    }
+    await grab();
     const resolvedTabs = await tabList();
     const fileAfterAcceptAll = readFileSync(notesAbs, 'utf8');
     log('tabs after real accept-all', JSON.stringify(resolvedTabs), 'file=', JSON.stringify(fileAfterAcceptAll));
-    await shot(page, 'askreview-mobile-light-acceptall-resolved-375x812.png', { ...(await canvasCredential(page, 'file:')), clickEffect: { action: '全部接受（真点 · 底部控件带那颗钮）', reviewOpenBefore, reviewClosedAfter: !resolvedTabs.some((t) => String(t).startsWith(`askreview:${sid}`)), tabsAfter: resolvedTabs, fileOnDisk: fileAfterAcceptAll } });
-    report.notes.push({ realClicks: { before: beforeClicks, chunkRejected: afterReject, chunkRejectedSettled: afterRejectSettled, chunkAccepted: afterAccept, acceptAll: { reviewOpenBefore, resolvedTabs, fileOnDisk: fileAfterAcceptAll } } });
+    // 修复判据（作者令）：收口后内容区**必须非空**（可见 pane + 文本 + 中心点命中）。
+    const landed = resolvedDiag[resolvedDiag.length - 1];
+    log('[content-criterion] landedTab=', landed && landed.active, 'contentNonEmpty=', landed && landed.contentNonEmpty,
+      'gapPanes=', landed && landed.visibleHostPanes, 'textLen=', landed && landed.visibleHostTextLen,
+      'centreHitInsidePane=', landed && landed.centreHitInsidePane, 'selfHealEvents=', landed && landed.selfHealEvents);
+    await shot(page, 'askreview-mobile-light-acceptall-resolved-375x812.png', { ...(await canvasCredential(page, 'file:')), clickEffect: { action: '全部接受（真点 · 底部控件带那颗钮）', reviewOpenBefore, reviewClosedAfter: !resolvedTabs.some((t) => String(t).startsWith(`askreview:${sid}`)), tabsAfter: resolvedTabs, fileOnDisk: fileAfterAcceptAll, contentCriterion: landed ? { landedTab: landed.active, contentNonEmpty: landed.contentNonEmpty, visibleHostPanes: landed.visibleHostPanes, visibleHostTextLen: landed.visibleHostTextLen, centreHitInsidePane: landed.centreHitInsidePane, centreHit: landed.centreHit, selfHealEvents: landed.selfHealEvents } : null } });
+    await page.emulateMedia({ colorScheme: 'dark' }); await sleep(700);
+    await shot(page, 'askreview-mobile-dark-resolved-file-375x812.png', await canvasCredential(page, 'file:'));
+    await page.emulateMedia({ colorScheme: 'light' }); await sleep(500);
+    report.notes.push({ realClicks: { before: beforeClicks, chunkRejected: afterReject, chunkRejectedSettled: afterRejectSettled, chunkAccepted: afterAccept, acceptAll: { reviewOpenBefore, resolvedTabs, fileOnDisk: fileAfterAcceptAll, renderSeries: resolvedDiag } } });
 
     console.log('DIAG ' + JSON.stringify({ errors: errors.slice(0, 8), fileChangesChip: fcOk }));
     const frames = await page.evaluate(() => ({ in: (window.__nfFrames.in || []).map((f) => f.type || Object.keys(f).slice(0, 3)).slice(-25) }));
