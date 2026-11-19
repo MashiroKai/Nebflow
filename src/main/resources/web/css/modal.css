@@ -1066,8 +1066,8 @@
    token's own media definitions), so no dark-mode override block is needed. */
 .nebflow-toast {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
+  bottom: var(--ds-space-5);    /* 右下角座位内距（20px 档 = --ds-space-5） */
+  right: var(--ds-space-5);
   z-index: var(--ds-z-toast);   /* 弹层堆叠带（design-system.css ⑭：通知 10000） */
   max-width: 400px;
   padding: var(--ds-space-3) var(--ds-space-4);
@@ -1091,6 +1091,19 @@
   opacity: 1;
   transform: translateY(0);
 }
+
+/* 通知让位底缘（2026-11-19）：canvas 打开时，通知不压 canvas 底部控件带
+   （.canvas-zoom-bar / 文档圆钮族 + 手机 dock 之上的控件行）—— 实测带高单源 =
+   `--canvas-bottom-clearance`（viewers/shared.js syncBottomClearance 量出的
+   「浮钮带顶 → 面板底缘 + 12 呼吸」，split.css「底部浮钮让位」块同一处），
+   该实测值同时发布到 documentElement，body 级浮层（本通知）才读得到。
+   守卫 = `body.canvas-open`：canvas 关上后该实测值不再刷新，守卫保证陈旧值零消费
+   （通知退回右下角 20px 座位）。位置只有一个来源（本族两条规则共用同一条带），
+   不新造第二套定位。 */
+body.canvas-open .nebflow-toast {
+  bottom: calc(var(--ds-space-5) + var(--canvas-bottom-clearance, 0px));
+}
+
 /* Type semantics: leading glyph, colored per type (no color strip).
    ui-status-redesign（盘点 #26 / D 组，S7 全站归一）：字形 → lucide 真图标
    （modal.js 注入），色档保留 = 图标载体；error 档色值归 --status-error-icon
