@@ -615,4 +615,72 @@ class ManualRevivalSpec extends FunSuite:
     withProp(Some("true"))(assertEquals(nebflow.shared.Defaults.RestartRecoveryManual, true))
   }
 
+  test(
+    "MR8: production boot wiring is manual — sweep reads Defaults.RestartRecoveryManual; the default leaves an in-flight delegate pending with zero notify, " +
+      "the prop=false control engages the auto leg (gate flips red if the switch is turned back on)"
+  ) {
+    val prop = "nebflow.startup.recovery.manual"
+    val before = Option(System.getProperty(prop))
+    // 生产形态：调用点传的就是这个开关（GatewayMain.scala:993/1138/1174/1239）。
+    def productionSweep(fx: Fx) =
+      SubAgentStartupRecovery.sweep(
+        fx.store,
+        fx.sessionStore,
+        Some(SubAgentStartupRecovery.RevivalDeps(fx.resources, fx.system, None)),
+        manual = nebflow.shared.Defaults.RestartRecoveryManual
+      )
+    try
+      // ── Part A：缺省 props（手动）——在飞 delegate 必须只被保存、零复活零通知 ──
+      System.clearProperty(prop)
+      withFx("mr8-prod", verifiedLegacy = true) { fx =>
+        for
+          parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+          orphan = "delegate-nebflow-mr8-prod"
+          _ <- fx.store.recordTask(mkTask(orphan, parent.id, "running"))
+          _ <- IO(DelegateRegistry.put(mkRecord(orphan, parent.id, fx.seat.toString)))
+          _ = assertEquals(
+            nebflow.shared.Defaults.RestartRecoveryManual,
+            true,
+            "production switch reads manual (true) by default — auto revival leg is off"
+          )
+          report <- productionSweep(fx)
+          row <- fx.store.findByTaskId(orphan)
+          events <- mailboxEvents(fx, parent.id)
+        yield
+          assertEquals(report.revived, Nil, s"auto leg must stay off under the production wiring: ${report.summary}")
+          assertEquals(report.terminalized, Nil, s"manual mode never terminalizes: ${report.summary}")
+          assertEquals(report.pended, List(orphan), s"the in-flight orphan is saved as pending-recovery: ${report.summary}")
+          assertEquals(
+            row.map(_.status),
+            Some(SubAgentStartupRecovery.PendingRecoveryStatus),
+            "the row is pending-recovery (state saved, not judged dead)"
+          )
+          assertEquals(events.filter(e => e.correlationId.exists(_.contains("mr8"))), Nil, "zero upward notify")
+      }
+      // ── Part B：负控——把开关翻回自动，同一形态不再被保存（自动腿真的上场）──
+      System.setProperty(prop, "false")
+      withFx("mr8-auto", verifiedLegacy = true) { fx =>
+        for
+          parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
+          orphan = "delegate-nebflow-mr8-auto"
+          // 无 registry 记录 ⇒ 自动腿判不合格 ⇒ 落收殓链（终态 failed）。确定性、零 spawn。
+          _ <- fx.store.recordTask(mkTask(orphan, parent.id, "running"))
+          _ = assertEquals(
+            nebflow.shared.Defaults.RestartRecoveryManual,
+            false,
+            "control: with the prop flipped the switch reads auto"
+          )
+          report <- productionSweep(fx)
+          row <- fx.store.findByTaskId(orphan)
+        yield
+          assertEquals(report.pended, Nil, s"with the auto leg on nothing is left pending: ${report.summary}")
+          assertEquals(report.terminalized, List(orphan), s"the auto leg salvages the ineligible orphan: ${report.summary}")
+          assert(row.exists(_.status == "failed"), s"control row terminalized failed, got ${row.map(_.status)}")
+      }
+    finally
+      before match
+        case Some(v) => System.setProperty(prop, v)
+        case None => System.clearProperty(prop)
+  }
+
 end ManualRevivalSpec
