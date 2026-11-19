@@ -63,7 +63,7 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
     yield ()
   }
 
-  test("a second tab cannot claim while a writer is held and its PUT stays rejected") {
+  test("a second window silently takes the seat and the previous writer's PUT is fenced off") {
     val token = "canvas-writer-test-token"
     val routes = new RestApiRoutes(
       tokenRef = Ref.unsafe[IO, String](token),
@@ -87,42 +87,55 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
       _ = assertEquals(firstBody.hcursor.get[String]("role").toOption, Some("writer"))
       firstEpoch = firstBody.hcursor.get[Long]("epoch").toOption.get
       _ = assertEquals(firstEpoch, 1L)
-      // 真多开：第二个窗口的席位申请被拒（非抢占），明确原因 + 真实保存失败文案。
+      // 静默接管（2026-11-19 作者令）：第二个窗口申请**也**授予（不再是 409 writer_already_held），
+      // epoch 自增、旧写者当场失权；失权端由前端静默落草稿承接「不丢」。
       second <- call(Method.POST, "/canvas-writer/claim", identity("tab-b"))
-      _ = assertEquals(second.status, Status.Conflict)
+      _ = assertEquals(second.status, Status.Ok)
       secondBody <- second.as[Json]
-      _ = assertEquals(secondBody.hcursor.get[String]("error").toOption, Some("writer_already_held"))
-      _ = assertEquals(secondBody.hcursor.get[String]("message").toOption, Some("保存失败，本次修改未保存到服务器。"))
-      _ = assertEquals(secondBody.hcursor.get[String]("role").toOption, Some("reader"))
-      // 单实例正常写：持位写者照常写穿（并把权威存档落到隔离根）。
-      writer <- call(Method.PUT, "/canvas-tabs", identity("tab-a").deepMerge(
-        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> firstEpoch.asJson)
+      _ = assertEquals(secondBody.hcursor.get[String]("role").toOption, Some("writer"))
+      secondEpoch = secondBody.hcursor.get[Long]("epoch").toOption.get
+      _ = assertEquals(secondEpoch, firstEpoch + 1L)
+      // 新写者照常写穿（并把权威存档落到隔离根）。
+      writer <- call(Method.PUT, "/canvas-tabs", identity("tab-b").deepMerge(
+        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> secondEpoch.asJson)
       ))
       _ = assertEquals(writer.status, Status.Ok)
       // 只读可看：GET 照常返回权威存档。
       stored <- call(Method.GET, "/canvas-tabs", Json.obj())
       _ = assertEquals(stored.status, Status.Ok)
-      // 服务端拒写：第二窗口的 PUT 落栅栏外。
-      readerPut <- call(Method.PUT, "/canvas-tabs", identity("tab-b").deepMerge(
+      // 服务端写栅栏：被顶下的旧写者拿自己的旧 epoch 写穿一律落栅栏外。
+      oldWriterPut <- call(Method.PUT, "/canvas-tabs", identity("tab-a").deepMerge(
         Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> firstEpoch.asJson)
       ))
-      _ = assertEquals(readerPut.status, Status.Conflict)
-      readerBody <- readerPut.as[Json]
-      _ = assertEquals(readerBody.hcursor.get[String]("error").toOption, Some("stale_writer_epoch"))
-      _ = assertEquals(readerBody.hcursor.get[String]("message").toOption, Some("保存失败，本次修改未保存到服务器。"))
+      _ = assertEquals(oldWriterPut.status, Status.Conflict)
+      oldBody <- oldWriterPut.as[Json]
+      _ = assertEquals(oldBody.hcursor.get[String]("error").toOption, Some("stale_writer_epoch"))
+      _ = assertEquals(oldBody.hcursor.get[String]("message").toOption, Some("保存失败，本次修改未保存到服务器。"))
     yield ()
   }
 
-  test("Canvas owner change uses console takeover notification") {
+  test("a canvas seat claim is silent: control ownership untouched, only the seat-change frame is emitted") {
     for
       sent <- Ref.of[IO, Vector[(String, Json)]](Vector.empty)
       takeover = new ConsoleTakeover((id, frame) => sent.update(_ :+ (id -> frame)), nebflow.shared.NebflowLogger.forName("test"))
       _ <- takeover.onConnect("session-a", "conn-a", Some("client-a"))
+      _ <- takeover.claimCanvas("principal-a", "client-a", "tab-a")
+      ownerAfterFirst <- takeover.owner
+      _ = assertEquals(ownerAfterFirst, Some("c:client-a"))
+      _ <- sent.set(Vector.empty)
+      // 第二个窗口静默接管席位：既**不**翻控制台归属，也**不**推任何接管卡片帧
+      // （静默接管批 2026-11-19；席位与控制台所有权彻底解耦，补齐 2026-11-18 作者令）。
       _ <- takeover.claimCanvas("principal-b", "client-b", "tab-b")
       frames <- sent.get
-      _ = assert(frames.exists { case (id, json) => id == "conn-a" && json.hcursor.get[String]("type").toOption.contains("takeover") })
-      owner <- takeover.owner
-      _ = assertEquals(owner, Some("c:client-b"))
+      _ = assert(frames.nonEmpty, "the displaced writer must be notified (that is its draft trigger)")
+      _ = assert(
+        frames.forall { case (id, json) =>
+          id == "conn-a" && json.hcursor.get[String]("type").toOption.contains("canvasWriterChanged")
+        },
+        s"a seat change must be silent — only the seat-change frame to the losing writer, got ${frames.map(_._2.noSpaces)}"
+      )
+      ownerAfterSecond <- takeover.owner
+      _ = assertEquals(ownerAfterSecond, Some("c:client-a"), "console ownership is untouched by a canvas seat claim")
     yield ()
   }
 
@@ -149,7 +162,7 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
     }
   }
 
-  test("concurrent claims for the empty writer slot leave exactly one writer") {
+  test("concurrent claims on the empty slot both succeed silently, only the newest epoch writes") {
     val token = "canvas-writer-test-token"
     val routes = new RestApiRoutes(
       tokenRef = Ref.unsafe[IO, String](token),
@@ -168,21 +181,23 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
     def identity(tab: String): Json = Json.obj("clientId" -> "browser-a".asJson, "tabInstanceId" -> tab.asJson)
     def claim(tab: String): IO[Response[IO]] = call(Method.POST, "/canvas-writer/claim", identity(tab))
     for
+      // 静默抢占（2026-11-19 作者令）：并发申请**都**授予（不再有一个 409），epoch 各拿一枚；
+      // 真正的判定面是 epoch —— 只有最新那枚能写穿。
       pair <- (claim("tab-a"), claim("tab-b")).parTupled
       statuses = List(pair._1.status, pair._2.status)
-      _ = assertEquals(statuses.count(_ == Status.Ok), 1)
-      _ = assertEquals(statuses.count(_ == Status.Conflict), 1)
-      winner <- if pair._1.status == Status.Ok then IO.pure(pair._1) else IO.pure(pair._2)
-      winnerBody <- winner.as[Json]
-      winnerEpoch = winnerBody.hcursor.get[Long]("epoch").toOption.get
-      loserTab = if pair._1.status == Status.Ok then "tab-b" else "tab-a"
-      loserPut <- call(Method.PUT, "/canvas-tabs", identity(loserTab).deepMerge(
-        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> winnerEpoch.asJson)
+      _ = assertEquals(statuses, List(Status.Ok, Status.Ok))
+      bodyA <- pair._1.as[Json]
+      bodyB <- pair._2.as[Json]
+      eA = bodyA.hcursor.get[Long]("epoch").toOption.get
+      eB = bodyB.hcursor.get[Long]("epoch").toOption.get
+      _ = assert(eA != eB, "并发申请必须各拿一枚不同的 epoch（CAS 自增只有一个赢家）")
+      (winTab, winE, loseTab, loseE) = if eA > eB then ("tab-a", eA, "tab-b", eB) else ("tab-b", eB, "tab-a", eA)
+      loserPut <- call(Method.PUT, "/canvas-tabs", identity(loseTab).deepMerge(
+        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> loseE.asJson)
       ))
       _ = assertEquals(loserPut.status, Status.Conflict)
-      winnerTab = if pair._1.status == Status.Ok then "tab-a" else "tab-b"
-      winnerPut <- call(Method.PUT, "/canvas-tabs", identity(winnerTab).deepMerge(
-        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> winnerEpoch.asJson)
+      winnerPut <- call(Method.PUT, "/canvas-tabs", identity(winTab).deepMerge(
+        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> winE.asJson)
       ))
       _ = assertEquals(winnerPut.status, Status.Ok)
     yield ()

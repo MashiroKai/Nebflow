@@ -34,13 +34,15 @@ test('preempted client returns to reader and rejects writing', async () => {
   assert.equal(await a.put({}), false);
 });
 
-test('failed save transitions to unsynced reader without canvas takeover handler', async () => {
+test('failed save transitions to unsynced reader, drafts the buffer, without canvas takeover handler', async () => {
   const source = readFileSync(new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const begin = source.indexOf('function writerChanged(');
   const end = source.indexOf('const writerRejectionNotices', begin);
   assert.ok(begin >= 0 && end > begin);
   const notices = [];
+  const drafts = [];
   const context = { localUnsynced: false, writerStatusEl: null, writerClaimEl: null,
+    captureSeatDraft: () => drafts.push(1),
     serverPersistTimer: null, pendingPersistPayload: null, persistDirty: false, clearTimeout };
   vm.runInNewContext(source.slice(begin, end), context);
   const a = client({ claim: async () => ({role: 'writer', epoch: 1}), put: async () => false,
@@ -50,6 +52,8 @@ test('failed save transitions to unsynced reader without canvas takeover handler
   assert.equal(a.role(), 'reader');
   assert.equal(context.localUnsynced, true);
   assert.deepEqual(notices, ['Canvas 保存失败，本地变更已保留。']);
+  // 静默接管批（2026-11-19）：失权端**静默**落草稿 —— 丢席位的那一刻恰落一次。
+  assert.deepEqual(drafts, [1], 'losing the writer seat must stash the buffer exactly once');
   assert.doesNotMatch(source.slice(begin, end), /showCanvasTakeover|takeoverModal|localStorage\.removeItem/);
 });
 
@@ -118,23 +122,38 @@ test('① single instance never reads as multi-open and never reports a failure'
   assert.deepEqual(events.filter(([, lost]) => lost), [], 'no ownership loss on a normal write');
 });
 
-test('② true multi-open: the second window stays a readable reader and never writes', async () => {
+test('② a second window silently takes over (preemption) and writes; no failure notice', async () => {
+  let putCalls = 0;
+  const notices = [];
+  // 静默抢占（静默接管批 2026-11-19 作者令）：服务端对第二个窗口的申请也授予（新 epoch）。
+  const a = client({
+    failed: () => notices.push('failed'),
+    claim: async () => ({ role: 'writer', epoch: 9 }),
+    put: async () => { putCalls++; return true; },
+  });
+  assert.equal(await a.put({ v: 2, tabs: [] }), true);
+  assert.equal(putCalls, 1, 'preemptive seat: a second window reaches the shared PUT');
+  assert.equal(a.role(), 'writer');
+  assert.deepEqual(notices, [], 'a silent takeover is not a save failure');
+  // 只读查询腿照常回报 reader（未持席位时窗口仍能读存档）。
+  const b = client({ query: async () => ({ role: 'reader', epoch: null }) });
+  await b.refresh();
+  assert.equal(b.role(), 'reader');
+});
+
+test('②b a never-granted claim never reaches the shared PUT and reports the real failure once', async () => {
   let putCalls = 0;
   const notices = [];
   const a = client({
     failed: () => notices.push('failed'),
-    // 服务端非抢占席位：已有写者 ⇒ 拒授（HTTP 409 writer_already_held）。
+    // 抢占式下 claim 恒授予；唯一「未授予」= 网络失败 / 显式 CAS（expectedEpoch）不匹配。
     claim: async () => null,
     put: async () => { putCalls++; return true; },
   });
   assert.equal(await a.put({ v: 2, tabs: [] }), false);
-  assert.equal(putCalls, 0, 'a refused slot must never reach the shared PUT');
+  assert.equal(putCalls, 0, 'a refused seat must never reach the shared PUT');
   assert.equal(a.role(), 'reader');
   assert.deepEqual(notices, ['failed']);
-  // 只读可看：查询腿照常回报 reader，窗口仍能读存档。
-  const b = client({ query: async () => ({ role: 'reader', epoch: null }) });
-  await b.refresh();
-  assert.equal(b.role(), 'reader');
 });
 
 test('③ a refused write carries the real save-failure copy, never takeover/yield wording', () => {

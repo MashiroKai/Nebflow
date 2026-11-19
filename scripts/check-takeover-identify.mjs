@@ -19,11 +19,13 @@
 //    reported bug exactly (wire-level, nobody notices) — this script is the machine that
 //    notices.
 //
-// ② 真多开 = 只读 + 服务端拒写 + 真实失败文案（2026-11-18 作者令）。剔除的是**卡片
-//    与状态机**（「让出 / 取回控制权」弹窗、HTTP retake 入口、抢占式翻位），留下的是
-//    **检测**：单写者席位非抢占（第二个窗口只读），拒写走真实「保存失败」文案。
-//    失效面同样是静默的——弹窗被悄悄改回来、或拒写文案被换成接管措辞，界面看着都
-//    「正常」，只有机检能发现。
+// ② 真多开 = 静默接管 + 失权端自动落草稿（2026-11-19 作者令「直接静默吧 交给主会话
+//    实现」；取代 2026-11-18 的「非抢占 = 第二个窗口只读」）。剔除的仍是**卡片与状态机**
+//    （「让出 / 取回控制权」弹窗、HTTP retake 入口）；变的是席位本身——**申请即授予**：
+//    已有别的写者时**静默接管**（翻位 + epoch 自增），被顶下的写者由前端静默落
+//    「未合并草稿」承接「不丢」。失效面同样是静默的——把静默接管悄悄改回非抢占、
+//    或把「定向通知被顶下的写者」这条腿删掉（失权端就再也收不到落草稿的信号了），
+//    界面看着都「正常」，只有机检能发现。
 //
 // Assertions (exit 1 on any violation):
 //   A. `IdentifyFrameType` literal exists in ConsoleTakeover.scala;
@@ -38,7 +40,7 @@
 //      no handleRetake / claimAndReverseKick);
 //   H. write rejection carries a REAL save-failure message (never takeover/yield wording),
 //      on both the server payload and the client notice;
-//   I. the writer seat is non-preemptive (真多开的第二个窗口拿不到席位 ⇒ 只读).
+//   I. the writer seat is a SILENT PREEMPTIVE seat (申请即授予 + 定向通知被顶下的写者).
 //
 // Usage: node scripts/check-takeover-identify.mjs
 
@@ -180,19 +182,41 @@ if (!failedWire || !/保存失败/.test(failedWire[1])) {
   fail('H: canvas.js refused-write notice uses takeover/yield wording — the ruling forbids it');
 }
 
-// ── I. the writer seat is non-preemptive (真多开的第二个窗口 = 只读) ──
-const claimFn = /def\s+claimCanvas\s*\([\s\S]*?\n\s*\}\n/.exec(takeoverSrc);
-if (!claimFn) {
+// ── I. the writer seat is a SILENT PREEMPTIVE seat（静默接管批 2026-11-19 作者令
+//    「直接静默吧 交给主会话实现」）：申请即授予；已有别的写者时**静默接管**——翻位 +
+//    epoch 自增 + **定向通知被顶下的写者**（前端据此落未合并草稿）。旧的「非抢占 +
+//    活性判定腿」整套退役，故这里不再要求 `state.writer.isDefined && !mine` 这条守卫。 ──
+const claimIdx = takeoverSrc.indexOf('def claimCanvas(');
+if (claimIdx < 0) {
   fail('I: ConsoleTakeover.claimCanvas is missing — no single-writer seat to gate on');
-} else if (!/state\.writer\.isDefined\s*&&\s*!mine/.test(claimFn[0])) {
-  fail('I: claimCanvas lost its non-preemptive guard — a second window would preempt the incumbent writer again (真多开 ⇒ 只读 regressed)');
+} else {
+  const claimWindow = takeoverSrc.slice(claimIdx, claimIdx + 2400);
+  if (!/val displaced/.test(claimWindow)) {
+    fail('I: claimCanvas no longer captures the writer it displaces — a silent takeover must know who lost the seat (it is the one that must draft)');
+  }
+  if (!/notifyDisplacedWriter\(/.test(claimWindow)) {
+    fail('I: claimCanvas no longer notifies the displaced writer — that is the losing window\'s only trigger to stash its edits (silent + no-loss would regress to silent + lost)');
+  }
+  if (/state\.writer\.isDefined\s*&&\s*!mine/.test(claimWindow)) {
+    fail('I: claimCanvas still carries the retired non-preemptive guard — the seat must grant on every claim (silent takeover, 2026-11-19)');
+  }
+}
+if (!/def\s+notifyDisplacedWriter\s*\(/.test(takeoverSrc)) {
+  fail('I: ConsoleTakeover.notifyDisplacedWriter is missing — the silent seat-change signal has no single source');
 }
 const writerSliceStart = canvasJs.indexOf('function createCanvasWriterClient(');
 const writerSliceEnd = canvasJs.indexOf('// END CANVAS WRITER CLIENT', writerSliceStart);
 const writerSlice = writerSliceStart >= 0 && writerSliceEnd > writerSliceStart
   ? canvasJs.slice(writerSliceStart, writerSliceEnd) : '';
 if (!/async put\(payload\)[\s\S]*?await this\.claim\(\)/.test(writerSlice)) {
-  fail('I: the canvas write path no longer acquires the seat before writing (a refused seat must never reach the shared PUT)');
+  fail('I: the canvas write path no longer acquires the seat before writing (a fresh claim must precede the shared PUT)');
+}
+// 失权端落草稿的触发点必须在场（丢席位 ⇒ 静默落草稿，零阻断式通知）。
+if (!/function captureSeatDraft\s*\(/.test(canvasJs)) {
+  fail('I: canvas.js has no captureSeatDraft — the displaced writer would silently lose its edits (only half of 「静默 + 不丢」)');
+}
+if (!/captureSeatDraft\(\)/.test(canvasJs)) {
+  fail('I: captureSeatDraft is never called — the seat-loss hook is unwired');
 }
 if (/takeover/i.test(canvasJs)) {
   fail('I: canvas.js still references the console-takeover surface — the canvas producer must carry none of it');
@@ -208,5 +232,5 @@ if (failures.length > 0) {
 console.log(
   `check-takeover-identify: PASS — identity declared in-band as "${frameType}" (client emit ↔ receive-pipe intercept), ` +
   `handshake ?clientId= rail intact, no takeover/yield card or retake state machine, ` +
-  `refusal speaks the real save-failure copy, writer seat non-preemptive`
+  `refusal speaks the real save-failure copy, writer seat silently preemptive (displaced writer notified → draft)`
 );

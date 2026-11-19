@@ -2183,6 +2183,11 @@ export default {
   'canvas.conflictDirty': '这个文件在磁盘上已被改动，你本地有未保存的编辑。',
   'canvas.conflictKeep': '保留我的',
   'canvas.conflictReload': '重载磁盘版本',
+  // 失权端草稿（静默接管批 2026-11-19）：席位静默抢占后，被顶下的窗口把当前编辑
+  // 缓冲静默落成「未合并草稿」，事后以这条非阻断的取回入口呈现（零阻断式通知）。
+  'canvas.draftAvailable': '这个窗口的编辑已另存为未合并草稿（席位已被其他窗口接管）。',
+  'canvas.draftRestore': '恢复草稿',
+  'canvas.draftDismiss': '忽略',
   // B7-4 文件树搜索 + 排序（客户端，服务端顺序不动）
   'explorer.searchPlaceholder': '搜索文件…',
   'explorer.sortDefault': '默认顺序',

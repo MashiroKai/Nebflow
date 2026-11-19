@@ -143,11 +143,12 @@ private[gateway] object ConfigRoutes:
                 case (Some(id), Some(t)) if action == "claim" =>
                   canvasTakeover.claimCanvas(principal, id, t, c.get[Long]("expectedEpoch").toOption).flatMap {
                     case Some(epoch) =>
-                      wsHub.broadcast(Json.obj("type" -> "canvasWriterChanged".asJson, "epoch" -> epoch.asJson)) *>
+                      wsHub.broadcast(ConsoleTakeover.writerChangedFrame(epoch)) *>
                         Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson))
                     case None =>
-                      // 非抢占席位的正常拒绝（真多开：已有写者）⇒ 明确原因 + 真实
-                      // 保存失败文案；前端静默落只读，不弹接管/让出卡片。
+                      // 唯一拒绝面 = `expectedEpoch` 不匹配（严格 compare-and-set）。正常 claim
+                      // 不带 expectedEpoch ⇒ 恒授予（静默抢占，2026-11-19 作者令）；这里仍是
+                      // 真实「保存失败」文案，不含任何接管/让出措辞。
                       Conflict(Json.obj(
                         "error" -> "writer_already_held".asJson,
                         "message" -> "保存失败，本次修改未保存到服务器。".asJson,

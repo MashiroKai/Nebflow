@@ -95,6 +95,11 @@ export const CHECKS = [
   // canvas 保存失败通知批（2026-11-18 P0「老是出现 canvas 保存失败的通知」）：
   // 静态腿钉「跨刷新去重 / 正文逐字 / 可执行下一步 / 可关闭」四条声明不变量。
   nodeCheck('canvas-save-notice', 'check-canvas-save-notice'),
+  // canvas 席位静默接管批（2026-11-19 作者裁定「直接静默吧」；动机「现在通知很烦」）：
+  // 「静默 + 不丢」两条同时成立 —— 服务端申请即授予（无非抢占栅栏）、定向通知被顶下
+  // 写者、失权端零通知落本机草稿 + 事后取回入口；顺带钉活性惰性腿已整体移除。
+  // 行为腿另见 scripts/tests/canvas-seat-draft.test.mjs（在 script-tests 里跑）。
+  nodeCheck('canvas-seat-draft', 'check-canvas-seat-draft'),
   { name: 'canvas-save-failure-dedup', profiles: ['frontend'], timeoutMs: 180_000,
     argv: ['npm', 'exec', '--no', '--', 'playwright', 'test', 'tests/canvas-save-failure-dedup.spec.mjs', '--workers=1'] },
   { name: 'canvas-button-geom', profiles: ['frontend'], timeoutMs: 180_000,
