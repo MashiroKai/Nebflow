@@ -60,11 +60,11 @@ wiki-docs SKILL.md 强制条款的机器面（条款与检查一一对应，见 
 
   ── 只许引用词条批（作者令 2026-11-05；规则号 2026-11-05 让号重编到
      R13–R15——本批原挂 R7/R8/R9，与先落地的排版三禁撞号，按裁定让号）──
-  R13 doc-reference       → 只许引用词条（作者令 2026-11-05）：正文裸 `.md` 路径、
-                            markdown 链接指向文档、无锚短形 `[[X]]` 解析到文档却
-                            解析不到已注册词条 —— 都是「引用文档」，一律违规；
-                            带锚引用（`[[X#^term-slug]]` / `[[X#Heading]]`）、
-                            已注册词条短形 `[[词条名]]`、`![[…]]` 嵌入通过
+  R13 doc-reference       → 内部文档引用违规：正文带目录的裸文档路径、内部 markdown
+                            文档链接、解析到文档而非词条的无锚 wikilink；豁免 http(s)
+                            外链、正文无目录的裸文件名、斜杠清单残片、任意目录的
+                            index.md 与 templates/ 导航目标（wikilink 与 markdown 两种
+                            形式）。带锚 wikilink、词条与嵌入仍通过。
   R14 bare-image-path     → 图片文件名/路径以纯文本出现在正文（`attachments/a.png`、
                             `../x.jpg`、`/abs/y.png`）即违规；图片要么直接嵌入
                             （`![[a.png]]` / `![](…)` / `<img src=…>`），要么写成
@@ -207,7 +207,7 @@ RULES = (
     ("R12", "image-caption", "图注（同批「图里尽量少文字解释，文字解释放到文档里，比如图的 caption」）：每个图片引用必须有一行图注——同一行后随的 `图 N …` / `Figure …`，或图片下一行（最多隔一空行）的图注行；缺则报。图注超过 120 字符 ⇒ 提示 `image-caption-long`（advisory：图注该是一句结论，长解释进正文）"),
 
     # 只许引用词条批：2026-11-05 让号重编到 R13–R15（原 R7/R8/R9 与上方排版三禁撞号）
-    ("R13", "doc-reference", "只许引用词条（作者令 2026-11-05「只有引用词条，不允许引用文档」）：正文裸 `.md` 路径（`见 design/foo.md`）、markdown 链接指向文档（`[x](foo.md)` / `[x](foo.md#sec)`）、无锚短形 `[[X]]` 解析到文档却解析不到已注册词条 —— 三种形态都算「引用文档」= 违规；带锚引用（`[[X#^term-slug]]` / `[[X#Heading]]`）、已注册词条短形 `[[词条名]]`、`![[…]]` 嵌入通过。行内代码/围栏不算"),
+    ("R13", "doc-reference", "内部文档引用违规：正文带目录的裸 .md/.markdown 路径、内部 markdown 文档链接、无锚 wikilink 解析到文档而非词条；http(s) 外链、正文无目录裸文件名、斜杠清单残片（`a/b/c.md` 这类并列清单，判据见 is_slash_list）豁免；任意目录的 index.md 与 templates/ 导航目标（wikilink 与 markdown 两种形式）豁免；带锚、词条、嵌入及行内代码/围栏通过。"),
     ("R14", "bare-image-path", "图片路径不得以纯文本出现：`attachments/a.png`、`../x.jpg`、`/abs/y.png` 写成正文即违规。图片只有两种合法形态——直接嵌入（`![[a.png]]` / `![](…)` / `<img src=…>`）或可点击跳转（`[说明](attachments/a.png)`）。行内代码/围栏不算"),
     ("R15", "dangling-term", "悬空词条引用：无锚短形 `[[Name]]` 既解析不到文档也解析不到已注册词条 ⇒ 违规（该形状从 R2 broken-link 移出，同一行不双报；带路径/带锚的断链仍归 R2 的 broken-anchor / broken-block）"),
 
@@ -495,8 +495,10 @@ CAPTION_MAX_CHARS = 120            # 图注超过这个长度 ⇒ 提示（说�
 # 作者原话：「以后我们就只允许引用词条，不允许引用文档」「不允许引用文档和图片
 # 路径，文档就用词条，图片要么直接嵌入，要么就可以点击跳转」。三条机器面：
 #
-#   R13 doc-reference   ｜ 正文裸 `.md` 路径 / markdown 链接指向文档 / 无锚短形
-#                          `[[X]]` 解析到文档却解析不到已注册词条
+#   R13 doc-reference   ｜ 内部目录路径 / 内部 markdown 文档链接 / 无锚 wikilink
+#                          解析到文档而非词条；外链、裸文件名、斜杠清单残片、
+#                          任意目录 index.md 与 templates/ 导航豁免。
+#                          裸名与斜杠清单按形状判断，可能掩盖实际引用，须人工复核。
 #   R14 bare-image-path ｜ 图片文件名/路径以纯文本出现（不在嵌入/可点击链接里）
 #   R15 dangling-term   ｜ 无锚短形 `[[Name]]` 文档与词条双双解析不到（脱离 R2）
 #
@@ -547,6 +549,49 @@ def is_short_form_ref(target, anchor):
     if not raw or "/" in raw.replace("\\", "/"):
         return False
     return not re.search(r"\.(?:md|markdown|html)$", raw, re.IGNORECASE)
+
+
+def is_slash_list(token):
+    """正文里的 `/` 只是「并列清单」分隔符而非目录分隔符（2026-11-19 校准剔误报）。
+
+    已确认的误报形状 —— `a/b/c.md` 这类斜杠清单被 BARE_DOC_PATH_RE 当成带目录路径。
+    三条形状判据（任一命中即视为清单残片，不报 R13 ①）：
+      · 末段之前的某段本身是**带扩展名的文件名**：`plugin.json/mcp.json/skills/…`、
+        `User.md/Soul.md`、`memory/agent.json/system.md` —— 真目录不会叫 `x.json`；
+      · 命中片段以 `/` 起头 —— 它是 `/` 分隔清单被截下的尾巴
+        （`agents/*/memory.md` ⇒ `/memory.md`；`archive:112/…/chains/…` ⇒ `/chains/…`）；
+      · 末段之前的某段含汉字 —— `/` 把中文短语与文件名并成串（`选中包被封禁/Plugin.md`）；
+        本 vault 与插件种子内无汉字目录名（2026-11-19 实测）。
+    只削误报形状：判定锚在形状上，语义仍须人工复核；带目录的真路径照报。"""
+    if not token or "/" not in token:
+        return False
+    if token.startswith("/"):
+        return True
+    for seg in [s for s in token.split("/") if s][:-1]:
+        if re.search(r"\.[A-Za-z0-9]{1,6}$", seg):
+            return True
+        if re.search(r"[\u4e00-\u9fff]", seg):
+            return True
+    return False
+
+
+def is_navigation_target(path):
+    """导航目标：任意目录的 `index.md`，或位于任意 `templates/` 目录之下
+    （作者裁定 2026-11-19：豁免从「vault 根 index.md / 根 templates/」放宽到所有目录）。
+
+    导航不该被逼成词条引用，故 R13 对这类目标不报。入参可给 vault 相对路径
+    （wikilink 解析结果）或文档同目录相对路径（markdown 链接），两者判据相同。"""
+    if not path:
+        return False
+    p = path.replace("\\", "/").lower()
+    while p.startswith("./"):
+        p = p[2:]
+    parts = [s for s in p.split("/") if s not in ("", ".")]
+    if not parts:
+        return False
+    if parts[-1] == "index.md":
+        return True
+    return "templates" in parts[:-1]
 
 
 def mask_legal_carriers(line):
@@ -2083,11 +2128,26 @@ def check_reference_gate(docs, resolve, resolve_term, add, suppress):
             for m in MDLINK_RE.finditer(code_free):
                 if m.start() > 0 and code_free[m.start() - 1] == "!":
                     continue
+                # ② 仅 http(s) URL 是外部来源；相对链接仍属内部引用。
+                if re.match(r"https?://", m.group(2), re.IGNORECASE):
+                    continue
+                # ⑤ markdown 形式的导航链接（2026-11-19 裁定②）：目标落在任意目录的
+                #    index.md / templates/ 之下即豁免——导航写成 markdown 形式不是违规。
+                md_target = m.group(2).split("#", 1)[0].strip()
+                if is_navigation_target(posixpath.normpath(
+                        posixpath.join(posixpath.dirname(rel), md_target))):
+                    continue
                 emit("doc-reference", line_no,
                      f"markdown 链接指向文档「{m.group(0)}」——只许引用词条，"
                      "改写为 `[[词条名]]`（或带锚 `[[doc#^term-slug]]`）")
             # ① 正文裸 .md 路径（`见 design/foo.md`）：合法承载面先剥掉再找。
             for m in BARE_DOC_PATH_RE.finditer(mask_legal_carriers(line)):
+                # ③ 无目录分隔符的裸文件名视为叙述，不推断为引用。
+                if "/" not in m.group(0):
+                    continue
+                # ⑤ 斜杠清单残片（2026-11-19 校准剔误报）：`/` 是并列分隔符而非目录分隔符。
+                if is_slash_list(m.group(0)):
+                    continue
                 emit("doc-reference", line_no,
                      f"正文裸 .md 引用「{m.group(0)}」——不允许引用文档路径，"
                      "改写为已注册词条 `[[词条名]]`（或带锚 `[[doc#^term-slug]]`）")
@@ -2110,6 +2170,10 @@ def check_reference_gate(docs, resolve, resolve_term, add, suppress):
             hit_term = resolve_term(target) if resolve_term else None
             resolved = resolve(target, from_rel=rel)
             if resolved and not hit_term:
+                # ④ 导航豁免（2026-11-19 裁定②放宽）：任意目录的 index.md 与 templates/
+                #    目标都算导航，不再限 vault 根；其他解析到文档的引用照报。
+                if is_navigation_target(resolved):
+                    continue
                 if not re.search(r"\.(?:md|markdown|html)$", resolved, re.IGNORECASE):
                     continue  # 附件目标（图片 / PDF）= 可点击跳转，不是引用文档
                 emit("doc-reference", line_no,
