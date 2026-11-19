@@ -53,7 +53,16 @@ test('current web tree is fully covered by the named ledger', () => {
 });
 
 // ── CLI behaviour: exit 1 on fresh, 0 when ledgered, 2 on SKIP ────────────────
-const run = (args) => spawnSync(process.execPath, ['scripts/check-noclip-floating.mjs', ...args], { encoding: 'utf8' });
+// 2026-11-19 ci-static-reds 批：被测 CLI 的 ciMode 会读宿主的 CI / GITHUB_ACTIONS /
+// GITLAB_CI（scripts/check-noclip-floating.mjs:141），在被 CI 注入的环境里把 SKIP 升级成
+// FAIL(exit 1)，于是下面「无 web 树 ⇒ exit 2」那条在 GitHub Actions 上恒红（实测
+// `Expected 2, actual 1`）。run() 显式删键（不是置空串）还原「非 CI」形态；要测升级
+// 行为的那条用例自己显式传 `--ci`，不走 run()，不受影响。
+const CLEAN_ENV = { ...process.env };
+delete CLEAN_ENV.CI;
+delete CLEAN_ENV.GITHUB_ACTIONS;
+delete CLEAN_ENV.GITLAB_CI;
+const run = (args) => spawnSync(process.execPath, ['scripts/check-noclip-floating.mjs', ...args], { encoding: 'utf8', env: CLEAN_ENV });
 
 test('CLI is red on an unledgered violation and green once ledgered', () => {
   const dir = mkdtempSync(join(tmpdir(), 'noclip-'));

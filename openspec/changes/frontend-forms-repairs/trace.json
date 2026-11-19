@@ -159,7 +159,7 @@
           "name": "FRM-SCN-005 a frozen delegate offers wake only when the authoritative block says it is wakeable"
         },
         {
-          "path": "tests/forms-repair.test.mjs",
+          "path": "scripts/tests/forms-repair.test.mjs",
           "name": "FRM-SCN-005 wakeableOf follows the authoritative block"
         }
       ]
@@ -177,11 +177,11 @@
           "name": "FRM-SCN-005 a delegate-frozen row shows or hides wake the same way for a live frame and a snapshot block"
         },
         {
-          "path": "tests/forms-repair.test.mjs",
+          "path": "scripts/tests/forms-repair.test.mjs",
           "name": "FRM-SCN-005 a delegate-frozen reason is wakeable whichever frame described the row"
         },
         {
-          "path": "tests/forms-repair.test.mjs",
+          "path": "scripts/tests/forms-repair.test.mjs",
           "name": "FRM-SCN-005 families that recover on their own stay without a wake action when no block is present"
         }
       ]
@@ -240,7 +240,7 @@
           "name": "FRM-SCN-007 the background badge counts active rows while retained rows keep the entry available"
         },
         {
-          "path": "tests/forms-repair.test.mjs",
+          "path": "scripts/tests/forms-repair.test.mjs",
           "name": "FRM-SCN-007 active count excludes retained history and structural parent"
         }
       ]

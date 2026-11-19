@@ -41,7 +41,7 @@ import {
   BASE_RECONNECT_DELAY,
   MAX_RECONNECT_DELAY,
   STABLE_CONN_MS,
-} from "../src/main/resources/web/js/wsBackoff.js";
+} from "../../src/main/resources/web/js/wsBackoff.js";
 
 test('close diagnostics whitelist facts and discard arbitrary sensitive event data', () => {
   const event = { code: 1006, wasClean: false, reason: 'secret', url: 'secret' };
@@ -59,11 +59,10 @@ const noJitter = () => 0.5;
 /**
  * 旧口径的「断开后计数」：ws.js 修复前 onopen 无条件归零，等价于每次断开都
  * 已经是 0（只要握手成功过）。这里逐字复刻，作为红腿基准。
- * @param {number} _attempts
- * @param {{opened: boolean, lifetimeMs: number}} _obs
+ * 旧口径签名受理 (attempts, obs) 两参但一律忽略，实现恒返回 0。
  * @returns {number}
  */
-function legacyAttemptsAfterClose(_attempts, _obs) {
+function legacyAttemptsAfterClose() {
   return 0;
 }
 

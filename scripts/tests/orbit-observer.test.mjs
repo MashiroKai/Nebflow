@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const source = readFileSync(new URL('../src/main/resources/web/js/flowAnim.js', import.meta.url), 'utf8');
+const source = readFileSync(new URL('../../src/main/resources/web/js/flowAnim.js', import.meta.url), 'utf8');
 
 function harness() {
   const records = [];

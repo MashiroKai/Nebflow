@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 function client(transport) {
-  const source = readFileSync(new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const start = source.indexOf('function createCanvasWriterClient(');
   const end = source.indexOf('// END CANVAS WRITER CLIENT', start);
   const context = { transport };
@@ -35,7 +35,7 @@ test('preempted client returns to reader and rejects writing', async () => {
 });
 
 test('failed save transitions to unsynced reader without canvas takeover handler', async () => {
-  const source = readFileSync(new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const begin = source.indexOf('function writerChanged(');
   const end = source.indexOf('const writerRejectionNotices', begin);
   assert.ok(begin >= 0 && end > begin);
@@ -54,7 +54,7 @@ test('failed save transitions to unsynced reader without canvas takeover handler
 });
 
 test('reader can close shared tabs consecutively in order', () => {
-  const source = readFileSync(new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const begin = source.indexOf('export function closeTab(');
   const end = source.indexOf('/** Promote a preview', begin);
   assert.ok(begin >= 0 && end > begin);
@@ -75,7 +75,7 @@ test('reader can close shared tabs consecutively in order', () => {
 });
 
 test('reader guards are silent and server rejections notify once per reason', () => {
-  const source = readFileSync(process.env.CANVAS_TEST_SOURCE || new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
+  const source = readFileSync(process.env.CANVAS_TEST_SOURCE || new URL('../../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const notices = [];
   // 2026-11-18 canvas-save-failure 批：被切片求值的通知区块现在多了两个模块级依赖
   // —— branding 的 key()（派生去重账存储键）与 sessionStorage（跨刷新去重账）。
@@ -138,7 +138,7 @@ test('② true multi-open: the second window stays a readable reader and never w
 });
 
 test('③ a refused write carries the real save-failure copy, never takeover/yield wording', () => {
-  const source = readFileSync(new URL('../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../../src/main/resources/web/js/canvas.js', import.meta.url), 'utf8');
   const wire = /failed:\s*\(\)\s*=>\s*\{([^}]*)\}/.exec(source);
   assert.ok(wire, 'canvas.js must wire a `failed` handler for refused writes');
   assert.match(wire[1], /保存失败/);

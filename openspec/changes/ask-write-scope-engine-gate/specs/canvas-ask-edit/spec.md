@@ -1,10 +1,10 @@
 ## ADDED Requirements
 
 ### Requirement: [CAE-REQ-101] One normalising write-path verdict
-A file-bound Canvas Ask session SHALL edit exactly one document: its bound file. Every write target SHALL first be normalised (relative spellings resolved against the bound document's directory, `.` and `..` consumed) and then compared by file identity (real path plus `Files.isSameFile`), so that every spelling equivalent to the bound document is accepted while every other target is refused. A refusal SHALL state the reason, SHALL state that the session edits only its bound document, SHALL point at the main-session handoff as the sanctioned route, and SHALL leave the targeted file untouched. This requirement revises the target-gate wording of CAE-REQ-001: the criterion is document identity, not a spelling blacklist.
+A file-bound Canvas Ask session SHALL edit exactly one document: its bound file. Every write target SHALL first be normalised, then compared by file identity, so every spelling equivalent to the bound document is accepted and every other target is refused. A refusal SHALL state the reason, that the session edits only its bound document, and the main-session handoff as the sanctioned route, and SHALL leave the targeted file untouched.
 
 #### Scenario: [CAE-SCN-101] Equivalent spelling of the bound document is allowed
-- **WHEN** a file-bound Ask proposes an edit whose spelling normalises to the bound document (exact path, `.`, a `..` round trip, a relative form, `./`, a symbolic or hard link resolving to it, an alias mount, a case variant)
+- **WHEN** a file-bound Ask proposes an edit whose spelling — resolved against the bound document's directory (`.`, `..` and relative forms consumed) and compared by file identity (real path plus `Files.isSameFile`) — normalises to the bound document: exact path, `.`, a `..` round trip, a relative form, `./`, a symbolic or hard link resolving to it, an alias mount, or a case variant
 - **THEN** the engine SHALL accept the proposal and the write SHALL land in the bound document only.
 
 #### Scenario: [CAE-SCN-102] Any other target is refused readably

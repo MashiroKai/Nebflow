@@ -69,6 +69,18 @@ const instanceBacked = [
   'attachment-persistence.spec.mjs',
 ];
 
+// ③ `tests/*.test.mjs` = node:test / 独立 runner 单测（不是 Playwright 套件），
+// 被收集器 import 时顶层即执行：`delegate-chain-throttle.test.mjs` 顶层
+// `new vm.SourceTextModule` 直接 TypeError ⇒ 整轮收集 exit 1 + `Error: No tests found`。
+// 它有闸门归属：scripts/run-checks.mjs 点名（须带 --experimental-vm-modules）。
+// （另一个同类 `bgagent-mobile-detail-retirement.test.mjs` 已于 2026-11-19 普查收编批
+// 判定弃用并 `git rm` —— 自述 NOT RUN、需真浏览器 harness；其 testIgnore 条目一并删除，
+// 配置不留死条目。）
+// 2026-11-19 普查收编批的前后收集证据见 /Users/kaiyu/stand-evidence/gate-collection-20261119/。
+standaloneScripts.push(
+  'delegate-chain-throttle.test.mjs',
+);
+
 const testIgnore = [...standaloneScripts];
 if (process.env.PW_SELFCONTAINED_ONLY === '1') testIgnore.push(...instanceBacked);
 

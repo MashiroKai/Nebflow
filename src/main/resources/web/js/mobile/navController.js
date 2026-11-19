@@ -1114,6 +1114,21 @@ function syncCanvasPage() {
   if (!canvasUI) return;
   const docs = docTabs();
   const activeId = activeDocId();
+  /* 内容区非空不变量（审阅收口空白面修复批 2026-11-19，作者令「切过去必须是
+     可见内容，不许空白」）。真机实证的失效链：审阅页签收口时 `closeTab` 把**邻位
+     签**激活，而邻位可能是**面板签**（`plugins` / `projects` / `wiki-graph` 这类
+     PANEL_TAB_IDS）⇒ `activeDocId()` 为 null ⇒ `adoptActiveDoc()` 无 pane 可收编
+     （`.mf-cv-host` 子节点 0），而 `.mf-cv-empty` 又因 `docTabs().length > 0` 保持
+     hidden ⇒ canvas 页只剩空背景（实测：`#canvas-panel[display:none]` +
+     `.mf-cv-host` 零子节点 + 活动签 = 面板签）。**不是**任何加载/品牌态 —— 页面里
+     没有 splash 元素，等超时也不会自愈，故按「内容就绪」腿修，不引入计时器。
+     自愈 = 本站于 canvas 页时切回最近的文档签（面板签不在环带/收编面上，本就不该
+     占据手机页的活动槽）；不在 canvas 页时不动 ⇒ 桌面类语义零改。 */
+  if (docs.length && !activeId && stack[stack.length - 1] === 'canvas') {
+    logEvent('canvas-page-selfheal', { why: 'panel-tab-active', to: docs[0].id });
+    setActiveTab(docs[0].id);
+    return;
+  }
   const sig = docs.map((d) => d.id).join('|');
   if (canvasUI.strip.dataset.sig !== sig) {
     canvasUI.strip.dataset.sig = sig;

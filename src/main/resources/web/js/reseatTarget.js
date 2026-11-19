@@ -19,7 +19,7 @@
 // 所以卡窗模式在重座全程必须守恒。非卡窗页面逐字不变（零回归面）。
 //
 // 模块纪律：叶子（零 import，不依赖 ws/canvas），纯逻辑核 + 极薄读取面，
-// 供 tests/reseat-target.test.mjs 直接跑。
+// 供 scripts/tests/reseat-target.test.mjs 直接跑。
 
 /** 卡窗契约参数名（与 canvas.js popoutCardWindow / index.html 门脚本同源拼法）。 */
 const CARD_FLAG = 'card-window';
@@ -48,7 +48,7 @@ export function readReseatContext(search) {
 /**
  * 解析重座导航目标：卡窗模式在重座全程守恒。
  *
- * 规则（每条都可由 tests/reseat-target.test.mjs 机械判定）：
+ * 规则（每条都可由 scripts/tests/reseat-target.test.mjs 机械判定）：
  *   ① 非卡窗 / 无上下文 ⇒ **原样返回 target**（relay 腿与本地直连腿逐字不变）；
  *   ② 卡窗 ⇒ target 上补回 `card-window=1`，并补回 `path` / `title`（有才补）；
  *      target 已带的 `ticket` 等参数一律不动（票是这次重座的凭据）；
