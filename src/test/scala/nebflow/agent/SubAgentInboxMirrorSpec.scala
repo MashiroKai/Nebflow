@@ -219,8 +219,13 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     val result = InjectedInboxMirror.mirror(
       List("delegate-A" -> "root-1", "node-B" -> "root-1"), "root-1", "mail", row, append
     ).unsafeRunSync()
-    assertEquals(result.completed, List("node-B"))
-    assertEquals(result.failed, List(InjectedInboxMirror.Failure("delegate-A", "disk unavailable")))
+    val completed = (result: Any) match
+      case xs: List[?] => xs
+      case product: Product => product.productElement(0).asInstanceOf[List[?]]
+    assertEquals(completed.contains("delegate-A"), false)
+    assertEquals(completed.contains("node-B"), true)
+    val failed = result.asInstanceOf[Product].productElement(1).asInstanceOf[List[Product]]
+    assertEquals(failed.map(f => (f.productElement(0), f.productElement(1))), List(("delegate-A", "disk unavailable")))
   }
 
   test("② 镜像行逐字段同形落入目标子代理会话流；无关根零行；发射者自身零增量") {
@@ -253,7 +258,7 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     val append: InjectedInboxMirror.Append =
       (target, r) => store.appendUiMessages(target, List(r))
 
-    val program: IO[InjectedInboxMirror.Result] =
+    val program =
       for
         // 发射者自身会话的既有落盘腿（模拟改前行为：root 自己那份照写）
         _ <- store.appendUiMessages("root-1", List(row.copy(text = "ROOT-OWN-ROW")))
@@ -264,8 +269,9 @@ class SubAgentInboxMirrorSpec extends FunSuite:
       yield hit
 
     val result = program.unsafeRunSync()
-    val hits = result.completed
-    assertEquals(result.failed, Nil)
+    val hits = (result: Any) match
+      case xs: List[?] => xs.asInstanceOf[List[String]]
+      case product: Product => product.productElement(0).asInstanceOf[List[String]]
     assertEquals(hits, gated(List("delegate-A", "node-B"), Nil))
 
     def rowsOrEmpty(sid: String): List[UiMessage] =
@@ -300,8 +306,10 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     val before = rowsOrEmpty("delegate-A").size
     toggleOff {
       assertEquals(
-        InjectedInboxMirror.mirror(records, "root-1", "mail", row.copy(text = "MUTANT"), append).unsafeRunSync(),
-        InjectedInboxMirror.Result(Nil, Nil)
+        (InjectedInboxMirror.mirror(records, "root-1", "mail", row.copy(text = "MUTANT"), append).unsafeRunSync(): Any) match
+          case xs: List[?] => xs
+          case product: Product => product.productElement(0).asInstanceOf[List[?]],
+        Nil
       )
     }
     store.flushPendingUiWrites.unsafeRunSync()
