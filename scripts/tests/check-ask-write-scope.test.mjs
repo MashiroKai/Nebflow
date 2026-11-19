@@ -57,6 +57,8 @@ const goodAssembler = [
   'object AskContextAssembler {',
   '  def toolListSection(): String = ToolRegistry.TOOL_MAP.values.map(t => s"- ${t.name}").mkString',
   '  val constraints = "1. 本会话只能编辑它对应的那份文档；2. 复杂任务转交主会话"',
+  // 能力边界批（ask-prompt-scope 2026-11-19）：硬约束 2 的展开要件——金样须逐件在场。
+  '  val boundary = "**能力边界**：简单 = 四条同时成立（单文件 / 改动局部 / 无跨模块影响 / 一句话说清）；转交必须自包含：目标 = 要达成什么 / 约束 / 验收 / 已掌握的事实；例外：作者当场明确要求"',
 ].join('\n');
 
 const clean = (over = {}) => audit({
@@ -154,6 +156,25 @@ test('the prompt must derive its tool list and state both hard constraints', () 
     .some((p) => p.includes('constraint 1')));
   assert.ok(handoff(goodAssembler.replace('2. 复杂任务转交主会话', ''))
     .some((p) => p.includes('constraint 2')));
+});
+
+test('the capability boundary must state the simple-edit test, the default handoff and the author exception', () => {
+  const handoff = (assembler) => auditHandoff({ askTools: goodAskTools, assembler });
+  // 正面：金样含全部要件 ⇒ 零违规。
+  assert.deepEqual(handoff(goodAssembler), []);
+  // 负控（删掉该段 ⇒ 红）：抽掉整段能力边界后，逐条要件都要报红。
+  const noBoundary = goodAssembler.replace(/^\s*val boundary = .*$\n?/m, '');
+  assert.notEqual(noBoundary, goodAssembler, 'the fixture must actually lose the boundary line');
+  const problems = handoff(noBoundary);
+  for (const marker of [
+    'capability-boundary section',
+    '"simple edit" test',
+    'no-cross-module',
+    'self-contained',
+    'on-the-spot explicit-request',
+  ]) {
+    assert.ok(problems.some((p) => p.includes(marker)), `${marker} must go red when the boundary is deleted: ${problems.join('; ')}`);
+  }
 });
 
 test('a hand-written tool inventory in the prompt is refused as a second source of truth', () => {

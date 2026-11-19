@@ -83,4 +83,26 @@ final class AskToolFaceSpec extends munit.FunSuite:
     assert(handoff.contains("STRUCTURED handoff request"))
     assert(!handoff.contains("only outbound action"))
   }
+
+  test("F6 Ask prompt carries the capability boundary: simple edits in scope, complex tasks default to the main session") {
+    val prompt = AskContextAssembler.promptFor("notes.md", "/vault/notes.md", "context")
+    // 边界段在场（作者令 2026-11-19「它除了问答，简单的修改文档/文件，复杂的任务要
+    // 默认交给主会话」）——删掉该段本用例即红。
+    assert(prompt.contains("能力边界"), "the capability-boundary section must be in the rendered prompt")
+    // 「简单文档/文件修改」的四条可对照判据（单文件 / 局部小改 / 无跨模块 / 一句话说清）。
+    assert(prompt.contains("四条同时成立"), "the boundary must give the decidable simple-edit test")
+    assert(prompt.contains("单文件") && prompt.contains("无跨模块影响"), "single-file + no-cross-module conditions")
+    assert(prompt.contains("一句话说清"), "the one-sentence condition")
+    // 超出即默认转交主会话。
+    assert(prompt.contains("复杂任务转交主会话"), "complex tasks default to the main session")
+    // 转交必须自包含：目标 / 约束 / 验收 / 已掌握的事实（主会话不用回问即可派发）。
+    assert(prompt.contains("自包含"), "the handoff must be self-contained")
+    assert(
+      prompt.contains("已掌握的事实") && prompt.contains("验收"),
+      "the self-contained handoff must name the goal/constraints/acceptance/facts"
+    )
+    // 例外：作者当场明确要求的那一件可做，仍给「复杂 ⇒ 建议转交」提示。
+    assert(prompt.contains("当场明确要求"), "the author's on-the-spot explicit request is the allowed exception")
+    assert(prompt.contains("建议转交主会话"), "the exception still carries the complex⇒handoff hint")
+  }
 end AskToolFaceSpec
