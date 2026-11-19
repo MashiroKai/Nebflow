@@ -143,6 +143,11 @@ export const CHECKS = [
   { name: 'ask-button-unify', profiles: ['frontend'], timeoutMs: 300_000,
     argv: [process.execPath, 'tests/ask-button-unify.spec.mjs'] },
   nodeCheck('canvas-families', 'check-canvas-families', ['static']),
+  // PDF note/ask 入口单源闸（文本层批 2026-11-19，作者逐字纠形「pdf note and ask
+  // 不是在侧边栏加一个控件，是让 canvas 的 note 和 ask 能够支持 pdf 的阅读」）：
+  // 侧边栏件删净（盘上无件 + 身份串零命中，含孤儿 CSS 选择器）+ PDF 内容模型
+  // 单源（走 canvas 两颗钮）+ PDF 可选中（text layer）+ **零新路由**。
+  nodeCheck('pdf-entry-single-source', 'check-pdf-entry-single-source', ['static']),
   // 待办选项闸（待办数据模型与命名规范批 2026-11-18，作者令「每个待办必须要有选项」）：
   // 源码级断言「写侧强制点在且先于创建 / 强制面只绑待办 / 媒体是引用且可多张」。
   nodeCheck('todo-options', 'check-todo-options', ['static']),
