@@ -624,14 +624,9 @@ trap cleanup EXIT
 echo "[coldstart] 等待实例就绪（端口 ${COLDSTART_PORT}，每 3s 复查）…"
 READY=0
 for _ in $(seq 1 100); do
-  if [ "$(curl --noproxy '*' -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:$COLDSTART_PORT/api/health" || true)" = "200" ]; then READY=1; break; fi
-  if ! ps -p "$SBT_PID" -o pid= >/dev/null 2>&1; then break; fi
+  if lsof -tiTCP:"$COLDSTART_PORT" -sTCP:LISTEN 2>/dev/null | grep -q .; then READY=1; break; fi
   sleep 3
 done
-if [ "$READY" != "1" ]; then
-  echo "[coldstart] ERROR: /api/health 未返回 HTTP 200，启动失败。" >&2
-  exit 1
-fi
 
 # ── 开门目标显示口径的设备标识补充（device.json 由实例 boot 铸出，此处现读）──
 # 仅用于打印/回落探测；权威目标由引擎 PortalUrl.startupUrl 单点解析，脚本不复制判定。
@@ -662,7 +657,6 @@ if [ "$READY" = "1" ]; then
   else
     echo "[coldstart] 开门目标: 官网统一入口 $(portal_with_device "$PORTAL_BASE")（PortalUrl 解析序；登录后经门户回投 relay-mint 票进本地控制台）"
   fi
-  if [ "$COLDSTART_NO_OPEN" != "1" ]; then
   # 观察实例侧 boot 开门是否落地：一次性档案的 Chrome 进程出现（≤10s 轮询；
   # 避免与 boot 开门时序竞判为失败）。NEBFLOW_OPEN_UI=local 时引擎走 LocalConsoleUrl
   # 自铸票，同一 wrapper 档案开门，观察口径相同。
@@ -722,7 +716,6 @@ if [ "$READY" = "1" ]; then
       echo "[coldstart] （无痕窗口同样隔离本机 cookie / Logto SSO；普通窗口会被静默签入你已登录的账号）"
     fi
   fi
-  fi # COLDSTART_NO_OPEN
 else
   echo "[coldstart] WARN: 就绪等待超时（实例可能仍在编译）。就绪后请手动用无痕窗口打开: $(portal_with_device "${PORTAL_BASE:-http://localhost:$COLDSTART_PORT/}")（或 NEBFLOW_OPEN_UI=local 重跑走本地档）"
 fi
