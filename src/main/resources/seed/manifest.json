@@ -1,10 +1,11 @@
 {
   "seedVersion": "1.0.0",
   "items": [
-    "agents:project-dispatcher",
-    "agents:general",
     "plugins:visual-report",
     "plugins:slideblocks",
-    "project:general"
+    "plugins:web-search-toolkit",
+    "plugins:browser-use",
+    "plugins:computer-use",
+    "plugins:document-production"
   ]
 }

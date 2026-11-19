@@ -6,12 +6,20 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
+import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord, AgentStatus, sessionId, status}
 import nebflow.agent.*
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{SubAgentTask, ThinkingConfig}
 
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
@@ -88,21 +96,34 @@ class AgentControlToolSpec extends CatsEffectSuite:
       sharedResources = Some(resources)
     )
 
-  private def call(resources: SharedResources, sessionId: String, action: String, target: String = "", reason: String = "", confirm: Boolean = false): Either[ToolError, String] =
+  private def call(
+    resources: SharedResources,
+    sessionId: String,
+    action: String,
+    target: String = "",
+    reason: String = "",
+    confirm: Boolean = false,
+    scope: String = "",
+    jobId: String = ""
+  ): Either[ToolError, String] =
     val input = io.circe.JsonObject(
       "action" -> action.asJson,
       "sessionId" -> target.asJson,
       "reason" -> reason.asJson,
-      "confirm" -> confirm.asJson
+      "confirm" -> confirm.asJson,
+      "scope" -> scope.asJson,
+      "jobId" -> jobId.asJson
     )
     AgentControlTool.call(input, ctx(resources, sessionId)).unsafeRunSync()
+
+  end call
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
     cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -121,26 +142,38 @@ class AgentControlToolSpec extends CatsEffectSuite:
       delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "list-del")
       teamRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "list-team")
       now = System.currentTimeMillis()
-      _ <- resources.agentRegistry.set(Map(
-        "delegate-Explorer-aaaa1111" -> AgentRecord(
-          "delegate-Explorer-aaaa1111", delRef, AgentKind.Delegate, "root-1",
-          startedAt = now - 120_000, status = AgentStatus.Processing, lastActivityMs = now - 45_000
-        ),
-        "team-nebflow-project-Backend" -> AgentRecord(
-          "team-nebflow-project-Backend", teamRef, AgentKind.Team, "team-nebflow-project-Backend"
+      _ <- resources.agentRegistry.set(
+        Map(
+          "delegate-Explorer-aaaa1111" -> AgentRecord(
+            "delegate-Explorer-aaaa1111",
+            delRef,
+            AgentKind.Delegate,
+            "root-1",
+            startedAt = now - 120_000,
+            status = AgentStatus.Processing,
+            lastActivityMs = now - 45_000
+          ),
+          "team-nebflow-project-Backend" -> AgentRecord(
+            "team-nebflow-project-Backend",
+            teamRef,
+            AgentKind.Team,
+            "team-nebflow-project-Backend"
+          )
         )
-      ))
+      )
       res <- AgentControlTool.call(
-        io.circe.JsonObject("action" -> "list".asJson), ctx(resources, "root-1")
+        io.circe.JsonObject("action" -> "list".asJson),
+        ctx(resources, "root-1")
       )
     yield
       val out = res.toOption.get
       assert(out.contains("delegate-Explorer-aaaa1111"), s"row must render sessionId:\n$out")
       assert(out.contains("Delegate"), s"kind column:\n$out")
+      // 团队功能删除批（team-feature-deletion-20261104）阶段 3：Team 目标不可管理
+      // （team scope 整段删除）⇒ 行照常呈现，但按普通只读 kind 标注。
       assert(out.contains("Team"), s"team row:\n$out")
-      // Block 2（§C1）：root 桶调用者可全局管 Team——Team 行不再标 read-only
       val teamLine = out.linesIterator.find(_.contains("team-nebflow-project-Backend")).get
-      assert(!teamLine.contains("read-only"), s"Team row must not be read-only for a root caller:\n$teamLine")
+      assert(teamLine.contains("read-only"), s"Team row must be read-only now:\n$teamLine")
       assert(out.contains("Explorer"), s"agent name from task record:\n$out")
       assert(out.contains("guard test task"), s"task description column:\n$out")
       assert(out.contains("2m0s"), s"up column from startedAt (120s → 2m0s):\n$out")
@@ -155,13 +188,20 @@ class AgentControlToolSpec extends CatsEffectSuite:
       resources <- mkResources(system, tmp)
       _ <- resources.subAgentTaskStore.recordTask(mkTask("root-2", "delegate-Worker-bbbb2222"))
       delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "status-del")
-      _ <- resources.agentRegistry.set(Map(
-        "delegate-Worker-bbbb2222" -> AgentRecord(
-          "delegate-Worker-bbbb2222", delRef, AgentKind.Delegate, "root-2",
-          startedAt = System.currentTimeMillis() - 30_000, status = AgentStatus.Processing,
-          lastActivityMs = System.currentTimeMillis() - 5_000, parentSessionId = "root-2"
+      _ <- resources.agentRegistry.set(
+        Map(
+          "delegate-Worker-bbbb2222" -> AgentRecord(
+            "delegate-Worker-bbbb2222",
+            delRef,
+            AgentKind.Delegate,
+            "root-2",
+            startedAt = System.currentTimeMillis() - 30_000,
+            status = AgentStatus.Processing,
+            lastActivityMs = System.currentTimeMillis() - 5_000,
+            parentSessionId = "root-2"
+          )
         )
-      ))
+      )
       res <- IO(call(resources, "root-2", "status", target = "delegate-Worker-bbbb2222"))
     yield
       val out = res.toOption.get
@@ -172,27 +212,35 @@ class AgentControlToolSpec extends CatsEffectSuite:
     program.guarantee(system.stopAll.attempt.void)
   }
 
-  test("status Team member for a root-bucket caller shows manageable (Block 2 §C3 — not read-only)") {
+  test("status on a Team target — 详情卡仍可读，但 manage 行恒不可管（team scope 已退役）") {
     val system = ActorSystem("ac-status-team")
     val tmp = os.temp.dir()
     val program = for
       resources <- mkResources(system, tmp)
       memRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "status-team-mem")
-      _ <- resources.agentRegistry.set(Map(
-        "team-member-x" -> AgentRecord(
-          "team-member-x", memRef, AgentKind.Team, "root-t1",
-          startedAt = System.currentTimeMillis() - 30_000, status = AgentStatus.Processing,
-          lastActivityMs = System.currentTimeMillis() - 5_000, parentSessionId = "mgr-inst"
+      _ <- resources.agentRegistry.set(
+        Map(
+          "team-member-x" -> AgentRecord(
+            "team-member-x",
+            memRef,
+            AgentKind.Team,
+            "root-t1",
+            startedAt = System.currentTimeMillis() - 30_000,
+            status = AgentStatus.Processing,
+            lastActivityMs = System.currentTimeMillis() - 5_000,
+            parentSessionId = "mgr-inst"
+          )
         )
-      ))
+      )
       res <- IO(call(resources, "root-t1", "status", target = "team-member-x"))
-    yield
-      val out = res.toOption.get
-      assert(out.contains("kind: Team"), s"$out")
-      // v2：root 全局可管 Team——manage 行不得沿用 v1 的恒 read-only
-      assert(out.contains("manageable: cancel / restart"), s"$out")
-      assert(!out.contains("read-only kind"), s"Team must not render read-only for a root caller:\n$out")
-    program.guarantee(system.stopAll.attempt.void)
+    yield res
+    val res = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
+    // 阶段 3 口径：status 是**只读**面（诊断可见性保留，便于看残留记录），
+    // 但可管理性判定经同一 `kindRejection` ⇒ Team 恒 "manageable: no (read-only kind)"。
+    val out = res.toOption.getOrElse(fail(s"status must still render for a Team record, got: $res"))
+    assert(out.contains("kind: Team"), out)
+    assert(out.contains("manageable: no (read-only kind)"), out)
+    assert(!out.contains("manageable: cancel"), s"Team target must not advertise cancel/restart:\n$out")
   }
 
   test("status detects orphan task files (registry empty, task still running)") {
@@ -234,17 +282,24 @@ class AgentControlToolSpec extends CatsEffectSuite:
       teamRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "g-team")
       flowRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "g-flow")
       delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "g-del")
-      _ <- resources.agentRegistry.set(Map(
-        "self-session" -> AgentRecord("self-session", rootRef, AgentKind.Root, "self-session"),
-        // 同桶（root=self-session）但 kind=Root —— 走 kind 拒绝而非权限拒绝
-        "another-root" -> AgentRecord("another-root", rootRef, AgentKind.Root, "self-session"),
-        // Block 2：同桶 Team、非注册 Manager（TeamSessionRegistry 空）→ root 桶调用者放行
-        "team-nebflow-project-Backend" -> AgentRecord("team-nebflow-project-Backend", teamRef, AgentKind.Team, "self-session"),
-        // 同桶 Flow —— cancelFlow 指引
-        "dag-step1" -> AgentRecord("dag-step1", flowRef, AgentKind.Flow, "self-session"),
-        // 跨桶 Delegate —— Permission denied（在 kind 检查之前）
-        "delegate-Other-hhhh0000" -> AgentRecord("delegate-Other-hhhh0000", delRef, AgentKind.Delegate, "other-root")
-      ))
+      _ <- resources.agentRegistry.set(
+        Map(
+          "self-session" -> AgentRecord("self-session", rootRef, AgentKind.Root, "self-session"),
+          // 同桶（root=self-session）但 kind=Root —— 走 kind 拒绝而非权限拒绝
+          "another-root" -> AgentRecord("another-root", rootRef, AgentKind.Root, "self-session"),
+          // 同桶 Team —— 阶段 3 起恒 kind 拒绝（team scope 已退役）
+          "team-nebflow-project-Backend" -> AgentRecord(
+            "team-nebflow-project-Backend",
+            teamRef,
+            AgentKind.Team,
+            "self-session"
+          ),
+          // 同桶 Flow —— cancelFlow 指引
+          "dag-step1" -> AgentRecord("dag-step1", flowRef, AgentKind.Flow, "self-session"),
+          // 跨桶 Delegate —— Permission denied（在 kind 检查之前）
+          "delegate-Other-hhhh0000" -> AgentRecord("delegate-Other-hhhh0000", delRef, AgentKind.Delegate, "other-root")
+        )
+      )
       selfRes <- IO(call(resources, "self-session", "cancel", target = "self-session"))
       rootRes <- IO(call(resources, "self-session", "cancel", target = "another-root"))
       teamRes <- IO(call(resources, "self-session", "cancel", target = "team-nebflow-project-Backend"))
@@ -253,8 +308,12 @@ class AgentControlToolSpec extends CatsEffectSuite:
     yield
       assert(selfRes.left.exists(_.message.contains("Self-guard")), selfRes.toString)
       assert(rootRes.left.exists(_.message.contains("cannot be managed")), rootRes.toString)
-      // Block 2：root 桶调用者对 Team 全局 cancel 放行（v1.0 旧断言「read-only 拒绝」作废）
-      assert(teamRes.isRight, s"root-bucket caller must be able to cancel a Team member (Block 2 §C3), got: $teamRes")
+      // 团队功能删除批阶段 3：Team 目标恒显式拒绝（team scope 整段删除；Block 2
+      // §C3 的「root 桶全局可管 Team」随之作废）。
+      assert(
+        teamRes.left.exists(_.message.contains("Team targets are not manageable")),
+        s"Team target must be refused for every caller, got: $teamRes"
+      )
       assert(flowRes.left.exists(_.message.contains("cancelFlow")), flowRes.toString)
       assert(crossRes.left.exists(_.message.contains("Permission denied")), crossRes.toString)
     program.guarantee(system.stopAll.attempt.void)
@@ -270,12 +329,18 @@ class AgentControlToolSpec extends CatsEffectSuite:
       supEvents <- Ref.of[IO, List[AgentEvent]](Nil)
       supRef <- system.spawn(mkRecordingEvt(supEvents), "sup-evt")
       delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "cancel-sup-del")
-      _ <- resources.agentRegistry.set(Map(
-        "delegate-Worker-dddd4444" -> AgentRecord(
-          "delegate-Worker-dddd4444", delRef, AgentKind.Delegate, "root-9",
-          supervisorRef = Some(supRef), parentSessionId = "root-9"
+      _ <- resources.agentRegistry.set(
+        Map(
+          "delegate-Worker-dddd4444" -> AgentRecord(
+            "delegate-Worker-dddd4444",
+            delRef,
+            AgentKind.Delegate,
+            "root-9",
+            supervisorRef = Some(supRef),
+            parentSessionId = "root-9"
+          )
         )
-      ))
+      )
       res <- IO(call(resources, "root-9", "cancel", target = "delegate-Worker-dddd4444", reason = "obsolete"))
       _ <- waitUntil(3.seconds)(supEvents.get.map(_.nonEmpty))
       events <- supEvents.get
@@ -298,15 +363,23 @@ class AgentControlToolSpec extends CatsEffectSuite:
       parentRef <- system.spawn(mkRecordingCmd(parentEvents), "deg-parent")
       childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       childRef <- system.spawn(mkRecordingCmd(childEvents), "deg-child")
-      _ <- resources.agentRegistry.set(Map(
-        "subtask-Worker-eeee5555" -> AgentRecord(
-          "subtask-Worker-eeee5555", childRef, AgentKind.SubTask, "root-5",
-          parentRef = Some(parentRef), parentSessionId = "root-5"
+      _ <- resources.agentRegistry.set(
+        Map(
+          "subtask-Worker-eeee5555" -> AgentRecord(
+            "subtask-Worker-eeee5555",
+            childRef,
+            AgentKind.SubTask,
+            "root-5",
+            parentRef = Some(parentRef),
+            parentSessionId = "root-5"
+          )
         )
-      ))
+      )
       res <- IO(call(resources, "root-5", "cancel", target = "subtask-Worker-eeee5555", reason = "fallback"))
       _ <- waitUntil(3.seconds)(
-        resources.subAgentTaskStore.loadTasks("root-5").map(_.exists(t => t.taskId == "subtask-Worker-eeee5555" && t.status == "cancelled"))
+        resources.subAgentTaskStore
+          .loadTasks("root-5")
+          .map(_.exists(t => t.taskId == "subtask-Worker-eeee5555" && t.status == "cancelled"))
       )
       _ <- waitUntil(3.seconds)(resources.agentRegistry.get.map(!_.contains("subtask-Worker-eeee5555")))
       _ <- waitUntil(3.seconds)(childEvents.get.map(_.exists(_.isInstanceOf[AgentCommand.Stop])))
@@ -331,21 +404,31 @@ class AgentControlToolSpec extends CatsEffectSuite:
 
   // ── restart 守卫与路径 ─────────────────────────────────────
 
-  test("restart on Ephemeral kind is rejected with cancel guidance") {
-    val system = ActorSystem("ac-restart-eph")
+  // 裁定5 删除 `AgentKind.Ephemeral` 之后，本用例改挂到裁定4 新增的
+  // `AgentKind.External` 上——判据不变：**没有 supervisor/checkpoint 载体的 kind，
+  // restart 必须被显式拒绝并指引 cancel**（旧用例断言的 Ephemeral 已不存在）。
+  test("restart on External kind is rejected with cancel guidance") {
+    val system = ActorSystem("ac-restart-ext")
     val tmp = os.temp.dir()
     val program = for
       resources <- mkResources(system, tmp)
-      ephRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "eph-child")
-      _ <- resources.agentRegistry.set(Map(
-        "ephemeral-Mailer-ffff6666" -> AgentRecord("ephemeral-Mailer-ffff6666", ephRef, AgentKind.Ephemeral, "root-7")
-      ))
-      res <- IO(call(resources, "root-7", "restart", target = "ephemeral-Mailer-ffff6666"))
+      _ <- resources.agentRegistry.set(
+        Map(
+          "external-codex-aaaa1111" -> AgentRecord(
+            "external-codex-aaaa1111",
+            // 外部 CLI 腿进程内无 actor —— 裁定4 唯一允许 null ref 的记录
+            null,
+            AgentKind.External,
+            "root-7"
+          )
+        )
+      )
+      res <- IO(call(resources, "root-7", "restart", target = "external-codex-aaaa1111"))
     yield
       assert(res.isLeft)
       val msg = res.fold(e => e.message, _ => "")
-      assert(msg.contains("restart is not supported"), msg)
-      assert(msg.contains("Cancel"), msg)
+      assert(msg.contains("Restart is not supported"), msg)
+      assert(msg.contains("cancel"), msg)
     program.guarantee(system.stopAll.attempt.void)
   }
 
@@ -359,15 +442,23 @@ class AgentControlToolSpec extends CatsEffectSuite:
       supRef <- system.spawn(mkRecordingEvt(supEvents), "rh-sup")
       childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
       childRef <- system.spawn(mkRecordingCmd(childEvents), "rh-child")
-      _ <- resources.agentRegistry.set(Map(
-        "delegate-Worker-77778888" -> AgentRecord(
-          "delegate-Worker-77778888", childRef, AgentKind.Delegate, "root-8",
-          supervisorRef = Some(supRef), parentSessionId = "root-8"
+      _ <- resources.agentRegistry.set(
+        Map(
+          "delegate-Worker-77778888" -> AgentRecord(
+            "delegate-Worker-77778888",
+            childRef,
+            AgentKind.Delegate,
+            "root-8",
+            supervisorRef = Some(supRef),
+            parentSessionId = "root-8"
+          )
         )
-      ))
+      )
       res <- IO(call(resources, "root-8", "restart", target = "delegate-Worker-77778888", reason = "stuck turn"))
       _ <- waitUntil(3.seconds)(
-        resources.subAgentTaskStore.loadTasks("root-8").map(_.exists(t => t.taskId == "delegate-Worker-77778888" && t.status == "restarting"))
+        resources.subAgentTaskStore
+          .loadTasks("root-8")
+          .map(_.exists(t => t.taskId == "delegate-Worker-77778888" && t.status == "restarting"))
       )
       _ <- waitUntil(3.seconds)(childEvents.get.map(_.exists {
         case AgentCommand.Stop(r) => r.contains("agent-control-restart")
@@ -381,20 +472,20 @@ class AgentControlToolSpec extends CatsEffectSuite:
       assert(res.toOption.get.contains("resume from the last persisted checkpoint"), res.toOption.get)
       val task = tasks.find(_.taskId == "delegate-Worker-77778888").get
       assertEquals(task.status, "restarting")
-      assert(childCmds.exists { case AgentCommand.Stop(r) => r.contains("stuck turn"); case _ => false },
-        s"reason must ride the Stop: $childCmds")
-      assert(supEvts.isEmpty, s"restart must not message the supervisor directly (death-watch drives respawn): $supEvts")
+      assert(
+        childCmds.exists { case AgentCommand.Stop(r) => r.contains("stuck turn"); case _ => false },
+        s"reason must ride the Stop: $childCmds"
+      )
+      assert(
+        supEvts.isEmpty,
+        s"restart must not message the supervisor directly (death-watch drives respawn): $supEvts"
+      )
     program.guarantee(system.stopAll.attempt.void)
   }
 
-  test("F3(b): Team restart success text is honest — turn NOT auto-resumed, no checkpoint promise") {
-    val msg = AgentControlTool.teamRestartSuccessText("team-member-agent")
-    assert(msg.contains("未自动续跑"), msg)
-    assert(msg.contains("NOT auto-resumed"), msg)
-    assert(msg.contains("re-dispatch"), msg)
-    assert(!msg.contains("resumes from the last persisted checkpoint"),
-      "the misleading checkpoint claim must be gone: " + msg)
-  }
+  // F3(b)「Team restart success text is honest」—— 团队功能删除批阶段 3 删除：
+  // 断言对象 `AgentControlTool.teamRestartSuccessText` 随 Team 成员 restart 腿整段
+  // 删除（作者裁定 team scope 整段删除）。删因：**Team restart 能力已退役**。
 
   test("restart without a task record (persistent delegate) is rejected") {
     val system = ActorSystem("ac-restart-persist")
@@ -403,12 +494,18 @@ class AgentControlToolSpec extends CatsEffectSuite:
       resources <- mkResources(system, tmp)
       supRef <- system.spawn(mkRecordingEvt(Ref.unsafe(Nil)), "rp-sup")
       childRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "rp-child")
-      _ <- resources.agentRegistry.set(Map(
-        "delegate-Worker-99990000" -> AgentRecord(
-          "delegate-Worker-99990000", childRef, AgentKind.Delegate, "root-a",
-          supervisorRef = Some(supRef), parentSessionId = "root-a"
+      _ <- resources.agentRegistry.set(
+        Map(
+          "delegate-Worker-99990000" -> AgentRecord(
+            "delegate-Worker-99990000",
+            childRef,
+            AgentKind.Delegate,
+            "root-a",
+            supervisorRef = Some(supRef),
+            parentSessionId = "root-a"
+          )
         )
-      ))
+      )
       // 无 taskStore 记录（persistent Delegate 从不 recordTask）
       res <- IO(call(resources, "root-a", "restart", target = "delegate-Worker-99990000"))
     yield
@@ -418,225 +515,20 @@ class AgentControlToolSpec extends CatsEffectSuite:
     program.guarantee(system.stopAll.attempt.void)
   }
 
-  // ── Block 1（supervision trio §B3/§C2）：Manager 子树管控 ──
-
-  /** Instance A: Manager(mgr-a) + member(mem-a); instance B: Manager(mgr-b) +
-    * member(mem-b). Both mounted under the SAME root bucket (root-mount) —
-    * the exact shape that made same-bucket too broad for a Manager caller. */
-  private def setupDualTeam(resources: SharedResources, mgrRef: nebflow.actor.ActorRef[AgentCommand], memRef: nebflow.actor.ActorRef[AgentCommand], subRef: nebflow.actor.ActorRef[AgentCommand], bRef: nebflow.actor.ActorRef[AgentCommand], now: Long): IO[Unit] =
-    for
-      _ <- nebflow.core.flow.TeamSessionRegistry.clear
-      _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-a", "Manager", "mgr-a")
-      _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-a", "member", "mem-a")
-      _ <- nebflow.core.flow.TeamSessionRegistry.registerManager("inst-a", "mgr-a")
-      _ <- nebflow.core.flow.TeamSessionRegistry.registerParentSession("inst-a", "root-mount")
-      _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-b", "Manager", "mgr-b")
-      _ <- nebflow.core.flow.TeamSessionRegistry.registerSession("inst-b", "member", "mem-b")
-      _ <- nebflow.core.flow.TeamSessionRegistry.registerManager("inst-b", "mgr-b")
-      _ <- nebflow.core.flow.TeamSessionRegistry.registerParentSession("inst-b", "root-mount")
-      _ <- resources.agentRegistry.set(Map(
-        "mgr-a" -> AgentRecord("mgr-a", mgrRef, AgentKind.Team, "root-mount", parentSessionId = "root-mount",
-          startedAt = now, lastActivityMs = now),
-        "mem-a" -> AgentRecord("mem-a", memRef, AgentKind.Team, "root-mount", parentSessionId = "mgr-a",
-          startedAt = now, lastActivityMs = now),
-        "subtask-1" -> AgentRecord("subtask-1", subRef, AgentKind.SubTask, "root-mount", parentSessionId = "mem-a",
-          startedAt = now, lastActivityMs = now),
-        "mem-b" -> AgentRecord("mem-b", bRef, AgentKind.Team, "root-mount", parentSessionId = "mgr-b",
-          startedAt = now, lastActivityMs = now),
-        "mgr-b" -> AgentRecord("mgr-b", bRef, AgentKind.Team, "root-mount", parentSessionId = "root-mount",
-          startedAt = now, lastActivityMs = now),
-        "root-mount" -> AgentRecord("root-mount", mgrRef, AgentKind.Root, "root-mount",
-          startedAt = now, lastActivityMs = now)
-      ))
-    yield ()
-
-  test("Block 1: Manager cancels own member (direct parent after registration chain) — guard passes, degraded Stop fires") {
-    val system = ActorSystem("ac-b1-member")
-    val tmp = os.temp.dir()
-    val program = for
-      resources <- mkResources(system, tmp)
-      mgrRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1-mgr")
-      memReceived <- Ref.of[IO, List[AgentCommand]](Nil)
-      memRef <- system.spawn(mkRecordingCmd(memReceived), "b1-mem")
-      subRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1-sub")
-      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1-b")
-      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
-      res <- IO(call(resources, "mgr-a", "cancel", target = "mem-a", reason = "loop guard"))
-      _ <- waitUntil(3.seconds)(memReceived.get.map(_.exists(_.isInstanceOf[AgentCommand.Stop])))
-      registryAfter <- resources.agentRegistry.get
-      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
-    yield (res, memReceived, registryAfter)
-    val (res, memReceived, registryAfter) = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
-    assert(res.isRight, s"Manager must be able to cancel its own member (direct parent), got: $res")
-    assert(
-      memReceived.get.unsafeRunSync().exists(_.isInstanceOf[AgentCommand.Stop]),
-      "degraded cancel path must Stop the member actor"
-    )
-    assert(!registryAfter.contains("mem-a"), "registry entry must be removed after degraded cancel")
-  }
-
-  test("Block 1: Manager cancels a member's SubTask via the parentSessionId chain (subtree, not just direct children)") {
-    val system = ActorSystem("ac-b1-subtask")
-    val tmp = os.temp.dir()
-    val program = for
-      resources <- mkResources(system, tmp)
-      mgrRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1s-mgr")
-      memRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1s-mem")
-      subReceived <- Ref.of[IO, List[AgentCommand]](Nil)
-      subRef <- system.spawn(mkRecordingCmd(subReceived), "b1s-sub")
-      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1s-b")
-      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
-      res <- IO(call(resources, "mgr-a", "cancel", target = "subtask-1"))
-      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
-    yield res
-    val res = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
-    assert(res.isRight, s"SubTask of own member is inside the Manager subtree, got: $res")
-  }
-
-  test("Block 1: Manager denied another team's member (same bucket, different subtree)") {
-    val system = ActorSystem("ac-b1-cross")
-    val tmp = os.temp.dir()
-    val program = for
-      resources <- mkResources(system, tmp)
-      mgrRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1c-mgr")
-      memRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1c-mem")
-      subRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1c-sub")
-      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1c-b")
-      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
-      res <- IO(call(resources, "mgr-a", "cancel", target = "mem-b"))
-      resB <- IO(call(resources, "mgr-a", "cancel", target = "mgr-b"))
-      rootRes <- IO(call(resources, "mgr-a", "cancel", target = "root-mount"))
-      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
-    yield (res, resB, rootRes)
-    val (res, resB, rootRes) = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
-    assert(
-      res.left.exists(_.message.contains("outside your team subtree")),
-      s"other team's member must be subtree-denied, got: $res"
-    )
-    assert(
-      resB.left.exists(_.message.contains("outside your team subtree")),
-      s"other team's Manager must be subtree-denied, got: $resB"
-    )
-    assert(
-      rootRes.left.exists(_.message.contains("outside your team subtree")),
-      s"root session must be subtree-denied for a Manager caller, got: $rootRes"
-    )
-  }
-
-  test("Block 1: Manager list is scoped to its subtree (own members visible, other team hidden)") {
-    val system = ActorSystem("ac-b1-list")
-    val tmp = os.temp.dir()
-    val program = for
-      resources <- mkResources(system, tmp)
-      mgrRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1l-mgr")
-      memRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1l-mem")
-      subRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1l-sub")
-      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b1l-b")
-      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
-      res <- AgentControlTool.call(
-        io.circe.JsonObject("action" -> "list".asJson), ctx(resources, "mgr-a")
-      )
-      rootRes <- AgentControlTool.call(
-        io.circe.JsonObject("action" -> "list".asJson), ctx(resources, "root-mount")
-      )
-      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
-    yield (res, rootRes)
-    val (res, rootRes) = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
-    val out = res.toOption.get
-    assert(out.contains("mem-a"), s"own member row must be visible:\n$out")
-    assert(out.contains("subtask-1"), s"member's subagent row must be visible:\n$out")
-    assert(out.contains("mgr-a"), s"the Manager's own row must be visible:\n$out")
-    assert(!out.contains("mem-b"), s"other team's member must be hidden:\n$out")
-    assert(out.contains("your team subtree"), s"scope note must be present:\n$out")
-    val rootOut = rootRes.toOption.get
-    assert(rootOut.contains("mem-b"), s"root-bucket caller still sees everything:\n$rootOut")
-  }
-
-  // ── Block 2（supervision trio §C3-4）：Nebula 全局权 + 杀 Manager 强确认 ──
-
-  test("Block 2: root-bucket caller cancels a regular Team member — proceeds, audit line fired") {
-    val system = ActorSystem("ac-b2-member")
-    val tmp = os.temp.dir()
-    val program = for
-      resources <- mkResources(system, tmp)
-      mgrRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2-mgr")
-      memReceived <- Ref.of[IO, List[AgentCommand]](Nil)
-      memRef <- system.spawn(mkRecordingCmd(memReceived), "b2-mem")
-      subRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2-sub")
-      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2-b")
-      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
-      // audit capture
-      lbLogger = org.slf4j.LoggerFactory.getLogger("nebflow.audit").asInstanceOf[ch.qos.logback.classic.Logger]
-      appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
-      _ <- IO { appender.start(); lbLogger.addAppender(appender) }
-      res <- IO(call(resources, "root-mount", "cancel", target = "mem-a", reason = "loop guard"))
-      _ <- waitUntil(3.seconds)(memReceived.get.map(_.exists(_.isInstanceOf[AgentCommand.Stop])))
-      auditLines = appender.list.asScala.map(_.getFormattedMessage).toList
-      _ <- IO { lbLogger.detachAppender(appender); appender.stop() }
-      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
-    yield (res, memReceived, auditLines)
-    val (res, memReceived, auditLines) = program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
-    assert(res.isRight, s"root-bucket caller must cancel a Team member globally, got: $res")
-    assert(
-      memReceived.get.unsafeRunSync().exists(_.isInstanceOf[AgentCommand.Stop]),
-      "member actor must be stopped"
-    )
-    // §C3-4 audit: built-not-run IO would log nothing — the appender is the proof
-    val audit = auditLines.find(l => l.contains("action=cancel") && l.contains("mem-a"))
-    assert(audit.isDefined, s"nebflow.audit line must exist, got: $auditLines")
-    assert(audit.get.contains("targetKind=Team"), audit.get)
-    assert(audit.get.contains("reason=\"loop guard\""), audit.get)
-  }
-
-  test("Block 2: killing a team MANAGER — double confirm gate (no confirm / no reason) then confirm+reason proceeds with audit") {
-    val system = ActorSystem("ac-b2-mgr")
-    val tmp = os.temp.dir()
-    val program = for
-      resources <- mkResources(system, tmp)
-      mgrReceived <- Ref.of[IO, List[AgentCommand]](Nil)
-      mgrRef <- system.spawn(mkRecordingCmd(mgrReceived), "b2m-mgr")
-      memRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2m-mem")
-      subRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2m-sub")
-      bRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "b2m-b")
-      _ <- setupDualTeam(resources, mgrRef, memRef, subRef, bRef, System.currentTimeMillis())
-      lbLogger = org.slf4j.LoggerFactory.getLogger("nebflow.audit").asInstanceOf[ch.qos.logback.classic.Logger]
-      appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
-      _ <- IO { appender.start(); lbLogger.addAppender(appender) }
-      // 门 1：无 confirm → 拒绝 + 后果说明
-      noConfirm <- IO(call(resources, "root-mount", "cancel", target = "mgr-a"))
-      // 门 2：confirm=true 无 reason → 拒绝
-      noReason <- IO(call(resources, "root-mount", "cancel", target = "mgr-a", confirm = true))
-      auditMidway = appender.list.asScala.map(_.getFormattedMessage).toList
-      // 门 3：confirm=true + reason → 放行 + 审计含 reason
-      okRes <- IO(call(resources, "root-mount", "cancel", target = "mgr-a", reason = "manager wedged, rebuild team", confirm = true))
-      _ <- waitUntil(3.seconds)(mgrReceived.get.map(_.exists(_.isInstanceOf[AgentCommand.Stop])))
-      auditLines = appender.list.asScala.map(_.getFormattedMessage).toList
-      _ <- IO { lbLogger.detachAppender(appender); appender.stop() }
-      _ <- IO(nebflow.core.flow.TeamSessionRegistry.clear.void)
-    yield (noConfirm, noReason, auditMidway, okRes, mgrReceived, auditLines)
-    val (noConfirm, noReason, auditMidway, okRes, mgrReceived, auditLines) =
-      program.guarantee(system.stopAll.attempt.void).unsafeRunSync()
-    // 门 1：拒绝并返回后果说明
-    val m1 = noConfirm.fold(e => e.message, _ => "")
-    assert(m1.contains("confirm=true"), s"gate 1 must demand confirm, got: $m1")
-    assert(m1.contains("MANAGER"), s"gate 1 must name the target role, got: $m1")
-    assert(m1.contains("members keep running"), s"gate 1 must explain the consequence, got: $m1")
-    // 门 2：confirm=true 无 reason → 拒绝
-    val m2 = noReason.fold(e => e.message, _ => "")
-    assert(m2.contains("non-empty reason"), s"gate 2 must demand a reason, got: $m2")
-    // 两次被拒不得产生审计行（审计只在放行时落）
-    assert(auditMidway.isEmpty, s"rejected attempts must not audit, got: $auditMidway")
-    // 门 3：放行
-    assert(okRes.isRight, s"confirm=true + reason must proceed, got: $okRes")
-    assert(
-      mgrReceived.get.unsafeRunSync().exists(_.isInstanceOf[AgentCommand.Stop]),
-      "manager actor must be stopped"
-    )
-    val audit = auditLines.find(l => l.contains("action=cancel") && l.contains("mgr-a"))
-    assert(audit.isDefined, s"audit line must exist after the kill, got: $auditLines")
-    assert(audit.get.contains("confirm=true"), audit.get)
-    assert(audit.get.contains("reason=\"manager wedged, rebuild team\""), audit.get)
-  }
+  // ═══ Block 1 / Block 2（supervision trio §B3/§C2/§C3-4：团队 Manager 子树管控、
+  // Nebula 全局可管 Team、杀 Manager 的 confirm+reason 强确认门与审计行）——
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3 **整段删除**（作者裁定
+  // 「AgentControl 的 team scope 整段删除，只留 session / bgTask」）。
+  // 连带删除的夹具：`setupDualTeam`（inst-a/inst-b 双团队 + managerMap +
+  // parentSessionMap 全经团队会话登记表写入）与 6 条用例：
+  //   1. Manager cancels own member（degraded Stop）
+  //   2. Manager cancels a member's SubTask（parentSessionId 链）
+  //   3. Manager denied another team's member（子树门）
+  //   4. Manager list scoped to its subtree
+  //   5. root-bucket caller cancels a Team member（audit 行）
+  //   6. killing a team MANAGER — double confirm gate + audit
+  // 删因：**team scope 能力已退役**（不是「跑不过」）。Manager 侧的同位替代面 =
+  // Nebula 用 Delegate/SubTask/Project 会话管理，团队内不再有受管对象。
 
   // ── Project flow 会话（node-/dispatcher-）管理通道 ──────────
 
@@ -649,20 +541,28 @@ class AgentControlToolSpec extends CatsEffectSuite:
       bridgeRef <- system.spawn(mkRecordingEvt(bridgeEvents), "flow-bridge")
       nodeRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "flow-node")
       dispatcherRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "flow-dispatcher")
-      _ <- resources.agentRegistry.set(Map(
-        "node-aaaa1111" -> AgentRecord(
-          "node-aaaa1111", nodeRef, AgentKind.Flow, "root-9",
-          startedAt = System.currentTimeMillis(),
-          lastActivityMs = System.currentTimeMillis(),
-          supervisorRef = Some(bridgeRef)
-        ),
-        "dispatcher-bbbb2222" -> AgentRecord(
-          "dispatcher-bbbb2222", dispatcherRef, AgentKind.Flow, "root-9",
-          startedAt = System.currentTimeMillis(),
-          lastActivityMs = System.currentTimeMillis(),
-          supervisorRef = Some(bridgeRef)
+      _ <- resources.agentRegistry.set(
+        Map(
+          "node-aaaa1111" -> AgentRecord(
+            "node-aaaa1111",
+            nodeRef,
+            AgentKind.Flow,
+            "root-9",
+            startedAt = System.currentTimeMillis(),
+            lastActivityMs = System.currentTimeMillis(),
+            supervisorRef = Some(bridgeRef)
+          ),
+          "dispatcher-bbbb2222" -> AgentRecord(
+            "dispatcher-bbbb2222",
+            dispatcherRef,
+            AgentKind.Flow,
+            "root-9",
+            startedAt = System.currentTimeMillis(),
+            lastActivityMs = System.currentTimeMillis(),
+            supervisorRef = Some(bridgeRef)
+          )
         )
-      ))
+      )
       listRes <- IO(call(resources, "root-9", "list"))
       nodeRes <- IO(call(resources, "root-9", "cancel", target = "node-aaaa1111", reason = "hung node"))
       dispatcherRes <- IO(call(resources, "root-9", "cancel", target = "dispatcher-bbbb2222"))
@@ -689,16 +589,128 @@ class AgentControlToolSpec extends CatsEffectSuite:
       resources <- mkResources(system, tmp)
       bridgeRef <- system.spawn(mkRecordingEvt(Ref.unsafe(Nil)), "flow-bridge-r")
       nodeRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "flow-node-r")
-      _ <- resources.agentRegistry.set(Map(
-        "node-cccc3333" -> AgentRecord(
-          "node-cccc3333", nodeRef, AgentKind.Flow, "root-9",
-          supervisorRef = Some(bridgeRef)
+      _ <- resources.agentRegistry.set(
+        Map(
+          "node-cccc3333" -> AgentRecord(
+            "node-cccc3333",
+            nodeRef,
+            AgentKind.Flow,
+            "root-9",
+            supervisorRef = Some(bridgeRef)
+          )
         )
-      ))
+      )
       res <- IO(call(resources, "root-9", "restart", target = "node-cccc3333"))
     yield
       assert(res.left.exists(_.message.contains("single-shot")), res.toString)
       assert(res.left.exists(_.message.contains("Cancel")), res.toString)
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  // ── P2 scope=bgTask（后台任务生命周批 · 设计稿 §4.1-b：三守卫复用 + 任务归属校验）──
+
+  test("P2 scope=bgTask：1/N 精确取消——目标会话恰好收到一条 cancelled 事件，其余任务存活") {
+    val system = ActorSystem("ac-bg-task")
+    val tmp = os.temp.dir()
+    val sid = "delegate-bgTask-1"
+    val program = for
+      resources <- mkResources(system, tmp)
+      record <- Ref.of[IO, List[AgentCommand]](Nil)
+      delRef <- system.spawn(mkRecordingCmd(record), "bg-task-del")
+      shell <- ShellSession.forSession(sid)
+      result <- (
+        for
+          // 两条真实后台任务（属主 = 目标会话）
+          _ <- shell.executeBackground("sleep 3600", jobIdOverride = Some("g1"))
+          _ <- shell.executeBackground("sleep 3600", jobIdOverride = Some("g2"))
+          _ <- BgTaskRegistry.register("g1", sid, "task-g1", "local", rootSessionId = "root-p2")
+          _ <- BgTaskRegistry.register("g2", sid, "task-g2", "local", rootSessionId = "root-p2")
+          _ <- resources.agentRegistry.set(
+            Map(
+              sid -> AgentRecord(sid, delRef, AgentKind.Delegate, "root-p2", supervisorRef = None)
+            )
+          )
+          res <- IO(call(resources, "root-p2", "cancel", target = sid, scope = "bgTask", jobId = "g1"))
+          _ <- IO {
+            assert(res.isRight, s"scope=bgTask cancel must succeed: $res")
+            assert(res.toOption.get.contains("Cancelled background task g1"))
+          }
+          // 1/N：g1 出册、g2 存活
+          rows <- BgTaskRegistry.allActiveTasks
+          _ <- IO(assertEquals(rows.map(_.jobId), List("g2"), "只杀指定的一条"))
+          h2 <- shell.getBackgroundJobHealth("g2")
+          _ <- IO(assert(h2.exists(_.isAlive), "g2 进程必须存活"))
+          // 目标会话恰好收到一条 cancelled 事件（correlationId = jobId）
+          cmds <- record.get
+          evts = cmds.collect { case e: AgentCommand.ExternalEvent => e }
+          _ <- IO {
+            assertEquals(evts.size, 1, s"恰一条取消事件: $evts")
+            assertEquals(evts.head.eventType, "cancelled")
+            assertEquals(evts.head.correlationId, Some("g1"))
+            assert(evts.head.payload.contains("Cancelled"), evts.head.payload)
+          }
+        yield ()
+      ).guarantee(
+        shell.cancelBackgroundJob("g2").attempt.void *>
+          List("g1", "g2").traverse_(j => BgTaskRegistry.unregister(j).attempt.void) *>
+          ShellSession.destroySession(sid).attempt.void
+      )
+    yield result
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("P2 scope=bgTask：缺 jobId / 任务不属于目标会话 / 未知任务 ⇒ 拒绝（守卫与归属校验）") {
+    val system = ActorSystem("ac-bg-task-guard")
+    val tmp = os.temp.dir()
+    val sid = "delegate-bgTask-2"
+    val program = for
+      resources <- mkResources(system, tmp)
+      delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "bg-task-del2")
+      _ <- resources.agentRegistry.set(
+        Map(sid -> AgentRecord(sid, delRef, AgentKind.Delegate, "root-p2g", supervisorRef = None))
+      )
+      // 缺 jobId
+      r1 <- IO(call(resources, "root-p2g", "cancel", target = sid, scope = "bgTask"))
+      // 未知任务
+      r2 <- IO(call(resources, "root-p2g", "cancel", target = sid, scope = "bgTask", jobId = "ghost"))
+      // 归属校验：任务挂在**别的**会话名下
+      _ <- BgTaskRegistry.register("other-1", "someone-else", "task-x", "local")
+      r3 <- IO(call(resources, "root-p2g", "cancel", target = sid, scope = "bgTask", jobId = "other-1"))
+      _ <- BgTaskRegistry.unregister("other-1")
+      _ <- IO {
+        assert(r1.left.exists(_.message.contains("jobId")), r1.toString)
+        assert(r2.left.exists(_.message.contains("No active background task")), r2.toString)
+        assert(r3.left.exists(_.message.contains("does not belong")), r3.toString)
+      }
+    yield ()
+    program.guarantee(system.stopAll.attempt.void)
+  }
+
+  test("P2 scope=bgTask：会话取消语义零漂移——不带 scope 的 cancel 仍走整会话 doCancel") {
+    val system = ActorSystem("ac-bg-task-session")
+    val tmp = os.temp.dir()
+    val sid = "delegate-bgTask-3"
+    val program = for
+      resources <- mkResources(system, tmp)
+      record <- Ref.of[IO, List[AgentEvent]](Nil)
+      supRefEvt <- system.spawn(mkRecordingEvt(record), "bg-task-sup")
+      delRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "bg-task-del3")
+      rootRef <- system.spawn(mkRecordingCmd(Ref.unsafe(Nil)), "bg-task-root")
+      _ <- resources.subAgentTaskStore.recordTask(mkTask("root-p2s", sid))
+      _ <- resources.agentRegistry.set(
+        Map(
+          sid -> AgentRecord(sid, delRef, AgentKind.Delegate, "root-p2s", supervisorRef = Some(supRefEvt)),
+          "root-p2s" -> AgentRecord("root-p2s", rootRef, AgentKind.Delegate, "root-p2s", supervisorRef = None)
+        )
+      )
+      res <- IO(call(resources, "root-p2s", "cancel", target = sid))
+      _ <- IO(assert(res.isRight, s"session cancel unchanged: $res"))
+      evts <- record.get
+      _ <- IO(assert(evts.exists {
+        case AgentEvent.Cancelled(id, _) => id == sid
+        case _                           => false
+      }, s"supervisor got Cancelled: $evts"))
+    yield ()
     program.guarantee(system.stopAll.attempt.void)
   }
 

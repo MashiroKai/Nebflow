@@ -95,7 +95,10 @@ class EditToolSpec extends CatsEffectSuite:
     val p = tempFile("alpha\nbeta\n")
     EditTool.call(editInput(p, "zzz-not-there", "x"), ctx).map {
       case Left(err) =>
-        assertEquals(err.message, "old_string not found in file. Ensure the string matches exactly, including whitespace and indentation.")
+        assertEquals(
+          err.message,
+          "old_string not found in file. Ensure the string matches exactly, including whitespace and indentation."
+        )
         // file untouched
         assertEquals(DiffUtil.readFile(p), "alpha\nbeta\n")
       case Right(_) => fail("should fail")

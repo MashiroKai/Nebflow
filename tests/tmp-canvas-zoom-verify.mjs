@@ -2,6 +2,7 @@
 // 静态服务器 :8977 serve web/；nf-file 用路由 mock 回真实文件字节。
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
+import { installTicketMock, ticketGuard } from './nf-ticket-mock.mjs';
 
 const BASE = 'http://127.0.0.1:8977';
 const SID = 'sess-1';
@@ -24,13 +25,16 @@ await ctx.addInitScript(() => {
 const page = await ctx.newPage();
 page.on('pageerror', e => console.log('[pageerror]', String(e.message || e).slice(0, 150)));
 await page.route('**/api/**', r => r.fulfill({ json: {} })); // catch-all first（后注册优先，具体路径必须在后）
-await page.route('**/api/nf-file**', r => {
+await page.route('**/api/nf-file**', async r => {
+  // C 批（票据腿）：真实端点票据-only，无票 = 401（注入机制回归的哨兵）。
+  if (await ticketGuard(r)) return;
   const u = new URL(r.request().url());
   const p = u.searchParams.get('path') || '';
   if (p.endsWith('.pdf')) return r.fulfill({ body: readFileSync(PDF), contentType: 'application/pdf' });
   if (p.endsWith('.png')) return r.fulfill({ body: readFileSync(PNG), contentType: 'image/png' });
   return r.fulfill({ status: 404 });
 });
+await installTicketMock(page); // 必须最后注册（catch-all 之后）
 let serverWs = null;
 await page.routeWebSocket(/\/ws/, ws => {
   serverWs = ws;

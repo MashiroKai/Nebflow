@@ -1,7 +1,7 @@
 package nebflow.actor
 
 import cats.effect.IO
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 /**
  * System signals — delivered via a separate channel from regular messages.
@@ -83,4 +83,16 @@ object Behaviors:
     override def isStopped: Boolean = true
 
   def stopped[Msg]: Behavior[Msg] = Stopped.asInstanceOf[Behavior[Msg]]
+
+  /**
+   * 恒等行为：收到任何消息都**原地不动**（`this` 回流，状态零变化）。
+   *
+   * 用途 = 「这条消息对我没有语义」的显式落点。典型：刀一的自投计时消息
+   * [[AgentEvent.BgCompletionCapTick]] 只对**武装它的那个 actor** 有意义，其它
+   * `AgentEvent` 适配器（桥接/节点入口）必须显式声明「忽略」，而不是被 sealed
+   * 穷尽性逼出一个语义（停 actor / 完成 deferred / 报终态）——那些都会把一条
+   * 与自己无关的计时消息变成事故。
+   */
+  def ignore[Msg]: Behavior[Msg] = new:
+    def receive(ctx: ActorContext[Msg], msg: Msg): IO[Behavior[Msg]] = IO.pure(this)
 end Behaviors

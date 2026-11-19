@@ -1,0 +1,485 @@
+/* settingsRows.css — 设置页 iOS 设置行族的**造型唯一标准**
+   （settings-ios-rows 批 2026-11-06，作者令「能点击下一个面板的样式都统一成苹果的
+     这种样式 然后 底部的重启服务去掉 并且这些可点击的按钮 布局规整一点」）
+
+   ── 三层职责（改设置行只改这三处）────────────────────────────────────────
+     ① 令牌 = css/stand-tokens.css 的 `--set-*` 段（行高 / 图标盒 / 内距 / chevron
+              几何 / 动作钮高与内距的**唯一数值出生地**）；
+     ② 类   = 本文件（结构类只有一个实现：.set-card / .set-group / .set-nav /
+              .set-row / .set-btn / .set-actions / .set-row-hint / .set-collapse-body）；
+     ③ 行为 = js/settingsRows.js（setCard / setGroup / setNavRow / setRow 四个
+              构造函数 + setChevron 唯一 chevron 发射点；事件仍归各自既有绑定）。
+     机检：scripts/check-settings-ios-rows.mjs（R1 重启服务零痕 / R2 可点进行唯一样式
+     + chevron 齐备 / R3 行内右侧不重复同一数值 / R4 动作钮走令牌 + 右缘同列）。
+
+   ── 版式（对照附图 2 = iOS「通用」设置页）─────────────────────────────────
+     · 一组一卡：卡 = 白面 + r16 + 轻阴影；组标题在卡外灰底上（11px / 0.06em /
+       uppercase），组与组之间留白分组（--set-group-gap）；
+     · 行 = 左图标位（--set-icon-box 固定盒）+ 主标题 + 右侧单个副值 + chevron；
+     · 行间细分隔线：首行无上分隔、末行无下分隔、中线左缩进对齐文案列；
+     · 右列对齐：副值右缘 / 动作钮右缘 / chevron 盒左缘同一条 x —— 网格由
+       padding-right + 副值 margin-right = chevron 盒宽 推出（见令牌段注释）。
+
+   消费面：桌面设置弹窗（#settings-content）与手机设置页（同一 DOM 节点收编）
+   共用本文件，手机层只在 mobileLayer.css / 本文件移动档里换尺寸档。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+#settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--set-group-gap);
+  /* settings-whitespace 批（作者令 2026-11-07「设置面板的边距也没有考虑留白」）：
+     内容面统一安全区 —— 卡不再整宽贴屏幕边，四周留白由 --set-panel-pad-* 单源给出。 */
+  padding: var(--set-panel-pad-y) var(--set-panel-pad-x) var(--set-panel-pad-b);
+  box-sizing: border-box;
+}
+
+.sp-panel-group { display: flex; flex-direction: column; gap: var(--set-group-gap); }
+.sp-panel-group > h2 { margin: 0; font-size: var(--ds-fs-meta); color: var(--ds-text-muted); }
+.sp-panel-group[data-panel-group="models"] { order: 2; }
+.sp-panel-group[data-panel-group="runtime"] { order: 3; }
+.sp-panel-group[data-panel-group="advanced"] { order: 4; }
+.sp-panel-group[data-panel-group="about"] { order: 5; }
+
+/* ── 分组卡 ────────────────────────────────────────────────────────────── */
+.set-card {
+  position: relative;
+  background: var(--ds-surface);
+  border-radius: var(--ds-radius-card-lg);
+  box-shadow: var(--ds-shadow-card);
+  padding: var(--set-card-pad-y) 0 var(--set-card-pad-y);
+  display: flow-root;
+}
+@media (prefers-color-scheme: dark) {
+  .set-card { box-shadow: var(--ds-shadow-card-dark); }
+}
+/* 组标题：卡外灰底上的分组名（负外边距上拉进组间留白，与 iOS 分组节奏一致）。 */
+.set-card-title {
+  font-size: var(--ds-fs-meta);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ds-text-muted);
+  margin: calc(var(--ds-space-1h) - var(--set-group-gap)) var(--set-card-pad-x) var(--ds-space-1h);
+}
+
+/* ── 行网格 ────────────────────────────────────────────────────────────── */
+.set-group { display: flex; flex-direction: column; }
+
+.set-nav,
+.set-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--set-row-gap);
+  min-height: var(--set-row-h);
+  padding: var(--set-row-pad-y) var(--set-row-pad-x);
+  font-size: var(--ds-fs-body);
+  color: var(--ds-text);
+  box-sizing: border-box;
+}
+/* 行间细分隔线：只画在「行 + 行」之间（首行无上分隔、末行无下分隔）。 */
+.set-nav + .set-nav::before,
+.set-nav + .set-row::before,
+.set-row + .set-nav::before,
+.set-row + .set-row::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  /* 左缩进 = 行内距 + 图标盒 + 间隙（对齐文案列）。 */
+  left: calc(var(--set-row-pad-x) + var(--set-icon-box) + var(--set-row-gap));
+  right: var(--set-row-pad-x);
+  height: 1px;
+  background: var(--ds-border-hairline);
+}
+
+/* 可点进行（唯一形态）：整行是按钮。 */
+.set-nav {
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background var(--dur-2) ease;
+}
+.set-nav:hover { background: color-mix(in srgb, var(--ds-text) 4%, transparent); }
+.set-nav:active { background: color-mix(in srgb, var(--ds-text) 7%, transparent); }
+.set-nav:focus-visible {
+  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
+  outline-offset: -2px;
+}
+
+/* 图标位：固定盒（宽高同源 --set-icon-box），图标本体居中。 */
+.set-nav-ic {
+  flex: 0 0 var(--set-icon-box);
+  width: var(--set-icon-box);
+  height: var(--set-icon-box);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ds-text-muted);
+}
+.set-nav-ic svg { width: var(--set-icon-size); height: var(--set-icon-size); }
+
+.set-nav-label,
+.set-row-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* iOS 语义：空间不足时**值先截断**、标题保全 —— 值的 shrink 权重远高于标题
+   （真渲染实测：长值「使用浏览器内置语音识别（免费）」会把无权重差分的标题
+   挤成「STT …」；权重差分后值先收，标题逐字全出）。 */
+.set-nav .set-nav-val { flex-shrink: 999; }
+
+/* 右侧副值：**只放一个**读数（重复数值由机检 R3 判红）。 */
+.set-nav-val,
+.set-row-val {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+/* 副值右缘 = chevron 盒左缘：行是 flex gap 布局，副值与 chevron 之间隔着
+   --set-row-gap ⇒ 副值 margin-right = 负 gap 恰好抵消（真渲染实测 Δ=0）。
+   动作钮右缘同一 x（见下方 .set-row-ctrl .set-btn，它在行内距上收 20）。 */
+.set-nav .set-nav-val,
+.set-nav .set-nav-meta {
+  margin-right: calc(-1 * var(--set-row-gap));
+}
+.set-nav-meta {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* chevron：全页唯一 affordance，盒宽固定（副值与动作钮都对齐到它）。 */
+.set-nav-chev {
+  flex: 0 0 var(--set-chevron-box);
+  width: var(--set-chevron-box);
+  height: var(--set-chevron-box);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ds-text-muted);
+  opacity: var(--set-chevron-opacity);
+  transition: transform var(--dur-2) ease;
+}
+.set-nav-chev svg { width: var(--set-chevron-size); height: var(--set-chevron-size); }
+/* 原地展开行（STT / TTL）：chevron 下转表达开合，与「进下一面板」区分。 */
+.set-nav-expand[aria-expanded="true"] .set-nav-chev { transform: rotate(90deg); }
+
+/* 右列控件（开关 / 下拉 / 读数+动作钮）：空间不足时**值先截断**、标题保全
+   （同 .set-nav 的语义；ctrl 本体可缩，钮不缩）。 */
+.set-row .set-row-ctrl {
+  flex: 0 1 auto;
+  flex-shrink: 999;   /* 标题保全：空间不足时右列（值）先截，钮不缩 */
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+}
+/* provider-add-tabs 批（溢出零容忍断言 320px 实测）：开关不可缩（nb-toggle
+   flex-shrink:0 固定几何），ctrl 收缩权 999 会把它整列压成 0 宽、开关原样
+   外溢出卡（改前实测：toggle 右缘越界 35px，#settings-content +19px 真横滑
+   ——正是作者令禁的「面板手机端可以左右滑动」）。含开关的 ctrl 不低于
+   min-content，让标题侧省略号+title 收尾；纯值/钮 ctrl 语义不变。 */
+.set-row .set-row-ctrl:has(> .nb-toggle) { min-width: min-content; }
+.set-row .set-row-ctrl .set-row-val {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 头行右侧的既有状态徽标（Jev 健康腿 / STT 状态）：可缩 + 单行省略，不许把行
+   撑出卡、也不许被压成竖排（flex 缩到 1ch 宽时 CJK 逐字换行——真渲染实录，
+   nowrap 钉死 + 外层 overflow hidden 截）。 */
+.set-nav > .stt-status {
+  flex: 0 1 auto;
+  flex-shrink: 999;   /* 标题保全：空间不足时徽标先截（同副值语义） */
+  min-width: 0;
+  max-width: 45%;
+  overflow: hidden;
+}
+/* provider-add-tabs 批（溢出零容忍 P6）：裸 nowrap ⇒ 补齐省略号三件（overflow
+   由 .stt-status 外层与自身承接）；title 全文由徽标 slot.title 提供（该先例
+   出自原 paintJevHealth，现已随 JeV 面退役——2026-11-16），四件齐 = 合规收尾，
+   不是「靠遮掩」的假绿。 */
+.set-nav > .stt-status .st-badge,
+.set-nav > .stt-status .st-badge .badge-reason {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* 行内下拉：造型归输入面唯一标准（inputSurface.css），宽度按内容。 */
+.set-field { width: auto; max-width: 60%; }
+
+/* 行尾 hint（说明句 / 校验提示）：缩进对齐文案列。 */
+.set-row-hint {
+  font-size: var(--ds-fs-hint);
+  color: var(--ds-text-muted);
+  padding: var(--ds-space-1) var(--set-row-pad-x) var(--ds-space-2)
+    calc(var(--set-row-pad-x) + var(--set-icon-box) + var(--set-row-gap));
+  line-height: 1.5;
+}
+/* 卡内题注（模型回退链等段落级 hint）：左缩进回到卡内距，不跟图标列对齐。 */
+.set-card > .set-row-hint { padding-left: var(--set-row-pad-x); }
+
+/* ── 动作按钮（行内动作 + 成组行为按钮，同一尺寸令牌）──────────────────────
+   .set-btn 只覆盖**几何**（高度 / 内距 / 圆角半径族 / 字号），色与悬停态仍归
+   既有 .cfg-btn / .cfg-btn-primary（风格单点不搬家）。
+   md 档统一（作者令 2026-11-18「底部的这些按钮的设计 大小有些失衡……这些按钮的
+   样式 大小应该要有极致的控制 统一的要求」）：本族的几何**就是**服务商编辑窗
+   动作族（css/sidebar.css 的 `#cfg-modal .cfg-modal-actions .cfg-btn`）那一档
+   —— 最小 44×44 命中盒（--set-btn-h = var(--mtap, 44px)）/ 左右内距
+   --set-btn-pad-x = --ds-space-3 / 字号 --ds-fs-btn / pill 圆角 / 不折行。
+   两族共用同一批令牌值，不新开第二套几何。 */
+.set-btn {
+  height: var(--set-btn-h);
+  min-height: var(--set-btn-h);
+  /* 最小 44×44 命中盒的另一半：纯图标钮（后台智能体的停/恢复，16 图标 + 24
+     内距 + 2 边框 = 42）在宽度上差 2px；宽度地板与高度同令牌，命中盒成方。
+     文本钮本就更宽，不受影响；成组网格（.set-actions .set-btn）另行 min-width:0。 */
+  min-width: var(--set-btn-h);
+  padding: 0 var(--set-btn-pad-x);
+  border-radius: var(--ds-radius-pill);
+  font-size: var(--ds-fs-btn);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-1);
+  white-space: nowrap;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+}
+.set-btn-block { width: 100%; }
+
+/* 成组行为按钮：同一网格（同高、同宽、同左基线、同一间距）——等分列。 */
+.set-actions {
+  display: flex;
+  align-items: stretch;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--set-row-pad-x);
+  flex-wrap: wrap;
+}
+.set-actions .set-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  /* provider-add-tabs 批（溢出零容忍断言 320px）：等分列下长标签（Re-run
+     Onboarding）会顶破按钮盒（改前 +10px 双钮 → #settings-content +19px 真
+     横滑）。省略号收尾；title 全文由各发射点补（运行时豁免第四件）。 */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 整行钮（.set-btn-block 在动作网格内）= 独占一行、左右缘贴网格内容缘
+   （= 上方/下方 .set-row 的读数右缘同一条 x）。高级区批（2026-11-18 作者实拍
+   「按钮排布太乱」）：修前文件缓存清空键嵌在读数行里，右缘内收一个 chevron
+   盒宽而与上方动作网格错位 20px；收进本网格并独占一行后三条对齐（网格内容缘 =
+   读数行内容缘 = 卡内距 16）由同一处 padding 推出。 */
+.set-actions .set-btn.set-btn-block { flex: 1 1 100%; }
+.set-actions:first-child { padding-top: var(--ds-space-1h); }
+
+/* 行内动作钮右缘 = chevron 盒左缘：ctrl span 是末位子件，右缘贴行内容缘 ⇒
+   内收一个 chevron 盒宽（20）即与上排 chevron 盒左缘同 x。 */
+.set-row .set-row-ctrl .set-btn { margin-right: var(--set-chevron-align-gap); }
+
+/* ── 渐进披露摘要行（供应商 / 模型；内容在原卡内展开）────────────────────── */
+.set-disclosure {
+  width: 100%;
+  min-height: var(--set-row-h);
+  padding: var(--set-row-pad-y) var(--set-row-pad-x);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  border: 0;
+  background: transparent;
+  color: var(--ds-text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.set-disclosure:hover { background: color-mix(in srgb, var(--ds-text) 4%, transparent); }
+.set-disclosure:focus-visible {
+  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
+  outline-offset: -2px;
+}
+.set-disclosure-chevron {
+  flex: 0 0 auto;
+  color: var(--ds-text-muted);
+  transition: transform var(--dur-2) ease;
+}
+.set-disclosure[aria-expanded="true"] .set-disclosure-chevron { transform: rotate(90deg); }
+.set-disclosure-body { padding: 0 var(--set-row-pad-x) var(--ds-space-2); }
+.set-disclosure-body[hidden] { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .set-disclosure-chevron { transition: none; }
+}
+
+/* ── 折叠体（原地展开 / 配置下钻的内容面）────────────────────────────────── */
+.set-collapse-body { display: block; padding-bottom: var(--ds-space-2); }
+.set-collapse-body[hidden] { display: none; }
+.set-sub { padding: 0 var(--set-row-pad-x) var(--ds-space-2); }
+
+/* ── 模型配置两模式控件（模型配置两模式批 2026-11-18）───────────────────────
+   形态整件复用 /model 面板的 .mp-modes / .mp-mode-btn（全站唯一两模式控件；
+   modal.css 供造型）——本文件只补**设置页节内**的落位：面板头那一条
+   `margin-left: auto` 在卡内会把控件顶到右缘，本节要从左基线起排。
+   左右基线 = 0：本节挂在 .set-disclosure-body 里，横向内距已由该层给足（16）。 */
+.set-modes {
+  margin: 0 0 var(--ds-space-2);
+  justify-content: flex-start;
+  align-self: stretch;
+}
+
+/* ── 关于卡 ──────────────────────────────────────────────────────────────── */
+#settings-content .about-info { padding: 0 var(--set-row-pad-x) var(--ds-space-2); }
+/* 连接读数同行（栏目去重批 2026-11-18）：label 与值分列两端，行网格 = 同卡
+   .set-row 的「左标题 / 右读数」口径（竖向节奏也同档）。修前 label 与
+   「图标 + 词面」在一个文本流里，窄卡上被折成两行。 */
+#settings-content .about-conn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  min-height: var(--set-row-h);
+  font-size: var(--ds-fs-body);
+}
+#settings-content .about-conn-label { color: var(--ds-text); min-width: 0; }
+#settings-content .about-conn-value {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  color: var(--ds-text-muted);
+  font-size: var(--ds-fs-hint);
+  white-space: nowrap;
+}
+#settings-content .about-version { color: var(--ds-text-muted); font-size: var(--ds-fs-hint); }
+
+/* `#settings-content .neblink-account-actions`（账号修复操作安全区内缩）随账户卡
+   整件退役（作者令 2026-11-18）——零发射点。 */
+
+/* ── 移动端尺寸档（同一形态、换档；桌面零命中）─────────────────────────────
+   手机层：正文 17 / 图标 22 / 行高 max(50, 44) —— 数值来自 mobileLayer.css 既有
+   移动令牌（--mfs-body / --micon / --mrow），本批只把行族接上，不新立第二套。 */
+@media (max-width: 768px) {
+  /* 手机设置页的末端净空**不在这里写**（滚域末端净空单源批 2026-11-18 18:17）。
+     改前此处有一条 `body.mobile-layer #settings-content { padding-bottom:
+     calc(--set-panel-pad-b + --dock-h + --dock-gap + --dock-inset-b) }`——
+     它是 mobileLayer.css 里 `#settings-content` 末端净空的**第二份定义**，
+     且特异度更低从未生效（(1,1,1) < (2,3,1)）⇒ 典型「改一处必须同步另一处」
+     的死副本。现已删除，唯一来源 = mobileLayer.css 的
+     `--mobile-scroll-end`（消费点见该文件文件尾「滚域末端净空单源批」）。 */
+  body.mobile-layer .set-nav,
+  body.mobile-layer .set-row {
+    /* 与 mf-hub-row 同一条热区表达式（44 触控下限，工作台行族实测 50 档）。 */
+    min-height: max(50px, var(--mrow));
+    font-size: var(--mfs-body);
+    padding-left: var(--mpad-x);
+    padding-right: var(--mpad-x);
+  }
+  body.mobile-layer .set-disclosure {
+    min-height: max(50px, var(--mrow));
+    font-size: var(--mfs-body);
+    padding-left: var(--mpad-x);
+    padding-right: var(--mpad-x);
+  }
+  body.mobile-layer .set-nav-ic svg { width: var(--micon); height: var(--micon); }
+  body.mobile-layer .set-nav-val,
+  body.mobile-layer .set-row-val,
+  body.mobile-layer .set-row-hint { font-size: var(--mfs-min); }
+  body.mobile-layer .set-btn { height: var(--mtap); }
+  /* md 档跨视口同档（作者令 2026-11-18「这些按钮的样式 大小应该要有极致的控制
+     统一的要求」）：手机层不再让动作族掉回本面横距/字号（--mpad-x 16 / 13px），
+     两族在手机层仍是同一个 md 档（44 命中盒 / --ds-space-3 内距 / --ds-fs-btn /
+     pill / 不折行）。特异度必须压得过 mobileLayer.css 的
+     `body.mobile-layer #settings-modal .cfg-btn`（同等特异度、且该文件在本文件
+     **之后**加载 ⇒ 平手也输；`button.set-btn` 多带一个类型选择器才赢）。 */
+  body.mobile-layer #settings-modal button.set-btn {
+    height: var(--mtap);
+    min-height: var(--mtap);
+    padding: 0 var(--set-btn-pad-x);
+    font-size: var(--ds-fs-btn);
+  }
+}
+
+/* ── 设备清单行（profile-multidevice 批）──────────────────────────────────
+   共享标记：桌面个人资料面（#settings-profile-overlay）与手机个人资料页
+   （mobile/meFace.js）逐字同一份 `.pd-*` 结构，避免两套列表在两条 CSS 里漂移。
+   材质/颜色全部消费既有 token（零裸色值、零新灰底 —— 行分隔线走
+   --color-frame-border-light，与 .sp-field 同一条）。 */
+.pd-section-label {
+  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+}
+.pd-devices { display: flex; flex-direction: column; min-width: 0; }
+.pd-device-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) 0;
+  border-top: 1px solid var(--color-frame-border-light);
+  min-width: 0;
+}
+.pd-device-row:first-child { border-top: none; }
+.pd-device-icon {
+  flex: none;
+  display: flex;
+  align-items: center;
+  color: var(--color-text-muted);
+}
+.pd-device-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.pd-device-name {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  min-width: 0;
+  font-size: var(--ds-fs-body);
+  color: var(--color-text);
+}
+.pd-device-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 本机标记：纯文字 + 既有边框色描边（零新色、零灰底）。 */
+.pd-device-badge {
+  flex: none;
+  padding: 0 var(--ds-space-1);
+  border: 1px solid var(--color-frame-input-border);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+}
+.pd-device-meta {
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pd-device-signout { flex: none; }
+.pd-device-notice,
+.pd-device-empty {
+  margin: 0;
+  padding: var(--ds-space-2) 0;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+}

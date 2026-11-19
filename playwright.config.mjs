@@ -1,0 +1,84 @@
+// playwright.config.mjs — Playwright Test 总配置（2026-10-24 CI 迁移批）
+//
+// 背景：tests/*.spec.mjs 有两类文件共用一个目录、此前**没有** playwright 配置：
+//   ① @playwright/test 套件（import { test } from '@playwright/test'）——
+//     由 `npx playwright test` 收集执行；
+//   ② 独立 node 脚本（#!/usr/bin/env node，自起浏览器、自打 PASS/FAIL）——
+//     必须 `node tests/xxx.spec.mjs` 直跑；被 playwright 收集器 import 时
+//     会触发顶层副作用（自起浏览器），直接炸掉整轮收集。
+// 本配置把 ② 从收集面排除（运行时按 import 形态判定，新增 spec 无需维护名单），
+// 并钉 workers=1：大量自足 spec 绑定固定默认端口（8117–8300，存在重复占用），
+// 并行必撞端口。`-Dselfcontained` / PW_SELFCONTAINED_ONLY=1 进一步排除
+// instance-backed spec（需真实实例 + token，由 ci.yml frontend-smoke 的
+// 实例任务统一拉起服务器并桥接环境变量后点名执行）。
+
+import { readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const runnerImport = /from\s+['"]@playwright\/test['"]/;
+
+// ② 独立脚本：不匹配 @playwright/test import ⇒ 永不进收集面。
+// （含 ① 文件里注释提及该包名的假阳性风险由 `from ... '...'` 形态规避。）
+const standaloneScripts = readdirSync('tests')
+  .filter((f) => f.endsWith('.spec.mjs'))
+  .filter((f) => !runnerImport.test(readFileSync(join('tests', f), 'utf8')));
+
+// ② 补丁名单：借 `import { chromium } from '@playwright/test'` 只拿浏览器驱动的
+// 独立 runner（模块顶层自起浏览器、process.exit 收尾）。import 形态判定会把它们
+// 误收进收集面——收集期 import 即全跑并杀掉整轮 playwright 进程（provider-add-tabs
+// 批 2026-11-06 实证：PW_SELFCONTAINED_ONLY 全量「51s 假绿收场」，整份输出 =
+// mobile-chat harness 一家；--list 同样被劫持）。点名排除，node 直跑不受影响。
+standaloneScripts.push(
+  'mobile-chat-initial-scroll.spec.mjs',
+  'mobile-touch-target.spec.mjs',
+  'toggle-green-revert.spec.mjs',
+  // Standalone browser script, not a Playwright Test suite; CI runs it directly.
+  'project-open-contract.test.mjs',
+  'dropdown-menu.test.mjs',
+);
+
+// instance-backed spec：驱动真实服务器（BASE_URL/NEBFLOW_URL + token）。
+// 由 frontend-smoke 在拉起 CI 实例、桥接 ~/.stand/auth.json 后点名跑；
+// 自足套件任务用 PW_SELFCONTAINED_ONLY=1 整体排除它们。
+const instanceBacked = [
+  // Real isolated Java gateways need an exported classpath; run only explicitly, not in self-contained CI.
+  'canvas-tab-live-sync.spec.mjs',
+  'canvas-legacy-stale-comparison.spec.mjs',
+  'smoke.spec.mjs',
+  'askuser.spec.mjs',
+  'askuser-attach.spec.mjs',
+  'workspace-picker.spec.mjs',
+  'plugins-panel-redesign.spec.mjs',
+  'plugins-panel-two-actions.spec.mjs',
+  // asset-url-versioning：静态资源缓存击穿批（2026-10-25）——驱动真实引擎的
+  // 静态路由面（版本化引用/immutable 头），自足 mock 无法表达引擎行为。
+  'asset-url-versioning.spec.mjs',
+  // askuser-refresh-survive：自足任务面排除（需隔离 home + mock-LLM 夹具 runner），
+  // CI 也不跑——与 askinput-off-pending-text / askuser-lockline-history 同族重件，
+  // 编排成本见 ci.yml frontend-smoke 的说明。
+  'askuser-refresh-survive.spec.mjs',
+  // queuepos-detail：渲染面由引擎真实推导载荷驱动（target/queuepos-payload.json，
+  // 由 MergeQueuePositionSpec 落盘）——无载荷即抛错，自足任务面排除（liquid-glass
+  // 批 2026-10-31 实证：裸跑自足套件被其缺载荷抛错打断整轮收集）。
+  'queuepos-detail.spec.mjs',
+  // session-rail / clientconn-wake / askuser-lockline-history / askinput-off-pending-text
+  // 是独立脚本（②），本就不在收集面；其 CI 编排见 ci.yml frontend-smoke。
+  // attachment-persistence：P0「已发送的文件过一会失效」回归批（2026-11-18）——
+  // 断言面横跨服务端落盘授权（/uploads/<sid>/<file> 200）与前端历史恢复腿，
+  // 自足 mock 表达不了（需真 WS 发件 + 真 owner 台账 + 真 403/200）。
+  'attachment-persistence.spec.mjs',
+];
+
+const testIgnore = [...standaloneScripts];
+if (process.env.PW_SELFCONTAINED_ONLY === '1') testIgnore.push(...instanceBacked);
+
+export default {
+  testDir: 'tests',
+  testIgnore,
+  // 固定默认端口的自足 spec 不可并行（端口重复占用清单见文件头）。
+  workers: 1,
+  timeout: 180_000,
+  retries: 0,
+  use: { headless: true },
+  reporter: [['list']],
+};

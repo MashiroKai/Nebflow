@@ -6,6 +6,7 @@
 import { chromium } from 'playwright';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { establishSession } from './helpers/session-rail.mjs';
 
 const BASE_URL = process.argv[2] ?? 'http://localhost:8300';
 const TOKEN = process.argv[3] ?? '';
@@ -25,7 +26,9 @@ const browser = await chromium.launch();
 for (const scheme of ['light', 'dark']) {
   const ctx = await browser.newContext({ colorScheme: scheme, viewport: { width: 1280, height: 860 } });
   const page = await ctx.newPage();
-  await page.goto(`${BASE_URL}/?token=${TOKEN}`);
+  // Stage D: the URL token rail is retired — session comes from the
+  // one-time console ticket chain (helpers/session-rail.mjs).
+  await establishSession(BASE_URL, TOKEN, page);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(700);
 

@@ -1,13 +1,12 @@
 package nebflow.core.sandbox
 
-import io.circe.Json
-import io.circe.Decoder
+import io.circe.{Decoder, Json}
+import nebflow.actor.RootAgentIdentity
+import nebflow.shared.PathUtil
 
-import java.nio.file.{Files, LinkOption, Path, Paths}
+import java.nio.file.*
 
 import scala.jdk.CollectionConverters.*
-
-import nebflow.core.PathUtil
 
 /**
  * 阶段 2a 沙箱（设计文档 §A.2）：单一策略源。
@@ -37,10 +36,16 @@ import nebflow.core.PathUtil
  * memory.md 精确豁免）。凭据纪律不变（不建 deny 名单，08-19 裁定维持）；
  * agents/**/memory.md 非 Nebula 份读/写双闸一票拒红线延续（非新增 deny）。
  *
- * readExtras（系统只读面，§A.2/H-10①/H-12①）：/usr /System /opt/homebrew
+ * readExtras（系统只读面，§A.2/H-10①/H-12①）：/usr /System
  * /private/etc /private/var + ~/.nebflow 白名单子目录（skills/prompts/docs +
  * 系统运行数据目录 tool-results/uploads/logs/sessions/projects/agents——节点读
  * 自己的工具结果缓存/上传附件/日志/会话/项目元数据/agent 定义是正常工作需求）。
+ * [2026-09-14 耦合审计案 A] 系统面原含一条 macOS/Apple Silicon 专有的 Homebrew
+ * 前缀字面量（本批删除的条目；该字面量此后不落本文件，避免再成悬空引用）：
+ * 该条目**已退出读面承重**（全盘读吸收，见上段；readableRoots 恒为 "/"）⇒ 按
+ * 「不承重 ⇒ 删除」处置：条目删除，systemReadExtras 定义保留为 forRoot 构造链/
+ * 变异用例的快照锚点，读面语义零变化（见证 = SandboxSpec SUBSUME：剔除全部
+ * readExtras 后读面不变）。
  * §4.2-B 审计只读例外（2026-09-05 memory-management 批次二机制四，作者裁定：
  * 全局白名单加两路径）：~/.nebflow/User.md + ~/.nebflow/agents/Nebula/memory.md
  * 两个【精确文件路径】进读面（审计节点直读记忆真身，替代日志重建通道）——
@@ -58,7 +63,21 @@ import nebflow.core.PathUtil
  * 数据根入写面不扩大红线。
  *
  * enabled=false（nebflow.json sandbox.enabled=false 或非 project 会话）即回旧行为
- * （§G.1 回滚语义）：所有闸门短路过行，工具表现与沙箱引入前完全一致。
+ * （§G.1 回滚语义）：所有闸门短路过行，工具表现与沙箱引入前完全一致
+ * （pathRoot=None 保证路径语义亦随之一并回旧）。
+ *
+ * [沙箱拆围栏批 S1/S2，2026-09-10] 本批只做「解耦」不改能力：①新增 pathRoot
+ * （路径语义载体，见字段注释）——路径解析不再挂在围栏总闸上；②会话形态信号
+ * projectSession（SessionContext）接手 AGENTS.md 注入判据，sandboxEnabled 不再是
+ * 「project 会话」的代名词（design §4.4 S1 / R8）；③FileSandbox 的写根/读拒判定
+ * 退役、解析保留（S2 / R5=e2），`agents/<agent>/memory.md` 写拒（R3=c1）保留。`off` 与
+ * `forRoot` 的 cfg.enabled 回退点按 §4.5 保留不删。
+ *
+ * [沙箱拆围栏批 S3，2026-09-10] 宿主 Bash 包裹退场（F6/F7/F8 宿主路径）+ provider
+ * 语义落地（R4=d2）：`enabled` 由「围栏总闸」退化为**旧行为回退开关**（仍被
+ * `forRoot` 消费，§4.5 回退点不删）；`bashFailIfUnavailable` 字段**退役**（宿主路径
+ * 不再 fail-closed；非宿主 provider 不可用一律显式失败，无降级档）。
+ * 本 case class 的 root/pathRoot 语义**不变**（路径解析与写根推导原料）。
  *
  * Nebula 根会话（2026-09-05 作者裁定 13:09：Nebula 会话沙箱启用 + 写根
  * =~/.nebflow 数据根，让 Nebula 直接处理定义层与运行时配置）：置位点 =
@@ -68,58 +87,102 @@ import nebflow.core.PathUtil
  * sandboxPolicy 构造按 isNebulaRootSession 特判取 dataRoot；节点/分发器会话
  * 仍取 projectRoot 零变化。旁路语义：AGENTS.md 注入 gating（ContextRefresher
  * .agentsMdEnabledFor）按 agentName 排除 Nebula——sandboxEnabled 信号自本批起
- * 不再独占「project 会话」语义。
+ * 不再独占「project 会话」语义。[沙箱拆围栏批 S1, 2026-09-10] 注入判据已彻底换轨
+ * 到 SessionContext.projectSession（会话形态信号），与 sandboxEnabled 解耦——
+ * sandboxEnabled 自本批起只承载「围栏总闸」（root 推导 + 闸门开关），退役路径见
+ * design §4.4 S1/S3。
  */
 case class SandboxPolicy(
   /** canonical 后的沙箱根。 */
   root: os.Path,
-  /** 只读扩展面（系统工具链 + ~/.nebflow 白名单子目录）。[2026-09-06 读宽批]
-    * readableRoots 全盘化后本字段退出读面承重（全盘读吸收一切白名单条目）；
-    * 定义保留 = forRoot 构造链与 SUBSUME 类变异用例的快照锚点，不删。 */
+  /**
+   * 只读扩展面（系统工具链 + ~/.nebflow 白名单子目录）。[2026-09-06 读宽批]
+   * readableRoots 全盘化后本字段退出读面承重（全盘读吸收一切白名单条目）；
+   * 定义保留 = forRoot 构造链与 SUBSUME 类变异用例的快照锚点，不删。
+   */
   readExtras: List[os.Path] = Nil,
-  /** additionalRoots（H-5 预留③）：跨仓显式可写根，默认空=关。本批只留配置解析
-    * 位，不做 UI/NodeEdit 参数。语义：追加进 writableRoots 与 readableRoots。 */
+  /**
+   * additionalRoots（H-5 预留③）：跨仓显式可写根，默认空=关。语义：追加进
+   * writableRoots。[S3] 残留承重 = provider=local-process 的 Seatbelt profile
+   * 白名单扩口（JVM 写闸已随 S2 退役；宿主直跑下本字段无消费点）。
+   */
   extraWritable: List[os.Path] = Nil,
-  /** 总开关（feature flag §G.1）：false = 旧行为，全部闸门旁路。 */
+  /**
+   * 总开关（§G.1 回退语义）。[拆围栏批 S3，2026-09-10] **不再是围栏总闸**——
+   * 围栏已拆（S1/S2/S3），本字段的残留承重 = design §4.5 的「回旧行为」回退点：
+   * `false` ⇒ `forRoot` 短路 `off`（无会话根、无相对路径基准）、`SandboxRuntime.init`
+   * 不 probe 不包裹、Bash 不拦。**保留不删**（§4.5 硬要求：拆围栏 = 改缺省行为，
+   * 不是能力删除）。
+   */
   enabled: Boolean = true,
-  /** sandbox.bash.failIfUnavailable（§A.4-4）：probe 失败时 Bash fail-closed
-    * （默认 true=报 SANDBOX_UNAVAILABLE 不执行）；false = 显式降级 WARN +
-    * [unsandboxed] 前缀。 */
-  bashFailIfUnavailable: Boolean = true
+  /**
+   * 会话根（路径语义载体）。[沙箱拆围栏批 S1/R8 解耦，2026-09-10]
+   *
+   * 语义：Some = 本会话有工作根 —— 文件工具的**路径语义**锚定它（相对路径基准、
+   * Grep/Glob 缺省搜索根等，消费点 ToolPathUtil）；None = 无会话根 = 旧行为
+   * （四件套拒相对路径、Glob/Grep 用 JVM user.dir）。与 `root` 的区别：`root`
+   * 是根集合推导的原料（写根/Seatbelt profile），本字段只承载路径解析基准。
+   *
+   * 为什么必须与 `enabled` 分开：`enabled` 是「围栏总闸」——拆围栏批把它退化为
+   * 回旧行为的开关（§4.5 回退点，保留不删），而路径解析是**非围栏职能**，拆围栏
+   * 要拆的是闸、不是解析（R5=e2「拆闸保解析」）。路径语义若继续挂在 enabled 上，
+   * 拨动回退开关会连带把 Grep/Glob 缺省根打回 JVM user.dir——正是 FileSandbox
+   * 头注释自陈修掉的旧缺陷（design §8.1 X-1/X-2/X-9 的耦合面）。
+   *
+   * 取值：forRoot 内与 root 同源（同一次 canonicalize 双写），故有会话根时
+   * pathRoot == Some(root)；off / cfg.enabled=false 时为 None（此时 root="/" 仅是
+   * 占位，不得当路径基准用）。
+   */
+  pathRoot: Option[os.Path] = None
 )
 
 object SandboxPolicy:
 
-  /** 关闭态策略：闸门全部旁路。root 仅为占位（不可达——所有闸门先查 enabled）。 */
+  /**
+   * 关闭态策略：闸门全部旁路。root 仅为占位（不可达——所有闸门先查 enabled）；
+   * pathRoot=None（无会话根 ⇒ 路径语义亦回旧行为：相对路径拒、Grep/Glob 用
+   * JVM user.dir）。
+   */
   val off: SandboxPolicy = SandboxPolicy(os.Path("/"), Nil, Nil, enabled = false)
 
-  /** 系统只读面（§A.2）：够编译器/工具链/系统命令使用。[2026-09-06 读宽批]
-    * 被全盘读吸收（定义保留，退出读面承重）。 */
+  /**
+   * 系统只读面（§A.2）：够编译器/工具链/系统命令使用。[2026-09-06 读宽批]
+   * 被全盘读吸收（定义保留，退出读面承重）。[2026-09-14 耦合审计案 A]：原
+   * macOS/Apple Silicon 专有的 Homebrew 前缀条目（不承重）按案 A 处置并删除。
+   */
   def systemReadExtras: List[os.Path] =
-    List("/usr", "/System", "/opt/homebrew", "/private/etc", "/private/var").map(os.Path(_))
+    List("/usr", "/System", "/private/etc", "/private/var").map(os.Path(_))
 
-  /** ~/.nebflow 读取白名单（H-12① + 读白名单补全）：skills/prompts/docs 三子目录
-    * + 系统运行数据目录 tool-results/uploads/logs/sessions/projects/agents（只读，
-    * 不进可写根）。取 PathUtil.dataRoot（rebrand/测试 setDataRoot 均生效）。
-    * [2026-09-06 读宽批] 被全盘读吸收（定义保留，退出读面承重）。 */
+  /**
+   * ~/.nebflow 读取白名单（H-12① + 读白名单补全）：skills/prompts/docs 三子目录
+   * + 系统运行数据目录 tool-results/uploads/logs/sessions/projects/agents（只读，
+   * 不进可写根）。取 PathUtil.dataRoot（rebrand/测试 setDataRoot 均生效）。
+   * [2026-09-06 读宽批] 被全盘读吸收（定义保留，退出读面承重）。
+   */
   def nebflowReadExtras: List[os.Path] =
     List("skills", "prompts", "docs", "tool-results", "uploads", "logs", "sessions", "projects", "agents")
       .map(s => PathUtil.dataRoot / s)
 
   /**
-   * §4.2-B 审计只读例外（2026-09-05 批次二机制四）：两个记忆文件的【精确路径】
+   * §4.2-B 审计只读例外（2026-09-05 批次二机制四）：记忆文件的【精确路径】
    * 进读面——审计类节点 Read 直读记忆真身（日志重建通道 A 的稳态替代）。
-   * 只精确放行这两个文件：读面以 contains(file, file)=equals 成立；写面零变化
-   * （本列表只进 readableRoots）；与 MemoryStore.userMemoryPath/agentMemoryPath
-   * 的路径契约由 SandboxSpec 断言（防漂移）。def 而非 val：跟随 setDataRoot。
+   * 只精确放行这几个文件：读面以 contains(file, file)=equals 成立；写面零变化
+   * （本列表只进 readableRoots）；与 MemoryStore 权威路径的契约由 SandboxSpec
+   * 断言（防漂移）。def 而非 val：跟随 setDataRoot。
    *
    * [2026-09-06 读宽批] 全盘读后「进读面」语义被吸收；本列表残留唯一承重 =
-   * readDenied 负向规则的例外集（Nebula memory.md 精确豁免一票拒），定义保留。
+   * readDenied 负向规则的例外集（Soul.md / 旧位 Nebula memory.md 精确豁免一票拒），
+   * 定义保留。
+   *
+   * personal-agent 批 2026-10-04：新增根层 `Soul.md`（新位）；**旧位
+   * `agents/Nebula/memory.md` 保留在列**——双读过渡期它是回落源，被负向规则
+   * 一票拒掉就会让「尚未迁移」的 home 读不到既有记忆。
    */
   def auditReadableFiles: List[os.Path] =
     List(
       PathUtil.dataRoot / "User.md",
-      PathUtil.dataRoot / "agents" / "Nebula" / "memory.md"
+      PathUtil.dataRoot / "Soul.md",
+      PathUtil.dataRoot / "agents" / RootAgentIdentity.Name / "memory.md"
     )
 
   /** agents 子树根（负向规则锚点）。 */
@@ -149,17 +212,10 @@ object SandboxPolicy:
     else false
 
   /**
-   * Grep/Glob 遍历排除（红线覆盖遍历面）：搜索根落在 agents 子树内时，rg 追加
-   * basename 级排除（任意深度 memory.md）——文件级负向规则管不住 rg 目录遍历，
-   * 不排除则白名单内搜索会把 memory.md 内容扫进结果。返回 rg 参数片段（命中时）。
+   * forRoot readExtras 快照原料。[2026-09-06 读宽批] readableRoots 不再消费
+   * readExtras（全盘读吸收），本推导保留供构造链与变异用例；语义 = 建议性
+   * 快照，非承重面。
    */
-  def memoryGlobExcludes(canonicalRoot: Path): List[String] =
-    val agents = os.Path(canonicalize(agentsReadRoot.wrapped))
-    if canonicalRoot.startsWith(agents.wrapped) then List("--glob", "!memory.md") else Nil
-
-  /** forRoot readExtras 快照原料。[2026-09-06 读宽批] readableRoots 不再消费
-    * readExtras（全盘读吸收），本推导保留供构造链与变异用例；语义 = 建议性
-    * 快照，非承重面。 */
   def defaultReadExtras: List[os.Path] = systemReadExtras ++ nebflowReadExtras ++ auditReadableFiles
 
   /**
@@ -180,8 +236,8 @@ object SandboxPolicy:
    * 公开供 spec 断言（agentsMdEnabledFor 同文件先例）；AgentCore root 推导与
    * 本函数是 Nebula 沙箱根的唯一裁决点。
    */
-  def isNebulaRootSession(sandboxEnabled: Boolean, depth: Int, agentName: String): Boolean =
-    sandboxEnabled && depth == 0 && agentName == "Nebula"
+  def isSandboxRootSession(sandboxEnabled: Boolean, depth: Int, agentName: String): Boolean =
+    sandboxEnabled && depth == 0 && agentName == RootAgentIdentity.Name
 
   /**
    * 会话沙箱根推导（AgentCore sandboxPolicy 构造唯一调用点）：Nebula 根会话 →
@@ -210,7 +266,7 @@ object SandboxPolicy:
     fallbackProjectRoot: String,
     sandboxRoot: Option[String] = None
   ): String =
-    if isNebulaRootSession(sandboxEnabled, depth, agentName) then PathUtil.dataRoot.toString
+    if isSandboxRootSession(sandboxEnabled, depth, agentName) then PathUtil.dataRoot.toString
     else
       sandboxRoot
         .filter(_.nonEmpty)
@@ -229,12 +285,15 @@ object SandboxPolicy:
   def forRoot(root: os.Path, cfg: SandboxConfig): SandboxPolicy =
     if !cfg.enabled then off
     else
+      val canonicalRoot = os.Path(canonicalize(root.wrapped))
       SandboxPolicy(
-        root = os.Path(canonicalize(root.wrapped)),
-        readExtras = (defaultReadExtras ++ cfg.additionalRootsAsRead).map(p => os.Path(canonicalize(p.wrapped))).distinct,
+        root = canonicalRoot,
+        readExtras =
+          (defaultReadExtras ++ cfg.additionalRootsAsRead).map(p => os.Path(canonicalize(p.wrapped))).distinct,
         extraWritable = cfg.additionalRootsAsWrite.map(p => os.Path(canonicalize(p.wrapped))),
         enabled = true,
-        bashFailIfUnavailable = cfg.bashFailIfUnavailable
+        // 路径语义载体与 root 同源（拆围栏批 S1 解耦）：闸门退役不动解析基准。
+        pathRoot = Some(canonicalRoot)
       )
 
   /**
@@ -281,11 +340,11 @@ object SandboxPolicy:
    *   链接与 `..`（内核语义），绝不自行折叠 `..`。
    * - 新文件：向上找最深存在祖先，realpath 后再拼回剩余段。
    * - 拼回段中的 `..`/`.`：只对我们自己拼的、已证明不存在的段做折叠——这是
-     * contain 检查安全的必要条件（/w/x/../.. 词法上必须折出界才判得出拒绝），
-     * 与「禁止自己折叠 ..」的禁令（禁的是对已存在部分做词法 realpath）不冲突。
+   * contain 检查安全的必要条件（/w/x/../.. 词法上必须折出界才判得出拒绝），
+   * 与「禁止自己折叠 ..」的禁令（禁的是对已存在部分做词法 realpath）不冲突。
    * - 悬空 symlink 作为最深存在项：toRealPath 失败 → 按此刻词法形态判定
-     * （§A.3「新文件祖先为 symlink → 按此刻解析结果判定」），真正的执行期
-     * 兜底是写闸门的 fresh re-resolve + Bash 层 Seatbelt。
+   * （§A.3「新文件祖先为 symlink → 按此刻解析结果判定」），真正的执行期
+   * 兜底是写闸门的 fresh re-resolve + Bash 层 Seatbelt。
    */
   def canonicalize(path: Path): Path =
     var base = path.toAbsolutePath
@@ -303,34 +362,61 @@ object SandboxPolicy:
         case other => acc.resolve(other)
     }
 
-  /** contain 检查（§A.3）：NIO startsWith 是逐段比较——天然带分隔符边界，
-    * 防 /foo/bar-baz 伪匹配 /foo/bar。两侧都必须先 canonicalize。 */
+  end canonicalize
+
+  /**
+   * contain 检查（§A.3）：NIO startsWith 是逐段比较——天然带分隔符边界，
+   * 防 /foo/bar-baz 伪匹配 /foo/bar。两侧都必须先 canonicalize。
+   */
   def contains(root: Path, target: Path): Boolean =
     target.equals(root) || target.startsWith(root)
 
 end SandboxPolicy
 
 /**
- * nebflow.json 顶层 sandbox 节（§G.1 feature flag + H-5 预留③ + §A.4-4）：
+ * nebflow.json 顶层 sandbox 节（§G.1 + H-5 预留③ + **拆围栏批 S3 / R4=d2 provider**）：
  *
  * {{{
  * "sandbox": {
- *   "enabled": true,                      // 默认 true=合并后生效；false 一键回旧行为
+ *   "provider": "host",                   // 执行环境 provider，缺省 host（宿主直跑）
+ *   "enabled": true,                      // 旧行为回退点（§4.5）：false = 拆围栏前旧行为
  *   "additionalRoots": [],                // H-5 预留③：跨仓显式可写根，默认空=关
- *   "bash": { "failIfUnavailable": true } // probe 失败 fail-closed（默认）/降级
+ *   "bash": { "failIfUnavailable": true } // [S3 已退役] 不再被消费，见字段注释
  * }
  * }}}
  *
+ * [拆围栏批 S3，2026-09-10] 语义迁移逐项：
+ *  - **新增 `provider`（执行环境 provider）**，缺省 `host`——取代 docker 批 A2
+ *    「缺省 seatbelt」（design §4.2 表 + §6.4 取代项 6）。取值/失败语义见
+ *    `SandboxProvider`；U7：未实现或不可用的取值**显式失败，绝不静默回落 host**。
+ *  - `enabled`：从「围栏总闸」退化为**旧行为回退开关**（§4.5 硬要求保留）。
+ *  - `additionalRoots`：写白名单扩口（写闸已随 F1 退役）——残留承重 = provider=
+ *    local-process 的 Seatbelt profile 白名单扩口（`writableRoots`），保留。
+ *  - `bash.failIfUnavailable`：**失去对象**（宿主路径不再 fail-closed；非宿主
+ *    provider 不可用一律显式失败，无「降级到无围栏」档）⇒ 字段与键名保留（源码
+ *    兼容：存量 spec 具名参数），但**不再被任何代码消费**，启动时 WARN 提示退役。
+ *
  * Fail-safe 加载（镜像 ToolResultTtlConfig.load）：absent/非法 → 默认值
- * （enabled=true）。注意 SharedResources 字段默认值即本默认——但闸门激活还需
- * 会话级 sandboxEnabled=true（仅 project 节点/分发器 spawn 置位），存量测试
- * （无 project 上下文）不受影响。
+ * （provider=host / enabled=true）。注意 SharedResources 字段默认值即本默认。
+ * **例外（U7）**：`provider` 键存在但取值非法/类型错误时**不静默当 host**——落
+ * Host 值但把可读原因带在 `providerError` 上，由 `SandboxRuntime.init` 转成 Bash
+ * 的显式失败。
  */
 final case class SandboxConfig(
   enabled: Boolean = true,
   additionalRoots: List[String] = Nil,
-  bashFailIfUnavailable: Boolean = true
+  /**
+   * [S3 退役：不再被消费] sandbox.bash.failIfUnavailable（§A.4-4 旧语义：probe
+   * 失败时降级跑 + `[unsandboxed]` 前缀）。新语义下 provider 不可用一律显式失败
+   * （U7），无「降级」档 ⇒ 本字段与其配置键保留仅为源码兼容，启动时 WARN。
+   */
+  bashFailIfUnavailable: Boolean = true,
+  /** 执行环境 provider（design §4.2 / R4=d2 缺省 `host`）。 */
+  provider: SandboxProvider = SandboxProvider.Host,
+  /** provider 取值非法时的**显式失败原因**（U7：绝不静默回落 host）；None = 配置可解释。 */
+  providerError: Option[String] = None
 ):
+
   /** additionalRoots 只应为绝对目录路径——非法项 fail-safe 丢弃（不 fail 启动）。 */
   private def validAdditionalRoots: List[os.Path] =
     additionalRoots.filter(_.nonEmpty).flatMap { s =>
@@ -343,7 +429,10 @@ final case class SandboxConfig(
   def additionalRootsAsWrite: List[os.Path] = validAdditionalRoots
   def additionalRootsAsRead: List[os.Path] = validAdditionalRoots
 
+end SandboxConfig
+
 object SandboxConfig:
+
   given Decoder[SandboxConfig] = Decoder.instance { c =>
     for
       enabled <- c.downField("enabled").as[Option[Boolean]].map(_.getOrElse(true))
@@ -352,11 +441,32 @@ object SandboxConfig:
         .downField("bash")
         .as[Option[Map[String, Boolean]]]
         .map(_.flatMap(_.get("failIfUnavailable")).getOrElse(true))
-    yield SandboxConfig(enabled, additionalRoots, bashFailIfUnavailable)
+      providerJson <- c.downField("provider").as[Option[Json]]
+    yield
+      // provider 解析（S3 / R4=d2）：缺省 host；**非法取值或错误类型不静默回落
+      // host**（U7）——值落 Host（保证失败路径有根可用），原因带在 providerError 上。
+      val (provider, providerError) = providerJson match
+        case None => (SandboxProvider.Host, None)
+        case Some(json) =>
+          json.asString match
+            case Some(raw) =>
+              SandboxProvider.parse(raw) match
+                case Right(p) => (p, None)
+                case Left(msg) => (SandboxProvider.Host, Some(msg))
+            case None =>
+              (
+                SandboxProvider.Host,
+                Some(s""""sandbox.provider" 必须是字符串（收到 ${json.noSpaces.take(40)}）。""")
+              )
+      SandboxConfig(enabled, additionalRoots, bashFailIfUnavailable, provider, providerError)
   }
 
-  /** Fail-safe load from the raw config node（镜像 FreezeSchedule.load /
-    * ToolResultTtlConfig.load）：absent / 非法 / garbage → 默认（enabled=true）。 */
+  /**
+   * Fail-safe load from the raw config node（镜像 FreezeSchedule.load /
+   * ToolResultTtlConfig.load）：absent / 非法 / garbage → 默认（provider=host,
+   * enabled=true）。provider **取值**非法不经此路（decoder 内转 providerError，
+   * 见 U7：不静默回落 host）。
+   */
   def load(json: Option[Json]): SandboxConfig =
     json.flatMap(_.as[SandboxConfig].toOption).getOrElse(SandboxConfig())
 end SandboxConfig

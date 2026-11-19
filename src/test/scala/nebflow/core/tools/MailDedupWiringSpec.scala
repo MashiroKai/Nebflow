@@ -5,17 +5,24 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.AgentCommand
 import nebflow.agent.*
-import nebflow.core.PathUtil
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
-import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore, TeamSessionRegistry}
+import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore}
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, MailQueueItem, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -38,21 +45,23 @@ class MailDedupWiringSpec extends FunSuite:
 
   private class RecordingLlm(delayMs: Long = 0L) extends LlmHandle[IO]:
     val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(req :: _)) >>
         Stream.eval(IO.sleep(delayMs.millis)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO],
-      sessionStore: SessionStore
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
   ): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
@@ -84,11 +93,11 @@ class MailDedupWiringSpec extends FunSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -110,9 +119,9 @@ class MailDedupWiringSpec extends FunSuite:
     os.write.over(memberDir / "agent.json", """{"description": "fixture member", "useWhen": "tests"}""")
 
   private def ctxFor(
-      resources: SharedResources,
-      system: ActorSystem,
-      senderSid: String
+    resources: SharedResources,
+    system: ActorSystem,
+    senderSid: String
   ): ToolContext =
     ToolContext(
       projectRoot = os.pwd.toString,
@@ -121,15 +130,21 @@ class MailDedupWiringSpec extends FunSuite:
       actorSystem = Some(system)
     )
 
-  private def mkItem(id: String, message: String): MailQueueStore.MailQueueItem =
-    MailQueueStore.MailQueueItem(
-      id = id, from = "tester", fromSession = "sender-dd",
-      message = message, `type` = "INFO",
-      timestamp = System.currentTimeMillis(), imagePaths = Nil
+  private def mkItem(id: String, message: String): MailQueueItem =
+    MailQueueItem(
+      id = id,
+      from = "tester",
+      fromSession = "sender-dd",
+      message = message,
+      `type` = "INFO",
+      timestamp = System.currentTimeMillis(),
+      imagePaths = Nil
     )
 
-  /** Seed the persisted fingerprint file as if a previous JVM delivered `fp`
-   * at `ts` — simulates the state at a restart boundary. */
+  /**
+   * Seed the persisted fingerprint file as if a previous JVM delivered `fp`
+   * at `ts` — simulates the state at a restart boundary.
+   */
   private def seedDisk(fp: String, ts: Long): Unit =
     val file = PathUtil.dataRoot / "mail-dedup.json"
     os.makeDir.all(file / os.up)
@@ -145,7 +160,6 @@ class MailDedupWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-      _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-dd"))
       // First item — delivers normally
@@ -167,7 +181,8 @@ class MailDedupWiringSpec extends FunSuite:
     val (persisted, queueLeft) = io.unsafeRunSync()
     val injected = persisted.count(_.content.fold(identity, _.mkString).contains("DEDUP_W1_MARKER"))
     assertEquals(
-      clue(injected), 1,
+      clue(injected),
+      1,
       s"duplicate fingerprint must be injected exactly once, got $injected (persisted=${persisted.size})"
     )
     assert(clue(queueLeft).isEmpty, "duplicate item must still be consumed from the queue")
@@ -183,9 +198,10 @@ class MailDedupWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-      _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
       // The pre-restart delivery is recorded on disk only (JVM restarted)
-      _ <- IO(seedDisk(MailDeliveryDedup.fingerprint("tester", meta.id, "REPLAY_MARKER_W2"), System.currentTimeMillis()))
+      _ <- IO(
+        seedDisk(MailDeliveryDedup.fingerprint("tester", meta.id, "REPLAY_MARKER_W2"), System.currentTimeMillis())
+      )
       resources <- mkResources(system, tmp, llm, sessionStore)
       refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-dd"))
       // Restart recovery replays the disk-head item (MailTool:1075 shape)
@@ -201,7 +217,8 @@ class MailDedupWiringSpec extends FunSuite:
     val (persisted, reqs) = io.unsafeRunSync()
     val injected = persisted.count(_.content.fold(identity, _.mkString).contains("REPLAY_MARKER_W2"))
     assertEquals(
-      clue(injected), 0,
+      clue(injected),
+      0,
       "replayed mail within the dedup window must NOT be injected (disk-backed fingerprint)"
     )
     assert(clue(reqs).isEmpty, "no LLM turn should run for a suppressed replay")
@@ -217,25 +234,36 @@ class MailDedupWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-      _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
       // Identical content was delivered LONG ago — outside the window
-      _ <- IO(seedDisk(
-        MailDeliveryDedup.fingerprint("tester", meta.id, "RESEND_MARKER_W3"),
-        System.currentTimeMillis() - nebflow.shared.Defaults.MailDedupWindowMs - 60_000L
-      ))
+      _ <- IO(
+        seedDisk(
+          MailDeliveryDedup.fingerprint("tester", meta.id, "RESEND_MARKER_W3"),
+          System.currentTimeMillis() - nebflow.shared.Defaults.MailDedupWindowMs - 60_000L
+        )
+      )
       resources <- mkResources(system, tmp, llm, sessionStore)
       refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-dd"))
       resend = mkItem("mail-q-w3", "RESEND_MARKER_W3")
       _ <- MailQueueStore.append(meta.id, resend)
       _ <- refOpt.traverse_(ref => ref ! AgentCommand.MailQueued(resend, "sender-dd"))
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
+      // 投递允许与「注入落盘」是**两条**异步写路（LLM 请求先起，会话消息写入随回合走）——
+      // W1/W2/W4 各自带一个 settle 步，本用例原先缺失：`waitUntil(requests nonEmpty)` 后
+      // **立刻**读 store，负载下读到空表 ⇒ 假红（改前实测：本文件 :241 obtained 0，而同一轮
+      // 日志无 dedup 抑制 WARN，证明投递已放行）。改为「有界等它到」；两条断言本体逐字不变。
+      _ <- waitUntil(20.seconds)(
+        sessionStore
+          .loadMessagesForSession(meta.id)
+          .map(_.exists(m => m.content.fold(identity, _.mkString).contains("RESEND_MARKER_W3")))
+      )
       persisted <- sessionStore.loadMessagesForSession(meta.id)
     yield persisted
 
     val persisted = io.unsafeRunSync()
     val injected = persisted.count(_.content.fold(identity, _.mkString).contains("RESEND_MARKER_W3"))
     assertEquals(
-      clue(injected), 1,
+      clue(injected),
+      1,
       "identical content outside the window is a legitimate re-send and must deliver"
     )
   }
@@ -252,7 +280,6 @@ class MailDedupWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-      _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-dd"))
       // First item — delivered while idle (records the fingerprint)
@@ -263,7 +290,9 @@ class MailDedupWiringSpec extends FunSuite:
       // Second item: identical fingerprint, queued while the first turn is
       // still busy (slow LLM above guarantees the window)
       _ <- MailQueueStore.append(meta.id, mkItem("mail-q-w4b", "TURNEND_MARKER_W4"))
-      _ <- refOpt.traverse_(ref => ref ! AgentCommand.MailQueued(mkItem("mail-q-w4b", "TURNEND_MARKER_W4"), "sender-dd"))
+      _ <- refOpt.traverse_(ref =>
+        ref ! AgentCommand.MailQueued(mkItem("mail-q-w4b", "TURNEND_MARKER_W4"), "sender-dd")
+      )
       _ <- IO.sleep(300.millis) // second MailQueued lands while turn 1 is busy
       _ <- waitUntil(20.seconds)(MailQueueStore.load(meta.id).map(_.isEmpty))
       _ <- IO.sleep(1.second) // let a potential duplicate injection run
@@ -274,10 +303,58 @@ class MailDedupWiringSpec extends FunSuite:
     val (persisted, queueLeft) = io.unsafeRunSync()
     val injected = persisted.count(_.content.fold(identity, _.mkString).contains("TURNEND_MARKER_W4"))
     assertEquals(
-      clue(injected), 1,
+      clue(injected),
+      1,
       s"busy-queued duplicate fingerprint must not inject a second turn, got $injected (persisted=${persisted.size})"
     )
     assert(clue(queueLeft).isEmpty, "turn-end duplicate must still be consumed from the queue")
+  }
+
+  // delivery 退役批（收窄版，2026-09-15 裁定 (b)）re-pin：拒绝**方向不变**（node: 腿仍
+  // **显式拒绝** queue ⇒ 队列指纹面结构性不可达，判定面未放宽），文案统一到退役单点
+  // （`MAIL_DELIVERY_QUEUE_RETIRED`）；旧的 node: 腿专属「always immediate」文案已随退役
+  // 消失（不可达性由 MailDeliveryRetireSpec 反向钉死）。零落盘 / 零记账 / 零 turn 保持。
+  test("W5 R2（delivery 退役批 re-pin）：node: 地址不进 queue 指纹面 —— 显式拒 queue（退役单点文案）、零队列落盘、零去重记账") {
+    val system = ActorSystem(s"dd-w5-${java.util.UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir(prefix = "dd-w5")
+    fixtureTeam(tmp)
+    MailDeliveryDedup.reset()
+    val llm = new RecordingLlm
+
+    val io = for
+      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
+      meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
+      resources <- mkResources(system, tmp, llm, sessionStore)
+      suppressedBefore <- IO(MailDeliveryDedup.suppressedTotal)
+      // 分发器身份 + node: 地址 + delivery=queue（R2 腿② 必须拒 queue；退役批文案单点）
+      res <- MailTool.call(
+        JsonObject(
+          "address" -> Json.fromString("node:n-w5"),
+          "message" -> Json.fromString("改写任务书"),
+          "delivery" -> Json.fromString("queue"),
+          "chainId" -> Json.fromString("chain-n-w5")
+        ),
+        ctxFor(resources, system, "disp-w5").copy(isDispatcher = true, projectName = Some("p-w5"))
+      )
+      queueAtMember <- MailQueueStore.size(meta.id)
+      suppressedAfter <- IO(MailDeliveryDedup.suppressedTotal)
+      requests <- llm.requests.get
+      dedupFile <- IO(os.exists(PathUtil.dataRoot / "mail-dedup.json"))
+    yield (res, queueAtMember, suppressedBefore, suppressedAfter, requests, dedupFile)
+
+    val (res, queueAtMember, suppressedBefore, suppressedAfter, requests, dedupFile) = io.unsafeRunSync()
+    res match
+      case Left(err) =>
+        assert(
+          clue(err.message).contains(MailTool.ErrDeliveryQueueRetired),
+          "node: 腿必须显式拒 queue（退役单点文案）"
+        )
+        assert(!err.message.contains("always immediate"), s"旧 queue 专属文案不得复用，got: ${err.message}")
+      case Right(v) => fail(s"node: + queue 不得成功，got: $v")
+    assertEquals(queueAtMember, 0, "node: 腿不得落 MailQueueStore（queue 指纹面结构上不可达）")
+    assertEquals(suppressedAfter, suppressedBefore, "node: 腿不得咨询/记账 MailDeliveryDedup（immediate 无投递级去重，R3-a）")
+    assert(!dedupFile, "node: 腿不得触发 mail-dedup.json 落盘")
+    assert(clue(requests).isEmpty, "node: 腿不得因 queue 触发任何 turn")
   }
 
 end MailDedupWiringSpec

@@ -2,9 +2,8 @@ package nebflow.core.mcp
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
 import nebflow.core.tools.ToolRegistry
-import nebflow.llm.McpServerConfig
+import nebflow.shared.{McpServerConfig, NebflowLogger}
 
 import scala.concurrent.duration.*
 
@@ -82,13 +81,15 @@ class McpManager private (
     // R3 (wait-timeout-fix): per-server optional tool-call ceiling from the
     // server's `timeoutMs` config field — None (absent) = unbounded, replacing
     // the removed blanket 120s client hard top.
+    // 缺陷②（2026-11-02）：插件 mcp.json 的 `timeoutMs` 现在一路透传到此处
+    // （装载器白名单此前把它当未知字段丢掉 ⇒ 插件自带的 600s 预算形同虚设）。
+    // connectWithTransport 的 budget INFO 行是透传生效的可观测证据。
     val callTimeout = cfg.timeoutMs.map(_.millis)
     (cfg.command, cfg.url) match
       case (Some(cmd), _) =>
         // cwd（协议符合度批）：插件 MCP 经 PluginMcpManager 展开为绝对路径；
         // 全局配置 None → 继承进程 cwd（既有行为）。相对值按进程 cwd 解析。
-        StdioTransport(cmd, cfg.args.getOrElse(Nil), cfg.env.getOrElse(Map.empty),
-          cfg.cwd.map(c => os.Path(c, os.pwd)))
+        StdioTransport(cmd, cfg.args.getOrElse(Nil), cfg.env.getOrElse(Map.empty), cfg.cwd.map(c => os.Path(c, os.pwd)))
           .flatMap(transport => connectWithTransport(id, transport, callTimeout))
       case (_, Some(url)) =>
         val transport = new HttpTransport(url, cfg.headers.getOrElse(Map.empty))
@@ -96,9 +97,14 @@ class McpManager private (
       case _ =>
         IO.raiseError(new RuntimeException(s"MCP server '$id' must have either command or url"))
 
+  end connectServer
+
   private def connectWithTransport(id: String, transport: McpTransport, callTimeout: Option[FiniteDuration]): IO[Unit] =
     val client = new McpClient(id, transport, callTimeout = callTimeout)
     for
+      _ <- logger.info(
+        s"MCP server '$id' tools/call budget: ${callTimeout.map(t => s"${t.toMillis}ms (from config timeoutMs)").getOrElse("none (unbounded)")}"
+      )
       _ <- client.initialize()
       tools <- client.listTools()
       wrapped = tools.map(t => createMcpToolWrapper(id, t, client))

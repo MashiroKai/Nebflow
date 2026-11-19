@@ -62,15 +62,25 @@ class PresetCatalogInToolDocSpec extends FunSuite:
       .flatMap(_.asString)
       .getOrElse(fail("preset parameter missing from schema"))
 
-  test("Delegate inputSchema embeds live catalog from the store"):
+  // 2026-09-11 Delegate 恢复批：`preset` 参数随「目标恒为内置 kernel def」一并退役
+  // ——内核的模型选型归 ~/.nebflow/agents/kernel/agent.json 的定义层，不再每次
+  // 调用重选。本用例是该退役的反向钉死（旧正向断言在此即红）。
+  // 2026-09-14 工具面 `device` 摘除批（作者裁定 U1/U2）：`device` 亦随 schema 摘除
+  // ⇒ 期望键集由 {task, description, device} 收紧为 {task, description}。
+  // 2026-10-03 对齐（P1-3 归因修正）：`description` 键亦已退役（agentFlowLabel
+  // 批），`project` 键在场 ⇒ 键集 = {task, project}。判据 = 现读 `DelegateTool.inputSchema`
+  // 的 properties 键集，断言随实现现状对齐（非产品缺陷——preset/description 两条退役
+  // 各自的墓碑断言仍由上方反向钉与 DelegateToolSpec 覆盖）。
+  test("Delegate inputSchema has NO preset parameter any more (per-call model override retired)"):
     val schema = DelegateTool.inputSchema
-    val doc = presetParamDoc(schema)
-    // Static semantics preserved
-    assert(doc.contains("overrides the sub-agent's own preset/model"))
-    // Catalog consistency: every preset in the real store appears in the doc
-    // (environment-independent — self-consistent with the same file both read)
-    val names = PresetStore.catalogLines().map(_.takeWhile(c => c != ' ' && c != '—').trim)
-    names.foreach(n => assert(doc.contains(n), s"preset $n missing from Delegate preset doc"))
+    val props = schema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
+    assert(!props.contains("preset"), s"preset must be gone from Delegate schema, got: $props")
+    // external-executors 批 #1225：键集 += `executor`（主 agent 动态选择面）。
+    // 双模式批 2026-10-28：键集 += `mode`（执行形态显式声明面）。
+    // 过时测试修复（2026-11-15）：命名批（2026-10-31 `name`）与附件传输批
+    // （2026-11-05 `attachments`）后键集再扩，现值恰六参
+    // （worktree/force 已随 3007e48da 退役；与 DelegateToolSpec.schema 同钉面）。
+    assertEquals(props, Set("task", "name", "project", "executor", "mode", "attachments"))
 
   test("SubTask inputSchema embeds live catalog from the store"):
     val doc = presetParamDoc(SubTaskTool.inputSchema)
@@ -83,9 +93,15 @@ class PresetCatalogInToolDocSpec extends FunSuite:
     os.makeDir.all(dir)
     val path = dir / "model-presets.json"
     val mkStore = () => new PresetStore(path, () => List("prov/model"))
-    os.write.over(path, PresetFile("Old", Map("Old" -> ModelPreset("Old", "old note", Some("prov/model")))).asJson.toString)
+    os.write.over(
+      path,
+      PresetFile("Old", Map("Old" -> ModelPreset("Old", "old note", Some("prov/model")))).asJson.toString
+    )
     assertEquals(PresetStore.catalogLines(mkStore()), List("Old — old note"))
-    os.write.over(path, PresetFile("Old", Map("Old" -> ModelPreset("Old", "NEW note", Some("prov/model")))).asJson.toString)
+    os.write.over(
+      path,
+      PresetFile("Old", Map("Old" -> ModelPreset("Old", "NEW note", Some("prov/model")))).asJson.toString
+    )
     assertEquals(PresetStore.catalogLines(mkStore()), List("Old — NEW note"))
 
 end PresetCatalogInToolDocSpec

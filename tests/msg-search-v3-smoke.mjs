@@ -11,6 +11,8 @@ const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main', '
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.json': 'application/json', '.woff2': 'font/woff2' };
 
 const SID = 'smoke-session-1';
+let extraSession = false;
+let additionalSession = false;
 const NOW = Date.now();
 const DAY = 86400000;
 // Cross-day seed: today, yesterday, 3 days ago
@@ -20,8 +22,9 @@ const HISTORY = [
   { type: 'user', text: 'yesterday with image', timestamp: NOW - DAY, attachments: [{ type: 'image', name: 'photo.png' }] },
   { type: 'ai', text: 'yesterday ai reply', timestamp: NOW - DAY + 60000 },
   { type: 'user', text: 'three days ago text', timestamp: NOW - 3 * DAY },
-  { type: 'tool', label: 'Pop(report.html)', summary: 'pop output html', content: '<html>pop</html>' },
-  { type: 'tool', label: 'Card(report)', summary: 'legacy card output html', content: '<html>card</html>' },
+  // v3.2: payload-less legacy rows degrade through the tool input (PLAN §3.7)
+  { type: 'tool', label: 'Pop(report.html)', summary: 'pop output html', content: '<html>pop</html>', input: '{"filePath":"/tmp/report.html"}' },
+  { type: 'tool', label: 'Card(report)', summary: 'legacy card output html', content: '<html>card</html>', input: '{"filePath":"/tmp/report"}' },
   { type: 'tool', label: 'Bash\n  (ls)', summary: 'ls output', content: 'file list' },
 ];
 
@@ -32,7 +35,9 @@ function check(name, ok, extra = '') {
 }
 
 const browser = await chromium.launch();
-const page = await (await browser.newContext({ viewport: { width: 1440, height: 900 } })).newPage();
+const theme = process.env.SEARCH_TEST_THEME || 'light';
+const mobile = process.env.SEARCH_TEST_MOBILE === '1';
+const page = await (await browser.newContext({ viewport: mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 }, colorScheme: theme })).newPage();
 const pageErrors = [];
 page.on('pageerror', (e) => pageErrors.push(e.message));
 
@@ -43,7 +48,10 @@ await page.route('**/*', (route) => {
   let p = decodeURIComponent(url.pathname);
   if (p === '/') p = '/index.html';
   if (p === '/api/sessions') {
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'Smoke', agentName: 'Nebula' }], activeId: SID }) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessions: [{ id: SID, name: 'Smoke', agentName: 'Nebula' }, ...(extraSession ? [{ id: 'other-session', name: 'Other', agentName: 'OtherAgent' }] : []), ...(additionalSession ? [{ id: 'third-session', name: 'Third', agentName: 'ThirdAgent' }] : [])], activeId: SID }) });
+  }
+  if (p.startsWith('/api/sessions/other-session/history')) {
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messages: [{type:'user', text:'unique other agent marker', timestamp:NOW}], total:1 }) });
   }
   if (p.startsWith(`/api/sessions/${SID}/history`)) {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ messages: HISTORY, total: HISTORY.length, sessionId: SID }) });
@@ -66,7 +74,7 @@ await page.routeWebSocket(/\/ws/, (ws) => {
     let msg; try { msg = JSON.parse(raw); } catch { return; }
     if (msg.type === 'getConfig') sendConfig();
     else if (msg.type === 'getSessions' || msg.type === 'listSessions') sendSessions();
-    else if (msg.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: msg.sessionId, messages: [], hasMore: false, offset: 0 }));
+    else if (msg.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: msg.sessionId, messages: HISTORY, hasMore: false, offset: HISTORY.length, total: HISTORY.length }));
   });
 });
 
@@ -76,6 +84,17 @@ await page.waitForFunction(async (sid) => {
   return s.activeSessionId === sid && s.ws && s.ws.readyState === 1;
 }, SID, { timeout: 15000 });
 await page.waitForTimeout(300);
+await page.evaluate(theme => { document.documentElement.dataset.theme = theme; }, theme);
+if (mobile) {
+  await page.evaluate(async () => {
+    document.body.classList.add('mobile-layer');
+    (await import('/js/chatSearch.js')).openSearchModal();
+  });
+  await page.waitForSelector('#search-overlay.on');
+  check('mobile search filters hidden on actual page', await page.locator('.search-filters').evaluate(el => getComputedStyle(el).display === 'none'));
+  await browser.close();
+  if (checks.some(c => !c.ok)) process.exitCode = 1;
+} else {
 
 // ── Open the modal ──
 await page.click('#search-btn');
@@ -91,49 +110,103 @@ check('B1 no legacy search.hint text', !hintText.some(t => t.includes('输入关
 const tabs = page.locator('.search-tabs .search-tab');
 check('B2 exactly 5 tabs', await tabs.count() === 5);
 const tabTexts = await tabs.allTextContents();
-check('B2 tab labels', JSON.stringify(tabTexts) === JSON.stringify(['全部', '图片', '文件', 'Pop', '日期']), JSON.stringify(tabTexts));
+// v3.2 (#491 主题二): 图片与视频/链接 replace 图片/Pop — the standalone Pop tab
+// is retired; legacy Pop/Card rows surface under 文件 via the index degrade.
+check('B2 tab labels', JSON.stringify(tabTexts) === JSON.stringify(['全部', '图片与视频', '文件', '链接', '日期']), JSON.stringify(tabTexts));
 check('B2 first tab active', await tabs.nth(0).getAttribute('class') === 'search-tab active' || (await tabs.nth(0).getAttribute('class') || '').includes('active'));
 
-// B3/B4: switch to Images tab — keyword retained, filtering correct
+// B3/B4: switch to the MEDIA tab (图片与视频) — keyword retained, grid renders
 await page.fill('#search-keyword', 'test');
 await page.waitForTimeout(500);   // debounce + fetch
 await tabs.nth(1).click();
 await page.waitForTimeout(600);
 check('B3 keyword kept on tab switch', await page.inputValue('#search-keyword') === 'test');
-check('B3 images tab active', (await tabs.nth(1).getAttribute('class') || '').includes('active'));
-// 'test' matches nothing in seed → noResults state in Images tab
+check('B3 media tab active', (await tabs.nth(1).getAttribute('class') || '').includes('active'));
+// 'test' matches no entry name/ext/path in seed → noResults state in the grid
 await page.waitForSelector('#search-results .search-hint', { timeout: 3000 });
 
-// clear keyword, switch tabs for category filtering
+// clear keyword → the media grid renders the seed's one image as a card
 await page.fill('#search-keyword', '');
-await page.waitForTimeout(600);
-await page.waitForSelector('#search-results .search-result', { timeout: 3000 });
-const imgRows = await page.locator('#search-results .search-result').evaluateAll(els => els.map(e => e.dataset.attachments || ''));
-check('B4 images tab: all rows carry image attachment', imgRows.length === 1 && imgRows.every(a => a.includes('image')), JSON.stringify(imgRows));
+await page.waitForTimeout(700);
+await page.waitForSelector('#search-results .search-media-card', { timeout: 3000 });
+const mediaCards = await page.locator('#search-results .search-media-card').evaluateAll(els => els.map(e => ({ type: e.dataset.entryType, source: e.dataset.source })));
+check('B4 media tab: the user image card (grid, source user)', mediaCards.length === 1 && mediaCards[0].type === 'image' && mediaCards[0].source === 'user', JSON.stringify(mediaCards));
 
-// Files tab: seed has no non-image attachments → emptyCategory
+// Files tab: the payload-less legacy Pop/Card rows degrade to file entries
 await tabs.nth(2).click();
-await page.waitForSelector('#search-results .search-hint', { timeout: 3000 });
-const emptyText = await page.locator('#search-results .search-hint').textContent();
-check('B10 files tab empty state text', emptyText?.trim() === '该栏目下暂无内容', emptyText || '');
+await page.waitForTimeout(700);
+await page.waitForSelector('#search-results .search-media-card', { timeout: 3000 });
+const fileCards = await page.locator('#search-results .search-media-card').evaluateAll(els => els.map(e => e.dataset.entryType));
+check('B10 files tab: legacy Pop/Card degrade to file cards', fileCards.length === 2 && fileCards.every(t => t === 'file'), JSON.stringify(fileCards));
 
-// Pop tab: all rows tool+Pop/legacy-Card badge (v3.2: Card tool renamed Pop;
-// legacy Card labels still match for pre-rename history)
+// Links tab: seed carries no URL leg → emptyCategory
 await tabs.nth(3).click();
-await page.waitForSelector('#search-results .search-result', { timeout: 3000 });
-const cardRows = await page.locator('#search-results .search-result').evaluateAll(els => els.map(e => ({ kind: e.dataset.kind, badge: e.querySelector('.search-result-type')?.textContent || '' })));
-check('B4 pop tab: tool rows, Pop + legacy Card compat', cardRows.length === 2 && cardRows.every(r => r.kind === 'tool' && /Pop|Card/.test(r.badge)), JSON.stringify(cardRows));
+await page.waitForTimeout(700);
+await page.waitForSelector('#search-results .search-hint', { timeout: 3000 });
+const linksEmpty = await page.locator('#search-results .search-hint').textContent();
+check('B10 links tab empty state text', linksEmpty?.trim() === '该栏目下暂无内容', linksEmpty || '');
 
-// Pop tab: date tab disabled
+// v3.2: no tab disables the date anchor any more (index entries carry derived
+// times) — the old Pop×Date disable rule is retired.
 const dateDisabled = await tabs.nth(4).getAttribute('aria-disabled');
-check('§3 Pop×Date: date tab aria-disabled', dateDisabled === 'true', String(dateDisabled));
+check('§3 date tab never disabled in media tabs', dateDisabled !== 'true', String(dateDisabled));
 
 // Back to All
 await tabs.nth(0).click();
 await page.waitForTimeout(600);
 const dateEnabled = await tabs.nth(4).getAttribute('aria-disabled');
-check('§3 date tab restored after leaving Pop', dateEnabled === 'false');
+check('§3 date tab still enabled after leaving media', dateEnabled !== 'true', String(dateEnabled));
 
+// Exercise the actual filtering chain with two distinguishable sessions.
+extraSession = true;
+await page.locator('#search-scope').click();
+await page.locator('.project-open-menu [role="menuitemradio"]').nth(1).click();
+await page.waitForFunction(() => document.querySelector('#search-results')?.textContent.includes('unique other agent marker'), null, { timeout: 5000 });
+check('scope all fetches other session results', true);
+await page.locator('#search-agent').click();
+await page.locator('.project-open-menu [role="menuitemradio"]').filter({ hasText:'OtherAgent' }).click();
+await page.waitForFunction(() => document.querySelector('#search-agent')?.value === 'OtherAgent' && document.querySelector('#search-results')?.textContent.includes('unique other agent marker') && !document.querySelector('#search-results')?.textContent.includes('today plain message'), null, { timeout: 5000 });
+check('agent selection filters results', true);
+additionalSession = true;
+const refresh = page.waitForResponse(response => response.url().includes('/api/sessions?') && response.request().method() === 'GET', { timeout: 5000 });
+await page.locator('#search-keyword').fill('unique');
+await refresh;
+await page.waitForFunction(() => document.querySelector('#search-results')?.textContent.includes('unique other agent marker') && document.querySelector('#search-agent')?.value === 'OtherAgent' && !document.querySelector('#search-results')?.hasAttribute('data-loading'), null, { timeout: 5000 });
+await page.locator('#search-agent').click();
+check('agent options rebuilt while value stays selected', await page.locator('.project-open-menu [aria-checked="true"]').innerText().then(s => s.includes('OtherAgent')) && await page.locator('.project-open-menu [role="menuitemradio"]').filter({hasText:'ThirdAgent'}).count() === 1);
+await page.keyboard.press('Escape');
+await page.locator('#search-keyword').fill('');
+await page.locator('#search-agent').click();
+await page.keyboard.press('Escape');
+await page.locator('#search-agent').click(); await page.locator('.project-open-menu [role="menuitemradio"]').first().click();
+await page.locator('#search-scope').click(); await page.locator('.project-open-menu [role="menuitemradio"]').first().click();
+extraSession = false;
+// Scope and agent remain keyboard-operable single-choice filters.
+for (const id of ['search-scope', 'search-agent']) {
+  const trigger = page.locator(`#${id}`);
+  await trigger.click();
+  const menu = page.locator('.project-open-menu');
+  check(`${id} opens with a checked item`, await menu.isVisible() && await menu.locator('[aria-checked="true"]').count() === 1);
+  const style = await menu.evaluate(el => { const s = getComputedStyle(el); return { bg: s.backgroundColor, radius: s.borderRadius, shadow: s.boxShadow }; });
+  const background = theme === 'dark' ? 'rgba(24, 28, 38, 0.94)' : 'rgba(255, 255, 255, 0.97)';
+  check(`${id} ${theme} computed menu style`, style.bg === background && style.radius === '8px' && style.shadow !== 'none', JSON.stringify(style));
+  await page.keyboard.press('ArrowDown');
+  await page.keyboard.press('Escape');
+  check(`${id} escape restores focus`, await menu.count() === 0 && await trigger.evaluate(el => document.activeElement === el));
+}
+// Tool filter uses the shared menu while retaining the search value contract.
+await page.locator('#search-tool').click();
+const toolMenu = page.locator('.project-open-menu');
+check('tool menu opens on desktop', await toolMenu.isVisible());
+check('tool menu initial check', await toolMenu.locator('[aria-checked="true"]').count() === 1);
+await toolMenu.locator('[role="menuitemradio"]').nth(1).click();
+check('tool menu changes value', await page.locator('#search-tool').evaluate(el => el.value) === '__any__');
+await page.locator('#search-tool').click();
+check('tool menu selected value persists', await toolMenu.locator('[aria-checked="true"]').count() === 1 && (await toolMenu.locator('[aria-checked="true"]').innerText()).includes('工具'));
+await page.keyboard.press('Escape');
+check('tool menu closes on escape', await toolMenu.count() === 0);
+await page.locator('#search-tool').click();
+await toolMenu.locator('[role="menuitemradio"]').first().click();
 // B11: tool select linkage
 await tabs.nth(1).click();
 await page.waitForTimeout(300);
@@ -240,8 +313,16 @@ await page.waitForTimeout(150);
 const actives = await page.locator('#search-results .search-result').evaluateAll(els => els.map(e => e.classList.contains('active')));
 check('A4 ArrowDown moves active to 2nd', actives[1] === true && actives[0] === false, JSON.stringify(actives));
 await page.keyboard.press('Enter');
-await page.waitForTimeout(300);
-check('A4 Enter closes modal', await page.locator('#search-overlay.on').count() === 0);
+// 弹窗退场批①（2026-10-31 作者令）：Enter = 激活当前行 ⇒ 主会话直接跳转定位——
+// 搜索面关闭（act-and-exit）+ #chat 命中行滚动定位 + .search-hit-flash 高亮；
+// 消息浮窗已整体退役（chatSearchFloat.js 删除）。
+await page.waitForSelector('#chat .search-hit-flash', { timeout: 5000 });
+check('A4 Enter 激活当前行（换代：主会话命中行闪击带落地）', true);
+const actAndExit = await page.evaluate(() =>
+  !document.getElementById('search-overlay')?.classList.contains('on') &&
+  document.querySelectorAll('.nf-msgfloat').length === 0);
+check('A4 act-and-exit：modal 已关 + 无消息浮窗', actAndExit);
+await page.waitForTimeout(2000);   // let the flash expire before A8 reopens the modal
 
 // A8 regression: focus trap — 20 Tabs never leave the modal subtree
 await page.click('#search-btn');
@@ -264,4 +345,5 @@ check('no page errors', pageErrors.length === 0, pageErrors.join('; '));
 const failed = checks.filter(c => !c.ok);
 console.log(`\n${checks.length - failed.length}/${checks.length} passed`);
 await browser.close();
-process.exit(failed.length ? 1 : 0);
+process.exitCode = failed.length ? 1 : 0;
+}

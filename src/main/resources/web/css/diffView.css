@@ -1,0 +1,949 @@
+/* diffView.css — per-node file-change diff section (file-diff feature).
+   Mounted by diffView.js into the Flow Map node detail panel. */
+
+/* Section container */
+.nf-filechanges {
+  margin-top: var(--ds-space-stack-gap);
+}
+.nf-filechanges-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+}
+
+/* File list */
+.nf-filechanges-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  margin-top: var(--ds-space-1h);
+}
+
+/* One file entry (details/summary = click to expand the diff) */
+.nf-fc {
+  border: 1px solid var(--color-border, var(--nf-review-border-fallback));
+  border-radius: var(--ds-radius-chip);
+  overflow: hidden;
+  background: var(--color-bg, transparent);
+}
+.nf-fc-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--ds-fs-hint);
+  min-width: 0;
+}
+.nf-fc-row:hover {
+  background: var(--color-bg-hover, rgba(128, 128, 128, 0.12));
+}
+.nf-fc-row::marker,
+.nf-fc-row::-webkit-details-marker {
+  display: none;
+  content: '';
+}
+.nf-fc-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.nf-fc-counts {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+  white-space: nowrap;
+}
+.nf-fc-added {
+  color: var(--color-success, var(--nf-review-success-fallback));
+}
+.nf-fc-removed {
+  color: var(--color-danger, var(--nf-review-danger-fallback));
+}
+
+/* change-type badges */
+.nf-fc-badge {
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
+  white-space: nowrap;
+  border: 1px solid transparent;
+}
+.nf-fc-badge-added {
+  color: var(--color-success, var(--nf-review-success-fallback));
+  border-color: var(--color-success, var(--nf-review-success-fallback));
+}
+.nf-fc-badge-modified {
+  color: var(--color-warning, var(--nf-review-warning-fallback));
+  border-color: var(--color-warning, var(--nf-review-warning-fallback));
+}
+.nf-fc-badge-deleted {
+  color: var(--color-danger, var(--nf-review-danger-fallback));
+  border-color: var(--color-danger, var(--nf-review-danger-fallback));
+}
+
+/* diff source tag */
+.nf-fc-src {
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted, var(--nf-review-muted-fallback));
+  border: 1px solid var(--color-border, rgba(128, 128, 128, 0.3));
+  border-radius: var(--ds-radius-badge);
+  padding: 0 var(--ds-space-1h);
+  white-space: nowrap;
+}
+
+/* expanded body */
+.nf-fc-body {
+  border-top: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
+  max-height: 320px;
+  overflow: auto;
+}
+/* 空态（empty 形态 · M 档）：canvas-hint-text 批统一字档；修前色值带裸
+   rgba 兜底（`rgba(128,128,128,0.9)`），本批只留令牌。 */
+.nf-fc-empty {
+  padding: var(--ds-space-2);
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-m);
+  color: var(--cv-hint-color);
+}
+
+/* unified diff body */
+.nf-diff {
+  min-width: 0;
+}
+.nf-diff-body {
+  margin: 0;
+  padding: var(--ds-space-1h) 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+  line-height: 1.5;
+  white-space: pre;
+  overflow-x: auto;
+}
+.nf-diff-row {
+  padding: 0 var(--ds-space-2);
+}
+.nf-diff-add {
+  background: rgba(63, 185, 80, 0.15);
+  color: var(--color-success, var(--nf-review-success-fallback));
+}
+.nf-diff-del {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--color-danger, var(--nf-review-danger-fallback));
+}
+.nf-diff-ctx {
+  color: var(--color-text-muted, var(--nf-review-muted-fallback));
+}
+.nf-diff-hunk {
+  color: var(--color-info, var(--nf-review-info-fallback));
+  background: rgba(88, 166, 255, 0.1);
+  margin: var(--ds-space-1) 0;
+}
+.nf-diff-meta {
+  color: var(--color-text-muted, rgba(128, 128, 128, 0.7));
+  font-style: italic;
+}
+
+/* ── Canvas diff reader (diffCanvas.js tab, type 'filechanges') ────────────
+   拆面板批（2026-10-22 作者令「摘要上移+左右分体」）：旧 master-detail 一体
+   大面板（.fcv 分栏 = .fcv-nav 文件导航 + .fcv-view diff 阅读区）退役——文件
+   列表迁往左栏 #panel-filechanges（.nfp-* 规则，同文件尾段），Canvas 只剩
+   **选中文件**的阅读面：.fcv-view（单列滚动）+ .fcv-filehead（粘顶定心层，
+   其内 .fcv-headpill 居中标题胶囊——2026-10-22 作者三令批 + 追加零重叠令，
+   见下两段）。
+   Palette = existing tokens only（零新色值）。
+   滚动容器纪律：①水平 padding 恒零——sticky 视矩形按滚动容器自身 padding
+   内缩，零水平 padding 是「胶囊居中不漂移」的前提（文件头胶囊段详注）；
+   ②顶部 padding = 56px 卡头胶囊让位带（追加令「胶囊与标题文字/相邻控件
+   零重叠」）：卡头胶囊 .canvas-header（浮层 top10/left14）底缘 ≈38 与
+   deck fab（fixed top10+40 高）底缘 50 ⇒ 56 = 全清出 + 4px 基数。sticky
+   视矩形随此常量内缩 ⇒ 文件头胶囊钉住位 = 带底，静止态 = 钉住态同一几何
+   （本带恒定、与滚程无关——前会话「钉住偏移随 padding 漂移」坑的正面用法：
+   漂移来自**意外** padding；此处是**有意**常量带，两态恒等被 spec 钉死）。 */
+.fcv-view {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  /* 迁移批 2026-11-19：滚动权移交共享组件底座（CodeMirror .cm-scroller）——
+     组件要自持滚动才启得动视口虚拟化（D9）。本容器改为绑定高弹性列，
+     文件头（D4 的 56px 让位带）与手机文件条为不滚动的定宽头段。
+     `overflow:auto` 退役 ⇒ position:sticky 在此不滚动容器内退化为静态头
+     （几何 = 恒在顶部，不再有「钉住/静止两态」——判据变更见本批 spec 留痕）。 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--nf-dv-top-band) 0 0;
+}
+.fcv-dvhost { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
+/* ── 粘顶文件头标题胶囊（2026-10-22 作者三令批）────────────────────────────
+   作者令①居中 ②全量 frosted token ③动画节奏放慢（慢一点/自然一点/流畅一点，
+   参考 0.3-0.45s + 温和缓动）。旧全宽实条（border-bottom 分隔线 + color-bg 底
+   + 左贴边内容）退役；新形态 = 两层：
+   · .fcv-filehead —— sticky 全宽「定心层」：零背景/零边框/零水平 padding，
+     只负责 justify-content: center 把胶囊定中 + sticky 钉住。pointer-events
+     none 让位（胶囊两侧的 diff 文本照常可选中），胶囊本体 pointer-events auto。
+   · .fcv-headpill —— 居中玻璃胶囊，材质 = sapphire.css 单源全量 frosted
+     token（--glass-bg / blur(--glass-blur) saturate(1.4) / --glass-border /
+     --frost-shadow + 顶缘折射线 --sapphire-refraction），与 .canvas-header
+     同式（split.css §⑨）；#header 的底缘零边界豁免先例不适用，本胶囊走全量。
+
+   为什么居中/钉住必须「无水平 padding 定心层」方案（前会话实测坑，作者令原文：
+   「钉住偏移 112px 而非预期 56px」）：CSS Position 的 sticky 视矩形 = 滚动
+   容器 scrollport（padding box）按**其自身 padding** 内缩——若水平方向带
+   padding，钉住几何整体被 padding 撑偏（左右 56+56=112px 的水平偏斜即此
+   机制），且带 top padding 的滚动容器会让钉住的元素悬在 padding 带里、
+   内容从其上穿行。修法：.fcv-view **水平** padding 恒零（diff 行自带内缩，
+   见 .nf-diff-row / .nf-diff-body），胶囊在定心层内居中 ⇒ 水平约束矩形恒
+   等于面板可视宽，静止态与钉住态同一几何；胶囊始终 in-flow（sticky 只在
+   滚动越界时偏移），静止态不存在「下推压 diff 首行」。
+   垂直方向 = 顶部 56px 有意让位带（见 .fcv-view 段注）⇒ 文件头胶囊整体位于
+   卡头胶囊/deck fab 的浮动带之下，**任意路径宽度、任意面板宽度**零重叠
+   （2026-10-22 作者追加判据「胶囊与标题文字/相邻控件零重叠——布局层面解决」
+   ——水平走廊方案受制于卡头胶囊 fit-content 动态宽度，垂直让位是宽度无关
+   的唯一确定性解）；定心层自身 6px 顶 padding 属胶囊盒内部几何，静止/钉住
+   两态恒等，不产生任何状态切换瞬变。 */
+.fcv-filehead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  justify-content: center;
+  padding: var(--ds-space-1h) var(--ds-space-3) var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
+  min-width: 0;
+  pointer-events: none;
+}
+.fcv-headpill {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: var(--ds-space-1) var(--ds-space-3);
+  border-radius: var(--ds-radius-pill);
+  border: 1px solid var(--glass-border);
+  background:
+    linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
+    var(--glass-bg);
+  box-shadow: var(--frost-shadow);
+  color: var(--color-text-muted, var(--nf-review-muted-fallback));
+  pointer-events: auto;
+  /* 作者令③：出现 = 0.36s 温和缓出（轻位移 + 淡入，ease-out 家族曲线）；
+     每次渲染（开 tab / 换文件）重建头部 ⇒ 出现动画自然重放 = 状态切换过渡。 */
+  animation: fcv-head-in 0.36s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  transition: background-color 0.4s cubic-bezier(0.22, 0.61, 0.36, 1),
+              color 0.4s cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+.fcv-headpill .nf-fc-path {
+  flex: 0 1 auto;
+  color: var(--color-text, rgba(128, 128, 128, 0.95));
+  font-weight: 500; /* visual-style 铁律 3：标题档 500 封顶 */
+}
+/* 吸顶（作者令③）：钉住瞬间零瞬变——吸顶深度用 scroll() 时间线在前 48px
+   滚程内渐进爬坡（附加一档投影渐显，纯加深无位移/无缩放）；回滚对称渐退。
+   不支持 scroll-driven animations 的引擎经 @supports 静默跳过 = 常态基础档
+   （--frost-shadow），同样无突变。box-shadow 由此动画全程接管，故不进
+   transition 清单。 */
+@supports (animation-timeline: scroll()) {
+  .fcv-headpill {
+    animation: fcv-head-in 0.36s cubic-bezier(0.22, 0.61, 0.36, 1) both,
+               fcv-head-stuck 0.4s linear both;
+    animation-timeline: auto, scroll(nearest block);
+    animation-range: normal, 0px 48px;
+  }
+}
+@keyframes fcv-head-in {
+  from { opacity: 0; transform: translateY(-6px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes fcv-head-stuck {
+  from { box-shadow: var(--frost-shadow), 0 0 0 0 rgba(0, 0, 0, 0); }
+  to   { box-shadow: var(--frost-shadow), 0 4px 14px rgba(0, 0, 0, 0.10); }
+}
+.fcv-view .nf-diff-body {
+  padding: var(--ds-space-1h) var(--ds-space-2) var(--ds-space-2);
+}
+/* 手机层文件条（mobile-layer = 左栏面板退场层，diffCanvas 仅在该层渲染）：
+   pills 横滚，行族 = .nf-fc 复用；选中态与左栏面板同式（背景 + 阴影）。 */
+.fcv-filestrip {
+  display: flex;
+  gap: var(--ds-space-1);
+  overflow-x: auto;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-bottom: 1px solid var(--color-border, rgba(128, 128, 128, 0.2));
+}
+.fcv-filestrip .nf-fc {
+  flex: 0 0 auto;
+  max-width: 240px;
+  cursor: pointer;
+}
+.fcv-filestrip .nf-fc.active {
+  background: var(--color-bg-hover, rgba(128, 128, 128, 0.12));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+/* ── 完工通知卡（2026-10-31 22:29 单行化+hover 批 → 11-01 完工卡 diff 统计恢复批，
+   作者令版式四条：①恢复 diff 统计（合并提交第一亲 diff 统计——载荷 merge 锚键，
+   files 和回落）；②归因+状态「DELEGATE · INTERNAL · COMPLETED」合成一颗胶囊芯片
+   （.nf-rcpt-pill），diff 统计旁边单独一颗块（.nf-rcpt-note），两块之间「|」分隔；
+   ③+ 绿 / − 红语义 token 双主题达标；④两块各有 hover 态（本批样式家族：
+   块底 sapphire tint + 描边微变）。**单框批（作者令 2026-11-07）**：④的「行底」
+   层整条退役——卡头行 .nf-rcpt-head:hover 的背景/描边撤除（它与内层胶囊的
+   hover 框嵌套，hover 同屏两圈外框），只留块级 hover，见下。
+   视觉语言逐字对齐现行注入泡：卡头来源名同 .injected-source-label 族（10px
+   小号大写、sapphire 0.85）；判词 muted 单色（completed/merged/failed 同色，
+   无色相语义）。摘要行收进展开态（点开详情语义不动）；展开态正文与卡面的间距
+   只在正文可见时计费（折叠 display:none ⇒ 零高度）。 */
+.nf-rcpt-top {
+  min-width: 0;
+  /* 卡头行 = 折叠切换面（role=button 由 bindCollapsibleToggle 打上）：手型常驻
+     提示可点（hover 视觉反馈在胶囊块 .nf-rcpt-pill 上，单框批 2026-11-07 后
+     卡头行自身无 hover 框；展开态摘要区因此也不会泛蓝）。 */
+  cursor: pointer;
+}
+.nf-rcpt-top:focus-visible {
+  outline: 2px solid var(--btn-focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--ds-radius-chip);
+}
+/* 单行卡面行：弹性一行不换行。负边距补偿内边距 ⇒ 布局零位移；行底延伸进泡
+   padding 缘构成整行热区感（手型 = 可点感，行本身恒零底零影）。
+   单框批（作者令 2026-11-07「现在 delegate 的气泡 hover，会同时显示外框和内框，
+   只显示内框就行了」）：本行原自带**外框** hover（sapphire 0.08 底 + inset
+   hairline 0.22），它把内层胶囊 .nf-rcpt-pill 的**内框** hover 整个圈在里面 ⇒
+   hover 同屏两圈框。现整条退役：hover 视觉只剩内框（胶囊块底 tint + 描边微变，
+   见下条），本行 hover 零视觉、零过渡；可点感由 cursor:pointer 与胶囊/徽标各自
+   的 hover 承担，键盘 focus ring 走 .nf-rcpt-top:focus-visible（不动）。 */
+.nf-rcpt-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  margin: -2px -6px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+}
+.nf-rcpt-head:focus-visible {
+  outline: 2px solid var(--btn-focus-ring);
+  outline-offset: 1px;
+}
+/* 块一：归因+状态胶囊芯片（版式批②）——短名 + 字面 ' · ' + 判词同块，pill
+   textContent 逐字「DELEGATE · INTERNAL · COMPLETED」口径。胶囊语言 = hairline
+   边框 + 全圆角 + 横向呼吸 padding；rest 零底安静，hover = 块底 sapphire tint +
+   描边微变。单框批（2026-11-07）后这是卡头行**唯一**的 hover 框：外框
+   （.nf-rcpt-head:hover）整条退役，故本档不再需要「比行底深一档」的区分，
+   它就是 hover 反馈本身。收缩段 = 内部 .nf-rcpt-name（ellipsis 让位
+   pipe/diff 块，窄面板判词/统计不坠行）。 */
+.nf-rcpt-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  flex: 0 1 auto;
+  min-width: 0;
+  /* 字号 10px 落在胶囊本体：名与判词段之间的字面 ' · ' 文本节点继承此处——
+     不落则继承泡体正文字号，行带被撑破（单行化 B1 ≤24px 判红实证 30.47px）。 */
+  font-size: var(--ds-fs-meta);
+  line-height: 1.3;
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--ds-radius-pill);
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+@media (hover: hover) {
+  .nf-rcpt-pill:hover {
+    background: rgb(var(--sapphire) / 0.14);
+    border-color: rgb(var(--sapphire) / 0.38);
+  }
+}
+
+/* 批次短名：收缩省略号段（flex 0 1 auto——短名让位判词/统计块，过长时尾段省略）。
+   字面 ' · ' 分隔保留为文本节点，textContent 逐字节维持「KIND · EXECUTOR」口径。 */
+.nf-rcpt-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  /* 与 .bubble.injected .injected-source-label 同族（ask-label 基座：10px /
+     600 / uppercase / 0.4px 字距），来源名语义逐字保持。 */
+  font-size: var(--ds-fs-meta);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: rgb(var(--sapphire) / 0.85);
+}
+/* 判词徽标：单色墨族（muted 文字零填充零色相——failed 不红、completed 不绿，
+   判词差语义全在字面）；胶囊块内不再自带边框（块界由 .nf-rcpt-pill 承担——
+   版式批②「合成一个块」）。 */
+.nf-rcpt-badge {
+  flex: 0 0 auto;
+  font-size: var(--ds-fs-meta);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+/* 单行字面「|」分隔段（只在 diff 统计块在场时出现）：块间「|」相邻分隔（版式批
+   ②——22:29 批的 margin-left:auto 右缘贴卡口径退役）。aria-hidden——纯视觉分隔，
+   可及名零感知。 */
+.nf-rcpt-pipe {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: var(--ds-fs-meta);
+}
+/* 摘要行：收进展开态——默认 display:none（折叠卡面恒单行），.nf-rcpt-top 的
+   aria-expanded（bindCollapsibleToggle 维护）驱动显隐。展开后面 = 一句话结果
+   （flex 收缩省略号）+ merge commit 短哈希（mono 右缘段，不随省略号截断——
+   判词摘要恒带得到短哈希是作者令的硬判据）。 */
+.nf-rcpt-summary {
+  display: none;
+  align-items: baseline;
+  gap: var(--ds-space-1h);
+  min-width: 0;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text);
+}
+.nf-rcpt-top[aria-expanded='true'] + .nf-rcpt-summary {
+  display: flex;
+  margin-top: var(--ds-space-1);
+}
+.nf-rcpt-aggregate-children {
+  display: none;
+  margin-top: var(--ds-space-1h);
+  color: var(--color-text-muted);
+  font-size: var(--ds-fs-meta);
+}
+.nf-rcpt-top[aria-expanded='true'] ~ .nf-rcpt-aggregate-children {
+  display: grid;
+  gap: var(--ds-space-half);
+}
+.nf-rcpt-aggregate-child {
+  display: grid;
+  grid-template-columns: minmax(5rem, 0.8fr) minmax(0, 2fr) auto;
+  gap: var(--ds-space-1h);
+  min-width: 0;
+}
+.nf-rcpt-aggregate-child > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nf-rcpt-summary-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.nf-rcpt-hash {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+}
+/* 块二：diff 统计胶囊（版式批①②③——该批**合并**的代码量变化「+新增 −删除」）：
+   +数绿 −数红（非 --color-success/--color-error 亮档（亮底对比不足），复用
+   ui-status-redesign 批亮暗双档图标 token 对 --status-success-icon /
+   --status-error-icon，双主题 ≥4.5:1）；hover 不褪色（语义色恒驻——版式批③，
+   22:29 批的「hover 褪成正文色」退役）。胶囊构造：hairline 边框 + 全圆角 +
+   横向 padding（作者令「单独一颗块」；22:29 批「零构造」口径随版式批退役）。
+   files 载荷在场 = button（diff 面板入口：toggleDiffBatch，aria-pressed = 该批次
+   已在左栏面板承载）；merge-only 最小载荷 = span 静态色块（hover 态在场，
+   cursor 默认——无点击面不装可点）。+a/−r 两段各走 span，字面空格文本节点保留
+   ⇒ textContent 逐字节「+a −r」。 */
+.nf-rcpt-note {
+  position: relative; /* 命中盒外扩的定位根（::after，见下） */
+  display: inline-flex;
+  align-items: baseline;
+  flex: 0 0 auto;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  margin: 0;
+  border: 1px solid var(--color-border);
+  background: none;
+  font: inherit;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+  /* 行距 1.3 显式落定：不落则继承泡体正文行距，mono 段撑破单行带
+     （B1 ≤24px 判红实证 25.05px）。 */
+  line-height: 1.3;
+  color: var(--color-text-muted);
+  border-radius: var(--ds-radius-pill);
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+/* 命中盒（作者令 2026-11-04「diff 徽标点击退化」）：
+   徽标可见本体只有 ~18px 高（单行卡面 10px/1.3 字阶里的 mono 段），点击面同样
+   只有 18px —— 远低于 --ds-hit-row 44（HIG / WCAG 2.5.5 触控下限），实测命中盒
+   18.3px：鼠标要精确瞄准一条细带，手机上基本点不中 ⇒ 「点了没反应」。
+   修法 = ::after 只**纵向**外扩到 44（横向保持徽标宽，绝不侵占左侧 .nf-rcpt-pill
+   的命中面：同一行两颗块各有各的热区），视觉零变化（伪元素透明、无背景无描边，
+   不参与布局）。 */
+.nf-rcpt-note::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: min(0px, calc((100% - var(--ds-hit-row)) / 2));
+  bottom: min(0px, calc((100% - var(--ds-hit-row)) / 2));
+}
+button.nf-rcpt-note { cursor: pointer; }
+span.nf-rcpt-note { cursor: default; }
+.nf-rcpt-note:hover {
+  background: rgb(var(--sapphire) / 0.18);
+  border-color: rgb(var(--sapphire) / 0.38);
+}
+.nf-rcpt-partial { color: var(--color-text-muted); font-family: inherit; }
+.nf-rcpt-note-add { color: var(--status-success-icon); }
+.nf-rcpt-note-del { color: var(--status-error-icon); }
+.nf-rcpt-note:focus-visible {
+  outline: 1px solid var(--color-border);
+  outline-offset: 2px;
+  border-radius: var(--ds-radius-pill);
+}
+.nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-add,
+.nf-rcpt-note[aria-pressed='true'] .nf-rcpt-note-del {
+  color: rgb(var(--sapphire, 88, 166, 255) / 0.95);
+}
+/* 展开态间距：摘要/正文只在可见时计费（折叠 display:none ⇒ 零高度贡献）。 */
+.nf-rcpt-summary + .injected-content,
+.nf-rcpt-top[aria-expanded='true'] + .injected-content {
+  margin-top: var(--ds-space-1h);
+}
+
+/* ── 左栏「变更文件」面板（#panel-filechanges，拆面板批 2026-10-22）────────
+   面板族语言：.panel/.panel-header/.panel-title 基座 = css/sidebar.css；本段
+   只补内容面（列表行复用 .nf-fc 行族；选中态 = 背景 + 阴影，visual-style
+   铁律 5「侧边栏激活态用阴影，不用竖线」）。 */
+.nfp-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted, var(--nf-review-muted-fallback));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nfp-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--ds-space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+}
+/* 空态（empty 形态 · H 档）：同上一处，行高从裸 1.5 收进 --cv-hint-lh-h。 */
+.nfp-empty {
+  padding: var(--ds-space-block-y) var(--ds-space-1h);
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+}
+.nfp-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+}
+.nfp-list .nf-fc {
+  cursor: pointer;
+}
+/* 长路径自左省略（文件名恒可见）——原 chat 面同款 RTL 技巧迁到面板行。 */
+.nfp-list .nf-fc-path {
+  direction: rtl;
+  text-align: left;
+}
+.nfp-list .nf-fc.active {
+  background: var(--color-bg-hover, rgba(128, 128, 128, 0.12));
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+}
+
+/* ── 二次加载清剿批（2026-10-24 · 作者报障「点 diff … 打开还是很慢/点了没反应」）
+   装载态 + 失败可见反馈面。颜色只用既有 --color-* token（禁裸 hex）。 ── */
+/* 流式渲染进行中：Canvas 阅读器首帧的装载态行（渲染完成即移除）。 */
+.nf-diff-loading {
+  padding: var(--ds-space-2) var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted, var(--nf-review-muted-fallback));
+  animation: nf-diff-loading-pulse 1.2s ease-in-out infinite;
+}
+@keyframes nf-diff-loading-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+/* 面板 meta 槽的失败文案（打开链 import/容器失败——禁静默无响应）。 */
+.nfp-meta-err {
+  color: var(--color-danger, #d64545);
+  font-size: var(--ds-fs-hint);
+}
+/* 打开失败行的行内标记（下次成功开图时移除）。 */
+.nf-fc-openfail {
+  outline: 1px solid var(--color-danger, #d64545);
+}
+
+/* ── Ask edit review tab (askEditReview.js, type 'askreview') ─────────────
+   canvas-inline-diff-review（2026-11-16）：ask_edit/ask_write 直接落盘后的
+   聚合审阅页签——原文档全文就地绿增红删（行级 token 词汇与 .nf-diff-* 同源：
+   --color-success/--color-danger 低饱和底 + 左缘实色条），长未变段折叠，逐块/
+   全量接受拒绝，冲突显式条。 */
+.canvas-tab-pane[data-type="askreview"] {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.nf-ar-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  flex-wrap: wrap;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border-bottom: var(--ds-border-width) solid var(--color-border, var(--nf-review-border-fallback));
+}
+.nf-ar-headpill {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ds-space-1h);
+  min-width: 0;
+}
+.nf-ar-file {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.nf-ar-counts {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted, var(--nf-review-muted-fallback));
+  white-space: nowrap;
+}
+.nf-ar-added { color: var(--color-success, var(--nf-review-success-fallback)); }
+.nf-ar-removed { color: var(--color-danger, var(--nf-review-danger-fallback)); }
+/* 通用钮：紧凑 24px 命中档（页签内次级动作面 = 冲突条的重试/保留现状两颗）。 */
+.nf-ar-btn {
+  min-height: 24px;
+  padding: 0 var(--ds-space-2);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  border-radius: var(--ds-radius-chip);
+  color: var(--color-primary);
+  background: rgb(var(--sapphire) / 0.13);
+  border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.25);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              border-color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              opacity var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+}
+@media (hover: hover) {
+  .nf-ar-btn:hover { background: rgb(var(--sapphire) / 0.22); }
+}
+.nf-ar-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.nf-ar-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
+/* 冲突条（显式提示，绝不静默覆盖；role=alert）。 */
+.nf-ar-conflict {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  flex-wrap: wrap;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  background: rgba(210, 153, 34, 0.12);
+  border-bottom: var(--ds-border-width) solid rgba(210, 153, 34, 0.4);
+}
+.nf-ar-conflict-text {
+  font-size: var(--ds-fs-meta);
+  color: var(--color-warning, var(--nf-review-warning-fallback));
+}
+.nf-ar-conflict-err {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted, var(--nf-review-muted-fallback));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 40%;
+}
+.nf-ar-conflict-actions {
+  display: flex;
+  gap: var(--ds-space-1h);
+  margin-left: auto;
+}
+.nf-ar-retry { color: var(--color-warning, var(--nf-review-warning-fallback)); background: rgba(210, 153, 34, 0.12); border-color: rgba(210, 153, 34, 0.35); }
+@media (hover: hover) { .nf-ar-retry:hover { background: rgba(210, 153, 34, 0.2); } }
+.nf-ar-dismiss { color: var(--color-text-muted); background: transparent; border-color: var(--color-border, var(--nf-review-border-fallback)); }
+@media (hover: hover) { .nf-ar-dismiss:hover { color: var(--color-text); background: var(--color-surface); } }
+/* 文档体：全文滚动面（横向可滚——diff 行不折行）。 */
+.nf-ar-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--ds-space-1h) 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+  line-height: 1.5;
+}
+.nf-ar-line {
+  padding: 0 var(--ds-space-2);
+  white-space: pre;
+  color: var(--color-text);
+}
+.nf-ar-line.ctx { color: var(--color-text-muted, var(--nf-review-muted-fallback)); }
+.nf-ar-line.add {
+  color: var(--color-success, var(--nf-review-success-fallback));
+  background: rgba(63, 185, 80, 0.15);
+  box-shadow: inset 2px 0 0 var(--color-success, var(--nf-review-success-fallback));
+}
+.nf-ar-line.del {
+  color: var(--color-danger, var(--nf-review-danger-fallback));
+  background: rgba(248, 81, 73, 0.15);
+  box-shadow: inset 2px 0 0 var(--color-danger, var(--nf-review-danger-fallback));
+}
+/* 折叠带：长未变段只露头尾，中间收进按钮。 */
+.nf-ar-foldwrap { padding: 0; }
+.nf-ar-fold {
+  display: block;
+  width: 100%;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border: 0;
+  background: transparent;
+  color: var(--color-info, var(--nf-review-info-fallback));
+  font: inherit;
+  font-size: var(--ds-fs-hint);
+  text-align: left;
+  cursor: pointer;
+}
+@media (hover: hover) { .nf-ar-fold:hover { background: rgba(88, 166, 255, 0.08); } }
+.nf-ar-fold:focus-visible { outline: 2px solid var(--color-info, var(--nf-review-info-fallback)); outline-offset: -2px; }
+/* 可审块：动作条 + del/add 行组。waiting 态整块降透明度（动作已发送防双发）。 */
+.nf-ar-hunk { margin: var(--ds-space-1) 0; }
+.nf-ar-hunk[data-state="waiting"] { opacity: 0.55; }
+.nf-ar-hunkbar {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  background: rgba(88, 166, 255, 0.08);
+  box-shadow: inset 2px 0 0 var(--color-info, var(--nf-review-info-fallback));
+}
+.nf-ar-hunkmeta {
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted, var(--nf-review-muted-fallback));
+  white-space: nowrap;
+}
+.nf-ar-hunkbar .nf-ar-btn { margin-left: auto; }
+.nf-ar-hunkbar .nf-ar-btn + .nf-ar-btn { margin-left: 0; }
+
+/* ══ 共享差异组件（js/diffView/，2026-11-19 迁移批）═════════════════════════
+   作者裁定 2026-11-18「手机diff 按推荐」：两个差异面（delegate diff =
+   diffCanvas.js、canvas ask diff = askEditReview.js）共用**同一组件**（单源，
+   硬不变式①）；组件底座 = CodeMirror 6 + @codemirror/merge（随包分发台账见
+   package.json.vendorAssets）。
+
+   本节与 css/stand-tokens.css 的 `--nf-dv-*` 族一起，是报告 D1–D9 的样式落点：
+   · 几何/触控走 token（D6 44px / D7 13px·1.55 / D4 56px 让位带）；
+   · 色值零字面量（全部引用既有 `--nf-dv-*` 与 `--ds-*` / `--color-*` token 族）；
+   · 覆盖 @codemirror/merge 自带逐块按钮的绝对定位于铺排（改壳为行内 44px 带，
+     D4/D6 的「可点面被浮钮压住 / 目标 <44px」就在这一处消掉）。 */
+.nf-dv {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  min-width: 0;
+  background: var(--nf-dv-bg);
+}
+.nf-dv-editor { flex: 1 1 auto; min-height: 0; min-width: 0; }
+.nf-dv .cm-editor { height: 100%; }
+/* 折行开关（D1）：两个面共用的同一颗开关，触控档 44px。 */
+.nf-dv-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  row-gap: var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border-bottom: var(--ds-border-width) solid var(--nf-dv-border);
+}
+/* 动作区（review 专用）居左、工具区居右：靠 `margin-right:auto` 而非改
+   justify-content —— read 模式只有工具区一颗折行钮，几何与迁移批**逐值一致**
+   （`flex-end` + 单子 = 右缘，加 `space-between` 会把它挪到左缘 = 零回归破）。 */
+.nf-dv-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  margin-right: auto;
+}
+.nf-dv-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+}
+.nf-dv-wrapbtn {
+  min-height: var(--nf-dv-hit);
+  padding: 0 var(--ds-space-3);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  color: var(--color-primary);
+  background: rgb(var(--sapphire) / 0.13);
+  border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.25);
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+}
+.nf-dv-wrapbtn[aria-pressed='true'] { background: rgb(var(--sapphire) / 0.22); }
+.nf-dv-wrapbtn:focus-visible { outline: 2px solid var(--btn-focus-ring, var(--color-primary)); outline-offset: 2px; }
+
+/* 逐块接受/拒绝（D6 核心）：merge 默认把按钮绝对定位在行尾、高约 17px；改壳为
+   **行内动作带**（position: static）＋每颗 ≥44px，绝不被顶部浮钮/卡头压住。 */
+.nf-dv .cm-deletedChunk { padding-left: 0; }
+.nf-dv .cm-deletedChunk .cm-chunkButtons {
+  position: static;
+  inset-inline-end: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  background: none;
+}
+.nf-dv .cm-deletedChunk .cm-chunkButtons button,
+.nf-dv .nf-dv-chunkbtn {
+  min-height: var(--nf-dv-hit);
+  min-width: 72px;
+  margin: 0;
+  padding: 0 var(--ds-space-3);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  border-radius: var(--ds-radius-chip);
+  border: var(--ds-border-width) solid var(--nf-dv-accept-border);
+  color: var(--nf-dv-accept-fg);
+  background: var(--nf-dv-accept-bg);
+  cursor: pointer;
+}
+.nf-dv .nf-dv-chunkbtn-reject {
+  color: var(--nf-dv-reject-fg);
+  background: var(--nf-dv-reject-bg);
+  border-color: var(--nf-dv-reject-border);
+}
+.nf-dv .cm-deletedChunk .cm-chunkButtons button:focus-visible,
+.nf-dv .nf-dv-chunkbtn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+
+/* ask 面让位带（D4）：审阅页签顶部留出卡头浮钮带，与 delegate 面同一条 56px 常量。 */
+.nf-ar-shell { padding-top: var(--nf-dv-top-band); }
+
+/* ask 审阅面容器（迁移批 2026-11-19）：.nf-ar-shell 承载 56px 让位带 + 标题条
+   （不滚动头段）+ 共享组件编辑面（自持滚动）。 */
+.nf-ar-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.nf-ar-editor { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
+/* waiting 面（防双发）：动作钮整组禁用（逐块 + 全量；折行/文件切换不动 —— 等待期
+   仍可观察另一文件）。 */
+.nf-dv[data-waiting='1'] .nf-dv-chunkbtn,
+.nf-dv[data-waiting='1'] .nf-dv-actionbtn { opacity: 0.5; pointer-events: none; }
+
+/* ══ 审阅动作区（作者令 2026-11-19「diff 的逐块接受和全部接受的 UI 要设计一下」）══
+   逐块钮（行内动作带，见上）+ 全量钮（工具条左端）＝唯一动作区；read 模式组件根本
+   不建这些节点 ⇒ DOM 零残留（模式闸门）。「全部接受」= 逐块动作的批量化，走既有
+   回调同一语义（hunkId=null ⇒ 消费面发 askEditAccept 不带 hunkId），本节只管呈现。
+   几何：全部钮与逐块钮同落 --nf-dv-hit（≥44px）；色值全走 --nf-dv-* token（零字面量）。 */
+.nf-dv-actionbtn {
+  min-height: var(--nf-dv-hit);
+  padding: 0 var(--ds-space-3);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  border-radius: var(--ds-radius-chip);
+  border: var(--ds-border-width) solid var(--nf-dv-accept-border);
+  color: var(--nf-dv-accept-fg);
+  background: var(--nf-dv-accept-bg);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              border-color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+}
+.nf-dv-actionbtn.nf-dv-reject-all {
+  color: var(--nf-dv-reject-fg);
+  background: var(--nf-dv-reject-bg);
+  border-color: var(--nf-dv-reject-border);
+}
+@media (hover: hover) {
+  .nf-dv-actionbtn:hover { background: var(--nf-dv-accept-bg-strong); }
+  .nf-dv-actionbtn.nf-dv-reject-all:hover { background: var(--nf-dv-reject-bg-strong); }
+}
+.nf-dv-actionbtn:focus-visible { outline: 2px solid var(--btn-focus-ring, var(--color-primary)); outline-offset: 2px; }
+.nf-dv-actionbtn[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* 状态可见（已接受/已拒绝后的呈现要能看出）：动作发出即就地落 data-chunk-state，
+   动作带底 tint + 行内状态标签（前景 = 正文 token，双主题对比度由 --nf-dv-fg 保证）。 */
+.nf-dv .cm-deletedChunk[data-chunk-state='accepted'] .cm-chunkButtons { background: var(--nf-dv-state-ok-bg); }
+.nf-dv .cm-deletedChunk[data-chunk-state='rejected'] .cm-chunkButtons { background: var(--nf-dv-state-no-bg); }
+.nf-dv .cm-deletedChunk[data-chunk-state] .cm-chunkButtons button { opacity: 0.55; }
+.nf-dv-chunkstate {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 0 var(--ds-space-2);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  color: var(--nf-dv-fg);
+  white-space: nowrap;
+}
+
+/* ══ 多文件（作者令 2026-11-19「多文件 diff 适配」）════════════════════════════
+   设计取舍：一段差异文本含多文件段时按**文件分节**；分节列表常驻在编辑面之上，
+   单文件折叠 = 只展开被选中的那一节（同一编辑面按节重载文档 + 合并扩展）。为什么不
+   把 N 个文件同时挂成 N 个编辑面：手机上一屏多滚轴会互相打架、且每节各自虚拟化会
+   把视口预算切碎；单选装载让「行号空间 / 折叠状态 / 滚动位置」都只属于当前文件
+   （行号不跨文件错位）。计数（+增/−删）逐节落在列表行上。
+   铁律 9：路径不截断（换行增长，无 ellipsis）；列表高度上限必配 overflow-y:auto。 */
+.nf-dv-files {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: var(--nf-dv-filelist-max);
+  overflow-y: auto;
+  border-bottom: var(--ds-border-width) solid var(--nf-dv-border);
+}
+.nf-dv-file {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-height: var(--nf-dv-hit);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--nf-dv-fg);
+}
+.nf-dv-file + .nf-dv-file { border-top: var(--ds-border-width) solid var(--nf-dv-border); }
+.nf-dv-file[data-active='1'] { background: var(--nf-dv-accept-bg); }
+@media (hover: hover) { .nf-dv-file:hover { background: var(--nf-dv-accept-bg); } }
+.nf-dv-file:focus-visible { outline: 2px solid var(--btn-focus-ring, var(--color-primary)); outline-offset: -2px; }
+.nf-dv-filepath {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--nf-dv-gutter-fs);
+}
+.nf-dv-filecounts {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--nf-dv-gutter-fs);
+  white-space: nowrap;
+}
+.nf-dv-fileadd { color: var(--nf-dv-accept-fg); }
+.nf-dv-filedel { color: var(--nf-dv-reject-fg); }

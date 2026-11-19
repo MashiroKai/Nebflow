@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<!-- perception-btn-ghost harness.html — 顶栏感知入口按钮幽灵族钉静态夹具
+     （顶栏感知钮样式修 2026-10-28 批）。
+
+     顶栏整排 = index.html #header 真结构（header-left/center/right 逐元素
+     同形），真 CSS 四件（base/sapphire/chat/reminder/stand-tokens/perception），
+     真 perception.js（wirePanelButton 在 #daemon-btn 前插入真 #perception-btn），
+     真 lucide（vendor UMD，createIcons 同生产脸）。
+
+     #daemon-btn 的顶栏钮段 CSS 从 js/daemons.js DAEMON_CSS 头段拷贝（fixture
+     静态化惯例，出处注释在块内）；其余按钮全部走真 CSS 文件零拷贝。
+
+     legacy 模式（?legacy=1）：修前复现——#perception-btn 零规则命中 ⇒ 浏览器
+     UA 默认亮底填充钮。`all: revert` 逐属性退回 UA 值，正是「无作者规则」的
+     精确语义（新批 #perception-btn 规则整组被盖掉）。
+
+     fetch 全量 mock（window.__routes），出站帧落 window.__sent（state.ws 捕获
+     桩）。绝无真实网络。spec（tests/perception-btn-ghost.spec.mjs）经一次性
+     静态服务（127.0.0.1 临时端口，🔴 绝非 8080 宿主）驱动本页。-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>perception-btn-ghost harness</title>
+  <script>
+    // legacy 开关必须在样式表生效前置位（修前复现腿）
+    if (new URLSearchParams(location.search).has('legacy')) {
+      document.documentElement.classList.add('legacy');
+    }
+  </script>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/sapphire.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/stand-tokens.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/reminder.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/perception.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--st-bg, #f5f6f8); }
+    #main { position: relative; height: 100%; }
+    #chat {
+      position: absolute; top: 56px; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+    }
+    /* legacy（修前复现）：#perception-btn 零规则命中 ⇒ Chrome UA 默认按钮面。
+       all:revert = 逐属性退回 UA 值，语义上等价「该元素无任何作者规则」。 */
+    html.legacy #perception-btn { all: revert; }
+    /* ── #daemon-btn 顶栏钮段 —— 拷贝自 js/daemons.js DAEMON_CSS 头段
+          （Header Trigger Button；fixture 静态化，生产脸以 daemons.js 为准）── */
+    #daemon-btn {
+      background: none; border: 1px solid transparent; cursor: pointer; padding: 0;
+      width: 28px; height: 28px; display: flex; align-items: center;
+      justify-content: center; border-radius: 6px;
+      color: var(--color-frame-text-muted); position: relative;
+      flex-shrink: 0; transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    }
+    #daemon-btn:hover {
+      background: var(--glass-control-bg-hover);
+      -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+      backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
+      border-color: var(--glass-control-border);
+      box-shadow:
+        inset 0 1px 0 var(--glass-control-highlight),
+        inset 0 -1px 0 var(--glass-control-underedge);
+      color: var(--color-frame-text);
+    }
+    #daemon-btn svg { width: 16px; height: 16px; stroke-width: 2; opacity: 0.7; }
+    #daemon-btn.active svg { opacity: 1; color: rgb(91, 127, 191); }
+  </style>
+</head>
+<body>
+  <div id="main">
+    <!-- #header —— index.html 真结构同形（2026-10-28 读数；仅去注释） -->
+    <div id="header">
+      <div class="header-left">
+        <button id="sidebar-toggle" class="panel-toggle-btn">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/></svg>
+        </button>
+      </div>
+      <div class="header-center">
+        <span id="session-name">stand</span>
+        <button id="memory-btn" class="memory-btn" title="Memory" hidden><i data-lucide="brain"></i></button>
+      </div>
+      <div class="header-right">
+        <button id="search-btn" title="搜索聊天记录"><i data-lucide="search"></i></button>
+        <div id="bypass-dropdown" class="header-dropdown">
+          <button id="bypass-toggle" class="bypass-toggle" data-mode="confirm-edits" title="安全模式">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </button>
+        </div>
+        <button class="voice-toggle" id="voice-toggle-btn" title="Voice output">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/></svg>
+        </button>
+        <button id="reminder-btn" title="Scheduled Tasks"><i data-lucide="clock"></i></button>
+        <button id="daemon-btn" title="心跳进程"><i data-lucide="server"></i></button>
+        <div id="bg-indicator" class="hidden" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="bg-dropdown">
+          <span class="bg-dot"></span>
+          <span class="bg-count">0</span>
+        </div>
+        <div id="pending-asks-indicator" class="hidden" role="button" tabindex="0" aria-live="polite">
+          <span class="pa-dot"></span>
+          <span class="pa-count">0</span>
+        </div>
+        <div id="held-receipts-indicator" class="hidden" role="button" tabindex="0" title="Held delivery receipts">
+          <span class="pa-dot"></span>
+          <span class="pa-count">0</span>
+        </div>
+        <div id="bgagent-indicator" class="hidden" title="Sub-agents running" role="button" tabindex="0" aria-haspopup="true" aria-expanded="false" aria-controls="bgagent-dropdown">
+          <span class="bgagent-dot"></span>
+          <span class="bgagent-count">0</span>
+        </div>
+        <button id="canvas-toggle-btn" class="panel-toggle-btn" title="Canvas">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></svg>
+        </button>
+      </div>
+    </div>
+    <div id="chat"></div>
+  </div>
+  <div id="canvas-host">
+    <div id="canvas-tab-bar"></div>
+    <div id="canvas-content"></div>
+  </div>
+  <script src="/src/main/resources/web/vendor/lucide.min.js"></script>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+
+    // 出站 WS 帧捕获桩
+    window.__sent = [];
+    state.ws = { readyState: 1, send: (data) => window.__sent.push(JSON.parse(data)) };
+    state.activeSessionId = 'harness-session';
+
+    // REST mock 路由（面板打开腿 GET entries；其余 404 即业务静默）
+    window.__routes = [];
+    window.fetch = async (path, opts = {}) => {
+      const method = (opts.method || 'GET').toUpperCase();
+      const p = String(path);
+      for (const r of window.__routes) {
+        if (r.method === method && r.match(p)) {
+          const body = typeof r.data === 'function' ? r.data(p, opts) : r.data;
+          return {
+            ok: (r.status ?? 200) >= 200 && (r.status ?? 200) < 300,
+            status: r.status ?? 200,
+            json: async () => body,
+          };
+        }
+      }
+      return { ok: false, status: 404, json: async () => ({ error: 'no mock route: ' + method + ' ' + p }) };
+    };
+
+    const perception = await import(`${WEB}/perception.js`);
+    perception.initPerception();
+
+    window.__openPanel = () => perception.openPerceptionPanel();
+
+    // 真 lucide 同生产脸（createIcons 替换 <i data-lucide> 占位）
+    if (window.lucide && window.lucide.createIcons) window.lucide.createIcons();
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

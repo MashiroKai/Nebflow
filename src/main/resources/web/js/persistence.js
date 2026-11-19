@@ -1,16 +1,51 @@
-// persistence.js — localStorage cache module for Nebflow
+// persistence.js — localStorage cache module for Stand
 // Backend is the source of truth. localStorage is a best-effort write-behind cache
 // for optimistic display during streaming, and a fallback when backend is unreachable.
 
-import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY, AGENT_PALETTE } from './state.js';
-import { key } from './branding.js';
+import state, { LS_KEY, LS_SESSIONS_KEY, LS_HISTORY_KEY } from './state.js';
+// ⑨ 淘汰顺序挂靠点（作者 2026-09-12 口径）：好友消息缓存是纯缓存且已硬封顶
+// （512 KB / 30 会话，见 fmMessageCache.js）——配额压力下**先丢它**，
+// session 缓存（用户主聊天）永远不是第一个牺牲品。单向依赖，无环。
+import { dropFriendMessageCache } from './fmMessageCache.js';
+// ⑩ Dropbox 消息缓存（fmDropboxCache.js）与好友消息缓存同为**纯缓存**：淘汰顺序里
+// 并列第一步，两者都先丢，绝不让它们挤掉会话缓存。
+import { dropDeviceMessageCache } from './fmDropboxCache.js';
+// sessperf Phase B（2026-09-20）：本地优先层（IndexedDB，唯一属主 `localStore.js`）
+// 的驱逐挂靠点 —— 与上面两个纯缓存同级（淘汰次序：纯缓存先让路，会话缓存最后）。
+// 单向依赖、无环；`evict` 自带 L2/L5 降级（配额失败 ⇒ 本池清空重试 ⇒ 只读镜像）。
+import { evict as evictLocalStore } from './localStore.js';
 import { activeView } from './chatView.js';
 import { t } from './i18n.js';
-import { renderMarkdownWithMath, escapeHtml, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent } from './utils.js';
+import { permissionDetails } from './permissionDetails.js';
+import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, smartScroll, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, esc, localizeToolLabel, localizeToolSummary, renderHighlightedContent, isBgAgentId, shouldFollowBottom, deviceTagHtml } from './utils.js';
+// output 块语法批（作者令 2026-10-31）：历史重放腿同 live 腿一个 output 面——
+// 平衡 <output> 对 ⇒ 正常态只渲染块内，角标展开回原文（turnGroup toggle）。
+import { applyOutputFace, hasOutputBlock } from './outputTag.js';
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
-import { createDurationBadgeElement, createMsgFooterBadge, applyPopCard, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow } from './chat.js';
+// schedule-created-card 批（2026-11-05）：历史重放两腿与 live renderTool 共用
+// 同一个卡片行 builder（零第二套判据）。
+import { scheduleCardRowForTool } from './scheduleCard.js';
+import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards, applyThinkingWindowCap } from './chat.js';
+// pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
+// (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
+// (chat.js 的 openPopArtifact/popArtifactFromInput 已移入该处再 re-export,无环)。
+import { isPopPayload, parsePopPayload, buildPopArtifactRow, renderPopToolRow, applyLegacyPopCard, buildUserMediaRow, unifyUserMediaFace } from './popArtifacts.js';
+// msgchip-provenance 批（2026-11-01）：渠道/平台来源注记剥离单点（与 live 腿 chat.js
+// renderUserBubble、牌窗 msgTokenChip 同一实现）。
+import { stripChannelProvenance } from './channelProvenance.js';
 import { buildTurnSummariesForHistory } from './turnGroup.js';
 import { renderRefBlock, normalizeTaskRef } from './reference.js';
+// quote-message 一期（2026-10-09，spec §7.5）：历史重放行挂 data-msg-id（页内
+// index + mount token）+ 可引用行右键菜单 + UiMessage.User.quote 引用块重渲。
+import { beginHistoryMount, historyMsgId, attachQuoteMenu, renderQuoteBlock, syncQuoteJumpStates } from './msgQuote.js';
+import { renderGateBegin, renderGateEnd } from './chat/renderGate.js'; // perf 台账 #922：分帧挂载腿持渲染遮蔽门
+// 进场落底「武装窗」（手机端进场落顶修复批 · 2026-11-02）：同步钉底的延续，
+// 覆盖 deferred markdown 升级批 / 晚到媒体的撑高（下方 followBottom 分支用）；
+// 分帧挂载腿（挂载进行中）以 `cancelSettleBottom` 同拍撤回。理由见模块头注。
+import { settleBottom, cancelSettleBottom } from './chat/settleBottom.js';
+// quote-message 一期：被引用者名（助手/工具/提问行）= agent 显示名 —— ownAgentName
+// （会话行）缺席时回落 rootDisplayName（叶模块，只读 state，无环）。
+import { rootDisplayName } from './rootName.js';
 
 // ---------- AI message badge (no duration) ----------
 // Builds the unified v1.2 footer pill (time + copy), matching finishAi() in
@@ -35,6 +70,16 @@ function safeSetItem(key, value) {
 // ---------- Prune old sessions from the cache and retry writing once ----------
 // Removes roughly half of the non-active sessions to free space. Returns true on success.
 function pruneAndRetrySetSessions(all, keepSid) {
+  // ⑨ 淘汰顺序（作者 2026-09-12）：好友消息缓存 = 纯缓存，配额压力下先丢它；
+  // 丢掉后能写进就**不剪 session**（剪的是用户的会话缓存，主聊天被伤不可接受）。
+  // ⑩ Dropbox 消息缓存同级（两面同为纯缓存，一次丢干净再重试写入）。
+  // sessperf Phase B（卡 §5.3 `persistence.js:44-59`）：本地优先层（IndexedDB，
+  // 唯一属主 localStore.js）的**非阻塞驱逐**也挂在同一次序点上 —— 它自带预算与
+  // 降级（L2/L5），此处只 trigger，不等它（localStorage 配额与 IDB 是两套账，
+  // 本行保证的是「纯缓存先让路」这条**次序纪律**不散落成两处）。
+  void evictLocalStore();
+  const droppedAny = dropFriendMessageCache() || dropDeviceMessageCache();
+  if (droppedAny && safeSetItem(LS_SESSIONS_KEY, JSON.stringify(all))) return true;
   const otherSids = Object.keys(all).filter(k => k !== keepSid);
   if (otherSids.length === 0) return false; // nothing to prune
   const removeCount = Math.ceil(otherSids.length / 2);
@@ -52,6 +97,12 @@ export function emergencyCacheCleanup() {
     if (!raw) return;
     // If already under 2MB, no need to clean
     if (raw.length < 2_000_000) return;
+    // ⑨ 淘汰顺序第一步：好友消息缓存（fmMessageCache.js）是纯缓存且已硬封顶，
+    // 先丢它再动 session 缓存 —— 否则好友缓存占满配额时，下面的
+    // pruneAndRetrySetSessions 会去剪会话缓存（方案 §2.3 明确判定「不可接受」）。
+    dropFriendMessageCache();
+    dropDeviceMessageCache(); // ⑩ 同级第一步：Dropbox 消息缓存（fmDropboxCache.js）
+    void evictLocalStore();   // sessperf Phase B：本地优先层同一次序点（非阻塞；见 pruneAndRetrySetSessions）
     console.debug('[persistence] cache size ' + Math.round(raw.length / 1024) + 'KB — running emergency cleanup');
     const all = JSON.parse(raw);
     // Re-sanitize every entry in every session and enforce message cap
@@ -97,6 +148,94 @@ const MAX_THINKING_LEN = 2000; // AI thinking text
 const MAX_TEXT_LEN = 5000;     // AI response text
 const MAX_MSGS_PER_SESSION = 80;
 
+// ---------- Cache cut that never stores half a table (P-1, 2026-09-30) ----------
+// The cap above used to cut `text`/`answer` at a fixed character offset and
+// append '…'. When that offset landed inside a GFM table — the header row or
+// its `|---|` delimiter row — the cached copy lost the delimiter, and the
+// message surface re-rendered the ENTIRE table as literal `| 项目 | 状态 |`
+// prose. The canvas markdown viewer reads the whole file with no cap, so the
+// same content rendered correctly there — the renderer was never at fault
+// (root cause: chain-md-render-compare, 2026-09-29).
+//
+// Rule now: a shorter cache beats a corrupt one, and no cache beats either.
+// A cut is admissible only when it neither leaves a broken table at the tail
+// nor severs a table that begins right after it; otherwise the entry is not
+// cached at all (the caller's filter chain drops it and the backend history —
+// which remains the source of truth — supplies the message on restore).
+const CACHE_CAP_GIVEBACK = 200; // max chars to give back hunting for a block boundary
+
+const CACHE_FENCE_RE = /^\s{0,3}(?:```|~~~)/;
+const CACHE_DELIM_CELL_RE = /^:?-+:?$/;
+
+/** True when the retained text currently sits inside an unclosed code fence. */
+function cacheFenceOpen(s) {
+  let n = 0;
+  for (const line of s.split('\n')) if (CACHE_FENCE_RE.test(line)) n++;
+  return n % 2 === 1;
+}
+
+/** GFM delimiter row: `|---|:--:|` etc. Pipe-delimited cells of dashes only. */
+function cacheDelimiterRowValid(line) {
+  const t = (line || '').trim();
+  if (t.charCodeAt(0) !== 0x7c) return false; // must open with '|'
+  const cells = t.replace(/^\|/, '').replace(/\|$/, '').split('|').map((c) => c.trim());
+  return cells.length > 0 && cells.every((c) => CACHE_DELIM_CELL_RE.test(c));
+}
+
+/**
+ * True when the trailing block of `s` is a table that lost its structure — the
+ * header row has no GFM delimiter row yet, so the whole block degrades into
+ * literal `| a | b |` prose (the message-surface bug). A complete delimiter row
+ * means the table renders: cutting off trailing BODY rows is ordinary
+ * truncation, not corruption.
+ */
+function cacheTailTableBroken(s) {
+  if (cacheFenceOpen(s)) return false; // inside a fence the pipes are code
+  const at = s.lastIndexOf('\n\n');
+  const block = at < 0 ? s : s.slice(at + 2);
+  const lines = block.split('\n');
+  let head = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().charCodeAt(0) === 0x7c) { head = i; break; }
+  }
+  if (head < 0) return false;                     // no table in the trailing block
+  if (lines[head + 1] === undefined) return true; // header row with no delimiter row
+  return !cacheDelimiterRowValid(lines[head + 1]);
+}
+
+/** First non-blank line of `s`, or '' when there is none. */
+function cacheFirstLine(s) {
+  for (const line of s.split('\n')) if (line.trim() !== '') return line.trim();
+  return '';
+}
+
+/**
+ * Truncate `s` to MAX_TEXT_LEN without ever storing half a table.
+ * @returns {string|null} storable text, or null when no safe cut exists.
+ */
+function cacheCapText(s) {
+  if (s.length <= MAX_TEXT_LEN) return s;
+  let cut = MAX_TEXT_LEN;
+  // 1. The cut landed in a table's header/delimiter window ⇒ the block would
+  //    render as literal pipe prose. Give back to the nearest closed block
+  //    boundary; when even that cannot produce a clean block, do not cache.
+  if (cacheTailTableBroken(s.slice(0, cut) + '…')) {
+    const floor = Math.max(0, cut - CACHE_CAP_GIVEBACK);
+    let b = -1;
+    for (let i = cut; i > floor; i--) {
+      if (s.charCodeAt(i - 1) === 0x0a && s.charCodeAt(i - 2) === 0x0a) { b = i; break; }
+    }
+    if (b < 0 || cacheTailTableBroken(s.slice(0, b) + '…')) return null;
+    cut = b;
+  }
+  // 2. Never cache a message whose table the cap severed: a discarded tail that
+  //    opens with a table row means the table the backend still holds would be
+  //    missing from the restored view. Dropping the entry is the lesser evil —
+  //    a shorter cache beats a corrupt one, and no cache beats either.
+  if (cacheFirstLine(s.slice(cut)).charCodeAt(0) === 0x7c) return null;
+  return s.slice(0, cut) + '…';
+}
+
 function sanitizeForCache(entry) {
   if (!entry || typeof entry !== 'object') return entry;
   const e = { ...entry };
@@ -106,10 +245,18 @@ function sanitizeForCache(entry) {
     e.input = e.input.slice(0, MAX_INPUT_LEN) + '…';
   if (typeof e.thinking === 'string' && e.thinking.length > MAX_THINKING_LEN)
     e.thinking = e.thinking.slice(0, MAX_THINKING_LEN) + '…';
-  if (typeof e.text === 'string' && e.text.length > MAX_TEXT_LEN)
-    e.text = e.text.slice(0, MAX_TEXT_LEN) + '…';
-  if (typeof e.answer === 'string' && e.answer.length > MAX_TEXT_LEN)
-    e.answer = e.answer.slice(0, MAX_TEXT_LEN) + '…';
+  // A capped field that cannot be cut safely marks the whole entry uncacheable
+  // (returns null) — "rather no cache than half a table". See cacheCapText.
+  if (typeof e.text === 'string' && e.text.length > MAX_TEXT_LEN) {
+    const capped = cacheCapText(e.text);
+    if (capped === null) return null;
+    e.text = capped;
+  }
+  if (typeof e.answer === 'string' && e.answer.length > MAX_TEXT_LEN) {
+    const capped = cacheCapText(e.answer);
+    if (capped === null) return null;
+    e.answer = capped;
+  }
   // Strip base64 attachment previews — they can be multi-MB. Keep `path`:
   // it's a small string and lets the restore path re-render the image from
   // the uploads route (G1) even after the preview is gone.
@@ -133,28 +280,78 @@ function sanitizeForCache(entry) {
 // i18nKey (chat.compacting / chat.compacted / chat.compactFailed) + params —
 // the SAME strings the live cards are labelled with. Rebuild the SAME
 // .compact-card component (chat.js buildCompactCardRow) instead of the old
-// flat error-card. A "compacting" entry directly followed by a terminal
-// entry is dropped: the live card morphs in place, so history renders ONE
-// final card, not two. Returns null when the entry should be skipped.
+// flat error-card. Returns null when the entry should be skipped.
+//
+// 作者令 2026-10-28 11:44（无感压缩「彻底零痕迹」批）：回落同步压缩的完成卡与
+// 失败卡**重放腿停渲染**（零卡零横幅零尾注；数据面零削减——ui.json 条目照常
+// 留账可审计）。唯一保留的可见例外 = 0.95 硬守卫 emergencyClean 真清上下文
+// （安全阀）：帧带 emergency:true ⇒ WebSocketRoutes 把 params.emergency 一并
+// 落盘 ⇒ 本函数对 emergency 条目照常重建同卡（数据有损事件在历史中保持可见，
+// 避免「上下文被硬裁后无从解释质量变化」）；其余 compacted/compactFailed 条目
+// 一律 null（与「compacting 起始条目」同格——跳过，不 relabel）。
+//
+// EVERY "compacting" START entry is skipped on replay — adjacency is no longer
+// consulted (2026-09-15, F1 fix). Two shapes feed this:
+//   (a) start directly followed by a terminal entry (the live card morphed in
+//       place) ⇒ the terminal entry renders the ONE final card, not two;
+//   (b) start with NO adjacent terminal entry — interrupted / still running at
+//       the last snapshot / the compaction window swallowed user messages, so
+//       the terminal entry landed further down (or never) ⇒ the start entry
+//       has NO trustworthy outcome. Re-rendering the live start card's spinner
+//       here asserts "compaction in progress" on a replayed history that can
+//       never resolve it (nothing in a reload can morph it) — the author-facing
+//       symptom: a phantom active pill reappears after a refresh, forever.
+//       It is NOT reported as a failure either: an unconfirmed failure must
+//       never surface as an error card. So an orphan renders NOTHING (no
+//       activity, no new resident text — skipping, not relabelling).
+// `next` is kept for call-site signature parity only; the judgment below does
+// not read it any more.
 function restoreCompactCardRow(m, next) {
-  if (m.i18nKey === 'chat.compacting') {
-    const nextIsTerminal = next && next.type === 'system'
-      && (next.i18nKey === 'chat.compacted' || next.i18nKey === 'chat.compactFailed');
-    if (nextIsTerminal) return null;
-    // Orphan "compacting" (interrupted / still running at last snapshot) —
-    // render the active spinner card, matching the live start card.
-    return buildCompactCardRow('active', t('chat.compactingCard'));
-  }
+  if (m.i18nKey === 'chat.compacting') return null;
   const p = (m.params && typeof m.params === 'object') ? m.params : {};
   if (m.i18nKey === 'chat.compacted') {
-    return buildCompactCardRow('done', t('chat.compacted', { before: p.before ?? 0, after: p.after ?? 0, detail: p.detail || '' }));
+    // zero-trace 批：仅 0.95 硬守卫 emergency 卡（安全阀）保留重放渲染
+    if (p.emergency) {
+      return buildCompactCardRow('done', t('chat.compacted', { before: p.before ?? 0, after: p.after ?? 0, detail: p.detail || '' }));
+    }
+    return null;
   }
-  return buildCompactCardRow('error', t('chat.compactFailed', { attempt: p.attempt ?? 0, maxAttempts: p.maxAttempts ?? 0 }));
+  // chat.compactFailed：同刀静默，无例外（引擎退避+熔断+应急兜底已覆盖）
+  return null;
+}
+
+// ---------- System-record replay (shared by both restore paths) ----------
+// obsfix 微批 ②（作者令）· 判词位 O-2：`{type:'system'}` 落盘记录（本批新增的
+// 「仍在处理」/「连接已断开」取证记录属此族）在重载路径上曾一律渲成 `.row error`
+// ⇒ 页面重开留下**常驻错误行**，且 `countsAsRealMessage === true`（污染未读计数口径；
+// O-3 复核：谓词成立于那个行类，且非既有功能回归 —— 改前这些行根本不落盘）。
+// 现读法 = **中性 notice**（`.row notice` + `.notice-card notice-info`，与实时
+// 「仍在处理」行同族组件）：
+//   · 语义：落盘记录是**事后痕迹**，不是活的错误态 —— 与 restoreCompactCardRow 的
+//     孤儿规则同源（reload 解不开的状态不得以错误/进行中的面孔复现）。
+//   · 文案来源：有 `i18nKey` ⇒ 按 key 复渲（存 key 不存 HTML）；无 key 的**存量记录**
+//     ⇒ 回落 `m.content`（旧形态原样可读 ⇒ 存量兼容无需内容匹配）。
+//   · 行类 = `notice` ⇒ `countsAsRealMessage(row) === false`（utils.js 单点判据的既有
+//     口径：`.system` / `.notice` 系统提醒家族一律不计真消息），与 `main.js:2569`
+//     自陈「history restore renders it as a quiet notice card」一致 —— 旧 `.row error`
+//     实现与该注释相悖。视觉上同时去掉硬编码 `rgba(91,141,217,0.1)` / `#5b8dd9`
+//     （改由 `.notice-info` 提供，含暗档覆盖）。
+//   · 实时路径（当轮 notice/error 行）零变动：本函数只服务重载分类。
+function restoreSystemNoticeRow(m) {
+  const row = document.createElement('div');
+  row.className = 'row notice';
+  row.dataset.systemNotice = '1';
+  if (m.i18nKey) row.dataset.systemNoticeKey = m.i18nKey;
+  const card = document.createElement('div');
+  card.className = 'notice-card notice-info';
+  card.textContent = m.i18nKey ? t(m.i18nKey, m.params || {}) : m.content;
+  row.appendChild(card);
+  return row;
 }
 
 /** The persisted user answer that follows an askUser entry (or null). The
- *  gateway records card answers as a User message right after the askUser
- *  entry (answers joined with '\n'); '__cancelled__' is the cancel sentinel.
+ *  gateway records card answers as a User message (answers joined with '\n');
+ *  '__cancelled__' is the cancel sentinel.
  *
  *  Answer-source validation (issue #43, 2026-09-03 incident): agent-injected
  *  messages (delegate results, Mail, flow/node notifications) are ALSO
@@ -162,16 +359,89 @@ function restoreCompactCardRow(m, next) {
  *  NOT user-initiated and must NEVER be consumed as the card's answer: doing
  *  so locked the still-pending card with delegate-report fragments split
  *  across the answer slots (markAnsweredPick splits by '\n'), leaving the
- *  user no card to answer and pushing them onto the chat-input passthrough
- *  (which answers only the oldest card with ONE free-text slot — the second
- *  question came back "(skipped)"). Only a NON-injected user message adjacent
- *  to the askUser entry is a recorded answer; an injected bubble at i+1 means
- *  the card was still pending — render it interactive (safe direction: an
+ *  user no card to answer. Injected bubbles are skipped, never consumed as an
+ *  answer (they also do not truncate the run — they legitimately queue inside
+ *  it); no answer ⇒ null ⇒ the card renders interactive (safe direction: an
  *  already-consumed requestId re-answered is dropped by the hub with the
- *  slot retained, #12). */
+ *  slot retained, #12).
+ *
+ *  取值面修正（uiclean 批 2026-09-15，D 项）：输入框直通退役（e59ed251d）后，
+ *  卡片 pending 期间的输入框文本一律按**普通用户消息**落盘
+ *  （WebSocketRoutes.dispatchUserText），于是它也排在 askUser 条目之后、实收答案
+ *  **之前**。旧读法取「i+1 的第一条非 injected 用户消息」⇒ 取到的是**文本**，
+ *  刷新后锁定行显示末条用户文本、与工具实收答案不一致（实测 ui.json：
+ *  `[askUser, user(文本), user(答案), ai]`，旧读法返回 `user(文本)`）。
+ *  现读法 = 该轮连续 user run 的**最后**一条非 injected 文本（答案由 gateway 在
+ *  `askUserAnswer` 帧处理时追加 ⇒ 落在文本之后；阻塞式卡片在 pending 期间 agent
+ *  不产出 ai/tool 行，故该 run 的末条即实收答案）。非阻塞式提问（agent 在 pending
+ *  期间仍产出 ai 行 ⇒ run 被截断）与「作答后继续打字」两种形态下取值仍可能偏离
+ *  ——见 uiclean 批报告「未做/开放项」。
+ *
+ *  **案 B（双开缺陷批 2026-09-21，chain-askuserdup）= 把上面两条残余边界一次关掉**：
+ *  askUser 行自案 B 起**随行落盘 requestId**，作答行落盘带显式来源标记
+ *  `answerOf = 被作答的 requestId`（`UiMessage.askUserAnswer` 单一构造点）⇒ 取值
+ *  从「邻接启发式」改为**数据精确寻址**：按 `answerOf === 该行的 requestId` 找作答行，
+ *  与相邻行形态（ai/tool/injected/后续打字）全无关。
+ *
+ *  🔴 回落方向（硬口径）：**拿不到作答证据 ⇒ 回落「未作答」（null）**，禁把历史
+ *  一律读成「已作答」——「假已作答」正是重放去重判据被击穿、双开首卡恒死的成因。
+ *  两条腿、一条回落链（先精确后启发式，**不**把无标记一律读成未作答）：
+ *    ① 精确腿（案 B）：本行带 requestId ⇒ 找自称答了这个 id 的作答行
+ *       （`answerOf === 本行 requestId`）。与相邻行形态（ai/tool/injected/后续打字）
+ *       全无关 —— 关掉 #272 的两条残余边界。
+ *    ② 启发式腿（旧数据 / 无标记行的回落）：原 run 读法，逐字不变。
+ *  混合（而非「有 requestId 就只认标记」）是刻意的：存量数据里存在「askUser 行带
+ *  requestId、作答行无标记」的形态（`tests/fixtures/askuser-answer-source/
+ *  answered-fixture.json` 即此形态）—— 只认标记会把它误读成「未作答」，把既有的
+ *  正确还原打回成一张待定死卡。故标记缺席时回落启发式，方向仍偏向「未作答」。 */
 function askUserAnswerText(msgs, i) {
-  const nextMsg = msgs[i + 1];
-  return (nextMsg && nextMsg.type === 'user' && !nextMsg.injected && nextMsg.text) ? nextMsg.text : null;
+  const ask = msgs[i];
+  const askRid = ask && ask.requestId;
+  if (typeof askRid === 'string' && askRid) {
+    // ① 案 B 精确腿：答案行必须**自称**答的是这个 requestId。
+    for (let j = i + 1; j < msgs.length; j++) {
+      const m = msgs[j];
+      if (m && m.type === 'user' && m.answerOf === askRid) return m.text;
+    }
+  }
+  // ② 旧读法（run 启发式）逐字保留
+  let answer = null;
+  for (let j = i + 1; j < msgs.length; j++) {
+    const m = msgs[j];
+    if (!m || m.type !== 'user') break;
+    if (m.injected || !m.text) continue;
+    answer = m.text;
+  }
+  return answer;
+}
+
+/** 作答行的**答复附件清单**（askuser-dragdrop 实施批 2026-10-19，批 #551）。
+ *  与 [[askUserAnswerText]] 的①精确腿同一条寻址（`answerOf === askUser 行 requestId`）
+ *  —— 附件清单只随案 B 后的作答行落盘（`User.answerAttachments`，缺席即旧行字节
+ *  形态不变）；启发式腿（无标记旧行）没有附件可还原 ⇒ null。两腿历史卡由此渲染
+ *  「已回答 · 附 N 个文件」徽标 + 只读附件行（renderAskUserHistory 第 6 参）。 */
+function askUserAnswerAtts(msgs, i) {
+  const ask = msgs[i];
+  const askRid = ask && ask.requestId;
+  if (typeof askRid !== 'string' || !askRid) return null;
+  for (let j = i + 1; j < msgs.length; j++) {
+    const m = msgs[j];
+    if (m && m.type === 'user' && m.answerOf === askRid) {
+      return Array.isArray(m.answerAttachments) && m.answerAttachments.length ? m.answerAttachments : null;
+    }
+  }
+  return null;
+}
+
+/** R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡的复制载荷 —— 各问句的**纯文本**
+ *  （`AskItem.question` 可为富文本 HTML，复制键只该给纯文本，故剥标签并压缩空白），
+ *  一问一句、`\n` 分隔。空卡 ⇒ 空串 ⇒ 调用侧不挂药丸（不产生游离按钮）。 */
+function askUserQuestionText(items) {
+  if (!Array.isArray(items)) return '';
+  return items
+    .map(it => String((it && it.question) || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .join('\n');
 }
 
 /** The nearest history entry that is not an agent-injected user bubble
@@ -182,9 +452,10 @@ function askUserAnswerText(msgs, i) {
  *  arrived during the wait — and the restored card stayed locked with no way
  *  to answer. Skipping injected bubbles, an askUser at the scan stop = still
  *  pending; any other entry (ai/tool/user) = the ask moved on (a
- *  non-injected user message is a recorded answer — card click or chat-input
- *  passthrough). Exported so the restore spec exercises the SAME code
- *  main.js runs. */
+ *  non-injected user message is a recorded answer — the card's own
+ *  confirm/cancel path; the chat-input passthrough that used to be the second
+ *  producer retired 2026-09-14, e59ed251d). Exported so the restore spec
+ *  exercises the SAME code main.js runs. */
 export function findLastRealMessage(msgs) {
   let i = (msgs || []).length - 1;
   while (i >= 0 && msgs[i].type === 'user' && msgs[i].injected) i--;
@@ -195,10 +466,9 @@ export function findLastRealMessage(msgs) {
 
 /** Convert an absolute uploads path (ui.json records attachments as
  *  {name, type, path}) into a served URL for the backend's
- *  GET /uploads/<sid>/<file> route. Auth: same-origin cookie usually
- *  suffices; the ?token= query is the stale-cookie fallback (token from the
- *  frontend's existing store — localStorage key('token'), same one
- *  the WS connect uses). Returns null when the path isn't under an
+ *  GET /uploads/<sid>/<file> route. Auth: the same-origin fetch carries the
+ *  HttpOnly session cookie automatically (stage D removed the legacy
+ *  token-query fallback). Returns null when the path isn't under an
  *  uploads dir or is otherwise unusable. */
 export function attachmentImageUrl(path) {
   if (!path || typeof path !== 'string') return null;
@@ -208,17 +478,18 @@ export function attachmentImageUrl(path) {
   const rel = norm.slice(idx + '/uploads/'.length); // <sid>/<file>
   if (!rel || rel.includes('..')) return null;
   const encoded = rel.split('/').map(encodeURIComponent).join('/');
-  const tok = localStorage.getItem(key('token')) || '';
-  return `/uploads/${encoded}` + (tok ? `?token=${encodeURIComponent(tok)}` : '');
+  return `/uploads/${encoded}`;
 }
 
-/** Append one attachment bubble to a message row. Images render as <img>
- *  from the live preview (dataURL) or, after a refresh, from the uploads
- *  route via att.path (G1). Non-image attachments keep the plain text tag. */
+/** Append ONE in-bubble attachment: the reference cards only (type ref /
+ *  taskRef). #491 主题三 (author 2026-10-05 12:14 ruling): media/file
+ *  attachments render the Pop faces on an INDEPENDENT card row after the user
+ *  row — see buildUserAttachmentRows below; the old inline att-img /
+ *  att-file-tag bubbles are gone from both replay legs too. */
 export function appendAttachmentBubble(row, att) {
   const bubble = document.createElement('div');
   bubble.className = 'bubble user att-bubble';
-  if (att.type === 'ref' || att.type === 'taskRef') {
+  if (att && (att.type === 'ref' || att.type === 'taskRef')) {
     // #303 D4 + (2026-08-27 打回注入块收敛): restore a Reference as the
     // message card - same renderRefBlock(message) as the live
     // renderUserBubble path, so restored rows are byte-identical to live ones.
@@ -229,30 +500,31 @@ export function appendAttachmentBubble(row, att) {
     const cardNode = ref ? renderRefBlock(ref, { mode: 'message' }) : null;
     if (cardNode) bubble.appendChild(cardNode);
     row.appendChild(bubble);
-    return;
   }
-  const imgSrc =
-    att.type === 'image'
-      ? (att.preview && typeof att.preview === 'string' && att.preview.startsWith('data:'))
-        ? att.preview
-        : attachmentImageUrl(att.path)
-      : null;
-  if (imgSrc) {
-    const img = document.createElement('img');
-    img.src = imgSrc;
-    img.className = 'att-img';
-    img.title = att.name || '';
-    img.draggable = false;
-    // Missing file (uploads dir cleaned, session deleted) — hide the broken
-    // img, the tag below still labels the attachment.
-    img.onerror = () => { img.style.display = 'none'; };
-    bubble.appendChild(img);
-  }
-  const tag = document.createElement('span');
-  tag.className = 'att-file-tag';
-  tag.textContent = (att.type === 'image' ? '[image' : '[file') + (att.name ? ': ' + att.name : '') + ']';
-  bubble.appendChild(tag);
-  row.appendChild(bubble);
+}
+
+/** Split a message's attachments the way BOTH replay legs render them: ref
+ *  cards go INSIDE the user row (appendAttachmentBubble), media/file
+ *  attachments become the one independent `.row.pop-artifact.user-media` row
+ *  that follows it. Images without an inline preview resolve from the uploads
+ *  route via `path` (G1) — passed here as the resolver so the Pop face builders
+ *  never touch the ticket leg for user bytes. ts = the message timestamp for the
+ *  media row's footer badge (时间档与文本行同值；手机端长按退役批 2026-10-31).
+ *  Returns null when nothing displayable remains outside the row. */
+export function buildUserAttachmentRows(row, atts, ts) {
+  const mediaAtts = [];
+  (atts || []).forEach(att => {
+    if (att && (att.type === 'ref' || att.type === 'taskRef')) appendAttachmentBubble(row, att);
+    else mediaAtts.push(att);
+  });
+  if (!mediaAtts.length) return null;
+  const mediaRow = buildUserMediaRow(mediaAtts, { resolver: attachmentImageUrl, ts });
+  // live 腿（chat.js renderUserBubble）媒体卡随行挂**同一** msgId —— 重放腿同形
+  // 对齐（附件批 2026-10-31）：引用寻址/兄弟行合入判据（msgQuote.siblingMediaAttsOf
+  // 按同 msgId 找 .row.user-media）两条腿一致，此前重放腿媒体行拿独立 c- id ⇒
+  // 引用文本行合不到附件。
+  if (mediaRow && row && row.dataset && row.dataset.msgId) mediaRow.dataset.msgId = row.dataset.msgId;
+  return mediaRow;
 }
 
 // ---------- Save a message entry to localStorage (best-effort cache) ----------
@@ -262,7 +534,12 @@ export function saveMsg(entry, sessionId) {
   try {
     const all = safeGetJSON(LS_SESSIONS_KEY, {});
     const arr = all[sid] || [];
-    arr.push(sanitizeForCache(entry));
+    // P-1: a null sanitize result means the entry has a field that cannot be
+    // capped without corrupting a table — skip the cache write entirely rather
+    // than store a half-table. Backend history remains the source of truth.
+    const sane = sanitizeForCache(entry);
+    if (!sane) return;
+    arr.push(sane);
     // Cap messages per session to prevent unbounded growth
     if (arr.length > MAX_MSGS_PER_SESSION) arr.splice(0, arr.length - MAX_MSGS_PER_SESSION);
     all[sid] = arr;
@@ -278,23 +555,53 @@ export function saveMsg(entry, sessionId) {
 // ---------- Injected-bubble direction filter ----------
 // The blue injected bubble is for content RECEIVED by this session's agent
 // (Mail from others, Delegate/SubTask completion notifications, ExternalEvent
-// results). The backend currently records EVERY injected user event flowing
-// through the root WS connection into the ROOT session's ui.json
-// (makeRecordingWsSend's "user" case ignores the event's own session id), so a
-// restored history can contain injections that were actually delivered
-// elsewhere — including this agent's own OUTGOING sends. Those are not
-// received content: never render them as injected bubbles.
+// results). Historically the backend recorded EVERY injected user event that
+// flowed through the root WS connection into the ROOT session's ui.json
+// (makeRecordingWsSend's "user" case fell back to the *recording session* when
+// the frame carried no nodeSessionId), so a restored history could contain
+// injections that were actually delivered elsewhere — including this agent's
+// own OUTGOING sends. Those are not received content: never render them as
+// injected bubbles. Since 2026-09-12 the record is written at the single
+// emission point (AgentActor#emitInjectedUserEvent) into the event's OWN
+// session, but the filter stays: old histories still contain legacy rows.
 //   - sender === own agent name  → a Mail this agent SENT (the bubble belongs
 //     to the recipient's session)
 //   - source delegate/subtask without eventType → a task prompt this agent
 //     DISPATCHED (completion notifications always carry an eventType)
+//
+// 2026-09-19 (bginject-fix1, 作者 06:17 缺陷派单 · 诊断 n-a7bafc55): both
+// branches used to key on the *globally active* session (state.activeSessionId),
+// which is the PARENT session while a sub-agent panel is open — chatView's
+// setActiveView swaps activeView only and never writes activeSessionId. So
+// inside a delegate-/subtask- panel this agent's own received task prompt was
+// classified as 「本窗口外发」 and dropped: every sub-agent panel rendered zero
+// blue bubbles (467 sessions) while its .ui.json held injected rows. The
+// judgment is now keyed on the session that OWNS the message set being
+// restored — passed in by each consumption point, never read from the stale
+// global pointer — and a sub-agent session is exempt as a whole: the backend
+// persists injected rows at the RECEIVING agent's own emission point
+// (AgentActor#emitInjectedUserEvent → that session's own .ui.json), so every
+// injected row in a delegate-/subtask-/node-/dispatcher- session was received
+// by that agent and none of them can be an outgoing send. The legacy
+// misrecord this filter exists for only ever landed in the parent (recording
+// root) session, so the parent side keeps both branches verbatim.
 function ownAgentName() {
   const sid = state.activeSessionId;
   if (!sid) return null;
   const s = (state.sessions || []).find(x => x && x.id === sid);
   return s ? (s.agentName || s.name || null) : null;
 }
-function isOutgoingInjection(m) {
+/**
+ * @param m          the persisted injected row (type 'user', injected, source)
+ * @param sessionId  the session whose history this row belongs to —
+ *                   restoreFromStorage passes its localStorage cache key
+ *                   (state.activeSessionId), restoreFromBackendHistory passes
+ *                   the view that received the historyPage frame (the sub-agent
+ *                   panels own their own ChatView.sessionId).
+ */
+function isOutgoingInjection(m, sessionId) {
+  const sid = sessionId || state.activeSessionId || null;
+  if (isBgAgentId(sid)) return false;
   const own = ownAgentName();
   if (m.sender && own && m.sender === own) return true;
   if ((m.source === 'delegate' || m.source === 'subtask') && !m.eventType) return true;
@@ -333,6 +640,11 @@ export function saveAskMsgDedup(entry, sessionId, requestId) {
 export function restoreFromStorage(opts = {}) {
   const chat = activeView?.dom?.chat;
   if (!chat) return;
+  // This path renders the localStorage cache of the ACTIVE session — that cache
+  // key (state.activeSessionId) owns the message set, so it is the identity the
+  // direction filter must judge against (not activeView: the cache is not the
+  // view's). See isOutgoingInjection.
+  const ownerSessionId = state.activeSessionId || null;
   const msgs = loadMsgs();
   msgs.forEach((m, i) => {
     if (m.type === 'user') {
@@ -341,8 +653,14 @@ export function restoreFromStorage(opts = {}) {
       // (misrecorded into this session by the backend) are not received
       // content — skip them.
       if (m.injected && m.source) {
-        if (isOutgoingInjection(m)) return;
-        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery));
+        if (isOutgoingInjection(m, ownerSessionId)) return;
+        // fileChanges（file-diff → 委托结果行 bug #58 修）：缓存恢复读同一字段
+        //（main.js saveMsg 落缓存；缺席 ⇒ undefined = 旧行为逐字不变）。
+        // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同字段透传——
+        // `m.source==='schedule'` 的行在 builder 内走专属卡分支（缺席 = 旧行为）。
+        // 来源链批（2026-11-01 19:23）：收件会话 id 末参下传（同上方历史分页腿）。
+        // askAddress（ask-mail 批 2026-11-16）：ask 续聊地址同字段透传（缺席 = 旧行为）。
+        chat.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam, undefined, m.delivery, m.intake, m.header, m.fileChanges, m.schedule, ownerSessionId, m.askAddress));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -352,7 +670,21 @@ export function restoreFromStorage(opts = {}) {
       const skillName = isSkillActivation ? (next.params && next.params.skillName) : null;
       const row = document.createElement('div');
       row.className = 'row user';
-      if (m.text) {
+      // Ask ANSWER marker — same contract as the backend-history leg below
+      // (AskUser 强制展开修令 2026-10-06): mid-turn, never a turn opener.
+      if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行标——与后端历史腿
+      // 同一 DOM 契约（data-nf-mid-turn = 该 user 行不是轮起点；turnGroup 的段边界
+      // 单点判据据此把同一引擎回合保持为一段）。缺席（旧缓存行/普通开轮行）⇒ 不落标。
+      if (m.midTurn === true) row.dataset.nfMidTurn = '1';
+      // 媒体统一适配批（2026-10-20）：存量「已存至」行级换算（单点
+      // unifyUserMediaFace）——识别命中 ⇒ 媒体行接管、文本气泡隐去；否则逐字现状。
+      const userUnified = unifyUserMediaFace(m.text, m.attachments);
+      // msgchip-provenance 批（2026-11-01）：显示面只留作者原生输入——渠道来源块 /
+      // 注入头 / 附件路径指针行剥除（单点 channelProvenance；与 live 腿 chat.js
+      // renderUserBubble 同一实现，两条恢复腿同源）。
+      userUnified.text = stripChannelProvenance(userUnified.text).text;
+      if (userUnified.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
         if (isSkillActivation && skillName) {
@@ -360,22 +692,28 @@ export function restoreFromStorage(opts = {}) {
           label.className = 'ask-label';
           label.textContent = t('chat.skillLabel', { skill: skillName });
           const content = document.createElement('div');
-          content.textContent = m.text;
+          content.textContent = userUnified.text;
           bubble.appendChild(label);
           bubble.appendChild(content);
         } else {
           const t = document.createElement('div');
-          t.textContent = m.text;
+          // Plain-text face with mention spans (mention-render batch):
+          // identical output when nothing matches; user text never enters
+          // markdown on a restore path either.
+          appendUserTextWithFences(t, userUnified.text || '');
           bubble.appendChild(t);
         }
         row.appendChild(bubble);
       }
-      (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
+      const storageMediaRow = buildUserAttachmentRows(row, userUnified.atts, m.timestamp);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
-        row.appendChild(createAiCopyBadge(m.timestamp, m.text));
+        row.appendChild(createAiCopyBadge(m.timestamp, userUnified.text));
       }
       chat.appendChild(row);
+      // #491 主题三 (AC-S4): the independent media card row follows the user
+      // row — same shape and order the live path builds.
+      if (storageMediaRow) chat.appendChild(storageMediaRow);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
       if (m.thinking) {
@@ -389,12 +727,14 @@ export function restoreFromStorage(opts = {}) {
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         tContent.innerHTML = renderMarkdownWithMath(m.thinking);
-        // If there's no text, keep thinking expanded so user can see what the model thought
-        if (!m.text) {
-          tLabel.classList.add('expanded');
-        } else {
-          tContent.style.display = 'none';
-        }
+        // §③ 思考窗硬上限（stream-919-unify 批）：历史重放腿同窗钉限＋计数
+        // 读数（与 live 腿同一入口——四写点不分家，读数与窗形一致）。
+        applyThinkingWindowCap(tContent, m.thinking);
+        // 重连折叠持久批（2026-10-20，续作 chain 69e5e2e1）：thinking 恒折叠。
+        // 旧的「无 text 保持展开」例外与重放契约冲突 —— 每次重连重放都把
+        // thinking-only 行的全文抖开（症状①「thinking 突然完整显示」）。
+        // 折叠态跨重放持久；读全文 = 点 label 展开（collapsible 面不变）。
+        tContent.style.display = 'none';
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
@@ -403,15 +743,37 @@ export function restoreFromStorage(opts = {}) {
         chat.appendChild(tRow);
         bindCollapsibleToggle(tLabel, () => tContent);
       }
-      // Only render AI bubble if there's actual text content
-      if (m.text) {
+      // replay-terminal 批（2026-10-28，案一「A 根治」实施）两处渲染面变化：
+      //  ① 徽章渲染从 if (m.text) 提出 —— 「有 durationMs 但 text 为空」的纯工具
+      //     轮终态行此前连徽章带 phrase 一起消失（审计裸面①：徽章整个不渲染 ⇒
+      //     启发式判不出 done ⇒ 整段平铺），凡 durationMs>0 一律渲染**无气泡纯
+      //     徽章行**（旧转录无 terminal 键同享此修 —— 独立 bug 修）；
+      //  ② terminal 行无条件渲染（live done 帧写 UiMessage.Ai.terminal=true 的
+      //     落盘行）：行盖 data-nf-turn-terminal（turnGroup 回放 done 判据的单一
+      //     数据面）+ data-nf-model（header 模型回落）。
+      // 兼容：旧行（无 terminal、无 dur、有 text）走原路径逐字节同形。
+      const isTurnTerminal = m.terminal === true;
+      const hasDuration = m.durationMs != null && m.durationMs > 0;
+      if (m.text || isTurnTerminal || hasDuration) {
         const row = document.createElement('div');
         row.className = 'row ai';
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble ai';
-        bubble.innerHTML = renderMarkdownWithMath(m.text || '');
-        row.appendChild(bubble);
-        if (m.durationMs != null && m.durationMs > 0) {
+        if (m.text) {
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble ai';
+          if (!applyOutputFace(bubble, m.text || '')) {
+            bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+          }
+          row.appendChild(bubble);
+        }
+        if (isTurnTerminal) {
+          row.dataset.nfTurnTerminal = '1';
+          if (m.model) row.dataset.nfModel = m.model;
+          // tool-card-leak-on-reload 批（2026-11-02）：轮时长随 terminal 行落 DOM，
+          // 供 turnGroup 对**旧存量**转录（无 `midTurn` 键）做「该 user 行是否落在
+          // 这轮引擎窗口内」的时间戳蕴含推断（零迁移降级路径）。
+          if (hasDuration) row.dataset.nfTurnDuration = String(m.durationMs);
+        }
+        if (hasDuration) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
         } else {
@@ -423,18 +785,40 @@ export function restoreFromStorage(opts = {}) {
       // Inline render to avoid triggering saveMsg again
       const row = document.createElement('div');
       row.className = 'row tool';
+      // 卫生批（2026-10-28，回放残余①根治）：退化全工具轮的等价终态面——后端
+      // markRoundTerminal 在「段内零 ai 行」时把 terminal=true 盖到段内最后一行
+      // 工具行；此处转成 data-nf-turn-terminal（turnGroup 回放 done 判据与
+      // Ai.terminal 同读一戳）。旧行无键 ⇒ 不落标（逐字节同形）。
+      if (m.terminal === true) row.dataset.nfTurnTerminal = '1';
       // #346 v2 stats: tool input rides the row for the turn header's
       // 读写 <K> 文件 count (same contract as chat.js renderTool).
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
-      card.className = 'tool-card';
+      card.className = 'tool-card ds-tool-card';
       // beta.56 ruling: tool-class bubbles carry NO footer (message-class
       // only). Card/iframe payloads render without any copy badge.
-      // Card tool: render standard tool card + separate card iframe below
-      if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+      // Pop artifact payload (pop-upgrade batch): process row + artifact row,
+      // the same two-row shape the live renderTool builds.
+      if (isPopPayload(m.content)) {
         const isError = m.isError;
-        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        renderPopToolRow(card, m.label, m.summary, isError);
+        row.appendChild(card);
+        chat.appendChild(row);
+        const popPayload = parsePopPayload(m.content);
+        if (popPayload) {
+          // Pop 交付卡 footer 批（作者令 2026-11-01 16:19）：重放腿 ts = m.timestamp
+          // （footer 信息条时间档与 live 腿同口径三腿）；行 id 覆写为
+          // historyMsgId(i)+'-pop'——引用寻址落卡行本体，不与同轮工具行撞号。
+          const artifactRow = buildPopArtifactRow(popPayload, { ts: m.timestamp });
+          if (artifactRow) {
+            artifactRow.dataset.msgId = historyMsgId(i) + '-pop';
+            chat.appendChild(artifactRow);
+          }
+        }
+      } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+        const isError = m.isError;
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -450,28 +834,71 @@ export function restoreFromStorage(opts = {}) {
         cardRow.appendChild(cardContainer);
         chat.appendChild(cardRow);
         renderWithRegistry(cardContainer, m.content);
+      } else if (m.content && typeof m.content === 'string' && /___\w+_HTML___/.test(m.content)) {
+        // ── cardguard negative filter (author ruling 2026-09-17 · #687① / #695-A) ──
+        // The gate above is START-anchored (`/^___\w+_HTML___/`) ⇒ it only catches the
+        // canonical card. A tool RESULT carrying the sentinel ANYWHERE else — the
+        // realistic shape being ToolResultGuard's persisted preview,
+        // `<persisted-output>\n…Preview (first 2048 chars):\n___CARD_HTML___{…` — used to
+        // fall through to the plain branch below and be rendered verbatim, by
+        // `renderHighlightedContent` (hljs `<pre>`) or by the `<pre class="tool-body-pre">`
+        // fallback. Same negative filter, judged by the SAME regex and only that regex, as
+        // the live path (chat.js:1139): the raw payload and its `<persisted-output>`
+        // wrapper must not reach the DOM on any route. The preview-wrapped string is
+        // deliberately NOT handed to renderWithRegistry — the 2048-char window truncates
+        // the payload, so that would half-parse — it becomes a readable placeholder with
+        // no "view source" escape hatch (no <pre> at all ⇒ the raw text stays out of the
+        // DOM collapsed or not). Ordinary tool results never match this regex and keep the
+        // branch below byte-for-byte.
+        const isError = m.isError;
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        const localLabel = localizeToolLabel(m.label);
+        const localSummary = localizeToolSummary(m.summary, m.label);
+        const lParts = localLabel.split('\n', 2);
+        const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary)
+          + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
+        card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+          '<div class="content"><div class="label">' + lHtml + '</div></div>';
+        const cgBody = document.createElement('div');
+        cgBody.className = 'body open';
+        cgBody.dataset.cardguard = 'placeholder';
+        cgBody.textContent = t('chat.toolCardUnavailable');
+        const cgContentEl = card.querySelector('.content');
+        if (cgContentEl) cgContentEl.appendChild(cgBody);
+        row.appendChild(card);
+        chat.appendChild(row);
       } else {
         const isError = m.isError;
-        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const detailHtml = buildToolDetail(m.input, m.label);
-        const _delegatePrompt = buildDelegatePromptHtml(m.input);
-        const highlightHtml = renderHighlightedContent(m.content, m.label);
-        const bodyHtml = (detailHtml + _delegatePrompt + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
-        const hasBody = !!bodyHtml;
+        // 折叠单源（ui-unification-20261103-chat-stream）：与 chat.js renderTool
+        // 同构——预览/全文两态 mountToolCardBody 单点定义，全文只在展开瞬间进 DOM。
+        const promptText = delegatePromptRaw(m.input);
+        const hasBody = !!(detailHtml || promptText || m.content);
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
         let _deviceTag = '';
-        if (m.input) { try { const _inp = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; if (_inp.device) _deviceTag = '<span class="tool-device-tag">' + esc(String(_inp.device)) + '</span>'; } catch {} }
+        if (m.input) { try { const _inp = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; if (_inp.device) _deviceTag = deviceTagHtml(_inp.device); } catch {} }
         const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + _deviceTag
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-          '<div class="content"><div class="label">' + lHtml + '</div>' +
-          (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+          '<div class="content"><div class="label">' + lHtml + '</div></div>';
+        mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label, labelTail: lParts[1] || '' });
         row.appendChild(card);
         chat.appendChild(row);
         if (hasBody) attachToolClick(card);
+        // Schedule 卡片（schedule-created-card 批 2026-11-05）：重放腿与 live
+        // renderTool 同形 —— 进程行 + 卡片行两行制，同一个 builder（零第二套判据）。
+        const schedRow = scheduleCardRowForTool({
+          label: m.label, inputJson: m.input, content: m.content, isError: m.isError, sessionId: ownerSessionId,
+        });
+        if (schedRow) {
+          schedRow.dataset.msgId = historyMsgId(i) + '-sched';
+          chat.appendChild(schedRow);
+        }
       }
     } else if (m.type === 'askUser') {
       // Same card component + lock state as the live path (see
@@ -483,7 +910,18 @@ export function restoreFromStorage(opts = {}) {
       bubble.className = 'bubble ai';
       row.appendChild(bubble);
       chat.appendChild(row);
-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i));
+      // 附件（askUser 历史恢复批 2026-10-02，chain-askuser-histattach）：第 4 形参
+      // 保持本腿改前的取值（本腿历来不传 requestId ⇒ 仍是 undefined，本批不越界改
+      // 这条 id 语义），只补第 5 形参 `m.attachments`。缺席 / 空列表 ⇒
+      // `renderAskAttachments` 内早退 ⇒ 本腿历史卡与改前逐字节同形。
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), undefined, m.attachments, askUserAnswerAtts(msgs, i));
+      // R5（作者裁定 = 补上，2026-09-14）：历史 askUser 卡原**不挂** footer，而 live
+      // ask 行（chat.js）与历史 ask 问答行都挂 ⇒ 卡片 footer 奇偶不一致。现补一枚
+      // 药丸（复用同一 builder ⇒ 分隔符守卫与三面形态同源）。`AskUser` 落盘无
+      // timestamp ⇒ `m.timestamp || 0` ⇒ 现状恒为 copy-only；将来若出现带 ts 的
+      // 生产者，同一行自动带时间（无需再改本处）。
+      const askCopy = askUserQuestionText(m.items);
+      if (askCopy) row.appendChild(createMsgFooterBadge(m.timestamp || 0, askCopy));
     } else if (m.type === 'askPermission') {
       // Render as disabled permission prompt (will be replaced by interactive version if still pending)
       const row = document.createElement('div');
@@ -509,6 +947,7 @@ export function restoreFromStorage(opts = {}) {
       chat.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
+      box.appendChild(permissionDetails(m.toolName, m.input));
       const q = document.createElement('div');
       q.className = 'option-q';
       q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
@@ -540,8 +979,10 @@ export function restoreFromStorage(opts = {}) {
       qBubble.appendChild(qText);
       qRow.appendChild(qBubble);
       // v1.2 unified footer (2026-09-06 补齐批): ask question bubbles get a
-      // copy footer too (UiMessage.Ask carries no timestamp → copy-only).
-      if (m.question) qRow.appendChild(createAiCopyBadge(0, m.question));
+      // copy footer too. R1（作者裁定 = 带时间，2026-09-14）：不再硬编码 0 ——
+      // 传 `m.timestamp`（数据层已给 `UiMessage.Ask` 补 timestamp 落盘）；
+      // 缺席（旧历史行 / 无 ts 生产者）⇒ 仍按 copy-only 渲染，守卫语义不变。
+      if (m.question) qRow.appendChild(createAiCopyBadge(m.timestamp, m.question));
       chat.appendChild(qRow);
       // Ask answer (AI side)
       if (m.answer) {
@@ -574,48 +1015,40 @@ export function restoreFromStorage(opts = {}) {
       bubble.className = 'bubble ai';
       bubble.innerHTML = renderMarkdownWithMath(m.text || '');
       if (m.agentId && m.agentId !== 'default') {
+        // F1（作者 2026-09-16 决策卡）：与 chat.js 同一枚通用徽章 —— 无内联色
+        // （内联色/几何全部单源化到 sapphire.css 的 `.agent-badge`），文案取同一
+        // 个 i18n 键（禁死键、禁第二套表述）。
         const badge = document.createElement('div');
         badge.className = 'agent-badge';
-        const colorIdx = m.agentId.length % AGENT_PALETTE.length;
-        const color = AGENT_PALETTE[colorIdx];
-        badge.style.borderColor = color;
-        badge.style.color = color;
-        badge.textContent = m.agentId;
-        badge.style.maxWidth = '160px';
-        badge.style.whiteSpace = 'nowrap';
-        badge.style.overflow = 'hidden';
-        badge.style.textOverflow = 'ellipsis';
+        badge.textContent = t('messages.agentBadge');
         row.appendChild(badge);
       }
       row.appendChild(bubble);
       // v1.2 unified footer (2026-09-06 补齐批): agent rows get a copy
-      // footer too (UiMessage.Agent carries no timestamp → copy-only).
-      if (m.text) row.appendChild(createAiCopyBadge(0, m.text));
+      // footer too. R1（作者裁定 = 带时间，2026-09-14）：不再硬编码 0 ——
+      // 传 `m.timestamp`（数据层 `UiMessage.Agent` 同批补 timestamp 字段）；
+      // 缺席 ⇒ copy-only，守卫语义不变。
+      if (m.text) row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       chat.appendChild(row);
     } else if (m.type === 'error') {
       // Skip error messages on restore — they're transient
     } else if (m.type === 'system') {
       // Skill-activated system messages are rendered as skill bubbles by the user handler above
       if (m.i18nKey === 'slash.skillActivated') return;
-      // Compaction lifecycle → same .compact-card component as the live path
+      // Compaction lifecycle → zero-trace 批（2026-10-28）：常规完成/失败卡一律
+      // null（数据留账，界面零渲染）；仅 emergency 安全阀卡重建
       // (parity with restoreFromBackendHistory; see restoreCompactCardRow).
       if (m.i18nKey === 'chat.compacting' || m.i18nKey === 'chat.compacted' || m.i18nKey === 'chat.compactFailed') {
         const compactRow = restoreCompactCardRow(m, msgs[i + 1]);
         if (compactRow) chat.appendChild(compactRow);
         return;
       }
-      const row = document.createElement('div');
-      row.className = 'row error';
-      const card = document.createElement('div');
-      card.className = 'error-card';
-      card.style.background = 'rgba(91,141,217,0.1)';
-      card.style.color = '#5b8dd9';
-      card.textContent = m.i18nKey ? t(m.i18nKey, m.params || {}) : m.content;
-      row.appendChild(card);
-      chat.appendChild(row);
+      chat.appendChild(restoreSystemNoticeRow(m));
     }
   });
   buildTurnSummariesForHistory(chat, { busyTail: !!opts.busyTail }); // #346 E4: re-derive turn headers from flat rows
+  // #491 (2026-10-05 in-place ruling): rows replay in document order, so each
+  // artifact already sits right after its Pop tool row — no post-pass.
   chat.scrollTop = chat.scrollHeight;
   if (activeView) activeView.stream.scrollSnapped = true;
   // Schedule deferred scrolls to catch async iframe height changes from card rendering.
@@ -624,34 +1057,38 @@ export function restoreFromStorage(opts = {}) {
   setTimeout(() => { chat.scrollTop = chat.scrollHeight; if (activeView) activeView.stream.scrollSnapped = true; }, 500);
 }
 
-// ---------- Replay backend history messages into the DOM ----------
-// Same logic as restoreFromStorage but takes messages array directly (from backend).
-// Uses DocumentFragment to batch DOM insertions and avoids redundant scroll operations.
-export function restoreFromBackendHistory(msgs, opts = {}) {
-  const { scrollToBottom = true, busyTail = false } = opts;
-  const chat = activeView.dom.chat;
-  const fragment = document.createDocumentFragment();
-  let skipMsg = false;
-  // Defer expensive markdown+KaTeX rendering into post-append batches.
-  // DOM elements are created synchronously with plain text; innerHTML is upgraded via rAF.
-  const pendingRenders = [];
-  const deferMd = (el, text, parseVoice = true) => {
-    el.textContent = text;
-    pendingRenders.push({ el, text, parseVoice });
-  };
-  msgs.forEach((m, i) => {
-    if (skipMsg) { skipMsg = false; return; }
+/**
+ * ONE history row of a backend-history replay → appends into ctx.fragment.
+ * Extracted verbatim from restoreFromBackendHistory's msgs.forEach body
+ * (perf 台账 #922 · 2026-10-26): the chunked-build prepend leg
+ * (mountHistoryPageChunked) must run the SAME builders as the sync replay leg
+ * — single source, zero second implementation (drift = rendering divergence).
+ * ctx = { msgs, fragment, deferMd, chatEl, ownerSessionId, markSkip, deferToolBody? }:
+ *   · markSkip()  — the skill-activation lookahead (consume next message);
+ *   · chatEl      — the container sameAskCards dedups against (sync leg passes
+ *     the tempDiv swap target exactly as before; chunked leg passes the real chat);
+ *   · deferToolBody(card, build) — chunked leg ONLY: big tool bodies build
+ *     their HTML in an idle batch instead of inline (ctx absence = inline, byte-parity).
+ */
+function buildHistoryRow(m, i, ctx) {
+  const { msgs, fragment, deferMd, chatEl, ownerSessionId, markSkip, deferToolBody } = ctx;
     if (m.type === 'user') {
       // Injected messages (task P+Q): light-blue bubble via shared builder.
       // Skip outgoing sends misrecorded into this session (see
       // isOutgoingInjection) — the bubble is for received content only.
       if (m.injected && m.source) {
-        if (isOutgoingInjection(m)) return;
+        if (isOutgoingInjection(m, ownerSessionId)) return;
         // deferMd with parseVoice=false (same as the live path): injected
         // messages join the rAF markdown batch — no synchronous render storm
         // on hard-refresh (P0-2).
+        // fileChanges（bug #58 修）：后端历史分页行同字段透传（缺席 = 旧行为）。
+        // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同字段透传——
+        // `m.source==='schedule'` 的行在 builder 内走专属卡分支（缺席 = 旧行为）。
+        // 来源链批（2026-11-01 19:23）：收件会话 id 末参下传（完工卡归属链上层段；
+        // live 路径 renderInjectedBubble 同键）。
+        // askAddress（ask-mail 批 2026-11-16）：ask 续聊地址同字段透传（缺席 = 旧行为）。
         fragment.appendChild(buildInjectedRow(m.text || '', m.source, m.timestamp, m.eventType, m.sender, m.senderTeam,
-          (el, text) => deferMd(el, text, false), m.delivery));
+          (el, text) => deferMd(el, text, false), m.delivery, m.intake, m.header, m.fileChanges, m.schedule, ownerSessionId, m.askAddress));
         return;
       }
       // Look ahead: if next message is a skill-activated system message,
@@ -661,7 +1098,58 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       const skillName = isSkillActivation ? (next.params && next.params.skillName) : null;
       const row = document.createElement('div');
       row.className = 'row user';
-      if (m.text) {
+      // quote-message 一期（spec §7.5）：重放行挂 h<index>-<mount> id + 右键菜单
+      // （用户文本行 = 复制 + 引用；快照数据全在行内，重放腿引用零引擎依赖）。
+      row.dataset.msgId = historyMsgId(i);
+      // msgchip-provenance 批（2026-11-01）：显示面只留作者原生输入——渠道来源块 /
+      // 注入头 / 附件路径指针行剥除（单点 channelProvenance）。剥离结果一并在本行
+      // 的引用菜单与复制钮上生效（显示/引用/复制三面同文，与 live 腿 chat.js 同读）。
+      const shownText = stripChannelProvenance(m.text || '').text;
+      attachQuoteMenu(row, {
+        kind: 'text', text: shownText,
+        sessionId: ownerSessionId || undefined, messageId: row.dataset.msgId,
+        senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: m.timestamp || Date.now(),
+      });
+      // Ask ANSWER marker (AskUser 强制展开修令, author 2026-10-06 19:29): a
+      // recorded card answer rides `answerOf` (案 B single construction point,
+      // UiMessage.askUserAnswer). The row stays a normal user bubble here, but
+      // the marker tells turnGroup it is MID-TURN — the ask blocked the turn,
+      // it did not end it — so the history segment keeps ONE turn header and
+      // the pre-ask tool results stay tucked (isNonInjectedUserRow exemption;
+      // workline turnAnchor same exemption). Absent on pre-案B rows ⇒ those
+      // keep the legacy split behaviour (unchanged).
+      if (m.answerOf) row.dataset.nfAskAnswer = m.answerOf;
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行标——后端在落盘那
+      // 一瞬判定「该会话仍在 Processing」并随行写 `midTurn=true`（dispatchUserText
+      // / typeless 帧腿 / skill 腿），此处转成 data-nf-mid-turn（turnGroup 的段边界
+      // 单点判据读它；live 腿 chat.js renderUserBubble 盖同一标）。缺席（旧
+      // `.ui.json` 行 / 普通开轮行）⇒ 不落标，判据回落时间戳蕴含推断。
+      if (m.midTurn === true) row.dataset.nfMidTurn = '1';
+      // quote-message 一期（spec §3.4）：`m.quote` 在场 ⇒ 气泡上方引用块（与
+      // live 腿同一渲染器 renderQuoteBlock；快照文随行落盘自包含 —— ui.json 裁剪/
+      // 换设备/分页都稳）。目标行可点性在 fragment 挂载后由 syncQuoteJumpStates
+      // 统一收敛（页内靠后的目标行此刻可能尚未创建）；未命中 ⇒ 快照文 +
+      // 「原消息已删除」注记 + 无指针（无死点击）。
+      // 引用块宽度约束（2026-10-20 作者令「引用文字不要超过用户发送的文字」）：
+      // 与 live 腿同一包裹规则 —— 引用块 + 文本气泡同时在场 ⇒ .msg-quote-composite
+      // 气泡驱宽复合盒（规则单点 = chat.css 同名段）；仅引用无文本不包裹。
+      const quoteBox = (m.quote && typeof m.quote === 'object') ? renderQuoteBlock(m.quote) : null;
+      let composite = null;
+      if (quoteBox && m.text) {
+        composite = document.createElement('div');
+        composite.className = 'msg-quote-composite';
+        row.appendChild(composite);
+      }
+      if (quoteBox) (composite || row).appendChild(quoteBox);
+      // 媒体统一适配批（2026-10-20）：存量「已存至」行级换算（单点
+      // unifyUserMediaFace，与缓存恢复腿同源）——识别命中 ⇒ 媒体行接管、
+      // 文本气泡隐去；否则逐字现状。
+      const userUnified = unifyUserMediaFace(m.text, m.attachments);
+      // msgchip-provenance 批（2026-11-01）：显示面只留作者原生输入——渠道来源块 /
+      // 注入头 / 附件路径指针行剥除（单点 channelProvenance；与 live 腿 chat.js
+      // renderUserBubble 同一实现，两条恢复腿同源）。
+      userUnified.text = stripChannelProvenance(userUnified.text).text;
+      if (userUnified.text) {
         const bubble = document.createElement('div');
         bubble.className = 'bubble user';
         if (isSkillActivation && skillName) {
@@ -670,23 +1158,29 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
           label.className = 'ask-label';
           label.textContent = t('chat.skillLabel', { skill: skillName });
           const content = document.createElement('div');
-          content.textContent = m.text;
+          content.textContent = userUnified.text;
           bubble.appendChild(label);
           bubble.appendChild(content);
-          skipMsg = true; // skip the system message on next iteration
+          markSkip(); // skip the system message on next iteration
         } else {
           const t = document.createElement('div');
-          t.textContent = m.text;
+          // Plain-text face with mention spans (mention-render batch):
+          // identical output when nothing matches; user text never enters
+          // markdown on a restore path either.
+          appendUserTextWithFences(t, userUnified.text || '');
           bubble.appendChild(t);
         }
-        row.appendChild(bubble);
+        (composite || row).appendChild(bubble);
       }
-      (m.attachments || []).forEach(att => appendAttachmentBubble(row, att));
+      const backendMediaRow = buildUserAttachmentRows(row, userUnified.atts, m.timestamp);
       // Unified v1.2 footer pill (time + copy; copy-only when no timestamp)
       if ((m.timestamp && m.timestamp > 0) || m.text) {
-        row.appendChild(createAiCopyBadge(m.timestamp, m.text));
+        row.appendChild(createAiCopyBadge(m.timestamp, shownText));
       }
       fragment.appendChild(row);
+      // #491 主题三 (AC-S4): media row into the fragment right after the user
+      // row — document order survives the batched append.
+      if (backendMediaRow) fragment.appendChild(backendMediaRow);
     } else if (m.type === 'ai') {
       // Thinking bubble (if present)
       if (m.thinking) {
@@ -700,12 +1194,14 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         const tContent = document.createElement('div');
         tContent.className = 'thinking-content';
         deferMd(tContent, m.thinking);
-        // If there's no text, keep thinking expanded so user can see what the model thought
-        if (!m.text) {
-          tLabel.classList.add('expanded');
-        } else {
-          tContent.style.display = 'none';
-        }
+        // §③ 思考窗硬上限（stream-919-unify 批）：历史重放腿（deferMd 版）
+        // 同窗钉限＋计数读数——窗是元素常驻样式，与 deferMd 异步渲染正交。
+        applyThinkingWindowCap(tContent, m.thinking);
+        // 重连折叠持久批（2026-10-20，续作 chain 69e5e2e1）：thinking 恒折叠。
+        // 旧的「无 text 保持展开」例外与重放契约冲突 —— 每次重连重放都把
+        // thinking-only 行的全文抖开（症状①「thinking 突然完整显示」）。
+        // 折叠态跨重放持久；读全文 = 点 label 展开（collapsible 面不变）。
+        tContent.style.display = 'none';
         tBubble.appendChild(tLabel);
         tBubble.appendChild(tContent);
         tRow.appendChild(tBubble);
@@ -714,15 +1210,39 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         fragment.appendChild(tRow);
         bindCollapsibleToggle(tLabel, () => tContent);
       }
-      // Only render AI bubble if there's actual text content
-      if (m.text) {
+      // replay-terminal 批（2026-10-28，案一「A 根治」实施）——与 restoreFromStorage
+      // ai 分支同款两处渲染面变化（①徽章出 if (m.text)：凡 durationMs>0 一律渲染，
+      // 旧转录同享；②terminal 行无条件渲染 + data-nf-turn-terminal / data-nf-model
+      // 行标）：四条回放腿同一渲染器，单源不改第二处。旧行（无 terminal、无 dur、
+      // 有 text）逐字节同形。
+      const isTurnTerminal = m.terminal === true;
+      const hasDuration = m.durationMs != null && m.durationMs > 0;
+      if (m.text || isTurnTerminal || hasDuration) {
         const row = document.createElement('div');
         row.className = 'row ai';
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble ai';
-        deferMd(bubble, m.text || '');
-        row.appendChild(bubble);
-        if (m.durationMs != null && m.durationMs > 0) {
+        if (m.text) {
+          // quote-message 一期：助手文本行挂 id + 右键（复制 + 引用）。
+          row.dataset.msgId = historyMsgId(i);
+          attachQuoteMenu(row, {
+            kind: 'text', text: m.text || '',
+            senderRole: 'ai', senderName: ownAgentName() || rootDisplayName(), ts: m.timestamp || Date.now(),
+          });
+          const bubble = document.createElement('div');
+          bubble.className = 'bubble ai';
+          // output 面标记：升级批渲染时走 applyOutputFace（与 live/sync 两腿同面）。
+          if (hasOutputBlock(m.text || '')) bubble.dataset.nfDeferOutput = '1';
+          deferMd(bubble, m.text || '');
+          row.appendChild(bubble);
+        }
+        if (isTurnTerminal) {
+          row.dataset.nfTurnTerminal = '1';
+          if (m.model) row.dataset.nfModel = m.model;
+          // tool-card-leak-on-reload 批（2026-11-02）：轮时长随 terminal 行落 DOM，
+          // 供 turnGroup 对**旧存量**转录（无 `midTurn` 键）做「该 user 行是否落在
+          // 这轮引擎窗口内」的时间戳蕴含推断（零迁移降级路径）。
+          if (hasDuration) row.dataset.nfTurnDuration = String(m.durationMs);
+        }
+        if (hasDuration) {
           const badge = createDurationBadgeElement(m.durationMs, m.model, i, m.timestamp, m.text);
           row.appendChild(badge);
         } else {
@@ -733,18 +1253,44 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
     } else if (m.type === 'tool') {
       const row = document.createElement('div');
       row.className = 'row tool';
+      // 卫生批（2026-10-28，回放残余①根治）：与 restoreFromStorage tool 分支同款
+      // ——退化全工具轮的 terminal 工具行盖 data-nf-turn-terminal（旧行无键不落标）。
+      if (m.terminal === true) row.dataset.nfTurnTerminal = '1';
+      // quote-message 一期：工具卡行挂 id + 右键「引用」（摘要 = [工具] label ·
+      // summary≤40 —— UiMessage.Tool 自带一行摘要）。
+      row.dataset.msgId = historyMsgId(i);
+      attachQuoteMenu(row, {
+        kind: 'tool', label: m.label || '', summary: m.summary || '',
+        senderRole: 'tool', senderName: ownAgentName() || rootDisplayName(), ts: Date.now(),
+      });
       // #346 v2 stats: tool input rides the row for the turn header's
       // 读写 <K> 文件 count (same contract as chat.js renderTool).
       if (m.input) { try { row.dataset.nfInput = typeof m.input === 'string' ? m.input : JSON.stringify(m.input); } catch {} }
       const card = document.createElement('div');
-      card.className = 'tool-card';
+      card.className = 'tool-card ds-tool-card';
       // beta.56 ruling: tool-class bubbles carry NO footer (message-class
       // only). Card/iframe payloads render without any copy badge.
-      // Card tool: render standard tool card + separate card iframe below
-      if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+      // Pop artifact payload (pop-upgrade batch): process row + artifact row,
+      // the same two-row shape the live renderTool builds.
+      if (isPopPayload(m.content)) {
         const isError = m.isError;
-        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        renderPopToolRow(card, m.label, m.summary, isError);
+        row.appendChild(card);
+        fragment.appendChild(row);
+        const popPayload = parsePopPayload(m.content);
+        if (popPayload) {
+          // Pop 交付卡 footer 批（作者令 2026-11-01 16:19）：重放腿 ts = m.timestamp
+          // + 行 id 覆写 historyMsgId(i)+'-pop'（storage 腿同口径，见上方同款注）。
+          const artifactRow = buildPopArtifactRow(popPayload, { ts: m.timestamp });
+          if (artifactRow) {
+            artifactRow.dataset.msgId = historyMsgId(i) + '-pop';
+            fragment.appendChild(artifactRow);
+          }
+        }
+      } else if (m.content && typeof m.content === 'string' && /^___\w+_HTML___/.test(m.content)) {
+        const isError = m.isError;
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
@@ -762,45 +1308,118 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
         renderWithRegistry(cardContainer, m.content);
       } else {
         const isError = m.isError;
-        // Pop tool: rainbow filename + clickable card (shared with live renderTool)
-        if (applyPopCard(card, m.label, m.summary, m.input, isError)) {
+        // Legacy Pop rows (pre-batch histories): rainbow filename + clickable card
+        if (applyLegacyPopCard(card, m.label, m.summary, m.input, isError)) {
+          row.appendChild(card);
+          fragment.appendChild(row);
+        } else if (m.content && typeof m.content === 'string' && /___\w+_HTML___/.test(m.content)) {
+          // ── cardguard negative filter (author ruling 2026-09-17 · #687① / #695-A) ──
+          // Isomorphic to the restoreFromStorage branch above: same START-anchored gate
+          // at the card path, same sentinel-anywhere regex, same safe placeholder. A tool
+          // RESULT carrying the sentinel outside position 0 (realistic shape =
+          // ToolResultGuard's persisted preview,
+          // `<persisted-output>\n…Preview (first 2048 chars):\n___CARD_HTML___{…`) used to
+          // fall into the plain branch below and be rendered verbatim by
+          // `renderHighlightedContent` / `<pre class="tool-body-pre">`. Raw payload and its
+          // `<persisted-output>` wrapper must not reach the DOM on any route; the
+          // preview-wrapped string is deliberately NOT handed to renderWithRegistry (the
+          // 2048-char window truncates it ⇒ half-parse). The Pop face is unchanged — it is
+          // checked first, exactly as in the live path (chat.js:1099 before :1139) — and
+          // ordinary tool results never match the regex, so their rendering is untouched.
+          const isError = m.isError;
+          const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                               : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+          const localLabel = localizeToolLabel(m.label);
+          const localSummary = localizeToolSummary(m.summary, m.label);
+          const lParts = localLabel.split('\n', 2);
+          const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary)
+            + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
+          card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
+            '<div class="content"><div class="label">' + lHtml + '</div></div>';
+          const cgBody = document.createElement('div');
+          cgBody.className = 'body open';
+          cgBody.dataset.cardguard = 'placeholder';
+          cgBody.textContent = t('chat.toolCardUnavailable');
+          const cgContentEl = card.querySelector('.content');
+          if (cgContentEl) cgContentEl.appendChild(cgBody);
           row.appendChild(card);
           fragment.appendChild(row);
         } else {
-        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#f44336" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
-                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        const icon = isError ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M18 6L6 18M6 6l12 12"/></svg>'
+                             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>';
+        // perf 台账 #922（2026-10-26）：大工具正文是补页/初载长任务的大头——
+        // 实测 renderHighlightedContent 在 60KB 正文上 ~0.6s/条（正则重灾），
+        // esc+innerHTML 仅 ~3ms。三刀合一：>TOOL_HEAVY_BODY 的正文（甲）跳过
+        // 语法高亮走纯 pre（文字逐字同形，仅色面让位——60KB+ 的代码墙高亮是
+        // 纯成本）；（乙）分帧挂载腿把正文构建推进空闲升级批（卡片壳即时、
+        // .body 稍后逐字同形）；（丙）同步腿（初载/弹窗）同享甲刀（cap 在
+        // 共享 helper 内）。TOOL_HEAVY_BODY 以下逐字现状。
+        // 折叠单源（ui-unification-20261103-chat-stream）：与 live 腿同构。
+        // perf 台账 #922 的闲置分帧腿被折叠面**取代**：预览只对 ≤TOOL_PREVIEW_LINES
+        // 行做渲染（capLines 后高亮，成本与行数无关的墙已拆），全文改为展开瞬间
+        // 才构建——比「空闲升级批」严格更懒，故此处不再走 deferToolBody。
         const detailHtml = buildToolDetail(m.input, m.label);
-        const _delegatePrompt2 = buildDelegatePromptHtml(m.input);
-        const highlightHtml = renderHighlightedContent(m.content, m.label);
-        const bodyHtml = (detailHtml + _delegatePrompt2 + (highlightHtml || (m.content ? '<pre class="tool-body-pre">' + esc(m.content) + '</pre>' : ''))) || '';
-        const hasBody = !!bodyHtml;
+        const promptText = delegatePromptRaw(m.input);
+        const hasBody = !!(detailHtml || promptText || m.content);
         const localLabel = localizeToolLabel(m.label);
         const localSummary = localizeToolSummary(m.summary, m.label);
         const lParts = localLabel.split('\n', 2);
         let _deviceTag2 = '';
-        if (m.input) { try { const _inp2 = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; if (_inp2.device) _deviceTag2 = '<span class="tool-device-tag">' + esc(String(_inp2.device)) + '</span>'; } catch {} }
+        if (m.input) { try { const _inp2 = typeof m.input === 'string' ? JSON.parse(m.input) : m.input; if (_inp2.device) _deviceTag2 = deviceTagHtml(_inp2.device); } catch {} }
         const lHtml = esc(lParts[0]) + ' &mdash; ' + esc(localSummary) + _deviceTag2
           + (lParts.length > 1 ? '<br><span class="tool-detail">' + esc(lParts[1]) + '</span>' : '');
         card.innerHTML = '<span class="icon ' + (isError ? 'err' : 'ok') + '">' + icon + '</span>' +
-          '<div class="content"><div class="label">' + lHtml + '</div>' +
-          (bodyHtml ? '<div class="body">' + bodyHtml + '</div>' : '') + '</div>';
+          '<div class="content"><div class="label">' + lHtml + '</div></div>';
+        mountToolCardBody(card, { detailHtml, promptText, content: m.content, label: m.label, labelTail: lParts[1] || '' });
         row.appendChild(card);
         fragment.appendChild(row);
         if (hasBody) attachToolClick(card);
+        // Schedule 卡片（schedule-created-card 批 2026-11-05）：与 storage 腿逐字
+        // 同形（进程行 + 卡片行；同一 builder、同一行 id 后缀）。
+        const schedRow = scheduleCardRowForTool({
+          label: m.label, inputJson: m.input, content: m.content, isError: m.isError, sessionId: ownerSessionId,
+        });
+        if (schedRow) {
+          schedRow.dataset.msgId = historyMsgId(i) + '-sched';
+          fragment.appendChild(schedRow);
+        }
         }
       }
     } else if (m.type === 'askUser') {
+      // 一 id 一活卡（案 A③ 单一判据的历史腿）：该 askUser 行带 requestId 且聊天流里
+      // 已有同 id 的卡（live 腿或重放腿先画的真身）⇒ 不再画历史孪生卡。历史分页
+      // （beforeIndex 非空、不清 DOM）与「重放帧先到、历史后到」两个竞态都靠这一步
+      // 收口；禁在这里开 `legacyTwin`（那是替换腿的口子，历史腿开了会把任何遗留
+      // 未作答卡后面的历史卡静默跳过）。
+      const dupLive = m.requestId ? sameAskCards(chatEl, m.requestId) : [];
+      if (dupLive.length) return;
       // Same card component as the live renderAskUser path (chat.js
       // showOptions) + the terminal lock state of the live confirm/cancel
       // paths — restored answered cards are structurally identical to live
       // ones (question wrappers, descriptions, previews, Other input).
       const row = document.createElement('div');
       row.className = 'row ai';
+      // quote-message 一期：AskUser 卡行挂 id + 右键「引用」（摘要 = [提问]
+      // 首个 question 剥标签后首行；剥标签先例 = askUserQuestionText）。
+      row.dataset.msgId = historyMsgId(i);
+      attachQuoteMenu(row, {
+        kind: 'ask', question: askUserQuestionText(m.items),
+        senderRole: 'askUser', senderName: ownAgentName() || rootDisplayName(), ts: m.timestamp || Date.now(),
+      });
       const bubble = document.createElement('div');
       bubble.className = 'bubble ai';
       row.appendChild(bubble);
       fragment.appendChild(row);
-      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i));
+      // 案 B：持久化的 requestId 一并透传 ⇒ 历史卡带 `data-request-id`（可 id 寻址）。
+      // 附件（askUser 历史恢复批 2026-10-02，chain-askuser-histattach）：第 5 形参 =
+      // 落盘行顶层 `attachments`（后端历史恢复腿 `handleGetHistory` → `getHistoryPage`
+      // → `Encoder[UiMessage]` 编出的同一形状）。缺席 / 空列表 ⇒
+      // `renderAskAttachments` 内早退 ⇒ 无附件行（改前形态逐字不变）。
+      renderAskUserHistory(bubble, m.items, askUserAnswerText(msgs, i), m.requestId, m.attachments, askUserAnswerAtts(msgs, i));
+      // R5（作者裁定 = 补上）：与 localStorage 兜底路径同款补药丸，两条历史路径
+      // 逐字对齐（本函数与 restoreFromStorage 的历史形态必须一致）。
+      const askCopy = askUserQuestionText(m.items);
+      if (askCopy) row.appendChild(createMsgFooterBadge(m.timestamp || 0, askCopy));
     } else if (m.type === 'askPermission') {
       // Render as disabled permission prompt (will be replaced by interactive version if still pending)
       const row = document.createElement('div');
@@ -826,6 +1445,7 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       fragment.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
+      box.appendChild(permissionDetails(m.toolName, m.input));
       const q = document.createElement('div');
       q.className = 'option-q';
       q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
@@ -857,8 +1477,10 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       qBubble.appendChild(qText);
       qRow.appendChild(qBubble);
       // v1.2 unified footer (2026-09-06 补齐批): ask question bubbles get a
-      // copy footer too (UiMessage.Ask carries no timestamp → copy-only).
-      if (m.question) qRow.appendChild(createAiCopyBadge(0, m.question));
+      // copy footer too. R1（作者裁定 = 带时间，2026-09-14）：不再硬编码 0 ——
+      // 传 `m.timestamp`（数据层已给 `UiMessage.Ask` 补 timestamp 落盘）；
+      // 缺席（旧历史行 / 无 ts 生产者）⇒ 仍按 copy-only 渲染，守卫语义不变。
+      if (m.question) qRow.appendChild(createAiCopyBadge(m.timestamp, m.question));
       fragment.appendChild(qRow);
       // Ask answer (AI side)
       if (m.answer) {
@@ -891,75 +1513,267 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
       bubble.className = 'bubble ai';
       deferMd(bubble, m.text || '');
       if (m.agentId && m.agentId !== 'default') {
+        // F1（作者 2026-09-16 决策卡）：与 chat.js 同一枚通用徽章 —— 无内联色
+        // （内联色/几何全部单源化到 sapphire.css 的 `.agent-badge`），文案取同一
+        // 个 i18n 键（禁死键、禁第二套表述）。
         const badge = document.createElement('div');
         badge.className = 'agent-badge';
-        const colorIdx = m.agentId.length % AGENT_PALETTE.length;
-        const color = AGENT_PALETTE[colorIdx];
-        badge.style.borderColor = color;
-        badge.style.color = color;
-        badge.textContent = m.agentId;
-        badge.style.maxWidth = '160px';
-        badge.style.whiteSpace = 'nowrap';
-        badge.style.overflow = 'hidden';
-        badge.style.textOverflow = 'ellipsis';
+        badge.textContent = t('messages.agentBadge');
         row.appendChild(badge);
       }
       row.appendChild(bubble);
       // v1.2 unified footer (2026-09-06 补齐批): agent rows get a copy
-      // footer too (UiMessage.Agent carries no timestamp → copy-only).
-      if (m.text) row.appendChild(createAiCopyBadge(0, m.text));
+      // footer too. R1（作者裁定 = 带时间，2026-09-14）：不再硬编码 0 ——
+      // 传 `m.timestamp`（数据层 `UiMessage.Agent` 同批补 timestamp 字段）；
+      // 缺席 ⇒ copy-only，守卫语义不变。
+      if (m.text) row.appendChild(createAiCopyBadge(m.timestamp, m.text));
       fragment.appendChild(row);
     } else if (m.type === 'system') {
       // Skill-activated system messages are rendered as skill bubbles by the user handler above;
       // skip them here as a safety net (e.g. if the preceding user message was missing).
       if (m.i18nKey === 'slash.skillActivated') return;
-      // Compaction lifecycle → same .compact-card component as the live path.
-      // restoreCompactCardRow returns null for a "compacting" entry that the
-      // next terminal entry supersedes (the live card morphs in place).
+      // Compaction lifecycle → zero-trace 批（2026-10-28）：restoreCompactCardRow
+      // returns null for EVERY "compacting" start entry (both the paired and the
+      // orphan shape — see its header comment) AND for every regular compacted /
+      // compactFailed entry; only the 0.95 hard-guard emergency card re-renders.
       if (m.i18nKey === 'chat.compacting' || m.i18nKey === 'chat.compacted' || m.i18nKey === 'chat.compactFailed') {
         const compactRow = restoreCompactCardRow(m, msgs[i + 1]);
         if (compactRow) fragment.appendChild(compactRow);
         return;
       }
-      const row = document.createElement('div');
-      row.className = 'row error';
-      const card = document.createElement('div');
-      card.className = 'error-card';
-      card.style.background = 'rgba(91,141,217,0.1)';
-      card.style.color = '#5b8dd9';
-      card.textContent = m.i18nKey ? t(m.i18nKey, m.params || {}) : m.content;
-      row.appendChild(card);
-      fragment.appendChild(row);
+      fragment.appendChild(restoreSystemNoticeRow(m));
     }
-  });
+}
+
+// ---------- Replay backend history messages into the DOM ----------
+// Same logic as restoreFromStorage but takes messages array directly (from backend).
+// Uses DocumentFragment to batch DOM insertions and avoids redundant scroll operations.
+
+/** 大工具正文门槛（perf 台账 #922）：>16KB 的正文（甲）不进语法高亮（纯 pre，
+ *  文字逐字同形——60KB+ 的 renderHighlightedContent 实测 ~0.6s/条，高亮一面纯
+ *  成本），（乙）分帧挂载腿把它推到空闲升级批。以下逐字现状。 */
+const TOOL_HEAVY_BODY = 16384;
+
+/** 工具正文 HTML 单源（同步腿 / 分帧腿的 deferred 构建共用）：cap 内高亮，
+ *  超出纯 pre。输入 = content/input/label 三元组，输出与改前同构。 */
+function toolBodyHtml(content, input, label) {
+  const detailHtml = buildToolDetail(input, label);
+  const _delegatePrompt2 = buildDelegatePromptHtml(input);
+  const highlightHtml = (typeof content === 'string' && content.length <= TOOL_HEAVY_BODY)
+    ? renderHighlightedContent(content, label)
+    : null;
+  return (detailHtml + _delegatePrompt2 + (highlightHtml || (content ? '<pre class="tool-body-pre">' + esc(content) + '</pre>' : ''))) || '';
+}
+
+export function restoreFromBackendHistory(msgs, opts = {}) {
+  const { scrollToBottom = true, busyTail = false } = opts;
+  const chat = activeView.dom.chat;
+  // 重连视口不劫持（reconnect-collapse 续作 69e5e2e1，2026-10-21）：真重建腿
+  // 不再无条件把视口拽到底。两个量必须由**调用方在 wipe 之前**采集并随 opts
+  // 传入（historyReplay.js 初载腿）：
+  //   · followBottom —— 跟随意图。wipe 之后的空滚动区对 isNearBottom 恒真
+  //     （「空 = 贴底」），在重放函数内部采集会把「回看中段」误读成「跟随」；
+  //   · anchor.scrollTop —— 视口锚。真重建是**全量替换**：上方行由同一历史
+  //     重放出（高度恒定），恢复绝对 scrollTop 即把用户钉回原阅读位（增长
+  //     发生在下方/视口外时不补偿——分页 prepend 腿另有自管的差值公式）。
+  // 缺省（旧调用方：bg/flow 弹窗首刷等）回退为函数内自采 = 改前行为。
+  const followBottom = scrollToBottom && (typeof opts.followBottom === 'boolean'
+    ? opts.followBottom
+    : shouldFollowBottom(activeView, chat));
+  const prevScrollTop = opts.anchor ? opts.anchor.scrollTop : chat.scrollTop;
+  // quote-message 一期：每次恢复换一个 mount token（historyMsgId 的尾巴）——
+  // prepend 分页对本函数整页重跑 ⇒ 页内 index 重置，裸 index 会撞号；mount token
+  // 同时让「跨重挂载」的旧引用 id 天然失配 ⇒ 引用块退化快照态（无死指针）。
+  beginHistoryMount();
+  // The caller points activeView at the view that received this historyPage
+  // frame (chatView#setActiveView; the sub-agent panels own their own ChatView
+  // with their own sessionId), so that view identifies the session owning
+  // `msgs` — the identity the direction filter must judge against. See
+  // isOutgoingInjection.
+  const ownerSessionId = (activeView && activeView.sessionId) || state.activeSessionId || null;
+  const fragment = document.createDocumentFragment();
+  let skipMsg = false;
+  // Defer expensive markdown+KaTeX rendering into post-append batches.
+  // DOM elements are created synchronously with plain text; innerHTML is upgraded via rAF.
+  const pendingRenders = [];
+  const deferMd = (el, text, parseVoice = true) => {
+    el.textContent = text;
+    pendingRenders.push({ el, text, parseVoice });
+  };
+  const rowCtx = { msgs, fragment, deferMd, chatEl: chat, ownerSessionId, skip: false };
+  rowCtx.markSkip = () => { rowCtx.skip = true; };
+  for (let i = 0; i < msgs.length; i++) {
+    if (rowCtx.skip) { rowCtx.skip = false; continue; }
+    buildHistoryRow(msgs[i], i, rowCtx);
+  }
   chat.appendChild(fragment);
+  // quote-message 一期：fragment 已入 DOM ⇒ 引用块可点性统一收敛（挂载时目标行
+  // 可能在本页靠后位置，创建顺序倒挂 ⇒ 此刻才有完整答案）。
+  syncQuoteJumpStates(chat);
   buildTurnSummariesForHistory(chat, { busyTail }); // #346 E4: re-derive turn headers from flat rows
+  // #491: doc-order replay keeps each artifact beside its Pop tool row — same
+  // as the live path and the storage-replay path; no re-anchor.
   // Scroll to bottom: immediate sync (for stable initial position before any async iframe load)
   // followed by deferred rAF (catches late layout changes from streaming state restoration, etc.).
   // Caller can set scrollToBottom=false (e.g. scroll-up pagination preserves position).
-  if (scrollToBottom) {
+  if (followBottom) {
     chat.scrollTop = chat.scrollHeight;
     if (activeView) activeView.stream.scrollSnapped = true;
+    // 进场落底修复批（2026-11-02 · 作者实拍报障「手机端点进聊天从最顶部开始读」）：
+    // 上面这次同步钉底只赢一次 —— 紧随其后的 deferred markdown 升级批（下方
+    // `upgradeBatch`，每帧 6 条）与晚到的图片字节都会在下一次布局把内容撑高，
+    // 而**下方增长不产生 scroll 事件**（同族既有注记见 main.js `pinIfFollowing`），
+    // 视图就停在原处。武装窗在原语里把「这一小段时间内任何原因导致的离开底部」
+    // 逐帧收敛回来（用户一动手即解除、有截止时刻 —— 见 chat/settleBottom.js 头注）。
+    // 非跟随腿（回看中段）**不**武装：那里要的是锚位，不是底部。
+    settleBottom(chat);
+  } else if (scrollToBottom) {
+    // 非跟随（用户回看中段）：绝对锚位恢复——重放上方行与改前同形（同一历史
+    // 重放），scrollTop 回到 prev 即回到原阅读位；不写 scrollSnapped（不劫持
+    // 视口，也不把后续流的跟随手势强扭到底）。
+    chat.scrollTop = prevScrollTop;
   }
   // Batch-upgrade deferred markdown rendering (marked.parse + KaTeX) via rAF.
   // Processes a few elements per frame to avoid blocking the main thread.
+  // 冷启动批⑤：单元素 try/catch 护栏 —— 一枚病态输入不再炸断整条 rAF 链
+  // （修前 upgradeBatch 中途抛错 ⇒ 后续消息永久滞留原始 markdown 文本态）。
   const BATCH_SIZE = 6;
   let ri = 0;
   function upgradeBatch() {
     const end = Math.min(ri + BATCH_SIZE, pendingRenders.length);
     for (; ri < end; ri++) {
       const { el, text, parseVoice } = pendingRenders[ri];
-      el.innerHTML = renderMarkdownWithMath(text, parseVoice);
+      try {
+        // output 块语法批：标记泡走 output 面（只显块内；角标展开在 turnGroup）。
+        if (el.dataset && el.dataset.nfDeferOutput === '1') applyOutputFace(el, text);
+        else el.innerHTML = renderMarkdownWithMath(text, parseVoice);
+      } catch (e) {
+        el.textContent = text; // 回落纯文本（renderer 自身另有永不抛护栏，双保险）
+      }
     }
     if (ri < pendingRenders.length) {
       requestAnimationFrame(upgradeBatch);
-    } else if (scrollToBottom) {
+    } else if (followBottom) {
       chat.scrollTop = chat.scrollHeight;
       if (activeView) activeView.stream.scrollSnapped = true;
+    } else if (scrollToBottom) {
+      // 同上：md 升级批落定后把绝对锚位再落一次（deferMd 先 textContent 后
+      // md 的两相高度差在批间会漂，终相高度与改前同形 ⇒ prev 精确）。
+      chat.scrollTop = prevScrollTop;
     }
   }
   if (pendingRenders.length > 0) {
     requestAnimationFrame(upgradeBatch);
+  }
+}
+
+// ---------- Chunked-build prepend mount（perf 台账 #922 · 2026-10-26）----------
+/** 每片消息数：单片构建目标 <100ms（重页 = 多片跨帧，pong 在片间照常处理）。 */
+const MOUNT_BUILD_CHUNK = 8;
+/** 升级批宽：每帧 4 个任务（md 升级 + 大工具正文混排）。 */
+const MOUNT_UPGRADE_BATCH = 4;
+
+// Capture immediately before each DOM mutation, so intervening user scrolling wins.
+export function captureHistoryAnchor(chat) {
+  if (!chat || !chat.isConnected) return null;
+  const bounds = chat.getBoundingClientRect();
+  const row = [...chat.querySelectorAll('.row')].find((el) => {
+    const rect = el.getBoundingClientRect();
+    return rect.bottom > bounds.top && rect.top < bounds.bottom;
+  });
+  return row ? { chat, row, top: row.getBoundingClientRect().top - bounds.top } : null;
+}
+
+export function restoreHistoryAnchor(anchor) {
+  if (!anchor || !anchor.chat.isConnected || !anchor.chat.contains(anchor.row)) return;
+  const { chat, row, top } = anchor;
+  const delta = row.getBoundingClientRect().top - chat.getBoundingClientRect().top - top;
+  chat.scrollTop += delta;
+}
+
+/** rAF 换帧（后台标签 rAF 节流时 120ms 兜底 —— 挂载永不卡死）。 */
+function nextMountFrame() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+    setTimeout(resolve, 120);
+  });
+}
+
+/**
+ * 上滑补页的**分帧构建**挂载腿。与同步腿（restoreFromBackendHistory）共用同一
+ * 枚 buildHistoryRow —— 零第二实现；差别只在节奏：
+ *   · 构建按 MOUNT_BUILD_CHUNK 条/片跨 rAF 切片（改前 = 整页一枚长任务，
+ *     数百 ms~秒级，把心跳 pong 饿出假 miss ⇒ 3-miss 自逐出重连）；
+ *   · 大工具正文 / markdown 升级进空闲批（MOUNT_UPGRADE_BATCH/帧），批间对
+ *     scrollAnchor 做**相对**补偿（行在视口上方长高 ⇒ 视口跟涨，阅读位钉死）；
+ *   · 渲染遮蔽门横跨构建切片/挂载回调/升级批全程（ws.js 据此把门内宽限窗的
+ *     miss 走遮蔽旁路 —— 不放松 HB_MAX_MISSES，sessionGate 重座语义原样）。
+ *
+ * hooks:
+ *   onBuilt(container) — 全部行构建完成且容器仍脱管：调用方在此做原子 prepend +
+ *     滚动补偿 + pagination 落账。返回 false = 本页作废（挂载期间被初载 wipe
+ *     整替），升级批不再发生。
+ *   onDone()           — 升级批 drain 完毕（调用方放闸 / 停顶续拉）。
+ * opts: { scrollAnchor } — 批间补偿锚（真实 chat 容器；缺席 = 不补偿）。
+ */
+export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
+  renderGateBegin();
+  try {
+    beginHistoryMount();
+    const ownerSessionId = (activeView && activeView.sessionId) || state.activeSessionId || null;
+    const container = document.createElement('div');
+    const pendingRenders = [];
+    const pendingToolBodies = [];
+    const ctx = {
+      msgs, fragment: container,
+      deferMd: (el, text, parseVoice = true) => { el.textContent = text; pendingRenders.push({ el, text, parseVoice }); },
+      chatEl: activeView.dom.chat,
+      ownerSessionId,
+      skip: false,
+      deferToolBody: (card, build) => {
+        const contentEl = card.querySelector('.content');
+        const bodyEl = document.createElement('div');
+        bodyEl.className = 'body';
+        if (contentEl) contentEl.appendChild(bodyEl);
+        pendingToolBodies.push({ el: bodyEl, build });
+      },
+    };
+    ctx.markSkip = () => { ctx.skip = true; };
+    for (let i = 0; i < msgs.length; i++) {
+      if (ctx.skip) { ctx.skip = false; continue; }
+      buildHistoryRow(msgs[i], i, ctx);
+      if ((i + 1) % MOUNT_BUILD_CHUNK === 0 && i + 1 < msgs.length) {
+        await nextMountFrame();
+      }
+    }
+    syncQuoteJumpStates(container);
+    buildTurnSummariesForHistory(container, { busyTail: false });
+    if (hooks.onBuilt && hooks.onBuilt(container) === false) return;
+    const anchorChat = opts.scrollAnchor || null;
+    const jobs = [];
+    for (const j of pendingToolBodies) jobs.push(() => { j.el.innerHTML = j.build(); });
+    for (const j of pendingRenders) jobs.push(() => {
+      // output 块语法批：标记泡走 output 面（与 upgradeBatch 同处置）。
+      if (j.el.dataset && j.el.dataset.nfDeferOutput === '1') applyOutputFace(j.el, j.text);
+      else j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice);
+    });
+    for (let ji = 0; ji < jobs.length; ji += MOUNT_UPGRADE_BATCH) {
+      const end = Math.min(ji + MOUNT_UPGRADE_BATCH, jobs.length);
+      // 冷启动批⑤：同上护栏 —— 单片失败不拖垮整页升级批（病态输入回落
+      // 其 textContent 纯文本，链继续）。
+      const anchor = captureHistoryAnchor(anchorChat);
+      const previousOverflowAnchor = anchorChat?.style.overflowAnchor;
+      if (anchorChat) anchorChat.style.overflowAnchor = 'none';
+      for (; ji < end; ji++) {
+        try { jobs[ji](); } catch (e) { /* 单元素回落：元素保持 textContent 原样 */ }
+      }
+      restoreHistoryAnchor(anchor);
+      if (anchorChat) anchorChat.style.overflowAnchor = previousOverflowAnchor;
+      if (end < jobs.length) await nextMountFrame();
+    }
+    if (hooks.onDone) hooks.onDone();
+  } finally {
+    renderGateEnd();
   }
 }
 

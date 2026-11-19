@@ -8,9 +8,13 @@ import scala.concurrent.duration.*
  * 工具执行期心跳（审计 20260903 子项①）：在 `io` 运行期间每 `interval`
  * 触发一次 `emit`——AgentCore 用它发 toolHeartbeat WS 事件喂活前端 busy
  * timer，前台长工具执行（toolStart→toolEnd 之间零事件）不再触发前端
- * 630s 纯静默超时误杀仍在干活的 turn。RemoteExecutor 活动心跳
- * （touch lastActivityMs，防 TaskStuckWatcher 误判）先例的 WS 面补充，
- * 后端停摆口径统一（零输出+零 CPU 双条件 10min）。
+ * 630s 纯静默超时误杀仍在干活的 turn。
+ *
+ * 2026-09-10 卡死判据换轴（取证 20260910_130621）：后端判据改为 agent 侧
+ * （10min 零事件 ∪ 单工具超 10min），进程侧活性另存 processActivityMs 且
+ * **不参与判据**；本对象是 WS 面（前端 busy timer）的保活源，两者语义已分家
+ * ——前端 busy timer 仍是「长工具 = 有活动」的直观，属于换轴后遗留的口径
+ * 不一致面（本批不改，见交付报告后续批建议）。
  *
  * 保证：
  *  - 首次心跳在 `interval` 之后（toolStart 事件已重置过 timer，无需 t=0 心跳）；

@@ -1,14 +1,13 @@
 package nebflow.agent
 
-import nebflow.core.AtomicJson
-import nebflow.core.NebflowLogger
-import nebflow.core.PathUtil
-import nebflow.shared.ContentBlock
-import nebflow.shared.given // ContentBlock Encoder/Decoder (protocol.scala top-level)
 import cats.effect.IO
 import io.circe.*
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.actor.AgentCommand
+import nebflow.core.AtomicJson
+import nebflow.shared.given
+import nebflow.shared.{ContentBlock, NebflowLogger, PathUtil}
 
 /**
  * F2 (2026-08-30, compact-injection-shield batch 2): durable queue store for
@@ -35,19 +34,65 @@ object CompactionQueueStore:
   /** Disk snapshot of the two persisted queues. */
   case class PersistedQueues(
     imms: List[AgentCommand.ImmediateInput] = Nil,
-    events: List[AgentCommand.ExternalEvent] = Nil
+    events: List[AgentCommand.ExternalEvent] = Nil,
+    /** In-flight ephemeral delegate/subtask slots; absent in legacy snapshots. */
+    outstandingSubagentResults: Int = 0
   )
 
   // ── Codecs (hand-written, few fields; ContentBlock codec reused) ──
 
+  /**
+   * notifypack solution-b batch (2026-09-23): codec for the window-flush payload
+   * element (`ImmediateInput.windowItems`). Hand-written like its siblings — four
+   * plain String fields, all required (the decoder is only reached for entries the
+   * encoder itself wrote).
+   */
+  given Encoder[AgentCommand.WindowItem] = Encoder.instance { w =>
+    Json.obj(
+      "text" -> w.text.asJson,
+      "nodeName" -> w.nodeName.asJson,
+      "status" -> w.status.asJson,
+      "sender" -> w.sender.asJson
+    )
+  }
+
+  given Decoder[AgentCommand.WindowItem] = Decoder.instance { c =>
+    for
+      text <- c.downField("text").as[String]
+      nodeName <- c.downField("nodeName").as[String]
+      status <- c.downField("status").as[String]
+      sender <- c.downField("sender").as[String]
+    yield AgentCommand.WindowItem(text, nodeName, status, sender)
+  }
+
   given Encoder[AgentCommand.ImmediateInput] = Encoder.instance { imm =>
     val base = Json.obj("text" -> imm.text.asJson)
     val withBlocks = imm.blocks.fold(base)(b => base.deepMerge(Json.obj("blocks" -> b.asJson)))
-    imm.source.fold(withBlocks)(v => withBlocks.deepMerge(Json.obj("source" -> v.asJson)))
+    imm.source
+      .fold(withBlocks)(v => withBlocks.deepMerge(Json.obj("source" -> v.asJson)))
       .deepMerge(imm.eventType.fold(Json.obj())(v => Json.obj("eventType" -> v.asJson)))
       .deepMerge(imm.sender.fold(Json.obj())(v => Json.obj("sender" -> v.asJson)))
       .deepMerge(imm.senderTeam.fold(Json.obj())(v => Json.obj("senderTeam" -> v.asJson)))
       .deepMerge(imm.delivery.fold(Json.obj())(v => Json.obj("delivery" -> v.asJson)))
+      // ② (2026-09-11): the human-origin bit must survive "入队 → 崩溃恢复",
+      // otherwise the recovered input goes back through the
+      // `clientMessageId=None ⇒ source="tool"` fallback and the author sees the
+      // TOOL card again after a restart. Written only when true → all older
+      // snapshots decode as fromUser=false (backward compatible).
+      .deepMerge(if imm.fromUser then Json.obj("fromUser" -> true.asJson) else Json.obj())
+      // notifypack solution-b batch (2026-09-23): the notification-window flush
+      // payload must survive "enqueued → crash recovery" too — without it a
+      // recovered carrier degrades to "one bubble holding all sections" (the
+      // merged `text` is still there, so nothing is lost — degraded semantics,
+      // not data loss). Written only when defined → all older snapshots decode
+      // as windowItems=None (backward compatible, zero drift for every
+      // non-window leg).
+      .deepMerge(imm.windowItems.fold(Json.obj())(v => Json.obj("windowItems" -> v.asJson)))
+      // P3 磁盘邮箱批（节点 3）：cid 必须活过「压队 → 崩溃恢复」——改前它在这里
+      // 蒸发，队列恢复出的真人文字重投时就丢了幂等键（同一帧可能再跑一次）。
+      // 与 fromUser/windowItems 同款：只在 defined 时落键 ⇒ 旧快照解码 None，
+      // 逐字向后兼容。
+      .deepMerge(imm.clientMessageId.fold(Json.obj())(v => Json.obj("clientMessageId" -> v.asJson)))
   }
 
   given Decoder[AgentCommand.ImmediateInput] = Decoder.instance { c =>
@@ -59,17 +104,45 @@ object CompactionQueueStore:
       sender <- c.downField("sender").as[Option[String]]
       senderTeam <- c.downField("senderTeam").as[Option[String]]
       delivery <- c.downField("delivery").as[Option[String]]
-    yield AgentCommand.ImmediateInput(text, blocks, source, eventType, sender, senderTeam, delivery)
+      // Missing field (pre-② snapshot) → false = legacy behaviour.
+      fromUser <- c.downField("fromUser").as[Option[Boolean]]
+      // notifypack solution-b batch (2026-09-23): a missing key on an older
+      // snapshot → None ⇒ the recovered carrier expands identically to a plain
+      // input (1→1); the merged `text` still carries every section (no loss).
+      windowItems <- c.downField("windowItems").as[Option[List[AgentCommand.WindowItem]]]
+      // P3 磁盘邮箱批（节点 3）：缺键（旧快照）⇒ None ⇒ 与改前逐字同路。
+      clientMessageId <- c.downField("clientMessageId").as[Option[String]]
+    yield AgentCommand.ImmediateInput(
+      text,
+      blocks,
+      source,
+      eventType,
+      sender,
+      senderTeam,
+      delivery,
+      fromUser.getOrElse(false),
+      // notifypack solution-b batch: the original EIGHT positional arguments are
+      // kept verbatim (`project` was, and remains, not persisted — this batch
+      // does not touch that face); the new field travels as a NAMED argument ⇒
+      // zero positional drift.
+      windowItems = windowItems,
+      clientMessageId = clientMessageId
+    )
   }
 
+  // 媒体统一适配批（2026-10-20）：`blocks`（桥媒体 vision 块）同键可选——只在
+  // defined 时落键，旧快照（无键）解码 None ⇒ 向后兼容逐字（ImmediateInput.blocks
+  // 的既有先例同款）。base64 面与 ImmediateInput 的 blocks 持久化同一暴露量级
+  // （5MB 压缩后硬帽封顶），无新预算面。
   given Encoder[AgentCommand.ExternalEvent] = Encoder.instance { e =>
-    Json.obj(
+    val base = Json.obj(
       "source" -> e.source.asJson,
       "eventType" -> e.eventType.asJson,
       "payload" -> e.payload.asJson,
       "metadata" -> Json.fromJsonObject(e.metadata),
       "correlationId" -> e.correlationId.asJson
     )
+    e.blocks.fold(base)(b => base.deepMerge(Json.obj("blocks" -> b.asJson)))
   }
 
   given Decoder[AgentCommand.ExternalEvent] = Decoder.instance { c =>
@@ -79,18 +152,26 @@ object CompactionQueueStore:
       payload <- c.downField("payload").as[String]
       metadata <- c.downField("metadata").as[Option[JsonObject]]
       correlationId <- c.downField("correlationId").as[Option[String]]
-    yield AgentCommand.ExternalEvent(source, eventType, payload, metadata.getOrElse(JsonObject.empty), correlationId)
+      blocks <- c.downField("blocks").as[Option[List[ContentBlock]]]
+    yield AgentCommand
+      .ExternalEvent(source, eventType, payload, metadata.getOrElse(JsonObject.empty), correlationId)
+      .copy(blocks = blocks)
   }
 
   given Encoder[PersistedQueues] = Encoder.instance { q =>
-    Json.obj("imms" -> q.imms.asJson, "events" -> q.events.asJson)
+    Json.obj(
+      "imms" -> q.imms.asJson,
+      "events" -> q.events.asJson,
+      "outstandingSubagentResults" -> q.outstandingSubagentResults.asJson
+    )
   }
 
   given Decoder[PersistedQueues] = Decoder.instance { c =>
     for
       imms <- c.downField("imms").as[Option[List[AgentCommand.ImmediateInput]]]
       events <- c.downField("events").as[Option[List[AgentCommand.ExternalEvent]]]
-    yield PersistedQueues(imms.getOrElse(Nil), events.getOrElse(Nil))
+      outstanding <- c.downField("outstandingSubagentResults").as[Option[Int]]
+    yield PersistedQueues(imms.getOrElse(Nil), events.getOrElse(Nil), math.max(0, outstanding.getOrElse(0)))
   }
 
   private def queueFile(sessionId: String): os.Path =
@@ -104,7 +185,7 @@ object CompactionQueueStore:
    */
   def save(sessionId: String, q: PersistedQueues): IO[Unit] =
     if sessionId.isEmpty then IO.unit
-    else if q.imms.isEmpty && q.events.isEmpty then clear(sessionId)
+    else if q.imms.isEmpty && q.events.isEmpty && q.outstandingSubagentResults <= 0 then clear(sessionId)
     else
       val file = queueFile(sessionId)
       IO.blocking {

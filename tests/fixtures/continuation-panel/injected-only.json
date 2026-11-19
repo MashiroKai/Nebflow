@@ -1,0 +1,221 @@
+[
+ {
+  "header": "DELEGATE · NEBULA",
+  "source": "delegate",
+  "injected": true,
+  "timestamp": 1793520133176,
+  "type": "user",
+  "text": "[workspace] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9 (file tools need absolute paths; Bash cwd is not guaranteed) fleet.enforceExplicitDevice is ON: pass device=\"<name>\" on every Bash/Read/Write/Edit/Glob/Grep call (device=\"local\" for this machine) — calls without it are refused.\n[reset hazard] This checkout is shared with other live sessions (root, other delegates) — any party's `git reset --hard` / `checkout .` / `clean -f` / `branch -D` instantly discards every session's unpersisted in-progress work here (each one is written to the audit log). Work already committed or otherwise persisted to disk is unaffected. Never run reset-family commands in this workspace.\n\n[report] when your work reaches its end state, call delegate_report(category=\"finish\"|\"merge\", detail=…) right before your final text — \"merge\" = your deliverable commits sit on your working branch and need the merge queue (you keep working until the merge reminder arrives); \"finish\" = done for good (pure read / no file changes, the merge has landed, or the task could not be completed — state the blocker plainly in your final text; there is no separate blocked state). The report updates your status record; your final text remains the deliverable.\n\n── Waiting discipline (iron rule) ──\nNEVER wait with `sleep` or polling loops — sleeping in the foreground burns the turn, the context and hours of wall-clock. The correct pattern: start the long-running work with Bash `run_in_background: true`, then END YOUR TURN immediately — Nebflow's background-task notification wakes this session automatically with the job's output. Same when waiting for an author-gated event (engine restart, approval, merge reminder): deliver your current report and end your turn; you will be woken when it happens.\n\n[plugin discovery] Query installed plugin capabilities anytime (read-only, zero side effects): `tools/stand-plugins list` / `tools/stand-plugins search <keyword>` / `tools/stand-plugins mounts [--project <name>]` (repo-root CLI). If the current task lacks a capability, declare the needed plugin(s) and the intended use in your result — mounting authority stays with the dispatch side (you cannot hot-mount plugins yourself).\n── Output discipline ──\nONLY the content you wrap in paired `<output>...</output>` tags is shown to the user — write it WeChat-style: short direct paragraphs, conclusion first, zero filler. Everything outside the tags (reasoning, tool narration, machine detail) stays in your message but is stripped from display; the user expands a badge to see the full raw text. Adjust tone/length to the user's profile (their `~/.stand/User.md` communication-style answers); with no profile, default to concise direct Chinese.\n\n[continuation of delegate delegate-nebflow-94fe78c9 — the instance finished; this supplement is your new primary instruction]\n[workspace] /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9 (file tools need absolute paths; Bash cwd is not guaranteed)\n\n法医结论+复工令：你的链在侦察节点后断供了——recon 产出已落在你的分支（f9feaeb71「统一按钮玻璃批侦察——落点清点+harness+checkJs 基线」，我查账核实），但后续节点再没被派出来，会话终态却停在计划书。这正是 RCA 在查的分发器断供病。现在**不再走链**：你以单会话直接把三阶段全部做完（阶段〇 玻璃单源包+ask/气泡/输入框迁移+可读性一票否决+气泡性能红线 → 阶段一 悬浮按钮包 M1-M10+D1-D14（3 项待裁维持现状）→ 阶段二 非悬浮墨玻璃包+设计稿增章）。\n\n你的侦察成果直接用（分支上 f9feaeb71 的落点清点/harness/checkJs 基线），从阶段〇的包实现开始。完成标准不变：双引擎×双主题实拍+机械探针+checkJs 零新增，**真实合并 main 并报合并 commit hash——没有合并 commit 等于没做**。作者在等，别再发中间宣言，直接交付。\n\n<injected-plugins>\n<plugin name=\"stand-dev\">\n# stand-dev — 插件使用指导（Plugin.md）\n\n> 本文件是 stand-dev 插件的**包根使用指导件**（Plugin.md）：**插件分配时注入给 agent 的提示词 = 本文件内容**（作者令 2026-10-21「plugin.md = 插件必要文件机制」批；SKILL.md 回归按需查阅件——面板胶囊点击打开，不再随分配整文注入）。选配判定仍看 plugin.json 的 description；逐 skill 作业指令见各 references 深件（按需查阅）。**本文件是导览不是手册：与 SKILL.md / references 不一致时以 SKILL.md 与 references 为准并回改本文。** 文内路径均为**自包根的文件相对形式**（不使用 `${SKILL_DIR}`）。\n\n## 1. 速览\n\nstand-dev 是 **stand 本体开发统一知识包**（2026-10-31 作者令「开发插件统一批」：原 qa / frontend-dev / backend-dev / docs-prompt / pipelines / nebflow-plugin-creator 六包合并；2026-11-01 作者令二批并入 design-spec / engineering-methods 两包，能力零丢失）：节点获得 stand 全栈开发域的综合能力——需求怎么拆/调研怎么查证、UI/UX 设计规格书怎么写、验证怎么把关、前端怎么写、后端怎么写、引擎工程纪律（合并/发版/审查/文档/提示词/插件封装）。单 skill 目录结构，内部按面分**六章**：\n\n- **方法章**——`skills/stand-dev/references/methods/`（2 份）：需求拆解与技术选型双文档交付（grill）、并行调研纪律（parallel-research）。\n- **设计章**——`skills/stand-dev/references/design/`（1 份）：设计规格书四道防线（只设计不实现）与视觉评审（design-spec）。\n- **qa 章**——`skills/stand-dev/references/qa/`（5 份）：前后端五维审核、隔离真实例冒烟、自验 harness、验红实证。\n- **前端章**——`skills/stand-dev/references/frontend/`（3 份）：web/ 实现规范、用户视觉裁定铁律、UI/UX 范式案例库。\n- **后端章**——`skills/stand-dev/references/backend/`（3 份）：Scala 技术栈与分层铁律、sbt 实践、prompt cache、工具系统设计。\n- **引擎章**——`skills/stand-dev/references/engine/`（7 份）：合并/发版/三维审查、技术文档、提示词工程、插件封装与描述规范。\n\n**包纪律一句话**：六章不混装——按任务域进对应章，章内 references 深件按需 Read；「选题/调研/方案」（方法章）→「设计先行」（设计章）→「写」（前端/后端章）→「验」（qa 章）→「闸」（引擎章 pipelines）是五道关卡，不自行跳关；方法章/设计章不写生产代码（示例代码、规格书、评审报告除外），交付自测完成后交 QA 验收、审查前置再合并。\n\n## 2. 安装与启用\n\n- **安装**：本包属 Nebflow seed 官方分发，随实例 seed mirror 自动下发（默认预装集成员），无需手工安装。\n- **启用/选配**：装载为「在位即生效」；分发器按 description 触发词选配（需求拆解/技术调研/方案对比、写设计规格书/视觉评审、改 stand 前端/后端、交付前验证、合并发版、写文档/提示词、封装插件等），分配时注入本文件（Plugin.md），SKILL.md 与 references 为按需查阅件。\n- **停用**：面板「更多 → 封禁该插件」/ `POST /api/plugins/stand-dev/revoke` / `nebflow plugin revoke stand-dev`。\n- **内容变更**：包内任何字节改动都会漂移 digest，面板把该包标为「内容已变更」（可见性提示，不拦截装载；新内容对新派发即刻生效）。\n\n## 3. 目录结构\n\n```\nstand-dev/                              （包根）\n  plugin.json\n  Plugin.md                             ← 本文件（包根使用指导件）\n  skills/\n    stand-dev/                          ← 唯一 skill（六章总纲 SKILL.md = 按需查阅件）\n      SKILL.md                          ← 章导览 / 核心指令摘要 / 决策树\n      references/\n        methods/    （2 份 .md）\n        design/     （1 份 .md）\n        qa/         （5 份 .md）\n        frontend/   （3 份 .md）\n        backend/    （3 份 .md）\n        engine/     （7 份 .md）\n      scripts/\n        validate_plugin.py              ← 插件包机械校验脚本（M1-M15 + C 组，三档 profile）\n      assets/\n        manifest.template.json          ← manifest 起步模板\n        pluginmd.template.md            ← Plugin.md 起步模板\n        skill-template/                 ← skill 目录骨架\n```\n\n## 4. 章导览（怎么用六章）\n\n> 全量口径以 SKILL.md 与 references 为准；本节是跨章速查。\n\n| 章 | 任务信号 | 关键判据（速查） | 深件 |\n|---|---|---|---|\n| 方法 | 需求拆解 / 技术选型 / 方案对比 / 深度调研 | 需求模糊先问不猜；关键选型 2-3 方案＋trade-off 必给对比；完整架构＝双文档交付（人类摘要＋实施规格书）；调研每论断带来源链接、核验者亲自重访来源 | `references/methods/*.md` |\n| 设计 | 写设计规格书 / 视觉评审 / 设计走查 | 只设计不写产品代码；四道防线（设计先行→规格化实现→双重验收→教训沉淀）；视觉评审绝不裸看图下结论（截图＋DOM 断言交叉验证） | `references/design/*.md` |\n| qa | 交付前验证 / 合并前把关 / verify 节点 | 后端五维全覆盖（compile/test/验收逐项/质量/回归）；前端隔离真实例三步缺一不可、禁静态替身；修 bug 必做验红实证 | `references/qa/*.md` |\n| 前端 | 改 `src/main/resources/web/` | 无构建 vanilla JS；CSS 禁裸 hex 一律 `var(--color-*)`；视觉冲突以 visual-style 铁律终裁；实现以设计规格书为唯一依据 | `references/frontend/*.md` |\n| 后端 | 改 `src/main/scala/` / 调 flow engine / 建工具 | Actor 与 IO 分层铁律；最小改动/向后兼容；system prompt 前缀改动前必读 nebflow-cache | `references/backend/*.md` |\n| 引擎 | 合并 / 发版 / 审查 / 文档 / 提示词 / 封装插件 | 合并 `--no-ff` + go/no-go 三判据；tag 打在 release 分支 merge commit；review 三维评分 check-fix ≤3 轮；插件封装落盘即生效、自检后冻结 | `references/engine/*.md` |\n\n- **关卡顺序**：选题与方案（方法章）→ 设计先行（设计章）→ 写（前端/后端章）→ 自验（qa 章 frontend-verification）→ 交付 QA（qa 章 nebflow-qa-*）→ 审查（引擎章 review）→ 合并（引擎章 merge-pipeline）→ 需要发版时（引擎章 release-pipeline）。\n- **红线**：宿主 gateway 端口保护 / PID 验身（qa 章）；不 push 除非明确指示（引擎章 merge-pipeline）；上传 gated 永不自动 publish（release-pipeline）；落盘后不得再写包内文件（plugin-packaging）；只设计不实现（设计章）；无链接不作论断（方法章）。\n\n## 5. references 总目录\n\n| references 路径 | 来源（原包/skill） | 一句话括注 |\n|---|---|---|\n| `methods/grill.md` | engineering-methods/grill | 系统架构设计：需求澄清四场景、调研四维、trade-off 对比、双文档交付（人类摘要＋实施规格书）、输出风格与禁忌 |\n| `methods/parallel-research.md` | engineering-methods/parallel-research | 并行调研纪律：正交拆题、来源强制（每论断带链接/≥3 独立来源/一手优先）、逐轨核验三查、双轨综合成文规范 |\n| `design/design-spec.md` | design-spec/design-spec | 设计规格书与视觉评审方法论：角色边界、四道防线、规格书模板 §0-9、检索源清单、PASS/FAIL 二值化硬约束 |\n| `qa/nebflow-qa-backend.md` | qa/nebflow-qa-backend | Scala 后端五维审核：sbt compile/test/验收逐项/三维质量/回归 + 运行安全红线 |\n| `qa/nebflow-qa-frontend.md` | qa/nebflow-qa-frontend | 前端合并回归：隔离真实例三步验证、资源可达性、禁替身、契约静态审核 |\n| `qa/frontend-verification.md` | qa/frontend-verification | 实现侧自验 harness：wire 探针、契约夹具、Playwright 坑、分层验证 |\n| `qa/isolated-smoke-verification.md` | qa/isolated-smoke-verification | 隔离实例冒烟：临时 home + 独占端口 + mock 路由、沙盒泄漏三信号 |\n| `qa/verification-rigor.md` | qa/verification-rigor | 验红实证/变异安全/spec 载力/异步排障/字段改名四面验证 |\n| `frontend/nebflow-frontend.md` | frontend-dev/nebflow-frontend | web/ 结构、Sapphire Glass 设计系统、硬约束、截图驱动验证流 |\n| `frontend/visual-style.md` | frontend-dev/visual-style | 用户视觉裁定铁律：弹窗毛玻璃无 overlay、控件玻璃质感、中度字重 |\n| `frontend/design-system.md` | frontend-dev/design-system | 功能类型→成熟范式→适配规则案例库（软参考，冲突以 visual-style 为准） |\n| `backend/nebflow-backend.md` | backend-dev/nebflow-backend | Scala 3/actor/http4s 技术栈、Actor/IO 分层、编码规范、sbt、worktree 纪律 |\n| `backend/nebflow-cache.md` | backend-dev/nebflow-cache | prompt cache 命中率：指标/数据源/间隔悬崖/共享前缀维护纪律 |\n| `backend/nebflow-tool-dev.md` | backend-dev/nebflow-tool-dev | 工具管线/权限模型/六条设计原则/新建工具流程 |\n| `engine/merge-pipeline.md` | pipelines/merge-pipeline | 分支四事实扫描→go/no-go→`--no-ff` 合并→报告，不 push |\n| `engine/release-pipeline.md` | pipelines/release-pipeline | 四角色闭环、VERSION 单源、tag 纪律、三平台打包、上传 gated |\n| `engine/review.md` | pipelines/review | 工程哲学三条、Phase 0 门禁、三维评分、check-fix ≤3 轮、前端适配段 |\n| `engine/nebflow-docs.md` | docs-prompt/nebflow-docs | 写作规范/双语同步/一致性联动/产出路径纪律/图文报告图片内嵌 |\n| `engine/nebflow-prompt-engineering.md` | docs-prompt/nebflow-prompt-engineering | 六核心原则/提示词解剖/编辑纪律/工具描述写法/agent 体检 |\n| `engine/plugin-packaging.md` | nebflow-plugin-creator/plugin-packaging | 三输入→生成→自检→交付封装主流程，六分叉处置，交付报告模板 |\n| `engine/description-quality.md` | nebflow-plugin-creator/description-quality | manifest 五段式描述规范、核心词表圈定法、M1-M15 判定、四例对照 |\n\n## 6. 选章决策树\n\n- 任务是**定方向**（需求拆解、技术选型、架构设计、方案对比）→ 方法章（grill）。\n- 任务是**查证据**（多视角、来源可验证的深度调研）→ 方法章（parallel-research）。\n- 任务是**出设计**（新 UI/交互要设计规格书；实现完成要视觉评审/设计走查）→ 设计章（design-spec）。\n- 任务是**改 web/ 前端页面/组件/样式** → 前端章（nebflow-frontend + visual-style；设计新 UI 前先查 design-system 案例库）。\n- 任务是**写/改 Scala 后端、调 flow engine、建工具** → 后端章（nebflow-backend / nebflow-tool-dev；cache 指标相关加读 nebflow-cache）。\n- 任务是**交付 QA、验证、verify 节点** → qa 章（后端交付→nebflow-qa-backend；前端交付→nebflow-qa-frontend；修 bug 必附 verification-rigor 验红；跨 agent 行为→isolated-smoke-verification）。\n- 任务是**合并分支** → 引擎章 merge-pipeline；**发版** → release-pipeline；**代码审查/review** → review。\n- 任务是**写文档/改系统提示词/体检 agent 定义** → 引擎章 nebflow-docs / nebflow-prompt-engineering。\n- 任务是**封装新插件/体检 plugin.json** → 引擎章 plugin-packaging（+ description-quality）。\n- **官网 mystand.space** → 不进本包：另配 `website`；**通用 Word/PDF/PPT/Excel** → 另配 `document-production`；**代码库现状探索与实施方案** → 另配 `explorer-toolkit`。\n\n## 7. 脚本与资产\n\n| 资产 | 用途 | 使用方 |\n|---|---|---|\n| `skills/stand-dev/scripts/validate_plugin.py` | 插件包机械校验：M1-M15 + C 组、三档 profile（official/creator/user）、digest 复算 | 引擎章 plugin-packaging 第五步；协议面回归 |\n| `skills/stand-dev/assets/manifest.template.json` | manifest 起步模板（五段式 description 骨架） | 引擎章 plugin-packaging 3.1 |\n| `skills/stand-dev/assets/pluginmd.template.md` | Plugin.md 起步模板 | 引擎章 plugin-packaging 3.4 |\n| `skills/stand-dev/assets/skill-template/` | skill 目录骨架 | 引擎章 plugin-packaging 3.2 |\n\n> 脚本/资产自原 nebflow-plugin-creator 包**迁入本包**（取舍：脚本被 description-quality 与 plugin-packaging 两处引用且随包分发，迁入后 `${SKILL_DIR}/scripts/` 引用链最短；原包已随合并批卸除，无留原位引用的必要）。\n\n## 8. 扩展位（未来候选）\n\n| 候选项 | 现状 | 备注 |\n|---|---|---|\n| 新开发域章（如 mobile/桌面端专章） | 待域知识沉淀到可拆面 | 沉淀后入 §5 总目录，勿提前立空章 |\n| mcp.json 形态生产首例 | 实验性 | 首例产出建议隔离实例验证 MCP 启动链后再交付 |\n\n## 9. 维护约定\n\n- **references 即原 skill 全文**：21 份 references = 原八包 SKILL.md 逐字迁入（一批 2026-10-31 六包 + 二批 2026-11-01 两包；仅跨包引用改写 + 迁址头注 + 章内衔接注）；改章内容 = 改对应 references 文件，并在 SKILL.md 章导览同步口径。\n- **digest 纪律**：包内任何字节改动即 digest 漂移（可见性提示）；seed 副本（仓内 `src/main/resources/seed/plugins/stand-dev/`）与运行时副本（`<data_root>/plugins/stand-dev/`）**双副本逐字节同步**，改动两侧同落。\n- **本文件定位**：Plugin.md 是分配注入体；SKILL.md 与 references 是内容权威——不一致时以 SKILL.md / references 为准并回改本文；跨章共用的包级内容才进本文，单章细节留在对应 references。\n- **合并溯源**：一批 2026-10-31「开发插件统一批」卸除的六包（qa/frontend-dev/backend-dev/docs-prompt/pipelines/nebflow-plugin-creator）留痕见仓内批文档 `docs/20261031_223533_stand-dev-plugin-merge.md` 与 `<data_root>/plugins-backups/*_pre-stand-dev-merge-*/` 备份；二批 2026-11-01「design-spec/engineering-methods 并入批」留痕见仓内对应批文档——两原独立包**未卸除未退役**（实例侧仍装载 dispatchable，能力已双载于本包；退役与否等作者令）。\n\n</plugin>\n</injected-plugins>",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521199242,
+  "type": "user",
+  "text": "[Background task completed] \"Run scrollfps with glass bubble candidate\" (exit 0 · 10s):\n[scrollfps] chromium dark 1280x844: avgFps=32.9 dropped=48/83 p95=61ms max=64.1ms\n[scrollfps] webkit dark 1280x844: avgFps=56.2 dropped=2/141 p95=19ms max=178ms\nscrollfps.cjs done → /tmp/scrollfps-bubble-candidate.json",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521295562,
+  "type": "user",
+  "text": "[Background task completed] \"Run scrollfps light theme with candidate\" (exit 0 · 10s):\n[scrollfps] chromium light 1280x844: avgFps=34 dropped=46/85 p95=59.5ms max=62ms\n[scrollfps] webkit light 1280x844: avgFps=56.4 dropped=2/141 p95=19ms max=180ms\nscrollfps.cjs done → /tmp/scrollfps-bubble-candidate-light.json",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521361506,
+  "type": "user",
+  "text": "[Background task completed] \"Save veto evidence and run post-revert scrollfps\" (exit 0 · 10s):\nsaved\n[scrollfps] chromium dark 1280x844: avgFps=48.2 dropped=42/121 p95=42.1ms max=44.4ms\n[scrollfps] webkit dark 1280x844: avgFps=56.8 dropped=2/142 p95=19ms max=175ms\nscrollfps.cjs done → evidence/20261101_unified-button-glass-impl/bubble-veto/post-revert.json",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521374405,
+  "type": "user",
+  "text": "[Background task completed] \"Run re-pinned liquid-glass spec\" (exit 1 · 0.8s):\nnode:internal/modules/cjs/loader:1408\n  throw err;\n  ^\n\nError: Cannot find module '/Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/node_modules/@playwright/test/cli.js'\n    at Function._resolveFilename (node:internal/modules/cjs/loader:1405:15)\n    at defaultResolveImpl (node:internal/modules/cjs/loader:1061:19)\n    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1066:22)\n    at Function._load (node:internal/modules/cjs/loader:1215:37)\n    at TracingChannel.traceSync (node:diagnostics_channel:322:14)\n    at wrapModuleLoad (node:internal/modules/cjs/loader:235:24)\n    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:151:5)\n    at node:internal/main/run_main_module:33:47 {\n  code: 'MODULE_NOT_FOUND',\n  requireStack: []\n}\n\nNode.js v23.9.0",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521377984,
+  "type": "user",
+  "text": "[Background task completed] \"Run canvas-glass-unify spec\" (exit 127 · 0.7s):\nbash: 行 1: timeout: 未找到命令",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521394700,
+  "type": "user",
+  "text": "[Background task completed] \"Run canvas-glass-unify standalone spec\" (exit 0 · 7.5s):\nPASS  GU3-2 卡窗胶囊几何同面板档（36 高 / 999 圆角 / 180 宽）  — h=36 w=180 r=999px\nPASS  GU3-3 卡窗胶囊材质与主窗面板胶囊逐项相等（视觉语言完全同款）\nPASS  GU3-4 合并钮在胶囊行内（行 = 文件名胶囊 + 展开钮）\nPASS  R0b 卡窗文档零 JS 错误\nPASS  GU2-6 hover 语言 = 聊天控件（hover 抬亮 = --cv-hover-bg 计算值）  — {\"got\":\"rgba(255, 255, 255, 0.2)\",\"want\":\"rgba(255, 255, 255, 0.2)\"}\nPASS  GU2-5a 缩放条材质 = 模板逐项相等（修前 --frost-shadow 外投影）\nPASS  GU2-5b 缩放内钮 ghost（静默 transparent，非 glass-control chip 面）  — btnBg=rgba(0, 0, 0, 0)\nPASS  GU1-5b 缩放条与 header 行带零相交（html 腿复跑）  — zoom y=827\nPASS  GU2-7a token 单源：sapphire.css 声明 --cv-* 档（模糊配方/边框/阴影/hover/尺寸/行几何）\nPASS  GU2-7b 查找条块消费 --cv-* token（禁自带材质字面量）+ 行下缘锚  — .nf-findbar {\n  position: absolute; top: var(--cv-head-clear, 56px); right: 14px; z-index: 30;\n  display: flex; align-it\nPASS  GU2-7c 自绘外投影（0 4px 16px）与 right:66 让位带退役\nPASS  R0 主文档零 JS 错误（暗档腿）\nPASS  GU-L1a 亮档：标题胶囊 = chat #input-bar 逐项相等\nPASS  GU-L1b 亮档：find 圆钮 = 模板逐项相等\nPASS  GU-L1c 亮档：堆叠钮 = 模板逐项相等\nPASS  R0c 亮档腿零 JS 错误\n\ncanvas-glass-unify: 31 PASS / 0 FAIL\n[truncated: showing last 20 of 30 lines — full output: background-tasks panel, job 36f91d85]",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521456353,
+  "type": "user",
+  "text": "[Background task completed] \"Run checkJs type gate\" (exit 1 · 5.6s):\ncheckJs: 365 errors (baseline 345, zero-gate files: 3)\n\ncheckJs GATE FAILURES:\n  src/main/resources/web/js/ws.js: 6 errors — this file is a P2-3 core contract and must be checkJs-clean\n  src/main/resources/web/js/mobile/navController.js: new file with 3 errors — new/touched files must be checkJs-clean\n  src/main/resources/web/js/modelPanel.js: new file with 10 errors — new/touched files must be checkJs-clean\n  src/main/resources/web/js/main.js: TS2339 count 19 > baseline 13\n  src/main/resources/web/js/scheduled-task.js: TS2339 count 9 > baseline 8\n  total errors 359 > baseline 345",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521479400,
+  "type": "user",
+  "text": "[Background task completed] \"Run canvas-ask-dock spec\" (exit 0 · 32s):\nPASS  T14e 更长快照采纳（对账追平）+ sys 帧永久过滤（气泡面只出两族）  — {\"users\":3,\"ais\":3,\"sys\":0,\"leak\":false}\nPASS  T14b 重载后开 dock：本地注水即时呈现（回放未到先出账）  — {\"users\":[\"τ 为什么取 30 天？\",\"## 结构  - 甲 - 乙  | A | B | |---|---| | 1 | 2 |  ```js code ```\",\"主会话回问：需要我帮你做什么？\"]}\nPASS  T14b′ 回放到达对账不缩水（记录保持）  — {\"users\":3,\"ais\":3}\nPASS  T15a 气泡列与输入条左右缘一致（≤1px）  — {\"left\":0,\"right\":0}\nPASS  T15b 宽气泡 span 到列满档（306px 帽退役；窄气泡仍右贴自然宽）  — {\"wide\":372,\"input\":372,\"leftGap\":0}\nPASS  T16 双主题截图取证（t16-dark-dock-wide / t16-light-dock）  — evidence/canvas-ask-dock/shots/\nPASS  T9a 移动入口钮 48×48（悬浮钮统一批 g2-fab 基准）  — {\"w\":48,\"h\":48,\"fabBottomToDock\":76,\"dockH\":54,\"fabRightToViewport\":16,\"fabBottomOffset\":130,\"seatExpect\":130,\"colMaxH\":\"194px\"}\nPASS  T9b 座位 = max(dock-h+10, 角簇占用+12)（body fixed 视口径 · 批⑨+统一批）  — {\"offset\":130,\"expect\":130,\"right\":16}\nPASS  T9c 列可视 max-h = 总档 250 − 带档 56 = 194（E-2 移动档，⑤带净空口径）  — 194px\nPASS  T9d 气泡列表面横滑零切卡（peek 不亮 + dock 不被误关）  — {\"peek\":false,\"dockClosed\":false}\n\n=== canvas-ask-dock: 72 pass, 0 fail ===",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521497169,
+  "type": "user",
+  "text": "[Background task completed] \"Run checkJs at pristine merge commit\" (exit 0 · 13s):\nHEAD 现在位于 cb28bfc9d Merge branch 'main' into delegate/delegate-nebflow-94fe78c9\ncheckJs: 365 errors (baseline 345, zero-gate files: 3)\n\ncheckJs GATE FAILURES:\n  src/main/resources/web/js/ws.js: 6 errors — this file is a P2-3 core contract and must be checkJs-clean",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521501712,
+  "type": "user",
+  "text": "[Background task completed] \"Run capsule-six and mobile-dock specs\" (exit 0 · 55s):\n  ✓  16 tests/mobile-dock.spec.mjs:713:3 › friends-ON unread chain › D14b pure unread (no actionable flag) does NOT light the dock badge; the row face still reports it (2.8s)\n  ✓  17 tests/mobile-dock.spec.mjs:731:1 › D15 workbench root: settings demoted to hub row; settings row pushes settings page with adopted modal (2.1s)\n  ✓  18 tests/mobile-dock.spec.mjs:751:1 › D16 workbench misroute fix: hub row to projects keeps projects on top (canvas page does not hijack) (4.9s)\n  ✓  19 tests/mobile-dock.spec.mjs:782:1 › D17 page switch animation retired: zero transition, zero transform, direct cut (1.1s)\n  ✓  20 tests/mobile-dock.spec.mjs:825:1 › D18 floating chrome band: zero-height transparent band, capsule title centered, 48px g2-fab back at 16/16+safe, icon centered (1.0s)\n  ✓  21 tests/mobile-dock.spec.mjs:894:1 › D19 duplicate back/close buttons audited: face-owned header controls hidden inside pages (1.2s)\n\n  21 passed (43.6s)",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521584563,
+  "type": "user",
+  "text": "[Background task completed] \"Run liquid-glass spec via global playwright\" (exit 1 · 3m 17s):\n    Received:    0.55\n\n      491 |     });\n      492 |     const dark = await read();\n    > 493 |     expect(parseFloat(/,\\s*([\\d.]+)\\)$/.exec(dark.bg)[1])).toBeGreaterThanOrEqual(0.68 - 0.03); // 暗 .68（回落即原值档）\n          |                                                            ^\n      494 |     expect(errors).toEqual([]);\n      495 |   });\n      496 | });\n        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/tests/liquid-glass.spec.mjs:493:60\n\n    Error Context: test-results/liquid-glass-no-backdrop-降-d3756-g-原值（亮-alpha-55），滤镜摘除，面阴影保留/error-context.md\n\n  5 failed\n    tests/liquid-glass.spec.mjs:291:3 › 桌面视口（共享悬浮玻璃类，#header 不动） › D3 §7-① 共享类材质 = 基准件配方：blur(24px) saturate(1.15) 双写 + --cv-shadow 三档栈\n    tests/liquid-glass.spec.mjs:318:3 › 桌面视口（共享悬浮玻璃类，#header 不动） › D4 §7-③+④ 选中/禁用统一档：deck-fab pressed = sapphire 12%/35%/primary 字；disabled opacity .35\n    tests/liquid-glass.spec.mjs:379:3 › 桌面视口（共享悬浮玻璃类，#header 不动） › D6 亮档 hover 填充 Δ ≥ 8/255（.g2-pill 探针实测）\n    tests/liquid-glass.spec.mjs:438:3 › 三态 token 解析 › T1 --cv-bg 单源三态可解析且亮暗不同；--g2-fab-bg 退役（空读数）；--g2-veil veil 子族幸存\n    tests/liquid-glass.spec.mjs:469:3 › no-backdrop 降级 › F1 圆钮实色回落 = --glass-bg 原值（亮 alpha .55），滤镜摘除，面阴影保留\n  11 passed (3.3m)\n[truncated: showing last 20 of 25 lines — full output: background-tasks panel, job eaac0d85]",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521642358,
+  "type": "user",
+  "text": "[Background task completed] \"Probe D3/D4/D6 real values\" (exit 0 · 2.3s):\n{\n \"blur\": \"blur(24px) saturate(1.15)\",\n \"webkitBlur\": \"\",\n \"bg\": \"rgba(255, 255, 255, 0.55)\",\n \"shadow\": \"rgba(255, 255, 255, 0.25) 0px 1px 0px 0px inset, rgba(0, 0, 0, 0.04) 0px 2px 8px 0px, rgba(0, 0, 0, 0.06) 0px 8px 24px 0px\",\n \"pressRule\": \"background-color: rgb(var(--sapphire) / 0.12); color: var(--color-primary); border-color: rgb(var(--sapphire) / 0.35);\",\n \"disRule\": \"opacity: 0.35; cursor: not-allowed;\"\n}\nhover bg: rgba(255, 255, 255, 0.74)",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521728510,
+  "type": "user",
+  "text": "[Background task completed] \"Confirm capsule-six material legs green\" (exit 0 · 10s):\nPASS  S4-1 source-toggle 材质 = #header frosted 单源（bg/blur/border-top 与 #header 相等 + shadow = --frost-shadow token；#header 底缘透明/顶缘 inset 为既有豁免）  — {\"header\":{\"bg\":\"rgba(24, 28, 38, 0.68)\",\"blur\":\"blur(24px) saturate(1.15)\",\"btop\":\"rgba(255, 255, 255, 0.06)\",\"shadow\":\"rgba(255, 255, 255, 0.04) 0px 1px 0px 0px inset\"},\"src\":{\"bg\":\"rgba(24, 28, 38, 0.68)\",\"blur\":\"blur\nPASS  S4-2 减淡 opacity 退役（base opacity = 1 —— 材质到位不靠减淡）\nPASS  L1 亮色：source-toggle 贴齐右缘 + 材质 = #header 单源（bg/blur/border-top 相等 + shadow = --frost-shadow；豁免同 S4-1）  — gap=17 bg=rgba(255, 255, 255, 0.55)\ncanvas-capsule-six: 19 PASS / 0 FAIL",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521822930,
+  "type": "user",
+  "text": "[Background task completed] \"Run computed-style probe post batch\" (exit 0 · 9.5s):\n[probe] chromium dark: fixtures=17 vars=25 errors=0\n[probe] chromium light: fixtures=17 vars=25 errors=0\n[probe] webkit dark: fixtures=17 vars=25 errors=0\n[probe] webkit light: fixtures=17 vars=25 errors=0\nprobe.cjs done → evidence/20261101_unified-button-glass-impl/probe-post.json",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521895615,
+  "type": "user",
+  "text": "[Background task completed] \"Run all four shot targets both engines both themes\" (exit 0 · 43s):\n[shot] chat webkit light → evidence/20261101_unified-button-glass-impl/shots-post/chat-webkit-light.png (0 error)\nshot.cjs done: 4 shot(s) in report, 0 with errors\n[shot] canvas webkit light → evidence/20261101_unified-button-glass-impl/shots-post/canvas-webkit-light.png (0 error)\nshot.cjs done: 8 shot(s) in report, 0 with errors\n[shot] mobile webkit light → evidence/20261101_unified-button-glass-impl/shots-post/mobile-webkit-light.png (0 error)\nshot.cjs done: 12 shot(s) in report, 0 with errors\n[shot] dialog webkit light → evidence/20261101_unified-button-glass-impl/shots-post/dialog-webkit-light.png (0 error)\nshot.cjs done: 4 shot(s) in report, 0 with errors",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793521897072,
+  "type": "user",
+  "text": "[Background task completed] \"Re-run the 5 fixed liquid-glass legs\" (exit 1 · 3m 13s):\n      520 | });\n        at /Users/kaiyu/Claude code/Stand/.nebflow/worktrees/delegate-nebflow-94fe78c9/tests/liquid-glass.spec.mjs:517:60\n\n    Error Context: test-results/liquid-glass-no-backdrop-降-d3756-g-原值（亮-alpha-55），滤镜摘除，面阴影保留/error-context.md\n\n  3 failed\n    tests/liquid-glass.spec.mjs:291:3 › 桌面视口（共享悬浮玻璃类，#header 不动） › D3 §7-① 共享类材质 = 基准件配方：blur(24px) saturate(1.15) + -webkit- 双写（源级） + --cv-shadow 三档栈\n    tests/liquid-glass.spec.mjs:398:3 › 桌面视口（共享悬浮玻璃类，#header 不动） › D6 亮档 hover 填充 Δ ≥ 8/255（.g2-pill 探针实测）\n    tests/liquid-glass.spec.mjs:490:3 › no-backdrop 降级 › F1 圆钮实色回落 = --glass-bg 原值（亮 alpha .55），滤镜摘除，面阴影保留\n  2 passed (3.2m)",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793522052651,
+  "type": "user",
+  "text": "[Background task completed] \"Full liquid-glass spec run after fixes\" (exit 1 · 3m 16s):\n\n  3 failed\n    tests/liquid-glass.spec.mjs:291:3 › 桌面视口（共享悬浮玻璃类，#header 不动） › D3 §7-① 共享类材质 = 基准件配方：blur(24px) saturate(1.15) + -webkit- 双写（源级） + --cv-shadow 三档栈\n    tests/liquid-glass.spec.mjs:398:3 › 桌面视口（共享悬浮玻璃类，#header 不动） › D6 亮档 hover 填充 Δ ≥ 8/255（.g2-pill 探针实测）\n    tests/liquid-glass.spec.mjs:490:3 › no-backdrop 降级 › F1 圆钮实色回落 = --glass-bg 原值（亮 alpha .55），滤镜摘除，面阴影保留\n  13 passed (3.3m)",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793522158654,
+  "type": "user",
+  "text": "[Background task completed] \"Sequential evidence chain on merged tree\" (exit 1 · 4m 06s):\n    tests/liquid-glass.spec.mjs:291:3 › 桌面视口（共享悬浮玻璃类，#header 不动） › D3 §7-① 共享类材质 = 基准件配方：blur(24px) saturate(1.15) + -webkit- 双写（源级） + --cv-shadow 三档栈\n    tests/liquid-glass.spec.mjs:398:3 › 桌面视口（共享悬浮玻璃类，#header 不动） › D6 亮档 hover 填充 Δ ≥ 8/255（.g2-pill 探针实测）\n    tests/liquid-glass.spec.mjs:490:3 › no-backdrop 降级 › F1 圆钮实色回落 = --glass-bg 原值（亮 alpha .55），滤镜摘除，面阴影保留\n  13 passed (3.3m)",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793522199882,
+  "type": "user",
+  "text": "[Background task completed] \"Final full spec run with fixed file\" (exit 1 · 16s):\n\n    Error Context: test-results/liquid-glass-桌面视口（共享悬浮玻璃类，-bac55-kit--双写（源级）---cv-shadow-三档栈/error-context.md\n\n  1 failed\n    tests/liquid-glass.spec.mjs:291:3 › 桌面视口（共享悬浮玻璃类，#header 不动） › D3 §7-① 共享类材质 = 基准件配方：blur(24px) saturate(1.15) + -webkit- 双写（源级） + --cv-shadow 三档栈\n  15 passed (15.2s)",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793522235729,
+  "type": "user",
+  "text": "[Background task completed] \"Probe CSSOM serialization of -webkit-backdrop-filter\" (exit 0 · 1.9s):\n[\n {\n  \"sel\": \".g2-fab\",\n  \"dash\": \"\",\n  \"hasInCssText\": false,\n  \"snippet\": \"width: var(--cv-size-circle, 40px); height: var(--cv-size-circle, 40px); padding: 0px; border-radius: 50%; display: inline-flex; align-items: center; justify-co\"\n }\n]",
+  "attachments": []
+ },
+ {
+  "header": "BACKGROUND · NEBULA · COMPLETED",
+  "eventType": "completed",
+  "source": "background",
+  "injected": true,
+  "timestamp": 1793522287184,
+  "type": "user",
+  "text": "[Background task completed] \"Final full liquid-glass spec run\" (exit 0 · 15s):\n  ✓  15 tests/liquid-glass.spec.mjs:517:3 › prefers-reduced-motion › R1 §7-⑦ 按压态形变退化：transform none + opacity 0.8（CSSOM 契约） (682ms)\n  ✓  16 tests/liquid-glass.spec.mjs:544:3 › 折射链退役墓碑 › X1 SVG defs 无节点 + g2-refract-on 类永不挂载 + js/liquidGlass.js 不在加载面 (653ms)\n\n  16 passed (14.8s)",
+  "attachments": []
+ }
+]

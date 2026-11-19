@@ -33,9 +33,18 @@ const LEGACY_PREFIX = 'nebflow_';
 // Legacy keys whose spelling does not follow `nebflow_<suffix>`. Values map
 // suffix -> literal. Normalized on every boot (not only on rename day) so
 // these pre-standardization spellings disappear immediately.
+//
+// ⑨-6（作者 2026-09-12 预授权令）：好友域三个裸键（好友信任标记 / 已看请求 /
+// 拉黑镜像）此前无视命名空间纪律直接写死在 messages.js / contacts.js 里 ——
+// 迁到 `key()` 命名空间（`nebflow_fm_trusted` 等），存量值经本表**启动即迁移**
+// （migrateKey 是「新键已有数据则不动」的幂等拷贝，数据不丢；裸键字面自此只
+// 存在于这一张兼容表里）。
 const LEGACY_IRREGULAR = {
   task_collapsed: 'nebflow-task-collapsed',
   time_format: 'nebflow:timeFormat',
+  fm_trusted: 'fm_trusted',
+  fm_seen_requests: 'fm_seen_requests',
+  fm_blocked: 'fm_blocked',
 };
 
 /**
@@ -78,19 +87,5 @@ for (const [suffix, literal] of Object.entries(LEGACY_IRREGULAR)) {
   migrateKey(literal, key(suffix));
 }
 
-// 3. Token cookie: rename-day copy. Copy only, never delete - the backend
-//    still accepts the legacy cookie name during the transition, and cookie
-//    writes are asynchronous with respect to the network stack, so a
-//    delete-then-write sequence risks a handshake landing in the empty
-//    window (observed as intermittent WS 403).
-const LEGACY_TOKEN_COOKIE = 'nebflow_token';
-const tokenCookie = key('token');
-if (tokenCookie !== LEGACY_TOKEN_COOKIE) {
-  try {
-    const old = document.cookie.match(/(?:^|;\s*)nebflow_token=([^;]*)/);
-    const hasNew = document.cookie.match(new RegExp(`(?:^|;\\s*)${tokenCookie}=`));
-    if (old && !hasNew) {
-      document.cookie = `${tokenCookie}=${old[1]}; path=/; SameSite=Strict`;
-    }
-  } catch { /* cookie unavailable - never break boot */ }
-}
+// (Stage D: the old rename-day token-cookie copy lives only in the B' purge
+// — ws.js purgeLongLivedCopies removes every legacy spelling from the jar.)

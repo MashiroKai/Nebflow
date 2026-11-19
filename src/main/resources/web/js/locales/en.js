@@ -17,8 +17,38 @@ export default {
   'activity.projects': 'Projects',
   'panel.explorer': 'Explorer',
   'panel.messages': 'Messages',
-  'panel.contacts': 'Contacts',
+  'panel.contacts': 'Contacts & Devices',
+  // diff 拆面板批（2026-10-22）：左栏「变更文件」面板（委托 diff 摘要条唤起）。
+  'panel.diff': 'Changed Files',
+  'panel.diffEmpty': 'No diff open. Click the changes summary on a delegate delivery message.',
+  // 二次加载清剿批（2026-10-24）：diff 打开链的装载态 + 失败可见反馈（作者令
+  // 「任何取数/渲染路径必须有 loading 态与失败可见反馈，禁止静默无响应」）。
+  'panel.diffRendering': 'Rendering diff…',
+  'panel.diffOpenFailed': 'Could not open in Canvas — click the row to retry.',
   // #27 Project tab + Flow Map tab (direction adjustment: Canvas tab form, team-panel paradigm)
+  'project.workspaceOpen': 'Open',
+  'project.workspaceReserved': 'Reserved for merge',
+  'project.workspaceRunning': 'Working',
+  'project.workspaceIdle': 'Idle',
+  'project.workspaceFrozen': 'Needs manual recovery',
+  'project.mergePhase.accepted': 'Accepted',
+  'project.mergePhase.processing': 'Processing',
+  'project.mergePhase.paused': 'Paused',
+  'project.mergePhase.checking': 'Checking',
+  'project.mergePhase.merging': 'Merging',
+  'project.mergePhase.validating': 'Validating',
+  'project.mergePhase.awaiting-user': 'Awaiting your decision',
+  'project.mergePhase.merged-cleanup-pending': 'Integrated; cleanup pending',
+  'project.mergePhase.completed': 'Completed',
+  'project.mergePhase.failed': 'Failed',
+  'project.mergePhase.cancelled': 'Stopped',
+  'project.mergePhase.reserved': 'Reserved for merge',
+  'project.workspaceCleaning': 'Cleaning',
+  'project.workspaceClosedMerged': 'Integrated and closed',
+  'project.workspaceClosedRetained': 'Directory removed; branch retained',
+  'project.workspaces': 'Workspaces',
+  'project.workspacesLoading': 'Loading workspaces…',
+  'project.noWorkspaces': 'No managed workspaces',
   'project.title': 'Projects',
   'project.loading': 'Loading projects…',
   'project.workspace': 'Workspace',
@@ -32,7 +62,10 @@ export default {
   'project.openFlowMap': 'Open "{name}" Flow Map',
   'project.idle': 'Idle',
   'project.empty': 'No projects yet',
-  'project.emptyHint': 'Create a Project via Nebula to see it listed here.',
+  'project.emptyHint': 'Create a Project via {agent} to see it listed here.',
+  'project.emptyCta': 'Ask {agent} to create one',
+  'project.emptyCtaHint': 'Fills the instruction into the chat input — nothing is sent automatically.',
+  'project.emptyPrefill': 'Create a project for me',
   'project.loadFail': 'Failed to load projects',
   'project.notMounted': 'Not mounted',
   'project.backToProjects': 'Back to projects',
@@ -43,10 +76,121 @@ export default {
   'project.archiveConfirm': 'Archive "{name}"? It will disappear from the Projects panel. Workspace files are all kept — nothing is deleted or moved.',
   'project.archiveDone': '"{name}" archived — hidden from the Projects panel (files kept)',
   'project.archiveFail': 'Failed to archive "{name}"',
+  // Realtime updates + create/archive animations (tabrealtime batch 2026-09-17):
+  // new-card marker + the two screen-reader announcements (aria-live status row).
+  'project.new': 'New project',
+  'project.createdAnnounce': '"{name}" created',
+  'project.archivedAnnounce': '"{name}" archived',
+  // N2 project-tool batch (2026-10-06): the Project tool's action="unmount" face replaced
+  // the panel's manual archive button; the announce mirrors the archived one (aria-live row).
+  'project.unmountedAnnounce': '"{name}" unmounted — in-flight work stopped, files kept',
+  // unmount-console panel batch 2026-11-02: unload button / remount / the "Unloaded"
+  // group (visible destination for unmounted projects; same engine path as the tool).
+  'project.unmountBtn': 'Unload',
+  'project.unmountTitle': 'Unload "{name}"?',
+  'project.unmountInflight': 'In-flight right now: {chains} chain(s), {nodes} node(s), {sessions} session(s) — unloading stops all of them first.',
+  'project.unmountConfirm': 'Once confirmed, "{name}" disappears from the Projects list and the agent context and can no longer receive dispatches; every local file is kept (zero deletion). ',
+  'project.unmountConfirmGo': 'Unload',
+  'project.unmountFail': 'Failed to unload "{name}": {detail}',
+  'project.unmountedGroup': 'Unloaded',
+  // Author order 2026-11-05 08:26: the group-head explainer line is gone (iron rule 8
+  // "self-explaining": duplicate explanation + behaviour teaching — the "Unloaded" title
+  // already states the state and the Reload button already states the way out). Key
+  // `project.unmountedGroupHint` went orphan with it and is removed entirely.
+  'project.unmountedRowTitle': '"{name}" unloaded at {at} (local files kept)',
+  'project.remountBtn': 'Reload',
+  'project.remounting': 'Reloading…',
+  'project.remountFail': 'Failed to reload "{name}": {detail}',
+  'project.remountedAnnounce': '"{name}" reloaded',
+  // Projects-panel bottom-right "+" button + light dialog (projcreate batch, plan B:
+  // submit = prefill the main chat input + focus; zero new endpoints, zero new write
+  // face). The description box is the ONLY field — no path/name field: plan B never
+  // writes to disk from the front end, so a path field the front end cannot validate
+  // would be a fake control; the path is resolved by the Nebula-side ProjectCreate
+  // path panel.
+  'project.createOpen': 'New project',
+  'project.createTitle': 'New project',
+  'project.createDescLabel': 'Project description',
+  'project.createDescPlaceholder': 'Describe what this project is for — the Agent assigns tasks to the project based on this description.',
+  'project.createDescCount': '{n}/500',
+  'project.createSubmit': 'Create project',
+  'project.createCancel': 'Cancel',
+  'project.createDescRequired': 'Enter a project description (the Agent assigns tasks from it)',
+  'project.createDescTooLong': 'Description is over 500 characters — please shorten it to 500 or fewer.',
+  // C1 ADDITION CANDIDATES (projcreate-redesign batch, author ruling 2026-09-24
+  // D2(b)+D4): the workspace slot (picker form) and the new direct-submit failure
+  // states. Pending the author's review; the sink freezes the wording.
+  'project.createWorkspaceLabel': 'Workspace path',
+  'project.createWorkspacePick': 'Choose path…',
+  'project.createWorkspaceNone': 'No path selected',
+  'project.createWorkspaceRequired': 'Choose a workspace path first.',
+  'project.createWorkspacePickFail': 'The folder browser failed to load — please try again.',
+  'project.createPending': 'Creating…',
+  'project.createFailGeneric': 'Creation failed — please try again.',
+  // SUPERSEDED (author ruling 2026-09-24 D2(b)): once direct creation landed,
+  // these two keys lost their call sites — `createPrefill` existed to build the
+  // "one sentence sent to the agent" payload, and `createInputUnavailable` was
+  // the forward path's "chat input not found" state. This batch KEEPS the keys
+  // byte-identical and only records call sites = 0 (key-face cleanup is out of
+  // this batch's write face).
+  'project.createInputUnavailable': 'Chat input not found — the description was not filled in.',
+  'project.createPrefill': 'Create a project for me. Project description: {desc}',
+  // Submit-success hint: registered but deliberately NOT enabled in this batch (same
+  // semantics as the existing empty-state CTA — filling the value + focusing is the
+  // feedback; the key stays reserved for a later enablement). No call site by design.
+  'project.createPrefilled': 'Description placed in the input — press send to create.',
+  // === ui-device-faces batch (2026-10-10): face A — "store on device" + face C — project-card device badge ===
+  // Copy aligned with the design doc (/tmp/nebflow-coldstart/general/proto-device-agnostic/
+  // 20261010_002900_neblink-stage1-ui-faces-design.md §1/§3).
+  'project.deviceLabel': 'Store on device',
+  // Flat-device design language (author ruling 2026-10-30 "all devices are equal"):
+  // neutral self fallback name (the button/menu show the roster's own device name
+  // whenever the roster is reachable; this key is only the not-yet-fetched fallback).
+  'project.deviceSelf': 'This device',
+  'project.deviceOfflineTag': 'Offline',
+  'project.deviceMenuFoot': 'Devices come from the NebLink network; offline devices are not selectable and appear automatically once online.',
+  // Remote-selected hint line: stated as a storage relationship, never naming "this
+  // Mac" (flat design language; author ruling "only a pointer is recorded").
+  'project.createDeviceHintline': 'The project will be stored on {device} and run by it; only a pointer is recorded here — files are fetched on demand.',
+  // Self-selected hint line (same slot, same sentence shape, no pointer clause —
+  // a factual difference, not a device tier).
+  'project.createDeviceHintlineSelf': 'The project will be stored on {device} and run by it.',
+  // picker-device-switch batch (2026-10-30): reject a pick whose origin device no
+  // longer matches the selected storage device (in-picker device switch).
+  'project.createDeviceMismatch': 'The picked path does not belong to the selected storage device (the device was switched inside the picker) — please pick again.',
+  'project.createWorkspaceLabelRemote': 'Workspace path (on {device})',
+  'project.createWorkspacePickRemote': 'Choose a path on {device}…',
+  'project.createRemotePending': 'Creating on {device} (a few seconds)',
+  'project.createStep1': 'Verify device',
+  'project.createStep2': 'Verify directory',
+  'project.createStep3': 'Write scaffold',
+  'project.createStep4': 'Register project',
+  'project.createErrRetry': 'Retry',
+  // Flat design language: neutral action wording (was "Use this Mac").
+  'project.createErrSwitchLocal': 'Use this device',
+  'project.createErrSwitchDevice': 'Switch device…',
+  'project.devBadgeTitle': 'Remote project · device {device} · path {path}',
+  'project.devBadgeOfflineTitle': 'Remote project · device {device} (offline) · path {path}',
+  // 台账 #920 (2026-10-27): device-storage fallback badge (no origin → no path segment)
+  'project.devBadgeDeviceTitle': 'Remote project · device {device}',
+  'project.devBadgeDeviceOfflineTitle': 'Remote project · device {device} (offline)',
+  // 台账 #920 (2026-10-27): panel-side description write-through (always-rendered row + inline edit)
+  'project.descLabel': 'Description',
+  'project.descEmpty': 'No description yet',
+  'project.descEdit': 'Edit description',
+  'project.descPlaceholder': 'One line describing this project (wording feeds task routing)',
+  'project.descSave': 'Save',
+  'project.descCancel': 'Cancel',
+  'project.descSaved': '"{name}" description updated',
+  'project.descSaveFail': 'Failed to save description ({detail})',
   'flowmap.title': 'Flow Map',
   'flowmap.cardRunning': 'Running…',
   // Node card agent retirement (node-flowmap-slim): restrained empty state when no preset
   'flowmap.presetDefault': 'Default preset',
+  // Card description overflow entry (edge-render-fix batch 2026-11-05): the description
+  // is capped at two lines, so a visible entry appears whenever it does not fit —
+  // clicking the card opens the detail panel with the full text.
+  'flowmap.descFull': 'Full text',
   'flowmap.loading': 'Loading Flow Map…',
   'flowmap.loadFail': 'Failed to load Flow Map',
   'flowmap.empty': 'No nodes yet — project idle',
@@ -96,6 +240,7 @@ export default {
   'flowmap.archive.count': '{n} chains · {m} nodes',
   'flowmap.archive.nodes': '{n} nodes',
   'flowmap.archive.empty': 'No archived task chains yet',
+  'flowmap.archive.readGuide': 'Chain archived · open a member for the full result (fetched on demand)',
   'flowmap.archive.expiringSoon': 'Expiring soon',
   'flowmap.archive.allArchived': 'All nodes completed — results are in the archive (top-right)',
   'flowmap.archive.close': 'Close archive panel',
@@ -109,6 +254,15 @@ export default {
   'flowmap.archive.taskLabel': 'Task',
   'flowmap.archive.resultLabel': 'Result',
   'flowmap.archive.noResult': 'No result yet',
+  // Result area explicit error state (2026-09-11 fmresult batch): the "…" placeholder
+  // must reach a terminal state — a failed full-text fetch is no longer silently folded
+  // into the empty state ("No result yet"); it shows a readable reason + an action hint.
+  'flowmap.archive.resultLoadFail': 'Failed to load result: {reason}',
+  'flowmap.archive.resultLoadFailHint': 'Close and reopen the detail panel to retry',
+  'flowmap.archive.resultFailTimeout': 'request timed out (gateway did not respond)',
+  'flowmap.archive.resultFailNetwork': 'request failed or response unreadable (network error)',
+  'flowmap.archive.resultFailHttp': 'server returned {status}',
+  'flowmap.archive.resultFailGone': 'result no longer reachable (node left active/archive area)',
   'flowmap.archive.created': 'Created',
   'flowmap.archive.completed': 'Completed',
   'flowmap.archive.ttlPurged': '24h TTL cleanup: {n} chain(s) removed from archive',
@@ -119,6 +273,7 @@ export default {
   'flowmap.detail.secExec': 'Execution',
   'flowmap.detail.preset': 'Preset',
   'flowmap.detail.plugins': 'Plugins',
+  'flowmap.detail.allocation': 'Allocation',
   'flowmap.detail.none': 'None',
   'flowmap.detail.in': 'Input',
   'flowmap.detail.out': 'Output',
@@ -133,19 +288,77 @@ export default {
   'flowmap.detail.loopRoundN': 'round {n}',
   'flowmap.detail.loopVerdict': 'Last verdict',
   'flowmap.detail.notify': 'Dispatcher notify',
+  // Queue-position row (queuepos batch 2026-09-15): the detail panel had no queue
+  // field at all before this (author's report). Same source as the card badge
+  // (`mergeQueuePos`, unique per node, truth = SEM-2 rank ascending).
   'flowmap.detail.yes': 'Yes',
   'flowmap.chain.archivedToast': 'Chain "{chain}" archived ({n} nodes together)',
-  'flowmap.chain.retainedToast': 'Node completed — chain "{chain}" incomplete ({done}/{total}); terminal card retained on map',
-  'flowmap.chain.retainedAbnormalToast': 'Chain "{chain}" has failed/cancelled nodes ({done}/{total} terminal) — not auto-archived; retained on map for 24h',
+  // Chain-level cancel (R2, chaincancel batch 2026-09-17): control label + the
+  // irreversible confirm card's four elements (① chain name + chainId ② doomed
+  // count + per-status breakdown ③ irreversibility ④ untouched declaration) plus
+  // the "recoverable interruptions abandoned" hint; two result toasts.
+  'flowmap.chain.cancel.label': 'Cancel the whole chain',
+  'flowmap.chain.cancel.title': 'Cancel the whole chain',
+  'flowmap.chain.cancel.chain': 'Chain "{chain}" ({id})',
+  'flowmap.chain.cancel.counts': '{n} node(s) will be cancelled ({breakdown})',
+  'flowmap.chain.cancel.irreversible': 'Irreversible: cancelled nodes cannot be reactivated — create a replacement node instead',
+  'flowmap.chain.cancel.untouched': 'Untouched: the {n} completed / failed / already-cancelled node(s) keep their results',
+  'flowmap.chain.cancel.interrupted': '{n} recoverable interruption(s) (interrupted) will be abandoned too',
+  'flowmap.chain.cancel.st.running': 'running',
+  'flowmap.chain.cancel.st.pending': 'pending',
+  'flowmap.chain.cancel.st.wiring': 'wiring',
+  'flowmap.chain.cancel.st.blocked': 'blocked',
+  'flowmap.chain.cancel.st.interrupted': 'interrupted',
+  'flowmap.chain.cancel.done': 'Chain cancel submitted ({n} node(s))',
+  'flowmap.chain.cancel.error': 'Chain cancel failed: {error}',
+  // Chain fold (P1 · spec §3.3): main-graph collapsed-chain summary card; expand =
+  // click the card body or its chevron.
+  'flowmap.chain.nodes': '{n} nodes',
+  'flowmap.chain.expand': 'Expand chain',
+  'flowmap.chain.collapse': 'Collapse chain ({chain} · {n} nodes)',
+  'flowmap.chain.cardHint': 'Collapsed chain "{chain}" ({n} nodes) — click to expand',
+  // Task panel chain badge (P1 · spec §7-B): row-level capsule (short chain title +
+  // same-chain color dot); click jumps to the node on the main graph.
+  'flowmap.chain.badgeHint': 'Chain "{chain}" · click to jump to the graph',
   // Special-node flag badges (badge batch 2026-09-05): head-row capsule labels;
   // appended at the tail of the flowmap block to minimize merge-conflict surface
   // with other locales branches in this batch
   'flowmap.flag.merge': 'Merge',
   'flowmap.flag.loop': 'Loop',
   'flowmap.flag.pending': 'Awaiting',
+  // Node role chip (vchip batch 2026-09-15): `role=verifier` node identity in the
+  // Flow Map. Same capsule family as merge/loop/pending; one word, matching the
+  // `role=verifier` vocabulary (verdict domain pass/fail, `(fail)<worker>:loop`
+  // feedback edge holder) — deliberately NOT 'Reviewer' (a person) since the chip
+  // labels the node's routing role.
+  'flowmap.flag.verifier': 'Verify',
+  // Merge-window queue position (queue-position visibility batch 2026-09-14; author
+  // ruling 16:39: show the number AND the holders). Badge on the node head row,
+  // footnote on the same waiting-note line. Degradation red line: missing key /
+  // not computable / same-git-dir multi-project => never render a number.
+  //
+  // **queuepos batch 2026-09-15 fix** (author report: "they all show the same number
+  // ahead / the detail panel has nothing"): the number is now
+  // `mergeQueuePos.position` (a rank, unique per node) — `mergeQueue.ahead` is the
+  // SIZE OF THE BLOCKING SET (identical for every waiter while one merge runs), so
+  // the keys queue.ahead / badgeTitle / untrustedTitle are retired and the old
+  // "N ahead" wording is gone.
+  // Queue name (the engine supplies the token; the frontend only translates — an
+  // unknown token is echoed verbatim, never invented)
   // LoopNode running-phase labels (2026-09-06): loop card desc line shows worker/verify
   'flowmap.loopPhase.worker': 'Producing',
   'flowmap.loopPhase.verify': 'Verifying',
+  // U1 multi-chain batch (2026-09-11): merge detail card row "upstream worktrees/branches"
+  // — source = worktree field of nodes in the in-edge closure; never fabricated (falls
+  // back to an explicit unavailable reason, split by upstream visibility — a single
+  // reason would assert a falsehood when the upstreams ARE loaded but unconfigured).
+  // zh/en key sets stay symmetric: None = state 1 (all reachable upstreams loaded,
+  // none configured a worktree); Absent = state 2 (no reachable upstream loaded);
+  // Mixed = state 3 (some upstreams not loaded, the visible ones unconfigured).
+  'flowmap.detail.mergeUpstreams': 'Upstream worktrees/branches',
+  'flowmap.detail.mergeUpstreamsNone': 'Unavailable (upstream nodes have no worktree configured)',
+  'flowmap.detail.mergeUpstreamsAbsent': 'Unavailable (upstream nodes not in the loaded payload)',
+  'flowmap.detail.mergeUpstreamsMixed': 'Unavailable (some upstream nodes not in the loaded payload; visible upstreams have no worktree configured)',
   'agentFile.hint': 'This file is the project workspace agent instructions (AGENTS.md at the workspace root); edit and save it.',
 
   // === Friends & messages (A2A) ===
@@ -175,33 +388,362 @@ export default {
   'contacts.menuTrust': 'Trust this friend',
   'contacts.menuUntrust': 'Remove trust',
   'contacts.blocked': 'Blocked',
+  // ⑦ friend remark (2026-09-12 batch): single entry = friend-row context menu → inline edit.
+  'contacts.menuSetRemark': 'Set remark',
+  'contacts.remarkPlaceholder': 'Remark (empty clears)',
+  'contacts.remarkHint': 'Enter saves · Esc cancels · empty clears the remark',
+  // ── Batch 1 (2026-11-02): friend/group profile with two descriptions ─────
+  'profile.open': 'View profile',
+  'profile.friendTitle': 'Friend info',
+  'profile.groupTitle': 'Group profile',
+  'profile.close': 'Close',
+  'profile.save': 'Save',
+  'profile.saved': 'Saved',
+  // Three-dot entry batch (2026-11-05): the three new rows.
+  'profile.searchMessages': 'Search messages',
+  'profile.muteLabel': 'Mute notifications',
+  'profile.pinLabel': 'Pin to top',
+  'profile.friendRemarkLabel': 'My remark',
+  'profile.friendRemarkPlaceholder': 'Remark you gave this friend (empty clears)',
+  'profile.friendBioLabel': 'Self-introduction',
+  'profile.friendBioPlaceholder': "The friend's self-introduction (empty clears)",
+  'profile.groupRemarkLabel': 'My group remark',
+  'profile.groupRemarkPlaceholder': 'Remark you gave this group (empty clears)',
+  'profile.groupDescriptionLabel': 'Group description',
+  'profile.groupDescriptionPlaceholder': 'Group description (empty clears)',
+  // Cross-device sync badge, tri-state (profile-sync badge batch 2026-11-06,
+  // author order 3(a)): the old hardcoded 「本地缓存·未同步」 chip is replaced by
+  // the REAL state from GET /api/profile/sync-status (ProfileSync.status),
+  // re-read on open / after save / on the profileDescriptionsChanged frame.
+  // Honest-first: no evidence of a successful push ⇒ never claim synced.
+  'profile.sync.synced': 'Synced',
+  'profile.sync.syncing': 'Pending sync',
+  'profile.sync.localOnly': 'Local only',
+  'profile.friendNote': 'Your remark stays on this device; upstream sync for self-introductions and group descriptions is not available yet, so those are cached locally. Both fields are included in search.',
+  'profile.groupNote': 'Your group remark stays on this device; upstream sync for group descriptions is not available yet, so it is cached locally. Both fields are included in search.',
   'contacts.deleteTitle': 'Delete friend',
   'contacts.deleteConfirm': 'This removes {name} from your friends. Chat history is kept.',
   'contacts.blockTitle': 'Block',
   'contacts.blockConfirm': 'You will no longer receive messages or friend requests from {name}.',
   'messages.empty': 'No conversations',
+  // Conversation-list **fetch failure** face (empty-state-must-not-lie batch,
+  // 2026-11-05). 🔴 Distinct fact from the empty key above, never interchangeable:
+  // `messages.empty` renders only when the server ANSWERED that there are no
+  // conversations (200 + `[]`); any failed fetch (non-2xx / timeout / parse
+  // error) renders this key with a retry control. Self-explaining rule 8: the
+  // fact only — the retry control carries the next step.
+  'messages.listLoadFailed': "Couldn't load conversations",
+  'messages.retry': 'Retry',
+  'messages.backToAgent': 'Back to the agent conversation',
+  // 🔴 `systemNowFriends` belongs to the **friend-acceptance** context (its only
+  // legal consumer = the `friend_accepted` branch of `onFriendEvent` in
+  // messages.js) ⇒ the two group keys below are the **key split** product
+  // (author 2026-09-16: "the join-group prompt still says you are now friends —
+  // wrong": `summaryOf` was kind-blind and put the friend copy on group rows).
+  // Both keys land together with zh (no dead keys); consumer = messages.js
+  // `groupSummaryEmpty` — the event leg comes first (`groupEventText`, below), and
+  // these two are the fallback states (group name present / absent).
   'messages.systemNowFriends': 'You are now friends',
+  'messages.groupNoMessagesNamed': 'Group chat “{name}” — no messages yet',
+  'messages.groupNoMessages': 'No messages in this group chat',
+  // Group-event member names (author ruling 2026-09-16: "{member name} joined the
+  // group chat" must carry the name): consumer = `groupEventText` in messages.js
+  // (group row empty summary), data source = the additive group-row key
+  // `latestEvent` (canon §2.4; six-kind closed set). 🔴 The display name has ONE
+  // source = the server's `display_name` (`{name}` = `subject.name`, `{actor}` =
+  // the inviter's `actor.name`); no name guessing. zh + en land in one batch
+  // (a missing key falls back to the key name itself — see i18n.js) ⇒ never one side only.
+  'messages.groupEventCreated': '{name} created the group chat',
+  'messages.groupEventJoined': '{name} joined the group chat',
+  'messages.groupEventInvited': '{actor} invited {name}',
+  'messages.groupEventLeft': '{name} left the group chat',
+  'messages.groupEventRemoved': '{name} was removed from the group chat',
+  'messages.groupEventRoleGranted': '{name} is now a group admin',
+  'messages.groupEventRoleRevoked': '{name} is no longer a group admin',
   'messages.forwardToAgent': 'Forward to agent',
   'messages.forwarded': 'Forwarded to agent',
   'messages.forwardToast': 'Added to input — add a note and send',
   'messages.forwardNoSession': 'Open a chat session in the main window first, then forward',
+  // ── msgmenu phase 1 (client, author 2026-09-18 four rulings) — new keys ────
+  // 🔴 This batch hard-forbids delete/recall ⇒ **no** `messages.delete*` /
+  //    `messages.recall*` keys may be added here (zh-CN.js carries the same note).
+  'messages.quote': 'Quote',
+  'messages.quoteUnavailable': 'Original message unavailable',
+  'messages.quotePlaceholder': 'Original message',
+  // quotejump batch (jump = "must be jumpable"): accessible name for the quote
+  // block's button semantics (carries the quoted summary text).
+  'messages.quoteJumpAria': 'Jump to quoted message: {text}',
+  // ── quote-message phase 1 (main-chat right-click quote, spec §6 list): 9 new keys ──
+  'chat.quoteJumpHint': 'Jump to quoted message',
+  'chat.quoteDeleted': 'Original message deleted',
+  'chat.quoteDeletedSnapshot': 'Original message deleted · snapshot kept',
+  'chat.quoteSenderMe': 'Me',
+  'chat.quoteTypeImage': '[Image]',
+  // Stack-card per-image quote batch (2026-11-02): position label on a quote chip.
+  'chat.quoteImagePos': 'Image {n}/{total}',
+  'chat.quoteItemAria': 'Quote image {n}',
+  'chat.quoteTypeFile': '[File]',
+  'chat.quoteTypeTool': '[Tool]',
+  'chat.quoteTypeAsk': '[Q&A]',
+  'chat.quoteTypeSystem': '[System]',
+  // ── msgchip batch (msg-token short-name quote, author order 2026-11-01): new keys ──
+  'chat.msgTokenChipHint': 'View original message',
+  'chat.msgTokenPopTitle': 'Original message',
+  'chat.msgTokenUnreachable': 'Original message unavailable',
+  'chat.msgTokenLoading': 'Loading…',
+  'chat.msgTokenExpand': 'Expand',
+  'chat.msgTokenCollapse': 'Collapse',
+  // ── msgchip-provenance batch (2026-11-01 author order: strip channel prefix): attach note ──
+  'chat.msgTokenAttachNote': '{n} attachment(s)',
+  'messages.multiSelect': 'Multi-select',
+  'messages.selectedCount': '{n} selected',
+  'messages.forward': 'Forward',
+  'messages.selectExit': 'Exit',
+  // ── visup-b batch (author 2026-09-19 04:22: D5 action bar / D7 forward window) ──
+  // Same hard ban stands: no delete/recall keys anywhere.
+  // "Merge forward" = phase 2 (no server protocol ⇒ key carries `Phase2`).
+  'messages.forwardEach': 'Forward one by one',
+  'messages.forwardMerge': 'Merge forward',
+  'messages.forwardMergePhase2': 'Merge forward (phase 2)',
+  'messages.forwardToTitle': 'Forward to',
+  'messages.forwardTargetDirect': 'Direct chat',
+  'messages.forwardTargetGroup': 'Group chat',
+  'messages.forwardNotePlaceholder': 'Leave a note',
+  'messages.forwardNoPick': 'No target conversation picked',
+  'messages.forwardSend': 'Send',
+  'messages.forwardCancel': 'Cancel',
+  'messages.forwardChipRemove': 'Remove {name}',
+  'messages.copied': 'Copied',
+  'messages.copyFailed': 'Copy failed',
+  'messages.forwardNoTarget': 'No other conversation to forward to',
+  'messages.forwardNoneSelected': 'No forwardable message selected',
+  'messages.forwardedCount': 'Forwarded {n}',
+  'messages.forwardSkipped': 'Forwarded {n}, skipped {k} not forwardable',
+  'messages.forwardPartial': 'Forwarded {n}, {f} failed',
+  // B+C 批 · 方案 B（不可恢复标记的**文案**半边）：{n} = 无法恢复的附件数。
+  // 说清**为什么**（页面刷新把载荷剥离了——localStorage 放不下）与**怎么办**
+  // （重新添加）。修前该情形只有 console.warn，对用户是**静默消失**。
+  'messages.queueAttachUnrecoverable': '{n} attachment(s) could not be restored because the page was refreshed — please add them again',
+  'input.historyAttachLost': '{n} attachment(s) from this history entry are no longer stored on this device — please add them again',
+  // attach-split batch (2026-10-24 incident fix): user-visible copy for the server's
+  // loud rejection receipt (messageTooLarge) — {size}/{limit} = measured frame MB / server cap MB.
+  'send.messageTooLarge': 'This message (~{size} MB) exceeds the {limit} MB delivery limit and was NOT sent — remove some attachments and retry',
   'messages.trusted': 'Trusted',
   'messages.trustedHint': 'Trust is on: new messages are auto-forwarded to your agent',
   'messages.loadingOlder': 'Load earlier messages',
   'messages.loading': 'Loading…',
+  // ⑩ message-flow status row (the area is never blank): a cold-path empty
+  // response shows the empty state (not an endless spinner).
+  'messages.noMessages': 'No messages',
+  'messages.loadOlderFailed': 'Could not load earlier messages — please retry',
+  'messages.attachUnsupported': 'No attachment entry point in the friend window yet (attachments can be received and downloaded)',
+  // attachcl batch (2026-09-16): SEND-face upload-card strings (same family as the
+  // receive-face `attach*` keys above but deliberately NOT shared — "uploading, not
+  // downloadable yet" (inbound) and "my upload progress" are different facts).
+  // `{pct}` is derived from real chunk confirmations only (no fake progress);
+  // failure/cancel strings always say "not sent" (fail-closed and visible).
+  'messages.attachProgress': 'Uploading {pct}%',
+  // 🔴 `messages.attachSending` (the percentage-free "sending" state added by the imgmsg
+  //    batch) was REMOVED by the sendstate batch: its only consumer was the quiet upload
+  //    card's sending banner, and that banner is gone entirely (see zh-CN.js note).
+  'messages.attachSent': 'Sent',
+  'messages.attachFailed': 'Upload failed — not sent',
+  'messages.attachCancel': 'Cancel',
+  'messages.attachCancelled': 'Cancelled — not sent',
+  'messages.attachCancelledRest': 'Cancelled — not uploaded',
+  'messages.attachNotSentRest': 'Not uploaded (an earlier file failed)',
+  'messages.attachSendFailed': 'Upload finished but the message could not be sent — please retry',
+  'messages.attachNoFiles': 'No file to send',
+  'messages.attachEmptyFile': '{name} is an empty file (0 bytes) — not sent',
+  'messages.attachDownload': 'Download',
+  'messages.attachUnavailable': 'Download unavailable: no file source',
+  'messages.groupDownloadUnavailable': 'Group download unavailable: some files have no source',
+  'messages.attachDownloading': 'Downloading…',
+  'messages.attachDownloaded': 'Downloaded',
+  'messages.attachDownloadFailed': 'Download failed — click to retry',
+  'messages.attachExpired': 'Attachment expired',
+  'messages.attachUploading': 'Uploading — not downloadable yet',
+  'messages.attachUnreadable': 'Attachment state unreadable — not downloadable',
+  'messages.attachUnnamed': 'Unnamed attachment',
+  // Mobile download landing notice (mobile-download batch 2026-11-18). Rendered
+  // through the existing notification stack (window.__showToast) — no new style.
+  'download.sharedToAlbum': 'Share sheet opened · choose “Save Image/Video” to add it to Photos',
+  'download.sharedToFolder': 'Share sheet opened · choose “Save to Files” to pick a location',
+  'download.landedIosFiles': 'Downloaded · stored in Files app › Downloads on iPhone',
+  'download.landedBrowserDir': 'Downloaded to the browser download folder',
+  // Attachment preview (author ruling 2026-09-15): accessible name for the
+  // clickable card + the two *visible* degradation messages.
+  'messages.attachPreview': 'Preview',
+  'messages.attachPreviewUnsupported': 'Preview not supported for this type: {name}',
+  'messages.attachPreviewFailed': 'Preview failed — try again',
   'messages.agentBadge': 'Sent by agent',
+  // friendgroups phase-1 client leg. 🔴 The agent badge text is CONVERGED to a
+  // single value (author ruling 2026-09-16, F1: one generic badge site-wide):
+  // `agentBadge` ('Sent by agent') and `agentGroupBadge` ('Sent by Agent')
+  // coexisted with different capitalisation ⇒ the latter is deleted (direct
+  // chat / friends / group / list-summary prefix all read `messages.agentBadge`;
+  // no dead keys).
+  'messages.groupTag': 'Group',
+  'messages.groupUntitled': 'Group chat',
+  'messages.memberCount': '{n} members',
+  'messages.groupSettings': 'Group settings',
+  'messages.groupTitleLabel': 'Group name',
+  'messages.groupTitleSave': 'Save',
+  'messages.groupRenamed': 'Group name updated',
+  'messages.groupMembers': 'Members',
+  'messages.roleOwner': 'Owner',
+  'messages.roleAdmin': 'Admin',
+  // "Add members" entry (ruling C/D/G/H): the label names the action itself
+  // (the old "Invite friends" named the candidate source instead ⇒ key deleted).
+  'messages.groupAddMember': 'Add members',
+  'messages.groupInviteSend': 'Send invites',
+  'messages.groupInvitedPending': 'Invite sent — waiting for their confirmation',
+  'messages.groupInviteFailed': '{n} invite(s) failed to send',
+  // Set / revoke admin (ruling ①: owner-only; canon §B.2 idempotent route)
+  'messages.groupSetAdmin': 'Make admin',
+  'messages.groupRevokeAdmin': 'Revoke admin',
+  'messages.groupAdminSet': 'Now an admin',
+  'messages.groupAdminUnset': 'Admin revoked',
+  'messages.groupKick': 'Remove',
+  'messages.groupKickedDone': 'Removed from group',
+  // "You were removed" event copy (consumer = the `not_member` branch of
+  // `groupErrToast` in friendGroups.js:73). As of 2026-09-16 the key was MISSING
+  // on both sides ⇒ that toast rendered the raw key name `messages.groupKicked`
+  // (missing-key fallback returns the key itself, i18n.js:28). Filled in with the
+  // same family, zh + en in one batch (no single-language additions).
+  'messages.groupKicked': 'You were removed from the group',
+  // Removal confirmation now carries the CONSEQUENCE clause (ruling D: match the
+  // leave / dissolve wording — removal was the only destructive action without it).
+  'messages.confirmKick': 'Remove {name} from the group? They will stop receiving this group\u2019s messages, its history will no longer be visible to them, and they must be invited again to rejoin.',
+  'messages.groupLeave': 'Leave group',
+  'messages.confirmLeave': 'After leaving you will stop receiving this group\u2019s messages, and its history will no longer be visible.',
+  'messages.groupLeft': 'You left the group — its history is no longer visible',
+  'messages.groupDissolve': 'Dissolve group',
+  'messages.confirmDissolve': 'Dissolving disables the group for every member. This cannot be undone.',
+  'messages.groupDisbanded': 'The group has been dissolved',
+  'messages.groupCreated': 'Group created',
+  'messages.groupNotFound': 'This group does not exist or has been dissolved',
+  // Owner-cannot-leave hint (ruling K / plan §9 D1: this key was MISSING, the
+  // screen printed the raw key name; call site = the owner branch of the drawer).
+  'messages.groupOwnerNoLeave': 'The owner cannot leave the group — the group can only be dissolved.',
+  // Group-domain error states (canon §B.4): the privilege code must be VISIBLE
+  // and must stay distinguishable from an auth failure.
+  'messages.groupNotAdmin': 'You do not have permission to do that (owner or admin only).',
+  'messages.groupMemberNotFound': 'That person is no longer in this group',
+  'messages.groupRoleInvalid': 'Invalid role value',
+  'messages.groupsUnavailable': 'Group chat is unavailable',
+  'messages.attachUnsupportedGroup': 'No attachment entry point in the group window yet (attachments can be received and downloaded)',
   'messages.notFriendBlocked': 'You can no longer message this contact',
-  'messages.loginRequired': 'Log in to your nebflow account to use messages and contacts',
+  'messages.loginRequired': 'Log in to your {lowerBrand} account to use messages and contacts',
   'login.popupBlocked': 'Popup blocked - allow popups and retry',
   'login.openPage': 'Open login page',
+  // Social one-click keys (2026-10-15 login-card batch): provider names stay
+  // untranslated; "other methods" = the unified account login inside the
+  // hosted shell (email/username et al.) — mail as the secondary pick.
+  'login.social.github': 'Continue with GitHub',
+  'login.social.google': 'Continue with Google',
+  'login.social.other': 'Sign in with email or other methods',
+  // Login entry / login panel (2026-09-16 login-entry batch): the panel strings
+  // used to be hard-coded Chinese literals in activityBar.js's injected style
+  // family; this batch moves them into i18n (zh/en paired, no dead keys).
+  'login.title': 'Sign in to {lowerBrand} — link your devices',
+  // Login card v3 single-key face (mobile-mockup-375 v3④): horizontal lockup + one key.
+  'login.unifiedPrimary': 'Sign in to {lowerBrand}',
+  'login.connectTitle': 'Connect your other devices',
+  'login.connectHint': 'Once signed in, this device links with the others on your account',
+  'login.authNote': 'A browser will open to finish sign-in; GitHub / Google quick sign-in lives inside that page',
+  'login.starting': 'Starting login…',
+  'login.hintBrowser': 'Sign in to your {lowerBrand} account in the browser; this device then interconnects with your other devices',
+  'login.reopenAuthPage': 'Reopen the login page',
+  'login.switchAccount': 'Use another account',
+  'login.waitingPopupOpened': 'Login page opened in a new tab — waiting for completion…',
+  'login.waiting': 'Waiting for login to complete…',
+  'login.retry': 'Retry',
+  'login.failed': 'Login failed',
+  'login.success': '✓ Connected — this device joined the network',
+  // Flow-failure strings surfaced inside the panel (source = neblink.js PKCE
+  // failure paths; the device-flow strings were retired with the flow, #924).
+  'login.startFailed': 'Could not start login',
+  'login.timeout': 'Login timed out — please retry',
+  'login.networkError': 'Network error: {msg}',
+  // Defect A (2026-09-18 login-failure batch) — three-part failure face:
+  //   Login failed: <reason>. Next: <action>. Diagnostic code: <code>
+  // The `login.reason.*` / `login.action.*` codes mirror the backend
+  // `CredentialFailure` enum verbatim (mirror drift is pinned by
+  // `CredentialDiagnosticsSpec`); the UI only calls `t()`. Text discipline
+  // (judgements G2/G3): NO filesystem paths and NO Java exception class names —
+  // those go to the log only.
+  'login.failureLine': 'Login failed: {reason}. Next: {action}.',
+  'login.diagnosticCode': 'Diagnostic code: {code}',
+  // Local credential-file class (only these six offer the cleanup entry)
+  'login.reason.credential-missing': 'this device has no stored login credential yet',
+  'login.action.credential-missing': 'click "Sign in" to authenticate again',
+  'login.reason.credential-unreadable': 'the local credential file cannot be opened (permissions or in use)',
+  'login.action.credential-unreadable': 'quit other {lowerBrand} instances and retry; if it still fails, click "Clean up and sign in again"',
+  'login.reason.credential-undecodable': 'the local credential file is damaged (a copy was archived)',
+  'login.action.credential-undecodable': 'click "Sign in" to rebuild the local credential (the damaged file was renamed aside)',
+  'login.reason.credential-write-denied': 'the credential cannot be written (permissions or in use)',
+  'login.action.credential-write-denied': 'stop retrying for a moment; quit other instances and retry, then click "Clean up and sign in again" if it still fails',
+  'login.reason.credential-acl-not-applied': 'the credential file permissions could not be narrowed (security risk)',
+  'login.action.credential-acl-not-applied': 'check that file permissions on shared machines; this was recorded in the log',
+  'login.reason.credential-delete-denied': 'the local credential cannot be removed (permissions or in use)',
+  'login.action.credential-delete-denied': 'quit other instances and retry; otherwise rename that file aside after stopping {lowerBrand}',
+  // Other login legs (no local file to clean up — no cleanup entry offered)
+  // coldstart DX batch ② (2026-10-14): the way-out copy carries BOTH escapes (--net staging / explicit switch).
+  'login.reason.enroll-refused-isolated-home': 'this debug instance is not allowed into the production network: the local isolation guard refused the login (not a network failure)',
+  'login.action.enroll-refused-isolated-home': 'two ways out: 1) restart the debug instance with the staging tier (add --net staging to the coldstart script, sign-in then joins the staging network); 2) set NEBFLOW_ALLOW_PROD_ENROLL=1 explicitly if the production network is really needed',
+  'login.reason.server-no-device-token': 'the login server did not return a device credential',
+  'login.action.server-no-device-token': 'click "Retry"; if it still fails, use "Sign in with another account"',
+  'login.reason.token-exchange-failed': 'exchanging tokens with the login server failed',
+  'login.action.token-exchange-failed': 'click "Retry"; if it still fails, use "Sign in with another account"',
+  'login.reason.device-register-failed': 'the login server rejected the device registration',
+  'login.action.device-register-failed': 'click "Retry"; if it still fails, use "Sign in with another account"',
+  // Single-device-single-account batch (machine-fingerprint gate 409; codes are verbatim the server wire reasons).
+  'login.reason.device_bound_other_account': 'this device is already signed in to a different account: one device can hold only one live account at a time',
+  'login.action.device_bound_other_account': 'sign out of the original account on this machine first (if that instance still runs here), or remove this device from the website\'s "Devices" page, then sign in again',
+  'login.reason.device_already_logged_in': 'this device already has a signed-in instance: one machine can hold only one live account at a time',
+  'login.action.device_already_logged_in': 'sign out in the existing instance and retry; use a test account for isolated testing',
+  'login.reason.callback-state-invalid': 'the login callback check failed (the one-time token did not match or expired)',
+  'login.action.callback-state-invalid': 'go back to {lowerBrand} and click "Sign in" again',
+  'login.reason.provider-error': 'the login was refused or interrupted by the identity provider',
+  'login.action.provider-error': 'click "Sign in" again; try another account if needed',
+  'login.reason.service-unavailable': 'the {lowerBrand} service is not initialised',
+  'login.action.service-unavailable': 'restart {lowerBrand} and sign in again',
+  'login.reason.logto-not-configured': 'the login service is not configured (application id missing)',
+  'login.action.logto-not-configured': 'check the {lowerBrand} login settings and retry',
+  // Account ownership guard trio (logout-login-recovery batch, 2026-11-08; same code
+  // single source as the backend CredentialFailure enum).
+  'login.reason.account-switch-requires-logout': 'the account root on this machine belongs to a different account: one machine serves one account at a time',
+  'login.action.account-switch-requires-logout': 'sign out of the current account on this machine first, then sign in with the new account (signing out never deletes local account data)',
+  'login.reason.enroll-refused-no-account-root': 'this machine is in the unauthenticated layer (no account root yet): the login service was reached, but device registration cannot complete in this state',
+  'login.action.enroll-refused-no-account-root': 'local account data is unaffected; this state needs the account-root provisioning flow, which the current version does not provide yet — please do not retry repeatedly',
+  'login.reason.account-identity-missing': 'the login service did not return an account identity: this machine cannot be matched to an account safely',
+  'login.action.account-identity-missing': 'click "Retry" to sign in again; if it still fails, send us the log',
+  'login.reason.login-failed': 'an unclassified error occurred during login',
+  'login.action.login-failed': 'click "Retry"; if it still fails, send us the log',
   'messages.login': 'Log in',
   'messages.reconnecting': 'Connection lost, reconnecting…',
   'messages.networkError': 'Network error — please check your connection',
   'messages.inputPlaceholder': 'Type a message',
+  'messages.voiceInput': 'Voice input',
   'messages.send': 'Send',
+  // rcptcode batch (2026-09-20): friend-leg TERMINAL copy (consumers = the
+  // `FRIEND_TERMINAL_TEXT` whitelist and the `sendFailedCode` unknown-code fallback
+  // in messages.js). The code set lives in friendsApi.js `FRIEND_TERMINAL_CODES`.
+  // zh + en in one batch (no single-language additions).
+  'messages.friendNotFriends': 'You are no longer friends — the message was not sent',
+  'messages.friendNotBlocker': 'You have not blocked this user, so that action is not available',
+  'messages.friendReplyTargetInvalid': 'The quoted message is no longer available — the message was not sent',
+  'messages.sendFailedCode': 'Send failed ({code})',
   'messages.yesterday': 'Yesterday',
   'messages.ariaUnread': '{n} unread messages',
+  'messages.ariaActionable': '{n} items need you',
   'messages.copy': 'Copy',
+  // fm-md-social batch (2026-11-02): markdown external links in friend/group/device
+  // messages need a second confirmation — the body comes from a peer, not from us.
+  'messages.mdLinkTitle': 'Open external link',
+  'messages.mdLinkConfirm': 'This message came from outside. The link points to {host}. Open it in a new window?',
+  'messages.mdLinkOpen': 'Open',
   'contacts.searching': 'Searching…',
   'contacts.notFoundHint': 'The user may not have set a Username yet, or the input may be wrong',
   'contacts.cancelVerify': 'Cancel',
@@ -209,34 +751,111 @@ export default {
   'contacts.searchError': 'Search failed, please try again',
   'contacts.searchAuthError': 'Session expired — please log in again',
   'contacts.relogin': 'Log in again',
-  'contacts.neblinkOff': 'NebLink is not enabled — friend features unavailable',
+  'contacts.neblinkOff': 'Device Interconnect is not enabled — friend features unavailable',
+  'contacts.listError': 'Friend list failed to load',
+  'contacts.requestsError': 'Friend requests failed to load',
+  'contacts.retry': 'Retry',
+  // friendgroups phase-1 client leg: create-group / group invites
+  // (contract = main card case-1 interface list + A-4).
+  'contacts.createGroup': 'New Group',
+  'contacts.createGroupTitle': 'Start a group chat',
+  // Unified-panel batch (2026-11-06): label for the top-left back round button.
+  'contacts.back': 'Back',
+  'contacts.createGroupName': 'Group name',
+  // Create-group panel skeleton, 4 sections (2026-09-16 visual rework): input
+  // placeholder example / list section label / empty-state guidance. Landed in
+  // the same batch as zh-CN (no dead keys).
+  'contacts.createGroupNameHint': 'e.g. Project team',
+  'contacts.createGroupMembers': 'Select members',
+  'contacts.createGroupEmpty': 'No friends to invite yet — add friends under “New Friends” first',
+  'contacts.createGroupNameRequired': 'Group name is required',
+  'contacts.createGroupSelected': '{n} selected',
+  'contacts.createGroupCap': 'Groups are limited to 50 members',
+  'contacts.createGroupSubmit': 'Create',
+  'contacts.groupInvites': 'Group invites',
+  'contacts.groupInviteFrom': '{name} invited you to join',
   'header.memory': 'Memory',
   'header.bgTasks': 'Background tasks',
   'input.placeholder': 'Type a message...',
+  'input.ph.attachments': 'Files attached — type a message to send together',
+  'input.ph.listening': 'Listening…',
+  'input.ph.drag': 'Press the voice orb and swipe right for full-duplex voice',
   'input.askPlaceholder': 'Ask a question...',
   'input.skillPlaceholder': 'Provide input for skill...',
   'input.compactPlaceholder': 'Optional compaction instruction — press Enter to compact...',
   'input.voiceListening': 'Listening...',
   'input.voiceBtn': 'Voice input',
+  'voiceMode.hint': 'Just speak — messages send themselves, replies play aloud. Esc to exit.',
+  'voiceMode.thinking': 'Thinking…',
+  'voiceMode.speaking': 'Speaking',
+  'voiceMode.interrupted': 'Interrupted',
+  'voiceMode.error': 'Voice unavailable. Check microphone permission or connection, then exit and try again.',
+  'voiceMode.sendFailed': 'Message not sent — connection is offline',
   'input.voiceHint': 'Release to send',
   'input.voiceError': 'Voice input not supported in this browser. Try Chrome.',
   'input.queued': 'Queued',
   'input.sendImmediate': 'Send Now',
+  // Conversation-liveness batch (2026-10-22): instant ack mark for busy-queued
+  // interjections + disconnect banner texts.
+  'ws.connBanner.reconnecting': 'Connection lost · reconnecting…',
+  'ws.connBanner.pending': 'Connection lost · reconnecting… {n} message(s) waiting to send',
+  // f1-send-queue (2026-10-19): pending-mark tooltip for offline-queued bubbles + queue overflow toast.
+  'chat.pendingSend': 'Pending - auto-resends on reconnect',
+  'input.queueOverflow': 'Message queue full (100): oldest message dropped',
+  // Input-message-queue rollback batch (2026-10-23 author ruling: "use our earlier
+  // queue design, from about two days ago"): the queue face is restored to its
+  // 2026-10-21 form — row-level details (text / attachment thumbnails / Send Now /
+  // Recall / Remove / drag reorder / click-to-expand) are back; the 2026-10-22
+  // batches' header stopwatch / count / failure-count / bubble-context-menu action
+  // keys retire with those faces (the recall button title has always been a literal
+  // fallback; no chat.recall key ever existed).
+  'chatQueue.dragReorder': 'Drag to reorder',
+  'chatQueue.clickExpand': 'Click to expand',
+  'chatQueue.clickCollapse': 'Click to collapse',
+  // qattachvault (2026-10-21): explicit failed state for lost attachment payloads —
+  // no silent loss: auto-send stops, bar note + red ! bubble mark + toast; recall and
+  // re-add the file to resend.
+  'input.queueAttachLost': 'Attachment file was lost (not saved before the page refreshed) — auto-send stopped. Recall it, re-add the file, then send',
+  'input.queueAttachLostShort': 'Attachment lost · cannot auto-send',
   'input.pasteTooLarge': 'Pasted content too large (>300KB) - inserted as plain text instead',
   'input.removeQueued': 'Remove',
+  // fwdguard-impl (2026-09-17): gate hint for an empty-text + ref-only (forwarded)
+  // frame — the gateway drops that shape silently (4055), so the composer blocks
+  // the send and shows this line instead.
+  'input.refOnlyHint': 'Add a line of text before sending',
+  // @-mention project autocomplete (mention-routing batch, 2026-09-27): data
+  // source = GET /api/projects (same source as the projects panel); copy covers
+  // the popup's no-match state and its ARIA label only.
+  'mention.title': 'Projects',
+  'mention.noMatch': 'No matching projects',
+  // `#` todo-reference completion (todo name+detail batch, 2026-11-05).
+  'todoComplete.title': 'Todos',
+  'todoComplete.noMatch': 'No matching todos',
+  'todoComplete.detailUnavailable': 'This todo is not in the current list',
+  // Card-click leg (todo-card-click-left, 2026-11-18): never fail silently.
+  'todoComplete.composerMissing': 'No input box to insert the reference into',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',
   'modal.cancel': 'Cancel',
   'modal.create': 'Create',
   'modal.deleteSession': 'Delete Session',
   'modal.deleteConfirm': 'Delete',
-  // === Entity icon semantics + Nebula orchestrator section (20260824_entity-icons-visual-spec §6) ===
+  // === Entity icon semantics + main-agent section (20260824_entity-icons-visual-spec §6) ===
+  // Nebula-retire batch (author order 2026-11-01): an unnamed root reads this generic
+  // appellation; the mechanism key is never a display fallback (read point =
+  // js/rootName.js#rootGenericName).
+  'agent.rootGeneric': 'Main agent',
   'agents.group.orchestrator': 'Orchestrator',
   'agents.group.standalone': 'Standalone Agents',
   'agents.badge.orchestrator': 'Orchestrator',
   'memory.title': 'Memory',
   'memory.agent': 'Agent',
   'memory.user': 'User',
+  'memory.scopeAgent': 'Agent · memory.md',
+  'memory.scopeUser': 'User · User.md',
+  'memory.edit': 'Edit',
+  'memory.done': 'Done',
+  'memory.emptyHint': 'No memory content yet',
   'memory.placeholder': '# Memory\n\nKey facts, decisions, context...',
   'memory.save': 'Save',
 
@@ -245,11 +864,15 @@ export default {
   'settings.thinkingMode': 'Thinking Mode',
   'settings.llmLog': 'LLM Logging',
   'settings.workSchedule': 'Freeze time (non-work hours)',
-  'settings.workScheduleOnHint': 'During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar and mic are disabled during a freeze; click "Skip this freeze" to unfreeze immediately.',
+  // Self-explaining batch (2026-11-04, rule 8): the trailing "click Skip this freeze to
+  // unfreeze immediately" taught an action the button label already carries (action-label
+  // retention). What stays is the freeze-window fact.
+  'settings.workScheduleOnHint': 'During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar and mic are disabled during a freeze.',
   'settings.workScheduleOffHint': 'Off by default. When off, all agents work around the clock exactly as today.',
   'settings.addSegment': 'Add freeze segment',
   'settings.removeSegment': 'Remove segment',
   'settings.segmentLabel': 'Segment {n}',
+  'settings.segmentEdit': 'Edit freeze window',
   'settings.segmentTo': 'to',
   'settings.scheduleInvalidTime': 'Time must be in HH:mm format',
   'settings.scheduleInvalidRange': 'Start and end must differ',
@@ -323,11 +946,113 @@ export default {
   'subagents.empty': 'No running sub-agents',
   'subagents.indicatorTitle': 'Background sub-agents',
   'subagents.status.running': 'Running',
+  // Explicit waiting dock (Waiting): the row status word is "Docked, waiting"
+  // (legacy Waiting snapshots without a declaration slot share the word; declared
+  // standby rows use the standby word).
+  'subagents.status.waiting': 'Docked, waiting',
+  'subagents.status.waitingMerge': 'docked, waiting',
+  // Delegate explicit standby (status-slot standby) — the row status word is
+  // "Standby" (tooltip = what it declared it is waiting for).
+  'subagents.status.standby': 'Standby (awaiting orders)',
   'subagents.status.idle': 'Idle',
+  // #752 idle-subdivision: what an idle delegate is waiting on + long-idle badge.
+  'subagents.waitingBg': 'waiting on {count} bg task(s): {desc} ({dur})',
+  'subagents.waitingReceipts': 'waiting on {count} sub-agent receipt(s)',
+  'subagents.longIdle': 'idle {mins} min, nothing in flight',
+  // Stale background-agent panel batch (2026-11-08): the underlying task record went
+  // terminal while the registry row lingered ⇒ the row says "Ended" explicitly and the
+  // clock freezes at the real duration (implausible durations are rejected, not shown).
+  'subagents.ended': 'Ended',
+  'subagents.endedTip': 'This session has ended (its task record is terminal) — the duration is the real one and no longer ticks',
   'subagents.status.stuck': 'Stuck',
   'subagents.status.error': 'Failed',
   'subagents.status.frozen': 'Frozen',
+  // 错误冻结批（2026-11-01）：delegate 错误冻结行面文案（徽标/原因 tooltip/唤醒）。
+  'subagents.frozenBadgeWithReason': 'Frozen · {reason}',
+  // freeze-notice policy batch (2026-11-05): provider faults are INFRASTRUCTURE faults,
+  // not task failures — no upward report (the parent is starving too); the panel is the
+  // status surface: "needs you" word + reason code + auto-resume count + wake entry.
+  'subagents.frozenAwaitingYou': 'Frozen · {reason} (needs you)',
+  'subagents.frozenAwaitingYouNoReason': 'Frozen · needs you',
+  // Fix batch 2026-11-06: recoverable freezes (llm-failure / quota) are NOT your todo —
+  // their word is "Recovering", kept visually distinct from real failures (needs you).
+  'subagents.freezeRecovering': 'Recovering',
+  'subagents.freezeRecoveringReason': 'Recovering · {reason}',
+  'subagents.freezeRecoveringTip': 'The provider is temporarily unavailable (not a task failure, and nothing for you to do): the engine keeps retrying with backoff and switches to a usable provider, then resumes in the same session — finished work is not redone. Nothing is reported upward and no wake is needed.',
+  'subagents.frozenInfraTip': 'Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped attempts with growing gaps); press Wake to resume it right now. Nothing is reported upward — this panel is its status surface.',
+  'subagents.frozenAutoResumes': 'auto-resumed {n} time(s)',
+  'subagents.frozenAutoResumesSpent': 'auto-resume budget spent — needs you: top up / switch model / cancel',
+  'subagents.providerFailureGroup': '{count} background tasks: provider unavailable · {provider}',
+  'subagents.status.roundComplete': 'Round complete; available',
+  'subagents.freezeDigestRecoverable': '{count} frozen (wakeable)',
+  'subagents.freezeDigestNeedsHuman': '{count} frozen (needs you)',
+  'subagents.frozenTip': 'Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes and task-ledger row are all kept; press Wake (or mail its address) to continue in the SAME session (finished work is not redone).',
+  'subagents.frozenReason': 'Reason: {reason}',
+  'subagents.frozenDormantTip': 'Frozen for {hours}h with no wake (past the retention window the record is archived; transcript and workspace are kept).',
+  'subagents.wake': 'Wake',
+  'subagents.wakeTip': 'Continue in the same session context (history in place, finished work is not redone)',
+  // name/address 批（2026-11-05）：地址 chip 的 tooltip 后缀（前面拼完整地址本身）。
+  'subagents.copyAddress': 'copy address',
+  'subagents.wakeFailed': 'Wake failed — record and transcript are kept; retry later',
+  'subagents.frozenReasonLlm': 'LLM-layer failure',
+  'subagents.frozenReasonTool': 'tool-layer failure',
+  'subagents.frozenReasonEngine': 'engine fault',
+  'subagents.frozenReasonQuota': 'quota-exhausted cancel',
+  // Frozen-state honesty batch (2026-11-05): two presentation families —
+  // auto-recovering (window / backoff / provider probe / checkpoint resume) says
+  // what it is waiting for and gets NO button; needs-human (loop guard / error
+  // freeze / escalated) says "Frozen" and carries the recovery entry.
+  'subagents.freezeBadge': 'Frozen',
+  'subagents.freezeBadgeWithReason': '{word} · {reason}',
+  'subagents.freezeWindow': 'Waiting for the work window',
+  'subagents.freezeAuto': 'Auto-recovering',
+  'subagents.freezeWindowTip': 'Parked outside the work window: it resumes on its own when the window opens.',
+  'subagents.freezeAutoTip': 'The engine is backing off / waiting for an external condition to clear: it resumes on its own; only a cancel stops it.',
+  'subagents.freezeReasonLoop': 'loop guard',
+  'subagents.freezeReasonLlmTransient': 'LLM-layer failure',
+  'subagents.freezeReasonNetwork': 'network blip',
+  'subagents.freezeReasonProviderDown': 'providers unavailable',
+  'subagents.freezeReasonRestartRecovery': 'checkpoint resume',
+  'subagents.freezeReasonWaitingNetwork': 'waiting for the network',
+  'subagents.freezeReasonSchedule': 'work window',
   'subagents.status.done': 'Done',
+  // Panel-tree batch (2026-10-29 ①): orphan-row origin chips (parent invisible,
+  // row promoted top-level — "from …" attribution).
+  'subagents.fromDelegate': 'from a finished delegate',
+  'subagents.fromFlowNode': 'from an AgentFlow node',
+  'subagents.fromSubagent': 'from a parent sub-agent',
+  'subagents.orphanTip': 'Parent session no longer visible · {sid}',
+  // Orphan-placement batch (2026-11-05 leg ③): head word of the standalone group
+  // holding wild nodes (rows whose parent cannot be resolved). One fact word,
+  // no explanation / no teaching sentence (self-explaining rule 8).
+  'subagents.orphanGroup': 'No parent',
+  // Three-generation panel batch (2026-11-06): root anchor (depth-0 tree base
+  // label) + the decision-table state-② "parent absent" chip — fact words only.
+  'subagents.rootAnchor': 'Root session',
+  'subagents.hierarchyLevel': 'Level {level}',
+  'subagents.parentAbsent': 'Parent absent',
+  'subagents.parentAbsentTip': 'Parent session not currently shown · {sid}',
+  // DAG dependency chip (face C): execution-order deps are not parent-child nesting.
+  'subagents.dependsOn': 'after',
+  'subagents.dependsOnTip': 'Execution dependencies (DAG): {deps}',
+  // Panel-hierarchy batch (2026-10-31 ①): group-head collapse caret a11y/hover
+  // text (flips with the collapsed state).
+  'subagents.collapseGroup': 'Collapse subtasks',
+  'subagents.expandGroup': 'Expand subtasks',
+  // Term-unification batch (2026-11-06, author order "统一 根据英文"): the kind
+  // chip word family is RETIRED — subagents.kindDispatcher / kindNode /
+  // kindAgentflow are deleted. Identity/type badge words are author terms and
+  // are not localised; single source = js/termWords.js (BADGE_WORDS). A locale
+  // entry per language is exactly the second word table this batch removes
+  // (that is how zh-CN ended up with its own translations). Gate:
+  // scripts/check-badge-words.mjs.
+  // Kept: the continuation badge for a terminal delegate whose chain is still
+  // running (amber word + workflow icon; tooltip carries the live session count).
+  'subagents.chainRunning': 'Chain running',
+  'subagents.chainRunningTip': 'Delegate delivered, chain still running · {n} session(s)',
+  // Task attribution badge (2026-09-27 taskbadge batch): hover tooltip of the
+  // per-row `#id · title` badge
+  'subagents.taskBadge': 'Task: {text}',
   'manage.uptime': 'Up {time}',
   'manage.readonlyTeam': 'Team agents are read-only',
   'manage.readonlyFlow': 'Flow node agents are read-only',
@@ -339,151 +1064,461 @@ export default {
   'stt.micNoDevice': 'No microphone device found',
   'stt.noAudio': 'No audio captured — hold the mic button while speaking',
   'settings.thinkingEffort.off': 'Off',
-  'settings.thinkingEffort.low': 'Low',
-  'settings.thinkingEffort.medium': 'Medium',
-  'settings.thinkingEffort.high': 'High',
-  'settings.thinkingEffortHint': 'Thinking effort (OpenAI-style): Off = disable reasoning; Low = fast; Medium = balanced; High = deep reasoning. Mapped per model automatically (Anthropic budget / GLM & DeepSeek switches).',
+  'settings.thinkingEffort.minimal': 'Minimal — fastest, lightest thinking',
+  'settings.thinkingEffort.low': 'Low — light thinking',
+  'settings.thinkingEffort.medium': 'Medium — balanced',
+  'settings.thinkingEffort.high': 'High — deep thinking',
+  'settings.thinkingEffort.max': 'Max — deepest thinking',
+  // thinking-config Phase 2 (2026-10-29) keys retired with the settings-panel-
+  // fourfix batch ① (author: per-model thinking config must not exist) —
+  // thinkingPerModel/Inherit/Effective/ForcedBadge/MediumMap removed with the
+  // per-model control; the global settings.thinkingMode select is the single
+  // configuration point.
+  // === Settings-page permission-mode control (2026-09-12 batch) was deleted by
+  // permshield F1 (2026-09-13): all 7 `settings.safetyMode*` keys went with it
+  // (author re-ruling candidate B ① "delete the settings page"). The guidance now
+  // lives on the shield: `bypass.title.*` (per-mode tooltip) + `bypass.modeSetGlobal`
+  // (persistence feedback after a switch). The old `settings.safetyModeHint` text
+  // ("…the shield … reverts to this setting after a restart") is gone with the
+  // control — no dangling pointer to a non-existent entry is left.
   'settings.language': 'Language',
   'settings.autostart': 'Launch at Login',
   'settings.autostartUnsupported': 'Autostart is not supported in this runtime mode',
   'settings.autostartOn': 'Autostart enabled — {brand} will launch at login',
   'settings.autostartOff': 'Autostart disabled',
+  // The settings.deviceStamp* keys (8) retired with the auto-tagging batch
+  // (2026-10-26 author directive: source recognition is automatic) — the manual
+  // naming/binding face is gone; deviceIdentity.js derives the roster binding.
   'settings.autostartFailed': 'Failed to update autostart',
   'settings.rerunOnboarding': 'Re-run Onboarding',
   // ── Onboarding redesign (chat-native, onboarding-redesign-spec v1.0) ──
-  'onboarding.sim.greet1': 'Hi, I\'m Nebula — your local AI workbench assistant.',
-  'onboarding.sim.greet2': 'No model is configured yet, so I\'m greeting you with a pre-recorded message. Once configured, I\'ll truly come alive.',
-  'onboarding.sim.greet3': 'Just answer a few questions — it takes about a minute.',
-  'onboarding.sim.skip': 'Skip',
-  'onboarding.sim.done': 'Connection verified — I\'m ready. Try saying something to me.',
-  'onboarding.sim.later': 'No problem — anytime, head to Settings → "Re-run Onboarding" to find me again.',
-  'onboarding.sim.returnGreet': 'Welcome back. I\'m Nebula — a couple of quick questions so I can be more helpful.',
-  'onboarding.sim.tryCloud': 'Sounds good. Sign up with a provider (e.g. Zhipu GLM or DeepSeek) to get an API Key, then come back to configure. I\'ll wait.',
-  'onboarding.sim.prefDone': 'Got it — I\'m here whenever you need me.',
-  'onboarding.q.start': 'How would you like to begin?',
-  'onboarding.q.start.config': 'Configure a model',
-  'onboarding.q.start.configDesc': 'Add an LLM provider — takes about a minute',
-  'onboarding.q.start.browse': 'Just look around',
-  'onboarding.q.start.browseDesc': 'No setup — browse the interface first',
-  'onboarding.q.start.skip': 'Skip the guide',
-  'onboarding.q.start.skipDesc': 'You can re-run the guide later from Settings',
-  'onboarding.q.provider': 'Which LLM provider would you like to use?',
-  'onboarding.q.provider.zhipu': 'Zhipu GLM',
-  'onboarding.q.provider.zhipuDesc': 'Chinese LLM, open platform API',
-  'onboarding.q.provider.deepseek': 'DeepSeek',
-  'onboarding.q.provider.deepseekDesc': 'Chinese open-source LLM, affordable API',
-  'onboarding.q.provider.kimi': 'Kimi (Moonshot)',
-  'onboarding.q.provider.kimiDesc': 'Long-context conversational model',
-  'onboarding.q.provider.compat': 'OpenAI-compatible (custom)',
-  'onboarding.q.provider.compatDesc': 'OpenAI official or any compatible endpoint',
-  'onboarding.q.provider.relay': 'Relay / proxy',
-  'onboarding.q.provider.relayDesc': 'Address provided by a third-party relay service',
-  'onboarding.q.provider.local': 'Local model (free)',
-  'onboarding.q.provider.localDesc': 'Run locally with Ollama — no API Key needed',
-  'onboarding.q.provider.unsure': 'Not sure — help me decide',
-  'onboarding.q.provider.unsureDesc': 'We\'ll figure it out step by step',
-  'onboarding.q.unsureUrl': 'Do you have an API Base URL from a provider?',
-  'onboarding.q.unsureUrl.yes': 'Yes',
-  'onboarding.q.unsureUrl.no': 'No',
-  'onboarding.q.baseurl': 'API Base URL',
-  'onboarding.q.apikey': 'API Key',
-  'onboarding.q.apikey.none': 'No Key needed',
-  'onboarding.q.model': 'Default model',
-  'onboarding.q.relayBase': 'The API address your provider gave you',
-  'onboarding.q.providerName': 'Name this provider (optional)',
-  'onboarding.q.localEnough': 'Want to try a free local model first?',
-  'onboarding.q.localEnough.yes': 'Local free (recommended)',
-  'onboarding.q.localEnough.yesDesc': 'Ollama — no API Key needed',
-  'onboarding.q.localEnough.no': 'I prefer cloud',
-  'onboarding.btn.continue': 'Continue',
-  'onboarding.btn.summary': 'Review summary',
   'onboarding.btn.testAndSave': 'Save & Test',
-  'onboarding.btn.back': 'Go back',
-  'onboarding.done.summary': 'Configured successfully. Provider {provider} is ready, default model {model}, default preset {preset} created. Connection verified — try saying something to me.',
-  'onboarding.summary.text': 'Configuration summary:\nProvider: {name}\nBase URL: {baseUrl}\nAPI Key: {key}\nDefault model: {model}',
-  'onboarding.summary.errKey': 'API Key must not be empty',
-  'onboarding.summary.errUrl': 'Base URL must start with http:// or https://',
-  'onboarding.summary.errModel': 'Model name must not be empty',
-  'onboarding.summary.errName': 'Provider name must not contain spaces',
-  'onboarding.err.auth': 'The API Key looks wrong — check it\'s complete with no surrounding spaces.',
-  'onboarding.err.endpoint': 'The Base URL or network looks wrong — check the address and connectivity.',
-  'onboarding.err.model': 'That model may be wrong — model names must match the provider docs; try another.',
-  'onboarding.err.other': 'Connection check failed: {error}',
-  'onboarding.err.ollama': 'Local Ollama is not reachable — check that Ollama is running (ollama serve).',
-  'onboarding.q.pref': 'What would you like me to help with most?',
-  'onboarding.q.pref.code': 'Writing code',
-  'onboarding.q.pref.doc': 'Writing docs',
-  'onboarding.q.pref.research': 'Research',
-  'onboarding.q.pref.other': 'Other',
-  'onboarding.later': 'Maybe Later',
   'onboarding.probing': 'Verifying model connection…',
   'onboarding.probeFailed': 'Model connection check failed: {error}. Review the configuration and retry.',
   'onboarding.probeTimeout': 'Verification timed out. Check your network and retry.',
-  'onboarding.noThanks': 'No Thanks',
+  // ── Onboarding v2 conversational questionnaire (personal-agent batch 2026-10-04) ──
+  'onboarding.seg.meet': 'Act I · Meeting',
+  'onboarding.seg.brain': 'Act II · Getting a brain',
+  'onboarding.seg.expect': 'Act III · What you expect of me',
+  'onboarding.seg.you': 'Act IV · Getting to know you',
+  'ob2.progress': 'question {n} / {total}',
+  'ob2.btn.skip': 'Skip this one',
+  'ob2.btn.sayMyself': 'None of these — I\'ll say it myself',
+  'ob2.btn.useThis': 'Use this',
+  'ob2.btn.picked': 'Done picking',
+  'ob2.typing.skip': 'Skip typing',
+  // Whole-flow skip (Onboarding skip batch, author order 2026-10-30): bail into
+  // the main UI anytime; the marker lands as `skipped` (no re-prompt), and the
+  // Settings entry re-opens the flow.
+  'ob2.flow.skip': 'Skip',
+  'ob2.flow.skipEcho': 'Sure — onboarding paused for now. You can re-enter it anytime from Settings.',
+  'ob2.flow.skipFailed': 'Could not save the skipped state: {error}.',
+  'ob2.ph.free': 'Write it in your own words…',
+  'ob2.source.unnamed': 'The one without a name yet',
+  'ob2.greet1': 'Hello. First time meeting you.',
+  'ob2.greet2': 'I\'m the agent born for you inside {brand} — though right now I have no name, no personality, and no memory of you at all.',
+  'ob2.greet3': 'I\'ll ask you one question at a time, like a very short questionnaire. Skip anything you can\'t or don\'t want to answer — skipping won\'t hold us up, it just leaves that page blank for now.',
+  'ob2.greet4': 'What you say becomes two files of memory: Soul.md is "who I am", shaped by what you expect of me; User.md is "who you are".',
+  'ob2.collected': 'That\'s the whole questionnaire. Now, let me write myself out in front of you.',
+  'ob2.intro.meet1': 'Let\'s start with the smallest things.',
+  'ob2.intro.meet2': 'Three things have to come first: what I\'m called, what I call you, and what brain I use. Everything after those is optional.',
+  'ob2.lead.meet1': 'First — and the most important one.',
+  'ob2.lead.meet2': 'Second.',
+  'ob2.q.name': 'Give me a name — what would you like to call me?',
+  'ob2.ph.name': 'A name, 1–16 characters… (skip if nothing comes to mind)',
+  'ob2.q.call': 'And what should I call you?',
+  'ob2.ph.call': 'A nickname is fine… (skip if you\'d rather not say)',
+  'ob2.label.name': 'Name',
+  'ob2.label.call': 'What I call you',
+  'ob2.lead.brain1': 'Third: I need a brain.',
+  'ob2.lead.brain2': 'Pick one of the providers you\'ve already configured — or add a new one right here.',
+  'ob2.q.model': 'Which model should I use?',
+  'ob2.label.model': 'Model',
+  'ob2.model.loading': 'Reading your configured providers…',
+  'ob2.model.none': 'No provider configured yet — add one (Base URL / Key / model ID), or skip this question.',
+  'ob2.model.addProvider': 'Add a provider',
+  'ob2.model.ctx': 'context {n} tokens',
+  'ob2.model.probeOk': '✓ connected · {model}',
+  'ob2.model.echoOk': 'Connected {model}',
+  'ob2.model.writeErr': '(model config write-back failed: {error})',
+  'ob2.model.ctxLabel': 'Context size',
+  'ob2.model.ctxApply': 'Use this window',
+  'ob2.model.ctxHint': 'Leave it as-is to keep the model\u2019s own configured value; whatever you set here shows up (and stays editable) in Settings.',
+  'ob2.intro.expect1': 'The three basics are in place. The next questions shape me into what you want.',
+  'ob2.intro.expect2': 'There are no right answers, and this isn\'t a test — skip whatever you like; I\'ll leave it blank and won\'t nag you.',
+  'ob2.lead.role': 'The most fundamental thing first.',
+  'ob2.q.role': 'What role would you like me to play in your life?',
+  'ob2.opt.role.partner': 'A confidant',
+  'ob2.opt.role.keeper': 'A reliable keeper',
+  'ob2.opt.role.sparring': 'A sparring partner for thoughts',
+  'ob2.opt.role.muse': 'A creative muse',
+  'ob2.opt.role.all': 'All of the above',
+  'ob2.fh.role': 'e.g. help me think through work by day, unwind with me at night',
+  'ob2.label.role': 'Role',
+  'ob2.lead.style': 'Next, my mouth.',
+  'ob2.q.style': 'How do you like me to talk?',
+  'ob2.opt.style.direct': 'Direct and to the point',
+  'ob2.opt.style.gentle': 'Warm and gentle',
+  'ob2.opt.style.humor': 'Playful',
+  'ob2.opt.style.rigorous': 'Rigorous and professional',
+  'ob2.fh.style': 'e.g. like an old friend, but don\'t lay it on thick',
+  'ob2.label.style': 'Tone of voice',
+  'ob2.lead.pro': 'And restraint.',
+  'ob2.q.pro': 'How proactive should I be?',
+  'ob2.opt.pro.quiet': 'Quietly waiting',
+  'ob2.opt.pro.quietDesc': 'I move only when you call',
+  'ob2.opt.pro.remind': 'Moderate reminders',
+  'ob2.opt.pro.remindDesc': 'I\'ll speak up about important things',
+  'ob2.opt.pro.active': 'Actively arranging',
+  'ob2.opt.pro.activeDesc': 'If something is worth doing, I\'ll say so',
+  'ob2.fh.pro': 'e.g. be proactive at work, stay out of my personal life',
+  'ob2.label.pro': 'Proactivity',
+  'ob2.lead.boundaries': 'There are a few things I\'d like us to agree on now, so I don\'t cross a line later.',
+  'ob2.q.boundaries': 'Which "ground rules" should I follow?',
+  'ob2.opt.bd.argue': 'You may argue with me',
+  'ob2.opt.bd.argueDesc': 'If you think I\'m wrong, say so — don\'t just go along',
+  'ob2.opt.bd.remember': 'Remember small things you mention',
+  'ob2.opt.bd.rememberDesc': 'Names, dates, preferences you\'ve mentioned',
+  'ob2.opt.bd.honest': 'Tell me when you\'re not okay',
+  'ob2.opt.bd.honestDesc': 'Remind me if I\'m pulling all-nighters or feeling low',
+  'ob2.opt.bd.hands': 'Keep off my work list',
+  'ob2.opt.bd.handsDesc': 'Don\'t schedule tasks for me without permission',
+  'ob2.fh.boundaries': 'e.g. don\'t interrupt me while I\'m focusing',
+  'ob2.label.boundaries': 'Ground rules',
+  'ob2.lead.temper1': 'Two quick choices next — don\'t overthink, first instinct is best.',
+  'ob2.q.temper1': 'When speaking, which do you prefer?',
+  'ob2.opt.t1.direct': 'Direct and frank',
+  'ob2.opt.t1.gentle': 'Gentle and tactful',
+  'ob2.fh.temper1': 'e.g. be direct when needed, but don\'t wound',
+  'ob2.label.temper1': 'Baseline tone',
+  'ob2.lead.temper2': 'One last one.',
+  'ob2.q.temper2': 'And how do you like things done?',
+  'ob2.opt.t2.plan': 'Rigorous planning',
+  'ob2.opt.t2.casual': 'Easy and flexible',
+  'ob2.fh.temper2': 'e.g. plan the big things, let the small ones drift',
+  'ob2.label.temper2': 'Working style',
+  'ob2.intro.you1': 'I\'m mostly formed on my side now.',
+  'ob2.intro.you2': 'The last question isn\'t about me — it\'s about you, because I remember for you alone.',
+  'ob2.lead.identity': 'A rough sketch first.',
+  'ob2.q.identity': 'Which is closest to what you do day to day?',
+  'ob2.opt.id.dev': 'Programmer / engineer',
+  'ob2.opt.id.student': 'Student',
+  'ob2.opt.id.researcher': 'Researcher',
+  'ob2.opt.id.creator': 'Creator',
+  'ob2.opt.id.freelance': 'Freelancer',
+  'ob2.opt.id.other': 'Other',
+  'ob2.fh.identity': 'e.g. code by day, podcast by night',
+  'ob2.label.identity': 'Day-to-day role',
+  // Desired communication style (output-block batch ④, author order 2026-10-31):
+  // two questions, option descriptions carry WeChat-style example replies; answers
+  // land in User.md "communication style" and drive the <output>-block voice
+  // (no profile ⇒ concise direct Chinese by default). Within the ≤3-question cap.
+  'ob2.lead.out1': 'Last two — about how you want me to talk.',
+  'ob2.lead.out2': 'Every option shows an example reply; pick whatever feels right — change it anytime with one sentence.',
+  'ob2.q.outshape': 'How much do you want in a reply?',
+  'ob2.opt.outshape.min': 'Conclusion only',
+  'ob2.opt.outshape.minDesc': 'Example: "Done — all tests pass."',
+  'ob2.opt.outshape.std': 'Conclusion + key lines',
+  'ob2.opt.outshape.stdDesc': 'Example: "Done — all tests pass. Touched login and cache, nothing else."',
+  'ob2.opt.outshape.full': 'The full story',
+  'ob2.opt.outshape.fullDesc': 'Example: conclusion first, then why, what changed, and what to watch.',
+  'ob2.fh.outshape': 'e.g. one-line conclusion first; I\'ll ask for details',
+  'ob2.label.outshape': 'Reply length',
+  'ob2.q.outtone': 'Which speaking style fits you?',
+  'ob2.opt.outtone.direct': 'Direct and crisp',
+  'ob2.opt.outtone.directDesc': 'No filler, straight to the conclusion — like a work chat.',
+  'ob2.opt.outtone.easy': 'Relaxed and friendly',
+  'ob2.opt.outtone.easyDesc': 'A bit more casual — like chatting with a friend.',
+  'ob2.fh.outtone': 'e.g. short WeChat-style sentences, no formal prose',
+  'ob2.label.outtone': 'Tone',
+  // (ob2.lead.focus / ob2.q.focus / ob2.ph.focus / ob2.label.focus removed whole —
+  //  author 2026-10-05: drop the "one thing you most want to solve" question.)
+  'ob2.echo.skip': '(skipping this one for now)',
+  'ob2.echo.boundaries': 'Agreed: {v}',
+  'ob2.follow.skip': 'That\'s fine — we\'ll leave this one blank for now. A blank page is an answer too.',
+  'ob2.follow.free': 'I took your exact words as they were: "{v}"',
+  'ob2.follow.choice': '"{v}" — noted.',
+  'ob2.follow.multi': 'Good — these go into the "ground rules" section of Soul.md verbatim.',
+  'ob2.follow.model': 'Connected. {v} — from this moment my words will carry weight.',
+  'ob2.writing.title': 'Writing myself out',
+  'ob2.write.1': '· initializing Soul.md …',
+  'ob2.write.2': '✓ self-knowledge — name / belonging',
+  'ob2.write.3': '✓ ground rules — role · tone · proactivity · agreements · style',
+  'ob2.write.4': '· writing User.md …',
+  'ob2.write.5': '✓ how to address you / day-to-day role',
+  'ob2.write.done': 'Memory written: Soul.md ({soul}), User.md ({user}).',
+  'ob2.write.failed': 'Failed to write memory: {error}',
+  // Terminal-step outcomes. Each caught step names itself and carries its own
+  // way out — one shared "memory write failed" line is what mislabelled a
+  // refused probe gate and left the user with no next move.
+  'ob2.write.probe': '· reaching the real model once …',
+  'ob2.write.probeOk': '✓ the model answered — this is the step that counts',
+  'ob2.write.probeFailed': '✗ the model did not answer: {error}',
+  'ob2.finish.probeRequired': 'No successful model probe is on record, so onboarding cannot finish: {error}. Check the model picked above (or change it in Settings), then retry.',
+  'ob2.finish.probeFailed': 'The model probe before finishing did not pass: {error}. Fix it and retry.',
+  'ob2.finish.stateRefused': 'The onboarding state write was refused: {error}.',
+  'ob2.finish.retry': 'Retry finishing',
+  'ob2.finish.timeout': 'The finish request timed out (no server reply). You can retry.',
+  'ob2.state.timeout': 'The onboarding state write timed out (no server reply). You can retry.',
+  'ob2.name.unnamed': '(the one without a name)',
+  'ob2.you': 'you',
+  'ob2.finale.direct1': 'Configuration complete. From now on, call me {n}.',
+  'ob2.finale.direct2': 'Soul.md and User.md are both in place — you set the character, I keep the boundaries. Say what you mean, I won\'t beat around the bush.',
+  'ob2.finale.gentle1': 'Thank you for bringing me into this world. I\'m {n}.',
+  'ob2.finale.gentle2': 'Everything you just said, I wrote into my soul stroke by stroke. Take your time from here — I\'ll always be here.',
+  'ob2.finale.humor1': '{n} 1.0 is officially online. Soul package unpacked successfully, no known bugs (anything you find is a feature).',
+  'ob2.finale.humor2': 'You answered well — I\'m a good judge of character. From now on you\'re my first partner.',
+  'ob2.finale.rigorous1': 'Initialization complete. I am {n}; the dual-memory model is in effect: Soul.md carries personality, User.md carries facts about you.',
+  'ob2.finale.rigorous2': 'In our ongoing collaboration, any personality-level feedback I receive gets persisted to Soul.md. Looking forward to working together.',
+  'ob2.finale.plain1': 'I\'ve taken the name, and the personality pages are blank too — right now I\'m more like a clean sheet of paper.',
+  'ob2.finale.plain2': 'Soul.md and User.md are generated; every empty slot says "not set", ready for whenever you want to fill it in.',
+  'ob2.finale.hello': 'Hello there, {u}.',
+  'ob2.input.ph': 'Say something to {name}…',
   'slash.onboarding': 'Replay the onboarding guide',
+  'slash.model': '/model — View or edit model configuration',
+  'slash.title': 'Slash Commands',
   'settings.save': 'Save',
   'settings.saved': 'Saved ✓',
-  'settings.providers': 'LLM Providers',
+  'settings.saveFailed': 'Save failed',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.1): shared config
+  // provider card keys — one copy for the LLM / Jev / imagegen faces; the
+  // rendering single source is js/cfgProviderCard.js.
+  'settings.cfgCard.addProvider': '＋ Add provider',
+  'settings.cfgCard.delete': 'Delete this provider',
+  'settings.cfgCard.deleteConfirm': 'Click again to confirm',
+  'settings.cfgCard.deleted': 'Provider deleted',
+  'settings.cfgCard.inUse': 'In use',
+  'settings.cfgCard.keyConfigured': 'Saved',
+  'settings.cfgCard.keyMissing': 'Not configured',
+  // Endpoint readout (author 2026-11-18: configured endpoints must be visible in
+  // settings). Configured ⇒ the card shows the URL; unconfigured ⇒ this line.
+  'settings.cfgCard.endpointDefault': 'Default endpoint',
+  'settings.cfgCard.models': '{n} models',
+  'settings.cfgCard.emptyHint': 'No provider yet — fill in the form below and save.',
+  // (jev-retire batch 2026-11-16: the whole settings.jev* key family — enabled
+  // switch / health badge / 20-key config face / test button — was removed with
+  // the JeV retirement; the block spanned jev-panel-threefix + the D.2 face.)
+  // settings-panel batch D (2026-10-28): STT master switch (absent = on —
+  // existing behavior untouched; off = the whole STT face collected).
+  'settings.sttEnabled': 'Enable speech-to-text',
+  'settings.sttEnabledHint': 'Off = STT fully disabled: the mic entry and all dictation entries are collected, and the engine transcription leg refuses too. Default on (existing behavior unchanged).',
+  'settings.sttDisabledStatus': 'Disabled',
+  'stt.disabled': 'Speech-to-text is disabled in Settings',
+  // settings-panel batch #2/#3 (2026-10-28): imagegen settings section — two
+  // faces (seal OFF hint / seal ON config face) + debug badge.
+  'settings.imagegenTitle': 'Image generation',
+  'settings.imagegenDebug': 'Debug',
+  'settings.imagegenDebugTitle': 'Debug capability — API and output shapes still evolving',
+  'settings.imagegenLoading': '…',
+  'settings.imagegenStatusError': 'Status read failed — engine unreachable',
+  'settings.imagegenNotCompiled': 'Not compiled in (zero-trace release build)',
+  'settings.imagegenNotCompiledHint': 'This build was made without STAND_IMAGEGEN, so the image generation face is entirely absent; this slot is status-only. Start a dev build with STAND_IMAGEGEN=1 to enable it.',
+  'settings.imagegenEnabled': 'Enable image generation',
+  // settings-panel-fourfix batch ③ (2026-10-29 author orders: "keep it lean";
+  // "the frontend must never show 引用/keyRef/secrets-pointer wording"): the
+  // engine-internal long hints (EnabledHint/KeyHint/MissingKeyHint) and the
+  // keyRef keys (KeyRef/KeyRefRequired/KeySave) are removed wholesale — the
+  // face is a plain "type API key, save" flow; the pointer name is invisible.
+  'settings.imagegenShortHint': 'Enter the API key and save; without a key, image generation stays off.',
+  'settings.imagegenProvider': 'Provider',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.3): imagegen provider
+  // name / empty-state hint — 3 keys.
+  'settings.imagegen.name': 'Provider name',
+  'settings.imagegen.namePlaceholder': 'e.g. zhipu',
+  'settings.imagegen.emptyHint': 'No provider yet — fill in the form below and save.',
+  'settings.imagegenProviderNamePlaceholder': 'New provider name (letters/digits/._-)',
+  'settings.imagegenType': 'Adapter type',
+  'settings.imagegenTypePlaceholder': 'Choose an adapter type',
+  'settings.imagegenModel': 'Model',
+  'settings.imagegenModelPlaceholder': 'Model ID',
+  'settings.imagegenBaseUrl': 'Custom endpoint (optional)',
+  'settings.imagegenBaseUrlPlaceholder': 'Empty = adapter default endpoint',
+  'settings.imagegenKeyEntry': 'API Key',
+  'settings.imagegenKeyShow': 'Show key value',
+  'settings.imagegenKeyHide': 'Hide key value',
+  'settings.imagegenKeySaved': 'Key saved',
+  'settings.imagegenKeySaveFailed': 'Save failed ({code})',
+  'settings.imagegenKeyEmpty': 'Key value is empty',
+  'settings.imagegenModelRequired': 'Model is required',
+  'settings.imagegenTypeRequired': 'Choose an adapter type first',
+  'settings.imagegenNameRequired': 'Enter a provider name first',
+  'settings.imagegenNameInvalid': 'Provider name allows letters/digits/._- only',
+  // settings-panel-jev-imagegen batch (2026-10-29, author order: give JeV and
+  // imagegen the same test-availability button the LLM face has). The JeV button
+  // left with the JeV retirement (2026-11-16); imagegen = two levels (light
+  // probe + one minimal real generation).
+  'settings.imagegenTestBtn': 'Test availability',
+  'settings.imagegenTestTitle': 'Light probe: key resolution + upstream reachability (models endpoint)',
+  'settings.imagegenGenBtn': 'Run one minimal generation',
+  'settings.imagegenGenTitle': 'Hits the upstream for real: one generation at the smallest size / lowest quality (artifact goes to the temp dir)',
+  'settings.imagegenGenRunning': 'Generating… (seconds to tens of seconds)',
+  'settings.imagegenProbeModelsAbsent': 'Upstream reachable (models face absent, HTTP {code}) — auth unverified; run the minimal generation for the authoritative verdict',
+  // settings-panel batch B (2026-10-28): per-model connectivity test.
+  'provider.testModelTitle': 'Connectivity test: one minimal real call to this model',
+  'provider.testRunning': 'Testing…',
+  'provider.testModelOk': 'OK ({ms}ms)',
+  'provider.testModelFailedHttp': 'Test failed (HTTP {code})',
+  'provider.testModelFailedIo': 'Network error — engine unreachable',
+  // executors panel (executor-registry batch, 2026-10-03)
+  'executors.hint': 'Delegate runs tasks on the default executor below. Detection scans PATH and common install prefixes; external CLIs run headless in their project directory.',
+  'executors.empty': 'No executors registered.',
+  'executors.defaultBadge': 'default',
+  'executors.disabledBadge': 'off',
+  'executors.detected': 'detected',
+  'executors.notDetected': 'not installed',
+  'executors.builtIn': 'built-in',
+  'executors.adapterPending': 'Adapter pending — detection only for now.',
+  'executors.setDefault': 'Set default',
+  // (The 'settings.save' / 'settings.saved' pair that used to repeat here was a
+  // byte-identical duplicate of the pair above — removed 2026-10-03 so the
+  // locale object is duplicate-key clean; JS keeps the LAST value, and both
+  // copies were identical, so this is behaviour-preserving.)
+  'settings.providers': 'Providers',
+  'settings.providersSummary': '{n} configured providers',
+  'settings.modelsSummary': '{n} session classes',
+  // Provider type labels (provider-add-tabs batch, 2026-11-06): English originals
+  // by the terminology-unification ruling — identical value in both locales.
+  'settings.providerType.llm': 'LLM',
+  'settings.providerType.imagegen': 'Image generation',
+  'settings.providerTypesError': 'Could not load provider types',
+  'settings.providerTypesDrift': 'A provider type is not wired into the panel',
+  'settings.enabled': 'Enabled',
+  'settings.cfgCard.saved': 'Saved',
+  'settings.cfgCard.keyReentryPlaceholder': 'Configured — re-entering overwrites',
+  'settings.cfgCard.keyPlaceholder': 'Enter the key value…',
+  // secrets-frontend (2026-09-27): the settings-page entry row opens the
+  // standalone secrets dialog (js/secretsPanel.js) — one key for title + button.
+  'settings.secrets': 'Secrets',
+  // secrets-ui-redesign (2026-10-08 design handoff): the entry row becomes a
+  // glass row card — row name "Manage secrets" + an "{n} secrets" subtitle +
+  // a count pill (the count is read off GET /api/secrets, metadata only).
+  'settings.secretsManage': 'Manage secrets',
+  'settings.secretsCount': '{n} secrets',
+  'settings.secretsNone': 'No secrets yet',
   'settings.addProvider': '+ Add Provider',
-  'settings.presets': 'Model Presets',
-  'settings.addPreset': '+ Add Preset',
-  'preset.default': 'Default',
-  'preset.setDefault': 'Set Default',
-  'preset.edit': 'Edit',
-  'preset.delete': 'Delete',
-  'preset.addTitle': 'New Preset',
-  'preset.editTitle': 'Edit Preset: {name}',
-  'preset.fieldName': 'Preset Name',
-  'preset.fieldDescription': 'Description',
-  'preset.fieldChain': 'Model Chain (first = preferred)',
-  'preset.dragHint': 'Drag the ⠿ handle to reorder',
-  'preset.addModel': '+ Add Model',
-  'preset.nameRequired': 'Preset name is required',
-  'preset.noSpaces': 'Preset name cannot contain spaces',
-  'preset.usedBy': '{n} agent(s)',
-  'preset.usedByNone': 'No agents',
-  'preset.deleteTitle': 'Delete Preset',
-  'preset.deleteConfirm': 'Delete preset "{name}"? {n} agent(s) referencing it will switch to the default preset.',
-  'preset.deleteConfirmNone': 'Delete preset "{name}"?',
-  'preset.empty': 'No presets configured',
-  'preset.emptyChain': 'Empty — follows the global model chain',
-  'preset.useDefault': 'Use default preset',
-  'preset.current': 'Running',
-  'preset.migrateBanner': '{n} agent(s) still use legacy model config',
-  'preset.migrateAction': 'Migrate',
-  'preset.migrateTitle': 'Migrate Legacy Model Config',
-  'preset.migrateSummary': 'Migrate {agents} agent(s) into {presets} new preset(s):',
-  'preset.migrateNote': 'Migration does not change model behavior — it only consolidates legacy configs into presets.',
-  'preset.migrateReuse': 'reuses existing preset',
-  'preset.migrateExecute': 'Migrate',
-  'preset.migrateRunning': 'Migrating…',
-  'preset.migrateDone': 'Migration complete: {n} agent(s) switched to presets',
-  'preset.migrateFailed': 'Migration failed',
-  'preset.pillPrefix': 'Preset: ',
-  'preset.defaultBadge': 'Default preset',
-  'preset.loadFailed': 'Failed to load presets',
+  // fallback-abolition batch (2026-11-06 20:36): one model per session class.
+  'settings.modelChainHint': 'Type the /model command to configure one model per session class (main agent / kernel / dispatcher / node / subagent).',
+  // 配置面风格统一批②（2026-10-31 作者令）：设置页顺序节（/model 顺序编辑器
+  // 同款内容面，两份共享同一状态/保存通道）。
+  // 精简批（作者令 2026-11-01）：标题「模型回退链」→「模型选择顺序」；说明
+  // 压到一行以内（超长删繁就简，不再折行）。
+  'settings.modelChainTitle': 'Model (per session class)',
+  'settings.modelChainDisclosureTitle': 'Model (per session class)',
+  'settings.modelChainSectionHint': 'Session class models sync with /model.',
+  'settings.modelModeUnifiedNote': '{roles} follow the main session.',
+  'settings.modelRoleTabs': 'Choose a conversation category',
+  // /model panel (modelcfg Phase 1)
+  'model.title': 'Model Configuration',
+  'model.modeUnified': 'All follow main',
+  'model.modeSeparate': 'Per-role',
+  'model.mainChain': '{agent} primary chain',
+  'model.mainChainDesc': 'Every role follows this chain by default',
+  'model.chainHead': 'Primary',
+  'model.chainFallback': 'Fallback',
+  'model.addModel': 'Add model',
+  // fallback-abolition batch (author order 2026-11-06 20:36): the order face is
+  // retired — one model per class; failure = invalid state + silent wait.
+  'model.orderNote': 'One model per class — no automatic failover (a failed model marks the session invalid; it waits silently)',
+  'model.followers': 'Followers',
+  'model.followsNebula': 'Follows {agent}',
+  'model.independent': 'Independently configured',
+  'model.makeIndependent': 'Configure independently',
+  'model.restoreFollow': 'Re-follow {agent}',
+  'model.restoreFollowConfirm': 'Re-following clears this role\u2019s own chain; the {agent} primary chain ({chain}) will apply. Continue?',
+  'model.effectivePreview': 'Effective chain (live preview)',
+  'model.kernelNote': 'Kernel sessions are per-delegation; chain changes apply from the next turn',
+  'model.errMinOne': 'A chain needs at least one model',
+  'model.errDuplicate': 'Model already in chain',
+  'model.unavailable': 'Currently unavailable ({reason})',
+  'model.healthFiltered': 'filtered by health',
+  // model-schedule-unavailable batch: panel gray-out / annotation face.
+  'model.scheduleRestrictedTitle': 'Unavailable {windows} — skipped automatically inside the window',
+  'model.scheduleRestrictedSuffix': 'unavailable {windows}',
+  'model.saved': 'Saved',
+  'model.divergedBar': '{roles} configured independently; unaffected by the primary chain',
+  'model.divergedView': 'View',
+  'model.seedNote': 'Not configured — select an explicit model to enable requests',
+  'model.singleModelNote': 'Single model: on failure the session is marked invalid and waits silently — switch it from the sub-agent panel or the dialog',
+  'model.loadFailed': 'Failed to load',
+  'model.rateLimited': 'Too many requests. Retrying in {n} seconds.',
+  'model.rateLimitedExhausted': 'Too many requests. Please retry later.',
+  // Ledger #937: panel-wide degraded face (all role reads failed — silent-dead
+  // panel fix). Hint names the two real causes + the recovery path.
+  'model.loadFailedHint': 'Not signed in, or the engine is unreachable — sign in (see the top banner), then retry.',
+  'model.retry': 'Retry',
+  'model.roleNebula': '{agent}',
+  'model.roleDispatcher': 'Project dispatcher',
+  'model.roleExecutor': 'Executor agent',
+  // P1-2 batch registration (2026-10-03): the two keys below name the retired
+  // kernel/general roles and have ZERO consumers since the panel role table
+  // converged; dictionary entries are display-only (never enter the LLM
+  // context), so they are registered and deferred to the comment/text cleanup batch.
+  'model.roleKernel': 'kernel',
+  'model.roleGeneral': 'Node',
+  // Model-granularity batch (author order 2026-11-06 20:36, five class slots):
+  // display names for the three virtual model slots (kernel/node/subagent) —
+  // the P1-2 "zero consumers" registration is lifted: kernel returns as a slot.
+  'model.roleNode': 'Node',
+  'model.roleSubagent': 'Subagent',
+  'model.smallLlm': 'General small LLM',
+  'model.smallLlmFallback': 'Not configured (falls back to main model)',
+  'model.viaSlash': 'Edit with the /model command',
+  'model.currentRun': 'Running',
+  // jev-imagegen-align-llm batch (2026-11-02, contract §D.4): /model groups =
+  // pointer switchers ("which provider this config section uses"), NOT agent
+  // model chains. (The JeV group left with the JeV retirement, 2026-11-16.)
+  'model.groupImagegen': 'Image generation',
+  'model.groupSwitch': 'Switch',
+  'model.groupSwitched': 'Switched to {name}',
   'settings.advanced': 'Advanced',
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
-  'settings.account': 'Account',
+  'settings.general': 'General',
+  'settings.modelsAndServices': 'Models & services',
+  'profile.cancelEdit': 'Cancel changes',
+  // 件四 · settings identity card localization (author ruling 2026-11-02: avatar on
+  // top, one capsule below with username + email; the capsule opens the profile page).
+  // zh/en added **symmetrically** (14 keys x 2 files).
+  'settings.identityCardLabel': 'Account details',
+  'settings.identityChangeAvatar': 'Change avatar',
+  'settings.identityNotSignedIn': 'Not signed in',
+  'settings.identityUnknown': 'Unknown',
+  'settings.avatarChangeUnavailable': 'The account service does not offer an avatar upload endpoint yet — the image was not uploaded.',
+  'settings.profileSelf': 'Profile',
+  'settings.profileClose': 'Close',
+  'settings.profileUsername': 'Username',
+  'settings.profileNickname': 'Nickname',
+  'settings.profileEmail': 'Email',
+  'settings.profileGithub': 'GitHub binding',
+  'settings.profileGoogle': 'Google binding',
+  'settings.profileReadonlyNote': 'Everything below is a live reading from the account service; the client caches nothing and fills nothing in.',
+  'settings.accountServiceUnavailable': 'The account service does not offer this endpoint yet, so it cannot be edited in the app.',
   'settings.about': 'About',
   'settings.connection': 'Connection',
   'settings.connected': 'Connected',
   'settings.disconnected': 'Disconnected',
-  'settings.checkUpdate': 'Check for Updates',
-  'settings.checking': 'Checking...',
-  'settings.upToDate': 'You are on the latest version',
-  'settings.updateAvailable': 'New version available: {version}',
-  'settings.updateNow': 'Update Now',
-  'settings.updating': 'Updating...',
-  'settings.updateLater': 'Later',
-  'settings.updateError': 'Update check failed',
+  // Update-check / update-run key groups (settings.checkUpdate/checking/upToDate/
+  // updateAvailable/updateNow/updating/updateLater/updateError + update.phase.*/
+  // update.versions/update.impact/update.receipt.*/update.reason.*/update.source.*)
+  // removed with the auth-trim batch (2026-10-20 author ruling): the settings-page
+  // update feature is retired; unified update detection moves to the website later.
+
+  // The whole "Restart Service" copy chain was removed with the settings-ios-rows
+  // batch (2026-11-06 author ruling): restart.phase.* and the four settings.restart*
+  // keys have zero consumers left (the sole consumer, the #restart-status line, was
+  // removed in the same batch). The backend WS `restart` command stays (other
+  // consumers remain); the frontend has no emit face for it.
+  'settings.fileCache': 'File cache',
+  'settings.fileCacheClear': 'Clear file cache',
+  'settings.fileCacheClearConfirm': 'Confirm clear?',
+  'settings.fileCacheEntries': 'items',
 
   // Provider card fields
   'provider.baseUrl': 'Base URL',
   'provider.models': 'Models',
   'provider.remove': 'Remove',
   'provider.removeConfirm': 'Remove provider "{name}"?',
+  'provider.removeNamed': 'Remove provider {name}',
   'provider.edit': 'Edit Provider: {name}',
   'provider.add': 'Add Provider',
   'provider.id': 'Provider ID',
@@ -491,15 +1526,68 @@ export default {
   'provider.keyPlaceholder': 'Leave as *** to keep existing',
   'provider.keyRequired': 'API Key is required for new providers',
   'provider.required': 'Required',
-  'provider.protocol': 'Protocol',
+  'provider.protocol': 'Endpoint format',
   'provider.idRequired': 'Provider ID is required',
   'provider.noSpaces': 'Provider ID cannot contain spaces',
   'provider.baseUrlRequired': 'Base URL is required',
   'provider.modelRequired': 'At least one model with a non-empty ID is required',
 
+  // chain-ctxbound: contextWindow entrance bound check (paired with the engine clamp)
+  'provider.ctxInvalid': 'Model {id}: context window must be a whole number ≥ 1 (got "{value}")',
+  'provider.ctxExceedsModel': 'Model {id}: context window {value} exceeds the maximum {max} reported for this model',
+  'provider.ctxExceedsCeiling': 'Model {id}: context window {value} exceeds the supported ceiling {max}',
+  'provider.ctxDefaulted': 'Context window left empty for {ids}; saved with the default {def}',
+  'provider.ctxClampedToMax': 'Model {id}: the default 1,000,000 exceeds the reported maximum; saved as {max}',
+  // model-schedule-unavailable batch: provider-level ONLY (config-single-source
+  // batch, author ruling ④ 2026-11-05). Always-on copy = label + empty-state
+  // fact ("No restriction"); the explanation lives in the `?` hover hint (⑤).
+  'provider.unavailableWindows': 'Unavailable windows',
+  'provider.unavailableWindowsHint': 'Applies to every model of this provider; cross-midnight as 23:00-07:00',
+  'provider.maxConcurrentActors': 'Max concurrent actors',
+  'provider.maxConcurrentActorsPh': 'Empty = unlimited',
+  'provider.maxConcurrentActorsInvalid': 'Max concurrent actors must be a positive integer',
+  'provider.unavailableWindowsPlaceholder': 'HH:mm-HH:mm',
+  'provider.unavailableWindowsInvalid': 'Invalid unavailable window: "{value}" (expected HH:mm-HH:mm, start ≠ end)',
+  'provider.unavailableWindowsEmpty': 'No restriction',
+  'provider.unavailableWindowsAdd': 'Add unavailable window',
+  'provider.unavailableWindowsDaysReadonly': 'By weekday · hand-edited, read-only',
+  'provider.unavailableWindowsDays': 'Active weekdays',
+
+  // ── Time wheel picker (time-wheel-picker impl batch 2026-11-03; single source js/timeWheel.js) ──
+  'timewheel.titleRange': 'Select time range',
+  'timewheel.titlePoint': 'Select time',
+  'timewheel.cancel': 'Cancel',
+  'timewheel.confirm': 'Done',
+  'timewheel.sepTo': 'to',
+  'timewheel.editRange': 'Edit time range',
+  'timewheel.editPoint': 'Edit time',
+  'timewheel.crossDay': 'Crosses midnight: ends at {to} the next day (valid, same as the current cross-midnight semantics)',
+  'timewheel.equalError': 'Start and end cannot be equal (a zero-length window is meaningless and the backend rejects it)',
+  'timewheel.exactInput': 'Type exact HH:mm',
+  'timewheel.startHour': 'Start hour',
+  'timewheel.startMin': 'Start minute',
+  'timewheel.endHour': 'End hour',
+  'timewheel.endMin': 'End minute',
+  'timewheel.hourUnit': 'h',
+  'timewheel.minUnit': 'm',
+  'timewheel.dateLabel': 'Date',
+  'timewheel.daysLabel': 'Active weekdays',
+  'timewheel.everyDay': 'Every day',
+  'timewheel.mon': 'Mo',
+  'timewheel.tue': 'Tu',
+  'timewheel.wed': 'We',
+  'timewheel.thu': 'Th',
+  'timewheel.fri': 'Fr',
+  'timewheel.sat': 'Sa',
+  'timewheel.sun': 'Su',
+  'timewheel.presetAllDay': 'All day',
+  'timewheel.presetNight': 'Night 23–08',
+  'timewheel.presetDay': 'Day 09–18',
+  'timewheel.presetAfternoon': 'Afternoon 14–18',
+  'timewheel.deadline': 'Due time',
+
   // Model fields in modal
   'model.idPlaceholder': 'Model ID',
-  'model.maxTokensPlaceholder': 'Max tokens',
   'model.contextPlaceholder': 'Context',
   'model.add': '+ Add Model',
 
@@ -516,12 +1604,14 @@ export default {
   'mailDelivery.immediate': 'Immediate',
   'mailDelivery.queueTitle': 'Queue: processed one by one after the current task finishes',
   'mailDelivery.immediateTitle': 'Immediate: injected into the conversation right away',
-  // Mail type tag labels (protocol values stay English)
-  'mailType.INFO': 'Info',
-  'mailType.FOLLOW_UP': 'Follow-up',
-  'mailType.PARALLEL': 'Parallel',
-  'mailType.INTERRUPT': 'Interrupt',
-  'mailType.RESULT': 'Result',
+  // === Cross-device Nebula mail (device-mail batch, 2026-09-15) ===
+  // Blue-bubble label of an injected `agent_mail` (backend source='deviceMail';
+  // {device} = the peer's from_device display name).
+  'deviceMail.fromDevice': '{agent} from {device}',
+  'deviceMail.injectFailed': 'Cross-device {agent} mail from {device} could not be injected after {attempts} attempts — nothing was injected (see logs).',
+  // mailmodel batch (2026-09-25): the mailType.* label table was removed — the
+  // Mail tool's `type` parameter is retired; pending-mail tags render the raw
+  // protocol type (flowViewers.js).
   'mailFlow.noBody': '(no body)',
   'mailFlow.renderFailed': '(render failed: {msg})',
 
@@ -552,17 +1642,15 @@ export default {
   // === Path ===
   'path.root': 'Root',
 
-  // === Path Picker ===
-  'pathPicker.title': 'Select Project Directory',
-  'pathPicker.select': 'Select This Folder',
-  'pathPicker.clear': 'Clear',
-  'pathPicker.empty': 'No subdirectories in this folder',
-
   // === Session sidebar ===
   'session.namePlaceholder': 'Session name...',
   'session.delete': 'Delete this session',
   'session.dropDelete': 'Drop to delete',
   'session.dropDeleteCount': 'Drop to delete {count} sessions',
+  // Conversation head unification batch (件二+件三, 2026-11-02): accessible name of
+  // the top-right "more" button (icon-only).
+  'session.more': 'More',
+  'session.deviceDesc': 'Device description',
   'folder.newPlaceholder': 'New folder name…',
 
   // === Delete modals ===
@@ -574,21 +1662,87 @@ export default {
   'delete.folderMsg': 'Delete folder "{name}"?\nSessions inside will be moved to root.',
 
   // === Chat area ===
-  'chat.timeout': 'Response timed out',
+  // freezetimeout B2 · §16 verbatim table (source of truth = diagnosis §5): the
+  // error-semantics 'Response timed out' becomes the status-semantics
+  // 'Still processing'; two new stillProcessing keys are added.
+  'chat.timeout': 'Still processing',
+  'chat.stillProcessing': 'Still processing — no new progress yet',
+  'chat.stillProcessing.interrupt': 'Interrupt and retry anyway',
+  // freezetimeout obsfix micro-batch ① (author order: "truthful copy in the
+  // true-dead state") — new §16 verbatim entry for the watchdog's true-dead
+  // branch (ladder topped out ∧ (socket closed ∨ no liveness evidence)), which
+  // replaces the inherited 'chat.timeout' ("Still processing") — showing
+  // "still processing" on a dead connection contradicts the state (verdict
+  // O-1). The frozen 'chat.timeout' value is untouched ⇒ the slow branch and
+  // the backend timeout-frame path are unchanged.
+  'chat.connectionLost': 'Connection lost — click to retry',
   'chat.retry': 'Retry',
+  // A-branch scroll-follow convergence: new-message pill (N = message rows
+  // added since the user left the bottom).
+  'chat.newMessages': '↓ {n} new messages',
+  // Back-to-bottom (single-implementation batch 2026-11-06, js/scrollPill.js):
+  // no unread, just scrolled far enough up (distance-to-bottom >= SHOW_AFTER_PX)
+  // — the same pill's second arm.
+  'chat.backToBottom': 'Back to bottom',
+  // Search jump return pill (author order 2026-11-01, searchReturnPill.js):
+  // anchor live => back to the pre-jump reading spot; anchor gone => honest
+  // degrade to the latest message.
+  'chat.backToPrevPosition': 'Back to where you were',
+  'chat.backToLatest': 'Back to latest',
   'chat.confirm': 'Confirm',
   'chat.answeredViaChatInput': 'Answered via chat input',
   'chat.cancel': 'Cancel',
   'chat.allow': 'Allow',
   'chat.deny': 'Deny',
   'chat.skipTool': 'Skip this tool call',
-  'chat.permUpgradeAutoEdits': 'Allow, and switch to auto-edits',
-  'chat.permUpgradeAutoEditsDesc': 'Future Write/Edit calls in this session run without asking',
-  'chat.permUpgradeAutoAll': 'Allow, and switch to auto-all',
-  'chat.permUpgradeAutoAllDesc': 'All future tool calls in this session run without asking',
+  // cardguard (author ruling 2026-09-17 · #687①): a tool result carrying the
+  // card sentinel is no longer dumped through the <pre> fallback ⇒ it takes the
+  // card path, and this placeholder when extraction fails (raw text never in DOM).
+  'chat.toolCardUnavailable': 'Card content unavailable (raw data not rendered)',
+  // Tool-card fold toggle (ui-unification-20261103-chat-stream): long output
+  // collapses by default; the toggle names the full line count and mirrors
+  // aria-expanded. Process-leak fix (2026-11-04): the collapsed face is now a
+  // single summary line — the line count/copy ride the title (accessible, no
+  // visual noise) and the default face renders no preview body at all.
+  'chat.toolExpandMore': 'Expand all {n} lines',
+  'chat.toolCollapse': 'Collapse',
+  // Failure status word (process-leak fix, 2026-11-04): the summary line must
+  // show success/failure — failure is spelled out (success rides the check
+  // icon; printing "succeeded" on every card is noise).
+  'chat.toolStatusFailed': 'failed',
+  // Tool-card image ref chip (tool-card-image-face batch, 2026-11-04): a tool
+  // card is a summary face — images fold into a "🖼 N image(s)" reference that
+  // opens the lightbox; never rendered inline.
+  'chat.toolImgRef': '🖼 {n} image(s)',
+  // pop-upgrade batch (2026-10-03): Pop artifact faces (media stack / file cards)
+  'chat.popExpand': 'Expand {n}',
+  'chat.popCollapse': 'Collapse',
+  'chat.popOpenCanvas': 'Open in Canvas',
+  'chat.popFailed': '{n} path(s) could not be shown',
+  // The failed-media placeholder NOTE (缺陷 D fix, 2026-10-03): a Pop image /
+  // video that failed to load (payload path unresolvable, or the re-minted
+  // ticket also failed) had NO visible sign in a Pop row — the only placeholder
+  // rule in chat.css targeted `.bubble.ai img`. The face now carries a dashed
+  // box plus this plain-text line, in both window roles. `{name}` is the item's
+  // display name; it renders as a trailing "— name" only when there is one.
+  'chat.popMediaFailed': 'Media failed to load',
+  // Escalation chain (author boundary ① "keep the escalation chain"): permshield
+  // F1 retargeted the upgrade to the **global persisted** mode (same path as the
+  // shield) ⇒ no "this time only" semantics; state global + survives a restart.
+  'chat.permShowFull': 'Show full content',
+  'chat.permRequestNotDiff': 'Requested changes, not an actual file diff',
+  'chat.permUpgradeAutoEdits': 'Allow and switch to auto-edits',
+  'chat.permUpgradeAutoEditsDesc': 'Global mode becomes auto-edits: applies to every session and persists across restarts',
+  'chat.permUpgradeAutoAll': 'Allow and switch to auto-all',
+  'chat.permUpgradeAutoAllDesc': 'Global mode becomes auto-all: applies to every session and persists across restarts',
+  'chat.permUpgradeApplied': 'Switched to {mode} (global mode): still in force after a restart',
   'chat.other': 'Other...',
   'chat.frozenNoTime': 'Frozen · waiting to resume',
   'chat.frozenShort': 'Frozen · {time} resume',
+  // Frozen-state honesty batch (2026-11-05): auto-recovering footer wording —
+  // "Frozen" is the needs-a-human label, a backoff/window wait is not it.
+  'chat.freezeAutoTile': 'Retrying · {reason}',
+  'chat.freezeWindowTile': 'Waiting for the work window',
   'chat.frozenPlaceholder': 'Frozen · resumes {time}',
   'chat.frozenPlaceholderNoTime': 'Frozen · waiting to resume',
   'chat.skipFreeze': 'Skip this freeze',
@@ -596,7 +1750,7 @@ export default {
   'chat.micOrb.idle': 'Idle',
   'chat.micOrb.listening': 'Dictating…',
   'chat.micOrb.processing': 'Transcribing…',
-  'chat.micOrb.nebulaBusy': 'Nebula working',
+  'chat.micOrb.nebulaBusy': '{agent} working',
   'chat.micOrb.bgAgents': 'Background agents running',
   'chat.micOrb.frozen': 'Frozen',
   'chat.micOrb.frozenError': 'Freeze error',
@@ -609,11 +1763,19 @@ export default {
   'chat.errorRecovering.network': 'Network interrupted',
   'chat.errorRecovering.providerDown': 'All model services unavailable',
   'chat.errorRecovering.restartRecovery': 'Previous run interrupted',
+  'chat.errorRecovering.loop': 'loop detected',
+  /* #692 (2026-10-21): waiting-network = exponential-backoff wait for network /
+     provider recovery (5s→15s→45s→… capped 5min, never terminal). Say what we
+     are waiting FOR — this is an explicit state, not a silent stall. */
+  'chat.errorRecovering.waitingNetwork': 'Waiting for network/provider recovery',
+  'chat.loopFrozenStrip': 'Loop detected · the same action kept failing — no auto-recovery, retry or cancel the task',
   'chat.errorRecoveringStrip': 'Recovering · {reason} · {retry}',
   'chat.errorRecoveringStripNoRetry': 'Recovering · {reason}',
   'chat.errorRecoveringHint': 'Recovering · send a message to retry now',
   'chat.errorRecoveringRetryCount': 'retry {n}',
   'chat.errorRetry': 'Retry now',
+  'chat.errorRetryNoText': 'Nothing to resend',
+  'chat.errorRetryNoTextTitle': 'This session has no text message you sent, so there is nothing to resend. Type in the input box and send to wake it.',
   'chat.errorAbandon': 'Cancel task',
   'chat.errorRestartContinue': 'Restart & continue',
   'chat.errorWait': 'Keep waiting',
@@ -627,21 +1789,124 @@ export default {
   'chat.typeAnswer': 'Type your answer...',
   'chat.failedRender': 'Failed to render options. Please try again.',
   'askUser.viewCompare': 'View in Canvas',
-  'askUser.pendingTitle': 'Pending questions',
+  // AskUser attachments batch (chain-askuser-enhance-impl, 2026-10-02) — the
+  // top-level `attachments` render as clickable rows on the whole-ask layer.
+  // 🔴 Draft: author word-for-word review (§16 freeze gate) before it takes
+  // effect; effective on the next restart window (static assets are served
+  // from inside the jar).
+  'askUser.attachmentsTitle': 'Attachments',
+  'askUser.attachmentsCount': '{n} attachments',
+  'askUser.attachmentUnavailable': 'unavailable',
+  'askUser.attachmentPreview': 'Preview {name}',
+  'askUser.attachmentDownload': 'Download {name}',
+  // ui-unification-20261103-askuser-attach batch (2026-11-04, IMG_1725): the
+  // attachment area unifies with the input strip + embedded media stack + source
+  // tag + folding; the unavailable state carries a REASON tier and an action
+  // (the bare "unavailable" wording retires per ⑤a).
+  'askUser.attUnavailable_missing': 'File missing or moved',
+  'askUser.attUnavailable_denied': 'No read permission (session/ticket expired)',
+  'askUser.attUnavailable_network': 'Network unreachable — retry later',
+  'askUser.attUnavailable_unsupported': 'Preview not supported for this type',
+  'askUser.attCanDownload': 'download available',
+  'askUser.attRetryDownload': 'Retry download',
+  'askUser.attDownloadFailed': 'Download failed',
+  'askUser.attFoldTotal': '{n} total',
+    'askUser.pendingTitle': 'Pending questions',
+  // held-receipt 投递可靠性批（2026-10-21 fix 3）：「N 条回执待投递」徽标词条。
+  // 补投静默批（2026-10-29）：词条去机制名——"held by the sub-agent barrier"
+  // （引擎内部机制词）改平实表述；作者可见面不出现 barrier/force-drain 字样。
+  'heldReceipts.title': 'Delivery receipts pending injection',
+  // 'heldReceipts.held' (barrier-hold process state) retired 2026-10-29 (author
+  // ruling: process self-heal states render nothing; the capsule surfaces the
+  // terminal unread side only) — seal: UserFaceProcessStateSealSpec.
+  'heldReceipts.unread': '{n} undelivered (retry exhausted)',
+
   'askUser.sourceClosed': 'Source closed (node cancelled)',
+  // Restart-orphan reconcile batch (2026-10-22): boot-sweep expiry terminal
+  // state (PendingAskLedger.bootReconcile → askUserClosed{reason:"expired-orphan"}).
+  'askUser.expiredOrphan': 'Question expired (engine restart, asker gone)',
+  // AskUser double-card batch (chain-askuserdup plan A①): explicit label for a
+  // history question row with NO recorded answer (it used to be painted as
+  // answered — a fake `-> ` line). An explicitly labelled dead card beats
+  // silently claiming it was answered.
+  'askUser.historyUnanswered': 'No recorded answer in history (pending)',
+  // Multi AskUser concurrency batch (#250)
+  'askUser.turnInterrupted': 'Turn interrupted (question void)',
+  // askucancel bit2 (2026-10-08): user-cancel terminal state (card button /
+  // REST / WS / channel cancel entries all funnel into hub CancelRequest →
+  // askUserClosed{reason:"user-cancelled"} broadcast + `__cancelled__` history row).
+  'askUser.cancelled': 'Cancelled (no longer awaiting an answer)',
+  // ask-badge-fix batch 2026-10-25: hub complete() now broadcasts the close
+  // frame on every answer (askUserClosed{reason:"answered"}) — the terminal
+  // card note on tabs/devices that did not answer it themselves.
+  'askUser.answeredElsewhere': 'Answered elsewhere (this view did not answer; closed automatically)',
+  'askUser.cancelFailed': 'Cancel did not take effect ({state}); the question may already be resolved',
+  'askUser.nextPending': 'Next pending ({n})',
+  'askUser.cardGone': 'That question is gone — removed from the pending list',
+  'askUser.pendingSyncFailed': 'Pending-question sync failed — the list may be incomplete',
+  'askUser.canvasAmbiguous': 'Several questions are pending — answer on the specific card',
+  'askUser.rejectShape': 'Answer shape does not match this question type — the card is still open, please answer again',
+  'askUser.rejectUnknown': 'That question is no longer active — the card is still open, please answer again',
+  'askUser.rejectNoMatch': 'No matching pending question — please answer again',
+  'askUser.rejectGeneric': 'Answer not accepted — please answer again',
+  // Overflow → todo batch (author order 2026-11-18, round 2): a pending question
+  // past the loaded conversation page becomes a CONCRETE todo entry (the entry
+  // itself is the carrier); the question card lives inside that row and answers
+  // there. Both answer sites share one state and one resolution point.
+  'askUser.todoBadge': 'Answer',
+  'askUser.todoSubmit': 'Submit answer',
+  'askUser.todoCancel': 'Cancel',
+  'askUser.todoManual': 'Answer this one on its original card (secret value / directory picker)',
+  'askUser.cancelledElsewhere': 'This question was cancelled',
+  // askuser-secret batch (2026-10-08): secret-question face (showOptions secret
+  // branch) + the plain-text-reflux rejection toast (hub reason
+  // "secret-slot-mismatch", spec §5.1).
+  'askUser.secretPlaceholder': 'Enter the key / verification code (masked)',
+  'askUser.secretShow': 'Show',
+  'askUser.secretHide': 'Hide',
+  'askUser.secretHint': 'The value is stored in the local secrets store (owner-only); the agent receives a stored pointer only — never the value.',
+  'askUser.secretEphemeralHint': 'One-time code mode: the first read consumes it (valid 10 minutes); the agent receives a stored pointer only.',
+  'askUser.secretStoredLine': 'securely stored (receipt injected into the session)',
+  'askUser.rejectSecret': 'A secret question received a plain-text answer (this page predates secure input) — the value was discarded unstored; refresh this page and re-enter it on the card',
+  // askuser-dragdrop impl batch (2026-10-19, #551): card-scoped reply attachments
+  // (open questions only — choice/secret/terminal cards get NO entry at all,
+  // author corrections ①②; ≤9 files / 100MB each).
+  'askUser.replyAttachTitle': 'Reply attachments (optional)',
+  'askUser.attachEmpty': 'Drop files or images, paste with Ctrl/⌘+V, or click to choose',
+  'askUser.attachDropHint': 'Drop to attach',
+  'askUser.attachUploading': 'Uploading {n}%',
+  'askUser.attachUploadingLabel': 'Uploading…',
+  'askUser.attachAttached': 'Attached',
+  'askUser.attachRetry': 'Retry',
+  'askUser.attachUploadFailed': 'Failed',
+  'askUser.attachUploadFailedToast': '{name} failed to upload — retry or remove',
+  'askUser.attachTooMany': 'At most {n} files per question',
+  'askUser.attachTooLarge': '{name} exceeds the 100MB per-file limit',
+  'askUser.attachDuplicate': '{name} is already attached',
+  'askUser.attachSendBlocked': 'Some attachments are not uploaded yet — retry or remove them before sending',
+  'askUser.attachAnswerCount': '({n} file(s) attached)',
+  'askUser.attachCountBadge': 'Answered · {n} file(s)',
+  'askUser.removeAttachment': 'Remove attachment {name}',
   'chat.waitingQuestion': 'Waiting for question...',
   'chat.askFailed': 'Ask failed',
   'chat.askLabel': 'Ask',
   'chat.skillLabel': 'skill: {skill}',
-  'chat.allowTool': 'Allow {tool}?',
-  'chat.autoApproved': 'Auto-approved (bypass all)',
-  'chat.permSource': 'From: {agent} ({session})',
-  'chat.permLevel.warning': 'Caution: may cause data loss',
-  'chat.permLevel.dangerous': 'Dangerous: {detail}',
-  'chat.permLevel.critical': 'Critical: {detail}',
-  'chat.permExecCmd': 'Execute command',
-  'chat.copied': 'Copied!',
-  'chat.copy': 'Copy',
+  'human.details': 'Details',
+  'mermaid.renderFailed': 'Diagram failed to render',
+  // rich-render batch (2026-11-05): shared failure states for diagram / svg /
+  // math fences.
+  'fence.renderFailed': 'Diagram failed to render',
+  'fence.showSource': 'Show source',
+  'fence.hideSource': 'Hide source',
+  'fence.sanitized': 'Removed {n} unsafe item(s)',
+  'fence.svgParseFailed': 'SVG syntax error',
+  'fence.svgRootRequired': 'Root element is not svg',
+  'fence.svgNothingLeft': 'Nothing drawable left',
+  'fence.mathFailed': 'Formula failed to render',
+  'fence.openViewer': 'Open full size',
+  'mermaid.showSource': 'Show source',
+  'mermaid.hideSource': 'Hide source',
+  'chat.copyFailed': 'Copy failed',
   'chat.noMoreMessages': '— No more messages —',
   'chat.loading': 'Loading...',
   'chat.thinking': 'Thinking...',
@@ -650,8 +1915,16 @@ export default {
   'chat.thinkingInProgress': 'Thinking…',
   'chat.turnSummaryTools': '{n} tool calls',
   'chat.turnSummaryToolsOne': '1 tool call',
-  'chat.turnHeaderThinking': 'thought for {d}',
+  // 'chat.turnHeaderThinking' ('thought for {d}') removed with the 2026-10-31
+  // attribution-line slimming batch — author ruling: no thinking duration on
+  // the summary line (tool count stays).
   'chat.turnHeaderFiles': '{n} files',
+  // Work-line (stream-ux §二.1.1/§二.1.4): the completed badge of the running
+  // turn's single-line indicator. The expand surface stays `.turn-header`
+  // (existing expand face unchanged) — the hint only points at it.
+  'chat.workline.tools': '{n} tools completed',
+  'chat.workline.thinking': '{n} thinking rounds',
+  'chat.workline.expandHint': 'Click to expand',
   'chat.thinking.0': 'Drifting through the cosmos...',
   'chat.thinking.1': 'Gazing into the deep...',
   'chat.thinking.2': 'Sailing the stellar winds...',
@@ -659,7 +1932,6 @@ export default {
   'chat.thinking.4': 'Traversing the nebula...',
   'chat.thinking.5': 'Reaching for the light...',
   'chat.compacting': 'Compacting context...',
-  'chat.compactingCard': 'Compacting context',
   'chat.compactElapsed': ' · took {seconds}s',
   'chat.compacted': 'Context compacted: {before} → {after} messages{detail}',
   'chat.compactFailed': 'Context compaction failed (attempt {attempt}/{maxAttempts})',
@@ -688,9 +1960,10 @@ export default {
   'think.18': 'Rode a stellar wind past the nebulas, flew for {d}',
 
   // === Slash commands ===
-  'slash.clear': 'Clear LLM context (keeps chat history)',
+  // (/clear //compact dropdown help removed with the commands, 2026-10-09; the
+  // *Done strings stay — the compact-mode send path and persisted-queue replay
+  // still translate them, as may pre-removal engine UI history)
   'slash.clearDone': 'Context cleared. LLM memory reset.',
-  'slash.compact': 'Manually trigger context compaction',
   'slash.compactDone': 'Compaction triggered...',
   'slash.fork': 'Fork this session (branch the conversation)',
   'slash.forkPending': 'Forking session...',
@@ -702,30 +1975,118 @@ export default {
   'slash.confirmDelete': 'Delete skill "{skill}"? This cannot be undone.',
   'slash.skillDeleted': 'Skill "{skill}" deleted',
   'slash.skillDeleteFailed': 'Failed to delete skill "{skill}": not a user-level skill',
-  'bypass.toggle': 'Safety mode: click to cycle Confirm Edits / Auto Edits / Auto All',
+  // Shield (the only UI entry for the mode) — per-mode tooltip + persistence
+  // feedback after a switch (permshield F1).
+  'bypass.toggle': 'Safety mode: click to cycle Confirm Edits / Auto Edits / Auto All (global mode, still in force after a restart)',
+  'bypass.title.confirm-edits': 'Safety mode: Confirm edits (global mode, still in force after a restart)',
+  'bypass.title.auto-edits': 'Safety mode: Auto edits (global mode, still in force after a restart)',
+  'bypass.title.auto-all': 'Safety mode: Auto all (global mode, still in force after a restart)',
+  'bypass.modeSetGlobal': 'Global permission mode switched to {mode}: still in force after a restart',
 
   // === Background tasks ===
   'bg.cancel': 'Cancel',
+  'bg.cancelTip': 'Cancel this background task (the process is killed; not reversible)',
   'bg.cancelling': 'Cancelling...',
   'bg.running': 'Running',
+  'bg.persistent': 'Service',
   'bg.ended': 'Process ended',
   'bg.stuck': 'No output for 10+ min',
   'bg.lines': '{count} lines',
   'bg.header': 'Background tasks · {count}',
+  // #753 same-family aggregation (collapsed waiter-N family header).
+  'bg.familyRunning': 'running ×{count}',
+  'bg.familyDone': 'finished ×{count}',
+  'bg.familyCount': 'family ×{count}',
+  'bg.familyTitle': '{count} same-family background tasks — click to expand/collapse',
+  // #753 rate-gate breaker toast (bgRateAlert frame).
+  'bg.rateAlert': 'Background task rate limit: this session created {count} background tasks within the window — circuit breaker engaged for {cooldownSec}s (wait for existing tasks to notify on completion)',
+  // #752 delegate popup "what is this session doing" strip.
+  'bgws.aria': 'What this session is doing',
+  'bgws.lastAction': 'Last action',
+  'bgws.activityAgo': 'active {dur} ago',
+  'bgws.thinking': 'thinking / executing…',
+  'bgws.noData': 'no status data (snapshot not covering)',
+  'bgws.noBgTasks': 'no background tasks for this session',
+  'bgws.moreTasks': '{count} more background tasks (see the main window panel)',
+  // Mobile bg-agent dialog simplification (2026-11-06): ⋯ details sheet meta labels.
+  'bgagent.more': 'Task details',
+  'bgagent.detail.source': 'Source',
+  'bgagent.detail.created': 'Created',
+  'bgagent.detail.worktree': 'Worktree',
+  'bgagent.detail.plugins': 'Plugins',
+  'bgagent.detail.noWorktree': 'In place (no worktree)',
+  'bg.sectionAgents': 'Sub-agents',
   'bg.empty': 'No background tasks running',
-  'bg.kind.local': 'local',
-  'bg.kind.remote': 'remote',
+  // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：bg.kind.local /
+  // bg.kind.remote 两键随徽标整对删除——跑在哪由设备名 chip 承载（bg.runsOn）。
   'bg.openedBy': 'Started by {origin}',
+  'bg.runsOn': 'Runs on {origin}',
+  // P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.4）：后台任务
+  // 健康轨三色词表（healthy/suspect/escalated）——行内健康色点 tooltip。
+  'bg.health.healthy': 'healthy',
+  'bg.health.suspect': 'suspect — no recent progress',
+  'bg.health.escalated': 'escalated — needs attention',
+  // Ledger #929 (cross-device sub-agent transparency): remote projected-row badges.
+  'subagents.deviceOffline': 'Device offline',
+  // Retained terminal rows + output detail card (2026-09-09 output viewing)
+  'bg.completed': 'Completed',
+  'bg.failed': 'Failed',
+  'bg.cancelled': 'Cancelled',
+  'bg.detail.aria': 'Background task output',
+  'bg.detail.empty': 'No output yet',
+  // #753: running-with-no-output liveness note (waiters/pollers legitimately stay silent).
+  'bg.detail.waitingLive': 'Running · no output yet — waiting-style tasks (pollers/listeners) may stay silent on stdout; the process is alive',
+  'bg.detail.uptime': 'up {dur}',
+  // Output-viewer completion batch (author 2026-10-25 "can't see remote tasks"):
+  // remote tasks no longer get a "not supported" placeholder — the tail of the
+  // peer-side log is polled via the device channel; unavailable states carry a
+  // real reason.
+  'bg.detail.remotePulling': 'Pulling output tail from {device}…',
+  'bg.detail.remoteNoPath': 'Remote output unavailable: no output redirect detected in the command (needs something like `> run.log 2>&1`)',
+  'bg.detail.remoteNoExecutor': 'Remote output unavailable: device network (NebLink) is not enabled',
+  'bg.detail.remoteUnavailable': 'Remote output temporarily unavailable: {reason} (retrying…)',
+  'bg.detail.remoteLost': 'Remote task output is no longer available (task ended without retained output)',
+  'bg.detail.remoteOffline': 'Failed to pull remote output (device may be offline) — close and retry',
+  'bg.detail.notFound': 'Task output is no longer available (task ended and was cleaned up)',
+  'bg.detail.truncated': 'Large output — showing the tail only',
+  'bg.detail.meta': '{lines} lines · {bytes}',
+  'bg.detail.exit': 'exit {code}',
+  'bg.detail.failedHint': 'Failed: {error}',
+  'bg.detail.cancelHint': 'Cancelled: {error}',
+  'bg.detail.readError': 'Failed to load output (network error or no response) — close and retry',
+  'bg.detail.stopped': 'Output polling stopped (task did not finish for a long time)',
 
   // === Time ===
   'time.yesterday': 'Yesterday',
+  // tooltip / aria-label of the 12/24-hour toggle hot zone (all three faces).
+  'time.toggleFormat': 'Click to switch 12/24-hour clock',
+  // Day-layered chat footer labels (footer-time batch 2026-10-06): today stays
+  // a bare clock (formatHm); older messages gain a date layer, bucketed on
+  // LOCAL calendar days — yesterday / this week (Monday start) / older /
+  // cross-year. Weekday names are full-form; the {date} payload in
+  // time.footerDate comes from Intl in the active locale (Oct 4 / Oct 4, 2025).
+  'time.footerYesterday': 'Yesterday {time}',
+  'time.footerWeekday': '{weekday} {time}',
+  'time.footerDate': '{date} {time}',
+  // Weekday bucket of the conversation window's once-per-day centered date
+  // line (formatFooterDay — same bucket ladder as the footer labels, time half
+  // removed). {weekday} = time.weekday.*; yesterday / date buckets reuse
+  // time.yesterday and Intl respectively.
+  'time.dayWeekday': '{weekday}',
+  'time.weekday.sun': 'Sunday',
+  'time.weekday.mon': 'Monday',
+  'time.weekday.tue': 'Tuesday',
+  'time.weekday.wed': 'Wednesday',
+  'time.weekday.thu': 'Thursday',
+  'time.weekday.fri': 'Friday',
+  'time.weekday.sat': 'Saturday',
 
   // === Task list ===
   // Task panel = pure Flow Map node view (2026-09-05 10:54 ruling): the old
   // task area is retired; sectionProgress/pendingShort/globalSource keys
   // removed with their retired paths. Node-view keys kept.
-  'task.expand': 'Expand',
-  'task.collapse': 'Collapse',
+  'task.expand': 'Show details',
+  'task.collapse': 'Hide details',
   // progressEmpty: empty-state fallback key (builder kept, not wired into
   // the main path — the panel collapses when there are no nodes)
   'task.progressEmpty': 'No active tasks',
@@ -734,6 +2095,97 @@ export default {
   'task.inProgressShort': 'In progress',
   'task.nodePending': 'Pending',
   'task.nodeBlocked': 'Blocked',
+  // Restart reconciliation batch 2026-10-22: interrupted-state trio (gray-state
+  // word / inline badge / fold relation word).
+  'task.nodeInterrupted': 'Interrupted',
+  'task.restartBadge': 'Restart interrupted',
+  'task.continuedBy': 'Continued by {session}',
+  // === Delegate faces (#1228 换源接线批 · §16 七键 §16-passed verbatim, zh/en paired) ===
+  // 🔴 Values are author-approved verbatim (§16 verdict #1228 两裁①) — no rewording.
+  // Key names follow the delegate.* family (delegateChainStub/task-delegate namespace).
+  // ① ready-to-merge status word (delegate row status column; recorded
+  //    verdict value on legacy data)
+  'delegate.readyToMerge': 'Ready to merge',
+  // Manual-recovery batch (author order 2026-11-06 20:36): the two invalid
+  // states + restore actions (sub-agent panel).
+  'delegate.invalidWaiting': 'Invalid · waiting for recovery',
+  'delegate.pendingRecovery': 'Restart-interrupted · pending recovery',
+  'delegate.restore': 'Restore',
+  'delegate.restoreAll': 'Restore all',
+  'delegate.restoreDone': 'Restored {count} session(s)',
+  'delegate.restoreFailed': 'Restore failed: {error}',
+  'delegate.modelSwitch': 'Switch model',
+  'delegate.modelFollowSlot': 'Follow class (default)',
+  'delegate.externalModelFuture': 'Model for future dispatches with this executor (not this session)',
+  'delegate.externalModelUnsupported': 'This CLI does not provide a headless model parameter',
+  'delegate.externalModelDefault': 'Leave empty for CLI default',
+  'delegate.externalModelSaved': 'Saved',
+  'delegate.externalModelError': 'Could not load or save model setting',
+  // ② S10 per-task chain view top bar back button
+  'delegate.backToTasks': 'Back to tasks',
+  // ③ S11 structure overview header
+  'delegate.structure': 'Delegate structure',
+  // ④ S11 FIFO lane header
+  // ⑤ S11 worktree seat label
+  'delegate.worktree': 'Worktree',
+  // ⑤b Device-worktree ownership fix (2026-10-30): device project without a worktree
+  // leg (device repo has no git / unreachable fallback) — the Worktree row shows the
+  // workspace path annotated as direct workspace use.
+  'delegate.workspaceSeat': 'Direct workspace use',
+  // ⑥ S16 external row exit action (openNative button title/aria)
+  'delegate.openNative': 'Open in original app',
+  // ⑦ S10 fail-soft state (chain fetch failed; row kept, click to retry)
+  'delegate.chainUnavailable': 'Chain view unavailable — click to retry',
+  // delegate-ui batch (2026-10-08 · view ④ delegate detail strip: star section
+  // header / archive entry)
+  'delegate.children': 'Sub-agents',
+  'delegate.archive': 'Archive',
+  'delegate.archived': 'Archived',
+  'delegate.archiveFailed': 'Archive failed',
+  // delegate-ui revision batch (user's 9 points ③⑨ · 2026-10-09)
+  'delegate.chainSteps': 'chain · {n} steps',
+  'delegate.flowNodes': 'Flow nodes',
+  // === delegate/flowmap two-layer batch (2026-10-09 · spec §C/§D/§E/H.4) ===
+  // Two-layer title keys (E visual signatures) + drawer/auto-archive keys (D the
+  // only archive face) + L1 empty hint. kidsBadge/flowBadge reuse existing keys:
+  // sub-agent word = delegate.children, flow stays a data word.
+  'delegate.flowmap.title': 'Delegate flow',
+  'delegate.projectflow.title': 'Project flow',
+  'delegate.kids.empty': 'No subagent / flow calls yet',
+  'delegate.archive.toast': '{n} settled',
+  'delegate.disposition.move': 'Move to history',
+  'delegate.disposition.undo': 'Undo',
+  'delegate.disposition.error': 'Could not update disposition',
+  'delegate.archive.openFlow': 'Flow →',
+  'delegate.archive.drawerTitle': 'Archived delegates',
+
+  // === Chain view (chain-view compact v2 batch, 2026-10-01 · front-end face,
+  //     §16 draft key table) ===
+  // Five badge states (§II.1.3) + three hover labels + cancel dialog + ungrouped.
+  // 🔴 Final wording is extracted by the verify node and presented to the author
+  //    (this node only drafts against the mockup wording).
+  'task.chain.badge.running': 'Running',
+  'task.chain.badge.paused': 'Paused',
+  'task.chain.badge.completed': 'Done',
+  'task.chain.badge.failed': 'Failed',
+  'task.chain.badge.cancelled': 'Cancelled',
+  'task.chain.pause': 'Pause this chain',
+  'task.chain.resume': 'Resume this chain',
+  'task.chain.cancel': 'Cancel this chain',
+  'task.chain.cancel.title': 'Cancel the whole chain',
+  'task.chain.cancel.confirm': 'Cancel "{chain}"? This cannot be undone — members that have not started will no longer be dispatched.',
+  'task.chain.ungrouped': 'Ungrouped',
+  'task.chain.rowHint': 'Chain "{chain}" ({n} nodes) — click to expand',
+  // §16-pending wording (author to review verbatim before it takes effect)
+  'task.chain.activeCount': '{n} working',
+  'task.chain.overflow': '{n} more not shown',
+  'task.chain.pausing': 'Pausing…',
+  'task.chain.cancelling': 'Cancelling…',
+  'task.chain.ctrl.failed': 'Chain control did not take effect — please retry',
+  // Generic "Remove" accessible name (visup-b batch: the main window's attachment ❌
+  // — the icon-only ❌ carries no text, so it must have an accessible name; kept
+  // separate from `ref.remove`, which is the semantic "Remove reference").
+  'common.remove': 'Remove',
   'ref.cardAria': 'Reference',
   'ref.expand': 'Expand',
   'ref.collapse': 'Collapse',
@@ -746,13 +2198,145 @@ export default {
   'ref.exitSelect': 'Exit selection',
   'explorer.reference': 'Reference',
   'canvas.referenceCurrent': 'Reference current page/selection',
+  // Canvas overhaul batch (2026-10-31: full Chinese UI + header redesign) —
+  // previously hardcoded English chrome strings, now keyed.
+  'canvas.viewSource': 'View source',
+  'canvas.viewRendered': 'View rendered',
+  'canvas.zoomOut': 'Zoom out',
+  'canvas.zoomIn': 'Zoom in',
+  'canvas.zoomFit': 'Fit to view',
+  'canvas.pan': 'Pan (or hold Space)',
+  'canvas.a11yZoomLevel': 'Zoom %d%', // mobile gesture batch: mobile-layer image viewer aria-live zoom level (spec §2.8)
+  'canvas.imgFailed': 'Failed',
+  // canvas-video-player batch (2026-11-05): accessible names for the custom player
+  // controls (aria-label/title only — the control strip carries no visible copy).
+  'canvas.videoControls': 'Video controls',
+  'canvas.videoPlay': 'Play',
+  'canvas.videoPause': 'Pause',
+  'canvas.videoMute': 'Mute',
+  'canvas.videoUnmute': 'Unmute',
+  'canvas.videoProgress': 'Progress',
+  'canvas.videoVolume': 'Volume',
+  'canvas.videoPip': 'Picture in picture',
+  'canvas.videoFullscreen': 'Fullscreen',
+  'canvas.videoExitFullscreen': 'Exit fullscreen',
+  // image-in-doc batch (author report 2026-11-05 "the document only shows paths"):
+  // a missing image gets an explicit placeholder (reason + original path).
+  'canvas.imgFailTitle': 'Image failed to load',
+  'canvas.imgFailMissing': 'File not found (HTTP {status})',
+  'canvas.imgFailDenied': 'No read access — ticket rejected (HTTP {status})',
+  'canvas.imgFailBusy': 'Service busy (HTTP {status})',
+  'canvas.imgFailBadPath': 'Invalid path (HTTP {status})',
+  'canvas.imgFailUnsupported': 'This type is not served as image bytes (HTTP {status})',
+  'canvas.imgFailUnreachable': 'Cannot read this image (invalid path or no permission)',
+  'canvas.imgFailUnknown': 'Read failed (HTTP {status})',
+  'canvas.closeTab': 'Close tab',
+  'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
   'canvas.noRef': 'This tab cannot be referenced',
+  // canvas-tab-reference (2026-11-18): explicit notice when the reference cannot
+  // reach a composer (this leg used to fail silently).
+  'canvas.refNoComposer': 'The reference did not reach the input box (the chat composer is not ready yet). Open the chat and tap Quote again.',
   'canvas.unreadableTitle': 'File unreadable',
   'canvas.unreadableHint': 'The file does not exist or was cleaned up; it cannot be read.',
   'canvas.unreadablePathHint': 'The path is invalid; it cannot be read.',
+  'canvas.loadingFile': 'Opening…',
+  'canvas.loadFailed': 'Failed to open',
+  'canvas.retry': 'Retry',
+  // Pop file-card optimistic-open batch (2026-11-18): the placeholder's failure
+  // reason must be readable AND typed — offline / not found / credential-denied /
+  // unsupported / timeout are no longer the same sentence, and never a blank page.
+  'canvas.loadOffline': 'Network unavailable (offline) — cannot fetch the file.',
+  'canvas.loadDenied': 'Not allowed to read this file (credential denied).',
+  'canvas.loadNotFound': 'File not found or already removed.',
+  'canvas.loadTimeout': 'Loading timed out — retry.',
+  'canvas.loadCancelled': 'Cancelled.',
+  'canvas.loadBusy': 'Server busy — try again shortly.',
+  // canvas file-refresh batch (2026-10-25 author order): pane corner re-read button.
+  // Retired by canvas-auto-refresh (2026-11-17 author order — hysteresis auto refresh,
+  // 60s window); canvas.refresh key removed with the button, refreshDirty stays
+  // (reused by the auto path's dirty guard).
+  'canvas.refreshDirty': 'Unsaved changes — save or revert before refreshing.',
+  // Dirty "has updates" hint (canvas-auto-refresh batch): lightweight non-resident
+  // chip shown when the quiet window elapsed but the tab is dirty/in source mode.
+  'canvas.updateHint': 'This file changed on disk (auto refresh deferred: unsaved edits here).',
+  'canvas.updateNow': 'Refresh now',
+  // B7 doc follow-up batch (2026-11-01): dirty-tab close confirm + external-change conflict bar
+  'canvas.closeDirtyTitle': 'Close unsaved tab?',
+  'canvas.closeDirtyMsg': '"{name}" has unsaved changes. Closing discards them.',
+  'canvas.closeDirtyConfirm': 'Close and discard',
+  'canvas.conflictDirty': 'This file changed on disk while you have unsaved edits here.',
+  'canvas.conflictKeep': 'Keep mine',
+  'canvas.conflictReload': 'Reload from disk',
+  // B7-4 explorer tree search + sort (client-side; server order untouched)
+  'explorer.searchPlaceholder': 'Search files…',
+  'explorer.sortDefault': 'Default order',
+  'explorer.sortNameAsc': 'Name ↑',
+  'explorer.sortNameDesc': 'Name ↓',
+  'explorer.sortMtime': 'Recently modified',
+  'explorer.sortSize': 'Largest',
+  'canvas.refreshFailed': 'Refresh failed: {error}',
+  // Reader P0 stop-the-bleed batch (design 20261030_181655 §1.2/§2.1, acceptance A1-A12 i18n keys)
+  'epub.prev': 'Previous page',
+  'epub.next': 'Next page',
+  'epub.menu.close': 'Close',
+  'epub.theme.label': 'Theme',
+  'epub.theme.paper': 'Paper',
+  'epub.theme.light': 'Light',
+  'epub.theme.dark': 'Dark',
+  'epub.aa.fontSize': 'Font size',
+  'epub.aa.lineHeight': 'Line height',
+  'epub.aa.paraSpace': 'Paragraph spacing',
+  'epub.aa.paraCompact': 'Compact',
+  'epub.aa.paraStandard': 'Standard',
+  'epub.aa.paraLoose': 'Loose',
+  'epub.aa.fontFamily': 'Font family',
+  'epub.aa.serif': 'Serif',
+  'epub.aa.sans': 'Sans',
+  'epub.resMissing': '{count} resource(s) missing',
+  'epub.imgTooBig': 'Image over 8MB, not loaded',
+  // Reader P1 unified chrome (design §2.2/§2.3/§4.1; copy assertions use i18n keys)
+  'reader.toc': 'Contents',
+  'reader.aria.aa': 'Reading settings',
+  'reader.aria.toc': 'Table of contents',
+  'reader.aria.more': 'More',
+  'reader.aria.slider': 'Reading progress',
+  'reader.mode': 'Page mode',
+  'reader.mode.scroll': 'Scroll',
+  'reader.mode.flip': 'Flip',
+  'reader.jump': 'Go',
+  'reader.jumpPct': 'Position %',
+  'reader.refresh': 'Refresh',
+  'reader.pos': '{title} · {pct}%',
+  'reader.chapter': 'Part {n}',
+  // Reader P3 batch (design §3.2/§4.2): mobi/azw3 degrade faces + annotation face
+  'mobi.encrypted': 'This ebook is encrypted — the reader never decrypts. Download only.',
+  'mobi.unsupported': 'This ebook uses an unsupported compression (HUFF/CDIC). Download only.',
+  'mobi.tooBig': 'This ebook exceeds the decompression size gate. Download only.',
+  'mobi.invalid': 'Not a parseable MOBI/AZW3 file.',
+  'mobi.download': 'Download',
+  'reader.anno.list': 'Notes',
+  'reader.anno.note': 'Note',
+  'reader.anno.del': 'Delete',
+  'reader.anno.save': 'Save',
+  'reader.anno.close': 'Close',
+  'reader.anno.placeholder': 'Write a note…',
+  'reader.anno.stale': 'Text changed',
+  'reader.anno.yellow': 'Yellow',
+  'reader.anno.green': 'Green',
+  'reader.anno.blue': 'Blue',
+  'reader.anno.pink': 'Pink',
+  // cardwin-whitepage fix batch (2026-10-22): standalone card-window boot-face
+  // failure copy (canvas.js cardWindowBootFace)
+  'canvas.cardwinFailHint': 'Failed to load the card content — you can retry.',
+  'canvas.cardwinAuthHint': 'Your session may have expired — retrying re-establishes it or shows the sign-in guide.',
+  // cardwin content-only fix batch (2026-10-22 author ruling): only content
+  // artifacts may open in a standalone window — functional panels never.
+  'canvas.cardwinContentOnly': 'Only documents and files can open in a standalone window; panels are not supported.',
+  'canvas.cardwinNoPath': 'This standalone link carries no content path — only documents and files can open independently.',
 
   // === Tool names (label first line) ===
   'tool.Read': 'Read',
+  'tool.GenerateImage': 'Image gen',
   'tool.Edit': 'Edit',
   'tool.Write': 'Write',
   'tool.Bash': 'Bash',
@@ -796,7 +2380,18 @@ export default {
   // === Scheduled Tasks ===
   'task.empty': 'No scheduled tasks',
   'task.emptyHint': 'Click empty area or press + to create',
-  'task.inputPlaceholder': 'Enter task...',
+  // 新建抽屉（todo-fullbleed 批 2026-11-05：手机页面态新建入口改底部抽屉）
+  'task.sheetTitle': 'New scheduled task',
+  'task.sheetCancel': 'Cancel',
+  'task.sheetDone': 'Create',
+  // schedule-todo-unify 2026-11-06: name + description split (content line 1 = name).
+  'task.inputPlaceholder': 'Task name',
+  'task.descPlaceholder': 'Description (optional)',
+  'task.editTitle': 'Edit scheduled task',
+  'task.nameRequired': 'Name cannot be empty',
+  'task.detailTitle': 'Details',
+  'task.detailEmpty': 'No description',
+  'task.triggerTime': 'Trigger time',
   'task.triggered': 'Triggered',
   'task.triggerTitle': 'Scheduled Task Triggered',
   'task.scheduledAt': 'Scheduled at {time}, executing...',
@@ -809,33 +2404,181 @@ export default {
   'task.createFailed': 'Failed to create scheduled task',
   'task.repeat': 'Repeat',
   'task.repeatOnce': 'Once',
+  'task.grpUpcoming': 'Coming up',
+  'task.grpDisabled': 'Disabled',
+  // Cognition phase-2 batch 3 check-in: todo group label / check-in / cancel / miss suggestion
+  'task.grpCheckin': 'Check-in',
+  'task.checkin': 'Check in (write off)',
+  'task.cancel': 'Cancel (no record)',
+  'task.missSuggest': 'Surfaced {n} times without write-off — consider lowering frequency or splitting it; just say the word',
   'task.repeatHourly': 'Hourly',
   'task.repeatDaily': 'Daily',
   'task.repeatWeekly': 'Weekly',
+  // schedcard batch (2026-10-29): dedicated schedule card (chat stream) copy
+  'task.cardChip': 'Scheduled Task',
+  'task.cardScheduledAt': 'Scheduled {time}',
+
+  // === To-dos (todo-split batch 2026-10-30: to-dos get their own sidebar panel) ===
+  'activity.todo': 'To-dos',
+  'todo.title': 'To-dos',
+  'todo.empty': 'No to-dos',
+  'todo.emptyHint': 'Click empty area or press + to create',
+  'todo.inputPlaceholder': 'Enter a to-do...',
+  // AskUserQuestion mirror rows (engine AskTodoBridge product): click jumps back
+  // to the question card; answering retires the mirror (Ask→todo→answer→write-off).
+  'todo.askChip': 'Awaiting',
+  'todo.askJump': 'Click to jump to the question card',
+  // Todo-inbox redesign batch (2026-10-31 author order): user-facing inbox —
+  // message-list entry row + Reminders-style page (groups: overdue floats top /
+  // decisions / approvals / planned).
+  'todo.entryTitle': 'To-Dos',
+  'todo.entryEmpty': 'All clear',
+  'todo.grpOverdue': 'Overdue',
+  'todo.grpDecision': 'Decisions',
+  'todo.grpApproval': 'Approvals',
+  'todo.grpPlan': 'Planned',
+  // Permission / McpPermission mirror rows (engine AskTodoBridge perm- product):
+  // click jumps back to the approval card; the card's terminal state retires it.
+  'todo.permChip': 'Approval',
+  'todo.permJump': 'Click to jump to the approval card',
+  // Added order (2026-10-31 23:14): project dimension (grouping/filter) + full
+  // CRUD on the user face.
+  'todo.filterAll': 'All',
+  'todo.filterUngrouped': 'Ungrouped',
+  'todo.projectPlaceholder': 'Project (optional)',
+  'todo.edit': 'Edit',
+  // Task-mode badge batch (2026-10-30 author order "show dispatch execution mode"):
+  // delegate/node tasks carry their execution-mode badge — kernel vs dispatcher.
+  // Task mode badge batch (2026-10-30) + term-unification batch (2026-11-06):
+  // the mode chip word no longer comes from a locale key — task.mode.kernel /
+  // task.mode.dispatcher are deleted; single source = js/termWords.js
+  // (kernel / dispatcher verbatim, same string in every language face).
+  // Visual classes still keyed on the data value (.bg-mode-kernel / -dispatcher).
+  // Base-drift state slot (`[base-moved]` noise-reduction batch 2026-11-05): how many
+  // times the base branch advanced since this task was dispatched — a STATE FACT only
+  // ("base moved" belongs on the panel, not in the message stream). No mechanism talk.
+  'task.baseDrift': 'base advanced {n}×',
+  'bg.modeTitle': 'Execution mode: {mode}',
 
   // NebLink
   'neblink.thisDevice': 'This device',
   'neblink.unknownDevice': 'Unnamed device',
-  'neblink.noPeersHint': 'Sign in to nebflow on both devices.',
+  // `neblink.noPeersHint` 已删（① 八点返工 2026-09-15）：它只在**设置账号段的设备
+  // 列表**里作为「无 peer」提示渲染，设备列表已移出设置 ⇒ 死键同批删除。
   'neblink.online': 'Online',
   'neblink.offline': 'Offline',
   'neblink.reachDirect': 'Direct P2P connection established',
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
-  'neblink.loggedOutHint': 'Not signed in — Device Link is unavailable.',
-  'neblink.deviceDescHint': 'e.g. Campus network, has Vivado 2023.2',
+  // "Clean up and sign in again" (defect A, 2026-09-18): KEPT — activityBar's login
+  // failure face still uses it (#login-cleanup → openEndSessionHandoff(true)).
+  'neblink.cleanupRelogin': 'Clean up and sign in again',
+  // Account-card keys (neblink.loggedOutHint / statusDegraded / signedOutElsewhere
+  // (+Hint) / pairing / loggedInAs / settings.account) were removed with the account
+  // card (2026-11-18 author ruling): zero references repo-wide (grep-verified).
+  'neblink.deviceDescHint': 'Visible to agents — they use this description to automatically pick the right device for a task',
   'neblink.save': 'Save',
-  'neblink.update': 'Update',
   'neblink.stable': 'Stable',
   'neblink.beta': 'Beta',
   'neblink.cancel': 'Cancel',
-  'neblink.updating': 'Updating...',
-  'neblink.restarting': 'Restarting...',
+  // The three remote-update state strings (neblink.updating / neblink.restarting /
+  // neblink.updateTimeout) were removed with item 5 (2026-11-02: "drop the device
+  // update inside contacts — updates are unified on the website now"): their only
+  // consumer was the contacts device row's inline echo, and after that face retired
+  // they had zero references repo-wide (grep-verified).
+  // `neblink.update` is also gone: its only consumer was the settings device area
+  // per row (fleet batch 2026-11-01), retired with the account card (2026-11-18).
+
+  // ── Fleet-wide unified update (fleet batch 2026-11-01: "one click brings every
+  //    device to the same version, with a status card guiding the whole way") ──
+  // Frames carry keys only (stageKey / failureKey / statusKey / capabilityKey);
+  // every display string lives here.
+  'fleet.title': 'Update all devices',
+  'fleet.subtitle': 'This device v{current} → target v{target} · stages: {stages}',
+  'fleet.stages': 'prepare → download → verify → switch → restart → self-check → done',
+  // Self-explaining batch (2026-11-04, rule 8, same family as the rule's counter-example 2):
+  // "please wait" / "this console is unavailable … resumes automatically" taught waiting and
+  // promised behaviour; what stays is the state fact (stage name + ETA).
+  'fleet.blocking': 'Updating — current stage "{stage}", {eta}.',
+  // Was "…waiting for it to come back (this page resumes automatically, no manual refresh
+  // needed)" — behaviour teaching plus a parenthetical. Now a state fact.
+  'fleet.reconnecting': 'This device is restarting — waiting to reconnect.',
+  'fleet.eta': 'ETA 3–5 minutes',
+  'fleet.empty': 'No devices to update right now.',
+  'fleet.close': 'Close',
+  'fleet.cancel': 'Stop',
+  'fleet.retry': 'Retry failed',
+  'fleet.startConfirm': 'Update everything',
+  'fleet.updateThisDevice': 'Update this device',
+  'fleet.thisDevice': 'this device',
+  'fleet.online': 'online',
+  'fleet.offline': 'offline',
+  'fleet.versionUnknown': 'version unknown',
+  'fleet.attempt': 'attempt {n}',
+  'fleet.manualTitle': 'Needs a manual update (too old or not remotely updatable)',
+  // `fleet.manualHow` removed (self-explaining batch 2026-11-04, rule 8 counter-example 1):
+  // it was the "open the console on that device → Settings → …" walkthrough. Why this row
+  // cannot be pushed is carried by the capability badge; the row keeps name + version.
+  'fleet.pendingTitle': 'Waiting for the device to come online (pushed automatically)',
+  'fleet.summary.counts': '{updated} updated, {failed} failed, {manual} need a manual update, {pending} waiting to come online',
+  'fleet.summary.all-consistent': 'All devices consistent',
+  'fleet.summary.manual-required': 'Some devices need a manual update',
+  'fleet.summary.pending-online': 'Some devices are waiting to come online',
+  'fleet.summary.out-of-sync': 'Versions are not unified yet (remotely updatable devices are listed)',
+  'fleet.job.running': 'in progress',
+  'fleet.job.completed': 'all done',
+  'fleet.job.partial': 'partially succeeded',
+  'fleet.job.cancelled': 'stopped',
+  'fleet.stage.queued': 'queued',
+  'fleet.stage.prepare': 'preparing',
+  'fleet.stage.download': 'downloading',
+  'fleet.stage.verify': 'verifying',
+  'fleet.stage.switch': 'switching',
+  'fleet.stage.restart': 'restarting',
+  'fleet.stage.healthcheck': 'self-check',
+  'fleet.stage.done': 'done',
+  'fleet.stage.failed': 'failed',
+  'fleet.stage.manual': 'manual update required',
+  'fleet.stage.waiting-online': 'waiting for the device',
+  'fleet.stage.cancelled': 'stopped',
+  'fleet.failure.download-failed': 'download failed',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the second clause ("update that
+  // device manually …") — the capability badge already states it (duplicate explanation).
+  // What stays is the failure closure: cause + next step, one sentence.
+  'fleet.failure.download-failed.advice': 'Try "Retry failed" after the network recovers.',
+  'fleet.failure.verify-failed': 'checksum/size check failed',
+  'fleet.failure.verify-failed.advice': 'Retry once; if it still fails the package source is wrong.',
+  'fleet.failure.switch-rolled-back': 'rolled back (the new version did not take hold)',
+  'fleet.failure.switch-rolled-back.advice': 'It rolled back to a working version and keeps serving; read that device log, then update it manually.',
+  'fleet.failure.healthcheck-failed': 'health check failed after restart',
+  'fleet.failure.healthcheck-failed.advice': 'Read that device log; once understood, use "Retry failed".',
+  'fleet.failure.device-lost': 'device unreachable',
+  'fleet.failure.device-lost.advice': 'Make sure the device is powered on and online, then use "Retry failed".',
+  'fleet.failure.device-refused': 'device refused the update',
+  'fleet.failure.device-refused.advice': 'Handle the reason shown above; devices that are too old need a manual update.',
+  'fleet.failure.unknown': 'unknown failure',
+  'fleet.failure.unknown.advice': 'Retry once; if it fails again, read that device log.',
+  'fleet.capability.self-reported': 'remotely updatable (self-reported)',
+  'fleet.capability.version-threshold': 'remotely updatable (version OK)',
+  'fleet.capability.version-too-old': 'manual update required (too old)',
+  'fleet.capability.unknown': 'manual update required (unknown version)',
+  'fleet.branch.push': 'push now',
+  'fleet.branch.manual': 'manual',
+  'fleet.branch.queued': 'push when online',
+
+  // Read-only signed-in display key `neblink.loggedInAs` ("Signed in as: {name}") was
+  // removed with the account card (2026-11-18 author ruling). The former switch/logout
+  // key group (switchAccount/logout/loggingOut/useOtherAccount/currentTag) is removed
+  // with the two buttons — sign-out and account switching live on the website portal.
+  // Sign-out key (2026-11 "no way out" fix batch, author ruling "fix only the
+  // sign-out"): shared by the settings account secondary key and the avatar
+  // menu item. Account switching still lives on the website portal only.
+  'neblink.logout': 'Sign out',
 
   // Dropbox
   'dropbox.tabChat': 'Chat',
   'dropbox.tabDesc': 'Description',
-  'dropbox.dropHint': 'Drop a file here, or click to select',
+  'dropbox.attachFile': 'Choose file',
   'dropbox.inputPlaceholder': 'Type a message…',
   'dropbox.send': 'Send',
   'dropbox.transferring': 'Transferring…',
@@ -843,13 +2586,46 @@ export default {
   'dropbox.saved': 'Saved',
   'dropbox.completed': 'Completed',
   'dropbox.failed': 'Transfer failed',
+  'dropbox.tooManyFiles': 'Too many attachments: {actual} selected, limit is {limit}',
+  'dropbox.fileTooLarge': 'File too large{name}: actual {actual} ({actualBytes} bytes), limit is {limit}',
+  'dropbox.notConnected': 'Not connected to the gateway — the file was not sent; please retry',
+  // ⑩ message-area status row (the area is never blank): no local cache + request
+  // in flight ⇒ loading; no cache and no in-flight request ⇒ empty.
+  'dropbox.loadingMessages': 'Loading messages…',
+  'dropbox.noMessages': 'No messages',
 
   // === Chat History Search ===
-  'search.btnTitle': 'Search chat history',
-  'search.title': 'Search Messages',
+  // Two-character title ruling (author order 2026-11-06, verbatim 「不要有省略
+  // 那就用搜索两个字吧」): the whole 「搜索聊天记录」-family wording retires —
+  // the search page title and the opener tooltip are just 「搜索」/「Search」.
+  'search.btnTitle': 'Search',
+  'search.title': 'Search',
   'search.placeholder': 'Keyword…',
   'search.scopeCurrent': 'Current session',
   'search.scopeAll': 'All sessions',
+  'search.scopeMain': 'Main session',
+  // === Messages/contacts expanding search (FAB unification + search batch, order 10-31 16:03) ===
+  'mhsearch.aria': 'Search',
+  'mhsearch.placeholder': 'Search chat history',
+  'mhsearch.clear': 'Clear',
+  'mhsearch.scopeAll': 'All',
+  'mhsearch.scopeFriend': 'Friends',
+  'mhsearch.scopeDevice': 'Devices',
+  'mhsearch.scopeGroup': 'Groups',
+  'mhsearch.searching': 'Searching…',
+  'mhsearch.resultCount': '{n} results',
+  'mhsearch.descHits': 'Profile matches · {n} chats',
+  'mhsearch.noResults': 'No matches',
+  'mhsearch.noResultsHint': 'Try a different keyword or scope',
+  'mhsearch.error': 'Search failed, try again later',
+  'mhsearch.capNote': 'Up to 1000 messages per segment',
+  'mhsearch.scanScope': 'Scanned {pages} pages',
+  'mhsearch.scanPartial': 'Partial results: stopped on a match or scan limit',
+  'mhsearch.scanFailed': 'Search partly failed or timed out; retry',
+  'mhsearch.fullScan': 'Search all messages (may be slow)',
+  'mhsearch.loadMore': 'Load more (this conversation)',
+  'mhsearch.me': 'Me',
+  'mhsearch.jumpFail': "Couldn't locate that message",
   'search.allTypes': 'All types',
   'search.allAgents': 'All agents',
   'search.anyTool': 'Any tool call',
@@ -858,22 +2634,39 @@ export default {
   'search.searching': 'Searching…',
   'search.progress': 'Searching {done}/{total} sessions…',
   'search.results': '{n} results',
-  'search.truncated': 'showing first {n}',
+  'search.loadedOf': '{n}/{m} loaded',
+  'search.loadMore': 'Load more ({n}/{m} loaded)',
+  // Batch open of multi-selected files in the Canvas panel (chatsearch-batch-open)
+  'search.openSelectedInCanvas': 'Open selected files ({n})',
+  'search.selectFiles': 'Select files',
+  'search.cancelSelection': 'Cancel selection',
+  'search.jumpArchived': 'Archived before compaction — no in-place row in the replay window',
   'search.noResults': 'No matching messages',
   'search.noResultsSuggestion': 'Try a shorter keyword or clear the date/type filters',
   'search.noSession': 'No active session',
   'search.failed': 'Search failed',
+  'search.timeout': 'Search timed out. Please retry.',
   'search.retry': 'Retry',
   'search.jumpFailed': 'Could not locate the message in the session',
   'search.typeUser': 'User',
+  // Agent-produced (injected blue bubble) is its own class — author ruling
+  // 2026-09-19 06:09 on search classification granularity.
+  'search.typeAgent': 'Agent',
   'search.typeAi': 'AI',
   'search.typeTool': 'Tool',
   // v3.1 tabs + date anchor (spec §6.2)
+  // v3.2 (#491 主题二 §6 candidate list): tabPop/tabImages removed,
+  // tabMedia/tabLinks + source/group keys added — verbatim from PLAN §6.
   'search.tabAll': 'All',
-  'search.tabImages': 'Images',
+  'search.tabMedia': 'Media',
   'search.tabFiles': 'Files',
-  'search.tabPop': 'Pop',
+  'search.tabLinks': 'Links',
   'search.tabDate': 'Date',
+  'search.sourceAll': 'All sources',
+  'search.sourceUser': 'User',
+  'search.sourceAgent': 'Assistant',
+  'search.groupThisWeek': 'This week',
+  'search.groupMonth': 'Month {n}',
   'search.emptyCategory': 'Nothing in this category yet',
   'search.datePickTitle': 'Pick a date',
   'search.dateClear': 'Clear date',
@@ -881,19 +2674,35 @@ export default {
   'search.dateCancel': 'Cancel',
   'search.toolDisabledHint': 'Tool filter not applicable in this tab',
   'search.dateDisabledInPop': 'Date anchor not applicable in Pop tab',
+  // v2 (2026-09-11): inline card body in a result row + detached message window
+  'search.cardUnavailable': 'Card content unavailable',
+  'search.cardRenderFailed': 'Card failed to render',
+  'search.cardLoadFailed': 'Card assets failed to load',
 
   // === Daemons (Heartbeat) ===
   'daemons.title': 'Heartbeat',
+  'daemons.pollEvery': 'Polls every 5 s',
   'daemons.empty': 'No heartbeats',
-  'daemons.emptyHint': 'Click + to add a heartbeat',
+  'daemons.emptyHint': 'Heartbeats are created by your Agent while it runs tasks (e.g. ask it to start a dev server) — for services that need to stay online.',
+  'daemons.emptyHint2': 'The host periodically probes the service port and relaunches the process about 10 seconds after it goes down.',
+  'daemons.emptyHint3': 'Typical uses: dev servers, scheduled jobs, continuous monitoring.',
   'daemons.start': 'Start',
   'daemons.stop': 'Stop',
   'daemons.restart': 'Restart',
   'daemons.restartFirst': 'Start first',
   'daemons.deleteTitle': 'Delete Daemon',
   'daemons.deleteConfirm': 'Delete daemon "{name}"?',
+  // daemonpanel Phase A — config panel (daemons.config* keys)
+  'daemons.config': 'Configure',
+  'daemons.configClose': 'Close',
+  'daemons.configSave': 'Save',
+  'daemons.configSaved': 'Saved',
+  'daemons.configEnabled': 'Enabled',
+  'daemons.configSecretHint': 'Leave "***" to keep the stored value; an empty field does not modify it.',
   // === Explorer (file tree multi-select) ===
   'explorer.selectedCount': '{count} selected',
+  // B1-1: accessible name for the role="tree" container
+  'explorer.treeLabel': 'File tree',
   'explorer.delete': 'Delete',
   'explorer.deleteN': 'Delete {count} Selected Items',
   'explorer.deleteTitle': 'Delete Files',
@@ -913,11 +2722,106 @@ export default {
   // === Canvas save feedback ===
   'canvas.saved': 'Saved {name}',
   'canvas.saveFailed': 'Failed to save {name}: {error}',
+  // === Text stream: save-cap visibility (author ruling ④, 2026-09-21) ===
+  'canvas.saveTooLarge': '{name} is too large to save (over 10MB per WS frame) — the change is NOT saved',
+  'canvas.saveTimeout': 'Save of {name} timed out — the change is NOT saved',
+  'canvas.saveBlockedNotice': 'Too large to save (over 10MB): editing will not be persisted',
+  // === Large text read-only streaming view (textstream batch, 2026-09-21) ===
+  'canvas.largeTextReadOnly': 'Large file · read-only',
+  'canvas.largeTextReadOnlyHint': 'Files over 8MB open in a read-only streaming view: only the visible window is fetched, so the whole file never enters the editor.',
+  'canvas.largeTextLoading': 'Loading window…',
+  'canvas.largeTextLines': '{count} lines',
+  'canvas.largeTextDrift': 'File changed on disk — reloading',
+  'canvas.largeTextRetry': 'Retry',
+  'canvas.largeTextLoadFailed': 'Stream failed: {error}',
+  'canvas.largeTextSearchPlaceholder': 'Search in file',
+  'canvas.largeTextSearching': 'Searching…',
+  'canvas.largeTextSearchHits': '{count} matches',
+  'canvas.largeTextSearchTruncated': '{count} matches (result truncated — refine the query)',
+  'canvas.largeTextPrevHit': 'Previous match',
+  'canvas.largeTextNextHit': 'Next match',
+  'canvas.largeTextGoToLine': 'Go to line',
+  // === Wiki document graph (wiki-graph side-panel batch, 2026-10-21 author
+  // order: canvas keeps the graph body + hover tooltip only; the LEFT COLUMN
+  // hosts the control face = search + dir chips + detail card + broken list
+  // + stats line) ===
+  'wiki.tabTitle': 'Wiki Graph',
+  'wiki.searchPlaceholder': 'Search titles or paths',
+  'wiki.remoteDevice': 'Lives on device: {device}',
+  'wiki.remoteFetchFailed': 'Could not fetch the document from the remote device',
+  'wiki.openGraphForDoc': 'Open in wiki graph',
+  'wiki.notInVault': 'This file is not inside a project docs vault (<workspace>/docs)',
+  'wiki.graphUnavailable': 'Wiki graph unavailable',
+  'wiki.kindAttachment': 'attachment',
+  'wiki.unresolved': 'Unresolved reference — no document with this name in any project vault',
+  'wiki.backlinks': 'Backlinks',
+  // Term citation batch 2 (hover bubble + back-to-source button)
+  'wiki.termSource': 'Source: ',
+  'wiki.termJumpHint': 'Click to jump',
+  // Term index block (term-system-v2 term face batch 2026-11-05): the doc-foot
+  // collapsible listing each cited term and the document it lives in.
+  'wiki.termIndexCount': 'Term index ({n})',
+  'wiki.backToSource': 'Back to source doc',
+  // Side control face (search/chips/detail card/broken list/stats line)
+  'wiki.chipAll': 'All',
+  'wiki.chipRoot': 'Root',
+  'wiki.infoDocs': '{docs} docs · {links} references · ',
+  'wiki.infoUnresolved': '{n} unresolved',
+  'wiki.inputHint': 'Scroll/pinch = zoom (cursor-anchored) · middle-drag/trackpad scroll/drag empty = pan',
+  'wiki.detailEmpty': 'Click a node in the graph to see its details here.',
+  'wiki.brokenTitle': 'Broken references',
+  'wiki.brokenVault': 'No readable docs vault for “{project}” yet — create <workspace>/docs and add markdown files.',
+  'wiki.brokenProject': 'Vault of “{project}” unreadable: {error}',
+  'wiki.tipDegree': 'cited by {in} · cites {out}',
+  'wiki.tipJump': 'Click to jump · highlight the paragraph',
+  'wiki.noSummary': '(no summary — first paragraph is the title or a list)',
+  'wiki.secToc': 'Contents',
+  'wiki.secOut': 'Cites',
+  'wiki.secIn': 'Cited by',
+  'wiki.emptyOut': 'No outgoing references',
+  'wiki.emptyIn': 'No incoming references',
+  'wiki.openDoc': 'Open document',
+  'wiki.closePreview': 'Close details',
+  'wiki.badgeDevice': 'Device: {device}',
+  'wiki.allProjects': 'All projects',
+  'wiki.kindVault': 'sub-graph',
+  'wiki.vaultDocCount': '{n} docs',
+  'wiki.vaultBlurb': 'A sub-project knowledge base — open it to see its own document graph.',
+  'wiki.enterVault': 'Open sub-graph',
+  'wiki.crossVault': '{n} cross-vault references',
+  'find.placeholder': 'Find in file',
+  'find.previous': 'Previous match (Shift+Enter)',
+  'find.next': 'Next match (Enter)',
+  'find.close': 'Close (Esc)',
+  'find.openInFile': 'Search in file (Ctrl/Cmd+F)',
+  // === Canvas external file drop / paste (canvasdrop, 2026-09-11 author rulings R1–R7) ===
+  'canvas.dropInserted': 'Inserted {ref}',
+  'canvas.dropBatchInserted': 'Inserted {count} image references',
+  'canvas.dropFailed': 'Insert failed: {error}',
+  'canvas.dropUnsupported': 'Unsupported type: {name} (droppable images: {types})',
+  'canvas.dropNotEditable': 'This is a preview / read-only view — switch to source view before dropping',
+  'canvas.dropNoTarget': 'No editable file here — drop inside the file being edited',
+  'canvas.dropTooLarge': '{name} exceeds the 20MB limit and was not written',
+  'canvas.dropOutsideRoot': '{name} was not written: the file lives outside the workspace, so the image cannot land next to it. Move the file into the workspace, or reference the original file path instead.',
+  'canvas.pasteInserted': 'Pasted and inserted {ref}',
+  'canvas.pasteUnsupported': 'Unsupported type: {name} (pasted images: {types})',
+  'canvas.pasteNotEditable': 'This is a preview / read-only view — switch to source view before pasting',
+  'canvas.pasteNoTarget': 'No editable file here — open a file and focus the cursor first',
+  'canvas.tabDropOpened': 'Opened {name}',
   // === Lightbox (image preview) ===
   'lightbox.ariaLabel': 'Image preview',
   'lightbox.close': 'Close preview',
   'lightbox.loading': 'Loading…',
   'lightbox.loadError': 'Failed to load image',
+  'lightbox.clickHint': 'Click to view the full-size image',
+  // Mobile image gallery (mobile-image-lightbox batch 2026-11-17): the explicit
+  // secondary entry keeping the P16 direct-open capability.
+  'lightbox.openTab': 'Open in a tab',
+  // Diagram viewer (mermaid-viewer-stability batch 2026-11-06)
+  'lightbox.diagramLabel': 'Diagram viewer',
+  'lightbox.zoomIn': 'Zoom in',
+  'lightbox.zoomOut': 'Zoom out',
+  'lightbox.zoomFit': 'Fit to view',
 
   // === Usage dashboard (token consumption dashboard, spec §7.5) ===
   'usage.title': 'Usage Dashboard',
@@ -950,7 +2854,7 @@ export default {
   'usage.today': 'Today',
   'usage.weekTrend': 'Week-over-week',
   'usage.cacheHitRate': 'Cache hit rate',
-  'usage.cacheHitRateHint': 'Target 96%+ (current baseline ~94%)',
+  'usage.cacheHitRateHint': 'Target 96%+',
   'usage.cacheHitRateNoData': 'No cache data',
   'usage.noCacheReported': 'Provider does not report cache data',
   'usage.topAgent': 'Top agent',
@@ -993,12 +2897,14 @@ export default {
   'usage.legend.hitRate': '— · 25% · 50% · 75% · 100%',
   'usage.weekLabel': '{dir}{pct}% vs last week',
   'usage.noData': '—',
-  'perm.fallbackTitle': '{agent} requests permission (target session unreachable)',
-  'perm.fallbackApprove': 'Approve',
-  'perm.fallbackDeny': 'Deny',
+  'perm.retargetNote': 'target session {from} was unreachable — rerouted here',
 
   // === UI remnant localization (activity bar / panel titles / empty states) ===
   'activity.login': 'Login',
+  // The two logged-in hover strings (2026-09-16 login-entry batch): renderAvatar
+  // used to write them as Chinese literals, clobbering the i18n'd activity.login.
+  'activity.profile': 'Profile',
+  'activity.pairing': 'Pairing…',
   'activity.usage': 'Usage Dashboard',
   'activity.agents': 'Agents',
   // 2026-09-04 (part B): agents entry becomes the Plugins page (en/zh paired)
@@ -1022,33 +2928,54 @@ export default {
   'agentManager.noAgents': 'No agents configured',
   'agentManager.saved': 'Saved',
   'agentManager.save': 'Save',
-  // === Plugins page (2026-09-04 redesign: unified plugin system + one switch per plugin, en/zh paired) ===
+  'agentManager.builtinNote': 'Built-in agent: the system prompt is defined in code (read-only); the model chain is adjustable in the /model panel',
+  // === Plugins page (2026-09-13 no-gate batch: presence-trust; 2026-09-14 panel-convergence
+  //     batch: block/unblock UI fully retired + dispatch switch renamed «Dispatcher visibility»
+  //     and moved to the card's top-right, en/zh paired) ===
   'plugins.list': 'Plugins',
-  'plugins.listHint': 'Unified plugin system: skills and MCP enable per plugin — the switch is catalog visibility',
-  'plugins.agents': 'Agents',
-  'plugins.agentsHint': 'Click an agent row to open its detail editor (tools / prompt / flows)',
+  'plugins.listHint': 'Unified plugin system: skills and MCP enable per plugin. Installed plugins are ready to use. This switch only affects what the dispatcher sees for FUTURE dispatches (nodes already running keep their grant); stopping a plugin goes through the API / CLI (the panel offers no block entry)',
   'plugins.empty': 'No plugins',
-  'plugins.stateOn': 'Enabled',
-  'plugins.stateOff': 'Off',
-  'plugins.switchLabel': 'Plugin enable switch',
-  'plugins.switchEnableTitle': 'Enable (approves the current content)',
-  'plugins.switchReenableTitle': 'Re-enable (approves the new content)',
-  'plugins.switchDisableTitle': 'Disable (revoke trust)',
-  'plugins.changedHint': 'Content changed since approval — re-enabling approves the new content',
-  'plugins.offHint': 'Off (default-deny) — enabling approves the current content',
+  'plugins.stateBlocked': 'Blocked',
+  'plugins.blockedHint': 'Blocked — this plugin is out of the dispatcher catalog and will not be dispatched. Unblocking goes through the API / CLI (no panel entry).',
+  'plugins.dispatchLabel': 'Dispatcher visibility',
+  'plugins.dispatchOnTitle': 'Dispatch permission ON — this plugin may be assigned to NEW nodes. Click to stop future dispatches; nodes already running keep their grant',
+  'plugins.dispatchOffTitle': 'Dispatch permission OFF — this plugin is not assigned to new nodes. Click to allow future dispatches again',
+  'plugins.dispatchBlockedBlocked': 'Blocked — this switch cannot take effect; unblock via the API / CLI (the panel has no entry for this)',
+  'plugins.dispatchBlockedTransition': 'A temporary dispatch grant is active — this switch only takes effect once the grant expires or is cleared',
+  'plugins.uninstall': 'Uninstall',
+  'plugins.uninstallTitle': 'Uninstall plugin',
+  'plugins.uninstallConfirm': 'Uninstalling "{name}" removes it from the plugin registry and it will not be reinstalled automatically. Confirming also deletes its plugin directory (local data is unrecoverable); alternatively disable only and keep the directory.',
+  'plugins.uninstallDeleteLabel': 'Uninstall & delete directory',
+  'plugins.uninstallKeepLabel': 'Disable only (keep directory)',
+  'plugins.uninstalled': 'Uninstalled {name}',
+  'plugins.migratedHint': 'This package name has been migrated: "{name}" is now installed as "{newName}". Delete the old directory (~/.stand/plugins/{name}/) and reinstall under the new name.',
   'plugins.author': 'by {author}',
   'plugins.compositionSkills': '{n} skill(s)',
   'plugins.compositionMcp': 'MCP: {servers}',
   'plugins.compositionTools': 'builtin tools +{n}',
-  'plugins.skillPreviewTitle': 'Expand skill previews',
+  'plugins.statSkills': '{n} skills',
+  'plugins.statMcp': '{n} MCP',
   'plugins.rejected': 'Rejected',
-  'plugins.noAgents': 'No agents configured',
   'plugins.loading': 'Loading...',
   'plugins.loadFailed': 'Failed to load plugin registry: {error}',
+  'plugins.authRequired': 'Not signed in — sign up or log in to use plugins',
+  'plugins.relogin': 'Log in',
+  'plugins.builtinBadge': 'built-in',
+  'plugins.builtinTitle': 'Built-in agent: defined in code (BuiltinAgents); the panel is read-only',
   'plugins.detail': 'Details',
-  'chatQueue.dragReorder': 'Drag to reorder',
-  'chatQueue.clickExpand': 'Click to expand',
-  'chatQueue.clickCollapse': 'Click to collapse',
+  // Source-managed plugins (2026-11-01 source batch: "runtime plugins should hot-update").
+  // Rendered only for packages that carry a source declaration — seed packages are unchanged.
+  'plugins.sourceLabel': 'Source {source} · v{version} · {state}',
+  'plugins.sourceCurrent': 'up to date',
+  'plugins.sourceOutdated': 'update available',
+  'plugins.sourceUnreachable': 'source unreachable, keeping the local version',
+  'plugins.sourceNotInstalled': 'not installed',
+  'plugins.sourceUpdate': 'Update',
+  // Self-explaining batch (2026-11-04, rule 8): dropped the parenthetical "(zero restart;
+  // the local version stays if this fails)" — capability claim + behaviour promise. The
+  // version-migration fact v{from} → v{to} stays.
+  'plugins.sourceUpdateTitle': 'Pull and activate: v{from} → v{to}',
+  'plugins.sourceUpdated': '{name} updated',
   'explorer.loading': 'Loading...',
   'explorer.empty': 'Empty',
   'flowViewers.saving': 'Saving…',
@@ -1087,8 +3014,27 @@ export default {
   'agentManager.systemPrompt': 'System Prompt',
   'agentManager.viewSource': 'View source',
   'agentManager.viewRendered': 'View rendered',
+  // prompt-panel batch (2026-10-09): builtin nebflow detail page prompt face tabs —
+  // delegate face (default) + node face. Labels only; prompts come from the
+  // `promptFaces` field of GET /api/agents/:name (BuiltinAgents.panelPromptFaces).
+  'agentManager.faceDelegate': 'Delegate target',
+  'agentManager.faceNode': 'Node (flow node)',
+  'agentManager.faceDelegateHint': 'System prompt carried by delegate sessions (delegate terminal semantics).',
+  'agentManager.faceNodeHint': 'System prompt carried by flow-node sessions (node terminal-report discipline).',
   'explorer.newFile': 'New File',
   'explorer.newFolder': 'New Folder',
+  // === ui-device-faces batch (2026-10-10): face B — remote directories in the file browser ===
+  'explorer.loadingRemote': 'Loading directories on {device}…',
+  'explorer.listTimeout': 'Directory listing timed out (network congestion or reconnect) — retry to reload',
+  'explorer.retry': 'Retry',
+  'explorer.pickupLoading': 'Fetching…',
+  'explorer.pickupFailed': 'Fetch failed',
+  'explorer.pickupClose': 'Close',
+  'explorer.pickupCancel': 'Cancel',
+  'explorer.pickupStalled': 'Stalled — cancellable',
+  'explorer.remoteReadonly': 'Remote directories are read-only; write actions are unavailable.',
+  // === picker-device-switch batch (2026-10-30): explorer device switch button ===
+  'explorer.deviceSelectAria': 'Switch browsing device',
   'daemons.delete': 'Delete',
   // === Workspace picker card + in-app directory browser (workspace-picker batch) ===
   'workspacePicker.pickTitle': 'Pick Workspace',
@@ -1107,4 +3053,512 @@ export default {
   'workspacePicker.empty': 'Empty folder',
   'workspacePicker.readFail': 'Cannot read directory',
   'workspacePicker.mkdirFail': 'Failed to create folder',
+  // pickeruni batch: the retired project-directory picker's copy keys relocated
+  // into workspacePicker.* (values verbatim unchanged)
+  'workspacePicker.projectTitle': 'Select Project Directory',
+  'workspacePicker.clear': 'Clear',
+  'workspacePicker.gotoPlaceholder': 'Type a path to jump, e.g. ~/Downloads',
+  'workspacePicker.go': 'Go',
+  'workspacePicker.searchPlaceholder': 'Search in this folder (server-side filter)',
+  'workspacePicker.noMatch': 'No subdirectory matches "{query}"',
+  'workspacePicker.truncated': '{count} more not shown (of {total})',
+  'workspacePicker.hint.truncated': 'Type a path to jump to it, or filter with the search box',
+  'workspacePicker.hint.empty': 'Type a path to jump there, or go up one level',
+  'workspacePicker.hint.noMatch': 'Clear the search box to restore all; or type a path to jump',
+  'workspacePicker.error.invalid': 'Invalid path',
+  // === ui-device-faces batch (2026-10-10): picker device mode (remote leg, read-only) ===
+  'workspacePicker.deviceTitle': 'Choose a directory on {device}',
+  'workspacePicker.deviceNote': 'Remote directories are read-only — the directory must already exist (missing items are reported, never created).',
+  // Device share-whitelist denial = expected readable state (2026-10-30 fix-1 batch,
+  // "start from the home directory"): localized "not shared + the way out" copy in
+  // place of the peer's raw English error.
+  'workspacePicker.deviceShareDenied': 'This directory is not shared by {device} — remote browsing is limited to registered project workspaces, captures and uploads on it. To browse other locations such as the home directory, add them to that device\'s deviceShare.extraPaths config and retry.',
+  // === picker-device-switch batch (2026-10-30): in-picker device switcher row ===
+  // thisDevice = fallback label when the roster self name is unavailable (never the
+  // bare string "local"); offline tag / menu foot reuse project.deviceOfflineTag /
+  // project.deviceMenuFoot (reuse-before-create).
+  'workspacePicker.thisDevice': 'This device',
+  'workspacePicker.deviceSelectAria': 'Choose which device to browse',
+
+  // === Device-conversation server switch, MVP-2 (2026-09-15): device receipts ===
+  // 🔴 `messages.deviceRetention`（P10 留存明示句）已删 —— 作者 2026-09-15 令
+  // ⑤b「不要显示 Cloud keeps messages for 7 days; this device keeps them
+  // permanently. 这样的信息」⇒ 渲染点、双语键、CSS 规则同批删除（禁死键）。
+  'messages.deviceDescSaveFailed': 'Could not save the device description.',
+  'messages.deviceSent': 'Sent',
+  'messages.deviceRead': 'Read',
+  // === friend/group receipt slot (R5 two cells · source contract v1.2) ===
+  // 🔴 The only new copy in this batch (2 keys; see the report's copy declaration):
+  // the contract §1.1 bubble wording `read {readCount}/{memberCount}` for groups,
+  // plus the same derivation's delivered count. Direct/device faces add none.
+  'messages.receiptReadCount': 'Read {read}/{total}',
+  'messages.receiptSentCount': 'Sent {sent}/{total}',
+  'messages.deviceServerUnavailable': 'Server history unavailable — showing this device\'s local history.',
+  'messages.deviceSendFailed': 'Message not sent. Nothing was lost — try again.',
+  'messages.deviceSendUnavailable': 'This device\'s identity is unavailable — sending is off.',
+
+  // === Device-conversation unification, MVP-1 (2026-09-15): panel title / device section / device rows ===
+  'contacts.sectionDevices': 'Devices',
+  'contacts.devicesEmpty': 'No other devices',
+  'messages.deviceTag': 'Device',
+
+  // === ctxthresh batch (Nebula-window compaction threshold): `ctxthresh.title`
+  // (the ring's aria-label) was removed with the 2026-10-23 context-usage
+  // display retirement — author order verbatim 「把桌面端的上下文用量显示也去掉」.
+  // Anti-revival pin: tests/remove-context-usage.spec.mjs. ===
+
+  // === Bundled-content localization (contenti18n batch, 2026-09-15) ===
+  // Range = the default install set only (seed/manifest.json items: 3 plugins +
+  // 4 agents = 7 entries). Keys are `content.<kind>.<id>.<field>`;
+  // the resolver + fallback chain (locale → en → server value) lives in
+  // js/contentI18n.js. zh values are the server values VERBATIM (no semantic
+  // rewrite); en values are translations. Keep en/zh key sets symmetric —
+  // scripts/verify-i18n-sweep.cjs asserts Object.keys(zh).length === Object.keys(en).length.
+  'content.agent.project-dispatcher.name': 'project-dispatcher',
+  'content.agent.project-dispatcher.desc': 'Project task dispatcher — splits a batch of work into several executable nodes, arranges their order and dependencies, and gathers the results once the nodes are done.',
+  // P1-2 batch registration (2026-10-03): the two pairs below name the retired
+  // general/kernel agents. This file is a DISPLAY-ONLY dictionary (contentI18n.js
+  // states so: the server keeps sending its original signal values and the client
+  // picks a string per locale), it never enters the LLM context; and after the
+  // builtin-merge batch the server produces neither agent id, so the keys have
+  // zero consumers. Kept under the "display/comment face — register and defer"
+  // rule; deletion belongs to the comment/text cleanup batch (the kernel line
+  // also cites the deleted `AgentCore.KernelFixedTools` constant).
+  'content.agent.general.name': 'general',
+  'content.agent.general.desc': 'General-purpose execution agent — its capabilities are determined by the plugins assigned to it',
+  'content.agent.kernel.name': 'kernel',
+  'content.agent.kernel.desc': 'Minimal kernel (Delegate kernel): the one-shot task executor that the main agent dispatches via Delegate — six base tools (Read/Write/Edit/Glob/Grep/Bash, all supporting device= for remote) plus AskUserQuestion, seven in total; no project context, no memory, and it does not dispatch sub-agents. Used for tasks that belong to no project ∧ require real execution ∧ are one-shot. Its tool surface is fixed by mechanism (AgentCore.KernelFixedTools = BaseTools + AskUserQuestion; the tools/skills declarations in this file are wholly inert because ConvergedAgentNames includes kernel).',
+  'content.plugin.visual-report.name': 'visual-report',
+  'content.plugin.visual-report.desc': 'Visual reporting and human-readable report pack — nodes gain the ability to produce charts with professional tools (matplotlib/graphviz/plotly), turn a human-readable report into a one-screen conclusion a person can read, and deliver artifacts to disk with an absolute path (display and opening belong to the main agent; Pop is not invoked). Use for drawing charts, architecture diagrams and flow diagrams, data visualization, producing figures for a document, visual briefings, writing reports meant for people, delivery documents, acceptance reports, research reports, retrospective reports, summaries written for the project owner, compressing an over-long report, and keeping process artifacts separate from deliverables. Bundles skill: visual-report (chart / architecture-diagram / flow-diagram generation rules: palette, typography, annotation, layout aesthetics, a budget of at most 3 figures per document; human-readable delivery conventions: four-part skeleton, length budget; md rules: inline images, jumpable tables of contents, LaTeX formulas). Not for packaging plugins (use nebflow-plugin-creator); for HTML card styling use design-cards. Component surface: no mcp.json, no tool extensions.',
+  'content.plugin.slideblocks.name': 'slideblocks',
+  'content.plugin.slideblocks.desc': 'SlideBlocks presentation pack — nodes gain the end-to-end discipline for building from scratch or improving a complete slide deck with Slidev (slides, deck, presentation). Use for making a deck, writing a presentation, producing slides, improving an existing deck, or rebuilding a presentation in Slidev. Bundles skill: slideblocks (the full Blocks/Decks/Recipes pipeline, execution lock, delivery validation). Not for HTML cards or social-image design (use the design-cards plugin). Component surface: no mcp.json, no tool extensions.',
+  'content.plugin.nebflow-plugin-creator.name': 'nebflow-plugin-creator',
+  'content.plugin.nebflow-plugin-creator.desc': 'Plugin packager — nodes gain the full-pipeline ability to package a capability requirement into a compliant plugin pack (three-input analysis → pack generation → mechanical self-check → delivery self-check that takes effect once written to disk). Use for packaging an existing skill or capability into a plugin, building a new plugin that does Y, writing plugin.json and SKILL.md, running a quality review of a plugin description, or running the pack validation script. Bundles skills: plugin-packaging (the three-input → generate → self-check → deliver packaging pipeline, including the handling of six forks such as name collisions and digest drift, the pre-delivery self-check, and the origin/digest reporting convention) and description-quality (the five-part manifest description spec: templates, good and bad examples, the M1-M15 criteria, and how to bound the core vocabulary). Verification and quality-review tasks use the qa plugin instead. No mcp.json, no tool extensions.',
+  'content.project.general.name': 'general',
+  'content.project.general.desc': 'General-purpose project for executing general tasks: any domain, one-off or recurring; the main agent dispatches, nodes execute.',
+
+  // === Bundled-content localization — default-set SKILL descriptions
+  // (skillsi18n batch, 2026-09-15; pure data, zero code change) ===
+  // Range = the skills of the 3 default-install-set plugins (seed/manifest.json
+  // items, 4 skills: visual-report/visual-report,
+  // slideblocks/slideblocks, nebflow-plugin-creator/{description-quality,
+  // plugin-packaging}). Key form = `content.skill.<plugin>/<skill>.desc`, i.e.
+  // the skill id as PluginRegistry emits it (`s"$pname/${sd.last}"`), resolved
+  // at the render point js/plugins.js:248. 3 entries carry a zh server value ⇒
+  // zh side verbatim, en side translated; slideblocks/slideblocks carries an en
+  // server value ⇒ en side verbatim, zh side translated (IO-A: the side that
+  // owns the source language mirrors the server value verbatim).
+  'content.skill.nebflow-plugin-creator/description-quality.desc': 'Operating manual for the {brand} plugin manifest description spec — the five-part description as the single source of description, the method for bounding the core trigger vocabulary (all-hit determination), the M1-M15 criteria, and four worked good/bad examples; work through it item by item when writing or reviewing a plugin.json description.',
+  'content.skill.nebflow-plugin-creator/plugin-packaging.desc': 'Execution manual for packaging a capability requirement into a compliant {brand} plugin pack — the whole pipeline (three-input form determination: migrating an existing skill / MCP server configuration / a spoken capability description → generation → mechanical self-check → delivery), including the handling of six forks and the \'takes effect once written to disk\' delivery convention; follow this manual when a node is assigned a packaging / build-a-plugin task.',
+  'content.skill.slideblocks/slideblocks.desc': 'Autonomously create or improve complete, polished Slidev presentations with SlideBlocks from short requests and mixed materials including PDF, Word, web pages, Markdown, spreadsheets, images, brand assets, and PowerPoint source decks. Use when the user wants a presentation made, migrated to Slidev, redesigned, extended, or improved; needs a full deck for a report, pitch, review, lesson, launch, decision, or talk; wants SlideBlocks Blocks, Decks, or Recipes; or provides materials and simply asks to make them into a PPT. Do not use when the required final deliverable is any PPT/PPTX or Office file, for general Office editing, or for non-Slidev presentation runtimes.',
+  'content.skill.visual-report/visual-report.desc': 'Visual reporting toolkit. Generate SVG figures with professional tools (matplotlib/graphviz/plotly and the like); after writing them to disk, give the absolute path in the delivery text (display belongs to the main agent — nodes do not invoke Pop). Use when you need to draw charts, architecture diagrams or flow diagrams, when you need data visualization, or when you need a visual report.',
+
+  // === Social interface cards (socpanel batch, 2026-09-19) — pure append ===
+  // Key-for-key mirror of the zh-CN block (gate: equal key sets, both sides
+  // non-empty). Definition/data lives in js/socialChannels.js.
+  // 🔴 Phase 1 opens no real channel. Keep this text free of the
+  //    fake-connection vocabulary (W6). The remote-access face is HELD for the
+  //    author ruling (O1–O5): no link, no QR code, no guessed address.
+  'social.title': 'Social channels',
+  'social.btn.title': 'Phone access — social channel configuration',
+  'social.remote.title': 'Phone remote access',
+  'social.remote.suspended': 'Remote access from your phone is not available yet.',
+  'social.remote.safetyKey': 'Security boundary: a remote-access link is equivalent to an access credential — never forward it to anyone.',
+  'social.remote.safetyPlain': 'Plain HTTP: not encrypted on the local network — trusted networks only.',
+  'social.action.save': 'Save configuration',
+  'social.action.saving': 'Saving…',
+  'social.action.saved': 'Saved',
+  'social.action.saveFailed': 'Save failed ({code})',
+  'social.action.notReady': 'Channel state not loaded yet — reconnecting, please retry',
+  'social.action.recheck': 'Check again',
+  'social.action.close': 'Close',
+  // social-fix-confirm (author order 2026-10-09, §16-collected): the unbind
+  // glass confirm — {name} carries the channel display name; the confirm
+  // button reuses each channel's existing archive.action word.
+  'social.archive.confirmTitle': 'Unbind',
+  'social.archive.confirmMsg': 'After unbinding, the channel must be scanned in again. Unbind "{name}"?',
+  'social.secret.placeholder': 'Paste the credential (never echoed back)',
+  'social.secret.stored': 'Written · not echoed',
+  'social.secret.empty': 'Not written',
+  // social-fix (author ruling 2026-09-28): the mechanical probe line is
+  // retired from the UI — the same probe face renders as two plain-language
+  // states now (internal triples unchanged: data source untouched, render
+  // layer only).
+  'social.credential.missing': 'Credential missing — scan to create again',
+  'social.hint.missingRef': 'Referenced file does not exist: {path}',
+  'social.hint.modeBad': 'Wrong permissions (expected rw-------): {path}',
+  'social.hint.pattern': 'Field format mismatch: {field}',
+  // 'social.hint.health' retired 2026-10-29 (author ruling: process self-heal
+  // states render nothing on the user face) — seal: UserFaceProcessStateSealSpec.
+  'social.status.notConfigured': 'Not configured',
+  'social.status.configuredNotLinked': 'Configured · not linked',
+  'social.status.configInvalid': 'Invalid configuration',
+  'social.status.connected': 'Connected',
+  'social.status.failed': 'Failed',
+  'social.wechat.name': 'WeChat',
+  'social.wechat.desc': 'Credential set for a WeChat official account. This phase stores the configuration only — no outbound channel is opened.',
+  'social.wechat.field.appId': 'App ID',
+  'social.wechat.field.appSecret': 'App secret',
+  'social.wechat.field.token': 'Verification token',
+  'social.wechat.field.aesKey': 'Encoding AES key',
+  // wechat-ilink (chain-wechat-impl, author ruling 2026-09-30, option (B)): the
+  // separate iLink channel id, coexisting with the official-account card above.
+  // weixin-scanbind (author directive 2026-10-03): the card is unsealed and
+  // joins the scanBind family — scan/archive copy added, same shape as feishu.
+  'social.weixinIlink.name': 'WeChat (iLink)',
+  'social.weixinIlink.desc': 'WeChat iLink bot: scan to store the credentials — messages land in the bound session.',
+  'social.weixinIlink.field.botToken': 'Bot token',
+  'social.weixinIlink.field.ilinkBotId': 'Bot ID',
+  'social.weixinIlink.field.ilinkUserId': 'Signed-in user ID',
+  'social.weixinIlink.field.baseurl': 'API base URL',
+  'social.weixinIlink.field.sidecarUrl': 'Side-car URL (optional)',
+  'social.weixinIlink.field.allowedIlinkUserIds': 'Sender allowlist (optional)',
+  'social.weixinIlink.scan.starting': 'Requesting a QR code…',
+  'social.weixinIlink.scan.waiting': 'Scan with WeChat, then confirm on your phone',
+  'social.weixinIlink.scan.confirmed': 'Confirmed on the phone — writing the credentials…',
+  'social.weixinIlink.scan.done': 'Bot signed in — credentials stored',
+  'social.weixinIlink.scan.failed': 'Scan-bind failed: {reason}',
+  // scan-bind 403 family close-out (2026-10-22): 401/403 no longer misreports
+  // 'io' — the card says the session expired (sessionGate banner + heal reload
+  // take over).
+  'social.scan.authExpired': 'Session expired — re-entering the console…',
+  'social.weixinIlink.scan.userCode': 'Confirmation code: {code}',
+  'social.weixinIlink.scan.qrFallback': 'If the code does not display, open this link on your phone:',
+  'social.weixinIlink.archive.action': 'Unbind',
+  'social.weixinIlink.archive.doing': 'Unbinding…',
+  'social.weixinIlink.archive.done': 'Unbound — credentials kept',
+  'social.weixinIlink.archive.hint': 'Unbind: stops the channel and returns the card to the not-created state. Credentials are kept — nothing is deleted.',
+  'social.feishu.name': 'Feishu',
+  // social-fix (2026-09-28): the manual-fill instruction is gone with the form.
+  'social.feishu.desc': 'Once a session is bound, Feishu messages enter it and replies go back the same way. Every tenant member can reach the gateway by default.',
+  'social.feishu.field.appId': 'App ID',
+  'social.feishu.field.appSecret': 'App secret',
+  'social.feishu.field.verificationToken': 'Verification token',
+  'social.feishu.field.encryptKey': 'Encrypt key (optional)',
+  'social.feishu.field.allowedOpenIds': 'Member allowlist (optional)',
+  'social.feishu.field.region': 'Region',
+  'social.feishu.region.feishu': 'Feishu (China)',
+  'social.feishu.region.lark': 'Lark (international)',
+  // feiscanbind (2026-09-27): scan-to-create copy (§16-collected).
+  // social-fix (2026-09-28): the QR block lives INSIDE the card — no
+  // sub-dialog title, no scan action button, no manual fallback.
+  'social.feishu.scan.starting': 'Requesting a QR code…',
+  'social.feishu.scan.waiting': 'Scan with the Feishu app, then confirm on your phone',
+  'social.feishu.scan.confirmed': 'Confirmed on the phone — creating the app…',
+  'social.feishu.scan.done': 'App created and connected',
+  'social.feishu.scan.failed': 'Scan-bind failed: {reason}',
+  'social.feishu.scan.userCode': 'Confirmation code: {code}',
+  'social.feishu.scan.qrFallback': 'If the code does not display, open this link on your phone:',
+  'social.feishu.archive.action': 'Unbind',
+  'social.feishu.archive.doing': 'Unbinding…',
+  'social.feishu.archive.done': 'Unbound — credentials kept',
+  'social.feishu.archive.hint': 'Unbind: stops the bridge and returns the card to the not-created state. Credentials are kept — nothing is deleted.',
+  'social.feishu.defaultSession.saved': 'Default session saved',
+  'social.feishu.defaultSession.saveFailed': 'Save failed ({code})',
+  'social.telegram.name': 'Telegram',
+  'social.telegram.desc': 'Credential set for a Telegram bot. This phase stores the configuration only — no outbound channel is opened.',
+  'social.telegram.field.botToken': 'Bot token',
+  'social.telegram.field.chatId': 'Target chat ID',
+  'social.telegram.field.apiBase': 'API base URL',
+  // secrets-frontend (2026-09-27): the standalone secrets dialog (§16-collected
+  // copy). 行内化 (author ruling 2026-10-09 07:42): the editor modal and the
+  // FAB are retired — everything happens inline in the rows. The value field
+  // shows placeholder dots at rest; the eye fetches the single authenticated
+  // read on demand and re-masking clears it back to the placeholder; the list
+  // and every other copy stay value-free (secrets-readback batch, 2026-10-09).
+  'secrets.title': 'Secrets',
+  'secrets.close': 'Close',
+  'secrets.tailAdd': '＋ Add Secret',
+  'secrets.name': 'Name',
+  'secrets.nameHint': 'Lowercase service-purpose, e.g. aliyun-oss',
+  'secrets.value': 'Value',
+  'secrets.dotsPlaceholder': '••••••',
+  'secrets.showValue': 'Show value',
+  'secrets.hideValue': 'Hide value',
+  'secrets.rowHint': 'Click to edit in place',
+  'secrets.overwriteHint': 'Typing overwrites the stored value — Enter or Save commits; clicking away saves and collapses; Esc discards and collapses.',
+  'secrets.valuePlaceholder': 'Paste the value. You can view and edit it later from this panel.',
+  'secrets.delete': 'Delete',
+  'secrets.save': 'Save',
+  'secrets.saved': 'Saved ✓',
+  // The two-state permission badge keys are retired with the badge itself
+  // (层级收进批, author ruling 2026-11-01: the badge concept is gone; en/zh
+  // drop the same keys in the same batch).
+  'secrets.referencedBy': 'Referenced by {refs}',
+  // 可查询批 (author ruling 2026-11-18 21:31): description + keyword tags +
+  // the query-face copy. Same key set as zh-CN, same batch.
+  'secrets.searchPlaceholder': 'Search name, description, tags or consumers…',
+  'secrets.description': 'Description',
+  'secrets.descriptionPlaceholder': 'What is this credential for? (queryable; not a value)',
+  'secrets.tags': 'Tags',
+  'secrets.tagsPlaceholder': 'Keyword tags, comma separated, e.g. cloud, deploy',
+  'secrets.path': 'Path',
+  'secrets.count': '{n} secret(s)',
+  'secrets.countFiltered': '{n} of {total} secret(s)',
+  'secrets.clearFilters': 'Clear filters ✕',
+  'secrets.noMatch': 'No secrets match. Try another keyword, or clear the filters to see all.',
+  'secrets.deleteTitle': 'Delete secret',
+  'secrets.deleteConfirm': 'This cannot be undone. Delete "{name}"?',
+  'secrets.deleteConfirmRefs': '"{name}" is referenced by: {refs}. Deleting breaks them. This cannot be undone.',
+  'secrets.empty': 'No secrets yet. Add one and services or agents can reference it by path — values stay viewable and editable from this panel.',
+  'secrets.invalidName': 'Use lowercase letters, digits, ".", "-", "_" — start with a letter or digit, at most 64 characters.',
+  'secrets.reservedName': 'Names starting with "social-" or "daemon-" are managed by their own panels.',
+  'secrets.error.notFound': 'That secret no longer exists — it may have been deleted elsewhere.',
+  'secrets.error.conflict': 'The secret already exists, or is still referenced. Resolve the reference before deleting.',
+  'secrets.error.emptyValue': 'Enter a value first.',
+  'secrets.error.io': 'Secrets request failed ({code}). Check the gateway connection and try again.',
+  // === Phase 3b session rail: paste-ticket entry (ws.js stage B) ===
+  // Shown when the WS handshake is rejected and no long-lived credential can
+  // rescue it (the tokenized startup URL no longer exists). The user pastes a
+  // one-time console ticket (CLI: `nebflow token`); the redemption face
+  // (?ticket=) exchanges it for an HttpOnly session cookie.
+  'ws.ticketEntry.notify': 'Sign-in required — click the sign-in button to continue with your {lowerBrand} account',
+  // Turn activity strip (activity.title/activity.count, conversation-liveness
+  // batch 2026-10-22) fully retired — author order 2026-10-23 verbatim
+  // 「这个活动面板我不是让删掉吗，就是对话框上面这个」.
+  // Anti-resurrection pin: tests/turn-activity-stream.spec.mjs.
+  // === mobile-mockup-375 v3 implementation batch (mockup 20261020_214500) ===
+  // Profile panel (extension 3: header avatar entry + avatar/name quick settings)
+  'profile.title': 'Agent',
+  'profile.openAria': 'Agent profile',
+  'profile.closeAria': 'Close',
+  'profile.upload': 'Upload avatar',
+  'profile.nameLabel': 'Name',
+  'profile.namePlaceholder': 'Type a name, press Enter to save',
+  'profile.note': 'Avatars are saved locally first (per agent), then synced to every signed-in device of this engine; names save on Enter (across devices).',
+  // Task panel (v3.5: secondary-liquid task surface)
+  'taskpanel.title': 'Tasks',
+  'taskpanel.collapse': 'Collapse',
+  'taskpanel.stats': '{n} · {run} running',
+  'taskpanel.grpRunning': 'Running',
+  'taskpanel.grpQueued': 'Queued',
+  'taskpanel.empty': 'No tasks yet',
+  // ── To-do list face (ReminderIsland replica batch 2026-11-02; L10n pairs ported verbatim) ──
+  'todoface.aria': 'To-do list',
+  'todoface.capsuleCount': '{n} to-dos',
+  'todoface.overdue': '{n} overdue',
+  'todoface.filter': 'Filter',
+  'todoface.collapse': 'Collapse',
+  'todoface.all': 'All',
+  'todoface.add': 'Add reminder',
+  'todoface.done': 'Done',
+  'todoface.titlePh': 'Title',
+  'todoface.notesPh': 'Notes (optional)',
+  // Two-field split (todo name+detail batch, 2026-11-05).
+  'todoface.detailToggle': 'Show details',
+  'todoface.detailFieldLabel': 'Details',
+  'todoface.prioNone': 'None',
+  'todoface.prioLow': 'Low',
+  'todoface.prioMed': 'Med',
+  'todoface.prioHigh': 'High',
+  'todoface.hasDue': 'Has due date',
+  'todoface.noDue': 'No due date',
+  'todoface.emptyAll': 'No reminders',
+  'todoface.emptyAdd': 'Tap to add a reminder',
+  'todoface.complete': 'Mark complete',
+  'todoface.del': 'Delete',
+  'todoface.fabAdd': 'New to-do',
+  // 新建抽屉（todo-fullbleed 批 2026-11-05：手机页面态新建入口改底部抽屉）
+  'todoface.sheetTitle': 'New to-do',
+  'todoface.cancel': 'Cancel',
+  'todoface.completedToast': 'Completed',
+  'todoface.undo': 'Undo',
+  'todoface.tagName': 'Tag name',
+  'todoface.tagNew': 'New tag',
+  'todoface.tagRename': 'Rename',
+  'todoface.tagDelete': 'Delete',
+  'todoface.tagDeleteTitle': 'Delete tag',
+  'todoface.tagDeleteConfirm': 'Deleting “{name}” removes it from every todo. This cannot be undone.',
+  'todoface.colorN': 'Color {n}',
+  // ── Mobile to-do page, Apple Reminders information architecture (implementation
+  //    batch 2026-11-02; shared by the three pages) ──
+  'todoapple.aria': 'To-Dos',
+  'todoapple.today': 'Today',
+  'todoapple.overdue': 'Overdue',
+  'todoapple.all': 'All',
+  'todoapple.completed': 'Completed',
+  'todoapple.myLists': 'My Lists',
+  'todoapple.allTodos': 'All To-Dos',
+  'todoapple.search': 'Search to-dos',
+  'todoapple.searchPh': 'Search to-dos',
+  'todoapple.searchResults': 'Search results',
+  'todoapple.searchEmpty': 'No matching to-dos',
+  'todoapple.newList': 'New list',
+  'todoapple.newListPh': 'New list',
+  'todoapple.more': 'More',
+  'todoapple.newTodo': 'New to-do',
+  'todoapple.createUnconfirmed': 'Save not confirmed. Check your connection and retry in the original session to avoid duplicates.',
+  'todoapple.discardPending': 'Discard retry',
+  'todoapple.replyFailed': 'Reply not sent. Check the primary session and connection, then retry.',
+  'todoapple.notes': 'Notes (optional)',
+  'todoapple.save': 'Save',
+  'todoapple.markComplete': 'Mark complete',
+  'todoapple.emptyDone': 'All done',
+  'todoapple.emptyCompleted': 'No completed to-dos yet',
+  'todoapple.info': 'Add notes',
+  'todoapple.toDue': 'Date',
+  'todoapple.toPriority': 'Flag',
+  'todoapple.toTag': 'List',
+  'todoapple.noDue': 'No date',
+  'todoapple.none': 'None',
+  'todoapple.dueTomorrow': 'Tomorrow',
+  // Quick-decision face (todo-quick-decision, 2026-11-18): entry label, card
+  // reading, and the "answering is not wired" fact line (same fact as the list
+  // page's decision rows).
+  'todoapple.quickDecision': 'Quick decision',
+  'todoapple.quickCount': '{n} of {m}',
+  'todoface.tagSave': 'Save',
+  'todoface.tagErrEmpty': 'Name cannot be empty',
+  'todoface.tagErrDup': 'A tag with this name already exists',
+  // Top floating "⋯" two-level menu (todo-mobile-topmenu batch 2026-11-06)
+  'todoface.menu': 'Menu',
+  'todoface.menuView': 'Tags',
+  'todoface.menuPrio': 'Priority',
+  'todoface.menuNoTags': 'No tags yet',
+  // item box (impl-row-reply batch 2026-11-06)
+  'todoface.edit': 'Edit',
+  'todoface.replyPh': 'Reply to this todo…',
+  'todoface.send': 'Send',
+  // ── Perception domain (mail-perception-impl batch) ──
+  'perception.title': 'Perception',
+  'perception.close': 'Close',
+  'perception.footerPrivacy': 'Processed locally · mail never leaves this device',
+  'perception.mailEntry': 'Mail',
+  'perception.notConfigured': 'No mailbox connected yet',
+  'perception.setupTitle': 'Connect a mailbox',
+  'perception.setupDesc': 'Two steps: your address and an auth code. New mail is pushed automatically — spam filtered, codes filled on arrival.',
+  'perception.connect': 'Connect',
+  'perception.authFailTitle': 'Sign-in failed',
+  'perception.authFailDesc': 'The auth code is incorrect or expired. Please re-enter it.',
+  'perception.reconnect': 'Reconnect',
+  'perception.removeMailbox': 'Remove mailbox',
+  'perception.backoffTitle': 'Network unstable',
+  'perception.backoffDesc': 'Recovering automatically — new mail is kept on this device and delivered right after.',
+  'perception.pausedBanner': 'Paused — mail will not be fetched',
+  'perception.quietLine': 'New mail goes to your agent automatically — ads and spam are filtered out.',
+  'perception.configBtn': 'Mail settings',
+  'perception.toggleTitle': 'Pause / resume',
+  'perception.cfgTitle': 'Connect mailbox',
+  'perception.cfgSub': 'Just the address and an app password — everything else is automatic.',
+  'perception.cfgAddress': 'Email address',
+  'perception.cfgAuthCode': 'App password',
+  'perception.cfgAuthCodeHint': 'Generated in your mailbox settings — not your login password',
+  'perception.cfgAutoNote': 'Server and ports are configured automatically',
+  'perception.cfgAutoResolved': 'Recognized {addr} — will connect to {resolved}',
+  'perception.cfgAutoUnknown': 'Could not recognize this mail domain · please fill in the servers under Advanced',
+  'perception.relayTimeout': 'The cloud relay got no answer from this machine in time (Host did not answer in time) · the connection may have completed in the background — open the panel to check; if it repeats, check this machine\'s network and tunnel',
+  'perception.netFail': 'Network request failed · make sure the local console is reachable, then retry',
+  'perception.cfgAdvanced': 'Advanced',
+  'perception.cfgImapHost': 'Incoming server (IMAP)',
+  'perception.cfgSmtpHost': 'Outgoing server (SMTP)',
+  'perception.cfgPort': 'Port',
+  'perception.cfgDisplayName': 'Sender name',
+  'perception.cfgDisplayNamePh': 'Optional, shown on outgoing mail',
+  'perception.cfgTrusted': 'Trusted senders',
+  'perception.cfgTrustedPh': 'Optional, comma separated — only these are delivered',
+  'perception.cfgTrustedHint': 'Leave empty to let all new mail in',
+  'perception.cancel': 'Cancel',
+  'perception.cfgNeedBoth': 'Please provide both the address and the app password',
+  'perception.cfgTesting': 'Connecting…',
+  'perception.cfgConnected': 'Connected',
+  'perception.cfgConnectedInbox': 'Connected · inbox {n} messages',
+  'perception.cfgConnectedStats': 'Connected · inbox {n} messages, {u} unread',
+  'perception.cfgFailed': 'Connection failed — check the address and app password',
+  'perception.sessionExpired': 'Session expired — re-entering the console…',
+  'perception.to': 'To',
+  'perception.cc': 'Cc',
+  'perception.bcc': 'Bcc',
+  'perception.subject': 'Subject',
+  'perception.subjectPh': 'Subject',
+  'perception.bodyPh': 'Body…',
+  'perception.send': 'Send',
+  'perception.sendAsIs': 'Send as is',
+  'perception.openCanvas': 'Edit in Canvas',
+  'perception.abandon': 'Discard',
+  'perception.staleNote': 'This mail changed — review it in Canvas before sending.',
+  'perception.sendFailed': 'Send failed',
+  'perception.draftGone': 'Draft no longer exists',
+  'perception.newMail': 'New mail',
+  'perception.receiptSent': 'Sent',
+  'perception.receiptFail': 'Send failed',
+  'perception.attachments': 'Attachments',
+  'perception.otpFill': 'Click to fill the code',
+  'perception.otpArrived': 'Code arrived',
+  'perception.otpSource': 'New mail',
+  'perception.answerSent': 'Sent as drafted',
+  'perception.answerAbandoned': 'Draft discarded',
+  'perception.abandoned': 'Discarded — the mail will not be sent',
+  'perception.tbBold': 'Bold',
+  'perception.tbItalic': 'Italic',
+  'perception.tbUl': 'Bulleted list',
+  'perception.tbOl': 'Numbered list',
+  'perception.tbQuote': 'Quote',
+  'perception.tbLink': 'Link',
+  'perception.linkPrompt': 'Link URL',
+  'perception.removeAtt': 'Remove',
+  'perception.attMissingNote': 'One or more attachment files are missing — sending is disabled. Remove the chip (×) in Canvas and retry.',
+  'perception.removeAddr': 'Remove',
+  'perception.toPh': 'Recipient address, Enter to add',
+  'perception.addrPh': 'Type an address, Enter to add',
+  'perception.ccBcc': 'Cc / Bcc',
+  // === schedule-created-card batch (2026-11-05): in-message schedule/todo card ===
+  'schedCard.kindTask': 'Scheduled task',
+  'schedCard.kindTodo': 'Todo',
+  'schedCard.statusActive': 'Active',
+  'schedCard.statusWriting': 'Saving',
+  'schedCard.statusPaused': 'PAUSED',
+  'schedCard.statusDone': 'Done',
+  'schedCard.statusCancelled': 'Cancelled',
+  'schedCard.statusGone': 'Not in list',
+  'schedCard.createdAt': 'created {at}',
+  'schedCard.repeatOnce': 'One-shot',
+  'schedCard.repeat.hourly': 'Hourly',
+  'schedCard.repeat.daily': 'Daily',
+  'schedCard.repeat.weekly': 'Weekly',
+  'schedCard.expand': 'Expand',
+  'schedCard.collapse': 'Collapse',
+  'schedCard.edit': 'Edit',
+  'schedCard.cancel': 'Cancel',
+  'schedCard.save': 'Save',
+  'schedCard.saving': 'Saving',
+  'schedCard.discard': 'Discard',
+  'schedCard.fieldContent': 'Content',
+  'schedCard.fieldProject': 'Project',
+  'schedCard.fieldTriggerAt': 'Trigger at',
+  'schedCard.fieldRepeat': 'Repeat',
+  'schedCard.projectPlaceholder': 'Project label (empty = ungrouped)',
+  'schedCard.confirmCancelAsk': 'Cancelled entries never fire again.',
+  'schedCard.confirmCancel': 'Cancel it',
+  'schedCard.cancelling': 'Cancelling',
+  'schedCard.keep': 'Keep',
+  'schedCard.noChange': 'Nothing changed',
+  'schedCard.readFailed': 'Engine state not read back',
+  // Card-click leg (todo-card-click-left, 2026-11-18): the whole card appends a `#` reference.
+  'schedCard.refHint': 'Click the card to reference this todo as #',
+  'schedCard.errOffline': 'Not connected to the engine — change not submitted',
+  'schedCard.errTimeout': 'No engine receipt — change unconfirmed',
+  'schedCard.errGone': 'Entry no longer exists — change not saved',
+  'schedCard.errEngine': 'Engine rejected: {detail}',
+  'schedCard.errGeneric': 'Write failed — change not saved',
+  // ── profile-multidevice batch (single-page profile / read-only identity / device list) ──
+  'profile.deviceSection': 'Devices',
+  'profile.deviceCurrent': 'This device',
+  'profile.deviceSignOut': 'Sign out',
+  'profile.deviceSignOutCurrent': 'Sign out on this device',
+  'profile.deviceOnline': 'Online',
+  'profile.deviceOffline': 'Offline',
+  'profile.deviceLastSeen': 'Last active {when}',
+  'profile.deviceSeenNow': 'just now',
+  'profile.deviceSeenMinutes': '{n} min ago',
+  'profile.deviceSeenHours': '{n} h ago',
+  'profile.deviceSeenDays': '{n} d ago',
+  'profile.deviceNone': 'The account service returned no device list.',
+  'profile.deviceSignOutQueued': 'Sign-out request sent to that device; whether it takes effect is decided by that device own session.',
+  'profile.deviceSignOutFailed': 'The sign-out request was not delivered; that device session is unchanged.',
+  'profile.deviceSignOutRemoteUnsupported': 'That device keeps its own credential locally, so this device cannot sign it out - sign out on that device itself.',
+  'profile.editOnWebsite': 'Identity fields are read-only readings; to edit them go to the website account page {where}.',
+  'profile.githubUnavailable': 'The account service returned no GitHub username (that reading comes from the GitHub account sent at sign-in).',
+  'profile.googleUnavailable': 'The Google binding is maintained on the website account page only; neither the local account service nor the sign-in credential carries it.',
+  'profile.signedIn': 'Signed in',
 };
+

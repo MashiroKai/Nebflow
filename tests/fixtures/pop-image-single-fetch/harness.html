@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<!-- pop-image-single-fetch harness.html — Pop 图片「预览 + Canvas 打开恰一次抓取」
+     (imgdoor 二次加载批 2026-10-24) 的静态测试 harness。
+
+     驱动**真实前端模块**，两条腿都是生产链原样：
+       · 预览脸：popArtifacts.buildPopArtifactRow({items:[{kind:'image',path,…}]})
+         → mediaFace → hydrateMedia 票腿 ⇒ nfViewerUrl（账本：命中 blob URL 直显 /
+           未命中票据链取数 + nfCachePut 入账）；
+       · Canvas 打开：fileViewers.renderFile(pane, {itemType:'image', absPath})
+         → viewers/image.js viewImage ⇒ 同一个 nfViewerUrl 单点。
+     （openPopArtifact 的 workspace-open-item → readFile WS 往返只定 itemType、
+      不携带图片字节；字节面的计数担保就在 nfViewerUrl —— 本 harness 直达该腿。）
+
+     字节面由 spec 侧的小源服务器提供：POST /api/nf-ticket 铸票 +
+     GET /api/nf-file?path&ticket 取件（真字节、带请求计数）。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>pop-image-single-fetch harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat { width: 680px; padding: 12px; }
+    #canvas-pane { width: 680px; height: 400px; padding: 12px; }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <div id="canvas-pane"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const state = (await import(`${WEB}/state.js`)).default;
+    state.ws = { readyState: 1, send: () => {} };
+    window.__nfSessionId = 'sess-1';
+
+    const pop = await import(`${WEB}/popArtifacts.js`);
+    const cacheMod = await import(`${WEB}/nfFileCache.js`);
+    const { renderFile } = await import(`${WEB}/fileViewers.js`);
+
+    const settle = async (ms = 500) => {
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      // 账本腿 = 异步铸票（合帧 + fetch）+ fetchBlobWithProgress 整收 + nfCachePut
+      // 落账 + blob URL 建链——多等几拍，保证落账与后续命中都 landed。
+      await new Promise(r => setTimeout(r, ms));
+    };
+
+    /** 装配一条 agent Pop 媒体行（聊天流渲染的真实装配链）。 */
+    window.__mountPopRow = async (items) => {
+      const row = pop.buildPopArtifactRow({ items, warnings: [] });
+      if (!row) return false;
+      document.getElementById('chat').appendChild(row);
+      await settle();
+      return true;
+    };
+
+    /** 每张 .pop-img 的读数。 */
+    window.__popImgs = () =>
+      Array.from(document.querySelectorAll('#chat .pop-img')).map(img => ({
+        src: String(img.src || ''),
+        isBlob: String(img.src || '').startsWith('blob:'),
+        isTicket: String(img.src || '').includes('/api/nf-file'),
+        failed: img.classList.contains('nf-img-failed'),
+        loaded: img.complete && img.naturalWidth > 0,
+        naturalWidth: img.naturalWidth,
+      }));
+
+    /** 失败注记行（appendFailureNote 读数）。 */
+    window.__failedNotes = () =>
+      Array.from(document.querySelectorAll('#chat .nf-media-failed-note')).map(n => n.textContent);
+
+    /** Canvas 打开的真实字节腿 = image viewer（renderFile → viewImage → nfViewerUrl）。 */
+    window.__openInCanvas = async (ctx) => {
+      const pane = document.getElementById('canvas-pane');
+      pane.innerHTML = '';
+      await renderFile(pane, Object.assign({ itemType: 'image' }, ctx));
+      await settle();
+      const img = pane.querySelector('.canvas-image-viewer img');
+      return img
+        ? { found: true, src: String(img.src), isBlob: String(img.src).startsWith('blob:'),
+            loaded: img.complete && img.naturalWidth > 0, naturalWidth: img.naturalWidth }
+        : { found: false };
+    };
+
+    window.__cacheStats = () => cacheMod.nfCacheStats();
+    window.__invalidate = (p) => cacheMod.nfCacheInvalidatePath(p);
+    window.__ready = true;
+  </script>
+</body>
+</html>

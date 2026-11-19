@@ -1,11 +1,12 @@
-// input.js — Input handling module for Nebflow
+// input.js — Input handling module for Stand
 // All send logic, keyboard/input events, slash commands, attachments, drag/drop, voice.
 
-import state, { LS_HISTORY_KEY } from './state.js';
+import state from './state.js';
 import { key } from './branding.js';
 import { activeView, setActiveView, chatViews, findViewBySessionId } from './chatView.js';
-import { sendWs } from './ws.js';
-import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF, refreshSendButtonState } from './chat.js';
+import { sendWs, onReconnect, onMessage } from './ws.js';
+import { renderUserBubble, renderSystemBubble, setBusy, renderAttachmentPreview, renderAskBubble, renderSkillBubble, cancelToolStreamRAF, refreshSendButtonState, clearAttachmentStripAnimated } from './chat.js';
+import { selectionAskPending } from './selectionAsk.js';
 import { renderMarkdownWithMath, escapeHtml, smartScroll } from './utils.js';
 import { saveMsg } from './persistence.js';
 import { saveInputDraft } from './sidebar.js';
@@ -13,10 +14,75 @@ import { saveInputDraft } from './sidebar.js';
 import { t } from './i18n.js';
 import { getLocale } from './i18n.js';
 import { renderQueueBar } from './chatQueue.js';
+import { ticketUrl } from './nfTicket.js';
 import { makeReference } from './reference.js';
-import { startDictation, stopDictation, isModelReady } from './voiceEngine.js';
+// quote-message 一期：引用条落面/清理（引用态数据面 = pendingAttachments 的
+// chat-message ref；发送/排队清空后同步引用条显隐）。
+import { renderQuoteStrip } from './msgQuote.js';
+import { startDictation, stopDictation, isModelReady, sttEnabled } from './voiceEngine.js';
 import { notifyVoiceState } from './micOrb.js';
+// voiceseal 批（批 #508）：语音封存 flag（features.voice，默认封存）——
+// 听写入口与全双工拖动入口在封存态一并闸死（见 onVoiceToggle/enterVoiceModeNow）。
+import { voiceEnabled, voiceOrbEnabled, consoleInputMode } from './featureFlags.js';
 import { showToast } from './modal.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+// 输入行为包批（2026-11-02 作者令「文字输入框的逻辑做成一个包」）：主会话不再
+// 直呼 imeGuard——键盘契约（IME 前置短路 + 裸 Enter 发送判定）经
+// input/composer.js 统一装配（与 canvas ask 同一实现）；中断帧出口同批收进包
+// （requestTurnInterrupt）。imeGuard 语义零改动，仅消费方式升级。
+// qattachvault 批（2026-10-21）：消息队列附件**载荷库**（IndexedDB）——入队写字节、
+// 刷新后水合灌回、派发闸拒绝空心帧（失败可见可重传）。叶子模块（queueVault → branding）。
+import {
+  available as vaultAvailable, queueVaultKey, put as vaultPut, get as vaultGet,
+  del as vaultDel, keys as vaultKeys, HISTORY_VAULT_PREFIX,
+} from './queueVault.js';
+// Sent-input history with attachments: the store records every sent message (text + attachments)
+// and rebuilds the attachments when the history keys recall an entry.
+import { recordSentInput, entryHasAttachments, restoreEntryAttachments } from './input/historyStore.js';
+// device-provenance 批（2026-10-23 作者令）：来源设备声明随用户消息帧上行
+// （`device` 键；网关对照 NebLink 花名册出已登记/未登记标记，只进模型面）。
+import { deviceStamp } from './deviceIdentity.js';
+
+// @-mention project autocomplete (mention-routing batch; mention-cn 2026-09-27):
+// '@' opens the mounted-projects popup unless the character right before it is
+// an ASCII letter/digit (email-like 'foo@' never triggers) — whitespace, line
+// start, CJK characters and CJK punctuation all open it. Data source =
+// fetchProjects() (nodeData.js).
+// 输入补全单引擎（待办结构化批 2026-11-05）：`@` 项目 与 `#` 待办 共用
+// tokenComplete.js 一套弹层/分词/键盘/插入；两个 provider 分别在
+// mentionComplete.js（import 链经 main.js）与 todoComplete.js 注册。
+import { bindTokenComplete, handleTokenKeydown, closeTokenDropdown } from './tokenComplete.js';
+import './todoComplete.js';
+
+// input.js 拆分（FE组件化批次四 2026-09-27）：slash 命令族/输入模式族/附件与引用帧族 → js/input/ 可复用模块（行为保持）。
+// 主体消费面 import + 原导出面转发（23 个 export 仍全部可从 input.js 取得，批次一~三同款纪律）。
+import { handleSlash, updateSlashDropdown, closeSlashDropdown, setSlashHighlight, pickSlashCommand } from './input/slashCommands.js';
+export { registerSkillCommands, handleSlash, registerCommand } from './input/slashCommands.js';
+import { cancelAskMode, cancelSkillMode, cancelCompactMode } from './input/inputModes.js';
+export { enterAskMode, cancelAskMode, enterSkillMode, cancelSkillMode, enterCompactMode, cancelCompactMode, applyInputModes } from './input/inputModes.js';
+import { addFileAttachment, pendingAttCount, isRefOnlyFrame, syncRefOnlyGate, showAttError, joinAbsPath } from './input/attachments.js';
+export { addFileAttachment, wireAttachmentsOf, isRefOnlyFrame, syncRefOnlyGate, appendRefToActiveView, initGlobalFileDrop } from './input/attachments.js';
+// 输入行为包（2026-11-02 作者令）：键盘契约装配 + 中断帧单点（ask 与主会话共用）。
+import { bindComposerKeys, requestTurnInterrupt, growComposerInput, composerPlaceholder } from './input/composer.js';
+
+// ---------- 真人消息 turn 标志（2026-09-16 msunread-r2；作者裁定 ①）----------
+// 「本机派发了一条真人消息 = 本 turn 的起点」的 per-session turn 级标志。
+// 置位点 = 本文件五个**真人派发**点，与既有 `state.turnExpecting[sid] = true`
+// **同点同条件**：① `send()` skill 支 ② `send()` ask 支 ③ `send()` 普通支
+// ④ `drainMessageQueue`（排队消息真派发台）⑤ `dispatchOfflineItem`
+// （f1-send-queue：断线入队消息的重连补发真派发台）。
+// 为什么不复用 `turnExpecting`：后端 `sessionBusy{busy:true}`（main.js）同样置它
+// ⇒ 纯程序 turn（REST `rest-turn` / CLI）与真人 turn **不可分**（真渲染读数：两侧
+// 帧序同为 sessionBusy→done→sessionBusy，均被置位）。本标志只由本文件（真人派发）
+// 置位，是客户端**唯一** turn 级的真人痕迹（后备候选「消息缓存」已在真渲染里证伪：
+// 真人腿 `done` 时刻该会话缓存为 `["tool","tool","tool"]`，真人条目不在其中）。
+// 消费方 = main.js 四个终态（done / error / timeout / maxTokens）：
+// `takeRealUserTurn` **取用即清** ⇒ 同一枚真人消息只置一次未读。
+const realUserTurnSessions = new Set();
+/** 置位「本会话有一条真人消息在飞」（模块私有；调用点 = 四个真人派发点）。 */
+function markRealUserTurn(sid) { if (sid) realUserTurnSessions.add(sid); }
+/** 取用并清理该会话的真人消息 turn 标志（main.js 终态调用；缺省会话 ⇒ false）。 */
+export function takeRealUserTurn(sid) { return sid ? realUserTurnSessions.delete(sid) : false; }
 
 // ---------- Large text auto-attachment (paste detection) ----------
 const LARGE_TEXT_THRESHOLD = 1000;
@@ -43,443 +109,105 @@ function showAttachmentBanner(message) {
   const banner = document.createElement('div');
   banner.className = 'attachment-banner';
   banner.textContent = message;
-  banner.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);background:var(--color-surface,rgba(20,25,35,0.9));color:var(--color-text);padding:8px 16px;border-radius:8px;z-index:1000;font-size:13px;box-shadow:0 2px 12px rgba(0,0,0,0.15);border:1px solid var(--glass-border);transition:opacity 0.3s;';
+  banner.style.cssText = 'position:fixed;top:50px;left:50%;transform:translateX(-50%);background:var(--color-surface,rgba(20,25,35,0.9));color:var(--color-text);padding:var(--ds-space-2) var(--ds-space-4);border-radius:var(--ds-radius-input);z-index:1000;font-size:var(--ds-fs-body);box-shadow:0 2px 12px rgba(0,0,0,0.15);border:1px solid var(--glass-border);transition:opacity 0.3s;';
   document.body.appendChild(banner);
   setTimeout(() => { banner.style.opacity = '0'; }, 2700);
   setTimeout(() => banner.remove(), 3000);
 }
 
-// ---------- Slash Commands ----------
-/* SEALED / 封存待启用 (author ruling 2026-08-29 22:56): the /slash command
-   menu is sealed - '/' is treated as plain text (zero popup, no command
-   interception). Code kept intact for future re-enable:
-     localStorage.setItem('nebflow_slash.enabled', '1')  // then reload */
-const SLASH_ENABLED = () => { try { return localStorage.getItem(key('slash.enabled')) === '1'; } catch (e) { return false; } };
-const slashCommands = {
-  '/ask': {
-    desc: () => t('slash.ask'),
-    run: () => {
-      enterAskMode();
-    }
-  },
-  '/onboarding': {
-    desc: () => t('slash.onboarding'),
-    run: () => {
-      // Replay the fixed chat-native onboarding greeting (same as first run).
-      import('./onboarding.js').then(m => m.replayOnboarding()).catch(() => {});
-    }
-  }
-};
-
-/** Register skill commands from the server-provided skill list. */
-export function registerSkillCommands(skills) {
-  // Remove previously registered skill commands
-  Object.keys(slashCommands).forEach(key => {
-    if (key.startsWith('/') && slashCommands[key]._skill) {
-      delete slashCommands[key];
-    }
-  });
-  skills.forEach(skill => {
-    const cmd = '/' + skill.name;
-    // Don't override built-in commands
-    if (!slashCommands[cmd] || slashCommands[cmd]._skill) {
-      slashCommands[cmd] = {
-        _skill: true,
-        _source: skill.source,
-        _skillName: skill.name,
-        desc: () => skill.description || t('slash.skillDefault'),
-        whenToUse: skill.whenToUse || '',
-        argumentHint: skill.argumentHint || '',
-        run: () => enterSkillMode(skill.name, skill.description, skill.argumentHint, skill.source)
-      };
-    }
-  });
-}
-
-// ---------- Slash Command Handler ----------
-export function handleSlash(text) {
-  if (!SLASH_ENABLED()) return false; // SEALED: '/' is plain text
-  const cmd = text.trim().split(/\s/)[0];
-  if (slashCommands[cmd] && slashCommands[cmd].run) {
-    slashCommands[cmd].run(text);
-    return true;
-  }
-  return false;
-}
-
-// ---------- Slash Autocomplete ----------
-function updateSlashDropdown() {
-  const input = activeView.dom.input;
-  const text = input.value;
-  if (!SLASH_ENABLED()) { closeSlashDropdown(); return; } // SEALED
-  if (!text.startsWith('/')) {
-    closeSlashDropdown();
-    return;
-  }
-  const query = text.slice(1).toLowerCase();
-  activeView.slashMatches = Object.entries(slashCommands)
-    .filter(([cmd]) => cmd.slice(1).toLowerCase().startsWith(query))
-    .map(([cmd, info]) => ({ cmd, desc: typeof info.desc === 'function' ? info.desc() : info.desc, whenToUse: info.whenToUse || '', isSkill: !!info._skill, source: info._source || '', skillName: info._skillName || '' }));
-  if (activeView.slashMatches.length === 0) {
-    closeSlashDropdown();
-    return;
-  }
-  const slashDropdown = activeView.dom.slashDropdown;
-  slashDropdown.innerHTML = '';
-  activeView.slashMatches.forEach((item, i) => {
-    const div = document.createElement('div');
-    div.className = 'slash-item' + (i === 0 ? ' active' : '');
-    const badge = item.isSkill ? '<span class="slash-badge skill">' + escapeHtml(t('slash.skillBadge')) + '</span>' : '';
-    const whenToUseHtml = item.whenToUse ? '<span class="slash-when">' + escapeHtml(item.whenToUse) + '</span>' : '';
-    const deleteHtml = (item.isSkill && item.source === 'user')
-      ? '<span class="slash-delete" title="' + escapeHtml(t('slash.deleteSkill')) + '" data-skill="' + escapeHtml(item.skillName) + '"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg></span>'
-      : '';
-    div.innerHTML = '<div style="display:flex;align-items:center"><span class="slash-cmd">' + escapeHtml(item.cmd) + '</span>' + badge + '</div><span class="slash-desc">' + escapeHtml(item.desc) + '</span>' + whenToUseHtml + deleteHtml;
-    div.onclick = () => { pickSlashCommand(i); };
-    div.onmouseenter = () => { setSlashHighlight(i); };
-    if (deleteHtml) {
-      const delBtn = div.querySelector('.slash-delete');
-      if (delBtn) {
-        delBtn.onclick = (e) => {
-          e.stopPropagation();
-          handleDeleteSkill(item.skillName);
-        };
-      }
-    }
-    slashDropdown.appendChild(div);
-  });
-  activeView.slashSelectedIndex = 0;
-  slashDropdown.classList.add('on');
-}
-
-function closeSlashDropdown() {
-  activeView.dom.slashDropdown.classList.remove('on');
-  activeView.slashSelectedIndex = -1;
-  activeView.slashMatches = [];
-}
-
-function setSlashHighlight(index) {
-  activeView.slashSelectedIndex = index;
-  const items = activeView.dom.slashDropdown.querySelectorAll('.slash-item');
-  items.forEach((el, i) => { el.classList.toggle('active', i === index); });
-
-  const active = items[index];
-  if (!active) return;
-
-  const dd = activeView.dom.slashDropdown;
-  // Calculate element's offset relative to the dropdown content area
-  let relTop = 0;
-  let el = active;
-  while (el && el !== dd) {
-    relTop += el.offsetTop;
-    el = el.offsetParent;
-  }
-  const relBottom = relTop + active.offsetHeight;
-  const scrollTop = dd.scrollTop;
-  const visibleBottom = scrollTop + dd.clientHeight;
-
-  if (relTop < scrollTop) {
-    dd.scrollTop = relTop;
-  } else if (relBottom > visibleBottom) {
-    dd.scrollTop = relBottom - dd.clientHeight;
-  }
-}
-
-function pickSlashCommand(index) {
-  if (index < 0 || index >= activeView.slashMatches.length) return;
-  const cmd = activeView.slashMatches[index].cmd;
-  activeView.dom.input.value = '';
-  activeView.dom.input.style.height = 'auto';
-  closeSlashDropdown();
-  activeView.dom.input.focus();
-  if (slashCommands[cmd] && slashCommands[cmd].run) slashCommands[cmd].run();
-}
-
-/** Delete a user-level skill after confirmation. */
-function handleDeleteSkill(skillName) {
-  const msg = t('slash.confirmDelete').replace('{skill}', skillName);
-  window.__showConfirm?.('Delete Skill', msg, () => {
-    sendWs({ type: 'deleteSkill', name: skillName });
-    closeSlashDropdown();
-  });
-}
-
-// ---------- Ask Mode ----------
-export function enterAskMode() {
-  if (activeView.stream.askMode) return;
-  activeView.stream.askMode = true;
-  updateAskIndicator();
-  activeView.dom.input.placeholder = t('input.askPlaceholder');
-  activeView.dom.input.focus();
-}
-
-export function cancelAskMode() {
-  if (!activeView.stream.askMode) return;
-  activeView.stream.askMode = false;
-  updateInputIndicator();
-  activeView.dom.input.placeholder = t('input.placeholder');
-}
-
-function updateAskIndicator() {
-  updateInputIndicator();
-}
-
-function updateInputIndicator() {
-  const askEl = document.getElementById('ask-indicator');
-  const skillEl = document.getElementById('skill-indicator');
-  const skillLabel = document.getElementById('skill-indicator-label');
-  const compactEl = document.getElementById('compact-indicator');
-  const input = activeView.dom.input;
-  // Ask/Skill/Compact mode — all mutually exclusive
-  if (activeView.stream.askMode) {
-    if (askEl) askEl.classList.add('show');
-    if (skillEl) skillEl.classList.remove('show');
-    if (compactEl) compactEl.classList.remove('show');
-    input.style.paddingLeft = '';
-    if (askEl) {
-      const w = askEl.offsetWidth + 12;
-      input.style.paddingLeft = Math.max(w, 48) + 'px';
-    }
-  } else if (activeView.skillMode) {
-    if (askEl) askEl.classList.remove('show');
-    if (skillEl) {
-      if (skillLabel) skillLabel.textContent = activeView.skillModeSource === 'flow' ? 'FLOW' : (activeView.skillModeName || 'SKILL');
-      skillEl.classList.add('show');
-      const w = skillEl.offsetWidth + 12;
-      input.style.paddingLeft = Math.max(w, 56) + 'px';
-    } else {
-      input.style.paddingLeft = '';
-    }
-    if (compactEl) compactEl.classList.remove('show');
-  } else if (activeView.compactMode) {
-    if (askEl) askEl.classList.remove('show');
-    if (skillEl) skillEl.classList.remove('show');
-    if (compactEl) compactEl.classList.add('show');
-    input.style.paddingLeft = '';
-    const w = compactEl.offsetWidth + 12;
-    input.style.paddingLeft = Math.max(w, 48) + 'px';
-  } else {
-    if (askEl) askEl.classList.remove('show');
-    if (skillEl) skillEl.classList.remove('show');
-    if (compactEl) compactEl.classList.remove('show');
-    input.style.paddingLeft = '';
-  }
-}
-
-// ---------- Skill Mode ----------
-export function enterSkillMode(skillName, description, argumentHint, source) {
-  if (activeView.skillMode) {
-    // Already in skill mode — if it's a different skill, switch; otherwise do nothing
-    if (activeView.skillModeName === skillName) return;
-    cancelSkillMode();
-  }
-  // Cancel ask mode if active
-  if (activeView.stream.askMode) cancelAskMode();
-  activeView.skillMode = true;
-  activeView.skillModeName = skillName;
-  activeView.skillModeSource = source || '';
-  activeView.skillModeDesc = description || '';
-  activeView.skillModeArgHint = argumentHint || '';
-  updateInputIndicator();
-  activeView.dom.input.placeholder = argumentHint || t('input.skillPlaceholder');
-  activeView.dom.input.focus();
-}
-
-export function cancelSkillMode() {
-  if (!activeView.skillMode) return;
-  activeView.skillMode = false;
-  activeView.skillModeName = '';
-  activeView.skillModeSource = '';
-  activeView.skillModeDesc = '';
-  activeView.skillModeArgHint = '';
-  updateInputIndicator();
-  activeView.dom.input.placeholder = t('input.placeholder');
-}
-
-// ---------- Compact Mode ----------
-export function enterCompactMode() {
-  if (activeView.compactMode) return;
-  // Cancel other modes if active
-  if (activeView.stream.askMode) cancelAskMode();
-  if (activeView.skillMode) cancelSkillMode();
-  activeView.compactMode = true;
-  updateInputIndicator();
-  activeView.dom.input.placeholder = t('input.compactPlaceholder');
-  activeView.dom.input.focus();
-}
-
-export function cancelCompactMode() {
-  if (!activeView.compactMode) return;
-  activeView.compactMode = false;
-  updateInputIndicator();
-  activeView.dom.input.placeholder = t('input.placeholder');
-}
-
-// Restore skill/ask mode from per-session draft data.
-// Unlike enterSkillMode/enterAskMode, this does NOT focus the input.
-export function applyInputModes(skillData, askActive) {
-  activeView.skillMode = false;
-  activeView.skillModeName = '';
-  activeView.skillModeSource = '';
-  activeView.skillModeDesc = '';
-  activeView.skillModeArgHint = '';
-  activeView.stream.askMode = false;
-
-  if (skillData) {
-    activeView.skillMode = true;
-    activeView.skillModeName = skillData.name || '';
-    activeView.skillModeSource = skillData.source || '';
-    activeView.skillModeDesc = skillData.desc || '';
-    activeView.skillModeArgHint = skillData.argHint || '';
-  } else if (askActive) {
-    activeView.stream.askMode = true;
-  }
-
-  updateInputIndicator();
-
-  if (activeView.skillMode) {
-    activeView.dom.input.placeholder = activeView.skillModeArgHint || t('input.skillPlaceholder');
-  } else if (activeView.stream.askMode) {
-    activeView.dom.input.placeholder = t('input.askPlaceholder');
-  } else {
-    activeView.dom.input.placeholder = t('input.placeholder');
-  }
-}
-
-// ---------- Image Compression ----------
-function compressImage(file, opts = {}) {
-  const maxDim = opts.maxDim || 1920;
-  const quality = opts.quality || 0.8;
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(img.src);
-      let w = img.width, h = img.height;
-      if (w > maxDim || h > maxDim) {
-        const scale = maxDim / Math.max(w, h);
-        w = Math.round(w * scale);
-        h = Math.round(h * scale);
-      }
-      const canvas = document.createElement('canvas');
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, w, h);
-      const dataUrl = canvas.toDataURL('image/jpeg', quality);
-      resolve({ dataUrl, w, h });
-    };
-    img.onerror = () => { URL.revokeObjectURL(img.src); reject(new Error('Image load failed')); };
-    img.src = URL.createObjectURL(file);
-  });
-}
-
-// ---------- File Attachment ----------
-
-/** Show an inline error in the attachment preview area (no alert popup). */
-function showAttError(msg, target) {
-  const attPreview = (target && target.attPreviewEl) || (activeView && activeView.dom && activeView.dom.attPreview);
-  if (!attPreview) { console.warn(msg); return; }
-  const err = document.createElement('div');
-  err.className = 'att-error';
-  err.textContent = msg;
-  attPreview.appendChild(err);
-  setTimeout(() => { err.classList.add('att-error-fade'); setTimeout(() => err.remove(), 300); }, 2500);
-}
-
-/** Convert ArrayBuffer to base64 in chunks (avoids reading file twice). */
-function arrayBufferToBase64(buffer) {
-  const bytes = new Uint8Array(buffer);
-  const chunkSize = 0x8000;
-  let binary = '';
-  for (let i = 0; i < bytes.length; i += chunkSize) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
-  }
-  return btoa(binary);
-}
-
-// Track pending attachment operations to prevent send() race condition
-const pendingAttCount = { value: 0 };
-
-export async function addFileAttachment(file, callback, target) {
-  // Capture the view at entry — activeView is a live module binding that ws.js
-  // changes on every incoming message. Without capturing, the await points below
-  // would read a stale/changed activeView, causing renderAttachmentPreview to
-  // target the wrong DOM element (or crash on null).
-  if (!target && activeView) {
-    target = { attPreviewEl: activeView.dom.attPreview, attachments: activeView.pendingAttachments };
-  }
-  const attachments = (target && target.attachments) || (activeView && activeView.pendingAttachments);
-  if (!attachments) { console.error('[input] addFileAttachment: no attachments array'); return; }
-
-  // Increment once at entry — every exit path below decrements.
-  pendingAttCount.value++;
-
-  if (file.type.startsWith('image/')) {
-    if (file.size > 10 * 1024 * 1024) {
-      pendingAttCount.value--;
-      showAttError('Image too large (max 10MB): ' + file.name, target);
-      return;
-    }
-    try {
-      const { dataUrl, w, h } = await compressImage(file);
-      attachments.push({
-        type: 'image', mimeType: 'image/jpeg',
-        data: dataUrl.split(',')[1],
-        name: file.name, preview: dataUrl
-      });
-    } catch (e) {
-      console.warn('[input] image compression failed, using original:', e);
-      // Fallback: read once as ArrayBuffer, derive both base64 and preview
-      try {
-        const buffer = await file.arrayBuffer();
-        const base64Data = arrayBufferToBase64(buffer);
-        const mimeType = file.type || 'image/jpeg';
-        const preview = 'data:' + mimeType + ';base64,' + base64Data;
-        attachments.push({
-          type: 'image', mimeType,
-          data: base64Data, name: file.name, preview
-        });
-      } catch (e2) {
-        console.warn('[input] image fallback read failed:', e2);
-        showAttError('Failed to read image: ' + file.name, target);
-        pendingAttCount.value--;
-        return;
-      }
-    }
-    renderAttachmentPreview(target);
-    if (callback) callback();
-    pendingAttCount.value--;
-  } else {
-    // Non-image: send metadata (name + size + hash) for filesystem resolution,
-    // plus base64 data for small files (< 5MB) as a fallback when the file
-    // can't be found on disk (e.g. inside ~/Library/Containers).
-    try {
-      const buffer = await file.arrayBuffer();
-      let hash = '';
-      try {
-        const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-        const hashArray = Array.from(new Uint8Array(hashBuffer));
-        hash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-      } catch (e) {
-        console.warn('[input] SHA-256 computation failed:', e);
-      }
-      const isSmall = file.size < 5 * 1024 * 1024;
-      const base64Data = isSmall ? arrayBufferToBase64(buffer) : '';
-      attachments.push({
-        type: 'text', mimeType: file.type || 'application/octet-stream',
-        data: base64Data, name: file.name, hash, size: file.size
-      });
-      renderAttachmentPreview(target);
-      if (callback) callback();
-    } catch (e) {
-      console.warn('[input] file read failed:', e);
-      showAttError('Failed to read file: ' + file.name, target);
-    }
-    pendingAttCount.value--;
-  }
-}
-
 // ---------- Send ----------
-export function send() {
+// attach-split 批（2026-10-24 现场事故修复：22 图 + 文字一条 WS 帧 > 服务端旧 10MB
+// 上限 ⇒ 整帧（含文字）被静默丢弃，前端已渲乐观气泡 = 假成功）：附件与文字投递解耦。
+// 单帧估算超阈 ⇒ 拆「文字必达首帧 + 附件分批帧」。阈值 8MB 刻意低于服务端**旧** 10MB
+// 上限 ⇒ 拆分后的每一帧对未升级服务端同样安全；服务端新上限已提 64MB（双保险）。
+const WS_SPLIT_MAX_BYTES = 8 * 1024 * 1024;
+
+/** 单条线上附件的帧字节估算（base64 data 占绝对大头，+256 记 JSON 包装开销）。 */
+function wireAttBytes(a) {
+  return (a && typeof a.data === 'string' ? a.data.length : 0)
+    + (a && typeof a.name === 'string' ? a.name.length : 0) + 256;
+}
+
+/**
+ * 用户消息帧真派发台 —— 直发（send 普通支）/ busy drain / 立即发送 / 离线补发
+ * 四腿共用（四腿帧形原本逐字同构）。低于阈值 = 原样单帧（行为逐字不变）；超阈 ⇒
+ *  ① 首帧只载正文 + refs/taskRefs + 主 clientMessageId（**文字必达**，WS 有序先行）；
+ *  ② 附件按累计字节切片，每片一帧，clientMessageId = 主 id + '/a' + 序号 —— **独立
+ *     幂等键**（AgentActor recentMessageIds 按 id 判重：附件帧与主帧同 id 会被判重
+ *     丢弃 ⇒ 附件永远到不了）；帧序 = 单连接有序 ⇒ 文字 turn 必然先于附件 turn 受理；
+ *  ③ 附件帧无 content/chatWidth/refs（全部随首帧）；服务端 typeless 腿对「content 空 ∧
+ *     attachments 非空」帧的受理是既有行为（准入谓词 `content.nonEmpty || attachments.
+ *     nonEmpty` 早覆盖）⇒ 附件帧对未升级服务端同样可达（落 UiMessage.User + 块注入）。
+ * 返回首帧 sendWs 结果（false = 帧进 ws.js pendingSends 内存轨，离线补发腿据此留队）。
+ */
+export function dispatchUserMessageFrames({ sessionId, content, clientMessageId, taskRefs, refs, wireAtts, chatWidth }) {
+  const baseBytes = (content ? content.length : 0) + (sessionId ? sessionId.length : 0)
+    + (clientMessageId ? clientMessageId.length : 0) + JSON.stringify(refs || []).length
+    + JSON.stringify(taskRefs || []).length + 512;
+  const totalBytes = baseBytes + (wireAtts || []).reduce((s, a) => s + wireAttBytes(a), 0);
+  const buildFrame = (attachments, cmid, withExtras) => ({
+    content,
+    device: deviceStamp(),
+    ...(withExtras && taskRefs && taskRefs.length > 0 ? { taskRefs } : {}),
+    ...(withExtras && refs && refs.length > 0 ? { refs } : {}),
+    attachments,
+    clientMessageId: cmid,
+    sessionId,
+    chatWidth: chatWidth || 0
+  });
+  if (totalBytes <= WS_SPLIT_MAX_BYTES || (wireAtts || []).length === 0) {
+    return sendWs(buildFrame(wireAtts || [], clientMessageId, true));
+  }
+  console.info('[send] frame over split threshold — text first, attachments chunked:', {
+    sessionId, estimatedBytes: totalBytes, attachments: wireAtts.length
+  });
+  // ① 文字必达首帧（附件显式空数组 —— 与单帧形态同键；服务端按 content 非空受理）。
+  //    正文为空（纯附件消息）时不发空心首帧 —— 网关准入谓词会把它当空帧丢弃
+  //    （fwdguard 批钉死过这个静默面）：此时主幂等键让给第一片附件帧。
+  let first = true;
+  if (content) first = sendWs(buildFrame([], clientMessageId, true));
+  // ② 附件分批帧：content 缺省（undefined 键不落 JSON），幂等键 = 有首帧时
+  //    主 id + '/a' + 序号（独立键，躲 AgentActor recentMessageIds 判重），无首帧时
+  //    第一片用主 id、其后 '/a' + 序号。
+  let idx = 0;
+  let chunk = [];
+  let chunkBytes = 0;
+  const flush = () => {
+    if (chunk.length === 0) return;
+    idx += 1;
+    const cmid = (content || idx > 1) ? clientMessageId + '/a' + idx : clientMessageId;
+    sendWs({
+      device: deviceStamp(),
+      ...(!content && idx === 1 && taskRefs?.length ? { taskRefs } : {}),
+      ...(!content && idx === 1 && refs?.length ? { refs } : {}),
+      attachments: chunk,
+      clientMessageId: cmid,
+      sessionId
+    });
+    chunk = [];
+    chunkBytes = 0;
+  };
+  for (const a of wireAtts) {
+    const ab = wireAttBytes(a);
+    if (chunk.length > 0 && chunkBytes + ab > WS_SPLIT_MAX_BYTES) flush();
+    chunk.push(a);
+    chunkBytes += ab;
+  }
+  flush();
+  return first;
+}
+
+
+// resend-dedup 批（修复批 #569）：`resendId` = **同一条逻辑消息**重发时携带的
+// 原 clientMessageId（重试/重发腿从 state.lastUserSendId[sid] 取）。语义分叉：
+//   · 全新发送（resendId 缺省）⇒ 新 id + 乐观气泡 + 落盘 + 入历史（原状）；
+//   · 同 id 重发 ⇒ **零新增呈现**（首次尝试的乐观气泡/落盘/历史都已在场，再渲染
+//     一份就是「重复气泡」的客户端半边）——只把帧再写一次线。服务端 recentMessageIds
+//     命中该 id ⇒ 丢弃并回 `messageDuplicate` 回执（已送达场景 = 无第二次 turn、
+//     无第二个气泡）；没见过 ⇒ 正常受理（真未送达场景 = 补送不丢）。
+export function send(resendId) {
+  // 同 id 重发：输入框常是空的（历史末条重放），空文本守卫要放行。
+  const isResend = typeof resendId === 'string' && resendId.length > 0;
   // Capture the view at entry — activeView is a live module binding that ws.js
   // changes on every incoming message. Without capturing, setTimeout closures
   // (e.g. the 300ms isSending debounce) would clear the flag on the wrong view
@@ -490,8 +218,18 @@ export function send() {
     return;
   }
   const input = v.dom.input;
+  // @-mention popup: send() clears the input on every path below, which would
+  // strand the popup over the next turn — close it up front.
+  closeTokenDropdown();
   const text = input.value.trim();
+  // 同 id 重发：重放 state.inputHistory 末条（resendLastInput 会先把值塞回输入框；
+  // 直接从登记表兜底取文本，输入框被并行路径清空也不落空）。
+  const resendText = !text && isResend ? (state.inputHistory[state.inputHistory.length - 1] || '') : text;
+  const effText = isResend ? resendText : text;
   const isBusy = state.busySessionIds.has(v.sessionId) || state.compactingSessionIds.has(v.sessionId);
+  // Selection Ask frames share this session and have no request correlation ID.
+  // Do not admit another local turn until its terminal frame arrives.
+  if (selectionAskPending(v.sessionId)) return;
   // If in skill mode, send as skill activation
   if (v.skillMode) {
     const skillName = v.skillModeName;
@@ -499,6 +237,29 @@ export function send() {
     if (!text) return;
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
     if (isBusy) {
+      // queuedirect 批（2026-10-28 作者令）：direct 模式下 skill 激活同样立即出线
+      // （与排队条「立即发送」的 skill 腿同帧形：type:'skill'；引擎侧 busy 收到
+      // SkillActivate 入 pendingUserInputs，由 turn 边界 head-forward 消费）。
+      // queue 模式（或 WS 恰好已断）走旧排队腿，逐字不变。
+      const skillDirect = consoleInputMode() === 'direct'
+        && state.ws && state.ws.readyState === WebSocket.OPEN;
+      if (skillDirect) {
+        const item = {
+          id: ++queueCounter,
+          text,
+          attachments: [],
+          skillName,
+          mode: null,
+          clientMessageId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          ts: Date.now()
+        };
+        if (v.sessionId) state.lastUserSendId[v.sessionId] = item.clientMessageId;
+        dispatchQueuedItemNow(v.sessionId, item, { quiesce: false, newTurn: false });
+        input.value = '';
+        input.style.height = 'auto';
+        saveInputDraft(v.sessionId);
+        return;
+      }
       queueMessage(v, text, [], skillName);
       input.value = '';
       input.style.height = 'auto';
@@ -507,8 +268,12 @@ export function send() {
       return;
     }
     v.isSending = true;
-    if (v.sessionId) state.turnExpecting[v.sessionId] = true;
-    sendWs({ type: 'skill', skillName, input: text, sessionId: v.sessionId });
+    if (v.sessionId) { state.turnExpecting[v.sessionId] = true; markRealUserTurn(v.sessionId); }
+    // resend-dedup 批：skill 帧带客户端唯一 id（wire 形态与普通帧同键；服务端
+    // 本批去重收口在 UserInput 腿，skill 腿先落 id 备二期收口）。
+    const skillId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    if (v.sessionId) state.lastUserSendId[v.sessionId] = skillId;
+    sendWs({ type: 'skill', skillName, input: text, clientMessageId: skillId, sessionId: v.sessionId });
     renderSkillBubble(skillName, text);
     saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a=>({type:a.type,name:a.name,preview:a.preview}))});
     input.value = '';
@@ -525,7 +290,7 @@ export function send() {
       return;
     }
     v.isSending = true;
-    if (v.sessionId) state.turnExpecting[v.sessionId] = true;
+    if (v.sessionId) { state.turnExpecting[v.sessionId] = true; markRealUserTurn(v.sessionId); }
     sendWs({ type: 'ask', question: text, sessionId: v.sessionId });
     state.sessionAskBuffers[v.sessionId] = { question: text, answer: '' };
     renderAskBubble(text);
@@ -543,6 +308,10 @@ export function send() {
       return;
     }
     if (isBusy) {
+      // queuedirect 批（2026-10-28）：compact 模式**两种模式下都保持入队**——
+      // compact 的即时命令面（type:'command',command:'compact'）已随 2026-10-09
+      // 命令面退役成为网关静默 no-op，direct 直投 = 静默丢失；入队保持现状端到
+      // 端行为逐字节不变（作者令的直通面对象是普通输入文本，不含此遗留腿）。
       queueMessage(v, text, [], null, 'compact');
       input.value = '';
       input.style.height = 'auto';
@@ -572,8 +341,23 @@ export function send() {
       return;
     }
   }
-  // Empty input — just ignore
-  if (!text && v.pendingAttachments.length === 0) {
+  // qattachvault 派发闸（直发腿）：撤回回填的「载荷已失」附件（stripped/存量 image
+  // 骨架且无 data）不允许再出空心帧（= 服务端 path:null 形态）。就地剔除 + 可判读
+  // 提示 —— 撤回腿的 toast 已说过一次；这里拦的是「不理会提示直接重发」的残余面。
+  // 禁静默：剔除可见。判据与 lostPayloadAttsOf 同律（image 结构兜底同款）。
+  {
+    const hollow = (v.pendingAttachments || []).filter(a => a && a.type !== 'taskRef' && a.type !== 'ref'
+      && !(typeof a.data === 'string' && a.data.length > 0)
+      && (a.stripped === true || (a.type === 'image' && !a.hash)));
+    if (hollow.length > 0) {
+      v.pendingAttachments = v.pendingAttachments.filter(a => !hollow.includes(a));
+      renderAttachmentPreview({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments });
+      showAttError(t('messages.queueAttachUnrecoverable', { n: hollow.length }));
+      console.warn('[send] dropped ' + hollow.length + ' stripped attachment(s) with no recoverable payload');
+    }
+  }
+  // Empty input — just ignore (同 id 重发放行：文本走登记表兜底)
+  if (!effText && v.pendingAttachments.length === 0) {
     return;
   }
   // Wait for pending attachment processing (image compression, file reading)
@@ -588,28 +372,111 @@ export function send() {
   // message parked forever — the whole point of freeze is that a user message
   // WAKES the agent (spec §3.2 input.js, F7). Fall through to the normal send
   // path below (direct WS frame, no queueMessage).
-  if (isBusy && !state.frozenSessions.has(v.sessionId)) {
-    queueMessage(v, text, v.pendingAttachments);
+  // 同 id 重发不入本地队（入队会在 drain 时另派一帧；重发的幂等性靠同 id + 服务端
+  // 去重，不靠队列）。
+  if (isBusy && !isResend && !state.frozenSessions.has(v.sessionId)) {
+    // ── queuedirect 批（2026-10-28 作者令）───────────────────────────────
+    // 原令 11:1x「取消我们的这个输入排队功能（不删代码）……如果你在回复过程中
+    // 【收到输入】，改为，直接输入给你」；11:14 补充裁定「应该不会打断你的 llm
+    // 调用吧？效果就像是我们现在的立即发送一样」。
+    // direct（新缺省）= busy 发送的消息**立即出线**，走排队条「立即发送」的既有
+    // 帧腿（纯文本 = type:'immediateInput'；带附件/引用/任务 = 默认用户帧——
+    // handleUserText 文本腿不承载附件，sendImmediate 同律）。引擎侧 ImmediateInput
+    // 在 Processing 态入 pendingImmediateInputs，于**最近安全边界**并入当前回合
+    // （工具批次完成 → ToolsComplete 边界注入 / 已无内部边界 → 回合末续轮注入），
+    // 在飞 LLM 调用**不取消不打断**（#939 Mail 工具边界注入同源语义）。
+    // queue = 旧排队腿逐字保留（配置 console.inputMode='queue' 切回）。
+    // WS 恰好已断 ⇒ 落回旧队（busy 轨项由重连确认网收口补发，f1-send-queue 场景⑤）。
+    const wsOpen = state.ws && state.ws.readyState === WebSocket.OPEN;
+    if (consoleInputMode() !== 'direct' || !wsOpen) {
+      // 输入消息排队回退批（2026-10-23 作者令「我们的输入消息排队功能采用我们的
+      // 之前的。大概两天以前的设计」）：busy 排队腿回归 10-21 形态——消息只入队，
+      // 呈现面 = 输入框上方的排队条行（chatQueue.js 行级明细：文本/附件/立即发送/
+      // 撤回/移除/拖拽排序），会话流内**零乐观气泡**（10-22 并泡诊断批的「入队即
+      // 上屏气泡」随本批退役；当前回复完成后 drain 腿逐条补渲气泡）。离线腿
+      // （WS 未开）的「待送达」乐观气泡不受本批影响，照旧。
+      queueMessage(v, text, v.pendingAttachments);
+      input.value = '';
+      input.style.height = 'auto';
+      v.pendingAttachments = [];
+      // uifix 批 2026-10-22：发送族清空 = 渐隐退场动画（chat.js 清空动画单点；
+      // 旧 innerHTML='' 瞬时蒸发退役）。随后的 renderQuoteStrip（同空数组）在
+      // renderAttachmentPreview 内命中「清空动画在播 + 空数据」闸，不打断动画。
+      clearAttachmentStripAnimated({ attPreviewEl: v.dom.attPreview });
+      renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // quote-message 一期：排队后引用 chip 随 pending 清空
+      saveInputDraft(v.sessionId);
+      setTimeout(() => { v.isSending = false; }, 300);
+      return;
+    }
+    // —— direct 直通腿：立即派发（「立即发送」等价形）────────────────────
+    // 附件派发闸先行：载荷丢失的空心帧禁出线（与直发腿 :298 同律，可见剔除）。
+    {
+      const hollow = v.pendingAttachments.filter(a => a && a.type !== 'taskRef' && a.type !== 'ref'
+        && !(typeof a.data === 'string' && a.data.length > 0)
+        && (a.stripped === true || (a.type === 'image' && !a.hash)));
+      if (hollow.length > 0) {
+        v.pendingAttachments = v.pendingAttachments.filter(a => !hollow.includes(a));
+        renderAttachmentPreview({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments });
+        showAttError(t('messages.queueAttachUnrecoverable', { n: hollow.length }));
+        console.warn('[send] direct leg dropped ' + hollow.length + ' stripped attachment(s) with no recoverable payload');
+      }
+    }
+    const directItem = {
+      id: ++queueCounter,
+      text,
+      attachments: v.pendingAttachments.map(a => ({ ...a })),
+      skillName: null,
+      mode: null,
+      // 幂等键在派发点钉死（与 queueMessage 入队钉死同律）：这条逻辑消息此后任何
+      // 重复派发都被服务端按 id 去重。
+      clientMessageId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+      ts: Date.now()
+    };
+    if (v.sessionId) state.lastUserSendId[v.sessionId] = directItem.clientMessageId;
+    // quiesce:false —— 当前回合**还在流式进行中**，禁跑 drain 腿的孤儿占位清理/
+    // stream 复位（会掐断在飞气泡的增量跟踪）。
+    // newTurn:false —— 客户端不主张新 turn：busy 判定本身就来自引擎 sessionBusy
+    // 在场事实，幻影 busy（派发被判重丢弃 ⇒ 无 turn）形态在此不成立，故不重挂
+    // turn-start 确认网、不动 lastTerminalAt/turnStartTimes（在飞回合的既有
+    // 看门/计时照旧）。
+    // wire:'immediate' —— 纯文本走 immediateInput 帧（引擎最近边界注入的承载帧）。
+    dispatchQueuedItemNow(v.sessionId, directItem, { quiesce: false, newTurn: false, wire: 'immediate' });
     input.value = '';
     input.style.height = 'auto';
     v.pendingAttachments = [];
-    v.dom.attPreview.innerHTML = '';
+    // uifix 批 2026-10-22：清空动画（同排队腿）。
+    clearAttachmentStripAnimated({ attPreviewEl: v.dom.attPreview });
+    renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments });
     saveInputDraft(v.sessionId);
-    setTimeout(() => { v.isSending = false; }, 300);
+    // isSending 防双击debounce 由 dispatchQueuedItemNow 的 view 腿统一收口，此处不再重复。
     return;
   }
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) {
-    console.warn('[send] ws not open:', { ws: !!state.ws, readyState: state.ws?.readyState });
+    // f1-send-queue 批（2026-10-19 · mobile-sync 审计 S4 = 头号丢面）：WS 未开
+    // 不再静默早退（修前 = 消息不入队、不上屏、零提示直接消失）。改走既有客户端
+    // 消息队列（persistQueue 持久化轨，刷新/重启浏览器不丢），乐观气泡上屏为
+    // 「待送达」态；重连后 flushOfflineQueue 按入队时钉死的 clientMessageId 自动
+    // 补发（#569 同 id 幂等轨：服务端见过 ⇒ messageDuplicate 丢弃，没见过 ⇒ 正常
+    // 受理 ⇒ 恰一次，无双发）。
+    // `/ask <q>` 不入队：ask 帧型在队列/drain 无承载（type:'ask' 帧），保持原早退
+    // （本批残余面，证据档申报）。
+    if (text.startsWith('/ask ')) {
+      console.warn('[send] ws not open — /ask not queued:', { readyState: state.ws?.readyState });
+      return;
+    }
+    enqueueOfflineMessage(v, text);
     return;
   }
   v.isSending = true;
   // Mark this session as expecting a turn (prevents stray thinking bubbles after done)
-  if (v.sessionId) state.turnExpecting[v.sessionId] = true;
+  if (v.sessionId) { state.turnExpecting[v.sessionId] = true; markRealUserTurn(v.sessionId); }
   // Intercept /ask <question> before normal slash handling
   if (text.startsWith('/ask ')) {
     const question = text.slice(5).trim();
     if (question) {
-      sendWs({ type: 'ask', question, sessionId: v.sessionId });
+      const askId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      sendWs({ type: 'ask', question, clientMessageId: askId, sessionId: v.sessionId });
+      if (v.sessionId) state.lastUserSendId[v.sessionId] = askId;
       state.sessionAskBuffers[v.sessionId] = { question, answer: '' };
       renderAskBubble(question);
     }
@@ -626,29 +493,32 @@ export function send() {
     setTimeout(() => { v.isSending = false; }, 300);
     return;
   }
-  renderUserBubble(text, v.pendingAttachments);
-  saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a => a.type === 'taskRef'
-    ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
-    : a.type === 'ref'
-      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }
-      : { type: a.type, name: a.name, preview: a.preview })});
-  // Save to input history
-  if (text && text !== '/clear') {
-    state.inputHistory.push(text);
-    if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
-    try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {
-      // Quota exceeded — trim history to 100 entries and retry once
-      if (state.inputHistory.length > 100) {
-        state.inputHistory = state.inputHistory.slice(-100);
-        try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e2) {}
-      }
-      console.debug('[input] history save failed:', e);
-    }
+  // quote-message 一期（spec §3.6）：clientMessageId 生成上提到 renderUserBubble
+  // 之前 —— 用户行的 data-msg-id = 这个 id（与引擎帧 clientMessageId 同键，为二期
+  // 引擎 id 收口预留）。
+  // resend-dedup 批：同 id 重发复用原 id（幂等键 = 逻辑消息，不是发送动作）；
+  // 呈现/落盘/历史三件套全部跳过 —— 首次尝试已留痕，重发再留一份就是重复气泡。
+  const clientMessageId = isResend ? resendId : Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  const frameText = isResend ? effText : text;
+  if (isResend) {
+    console.info('[send] resend same id:', { sessionId: v.sessionId, clientMessageId });
+  } else {
+    renderUserBubble(text, v.pendingAttachments, undefined, { msgId: clientMessageId });
   }
+  if (!isResend) {
+    saveMsg({type:'user', text, attachments: (v.pendingAttachments||[]).map(a => a.type === 'taskRef'
+      ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
+      : a.type === 'ref'
+        ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }
+        : { type: a.type, name: a.name, preview: a.preview })});
+  }
+  // Save to input history, with the attachments of this message (a same-id resend was recorded by
+  // its first attempt; recording it again would double the entry).
+  if (!isResend) recordSentInput(frameText, v.pendingAttachments);
   v.historyIndex = -1;
   v.historyDraft = '';
+  v.historyRecalledAtts = [];
   try {
-    const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     // v2 §5.2/§6.1 + B (2026-08-20): taskRefs carry taskId/sessionId/subject —
     // 描述/产出不重复进载荷（agent 凭 taskId 定位任务，记忆里有上下文）；
     // 用户意见 = 本帧 content（§5.4，后端落 notes）。
@@ -662,17 +532,19 @@ export function send() {
       .filter(a => a.type === 'ref')
       .map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }));
     notifyFriendRefsSent(refs);
-    sendWs({
-      content: text,
-      ...(taskRefs.length > 0 ? { taskRefs } : {}),
-      ...(refs.length > 0 ? { refs } : {}),
-      attachments: (v.pendingAttachments || [])
-        .filter(a => a.type !== 'taskRef' && a.type !== 'ref')
-        .map(a => ({
-          mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
-        })),
-      clientMessageId,
+    // resend-dedup 批：帧 content 用 frameText（同 id 重发时 = 登记表兜底文本，
+    // 与首次尝试逐字一致）；登记 lastUserSendId = 重发腿的同 id 取用点。
+    if (v.sessionId) state.lastUserSendId[v.sessionId] = clientMessageId;
+    // attach-split 批：单帧超阈 ⇒ 拆「文字必达首帧 + 附件分批帧」（helper 内）。
+    dispatchUserMessageFrames({
       sessionId: v.sessionId,
+      content: frameText,
+      clientMessageId,
+      taskRefs,
+      refs,
+      wireAtts: (v.pendingAttachments || [])
+        .filter(a => a.type !== 'taskRef' && a.type !== 'ref')
+        .map(a => ({ mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0 })),
       chatWidth: v.dom.chat?.clientWidth || 0
     });
   } catch (e) {
@@ -681,12 +553,33 @@ export function send() {
   input.value = '';
   input.style.height = 'auto';
   v.pendingAttachments = [];
-  v.dom.attPreview.innerHTML = '';
+  // uifix 批 2026-10-22：发送消费 = 渐隐退场动画（同排队腿；renderQuoteStrip 的
+  // 空数据重渲染在 renderAttachmentPreview 内命中「动画在播」闸不打断）。
+  clearAttachmentStripAnimated({ attPreviewEl: v.dom.attPreview });
+  renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // quote-message 一期：发送完成 = 引用态消费（清空时机之一，spec §2.2）
   // Immediately clear the draft for this session so it is not restored after refresh
   saveInputDraft(v.sessionId);
-  setBusy(v.sessionId);
+  // ①-2 (2026-09-11) 乐观置位时序校验 —— 本地派发 = 新 turn 的起点，因此它「在
+  // 已有终止帧时间戳之后」：允许置位并取代该时间戳（main.js 的 re-arm 闸靠它复位；
+  // 否则上一 turn 的终止戳会把本次新 turn 的每一帧都挡在闸外）。
+  // 校验点 = 帧确实写出去了：ws.js:275 的 sendWs 在非 OPEN 时是静默 no-op，此时
+  // 置位会把会话顶成「无后端 turn」的假 busy —— 没有 turn 就没有终止帧，busy 永不
+  // 自清、后续 Enter 全进本地队列且无 drain（正是症状① G3 的同族缺口）。
+  if (state.ws && state.ws.readyState === WebSocket.OPEN) {
+    if (v.sessionId) delete state.lastTerminalAt[v.sessionId];
+    setBusy(v.sessionId);
+    // busy-stuck-fix：乐观置位 = 草签——武装 turn-start 确认网（引擎 sessionBusy
+    // {busy:true}/终态帧/本会话流帧任一到场即撤；到点无任何 turn 事实 ⇒ 判幻影
+    // 收 busy，#569 判重丢弃帧不再永久卡 busy）。
+    state.armTurnConfirm?.(v.sessionId);
+  } else {
+    console.warn('[send] frame not dispatched (ws closed) — busy not armed (①-2 guard)');
+  }
   // Start turn timer
   state.turnStartTimes[v.sessionId] = Date.now();
+  // thinkingtimer-fix：真人派发 = 新 turn = 新「思考中」段起点（与 turnStartTimes
+  // 同步盖戳；段生命周期见 main.js phaseStamp 族注）。
+  state.phaseStartAt[v.sessionId] = Date.now();
   // Release send lock after a short debounce to prevent double-click / rapid Enter
   setTimeout(() => { v.isSending = false; }, 300);
   // Clean up any orphaned thinking placeholders from previous incomplete streams
@@ -699,34 +592,37 @@ export function send() {
   v.stream.aiText = '';
   v.stream.currentThinkingBubble = null;
   v.stream.thinkingText = '';
-  // Safety timeout: backend sends 'timeout' event, but this is a last-resort fallback
-  // in case the backend event never arrives. Uses streamTimeoutMs from server config (+ 30s buffer).
+  // Safety timeout：后端 'timeout' 事件之外的兜底。freezetimeout B2 —— 到点不再发
+  // interrupt（原实现会掐掉仍在慢速推进的 turn），改由阶梯看门只呈现「仍在处理」。
   const sid = v.sessionId;
-  if (sid && state.sessionBusyTimeouts[sid]) {
-    clearTimeout(state.sessionBusyTimeouts[sid]);
-    delete state.sessionBusyTimeouts[sid];
-  }
-  state.sessionBusyTimeouts[sid] = setTimeout(() => {
-    if (state.busySessionIds.has(sid)) {
-      // Send interrupt to backend so the agent cancels its fiber and returns to idle.
-      // Without this, the frontend clears busy but the backend keeps processing — any
-      // new user message gets stashed and the user sees no response until they manually
-      // click Stop (which does send interrupt).
-      sendWs({type: 'interrupt', sessionId: sid});
-      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        const timeoutView = findViewBySessionId(sid);
-        if (timeoutView) { setActiveView(timeoutView); renderTimeoutNotice(); }
-        clearBusy(sid);
-        clearStatus();
-      });
-    }
-  }, state.streamTimeoutMs + 30000);
+  armBusyWatchdogFor(sid);
 }
 
 // ---------- Input Queue (messages typed while LLM is busy) ----------
 
+/**
+ * freezetimeout B2 (2026-09-20 · 诊断 chain-n-36a3f13d §4.2②)：新 turn 起点武装阶梯
+ * 看门。判定/动作的唯一属主 = chat.js（armBusyWatchdog / onBusyWatchdogDeadline）——
+ * 本文件原有的三处「到点即 `sendWs({type:'interrupt'})`」破坏性分支全部删除：到点只
+ * 呈现「仍在处理」，中断降级为需用户显式确认。动态 import 沿用本文件的既有口径
+ * （chat.js 侧不反向 import 本模块，静态 import 会成环）。
+ */
+export function armBusyWatchdogFor(sid) {
+  if (!sid) return;
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  import('./chat.js')
+    .then(({ armBusyWatchdog }) => { if (state.busySessionIds.has(sid)) armBusyWatchdog(sid); })
+    .catch((e) => console.error('[input] arm busy watchdog failed:', e));
+}
+
 let queueCounter = 0;
 const LS_QUEUE_KEY = key('message_queue');
+// f1-send-queue：队列容量 100（与 ws.js PENDING_SEND_CAP 同律 = 「cap100 那套」）——
+// 有界防长时间离线/繁忙导致内存与 localStorage 无界增长；溢出丢最旧 + 可见告警。
+const QUEUE_CAP = 100;
 
 /** Persist message queue to localStorage so it survives browser refresh.
  *  Exported for sidebar.js deleteSession — a deleted session's queue entries
@@ -743,20 +639,49 @@ export function persistQueue() {
         text: it.text,
         skillName: it.skillName || null,
         mode: it.mode || null,
+        // resend-dedup 批：幂等键随队列项跨刷新存活（drain 腿同 id 复用的前提）。
+        clientMessageId: it.clientMessageId || null,
+        // 并泡诊断批：入队时刻随项跨刷新存活（drain 补渲腿的气泡时间戳真值源）。
+        ts: it.ts || null,
+        // qattachvault 批：载荷丢失的显式失败态随队列跨刷新存活（刷新后失败面不丢）。
+        failed: it.failed === true,
+        failCode: it.failCode || null,
+        // f1-send-queue：offline 标记随队列跨刷新存活（重连补发的拣选面）。
+        // rendered 刻意**不落盘**——刷新后乐观气泡不在场，恢复项按未渲染走
+        // （派发时活跃视图补渲），否则刷新后永远等不到翻面、气泡也永远不会出现。
+        offline: it.offline === true,
         // v2 B15: taskRef chips must survive refresh — keep taskId/sessionId
         // (+ subject as the display name); #303: ref blocks keep their full
-        // Reference shape; file/image keep type+name only — EXCEPT pasted-text
-        // attachments, whose base64 data IS the only copy of the content (the
-        // file never existed on disk). Keep small text payloads (<=400KB
-        // base64) so drain-after-refresh still delivers the content; images
-        // stay stripped (too large for localStorage).
+        // Reference shape; file/image keep type+name plus their CLASSIFICATION
+        // metadata (mimeType + hash/size) — EXCEPT pasted-text attachments,
+        // whose base64 data IS the only copy of the content (the file never
+        // existed on disk). Keep small text payloads (<=400KB base64) so
+        // drain-after-refresh still delivers the content; data/preview payloads
+        // still never persist (too large for localStorage).
         attachments: (it.attachments || []).map(a => a.type === 'taskRef'
           ? { type: 'taskRef', taskId: a.taskId, sessionId: a.sessionId, subject: a.subject, name: a.subject }
           : a.type === 'ref'
             ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) }
             : a.type === 'text' && typeof a.data === 'string' && a.data.length > 0 && a.data.length <= 400000
               ? { type: a.type, mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0 }
-              : { type: a.type, name: a.name })
+              // B+C 批 · 方案 B（不可恢复标记）：走到本支 = **载荷被剥离**。
+              // 只在**确有载荷可丢**（`data` / `preview` 其一存在）时置 `stripped: true`
+              // —— 纯元数据缺失不报，否则每个 file 附件都会假报，把真信号淹掉
+              // （取证稿 §3.3 的降噪口径：噪声化 = 另一种静默）。
+              // 标记随队列项一起落 localStorage ⇒ 跨刷新存活，撤回时据此给**可判读**
+              // 文案（下面 recallQueuedItem），而不是让用户以为附件还在。
+              //
+              // busyfix-image-mime（2026-10-09，缺陷 #45 批申报）：载荷剥离 ≠ 分类元数据
+              // 剥离。mimeType 是后端图片分类的**唯一判据**（WebSocketRoutes.scala:1616
+              // 读帧，:1734 `mimeType.startsWith("image/") ⇒ type:"image"`），剥掉它 ⇒
+              // 重发帧被落库成 `type:"file", path:null` = 历史重放永久文件卡（实证
+              // 5cc7590a….ui.json「截屏2026-10-02 09.08.27.png」行）。metadata 保留后：
+              // 无刷新路径 data 本就在内存队列 ⇒ 重发帧 mimeType+data 齐全，与直接发送
+              // 完全同路（image 分支 + 落 uploads + 重放媒体预览）；刷新路径字节本就
+              // 不可恢复（既有取舍，stripped 标记如实申报），但分类不再谎报。
+              // hash/size 顺带保留 = 超大 text 附件的磁盘解析引用（后端
+              // findLocalFile/Spotlight 判据 hash 非空 + size>0，WebSocketRoutes.scala:1675）。
+              : { type: a.type, name: a.name, mimeType: a.mimeType, hash: a.hash || '', size: a.size || 0, ...(a.data || a.preview ? { stripped: true } : {}) })
       }));
     }
     localStorage.setItem(LS_QUEUE_KEY, JSON.stringify(serializable));
@@ -780,10 +705,154 @@ export function restoreQueue() {
         refreshQueue(sid);
       }
     }
+    // qattachvault：骨架落位后立即水合载荷库（字节灌回内存项）；boot 时 WS 尚未连接，
+    // 派发闸（flushOfflineQueue 等）一律 `afterQueueHydration` 挂在水合之后 ⇒ 无竞态。
+    void hydrateQueueFromVault();
+    // conn-liveness（对话层活性批 2026-10-22）：刷新恢复的滞留项立即进横幅计数。
+    state.updateConnBanner?.();
   } catch (e) { /* corrupt data — ignore */ }
 }
 
-/** Helper: re-render the queue bar for a session with standard handlers. */
+// ── qattachvault：队列附件载荷库（IndexedDB）——字节跨刷新存活 + 空心帧派发闸 ──────
+// 缺陷链（file:line）：选图（input/attachments.js addFileAttachment ⇒ {type:'image',
+// data,preview}）→ WS 未开 enqueueOfflineMessage / LLM 忙 queueMessage（内存全量）
+// → persistQueue 把 image 剥成 {type,name,mimeType,hash:'',size:0,stripped:true}
+// （data/preview 不落任何介质）→ 刷新 restoreQueue 骨架**替换**内存态 ⇒ 字节永久丢
+// → 三条派发腿（dispatchOfflineItem / sendImmediate / drainMessageQueue）帧映射
+// `data: a.data` = undefined ⇒ JSON 丢键 ⇒ 服务端 WebSocketRoutes.scala:1621
+// （image 落 uploads 需 data.nonEmpty）不成立 ⇒ 零字节落盘 ⇒ ui.json 落 path:null
+// ⇒ 消息已送达、图片从未落盘 ⇒ 接收面永远「媒体加载失败」。
+// 修复两半：
+//   ① 字节持久化：入队即把载荷写载荷库；刷新后水合灌回 ⇒ 派发帧带全量 data ⇒
+//      服务端落 uploads ⇒ path 真值（「消息可见 ⇒ 文件可落盘」）；
+//   ② 派发闸：水合后仍缺载荷的项（库被清/写失败/IDB 不可用 = 真丢）⇒ **拒绝出线**，
+//      标 failed（队列条失败样式 + 气泡小标翻红 ! + toast 可判读）；后续项不被楔死，
+//      用户撤回重编重新添加附件 = 可重传。🔴 禁静默、禁发空心帧（path:null）。
+
+/** 项内「载荷已失」附件（权威判据 = stripped 标记 + 水合后仍无 data；B+C 批口径）。
+ *  结构兜底（只对 image）：stripped 标记上线**之前**持久化的存量骨架没有标记，
+ *  而 image 附件的唯一生产者（input/attachments.js addFileAttachment）恒带 data、
+ *  恒不带 hash ⇒ 队列项里的 image 无 data = 必然是丢字节的骨架（大文件 text 腿
+ *  靠 hash 服务端解析，不在兜底内，禁误伤）。 */
+function lostPayloadAttsOf(item) {
+  return (item.attachments || []).filter(a => a && a.type !== 'taskRef' && a.type !== 'ref'
+    && !(typeof a.data === 'string' && a.data.length > 0)
+    && (a.stripped === true || (a.type === 'image' && !a.hash)));
+}
+
+/** 入队点：把项内真载荷写进载荷库（fire-and-forget；写失败 ⇒ 跨刷新水合不中 ⇒
+ *  派发闸兜底显式失败，不静默）。只写 `data`（preview = data 的 dataURL 包装，
+ *  水合时按 mimeType 重建，不双写）。 */
+function vaultItemPayloads(sid, item) {
+  (item.attachments || []).forEach((a, idx) => {
+    if (a && typeof a.data === 'string' && a.data.length > 0
+        && a.type !== 'taskRef' && a.type !== 'ref') {
+      void vaultPut(queueVaultKey(sid, item.id, idx), a.data);
+    }
+  });
+}
+
+/** 项离队（派发成功/移除/撤回/溢出）⇒ 载荷库对应键清账（fire-and-forget）。 */
+function purgeVaultItem(sid, item) {
+  if (!item) return;
+  const n = Array.isArray(item.attachments) ? item.attachments.length : 0;
+  for (let idx = 0; idx < n; idx += 1) void vaultDel(queueVaultKey(sid, item.id, idx));
+}
+
+/** @type {Promise<void>|null} 水合链（restoreQueue 触发首趟；派发闸与测试可 await
+ *  最新一趟 —— 每次调用都追加一趟并串行化，页内二次刷新等价动作也能拿到新水合）。 */
+let queueHydration = null;
+
+/** 刷新后把载荷库字节灌回队列项（stripped ⇒ 命中：data 回补 + image preview 重建 +
+ *  摘 stripped；不命中：保留 stripped ⇒ 派发闸拒发）。末尾清孤儿键（deleteSession/
+ *  损坏恢复/溢出丢最旧的残余）。多次调用 = 多趟串行（幂等读，返回最新一趟）。 */
+export function hydrateQueueFromVault() {
+  const run = async () => {
+    let touched = false;
+    for (const [sid, items] of Object.entries(state.messageQueue)) {
+      if (!Array.isArray(items)) continue;
+      for (const item of items) {
+        const atts = Array.isArray(item.attachments) ? item.attachments : [];
+        for (let idx = 0; idx < atts.length; idx += 1) {
+          const a = atts[idx];
+          if (!a || a.stripped !== true) continue;
+          if (typeof a.data === 'string' && a.data.length > 0) { delete a.stripped; continue; }
+          let bytes = null;
+          try { bytes = await vaultGet(queueVaultKey(sid, item.id, idx)); } catch { bytes = null; }
+          if (typeof bytes === 'string' && bytes.length > 0) {
+            a.data = bytes;
+            delete a.stripped;
+            if (a.type === 'image' && !a.preview) {
+              a.preview = 'data:' + (a.mimeType || 'image/jpeg') + ';base64,' + bytes;
+            }
+            touched = true;
+          }
+          // 不命中 ⇒ stripped 保留：派发闸据此显式失败（禁静默、禁空心帧）。
+        }
+      }
+    }
+    if (touched) {
+      for (const sid of Object.keys(state.messageQueue)) refreshQueue(sid);
+    }
+    // 孤儿清扫：队列里已无对应项的键删除（载荷库与 localStorage 队列是两套账，
+    // 队列项被移除/溢出/会话删除时 localStorage 已清，此处收齐 IDB 侧的尾巴）。
+    if (vaultAvailable()) {
+      try {
+        const valid = new Set();
+        for (const [sid, items] of Object.entries(state.messageQueue)) {
+          for (const item of (items || [])) {
+            const n = Array.isArray(item.attachments) ? item.attachments.length : 0;
+            for (let idx = 0; idx < n; idx += 1) valid.add(queueVaultKey(sid, item.id, idx));
+          }
+        }
+        const all = await vaultKeys();
+        // Sent-input history payloads live in the same database under their own prefix.
+        await Promise.all(all.filter(k => !valid.has(k) && !k.startsWith(HISTORY_VAULT_PREFIX)).map(k => vaultDel(k)));
+      } catch { /* 清扫失败不影响水合结果 */ }
+    }
+  };
+  queueHydration = (queueHydration || Promise.resolve()).then(run, run);
+  return queueHydration;
+}
+
+/** 派发闸的统一入口：动作体挂在水合完成之后（boot 竞态面 = 首连 flush 先于水合）。 */
+function afterQueueHydration(fn) {
+  (queueHydration || Promise.resolve()).then(fn, fn);
+}
+
+/** 载荷丢失项的**显式失败态**（qattachvault ②）：队列条失败样式 + 在场气泡小标翻
+ *  红 ! + 可判读 toast；项留队（撤回/移除入口 = 可重传面），failed 随 persistQueue
+ *  落盘 ⇒ 跨刷新失败面不丢。后续派发腿按 `!it.failed` 跳过（不楔死队列）。 */
+function markQueueItemPayloadLost(sid, item) {
+  if (!item || item.failed) return;
+  item.failed = true;
+  item.failCode = 'payload_lost';
+  persistQueue();
+  refreshQueue(sid); // 原始键（Object.entries 形态，与 dispatch 腿 refreshQueue 同律）
+  // 气泡腿：在场 ⇒ 待送达小标原地改型为失败标（!）；不在场（刷新后）⇒ 队列条
+  // 失败态即唯一失败面（materializeOfflineBubbles 只登记已派发项 ⇒ 不会补渲假送达）。
+  if (item.clientMessageId) {
+    const mapped = sid === 'null' ? null : sid;
+    const view = (mapped && findViewBySessionId(mapped)) || activeView;
+    const row = view?.dom?.chat?.querySelector(`.row.user[data-msg-id="${item.clientMessageId}"]`);
+    const mark = row && row.querySelector('.msg-pending-mark');
+    if (mark) {
+      mark.classList.remove('msg-pending-mark');
+      mark.classList.add('msg-failed-mark');
+      mark.title = t('input.queueAttachLost');
+      mark.setAttribute('aria-label', t('input.queueAttachLost'));
+      mark.textContent = '!';
+    }
+  }
+  if (!item.failNotified) {
+    item.failNotified = true; // 内存态即可：跨刷新后气泡已不在场，toast 随失败标一次性给出
+    try { showToast(t('input.queueAttachLost'), 'error'); } catch { /* toast 面失败不阻断 */ }
+  }
+}
+
+/** Helper: re-render the queue bar for a session with standard handlers.
+ *  （输入消息排队回退批 2026-10-23：行级明细与行按钮随 10-21 形态回归——
+ *  立即发送/撤回/移除走行按钮 handler，气泡右键菜单队列动作已退役。） */
 function refreshQueue(sessionId) {
   renderQueueBar(sessionId, {
     onImmediate: (item) => sendImmediate(sessionId, item),
@@ -794,26 +863,287 @@ function refreshQueue(sessionId) {
 
 // Re-render queue bar when user switches to a different session
 window.addEventListener('queuebar-refresh', (e) => {
-  refreshQueue(e.detail.sessionId);
+  refreshQueue(/** @type {CustomEvent<{sessionId: string}>} */ (e).detail.sessionId);
 });
 
-function queueMessage(view, text, attachments, skillName, mode) {
+function queueMessage(view, text, attachments, skillName, mode, extra) {
   const sid = view.sessionId;
+  // resend-dedup 批：排队时就把幂等键钉在队列项上（不是 drain 时现生成）——
+  // 这条逻辑消息此后无论 drain 几次、跨几次刷新，线上帧都带同一个 id；
+  // 排队项的任何重复派发都会被服务端按 id 去重。
+  // f1-send-queue：`extra` = 离线腿的标记注入面（{offline, rendered}），入队即钉死。
   const item = {
     id: ++queueCounter,
     text,
     attachments: attachments.map(a => ({ ...a })),
     skillName,
-    mode
+    mode,
+    clientMessageId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+    // 并泡诊断批：入队时刻随项钉死 —— drain/补渲腿的气泡时间戳用它（修前
+    // drain 渲染取 Date.now() ⇒ 排队项的呈现时刻 ≠ 发送时刻，同一批 drain
+    // 的气泡还被标成同一时刻）。
+    ts: Date.now(),
+    ...(extra || {})
   };
   if (!state.messageQueue[sid]) state.messageQueue[sid] = [];
   state.messageQueue[sid].push(item);
+  // f1-send-queue：cap100 溢出丢最旧（与 ws.js pendingSends 同律）+ **可见告警**
+  // （审计 F1：溢出不得静默）。丢掉的若是已上屏的离线乐观气泡，连气泡一并收掉——
+  // 消息已不在场，UI 不得继续谎称「待送达」。
+  while (state.messageQueue[sid].length > QUEUE_CAP) {
+    const dropped = state.messageQueue[sid].shift();
+    console.warn('[input] queue overflow (cap ' + QUEUE_CAP + ') — dropped oldest item #' + (dropped && dropped.id));
+    showToast(t('input.queueOverflow'), 'error');
+    if (dropped && dropped.rendered) removeOfflineBubble(sid, dropped.clientMessageId);
+    if (dropped) purgeVaultItem(sid, dropped); // qattachvault：被丢项的载荷一并清账
+  }
   refreshQueue(sid);
   persistQueue();
+  // qattachvault：入队即落字节（载荷库 IndexedDB）——「消息可见 ⇒ 文件可落盘」的
+  // 上半句；跨刷新后由 hydrateQueueFromVault 灌回，水合不中由派发闸显式失败兜底。
+  vaultItemPayloads(sid, item);
+  // f1-send-queue：返回项 = 调用方取入队钉死的 clientMessageId（离线腿挂气泡用）。
+  return item;
 }
+
+// ---------- f1-send-queue：断线入队（「待送达」态）与重连自动补发 ----------
+// 审计 S4（mobile-sync 2026-10-19）：WS 未开时按 Enter 发纯文本 = 静默丢（最大丢面）。
+// 本簇语义 = 微信式「待送达」：
+//   · 入队 = 既有 queueMessage 轨（offline:true 标记 = 补发拣选面；persistQueue 持久化
+//     ⇒ 刷新/重启浏览器不丢）；busy 排队项**不带** offline 标记 ⇒ 两轨不混（busy 项仍
+//     等 done 终态 drain，补发腿不抢）。
+//   · 上屏 = 乐观气泡照常渲染，footer 带时钟小标（msg-pending-mark）；行 data-msg-id =
+//     入队钉死的 clientMessageId ⇒ 翻面/去重/撤回收泡的寻址面。
+//   · 历史/落盘不在入队点做（drain/flush 派发点做一次，与 busy 排队腿同律——入队点
+//     做会在派发点重复）。
+//   · 补发 = onReconnect（含首连）flushOfflineQueue 按 pinned id 派发；sendWs 写出
+//     成功 ⇒ 出队 + 登记 offlineDeliveredPendingUI；返 false（帧转 ws.js pendingSends
+//     内存轨）⇒ 项留队、小标不翻，下次 open 同 id 再补——双发由服务端判重兜（#569）。
+//   · 翻面/补渲的单点 = materializeOfflineBubbles：重连 historyPage 初载会整替 DOM
+//     （审计 S6），乐观气泡可能被抹 ⇒ 登记项在 historyPage 后/2s 兜底统一落实
+//     「行在场且无小标」；历史页已含同文用户消息（服务端先落盘的竞态）⇒ 不补渲防重复。
+
+/** WS 未开时的离线入队腿（send() 普通支 :237 族的唯一调用点）。 */
+function enqueueOfflineMessage(v, text) {
+  const item = queueMessage(v, text, v.pendingAttachments, null, null, { offline: true, rendered: true });
+  renderUserBubble(text, v.pendingAttachments, undefined, { msgId: item.clientMessageId, pending: true });
+  // conn-liveness（对话层活性批 2026-10-22）：滞留计数变化 ⇒ 顶栏横幅立即重读。
+  state.updateConnBanner?.();
+  const input = v.dom.input;
+  input.value = '';
+  input.style.height = 'auto';
+  v.pendingAttachments = [];
+  // uifix 批 2026-10-22：离线入队消费 = 渐隐退场动画（同发送腿）。
+  clearAttachmentStripAnimated({ attPreviewEl: v.dom.attPreview });
+  renderQuoteStrip({ attPreviewEl: v.dom.attPreview, attachments: v.pendingAttachments }); // 引用 chip 随 pending 清空（同发送/排队腿）
+  saveInputDraft(v.sessionId);
+  setTimeout(() => { v.isSending = false; }, 300);
+}
+
+/** 摘掉待送达小标（翻已送达态）。同页命内乐观气泡的寻址面 = 行
+ *  data-msg-id。.msg-pending-mark 只有离线腿时钟标单形态（busy 排队腿回退批
+ *  2026-10-23 后零气泡零标——呈现面只在排队条行）——离线腿乐观气泡经本单点
+ *  翻面（补发后调用，标缺席时 no-op 无害）。
+ *  返回行是否在场（不在场 = 已被 historyPage 整替抹掉，调用方走补渲台）。 */
+function flipOfflineMark(sid, msgId) {
+  if (!msgId) return false;
+  const view = (sid && findViewBySessionId(sid)) || activeView;
+  const row = view?.dom?.chat?.querySelector(`.row.user[data-msg-id="${msgId}"]`);
+  if (!row) return false;
+  row.querySelector('.msg-pending-mark')?.remove();
+  return true;
+}
+
+/** 收掉离线乐观气泡（撤回/移除/溢出丢弃时——消息不在场，UI 不得谎称待送达）。
+ *  选择器不带 .user 前缀：renderUserBubble 的随行媒体卡挂同一 msgId，一起收。 */
+function removeOfflineBubble(sid, msgId) {
+  if (!msgId) return;
+  const view = (sid && findViewBySessionId(sid)) || activeView;
+  view?.dom?.chat?.querySelectorAll(`[data-msg-id="${msgId}"]`).forEach(el => {
+    (el.closest('.row') || el).remove();
+  });
+}
+
+// sid → [{ text, attachments, msgId }]：已派发（帧已写出）但「气泡最终态」未落实的
+// 离线项。落实 = materializeOfflineBubbles（historyPage 后 + 2s 兜底双触发）。
+// 项常驻至某次 historyPage 落实后清除；从不清仓的残余（本会话再无 historyPage）
+// 每页命数条封顶，可忽略。
+const offlineDeliveredPendingUI = new Map();
+
+function registerOfflineDelivered(sid, item, msgId) {
+  const key = sid || '';
+  if (!offlineDeliveredPendingUI.has(key)) offlineDeliveredPendingUI.set(key, []);
+  offlineDeliveredPendingUI.get(key).push({ text: item.text, attachments: item.attachments, msgId });
+  // 兜底：无 historyPage 可循（会话未重载/帧丢失）时 2s 后自行落实。
+  setTimeout(() => materializeOfflineBubbles(key, undefined), 2000);
+}
+
+/**
+ * 落实已派发离线项的气泡终态：行在 ⇒ 摘小标；行不在（被 historyPage 抹掉/跨刷新
+ * 从未渲染）⇒ 补渲（无小标 = 已送达态）。historyMsgs 在场时先查重——服务端已把
+ * 本条落盘进历史页（补发帧先于 getHistory 被处理的竞态）⇒ 历史行就是它的呈现，
+ * 再补一份就是重复气泡。
+ */
+function materializeOfflineBubbles(sid, historyMsgs) {
+  const list = offlineDeliveredPendingUI.get(sid);
+  if (!list || list.length === 0) return;
+  const view = sid ? findViewBySessionId(sid) : activeView;
+  // 非活跃视图不补渲（气泡由落盘缓存/下次切会话的历史真值源承担）；登记保留。
+  if (!view || !activeView) return;
+  if (sid && activeView.sessionId !== sid) return;
+  for (const entry of list) {
+    const row = view.dom.chat?.querySelector(`.row.user[data-msg-id="${entry.msgId}"]`);
+    if (row) { row.querySelector('.msg-pending-mark')?.remove(); continue; }
+    const inHistory = Array.isArray(historyMsgs)
+      && historyMsgs.some(m => m && m.type === 'user' && m.text === entry.text);
+    if (inHistory) continue;
+    renderUserBubble(entry.text, entry.attachments || [], undefined, { msgId: entry.msgId });
+  }
+  // historyPage 触发 = 权威落实点（整替已完成，此后直到下次重连不再被抹）⇒ 清仓；
+  // 兜底定时器触发（historyMsgs undefined）不清仓——后续真来的 historyPage 还要再核。
+  if (historyMsgs !== undefined) offlineDeliveredPendingUI.delete(sid);
+}
+
+/** 重连（含首连）后补发全部 offline 标记项（ws.js onopen 回调注册点在本簇尾）。
+ *  qattachvault：动作体挂在水合完成之后（boot 首连 flush 可能先于水合 ⇒ 抢跑会把
+ *  尚未灌回字节的项误判成「载荷丢失」）；failed 项跳过（显式失败态，不楔死队列）。 */
+export function flushOfflineQueue() {
+  afterQueueHydration(() => {
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    for (const [sid, items] of Object.entries(state.messageQueue)) {
+      if (!Array.isArray(items) || items.length === 0) continue;
+      // 每轮重新 find：dispatchOfflineItem 成功即出队，find 自然前进；失败（ws 中途
+      // 又断）⇒ 留队并整体停轮（保序，剩余项留待下次 open）。failed（载荷丢失，终态）
+      // 同律跳过 —— 已有显式失败面，再派发只会重复拒绝。
+      let item;
+      while ((item = items.find(it => it && it.offline && !it.failed))) {
+        if (lostPayloadAttsOf(item).length > 0) { markQueueItemPayloadLost(sid, item); continue; }
+        if (!dispatchOfflineItem(sid === 'null' ? null : sid, item)) return;
+      }
+    }
+  });
+}
+
+/** 单条离线项的真派发台（真人派发点 ⑤）。帧形与 drainMessageQueue 普通支逐字同构。 */
+function dispatchOfflineItem(sid, item) {
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
+  const view = sid ? findViewBySessionId(sid) : null;
+  // resend-dedup 批：幂等键 = 入队时钉死的 clientMessageId（存量恢复项现场补一枚）。
+  const clientMessageId = item.clientMessageId
+    || (item.clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+  const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
+  const refs = (item.attachments || []).filter(a => a.type === 'ref');
+  notifyFriendRefsSent(refs);
+  const sent = dispatchUserMessageFrames({
+    sessionId: sid,
+    content: item.text,
+    clientMessageId,
+    taskRefs: taskRefs.length > 0 ? taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sid })) : taskRefs,
+    refs: refs.length > 0 ? refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) : refs,
+    wireAtts: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
+      mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
+    })),
+    chatWidth: view?.dom?.chat?.clientWidth || 0
+  });
+  if (!sent) return false; // 帧在 ws.js pendingSends 内存轨；项留队，下次 open 同 id 再补
+  // conn-liveness（对话层活性批 2026-10-22）：项已派发 ⇒ 滞留计数变化 ⇒ 横幅重读。
+  state.updateConnBanner?.();
+  // 写出成功 ⇒ 出队 + 持久化（先出队 = 「移出即已派发」口径，同 sendImmediate）
+  const q = state.messageQueue[sid];
+  if (q) { const idx = q.indexOf(item); if (idx >= 0) q.splice(idx, 1); }
+  refreshQueue(sid);
+  persistQueue();
+  purgeVaultItem(sid, item); // qattachvault：载荷已随帧出线 ⇒ 载荷库清账
+  // 呈现面：行还在（同页命、未被整替）⇒ 原地摘小标翻已送达态；登记进
+  // offlineDeliveredPendingUI 由 materializeOfflineBubbles 兜底最终态（S6 整替窗口）。
+  flipOfflineMark(sid, clientMessageId);
+  registerOfflineDelivered(sid, item, clientMessageId);
+  // 落盘 + 入历史（恰好一次 = 派发点；入队点刻意不做）
+  saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
+    ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
+    : a.type === 'ref'
+      ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
+      : { type: a.type, name: a.name, preview: a.preview }) }, sid);
+  recordSentInput(item.text, item.attachments);
+  // turn 簿记（同 send()/drainMessageQueue：本次派发 = 新 turn 起点 ⇒ 取代上一 turn
+  // 终止戳、武装看门；服务端 busy 中 ⇒ 帧由服务端排队受理，busy 登记本就恒真）。
+  if (sid) {
+    state.turnExpecting[sid] = true; markRealUserTurn(sid);
+    state.lastUserSendId[sid] = clientMessageId;
+    delete state.lastTerminalAt[sid];
+  }
+  setBusy(sid);
+  // busy-stuck-fix：补发腿同款草签（同 id 重放被服务端判重丢弃时，无 turn 无终态帧，
+  // 靠确认网/判重回执收幻影 busy）。
+  state.armTurnConfirm?.(sid);
+  state.turnStartTimes[sid] = Date.now();
+  state.phaseStartAt[sid] = Date.now(); // thinkingtimer-fix：补发派发 = 新段起点（同 send）
+  armBusyWatchdogFor(sid);
+  return true;
+}
+
+/** ②26/⑥38 busy 排队项断连补发轨（2026-10-25，手机端 P1 批）：busy 排队项不带
+ *  offline 标记（两轨隔离设计，:740 注），其唯一投递挂点 = 终态帧族（done /
+ *  sessionBusy{false} → clearBusyFor → scheduleQueueDrain）。WS 断连期终态帧全数
+ *  被吞 ⇒ 断连前进队、轮次在断连窗内真终态的 busy 项，重连后**无人触发**（引擎
+ *  onopen 引导帧族不重放 per-session busy 态，客户端 busy 镜像/开轮事实就此陈旧
+ *  —— drain 闸 ②/③ 按陈旧事实把重连后的每次补触发都挡到「永远不来的终态」上）。
+ *  本腿 = 重连/首连时对含 busy 轨项（非 offline 标记、非 failed 终态）的会话：
+ *    ① 补触发 drain（触发点补一；正确性闸全在 main.js armQueueDrainTimer 内裁决
+ *      ——冷却窗/运行中事实/投递未决/WS 开，queue-one-per-turn 语义零放松）；
+ *    ② turn-start 确认网换新窗口基点重挂（turnStartTimes 推进到 now：断连**前**
+ *      的开轮事实不再计入对账）——引擎仍在跑的轮次由流帧/心跳在重连后持续记账
+ *      （网体 factAt > 新基点 ⇒ 持有不误杀），真空闲轮 20s 无任何新事实 ⇒ 幻影
+ *      分支收 busy + 落权威无-turn 戳 + drain（与派发幻影腿 main.js:518 同款收口）。
+ *    纯 offline 轨会话不进本腿（归 flushOfflineQueue，双轨不混）。 */
+function rearmBusyQueueDrains() {
+  for (const [sid, items] of Object.entries(state.messageQueue)) {
+    if (!Array.isArray(items) || items.length === 0) continue;
+    if (!items.some(it => it && !it.failed && !it.offline)) continue; // 纯离线轨/全失败：不进本腿
+    state.scheduleQueueDrain?.(sid);
+    // thinkingtimer-fix（2026-10-28）：这里重盖的只有 turnStartTimes 对账基点
+    // （turn-start 确认网用）。state.phaseStartAt（「思考中」dots 计时锚）**刻意
+    // 不动**——重连不构成阶段边界：仍在跑的轮次的等待段起点必须存活，重连历史
+    // 整替后重建的 dots 才能从原段起点继续单调计数（报障「思考中 1m58s」的重置
+    // 源之一就是本腿连带重置了计时锚）。
+    state.turnStartTimes[sid] = Date.now();
+    state.armTurnConfirm?.(sid);
+  }
+}
+
+// 首连/重连收口点：ws.js onopen 在 flushPendingSends 之后、引导帧族之后调
+// reconnectCallbacks —— 离线项补发先行，busy 轨重排次之，历史重拉（main.js
+// onReconnect）随后。
+onReconnect(() => {
+  try { flushOfflineQueue(); } catch (e) { console.error('[input] offline flush failed:', e); }
+  try { rearmBusyQueueDrains(); } catch (e) { console.error('[input] busy queue re-drain failed:', e); }
+});
+
+// historyPage 后落实离线气泡终态（S6 整替窗口的收口）。input.js 模块先于 main.js
+// 求值 ⇒ 本处理器注册在前、同步段先跑；setTimeout(0) 把落实推到 main.js 处理器
+// （整替+历史重渲）完成之后。
+onMessage('historyPage', (msg) => {
+  const sid = msg && msg.sessionId;
+  setTimeout(() => {
+    try { materializeOfflineBubbles(sid || '', msg && msg.messages); } catch (e) { /* 呈现兜底不炸处理器 */ }
+  }, 0);
+});
 
 function sendImmediate(sessionId, item) {
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  // resend-dedup 批（「已派发还重发」判断修正）：立即发送的第一步就把项移出队列
+  // ⇒ 项已不在队列 = 已派发过（双击 / 陈旧 handler 重放）⇒ 不再二连发。
+  const q0 = state.messageQueue[sessionId];
+  if (!q0 || !q0.includes(item)) {
+    console.warn('[input] sendImmediate: item already dispatched — skip');
+    return;
+  }
+  // qattachvault 派发闸：载荷丢失（水合不中）⇒ 拒绝出线（空心帧 = path:null 形态，
+  // 禁发）。显式失败态就地给出；项留队，撤回重编 = 可重传。
+  if (lostPayloadAttsOf(item).length > 0) {
+    markQueueItemPayloadLost(sessionId, item);
+    return;
+  }
   const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
   const refs = (item.attachments || []).filter(a => a.type === 'ref');
   // File/image attachments (base64 data payload) ride the same default
@@ -822,38 +1152,57 @@ function sendImmediate(sessionId, item) {
   // `content` — with content === '' the frame hit handleUserText's empty
   // guard and the agent never saw it (silent non-response).
   const fileAtts = (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref');
+  // resend-dedup 批：幂等键 = 队列项入队时钉死的 clientMessageId（存量恢复项
+  // 现场补一枚）。立即发送是对同一逻辑消息的投递 ⇒ 同 id。
+  const itemMsgId = item.clientMessageId
+    || (item.clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+  state.lastUserSendId[sessionId] = itemMsgId;
   if (item.mode === 'compact') {
     sendWs({ type: 'command', command: 'compact', sessionId, instruction: item.text || undefined });
   } else if (item.skillName) {
-    sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
+    sendWs({ type: 'skill', skillName: item.skillName, input: item.text, clientMessageId: itemMsgId, sessionId });
   } else if (taskRefs.length > 0 || refs.length > 0 || fileAtts.length > 0) {
     // v2 + #303: a return/reference message must ride the default user-message
     // branch — the backend parses taskRefs/refs only there (WebSocketRoutes
     // §6.2); immediateInput goes through handleUserText and would drop them.
-    const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const clientMessageId = itemMsgId;
     notifyFriendRefsSent(refs);
-    sendWs({
+    dispatchUserMessageFrames({
+      sessionId,
       content: item.text,
-      ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
-      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
-      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
+      clientMessageId,
+      taskRefs: taskRefs.length > 0 ? taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) : taskRefs,
+      refs: refs.length > 0 ? refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) : refs,
+      wireAtts: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
         mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
       })),
-      clientMessageId,
-      sessionId,
       chatWidth: activeView?.dom?.chat?.clientWidth || 0
     });
   } else {
-    sendWs({ type: 'immediateInput', content: item.text, sessionId });
+    // resend-dedup 批：immediateInput 帧带客户端唯一 id（gateway 本批不消费该腿的
+    // id——ImmediateInput 命令无此字段；wire 先行，候二期命令形状收口）。
+    // device-provenance 批：「立即发送」腿同律随帧声明。
+    sendWs({ type: 'immediateInput', content: item.text, device: deviceStamp(), clientMessageId: itemMsgId, sessionId });
   }
   // Render in chat
-  if (activeView && activeView.sessionId === sessionId) {
+  // resend-dedup 批：renderUserBubble 落 data-msg-id = 幂等键（与普通发送同键）。
+  // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
+  // 小标即「已送达」翻面；重渲一份就是重复气泡。
+  // 翻面落空（行不在场：刷新后 / historyPage 整替）⇒ 补渲一次已送达态气泡 ——
+  // 消息此刻已被受理，界面上不能凭空消失（对话层活性批 2026-10-22 收口）。
+  if (item.rendered) {
+    if (!flipOfflineMark(sessionId, itemMsgId) && activeView && activeView.sessionId === sessionId) {
+      renderUserBubble(item.text, item.attachments);
+    }
+  } else if (activeView && activeView.sessionId === sessionId) {
     if (item.mode === 'compact') {
       renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));
     } else if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
-      renderUserBubble(item.text, item.attachments);
+      // 排队项补渲：时间戳 = 入队时刻（item.ts），非补渲时刻（排队回退批保留
+      // 该数据层真值钉）。
+      renderUserBubble(item.text, item.attachments, item.ts, { msgId: itemMsgId });
     }
   }
   saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
@@ -862,11 +1211,7 @@ function sendImmediate(sessionId, item) {
       ? { type: 'ref', refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display }
       : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
   // Save to input history (same as normal send and drainMessageQueue)
-  if (item.text) {
-    state.inputHistory.push(item.text);
-    if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
-    try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {}
-  }
+  recordSentInput(item.text, item.attachments);
   // Remove from queue and refresh bar
   const q = state.messageQueue[sessionId];
   if (q) {
@@ -875,6 +1220,7 @@ function sendImmediate(sessionId, item) {
   }
   refreshQueue(sessionId);
   persistQueue();
+  purgeVaultItem(sessionId, item); // qattachvault：载荷已随帧出线 ⇒ 载荷库清账
 }
 
 function removeQueuedItem(sessionId, item) {
@@ -882,8 +1228,39 @@ function removeQueuedItem(sessionId, item) {
   if (!q) return;
   const idx = q.indexOf(item);
   if (idx >= 0) q.splice(idx, 1);
+  // f1-send-queue：离线乐观气泡随移除一并收掉（消息已不在场，不留谎称待送达的壳）。
+  if (item.rendered) removeOfflineBubble(sessionId, item.clientMessageId);
   refreshQueue(sessionId);
   persistQueue();
+  purgeVaultItem(sessionId, item); // qattachvault：项已离队 ⇒ 载荷库清账
+}
+
+/**
+ * Put the attachments of the history entry the view now points at into the input strip, replacing the
+ * ones the previous recall added. Attachments the user added by hand are never touched. The payload may
+ * come from IndexedDB, so the result is applied only if the view still points at the same entry.
+ * @param {import('./chatView.js').ChatView} view
+ */
+function recallHistoryAttachments(view) {
+  const strip = () => renderAttachmentPreview({ attPreviewEl: view.dom.attPreview, attachments: view.pendingAttachments });
+  const previous = view.historyRecalledAtts;
+  if (previous.length > 0) {
+    view.pendingAttachments = view.pendingAttachments.filter((att) => !previous.includes(att));
+    view.historyRecalledAtts = [];
+    strip();
+  }
+  const index = view.historyIndex;
+  const ticket = ++view.historyRecallTicket;
+  if (index < 0 || !entryHasAttachments(index)) return;
+  void restoreEntryAttachments(index).then(({ atts, lost }) => {
+    if (ticket !== view.historyRecallTicket || view.historyIndex !== index) return;
+    if (atts.length > 0) {
+      view.pendingAttachments.push(...atts);
+      view.historyRecalledAtts = atts;
+      strip();
+    }
+    if (lost > 0) showToast(t('input.historyAttachLost', { n: lost }), 'error');
+  });
 }
 
 /** Recall a queued item back to the input box for editing, removing it from the queue. */
@@ -892,8 +1269,12 @@ function recallQueuedItem(sessionId, item) {
   if (!q) return;
   const idx = q.indexOf(item);
   if (idx >= 0) q.splice(idx, 1);
+  // f1-send-queue：离线乐观气泡随撤回一并收掉（文本回输入框重编 = 该条逻辑消息
+  // 已撤回；气泡留着会继续显示「待送达」却永远不会补发）。
+  if (item.rendered) removeOfflineBubble(sessionId, item.clientMessageId);
   refreshQueue(sessionId);
   persistQueue();
+  purgeVaultItem(sessionId, item); // qattachvault：项已离队（回输入框重编）⇒ 载荷库清账
 
   // Put text back into the input box
   const view = findViewBySessionId(sessionId);
@@ -907,42 +1288,125 @@ function recallQueuedItem(sessionId, item) {
     // Place cursor at end
     const len = view.dom.input.value.length;
     view.dom.input.setSelectionRange(len, len);
+    // A-batch (msgqueue-recall-attach, 2026-09-14): the splice above removed the
+    // last live reference to item.attachments, so the attachment payload used to
+    // vanish right here with no trace. Feed it back through the SAME path send()
+    // and appendRefToActiveView() use — no new mechanism. Mixed set (the input
+    // box already holds pending attachments) = append, never drop either side.
+    const queuedAtts = Array.isArray(item.attachments) ? item.attachments : [];
+    if (queuedAtts.length > 0) {
+      if (!Array.isArray(view.pendingAttachments)) view.pendingAttachments = [];
+      const before = view.pendingAttachments.length;
+      view.pendingAttachments.push(...queuedAtts.map(a => ({ ...a })));
+      console.warn('[input] recallQueuedItem: restored ' + queuedAtts.length
+        + ' attachment(s) from queued item #' + item.id
+        + ' (pending ' + before + ' -> ' + view.pendingAttachments.length + ')');
+      if (view.dom.attPreview) {
+        renderAttachmentPreview({ attPreviewEl: view.dom.attPreview, attachments: view.pendingAttachments });
+      }
+      // quote-message 一期：排队项撤回输入框 —— chat-message ref 随附件原样回填；
+      // 2026-10-09 改版后引用 chip 与附件同条带 ⇒ 上面的 renderAttachmentPreview
+      // 一次重建即同时复原两者（数据单点 = pendingAttachments，无需二次落面调用）。
+      // Refresh blind spot: persistQueue() reduces images/large payloads to a
+      // {type, name} skeleton, so such an item cannot be restored for real.
+      //
+      // B+C 批 · 方案 B：两级判据 ——
+      //  ① 显式标记（本批新增，**权威**）：`persistQueue` 在剥离 `data`/`preview` 时
+      //     写下 `stripped: true`；标记随 localStorage 存活 ⇒ 撤回时**知道**自己丢过东西。
+      //  ② 结构兜底（A-only 批既有，保留）：本标记落地**之前**就已持久化的旧队列项
+      //     没有标记，按「四键俱缺」形态识别。⇒ 旧项不因新标记上线而漏报。
+      // 判据逻辑**不含**任何「猜内容」：只读标记与结构，不尝试从服务端回补（回补不存在）。
+      const stripped = view.pendingAttachments.filter(a => a.type !== 'taskRef' && a.type !== 'ref'
+        && (a.stripped === true || (!a.data && !a.preview && !a.hash && !a.mimeType)));
+      if (stripped.length > 0) {
+        console.warn('[input] recallQueuedItem: ' + stripped.length
+          + ' attachment(s) lost their payload to page-refresh persistence and must be re-added');
+        // **用户可见**文案（方案 B 的「文案」半边）：修前只有 console.warn —— 对用户
+        // 而言附件**静默消失了**（红点/角标没有、输入框里也不见了），正是本次要修的
+        // 「不得静默」形态。文案说清**为什么**（页面刷新）与**怎么办**（重新添加）。
+        window.__showToast?.(t('messages.queueAttachUnrecoverable', { n: stripped.length }), 'error');
+      }
+    }
     saveInputDraft(sessionId);
+  } else if (Array.isArray(item.attachments) && item.attachments.length > 0) {
+    // J5 residual path: no mounted input box means the payload can be neither
+    // restored nor edited — say so instead of letting it vanish silently.
+    console.warn('[input] recallQueuedItem: no mounted input view for ' + sessionId
+      + ' — ' + item.attachments.length + ' attachment(s) of queued item #' + item.id
+      + ' could not be restored');
   }
 }
 
 /** Called on 'done' event — send first queued message as normal UserInput.
  *  Works even when the session isn't currently displayed (view is null):
- *  DOM operations are skipped, but the WS message is still sent. */
+ *  DOM operations are skipped, but the WS message is still sent.
+ *  qattachvault：动作体挂在水合完成之后（boot 后立刻 done 的竞态面）；failed
+ *  （载荷丢失终态）项跳过 —— 不楔死队列，其余项照常 drain。 */
 export function drainMessageQueue(sessionId) {
+  afterQueueHydration(() => drainMessageQueueNow(sessionId));
+}
+
+function drainMessageQueueNow(sessionId) {
   const q = state.messageQueue[sessionId];
   if (!q || q.length === 0) return false;
   if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return false;
-  const item = q[0];
-  const view = findViewBySessionId(sessionId);
+  const item = q.find(it => !it.failed);
+  if (!item) return false;
+  // qattachvault 派发闸：载荷丢失（水合不中）⇒ 拒绝出线（空心帧 = path:null 形态，
+  // 禁发）。显式失败态就地给出；项留队，撤回重编 = 可重传。
+  if (lostPayloadAttsOf(item).length > 0) {
+    markQueueItemPayloadLost(sessionId, item);
+    return false;
+  }
 
   // Remove from queue
-  q.shift();
+  const itemIdx = q.indexOf(item);
+  if (itemIdx >= 0) q.splice(itemIdx, 1);
   refreshQueue(sessionId);
   persistQueue();
+  purgeVaultItem(sessionId, item); // qattachvault：载荷已随帧出线 ⇒ 载荷库清账
+
+  return dispatchQueuedItemNow(sessionId, item);
+}
+
+/** 单条已出队项的**真派发台**（queuedirect 批 2026-10-28 从 drainMessageQueueNow
+ *  抽出——drain 腿与 busy 直通腿共用同一帧形/呈现/落盘/记账序列）：
+ *   · drain 腿（默认 opts）= 旧行为逐字：done 终态后的孤儿占位清理 + 乐观新 turn
+ *     记账（busy 置位/确认网/计时戳/终止戳清账）。
+ *   · 直通腿（{quiesce:false, newTurn:false, msgId}）= busy 会话中「立即发送」
+ *     等价形：回合还在流式进行 —— 不清占位不复位 stream（quiesce:false），不主张
+ *     新 turn（newTurn:false：引擎侧只是把消息并入在飞回合的最近安全边界）；气泡
+ *     带 data-msg-id = 幂等键（msgId，与普通发送同键，供历史整替去重寻址）。
+ *  返回 true = 帧已出线。 */
+function dispatchQueuedItemNow(sessionId, item, opts = {}) {
+  const quiesce = opts.quiesce !== false;
+  const newTurn = opts.newTurn !== false;
+  const view = findViewBySessionId(sessionId);
 
   // Render in chat (only if this session is the active view)
-  if (view && activeView && activeView.sessionId === sessionId) {
+  // f1-send-queue：rendered 项（离线入队的乐观气泡已在场）零新增呈现 —— 摘掉
+  // 小标即可；重渲一份就是重复气泡（与 sendImmediate 同律）。
+  // 翻面落空（行不在场：刷新后 / historyPage 整替）⇒ 补渲已送达态气泡（同
+  // sendImmediate 的收口——消息已受理，不能凭空消失）。
+  if (item.rendered) {
+    if (!flipOfflineMark(sessionId, item.clientMessageId) && view && activeView && activeView.sessionId === sessionId) {
+      renderUserBubble(item.text, item.attachments);
+    }
+  } else if (view && activeView && activeView.sessionId === sessionId) {
     if (item.mode === 'compact') {
       renderSystemBubble(item.text ? t('slash.compactDone') + ' — ' + item.text : t('slash.compactDone'));
     } else if (item.skillName) {
       renderSkillBubble(item.skillName, item.text);
     } else {
-      renderUserBubble(item.text, item.attachments);
+      // 排队项 drain 补渲：时间戳 = 入队时刻（item.ts），非 drain 渲染时刻
+      // （排队回退批保留该数据层真值钉）。直通腿带 msgId（opts.msgId）＝
+      // 气泡行 data-msg-id = 幂等键（普通发送同键）。
+      renderUserBubble(item.text, item.attachments, item.ts, opts.msgId ? { msgId: opts.msgId } : undefined);
     }
   }
 
   // Save to history
-  if (item.text) {
-    state.inputHistory.push(item.text);
-    if (state.inputHistory.length > 200) state.inputHistory = state.inputHistory.slice(-200);
-    try { localStorage.setItem(LS_HISTORY_KEY, JSON.stringify(state.inputHistory)); } catch(e) {}
-  }
+  recordSentInput(item.text, item.attachments);
   saveMsg({ type: 'user', text: item.text, attachments: (item.attachments || []).map(a => a.type === 'taskRef'
     ? { type: a.type, name: a.subject, taskId: a.taskId, sessionId: a.sessionId, subject: a.subject }
     : a.type === 'ref'
@@ -950,7 +1414,7 @@ export function drainMessageQueue(sessionId) {
       : { type: a.type, name: a.name, preview: a.preview }) }, sessionId);
 
   // Send as normal UserInput
-  if (sessionId) state.turnExpecting[sessionId] = true;
+  if (sessionId) { state.turnExpecting[sessionId] = true; markRealUserTurn(sessionId); }
   if (view) {
     view.isSending = true;
     view.historyIndex = -1;
@@ -960,62 +1424,96 @@ export function drainMessageQueue(sessionId) {
   if (item.mode === 'compact') {
     sendWs({ type: 'command', command: 'compact', sessionId, instruction: item.text || undefined });
   } else if (item.skillName) {
-    sendWs({ type: 'skill', skillName: item.skillName, input: item.text, sessionId });
+    sendWs({ type: 'skill', skillName: item.skillName, input: item.text, clientMessageId: item.clientMessageId, sessionId });
   } else {
-    const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    // resend-dedup 批：幂等键 = 队列项入队时钉死的 clientMessageId（存量恢复项
+    // 缺失时现场补一枚，仍在本项生命周期内保持稳定）。重复 drain / 刷新后再
+    // drain 的重复派发都在服务端按 id 去重。
+    const clientMessageId = item.clientMessageId
+      || (item.clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6));
+    if (sessionId) state.lastUserSendId[sessionId] = clientMessageId;
     // v2 B15: queued return messages keep their taskRefs when drained.
     // #303: unified refs ride the same default user-message frame (backend
     // parses refs via circe cursor — tolerated for forward-compat).
     const taskRefs = (item.attachments || []).filter(a => a.type === 'taskRef');
     const refs = (item.attachments || []).filter(a => a.type === 'ref');
+    const fileAtts = (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref');
     notifyFriendRefsSent(refs);
-    sendWs({
-      content: item.text,
-      ...(taskRefs.length > 0 ? { taskRefs: taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) } : {}),
-      ...(refs.length > 0 ? { refs: refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) } : {}),
-      attachments: (item.attachments || []).filter(a => a.type !== 'taskRef' && a.type !== 'ref').map(a => ({
-        mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
-      })),
-      clientMessageId,
-      sessionId,
-      chatWidth: view?.dom?.chat?.clientWidth || 0
-    });
-  }
-
-  setBusy(sessionId);
-  state.turnStartTimes[sessionId] = Date.now();
-
-  // Safety timeout
-  if (state.sessionBusyTimeouts[sessionId]) {
-    clearTimeout(state.sessionBusyTimeouts[sessionId]);
-    delete state.sessionBusyTimeouts[sessionId];
-  }
-  state.sessionBusyTimeouts[sessionId] = setTimeout(() => {
-    if (state.busySessionIds.has(sessionId)) {
-      sendWs({ type: 'interrupt', sessionId });
-      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        const timeoutView = findViewBySessionId(sessionId);
-        if (timeoutView) { setActiveView(timeoutView); renderTimeoutNotice(); }
-        clearBusy(sessionId);
-        clearStatus();
+    // queuedirect 直通腿（wire:'immediate'）且**纯文本**（无附件/引用/任务引用）
+    // ⇒ immediateInput 帧（「立即发送」等价腿：引擎 busy 态入 pendingImmediateInputs
+    // = 回合内最近安全边界注入）。带附件 ⇒ 默认用户帧（handleUserText 文本腿不承载
+    // 附件，sendImmediate 同律——引擎侧落 UserInput，由 turn 末处理）。
+    // drain 腿（wire 缺省）一律默认用户帧（旧行为逐字）。
+    if (opts.wire === 'immediate' && taskRefs.length === 0 && refs.length === 0 && fileAtts.length === 0) {
+      sendWs({ type: 'immediateInput', content: item.text, device: deviceStamp(), clientMessageId, sessionId });
+    } else {
+      dispatchUserMessageFrames({
+        sessionId,
+        content: item.text,
+        clientMessageId,
+        taskRefs: taskRefs.length > 0 ? taskRefs.map(a => ({ taskId: a.taskId, sessionId: a.sessionId || sessionId })) : taskRefs,
+        refs: refs.length > 0 ? refs.map(a => ({ refType: a.refType, id: a.id, source: a.source, anchor: a.anchor, meta: a.meta, display: a.display, ...(a.content ? { content: a.content } : {}) })) : refs,
+        wireAtts: fileAtts.map(a => ({
+          mimeType: a.mimeType, data: a.data, name: a.name, hash: a.hash || '', size: a.size || 0
+        })),
+        chatWidth: view?.dom?.chat?.clientWidth || 0
       });
     }
-  }, state.streamTimeoutMs + 30000);
+  }
+
+  // ①-2: 本次 drain 派发 = 新 turn 起点 ⇒ 取代上一 turn 的终止戳（同 send()）。
+  // 直通腿（newTurn:false）不主张新 turn：在飞回合的既有终止戳/计时原样保留。
+  if (newTurn && sessionId) delete state.lastTerminalAt[sessionId];
+  if (newTurn) setBusy(sessionId);
+  if (newTurn) {
+    // busy-stuck-fix：drain 派发腿同款草签（服务端 busy 排队闸判重丢弃时，无 turn
+    // 无终态帧，靠确认网/判重回执收幻影 busy）。直通腿不重挂——busy 事实本身就
+    // 来自引擎 sessionBusy 在场，幻影形态不成立；在飞回合的流帧照常撤既有网。
+    state.armTurnConfirm?.(sessionId);
+    state.turnStartTimes[sessionId] = Date.now();
+    // thinkingtimer-fix：newTurn 派发 = 新「思考中」段起点；直通腿（newTurn:false）
+    // 同样不主张新段——在飞回合的等待段锚原样保留（与上一行的计时原样保留同律）。
+    state.phaseStartAt[sessionId] = Date.now();
+  }
+
+  // Safety timeout（freezetimeout B2：到点只呈现「仍在处理」，不发 interrupt）。
+  // 直通腿不重挂（quiesce/newTurn 皆 false 的场景 = 回合进行中，既有看门在管）。
+  if (newTurn) armBusyWatchdogFor(sessionId);
 
   // Clean up thinking placeholders (only for displayed sessions)
+  // 直通腿（quiesce:false）跳过：回合还在流式进行，占位清理/stream 复位会掐断
+  // 在飞气泡的增量跟踪（下一个流 delta 会另开新泡 = 撕裂）。isSending 防双击
+  // debounce 与 quiesce 无关——两条腿都必须归还发送锁。
   if (view) {
-    if (window.__stopThinkingTimer) window.__stopThinkingTimer();
-    view.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
-      const row = el.closest('.row');
-      if (row) row.remove();
-    });
-    view.stream.currentAiBubble = null;
-    view.stream.aiText = '';
-    view.stream.currentThinkingBubble = null;
-    view.stream.thinkingText = '';
+    if (quiesce) {
+      if (window.__stopThinkingTimer) window.__stopThinkingTimer();
+      view.dom.chat.querySelectorAll('.thinking-placeholder').forEach(el => {
+        const row = el.closest('.row');
+        if (row) row.remove();
+      });
+      view.stream.currentAiBubble = null;
+      view.stream.aiText = '';
+      view.stream.currentThinkingBubble = null;
+      view.stream.thinkingText = '';
+    }
     setTimeout(() => { view.isSending = false; }, 300);
   }
   return true;
+}
+
+// Send an explicit todo reply without borrowing either composer's draft or attachments.
+// injectUserMessage renders and persists through activeView, so scope that binding
+// synchronously to the primary view and restore the caller even on failure.
+export function sendPrimaryTodoReply(text) {
+  const primary = chatViews.primary;
+  if (!primary || !primary.sessionId || !text?.trim()) return false;
+  const previous = activeView;
+  try {
+    setActiveView(primary);
+    return injectUserMessage(text, { sessionId: primary.sessionId });
+  } finally {
+    setActiveView(previous);
+  }
 }
 
 // ---------- Inject User Message (for plugin card interactions) ----------
@@ -1063,6 +1561,7 @@ export function injectUserMessage(text, options = {}) {
   const clientMessageId = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   sendWs({
     content: trimmed,
+    device: deviceStamp(), // device-provenance 批：插件卡注入腿同律随帧声明
     attachments: [],
     clientMessageId,
     sessionId,
@@ -1070,26 +1569,19 @@ export function injectUserMessage(text, options = {}) {
   });
 
   // Mark session as busy
+  // ①-2: 本派发同样是新 turn 起点 ⇒ 取代上一 turn 的终止戳（同 send()/drain）。
+  if (sessionId) delete state.lastTerminalAt[sessionId];
   setBusy(sessionId);
+  // busy-stuck-fix：插件卡注入腿同款草签（同上三条派发腿）。
+  state.armTurnConfirm?.(sessionId);
   // Only set timer if not already running — don't reset during active turn
   if (!state.turnStartTimes[sessionId]) state.turnStartTimes[sessionId] = Date.now();
+  // thinkingtimer-fix：同口径——在飞回合的「思考中」段锚不被插件注入腿重置；
+  // 空闲注入则开新段。
+  if (sessionId && !state.phaseStartAt[sessionId]) state.phaseStartAt[sessionId] = Date.now();
 
-  // Safety timeout (same as normal send)
-  if (state.sessionBusyTimeouts[sessionId]) {
-    clearTimeout(state.sessionBusyTimeouts[sessionId]);
-    delete state.sessionBusyTimeouts[sessionId];
-  }
-  state.sessionBusyTimeouts[sessionId] = setTimeout(() => {
-    if (state.busySessionIds.has(sessionId)) {
-      sendWs({type: 'interrupt', sessionId});
-      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        const v = findViewBySessionId(sessionId);
-        if (v) { setActiveView(v); renderTimeoutNotice(); }
-        clearBusy(sessionId);
-        clearStatus();
-      });
-    }
-  }, state.streamTimeoutMs + 30000);
+  // Safety timeout (same as normal send) —— freezetimeout B2: 到点只呈现，不发 interrupt
+  armBusyWatchdogFor(sessionId);
 
   return true;
 }
@@ -1126,28 +1618,120 @@ export function initInput(view) {
   // Sync the send button's connection state on init (grey until connected).
   refreshSendButtonState();
 
-  // Auto-resize textarea
+  // ── fwdguard-impl（2026-09-17）→ #531 占位形态修正（作者令 2026-10-18 23:36）──
+  // 纯引用帧闸的提示**不再设独立提示行**：旧实现插入 .ref-gate-hint div（#input
+  // 之前的文档流位），blocked 时在附件 chip 下方另起一行渲染「请附一句话后发送」
+  // ——作者裁定提示应落在**原输入框自己的 placeholder 位**（updateInputPlaceholder
+  // 的 isRefOnlyFrame 分支），本元素整个移除。（旧注里「结构角色由 44px 让位带
+  // 承担」一段已随 uifix 批 2026-10-22 附件条改 in-flow 独立行失效 —— overlay
+  // 命中带不复存在，chip 与文字区完全分离，无点击吃面问题。）
+  // 闸的视觉态 = 发送键禁用（syncRefOnlyGate）+ placeholder 文案（下方两个 helper）。
+
+  // Auto-resize textarea + 同步纯引用帧闸（文本变化会改变闸判据）。
   input.addEventListener('input', () => {
     input.style.height = 'auto';
-    input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+    growComposerInput(input);
+    syncRefOnlyGate(view);
+    // 输入使闸解除时（blocked→false）占位符立即回到附件/通用文案 ——
+    // 闸文案由输入框自身 placeholder 承担（#531，2026-10-18）。
+    updateInputPlaceholder();
   });
 
-  // Send button
-  sendBtn.onclick = () => { setActiveView(view); send(); };
+  // Voice dictation state — declared at the top of the setup scope because
+  // the placeholder helper below runs during init (before the dictation
+  // section executes) and reads `voiceActive`; a later `let` would be a
+  // temporal-dead-zone reference there and crash the whole initInput chain.
+  // Push-and-hold the mic button to start; release to stop.
+  // Interim text streams directly into the input box — no overlay.
+  let voiceActive = false;
+  let voiceAnchor = 0;       // position where current voice segment starts
+  let voiceInterimLen = 0;   // length of interim text currently displayed
+  // Snapshot of input.value at the last voice write / user edit. The diff
+  // baseline that lets us re-anchor the live draft slot after user edits
+  // (2026-09-02 duplicate-fix; see the input listener below).
+  let voiceBaseline = '';
+
+  // 附件/引用条的任何重建都会同步闸态（观察器覆盖面含 chat.js 侧 ref 芯片的移除
+  // 按钮与 send() 尾部清空 strip 两条非本文件路径）。popup 每次打开重建 DOM ⇒
+  // 旧观察器先断开，避免挂在已脱离文档的节点上。
+  if (view.dom.attPreview && typeof MutationObserver !== 'undefined') {
+    view.dom.refGateObserver?.disconnect?.();
+    const mo = new MutationObserver(() => { syncRefOnlyGate(view); updateInputPlaceholder(); });
+    mo.observe(view.dom.attPreview, { childList: true, subtree: true });
+    view.dom.refGateObserver = mo;
+  }
+  syncRefOnlyGate(view);
+  updateInputPlaceholder();
+
+  /** Contextual composer placeholder (mobile voice redesign): the pending
+   *  attachment count and the mic state replace the generic line —
+   *  attachments no longer claim their own row, the placeholder names them.
+   *  Count source = the RENDERED strip (childElementCount), NOT the global
+   *  pendingAttCount in-flight counter: this runs from the attPreview
+   *  MutationObserver, which fires after addFileAttachment has already
+   *  decremented the counter back to 0, so the counter can never drive the
+   *  has-attachments class at steady state (composer-typing fix 2026-10-18).
+   *  uifix 批 2026-10-22：strip 改 in-flow 独立行后 44px padding 补偿随 overlay
+   *  退役，本函数仍是 strip 重建的**占位符/类同步单点**（has-attachments 类保留
+   *  为状态钩子，CSS 消费面已零）。发送清空动画窗内（chat.js，~160ms）计数含
+   *  退场 chip，落定后由本观察器再同步一次 —— 短暂窗口零行为影响。 */
+  function updateInputPlaceholder() {
+    // 占位文案单点 = js/input/composer.js composerPlaceholder（composer 统一批
+    // 2026-11-18）：语音 / 纯引用帧 / 附件计数 / 通用四条分支的**判据**在那一份，
+    // 本处只供状态（语音态 + 闸态 + 渲染条计数）。分支顺序与既有产品态逐字相同。
+    const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
+    input.parentElement?.classList.toggle('has-attachments', n > 0);
+    input.placeholder = composerPlaceholder({
+      baseToken: 'input.placeholder',
+      voiceActive,
+      refOnly: isRefOnlyFrame(view),
+      attachments: n,
+    });
+  }
+
+  // Send button —— 入口①（点击）。纯引用帧在此不产帧（网关 4055 会静默丢弃它）。
+  sendBtn.onclick = () => {
+    setActiveView(view);
+    if (isRefOnlyFrame(view)) { syncRefOnlyGate(view); return; }
+    send();
+  };
 
   // Stop button — send interrupt with sessionId, reset UI immediately
+  // （输入行为包批 2026-11-02：帧出口收进包单点 requestTurnInterrupt——与 ask
+  //  .ask-stop 同一实现，帧形态逐字节不变。）
   stopBtn.onclick = () => {
     setActiveView(view);
     const sid = view.sessionId;
-    sendWs({type: 'interrupt', sessionId: sid});
+    requestTurnInterrupt(sid);
+    state.cancelTurnConfirm?.(sid);
     if (sid && state.sessionBusyTimeouts[sid]) {
       clearTimeout(state.sessionBusyTimeouts[sid]);
       delete state.sessionBusyTimeouts[sid];
     }
-    import('./chat.js').then(({ clearBusy }) => clearBusy(sid));
+    // queue-idle-flush（2026-10-23）：stop = 真实 busy→idle 迁移，排队消息照常触发
+    // 投递（终态 `interrupted` 帧到场会再触发一次——同一 pending 槽去重；帧丢失时本
+    // 腿兜底，队列不再滞留）。🔴 触发必须挂在 clearBusy **之后**（同一回调内）：
+    // clearBusy 走动态 import 异步腿，若触发在同步面先发，定时器 +50ms 可能落在
+    // 「busy 尚未清 + 上次派发后有新轮事实」的窗口里，被运行中事实闸当成本轮仍在
+    // 跑而拦下（无 re-arm = 触发丢失）——正是实测撞到的滞留形态。派发闸的冷却窗/
+    // 运行中事实闸照旧把关。
+    import('./chat.js').then(({ clearBusy }) => {
+      clearBusy(sid);
+      // queue-one-per-turn（2026-10-24）：stop = 用户权威「本 turn 到此为止」⇒ 落
+      // 终态戳放行投递未决闸（interrupted 帧丢失形态下无戳则队列滞留——本腿就是
+      // 该形态的收口，queue-idle-flush R3 语义保留）。
+      state.lastTerminalAt[sid] = Date.now();
+      state.scheduleQueueDrain?.(sid);
+    });
   };
 
-  // Composition start/end (IME)
+  // Element-level IME bookkeeping (⑤ 收归) — moved INTO the shared composer
+  // package below (bindComposerKeys → bindImeGuard; the keyboard decision
+  // reads the same element-level flag through the package's hoisted guard).
+
+  // @deprecated ⑤-A4（作者裁定 2026-09-12）：视图级 `view.composing` 已由
+  // imeGuard 的元素级判定取代（14 个分叉点里 13 个根本没有 view 对象）。
+  // 保留一版不删——本批未穷尽潜在读者面；新代码一律走 imeGuard，勿再读它。
   input.addEventListener('compositionstart', () => { view.composing = true; });
   input.addEventListener('compositionend', () => { view.composing = false; });
 
@@ -1194,25 +1778,55 @@ export function initInput(view) {
     files.forEach(file => addFileAttachment(file));
   });
 
-  // Keydown handler — slash autocomplete navigation, input history navigation, Enter-to-send
-  input.onkeydown = (e) => {
-    setActiveView(view);
+  // ── 键盘契约 = 统一输入行为包（input/composer.js；2026-11-02 作者令「文字
+  // 输入框的逻辑做成一个包」）──组字判定（bindImeGuard 元素级记账 + 前置短路）
+  // 与裸 Enter 发送判定（commitEnter）收进包实现，本文件只注入两件面级私货：
+  //   preamble = setActiveView（每个键都要先落的视图登记，语义原位）；
+  //   cascade  = surfaceKeydownCascade（@-mention / 模式取消 / 斜杠 / 历史）。
+  // 决策顺序与搬位前逐位一致：IME 短路仍是处理器首行（任何 `e.key` 分支之前，
+  // 组字期间每一个键都属于输入法——Enter 确认候选 / ↑↓ 选候选词 / Esc 取消组字
+  // / Backspace 删拼音，一律不 preventDefault 不动作交还浏览器；该短路同时修掉
+  // 「斜杠下拉抢先消费组字 Enter」的既有缺陷，⑤-A 同批修）、级联居中、Enter
+  // 判定仍是末位；Shift+Enter 仍走浏览器默认换行。行为基准 = 搬位前（ime-guard
+  // spec A1-A7 全绿为证）。
+  bindComposerKeys(input, {
+    preamble: () => { setActiveView(view); },
+    cascade: (e) => surfaceKeydownCascade(e),
+    onSend: () => {
+      // 入口②（Enter 直发，fwdguard-impl）：纯引用帧不产帧 —— 该形态在网关
+      // `WebSocketRoutes.scala:4055` 判空并被 `:4246` 静默丢弃（前端已 setBusy
+      // ⇒ 会话永久转圈）。提示件由 syncRefOnlyGate 常驻显示。
+      // （preventDefault 已由包内 commitEnter 完成拍点与搬位前相同。）
+      if (isRefOnlyFrame(view)) { syncRefOnlyGate(view); return; }
+      send();
+    },
+  });
+
+  /** 面级键级联（原 keydown 处理器主体原样搬位；返回 true = 已消费）：
+   *  mention 弹窗 → Esc 取消 ask/skill/compact 模式 → 空输入退格删模式 →
+   *  斜杠下拉键盘导航 → 输入历史 ↑↓ 下沉。每个分支消费即 preventDefault +
+   *  true；未消费落空（交给包的 Enter 判定 / 浏览器默认）。IME 组字键永远到
+   *  不了这里（包的前置短路在上游）——IME 会话既不能导航也不能选中。 */
+  function surfaceKeydownCascade(e) {
+    // @-mention popup navigation (ArrowUp/Down, Tab/Enter pick, Esc close).
+    // Consumes keys only while the popup is open.
+    if (handleTokenKeydown(e, view)) return true;
     // Escape cancels ask/skill/compact mode
     if (e.key === 'Escape') {
       if (view.stream.askMode) {
         e.preventDefault();
         cancelAskMode();
-        return;
+        return true;
       }
       if (view.skillMode) {
         e.preventDefault();
         cancelSkillMode();
-        return;
+        return true;
       }
       if (view.compactMode) {
         e.preventDefault();
         cancelCompactMode();
-        return;
+        return true;
       }
     }
     // Backspace/Delete on empty input cancels ask/skill/compact mode (like removing a tag)
@@ -1220,46 +1834,49 @@ export function initInput(view) {
       if (view.stream.askMode) {
         e.preventDefault();
         cancelAskMode();
-        return;
+        return true;
       }
       if (view.skillMode) {
         e.preventDefault();
         cancelSkillMode();
-        return;
+        return true;
       }
       if (view.compactMode) {
         e.preventDefault();
         cancelCompactMode();
-        return;
+        return true;
       }
     }
     if (slashDropdown.classList.contains('on')) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setSlashHighlight((view.slashSelectedIndex + 1) % view.slashMatches.length);
-        return;
+        return true;
       }
       if (e.key === 'ArrowUp') {
         e.preventDefault();
         setSlashHighlight((view.slashSelectedIndex - 1 + view.slashMatches.length) % view.slashMatches.length);
-        return;
+        return true;
       }
       if (e.key === 'Enter') {
         e.preventDefault();
         pickSlashCommand(view.slashSelectedIndex);
-        return;
+        return true;
       }
       if (e.key === 'Escape') {
         e.preventDefault();
         closeSlashDropdown();
-        return;
+        return true;
       }
     }
-    // Input history navigation (up/down arrows)
-    if (!slashDropdown.classList.contains('on') && !view.composing && !e.isComposing && e.keyCode !== 229) {
+    // Input history navigation (up/down arrows). The composition arm that used
+    // to sit here (`!view.composing && !e.isComposing && e.keyCode !== 229`) is
+    // gone: the hoisted guard above already short-circuits every composed key
+    // (⑤ 收归，方案 §4.1 步骤 2「删除 :1275 的重复判定」)。
+    if (!slashDropdown.classList.contains('on')) {
       if (e.key === 'ArrowUp' && input.selectionStart === 0 && input.selectionEnd === 0) {
         e.preventDefault();
-        if (state.inputHistory.length === 0) return;
+        if (state.inputHistory.length === 0) return true;
         if (view.historyIndex === -1) {
           view.historyDraft = input.value;
           view.historyIndex = state.inputHistory.length - 1;
@@ -1267,14 +1884,15 @@ export function initInput(view) {
           view.historyIndex--;
         }
         input.value = state.inputHistory[view.historyIndex];
+        recallHistoryAttachments(view);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
         input.setSelectionRange(input.value.length, input.value.length);
-        return;
+        return true;
       }
       if (e.key === 'ArrowDown' && input.selectionStart === input.value.length && input.selectionEnd === input.selectionStart) {
         e.preventDefault();
-        if (view.historyIndex === -1) return;
+        if (view.historyIndex === -1) return true;
         if (view.historyIndex >= state.inputHistory.length - 1) {
           view.historyIndex = -1;
           input.value = view.historyDraft;
@@ -1282,20 +1900,15 @@ export function initInput(view) {
           view.historyIndex++;
           input.value = state.inputHistory[view.historyIndex];
         }
+        recallHistoryAttachments(view);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
         input.setSelectionRange(input.value.length, input.value.length);
-        return;
+        return true;
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      if (view.composing || e.isComposing || e.keyCode === 229) {
-        return; // Let browser handle composition confirmation
-      }
-      e.preventDefault();
-      send();
-    }
-  };
+    return false;
+  }
 
   // Attach button — hidden file input trigger (supports multiple files)
   attachBtn.onclick = () => {
@@ -1306,7 +1919,7 @@ export function initInput(view) {
     f.style.display = 'none';
     document.body.appendChild(f);
     f.onchange = (e) => {
-      const files = Array.from(e.target.files);
+      const files = Array.from(/** @type {HTMLInputElement} */ (e.target).files);
       files.forEach(file => addFileAttachment(file));
       f.remove();
     };
@@ -1318,6 +1931,9 @@ export function initInput(view) {
   // covering primary + popup input bars — see #303).
   if (view.id === 'primary') {
     document.addEventListener('paste', (e) => {
+      // A conversation shown in the main area leaves this composer hidden and inert: a paste is not meant for it, and
+      // an attachment added to it would ride the next Agent message unseen.
+      if (view.dom.inputBar && view.dom.inputBar.closest('[inert]')) return;
       const items = e.clipboardData && e.clipboardData.items;
       if (!items) return;
       for (const item of items) {
@@ -1332,17 +1948,6 @@ export function initInput(view) {
     });
   }
 
-  // Voice dictation — uses browser Web Speech API (free, no API key needed)
-  // Push-and-hold the mic button to start; release to stop.
-  // Interim text streams directly into the input box — no overlay.
-  let voiceActive = false;
-  let voiceAnchor = 0;       // position where current voice segment starts
-  let voiceInterimLen = 0;   // length of interim text currently displayed
-  // Snapshot of input.value at the last voice write / user edit. The diff
-  // baseline that lets us re-anchor the live draft slot after user edits
-  // (2026-09-02 duplicate-fix; see the input listener below).
-  let voiceBaseline = '';
-
   // Shared callbacks for dictation mode.
   function makeVoiceCallbacks() {
     return {
@@ -1356,7 +1961,7 @@ export function initInput(view) {
         input.focus();
         input.setSelectionRange(voiceAnchor + text.length, voiceAnchor + text.length);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
       },
       onText: (text) => {
         // Replace interim with final text + trailing space
@@ -1369,7 +1974,7 @@ export function initInput(view) {
         voiceBaseline = input.value;
         input.setSelectionRange(voiceAnchor, voiceAnchor);
         input.style.height = 'auto';
-        input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+        growComposerInput(input);
       },
       onState: (state, data) => {
         updateVoiceUI(state, data);
@@ -1420,18 +2025,27 @@ export function initInput(view) {
     voiceBaseline = input.value;
   });
 
-  // Update voice UI — the orb reflects the state via notifyVoiceState; the
-  // legacy .recording class is kept for any external consumers (no visual
-  // styling on the orb button itself).
+  // Update voice UI —— 作者 2026-09-19 04:22 **修正④**：麦克风 = 普通麦克风形态
+  // （micOrb 气泡/光球退役 ⇒ `notifyVoiceState` 在本窗已成 no-op，保留调用是为
+  // 设置页/预览面上的同一渲染管线仍在册）。**反馈保留**（同令）：
+  //   · 录音中（listening/speaking）= 既有 `.icon-btn.recording`（微信绿 + 既有
+  //     `voicePulse` 脉冲，值零新增）+ `aria-pressed=true`（可访问态）；
+  //   · 转写中（processing）= `.mic-btn.processing`（既有 sapphire 强调色）；
+  //   · 出错 = 既有 `showToast(…, 'error')` 可见提示 + console.warn（不变）。
+  function setMicState(state) {
+    voiceBtn.classList.toggle('recording', state === 'listening' || state === 'speaking');
+    voiceBtn.classList.toggle('processing', state === 'processing');
+    voiceBtn.setAttribute('aria-pressed', String(state === 'listening' || state === 'speaking'));
+  }
   function updateVoiceUI(state, data) {
     notifyVoiceState(state);
     switch (state) {
       case 'listening':
       case 'speaking':
-        voiceBtn.classList.add('recording');
+        setMicState(state);
         break;
       case 'error':
-        voiceBtn.classList.remove('recording');
+        setMicState('idle');
         // Voice errors must be user-visible, not console-only (#stt-hotfix:
         // a denied/busy mic previously produced zero on-screen feedback).
         // data is an already-classified, i18n'd message from voiceEngine.
@@ -1439,12 +2053,16 @@ export function initInput(view) {
         console.warn('[voice] Error:', data);
         break;
       case 'idle':
-        voiceBtn.classList.remove('recording');
+        setMicState('idle');
+        break;
+      default:
+        setMicState(state);
         break;
     }
   }
 
   async function startVoice() {
+    input.placeholder = composerPlaceholder({ voiceActive: true });
     voiceActive = true;
     voiceAnchor = input.selectionStart ?? input.value.length;
     voiceInterimLen = 0;
@@ -1457,7 +2075,7 @@ export function initInput(view) {
       }
     }
     voiceBaseline = input.value;
-    voiceBtn.classList.add('recording');
+    setMicState('listening');
     input.classList.add('voice-dictating');
     input.focus();
     try { localStorage.setItem(key('voice_used'), '1'); } catch {}
@@ -1474,25 +2092,148 @@ export function initInput(view) {
       voiceInterimLen = 0;
       voiceBaseline = input.value;
     }
-    // Show the "processing" orb state while the captured audio transcribes
+    // Show the "processing" state while the captured audio transcribes
     // (spec §9 pure-front-end addition — voiceEngine emits no processing state
     // after stop; the follow-up onState('idle') from the engine clears it).
     notifyVoiceState('processing');
     stopDictation();
-    voiceBtn.classList.remove('recording');
+    setMicState('processing');
     input.classList.remove('voice-dictating');
     input.focus();
+    // 占位文本恢复（作者报障 2026-10-30 12:55）：startVoice 把 placeholder 直写为
+    // 「正在聆听…」，退出路径此前没有任何恢复调用 —— 之后无任何 input/附件事件时
+    // 文案永远卡在聆听态。三条退出路（点击切换/Esc/拖动 ensureDictationIdle）全部
+    // 经本函数 ⇒ 在此归一恢复（voiceActive 已 false，回落附件/闸/通用文案）。
+    updateInputPlaceholder();
   }
 
   // Click-toggle voice (user ruling 2026-08-25 21:34: tap once to start, tap
   // again to stop — replaces the old push-and-hold). Also spec §3.3.
   function onVoiceToggle(e) {
+    // voiceseal 批（批 #508）→ 纠正批（#513）：门收窄为气泡开关
+    // voiceOrbEnabled()（默认显示）。#508 曾以全双工 flag 连带闸死听写 =
+    // 理解过宽；#513 起点击听写（非全双工基础路径）随气泡回归照常可用，
+    // 全双工封存不受影响（会话腿仍由 enterVoiceModeNow/voiceMode 闸死）。
+    // 气泡显式隐藏（voiceOrb:false）时正常情形不可点，此闸兜住程序化调用。
+    if (!voiceOrbEnabled()) return;
+    // settings-panel 批 D 件（2026-10-28）：STT 停用态入口全收——主窗听写
+    // 入口一并闸死（toast 提示 + body.stt-disabled 已藏气泡；此闸兜程序化
+    // 调用与 UI 刷新竞态窗口）。
+    if (!sttEnabled()) {
+      window.__showToast?.(t('stt.disabled'), 'error');
+      return;
+    }
     if (e) e.preventDefault();
+    // A drag that just entered voice mode must not also toggle dictation
+    // (the synthetic click fires after pointerup).
+    if (Date.now() < suppressVoiceClickUntil) return;
     setActiveView(view);
     if (voiceActive) stopVoice();
     else startVoice();
   }
   voiceBtn.addEventListener('click', onVoiceToggle);
+
+  // Full-duplex voice entry (voice-mode batch): dragging the voice bubble
+  // right (gesture below) is the only way in. Dynamic import keeps
+  // input.js ↔ voiceMode.js cycle-free at module-eval time (same pattern as
+  // micOrb → voiceEngine).
+  function enterVoiceModeNow() {
+    // voiceseal 批（批 #508）：封存（默认）时全双工入口闸死 —— 不动态加载
+    // voiceMode.js（voiceMode.enterVoiceMode 内还有一道终闸，双保险）。
+    if (!voiceEnabled()) return;
+    setActiveView(view); // utterances must land in THIS session even if ws.js flips activeView later
+    import('./voiceMode.js').then((m) => {
+      m.enterVoiceMode({
+        // send() operates on the active view's input; the ws-closed path
+        // leaves the value uncleared — that's the failure signal.
+        sendText: (/** @type {string} */ text) => {
+          input.value = text;
+          send();
+          const ok = input.value !== text;
+          input.value = '';
+          input.style.height = 'auto';
+          return ok;
+        },
+        // Push-to-talk and voice mode share one mic session.
+        ensureDictationIdle: () => { if (voiceActive) stopVoice(); },
+        // Replies for THIS session are read aloud; others are ignored.
+        getSessionId: () => view.sessionId,
+        cancelResponse: () => requestTurnInterrupt(view.sessionId),
+      });
+    }).catch(() => {});
+  }
+
+  // Drag-in gesture (voice redesign): press the voice bubble and swipe right
+  // past the threshold — full-duplex voice opens, and the synthetic click is
+  // suppressed so dictation does not also start. The bubble tracks the
+  // pointer horizontally while dragging (the wrap transition is disabled by
+  // .dragging, so tracking is 1:1 and the snap-back animates on release);
+  // the gradient chevrons (.voice-drag-hint, css/voiceMode.css) float above
+  // the bubble inside the same wrap, shown on hover and while dragging.
+  // 🟡 voiceseal 纠正批（批 #513，作者澄清：「我要去掉的是hover拖动这些
+  // 功能。」）：拖动手势 = 全双工唯一入口，**归属面 A**——默认封存态
+  // （voiceEnabled() OFF）整个手势面 dead：pointerdown 闸住后 voiceDrag
+  // 恒 null ⇒ 跟手 transform / `.dragging` 类 / 拖右开全双工 / 合成 click
+  // 抑制全不发生，气泡固定默认位、纯静态可点（hover 箭头另由 voiceMode.css
+  // 的 `.voice-static` 姿态规则压死）。代码零删除：features.voice:true 时
+  // 手势随面 A 原样回归（#508 封存/恢复机制不变）。
+  let voiceDrag = null;
+  let suppressVoiceClickUntil = 0;
+  const micOrbWrap = voiceBtn?.closest('.mic-orb-wrap') || null;
+  // Scope-local placeholder refresh (the shared updateInputPlaceholder lives
+  // in the per-view setup scope and is not reachable here).
+  // Count source = the rendered strip, same as updateInputPlaceholder — the
+  // global pendingAttCount is an in-flight counter (already 0 when this runs),
+  // so it could never hold has-attachments open (composer-typing fix).
+  const refreshPlaceholder = () => {
+    // 同上：文案判据单点在 js/input/composer.js composerPlaceholder（本作用域只是
+    // 第二个调用点，不再持一份分支副本 —— composer 统一批 2026-11-18）。
+    const n = view.dom.attPreview ? view.dom.attPreview.childElementCount : 0;
+    input.parentElement?.classList.toggle('has-attachments', n > 0);
+    input.placeholder = composerPlaceholder({
+      baseToken: 'input.placeholder',
+      voiceActive,
+      refOnly: isRefOnlyFrame(view),
+      attachments: n,
+    });
+  };
+  voiceBtn.addEventListener('pointerdown', (e) => {
+    // #513 纠正：拖动手势 = 全双工入口（面 A），默认封存态整个 dead ——
+    // 不捕获指针、不进跟手态、不改 placeholder（chevrons 的 hover 显示
+    // 面也已由 css 静态姿态压死）。gesture 体零删除，flag ON 原样回归。
+    if (!voiceEnabled()) return;
+    // Capture the pointer to THIS element: mouse/pen drags leave the 44px
+    // button immediately, and without capture the pointermove events go to
+    // whatever element is under the cursor — the gesture never fires.
+    try { voiceBtn.setPointerCapture(e.pointerId); } catch (_) {}
+    voiceDrag = { x: e.clientX, y: e.clientY, fired: false };
+    micOrbWrap?.classList.add('dragging');
+    input.placeholder = composerPlaceholder({ dragActive: true });
+  });
+  voiceBtn.addEventListener('pointermove', (e) => {
+    if (!voiceDrag || voiceDrag.fired) return;
+    const dx = e.clientX - voiceDrag.x;
+    const dy = Math.abs(e.clientY - voiceDrag.y);
+    // Rightward tracking only, with a little overshoot past the fire
+    // threshold so the bubble keeps following the finger after the point
+    // where voice mode would open.
+    if (micOrbWrap) micOrbWrap.style.transform = `translateX(${Math.min(Math.max(dx, 0), 84)}px)`;
+    if (dx > 56 && dy < 44) {
+      voiceDrag.fired = true;
+      suppressVoiceClickUntil = Date.now() + 700;
+      if (micOrbWrap) { micOrbWrap.classList.remove('dragging'); micOrbWrap.style.transform = ''; }
+      refreshPlaceholder();
+      enterVoiceModeNow();
+    }
+  });
+  const endVoiceDrag = () => {
+    if (!voiceDrag) return;
+    voiceDrag = null;
+    if (micOrbWrap) { micOrbWrap.classList.remove('dragging'); micOrbWrap.style.transform = ''; }
+    refreshPlaceholder();
+  };
+  voiceBtn.addEventListener('pointerup', endVoiceDrag);
+  voiceBtn.addEventListener('pointercancel', endVoiceDrag);
 
   // Escape key stops voice recording (only register once)
   if (view.id === 'primary') {
@@ -1506,6 +2247,12 @@ export function initInput(view) {
 
   // Slash dropdown input listener
   input.addEventListener('input', () => { setActiveView(view); updateSlashDropdown(); });
+
+  // @-mention autocomplete (mention-routing batch): input + blur listeners,
+  // token parsing and popup rendering live in mentionComplete.js. Key
+  // handling is hooked in the keydown handler above (behind the imeGuard
+  // short-circuit); send() closes the popup up front.
+  bindTokenComplete(view);
 
   // Ask/skill indicator cancel buttons
   {
@@ -1539,20 +2286,6 @@ export function initInput(view) {
   }
 }
 
-// ---------- Global drag & drop onto input bars (#303) ----------
-// Event delegation on document: popup views recreate their input bar DOM on
-// every open (per-element binding would go stale — see _inputBound), so all
-// drag listeners live here and resolve the owning ChatView at event time.
-// A file dropped onto ANY input bar (main or popup) attaches to THAT bar's
-// session; drops elsewhere are ignored (no page navigation).
-const INPUT_BAR_SELECTOR = '#input-bar, .fa-input-bar';
-// #303 internal drag: explorer file rows carry this custom MIME in addition to
-// (or instead of) native 'Files' — both count as attach payloads.
-const INTERNAL_DRAG_MIME = 'application/x-nebflow-file';
-// #303 global-reference: canvas tab rows carry this MIME to produce a Reference
-// (document/file/html-element) on drop into an input bar.
-const CANVAS_DRAG_MIME = 'application/x-nebflow-ref';
-
 /**
  * #290 A2A: notify listeners (messages.js) when friend-message refs actually
  * leave on the wire - the 「已转发给 agent」 chip is stamped only at this point
@@ -1567,116 +2300,6 @@ function notifyFriendRefsSent(refs) {
   window.dispatchEvent(new CustomEvent('fm-refs-sent', { detail: { messageIds: ids } }));
 }
 
-/**
- * #303/global-reference: append a unified Reference to a view's
- * pendingAttachments and re-render the attachment preview strip. Used by the
- * explorer/canvas entry points (right-click & drag). Returns true on success.
- * @param {Object} ref  Reference produced by makeReference()
- * @param {{attPreviewEl?:HTMLElement, attachments?:Array, focus?:boolean}} [target]
- */
-export function appendRefToActiveView(ref, target) {
-  const view = activeView || state.getActiveView?.();
-  if (!view || !ref) return false;
-  if (!Array.isArray(view.pendingAttachments)) view.pendingAttachments = [];
-  view.pendingAttachments.push(ref);
-  if (target && target.attPreviewEl) {
-    renderAttachmentPreview({ attPreviewEl: target.attPreviewEl, attachments: view.pendingAttachments });
-  } else if (view.dom && view.dom.attPreview) {
-    renderAttachmentPreview({ attPreviewEl: view.dom.attPreview, attachments: view.pendingAttachments });
-  }
-  if (target?.focus !== false) view.dom?.input?.focus?.();
-  return true;
-}
-
-export function initGlobalFileDrop() {
-  let dragDepth = 0;    // child-element nesting depth inside the bar
-  let activeBar = null; // currently highlighted input bar
-
-  const hasAttach = (e) => {
-    if (!e.dataTransfer) return false;
-    const types = Array.from(e.dataTransfer.types || []);
-    return types.includes('Files') || types.includes(INTERNAL_DRAG_MIME) || types.includes(CANVAS_DRAG_MIME);
-  };
-  const barOf = (e) =>
-    e.target instanceof Element ? e.target.closest(INPUT_BAR_SELECTOR) : null;
-  const clearHighlight = () => {
-    if (activeBar) activeBar.classList.remove('drag-over');
-    activeBar = null; dragDepth = 0;
-  };
-
-  document.addEventListener('dragenter', (e) => {
-    if (!hasAttach(e)) return;
-    const bar = barOf(e);
-    if (!bar) return;
-    if (bar !== activeBar) clearHighlight();
-    activeBar = bar;
-    dragDepth++;
-    bar.classList.add('drag-over');
-  });
-
-  document.addEventListener('dragover', (e) => {
-    if (!hasAttach(e)) return;     // native text drags pass through untouched
-    e.preventDefault();            // block browser default "open dropped file"
-    e.dataTransfer.dropEffect = 'copy';
-  });
-
-  // No hasFiles() check here: dataTransfer.types is unreadable during
-  // dragleave in some engines (this was the old stuck-highlight bug).
-  document.addEventListener('dragleave', () => {
-    if (!activeBar) return;
-    dragDepth--;
-    if (dragDepth <= 0) clearHighlight();
-  });
-
-  document.addEventListener('drop', (e) => {
-    if (!hasAttach(e)) return;
-    e.preventDefault();            // never navigate to the dropped file
-    const bar = barOf(e);
-    clearHighlight();
-    if (!bar) return;              // dropped outside any input bar — ignore
-    const view = Object.values(chatViews)
-      .find(v => v.mounted && v.dom && v.dom.inputBar === bar);
-    if (!view || view.dom.input?.readOnly) return; // disabled popup guard
-    setActiveView(view);
-    const target = { attPreviewEl: view.dom.attPreview,
-                     attachments: view.pendingAttachments };
-    // #303 global-reference drag routing (v1.1):
-    //   internal explorer file row (application/x-nebflow-file with path+rootPath)
-    //     → Reference @path (not an attachment upload)
-    //   canvas tab row (application/x-nebflow-ref) → Reference w/ current anchor
-    //   anything else (OS/Finder files) → attachment upload (#303 regression)
-    const internal = e.dataTransfer.getData(INTERNAL_DRAG_MIME);
-    const canvasRef = e.dataTransfer.getData(CANVAS_DRAG_MIME);
-    if (internal) {
-      try {
-        const { path, rootPath } = JSON.parse(internal);
-        if (path) {
-          const absPath = joinAbsPath(rootPath, path);
-          const name = path.split('/').pop() || path;
-          appendRefToActiveView(makeReference({
-            refType: 'file',
-            source: { kind: 'workspace', path: absPath, fileName: name, title: name },
-          }), { focus: false });
-        } else console.warn('[drop] internal drag payload missing path');
-      } catch (err) {
-        console.warn('[drop] bad internal drag payload:', err);
-      }
-    } else if (canvasRef) {
-      try {
-        const input = JSON.parse(canvasRef);
-        if (input && input.refType) appendRefToActiveView(makeReference(input), { focus: false });
-        else console.warn('[drop] canvas ref payload missing refType');
-      } catch (err) {
-        console.warn('[drop] bad canvas ref payload:', err);
-      }
-    } else {
-      // External drag (desktop files) — unchanged.
-      Array.from(e.dataTransfer.files || []).forEach(f => addFileAttachment(f, null, target));
-    }
-    view.dom.input?.focus();
-  });
-}
-
 // ---------- #303 internal drag: explorer file → attachment pipeline ----------
 // Explorer rows drop with {path, rootPath} (explorer-relative path + absolute
 // root, the same coordinates readFile/listDir use). We re-read the file through
@@ -1684,22 +2307,24 @@ export function initGlobalFileDrop() {
 // the WS), readFile WS for text — then feed a real File object into
 // addFileAttachment, so preview chips / upload / send are byte-identical to the
 // attach-button path.
-function joinAbsPath(rootPath, path) {
-  if (!rootPath) return path;
-  return rootPath.endsWith('/') ? rootPath + path : rootPath + '/' + path;
-}
 
 async function addPathAttachment({ path, rootPath }, view, target) {
   const name = path.split('/').pop() || path;
   const absPath = joinAbsPath(rootPath, path);
-  const token = localStorage.getItem(key('token')) || '';
   // Typed window alias — the one-shot readFile guard flag shared with explorer.js.
   const win = /** @type {Window & { __internalDragReadPath: string | null }} */ (/** @type {any} */ (window));
 
   // Phase 1: whitelisted media (images, pdf, mp4…) come back from nf-file.
   // Non-whitelisted extensions → 400 "File type not allowed" → phase 2.
+  //
+  // 2026-09-11 (C batch): the URL comes from ticketUrl() — a per-path ticket,
+  // minted here (at the moment of the drop), not the global gateway token.
+  // A path that cannot be ticketed (or a mint outage) yields the ticket-free
+  // URL, the endpoint answers 401/400, and we fall through to the readFile
+  // phase exactly as before (T4: a deterministic non-media type is not
+  // retried, it just takes the WS path).
   try {
-    const resp = await fetch(`/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(token)}`);
+    const resp = await fetch(await ticketUrl(absPath));
     if (resp.ok) {
       const blob = await resp.blob();
       const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
@@ -1745,3 +2370,15 @@ async function addPathAttachment({ path, rootPath }, view, target) {
   const file = new File([detail.content], name, { type: 'text/plain' });
   addFileAttachment(file, null, target);
 }
+
+/* ── 附件态占位文案（输入框附件图标化批，作者令 2026-11-02）─────────────
+   令文口径：「添加附件后占位提示文字不变，仍是『请输入消息...』」。手机层
+   （body.mobile-layer）附件条已改为扩展名族图标盒 —— 附件不再以文字占名，
+   「已附加文件——输入一句话一起发送」这条文字提示在手机层随之退场，占位恒为
+   通用文案 `input.placeholder`（=「输入消息...」）；桌面层逐字沿用既有
+   `input.ph.attachments`（%n 计数），按令「桌面共组件先不动」。
+
+   🔴 composer 统一批（2026-11-18）：本判据的**实现**已整体上移到全站单点
+   `js/input/composer.js` 的 `composerPlaceholder()`（含 mobile-layer 判定），
+   本文件不再持有第二份副本 —— 原 `attachmentPlaceholder(n)` 模块级函数随批删除
+   （消费点改为直接调 `composerPlaceholder`，语句等价）。此处只留口径记录。 */

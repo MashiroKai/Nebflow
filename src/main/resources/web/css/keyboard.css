@@ -1,0 +1,235 @@
+/* keyboard.css — 键盘层：焦点环基线 / 命令面板（keyboard-first 一期，2026-11-01）
+   ══════════════════════════════════════════════════════════════════════════
+   为什么是一个独立文件而不是散进既有 26 个 CSS：
+   改造前全树 26 个文件写了 60+ 条 focus 规则，却**没有一条兜底基线** ——
+   任何没被单独点到的控件键盘聚焦时完全无视觉反馈（设计文档 §1.2）。
+   基线必须是「一条规则 + 一个单源 token」，否则下一次又会漏。
+
+   颜色纪律：零裸 hex。焦点环 = --btn-focus-ring（蓝族单源，亮 #3b82f6 /
+   暗 #60a5fa 双档，已由 sapphire.css:927 与 stand-tokens.css:133/141 定义），
+   因此暗/亮两套主题下都可见，且不引入新色。
+
+   🔴 §2 模式指示器（.nf-mode-chip）与对话输入框本体环（#input:focus-visible）
+   已随作者令 2026-11-03 10:11 ④（输入框键盘提示与高亮移除）整块退役；本文件
+   现存 = 焦点环基线 + 命令面板外观，§ 编号顺延保留原文。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --nf-focus-ring: var(--btn-focus-ring, currentColor);
+  --nf-focus-ring-w: 2px;
+  --nf-focus-ring-offset: 2px;
+  --nf-chip-bg: rgb(var(--sapphire) / 0.10);
+  --nf-chip-border: rgb(var(--sapphire) / 0.32);
+  --nf-chip-bg-on: rgb(var(--sapphire) / 0.20);
+  --nf-chip-border-on: rgb(var(--sapphire) / 0.62);
+}
+
+/* ── 1 焦点环基线 ────────────────────────────────────────────────────────
+   只在 :focus-visible（键盘 / 程序化键盘态）出现，鼠标点击不出环；用 outline
+   而非 box-shadow —— box-shadow 会和组件既有投影互相覆盖，outline 不会。
+   特异性 (0,1,0)：组件自己写过更具体的环规则时以组件为准（既有 26 处的环
+   一个都不被推翻），没写的才由本条兜底。 */
+:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: var(--nf-focus-ring-offset);
+}
+
+/* 组件把 outline 压成 none 却没补环的既有面（nav.css:61/291、sidebar.css:764/987、
+   modal.css:130/147/604/724/1307/1558 一族）——这里统一补回来。 */
+.activity-btn:focus-visible,
+.nav-agent:focus-visible,
+.cfg-card-head-btn:focus-visible,
+.explorer-action-btn:focus-visible,
+.explorer-folder-btn:focus-visible,
+.panel-toggle-btn:focus-visible,
+.icon-btn:focus-visible,
+.save-btn:focus-visible,
+#send-btn:focus-visible,
+#search-btn:focus-visible,
+#sidebar-toggle:focus-visible,
+#canvas-toggle-btn:focus-visible,
+#deck-fab:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: var(--nf-focus-ring-offset);
+}
+
+/* 输入框环：🔴 对话输入框本体的键盘态高亮已随作者令 2026-11-03 10:11 ④
+   （「输入框键盘提示与高亮移除……键盘态不再给输入区加高亮」）退役 —— 既有
+   `#input { outline: none }`（input.css）恢复为唯一口径；焦点是否在输入框由
+   `body[data-nf-mode]`（mode.js，零视觉痕迹）承载，不再上屏。
+   命令面板的输入框（Monaco `.quick-input-box`）：输入面唯一标准批（2026-11-06）
+   起不再自留蓝键盘环 —— 全站输入件的焦点态只有 css/inputSurface.css 一处
+   （那里键盘态是内缩压灰环，仍然可见、仍然键盘可达）。 */
+
+/* 程序化焦点落点（对话流容器 / 画布面板）：环走内描边，避免被父级
+   overflow 裁掉。 */
+.nf-nav-stop:focus-visible {
+  outline: var(--nf-focus-ring-w) solid var(--nf-focus-ring);
+  outline-offset: -3px;
+}
+
+/* 层容器（陷阱宿主）自身不出环：它是「盒子」不是「控件」。 */
+.nf-trap-root:focus,
+.nf-trap-root:focus-visible {
+  outline: none;
+}
+
+/* ── 2 模式指示器（meta / edit 双模态的状态面）—— 🔴 已整块退役 ────────────
+   作者令 2026-11-03 10:11 ④：「输入框键盘提示与高亮移除——输入区的「[ ] NAV」
+   模式胶囊与键盘态高亮整块去掉；键盘模式指示若要有去处另行设计（不进输入框），
+   本批先移除。」原块（.nf-mode-chip 基础档 + glyph + [data-mode=edit/meta]
+   双态 + reduced-motion 兜底，共 5 条规则）摘除，js/mode.js 的挂载面
+   （ensureChip/paint）同批退役。防复活钉 =
+   ~/.stand/evidence/ui-unification-20261103/input-fixes/
+   verify-five-fixes.mjs ④ 腿（CSS/JS/HTML 三面 0 命中）。
+   --nf-chip-* 四槽保留：命令面板（§3）仍在消费。 */
+
+/* ── 3 命令面板（三期：Monaco QuickInput 组件）─────────────────────────────
+   内核换成了 Monaco 自带的 QuickInput（vs/platform/quickinput 的
+   QuickInputController，= VS Code 命令面板同一个组件；桥见 js/monacoQuickInput.js）。
+   本段是它**唯一的外观真相**：桥把所有 style 入参置空 ⇒ 组件不写内联颜色 ⇒
+   这里用既有玻璃族 token 接管皮肤，视觉与改造前的面板逐项对应（居中偏上 12vh /
+   14px 圆角 / 玻璃底 + 描边 + 投影 / 分组小标题 / 选中行蓝族淡填充 / 右列键位提示）。
+   不引入新颜色：全部走 --glass-* 与 --nf-chip-* 两条既有单源。
+   弹层层族批（ui-unification-20261103-overlays）：壳的**层三件套**改由
+   design-system.css 弹层层族槽供给 —— 层级 = var(--ds-z-quickinput) 档 /
+   圆角 = var(--ds-radius-card-md)（14px 同值零漂）/ 面板壳影 =
+   var(--ds-shadow-palette)。Monaco 内核生成件挂不上类钩子，故按**令牌消费
+   同族值**（不用 .ds-overlay/.ds-layer 类），玻璃材质仍走 --glass-* 面级档。 */
+#nf-quickinput-host {
+  position: fixed;
+  inset: 0;
+  z-index: var(--ds-z-quickinput);
+  pointer-events: none;   /* 宿主自身不吃事件：只有面板本体可点 */
+}
+
+#nf-quickinput-host .quick-input-widget {
+  pointer-events: auto;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-card-md);
+  background: var(--glass-bg);
+  box-shadow: var(--ds-shadow-palette);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--ds-fs-body);
+  overflow: hidden;
+}
+
+#nf-quickinput-host .quick-input-header,
+#nf-quickinput-host .quick-input-and-message {
+  padding: var(--ds-space-block-y) var(--ds-space-3) var(--ds-space-1h);
+  border-bottom: 1px solid var(--nf-chip-border);
+  background: transparent;
+}
+
+#nf-quickinput-host .quick-input-box input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  color: var(--color-text);
+  font-size: var(--ds-fs-subtitle);
+  font-family: inherit;
+}
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06 ——
+   命令面板的输入框同样只是「一种输入件」，不再自留一圈蓝键盘环）。 */
+
+#nf-quickinput-host .quick-input-box input::placeholder {
+  color: var(--color-text-muted);
+}
+
+#nf-quickinput-host .quick-input-list {
+  padding: var(--ds-space-1) var(--ds-space-1h) var(--ds-space-1h);
+}
+
+/* 行：**不改布局**（.monaco-list-row 是虚拟列表的行，display/height 都被内联管着，
+   改它会让行与 sticky 分隔错位 —— 首版就踩了这条）。只调字面：字色、字号、行内
+   元素的对齐由 Monaco 自己的 flex 结构负责。 */
+#nf-quickinput-host .quick-input-list .monaco-list-row {
+  color: var(--color-text);
+  font-size: var(--ds-fs-body);
+  border-radius: var(--ds-radius-input);
+}
+
+#nf-quickinput-host .quick-input-list .quick-input-list-entry {
+  padding-left: var(--ds-space-half);
+}
+
+#nf-quickinput-host .quick-input-list .monaco-highlighted-label {
+  color: var(--color-text);
+  font-weight: 400;
+}
+
+/* 选中行 = 改造前 .nf-palette-row[aria-selected=true] 的同一套（蓝族淡填充 + 内描边）。
+   注：行高 22px（虚拟列表口径），内描边用 outline 不占盒。 */
+#nf-quickinput-host .quick-input-list .monaco-list-row.focused {
+  background: var(--nf-chip-bg-on);
+  outline: 1px solid var(--nf-chip-border-on);
+  outline-offset: -1px;
+}
+
+/* 禁用行（不可执行的纯直键行 / 当前不可用的命令）= 改造前 .is-disabled */
+#nf-quickinput-host .quick-input-list .monaco-list-row.disabled,
+#nf-quickinput-host .quick-input-list .monaco-list-row .quick-input-list-entry.disabled {
+  color: var(--color-text-muted);
+  opacity: 0.62;
+}
+
+#nf-quickinput-host .quick-input-list .monaco-list-row.disabled .monaco-highlighted-label,
+#nf-quickinput-host .quick-input-list .quick-input-list-entry.disabled .monaco-highlighted-label {
+  color: var(--color-text-muted);
+  opacity: 0.75;
+}
+
+/* 分组小标题 = 改造前 .nf-palette-group（大写 + 字距 + 弱色）。
+   它是**行内**元素（.quick-input-list-separator 住在 22px 的行里），所以用
+   line-height 撑满而不是 padding —— padding 会把它挤出所在行（首版的「只剩一条线」）。 */
+#nf-quickinput-host .quick-input-list .quick-input-list-separator {
+  padding: 0 var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
+  font-weight: 600;
+  letter-spacing: 0.7px;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  opacity: 0.75;
+  background: transparent;
+  line-height: 22px;
+}
+
+/* 右列键位提示 = 改造前 .nf-palette-key（等宽 + 弱色） */
+#nf-quickinput-host .quick-input-list .quick-input-list-entry-keybinding,
+#nf-quickinput-host .quick-input-list .monaco-keybinding {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+  opacity: 0.85;
+}
+
+#nf-quickinput-host .quick-input-list .monaco-keybinding > .monaco-keybinding-key {
+  border: none;
+  background: transparent;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+}
+
+/* 无命中提示行（disabled 占位行）弱显 */
+#nf-quickinput-host .quick-input-list .monaco-list-row[aria-disabled='true'] {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+/* Monaco 自带的「Press Enter to confirm…」无障碍播报文本：保留在可读性树里
+   （视觉隐藏而不是 display:none —— 屏幕阅读器还要读它），不占版面。 */
+#nf-quickinput-host .quick-input-message {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Monaco 组件自带的计数徽标 / 校验条：面板不用，但避免它们以默认皮肤漏出来 */
+#nf-quickinput-host .quick-input-count,
+#nf-quickinput-host .quick-input-progress {
+  display: none;
+}

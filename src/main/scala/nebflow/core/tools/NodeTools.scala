@@ -4,11 +4,10 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.actor.ActorRef
-import nebflow.agent.AgentCommand
-import nebflow.core.{AskItem, AskOption, NebflowLogger, PathUtil}
+import nebflow.actor.{ActorRef, AgentCommand}
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.*
+import nebflow.shared.{AskItem, NebflowLogger, PathUtil}
 
 import scala.util.Try
 
@@ -19,16 +18,38 @@ import scala.util.Try
  * 校验（agent 存在性 / 引用存在 / 环检测 / 1 对多 / 状态守卫 / loop detect）
  * 在工具层统一拦截，0 spawn 0 token。
  *
- * 边模型（§2.3 原子性 + P1 语义门控 20260908）：`node.out` 是边列表单权威（OutEdge：
+ * 边模型（§2.3 原子性 + P1 语义门控）：`node.out` 是边列表单权威（OutEdge：
  * to/on⊆{pass,failed}/mode∈{result,signal}）——设 out 时事务内同步更新目标节点 `in`
- *（反向一致），被移除目标 in 移除、新增目标 in 追加，杜绝双写漂移。in 参数用于
+ * （反向一致），被移除目标 in 移除、新增目标 in 追加，杜绝双写漂移。in 参数用于
  * 创建/追加 barrier 入边（等价给上游 out 追加指向本节点的 pass 边）。
  */
 object NodeTools:
   private val logger = NebflowLogger.forName("nebflow.node.tools")
 
-  /** 解析 project（参数优先，fallback ctx.projectName；项目名大小写不敏感——
-    * registry.get 已做 equalsIgnoreCase 兜底，Nebflow/nebflow 等价）。 */
+  /**
+   * ⑥ 合并节点 in 上限（引擎硬闸）。
+   * 纪律原文（分发器提示词「合并节点」节 + 设计指南 §0bis）：「in ≤4，超限拆多个合并
+   * 节点」——此前纯纪律、引擎查无校验。边界：=4 合法、≥5 拒（`NODE_MERGE_IN_CAP`）。
+   */
+  val MergeInCap: Int = 4
+
+  /**
+   * ⑧ 「已触发」状态集（同一硬闸）：running/blocked/completed 的合并节点其 in 账本冻结
+   * ——新 worktree 配新合并节点，禁向已触发节点追加 in（`NODE_MERGE_FIRED_NO_IN`）。
+   * un-triggered（wiring/pending）追加是正常回流，放行。
+   *
+   * failed/cancelled **不在集内**（有意）：二者是 NodeEdit 重激活闸唯一放行的两个状态
+   * （`ReactivateStatuses`），把 in 追加一起拒会把「重激活时重接上游」这条恢复路径掐死
+   * ——与设计原文只列 running/blocked/completed 逐字一致。blocked 桶仅为 legacy
+   * 存量行保留（终态已退役，新图零产生）——账本冻结口径对存量行不变。
+   */
+  val MergeFiredStatuses: Set[String] =
+    Set(NodeLifecycle.Running, NodeLifecycle.Blocked, NodeLifecycle.Completed)
+
+  /**
+   * 解析 project（参数优先，fallback ctx.projectName；项目名大小写不敏感——
+   * registry.get 已做 equalsIgnoreCase 兜底，Nebflow/nebflow 等价）。
+   */
   def resolveProject(project: Option[String], ctx: ToolContext): IO[Either[String, ProjectRuntime]] =
     val name = project.orElse(ctx.projectName).getOrElse("")
     if name.isEmpty then IO.pure(Left("Missing 'project' parameter (and no project context)"))
@@ -39,14 +60,114 @@ object NodeTools:
           ProjectRuntimeRegistry.all.map(rts => Left(mountError(name, rts.map(_.project.name))))
       }
 
-  /** 项目未挂载报错（附可用项目列表提示实际名称）——纯函数便于单测。
-    * 精确项目名不匹配时列出已挂载项目（提示实际名称，不裸报 not mounted）；
-    * 空列表（无任何挂载项目）给单独一行提示。 */
-  def mountError(name: String, available: List[String]): String =
-    if available.isEmpty then
-      s"Project '$name' is not mounted. No projects are currently mounted. Use ProjectCreate first."
+  // ── N1 刀2（v3 §10.1 A4 授能/作用域闸）────────────────────────────────────
+
+  /**
+   * delegate 会话的四件工具面（挂载点 = `buildAllowedToolSet` 尾段 `delegateSession`
+   * 腿；本集是报错文案与 spec 断言的名字单点，禁字面量散落）。
+   */
+  val DelegateNodeToolsFace: Set[String] = Set("NodeEdit", "NodeList", "NodeCancel", "ChainWrite")
+
+  /**
+   * **运行时解析单点（A4 作用域闸）**：delegate 会话 → **只解析自己的作用域图**
+   * （`DelegateFlowHosts.get(ctx.sessionId)`；查无宿主 = fail-closed 显式报错，
+   * 禁静默回落 per-project 面）；其余身份（分发器白名单过渡期照旧 / Nebula /
+   * REST 直调）→ 既有 `resolveProject` per-project 路径**逐字节不变**。
+   *
+   * 三个工具调用点（NodeEdit/NodeList/NodeCancel）统一改走本方法——第二保险与
+   * 挂载面（delegateSession 尾段）构成双保险（TaskBoard 同款纪律）。
+   *
+   * @param project **显式** project 参数（调用方不再自行 orElse ctx.projectName——
+   *                delegate 面上 ctx.projectName 是派发上下文残留，**禁**参与作用域
+   *                归属：作用域只认会话身份；per-project 面的 fallback 在
+   *                `resolveProject` 内原样保留）。
+   */
+  def resolveRuntime(project: Option[String], ctx: ToolContext): IO[Either[String, ProjectRuntime]] =
+    if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then resolveDelegateScope(project, ctx)
+    else resolveProject(project, ctx)
+
+  /** delegate 会话的宿主查无（fail-closed，可行动：重挂触发点在 spawn/续聊腿）。 */
+  def scopeUnavailableError(scopeId: String): String =
+    s"Your scope flow map is not available (no mounted host for this delegate session) — the flow tools only operate on " +
+      "your own scope map. Retry shortly (the host remounts on session revival) or state the outage plainly in your wrap-up report if it persists. " +
+      "(DELEGATE_SCOPE_UNAVAILABLE)"
+
+  /** delegate 会话显式指定了他人项目（作用域归属 fail-closed——只能编辑自己作用域图）。 */
+  def scopeForeignError(scopeId: String, requested: String, scopeName: String): String =
+    s"'$requested' is outside your scope — a delegate may only address its OWN scope flow map (scope '$scopeId', " +
+      s"mounted as '$scopeName'). Cross-project work goes through Delegate dispatch, not the flow tools. " +
+      "(DELEGATE_SCOPE_FOREIGN)"
+
+  private def resolveDelegateScope(project: Option[String], ctx: ToolContext): IO[Either[String, ProjectRuntime]] =
+    val scopeId = ctx.sessionId.getOrElse("")
+    nebflow.core.project.DelegateFlowHosts.get(scopeId).flatMap {
+      case None => IO.pure(Left(scopeUnavailableError(scopeId)))
+      case Some(h) =>
+        val scopeName = h.engine.projectName
+        project match
+          case Some(p) if !p.equalsIgnoreCase(scopeName) && p != scopeId =>
+            IO.pure(Left(scopeForeignError(scopeId, p, scopeName)))
+          case _ => IO.pure(Right(h.projectRuntime))
+    }
+
+  // ── N1 刀2（v3 §10.1 A5 双寻址）──────────────────────────────────────────
+
+  /**
+   * **节点双寻址解析单点**（判据 v2 §4 R1/R3 原样引用；修复底座既有弱点
+   * `resolveTargetId` 静默取首个 name 命中）：解析序 = **id 精确命中即止**（R4 保证
+   * id/name 两空间不相交，序即确定）→ 否则按 name（精确、大小写敏感、零 case
+   * folding）→ **>1 命中 = 显式歧义错**（列全候选 `id(task前30字符)`，不猜）→
+   * 零命中 = `CHAIN_NODE_NOT_FOUND`。
+   *
+   * @param nodes 解析域（调用方取**一次**快照传入——活动区优先；归档候选由调用方
+   *              决定是否并入 combined 集，本函数不做两区 IO）。
+   * @return Right(nodeId) | Left(带错误码的完整文案)。
+   */
+  def resolveNodeRef(nodes: Map[String, NodeDef], ref: String): Either[String, String] =
+    val r = ref.trim
+    if r.isEmpty then Left(chainNodeNotFoundError(r))
+    else if nodes.contains(r) then Right(r)
     else
-      s"Project '$name' is not mounted. Available projects: ${available.mkString(", ")}. Use ProjectCreate first."
+      nodes.values.filter(_.name == r).toList match
+        case single :: Nil => Right(single.id)
+        case Nil => Left(chainNodeNotFoundError(r))
+        case many =>
+          val candidates = many.map(n => s"${n.id}(${n.task.getOrElse("").take(30)})").mkString(", ")
+          Left(
+            s"'$r' matches ${many.size} nodes by name — $candidates — address by node id, or rename. (CHAIN_ADDR_AMBIGUOUS)"
+          )
+
+  def chainNodeNotFoundError(ref: String): String =
+    s"no node '$ref' (id or name) in this scope's chain map. (CHAIN_NODE_NOT_FOUND)"
+
+  /** 双寻址便捷形态（IO 包装）：活动区未命中再兜归档区（与 findNode 同序），两区皆无 = 未找到。 */
+  def resolveNodeRefIO(rt: ProjectRuntime, ref: String): IO[Either[String, NodeDef]] =
+    rt.store.snapshot.flatMap { s =>
+      resolveNodeRef(s.nodes, ref) match
+        case Right(id) =>
+          s.nodes.get(id).map(n => IO.pure(Right(n))).getOrElse {
+            rt.store.findNode(id).map {
+              case Some(n) => Right(n)
+              case None => Left(chainNodeNotFoundError(ref))
+            }
+          }
+        case Left(err) =>
+          // 活动区按名零命中 → 归档区兜底（归档节点可被 detail/取消面寻址——结果补投/收殓语义）
+          rt.store.archiveSnapshot.map { arch =>
+            arch.nodes.values.filter(_.name == ref.trim).toList match
+              case single :: Nil => Right(single)
+              case _ => Left(err)
+          }
+    }
+
+  /**
+   * 项目未挂载报错（附可用项目列表提示实际名称）——纯函数便于单测。
+   * 精确项目名不匹配时列出已挂载项目（提示实际名称，不裸报 not mounted）；
+   * 空列表（无任何挂载项目）给单独一行提示。
+   */
+  def mountError(name: String, available: List[String]): String =
+    if available.isEmpty then s"Project '$name' is not mounted. No projects are currently mounted. Use Project first."
+    else s"Project '$name' is not mounted. Available projects: ${available.mkString(", ")}. Use Project first."
 
   /** 引用节点存在性（活动区 + 归档区）。 */
   def ensureNodeExists(rt: ProjectRuntime, id: String): IO[Either[String, Unit]] =
@@ -55,38 +176,105 @@ object NodeTools:
       case None => Left(s"Referenced node '$id' not found in project '${rt.project.name}'")
     }
 
-  /** 状态守卫：目标已运行 → 拒绝接线（§2.2「目标已运行，输入已冻结」）。 */
+  /**
+   * out 目标解析（in 丢失修复面单点）：out 边目标串接受节点 id 或节点名
+   * （in/deps 维持纯 id 契约，不经此解析）。返回解析后的节点 id；悬空 → None。
+   * 校验（存在性/状态守卫/环检测）、in 镜像记账、投递结算统一以解析结果为准——
+   * 原始串形态只留在存储层（边 to 字段，前端/审计可读）。
+   */
+  def resolveOutTarget(rt: ProjectRuntime, target: String): IO[Option[String]] =
+    if target == OutEdge.RootTarget then IO.pure(None)
+    else rt.store.snapshot.map(s => OutEdge.resolveTargetId(s.nodes, target))
+
+  /**
+   * 状态守卫：目标已运行 → 拒绝接线（§2.2「目标已运行，输入已冻结」）。
+   *
+   * **适用面收窄**后的守卫口径：本守卫只对
+   * **非控制边**（真实输入边 result / signal）与「已接线且未变」的目标生效；指向
+   * running 目标的**控制边**（`:loop`）改由 [[deferredLoopEdges]] 入待接线队列
+   * （`NodeDef.pendingOut`），不再整单拒绝——控制边零投递、不进 in 镜像/屏障，对其
+   * 冻结输入的理由不成立（同族先例：环检 `:2071` 早已过滤控制边）。
+   */
   def ensureTargetNotRunning(rt: ProjectRuntime, id: String): IO[Either[String, Unit]] =
     rt.store.getNode(id).map {
       case Some(n) if n.status == NodeLifecycle.Running =>
-        Left(s"Node '$id' is running — its input is frozen. NodeCancel it first, then rewire.")
+        Left(
+          s"Node '$id' is running — its input is frozen. NodeCancel it first, then rewire. " +
+            "(NODE_TARGET_RUNNING_INPUT_FROZEN; control edges — `(fail)<worker>:loop` — are exempt: they queue in " +
+            "pendingOut and auto-wire once the target leaves running)"
+        )
       case _ => Right(())
     }
 
-  /** P1 out 表面语法解析（spec §2.2；向后兼容 + 扇出 + 失败信号边）：
-    *   out="B"                  → List(OutEdge("B"))                          旧单值等价
-    *   out="(pass)B, (failed)C" → List(OutEdge("B"), OutEdge("C",{failed}))   扇出
-    *   out="(failed)C:signal"   → List(OutEdge("C",{failed},"signal"))        失败纯信号边
-    * 段语法：(gates)? target (:mode)?——gates 逗号分隔 ⊆{pass,failed}（缺省 pass；
-    * **Nebula 缺省 {pass,failed}**=completed/failed 双通报旧形态零漂移，显式门控按
-    * 声明收紧）；mode ∈{result,signal}（缺省 result）。null/"null" → Nil = 断开
-    *（编辑侧 EMPTY_NODE_CONNECTION 守卫区分「未传」与「显式断开」，语义不变）；
-    * JSON 数组 → 拒（1 对多改用逗号段语法）。输出经 canonical 规范化（同 (to,mode)
-    * 合并 on 集）。纯函数便于单测。 */
+  /**
+   * **编辑期待接线分区判据单点**（「待接线队列
+   * （到点自动接）」口径）：把本次声明的 `newOut` 相对**已接线** `currentOut` 的
+   * **新增边**按「目标此刻是否 running」三分为：
+   *
+   *   - `deferred`：新增 **控制边**（`:loop`）∧ 目标 running ⇒ 入 `NodeDef.pendingOut`
+   *     待接线队列（不进 out），目标离开 running 后由 `NodeEngine.applyDeferredWiring`
+   *     自动接线 + 落痕；
+   *   - `frozen`：新增 **非控制边**（result / signal）∧ 目标 running ⇒ 照旧**拒**
+   *     （护「in 在启动前定型」的屏障语义，merge 面保护不得削弱）；
+   *   - **未变边（`currentOut` 已含）**：两边皆不入 ⇒ 编辑放行（已接线者无需再接、也
+   *     无输入冻结可言——旧守卫「对所有声明目标含未变者」的过宽面即在此收窄）。
+   *
+   * 🔴 为什么必须排除「已接线」：若把已接线的控制边也判进 `deferred`，一次只改别的字段
+   * 的编辑就会把在用的回边从 `out` 摘走、丢进队列（回边在目标 running 期间静默失效）
+   * ——这正是本判据按 canonical diff 计算的原因。
+   *
+   * 目标串支持 id / 名字两形态（`OutEdge.resolveTargetId` 单点）；悬空目标在此忽略
+   * （上游 `resolvedIds` 闸已拒，正常不可达；`frozen` 只承载可行动的点名）。
+   * 幂等：同一 out 重复提交给出同一分区。
+   */
+  def partitionDeferredWiring(
+    rt: ProjectRuntime,
+    currentOut: List[OutEdge],
+    newOut: List[OutEdge]
+  ): IO[(List[(OutEdge, String)], List[String])] =
+    rt.store.snapshot.map { s =>
+      val wired = OutEdge.canonical(currentOut)
+      val added = OutEdge.canonical(newOut).filterNot(wired.contains)
+      def runningTargetOf(e: OutEdge): Option[String] =
+        OutEdge.resolveTargetId(s.nodes, e.to).filter(id => s.nodes.get(id).exists(_.status == NodeLifecycle.Running))
+      val deferred = added.filter(OutEdge.isLoopEdge).flatMap(e => runningTargetOf(e).map(id => (e, id)))
+      val frozen = added.filterNot(OutEdge.isLoopEdge).flatMap(runningTargetOf).distinct
+      (deferred, frozen)
+    }
+
+  /**
+   * P1 out 表面语法解析（spec §2.2；向后兼容 + 扇出 + 失败信号边）：
+   *   out="B"                  → List(OutEdge("B"))                          旧单值等价
+   *   out="(pass)B, (failed)C" → List(OutEdge("B"), OutEdge("C",{failed}))   扇出
+   *   out="(failed)C:signal"   → List(OutEdge("C",{failed},"signal"))        失败纯信号边
+   * 段语法：(gates)? target (:mode)?——gates 逗号分隔 ⊆{pass,failed}（缺省 pass）；
+   * mode ∈{result,signal}（缺省 result）。**Nebula 两态语义**：隐式门（bare `"Nebula"`）＝纯出口标记 ⇒ `on={pass}` + `mode=signal`
+   * （零投递、只记账）；显式门集 `"(pass)Nebula"` / `"(pass,failed)Nebula"` ＝通知
+   * 声明（按声明门 + 声明 mode 真投递）。null/"null" → Nil = 断开（空 out 合法）；
+   * JSON 数组 → 拒（1 对多改用逗号段语法）。输出经 canonical 规范化（同 (to,mode)
+   * 合并 on 集）。纯函数便于单测。
+   */
   def parseOut(outJson: Option[Json]): Either[String, List[OutEdge]] =
     outJson match
       case None => Right(Nil) // 未传 out = 不改动（哨兵语义不变）
       case Some(j) if j.isNull => Right(Nil) // out=null = 断开（悬空化）
       case Some(j) if j.isArray =>
-        Left("'out' must be a target spec string — fan-out uses the \"(pass)B, (failed)C\" segment syntax, not a JSON array")
+        Left(
+          "'out' must be a target spec string — fan-out uses the \"(pass)B, (failed)C\" segment syntax, not a JSON array"
+        )
       case Some(j) =>
         j.asString match
           case Some(s) => parseOutSyntax(s)
-          case None => Left("'out' must be a target spec string (node id, \"Nebula\", or \"(gates)target:mode\" segments), or null")
+          case None =>
+            Left(
+              "'out' must be a target spec string (node id, \"Nebula\", or \"(gates)target:mode\" segments), or null"
+            )
 
-  /** 表面语法段解析入口：整值 trim；"null"（任意大小写）= 断开；逗号分段逐段解析
-    * 后 canonical 规范化。分段为**括号深度感知**——门组内的逗号（"(pass,failed)B"）
-    * 不是段分隔符。 */
+  /**
+   * 表面语法段解析入口：整值 trim；"null"（任意大小写）= 断开；逗号分段逐段解析
+   * 后 canonical 规范化。分段为**括号深度感知**——门组内的逗号（"(pass,failed)B"）
+   * 不是段分隔符。
+   */
   def parseOutSyntax(s: String): Either[String, List[OutEdge]] =
     val t = s.trim
     if t.isEmpty then Left("'out' must be a non-empty target spec, \"Nebula\", or null")
@@ -109,16 +297,32 @@ object NodeTools:
     }
     buf.result().split('\u0000').map(_.trim).filter(_.nonEmpty).toList
 
-  /** 门控组解析："(pass)" / "(pass,failed)"——空组/非法门 → 可行动错误（附原文）。 */
+  /**
+   * 门控组解析："(pass)" / "(pass,failed)" / "(fail)"——空组/非法门 → 可行动错误
+   * （附原文 + **fail/failed 一字之差的区分说明**，§3.3 #11：写错门是
+   * 最可能的 LLM 误用面，错误文案必须自己说清两词的区别）。
+   */
   private def parseOutGates(inner: String, seg: String): Either[String, Set[String]] =
     val parts = inner.split(',').map(_.trim).filter(_.nonEmpty).toList
-    if parts.isEmpty then Left(s"invalid out segment '$seg': empty '(gates)' — use pass and/or failed")
+    if parts.isEmpty then
+      Left(
+        s"invalid out segment '$seg': empty '(gates)' — use pass and/or failed (node-status gate) or fail (verdict gate)"
+      )
     else
       val gs = parts.map(_.toLowerCase).toSet
       val invalid = gs -- OutEdge.Gates
       if invalid.nonEmpty then
-        Left(s"invalid out gate(s) '${invalid.mkString(",")}' in '$seg' — gates ⊆ {pass, failed}")
+        Left(
+          s"invalid out gate(s) '${invalid.mkString(",")}' in '$seg' — gates ⊆ {pass, failed, fail}. " +
+            "Note the two: 'failed' = the NODE-STATUS gate (fires when the upstream node itself failed); " +
+            "'fail' = the VERDICT gate (a verifier's reject verdict; must be paired with the ':loop' mode and " +
+            "only a role=verifier node may declare it)"
+        )
       else Right(gs)
+
+    end if
+
+  end parseOutGates
 
   /** 单段解析：(gates)? target (:mode)?。target 空 / 字面 null / mode 非法 → 错误。 */
   private def parseOutSegment(seg: String): Either[String, OutEdge] =
@@ -135,20 +339,42 @@ object NodeTools:
         if colon > 0 then (rest.substring(0, colon).trim, rest.substring(colon + 1).trim.toLowerCase)
         else (rest.trim, OutEdge.Result)
       if target.isEmpty || target.startsWith(":") then Left(s"invalid out segment '$seg': missing target node id")
-      else if target.equalsIgnoreCase("null") then Left(s"invalid out segment '$seg': null is only valid as the whole out value")
-      else if !OutEdge.Modes.contains(mode) then Left(s"invalid out mode ':$mode' in '$seg' — mode ∈ {result, signal}")
+      else if target.equalsIgnoreCase("null") then
+        Left(s"invalid out segment '$seg': null is only valid as the whole out value")
+      else if !OutEdge.Modes.contains(mode) then
+        // mode 白名单纳入 `loop`（控制边；nrloop 一期 §3.3 #11）：错误文案列出三态并
+        // 说明 loop 的语义（回边/图上不连/由引擎显式驱动），防 LLM 猜。
+        Left(
+          s"invalid out mode ':$mode' in '$seg' — mode ∈ {result, signal, loop}; " +
+            "':loop' = control edge (the fail-routed re-run edge: declared in out, not part of the DAG, " +
+            "never settles the barrier — the engine drives it)"
+        )
       else
-        // Nebula 缺省双通报门（旧形态零漂移）；显式门控按声明
-        val on = if target == OutEdge.NebulaTarget && gatesImplicit then OutEdge.NebulaDefaultOn else declaredGates
-        Right(OutEdge(target, on, mode))
+        // Nebula 边两态分叉（隐式门 = 出口标记）：
+        //   隐式门（bare "Nebula"）→ on={pass} + mode=signal：**零投递、只记账**
+        //     （nebulaDelivery/deliverFailed 走既有 Signal 分支 ⇒ 不投 root，亦不补投）。
+        //     该分支连写的 :mode 被出口标记语义整体覆盖——「显式回传 = 写字面
+        //     门集形态」，隐式门不是声明面（要通知必须补门集）。
+        //   显式门集（"(pass)Nebula" / "(pass,failed)Nebula"）→ 按声明门 + 声明 mode
+        //     （缺省 result）真投递 = 通知声明。
+        // NebulaDefaultOn 不再经本路径：它只服务存量读路径（fromLegacyString /
+        // OutEdge.nebula）——两处语义自此分叉（见 ProjectTypes.OutEdge.NebulaDefaultOn 注释）。
+        if target == OutEdge.RootTarget && gatesImplicit then
+          Right(OutEdge(OutEdge.RootTarget, OutEdge.DefaultOn, OutEdge.Signal))
+        else Right(OutEdge(target, declaredGates, mode))
+      end if
     }
 
-  /** in 参数宽容解析（修复次因 B）：三形态统一接受——
-    * ① 原生 JSON 数组 ["a","b"]；② JSON 数组字符串 "[\"a\",\"b\"]"（LLM 常见：
-    * 把数组整体字符串化）；③ 逗号串 "a,b"。元素 trim + 空段/空串过滤。
-    * 形态②解析失败 → 清晰报错附原文（绝不静默吞成单个字面 id——实证案例 1：
-    * 分发器三次接线失败均因 "[\"n-8a481bd0\",...]" 被当单 id → not found）。
-    * （原 NodeEditTool 私有方法，提为 NodeTools 公开以便单测。） */
+  end parseOutSegment
+
+  /**
+   * in 参数宽容解析（修复次因 B）：三形态统一接受——
+   * ① 原生 JSON 数组 ["a","b"]；② JSON 数组字符串 "[\"a\",\"b\"]"（LLM 常见：
+   * 把数组整体字符串化）；③ 逗号串 "a,b"。元素 trim + 空段/空串过滤。
+   * 形态②解析失败 → 清晰报错附原文（绝不静默吞成单个字面 id——实证案例 1：
+   * 分发器三次接线失败均因 "[\"n-8a481bd0\",...]" 被当单 id → not found）。
+   * （原 NodeEditTool 私有方法，提为 NodeTools 公开以便单测。）
+   */
   def parseIn(inJson: Option[Json]): Either[String, List[String]] =
     inJson match
       case None => Right(Nil)
@@ -167,97 +393,827 @@ object NodeTools:
         else Right(s.split(',').map(_.trim).filter(_.nonEmpty).toList)
       case Some(_) => Left("'in' must be a node id string or an array of node ids")
 
-  /** 事务内设 out 边集（单权威，P1 多边版）：被移除边目标 in 移除 + 新增边目标 in
-    * 追加 + 本节点 out 替换（canonical 规范化落库）。同 to 保留边不重触发 in 写
-    *（幂等）。归档感知（fix a「新建边→归档上游」修复 20260903）：from 在归档区
-    * 时——活动区侧照常做目标 in 增删，from.out 补写归档区（mutateArchive；归档节点
-    * 不可复活，仅元数据保持单权威一致）；旧目标也在归档区时其 in 不回写（归档 in
-    * 表是死数据，避免跨区二跳写）。 */
-  def setOut(rt: ProjectRuntime, fromId: String, newOut: List[OutEdge]): IO[Unit] =
+  /**
+   * 悬空提示：创建/改接成功结果尾部一行提示——与
+   * 既有 `stalledInWarning` **同款形态**（成功结果尾部附 ⚠ 行，非阻断）。判据 = 本次调用
+   * 结束态该节点无出边 ⇒ 结果将滞留（零投递、零升根），接线后自动投递。
+   * 0 spawn、零新字段、零持久痕迹（与 W2 的 `wiringGap` 载荷键互为「决策当下可见 /
+   * 巡检可见」两面）。
+   */
+  def wiringGapHint(nodeName: String, nodeId: String): List[String] =
+    List(
+      s"⚠ node '$nodeName' ($nodeId) has NO out edge — its result will be retained on the node (zero delivery, no root notify). " +
+        "Wire an out edge later (NodeEdit out=<target>, or a downstream in=<this node id>) and the retained result is delivered then."
+    )
+
+  /**
+   * 悬空提示——**已声明**变体（nodegate 方案件 §1(ii) C-ii ① + §7#6：把「忘了」与
+   * 「有意」在决策当下区分开）：`dangling=true` 建位的 ⚠ 行带 declared 标记，文案
+   * 从「未声明（可疑）」升级为「已声明（预期）」。零新持久字段（wiringGap 派生键
+   * 不动，`ProjectTypes` 序列化链零改动）；声明动作另落审计事件 `dangling-declared`。
+   */
+  def wiringGapHintDeclared(nodeName: String, nodeId: String): List[String] =
+    List(
+      s"⚠ node '$nodeName' ($nodeId) declared dangling=true — the missing out edge is INTENTIONAL (no delivery, no root notify). " +
+        "Its result is retained and is auto-delivered once an out edge is wired. (dangling=true)"
+    )
+
+  /**
+   * **The pass-consumer judgement single point** (design card §1.3 / §3.1, verbatim):
+   *
+   * ```
+   * declaredOut(v) = canonical(v.out) ++ v.pendingOut
+   * passOutlet(v) ≜ ∃ e ∈ declaredOut(v): mode(e) ≠ loop ∧ pass ∈ on(e)
+   *                ∧ ( e.to = "Nebula" ∧ mode(e) = result
+   *                    ∨ resolveTargetId(nodes, e.to).isDefined )
+   * ```
+   *
+   * Three boundary readings, verbatim from the card, on the same discipline as
+   * `NodePayload.verifierRouteInvalid` (derived quantity, zero new persisted field,
+   * recovery removes the condition with no bookkeeping):
+   *  - `pendingOut` **counts** as declared (the rewire window must not report — the
+   *    observed window is up to 24.5 minutes long);
+   *  - a `mode=loop` edge **does not count** (a re-run back edge is a control signal,
+   *    not a delivery leg);
+   *  - a bare `(pass)Nebula:signal` exit marker **does not count** (it delivers
+   *    nothing); only `(pass)Nebula` in `:result` mode does.
+   *
+   * 🔴 Both consumers — (a) the create/rewire receipt warning and (b) the chain archive
+   * gate — call THIS function. Deriving a second copy per consumer would be exactly the
+   * twin-derivation the engine forbids (`NodeGating.scala:302-306`).
+   *
+   * @param nodes the resolution face (caller reads one snapshot; never mix snapshots).
+   */
+  def passOutlet(v: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    declaredOutOf(v).exists { e =>
+      !OutEdge.isLoopEdge(e) && e.on.contains(OutEdge.Pass) && {
+        (e.to == OutEdge.RootTarget && e.mode == OutEdge.Result) ||
+        OutEdge.resolveTargetId(nodes, e.to).isDefined
+      }
+    }
+
+  /**
+   * `declaredOut` reading single point for the pass-consumer judgement: the same
+   * `canonical(out) ++ pendingOut` shape `NodePayload.verifierRouteInvalid` uses (one
+   * point, several readers) — so (a) and (b) can never disagree on what "declared" means.
+   */
+  def declaredOutOf(v: NodeDef): List[OutEdge] = OutEdge.canonical(v.out) ++ v.pendingOut
+
+  /**
+   * `inConsumer` — the second half of the strict V-0 form (design card §1.3, verbatim):
+   *
+   * ```
+   * inConsumer(v) ≜ ∃ n ∈ nodes: v.id ∈ resolve(n.in) ∨ v.id ∈ resolve(n.deps)
+   * ```
+   *
+   * "resolve" for `deps` is the chain-reference expansion single point
+   * (`FlowMapStore.resolveDepTargets`) — a `chain:<id>` reference expanding onto this
+   * verifier counts as a consumer exactly as a plain node id would. The batch form is the
+   * only implementation (a per-candidate singular would re-expand the chain table once
+   * per node — O(n·chains) on a 4000-node view), so callers scan the referrer set once.
+   *
+   * 🔴 (a) deliberately does NOT use this — at create time "who will reference me later"
+   * is unknowable, and judging the strict V-0 there would fire on every normally created
+   * verifier (noise flood). (b) does — at archive time the `in`/`deps` references are
+   * settled facts, and dropping the clause would hit the 15 legitimate landing-position
+   * shapes on record. That asymmetry is the card's hard ruling (§3.1), not an oversight.
+   */
+  def inConsumersOf(nodes: Map[String, NodeDef]): Set[String] =
+    nodes.values.iterator.flatMap { n =>
+      val fromDeps =
+        if n.deps.isEmpty then Nil else FlowMapStore.resolveDepTargets(n.deps, nodes).ids
+      (n.in ++ fromDeps).distinct
+    }.toSet
+
+  /** Singular reading of [[inConsumersOf]] (does not re-expand anything beyond the scan). */
+  def inConsumerOf(v: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    inConsumersOf(nodes).contains(v.id)
+
+  /**
+   * **The create/rewire-face judgement single point** (design card §2.1 body + §2.2
+   * exemption 4, verbatim):
+   *
+   * ```
+   * verifierPassOutletMissing(v) ≜ role(v) = verifier
+   *                              ∧ declaredOut(v) non-empty   ← an empty out goes to the existing two-phase token face, not judged here
+   *                              ∧ ¬passOutlet(v)
+   * ```
+   *
+   * Two clauses need their boundary spelled out, because the card states them as
+   * exemptions rather than as part of the formula (§2.2 exemption face, shared by both tiers):
+   *
+   *  - **empty `out` is never judged** (exemption 5): that window belongs to the existing
+   *    two-phase token face (`verifierRoutePending`), already owned by
+   *    `NODE_VERIFIER_NEEDS_ROUTE`. Tested on the node's OWN edge list, not on
+   *    `declaredOut` — the two are equivalent here because a `pendingOut`-only node has an
+   *    empty own list.
+   *  - **`pendingOut` non-empty ⇒ do not report** (exemption 4): a control edge queued
+   *    behind a running target is the *rewire window* (measured up to 24.5 minutes), during
+   *    which the user is actively wiring; reporting there would be a false positive. This
+   *    is the exact counterpart of the fail-face (iii) boundary in
+   *    [[NodePayload.verifierRouteInvalid]] — same window, same "do not report".
+   *
+   * 🔴 The `lastVerdict` clause is deliberately absent here. At create/rewire time the node
+   * is being DECLARED, not judged — demanding a written verdict would make the warning
+   * unreachable for every newly created verifier (R1 of the acceptance list requires the ⚠
+   * line at creation). The verdict clause belongs to the archive face, where it composes
+   * with `¬inConsumer` into the strict `V-0` form (`FlowMapStore.unconsumedVerdictsOf`).
+   * Both faces share the SAME `passOutlet` single point — only the composition differs,
+   * and that asymmetry is the card's hard ruling (§3.1), not an oversight.
+   */
+  def verifierPassOutletMissing(v: NodeDef, nodes: Map[String, NodeDef]): Boolean =
+    NodeRoles.normalize(v.role) == NodeRoles.Verifier &&
+      OutEdge.canonical(v.out).nonEmpty &&
+      v.pendingOut.isEmpty &&
+      !passOutlet(v, nodes)
+
+  /**
+   * **pass-outlet gap hint (candidate (a), warning tier)** — mirrors [[wiringGapHint]]
+   * line for line: one ⚠ line appended to the tail of a SUCCESS receipt, non-blocking,
+   * **zero rejection paths**.
+   *
+   * Judgement = `role(v)=verifier ∧ declaredOut(v) non-empty ∧ ¬passOutlet(v)` (the
+   * card's `V-0prime`, §2.1): an empty `declaredOut` is deliberately exempt — that window
+   * belongs to the existing two-phase token face (`verifierRoutePending`) and is already
+   * owned by `NODE_VERIFIER_NEEDS_ROUTE`. `pendingOut` counting as declared (§2.2 exempt
+   * 4) is what keeps the rewire window from reporting a false positive.
+   *
+   * 🔴 This judges the **pass** face (where a positive verdict goes). It runs in parallel
+   * with — never instead of — the **fail** face family (`NODE_VERIFIER_NEEDS_ROUTE` /
+   * `verifierRouteInvalid` / `verifier-route-lost`): both can hold at the same time.
+   */
+  def verifierPassOutletGapHint(nodeName: String, nodeId: String): List[String] =
+    List(
+      s"⚠ verifier '$nodeName' ($nodeId) declares no pass outlet — its pass verdict has no consumer to route to (unconsumed). " +
+        "A verifier's pass leg must reach either a landing node ('(pass)<landing>') or the root exit ('(pass)Nebula'); " +
+        "declare it with NodeEdit out=\"(pass)<landing>, (fail)<worker>:loop\". (verifier-pass-unconsumed)"
+    )
+
+  /**
+   * loop 门集不变量（**P-2 强读法**）——判定单点（纯函数）。
+   *
+   * 判据（写死）：`loop.exists(_.enabled)`（与引擎实际路由键 `NodeEngine.spawnAndRun`
+   * 的 `node.loop.exists(_.enabled)` 同源，**不是** `loop.isDefined`）∧ 最终边集非空 ∧
+   * 未**同时覆盖** pass 与 failed 两腿 ⇒ 拒。**空 out 豁免**（out 可空置：结果留在
+   * result，接线后再投递）——否则与「out 可空置」语义直接冲突（该形态下 P-2 不可判，
+   * 是已接受的不可判窗口）。**存量零回溯**：只在写路径入口判定（新建/改接），
+   * 落盘加载路径（`Decoder[List[OutEdge]]` / `fromLegacyString`）一行不改。
+   *
+   * 为何 loop 单独收紧：loop 是唯一「两腿终态都由引擎内部决定」的节点类型（PASS 由
+   * 内部 verify 裁决、FAIL 由轮帽/执行层失败触发）⇒ out 门集是它**唯一**的对外意图
+   * 声明面，隐式/单腿门会让「PASS 要不要升根 / 达 K 轮失败要不要升根」在拓扑上不可读。
+   *
+   * @return Some(可行动错误) = 拒；None = 合规。
+   */
+  def loopGateViolation(loopEnabled: Boolean, name: String, finalOut: List[OutEdge]): Option[String] =
+    if !loopEnabled || finalOut.isEmpty then None
+    else
+      val edges = OutEdge.canonical(finalOut)
+      val hasPass = edges.exists(_.on.contains(OutEdge.Pass))
+      val hasFailed = edges.exists(_.on.contains(OutEdge.Failed))
+      if hasPass && hasFailed then None
+      else
+        val missing =
+          if hasPass then "'failed'" else if hasFailed then "'pass'" else s"'pass'+'failed'"
+        Some(
+          s"loop node '$name' must route BOTH legs — its out edges must cover 'pass' and 'failed' (missing: $missing). " +
+            "A loop's PASS is decided by its inner verify and its FAIL by the round cap / execution failure, so a bare or " +
+            "one-legged route leaves one outcome invisible: write an explicit gate set, e.g. out: \"(pass,failed)<target>\" " +
+            "(one edge, both legs) or \"(pass)<target>, (failed)<fallback>:signal\". Leaving out EMPTY is legal (result " +
+            "retained, delivered when wired). (NODE_LOOP_GATE_INCOMPLETE)"
+        )
+
+  /** NodeDef 形态的重载（写路径入口用）。 */
+  def loopGateViolation(node: NodeDef, finalOut: List[OutEdge]): Option[String] =
+    loopGateViolation(node.loop.exists(_.enabled), node.name, finalOut)
+
+  /**
+   * 镜像追加路径（下游 `in:` 声明 ⇒ 上游 out 追加缺省 pass 边）的 loop 门集预检
+   * （该路径不经 outJson 校验点，故必须在**写路径**上判）。
+   *
+   * 复算方式：逐条调用**真实的落盘收敛函数** `appendEdgeTo` 得到追加后的上游边集再判
+   * ——不复制其条件（单一真相源，避免「幂等不追加」分支被镜像成第二套语义）。归档
+   * 上游不在活动区 Map ⇒ `appendEdgeTo` 恒为 no-op（与 create 事务内行为一致）。
+   *
+   * @return Some(错误) = 拒（调用方必须在**任何写之前**拒绝整调用 ⇒ 不落库/不落边/零残留）。
+   */
+  def loopGateForAppends(nodes: Map[String, NodeDef], upIds: List[String], toNodeId: String): Option[String] =
+    upIds.distinct.iterator
+      .flatMap { upId =>
+        NodeTools.appendEdgeTo(nodes, upId, toNodeId).get(upId).flatMap(up => loopGateViolation(up, up.out))
+      }
+      .nextOption()
+
+  /**
+   * `NODE_VERIFIER_NEEDS_ROUTE` 可行动文案单点（文案口径：
+   * 两腿同码——缺陷语义相同（verifier 无 fail 路由），码名描述缺陷不描述相位，
+   * 下游分发器自纠只需认一个码）。
+   *
+   * @param via 相位后缀：自身边集腿为空串；镜像追加腿附「被下游 in= 追加」语境。
+   */
+  private def verifierNoRouteMsg(nodeName: String, via: String): String =
+    s"verifier node '$nodeName' has no fail route — a verifier MUST declare exactly one '(fail)<worker>:loop' edge, otherwise " +
+      "a rejected target can never be re-run (the loop silently degrades to a single pass). Write out=\"(pass)<landing>, " +
+      "(fail)<worker>:loop\"." + via + " (NODE_VERIFIER_NEEDS_ROUTE)"
+
+  /**
+   * 镜像追加路径的 verdict 选通预检（镜像腿）：
+   * 下游 `in:` 声明会给每个上游 out 追加一条缺省 pass 边——上游若是 verifier 且
+   * 追加后 fail 路由仍为空 ⇒ 拒（否则「pending verifier 被下游补 pass 边」立即
+   * 变成「有边无 fail 路由」= 缺陷形态本身，正是 n-b9faa304 形态的成因通道）。
+   *
+   * **镜像腿不豁免**（方案件 §1(i) C-i ①）：`verifierRoutePending=true` 只放行
+   * 创建期自身空 out 面；本函数没有 pending 参数——pending verifier 想接下游，
+   * 先补挂 `(fail)<worker>:loop`（解除 = 派生，挂上即自然解除）。
+   *
+   * 复算方式与 `loopGateForAppends` 同款：逐条调用**真实的落盘收敛函数**
+   * `appendEdgeTo` 得到追加后的上游边集再判（单一真相源，幂等分支零复制）。归档
+   * 上游不在活动区 Map ⇒ `appendEdgeTo` 恒为 no-op。
+   *
+   * @return Some(错误) = 拒（调用方必须在**任何写之前**拒绝整调用 ⇒ 不落库/不落边/
+   *   零残留）。
+   */
+  def verdictRouteGateForAppends(nodes: Map[String, NodeDef], upIds: List[String], toNodeId: String): Option[String] =
+    upIds.distinct.iterator
+      .flatMap { upId =>
+        NodeTools.appendEdgeTo(nodes, upId, toNodeId).get(upId).flatMap { up =>
+          val edges = OutEdge.canonical(up.out)
+          val failEdges = edges.filter(_.on.contains(OutEdge.Fail))
+          if NodeRoles.normalize(up.role) != NodeRoles.Verifier || failEdges.nonEmpty then None
+          else
+            Some(
+              verifierNoRouteMsg(
+                up.name,
+                " The route-less verifier was being wired as an UPSTREAM by a downstream in= declaration — declare the " +
+                  "fail route on it first (NodeEdit out=\"(fail)<worker>:loop\"), or wire this downstream elsewhere."
+              )
+            )
+        }
+      }
+      .nextOption()
+
+  /**
+   * 事务内设 out 边集（单权威，P1 多边版）：被移除边目标 in 移除 + 新增边目标 in
+   * 追加 + 本节点 out 替换（canonical 规范化落库）。同 to 保留边不重触发 in 写
+   * （幂等）。归档感知（「新建边→归档上游」修复）：from 在归档区
+   * 时——活动区侧照常做目标 in 增删，from.out 补写归档区（mutateArchive；归档节点
+   * 不可复活，仅元数据保持单权威一致）；旧目标也在归档区时其 in 不回写（归档 in
+   * 表是死数据，避免跨区二跳写）。
+   *
+   * **loop 门集不变量（落盘收敛点）**：写入前用 `loopGateViolation` 复查最终
+   * 边集——违规即**拒写**（ERROR 留痕，本函数是写路径单权威，防未来新调用方绕过前置
+   * 预检）。正常路径不可达：创建/改接的**前置预检**（`loopGateForAppends` + 改接侧
+   * self 预检）已用同一判据在任何写之前拒绝整调用 ⇒ 零残留。
+   */
+  def setOut(
+    rt: ProjectRuntime,
+    fromId: String,
+    newOut: List[OutEdge],
+    pendingOut: Option[List[OutEdge]] = None
+  ): IO[Unit] =
     val newEdges = OutEdge.canonical(newOut)
     def rewire(nodes: Map[String, NodeDef], from: NodeDef): Map[String, NodeDef] =
-      val oldTargets = from.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
-      val newTargets = newEdges.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
-      val afterRemoved = oldTargets.diff(newTargets).foldLeft(nodes)((acc, t) =>
-        acc.get(t).map(tn => acc.updated(t, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(acc))
-      val afterAdded = newTargets.diff(oldTargets).foldLeft(afterRemoved)((acc, t) =>
-        acc.get(t).map(tn => acc.updated(t, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(acc))
-      afterAdded.updated(fromId, from.copy(out = newEdges))
+      // in 镜像记账按解析后的节点 id 做（in 丢失修复）：目标串有 id/名字
+      // 两种形态，removed/added 的 diff 必须在「节点身份」空间进行——按原始串 diff 时，
+      // 「旧 id 形态边 → 新名字形态边指向同一节点」会被误判为改接他点，removed 侧把
+      // 下游 in 抹掉、added 侧又因名字查 Map MISS 而漏记（净效应 = in 蒸发）。
+      //
+      // **红线①**：`mode==loop`
+      // 的控制边**不写 in 镜像**——回边若照写镜像，worker 的 in 会含 verifier ⇒
+      // round-1 的 in-barrier 永不归零 ⇒ 第一次就死锁（loop 边不是「谁被谁喂输入」，
+      // 它是选通信号）。两侧（removed/added）都过滤，且 `afterAdded.updated` 仍写 out。
+      val oldIds = from.out
+        .filterNot(OutEdge.isLoopEdge)
+        .map(_.to)
+        .filterNot(_ == OutEdge.RootTarget)
+        .distinct
+        .flatMap(OutEdge.resolveTargetId(nodes, _))
+        .distinct
+      val newIds = newEdges
+        .filterNot(OutEdge.isLoopEdge)
+        .map(_.to)
+        .filterNot(_ == OutEdge.RootTarget)
+        .distinct
+        .flatMap(OutEdge.resolveTargetId(nodes, _))
+        .distinct
+      val afterRemoved = oldIds
+        .diff(newIds)
+        .foldLeft(nodes)((acc, tid) =>
+          acc.get(tid).map(tn => acc.updated(tid, tn.copy(in = tn.in.filterNot(_ == fromId)))).getOrElse(acc)
+        )
+      val afterAdded = newIds
+        .diff(oldIds)
+        .foldLeft(afterRemoved)((acc, tid) =>
+          acc.get(tid).map(tn => acc.updated(tid, tn.copy(in = (tn.in :+ fromId).distinct))).getOrElse(acc)
+        )
+      afterAdded.updated(fromId, from.copy(out = newEdges, pendingOut = pendingOut.getOrElse(from.pendingOut)))
+    end rewire
+    def sinkGuard(node: NodeDef): Option[String] = NodeTools.loopGateViolation(node, newEdges)
+
+    // ── 边集变更留痕 ───────────────────────────────
+    // `setOut` 是 out 边集的**落盘 choke point**（调用点埋点必漏）⇒ 在收口处对
+    // before(out) ↔ after(newEdges) 逐边 diff，**逐边一行**发 `edge-changed`。
+    // 目标解析统一经 `resolveTargetId`（in 丢失口径：diff 在**节点身份**
+    // 空间进行——旧 id 形态边 → 新名字形态边指向同一节点时**零行**，不误报「改接」）。
+    def resolve(nodes: Map[String, NodeDef])(target: String): String =
+      OutEdge.resolveTargetId(nodes, target).getOrElse(target)
+
+    /** 两时点快照（写前 / 写后）⇒ 本节点 out 的逐边视图 + 受影响节点 in 镜像的逐项视图。 */
+    def edgeTrace(
+      before: Map[String, NodeDef],
+      after: Map[String, NodeDef],
+      owner: String,
+      beforeOut: List[OutEdge]
+    ): List[FlowMapEventLog.EdgeChangeView] =
+      val reason = FlowMapEventLog.EdgeChangeReason.Machine
+      val outViews = FlowMapEventLog.outEdgeViews(owner, beforeOut, newEdges, reason, resolve(after))
+      val touched = (before.keySet ++ after.keySet).toList.sorted
+      val inViews = FlowMapEventLog.inMirrorViewsBatch(
+        touched.map(id => id -> before.get(id).map(_.in).getOrElse(Nil)).toMap,
+        touched.map(id => id -> after.get(id).map(_.in).getOrElse(Nil)).toMap,
+        reason
+      )
+      outViews ++ inViews
+    end edgeTrace
+
+    /** `None` ⇒ 零写（幂等出口）；`Some` ⇒ 逐边/逐项一行落 `edge-changed`。 */
+    def emit(views: List[FlowMapEventLog.EdgeChangeView]): IO[Unit] =
+      FlowMapEventLog.appendEdgeChanges(rt.project.workspace, rt.project.name, views)
+
     rt.store.getNode(fromId).flatMap {
-      case Some(_) =>
-        rt.store.mutate { s => s.copy(nodes = rewire(s.nodes, s.nodes(fromId))) }.void
+      case Some(from) =>
+        sinkGuard(from) match
+          case Some(err) =>
+            IO(logger.errorSync(s"[loop-gate] setOut REFUSED (write skipped, sink invariant): $err"))
+          case None =>
+            rt.store
+              .mutateWithResult { s =>
+                val nodesAfter = rewire(s.nodes, s.nodes(fromId))
+                (
+                  s.copy(nodes = nodesAfter),
+                  edgeTrace(s.nodes, nodesAfter, fromId, s.nodes.get(fromId).map(_.out).getOrElse(Nil))
+                )
+              }
+              .flatMap { case (_, trace) => emit(trace) }
       case None =>
         rt.store.findNode(fromId).flatMap {
           case None => IO.unit // 两区皆无（并发 TTL 迁移已删）→ no-op
           case Some(archFrom) =>
             // 归档分支：活动侧做目标 in 增删（rewire），但 rewire 会把 from 按
             // 活动节点回插（updated(fromId, …)）——归档原件必须剔除，不复活进活动区
-            //（历史损伤 n-52670d20 形态回归面：NodeEdgeRepairSpec ③）。
-            rt.store.mutate { s => s.copy(nodes = rewire(s.nodes, archFrom) - fromId) }.void *>
-              rt.store.mutateArchive(a => a.copy(nodes = a.nodes.updatedWith(fromId)(_.map(_.copy(out = newEdges))))).void
+            // （历史损伤 n-52670d20 形态回归面：NodeEdgeRepairSpec ③）。
+            sinkGuard(archFrom) match
+              case Some(err) =>
+                IO(logger.errorSync(s"[loop-gate] setOut REFUSED (archive write skipped, sink invariant): $err"))
+              case None =>
+                // 🔴 **归档分支也要发**（设计卡 §6.3 风险 R-1 的漏点：归档区 out 补写此前
+                // 完全静默——本行是那处「我没动过它、它的边为什么变了」的唯一观测面）。
+                rt.store
+                  .mutateWithResult { s =>
+                    val nodesAfter = rewire(s.nodes, archFrom) - fromId
+                    (
+                      s.copy(nodes = nodesAfter),
+                      edgeTrace(s.nodes, nodesAfter, fromId, archFrom.out)
+                    )
+                  }
+                  .flatMap { case (_, trace) =>
+                    rt.store
+                      .mutateArchive(a => a.copy(nodes = a.nodes.updatedWith(fromId)(_.map(_.copy(out = newEdges)))))
+                      .void *> emit(trace)
+                  }
         }
     }
 
-  /** in 声明的边侧镜像（P1 事务内纯函数）：上游 out **追加**指向本节点的缺省 pass
-    * 边——上游已有指向本节点的边（任意门控）则保持不变（in 声明不覆盖既有门控声明，
-    * 扇出拓扑的其它边零扰动；旧单值世界的「改指」语义由多边追加天然兼容）。 */
+  end setOut
+
+  /**
+   * in 声明的边侧镜像（P1 事务内纯函数）：上游 out **追加**指向本节点的缺省 pass
+   * 边——上游已有指向本节点的边（任意门控）则保持不变（in 声明不覆盖既有门控声明，
+   * 扇出拓扑的其它边零扰动；旧单值世界的「改指」语义由多边追加天然兼容）。
+   *
+   * **loop 门集不变量面**：本函数是镜像追加路径的落盘收敛点，调用方
+   * （create 事务 / edit 侧 `setOut`）必须在写前用 `loopGateForAppends` 预检——它
+   * 直接调用本函数复算追加后的上游边集，故「幂等不追加」分支零复制。
+   *
+   * **红线①**：追加的边恒为缺省 pass + result 模式的边（本函数
+   * 不产 `:loop` 边）；`(fail)<worker>:loop` 的回边**绝不**经本函数写 in 镜像——回边
+   * 由 verifier 的 out 声明承载，镜像面在 `setOut` 侧按 `mode==loop` 过滤（防 round-1
+   * 死锁：worker 的 in 若含 verifier ⇒ barrier 永不归零）。
+   */
   def appendEdgeTo(nodes: Map[String, NodeDef], upId: String, toNodeId: String): Map[String, NodeDef] =
     nodes.get(upId) match
       case Some(up) if !up.out.exists(_.to == toNodeId) =>
         nodes.updated(upId, up.copy(out = up.out :+ OutEdge(toNodeId)))
       case _ => nodes
 
-  /** P1 校验层①（spec §2.2，wf3 §3.7 护栏）：指向 merge 节点的 on-failed 边 → 硬拒
-    * （NODE_MERGE_PASS_ONLY）。merge 触发语义 = 全部上游 completed（in-barrier）；
-    * 上游 failed 由 D5+MergeNodePolicy 转 blocked 可见终态——failed 门控入边与该语义
-    * 矛盾，创建/改接期 0 spawn 拒绝。运行期兜底（deliverFailed merge 分支与门控无关）
-    * 原样保留为纵深（覆盖校验生效前落盘的旧拓扑）。返回首个违规的错误文本。 */
+  /**
+   * 纯函数：镜像追加视图。
+   *
+   * `appendEdgeTo` 是**纯函数**（返回新 Map，无 IO），故其留痕在调用方收口：本函数从
+   * 「追加前 / 追加后」两张 `Map` 抽出该上游 out 的逐边 diff 视图 ⇒ 调用方逐边发一行。
+   * `kind=in`（上游 out 追加 = 下游 in 镜像追加的**同一事实的另一面**）：
+   * `owner` = **被追加镜像的目标节点**（toNodeId），`from=-` `to=<上游>`。
+   *
+   * 🔴 幂等：`appendEdgeTo` 未追加（上游已有指向该目标的边）⇒ 零视图 ⇒ 零行。
+   */
+  def appendEdgeViews(
+    before: Map[String, NodeDef],
+    after: Map[String, NodeDef],
+    upId: String,
+    toNodeId: String,
+    reason: String
+  ): List[FlowMapEventLog.EdgeChangeView] =
+    val beforeOut = before.get(upId).map(_.out).getOrElse(Nil)
+    val afterOut = after.get(upId).map(_.out).getOrElse(Nil)
+    if OutEdge.canonical(beforeOut) == OutEdge.canonical(afterOut) then Nil
+    else
+      val resolvedTo = OutEdge.resolveTargetId(after, toNodeId).getOrElse(toNodeId)
+      List(
+        FlowMapEventLog.EdgeChangeView(
+          owner = resolvedTo,
+          from = None,
+          to = Some(upId),
+          kind = FlowMapEventLog.EdgeChangeKind.In,
+          reason = reason
+        )
+      )
+
+  end appendEdgeViews
+
+  /**
+   * 纯函数：**建位（create）事务的边集变更视图**。
+   *
+   * 建位本身也是边集变更：新节点的 `out` 声明、以及**所有被改动的 `in` 镜像**（新节点自身
+   * 的 `in`、以及 `appendEdgeTo` 在上游 out 追加后在**新节点**侧映出的入边）。此前建位期
+   * 完全静默——「我没动过它、它的边为什么变了」在审计面零观测。
+   *
+   * 输入 = `(写前, 写后)` 两张 `Map`（`mutateWithResult` 的 f 在 CAS 自旋下可能重入 ⇒ 本
+   * 函数**必须纯**：零 IO、零外部状态）。`out` 视图恒为「新增」（新节点建位前不存在 ⇒
+   * `before.get(nodeId).map(_.out).getOrElse(Nil)` = `Nil` 起 diff，同一实现对幂等重入也自洽）。
+   *
+   * 🔴 幂等：两时点 canonical 相等 ⇒ `Nil`（零行）；未变节点的 `in` 零行。
+   */
+  def createdEdgeViews(
+    nodeId: String,
+    before: Map[String, NodeDef],
+    after: Map[String, NodeDef]
+  ): List[FlowMapEventLog.EdgeChangeView] =
+    val reason = FlowMapEventLog.EdgeChangeReason.Machine
+    val resolve: String => String = t => OutEdge.resolveTargetId(after, t).getOrElse(t)
+    val outViews = FlowMapEventLog.outEdgeViews(
+      nodeId,
+      before.get(nodeId).map(_.out).getOrElse(Nil),
+      after.get(nodeId).map(_.out).getOrElse(Nil),
+      reason,
+      resolve
+    )
+    val touched = (before.keySet ++ after.keySet).toList.sorted
+    val inViews = FlowMapEventLog.inMirrorViewsBatch(
+      touched.map(id => id -> before.get(id).map(_.in).getOrElse(Nil)).toMap,
+      touched.map(id => id -> after.get(id).map(_.in).getOrElse(Nil)).toMap,
+      reason
+    )
+    outViews ++ inViews
+
+  end createdEdgeViews
+
+  /**
+   * **编辑期拒绝面留痕**（IO 包装 = 唯一 IO 点）。
+   *
+   * 形态 12（`ensureMergePassOnly` / `ensureTargetNotRunning` / `verdictRouteGate` 及
+   * create 侧同族）的编辑期硬拒此前**零事件**——「谁被谁拒、按哪个码」在审计面查无。
+   * 本函数落一笔 `edge-changed` + `reason=refused`（🔴 不新造平行类型），payload =
+   * `owner=<被编辑节点> kind=<被拒门类> reason=refused detail=<既有错误码>`；
+   * `from`/`to` 恒 `-`（拒绝面不写边）。
+   *
+   * 🔴 幂等 / 零副作用：本函数**不写任何状态**（拒本身已保证零残留），只追加一行审计。
+   */
+  def emitRefused(rt: ProjectRuntime, owner: String, gateKind: String, errorCode: String): IO[Unit] =
+    FlowMapEventLog.appendEdgeChange(
+      rt.project.workspace,
+      rt.project.name,
+      FlowMapEventLog.refusedView(owner, gateKind, errorCode)
+    )
+
+  /**
+   * `NODE_MERGE_PASS_ONLY` 等既有错误码抽取（错误文本 → 码）的单点：门函数返回的是
+   * **完整文案**（含空白，禁进 payload），本函数从中取出行尾括号里的**错误码常量**
+   * （`(CODE)` 形态，沿本文件既有约定）。无括号码 ⇒ 回落门类名（可行动性优先于精确性：
+   * 宁可记一个明确的门类名，也不记一坨含空白文案）。
+   */
+  def errorCodeOf(message: String, fallback: String): String =
+    val re = raw"\(([A-Z][A-Z0-9_]{3,})\)".r
+    re.findFirstMatchIn(message).map(_.group(1)).getOrElse(fallback)
+
+  /**
+   * P1 校验层①（spec §2.2，wf3 §3.7 护栏）：指向 merge 节点的 on-failed 边 → 硬拒
+   * （NODE_MERGE_PASS_ONLY）。merge 触发语义 = 全部上游 completed（in-barrier）；
+   * failed 门控入边与该语义矛盾，创建/改接期 0 spawn 拒绝（判据读存量节点的
+   * `merge` 标记——新建合并节点已被 NODE_MERGE_UNSUPPORTED 拒，本门守存量图）。
+   * 返回首个违规的错误文本。
+   */
   def ensureMergePassOnly(rt: ProjectRuntime, edges: List[OutEdge]): IO[Option[String]] =
     edges
-      .filter(e => e.on.contains(OutEdge.Failed) && e.to != OutEdge.NebulaTarget)
-      .toList.traverse { e =>
-        rt.store.getNode(e.to).map {
-          case Some(t) if MergeNodePolicy.isMerge(t) =>
-            Some(s"out edge '(failed)${e.to}' targets a merge node — on-failed edges into a merge node are rejected: a merge fires only when ALL upstreams complete, and upstream failure already converts it to a visible blocked state (D5). Use a pass-only edge, or signal a non-merge fallback node instead. (NODE_MERGE_PASS_ONLY)")
-          case _ => None
+      .filter(e => e.on.contains(OutEdge.Failed) && e.to != OutEdge.RootTarget)
+      .toList
+      .traverse { e =>
+        // 目标按解析后 id 查（修复面：名字形态的 failed 边不再绕过本门控）
+        NodeTools.resolveOutTarget(rt, e.to).flatMap {
+          case None => IO.pure(None)
+          case Some(tid) =>
+            rt.store.getNode(tid).map {
+              case Some(t) if t.merge =>
+                Some(
+                  s"out edge '(failed)${e.to}' targets a merge node — on-failed edges into a merge node are rejected: a merge fires only when ALL upstreams complete. Use a pass-only edge, or signal a non-merge fallback node instead. (NODE_MERGE_PASS_ONLY)"
+                )
+              case _ => None
+            }
         }
-      }.map(_.flatten.headOption)
+      }
+      .map(_.flatten.headOption)
 
-  /** P1 校验层②（spec §2.2，wf3 §3.7 护栏）：下游持 in 边而上游已 failed 且上游
-    * 无指向本下游的 on-failed 边、下游非 merge → WARNING 级提示（**不阻断**——
-    * 「愿意人工兜底」合法；死锁持续可见性由既有 mount-stalled 事件承载）。触发面 =
-    * NodeEdit（create/edit）对最终 in 集的声明式复检：仅上游当前已 failed 时提示
-    * （死锁是活的真实形态，正常 pass-only 拓扑零噪音）。返回提示行列表（空=无）。 */
-  def stalledInWarning(rt: ProjectRuntime, nodeId: String, nodeName: String, finalIn: List[String], isMerge: Boolean): IO[List[String]] =
+  /**
+   * **verdict 选通校验族**（
+   * 全部 **0 spawn** —— 创建/改接期拒绝，节点不落库、上游零改边）。
+   *
+   * 判据（逐条，返回首个违规的可行动错误；`Some` = 拒）：
+   *  1. `NODE_VERDICT_GATE_ON_TASK_NODE`：`fail` 门 / `:loop` 边出现在 `role=task`
+   *     的节点上；或 `failed` 门出现在 `role=verifier` 的节点上（两个方向都是「门
+   *     语义与角色不符」）。
+   *  2. `NODE_LOOP_EDGE_ROLE`：`fail` 门与 `:loop` 模式**必须成对**（`fail` 门只经
+   *     控制边驱动、`:loop` 边只承载 verdict）；目标必须**存在**（悬空回边 = 静默
+   *     不生效）且不得自指；`role=verifier` 的节点**不得**同时是旧式 loop 节点
+   *     （`loop=true` 的节点内 verify 会话已天然是校验方，节点级 role 与之冲突）。
+   *  3. `NODE_VERIFIER_NEEDS_ROUTE`：`role=verifier` 且 fail 选通边为空 ⇒ 拒（否则
+   *     loop 静默退化为单次：verifier 报不了 fail，回边永不触发）。nodegate 方案件
+   *     §1(i) 把**空 out 逃逸通道一并关闭**——原实现的 `edges.nonEmpty`
+   *     前置使空 out verifier 建位/编辑恒放行（注释自陈「空 out 是合法形态，不在此
+   *     判」正是逃逸口）；现取「空 out 且创建期显式声明 `verifierRoutePending=true`」
+   *     为唯一放行形态（C-i 令牌，见 [[verifierRoutePending]] 参数），编辑面与镜像
+   *     追加面不豁免（编辑面本调用 `routePending=false`；镜像腿见
+   *     [[verdictRouteGateForAppends]]）。
+   *  4. `NODE_LOOP_TARGET_NEBULA`：回边目标不得是 "Nebula"（回边是节点间控制信号，
+   *     不是上报通道）。
+   *  5. `NODE_VERIFY_MULTI_FAIL_TARGET`：v1 限**恰一条** fail 回边目标（扇出回边
+   *     语义不清：哪个目标被重跑？）。多目标请在二期由 verifier 的多 pass/fail
+   *     分支表达，勿用多条回边。
+   *  6. `NODE_VERDICT_ROUTE_COLLISION`：verifier 的 pass 目标集与 fail 目标集不得
+   *     相交——`OutEdge.canonical` 按 `(to, mode)` 合并门集，同目标两条腿会被并成
+   *     一条（两条都触发），选通语义静默失效 ⇒ 硬拒。
+   *  7. `NODE_RETRY_LOOP_CONFLICT`：回边目标**不得**同时配 `retry`（设计 §3.5）——
+   *     两条自动重跑腿都会清 `deliveredTo`，并发命中会打乱 barrier 账本；v1 拒绝
+   *     同节点既为 loop 目标又有 retry。
+   *
+   * 与既有判据共存（硬口径）：本函数**不触碰** `loopGateViolation`（旧式 loop 节点
+   * 的两腿覆盖不变量）——两者是并列的写前校验，互不覆盖、互不放宽；本函数只看
+   * 角色 × verdict 门 × 控制边这一族，且对旧式 loop 节点仅在「role=verifier」这一
+   * 冲突形态上发声（见第 2 条第 3 分句）。
+   *
+   * @param selfId  本节点 id（自指回边判定；创建期 = 预分配的新 id）
+   * @param role    生效后的角色（未传 = 既有 role / 缺省 task）
+   * @param legacyLoopEnabled 生效后的旧式 loop 开关（`loop.exists(_.enabled)`）
+   * @param routePending C-i 令牌（nodegate 方案件 §1(i)，默认 false）：创建期显式
+   *   声明「verifier 暂无 fail 路由」（create-only 参数 `verifierRoutePending=true`）
+   *   ⇒ **仅**「空 out」形态放行（非空 out 仍照判）；编辑面不传（缺省 false）⇒ 空
+   *   out verifier 的编辑同码被拒（两腿一致，C-1）。
+   */
+  def verdictRouteGate(
+    rt: ProjectRuntime,
+    selfId: String,
+    nodeName: String,
+    role: String,
+    legacyLoopEnabled: Boolean,
+    finalOut: List[OutEdge],
+    routePending: Boolean = false
+  ): IO[Option[String]] =
+    val edges = OutEdge.canonical(finalOut)
+    val r = NodeRoles.normalize(role)
+    val isVerifier = r == NodeRoles.Verifier
+    val failEdges = edges.filter(_.on.contains(OutEdge.Fail))
+    val loopEdges = edges.filter(OutEdge.isLoopEdge)
+    val local: Option[String] =
+      if !isVerifier && (failEdges.nonEmpty || loopEdges.nonEmpty) then
+        Some(
+          s"node '$nodeName' has role=${NodeRoles.Task} but declares a verdict route — the 'fail' gate and the ':loop' mode are " +
+            "verifier-only: only a node with role=verifier produces a verdict about another node. Either declare this node " +
+            "role=verifier (create-only: it must be set when the node is created) with out=\"(pass)<target>, (fail)<worker>:loop\", " +
+            "or drop the fail/:loop edge and report finish. (NODE_VERDICT_GATE_ON_TASK_NODE)"
+        )
+      else if isVerifier && edges.exists(_.on.contains(OutEdge.Failed)) then
+        Some(
+          s"verifier node '$nodeName' declares a 'failed' gate — that gate fires on the NODE STATUS 'failed' (the upstream node's " +
+            "own execution failure), which is not part of a verifier's routing: a verifier routes its VERDICT " +
+            "(pass/fail about the judged target). Use '(fail)<target>:loop' for the reject leg and '(pass)<target>' for the accept " +
+            "leg. (NODE_VERDICT_GATE_ON_TASK_NODE)"
+        )
+      else if isVerifier && legacyLoopEnabled then
+        Some(
+          s"verifier node '$nodeName' cannot also be a LoopNode (loop=true) — an in-node loop node already runs its OWN verify " +
+            "session (the verifier role belongs to that session), so declaring role=verifier on it is contradictory: the routed " +
+            "form is 'separate worker node + separate verifier node'. Keep loop=true with role=task, or model the loop as two " +
+            "nodes with role=task / role=verifier and a '(fail)<worker>:loop' edge. (NODE_LOOP_EDGE_ROLE)"
+        )
+      else if loopEdges.exists(e => !e.on.contains(OutEdge.Fail)) then
+        val bad = loopEdges.find(e => !e.on.contains(OutEdge.Fail)).map(_.to).getOrElse("")
+        Some(
+          s"node '$nodeName' declares the ':loop' mode on target '$bad' without the 'fail' gate — the ':loop' mode is the CONTROL EDGE " +
+            "carrier of a verdict: it must be written as '(fail)<target>:loop' (fail gate + loop mode are a pair). A plain pass " +
+            "edge with :loop has no defined semantics. (NODE_LOOP_EDGE_ROLE)"
+        )
+      else if failEdges.exists(e => !OutEdge.isLoopEdge(e)) then
+        val bad = failEdges.find(e => !OutEdge.isLoopEdge(e)).map(_.to).getOrElse("")
+        Some(
+          s"node '$nodeName' declares the 'fail' gate on target '$bad' without the ':loop' mode — a fail verdict must be routed " +
+            "along a control edge: write '(fail)<target>:loop'. (Without :loop the edge would settle the target's input barrier " +
+            "like a normal out edge, which is exactly the deadlock the control-edge form prevents.) (NODE_LOOP_EDGE_ROLE)"
+        )
+      else if isVerifier && failEdges.isEmpty && !(edges.isEmpty && routePending) then
+        Some(verifierNoRouteMsg(nodeName, ""))
+      else None
+    local match
+      case Some(err) => IO.pure(Some(err))
+      case None if failEdges.isEmpty => IO.pure(None)
+      case None =>
+        val raw = failEdges.map(_.to)
+        if raw.exists(_ == OutEdge.RootTarget) then
+          IO.pure(
+            Some(
+              s"node '$nodeName' routes its 'fail' verdict to \"Nebula\" — a fail route is an inter-node CONTROL edge (the target " +
+                "re-runs), not a report channel. Report the verdict to the root by adding the root notification to a node edge " +
+                "('(pass)Nebula') if you need one. (NODE_LOOP_TARGET_NEBULA)"
+            )
+          )
+        else
+          raw.distinct.traverse(t => resolveOutTarget(rt, t).map(t -> _)).flatMap { pairs =>
+            pairs.collectFirst { case (t, None) => t } match
+              case Some(missing) =>
+                IO.pure(
+                  Some(
+                    s"node '$nodeName' routes its 'fail' verdict to '$missing' — not a node id nor any node's name in this project. " +
+                      "The re-run edge must point at an EXISTING node (the worker that should re-run); create it first, then wire. " +
+                      "(NODE_LOOP_EDGE_ROLE)"
+                  )
+                )
+              case None =>
+                val ids = pairs.map(_._2.get).distinct
+                if ids.contains(selfId) then
+                  IO.pure(
+                    Some(
+                      s"node '$nodeName' routes its 'fail' verdict back to itself — a self re-run edge is not a loop, it is a spin. " +
+                        "Point the fail edge at the worker node that produced the judged artifact. (NODE_LOOP_EDGE_ROLE)"
+                    )
+                  )
+                else if ids.size > 1 then
+                  IO.pure(
+                    Some(
+                      s"node '$nodeName' declares ${ids.size} distinct fail targets — v1 allows exactly ONE fail re-run target " +
+                        "(with several, which target is re-run is undefined). Use one fail edge; model multiple outcomes as extra " +
+                        "pass edges to distinct downstream nodes. (NODE_VERIFY_MULTI_FAIL_TARGET)"
+                    )
+                  )
+                else
+                  val passIds = edges
+                    .filter(e => e.on.contains(OutEdge.Pass) && !OutEdge.isLoopEdge(e))
+                    .map(_.to)
+                    .filterNot(_ == OutEdge.RootTarget)
+                    .distinct
+                  passIds.traverse(t => resolveOutTarget(rt, t).map(o => o.getOrElse(t))).flatMap { pids =>
+                    if pids.exists(ids.contains) then
+                      IO.pure(
+                        Some(
+                          s"node '$nodeName' routes BOTH its pass leg and its fail leg to '${ids.head}' — the two edges merge " +
+                            "(canonical merges same (target,mode) edges) and the verdict routing silently disappears. Point the pass " +
+                            "leg at a different node (e.g. the landing/merge node) than the fail leg (the worker that re-runs). " +
+                            "(NODE_VERDICT_ROUTE_COLLISION)"
+                        )
+                      )
+                    else
+                      rt.store.findNode(ids.head).map {
+                        case Some(t) if t.retry.isDefined =>
+                          Some(
+                            s"node '$nodeName' routes its 'fail' verdict to '${t.name}' (${t.id}), which also carries a retry policy — " +
+                              "both auto-rerun legs clear deliveredTo, so a concurrent hit would corrupt the barrier accounting. " +
+                              "Use ONE auto-rerun mechanism per target: drop either the retry policy or this fail edge. " +
+                              "(NODE_RETRY_LOOP_CONFLICT)"
+                          )
+                        case _ => None
+                      }
+                  }
+                end if
+          }
+
+        end if
+
+    end match
+
+  end verdictRouteGate
+
+  /**
+   * P1 校验层②（spec §2.2，wf3 §3.7 护栏）：下游持 in 边而上游已 failed 且上游
+   * 无指向本下游的 on-failed 边、下游非 merge → WARNING 级提示（**不阻断**——
+   * 「愿意人工兜底」合法；死锁持续可见性由既有 mount-stalled 事件承载）。触发面 =
+   * NodeEdit（create/edit）对最终 in 集的声明式复检：仅上游当前已 failed 时提示
+   * （死锁是活的真实形态，正常 pass-only 拓扑零噪音）。返回提示行列表（空=无）。
+   */
+  def stalledInWarning(
+    rt: ProjectRuntime,
+    nodeId: String,
+    nodeName: String,
+    finalIn: List[String],
+    isMerge: Boolean
+  ): IO[List[String]] =
     if isMerge || finalIn.isEmpty then IO.pure(Nil)
     else
-      finalIn.distinct.traverse { upId =>
-        rt.store.findNode(upId).map {
-          case Some(up) if up.status == NodeLifecycle.Failed
-              && !up.out.exists(e => e.to == nodeId && e.on.contains(OutEdge.Failed)) =>
-            Some(s"⚠ upstream '$upId' ('${up.name}') has FAILED and no on-failed edge reaches this node — its in-barrier can never clear (stays wiring; mount-stalled will keep reporting it until the upstream is fixed and reactivated). Proceeding is fine if manual fallback is intended.")
-          case _ => None
+      finalIn.distinct
+        .traverse { upId =>
+          rt.store.findNode(upId).map {
+            case Some(up)
+                if up.status == NodeLifecycle.Failed
+                  && !up.out.exists(e => e.to == nodeId && e.on.contains(OutEdge.Failed)) =>
+              Some(
+                s"⚠ upstream '$upId' ('${up.name}') has FAILED and no on-failed edge reaches this node — its in-barrier can never clear (stays wiring; mount-stalled will keep reporting it until the upstream is fixed and reactivated). Proceeding is fine if manual fallback is intended."
+              )
+            case _ => None
+          }
         }
-      }.map(_.flatten)
+        .map(_.flatten)
+
+  /**
+   * 通知策略声明自检（**WARNING 族**；形态仿 [[stalledInWarning]]：
+   * 成功结果尾部附 ⚠ 行，**非阻断**）。三条判据：
+   *
+   *   ① **只警告，不拦**：`silent` ∧ **链末端**（out 里没有任何
+   *      「可解析为节点的目标」——仅 Nebula 边 / 悬空名 / out=Nil 都算末端，D7 口径
+   *      与 `FlowMapStore.topologicalChains` 的 `hasNodeTarget` 同源）。语义 = 该节点
+   *      是链的收口位，自身静默 + 下游无节点 ⇒ 完成事实在根面**完全没有**节点级入口，
+   *      只能等链归档时的链摘要。**不动引擎投递、不新增错误码、不硬拒**。
+   *   ② `silent` ∧ failed：spec §4.2「`silent` ∧ failed | 不阻断（failed 由引擎恒定回
+   *      分发器）但校验期 WARNING 提示『silent 不豁免 failed』」（R14）。
+   *   ③ `root` ∧ out 无 Nebula 边：spec §4.2「WARNING 不阻断：声明 root 但无根出口
+   *      ——因链摘要由引擎聚合派发，无 Nebula 边不等于无根可见性」。
+   *
+   * 返回 ⚠ 行列表（空 = 无告警）。判据纯读（0 spawn、0 写）。
+   */
+  def notifyPolicyWarnings(
+    rt: ProjectRuntime,
+    nodeName: String,
+    policy: Option[String],
+    legacyFlag: Boolean,
+    finalOut: List[OutEdge]
+  ): IO[List[String]] =
+    rt.store.snapshot.map { s =>
+      val edges = OutEdge.canonical(finalOut).filterNot(OutEdge.isLoopEdge)
+      val hasNodeTarget =
+        edges.exists(e => e.to != OutEdge.RootTarget && OutEdge.resolveTargetId(s.nodes, e.to).isDefined)
+      val rootEdge =
+        edges.exists(e => e.to == OutEdge.RootTarget && e.mode == OutEdge.Result && e.on.contains(OutEdge.Pass))
+      // 生效策略（缺键 ⇒ legacy 三态：投根 ⇒ root / flag ⇒ dispatcher / else silent）
+      val effective = policy.getOrElse(
+        if rootEdge then NotifyPolicy.Root
+        else if legacyFlag then NotifyPolicy.Dispatcher
+        else NotifyPolicy.Silent
+      )
+      val isChainEnd = !hasNodeTarget
+      val lines = List(
+        if effective == NotifyPolicy.Silent && isChainEnd then
+          Some(
+            s"⚠ notify=silent on a CHAIN-END node ('$nodeName': no out-edge resolves to a node) — its completion will reach the root ONLY through the chain summary emitted when the chain is archived, and a single-member (isolated) chain emits NO summary at all. Declare notify=root if this node's result must be seen as it completes. (warning only — nothing is blocked)"
+          )
+        else None,
+        if effective == NotifyPolicy.Silent then
+          Some(
+            s"⚠ notify=silent does NOT exempt failures ('$nodeName'): a failed node always notifies the dispatcher (and an explicit '(failed)Nebula' edge still reports to the root). silent suppresses COMPLETED events only."
+          )
+        else None,
+        if effective == NotifyPolicy.Root && !rootEdge then
+          Some(
+            s"⚠ notify=root but no root outlet declared ('$nodeName': no '(pass)Nebula' :result edge) — the node itself will not post to the root; chain-level visibility still arrives with the archived chain summary. Add an explicit '(pass)Nebula' out-edge if a per-node root bubble is required."
+          )
+        else None
+      ).flatten
+      lines
+    }
 
   // ── 环检测（对外暴露给测试）────────────────────────────
 
   def wouldCreateCycle(rt: ProjectRuntime, fromId: String, to: String): IO[Boolean] =
     rt.store.wouldCreateCycle(fromId, to)
 
-  /** P2 retry 风暴防护两校验（spec §2.3，0 spawn；批E2）。Some(错误) = 拒绝：
-    *   ① 邻居限定（NODE_RETRY_NEIGHBOR）：retry.upstream 必须是持有节点的 in/deps
-    *      邻居——回跳语义 =「重取上游产物再试」，跨子图回跳无输入语义支撑（沿 deps
-    *      「下游单侧持有」连通性先例）。
-    *   ② retry 环（NODE_RETRY_CYCLE）：retry 图自身无环（B.retry→C 且 C.retry→B
-    *      拒绝）——retry 边不进 DAG（wf3 §4.2 方案①：绕开环检是设计前提），自环
-    *      防护必须独立成检（规模极小：每节点至多一条 retry 出边，链走即判）。
-    * upstream 存在性无需单查：邻居限定以 in/deps 为值域（其成员均经存在性校验），
-    * 非邻居即拒（错误文案指向先接线）。
-    *
-    * @param holderId   retry 持有节点 id（创建期 = 新节点临时 id，环检起点）
-    * @param policy     本次要设置的 retry 策略
-    * @param neighbors  持有节点的最终 in ∪ deps（编辑路径 = 应用本次改动后的全集） */
+  /**
+   * P2 retry 风暴防护两校验（spec §2.3，0 spawn）。Some(错误) = 拒绝：
+   *   ① 邻居限定（NODE_RETRY_NEIGHBOR）：retry.upstream 必须是持有节点的 in/deps
+   *      邻居——回跳语义 =「重取上游产物再试」，跨子图回跳无输入语义支撑（沿 deps
+   *      「下游单侧持有」连通性先例）。
+   *   ② retry 环（NODE_RETRY_CYCLE）：retry 图自身无环（B.retry→C 且 C.retry→B
+   *      拒绝）——retry 边不进 DAG（wf3 §4.2 方案①：绕开环检是设计前提），自环
+   *      防护必须独立成检（规模极小：每节点至多一条 retry 出边，链走即判）。
+   * upstream 存在性无需单查：邻居限定以 in/deps 为值域（其成员均经存在性校验），
+   * 非邻居即拒（错误文案指向先接线）。
+   *
+   * @param holderId   retry 持有节点 id（创建期 = 新节点临时 id，环检起点）
+   * @param policy     本次要设置的 retry 策略
+   * @param neighbors  持有节点的最终 in ∪ deps（编辑路径 = 应用本次改动后的全集）
+   */
   def retryGuard(
     rt: ProjectRuntime,
     holderId: String,
@@ -266,20 +1222,26 @@ object NodeTools:
     neighbors: List[String]
   ): IO[Option[String]] =
     if !neighbors.distinct.contains(policy.upstream) then
-      IO.pure(Some(
-        s"retry.upstream '${policy.upstream}' must be an in/deps neighbor of node '$holderName' — " +
-          "retry re-runs an upstream whose output feeds this node; declare the in/deps edge first, then set retry. (NODE_RETRY_NEIGHBOR)"))
+      IO.pure(
+        Some(
+          s"retry.upstream '${policy.upstream}' must be an in/deps neighbor of node '$holderName' — " +
+            "retry re-runs an upstream whose output feeds this node; declare the in/deps edge first, then set retry. (NODE_RETRY_NEIGHBOR)"
+        )
+      )
     else
       retryCycleExists(rt, holderId, policy.upstream).map {
         case true =>
           Some(
             s"retry chain cycle: setting retry on '$holderName' → '${policy.upstream}' closes a retry loop " +
-              "(B.retry→C and C.retry→B would re-run nodes forever) — retry chains must stay acyclic. (NODE_RETRY_CYCLE)")
+              "(B.retry→C and C.retry→B would re-run nodes forever) — retry chains must stay acyclic. (NODE_RETRY_CYCLE)"
+          )
         case false => None
       }
 
-  /** retry 环判定（retryGuard ②的载体）：沿 retry.upstream 链行走（候选边视同已
-    * 设置），回到持有者即环；访问集防既有数据（手改 flow-map.json）已环时死循环。 */
+  /**
+   * retry 环判定（retryGuard ②的载体）：沿 retry.upstream 链行走（候选边视同已
+   * 设置），回到持有者即环；访问集防既有数据（手改 flow-map.json）已环时死循环。
+   */
   def retryCycleExists(rt: ProjectRuntime, holderId: String, candidateUp: String): IO[Boolean] =
     rt.store.snapshot.map { s =>
       def nextOf(id: String): Option[String] =
@@ -288,21 +1250,24 @@ object NodeTools:
       def walk(cur: String, visited: Set[String]): Boolean =
         if cur == holderId then true
         else if visited.contains(cur) then false
-        else nextOf(cur) match
-          case Some(n) => walk(n, visited + cur)
-          case None    => false
+        else
+          nextOf(cur) match
+            case Some(n) => walk(n, visited + cur)
+            case None => false
       walk(candidateUp, Set.empty)
     }
-
 
   /** task 文本归一化（loop detect 用）：trim + 空白折叠。 */
   def normalizeTask(t: String): String = t.trim.replaceAll("\\s+", " ")
 
-  /** loop detect（§2.6）：同 agent + 同 task 归一化，活动区已有
-    * running/completed 节点 → 疑似重复派发（TTL 窗口内 = 活动区仍显示）。
-    * 返回匹配的节点（无则 None）。NodeEdit 创建入口节点时校验（0 spawn）。
-    * R1 复核（blocked 反馈重入设计 §6）：Terminal 含 blocked——blocked 节点
-    * **应**计入重复派发（防对同一任务重复派发；blocked ≠ 可重派）。 */
+  /**
+   * loop detect（§2.6）：同 agent + 同 task 归一化，活动区已有
+   * running/completed 节点 → 疑似重复派发（TTL 窗口内 = 活动区仍显示）。
+   * 返回匹配的节点（无则 None）。NodeEdit 创建入口节点时校验（0 spawn）。
+   * 判据 = running ∪ Terminal（completed/failed/cancelled）。blocked 终态已退役
+   * （no-blocked-semantics 一期：不在 Terminal 集），legacy blocked 存量行不再计入
+   * 重复派发哨——存量行归分发器人工迁移，哨只看可存活锚。
+   */
   def findDuplicateDispatch(rt: ProjectRuntime, agentName: String, task: String): IO[Option[NodeDef]] =
     val norm = normalizeTask(task)
     if norm.isEmpty then IO.pure(None)
@@ -315,29 +1280,207 @@ object NodeTools:
         }
       }
 
-  /** wiring 变更最终态事件（子任务：Flow Map 事件推送补全）：受影响节点逐一读
-    * store 发 nodeUpdated（NodeList 同构 payload）——上游 out 改指 / 旧新目标 in
-    * 增删 / 本节点 in·out 变更都从这里走，事件与 NodeList 数据源一致。
-    * 活动区已消失（TTL/归档）节点不发——归档节点不在 Flow Map 视图内。 */
+  /**
+   * wiring 变更最终态事件（子任务：Flow Map 事件推送补全）：受影响节点逐一读
+   * store 发 nodeUpdated（NodeList 同构 payload）——上游 out 改指 / 旧新目标 in
+   * 增删 / 本节点 in·out 变更都从这里走，事件与 NodeList 数据源一致。
+   * 活动区已消失（TTL/归档）节点不发——归档节点不在 Flow Map 视图内。
+   */
   def emitWiringUpdates(rt: ProjectRuntime, nodeIds: List[String]): IO[Unit] =
     nodeIds.traverse_ { id =>
       rt.store.getNode(id).flatMap {
         case Some(n) => rt.engine.emitUpdated(n)
-        case None    => IO.unit
+        case None => IO.unit
       }
     }
 
-  /** 节点运行后台化（收口③：dispatcher 会话结束语义修复）。
-    *
-    * startNode/deliverOutTo 会同步等待节点终态（runWithAgent 的 resultDeferred
-    * race 无超时，下游链条投递也在该 fiber 顺序推进）。NodeEdit 工具若在分发器
-    * turn 的工具 fiber 里直接调用，turn 会被阻塞整个节点运行期（实证
-    * dispatcher-95f8434b：诊断节点 35min + 修复节点 19min，单 turn 56min）：
-    * 期间零 lastActivity 更新 → TaskStuckWatcher 误判卡死；入口节点被串行化
-    * （建 A 等 A 完才建 B）；「节点建完/接线完成」后分发器会话仍 Processing
-    * 挂起。fork 到独立 fiber 后工具立即返回——NodeEdit 文档契约「async,
-    * non-blocking」的落地。节点失败已在 fiber 内落 store（failNode），此处仅
-    * 兜底记日志；分发器取消/结束不影响已派发节点（节点由 NodeCancel 独立管理）。 */
+  // ── 链成员制面（chainmodel 批一 ①③⑤；判据单点全部在 FlowMapStore）─────────
+
+  /**
+   * **链归属变更事件单点**（chainmodel 批一 ⑤；设计件取证 6 的「最硬未决项」：
+   * 事件流 44 类里零该类型，跨链并合/拆分只能靠人写的 `node-message` 正文回溯）。
+   *
+   * 判据（机械、零启发式）：写操作**前后各取一次**「有效链归属视图」
+   * （[[FlowMapStore.chainIdView]] = 与载荷 `chainId` 条件键、[[FlowMapStore.chainIdIn]]
+   * 同一判据，禁第二判据）并逐节点比对 —— 视图全集 = 两快照节点 id 并集（写后新增
+   * 的节点也在内）。**归属视图变化**或**本节点声明态变化**任一成立 ⇒ 一条
+   * [[FlowMapEventLog.ChainMembershipChangedType]]。
+   *
+   * 为什么按「全节点」而非调用点给的受影响集比对：链 id 是**分量级**派生量——新增一条
+   * 边可能把两个既有分量并成一条链（id 归并为最早 createdAt 者的 id），此时**每个**原
+   * 成员节点的链号都变了，而它们都不是本次写动作「点名」的节点。少比对 = 归属变更静默
+   * （正是要消灭的形态）。
+   *
+   * 三项原因（`reason`，与 [[FlowMapEventLog.chainMembershipChangedSummary]] 同值域）：
+   *   - `declaration`：本节点由未声明 → 声明（旧链号可能缺省也可能有派生值）；
+   *   - `re-id`：本节点声明值变更（改号）；
+   *   - `fallback`：其余（派生分量重组 / 撤销声明后回落 / 归档引起的派生变化）。
+   *
+   * best-effort 纪律与同族（`chain-restored` / `chain-archived`）一致：留痕失败**不得**
+   * 让已经落库的拓扑写动作失败；但**禁**整条静默吞掉——逐条 handleErrorWith 记 warn。
+   * `before` 由调用方在**任何写动作之前**取（`rt.store.combinedNodes`），本方法只读现状。
+   */
+  def emitChainMembershipChanges(rt: ProjectRuntime, before: Map[String, NodeDef]): IO[Unit] =
+    val beforeView = FlowMapStore.chainIdView(before)
+    val beforeDecl: Map[String, String] =
+      before.flatMap((id, n) => FlowMapStore.declaredChainId(n).map(id -> _))
+    rt.store.combinedNodes.flatMap { after =>
+      val afterView = FlowMapStore.chainIdView(after)
+      val afterDecl: Map[String, String] =
+        after.flatMap((id, n) => FlowMapStore.declaredChainId(n).map(id -> _))
+      (before.keySet ++ after.keySet).toList.sorted
+        .flatMap { id =>
+          val oldV = beforeView.get(id)
+          val newV = afterView.get(id)
+          val oldD = beforeDecl.get(id)
+          val newD = afterDecl.get(id)
+          if oldV == newV && oldD == newD then Nil
+          else
+            val reason = (oldD, newD) match
+              case (None, Some(_)) => "declaration"
+              case (Some(a), Some(b)) => "re-id"
+              case _ => "fallback"
+            List(
+              FlowMapEventLog
+                .append(
+                  rt.project.workspace,
+                  rt.project.name,
+                  id,
+                  FlowMapEventLog.ChainMembershipChangedType,
+                  FlowMapEventLog.chainMembershipChangedSummary(oldV, newV, reason),
+                  chainId = newV
+                )
+                .handleErrorWith(e =>
+                  IO(
+                    logger.warnSync(
+                      s"[${rt.project.name}] chain-membership-changed append failed for $id " +
+                        s"(${oldV.getOrElse("-")}→${newV.getOrElse("-")} reason=$reason): ${Option(e.getMessage).getOrElse(e.toString).take(200)}"
+                    )
+                  )
+                )
+            )
+          end if
+        }
+        .sequence_
+        .void
+    }
+
+  end emitChainMembershipChanges
+
+  /** 链引用的 `<id>` 段展示形（空后缀时显示原文，避免报错文本出现空引号）。 */
+  private def chainRefShown(ref: String): String =
+    val t = FlowMapStore.chainRefTarget(ref)
+    if t.isEmpty then ref else t
+
+  /**
+   * **`in` 里出现链引用**的可行动报错（chainmodel 批一 ③；`NODE_CHAIN_REF_UNKNOWN`）。
+   * 静态判据（不需要看拓扑）：链引用是 deps 专属语法——它是「等」不是「取」，不注入任何
+   * 结果，故不可能充当 barrier 输入。禁静默按字面节点 id 解析（那会得到一个永远查无此点
+   * 的悬空引用，报错文案还指不到真正原因）。
+   */
+  def chainRefInInputError(ref: String): String =
+    s"'in' cannot carry a chain reference ('$ref') — \"chain:<chainId>\" is a deps-only scheduling gate: it waits for a " +
+      "whole chain's completion and never injects a result, so it cannot be a barrier input. Use deps for the chain, or " +
+      "name the member node ids you actually need as input. (NODE_CHAIN_REF_UNKNOWN)"
+
+  /**
+   * **链引用解析不可达**的可行动报错（③）：`chain:<id>` 的目标链在**给定节点集**上不存在
+   * （既不是任何节点的声明链号，也不是任何派生分量的 `chain-<最早成员 id>`）。此时闸
+   * **永不满足**（[[FlowMapStore.DepTargets.unknownChainRefs]] 由启动闸 fail-closed 处理），
+   * 故写路径必须当场拒（禁静默 no-op = 「零成员即满足」，也禁只挂一条无痕停等）。
+   */
+  def chainRefUnknownError(ref: String): String =
+    s"Unknown chain reference '${chainRefShown(ref)}' in deps: \"chain:<chainId>\" must name a chain that exists — a declared chain id, " +
+      "or a derived `chain-<earliest-member-id>` for an undeclared component. As written the gate can never be satisfied (the node " +
+      "would wait forever). Read the real ids from NodeList chains[].id. (NODE_CHAIN_REF_UNKNOWN)"
+
+  /**
+   * **链引用构造性不可满足**的可行动报错（判据 D · 死链；错误码 `NODE_CHAIN_REF_DEAD`）。
+   *
+   * 与 [[chainRefUnknownError]] **互补分桶，非替代**：`UNKNOWN` = 「链号在给定节点集上不
+   * 存在」；`DEAD` = 「链号**存在**，但成员集含**不可挽回**成员（`cancelled`）⇒ 闸永不结算」。
+   * 二者**互斥且穷尽**。
+   *
+   * 为什么 `cancelled` 是「永不」而 `failed` 不是：闸只认 `completed`，`cancelled` 是**不可
+   * 重激活**的终态（重激活闸只放行 `blocked`/`failed`），且引擎**零节点删除路径** ⇒ 该成员
+   * 永久留在节点集里。`failed` 可经重激活转 `completed` ⇒ **不**构成死链（放行 + WARN）。
+   *
+   * 文案**自带改锚指引**（照 [[chainRefUnknownError]] 的成熟形态：说清**怎么改**，不只说
+   * 「不许」）：把「等整链」换成**字面成员 id 的『完成事实锚』**——`deps` 里直接写那些**确实
+   * 承载落地事实**、且已 `completed` 的成员 id（既有字面 `deps` 语法，零新原语）。
+   */
+  def chainRefDeadError(ref: String, deadMembers: Map[String, Set[String]]): String =
+    val named = deadMembers.toList
+      .sortBy(_._1)
+      .map((cid, ids) =>
+        s"chain '$cid' via member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Cancelled}").mkString(", ")}"
+      )
+      .mkString("; ")
+    s"Dead chain reference '${chainRefShown(ref)}' in deps: the chain EXISTS but its member set is constructively unsatisfiable — " +
+      s"$named. `cancelled` is a non-reactivatable terminal (unlike `failed`, which can be re-activated): the gate waits for EVERY " +
+      "member to be completed, so as written this node would wait forever. Fix it by rewiring the deps ref to a COMPLETION FACT " +
+      "ANCHOR — a literal member id that actually carries the landing fact and is already `completed` (deps = [\"n-...\"]), instead of " +
+      "the whole-chain ref; or drop the ref if the gate is no longer meaningful. Read the member ids from NodeList " +
+      "chains[].memberIds, then each member's own status via NodeList detail=<memberId> (that read path resolves a " +
+      "member even after it has left the active map) — or from `nodes[].status` for members still on the active map. (NODE_CHAIN_REF_DEAD)"
+
+  /**
+   * 单条链引用可达性（create/edit 两条写路径共用；判据单点，数据源 = 双区合并集
+   * ——与启动闸/停滞面同源；零链引用时零派生成本）。`in` 里的链引用由
+   * [[chainRefInInputError]] 静态拒（不经本闸）。
+   *
+   * 两档判据（同源 = `FlowMapStore.resolveDepTargets` 单点，零第二解析器）：
+   *   - 链号**不存在**（`unknownChainRefs`）⇒ 拒，[[chainRefUnknownError]]（既有行为）；
+   *   - 链号**存在但构造性不可满足**（`deadChainRefs`，判据 D：成员含 `cancelled`）⇒
+   *     **拒**，[[chainRefDeadError]]（新增；fail-loud + 点名 + 改锚指引）。
+   * 🔴 判据**只看** `status == cancelled`——`failed` 成员**放行**（可重激活，禁止硬拒以免
+   * 封死自愈路）；🔴 **禁**以 `archived` / `compacted` / `archivedAt` / ledger 任何键作判据。
+   */
+  def chainRefExists(rt: ProjectRuntime, ref: String): IO[Either[String, Unit]] =
+    if !FlowMapStore.isChainRef(ref) then IO.pure(Right(()))
+    else
+      rt.store.combinedNodes.map { combined =>
+        val targets = FlowMapStore.resolveDepTargets(List(ref), combined)
+        val t = FlowMapStore.chainRefTarget(ref)
+        if targets.deadChainRefs.nonEmpty then Left(chainRefDeadError(ref, targets.deadChainRefs))
+        else if t.nonEmpty && !targets.unknownChainRefs.nonEmpty then Right(())
+        else Left(chainRefUnknownError(ref))
+      }
+
+  /**
+   * 链引用的 **RISKY 档**回执行（⚠ 行；空 = 无该形态）。**放行但告警**——`failed` 成员
+   * **可重激活**（与 `cancelled` 不同域）⇒ 🔴 **禁**在写路径硬拒（那会封死自愈路），只把
+   * 「这条闸现在挡着、且要靠重激活才能通」说在决策当下（形式仿 [[stalledInWarning]]：成功
+   * 回执尾部附 ⚠ 行，非阻断）。判据源 = 同一解析单点 [[FlowMapStore.resolveDepTargets]]。
+   */
+  def chainRefWarnings(rt: ProjectRuntime, ref: String): IO[List[String]] =
+    if !FlowMapStore.isChainRef(ref) then IO.pure(Nil)
+    else
+      rt.store.combinedNodes.map { combined =>
+        val targets = FlowMapStore.resolveDepTargets(List(ref), combined)
+        targets.riskyChainRefs.toList
+          .sortBy(_._1)
+          .map((cid, ids) =>
+            s"⚠ chain '$cid' has FAILED member(s) ${ids.toList.sorted.map(id => s"'$id':${NodeLifecycle.Failed}").mkString(", ")} — " +
+              "the gate waits for every member to be completed, and `failed` IS reactivatable (unlike `cancelled`, which would " +
+              "refuse this edit outright), so this is NOT a dead ref: re-activate the member, or rewire to a completion fact " +
+              "anchor (literal member ids). (warning only)"
+          )
+      }
+
+  /**
+   * 节点运行后台化（收口③：dispatcher 会话结束语义修复）。
+   *
+   * startNode/deliverOutTo 会同步等待节点终态（runWithAgent 的 resultDeferred
+   * race 无超时，下游链条投递也在该 fiber 顺序推进）。NodeEdit 工具若在分发器
+   * turn 的工具 fiber 里直接调用，turn 会被阻塞整个节点运行期（实证
+   * dispatcher-95f8434b：诊断节点 35min + 修复节点 19min，单 turn 56min）：
+   * 期间零 lastActivity 更新 → TaskStuckWatcher 误判卡死；入口节点被串行化
+   * （建 A 等 A 完才建 B）；「节点建完/接线完成」后分发器会话仍 Processing
+   * 挂起。fork 到独立 fiber 后工具立即返回——NodeEdit 文档契约「async,
+   * non-blocking」的落地。节点失败已在 fiber 内落 store（failNode），此处仅
+   * 兜底记日志；分发器取消/结束不影响已派发节点（节点由 NodeCancel 独立管理）。
+   */
   def runDetached(rt: ProjectRuntime, what: String)(io: IO[Unit]): IO[Unit] =
     io
       .handleErrorWith(e =>
@@ -348,41 +1491,246 @@ object NodeTools:
       .start
       .void
 
-  /** NodeList 工具 / REST flow-map 端点共用的载荷（nodes/worktrees/meta，§2.2 NodeList 返回结构）。
-    * 节点序列化统一走 NodePayload.buildNodeJson（与 WS 事件 payload 同构）。
-    *
-    * statusFilter（观测面上下文经济学批 20260907 裁定⑤a）：可选生命周期枚举多选
-    * 过滤——**缺省 None = 全量，输出字节级等于现状**（向后兼容铁律；REST/前端
-    * 调用零改动）。命中过滤时 liveness 探测也只对入选 running 节点做。 */
+  /**
+   * 链拉回包装（链级抽象 P2 · spec §5.3-④）：`restoreChain=true` 时**先**把目标所属
+   * 归档链整体拉回活动区、写审计、再执行 `body`（原创建/编辑流）；按需在结果串前加
+   * 拉回告知块（未拉回 ⇒ 结果逐字不变，含错误文案——`Either.map` 只作用于成功侧，
+   * 错误码断言零影响）。`body` 以 by-value 传入但**执行在拉回之后**（scala `IO` 是
+   * 描述——`body` 内的 `store.snapshot` 到 `flatMap` 真正运行时才求值，看到的是拉回
+   * 后的活动区）。
+   */
+  def withChainRestore(
+    rt: ProjectRuntime,
+    flag: Boolean,
+    inJson: Option[Json],
+    depsJson: Option[Json],
+    nodename: String
+  )(body: IO[Either[ToolError, String]]): IO[Either[ToolError, String]] =
+    maybeRestoreChains(rt, flag, inJson, depsJson, nodename).flatMap { restored =>
+      logChainRestored(rt, restored) *>
+        body.map(_.map(r => restoreNotice(restored) + r))
+    }
+
+  /**
+   * `restoreChain` 旗标的拉回单点（链级抽象 P2 · spec §5.3-①②）。
+   *
+   * **触发集** = 本次调用的 `in` ∪ `deps` 引用（id 或名字，三形态宽容解析同上游校验）
+   * ∪ `nodename`（编辑归档节点本身的情形——拉回后该名在活动区命中，归档节点编辑的
+   * 「只放行 out 改接」闸自然让位）。**解析次序**与 findNode / resolveOutTarget 同序：
+   * 活动区命中 = 无需拉回（现状语义零变化）；归档区按 id 或按名命中 = 拉回目标；
+   * 两区皆无 = 忽略（交给既有「引用不存在」校验报错，不改变其文案）。
+   *
+   * 旗标 false 或触发集空 ⇒ 零 IO 零动作（`restoreChain` 缺省 = 纯引用，今日行为
+   * 逐字不变）。
+   */
+  def maybeRestoreChains(
+    rt: ProjectRuntime,
+    flag: Boolean,
+    inJson: Option[Json],
+    depsJson: Option[Json],
+    nodename: String
+  ): IO[List[FlowMapStore.RestoredChain]] =
+    if !flag then IO.pure(Nil)
+    else
+      // chainmodel 批一 ③：`deps` 里的 `chain:<id>` 是**跨链引用**（目标链成员集），不是
+      // 节点 id ——先滤掉，免得它进去被当「查无此节点」而让拉回的触发集多一个永远不命中
+      // 的项（现状是静默忽略，但「链引用被当节点名去归档区找同名」是误导面）。`nodename`
+      // 不滤（节点名恰为 `chain:...` 的形态照旧按其本名拉回）。
+      val refs = ((NodeTools.parseIn(inJson).getOrElse(Nil)
+        ++ NodeTools.parseIn(depsJson).getOrElse(Nil)).filterNot(FlowMapStore.isChainRef)
+        ++ List(nodename)).map(_.trim).filter(_.nonEmpty).distinct
+      for
+        active <- rt.store.snapshot
+        archived <- rt.store.archiveSnapshot
+        targets = refs.flatMap { r =>
+          if active.nodes.contains(r) then None
+          else if archived.nodes.contains(r) then Some(r)
+          else OutEdge.resolveTargetId(archived.nodes, r)
+        }.distinct
+        restored <- rt.store.restoreChainsFromArchiveDetailed(targets)
+      yield restored
+
+  /**
+   * 拉回告知块（链级抽象 P2 · spec §5.3-⑦ 的工具面）：空集 → **空串**（未拉回 ⇒
+   * 调用方结果逐字不变）；有拉回 → 每链一行前导块，链 id 可继续用于节点引用与谱系
+   * 追踪。工具结果 = 分发器唯一即时反馈面（主图重现是异步 WS 面）。
+   */
+  def restoreNotice(restored: List[FlowMapStore.RestoredChain]): String =
+    if restored.isEmpty then ""
+    else
+      restored
+        .map(c => s"[chain-restored] ${c.chainId} back on the active map (${c.members} node(s))")
+        .mkString("", "\n", "\n")
+
+  /**
+   * 拉回审计（链级抽象 P2 · spec §5.3）：逐链一条 `chain-restored`——
+   * [[FlowMapEventLog.ChainRestoredType]] 的**唯一生产写入点**（此前全仓只有接口点
+   * 与消费侧回翻分支，本方法激活之）。`nodeId` = 分量内 createdAt 最早成员（= 链 id
+   * 派生源节点，与 `chain-archived` 的 nodeId 口径对称）、summary =
+   * [[FlowMapEventLog.chainRestoredSummary]]、顶层 `chainId` 同值——消费者
+   * [[DocIndexConsumer]] 据此把 INDEX.md 的链块从「已归档」分区翻回「活跃」分区。
+   * best-effort：写失败不阻断拉回与后续创建/编辑（与 chain-archived 写点同纪律）。
+   */
+  def logChainRestored(rt: ProjectRuntime, restored: List[FlowMapStore.RestoredChain]): IO[Unit] =
+    if restored.isEmpty then IO.unit
+    else
+      rt.store.snapshot.flatMap { s =>
+        restored.traverse_ { c =>
+          val anchor = c.nodeIds
+            .flatMap(s.nodes.get)
+            .sortBy(n => (n.createdAt, n.id))
+            .headOption
+            .map(_.id)
+            .orElse(c.nodeIds.headOption)
+            .getOrElse(c.chainId)
+          FlowMapEventLog
+            .append(
+              rt.project.workspace,
+              rt.project.name,
+              anchor,
+              FlowMapEventLog.ChainRestoredType,
+              FlowMapEventLog.chainRestoredSummary(c.chainId, c.restoredAt, c.members),
+              Some(c.chainId)
+            )
+            .handleErrorWith(e =>
+              IO(
+                logger.warnSync(
+                  s"[chain-restored] audit append failed for ${c.chainId}: ${Option(e.getMessage).getOrElse(e.toString)}"
+                )
+              )
+            )
+        }
+      }
+
+  /**
+   * NodeList 工具 / REST flow-map 端点共用的载荷（nodes/worktrees/chains/meta，
+   * §2.2 NodeList 返回结构）。节点序列化统一走 NodePayload.buildNodeJson（与 WS
+   * 事件 payload 同构）。
+   *
+   * statusFilter（观测面上下文经济学）：可选生命周期枚举多选
+   * 过滤——**缺省 None = 全量，输出字节级等于现状**（向后兼容铁律；REST/前端
+   * 调用零改动）。命中过滤时 liveness 探测也只对入选 running 节点做。
+   *
+   * chains 顶层旁挂 + 节点级 chainId / chainIds（链级抽象 P0 · spec §6.2；U1 多链
+   * 归属批）：派生单点 = FlowMapStore.topologicalChains（活动∪归档合并集，D8），
+   * 旁挂判据 = FlowMapStore.chainVisible ∧ 含活动成员（**chainmodel 批一 ① 起：声明链
+   * 不论成员数都进旁挂**、派生分量仍需 ≥2 成员；与节点级 chainId 判据**同源**，禁第二
+   * 判据——凡载荷带 chainId 的节点其链条目必在旁挂中，前端 chainId → 链查找恒命中）；
+   * 条目形状 {id,title,entries,ends,memberIds}，title 由 FlowMapStore.chainTitle
+   * 三级推导下发（前端零派生）；entries/ends/memberIds = 分量全量（含归档成员，
+   * spec §6.2「全成员」——主图渲染由前端按节点缓存过滤）。节点级 chainIds 条件键
+   * **仅 merge 节点且可达成员链数 ≥2** 带（多链归属只对合并节点做；普通
+   * 节点恒单值 chainId），值 = **主链 id 首项 + 全量成员链**（主链恒首项 = `chainId`
+   * 逐字同值；无上限、无降级）。
+   * WS 不带链级帧，结构变化由前端对账重拉快照消化。
+   */
+  /**
+   * **链控端点响应体单点**：三条 REST 端点（pause / resume /
+   * cancel）的成功响应共用本构造函数 —— 🔴 禁三处各拼一份（帧形/字段集漂移）。
+   *
+   * 形状（与本文件既有 projects 族逐条同风格，`404/400` 错误体另件于路由）：
+   * {{{
+   *   { chainId, title, status, memberIds, pausedAt|null, cancelledAt|null }
+   * }}}
+   *
+   * 读法纪律：`memberIds` / 链标题恒来自 [[FlowMapStore.chainMembersOf]]（**唯一**的
+   * chainId → 成员解析点，V8 判据）；`status` / 时间戳恒来自
+   * [[ChainLedger.ChainControl]]（判据单点 `ChainLedger.statusOf`）。本方法**零派生**。
+   * 链查无（竞赛窗口：链在动作后消失）⇒ 退化为只回状态字段（不伪造成员集）。
+   */
+  def chainControlPayload(rt: ProjectRuntime, ctl: ChainLedger.ChainControl): IO[Json] =
+    rt.store.chainMembersOf(ctl.chainId).map { cm =>
+      val base = Json.obj(
+        "chainId" -> ctl.chainId.asJson,
+        "status" -> ctl.status.asJson,
+        "pausedAt" -> ctl.pausedAt.map(_.asJson).getOrElse(Json.Null),
+        "cancelledAt" -> ctl.cancelledAt.map(_.asJson).getOrElse(Json.Null)
+      )
+      cm match
+        case None => base
+        case Some(cmInfo) =>
+          base.deepMerge(
+            Json.obj(
+              "title" -> cmInfo.title.asJson,
+              "memberIds" -> cmInfo.info.memberIds.asJson
+            )
+          )
+    }
+
   def buildNodeListPayload(rt: ProjectRuntime, statusFilter: Option[Set[String]] = None): IO[Json] =
     for
       s <- rt.store.snapshot
       arch <- rt.store.archiveSnapshot
-      // 清场 c-①（20260903 03:04 清场误杀事故复盘）：running 节点携带 liveness
+      // 🔴 Two-zone combined map: the chain derivation below (`payloadChains`) reads the
+      // combined map so archived members keep counting toward chain membership (same source
+      // as `depsSatisfied`). Zero new IO: `s` and `arch` are already in hand above.
+      combined = s.nodes ++ arch.nodes
+      // 清场 c-①（清场误杀复盘）：running 节点携带 liveness
       // 字段——true = 有在飞执行 fiber（活会话，取消信号可达）；false = 无在飞
       // fiber（死会话残留/实例重启泄漏，可经 NodeCancel / abandon 收殓）。非
       // running 节点不带该键（wiring/pending 无会话存活概念、终态无存活可言
       // ——语义明确）。仅快照（NodeList 工具 / REST flow-map）带；WS 事件单一
       // 序列化点（NodePayload.buildNodeJson）不动 → 事件键集断言零影响。
-      // 裁定⑤a：过滤先行——liveness 只探入选节点（缺省 None 集合不变）。
+      // 过滤先行——liveness 只探入选节点（缺省 None 集合不变）。
       selected = statusFilter match
-        case None    => s.nodes.values.toList.sortBy(_.createdAt)
+        case None => s.nodes.values.toList.sortBy(_.createdAt)
         case Some(fs) => s.nodes.values.toList.sortBy(_.createdAt).filter(n => fs.contains(n.status))
       liveness <- selected
         .filter(_.status == NodeLifecycle.Running)
         .traverse(n => rt.engine.isRunning(n.id).map(alive => n.id -> alive))
         .map(_.toMap)
+      // 链控三态读数（chains[] 的 status/pausedAt/cancelledAt 三键
+      // 数据源）。**一次读**供整表消费（禁逐链读台账）；纯只读，不写台账、不登记任何号。
+      ledgerState <- rt.store.chainLedgerStore.snapshot
     yield
       val now = System.currentTimeMillis()
+      // 链派生（合并集分量）+ chainId 条件键注入 + chains 旁挂组装（同源单点）
+      // chainmodel 批一 ①（判据同源收口）：旁挂判据由写死的「分量成员数 ≥2」改为判据单点
+      // [[FlowMapStore.chainVisible]]（**声明链不论成员数都可见**、派生分量仍需 ≥2 成员
+      // ——payload 零膨胀口径逐字保留），并保持既有「旁挂仅收含活动成员的链」约束。
+      // 为什么必须同源：节点级 `chainId` 条件键（本处 `chainIdByNode`）与 WS/事件面
+      // （`chainAttrsOf` → `chainIdIn`）是同一个载荷键的两条生产路径——不同源 = 同一节点
+      // 在工具面与事件面报出不同链号（① 的直接反例）。零新键、零形状变化。
+      val chains = FlowMapStore.payloadChains(combined, s.nodes.keySet)
+      val chainIdByNode = chains.flatMap(c => c.memberIds.map(_ -> c.id)).toMap
       val nodes = selected.map { n =>
-        val base = NodePayload.buildNodeJson(n, now)
+        val base = NodePayload.buildNodeJson(
+          n,
+          now,
+          chainIdByNode.get(n.id),
+          // verifierRoute 条件键：判据**单点** =
+          // NodePayload.verifierRouteInvalid（纯函数；「合法 fail 选通边」算面与运行期
+          // NodeEngine.loopRouteTargetId 同源，🔴 禁前端/分发器复刻、禁第二处派生）。
+          // 注入活动区快照 ⇒ 仅**拒绝态**的 verifier 带键（值 "lost"）；合法节点与
+          // 全部 WS 事件写点（不注入）字段集字节级零漂移。
+          nodes = Some(s.nodes)
+        )
         liveness.get(n.id) match
           case Some(alive) => base.deepMerge(Json.obj("liveness" -> Json.fromBoolean(alive)))
-          case None        => base
+          case None => base
+      }
+      val chainsJson = chains.map { c =>
+        val members = c.memberIds.flatMap(combined.get)
+        Json.obj(
+          "id" -> c.id.asJson,
+          "title" -> FlowMapStore.chainTitle(members, c.id).asJson,
+          "entries" -> c.entries.asJson,
+          "ends" -> c.ends.asJson,
+          "memberIds" -> c.memberIds.asJson,
+          // 链控三态条件键（前端据此渲染暂停/取消态，
+          // 🔴 前端零派生）。判据**单点** = `ChainLedger.statusOf`（进入本轮
+          // 资格判定时的那一读；别名逐跳解析 ⇒ 改号后旧号照样报对态）。
+          // 键名 `status` **只加不改**：既有五键（id/title/entries/ends/memberIds）
+          // 的名称、类型、语义逐字不变 —— 已核 FlowMapChainSpec / NodeDepsSpec 均
+          // 为非穷举断言（读键不校全集）⇒ 向前兼容。
+          "status" -> ChainLedger.statusOf(ledgerState, c.id).asJson,
+          "pausedAt" -> ChainLedger.pausedAtOf(ledgerState, c.id).map(_.asJson).getOrElse(Json.Null),
+          "cancelledAt" -> ChainLedger.cancelledAtOf(ledgerState, c.id).map(_.asJson).getOrElse(Json.Null)
+        )
       }
       val wtDir = os.Path(rt.project.workspace) / ".nebflow"
       val authDir = wtDir / "worktrees"
-      // worktrees[] 双位置合并去重（20260903 worktree 参数修复——参照系统一）：
+      // worktrees[] 双位置合并去重（worktree 参数修复——参照系统一）：
       // worktrees/ 权威位置目录名 ∪ .nebflow/ 顶层目录/软链名（os.isDir 沿软链），
       // distinct + sorted 排序稳定。worktrees/ 容器本身不算 worktree。今日生产
       // 顶层同名条目为指向权威位置的软链 → 去重后名单与可传 worktree 名单一致。
@@ -398,1688 +1746,17 @@ object NodeTools:
       Json.obj(
         "nodes" -> nodes.asJson,
         "worktrees" -> worktrees.asJson,
+        "chains" -> chainsJson.asJson,
+        // meta 增 `workspace` = 本项目**权威工作区
+        // 绝对路径**，供分发器/下游拿权威路径（根治「按项目名猜路径」——按名拼接路径与真源 workspace 可能错位）。
+        // 🔴 只**新增**键：既有键 `project` / `updatedAt` / `archived` 的键名与类型语义零改动
+        // （后端新增键对全部既有消费者是向后兼容新增，容忍读数见实施批报告 A5 节）。
         "meta" -> Json.obj(
           "project" -> rt.project.name.asJson,
+          "workspace" -> rt.project.workspace.asJson,
           "updatedAt" -> s.updatedAt.asJson,
           "archived" -> arch.nodes.size.asJson
         )
       )
 
-/** notifyDispatcher 参数载体（dispatch-notify 批 2026-09-05）：call() 解析的
-  * （flag, provided）经 implicit 从 call() 词法作用域自动填入 createNode/proceed/
-  * editNode——三者的既有调用点零文本改动（在飞批 trigger-chain-fix 占用了这些
-  * 调用点行，碰撞规避；implicit 参数解析为 Scala 标准机制，非 hack）。 */
-final case class NodeEditNotify(flag: Boolean, provided: Boolean)
-
-/** loop 参数载体（LoopNode 批 2026-09-06）：call() 解析的（config, provided）经
-  * implicit 自动填入 createNode/proceed/editNode——调用点零文本改动（与
-  * NodeEditNotify 同机制）。provided=false（未传）= 编辑不改动 / 创建 None；
-  * provided=true 且 config=Some(LoopConfig) = 启用 loop；provided=true 且
-  * config=None = 显式停用 loop（loop=false）。 */
-final case class NodeEditLoop(config: Option[LoopConfig], provided: Boolean)
-
-/** retry 参数载体（批E2 P2 failed 回跳，spec §2.3）：call() 解析的（policy,
-  * provided）经 implicit 自动填入 createNode/proceed/editNode（与 notify/loop 同
-  * 机制）。provided=false（未传）= 编辑不改动 / 创建 None；provided=true 且
-  * policy=Some = 设置/替换（对象或字符串形态）；provided=true 且 policy=None =
-  * 显式清除（retry=null，replace-on-provide 与 deps 同款）。 */
-final case class NodeEditRetry(policy: Option[RetryPolicy], provided: Boolean)
-
-object NodeEditTool extends Tool:
-  val name = "NodeEdit"
-
-  /** 观测面上下文经济学批（20260907 裁定⑤b）：描述 7,438 → 3,742 字符（-50%，
-    * 压措辞不改语义——参数面/动作语义/错误码/校验/重激活规则全保留）；合并
-    * 观测面P0P1引擎批时统一进基线后落的 main 语义（failed 重激活条款 / abandon
-    * 无 TTL 裁定 / notifyDispatcher completion-only）→ 4,308 字符（仍 -42% vs
-    * 7,438；NodeSchemaSlimSpec 预算断言随之 3800→4400，语义不可删故放宽预算）。
-    * 批D2 描述重写（20260908 语义门控 spec §5 批D2，行为基线=E1+E2 已实施代码）：
-    * out 门控语法逐段展开（单值/扇出/失败信号边/门缺省 on={pass} 零漂移/Nebula
-    * 双门例外/mode=signal deps 同款）+ retry 自动回跳链（下游单侧持有/gen 代次/
-    * cap 耗尽 RetryCap 升级/邻居与环两校验）+ NODE_MERGE_PASS_ONLY 硬拒与
-    * 无 on-failed 边 WARNING 两条新校验条款 → ~5,3xx 字符（预算断言随之
-    * 4700→5400，同窗合并使前缀缓存一次性失效——spec §4.2 cache 纪律）。
-    * 该描述随 tools 数组进分发器每次请求。长度上限由 NodeSchemaSlimSpec 断言钉住）。 */
-  val description =
-    """Create or edit a Flow Map node — the dispatcher's single topology tool (create / wire / rewire). No files written (the store owns flow-map.json).
-## Parameters
-- project (optional; defaults to current project): project name.
-- nodename: unique display name; missing = create, existing = edit.
-- description (required on create, ≤60 chars): one-line purpose — always-loaded card/payload metadata (results read on demand). Replace on edit.
-- descriptionLong (optional, ≤200 chars): longer summary, detail channel only (never in default payloads). Replace on edit.
-- task (optional): node task; an entry node (task, no in) starts running on create.
-- in (optional): upstream id(s) added as barrier inputs (multi-in = barrier); each upstream's out gains a default pass edge here (existing edges kept).
-- deps (optional, replace-on-provide): upstream id(s) awaited for COMPLETION SIGNAL only — no result injected (input = own task; needs result? in, ordering only? deps). Passed (any form, incl []/null) = whole-list replacement. failed/cancelled/blocked upstream never triggers; running upstream legal; editing deps on RUNNING node rejected (input frozen).
-- retry (optional, downstream-held like deps): failed auto-retry {upstream:"<in/deps-neighbor>", max:N} or "<id>:<N>"; null clears. On FAIL with gen<N: auto-reactivates self (gen+1) and re-runs that upstream — fresh result re-delivers via the pass edge (replaces that round's failed notify; retry logged); gen≥N → failed + RetryCap escalation. max 1-10; neighbor-only (NODE_RETRY_NEIGHBOR); chain acyclic (NODE_RETRY_CYCLE).
-- out (required on create; rewrites the edge set on edit): "B" = pass edge with result payload (legacy); "Nebula" = root notify on completed+failed; fan-out "(pass)B, (failed)C"; failure edge to a node = "(failed)C:signal". Gates ⊆ pass,failed (default pass — legacy zero-drift; implicit-gate Nebula = pass+failed); mode :result (payload; default) | :signal (signal only — deps parity). null disconnect rejected — rewire (EMPTY_NODE_CONNECTION). on-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY).
-- plugins (optional, replace-on-provide): plugin name(s) — THE capability mechanism (no per-node agent; nodes run general). A plugin = skills + mcp.json (either alone valid); allocation injects skills into the first message, starts MCP servers (mcp__plugin_<p>_<s>__<t>), grants builtin tools. Names must be in the Plugin Catalog AND trusted (default-deny).
-- worktree (optional boolean, create-time only): true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-name> (same-name branch, baseline main HEAD); immediate + fail-fast. Refused on edits.
-- preset: legacy (unused).
-- abandon (optional, default false): terminal (blocked/completed/failed/cancelled), wiring/pending, or STALE running (dead session) node → cancelled, retained on map, result kept (no TTL — failed/cancelled never auto-archive; cleanup is the caller's; audit-logged). Blocked give-up / dead-session reaping exit. LIVE running refused — use NodeCancel.
-- notifyDispatcher (optional, default false): on COMPLETION (flag on), trigger a dispatcher session with this node's result reference (independent channel, no out-edge cost). Completion-only — failed notifies automatically (never flag-gated); blocked reserved. Settable/withdrawable while wiring/pending/running; dispatcher-created nodes default false.
-- Retired (rejected, NODE_AGENT_RETIRED): agent / skill / mcp — capability = plugins; legacy values display-only.
-## Semantics
-- Create requires out AND an input side (task or in; coexist ok) → else EMPTY_NODE_CONNECTION. Entry (task + out) runs on create (async).
-- out delivery: completed → pass edges fire (:result payload / :signal bare start; ≤1 delivery per (target,mode)). failed → on-failed :signal edges fire; the rest keeps waiting (D5 zero-settlement — fix + reactivate the upstream; completion re-delivers via pass edges). Wiring into an already-FAILED upstream with no on-failed edge → non-blocking warning (manual fallback legal).
-- merge=true (create-only): batch landing sink — fires when ALL upstreams completed; upstream failure → blocked (upstream-incomplete). REQUIRES in ≥1 (NODE_MERGE_REQUIRES_UPSTREAM: create upstreams first); must NOT carry worktree (lands on workspace root repo).
-- Edit: in appends; deps replaces (when provided); out rewrites the whole edge set; description(s) replace (when provided). Rewire removing a consumed target (running/terminal) rejected — NodeCancel first; completed (or legacy dangling, pre-policy out=null) rewire → retained result auto-delivers to new targets (edge-gated).
-- Blocked node edit (task/description/in/out/deps/loop changed) reactivates: status → wiring/pending, deliveredTo cleared, blockCount kept, completed upstreams re-delivered, reruns. No-op if nothing changed.
-- Failed node edit: actual change (task/description/in/out/deps/loop) on a FAILED node reactivates like blocked — first-choice recovery (topology kept); round history resets (blockCount→0; next real failure notifies again). completed/cancelled not reactivatable (create successor instead).
-- Validation (0 spawn except worktree): description rules; referenced nodes exist; DAG cycle check; running target → input frozen. Result = agent's final output, auto-saved per-node, delivered along out ("Nebula" → root session). Full result: NodeList(detail=<nodeId>)."""
-  val inputSchema = JsonObject.fromIterable(
-    List(
-      "type" -> "object".asJson,
-      "properties" -> Json.obj(
-        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (optional; defaults to the dispatcher's current project)".asJson),
-        "nodename" -> Json.obj("type" -> "string".asJson, "description" -> "Display name; unique within the Flow Map".asJson),
-        "description" -> Json.obj("type" -> "string".asJson, "description" -> "REQUIRED on create: one-line summary of the node's purpose, 1-60 chars (always-loaded card/payload metadata; replace on edit)".asJson),
-        "descriptionLong" -> Json.obj("type" -> "string".asJson, "description" -> "Optional longer summary, ≤200 chars — detail channel only (NodeList detail= / REST), never in default payloads".asJson),
-        "task" -> Json.obj("type" -> "string".asJson, "description" -> "Node task context; entry nodes (task, no in) run immediately".asJson),
-        "in" -> Json.obj("oneOf" -> Json.arr(
-          Json.obj("type" -> "string".asJson),
-          Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
-        ).asJson, "description" -> "Upstream node id(s) to add as barrier inputs".asJson),
-        "deps" -> Json.obj("oneOf" -> Json.arr(
-          Json.obj("type" -> "string".asJson),
-          Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
-        ).asJson, "description" -> "Upstream node id(s) this node waits on for completion signal only (no result injected). Replace-on-provide: [] / null clears. Needs the result? Use in".asJson),
-        "out" -> Json.obj("type" -> "string".asJson,
-          "description" -> "Out-edge spec (required on create; on edit replaces the whole edge set): edge = target + gates + mode. \"B\" = pass edge with payload (legacy); \"Nebula\" = root notify on completed+failed; fan-out \"(pass)B, (failed)C\"; node failure edge = \"(failed)C:signal\" (failure starts C on its own task — error text never injected). Gates (parens, comma-sep) ⊆ pass,failed — default pass; implicit-gate Nebula = pass+failed; explicit gates narrow. mode :result (payload; default) | :signal (barrier settle only — deps parity). On-failed edge into a merge node rejected (NODE_MERGE_PASS_ONLY); null disconnect rejected while an edge exists — rewire (EMPTY_NODE_CONNECTION); JSON arrays rejected — use segment syntax. Same (target,mode) edges merge gates".asJson),
-        "plugins" -> Json.obj("oneOf" -> Json.arr(
-          Json.obj("type" -> "string".asJson),
-          Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
-        ).asJson, "description" -> "Plugin package name(s) allocated to this node (§B.4) — THE capability mechanism (no per-node agent): skills injected into the first message + plugin MCP servers + builtin tool grants. Replace-on-provide (like deps). Names must exist in the Plugin Catalog AND be approved (trust gate default-deny) — unapproved allocation is refused".asJson),
-        "worktree" -> Json.obj("type" -> "boolean".asJson, "description" -> "Create-time only: true = isolated git worktree auto-created at .nebflow/worktrees/<derived-from-node-name> (same-name branch, baseline = main HEAD; failure rejects the NodeEdit). false/omitted = workspace direct-run. Refused on edits".asJson),
-        "preset" -> Json.obj("type" -> "string".asJson),
-        "merge" -> Json.obj("type" -> "boolean".asJson, "description" -> "Merge/collection node (batch landing sink, create-only): triggers only when ALL upstreams completed (in-barrier); an upstream failure converts this node to blocked (category=upstream-incomplete) instead of the collect placeholder-start. Must NOT carry 'worktree' — a merge node lands on the workspace root repo (sandbox root = workspace, .git writable); task should embed the upstream branch/worktree list + landing command set. REQUIRES 'in' (≥1 existing upstream id) on create — zero-upstream merge is rejected (NODE_MERGE_REQUIRES_UPSTREAM): create the upstreams first, then this node with in=<ids>".asJson),
-        "notifyDispatcher" -> Json.obj("type" -> "boolean".asJson, "description" -> "dispatch-notify backflow: on terminal state (completion wired) trigger a dispatcher session with this node's result reference (independent signal channel, no out-edge cost). Settable/withdrawable while wiring/pending/running".asJson),
-        "abandon" -> Json.obj("type" -> "boolean".asJson, "description" -> "Abandon a TERMINAL (blocked/completed/failed/cancelled), wiring/pending, or dead-session running node → cancelled, retained on map (no TTL — failed/cancelled never auto-archive; upper layer decides cleanup; audit-logged)".asJson),
-        "loop" -> Json.obj("type" -> "boolean".asJson, "description" -> "LoopNode flag (create/edit): true = this node iterates — a WORKER session produces a result, a VERIFY session checks it; PASS → delivered downstream; FAIL → worker re-runs (same session, constant input) up to maxRounds(K). false/omitted = normal single-pass node. A loop node still declares its normal in/out/deps (and may merge) — loop only adds the inner iterate-verify loop".asJson),
-        "retry" -> Json.obj(
-          "oneOf" -> Json.arr(
-            Json.obj("type" -> "object".asJson, "properties" -> Json.obj(
-              "upstream" -> Json.obj("type" -> "string".asJson),
-              "max" -> Json.obj("type" -> "integer".asJson)),
-              "required" -> Json.arr("upstream".asJson, "max".asJson)),
-            Json.obj("type" -> "string".asJson)
-          ).asJson,
-          "description" -> "Failed auto-retry policy (P2, downstream-held like deps): {upstream:\"<in/deps-neighbor id>\", max:N} or \"<id>:<N>\". On this node's FAILURE with gen<N the engine auto-reactivates it (gen+1, deliveredTo cleared) AND re-runs the upstream (terminal upstreams only — in-flight reruns untouched); the fresh result re-delivers along the pass edge as a new attempt. The auto-retry replaces that round's failed dispatcher notification (each retry is logged via nodeUpdated + retry event); gen≥N → terminal failed: dispatcher notification AND RetryCap escalation to Nebula both fire. max 1-10 (NODE_RETRY_MAX_RANGE; max=1 = one retry, two runs). upstream must be an in/deps neighbor (NODE_RETRY_NEIGHBOR — wire first); retry chains must stay acyclic (NODE_RETRY_CYCLE). Settable in any status — arms on the NEXT failure; a retry edit never reactivates by itself (edit task to re-arm an already-failed node). null clears (replace-on-provide)".asJson),
-        "maxRounds" -> Json.obj("type" -> "integer".asJson, "description" -> "Loop round cap K (1-50, default 5): re-run the worker up to K times before the verify PASSes; reaching K without PASS terminalizes the node as failed (result states 'loop reached maxRounds'). Only meaningful with loop=true".asJson),
-        "verify" -> Json.obj("type" -> "string".asJson, "description" -> "Verify-agent name (default \"general\"): the session that checks each worker output (general agent + plugins — shares the node's plugins). Must exist in the Agent Catalog. Only with loop=true".asJson),
-        "verifyTask" -> Json.obj("type" -> "string".asJson, "description" -> "Verify checklist template (against the original task / acceptance baseline). Empty → engine default checklist. Only with loop=true".asJson)
-      ),
-      "required" -> Json.arr("nodename".asJson)
-    )
-  )
-
-  def summarize(input: JsonObject): String =
-    val nn = input("nodename").flatMap(_.asString).getOrElse("")
-    s"NodeEdit($nn)"
-
-  def summarizeResult(input: JsonObject, result: String): String =
-    if result.length > 200 then result.take(197) + "..." else result
-
-  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val project = input("project").flatMap(_.asString)
-    val nodename = input("nodename").flatMap(_.asString).getOrElse("")
-    val task = input("task").flatMap(_.asString)
-    val description = input("description").flatMap(_.asString)
-    // 裁定⑤c（20260907）：双层化长描述——可选，≤200，仅 detail 通道消费
-    val descriptionLong = input("descriptionLong").flatMap(_.asString)
-    val worktree = input("worktree")
-    val preset = input("preset").flatMap(_.asString)
-    val abandon = input("abandon").flatMap(_.asBoolean).getOrElse(false)
-    // merge（merge-node 批 20260905）：create-only 标记——edit 路径不接收（对既有
-    // 节点传 merge 会被静默忽略；归档节点传 merge 走 forbidden 拒绝）。
-    val merge = input("merge").flatMap(_.asBoolean).getOrElse(false)
-    val mergeProvided = input("merge").flatMap(_.asBoolean).isDefined
-    // notifyDispatcher（dispatch-notify 批 2026-09-05）：Option 保留「显式传入」信号
-    // （缺省 = 不改动——同 plugins 缺省不改动形态）。载体经 implicit 传入 createNode/
-    // proceed/editNode——三者的既有调用点零改动（碰撞规避：在飞批占用了这些调用点行）。
-    val notifyProvided = input("notifyDispatcher").flatMap(_.asBoolean)
-    implicit val notifyFlag: NodeEditNotify = NodeEditNotify(notifyProvided.getOrElse(false), notifyProvided.isDefined)
-    // loop 参数（LoopNode 批 2026-09-06）：Option 区分「未传」（编辑不改动 / 创建 None，
-    // provided=false）与「传了」（loop true 启用 / false 停用）。载体经 implicit 传入
-    // createNode/proceed/editNode——调用点零文本改动（与 notifyFlag 同机制）。maxRounds
-    // 缺省 5（与主设计 §2.5 K=5 同参）；verify 缺省 "general"（通用 agent + plugins）。
-    val loopJson = input("loop")
-    val loopProvided = loopJson.exists(j => !j.isNull)
-    val loopEnabled = loopJson.flatMap(_.asBoolean).getOrElse(false)
-    val maxRounds = input("maxRounds").flatMap(_.asNumber).flatMap(_.toInt).getOrElse(5)
-    val verify = input("verify").flatMap(_.asString).getOrElse("general")
-    val verifyTask = input("verifyTask").flatMap(_.asString).getOrElse("")
-    implicit val loopFlag: NodeEditLoop =
-      if !loopProvided then NodeEditLoop(None, provided = false)
-      else NodeEditLoop(if loopEnabled then Some(LoopConfig(maxRounds, verify, verifyTask)) else None, provided = true)
-    // retry 参数（批E2 P2 failed 回跳，spec §2.3）：两形态——JSON 对象
-    // {"upstream":"<id>","max":N} 或字符串 "<id>:<N>"；null=清除。replace-on-provide
-    // 与 deps 同款：传了（任何形态含 null）= 整体替换/清除，未传 = 不改动。
-    // max 范围 1-10 在解析单点校验（NODE_RETRY_MAX_RANGE）——创建/编辑共用。
-    val retryJson = input("retry")
-    val retryProvided = retryJson.isDefined
-    val retryParsed: Either[String, Option[RetryPolicy]] =
-      retryJson match
-        case None => Right(None)
-        case Some(j) if j.isNull => Right(None)
-        case Some(j) if j.isObject =>
-          (j.hcursor.get[String]("upstream"), j.hcursor.get[Int]("max")) match
-            case (Right(up), Right(mx)) =>
-              if mx < 1 || mx > 10 then Left(s"'retry.max' must be between 1 and 10 (got $mx) — the auto-retry budget per node. (NODE_RETRY_MAX_RANGE)")
-              else if up.trim.isEmpty then Left("'retry.upstream' must be a non-empty node id")
-              else Right(Some(RetryPolicy(up.trim, mx)))
-            case _ => Left("'retry' object form requires string 'upstream' and integer 'max'")
-        case Some(j) if j.isString =>
-          j.asString.getOrElse("").trim.split(':').toList match
-            case up :: mx :: Nil if up.trim.nonEmpty =>
-              mx.trim.toIntOption match
-                case Some(n) if n >= 1 && n <= 10 => Right(Some(RetryPolicy(up.trim, n)))
-                case Some(n) => Left(s"'retry.max' must be between 1 and 10 (got $n) — the auto-retry budget per node. (NODE_RETRY_MAX_RANGE)")
-                case None => Left(s"'retry' string form must be '<upstream-id>:<max-int>', got '${j.asString.getOrElse("")}'")
-            case _ => Left(s"'retry' string form must be '<upstream-id>:<max-int>', got '${j.asString.getOrElse("")}'")
-        case Some(_) => Left("'retry' must be an object {upstream, max} or a string '<upstream-id>:<max>'")
-    implicit val retryFlag: NodeEditRetry = NodeEditRetry(retryParsed.getOrElse(None), retryProvided)
-    val inJson = input("in")
-    val depsJson = input("deps")
-    val outJson = input("out")
-    // 阶段 2b（§B.4 第 3 步）：plugins 参数。Option 区分「未传」（编辑不改动 /
-    // 创建 Nil）与「已传」（整列表替换，replace-on-provide 与 deps 同款）；
-    // 解析复用 parseIn 三形态宽容（string / array / 逗号串）。
-    val pluginsJson = input("plugins")
-    val pluginsProvided = pluginsJson.exists(j => !j.isNull)
-    val pluginsParsed: Either[String, List[String]] =
-      if !pluginsProvided then Right(Nil)
-      else NodeTools.parseIn(pluginsJson).left.map(err => err.replace("'in'", "'plugins'"))
-    if nodename.isEmpty then IO.pure(Left(ToolError("Missing 'nodename'")))
-    // 退役参数硬闸（2026-09-05 插件架构对齐）：agent/skill/mcp 一律拒绝——schema 层
-    // 已删属性（严格调用方过不了 schema），此处运行时兜底（宽容调用方拿到可行动错误，
-    // 指向 plugins）。形态：NODE_AGENT_RETIRED 单一错误码三参数共用。
-    else if input.contains("agent") || input.contains("skill") || input.contains("mcp") then
-      IO.pure(Left(ToolError(
-        "'agent'/'skill'/'mcp' node params are RETIRED and no longer accepted (2026-09-05 plugin-architecture alignment) — " +
-          "every node executes the general agent; capability differentiation goes through 'plugins' (a plugin = skills + mcp.json, either " +
-          "alone is valid; see the Plugin Catalog in your prompt). Existing flow-map nodes keep their old values for display only. " +
-          "(NODE_AGENT_RETIRED)")))
-    // worktree 类型闸：布尔显式化（String→Boolean 改造）——传字符串（旧形态）不再
-    // 宽容收编，直接拒绝（旧文案教「先建 worktree 再传裸名」的工作流已被
-    // 「worktree=true 即时创建」取代）。
-    else if worktree.exists(w => !w.isBoolean && !w.isNull) then
-      IO.pure(Left(ToolError(
-        "'worktree' must be a boolean (2026-09-05 explicit-boolean rework): true = an isolated worktree is auto-created for this node " +
-          "(derived from the node name, baseline = main HEAD); false/omitted = run directly in the workspace. " +
-          "The old string form (pre-existing bare name) is no longer accepted. (WORKTREE_NOT_BOOLEAN)")))
-    else if pluginsProvided && pluginsParsed.isLeft then
-      IO.pure(Left(ToolError(pluginsParsed.swap.toOption.getOrElse("invalid plugins"))))
-    // loop maxRounds 范围校验（LoopNode 批 2026-09-06）：1-50 合理区间（主设计 K=5
-    // 口径，上限防御异常配置）；loop=true 时校验，非 loop 忽略。
-    else if loopEnabled && (maxRounds < 1 || maxRounds > 50) then
-      IO.pure(Left(ToolError(
-        s"'maxRounds' must be between 1 and 50 (got $maxRounds) — the loop round cap K (loop node iteration budget). (NODE_LOOP_MAXROUNDS_RANGE)")))
-    // retry 解析/范围错误前置拦截（批E2）：对象/字符串形态与 max 范围在解析单点
-    // 已判，这里统一拦在进 create/edit 之前（0 spawn）。
-    else if retryProvided && retryParsed.isLeft then
-      IO.pure(Left(ToolError(retryParsed.swap.toOption.getOrElse("invalid retry"))))
-    // description 校验（创建必写 + 编辑可 update 共用）：trim 非空 + ≤60 字符
-    // （裁定⑤c 双层化：短文进默认载荷；长文走 descriptionLong ≤200）。
-    else if description.exists(d => d.trim.isEmpty) then
-      IO.pure(Left(ToolError("'description' must be a non-empty one-line summary of the node's purpose (NODE_DESCRIPTION_REQUIRED)")))
-    else if description.exists(_.trim.length > 60) then
-      IO.pure(Left(ToolError(s"'description' must be ≤60 characters (got ${description.map(_.trim.length).getOrElse(0)}) — keep it to one line; longer context goes in the task or descriptionLong (NODE_DESCRIPTION_TOO_LONG)")))
-    else if descriptionLong.exists(d => d.trim.isEmpty) then
-      IO.pure(Left(ToolError("'descriptionLong' must be non-empty when provided (NODE_DESCRIPTION_LONG_REQUIRED)")))
-    else if descriptionLong.exists(_.trim.length > 200) then
-      IO.pure(Left(ToolError(s"'descriptionLong' must be ≤200 characters (got ${descriptionLong.map(_.trim.length).getOrElse(0)}) (NODE_DESCRIPTION_LONG_TOO_LONG)")))
-    else
-      val plugins = pluginsParsed.getOrElse(Nil)
-      // flag off（§G.2 回滚语义）：NodeEdit 忽略 plugins 参数——不校验不存储
-      val pluginsEffective: IO[Option[List[String]]] =
-        if !pluginsProvided then IO.pure(None)
-        else nebflow.core.plugin.PluginsConfig.enabled.map(enabled => if enabled then Some(plugins) else None)
-
-      pluginsEffective.flatMap { pluginsOpt =>
-        val pluginsForCall = pluginsOpt.getOrElse(Nil)
-        // 插件存在性 + 信任门白名单校验（0 spawn 快速失败，§B.4 第 3 步）；
-        // flag off → pluginsOpt=None → 跳过校验（参数被忽略）。
-        val pluginValidation: IO[Either[String, Unit]] =
-          pluginsOpt match
-            case None => IO.pure(Right(()))
-            case Some(names) =>
-              if names.isEmpty then IO.pure(Right(()))
-              else
-                names.traverse(nebflow.core.plugin.PluginRegistry.resolve).map { results =>
-                  results.find(_.isLeft) match
-                    case Some(Left(err)) => Left(err)
-                    case _ => Right(())
-                }
-        pluginValidation.flatMap {
-          case Left(err) => IO.pure(Left(ToolError(err)))
-          case Right(_) =>
-            NodeTools.resolveProject(project, ctx).flatMap {
-              case Left(err) => IO.pure(Left(ToolError(err)))
-              case Right(rt) =>
-                rt.store.snapshot.flatMap { s =>
-                  s.nodes.values.find(_.name == nodename) match
-                    case Some(existing) => editNode(rt, existing, task, description, descriptionLong, abandon, worktree.flatMap(_.asBoolean), preset, pluginsOpt, inJson, depsJson, outJson, ctx)
-                    case None =>
-                      // 归档节点编辑兜底（fix b「已存在边+归档上游不补投递」修复 20260903）：
-                      // 活动区按名未命中 → 归档区按名兜底。归档节点只支持 out 改接（悬空
-                      // 完成结果的补投递——「悬空节点后来被接线」的归档变体：editNode 的
-                      // completed+newOut 投递分支沿 deliverOutTo 补投，barrier 随之结算）；
-                      // 其余编辑域（task/description/in/deps/配置/abandon）拒绝——归档是显示
-                      // 过期（TTL 满、结果保留可投递），不是重激活通道（重激活只属于
-                      // Blocked 态）。修复前：归档名落 createNode → 同名重复节点（拓扑
-                      // 污染）或静默失败。
-                      rt.store.archiveSnapshot.flatMap { arch =>
-                        arch.nodes.values.find(_.name == nodename) match
-                          case Some(archived) =>
-                            val forbidden =
-                              task.isDefined || description.isDefined || descriptionLong.isDefined || worktree.isDefined ||
-                                preset.isDefined ||
-                                abandon || inJson.isDefined || depsJson.isDefined ||
-                                pluginsProvided ||
-                                mergeProvided || notifyProvided.isDefined || retryProvided
-                            if abandon then
-                              IO.pure(Left(ToolError(s"Node '$nodename' is archived (display TTL expired) — abandon is not applicable; it already ages out of views on its own.")))
-                            else if mergeProvided then
-                              IO.pure(Left(ToolError(
-                                s"Node '$nodename' is archived — 'merge' is a create-only flag and cannot be set on an archived node.")))
-                            else if !outJson.isDefined then
-                              IO.pure(Left(ToolError(
-                                s"Node '$nodename' is archived (display TTL expired, result retained). Only 'out' rewiring is supported for archived nodes (result re-delivery).")))
-                            else if forbidden then
-                              IO.pure(Left(ToolError(
-                                s"Node '$nodename' is archived — only 'out' rewiring is supported (result re-delivery); task/description/in/deps/config edits are not.")))
-                            else editNode(rt, archived, task, description, descriptionLong, abandon, worktree.flatMap(_.asBoolean), preset, pluginsOpt, inJson, depsJson, outJson, ctx)
-                          case None =>
-                            if abandon then IO.pure(Left(ToolError(s"Node '$nodename' not found — abandon requires an existing node")))
-                            else createNode(rt, nodename, task, description, descriptionLong, worktree.flatMap(_.asBoolean), preset, pluginsForCall, inJson, depsJson, outJson, merge)
-                      }
-                  }
-              }
-          }
-      }
-
-  // ── 新建 ─────────────────────────────────────────────
-
-  /** description 校验单点（create 必写；edit 传了才校验）。裁定⑤c（20260907
-    * 双层化）：短文 ≤60 进默认载荷；长文走 validateDescriptionLong（≤200，
-    * detail 通道）。存量 ≤200 长描述不回溯。 */
-  private def validateDescription(description: Option[String], creating: Boolean): Option[ToolError] =
-    description match
-      case None if creating =>
-        Some(ToolError(
-          "New node requires 'description' — a one-line summary (≤60 chars) of what this node does. " +
-            "It is the always-loaded metadata shown on the Flow Map card (the node's result is read on demand). (NODE_DESCRIPTION_REQUIRED)"))
-      case Some(d) if d.trim.isEmpty =>
-        Some(ToolError("'description' must be non-empty (trim) — one line, ≤60 chars (NODE_DESCRIPTION_REQUIRED)"))
-      case Some(d) if d.trim.length > 60 =>
-        Some(ToolError(s"'description' must be ≤60 characters (got ${d.trim.length}) — one line; longer context goes in the task or descriptionLong (NODE_DESCRIPTION_TOO_LONG)"))
-      case _ => None
-
-  /** descriptionLong 校验单点（裁定⑤c，可选参数：传了才校验；≤200 字符）。 */
-  private def validateDescriptionLong(descriptionLong: Option[String]): Option[ToolError] =
-    descriptionLong match
-      case Some(d) if d.trim.isEmpty =>
-        Some(ToolError("'descriptionLong' must be non-empty (trim) — ≤200 chars (NODE_DESCRIPTION_LONG_REQUIRED)"))
-      case Some(d) if d.trim.length > 200 =>
-        Some(ToolError(s"'descriptionLong' must be ≤200 characters (got ${d.trim.length}) (NODE_DESCRIPTION_LONG_TOO_LONG)"))
-      case _ => None
-
-  /** worktree 派生规则（2026-09-05 显式布尔改造，规则写死）：
-    * 目录名 = 节点名 sanitize——空白与 git-ref 非法字符（~^:?*[\\ 及控制符）→ '-'、
-    * 连续 '-' 折叠、首尾 '-.' 剥除、截 40 字符、空则 "node"（**保留 CJK/Unicode
-    * 字母数字**——生产节点名以中文为主，全部归一成 "node" 会让派生名失去区分度；
-    * git 分支名与 macOS/Linux 文件名均合法接受 Unicode）。冲突追加 -2..-99；
-    * 分支同名；基线 = main HEAD（无 main → 当前 HEAD）。
-    * 创建时机选型（裁决 a「NodeEdit 即时创建」）：fail-fast——分发器组图当下拿到
-    * 可行动错误，零 spawn 零 token 浪费；spawn 时懒创建（方案 b）会把失败推迟到
-    * 执行链中段，形成 failed 节点 + 重入轮次。git 不可用/非 git 工作区 → 拒建节点。 */
-  private def createWorktreeFor(ws: os.Path, nodename: String): Either[String, String] =
-    def git(args: String*): Either[String, String] =
-      val res = os.proc(Seq("git", "-C", ws.toString) ++ args).call(cwd = ws, check = false, mergeErrIntoOut = true)
-      if res.exitCode != 0 then Left(res.out.trim().take(300)) else Right(res.out.trim())
-    val sanitized =
-      nodename.trim.replaceAll("[\\s~^:?*\\[\\\\]+", "-").replaceAll("-{2,}", "-").stripPrefix("-").stripSuffix("-").stripPrefix(".").take(40).stripSuffix("-").stripSuffix(".lock").stripSuffix(".")
-    val base = if sanitized.isEmpty then "node" else sanitized
-    val wtRoot = ws / ".nebflow" / "worktrees"
-    val candidates = (1 to 99).map(i => if i == 1 then base else s"$base-$i")
-    candidates.find { n => !os.exists(wtRoot / n) && !os.exists(ws / ".nebflow" / n) } match
-      case None =>
-        Left(s"Cannot derive a free worktree name for node '$nodename' (tried '$base', '$base-2'…'$base-99') — pass a shorter/unique nodename")
-      case Some(name) =>
-        val path = wtRoot / name
-        os.makeDir.all(wtRoot)
-        val baseRef = if git("rev-parse", "--verify", "--quiet", "main").isRight then "main" else "HEAD"
-        git("worktree", "add", "-b", name, path.toString, baseRef).map(_ => name)
-
-  private def createNode(
-    rt: ProjectRuntime,
-    nodename: String,
-    task: Option[String],
-    description: Option[String],
-    descriptionLong: Option[String],
-    worktree: Option[Boolean],
-    preset: Option[String],
-    plugins: List[String],
-    inJson: Option[Json],
-    depsJson: Option[Json],
-    outJson: Option[Json],
-    merge: Boolean = false
-  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry): IO[Either[ToolError, String]] =
-    // 执行统一 general（2026-09-05 插件架构对齐）：新建节点不再接受 agent 参数，
-    // 专业能力由 plugins 差异化；NodeDef.agent 字段保留（存量兼容读 + spawn 读取）。
-    val agentName = "general"
-    val inIds = NodeTools.parseIn(inJson)
-    // deps 复用 parseIn 三形态宽容解析（deps 设计 §1.2：不新写解析器）；报错文案
-    // 把参数名替换成 deps，避免误导（解析器文案写死 'in'）。
-    val depsIds = NodeTools.parseIn(depsJson).left.map(err => err.replace("'in'", "'deps'"))
-    val outEither = NodeTools.parseOut(outJson)
-    (validateDescription(description, creating = true), validateDescriptionLong(descriptionLong)) match
-      case (Some(err), _) => IO.pure(Left(err))
-      case (_, Some(err)) => IO.pure(Left(err))
-      case (None, None) =>
-        (inIds, depsIds, outEither) match
-          case (Left(err), _, _) => IO.pure(Left(ToolError(err)))
-          case (_, Left(err), _) => IO.pure(Left(ToolError(err)))
-          case (_, _, Left(err)) => IO.pure(Left(ToolError(err)))
-          case (Right(ins), Right(deps), Right(out)) =>
-            // 校验五（连接规范收紧 v2，20260903 裁定①②③）：创建必须 (task ∨ in) ∧ out。
-            // out 是唯一出口权威边——悬空新节点不再支持，「先创建后补 out」工作流废弃；
-            // in 侧 task 即连接（入口节点 task+out 创建即运行语义保持），in 边与 task 可
-            // 并存；纯空挂载（无 task 无 in 无 out）由 out 检查一并拒绝。deps 是完成信号
-            // 不是输入内容，不计入 in 侧（deps+out 纯信号中继仍须 task 或 in 承载输入
-            // 语义）。错误码沿用 EMPTY_NODE_CONNECTION（两条文案都携带，供分发器自纠）。
-            if out.isEmpty then
-              IO.pure(Left(ToolError(
-                s"Node '$nodename' must declare 'out' on creation — a downstream node id or \"Nebula\" (flow exit). " +
-                  "Dangling nodes are no longer supported (create-then-wire-out is retired): wire the out edge in the same NodeEdit. (EMPTY_NODE_CONNECTION)")))
-            else if !task.exists(_.trim.nonEmpty) && ins.isEmpty then
-              IO.pure(Left(ToolError(
-                s"Node '$nodename' must declare an input side — 'task' (entry semantics: starts running on create) or 'in' (barrier upstream). " +
-                  "Out-only relay nodes are no longer supported. (EMPTY_NODE_CONNECTION)")))
-            // merge 校验①（merge-node 批 20260905 §权限选型③；worktree 布尔化后
-            // contains(true) 语义）：合并节点不配 worktree——落地收口在 workspace 根仓
-            // 执行，沙箱根必须 = workspace（.git 在根内可写）；配 worktree=true 则
-            // 沙箱根 = worktree 目录，主仓 .git 在根外 → git 变更 EPERM。
-            else if merge && worktree.contains(true) then
-              IO.pure(Left(ToolError(
-                "merge=true (batch landing sink) must NOT carry 'worktree' — a merge node lands on the workspace " +
-                  "root repo; its sandbox root must be the workspace itself so .git is writable. Drop 'worktree'.")))
-            // merge 校验②（mount-enforce 批 20260905，作者裁定「节点不允许空挂载」）：
-            // merge=true 必须 ≥1 上游（in 非空）——合并节点靠上游 completed 投递清
-            // in-barrier 触发（deliverOut→startNode），零上游=可触发点永不到达=空挂
-            // pending 永不生效（实证 n-371cf932：merge=true、in=[] 悬挂 10+min，靠
-            // 人工 abandon+重建救援）。合法创建顺序：先建上游节点，再建合并节点并
-            // in=<上游 id>（in 声明自动改接各上游 out → 本节点）。
-            else if merge && ins.isEmpty then
-              IO.pure(Left(ToolError(
-                "merge=true (batch landing sink) requires at least one upstream: declare 'in' with existing upstream node id(s). " +
-                  "A merge node triggers only when its in-barrier clears via upstream completed delivery — with zero upstreams " +
-                  "it can never fire (empty mount = pending forever). Create the upstream node(s) first, then create this merge " +
-                  "node with in=<upstream-id(s)> (the in declaration rewires each upstream's out to this node). " +
-                  "(NODE_MERGE_REQUIRES_UPSTREAM)")))
-            else
-              // 1. agent 存在性（新建恒 "general"——库缺 general = 环境残缺，fail-fast）
-              EntityLoader.loadAgent(agentName).flatMap {
-                case None => IO.pure(Left(ToolError(s"Agent 'general' not found in global library — every node executes the general agent (plugin-architecture alignment); install/restore it first")))
-                case Some(_) =>
-                  // 2. worktree 布尔派生（2026-09-05 显式化）：true → 即时创建（裁决 a，
-                  //    fail-fast；失败拒绝建节点）；false/缺省 → workspace 直跑（现状）。
-                  val viaWorktree: IO[Either[ToolError, String]] =
-                    worktree match
-                      case Some(true) =>
-                        val ws = os.Path(rt.project.workspace)
-                        // 必须是 git 仓**根**：--show-toplevel 输出与 workspace 一致。
-                        // 只查 rev-parse 退出码会把「嵌在别的 git 仓子目录里的 workspace」
-                        // 误判为 git 仓（worktree add 会挂到外层仓上）。
-                        val repoRoot = os.proc("git", "-C", ws.toString, "rev-parse", "--show-toplevel")
-                          .call(cwd = ws, check = false, mergeErrIntoOut = true)
-                        val isGitRoot = repoRoot.exitCode == 0 && repoRoot.out.trim() == ws.toString
-                        if !isGitRoot then
-                          IO.pure(Left(ToolError(
-                            s"worktree=true requires the project workspace to be a git repository root (${ws} is not) — " +
-                              "run in the workspace instead (omit worktree), or git init the workspace first.")))
-                        else
-                          IO.blocking(createWorktreeFor(ws, nodename)).flatMap {
-                            case Left(err) => IO.pure(Left(ToolError(
-                              s"worktree=true auto-creation failed for node '$nodename' — node NOT created (fail-fast). git said: $err")))
-                            case Right(bare) => proceed(rt, nodename, agentName, task, description, descriptionLong, Some(bare), preset, plugins, ins, deps, out, merge)
-                          }
-                      case _ => proceed(rt, nodename, agentName, task, description, descriptionLong, None, preset, plugins, ins, deps, out, merge)
-                  // loop verify agent 存在性（§2.6 校验②，0 spawn 拦截）：loop=true 时校验
-                  // verify agent 可装载——缺失即拒（与 worker agent 同纪律，fail-fast）。
-                  loopFlag.config match
-                    case Some(lc) =>
-                      EntityLoader.loadAgent(lc.verify).flatMap {
-                        case None => IO.pure(Left(ToolError(
-                          s"Verify agent '${lc.verify}' not found in global library — loop node requires a valid verify agent (worker '${agentName}', verify '${lc.verify}'). (NODE_LOOP_VERIFY_AGENT)")))
-                        case Some(_) => viaWorktree
-                      }
-                    case None => viaWorktree
-              }
-
-  private def proceed(
-    rt: ProjectRuntime,
-    nodename: String,
-    agentName: String,
-    task: Option[String],
-    description: Option[String],
-    descriptionLong: Option[String],
-    worktree: Option[String],
-    preset: Option[String],
-    plugins: List[String],
-    ins: List[String],
-    deps: List[String],
-    out: List[OutEdge],
-    merge: Boolean = false
-  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry): IO[Either[ToolError, String]] =
-    val nodeId = s"n-${java.util.UUID.randomUUID().toString.take(8)}"
-    val outTargets = out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
-    for
-      // 引用存在性 + 环检测（in 上游 → 本节点；deps 上游 → 本节点；本节点 → out 目标）。
-      // wouldCreateCycle 已含 deps 反向边（deps 设计 §1.2 校验二：混合图单点覆盖）——
-      // create 场景新节点无出边，环检天然为 false，保留调用与 in 对称（防御未来变化）。
-      inOk <- ins.traverse(id => NodeTools.ensureNodeExists(rt, id))
-      depsOk <- deps.traverse(id => NodeTools.ensureNodeExists(rt, id))
-      cycleIn <- ins.traverse(id => NodeTools.wouldCreateCycle(rt, fromId = id, to = nodeId))
-      cycleDeps <- deps.traverse(id => NodeTools.wouldCreateCycle(rt, fromId = id, to = nodeId))
-      outOk <- outTargets.traverse(t => NodeTools.ensureNodeExists(rt, t))
-      cycleOut <- outTargets.traverse(t => NodeTools.wouldCreateCycle(rt, fromId = nodeId, to = t))
-      // P1 校验层①（spec §2.2）：指向 merge 的 on-failed 边 → 硬拒（NODE_MERGE_PASS_ONLY）
-      mergeGate <- NodeTools.ensureMergePassOnly(rt, out)
-      // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed 边且非 merge →
-      // WARNING（不阻断，人工兜底合法）——补投链/死锁可见性由既有 mount-stalled 承载
-      stallWarn <- NodeTools.stalledInWarning(rt, nodeId, nodename, ins, merge)
-      // 批E2 retry 风暴防护（spec §2.3，0 spawn）：邻居限定 + retry 环。值域 =
-      // 本次声明的 in ∪ deps（节点尚未落库，in 邻接关系沿声明）。
-      retryGate <- retryFlag.policy match
-        case None => IO.pure(None)
-        case Some(p) => NodeTools.retryGuard(rt, nodeId, nodename, p, ins ++ deps)
-      // loop detect（§2.6）：入口节点（有 task）同 agent+task 归一化重复 → 拒
-      dup <- task match
-        case Some(t) if t.trim.nonEmpty => NodeTools.findDuplicateDispatch(rt, agentName, t)
-        case _ => IO.pure(None)
-      // 校验短路（0 spawn）
-      validated <-
-        if inOk.exists(_.isLeft) then
-          IO.pure(Left(ToolError(inOk.collectFirst { case Left(e) => e }.getOrElse("invalid in"))))
-        else if depsOk.exists(_.isLeft) then
-          IO.pure(Left(ToolError(depsOk.collectFirst { case Left(e) => e }.getOrElse("invalid deps"))))
-        else if cycleIn.exists(identity) then
-          IO.pure(Left(ToolError(s"Cycle detected: adding in would create a loop (A→B→A) — DAG must stay acyclic")))
-        else if cycleDeps.exists(identity) then
-          IO.pure(Left(ToolError(s"Cycle detected: adding deps would create a loop — DAG must stay acyclic")))
-        else if outOk.exists(_.isLeft) then
-          IO.pure(Left(ToolError(outOk.collectFirst { case Left(e) => e }.getOrElse("invalid out"))))
-        else if cycleOut.exists(identity) then
-          IO.pure(Left(ToolError(s"Cycle detected: out → ${outTargets.mkString(", ")} would create a loop — DAG must stay acyclic")))
-        else if mergeGate.isDefined then
-          IO.pure(Left(ToolError(mergeGate.get)))
-        else if retryGate.isDefined then
-          IO.pure(Left(ToolError(retryGate.get)))
-        else if dup.isDefined then
-          IO.pure(Left(ToolError(s"疑似重复派发: agent '$agentName' already has a ${dup.get.status} node with the same task (node '${dup.get.name}'). Check NodeList before re-dispatching.")))
-        else IO.pure(Right(()))
-      result <- validated match
-        case Left(err) => IO.pure(Left(err))
-        case Right(_) =>
-          val now = System.currentTimeMillis()
-          val node = NodeDef(
-            id = nodeId,
-            name = nodename,
-            agent = agentName,
-            worktree = worktree,
-            preset = preset,
-            task = task,
-            description = description.map(_.trim),
-            descriptionLong = descriptionLong.map(_.trim),
-            in = Nil,
-            deps = deps,
-            merge = merge,
-            // LoopNode 配置（LoopNode 批 2026-09-06）：loop=true 时 NodeDef.loop=Some(LoopConfig)，
-            // 否则 None（普通节点）。loop 不构成「可立即运行」的输入语义——仍须 task/in 承载
-            // 输入（与 deps 同款：完成信号/迭代语义不是输入），入口/barrier 判定不变。
-            loop = loopFlag.config,
-            // P2 failed 回跳 retry 策略（spec §2.3）：未传 None（旧行为）；传了 = 校验
-            // 通过的 RetryPolicy（下游单侧持有）。
-            retry = retryFlag.policy,
-            // dispatch-notify 回流标志（创建期按需开启；缺省 false=分发器新建节点
-            // 不继承——收敛保证见 DispatchNotify）
-            notifyDispatcher = notify.flag,
-            out = OutEdge.canonical(out),
-            status = if task.isDefined && ins.isEmpty then NodeLifecycle.Pending else NodeLifecycle.Wiring,
-            createdAt = now,
-            plugins = plugins
-          )
-          // 单事务：加节点（deps 单侧持有，无上游侧镜像边要写）+ in 边（上游 out 追加 → 本节点）
-          // + out 边（每个非 Nebula 目标 in 追加本节点）。P1 多边：in 声明为上游 out **追加**
-          // 指向本节点的缺省 pass 边（不覆盖既有门控，扇出拓扑零扰动）。
-          val mutateIO = rt.store.mutate { s =>
-            val withNode = s.copy(nodes = s.nodes + (nodeId -> node))
-            val insNodes = ins.foldLeft(withNode.nodes)((acc, upId) => NodeTools.appendEdgeTo(acc, upId, nodeId))
-            val withIns = withNode.copy(nodes = insNodes)
-            val withInList = ins.foldLeft(withIns) { (acc, upId) =>
-              acc.nodes.get(nodeId) match
-                case Some(n) => acc.copy(nodes = acc.nodes.updated(nodeId, n.copy(in = (n.in :+ upId).distinct)))
-                case None => acc
-            }
-            val outNodes = out.foldLeft(withInList.nodes)((acc, e) =>
-              if e.to != OutEdge.NebulaTarget then
-                acc.get(e.to) match
-                  case Some(tn) => acc.updated(e.to, tn.copy(in = (tn.in :+ nodeId).distinct))
-                  case None => acc
-              else acc)
-            withInList.copy(nodes = outNodes.updated(nodeId, outNodes(nodeId).copy(out = OutEdge.canonical(out))))
-          }
-          val createIO: IO[Unit] =
-            mutateIO.flatMap { s =>
-              // 新节点事件（NodeList 同构 payload，in/out 以 store 最终态为准）
-              rt.engine.emitCreated(s.nodes(nodeId)) *>
-                // wiring 变更事件（barrier 合并接线 §2.3）：上游 out 追加指向本节点 +
-                // out 目标 in 追加——此前只有 nodeCreated，改写的节点无事件（缺失补齐）
-                NodeTools.emitWiringUpdates(rt, ins ++ out.map(_.to).filterNot(_ == OutEdge.NebulaTarget)) *>
-                // D1 修复（验收④b，@a4b5d184 spec 实证）：in 引用已完成上游（活动区
-                // 或归档区——findNode 兜底）→ 立即投递其结果，等同 §2.3「悬空节点
-                // out 接入下游 = 已完成节点改接」路径。归档节点活动区已消失，
-                // completeNode 的 deliverOut 不会再触发，唯一投递入口就是这里。
-                // 运行中上游不投递（barrier 等待语义——completeNode 时 deliverOut 自然投）。
-                // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游节点终态，
-                // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
-                // merge 分流（mount-enforce 批）：合并节点创建时 in 引用已 failed 的
-                // 上游（创建顺序翻转后的合法形态）——failed 错误文本≠产物，不作输入
-                // 投递，走 MergeNodePolicy 转 blocked 可见终态不悬挂（与 deliverFailed
-                // 运行期路径同语义单点 mergeBlockedByUpstreamFailure）；非 merge 下游
-                // 的 failed 错误投递语义保持不变。
-                NodeTools.runDetached(rt, s"deliver retained upstream results -> $nodeId")(
-                  ins.traverse_ { upId =>
-                    rt.store.findNode(upId).flatMap {
-                      // R1（blocked 反馈重入设计 §6）：blocked 是终态且 result=反馈渲染串，
-                      // 但反馈串不是可投结果——D1 显式排除 blocked（failed 错误投递语义保持不变）
-                      case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
-                        if s.nodes(nodeId).merge && up.status == NodeLifecycle.Failed then
-                          rt.engine.mergeBlockedByUpstreamFailure(s.nodes(nodeId), up, up.result.get)
-                        else rt.engine.deliverOutTo(up, nodeId, up.result.get)
-                      case _ => IO.unit
-                    }
-                  }
-                ) *>
-                // D1-deps 补触发（deps 设计 §1.2，裁定③内明确要求）：接线后 deps 全满足
-                // 且 in barrier 已归零且自身 wiring/pending → 立即启动（上游已 completed
-                // 时接线即时触达，含归档上游——findNode 兜底）。与入口启动互斥（入口条件
-                // task && ins.isEmpty 独占启动，防双 startNode 并发 spawn）；ins 非空时
-                // D1 in-delivery 链的 barrier 结算同样经 startNode 闸门，双路径幂等无害。
-                (if !(task.isDefined && ins.isEmpty) then
-                   NodeTools.runDetached(rt, s"D1-deps settle -> $nodeId")(
-                     rt.store.getNode(nodeId).flatMap {
-                       case Some(n) if (n.status == NodeLifecycle.Wiring || n.status == NodeLifecycle.Pending)
-                           && n.in.forall(n.deliveredTo.contains) =>
-                         rt.engine.depsSatisfied(n).flatMap(ok => if ok then rt.engine.startNode(n.id) else IO.unit)
-                       case _ => IO.unit
-                     }
-                   )
-                 else IO.unit) *>
-                // 入口节点（task 且无 in）→ 创建即运行。后台化（收口③根因修复）：
-                // startNode 同步等节点整个任务跑完，直接调用会把分发器 turn 卡在
-                // NodeEdit 上直到节点完成（实测单 turn 56min），违背工具契约
-                // 「async, non-blocking」。deps 不构成「可立即运行」——即使误判也被
-                // startNode 内 deps 闸门拦下（deps 设计 §1.2）。
-                // 合并节点例外（merge-node 批 20260905）：merge=true 时 task 只是
-                // 落地指令集，**不构成可立即运行的入口语义**——落地收口必须等齐
-                // 全部上游（in barrier 归零后由上游投递链经 startNode 启动）。
-                // 否则合并节点会在零上游时开跑（S1 E2E 实测捕获）。
-                (if task.isDefined && ins.isEmpty && !merge then
-                   NodeTools.runDetached(rt, s"start entry node $nodeId")(rt.engine.startNode(nodeId))
-                 else IO.unit)
-            }
-          createIO.as(Right(
-            s"Node '$nodename' ($nodeId) created in project '${rt.project.name}'" +
-              (if task.isDefined && ins.isEmpty && !merge then " — entry node started running." else "") +
-              (if deps.nonEmpty then s" deps ← ${deps.mkString(",")}" else "") +
-              (if out.nonEmpty then s" out → ${out.map(_.to).mkString(", ")}" else "") +
-              (retryFlag.policy match
-                case Some(p) => s" retry ← ${p.upstream}:max=${p.max}"
-                case None => "") +
-              (if stallWarn.nonEmpty then "\n" + stallWarn.mkString("\n") else "")
-          ))
-    yield result
-    end for
-
-  // ── 编辑 ─────────────────────────────────────────────
-
-  /** abandon 动作（blocked 反馈重入设计 §7.7）：终态节点 → status=cancelled + 审计
-    * 事件（无显示 TTL——2026-09-07 裁定：failed/cancelled 永不自动归档，主图保留
-    * 待上层处置）。分发器处置 blocked 节点的「放弃」载体；NodeCancel 语义不动（仅 running）。
-    * R2 纪律：mutate 内现读 fresh，fresh 已非终态（并发重激活）→ 拒写。
-    *
-    * 接受域扩展（裁定①待实施语义，deps 设计 §1.6）：终态 ∪ wiring/pending——拓扑
-    * 清场时退役节点常是活的 wiring/pending（「悬空活节点」无处置出口），abandon 是
-    * 其唯一出口（NodeCancel 仅 running）。wiring/pending 无在飞会话，无中断副作用；
-    * 被退役节点的上游其后完成时 deliverOut → startNode 幂等跳过（cancelled ∈ Terminal）。
-    *
-    * 死会话 running 收殓（清场 c-②，20260903 03:04 清场误杀事故复盘）：running 且
-    * 无在飞执行 fiber（会话死于传输中断/实例重启泄漏）→ 可收殓（cancelled，无 TTL，
-    * 留主图——2026-09-07 裁定）。
-    * 误杀防护（硬约束）：活 running（isRunning=true = 有在飞 fiber，取消信号可达）
-    * 绝对拒绝，只能走 NodeCancel。无复活竞态：running 节点不会被 startNode 二次
-    * spawn（入口状态幂等跳过），死会话不可能复活 → 预检后无需事务内复查 IO 信号。 */
-  private def abandonNode(rt: ProjectRuntime, node: NodeDef): IO[Either[ToolError, String]] =
-    def doAbandon(allowDeadRunning: Boolean): IO[Either[ToolError, String]] =
-      for
-        now <- IO(System.currentTimeMillis())
-        s <- rt.store.mutate { st =>
-          st.nodes.get(node.id) match
-            // R2：fresh 仍可收殓（终态/wiring/pending；或预检过死会话的 running）
-            // 才写——并发重激活成 running 且未预检死会话时拒写（该窗口内节点已有
-            // 在飞会话，abandon 不得中断）
-            case Some(fresh) if fresh.status != NodeLifecycle.Running || allowDeadRunning =>
-              st.copy(nodes = st.nodes.updated(node.id, fresh.copy(
-                status = NodeLifecycle.Cancelled,
-                completedAt = Some(now),
-                // 2026-09-07 作者裁定：cancelled 无 TTL 强制清——abandon 是上层
-                // 裁决动作，节点留主图（不再 24h 后静默消失），由后续拓扑清理处置。
-                ttlExpireAt = None)))
-            case _ => st // 状态已变（并发重激活/移除）→ 拒写
-        }
-        _ <- s.nodes.get(node.id) match
-          case Some(c) if c.status == NodeLifecycle.Cancelled =>
-            rt.engine.emitUpdated(c) *>
-              FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "abandoned",
-                s"node abandoned via NodeEdit (${node.status}${if allowDeadRunning && node.status == NodeLifecycle.Running then "/dead-session" else ""} → cancelled, retained on map)") *>
-              // P2 G11（spec §3.4）：cancelled 级联清理该会话 pending asks（与
-              // cancelNode/reap 同款单点——问出问题的节点被放弃，卡片必须关闭）。
-              rt.engine.cleanupPendingAsks(c.sessionRef)
-          case _ => IO.unit
-      yield Right(s"Node '${node.name}' abandoned — cancelled (retained on map, no TTL; result retained)")
-
-    if node.status == NodeLifecycle.Running then
-      rt.engine.isRunning(node.id).flatMap {
-        case true =>
-          IO.pure(Left(ToolError(
-            s"Node '${node.name}' is running with a live session — abandon refused (mis-kill protection: abandon accepts terminal/wiring/pending and dead-session running only). Use NodeCancel for running nodes.")))
-        case false =>
-          doAbandon(allowDeadRunning = true)
-      }
-    else doAbandon(allowDeadRunning = false)
-
-  private def editNode(
-    rt: ProjectRuntime,
-    node: NodeDef,
-    task: Option[String],
-    description: Option[String],
-    descriptionLong: Option[String],
-    abandon: Boolean,
-    worktree: Option[Boolean],
-    preset: Option[String],
-    pluginsOpt: Option[List[String]],
-    inJson: Option[Json],
-    depsJson: Option[Json],
-    outJson: Option[Json],
-    ctx: ToolContext
-  )(implicit notify: NodeEditNotify, loopFlag: NodeEditLoop, retryFlag: NodeEditRetry): IO[Either[ToolError, String]] =
-    // ── 动作分支 ──
-    if abandon then abandonNode(rt, node)
-    // worktree 创建期绑定闸（2026-09-05 显式布尔改造）：worktree 是 create-time
-    // 参数——编辑路径出现即拒（旧实现对编辑路径静默忽略，布尔语义下静默忽略
-    // = 「我说要建 worktree 你却没建」的陷阱；显式拒绝 + 指引重建）。
-    else if worktree.isDefined then
-      IO.pure(Left(ToolError(
-        s"'worktree' is a create-time parameter — node '${node.name}' already exists ${if node.worktree.isDefined then s"with worktree '${node.worktree.get}'" else "in the workspace"}. " +
-          "It cannot be added/changed on an existing node; recreate the node if the binding is wrong. (WORKTREE_CREATE_ONLY)")))
-    // 校验三（deps 设计 §1.2）：编辑 running 下游传 deps → 同款冻结拒绝（「输入已冻结」
-    // 对齐 in 语义）；给下游加 deps 的上游是 running 则合法（等它完成正是 deps 语义）。
-    else if depsJson.isDefined && node.status == NodeLifecycle.Running then
-      IO.pure(Left(ToolError(
-        s"Node '${node.name}' is running — its input is frozen. NodeCancel it first, then rewire.")))
-    else
-      // out 处理（单值替换/断开）——同步校验先 match，再进 IO 链
-      NodeTools.parseOut(outJson) match
-        case Left(err) => IO.pure(Left(ToolError(err)))
-        // 校验六-a（连接规范收紧 v2，裁定④）：out 断开（显式 null/"null" 且节点现有
-        // out）→ 拒绝——改接新目标而非断开（「先断开再改接」废弃）。存量悬空节点
-        //（out 已 null）显式传 null = 无状态变更 no-op，放行（口径⑤ 存量不回溯）。
-        case Right(newOut) if outJson.isDefined && newOut.isEmpty && node.out.nonEmpty =>
-          IO.pure(Left(ToolError(
-            s"Node '${node.name}' has an out edge — disconnecting (out=null) is no longer supported. " +
-              "Rewire to a new target instead (out=<node-id|\"Nebula\">); every node keeps its out edge. (EMPTY_NODE_CONNECTION)")))
-        case Right(newOut) =>
-          // deps 处理（deps 设计 §1.2，replace-on-provide 语义裁定）：未传不改；
-          // 传了（任何形态，含 [] / null）整体替换——清空是合法改接动作（清空后仍须
-          // 剩至少一种连接，校验六）。deps 上游侧无句柄（下游单侧持有），replace 是
-          // 下游自持列表唯一完整 CRUD 原语，对分发器幂等。
-          NodeTools.parseIn(depsJson).left.map(err => err.replace("'in'", "'deps'")) match
-            case Left(err) => IO.pure(Left(ToolError(err)))
-            case Right(newDeps) =>
-              val depsProvided = depsJson.isDefined
-              // P1: out 变更判定与目标集（canonical 比较消歧「(pass)B」与既有单边等价）
-              val outProvided = outJson.isDefined
-              val newTargets = newOut.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
-              val oldTargets = node.out.map(_.to).filterNot(_ == OutEdge.NebulaTarget).distinct
-              val outChanged = outProvided && OutEdge.canonical(newOut) != OutEdge.canonical(node.out)
-              // D2 修复（验收②c，@a4b5d184 spec 实证）：旧目标已消费 → 拒绝改接。
-              // 完成节点改投新目标时，若被移除的旧目标已启动/已完成（结果已投递、输入已消费），
-              // 改投会造成语义漂移 + 重复投递风险。保留「旧目标未启动（Wiring/Pending）→
-              // 原子改投」分支（§2.3 场景表第 3 行，②b PASS 依赖）；断开（out=null）已由
-              // 上方 EMPTY_NODE_CONNECTION 拒绝、不投新目标无重复投递。**P1 多边改接只对
-              // 被移除目标检查**（扇出改接可保留部分目标，保留者不拦）。
-              val removedTargets = if outProvided then oldTargets.diff(newTargets) else Nil
-              val consumedGuard: IO[Either[String, Unit]] =
-                if node.status != NodeLifecycle.Completed then IO.pure(Right(()))
-                else removedTargets.traverse(oldT => rt.store.findNode(oldT).map {
-                  case Some(x) if x.status != NodeLifecycle.Wiring && x.status != NodeLifecycle.Pending =>
-                    Left(
-                      s"Node '${node.name}' result already delivered to '${x.name}' (status=${x.status}) — input consumed. " +
-                        s"NodeCancel it first, then rewire, then recreate the old target node."
-                    )
-                  case _ => Right(())
-                }).map(_.collectFirst { case Left(e) => e }.toLeft(()))
-              // 守卫：新目标已运行 → 拒绝（§2.2 状态守卫，对所有声明的 out 目标——含未变者，
-              // 与旧单值行为一致）+ P1 校验层①（NODE_MERGE_PASS_ONLY：指向 merge 的
-              // on-failed 边硬拒）+ 旧目标已消费 → 拒绝（§2.3）
-              val guard: IO[Either[String, Unit]] =
-                if outProvided && newTargets.nonEmpty then
-                  newTargets.traverse(t => NodeTools.ensureTargetNotRunning(rt, t)).flatMap { rs =>
-                    rs.collectFirst { case Left(e) => e } match
-                      case Some(e) => IO.pure(Left(e))
-                      case None =>
-                        NodeTools.ensureMergePassOnly(rt, newOut).flatMap {
-                          case Some(gate) => IO.pure(Left(gate): Either[String, Unit])
-                          case None       => consumedGuard
-                        }
-                  }
-                else consumedGuard
-              guard.flatMap {
-                case Left(err) => IO.pure(Left(ToolError(err)))
-                case Right(_) =>
-                  // 环检测（新 out：每个非 Nebula 目标）
-                  val cycle: IO[List[Boolean]] = newTargets.traverse(t => NodeTools.wouldCreateCycle(rt, node.id, t))
-                  cycle.flatMap { isCycles =>
-                    val cycleTarget = newTargets.zip(isCycles).collectFirst { case (t, true) => t }
-                    if cycleTarget.isDefined then
-                      IO.pure(Left(ToolError(s"Cycle detected: out → ${cycleTarget.get} would create a loop — DAG must stay acyclic")))
-                    else
-                      // out 变更（原子：被移除目标 in 移除 + 新目标 in 追加）。outJson 未出现
-                      // = 不改动（parseOut 注释「not passed = no change」的落地）。
-                      val setOutIO =
-                        if outProvided && outChanged then NodeTools.setOut(rt, node.id, newOut)
-                        else IO.unit
-                      val inAdds = NodeTools.parseIn(inJson)
-                      inAdds match
-                        case Left(err) => IO.pure(Left(ToolError(err)))
-                        case Right(adds) =>
-                          // deps 校验一 + 二（deps 设计 §1.2）：目标存在（findNode 归档兜底）
-                          // + 环检测（wouldCreateCycle 单点已含 deps 反向边 = in+deps 混合图
-                          // 覆盖）。replace 语义：对替换后全集逐条检查（旧 deps 边将消失，
-                          // 不在检查路径——环路径经 successors=out ∪ deps 反向，旧 deps 是
-                          // 本节点入边不参与）。
-                          val depsChecks: IO[List[Either[String, Unit]]] =
-                            if depsProvided then
-                              newDeps.traverse { upId =>
-                                NodeTools.ensureNodeExists(rt, upId).flatMap {
-                                  case Left(e) => IO.pure(Left(e): Either[String, Unit])
-                                  case Right(_) =>
-                                    NodeTools.wouldCreateCycle(rt, upId, node.id).map {
-                                      case true => Left(s"Cycle detected: adding deps from '$upId' would create a loop — DAG must stay acyclic")
-                                      case false => Right(())
-                                    }
-                                  }
-                              }
-                            else IO.pure(Nil)
-                          depsChecks.flatMap { dChecks =>
-                          // 校验六（裁定①零连接下限，改接侧）：断开/清空单边合法，但编辑
-                          // 后交互终态连接集（in ∪ deps ∪ out）为空 → 拒绝（同码，改接侧
-                          // 文案）。in 只增（finalIn = 既有 + 追加）；result 不因断开清除
-                          //（既有语义，裁定①边界注记）。与 deps 校验一/二一起构成前置拒绝集。
-                          // 注意 out 的「未传」与「显式 null 断开」经 parseOut 后同为 None——
-                          // 必须按 outJson 是否出现区分：传了才视为断开后的 None，未传保持原 out。
-                          val finalIn = node.in ++ adds
-                          val finalDeps = if depsProvided then newDeps else node.deps
-                          val finalOut = if outJson.isDefined then newOut else node.out
-                          // notifyDispatcher 校验（dispatch-notify 批）：设置/撤销域为
-                          // wiring/pending/running（完成时行为开关，不属输入冻结域）；
-                          // 终态拒（blocked 出口=重激活）。
-                          val notifyStatusOk = !notify.provided ||
-                            (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
-                          // loop 校验（LoopNode 批 2026-09-06）：设置/撤销域同 hold——enabled
-                          // 开关是行为开关（loop 迭代仅在 running 期驱动、PASS 完成时经
-                          // completeNode 走 hold/merge/投递），wiring/pending/running 可设；
-                          // 终态/held 拒（held 出口=release，blocked 出口=重激活）。blocked
-                          // 节点 loop 变更走 actualChange → 重激活（下方 reactivate 分支应用）。
-                          val loopStatusOk = !loopFlag.provided ||
-                            (node.status == NodeLifecycle.Wiring || node.status == NodeLifecycle.Pending || node.status == NodeLifecycle.Running)
-                          val earlyReject: Option[ToolError] =
-                            validateDescription(description, creating = false).orElse(
-                            validateDescriptionLong(descriptionLong)).orElse(
-                            if finalIn.isEmpty && finalDeps.isEmpty && finalOut.isEmpty then
-                              Some(ToolError(
-                                s"Node '${node.name}' must keep at least one connection — this rewiring would leave it disconnected. (EMPTY_NODE_CONNECTION)"))
-                            else if dChecks.exists(_.isLeft) then
-                              Some(ToolError(dChecks.collectFirst { case Left(e) => e }.getOrElse("invalid deps")))
-                            else if !notifyStatusOk then
-                              Some(ToolError(
-                                s"notifyDispatcher can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered). re-activation is the exit for blocked/failed."))
-                            else if !loopStatusOk then
-                              Some(ToolError(
-                                s"loop can only be set or withdrawn before completion (wiring/pending/running) — node '${node.name}' is ${node.status} (result already delivered). re-activation is the exit for blocked/failed."))
-
-                            else None
-                            )
-                          // 前置拒绝集统一闸（description 校验 + 零连接 + deps 校验）
-                          if earlyReject.isDefined then IO.pure(Left(earlyReject.get))
-                          // 批E2 retry 风暴防护（spec §2.3，0 spawn）：邻居限定（值域 =
-                          // 应用本次改动后的最终 in ∪ deps）+ retry 环。校验失败卡在
-                          // 全部写路径（in 追加/重激活/写回）之前——本次编辑零副作用。
-                          else (retryFlag.policy match
-                            case None => IO.pure(None)
-                            case Some(p) =>
-                              NodeTools.retryGuard(rt, node.id, node.name, p, finalIn ++ finalDeps)
-                          ).flatMap {
-                            case Some(err) => IO.pure(Left(ToolError(err)))
-                            case None => {
-                          // blocked/failed 重激活（blocked 反馈重入设计 §6 #5；failed
-                          // 放开=2026-09-07 批作者裁定③）：编辑 blocked/failed 节点且
-                          // task/description/in/out/deps 实际变更 → status 回
-                          // wiring/pending、deliveredTo 清空、completedAt/ttlExpireAt/
-                          // startedAt 复位，随后 D1 补投递链重投全部已完成上游。
-                          // blocked 版 blockCount 保留（§3.1 轮次历史）；failed 版轮次
-                          // 历史复位（重跑非语义阻塞轮次，见下方事务内注释）。
-                          // （agent 已退役不可编辑——重激活沿用节点自身 agent。）
-                          val taskChanged = task.exists(t => NodeTools.normalizeTask(t) != node.task.map(NodeTools.normalizeTask).getOrElse(""))
-                          val descriptionChanged = description.exists(d => d.trim != node.description.getOrElse(""))
-                          val depsChanged = depsProvided && newDeps != node.deps
-                          val loopChanged = loopFlag.provided && loopFlag.config != node.loop
-                          // out 未传 ≠ 变更（actualChange quirk 修，2026-09-07）：
-                          // parseOut 未传=Nil 与 node.out 非空恒不等——裸比较会让
-                          // 终态节点「未传 out 的编辑」恒判 actualChange=true → 意外重
-                          // 激活，违背描述「No-op if nothing actually changed」。与
-                          // 上方 setOutIO / finalOut 同款 outProvided 守卫（canonical
-                          // 比较消歧段语法等价形态）。
-                          val actualChange = taskChanged || descriptionChanged || outChanged || adds.nonEmpty || depsChanged || loopChanged
-                          val reactivate = (node.status == NodeLifecycle.Blocked || node.status == NodeLifecycle.Failed) && actualChange
-                          val appliedTask = task.orElse(node.task)
-                          val appliedDeps = if depsProvided then newDeps else node.deps
-                          // wiring 变更涉及节点集（最终态事件）：本节点（in/out 变更，in 追加
-                              // 也改自身 in）、in 上游（out 追加指向本节点）、被移除/新增 out
-                              // 目标（in 增删）。deps 目标不入列——下游单侧持有，上游
-                              // payload 无「被谁依赖」字段，其卡片无需事件。
-                              val affected: List[String] =
-                                val fromOut =
-                                  if outChanged then oldTargets ++ newTargets
-                                  else Nil
-                                (node.id +: (adds ++ fromOut)).distinct
-                              for
-                                // in 追加校验先行（存在性 + 环检），全部通过才动 store——旧实现
-                                // traverse 内 raiseError 后被 handleErrorWith 吞成 Left 值丢弃，
-                                // 后续 setOutIO/mutate 照跑且工具误报成功（一并修正）
-                                inChecks <- adds.traverse { upId =>
-                                  NodeTools.ensureNodeExists(rt, upId).flatMap {
-                                    case Left(e) => IO.pure(Left(e): Either[String, Unit])
-                                    case Right(_) =>
-                                      NodeTools.wouldCreateCycle(rt, upId, node.id).map {
-                                        case true => Left(s"Cycle detected: adding in from '$upId' would create a loop (A→B→A) — DAG must stay acyclic")
-                                        case false => Right(())
-                                      }
-                                    }
-                                }
-                                inResult <-
-                                  if inChecks.exists(_.isLeft) then
-                                    IO.pure(Left(ToolError(inChecks.collectFirst { case Left(e) => e }.getOrElse("invalid in"))))
-                                  else
-                                    for
-                                      // in 追加（barrier）：每个上游 out 追加指向本节点的缺省
-                                      // pass 边（P1 多边镜像——不覆盖上游既有边/门控，原子改投
-                                      // §2.3 的单值语义在多边下自然兼容）。归档上游（活动区无
-                                      // 副本）走 setOut 归档分支：活动侧目标 in 追加 + 归档 out
-                                      // 镜像补写（旧 setOut(rt, upId, Some(node.id)) 同域语义）。
-                                      _ <- adds.traverse_(upId =>
-                                        rt.store.getNode(upId).flatMap {
-                                          case Some(up) if !up.out.exists(_.to == node.id) =>
-                                            NodeTools.setOut(rt, upId, up.out :+ OutEdge(node.id))
-                                          case Some(_) => IO.unit // 边已存在（幂等）
-                                          case None =>
-                                            rt.store.findNode(upId).flatMap {
-                                              case Some(archUp) if !archUp.out.exists(_.to == node.id) =>
-                                                NodeTools.setOut(rt, upId, archUp.out :+ OutEdge(node.id))
-                                              case _ => IO.unit
-                                            }
-                                        })
-                                      _ <- setOutIO
-                                      // deps 替换写回（非重激活路径；重激活在下方事务内一并写）。
-                                      // deps 单侧持有：只更新本节点字段，无上游侧镜像边。
-                                      _ <-
-                                        if depsProvided && depsChanged && !reactivate then
-                                          rt.store.mutate { s =>
-                                            s.nodes.get(node.id) match
-                                              case Some(fresh) =>
-                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(deps = newDeps)))
-                                              case None => s
-                                          }.void
-                                        else IO.unit
-                                      // plugins 替换写回（阶段 2b §B.4 第 3 步，replace-on-provide
-                                      // 与 deps 同款）：passed（any form, including []）= 整列表
-                                      // 替换；未传 = 不改动。存在性+信任门校验已在 call() 前置
-                                      // 拦截；这里纯写。对运行中节点仅改元数据——已运行会话的
-                                      // 注入/MCP 不回溯（能力集 spawn 时冻结），下次运行生效。
-                                      _ <-
-                                        if pluginsOpt.isDefined then
-                                          rt.store.mutate { s =>
-                                            s.nodes.get(node.id) match
-                                              case Some(fresh) =>
-                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(plugins = pluginsOpt.get)))
-                                              case None => s
-                                          }.void
-                                        else IO.unit
-                                      // description 写回（2026-09-05 创建必写批，编辑可 update）：
-                                      // 校验（非空/≤200）已在 earlyReject 前置拦截；这里纯写
-                                      //（trim 归一，与 create 同源）。blocked 节点的 description
-                                      // 变更参与重激活判定（descriptionChanged）；非 blocked 节点
-                                      // 纯元数据更新（不影响执行——description 是展示层）。
-                                      _ <-
-                                        if description.isDefined && !reactivate then
-                                          rt.store.mutate { s =>
-                                            s.nodes.get(node.id) match
-                                              case Some(fresh) =>
-                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(description = description.map(_.trim))))
-                                              case None => s
-                                          }.void
-                                        else IO.unit
-                                      // descriptionLong 写回（裁定⑤c 双层化 20260907）：纯展示
-                                      // 元数据（detail 通道/前端详情消费，不进默认载荷）——
-                                      // 不参与重激活判定（任务语义信号由 task/description 承载）。
-                                      _ <-
-                                        if descriptionLong.isDefined && !reactivate then
-                                          rt.store.mutate { s =>
-                                            s.nodes.get(node.id) match
-                                              case Some(fresh) =>
-                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(descriptionLong = descriptionLong.map(_.trim))))
-                                              case None => s
-                                          }.void
-                                        else IO.unit
-                                      // notifyDispatcher 设置/撤销写回（dispatch-notify 批）：
-                                      // 校验已在 earlyReject 拦截（终态 → 拒）；running 合法
-                                      // （完成时行为开关）。事务内现读 fresh（R2 纪律）+ 状态双重保险。
-                                      _ <-
-                                        if notify.provided then
-                                          rt.store.mutate { s =>
-                                            s.nodes.get(node.id) match
-                                              case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
-                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(notifyDispatcher = notify.flag)))
-                                              case _ => s
-                                          }.void
-                                        else IO.unit
-                                      // loop 设置/撤销写回（LoopNode 批 2026-09-06）：校验已在
-                                      // earlyReject 拦截（终态/held → 拒）；wiring/pending/running 合法
-                                      // （loop 是 running 期行为开关）。事务内现读 fresh（R2 纪律）+
-                                      // 状态双重保险；blocked 重激活在下方 reactivate 分支应用（不再走此）。
-                                      _ <-
-                                        if loopFlag.provided && !reactivate then
-                                          rt.store.mutate { s =>
-                                            s.nodes.get(node.id) match
-                                              case Some(fresh) if fresh.status == NodeLifecycle.Wiring || fresh.status == NodeLifecycle.Pending || fresh.status == NodeLifecycle.Running =>
-                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(loop = loopFlag.config)))
-                                              case _ => s
-                                          }.void
-                                        else IO.unit
-                                      // retry 设置/清除写回（批E2 P2，spec §2.3）：replace-on-provide
-                                      //（传了即整体替换，null=清除）；不参与重激活判定（retry 是
-                                      // 「下一次失败」的行为开关，语义同 notifyDispatcher——已有
-                                      // failed 节点要立即生效须另行重激活，如改 task）。
-                                      // 语义校验（邻居/环）已在写路径前 retryGuard 拦截；此处纯写
-                                      //（任意状态可设——failed 节点配置 retry 后，人工重激活触发的
-                                      // 重跑再失败时自动回跳）。
-                                      _ <-
-                                        if retryFlag.provided then
-                                          rt.store.mutate { s =>
-                                            s.nodes.get(node.id) match
-                                              case Some(fresh) =>
-                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(retry = retryFlag.policy)))
-                                              case None => s
-                                          }.void
-                                        else IO.unit
-                                      // blocked/failed 重激活写回（R2 纪律）：事务内现读
-                                      // fresh，fresh 仍 Blocked/Failed 才写；状态已变（并发
-                                      // abandon/重激活）→ 拒写不重激活。failed 版差异
-                                      // （2026-09-07 批，作者裁定①②语义点）：**轮次历史复位**
-                                      // 而非保留——重跑不是语义阻塞轮次：blockCount→0、
-                                      // blockedFeedback 清除（blockCount 复位后旧反馈成孤
-                                      // 儿数据）；notifySentAt 清除（重激活后再次真失败 →
-                                      // 分发器再获通知——重试回路非循环口径，DispatchNotify
-                                      // §2.2；inFlight 占位在通知尝试后已释放，不会挡第二次）。
-                                      // blocked 版三者保留（blockCount 记语义阻塞轮次，
-                                      // FeedbackRouter LoopCap 依赖）。
-                                      didReactivate <-
-                                        if reactivate then
-                                          rt.store.mutate { s =>
-                                            s.nodes.get(node.id) match
-                                              case Some(fresh) if fresh.status == NodeLifecycle.Blocked || fresh.status == NodeLifecycle.Failed =>
-                                                val fromFailed = fresh.status == NodeLifecycle.Failed
-                                                val nextStatus =
-                                                  if appliedTask.exists(_.trim.nonEmpty) && fresh.in.isEmpty then NodeLifecycle.Pending
-                                                  else NodeLifecycle.Wiring
-                                                s.copy(nodes = s.nodes.updated(node.id, fresh.copy(
-                                                  status = nextStatus,
-                                                  task = appliedTask,
-                                                  description = description.map(_.trim).orElse(fresh.description),
-                                                  descriptionLong = descriptionLong.map(_.trim).orElse(fresh.descriptionLong),
-                                                  deps = appliedDeps,
-                                                  loop = loopFlag.config.orElse(fresh.loop), // loop 变更随重激活应用
-                                                  result = None, // blocked 反馈渲染串 / failed 错误文本均不复存在
-                                                  deliveredTo = Nil,
-                                                  // V8: 重激活 = 该节点身份重跑一轮，out=Nebula 投递
-                                                  // 记账同样清零——重跑完成后的结果重新投递+记账。
-                                                  nebulaDeliveredAt = None,
-                                                  startedAt = None,
-                                                  completedAt = None,
-                                                  ttlExpireAt = None,
-                                                  blockCount = if fromFailed then 0 else fresh.blockCount, // blocked 保留轮次 / failed 复位
-                                                  blockedFeedback = if fromFailed then None else fresh.blockedFeedback,
-                                                  notifySentAt = if fromFailed then None else fresh.notifySentAt)))
-                                              case _ => s
-                                          }.map(s2 =>
-                                            s2.nodes.get(node.id).exists(n => n.status == NodeLifecycle.Wiring || n.status == NodeLifecycle.Pending))
-                                        else IO.pure(false)
-                                      _ <- if didReactivate then
-                                        val reactivateNote =
-                                          if node.status == NodeLifecycle.Failed then
-                                            s"failed node edited (round history reset: blockCount→0, notifySentAt cleared) → rerun: ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
-                                          else
-                                            s"blocked node edited (round ${node.blockCount} preserved) → ${appliedTask.map(t => s"task=${t.take(80)}").getOrElse("")}"
-                                        FlowMapEventLog.append(rt.project.workspace, rt.project.name, node.id, "reactivated", reactivateNote) *>
-                                          // 重激活补投递（design §6 #5「随后走现有 D1 补投递链」）：
-                                          // deliveredTo 已清空 → 全部 in 上游（终态有结果、非 blocked）
-                                          // 重投（deliverOutTo dedup 幂等）→ barrier 结算 → 启动；
-                                          // 入口节点（task 且无 in）→ 直接启动。后台化（runDetached：
-                                          // 直接调用会把工具 fiber 卡到节点终态）。
-                                          NodeTools.runDetached(rt, s"reactivated redelivery + barrier settle -> ${node.id}")(
-                                            rt.store.getNode(node.id).flatMap {
-                                              case None => IO.unit
-                                              case Some(n) =>
-                                                n.in.traverse_ { upId =>
-                                                  rt.store.findNode(upId).flatMap {
-                                                    case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
-                                                      rt.engine.deliverOutTo(up, n.id, up.result.get)
-                                                    case _ => IO.unit
-                                                  }
-                                                } *> rt.store.getNode(node.id).flatMap {
-                                                  case Some(n2) if n2.in.nonEmpty && n2.in.forall(n2.deliveredTo.contains) =>
-                                                    rt.engine.startNode(n2.id)
-                                                  case Some(n2) if n2.in.isEmpty && n2.status == NodeLifecycle.Pending =>
-                                                    rt.engine.startNode(n2.id)
-                                                  case _ => IO.unit
-                                                }
-                                            }
-                                          )
-                                      else IO.unit
-                                      // 已完成节点改接 → 立即投递（§2.3：结果缓冲/归档 → 向新目标
-                                      // 投递）。P1 多边：向全部新声明目标投（Nebula/门控判定由
-                                      // deliverOutTo 内部处理）。
-                                      // 后台化（收口③）：deliverOutTo 内 startNode 同步等下游终态，
-                                      // 直接调用会阻塞 NodeEdit 工具 fiber（见 runDetached 注释）。
-                                      _ <- (outProvided, node.status) match
-                                        case (true, NodeLifecycle.Completed) if newOut.nonEmpty =>
-                                          node.result match
-                                            case Some(res) =>
-                                              NodeTools.runDetached(rt, s"deliver retained result ${node.id} -> ${newTargets.mkString(",")}")(
-                                                newOut.traverse_(e => rt.engine.deliverOutTo(node, e.to, res))
-                                              )
-                                            case None => IO.unit
-                                        case _ => IO.unit
-                                      // 修复次因 A（edit 路径补 D1 等价投递 + barrier 结算复查，
-                                      // create 路径见 proceed 内 D1 注释）：新追加上游中已终态且
-                                      // 有结果的 → 立即投递（findNode 活动/归档兜底；含悬空完成的
-                                      // 上游——其 completeNode 时 out 悬空未投，此处是唯一投递入口）；
-                                      // 随后复查 barrier——deliveredTo 可能已含全部 in 上游（分批
-                                      // 送达/重复接线）→ startNode。投递与结算串在同一 detached
-                                      // fiber（deliverOutTo 自带结算 → startNode；复查随后命中
-                                      // running/terminal 由 startNode 幂等跳过）；后台化遵循
-                                      // runDetached 的阻塞教训（直接调用会把工具 fiber 卡到节点终态）。
-                                      _ <- if adds.nonEmpty then NodeTools.runDetached(rt, s"deliver appended upstream results + settle barrier -> ${node.id}")(
-                                        for
-                                          // 补投递完整性（fix b「已存在边+归档上游不补投递」修复
-                                          // 20260903）：不只投递本次追加上游——全部 in 上游中
-                                          // 「终态有结果而 deliveredTo 未记」的都补投（findNode
-                                          // 活动/归档兜底）。覆盖两类缺口：①边已存在但投递曾丢失
-                                          //（陈旧 out 覆盖时代的历史悬空，实证 n-219106db：两个
-                                          // 归档 completed 上游在 in 里、deliveredTo 恒空、下游
-                                          // 永久等待）；②新建边指向归档上游（fix a 路径，setOut
-                                          // 归档感知后不再崩溃）。运行中上游天然跳过（无 result，
-                                          // 等 completeNode → deliverOut 正常投）。
-                                          // R1：blocked 反馈串不是可投结果，显式排除（同 create 路径）。
-                                          _ <- rt.store.getNode(node.id).flatMap {
-                                            case Some(nFresh) =>
-                                              nFresh.in.traverse_ { upId =>
-                                                rt.store.findNode(upId).flatMap {
-                                                  case Some(up) if up.result.isDefined && up.status != NodeLifecycle.Blocked && NodeLifecycle.Terminal.contains(up.status) =>
-                                                    rt.engine.deliverOutTo(up, node.id, up.result.get)
-                                                  case _ => IO.unit
-                                                }
-                                              }
-                                            case None => IO.unit
-                                          }
-                                          _ <- rt.store.getNode(node.id).flatMap {
-                                            case Some(n) if n.in.nonEmpty && n.in.forall(n.deliveredTo.contains) =>
-                                              rt.engine.startNode(n.id)
-                                            case _ => IO.unit
-                                          }
-                                        yield ()
-                                      )
-                                      else IO.unit
-                                      // D1-deps 补触发（edit 路径，deps 设计 §1.2）：接线后若 deps 全
-                                      // 满足 && in barrier 已归零 && 自身 wiring/pending → 立即启动。
-                                      // 上游已 completed 时接 deps 边即时触达（含归档上游 findNode 兜底
-                                      // ——「归档 completed 上游是唯一投递入口」先例同款）。startNode 内
-                                      // 闸门二次把关，重复调用幂等。
-                                      _ <- if depsProvided then NodeTools.runDetached(rt, s"D1-deps settle -> ${node.id}")(
-                                        rt.store.getNode(node.id).flatMap {
-                                          case Some(n) if (n.status == NodeLifecycle.Wiring || n.status == NodeLifecycle.Pending)
-                                              && n.in.forall(n.deliveredTo.contains) =>
-                                            rt.engine.depsSatisfied(n).flatMap(ok => if ok then rt.engine.startNode(n.id) else IO.unit)
-                                          case _ => IO.unit
-                                        }
-                                      )
-                                      else IO.unit
-                                      // wiring 变更事件（NodeList 同构 payload，store 最终态）——此前只发
-                                      // 本节点且 payload 含陈旧 in、改写的上游/新旧目标无事件（缺失补齐）
-                                      _ <- NodeTools.emitWiringUpdates(rt, affected)
-                                    yield Right(
-                                      s"Node '${node.name}' updated" +
-                                        (if didReactivate then
-                                          if node.status == NodeLifecycle.Failed then " — reactivated from failed (round history reset; next real failure re-notifies dispatcher)"
-                                          else s" — reactivated from blocked (round ${node.blockCount} preserved)"
-                                        else "") +
-                                        (if notify.provided then s" — notifyDispatcher → ${notify.flag}" else "") +
-                                        (if retryFlag.provided then
-                                           retryFlag.policy match
-                                             case Some(p) => s" — retry ← ${p.upstream}:max=${p.max}"
-                                             case None    => " — retry cleared"
-                                         else "") +
-                                        (if outProvided && newOut.nonEmpty then s" — out → ${newOut.map(_.to).mkString(",")}" else "") +
-                                        (if adds.nonEmpty then s" — in += ${adds.mkString(",")}" else "") +
-                                        (if depsProvided && depsChanged then s" — deps → [${newDeps.mkString(",")}]" else "")
-                                    )
-                                // P1 校验层②（spec §2.2）：下游持 in 边而上游已 failed 无 on-failed
-                                // 边且非 merge → WARNING 级提示（不阻断，附成功结果尾部；死锁持续
-                                // 可见性由既有 mount-stalled 事件承载）
-                                stallWarn <- NodeTools.stalledInWarning(rt, node.id, node.name, finalIn, node.merge)
-                              yield inResult.map(r =>
-                                if stallWarn.isEmpty then r else r + "\n" + stallWarn.mkString("\n"))
-                          }
-                          }
-                          }
-                  }
-              }
-
-object NodeListTool extends Tool:
-  val name = "NodeList"
-
-  val description =
-    """List a project's Flow Map snapshot — the task dispatcher's opening move (read the graph before deciding).
-## When to Use
-- The dispatcher reads the current topology at session start (and before ending) — nodes with status/description/hasWorktree drive merge-node decisions.
-- Frontend panel data source (REST mirrors this shape).
-
-## Parameters
-- **project** (optional; defaults to current project): project name.
-- **status** (optional): filter the map to specific lifecycle state(s) — single value, comma-separated list, or array. Valid: wiring, pending, running, completed, failed, cancelled, blocked. Example: "running,pending" to see only active work. Omitted = ALL nodes (use this for the full picture; filter only when the map is large and you know which slice you need). Applies to the map listing only, not to detail=.
-- **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (+ historical blockedFeedback when present). Payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint.
-
-## Returns
-Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (legacy no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (legacy values only), liveness (running only)}], worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
-With detail=<nodeId>: the same node shape + task + result (full text)."""
-  val inputSchema = JsonObject.fromIterable(
-    List(
-      "type" -> "object".asJson,
-      "properties" -> Json.obj(
-        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (optional; defaults to the dispatcher's current project)".asJson),
-        "status" -> Json.obj("oneOf" -> Json.arr(
-          Json.obj("type" -> "string".asJson),
-          Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
-        ).asJson, "description" -> "Optional lifecycle filter: wiring|pending|running|completed|failed|cancelled|blocked — single, comma-separated, or array. Omitted = all nodes".asJson),
-        "detail" -> Json.obj("type" -> "string".asJson, "description" -> "Node id — return that node's full record (metadata + task + result FULL TEXT) instead of the whole map".asJson)
-      ),
-      "required" -> Json.arr()
-    )
-  )
-
-  def summarize(input: JsonObject): String =
-    val p = input("project").flatMap(_.asString).getOrElse("?")
-    s"NodeList($p)"
-
-  def summarizeResult(input: JsonObject, result: String): String =
-    if result.length > 300 then result.take(297) + "..." else result
-
-  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    NodeTools.resolveProject(input("project").flatMap(_.asString).orElse(ctx.projectName), ctx).flatMap {
-      case Left(err) => IO.pure(Left(ToolError(err)))
-      case Right(rt) =>
-        // detail 通道（2026-09-05 载荷收敛配套）：指定 nodeId → 单节点全记录
-        // （元数据 + task + 结果全文）。数据源与 REST result 端点同源
-        // （findNode 活动区优先归档兜底；内存 result/task = 加载时从 per-node
-        // 文件 results/<id>.md / tasks/<id>.md 水合的全文——落盘 JSON 只存摘要
-        // +指针，detail 聚合即「per-node 文件内容」，单源等价，2026-09-06 存储
-        // 瘦身批）。payload 键集 = NodeList 同构字段 + task + result。
-        input("detail").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
-          case Some(nodeId) =>
-            rt.store.findNode(nodeId).map {
-              case None => Left(ToolError(s"Node '$nodeId' not found (active or archived) — check NodeList without detail for the current topology"))
-              case Some(n) =>
-                val now = System.currentTimeMillis()
-                val base = NodePayload.buildNodeJson(n, now)
-                // 裁定②历史参照补挂（20260907 上下文经济学批）：默认载荷仅 blocked 态
-                // 携带 blockedFeedback——detail 按需通道对非 blocked 节点补挂存储值
-                // （blocked 节点 base 已含，deepMerge 同值幂等）。
-                val histFeedback = n.blockedFeedback.toList.map(bf => "blockedFeedback" -> bf.asJson)
-                // 裁定⑤c 双层化：descriptionLong 仅 detail 通道（不进默认载荷）——
-                // 条件键，存量节点无长文 → 缺键（消费方回退短文 description）。
-                val descLong = n.descriptionLong.toList.map(d => "descriptionLong" -> d.asJson)
-                val full = base
-                  .deepMerge(Json.obj(
-                    "task" -> n.task.asJson,
-                    "result" -> n.result.asJson
-                  ))
-                  .deepMerge(Json.obj((histFeedback ++ descLong)*))
-                Right(full.noSpaces)
-            }
-          case None =>
-            // status 过滤（裁定⑤a，20260907）：解析三形态宽容（string/array/逗号串），
-            // 逐值枚举校验；缺省 None = 全量（字节级现状）。
-            parseStatusFilter(input("status")) match
-              case Left(err) => IO.pure(Left(ToolError(err)))
-              case Right(statusFilter) =>
-                NodeTools.buildNodeListPayload(rt, statusFilter).map(payload => Right(payload.noSpaces))
-    }
-
-  /** status 过滤参数解析（裁定⑤a）：三形态宽容（单值 string / array / 逗号串，
-    * 复用 parseIn 语义），逐值对生命周期枚举校验——非法值给可行动错误（列出全部
-    * 合法值）。缺省（未传/null）→ None = 全量。 */
-  private def parseStatusFilter(v: Option[Json]): Either[String, Option[Set[String]]] =
-    v match
-      case None | Some(Json.Null) => Right(None)
-      case Some(json) =>
-        NodeTools.parseIn(Some(json)).left.map(err => err.replace("'in'", "'status'")).flatMap { values =>
-          val trimmed = values.map(_.trim).filter(_.nonEmpty)
-          if trimmed.isEmpty then Right(None)
-          else trimmed.find(!NodeLifecycle.All.contains(_)) match
-            case Some(bad) => Left(s"Unknown status '$bad' — valid: ${NodeLifecycle.All.mkString(", ")} (single value, comma-separated list, or array)")
-            case None => Right(Some(trimmed.toSet))
-        }
-
-object NodeCancelTool extends Tool:
-  val name = "NodeCancel"
-
-  val description =
-    """Cancel a running node (supervisor cancel semantics) — the dispatcher's stop-loss tool.
-## When to Use
-- A node is mis-wired, hung, or superseded: cancel it, then rewire or recreate. Result is NOT delivered; upstream results already delivered stay buffered/archived.
-- Cancel target must be running (non-running → no-op with notice). A running node with a live session gets a cancel signal; a STALE running node (dead session, e.g. after an instance restart) is reaped — finalized as cancelled immediately instead of a fake success."""
-  val inputSchema = JsonObject.fromIterable(
-    List(
-      "type" -> "object".asJson,
-      "properties" -> Json.obj(
-        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (optional; defaults to the dispatcher's current project)".asJson),
-        "node-id" -> Json.obj("type" -> "string".asJson, "description" -> "Node id to cancel (from NodeList)".asJson)
-      ),
-      "required" -> Json.arr("node-id".asJson)
-    )
-  )
-
-  def summarize(input: JsonObject): String =
-    val id = input("node-id").flatMap(_.asString).getOrElse("?")
-    s"NodeCancel($id)"
-
-  def summarizeResult(input: JsonObject, result: String): String = result
-
-  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val nodeId = input("node-id").flatMap(_.asString).getOrElse("")
-    NodeTools.resolveProject(input("project").flatMap(_.asString).orElse(ctx.projectName), ctx).flatMap {
-      case Left(err) => IO.pure(Left(ToolError(err)))
-      case Right(rt) =>
-        if nodeId.isEmpty then IO.pure(Left(ToolError("Missing 'node-id'")))
-        else
-          rt.store.getNode(nodeId).flatMap {
-            case None => IO.pure(Left(ToolError(s"Node '$nodeId' not found")))
-            case Some(n) if n.status != NodeLifecycle.Running =>
-              IO.pure(Right(s"Node '${n.name}' is not running (status=${n.status}) — no-op"))
-            case Some(n) =>
-              // 清场 c-③（20260903 事故复盘）：有在飞执行 fiber → 正常取消信号（原
-              // 语义）；无在飞 fiber（会话已死/实例重启泄漏）→ 直接收殓终态化——修复
-              // 「返回成功但节点状态不落终态」的假成功（假成功下分发器以为已止损，
-              // stale running 永久滞留）。收殓内部二次复核 isRunning（防窗口竞态）。
-              rt.engine.isRunning(nodeId).flatMap {
-                case true => rt.engine.cancelNodeById(nodeId).as(Right(s"Node '${n.name}' cancel signal sent"))
-                case false => rt.engine.reapStaleRunning(nodeId).map(_.left.map(ToolError(_)))
-              }
-          }
-    }
-
-/** NodeMessage（20260905 机制批，作者裁定六条语义）——任务分发器向已分发节点
-  * 注入补充消息。仅分发器工具面（AgentCore.DispatcherFixedTools 第八件）；
-  * Nebula/general 不加。六条语义（engine 单点 sendNodeMessage）：
-  * ① 签名 (nodeId, message)：目标=本项目 Flow Map 节点；nodeId 不存在→
-  *   NODE_NOT_FOUND；message 空白→NODE_MESSAGE_EMPTY。
-  * ② running：下一 turn 边界注入（复用 immediate 注入机制），[NODE-MESSAGE]
-  *   前缀（来源=分发器 NodeMessage+节点名+时间戳）；会话已终结→记录追加
-  *   「注入未达」（留痕不丢）。
-  * ③ wiring/pending（非终态无活动会话）：持久追加节点任务记录（
-  *   == 分发器补充（NodeMessage <时间戳>） == 分节），启动时随任务读到。
-  * ④ 终态（completed/failed/cancelled/blocked）拒绝 NODE_TERMINAL_NO_MESSAGE
-  *   ——应新建节点而非倒改。
-  * ⑤ 留痕：每条消息追加 FlowMapEventLog（node-message）；Flow Map 默认载荷
-  *   零膨胀。
-  * ⑥ 工具面：仅分发器（本文件注册 + AgentCore 分发器静态集）。 */
-object NodeMessageTool extends Tool:
-  val name = "NodeMessage"
-
-  val description =
-    """Send a supplementary message to an already-dispatched node in a project's Flow Map — the task dispatcher's course-correction tool.
-## When to Use
-- After dispatching: new constraints, corrections, or extra context that must reach a node WITHOUT re-dispatching or editing topology. Routing is automatic by node status.
-- **Dispatcher-only tool** (mechanism-fixed). Do not use for terminal nodes — see below.
-## Parameters
-- **project** (optional; defaults to current project): project name.
-- **nodeId** (required): target node id (from NodeList).
-- **message** (required, non-empty): the supplementary instruction text.
-## Routing semantics (by target node status)
-- **running**: the message is injected into the node's live session at the NEXT turn boundary (reuses the immediate-input mechanism — it does NOT interrupt the current turn). The injected text carries a recognizable `[NODE-MESSAGE]` header (source: dispatcher NodeMessage + node name + timestamp), clearly distinct from the node's original task and from result deliveries. Race fallback: if the session ends before delivery, the message is recorded on the node's task annotated「注入未达」— the trace is never lost.
-- **wiring / pending** (non-terminal, no live session): the message is persistently appended to the node's task record as a `== 分发器补充（NodeMessage <timestamp>） ==` section — the node reads it as part of its task when it starts.
-- **terminal (completed / failed / cancelled / blocked)**: REFUSED (NODE_TERMINAL_NO_MESSAGE). A finished node is never retro-edited — create a new node instead (NodeEdit), even for blocked/failed (their exit = NodeEdit reactivation or abandon, not messages).
-## Errors
-- `NODE_NOT_FOUND` — nodeId does not exist in the project (active or archived).
-- `NODE_MESSAGE_EMPTY` — message is blank after trim.
-- `NODE_TERMINAL_NO_MESSAGE` — target is terminal; create a new node instead.
-## Traceability
-Every message (injected / appended / not-delivered) is appended to the project's flow-map-events.jsonl audit log (type=node-message). Flow Map default payloads stay unchanged (no extra keys — the payload-slimming contract holds)."""
-  val inputSchema = JsonObject.fromIterable(
-    List(
-      "type" -> "object".asJson,
-      "properties" -> Json.obj(
-        "project" -> Json.obj("type" -> "string".asJson, "description" -> "Project name (optional; defaults to the dispatcher's current project)".asJson),
-        "nodeId" -> Json.obj("type" -> "string".asJson, "description" -> "Target node id (from NodeList)".asJson),
-        "message" -> Json.obj("type" -> "string".asJson, "description" -> "Supplementary instruction text (non-empty; injected at turn boundary if running, appended to task if not started)".asJson)
-      ),
-      "required" -> Json.arr("nodeId".asJson, "message".asJson)
-    )
-  )
-
-  def summarize(input: JsonObject): String =
-    val id = input("nodeId").flatMap(_.asString).getOrElse("?")
-    s"NodeMessage($id)"
-
-  def summarizeResult(input: JsonObject, result: String): String = result
-
-  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val nodeId = input("nodeId").flatMap(_.asString).getOrElse("")
-    val message = input("message").flatMap(_.asString).getOrElse("")
-    if nodeId.trim.isEmpty then IO.pure(Left(ToolError("Missing 'nodeId' — target node id is required (from NodeList)")))
-    else if message.trim.isEmpty then
-      IO.pure(Left(ToolError("'message' must be non-empty (trim) — nothing to inject (NODE_MESSAGE_EMPTY)")))
-    else
-      NodeTools.resolveProject(input("project").flatMap(_.asString).orElse(ctx.projectName), ctx).flatMap {
-        case Left(err) => IO.pure(Left(ToolError(err)))
-        case Right(rt) => rt.engine.sendNodeMessage(nodeId, message).map(_.left.map(ToolError(_)))
-      }
-
-object ProjectCreateTool extends Tool:
-  val name = "ProjectCreate"
-
-  val description =
-    """Create a Project (Nebula use) — project definition + workspace .nebflow/ scaffolding.
-## When to Use
-- **Known workspace path** (the user told you, or you know it): pass `workspace` (absolute path; `name`/`description` optional) — direct create: writes projects/<name>/project.json, workspace root AGENTS.md template, workspace/.nebflow/ + .gitignore scaffolding, and mounts the project (FlowMapStore + ProjectActor ready).
-- **Unknown workspace path**: omit `workspace` — an AskUserQuestion-style card pops up on the user's window with a prominent "选择工作区" (pick workspace) target. Clicking it opens the REAL OS folder browser (native directory dialog on macOS/Windows) where the user browses, can create folders, and confirms; the chosen path flows back into the card and creation proceeds automatically. If the native dialog is unavailable (headless JVM) or fails, the card automatically falls back to an in-app folder browser. Candidate paths (first-level directories under ~/Claude code/ not already used as project workspaces) remain on the card as secondary one-click hints, and the built-in "Other…" free input accepts a custom absolute path.
-- `name` defaults to the workspace path's basename when omitted.
-## After Creation
-- Dispatch work with Task(project=<name>, task=...) — the project is mounted and triggerable immediately.
-## Semantics
-- Same name + same workspace → idempotent (returns "already exists", re-mounts; safe to repeat).
-- Same name + different workspace → explicit error (never silently re-points an existing project).
-- Panel dismissed (cancel / empty answer) → clear shelved message, nothing created — re-invoke with a known path or ask the user again."""
-  val inputSchema = JsonObject.fromIterable(
-    List(
-      "type" -> "object".asJson,
-      "properties" -> Json.obj(
-        "name" -> Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "Project name (single path segment). Optional — defaults to the workspace path basename.".asJson
-        ),
-        "workspace" -> Json.obj(
-          "type" -> "string".asJson,
-          "description" -> "Absolute path to the project workspace. Omit to pop the interactive path-selection panel (AskUserQuestion-style card).".asJson
-        ),
-        "description" -> Json.obj("type" -> "string".asJson, "description" -> "Optional one-line description".asJson)
-      ),
-      "required" -> Json.arr()
-    )
-  )
-
-  /** 前端卡片取消哨兵（chat.js 取消按钮回填 answers=['__cancelled__']）。 */
-  val CancelSentinel = "__cancelled__"
-
-  def summarize(input: JsonObject): String =
-    val n = input("name").flatMap(_.asString).orElse(input("workspace").flatMap(_.asString))
-    s"ProjectCreate(${n.getOrElse("<panel>")})"
-
-  def summarizeResult(input: JsonObject, result: String): String = result
-
-  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val rawName = input("name").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-    val rawWorkspace = input("workspace").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-    val description = input("description").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
-    rawWorkspace match
-      // 已知路径直建（口径①，既有路径语义不变，name 缺省改 basename 派生）。
-      case Some(ws) =>
-        Try(os.Path(ws, PathUtil.dataRoot)) match
-          case scala.util.Success(_) => createChain(rawName, ws, description, ctx)
-          case scala.util.Failure(_) => pathPanel(rawName, description, ctx) // path 不可用 → 面板兜底
-      // 未知/缺省 path（口径②）→ AskUser 式交互面板。
-      case None => pathPanel(rawName, description, ctx)
-
-  // ============================================================
-  // 创建链（直建与面板选择路径共用）
-  // ============================================================
-
-  /** 创建 + 幂等挂载。name 缺省 = workspace basename（口径①）。
-    * 同名冲突语义（任务口径）：同 workspace → 幂等（"already exists" + 挂载）；
-    * 异 workspace → 明确报错（绝不静默改指旧定义）。 */
-  private def createChain(
-      nameOpt: Option[String],
-      workspace: String,
-      description: Option[String],
-      ctx: ToolContext
-  ): IO[Either[ToolError, String]] =
-    val resolvedName = nameOpt.getOrElse(baseName(workspace))
-    if resolvedName.isEmpty then
-      IO.pure(Left(ToolError(s"Cannot derive project name from workspace '$workspace' — pass 'name' explicitly")))
-    else
-      val agentMdTemplate =
-        s"""# ${resolvedName} — AGENTS.md
-
-项目级 agent 指令（取代 team rules.md，工作区根 AGENTS.md）。分发器任务文本可引用本文件。
-
-- 工作区：$workspace
-- Flow Map：`$workspace/.nebflow/flow-map.json`
-- 节点规则：节点是 leaf（无记忆、无 Mail 身份、ephemeral）；结果沿 out 边投递。
-"""
-      /** 挂载（新创建 + 已存在幂等共用）。ProjectRuntimeRegistry.mount 本身幂等：
-        * 已挂载 → 直接返回现有 runtime（不重建不覆盖——rootSessionId 已在首次挂载
-        * 用上链根接线；运行中重挂覆盖需重建 engine，试点期无此场景）。 */
-      def mountProject(pd: ProjectDef, created: Boolean): IO[Either[ToolError, String]] =
-        (ctx.actorSystem, ctx.sharedResources) match
-          case (Some(system), Some(res)) =>
-            // P0 接线修复（Explorer c759e8c）：mount 传**上链 rootSessionId**（真正顶层），
-            // 非挂载者自身会话——否则 out="Nebula" 投递目标是挂载者（如 qa-backend），
-            // 节点完成消息注入执行者形成自维持循环。fallback ctx.sessionId（老调用方）。
-            ProjectRuntimeRegistry
-              .mount(pd, system, res, ctx.wsSend, ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("default"))
-              .as {
-                val verb = if created then "created" else "already exists"
-                Right(
-                  s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
-                    s"Dispatch work with Task(project='${pd.name}', task=...)."
-                )
-              }
-          case _ =>
-            IO.pure(Right(s"Project '${pd.name}' definition ready. Mount requires an agent session."))
-
-      ProjectStore.create(resolvedName, workspace, description, agentMdTemplate).flatMap {
-        case Right(pd) => mountProject(pd, created = true)
-        case Left(err) =>
-          // 幂等挂载（试点重启恢复关键路径）：定义已存在 → 不重建定义、不动脚手架，
-          // 直接挂载（ProjectStore.create 防覆盖返回 Left；load 命中即已存在）。
-          // 同名异 workspace → 明确报错（不静默复用旧定义）。
-          // 归档项目例外（迁移方案 v2 §6.1 单程语义）：拒绝挂载——否则出现「已挂载
-          // 但面板不可见」（list 过滤）的僵尸态；恢复须先手工删 project.json 归档两键。
-          ProjectStore.load(resolvedName).flatMap {
-            case Some(pd) if pd.archived.contains(true) =>
-              IO.pure(Left(ToolError(
-                s"Project '$resolvedName' is archived (hidden from the Projects panel). " +
-                  s"Remove the 'archived'/'archivedAt' keys in ~/.nebflow/projects/$resolvedName/project.json to restore it first."
-              )))
-            case None => IO.pure(Left(ToolError(err)))
-            case Some(pd) if sameWorkspace(pd.workspace, workspace) => mountProject(pd, created = false)
-            case Some(pd) =>
-              IO.pure(Left(ToolError(
-                s"Project '$resolvedName' already exists with a different workspace (${pd.workspace}) — " +
-                  "choose another name or reuse the existing workspace"
-              )))
-          }
-      }
-
-  /** workspace 归一化（绝对化 + 去尾斜杠），用于同名冲突判定与候选排除。
-    * 不可解析 → None（视为不同）。 */
-  private def normalizeWorkspace(p: String): Option[String] =
-    Try(os.Path(p, PathUtil.dataRoot).toString).toOption
-
-  private def sameWorkspace(a: String, b: String): Boolean =
-    (normalizeWorkspace(a), normalizeWorkspace(b)) match
-      case (Some(x), Some(y)) => stripTrailingSlashes(x) == stripTrailingSlashes(y)
-      case _                  => false
-
-  /** 路径 basename（name 派生）；根路径等无 basename → ""（由调用方报错）。 */
-  private def baseName(workspace: String): String =
-    Try(os.Path(workspace, PathUtil.dataRoot)).map(_.last).getOrElse("")
-
-  // ============================================================
-  // 未知路径交互面板（口径②）
-  // ============================================================
-
-  /** 候选根目录（触点）：默认 ~/Claude code；spec 用系统属性注入隔离目录。
-    * 独立属性注入（非 PathUtil.dataRoot 派生）——候选根是用户机器上的项目
-    * 惯例目录，与数据根语义无关。 */
-  private def candidatesRoot: os.Path =
-    Option(System.getProperty("nebflow.projectcreate.candidates-dir"))
-      .map(os.Path(_, os.Path(sys.props("user.home"))))
-      .getOrElse(os.Path(sys.props("user.home")) / "Claude code")
-
-  /** 候选扫描（纯函数，spec 覆盖）：root 一级子目录、排除点目录与已占用
-    * workspace、按名称排序、最多 max 个。root 不存在 → 空（面板仍有 Other
-    * 自由输入兜底，不因无候选而不可用）。 */
-  def scanCandidates(root: os.Path, taken: Set[String], max: Int = 8): List[String] =
-    if !os.isDir(root) then Nil
-    else
-      os.list(root)
-        .filter(os.isDir)
-        .map(_.toString)
-        .filterNot(p => os.Path(p).last.startsWith("."))
-        .filterNot(p => taken.exists(t => stripTrailingSlashes(t) == stripTrailingSlashes(p)))
-        .toList
-        .sorted
-        .take(max)
-
-  /** '~' 展开（仅前缀语义，防 API 差异；非 ~ 开头原样返回）。 */
-  def expandTilde(path: String): String =
-    val home = sys.props("user.home")
-    if path == "~" then home
-    else if path.startsWith("~/") then home + path.drop(1)
-    else path
-
-  private sealed trait PanelAnswer
-  private object PanelAnswer:
-    /** 取消哨兵 / 空答案 → 搁置（不创建、不报错悬挂）。 */
-    case object Shelved extends PanelAnswer
-    /** 非绝对路径等不可用输入 → 明确报错（不创建）。 */
-    case class BadPath(raw: String, why: String) extends PanelAnswer
-    /** 合法绝对路径 → 进入创建链。 */
-    case class Chosen(path: String) extends PanelAnswer
-
-  /** 去尾部斜杠（Scala String.stripTrailing 无参版，斜杠语义手写）。 */
-  private def stripTrailingSlashes(s: String): String = s.replaceAll("/+$", "")
-
-  /** 面板答案解析（纯函数，spec 覆盖）：首槽空 / 取消哨兵 → Shelved；
-    * '~' 展开后非绝对 → BadPath；合法 → Chosen（去尾斜杠）。
-    * isAbsolute 为跨平台判定（POSIX / 盘符 / UNC）——朴素 startsWith("/")
-    * 会拒绝 Windows 盘符答案（diag-win-paths P1）。 */
-  private def parsePanelAnswer(answers: List[String]): PanelAnswer =
-    val raw = answers.headOption.map(_.trim).getOrElse("")
-    if raw.isEmpty || raw == CancelSentinel then PanelAnswer.Shelved
-    else
-      val expanded = expandTilde(raw)
-      if !PathUtil.isAbsolute(expanded) then PanelAnswer.BadPath(raw, "path must be absolute")
-      else PanelAnswer.Chosen(stripTrailingSlashes(expanded))
-
-  /** 面板答案落地（纯分派）：Shelved → 搁置消息；BadPath → 明确报错；
-    * Chosen → 创建链。 */
-  private def applyPanelAnswer(
-      ans: PanelAnswer,
-      nameOpt: Option[String],
-      description: Option[String],
-      ctx: ToolContext
-  ): IO[Either[ToolError, String]] =
-    ans match
-      case PanelAnswer.Shelved =>
-        IO.pure(Right(
-          "ProjectCreate shelved: the path-selection panel was dismissed without a choice — " +
-            "no project created. Re-invoke with a known 'workspace', or ask the user again."
-        ))
-      case PanelAnswer.BadPath(raw, why) =>
-        IO.pure(Left(ToolError(
-          s"Panel answer '$raw' is not usable ($why) — nothing created. " +
-            "Re-invoke with an absolute 'workspace' path."
-        )))
-      case PanelAnswer.Chosen(path) => createChain(nameOpt, path, description, ctx)
-
-  /** 未知路径分支：复用 AskUser pending 机制（AgentCommand.AskUser →
-    * InteractionHub → 前端 AskUserQuestion 卡片），零新增前端/问答通道。
-    *
-    * 语义边界（全部与 AskUserQuestionTool 对齐，不另起一套）：
-    * - headless（NEBFLOW_HEADLESS=1）→ askGuard 同款报错（无交互用户，面板会
-    *   永久悬挂）；
-    * - 无 agent 会话（REST 直调 / harness）→ 明确报错不悬挂；
-    * - 等待无人工超时——与 AskUserQuestion 同语义（pending 期间会话标记
-    *   WaitingForUser 豁免 TaskStuckWatcher；hub 缺席时 AgentActor 直接取消
-    *   ask 回 Nil → 走 Shelved 搁置消息）；
-    * - 取消/空答案 → 明确搁置消息（无创建、无悬挂）；
-    * - 答案落定 → restoreRegistryAfterAnswer 配对恢复（与 AskUserQuestionTool
-    *   同一实现——#43 修复的答案来源校验语义原样适用：面板答案只能来自用户
-    *   点选帧 askUserAnswer（非 injected 用户消息），agent 侧注入负载永不消费）。
-    */
-  private def pathPanel(
-      nameOpt: Option[String],
-      description: Option[String],
-      ctx: ToolContext
-  ): IO[Either[ToolError, String]] =
-    AskUserQuestionTool.askGuard() match
-      case Some(err) => IO.pure(Left(err))
-      case None =>
-        ctx.agentActorRef match
-          case None =>
-            IO.pure(Left(ToolError(
-              "Workspace path required — no interactive session available for the path-selection panel; " +
-                "pass 'workspace' (and optionally 'name') explicitly."
-            )))
-          case Some(agentRef) =>
-            for
-              taken <- ProjectStore.list().map(_.flatMap(p => normalizeWorkspace(p.workspace)).toSet)
-              candidates = scanCandidates(candidatesRoot, taken)
-              question =
-                s"ProjectCreate 需要项目工作区路径 — 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹）；" +
-                  s"候选为 $candidatesRoot 下尚未用作项目工作区的目录，可点选；或选 Other… 手输绝对路径（支持 ~）。"
-              item = AskItem(question, candidates.map(c => AskOption(c, None)), dirPicker = true)
-              requestId = java.util.UUID.randomUUID().toString.take(8)
-              answers <- agentRef
-                .?(
-                  (replyTo: ActorRef[List[String]]) => AgentCommand.AskUser(requestId, List(item), Some(replyTo)),
-                  timeout = None
-                )
-              _ <- AskUserQuestionTool.restoreRegistryAfterAnswer(ctx)
-              result <- applyPanelAnswer(parsePanelAnswer(answers), nameOpt, description, ctx)
-            yield result
-end ProjectCreateTool
+end NodeTools

@@ -1,0 +1,249 @@
+/* searchField.css — 面板搜索字段（桌面「消息」顶部搜索框 + 联系人搜索块统一）
+   ═══════════════════════════════════════════════════════════════════════════
+   desktop-search-field 批（2026-11-17），作者令逐字：
+     「然后电脑端的消息 顶部应该要有搜索的框 同时优化一下样式 联系人搜索那边也是
+       风格和手机端的搜索框保持一致」
+
+   ── 单源结构（令牌 → 应用点）────────────────────────────────────────────
+   · `--sfs-*` 令牌族 = 搜索字段几何/字色**唯一出生地**（本文件 :root）。
+   · 桌面应用点 = 本文件 `.sf-field` 组件（js/socialSearchCore.js#buildFieldShell
+     造 markup：`.sf-field.nf-glass > (icon, input, clear)`）；材质零声明 ——
+     与手机条同走唯一工具类 `.nf-glass`（css/glass.css），本文件只给几何。
+   · 手机应用点 = css/mobileSearchFlat.css ①块消费同一组 `--sfs-*`
+     （height/pad-x/radius 三值 var() 引用，计算值与手机端逐值相同）。
+
+   ── 与手机端的差异点（本批约束下的诚实清单）──────────────────────────────
+   css/mobileLayer.css（另一批冻结面）在 `body.mobile-layer` 高特异度下仍写有
+   同值字面量（44 高 / 14 内距被 mobileSearchFlat 覆盖为 16 / pill 被覆盖为 xl、
+   图标 16、输入字色）——本批**不动该文件**，故手机端这些值仍由其供给；两端
+   数值一致性由运行态读数核对（批证据 readings），待 mobileLayer 冻结解除后
+   把该块字面量换成 var(--sfs-*) 即完成全量单源（本文件已备好令牌）。
+   已知设计内差异：输入字号（手机 --mfs-callout 16 = iOS 不缩放硬下限；桌面
+   --ds-fs-body 13）与清空键触控面（手机 44 热区 / 桌面 26 视觉面）。
+
+   门禁红线（check-design-tokens new-file-literals / check-input-surface）：
+   零裸色值；圆角只落 var(--ds-radius-*) / 999px / 50%；字号只落 var()；
+   输入面造型（背景/边框/圆角/阴影）零声明 —— 裸件归 css/inputSurface.css
+   成员表（`.sf-field-input` / `.fm-search-input`）。 */
+
+:root {
+  /* 条壳几何（与手机展开态逐值同源；手机消费点 = mobileSearchFlat.css ①块） */
+  --sfs-height: 44px;
+  --sfs-pad-x: var(--ds-space-4);      /* 16：图标/清空键与弧线脱开的呼吸 */
+  --sfs-gap: var(--ds-space-2);        /* 8：icon ↔ input ↔ clear */
+  --sfs-radius: var(--ds-radius-xl);   /* 12：条状容器档（2026-11-05 17:37 作者令） */
+  /* 图标与字色（与手机 mobileLayer 图标档同值） */
+  --sfs-icon: 16px;
+  --sfs-icon-color: var(--color-frame-text-muted);
+  --sfs-input-color: var(--color-frame-text);
+  --sfs-placeholder-color: var(--color-frame-text-muted);
+  /* 清空键（视觉圆盘 + 12 系图标；手机另扩 44 触控热区 = mobileLayer） */
+  --sfs-clear-disc: 26px;
+  --sfs-clear-icon: var(--ds-fs-body); /* 13：与手机收编后清空图标档同值 */
+}
+
+/* ── 组件：搜索字段壳（桌面应用点）────────────────────────────────────── */
+.sf-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sfs-gap);
+  height: var(--sfs-height);
+  padding: 0 var(--sfs-pad-x);
+  border-radius: var(--sfs-radius);
+  flex: none;
+}
+/* 搜索图标（lucide search）：居左、muted、随壳 flex 行排。 */
+.sf-field > i svg,
+.sf-field > svg {
+  width: var(--sfs-icon);
+  height: var(--sfs-icon);
+  flex: none;
+  color: var(--sfs-icon-color);
+  display: block;
+}
+/* 输入件：裸件（造型/焦点归 css/inputSurface.css 成员表），只留字与 caret。 */
+.sf-field-input {
+  flex: 1;
+  min-width: 0;
+  color: var(--sfs-input-color);
+  font-size: var(--ds-fs-body);
+  font-family: inherit;
+}
+.sf-field-input::placeholder { color: var(--sfs-placeholder-color); }
+/* 清空键：默认不占位，shell.has-text 才入场（手机同判据）。 */
+.sf-field-clear {
+  flex: none;
+  position: relative;
+  width: var(--sfs-clear-disc);
+  height: var(--sfs-clear-disc);
+  padding: 0;
+  border: 1px solid var(--glass-control-border);
+  border-radius: 50%;
+  background: var(--glass-control-bg);
+  color: var(--sfs-icon-color);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.sf-field-clear svg { width: var(--sfs-clear-icon); height: var(--sfs-clear-icon); display: block; }
+.sf-field.has-text .sf-field-clear { display: flex; }
+
+/* ── 桌面「消息」面板搜索区（.fm-msg-search；js/panelSearch.js 建造）────────
+   markup 类名 = 引擎/手机同款（.mh-scope-* / .mh-search-status / .mh-search-results /
+   .mh-sr-*，socialSearchCore 单一构建器产出）：样式应用点各归各层 —— 手机档在
+   mobileLayer.css（body.mobile-layer 门控），桌面档在此（#panel-messages 门控），
+   数值同源（见各条注）。 */
+#panel-messages .fm-msg-search {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  min-height: 0;
+  padding: var(--ds-space-2) var(--ds-space-2) 0;
+}
+/* 空态 = 一条纯净搜索框（chips/状态/结果/脚注不占位，列表照常）；
+   有查询 = 列表让位、结果流自滚（与手机 .has-query 闸同构）。 */
+#panel-messages .fm-msg-search:not(.has-query) .mh-scope-row,
+#panel-messages .fm-msg-search:not(.has-query) .mh-search-status,
+#panel-messages .fm-msg-search:not(.has-query) .mh-search-results,
+#panel-messages .fm-msg-search:not(.has-query) .mh-search-note {
+  display: none;
+}
+#panel-messages .fm-msg-search.has-query {
+  flex: 1;
+  min-height: 0;
+}
+#panel-messages .fm-msg-search.has-query ~ #fm-conversations {
+  display: none;
+}
+/* 范围 chips（全部/好友/设备/群聊）：mobileLayer 手机档同配方（30 高 / pill /
+   glass-control 材质 / 品牌绿 on 态），桌面档压一档高度适配 220px 侧栏。 */
+#panel-messages .mh-scope-row {
+  display: flex;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-half) var(--ds-space-half);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+#panel-messages .mh-scope-row::-webkit-scrollbar { display: none; }
+#panel-messages .mh-scope-chip {
+  flex: none;
+  height: 26px;
+  padding: 0 10px; /* 4px 栅格外半步档（spacing 不入圆角/字号门禁面） */
+  border-radius: 999px;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-frame-text);
+  font-size: var(--ds-fs-hint);
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+#panel-messages .mh-scope-chip.on {
+  background: rgb(var(--brand-green, 7 193 96) / 0.14);
+  border-color: rgb(var(--brand-green, 7 193 96) / 0.5);
+  color: var(--color-text-bright, var(--color-text));
+  font-weight: 600;
+}
+/* 状态行（aria-live）/ 脚注：hint 档 muted。 */
+#panel-messages .mh-search-status {
+  padding: var(--ds-space-1h) var(--ds-space-2) 0;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text-muted);
+  min-height: 20px;
+}
+#panel-messages .mh-search-status[hidden] { display: none; }
+#panel-messages .mh-search-note {
+  padding: var(--ds-space-half) var(--ds-space-2) var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text-muted);
+}
+/* 结果流：按会话分组（微信「查找聊天内容」口径），自滚。 */
+#panel-messages .mh-search-results {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--ds-space-half) 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-half);
+}
+#panel-messages .mh-sr-group {
+  font-size: var(--ds-fs-hint);
+  font-weight: 600;
+  color: var(--color-frame-text-muted);
+  padding: var(--ds-space-1h) var(--ds-space-2) var(--ds-space-half);
+  flex: none;
+}
+#panel-messages .mh-sr-row {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-half);
+  width: 100%;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border: none;
+  border-radius: var(--ds-radius-input);
+  background: transparent;
+  color: var(--color-frame-text);
+  font-family: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+#panel-messages .mh-sr-row:hover { background: var(--color-frame-hover); }
+#panel-messages .mh-sr-row + .mh-sr-row { border-top: 1px solid var(--color-border); }
+#panel-messages .mh-sr-more {
+  flex: none;
+  width: 100%;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--color-frame-hover);
+  color: var(--color-frame-text-muted);
+  font-family: inherit;
+  font-size: var(--ds-fs-hint);
+  cursor: pointer;
+}
+#panel-messages .mh-sr-more:disabled { opacity: 0.6; }
+#panel-messages .mh-sr-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ds-space-2);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text-muted);
+}
+#panel-messages .mh-sr-sender { font-weight: 600; color: var(--color-frame-text); }
+#panel-messages .mh-sr-time { margin-left: auto; font-variant-numeric: tabular-nums; flex: none; }
+#panel-messages .mh-sr-snippet {
+  font-size: var(--ds-fs-hint);
+  line-height: 1.45;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow-wrap: anywhere;
+}
+/* 命中高亮：sapphire 30%（与手机层 mark 档同配方）。 */
+#panel-messages .mh-sr-snippet mark {
+  background: rgb(var(--sapphire) / 0.30);
+  color: inherit;
+  border-radius: var(--ds-radius-thin);
+  padding: 0 var(--ds-space-hair);
+}
+
+/* ── 联系人搜索块（.fm-search-block 内 .fm-search 行收编为同一字段）────────
+   js/contacts.js#buildSearch：行壳 = buildFieldShell（.sf-field.nf-glass），
+   提交键留在壳内右端（提交语义/六态卡/1s 节流零改动，键形只做在壳适配）。 */
+#fm-contacts-body .fm-search-block {
+  padding: var(--ds-space-1) var(--ds-space-half) var(--ds-space-2);
+}
+#fm-contacts-body .fm-search { align-items: center; }
+#fm-contacts-body .fm-search .sf-field { flex: 1; min-width: 0; }
+/* 提交键：在壳高度内取紧凑档（loading/disabled/hover 状态 ramp 全保，
+   friends.css 既有按钮族不动 —— 这里只补壳内几何）。 */
+#fm-contacts-body .fm-search button.fm-search-btn {
+  align-self: center;
+  height: 30px;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
+}

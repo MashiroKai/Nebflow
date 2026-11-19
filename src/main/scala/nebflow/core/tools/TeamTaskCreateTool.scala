@@ -110,13 +110,16 @@ object TeamTaskCreateTool extends Tool:
                     .update(scopeKey, id, TaskUpdateInput(addBlockedBy = Some(blockedBy)))
                     .handleErrorWith {
                       case e: IllegalStateException =>
-                        IO.raiseError(new IllegalStateException(
-                          s"Task #$id created, but dependency update failed: ${e.getMessage} (use TeamTaskUpdate to retry the dependencies)"
-                        ))
+                        IO.raiseError(
+                          new IllegalStateException(
+                            s"Task #$id created, but dependency update failed: ${e.getMessage} (use TeamTaskUpdate to retry the dependencies)"
+                          )
+                        )
                       case e => IO.raiseError(e)
                     }
                 else IO.unit
               _ <- TaskToolHelper.emitTeamTaskListUpdate(store, teamName, ctx)
             yield Right(s"Task created: ${createInput.subject} (ID: $id)")
+            end for
 
 end TeamTaskCreateTool

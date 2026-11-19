@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<!-- askuser-badge-mirror harness.html — 修复批 2026-10-25「顶部黄色待答徽章常显」
+     的静态试验台。Imports the REAL frontend mirror module (askPending.js —
+     no stubs, no bundling) plus the real i18n/chatView/rootName leaves it
+     depends on, mounts the REAL badge/bar DOM (index.html :269/:341 同形),
+     and exposes drivers for the spec:
+
+       window.__note(msg)       → notePendingAsk (askUser frame leg, live+replayed)
+       window.__remove(rid)     → removePendingAsk (askUserClosed / card answer leg)
+       window.__snapshot(asks)  → applyPendingAskSnapshot (authority reconcile leg)
+       window.__sync()          → requestPendingAskSync (stamps since + sends;
+                                   send goes to window.__captured, never a socket)
+       window.__count()         → pendingAskCount (mirror size)
+       window.__badge()         → { visible, count } of #pending-asks-indicator
+       window.__barRows()       → 待办条行数（与徽标同镜像）
+
+     The spec (tests/askuser-badge-mirror.spec.mjs) serves the repo root over a
+     throwaway static server (never the 8080 host) and drives the badge
+     semantics: 隐藏缺省 / 有问显数 / 收口即隐 / 权威对账摘僵尸 / live 帧竞态豁免。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>askuser-badge-mirror harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+</head>
+<body>
+  <!-- 与 index.html :269-272 逐字节同形的徽章胶囊（warning hue 族） -->
+  <div id="pending-asks-indicator" class="hidden" role="button" tabindex="0" aria-live="polite">
+    <span class="pa-dot"></span>
+    <span class="pa-count">0</span>
+  </div>
+  <!-- 与 index.html :341 同形的待办条 -->
+  <div id="ask-pending-bar" class="hidden" role="list" aria-live="polite"></div>
+
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const askPending = await import(`${WEB}/askPending.js`);
+
+    // Capture outgoing WS frames (requestPendingAskSync emits getPendingAsks)
+    // — nothing reaches a real socket in this harness.
+    window.__captured = [];
+    askPending.startPendingAskSync((frame) => window.__captured.push(frame));
+
+    askPending.initPendingAsks();
+
+    window.__note = (msg) => askPending.notePendingAsk(msg);
+    window.__remove = (rid) => askPending.removePendingAsk(rid);
+    window.__snapshot = (asks, since) => askPending.applyPendingAskSnapshot(asks, since);
+    window.__sync = () => askPending.requestPendingAskSync();
+    window.__count = () => askPending.pendingAskCount();
+    window.__badge = () => {
+      const el = document.getElementById('pending-asks-indicator');
+      return {
+        visible: !el.classList.contains('hidden'),
+        count: el.querySelector('.pa-count').textContent
+      };
+    };
+    window.__barRows = () => document.querySelectorAll('#ask-pending-bar .ask-pending-row').length;
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

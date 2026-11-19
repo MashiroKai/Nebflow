@@ -1,0 +1,155 @@
+/* executors.css — /Agents executor picker canvas tab + settings section rows
+   (executor-registry batch, 2026-10-03). Home convention: canvas-tab content
+   styles live beside their owner module's other styles (agent-mgr-* in
+   sidebar.css); kept separate here since the panel is its own module. */
+
+#executors-content {
+  padding: var(--ds-space-4) var(--ds-space-5);
+  overflow-y: auto;
+  height: 100%;
+  box-sizing: border-box;
+}
+
+.executor-loading {
+  color: var(--text-secondary, #888);
+  font-size: var(--ds-fs-body);
+  padding: var(--ds-space-6) var(--ds-space-1);
+}
+
+.executor-hint {
+  font-size: var(--ds-fs-hint);
+  line-height: 1.5;
+  color: var(--text-secondary, #888);
+  margin-bottom: var(--ds-space-3);
+}
+
+.executor-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+}
+
+.executor-card {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-3) 14px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.2));
+  border-radius: var(--ds-radius-card-sm);
+  background: var(--panel-bg, transparent);
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.executor-card:hover {
+  border-color: var(--accent-color, rgba(99, 102, 241, 0.5));
+}
+
+.executor-card.is-default {
+  border-color: var(--accent-color, rgba(99, 102, 241, 0.55));
+}
+
+.executor-card-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--ds-radius-input);
+  background: rgba(128, 128, 128, 0.08);
+  color: var(--text-primary, #ddd);
+}
+
+.executor-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.executor-card-name {
+  font-size: var(--ds-fs-body);
+  /* panel-language 批 2026-11-06：卡名行字重收编令牌（值不变 600 = --ds-fw-title），
+     机检 P1 登记槽（check-panel-unify.mjs）：裸字面量即红。 */
+  font-weight: var(--ds-fw-title);
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  flex-wrap: wrap;
+}
+
+.executor-card-desc {
+  font-size: var(--ds-fs-hint);
+  color: var(--text-secondary, #888);
+  margin-top: var(--ds-space-half);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executor-card-path {
+  font-size: var(--ds-fs-meta);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text-secondary, #777);
+  margin-top: var(--ds-space-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.executor-card-pending {
+  font-size: var(--ds-fs-meta);
+  color: #d97709;
+  margin-top: var(--ds-space-1);
+}
+
+.executor-card-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-button);
+  font-size: var(--ds-fs-meta);
+  line-height: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.executor-card-badge.default {
+  background: rgba(99, 102, 241, 0.15);
+  color: rgb(99, 102, 241);
+}
+
+.executor-card-badge.off {
+  background: rgba(128, 128, 128, 0.15);
+  color: var(--text-secondary, #888);
+}
+
+.executor-card-detect {
+  font-size: var(--ds-fs-meta);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.executor-card-detect.ok { color: #10b981; }
+.executor-card-detect.miss { color: var(--text-secondary, #888); }
+
+.executor-card-set {
+  flex-shrink: 0;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
+  background: transparent;
+  color: var(--text-primary, #ddd);
+  font-size: var(--ds-fs-hint);
+  padding: var(--ds-space-1h) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
+  cursor: pointer;
+}
+
+.executor-card-set:hover {
+  border-color: var(--accent-color, rgba(99, 102, 241, 0.6));
+  color: rgb(99, 102, 241);
+}
+
+.executor-card-set:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+/* (The settings default-executor label rule — retired with the settings
+   executor section, ui-train-threefix A 2026-10-07.) */

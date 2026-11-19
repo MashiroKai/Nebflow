@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 object ModelCommand extends CliCommand:
   def name = "model"
@@ -12,8 +12,8 @@ object ModelCommand extends CliCommand:
   def subcommands = List(ModelList, ModelSet)
 
   def examples = List(
-    "nebflow model list",
-    "nebflow model set anthropic/claude-sonnet-4-6"
+    "stand model list",
+    "stand model set anthropic/claude-sonnet-4-6"
   )
 
   private object ModelList extends CliSubcommand:
@@ -56,7 +56,7 @@ object ModelCommand extends CliCommand:
 
   private object ModelSet extends CliSubcommand:
     def name = "set"
-    def description = "Set default or session model"
+    def description = "Set the Nebula chain head or a session model"
 
     def params = List(
       CliParam("model-ref", None, "Model reference (provider/model)", required = true),
@@ -67,37 +67,37 @@ object ModelCommand extends CliCommand:
       ctx.client match
         case None => IO.pure(CliResult.Error("Gateway not running"))
         case Some(client) =>
-          val modelRef = ctx.positionalArgs.headOption.getOrElse("")
+          // A3: the named form `--model-ref` was accepted by the parser but
+          // ignored by the body, so only the positional form worked.
+          val modelRef = ctx.positionalArgs.headOption.orElse(ctx.args.get("model-ref")).getOrElse("")
           val sessionId = ctx.args.getOrElse("session", "")
           if modelRef.isEmpty then
             IO.pure(CliResult.Error("Model reference required (e.g. anthropic/claude-sonnet-4-6)"))
           else if sessionId.isEmpty then
-            // #339：llm.model 已退役——「改全局默认模型」落点变为**默认 preset
-            // 的 preferred**（语义对旧用户不变）。GET /api/presets 取默认名 →
-            // PUT /api/presets/{name} 只换 preferred（fallbacks/description
-            // 服务端缺省保留）。
+            // Default-model write: reads the Nebula agent's chain, swaps its
+            // preferred model and writes the chain back (fallbacks survive).
             client
-              .get("/api/presets")
+              .get("/api/agents/Nebula/model")
               .flatMap { resp =>
-                val defaultName = resp.hcursor.downField("defaultPreset").as[String].getOrElse("")
-                if defaultName.isEmpty then
-                  IO.pure(CliResult.Error("No default preset found — start the app once to initialize presets"))
-                else
-                  client
-                    .put(s"/api/presets/$defaultName", Json.obj("preferred" -> modelRef.asJson))
-                    .flatMap { r =>
-                      r.hcursor.downField("error").as[String] match
-                        case Right(err) =>
-                          IO.pure(CliResult.Error(s"Failed to set default model: $err"))
-                        case Left(_) =>
-                          IO.pure(
-                            CliResult.text(s"Default model set to $modelRef (default preset \"$defaultName\")")
-                          )
-                    }
+                val chain = resp.hcursor.downField("chain").focus
+                val effChain = resp.hcursor.downField("effectiveChain").focus
+                val base = chain.orElse(effChain).flatMap(_.as[nebflow.shared.AgentModelConfig].toOption)
+                val fallbacks = base.map(_.fallbacks).getOrElse(Nil)
+                val updated = nebflow.shared.AgentModelConfig(Some(modelRef), fallbacks)
+                client
+                  .put(
+                    "/api/agents/Nebula/model",
+                    Json.obj("model" -> updated.asJson)
+                  )
+                  .flatMap { r =>
+                    r.hcursor.downField("error").as[String] match
+                      case Right(err) =>
+                        IO.pure(CliResult.Error(s"Failed to set default model: $err"))
+                      case Left(_) =>
+                        IO.pure(CliResult.text(s"Default model set to $modelRef (Nebula chain)"))
+                  }
               }
-              .handleErrorWith(e =>
-                IO.pure(CliResult.Error(s"Failed to set default model: ${e.getMessage}"))
-              )
+              .handleErrorWith(e => IO.pure(CliResult.Error(s"Failed to set default model: ${e.getMessage}")))
           else
             // Set session model
             client
@@ -120,7 +120,7 @@ object ThinkingCommand extends CliCommand:
   def name = "thinking"
   def description = "Control thinking mode"
   def subcommands = List(ThinkingOn, ThinkingOff, ThinkingStatus)
-  def examples = List("nebflow thinking on", "nebflow thinking off")
+  def examples = List("stand thinking on", "stand thinking off")
 
   private object ThinkingOn extends CliSubcommand:
     def name = "on"
@@ -159,8 +159,14 @@ object ThinkingCommand extends CliCommand:
             case Some(cfg) =>
               val enabled = cfg.hcursor.downField("enabled").as[Boolean].getOrElse(true)
               val budget = cfg.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
+              // thinking-config 批（2026-10-28）：effort 档位（可选新字段）随行显示。
+              val effort = cfg.hcursor.downField("effort").as[String].toOption
+              val effortTxt = effort.map(e => s", effort: $e").getOrElse("")
               if ctx.json then CliResult.Json(cfg)
-              else CliResult.text(s"Thinking: ${if enabled then "ON" else "OFF"} (budget: $budget tokens)")
+              else
+                CliResult.text(
+                  s"Thinking: ${if enabled then "ON" else "OFF"} (budget: $budget tokens$effortTxt)"
+                )
             case None =>
               CliResult.text("Thinking: default (enabled)")
           }

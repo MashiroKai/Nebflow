@@ -8,14 +8,21 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behavior}
 import nebflow.agent.{AgentLibrary, SharedResources}
-import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
-import nebflow.core.project.{FlowMapStore, NodeDef, NodeEngine, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
+import nebflow.core.project.{
+  FlowMapStore,
+  NodeDef,
+  NodeEngine,
+  NodeLifecycle,
+  ProjectDef,
+  ProjectRuntime,
+  ProjectRuntimeRegistry
+}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.RateLimiter
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.RateLimiter
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 import scala.collection.concurrent.TrieMap
@@ -25,9 +32,11 @@ import scala.collection.concurrent.TrieMap
  *
  * 真实 NodeEdit → NodeEngine 链（NodeAcceptanceSpec 基建复用：RecordingLlm 捕获
  * LlmRequest 断言首条消息注入 + 工具清单）：
- * - §B.8-1：分配后 node 首条消息含 <injected-plugins> 全文 + ${SKILL_DIR} 已替换
+ * - §B.8-1：分配后 node 首条消息含 <injected-plugins> 全文（= 包根 Plugin.md——
+ *   作者令「plugin.md = 插件必要文件机制」批；SKILL.md 不再随注入）
  * - §B.4-③：plugin MCP server 启动 + 工具进会话清单；终态回收（全终态汇合点）
- * - §B.8-3 spawn 侧：审批后改文件 → 分配节点启动即 failed（PLUGIN_UNTRUSTED）
+ * - **内容面（无审批批 2026-09-13）**：内容变更/无记录**不拦装载**（节点照常启动，
+ *   装载的是新内容）；**封禁**（deny-list）在 0 spawn 校验即拒（PLUGIN_BLOCKED）
  * - H-3①：NodePayload/节点模型带 plugins 字段
  * - §G.2：flag off → NodeEdit 忽略 plugins（不校验不存储）、不注入
  */
@@ -41,6 +50,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"plugin chain agent","tools":[],"category":"standalone"}"""
@@ -48,14 +58,19 @@ class NodePluginChainSpec extends CatsEffectSuite:
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
   // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   // ── plugin fixtures（真实目录 + 审批走 PluginRegistry 单点）──────
   private val echoServerFile = tempRoot / "fixture_echo_server.py"
-  os.write.over(echoServerFile,
+
+  os.write.over(
+    echoServerFile,
     """#!/usr/bin/env python3
       |import sys, json
       |def send(obj):
@@ -81,54 +96,99 @@ class NodePluginChainSpec extends CatsEffectSuite:
       |        send({"id": mid, "result": {"content": [{"type": "text", "text": "echo-ok"}]}})
       |    else:
       |        send({"id": mid, "result": {}})
-      |""".stripMargin)
+      |""".stripMargin
+  )
 
   // inject-skill：只有 skills（${SKILL_DIR} 引用 → 断言替换）
   private val injectSkillDir = tempRoot / "plugins" / "inject-skill"
   os.makeDir.all(injectSkillDir / "skills" / "howto")
-  os.write.over(injectSkillDir / "plugin.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"inject-skill","version":"1.0.0","description":"skill injection fixture"}""")
-  os.write.over(injectSkillDir / "skills" / "howto" / "SKILL.md",
+
+  os.write.over(
+    injectSkillDir / "plugin.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"inject-skill","version":"1.0.0","description":"skill injection fixture"}"""
+  )
+
+  // 作者令「plugin.md = 插件必要文件机制」：分配注入的提示词 = 包根 Plugin.md
+  // （旧 SKILL.md 全文注入退役——SKILL.md 回归按需查阅件，不再随分配进提示词）。
+  os.write.over(
+    injectSkillDir / "Plugin.md",
+    """# inject-skill
+
+      |## PluginMd Body Marker
+      |Injection prompt source = this file.""".stripMargin
+  )
+
+  os.write.over(
+    injectSkillDir / "skills" / "howto" / "SKILL.md",
     """---
       |name: howto
       |description: injection test skill
       |---
       |## HowTo Body Marker
-      |Read bundled refs at ${SKILL_DIR}/refs/spec.md before answering.""".stripMargin)
+      |Read bundled refs at ${SKILL_DIR}/refs/spec.md before answering.""".stripMargin
+  )
 
   // echo-mcp：只有 mcp（python stdio fixture server）
   private val echoMcpDir = tempRoot / "plugins" / "echo-mcp"
   os.makeDir.all(echoMcpDir)
-  os.write.over(echoMcpDir / "plugin.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"echo-mcp","version":"1.0.0","description":"mcp lifecycle fixture"}""")
-  os.write.over(echoMcpDir / "mcp.json",
-    Json.obj("$schema" -> PluginRegistry.CanonicalMcpSchema.asJson,
-      "mcpServers" -> Json.obj("srv" -> Json.obj(
-        "type" -> "stdio".asJson,
-        "command" -> "python3".asJson, "args" -> List(echoServerFile.toString).asJson))).noSpaces)
 
-  // never-approved：本 spec 任何测试都不审批——信任门校验测试的顺序无关 fixture
+  os.write.over(
+    echoMcpDir / "plugin.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"echo-mcp","version":"1.0.0","description":"mcp lifecycle fixture"}"""
+  )
+
+  // 必要文件（mcp 包同样过注入面——Plugin.md 缺失 = 分配 Left）
+  os.write.over(echoMcpDir / "Plugin.md", "# echo-mcp\n\nMCP lifecycle fixture package.\n")
+
+  os.write.over(
+    echoMcpDir / "mcp.json",
+    Json
+      .obj(
+        "$schema" -> PluginRegistry.CanonicalMcpSchema.asJson,
+        "mcpServers" -> Json.obj(
+          "srv" -> Json.obj(
+            "type" -> "stdio".asJson,
+            "command" -> "python3".asJson,
+            "args" -> List(echoServerFile.toString).asJson
+          )
+        )
+      )
+      .noSpaces
+  )
+
+  // never-approved：本 spec 任何测试都不审批——**在位即信任**下它是正常可用包
+  // （无记录 ⇒ 首扫即受信）；「封禁」用例在此 fixture 上叠加 deny-list 验证。
   private val neverApprovedDir = tempRoot / "plugins" / "never-approved"
   os.makeDir.all(neverApprovedDir / "skills" / "s")
-  os.write.over(neverApprovedDir / "plugin.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"never-approved","version":"1.0.0","description":"default-deny fixture"}""")
-  os.write.over(neverApprovedDir / "skills" / "s" / "SKILL.md",
+
+  os.write.over(
+    neverApprovedDir / "plugin.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"never-approved","version":"1.0.0","description":"no-record fixture"}"""
+  )
+
+  os.write.over(neverApprovedDir / "Plugin.md", "# never-approved\n\nNo-record fixture package.\n")
+
+  os.write.over(
+    neverApprovedDir / "skills" / "s" / "SKILL.md",
     """---
       |name: s
       |description: never approved
       |---
-      |body""".stripMargin)
+      |body""".stripMargin
+  )
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
   // ── 基建（NodeAcceptanceSpec 同款）─────────────────────────
 
-  private class RecordingLlm(capture: TrieMap[String, LlmRequest], delay: FiniteDuration = Duration.Zero) extends LlmHandle[IO]:
+  private class RecordingLlm(capture: TrieMap[String, LlmRequest], delay: FiniteDuration = Duration.Zero)
+      extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       val put = IO(capture.update(req.sessionId, req)).void
       val body: Stream[IO, StreamChunk] = Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
@@ -149,7 +209,7 @@ class NodePluginChainSpec extends CatsEffectSuite:
     yield SharedResources(
       llm = llm,
       dispatcher = dispatcher,
-      sessionStore = nebflow.gateway.SessionStore(tmp / "sessions", tmp / "tasks"),
+      sessionStore = nebflow.core.SessionStore(tmp / "sessions", tmp / "tasks"),
       projectRoot = os.pwd,
       thinkingConfigRef = thinkingRef,
       rateLimiter = rateLimiter,
@@ -179,14 +239,23 @@ class NodePluginChainSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
-        emitEvent = (_, _, _) => IO.unit
+        emitEvent = (_, _, _) => IO.unit,
+        // 显式关终态 hold 腿（休眠旋钮；本 fixture 主题与之正交）。
+        reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -195,7 +264,10 @@ class NodePluginChainSpec extends CatsEffectSuite:
     NodeEditTool.call(input.asObject.get, ctx).map(_.left.map(_.message))
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
@@ -211,12 +283,12 @@ class NodePluginChainSpec extends CatsEffectSuite:
   private def approve(name: String): IO[Unit] =
     PluginRegistry.approve(name).flatMap {
       case Right(_) => IO.unit
-      case Left(e)  => IO.raiseError(new RuntimeException(s"fixture approve failed: $e"))
+      case Left(e) => IO.raiseError(new RuntimeException(s"fixture approve failed: $e"))
     }
 
-  // ── §B.8-1：skill 全文注入首条消息 ─────────────────────────
+  // ── §B.8-1：注入全文进首条消息（作者令批：内容 = 包根 Plugin.md）────────
 
-  test("§B.8-1: 分配 skill plugin 的节点——首条消息含 <injected-plugins> 全文且 ${SKILL_DIR} 已替换") {
+  test("§B.8-1: 分配 plugin 的节点——首条消息含 <injected-plugins> 全文（= Plugin.md；SKILL.md 不再随注入）") {
     val capture = TrieMap[String, LlmRequest]()
     val ws = tempRoot / "ws-inject"
     os.makeDir.all(ws)
@@ -227,12 +299,21 @@ class NodePluginChainSpec extends CatsEffectSuite:
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-inject", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        created <- nodeEdit(nodeInput("plc-inject", "injected", "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("use the howto skill"), "out" -> Json.fromString("Nebula"),
-          "plugins" -> Json.arr(Json.fromString("inject-skill"))), ctx)
+        created <- nodeEdit(
+          nodeInput(
+            "plc-inject",
+            "injected",
+            "description" -> Json.fromString("test node purpose"),
+            "task" -> Json.fromString("use the howto skill"),
+            "out" -> Json.fromString("Nebula"),
+            "plugins" -> Json.arr(Json.fromString("inject-skill"))
+          ),
+          ctx
+        )
         _ = assert(created.isRight, s"NodeEdit with trusted plugin must succeed: $created")
-        _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
-          _.nodes.values.exists(n => n.name == "injected" && n.status == NodeLifecycle.Completed)))
+        _ <- waitUntil(30.seconds)(
+          rt.store.snapshot.map(_.nodes.values.exists(n => n.name == "injected" && n.status == NodeLifecycle.Completed))
+        )
         reqOpt = capture.values.headOption
         node <- rt.store.snapshot.map(_.nodes.values.find(_.name == "injected")).flatMap {
           case Some(n) => IO.pure(n)
@@ -244,12 +325,26 @@ class NodePluginChainSpec extends CatsEffectSuite:
     program.map { case (reqOpt, node, payload) =>
       val req = reqOpt.getOrElse(fail("no LLM request captured"))
       val userMsg = req.messages.find(_.role == nebflow.shared.MessageRole.User).map(_.textContent).getOrElse("")
-      assert(userMsg.contains("<injected-plugins>"), s"first user message must carry the injection block, got:\n${userMsg.take(600)}")
-      assert(userMsg.contains("<plugin name=\"inject-skill\" skill=\"howto\">"), "plugin tag with §B.4 shape must be present")
-      assert(userMsg.contains("## HowTo Body Marker"), "SKILL.md body (frontmatter stripped) must be injected in full")
-      assert(userMsg.contains("/refs/spec.md"), "SKILL_DIR substitution must keep the relative ref path")
-      assert(!userMsg.contains("${SKILL_DIR}"), "${SKILL_DIR} placeholder must be replaced with the absolute dir")
-      assert(userMsg.contains(injectSkillDir.toString), "SKILL_DIR must resolve to the plugin skill dir")
+      assert(
+        userMsg.contains("<injected-plugins>"),
+        s"first user message must carry the injection block, got:\n${userMsg.take(600)}"
+      )
+      assert(
+        userMsg.contains("<plugin name=\"inject-skill\">"),
+        "plugin tag = <plugin name> only — the per-skill shape retired with the Plugin.md mechanism"
+      )
+      assert(
+        !userMsg.contains("skill="),
+        "the injected block must not carry the legacy per-skill attribute"
+      )
+      assert(
+        userMsg.contains("## PluginMd Body Marker"),
+        "Plugin.md body is the injected prompt (allocation prompt = plugin.md)"
+      )
+      assert(
+        !userMsg.contains("## HowTo Body Marker"),
+        "SKILL.md body must NOT ride the allocation prompt any more (on-demand doc, not injected)"
+      )
       assertEquals(node.plugins, List("inject-skill"), "node model must record the allocation (H-3①)")
       assert(payload.toString.contains("\"plugins\""), "NodePayload must expose plugins (H-3①)")
     }
@@ -273,9 +368,17 @@ class NodePluginChainSpec extends CatsEffectSuite:
         res <- mkResources(system, tempRoot, new RecordingLlm(capture, delay = 1500.millis))
         rt <- mountProject("plc-mcp", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        created <- nodeEdit(nodeInput("plc-mcp", "mcpped", "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("use the echo tool"), "out" -> Json.fromString("Nebula"),
-          "plugins" -> Json.arr(Json.fromString("echo-mcp"))), ctx)
+        created <- nodeEdit(
+          nodeInput(
+            "plc-mcp",
+            "mcpped",
+            "description" -> Json.fromString("test node purpose"),
+            "task" -> Json.fromString("use the echo tool"),
+            "out" -> Json.fromString("Nebula"),
+            "plugins" -> Json.arr(Json.fromString("echo-mcp"))
+          ),
+          ctx
+        )
         _ = assert(created.isRight, s"NodeEdit must succeed: $created")
         // MCP 启动 + 引用记账（工具注册先于引用记账——startServer 完成时工具即
         // 可见，serverRefs/sessionRefs 随后才 update）。已知 flake（满载偶红、
@@ -283,43 +386,52 @@ class NodePluginChainSpec extends CatsEffectSuite:
         // 冷启 + MCP 握手可超过原 15s；回收窗口同理。
         _ <- waitUntil(30.seconds)(
           IO.blocking(nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name))
-            .map(_.exists(_.startsWith("mcp__plugin_echo-mcp_srv__"))))
+            .map(_.exists(_.startsWith("mcp__plugin_echo-mcp_srv__")))
+        )
         // refcount 快照的确定性同步点：工具可见 ≠ 引用记账可见（acquire 先
         // startServer 后 refs.update）——等 refcount==1 落定再快照
-        _ <- waitUntil(30.seconds)(
-          res.pluginMcp.runningServers.map(_.get("plugin_echo-mcp_srv").contains(1)))
+        _ <- waitUntil(30.seconds)(res.pluginMcp.runningServers.map(_.get("plugin_echo-mcp_srv").contains(1)))
         sessionRunning <- res.pluginMcp.runningServers
-        _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
-          _.nodes.values.exists(n => n.name == "mcpped" && n.status == NodeLifecycle.Completed)))
+        _ <- waitUntil(30.seconds)(
+          rt.store.snapshot.map(_.nodes.values.exists(n => n.name == "mcpped" && n.status == NodeLifecycle.Completed))
+        )
         _ <- waitUntil(30.seconds)(res.pluginMcp.sessionHolds.map(_.isEmpty))
         // 回收链的确定性终点：release 先清 sessionRefs/serverRefs，stopServer
         // （含 unregisterToolsByPrefix + 进程关闭）在其后异步执行——sessionHolds
         // 清空 ≠ 回收完成。等真正要断言的终态（工具已注销 + server 已摘除）落定
         _ <- waitUntil(30.seconds)(
           IO.blocking(nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name))
-            .map(!_.exists(_.startsWith("mcp__plugin_echo-mcp_srv__"))))
-        _ <- waitUntil(30.seconds)(
-          res.pluginMcp.runningServers.map(!_.contains("plugin_echo-mcp_srv")))
+            .map(!_.exists(_.startsWith("mcp__plugin_echo-mcp_srv__")))
+        )
+        _ <- waitUntil(30.seconds)(res.pluginMcp.runningServers.map(!_.contains("plugin_echo-mcp_srv")))
         toolsAfter <- IO.blocking(nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name))
         runningAfter <- res.pluginMcp.runningServers
         reqOpt = capture.values.headOption
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield (reqOpt, sessionRunning, toolsAfter, runningAfter)
     program.map { case (reqOpt, sessionRunning, toolsAfter, runningAfter) =>
-      assertEquals(sessionRunning.get("plugin_echo-mcp_srv"), Some(1), "refcount 1 while session runs (§B.8-6 precondition)")
+      assertEquals(
+        sessionRunning.get("plugin_echo-mcp_srv"),
+        Some(1),
+        "refcount 1 while session runs (§B.8-6 precondition)"
+      )
       val req = reqOpt.getOrElse(fail("no LLM request captured"))
       val toolNames = req.tools.getOrElse(Nil).map(_.name)
-      assert(toolNames.exists(_.startsWith("mcp__plugin_echo-mcp_srv__")),
-        s"plugin MCP tool must be in the session tool list (allowedSet §B.4-③), got: ${toolNames.mkString(",")}")
-      assert(!toolsAfter.exists(_.startsWith("mcp__plugin_echo-mcp_srv__")),
-        "plugin tools must be unregistered after node terminal state (recycle)")
+      assert(
+        toolNames.exists(_.startsWith("mcp__plugin_echo-mcp_srv__")),
+        s"plugin MCP tool must be in the session tool list (allowedSet §B.4-③), got: ${toolNames.mkString(",")}"
+      )
+      assert(
+        !toolsAfter.exists(_.startsWith("mcp__plugin_echo-mcp_srv__")),
+        "plugin tools must be unregistered after node terminal state (recycle)"
+      )
       assert(!runningAfter.contains("plugin_echo-mcp_srv"), "server must be stopped after terminal recycle")
     }
   }
 
-  // ── §B.8-3（spawn 侧）：审批后改文件 → 分配节点启动即失败 ───────
+  // ── 内容面（无审批批）：内容变更不拦装载 ───────────────────────
 
-  test("§B.8-3 spawn 侧: 分配校验通过后插件被改 → 节点启动即 failed（旧 digest 拒用）") {
+  test("内容变更不拦装载（§B.8-3 语义取消）: 分配后插件被改 → 节点照常启动并装载**新**内容") {
     val capture = TrieMap[String, LlmRequest]()
     val ws = tempRoot / "ws-stale"
     os.makeDir.all(ws)
@@ -332,42 +444,74 @@ class NodePluginChainSpec extends CatsEffectSuite:
         rt <- mountProject("plc-stale", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
         // A：入口节点（task，out→Nebula），慢 LLM 下保持 running
-        a <- nodeEdit(nodeInput("plc-stale", "A-slow", "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("slow upstream"), "out" -> Json.fromString("Nebula")), ctx)
+        a <- nodeEdit(
+          nodeInput(
+            "plc-stale",
+            "A-slow",
+            "description" -> Json.fromString("test node purpose"),
+            "task" -> Json.fromString("slow upstream"),
+            "out" -> Json.fromString("Nebula")
+          ),
+          ctx
+        )
         _ = assert(a.isRight, s"upstream A create failed: $a")
         aId <- rt.store.snapshot.map(_.nodes.values.find(_.name == "A-slow").map(_.id)).flatMap {
           case Some(id) => IO.pure(id)
           case None => IO.raiseError(new RuntimeException("A-slow vanished"))
         }
         // B：wiring（in=[A] 无 task，运行中上游不投递 → 不启动），分配 inject-skill
-        b <- nodeEdit(nodeInput("plc-stale", "B-stale", "description" -> Json.fromString("test node purpose"),
-          "in" -> Json.arr(Json.fromString(aId)), "out" -> Json.fromString("Nebula"),
-          "plugins" -> Json.arr(Json.fromString("inject-skill"))), ctx)
+        b <- nodeEdit(
+          nodeInput(
+            "plc-stale",
+            "B-stale",
+            "description" -> Json.fromString("test node purpose"),
+            "in" -> Json.arr(Json.fromString(aId)),
+            "out" -> Json.fromString("Nebula"),
+            "plugins" -> Json.arr(Json.fromString("inject-skill"))
+          ),
+          ctx
+        )
         _ = assert(b.isRight, s"downstream B create failed: $b")
-        // 校验通过后再改插件（digest 失效——§B.8-3「升级即重审」）
+        // 校验通过后再改插件（旧语义：digest 失效 ⇒ 拒启动；新语义：**不拦**，装载新内容）
         _ <- IO.sleep(20.millis)
-        _ <- IO.blocking(os.write.append(injectSkillDir / "skills" / "howto" / "SKILL.md", "\ntampered\n"))
-        // A 完成 → 投递 → barrier 归零 → B 启动 → spawn 期 resolve 失败 → failNode
-        _ <- waitUntil(30.seconds)(rt.store.getNode(aId).map(
-          _.exists(_.status == NodeLifecycle.Completed)))
-        _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
-          _.nodes.values.find(_.name == "B-stale").exists(_.status == NodeLifecycle.Failed)))
+        _ <- IO.blocking(os.write.append(injectSkillDir / "Plugin.md", "\ntampered-live-content\n"))
+        // A 完成 → 投递 → barrier 归零 → B 启动（内容面恒可用）→ 完成
+        _ <- waitUntil(30.seconds)(rt.store.getNode(aId).map(_.exists(_.status == NodeLifecycle.Completed)))
+        _ <- waitUntil(30.seconds)(
+          rt.store.snapshot.map(_.nodes.values.find(_.name == "B-stale").exists(_.status == NodeLifecycle.Completed))
+        )
         bNode <- rt.store.snapshot.map(_.nodes.values.find(_.name == "B-stale")).flatMap {
           case Some(n) => IO.pure(n)
           case None => IO.raiseError(new RuntimeException("B-stale vanished"))
         }
+        catalog <- PluginRegistry.renderCatalog()
+        health <- PluginRegistry.healthSummary()
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      yield bNode
-    program.map { bNode =>
-      assertEquals(bNode.status, NodeLifecycle.Failed, "allocation with stale digest must fail the node (no silent degradation)")
-      val result = bNode.result.getOrElse("")
-      assert(result.contains("PLUGIN_UNTRUSTED"), s"failure must carry the trust-gate guidance, got: $result")
+      yield (bNode, capture.values.toList, catalog, health)
+    program.map { case (bNode, reqs, catalog, health) =>
+      assertEquals(
+        bNode.status,
+        NodeLifecycle.Completed,
+        "content change must NOT gate loading any more (tampered package keeps working)"
+      )
+      val injected = reqs.exists(r =>
+        r.messages.exists(m =>
+          m.role == nebflow.shared.MessageRole.User && m.textContent.contains("tampered-live-content")
+        )
+      )
+      assert(injected, "the node must load the NEW content (the change is visible to the model, not intercepted)")
+      assert(catalog.contains("- inject-skill:"), s"content-changed package stays in the catalog: $catalog")
+      assert(catalog.contains("内容与上次记录的版本不同"), s"catalog must note the content change: $catalog")
+      assert(
+        health.exists(_.contains("[content-changed] inject-skill:")),
+        s"health summary must note the content change (non-blocking): $health"
+      )
     }
   }
 
-  // ── NodeEdit 校验面（§B.4 第 3 步）────────────────────────
+  // ── NodeEdit 校验面（§B.4 第 3 步；无审批批口径）────────────────────────
 
-  test("NodeEdit 校验: 不存在的插件 → PLUGIN_NOT_FOUND；未审批插件 → PLUGIN_UNTRUSTED（0 spawn 拒绝）") {
+  test("NodeEdit 校验: 不存在的插件 → PLUGIN_NOT_FOUND；无记录插件 → 受理；被封禁 → PLUGIN_BLOCKED（0 spawn 拒绝）") {
     val capture = TrieMap[String, LlmRequest]()
     val ws = tempRoot / "ws-validate"
     os.makeDir.all(ws)
@@ -377,22 +521,78 @@ class NodePluginChainSpec extends CatsEffectSuite:
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-val", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        missing <- nodeEdit(nodeInput("plc-val", "v1", "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
-          "plugins" -> Json.arr(Json.fromString("no-such-plugin"))), ctx)
-        untrusted <- nodeEdit(nodeInput("plc-val", "v2", "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
-          "plugins" -> Json.arr(Json.fromString("never-approved"))), ctx)
+        _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}"))
+        _ <- IO(PluginRegistry.invalidateCache())
+        missing <- nodeEdit(
+          nodeInput(
+            "plc-val",
+            "v1",
+            "description" -> Json.fromString("test node purpose"),
+            "task" -> Json.fromString("t"),
+            "out" -> Json.fromString("Nebula"),
+            "plugins" -> Json.arr(Json.fromString("no-such-plugin"))
+          ),
+          ctx
+        )
+        // 无审批记录 ⇒ 在位即信任 ⇒ 受理（default-deny 已取消的负面断言）
+        recordless <- nodeEdit(
+          nodeInput(
+            "plc-val",
+            "v2",
+            "description" -> Json.fromString("test node purpose"),
+            "task" -> Json.fromString("t"),
+            "out" -> Json.fromString("Nebula"),
+            "plugins" -> Json.arr(Json.fromString("never-approved"))
+          ),
+          ctx
+        )
+        _ <- PluginBlockPolicy.block("never-approved", "spec: deny-list", "spec")
+        blocked <- nodeEdit(
+          nodeInput(
+            "plc-val",
+            "v3",
+            "description" -> Json.fromString("test node purpose"),
+            "task" -> Json.fromString("t"),
+            "out" -> Json.fromString("Nebula"),
+            "plugins" -> Json.arr(Json.fromString("never-approved"))
+          ),
+          ctx
+        )
+        _ <- PluginBlockPolicy.unblock("never-approved", "spec")
+        after <- NodeEditTool
+          .call(
+            nodeInput(
+              "plc-val",
+              "v4",
+              "description" -> Json.fromString("test node purpose"),
+              "task" -> Json.fromString("t-after-unblock"),
+              "out" -> Json.fromString("Nebula"),
+              "plugins" -> Json.arr(Json.fromString("never-approved"))
+            ).asObject.get,
+            ctx
+          )
+          .map(_.left.map(_.message))
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      yield (missing, untrusted)
-    program.map { case (missing, untrusted) =>
+      yield (missing, recordless, blocked, after)
+    program.map { case (missing, recordless, blocked, after) =>
       assert(missing.isLeft, s"missing plugin must be refused, got: $missing")
       val mErr = missing.swap.toOption.getOrElse("")
       assert(mErr.contains("PLUGIN_NOT_FOUND"), s"missing plugin error code expected, got: $mErr")
-      assert(untrusted.isLeft, s"untrusted plugin must be refused, got: $untrusted")
-      val uErr = untrusted.swap.toOption.getOrElse("")
-      assert(uErr.contains("PLUGIN_UNTRUSTED") && uErr.contains("approve"),
-        s"untrusted error must carry gate code + guidance, got: $uErr")
+      assert(
+        recordless.isRight,
+        s"a record-less package must be accepted (presence = trust), got: ${recordless.swap.toOption}"
+      )
+      assert(blocked.isLeft, s"a blocked plugin must be refused, got: $blocked")
+      val uErr = blocked.swap.toOption.getOrElse("")
+      assert(
+        uErr.contains("PLUGIN_BLOCKED") && uErr.contains("unblock"),
+        s"blocked error must carry the deny-list code + an actionable hint, got: $uErr"
+      )
+      assert(
+        !uErr.contains("default-deny") && !uErr.contains("never approved"),
+        s"the retired default-deny wording must be gone, got: $uErr"
+      )
+      assert(after.isRight, s"unblock must restore acceptance, got: ${after.swap.toOption}")
     }
   }
 
@@ -405,78 +605,135 @@ class NodePluginChainSpec extends CatsEffectSuite:
     val system = ActorSystem(s"plc-off-${scala.util.Random.nextInt(100000)}")
     val program =
       for
-        _ <- IO.blocking(os.write.over(tempRoot / "nebflow.json", """{"plugins":{"enabled":false}}"""))
+        _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, """{"plugins":{"enabled":false}}"""))
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-off", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
         // 引用不存在的插件名也被忽略（不校验）——flag off 的回滚语义
-        created <- nodeEdit(nodeInput("plc-off", "ignored", "description" -> Json.fromString("test node purpose"),
-          "task" -> Json.fromString("no plugins"), "out" -> Json.fromString("Nebula"),
-          "plugins" -> Json.arr(Json.fromString("no-such-plugin"))), ctx)
+        created <- nodeEdit(
+          nodeInput(
+            "plc-off",
+            "ignored",
+            "description" -> Json.fromString("test node purpose"),
+            "task" -> Json.fromString("no plugins"),
+            "out" -> Json.fromString("Nebula"),
+            "plugins" -> Json.arr(Json.fromString("no-such-plugin"))
+          ),
+          ctx
+        )
         _ = assert(created.isRight, s"flag off must ignore plugins param, got: $created")
-        _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
-          _.nodes.values.find(_.name == "ignored").exists(_.status == NodeLifecycle.Completed)))
+        _ <- waitUntil(30.seconds)(
+          rt.store.snapshot.map(_.nodes.values.find(_.name == "ignored").exists(_.status == NodeLifecycle.Completed))
+        )
         node <- rt.store.snapshot.map(_.nodes.values.find(_.name == "ignored")).flatMap {
           case Some(n) => IO.pure(n)
           case None => IO.raiseError(new RuntimeException("node vanished"))
         }
         reqOpt = capture.values.headOption
-        _ <- IO.blocking(os.write.over(tempRoot / "nebflow.json", "{}"))
+        _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}"))
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
       yield (node, reqOpt)
     program.map { case (node, reqOpt) =>
       assertEquals(node.plugins, Nil, "flag off must not store the ignored plugins param")
-      val userMsg = reqOpt.flatMap(_.messages.find(_.role == nebflow.shared.MessageRole.User).map(_.textContent)).getOrElse("")
+      val userMsg =
+        reqOpt.flatMap(_.messages.find(_.role == nebflow.shared.MessageRole.User).map(_.textContent)).getOrElse("")
       assert(!userMsg.contains("<injected-plugins>"), "flag off must suppress injection")
     }
   }
 
-  // ── §E.3：node.preset 消费接通（协议符合度批，2b 遗留）─────────
+  // ── panelscheme（2026-09-21）：preset 参数退役 + 节点跑 /model 主链 ──────────
 
-  test("§E.3 preset: node.preset → 预设链进会话 LLM 请求（agentModel）；未知 preset → 节点 failed 含可用清单") {
+  test("panelscheme: NodeEdit preset 参数不可设（NODE_PRESET_UNSUPPORTED）；节点模型 = /model 主链") {
     val capture = TrieMap[String, LlmRequest]()
     val ws = tempRoot / "ws-preset"
     os.makeDir.all(ws)
-    // 预设 fixture：fast 链 = fast-model + fb-fallback（PresetStore 单点解析）
-    os.write.over(tempRoot / "model-presets.json", Json.obj(
-      "defaultPreset" -> "general".asJson,
-      "presets" -> Json.obj(
-        "general" -> Json.obj("name" -> "general".asJson, "preferred" -> "general-model".asJson, "fallbacks" -> List.empty[String].asJson),
-        "fast" -> Json.obj("name" -> "fast".asJson, "preferred" -> "fast-model".asJson, "fallbacks" -> List("fb-fallback").asJson))).noSpaces)
+    // model-chain anchor 批（2026-10-29）：节点 fallback 锚 = 内置执行 agent 的
+    // /model 链（own fork > Nebula 主链 > seed）。夹具 = Nebula 主链 sidecar
+    // （/model 面板的写入面），dispatcher 的旧 preset 目录面刻意一并写上——
+    // 旧「分发器当前方案」派生若仍在场，本断言即红。
+    os.makeDir.all(tempRoot / "agents" / "Nebula")
+    os.write.over(
+      tempRoot / "agents" / "Nebula" / "agent.json",
+      """{"name":"Nebula","model":{"preferred":"fast-model","fallbacks":["fb-fallback"]}}"""
+    )
+    os.write.over(
+      tempRoot / "model-presets.json",
+      Json
+        .obj(
+          "defaultPreset" -> "general".asJson,
+          "presets" -> Json.obj(
+            "general" -> Json.obj(
+              "name" -> "general".asJson,
+              "preferred" -> "general-model".asJson,
+              "fallbacks" -> List.empty[String].asJson
+            ),
+            "fast" -> Json.obj(
+              "name" -> "fast".asJson,
+              "preferred" -> "fast-model".asJson,
+              "fallbacks" -> List("fb-fallback").asJson
+            )
+          )
+        )
+        .noSpaces
+    )
+    os.makeDir.all(tempRoot / "agents" / "project-dispatcher")
+    os.write.over(
+      tempRoot / "agents" / "project-dispatcher" / "agent.json",
+      """{"name":"project-dispatcher","description":"dispatcher fixture","preset":"general"}"""
+    )
+    os.write.over(tempRoot / "agents" / "project-dispatcher" / "system.md", "# dispatcher\n")
     val system = ActorSystem(s"plc-preset-${scala.util.Random.nextInt(100000)}")
     val program =
       for
         res <- mkResources(system, tempRoot, new RecordingLlm(capture))
         rt <- mountProject("plc-preset", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        ok <- nodeEdit(nodeInput("plc-preset", "preset-ok",
-          "description" -> Json.fromString("preset ok node"),
-          "task" -> Json.fromString("t"), "out" -> Json.fromString("Nebula"),
-          "preset" -> Json.fromString("fast")), ctx)
-        _ = assert(ok.isRight, s"NodeEdit with valid preset must succeed: $ok")
-        _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
-          _.nodes.values.exists(n => n.name == "preset-ok" && n.status == NodeLifecycle.Completed)))
-        bad <- nodeEdit(nodeInput("plc-preset", "preset-bad",
-          "description" -> Json.fromString("preset bad node"),
-          "task" -> Json.fromString("t-preset-missing"), "out" -> Json.fromString("Nebula"),
-          "preset" -> Json.fromString("no-such-preset")), ctx)
-        _ = assert(bad.isRight, s"NodeEdit accepts the preset param (validation is spawn-side §E.3): $bad")
-        _ <- waitUntil(30.seconds)(rt.store.snapshot.map(
-          _.nodes.values.exists(n => n.name == "preset-bad" && n.status == NodeLifecycle.Failed)))
-        badNode <- rt.store.snapshot.map(_.nodes.values.find(_.name == "preset-bad")).flatMap {
-          case Some(n) => IO.pure(n)
-          case None => IO.raiseError(new RuntimeException("preset-bad vanished"))
-        }
+        // ① 退役参数硬闸：preset 键出现即拒（NODE_PRESET_RETIRED），节点零落库
+        rejected <- nodeEdit(
+          nodeInput(
+            "plc-preset",
+            "preset-retired",
+            "description" -> Json.fromString("preset retired"),
+            "task" -> Json.fromString("t"),
+            "out" -> Json.fromString("Nebula"),
+            "preset" -> Json.fromString("fast")
+          ),
+          ctx
+        )
+        _ = assert(rejected.isLeft, s"NodeEdit with the preset param must be rejected: $rejected")
+        _ = assert(
+          rejected.left.exists(_.contains("NODE_PRESET_UNSUPPORTED")),
+          s"rejection must carry NODE_PRESET_UNSUPPORTED: $rejected"
+        )
+        noNode <- rt.store.snapshot.map(s => !s.nodes.values.exists(_.name == "preset-retired"))
+        _ = assert(noNode, "rejected NodeEdit must not create a node")
+        // ② 节点模型 = /model 主链：无 preset 参数的普通节点，执行 agent 的
+        //    AgentDef.model 经 core.SchemePolicy 现读 Nebula 主链（/model 写入面）
+        ok <- nodeEdit(
+          nodeInput(
+            "plc-preset",
+            "preset-ok",
+            "description" -> Json.fromString("model chain inherited"),
+            "task" -> Json.fromString("t"),
+            "out" -> Json.fromString("Nebula")
+          ),
+          ctx
+        )
+        _ = assert(ok.isRight, s"plain NodeEdit must succeed: $ok")
+        _ <- waitUntil(30.seconds)(
+          rt.store.snapshot.map(
+            _.nodes.values.exists(n => n.name == "preset-ok" && n.status == NodeLifecycle.Completed)
+          )
+        )
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      yield (capture.values.find(_.sessionId.startsWith("node-")), badNode)
-    program.map { case (reqOpt, badNode) =>
-      val req = reqOpt.getOrElse(fail("no LLM request captured for preset node"))
-      assertEquals(req.agentModel, Some(nebflow.shared.AgentModelConfig(Some("fast-model"), List("fb-fallback"))),
-        s"node.preset must drive the session model chain (§E.3 consumption), got: ${req.agentModel}")
-      assertEquals(badNode.status, NodeLifecycle.Failed, "unresolvable preset must fail the node")
-      val result = badNode.result.getOrElse("")
-      assert(result.contains("preset") && result.contains("unresolved") && result.contains("general"),
-        s"failure must carry §E.3 guidance with available presets, got: $result")
+      yield capture.values.find(_.sessionId.startsWith("node-"))
+    program.map { reqOpt =>
+      val req = reqOpt.getOrElse(fail("no LLM request captured for the /model-anchored node"))
+      assertEquals(
+        req.agentModel,
+        Some(nebflow.shared.AgentModelConfig(Some("fast-model"), List("fb-fallback"))),
+        s"node session must run the /model primary chain, got: ${req.agentModel}"
+      )
     }
   }
 

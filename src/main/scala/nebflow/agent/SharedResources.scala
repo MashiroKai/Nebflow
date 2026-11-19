@@ -1,23 +1,41 @@
 package nebflow.agent
 
+import nebflow.neblink.attachment.*
+import nebflow.neblink.core.*
+import nebflow.neblink.social.*
+
 import cats.effect.std.Dispatcher
 import cats.effect.{Deferred, IO, Ref}
-import nebflow.actor.{ActorRef, ActorSystem}
+import cats.syntax.all.*
+import io.circe.{Json, JsonObject}
+import nebflow.actor.*
 import nebflow.bridge.BridgeManager
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.daemon.DaemonService
 import nebflow.core.hooks.{HookEngine, HooksConfig}
+import nebflow.core.node.NodeRunner
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.task.TaskStore
-import nebflow.core.tools.FileLockManager
+import nebflow.core.tools.*
 import nebflow.core.workspace.KnowledgeStore
-import nebflow.core.{FileChangeTracker, PathUtil, UsageRecordStore}
+import nebflow.core.{RateLimiter, SessionStore, *}
 import nebflow.dropbox.DropboxService
-import nebflow.gateway.{RateLimiter, SessionStore}
 import nebflow.llm.*
-import nebflow.neblink.{NeblinkService, FriendService}
-import nebflow.shared.*
+import nebflow.neblink.attachment.AttachUploadRegistry
+import nebflow.neblink.social.FriendService
+import nebflow.neblink.core.NeblinkService
+import nebflow.shared.{FileHistory, ReadTracker, *}
 
+/** A recovered protected attempt whose runner Resource is retained by this runtime. */
+private[agent] final case class ActiveProtectedRecovery(
+  handle: nebflow.core.ProtectedExecutionHandle,
+  runner: ExecutionCommitStore#RunnerHandle,
+  release: IO[Unit],
+  result: nebflow.shared.ProtectedRecoveryResult
+)
+
+// 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-A/R-C):本类原地混入 core 窄视图 AgentRuntimePort
+// (AgentRegistryPort 经其继承;签名镜像,行为保持)。extends 子句形状与改前一致。
 /**
  * Shared resources available to all actors in the hierarchy.
  * Created once in GatewayMain and passed down through actor constructors.
@@ -32,6 +50,14 @@ case class SharedResources(
   thinkingConfigRef: Ref[IO, ThinkingConfig],
   rateLimiter: RateLimiter,
   fileChangeTracker: FileChangeTracker,
+  /**
+   * Session-level file-change ledger (file-diff feature; memory-only, one
+   * global instance). Tools append events via ToolContext.fileChangeLedger; at
+   * node completion FileChangeReport drains + recomputes git diffs and persists
+   * the report. Default = the global singleton (Ref.unsafe precedent) →
+   * existing test constructors need zero changes.
+   */
+  fileChangeLedger: FileChangeLedger = FileChangeLedger.unsafe,
   contextWindow: Int,
   agentLibrary: AgentLibrary,
   taskStore: TaskStore,
@@ -44,34 +70,53 @@ case class SharedResources(
   hookEngine: HookEngine = HookEngine.noop,
   bridgeManager: Option[BridgeManager] = None,
   scheduledTaskStore: ScheduledTaskStore = new ScheduledTaskStore(PathUtil.dataRoot / "scheduled-tasks"),
+  /**
+   * 认知二期产品批③④：打卡 done 历史（只增 JSONL）——周报生成器聚合数据源；
+   * 打卡 UI 销账与 Schedule done 双写口。
+   */
+  override val doneRecordStore: nebflow.core.scheduler.DoneRecordStore =
+    nebflow.core.scheduler.DoneRecordStore(PathUtil.dataRoot),
+  // ↑ override：AgentRuntimePort 给了 dataRoot 默认实现（匿名窄视图零改动），
+  // SharedResources 以同一路径覆盖之。
   neblinkService: Option[NeblinkService] = None,
-  /** A2A 好友与消息服务（spec §11 客户端）。由 GatewayMain 在 NeblinkClient
-    * 初始化后创建，注入 REST 路由 + relay tunnel + WS 事件回调。 */
+  /**
+   * A2A 好友与消息服务（spec §11 客户端）。由 GatewayMain 在 NeblinkClient
+   * 初始化后创建，注入 REST 路由 + relay tunnel + WS 事件回调。
+   */
   friendService: Option[FriendService] = None,
+  /**
+   * attachcl 批（2026-09-16）：在飞附件上传的**取消位**登记表（网页腿「整件一次
+   * 请求 → 网关分块」的上传可取消；见 [[nebflow.neblink.attachment.AttachUploadRegistry]]）。
+   * 缺省 = 本实例独立空表（`Ref.unsafe`，同本类既有先例）⇒ 既有构造点零改动。
+   */
+  attachUploads: AttachUploadRegistry = AttachUploadRegistry.unsafe,
   dropboxService: Option[DropboxService] = None,
   scheduledTaskService: Option[ScheduledTaskService] = None,
   daemonService: Option[DaemonService] = None,
   knowledgeStore: KnowledgeStore = new KnowledgeStore(PathUtil.dataRoot / "workspace-items"),
   subAgentTaskStore: SubAgentTaskStore = new SubAgentTaskStore(PathUtil.dataRoot / "subagent-tasks"),
   usageRecordStore: UsageRecordStore = new UsageRecordStore(PathUtil.dataRoot / "usage-records"),
+  /**
+   * 分配决策通道探活（jev-plugins 批 #1226 起；jev-retire 批 2026-11-16 起写腿 =
+   * 小模型分配单腿）：[[nebflow.llm.decision.DecisionHealthMonitor 单实例]]——写腿 =
+   * 插件分配器（经 SharedResources 构造行的 PluginAllocator 注册面闭包注入），
+   * 读面 = `GET /api/decision/health`。默认实例同步构造（pluginMcp Ref.unsafe
+   * 先例）——存量测试构造零改动；每实例独立（spec 隔离防跨 suite 污染）。
+   */
+  decisionHealth: nebflow.llm.decision.DecisionHealthMonitor = new nebflow.llm.decision.DecisionHealthMonitor,
   voiceMutedRef: Ref[IO, Boolean],
   lastWsActivity: Ref[IO, Long] = Ref.unsafe[IO, Long](System.currentTimeMillis()),
   runtimeModels: Ref[IO, Map[String, String]] = Ref.unsafe[IO, Map[String, String]](Map.empty),
   /**
    * P1 统一注册表: the single registry for ALL running agents
-   * (Root/Team/Flow/Delegate/Ephemeral). Replaces `subAgentRegistry`; during P1
-   * `rootAgents` and `TeamSessionRegistry.actorMap` remain as dual-written
-   * caches (P3 removes them). Interaction answers route through this map only —
+   * (Root/Flow/Delegate/Ephemeral/SubTask). Replaces `subAgentRegistry`; during
+   * P1 `rootAgents` remained as a dual-written cache. 团队功能删除批
+   * （team-feature-deletion-20261104）阶段 3：另一份 dual-write 缓存（团队会话
+   * 登记表的 actorMap）随团队面整体删除 ⇒ 本表自此是 agent 记录的**唯一**权威。
+   * Interaction answers route through this map only —
    * a lookup miss never spawns a ghost agent.
    */
   agentRegistry: Ref[IO, Map[String, AgentRecord]] = Ref.unsafe[IO, Map[String, AgentRecord]](Map.empty),
-  /**
-   * P2 全局权限策略: one PermissionPolicy per Nebula root session, keyed by
-   * rootSessionId. Every agent in a root session's tree reads this bucket at
-   * decision time (dynamic inheritance — never a per-agent snapshot).
-   * Seeded by ensureRootAgent from session meta; written by SetSafetyMode.
-   */
-  permissionPolicies: Ref[IO, Map[String, PermissionPolicy]] = Ref.unsafe[IO, Map[String, PermissionPolicy]](Map.empty),
   /**
    * P2 InteractionHub: spawned once by GatewayMain at startup. Agents send
    * InteractionRequest here for permission/AskUser; gateway forwards frontend
@@ -96,36 +141,793 @@ case class SharedResources(
    * 带默认值 → 既有测试的 SharedResources 构造零改动。
    */
   freezeSkipUntilRef: Ref[IO, Option[Long]] = Ref.unsafe[IO, Option[Long]](None),
-  /** 工具结果 TTL 清理（#341）：request-only 清理配置。GatewayMain 启动时从
-    * nebflow.json toolResultTtl 节 fail-safe 加载覆写；默认关（disabled）。
-    * #341 WS 尾巴：Ref 化热更（镜像 freezeScheduleRef）——setToolResultTtl
-    * 写盘成功后 set，下个 LLM 请求即生效，无需重启。
-    * 带默认值 → 既有测试的 SharedResources 构造零改动。 */
+  /**
+   * 升级链通知风暴闸（v2 反推送风暴批 2026-10-28）：按父会话滑窗限流
+   * error-escalated 通知（[[EscalationNotifyGate]] 头注=根因实证）。默认实例 =
+   * 本实例独立 Ref（`Ref.unsafe` 先例）⇒ 既有测试构造零改动；每实例独立
+   * （spec 隔离防跨 suite 污染）。
+   */
+  escalationNotifyGate: EscalationNotifyGate = EscalationNotifyGate.unsafe,
+  /**
+   * 工具结果 TTL 清理（#341）：request-only 清理配置。GatewayMain 启动时从
+   * nebflow.json toolResultTtl 节 fail-safe 加载覆写；默认关（disabled）。
+   * #341 WS 尾巴：Ref 化热更（镜像 freezeScheduleRef）——setToolResultTtl
+   * 写盘成功后 set，下个 LLM 请求即生效，无需重启。
+   * 带默认值 → 既有测试的 SharedResources 构造零改动。
+   */
   toolResultTtlRef: Ref[IO, nebflow.core.compact.ToolResultTtlConfig] =
     Ref.unsafe[IO, nebflow.core.compact.ToolResultTtlConfig](nebflow.core.compact.ToolResultTtlConfig()),
-  /** Bash 卡死防护阈值（#391）：GatewayMain 从 nebflow.json 顶层键 fail-safe
-    * 读取（bashAutoBackgroundMs/bashBackgroundHardTimeoutMs/bashStuckWindowSec），
-    * 经 AgentCore 注入 ToolContext → BashTool。带默认值 → 既有测试构造零改动。 */
+  /**
+   * Bash 卡死防护阈值（#391）：GatewayMain 从 nebflow.json 顶层键 fail-safe
+   * 读取（bashAutoBackgroundMs/bashBackgroundHardTimeoutMs/bashStuckWindowSec），
+   * 经 AgentCore 注入 ToolContext → BashTool。带默认值 → 既有测试构造零改动。
+   */
   bashResilience: nebflow.shared.BashResilienceConfig = nebflow.shared.BashResilienceConfig(),
-  /** 阶段 2a 沙箱配置（§G.1）：GatewayMain 从 nebflow.json sandbox 节 fail-safe
-    * 加载（absent → enabled=true 默认）。经 AgentCore 派生 ToolContext.sandbox——
-    * 但闸门激活还需会话级 SessionContext.sandboxEnabled=true（仅 project 节点/
-    * 分发器 spawn 置位），故存量测试的默认构造不受影响。 */
+  /**
+   * 执行环境 provider 配置（design §4.2；GatewayMain 启动经 SandboxConfig.load +
+   * SandboxRuntime.init 装配）：absent → 缺省 provider=host / enabled=true。经
+   * AgentCore 派生 ToolContext.sandbox（路径语义 + 会话根推导）。默认实例 =
+   * provider=host（宿主直跑），存量测试构造零改动。
+   * [沙箱拆围栏批 S1, 2026-09-10] 本配置不再参与 AGENTS.md 注入判据（该判据改用
+   * SessionContext.projectSession，见 ContextRefresher.agentsMdEnabledFor）。
+   * [沙箱拆围栏批 S3, 2026-09-10] JVM 写闸已退役（S2）、宿主 Bash 包裹已退场
+   * （S3）：本配置残留承重 = provider 装配 + 会话根/路径语义 + §4.5 回退点。
+   */
   sandboxConfig: nebflow.core.sandbox.SandboxConfig = nebflow.core.sandbox.SandboxConfig(),
-  /** 阶段 2b Plugins（§B.5）：plugin 级 MCP 生命周期管理器（引用计数 + 信任运行时
-    * 联动）。独立于全局 mcpManager（不复用 enable/disable 面，§B.5）；默认实例
-    * 同步构造（Ref.unsafe 先例）——存量测试构造零改动，节点无分配时不触碰。 */
+  /**
+   * 阶段 2b Plugins（§B.5）：plugin 级 MCP 生命周期管理器（引用计数 + 信任运行时
+   * 联动）。独立于全局 mcpManager（不复用 enable/disable 面，§B.5）；默认实例
+   * 同步构造（Ref.unsafe 先例）——存量测试构造零改动，节点无分配时不触碰。
+   */
   pluginMcp: nebflow.core.plugin.PluginMcpManager = nebflow.core.plugin.PluginMcpManager.unsafe(),
-  /** 热重启优雅关停触发闸（hot-restart 批设计 §3.3）：HotRestart 编排器在三检查点
-    * 全过后 complete 它，GatewayMain 的 waitForQuit 经 IO.race 收敛 → use 块完成 →
-    * Ember 优雅 stop → .guarantee 链 → JVM 自然退出——替代 System.exit(0) 非优雅
-    * 退（RestApiRoutes neblink 更新路径的既有缺陷）。R4 零回归：Ctrl+C / quit /
-    * `nebflow stop` 三既有退出路径零改变（race 对它们无感——任一先完成即收敛，
-    * Deferred 无人 complete 时 race 行为与裸 waitForQuit 等价）。
-    * Deferred.unsafe 同步构造（HealthMonitor.signalRef 先例）→ 既有测试构造零改动。 */
+  /**
+   * 热重启优雅关停触发闸（hot-restart 批设计 §3.3）：HotRestart 编排器在三检查点
+   * 全过后 complete 它，GatewayMain 的 waitForQuit 经 IO.race 收敛 → use 块完成 →
+   * Ember 优雅 stop → .guarantee 链 → JVM 自然退出——替代 System.exit(0) 非优雅
+   * 退（RestApiRoutes neblink 更新路径的既有缺陷）。R4 零回归：Ctrl+C / quit /
+   * `nebflow stop` 三既有退出路径零改变（race 对它们无感——任一先完成即收敛，
+   * Deferred 无人 complete 时 race 行为与裸 waitForQuit 等价）。
+   * Deferred.unsafe 同步构造（HealthMonitor.signalRef 先例）→ 既有测试构造零改动。
+   */
   gatewayShutdown: Deferred[IO, Unit] = Deferred.unsafe[IO, Unit],
-  /** 热重启编排器（hot-restart 批）：GatewayMain 装配后注入；None = 未装配（测试 /
-    * 极早期 boot / 总开关关闭）。WS restart 命令经它触发 requestRestart；进度经
-    * restartStatus 帧广播（wsHub）。 */
-  hotRestart: Option[nebflow.core.hotrestart.HotRestart] = None
-)
+  /**
+   * 热重启编排器（hot-restart 批）：GatewayMain 装配后注入；None = 未装配（测试 /
+   * 极早期 boot / 总开关关闭）。WS restart 命令经它触发 requestRestart；进度经
+   * restartStatus 帧广播（wsHub）。
+   */
+  hotRestart: Option[nebflow.core.hotrestart.HotRestart] = None,
+  /**
+   * 统一更新编排器（hotupdate 批 1，设计 §4）：GatewayMain 装配后注入；None = 未装配
+   * （测试 / 极早期 boot）。设置页一键更新经它受理（`WebSocketRoutes` 的 `doUpdate`
+   * 分支）；其重启相位委托上面的 [[hotRestart]]；进度经统一进度帧广播（wsHub）。
+   */
+  updateOrchestrator: Option[nebflow.core.hotupdate.UpdateOrchestrator] = None,
+  /**
+   * 统一更新收敛闭环 · 设备侧领账/采纳闸（M3 ③，DESIGN §7.2）：GatewayMain 装配后
+   * 注入；None = 未装配（测试 / 极早期 boot / neblink 关闭）。心跳腿领账 → 采纳闸 →
+   * 交上面的 [[updateOrchestrator]] 执行；状态经 `updateState` 帧 + serverConfig 快照
+   * （WebSocketRoutes）+ /api/health `update` 键（HealthRoutes）可见，零定时器。
+   */
+  updateConvergence: Option[nebflow.neblink.core.NeblinkUpdateConvergence] = None,
+  /**
+   * **全设备统一更新协调器**（fleet 批 2026-11-01，作者令「一键把所有设备更新到同一
+   * 版本」）：GatewayMain 装配后注入；None = 未装配（测试 / 极早期 boot / neblink 关闭）。
+   *
+   * 面：`GET/POST /api/update/fleet`（计划 + 发起）、`/cancel`、`/retry`（REST），
+   * `fleetUpdate` WS 帧（阻塞式状态卡），`/api/health` 的 `fleet` 自报键。
+   * 装包/重启/自检/回滚一律复用 [[updateOrchestrator]] 与既有远端更新动作——本件只
+   * 做**调度与可见性**。
+   */
+  fleetUpdate: Option[nebflow.core.hotupdate.FleetUpdateCoordinator] = None,
+  /**
+   * **会话级压缩阈值比例覆盖**（ctxthresh 批，2026-09-15 方案 A）：键 = **root
+   * sessionId**，值 = 比例 `r`（`15% < r ≤ 90%`，见
+   * [[nebflow.agent.CompactThresholdOverride]]）。与 `sessionModelOverrides`
+   * （上方 :40）同形同列——同一「会话级覆盖」形态的第二个实例。
+   *
+   * 与 `sessionModelOverrides` 的**语义差异**（设计 §9-O4，作者卡答采纳）：
+   * 本 Ref **不参与启动清零**（`SessionStore.clearAllSessionModels`）——清零的
+   * 理由是 `ModelCandidate` 是**旧配置快照**，热重载后可能「Unknown provider」
+   * （`llm/registry.scala:186-195`）；比例是**纯标量**，无陈旧风险 ⇒ 跨重启保留
+   * （盘上权威 = `SessionMeta` 新增的阈值比例键，见 `shared/SessionMeta.scala`）。
+   *
+   * 带默认值（Ref.unsafe 先例）⇒ 存量测试构造零改动。🔴 非 root spawn 路径
+   * **禁**读本 Ref（口径③；静态判据见
+   * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`）。
+   */
+  sessionCompactThreshold: Ref[IO, Map[String, Double]] = Ref.unsafe[IO, Map[String, Double]](Map.empty),
+  /**
+   * 消息身份牌注册表（msgtokens 批 2026-10-31）：真人用户消息到达时急切铸牌
+   * （先映射后会话数组双写序），五个投递组包点投递前消解牌为全文；会话级
+   * `<dataRoot>/sessions/<sid>/msg-tokens.jsonl`，压缩/重启存活。
+   * 默认 = 全局单例（惰性绑定 PathUtil.dataRoot，同 FileChangeLedger.unsafe 先例）
+   * ⇒ 存量测试构造零改动。置于参数表末尾——其后无参数，位置参数构造点零影响。
+   */
+  override val msgTokens: nebflow.core.msgtokens.MsgTokenRegistry = nebflow.core.msgtokens.MsgTokenRegistry.global,
+  /**
+   * provider 并发上限 · actor 占坑表（provider-concurrency 批，2026-11-06）：键 =
+   * providerId，值 = 占坑 actorId 集。唯一读写面 = [[nebflow.llm.ProviderConcurrency]]
+   * （assign/release/reconcile/snapshot 单点）。默认实例 = 本实例独立空表
+   * （`Ref.unsafe` 先例，同 agentRegistry）⇒ 既有测试构造零改动。
+   */
+  providerConcurrency: Ref[IO, nebflow.llm.ProviderConcurrency.Counts] =
+    Ref.unsafe[IO, nebflow.llm.ProviderConcurrency.Counts](nebflow.llm.ProviderConcurrency.empty),
+  override val executionCommitPort: ExecutionCommitPort = ExecutionCommitPort.unsupported,
+  override val delegateRecoveryMode: Option[String] = Option(System.getProperty("nebflow.delegate.recovery")),
+  protectedExecutions: Map[String, ProtectedExecutionHandle] = Map.empty,
+  protectedRunners: Map[String, ExecutionCommitStore#RunnerHandle] = Map.empty,
+  /**
+   * Recovery-spawned attempts registered after construction. The runner Resource
+   * allocation is held here rather than around the returned live actor.
+   */
+  protectedRecoveries: Ref[IO, Map[String, ActiveProtectedRecovery]] =
+    Ref.unsafe[IO, Map[String, ActiveProtectedRecovery]](Map.empty)
+) extends AgentRuntimePort,
+      SubAgentTaskPort:
+
+  override def externalThinkingConfig: IO[ThinkingConfig] = thinkingConfigRef.get
+
+  override def isProtectedExecution(sessionId: String): Boolean = protectedExecutions.contains(sessionId)
+
+  private[agent] def activeProtectedRecovery(sessionId: String): IO[Option[ActiveProtectedRecovery]] =
+    protectedRecoveries.get.map(_.get(sessionId))
+
+  /** The attempt's live handle and runner, whether admitted directly or recovered. */
+  def activeProtectedAttempt(sessionId: String): IO[Option[
+    (nebflow.core.ProtectedExecutionHandle, ExecutionCommitStore#RunnerHandle)]] =
+    protectedRecoveries.get.map(_.get(sessionId).map(binding => (binding.handle, binding.runner))).map {
+      case Some(pair) => Some(pair)
+      case None => protectedExecutions.get(sessionId).flatMap(handle =>
+        protectedRunners.get(sessionId).map(runner => (handle, runner)))
+    }
+
+  /** Retain an admitted attempt's runner and its release action for the session lifetime. */
+  def retainProtectedExecution(
+    handle: nebflow.core.ProtectedExecutionHandle,
+    runner: ExecutionCommitStore#RunnerHandle,
+    release: IO[Unit],
+    result: nebflow.shared.ProtectedRecoveryResult
+  ): IO[Unit] =
+    protectedRecoveries.update(_.updated(handle.admission.sessionId,
+      ActiveProtectedRecovery(handle, runner, release, result)))
+
+  /** Release every retained recovery runner at test/runtime teardown. */
+  def releaseProtectedRecoveries(): IO[Unit] =
+    protectedRecoveries.getAndSet(Map.empty).flatMap(values =>
+      values.values.foldLeft(IO.unit)((acc, binding) => acc.flatMap(_ => binding.release)))
+
+  override def executionProtection(sessionId: String): IO[nebflow.shared.ExecutionProtection] =
+    protectedRecoveries.get.flatMap { recovered =>
+      val liveHandle = protectedExecutions.get(sessionId).orElse(recovered.get(sessionId).map(_.handle))
+      executionCommitPort.protection(sessionId).map {
+        case nebflow.shared.ExecutionProtection.Unprotected if liveHandle.nonEmpty =>
+          nebflow.shared.ExecutionProtection.Unknown("live-protected-handle-without-authority")
+        case nebflow.shared.ExecutionProtection.Protected(ids) if liveHandle.exists(handle =>
+            !ids.contains(handle.admission.executionId)) =>
+          nebflow.shared.ExecutionProtection.Unknown("live-protected-handle-mismatch")
+        case result => result
+      }
+    }.handleError(e => nebflow.shared.ExecutionProtection.Unknown(s"authority-unavailable: ${e.getClass.getSimpleName}"))
+
+  override def cancelProtectedExecution(sessionId: String, reason: String): IO[Either[String, String]] =
+    activeProtectedRecovery(sessionId).flatMap { recovered =>
+    (protectedExecutions.get(sessionId).orElse(recovered.map(_.handle)),
+      protectedRunners.get(sessionId).orElse(recovered.map(_.runner))) match
+      case (Some(execution), Some(runner)) =>
+        val admission = execution.admission
+        executionProtection(sessionId).flatMap {
+          case nebflow.shared.ExecutionProtection.Protected(ids) if ids == List(admission.executionId) =>
+            executionCommitPort.observeChain(sessionId, admission.executionId)
+          case _ => IO.pure(nebflow.shared.ExecutionChainObservation.ReviewRequired(None, "ambiguous-or-unavailable-execution"))
+        }.flatMap {
+          case nebflow.shared.ExecutionChainObservation.Verified(state)
+              if state.attemptId == admission.attemptId && state.incarnationId == admission.incarnationId =>
+            val id = java.util.UUID.randomUUID().toString
+            val command = nebflow.shared.ExecutionTransition(sessionId, admission.executionId, id, id, state.ref,
+              state.attemptId, state.incarnationId,
+              nebflow.shared.ExecutionEvent.CancelRequested(Option(reason).filter(_.nonEmpty).getOrElse("operator")))
+            runner.cancel(command).flatMap {
+              case _: nebflow.shared.ExecutionCommitResult.Committed | _: nebflow.shared.ExecutionCommitResult.Duplicate =>
+                runner.awaitStopped(scala.concurrent.duration.FiniteDuration(1, java.util.concurrent.TimeUnit.SECONDS)).map { stopped =>
+                  Right(if stopped then "Cancellation committed; owned runner stopped."
+                        else "Cancellation committed; owned runner stop unconfirmed.")
+                }
+              case result => IO.pure(Left(s"Cancellation not confirmed: $result"))
+            }
+          case _ => IO.pure(Left("Protected execution requires review; cancellation not committed"))
+        }
+      case (None, None) =>
+        executionCommitPort.cancelUnownedSession(sessionId, Option(reason).filter(_.nonEmpty).getOrElse("operator"))
+          .map {
+            case _: nebflow.shared.ExecutionCommitResult.Committed | _: nebflow.shared.ExecutionCommitResult.Duplicate =>
+              Right("Cancellation committed; prior runner stop unconfirmed.")
+            case result => Left(s"Cancellation not confirmed: $result")
+          }
+      case _ => IO.pure(Left("Protected runner binding incomplete; cancellation not committed"))
+    }
+
+  /**
+   * **唯一解析入口**（permshield S1 / 2026-09-13 作者重裁「候选 B」）：有效档位
+   * **恒等于**全局持久档位（`nebflow.json` 的 `safety.defaultMode`，热读、零缓存）。
+   *
+   * 2026-09-12 的「会话内临时覆盖」（仅内存 `permissionPolicies[rootSid]`）层已整体
+   * 停用并删除 ⇒ 本方法**不再接受会话参数**：没有任何按会话分叉的档位来源，因此
+   * "某个会话有自己的档位"在类型上就不可能存在（漏用/漏注入从运行时缺陷降为编译期
+   * 不可能）。所有消费点（工具判定 / 卡帧档位 / 会话列表出口 / 子代理与流程继承）
+   * 一律经此读，不得各自读配置文件。
+   */
+  def effectiveSafetyMode: IO[nebflow.core.SafetyMode] =
+    nebflow.core.GlobalSafety.defaultMode
+
+  /**
+   * 会话列表出口的**权威 overlay**：把 `List[SessionMeta]` 序列化成
+   * `safetyMode` 恒存在的 JSON，取值 = **有效档位** = 全局持久档位
+   * （与 `effectiveSafetyMode` 同源）。
+   *
+   * ⚠ 只用于**线上出口**（WS `agentSessionList` / fork `sessionList` /
+   * `SessionService.sendSessionList` / REST `GET /sessions`）。**不得**用于
+   * `SessionStore.saveIndex` 的落盘序列化——盘上字节零改动。
+   */
+  def overlaySessionList(sessions: List[nebflow.shared.SessionMeta]): IO[io.circe.Json] =
+    effectiveSafetyMode.flatMap { global =>
+      val base = nebflow.shared.SessionMeta.withEffectiveSafetyModes(sessions, nebflow.core.SafetyMode.toString(global))
+      // taskbadge batch 2026-09-27: task-attribution enrichment (wire-only).
+      // Attribution source = AgentRegistry (AgentRecord.taskId: snapshot taken at
+      // spawn from the Project-domain registration site, cleared at the same point
+      // as the dispatcher slot table -- slot cleared => registry cleared => both
+      // keys absent = empty state); title source = the unified ledger (deduped,
+      // read once -- at most one ledger-file read per task id across N sessions).
+      // 🔴 An attribution-query failure must **never take down the session-list
+      // endpoint**: the whole enrichment degrades to the un-enriched base (keys
+      // absent = empty state), matching the "the list endpoint never fails because
+      // an attribution query failed" contract.
+      agentRegistry.get.flatMap { reg =>
+        val attribution =
+          sessions.flatMap(m => reg.get(m.id).flatMap(_.taskId).map(tid => m.id -> tid)).toMap
+        val ids = attribution.values.toList.distinct
+        val titlesIo: IO[Map[String, String]] =
+          if ids.isEmpty then IO.pure(Map.empty[String, String])
+          else
+            IO.blocking(
+              ids.map(id => id -> nebflow.core.project.TaskLedgerStore.titleOfSync(Some(id)).getOrElse("")).toMap
+            )
+        titlesIo
+          .handleErrorWith(_ => IO.pure(Map.empty[String, String]))
+          .map(titles => nebflow.shared.SessionMeta.withTaskAttribution(base, attribution, titles))
+      }
+    }
+
+  // ── Phase 5 D 步窄能力面(core ← agent 倒置,见 core/capabilities.scala)──────
+  // 方法体 = core(hotrestart/HotRestart.quiesceReport)原内联逻辑逐字迁移,零行为差;
+  // 签名零 agent 符号(AgentRecord/AgentStatus/SubAgentTask 不外泄)。
+
+  /** hot-restart 五域判定 F3 的读数(原 HotRestart 内联过滤)。 */
+  def processingSessionIds: IO[List[String]] =
+    agentRegistry.get.map(_.values.filter(_.status == AgentStatus.Processing).map(r => r.sessionId).toList)
+
+  /** hot-restart 五域判定 F2 的读数(原 HotRestart 直读;映射为 core 瘦视图)。 */
+  def findRunningTasks: IO[List[RunningSubAgentTask]] =
+    subAgentTaskStore.findRunningTasks.map(_.map(t => RunningSubAgentTask(t.taskId, t.parentSessionId, t.source)))
+
+  // ── 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-C):spawn 工厂三镜像。方法体 = core.node
+  //    .NodeRunner 的 spawnAgentActor/spawnSupervisedAdapter 原体逐字迁此(resources 以
+  //    this 代入——NodeRunner 委托式保证 receiver == p.resources,零行为差);
+  //    agentActorBehavior = AgentActor.apply 全参镜像去 resources(this 代入)。──────────
+
+  /**
+   * provider 并发上限 · 派发时刻分配（provider-concurrency 批，作者令 2026-11-06）。
+   * **唯一调用点 = [[spawnAgentActor]]**（spawn 前一次；`private[agent]` 编译期禁止
+   * 其它调用方——NodeRunner 委托 / 9 个业务调用方 / MailTool 直连 spawn 一律不得加）。
+   *
+   * 语义：从链首开始找第一个「在用 actor 数 < 其 maxConcurrentActors（None=不限）」
+   * 的 provider 作为该 actor 的链首并占坑；此后该 actor 的链快照终生不重算（幂等
+   * assign 不迁移）。返回 None = 不钉（registry 未装配／空链／全部超限）⇒ 既有行为。
+   * 链源 = `getCandidatesForAgentUnfiltered(agentDef.model)`（与请求路径同一解析函数，
+   * 零新选择路径）；配置源 = `providerRegistry.currentConfig`（同一份热读 configRef）。
+   */
+  private[agent] def assignFallbackChain(actorId: String, agentDef: AgentDef): IO[Option[nebflow.llm.PinnedChain]] =
+    if providerRegistry == null then
+      nebflow.llm.ProviderConcurrency
+        .logAssign(actorId, agentDef.name, None, None, Some("registry-absent"))
+        .as(None)
+    else
+      for
+        cfg <- providerRegistry.currentConfig
+        chain <- providerRegistry.getCandidatesForAgentUnfiltered(agentDef.model)
+        configuredHead = chain.headOption.map(c => s"${c.providerId}/${c.model}")
+        pin <- nebflow.llm.ProviderConcurrency.assign(
+          providerConcurrency,
+          cfg,
+          actorId,
+          chain.map(c => c.providerId -> c.model)
+        )
+        _ <- nebflow.llm.ProviderConcurrency.logAssign(
+          actorId,
+          agentDef.name,
+          pin,
+          configuredHead,
+          Some(if chain.isEmpty then "empty-chain" else "all-full")
+        )
+      yield pin
+
+  /**
+   * 钉链失效判读（model-404-freeze 批 2026-11-07）——纯判据在
+   * `ProviderConcurrency.pinVerdict`，本方法只负责把「现配置」喂进去：
+   * 钉链首这个 `provider/model` 是否仍在当前配置清单里 + 现配置链首（回落目标）。
+   * registry 未装配（测试面）/ 读配置失败 ⇒ 判为「仍有效」（Keep = 零行为变化）。
+   */
+  private[agent] def pinVerdictFor(
+    pin: Option[nebflow.llm.PinnedChain],
+    agentModel: Option[nebflow.shared.AgentModelConfig]
+  ): IO[nebflow.llm.ProviderConcurrency.PinVerdict] =
+    pin match
+      case None => IO.pure(nebflow.llm.ProviderConcurrency.PinVerdict.Keep)
+      case Some(p) =>
+        if providerRegistry == null then IO.pure(nebflow.llm.ProviderConcurrency.PinVerdict.Keep)
+        else
+          (for
+            cfg <- providerRegistry.currentConfig
+            chain <- providerRegistry.getCandidatesForAgentUnfiltered(agentModel)
+          yield nebflow.llm.ProviderConcurrency.pinVerdict(
+            pin,
+            headStillConfigured = nebflow.llm.ProviderConcurrency.refConfigured(p.headRef, cfg.llm.providers),
+            currentChain = chain.map(c => s"${c.providerId}/${c.model}")
+          )).handleErrorWith(_ => IO.pure(nebflow.llm.ProviderConcurrency.PinVerdict.Keep))
+
+  /** 可观测面投影（§3h）：/api/models/candidates 与 /api/health 共用的 providerConcurrency 键。 */
+  def providerConcurrencyJson: IO[io.circe.Json] =
+    providerRegistry match
+      case null => IO.pure(io.circe.Json.Null)
+      case _ =>
+        for
+          cfg <- providerRegistry.currentConfig
+          json <- nebflow.llm.ProviderConcurrency.snapshot(providerConcurrency, cfg)
+        yield json
+
+  /**
+   * Bind an exact observed commit and continue the existing leaf Delegate run in
+   * the real Agent loop. The previous attempt's runner, when still present, must
+   * be quiescent; after process death the authority lock itself proves no old
+   * in-memory runner survives.
+   */
+  override def resumeProtectedExecution(
+      request: nebflow.shared.ProtectedRecoveryRequest
+  ): IO[Either[String, nebflow.shared.ProtectedRecoveryResult]] =
+    executionProtection(request.sessionId).flatMap {
+      case nebflow.shared.ExecutionProtection.Protected(List(executionId)) if executionId == request.executionId =>
+        resumeWithAuthority(request)
+      case nebflow.shared.ExecutionProtection.Protected(ids) if ids.contains(request.executionId) =>
+        IO.pure(Left("ambiguous-protected-execution"))
+      case nebflow.shared.ExecutionProtection.Protected(_) =>
+        IO.pure(Left("observed-execution-not-protected"))
+      case nebflow.shared.ExecutionProtection.Unprotected => IO.pure(Left("unprotected-execution"))
+      case nebflow.shared.ExecutionProtection.Unknown(reason) => IO.pure(Left(s"recovery-classification-unavailable: $reason"))
+    }
+
+  private def resumeWithAuthority(
+      request: nebflow.shared.ProtectedRecoveryRequest
+  ): IO[Either[String, nebflow.shared.ProtectedRecoveryResult]] =
+    subAgentTaskStore.findByTaskId(request.sessionId).flatMap { taskOpt =>
+      val agentName = taskOpt.map(_.agentName).getOrElse(nebflow.core.entity.BuiltinAgents.ExecutorName)
+      val definition: IO[Option[AgentDef]] =
+        if agentLibrary == null then IO.pure(None) else agentLibrary.get(agentName)
+      definition.flatMap {
+        case None => IO.pure(Left("agent-definition-unavailable"))
+        case Some(agentDef) => executionCommitPort match
+          case store: ExecutionCommitStore =>
+            // The durable authority validates idempotency even for a retained attempt.
+            // A retained binding is ownership, not evidence that a request is identical.
+            activeProtectedAttempt(request.sessionId).flatMap { active =>
+              val stopped = active match
+                case Some((handle, _)) if handle.admission.attemptId == s"${request.requestId}-attempt" =>
+                  IO.pure(true) // Duplicate validation still belongs to the durable authority.
+                case Some((_, runner)) =>
+                  runner.awaitStopped(scala.concurrent.duration.FiniteDuration(5, java.util.concurrent.TimeUnit.SECONDS))
+                case None => IO.pure(true)
+              stopped.flatMap {
+                case true => store.resumeInterrupted(request, ProtectedAgentExecution.configBinding(agentDef))
+                case false => IO.pure(Left("runner-stop-unconfirmed"))
+              }
+            }.flatMap {
+              case Left(reason) => IO.pure(Left(reason))
+              case Right(result) =>
+                activeProtectedRecovery(request.sessionId).flatMap {
+                  case Some(binding) if result.duplicate && binding.result.attemptId == result.attemptId =>
+                    IO.pure(Right(result))
+                  case _ =>
+                    executionCommitPort.observeChain(request.sessionId, request.executionId).flatMap {
+                      case nebflow.shared.ExecutionChainObservation.Verified(state)
+                          if result.duplicate && (state.terminalPayload.nonEmpty || state.terminalResultRef.nonEmpty) =>
+                        IO.pure(Right(result))
+                      case _ => spawnRecoveredActor(store, request, result, agentDef, taskOpt)
+                    }
+                }
+            }
+          case _ => IO.pure(Left("runner-authority-unavailable"))
+      }
+    }
+
+  private def spawnRecoveredActor(
+      store: ExecutionCommitStore,
+      request: nebflow.shared.ProtectedRecoveryRequest,
+      result: nebflow.shared.ProtectedRecoveryResult,
+      agentDef: AgentDef,
+      taskOpt: Option[SubAgentTask]
+  ): IO[Either[String, nebflow.shared.ProtectedRecoveryResult]] =
+    val projection = taskOpt match
+      case Some(row) =>
+        subAgentTaskStore.resumeRun(row.parentSessionId, request.sessionId, request.executionId,
+          row.rootSessionId.getOrElse(if row.parentSessionId.nonEmpty then row.parentSessionId else request.sessionId),
+          row.executor.getOrElse(nebflow.core.executor.ExecutorRegistry.DefaultId))
+      case None =>
+        subAgentTaskStore.beginRun(
+          SubAgentTask(request.sessionId, "", agentDef.name, "", request.sessionId, "running", 0,
+            System.currentTimeMillis(), None, None, "delegate"),
+          request.executionId, request.sessionId, nebflow.core.executor.ExecutorRegistry.DefaultId
+        )
+    projection.flatMap {
+      case Left(reason) => IO.pure(Left(s"task-projection-failed: $reason"))
+      case Right(_) =>
+        store.registerRunner(
+          ExecutionRunner.Attempt(request.sessionId, request.executionId, result.attemptId, result.incarnationId)
+        ).allocated.flatMap {
+          case (Left(reason), release) => release *> IO.pure(Left(s"runner-registration-failed: $reason"))
+          case (Right(runner), release) =>
+            executionCommitPort.observe(request.sessionId, request.executionId).flatMap {
+              case nebflow.shared.ExecutionAdmissionObservation.Verified(record, input) =>
+                val inputId = input.hcursor.get[String]("inputId").toOption.getOrElse(record.requestId)
+                val inputContent = input.hcursor.get[Json]("content").getOrElse(Json.Null)
+                val admission = nebflow.shared.ExecutionAdmission(
+                  request.sessionId, request.executionId, record.commitId, request.requestId,
+                  result.attemptId, result.incarnationId, record.ownerBinding, record.businessBinding,
+                  record.modelAuditBinding, inputContent, inputId
+                )
+                ExecutionCommitPort.bindRecovered(executionCommitPort, admission, result.ref).flatMap {
+                  case Left(reason) => release *> IO.pure(Left(reason))
+                  case Right(handle) =>
+                    val withRuntime = copy(
+                      protectedExecutions = protectedExecutions.updated(request.sessionId, handle),
+                      protectedRunners = protectedRunners.updated(request.sessionId, runner)
+                    )
+                    restoredState(result).flatMap {
+                      case Left(reason) => release *> IO.pure(Left(reason))
+                      case Right(initial) =>
+                        val cwd = nebflow.core.delegate.DelegateRegistry.find(request.sessionId).map(_.cwd)
+                          .getOrElse(projectRoot.toString)
+                        val parentSessionId = taskOpt.map(_.parentSessionId).filter(_.nonEmpty).getOrElse(record.ownerBinding)
+                        val rootSessionId = taskOpt.flatMap(_.rootSessionId).getOrElse(parentSessionId)
+                        agentRegistry.get.flatMap { registry =>
+                        val parent = registry.get(parentSessionId).map(_.ref)
+                        val params = NodeRunner.SpawnParams(
+                          agentDef = agentDef,
+                          resources = withRuntime,
+                          sessionId = request.sessionId,
+                          sessionName = taskOpt.map(_.description).filter(_.nonEmpty).getOrElse(request.sessionId),
+                          depth = 1,
+                          parentRef = parent,
+                          wsSend = _ => IO.unit,
+                          projectRoot = Some(cwd),
+                          safetyMode = "confirm-edits",
+                          rootSessionId = rootSessionId,
+                          isSubTaskWorker = false,
+                          initialState = Some(initial),
+                          continueOnSpawn = false,
+                          protectedExecution = Some(handle)
+                        )
+                        // The prior runner is fenced; retire its actor and adapter before reusing their names.
+                        registry.get(request.sessionId).traverse_ { previous =>
+                          previous.supervisorRef.traverse_(actorSystem.stop(_)) *> actorSystem.stop(previous.ref)
+                        } *> withRuntime.spawnAgentActor(actorSystem, params).flatMap { actor =>
+                          withRuntime.spawnSupervisedAdapter(actorSystem, params, actor, request.sessionId,
+                            params.sessionName, agentDef.name, request.sessionId, parentSessionId,
+                            taskOpt.map(_.prompt).getOrElse(""), "delegate").flatMap { supervisor =>
+                            (NodeRunner.registerAgent(
+                              resources = withRuntime,
+                              id = request.sessionId,
+                              ref = actor,
+                              kind = AgentKind.Delegate,
+                              rootSessionId = params.rootSessionId,
+                              parentRef = parent,
+                              startedAt = System.currentTimeMillis(),
+                              lastActivityMs = System.currentTimeMillis(),
+                              supervisorRef = Some(supervisor),
+                              parentSessionId = parentSessionId
+                            ) *> protectedRecoveries.modify { bindings =>
+                              (bindings.updated(request.sessionId, ActiveProtectedRecovery(handle, runner, release, result)),
+                                bindings.get(request.sessionId))
+                            }.flatMap(_.traverse_(_.release)) *>
+                              (actor ! AgentCommand.ContinueProtectedRun).as(Right(result)))
+                              .onError { case _ => actorSystem.stop(supervisor) }
+                          }.onError { case _ => actorSystem.stop(actor) }
+                        }.handleErrorWith { error =>
+                          release *> IO.pure(Left(s"actor-spawn-failed: ${error.getMessage}"))
+                        }
+                        }
+                    }
+                }
+              case nebflow.shared.ExecutionAdmissionObservation.ReviewRequired(reason) =>
+                release *> IO.pure(Left(s"admission-review-required: $reason"))
+              case nebflow.shared.ExecutionAdmissionObservation.Missing =>
+                release *> IO.pure(Left("admission-missing"))
+            }
+        }
+    }
+
+  private def restoredState(
+      result: nebflow.shared.ProtectedRecoveryResult
+  ): IO[Either[String, AgentState]] =
+    executionCommitPort.observeChain(result.sessionId, result.executionId).map {
+      case nebflow.shared.ExecutionChainObservation.Verified(state)
+          if state.attemptId == result.attemptId && state.incarnationId == result.incarnationId &&
+            state.checkpoint.nonEmpty =>
+        for
+          restored <- ProtectedAgentExecution.restore(AgentState(), state.checkpoint.get)
+          pending <- state.pendingInputs.traverse { id =>
+            state.inputs.get(id).toRight("recovery-input-missing").flatMap { value =>
+              value.as[nebflow.core.mail.InputPayload].left.map(_ => "recovery-input-invalid").flatMap { input =>
+                if input.kind != nebflow.core.mail.InputPayload.KindUser &&
+                    input.kind != nebflow.core.mail.InputPayload.KindImmediate then Left("recovery-input-kind-unsupported")
+                else
+                  val content = input.blocks.filter(_.nonEmpty)
+                    .fold[Either[String, List[ContentBlock]]](Left(input.text))(Right(_))
+                  Right(Message(MessageRole.User, content, source = input.source, messageId = Some(id)))
+              }
+            }
+          }
+        yield restored.copy(execution = restored.execution.copy(messages = restored.execution.messages ++ pending))
+      case _ => Left("recovery-checkpoint-unavailable")
+    }
+
+  /** 共享 spawn:readTracker/fileHistory 创建 + AgentActor spawn(NodeRunner 原体)。 */
+  def spawnAgentActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
+    if p.protectedExecution.nonEmpty || protectedExecutions.contains(p.sessionId) then spawnActor(system, p)
+    else executionCommitPort.withUnprotectedSession(p.sessionId)(spawnActor(system, p))
+
+  private def spawnActor(system: ActorSystem, p: NodeRunner.SpawnParams): IO[ActorRef[AgentCommand]] =
+    val actorName = if p.actorName.nonEmpty then p.actorName else p.sessionId
+    for
+      _ <- IO.unit
+      // ── R-3a spawn 期硬闸（actor-tree spec v1 §13.2 #P2）────────────────────────
+      // 闸位 = **spawn 动作本身**（这是全仓 spawn 的唯一实现；NodeRunner 及其
+      // Delegate/SubTask/flow/node/dispatcher/恢复六路调用方全部经此）。判据 =
+      // `parentRef → registry → 父会话身份` 的 kernel 双重证据（mode 记录 ∪
+      // `delegate-kernel-` 前缀），见 core.delegate.KernelChildSpawnGate。
+      // 零行为变化：无父/未解析/非 kernel 身份一律放行（dispatcher 是本闸之后
+      // 唯一被允许派生的 delegate 形态）。
+      // The sole kernel exemption is the exact builtin subagent name, passed below.
+      _ <- nebflow.core.delegate.KernelChildSpawnGate.check(
+        agentRegistry,
+        p.parentRef,
+        p.sessionId,
+        p.agentDef.name
+      )
+      readTracker <- ReadTracker.create
+      fileHistory <- FileHistory.create()
+      // ── provider 并发上限 · 派发时刻分配（provider-concurrency 批）──────────────
+      // 全仓唯一 assign 调用点（壳方法 private[agent]）。pin = None ⇒ 零行为变化。
+      // spawn 失败 ⇒ onError 回滚占坑（幂等 release，不泄漏）。
+      providerChainPin <- assignFallbackChain(p.sessionId, p.agentDef)
+      ref <- system.spawn(
+        AgentActor(
+          agentDef = p.agentDef,
+          resources = this,
+          wsSend = p.wsSend,
+          depth = p.depth,
+          parentRef = p.parentRef,
+          sessionId = Some(p.sessionId),
+          sessionName = Some(p.sessionName),
+          initialMessages = p.initialMessages,
+          readTracker = if p.withTracking then Some(readTracker) else None,
+          fileHistory = if p.withTracking then Some(fileHistory) else None,
+          contextWindow = contextWindow,
+          projectRoot = p.projectRoot,
+          safetyMode = p.safetyMode,
+          rootSessionId = p.rootSessionId,
+          isSubTaskWorker = p.isSubTaskWorker,
+          isFlowNode = p.isFlowNode,
+          expectsMail = p.expectsMail,
+          userFacingNode = p.userFacingNode,
+          flowNodeId = p.flowNodeId,
+          isDispatcher = p.isDispatcher,
+          flowNodeRole = p.flowNodeRole,
+          projectName = p.projectName,
+          taskId = p.taskId,
+          flowNodeName = p.flowNodeName,
+          flowChainId = p.flowChainId,
+          sandboxEnabled = p.sandboxEnabled,
+          sandboxRoot = p.sandboxRoot,
+          sessionCwd = p.sessionCwd,
+          projectSession = p.projectSession,
+          sessionDevice = p.sessionDevice,
+          sessionDeviceWorkspace = p.sessionDeviceWorkspace,
+          providerChainPin = providerChainPin,
+          initialState = p.initialState,
+          continueOnSpawn = p.continueOnSpawn
+        ),
+        actorName
+      )
+    yield ref
+
+    end for
+
+  end spawnActor
+
+  /** 共享 BackoffSupervisor adapter spawn(NodeRunner 原体;delegate/subtask 共用)。 */
+  def spawnSupervisedAdapter(
+    system: ActorSystem,
+    params: NodeRunner.SpawnParams,
+    childRef: ActorRef[AgentCommand],
+    childName: String,
+    description: String,
+    agentName: String,
+    subagentId: String,
+    parentSessionId: String,
+    initialPrompt: String,
+    source: String,
+    extraMetadata: JsonObject = JsonObject.empty,
+    wsSend: Option[Json => IO[Unit]] = None
+  ): IO[ActorRef[AgentEvent]] =
+    system.spawn(
+      BackoffSupervisor(
+        childRef = childRef,
+        childSpawnFn = (sys: ActorSystem, recoveredMessages: List[Message]) =>
+          spawnAgentActor(
+            sys,
+            params.copy(
+              initialMessages = recoveredMessages,
+              withTracking = false
+            )
+          ),
+        childName = childName,
+        parentRef = params.parentRef,
+        description = description,
+        agentName = agentName,
+        subagentId = subagentId,
+        parentSessionId = parentSessionId,
+        resources = this,
+        initialPrompt = initialPrompt,
+        source = source,
+        extraMetadata = extraMetadata,
+        wsSend = wsSend
+      ),
+      s"$subagentId-adapter"
+    )
+  end spawnSupervisedAdapter
+
+  /** `AgentActor.apply` 的工厂镜像(R-C):全参转发,resources 以 this 代入。 */
+  def agentActorBehavior(
+    agentDef: AgentDef,
+    wsSend: io.circe.Json => IO[Unit],
+    depth: Int,
+    parentRef: Option[ActorRef[AgentCommand]] = None,
+    sessionId: Option[String] = None,
+    sessionName: Option[String] = None,
+    initialMessages: List[Message] = Nil,
+    readTracker: Option[ReadTracker] = None,
+    fileHistory: Option[FileHistory] = None,
+    contextWindow: Int = Defaults.ContextWindow,
+    projectRoot: Option[String] = None,
+    rulesMd: Option[String] = None,
+    agentsMd: Option[String] = None,
+    folderId: Option[String] = None,
+    safetyMode: String = "confirm-edits",
+    gitBranch: Option[String] = None,
+    expectsMail: Boolean = false,
+    rootSessionId: String = "",
+    isSubTaskWorker: Boolean = false,
+    freezeExempt: Boolean = false,
+    isFlowNode: Boolean = false,
+    userFacingNode: Boolean = false,
+    flowNodeId: Option[String] = None,
+    isDispatcher: Boolean = false,
+    flowNodeRole: Option[String] = None,
+    projectName: Option[String] = None,
+    flowNodeName: Option[String] = None,
+    flowChainId: Option[String] = None,
+    sandboxEnabled: Boolean = false,
+    sandboxRoot: Option[String] = None,
+    sessionCwd: Option[String] = None,
+    projectSession: Boolean = false,
+    compactThresholdRatio: Option[Double] = None,
+    sessionDevice: Option[String] = None,
+    sessionDeviceWorkspace: Option[String] = None
+  ): Behavior[AgentCommand] =
+    AgentActor(
+      agentDef = agentDef,
+      resources = this,
+      wsSend = wsSend,
+      depth = depth,
+      parentRef = parentRef,
+      sessionId = sessionId,
+      sessionName = sessionName,
+      initialMessages = initialMessages,
+      readTracker = readTracker,
+      fileHistory = fileHistory,
+      contextWindow = contextWindow,
+      projectRoot = projectRoot,
+      rulesMd = rulesMd,
+      agentsMd = agentsMd,
+      folderId = folderId,
+      safetyMode = safetyMode,
+      gitBranch = gitBranch,
+      expectsMail = expectsMail,
+      rootSessionId = rootSessionId,
+      isSubTaskWorker = isSubTaskWorker,
+      freezeExempt = freezeExempt,
+      isFlowNode = isFlowNode,
+      userFacingNode = userFacingNode,
+      flowNodeId = flowNodeId,
+      isDispatcher = isDispatcher,
+      flowNodeRole = flowNodeRole,
+      projectName = projectName,
+      flowNodeName = flowNodeName,
+      flowChainId = flowChainId,
+      sandboxEnabled = sandboxEnabled,
+      sandboxRoot = sandboxRoot,
+      sessionCwd = sessionCwd,
+      projectSession = projectSession,
+      compactThresholdRatio = compactThresholdRatio,
+      sessionDevice = sessionDevice,
+      sessionDeviceWorkspace = sessionDeviceWorkspace
+    )
+  end agentActorBehavior
+
+  // ── 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,M2):三个静态面注册器的安装行(构造即
+  //    注册,幂等;生产 boot 与测试装配均经本构造——GatewayMain / SpecResources;各注册器
+  //    未注册兜底语义见 core/AgentRuntimePort.scala)。─────────────────────────────
+  DelegateBudgetPort.install(
+    new DelegateBudgetPort.Face:
+      def resume(sessionId: String): IO[Unit] = DelegateBudget.resume(sessionId)
+  )
+
+  SendConfirmPort.install(
+    new SendConfirmPort.Face:
+      def locally[A](ctx: ToolContext, recipientLabel: String)(io: IO[A]): IO[A] =
+        SendConfirm.locally(SendConfirm.targetFor(ctx, recipientLabel))(io)
+  )
+
+  AskUserAnswerPort.install(
+    new AskUserAnswerPort.Face:
+      def ref(
+        target: ActorRef[AgentCommand],
+        items: List[AskItem],
+        requestId: String,
+        ctx: ToolContext
+      ): ActorRef[List[String]] =
+        AskUserAnswerBridge.ref(target, items, requestId, ctx)
+  )
+
+  // worktree-judge-fifo 批（#1224 增补 §3.1）：delegate **终态**判定机注册（执行体
+  // 在 llm.decision.DelegateJudgeMachine——SmallJudge 候选链单腿，jev-retire 批
+  // 2026-11-16 起 Jev 腿退役；core 只见 DelegateJudgePort 注册器，分层纪律同
+  // DelegateBudgetPort 三先例）。注册点 = 本构造行（生产 boot 与测试装配共用）。
+  // **spawn 腿已删**（delegate-param-decisions 批 2026-11-04：worktree 判定改由
+  // 参数决定，spawn 路径零模型调用）——本端口只剩 judgeTerminal 一个方法。
+  nebflow.core.delegate.DelegateJudge.DelegateJudgePort.install(
+    nebflow.llm.decision.DelegateJudgeMachine.face(providerRegistry)
+  )
+
+  // 引擎加固批 2026-10-09（P1-2）：外部执行器判定缝**缺省接线**——同一判定机
+  // （上方安装的 DelegateJudgePort face）服务外部腿终态判词。幂等赋值
+  // （@volatile 单点）；未走到本构造的进程 = 恒 None 缝（进程结果直判，原缺省）。
+  nebflow.core.delegate.ExternalJudgeHook.classify = nebflow.core.delegate.ExternalJudgeHook.defaultClassify()
+
+  // jev-plugins 批（#1226）注册；jev-retire 批（2026-11-16）起执行体 = 小模型单腿
+  // （llm.decision.PluginAllocatorMachine.face → LlmAllocator，SchemePolicy.smallLlmModel
+  // 候选链；fail-open 兜底——core 只见 core.jev.PluginAllocator 注册器，分层纪律同上）。
+  // 注册点 = 本构造行（生产 boot 与测试装配共用）；探活写腿闭包本实例的
+  // decisionHealth（读面 = REST）。
+  nebflow.core.jev.PluginAllocator.install(
+    nebflow.llm.decision.PluginAllocatorMachine.face(
+      providerRegistry,
+      health = Some(decisionHealth)
+    )
+  )
+
+  // D1（steward 批 2026-10-23）：后台任务通知「持久补投」面注册——BashTool 完成
+  // 回调的改道/补投腿经 BgInboxPort 消费（core 不 import agent 的分层纪律，
+  // DelegateJudgePort 同款 M2 形态）；实现 = 持久注入队 append（CompactionQueueStore，
+  // correlationId 幂等 + 会话已删守卫，复活轮 RecoverPersistedQueues 重放）。
+  BgInboxPort.install(BgInboxBackstop.face(this))
+
+end SharedResources

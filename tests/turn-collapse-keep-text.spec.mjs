@@ -5,15 +5,18 @@
 //
 // v2 semantics: the turn keeps its ordered row list IN PLACE — collapse is a
 // render-layer transform. A persistent `.turn-header` (✻ 字句 · model ·
-// 思考 Ns · 工具 M 次 · 读写 K 文件 + chevron) lands at the turn top; ONLY
-// thinking rows + tool-call rows tuck away (`.nf-tucked`). Assistant text
+// 工具 M 次 · 读写 K 文件 + chevron; the 思考 segment was removed from the
+// attribution line by the 2026-10-31 author ruling) lands at the turn top;
+// ONLY thinking rows + tool-call rows tuck away (`.nf-tucked`). Assistant text
 // rows, card deliverables and injected bubbles stay visible. Expanding
 // restores every middle block to its ORIGINAL position (they never moved).
 // The toggle is INSTANT — no transition layer (the 批② 320ms/stagger WAAPI
 // animation was removed 2026-09-06, author feedback 「动画太卡顿」).
 //
-// Streaming regression (思考直播回归): thinking streams EXPANDED; only the
-// terminal tuck folds it.
+// Streaming (2026-10-03 stream-ux redesign, superseding the 2026-09-05
+// 思考直播回归): the thinking bubble is born PRE-TUCKED — the deltas still
+// render into it (the expand face) but the visible feed is the turn line's
+// single-line reveal; the terminal settles the line into the header.
 //
 // Drives the REAL render modules (chatView.js / chat.js / turnGroup.js /
 // persistence.js) in a static harness page
@@ -206,13 +209,15 @@ test.describe('decompression model — live alternating turn (验收 ②④)', (
     expect(vis.tools).toEqual([false, false]);
     expect(vis.injected).toEqual([true]);
 
-    // The header carries the restored ✻ design phrase + model + 思考 +
-    // whole-turn tool count + file count (Read turnGroup.js → 1 file;
-    // WebSearch has no file payload).
+    // The header carries the restored ✻ design phrase + model + whole-turn
+    // tool count + file count (Read turnGroup.js → 1 file;
+    // WebSearch has no file payload). 2026-10-31 归因行瘦身批 (author ruling):
+    // the 思考 segment is REMOVED from the attribution line — the live
+    // thinking duration must NOT appear between the model and the tool count.
     const headerText = await page.locator('.turn-header-text').first().textContent();
     expect(headerText).toContain('✻ 整理线索 4 秒'); // v1-designed copy, restored 2026-09-06
     expect(headerText).toContain('test-model');
-    expect(headerText).toContain('思考'); // duration is live-measured (< 1s here)
+    expect(headerText).not.toContain('思考'); // 10-31 ruling: no thinking time on the line
     expect(headerText).toContain('工具 2 次');
     expect(headerText).toContain('读写 1 文件');
 
@@ -257,71 +262,70 @@ test.describe('decompression model — live alternating turn (验收 ②④)', (
   });
 });
 
-test.describe('思考直播回归 (验收 ①)', () => {
-  test('thinking streams EXPANDED; auto-collapses at stream end (09-07 ruling) with a clickable re-open label', async ({ browser }) => {
+test.describe('思考单行揭示 (2026-10-03 stream-ux redesign)', () => {
+  test('thinking streams on the turn line; the bubble is the pre-tucked expand face', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
 
-    // Streaming: content div must be visible while deltas land.
+    // Streaming: the deltas render into the bubble's content div (the expand
+    // face keeps accumulating) but the row itself is PRE-TUCKED — the visible
+    // feed is the turn line's single-line reveal (2026-10-03 ruling supersedes
+    // the 2026-09-05 思考直播回归: the feed no longer streams as a bubble).
     await page.evaluate(() => window.__thinkingStreamStart());
     expect(pageErrors).toEqual([]);
     const streaming = await page.evaluate(() => {
       const row = document.querySelector('#chat .row.thinking-row');
       const content = row?.querySelector('.thinking-content');
+      const line = Array.from(document.getElementById('chat').children)
+        .find(k => !k.classList.contains('row') && !k.classList.contains('turn-header'));
       return {
+        rowTucked: row ? row.classList.contains('nf-tucked') : false,
         rowVisible: row ? row.offsetHeight > 0 : false,
-        contentVisible: content ? content.offsetHeight > 0 : false,
         hasText: !!content && content.textContent.includes('第二段思考'),
-        label: row?.querySelector('.thinking-label-text')?.textContent || '',
+        lineText: line ? (line.textContent || '').trim() : '',
       };
     });
-    expect(streaming.rowVisible).toBe(true);
-    expect(streaming.contentVisible).toBe(true);
-    expect(streaming.hasText).toBe(true);
-    expect(streaming.label).toContain('思考中');
+    expect(streaming.rowTucked, 'the bubble is born pre-tucked (expand face)').toBe(true);
+    expect(streaming.rowVisible, 'and it is NOT a visible feed during the run').toBe(false);
+    expect(streaming.hasText, 'the expand face still accumulates every delta').toBe(true);
+    expect(streaming.lineText, 'the turn line carries the single-line reveal').toContain('第二段思考');
 
-    // Mid-turn finish (text reply follows): the thinking CONTENT auto-collapses
-    // at stream end (2026-09-07 09:24 author ruling — restores the pre-08-20
-    // behavior; 15f7cab4), the label stays clickable so the user can re-open.
+    // Mid-turn finish (text reply follows): the thinking row stays tucked; its
+    // label reverts to the done design (「思考过程」, clickable re-open — the
+    // click itself only works once the turn's header untucks the row).
     await page.evaluate(() => window.__thinkingStreamMid());
     expect(pageErrors).toEqual([]);
     const mid = await page.evaluate(() => {
       const row = document.querySelector('#chat .row.thinking-row');
-      const content = row?.querySelector('.thinking-content');
       const aiRow = Array.from(document.querySelectorAll('#chat .row.ai'))
         .find(r => !r.classList.contains('thinking-row'));
       return {
-        rowVisible: row ? row.offsetHeight > 0 : false,
-        contentVisible: content ? content.offsetHeight > 0 : false,
+        rowTucked: row ? row.classList.contains('nf-tucked') : false,
         label: row?.querySelector('.thinking-label-text')?.textContent || '',
         collapsible: !!row?.querySelector('.thinking-label.collapsible'),
         aiText: aiRow ? (aiRow.querySelector('.bubble.ai')?.textContent || '').trim() : '',
       };
     });
-    expect(mid.rowVisible).toBe(true);
-    expect(mid.contentVisible).toBe(false); // auto-collapse at stream end (09-07 ruling)
+    expect(mid.rowTucked).toBe(true);
     expect(mid.label).toBe('思考过程'); // done label, pre-#345 design
     expect(mid.collapsible).toBe(true); // label stays clickable — 可重开
-    expect(mid.aiText).toBe('思考后的答案。');
-
-    // Click the label → the content re-expands (「可重开」contract).
-    await page.locator('#chat .row.thinking-row .thinking-label').click();
-    const reopened = await page.evaluate(() => {
-      const content = document.querySelector('#chat .row.thinking-row .thinking-content');
-      return content ? content.offsetHeight > 0 : false;
-    });
-    expect(reopened).toBe(true);
+    // stream-ux A3 (§二.1.2): the assistant bubble does NOT render per-delta.
+    // Deltas accumulate off-DOM; the whole text lands in ONE paint at
+    // finishAi(). At this mid point (deltas landed, finishAi not called yet)
+    // the bubble is therefore EMPTY by design — the text is asserted after the
+    // terminal in the next test (terminal tuck → 'ai:思考后的答案。').
+    expect(mid.aiText).toBe('');
 
     await context.close();
   });
 
-  test('terminal tuck folds the finished thinking row with the turn', async ({ browser }) => {
+  test('terminal settles the line into the header; expanding it reveals the thinking face (可重开)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__thinkingStreamStart());
     await page.evaluate(() => window.__thinkingStreamMid());
     await page.evaluate(() => window.__thinkingStreamFinish());
     expect(pageErrors).toEqual([]);
 
-    // After done: thinking row tucked behind the header; text reply visible.
+    // After done: the settled header + tucked thinking row; text reply visible.
     expect(await readSeq(page)).toEqual([
       'user',
       'header',
@@ -330,7 +334,31 @@ test.describe('思考直播回归 (验收 ①)', () => {
     ]);
     const headerText = await page.locator('.turn-header-text').first().textContent();
     expect(headerText).toContain('test-model');
-    expect(headerText).toContain('思考');
+    // 2026-10-31 归因行瘦身批: no thinking-duration segment on the summary
+    // line (author ruling) — the settle path (buildBadgeLabel segment spans)
+    // is what lands here.
+    expect(headerText).not.toContain('思考');
+
+    // The turn's header untucks the process face. The thinking CONTENT itself
+    // stays auto-collapsed (09-07 ruling) until its label is clicked — the
+    // 「可重开」 contract lives behind the header's expand now.
+    await page.locator('#chat > .turn-header').first().click();
+    const revealed = await page.evaluate(() => {
+      const row = document.querySelector('#chat .row.thinking-row');
+      const content = row?.querySelector('.thinking-content');
+      return {
+        rowVisible: row ? row.offsetHeight > 0 : false,
+        contentVisible: content ? content.offsetHeight > 0 : false,
+      };
+    });
+    expect(revealed.rowVisible).toBe(true);
+    expect(revealed.contentVisible).toBe(false);
+    await page.locator('#chat .row.thinking-row .thinking-label').click();
+    const reopened = await page.evaluate(() => {
+      const content = document.querySelector('#chat .row.thinking-row .thinking-content');
+      return content ? content.offsetHeight > 0 : false;
+    });
+    expect(reopened, 'clicking the revealed label re-opens the content').toBe(true);
 
     await context.close();
   });
@@ -476,7 +504,14 @@ test.describe('decompression model — history rebuild path (验收 ②⑤)', ()
     await context.close();
   });
 
-  test('busyTail: badge-less mid-turn tail stays flat (cursor at tail start); badge-less tail stays flat when closed', async ({ browser }) => {
+  // 改判（过程泄漏修复批 2026-11-04，作者令 14:14「断网或者刷新页面……直接把所有的
+  // 思考和工具过程全部呈现出来」+ P1「回放默认态 DOM = 流式完成后」）：旧口径
+  // 「badge-less 尾段平铺」正是泄露真源 —— live 腿过程行出生即折叠
+  // （chat.js:1057/1348/4330），回放腿若平铺，同一轮的默认态就与 live 不同形。
+  // 新口径：尾段（在飞 / 已闭合但无终态判据）建**中性摘要行**
+  // （`data-nf-turn-unconfirmed="1"`、无 ✻ 成功文案）+ 过程行折叠；可点开 ⇒ 内容不丢；
+  // 文字行照旧平铺（消息面不被折叠影响）。
+  test('busyTail: badge-less mid-turn tail folds behind a neutral summary row (cursor at tail start); badge-less closed tail folds the same way', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const T = 1735689600000;
     const mkMsgs = () => ([
@@ -488,44 +523,74 @@ test.describe('decompression model — history rebuild path (验收 ②⑤)', ()
       { type: 'tool', label: 'Read("b.md")', summary: '2 lines', content: 'body', isError: false, input: '{"file_path":"b.md"}' },
     ]);
 
-    // busyTail=true: the open turn's tail rows stay FLAT — live stream keeps
-    // appending; the terminal will build the header.
+    // busyTail=true: the open turn's tail gets its OWN neutral summary row —
+    // 未终态 ⇒ 过程行折叠、无 ✻ 成功文案、戳 data-nf-turn-unconfirmed。
     await page.evaluate(m => window.__history(m, { busyTail: true }), mkMsgs());
     expect(pageErrors).toEqual([]);
-    expect(await page.locator('.turn-header').count()).toBe(1); // only the closed first turn
+    expect(await page.locator('.turn-header').count()).toBe(2); // closed turn-1 + neutral tail row
     expect(await readSeq(page)).toEqual([
       'user',
-      'header',
+      'header', // turn-1: confirmed header
       'tool:tucked',
       'ai:第一轮完成。',
       'user',
+      'header', // tail: neutral summary row (未终态)
       'ai:流式中的中间文字。',
-      'tool', // tail tool row: flat, NOT tucked (open turn)
+      'tool:tucked', // tail tool folded behind the neutral row (was flat)
     ]);
-    // The closed turn is collapsed; the open tail's tool is visible.
+    const tailFace = await page.evaluate(() => {
+      const hs = Array.from(document.querySelectorAll('#chat > .turn-header'));
+      const rows = Array.from(document.getElementById('chat').children);
+      const last = rows[rows.length - 1];
+      return {
+        unconfirmed: hs.map(h => h.dataset.nfTurnUnconfirmed === '1'),
+        tailText: (hs[1].querySelector('.turn-header-text')?.textContent || '').trim(),
+        lastTucked: last.classList.contains('tool') && last.classList.contains('nf-tucked'),
+        lastHeight: last.offsetHeight,
+      };
+    });
+    expect(tailFace.unconfirmed).toEqual([false, true]);
+    expect(tailFace.tailText).not.toContain('✻'); // 不编造成败
+    expect(tailFace.lastTucked).toBe(true);
+    expect(tailFace.lastHeight).toBe(0);
+    // 展开仍可用：点中性行 ⇒ 该轮过程行复原可见（内容不丢）。
+    await page.locator('#chat > .turn-header').nth(1).click();
     expect(await page.evaluate(() => {
       const rows = Array.from(document.getElementById('chat').children);
-      const flat = rows[rows.length - 1];
-      return flat.classList.contains('tool') && flat.offsetHeight > 0;
+      const last = rows[rows.length - 1];
+      return last.offsetHeight > 0;
     })).toBe(true);
+    // 文字行两态都平铺可见（消息面不受折叠影响）。
+    const texts1 = await visibleTexts(page);
+    expect(texts1.map(t => t.text)).toEqual(['第一轮完成。', '流式中的中间文字。']);
+    expect(texts1.every(t => t.visible)).toBe(true);
     await context.close();
 
     // busyTail=false (closed rebuild): the badge-less tail is failed/
-    // unfinished — flat, NO header, texts still visible.
+    // unfinished — same neutral row (no ✻), process folded, texts visible.
     const { context: ctx2, page: page2, pageErrors: err2 } = await newPage(browser);
     await page2.evaluate(m => window.__history(m, { busyTail: false }), mkMsgs());
     expect(err2).toEqual([]);
-    expect(await page2.locator('.turn-header').count()).toBe(1); // only the success turn
+    expect(await page2.locator('.turn-header').count()).toBe(2);
     const seq2 = await readSeq(page2);
-    expect(seq2[seq2.length - 1]).toBe('tool'); // failed tail: flat, not tucked
-    expect(await page2.locator('.nf-tucked').count()).toBe(1); // only turn-1's tool
+    expect(seq2[seq2.length - 1]).toBe('tool:tucked'); // badge-less tail: folded
+    expect(await page2.locator('.nf-tucked').count()).toBe(2); // turn-1's tool + tail tool
+    expect(await page2.evaluate(() => {
+      const hs = Array.from(document.querySelectorAll('#chat > .turn-header'));
+      return hs.map(h => h.dataset.nfTurnUnconfirmed === '1');
+    })).toEqual([false, true]);
     const texts2 = await visibleTexts(page2);
     expect(texts2.map(t => t.text)).toEqual(['第一轮完成。', '流式中的中间文字。']);
     expect(texts2.every(t => t.visible)).toBe(true);
     await ctx2.close();
   });
 
-  test('text-only turn renders no header (E5); thinking-only turn keeps thinking visible (E6)', async ({ browser }) => {
+  // 改判（过程泄漏修复批 2026-11-04）：E5 面不变（纯文字轮无可收拢内容 ⇒ 不立行）；
+  // E6 面反转 —— 旧口径「思考独占回合保持思考可见」是回放腿独有的例外，live 腿早已
+  // 取消该例外（collapseTurn 头注：Every turn with tuckable process gets the header
+  // now — the old E6 exception is gone）。P1 要求「回放默认态 = 流式完成后」，故思考行
+  // 默认折叠在中性摘要行之后（可点开，内容不丢），这正是作者报障的泄露面。
+  test('text-only turn renders no header (E5); thinking-only turn folds the thinking behind a neutral summary row (E6)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const T = 1735689600000;
     await page.evaluate(m => window.__history(m, { busyTail: false }), [
@@ -536,14 +601,28 @@ test.describe('decompression model — history rebuild path (验收 ②⑤)', ()
       { type: 'ai', thinking: '深度思考内容，没有文字回复。' },
     ]);
     expect(pageErrors).toEqual([]);
-    expect(await page.locator('.turn-header').count()).toBe(0);
-    expect(await page.locator('.nf-tucked').count()).toBe(0);
+    // E5: 纯文字轮零过程行 ⇒ 不立摘要行（空壳行 = 纯噪音）。
+    // E6: 思考独占轮有一枚中性摘要行 + 思考行折叠（与 live 同形）。
+    expect(await page.locator('.turn-header').count()).toBe(1);
+    expect(await page.evaluate(() => {
+      const h = document.querySelector('#chat > .turn-header');
+      return { unconfirmed: h.dataset.nfTurnUnconfirmed === '1',
+               text: (h.querySelector('.turn-header-text')?.textContent || '').trim() };
+    })).toMatchObject({ unconfirmed: true });
+    expect(await page.locator('.nf-tucked').count()).toBe(1);
     const texts = await visibleTexts(page);
     expect(texts.map(t => t.text)).toEqual(['只有一段中间文字。', '最终文字。']);
     expect(texts.every(t => t.visible)).toBe(true);
-    // The lone thinking row (only readable content of its turn) stays visible.
+    // 默认态：思考行折叠（作者报障的泄露面 = 它直接现形）。
     expect(await page.locator('.thinking-row').count()).toBe(1);
+    expect(await page.locator('.thinking-row').evaluate(el => el.offsetHeight)).toBe(0);
+    // 展开仍可用：点中性行 ⇒ 思考行复原（内容不丢）；内容本体仍按 09-07 裁定
+    // 二次折叠，点标签才展开。
+    await page.locator('#chat > .turn-header').click();
     expect(await page.locator('.thinking-row').evaluate(el => el.offsetHeight > 0)).toBe(true);
+    expect(await page.locator('.thinking-content').evaluate(el => el.offsetHeight)).toBe(0);
+    await page.locator('.thinking-row .thinking-label').click();
+    expect(await page.locator('.thinking-content').evaluate(el => el.offsetHeight > 0)).toBe(true);
 
     await context.close();
   });

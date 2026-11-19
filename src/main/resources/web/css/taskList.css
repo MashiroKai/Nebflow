@@ -1,5 +1,5 @@
 #task-list {
-  padding: 0 8px;
+  padding: 0 var(--ds-space-2);
   margin: 0;
   max-height: 0;
   overflow: hidden;
@@ -11,7 +11,7 @@
   /* 2026-09-08 作者令：面板头钉顶——滚动边界内移到 .task-body-inner，
      外层收敛为 hidden（双滚动条防线），高度预算语义不变（整卡含 header ≤50vh）。*/
   overflow: hidden;
-  padding: 2px 8px 4px;
+  padding: var(--ds-space-half) var(--ds-space-2) var(--ds-space-1);
   /* flex column 链：has-tasks → card → body → inner，逐层 min-height:0
      让高度约束传到底，inner 才获得可滚动的确定高度。 */
   display: flex;
@@ -24,11 +24,9 @@
   flex-direction: column;
   min-height: 0;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 14px;
-  padding: 8px 12px 6px;
+  border-radius: var(--ds-radius-card-md);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-1h);
   box-shadow: inset 0 1px 0 0 rgba(255, 255, 255, 0.15);
 }
 @media (prefers-color-scheme: dark) {
@@ -40,9 +38,9 @@
 .task-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
-  font-size: 12px;
+  gap: var(--ds-space-2);
+  margin-bottom: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
   cursor: default;
   /* 钉顶头：位于滚动容器（.task-body-inner）之外的兄弟节点，天然不随
      内容滚走；flex-shrink:0 防 50vh 高度压力下头部被压缩。 */
@@ -58,7 +56,7 @@
   padding: 0;
   border: none;
   background: transparent;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   cursor: pointer;
   color: var(--color-text-muted, #888);
   transition: background 0.15s, color 0.15s;
@@ -79,6 +77,9 @@
   color: var(--color-text-muted, #888);
   /* Unified panel spec §3.3: tabular figures for the count pair. */
   font-variant-numeric: tabular-nums;
+  /* 2026-10-19 作者令：任务数靠边——紧跟左侧折叠箭头（同一 flex 行，8px gap），
+     不再 44px 缩进对齐行文本列（宽面板上读作居中悬置；列对齐语义随
+     executor 徽标 九点② 去重一并失效，方程不再成立）。 */
 }
 
 /* Collapsed body — use grid-template-rows for smooth height-aware animation */
@@ -97,9 +98,16 @@
 }
 
 /* 展开态唯一滚动容器：仅列表体滚，header 在滚动边界外钉顶。
-   折叠瞬间 .collapsed 生效 → 回到 overflow:hidden，动画期无滚动条残影。 */
+   折叠瞬间 .collapsed 生效 → 回到 overflow:hidden，动画期无滚动条残影。
+   可见滚动条隐藏（滚动能力保留：overflow-y:auto 不动）：写法照仓内既有惯用法
+   （nav.css #nav-agent-list / split.css .xlsx-sheet-bar / modal.css .search-tabs），
+   作用域限本容器，全局滚动条样式与折叠态语义均不动。 */
 .task-card:not(.collapsed) .task-body-inner {
   overflow-y: auto;
+  scrollbar-width: none;
+}
+.task-card:not(.collapsed) .task-body-inner::-webkit-scrollbar {
+  display: none;
 }
 
 .task-card.collapsed .task-body {
@@ -121,10 +129,10 @@
 
 /* ── Empty zone state (C27, §15.5/§15.6) ── */
 .task-empty {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 400;
   color: var(--color-text-muted, #888);
-  padding: 4px 2px;
+  padding: var(--ds-space-1) var(--ds-space-half);
 }
 
 /* 旧任务行 CSS（.task-item/.task-check*/.task-label/.task-desc/.task-meta/
@@ -142,7 +150,7 @@
    命名空间纪律：节点区块只用 .task-node- 前缀类，零引用任务行/team 区块类
    （.task-item、.task-check-、.task-subgroup-、.task-meta、.task-last-active 等）——
    team 任务退役整块删除任务行 CSS 时节点区不受影响（清单：
-   docs/Nebflow/20260902_tasklist-team-retirement-cleanup.md）。
+   tasklist-team-retirement-cleanup 设计件）。
    状态色全部走 base.css 既有变量，亮暗同源自适应：
    running→--color-primary(品牌绿) completed→--color-success failed→--color-error
    cancelled→--color-warning 等待/未知→muted。 */
@@ -151,15 +159,19 @@
 .task-node {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 3px 0;
-  font-size: 13px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1) 0;
+  font-size: var(--ds-fs-body);
   line-height: 1.4;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   transition: background 0.15s;
 }
-.task-node:hover { background: var(--color-frame-hover, rgba(128, 128, 128, 0.08)); }
+/* 面板行悬停/焦点档（作者令 2026-11-03 10:11 ⑤「面板键盘焦点/选中高亮改为非常
+   非常低调——几乎不可见但仍有线索」）：底色退到 --ds-veil-focus（design-system.css
+   的低调焦面槽，4% 蓝雾）。原 --color-frame-hover 是「可见 wash」级，且带裸
+   rgba fallback 字面量——本批一并去掉（字面量只减不增）。 */
+.task-node:hover { background: var(--ds-veil-focus); }
 
 /* 状态 glyph：统一 12px（= 任务行 pending 小方框尺寸节奏，宁小勿大）；
    margin-top 3px = 13px/1.4 首行 (18.2-12)/2 垂直居中。 */
@@ -169,7 +181,7 @@
   flex-shrink: 0;
   width: 12px;
   height: 12px;
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
 }
 
 /* running：品牌绿（--color-primary #07C160）转动圆环——与 completed 静态实心
@@ -187,35 +199,44 @@
 
 /* wiring/pending：静默小方框（等待色 = muted 描边） */
 .task-node-box {
-  border-radius: 3px;
+  border-radius: var(--ds-radius-badge);
   border: 1.5px solid color-mix(in srgb, var(--color-text-muted, #888) 40%, transparent);
 }
 
 /* 终态：实心色点；未知状态：中性半透明点优雅降级 */
 .task-node-dot { border-radius: 50%; }
 .task-node-dot-completed { background: var(--color-success, #4caf50); }
-.task-node-dot-failed { background: var(--color-error, #f44336); }
+/* ui-status-redesign（盘点 #17）：图案点保留，色值归状态 token（暗档随 token 提亮）。 */
+.task-node-dot-failed { background: var(--status-error-icon, #f44336); }
 .task-node-dot-cancelled { background: var(--color-warning, #ff9800); }
 .task-node-dot-neutral { background: color-mix(in srgb, var(--color-text-muted, #888) 45%, transparent); }
 
-/* blocked（阻塞，2026-09-05 裁定）：琥珀实心点——警示态，区别于 failed 终结红 */
-.task-node-dot-blocked { background: rgb(var(--amber, 255 152 0) / 0.95); }
+/* #566：.task-node-dot-blocked 退役（delegate 行值域无 blocked——producer 已删，
+   agentflow flow 节点的 blocked 语言在 flowMap/fmNodeCard 面板） */
 
 .task-node-text { flex: 1; min-width: 0; }
 
+/* 首行 = 节点名 + 链徽标（P1 链级抽象 spec §7-B ⭐）。名可收缩省略、徽标不收缩
+   （窄栏下先牺牲名字，链归属恒可读——信息优先级）。 */
+.task-node-label-row { display: flex; align-items: center; gap: var(--ds-space-1); min-width: 0; }
+
 .task-node-label {
   display: block;
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--color-text, #000);
 }
 
-/* meta 只标 agent（project 已由分组头承载——信息减法） */
+/* meta = 节点 description（缺失回落 agent 名；project 已由分组头承载——信息减法）。
+   窄栏省略号截断，全文由 metaEl.title 悬停承载（沿用既有原生 tooltip 形态）。
+   delegate 行复用：S16 外部行进度尾行同槽显示。 */
 .task-node-meta {
   display: block;
-  margin-top: 1px;
-  font-size: 10px;
+  margin-top: var(--ds-space-hair);
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted, #888);
   overflow: hidden;
@@ -230,7 +251,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 400;
   color: var(--color-text-muted, #888);
 }
@@ -242,35 +263,129 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   font-family: ui-monospace, SFMono-Regular, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted, #888);
 }
 
-/* 项目分组头（节点自有类；视觉值对齐 team 分组头设计语言）。
-   2026-09-06 显示优化批：.task-node-section-title（「Flow Map」分区标题）随作者
-   00:35 裁定整体退役——元素与样式同清，flowmap.title 键保留（标签页域共用）。 */
-.task-node-group { margin-top: 4px; }
+/* Project group header (node-owned classes; visual values follow the group
+   header design language). Rows nest 10px under the header. */
+.task-node-group { margin-top: var(--ds-space-1); }
 .task-node-group-header {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   color: var(--color-text-muted, #888);
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  margin: 6px 2px 2px;
+  margin: var(--ds-space-1h) var(--ds-space-half) var(--ds-space-half);
   cursor: default;
 }
-.task-node-group .task-node { margin-left: 10px; }
+.task-node-group .task-node { margin-left: var(--ds-space-indent-x); }
 
-/* 新节点行入场（任务行同款位移淡入；动画名独立——删任务行 keyframes 不相干） */
+/* ── 重启对账（2026-10-22）：打断徽标 + 折叠前会话灰腿 ─────────────────────
+   徽标 = 行内首槽小胶囊（与 word 槽同 muted 语言，橙警示描边——打断 ≠ 失败红、
+   ≠ 完成绿，中性警示色）；灰腿 = 折进接续者区块的一行 muted（替代旧的双行并存），
+   标题省略号 + 「已由 #N 接续」关系词，点击 = 旧会话 L1（审计可达）。 */
+.task-delegate-badge {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-meta);
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.task-delegate-badge-interrupted {
+  color: var(--color-warning, #ff9800);
+  background: color-mix(in srgb, var(--color-warning, #ff9800) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning, #ff9800) 35%, transparent);
+}
+
+/* 任务模式标注批（2026-10-30）：执行形态徽标——kernel 极简内核（中性 sapphire
+   语系，同待答 chip 家族）/ dispatcher 分发器（亮一档正文色，同编排徽标的
+   「信息标注非警示」基调）。闸关/旧盘不渲染，行高零变化。 */
+.task-delegate-badge-mode-kernel {
+  color: rgb(var(--sapphire));
+  background: color-mix(in srgb, rgb(var(--sapphire)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, rgb(var(--sapphire)) 30%, transparent);
+}
+.task-delegate-badge-mode-dispatcher {
+  color: var(--color-frame-text);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+}
+
+.task-chain-folds { display: block; }
+
+.task-chain-folded {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  height: 20px;
+  margin: var(--ds-space-hair) 0 var(--ds-space-hair) var(--ds-space-5); /* 头行缩进（与成员行 nest 首级同节奏） */
+  padding-right: var(--ds-space-1h);
+  cursor: pointer;
+  opacity: 0.72;
+}
+.task-chain-folded:hover { opacity: 1; }
+.task-chain-folded-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted, #888);
+}
+.task-chain-folded-word {
+  flex-shrink: 0;
+  margin-left: auto;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted, #888);
+}
+.task-chain-folded.task-node-entering {
+  animation: task-node-enter 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-chain-folded.task-node-entering { animation: none; }
+}
+
+/* 新行入场（任务行同款位移淡入；动画名独立——删任务行 keyframes 不相干）
+   delegate 行沿用本动画槽（比较键含 data-delegate-key，重渲不重播）。 */
 .task-node.task-node-entering {
   animation: task-node-enter 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 @keyframes task-node-enter {
   from { opacity: 0; transform: translateX(-12px); }
   to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Chain-block tokens (single source; JS mirrors the numeric ones) ── */
+:root {
+  --task-chain-btn-w: 22px;          /* icon button width (.task-delegate-btn) */
+  --task-chain-btn-h: 20px;          /* icon button height (.task-delegate-btn) */
+  --task-chain-node-h: 22px;         /* expanded member row height */
+  --task-chain-dot-r: 3px;           /* dotmap dot diameter */
+  /* Member-kind palette: subagent child = impl, flow-step = design (the two
+     kinds the delegate plane carries; the other classic slots stay reserved). */
+  --task-node-type-dispatcher: #8a93a5;
+  --task-node-type-impl: #4a8fd4;
+  --task-node-type-verify: #e0a03c;
+  --task-node-type-sink: #9b6fd4;
+  --task-node-type-design: #3aa8a0;
+  --task-chain-check-dash: 12;       /* check stroke dash length */
+  --task-chain-check-ease: cubic-bezier(.34,1.6,.64,1); /* overshoot bounce easing */
+  --task-chain-roll-ms: 350ms;       /* status-word roll duration */
+  --task-chain-nest-step: 8px;       /* indent step per depth level */
+  --task-chain-nest-cap: 3;          /* indent cap (sequence label carries depth past it) */
 }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
@@ -283,7 +398,6 @@
 
 /* ── Reduced motion (§5 A11/A15): all animation becomes instant ── */
 @media (prefers-reduced-motion: reduce) {
-  /* 节点区块（独立规则——不依赖任务行规则存亡） */
   .task-node-spin {
     animation: none;
     border-top-color: color-mix(in srgb, var(--color-primary, #07c160) 25%, transparent);
@@ -291,16 +405,280 @@
   .task-node.task-node-entering {
     animation: none;
   }
+  .task-chain-mark,
+  .task-chain-mark path,
+  .task-chain-roll-in,
+  .task-chain-block.task-chain-enter {
+    animation: none;
+  }
+  .task-chain-mark-static path,
+  .task-chain-mark path { stroke-dashoffset: 0; }
 }
 /* ── Narrow viewport (§10 A12, 裁定 F3): tighten the header at ≤480px. ── */
 @media (max-width: 480px) {
-  .task-header { gap: 4px; }
+  .task-header { gap: var(--ds-space-1); }
   .task-stats {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    /* 靠边纪律同基规则（2026-10-19 作者令）：无缩进，窄 gap 4 即全部间距。 */
   }
-  /* 节点区块（独立规则）：窄屏收起状态词与相对时间 */
+  /* 窄屏收起状态词与相对时间（delegate 行沿用 .task-node-word/-time 同槽） */
   .task-node-word, .task-node-time { display: none; }
 }
+
+/* ── Chain blocks (the classic chain-structure face, delegate-sourced) ──────
+   Block = header row (root node, .task-node.task-chain-head) + expanded member
+   rows (.task-chain-member, 22px). Fold twisty rotates via the header's
+   aria-expanded; leaf headers carry an invisible placeholder (text column
+   alignment discipline). */
+.task-chain-block { margin: var(--ds-space-half) 0; }
+
+.task-chain-twisty {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-top: var(--ds-space-1); /* glyph-row baseline rhythm (same as the 12px glyph slot) */
+  color: var(--color-text-muted, #888);
+  transition: transform 0.15s;
+}
+.task-chain-twisty svg { width: 12px; height: 12px; display: block; }
+.task-chain-head[aria-expanded="true"] .task-chain-twisty { transform: rotate(90deg); }
+.task-chain-twisty-leaf { visibility: hidden; }
+
+/* Chain-level jump zone (dotmap + progress meta): the chain's structure
+   thumbnail — clicks through to the L1 flowmap (whole-chain fit view). */
+.task-chain-jump {
+  flex: 0 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  min-width: 0;
+  margin-top: var(--ds-space-1);
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+}
+.task-chain-jump:hover .task-chain-meta { color: var(--color-text, #000); }
+
+/* Kind colors (member rows only — the header dotmap was dropped as noise):
+   values from the :root tokens above, never literals here. */
+.task-chain-dot.t-dispatcher { color: var(--task-node-type-dispatcher); }
+.task-chain-dot.t-impl { color: var(--task-node-type-impl); }
+.task-chain-dot.t-verify { color: var(--task-node-type-verify); }
+.task-chain-dot.t-sink { color: var(--task-node-type-sink); }
+.task-chain-dot.t-design { color: var(--task-node-type-design); }
+
+.task-chain-meta {
+  flex: 0 0 auto;
+  font-size: var(--ds-fs-meta);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted, #888);
+  white-space: nowrap;
+}
+
+/* ── Expanded member row (22px): sequence label + kind dot + name + word +
+   motion mark + time. Layered indent: base 16px + 8px per depth level, capped
+   at level 3; past the cap the sequence label keeps carrying the depth. ── */
+.task-chain-body { min-width: 0; }
+.task-chain-member {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  height: var(--task-chain-node-h);
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-1) 0 calc(16px + min(var(--nest, 0), var(--task-chain-nest-cap)) * var(--task-chain-nest-step));
+  font-size: var(--ds-fs-meta);
+  line-height: 1;
+  cursor: pointer;
+  border-radius: var(--ds-radius-chip);
+  transition: background 0.15s;
+}
+.task-chain-member:hover { background: var(--ds-veil-focus); }
+.task-chain-depth {
+  flex: 0 0 auto;
+  min-width: 24px;
+  font-size: var(--ds-fs-meta);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: color-mix(in srgb, var(--color-text-muted, #888) 70%, transparent);
+}
+.task-chain-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.task-chain-member-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text, #000);
+}
+.task-chain-member-word {
+  flex: 0 0 auto;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-text-muted, #888);
+}
+.task-chain-member-time {
+  flex: 0 0 auto;
+  font-size: var(--ds-fs-meta);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted, #888);
+}
+
+/* ── Transition motion marks (12px, beside the status word): completed =
+   self-drawing check that bounces in, failed = same-geometry red cross,
+   running = the orbit mini. A real frame-over-frame status change is the only
+   animation trigger; first paint and same-state frames land static. ── */
+.task-chain-mark {
+  flex: 0 0 auto;
+  width: 12px;
+  height: 12px;
+}
+.task-chain-mark svg { width: 12px; height: 12px; display: block; }
+.task-chain-mark circle {
+  fill: none;
+  stroke: var(--color-success, #4caf50);
+  stroke-width: 2;
+}
+.task-chain-mark path {
+  fill: none;
+  stroke: var(--color-success, #4caf50);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: var(--task-chain-check-dash);
+  stroke-dashoffset: var(--task-chain-check-dash);
+}
+.task-chain-mark-failed circle,
+.task-chain-mark-failed path { stroke: var(--status-error-icon, #f44336); }
+.task-chain-mark-failed path { stroke-dasharray: 6; stroke-dashoffset: 6; }
+.task-chain-mark-done:not(.task-chain-mark-static) {
+  animation: task-chain-check-pop 0.4s var(--task-chain-check-ease) forwards;
+}
+.task-chain-mark-done:not(.task-chain-mark-static) path {
+  animation: task-chain-draw 0.25s 0.1s ease forwards;
+}
+.task-chain-mark-failed:not(.task-chain-mark-static) {
+  animation: task-chain-check-pop 0.4s var(--task-chain-check-ease) forwards;
+}
+.task-chain-mark-failed:not(.task-chain-mark-static) path {
+  animation: task-chain-draw 0.25s 0.1s ease forwards;
+}
+.task-chain-mark-static path { stroke-dashoffset: 0; }
+/* running mark: the spin ring fills the 12px slot (classic member-mark form) */
+.task-chain-mark.task-node-spin { margin-top: 0; }
+@keyframes task-chain-draw {
+  to { stroke-dashoffset: 0; }
+}
+@keyframes task-chain-check-pop {
+  from { opacity: 0; transform: scale(0.4); }
+  to   { opacity: 1; transform: scale(1); }
+}
+.task-chain-roll-in {
+  animation: task-chain-roll-in var(--task-chain-roll-ms) cubic-bezier(0.2, 0.9, 0.3, 1.1) both;
+}
+@keyframes task-chain-roll-in {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: none; }
+}
+/* Chain-block first-appearance pop (frame-diff memory — repaints stay silent). */
+@keyframes task-chain-pop {
+  0%   { opacity: 0; transform: translateY(16px) scale(0.82); }
+  60%  { transform: translateY(-2px) scale(1.02); }
+  100% { opacity: 1; transform: none; }
+}
+.task-chain-block.task-chain-enter { animation: task-chain-pop 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.1) both; }
+
+/* ── Delegate row action zone (external rows' open-native exit) ─────────────
+   Zero new color values: everything reuses existing tokens (--color-*). The
+   trailing button syntax follows the 22×20 icon-button family. */
+/* Executor badge slot (external rows only — 九点② dedup: internal executors
+   carry no badge, the status glyph is the identity visual). 12px in the
+   glyph-slot rhythm: same mark size as the twisty slot, same margin-top 3px
+   first-line vertical centering; the inline-flex box keeps the wrapped
+   svg/img out of the line-box baseline math (the old unstyled span grew to
+   the 13px/1.4 line height — 18.2px tall — and hung below the glyph;
+   tasklist-display-fixes 2026-10-19). */
+.task-delegate-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  margin-top: var(--ds-space-1);
+  overflow: hidden;
+}
+.task-delegate-icon img,
+.task-delegate-icon svg { display: block; width: 12px; height: 12px; }
+
+.task-delegate-actions {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-half);
+}
+.task-delegate-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--task-chain-btn-w, 22px);
+  height: var(--task-chain-btn-h, 20px);
+  padding: 0;
+  border: none;
+  border-radius: var(--ds-radius-badge);
+  background: transparent;
+  cursor: pointer;
+  color: var(--color-text-muted, #888);
+  transition: background 0.15s, color 0.15s;
+}
+.task-delegate-btn svg { width: 12px; height: 12px; }
+@media (hover: hover) {
+  .task-delegate-btn:hover { background: var(--color-frame-hover); color: var(--color-text, #000); }
+}
+
+.task-delegate-btn:disabled { opacity: 0.4; cursor: default; }
+
+
+/* ── Ready-to-merge queue rank chip (engine G5 mergeQueuePos verbatim) ── */
+.task-delegate-rank {
+  flex-shrink: 0;
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+  font: 600 var(--ds-fs-meta)/var(--ds-fs-callout) ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted, #888);
+}
+
+/* ── Base-drift state chip（`[base-moved]` 降噪重写批 2026-11-05）────────────
+   基分支自派发以来前进的次数：常色 = 单纯状态（无需行动）；`is-actionable` =
+   挂账里有可行动内容（动到我改过的文件 / base 历史被改写），用警告色提示。
+   这一格替代了原来「每移动一次就注入一条消息」的面，故必须常显不折叠。 */
+.task-delegate-drift {
+  flex-shrink: 0;
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+  font: var(--ds-fs-meta)/var(--ds-fs-callout) ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-muted, #888);
+  white-space: nowrap;
+}
+.task-delegate-drift.is-actionable {
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 15%, transparent);
+}
+

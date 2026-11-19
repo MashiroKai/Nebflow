@@ -1,10 +1,19 @@
-// cardRegistry.js — Universal HTML card renderer for Nebflow
+// cardRegistry.js — Universal HTML card renderer for Stand
 // Detects ___<AGENT>_HTML___ markers and renders HTML in sandboxed iframes.
 // Theme CSS variables are injected into iframes for dark mode support.
 
 import state from './state.js';
-import { key } from './branding.js';
-import { smartScroll } from './utils.js';
+import { smartScroll, isNearBottom } from './utils.js';
+import { mintTickets, reMintAll, stripCredentialParams, nfFilePathsIn, injectTickets } from './nfTicket.js';
+// Local-link routing (2026-09-12, canvas-preview nav parity). A card is a
+// second surface that renders agent HTML, so it injects the SAME in-frame
+// handler the Canvas HTML viewer does (viewers/shared.js) and binds the same
+// parent bridge. Without it, an `<a>` in a card is a dead click: a relative
+// href navigates the card frame onto the app URL (cardRegistry has no render
+// guard, the frame is simply gone), and `target="_blank"` does nothing at all —
+// the card sandbox has no allow-popups, so the browser swallows the popup with
+// no tab, no navigation and no message.
+import { localLinkNavScript, bindLocalLinkBridge, imgClickScript } from './viewers/shared.js';
 
 let _iframeId = 0;
 
@@ -18,8 +27,9 @@ function buildThemeVarsCSS() {
   for (const sheet of document.styleSheets) {
     try {
       for (const rule of sheet.cssRules) {
-        if (rule.selectorText === ':root') {
-          for (const prop of rule.style) {
+        const styleRule = /** @type {CSSStyleRule} */ (rule);
+        if (styleRule.selectorText === ':root') {
+          for (const prop of styleRule.style) {
             if (prop.startsWith('--color-')) {
               const val = root.getPropertyValue(prop).trim();
               if (val) pairs.push(`${prop}:${val}`);
@@ -134,7 +144,7 @@ window.addEventListener('message', (e) => {
     return;
   }
   if (!e.data || !e.data._nfCardH) return;
-  const iframe = document.querySelector(`iframe[data-nf-card-id="${e.data.id}"]`);
+  const iframe = /** @type {HTMLIFrameElement|null} */ (document.querySelector(`iframe[data-nf-card-id="${e.data.id}"]`));
   if (iframe) {
     const isFirst = !_firstHeightDone.has(e.data.id);
     if (isFirst) {
@@ -162,7 +172,16 @@ window.addEventListener('message', (e) => {
       const view = state.getActiveView ? state.getActiveView() : null;
       const chat = view && view.dom.chat;
       if (!chat) return;
-      const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 100;
+      // Ownership rule (msgsearch v2, 2026-09-11): only a card that actually
+      // lives inside the active view's chat may drive that chat's scroll
+      // restoration. Cards drawn outside it — a detached message window
+      // (search float, retired 2026-10-31) or the search-result list inside the search modal —
+      // own a different scroll container and must never move the session the
+      // user is reading.
+      if (!chat.contains(iframe)) return;
+      // A-branch: shared NEAR_BOTTOM_PX unit (was a local 100) — a card that
+      // grows while the user is reading history must not move their viewport.
+      const nearBottom = isNearBottom(chat);
       if (nearBottom) {
         requestAnimationFrame(() => {
           chat.scrollTop = chat.scrollHeight;
@@ -236,20 +255,121 @@ window.addEventListener('message', (e) => {
     });
   }
 });
-/** Read the nebflow auth token from localStorage (set by ws.js on connect). */
-function getNfToken() {
-  return localStorage.getItem(key('token')) || '';
+// The `/api/nf-file` matcher, the candidate scanner and the ticket injector
+// all live in nfTicket.js (`nfFileUrlRe` / `nfFilePathsIn` / `injectTickets`)
+// so the card path and the Canvas viewer path cannot drift apart — the
+// self-correction ⑨ boundary bug (`)`-exclusion) existed precisely because
+// two copies of the same regex could disagree.
+
+/** Build the load-failure placeholder script injected into srcdoc.
+ *
+ *  2026-09-11 (carderr batch): a card whose <img>/<video>/<audio> failed to
+ *  load (unresolved local reference, file deleted after the tool call, 403,
+ *  missing token) used to render as an invisible empty box — indistinguishable
+ *  from an intentional blank. The author hit this with
+ *  `<img src="~/projects/gamma-telescope/reports/…svg">` (path did not exist
+ *  after `~` expansion) and saw an empty graph.
+ *
+ *  The injected script replaces the failed element with a visible placeholder
+ *  carrying the alt text, a failure hint and the original src. Notes:
+ *   - resource `error` events do not bubble, so the listener is registered in
+ *     the capture phase on window, from <head> (before any media is parsed);
+ *   - the credential is stripped from the displayed src — a placeholder must
+ *     never print a token or ticket query parameter. The stripper is NOT
+ *     reimplemented here: the one implementation lives in nfTicket.js
+ *     (`stripCredentialParams`) and is inlined by source into this injected
+ *     script, because a srcdoc script cannot import a module. Same function
+ *     the markdown image tooltip uses — one regex, no drift (C2-19);
+ *   - <video>/<audio> carry preload="none" (see renderHtmlCard), so their
+ *     placeholder appears when the user presses play, not on card load;
+ *   - scope is img/video/audio (+ a <source> child targets its media parent);
+ *     <script>/<link>/CSS url() failures are NOT covered (registered as an
+ *     open gap in the batch report, deliberately not widened here). */
+function buildMediaFallbackScript() {
+  return `<script>
+(function(){
+  var HINT='This reference was not proxied or the file is unreachable. The Card tool result lists unresolved references (warnings).';
+  var stripToken=${stripCredentialParams.toString()};
+  function placeholder(el,src){
+    var tag=(el.tagName||'media').toLowerCase();
+    var alt=(el.getAttribute&&el.getAttribute('alt'))||'';
+    var box=document.createElement('div');
+    box.setAttribute('data-nf-load-error','1');
+    box.style.cssText='box-sizing:border-box;width:100%;max-width:100%;padding:var(--ds-space-block-y) var(--ds-space-3);margin:0;border:1px dashed var(--color-border,rgba(127,127,127,0.55));border-radius:var(--ds-radius-input);background:var(--color-surface,transparent);color:var(--color-text-muted,#8b8e96);font-size:var(--ds-fs-hint);line-height:1.5;word-break:break-all;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif';
+    var head=document.createElement('div');
+    head.style.cssText='color:var(--color-text,#1b1e26);font-weight:500';
+    head.textContent=tag+' could not be loaded'+(alt?' — '+alt:'');
+    var why=document.createElement('div');
+    why.textContent=HINT;
+    var code=document.createElement('code');
+    code.textContent='src: '+stripToken(src);
+    box.appendChild(head);
+    box.appendChild(why);
+    box.appendChild(code);
+    if(el.parentNode) el.parentNode.replaceChild(box,el);
+  }
+  window.addEventListener('error',function(ev){
+    var t=ev.target;
+    if(!t||!t.tagName) return;
+    var reported=(t.getAttribute&&t.getAttribute('src'))||t.currentSrc||'';
+    var tag=t.tagName.toUpperCase();
+    if(tag==='SOURCE'){
+      var host=t.parentNode;
+      if(!host||!host.tagName) return;
+      var hostTag=host.tagName.toUpperCase();
+      if(hostTag!=='VIDEO'&&hostTag!=='AUDIO') return;
+      t=host;
+      tag=hostTag;
+    }
+    if(tag!=='IMG'&&tag!=='VIDEO'&&tag!=='AUDIO') return;
+    if(t.getAttribute('data-nf-load-error')) return;
+    if(!reported) reported=t.currentSrc||'';
+    t.setAttribute('data-nf-load-error','1');
+    placeholder(t,reported);
+  },true);
+})();
+</script>`;
 }
 
-/** Inject auth token into /api/nf-file URLs so the sandboxed iframe can fetch them.
- *  The iframe uses allow-same-origin, but srcdoc iframes may not send cookies
- *  reliably — token in the query string ensures the request is authenticated. */
-function injectFileTokens(html) {
-  const token = getNfToken();
-  if (!token) return html;
-  return html.replace(/(\/api\/nf-file\?path=[^"'\s]+)/g, (url) => {
-    return url + '&token=' + encodeURIComponent(token);
+/** Render the unresolved-reference notice above a card.
+ *
+ *  2026-09-11 (carderr batch): the Card tool now reports every local reference
+ *  it could not proxy in its payload (`warnings`). Replaying a persisted
+ *  session keeps them, so the notice is rebuilt from the payload instead of
+ *  being a one-shot render artifact. Values come from the agent's HTML —
+ *  textContent only, never innerHTML.
+ *
+ *  2026-09-11 (toolfail batch): exported, because the Canvas HTML viewer
+ *  renders the exact same notice from the `popFile` item's `warnings` (the Pop
+ *  tool reads a local HTML file and its images may fail the same way). One
+ *  renderer, one CSS class — used as `renderCardWarnings(host, iframe, list)`. */
+export function renderCardWarnings(wrap, iframe, warnings) {
+  if (!warnings || !warnings.length) return null;
+  const box = document.createElement('div');
+  box.className = 'html-card-warning';
+  const head = document.createElement('div');
+  head.className = 'html-card-warning-head';
+  head.textContent = warnings.length === 1
+    ? '1 file reference could not be proxied'
+    : warnings.length + ' file references could not be proxied';
+  box.appendChild(head);
+  const list = document.createElement('ul');
+  list.className = 'html-card-warning-list';
+  warnings.forEach((w) => {
+    const item = document.createElement('li');
+    const ref = document.createElement('code');
+    const ww = w || {};
+    const count = Number(ww.count) > 1 ? ' (x' + ww.count + ')' : '';
+    ref.textContent = String(ww.ref || '(unknown reference)') + count;
+    item.appendChild(ref);
+    const why = document.createElement('span');
+    why.textContent = ' — ' + String(ww.reason || 'unknown') + (ww.detail ? ': ' + String(ww.detail) : '');
+    item.appendChild(why);
+    list.appendChild(item);
   });
+  box.appendChild(list);
+  wrap.insertBefore(box, iframe);
+  return box;
 }
 
 /** Render HTML content inside a sandboxed iframe.
@@ -259,8 +379,11 @@ function injectFileTokens(html) {
  *  being created simultaneously when a session with many cards is opened.
  *  Additionally, <audio>/<video> elements get preload="none" so the browser
  *  never auto-fetches media files; the user must click play. */
-function renderHtmlCard(container, html, title) {
+function renderHtmlCard(container, html, title, warnings) {
   container.innerHTML = '';
+  // One global listener for the whole app (idempotent) — the chat card is a
+  // second producer of the same _nfOpenLocalFile / _nfOpenExternalUrl messages.
+  bindLocalLinkBridge();
 
   const wrap = document.createElement('div');
   wrap.className = 'html-card-wrap';
@@ -268,27 +391,67 @@ function renderHtmlCard(container, html, title) {
   const id = ++_iframeId;
   const themeCSS = buildThemeVarsCSS();
   const heightScript = buildHeightScript(id);
-
-  // Inject auth tokens into /api/nf-file URLs (sandboxed iframe can't use cookies)
-  let processedHtml = injectFileTokens(html);
+  const mediaFallbackScript = buildMediaFallbackScript();
 
   // Add preload="none" to <audio>/<video> elements that don't already have it.
   // Without this, a session with 200+ audio elements causes the browser to
   // simultaneously fetch and decode all files on load, freezing the page.
+  let processedHtml = String(html || '');
   processedHtml = processedHtml.replace(/(<audio\b(?![^>]*\bpreload=)[^>]*)(\s*\/?>)/gi, '$1 preload="none"$2');
   processedHtml = processedHtml.replace(/(<video\b(?![^>]*\bpreload=)[^>]*)(\s*\/?>)/gi, '$1 preload="none"$2');
 
   // #nf-wrap: width:100% fills the available card width.
   // SVGs with width:100% scale proportionally via viewBox + height:auto.
   // No fit-content deadlock — the width chain is: chat panel → row → container → wrap → iframe → nf-wrap, all 100%.
-  const srcdoc = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:15px;line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style></head><body><div id="nf-wrap" style="width:100%">${processedHtml}</div>${heightScript}</body></html>`;
+  //
+  // 2026-09-11 (C batch, C2-15): the srcdoc is a FUNCTION of the tickets, not a
+  // template constant. The old `const srcdoc` baked the credential in at
+  // construction time and then re-used that same string for the lazy first
+  // mount, the blank-recovery re-mount and the 3s safety mount — so a ticket
+  // either expired before the card was ever shown (lazy iframes) or was
+  // replayed across mounts (T2, both forbidden). The credential now enters at
+  // exactly one point: `injectFileTickets(processedHtml, tickets)` below.
+  const srcdocHead = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${themeCSS}html,body{margin:0;padding:0;font-size:var(--ds-fs-title);line-height:1.5;box-sizing:border-box;word-wrap:break-word;overflow-wrap:break-word;background:var(--color-bg);color:var(--color-text);overflow:hidden;}*,*:before,*:after{box-sizing:inherit;}svg{max-width:100%;height:auto;}svg text{font-size:min(max(14px,100%),5vw);}img{max-width:100%;height:auto;}</style>${mediaFallbackScript}</head><body><div id="nf-wrap" style="width:100%">`;
+  // localLinkNavScript(): the card's half of the local-link channel (parent
+  // half = bindLocalLinkBridge below). Inside #nf-wrap's sibling position so
+  // the height script's measurement of the wrapper is unaffected.
+  //
+  // imgClickScript() (card-image-zoom batch, 2026-09-28, author order): the
+  // card's half of the image-preview channel. The Canvas HTML viewer has
+  // forwarded `_nfImagePreview` since the 2026-09-11 C batch while the card
+  // injected no producer, so an image embedded in a Card was a dead click.
+  // The author's order asked for an image embedded in a Card tool to open on
+  // click exactly as an image embedded in Canvas does. Same script function as
+  // the Canvas leg — one producer, one payload shape. It sits in the same tail
+  // as the link script so the height script's measurement of #nf-wrap (which
+  // closes above) is untouched, and it changes no existing message:
+  // `_nfCardH` / `_nfCardFused` / `_nfThemeVars` / `_nfOpenLocalFile` keep
+  // their shape.
+  const srcdocTail = `</div>${localLinkNavScript()}${imgClickScript()}${heightScript}</body></html>`;
+  /** @param {Map<string, string>} [tickets] */
+  const buildSrcdoc = (tickets) =>
+    srcdocHead + injectTickets(processedHtml, tickets || new Map()) + srcdocTail;
+
+  // Mint candidates, computed once: the paths this card actually references.
+  // Empty ⇒ every mint call short-circuits with zero requests (§4.3 F1).
+  const filePaths = nfFilePathsIn(processedHtml);
+  /** @param {boolean} fresh true ⇒ re-mint (never reuse the previous value) */
+  const mintForCard = (fresh) => {
+    if (filePaths.length === 0) return Promise.resolve(new Map());
+    return fresh ? reMintAll(filePaths) : mintTickets(filePaths);
+  };
 
   const iframe = document.createElement('iframe');
   iframe.className = 'html-card-iframe';
   iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin');
   iframe.setAttribute('scrolling', 'no');
-  iframe.dataset.nfCardId = id;
+  // dataset is a DOMStringMap: assignment stringifies the numeric id.
+  iframe.dataset.nfCardId = String(id);
   wrap.appendChild(iframe);
+
+  // Unresolved local references reported by the Card tool (carderr batch):
+  // list them above the card so a broken asset is never a silent blank box.
+  renderCardWarnings(wrap, iframe, warnings);
 
   container.appendChild(wrap);
 
@@ -313,6 +476,9 @@ function renderHtmlCard(container, html, title) {
   // parsed at once — only visible (+ margin) cards are instantiated.
   let srcdocSet = false;
   let lastReloadCheck = 0;
+  // Set by _nfCleanup: a mint that resolves after the card was released must
+  // not write srcdoc back onto a dead iframe.
+  let disposed = false;
 
   const applySrcdoc = () => {
     if (srcdocSet) return;
@@ -321,7 +487,17 @@ function renderHtmlCard(container, html, title) {
     // during the initial load (the iframe's size change from 0→150px can
     // re-trigger the IntersectionObserver while content is still parsing).
     lastReloadCheck = Date.now();
-    iframe.setAttribute('srcdoc', srcdoc);
+    // T1: mint at the moment of mounting, i.e. after the lazy observer fired —
+    // never at construction. §4.3 F5: the mint resolves (never rejects), so a
+    // mint outage yields a ticket-free srcdoc and the existing per-element
+    // failure chain, not a blank card and never an unhandled rejection.
+    mintForCard(false)
+      .then((tickets) => {
+        if (!disposed) iframe.setAttribute('srcdoc', buildSrcdoc(tickets));
+      })
+      .catch(() => {
+        if (!disposed) iframe.setAttribute('srcdoc', buildSrcdoc());
+      });
     // Fallback: force iframe visible after 800ms even if the height postMessage
     // hasn't arrived yet. During active streaming the browser event loop may be
     // busy processing WebSocket messages, delaying postMessage handling and
@@ -368,10 +544,21 @@ function renderHtmlCard(container, html, title) {
       // attribute in the same frame doesn't always trigger a navigation,
       // so we use requestAnimationFrame to ensure the browser processes
       // the removal before re-adding.
+      //
+      // T2 ②: a re-mount must MINT AGAIN, never replay the previous srcdoc.
+      // The browser may discard a far-out-of-view iframe arbitrarily later
+      // (minutes), so the ticket from the first mount is likely expired by the
+      // time the user scrolls back — and replaying it would also keep one
+      // credential alive across two mounts.
       iframe.removeAttribute('srcdoc');
-      requestAnimationFrame(() => {
-        iframe.setAttribute('srcdoc', srcdoc);
-      });
+      mintForCard(true)
+        .then((tickets) => {
+          if (disposed) return;
+          requestAnimationFrame(() => {
+            if (!disposed) iframe.setAttribute('srcdoc', buildSrcdoc(tickets));
+          });
+        })
+        .catch(() => { /* mint never rejects; nothing to recover here */ });
     }
   };
 
@@ -392,10 +579,14 @@ function renderHtmlCard(container, html, title) {
     // Register cleanup so mass DOM removal (session switch, history
     // reload) can release the observer + iframe browsing context instead
     // of leaking them (each leaked iframe keeps its own DOM+JS engine).
-    iframe._nfCleanup = () => {
+    (/** @type {{_nfCleanup?: () => void}} */ (iframe))._nfCleanup = () => {
+      disposed = true;
       io.disconnect();
       widthObserver.disconnect();
       _firstHeightDone.delete(id);
+      // Drop the credential with the frame: the srcdoc attribute holds live
+      // `&ticket=` values, and a detached iframe can outlive the card node in
+      // a memory snapshot (T2 ③ — no credential in a serializable surface).
       iframe.removeAttribute('srcdoc');
     };
     // Safety timeout: load after 3s even if observer never fires
@@ -428,7 +619,7 @@ export function cleanupCardIframes(root) {
 export function renderWithRegistry(container, text, toolName) {
   // Direct {html, title} object — used by Card tool (no marker needed)
   if (text && typeof text === 'object' && !Array.isArray(text) && text.html) {
-    renderHtmlCard(container, text.html, text.title || '');
+    renderHtmlCard(container, text.html, text.title || '', text.warnings);
     return true;
   }
 
@@ -444,7 +635,7 @@ export function renderWithRegistry(container, text, toolName) {
       const json = text.substring(htmlMatch[0].length);
       const data = JSON.parse(json);
       if (data.html) {
-        renderHtmlCard(container, data.html, data.title || '');
+        renderHtmlCard(container, data.html, data.title || '', data.warnings);
         return true;
       }
     } catch (e) {}
@@ -458,7 +649,7 @@ export function renderWithRegistry(container, text, toolName) {
       const data = JSON.parse(json);
       const inner = data.data || data;
       if (inner.html) {
-        renderHtmlCard(container, inner.html, inner.title || '');
+        renderHtmlCard(container, inner.html, inner.title || '', inner.warnings);
         return true;
       }
     } catch (e) {}
@@ -478,9 +669,10 @@ export function renderWithRegistry(container, text, toolName) {
     if (!css) return;
     const vars = extractThemeVars(css);
     document.querySelectorAll('iframe[data-nf-card-id]').forEach(iframe => {
+      const frame = /** @type {HTMLIFrameElement} */ (iframe);
       try {
-        if (iframe.contentWindow) {
-          iframe.contentWindow.postMessage({ _nfThemeVars: vars }, '*');
+        if (frame.contentWindow) {
+          frame.contentWindow.postMessage({ _nfThemeVars: vars }, '*');
         }
       } catch (e) { /* cross-origin iframe, skip */ }
     });

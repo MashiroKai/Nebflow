@@ -1,11 +1,10 @@
 package nebflow.core.plugin
 
-import cats.effect.{IO, Ref}
 import cats.effect.unsafe.implicits.global
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.core.{NebflowLogger, PathUtil}
 import nebflow.core.mcp.McpManager
-import nebflow.llm.McpServerConfig
+import nebflow.shared.{McpServerConfig, NebflowLogger, PathUtil}
 
 import scala.concurrent.duration.*
 
@@ -21,9 +20,10 @@ import scala.concurrent.duration.*
  *   failNode（不静默跳过——分配了 MCP 却没有 = 节点能力残缺）。
  * - **独立管理器**：不复用全局 McpManager 实例与 enable/disable 面（避免互相
  *   污染开关状态，§B.5）；本类持有自己的 McpManager 实例。
- * - **信任运行时联动**（§B.5）：digest 失效 → refcount>0 的运行中 server 立即
- *   停用 + 受影响 running 会话收到系统提醒（trust 是运行时属性，不只是装载时
- *   属性）。提醒经 notify 回调投递（NodeEngine 接 agentRegistry 的
+ * - **内容面运行时联动**（§B.5；2026-09-13 无审批批口径）：**被封禁**（deny-list）的
+ *   plugin ⇒ refcount>0 的运行中 server 立即停用 + 受影响 running 会话收到系统提醒。
+ *   **内容变更（digest 漂移）不再停飞**（判据已放宽，见 [[PluginMcpManager.revalidate]]）。
+ *   提醒经 notify 回调投递（NodeEngine 接 agentRegistry 的
  *   ImmediateInput——排 pendingUserInputs、turn 边界消费，不打断进行中 turn）。
  */
 class PluginMcpManager private (
@@ -33,28 +33,39 @@ class PluginMcpManager private (
 ):
   private val logger = NebflowLogger.forName("nebflow.plugin.mcp")
 
-  /** acquire：为会话注册一组 plugin 的 MCP servers（调用方已过信任门解析；
-    * 此处以 acquire 时点 digest 记账，供 revalidate 对比）。
-    *
-    * 返回 Right(grant)：serverIds（allowedSet 前缀来源，AgentCore 扩展消费）。
-    * 任一 server 启动失败 → 本批已启动者立即回滚停用 + Left（failNode 语义，§B.5）。
-    */
+  /**
+   * acquire：为会话注册一组 plugin 的 MCP servers（调用方已过内容面解析；
+   * 此处以 acquire 时点 digest 记账——**审计用**，2026-09-13 无审批批后不再作为
+   * revalidate 的停用判据）。
+   *
+   * 返回 Right(grant)：serverIds（allowedSet 前缀来源，AgentCore 扩展消费）。
+   * 任一 server 启动失败 → 本批已启动者立即回滚停用 + Left（failNode 语义，§B.5）。
+   */
   def acquire(sessionId: String, plugins: List[PluginRegistry.PluginDef]): IO[Either[String, PluginMcpManager.Grant]] =
     val wanted: Map[String, (String, String, String, McpServerConfig)] =
-      plugins.flatMap(p => p.mcpServers.map { case (s, cfg) =>
-        PluginMcpManager.serverIdFor(p.name, s) -> (p.name, p.dir, p.digest, cfg)
-      }).toMap
+      plugins
+        .flatMap(p =>
+          p.mcpServers.map { case (s, cfg) =>
+            PluginMcpManager.serverIdFor(p.name, s) -> (p.name, p.dir, p.digest, cfg)
+          }
+        )
+        .toMap
     if wanted.isEmpty then IO.pure(Right(PluginMcpManager.Grant(Nil)))
     else
       for
         existing <- serverRefs.get
         toStart = wanted.filter { case (sid, _) => !existing.contains(sid) }
         started <- toStart.toList.traverse { case (sid, (_, pdir, _, cfg)) =>
-          runtimeConfig(pdir, cfg).flatMap { eff =>
-            mcp.startServer(sid, eff)
-              .timeout(15.seconds)
-              .attempt
-              .map(sid -> _)
+          runtimeConfig(pdir, cfg).flatMap {
+            case Left(err) =>
+              // secret 指针解析失败 → 走 startServer 的同一条 Left 通道（回滚腿复用）
+              IO.pure(sid -> (Left(new java.lang.IllegalStateException(err)): Either[Throwable, Unit]))
+            case Right(eff) =>
+              mcp
+                .startServer(sid, eff)
+                .timeout(15.seconds)
+                .attempt
+                .map(sid -> _)
           }
         }
         failures = started.collect { case (sid, Left(err)) => sid -> err }
@@ -63,11 +74,16 @@ class PluginMcpManager private (
             // 回滚本批已成功启动的（引用未建立，直接停），失败细节进错误消息
             val okStarted = started.collect { case (sid, Right(())) => sid }
             okStarted.traverse_(sid => mcp.stopServer(sid).handleError(_ => ())) *>
-              IO.pure(Left(
-                s"Plugin MCP server failed to start — node cannot run without its allocated capability " +
-                  "(no silent skip, §B.5). Detail: " +
-                  failures.map { case (sid, err) => s"$sid: ${Option(err.getMessage).getOrElse(err.toString)}" }.mkString("; ") +
-                  " (PLUGIN_MCP_START_FAILED)"))
+              IO.pure(
+                Left(
+                  s"Plugin MCP server failed to start — node cannot run without its allocated capability " +
+                    "(no silent skip, §B.5). Detail: " +
+                    failures
+                      .map { case (sid, err) => s"$sid: ${Option(err.getMessage).getOrElse(err.toString)}" }
+                      .mkString("; ") +
+                    " (PLUGIN_MCP_START_FAILED)"
+                )
+              )
           else
             // 引用记账：server 条目（含 digest 记账）+ session 持有集并入
             serverRefs.update { m =>
@@ -75,60 +91,72 @@ class PluginMcpManager private (
                 val (sid, (pname, _, digest, _)) = entry
                 acc.get(sid) match
                   case Some(e) => acc.updated(sid, e.copy(holders = e.holders + sessionId))
-                  case None    => acc.updated(sid, PluginMcpManager.ServerEntry(pname, Set(sessionId), digest))
+                  case None => acc.updated(sid, PluginMcpManager.ServerEntry(pname, Set(sessionId), digest))
               }
             } *> sessionRefs.update(m => m + (sessionId -> (m.getOrElse(sessionId, Set.empty) ++ wanted.keys.toSet))) *>
               IO.pure(Right(PluginMcpManager.Grant(wanted.keys.toList)))
       yield result
 
-  /** §9 占位符展开 + 环境注入（协议符合度批）：
-    * - PLUGIN_ROOT = 插件根绝对路径；PLUGIN_DATA = <dataRoot>/plugin-data/<plugin>/
-    *   （§9.1 客户端必须在启动前创建、可写、跨更新保留——makeDir.all 幂等）。
-    * - 展开：args 元素、env 值、cwd（单次非递归替换）；command 不展开（§9.2）。
-    * - cwd 缺省 → 插件根（§11.1-7 子进程默认工作目录 = 插件根）。 */
-  private def runtimeConfig(pluginDir: String, cfg: McpServerConfig): IO[McpServerConfig] =
-    IO.blocking {
-      val pluginData = PathUtil.dataRoot / "plugin-data" / java.nio.file.Paths.get(pluginDir).getFileName.toString
-      os.makeDir.all(pluginData)
-      def expand(s: String): String =
-        s.replace("${PLUGIN_ROOT}", pluginDir).replace("${PLUGIN_DATA}", pluginData.toString)
-      val injectedEnv = cfg.env.getOrElse(Map.empty).map { case (k, v) => k -> expand(v) } +
-        ("PLUGIN_ROOT" -> pluginDir) + ("PLUGIN_DATA" -> pluginData.toString)
-      cfg.copy(
-        args = cfg.args.map(_.map(expand)),
-        env = Some(injectedEnv),
-        cwd = Some(cfg.cwd.map(expand).getOrElse(pluginDir))
-      )
-    }
+    end if
 
-  /** release：会话终态回收（completed/failed/cancelled/blocked 全终态统一调用，
-    * §B.4 第 5 步）。该会话持有的全部 server 计数 -1；归零 → 停 server
-    * （McpManager.stopServer 内含 unregisterToolsByPrefix + 连接关闭）。幂等：
-    * 会话无持有集 / server 已不在表 → no-op（允许兜底路径二次调用）。 */
+  end acquire
+
+  /**
+   * §9 展开的实例包装（blocking 线程转移）——唯一实现与 ④a secret 指针语义文档
+   * 在 [[PluginMcpManager.expandRuntimeConfig]]（对象级，`private[plugin]` spec 直读）。
+   */
+  private def runtimeConfig(pluginDir: String, cfg: McpServerConfig): IO[Either[String, McpServerConfig]] =
+    IO.blocking(PluginMcpManager.expandRuntimeConfig(pluginDir, cfg))
+
+  /**
+   * release：会话终态回收（completed/failed/cancelled/blocked 全终态统一调用，
+   * §B.4 第 5 步）。该会话持有的全部 server 计数 -1；归零 → 停 server
+   * （McpManager.stopServer 内含 unregisterToolsByPrefix + 连接关闭）。幂等：
+   * 会话无持有集 / server 已不在表 → no-op（允许兜底路径二次调用）。
+   */
   def release(sessionId: String): IO[Unit] =
     for
       held <- sessionRefs.get.map(_.getOrElse(sessionId, Set.empty))
       _ <- sessionRefs.update(m => m - sessionId)
       _ <- held.toList.traverse_ { sid =>
-        serverRefs.modify { m =>
-          m.get(sid) match
-            case Some(e) =>
-              val rest = e.holders - sessionId
-              if rest.isEmpty then (m - sid, Some(sid))
-              else (m.updated(sid, e.copy(holders = rest)), None)
-            case None => (m, None)
-        }.flatMap {
-          case Some(sid) =>
-            mcp.stopServer(sid).handleError(e => logger.warn(s"stopServer '$sid' after release failed: ${e.getMessage}"))
-          case None => IO.unit
-        }
+        serverRefs
+          .modify { m =>
+            m.get(sid) match
+              case Some(e) =>
+                val rest = e.holders - sessionId
+                if rest.isEmpty then (m - sid, Some(sid))
+                else (m.updated(sid, e.copy(holders = rest)), None)
+              case None => (m, None)
+          }
+          .flatMap {
+            case Some(sid) =>
+              mcp
+                .stopServer(sid)
+                .handleError(e => logger.warn(s"stopServer '$sid' after release failed: ${e.getMessage}"))
+            case None => IO.unit
+          }
       }
     yield ()
 
-  /** 信任运行时重验（§B.5 信任联动，周期驱动）：重扫注册表 → 运行中 server 对应
-    * plugin 的当前 trusted digest ≠ acquire 时 digest（或已 untrusted / 被移除）
-    * → 立即停 server + 对持有会话发系统提醒。返回受影响 plugin 名列表。
-    * 无运行中 server → 不扫描直接返回 Nil。 */
+  /**
+   * 内容面运行时重验（§B.5 信任联动，周期驱动）：重扫注册表 → 运行中 server 对应
+   * plugin **被封禁**（`plugins.revoked` deny-list）或已从注册表移除 → 立即停 server +
+   * 对持有会话发系统提醒。返回受影响 plugin 名列表。
+   * 无运行中 server → 不扫描直接返回 Nil。
+   *
+   * **判据口径（2026-09-13 无审批批，作者裁定 (ii)，勿误改）**：判据 = **封禁检查**
+   * （`d.trust.trusted` 在「在位即信任」下恒真，唯一取假来源 = `TrustStatus.Blocked`）。
+   * **`d.digest == digestAtAcquire` 那一半已去除**：目录内容变更**不得**停在飞 MCP
+   * （内容面在飞工具面只在下次派发换代——新 spawn 的节点装载新内容）。这正是
+   * 「装了就是信任」的字面落地（内容被替换后不再抖掉正在跑的节点）。
+   * **仍然生效的**：① 被封禁的包 ⇒ 在飞 MCP ≤30s（`GatewayMain` 的 ttlScanner tick）
+   * 内停掉 + 提醒；② 包从注册表消失（目录被删）⇒ 停掉；③ 总闸 `plugins.enabled=false`
+   * 的既有停飞行为（调用方 `NodeEngine.revalidatePluginTrust` 旁路）不回退。
+   * `ServerEntry.digestAtAcquire` 自此**仅作审计记账**（不再参与停用判定）。
+   *
+   * 派发面变更（作者关闭插件）在此**零动作**：关闭只写 `plugins.dispatch`，内容面不变
+   * ⇒ 在飞节点的工具面不被抽走（作者 2026-09-12 14:14 原话「不能影响目前的」）。
+   */
   def revalidate(
     rescan: IO[List[PluginRegistry.PluginDef]],
     notify: (String, String) => IO[Unit]
@@ -140,25 +168,30 @@ class PluginMcpManager private (
           val current = defs.map(d => d.name -> d).toMap
           val stale = running.toList.flatMap { case (sid, entry) =>
             current.get(entry.pluginName) match
-              case Some(d) if d.trust.trusted && d.digest == entry.digestAtAcquire => Nil
+              case Some(d) if d.trust.trusted => Nil // 内容面可用（在位即信任 ∧ 未封禁）⇒ 在飞照跑
               case other =>
                 val why = other match
-                  case Some(d) if !d.trust.trusted => "plugin fell back to untrusted"
-                  case Some(d) => "plugin directory digest changed since this server started"
+                  case Some(_) => "plugin is blocked (deny-list)"
                   case None => "plugin removed from registry"
                 List((sid, entry, why))
           }
           stale.traverse { case (sid, entry, why) =>
             for
-              _ <- mcp.stopServer(sid).handleError(e => logger.warn(s"trust revalidation stopServer '$sid' failed: ${e.getMessage}"))
+              _ <- mcp
+                .stopServer(sid)
+                .handleError(e => logger.warn(s"trust revalidation stopServer '$sid' failed: ${e.getMessage}"))
               _ <- serverRefs.update(m => m - sid)
               holders <- sessionRefs.get.map(_.filter { case (_, set) => set(sid) }.keySet)
               _ <- holders.toList.traverse_ { s =>
-                notify(s, s"[plugin-trust] Plugin '${entry.pluginName}' failed trust revalidation ($why) — " +
-                  "its MCP server has been stopped (trust is a runtime property, §B.5). Re-approve the plugin if intended; " +
-                  "this session's tool calls to it will now fail.")
+                notify(
+                  s,
+                  s"[plugin-block] Plugin '${entry.pluginName}' $why — " +
+                    "its MCP server has been stopped. " +
+                    s"Unblock it if intended (Plugin panel, REST POST /api/plugins/${entry.pluginName}/unblock, " +
+                    s"or CLI 'stand plugin unblock ${entry.pluginName}'); this session's tool calls to it will now fail."
+                )
               }
-              _ <- logger.warn(s"Plugin '${entry.pluginName}' MCP '$sid' stopped by trust revalidation: $why")
+              _ <- logger.warn(s"Plugin '${entry.pluginName}' MCP '$sid' stopped by content-face revalidation: $why")
             yield entry.pluginName
           }
         }
@@ -175,21 +208,73 @@ end PluginMcpManager
 object PluginMcpManager:
 
   final case class Grant(
-    /** 允许集前缀来源：plugin MCP serverId 列表（AgentCore 扩展一个前缀来源消费，
-      * §B.4 第 4 步）。 */
+    /**
+     * 允许集前缀来源：plugin MCP serverId 列表（AgentCore 扩展一个前缀来源消费，
+     * §B.4 第 4 步）。
+     */
     serverIds: List[String]
   )
 
   private final case class ServerEntry(
     pluginName: String,
     holders: Set[String],
+    /** acquire 时点 digest（**审计记账**；2026-09-13 无审批批起不参与停用判定）。 */
     digestAtAcquire: String
   )
 
-  /** 运行时 serverId：`plugin_<plugin>_<server>` → 工具名
-    * `mcp__plugin_<plugin>_<server>__<tool>`（§B.4 命名）。 */
+  /**
+   * 运行时 serverId：`plugin_<plugin>_<server>` → 工具名
+   * `mcp__plugin_<plugin>_<server>__<tool>`（§B.4 命名）。
+   */
   def serverIdFor(pluginName: String, serverName: String): String =
     s"plugin_${pluginName}_$serverName"
+
+  /**
+   * §9 占位符展开 + 环境注入（协议符合度批；对象级纯函数面，`private[plugin]` =
+   * spec 直读）：
+   * - PLUGIN_ROOT = 插件根绝对路径；PLUGIN_DATA = <dataRoot>/plugin-data/<plugin>/
+   *   （§9.1 客户端必须在启动前创建、可写、跨更新保留——makeDir.all 幂等）。
+   * - 展开：args 元素、env 值、cwd（单次非递归替换）；command 不展开（§9.2）。
+   * - cwd 缺省 → 插件根（§11.1-7 子进程默认工作目录 = 插件根）。
+   * - **secret 指针展开（安全批 2026-10-29 ④a）**：env 值 = `${secret:<name>}` ⇒
+   *   从 secrets 库读值注入（`SecretInjection.materialize` 同款读取语义：raw bytes
+   *   / UTF-8 / 去一个尾换行 / ≤64KiB；值永不上日志、不上 Left 消息）。**失败语义
+   *   （裁定）**：缺失/超限/空值 ⇒ Left（acquire 既有失败载体 → 回滚本批启动者 →
+   *   PLUGIN_MCP_START_FAILED，点名 env 键与 secret 名）——fail-closed 而非跳过
+   *   env：半配置（无凭据）的 server 会在请求期才崩，显式启动失败才可行动。
+   */
+  private[plugin] def expandRuntimeConfig(pluginDir: String, cfg: McpServerConfig): Either[String, McpServerConfig] =
+    val pluginData = PathUtil.dataRoot / "plugin-data" / java.nio.file.Paths.get(pluginDir).getFileName.toString
+    os.makeDir.all(pluginData)
+    def expand(s: String): String =
+      s.replace("${PLUGIN_ROOT}", pluginDir).replace("${PLUGIN_DATA}", pluginData.toString)
+    def resolveEnv: Either[String, Map[String, String]] =
+      cfg.env.getOrElse(Map.empty).toList.sortBy(_._1).foldLeft[Either[String, List[(String, String)]]](Right(Nil)) {
+        case (Left(e), _) => Left(e)
+        case (Right(acc), (k, v)) =>
+          SecretEnvPointer.parse(v) match
+            case None => Right((k, expand(v)) :: acc)
+            case Some(secretName) =>
+              val resolved =
+                nebflow.core.secrets.SecretInjection.materialize(
+                  PathUtil.dataRoot / "secrets",
+                  List(nebflow.core.secrets.SecretInjection.Entry(variable = k, secret = secretName))
+                ).get(k)
+              resolved match
+                case Some(value) => Right((k, value) :: acc)
+                case None =>
+                  Left(
+                    s"env '$k' points at secret '$secretName' which did not resolve " +
+                      "(missing, empty, or over the 64KiB cap) — write it via the secrets store and restart the node"
+                  )
+      }.map(_.toMap + ("PLUGIN_ROOT" -> pluginDir) + ("PLUGIN_DATA" -> pluginData.toString))
+    resolveEnv.map { injectedEnv =>
+      cfg.copy(
+        args = cfg.args.map(_.map(expand)),
+        env = Some(injectedEnv),
+        cwd = Some(cfg.cwd.map(expand).getOrElse(pluginDir))
+      )
+    }
 
   /** 创建（GatewayMain / SharedResources 默认实例共用）。 */
   def create: IO[PluginMcpManager] =
@@ -199,8 +284,10 @@ object PluginMcpManager:
       sessionRefs <- Ref.of[IO, Map[String, Set[String]]](Map.empty)
     yield new PluginMcpManager(mcp, serverRefs, sessionRefs)
 
-  /** 同步构造（SharedResources 字段默认值用——boot 单线程期 / 测试构造）。
-    * Ref.unsafe 与既有 SharedResources 字段先例同款。 */
+  /**
+   * 同步构造（SharedResources 字段默认值用——boot 单线程期 / 测试构造）。
+   * Ref.unsafe 与既有 SharedResources 字段先例同款。
+   */
   def unsafe(): PluginMcpManager =
     new PluginMcpManager(
       McpManager.create.unsafeRunSync(),

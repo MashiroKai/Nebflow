@@ -1,5 +1,7 @@
 package nebflow.core.mcp
 
+import nebflow.neblink.core.*
+
 import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import com.sun.net.httpserver.HttpServer

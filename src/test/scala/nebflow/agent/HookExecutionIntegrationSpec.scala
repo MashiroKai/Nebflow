@@ -4,13 +4,13 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.ToolExecResult
+import nebflow.shared.ToolExecResult
 import nebflow.core.hooks.*
 import nebflow.core.tools.ToolContext
 import nebflow.shared.ToolCall
 import munit.FunSuite
 
-import java.nio.file.{Files => JFiles}
+import java.nio.file.Files as JFiles
 
 /**
  * Hook P0 integration: a REAL hook process fired from AgentCore.executeTool's
@@ -38,7 +38,7 @@ class HookExecutionIntegrationSpec extends FunSuite:
       val root = os.Path(JFiles.createTempDirectory("nb-hook-int").toString)
       try
         os.write(
-          root / "nebflow.json",
+          root / nebflow.shared.Branding.configFileName,
           """{"hooks": {"PostToolUse": [
             {"matcher": "Read", "hooks": [
               {"type": "command", "command": "echo '{\"additional_context\":\"HOOK-CTX-MARKER\"}'", "timeout": 10}
@@ -51,20 +51,22 @@ class HookExecutionIntegrationSpec extends FunSuite:
         assert(cfg.hooks.contains("PostToolUse"))
         val engine = HookEngine(cfg)
 
-        val call = ToolCall(id = "t1", name = "Read", input = JsonObject("file_path" -> (root / "hello.txt").toString.asJson))
+        val call =
+          ToolCall(id = "t1", name = "Read", input = JsonObject("file_path" -> (root / "hello.txt").toString.asJson))
         val res = CoreProbe.exec(call, mkCtx(root, engine)).unsafeRunSync()
 
         assert(!res.isError, s"Read failed: ${res.content}")
         // the hook's additional_context must be appended to the tool result
         assert(res.content.contains("HOOK-CTX-MARKER"), s"hook context missing from: ${res.content.take(200)}")
       finally os.remove.all(root)
+      end try
     }
 
     test("PreToolUse block decision vetoes the tool call before execution") {
       val root = os.Path(JFiles.createTempDirectory("nb-hook-block").toString)
       try
         os.write(
-          root / "nebflow.json",
+          root / nebflow.shared.Branding.configFileName,
           """{"hooks": {"PreToolUse": [
             {"matcher": "Read", "hooks": [
               {"type": "command", "command": "echo '{\"decision\":\"block\",\"reason\":\"forbidden by policy\"}'", "timeout": 10}
@@ -78,13 +80,14 @@ class HookExecutionIntegrationSpec extends FunSuite:
         assert(res.isError)
         assert(res.content.contains("forbidden by policy"))
       finally os.remove.all(root)
+      end try
     }
 
     test("matcher non-matching tool name fires nothing") {
       val root = os.Path(JFiles.createTempDirectory("nb-hook-nomatch").toString)
       try
         os.write(
-          root / "nebflow.json",
+          root / nebflow.shared.Branding.configFileName,
           """{"hooks": {"PostToolUse": [
             {"matcher": "Edit", "hooks": [
               {"type": "command", "command": "echo '{\"additional_context\":\"MUST-NOT-APPEAR\"}'", "timeout": 10}
@@ -93,11 +96,14 @@ class HookExecutionIntegrationSpec extends FunSuite:
         )
         val engine = HookEngine(HooksConfigLoader.load(root))
         os.write(root / "f.txt", "x")
-        val call = ToolCall(id = "t3", name = "Read", input = JsonObject("file_path" -> (root / "f.txt").toString.asJson))
+        val call =
+          ToolCall(id = "t3", name = "Read", input = JsonObject("file_path" -> (root / "f.txt").toString.asJson))
         val res = CoreProbe.exec(call, mkCtx(root, engine)).unsafeRunSync()
         assert(!res.isError)
         assert(!res.content.contains("MUST-NOT-APPEAR"))
       finally os.remove.all(root)
+      end try
     }
+  end if
 
 end HookExecutionIntegrationSpec

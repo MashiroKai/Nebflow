@@ -1,0 +1,1444 @@
+package nebflow.social
+
+import cats.effect.IO
+import cats.effect.Ref
+import cats.effect.unsafe.implicits.global
+import io.circe.Json
+import io.circe.syntax.*
+import munit.CatsEffectSuite
+import nebflow.shared.SessionMeta
+
+import java.nio.file.Files
+import java.nio.file.attribute.PosixFilePermissions
+import scala.concurrent.duration.DurationInt
+
+/**
+ * Offline regression spec for the weixin OUTBOUND leg (weixin-outbound batch,
+ * 2026-10-07). Deliberately NO network and NO credential: the send seam is a
+ * recorder ([[WeixinIlinkBridgePlugin]]'s injected `send` factory), the token
+ * lives in a temp data root, and the response mapping is exercised through the
+ * pure [[WeixinOutboundAdapter.parseSendResponse]]. What is pinned:
+ *
+ *   - the token mint (owner-only from the first byte, idempotent, never
+ *     rotated on a second call);
+ *   - the reply-flush shape (textDelta accumulate → ONE send on `done`, plain
+ *     text through OutboundText.toPlain, torn turns never flush);
+ *   - the reverse routing rule (only an explicitly bound sender is a target);
+ *   - containment (a failing send never raises, a flush never duplicates);
+ *   - the wire request/response mapping (pure functions).
+ */
+class WeixinOutboundSpec extends CatsEffectSuite:
+
+  private def tmpRoot(): os.Path = os.temp.dir(prefix = "nb-weixin-outbound-")
+
+  /** The recording send seam: captures (to, text) pairs, answers `result`. */
+  private final class RecordingSend(
+    result: WeixinOutboundAdapter.SendResult,
+    /** pop multi-group batch: a SHARED ordered wire log across both seams. */
+    wire: Option[Ref[IO, List[String]]] = None
+  ):
+    val calls: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
+    val sendFn: WeixinOutboundAdapter.Send = (to, text) =>
+      calls
+        .update(_ :+ ((to, text)))
+        .flatMap(_ => wire.fold(IO.unit)(w => w.update(_ :+ s"text:$text")))
+        .as(result)
+    val factory: os.Path => WeixinIlinkBridgePlugin.Send = _ => sendFn
+
+  /**
+   * The recording MEDIA seam (weixin-media batch): captures (to, media) pairs.
+   * `failOn` lets one test fail a SLICE of the batch (pop batch-media fix)
+   * without touching the other items. `raiseOn` (pop multi-group batch) makes
+   * the seam RAISE for a slice — the unexpected-fault face the per-item raise
+   * containment guards.
+   */
+  private final class RecordingMedia(
+    result: WeixinOutboundAdapter.SendResult,
+    failOn: WeixinOutboundAdapter.WeixinMedia => Boolean = _ => false,
+    raiseOn: WeixinOutboundAdapter.WeixinMedia => Boolean = _ => false,
+    wire: Option[Ref[IO, List[String]]] = None
+  ):
+
+    private val failResult =
+      WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: cdn http_500")
+
+    val calls: Ref[IO, List[(String, WeixinOutboundAdapter.WeixinMedia)]] =
+      Ref.unsafe[IO, List[(String, WeixinOutboundAdapter.WeixinMedia)]](Nil)
+
+    private def note(m: WeixinOutboundAdapter.WeixinMedia): IO[Unit] =
+      wire.fold(IO.unit)(w =>
+        w.update(_ :+ s"media:${m.imagePath.orElse(m.filePath).getOrElse("?")}")
+      )
+
+    val sendFn: WeixinIlinkBridgePlugin.SendMedia = (to, media) =>
+      if raiseOn(media) then
+        note(media).flatMap(_ => IO.raiseError[WeixinOutboundAdapter.SendResult](new java.io.IOException("simulated media fault")))
+      else
+        calls
+          .update(_ :+ ((to, media)))
+          .flatMap(_ => note(media))
+          .as(if failOn(media) then failResult else result)
+    val factory: os.Path => WeixinIlinkBridgePlugin.SendMedia = _ => sendFn
+
+  private def okResult =
+    WeixinOutboundAdapter.SendResult(true, true, Some("421001"), 200, "delivered")
+
+  /**
+   * The recording GROUP seam (媒体合并批, 2026-10-22): captures `(to, images,
+   * caption)` triples. `failOn` / `raiseOn` gate on the image batch — one test
+   * can fail or fault ONE group call without touching the others. Shares the
+   * ordered wire log (`group:<caption>|<p1>,<p2>` entries) with the text and
+   * media recorders, so a test can assert the true delivery order.
+   */
+  private final class RecordingGroup(
+    result: WeixinOutboundAdapter.SendResult,
+    failOn: List[String] => Boolean = _ => false,
+    raiseOn: List[String] => Boolean = _ => false,
+    wire: Option[Ref[IO, List[String]]] = None
+  ):
+    private val failResult =
+      WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: group sendmessage ret=1")
+
+    val calls: Ref[IO, List[(String, List[String], Option[String])]] =
+      Ref.unsafe[IO, List[(String, List[String], Option[String])]](Nil)
+
+    private def note(images: List[String], caption: Option[String]): IO[Unit] =
+      wire.fold(IO.unit)(w => w.update(_ :+ s"group:${caption.getOrElse("")}|${images.mkString(",")}"))
+
+    val sendFn: WeixinIlinkBridgePlugin.SendGroup = (to, images, caption) =>
+      if raiseOn(images) then
+        note(images, caption).flatMap(_ =>
+          IO.raiseError[WeixinOutboundAdapter.SendResult](new java.io.IOException("simulated group fault"))
+        )
+      else
+        calls
+          .update(_ :+ ((to, images, caption)))
+          .flatMap(_ => note(images, caption))
+          .as(if failOn(images) then failResult else result)
+    val factory: os.Path => WeixinIlinkBridgePlugin.SendGroup = _ => sendFn
+
+  private def plugin(
+    root: os.Path,
+    send: os.Path => WeixinIlinkBridgePlugin.Send,
+    sendMedia: os.Path => WeixinIlinkBridgePlugin.SendMedia = _ =>
+      (_, _) => IO.pure(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered")),
+    sendMediaGroup: os.Path => WeixinIlinkBridgePlugin.SendGroup = _ =>
+      (_, _, _) => IO.pure(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered")),
+    longshot: nebflow.social.outbound.FileLongShot.Renderer = nebflow.social.outbound.FileLongShot.Unavailable
+  ): WeixinIlinkBridgePlugin =
+    // longshot defaults to Unavailable: no test ever starts node (offline discipline);
+    // the production default is FileLongShot.NodeShot.
+    new WeixinIlinkBridgePlugin(
+      root,
+      pinnedAllowedIlinkUserIds = None,
+      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      send = send,
+      sendMedia = sendMedia,
+      sendMediaGroup = sendMediaGroup,
+      longshot = longshot
+    )
+
+  private def meta(id: String, senderId: Option[String]): SessionMeta =
+    SessionMeta(
+      id = id,
+      name = id,
+      createdAt = 0L,
+      updatedAt = 0L,
+      hasUnread = false,
+      bridges = senderId
+        .map(s => Map(WeixinIlinkBridgePlugin.Name -> Json.obj("ilink_user_id" -> Json.fromString(s))))
+        .getOrElse(Map.empty)
+    )
+
+  private def recordingCtx(sessions: List[SessionMeta]) = new nebflow.bridge.BridgeContext:
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] = IO.unit
+    def interruptAgent(sessionId: String): IO[Unit] = IO.unit
+    def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
+    def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
+    def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
+
+  // ───────────────────────── shared token face ─────────────────────────
+
+  test("WO-K1 ensureToken mints an owner-only token; the second call returns the SAME value (never rotated)") {
+    val root = tmpRoot()
+    for
+      first <- WeixinOutboundAdapter.ensureToken(root)
+      second <- WeixinOutboundAdapter.ensureToken(root)
+      read <- WeixinOutboundAdapter.readToken(root)
+    yield
+      val t1 = first.getOrElse(fail(s"the first mint must succeed, got: $first"))
+      val t2 = second.getOrElse(fail(s"the second mint must succeed, got: $second"))
+      assertEquals(t2, t1, "an existing token is read, never rotated (rotation would desync a running side-car)")
+      assertEquals(read, Some(t1))
+      assert(t1.length >= 40, s"a 32-byte base64url token is at least 40 chars, got ${t1.length}")
+      val path = WeixinOutboundAdapter.tokenPath(root).toNIO
+      // POSIX 读回断言：Windows 无 posix 视图 ⇒ 跳过（mint 本腿已断言成功；owner-only
+      // 的 Windows 臂走 ACL，另案）。同 WeixinIlinkScanBindSpec.posixOnly 惯例。
+      assume(
+        !nebflow.core.CredentialFileAcl.isWindows(nebflow.core.CredentialFileAcl.currentOsName),
+        "POSIX-only owner-mode readback"
+      )
+      assertEquals(
+        PosixFilePermissions.toString(Files.getPosixFilePermissions(path)),
+        "rw-------",
+        "the token file is owner-only from its first byte (the F1 discipline)"
+      )
+    end for
+  }
+
+  test("WO-K2 a channel-less root gains NO token file from sendLive (the leg stays closed, spelled out)") {
+    val root = tmpRoot()
+    for r <- WeixinOutboundAdapter.sendLive(root)("wx_alice", "hello")
+    yield
+      assertEquals(r.ok, false)
+      assert(r.reason.startsWith("shim_token_unconfigured"), r.reason)
+      assert(
+        !Files.exists(WeixinOutboundAdapter.tokenPath(root).toNIO),
+        "the send face never mints on its own authority — minting happens only in the plugin start path"
+      )
+  }
+
+  test("WO-K3 sidecarBase reads the stored card, absent ⇒ the scan-bind default") {
+    val root = tmpRoot()
+    assertEquals(WeixinOutboundAdapter.sidecarBase(root), WeixinIlinkScanBind.SidecarDefaultBase)
+    SocialChannels.save(
+      root,
+      WeixinIlinkBridgePlugin.Name,
+      io.circe.parser.parse("""{"fields":{"sidecar_url":"http://127.0.0.1:8788"}}""").toOption.get
+    ) match
+      case Right(_) => ()
+      case Left(err) => fail(s"save refused: $err")
+    assertEquals(WeixinOutboundAdapter.sidecarBase(root), "http://127.0.0.1:8788")
+  }
+
+  // ───────────────────────── reply flush shape ─────────────────────────
+  //
+  // output 块纪律渠道接线批（2026-11-01）：渠道出站只投 `<output>` 块内拼接
+  // （作者令「不要回退成发全文」）——本节起的轮文本夹具一律裹块，块内内容
+  // 即断言值；裸叙述轮在改后是零出站（WO-GT3 纯媒体轮照发的口径不变）。
+
+  test("WO-F1 textDelta accumulates and `done` flushes ONE plain-text send to the bound sender") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>你好".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "，世界</output>".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      calls <- rec.calls.get
+      after <- p.pendingRef.get
+    yield
+      assertEquals(calls, List(("wx_alice", "你好，世界")), "ONE send, to the bound sender, whole turn text")
+      assertEquals(after.get("s1"), None, "the buffer is drained by the flush")
+  }
+
+  test("WO-F2 the outbound copy is de-marked-up (toPlain) — the in-session original is never rewritten") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent(
+        "s1",
+        Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>**bold** and a [link](https://example.com)</output>".asJson)
+      )
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      calls <- rec.calls.get
+    yield
+      val sent = calls.headOption.map(_._2).getOrElse(fail("one send expected"))
+      assert(
+        !sent.contains("**") && !sent.contains("](https://"),
+        s"markdown syntax must not reach the wire, got: $sent"
+      )
+      assert(
+        sent.contains("bold") && sent.contains("https://example.com"),
+        s"the content itself must survive the de-markup, got: $sent"
+      )
+    end for
+  }
+
+  test("WO-F3 an interrupted turn never flushes (a torn turn is not a reply)") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "partial".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "interrupted".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      calls <- rec.calls.get
+    yield assertEquals(calls, Nil, "interrupted clears the buffer; the later done has nothing to flush")
+  }
+
+  test("WO-F4 a retried turn (retryStatus) never flushes its stale partial either") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "stale".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "retryStatus".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      calls <- rec.calls.get
+    yield assertEquals(calls, Nil)
+  }
+
+  test("WO-F5 done with an empty buffer sends nothing (no fabricated empty message)") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      calls <- rec.calls.get
+    yield assertEquals(calls, Nil)
+  }
+
+  test("WO-F6 only the turn's OWN session flushes (per-session buffers, not one global buffer)") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")), meta("s2", Some("wx_bob")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>for alice</output>".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      calls <- rec.calls.get
+    yield assertEquals(calls, List(("wx_alice", "for alice")), "s2's buffer is untouched by s1's flush")
+  }
+
+  test("WO-F7 a session with NO bound sender has no return address: dropped, nothing sent") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s9", None)))) // default-session-style session, no binding
+      _ <- p.onAgentEvent("s9", Json.obj("type" -> "textDelta".asJson, "delta" -> "hi".asJson))
+      _ <- p.onAgentEvent("s9", Json.obj("type" -> "done".asJson))
+      calls <- rec.calls.get
+    yield assertEquals(calls, Nil, "no binding ⇒ no iLink target; the WARN names no-return-address")
+  }
+
+  test("WO-F8 a failing send is contained: the flush completes, no exception escapes") {
+    val failing =
+      RecordingSend(WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: sendmessage ret=1"))
+    val p = plugin(tmpRoot(), failing.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>hi</output>".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      calls <- failing.calls.get
+    yield
+    assertEquals(calls.size, 1, "the attempt WAS made (fail-closed, not silently skipped)")
+    // no raise: the for-comprehension above completing IS the assertion
+  }
+
+  test("WO-F9 stop clears the pending buffer (a torn turn is never a reply, also across restarts)") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "orphan".asJson))
+      _ <- p.stop
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      calls <- rec.calls.get
+    yield assertEquals(calls, Nil, "stop drains the buffer; the post-stop done flushes nothing")
+  }
+
+  test("WO-F10 a toolEnd alone never sends: a non-product payload leaves no memory either (text seam stays silent)") {
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      // "___POP_JSON___{}" parses but carries NO items — not a rich product at
+      // all (weixin-media batch: the parser is the channel-agnostic
+      // [[nebflow.social.outbound.RichProduct]]; a video-only payload reads the same).
+      _ <- p.onAgentEvent(
+        "s1",
+        Json.obj("type" -> "toolEnd".asJson, "content" -> "___POP_JSON___{}".asJson, "isError" -> false.asJson)
+      )
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      calls <- rec.calls.get
+      mediaCalls <- media.calls.get
+      rich <- p.richRef.get
+    yield
+      assertEquals(calls, Nil, "the TEXT seam never fires from a tool result")
+      assertEquals(mediaCalls, Nil, "no media seam call without a carriable product")
+      assertEquals(rich.get("s1"), None, "a non-product payload leaves no memory behind")
+    end for
+  }
+
+  // ─────────────── 逐段即时推送批（2026-10-10）：出站段级断言 ───────────────
+  //
+  // 作者需求（2026-10-09 原话）：一条消息就对应一条渠道消息，一条一条即时推
+  // 送，而不是等一起了才推送。分段提交源 = 桌面端一条气泡的落点（SessionRecorder
+  // 在 `toolStart` | `roundComplete` | `done` 帧 flush textBuf）——桥接腿接同一源。
+
+  private def wxDelta(sessionId: String, text: String): Json =
+    Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> text.asJson)
+
+  private val wxToolStart = Json.obj("type" -> "toolStart".asJson)
+  private val wxRoundComplete = Json.obj("type" -> "roundComplete".asJson)
+
+  test("WO-SG1 three committed segments → THREE in-order immediate sends; done resends nothing") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>第一段"))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "①</output>"))
+      _ <- p.onAgentEvent("s1", wxToolStart) // 分段提交边界 1：第一段即推
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>第二段</output>"))
+      _ <- p.onAgentEvent("s1", wxRoundComplete) // 分段提交边界 2：第二段即推
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>第三段</output>"))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson)) // 只补发尾段
+      calls <- rec.calls.get
+      after <- p.pendingRef.get
+    yield
+      assertEquals(
+        calls,
+        List(("wx_alice", "第一段①"), ("wx_alice", "第二段"), ("wx_alice", "第三段")),
+        "each committed segment is ONE immediate message, in order; the old whole-turn aggregate is gone"
+      )
+      assertEquals(after.get("s1"), None, "done drains only the tail segment — no whole-turn resend")
+    end for
+  }
+
+  test("WO-SG2 the throttle paces adjacent segments: send N starts ≥1s after send N-1 started") {
+    val stamps = Ref.unsafe[IO, List[Long]](Nil)
+    val p = plugin(tmpRoot(), _ =>
+      (_, _) => IO.monotonic.flatMap(d => stamps.update(_ :+ d.toMillis)).as(okResult))
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>seg one</output>"))
+      _ <- p.onAgentEvent("s1", wxToolStart)
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>seg two</output>"))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      ss <- stamps.get
+    yield
+      assertEquals(ss.size, 2, "two segments → two paced sends")
+      assert(
+        ss(1) - ss(0) >= 950L,
+        s"the second send must start ≥1s (start-to-start) after the first, got ${ss(1) - ss(0)}ms"
+      )
+    end for
+  }
+
+  test("WO-SG3 an empty boundary commits nothing: a pure-tool stretch pushes no message") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>第一段</output>"))
+      _ <- p.onAgentEvent("s1", wxToolStart)
+      _ <- p.onAgentEvent("s1", wxToolStart) // 空缓冲：纯工具过程不推
+      _ <- p.onAgentEvent("s1", wxRoundComplete) // 仍空：不推
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>尾段</output>"))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      calls <- rec.calls.get
+    yield
+      assertEquals(
+        calls,
+        List(("wx_alice", "第一段"), ("wx_alice", "尾段")),
+        "empty boundaries are silent; only committed text and the tail reach the wire"
+      )
+    end for
+  }
+
+  test("WO-SG4 interrupted after a committed boundary: the pushed segment stays, the torn tail never flushes") {
+    val rec = RecordingSend(okResult)
+    val p = plugin(tmpRoot(), rec.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>已推段</output>"))
+      _ <- p.onAgentEvent("s1", wxToolStart)
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "torn tail"))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "interrupted".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+      // 段推送骑 .start 后台 fiber（awaitCalls 的文档即此险）：轮终 await 盖不
+      // 住它，直读有负载竞态——等它落账再断言（pop multi-group 批顺手收紧）。
+      calls <- awaitCalls(rec.calls, 1).timeout(10.seconds)
+    yield
+      assertEquals(
+        calls,
+        List(("wx_alice", "已推段")),
+        "a committed segment is already delivered (cannot be unsent); the torn tail flushes nothing"
+      )
+    end for
+  }
+
+  /** Bounded wait for the recorder to observe `count` calls — the failure note
+    * rides a background fiber (`.start`), which done's await cannot cover. */
+  private def awaitCalls(
+    ref: Ref[IO, List[(String, String)]],
+    count: Int
+  ): IO[List[(String, String)]] =
+    IO.sleep(50.millis) *> ref.get.flatMap { l =>
+      if l.size >= count then IO.pure(l) else awaitCalls(ref, count)
+    }
+
+  test("WO-SG5 a failed segment is noted, exactly once per failure run; the no-retry boundary stays intact") {
+    val failing =
+      RecordingSend(WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: sendmessage ret=-2"))
+    val p = plugin(tmpRoot(), failing.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>段一</output>"))
+      _ <- p.onAgentEvent("s1", wxToolStart) // 段一失败 → 注明 #1
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>段二</output>"))
+      _ <- p.onAgentEvent("s1", wxRoundComplete) // 段二失败 → 连续失败只注明一次
+      _ <- p.onAgentEvent("s1", wxDelta("s1", "<output>尾</output>"))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson)) // 尾失败：轮终腿保持既有仅 WARN
+      calls <- awaitCalls(failing.calls, 4).timeout(10.seconds)
+    yield
+      // 注明恰好一条；失败段本身各恰好一次（不补发——重发边界不变）。注明从
+      // 失败段的后台 runner 里注册，相对其后注册段的插队位置不保证（失败检测
+      // 是异步的；生产段间隔秒级，实际总在下一段之前）——但它必在其主题（段一）
+      // 已尝试之后。
+      assertEquals(calls.size, 4, "two failed segments + tail + exactly ONE note")
+      assertEquals(calls.count(_._2.contains("上一条推送失败")), 1, "contiguous failures note ONCE")
+      assertEquals(calls.count(_._2 == "段一"), 1, "the failed segment is never re-sent")
+      assertEquals(calls.count(_._2 == "段二"), 1, "the failed segment is never re-sent")
+      assertEquals(calls.count(_._2 == "尾"), 1, "the failed segment is never re-sent")
+      assert(
+        calls.indexWhere(_._2.contains("上一条推送失败")) > calls.indexWhere(_._2 == "段一"),
+        s"the note must follow its subject's attempt: $calls"
+      )
+    end for
+  }
+
+  // ───────────────────────── wire shape (pure) ─────────────────────────
+
+  test("WO-W1 the /send request body, default form: exactly to+text, NO account key (the side-car owns selection)") {
+    val j = WeixinOutboundAdapter.buildSendJson("wx_alice", "hello 世界")
+    assertEquals(
+      j.asObject.map(_.keys.toList.sorted),
+      Some(List("text", "to")),
+      "no hint ⇒ the account key is ABSENT, never \"account\": null"
+    )
+    assertEquals(j.hcursor.downField("to").as[String].toOption, Some("wx_alice"))
+    assertEquals(j.hcursor.downField("text").as[String].toOption, Some("hello 世界"))
+  }
+
+  test("WO-W2 parseSendResponse maps the side-car verdicts onto the vocabulary") {
+    val ok200 = WeixinOutboundAdapter.parseSendResponse(
+      200,
+      """{"ok":true,"delivered":true,"message_id":"421001","client_id":"nebflow-sidecar:1-aa","attempts":1,"context_threaded":false}"""
+    )
+    assertEquals(ok200, WeixinOutboundAdapter.SendResult(true, true, Some("421001"), 200, "delivered"))
+
+    val bad200 = WeixinOutboundAdapter.parseSendResponse(200, """{"ok":true,"delivered":false}""")
+    assertEquals(bad200.ok, false, "a 200 without delivered=true is NOT a success reading")
+
+    val unauthorized = WeixinOutboundAdapter.parseSendResponse(401, """{"error":"unauthorized"}""")
+    assertEquals(unauthorized.reason, "shim_auth_rejected")
+
+    val unconfigured = WeixinOutboundAdapter.parseSendResponse(503, """{"error":"shim_token_unconfigured"}""")
+    assertEquals(unconfigured.reason, "shim_token_unconfigured")
+
+    val refused =
+      WeixinOutboundAdapter.parseSendResponse(502, """{"error":"delivery_failed: sendmessage ret=1 errmsg=bad"}""")
+    assertEquals(refused.ok, false)
+    assert(refused.reason.startsWith("delivery_failed:"), refused.reason)
+
+    val unparseable = WeixinOutboundAdapter.parseSendResponse(502, "not json at all")
+    assert(unparseable.reason.startsWith("delivery_failed:"), unparseable.reason)
+  }
+
+  test("WO-W3 an account hint rides along VERBATIM: keys are exactly account+text+to, the raw bot id untouched") {
+    val j = WeixinOutboundAdapter.buildSendJson("wx_alice", "hello 世界", Some("58dcfa8119b9@im.bot"))
+    assertEquals(j.asObject.map(_.keys.toList.sorted), Some(List("account", "text", "to")))
+    assertEquals(
+      j.hcursor.downField("account").as[String].toOption,
+      Some("58dcfa8119b9@im.bot"),
+      "the raw @im.bot form passes through untouched — normalization is the side-car's job"
+    )
+  }
+
+  test("WO-W4 accountHint reads the card's ilink_bot_id: no card ⇒ None, a card ⇒ Some(raw), a blank value ⇒ None") {
+    val root = tmpRoot()
+    assertEquals(WeixinOutboundAdapter.accountHint(root), None, "no channel card ⇒ no hint")
+    def saveFields(fieldsJson: String): Unit =
+      SocialChannels.save(
+        root,
+        WeixinIlinkBridgePlugin.Name,
+        io.circe.parser.parse(s"""{"fields":$fieldsJson}""").toOption.get
+      ) match
+        case Right(_) => ()
+        case Left(err) => fail(s"save refused: $err")
+    saveFields("""{"ilink_bot_id":"58dcfa8119b9@im.bot"}""")
+    assertEquals(
+      WeixinOutboundAdapter.accountHint(root),
+      Some("58dcfa8119b9@im.bot"),
+      "the stored raw bot id is surfaced verbatim (same cold-read face as sidecarBase)"
+    )
+    saveFields("""{"ilink_bot_id":"   "}""")
+    assertEquals(WeixinOutboundAdapter.accountHint(root), None, "a blank hint is no hint — the key stays absent")
+  }
+
+  // ───────────── weixin-media batch: the media seam + rich flush ─────────────
+
+  /** A Pop payload with the given items (PopTool.itemJson field names). */
+  private def popPayload(items: Json*): String =
+    nebflow.social.outbound.RichProduct.PopSentinel +
+      Json.obj("items" -> Json.arr(items*)).noSpaces
+
+  private def popItem(kind: String, p: os.Path): Json =
+    Json.obj("kind" -> kind.asJson, "name" -> "artifact".asJson, "path" -> p.toString.asJson)
+
+  private def toolEnd(content: String): Json =
+    Json.obj(
+      "type" -> "toolEnd".asJson,
+      "content" -> content.asJson,
+      "isError" -> false.asJson,
+      "label" -> "Pop".asJson
+    )
+
+  private def doneEv(sessionId: String): Json = Json.obj("type" -> "done".asJson, "sessionId" -> sessionId.asJson)
+
+  test(
+    "WO-M1 buildMediaSendJson image: keys exactly to+image_path (+account under the same verbatim rule), no text key"
+  ) {
+    val j = WeixinOutboundAdapter.buildMediaSendJson("wx_alice", WeixinOutboundAdapter.WeixinMedia.image("/tmp/a.png"))
+    assertEquals(j.asObject.map(_.keys.toList.sorted), Some(List("image_path", "to")))
+    assertEquals(j.hcursor.downField("image_path").as[String].toOption, Some("/tmp/a.png"))
+    assertEquals(j.hcursor.downField("text").as[String].toOption, None, "the media body carries NO text key")
+    val withHint = WeixinOutboundAdapter.buildMediaSendJson(
+      "wx_alice",
+      WeixinOutboundAdapter.WeixinMedia.image("/tmp/a.png"),
+      Some("58dcfa8119b9@im.bot")
+    )
+    assertEquals(withHint.asObject.map(_.keys.toList.sorted), Some(List("account", "image_path", "to")))
+    assertEquals(withHint.hcursor.downField("account").as[String].toOption, Some("58dcfa8119b9@im.bot"))
+  }
+
+  test("WO-M2 buildMediaSendJson file: the file_path form under the same rules") {
+    val j = WeixinOutboundAdapter.buildMediaSendJson("wx_bob", WeixinOutboundAdapter.WeixinMedia.file("/tmp/r.pdf"))
+    assertEquals(j.asObject.map(_.keys.toList.sorted), Some(List("file_path", "to")))
+    assertEquals(j.hcursor.downField("file_path").as[String].toOption, Some("/tmp/r.pdf"))
+    assertEquals(j.hcursor.downField("image_path").as[String].toOption, None)
+  }
+
+  test("WO-M3 sendMediaLive with no token ⇒ the media leg stays closed (same vocabulary as the text seam)") {
+    val root = tmpRoot()
+    for r <- WeixinOutboundAdapter.sendMediaLive(root)(
+        "wx_alice",
+        WeixinOutboundAdapter.WeixinMedia.image("/tmp/a.png")
+      )
+    yield
+      assertEquals(r.ok, false)
+      assert(r.reason.startsWith("shim_token_unconfigured"), r.reason)
+      assertEquals(r.code, -1)
+  }
+
+  test(
+    "WO-R1 a Pop IMAGE product remembered on toolEnd flushes ONE media send on done (image_path); the text reply is intact"
+  ) {
+    val img = tmpRoot() / "pop.png"
+    os.write(img, "png-bytes", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", img))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>图好了</output>".asJson))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+      rich <- p.richRef.get
+    yield
+      assertEquals(
+        mediaCalls,
+        List(("wx_alice", WeixinOutboundAdapter.WeixinMedia.image(img.toString))),
+        "ONE media send, to the bound sender, the payload's resolved path"
+      )
+      assertEquals(calls, List(("wx_alice", "图好了")), "the text reply is never suppressed (additive rich leg)")
+      assertEquals(rich.get("s1"), None, "the memory is drained by the flush")
+    end for
+  }
+
+  test(
+    "WO-R2 a Pop FILE item flushes the file_path form (pop batch-media fix: every item, payload order — no kind beats another)"
+  ) {
+    val doc = tmpRoot() / "report.pdf"
+    os.write(doc, "pdf-bytes", createFolders = true)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", doc))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+    yield assertEquals(mediaCalls, List(("wx_alice", WeixinOutboundAdapter.WeixinMedia.file(doc.toString))))
+  }
+
+  test(
+    "WO-R3 a FAILED media send degrades to a text notice AFTER the turn text (文字先行 — the text never lags its media)"
+  ) {
+    val img = tmpRoot() / "pop.png"
+    os.write(img, "png-bytes", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media =
+      RecordingMedia(WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: cdn http_500"))
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", img))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文</output>".asJson))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls.size, 1, "the media attempt WAS made")
+      assertEquals(calls.size, 2, "the turn text AND the degrade notice both go out")
+      assertEquals(calls.head._2, "正文", "the turn text goes FIRST (媒体合并批: 文字先行、媒体殿后)")
+      assert(calls(1)._2.startsWith("[图片发送失败 code=502]"), s"the notice names the failure: ${calls(1)._2}")
+  }
+
+  test("WO-R4 an interrupted turn drops the remembered product (a torn turn is never a media reply)") {
+    val img = tmpRoot() / "pop.png"
+    os.write(img, "png-bytes", createFolders = true)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", img))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "interrupted".asJson))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      rich <- p.richRef.get
+    yield
+      assertEquals(mediaCalls, Nil)
+      assertEquals(rich.get("s1"), None)
+  }
+
+  test("WO-R5 an errored tool result is never a rich product (isError gate)") {
+    val img = tmpRoot() / "pop.png"
+    os.write(img, "png-bytes", createFolders = true)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent(
+        "s1",
+        Json.obj(
+          "type" -> "toolEnd".asJson,
+          "content" -> popPayload(popItem("image", img)).asJson,
+          "isError" -> true.asJson
+        )
+      )
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      rich <- p.richRef.get
+    yield
+      assertEquals(mediaCalls, Nil, "an errored tool's content is an error string, never an artifact")
+      assertEquals(rich.get("s1"), None)
+    end for
+  }
+
+  test("WO-R6 a CARD product is the stated v1 boundary: no media send, the text leg carries the turn") {
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    val card = nebflow.social.outbound.RichKind.CardSentinel + """{"html":"<h1>card</h1>"}"""
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(card))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>卡片说明</output>".asJson))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls, Nil, "a card payload is not transcodable to the weixin media items")
+      assertEquals(calls, List(("wx_alice", "卡片说明")))
+  }
+
+  test("WO-R7 a NON-EXISTENT image path classifies Unknown: no media send (fail-closed, no garbage upload)") {
+    val gone = tmpRoot() / "gone.png"
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", gone))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+    yield assertEquals(mediaCalls, Nil, "RichKind.of(exists=false) ⇒ Unknown ⇒ the v1 boundary log, no send")
+  }
+
+  // ───── pop-social-files batch: 文件类（md/html）长图腿（2026-10-20 作者令）─────
+
+  /**
+   * A recording long-shot seam: never starts node; counts invocations and pins
+   * the ORIGINAL input, so a test can prove which file reached the converter.
+   */
+  private final class RecordingLongShot(result: Either[String, os.Path])
+      extends nebflow.social.outbound.FileLongShot.Renderer:
+    val calls: Ref[IO, Int] = Ref.unsafe[IO, Int](0)
+    val lastInput: Ref[IO, String] = Ref.unsafe[IO, String]("")
+    def available: Boolean = true
+    def shot(file: os.Path, outPng: os.Path): IO[Either[String, os.Path]] =
+      calls.update(_ + 1) *> lastInput.set(file.toString).as(result)
+
+  test("WO-W1 an md product converts to ONE long-shot PNG on image_path + the original-path note; the file leg is gone") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val md = tmpRoot() / "report.md"
+    os.write(md, "# 报告\n\n第一段正文。\n", createFolders = true)
+    val png = tmpRoot() / "report-long.png"
+    os.write(png, "png-bytes", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val longshot = new RecordingLongShot(Right(png))
+    val p = plugin(tmpRoot(), rec.factory, media.factory, longshot = longshot)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+      shotCalls <- longshot.calls.get
+      shotInput <- longshot.lastInput.get
+    yield
+      assertEquals(shotCalls, 1, "the conversion seam is consulted exactly once")
+      assertEquals(shotInput, md.toString, "the seam receives the ORIGINAL md")
+      assertEquals(
+        mediaCalls.map(_._2),
+        List(WeixinOutboundAdapter.WeixinMedia.image(png.toString)),
+        "ONE image send of the converted PNG — no file_path send (the file-first face is retired)"
+      )
+      assertEquals(calls, List(("wx_alice", nebflow.social.outbound.RichDegrade.originalNote(md))),
+        "the companion note carries the original path")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size >= 1, "a successful push records the dedup key")
+  }
+
+  test("WO-W2 an html product takes the SAME long-shot leg (2026-10-20 ruling supersedes file-first)") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val html = tmpRoot() / "diagram.html"
+    os.write(html, "<html><body>diagram</body></html>", createFolders = true)
+    val png = tmpRoot() / "diagram-long.png"
+    os.write(png, "png-bytes", createFolders = true)
+    val media = RecordingMedia(okResult)
+    val longshot = new RecordingLongShot(Right(png))
+    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, media.factory, longshot = longshot)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", html))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      shotInput <- longshot.lastInput.get
+    yield
+      assertEquals(shotInput, html.toString, "the seam receives the ORIGINAL html")
+      assertEquals(
+        mediaCalls.map(_._2),
+        List(WeixinOutboundAdapter.WeixinMedia.image(png.toString)),
+        "the converted PNG on image_path; the original NEVER rides file_path"
+      )
+  }
+
+  test("WO-W3 the SAME bytes pushed twice are suppressed once (dedup 防轰炸)") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val md = tmpRoot() / "report.md"
+    os.write(md, "# 报告\n", createFolders = true)
+    val png = tmpRoot() / "report-long.png"
+    os.write(png, "png-bytes", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val longshot = new RecordingLongShot(Right(png))
+    val p = plugin(tmpRoot(), rec.factory, media.factory, longshot = longshot)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md)))) // same file again
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+      shotCalls <- longshot.calls.get
+    yield
+      assertEquals(shotCalls, 1, "the duplicate never reaches the converter (dedup gates BEFORE conversion)")
+      assertEquals(mediaCalls.size, 1, "exactly ONE media send across both turns")
+      assertEquals(calls.size, 1, "exactly ONE note across both turns")
+  }
+
+  test("WO-W4 a FAILED conversion degrades to the 「文件名+路径+摘要」text card; the turn text is intact") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val md = tmpRoot() / "audit.md"
+    os.write(md, "# 存储审计\n\n结论先行的报告。", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory) // longshot defaults Unavailable ⇒ conversion fails
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文照发</output>".asJson))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls, Nil, "a failed conversion sends no media")
+      assertEquals(calls.size, 2, "the text card AND the turn text both go out")
+      assertEquals(calls.head._2, "正文照发", "the turn text goes FIRST (媒体合并批: 文字先行)")
+      val card = calls(1)._2
+      assert(card.startsWith(nebflow.social.outbound.RichDegrade.UnconvertedPrefix), s"machine-matchable card: $card")
+      assert(card.contains("audit.md") && card.contains(md.toString), s"file name + local path: $card")
+      assert(card.contains("存储审计"), s"the one-line summary: $card")
+  }
+
+  test("WO-W5 a FAILED image send does NOT record dedup: the next Pop of the same file retries") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val md = tmpRoot() / "report.md"
+    os.write(md, "# 报告\n", createFolders = true)
+    val png = tmpRoot() / "report-long.png"
+    os.write(png, "png-bytes", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult, failOn = _.imagePath.contains(png.toString))
+    val longshot = new RecordingLongShot(Right(png))
+    val p = plugin(tmpRoot(), rec.factory, media.factory, longshot = longshot)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
+      _ <- p.onAgentEvent("s1", doneEv("s1")) // first push: image send FAILS
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", md))))
+      _ <- p.onAgentEvent("s1", doneEv("s1")) // second Pop: must RETRY, not suppress
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls.size, 2, "the failed first push left no dedup record ⇒ the retry goes out")
+      assertEquals(calls.size, 2, "two degrade notices ([图片发送失败]) and NO note (nothing succeeded)")
+      assert(calls.head._2.startsWith("[图片发送失败 code=502]"), s"the notice names the failure: ${calls.head._2}")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 0, "a failed push never records dedup")
+  }
+
+  // ───── pop-file-leg batch: 文件腿直推（2026-10-21 作者令「pop 把这个文件发给
+  // 我，就自动传过来了呀」）— PDF/办公件走文档表 Document 臂、压缩包走 Unknown
+  // 臂的 [[FileLeg]] 收编分支，共用去重台账 + 体积闸 ─────
+
+  test("WO-W6 a PDF product rides the FILE leg directly: one file_path send, dedup recorded on success") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val pdf = tmpRoot() / "report.pdf"
+    os.write(pdf, "%PDF-1.4 fake", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", pdf))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(
+        mediaCalls.map(_._2),
+        List(WeixinOutboundAdapter.WeixinMedia.file(pdf.toString)),
+        "the Pop→桥→文件腿 chain: the ORIGINAL pdf goes out on file_path — no conversion, no suppression"
+      )
+      assertEquals(calls, Nil, "a clean file delivery puts out NO companion text")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 1, "success records the dedup key")
+  }
+
+  test("WO-W7 an ARCHIVE product (zip — in neither authority table) rides the file leg via the FileLeg class") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val zip = tmpRoot() / "bundle.zip"
+    os.write(zip, "PK fake-zip", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", zip))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(
+        mediaCalls.map(_._2),
+        List(WeixinOutboundAdapter.WeixinMedia.file(zip.toString)),
+        "the archive gap (NfFileAllowedExt has no zip) is closed: direct file leg, no log-only drop"
+      )
+      assertEquals(calls, Nil)
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 1)
+  }
+
+  test("WO-W8 the SAME archive bytes pushed twice are suppressed (file-leg dedup, mtime+size fingerprint)") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val zip = tmpRoot() / "bundle.zip"
+    os.write(zip, "PK fake-zip", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", zip))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", zip)))) // same bytes again
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls.size, 1, "exactly ONE file send across both turns")
+      assertEquals(calls, Nil, "no companion/degrade text either — the duplicate is quiet")
+  }
+
+  test("WO-W9 an OVERSIZE file never attempts the send: [文件过大] text card + console guidance, dedup records") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val big = tmpRoot() / "huge.pdf"
+    os.write(big, Array.fill(25_000_001)(0.toByte), createFolders = true) // 1 byte over the 25MB cap
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", big))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", big)))) // same oversize bytes again
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls, Nil, "over the cap the file leg is never attempted (no doomed 400)")
+      assertEquals(calls.size, 1, "ONE text card; the repeat Pop is dedup-suppressed (anti-spam)")
+      val card = calls.head._2
+      assert(card.startsWith(nebflow.social.outbound.RichDegrade.OversizePrefix), s"machine-matchable card: $card")
+      assert(card.contains("huge.pdf") && card.contains(big.toString), s"file name + local path: $card")
+      assert(card.contains("控制台"), s"the console guidance: $card")
+      assert(card.contains("25.0MB"), s"the limit in human units: $card")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 1, "the delivered card discharges the obligation — recorded")
+  }
+
+  test("WO-W10 a FAILED file send does NOT record dedup: the next Pop of the same file retries") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val zip = tmpRoot() / "bundle.zip"
+    os.write(zip, "PK fake-zip", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult, failOn = _.filePath.contains(zip.toString))
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", zip))))
+      _ <- p.onAgentEvent("s1", doneEv("s1")) // first push FAILS
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", zip))))
+      _ <- p.onAgentEvent("s1", doneEv("s1")) // second Pop must RETRY
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls.size, 2, "the failed push left no dedup record ⇒ the retry goes out")
+      assertEquals(calls.size, 2, "two 保底 notices ([文件…发送失败]), no companion note")
+      assert(calls.head._2.startsWith("[文件「bundle.zip」发送失败 code=502]"), s"the notice: ${calls.head._2}")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 0, "a failed push never records dedup")
+  }
+
+  // ───── 渠道文件出站批 (2026-10-31 22:10 作者令收口): off-table 文件腿 widening ─────
+  //
+  // WO-W11 钉作者当日实证 repro 同款：Pop 一个 .txt（stand_file_channel_test.txt
+  // / stand_wx_file_test.txt 形态）⇒ Unknown 分类（两张权威表都不收 txt）⇒
+  // 文件腿直推。批前实况（stand.log 2026-10-31 21:59:28）：「rich item not
+  // carriable (extension is in neither authority table: txt) — the text reply
+  // carries the turn」，微信未收。红-by-construction：摘掉
+  // deliverClassifiedItem Unknown 臂的 off-table 直推（恢复 FileLeg.isPushable
+  // 压缩包表闸），本测试退回日志边界即红。
+  test("WO-W11 a plain .txt product rides the FILE leg (the 10-31 author repro shape)") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val txt = tmpRoot() / "stand_wx_file_test.txt"
+    os.write(txt, "Stand 文件通道测试\n", createFolders = true)
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", txt))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(
+        mediaCalls.map(_._2),
+        List(WeixinOutboundAdapter.WeixinMedia.file(txt.toString)),
+        "off-table txt: the ORIGINAL bytes ride file_path — the pre-batch log-only drop is closed"
+      )
+      assertEquals(calls, Nil, "a clean file delivery puts out NO companion text")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 1, "success records the dedup key")
+  }
+
+  // WO-W12 钉 widening 后**唯一**保留下来的 v1 边界：off-table 件但文件不在盘
+  // （Pop 解析到的路径已被删/不可读）⇒ 无件可发，零发送、零文本卡，日志一行。
+  test("WO-W12 an off-table product MISSING from disk sends NOTHING (the surviving v1 log boundary)") {
+    nebflow.social.outbound.FileLongShot.Dedup.reset()
+    val gone = tmpRoot() / "ghost.txt"
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", gone))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(mediaCalls, Nil, "no file send — the product is not on disk")
+      assertEquals(calls, Nil, "no degrade card either — nothing was attempted, the text reply carries the turn")
+      assert(nebflow.social.outbound.FileLongShot.Dedup.size == 0, "a non-attempt records no dedup")
+  }
+
+  // ───── 媒体合并批 (2026-10-22, 台账 #756): runs — grouping + text-first + caption ─────
+
+  test(
+    "WO-B1 an 11-image Pop carries ALL of them as ONE group call, in payload order, caption riding inside (the old single-pick read dropped ten; the old per-item face split them)"
+  ) {
+    val dir = tmpRoot()
+    val imgs = (1 to 11)
+      .map(i =>
+        val p = dir / s"p$i.png"; os.write(p, s"png-$i", createFolders = true); p
+      )
+      .toList
+    val rec = RecordingSend(okResult)
+    val media = RecordingMedia(okResult)
+    val group = RecordingGroup(okResult)
+    val p = plugin(tmpRoot(), rec.factory, media.factory, group.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(imgs.map(i => popItem("image", i))*)))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>十一张都好了</output>".asJson))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      groupCalls <- group.calls.get
+      mediaCalls <- media.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(groupCalls.map(_._1), List("wx_alice"), "the whole batch goes to the bound sender")
+      assertEquals(
+        groupCalls.map(_._2),
+        List(imgs.map(_.toString)),
+        "ALL 11 items, in payload order, in ONE group call — one WeChat message, never 11 separate ones"
+      )
+      assertEquals(
+        groupCalls.head._3,
+        Some("十一张都好了"),
+        "the short tail rides the group as its caption (图文同发 — the text and the images arrive together)"
+      )
+      assertEquals(mediaCalls, Nil, "the per-item media seam never fires for a grouped stretch")
+      assertEquals(calls, Nil, "no separate text send — the text is INSIDE the group message")
+  }
+
+  test("WO-B2 a MIXED Pop keeps the payload order across runs: the 2-image stretch merges, the files stay per-item") {
+    val dir = tmpRoot()
+    def img(n: String) =
+      val p = dir / n; os.write(p, "png", createFolders = true); p
+    def doc(n: String) =
+      val p = dir / n; os.write(p, "pdf", createFolders = true); p
+    val a = img("a.png"); val c = img("c.png"); val b = doc("b.pdf"); val d = doc("d.pdf")
+    val wire = Ref.unsafe[IO, List[String]](Nil)
+    val media = RecordingMedia(okResult, wire = Some(wire))
+    val group = RecordingGroup(okResult, wire = Some(wire))
+    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, media.factory, group.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent(
+        "s1",
+        toolEnd(popPayload(popItem("image", a), popItem("image", c), popItem("file", b), popItem("file", d)))
+      )
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      order <- wire.get
+    yield assertEquals(
+      order,
+      List(
+        s"group:|${a.toString},${c.toString}",
+        s"media:${b.toString}",
+        s"media:${d.toString}"
+      ),
+      "the contiguous image stretch is ONE group call, the files stay per-item, payload order rules the wire"
+    )
+  }
+
+  test(
+    "WO-B3 a FAILED group degrades ONCE for the batch with the caption recovered through the text seam (文字不被媒体失败连坐)"
+  ) {
+    val dir = tmpRoot()
+    def img(n: String) =
+      val p = dir / n; os.write(p, "png", createFolders = true); p
+    val i1 = img("i1.png"); val i2 = img("i2.png"); val i3 = img("i3.png")
+    val rec = RecordingSend(okResult)
+    val group = RecordingGroup(WeixinOutboundAdapter.SendResult(false, false, None, 502, "delivery_failed: cdn http_500"))
+    val p = plugin(tmpRoot(), rec.factory, RecordingMedia(okResult).factory, group.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", i1), popItem("image", i2), popItem("image", i3))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文</output>".asJson))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      groupCalls <- group.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(groupCalls.map(_._2), List(List(i1.toString, i2.toString, i3.toString)), "ONE group attempt for the stretch")
+      assertEquals(calls.size, 2, "the caption recovery AND the batch notice both go out")
+      assertEquals(calls.head._2, "正文", "the caption is recovered FIRST — the text never dies with the media")
+      assert(
+        calls(1)._2.startsWith("[3 张图片发送失败 code=502]"),
+        s"the notice names the batch size: ${calls(1)._2}"
+      )
+  }
+
+  // ───────────── pop multi-group fix (2026-10-09) → 媒体合并批 (2026-10-22) ─────────────
+  //
+  // Incident 2026-10-09 22:2x: one turn popped a 4-image group and then a
+  // single image; the old single-slot richRef attempted exactly ONE media send.
+  // The pop multi-group fix pinned: every 组卡 delivered, group order = toolEnd
+  // order. 媒体合并批 (2026-10-22) keeps the every-group property and upgrades
+  // the delivery: each group is ONE group call, the whole sequence sits in one
+  // pacer slot AFTER the text leg (文字先行), a short tail rides the first
+  // ≥2-image group as its caption.
+
+  test(
+    "WO-B4 TWO Pop 组卡 in one turn → BOTH delivered in toolEnd order: the ≥2 card as ONE group call, the solo card on the legacy face (the old overwrite lost the first group)"
+  ) {
+    val dir = tmpRoot()
+    def img(n: String) =
+      val p = dir / n; os.write(p, "png", createFolders = true); p
+    val a = img("a.png"); val b = img("b.png"); val c = img("c.png")
+    val wire = Ref.unsafe[IO, List[String]](Nil)
+    val media = RecordingMedia(okResult, wire = Some(wire))
+    val group = RecordingGroup(okResult, wire = Some(wire))
+    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, media.factory, group.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      // Group one: the multi-image stacked card; group two: a later single Pop.
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", c))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      order <- wire.get
+      groupCalls <- group.calls.get
+      rich <- p.richRef.get
+    yield
+      assertEquals(
+        order,
+        List(
+          s"group:|${a.toString},${b.toString}",
+          s"media:${c.toString}"
+        ),
+        "both cards delivered, group order = toolEnd order; the ≥2 stretch merges, the solo keeps the legacy face"
+      )
+      assertEquals(groupCalls.map(_._2), List(List(a.toString, b.toString)), "the multi-image card is ONE group call")
+      assertEquals(groupCalls.map(_._3), List(None), "no text in the turn ⇒ no caption")
+      assertEquals(rich.get("s1"), None, "the memory is drained by the flush")
+  }
+
+  test(
+    "WO-B5 mixed text + 组卡: the short tail rides the FIRST group as its caption (图文同发 — one message, text inside; the old 媒体先行、正文殿后 is retired)"
+  ) {
+    val dir = tmpRoot()
+    def img(n: String) =
+      val p = dir / n; os.write(p, "png", createFolders = true); p
+    val a = img("a.png"); val b = img("b.png")
+    val wire = Ref.unsafe[IO, List[String]](Nil)
+    val rec = RecordingSend(okResult, Some(wire))
+    val group = RecordingGroup(okResult, wire = Some(wire))
+    val p = plugin(tmpRoot(), rec.factory, RecordingMedia(okResult).factory, group.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>两张图如下</output>".asJson))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      order <- wire.get
+    yield
+      assertEquals(
+        order,
+        List(s"group:两张图如下|${a.toString},${b.toString}"),
+        "ONE wire event: the caption rides INSIDE the group message — text and images arrive together, never split"
+      )
+  }
+
+  test("WO-B5b a LONG tail (> first tier) keeps its own pull flow and goes FIRST; the group follows caption-less") {
+    val dir = tmpRoot()
+    def img(n: String) =
+      val p = dir / n; os.write(p, "png", createFolders = true); p
+    val a = img("a.png"); val b = img("b.png")
+    val long = "长" * 4200 // > WeixinAskLeg.FullTextThreshold
+    val wire = Ref.unsafe[IO, List[String]](Nil)
+    val rec = RecordingSend(okResult, Some(wire))
+    val group = RecordingGroup(okResult, wire = Some(wire))
+    val p = plugin(tmpRoot(), rec.factory, RecordingMedia(okResult).factory, group.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> s"<output>$long</output>".asJson))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      order <- wire.get
+      groupCalls <- group.calls.get
+    yield
+      assertEquals(order.size, 2, "the text summary message + the group")
+      assert(order.head.startsWith("text:"), s"the text goes FIRST: ${order.head}")
+      assert(order.head.contains("全文"), s"the long tail rides the pull flow (summary + hint): ${order.head.take(80)}")
+      assertEquals(order(1), s"group:|${a.toString},${b.toString}", "the group follows, caption-less")
+      assertEquals(groupCalls.head._3, None, "a long tail never rides as a caption")
+  }
+
+  test("WO-B6 a group seam RAISE is contained: the caption is recovered and ONE batch notice goes out; nothing rethrows") {
+    val dir = tmpRoot()
+    def img(n: String) =
+      val p = dir / n; os.write(p, "png", createFolders = true); p
+    val a = img("a.png"); val b = img("b.png"); val c = img("c.png")
+    val rec = RecordingSend(okResult)
+    val group = RecordingGroup(okResult, raiseOn = _.size == 3)
+    val p = plugin(tmpRoot(), rec.factory, RecordingMedia(okResult).factory, group.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文照发</output>".asJson))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b), popItem("image", c))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      calls <- rec.calls.get
+    yield
+      // the raised call never lands in the recorder (the seam raises before
+      // recording) — the containment shows on the TEXT seam: recovery + notice
+      assertEquals(calls.size, 2, "the caption recovery AND the batch notice both go out")
+      assertEquals(calls.head._2, "正文照发", "the caption is recovered through the text seam")
+      assert(
+        calls(1)._2.startsWith("[3 张图片发送失败 code=-1]"),
+        s"the fault names the batch: ${calls(1)._2}"
+      )
+  }
+
+  test("WO-B7 a raising per-ITEM leg (file) degrades to its own [未送达] line; the remaining runs and the text survive") {
+    val dir = tmpRoot()
+    def img(n: String) =
+      val p = dir / n; os.write(p, "png", createFolders = true); p
+    def doc(n: String) =
+      val p = dir / n; os.write(p, "pdf", createFolders = true); p
+    val a = img("a.png"); val bad = doc("bad.pdf"); val b = img("b.png")
+    val wire = Ref.unsafe[IO, List[String]](Nil)
+    val rec = RecordingSend(okResult, Some(wire))
+    val media = RecordingMedia(okResult, raiseOn = _.filePath.contains(bad.toString), wire = Some(wire))
+    val group = RecordingGroup(okResult, wire = Some(wire))
+    val p = plugin(tmpRoot(), rec.factory, media.factory, group.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文照发</output>".asJson))
+      _ <- p.onAgentEvent(
+        "s1",
+        toolEnd(popPayload(popItem("image", a), popItem("file", bad), popItem("image", b)))
+      )
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      order <- wire.get
+      groupCalls <- group.calls.get
+      calls <- rec.calls.get
+    yield
+      assertEquals(groupCalls, Nil, "solo images never form a group (grouping is for ≥2 stretches)")
+      assertEquals(
+        order,
+        List(
+          "text:正文照发",
+          s"media:${a.toString}",
+          s"media:${bad.toString}", // the raise is noted on the wire — the attempt WAS made
+          "text:[未送达] bad.pdf — 这一项发送时出现异常，其余内容照常", // contained to ITS run, inline
+          s"media:${b.toString}"
+        ),
+        "the faulted file never blocks its neighbours: every run attempts its own leg, text first, the fault degrades inline"
+      )
+      assertEquals(calls.size, 2, "the [未送达] line AND the turn text both go out")
+      assertEquals(calls.head._2, "正文照发", "the turn text goes FIRST (文字先行)")
+      assert(
+        calls(1)._2.contains("[未送达] bad.pdf"),
+        s"the faulted item is named visibly, after the text: ${calls(1)._2}"
+      )
+  }
+
+  // ───────────── 媒体合并批: the merge-window timing trio (task #756 验证面) ─────────────
+
+  test("WO-GT1 媒体先到、文字后到 (toolEnd before the tail exists): the text+images STILL arrive as ONE captioned message") {
+    val dir = tmpRoot()
+    def img(n: String) =
+      val p = dir / n; os.write(p, "png", createFolders = true); p
+    val a = img("a.png"); val b = img("b.png")
+    val wire = Ref.unsafe[IO, List[String]](Nil)
+    val group = RecordingGroup(okResult, wire = Some(wire))
+    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, RecordingMedia(okResult).factory, group.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      // media FIRST (remembered at toolEnd), the text only afterwards
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b))))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>看这两张</output>".asJson))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      order <- wire.get
+    yield
+      assertEquals(
+        order,
+        List(s"group:看这两张|${a.toString},${b.toString}"),
+        "the merge window holds the media until the turn ends; the late text rides INSIDE the group — media never goes out empty"
+      )
+  }
+
+  test("WO-GT2 文字先到、媒体后到: the wire order stays text-first, media-after (顺序稳定)") {
+    val dir = tmpRoot()
+    def img(n: String) =
+      val p = dir / n; os.write(p, "png", createFolders = true); p
+    def doc(n: String) =
+      val p = dir / n; os.write(p, "pdf", createFolders = true); p
+    val a = img("a.png"); val doc1 = doc("a.pdf")
+    val wire = Ref.unsafe[IO, List[String]](Nil)
+    val rec = RecordingSend(okResult, Some(wire))
+    val media = RecordingMedia(okResult, wire = Some(wire))
+    val p = plugin(tmpRoot(), rec.factory, media.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      // text FIRST, the media only afterwards (files never group — sequential form)
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正文</output>".asJson))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("file", doc1))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      order <- wire.get
+    yield
+      assertEquals(
+        order,
+        List("text:正文", s"media:${doc1.toString}"),
+        "text leads, media follows — the text never lags the media it belongs to"
+      )
+  }
+
+  test("WO-GT3 纯媒体无文字: the group goes out alone at the turn end (no empty text send, no artificial wait)") {
+    val dir = tmpRoot()
+    def img(n: String) =
+      val p = dir / n; os.write(p, "png", createFolders = true); p
+    val a = img("a.png"); val b = img("b.png")
+    val wire = Ref.unsafe[IO, List[String]](Nil)
+    val group = RecordingGroup(okResult, wire = Some(wire))
+    val p = plugin(tmpRoot(), RecordingSend(okResult).factory, RecordingMedia(okResult).factory, group.factory)
+    for
+      _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+      _ <- p.onAgentEvent("s1", toolEnd(popPayload(popItem("image", a), popItem("image", b))))
+      _ <- p.onAgentEvent("s1", doneEv("s1"))
+      order <- wire.get
+    yield
+      assertEquals(
+        order,
+        List(s"group:|${a.toString},${b.toString}"),
+        "a text-less media turn delivers its group caption-less at the turn end — the turn end IS the window's close"
+      )
+  }
+
+  // ───────────── 媒体合并批: the wire body + timeout arithmetic (pure) ─────────────
+
+  test("WO-WG1 buildMediaGroupSendJson: keys exactly to+images, +text when a caption rides, +account under the verbatim rule") {
+    val bare = WeixinOutboundAdapter.buildMediaGroupSendJson("wx_alice", List("/tmp/a.png", "/tmp/b.png"))
+    assertEquals(bare.asObject.map(_.keys.toList.sorted), Some(List("images", "to")), "no caption ⇒ NO text key")
+    assertEquals(bare.hcursor.downField("images").as[List[String]].toOption, Some(List("/tmp/a.png", "/tmp/b.png")))
+    val captioned =
+      WeixinOutboundAdapter.buildMediaGroupSendJson("wx_alice", List("/tmp/a.png"), Some("看图"))
+    assertEquals(captioned.asObject.map(_.keys.toList.sorted), Some(List("images", "text", "to")))
+    assertEquals(captioned.hcursor.downField("text").as[String].toOption, Some("看图"))
+    val hinted = WeixinOutboundAdapter.buildMediaGroupSendJson(
+      "wx_alice",
+      List("/tmp/a.png"),
+      Some("看图"),
+      Some("58dcfa8119b9@im.bot")
+    )
+    assertEquals(hinted.asObject.map(_.keys.toList.sorted), Some(List("account", "images", "text", "to")))
+    assertEquals(
+      hinted.hcursor.downField("account").as[String].toOption,
+      Some("58dcfa8119b9@im.bot"),
+      "the raw bot id passes through untouched (the same verbatim rule as every seam)"
+    )
+  }
+
+  test("WO-WG2 groupReadTimeout scales with the batch size and caps at 30min") {
+    import scala.concurrent.duration.*
+    assertEquals(WeixinOutboundAdapter.groupReadTimeout(1), 480.seconds, "N=1 → 240×2")
+    assertEquals(WeixinOutboundAdapter.groupReadTimeout(4), 1200.seconds, "N=4 → 240×5")
+    assertEquals(WeixinOutboundAdapter.groupReadTimeout(20), 1800.seconds, "N=20 → capped at 30min")
+    assertEquals(WeixinOutboundAdapter.groupReadTimeout(0), 240.seconds, "N=0 → the single-media budget")
+  }
+
+end WeixinOutboundSpec

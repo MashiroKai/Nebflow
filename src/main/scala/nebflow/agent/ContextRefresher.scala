@@ -2,10 +2,11 @@ package nebflow.agent
 
 import cats.effect.IO
 import cats.syntax.all.*
+import nebflow.actor.*
+import nebflow.core.*
 import nebflow.core.entity.{EntityLoader, TeamCatalog}
 import nebflow.core.skill.SkillService
-import nebflow.core.{HeadlessMode, PathUtil, SystemReminder, SystemReminders}
-import nebflow.service.{MemoryStore, RulesStore}
+import nebflow.shared.*
 
 /**
  * Unified context refresh for session-scoped resources.
@@ -45,42 +46,50 @@ object ContextRefresher:
   // AGENTS.md 注入（§E.2，project-architecture phase2 设计 §E）
   // ============================================================
 
-  private val logger = nebflow.core.NebflowLogger.forName("nebflow.agent")
+  private val logger = nebflow.shared.NebflowLogger.forName("nebflow.agent")
 
   /** E.2 长度护栏：>16KB（16*1024 字节）截断 + 尾注（提示词膨胀防护）。 */
   val AgentsMdMaxBytes: Int = 16 * 1024
 
-  /** E.2 接收面 gating：注入对象 = project 分发器 + 全部 node 会话；Nebula 与
-    * 双轨 team/flow 会话不注入。
-    *
-    * 基准取舍（任务书建议 projectRoot.isDefined ± converged 名单，均否决留档）：
-    *  - projectRoot.isDefined 不可作主基准：WebSocketRoutes.doSpawnRootAgent 把
-    *    全部 WS 根会话（含 Nebula）的 projectRoot fallback 到 ~/.nebflow/projects
-    *    ——Nebula 恒 Some，单基准会误注入。
-    *  - converged 名单（project-dispatcher + general）不可作叠加/主基准：node
-    *    会话 agent 名 = NodeDef.agent 任意声明值（NodeEngine loadAgent(node.agent)），
-    *    名单覆盖不了「全部 node 会话」。
-    *  - 采用 sandboxEnabled（spawn 形态信号）：全仓唯二置位点 NodeEngine（节点
-    *    spawn）+ ProjectActor（分发器 spawn）＝接收面本身（2a §A.6 spec 钉死
-    *    「仅 project 节点/分发器置位」）；Nebula/team/flow/Delegate/SubTask 默认
-    *    false → 不注入。projectRoot 非空作读取源 + 空串护栏。
-    *  - [2026-09-05 Nebula 沙箱启用批] 第三置位点 WebSocketRoutes.doSpawnRootAgent
-    *    （Nebula 根会话）落地后，sandboxEnabled 不再独占「project 会话」语义
-    *    （Nebula fallback projectRoot 恒 Some → 两条件恒真、必误注入）——追加
-    *    agentName 排除：name=="Nebula" 的会话不注入（AGENTS.md 接收面维持
-    *    project 分发器 + node 会话不变）。默认参数 "" 保持既有两参调用与 spec
-    *    兼容（"" != "Nebula" 语义不变）。
-    * 公开供 spec 断言（参照 skillCatalogEnabledFor 同文件先例）。 */
-  def agentsMdEnabledFor(sandboxEnabled: Boolean, projectRoot: Option[String], agentName: String = ""): Boolean =
-    sandboxEnabled && projectRoot.exists(_.nonEmpty) && agentName != "Nebula"
+  /**
+   * E.2 接收面 gating：注入对象 = project 分发器 + 全部 node 会话；Nebula 与
+   * 双轨 team/flow 会话不注入。
+   *
+   * 基准取舍（任务书建议 projectRoot.isDefined ± converged 名单，均否决留档）：
+   *  - projectRoot.isDefined 不可作主基准：WebSocketRoutes.doSpawnRootAgent 把
+   *    全部 WS 根会话（含 Nebula）的 projectRoot fallback 到 ~/.nebflow/projects
+   *    ——Nebula 恒 Some，单基准会误注入。
+   *  - converged 名单（project-dispatcher + general）不可作叠加/主基准：node
+   *    会话 agent 名 = NodeDef.agent 任意声明值（NodeEngine loadAgent(node.agent)），
+   *    名单覆盖不了「全部 node 会话」。
+   *  - 【沙箱拆围栏批 S1/R8 解耦】主基准改用 projectSession（会话形态信号）：
+   *    spawn 侧置位点恰为接收面本身（NodeEngine 节点 spawn ×2 + ProjectActor
+   *    分发器 spawn ×1）——原实现借用 sandboxEnabled，而该信号是「围栏总闸」，
+   *    拆围栏批要退役它：继续挂靠 ⇒ 拆围栏会连带关掉节点 AGENTS.md 注入
+   *    （项目级契约文件不进上下文）= 与拆围栏目标无关的静默回归（design §0
+   *    结论 4 / R8 h2 禁止项）。解耦后两者生命周期独立：围栏退役不动注入面。
+   *    Nebula/team/flow/Delegate/SubTask 的 projectSession 默认 false → 不注入。
+   *    projectRoot 非空仍是读取源 + 空串护栏（不变）。
+   *  - [2026-09-05 Nebula 沙箱启用批] 第三置位点 WebSocketRoutes.doSpawnRootAgent
+   *    （Nebula 根会话）落地后，sandboxEnabled 不再独占「project 会话」语义
+   *    （Nebula fallback projectRoot 恒 Some → 两条件恒真、必误注入）——解耦后
+   *    该会话 projectSession=false 天然不注入；agentName 排除保留为第二道保险
+   *    （name=="Nebula" 恒不注入，即「WS 根会话语义保持现状」的显式锚点）。
+   *    默认参数 "" 保持既有两参调用与 spec 兼容（"" != "Nebula" 语义不变）。
+   * 公开供 spec 断言（参照 skillCatalogEnabledFor 同文件先例）。
+   */
+  def agentsMdEnabledFor(projectSession: Boolean, projectRoot: Option[String], agentName: String = ""): Boolean =
+    projectSession && projectRoot.exists(_.nonEmpty) && agentName != RootAgentIdentity.Name
 
-  /** E.2 读取：`<projectRoot>/AGENTS.md`，每 turn 重读盘（对齐 rulesMd 同机制）。
-    * 旧位 `.nebflow/Agent.md` 残留 → 仅 WARN + 回落读根文件——迁移动作本体在
-    * ProjectStore.load（E.3），此处置严禁文件搬家（每 turn 读路径带写副作用会
-    * 放大竞态面）；挂载即迁移，残留只出现在 load 不可达的异常态，WARN 暴露即可。
-    * >16KB 按字节截断 + 尾注 `[AGENTS.md truncated]`（截断切点若落在多字节
-    * UTF-8 序列内，残码由解码器替换，不回写盘面）。路径解析失败（脏 projectRoot
-    * 字符串）→ None，不中断 turn。 */
+  /**
+   * E.2 读取：`<projectRoot>/AGENTS.md`，每 turn 重读盘（对齐 rulesMd 同机制）。
+   * 旧位 `.nebflow/Agent.md` 残留 → 仅 WARN + 回落读根文件——迁移动作本体在
+   * ProjectStore.load（E.3），此处置严禁文件搬家（每 turn 读路径带写副作用会
+   * 放大竞态面）；挂载即迁移，残留只出现在 load 不可达的异常态，WARN 暴露即可。
+   * >16KB 按字节截断 + 尾注 `[AGENTS.md truncated]`（截断切点若落在多字节
+   * UTF-8 序列内，残码由解码器替换，不回写盘面）。路径解析失败（脏 projectRoot
+   * 字符串）→ None，不中断 turn。
+   */
   def resolveAgentsMd(projectRoot: Option[String]): IO[Option[String]] =
     projectRoot.filter(_.trim.nonEmpty) match
       case None => IO.pure(None)
@@ -252,14 +261,16 @@ object ContextRefresher:
     agentName: String,
     headless: Boolean = HeadlessMode.enabled
   ): Boolean =
-    !headless && !isWorker && agentName == "Nebula"
+    !headless && !isWorker && agentName == RootAgentIdentity.Name
 
   /**
    * Build a memory block string for system prompt injection.
    *
    * Reads memory levels and formats them into a single Markdown block:
-   *   - User memory    (~/.nebflow/User.md)                 — global
-   *   - Agent memory   (~/.nebflow/agents/Nebula/memory.md)  — Nebula
+   *   - User memory    (~/.nebflow/User.md)                 — global「你是谁」
+   *   - Soul memory    (~/.nebflow/Soul.md)                 — global「我是谁」
+   *     (personal-agent 批 2026-10-04：由 agents/Nebula/memory.md 上收到根层；
+   *      双读回落旧位，见 MemoryStore.loadSoulMemory)
    *
    * 2026-08-31 裁定①: team agents no longer carry memory — the gate
    * (shouldInjectMemory) only admits Nebula, so teamName is always None here.
@@ -281,32 +292,59 @@ object ContextRefresher:
    */
   def buildMemoryBlock(
     agentName: String,
-    teamName: Option[String] = None
+    teamName: Option[String] = None,
+    contextWindow: Int = nebflow.shared.Defaults.ContextWindow
   ): String =
     val agentMemory = teamName match
       case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName)
-      case None => MemoryStore.loadAgentMemory(agentName)
+      case None => MemoryStore.loadSoulMemory(agentName)
     renderMemoryBlock(
       MemoryStore.loadUserMemory,
       agentMemory,
       MemoryHygieneSignal.takePending(),
-      nebflow.core.tools.TaskListStore.openSummaryLine()
+      // taskunify 合一批（2026-09-24 `75fddc5db`）：数据源指向**合一账本**
+      // （`~/.nebflow/tasks-v2.json`，`TaskLedgerStore.openSummaryLine`，标记
+      // `[Task]`）——旧 `TaskListStore.openSummaryLine()` 读的
+      // `~/.nebflow/tasks.json` 已随批退役（裁定 L：只读归档，新代码不读）。
+      // 🔴 本行曾被 PR48 head tree 重建族（0b26aa857+ee1c8058c，09-27/28）静默
+      // 回退回旧数据源；2026-10-14 redfix 批按 taskunify 语义恢复。
+      nebflow.core.project.TaskLedgerStore.open().openSummaryLine(),
+      contextWindow
     )
   end buildMemoryBlock
 
-  /** 纯渲染（spec 直测面）：两记忆内容 + (restartPending, compactPending) 信号 +
-    * TaskList open 摘要行 → 记忆块全文。文件字节直接由已加载内容计算（无第二次
-    * 读盘）。openTasksLine 为空串时不渲染（全 done 后提醒消失）；三段（记忆主体/
-    * 整理提醒/任务摘要）非空段以 --- 分隔。 */
+  /**
+   * 纯渲染（spec 直测面）：两记忆内容 + (restartPending, compactPending) 信号 +
+   * TaskList open 摘要行 → 记忆块全文。文件字节直接由已加载内容计算（无第二次
+   * 读盘）。空串段不渲染；非空段以 --- 分隔。
+   *
+   * **分块注入**（personal-agent 批 ⑥ 硬要求）：Soul.md（我是谁）与 User.md
+   * （你是谁）渲染为**两个可区分的块**（`## Soul` / `## User`），而非合并成一块
+   * ——两块标题即语义边界，模型能分辨「关于我」与「关于你」。
+   *
+   * 头部固定携带一段检索指引（2026-10-29 作者令批）：改制后记忆主库 = 对话
+   * 检索库（`~/.stand/memory-db/`），CLI = `tools/stand-recall`（仓根执行，
+   * cwd 漂移须回仓根/绝对路径）——指引是固定文案，只随非空 base 渲染（主体
+   * 缺省 ⇒ 整块不渲染的既有语义不变）。
+   *
+   * 记忆队列 pending 行参数已随队列族退役（memory-family-retirement 批
+   * 2026-09-29）：队列机制整体停用 ⇒ 无 pending 可报，该段恒空 ⇒ 参数、职责与
+   * 该段一并删除（不留死参）。
+   *
+   * `contextWindow`（默认参数 = `Defaults.ContextWindow`，向后兼容未传的调用方）
+   * = **生效**上下文窗口，只用于 hygiene 判据的窗口联动（见 [[memoryHygieneNotice]]）；
+   * 不参与正文渲染（注入侧不加截断的既有裁定不变）。
+   */
   def renderMemoryBlock(
     userContent: Option[String],
     agentContent: Option[String],
     lifecycleSignal: (Boolean, Boolean),
-    openTasksLine: String = ""
+    openTasksLine: String = "",
+    contextWindow: Int = nebflow.shared.Defaults.ContextWindow
   ): String =
     val sections = List(
-      userContent.map(content => s"## User Memory\n\n$content"),
-      agentContent.map(content => s"## Agent Memory\n\n$content")
+      agentContent.map(content => s"## Soul\n\n$content"),
+      userContent.map(content => s"## User\n\n$content")
     ).flatten
 
     val base =
@@ -314,35 +352,59 @@ object ContextRefresher:
       else
         s"""# Memory
            |
-           |Your memory is below. Entries with →id have detail files at `~/.nebflow/memory/{id}.md` — read them when the scenario matches.
+           |## Recall archive — `tools/stand-recall`
+           |
+           |Your full conversation history with the user is auto-indexed into a searchable archive at `~/.stand/memory-db/`. When context is missing, a past ruling is uncertain, or compaction ate a detail you need — search FIRST, then act:
+           |
+           |    ./tools/stand-recall "<natural language query>"
+           |
+           |Run it from the repo root; after any `cd`, go back to the repo root or use an absolute path (a drifted cwd makes the relative path fail). Output: relevance-ranked conversation snippets — timestamp, role, session anchor, `←`/`→` neighbor lines. Exhaust self-retrieval before asking the user: try multiple keyword rounds, switching to synonyms / English / commit hashes when words miss.
            |
            |${sections.mkString("\n\n")}""".stripMargin
 
-    val notice = memoryHygieneNotice(userContent, agentContent, lifecycleSignal)
+    val notice = memoryHygieneNotice(userContent, agentContent, lifecycleSignal, contextWindow)
     List(base, notice, openTasksLine).filter(_.nonEmpty).mkString("\n\n---\n\n")
   end renderMemoryBlock
 
-  /** 生命周期整理提醒（§6.2-2.5）：任一文件 >80% 软线 → 即时任务措辞（当轮安排
-    * 整理，不等周日）；否则重启/压缩事件命中 → 轻量清扫提示；两者皆无 → 空串。 */
+  /**
+   * 生命周期整理提醒（§6.2-2.5）：任一文件 >80% 软线 → 即时任务措辞（当轮安排
+   * 整理，不等周日）；否则重启/压缩事件命中 → 轻量清扫提示；两者皆无 → 空串。
+   *
+   * **窗口联动**（personal-agent 批 ⑥）：软线不再只取常量，而是
+   * `min(常量 80%, 生效窗口 × 10%)` —— 小窗口模型不再被默认 50KB/30KB 的记忆
+   * 预算相对压垮。`contextWindow` 缺省 = `Defaults.ContextWindow`（128k）⇒
+   * 与该比例下界相等 ⇒ **未传参的调用方读数逐字不变**（既有 spec 不受影响）。
+   * 🔴 记忆**写入侧**（[[nebflow.shared.MemoryBudget.verdict]] 的硬顶）不进本联动：
+   * 存量数据在窗口改小时不因闸而无法整理（收缩路径见 shrinkExempt）。
+   */
   def memoryHygieneNotice(
     userContent: Option[String],
     agentContent: Option[String],
-    lifecycleSignal: (Boolean, Boolean)
+    lifecycleSignal: (Boolean, Boolean),
+    contextWindow: Int = nebflow.shared.Defaults.ContextWindow
   ): String =
-    val bytesOf = (s: Option[String]) => s.map(_.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong).getOrElse(0L)
+    val bytesOf = (s: Option[String]) =>
+      s.map(_.getBytes(java.nio.charset.StandardCharsets.UTF_8).length.toLong).getOrElse(0L)
     val userBytes = bytesOf(userContent)
     val agentBytes = bytesOf(agentContent)
     val (restartPending, compactPending) = lifecycleSignal
 
-    val userOver = userBytes > nebflow.service.MemoryBudget.UserSoftBytes
-    val agentOver = agentBytes > nebflow.service.MemoryBudget.AgentSoftBytes
+    val userSoft = nebflow.shared.MemoryBudget.userInjectionSoftBytes(contextWindow)
+    val agentSoft = nebflow.shared.MemoryBudget.agentInjectionSoftBytes(contextWindow)
+    val userHard = nebflow.shared.MemoryBudget.userInjectionHardBytes(contextWindow)
+    val agentHard = nebflow.shared.MemoryBudget.agentInjectionHardBytes(contextWindow)
+
+    val userOver = userBytes > userSoft
+    val agentOver = agentBytes > agentSoft
 
     if userOver || agentOver then
       val lines = List(
         Option.when(userOver)(
-          s"- ~/.nebflow/User.md: $userBytes bytes (soft line ${nebflow.service.MemoryBudget.UserSoftBytes}, hard ${nebflow.service.MemoryBudget.UserHardBytes})"),
+          s"- ~/.stand/User.md: $userBytes bytes (soft line $userSoft, hard $userHard)"
+        ),
         Option.when(agentOver)(
-          s"- ~/.nebflow/agents/Nebula/memory.md: $agentBytes bytes (soft line ${nebflow.service.MemoryBudget.AgentSoftBytes}, hard ${nebflow.service.MemoryBudget.AgentHardBytes})")
+          s"- ~/.stand/Soul.md: $agentBytes bytes (soft line $agentSoft, hard $agentHard)"
+        )
       ).flatten
       s"""## Memory hygiene — IMMEDIATE TASK
          |
@@ -352,13 +414,14 @@ object ContextRefresher:
          |Schedule a consolidation pass THIS TURN (memory-consolidation skill), do not wait for the weekly audit: over-budget memory taxes every future session, and the write-side gate will start rejecting appends at the hard line. Trim stale T2 batch sections, superseded rulings and unpromoted Dream entries first (取代而非追加; replace_section for section-level cleanup).""".stripMargin
     else if restartPending || compactPending then
       val cause = (restartPending, compactPending) match
-        case (true, true)  => "The host just restarted AND your memory was just compacted"
+        case (true, true) => "The host just restarted AND your memory was just compacted"
         case (true, false) => "The host just restarted"
-        case _             => "Your memory was just compacted"
+        case _ => "Your memory was just compacted"
       s"""## Memory hygiene
          |
          |$cause. Restart/compaction closes out T2 status entries (pending-reboot lists, batch ledgers) and ages T3 Dream entries. If you noticed stale state while resuming, run a quick consolidation pass (memory-consolidation skill) — trim closed-out entries instead of letting them accumulate to the budget line.""".stripMargin
     else ""
+    end if
   end memoryHygieneNotice
 
   // ============================================================
@@ -394,18 +457,22 @@ object ContextRefresher:
     // edits (e.g. PUT /api/agents/:name/model) take effect on the running
     // actor. agentLibrary.get only scans the GLOBAL agents dir — for team
     // agents it returns None and the code would silently keep using the
-    // actor-startup snapshot (MailTool/FlowTreeActor loadTeamAgent result).
+    // actor-startup snapshot (MailTool's team-agent load result).
     // loadTeamAgent checks teams/<team>/agents/<name>/ first, then global.
     teamNameOpt match
       case Some(teamName) =>
         EntityLoader.loadTeamAgent(teamName, agentDef.name).map { entryOpt =>
-          entryOpt.map(_.toAgentDef.copy(
-            // AgentEntry doesn't carry presentation fields — keep whatever
-            // the running actor already resolved (avatar from panel config).
-            avatar = agentDef.avatar,
-            displayName = agentDef.displayName,
-            voiceEnabled = agentDef.voiceEnabled
-          )).map(applyRuntimeOverrides(agentDef, _))
+          entryOpt
+            .map(
+              _.toAgentDef.copy(
+                // AgentEntry doesn't carry presentation fields — keep whatever
+                // the running actor already resolved (avatar from panel config).
+                avatar = agentDef.avatar,
+                displayName = agentDef.displayName,
+                voiceEnabled = agentDef.voiceEnabled
+              )
+            )
+            .map(applyRuntimeOverrides(agentDef, _))
         }
       case None => resources.agentLibrary.get(agentDef.name).map(_.map(applyRuntimeOverrides(agentDef, _)))
 
@@ -414,25 +481,24 @@ object ContextRefresher:
    * reloaded disk def. The per-turn reload (panel edits take effect on the
    * running actor) must not silently drop spawn-time overrides:
    *
-   *  - modelOverride (#291: Delegate/SubTask `preset` param) — wins over
-   *    disk/panel edits for the actor's lifetime;
    *  - flowContract (FlowDagExecutor injects it per node via
    *    `baseDef.copy(...)`; the contract data survives reloads so the
    *    executor's verdict/slot resolution stays consistent). The FlowReport
    *    tool re-append that used to accompany it retired 2026-09-06 with the
    *    tool itself.
+   *
+   * (The former `modelOverride` leg was removed with the modelcfg batch
+   * `28a246724` -- AgentDef no longer carries `modelOverride`. W1 provisional
+   * shim: ported from main's ContextRefresher.)
    */
   private def applyRuntimeOverrides(running: AgentDef, fresh: AgentDef): AgentDef =
-    val withModel = running.modelOverride match
-      case Some(cfg) => fresh.copy(model = Some(cfg), preset = running.preset, modelOverride = Some(cfg))
-      case None => fresh
-    withModel.copy(
-      flowContract = if running.flowContract.nonEmpty then running.flowContract else withModel.flowContract,
+    fresh.copy(
+      flowContract = if running.flowContract.nonEmpty then running.flowContract else fresh.flowContract,
       // 阶段 2b Plugins（§B.4 第 3/4 步）：node 分配是 spawn 时运行时注入
       // （NodeEngine 写入 pluginMcpServers/pluginTools，不落 agent.json）——
       // 每 turn 热重载不得冲掉（flowContract 同款保活先例）。
-      pluginMcpServers = if running.pluginMcpServers.nonEmpty then running.pluginMcpServers else withModel.pluginMcpServers,
-      pluginTools = if running.pluginTools.nonEmpty then running.pluginTools else withModel.pluginTools
+      pluginMcpServers = if running.pluginMcpServers.nonEmpty then running.pluginMcpServers else fresh.pluginMcpServers,
+      pluginTools = if running.pluginTools.nonEmpty then running.pluginTools else fresh.pluginTools
     )
 
   def refreshTurn(
@@ -443,9 +509,10 @@ object ContextRefresher:
     for
       // Detect team membership once — used for both the def refresh source
       // and the memory block below.
-      teamNameOpt <- state.sessionId match
-        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
-        case None => IO.pure(None)
+      // 团队功能删除批（team-feature-deletion-20261104）阶段 3：团队会话登记表本体
+      // 删除 ⇒ 团队归属**恒 None**（团队 agent 的 per-turn def 重载与团队 memory
+      // 分档因此不再可达；全局 agents 路径与 memory 判据零变化）。
+      teamNameOpt <- IO.pure(Option.empty[String])
       freshDefOpt <- loadCurrentDef(teamNameOpt, resources, agentDef)
       globalDef = freshDefOpt.getOrElse(agentDef)
       // SubTask workers are leaf task-execution pipelines: strip all team /
@@ -471,12 +538,12 @@ object ContextRefresher:
       // E.2 AGENTS.md 注入（每 turn 重读盘，对齐 rulesMd 同机制）。读取基准 =
       // SessionContext.projectRoot（NodeEngine/ProjectActor spawn 写入的
       // workspace/worktree 路径，§A.6 唯一权威）——node/分发器会话无 folderId，
-      // 上方 folderId 派生的 projectRoot 对它们恒 None，不可作基准（gating 取舍
-      // 见 agentsMdEnabledFor；agentName 排除 = Nebula 根会话沙箱启用后
-      // sandboxEnabled 信号失真的补丁，2026-09-05 批）。随 systemStable 在
-      // lifecycle 节点生效。
+      // 上方 folderId 派生的 projectRoot 对它们恒 None，不可作基准）；gating 取舍
+      // 见 agentsMdEnabledFor——判据已解耦为 projectSession（会话形态信号），
+      // agentName 排除保留为 Nebula 根会话的第二道保险（沙箱拆围栏批 S1/R8，
+      // 2026-09-10）。随 systemStable 在 lifecycle 节点生效。
       agentsMd <-
-        if agentsMdEnabledFor(state.sandboxEnabled, state.projectRoot, globalDef.name) then
+        if agentsMdEnabledFor(state.projectSession, state.projectRoot, globalDef.name) then
           resolveAgentsMd(state.projectRoot)
         else IO.pure(None)
       thinkingConfig <- resources.thinkingConfigRef.get
@@ -500,8 +567,13 @@ object ContextRefresher:
       // Memory: only Nebula (2026-08-31 裁定①). Team agents, standalone
       // agents and SubTask workers get no memory block — clean context.
       // Headless (NEBFLOW_HEADLESS=1): none at all — benchmark determinism.
+      // personal-agent 批 ⑥：注入预算随**生效**上下文窗口联动——窗口源 =
+      // state.contextWindow（链 = ProviderRegistry.effectiveContextWindow →
+      // ModelCandidate.contextWindow → spawn/update 写入状态；🔴 既有单点链，
+      // 不另立旁路，本处只**消费**）。
       memoryBlock =
-        if shouldInjectMemory(isWorker, globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt)
+        if shouldInjectMemory(isWorker, globalDef.name) then
+          buildMemoryBlock(globalDef.name, teamNameOpt, state.contextWindow)
         else ""
     yield TurnContext(
       globalDef,
@@ -526,12 +598,14 @@ object ContextRefresher:
   ): IO[Option[String]] =
     resolveProjectRoot(state.folderId, resources, agentDef.name)
 
-  /** D.1-12（阶段 2d）：skill 目录注入开关——收敛三角色中仅 Nebula 保留
-    * （skill-creator alwaysVisible，Nebula 用它造 skill）；general（node 会话
-    * 模版）与 project-dispatcher 停注（plugin 全文注入取代「目录+自读」，
-    * 裁定 8/9）；legacy agent 保留至阶段 3。公开供 spec 断言。 */
+  /**
+   * D.1-12（阶段 2d）：skill 目录注入开关——收敛三角色中仅 Nebula 保留
+   * （skill-creator alwaysVisible，Nebula 用它造 skill）；general（node 会话
+   * 模版）与 project-dispatcher 停注（plugin 全文注入取代「目录+自读」，
+   * 裁定 8/9）；legacy agent 保留至阶段 3。公开供 spec 断言。
+   */
   def skillCatalogEnabledFor(agentName: String): Boolean =
-    !AgentCore.ConvergedAgentNames.contains(agentName) || agentName == "Nebula"
+    !AgentCore.ConvergedAgentNames.contains(agentName) || agentName == RootAgentIdentity.Name
 
   /**
    * Build Team catalog for system prompt injection.
@@ -543,9 +617,11 @@ object ContextRefresher:
    */
   private def buildTeamCatalogForSession(sessionId: Option[String]): IO[String] =
     sessionId match
-      case Some(sid) =>
+      case Some(_) =>
         for
-          teamNameOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
+          // 团队功能删除批阶段 3：团队归属恒 None（表本体已删）⇒ 本目录的团队分支
+          // 结构上不可达，只剩「无团队 ⇒ 空串」一条（global 目录停注见下）。
+          teamNameOpt <- IO.pure(Option.empty[String])
           result <- teamNameOpt match
             case Some(teamName) =>
               // Team agent: show team-specific catalog. The agents map MUST

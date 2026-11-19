@@ -2,7 +2,7 @@
 // 多轮 turn 出现两个 badge）, updated for the #346 v2 "decompression model"
 // (2026-09-05 23:44 ruling).
 //
-// A turn interleaving text with several tool rounds (MemoryEdit×5 → text →
+// A turn interleaving text with several tool rounds (MemoryNote×5 → text →
 // Task×4 → text → final) gets exactly ONE persistent stats header
 // (`.turn-header`) at the turn top, counting the WHOLE turn: ✻ 字句 ·
 // model · 思考 · 工具 9 次 · 读写 5 文件. v2: rows never move — the header
@@ -108,6 +108,8 @@ function badgeCensus(page) {
         return {
           text: (h.querySelector('.turn-header-text')?.textContent || '').trim(),
           visible: h.offsetHeight > 0,
+          // 过程泄漏修复批（2026-11-04）：中性摘要行（未终态段）单点判据。
+          unconfirmed: h.dataset.nfTurnUnconfirmed === '1',
           toolCards: rows.filter(r => r.classList.contains('tool')).length,
           tuckedRows: rows.filter(r => r.classList.contains('nf-tucked')).length,
           // header position: immediately after the turn's user row
@@ -147,7 +149,7 @@ async function expectNoAnimations(page) {
 }
 
 test.describe('one header per turn — multi-round tool loop (author repro)', () => {
-  test('MemoryEdit×5 → text → Task×4 → text → final: exactly ONE header, count 9, files 5, at the turn top', async ({ browser }) => {
+  test('MemoryNote×5 → text → Task×4 → text → final: exactly ONE header, count 9, files 5, at the turn top', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__multiRoundTurn());
     expect(pageErrors).toEqual([]);
@@ -157,7 +159,7 @@ test.describe('one header per turn — multi-round tool loop (author repro)', ()
     expect(c.groupCount).toBe(1);
     expect(c.bars.length).toBe(1);
     expect(c.bars[0].visible).toBe(true);
-    // 计数 = 全轮合计 9（5+4）；读写文件 = MemoryEdit 的 5 个去重 file_path
+    // 计数 = 全轮合计 9（5+4）；读写文件 = MemoryNote 的 5 个去重 file_path
     // （Task 载荷无文件字段）。✻ 设计字句为首段（2026-09-06 恢复）。
     expect(c.bars[0].toolCards).toBe(9);
     expect(c.bars[0].text).toBe(`✻ 买了张去星辰的车票，3m 25s 到站 · ${MODEL_1} · 工具 9 次 · 读写 5 文件`);
@@ -176,7 +178,7 @@ test.describe('one header per turn — multi-round tool loop (author repro)', ()
         .map(r => ({ v: r.offsetHeight > 0, label: r.querySelector('.tool-card')?.textContent || '' })));
     expect(tools.length).toBe(9);
     expect(tools.every(t => t.v)).toBe(true);
-    expect(tools.filter(t => t.label.includes('MemoryEdit')).length).toBe(5);
+    expect(tools.filter(t => t.label.includes('MemoryNote')).length).toBe(5);
     expect(tools.filter(t => t.label.includes('Task')).length).toBe(4);
 
     // 真渲染取证截图（报告用）。
@@ -243,8 +245,8 @@ test.describe('one header per turn — history rebuild path', () => {
     const T = 1735689600000;
     await page.evaluate(m => window.__history(m, { busyTail: false }), [
       { type: 'user', text: '多轮回合（历史）', timestamp: T },
-      { type: 'tool', label: 'MemoryEdit("a.md")', summary: 'ok', content: 'p1', isError: false, input: '{"file_path":"a.md"}' },
-      { type: 'tool', label: 'MemoryEdit("b.md")', summary: 'ok', content: 'p2', isError: false, input: '{"file_path":"b.md"}' },
+      { type: 'tool', label: 'MemoryNote("a.md")', summary: 'ok', content: 'p1', isError: false, input: '{"file_path":"a.md"}' },
+      { type: 'tool', label: 'MemoryNote("b.md")', summary: 'ok', content: 'p2', isError: false, input: '{"file_path":"b.md"}' },
       { type: 'ai', text: '历史中间文字A。' },
       { type: 'tool', label: 'Task("w1")', summary: 'ok', content: 'd1', isError: false, input: '{"name":"w1"}' },
       { type: 'tool', label: 'Task("w2")', summary: 'ok', content: 'd2', isError: false, input: '{"name":"w2"}' },
@@ -265,7 +267,11 @@ test.describe('one header per turn — history rebuild path', () => {
     await context.close();
   });
 
-  test('busyTail boundary: a mid-turn multi-round tail stays flat (no premature header)', async ({ browser }) => {
+  // 改判（过程泄漏修复批 2026-11-04，作者令 14:14 + P1「回放默认态 = 流式完成后」）：
+  // 旧口径「在跑尾段平铺」= 刷新/断网时把思考与工具过程整段摊开的真源（live 腿的
+  // 过程行**出生即折叠** chat.js:1057/1348/4330，回放同形必须折）。新口径 = 尾段有
+  // 自己的一枚**中性摘要行**（不融合上一轮、不编造成败、可点开、内容不丢）。
+  test('busyTail boundary: the in-flight tail gets its OWN neutral summary header (never fuses with turn 1)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const T = 1735689600000;
     await page.evaluate(m => window.__history(m, { busyTail: true }), [
@@ -280,19 +286,32 @@ test.describe('one header per turn — history rebuild path', () => {
     expect(pageErrors).toEqual([]);
 
     const c = await badgeCensus(page);
-    // 只有已闭合的 turn1 有 header；在跑的 tail（已跨一轮工具+文字+工具）不收。
-    expect(c.groupCount).toBe(1);
+    // 两枚 = 已闭合 turn1（确认态，✻短语 + m-one 原样）+ 在飞尾段自己的中性摘要行。
+    expect(c.groupCount).toBe(2);
     expect(c.bars[0].text).toContain('m-one');
-    expect(c.flatTexts).toEqual(['已闭合回复。', '流式中间文字。']);
+    expect(c.bars[0].unconfirmed).toBe(false);
+    expect(c.bars[1].unconfirmed).toBe(true);   // 未终态：DOM 单点可读
+    expect(c.bars[1].text).not.toContain('✻');  // 不编造成败（无 done 徽章 ⇒ 无 ✻）
+    expect(c.bars[1].toolCards).toBe(2);
+    expect(c.bars[1].tuckedRows).toBe(2);       // 尾段过程行折叠
+    expect(c.flatTexts).toEqual(['已闭合回复。', '流式中间文字。']); // 消息面不受影响
     const tailFlat = await page.evaluate(() => {
       const kids = Array.from(document.getElementById('chat').children);
       // v2: ALL rows are chat's direct children (nothing is gathered). The
-      // open turn's tail tools are the NOT-tucked ones — exactly 2, visible.
+      // in-flight tail's tools are tucked ⇒ height 0 (process face hidden).
       const tools = kids.filter(k => k.classList && k.classList.contains('tool'));
-      const flat = tools.filter(t => !t.classList.contains('nf-tucked'));
-      return tools.length === 3 && flat.length === 2 && flat.every(t => t.offsetHeight > 0);
+      const tucked = tools.filter(t => t.classList.contains('nf-tucked'));
+      return { tools: tools.length, tucked: tucked.length,
+               heights: tucked.map(t => t.offsetHeight) };
     });
-    expect(tailFlat).toBe(true);
+    expect(tailFlat).toEqual({ tools: 3, tucked: 3, heights: [0, 0, 0] });
+    // 展开仍可用：点尾段摘要行 ⇒ 该轮两张工具卡复原可见（turn-1 的仍折叠）。
+    await page.locator('#chat > .turn-header').nth(1).click();
+    expect(await page.evaluate(() => {
+      const tools = Array.from(document.querySelectorAll('#chat .row.tool'));
+      return { total: tools.length,
+               visible: tools.filter(t => t.offsetHeight > 0).length };
+    })).toEqual({ total: 3, visible: 2 });
 
     await context.close();
   });

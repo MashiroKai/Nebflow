@@ -36,7 +36,9 @@ class UsageRecordStoreSpec extends FunSuite:
     val dir = os.temp.dir()
     val s = store(dir)
     s.record(record(1000L, input = 1000, output = 100, cacheRead = 900)).unsafeRunSync()
-    s.record(record(2000L, provider = "kimi", model = "k3-256k", agent = "Frontend", input = 2000, output = 200, cacheRead = 0)).unsafeRunSync()
+    s.record(
+      record(2000L, provider = "kimi", model = "k3-256k", agent = "Frontend", input = 2000, output = 200, cacheRead = 0)
+    ).unsafeRunSync()
     val agg = s.aggregate(None, None, None).unsafeRunSync()
     assertEquals(agg.count, 2)
     assertEquals(agg.totalInput, 3000L)
@@ -133,9 +135,13 @@ class UsageRecordStoreSpec extends FunSuite:
   test("provider filter narrows totals and buckets (D1: filter before group)") {
     val dir = os.temp.dir()
     val s = store(dir)
-    s.record(record(1000L, provider = "107", model = "m-a", agent = "Nebula", input = 100, output = 10, cacheRead = 90)).unsafeRunSync()
-    s.record(record(2000L, provider = "107", model = "m-b", agent = "Backend", input = 200, output = 20, cacheRead = 0)).unsafeRunSync()
-    s.record(record(3000L, provider = "deepseek", model = "m-a", agent = "Nebula", input = 400, output = 40, cacheRead = 0)).unsafeRunSync()
+    s.record(record(1000L, provider = "107", model = "m-a", agent = "Nebula", input = 100, output = 10, cacheRead = 90))
+      .unsafeRunSync()
+    s.record(record(2000L, provider = "107", model = "m-b", agent = "Backend", input = 200, output = 20, cacheRead = 0))
+      .unsafeRunSync()
+    s.record(
+      record(3000L, provider = "deepseek", model = "m-a", agent = "Nebula", input = 400, output = 40, cacheRead = 0)
+    ).unsafeRunSync()
     // dim=day + provider=107: buckets only cover provider 107's records
     val agg = s.aggregate(Some("day"), None, None, provider = Some("107")).unsafeRunSync()
     assertEquals(agg.count, 2)
@@ -215,10 +221,9 @@ class UsageRecordStoreSpec extends FunSuite:
     val latch = new CountDownLatch(n)
     try
       val futures: List[java.util.concurrent.Future[?]] = (0 until n).map { i =>
-        val runnable: Runnable = () => {
+        val runnable: Runnable = () =>
           try s.record(record(i.toLong * 10L, provider = s"p$i", agent = s"a$i", input = i)).unsafeRunSync()
           finally latch.countDown()
-        }
         pool.submit(runnable)
       }.toList
       assert(latch.await(30, TimeUnit.SECONDS), "records should complete within 30s")
@@ -258,5 +263,32 @@ class UsageRecordStoreSpec extends FunSuite:
     // Later record bumps the timestamp
     s.record(record(ts + 60_000L, input = 20, agent = "Backend")).unsafeRunSync()
     assertEquals(s.lastActivityMs("Backend"), ts + 60_000L)
+
+  // ── tokenpanel-incremental (2026-09-17): the cache path added by this batch ──
+
+  test("aggregate serves the cache it persists under baseDir, equal to the full recompute") {
+    val dir = os.temp.dir()
+    val s = store(dir)
+    (1 to 5).foreach(i => s.record(record(i * 1000L, input = i * 10, cacheRead = i * 3)).unsafeRunSync())
+    val inc = s.aggregate(Some("provider"), None, None).unsafeRunSync()
+    val full = s.aggregateFull(Some("provider"), None, None).unsafeRunSync()
+    assertEquals(inc, full)
+    assert(os.exists(dir / "usage-agg-v1.json"), s"cache must live beside the ledger, got ${os.list(dir).map(_.last)}")
+    assertEquals(s.cacheDiagnostics.unsafeRunSync().fallbacks, 0L)
+  }
+
+  test("records appended between requests are never missed by the cache") {
+    val dir = os.temp.dir()
+    val s = store(dir)
+    s.record(record(1000L, input = 100, cacheRead = 90)).unsafeRunSync()
+    val first = s.aggregate(None, None, None).unsafeRunSync()
+    assertEquals(first.count, 1)
+    s.record(record(2000L, provider = "kimi", agent = "Frontend", input = 200, cacheRead = 0)).unsafeRunSync()
+    s.record(record(3000L, provider = "zhipu", agent = "Coder", input = 300, cacheRead = 30)).unsafeRunSync()
+    val second = s.aggregate(None, None, None).unsafeRunSync()
+    assertEquals(second.count, 3, "an append must be picked up by the incremental merge")
+    assertEquals(second, s.aggregateFull(None, None, None).unsafeRunSync())
+    assertEquals(second.totalInput, 600L)
+  }
 
 end UsageRecordStoreSpec

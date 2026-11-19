@@ -6,6 +6,7 @@ import io.circe.Json
 import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
+import nebflow.actor.{InteractionAnswered, InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
 
 /**
  * 刷新存活（2026-09-03，#43 同任务域补充 case）— pending AskUser 在浏览器刷新
@@ -15,7 +16,8 @@ import scala.concurrent.duration.*
  * ListPendingAsks 只读快照命令，gateway 在会话（重）订阅的初始 historyPage 之后
  * 把快照逐帧重发（形态 = 首次下发 renderAskUser + `replayed: true`）。前端按
  * requestId 重绑定卡片（历史还原卡不带 requestId——UiMessage.AskUser 只持久化
- * {type, items}），两条回答路径（卡片点击 / 输入框直通）随即重新接通。
+ * {type, items}），卡片回答路径（requestId 精确路由）随即重新接通。
+ * （输入框直通这一条回答路径已于 2026-09-14 作者令退役 ⇒ 本文件相关断言同步改测。）
  *
  * 本 spec 用真实 InteractionHub actor 钉住四条契约：
  *  1. (a) 快照形态：type/sessionId/requestId/items(问题内容)/agentName/
@@ -24,9 +26,11 @@ import scala.concurrent.duration.*
  *     → Deferred 收到正确槽位值 —— 答案来源校验（answerCompletes 要求 answers
  *     形态）对重放后的用户路径照常放行；
  *  3. (c) 快照权威性：已消费的 ask 不再出现在快照（answered-before-replay 不
-     * 可能复活卡片）；跨 root 会话的 pending 与 permission 卡不串扰；
+ * 可能复活卡片）；跨 root 会话的 pending 与 permission 卡不串扰；
  *  4. (d) 多卡排队：同 root 会话多个 pending ask 按创建序（最老在前）重发，
- *     与 AnswerViaChatInput 消费最老卡的既有语义一致。
+ *     且快照/重放本身不消费任何槽位（两卡重发后仍待答）。原「与 AnswerViaChatInput
+ *     消费最老卡的既有语义一致」的对照腿随该命令退役（2026-09-14）一并删除，
+ *     替换为「重放不消费」的负控断言。
  */
 class InteractionHubReplaySpec extends CatsEffectSuite:
 
@@ -36,15 +40,17 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
   private def userAnswerPayload(answers: String*): Json =
     Json.obj("answers" -> Json.arr(answers.map(Json.fromString)*))
 
-  /** Register an answer sink actor; returns the InteractionRequest whose
-    * AskUserReply routes to it. */
+  /**
+   * Register an answer sink actor; returns the InteractionRequest whose
+   * AskUserReply routes to it.
+   */
   private def askRequest(
-      requestId: String,
-      gotAnswers: Ref[IO, Option[List[String]]],
-      question: String,
-      rootSid: String,
-      sourceAgent: String = "Nebula",
-      system: nebflow.actor.ActorSystem
+    requestId: String,
+    gotAnswers: Ref[IO, Option[List[String]]],
+    question: String,
+    rootSid: String,
+    sourceAgent: String = "Nebula",
+    system: nebflow.actor.ActorSystem
   ): IO[InteractionRequest] =
     system
       .spawn(
@@ -97,6 +103,7 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
       assertEquals(frame.hcursor.downField("agentName").as[String].getOrElse(""), "Nebula", "agentName 徽标信息保留")
       assertEquals(frame.hcursor.downField("sourceSession").as[String].getOrElse(""), "root-1", "sourceSession 保留")
       assertEquals(frame.hcursor.downField("replayed").as[Boolean].getOrElse(false), true, "replayed 标记供前端去重")
+    end for
   }
 
   // ============================================================
@@ -126,6 +133,7 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
       assertEquals(snap.length, 1, "pending 期间快照可见")
       assertEquals(before, None, "快照本身不解除 pending（只读）")
       assertEquals(after, Some(List("方案 A", "")), "刷新后回答放行且槽位值逐位正确")
+    end for
   }
 
   // ============================================================
@@ -151,7 +159,13 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
         sourceAgent = "Nebula",
         sourceSession = "root-1"
       )
-      reqOther <- askRequest("replay-c-other", Ref.unsafe[IO, Option[List[String]]](None), "别的会话的卡?", "root-2", system = system)
+      reqOther <- askRequest(
+        "replay-c-other",
+        Ref.unsafe[IO, Option[List[String]]](None),
+        "别的会话的卡?",
+        "root-2",
+        system = system
+      )
       _ <- hub ! InteractionHubCommand.Request(req1)
       _ <- hub ! InteractionHubCommand.Request(req2)
       _ <- hub ! InteractionHubCommand.Request(permReq)
@@ -175,10 +189,12 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
         List("replay-c-other"),
         "跨 root 会话不串扰"
       )
+    end for
   }
 
   // ============================================================
-  // (d) 多卡排队：最老在前，与输入框直通消费最老卡语义一致
+  // (d) 多卡排队：重发按创建序（最老在前）。[2026-09-11 U2=B2] 输入框直通在**多卡
+  // 并存时不消费**——旧用例的「直通消费最老卡」断言已按 B2 反向重写。
   // ============================================================
 
   test("(d) 同 root 会话多个 pending ask 按创建序重发（最老在前）") {
@@ -195,11 +211,12 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.Request(reqNewer)
       _ <- IO.sleep(80.millis)
       snap <- hub.?[List[Json]](reply => InteractionHubCommand.ListPendingAsks("root-1", reply))
-      // 输入框直通消费最老卡（既有语义）——快照顺序与此一致
-      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "直通答案", cats.effect.Deferred.unsafe[IO, Boolean])
       _ <- IO.sleep(80.millis)
+      // 退役负控（2026-09-14）：输入框直通不再存在 ⇒ 本轮无任何「消费最老卡」的
+      // 动作；重放/快照本身只读，两卡必须都还 pending 且快照仍按创建序。
       afterOlder <- gotOlder.get
       afterNewer <- gotNewer.get
+      snapshot2 <- hub.?[List[Json]](reply => InteractionHubCommand.ListPendingAsks("root-1", reply))
       _ <- system.stopAll
     yield
       assertEquals(
@@ -207,6 +224,13 @@ class InteractionHubReplaySpec extends CatsEffectSuite:
         List("replay-d-old", "replay-d-new"),
         "快照按创建序（最老在前）"
       )
-      assertEquals(afterOlder, Some(List("直通答案")), "直通消费最老卡 —— 与快照首帧一致")
-      assertEquals(afterNewer, None, "后问的卡保持 pending")
+      assertEquals(afterOlder, None, "重放不消费最老卡（槽位仍空白）")
+      assertEquals(afterNewer, None, "重放不消费后问的卡（槽位仍空白）")
+      assertEquals(
+        snapshot2.map(_.hcursor.downField("requestId").as[String].getOrElse("")),
+        List("replay-d-old", "replay-d-new"),
+        "两卡都还在（快照仍按创建序）"
+      )
+    end for
   }
+end InteractionHubReplaySpec

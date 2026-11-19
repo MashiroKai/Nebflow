@@ -1,0 +1,1232 @@
+package nebflow.core.project
+
+import io.circe.Codec
+import io.circe.derivation.{Configuration, ConfiguredCodec}
+
+/**
+ * ChainLedger —— **链号台账**（chainmodel 批二：链号台账 + 链号不变 + 退出机制三轴）。
+ *
+ * 设计正本（只读引用）：`~/.nebflow/docs/Nebflow/20260919_121852_chainmodel-design.md`
+ * （设计位 n-c7e4aa2f，PLAN-ONLY 只读取证）§一 取证 1/2/5/6 + §二(b) + §三「接缝/同批必补」；
+ * 过程件 `.nebflow/reports/20260919_121852_chainmodel-design.md` §2（chainId 稳定性与
+ * 悬空面）/ §5（TTL 归档与链）/ §9（未取证项）。作者 2026-09-19 13:10 终裁令 = 成员制 +
+ * **台账照案实施** + **退出机制三轴强制内置**。
+ *
+ * == 本类只做三件事（第 14 条反过度设计；批界逐条钉死）==
+ *  1. **持久台账**：链号 → {成员集, 状态, **别名表**}，落盘（原子写）+ 启动期载入 +
+ *     与 `flow-map.json` 同生命周期 + 崩溃/重启后自洽（可复算校验）。
+ *  2. **链号出生即定、永不重归**：链号在链**出生那一刻**由本类登记；此后任何「按分量
+ *     重算」的路径都不得改写一个已出生链号（[[observe]] 是唯一裁决点）。
+ *  3. **拆分/合并 ⇒ 显式改号 + 旧号保留别名**：改号走 [[observe]] 的显式路径并留痕
+ *     （逐节点 `chain-membership-changed`，字段 = 旧号/新号/原因，与批一同值域）；
+ *     旧号进 [[AliasRow]] **永久可达**（[[resolve]] 热面单点 + 冷档兜底）。
+ *
+ * 🔴 **本批不做**（批界，禁越界；第 14 条）：不改 Mail 校验（`MailTool.scala:629-646`）、
+ * 不改 Flow Map 载荷、不动收口判据、不动 `deps`
+ * 节点引用语义与既有闸 —— 三者归档三。本类只提供判据与数据面，**不接管任何既有消费方**。
+ *
+ * == 判据（机械、零启发式）==
+ * **出生**：某派生分量在台账里**无命中条目** ⇒ 出生，链号 = 该分量派生值（与批一
+ * `topologicalChains` 逐字同值：声明值逐字 / 兜底 `chain-<分量内 createdAt 最早节点 id>`）。
+ * **承继**：分量恰命中一条既有条目 ⇒ 该条目链号逐字保留（**成员集可生长/收缩，链号不动**
+ * —— 现状病根「读时现算 + 分量合并改号」的反面）。
+ * **合并**（一个分量命中 ≥2 条既有条目）：生还者 = 命中集中 `(bornAt, chainId)` 最小者
+ * （**先出生者保号**；含该条目锚点的优先），其余 id **改为别名**指向生还者（显式改号 + 留痕）。
+ * **拆分**（一条既有条目的成员落在 ≥2 个分量里）：**锚点所在分量**承继原链号，其余分量
+ * 各自出生 ⇒ 拆出去的节点各记一条 `re-id` 留痕（旧号 → 新号）。
+ * **离场**（条目在本次派生里无任何命中分量 ⇒ 该链已不在图上）：条目离场（轴 a 的
+ * 「禁留悬空条目」臂），其**载荷整行下沉冷档**（只归档不删除）。
+ * 确定性：分量按 id 排序、命中集按 `(bornAt, chainId)` 排序、别名目标取 id 升序首项 ——
+ * 同输入恒同输出。
+ *
+ * == 「归属 vs 排队」的边界（与批一的责任分界，禁重复记账）==
+ * 本类只发射**改号**留痕（`old`/`new` 都非空且不等 ⇒ [[ReasonReId]]）。`None ↔ X` 的跃迁
+ * （首次归属 / 声明 / 撤销后回落 / 编外重归）是批一写点
+ * `NodeTools.emitChainMembershipChanges` 的责任面，本类**不重复计账**（同一次归属变化出
+ * 两条事件 = 审计噪声，且必有一条是假事实）。
+ *
+ * == 退出机制三轴（出生即有，非事后补丁）==
+ * **(a) 生命周期绑定**：条目随所属链**归档同刻**翻 [[StatusArchived]]（挂点 =
+ * `FlowMapStore.sweepCompletedChainsDetailed` 的同一次写事务；反向
+ * `restoreChainsFromArchiveDetailed` 翻回 [[StatusActive]]）；别名行**不得早于**所属链
+ * 归档退役（归档刻 = 最早退役窗口）；条目/别名行**一律不得留悬空引用**（[[structureCheck]]）。
+ * **(b) 引用计数退役**：退役判据 = `refCount == 0`，计数由 [[ReferenceFaces]] 枚举的面在
+ * 每一拍 reconcile 上**覆盖式全量复算**（🔴 禁增量自减 —— 丢更新不可复算；🔴 禁「人工
+ * 判断无引用」）。计数持久化在台账本体（[[Entry.refCount]] / [[AliasRow.refCount]]）。
+ * **(c) 硬上限压缩**：[[MaxHotRows]] / [[MaxHotBytes]] **双阈值**触发压缩轮：载荷搬进
+ * `chain-ledger-archive/round-<n>.json`（**只归档不删除**），每轮留 [[RoundManifest]]
+ * （阈值 + 搬迁计数 + 前后读数 + 内容摘要）⇒ 留痕可复算、压缩后可再复算与原账一致
+ * （[[roundConservation]] / [[mirrorCheck]] / [[verifyLedger]]）。
+ *
+ * == 可复算校验（崩溃/重启后自洽）==
+ * [[verifyLedger]] 四查（任一不过 ⇒ `Left` 可行动诊断；调用方 WARN，**绝不静默吞掉**、
+ * 也不因它崩服务）：① 每轮守恒（`hotAfter` 由 `hotBefore` + 搬迁量机械推出）；
+ * ② 轮间链式 —— **只对同拍（[[RoundManifest.tick]] 相同）的相邻轮**断言
+ * （`k.hotBefore == (k-1).hotAfter`）：出生 / 离场 / 计数复算都发生在轮**之外**，会合法
+ * 改变热读数 ⇒ 跨拍两轮读数本不相同，拿上一轮 `hotAfter` 当本拍 `hotBefore` 对账恒假
+ * （先例：两拍各出一轮 compact、其间仅有普通出生 ⇒ 旧写法恒 `Left`，且轮为 append-only
+ * 故该假警告永不消解）；③ 压缩镜像一一对应（`compacted=true`
+ * 的热行在冷档有载荷副本，反之亦然）；④ 结构（同 id 不同时作条目与别名；别名不悬空）。
+ */
+object ChainLedger:
+
+  // ── 落点（引擎自管面：`<workspace>/.nebflow/**` 已 gitignore）──────────────
+  /** 台账本体文件名（与 `flow-map.json` 同目录、同生命周期）。 */
+  val FileName: String = "chain-ledger.json"
+
+  /** 冷档目录名（压缩轮 / 退役 / 离场行的唯一下沉面；**只归档不删除**）。 */
+  val ArchiveDirName: String = "chain-ledger-archive"
+
+  val Version: Int = 1
+
+  // ── 条目状态 ─────────────────────────────────────────
+  val StatusActive: String = "active"
+  val StatusArchived: String = "archived"
+
+  // ── 链控状态（chainview 批 2026-10-01；链控三原语的**状态面**）──────────
+  //
+  // 与上两值同域（同一条链的状态机），但载体不同：`StatusActive` / `StatusArchived`
+  // 由轴(a) 归档绑定写在 **Entry.status**（生命周期），`paused` / `cancelled` 由链控
+  // 三原语写在 **State.pausedChains / cancelledChains**（控制意图）。分开的理由是硬的：
+  // ① Entry 可能**不存在**（链未跑过 reconcile 拍点）⇒ 暂停标志不能寄生在行上；
+  // ② 轴(c) 压缩会把 `Entry.members` 清空（`compacted = true`，载荷下沉冷档）⇒
+  //    挂在行载荷上的成员集会在压缩后消失，暂停闸会**静默失效**；
+  // ③ 控制意图必须比「链的成员集」长寿 —— 链收缩成一个节点、再长回来，暂停不因此丢。
+  /** 链已暂停（settle 派发面短路，见 `NodeEngine.chainGateOf`）。 */
+  val StatusPaused: String = "paused"
+
+  /** 链已取消（级联取消已执行 + 台账留痕；**不可逆**，`resume` 拒绝）。 */
+  val StatusCancelled: String = "cancelled"
+
+  /**
+   * **Lifetime of an in-progress cancel intent** (eng-deferred-cancel batch):
+   * entries in [[State.cancellingChains]] older than this window count as
+   * absent (filtered on read, pruned lazily on write).
+   *
+   * 5 minutes = the upper bound on a NORMAL cancel leg (per-node `executeCancel`
+   * is signalling / short writes, never a wait): only the cancel leg itself
+   * separates the intent registration from the `cancelledChains` landing. The
+   * real cancellation does **not** rely on this window — landing clears the
+   * intent atomically; the window only sweeps out the crash residue of the
+   * "intent written, cancel not run" case, so the readable face neither
+   * false-positives (a permanent "cancelling") nor false-negatives (a truly
+   * cancelling chain that reads as idle).
+   */
+  val CancellingTtlMs: Long = 5L * 60L * 1000L
+
+  // ── 冷档轮类型（留痕形态判据）────────────────────────
+  /** 轴(c)：载荷搬迁（热行保留身份，`members` 清空 + `compacted=true`）。 */
+  val RoundCompact: String = "compact"
+
+  /** 轴(a)+(b)：整行退役（热行移除，冷档保留全行）。 */
+  val RoundRetire: String = "retire"
+
+  /** 轴(a) 禁悬空臂：链已离场 ⇒ 整行下沉（热行移除，冷档保留全行）。 */
+  val RoundDissolve: String = "dissolve"
+
+  // ── 变更原因码（与 FlowMapEventLog.chainMembershipChangedSummary 同值域）──
+  val ReasonReId: String = "re-id"
+
+  // ── 轴(c) 双阈值（**在册可查**：常量 + 随每轮冷档留痕）──────────────────
+  /** 条数阈值：热台账行数（`entries + aliases`）上限。 */
+  val MaxHotRows: Int = 4096
+
+  /** 字节阈值：热台账 JSON（= 落盘字节）上限。 */
+  val MaxHotBytes: Int = 1024 * 1024
+
+  /** 单轮搬迁行数上限（有界轮：一轮不搬空全库 ⇒ 可观测、可中断复跑）。 */
+  val CompactionBatchRows: Int = 512
+
+  /**
+   * perf-481 A3：journal 折叠回 checkpoint 的字节阈值（**「每分钟写入 ≤ 3 MB」判据的
+   * 直接旋钮**）。一次折叠 = 一次整份 checkpoint 写（≈ 文件体量），truncate 之后归零。
+   * 实测量得该台账写频 ≈1.88 次/分钟、记录单条 ≈2 KB ⇒ 设 1 MB 时折叠约每 13 天一次
+   * （单次整写分摊到 ~19 000 分钟 ≈ 0.7 KB/分钟）⇒ 总写入 ≈ 3 KB/分钟，远低于 3 MB/分钟。
+   *
+   * 为什么**不**复用 [[MaxHotBytes]] 作阈值：`bytes > MaxHotBytes` 在本台账恒真（`rounds`
+   * 使文件远超 1 MB），若以它触发折叠就会**每拍都整写 13.4 MB**（= 回到现状甚至更糟）。
+   * 两个量度是不同的东西 —— `MaxHotBytes` 量「热态该不该压缩（轴的 (c) 语义）」，本阈值量
+   * 「journal 该不该折叠（写放大语义）」，故各自成常数（禁合并成一个）。
+   *
+   * R3 续批（2026-10-30）注：`MaxHotBytes` 的量测面改为 [[checkpointView]]（checkpoint
+   * 实写视角 = rounds 只带尾部窗口）后，本注释的「恒真」病灶随之消失 —— 热行字节重新
+   * 成为有效量度；阈值维持 1 MB 不动（行小而多的台账，字节闸先于条数闸生效，符合双阈值
+   * 设计意图）。
+   */
+  val JournalRotateBytes: Long = 1024L * 1024L
+
+  // ── R3 续批：manifest 外置 + 离场轮批化（2026-10-30）──────────────────
+
+  /**
+   * checkpoint 里 `rounds` manifest 的**尾部窗口**（manifest 外置，checkpoint 减重）：
+   * 完整 manifest 史的权威面 = 冷档旁卷 `chain-ledger-rounds.jsonl`（append-only，每轮
+   * 一行，写轮同刻落）；checkpoint 只携带最近 [[CheckpointRoundsWindow]] 条（载入时与
+   * 旁卷按轮号合并，[[mergeRounds]] 去重）。54k 条 × ~371 B 的 manifest 不再随每次折叠
+   * 整写 —— 20 MB 级 checkpoint 回落 KB 级。
+   */
+  val CheckpointRoundsWindow: Int = 500
+
+  /** manifest 旁卷文件名（位于冷档目录内；append-only JSONL，一行一条 [[RoundManifest]]）。 */
+  val RoundsSideVolumeFile: String = "chain-ledger-rounds.jsonl"
+
+  /**
+   * 离场轮批化的**行数触发**（攒批 flush；事件驱动不挂定时器 —— 判据只在既有 30s 拍点
+   * 与轮写点求值）。待落批达到该行数 ⇒ 立即整批落一轮；与 [[OfflineFlushAgeMs]] 互为
+   * 「量与龄」双闸（任一命中即落）。整批落盘（不按行截断）⇒ 单轮文件有界且可复算。
+   */
+  val OfflineFlushRows: Int = 512
+
+  /**
+   * 离场轮批化的**龄期触发**：待落批里最老一行在热态滞留超过该龄期 ⇒ 下一拍整批落轮。
+   * 这是「轻载零星离场」的下界保证 —— 每行至多滞留一个龄期，禁无限期挂账。
+   */
+  val OfflineFlushAgeMs: Long = 10L * 60L * 1000L
+
+  /** 阈值在册形态（随每轮冷档落盘 ⇒「这一轮按哪组阈值触发」事后可查、可复算）。 */
+  final case class Thresholds(maxHotRows: Int, maxHotBytes: Int, batchRows: Int)
+
+  object Thresholds:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[Thresholds] = ConfiguredCodec.derived
+
+  val ThresholdsNow: Thresholds = Thresholds(MaxHotRows, MaxHotBytes, CompactionBatchRows)
+
+  // ── 模型 ─────────────────────────────────────────────
+
+  /**
+   * **台账条目** = 一条**已出生**链。
+   *
+   * @param chainId     出生即定的链号（本类是其唯一裁决点；永不按分量重算）
+   * @param anchor      出生时刻分量内 `(createdAt, id)` 最小成员 —— **身份锚**：载荷已
+   *                    压缩时命中判据退化为「分量是否含锚点」（见 [[observe]]）
+   * @param bornAt      出生时刻（生还者判定第一键：先出生者保号）
+   * @param members     最近一次观察到的成员集（`(createdAt, id)` 升序；压缩后为 `Nil`）
+   * @param memberCount 成员数（**压缩不改读数**：载荷搬迁不动它）
+   * @param status      [[StatusActive]] | [[StatusArchived]]（轴 a，由归档写点翻）
+   * @param archivedAt  归档时刻（轴 a 绑定点；也是压缩排序的冷度键）
+   * @param refCount    活引用数（轴 b；覆盖式复算，持久化）
+   * @param compacted   载荷已下沉（`members` 在冷档）——身份/状态/计数**不随压缩变化**
+   */
+  final case class Entry(
+    chainId: String,
+    anchor: String,
+    bornAt: Long,
+    members: List[String] = Nil,
+    memberCount: Int = 0,
+    status: String = StatusActive,
+    archivedAt: Option[Long] = None,
+    refCount: Int = 0,
+    compacted: Boolean = false
+  )
+
+  object Entry:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[Entry] = ConfiguredCodec.derived
+
+  /**
+   * **别名行** = 改号遗留的旧链号 → 现链号（合并被吸收者 / 显式改号的历史名）。
+   *
+   * 🔴 旧号在本行存在期间（热面）或冷档存在期间（`ChainLedgerStore.resolveDeep`）
+   * **永久可达** —— 供批三 Mail 校验与一切引用面解析，禁静默丢弃。
+   */
+  final case class AliasRow(alias: String, canonical: String, createdAt: Long, refCount: Int = 0)
+
+  object AliasRow:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[AliasRow] = ConfiguredCodec.derived
+
+  /** 台账读数（可复算载体）：行数 / 成员数 / 引用数；压缩前后**恒等**（轴 c 不变量）。 */
+  final case class Totals(entries: Int = 0, aliases: Int = 0, members: Int = 0, refCount: Long = 0L)
+
+  object Totals:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[Totals] = ConfiguredCodec.derived
+
+  /**
+   * **压缩轮清单**（热台账里的一行账）：一轮恰一条，留痕可复算。
+   *
+   * @param round        轮号（1 起 = `rounds.size + 1`；崩在「冷档已写、热账未写」之间 ⇒
+   *                     下一拍以同轮号重放（候选集确定 ⇒ 内容相同 ⇒ 幂等覆写））
+   * @param kind         [[RoundCompact]] | [[RoundRetire]] | [[RoundDissolve]]
+   * @param file         冷档文件名（`round-<n>.json`）
+   * @param movedEntries 本轮搬走的条目数
+   * @param movedAliases 本轮搬走的别名行数
+   * @param movedMembers 本轮搬走的成员 id 数（载荷量）
+   * @param hotBefore    本轮前的热读数
+   * @param hotAfter     本轮后的热读数（守恒判据见 [[roundConservation]]）
+   * @param digest       冷档文件字节 sha-256（留痕 +「冷档未被改写」核对面）
+   * @param tick         **拍标识** = 产生本轮的 reconcile 开工时的轮号（= 该拍**首轮**的轮号；
+   *                     同一拍内各轮同值）。由 append-only 轮号派生 ⇒ 同拍恒同值、异拍恒异值
+   *                     （任一拍了轮 ⇒ 轮号水位前进 ⇒ 下一拍该值必增），故可作「同拍」判据。
+   *                     用途 = [[verifyLedger]] ② 查的适用范围（同拍相邻轮才链式对账）。
+   *                     0 = 本轮改造前写入的旧账（无拍标识 ⇒ 该查不可判，跳过）。
+   */
+  final case class RoundManifest(
+    round: Int,
+    at: Long,
+    kind: String,
+    file: String,
+    movedEntries: Int,
+    movedAliases: Int,
+    movedMembers: Int,
+    hotBefore: Totals,
+    hotAfter: Totals,
+    digest: String,
+    tick: Long = 0L
+  )
+
+  object RoundManifest:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[RoundManifest] = ConfiguredCodec.derived
+
+  /** 台账热态（落盘 `<workspace>/.nebflow/chain-ledger.json`；原子写）。 */
+  final case class State(
+    v: Int = Version,
+    project: String = "",
+    updatedAt: Long = 0L,
+    entries: Map[String, Entry] = Map.empty,
+    aliases: Map[String, AliasRow] = Map.empty,
+    /** 外部引用面已计的增量（`noteReference` 写入；面登记见 [[ReferenceFaces]]） */
+    externalRefs: Map[String, Int] = Map.empty,
+    /** 压缩/退役/离场轮清单（append-only，按轮号升序） */
+    rounds: List[RoundManifest] = Nil,
+    /**
+     * **链控 · 已暂停链**（chainId → 暂停时刻；chainview 批）。链控三原语的状态面
+     * （头注见 [[StatusPaused]]）：命中的链**零后续节点派发**（闸 = [[stateOf]] 的
+     * `paused` ⇒ `NodeEngine.chainGateOf`），运行中节点跑完自然停（🔴 禁「暂停即杀
+     * 运行中节点」——那是 cancel 的语义）。
+     *
+     * 🔴 与「条目」分开存（呼应 [[StatusPaused]] 头注）：未 reconcile 的链没有条目，
+     * 压缩会清空条目载荷 ⇒ 控制意图不能寄生在 `Entry` 上。键 = **稳定链号**（出生即定、
+     * 永不重归；改号经 `aliases` 解析，调用方先过 [[resolve]] 再落键）。
+     *
+     * 不进 [[Totals]] ⇒ `roundConservation` / `verifyLedger` 结构性不受影响（读数面
+     * 只量 entries / aliases）。
+     */
+    pausedChains: Map[String, Long] = Map.empty,
+    /**
+     * **链控 · 已取消链**（chainId → 取消时刻；chainview 批）。留痕面：取消语义**全部**
+     * 由既有 `NodeEngine.cancelChain` 承担（级联闭包 / 通知 / 审计），本表只记「这条链
+     * 被链级取消过」这个**意图事实**，供 REST/WS 三态读数与「resume 对已取消链拒绝」
+     * 的判据。状态投影优先级见 [[stateOf]]（cancelled > paused > active）。
+     */
+    cancelledChains: Map[String, Long] = Map.empty,
+    /**
+     * **Chain control · chains being cancelled** (chainId → intent registration
+     * instant; eng-deferred-cancel batch). This is the carrier of the
+     * "cancellation is readable" criterion: the chain-cancel leg records the
+     * intent at the start of the existing cancel leg, so "this chain is being
+     * cancelled" has a readable face on the persisted ledger instead of being a
+     * silent delay.
+     *
+     * 🔴 The difference from [[cancelledChains]] is TENSE, not state:
+     * `cancelledChains` = the cancel has COMPLETED (irreversible terminal, part
+     * of the [[stateOf]] projection); this table = the cancel is IN PROGRESS
+     * (during the deferred window, 🔴 NOT part of [[stateOf]] ⇒ not part of the
+     * REST/WS payload shape).
+     *
+     * Why a TTL ([[CancellingTtlMs]]): the intent is a SHORT-LIVED fact — the
+     * terminal cancel write point in [[withChainControl]] clears it atomically
+     * (same State); a crash inside the narrow "intent written, cancel not run"
+     * window is swept by lazy expiry (zero timers, zero new threads: stale
+     * entries are dropped only on read/write). Persisting it without a TTL
+     * would produce a permanent, never-cleared "cancelling" table.
+     */
+    cancellingChains: Map[String, Long] = Map.empty,
+    /**
+     * R3 续批（manifest 外置）：**checkpoint/记录写入时刻的全量 manifest 总数**。manifest
+     * 外置后 checkpoint 只携带尾部窗口（[[CheckpointRoundsWindow]]），「journal 增量段的
+     * 下界」不能再由 `checkpoint.rounds.size` 给出 —— 由本字段承载（写入时 = `rounds.size`；
+     * 载入旧格式文件缺字段 ⇒ 缺省 0，调用方回落 `rounds.size`，旧文件携带全量故同值）。
+     */
+    roundsTotal: Int = 0,
+    /**
+     * R3 续批（离场轮批化）：**dissolve 腿的待落批**（本拍离场行先入批、攒够再整批落轮）。
+     * 批本体持久在台账热态里（随 checkpoint/journal 落盘）⇒「先冷档后热账」不断链：
+     * 行在批内 = 载荷仍可由台账恢复；崩在落轮前 ⇒ 重启后批随台账回来、下一拍继续攒/落。
+     * `since` = 批内最老一行的入批时刻（龄期闸的量度；批空时为 0）。
+     */
+    pendingDissolve: PendingOffline = PendingOffline(),
+    /**
+     * R3 续批（离场轮批化）：**retire 腿的待落批**（语义同 [[State.pendingDissolve]]）。
+     * 两条腿分批是因为**一轮一 kind**（[[RoundManifest.kind]] 参与守恒与轮守卫的口径），
+     * 混批会糊掉「轴(a)×(b) 退役」与「轴(a) 离场」的审计标签。
+     */
+    pendingRetire: PendingOffline = PendingOffline()
+  )
+
+  object State:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[State] = ConfiguredCodec.derived
+
+  /**
+   * **离场轮的待落批**（R3 续批）：一批同 kind 的整行（条目 + 别名行）+ 入批时刻。
+   * 批在台账热态内持久（落盘面）⇒ 崩溃安全同热账；判据 [[isFlushDue]] 决定何时整批落轮。
+   */
+  final case class PendingOffline(
+    entries: List[Entry] = Nil,
+    aliases: List[AliasRow] = Nil,
+    since: Long = 0L
+  ):
+    def isEmpty: Boolean = entries.isEmpty && aliases.isEmpty
+    def rowCount: Int = entries.size + aliases.size
+
+    /** 序列化字节量级（批化字节闸的量度面；量级正确即可，禁逐字节承诺）。 */
+    def approxBytes: Long =
+      entries.map(_.members.size * 24 + 96).sum.toLong + aliases.size * 64L
+
+    /**
+     * **批化 flush 判据**（事件驱动、零定时器 —— 只在既有拍点/写点求值）：
+     * 批非空 ∧（行数达 [[OfflineFlushRows]] ∨ 龄期达 [[OfflineFlushAgeMs]]）⇒ 整批落一轮。
+     * 「整批」= 不按行截断：批是守恒与复算的原子单位，截断会把一轮拆成对不上账的半轮。
+     */
+    def isFlushDue(now: Long): Boolean =
+      !isEmpty && (rowCount >= OfflineFlushRows || (since > 0L && now - since >= OfflineFlushAgeMs))
+
+    /** 入批（批空时落 `since` = 龄期闸的起点；已有时保留最早值）。 */
+    def absorb(es: List[Entry], as: List[AliasRow], at: Long): PendingOffline =
+      if es.isEmpty && as.isEmpty then this
+      else copy(entries = entries ++ es, aliases = aliases ++ as, since = if since == 0L then at else since)
+
+  end PendingOffline
+
+  object PendingOffline:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[PendingOffline] = ConfiguredCodec.derived
+
+  /**
+   * **checkpoint 实写视角**（manifest 外置；纯函数）：checkpoint（折叠/首写）与
+   * `hotBytes` 量测都用本视角 —— `rounds` 只带尾部 [[CheckpointRoundsWindow]] 条，
+   * `roundsTotal` 带全量计数（journal 增量下界的水位）。完整 manifest 史的权威面在
+   * 冷档旁卷（`ChainLedgerStore` 载入时按轮号合并还原），checkpoint 的窗口段只是
+   * 冗余读验面。
+   */
+  def checkpointView(st: State): State =
+    st.copy(rounds = st.rounds.takeRight(CheckpointRoundsWindow), roundsTotal = st.rounds.size)
+
+  /**
+   * **增量写记录**（perf-481 A3；落点 = `<workspace>/.nebflow/chain-ledger.json.journal` 的一行）。
+   *
+   * == 为什么记录不是「整份 State」 ==
+   * 实测量得：CZT 项目台账 13 434 495 B 里 `rounds`（39 071 条 manifest）占 **99.99%**，
+   * 而 `entries` 8 行 + 其余字段合计仅 ~1.8 KB。所以「每次变更整份原子写」的成本几乎全在
+   * `rounds` 上，而 `rounds` 是 **append-only**：已落 checkpoint 的那段与本次变更无关。
+   * ⇒ 记录只需携带「相对 checkpoint 的增量」= **更新后的非轮字段** + **自上轮 checkpoint
+   * 以来新增的 manifest**（通常 0–3 条，每条 ~344 B）⇒ 单次写入从 13.4 MB 降到 ~2 KB。
+   *
+   * == 语义（禁静默弱化）==
+   *   · `base` = 本记录相对的 checkpoint **折叠时刻的全量 manifest 水位**（= `state.rounds.drop(base)`
+   *     就是「新增段」）。`base` 只在 **rotation**（checkpoint 折叠 + journal 截断）时前进。
+   *     R3 续批注：manifest 外置后 checkpoint 只携带尾部窗口（`rounds.size` ≠ 水位），水位
+   *     由 [[State.roundsTotal]] 承载 —— 旧格式 checkpoint（无窗口、携带全量）两值恒相等。
+   *   · `state.rounds` **只**存新增段（不是全量）—— 全量恒可由「checkpoint.rounds ++ 新增段 ++ 冷档旁卷」
+   *     **合并（[[mergeRounds]]，按轮号去重）**还原 ⇒ 载入后内存态与旧写法**逐字节同值**。
+   *   · 记录是一份**完整可读的状态快照**（非 delta-diff）⇒ 重放幂等：同一条记录重放两次
+   *     结果不变（轮号去重），崩在「checkpoint 已写、journal 未截断」之间也只是重放旧记录。
+   */
+  final case class JournalRecord(base: Int, state: State)
+
+  object JournalRecord:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[JournalRecord] = ConfiguredCodec.derived
+
+  /**
+   * 轮清单合并（按轮号去重、升序）：checkpoint 已有的段 + journal 记录携带的新增段。
+   * 同一轮号在两段里**内容恒同**（由 `reconcile` 的确定性派生 + 冷档同轮号重放幂等保证）
+   * ⇒ 「后见者覆盖」与「先见者保留」等价，此处取后见者并排序（禁静默丢弃任一段）。
+   * 无锁（单线程回放调用点）。
+   */
+  def mergeRounds(committed: List[RoundManifest], pending: List[RoundManifest]): List[RoundManifest] =
+    val seen = scala.collection.mutable.LinkedHashMap.empty[Int, RoundManifest]
+    (committed ++ pending).foreach(m => seen.update(m.round, m))
+    seen.values.toList.sortBy(_.round)
+
+  // ── 链控状态投影（chainview 批 2026-10-01；**判据单点**）────────────────
+  //
+  // 三态（active / paused / cancelled）是**投影**，不是第三张表：真源只有
+  // [[State.pausedChains]] 与 [[State.cancelledChains]] 两张时刻表，优先级
+  // cancelled > paused > active（已取消链即便残留暂停键也报 cancelled —— 取消是
+  // 不可逆的终局意图，见 [[NodeCanceller.cancelChainAndRecord]] 的写点）。
+  //
+  // 🔴 派发闸**只认本单点**（[[blocksDispatch]]）：settle sweep / barrier 结算 /
+  // 启动收口三处都不得另写 `pausedChains.contains(...)` 式的第二判据（先例：
+  // `DocIndexConsumer` 头注「同一条链在两处各派生一次 = 必然漂移」）。
+
+  /** 已取消链 → 取消时刻（别名逐跳解析；查无 ⇒ `None`）。 */
+  def cancelledAtOf(st: State, chainId: String): Option[Long] =
+    st.cancelledChains.get(canonicalKey(st, chainId))
+
+  /** 已暂停链 → 暂停时刻（别名逐跳解析；查无 ⇒ `None`）。 */
+  def pausedAtOf(st: State, chainId: String): Option[Long] =
+    st.pausedChains.get(canonicalKey(st, chainId))
+
+  /**
+   * **Being cancelled** (inside the deferred-cancel window; eng-deferred-cancel
+   * batch) → the intent registration instant (alias resolved hop by hop;
+   * unknown / expired ⇒ `None`).
+   *
+   * The TTL is a READ-time judgement ([[CancellingTtlMs]]): an entry older than
+   * the TTL counts as absent, so crash residue left in the "intent written,
+   * cancel not run" window can never permanently pollute the readable face. A
+   * chain that really was cancelled reads [[cancelledAtOf]] (the intent is
+   * cleared atomically by [[withChainControl]] when the cancel lands).
+   */
+  def cancellingAtOf(st: State, chainId: String, now: Long = System.currentTimeMillis()): Option[Long] =
+    st.cancellingChains
+      .get(canonicalKey(st, chainId))
+      .filter(t => now - t < CancellingTtlMs)
+
+  /** All currently IN-PROGRESS cancel intents (read-time TTL filter; for REST/WS and inspection). */
+  def cancellingChainsAt(st: State, now: Long = System.currentTimeMillis()): Map[String, Long] =
+    st.cancellingChains.filter((_, t) => now - t < CancellingTtlMs)
+
+  /**
+   * **Cancel-intent registration** (the write point of the readable-cancellation
+   * criterion; a PURE function — persistence is
+   * `ChainLedgerStore.setChainCancelIntent`'s job).
+   *
+   * It only registers, and deliberately does NOT touch `pausedChains` /
+   * `cancelledChains`: the cancel leg itself
+   * ([[NodeCanceller.cancelChainAndRecord]]) still writes `cancelledChains` in
+   * the existing order, i.e. only AFTER success — the intent is the "about to
+   * cancel" pre-mark, not a state driver (a failed leg writes nothing, per the
+   * existing "never claim cancelled falsely" discipline).
+   *
+   * The lazy prune happens here too: writing also drops stale entries (one
+   * read/write point, no second judge).
+   */
+  def withChainCancelIntent(st: State, chainId: String, now: Long): State =
+    val cid = canonicalKey(st, chainId)
+    val pruned = st.cancellingChains.filter((_, t) => now - t < CancellingTtlMs)
+    st.copy(updatedAt = now, cancellingChains = pruned.updated(cid, now))
+
+  /**
+   * 链控三态投影（**判据单点**）：`cancelled` > `paused` > `active`。
+   * 别名（改号遗留旧号）先经 [[resolve]] 折到稳定链号再查表 —— 改号后旧号照样报对态。
+   */
+  def statusOf(st: State, chainId: String): String =
+    val cid = canonicalKey(st, chainId)
+    if st.cancelledChains.contains(cid) then StatusCancelled
+    else if st.pausedChains.contains(cid) then StatusPaused
+    else StatusActive
+
+  /**
+   * **派发闸判据单点**：本链当前是否短路后续节点派发（`paused` ∨ `cancelled`）。
+   * 回调方据此跳过启动 —— 🔴 **静默跳过、零日志**（与引擎既有停等闸落点同款纪律，
+   * 停等留痕会把日志行混进暂停链的装配文本；「暂停」是用户显式意图，不是异常态，
+   * 其可见性由 REST/WS 三态面承担，不由引擎事件流承担）。
+   */
+  def blocksDispatch(st: State, chainId: String): Boolean =
+    val s = statusOf(st, chainId)
+    s == StatusPaused || s == StatusCancelled
+
+  /** 链号规范化键（查表用）：可解析 ⇒ 稳定链号；查无（未出生/无条目）⇒ 原文 trim。 */
+  private def canonicalKey(st: State, chainId: String): String =
+    resolve(st, chainId).getOrElse(chainId.trim)
+
+  /** 写入/清除控制意图（**纯函数**；落盘由 `ChainLedgerStore.setChainControl` 承担）。 */
+  def withChainControl(st: State, chainId: String, status: String, now: Long): State =
+    val cid = canonicalKey(st, chainId)
+    status match
+      case StatusCancelled =>
+        st.copy(
+          updatedAt = now,
+          cancelledChains = st.cancelledChains.updated(cid, now),
+          pausedChains = st.pausedChains - cid,
+          // eng-deferred-cancel batch: the intent has been realised — the
+          // in-progress marker is cleared in the same atomic write that records
+          // the terminal cancellation, so the two surfaces can never disagree
+          // (a chain cannot read as both "cancelling" and "cancelled").
+          cancellingChains = st.cancellingChains - cid
+        )
+      case StatusPaused => st.copy(updatedAt = now, pausedChains = st.pausedChains.updated(cid, now))
+      case _ => st.copy(updatedAt = now, pausedChains = st.pausedChains - cid)
+
+  end withChainControl
+
+  /**
+   * **链控状态读数载体**（chainview 批 2026-10-01）：链控三原语的返回面 / REST 响应体 /
+   * WS 帧载荷的**同一份**状态投影（判据单点 [[State.statusOf]]；禁调用点各自拼）。
+   *
+   * @param chainId     调用方给出的链号（原样回显；可能是改号前的旧号）
+   * @param status      `active` | `paused` | `cancelled`（投影，见 [[StatusPaused]] 头注）
+   * @param pausedAt    暂停时刻（`status=paused` 时有值）
+   * @param cancelledAt 取消时刻（`status=cancelled` 时有值）
+   */
+  final case class ChainControl(
+    chainId: String,
+    status: String = StatusActive,
+    pausedAt: Option[Long] = None,
+    cancelledAt: Option[Long] = None
+  )
+
+  object ChainControl:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[ChainControl] = ConfiguredCodec.derived
+
+  /**
+   * **归属变更留痕**（字段与批一 `ChainMembershipChangedType` 逐字同构：节点 id + 旧号 +
+   * 新号 + 原因；`reason` 恒 [[ReasonReId]]，批界见类头注）。
+   */
+  final case class Change(nodeId: String, from: Option[String], to: Option[String], reason: String)
+
+  object Change:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[Change] = ConfiguredCodec.derived
+
+  /** 一次 reconcile 的结构化产出（调用方据此发射事件 / 记日志；**派生只发生一次**）。 */
+  final case class Observation(
+    state: State,
+    changes: List[Change] = Nil,
+    born: List[String] = Nil,
+    absorbed: List[String] = Nil,
+    /**
+     * **本拍裁决表**：派生原型链号（`ChainInfo.id`）→ 该分量本拍的**稳定链号**
+     * （= 出生号 / 承继号 / 生还者号）。调用方据此把「分量成员」折算到稳定链号上
+     * （轴 b 的 `live-member` 面**不依赖**行内载荷 —— 载荷可能已压缩下沉，读数口径
+     * 因此与 [[Entry.compacted]] 无关）。
+     */
+    assigned: Map[String, String] = Map.empty,
+    /** 本拍离场（链已不在图上）的条目**全行** —— 只归档不删除（下沉冷档） */
+    dissolved: List[Entry] = Nil,
+    /** 本拍失去 canonical（所属链已离场且无吸收目标）的别名行**全行** —— 同款下沉 */
+    orphanAliases: List[AliasRow] = Nil,
+    /** 轴(a)×(b)：本拍退役行数（条目 + 别名行；0 = 无行满足「已归档 ∧ 零引用」） */
+    retired: Int = 0,
+    /**
+     * 轴(c)：本拍热读数是否越过双阈值（true 且 `compaction` 为空 = 超限但无行可搬，
+     * 已落 WARN 信号 —— 见 `ChainLedgerStore.reconcile`，禁空转成风暴）
+     */
+    capExceeded: Boolean = false,
+    /** 轴(c)：本拍压缩轮清单（有 ⇒ 冷档已落 + 热账 `rounds` 已追加） */
+    compaction: Option[RoundManifest] = None
+  )
+
+  /**
+   * **冷档文件**（`chain-ledger-archive/round-<n>.json`）：搬迁行的**逐字载荷**
+   * （只归档不删除的落点）+ 该轮自证读数（阈值 / 前后读数）⇒ 离线可复算。
+   */
+  final case class RoundFile(
+    round: Int,
+    at: Long,
+    kind: String,
+    thresholds: Thresholds,
+    hotBefore: Totals,
+    hotAfter: Totals,
+    entries: List[Entry] = Nil,
+    aliases: List[AliasRow] = Nil
+  )
+
+  object RoundFile:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[RoundFile] = ConfiguredCodec.derived
+
+  /** 引用面登记（[[ReferenceFaces]] 的元素形态）。 */
+  final case class ReferenceFace(
+    id: String,
+    label: String,
+    /** 本批是否已接线（false ⇒ 计数钩子归 `owner` 批次） */
+    wired: Boolean,
+    owner: String,
+    /** 计引用写点（`path:line` 锚点，可机械核对） */
+    writePoint: String,
+    incWhen: String,
+    decWhen: String
+  )
+
+  /**
+   * **引用面枚举（轴 b 的判据正本；机械可核）**
+   *
+   * 计数口径：每一拍 reconcile 对**全部**条目/别名行按本表逐面求值并**覆盖式复算**
+   * （`refCount = Σ 已接线面`）。🔴 禁增量自减、禁「人工判断无引用」。
+   *
+   * **已接线七面**（面 id 集是判据正本，见 [[WiredFaceIds]]）：
+   *   1. `live-member`    链上仍有**活动区**成员（该成员载荷带 chainId）。
+   *   2. `declaration`    有节点**显式声明**该链号（`NodeDef.chainId`，批一字段）。
+   *   3. `archive-batch`  归档批以该链号命名（批文件 `<chainId>.json` + 批次索引）。
+   *   4. `alias-target`   别名行仍解析到本链号（别名表自身是引用者）。
+   *      —— 以上四面（批二）：数据源全在引擎自管状态内 ⇒ 零新写点即机械可求。
+   *   5. `mail-usage` / 6. `board-usage` / 7. `report-usage`（**批三+ 接线**）：引擎自管状态
+   *      **之外**的引用面 ⇒ 走**事件式计账**（`ChainLedgerStore.noteReference` 逐次引用 /
+   *      `noteTextReferences` 正文形态），计在 [[State.externalRefs]]（只计不减），每拍
+   *      [[recomputeRefCounts]] 按账并入覆盖式复算（读数因此仍可复算、仍无丢更新）。
+   *
+   * **计数口径的边界（如实登记；🔴 禁以人工判断代替计数）**：外部三面只覆盖各面 `writePoint`
+   * 指认的那个写入点。同族但**未接线**的正文面 —— 引擎按拍落盘的 `tasks/<nodeId>.md` 任务书
+   * 全文、`results/<nodeId>.md` 结果全文 —— **仍不计数**（这些写入点每拍随 diff 复用，其引用
+   * 事件性需另设去重机制）⇒ 登记在册的**已知缺口**，见批报告「未决/风险」栏，不是静默省略。
+   */
+  val ReferenceFaces: List[ReferenceFace] = List(
+    ReferenceFace(
+      id = "live-member",
+      label = "链上仍有活动区成员（该成员载荷带 chainId）",
+      wired = true,
+      owner = "batch2",
+      writePoint = "src/main/scala/nebflow/core/project/FlowMapStore.scala (reconcileChainLedger ← 活动区快照 state.nodes)",
+      incWhen = "节点属该链且仍在活动区（本链落库/拉回后，下一拍复算即计）",
+      decWhen = "该链活动区成员清零（整链出库 sweep 同拍；见 sweepCompletedChainsDetailed）"
+    ),
+    ReferenceFace(
+      id = "declaration",
+      label = "有节点显式声明该链号（NodeDef.chainId）",
+      wired = true,
+      owner = "batch2",
+      writePoint = "src/main/scala/nebflow/core/tools/NodeTools.scala (NodeEdit chainId 声明写回；chainmodel 批一 ①)",
+      incWhen = "节点声明值 = 该链号（声明即归属；含单成员声明链）",
+      decWhen = "声明被撤销（chainId=null）或改号为其它链号"
+    ),
+    ReferenceFace(
+      id = "archive-batch",
+      label = "归档批以该链号命名（批文件 + 批次索引）",
+      wired = true,
+      owner = "batch2",
+      writePoint =
+        "src/main/scala/nebflow/core/project/FlowMapStore.scala (sweepCompletedChainsDetailed → persistBatchFiles)",
+      incWhen = "链出库注册归档批（批 id = 链号，批文件名 = <chainId>.json）",
+      decWhen = "批被拉回（restoreChainsFromArchiveDetailed 清索引）或批文件删除（persistBatchFiles 成员全移除臂）"
+    ),
+    ReferenceFace(
+      id = "alias-target",
+      label = "别名行仍解析到本链号（别名表自身是引用者）",
+      wired = true,
+      owner = "batch2",
+      writePoint = "src/main/scala/nebflow/core/project/ChainLedger.scala (observe 的别名表写入臂)",
+      incWhen = "一条别名行以该链号为 canonical（改号吸收）",
+      decWhen = "别名行退役（轴 b 计数归零）或重指向"
+    ),
+    ReferenceFace(
+      id = "mail-usage",
+      label = "Mail 正文注入 [mail chainId: <id>]（收件人可回引）",
+      wired = true,
+      owner = "batch3+",
+      writePoint =
+        "src/main/scala/nebflow/core/tools/MailTool.scala:588 与 :604（layeredRoute 两腿 countMailUsage 成功臂；注解单点 :626 withChainAnnotation）",
+      incWhen = "Mail 携带 chainId 且投递成功（批三+ 接线：只算正文已注入注解的两腿 —— node: / Nebula）",
+      decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
+    ),
+    ReferenceFace(
+      id = "board-usage",
+      label = "板卡/任务书引用链号（任务书正文与板卡条目）",
+      wired = true,
+      owner = "batch3+",
+      writePoint =
+        "src/main/scala/nebflow/core/tools/TaskBoardTool.scala:368（call 写成功臂 → :229 countBoardUsage；正文 = title/note/text/links）",
+      incWhen = "板卡写动作（create/update/close/log）成功后，提交正文引用该链号（批三+ 接线）",
+      decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
+    ),
+    ReferenceFace(
+      id = "report-usage",
+      label = "节点报告 / 结果正文引用链号",
+      wired = true,
+      owner = "batch3+",
+      writePoint =
+        "(历史申报通道已退役——本计数器当前无生产写点，保留作历史审计口径占位)",
+      incWhen = "（退役口径）申报登记成功后，detail/suggestion 正文引用该链号",
+      decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
+    )
+  )
+
+  /**
+   * 已接线引用面 id 集（计数判据的机械白名单；改本表 = 改计数口径，须同步测试）。
+   * 批三+ 接线落地后 = **七面全量**（含外部三面）。
+   */
+  val WiredFaceIds: List[String] = ReferenceFaces.filter(_.wired).map(_.id)
+
+  /**
+   * 未接线引用面 id 集（已知缺口清单）。批三+ 外部三面接线落地后本表 = **空**；日后若新增
+   * 面而不接线，本表随之增长（承重断言 = `ChainLedgerSpec` T7：改 `wired` 标记而不动该断言
+   * ⇒ 必红 —— 面集合的收放**只能**经本表与 [[WiredFaceIds]] 反映，禁静默改写）。
+   */
+  val PendingFaceIds: List[String] = ReferenceFaces.filterNot(_.wired).map(_.id)
+
+  // ── 派生视图与解析 ───────────────────────────────────
+
+  /** 条目成员视图（nodeId → 链号）。压缩行以锚点代成员（身份恒在，见 [[hitKeys]]）。 */
+  def entryView(e: Entry): Map[String, String] =
+    hitKeys(e).map(_ -> e.chainId).toMap
+
+  def viewOf(entries: Iterable[Entry]): Map[String, String] =
+    entries.foldLeft(Map.empty[String, String])((acc, e) => acc ++ entryView(e))
+
+  /**
+   * **链号解析单点（热面）**：现链号 → 自身；旧链号（别名）→ 现链号（逐跳，带环守卫）。
+   * 冷档内（已下沉）的行由 `ChainLedgerStore.resolveDeep` 兜底 ⇒「旧号永久可达」分两级。
+   */
+  def resolve(st: State, id: String): Option[String] =
+    var cur = id
+    var hops = 0
+    var result: Option[String] = None
+    var done = false
+    while !done do
+      if st.entries.contains(cur) then
+        result = Some(cur)
+        done = true
+      else
+        st.aliases.get(cur) match
+          case Some(r) if r.canonical != cur && hops <= st.aliases.size =>
+            cur = r.canonical
+            hops += 1
+          case _ =>
+            done = true
+    result
+  end resolve
+
+  // ── 轴：出生 / 承继 / 合并 / 拆分（链号稳定化的唯一裁决点）──────────────
+
+  /**
+   * **命中面判据单点**：条目在「分量 ↔ 条目」比对里暴露的键 —— 载荷已压缩（或载荷为
+   * 空）⇒ 只剩**锚点**（身份恒在，见 [[Entry.compacted]]）；否则 = 成员集。命中比对、
+   * 成员视图、别名目标求值三处**共用本函数**（禁各写一份 `if compacted ...` 分支）。
+   */
+  private def hitKeys(e: Entry): List[String] =
+    if e.compacted || e.members.isEmpty then List(e.anchor) else e.members
+
+  /**
+   * **稳定化**（纯函数）：把 `topologicalChains` 的**派生原型链**折算成**出生即定的链号**。
+   *
+   * 这是「链号出生即定、永不重归」的唯一落点：已出生链号的改写**只能**经本方法的显式
+   * 路径（承继 = 不改；合并/拆分 = 显式改号 + 别名 + 留痕），不存在任何「按分量重算
+   * 覆盖旧号」的分支。
+   *
+   * @param chains derived prototype chains (the `FlowMapStore.topologicalChains`
+   *   read, the single judgement source)
+   * @param activeIds active-zone id set (`Some` = birth gate ON: a component
+   *   with ZERO members in the active zone is not born — see the birth arm;
+   *   `None` = gate OFF, every candidate births as before. A component that
+   *   matches an existing hot entry takes an inheritance arm and is not
+   *   affected by the gate)
+   */
+  def observe(st: State, chains: List[ChainInfo], now: Long, activeIds: Option[Set[String]] = None): Observation =
+    val comps = chains.sortBy(_.id)
+    val live = st.entries.values.toList
+    // ⓪ **活性别闸（R3 续批：anchor 重估规则）**：分量对「条目存续」的提名权只来自它的
+    //    **活动区成员** —— 归档区（终态）成员不再构成钉活理由。闸前的病灶：锚点躺在归档
+    //    区的行，其分量由 `topologicalChains(活动∪归档)` 从归档区成员恒常派生 ⇒ 承继臂
+    //    每拍命中 ⇒ 永不落「离场」臂 ⇒「图没了账还赖着」（审计 §3.4-② 的项目面形态，
+    //    Stand 实测 4 条 active 僵尸 + 1,660 条归档钉活行）。闸后：活动区空 ⇒ 一切分量
+    //    非活 ⇒ 全部条目走离场（整行下沉冷档，「旧号永久可达」由冷档二级兜底）；分量
+    //    「完全回归活动区」时会重新相交并**重新出生**（fresh 同号，见出生臂注释）。
+    //    `activeIds = None` ⇒ 闸关（旧路径/纯函数测试逐字旧行为）。
+    def isLive(c: ChainInfo): Boolean = activeIds.forall(ids => c.memberIds.exists(ids.contains))
+    val liveComps = comps.filter(isLive)
+    // ① 命中：分量 ↔ 既有条目（载荷在热面比成员集；载荷已压缩比锚点）；**仅活分量参与**
+    //    成员集每分量**只建一次**，命中面走**倒排索引**（`节点/锚点 → 条目`）——
+    //    逐「分量 × 条目」笛卡尔遍历会放大成 O(分量 × 条目 × 成员) 次比较/分配，
+    //    而本函数每 30s 一拍，大图上不可接受（等价性：条目成员集两两不交，见
+    //    下方 `keptEntries` 构造；命中面两支由 [[hitKeys]] 单点给出）。
+    val compMembers: Map[String, Set[String]] = comps.map(c => c.id -> c.memberIds.toSet).toMap
+    val byPayload: Map[String, Entry] = live.flatMap(e => hitKeys(e).map(_ -> e)).toMap
+    val compMatches: Map[String, List[Entry]] =
+      liveComps.map(c => c.id -> compMembers.getOrElse(c.id, Set.empty).flatMap(byPayload.get).toList.distinct).toMap
+    // ② 逐分量裁决（两档序保证确定性，且「锚点持有者先得号」——拆分时原链号随锚点走）：
+    //    档 0 = 该分量含某命中条目的锚点；档 1 = 其余。档内按常量 id 排序。仅活分量入裁决。
+    val ordered = liveComps.sortBy { c =>
+      val hs = compMatches.getOrElse(c.id, Nil)
+      (if hs.exists(e => c.memberIds.contains(e.anchor)) then 0 else 1, c.id)
+    }
+    val assigned = scala.collection.mutable.LinkedHashMap.empty[String, String] // compId -> stable id
+    val used = scala.collection.mutable.HashSet.empty[String] // 已被占用的稳定链号
+    def free(id: String): Boolean = !used.contains(id)
+    def freshId(proto: String): String =
+      if free(proto) then proto
+      else
+        var k = 1
+        while !free(s"$proto.$k") do k += 1
+        s"$proto.$k"
+    ordered.foreach { c =>
+      val ms = compMatches.getOrElse(c.id, Nil).filterNot(e => used.contains(e.chainId))
+      val pool =
+        val hs = ms.filter(e => c.memberIds.contains(e.anchor))
+        if hs.nonEmpty then hs else ms
+      val owner = if pool.isEmpty then None else Some(pool.minBy(e => (e.bornAt, e.chainId)))
+      val chosen = owner.map(_.chainId).getOrElse(freshId(c.id))
+      assigned.update(c.id, chosen)
+      used += chosen
+    }
+    // ③ 承继 / 出生
+    val nextEntries = scala.collection.mutable.LinkedHashMap.empty[String, Entry]
+    val born = scala.collection.mutable.ListBuffer.empty[String]
+    liveComps.foreach { c =>
+      val cid = assigned(c.id)
+      st.entries.get(cid) match
+        case Some(prev) if prev.compacted =>
+          // 承继（**载荷已下沉**）：链号/锚点/出生时刻/状态/归档时刻/成员读数/计数一律
+          // 不动 —— 载荷在冷档（`RoundFile.entries`），**不回热**。回热会让压缩每拍被
+          // 撤销（轴 c 失效）+ 压缩镜像面翻转（`verifyLedger` 的 ③ 查），故压缩对载荷是
+          // **终局**：只有退役/离场会移除该行（其载荷副本恒在冷档 ⇒ 只归档不删除）。
+          // 身份恒在（锚点留热）⇒ 链号继续按 [[hitKeys]] 命中，零重归。
+          nextEntries.update(cid, prev)
+        case Some(prev) =>
+          // 承继（载荷在热面）：链号/锚点/出生时刻/状态/归档时刻/计数**一律不动**，只
+          // 刷新成员读数（成员集可生长/收缩；链号不动 = 「永不重归」的可执行判据）。
+          nextEntries.update(cid, prev.copy(members = c.memberIds, memberCount = c.memberIds.size))
+        case None =>
+          // Birth gate (active-zone awareness): when the caller supplies the
+          // active-zone id set, a component with ZERO members there is not
+          // born at all. Such a component was previously born, immediately
+          // flipped Archived by the caller's born-archived pass, and retired
+          // in the same tick — and because retire deletes the hot entry this
+          // function matches on, the same archive-only component re-birthed
+          // on every tick (one retire round per tick, growing the round
+          // files without bound). Skipping the birth ends that loop. The
+          // gate is narrow by design: a component with >= 1 active member
+          // births exactly as before, a component matching an existing hot
+          // entry takes an inheritance arm above (identity continuation, so
+          // rows kept alive by reference faces stay put), and a chain that
+          // fully returns to the active zone later intersects again and
+          // births fresh then.
+          if activeIds.forall(_.exists(c.memberIds.contains)) then
+            born += cid
+            nextEntries.update(
+              cid,
+              Entry(
+                chainId = cid,
+                anchor = c.memberIds.headOption.getOrElse(cid),
+                bornAt = now,
+                members = c.memberIds,
+                memberCount = c.memberIds.size
+              )
+            )
+      end match
+    }
+    val keptEntries = nextEntries.toMap
+    // ④ 别名：被吸收 / 已离场的旧号 → 生还者（显式改号；旧号永久可达）
+    val superseded = live.map(_.chainId).filterNot(keptEntries.contains).sorted
+    val absorbedTargets: Map[String, String] = superseded.flatMap { old =>
+      val e = st.entries(old)
+      val touch = hitKeys(e).toSet
+      // R3 续批：吸收目标必须是**存活分量**（活 ∧ 本拍留热）——闸前的病灶：归档区分量
+      // 也会进候选（其 assigned 号永不落热）⇒ 别名指向一个不存在的链号。候选集限制在
+      // keptEntries 后，无存活命中 ⇒ 无吸收 ⇒ 旧号走孤儿别名下沉冷档（可达性不丢）。
+      val cands =
+        comps
+          .filter(c => isLive(c) && c.memberIds.exists(touch.contains))
+          .map(c => assigned(c.id))
+          .filter(keptEntries.contains)
+          .distinct
+          .sorted
+      if cands.isEmpty then None else Some(old -> cands.head)
+    }.toMap
+    // 既有别名行：canonical 尚在 ⇒ 保行（吸收则重指向）；canonical 已离场且无吸收目标
+    // ⇒ 本行失去目标，**下沉冷档**（既不留悬空行，也不静默删除）
+    val repointed: (Map[String, AliasRow], List[AliasRow]) =
+      st.aliases.foldLeft((Map.empty[String, AliasRow], List.empty[AliasRow])) { case ((keep, orphan), (k, r)) =>
+        val t =
+          if keptEntries.contains(r.canonical) then r.canonical
+          else absorbedTargets.getOrElse(r.canonical, "")
+        if t.nonEmpty then (keep.updated(k, r.copy(canonical = t)), orphan)
+        else (keep, r :: orphan)
+      }
+    val (keptAliases, orphanAliases) = repointed
+    val aliasesAfter: Map[String, AliasRow] =
+      keptAliases ++ absorbedTargets.map { case (old, target) =>
+        old -> st.aliases
+          .get(old)
+          .map(_.copy(canonical = target))
+          .getOrElse(AliasRow(alias = old, canonical = target, createdAt = now))
+      }
+    // ⑤ 改号留痕（只记 X→Y（X≠Y）：None↔X 归批一写点，见类头注批界）
+    val beforeView = viewOf(live)
+    val afterView = viewOf(nextEntries.values)
+    val changes = (beforeView.keySet ++ afterView.keySet).toList.sorted.flatMap { n =>
+      (beforeView.get(n), afterView.get(n)) match
+        case (Some(a), Some(b)) if a != b => Some(Change(n, Some(a), Some(b), ReasonReId))
+        case _ => None
+    }
+    Observation(
+      state = st.copy(entries = keptEntries, aliases = aliasesAfter, updatedAt = now),
+      changes = changes,
+      born = born.toList,
+      absorbed = absorbedTargets.keys.toList.sorted,
+      assigned = assigned.toMap,
+      dissolved = superseded.filterNot(absorbedTargets.contains).flatMap(st.entries.get),
+      orphanAliases = orphanAliases.sortBy(_.alias)
+    )
+  end observe
+
+  // ── 轴(b)：引用计数复算（机械、覆盖式；禁增量自减）──────────────────────
+
+  /** 引用面求值的机械输入（全部来自引擎自管状态；零人工判断）。 */
+  final case class FaceCounts(
+    /** 链号 → 该链在**活动区**的成员 id（face `live-member`） */
+    activeMembers: Map[String, Set[String]] = Map.empty,
+    /** 链号 → 声明该链号的节点 id（face `declaration`） */
+    declarations: Map[String, Set[String]] = Map.empty,
+    /** 归档批 id 全集（face `archive-batch`） */
+    batchIds: Set[String] = Set.empty
+  )
+
+  object FaceCounts:
+    given Configuration = Configuration.default.withDefaults
+    given Codec[FaceCounts] = ConfiguredCodec.derived
+
+  /**
+   * 覆盖式复算全部行计数（轴 b）。**纯函数**：同输入恒同输出 ⇒ 可复算、可测试、崩溃后
+   * 下一拍自然纠正（不存在丢更新）。外部引用面（`noteReference` 写入的
+   * [[State.externalRefs]]）按账并入。
+   */
+  def recomputeRefCounts(st: State, in: FaceCounts): State =
+    val entries = st.entries.map { case (k, e) =>
+      val c = in.activeMembers.getOrElse(k, Set.empty).size +
+        in.declarations.getOrElse(k, Set.empty).size +
+        (if in.batchIds.contains(k) then 1 else 0) +
+        st.externalRefs.getOrElse(k, 0)
+      k -> e.copy(refCount = c)
+    }
+    val aliases = st.aliases.map { case (k, a) =>
+      // 别名行的面：声明面 + 归档批面 + 外部面 +「仍有别名行以本链号为 canonical」面
+      val self = in.declarations.getOrElse(k, Set.empty).size +
+        (if in.batchIds.contains(k) then 1 else 0) +
+        st.externalRefs.getOrElse(k, 0)
+      k -> a.copy(refCount = self + (if st.entries.contains(a.canonical) then 1 else 0))
+    }
+    st.copy(entries = entries, aliases = aliases)
+  end recomputeRefCounts
+
+  /**
+   * **正文引用面的已登记链号集（热面；纯函数）**：条目 id ∪ 别名 id（旧号在别名表期间照旧
+   * 可被正文引用 ⇒ 必须在内）。**只读、零回填** —— 未登记号（含冷档已退役历史行）不在集合内
+   * ⇒ 正文里出现也不计（🔴 禁为其伪造别名/条目，见批报告「零回填」判据）。
+   */
+  def knownIds(st: State): Set[String] = st.entries.keySet ++ st.aliases.keySet
+
+  /**
+   * 链号字符集（正文命中的**边界判据**用）：与派生链号值域同源 —— 字母/数字 + `-`/`_`/`.`
+   * （改号后缀 `<proto>.<k>` 落在此集内）。
+   */
+  private def isIdChar(c: Char): Boolean =
+    c.isLetterOrDigit || c == '-' || c == '_' || c == '.'
+
+  /**
+   * **正文引用面判据（纯函数，`board-usage` / `report-usage` 共用单点）**：一段自由文本里
+   * **逐字且按链号边界**出现的已登记链号（升序去重；空文本 ⇒ 空表）。
+   *
+   * 边界判据（禁靠巧合）：命中处的前后字符**不得**是 [[isIdChar]] —— 否则 `chain-u-1`
+   * 会被 `chain-u-10` 的正文误命中（前缀族链号在同项目里并存），反之亦然。
+   * 确定性：返回 `sorted` ⇒ 同输入恒同输出（可复算、可断言）。
+   *
+   * 🔴 本函数**只读文本与已知集**，不解析别名、不建条目、不落盘（零回填面）。
+   */
+  def referencedIds(text: String, registeredIds: Iterable[String]): List[String] =
+    if text.isEmpty then Nil
+    else
+      def occurs(id: String): Boolean =
+        var idx = text.indexOf(id)
+        var hit = false
+        while idx >= 0 && !hit do
+          val beforeOk = idx == 0 || !isIdChar(text.charAt(idx - 1))
+          val end = idx + id.length
+          val afterOk = end >= text.length || !isIdChar(text.charAt(end))
+          if beforeOk && afterOk then hit = true else idx = text.indexOf(id, idx + 1)
+        hit
+      registeredIds.toSet.toList.sorted.filter(id => id.nonEmpty && occurs(id))
+
+  // ── 轴(a)+(b)：退役计划 ──────────────────────────────
+
+  final case class RetirePlan(
+    state: State,
+    entries: List[Entry] = Nil,
+    aliases: List[AliasRow] = Nil
+  ):
+    def isEmpty: Boolean = entries.isEmpty && aliases.isEmpty
+
+  /**
+   * **退役计划（纯函数；轴 a × 轴 b 的联合判据）**
+   *
+   * 判据（机械）：`所属链已归档（或已离场）∧ refCount == 0`。
+   *  - 轴 (a) 生命周期绑定：行**不得早于**所属链归档退役（`status == Archived` 或所属链
+   *    已离场）—— 归档刻 = 最早退役窗口；同时退役 0 行是合法结论（存在活引用就不退，
+   *    这正是「旧号永久可达」）。
+   *  - 轴 (b) 引用计数：`refCount == 0` 才退；计数由 [[recomputeRefCounts]] 覆盖式复算。
+   *  - 别名行随其 canonical 条目同刻退役；离场条目的别名行一并退 ⇒ **禁留悬空条目**。
+   */
+  def planRetire(st: State, now: Long): RetirePlan =
+    val goneEntries = st.entries.filter { case (_, e) =>
+      e.status == StatusArchived && e.refCount <= 0
+    }.keySet
+    val retiredAliases = st.aliases.filter { case (_, a) =>
+      val ownerGone = !st.entries.contains(a.canonical) || goneEntries.contains(a.canonical)
+      ownerGone && a.refCount <= 0
+    }
+    RetirePlan(
+      state = st.copy(entries = st.entries -- goneEntries, aliases = st.aliases -- retiredAliases.keySet),
+      entries = goneEntries.toList.sorted.flatMap(st.entries.get),
+      aliases = retiredAliases.values.toList.sortBy(_.alias)
+    )
+
+  // ── 轴(c)：硬上限压缩 ────────────────────────────────
+
+  /**
+   * 热读数（轴 c 触发面 = 行数两条 + 字节一条，字节由调用方量现读落盘长度）。
+   * R3 续批注：**待落批计入读数**（批行仍持久在台账热态里，落轮前的守恒坐标以含批口径
+   * 计算 —— 入批读数中性、整批落轮一次性减去，轮守恒因此逐项成立，见 [[roundConservation]]）。
+   */
+  def totals(st: State): Totals =
+    Totals(
+      entries = st.entries.size + st.pendingDissolve.entries.size + st.pendingRetire.entries.size,
+      aliases = st.aliases.size + st.pendingDissolve.aliases.size + st.pendingRetire.aliases.size,
+      members = st.entries.values.map(_.memberCount).sum +
+        st.pendingDissolve.entries.map(_.memberCount).sum + st.pendingRetire.entries.map(_.memberCount).sum,
+      refCount = st.entries.values.map(_.refCount.toLong).sum + st.aliases.values.map(_.refCount.toLong).sum +
+        st.pendingDissolve.entries.map(_.refCount.toLong).sum + st.pendingDissolve.aliases.map(_.refCount.toLong).sum +
+        st.pendingRetire.entries.map(_.refCount.toLong).sum + st.pendingRetire.aliases.map(_.refCount.toLong).sum
+    )
+
+  def hotRows(st: State): Int =
+    st.entries.size + st.aliases.size + st.pendingDissolve.rowCount + st.pendingRetire.rowCount
+
+  /**
+   * **双阈值触发判据**（条数 ∨ 字节；阈值在册见 [[MaxHotRows]] / [[MaxHotBytes]]）。
+   */
+  def needsCompaction(st: State, bytes: Long): Boolean =
+    hotRows(st) > MaxHotRows || bytes > MaxHotBytes
+
+  final case class CompactPlan(
+    state: State,
+    /** 载荷搬迁的条目（热行保留身份，`members` 清空 + `compacted=true`） */
+    compactedEntries: List[Entry] = Nil,
+    /** 整行下沉的别名行（热面移除；冷档保留） */
+    retiredAliases: List[AliasRow] = Nil,
+    hotBefore: Totals = Totals(),
+    hotAfter: Totals = Totals()
+  ):
+    def isEmpty: Boolean = compactedEntries.isEmpty && retiredAliases.isEmpty
+
+  /**
+   * **压缩轮计划（纯函数；轴 c）**
+   *
+   * 搬迁顺序（确定性「冷度」序 = 最不会再变的先下沉）：
+   *   ① 已归档条目（`archivedAt` → `bornAt` → `chainId` 升序）；
+   *   ② 其余条目（`bornAt` → `chainId` 升序）。
+   * 逐条：条目**载荷**下沉（身份/状态/计数/成员读数留热 —— 压缩只搬字节，不改读数），
+   * 其**别名行**（`compacted` 条目的历史名）整行下沉（旧号由
+   * `ChainLedgerStore.resolveDeep` 永久可达）。单轮上限 [[CompactionBatchRows]] 行
+   * （有界轮 ⇒ 可观测、可中断复跑）。
+   *
+   * 无可搬行（全库皆 `compacted` 且无别名行）⇒ 空计划：调用方**只记超限信号**，
+   * 禁把「无事可搬」变成每拍空转。
+   */
+  def planCompaction(st: State, bytes: Long): CompactPlan =
+    val ordered = st.entries.values.toList.sortBy(e =>
+      (if e.status == StatusArchived then 0 else 1, e.archivedAt.getOrElse(e.bornAt), e.bornAt, e.chainId)
+    )
+    val movableEntries = ordered.filterNot(_.compacted).take(CompactionBatchRows)
+    val movableIds = movableEntries.map(_.chainId).toSet
+    val movableAliases = st.aliases.values
+      .filter(a => movableIds.contains(a.canonical))
+      .toList
+      .sortBy(_.alias)
+      .take(math.max(0, CompactionBatchRows - movableEntries.size))
+    val nextEntries = st.entries ++ movableEntries.map(e => e.chainId -> e.copy(members = Nil, compacted = true))
+    val nextAliases = st.aliases -- movableAliases.map(_.alias)
+    CompactPlan(
+      state = st.copy(entries = nextEntries, aliases = nextAliases),
+      compactedEntries = movableEntries,
+      retiredAliases = movableAliases,
+      hotBefore = totals(st),
+      hotAfter = totals(st.copy(entries = nextEntries, aliases = nextAliases))
+    )
+  end planCompaction
+
+  // ── 可复算校验（崩溃/重启后自洽）──────────────────────
+
+  /**
+   * 轮守恒：`hotAfter` 必须由 `hotBefore` 与本轮搬迁量**机械推出**（禁事后改写读数）。
+   *
+   * 两支口径：[[RoundCompact]] 只搬**载荷**（条目行留在热面 ⇒ 条目读数不减；
+   * 但与载荷同走的别名行整行移出 ⇒ 别名/引用读数照减）；[[RoundRetire]] /
+   * [[RoundDissolve]] 整行移出 ⇒ 条目与别名读数同减。
+   */
+  def roundConservation(f: RoundFile, m: RoundManifest): Either[String, Unit] =
+    val droppedEntries = if f.kind == RoundCompact then 0 else f.entries.size
+    // 载荷搬迁（compact）**不动条目读数**（身份/成员数/引用数留热）；整行移出（retire/dissolve）
+    // 条目与别名读数同减。别名行在任何一支里都是整行移出（故其读数恒减）。
+    val droppedMembers = if f.kind == RoundCompact then 0 else f.entries.map(_.memberCount).sum
+    val droppedRef =
+      (if f.kind == RoundCompact then 0L else f.entries.map(_.refCount.toLong).sum) +
+        f.aliases.map(_.refCount.toLong).sum
+    val expectAfter = f.hotBefore.copy(
+      entries = f.hotBefore.entries - droppedEntries,
+      aliases = f.hotBefore.aliases - f.aliases.size,
+      members = f.hotBefore.members - droppedMembers,
+      refCount = f.hotBefore.refCount - droppedRef
+    )
+    if m.kind != f.kind then Left(s"round ${m.round}: kind mismatch manifest=${m.kind} file=${f.kind}")
+    else if m.hotBefore != f.hotBefore then
+      Left(s"round ${m.round}: hotBefore mismatch manifest=${m.hotBefore} file=${f.hotBefore}")
+    else if m.hotAfter != f.hotAfter then
+      Left(s"round ${m.round}: hotAfter mismatch manifest=${m.hotAfter} file=${f.hotAfter}")
+    else if f.hotAfter != expectAfter then
+      Left(s"round ${m.round}: conservation broken expected=$expectAfter got=${f.hotAfter}")
+    else if m.movedEntries != f.entries.size || m.movedAliases != f.aliases.size then
+      Left(
+        s"round ${m.round}: moved-count mismatch manifest=${m.movedEntries}/${m.movedAliases} " +
+          s"file=${f.entries.size}/${f.aliases.size}"
+      )
+    else if m.movedMembers != f.entries.map(_.members.size).sum then
+      Left(
+        s"round ${m.round}: moved-members mismatch manifest=${m.movedMembers} " +
+          s"file=${f.entries.map(_.members.size).sum}"
+      )
+    else Right(())
+
+    end if
+
+  end roundConservation
+
+  /** 压缩镜像一一对应：`compacted=true` 的热行在冷档须有载荷副本；冷档载荷须有热行。 */
+  def mirrorCheck(st: State, coldPayloadIds: Set[String]): Either[String, Unit] =
+    val hot = st.entries.values.filter(_.compacted).map(_.chainId).toSet
+    if hot != coldPayloadIds then
+      Left(s"mirror mismatch hot=${hot.toList.sorted.mkString(",")} cold=${coldPayloadIds.toList.sorted.mkString(",")}")
+    else Right(())
+
+  /** 台账结构不变量：同 id 不得兼作条目与别名；别名不得悬空；锚点不得为空。 */
+  def structureCheck(st: State): Either[String, Unit] =
+    val dup = st.entries.keySet.intersect(st.aliases.keySet)
+    if dup.nonEmpty then Left(s"ids present as both entry and alias: ${dup.toList.sorted.mkString(",")}")
+    else
+      st.entries.values.find(_.anchor.isEmpty) match
+        case Some(e) => Left(s"entry ${e.chainId} has empty anchor")
+        case None =>
+          st.aliases.values.find(a => !st.entries.contains(a.canonical)) match
+            case Some(a) => Left(s"alias ${a.alias} points to unknown chain ${a.canonical} (dangling)")
+            case None => Right(())
+
+  /**
+   * **全量台账校验**（启动期 / verify 位用）：结构 + 每轮守恒 + 轮间链式 + 压缩镜像。
+   */
+  def verifyLedger(
+    st: State,
+    files: List[RoundFile],
+    coldPayloadIds: Set[String]
+  ): Either[String, Unit] =
+    val byRound = files.map(f => f.round -> f).toMap
+    val ordered = st.rounds.sortBy(_.round)
+    var err: Option[String] = None
+    ordered.foreach { m =>
+      if err.isEmpty then
+        byRound.get(m.round) match
+          case None => err = Some(s"round ${m.round}: cold file missing (冷档是每轮的证据面)")
+          case Some(f) => err = roundConservation(f, m).left.toOption
+    }
+    if err.isEmpty then
+      // ② 轮间链式 —— **只对同拍（`tick` 相同）的相邻轮**断言：同一拍内各轮坐标同源
+      //    （`hotAfter(k) == hotBefore(k+1)`，见 `ChainLedgerStore.reconcile` 的坐标口径），
+      //    跨拍不行 —— 出生 / 离场 / 计数复算都发生在轮**之外**（`observe` /
+      //    `recomputeRefCounts`），会合法改变热读数（先例 D1-c：两拍各出一轮 compact、
+      //    其间仅有普通出生 ⇒ 旧写法恒 `Left`，且轮为 append-only 故永不消解）。
+      //    `tick == 0` = 改造前写入的旧账（无拍标识）⇒ 本项不可判，跳过（其余三查照旧）。
+      ordered.sliding(2).foreach { w =>
+        if err.isEmpty && w.size == 2 && w.head.tick > 0 && w.head.tick == w.last.tick &&
+          w.head.hotAfter != w.last.hotBefore
+        then
+          err = Some(
+            s"round chain broken (tick ${w.head.tick}): round ${w.head.round}.hotAfter=${w.head.hotAfter} " +
+              s"!= round ${w.last.round}.hotBefore=${w.last.hotBefore}"
+          )
+      }
+    end if
+    err.toLeft(()).flatMap(_ => structureCheck(st)).flatMap(_ => mirrorCheck(st, coldPayloadIds))
+  end verifyLedger
+end ChainLedger

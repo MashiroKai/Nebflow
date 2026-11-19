@@ -6,7 +6,7 @@ import nebflow.shared.*
 
 /**
  * Tool-result TTL cleanup (#341, design
- * docs/Nebflow/20260820_tool-result-ttl.md).
+ * tool-result-ttl 设计件).
  *
  * REQUEST-ONLY: replaces stale, oversized tool results with a self-describing
  * placeholder in the LLM request copy. The session file (state.messages /
@@ -78,7 +78,7 @@ object ToolResultTtl:
         val ttlCutoff = nowMs - cfg.ttlMinutes.toLong * 60_000L
         var changed = false
         val cleaned = messages.map {
-          case msg @ Message(MessageRole.User, Right(blocks), ts, _) =>
+          case msg @ Message(MessageRole.User, Right(blocks), ts, _, _, _) =>
             var msgChanged = false
             val newBlocks = blocks.map {
               case tr: ContentBlock.ToolResult
@@ -95,23 +95,29 @@ object ToolResultTtl:
         }
         if changed then Some(cleaned) else None
 
-  /** Cold-cache check: no assistant message within ColdAfterMs of now.
-    * timestamp == 0 (legacy messages without ts) → treat as cold (same as
-    * FastMicroCompact). */
+      end if
+
+  /**
+   * Cold-cache check: no assistant message within ColdAfterMs of now.
+   * timestamp == 0 (legacy messages without ts) → treat as cold (same as
+   * FastMicroCompact).
+   */
   private def cacheIsCold(messages: List[Message], nowMs: Long): Boolean =
     val lastAssistantTs = messages.collect {
       case m if m.role == MessageRole.Assistant && m.timestamp > 0 => m.timestamp
     }.maxOption
     lastAssistantTs match
       case Some(ts) => nowMs - ts >= ColdAfterMs
-      case None     => true
+      case None => true
 
-  /** Compactable tool_use ids in MESSAGE ORDER (oldest → newest), distinct.
-    * ORDER MATTERS: keepRecent = takeRight of this list = the true newest N
-    * (qa #341 FAIL — a Set here made the keep window arbitrary). */
+  /**
+   * Compactable tool_use ids in MESSAGE ORDER (oldest → newest), distinct.
+   * ORDER MATTERS: keepRecent = takeRight of this list = the true newest N
+   * (qa #341 FAIL — a Set here made the keep window arbitrary).
+   */
   private def compactableToolUseIds(messages: List[Message]): List[String] =
     messages.flatMap {
-      case Message(MessageRole.Assistant, Right(blocks), _, _) =>
+      case Message(MessageRole.Assistant, Right(blocks), _, _, _, _) =>
         blocks.collect {
           case ContentBlock.ToolUse(id, name, _) if CompactableTools.contains(name) => id
         }
@@ -133,6 +139,7 @@ final case class ToolResultTtlConfig(
   ttlMinutes: Int = 60,
   keepRecent: Int = 5
 ):
+
   /** Normalized validity for load-time fail-safe. */
   def sanitized: ToolResultTtlConfig =
     ToolResultTtlConfig(
@@ -154,8 +161,10 @@ object ToolResultTtlConfig:
 
   given io.circe.Encoder[ToolResultTtlConfig] = io.circe.generic.semiauto.deriveEncoder
 
-  /** Fail-safe load from the raw config node (mirrors FreezeSchedule.load):
-    * absent / invalid / garbage → disabled default. */
+  /**
+   * Fail-safe load from the raw config node (mirrors FreezeSchedule.load):
+   * absent / invalid / garbage → disabled default.
+   */
   def load(json: Option[Json]): ToolResultTtlConfig =
     json
       .flatMap(_.as[ToolResultTtlConfig].toOption)
@@ -185,10 +194,12 @@ object ToolResultTtlConfig:
       }
     for
       o <- obj
-      enabled <- o("enabled").toRight("missing field \"enabled\"")
+      enabled <- o("enabled")
+        .toRight("missing field \"enabled\"")
         .flatMap(_.as[Boolean].left.map(_ => "field \"enabled\" must be a boolean"))
       ttlMinutes <- intField("ttlMinutes", min = 1, max = 43200)
       keepRecent <- intField("keepRecent", min = 0, max = 200)
     yield ToolResultTtlConfig(enabled, ttlMinutes, keepRecent)
+  end parseStrict
 
 end ToolResultTtlConfig

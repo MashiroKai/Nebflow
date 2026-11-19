@@ -1,0 +1,1150 @@
+#!/usr/bin/env node
+// canvas-ask-dock.spec.mjs — Canvas 文件 ask mode（2026-10-28 实施批；同日 22:42
+// v2.1 简化修订）实施验收。
+//
+// 机制稿 §8 验收条目 → 本 spec 断言映射（前端组件行为面；后端路由/绑定/流式
+// 的协议面用 routeWebSocket mock 驱动，形态 = canvas-stack.spec.mjs 孪生）：
+//   T0  页面零 pageerror（载入健康面）
+//   T1  入口（§8-1/§8-2/§8-3）：.ask-fab 48×48（canvas 控件尺寸对齐批 2026-11-02
+//       作者令 09:41「包括 canvas 的这些控件宽度也要保持一致」：入口钮 44 → 48 =
+//       canvas chrome 档 --cv-size-circle-lg，全站悬浮圆钮回到一个真值）、右下角
+//       最靠右、z 序 25 = ask-dock
+//       24+1 < 顶行胶囊 30（排他 z 序）、dock 宽 372（E-2 桌面档）；
+//       单行排布批（2026-11-01 作者令 16:18）：功能钮簇左锚 / fab 独右一行两端
+//       对齐（T1f 共中线）、对话框钉按钮行上一行（T1g）、座位基准 = 实测簇中线 −
+//       fab 半高（T1c；件3 批：簇钮 40 ⇒ 中线 44 ⇒ 基准 20，判据由实测派生）
+//   T2  开合三通路（§8-1）：入口钮再点 / Esc / 画布空白点击；开 = .closed 摘除
+//       + fab.open + 输入聚焦；输入条在按钮上方（transform-origin 100% 100% 锚定）
+//   T3  提问 → 气泡流式回答（§8-1）：askOpen 帧先于 askQuestion 帧、sessionId =
+//       ask-<8hex>（每文件绑定）；user 气泡即时、typing 指示在场、textDelta
+//       增量回填同一 ai 气泡、done 定稿；在看流（dock 开）⇒ 无未读 ⇒ 通知点不亮
+//   T4  每文件独立 session（§8-1 作者令⑦）：切卡即切——B 卡 askState 回放 B 的
+//       转录；切回 A 复现 A 转录（收起保留，§2/§4）；v2.1 徽标退场后以转录呈现
+//   T5  未读通知点（三修② 作者令 2026-10-29「小点应为绿色通知点，只在有（未读）
+//       消息时显示」）：已读收起 → pulse/点零亮；闭窗推流 → 绿点（--color-primary
+//       #07c160）+ pulse；再开即读 → 点熄
+//   T6  v2.1 减法·转交/回问（§7）：转交钮自 UI 撤除（两箭头减为一枚右侧发送钮）；
+//       askHandoffAck 回执收进不可见处（零 sys 气泡）；注入 user 帧（主会话回问）
+//       → user 族气泡带「主会话回问：」前缀（问答面两族制）；error 落助手气泡槽
+//   T7  主会话零交集（§8-2 视图排他）：ask 流式全程 #chat .bubble 计数不变
+//   T8  UI 纪律（§8-2）：dock max-h 316（E-2）、零遮罩（新增阻塞层计数零）、
+//       气泡列 touch-action pan-y（#988 列内纵滚原生）
+//   T9  移动档（§8-3）：48×48 命中盒、座位 = dock-h+16 与左锚簇行同带（单行
+//       排布批）、列 max-h 250、
+//       气泡列表面横滑零切卡（.mobile-card-peek 不亮起，surface 归属制）
+//   T10 v2.1 减法纪律（作者令 2026-10-28 22:42「简约一点…」）：ghost 提示行/
+//       session 徽标/转交钮零残留；旧 T10b 短快照 sys 过滤面由 T14e 长快照腿
+//       接棒（持久批合并律改「永不缩水」后，短快照保留本地不再换血）
+//   T11 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）：
+//       入口钮只在文件型标签页（有真实文件 backing 的 canvas tab）挂载显示；
+//       插件面板等非文件型 surface 零残留（display:none 出命中盒），切卡离开
+//       文件 tab 即隐、开着切走即一并收起，切回文件 tab 复现
+//   T13 md/html 类型硬约束闸（设计稿 §2；作者 2026-10-29 11:46 自裁）：ask 能力
+//       仅 .md/.markdown/.html/.htm 四扩展名——非白名单文件 tab（.txt/.scala
+//       等文件型卡）入口同闸隐藏（与可见性闸同悬挂点：currentFile 赋值处过滤），
+//       零 askOpen 帧外发；大小写不敏感（README.MD 放行）；切回白名单文件
+//       入口复现。后端拒答面见 AskGateSpec + ask-gate-live（双层防呆之后端腿）
+//   F  修复批 2026-10-31（作者令 10-31 10:43 + 截屏 3 张）：
+//       F1 ④双泡修复——发问等待期零空 ai 泡（typing 单件）；
+//       F2 ①ai 气泡复用主会话渲染腿 renderMarkdownWithMath（h2/ul/pre+code/
+//          table 全在场、裸 md 字面量退场）；
+//       F3 ⑤顶缘渐隐（ask-fade-content-opacity 批 2026-11-04 改判据）：面板内零遮罩
+//          条元素，渐隐本体 = .ask-col 自身的 mask-image（内容 alpha 渐到 0）；
+//          面板/滚动容器整体透明无边框（①-批 .ask-veil + .ds-edge-fade 成员形态退役）。
+//   T12 风格统一（三修③ 作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，
+//       不新造风格」）：输入条/气泡与聊天 #header 同一套配方（blur 参数 / 描边 token
+//       逐项相等）+ **底收不透明档**（α=1，= --glass-bg 压平 --color-bg 的合成值）
+//       ——判据由「底逐项相等」改判于 2026-11-05 09:32 作者令「看不清楚，要 Header
+//       同款，那个是不透明的」（半透底背后是 canvas 文档正文 ⇒ 双层重影）；
+//       入口钮材质随液体玻璃 v3 F1 扩面批（2026-10-31 作者 12:32 点选
+//       「悬浮族 = F1」，liquid-glass.css ④）归 --g2-fab-* 单源 = #deck-fab 同族
+//       （本批实测对齐——旧断言比 #header 为 v3 批欠账，main 快照同红）；
+//       发送钮 = 微信绿跟随主对话（v3 实现批 2026-10-31 作者 12:32「其它面板发送钮
+//       跟随主对话」，--ctl-send-* 考古绿 #07C160——10-30 墨族档退役，旧断言欠账同批）；
+//       通知点底色 = --color-primary（身份/状态绿，绿降级冻结保留）
+//   T14 文档会话持久（2026-11-01 作者令「切文档之后会消失」批①）：
+//       a 切卡往返 A→B→A 转录双份保留（页内 Map 面，T4 孪生加 B 转录）；
+//       b 重载页面后开 dock：本地注水即时呈现（不等回放——mock 回放延迟 2s，
+//         注水面先出）；
+//       c 过期快照不缩水：askState 快照比本地短（重连重放竞态现场）⇒ 保留本地
+//         （AI 答不丢），快照更长 ⇒ 采纳（他机续问对账）；
+//       d localStorage 键在场（nebflow_ask:sess:<sid>，write-through 面实证）
+//   T15 对话区与输入条同宽（2026-11-01 作者令批②「对话的宽度要和下面输入框
+//       保持一致」）：气泡列内容盒左右缘 = 输入条左右缘（逐像素，≤1px）；宽
+//       气泡（长表格/长行）span 到列满档（306px 帽退役）；窄气泡仍右贴自然宽。
+//   T16 双主题截图取证（本批验收面：暗/亮两档 dock 全景存证 evidence/）
+//
+// 运行：node tests/canvas-ask-dock.spec.mjs
+// 可选 env：PORT（默认 8216，避开在跑 spec 的固定端口）、ASK_SHOTS_DIR（截图目录）。
+
+import { chromium } from 'playwright';
+import { createHash } from 'node:crypto';
+import { readFileSync, mkdirSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { installTicketMock, ticketGuard } from './nf-ticket-mock.mjs';
+
+/** 客户端/服务端同式的 ask 会话 id 派生（sha256(absPath) 前 8 hex，前缀 ask-）。 */
+const sidOf = (absPath) => 'ask-' + createHash('sha256').update(absPath, 'utf8').digest('hex').slice(0, 8);
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const WEB_DIR = resolve(HERE, '../src/main/resources/web');
+const PORT = Number(process.env.PORT || 8216);
+const BASE = `http://127.0.0.1:${PORT}`;
+const SHOTS_DIR = process.env.ASK_SHOTS_DIR || resolve(HERE, `../evidence/canvas-ask-dock/shots`);
+mkdirSync(SHOTS_DIR, { recursive: true });
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ── 静态服务（serve 真实 web/ 前端源码树，canvas-stack 同款）──
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
+  '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf',
+};
+const server = createServer((req, res) => {
+  const url = new URL(req.url, BASE);
+  let p = decodeURIComponent(url.pathname);
+  if (p === '/') p = '/index.html';
+  const file = join(WEB_DIR, p);
+  if (!file.startsWith(WEB_DIR)) { res.writeHead(403); res.end(); return; }
+  try {
+    const body = readFileSync(file);
+    res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream' });
+    res.end(body);
+  } catch {
+    res.writeHead(404); res.end('not found');
+  }
+});
+await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
+
+// ── 断言器 ──
+let pass = 0, fail = 0;
+const results = [];
+function ok(name, cond, detail = '') {
+  const line = `${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`;
+  results.push(line);
+  console.log(line);
+  if (cond) pass++; else fail++;
+}
+
+// ── ask 会话 mock 面（routeWebSocket 的 server 侧）──
+/** @type {any} */ let askWs = null;               // 活跃 page 的 ws 句柄（单页 spec）
+const inbound = [];                                // page → server 帧留档（协议断言面）
+let replayDelay = 0;                               // askState 回放延迟（T14 注水先行面；0 = 即时）
+function wsSend(obj) { if (askWs) askWs.send(JSON.stringify(obj)); }
+function askStateReply(m, fileName, messages) {
+  // askOpen 帧不携 sessionId（服务端按文件派生）——回放帧带同式派生 sid。
+  const sid = m.sessionId || sidOf((m.file && m.file.absPath) || '');
+  const key = 'ask:' + sid.slice(4, 8);
+  const deliver = () => wsSend({
+    type: 'askState',
+    sessionId: sid,
+    sessionKey: key,
+    file: (m.file && m.file.absPath) || '',
+    fileName: fileName,
+    messages: messages || [],
+  });
+  if (replayDelay > 0) setTimeout(deliver, replayDelay);
+  else deliver();
+}
+
+function nfFileRoute() {
+  return async (route) => {
+    if (await ticketGuard(route)) return;
+    const url = new URL(route.request().url());
+    const p = url.searchParams.get('path') || '';
+    return route.fulfill({ status: 200, contentType: 'text/markdown', body: `# ${p}\n\nmock body\n` });
+  };
+}
+
+async function bootPage(browser, { viewport = { width: 1600, height: 1000 }, colorScheme = 'dark' } = {}) {
+  const ctx = await browser.newContext({ viewport, colorScheme });
+  await ctx.addInitScript(() => {
+    localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
+    localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
+    localStorage.setItem('nebflow_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+    localStorage.setItem('neblink_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e.message || e).slice(0, 300)));
+  await page.route('**/api/**', (r) => r.fulfill({ json: {} }));
+  await page.route(/\/api\/nf-file\?/, nfFileRoute());
+  await installTicketMock(page);
+  await page.routeWebSocket(/\/ws/, (ws) => {
+    askWs = ws;
+    ws.onMessage((raw) => {
+      let m; try { m = JSON.parse(raw); } catch { return; }
+      inbound.push(m);
+      if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
+      if (m.type === 'askOpen') {
+        // askOpen 帧不携 sessionId（服务端按 file.absPath 派生）——mock 同式推导。
+        const name = (m.file && m.file.name) || 'file';
+        const sid = m.sessionId || sidOf((m.file && m.file.absPath) || '');
+        askStateReply(m, name, sessions.msgs[sid] || []);
+      }
+    });
+    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
+  });
+  await page.goto(BASE + '/index.html');
+  await page.waitForSelector('#activity-bar', { timeout: 15000 });
+  await sleep(600);
+  return { ctx, page, errors };
+}
+
+/** 移动档 boot（body.mobile-layer 自举，#activity-bar 手机层隐藏不等待）。 */
+async function bootMobilePage(browser, colorScheme = 'dark') {
+  const ctx = await browser.newContext({ viewport: { width: 375, height: 812 }, colorScheme, hasTouch: true });
+  await ctx.addInitScript(() => {
+    localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
+    localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
+    localStorage.setItem('nebflow_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+    localStorage.setItem('neblink_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e.message || e).slice(0, 300)));
+  await page.route('**/api/**', (r) => r.fulfill({ json: {} }));
+  await page.route(/\/api\/nf-file\?/, nfFileRoute());
+  await installTicketMock(page);
+  await page.routeWebSocket(/\/ws/, (ws) => {
+    askWs = ws;
+    ws.onMessage((raw) => {
+      let m; try { m = JSON.parse(raw); } catch { return; }
+      inbound.push(m);
+      if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
+      if (m.type === 'askOpen') {
+        // askOpen 帧不携 sessionId（服务端按 file.absPath 派生）——mock 同式推导。
+        const name = (m.file && m.file.name) || 'file';
+        const sid = m.sessionId || sidOf((m.file && m.file.absPath) || '');
+        askStateReply(m, name, sessions.msgs[sid] || []);
+      }
+    });
+    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
+  });
+  await page.goto(BASE + '/index.html');
+  await page.waitForFunction(() => document.body.classList.contains('mobile-layer'), { timeout: 20000 });
+  await sleep(800);
+  return { ctx, page, errors };
+}
+
+/** 每文件 ask 转录的 mock 存取（T4 独立 session 用：askState 回放各自转录）。 */
+const sessions = { msgs: {} };
+function expectTranscript(sid, msgs) { sessions.msgs[sid] = msgs; }
+
+async function openFile(page, name, { state = 'visible', itemType = 'markdown', content } = {}) {
+  const absPath = `/tmp/canvas-ask-fixture/${name}`;
+  await page.evaluate(({ name, absPath, itemType, content }) => {
+    window.dispatchEvent(new CustomEvent('workspace-open-item', {
+      detail: {
+        id: 'file:' + absPath, itemType, title: name,
+        content: content != null ? content : `# ${name}\n\nmock body\n`,
+        absPath, pinned: true,
+      },
+    }));
+  }, { name, absPath, itemType, content });
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="file:${absPath}"]`, { state, timeout: 10000 });
+  await sleep(300);
+  return absPath;
+}
+
+const geo = (page) => page.evaluate(() => {
+  const panel = document.getElementById('canvas-panel');
+  const fab = document.querySelector('.ask-fab');
+  const dock = document.querySelector('.ask-dock');
+  const head = document.querySelector('#canvas-slide .canvas-header');
+  const pr = panel.getBoundingClientRect();
+  const fr = fab ? fab.getBoundingClientRect() : null;
+  const cs = fab ? getComputedStyle(fab) : null;
+  const dcs = dock ? getComputedStyle(dock) : null;
+  const hcs = head ? getComputedStyle(head) : null;
+  return {
+    fab: fr ? { x: fr.x, y: fr.y, w: fr.width, h: fr.height, right: fr.right, bottom: fr.bottom } : null,
+    panel: { right: pr.right, bottom: pr.bottom },
+    fabZ: cs ? cs.zIndex : null,
+    dockZ: dcs ? dcs.zIndex : null,
+    headZ: hcs ? hcs.zIndex : null,
+    dockW: dcs ? dcs.width : null,
+    dockClosed: dock ? dock.classList.contains('closed') : null,
+    dockMaxH: dcs ? dcs.maxHeight : null,
+  };
+});
+
+async function shot(page, name) {
+  try { await page.screenshot({ path: join(SHOTS_DIR, name + '.png'), fullPage: false }); } catch { /* headless 沙箱截不到就算了 */ }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+const browser = await chromium.launch();
+try {
+  // ── 桌面（暗档基准）──
+  const { page, errors } = await bootPage(browser);
+  const absA = await openFile(page, '记忆检索调优笔记.md');
+  const absB = await openFile(page, 'wiki-graph-redesign-design.md');
+  await openFile(page, '记忆检索调优笔记.md'); // 收敛 active 回 A
+  await sleep(400);
+
+  // T0 载入健康
+  ok('T0 页面零 pageerror', errors.length === 0, errors.slice(0, 2).join(' | '));
+
+  // T1 入口几何 + z 序
+  const g1 = await geo(page);
+  ok('T1a 入口钮 48×48（命中盒=视觉径；canvas 控件尺寸对齐批 2026-11-02 作者令 09:41：44 → 48 = canvas chrome 档）', !!g1.fab && Math.abs(g1.fab.w - 48) < 1.5 && Math.abs(g1.fab.h - 48) < 1.5, JSON.stringify(g1.fab));
+  ok('T1b 右下角最靠右（右缘距面板右缘 ~14px）', !!g1.fab && Math.abs(g1.panel.right - g1.fab.right - 14) < 3, `gap=${g1.panel.right - (g1.fab ? g1.fab.right : 0)}`);
+  // T1c 座位契约（单行排布批 2026-11-01 作者令 16:18「功能钮靠左、ask 单独
+  // 靠右，一行两端对齐」）：基准 = 与左锚文档工具簇行共中线。簇在 pane 内
+  // bottom:16、钮高 = --cv-size-circle-lg（件3 批后 40）⇒ 中线 = 面板底 − (16 + 8 + 半钮高)
+  // = 44、fab 48 半高 24 ⇒ 底距 **20**；本 spec 由实测簇中线派生（不再写死 24，
+  // 48 档时代的常量）—— 簇/钮档再改，判据自动跟随；左锚簇与右缘 fab 异侧不再让位，实测让位
+  // 只剩通栏底栏（epub reader nav，上沿+12）。本环境无 epub → 基准。
+  const seatExpect = await page.evaluate(() => {
+    const panel = document.getElementById('canvas-panel');
+    if (!panel) return 24;
+    const pr = panel.getBoundingClientRect();
+    let occupied = 0;
+    panel.querySelectorAll('.epub-reader-nav').forEach((f) => {
+      const h = /** @type {HTMLElement} */ (f);
+      if (h.hidden || h.offsetParent === null) return;
+      const r = h.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) return;
+      occupied = Math.max(occupied, pr.bottom - r.top);
+    });
+    if (occupied > 0) return occupied + 12;
+    // 件3 批（2026-11-05）：基准由**实测簇行中线**派生（簇钮档 = --cv-size-circle-lg，
+    // 40 档 ⇒ 中线 44、fab 48 ⇒ 底距 20）；不再写死 24（48 档时代的常量，改档即漂 4px）。
+    const rowBtn = panel.querySelector('.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle');
+    const rb = rowBtn ? rowBtn.getBoundingClientRect() : null;
+    const fabEl = document.querySelector('.ask-fab');
+    const fabH = fabEl ? fabEl.getBoundingClientRect().height : 48;
+    const mid = rb && rb.height > 0 ? pr.bottom - (rb.top + rb.height / 2) : 48;
+    return Math.max(8, Math.round(mid - fabH / 2));
+  });
+  ok('T1c 座位：基准 = 实测簇中线 − fab 半高（件3 批：簇钮 40 ⇒ 中线 44 ⇒ 基准 20；与左锚工具簇共中线），通栏底栏在场时实测让位（上沿+12）', !!g1.fab && Math.abs(g1.panel.bottom - g1.fab.bottom - seatExpect) < 3, `gap=${g1.panel.bottom - (g1.fab ? g1.fab.bottom : 0)} expected=${seatExpect}`);
+  // 单行排布批：一行两端对齐——文档工具簇贴 pane 左缘、fab 独守右缘、同带共中线。
+  const rowAlign = await page.evaluate(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const pr = pane ? pane.getBoundingClientRect() : null;
+    const circles = pane ? [...pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-ref-select')].filter((b) => !b.hidden && b.offsetParent !== null) : [];
+    const fab = document.querySelector('.ask-fab');
+    if (!pr || !circles.length || !fab) return null;
+    const fb = fab.getBoundingClientRect();
+    const cLeft = Math.min(...circles.map((b) => b.getBoundingClientRect().left)) - pr.left;
+    const cCenter = circles.reduce((s, b) => { const r = b.getBoundingClientRect(); return Math.max(s, r.top + r.height / 2); }, 0);
+    return { cLeft, fabCenter: fb.top + fb.height / 2, cCenter, dy: Math.abs(fb.top + fb.height / 2 - cCenter) };
+  });
+  ok('T1f 单行两端对齐：工具簇贴左（16px 栅格）∧ fab 独右 ∧ 同行共中线（≤2.5px）',
+    !!rowAlign && rowAlign.cLeft <= 17 && rowAlign.dy <= 2.5,
+    JSON.stringify(rowAlign));
+  // 对话框锚点（作者令「ask 展开的对话框正好落在按钮行的上一行，按钮行在其
+  // 下方贴着，展开方向向上」）：开态 dock 底缘钉 fab 顶上方 10px 缝。
+  await page.click('.ask-fab');
+  await sleep(400);
+  const dockAnchor = await page.evaluate(() => {
+    const fab = document.querySelector('.ask-fab').getBoundingClientRect();
+    const dock = document.querySelector('.ask-dock').getBoundingClientRect();
+    return { gap: fab.top - dock.bottom, above: dock.bottom <= fab.top + 1 };
+  });
+  ok('T1g 对话框锚点：dock 展开底缘在按钮行上一行（fab 顶上方 10px 缝，向上展开）',
+    dockAnchor.above && dockAnchor.gap >= 6 && dockAnchor.gap <= 13, JSON.stringify(dockAnchor));
+  await page.keyboard.press('Escape');
+  await sleep(350);
+  ok('T1d z 序排他：fab 25 / dock 24 < 顶行胶囊 30', g1.fabZ === '25' && g1.dockZ === '24' && Number(g1.headZ) >= 30, `fab=${g1.fabZ} dock=${g1.dockZ} head=${g1.headZ}`);
+  ok('T1e dock 桌面档宽 372px', g1.dockW === '372px', g1.dockW);
+
+  // T2 开合三通路
+  await page.click('.ask-fab');
+  await sleep(400);
+  let g2 = await geo(page);
+  const fabOpen = await page.evaluate(() => document.querySelector('.ask-fab').classList.contains('open'));
+  const inputFocused = await page.evaluate(() => document.activeElement === document.querySelector('.ask-dock textarea'));
+  ok('T2a 点击入口开：dock 摘 .closed + fab.open + 输入聚焦', !g2.dockClosed && fabOpen && inputFocused, `closed=${g2.dockClosed} open=${fabOpen} focus=${inputFocused}`);
+  const anchored = await page.evaluate(() => {
+    // 液态形变批（2026-11-07 12:22）：形变载体从容器搬到**玻璃面本体**
+    // （.ask-input），锚点语义不变（锚在 fab 那一角 = 本体右下角）；容器侧
+    // 改为断言「零 transform / 零 opacity」——那正是 ①/② 两条病根的判据。
+    const d = document.querySelector('.ask-dock');
+    const f = document.querySelector('.ask-dock .ask-input');
+    const [ox, oy] = getComputedStyle(f).transformOrigin.split(' ').map(parseFloat);
+    const cs = getComputedStyle(d);
+    return {
+      ox, oy, w: f.offsetWidth, h: f.offsetHeight,
+      dockTransform: cs.transform, dockOpacity: cs.opacity,
+    };
+  });
+  ok('T2b 形变锚点 = 玻璃面本体右下角（100% 100% ⇒ 锚在 fab 侧）+ 容器零 transform/零 opacity（不成 backdrop root）',
+    Math.abs(anchored.ox - anchored.w) < 2 && Math.abs(anchored.oy - anchored.h) < 2
+      && (anchored.dockTransform === 'none' || anchored.dockTransform === 'matrix(1, 0, 0, 1, 0, 0)')
+      && anchored.dockOpacity === '1', JSON.stringify(anchored));
+  await page.keyboard.press('Escape');
+  await sleep(400);
+  g2 = await geo(page);
+  ok('T2c 通路② Esc 收起', g2.dockClosed === true);
+  await page.click('.ask-fab');
+  await sleep(350);
+  await page.evaluate(() => {
+    const content = document.getElementById('canvas-content');
+    const event = { bubbles: true, pointerId: 42, pointerType: 'mouse', isPrimary: true, button: 0, clientX: window.innerWidth / 2 };
+    content.dispatchEvent(new PointerEvent('pointerdown', event));
+    content.dispatchEvent(new PointerEvent('pointerup', event));
+  });
+  await sleep(350);
+  g2 = await geo(page);
+  ok('T2d 通路③ 画布空白点击收起', g2.dockClosed === true);
+
+  // T3 提问 → 流式回填（mock 协议面）
+  inbound.length = 0;
+  await page.click('.ask-fab');
+  await sleep(350);
+  await page.fill('.ask-dock textarea', 'τ 为什么取 30 天？');
+  await page.press('.ask-dock textarea', 'Enter');
+  await sleep(200);
+  const askOpenIdx = inbound.findIndex((m) => m.type === 'askOpen');
+  const askQ = inbound.find((m) => m.type === 'askQuestion');
+  const sidRe = /^ask-[0-9a-f]{8}$/;
+  ok('T3a askOpen 先行且 sessionId=ask-<8hex>（每文件绑定）', askOpenIdx >= 0 && !!askQ && askOpenIdx < inbound.indexOf(askQ) && sidRe.test(askQ.sessionId), JSON.stringify({ openIdx: askOpenIdx, sid: askQ && askQ.sessionId }));
+  ok('T3b askQuestion 携带提问原文', !!askQ && askQ.content === 'τ 为什么取 30 天？');
+  const askedSid = askQ ? askQ.sessionId : '';
+  // 主会话 id 随帧上报（转交目标刷新面）
+  ok('T3c askQuestion 携带 mainSessionId（§7 转交目标）', !!askQ && typeof askQ.mainSessionId === 'string' && askQ.mainSessionId.length > 0, String(askQ && askQ.mainSessionId));
+  // mock 服务端流式应答
+  const userBub = await page.waitForSelector('.ask-dock .ask-bub.user', { timeout: 3000 });
+  const userText = await userBub.textContent();
+  ok('T3d user 气泡即时呈现', userText.includes('τ 为什么取 30 天？'), userText.slice(0, 40));
+  await page.waitForSelector('.ask-dock .ask-stream-line', { timeout: 2000 }).then(() => ok('T3e 单行流式指示在场', true)).catch(() => ok('T3e 单行流式指示在场', false));
+  wsSend({ type: 'textDelta', sessionId: askedSid, delta: '笔记「近因加权」节：' });
+  await sleep(60);
+  const streamLine = await page.evaluate(() => {
+    const line = document.querySelector('.ask-dock .ask-stream-line');
+    return line ? { text: line.textContent, overflow: getComputedStyle(line).overflowX, pointerEvents: getComputedStyle(line).pointerEvents, height: line.getBoundingClientRect().height } : null;
+  });
+  ok('T3e1 流式行显示增量、单行且不可交互展开', !!streamLine && streamLine.text.includes('笔记') && streamLine.height < 60 && streamLine.pointerEvents === 'none', JSON.stringify(streamLine));
+  const streamContract = await page.evaluate(() => {
+    const line = document.querySelector('.ask-dock .ask-stream-line');
+    const col = line.parentElement;
+    const reference = document.createElement('div');
+    reference.className = 'nf-workline nf-wl-think';
+    reference.textContent = 'Reference';
+    document.body.append(reference);
+    const props = ['fontSize', 'fontWeight', 'lineHeight', 'color', 'opacity'];
+    const actual = getComputedStyle(line), expected = getComputedStyle(reference);
+    const styles = Object.fromEntries(props.map(p => [p, [actual[p], expected[p]]]));
+    const caret = ['content', 'color', 'animationName', 'animationDuration', 'animationTimingFunction'].map(p => [p, getComputedStyle(line, '::after')[p], getComputedStyle(reference, '::after')[p]]);
+    // Constrain the actual flex column: a last flex item must not shrink below its line box.
+    const old = col.style.cssText;
+    col.style.height = '80px';
+    col.style.maxHeight = '80px';
+    const range = document.createRange();
+    range.selectNodeContents(line);
+    const text = range.getBoundingClientRect(), box = line.getBoundingClientRect();
+    const geometry = { textTop: text.top, textBottom: text.bottom, boxTop: box.top, boxBottom: box.bottom, clientHeight: line.clientHeight, scrollHeight: line.scrollHeight };
+    col.style.cssText = old;
+    reference.remove();
+    return { styles, caret, geometry };
+  });
+  const g = streamContract.geometry;
+  ok('T3e2 拥挤列内流式文字行框完整', g.textTop >= g.boxTop - 0.5 && g.textBottom <= g.boxBottom + 0.5 && g.scrollHeight <= g.clientHeight, JSON.stringify(g));
+  ok('T3e3 主会话流式文字与光标计算样式一致', Object.values(streamContract.styles).every(([a, b]) => a === b) && streamContract.caret.every(([, a, b]) => a === b), JSON.stringify({ styles: streamContract.styles, caret: streamContract.caret }));
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  const reducedCaret = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-stream-line'), '::after').animationName);
+  ok('T3e4 减少动态效果时流式光标不闪烁', reducedCaret === 'none', reducedCaret);
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await shot(page, 't3-stream-line');
+  for (const d of ['τ=30 半衰期 ≈21 天。', '<cite>§近因加权</cite>']) {
+    wsSend({ type: 'textDelta', sessionId: askedSid, delta: d });
+    await sleep(60);
+  }
+  const aiMid = await page.evaluate(() => document.querySelector('.ask-dock .ask-stream-line')?.textContent || '');
+  ok('T3f textDelta 增量更新单行流式预览', aiMid.includes('τ=30 半衰期 ≈21 天。'), aiMid.slice(0, 50));
+  wsSend({ type: 'done', sessionId: askedSid });
+  await sleep(250);
+  const aiFinal = await page.evaluate(() => {
+    const nodes = [...document.querySelectorAll('.ask-dock .ask-bub.ai')];
+    return nodes.length ? nodes[nodes.length - 1].textContent : '';
+  });
+  const streamGone = await page.$('.ask-dock .ask-stream-line');
+  ok('T3g done 定稿（转录保留 + 流式行消失，无完成标记）', aiFinal.includes('τ=30 半衰期 ≈21 天') && !streamGone && !(await page.$('.ask-dock .ask-bub.typing')), aiFinal.slice(-30));
+  const fabState = await page.evaluate(() => {
+    const f = document.querySelector('.ask-fab');
+    const dot = getComputedStyle(f.querySelector('.ask-sess-dot'));
+    return { hasUnread: f.classList.contains('has-unread'), dotBg: dot.backgroundColor, dotOpacity: dot.opacity };
+  });
+  // 三修②（作者令 2026-10-29）：点=未读通知。全程在看着流（dock 开）⇒ 无未读
+  // ⇒ 点不亮（旧「has-sess 有过消息即亮紫点」退役——此处正是旧口径会误亮的现场）。
+  ok('T3h 在看流（dock 开）无未读：通知点不亮', !fabState.hasUnread && parseFloat(fabState.dotOpacity) < 0.1, JSON.stringify(fabState));
+  await shot(page, 't3-conversation');
+
+  // ── F 修复批 2026-10-31（作者令 10-31 10:43 + 截屏 3 张）──────────────────
+  // F1 ④双泡：发问等待期只有 typing 一件——零空 ai 泡（根因 = 预压空 ai 泡 +
+  //    typing 泡并存；首个 textDelta 换泡单点 removeTyping）。
+  // F2 ①markdown：ai 气泡渲染复用主会话渲染腿 renderMarkdownWithMath
+  //    （代码块/表格/列表全套 HTML 产物在场，裸 markdown 字面量退场）。
+  // F3 ⑤液体玻璃 v2 顶带：.ask-veil 材质 = --g2-veil + blur(--g2-fade-blur)
+  //    saturate(--g2-fade-sat) + 两段式 mask；列顶留白 = fade-h（首条不入带）。
+  inbound.length = 0;
+  const aiCountBefore = await page.evaluate(() => document.querySelectorAll('.ask-dock .ask-bub.ai').length);
+  await page.fill('.ask-dock textarea', '## 结构\n\n- 甲\n- 乙\n\n| A | B |\n|---|---|\n| 1 | 2 |\n\n```js\ncode\n```');
+  await page.press('.ask-dock textarea', 'Enter');
+  await sleep(250);
+  const f1 = await page.evaluate((prevAi) => ({
+    user: document.querySelectorAll('.ask-dock .ask-bub.user').length,
+    ai: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+    emptyAi: [...document.querySelectorAll('.ask-dock .ask-bub.ai')].filter((b) => !b.textContent.trim()).length,
+    streamLine: document.querySelectorAll('.ask-dock .ask-stream-line').length,
+    prevAi,
+  }), aiCountBefore);
+  // ④双泡（作者截屏 3 = 空 ai 泡叠 typing 双泡）：等待期 ai 泡数不增长（无新空泡）、
+  // typing 单件；既有 T3 答复泡不算新泡。
+  ok('F1 双泡修复：等待期零新增空 ai 泡（流式单行单件）', f1.ai === f1.prevAi && f1.emptyAi === 0 && f1.streamLine === 1, JSON.stringify(f1));
+  const fAskQ = inbound.find((m) => m.type === 'askQuestion');
+  const fSid = fAskQ ? fAskQ.sessionId : askedSid;
+  for (const d of ['## 结构\n\n', '- 甲\n- 乙\n\n', '| A | B |\n|---|---|\n| 1 | 2 |\n\n', '```js\ncode\n```']) {
+    wsSend({ type: 'textDelta', sessionId: fSid, delta: d });
+    await sleep(80);
+  }
+  await sleep(200);
+  const f2mid = await page.evaluate((previousCount) => ({
+    ai: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+    streamLine: document.querySelectorAll('.ask-dock .ask-stream-line').length,
+    previousCount,
+    text: document.querySelector('.ask-dock .ask-stream-line')?.textContent || '',
+  }), aiCountBefore);
+  ok('F2 生成中仅显示一行预览（答案不提前形成气泡）',
+    f2mid.ai === f2mid.previousCount && f2mid.streamLine === 1 && f2mid.text.includes('## 结构') && f2mid.text.includes('```js'),
+    JSON.stringify(f2mid));
+  wsSend({ type: 'done', sessionId: fSid });
+  await sleep(250);
+  const f2final = await page.evaluate(() => {
+    const nodes = [...document.querySelectorAll('.ask-dock .ask-bub.ai')];
+    const b = nodes[nodes.length - 1];
+    return b ? { n: nodes.length, table: !!b.querySelector('table td'), pre: !!b.querySelector('pre') } : null;
+  });
+  ok('F2-b done 定稿：markdown 渲染保持 + ai 泡总数稳定（无空泡残留）', !!f2final && f2final.n === aiCountBefore + 1 && f2final.table && f2final.pre, JSON.stringify(f2final));
+  // F3 顶缘渐隐（毛玻璃批 2026-11-06 载体换代 —— 作者令「聊天气泡使用我们的毛玻璃
+  //    效果 显然它使用错了 现在是半透明的效果」）：列 mask 使 .ask-col 成为 backdrop
+  //    root，架空子气泡 backdrop-filter（= 半透明洗色假玻璃）⇒ mask 整体退役，
+  //    载体 = askDock.js syncAskFade 逐泡 opacity（泡顶到列顶距离在 --ask-fade-h 内
+  //    线性落 alpha）。判据：① 面板内零渐隐带遮罩元素；② .ask-col 计算样式
+  //    mask-image = none + askDock.js 源含 syncAskFade（ask-fade-content-opacity 批
+  //    2026-11-04「内容本体 alpha 渐到 0」令语义不变，只换实现载体）。
+  const f3 = await page.evaluate(() => {
+    const wrap = document.querySelector('.ask-colwrap');
+    const col = document.querySelector('.ask-col');
+    const dock = document.querySelector('.ask-dock');
+    const mainFade = document.getElementById('g2-edge-fade');
+    const ccs = getComputedStyle(col);
+    const wcs = getComputedStyle(wrap);
+    const dcs = getComputedStyle(dock);
+    return {
+      fadeLayers: dock.querySelectorAll('.ds-edge-fade, .ask-veil').length,
+      mainCls: mainFade ? mainFade.className : null,
+      colMask: String(ccs.maskImage || ccs.webkitMaskImage),
+      colMaskWebkit: String(ccs.webkitMaskImage || ''),
+      fadeH: parseFloat(ccs.getPropertyValue('--ask-fade-h')) || 0,
+      colPadTop: parseFloat(ccs.paddingTop) || 0,
+      colwrapMask: String(wcs.maskImage),
+      dockBg: dcs.backgroundColor, dockBorder: dcs.borderTopWidth, dockShadow: dcs.boxShadow,
+      dockFilter: dcs.backdropFilter || dcs.webkitBackdropFilter,
+    };
+  });
+  const askDockSrc = readFileSync(join(WEB_DIR, 'js', 'askDock.js'), 'utf8');
+  // FCC-REQ-004: history bubbles are never dimmed any more, so the per-bubble opacity carrier is gone;
+  // the clearance band (--ask-fade-h) stays as plain padding.
+  ok('F3 顶缘无渐隐（面板内零遮罩条元素；.ask-col 零 mask（backdrop root 摘除）'
+    + '+ askDock.js 无逐泡 opacity 载体；--ask-fade-h 净空档保留）',
+    f3.fadeLayers === 0 && f3.colMask === 'none' && f3.fadeH > 0 && !/syncAskFade/.test(askDockSrc) && !/\.style\.opacity\s*=/.test(askDockSrc),
+    JSON.stringify({ layers: f3.fadeLayers, mask: f3.colMask, fadeH: f3.fadeH, syncAskFade: /syncAskFade/.test(askDockSrc), opacityWrite: /\.style\.opacity\s*=/.test(askDockSrc) }));
+  ok('F3-b 整体透明无边框（dock 零背景/零边框/零浮影/零 backdrop-filter；外框零 mask）',
+    f3.dockBg === 'rgba(0, 0, 0, 0)' && parseFloat(f3.dockBorder) === 0 && f3.dockShadow === 'none'
+      && /^none$/.test(String(f3.dockFilter)) && f3.colwrapMask === 'none' && /^none$/.test(String(f3.colwrapMask)),
+    JSON.stringify({ bg: f3.dockBg, bw: f3.dockBorder, sh: f3.dockShadow, bf: f3.dockFilter, wrapMask: f3.colwrapMask }));
+  ok('F3-c 主对话窗 #g2-edge-fade 未受影响（本批只改 Ask）', f3.mainCls !== null && /\bds-edge-fade\b/.test(String(f3.mainCls)),
+    JSON.stringify({ main: f3.mainCls }));
+  await shot(page, 'f-batch-md-render-and-fade');
+
+  // mock 服务端持久化面：A 的转录入库（T5 再开 askOpen 重放需复现——服务端为权威）。
+  expectTranscript(askedSid, [
+    { role: 'user', text: 'τ 为什么取 30 天？' },
+    { role: 'ai', text: '笔记「近因加权」节：τ=30 半衰期 ≈21 天。<cite>§近因加权</cite>' },
+  ]);
+
+  // T4 每文件独立 session：切卡即切（B 转录先登记——askOpen(B) 自动回放）
+  expectTranscript(sidOf(absB), [
+    { role: 'user', text: '引用边是从哪来的？' },
+    { role: 'ai', text: 'WikiIndex 抽取文档内链接与 ^锚 为引用边。' },
+  ]);
+  inbound.length = 0; // 切卡协议面从零起量（A 的 askOpen 已在 T3 留档）
+  await openFile(page, 'wiki-graph-redesign-design.md'); // 切到 B（dock 开着 → 即刻切 session）
+  await sleep(500);
+  const askOpenB = inbound.find((m) => m.type === 'askOpen');
+  ok('T4a 切卡后 askOpen 指向 B 文件（sid 随文件派生）',
+    !!askOpenB && !!askOpenB.file && sidOf(askOpenB.file.absPath) === sidOf(absB) && sidOf(absB) !== askedSid,
+    `${askedSid} → ${askOpenB && askOpenB.file ? askOpenB.file.absPath : '(no askOpen)'}`);
+  const badgeB = await page.evaluate(() => ({
+    retired: document.querySelectorAll('.ask-dock .ask-sess, .ask-ghost, .ask-handoff').length,
+    firstUser: (document.querySelector('.ask-dock .ask-bub.user') || {}).textContent || '',
+  }));
+  ok('T4b v2.1 减法：ghost/徽标/转交钮零残留，切卡即切 B 转录',
+    badgeB.retired === 0 && badgeB.firstUser.includes('引用边是从哪来的'), JSON.stringify(badgeB));
+  ok('T4c 气泡列切 B 转录', badgeB.firstUser.includes('引用边是从哪来的'), badgeB.firstUser.slice(0, 30));
+  // 切回 A → A 转录复现（收起保留口径）
+  await openFile(page, '记忆检索调优笔记.md');
+  await sleep(400);
+  const backA = await page.evaluate(() => ({
+    user: (document.querySelector('.ask-dock .ask-bub.user') || {}).textContent || '',
+    ai: (document.querySelector('.ask-dock .ask-bub.ai') || {}).textContent || '',
+  }));
+  ok('T4d 切回 A：会话/转录复现（收起保留口径；v2.1 起仅以气泡面呈现）',
+    backA.user.includes('τ 为什么取 30 天') && backA.ai.includes('近因加权'),
+    JSON.stringify(backA).slice(0, 120));
+  await shot(page, 't4-session-switch');
+
+  // A running must not leak its composer state into idle B, and must return on switch back.
+  wsSend({ type: 'textDelta', sessionId: askedSid, delta: 'running' });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.ask-stop')).display !== 'none');
+  await openFile(page, 'wiki-graph-redesign-design.md');
+  const idleB = await page.evaluate(() => ({
+    stop: getComputedStyle(document.querySelector('.ask-stop')).display,
+    send: getComputedStyle(document.querySelector('.ask-send')).display,
+    indicators: document.querySelectorAll('.ask-stream-line').length,
+  }));
+  ok('running state is isolated from idle B', idleB.stop === 'none' && idleB.send !== 'none' && idleB.indicators === 0, JSON.stringify(idleB));
+  await openFile(page, '记忆检索调优笔记.md');
+  const runningA = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-stop')).display !== 'none');
+  ok('running state restored on A', runningA);
+  wsSend({ type: 'done', sessionId: askedSid });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.ask-stop')).display === 'none');
+
+  // T5 未读通知点（三修② 作者令 2026-10-29：绿点只在有未读时显示，无未读不显示）
+  await page.click('.ask-fab'); // 收起（刚读完：无未读）
+  await sleep(400);
+  const t5 = await page.evaluate(() => {
+    const f = document.querySelector('.ask-fab');
+    const dot = getComputedStyle(f.querySelector('.ask-sess-dot'));
+    return { closed: document.querySelector('.ask-dock').classList.contains('closed'), pulse: f.classList.contains('pulse'), hasUnread: f.classList.contains('has-unread'), dotOpacity: dot.opacity };
+  });
+  ok('T5a 已读收起：pulse 不亮 + 通知点不亮（无未读不显示）',
+    t5.closed && !t5.pulse && !t5.hasUnread && parseFloat(t5.dotOpacity) < 0.1, JSON.stringify(t5));
+  // 闭窗推流（dock 收着，回复到达）→ 绿点（--color-primary #07c160）点亮 + pulse 唤回
+  wsSend({ type: 'textDelta', sessionId: askedSid, delta: '闭窗补一行。' });
+  wsSend({ type: 'done', sessionId: askedSid });
+  await sleep(300);
+  const t5u = await page.evaluate(() => {
+    const f = document.querySelector('.ask-fab');
+    const dot = getComputedStyle(f.querySelector('.ask-sess-dot'));
+    return { pulse: f.classList.contains('pulse'), hasUnread: f.classList.contains('has-unread'), dotBg: dot.backgroundColor, dotOpacity: dot.opacity };
+  });
+  ok('T5b 闭窗推流=未读：绿点（--color-primary）点亮 + pulse 提示',
+    t5u.hasUnread && t5u.pulse && parseFloat(t5u.dotOpacity) > 0.9 && t5u.dotBg === 'rgb(7, 193, 96)', JSON.stringify(t5u));
+  await shot(page, 't5-unread-dot');
+  await page.click('.ask-fab'); // 再开即读
+  await sleep(350);
+  const t5b = await page.evaluate(() => ({
+    open: !document.querySelector('.ask-dock').classList.contains('closed'),
+    hasUnread: document.querySelector('.ask-fab').classList.contains('has-unread'),
+    user: (document.querySelector('.ask-dock .ask-bub.user') || {}).textContent || '',
+  }));
+  ok('T5c 再开即读：通知点熄灭 + 转录复现（含闭窗增量）',
+    t5b.open && !t5b.hasUnread && t5b.user.includes('τ 为什么取 30 天'), JSON.stringify(t5b).slice(0, 100));
+
+  // T6 v2.1 减法·转交/回问（§7 机制不变，呈现面减法）
+  inbound.length = 0;
+  const t6a = await page.evaluate(() => {
+    const row = document.querySelector('.ask-dock .ask-input');
+    const btns = row ? [...row.querySelectorAll('button')] : [];
+    const stop = /** @type {HTMLElement|null} */ (row && row.querySelector('.ask-stop'));
+    return {
+      n: btns.filter((b) => getComputedStyle(/** @type {HTMLElement} */ (b)).display !== 'none').length,
+      cls: btns.map((b) => b.className),
+      hasHandoff: !!document.querySelector('.ask-dock .ask-handoff'),
+      stopHidden: !!stop && getComputedStyle(stop).display === 'none',
+    };
+  });
+  // 输入行为包批（2026-11-02 作者令「给 ask 也加一个 interrupt 的状态」）：
+  // 输入条按钮面 = 发送 + 中断两枚（中断钮 idle 态 display:none 隐着，busy 才
+  // 上位）——转交钮退场契约（v2.1 减法）由 hasHandoff=false + idle 可见按钮唯一
+  // （.ask-send）共同钉住；T-IX 批（ask-input-composer.spec）另有 busy 互换全断言。
+  // 转回合按钮单源批（ui-unification-20261103-canvas-ask-resize）：两钮在 DOM 上
+  // 追加了主会话同一组件类 `ds-turn-btn ds-turn-btn--send|--stop`（作者令「发送
+  // 按钮与终止按钮样式与主会话完全统一」）⇒ 本钉由「className 逐字等于 ask-send」
+  // 改为「**首 token** 仍是身份钩子 ask-send」（钩子在前的次序契约不变，组件类
+  // 在场由 canvas-ask-resize.spec 的 c7/c11/c12 独立钉住）。
+  ok('T6a v2.1 单箭头 + 中断钮对：转交钮退场，idle 可见按钮唯一 = .ask-send（.ask-stop 隐）',
+    !t6a.hasHandoff && t6a.n === 1 && String(t6a.cls[0]).split(/\s+/)[0] === 'ask-send' && t6a.stopHidden === true,
+    JSON.stringify(t6a));
+  // 转交回执（服务端 ack 帧）收进不可见处：零 sys 气泡、气泡总数不变
+  const before6b = await page.evaluate(() => document.querySelectorAll('.ask-dock .ask-bub').length);
+  wsSend({ type: 'askHandoffAck', sessionId: askedSid, ok: true, question: 'τ 为什么取 30 天？' });
+  await sleep(300);
+  const t6b = await page.evaluate(() => ({
+    n: document.querySelectorAll('.ask-dock .ask-bub').length,
+    sys: document.querySelectorAll('.ask-dock .ask-bub.sys').length,
+  }));
+  ok('T6b v2.1 回执收进不可见处：ack 帧后零 sys 气泡、气泡面不生长',
+    t6b.sys === 0 && t6b.n === before6b, `bubbles=${before6b}→${t6b.n} sys=${t6b.sys}`);
+  // 主会话回问（注入 user 帧进 ask 会话）→ §7 契约：以用户消息形态呈现
+  wsSend({ type: 'user', sessionId: askedSid, injected: true, text: '主会话回问：需要我帮你做什么？' });
+  await sleep(300);
+  const t6c = await page.evaluate(() => {
+    const users = [...document.querySelectorAll('.ask-dock .ask-bub.user')];
+    return { last: users.length ? users[users.length - 1].textContent : '', sys: document.querySelectorAll('.ask-dock .ask-bub.sys').length };
+  });
+  ok('T6c 主会话回问以 user 族呈现且带前缀（问答面两族制）',
+    t6c.last.includes('主会话回问：需要我帮你做什么') && t6c.sys === 0, t6c.last.slice(0, 50));
+  // 错误呈现 v2.1：不起 sys 气泡——文本落助手气泡槽
+  wsSend({ type: 'error', sessionId: askedSid, message: 'mock 失败' });
+  await sleep(300);
+  const t6d = await page.evaluate(() => {
+    const ais = [...document.querySelectorAll('.ask-dock .ask-bub.ai')];
+    return { last: ais.length ? ais[ais.length - 1].textContent : '', sys: document.querySelectorAll('.ask-dock .ask-bub.sys').length };
+  });
+  ok('T6d 错误落助手气泡槽（零 sys 呈现）', t6d.last.includes('出错了：mock 失败') && t6d.sys === 0, t6d.last.slice(0, 40));
+  await shot(page, 't6-handoff-reply');
+
+  // T7 主会话零交集（视图排他）
+  const chatCount = await page.evaluate(() => document.querySelectorAll('#chat .bubble').length);
+  for (const d of ['背景流式', '探测']) wsSend({ type: 'textDelta', sessionId: askedSid, delta: d });
+  await sleep(250);
+  const chatCount2 = await page.evaluate(() => document.querySelectorAll('#chat .bubble').length);
+  ok('T7 ask 流式全程 #chat 气泡计数不变（零交集）', chatCount === chatCount2, `${chatCount} → ${chatCount2}`);
+
+  // T8 UI 纪律
+  const t8 = await geo(page);
+  const colwrapMaxH = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-colwrap')).maxHeight);
+  ok('T8a 列 max-h 316（E-2 桌面档，小巧不占 canvas）', colwrapMaxH === '316px', colwrapMaxH);
+  const maskCount = await page.evaluate(() => document.querySelectorAll('.ask-overlay-mask, .nf-modal-backdrop-ask').length);
+  ok('T8b 零遮罩零面板（无窗体形态）', maskCount === 0);
+  const colTouch = await page.evaluate(() => getComputedStyle(document.querySelector('.ask-col')).touchAction);
+  ok('T8c 气泡列 touch-action: pan-y（#988 列内纵滚原生）', colTouch === 'pan-y', colTouch);
+
+  // T10 v2.1 减法纪律（作者令 2026-10-28 22:42「简约一点。不需要两个箭头…」）
+  const t10a = await page.evaluate(() => ({
+    ghost: document.querySelectorAll('.ask-ghost').length,
+    sess: document.querySelectorAll('.ask-dock .ask-sess').length,
+    handoff: document.querySelectorAll('.ask-handoff').length,
+  }));
+  ok('T10a v2.1 退场件零残留（ghost 提示行 / session 徽标 / 转交钮）',
+    t10a.ghost === 0 && t10a.sess === 0 && t10a.handoff === 0, JSON.stringify(t10a));
+  // 旧 T10b「短快照回放过滤 sys」退役（持久批 2026-11-01）：askState 合并改
+  // 「永不缩水」后，比本地短的快照保留本地（不再换血）——sys 过滤面由 T14e
+  // 以「长快照含 sys」强断言接棒（可见行逐字重建 + 两条 sys，采纳后面仍只出
+  // user/ai 两族）。
+  // 服务端转录 sys 帧过滤面 → T14e（长快照腿）接棒，见 T14 段。
+
+  // T12 风格统一（三修③ 作者令 2026-10-29「对齐 canvas 统一风格，不新造风格」）：
+  // 三面（fab/输入条/气泡）计算材质与聊天 #header 玻璃模板逐项相等——GU2-7
+  // 「材质字面量零自带」同律的 ask 域落点；发送钮/通知点归全站绿家族。
+  // 量测前先清测试态：指针挪开（fab :hover 抬亮 --cv-hover-bg 会污染 bg 读数）
+  // + blur（输入条 focus-within 活性蓝描边会污染 border 读数），再等材质过渡走完。
+  await page.mouse.move(8, 8);
+  await page.evaluate(() => { try { document.activeElement && document.activeElement.blur(); } catch { /* detached */ } });
+  await sleep(350);
+  const mat = await page.evaluate(() => {
+    const pick = (el) => {
+      if (!el) return null;
+      const cs = getComputedStyle(el);
+      return { bg: cs.backgroundColor, border: cs.borderTopColor, blur: cs.backdropFilter };
+    };
+    // 不透明毛玻璃改判批（作者令 2026-11-05 09:32「看不清楚 ⇒ 要 Header 同款，
+    // 那个是不透明的」）：Ask 面（输入条/气泡）与 #header 的关系从「底逐项相等」
+    // 改判成「同一套配方 + 底收 α 到 1」。判据拆成三件实测：
+    //   ① 配方件（blur 参数 / 描边 token）与 #header 逐项相等；
+    //   ② Ask 面底的 α = 1（= 不再透出背后文档正文；#header 仍是 .55/.68，它靠
+    //      #chat 的 mask 把内容洗掉才读成不透明，见 sapphire --glass-bg-opaque 注）；
+    //   ③ Ask 面底 = --glass-bg 压平在 --color-bg 上的合成值（同色收 α，零新色相）。
+    const probe = document.createElement('div');
+    document.body.appendChild(probe);
+    const norm = (raw) => {
+      if (!raw) return null;
+      probe.style.backgroundColor = '';
+      probe.style.backgroundColor = String(raw).trim();
+      const m = String(getComputedStyle(probe).backgroundColor).match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const p = m[1].split(/[,/]/).map((x) => parseFloat(x.trim()));
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    };
+    const cs0 = getComputedStyle(probe);
+    const glassBg = norm(cs0.getPropertyValue('--glass-bg'));
+    const paper = norm(cs0.getPropertyValue('--color-bg'));
+    probe.remove();
+  const opaqueBg = norm(cs0.getPropertyValue('--nf-glass-opaque-bg'));
+    const asRgba = (s) => {
+      const m = String(s).match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const p = m[1].split(/[,/]/).map((x) => parseFloat(x.trim()));
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    };
+    return {
+      fab: pick(document.querySelector('.ask-fab')),
+      input: pick(document.querySelector('.ask-input')),
+      bub: pick(document.querySelector('.ask-bub.ai')),
+      // 悬浮族 F1 参照（v3 批 liquid-glass.css ④：ask-fab 与 deck-fab 同族配方）
+      deck: pick(document.getElementById('deck-fab')),
+      header: pick(document.getElementById('header')),
+      inputBg: asRgba(pick(document.querySelector('.ask-input')).bg),
+      bubBg: asRgba(pick(document.querySelector('.ask-bub.ai')).bg),
+      opaqueBg,
+    };
+  });
+  const matSame = (a, b) => !!a && !!b && a.bg === b.bg && a.border === b.border && a.blur === b.blur;
+  // v3 F1 扩面批（作者 12:32「悬浮族 = F1」）：入口钮材质归 --g2-fab-* 单源 =
+  // #deck-fab 同族（旧「= #header」断言为 v3 批欠账——ask.css 三修③ 的 --cv-*
+  // 基础档被 liquid-glass.css ④ 后写胜出，#deck-fab 同吃同配方，两者计算样式相等）。
+  ok('T12a 入口钮材质 = 悬浮族 F1 单源（#deck-fab 同配方逐项相等）', matSame(mat.fab, mat.deck), JSON.stringify({ fab: mat.fab, deck: mat.deck }));
+  // 配方件相等（blur / border 逐项）+ 底 α≥.97（正文区不透字）。
+  const recipeSame = (a, b) => !!a && !!b && a.border === b.border && a.blur === b.blur;
+  const near3 = (x, y) => !!x && !!y && Math.abs(x.r - y.r) <= 1 && Math.abs(x.g - y.g) <= 1 && Math.abs(x.b - y.b) <= 1;
+  ok('T12b 输入条 = #header 同套配方（blur/描边逐项相等）+ 正文底 α≥.97',
+    recipeSame(mat.input, mat.header) && !!mat.inputBg && mat.inputBg.a >= 0.97,
+    JSON.stringify({ input: mat.input, ref: mat.header, bg: mat.inputBg }));
+  ok('T12c 气泡 = #header 同套配方（blur/描边逐项相等）+ 正文底 α≥.97',
+    recipeSame(mat.bub, mat.header) && !!mat.bubBg && mat.bubBg.a >= 0.97,
+    JSON.stringify({ bub: mat.bub, ref: mat.header, bg: mat.bubBg }));
+  const greenFaces = await page.evaluate(() => ({
+    send: getComputedStyle(document.querySelector('.ask-input .ask-send')).backgroundColor,
+    sendInk: getComputedStyle(document.querySelector('.ask-input .ask-send')).color,
+    dot: getComputedStyle(document.querySelector('.ask-fab .ask-sess-dot')).backgroundColor,
+  }));
+  // v3 实现批（作者 12:32「其它面板发送钮跟随主对话」）：墨族档退役，考古绿
+  // --ctl-send-bg（#07C160）回归——与主对话发送键同源（input.css 基准）。
+  // 12:52 批改判（作者令「底部按钮毛玻璃照抄顶部两个按钮」）：发送钮材质吃玻璃
+  // token（--cv-bg 玻璃底），微信绿改走**墨色**通道（.ds-turn-btn--send color =
+  // --ctl-send-bg）——两条作者令并存 ⇒ 材质令优先于底色令，语义绿保留在 icon 上。
+  ok('T12d 发送钮 = 微信绿跟随主对话（--ctl-send-*，#07C160）',
+    greenFaces.send === 'rgb(7, 193, 96)' || greenFaces.sendInk === 'rgb(7, 193, 96)', JSON.stringify(greenFaces));
+  ok('T12e 通知点底色 = --color-primary 品牌绿（#07c160，身份/状态色冻结保留）', greenFaces.dot === 'rgb(7, 193, 96)', greenFaces.dot);
+  await shot(page, 't12-unified-style');
+
+  // T11 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）：
+  // 入口钮只在文件型标签页挂载显示；插件面板/非文件型 surface 零残留
+  // （display:none = 出布局出命中盒），切卡离开文件 tab 即隐即收、切回复现。
+  const fabGate = () => page.evaluate(() => {
+    const f = document.querySelector('.ask-fab');
+    const d = document.querySelector('.ask-dock');
+    return {
+      fabPresent: !!f, fabHidden: !!f && getComputedStyle(f).display === 'none',
+      dockClosed: d ? d.classList.contains('closed') : null,
+    };
+  });
+  // 此刻 active = 文件卡 A（T10 留下的 dock 开着）——文件态入口在场。
+  let t11 = await fabGate();
+  ok('T11a 文件态 tab 入口在场（可见性闸放行）', t11.fabPresent && !t11.fabHidden, JSON.stringify(t11));
+  // 切到插件面板 tab（真实面板页签腿：canvas.openTab type=plugins，无 absPath）
+  // ——作者缺陷报现场（plugin-viewer/工具面板同族非文件型 surface）。
+  await page.evaluate(() => import('./js/canvas.js').then((m) => m.openTab('plugins', '插件', { type: 'plugins', closable: true })));
+  await sleep(500);
+  t11 = await fabGate();
+  ok('T11b 插件面板 tab 入口零残留（display:none 出命中盒）', t11.fabPresent && t11.fabHidden, JSON.stringify(t11));
+  ok('T11c 切卡离开文件 tab：开着切走即一并收起（dock .closed）', t11.dockClosed === true, JSON.stringify(t11));
+  await shot(page, 't11-plugin-panel-no-fab');
+  // 切回文件卡 → 入口复现（可见性闸放行）。
+  await openFile(page, '记忆检索调优笔记.md');
+  await sleep(400);
+  t11 = await fabGate();
+  ok('T11d 切回文件 tab 入口复现（闸随切卡落位）', t11.fabPresent && !t11.fabHidden, JSON.stringify(t11));
+
+  // T13 md/html 类型硬约束闸（设计稿 §2；作者 2026-10-29 11:46 自裁）：
+  // 文件型 tab 但非白名单扩展名（.txt/.scala）= 入口同闸隐藏（与可见性闸同一
+  // 悬挂点：currentFile 赋值处 isAskableFile 过滤——批⑩ 判据 = md/html + 电子书并集）+ 零 askOpen 帧外发；
+  // 白名单四扩展名（含大小写变体）放行。后端拒答腿不在本 spec（mock WS），
+  // 见 AskGateSpec（scala）与 ask-gate-live（真实例）。
+  const askOpens = () => inbound.filter((m) => m.type === 'askOpen');
+  inbound.length = 0;
+  const absTxt = await openFile(page, '实验记录.txt', { itemType: 'code' });
+  let t13 = await fabGate();
+  ok('T13a .txt 文件 tab 入口同闸隐藏（gate-off 出命中盒）', t13.fabPresent && t13.fabHidden, JSON.stringify(t13));
+  ok('T13b .txt 文件 tab dock 同闸隐藏', await page.evaluate(() => {
+    const d = document.querySelector('.ask-dock');
+    return !!d && getComputedStyle(d).display === 'none';
+  }), absTxt);
+  ok('T13c .txt 文件 tab 零 askOpen 帧外发', askOpens().length === 0, JSON.stringify(askOpens().map((m) => m.file)));
+  await shot(page, 't13-txt-no-fab');
+  await openFile(page, 'Plot.scala', { itemType: 'code' });
+  t13 = await fabGate();
+  ok('T13d .scala 文件 tab 入口同闸隐藏', t13.fabPresent && t13.fabHidden, JSON.stringify(t13));
+  const absReadme = await openFile(page, 'README.MD'); // 大小写变体放行（大小写不敏感同 FileTypeRegistry 口径）
+  t13 = await fabGate();
+  ok('T13e README.MD（大写扩展名）入口放行', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
+  await openFile(page, 'page.htm', { itemType: 'code' }); // .htm = 白名单第四扩展名
+  t13 = await fabGate();
+  ok('T13f .htm 文件 tab 入口放行（四扩展名全量）', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
+  // 批⑩ 2026-10-31（作者令「对话按钮扩到电子书格式」）：epub/mobi/azw3 并入可问面。
+  await openFile(page, 'book.epub', { itemType: 'code' });
+  t13 = await fabGate();
+  ok('T13f2 .epub 文件 tab 入口放行（批⑩ 电子书并集）', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
+  await openFile(page, 'novel.azw3', { itemType: 'code' });
+  t13 = await fabGate();
+  ok('T13f3 .azw3 文件 tab 入口放行（批⑩ 三扩展名全量）', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
+  await openFile(page, '记忆检索调优笔记.md');
+  t13 = await fabGate();
+  ok('T13g 切回 .md 文件 tab 入口复现（闸随切卡落位）', t13.fabPresent && !t13.fabHidden, JSON.stringify(t13));
+  ok('T13h 全程（含 .txt/.scala 切卡）零 askOpen 帧外发', askOpens().length === 0, JSON.stringify(askOpens().map((m) => m.file)));
+  void absTxt; void absReadme;
+
+  // ── T14 文档会话持久（2026-11-01 作者令「切文档之后会消失」批①）──────────
+  // 页内 Map + localStorage write-through 双面：切卡往返、重载重启、迟到/过期
+  // 回放三现场转录都不丢（头注动机链：重连置脏 → 发问补发 askOpen → 旧合并
+  // 守卫用短快照整表换血 = AI 答消失；本批改「永不缩水」合并 + 本地注水）。
+  await page.click('.ask-fab'); // T13g 留下的 active = A；开 dock（A 转录在页内账）
+  await sleep(450);
+  await openFile(page, 'wiki-graph-redesign-design.md'); // A→B（dock 开着即切 session）
+  await sleep(450);
+  const t14aB = await page.evaluate(() => (document.querySelector('.ask-dock .ask-bub.user') || {}).textContent || '');
+  ok('T14a 切 B：B 转录在（每文档各账）', t14aB.includes('引用边是从哪来的'), t14aB.slice(0, 30));
+  await openFile(page, '记忆检索调优笔记.md'); // B→A
+  await sleep(450);
+  const t14aA = await page.evaluate(() => ({
+    users: [...document.querySelectorAll('.ask-dock .ask-bub.user')].map((b) => b.textContent),
+    ais: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+  }));
+  ok('T14a′ 切回 A：A 转录整列复现（往返不丢）',
+    t14aA.users.some((u) => u.includes('τ 为什么取 30 天')) && t14aA.users.some((u) => u.includes('主会话回问')) && t14aA.ais >= 2,
+    JSON.stringify({ users: t14aA.users.length, ais: t14aA.ais }));
+  // T14b 本地持久键在场（write-through 实证）
+  const t14d = await page.evaluate(() => Object.keys(localStorage).filter((k) => /ask:sess:ask-[0-9a-f]{8}$/.test(k)));
+  ok('T14d 每文档持久键在场（<brand>_ask:sess:<sid>）', t14d.length >= 2, JSON.stringify(t14d));
+  // T14c 过期快照不缩水：推一个比本地短的 askState（重连重放竞态现场）——
+  // 旧守卫会整表换血（AI 答消失），新合并律保留本地。
+  const beforeShrink = await page.evaluate(() => ({
+    users: document.querySelectorAll('.ask-dock .ask-bub.user').length,
+    ais: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+  }));
+  wsSend({
+    type: 'askState', sessionId: askedSid, sessionKey: 'ask:' + askedSid.slice(4, 8),
+    file: '/tmp/canvas-ask-fixture/记忆检索调优笔记.md', fileName: '记忆检索调优笔记.md',
+    messages: [{ role: 'user', text: 'τ 为什么取 30 天？' }], // 1 行 << 本地
+  });
+  await sleep(350);
+  const afterShrink = await page.evaluate(() => ({
+    users: document.querySelectorAll('.ask-dock .ask-bub.user').length,
+    ais: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+  }));
+  ok('T14c 过期短快照不缩水（本地问答保留，AI 答不丢）',
+    afterShrink.users === beforeShrink.users && afterShrink.ais === beforeShrink.ais && afterShrink.users >= 2,
+    JSON.stringify({ before: beforeShrink, after: afterShrink }));
+  // T14e 更长快照采纳 + sys 帧渲染面永久过滤（接棒旧 T10b 面快照=
+  // 眼前可见 user/ai 行逐字重建 + 两条 sys —— 长于本地 ⇒ 对账采纳；sys 不呈现）。
+  const rebuild = await page.evaluate(() => [...document.querySelectorAll('.ask-dock .ask-bub')]
+    .map((b) => ({ role: b.classList.contains('user') ? 'user' : 'ai', text: b.textContent })));
+  wsSend({
+    type: 'askState', sessionId: askedSid, sessionKey: 'ask:' + askedSid.slice(4, 8),
+    file: '/tmp/canvas-ask-fixture/记忆检索调优笔记.md', fileName: '记忆检索调优笔记.md',
+    messages: rebuild.concat([
+      { role: 'sys', text: '↗ 已发送到主会话 · 应被过滤' },
+      { role: 'sys', text: '状态噪声类示例' },
+    ]),
+  });
+  await sleep(350);
+  const t14e = await page.evaluate(() => {
+    const col = document.querySelector('.ask-dock .ask-col');
+    return {
+      users: col.querySelectorAll('.ask-bub.user').length,
+      ais: col.querySelectorAll('.ask-bub.ai').length,
+      sys: col.querySelectorAll('.ask-bub.sys').length,
+      leak: col.textContent.includes('应被过滤') || col.textContent.includes('状态噪声类'),
+    };
+  });
+  ok('T14e 更长快照采纳（对账追平）+ sys 帧永久过滤（气泡面只出两族）',
+    t14e.sys === 0 && !t14e.leak && t14e.users === rebuild.filter((r) => r.role === 'user').length &&
+      t14e.ais === rebuild.filter((r) => r.role === 'ai').length,
+    JSON.stringify(t14e));
+  // T14b 重载注水：回放延迟 2s——dock 记录先由本地注水呈现（不等回放），
+  // 回放到达后对账不缩水。
+  replayDelay = 2000;
+  await page.reload();
+  await sleep(1200);
+  // 重载后 canvas tabs 恢复是异步腿——闸随恢复落位；显式再激活 A 收敛 active。
+  await openFile(page, '记忆检索调优笔记.md');
+  await page.click('.ask-fab');
+  await sleep(700); // < 2000ms 回放——此刻呈现面只能来自 localStorage 注水
+  const t14bEarly = await page.evaluate(() => ({
+    users: [...document.querySelectorAll('.ask-dock .ask-bub.user')].map((b) => b.textContent),
+  }));
+  ok('T14b 重载后开 dock：本地注水即时呈现（回放未到先出账）',
+    t14bEarly.users.some((u) => u.includes('τ 为什么取 30 天')),
+    JSON.stringify(t14bEarly).slice(0, 120));
+  await sleep(2300); // 回放到达
+  const t14bLate = await page.evaluate(() => ({
+    users: document.querySelectorAll('.ask-dock .ask-bub.user').length,
+    ais: document.querySelectorAll('.ask-dock .ask-bub.ai').length,
+  }));
+  ok('T14b′ 回放到达对账不缩水（记录保持）',
+    t14bLate.users >= t14bEarly.users.length && t14bLate.ais >= 1, JSON.stringify(t14bLate));
+  replayDelay = 0;
+  await shot(page, 't14-doc-session-persist');
+
+  // ── T15 对话区与输入条同宽（2026-11-01 作者令批②）────────────────────────
+  // 注入一条超长 user 行（注入族腿 = 真实 user 族呈现路径）制造宽气泡。
+  wsSend({ type: 'user', sessionId: askedSid, injected: true, text: 'W'.repeat(160) });
+  await sleep(400);
+  const t15 = await page.evaluate(() => {
+    const input = document.querySelector('.ask-dock .ask-input');
+    const col = document.querySelector('.ask-dock .ask-col');
+    const ir = input.getBoundingClientRect();
+    const cr = col.getBoundingClientRect();
+    const bubs = [...col.querySelectorAll('.ask-bub.user')];
+    const wide = bubs[bubs.length - 1];
+    const wr = wide ? wide.getBoundingClientRect() : null;
+    return {
+      leftGap: Math.abs(ir.left - cr.left),
+      rightGap: Math.abs(ir.right - cr.right),
+      wideW: wr ? wr.width : 0,
+      wideLeftGap: wr ? Math.abs(wr.left - cr.left) : 999,
+      inputW: ir.width,
+    };
+  });
+  ok('T15a 气泡列与输入条左右缘一致（≤1px）', t15.leftGap <= 1 && t15.rightGap <= 1, JSON.stringify({ left: t15.leftGap, right: t15.rightGap }));
+  ok('T15b 宽气泡 span 到列满档（306px 帽退役；窄气泡仍右贴自然宽）',
+    t15.wideW >= t15.inputW - 6 && t15.wideLeftGap <= 1, JSON.stringify({ wide: t15.wideW, input: t15.inputW, leftGap: t15.wideLeftGap }));
+  await shot(page, 't16-dark-dock-wide');
+
+  // ── T16 亮档取证（暗档已在上方 shot；亮档独立 context 全景一张）────────────
+  const lite = await bootPage(browser, { colorScheme: 'light' });
+  await openFile(lite.page, '记忆检索调优笔记.md');
+  await lite.page.click('.ask-fab');
+  await sleep(900); // askOpen 回放（mock 转录）到位
+  await shot(lite.page, 't16-light-dock');
+  ok('T16 双主题截图取证（t16-dark-dock-wide / t16-light-dock）', true, 'evidence/canvas-ask-dock/shots/');
+  await lite.page.close();
+
+  await page.close();
+
+  // ── 移动档（body.mobile-layer 自举，#988 手势纪律）──
+  const mob = await bootMobilePage(browser);
+  const isMobile = await mob.page.evaluate(() => document.body.classList.contains('mobile-layer'));
+  if (isMobile) {
+    // 移动卡层：pane 在卡层展开前 hidden → openFile 只等 attached；
+    // 先 openFile（事件建卡）再点卡层键（右抽屉 → 画板卡层展开）。
+    await openFile(mob.page, '记忆检索调优笔记.md', { state: 'attached' });
+    await sleep(400);
+    // 批⑨ 2026-10-31：手机层 FAB 可见性闸 = __nfMobileNav.top==='canvas'——
+    // 进 canvas 页走 dock 键（mh-dd 右抽屉键随 v3 下拉列批已退役）。
+    await mob.page.click('#mobile-dock .dock-key[data-dock="canvas"]');
+    await sleep(800);
+    await mob.page.waitForSelector(`.canvas-tab-pane[data-tab-id="file:/tmp/canvas-ask-fixture/记忆检索调优笔记.md"]`, { state: 'visible', timeout: 8000 }).catch(() => {});
+    await sleep(400);
+    const m1 = await mob.page.evaluate(() => {
+      // 批⑨ 2026-10-31：手机层 FAB = body 级 fixed（canvas 整页制）——座位判据
+      // 视口径。单行排布批（2026-11-01 作者令 16:18）：文档工具簇左锚化，与右缘
+      // fab 异侧零交叠——角簇让位腿退役；座位 = dock-h + --dock-inset-b（dock 悬浮
+      // 胶囊批 2026-11-01 21:07 加的下缘内距 8） + env(safe-area) + 16（与左锚簇行
+      // 同带共中线：簇 pane 内 bottom:16，pane 底 = 页底 = dock 带顶）。期望值按
+      // 活 token 读数拼装（不在 spec 里另抄一份几何真值）。
+      const fab = document.querySelector('.ask-fab');
+      if (!fab) return null;
+      const fr = fab.getBoundingClientRect();
+      const dock = document.getElementById('mobile-dock');
+      const dr = dock ? dock.getBoundingClientRect() : null;
+      const cssVar = (el, name) => parseFloat(getComputedStyle(el).getPropertyValue(name)) || 0;
+      // 同带共中线镜像核对（左锚簇可见者取中线）。
+      const pane = document.querySelector('.canvas-tab-pane.active');
+      const circles = pane ? [...pane.querySelectorAll('.canvas-source-toggle, .canvas-find-toggle, .canvas-ref-select')].filter((b) => !b.hidden && b.offsetParent !== null) : [];
+      const cCenter = circles.length
+        ? circles.reduce((s, b) => { const r = b.getBoundingClientRect(); return Math.max(s, r.top + r.height / 2); }, 0)
+        : null;
+      return {
+        w: fr.width, h: fr.height,
+        fabBottomToDock: dr ? dr.top - fr.bottom : null,
+        dockH: dr ? dr.height : null,
+        fabRightToViewport: innerWidth - fr.right,
+        fabBottomOffset: innerHeight - fr.bottom,
+        // dock 悬浮胶囊批（2026-11-01 21:07）：--dock-inset-b 8 抬出「胶囊底缘 →
+        // 簇行」；原 spec 写死 54+16 是胶囊化之前的账（HEAD 基线即红）。
+        // dock 域 token 声明在 body.mobile-layer 作用域（不在 :root）⇒ 从 body 读。
+        seatExpect: cssVar(document.body, '--dock-h') + cssVar(document.body, '--dock-inset-b') + 16,
+        cCenter,
+        fabCenter: fr.top + fr.height / 2,
+        colMaxH: getComputedStyle(document.querySelector('.ask-col')).maxHeight,
+        colwrapMaxH: getComputedStyle(document.querySelector('.ask-colwrap')).maxHeight,
+      };
+    });
+    ok('T9a 移动入口钮 48×48（悬浮钮统一批 g2-fab 基准）', !!m1 && Math.abs(m1.w - 48) < 1.5 && Math.abs(m1.h - 48) < 1.5, JSON.stringify(m1));
+    ok('T9b 座位 = dock-h + --dock-inset-b + 16（单行排布批：与左锚工具簇行同带共中线，异侧零让位；期望按活 token 拼装）',
+      !!m1 && m1.fabBottomToDock !== null && Math.abs(m1.fabBottomOffset - m1.seatExpect) < 3 && m1.fabRightToViewport <= 17,
+      JSON.stringify({ offset: m1 && m1.fabBottomOffset, expect: m1 && m1.seatExpect, right: m1 && m1.fabRightToViewport }));
+    ok('T9b2 单行同带：fab 中线 = 左锚簇中线（≤3px）', !!m1 && m1.cCenter !== null && Math.abs(m1.fabCenter - m1.cCenter) <= 3,
+      JSON.stringify({ fab: m1 && m1.fabCenter, cluster: m1 && m1.cCenter }));
+    // doc-ask-fade 批后口径：带盖内容不再吃列高 ⇒ 列可视高 = 总档（旧 250−56=194 退役）。
+    // 新档 = clamp(320px, 46vh, 420px)（活 token 解析成 px）；期望值不写常量：
+    // 断言「落在档内 ∧ 列高 = 容器档」= 无带档扣减 + 加高生效两件事一起钉住。
+    ok('T9c 列可视 max-h 落在加高档 [320,420] 且 = colwrap 档（无带档扣减；旧 194 必红）',
+      !!m1 && parseFloat(m1.colMaxH) >= 320 && parseFloat(m1.colMaxH) <= 420 && m1.colMaxH === m1.colwrapMaxH,
+      JSON.stringify({ col: m1 && m1.colMaxH, wrap: m1 && m1.colwrapMaxH }));
+    // 气泡列表面横滑零切卡（surface 归属制：peek 不亮）
+    await mob.page.click('.ask-fab');
+    await sleep(500);
+    const colBox = await mob.page.evaluate(() => {
+      const c = document.querySelector('.ask-col');
+      const r = c.getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2, visible: r.width > 0 };
+    });
+    if (colBox.visible) {
+      // pointer 流（触屏通路走 pointer events；canvasGestures 以 pointerdown 起步）
+      await mob.page.mouse.move(colBox.x, colBox.y);
+      await mob.page.mouse.down();
+      for (let i = 1; i <= 6; i++) {
+        await mob.page.mouse.move(colBox.x + i * 15, colBox.y, { steps: 1 });
+        await sleep(30);
+      }
+      await mob.page.mouse.up();
+      await sleep(300);
+      const peek = await mob.page.evaluate(() => {
+        const p = document.querySelector('.mobile-card-peek.show');
+        const dock = document.querySelector('.ask-dock');
+        return { peek: !!p, dockClosed: dock ? dock.classList.contains('closed') : null };
+      });
+      ok('T9d 气泡列表面横滑零切卡（peek 不亮 + dock 不被误关）', !peek.peek && peek.dockClosed === false, JSON.stringify(peek));
+    } else {
+      ok('T9d 气泡列表面横滑零切卡（skip：列不可见）', true, 'dock 未展开——覆盖面见桌面档');
+    }
+    await shot(mob.page, 't9-mobile');
+
+    // Ask stream-line visual evidence at requested 375×812 viewport, dark and light.
+    const mobileSid = sidOf('/tmp/canvas-ask-fixture/记忆检索调优笔记.md');
+    const mobileAsk = async (target, suffix) => {
+      const alreadyOpen = await target.evaluate(() => !document.querySelector('.ask-dock')?.classList.contains('closed'));
+      if (!alreadyOpen) await target.click('.ask-fab');
+      await sleep(350);
+      await target.fill('.ask-dock textarea', '手机流式验收');
+      await target.press('.ask-dock textarea', 'Enter');
+      await sleep(180);
+      const question = inbound.findLast((m) => m.type === 'askQuestion');
+      wsSend({ type: 'textDelta', sessionId: question?.sessionId || mobileSid, delta: '这是一段用于验证手机端单行尾随滚动的流式文本。' });
+      await sleep(120);
+      const streaming = await target.evaluate(() => {
+        const line = document.querySelector('.ask-stream-line');
+        return line && { count: document.querySelectorAll('.ask-stream-line').length, height: line.getBoundingClientRect().height, text: line.textContent, pointer: getComputedStyle(line).pointerEvents, viewport: [innerWidth, innerHeight], scrollWidth: line.scrollWidth, clientWidth: line.clientWidth };
+      });
+      ok(`T9e ${suffix}手机375×812流式态：单行可见且不可交互`, !!streaming && streaming.count === 1 && streaming.height < 60 && streaming.text.includes('单行尾随滚动') && streaming.pointer === 'none' && streaming.viewport[0] === 375 && streaming.viewport[1] === 812, JSON.stringify(streaming));
+      await shot(target, `t9-stream-${suffix}`);
+      wsSend({ type: 'done', sessionId: question?.sessionId || mobileSid });
+      await sleep(250);
+      const lingering = await target.$('.ask-stream-line');
+      ok(`T9f ${suffix}手机终态流式行消失`, !lingering);
+    };
+    await mobileAsk(mob.page, 'dark-');
+    const lightMob = await bootMobilePage(browser, 'light');
+    await openFile(lightMob.page, '记忆检索调优笔记.md', { state: 'attached' });
+    await sleep(400);
+    await lightMob.page.click('#mobile-dock .dock-key[data-dock="canvas"]');
+    await sleep(800);
+    await lightMob.page.waitForSelector('.canvas-tab-pane[data-tab-id="file:/tmp/canvas-ask-fixture/记忆检索调优笔记.md"]', { state: 'visible', timeout: 8000 }).catch(() => {});
+    await sleep(400);
+    await mobileAsk(lightMob.page, 'light-');
+    await lightMob.ctx.close();
+  } else {
+    ok('T9 移动档（skip：本环境 body.mobile-layer 未激活）', true, 'bootstrap 视口判据未命中');
+  }
+  await mob.page.close();
+
+  // ── 汇总 ──
+  console.log(`\n=== canvas-ask-dock: ${pass} pass, ${fail} fail ===`);
+} finally {
+  await browser.close();
+  server.close();
+}
+process.exit(fail ? 1 : 0);

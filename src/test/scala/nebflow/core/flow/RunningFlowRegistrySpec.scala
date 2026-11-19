@@ -135,9 +135,7 @@ class RunningFlowRegistrySpec extends FunSuite:
       _ <- RunningFlowRegistry.setNodeStatus(id, "n1", NodeStatus.Failed, "", "boom")
       afterNode <- RunningFlowRegistry.list.map(_.find(_.instanceId == id).get.status)
       // execute 末尾模拟：update(copy(status=Completed)) → 终态 + completedAt
-      _ <- RunningFlowRegistry.update(id)(rf =>
-        rf.copy(status = NodeStatus.Completed, completedAt = Some(42L))
-      )
+      _ <- RunningFlowRegistry.update(id)(rf => rf.copy(status = NodeStatus.Completed, completedAt = Some(42L)))
       flow <- RunningFlowRegistry.list.map(_.find(_.instanceId == id).get)
     yield
       assertEquals(afterNode, NodeStatus.Running, "node failure alone must not mark the flow failed")

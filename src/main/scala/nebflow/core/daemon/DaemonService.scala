@@ -5,8 +5,9 @@ import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.core.{AtomicJson, NebflowLogger, PathUtil}
+import nebflow.core.AtomicJson
 import nebflow.core.util.ProcessTree
+import nebflow.shared.{NebflowLogger, PathUtil, Retry}
 
 import java.io.{BufferedReader, InputStreamReader}
 import java.util.concurrent.locks.ReentrantLock
@@ -24,8 +25,10 @@ import scala.jdk.StreamConverters.*
  */
 final class DaemonService(
   dispatcher: Dispatcher[IO],
-  /** Marker file recording spawned pids — used to reclaim stale processes of
-   *  an abnormally-killed previous instance at boot (see reclaimStaleDaemons). */
+  /**
+   * Marker file recording spawned pids — used to reclaim stale processes of
+   *  an abnormally-killed previous instance at boot (see reclaimStaleDaemons).
+   */
   markerFile: os.Path = PathUtil.dataRoot / "daemon-pids.json"
 ):
 
@@ -94,7 +97,22 @@ final class DaemonService(
         else IO.unit
       }
 
-  /** Stop all running daemons. Called on gateway shutdown. */
+  /**
+   * seal 批（2026-11-03）：**孤儿收尸**单点。`autoStart` 内部本来就先收尸再拉起；
+   * 心跳封存后 `autoStart` 不跑，但上一实例被 SIGKILL 时遗留的子进程（含
+   * `perception-daemon`）仍会继续跑——那会让「封存」名不副实。故 boot 门在
+   * **两态都**执行本腿：只 kill 我们自己 marker + startTime 对得上的进程
+   * （用户手起的服务永不触碰），属收尸不属进程，一次性、零常驻。
+   */
+  def reclaimStaleOrphans(): IO[Unit] = reclaimStaleDaemons()
+
+  /**
+   * Stop all running daemons. Called on gateway shutdown.
+   *
+   * seal 批（2026-11-03）：本腿**不封**——它是引擎退出时的收尸面（把本进程起的
+   * daemon 一起带走），不是心跳/邮件的后台进程；心跳封存后 `autoStart` 不跑，
+   * 这里自然也没东西可停（幂等空转）。
+   */
   def stopAll(): IO[Unit] =
     entries.get.flatMap { map =>
       val running = map.values.filter(_.status == DaemonStatus.Running).toList
@@ -204,7 +222,7 @@ final class DaemonService(
    *      chain so the crash-loop counter survives process replacements.
    *
    * Port pre-flight: when the configured port is already serving — a stale
-   *      process from a previous Nebflow instance that was killed outside the
+   *      process from a previous Stand instance that was killed outside the
    *      JVM shutdown hook window, or a server the user started manually — we
    *      must NOT spawn a duplicate: it dies instantly with "address already in
    *      use" (exit 1), burns the auto-restart budget, and the crash-loop
@@ -246,7 +264,8 @@ final class DaemonService(
                   logger.info(s"[daemon] '${e2.config.name}' port $p freed — taking over") *>
                     doStartInternal(e2.config, 0).void
                       .handleErrorWith(err =>
-                        logger.error(s"[daemon] Takeover start failed for '${e2.config.name}': ${err.getMessage}") *> loop
+                        logger
+                          .error(s"[daemon] Takeover start failed for '${e2.config.name}': ${err.getMessage}") *> loop
                       )
                 case _ => IO.unit // someone else started it — done
               }
@@ -255,6 +274,9 @@ final class DaemonService(
         case _ => IO.unit // user stopped it, entry removed, or we started it — done
       )
     loop
+
+  end lowRateTakeover
+
   private def doStartInternal(config: DaemonConfig, restartCount: Int): IO[DaemonState] =
     IO.blocking {
       val workDir = config.cwd match
@@ -316,7 +338,7 @@ final class DaemonService(
     // Mark the stop as intentional BEFORE killing: monitorExit must see the
     // imminent exit as Stopped (never Crashed) and must not auto-restart. This
     // also covers the JVM shutdown path (stopAll -> doStop) — daemons must die
-    // with Nebflow, not be resurrected by the shutdown hook's own kill.
+    // with Stand, not be resurrected by the shutdown hook's own kill.
     entries.update(map => map.updated(id, entry.copy(stopRequested = true))) *>
       ProcessTree.killProcessTree(
         entry.process.getOrElse(throw new IllegalStateException(s"Daemon '$id' has no process"))
@@ -426,7 +448,7 @@ final class DaemonService(
    * daemons are persistent environment services (dev servers), so a crash must
    * bring them back. Never fires for an intentional stop (stopRequested), which
    * covers the JVM shutdown path: stopAll sets stopRequested before killing, so
-   * daemons are not resurrected while Nebflow is going down.
+   * daemons are not resurrected while Stand is going down.
    *
    * Backoff: exponential (restartBackoffSec doubled per attempt, capped at 60s).
    * Crash-loop protection: give up after restartMaxAttempts consecutive crashes.
@@ -448,7 +470,7 @@ final class DaemonService(
             val attempt = consecutive + 1
             if attempt > entry.config.restartMaxAttempts then
               // Crash budget exhausted: do NOT give up permanently. A daemon
-              // that crashed during the Nebflow-restart window (port still held
+              // that crashed during the Stand-restart window (port still held
               // by the previous instance's process) must self-heal once the
               // port frees — giving up left it dead until a manual restart
               // (2026-08-18: all three daemons dead after a restart raced the
@@ -489,11 +511,25 @@ final class DaemonService(
           end if
     }
 
-  /** Exponential backoff: base * 2^(attempt-1), capped at MaxBackoffDelay. */
-  private def backoffDelay(attempt: Int, baseSec: Int): FiniteDuration =
+  /**
+   * Exponential backoff: base * 2^(attempt-1), capped at MaxBackoffDelay.
+   *
+   * Phase 3 去重(行为保持重构,2026-09-25):延迟计算复用 shared Retry.delayAfter
+   * (初值 base、×2、上限封顶、无抖动)。原式的指数封顶 32× base
+   * (min(attempt-1, 5),cap exponential growth at 32x base)在公共层无独立轴,
+   * 等价表达为把 maxDelay 收紧到 min(MaxBackoffDelay, 32×base):attempt-1 ≤ 5
+   * 时 base×2^(attempt-1) ≤ 32×base 不触收紧;attempt-1 > 5 时公共层同样钳在
+   * 32×base——与原式逐值相等(DaemonBackoffDelaySpec 钉住)。可见性放宽到
+   * private[daemon] 供该 spec 直测;监督/轮询循环本体不动。
+   */
+  private[daemon] def backoffDelay(attempt: Int, baseSec: Int): FiniteDuration =
     val base = math.max(1, baseSec)
-    val exp = math.min(attempt - 1, 5) // cap exponential growth at 32x base
-    (base.toLong * math.pow(2, exp).toLong).seconds.min(MaxBackoffDelay)
+    Retry.delayAfter(
+      initialDelay = base.seconds,
+      failedAttemptNo = attempt,
+      multiplier = 2.0,
+      maxDelay = (base.toLong * 32L).seconds.min(MaxBackoffDelay)
+    )
 
   /** Start the active health-check fiber for a daemon with a configured port. */
   private def startHealthMonitor(config: DaemonConfig, process: Process): IO[Unit] =
@@ -622,7 +658,8 @@ final class DaemonService(
                 try
                   val opt = ph.info.startInstant()
                   if opt.isPresent then opt.get().toEpochMilli else 0L
-                catch case _: Exception => 0L
+                catch
+                  case _: Exception => 0L
               // Guard against pid reuse: a recycled pid has a DIFFERENT start
               // time than the one we recorded at spawn → not our process.
               startMs != 0L && math.abs(startMs - m.startedAt) <= 2000
@@ -631,9 +668,9 @@ final class DaemonService(
               logger.info(
                 s"[daemon] Reclaiming stale process of previous instance: '${m.name}' (pid=${m.pid}${m.port.map(p => s", port $p").getOrElse("")})"
               ) *>
-                ProcessTree.killProcessTree(ph).handleErrorWith(e =>
-                  logger.warn(s"[daemon] Reclaim kill failed for '${m.name}': ${e.getMessage}")
-                )
+                ProcessTree
+                  .killProcessTree(ph)
+                  .handleErrorWith(e => logger.warn(s"[daemon] Reclaim kill failed for '${m.name}': ${e.getMessage}"))
             } *> clearMarkers()
     }
 

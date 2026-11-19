@@ -3,8 +3,8 @@ package nebflow.core.flow
 import cats.effect.unsafe.implicits.global
 import io.circe.parser.decode
 import munit.FunSuite
-import nebflow.core.PathUtil
 import nebflow.core.entity.{EntityLoader, FlowDagDef, FlowNode, FlowStructure, NodeRoute}
+import nebflow.shared.PathUtil
 
 /**
  * R8-P2 load-time structural validation (FlowStructure.validate, wired into
@@ -42,7 +42,8 @@ class FlowStructureSpec extends FunSuite:
     val f = flowOf(
       "scanner" -> FlowNode("w", "$task", goto("reviewer")),
       "reviewer" -> FlowNode(
-        "w", "$task",
+        "w",
+        "$task",
         NodeRoute.Switch("$reviewer.verdict", Map("pass" -> ret, "fix" -> goto("fixer")))
       ),
       "fixer" -> FlowNode("w", "$task", goto("reviewer"))
@@ -110,7 +111,8 @@ class FlowStructureSpec extends FunSuite:
         "r2" -> FlowNode("w", "t", goto("verify")),
         "r3" -> FlowNode("w", "t", goto("verify")),
         "verify" -> FlowNode(
-          "w", "t",
+          "w",
+          "t",
           NodeRoute.Switch(
             "$verify.verdict",
             Map(
@@ -145,7 +147,8 @@ class FlowStructureSpec extends FunSuite:
       "r1" -> FlowNode("w", "t", goto("j")),
       "r2" -> FlowNode("w", "t", goto("j")),
       "j" -> FlowNode(
-        "w", "t",
+        "w",
+        "t",
         NodeRoute.Switch(
           "$j.verdict",
           Map("pass" -> ret, "revise" -> NodeRoute.Parallel(List("r1", "r2")))
@@ -197,12 +200,12 @@ class FlowStructureSpec extends FunSuite:
       """{"name":"f","description":"d","entry":"p","nodes":{"p":{"agent":"w","input":"$task","onComplete":{"parallel":["r1","r2"]}},"r1":{"agent":"w","input":"t","onComplete":"$return"},"r2":{"agent":"w","input":"t","onComplete":"$return"}},"maxFanout":8}"""
     decode[FlowDagDef](withFan) match
       case Right(f) => assertEquals(f.maxFanout, 8)
-      case Left(e)  => fail(s"decode failed: $e")
+      case Left(e) => fail(s"decode failed: $e")
     val withoutFan =
       """{"name":"f","description":"d","entry":"p","nodes":{"p":{"agent":"w","input":"$task","onComplete":"r1"},"r1":{"agent":"w","input":"t","onComplete":"$return"}}}"""
     decode[FlowDagDef](withoutFan) match
       case Right(f) => assertEquals(f.maxFanout, 4)
-      case Left(e)  => fail(s"decode failed: $e")
+      case Left(e) => fail(s"decode failed: $e")
 
   // ------------------------------------------------------------
   // EntityLoader integration: parseFlowJson applies structural validation

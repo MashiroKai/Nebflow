@@ -9,15 +9,16 @@ import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorRef, ActorSystem}
+import nebflow.actor.{AgentCommand, AgentDef, AgentKind, AgentRecord, messages, sessionId, status}
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.gateway.WsHub
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -61,15 +62,19 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
   private val AMarker = "TWIN-A-MARKER-418"
   private val BMarker = "TWIN-B-MARKER-418"
 
-  /** Session-routed mock LLM. delegate-Stall-* NEVER produces a chunk — the
-    * turn fiber parks on Stream.never, exactly the incident's parked fiber. */
+  /**
+   * Session-routed mock LLM. delegate-Stall-* NEVER produces a chunk — the
+   * turn fiber parks on Stream.never, exactly the incident's parked fiber.
+   */
   private class StuckLlm(
     rootSid: String,
     counters: Ref[IO, Map[String, Int]],
     requests: Ref[IO, List[LlmRequest]]
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -100,38 +105,44 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
       if req.messages.size <= 2 then
         // Turn 1 round 1: spawn the two-worker batch (Fast + Stall).
         Stream(
-          StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-            id = "tc-del-fast",
-            name = "Delegate",
-            input = JsonObject(
-              "prompt" -> "finish quickly and report".asJson,
-              "description" -> "fast worker".asJson,
-              "agent" -> "Fast".asJson
+          StreamChunk.ToolCallChunk(
+            nebflow.shared.ToolCall(
+              id = "tc-del-fast",
+              name = "Delegate",
+              input = JsonObject(
+                "prompt" -> "finish quickly and report".asJson,
+                "description" -> "fast worker".asJson,
+                "agent" -> "Fast".asJson
+              )
             )
-          )),
-          StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-            id = "tc-del-stall",
-            name = "Delegate",
-            input = JsonObject(
-              "prompt" -> "hang forever on your LLM call".asJson,
-              "description" -> "stalled worker".asJson,
-              "agent" -> "Stall".asJson
+          ),
+          StreamChunk.ToolCallChunk(
+            nebflow.shared.ToolCall(
+              id = "tc-del-stall",
+              name = "Delegate",
+              input = JsonObject(
+                "prompt" -> "hang forever on your LLM call".asJson,
+                "description" -> "stalled worker".asJson,
+                "agent" -> "Stall".asJson
+              )
             )
-          )),
+          ),
           StreamChunk.Done(None, None)
         )
       else if texts.contains("now a single one") then
         // Phantom probe: spawn a single follow-up delegate (Fast2).
         Stream(
-          StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-            id = "tc-del-fast2",
-            name = "Delegate",
-            input = JsonObject(
-              "prompt" -> "single follow-up, report immediately".asJson,
-              "description" -> "phantom probe".asJson,
-              "agent" -> "Fast2".asJson
+          StreamChunk.ToolCallChunk(
+            nebflow.shared.ToolCall(
+              id = "tc-del-fast2",
+              name = "Delegate",
+              input = JsonObject(
+                "prompt" -> "single follow-up, report immediately".asJson,
+                "description" -> "phantom probe".asJson,
+                "agent" -> "Fast2".asJson
+              )
             )
-          )),
+          ),
           StreamChunk.Done(None, None)
         )
       else if texts.contains(FastMarker) || texts.contains("cancelled") then
@@ -141,6 +152,8 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
       else
         // Round 2 of a tool turn (tool results) — end the turn.
         Stream(StreamChunk.TextDelta("batch launched, standing by"), StreamChunk.Done(None, None))
+      end if
+    end rootTurn
   end StuckLlm
 
   private def mkResources(
@@ -189,13 +202,15 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
   private def seedAgents(tmp: os.Path): Unit =
     val nebulaDir = tmp / "agents" / "Nebula"
     os.makeDir.all(nebulaDir)
-    os.write.over(nebulaDir / "agent.json",
+    os.write.over(
+      nebulaDir / "agent.json",
       """{"name":"Nebula","displayName":"Nebula","description":"e2e root","tools":["Read","Delegate"]}"""
     )
     for name <- List("Fast", "Stall", "Fast2", "TwinA", "TwinB") do
       val dir = tmp / "agents" / name
       os.makeDir.all(dir)
-      os.write.over(dir / "agent.json",
+      os.write.over(
+        dir / "agent.json",
         s"""{"name":"$name","displayName":"$name","description":"e2e worker","tools":["Read"]}"""
       )
 
@@ -204,7 +219,7 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError(s"waitUntil: condition not met within $timeout"))
@@ -285,7 +300,9 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
         )
         // (b) barrier returned to 0 and nothing is held (Fix D registry snapshot).
         _ <- waitUntil(10.seconds)(
-          resources.agentRegistry.get.map(m => m.get(rootSid).exists(r => r.outstandingSubagents == 0 && r.pendingEventCount == 0))
+          resources.agentRegistry.get.map(m =>
+            m.get(rootSid).exists(r => r.outstandingSubagents == 0 && r.pendingEventCount == 0)
+          )
         )
         // Stall deregistered + task file says cancelled (supervisor Cancelled branch).
         _ <- waitUntil(10.seconds)(
@@ -293,7 +310,7 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
         )
         _ <- resources.subAgentTaskStore.findByTaskId(stallSid).map {
           case Some(t) => assertEquals(t.status, "cancelled", s"stall task must be cancelled, got ${t.status}")
-          case None    => () // task file already pruned — fine
+          case None => () // task file already pruned — fine
         }
         // (c) no phantom: a later SINGLE delegate completes → its result
         // reaches the root (immediate injection turn; no held residue from the
@@ -314,20 +331,24 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
-  /** #418 regression: BOTH delegates complete normally, but only after turn 1
-    * ends (root back to idle). The FIRST completion must wake the idle root
-    * immediately — pre-fix the idle HOLD branch parked the parent asleep until
-    * user input ("delegate COMPLETED but the parent never turns").
-    */
+  /**
+   * #418 regression: BOTH delegates complete normally, but only after turn 1
+   * ends (root back to idle). The FIRST completion must wake the idle root
+   * immediately — pre-fix the idle HOLD branch parked the parent asleep until
+   * user input ("delegate COMPLETED but the parent never turns").
+   */
   private class TwinWakeLlm(
     rootSid: String,
     counters: Ref[IO, Map[String, Int]],
     requests: Ref[IO, List[LlmRequest]]
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -356,24 +377,28 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
         case 1 =>
           // Two parallel delegates in ONE turn: barrier +2 (spawn counting).
           Stream(
-            StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-              id = "tc-twin-a",
-              name = "Delegate",
-              input = JsonObject(
-                "prompt" -> "first worker, report immediately".asJson,
-                "description" -> "twin A".asJson,
-                "agent" -> "TwinA".asJson
+            StreamChunk.ToolCallChunk(
+              nebflow.shared.ToolCall(
+                id = "tc-twin-a",
+                name = "Delegate",
+                input = JsonObject(
+                  "prompt" -> "first worker, report immediately".asJson,
+                  "description" -> "twin A".asJson,
+                  "agent" -> "TwinA".asJson
+                )
               )
-            )),
-            StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-              id = "tc-twin-b",
-              name = "Delegate",
-              input = JsonObject(
-                "prompt" -> "second worker, report immediately".asJson,
-                "description" -> "twin B".asJson,
-                "agent" -> "TwinB".asJson
+            ),
+            StreamChunk.ToolCallChunk(
+              nebflow.shared.ToolCall(
+                id = "tc-twin-b",
+                name = "Delegate",
+                input = JsonObject(
+                  "prompt" -> "second worker, report immediately".asJson,
+                  "description" -> "twin B".asJson,
+                  "agent" -> "TwinB".asJson
+                )
               )
-            )),
+            ),
             StreamChunk.Done(None, None)
           )
         case 2 =>
@@ -483,6 +508,7 @@ class StuckDelegateReleaseSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
 end StuckDelegateReleaseSpec

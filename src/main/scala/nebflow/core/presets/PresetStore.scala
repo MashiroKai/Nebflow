@@ -4,9 +4,8 @@ import io.circe.generic.semiauto.*
 import io.circe.parser.decode
 import io.circe.syntax.*
 import io.circe.{Decoder, Encoder, Json}
-import nebflow.core.{NebflowLogger, PathUtil}
-import nebflow.shared.AgentModelConfig
-import nebflow.llm.{Config, NebflowServiceConfig}
+import nebflow.core.AtomicJson
+import nebflow.shared.*
 
 /**
  * A named model preset — a reusable `{preferred, fallbacks}` chain stored in
@@ -66,6 +65,8 @@ object PresetFile:
     yield PresetFile(defaultPreset, presets)
   }
 
+end PresetFile
+
 /**
  * File-backed store for model presets.
  *
@@ -94,26 +95,46 @@ object PresetFile:
  * The store reads the file fresh on every call (small file, rare writes) so
  * edits take effect on the next `refreshTurn` without restart or cache
  * invalidation.
+ *
+ * preset→chain 迁移批（2026-10-30）：启动迁移腿
+ * （[[nebflow.core.ModelChainMigration]]）把本目录文件迁进
+ * [[ModelChainRegistry]]（`model-chains.json`）后，走**默认路径**的 store
+ * 读面整体切到注册表（[[ModelChainRegistry.activeFor]] 判定）——旧 preset 名
+ * 逐字随迁移带走，故 `resolve` / `resolveExplicit` / `availableNames` /
+ * `catalogLines` 全部**零改动地解析到迁移后的链**（SubTask `preset` 参数、
+ * 工具文档目录、自描述错误面单源不分叉）；写面（`save` / repair 回写）同帧
+ * 落到注册表，绝不在已迁移 home 上重建被封存的 `model-presets.json`。
+ * 自定义 configPath（测试注入）永不切面，legacy 语义原样。
  */
 class PresetStore(
-    configPath: os.Path = PathUtil.dataRoot / "model-presets.json",
-    globalChainProvider: () => List[String] = () => PresetStore.readSeedChain()
+  configPath: os.Path = PathUtil.dataRoot / "model-presets.json",
+  globalChainProvider: () => List[String] = () => PresetStore.readSeedChain()
 ):
 
   private val logger = NebflowLogger.forName("nebflow.preset")
 
   private def globalChain: List[String] = globalChainProvider()
 
+  /** 迁移面判定结果缓存不得跨调用——dataRoot 可在测试中被重定向（def 语义）。 */
+  private def registryRoot: Option[os.Path] = ModelChainRegistry.activeFor(configPath)
+
   /**
    * Idempotent invariant enforcer: the preset file exists and its
    * defaultPreset carries a model chain. Call after the first provider/model
    * save (updateConfig / onboarding) and at gateway boot. A healthy file is
    * untouched (no write); an absent/empty/broken file is created or repaired.
+   * On a migrated home (chain registry present) the invariant is enforced on
+   * the registry instead — the sealed catalog is never re-seeded.
    */
   def ensureDefaultPreset(): Unit = load()
 
   /** Load the preset file, initializing it from the global chain on first use. */
   def load(): PresetFile =
+    registryRoot match
+      case Some(root) => ModelChainRegistry.load(root).map(repair).getOrElse(loadLegacy())
+      case None       => loadLegacy()
+
+  private def loadLegacy(): PresetFile =
     if !os.exists(configPath) then
       // 首载物化竞态防护（trigger-chain-fix fork 化前置硬化）：触发链并行化后并
       // 发节点 spawn 成为常态——check-then-act 下多 fiber 同时 !exists → 并发 save
@@ -145,25 +166,20 @@ class PresetStore(
         save(init)
         init
 
-  /** Atomically write the preset file (temp + rename). */
+  end loadExisting
+
+  /**
+   * Atomically write the preset file (temp + rename).
+   *
+   * 原实现为 nanoTime tmp + `os.move.over` + FileAlreadyExistsException 短退避重试
+   * （trigger-chain-fix，含阻塞 `Thread.sleep`）——`os.move.over` 的 delete-then-rename
+   * 形态是碰撞根源。现统一走 `AtomicJson.writeSync`（UUID tmp + `Files.move`
+   * REPLACE_EXISTING|ATOMIC_MOVE），碰撞形态从机制上不存在，重试与阻塞一并退役。
+   */
   def save(f: PresetFile): Unit =
-    os.makeDir.all(configPath / os.up)
-    val tmp = configPath / os.up / s".model-presets.${System.nanoTime()}.tmp"
-    os.write(tmp, f.asJson.noSpaces)
-    // 并发 save 换名碰撞重试（trigger-chain-fix）：并发 repair/init 双写时
-    // move.over 对已出现的目标抛 FileAlreadyExistsException——tmp 名含 nanoTime
-    // 互不覆盖，短退避重试即收敛；重试耗尽后原样上抛（真异常不留观感）。
-    var attempt = 0
-    var done = false
-    while !done && attempt < 5 do
-      try
-        os.move.over(tmp, configPath)
-        done = true
-      catch
-        case _: java.nio.file.FileAlreadyExistsException =>
-          attempt += 1
-          Thread.sleep(5L * attempt)
-    if !done then os.move.over(tmp, configPath)
+    registryRoot match
+      case Some(root) => ModelChainRegistry.save(f, root)
+      case None       => AtomicJson.writeSync(configPath, f.asJson.noSpaces)
 
   /**
    * Resolve an agent's model configuration given its preset reference and
@@ -216,7 +232,9 @@ class PresetStore(
       case Some(p) if p.preferred.isDefined || p.fallbacks.nonEmpty =>
         Right(AgentModelConfig(p.preferred, p.fallbacks))
       case Some(_) =>
-        Left(s"Preset '$presetName' is defined but has no model chain (preferred/fallbacks empty). Available presets: ${availableNames}")
+        Left(
+          s"Preset '$presetName' is defined but has no model chain (preferred/fallbacks empty). Available presets: ${availableNames}"
+        )
       case None =>
         Left(s"Preset '$presetName' not found. Available presets: ${availableNames}")
 
@@ -224,8 +242,10 @@ class PresetStore(
   def availableNames: String =
     load().presets.keys.toList.sorted.mkString(", ")
 
-  /** Build the initial PresetFile from the seed chain (D-a: llm.model 迁移
-    * 优先，否则首 provider 首模型——单元素链，fallbacks 由用户显式决策）。 */
+  /**
+   * Build the initial PresetFile from the seed chain (D-a: llm.model 迁移
+   * 优先，否则首 provider 首模型——单元素链，fallbacks 由用户显式决策）。
+   */
   private def initFromFile(): PresetFile =
     val globalChain = this.globalChain
     val general = ModelPreset(
@@ -265,6 +285,8 @@ class PresetStore(
               val init = initFromFile()
               save(init)
               init
+    end match
+  end repair
 end PresetStore
 
 object PresetStore:
@@ -282,7 +304,9 @@ object PresetStore:
 
   /** DI variant for tests (temp config path). */
   def catalogLines(store: PresetStore): List[String] =
-    scala.util.Try(store.load()).toOption
+    scala.util
+      .Try(store.load())
+      .toOption
       .map(_.presets.values.toList.sortBy(_.name).map { p =>
         val note = p.description.trim
         if note.isEmpty then p.name else s"${p.name} — $note"
@@ -320,6 +344,8 @@ object PresetStore:
         }
         .getOrElse(Nil)
 
+  end readGlobalChainDefault
+
   /**
    * providers 推导种子（D-a）：按 JSON 字段顺序取首个含模型 provider 的
    * 首个模型（单元素链）。**不把全部模型塞进 fallbacks**——那是重新制造
@@ -339,7 +365,9 @@ object PresetStore:
             // JsonObject 保持插入序——"首个" provider 是用户配置文件里的第一个
             providers.toIterable.view
               .flatMap { (name, pj) =>
-                pj.hcursor.downField("models").focus
+                pj.hcursor
+                  .downField("models")
+                  .focus
                   .flatMap(_.asArray)
                   .flatMap(_.headOption)
                   .flatMap(m => m.hcursor.downField("id").as[String].toOption)
@@ -350,6 +378,10 @@ object PresetStore:
               .headOption
           }
       firstRef.toList
+
+    end if
+
+  end readFromProviders
 
   /**
    * llm.model 一次性迁移（#339 D-b，boot 调用）：**先播种验证、后剥离**。
@@ -399,8 +431,12 @@ object PresetStore:
               logger.infoSync("migrated llm.model → default preset; field removed")
               true
             case None => false
-      catch case e: Exception =>
-        logger.warnSync(s"llm.model migration deferred: ${e.getMessage}")
-        false
+        end if
+      catch
+        case e: Exception =>
+          logger.warnSync(s"llm.model migration deferred: ${e.getMessage}")
+          false
+    end if
+  end migrateGlobalModelChain
 
 end PresetStore

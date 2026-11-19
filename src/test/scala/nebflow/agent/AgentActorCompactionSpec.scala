@@ -6,14 +6,41 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import fs2.Stream
 import munit.FunSuite
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentEvent,
+  AgentState,
+  AgentStatus,
+  CompactionJob,
+  compactionFailures,
+  latestUsage,
+  messages,
+  pendingCompaction,
+  sessionId,
+  withCompactionFailures,
+  withLatestUsage,
+  withMessages,
+  withPendingCompaction
+}
 import nebflow.actor.{ActorPath, ActorRef, ActorSystem, Behavior, Behaviors}
-import nebflow.core.{FileChangeTracker, PathUtil}
-import nebflow.core.compact.{CompactConfig, CompactThreshold, HistoryArchiver}
+import nebflow.core.FileChangeTracker
+import nebflow.core.compact.{CompactConfig, HistoryArchiver}
+import nebflow.shared.{CompactThreshold, PathUtil, ThinkingConfig}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, TokenUsage}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  StreamChunk,
+  TokenUsage
+}
 
 import io.circe.parser.decode
 import scala.concurrent.duration.*
@@ -276,18 +303,22 @@ class AgentActorCompactionSpec extends FunSuite:
     assertEquals(remaining2, List("m2"))
   }
 
-  /** Default execution context seeded with a pendingEvents queue (specs build
-    * AgentState without an explicit execution). */
+  /**
+   * Default execution context seeded with a pendingEvents queue (specs build
+   * AgentState without an explicit execution).
+   */
   private def state0Execution(events: List[AgentCommand.ExternalEvent]) =
     mkState(0).execution.copy(pendingEvents = events)
 
   // ============================================================
   // V2 (2026-08-30, compact-injection-shield G1): unified post-compaction
-  // queue drain. Mixed queues (immediate inputs + user inputs + barrier-
-  // drained events) inject ALL into the continuation round — zero loss.
+  // queue drain. 2026-09-15 ub 缺陷批（root 裁定：排队消息逐条、每条独立成 turn、
+  // 禁合并语义）把「inject ALL into the continuation round」收敛为「**一件**进本轮」：
+  // immediate input 队首优先，否则队首 replyTo-free 的 UserInput；余件留队，
+  // 由后续 turn 边界逐条消费（零丢失 = 留队而非丢弃）。
   // replyTo-bearing UserInputs and non-UserInput commands (SkillActivate /
-  // AskQuestion) stay in pendingUserInputs for full-metadata
-  // head-forwarding; barrier-held events stay queued.
+  // AskQuestion) stay in pendingUserInputs for full-metadata head-forwarding;
+  // barrier-held events stay queued.
   // ============================================================
 
   private def mkImm(text: String): AgentCommand.ImmediateInput =
@@ -317,7 +348,7 @@ class AgentActorCompactionSpec extends FunSuite:
       )
     )
 
-  test("V2: mixed queues drain fully with zero loss (imms + replyTo-free users + events)") {
+  test("V2: mixed queues inject exactly ONE message per round, zero loss (imms + replyTo-free users + events)") {
     val state = mkQueuedState(
       imms = List(mkImm("imm-1"), mkImm("imm-2")),
       users = List(
@@ -328,22 +359,33 @@ class AgentActorCompactionSpec extends FunSuite:
       events = List(mkEvent(1), mkEvent(2), mkEvent(3))
     )
     val drain = AgentActor.drainQueuesAfterCompaction(state)
-    // appended = 2 imm messages + 1 inline user + 1 batched event reminder
-    assertEquals(drain.appended.size, 4)
-    assertEquals(drain.immMessages.size, 2)
-    assertEquals(drain.userMessages.size, 1)
+    // appended = 1 件排队消息（imm 队首）+ 1 个事件 reminder —— 禁合并语义
+    assertEquals(drain.appended.size, 2, "一次续轮只准携带一件排队消息（+ 事件 reminder）")
+    assertEquals(drain.immMessages.size, 1)
+    assertEquals(drain.userMessages.size, 0, "imm 队首优先 ⇒ 本轮不注入 UserInput")
     assertEquals(drain.eventCount, 3)
-    // imm texts land first, in order
-    assertEquals(drain.appended.take(2).map(_.content.swap.getOrElse("")), List("imm-1", "imm-2"))
-    // inline user message lands
-    assertEquals(drain.appended(2).content.swap.getOrElse(""), "user-free")
+    // imm 队首（到达顺序最前的那件）先落地
+    assertEquals(drain.appended.head.content.swap.getOrElse(""), "imm-1")
     // events batch into one system-reminder carrying every payload
-    val evText = drain.appended(3).content.swap.getOrElse("")
+    val evText = drain.appended(1).content.swap.getOrElse("")
     assert(evText.contains("payload-1") && evText.contains("payload-3"), s"evText=$evText")
-    // queues fully drained except the deferred full-metadata commands
-    assertEquals(drain.exec.pendingImmediateInputs, Nil)
+    // 余件必须留队（零丢失）：imm 尾件 + 全部 UserInput（含 replyTo-free 的 user-free）
+    assertEquals(drain.exec.pendingImmediateInputs.map(_.text), List("imm-2"))
     assertEquals(drain.exec.pendingEvents, Nil)
-    assertEquals(drain.exec.pendingUserInputs.size, 2) // replyTo-bearing UserInput + SkillActivate
+    assertEquals(drain.exec.pendingUserInputs.size, 3)
+  }
+
+  test("V2: per-message drain preserves arrival order across consecutive boundaries (禁 burst/保序)") {
+    val state = mkQueuedState(
+      imms = List(mkImm("imm-1"), mkImm("imm-2")),
+      users = Nil,
+      events = Nil
+    )
+    val first = AgentActor.drainQueuesAfterCompaction(state)
+    assertEquals(first.appended.map(_.content.swap.getOrElse("")), List("imm-1"))
+    val second = AgentActor.drainQueuesAfterCompaction(state.copy(execution = first.exec))
+    assertEquals(second.appended.map(_.content.swap.getOrElse("")), List("imm-2"))
+    assert(second.exec.pendingImmediateInputs.isEmpty, "两件两轮消费完 —— 队列不滞留")
   }
 
   test("V2: barrier-held delegate results stay queued while the batch is outstanding") {
@@ -360,7 +402,10 @@ class AgentActorCompactionSpec extends FunSuite:
     val drain = AgentActor.drainQueuesAfterCompaction(state)
     assertEquals(drain.eventCount, 0)
     assertEquals(drain.exec.pendingEvents.size, 2)
-    assertEquals(drain.appended.size, 2) // imm + user only
+    assertEquals(drain.appended.size, 1) // imm head only（user-free 留队由后续边界消费）
+    assertEquals(drain.immMessages.size, 1)
+    assertEquals(drain.userMessages.size, 0)
+    assertEquals(drain.exec.pendingUserInputs.size, 1)
   }
 
   test("V2: non-subagent events flush even while the batch is outstanding") {
@@ -403,8 +448,10 @@ class AgentActorCompactionSpec extends FunSuite:
   // ============================================================
 
   private class ThinkingOnlyLlm(counter: cats.effect.Ref[IO, Int]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -497,6 +544,7 @@ class AgentActorCompactionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
   // ============================================================
   // V2b (2026-08-30, compact-injection-shield G1): resume=true compaction
@@ -512,23 +560,30 @@ class AgentActorCompactionSpec extends FunSuite:
     counter: cats.effect.Ref[IO, Int],
     userTextsRef: cats.effect.Ref[IO, List[List[String]]]
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(counter.update(_ + 1)) >>
-        Stream.eval(userTextsRef.update(prev => prev :+ req.messages.collect {
-          case m if m.role == MessageRole.User => m.content.fold(identity, _ => "")
-        })) >>
+        Stream.eval(
+          userTextsRef.update(prev =>
+            prev :+ req.messages.collect {
+              case m if m.role == MessageRole.User => m.content.fold(identity, _ => "")
+            }
+          )
+        ) >>
         Stream.eval(counter.get).flatMap { n =>
           if n == 1 then
             Stream.sleep[IO](300.millis) >>
               Stream(StreamChunk.TextDelta("COMPACTED SUMMARY"), StreamChunk.Done(None, None))
-          else
-            Stream(StreamChunk.TextDelta("DONE"), StreamChunk.Done(None, None))
+          else Stream(StreamChunk.TextDelta("DONE"), StreamChunk.Done(None, None))
         }
+
+  end DelayedSummaryLlm
 
   test("V2b: resume=true compaction drains a queued immediate input into the continuation turn") {
     val system = ActorSystem("compact-resume-drain-test")
@@ -565,7 +620,7 @@ class AgentActorCompactionSpec extends FunSuite:
         _ <- ref ! AgentCommand.TriggerCompaction("full", None, Some("post-compact instruction"))
         _ <- IO.sleep(100.millis) // compact turn in flight (mock sleeps 300ms)
         _ <- ref ! AgentCommand.ImmediateInput("queued-during-compact", source = Some("mail"))
-        _ <- {
+        _ <-
           def go(deadline: Long): IO[Unit] =
             counter.get.flatMap { n =>
               if n >= 2 then IO.unit
@@ -574,7 +629,6 @@ class AgentActorCompactionSpec extends FunSuite:
               else IO.sleep(100.millis) *> go(deadline)
             }
           go(System.currentTimeMillis() + 5000L)
-        }
         texts <- userTexts.get
       yield
         assert(texts.length >= 2, s"expected ≥2 LLM requests, got ${texts.length}")
@@ -589,6 +643,7 @@ class AgentActorCompactionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // ============================================================
@@ -652,6 +707,7 @@ class AgentActorCompactionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("V2-recover: persisted queues replay at spawn and land in the compaction continuation") {
@@ -696,7 +752,7 @@ class AgentActorCompactionSpec extends FunSuite:
         // load and merge before triggering the compaction that drains them.
         _ <- IO.sleep(200.millis)
         _ <- ref ! AgentCommand.TriggerCompaction("full", None, Some("post-compact instruction"))
-        _ <- {
+        _ <-
           def go(deadline: Long): IO[Unit] =
             counter.get.flatMap { n =>
               if n >= 2 then IO.unit
@@ -705,7 +761,6 @@ class AgentActorCompactionSpec extends FunSuite:
               else IO.sleep(100.millis) *> go(deadline)
             }
           go(System.currentTimeMillis() + 5000L)
-        }
         texts <- userTexts.get
       yield
         assert(texts.length >= 2, s"expected ≥2 LLM requests, got ${texts.length}")
@@ -724,6 +779,7 @@ class AgentActorCompactionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
   // ============================================================
   // 尾部保真 (2026-09-07 压缩摘要尾部保真): real-actor wiring test. The 09-07
@@ -771,7 +827,7 @@ class AgentActorCompactionSpec extends FunSuite:
           "tail-fid-agent"
         )
         _ <- ref ! AgentCommand.TriggerCompaction("full", None, Some("post-compact instruction"))
-        _ <- {
+        _ <-
           def go(deadline: Long): IO[Unit] =
             counter.get.flatMap { n =>
               if n >= 2 then IO.unit
@@ -780,7 +836,6 @@ class AgentActorCompactionSpec extends FunSuite:
               else IO.sleep(100.millis) *> go(deadline)
             }
           go(System.currentTimeMillis() + 5000L)
-        }
         texts <- userTexts.get
       yield
         assert(texts.length >= 2, s"expected ≥2 LLM requests, got ${texts.length}")
@@ -813,5 +868,6 @@ class AgentActorCompactionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 end AgentActorCompactionSpec

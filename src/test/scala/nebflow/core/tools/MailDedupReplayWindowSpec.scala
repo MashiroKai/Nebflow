@@ -7,15 +7,21 @@ import fs2.Stream
 import io.circe.syntax.*
 import munit.FunSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{AgentCommand, messages}
 import nebflow.agent.*
-import nebflow.core.PathUtil
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.FileChangeTracker
-import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore, TeamSessionRegistry}
+import nebflow.core.flow.{MailDeliveryDedup, MailQueueStore}
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, MailQueueItem, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -68,10 +74,14 @@ class MailDedupReplayWindowSpec extends FunSuite:
       val resend =
         MailDeliveryDedup.tryDeliver(sid, fp, now + 10 * 60 * 1000L, withinReplayWindow = false).unsafeRunSync()
       assert(clue(first), "first delivery must pass")
-      assert(clue(resend), "legitimate re-send outside the replay window must NOT be suppressed (V13 red-baseline scenario)")
+      assert(
+        clue(resend),
+        "legitimate re-send outside the replay window must NOT be suppressed (V13 red-baseline scenario)"
+      )
     finally
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
+    end try
   }
 
   test("R1b: outside-window delivery leaves no ledger entry (no consult, no record)") {
@@ -86,7 +96,10 @@ class MailDedupReplayWindowSpec extends FunSuite:
       val outside =
         MailDeliveryDedup.tryDeliver(sid, fp, now + 60 * 60 * 1000L, withinReplayWindow = false).unsafeRunSync()
       assert(clue(outside), "outside-window delivery passes")
-      assert(!os.exists(PathUtil.dataRoot / "mail-dedup.json"), "no ledger file may be written by an outside-window delivery")
+      assert(
+        !os.exists(PathUtil.dataRoot / "mail-dedup.json"),
+        "no ledger file may be written by an outside-window delivery"
+      )
       // A replay-shaped delivery (inside window) of the SAME content right
       // after must therefore be injected — the ledger never saw the content.
       val replay = MailDeliveryDedup.tryDeliver(sid, fp, now + 60 * 60 * 1000L + 1000).unsafeRunSync()
@@ -94,6 +107,7 @@ class MailDedupReplayWindowSpec extends FunSuite:
     finally
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
+    end try
   }
 
   test("R2: restart replay INSIDE the replay window is still suppressed (disk fingerprint)") {
@@ -115,6 +129,7 @@ class MailDedupReplayWindowSpec extends FunSuite:
     finally
       PathUtil.setDataRoot(originalRoot)
       os.remove.all(tmp)
+    end try
   }
 
   test("R3: expired fingerprint inside the replay window still delivers (window semantics unchanged)") {
@@ -134,15 +149,46 @@ class MailDedupReplayWindowSpec extends FunSuite:
       os.remove.all(tmp)
   }
 
+  // ── R2 分层地址面（2026-09-12）：新腿的重放窗行为显式钉死 ──
+
+  test("R5 R2：node: 腿 immediate —— 无投递级去重（不咨询 mail-dedup、不记账、不落盘）") {
+    val tmp = os.temp.dir(prefix = "r2-r5")
+    PathUtil.setDataRoot(tmp / "data")
+    MailDeliveryDedup.reset()
+    try
+      val sid = "node-sess-r5"
+      // node: 腿 = MailTool.deliverToNode → 引擎单点 sendNodeMessage（三态判据），
+      // **不经** AgentActor 的 queue drain ⇒ MailDeliveryDedup 结构上不参与。
+      // 本用例的可执行判据：两次同文 node: 投递后，抑制计数与账本文件均无变化
+      // （若 node 腿误经 queue+dedup，第二次会被吞且记账 ⇒ 断言可被反向证伪）。
+      val before = MailDeliveryDedup.suppressedTotal
+      val fp = MailDeliveryDedup.fingerprint("disp-r5", sid, "节点补充同文")
+      // 证据锚②：同一 (sender|sid|content) 三元组在**组件层**确实会被抑制
+      // —— 证明上面的「无变化」不是因为指纹面失效，而是 node 腿根本不走这里。
+      val now = System.currentTimeMillis()
+      assert(MailDeliveryDedup.tryDeliver(sid, fp, now).unsafeRunSync(), "组件层首投放行")
+      assert(!MailDeliveryDedup.tryDeliver(sid, fp, now + 1000).unsafeRunSync(), "组件层同三元组窗口内被抑制")
+      val afterComponent = MailDeliveryDedup.suppressedTotal
+      assertEquals(afterComponent, before + 1L, "组件层抑制计数 +1（哨兵有载力）")
+      // node: 腿不落 queue 面 ⇒ 无 MailQueueStore 落盘、无 mail-dedup 账本条目
+      assertEquals(MailQueueStore.load(sid).unsafeRunSync(), Nil, "node 会话不得有 queue 条目")
+    finally
+      PathUtil.setDataRoot(originalRoot)
+      os.remove.all(tmp)
+    end try
+  }
+
   // ── 运行时全链（真 AgentActor + MailTool.activateAgent）────────
 
   private class RecordingLlm(delayMs: Long = 0L) extends LlmHandle[IO]:
     val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(req :: _)) >>
         Stream.eval(IO.sleep(delayMs.millis)) >>
@@ -160,7 +206,12 @@ class MailDedupReplayWindowSpec extends FunSuite:
     os.makeDir.all(memberDir)
     os.write.over(memberDir / "agent.json", """{"description": "fixture member", "useWhen": "tests"}""")
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO], sessionStore: SessionStore): IO[SharedResources] =
+  private def mkResources(
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
+  ): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
       rateLimiter <- RateLimiter.create()
@@ -190,7 +241,11 @@ class MailDedupReplayWindowSpec extends FunSuite:
       voiceMutedRef = voiceMuted
     )
 
-  private def ctxFor(resources: SharedResources, system: ActorSystem, senderSid: String): nebflow.core.tools.ToolContext =
+  private def ctxFor(
+    resources: SharedResources,
+    system: ActorSystem,
+    senderSid: String
+  ): nebflow.core.tools.ToolContext =
     nebflow.core.tools.ToolContext(
       projectRoot = os.pwd.toString,
       sessionId = Some(senderSid),
@@ -198,19 +253,23 @@ class MailDedupReplayWindowSpec extends FunSuite:
       actorSystem = Some(system)
     )
 
-  private def mkItem(id: String, message: String): MailQueueStore.MailQueueItem =
-    MailQueueStore.MailQueueItem(
-      id = id, from = "tester", fromSession = "sender-dd",
-      message = message, `type` = "INFO",
-      timestamp = System.currentTimeMillis(), imagePaths = Nil
+  private def mkItem(id: String, message: String): MailQueueItem =
+    MailQueueItem(
+      id = id,
+      from = "tester",
+      fromSession = "sender-dd",
+      message = message,
+      `type` = "INFO",
+      timestamp = System.currentTimeMillis(),
+      imagePaths = Nil
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -229,14 +288,14 @@ class MailDedupReplayWindowSpec extends FunSuite:
       val io = for
         sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
         meta <- sessionStore.createSession("dq/member", agentName = Some("member"), flowName = Some("dq"))
-        _ <- TeamSessionRegistry.registerSession("dq", "member", meta.id)
         resources <- mkResources(system, tmp, llm, sessionStore)
         refOpt <- MailTool.activateAgent(meta.id, resources, system, ctxFor(resources, system, "sender-dd"))
         // Age the recipient's activation stamp far beyond the replay window —
         // simulates "the session has been alive for a long time", so any
         // arriving mail is by definition NOT a restart-replay re-fire.
         _ <- resources.agentRegistry.update { m =>
-          m.updatedWith(meta.id)(_.map(_.copy(startedAt = System.currentTimeMillis() - nebflow.shared.Defaults.MailDedupReplayWindowMs * 20))
+          m.updatedWith(meta.id)(
+            _.map(_.copy(startedAt = System.currentTimeMillis() - nebflow.shared.Defaults.MailDedupReplayWindowMs * 20))
           )
         }
         // First mail — normal delivery + injection.
@@ -250,7 +309,9 @@ class MailDedupReplayWindowSpec extends FunSuite:
         // window after activation. Pre-fix this was consumed-without-inject
         // (the audited loss — NO new turn at all); post-fix it must inject.
         _ <- MailQueueStore.append(meta.id, mkItem("mail-q-v13b", "V13_RESEND_MARKER"))
-        _ <- refOpt.traverse_(ref => ref ! AgentCommand.MailQueued(mkItem("mail-q-v13b", "V13_RESEND_MARKER"), "sender-dd"))
+        _ <- refOpt.traverse_(ref =>
+          ref ! AgentCommand.MailQueued(mkItem("mail-q-v13b", "V13_RESEND_MARKER"), "sender-dd")
+        )
         _ <- waitUntil(20.seconds)(MailQueueStore.load(meta.id).map(_.isEmpty))
         _ <- waitUntil(20.seconds)(llm.requests.get.map(_.size > countAfterFirstTurn))
         _ <- IO.sleep(1.second) // let the injection turn settle
@@ -269,6 +330,7 @@ class MailDedupReplayWindowSpec extends FunSuite:
       PathUtil.setDataRoot(originalRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
 end MailDedupReplayWindowSpec

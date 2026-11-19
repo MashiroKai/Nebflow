@@ -1,16 +1,196 @@
 package nebflow.core.tools
 
 import cats.effect.std.Dispatcher
-import cats.effect.{Deferred, IO, Ref}
-import io.circe.JsonObject
+import cats.effect.{Deferred, Fiber, IO, Ref}
 import io.circe.parser.decode
 import io.circe.syntax.*
-import nebflow.agent.AgentCommand
-import nebflow.core.NebflowLogger
-import nebflow.neblink.{NeblinkClient, NeblinkService, PeerInfo}
+import io.circe.{Json, JsonObject}
+import nebflow.actor.AgentCommand
+import nebflow.core.{NeblinkClientPort, NeblinkServicePort}
+import nebflow.shared.{AttachContract, ContentBlock, NebflowLogger, PeerInfo}
 import sttp.client4.*
 
 import scala.concurrent.duration.*
+
+/**
+ * Pure decision surface for the P2P-vs-relay choice (A) and path memory (C4),
+ * 2026-09-11 P2P 直连修复批.
+ *
+ * WHY pure: the two accepted criteria of the plan are behavioural
+ * ("`directOnline=false` 且无负证据 ⇒ 尝试 P2P"; "地址变化 ⇒ 记忆失效"; "TTL 过期 ⇒
+ * 重探"), and they were previously buried in IO/`@volatile` state where they could
+ * only be observed by driving a real network. Extracting them makes each rule a
+ * unit-testable function (`P2pPathDecisionSpec`) instead of a claim in a report.
+ */
+private[nebflow] object P2pPathDecision:
+
+  /**
+   * Path-memory TTL (C4). Lowered from the pre-fix 5 min to 60 s.
+   *
+   * WHY 60s: 5 min was long enough that a single relay success pinned the device
+   * to relay for the rest of the window, and every further relay success renewed
+   * it (`RemoteExecutor:514/:529`) — so a device whose P2P came back never
+   * returned to P2P. 60s bounds the worst case to "one extra P2P probe per minute
+   * per device" while keeping the memory long enough to spare the common
+   * back-to-back write burst.
+   */
+  val PathMemoryTtlMs: Long = 60_000L
+
+  /** Negative P2P evidence TTL (A): how long one real failure keeps P2P bypassed. */
+  val NegativeCacheTtlMs: Long = 60_000L
+
+  /** Short connect budget for a probe (A): unreachable addresses must fail fast. */
+  val ProbeConnectTimeout: FiniteDuration = 1500.millis
+
+  /**
+   * Probe budget. `directOnline` (is there an active presence WS?) is **demoted
+   * from decision basis to budget hint** — presence-not-connected means "the WS
+   * dial did not succeed", not "the peer is unreachable" (different transport).
+   */
+  final case class ProbeBudget(maxRetries: Int, connectTimeout: FiniteDuration, shortConnect: Boolean)
+
+  /**
+   * `directOnline=true` ⇒ trust the peer, retry like before (3 retries, 3s
+   * connect — the existing P0-1 posture). `false` ⇒ probe once with a 1.5s
+   * connect budget.
+   *
+   * Worst-case cost before falling back to relay, which is the number the plan's
+   * cost caveat is about:
+   *   - `false`: ≤ 1.5s connect + one request (no retry, no backoff).
+   *   - pre-fix behaviour this replaces: 3s connect × 4 attempts + 1+2+3s
+   *     backoff ≈ 12-15s, i.e. the reason `skipP2p` existed at all.
+   */
+  def probeBudget(directOnline: Boolean): ProbeBudget =
+    if directOnline then ProbeBudget(3, 3.seconds, false)
+    else ProbeBudget(0, ProbeConnectTimeout, true)
+
+  /**
+   * A (负证据化): bypass P2P **only** when there is real recent P2P failure
+   * evidence — a relay-route path memory, or a fresh dial/P2P failure
+   * ([[NegativeCacheTtlMs]]). Previously `skipP2p = memory=="relay" || !directOnline`
+   * turned "no presence WS" into "P2P impossible", which is how 9/9 dispatches
+   * went to relay (方案 §1.2 (F)).
+   *
+   * `relayAvailable` is part of the conjunction: without a relay there is nothing
+   * to bypass *to*, so the caller must still attempt P2P.
+   */
+  def shouldSkipP2pForRelay(
+    memoryMethod: Option[String],
+    recentP2pFailure: Boolean,
+    relayAvailable: Boolean
+  ): Boolean =
+    relayAvailable && (memoryMethod.contains("relay") || recentP2pFailure)
+
+  /**
+   * Address-sensitivity key (C4): the whole endpoint set, sorted, so that **any**
+   * change of address or endpoint set invalidates the memory (方案 §3.3 「如何更新」).
+   * Sorted (not preference-ordered) deliberately — ordering churn alone must not
+   * drop a valid memory, only an actual change of the reachable set may.
+   */
+  def addressKey(peer: PeerInfo): String =
+    val list = if peer.endpoints.nonEmpty then peer.endpoints else List(peer.address)
+    list.filter(_.nonEmpty).sorted.distinct.mkString("|")
+
+  /**
+   * Path-memory entry: which transport last succeeded, when, for which address set,
+   * and (p2p only) **which endpoint actually answered**.
+   *
+   * 砍探测税批（2026-11-04）：`endpoint` 是新增读数——P2P 成功时记住**赢的那个端点**，
+   * 记忆新鲜时直接复用它、**不再付一次探测**（否则每次下发都要重拨一遍才能知道打谁）。
+   */
+  final case class PathMemory(method: String, atMs: Long, addressKey: String, endpoint: String = "")
+
+  def isFresh(mem: PathMemory, nowMs: Long): Boolean = nowMs - mem.atMs < PathMemoryTtlMs
+
+  /** Memory usable for this dispatch: TTL fresh **and** same address set. */
+  def reusable(mem: Option[PathMemory], peer: PeerInfo, nowMs: Long): Option[PathMemory] =
+    mem.filter(m => m.addressKey == addressKey(peer) && isFresh(m, nowMs))
+
+  /**
+   * Write a memory entry. C4: **relay successes do not slide the window** — if a
+   * fresh relay entry already exists for the same address, its timestamp is kept,
+   * so the window always expires and P2P is re-probed at least once per TTL. P2P
+   * successes *do* renew (staying on P2P is the desired state).
+   */
+  def record(
+    existing: Option[PathMemory],
+    method: String,
+    peer: PeerInfo,
+    nowMs: Long,
+    endpoint: String = ""
+  ): PathMemory =
+    val key = addressKey(peer)
+    existing match
+      case Some(m) if method == "relay" && m.method == "relay" && m.addressKey == key && isFresh(m, nowMs) =>
+        m // no renewal — see scaladoc
+      case _ =>
+        // 端点只在 p2p 记忆上有效；未带端点的 p2p 续记沿用同地址集的既有端点
+        // （`raceP2PAndRelay` 这一层拿不到端点，不能让记忆退化成「下次再探一次」）。
+        val ep =
+          if method != "p2p" then ""
+          else if endpoint.nonEmpty then endpoint
+          else existing.filter(m => m.method == "p2p" && m.addressKey == key).map(_.endpoint).getOrElse("")
+        PathMemory(method, nowMs, key, ep)
+  end record
+
+end P2pPathDecision
+
+/**
+ * A1（作者裁定 2026-09-16）：设备腿 `Read` 的「标记 → 既有回拉通道 → 视觉块」。
+ *
+ * WHY（`devread-forensic` 判词，两跳并发必要）：设备腿的结果域恒为 `String`——
+ * 执行侧序列化（L2/L3）与调用侧解析（L4/L5）都只搬文本，**视觉块从未产生**；
+ * 全仓唯一执行期提取点只在**本机腿**（`AgentCore.scala:1763` 取块 / `:1774` 置块），
+ * 远端分支（`:1692-1700`）连字段都没填（L6）。
+ *
+ * 修法：远端返回体命中 `[image: <name> | <mime> | <KB>[ | note]]`
+ * （`ReadTool.scala:144` 的产出形态，经 L2/L3→L4/L5 **恒等搬运**）⇒ 回拉目标由
+ * 工具调用入参里的 `file_path`（**远端绝对路径**）确定，走**既有**
+ * `FileTransfer direction=get`（零 wire 变更、零新 action）取回字节。
+ *
+ * 本对象只放**纯函数面**（可离线测）：标记解析 + 字节→块；IO 编排见
+ * `RemoteExecutor#remoteReadImages`。
+ */
+private[nebflow] object RemoteImage:
+
+  /** 标记前缀 —— 与 `ReadTool.scala:144`（产出）/`:228`（提取闸）/`:100`（摘要）同一形态。 */
+  val MarkerPrefix = "[image:"
+
+  /** 标记字段：`<name> | <mime> | <KB>[ | note]`（`sizeKb` 仅供诊断，**不作闸**）。 */
+  final case class Marker(fileName: String, declaredMime: String, sizeKb: Long)
+
+  /** 解析标记；非标记 / 形态不足 ⇒ None（调用侧据此**零动作**，不为文本结果白发回拉）。 */
+  def parseMarker(result: String): Option[Marker] =
+    val firstLine = result.linesIterator.nextOption().getOrElse("")
+    if !firstLine.startsWith(MarkerPrefix) || !firstLine.endsWith("]") then None
+    else
+      val fields = firstLine.stripPrefix(MarkerPrefix).stripSuffix("]").split("\\|").map(_.trim)
+      if fields.length < 2 || fields(0).isEmpty then None
+      else
+        val kb = fields(2).takeWhile(_.isDigit).toLongOption.getOrElse(0L)
+        Some(Marker(fields(0), fields(1), kb))
+
+  /**
+   * 字节 → 视觉块。**逐行对齐本机腿** `ReadTool.extractImages`（`ReadTool.scala:233-244`）：
+   * 同源 mime 解析（按文件名扩展名 → [[ImageInject.imageMimeType]]）、同源压缩/上限判据
+   * （[[ImageInject.prepareImage]]，`TooLarge` ⇒ None、异常 ⇒ None）——**零自造阈值、
+   * 零第二套机制**。
+   *
+   * 🔴 为什么不直接调 `ReadTool.extractImages`：它读的是**本机**文件系统
+   * （`:235 Files.readAllBytes(filePath)`），远端路径在调用侧不存在 ⇒ 恒 None
+   * （判词的「只修 L6 无效」正是此因）。故字节必须由回拉提供，仅复用其后的构块口径。
+   */
+  def buildBlocks(bytes: Array[Byte], fileName: String): Option[List[ContentBlock.Image]] =
+    ImageInject.imageMimeType(fileName).flatMap { mediaType =>
+      try
+        ImageInject.prepareImage(bytes, mediaType, fileName) match
+          case ImageInject.TooLarge(_) => None
+          case ImageInject.Prepared(prepared, preparedMime, _) =>
+            Some(List(ContentBlock.Image(java.util.Base64.getEncoder.encodeToString(prepared), preparedMime)))
+      catch case _: Exception => None
+    }
+
+end RemoteImage
 
 /**
  * Executes tool calls on remote devices via direct P2P over NebLink.
@@ -21,47 +201,200 @@ import scala.concurrent.duration.*
  * NebLink provides the connectivity layer — no relay server needed.
  */
 class RemoteExecutor(
-  neblinkService: NeblinkService,
+  neblinkService: NeblinkServicePort,
   dispatcher: Dispatcher[IO],
-  relayClient: Option[NeblinkClient] = None
+  relayClient: Option[NeblinkClientPort] = None
 ):
 
   private val logger = NebflowLogger.forName("nebflow.remote-executor")
 
+  /**
+   * 在飞远端后台任务的 **等待 fiber 句柄图**（P2 单任务取消 + death-watch）：
+   * jobId → 等待 HTTP 回执的 fiber。句柄登记/清除与 fiber 生命同括号（start 时
+   * 入图、完成/取消/异常出图）——「句柄在图 = 终态腿仍在飞」即远端任务的活性
+   * 读数（death-watch 判据：句柄缺席而行仍在 = 终态事件已绝路 ⇒ 收割）。
+   * 取消经 fiber.cancel 打断 HTTP 等待；句柄清除由 guarantee 承担（取消路径
+   * 与完成路径同点出图，无双写）。
+   */
+  private val bgWaitFibers = Ref.unsafe[IO, Map[String, Fiber[IO, Throwable, Unit]]](Map.empty)
+
+  /** death-watch 读面：等待 fiber 是否在图（= 终态腿在飞）。未在图 ⇒ false。 */
+  private[tools] def bgWaitAlive(jobId: String): IO[Boolean] =
+    bgWaitFibers.get.map(_.contains(jobId))
+
+  /**
+   * T7（作者令 2026-11-04）：**外部腿的等待句柄登记**——设备腿（`BashTool` 的
+   * `ctx.isRemoteExec` 支）在本实例收编对端请求的命令时，其终态腿不是本类的 HTTP
+   * fiber，但台账行 `kind="remote"` 的死亡看护（[[BgTaskLiveness.probeRemote]]）只
+   * 读本图。登记进去 = 收编行在收割器面前 Alive（句柄在图 = 终态腿在飞），命令跑完
+   * （或取消）即由登记者出图（见 [[unregisterWaitFiber]]）。
+   */
+  private[tools] def registerWaitFiber(jobId: String, fiber: Fiber[IO, Throwable, Unit]): IO[Unit] =
+    bgWaitFibers.update(_ + (jobId -> fiber))
+
+  /** 外部腿出图（与 [[registerWaitFiber]] 成对；缺键 no-op）。 */
+  private[tools] def unregisterWaitFiber(jobId: String): IO[Unit] =
+    bgWaitFibers.update(_ - jobId)
+
+  /**
+   * P2 单任务取消**传输腿**（簿记/通知归 BgTaskCancel 统一面）：① 取消本侧
+   * 等待 fiber（在图才取消；缺席 = 终态腿已走完，簿记方 first-terminal-wins
+   * 判读）；② 对端 `bg-cancel` 动作经 [[executeViaBestPath]] 下发（relay 优先/
+   * P2P 兜底同既有腿，确认帧 = 动作响应）杀对端进程树。
+   *
+   * T7（作者令 2026-11-04）：`cancelLocalWait=false` —— **从终态腿内部**调用时
+   * （bgHttpWaitTimeout 到点，契约 3「先 bg-cancel 再收行」）必须跳过本侧 fiber 的
+   * 取消：那条 fiber 就是调用者自己，自取消会在落终态之前把整条终态腿打断（终态
+   * 事件绝路 = 行残留病灶）。只发对端 bg-cancel，本侧 fiber 由它自己的收行路径终结。
+   * 外部调用方（BgTaskCancel 面）保持缺省 true = 既有语义逐字节不变。
+   */
+  private[tools] def requestPeerCancel(deviceName: String, jobId: String): IO[Either[String, String]] =
+    requestPeerCancel(deviceName, jobId, cancelLocalWait = true)
+
+  private[tools] def requestPeerCancel(
+    deviceName: String,
+    jobId: String,
+    cancelLocalWait: Boolean
+  ): IO[Either[String, String]] =
+    resolvePeerByName(deviceName).flatMap {
+      case None => IO.pure(Left(s"device '$deviceName' not found among peers (already unpaired/offline?)"))
+      case Some(peer) =>
+        val cancelWait =
+          if !cancelLocalWait then IO.pure(false)
+          else
+            bgWaitFibers.get.flatMap { fibers =>
+              fibers.get(jobId) match
+                case Some(fib) => fib.cancel.as(true)
+                case None => IO.pure(false)
+            }
+        val confirm = executeViaBestPath(
+          peer,
+          "BgCancel",
+          JsonObject("jobId" -> jobId.asJson),
+          RemoteExecutor.BgCancelTimeout,
+          "",
+          kind = "bg-cancel"
+        ).map {
+          case Right(out) => Right(out)
+          case Left(err) => Left(err.message)
+        }
+        cancelWait.flatMap { waitCancelled =>
+          confirm.map { c =>
+            val waitNote = if waitCancelled then "local wait interrupted" else "local wait already settled"
+            c.fold(
+              err => Right(s"$waitNote; peer kill UNCONFIRMED: $err"),
+              out => Right(s"$waitNote; peer confirmed: $out")
+            )
+          }
+        }
+    }
+
+  /**
+   * The relay client ACTUALLY in use, resolved per dispatch (F1 sweep of the
+   * 2026-09-10 隧道鉴权自愈批).
+   *
+   * `NeblinkService.relayClientOpt` is the hot-swap pointer: GatewayMain
+   * registers the startup client and `NeblinkEnrollment.persist` re-points it
+   * on every re-enrollment (logout clears it) — reading it live means a UI
+   * re-login / account switch is followed instead of a constructor-time
+   * snapshot. This class used to capture client₀ and kept dispatching through
+   * a client whose session the server had kicked (the relay path is exactly the
+   * "control the other computer" business leg of the incident).
+   *
+   * The constructor argument stays as a fallback for tests / non-gateway
+   * wiring, where the service pointer is never set.
+   */
+  private def currentRelayClient: IO[Option[NeblinkClientPort]] =
+    IO(neblinkService.relayClientOpt).map(_.orElse(relayClient))
+
   /** Timeout for synchronous remote calls without ToolContext (fallback path). */
   private val SyncTimeout = 120.seconds
 
-  /** Timeout for background remote calls — the HTTP call waits up to this long. */
-  private val BgTimeout = 3600.seconds
+  // （BgTimeout 已上移伴生：bgHttpWaitTimeout 判据与类内引用同源单点，禁两处漂移。）
 
   // ---- P0-3: Path memory — remember last successful transport per device ----
 
-  /** Map: deviceId → (method, timestamp). TTL-locked to avoid stale relay bias. */
-  @volatile private var lastSuccessPath: Map[String, (String, Long)] = Map.empty
-  private val PathMemoryTtlMs = 5.minutes.toMillis
+  /**
+   * Map: deviceId → last successful transport.
+   *
+   * C4 (2026-09-11 P2P 直连修复批): entries now carry the address set they were
+   * recorded for, so a changed address/endpoint set invalidates the memory
+   * instead of silently pinning the device to a stale transport choice.
+   */
+  @volatile private var lastSuccessPath: Map[String, P2pPathDecision.PathMemory] = Map.empty
 
-  /** Read cached transport method if fresh, else None (and clean up expired entry). */
-  private def getPathMemory(deviceId: String): Option[String] =
-    lastSuccessPath.get(deviceId) match
-      case Some((method, ts)) if System.currentTimeMillis() - ts < PathMemoryTtlMs => Some(method)
-      case Some(_) =>
-        lastSuccessPath = lastSuccessPath.removed(deviceId)
-        None
-      case None => None
+  /**
+   * Negative P2P evidence (A) —— 砍探测税批（2026-11-04）起**真源**移到
+   * [[P2pReachability]] 账本：带指数退避窗口 + 地址集失效 + 成功即清。
+   * 改前这里是 `deviceId → 时间戳` + 固定 60 s 常量 ⇒ 每分钟重付一次探测税。
+   */
+  private def reachLedger: P2pReachability = P2pReachability.current
 
-  private def recordPathMemory(deviceId: String, method: String): IO[Unit] = IO {
-    lastSuccessPath = lastSuccessPath.updated(deviceId, (method, System.currentTimeMillis()))
+  /**
+   * Read the cached transport **only if** it is both TTL-fresh and still refers
+   * to the peer's current address set; an expired or address-stale entry is
+   * dropped (so the next call re-probes P2P).
+   */
+  private def getPathMemory(peer: PeerInfo): Option[String] =
+    val now = System.currentTimeMillis()
+    val usable = P2pPathDecision.reusable(lastSuccessPath.get(peer.deviceId), peer, now)
+    if usable.isEmpty && lastSuccessPath.contains(peer.deviceId) then
+      lastSuccessPath = lastSuccessPath.removed(peer.deviceId)
+    usable.map(_.method)
+
+  /** 记忆里那个**真答过话的端点**（P2P 记忆新鲜时直接复用，省一次探测）。 */
+  private def rememberedEndpoint(peer: PeerInfo): Option[String] =
+    val now = System.currentTimeMillis()
+    P2pPathDecision
+      .reusable(lastSuccessPath.get(peer.deviceId), peer, now)
+      .filter(_.method == "p2p")
+      .map(_.endpoint)
+      .filter(_.nonEmpty)
+
+  private def recordPathMemory(peer: PeerInfo, method: String, endpoint: String = ""): IO[Unit] = IO {
+    lastSuccessPath = lastSuccessPath.updated(
+      peer.deviceId,
+      P2pPathDecision.record(lastSuccessPath.get(peer.deviceId), method, peer, System.currentTimeMillis(), endpoint)
+    )
   }
 
   private def clearPathMemory(deviceId: String): IO[Unit] = IO {
     lastSuccessPath = lastSuccessPath.removed(deviceId)
   }
 
+  /** Record real P2P failure evidence (A) — the ONLY thing that bypasses P2P. */
+  private def recordP2pFailure(peer: PeerInfo): IO[Unit] = IO {
+    val n = reachLedger.noteFailure(peer.deviceId, P2pPathDecision.addressKey(peer), System.currentTimeMillis())
+    logger.info(
+      s"[p2p-probe] device=${peer.deviceName} negative evidence #$n " +
+        s"window=${P2pProbePolicy.negativeWindowMs(n)}ms"
+    )
+  }
+
+  private def hasRecentP2pFailure(peer: PeerInfo): Boolean =
+    reachLedger.shouldSkip(peer.deviceId, P2pPathDecision.addressKey(peer), System.currentTimeMillis())
+
+  /**
+   * HTTP backend for a probe budget (A): the short-connect backend when the
+   * budget is a fast-fail probe, otherwise the shared 3s-connect backend
+   * (`NeblinkService.httpBackend`, the existing P0-1 posture).
+   */
+  private lazy val shortConnectBackend: sttp.client4.SyncBackend =
+    sttp.client4.httpclient.HttpClientSyncBackend.usingClient(
+      java.net.http.HttpClient
+        .newBuilder()
+        .connectTimeout(java.time.Duration.ofMillis(P2pPathDecision.ProbeConnectTimeout.toMillis))
+        .build()
+    )
+
+  private def backendFor(budget: P2pPathDecision.ProbeBudget): sttp.client4.SyncBackend =
+    if budget.shortConnect then shortConnectBackend else neblinkService.httpBackend
+
   /** Read-only tools safe for parallel P2P + Relay racing (no side effects on cancellation). */
   private val ReadOnlyTools = Set("Read", "Glob", "Grep")
 
   /** Expose NeblinkService for system prompt generation (device list). */
-  def neblinkServiceOpt: Option[NeblinkService] = Some(neblinkService)
+  def neblinkServiceOpt: Option[NeblinkServicePort] = Some(neblinkService)
 
   def execute(
     deviceName: String,
@@ -70,27 +403,660 @@ class RemoteExecutor(
     ctxOpt: Option[ToolContext] = None
   ): IO[Either[ToolError, String]] =
     val isBackground = params("run_in_background").flatMap(_.asBoolean).getOrElse(false)
+    // T4 审计用：projectRoot 随 ctx 传递（无 ctx 的 REST/兜底路径记空串）
+    val projectRoot = ctxOpt.map(_.projectRoot).getOrElse("")
 
-    def runOnPeer(peer: PeerInfo): IO[Either[ToolError, String]] =
+    def runOnPeer(peer: PeerInfo, p: JsonObject): IO[Either[ToolError, String]] =
       if peer.address.isEmpty then IO.pure(Left(ToolError(s"Device '${peer.deviceName}' has no address.")))
-      else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, params, ctxOpt.get)
-      else if ctxOpt.isDefined then executeForegroundSync(peer, toolName, params, ctxOpt.get)
-      else executeViaBestPath(peer, toolName, params, SyncTimeout)
+      else if isBackground && ctxOpt.isDefined then executeRemoteBackground(peer, toolName, p, ctxOpt.get)
+      else if ctxOpt.isDefined then executeForegroundSync(peer, toolName, p, ctxOpt.get)
+      else executeViaBestPath(peer, toolName, p, SyncTimeout, projectRoot)
+
+    // xdev 批（2026-09-15）：单一下发包装 —— ① 画像惰性探测（只读、失败不
+    // 阻塞）→ ⑤ 白名单等价改写（默认关）→ 下发 → ② NEBFLOW_PULL 回拉扫描。
+    // 三步全部「尽力而为」：任何一步失败都不改变下发的成败语义。
+    def runWithProfile(peer: PeerInfo): IO[Either[ToolError, String]] =
+      for
+        profOpt <- ensureProfile(peer)
+        (effectiveParams, rewriteNote) = prepareBashParams(toolName, params, profOpt)
+        _ <- rewriteNote match
+          case Some(n) => XdevRewrite.logNote(peer.deviceName, n)
+          case None => IO.unit
+        raw <- runOnPeer(peer, effectiveParams)
+        pulled <- raw match
+          case Right(out) if toolName == "Bash" => pullCaptures(peer, out, isBackground)
+          case other => IO.pure(other)
+      yield pulled.map { out =>
+        rewriteNote.fold(out)(n => out + s"\n[xdev-rewrite] $n")
+      }
 
     neblinkService.peers.flatMap { peers =>
-      resolvePeer(deviceName, peers) match
-        case Right(peer) => runOnPeer(peer)
+      RemoteExecutor.resolvePeer(deviceName, peers) match
+        case Right(peer) => runWithProfile(peer)
         case Left(_) =>
           // Device not in peer list — the list might be stale. Trigger one immediate
           // discovery scan before giving up, so transient gaps don't cause false errors.
           logger.info(s"Device '$deviceName' not found in ${peers.size} peer(s), triggering discovery scan") *>
             neblinkService.scanNow.flatMap { refreshedPeers =>
-              resolvePeer(deviceName, refreshedPeers) match
-                case Right(peer) => runOnPeer(peer)
+              RemoteExecutor.resolvePeer(deviceName, refreshedPeers) match
+                case Right(peer) => runWithProfile(peer)
                 case Left(err) => IO.pure(Left(err))
             }
     }
   end execute
+
+  // ---- xdev 批：画像 / 改写 / 回拉（2026-09-15） ----
+
+  /** 内存画像缓存（避免每次下发读盘；store 与内存同步写）。 */
+  private val profileMem =
+    new java.util.concurrent.ConcurrentHashMap[String, DeviceProfileEntry]()
+
+  /** 探测去重：同一 deviceId 同时只允许一个在飞探测（并发首触只发一条探针）。 */
+  private val probeInFlight = new java.util.concurrent.ConcurrentHashMap[String, java.lang.Boolean]()
+
+  /**
+   * 探测专用短超时（探针是单条只读命令，20s 网络层兜底足够；对端 BashTool
+   * timeout 参数给 15s）。
+   */
+  private val ProbeTimeout = 20.seconds
+
+  /**
+   * ① 画像惰性探测（T1）。缓存新鲜 ⇒ 直接返回；缺失/stale/负条目静默期已过 ⇒
+   * 发**一条只读 Bash 探针**（走 executeViaBestPath 直达，不经 execute ⇒ 无递归、
+   * 不触发改写/回拉）。探测失败 ⇒ 负条目 + WARN，**绝不阻塞本次下发**（返回
+   * None = 无画像，fail-closed 回现状行为）。
+   */
+  private def ensureProfile(peer: PeerInfo): IO[Option[DeviceProfileEntry]] =
+    val now = System.currentTimeMillis()
+    Option(profileMem.get(peer.deviceId)) match
+      case Some(e) if !DeviceProfile.needsProbe(Some(e), peer, now) => IO.pure(Some(e))
+      case _ =>
+        if probeInFlight.putIfAbsent(peer.deviceId, java.lang.Boolean.TRUE) != null then
+          IO.pure(Option(profileMem.get(peer.deviceId)))
+        else
+          val probeParams = JsonObject(
+            "command" -> DeviceProfileProbe.Command.asJson,
+            "timeout" -> 15000L.asJson,
+            "description" -> "xdev read-only profile probe".asJson
+          )
+          executeViaBestPath(peer, "Bash", probeParams, ProbeTimeout, "", kind = "probe")
+            .flatMap {
+              case Right(out) =>
+                val fields = DeviceProfileProbe.parse(out)
+                if fields.isEmpty then
+                  // 探针命令跑通但零可解析字段（对端 banner-only？）⇒ 按失败处理
+                  DeviceProfile.recordProbeFailed(peer, System.currentTimeMillis()).map { eOpt =>
+                    eOpt.foreach(e => profileMem.put(peer.deviceId, e))
+                    None
+                  }
+                else
+                  DeviceProfile
+                    .recordProbe(peer, fields, peer.capabilities, System.currentTimeMillis())
+                    .map { eOpt =>
+                      eOpt.foreach(e => profileMem.put(peer.deviceId, e))
+                      eOpt
+                    }
+              case Left(err) =>
+                DeviceProfile.recordProbeFailed(peer, System.currentTimeMillis()).map { eOpt =>
+                  eOpt.foreach(e => profileMem.put(peer.deviceId, e))
+                  logger.warn(
+                    s"[device-profile] probe failed for ${peer.deviceName}: ${err.message.take(100)} (negative entry, ${DeviceProfile.NegativeRetryMs / 60000}min backoff; original call proceeds)"
+                  )
+                  None
+                }
+            }
+            .guarantee(IO(probeInFlight.remove(peer.deviceId)))
+
+    end match
+
+  end ensureProfile
+
+  /** ⑤ 改写决策（下发前）。仅 Bash、仅画像确证 MSYS、仅白名单形态；默认关。 */
+  private def prepareBashParams(
+    toolName: String,
+    params: JsonObject,
+    profOpt: Option[DeviceProfileEntry]
+  ): (JsonObject, Option[String]) =
+    if toolName != "Bash" then (params, None)
+    else
+      params("command").flatMap(_.asString) match
+        case Some(cmd) =>
+          val (c2, note) = XdevRewrite(cmd, XdevRewrite.msysConfirmed(profOpt))
+          (if note.nonEmpty then params.add("command", c2.asJson) else params, note)
+        case None => (params, None)
+
+  /**
+   * ② NEBFLOW_PULL 回拉：扫描对端 Bash 输出里的标记行，逐个把对端文件经既有
+   * FileTransfer direction=get 通道拉回本机 captures/。成功/失败都**追加可读行**
+   * （🔴 禁静默：拉取失败显式留痕，模型可自纠）。后台腿 v1 不接（其真实输出
+   * 走通知路径，占位符上无意义）。
+   */
+  private def pullCaptures(
+    peer: PeerInfo,
+    output: String,
+    isBackground: Boolean
+  ): IO[Either[ToolError, String]] =
+    if isBackground then IO.pure(Right(output))
+    else
+      CapturePull.scanPullPaths(output) match
+        case Nil => IO.pure(Right(output))
+        case paths =>
+          paths.foldLeft(IO.pure(Right(output): Either[ToolError, String])) { (acc, remotePath) =>
+            acc.flatMap {
+              case l @ Left(_) => IO.pure(l)
+              case Right(out) =>
+                transferGetToFile(peer, remotePath).map {
+                  case Right((local, size)) =>
+                    Right(out + s"\n[capture] pulled $remotePath -> $local ($size bytes)")
+                  case Left(err) =>
+                    logger.warn(s"[capture] pull failed for ${peer.deviceName}: $remotePath: ${err.take(120)}")
+                    Right(out + s"\n[capture] pull FAILED for $remotePath: $err")
+                }
+            }
+          }
+
+  /**
+   * 经既有 FileTransfer direction=get 通道拉单件：P2P remote-exec 优先，transient
+   * 失败回落 relay（与 executeViaBestPath 同族判定）。两条腿的接收端都路由到
+   * FileTransferAction.handle（RestApiRoutes / NeblinkRelayTunnel）——**零 wire
+   * 变更、零新 action**。大小闸 [[CapturePull.MaxCaptureBytes]]。
+   *
+   * 2026-09-16（A1 批）：解析/取字节抽成 [[transferGetBytes]] 单点后本方法只剩
+   * 「落盘」——行为逐字不变（同一闸、同一 dispatch、同一落位）。
+   */
+  private def transferGetToFile(
+    peer: PeerInfo,
+    remotePath: String
+  ): IO[Either[String, (os.Path, Long)]] =
+    transferGetBytes(peer, remotePath).flatMap {
+      case Right(bytes) =>
+        IO.blocking {
+          val local = CapturePull.saveCapture(peer.deviceId, remotePath, bytes)
+          Right((local, bytes.length.toLong)): Either[String, (os.Path, Long)]
+        }
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /**
+   * 经既有 FileTransfer direction=get 通道取**字节**（不落盘；A1 批新增变体）。
+   * dispatch（P2P → relay 回落）与解析闸（[[parseTransferBody]]）与
+   * [[transferGetToFile]] **同一单点**——禁第二份实现。
+   */
+  private def transferGetBytes(
+    peer: PeerInfo,
+    remotePath: String
+  ): IO[Either[String, Array[Byte]]] =
+    val params = JsonObject(
+      "direction" -> "get".asJson,
+      "path" -> remotePath.asJson
+    )
+
+    p2pExecuteWithRetry(
+      peer,
+      "FileTransfer",
+      params,
+      60.seconds,
+      "",
+      // 砍探测税批（2026-11-04）：连接级失败不再靠重试硬扛（每次重试都是一个
+      // connect 超时），回落 relay 本来就是即时的 —— 重试只会把税加倍。
+      P2pPathDecision.probeBudget(false),
+      kind = "capture"
+    )
+      .flatMap {
+        case Right(out) => IO.blocking(parseTransferBody(out))
+        case Left(p2pErr) =>
+          currentRelayClient.flatMap {
+            case Some(client) =>
+              relayExecAudited(client, peer, "FileTransfer", params, "", kind = "capture").flatMap {
+                case Right(out) => IO.blocking(parseTransferBody(out))
+                case Left(relayErr) =>
+                  IO.pure(Left(s"p2p: ${p2pErr.message.take(80)}; relay: ${relayErr.take(80)}"))
+              }
+            case None => IO.pure(Left(s"p2p: ${p2pErr.message.take(120)} (no relay client)"))
+          }
+      }
+
+  end transferGetBytes
+
+  /**
+   * `direction=get` 回执体解析（**唯一单点**，两条消费腿共用）：大小闸
+   * [[CapturePull.MaxCaptureBytes]]（🔴 既有常量，零自造阈值）→ base64 解码。
+   */
+  private def parseTransferBody(output: String): Either[String, Array[Byte]] =
+    decode[Json](output) match
+      case Right(json) =>
+        val size = json.hcursor.downField("size").as[Long].getOrElse(0L)
+        if size > CapturePull.MaxCaptureBytes then
+          Left(s"capture too large: $size bytes > ${CapturePull.MaxCaptureBytes} limit")
+        else
+          val b64 = json.hcursor.downField("content").as[String].getOrElse("")
+          if b64.isEmpty then Left("empty content")
+          else Right(java.util.Base64.getDecoder.decode(b64))
+      case Left(err) => Left(s"decode: ${err.getMessage}")
+
+  // ---- v2.1 阶段 1：浏览面公开口（direction=list 元数据 + scope=get 单件） ----
+
+  /**
+   * 浏览面**元数据目录列举**（§C.1-3 无感面②）：对端 `FileTransfer direction=list,
+   * scope=browse`——只拿元数据（name/type/size/mtime/broken），**零字节流动**。
+   * 消费方 = 项目创建面的远端目录校验（G.13 序①）+ WS 文件浏览器 `device` 腿。
+   * dispatch 与既有腿同族（P2P 优先 → relay 回落）。
+   */
+  def transferListScoped(peer: PeerInfo, dirPath: String): IO[Either[String, Json]] =
+    val params = JsonObject(
+      "direction" -> "list".asJson,
+      "path" -> dirPath.asJson,
+      "scope" -> "browse".asJson
+    )
+    dispatchBrowse(peer, "FileTransfer", params).flatMap {
+      case Right(out) => IO.blocking(decode[Json](out).left.map(err => s"decode: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /**
+   * 浏览面**单件取件**（§C.2「看哪个下哪个」）：对端 `FileTransfer direction=get,
+   * scope=browse`——出口白名单在对端闸（EgressWhitelist），大小闸在本侧
+   * （[[MaxScopedFetchBytes]]，超限显式报错引导显式批量/dropbox 通道）。
+   * 返回**字节**（落盘归调用方——pickups 单点）。
+   */
+  def transferGetScoped(peer: PeerInfo, remotePath: String): IO[Either[String, Array[Byte]]] =
+    val params = JsonObject(
+      "direction" -> "get".asJson,
+      "path" -> remotePath.asJson,
+      "scope" -> "browse".asJson
+    )
+    dispatchBrowse(peer, "FileTransfer", params).flatMap {
+      case Right(out) =>
+        IO.blocking {
+          decode[Json](out) match
+            case Right(json) =>
+              val size = json.hcursor.downField("size").as[Long].getOrElse(0L)
+              if size > MaxScopedFetchBytes then
+                Left(
+                  s"file too large for single fetch: $size bytes > $MaxScopedFetchBytes limit — use explicit batch transfer (dropbox) instead"
+                )
+              else
+                val b64 = json.hcursor.downField("content").as[String].getOrElse("")
+                if b64.isEmpty then Left("empty content")
+                else Right(java.util.Base64.getDecoder.decode(b64))
+            case Left(err) => Left(s"decode: ${err.getMessage}")
+        }
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  end transferGetScoped
+
+  /**
+   * 浏览面 dispatch 单点：P2P 优先 → relay 回落（与 [[transferGetBytes]] 同族判定，
+   * 拒绝与既有 capture 腿共用同一 dispatch 核心语义；浏览面独用本入口——禁旁路）。
+   */
+  private def dispatchBrowse(
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject
+  ): IO[Either[String, String]] =
+    p2pExecuteWithRetry(
+      peer,
+      toolName,
+      params,
+      60.seconds,
+      "",
+      // 砍探测税批（2026-11-04）：浏览腿是**多下发腿**（1 次目录探针 + N 块），
+      // 改前每次下发都付一遍 P2P 探测税且带 3 次重试 ⇒ 税 × 4 × 11。这里改为
+      // fast-fail 预算：探测由 `resolveP2pEndpoint` 一次付清（且带负缓存）。
+      P2pPathDecision.probeBudget(false),
+      kind = "browse"
+    ).flatMap {
+      case Right(out) => IO.pure(Right(out))
+      case Left(p2pErr) =>
+        currentRelayClient.flatMap {
+          case Some(client) =>
+            relayExecAudited(client, peer, toolName, params, "", kind = "browse")
+          case None => IO.pure(Left(s"p2p: ${p2pErr.message.take(120)} (no relay client)"))
+        }
+    }
+
+  /**
+   * 浏览面单件大小闸（dropbox 大件通道引导线之上的硬闸；与 10MiB capture 闸分档）。
+   * M2 起真源在伴生对象（BrowseGetLoop 的首响应闸与实例腿同参一处，禁两处漂移）。
+   */
+  def MaxScopedFetchBytes: Long = RemoteExecutor.MaxScopedFetchBytes
+
+  // ---- M2（2026-10-20）：浏览取件分块拉取腿（进度/取消/续传/逐块校验） ----
+
+  /**
+   * 分块取件结果。`chunks` / `chunkSize` / `window` / `elapsedMs` 是砍串行搬运批
+   * （2026-11-04）新增的**读数键**——只为「每次开文件的耗时打到日志」那条硬要求服务
+   * （`[file-open-timing]` 行），不参与任何判据。
+   */
+  final case class ScopedFetchResult(
+    path: os.Path,
+    size: Long,
+    wholeSha256: String,
+    chunks: Long = 0L,
+    chunkSize: Int = 0,
+    window: Int = 0,
+    elapsedMs: Long = 0L
+  )
+
+  /**
+   * 浏览面**单件取件 · 分块拉取腿**（设计 v1 §7 M2-1）：改前 `transferGetScoped` 单请求
+   * 整件 base64（无分块/无进度/无断点/无整件校验）；本方法改为 [[BrowseGetLoop]] 驱动的
+   * 逐块拉取——4MiB 级块 + 逐块自算摘要校验 + 落盘断点续传（`PointerPickup` 落点幂等，
+   * 重试从续传点继续）+ 整件 sha256 收口 + 每块进度回调 + 块间取消旗标。
+   *
+   * 大小闸不变（[[MaxScopedFetchBytes]]，首响应的整件读数把门）——超限显式报错引导
+   * dropbox 通道，行为与改前同判。旧对端（无分块键响应）⇒ legacy 整件消费，零回归。
+   *
+   * 取消账：`BrowseFetchRegistry.register` 会话周期登记（guarantee 注销）；WS
+   * `fileTransferCancel` 经 [[cancelScopedFetch]] 翻旗标。取消返回
+   * `Left(BrowseGetCursor.Cancelled)`（区别于传输失败的终态哨兵）。
+   *
+   * @param onProgress (bytesReceived, totalBytes, lastChunkMs)——每块落盘后回调（权威
+   *   读数 = 落盘长度，禁假进度）；`lastChunkMs` = 刚落那块的往返耗时（前端停滞阈依据）。
+   * @param totalBytesHint 整件字节数的**提示**（来自目录指纹，可缺省 `0`）——只用来选块长
+   *   档位与流水线窗口（[[ChunkSizing]]），不参与任何校验/判据。
+   */
+  def transferGetScopedChunked(
+    peer: PeerInfo,
+    remotePath: String,
+    onProgress: (Long, Long, Long) => IO[Unit],
+    totalBytesHint: Long = 0L
+  ): IO[Either[String, ScopedFetchResult]] =
+    val target = PointerPickup.pickupPath(peer.deviceId, remotePath)
+    val (flag, unregister) = BrowseFetchRegistry.register(peer.deviceId, remotePath)
+    // 块长按**整件大小**选档（调用方已从目录指纹拿到 size 时就不必慢启动），
+    // 窗口按在飞字节预算派生。两者是纯函数（`ChunkSizing`），此处只取值。
+    val chunkSize = ChunkSizing.chunkSizeFor(totalBytesHint)
+    val window = ChunkSizing.windowFor(chunkSize)
+    val startedNs = System.nanoTime()
+    def fetchChunk(index: Int, chunkSize: Int, wantWholeSha: Boolean): IO[Either[String, BrowseGetCursor.ChunkReply]] =
+      val params = JsonObject(
+        "direction" -> "get".asJson,
+        "path" -> remotePath.asJson,
+        "scope" -> "browse".asJson,
+        "chunkIndex" -> index.asJson,
+        "chunkSize" -> chunkSize.asJson,
+        "wantWholeSha256" -> wantWholeSha.asJson
+      )
+      dispatchBrowse(peer, "FileTransfer", params).flatMap {
+        case Right(out) =>
+          IO.blocking(decode[Json](out) match
+            case Right(json) => BrowseGetCursor.parseReply(json)
+            case Left(err) => Left(s"decode: ${err.getMessage}"))
+        case Left(err) => IO.pure(Left(err))
+      }
+    end fetchChunk
+    val progress: (Long, Long, Long) => IO[Unit] = (bytes, total, ms) =>
+      if flag.get then IO.unit // 已叫停：不再外发进度帧（终态帧随后）
+      else onProgress(bytes, total, ms)
+    BrowseGetLoop
+      .run(target, fetchChunk, progress, flag, startChunkSize = chunkSize, window = window)
+      .guarantee(unregister)
+      .map {
+        case Right((path, size, sha)) =>
+          Right(
+            ScopedFetchResult(
+              path,
+              size,
+              sha,
+              chunks = if chunkSize > 0 then (size + chunkSize - 1) / chunkSize else 0L,
+              chunkSize = chunkSize,
+              window = window,
+              elapsedMs = (System.nanoTime() - startedNs) / 1000000L
+            )
+          )
+        case Left(err) => Left(err)
+      }
+
+  end transferGetScopedChunked
+
+  /**
+   * 远端**单文件 Write**（v2.1 §A.5 远端创建脚手架腿的唯一落笔口）：走既有
+   * remote-exec Write 工具通道（对端 createFolders 语义幂等建目录）；projectRoot
+   * = 目标父目录（对端侧路径基座）。与工具级 remote-exec 六件的原语义同一通道，
+   * 只是把「模型显式调用」换成「创建面的机械落笔」——零新通道。
+   */
+  def writeRemoteFileForScaffold(
+    peer: PeerInfo,
+    remotePath: String,
+    content: String
+  ): IO[Either[String, String]] =
+    val parent = remotePath.replaceAll("""[/\\]+""", "/").split("/").dropRight(1).mkString("/")
+    // 参数键 = Write 工具 schema（file_path/content，WriteTool.scala）。
+    val params = JsonObject(
+      "file_path" -> remotePath.asJson,
+      "content" -> content.asJson
+    )
+    executeViaBestPath(peer, "Write", params, 60.seconds, parent, kind = "scaffold").map {
+      case Right(out) =>
+        // 台账 #902 收口批 F（写穿红线）：远端件被改写 ⇒ 本机 dev 键缓存立即失效。
+        FileOpenCache.invalidateRemote(peer.deviceId, remotePath)
+        Right(out)
+      case Left(err) => Left(err.message)
+    }
+  end writeRemoteFileForScaffold
+
+  // ---- 附件跨设备送达批（2026-11-05）：Delegate 设备腿的分块 put 两件 ----
+  //
+  // 注：本批**一度**还有一个「建位」动作（用对端 `Write` 建父目录 + 空目标件），实测在
+  // Windows 实机上失败（`Relay failed: Error writing file: C:\Users\PC`）⇒ 建位责任下沉到接收腿
+  // 自己（`FileTransferAction.ensureParentDir`，跨设备附件批对接收端的对齐改动），发送
+  // 侧不再依赖对端工具腿、也不猜对端 home。那条已删除，不留死码。
+
+  /**
+   * 对端**续传/收口探针**（`FileTransfer direction=probe`）：接收端从**它盘上的字节**
+   * 回 `bytesReceived` 与**自算**的 `prefixSha256`。P2P 优先 → relay 回落（与 capture 腿
+   * 同族判定）。
+   *
+   * 本探针同时充当**引擎能力探针**：不认 probe 方向的旧接收端会答
+   * `Unknown direction: probe` ⇒ 调用侧据此诊为版本偏斜并在**零字节写入之前**失败。
+   */
+  def transferProbe(peer: PeerInfo, remotePath: String): IO[Either[String, Json]] =
+    val params = JsonObject(
+      "direction" -> "probe".asJson,
+      "path" -> remotePath.asJson
+    )
+    fileTransferBestPath(peer, params, AttachContract.RelayDeadlineFloor).flatMap {
+      case Right(out) => IO.blocking(decode[Json](out).left.map(err => s"decode: ${err.getMessage}"))
+      case Left(err) => IO.pure(Left(err))
+    }
+
+  /**
+   * 对端**分块 put**（`FileTransfer direction=put` 的分块形态）：P2P 优先 → relay 回落。
+   *
+   * 语义**不放松**（I2/I4）：单块有界（块长 = 调用方给的 `chunkSize`，上限
+   * [[AttachContract.MaxChunkSize]]）、接收端**自算**并回传块摘要与（末块）整件摘要；
+   * 回执原样交回调用方比对（本方法**不做**「内容相同所以摘要相等」的自证）。
+   *
+   * 死线按块派生（[[AttachContract.p2pDeadline]] / [[AttachContract.relayDeadline]]，
+   * 与设备腿 chunked 传输同源），relay 腿用**按调用传超时**的
+   * [[NeblinkClientPort.relayTransferPutChunk]]（不放宽全局 10 s 的共用路径）。
+   */
+  def transferPutChunk(
+    peer: PeerInfo,
+    remotePath: String,
+    contentB64: String,
+    chunkIndex: Int,
+    totalBytes: Long,
+    chunkSize: Int,
+    chunkSha256: String,
+    wholeSha256: String,
+    overwrite: Boolean
+  ): IO[Either[String, Json]] =
+    val effectiveChunk = math.max(1, math.min(AttachContract.MaxChunkSize, chunkSize))
+    val chunkBytes = math.min(effectiveChunk.toLong, math.max(0L, totalBytes - chunkIndex.toLong * effectiveChunk))
+    val params = JsonObject(
+      "direction" -> "put".asJson,
+      "path" -> remotePath.asJson,
+      "content" -> contentB64.asJson,
+      "overwrite" -> overwrite.asJson,
+      "chunkIndex" -> chunkIndex.asJson,
+      "totalBytes" -> totalBytes.asJson,
+      "chunkSize" -> effectiveChunk.asJson,
+      "chunkSha256" -> chunkSha256.asJson,
+      "wholeSha256" -> wholeSha256.asJson
+    )
+    p2pExecuteWithRetry(
+      peer,
+      "FileTransfer",
+      params,
+      AttachContract.p2pDeadline(chunkBytes, 0L),
+      "",
+      P2pPathDecision.probeBudget(false),
+      kind = "delegate-attach"
+    ).flatMap {
+      case Right(out) => IO.blocking(decode[Json](out).left.map(err => s"decode: ${err.getMessage}"))
+      case Left(p2pErr) =>
+        currentRelayClient.flatMap {
+          case None => IO.pure(Left(s"p2p: ${p2pErr.message.take(200)} (no relay client)"))
+          case Some(client) =>
+            auditDispatch(
+              peer,
+              "FileTransfer",
+              JsonObject("command" -> s"put chunk $chunkIndex ($chunkBytes B of $totalBytes) → $remotePath".asJson),
+              "",
+              "relay",
+              "delegate-attach"
+            ) *>
+              client
+                .relayTransferPutChunk(
+                  targetDeviceId = peer.deviceId,
+                  path = remotePath,
+                  contentB64 = contentB64,
+                  chunkIndex = chunkIndex,
+                  totalBytes = totalBytes,
+                  chunkSize = effectiveChunk,
+                  chunkSha256 = chunkSha256,
+                  wholeSha256 = wholeSha256,
+                  overwrite = overwrite,
+                  timeout = AttachContract.relayDeadline(chunkBytes, 0L)
+                )
+                .map {
+                  case Right(json) => Right(json)
+                  case Left(relayErr) =>
+                    Left(s"p2p: ${p2pErr.message.take(120)}; relay: ${relayErr.take(300)}")
+                }
+        }
+    }
+
+  end transferPutChunk
+
+  /** `FileTransfer` 双腿派发（P2P 优先 → relay 回落；与 capture 腿**同一**判定形态）。 */
+  private def fileTransferBestPath(
+    peer: PeerInfo,
+    params: JsonObject,
+    p2pTimeout: FiniteDuration
+  ): IO[Either[String, String]] =
+    p2pExecuteWithRetry(
+      peer,
+      "FileTransfer",
+      params,
+      p2pTimeout,
+      "",
+      P2pPathDecision.probeBudget(false),
+      kind = "delegate-attach"
+    )
+      .flatMap {
+        case Right(out) => IO.pure(Right(out))
+        case Left(p2pErr) =>
+          currentRelayClient.flatMap {
+            case Some(client) =>
+              relayExecAudited(client, peer, "FileTransfer", params, "", kind = "delegate-attach").map {
+                case Right(out) => Right(out)
+                case Left(relayErr) => Left(s"p2p: ${p2pErr.message.take(120)}; relay: ${relayErr.take(300)}")
+              }
+            case None => IO.pure(Left(s"p2p: ${p2pErr.message.take(200)} (no relay client)"))
+          }
+      }
+  end fileTransferBestPath
+
+  // ---- A1：设备腿读图的视觉块回填（调用侧，2026-09-16 作者裁定） ----
+
+  /**
+   * 设备腿 `Read` 的视觉块回填（A1 的 IO 编排面）。**唯一调用点** = `AgentCore` 的
+   * 远端分支（与本地分支 `AgentCore.scala:1763` 取块 / `:1774` 置块的形态对齐）。
+   *
+   * 判据链（任一不成立 ⇒ `None`，**保留原文本标记、零抛错、零中断**）：
+   *   ① 工具必须是 `Read`（其它工具零动作）；
+   *   ② 结果必须是 `[image: …]` 标记（否则**零动作**——纯文本结果不发回拉）；
+   *   ③ `params.file_path`（远端绝对路径）必须非空；
+   *   ④ 对端可解析；⑤ 既有 `FileTransfer direction=get` 取字节成功；
+   *   ⑥ 字节能构块（mime 可解析 + 未超既有上限）。
+   *
+   * 🔴 降级纪律（硬）：回拉失败（对端不可达 / 解码失败 / 非图片 mime / 超限）⇒
+   * `None` + 一条 WARN（可 grep `[device-image]`）——**不得**让工具调用整体失败、
+   * **不得**吞掉原输出（与本地腿 `ReadTool.extractImages:243` catch 兜底同口径）。
+   * `handleErrorWith` 是兜底保险：本方法**永不**把异常抛给调用方。
+   */
+  def remoteReadImages(
+    deviceName: String,
+    toolName: String,
+    params: JsonObject,
+    result: String
+  ): IO[Option[List[ContentBlock.Image]]] =
+    if toolName != "Read" then IO.pure(None)
+    else
+      RemoteImage.parseMarker(result) match
+        case None => IO.pure(None)
+        case Some(marker) =>
+          params("file_path").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
+            case None =>
+              logger.warn(
+                s"[device-image] ${marker.fileName}: result carried the image marker but the call had no file_path — no pull attempted (text marker kept)"
+              )
+              IO.pure(None)
+            case Some(remotePath) =>
+              (for
+                peerOpt <- resolvePeerByName(deviceName)
+                out <- peerOpt match
+                  case None =>
+                    logger
+                      .warn(
+                        s"[device-image] $deviceName not resolvable — pull of $remotePath skipped (text marker kept)"
+                      )
+                      .as(None)
+                  case Some(peer) =>
+                    transferGetBytes(peer, remotePath).map {
+                      case Right(bytes) => RemoteImage.buildBlocks(bytes, marker.fileName)
+                      case Left(err) =>
+                        logger.warn(
+                          s"[device-image] pull failed for ${peer.deviceName}:$remotePath (${err.take(120)}, declared ${marker.declaredMime}) — text marker kept, no vision block"
+                        )
+                        None
+                    }
+              yield out).handleErrorWith { e =>
+                logger
+                  .warn(
+                    s"[device-image] ${marker.fileName}: pull crashed (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}) — text marker kept, no vision block"
+                  )
+                  .as(None)
+              }
+
+  /**
+   * 按设备名解析 peer（与 `execute` 同一先例：名册可能陈旧 ⇒ 一次即时扫描重试）。
+   * 解析不到 ⇒ None（调用方降级，不报错——回拉本就是尽力而为的附加面）。
+   */
+  private def resolvePeerByName(deviceName: String): IO[Option[PeerInfo]] =
+    neblinkService.peers.flatMap { peers =>
+      RemoteExecutor.resolvePeer(deviceName, peers) match
+        case Right(peer) => IO.pure(Some(peer))
+        case Left(_) =>
+          neblinkService.scanNow.map(refreshed => RemoteExecutor.resolvePeer(deviceName, refreshed).toOption)
+    }
+
+  /**
+   * 按 **deviceId** 解析 peer（跨设备项目挂载批 2026-10-25 新公开口）：项目
+   * `origin.device` 存的是创建面写入的稳定 deviceId（非显示名），引擎本机写面
+   * （agent.md 推回等）按 id 直查；名册可能陈旧 ⇒ 一次即时扫描重试（与
+   * [[resolvePeerByName]] 同先例）。解析不到 ⇒ None（调用方降级，不报错）。
+   */
+  def peerById(deviceId: String): IO[Option[PeerInfo]] =
+    neblinkService.peers.flatMap { peers =>
+      peers.find(_.deviceId == deviceId) match
+        case Some(p) => IO.pure(Some(p))
+        case None => neblinkService.scanNow.map(_.find(_.deviceId == deviceId))
+    }
 
   // ---- Remote background task: Mac manages lifecycle locally ----
 
@@ -101,6 +1067,16 @@ class RemoteExecutor(
    * 3. Start a detached fiber that does the synchronous HTTP call to the remote device
    * 4. Return "[Background job started]" to the LLM immediately
    * 5. When the HTTP call returns, notify agent (ExternalEvent) + frontend (WS)
+   *
+   * 多设备后台任务可见批（作者令 2026-10-25「多设备的后台任务我们也要可见」）：
+   * 设备通道后台任务进统一账本（BgTaskRegistry）——① origin 类别 = 设备名
+   * （[[BgTaskRegistry.deviceOrigin]]，「跑在哪」轴），注册与 WS 发射面同源；
+   * ② `persistent=true`（服务型长驻，设备上的 dev server / watcher）同本地腿
+   * 语义——不纳入节点等待集/热重启静默闸/bg-wait 屏障（三处消费面同判
+   * ActiveTask.persistent），且 HTTP 等待豁免 1h 网络兜底
+   * （[[RemoteExecutor.bgHttpWaitTimeout]]，对端 timeout 参数同值同源，防对端
+   * 先杀）；③ `persistent` 是**本侧**生命周期旗标，与 `run_in_background` 同法
+   * 在下发前摘除（[[RemoteExecutor.stripLocalBgFlags]]），不过线。
    */
   private def executeRemoteBackground(
     peer: PeerInfo,
@@ -108,53 +1084,109 @@ class RemoteExecutor(
     params: JsonObject,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    val remoteParams = ensureRemoteTimeout(params.remove("run_in_background"))
+    val persistent = RemoteExecutor.parsePersistent(params)
+    val waitTimeout = RemoteExecutor.bgHttpWaitTimeout(persistent)
+    // P2 单任务取消远端腿：host 侧 jobId 一并下发对端（stripLocalBgFlags 只摘
+    // 本侧生命周期旗标，bgJobId 是对端取消登记的 execKey——对端 runProcess 见
+    // 键即登记进 RemoteExecCancelRegistry，bg-cancel 动作按它精确杀树，1/N 判据）。
+    val jobId0 = java.util.UUID.randomUUID().toString.take(8)
+    val remoteParams = ensureRemoteTimeout(
+      RemoteExecutor.stripLocalBgFlags(params).add("bgJobId", jobId0.asJson),
+      waitTimeout
+    )
     val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
     val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
+    // 输出查看补全批（作者令 2026-10-25「远端任务看不到」）：从命令文本解析对端
+    // 日志路径（LLM 惯例把远端长任务输出重定向到日志，实证 test5 的
+    // `/c/Users/name/stand-win-test5.log`）——解析不到 = 空（面板降级注明原因，
+    // 不猜路径）。startedAtMs 一并捕获（fillRemote 落账 origin 用）。
+    val bgOutputPath = RemoteBgOutputLog.parseRedirect(commandStr).getOrElse("")
+    val bgStartedAtMs = System.currentTimeMillis()
 
-    // 来源标注（2026-09-07 后台任务面板重设计）：与 BashTool 同推导（注册
-    // 会话前缀 + 会话名 → 类别/显示名），注册与 WS 信封同源携带。
-    val (bgOrigin, bgOriginLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)
+    // 来源标注（多设备后台任务可见批）：设备通道后台任务的 origin 恒为设备名
+    // （deviceOrigin 单点）——不再借用注册会话的 nebula/dispatcher/node 类别
+    // （那是「谁开启」的轴，设备任务的 chip 要回答的是「跑在哪」）。
+    val (bgOrigin, bgOriginLabel) = BgTaskRegistry.deviceOrigin(peer.deviceName)
     for
-      jobId <- IO.randomUUID.map(_.toString.take(8))
-      _ <- logger.info(s"Remote background task $jobId started on ${peer.deviceName}: $firstLine")
+      // 终态延迟销毁窗口的禁 spawn 守卫（noderpt 批 B 段 2026-09-11 作者裁定）：远程后台
+      // 不经本地 ShellSession（无 executeBackground），故在**注册/发射之前**独立设点——
+      // 拒绝时零 WS 帧、零 registry 项、零 HTTP fiber（真拦截，不是事后注销）。
+      _ <- BgTaskRegistry.denySpawnIfFinalized(ctx.sessionId.getOrElse(""))
+      jobId = jobId0
+      _ <- logger.info(
+        s"Remote background task $jobId started on ${peer.deviceName}: $firstLine" +
+          (if bgOutputPath.nonEmpty then s" (log: $bgOutputPath)" else "")
+      )
       // 1. Emit "running" to frontend + register in global registry
-      _ <- emitBgTaskStarted(ctx, jobId, description)
+      _ <- emitBgTaskStarted(ctx, jobId, description, bgOrigin, bgOriginLabel)
       _ <- BgTaskRegistry.register(
-             jobId,
-             ctx.sessionId.getOrElse(""),
-             description,
-             "remote",
-             ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
-             false,
-             bgOrigin,
-             bgOriginLabel
-           )
+        jobId,
+        ctx.sessionId.getOrElse(""),
+        description,
+        "remote",
+        ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
+        persistent,
+        bgOrigin,
+        bgOriginLabel,
+        peer.deviceName,
+        bgOutputPath,
+        // 任务模式标注批（2026-10-30）：设备通道任务同样标注开启会话的执行形态。
+        nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId).getOrElse(""),
+        // 后台任务归属批（2026-10-31）：开启会话的 delegate 批次短名（注册面
+        // 与 WS 信封同源，见 emitBgTaskStarted）。
+        nebflow.core.delegate.DelegateRegistry.ownerNameOf(ctx.sessionId).getOrElse("")
+      )
       // 2. Start heartbeat so frontend shows progress (remote tasks have no process-level health)
       doneRef <- IO.ref(false)
       _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
       // 3. Start detached fiber — synchronous HTTP to the remote device, then notify
-      _ <- IO(startRemoteBgFiber(peer, toolName, remoteParams, ctx, jobId, description, doneRef))
+      //    （等待上限随 persistent 豁免：服务型设备任务不被 1h 网络兜底杀。）
+      _ <- IO(
+        startRemoteBgFiber(
+          peer,
+          toolName,
+          remoteParams,
+          ctx,
+          jobId,
+          description,
+          doneRef,
+          waitTimeout,
+          bgOutputPath,
+          bgStartedAtMs
+        )
+      )
     yield Right(
       s"[Background job started] Job ID: $jobId\nThe command is running in the background on ${peer.deviceName}. You will be automatically notified when it finishes — continue with other work or finish your turn."
     )
+    end for
 
   end executeRemoteBackground
 
   /**
    * Execute a remote command in the foreground until it completes.
    *
-   * #26（2026-08-30 用户裁定「Bash 工具不再自动转后台」）：删除 30s 自动转后台
-   * ——远程前台调用一直等到 HTTP 返回（或 BgTimeout 网络超时兜底），返回真实
-   * 输出，不产生「[Remote command moved to background]」占位。
+   * #26（2026-08-30 用户裁定「Bash 工具不再自动转后台」）：曾删除 30s 自动转后台。
    *
-   * 远程执行无本地进程树、无进程级进展探测（HTTP 等待中无法区分「命令在跑」
-   * 与「设备无响应」），因此：
-   * - 本地活动心跳（每 30s touch agent lastActivityMs）保持 turn 活动——
-   *   防 TaskStuckWatcher 把正常远程长命令误判卡死 restart
-   * - 真挂起（设备无响应）由 BgTimeout（3600s 网络超时）兜底——远程固有局限：
-   *   无法像本地 Bash 一样用输出/CPU 停滞检测，网络层超时是唯一防线
+   * 🔴 T7（bash overhaul，作者令 2026-11-04，自查件 D9 M6/§4）**恢复并重建**该语义：
+   * 「不自动转后台」的实质诉求是**不杀、不丢**，而不是让主会话无限阻塞——设备腿
+   * 前台因此改为**与本地前台腿同构**：
+   *  - 唯一等待上限 = `min(显式 timeout, ctx.bashConfig.foregroundWaitBudgetMs)`
+   *    （与 `BashTool.executeForeground` **同源单点**；显式 timeout 只收窄，禁第二个上限）；
+   *  - 预算内返回 ⇒ 真结果直通（行为与改前逐字节一致，含远端错误如实左路）；
+   *  - 到点未完成 ⇒ **收编**：本侧铸 jobId（同时作为 `bgJobId` 下发对端 ⇒ 对端
+   *    `RemoteExecCancelRegistry` 与它自己那份收编行用**同一个 id**），登记
+   *    `BgTaskRegistry`（`kind="remote"`，origin = 设备名）、起心跳、把仍在飞的 HTTP
+   *    调用挂成本侧后台任务，回与本地 auto-background **逐字同形**的回执
+   *    （[[RemoteExecutor.autoBackgroundReceipt]]，`isError=false`），可由 Bash wait mode
+   *    等、可被 `BgTaskCancel` 按同一 id 取消（对端 bg-cancel ⇒ 精确杀对端进程树）；
+   *  - 该 HTTP fiber 的等待上限仍是 [[bgHttpWaitTimeout]]（1h 网络兜底 / persistent 豁免）；
+   *    上限到点 ⇒ **先** `requestPeerCancel`（行仍在运行才发）**再**落终态
+   *    （[[remoteTerminalLeg]]，契约 3）。
+   *
+   * 远程执行无本地进程树、无进程级进展探测（HTTP 等待中无法区分「命令在跑」与
+   * 「设备无响应」），因此保留既有旁证：等待期间每 30s touch **processActivityMs**
+   * （不参与卡死判据）；真挂起由网络超时兜底。
    */
   private def executeForegroundSync(
     peer: PeerInfo,
@@ -162,32 +1194,166 @@ class RemoteExecutor(
     params: JsonObject,
     ctx: ToolContext
   ): IO[Either[ToolError, String]] =
-    val remoteParams = ensureRemoteTimeout(params.remove("run_in_background"))
+    // 上限同源单点（与本地前台腿同一个值、同一处钳法）：显式 timeout 只收窄。
+    val budgetMs = math.max(1L, ctx.bashConfig.foregroundWaitBudgetMs)
+    val explicitMs = params("timeout").flatMap(_.asNumber).flatMap(_.toLong).filter(_ > 0L)
+    val waitBudgetMs = explicitMs.fold(budgetMs)(_.min(budgetMs))
+    // 收编用 jobId 先行铸出（下发对端 + 本侧登记行/回执/等待/取消 同一 id）。
+    val jobId = java.util.UUID.randomUUID().toString.take(8)
+    val networkCap = RemoteExecutor.bgHttpWaitTimeout(persistent = false)
+    val remoteParams = ensureRemoteTimeout(
+      RemoteExecutor.stripLocalBgFlags(params).add("bgJobId", jobId.asJson),
+      networkCap
+    )
     val commandStr = params("command").flatMap(_.asString).getOrElse(toolName)
     val firstLine = commandStr.split('\n').headOption.getOrElse(commandStr).take(80)
     val description = s"[${peer.deviceName}] ${params("description").flatMap(_.asString).getOrElse(firstLine)}"
+    val outputPath = RemoteBgOutputLog.parseRedirect(commandStr).getOrElse("")
+    val startedAtMs = System.currentTimeMillis()
 
     for
-      // 活动心跳：等待期间每 30s 刷新 lastActivityMs（防 TaskStuckWatcher 误杀）。
+      // 进程侧活动心跳（2026-09-10 换轴）：等待期间每 30s 刷新
+      // **processActivityMs**（不再是 lastActivityMs——远程等待中的「进程/网络
+      // 还活着」不等于 agent 侧有进展；旧写点与 BashTool 活动桥同属事故根因族）。
+      // 本侧旗标（run_in_background/persistent）与后台腿同法摘除，不过线。
       hbFiber <- (IO.sleep(30.seconds) *> touchAgentActivity(ctx)).foreverM.start
-      r <- executeViaBestPath(peer, toolName, remoteParams, BgTimeout)
+      // racePair（不是 race）：落败侧必须继续活着——预算到点时那条 HTTP 调用要被
+      // 收编，绝不取消（取消 = 设备侧白跑一条命令且结果无人接收）。
+      execFiber <- executeViaBestPath(peer, toolName, remoteParams, networkCap, ctx.projectRoot).start
+      raced <- IO.racePair(joinResult(execFiber), IO.sleep(waitBudgetMs.millis))
+      result <- (raced match
+        case Left((winOutcome, budgetFiber)) =>
+          // 预算内完成 —— 既有真结果直通（成功/远端错误逐字不变）。
+          budgetFiber.cancel *> unwrapOutcome(winOutcome)
+        case Right(_) =>
+          // 预算到点仍在跑 —— 收编，命令不杀，回执 isError=false。
+          adoptRemoteForeground(peer, ctx, jobId, description, execFiber, waitBudgetMs, outputPath, startedAtMs)
+      ).handleErrorWith(e =>
+        // 兜底：执行 fiber 崩溃/被取消也不能把工具调用整条打挂（与改前同域）。
+        IO.pure(Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")))
+      )
       _ <- hbFiber.cancel
-    yield r
+    yield result
+    end for
   end executeForegroundSync
 
-  /** 刷新 agent registry 的 lastActivityMs（远程等待期间保持 turn 活动）。 */
+  /**
+   * 刷新 registry 的 **进程侧** 活动戳（远程等待期间保持「对端还在跑」的旁证）。
+   * 2026-09-10 换轴：目标字段 = processActivityMs——本戳不参与卡死判据。
+   */
   private def touchAgentActivity(ctx: ToolContext): IO[Unit] =
     (ctx.sharedResources, ctx.sessionId) match
       case (Some(res), Some(sid)) =>
         val now = System.currentTimeMillis()
         res.agentRegistry.modify { m =>
           m.get(sid) match
-            case Some(rec) => (m.updated(sid, rec.copy(lastActivityMs = now)), ())
+            case Some(rec) => (m.updated(sid, rec.copy(processActivityMs = now)), ())
             case None => (m, ())
         }
       case _ => IO.unit
 
-  /** Launch the HTTP call in a detached fiber; notify agent + frontend when done. */
+  /**
+   * Join 语义的小工具（与 `BashTool.joinResult` 同形；本类收编腿 join 的是
+   * `Fiber[IO, Throwable, Either[ToolError, String]]`——Succeeded 取内层 attempt 值、
+   * Errored 重抛、Canceled 视为被打断并升为 InterruptedException）。
+   */
+  private def unwrapOutcome[A](oc: cats.effect.kernel.Outcome[IO, Throwable, A]): IO[A] =
+    oc match
+      case cats.effect.kernel.Outcome.Succeeded(fa) => fa
+      case cats.effect.kernel.Outcome.Errored(e) => IO.raiseError[A](e)
+      case cats.effect.kernel.Outcome.Canceled() =>
+        IO.raiseError[A](new InterruptedException("remote wait fiber cancelled"))
+
+  private def joinResult[A](fiber: Fiber[IO, Throwable, A]): IO[A] =
+    fiber.join.flatMap(unwrapOutcome)
+
+  /**
+   * T7（作者令 2026-11-04）：把仍在飞的远端前台调用**收编**为本侧后台任务
+   * （登记台账 / 心跳 / 挂终态腿），回执 = [[RemoteExecutor.autoBackgroundReceipt]]
+   * ——与本地 auto-background 逐字同形。
+   *
+   * 与 [[executeRemoteBackground]] 同一台账面、同一终态腿、同一回执构造点；差别只在
+   * 「命令已经在下发途中」（不重发命令，join 既有 HTTP fiber）。
+   *
+   * `denySpawnIfFinalized` 守卫**不适用**：那是「创建之前拦住一次创建」的闸，而这里
+   * 命令已经在设备上跑着；拦住它等于让一条真在跑的命令失去台账行（结果绝路）。会话
+   * 终态场景由终态腿的 first-terminal-wins 兜住。
+   */
+  private def adoptRemoteForeground(
+    peer: PeerInfo,
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    execFiber: Fiber[IO, Throwable, Either[ToolError, String]],
+    waitedMs: Long,
+    outputPath: String,
+    startedAtMs: Long
+  ): IO[Either[ToolError, String]] =
+    val (bgOrigin, bgOriginLabel) = BgTaskRegistry.deviceOrigin(peer.deviceName)
+    for
+      _ <- logger.info(
+        s"Remote foreground call $jobId on ${peer.deviceName} reached the wait budget (${waitedMs}ms) — " +
+          "adopted as a background job (command NOT killed, HTTP wait continues)"
+      )
+      _ <- emitBgTaskStarted(ctx, jobId, description, bgOrigin, bgOriginLabel)
+      _ <- BgTaskRegistry.register(
+        jobId,
+        ctx.sessionId.getOrElse(""),
+        description,
+        "remote",
+        ctx.rootSessionId.orElse(ctx.sessionId).getOrElse(""),
+        false,
+        bgOrigin,
+        bgOriginLabel,
+        peer.deviceName,
+        outputPath,
+        nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId).getOrElse(""),
+        nebflow.core.delegate.DelegateRegistry.ownerNameOf(ctx.sessionId).getOrElse("")
+      )
+      doneRef <- IO.ref(false)
+      _ <- startRemoteHeartbeat(ctx, jobId, description, doneRef)
+      // 收编的终态腿：join 既有 HTTP fiber（同一句柄，不重发命令）⇒ 终态落账 + 通知。
+      _ <- IO(attachRemoteBgFiber(peer, ctx, jobId, description, execFiber, doneRef, outputPath, startedAtMs))
+    yield Right(RemoteExecutor.autoBackgroundReceipt(jobId, waitedMs))
+    end for
+  end adoptRemoteForeground
+
+  /** 收编腿的终态腿挂载：join 既有 fiber ⇒ [[remoteTerminalLeg]] ⇒ doneRef。 */
+  private def attachRemoteBgFiber(
+    peer: PeerInfo,
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    execFiber: Fiber[IO, Throwable, Either[ToolError, String]],
+    doneRef: Ref[IO, Boolean],
+    outputPath: String,
+    startedAtMs: Long
+  ): Unit =
+    val completionIO =
+      joinResult(execFiber).attempt
+        .flatMap {
+          case Right(res) =>
+            remoteTerminalLeg(peer, ctx, jobId, description, res, outputPath, startedAtMs)
+          case Left(e) =>
+            remoteTerminalLeg(
+              peer,
+              ctx,
+              jobId,
+              description,
+              Left(ToolError(s"Error: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")),
+              outputPath,
+              startedAtMs
+            )
+        }
+        .flatMap(_ => doneRef.set(true))
+    runRemoteBgFiber(completionIO, jobId, ctx, description, doneRef)
+  end attachRemoteBgFiber
+
+  /**
+   * Launch the HTTP call in a detached fiber; notify agent + frontend when done.
+   * `waitTimeout` = 本任务的 HTTP 等待上限（bgHttpWaitTimeout 判据：等待型 =
+   * BgTimeout 1h 网络兜底；persistent 服务型 = 豁免长档）。
+   */
   private def startRemoteBgFiber(
     peer: PeerInfo,
     toolName: String,
@@ -195,24 +1361,128 @@ class RemoteExecutor(
     ctx: ToolContext,
     jobId: String,
     description: String,
-    doneRef: Ref[IO, Boolean]
+    doneRef: Ref[IO, Boolean],
+    waitTimeout: FiniteDuration,
+    outputPath: String = "",
+    startedAtMs: Long = 0L
   ): Unit =
     val completionIO =
-      executeViaBestPath(peer, toolName, params, BgTimeout)
-        .flatMap {
-          case Right(output) => notifyRemoteBgResult(ctx, jobId, description, Right(output))
-          case Left(err) => notifyRemoteBgResult(ctx, jobId, description, Left(err.message))
-        }
+      executeViaBestPath(peer, toolName, params, waitTimeout, ctx.projectRoot)
+        .flatMap(res => remoteTerminalLeg(peer, ctx, jobId, description, res, outputPath, startedAtMs))
         .flatMap(_ => doneRef.set(true))
-
-    dispatcher.unsafeRunAndForget(
-      completionIO.handleErrorWith(e =>
-        logger.warn(s"Remote background fiber $jobId crashed: ${e.getMessage}") *>
-          emitBgTaskFinished(ctx, jobId, description, "failed") *>
-          doneRef.set(true)
-      )
-    )
+    runRemoteBgFiber(completionIO, jobId, ctx, description, doneRef)
   end startRemoteBgFiber
+
+  /**
+   * 终态腿的**唯一落点**（T7 契约 3，作者令 2026-11-04）：远端后台任务的 HTTP
+   * 等待上限（[[RemoteExecutor.bgHttpWaitTimeout]]）到点时，**先**向对端下发
+   * `bg-cancel`（行仍在运行才发）**再**落本侧终态——上限到点 ≠ 杀对端进程，
+   * 改前收行只写一条「timed out」，对端那条命令继续裸跑到自然终态，谁也不再管它。
+   *
+   * 语义边界：
+   *  - **真结果**（成功/远端明确报错）⇒ 直接落终态，绝不发 bg-cancel（对端命令已结束）。
+   *  - **等待上限到点**（[[RemoteExecutor.isWaitCapTimeout]] 判据）⇒ ① 行仍在册 ⇒
+   *    对端 bg-cancel（`cancelLocalWait=false`：本 fiber 就是终态腿自己，自取消会在
+   *    落终态前打断它）② 对端确认失败也照落本侧终态，并**如实带原因**（不吞、不假装
+   *    已杀）③ first-terminal-wins 由 [[notifyRemoteBgResult]] 的注销判空保持。
+   *  - **对端已先行收编**（它自己的前台预算先到点，回执先到）⇒ 本侧代理行按
+   *    「命令已在设备侧继续」如实落终态（[[RemoteExecutor.peerAdoptionHandoffBody]]），
+   *    不再伪装成「跑完」。
+   */
+  private def remoteTerminalLeg(
+    peer: PeerInfo,
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    res: Either[ToolError, String],
+    outputPath: String,
+    startedAtMs: Long
+  ): IO[Unit] =
+    res match
+      case Right(out) if RemoteExecutor.isPeerAdoptionReceipt(jobId, out) =>
+        logger.info(
+          s"Remote background task $jobId was adopted by ${peer.deviceName} first (peer foreground budget) — " +
+            "settling the host-side proxy row with the handoff body"
+        ) *>
+          notifyRemoteBgResult(
+            ctx,
+            jobId,
+            description,
+            Right(RemoteExecutor.peerAdoptionHandoffBody(jobId, peer.deviceName, out)),
+            peer.deviceName,
+            outputPath,
+            startedAtMs
+          )
+      case Right(out) =>
+        notifyRemoteBgResult(ctx, jobId, description, Right(out), peer.deviceName, outputPath, startedAtMs)
+      case Left(err) if RemoteExecutor.isWaitCapTimeout(err.message) =>
+        // 契约 3：行仍在运行才发取消（行已不在册 ⇒ 终态已有人落，直接如实收行）。
+        BgTaskRegistry.find(jobId).flatMap {
+          case None =>
+            logger.info(
+              s"Remote background task $jobId hit the HTTP wait cap but its registry row is already gone — " +
+                "terminal already settled elsewhere, no peer cancel"
+            ) *>
+              notifyRemoteBgResult(ctx, jobId, description, Left(err.message), peer.deviceName, outputPath, startedAtMs)
+          case Some(_) =>
+            requestPeerCancel(peer.deviceName, jobId, cancelLocalWait = false).attempt
+              .map(
+                _.fold(
+                  e =>
+                    s"\n[bg-cancel ERROR] peer cancel dispatch failed: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}",
+                  cancelRes => RemoteExecutor.peerCancelNote(cancelRes)
+                )
+              )
+              .flatMap(note =>
+                notifyRemoteBgResult(
+                  ctx,
+                  jobId,
+                  description,
+                  Left(err.message + note),
+                  peer.deviceName,
+                  outputPath,
+                  startedAtMs
+                )
+              )
+        }
+      case Left(err) =>
+        notifyRemoteBgResult(ctx, jobId, description, Left(err.message), peer.deviceName, outputPath, startedAtMs)
+  end remoteTerminalLeg
+
+  /**
+   * P2：等待 fiber 句柄入图/出图与 fiber 生命同括号——cancel 经句柄图精确
+   * 打断本任务等待（1/N：只动指定 jobId 的 fiber），death-watch 以「句柄在图」
+   * 为远端活性读数。guarantee 保证取消路径也出图（无双写）。崩溃腿收在
+   * fiber 体内（.start 后子 fiber 错误不再外抛）：WS failed + 注销行 + 停心跳。
+   *
+   * 两个调用方共用本单点：① [[startRemoteBgFiber]]（显式 run_in_background 的
+   * 远端腿，自己起 HTTP）② [[attachRemoteBgFiber]]（T7 前台收编腿，join 已在飞的
+   * HTTP）——两条路径的终态/取消/死亡看护因此逐字节同面。
+   */
+  private def runRemoteBgFiber(
+    completionIO: IO[Unit],
+    jobId: String,
+    ctx: ToolContext,
+    description: String,
+    doneRef: Ref[IO, Boolean]
+  ): Unit =
+    dispatcher.unsafeRunAndForget(
+      completionIO
+        .handleErrorWith(e =>
+          logger.warn(s"Remote background fiber $jobId crashed: ${e.getMessage}") *>
+            emitBgTaskFinished(ctx, jobId, description, "failed") *>
+            // P2 残留收口：崩溃腿此前只发 WS failed 不收 registry 行——终态事
+            // 件绝路 + 行残留 = 合并闸卡死病灶形态之一。此处补注销（幂等）。
+            BgTaskRegistry.unregister(jobId).handleErrorWith(_ => IO.unit) *>
+            doneRef.set(true)
+        )
+        .guarantee(bgWaitFibers.update(_ - jobId))
+        .start
+        .flatMap(fib => bgWaitFibers.update(_ + (jobId -> fib)))
+        .void
+        .handleErrorWith(e => logger.warn(s"Remote background fiber registration failed for $jobId: ${e.getMessage}"))
+    )
+  end runRemoteBgFiber
 
   // ---- WS helpers (match BashTool's backgroundTaskUpdate format) ----
 
@@ -253,13 +1523,32 @@ class RemoteExecutor(
                 )
               )
             ).handleErrorWith(_ => IO.unit)
-          } *> IO.sleep(baseSec.seconds) *> loop
+          } *>
+            // 健康轨进展信号（后台任务生命周期 P1 批 · 设计稿 §3.3「心跳行 → 远端
+            // 任务活性」）：远端任务无本地输出行数面，心跳 tick = 对端通道仍活的
+            // 既有观测——经 P0 写缝 recordActivity 喂行内 lastActivityMs，
+            // BgLifecycleReconciler 把行戳增长视作进展（零新传感器）。
+            BgTaskRegistry.recordActivity(jobId, now).handleErrorWith(_ => IO.unit) *>
+            IO.sleep(baseSec.seconds) *> loop
       }
     loop.start.void
   end startRemoteHeartbeat
 
-  private def emitBgTaskStarted(ctx: ToolContext, jobId: String, description: String): IO[Unit] =
-    val (origin, originLabel) = BgTaskRegistry.originFor(ctx.sessionId.getOrElse(""), ctx.sessionName)
+  private def emitBgTaskStarted(
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    origin: String,
+    originLabel: String
+  ): IO[Unit] =
+    // 任务模式标注批（2026-10-30）：与注册面同源解析（modeFaceOf 三闸，非
+    // delegate/闸关 ⇒ 空串，前端零渲染）。
+    val ownerMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(ctx.sessionId).getOrElse("")
+    // 后台任务归属批（2026-10-31）：delegate 批次短名同缝解析（与注册面同源）。
+    val ownerName = nebflow.core.delegate.DelegateRegistry.ownerNameOf(ctx.sessionId).getOrElse("")
+    // 来源字段（多设备后台任务可见批）：由注册面（executeRemoteBackground）传入
+    // ——设备任务 = ("device", 设备名)，与 BgTaskRegistry.register 同源同值；
+    // 快照路径（activeTasksJson）与实时信封两条路径的 chip 数据不再分叉。
     ctx.wsSend.fold(
       logger.debug(s"Cannot notify frontend for remote background job $jobId: no wsSend")
     )(send =>
@@ -274,16 +1563,22 @@ class RemoteExecutor(
           "startedAt" -> System.currentTimeMillis().asJson,
           "kind" -> "remote".asJson,
           "origin" -> origin.asJson,
-          "originLabel" -> originLabel.asJson
+          "originLabel" -> originLabel.asJson,
+          "ownerMode" -> ownerMode.asJson,
+          "ownerName" -> ownerName.asJson
         )
       ).handleErrorWith(e => logger.warn(s"WS send failed for remote job $jobId: ${e.getMessage}"))
     )
+
+  end emitBgTaskStarted
 
   private def emitBgTaskFinished(
     ctx: ToolContext,
     jobId: String,
     description: String,
-    status: String
+    status: String,
+    exitCode: Option[Int] = None,
+    durationMs: Option[Long] = None
   ): IO[Unit] =
     ctx.wsSend.fold(IO.unit)(send =>
       send(
@@ -293,114 +1588,432 @@ class RemoteExecutor(
           "rootSessionId" -> ctx.rootSessionId.orElse(ctx.sessionId).asJson,
           "taskId" -> jobId.asJson,
           "description" -> description.asJson,
-          "status" -> status.asJson
+          "status" -> status.asJson,
+          // 通知详情批（2026-10-24）：终态帧只增键（本地腿同款）——面板行 exit
+          // chip 与冻结时长；远程无进程退出码 ⇒ 恒 null，前端按缺读处理。
+          "exitCode" -> exitCode.asJson,
+          "durationMs" -> durationMs.asJson,
+          "finishedAt" -> System.currentTimeMillis().asJson
         )
       ).handleErrorWith(_ => IO.unit)
     )
 
-  /** Notify agent (ExternalEvent) + frontend (WS) of a background task result. */
+  /**
+   * Notify agent (ExternalEvent) + frontend (WS) of a background task result.
+   *
+   * 输出查看补全批（作者令 2026-10-25）：终态时先把 HTTP 拿到的全量输出灌进
+   * BgTaskOutputStore（[[BgTaskOutputStore.fillRemote]]——open + append +
+   * finalize 同一时序），**再** unregister + 发 WS completed 帧 ⇒ 前端详情卡
+   * 对 remote 任务的终态回看首拍即命中留存（不再是「暂不支持」/404）。exit
+   * 码只认对端回执末尾的 `(exit N)` 标记（解析不到不虚报）。
+   */
   private def notifyRemoteBgResult(
     ctx: ToolContext,
     jobId: String,
     description: String,
-    result: Either[String, String]
+    result: Either[String, String],
+    deviceName: String = "",
+    outputPath: String = "",
+    startedAtMs: Long = 0L
   ): IO[Unit] =
-    BgTaskRegistry.unregister(jobId) *>
-      (result match
-        case Right(output) =>
-          ctx.agentActorRef.fold(IO.unit)(ref =>
-            ref ! AgentCommand.ExternalEvent(
-              source = "background-task",
-              eventType = "completed",
-              payload = s"[Background task completed] \"$description\":\n$output",
-              metadata = JsonObject("description" -> description.asJson, "output" -> output.asJson)
-            )
-          ) *>
-            emitBgTaskFinished(ctx, jobId, description, "completed") *>
-            logger.info(s"Remote background task $jobId completed")
-        case Left(errMsg) =>
-          ctx.agentActorRef.fold(IO.unit)(ref =>
-            ref ! AgentCommand.ExternalEvent(
-              source = "background-task",
-              eventType = "failed",
-              payload = s"[Background task failed] \"$description\":\n$errMsg",
-              metadata = JsonObject("description" -> description.asJson)
-            )
-          ) *>
-            emitBgTaskFinished(ctx, jobId, description, "failed") *>
-            logger.warn(s"Remote background task $jobId failed: $errMsg"))
+    // P2 first-terminal-wins：行已被取消/death-watch 收割取走 ⇒ 终态已有人落
+    // （簿记 + 通知齐了），本迟到腿不再双注——只留日志。行在册 ⇒ 本腿独占终态。
+    BgTaskRegistry.find(jobId).flatMap {
+      case None =>
+        logger.info(
+          s"Remote background task $jobId reached a terminal result but the registry row is gone " +
+            "(cancelled or reaped first) — skipping duplicate terminal notification"
+        )
+      case Some(_) =>
+        notifyRemoteBgResultOwned(ctx, jobId, description, result, deviceName, outputPath, startedAtMs)
+    }
+
+  private def notifyRemoteBgResultOwned(
+    ctx: ToolContext,
+    jobId: String,
+    description: String,
+    result: Either[String, String],
+    deviceName: String = "",
+    outputPath: String = "",
+    startedAtMs: Long = 0L
+  ): IO[Unit] =
+    // 通知详情批（作者报障 2026-10-24「后台任务通知很不详细甚至有截断」）：远程腿
+    // 与本地腿同一负载单点（BgNotifyPayload）——耗时（输出查看批传入的 startedAtMs
+    // → 终态墙钟差；缺席=无耗时段）+ 输出/错误尾段 + 零输出占位。远程退出码只认
+    // 对端回执末尾的 `(exit N)` 标记（输出查看补全批 parseExitMarker；解析不到不
+    // 虚报 ⇒ None——耗时段仍在）。存储灌装（fillRemote，输出查看批）照旧先于投递。
+    val finishedAtMs = System.currentTimeMillis()
+    val durationMs = if startedAtMs > 0L then Some((finishedAtMs - startedAtMs).max(0L)) else None
+    val fillIo = result match
+      case Right(output) =>
+        BgTaskOutputStore.fillRemote(
+          jobId,
+          output,
+          "completed",
+          RemoteBgOutputLog.parseExitMarker(output),
+          None,
+          BgTaskOutputStore.Origin("remote", deviceName, outputPath, description, startedAtMs)
+        )
+      case Left(errMsg) =>
+        BgTaskOutputStore.fillRemote(
+          jobId,
+          "",
+          "failed",
+          None,
+          Some(errMsg),
+          BgTaskOutputStore.Origin("remote", deviceName, outputPath, description, startedAtMs)
+        )
+    fillIo
+      .handleErrorWith(e => logger.warn(s"Remote bg fill store failed for $jobId: ${e.getMessage}"))
+      .guarantee(BgTaskRegistry.unregister(jobId))
+      .flatMap { _ =>
+        result match
+          case Right(output) =>
+            val exitCode = RemoteBgOutputLog.parseExitMarker(output)
+            val built = BgNotifyPayload.completed(description, exitCode, durationMs, output, "", jobId)
+            // 完成事件持久账本（修复批 2026-10-24「先落账本再投递」）：与 BashTool
+            // 本地腿同语义——事件先落账再投递，投递失联由补投腿兜底，永不蒸发。
+            // fail-soft：账本故障绝不阻断投递。
+            BgTaskLedger
+              .recordCompletion(ctx.sessionId.getOrElse(""), jobId, description, "completed", built.payload)
+              .handleErrorWith(e => logger.warn(s"bg-ledger record failed for remote job $jobId: ${e.getMessage}"))
+              .flatMap { _ =>
+                ctx.agentActorRef.fold(IO.unit)(ref =>
+                  ref ! AgentCommand.ExternalEvent(
+                    source = "background-task",
+                    eventType = "completed",
+                    payload = built.payload,
+                    metadata = built.metadata
+                  )
+                ) *>
+                  emitBgTaskFinished(ctx, jobId, description, "completed", exitCode, durationMs) *>
+                  logger.info(s"Remote background task $jobId completed${logTagSuffix(built.logTag)}")
+              }
+          case Left(errMsg) =>
+            val built = BgNotifyPayload.failed(description, errMsg, durationMs, jobId)
+            BgTaskLedger
+              .recordCompletion(ctx.sessionId.getOrElse(""), jobId, description, "failed", built.payload)
+              .handleErrorWith(e => logger.warn(s"bg-ledger record failed for remote job $jobId: ${e.getMessage}"))
+              .flatMap { _ =>
+                ctx.agentActorRef.fold(IO.unit)(ref =>
+                  ref ! AgentCommand.ExternalEvent(
+                    source = "background-task",
+                    eventType = "failed",
+                    payload = built.payload,
+                    metadata = built.metadata
+                  )
+                ) *>
+                  emitBgTaskFinished(ctx, jobId, description, "failed", None, durationMs) *>
+                  logger.warn(s"Remote background task $jobId failed: $errMsg${logTagSuffix(built.logTag)}")
+              }
+      }
+
+  end notifyRemoteBgResultOwned
+
+  private def logTagSuffix(tag: String): String =
+    if tag.isEmpty then "" else s" ($tag)"
+
+  /**
+   * 对端日志尾窗拉取（输出查看补全批：详情面板 remote-output 路由的设备通道面）。
+   *
+   * 走**既有**通道面——对端 Bash 工具执行 `tail -c N`（[[RemoteBgOutputLog.tailCommand]]
+   * 构造，路径单引号包裹），P2P/relay dispatch 与远端命令执行同一族
+   * （executeViaBestPath），零新 wire、零新权限口子。短超时（[[RemoteBgOutputLog.TailRemoteTimeoutMs]]）
+   * ——设备无响应快速失败，不占用 1h 网络兜底档。
+   *
+   * Left = 可读原因（executor 未初始化 / 设备解析不到 / 执行失败 / tail 非零退出），
+   * 面板原样降级展示；Right = 尾窗文本（对端 Bash 回执原文，含 formatResult 的
+   * `(cwd: …)` 头——展示面如实呈现）。
+   */
+  def readBgLogTail(deviceName: String, remotePath: String): IO[Either[String, String]] =
+    resolvePeerByName(deviceName).flatMap {
+      case None => IO.pure(Left(s"device '$deviceName' not reachable (offline or unknown)"))
+      case Some(peer) =>
+        val cmd = RemoteBgOutputLog.tailCommand(remotePath, RemoteBgOutputLog.TailMaxBytes)
+        val params = JsonObject(
+          "command" -> cmd.asJson,
+          "description" -> "bg-log-tail".asJson,
+          "timeout" -> RemoteBgOutputLog.TailRemoteTimeoutMs.asJson
+        )
+        executeViaBestPath(
+          peer,
+          "Bash",
+          params,
+          RemoteBgOutputLog.TailRemoteTimeoutMs.millis + 5.seconds,
+          "",
+          kind = "bglog"
+        ).map {
+          case Right(out) => Right(out)
+          case Left(err) => Left(err.message.take(200))
+        }
+    }
 
   // ---- P2P Direct ----
 
+  /**
+   * Candidate endpoints for a P2P dispatch (C1). `peer.endpoints` is already
+   * preference-ordered (Tailscale → 同网段 → 其余, `EndpointPreference`); peers
+   * built without a server namelist (`endpoints = Nil`) fall back to the single
+   * `address`, i.e. pre-C1 behaviour.
+   */
+  private def p2pCandidates(peer: PeerInfo): List[String] =
+    val all = if peer.endpoints.nonEmpty then peer.endpoints else List(peer.address)
+    all.filter(_.nonEmpty).distinct
+
+  /**
+   * P2P 下发入口（三档选路批 2026-11-04 起**先选路再拨**）。
+   *
+   * 三步（见 [[resolveP2pEndpoint]]）：
+   *   ① 选路计划（[[DirectRoute.plan]]）= ① Tailscale 档（探测可用才选）/ ② 自研 P2P
+   *      （未实现 ⇒ 恒跳过）/ ③ relay 兜底；计划里 `attempt` 为空 ⇒ **一个字节都不拨**，
+   *      直接把 relay 决策交回调用方（不落到「排第一 → 失败 → 回落」）；
+   *   ② 路径记忆新鲜且`method=p2p` ⇒ 直接用记忆里的端点（**零探测**）；
+   *   ③ 负缓存命中（[[P2pReachability]]）⇒ 零成本走 relay；
+   *   ④ 否则**并发探测计划里的候选、首胜即放行**，全不通则写负证据。
+   */
   private def p2pExecute(
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
-    timeout: FiniteDuration
+    timeout: FiniteDuration,
+    budget: P2pPathDecision.ProbeBudget,
+    plan: RoutePlan
   ): IO[Either[ToolError, String]] =
     for
-      // Send our own deviceId so the peer can authenticate us by network
-      // membership (same networkId) when its IP-based trust list is stale —
-      // e.g. after a NIC filter change or DHCP address rotation.
       selfDeviceId <- neblinkService.identity.map(_.deviceId)
-      result <- IO.blocking {
-        val body = io.circe.Json.obj(
+      decision <- resolveP2pEndpoint(peer, budget, plan)
+      result <- decision.endpoint match
+        case Some(endpoint) =>
+          p2pExecuteAt(peer, endpoint, selfDeviceId, toolName, params, timeout, budget).flatMap {
+            case r @ Right(_) => recordPathMemory(peer, "p2p", endpoint).as(r)
+            case l @ Left(_) => IO.pure(l)
+          }
+        case None =>
+          IO.pure(
+            Left(
+              ToolError(
+                if plan.isEmpty then
+                  s"Cannot reach ${peer.deviceName}: 直连档全部跳过（via=relay reasons=" +
+                    s"${plan.reasons.mkString(",")}；0ms，未付探测税）"
+                else if decision.negativeHit then
+                  s"Cannot reach ${peer.deviceName}: P2P endpoint(s) known unreachable " +
+                    s"(negative cache, no probe paid; tried ${plan.attempt.size} candidate endpoint(s))"
+                else
+                  s"Cannot reach ${peer.deviceName}: no candidate endpoint answered " +
+                    s"(probed ${decision.probed} endpoint(s) concurrently in ${decision.probeMs}ms)"
+              )
+            )
+          )
+    yield result
+
+  /**
+   * 端点解析（**唯一判据点**）：选路计划 → 记忆 → 负缓存 → 并发探测。返回
+   * [[P2pReachability.Decision]]（端点 + 探测读数），读数随日志外发供本批取数。
+   *
+   * 三档选路批（2026-11-04）：候选集改为 `plan.attempt`（① 档的门已经过滤掉不可用的
+   * tailnet 候选），并在**每个分支**落一行结构化选路日志（`[route] …`）——这是「为什么
+   * 没直连」的唯一可读面。
+   */
+  private def resolveP2pEndpoint(
+    peer: PeerInfo,
+    budget: P2pPathDecision.ProbeBudget,
+    plan: RoutePlan
+  ): IO[P2pReachability.Decision] =
+    val now = System.currentTimeMillis()
+    val addressKey = P2pPathDecision.addressKey(peer)
+    val candidates = plan.attempt
+    val routeLog: IO[Unit] = IO(DirectRoute.logPlan(peer.deviceName, plan))
+    rememberedEndpoint(peer) match
+      case Some(ep) =>
+        routeLog.as(
+          P2pReachability.Decision(Some(ep), probed = 0, probeMs = 0L, negativeHit = false, probeFailed = false)
+        )
+      case None =>
+        if candidates.isEmpty then
+          // ① 档不可用且（② 恒不可用）⇒ 零成本 relay 决策：**不探测、不拨号**。
+          routeLog.as(
+            P2pReachability.Decision(None, probed = 0, probeMs = 0L, negativeHit = false, probeFailed = false)
+          )
+        else if reachLedger.shouldSkip(peer.deviceId, addressKey, now) then
+          val left = reachLedger.negativeRemainingMs(peer.deviceId, addressKey, now).getOrElse(0L)
+          routeLog *> IO(reachLedger.noteSkip()) *> logger.info(
+            s"[p2p-probe] device=${peer.deviceName} decision=relay (negative cache, ${left}ms left, 0ms paid)"
+          )
+          IO.pure(
+            P2pReachability.Decision(None, probed = 0, probeMs = 0L, negativeHit = true, probeFailed = false)
+          )
+        else
+          // 探测预算：短连接预算（fast-fail）与硬上限取小——探测本身不该比下发更贵。
+          val probeBudgetMs =
+            math.min(budget.connectTimeout.toMillis, P2pProbePolicy.ProbeConnectTimeoutMs.toLong).toInt
+          val t0 = System.nanoTime()
+          routeLog *> IO(reachLedger.noteProbeAttempt()) *>
+            P2pReachability.probeConcurrently(candidates, probeBudgetMs).map { winner =>
+              val ms = (System.nanoTime() - t0) / 1000000L
+              winner match
+                case Some(ep) =>
+                  // 探通即清账（负证据的可失效条件之一）：端点回来了就不该继续旁路。
+                  reachLedger.noteSuccess(peer.deviceId)
+                  logger.info(
+                    s"[p2p-probe] device=${peer.deviceName} decision=${DirectRoute.viaOf(ep)} endpoint=$ep " +
+                      s"probed=${candidates.size} probeMs=$ms (concurrent, first-wins)"
+                  )
+                  P2pReachability.Decision(
+                    Some(ep),
+                    probed = candidates.size,
+                    probeMs = ms,
+                    negativeHit = false,
+                    probeFailed = false
+                  )
+                case None =>
+                  val n = reachLedger.noteFailure(peer.deviceId, addressKey, System.currentTimeMillis())
+                  logger.info(
+                    s"[p2p-probe] device=${peer.deviceName} decision=relay " +
+                      s"probed=${candidates.size} probeMs=$ms (all timed out; negative #$n " +
+                      s"window=${P2pProbePolicy.negativeWindowMs(n)}ms)"
+                  )
+                  P2pReachability.Decision(
+                    None,
+                    probed = candidates.size,
+                    probeMs = ms,
+                    negativeHit = false,
+                    probeFailed = true
+                  )
+              end match
+            }
+    end match
+  end resolveP2pEndpoint
+
+  /**
+   * 改前的「串行挨个拨候选」实现已随砍探测税批（2026-11-04）**退役**：其判据
+   * （首成功者即短路）被 [[resolveP2pEndpoint]] 的「并发探测 + 首胜即放行」取代
+   * ——语义不变（第一个通的就是要打的那个），成本从「候选数 × 预算」降到
+   * 「单端点预算」。删除而非保留的理由：留下就会有人再调它，税就回来了。
+   *
+   * One P2P HTTP dispatch against one concrete endpoint.
+   */
+  private def p2pExecuteAt(
+    peer: PeerInfo,
+    endpoint: String,
+    selfDeviceId: String,
+    toolName: String,
+    params: JsonObject,
+    timeout: FiniteDuration,
+    budget: P2pPathDecision.ProbeBudget
+  ): IO[Either[ToolError, String]] =
+    IO.blocking {
+      val apiPath = "/api/neblink/remote-exec"
+      val bodyStr = io.circe.Json
+        .obj(
           "action" -> toolName.asJson,
           "params" -> params.asJson
         )
-        val resp = basicRequest
-          .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/remote-exec"))
-          .contentType("application/json")
-          .header(nebflow.neblink.Protocol.DeviceHeader, selfDeviceId)
-          .body(body.noSpaces)
-          .readTimeout(timeout)
-          .response(asStringAlways)
-          .send(neblinkService.httpBackend)
+        .noSpaces
+      // v2.1 §A.4（2026-10-09 实施批）：配对设备对设备面请求**恒附** HMAC 头
+      // （发送侧无条件签名；收端是否 enforce 由其 deviceAuth 档自主——双轨灰度的
+      // 两端解耦）。未配对（devices.json 无本对端键）= 头集与改前逐字节相同，
+      // 零回归。canonical = DeviceHmac 唯一拼装点，收端 verifyHeaders 同源。
+      val hmacHeaders: List[sttp.model.Header] =
+        nebflow.core.device.DeviceRegistry.secretForSync(peer.deviceId) match
+          case Some(key) if key.nonEmpty =>
+            val ts = (System.currentTimeMillis() / 1000).toString
+            val nonce = nebflow.core.device.DeviceHmac.newNonce()
+            val sig = nebflow.core.device.DeviceHmac.sign(
+              key,
+              nebflow.core.device.DeviceHmac.canonical(
+                selfDeviceId,
+                ts,
+                nonce,
+                "POST",
+                apiPath,
+                nebflow.core.device.DeviceHmac.bodySha256(bodyStr)
+              )
+            )
+            List(
+              sttp.model.Header(nebflow.core.device.DeviceHmac.HeaderTs, ts),
+              sttp.model.Header(nebflow.core.device.DeviceHmac.HeaderNonce, nonce),
+              sttp.model.Header(nebflow.core.device.DeviceHmac.HeaderSignature, sig)
+            )
+          case _ => Nil
+      val resp = basicRequest
+        .post(sttp.model.Uri.unsafeParse(s"$endpoint$apiPath"))
+        .contentType("application/json")
+        .header(nebflow.shared.DeviceHeader, selfDeviceId)
+        .headers(hmacHeaders*)
+        .body(bodyStr)
+        .readTimeout(timeout)
+        .response(asStringAlways)
+        .send(backendFor(budget))
 
-        if !resp.code.isSuccess then
-          Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
-        else
-          decode[io.circe.Json](resp.body) match
-            case Right(json) =>
-              val output = json.hcursor.downField("output").as[String].getOrElse("")
-              val error = json.hcursor.downField("error").as[String].getOrElse("")
-              if error.nonEmpty then Left(ToolError(s"Remote error: $error"))
-              else Right(output)
-            case Left(err) =>
-              Left(ToolError(s"Invalid response from remote: ${err.getMessage}"))
-      }.handleErrorWith { e =>
-        val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-        val lower = msg.toLowerCase
-        if lower.contains("timeout") || lower.contains("timed out") then
-          IO.pure(Left(ToolError(s"Command timed out on ${peer.deviceName} after ${timeout.toSeconds}s: $msg")))
-        else IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at ${peer.address}: $msg")))
-      }
-    yield result
-  end p2pExecute
+      if !resp.code.isSuccess then Left(ToolError(s"Remote device returned HTTP ${resp.code}: ${resp.body.take(200)}"))
+      else
+        decode[io.circe.Json](resp.body) match
+          case Right(json) =>
+            val output = json.hcursor.downField("output").as[String].getOrElse("")
+            val error = json.hcursor.downField("error").as[String].getOrElse("")
+            if error.nonEmpty then Left(ToolError(s"Remote error: $error"))
+            else Right(output)
+          case Left(err) =>
+            Left(ToolError(s"Invalid response from remote: ${err.getMessage}"))
+    }.handleErrorWith { e =>
+      val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
+      val lower = msg.toLowerCase
+      if lower.contains("timeout") || lower.contains("timed out") then
+        IO.pure(Left(ToolError(s"Command timed out on ${peer.deviceName} after ${timeout.toSeconds}s: $msg")))
+      else IO.pure(Left(ToolError(s"Cannot reach ${peer.deviceName} at $endpoint: $msg")))
+    }
+  end p2pExecuteAt
 
   /**
    * Wraps p2pExecute with retry logic for transient network failures.
-   * Retries up to 3 times with 1s, 2s delays on connection errors only.
-   * Does NOT retry on HTTP errors or remote tool execution errors — those
-   * indicate the remote device is running but the request itself failed.
+   * Retries up to `budget.maxRetries` times with 1s, 2s ... delays on connection
+   * errors only. Does NOT retry on HTTP errors or remote tool execution errors —
+   * those indicate the remote device is running but the request itself failed.
+   *
+   * A: the budget is the caller's (see [[P2pPathDecision.probeBudget]]) — a
+   * `directOnline=false` dispatch probes once with a 1.5s connect timeout
+   * instead of paying 4 attempts + backoff before the relay fallback.
+   *
+   * 三档选路批（2026-11-04）：**选路计划在重试循环之外算一次**。计划为空（① 档探测
+   * 不可用 + ② 档未实现）⇒ 直接返回 relay 决策：**零拨号、零探测、零重试**
+   * ——否则「Cannot reach」会被 [[isTransientError]] 判成可重试，白付 1+2+3s 退避
+   * （改前正是这种形态，只是白付的是三个 connect 超时）。
    */
   private def p2pExecuteWithRetry(
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
     timeout: FiniteDuration,
-    maxRetries: Int = 3
+    projectRoot: String,
+    budget: P2pPathDecision.ProbeBudget,
+    kind: String = ""
   ): IO[Either[ToolError, String]] =
-    def attempt(n: Int): IO[Either[ToolError, String]] =
-      p2pExecute(peer, toolName, params, timeout).flatMap {
+    def attempt(n: Int, plan: RoutePlan): IO[Either[ToolError, String]] =
+      p2pExecute(peer, toolName, params, timeout, budget, plan).flatMap {
         case Right(result) => IO.pure(Right(result))
-        case Left(err) if n < maxRetries && isTransientError(err) =>
+        case Left(err) if n < budget.maxRetries && isTransientError(err) =>
           val delay = (n + 1).seconds
-          logger.info(s"Retrying ${peer.deviceName} in ${delay.toSeconds}s (attempt ${n + 1}/$maxRetries)") *>
-            IO.sleep(delay) *> attempt(n + 1)
+          logger.info(s"Retrying ${peer.deviceName} in ${delay.toSeconds}s (attempt ${n + 1}/${budget.maxRetries})") *>
+            IO.sleep(delay) *> attempt(n + 1, plan)
         case Left(err) => IO.pure(Left(err))
       }
-    attempt(0)
+    // T4：一次逻辑下发的审计行（在第一次网络尝试前落——重试是同一行下发，
+    // 不重复记行；下发本身失败也记，审计关心「试图驱动了哪台设备」）。
+    DirectRoute.plan(peer.deviceName, p2pCandidates(peer)).flatMap { plan =>
+      // 审计的 `via` 仍是 "p2p"（分档信息在 `[route]` 行里；不改既有审计字段值域）。
+      auditDispatch(peer, toolName, params, projectRoot, "p2p", kind) *>
+        (if plan.isEmpty then
+           IO(DirectRoute.logPlan(peer.deviceName, plan)) *>
+             IO.pure(
+               Left(
+                 ToolError(
+                   s"Cannot reach ${peer.deviceName}: 直连档全部跳过（via=relay reasons=" +
+                     s"${plan.reasons.mkString(",")}；0ms，未付探测税）"
+                 )
+               )
+             )
+         else attempt(0, plan))
+    }
 
   end p2pExecuteWithRetry
 
@@ -430,11 +2043,13 @@ class RemoteExecutor(
   /**
    * Best-path execution with performance optimizations:
    *
-   * 1. **P0-3 Path memory**: if relay was the last successful transport for this
-   *    device (within 5 min TTL), skip P2P entirely.
-   * 2. **Presence check**: if there is no active presence WS connection to the
-   *    peer (cross-network), P2P is impossible — skip to relay (fast-fail with
-   *    a clear error if the relay tunnel is also down).
+   * 1. **A — negative-evidence P2P bypass**: P2P is skipped **only** on real
+   *    recent failure evidence (relay path memory, or a fresh P2P/dial failure),
+   *    never merely because there is no presence WS. `directOnline` is demoted to
+   *    a probe-budget hint ([[P2pPathDecision.probeBudget]]).
+   * 2. **C4 — address-sensitive, re-probing path memory**: a memory is reusable
+   *    only for the same address set and only within 60s, and relay successes do
+   *    not slide the window — so P2P is re-probed at least once per TTL.
    * 3. **P1 Parallel race** (read-only tools only): send P2P and Relay concurrently,
    *    use whichever responds first. Safe because read-only tools have no side
    *    effects on cancellation.
@@ -447,61 +2062,112 @@ class RemoteExecutor(
     peer: PeerInfo,
     toolName: String,
     params: JsonObject,
-    timeout: FiniteDuration
+    timeout: FiniteDuration,
+    projectRoot: String,
+    kind: String = ""
   ): IO[Either[ToolError, String]] =
-    relayClient match
+    // F1 sweep (2026-09-10 隧道鉴权自愈批): resolve the client per dispatch —
+    // never dispatch through a constructor-time snapshot whose session the
+    // server may have kicked.
+    currentRelayClient.flatMap {
       case None =>
-        // No relay available — P2P only
-        p2pExecuteWithRetry(peer, toolName, params, timeout).flatMap {
-          case r @ Right(_) => recordPathMemory(peer.deviceId, "p2p").as(r)
-          case l @ Left(_)  => IO.pure(l)
-        }
+        // No relay available — P2P only. NOTE (A): the probe budget is
+        // deliberately NOT downgraded here — `directOnline=false` does not mean
+        // the P2P HTTP path is down (presence WS and remote-exec HTTP are
+        // different transports), and with no relay there is nothing to fall
+        // back to, so retries remain this path's only recovery.
+        p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, P2pPathDecision.probeBudget(true), kind)
+          .flatMap {
+            case r @ Right(_) => recordPathMemory(peer, "p2p").as(r)
+            case l @ Left(_) => IO.pure(l)
+          }
 
       case Some(client) =>
-        // P0-3: check path memory — skip P2P if relay was last success
-        val memoryOpt = getPathMemory(peer.deviceId)
-        // Presence-based P2P check: skip P2P if no active presence WS to peer
-        val directOnline = neblinkService.presenceServiceOpt.exists(_.isConnected(peer.deviceId))
         val relayAvailable = neblinkService.relayTunnelOpt.exists(_.isAlive)
-        val skipP2p = memoryOpt.contains("relay") || !directOnline
+        // Presence-based signal — no longer a decision basis, only a budget hint.
+        val directOnline = neblinkService.presenceServiceOpt.exists(_.isConnected(peer.deviceId))
+        // A: 负证据驱动 —— 只有「有近期真实 P2P 失败证据」才旁路，否则尝试 P2P。
+        val memoryOpt = getPathMemory(peer)
+        val recentP2pFailure = hasRecentP2pFailure(peer)
+        val skipP2p = P2pPathDecision.shouldSkipP2pForRelay(memoryOpt, recentP2pFailure, relayAvailable)
+        val budget = P2pPathDecision.probeBudget(directOnline)
 
-        for
-          result <-
+        for result <-
             if skipP2p then
-              if !relayAvailable then
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"Device ${peer.deviceName} is unreachable: no direct connection and relay tunnel is down"
-                    )
-                  )
-                )
-              else
-                // Relay only — with cold-start retry for tunnel reconnection latency
-                relayWithColdStartRetry(client, peer, toolName, params).flatMap {
-                  case Right(output) => recordPathMemory(peer.deviceId, "relay").as(Right(output))
-                  case Left(err)     => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
-                }
+              // Relay only — with cold-start retry for tunnel reconnection latency
+              relayWithColdStartRetry(client, peer, toolName, params, projectRoot, kind).flatMap {
+                case Right(output) => recordPathMemory(peer, "relay").as(Right(output))
+                case Left(err) => clearPathMemory(peer.deviceId).as(Left(ToolError(s"Relay failed: $err")))
+              }
             else if ReadOnlyTools.contains(toolName) then
               // P1: parallel race for read-only tools (safe cancellation)
-              raceP2PAndRelay(peer, toolName, params, timeout, client)
+              raceP2PAndRelay(peer, toolName, params, timeout, client, projectRoot, budget, kind)
             else
-              // Write tools: serial P2P → relay fallback
-              p2pExecuteWithRetry(peer, toolName, params, timeout).flatMap {
-                case Right(output) => recordPathMemory(peer.deviceId, "p2p").as(Right(output))
+              // Write tools: serial P2P → relay fallback, negative cache as兜底
+              p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, budget, kind).flatMap {
+                case Right(output) => recordPathMemory(peer, "p2p").as(Right(output))
                 case Left(err) if shouldRelayFallback(err) =>
-                  logger.info(
-                    s"P2P unavailable for ${peer.deviceName} (${err.message.take(80)}), falling back to relay"
-                  ) *>
-                    relayWithColdStartRetry(client, peer, toolName, params).flatMap {
-                      case Right(output) => recordPathMemory(peer.deviceId, "relay").as(Right(output))
+                  // A: this failure IS the evidence that justifies bypassing P2P
+                  // (and, because relay renewals do not slide, it can expire).
+                  recordP2pFailure(peer) *>
+                    logger.info(
+                      s"P2P unavailable for ${peer.deviceName} (${err.message.take(80)}), falling back to relay"
+                    ) *>
+                    relayWithColdStartRetry(client, peer, toolName, params, projectRoot, kind).flatMap {
+                      case Right(output) => recordPathMemory(peer, "relay").as(Right(output))
                       case Left(relayErr) =>
                         IO.pure(Left(ToolError(s"P2P failed: ${err.message}; Relay also failed: $relayErr")))
                     }
                 case Left(err) => IO.pure(Left(err))
               }
         yield result
+    }
   end executeViaBestPath
+
+  // ---- T4 (2026-09-11): relay/P2P 远端执行审计 ----
+
+  /**
+   * 落一条远端执行审计行（见 [[RelayExecAudit]]）。**每次逻辑下发一次**，在首次
+   * 网络尝试前调用（重试不重复记行）。审计失败绝不影响下发：[[RelayExecAudit.record]]
+   * 自身吞异常 + WARN，这里再兜一层（取本机身份失败时也不能挡住下发）。
+   *
+   * 与 dangerLevel 无关——auto-all 下权限卡不出现，正是这一行承担可见性。
+   */
+  private def auditDispatch(
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    projectRoot: String,
+    via: String,
+    kind: String = ""
+  ): IO[Unit] =
+    neblinkService.identity
+      .map(_.deviceId)
+      .flatMap(src =>
+        RelayExecAudit.record(
+          sourceDeviceId = src,
+          targetDeviceId = peer.deviceId,
+          via = via,
+          action = toolName,
+          command = RelayExecAudit.summarizeParams(toolName, params),
+          projectRoot = projectRoot,
+          cwd = Option(System.getProperty("user.dir")).getOrElse(""),
+          kind = kind
+        )
+      )
+      .handleErrorWith(e => logger.warn(s"relay-exec audit line skipped: ${e.getMessage}"))
+
+  /** relay 下发 + 审计（唯一 relay 出口——避免某条分支漏记）。 */
+  private def relayExecAudited(
+    client: NeblinkClientPort,
+    peer: PeerInfo,
+    toolName: String,
+    params: JsonObject,
+    projectRoot: String,
+    kind: String = ""
+  ): IO[Either[String, String]] =
+    auditDispatch(peer, toolName, params, projectRoot, "relay", kind) *>
+      client.relayExec(peer.deviceId, toolName, params)
 
   // ---- BUG 4: Relay cold-start retry ----
 
@@ -513,18 +2179,20 @@ class RemoteExecutor(
    * A short 150ms delay + second attempt covers this window.
    */
   private def relayWithColdStartRetry(
-    client: NeblinkClient,
+    client: NeblinkClientPort,
     peer: PeerInfo,
     toolName: String,
-    params: JsonObject
+    params: JsonObject,
+    projectRoot: String,
+    kind: String = ""
   ): IO[Either[String, String]] =
-    client.relayExec(peer.deviceId, toolName, params).flatMap {
+    relayExecAudited(client, peer, toolName, params, projectRoot, kind).flatMap {
       case Right(output) => IO.pure(Right(output))
-      case Left(err)     =>
+      case Left(err) =>
         // Cold start retry — relay tunnel might have just reconnected
         IO.sleep(150.millis) *> client.relayExec(peer.deviceId, toolName, params).map {
-          case Right(output)   => Right(output)
-          case Left(err2)      => Left(s"$err; $err2 (2 attempts)")
+          case Right(output) => Right(output)
+          case Left(err2) => Left(s"$err; $err2 (2 attempts)")
         }
     }
 
@@ -543,17 +2211,21 @@ class RemoteExecutor(
     toolName: String,
     params: JsonObject,
     timeout: FiniteDuration,
-    client: NeblinkClient
+    client: NeblinkClientPort,
+    projectRoot: String,
+    budget: P2pPathDecision.ProbeBudget,
+    kind: String = ""
   ): IO[Either[ToolError, String]] =
-    val p2pIO: IO[Either[ToolError, String]] = p2pExecuteWithRetry(peer, toolName, params, timeout)
+    val p2pIO: IO[Either[ToolError, String]] =
+      p2pExecuteWithRetry(peer, toolName, params, timeout, projectRoot, budget, kind)
     val relayIO: IO[Either[ToolError, String]] =
-      client.relayExec(peer.deviceId, toolName, params).map {
+      relayExecAudited(client, peer, toolName, params, projectRoot, kind).map {
         case Right(output) => Right(output)
-        case Left(err)     => Left(ToolError(s"Relay failed: $err"))
+        case Left(err) => Left(ToolError(s"Relay failed: $err"))
       }
 
     for
-      p2pFiber   <- p2pIO.start
+      p2pFiber <- p2pIO.start
       relayFiber <- relayIO.start
       // Race to see which fiber finishes first (success or failure).
       // IO.race cancels the losing *join* IO but NOT the underlying fiber.
@@ -561,21 +2233,18 @@ class RemoteExecutor(
       result <- raceResult match
         case Left(r @ Right(_)) =>
           // P2P won with success — cancel relay fiber, record memory
-          relayFiber.cancel *> recordPathMemory(peer.deviceId, "p2p").as(r)
+          relayFiber.cancel *> recordPathMemory(peer, "p2p").as(r)
         case Left(Left(_)) =>
           // P2P failed first — wait for relay
-          relayFiber.joinWithNever.flatMap(r =>
-            recordPathMemory(peer.deviceId, if r.isRight then "relay" else "p2p").as(r)
-          )
+          relayFiber.joinWithNever.flatMap(r => recordPathMemory(peer, if r.isRight then "relay" else "p2p").as(r))
         case Right(r @ Right(_)) =>
           // Relay won with success — cancel P2P fiber, record memory
-          p2pFiber.cancel *> recordPathMemory(peer.deviceId, "relay").as(r)
+          p2pFiber.cancel *> recordPathMemory(peer, "relay").as(r)
         case Right(Left(_)) =>
           // Relay failed first — wait for P2P
-          p2pFiber.joinWithNever.flatMap(r =>
-            recordPathMemory(peer.deviceId, if r.isRight then "p2p" else "relay").as(r)
-          )
+          p2pFiber.joinWithNever.flatMap(r => recordPathMemory(peer, if r.isRight then "p2p" else "relay").as(r))
     yield result
+    end for
   end raceP2PAndRelay
 
   // ---- Helpers ----
@@ -584,27 +2253,19 @@ class RemoteExecutor(
    * Ensure remote params have a timeout matching the HTTP timeout.
    * Without this, the remote BashTool uses its default 30s timeout,
    * causing premature timeout for long-running remote tasks.
+   *
+   * `waitTimeout` 与本侧 fiber 的等待上限同源同值（bgHttpWaitTimeout 判据）：
+   * persistent 服务型设备任务两侧同豁免——缺省 = BgTimeout（前台腿现状零漂移）。
    */
-  private def ensureRemoteTimeout(params: JsonObject): JsonObject =
+  private def ensureRemoteTimeout(
+    params: JsonObject,
+    waitTimeout: FiniteDuration = RemoteExecutor.BgTimeout
+  ): JsonObject =
     if params.contains("timeout") then params
-    else params.add("timeout", BgTimeout.toMillis.asJson)
+    else params.add("timeout", waitTimeout.toMillis.asJson)
 
-  private def resolvePeer(deviceName: String, peers: List[PeerInfo]): Either[ToolError, PeerInfo] =
-    peers.find(p =>
-      p.deviceName.equalsIgnoreCase(deviceName) ||
-        p.deviceId.startsWith(deviceName) ||
-        p.deviceName.toLowerCase.contains(deviceName.toLowerCase)
-    ) match
-      case Some(p) => Right(p)
-      case None =>
-        val available = peers.map(_.deviceName)
-        Left(
-          ToolError(
-            if peers.isEmpty then
-              s"No peer devices discovered after scan. Check: (1) NebLink Server is configured on both machines, (2) Nebflow is running on '$deviceName', (3) both devices are on the same NebLink network."
-            else s"Device '$deviceName' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
-          )
-        )
+  // resolvePeer 已上移至伴生 object（xdev 批：纯函数 + 同包可测）——
+  // 类内调用点经 `RemoteExecutor.resolvePeer` 限定，行为零变化。
 
 end RemoteExecutor
 
@@ -613,16 +2274,190 @@ object RemoteExecutor:
 
   @volatile private var instance: Option[RemoteExecutor] = None
 
+  // ---- 多设备后台任务可见批（作者令 2026-10-25）判据单点（纯函数，spec 直测）----
+
+  /**
+   * 等待型远程调用（前台腿 + 后台 fiber）的 HTTP 等待上限：1h 网络兜底。
+   * （原类内 `private val BgTimeout` 上移伴生——类内引用经限定名同值，禁漂移。）
+   */
+  val BgTimeout: FiniteDuration = 3600.seconds
+
+  /**
+   * persistent（服务型）远程后台任务的 HTTP 等待档：30 天「事实无界」。
+   * dispatch 界面收 FiniteDuration（无 Inf 档），而设备上的 dev server / watcher
+   * 是长驻语义——不该被 1h 网络兜底在等待中杀掉。语义对齐本地腿「persistent
+   * 豁免 idle/硬超时/停滞守卫」；对端 Bash 的 `timeout` 参数经 ensureRemoteTimeout
+   * 同值下发，防对端先杀（两侧同判据）。
+   */
+  val PersistentBgHttpTimeout: FiniteDuration = 30.days
+
+  /**
+   * persistent 豁免判据（唯一单点）：等待型 = BgTimeout（现状零漂移）；
+   * persistent=true = 恒长档。executeRemoteBackground 的 fiber 等待与
+   * ensureRemoteTimeout 的对端 timeout 同源消费本判据。
+   */
+  def bgHttpWaitTimeout(persistent: Boolean): FiniteDuration =
+    if persistent then PersistentBgHttpTimeout else BgTimeout
+
+  // ---- T7（作者令 2026-11-04）：设备腿前台对齐本地腿的四块判据（纯函数，spec 直测）----
+
+  /**
+   * 自动转后台回执的**唯一构造点**（本地腿 `BashTool.autoBackground` 与设备腿
+   *  `RemoteExecutor.executeForegroundSync` / `BashTool` 的 remote 支共用）。
+   *
+   * 禁止第二份字符串：契约 1 要求「与本地 auto-background **逐字同形**」，而
+   * 「两处写法看起来一样」不是同形——只有同一个函数才保证。改文案只改这里。
+   */
+  def autoBackgroundReceipt(jobId: String, waitedMs: Long): String =
+    s"[Background job started] Job ID: $jobId\n" +
+      s"Auto-backgrounded after ${waitedMs / 1000}s in the foreground (wait budget reached — the command was NOT killed). " +
+      "It keeps running in the background and you will be automatically notified when it finishes — continue with other work or finish your turn. " +
+      s"""Wait with Bash(background_job_id: "$jobId", timeout: <milliseconds>) if you are genuinely blocked, or end your turn — you will be notified on completion. Cancel with background_job_id + cancel_background_job: true."""
+
+  /**
+   * 「对端已先行收编」判据：对端实例的前台预算先到点 ⇒ 它把命令收编进它自己的后台
+   * 并对本次 HTTP 调用回了收编回执（回执头 + **同一个** jobId，因为 host 把 id 随
+   * `bgJobId` 下发了）。本侧代理行据此如实落终态，绝不把它当成命令自己跑完的输出
+   * （否则「输出 = 一条回执」= 结果被吞）。
+   */
+  def isPeerAdoptionReceipt(jobId: String, output: String): Boolean =
+    output.startsWith(s"[Background job started] Job ID: $jobId\n")
+
+  /** 对端已收编时的本侧终态正文（如实说明命令还在设备上跑、去哪取输出）。 */
+  def peerAdoptionHandoffBody(jobId: String, deviceName: String, receipt: String): String =
+    s"[Adopted on $deviceName] Job ID: $jobId\n" +
+      "The device reached its own foreground budget first and adopted the command into ITS background " +
+      "registry under the SAME job id — the command was NOT killed and may still be running there. " +
+      s"""Its live state and output live on that device: ask for them with Bash (device: "$deviceName", background_job_id: "$jobId").\n""" +
+      receipt
+
+  /**
+   * 「等待上限到点」判据（契约 3 的触发面）：远端 HTTP 等待被网络层上限打断
+   * （`Command timed out on <device> after Ns: …`、relay 侧的 timeout 文案、或底层
+   * `timeout` / `timed out` 措辞）。**这是「本侧不再等」，不是「对端命令失败」**
+   * ——所以它必须触发「先 bg-cancel 再收行」，而不是当普通错误收行。
+   */
+  def isWaitCapTimeout(message: String): Boolean =
+    val lower = message.toLowerCase
+    lower.contains("timed out") || lower.contains("timeout")
+
+  /** bg-cancel 结果的如实注记（确认失败也照落终态，但绝不假装已杀）。 */
+  def peerCancelNote(result: Either[String, String]): String =
+    result match
+      case Left(reason) => s"\n[bg-cancel ERROR] peer cancel dispatch failed: $reason"
+      case Right(msg) if msg.contains("UNCONFIRMED") =>
+        s"\n[bg-cancel NOT confirmed] $msg — the command may still be running on the device."
+      case Right(msg) => s"\n[bg-cancel] $msg"
+
+  /**
+   * `bg-cancel` 动作往返的等待上限（P2 单任务取消批）：独立短档——取消确认是
+   * 轻量控制帧，不该消费 1h 的 BgTimeout；对端杀树本身经 RemoteExecCancelRegistry
+   * 异步落（确认帧只答「登记表已取走」，不等对端进程退出——进程退出无可等的
+   * 事件腿，等它即违零超时红线）。
+   */
+  val BgCancelTimeout: FiniteDuration = 30.seconds
+
+  /**
+   * 本侧生命周期旗标摘除（下发对端前）：`run_in_background`（execute 分流已消费）
+   * 与 `persistent`（本侧登记/等待集豁免/HTTP 豁免记账）不过线——对端按前台同步
+   * 执行，不识别也不该识别本侧的后台生命周期语义。
+   */
+  def stripLocalBgFlags(params: JsonObject): JsonObject =
+    params.remove("run_in_background").remove("persistent")
+
+  /**
+   * `persistent` 旗标解析（缺省 false = 等待型；与本地 BashTool 同判：
+   * true = 服务型长驻，不纳入等待集、HTTP 等待豁免）。
+   */
+  def parsePersistent(params: JsonObject): Boolean =
+    params("persistent").flatMap(_.asBoolean).getOrElse(false)
+
+  /**
+   * 浏览面单件大小闸（dropbox 大件通道引导线之上的硬闸；与 10MiB capture 闸分档）。
+   * M2 起真源在伴生对象（BrowseGetLoop 首响应闸与实例腿同参一处，禁两处漂移）。
+   */
+  val MaxScopedFetchBytes: Long = 50L * 1024 * 1024
+
+  /**
+   * 浏览取件取消（WS `fileTransferCancel` 的单一入口）：翻在途旗标，取件腿在块间
+   * 停止。true = 有一条在途取件被叫停（旗标表 = `BrowseFetchRegistry`，进程级，
+   * 无需实例在场——实例未初始化时无在途取件，恒 false）。
+   */
+  def cancelScopedFetch(deviceId: String, remotePath: String): Boolean =
+    BrowseFetchRegistry.cancel(deviceId, remotePath)
+
   /** Wire the RemoteExecutor with a NeblinkService, Dispatcher, and optional relay client. Called on startup. */
   def initialize(
-    neblinkService: NeblinkService,
+    neblinkService: NeblinkServicePort,
     dispatcher: Dispatcher[IO],
-    relayClient: Option[NeblinkClient] = None
+    relayClient: Option[NeblinkClientPort] = None
   ): Unit =
     instance = Some(new RemoteExecutor(neblinkService, dispatcher, relayClient))
+    // ④ captures TTL 清扫（xdev 批 2026-09-15）：启动即清一次 + 每 6h 周期清。
+    // 清扫失败只 WARN（CapturePull.sweepExpired 内已兜），绝不影响网关启动。
+    // v2.1 阶段 1（2026-10-09）：pickups 落盘（PointerPickup，§C.2 按需取件的
+    // 本地读数端）同 fiber 同周期——逐件留痕语义同族。
+    dispatcher.unsafeRunAndForget(
+      (CapturePull.sweepExpired().attempt *> PointerPickup.sweepExpired().attempt *> IO.sleep(6.hours)).foreverM.void
+    )
 
   /** Get the current instance, or None if neblink is not initialized. */
   def current: Option[RemoteExecutor] = instance
+
+  /**
+   * 测试接缝（存量红清欠批 2026-10-30）：全量闸门单 JVM 内多套件经
+   * `initialize` 写全局单例且从不复位 —— 依赖「单例未初始化」读数的套件
+   * （DeviceProjectMountSpec / BgRemoteOutputRoutesSpec 等）在全量面下被
+   * 串扰红。规格固件在 setup 调本缝清回 None 自足化（initialize 的套件
+   * 均自负责初始化，复位不影响它们）。生产零调用点。
+   */
+  private[nebflow] def resetForTests(): Unit = instance = None
+
+  /**
+   * 目标解析（xdev 批 2026-09-15 作者裁定「歧义即拒绝 A」）：
+   * **分层匹配 + 多命中显式拒绝**。
+   *   1. 精确层（equalsIgnoreCase）：恰一命中 ⇒ 用它；多命中（真同名设备）⇒ 拒绝。
+   *   2. 模糊层（deviceId.startsWith ‖ deviceName.contains，仅精确层零命中时）：
+   *      恰一命中 ⇒ 用它；多命中 ⇒ **显式报错 + 全部候选名单**（候选格式
+   *      `deviceName(id前8位)`，可判读、可直接复制精确 id）。
+   *   3. 零命中语义不变（原报错文案逐字保留，含 Available 名单）。
+   *
+   * 行为变更申报（判红①缓解）：旧代码 = `find` 取列表序首个命中（静默）。分层
+   * 后「精确唯一命中」场景与旧代码常见路径一致；被拒的只有**真歧义**（精确多
+   * 命中 / 模糊多命中）——旧代码在这种场景会静默选中任意一台，正是判红① 的
+   * 「同名投错机器」失败形态。纯函数（不触实例状态）⇒ 放 object 供同包测试。
+   * v2.1 阶段 1：可见域从 `private[tools]` 放宽到 `private[nebflow]`——项目
+   * 创建面（ProjectCreateService 的远端创建腿）按同一解析单点选设备（禁第二份
+   * 分层匹配实现），行为零变化。
+   */
+  private[nebflow] def resolvePeer(deviceName: String, peers: List[PeerInfo]): Either[ToolError, PeerInfo] =
+    val exact = peers.filter(_.deviceName.equalsIgnoreCase(deviceName))
+    val fuzzy = peers.filter(p =>
+      p.deviceId.startsWith(deviceName) ||
+        p.deviceName.toLowerCase.contains(deviceName.toLowerCase)
+    )
+    val candidates = if exact.nonEmpty then exact else fuzzy
+    candidates match
+      case single :: Nil => Right(single)
+      case Nil =>
+        val available = peers.map(_.deviceName)
+        Left(
+          ToolError(
+            if peers.isEmpty then
+              s"No peer devices discovered after scan. Check: (1) NebLink Server is configured on both machines, (2) ${nebflow.shared.Branding.productName} is running on '$deviceName', (3) both devices are on the same NebLink network."
+            else s"Device '$deviceName' not found among ${peers.size} peer(s). Available: ${available.mkString(", ")}"
+          )
+        )
+      case many =>
+        val listed = many.map(p => s"${p.deviceName}(${p.deviceId.take(8)})").mkString(", ")
+        Left(
+          ToolError(
+            s"Device '$deviceName' is ambiguous: ${many.size} peers match. Candidates: $listed. " +
+              "Re-dispatch with the exact device name or the full deviceId of the intended target."
+          )
+        )
+    end match
+  end resolvePeer
 
   /**
    * Tools that support remote execution. Only these tools get the `device` parameter
@@ -633,6 +2468,11 @@ object RemoteExecutor:
   /**
    * Add `device` parameter to a tool's input schema if it's a remoteable tool.
    * Returns the modified schema, or the original if the tool is not remoteable.
+   *
+   * 台账 #913 ③（2026-10-26）：`fleet.enforceExplicitDevice` 开启时，`device`
+   * 参数的 schema 描述改为**必填措辞**（缺省调用会在引擎侧被拒，schema 与引擎
+   * 行为同源——两面都由 [[nebflow.core.device.FleetConfig]] 承载）。开关关 =
+   * 既有文案逐字节（热读 2s memo，成本与改前同量级）。
    */
   def augmentSchema(toolName: String, schema: JsonObject): JsonObject =
     if !remoteableTools.contains(toolName) then schema
@@ -640,14 +2480,53 @@ object RemoteExecutor:
       val props = schema("properties")
         .flatMap(_.asObject)
         .getOrElse(JsonObject.empty)
+      val deviceDescription =
+        if nebflow.core.device.FleetConfig.enforceExplicitDevice then
+          "Target device name — REQUIRED on EVERY call (fleet.enforceExplicitDevice is ON; calls without it are refused). Use the device's name from the available devices list; \"local\" for this machine."
+        else
+          "Target device name. Use the device's name from the available devices list. Defaults to local device if omitted."
       props.add(
         "device",
         io.circe.Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Target device name. Use the device's name from the available devices list. Defaults to local device if omitted.".asJson
+          "description" -> deviceDescription.asJson
         )
       ) match
         case newProps =>
           schema.add("properties", newProps.asJson)
+
+  /**
+   * 工具 schema 是否**自陈** `device` 输入键（stray 判据的豁免面，2026-10-26
+   * 台账 #901 修正批）：自陈 = 工具**自消费**该参数（如 `Project` 的 create
+   * 参数面——device 是它自己的业务入参，不是误投意图），不属 stray。
+   * remoteable 六件的注入键走 [[augmentSchema]]（真漏斗面），与本判据 OR 联合。
+   */
+  def schemaDeclaresDeviceParam(schema: JsonObject): Boolean =
+    schema("properties").flatMap(_.asObject).exists(_.contains("device"))
+
+  /**
+   * 设备通道 `direction=list` 的**版本偏斜诊断**（台账 #901，2026-10-26）：
+   * 签名不中 ⇒ `None`（调用方错误通道逐字节不变）。
+   *
+   * 动因（2026-10-26 晨生产实录）：Mac 引擎（device-project-mount 批）对设备
+   * Windows 设备发 `direction=list` 做目录核验，设备在产 daemon（2026.9.19 stable，
+   * 早于 2026-10-10 list 方向落位）的 legacy 接收分支原样回答
+   * `"Unknown direction: list"`——这不是「目录不存在」，是**对端引擎版本偏斜**。
+   * 旧文案（"Create/verify the directory on that device first"）把用户引去
+   * 错误的补救路径，故命中签名时改诊为版本偏斜 + 指路升级。
+   *
+   * 签名取小写包含匹配（legacy 接收分支自 2026-09 起逐字稳定
+   * `case other => Left(s"Unknown direction: $other")`），对发送侧各包裹形态
+   * （裸串 / `Remote error: ` 前缀 / `p2p: …; relay: …` 合成）同判。
+   */
+  def listDirectionSkewNote(err: String, deviceName: String): Option[String] =
+    if err.toLowerCase.contains("unknown direction: list") then
+      Some(
+        s"device '$deviceName' engine build predates the metadata-list direction " +
+          "(FileTransfer direction=list, landed 2026-10-10) — the peer's legacy receiver answered " +
+          "\"Unknown direction: list\". This is a device-engine version skew, not a missing directory: " +
+          "upgrade the engine on that device to a current build (deploy the assembly jar, then restart the device daemon) and retry."
+      )
+    else None
 
 end RemoteExecutor

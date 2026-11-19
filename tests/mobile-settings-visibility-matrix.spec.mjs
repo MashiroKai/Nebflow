@@ -1,0 +1,14 @@
+// Sample all fully visible settings controls and text boxes across real scroll and disclosure states.
+import {mkdirSync,writeFileSync} from 'node:fs';
+import {loadPlaywright,createSession,settle} from '../scripts/lib/visual-harness.mjs';
+const out='/private/tmp/stand-overlay-diagnostics/settings-matrix'; mkdirSync(out,{recursive:true});
+const {mod}=loadPlaywright();const browser=await mod.chromium.launch({headless:true});const rows=[];
+try {
+ const context=await browser.newContext({viewport:{width:375,height:812},hasTouch:true});const {page,boot}=await createSession({newPage:()=>context.newPage()},{width:375,height:812,baseURL:'https://stand.test/'});await boot();await page.waitForSelector('body.mobile-layer');await page.evaluate(async()=>(await import('/js/mobile/navController.js')).pushPage('settings'));await settle(page);
+ for(const panel of ['closed','open']) for(const floating of ['off','on-negative-control']) for(const scroll of ['top','middle','bottom']) {
+  await page.evaluate(({panel,floating,scroll})=>{const d=document.querySelector('[data-settings-disclosure="models"]');if(d && d.getAttribute('aria-expanded')!==(panel==='open'?'true':'false'))d.click(); const b=document.querySelector('.decision-preview-entry'); if(floating==='off')b.style.removeProperty('display');else b.style.setProperty('display','block','important');const sc=document.querySelector('#settings-content');sc.scrollTop=scroll==='top'?0:scroll==='middle'?(sc.scrollHeight-sc.clientHeight)/2:sc.scrollHeight;},{panel,floating,scroll});await settle(page);
+  const row=await page.evaluate(({panel,floating,scroll})=>{const sc=document.querySelector('#settings-content'),clip=sc.getBoundingClientRect();const vis=e=>{const r=e.getBoundingClientRect(),cs=getComputedStyle(e);return r.width>2&&r.height>2&&r.top>=clip.top&&r.bottom<=clip.bottom&&r.left>=clip.left&&r.right<=clip.right&&cs.visibility==='visible'&&cs.display!=='none'};const els=[...sc.querySelectorAll('button,input:not(.nf-select-native),select:not(.nf-select-native),a[href],.set-card-title')].filter(vis);const points=els.map(e=>{const r=e.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,h=document.elementFromPoint(x,y);return {target:(e.id||e.getAttribute('data-settings-disclosure')||e.textContent.trim()).slice(0,60),x,y,hit:h?.tagName+'.'+h?.className,ok:h===e||e.contains(h)};});return {panel,floating,scroll,scrollTop:sc.scrollTop,points,failures:points.filter(p=>!p.ok)};},{panel,floating,scroll});rows.push(row);
+ }
+ writeFileSync(`${out}/matrix.json`,JSON.stringify(rows,null,2));console.log(JSON.stringify(rows.map(r=>({panel:r.panel,floating:r.floating,scroll:r.scroll,count:r.points.length,failures:r.failures})),null,2));
+ if(rows.filter(r=>r.floating==='off').some(r=>r.failures.length))process.exitCode=1;
+}finally{await browser.close();}

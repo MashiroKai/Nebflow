@@ -61,8 +61,9 @@ export function initColResizers() {
     const leftId = ORDER[i];
     const rightId = ORDER[i + 1];
     if (!leftId || !rightId) return;
-    r.dataset.left = leftId;
-    r.dataset.right = rightId;
+    const resizer = /** @type {HTMLElement} */ (r);
+    resizer.dataset.left = leftId;
+    resizer.dataset.right = rightId;
     updateResizerVisibility(r, leftId, rightId);
   });
 
@@ -92,9 +93,16 @@ function isPanelVisible(id) {
   return true; // main is always visible
 }
 
-/** Show/hide a resizer based on whether both adjacent panels are visible. */
+/** Show/hide a resizer based on whether both adjacent panels are visible.
+ *
+ *  The main/canvas handle additionally requires the side-by-side form: in the
+ *  narrow-window overlay form (body.canvas-overlay, set by canvas.js) the panel
+ *  is out of the flex row, so there is no column boundary left for this handle
+ *  to separate — a draggable handle over a boundary that does not exist is a
+ *  UI lie. Sidebar width is still adjustable there (sidebar|main handle). */
 function updateResizerVisibility(resizer, leftId, rightId) {
-  const show = isPanelVisible(leftId) && isPanelVisible(rightId);
+  let show = isPanelVisible(leftId) && isPanelVisible(rightId);
+  if (rightId === 'canvas') show = show && !document.body.classList.contains('canvas-overlay');
   resizer.style.display = show ? 'block' : 'none';
 }
 

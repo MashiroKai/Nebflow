@@ -9,41 +9,99 @@ import { sendWs, onMessage } from './ws.js';
 function showBatchDeleteModalLazy() {
   import('./modal.js').then(({ showBatchDeleteModal }) => showBatchDeleteModal());
 }
-import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn } from './utils.js';
-import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF } from './chat.js';
+import { renderMarkdownWithMath, smartScroll, stopSpinner, createIconsIn, statusIcon } from './utils.js';
+import { finishAgent, setStatus, renderToolPending, cancelThinkingRAF, bindCollapsibleToggle } from './chat.js';
 import { restoreFromStorage, loadMsgs } from './persistence.js';
-import { renderTaskList } from './taskList.js';
+import { renderTodoTaskList } from './todoFace.js';
 import { clearMemoryCache } from './memory.js';
 import { chatViews, setActiveView, activeView } from './chatView.js';
+import { emit } from './events.js';
 import { cleanupCardIframes, resetCardAccumulator } from './cardRegistry.js';
 import { t, getLocale, setLocale, getAvailableLocales } from './i18n.js';
-import { fetchNeblinkStatus, neblinkSettingsHTML, bindNeblinkEvents, avatarViewState, noteAvatarFailure } from './neblink.js';
-import { notifyManualUpdateCheck } from './updateCheck.js';
+// neblink 设置页取数/绑定面（`fetchNeblinkStatus` / `neblinkSettingsHTML` /
+// `accountCardHTML` / `bindNeblinkEvents`）随账户栏整件退役（2026-11-18 16:36 作者令）
+// —— 设置页不再持有任何 neblink 读数面或事件绑定；账号/设备面的取数各自归
+// `neblink.js` 的其它消费方（工作台 hero / 个人主页 / 联系人面板）。
+// settingsIdentity.js 的设置页身份卡入口（`settingsIdentityCardHTML` /
+// `paintSettingsIdentity`）同样无调用点：身份与头像的权威展示已迁工作台 hero
+// （account-hero-dedupe 批 2026-11-07）；本文件身份面零残留。
+// settings-ios-rows 批（2026-11-06 作者令）：设置页行/卡/chevron/动作钮的结构单点。
+import { setCard, setGroup, setNavRow, setRow } from './settingsRows.js';
+// updateCheck.js（更新检查/更新执行链）已随 auth-trim 批（2026-10-20 作者令）整体删除：
+// 设置页「更新」功能退役，未来由官网统一检测更新取代。重启面（restartStatus/
+// restartResult 帧消费）曾迁到本文件模块级；settings-ios-rows 批（2026-11-06）随
+// 「重启服务」入口整件移除而一并删除（见 bindSettingsEvents 内注释）。
 import { toggleHTML, setToggleState } from './toggle.js';
+// 时间滚轮选择器（time-wheel-picker 实施批 2026-11-03，作者令 22:16/22:20）：
+// 冻结时段 = 原子段字段（整段一颗触发钮），交互单源 = js/timeWheel.js。
+import { HHMM_RE, toMin, rangeTriggerHTML, paintRangeTrigger, attachTimeTriggers } from './timeWheel.js';
+import { authHeaders } from './flowHelpers.js';
 import { preloadModelCapabilities, renderVisionBadge } from './modelCapabilities.js';
-import * as presets from './presets.js';
 import { renderAppearanceSection, bindAppearanceEvents } from './orbSettingsUI.js';
+// 骨架卡（audit ②27，2026-10-25）：初次进会话（历史未加载完）的 loading 占位泡。
+import { showHistoryLoader } from './main/historyIndicators.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { withFocusKey, pushLayer, popLayer } from './focusTrap.js';
+// Root agent's DISPLAY name — the single read point shared with onboarding /
+// micOrb / chat / modelPanel (leaf module; no cycle risk).
+import { rootDisplayName, isRootNamed, agentDisplayName, ROOT_AGENT_KEY } from './rootName.js';
+// 文件缓存设置行（M2 · 设计 v1 §6.4/§7 表5）：占用读数/清空 seam 单源 = nfFileCache.js。
+// 依赖纪律安全：nfFileCache 只 import state.js/branding.js（后者为叶子），本边不成环。
+import { nfCacheStats, nfCacheReset } from './nfFileCache.js';
+// uifix3 ② (2026-10-06 21:36 author order): the provider model-list probe is
+// SHARED with the onboarding model question — implementation lives in
+// providerModels.js (moved verbatim from here), one probe, no second copy.
+// 合流落位：探针在本文件零消费点（唯一调用点 wireProviderModelFetch 随 Provider 界面族
+// 迁 ./sidebar/providersUi.js，该件已自 ../providerModels.js 单源 import）⇒ 本文件
+// 不再空挂该 import（A 侧单源语义由 providersUi.js 承接，零丢失）。
+
+// sidebar.js 拆分(FE组件化批次二 2026-09-27):三簇实现迁至 js/sidebar/ 子模块 —
+// Provider 界面族(providersUi.js)、Rules + PathPicker 模态(pathRules.js)。
+// (预设管理 UI presetsAdmin.js 已随 A 线退役 presets.js 一并删除,合并 2026-10-02。)
+// 本文件保持单向 import(子模块不得反向 import
+// sidebar.js),公共导出面(批次前 41 符号)经下方 `export ... from` 显式转发,
+// 外部 import 方零改动。
+import { escapeHtml } from './sidebar/providersUi.js';
+// 服务商面板（provider-add-tabs 批 2026-11-06 作者令「添加服务商统一成标签切换
+// 类型 + 单一服务商面板」）：LLM / 生图 / JeV 三类服务商从此只有**一个面** ——
+// 类型标签 + 一张列表 + 一套表单骨架全部在 sidebar/providerPanel.js（本文件只
+// 挂宿主节点 + 调一次 bindProviderPanel）。旧的 Jev / 生图两节与本文件内联的
+// LLM 列表/新增绑定整件退役（零空壳、零并存）。
+import { bindProviderPanel, PROVIDER_PANEL_HOST_ID } from './sidebar/providerPanel.js';
+// 同批②：设置页「模型回退链」节——/model 面板的回退链编辑器原样再放一份，
+// 内容面/状态/保存通道与面板同源（modelPanel.js 单点实现）。
+import { mountModelChainSection } from './modelPanel.js';
+// 连接性测试钮已随 settings-panel-fourfix 批 ②件（2026-10-29 作者令「连接性
+// 测试按钮应放到 LLM provider 配置页面里」）迁入 provider 编辑弹窗——设置页
+// provider 卡模型行不再携带测试钮；模块 = sidebar/modelTestButton.js（弹窗面
+// 自行 import）。
+export { saveNewProvider, openProviderWizard, validateContextWindow, CTX_WINDOW_HARD_CEILING } from './sidebar/providersUi.js';
+import { openRulesEditor, openPathPicker, injectRenderSessionSidebar } from './sidebar/pathRules.js';
+export { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal, openPathPicker, openPathPickerCallback, handleBrowseResult, initPathPicker } from './sidebar/pathRules.js';
+// pathRules 的 handleRulesSaved/handleRulesDeleted 需重渲会话侧栏(该段留守本
+// 文件):模块求值即注入,函数声明提升保证 renderSessionSidebar 此处已可引用。
+injectRenderSessionSidebar(renderSessionSidebar);
 
 // 2026-09-03 作者裁定：光球（micOrb）按预设驱动，设置页隐藏光球配置区。
 // 仅 UI 门控——orbSettingsUI/orbPresets/micOrb 代码与配置读取逻辑全部保留，
 // 用户本地已存自定义配置照常生效；翻回 true 即恢复配置区。
 const ORB_SETTINGS_VISIBLE = false;
 
-// 2026-09-05 作者裁定（设置页清理批②）：新手运行指导入口隐藏封存。与
-// SIDEBAR_LEGACY_ENTRIES 同款 flag 形态——false = 渲染与绑定整体门控；
-// 按钮/绑定代码与 i18n 键 settings.rerunOnboarding 保留不删（隐藏 ≠ 删除），
-// 翻回 true 即原样回归。onboarding 本体与 /onboarding slash 命令零触碰。
-const SHOW_RERUN_ONBOARDING = false;
-
-const eyeSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
-const eyeOffSvg = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+// 2026-09-05 作者裁定（设置页清理批②）曾将此入口隐藏封存；2026-10-30
+// 「Onboarding 跳过批」作者令（更新、更具体）要求设置里保留重新进入
+// Onboarding 的入口 —— 跳过用户唯一的回归面，故翻回 true 原样回归。
+// 与 SIDEBAR_LEGACY_ENTRIES 同款 flag 形态；按钮/绑定与 i18n 键
+// settings.rerunOnboarding 从未删除（隐藏 ≠ 删除）。onboarding 本体与
+// /onboarding slash 命令零触碰。
+const SHOW_RERUN_ONBOARDING = true;
 
 // ---------- Active Folder (VSCode-style) ----------
 export function setActiveFolder(folderId) {
   state.activeFolderId = folderId;
   // Update UI highlight
   document.querySelectorAll('.folder-item').forEach(el => {
-    el.classList.toggle('active', el.dataset.folderId === folderId);
+    el.classList.toggle('active', (/** @type {HTMLElement} */ (el)).dataset.folderId === folderId);
   });
 }
 
@@ -66,20 +124,24 @@ export function showPanel(tab) {
  * and render. Shared by the Activity Bar settings button.
  */
 export function openSettingsPanel() {
-  document.getElementById('settings-overlay')?.classList.add('on');
+  const ov = document.getElementById('settings-overlay');
+  window.__settingsDisclosure = { providers: false, models: false };
+  ov?.classList.add('on');
+  // B4：设置面板入层栈（本壳有 6 个打开入口：活动栏 / 命令面板 / 会话头 / 移动层，
+  // 全部汇到本函数 ⇒ 单点接线）。Esc 仍由本模块既有 document keydown 收口。
+  if (ov) pushLayer(ov, { name: 'settings' });
   sendWs({type: 'getConfig'});
   sendWs({type: 'getToolResultTtl'}); // #341: fresh TTL echo every open
   renderSettings();
 }
 
-/** Close the Settings modal and stop its periodic NebLink refresh. */
+/** Close the Settings modal. */
 export function closeSettingsPanel() {
-  document.getElementById('settings-overlay')?.classList.remove('on');
+  const ov = document.getElementById('settings-overlay');
+  window.__settingsDisclosure = { providers: false, models: false };
+  if (ov) popLayer(ov); // B4：出栈 + 回焦
+  ov?.classList.remove('on');
   scheduleDraft = null;   // #334: closing the panel discards unsaved edits
-  if (window._neblinkRefreshTimer) {
-    clearInterval(window._neblinkRefreshTimer);
-    window._neblinkRefreshTimer = null;
-  }
 }
 
 /** Return whether the settings modal is currently shown. */
@@ -93,6 +155,9 @@ export function isSettingsPanelActive() {
 /** Switch the main panel to display a different session. */
 export function switchToSession(sessionId) {
   if (!sessionId) return;
+  // Selecting an Agent session, the current one included, is a request to see the Agent: a conversation shown in the
+  // main area gives way.
+  emit(window, 'AGENT_VIEW_REQUESTED', { sessionId });
 
   // Same-session: just clear unread and scroll to bottom
   if (sessionId === state.activeSessionId) {
@@ -138,7 +203,6 @@ export function switchToSession(sessionId) {
 
   renderSessionSidebar(state.sessions, sessionId);
   // Sync header indicators
-  if (typeof state.updateHeaderModelInfo === 'function') state.updateHeaderModelInfo();
   if (typeof state.updateBgTasksUI === 'function') state.updateBgTasksUI();
   if (typeof state.updateBgAgentIndicator === 'function') state.updateBgAgentIndicator();
   if (typeof state.updateBypassToggle === 'function') state.updateBypassToggle(chatViews.primary);
@@ -160,22 +224,33 @@ export function initNavTabs() {
 }
 
 // ---------- Agent icons in Nav Bar ----------
+/** DISPLAY name of an agent by mechanism name — delegates to the SINGLE display
+ *  read point (rootName.js#agentDisplayName), so the root agent renders the
+ *  user's chosen name (generic appellation while unnamed — never the mechanism
+ *  key) and background agents render their own name. Judgement keys
+ *  (`a.name === ROOT_AGENT_KEY` below) stay untouched — display only. */
+function agentDisplayLabel(agentName) {
+  return agentDisplayName(agentName);
+}
+
 export function renderAgentList() {
   const list = document.getElementById('nav-agent-list');
   if (!list) return;
   list.innerHTML = '';
-  // ⑧ Nebula (orchestrator) pinned first with a separator before the rest
-  // (entity-icons-visual-spec §3.3). Nebula always renders the orbit icon —
+  // ⑧ root agent (orchestrator) pinned first with a separator before the rest
+  // (entity-icons-visual-spec §3.3). It always renders the orbit icon —
   // its identity marker must stay stable, so custom avatars are ignored.
   const ordered = [...state.agentsData].sort((a, b) =>
-    (b.name === 'Nebula' ? 1 : 0) - (a.name === 'Nebula' ? 1 : 0));
+    (b.name === ROOT_AGENT_KEY ? 1 : 0) - (a.name === ROOT_AGENT_KEY ? 1 : 0));
   ordered.forEach((a, idx) => {
-    const isNebula = a.name === 'Nebula';
+    const isNebula = a.name === ROOT_AGENT_KEY;
     const el = document.createElement('div');
     const isActive = state.selectedAgent === a.name;
     el.className = 'nav-agent' + (isActive ? ' active' : '') + (isNebula ? ' nav-agent-orchestrator' : '');
     const avatar = a.avatar || '';
-    const displayName = a.displayName || a.name;
+    // Display name = the single read point (named root → its name; unnamed root →
+    // generic appellation; every other agent → its own name).
+    const displayName = agentDisplayLabel(a.name);
     el.dataset.name = a.name;
     el.title = displayName;
     const iconHtml = isNebula
@@ -296,7 +371,7 @@ export function selectAgent(agentName) {
   }
   // Update nav bar active state
   document.querySelectorAll('#nav-agent-list .nav-agent').forEach(el => {
-    el.classList.toggle('active', el.dataset.name === agentName);
+    el.classList.toggle('active', (/** @type {HTMLElement} */ (el)).dataset.name === agentName);
   });
   // Exit batch mode and clear active folder when switching agents
   if (state.selectedSessionIds.size > 0) exitBatchMode();
@@ -356,42 +431,41 @@ function renderWorkScheduleSection() {
   const segs = Array.isArray(ws.segments) ? ws.segments : [];
   const segRows = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
   return `
-    <div class="settings-row">
-      <span class="settings-label">${t('settings.workSchedule')}</span>
-      ${toggleHTML({ on: enabled, id: 'toggle-schedule', label: t('settings.workSchedule') })}
-    </div>
-    <div id="schedule-editor" style="display:${enabled ? 'block' : 'none'};padding:4px 0 8px;">
+    ${setRow({
+      title: t('settings.workSchedule'),
+      control: toggleHTML({ on: enabled, id: 'toggle-schedule', label: t('settings.workSchedule') }),
+    })}
+    <div id="schedule-editor" class="set-sub" style="display:${enabled ? 'block' : 'none'};">
       <div class="segment-list" id="segment-list">${segRows}</div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-segment">${t('settings.addSegment')}</button>
-      <div class="cfg-hint">${t('settings.workScheduleOnHint')}</div>
+      <button class="cfg-btn cfg-btn-add set-btn set-btn-block" id="btn-add-segment">${t('settings.addSegment')}</button>
+      <div class="set-row-hint">${t('settings.workScheduleOnHint')}</div>
     </div>
     <!-- Dirty hint + action row live OUTSIDE #schedule-editor so they stay
          visible even when the editor is display:none — a toggled-OFF draft
          must remain committable (Save) / abandonable (Reset). The segments
          themselves stay in the DOM (renderScheduleEditorRows rebuilds from
          the draft on re-enable), so nothing is cleared on toggle-off. -->
-    <div class="cfg-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'};margin-top:6px;color:var(--color-text-muted)">${t('settings.scheduleDirtyHint')}</div>
-    <div style="display:${scheduleDraft !== null ? 'flex' : 'none'};gap:8px;margin-top:8px" id="schedule-actions">
-      <button class="cfg-btn cfg-btn-primary" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
-      <button class="cfg-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
+    <div class="set-row-hint" id="schedule-dirty-hint" style="display:${scheduleDraft !== null ? 'block' : 'none'}">${t('settings.scheduleDirtyHint')}</div>
+    <div class="set-actions" style="display:${scheduleDraft !== null ? 'flex' : 'none'}" id="schedule-actions">
+      <button class="cfg-btn cfg-btn-primary set-btn" id="btn-save-schedule">${t('settings.scheduleSave')}</button>
+      <button class="cfg-btn set-btn" id="btn-reset-schedule">${t('settings.scheduleReset')}</button>
     </div>
-    <div class="cfg-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'};margin-top:-2px">${t('settings.workScheduleOffHint')}</div>`;
+    <div class="set-row-hint" id="schedule-off-hint" style="display:${enabled ? 'none' : 'block'}">${t('settings.workScheduleOffHint')}</div>`;
 }
 
 /**
- * One segment row — start/end HH:mm inputs + remove. A small sapphire hint is
- * shown when the segment crosses midnight (start > end): the freeze window
- * spans into the next day (blacklist semantics).
+ * One segment row — 原子段字段（整段「09:00-12:00」一颗触发钮，作者令 2026-11-01 16:46
+ * 「8:00-12:00 应该是一个整体」）+ remove。跨零点的行内 sapphire 徽标保留
+ * （start > end = 冻结窗跨入次日，黑名单语义）。交互组件单源 = js/timeWheel.js。
  */
 function buildSegmentRowHtml(s, i) {
-  const crossMidnight = HHMM_RE.test(s.start) && HHMM_RE.test(s.end)
-    && toMin(s.start) > toMin(s.end);
+  const start = HHMM_RE.test(s.start) ? s.start : '09:00';
+  const end = HHMM_RE.test(s.end) ? s.end : '12:00';
+  const crossMidnight = toMin(start) > toMin(end);
   return `
     <div class="segment-row" data-seg-index="${i}">
       <span class="seg-label">${t('settings.segmentLabel', { n: i + 1 })}</span>
-      <input class="time-input" value="${escapeHtml(s.start || '')}" data-role="start" autocomplete="off" spellcheck="false">
-      <span class="seg-label">${t('settings.segmentTo')}</span>
-      <input class="time-input" value="${escapeHtml(s.end || '')}" data-role="end" autocomplete="off" spellcheck="false">
+      ${rangeTriggerHTML({ start, end, label: t('settings.segmentEdit'), presets: 'freeze' })}
       ${crossMidnight ? `<span class="seg-cross-midnight">${t('settings.segmentCrossMidnight')}</span>` : ''}
       <button class="seg-remove" title="${t('settings.removeSegment')}" aria-label="${t('settings.removeSegment')}">×</button>
     </div>`;
@@ -417,6 +491,10 @@ let sttAdvanceExpanded = false;
  *  advance (#341): collapsed by default, expanded state survives re-renders
  *  but not fresh sessions. */
 let ttlAdvanceExpanded = false;
+
+/** 模型回退链节上一任卸载函数（配置面风格统一批②：renderSettings 重渲前
+ *  先卸上一任 mountModelChainSection 的监听，不叠订阅）。 */
+let modelChainUnmount = /** @type {(() => void)|null} */ (null);
 
 /** Backend defaults — mirrors ToolResultTtlConfig.parseStrict bounds. Used
  *  both for rendering before the first echo and for local pre-validation. */
@@ -466,26 +544,29 @@ function renderTtlSection() {
       <div class="cfg-form-group">
         <label class="cfg-label" for="${id}">${t(labelKey)}</label>
         <input class="cfg-input" id="${id}" type="number" inputmode="numeric" value="${Number(value)}" ${enabled ? '' : 'disabled'} autocomplete="off">
-        <div class="cfg-hint">${t(hintKey)}</div>
+        <div class="set-row-hint">${t(hintKey)}</div>
       </div>`;
+  // settings-ios-rows 批：原地展开头行 = 同一套可点进行（setNavRow expand，chevron
+  // 下转表达开合），主体 = .set-collapse-body；开关/保存按钮取同一行网格与尺寸令牌。
   return `
-    <div class="settings-row stt-advance-toggle-row">
-      <button type="button" class="settings-collapse-toggle" id="ttl-advance-toggle"
-              aria-expanded="${ttlAdvanceExpanded}" aria-controls="ttl-advance-body">
-        <span class="settings-label">${t('settings.ttlAdvanceTitle')}</span>
-        <span class="settings-collapse-chevron" aria-hidden="true"></span>
-      </button>
-    </div>
-    <div class="settings-collapse-body" id="ttl-advance-body" ${ttlAdvanceExpanded ? '' : 'hidden'}>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.ttlEnabled')}</span>
-        ${toggleHTML({ on: enabled, id: 'toggle-ttl-enabled', label: t('settings.ttlEnabled') })}
-      </div>
-      <div class="cfg-hint">${t('settings.ttlEnabledHint')}</div>
-      ${rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes)}
-      ${rowHtml('settings.keepRecentLabel', 'settings.keepRecentHint', 'ttl-keep-recent', cfg.keepRecent ?? TTL_DEFAULTS.keepRecent)}
-      <div style="display:flex;gap:8px;margin-top:8px">
-        <button class="cfg-btn cfg-btn-primary" id="btn-save-ttl">${t('settings.ttlSave')}</button>
+    ${setNavRow({
+      icon: statusIcon('timer', 16),
+      title: t('settings.ttlAdvanceTitle'),
+      id: 'ttl-advance-toggle',
+      expand: true,
+      expanded: ttlAdvanceExpanded,
+      controls: 'ttl-advance-body',
+    })}
+    <div class="set-collapse-body" id="ttl-advance-body" ${ttlAdvanceExpanded ? '' : 'hidden'}>
+      ${setRow({
+        title: t('settings.ttlEnabled'),
+        control: toggleHTML({ on: enabled, id: 'toggle-ttl-enabled', label: t('settings.ttlEnabled') }),
+        hint: t('settings.ttlEnabledHint'),
+      })}
+      ${setGroup(rowHtml('settings.ttlMinutesLabel', 'settings.ttlMinutesHint', 'ttl-minutes', cfg.ttlMinutes ?? TTL_DEFAULTS.ttlMinutes))}
+      ${setGroup(rowHtml('settings.keepRecentLabel', 'settings.keepRecentHint', 'ttl-keep-recent', cfg.keepRecent ?? TTL_DEFAULTS.keepRecent))}
+      <div class="set-actions">
+        <button class="cfg-btn cfg-btn-primary set-btn" id="btn-save-ttl">${t('settings.ttlSave')}</button>
       </div>
     </div>`;
 }
@@ -600,48 +681,70 @@ onMessage('configUpdateFailed', (msg) => {
 function renderSttSection() {
   const stt = state.stt && typeof state.stt === 'object' ? state.stt : {};
   const configured = !!stt.sttConfigured;
+  // D 件（2026-10-28）：总开关——缺省开（缺席 = 现有行为逐字不变，存量用户
+  // 零感知）；关 = STT 整体停用（入口与快捷键全收 + 引擎腿拒绝，见
+  // voiceEngine.sttEnabled 门与 stt-disabled body 类）。
+  const enabled = stt.sttEnabled !== false;
   const endpoint = stt.endpoint || '';
   const model = stt.model || '';
-  const status = configured
-    ? t('settings.sttConfiguredStatus', { endpoint: escapeHtml(endpoint), model: escapeHtml(model) })
-    : t('settings.sttUnconfiguredStatus');
+  const status = !enabled
+    ? t('settings.sttDisabledStatus')
+    : configured
+      ? t('settings.sttConfiguredStatus', { endpoint: escapeHtml(endpoint), model: escapeHtml(model) })
+      : t('settings.sttUnconfiguredStatus');
+  // settings-ios-rows 批：头行与 TTL 节同一套可点进行（原地展开 = setNavRow expand），
+  // 右侧只放一个状态读数（.set-nav-val），不再有第二种行壳。
   return `
-    <div class="settings-row stt-advance-toggle-row">
-      <button type="button" class="settings-collapse-toggle" id="stt-advance-toggle"
-              aria-expanded="${sttAdvanceExpanded}" aria-controls="stt-advance-body">
-        <span class="settings-label">${t('settings.sttAdvanceTitle')}</span>
-        <span class="settings-collapse-chevron" aria-hidden="true"></span>
-      </button>
-      <span class="cfg-hint stt-status" id="stt-status-hint">${status}</span>
-    </div>
-    <div class="settings-collapse-body" id="stt-advance-body" ${sttAdvanceExpanded ? '' : 'hidden'}>
+    ${setNavRow({
+      icon: statusIcon('mic', 16),
+      title: t('settings.sttAdvanceTitle'),
+      id: 'stt-advance-toggle',
+      expand: true,
+      expanded: sttAdvanceExpanded,
+      controls: 'stt-advance-body',
+      value: status,
+      valueTitle: status.replace(/<[^>]*>/g, ''),
+      valueId: 'stt-status-hint',
+    })}
+    <div class="set-collapse-body" id="stt-advance-body" ${sttAdvanceExpanded ? '' : 'hidden'}>
+      ${setRow({
+        title: t('settings.sttEnabled'),
+        control: toggleHTML({ on: enabled, id: 'toggle-stt-enabled', label: t('settings.sttEnabled') }),
+        hint: t('settings.sttEnabledHint'),
+      })}
       <div class="cfg-form-group">
         <label class="cfg-label" for="stt-endpoint">${t('settings.sttEndpoint')}</label>
-        <input class="cfg-input" id="stt-endpoint" type="text" value="${escapeHtml(endpoint)}" placeholder="https://api.example.com/v1/audio/transcriptions" autocomplete="off" spellcheck="false">
+        <input class="cfg-input" id="stt-endpoint" type="text" value="${escapeHtml(endpoint)}" placeholder="https://api.example.com/v1/audio/transcriptions" autocomplete="off" spellcheck="false" ${enabled ? '' : 'disabled'}>
         <label class="cfg-label" for="stt-model">${t('settings.sttModel')}</label>
-        <input class="cfg-input" id="stt-model" type="text" value="${escapeHtml(model)}" placeholder="${t('settings.sttModelPlaceholder')}" autocomplete="off" spellcheck="false">
+        <input class="cfg-input" id="stt-model" type="text" value="${escapeHtml(model)}" placeholder="${t('settings.sttModelPlaceholder')}" autocomplete="off" spellcheck="false" ${enabled ? '' : 'disabled'}>
         <label class="cfg-label" for="stt-apikey">${t('settings.sttApiKey')}
           ${configured ? `<span class="stt-key-configured">${t('settings.sttKeyConfigured')}</span>` : ''}
         </label>
-        <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off">
-        <div class="cfg-hint">${t('settings.sttHint')}</div>
-        <div style="display:flex;gap:8px;margin-top:8px">
-          <button class="cfg-btn cfg-btn-primary" id="btn-save-stt">${t('settings.sttSave')}</button>
-          <button class="cfg-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
+        <!-- 密钥字段关拼写检查（input-focus-ring 批 2026-11-05）：浏览器会把 key 当
+             单词画红波浪线，且部分实现会把值送拼写服务 ⇒ 一并关自动大写/自动更正。 -->
+        <input class="cfg-input" id="stt-apikey" type="password" value="" placeholder="${t(configured ? 'settings.sttApiKeyConfiguredPlaceholder' : 'settings.sttApiKeyPlaceholder')}" autocomplete="off" spellcheck="false" autocapitalize="off" autocorrect="off" ${enabled ? '' : 'disabled'}>
+        <div class="set-row-hint">${t('settings.sttHint')}</div>
+        <div class="set-actions">
+          <button class="cfg-btn cfg-btn-primary set-btn" id="btn-save-stt">${t('settings.sttSave')}</button>
+          <button class="cfg-btn set-btn" id="btn-clear-stt">${t('settings.sttClear')}</button>
         </div>
       </div>
     </div>`;
 }
 
 /**
- * Collect segments currently in the editor (all rows, raw values).
+ * Collect segments currently in the editor (all rows). 值域单源 = 原子段触发钮的
+ * dataset（data-start/data-end）——整段一个字段，无半边输入框可取。
  */
 function collectSegments() {
   const rows = document.querySelectorAll('#segment-list .segment-row');
-  return Array.from(rows).map(row => ({
-    start: row.querySelector('[data-role="start"]')?.value.trim() || '',
-    end: row.querySelector('[data-role="end"]')?.value.trim() || ''
-  }));
+  return Array.from(rows).map((row) => {
+    const btn = /** @type {HTMLElement|null} */ (row.querySelector('[data-tw-range]'));
+    return {
+      start: btn ? (btn.dataset.start || '') : '',
+      end: btn ? (btn.dataset.end || '') : ''
+    };
+  });
 }
 
 /** Rebuild the segment rows (used for the F2 default on first enable). */
@@ -650,9 +753,6 @@ function renderScheduleEditorRows(segs) {
   if (!list) return;
   list.innerHTML = segs.map((s, i) => buildSegmentRowHtml(s, i)).join('');
 }
-
-const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
-function toMin(hhmm) { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; }
 
 /**
  * Blacklist validation contract (user ruling 2026-08-19 23:16): HH:mm format;
@@ -671,12 +771,12 @@ function validateSegments(segs) {
   return null;
 }
 
-/** In-place toggle of a row's cross-midnight hint (no rebuild → no focus loss
- *  while the user clicks from the start input into the end input). */
+/** In-place toggle of a row's cross-midnight hint（值域单源 = 原子段触发钮 dataset）。 */
 function updateSegmentRowHint(row) {
   if (!row) return;
-  const start = row.querySelector('[data-role="start"]')?.value.trim() || '';
-  const end = row.querySelector('[data-role="end"]')?.value.trim() || '';
+  const btn = /** @type {HTMLElement|null} */ (row.querySelector('[data-tw-range]'));
+  const start = btn ? (btn.dataset.start || '') : '';
+  const end = btn ? (btn.dataset.end || '') : '';
   const cross = HHMM_RE.test(start) && HHMM_RE.test(end) && toMin(start) > toMin(end);
   let hint = row.querySelector('.seg-cross-midnight');
   if (cross && !hint) {
@@ -720,471 +820,238 @@ function saveWorkSchedule(enabled, segs, opts) {
  */
 function effortFromConfig() {
   if (!state.thinkingMode?.enabled) return 'off';
+  if (state.thinkingMode.effort) return state.thinkingMode.effort;
   const b = state.thinkingMode.budgetTokens ?? 32000;
   if (b <= 2048) return 'low';
   if (b <= 8192) return 'medium';
   return 'high'; // covers ≤32768 and legacy >32768 (xhigh collapsed to high)
 }
 
+// 权限模式（全局档位）设置页控件已于 permshield F1（2026-09-13，作者重裁
+// 「候选 B」①「删设置页，盾牌改成写全局」）**整体删除**——控件、事件绑定与
+// 7 个 i18n 键一并移除；`PUT /api/safety/mode` 的前端调用点随之归零（REST 端点
+// 由后端保留，供外部/脚本使用）。档位的**唯一 UI 入口 = 顶栏盾牌**
+// （`web/js/main.js` `initSafetyToggle`，写的是同一条全局持久路径）。
+// 账户栏整件退役（作者令 2026-11-18 16:36「设置里的账户这一栏完全移除」）：
+// 设置页原有 `[data-panel-group="account"]` 分组（`<h2>账号</h2>` + `accountCardHTML`
+// 账号卡）**整栏移除**——不是隐藏、不留空容器、不留死样式/i18n 键。账号读数与设备子区
+// 的权威展示 = 工作台 hero（`.mf-me-entry`）+ 个人主页（`mobile/meFace.js`）；逐设备登出
+// 仍在个人主页设备清单（`profileDevices.js`）与桌面个人资料面，设置页零复述。
+// 由此：正文不再有 `mobileAccountLayer` 数据集/层切换重渲（那套机制只服务账号卡两档
+// 形态）——设置页 HTML 自此与层无关，`settingsLayerObserver` 一并退役。
 export function renderSettings() {
   const content = document.getElementById('settings-content');
   const cfg = state.parsedConfig || {};
-  const llm = cfg.llm || {};
-  const providers = llm.providers || {};
-  const providerNames = Object.keys(providers);
   // Build language selector options
   const locales = getAvailableLocales();
   const localeLabels = { 'zh-CN': '中文', en: 'English' };
+  const llmProviders = cfg.llm?.providers || {};
+  const providerCount = Object.values(llmProviders).filter(Boolean).length
+    + Object.keys(cfg.imagegen?.providers || {}).length;
+  const modelCount = ['Nebula', 'kernel', 'project-dispatcher', 'node', 'subagent'].length;
   const langOpts = locales.map(code =>
     `<option value="${code}" ${code === getLocale() ? 'selected' : ''}>${localeLabels[code] || code}</option>`
   ).join('');
 
-  // 2026-09-06 作者裁定：账号区与设备互联统一为一个区块——设备属于账号，
-  // 登录态头像下方直接放设备列表，未登录态只有 logo + 一句「不可用」说明，
-  // 不再有独立的 neblink settings-section。
+  // settings-progressive-disclosure 批：供应商与模型只在每次新开设置时折叠；
+  // renderSettings 会因 WS echo 重建 DOM，展开状态需跨同一设置会话保留。
+  const settingsDisclosure = window.__settingsDisclosure || (window.__settingsDisclosure = {
+    providers: false,
+    models: false,
+  });
+  // ── settings-ios-rows 批（2026-11-06 作者令「能点击下一个面板的样式都统一成苹果的
+  // 这种样式 然后 底部的重启服务去掉 并且这些可点击的按钮 布局规整一点」）──────────
+  // 全页结构单点 = js/settingsRows.js（setCard / setGroup / setNavRow / setRow）；
+  // 造型单点 = css/settingsRows.css（令牌 --set-* 落在 css/stand-tokens.css）。
+  // 「能进下一面板」的行一律 setNavRow（图标位 + 主标题 + 单个副值 + chevron），
+  // 读数/控件行一律 setRow（同一高度网格）；动作按钮一律 .set-btn（同尺寸令牌）。
   content.innerHTML = `
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.account')}</div>
-      <button class="settings-avatar-entry" id="settings-avatar-entry" type="button">
-        <span class="settings-avatar-frame">
-          <picture>
-            <source media="(prefers-color-scheme: dark)" srcset="css/logo-dark-4.png">
-            <img class="settings-avatar-logo" src="css/logo-bright-4.png" alt="">
-          </picture>
-          <img class="settings-avatar-photo" alt="" hidden>
-        </span>
-      </button>
-      ${neblinkSettingsHTML()}
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.runtime')}</div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.thinkingMode')}</span>
-        <select class="cfg-select" id="cfg-thinking-effort" style="width:auto">
-          ${['off','low','medium','high'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="cfg-hint">${t('settings.thinkingEffortHint')}</div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.llmLog')}</span>
-        ${toggleHTML({ on: state.llmLogEnabled !== false, id: 'toggle-llm-log', label: t('settings.llmLog') })}
-      </div>
+    <section class="sp-panel-group" data-panel-group="general"><h2>${t('settings.general')}</h2>
+      ${setCard({ body: setGroup(setRow({ title: t('settings.language'), control: `<select class="cfg-select set-field" id="cfg-language" style="width:auto">${langOpts}</select>` })) })}
+      ${ORB_SETTINGS_VISIBLE ? setCard({ title: t('settings.appearance'), body: renderAppearanceSection() }) : ''}
+    </section>
+    <section class="sp-panel-group" data-panel-group="runtime"><h2>${t('settings.runtime')}</h2>
+    <!-- 栏目名去重批（2026-11-18 作者实拍报障「每一栏都出现两次栏目名 比如高级 高级」）：
+         单卡分区的卡内标题与 section 标题逐字相同 ⇒ 二取一，保留**卡外**的 section
+         标题（它是全页分组节奏的唯一承载体，删掉会让本组脱离「组标题 + 白卡」的版式），
+         卡内标题整件撤除。多卡分区（模型与服务：服务商 / 模型（按会话类别）/ 密钥）
+         的卡内标题与 section 标题不同名 ⇒ 一个不动。机检：
+         scripts/check-settings-section-dedupe.mjs 逐对核（红/绿自证）。 -->
+    ${setCard({ body: `
+      ${setGroup(
+        setRow({
+          title: t('settings.thinkingMode'),
+          control: `<select class="cfg-select set-field" id="cfg-thinking-effort" style="width:auto">
+            ${['off','minimal','low','medium','high','max'].map(lvl => `<option value="${lvl}"${effortFromConfig() === lvl ? ' selected' : ''}>${t('settings.thinkingEffort.' + lvl)}</option>`).join('')}
+          </select>`,
+        })
+        + setRow({
+          title: t('settings.llmLog'),
+          control: toggleHTML({ on: state.llmLogEnabled !== false, id: 'toggle-llm-log', label: t('settings.llmLog') }),
+        })
+      )}
       ${renderWorkScheduleSection()}
       ${renderSttSection()}
       <div id="ttl-section-wrap">${renderTtlSection()}</div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.language')}</span>
-        <select class="cfg-select" id="cfg-language" style="width:auto">${langOpts}</select>
-      </div>
-      <div class="settings-row">
-        <span class="settings-label">${t('settings.autostart')}</span>
-        ${toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) })}
-      </div>
-      <div class="cfg-hint" id="autostart-hint" style="display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'};margin-top:-4px">${escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported'))}</div>
-    </div>
-    ${ORB_SETTINGS_VISIBLE ? `
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.appearance')}</div>
-      ${renderAppearanceSection()}
-    </div>` : ''}
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.providers')}</div>
-      <div id="provider-list">
-        ${providerNames.map(name => renderProviderCard(name, providers[name])).join('')}
-      </div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-provider">${t('settings.addProvider')}</button>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.presets')}</div>
-      <div id="preset-migrate-banner" style="display:none"></div>
-      <div id="preset-list"><div class="cfg-empty">Loading…</div></div>
-      <button class="cfg-btn cfg-btn-add" id="btn-add-preset">${t('settings.addPreset')}</button>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.advanced')}</div>
-      <button class="cfg-btn" id="btn-toggle-json">${t('settings.editRawJson')}</button>
-      ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn" id="btn-rerun-onboarding" style="margin-left:8px">${t('settings.rerunOnboarding')}</button>` : ''}
-    </div>
-    <div class="settings-section" id="json-editor-section" style="display:${state.settingsShowJson ? 'block' : 'none'}">
+      ${setGroup(
+        setRow({
+          title: t('settings.autostart'),
+          control: toggleHTML({ on: !!(state.autostartStatus && state.autostartStatus.enabled), id: 'toggle-autostart', label: t('settings.autostart'), disabled: !!(state.autostartStatus && !state.autostartStatus.supported) }),
+          hint: escapeHtml(state.autostartStatus?.reason || t('settings.autostartUnsupported')),
+          hintId: 'autostart-hint',
+          hintStyle: `display:${state.autostartStatus && !state.autostartStatus.supported ? 'block' : 'none'}`,
+        })
+      )}` })}
+    </section>
+    <section class="sp-panel-group" data-panel-group="models"><h2>${t('settings.modelsAndServices')}</h2>
+    ${setCard({ title: t('settings.providers'), id: 'provider-section', body: `
+      <button type="button" class="set-disclosure" data-settings-disclosure="providers"
+        aria-expanded="${settingsDisclosure.providers ? 'true' : 'false'}" aria-controls="provider-panel-disclosure">
+        <span>${t('settings.providersSummary', { n: providerCount })}</span><span class="set-disclosure-chevron" aria-hidden="true">›</span>
+      </button>
+      <div id="provider-panel-disclosure" class="set-disclosure-body"${settingsDisclosure.providers ? '' : ' hidden'}>
+        <!-- 服务商面板的类型标签、列表和表单骨架唯一归 sidebar/providerPanel.js。 -->
+        <div id="${PROVIDER_PANEL_HOST_ID}"></div>
+      </div>` })}
+    ${setCard({ title: t('settings.modelChainDisclosureTitle'), id: 'model-chain-section', body: `
+      <button type="button" class="set-disclosure" data-settings-disclosure="models"
+        aria-expanded="${settingsDisclosure.models ? 'true' : 'false'}" aria-controls="model-chain-disclosure">
+        <span>${t('settings.modelsSummary', { n: modelCount })}</span><span class="set-disclosure-chevron" aria-hidden="true">›</span>
+      </button>
+      <div id="model-chain-disclosure" class="set-disclosure-body"${settingsDisclosure.models ? '' : ' hidden'}>
+        <!-- 模型回退链节的状态与保存通道仍单点归 modelPanel.js，/model 同步不变。 -->
+        <div class="set-row-hint" id="model-chain-hint">${t('settings.modelChainSectionHint')}</div>
+        <div id="model-chain-section-body"></div>
+      </div>` })}
+      <!-- 🔴 provider-add-tabs 批（2026-11-06 作者令）：原 Jev 卡（setNavRow
+           #jev-advance-toggle + #jev-advance-body）与生图卡（#imagegen-advance-toggle
+           + #imagegen-section-wrap）两节随三入口统一整件退役——生图收进上方唯一
+           服务商面板（sidebar/providerPanel.js 类型标签）；JeV 面随后于 jev-retire
+           批（2026-11-16）随 JeV 全量退役整体删除（含 settings-jev-health 徽标）。 -->
+    ${setCard({ title: t('settings.secrets'), body: `
+      <!-- Secrets entry (secrets-frontend batch, 2026-09-27, author ruling
+           2026-09-27 19:20): one row only — the list itself lives in the
+           standalone dedicated dialog (#secrets-overlay, owned by
+           js/secretsPanel.js), not inside #settings-modal.
+           settings-ios-rows 批 2026-11-06：原来的「密钥管理 + 14 个密钥 + [14] 胶囊
+           + chevron」四件行卡收编为本页唯一可点进行 setNavRow —— 副值只剩**一个**
+           计数读数（设置项是图标位，不再是重复图标），不再有第二份数字。 -->
+      ${setNavRow({
+        icon: statusIcon('key-round', 16),
+        title: t('settings.secretsManage'),
+        id: 'btn-open-secrets',
+        value: '…',
+        valueId: 'secrets-entry-sub',
+      })}` })}
+    </section>
+    <section class="sp-panel-group" data-panel-group="advanced"><h2>${t('settings.advanced')}</h2>
+    <!-- 栏目名去重（见上方 runtime 段注）：section 标题「高级」与卡内标题逐字相同 ⇒
+         卡内标题撤除，保留卡外 section 标题。 -->
+    ${setCard({ body: `
+      <!-- 高级区按钮排布重做（2026-11-18 作者实拍报障「这里的按钮排布也太乱太丑了」）：
+           修前 = 两枚动作钮（.set-actions 等分列）+ 文件缓存读数行里**又嵌一枚**动作钮
+           ⇒ 三枚钮两种宽度、右缘两条 x（动作钮贴卡内容缘，行内钮再内收一个 chevron 盒宽
+           = 本卡内没有任何 chevron 行可对齐，纯粹是错位）。修后 = 全部动作钮收进**同一张
+           .set-actions 网格**（同高 44 / 同内距 / 同圆角 / 同间隙），缓存读数退回**纯读数行**
+           （.set-row + .set-row-val，行内零按钮）；清空键占满整行（.set-btn-block，
+           .set-actions 内跨列）。同排对齐、间距一致、可点区一致三件一次到位；
+           用的全是既有类与既有令牌（零新组件、零新令牌）。 -->
+      ${setGroup(setRow({
+        title: t('settings.fileCache'),
+        control: `<span id="nf-cache-usage" role="status" class="set-row-val">…</span>`,
+      }))}
+      <div class="set-actions">
+        <button class="cfg-btn set-btn" id="btn-toggle-json" title="${t('settings.editRawJson')}">${t('settings.editRawJson')}</button>
+        ${SHOW_RERUN_ONBOARDING ? `<button class="cfg-btn set-btn" id="btn-rerun-onboarding" title="${t('settings.rerunOnboarding')}">${t('settings.rerunOnboarding')}</button>` : ''}
+        <!-- 文件缓存清空键（M2 · 设计 v1 §6.4/§7 表5）：nfCacheReset seam，
+             两段式确认 = 按钮第二击即确认位（逻辑零改动，只换落位）。 -->
+        <button class="cfg-btn set-btn set-btn-block" id="btn-clear-nf-cache" type="button" title="${t('settings.fileCacheClear')}">${t('settings.fileCacheClear')}</button>
+      </div>` })}
+    ${setCard({ hidden: !state.settingsShowJson, id: 'json-editor-section', body: `
       <div class="config-editor-wrap">
         <textarea id="config-editor" spellcheck="false">${escapeHtml(state.configText)}</textarea>
         <div class="config-actions">
           <button class="btn-save" id="btn-save-config">${t('settings.save')}</button>
           <button id="btn-reload-config">${t('settings.reload')}</button>
         </div>
-      </div>
-    </div>
-    <div class="settings-section">
-      <div class="settings-section-title">${t('settings.about')}</div>
+      </div>` })}
+    ${/* 「重启服务」整件已由 settings-ios-rows 批（2026-11-06 作者令「底部的重启服务去掉」）
+          移除：按钮 + 两段式确认逻辑 + #restart-status 状态行 + restartStatus/restartResult
+          两个模块级订阅全删（前端零发射面）；后端 WS `restart` 命令保留不动（其余消费方
+          仍在）。更新功能已随 auth-trim 批（2026-10-20 作者令）退役。 */ ''}
+    </section>
+    <section class="sp-panel-group" data-panel-group="about"><h2>${t('settings.about')}</h2>
+    <!-- 栏目名去重（见 runtime 段注）：section 标题「关于」与卡内标题逐字相同 ⇒
+         卡内标题撤除。卡体还顺带修了旧排版的“连接状态: / ⤷ 已连接”两行错位
+         （作者实拍「重复信息」清单第 4 条）：连接读数收进**同一行**（label + 图标
+         + 词面），与 .set-row 的「左标题右读数」同格。 -->
+    ${setCard({ body: `
       <div class="about-info">
-        <div>${brand.productName} v${state.serverVersion || '...'}</div>
-        <div style="margin-top:4px;font-size:12px;color:var(--color-text-secondary)">${t('settings.connection')}: <span style="color:${state.connected ? '#4caf50' : '#f44336'}">${state.connected ? t('settings.connected') : t('settings.disconnected')}</span></div>
-        <div style="margin-top:10px">
-          <button class="cfg-btn cfg-btn-sm" id="btn-check-update">${t('settings.checkUpdate')}</button>
-          <span id="update-status" style="margin-left:8px;font-size:12px;color:var(--color-text-secondary)"></span>
-        </div>
-        <div id="update-action" style="display:${state.updateAvailable ? 'block' : 'none'};margin-top:8px">
-          <button class="cfg-btn cfg-btn-primary" id="btn-do-update">${t('settings.updateNow')}</button>
-          <button class="cfg-btn cfg-btn-sm" id="btn-dismiss-update" style="margin-left:6px">${t('settings.updateLater')}</button>
+        <div class="about-version">${brand.productName} ${state.serverVersion || '...'}</div>
+        <div class="about-conn">
+          <span class="about-conn-label">${t('settings.connection')}</span>
+          <span class="about-conn-value">${state.connected
+            ? statusIcon('circle-check', 14, 'st-ok') + '<span style="color:var(--status-word)">' + t('settings.connected') + '</span>'
+            : statusIcon('wifi-off', 14, 'st-err') + '<span style="color:var(--status-word)">' + t('settings.disconnected') + '</span>'}</span>
         </div>
       </div>
-    </div>`;
+    ` })}</section>`;
 
-  // Silent auto checks (updateCheck.js) record their outcome in state so a
-  // panel (re)render shows the same "update available" detail the manual
-  // path would — same chain, one source of truth.
-  if (state.updateAvailable) {
-    const statusEl = document.getElementById('update-status');
-    if (statusEl) statusEl.textContent = t('settings.updateAvailable', { version: state.latestVersion });
+  for (const name of ['general', 'models', 'runtime', 'advanced', 'about']) {
+    const group = content.querySelector(`[data-panel-group="${name}"]`);
+    if (group) content.appendChild(group);
   }
-
-  renderSettingsAvatar();
+  bindSettingsDisclosure(content);
   bindSettingsEvents(content, cfg);
-  bindNeblinkEvents(() => renderSettings());
+  // Secrets entry count pill (secrets-ui-redesign, 2026-10-08): read/cached
+  // module-side, repainted on every render and on `secrets-changed`.
+  refreshSecretsEntryCount();
+  // 服务商面板装配延至展开时：折叠状态不发投影请求；展开后沿用既有统一面板装配。
+  if (settingsDisclosure.providers) void bindProviderPanel();
+  // 模型回退链节：挂载/重挂（与 /model 面板共享状态/保存通道，modelPanel.js
+  // 单点；先卸上一任监听再挂，重渲不叠订阅）。
+  modelChainUnmount?.();
+  modelChainUnmount = settingsDisclosure.models
+    ? mountModelChainSection(document.getElementById('model-chain-section-body'))
+    : () => {};
+  // 设置页 apikey 明文回读预取（作者令 2026-10-27「设置里配置的 apikey 直接
+  // 显示」）：进页即拉已存 provider key 真值（owner 鉴权单点
+  // GET /api/config/provider-keys；providersUi 模块内 60s 缓存 + 单飞），编辑
+  // 弹窗打开时已在手。失败静默——弹窗退回既有空态（留空保存 = "***" = 引擎
+  // 保留旧值），保存路径零改动。
+  // Provider credentials are fetched only after an explicit reveal action.
 
-  // Async-load the preset management section (non-blocking)
-  loadPresetsSection();
+  // device-provenance 批（2026-10-23）的「消息设备标记」设置区已随标注全自动批
+  // （2026-10-26 作者令「消息来源识别应该是自动的」）整区退役：来源识别由
+  // deviceIdentity.js 按花名册自动判定（登录会话→账号设备名；配对设备→登记名；
+  // 匿名→默认标注），设置页不再有手动命名/绑定面。
 
   // Pre-fetch model capabilities, then refresh badges on provider cards
   preloadModelCapabilities(() => {
     const providerList = document.getElementById('provider-list');
     if (providerList) {
       providerList.querySelectorAll('.cfg-model-vision').forEach(el => {
-        const ref = el.closest('.cfg-model-row')?.dataset.modelRef;
+        const ref = (/** @type {HTMLElement|null} */ (el.closest('.cfg-model-row')))?.dataset.modelRef;
         if (ref) el.innerHTML = renderVisionBadge(ref);
       });
     }
   });
 
-  // Refresh neblink peers periodically while settings panel is open
-  const refreshNeblink = () => {
-    fetchNeblinkStatus().then(() => {
-      // Match both states: logged in (.neblink-logged-in) and logged out
-      // (.neblink-login-section) so login/logout swaps render correctly.
-      const neblinkDiv = content.querySelector('.neblink-logged-in, .neblink-login-section');
-      if (neblinkDiv && document.getElementById('settings-content').contains(neblinkDiv)) {
-        const wrapper = document.createElement('div');
-        wrapper.innerHTML = neblinkSettingsHTML();
-        neblinkDiv.replaceWith(wrapper.firstElementChild);
-        bindNeblinkEvents(() => renderSettings());
-      }
-      // Keep the avatar section in lockstep with login/avatar changes.
-      renderSettingsAvatar();
-    });
-  };
-  refreshNeblink();
-  if (window._neblinkRefreshTimer) clearInterval(window._neblinkRefreshTimer);
-  window._neblinkRefreshTimer = setInterval(refreshNeblink, 3000);
+  // neblink 设置页刷新面（3s 在线态轮询 + 账号卡/身份卡/设备子区重画）随账户栏整件
+  // 退役（2026-11-18 16:36 作者令）：设置页已无 `.neblink-logged-in` /
+  // `.neblink-login-section` / `#settings-devices-slot` / `#settings-identity-card`
+  // 任一面，`_neblinkRefreshTimer` 不再起表（在线态刷新只在工作台 hero / 个人主页 /
+  // 联系人面板，均各自订阅 WS `peerListChanged`，不依赖本表）。
 }
 
-function renderProviderCard(name, p) {
-  // Deleted providers are stored as null — render nothing instead of crashing
-  // the settings re-render (remove flow calls renderSettings synchronously).
-  if (!p) return '';
-  const modelCount = (p.models || []).length;
-  const modelsHtml = (p.models || []).map(m => {
-    const ref = `${name}/${m.id}`;
-    return `<div class="cfg-model-row" data-model-ref="${escapeHtml(ref)}">
-      <span class="cfg-model-name">${escapeHtml(m.id)}</span>
-      <div class="cfg-model-vision">${renderVisionBadge(ref)}</div>
-    </div>`;
-  }).join('');
-
-  return `
-    <div class="cfg-card" data-provider="${escapeHtml(name)}">
-      <div class="cfg-card-header">
-        <span class="cfg-card-title">${escapeHtml(name)}</span>
-        <button class="cfg-card-remove" data-provider="${escapeHtml(name)}" title="${t('provider.remove')}">×</button>
-      </div>
-      <div class="cfg-card-meta">
-        <span class="cfg-card-badge">${escapeHtml((p.protocol || '').toUpperCase())}</span>
-        <span class="cfg-card-sub">${modelCount} model${modelCount !== 1 ? 's' : ''}</span>
-      </div>
-      ${modelsHtml ? `<div class="cfg-model-list">${modelsHtml}</div>` : ''}
-    </div>`;
-}
-
-// ── Settings avatar section (09-05 五项裁定④; 2026-09-06 修整: 头像-only) ──
-// Dual state driven by the SAME decision as the Activity Bar avatar
-// (neblink.js avatarViewState): logged in with a usable account avatar →
-// photo; otherwise the product logo. The entry renders the centered avatar
-// only — all in-area text removed (author 2026-09-06). Click behavior is not
-// reimplemented: the entry forwards to #activity-avatar's native click
-// (activityBar.js bindAvatar — login modal when logged out, profile page when
-// logged in), so both entries stay byte-identical by construction.
-function renderSettingsAvatar() {
-  const entry = document.getElementById('settings-avatar-entry');
-  if (!entry) return;
-  const { url: validAvatarUrl, showPhoto } = avatarViewState();
-  const logoEl = entry.querySelector('.settings-avatar-logo');
-  const photoEl = entry.querySelector('.settings-avatar-photo');
-  if (photoEl) {
-    photoEl.hidden = !showPhoto;
-    photoEl.onerror = () => {
-      noteAvatarFailure(validAvatarUrl); // shared failed-URL latch
-      const view = avatarViewState();
-      if (photoEl) photoEl.hidden = true;
-      if (logoEl) logoEl.hidden = view.showPhoto;
-    };
-    if (showPhoto && photoEl.getAttribute('src') !== validAvatarUrl) photoEl.setAttribute('src', validAvatarUrl);
-  }
-  if (logoEl) logoEl.hidden = showPhoto;
-}
-
-// ---------- Preset management section (P3) ----------
-
-/** Reverse-lookup: which agents reference a given preset name. */
-function presetUsedBy(agentsMap, presetName) {
-  return Object.entries(agentsMap || {})
-    .filter(([, v]) => v === presetName)
-    .map(([k]) => k)
-    .sort();
-}
-
-function renderPresetCard(p, defaultPreset, agentsMap) {
-  const isDefault = p.name === defaultPreset;
-  const usedBy = presetUsedBy(agentsMap, p.name);
-  const chain = [p.preferred, ...(p.fallbacks || [])].filter(Boolean);
-  const usedByHtml = usedBy.length > 0
-    ? `<span class="preset-card-agents" title="${escapeHtml(usedBy.join(', '))}">${t('preset.usedBy', { n: usedBy.length })}</span>`
-    : `<span class="preset-card-agents">${t('preset.usedByNone')}</span>`;
-  return `
-    <div class="cfg-card preset-card" data-preset="${escapeHtml(p.name)}">
-      <div class="cfg-card-header">
-        <span class="cfg-card-title">${escapeHtml(p.name)}</span>
-        ${isDefault ? `<span class="preset-default-badge">${t('preset.default')}</span>` : ''}
-      </div>
-      <div class="preset-card-body">
-        ${p.description ? `<div class="preset-card-desc">${escapeHtml(p.description)}</div>` : ''}
-        ${presets.presetChainHtml(chain, '')}
-        <div class="preset-card-footer">
-          ${usedByHtml}
-          <span class="preset-card-actions">
-            <button class="cfg-btn cfg-btn-sm" data-action="default" ${isDefault ? 'disabled' : ''}>${t('preset.setDefault')}</button>
-            <button class="cfg-btn cfg-btn-sm" data-action="edit">${t('preset.edit')}</button>
-            <button class="cfg-btn cfg-btn-sm" data-action="delete" ${isDefault ? 'disabled' : ''}>${t('preset.delete')}</button>
-          </span>
-        </div>
-      </div>
-    </div>`;
-}
-
-/** Load presets + agent mapping, render cards, bind section events. */
-async function loadPresetsSection() {
-  const listEl = document.getElementById('preset-list');
-  if (!listEl) return; // settings panel not open
-
-  const data = await presets.fetchPresets();
-  if (!document.getElementById('preset-list')) return; // panel closed while fetching
-  if (!data) {
-    listEl.innerHTML = `<div class="cfg-empty">${t('preset.loadFailed')}</div>`;
-    return;
-  }
-
-  const presetList = data.presets || [];
-  const defaultPreset = data.defaultPreset || '';
-  const agentsMap = data.agents || {};
-
-  listEl.innerHTML = presetList.length > 0
-    ? presetList.map(p => renderPresetCard(p, defaultPreset, agentsMap)).join('')
-    : `<div class="cfg-empty">${t('preset.empty')}</div>`;
-
-  // Card action buttons (delegation on the list container)
-  listEl.onclick = async (e) => {
-    const btn = e.target.closest('button[data-action]');
-    if (!btn || btn.disabled) return;
-    const card = btn.closest('.preset-card');
-    const name = card?.dataset.preset;
-    const preset = presetList.find(p => p.name === name);
-    if (!preset) return;
-
-    if (btn.dataset.action === 'default') {
-      try {
-        await presets.setDefaultPreset(name);
-        loadPresetsSection();
-      } catch (err) { window.__showToast?.(err.message, 'error'); }
-    } else if (btn.dataset.action === 'edit') {
-      showPresetModal(preset, () => loadPresetsSection());
-    } else if (btn.dataset.action === 'delete') {
-      const usedBy = presetUsedBy(agentsMap, name);
-      const msg = usedBy.length > 0
-        ? t('preset.deleteConfirm', { name, n: usedBy.length })
-        : t('preset.deleteConfirmNone', { name });
-      window.__showConfirm?.(t('preset.deleteTitle'), msg, async () => {
-        try {
-          await presets.deletePreset(name);
-          loadPresetsSection();
-        } catch (err) { window.__showToast?.(err.message, 'error'); }
-      });
-    }
-  };
-
-  // Add-preset button (recreated each renderSettings — bind here)
-  const addBtn = document.getElementById('btn-add-preset');
-  if (addBtn) addBtn.onclick = () => showPresetModal(null, () => loadPresetsSection());
-
-  // Legacy migration banner → P5 migration dialog
-  presets.detectLegacyAgents().then(legacy => {
-    const banner = document.getElementById('preset-migrate-banner');
-    if (!banner) return;
-    if (legacy.length === 0) { banner.style.display = 'none'; return; }
-    banner.style.display = '';
-    banner.innerHTML = `
-      <div class="preset-migrate-inner">
-        <span class="preset-migrate-text">⚠ ${t('preset.migrateBanner', { n: legacy.length })}</span>
-        <button class="cfg-btn cfg-btn-sm" id="btn-migrate-legacy">${t('preset.migrateAction')}</button>
-      </div>`;
-    banner.querySelector('#btn-migrate-legacy')?.addEventListener('click', () => {
-      showMigrationDialog(legacy, () => loadPresetsSection());
-    });
-  });
-}
-
-/**
- * Legacy migration dialog (P5). Stage 1: local preview grouped by config
- * fingerprint. Stage 2: POST /api/presets/migrate-legacy, then refresh.
- */
-async function showMigrationDialog(legacyAgents, onDone) {
-  document.getElementById('cfg-modal')?.remove();
-
-  const overlay = document.createElement('div');
-  overlay.id = 'cfg-modal';
-  overlay.className = 'cfg-modal-overlay';
-  overlay.innerHTML = `
-    <div class="cfg-modal">
-      <div class="cfg-modal-title">${t('preset.migrateTitle')}</div>
-      <div class="cfg-modal-body" id="preset-migrate-body">
-        <div class="cfg-empty">Loading…</div>
-      </div>
-      <div class="cfg-modal-actions">
-        <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
-        <button class="cfg-btn cfg-btn-save" id="preset-migrate-run">${t('preset.migrateExecute')}</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-
-  const close = () => overlay.remove();
-  overlay.querySelector('#cfg-modal-cancel').addEventListener('click', close);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-
-  // Stage 1 — preview (local computation; existing names needed for mig-<n>)
-  const body = overlay.querySelector('#preset-migrate-body');
-  const presetData = await presets.fetchPresets();
-  if (!overlay.isConnected) return;
-  const groups = presets.previewMigration(legacyAgents, presetData);
-  const newCount = groups.filter(g => !g.reused).length;
-
-  body.innerHTML = `
-    <div class="preset-migrate-summary">${t('preset.migrateSummary', { agents: legacyAgents.length, presets: newCount })}</div>
-    ${groups.map(g => `
-      <div class="preset-migrate-group">
-        <div class="preset-migrate-group-head">
-          <span class="preset-migrate-group-name">「${escapeHtml(g.presetName)}」</span>
-          ${g.reused ? `<span class="preset-migrate-reuse">${t('preset.migrateReuse')}</span>` : ''}
-          <span class="preset-migrate-group-arrow">←</span>
-          <span class="preset-migrate-group-agents">${escapeHtml(g.agents.join(', '))}</span>
-        </div>
-        ${presets.presetChainHtml([g.preferred, ...g.fallbacks].filter(Boolean), '')}
-      </div>`).join('')}
-    <div class="preset-migrate-note">${t('preset.migrateNote')}</div>
-    <div class="preset-migrate-error" id="preset-migrate-error" style="display:none"></div>`;
-
-  // Stage 2 — execute
-  const runBtn = overlay.querySelector('#preset-migrate-run');
-  runBtn.addEventListener('click', async () => {
-    runBtn.disabled = true;
-    overlay.querySelector('#cfg-modal-cancel').disabled = true;
-    runBtn.textContent = t('preset.migrateRunning');
-    const errEl = overlay.querySelector('#preset-migrate-error');
-    errEl.style.display = 'none';
-    try {
-      const result = await presets.migrateLegacy(legacyAgents.map(a => a.name));
-      const migrated = result?.migratedAgents?.length ?? legacyAgents.length;
-      close();
-      window.__showToast?.(t('preset.migrateDone', { n: migrated }), 'success');
-      onDone?.();
-    } catch (err) {
-      errEl.textContent = `${t('preset.migrateFailed')}: ${err.message}`;
-      errEl.style.display = '';
-      runBtn.disabled = false;
-      overlay.querySelector('#cfg-modal-cancel').disabled = false;
-      runBtn.textContent = t('preset.migrateExecute');
-    }
-  });
-}
-
-/**
- * Preset create/edit modal. Reuses the cfg-modal skeleton; the model chain
- * editor is the shared drag-to-reorder component from presets.js.
- */
-function showPresetModal(existing, onSaved) {
-  const isEdit = !!existing;
-  document.getElementById('cfg-modal')?.remove();
-
-  const overlay = document.createElement('div');
-  overlay.id = 'cfg-modal';
-  overlay.className = 'cfg-modal-overlay';
-  overlay.innerHTML = `
-    <div class="cfg-modal">
-      <div class="cfg-modal-title">${isEdit ? t('preset.editTitle', { name: existing.name }) : t('preset.addTitle')}</div>
-      <div class="cfg-modal-body">
-        <div class="cfg-form-group">
-          <label class="cfg-label">${t('preset.fieldName')}</label>
-          <input class="cfg-input" data-field="name" type="text" value="${escapeHtml(existing?.name || '')}" placeholder="vision" ${isEdit ? 'disabled' : ''} autocomplete="off">
-        </div>
-        <div class="cfg-form-group">
-          <label class="cfg-label">${t('preset.fieldDescription')}</label>
-          <input class="cfg-input" data-field="description" type="text" value="${escapeHtml(existing?.description || '')}" autocomplete="off">
-        </div>
-        <div class="cfg-form-group">
-          <label class="cfg-label">${t('preset.fieldChain')}</label>
-          <div class="preset-drag-hint">${t('preset.dragHint')}</div>
-          <div class="preset-chain-editor" id="preset-chain-editor"></div>
-        </div>
-      </div>
-      <div class="cfg-modal-actions">
-        <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
-        <button class="cfg-btn cfg-btn-save" id="cfg-modal-save">${t('settings.save')}</button>
-      </div>
-    </div>`;
-  document.body.appendChild(overlay);
-
-  const initialChain = existing ? [existing.preferred, ...(existing.fallbacks || [])].filter(Boolean) : [];
-  const editor = presets.renderChainEditor(
-    overlay.querySelector('#preset-chain-editor'),
-    initialChain,
-    presets.getAllModelRefs(),
-  );
-
-  const close = () => overlay.remove();
-  overlay.querySelector('#cfg-modal-cancel').addEventListener('click', close);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-
-  overlay.querySelector('#cfg-modal-save').addEventListener('click', async () => {
-    const name = overlay.querySelector('[data-field="name"]').value.trim();
-    const description = overlay.querySelector('[data-field="description"]').value.trim();
-    if (!isEdit) {
-      if (!name) { window.__showToast?.(t('preset.nameRequired'), 'error'); return; }
-      if (/\s/.test(name)) { window.__showToast?.(t('preset.noSpaces'), 'error'); return; }
-    }
-    const chain = editor.getChain();
-    const body = {
-      name: isEdit ? existing.name : name,
-      description,
-      preferred: chain[0] || null,
-      fallbacks: chain.slice(1),
-    };
-    try {
-      if (isEdit) await presets.updatePreset(existing.name, body);
-      else await presets.createPreset(body);
-      close();
-      onSaved?.();
-    } catch (err) {
-      window.__showToast?.(err.message, 'error');
-    }
-  });
-}
-
+// ── Settings avatar section — 已迁入 settingsIdentity.js（件四，作者令 2026-11-02）──
+// 修前本处是 `renderSettingsAvatar()`（只画头像、点击委托 activityBar 的
+// activateAccountEntry）：2026-09-06 起「头像 only、区内零文案」；2026-11-01 起
+// 已登录态点头像 = 两选一菜单（其中「个人主页」= window.open 官网）。
+// 件四按作者令整体改写：头像在上 + 用户名/邮箱单行胶囊 + 点胶囊进 **App 内**
+// 个人资料面（零外链），绘制/交互/资料面全在 `settingsIdentity.js`
+// （`settingsIdentityCardHTML()` 出结构，`paintSettingsIdentity()` 出读数）。
+// 本文件不再持有任何头像绘制代码 —— 禁在此重建第二份（双真源必然分叉）。
 
 // ---------- Autostart (开机自启动) ----------
 // Target `enabled` while an autostartSet request is in flight; null when idle.
@@ -1198,7 +1065,7 @@ onMessage('autostartStatusResult', (msg) => {
     supported: msg.supported !== false,
     reason: msg.reason || '',
   };
-  const toggle = document.getElementById('toggle-autostart');
+  const toggle = /** @type {HTMLButtonElement|null} */ (document.getElementById('toggle-autostart'));
   if (toggle) {
     setToggleState(toggle, state.autostartStatus.enabled);
     toggle.disabled = !state.autostartStatus.supported; // native button disabled — :disabled styling
@@ -1220,23 +1087,113 @@ onMessage('autostartStatusResult', (msg) => {
 });
 
 
+// ── Secrets entry count (secrets-ui-redesign, 2026-10-08) ───────────────────
+// The entry row carries an "{n} secrets" subtitle + a count pill. The count is
+// the LIST LENGTH of GET /api/secrets — metadata only (the contract has no
+// read-value face; secretsPanel.js's discipline header applies verbatim).
+// Cached for 60s so settings re-renders don't re-fetch; secretsPanel.js
+// dispatches a `secrets-changed` event after every successful list read,
+// which busts the cache and re-paints immediately (add/delete reflect at once).
+/** @type {{n: number|null, at: number}} */
+let secretsCountCache = { n: null, at: 0 };
+
+/** Paint a known count onto the entry row (0 = the "no secrets yet" wording).
+ *  settings-ios-rows 批 2026-11-06：**只画一处**读数（行右副值 #secrets-entry-sub）
+ *  —— 修前「{n} 个密钥」与计数胶囊两件并排，同一数字说了两遍，作者实拍点名。 */
+function paintSecretsEntryCount(n) {
+  const sub = document.getElementById('secrets-entry-sub');
+  if (!sub) return;
+  const txt = n > 0 ? t('settings.secretsCount', { n }) : t('settings.secretsNone');
+  sub.textContent = txt;
+  // provider-add-tabs 批（溢出零容忍断言）：副值省略号收尾时 title 全文。
+  sub.title = txt;
+}
+
+/** Read the count (cached ≤60s) and paint it; a failure keeps the "…"
+ *  placeholder — the same silent-catch convention as the health probe below. */
+function refreshSecretsEntryCount() {
+  const sub = document.getElementById('secrets-entry-sub');
+  if (!sub) return;
+  if (secretsCountCache.n !== null && Date.now() - secretsCountCache.at < 60000) {
+    paintSecretsEntryCount(secretsCountCache.n);
+    return;
+  }
+  fetch('/api/secrets', { headers: authHeaders() })
+    .then(r => (r.ok ? r.json() : null))
+    .then(data => {
+      const rows = Array.isArray(data && data.secrets) ? data.secrets : [];
+      secretsCountCache = { n: rows.length, at: Date.now() };
+      if (!sub.isConnected) return;
+      paintSecretsEntryCount(rows.length);
+    })
+    .catch(() => {});
+}
+if (typeof window !== 'undefined') {
+  window.addEventListener('secrets-changed', () => { secretsCountCache.at = 0; refreshSecretsEntryCount(); });
+}
+
+// ── 文件缓存设置行（M2 · 设计 v1 §6.4/§7 表5）：占用读数 + 清空入口 ─────────
+// 读数/清空 seam 单源 = nfFileCache.js（nfCacheStats/nfCacheReset）；模块头注已声明
+// 依赖纪律（nfFileCache 只 import state/branding 叶子，本边不成环）。
+// MB 读数格式与 explorer.js formatMb 同式（本地小助手，禁为四行跨模块新增公共面；
+// 一处刻意偏差：explorer 版对 0 字节下限取 1 KB，本行读数要如实出「0 KB」）。
+function nfCacheFormatMb(n) {
+  const v = Number(n) || 0;
+  if (v >= 1024 * 1024 * 1024) return (v / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + ' MB';
+  return Math.max(0, Math.round(v / 1024)) + ' KB';
+}
+
+/** 占用读数入画：`N 条 · 大小`；title = 分桶明细（local/device/server，占/预算）。 */
+function paintNfCacheUsage(el) {
+  const s = nfCacheStats();
+  el.textContent = `${s.entries} ${t('settings.fileCacheEntries')} · ${nfCacheFormatMb(s.bytes)}`;
+  el.title = `local ${nfCacheFormatMb(s.buckets.local)}/${nfCacheFormatMb(s.bucketBudgets.local)}` +
+    ` · device ${nfCacheFormatMb(s.buckets.device)}/${nfCacheFormatMb(s.bucketBudgets.device)}` +
+    ` · server ${nfCacheFormatMb(s.buckets.server)}/${nfCacheFormatMb(s.bucketBudgets.server)}`;
+}
+
+function bindSettingsDisclosure(content) {
+  content.querySelectorAll('[data-settings-disclosure]').forEach((button) => {
+    button.addEventListener('click', () => {
+      const key = button.dataset.settingsDisclosure;
+      if (key !== 'providers' && key !== 'models') return;
+      const expanded = button.getAttribute('aria-expanded') !== 'true';
+      window.__settingsDisclosure[key] = expanded;
+      button.setAttribute('aria-expanded', String(expanded));
+      const body = document.getElementById(button.getAttribute('aria-controls') || '');
+      if (body) body.hidden = !expanded;
+      if (key === 'providers' && expanded) void bindProviderPanel();
+      if (key === 'models' && expanded) {
+        modelChainUnmount?.();
+        modelChainUnmount = mountModelChainSection(document.getElementById('model-chain-section-body'));
+      } else if (key === 'models') {
+        modelChainUnmount?.();
+        modelChainUnmount = null;
+      }
+    });
+  });
+}
+
 function bindSettingsEvents(content, cfg) {
-  // Thinking effort selector (#345, user ruling 2026-08-20): OpenAI-style
-  // off/low/medium/high dropdown replaces the Anthropic numeric budget input.
-  // Levels map to budget_tokens at the same boundaries OpenAiAdapter.
   // budgetToEffort uses (≤2048 low / ≤8192 medium / ≤32768 high), so a saved
   // value round-trips through the adapter unchanged. Legacy numeric configs
   // are displayed at their nearest level (no migration needed — saving
   // rewrites the canonical number for that level).
-  const EFFORT_BUDGETS = { low: 2048, medium: 8192, high: 32768 };
-  document.getElementById('cfg-thinking-effort')?.addEventListener('change', function() {
+  const EFFORT_BUDGETS = { minimal: 1024, low: 2048, medium: 8192, high: 32768, max: 65536 };
+  document.getElementById('cfg-thinking-effort')?.addEventListener('change', /** @this {HTMLSelectElement} */ function() {
     if (this.value === 'off') {
       state.thinkingMode = null;
     } else {
-      state.thinkingMode = { enabled: true, budgetTokens: EFFORT_BUDGETS[this.value] };
+      state.thinkingMode = { enabled: true, effort: this.value, budgetTokens: EFFORT_BUDGETS[this.value] ?? 32768 };
     }
     sendWs({ type: 'setThinking', thinking: state.thinkingMode });
   });
+
+  // 权限模式「全局」下拉的 change 绑定已随控件一并删除（permshield F1，2026-09-13
+  // 作者重裁候选 B ①）：档位写入的唯一 UI 入口 = 顶栏盾牌（main.js
+  // `initSafetyToggle` → WS `setSafetyMode` → 后端 `persistGlobalSafetyMode` 落盘
+  // `nebflow.json` 的 `safety.defaultMode`），此处不再有第二个写入口。
 
   // LLM Log toggle — shared nb-toggle component; setToggleState keeps the
   // class and aria-checked in lockstep.
@@ -1246,6 +1203,10 @@ function bindSettingsEvents(content, cfg) {
     state.llmLogEnabled = enabled;
     sendWs({type: 'setLlmLog', enabled});
   });
+
+  // ── Executors section retired (ui-train-threefix A, 2026-10-07): the
+  // settings 默认执行器 row, the panel-entry button and the /agents command
+  // left with their locale keys; ExecutorRegistry/detect (scala) untouched.
 
   // ── Work schedule (freeze) — spec §3.2 sidebar.js ──────────────────────
   // 作者裁定（2026-08-30, toggle 即时保存）：开关类设置变更即保存——toggle 不再
@@ -1283,8 +1244,10 @@ function bindSettingsEvents(content, cfg) {
     const list = document.getElementById('segment-list');
     if (!list) return;
     const idx = list.children.length;
-    list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '', end: '' }, idx));
-    list.querySelector(`[data-seg-index="${idx}"] [data-role="start"]`)?.focus();
+    // 新段 = 合法默认段（09:00-12:00）：原子段字段没有「空值」这一状态
+    // （空串不是 HH:mm，且面板只能产出合法的 HH:mm 二元组）。
+    list.insertAdjacentHTML('beforeend', buildSegmentRowHtml({ start: '09:00', end: '12:00' }, idx));
+    (/** @type {HTMLElement|null} */ (list.querySelector(`[data-seg-index="${idx}"] [data-tw-range]`)))?.focus();
     markScheduleDirty();
   });
 
@@ -1309,19 +1272,35 @@ function bindSettingsEvents(content, cfg) {
   // backend merge keeps the stored key (A2: an empty string would REPLACE
   // stt-config.json without the key and drop the service to unconfigured).
   function sendSttConfig(clear) {
-    const endpoint = clear ? '' : (document.getElementById('stt-endpoint')?.value.trim() || '');
-    const model = clear ? '' : (document.getElementById('stt-model')?.value.trim() || '');
-    const apiKey = clear ? '' : (document.getElementById('stt-apikey')?.value.trim() || '');
+    const endpoint = clear ? '' : ((/** @type {HTMLInputElement|null} */ (document.getElementById('stt-endpoint')))?.value.trim() || '');
+    const model = clear ? '' : ((/** @type {HTMLInputElement|null} */ (document.getElementById('stt-model')))?.value.trim() || '');
+    const apiKey = clear ? '' : ((/** @type {HTMLInputElement|null} */ (document.getElementById('stt-apikey')))?.value.trim() || '');
+    // D 件（2026-10-28）：总开关随保存一起提交（显式布尔；后端三态合并——
+    // 省略路径仅旧前端负载会出现）。关 = STT 整体停用：清空三串 + enabled=false
+    // 时后端保留 {enabled:false} 文件（不再整体删档），停用态跨重启保持。
+    const enabled = document.getElementById('toggle-stt-enabled')?.classList.contains('on') !== false;
     const allEmpty = !endpoint && !model && !apiKey;
     // Clear = explicit all-empty (three keys, backend deletes the config file);
     // normal save omits an empty apiKey so the backend merge keeps the stored
     // key — never send an empty string on a partial update.
     const sttConfig = clear
-      ? { endpoint: '', apiKey: '', model: '' }
-      : { endpoint, model, ...(apiKey ? { apiKey } : {}) };
+      ? { endpoint: '', apiKey: '', model: '', enabled }
+      : { endpoint, model, enabled, ...(apiKey ? { apiKey } : {}) };
     sendWs({ type: 'setSttConfig', sttConfig });
-    window.__showToast?.(t(allEmpty ? 'settings.sttCleared' : 'settings.sttSaved'), 'success');
+    window.__showToast?.(t(allEmpty && enabled ? 'settings.sttCleared' : 'settings.sttSaved'), 'success');
   }
+  // D 件：启用开关只翻本地态（显式保存随 #334 既有 STT 语义——非 toggle 即存
+  // 族例外不新增），关=灰化三个输入框（TTL enabled 同款交互）。
+  document.getElementById('toggle-stt-enabled')?.addEventListener('click', function () {
+    const on = !this.classList.contains('on');
+    setToggleState(this, on);
+    ['stt-endpoint', 'stt-model', 'stt-apikey'].forEach((id) => {
+      const inp = /** @type {HTMLInputElement|null} */ (document.getElementById(id));
+      if (inp) inp.disabled = !on;
+    });
+    const hint = document.getElementById('stt-status-hint');
+    if (hint) hint.textContent = t(on ? 'settings.sttUnconfiguredStatus' : 'settings.sttDisabledStatus');
+  });
   document.getElementById('btn-save-stt')?.addEventListener('click', () => sendSttConfig(false));
   document.getElementById('btn-clear-stt')?.addEventListener('click', () => sendSttConfig(true));
   // A1: collapsed advanced panel — expand/collapse (session-memory state).
@@ -1342,7 +1321,7 @@ function bindSettingsEvents(content, cfg) {
   if (ORB_SETTINGS_VISIBLE) bindAppearanceEvents(content);
 
   // Language selector
-  document.getElementById('cfg-language')?.addEventListener('change', function() {
+  document.getElementById('cfg-language')?.addEventListener('change', /** @this {HTMLSelectElement} */ function() {
     setLocale(this.value);
     renderSettings();
   });
@@ -1360,40 +1339,11 @@ function bindSettingsEvents(content, cfg) {
   // with CLI-side `nebflow autostart enable/disable`).
   sendWs({ type: 'autostartStatus' });
 
-  // --- Provider add/edit/remove ---
-  document.getElementById('btn-add-provider')?.addEventListener('click', () => {
-    showProviderModal(null, null, (name, data) => {
-      saveNewProvider(name, data);
-    });
-  });
-
-  content.querySelectorAll('.cfg-card[data-provider]').forEach(card => {
-    const name = card.dataset.provider;
-    card.querySelector('.cfg-card-remove')?.addEventListener('click', (e) => {
-      e.stopPropagation();
-      window.__showConfirm?.('Remove Provider', t('provider.removeConfirm', { name }), () => {
-        state.parsedConfig.llm.providers[name] = null;
-        // Preset reference cleanup on provider removal is backend-owned (#339 —
-        // the global default-model field is retired; backend auto-created
-        // presets are keyed per provider).
-        state.configDirty = true;
-        flushConfigToServer();
-        renderSettings();
-      });
-    });
-    card.addEventListener('click', () => {
-      const p = state.parsedConfig.llm.providers[name];
-      showProviderModal(name, p, (newName, data) => {
-        if (newName !== name) {
-          // Use null to signal explicit deletion of old name
-          state.parsedConfig.llm.providers[name] = null;
-        }
-        state.parsedConfig.llm.providers[newName] = data;
-        state.configDirty = true;
-        flushConfigToServer();
-      });
-    });
-  });
+  // --- 服务商：新增/编辑/删除 ---
+  // provider-add-tabs 批（2026-11-06）：这三条交互的**唯一实现**在
+  // sidebar/providerPanel.js（类型标签 + 统一列表 + 单一表单骨架 + 一条保存腿），
+  // 本函数不再绑任何 provider 面（旧的内联列表/新增/卡片点击/删除已整件退役）。
+  // 面板由 renderSettings 尾部的 bindProviderPanel() 装配。
 
   // --- Advanced JSON editor ---
   document.getElementById('btn-toggle-json')?.addEventListener('click', () => {
@@ -1413,7 +1363,7 @@ function bindSettingsEvents(content, cfg) {
   }
 
   document.getElementById('btn-save-config')?.addEventListener('click', () => {
-    const cfg = document.getElementById('config-editor').value;
+    const cfg = (/** @type {HTMLTextAreaElement} */ (document.getElementById('config-editor'))).value;
     try {
       JSON.parse(cfg);
       sendWs({type: 'updateConfig', config: cfg});
@@ -1427,39 +1377,64 @@ function bindSettingsEvents(content, cfg) {
   });
 
   // --- Settings avatar section (dual state; click = Activity Bar avatar) ---
-  document.getElementById('settings-avatar-entry')?.addEventListener('click', () => {
-    // Forward to the canonical entry — bindAvatar's handler owns the
-    // logged-out → login modal / logged-in → profile behavior.
-    document.getElementById('activity-avatar')?.click();
-  });
+  // The click handler is NOT bound here: activityBar.js owns the account entry
+  // (activateAccountEntry) and binds this element by document-level delegation,
+  // which keeps the login popup reservation inside the user's own gesture.
+  // The previous forwarding — synthesizing a click on #activity-avatar — carried
+  // no transient user activation, so a real browser popup-blocked the login tab
+  // and one click degraded into two (2026-09-15 session-handoff 案 3 ①).
+  // Do not re-add a handler here: it would fire alongside the delegated one.
+  // (The avatar's own rendering below stays in this module — it is view state,
+  // not the entry.)
 
-  // --- Check for updates ---
-  document.getElementById('btn-check-update')?.addEventListener('click', () => {
-    const statusEl = document.getElementById('update-status');
-    const actionEl = document.getElementById('update-action');
-    statusEl.textContent = t('settings.checking');
-    statusEl.style.display = '';
-    actionEl.style.display = 'none';
-    // Flag BEFORE the WS roundtrip: updateCheckResult routes by this flag —
-    // a manual check keeps its About-section echo even if a scheduled auto
-    // check fires meanwhile (auto cycles are skipped while the flag is up).
-    notifyManualUpdateCheck();
-    sendWs({type: 'checkUpdate'});
-  });
+  // 「检查更新 / 立即更新 / 稍后」绑定已随 auth-trim 批（2026-10-20 作者令）删除：
+  // 设置页更新功能退役（入口 + checkUpdate/doUpdate 发送 + updateCheck.js 消费链），
+  // 未来由官网统一检测更新取代。
 
-  document.getElementById('btn-do-update')?.addEventListener('click', () => {
-    const btn = document.getElementById('btn-do-update');
-    const statusEl = document.getElementById('update-status');
-    btn.textContent = t('settings.updating');
-    btn.disabled = true;
-    statusEl.textContent = '';
-    sendWs({type: 'doUpdate'});
-  });
-
-  document.getElementById('btn-dismiss-update')?.addEventListener('click', () => {
-    document.getElementById('update-action').style.display = 'none';
-  });
+  // --- 「重启服务」按钮：已随 settings-ios-rows 批（2026-11-06 作者令「底部的重启
+  //     服务去掉」）**整件移除** —— 按钮 + 两段式确认逻辑 + #restart-status 状态行
+  //     + restartStatus/restartResult 两个模块级订阅（原在文件尾部）全删，前端
+  //     对 WS `restart` 零发射面。后端 `case "restart"`（WebSocketRoutes）保留不动：
+  //     它是引擎侧通用能力，其余消费方仍在，本批只摘 UI 入口。
+  // --- 文件缓存：占用读数入画 + 清空入口（M2 · 设计 v1 §6.4/§7 表5） ---
+  // 清空 = nfCacheReset()（索引 + Cache Storage 字节 + 会话内存 blob 全清；已铸的
+  // blob URL 不受影响——URL 与字节源解耦，活动 viewer 继续渲染，下轮打开重新取数
+  // 入账）。确认形态 = 两段式（按钮第二击即确认位，5 秒无第二击自动复位），同上方
+  // btn-restart-gateway 先例：共用 #delete-box 弹窗其确认键文案是「删除」，复用会
+  // 把「清空缓存」错标成删除。清空后读数即现「0 条 · 0 KB」= 清空反馈（诚实读数）。
+  const cacheUsageEl = /** @type {HTMLElement|null} */ (document.getElementById('nf-cache-usage'));
+  if (cacheUsageEl) paintNfCacheUsage(cacheUsageEl);
+  const clearCacheBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('btn-clear-nf-cache'));
+  if (clearCacheBtn && cacheUsageEl) {
+    let cacheArmed = false;
+    let cacheArmTimer = null;
+    const cacheDisarm = () => {
+      cacheArmed = false;
+      if (cacheArmTimer) { clearTimeout(cacheArmTimer); cacheArmTimer = null; }
+      clearCacheBtn.textContent = t('settings.fileCacheClear');
+      clearCacheBtn.title = t('settings.fileCacheClear');
+    };
+    clearCacheBtn.addEventListener('click', async () => {
+      if (!cacheArmed) {
+        cacheArmed = true;
+        clearCacheBtn.textContent = t('settings.fileCacheClearConfirm');
+        clearCacheBtn.title = t('settings.fileCacheClearConfirm');
+        cacheArmTimer = setTimeout(cacheDisarm, 5000);
+        return;
+      }
+      cacheDisarm();
+      clearCacheBtn.disabled = true;
+      try { await nfCacheReset(); } finally { clearCacheBtn.disabled = false; }
+      paintNfCacheUsage(cacheUsageEl);
+    });
+  }
 }
+
+// ── 重启进度面：整体退役（settings-ios-rows 批 2026-11-06）────────────────────
+// 原 updateCheck.js 的两条订阅随该文件退役后迁到本文件模块级；「重启服务」入口
+// 本轮被作者明令删除 ⇒ 唯一消费元素（#restart-status）不复存在，两条订阅
+// （restartStatus / restartResult）随之整段删除，前端零消费面。WS 端
+// `restartStatus`/`restartResult` 广播帧本身不受影响（引擎侧照旧发，只是没人听）。
 
 // Delegated segment-editor listeners — bound ONCE at module scope, NOT inside
 // bindSettingsEvents. renderSettings() re-runs on every serverConfig echo while
@@ -1469,7 +1444,7 @@ function bindSettingsEvents(content, cfg) {
 // listener for the whole app lifetime.
 document.addEventListener('click', (e) => {
   const settings = document.getElementById('settings-content');
-  if (!settings || !(e.target instanceof Node) || !settings.contains(e.target)) return;
+  if (!settings || !(e.target instanceof Element) || !settings.contains(e.target)) return;
   const rm = e.target.closest('.seg-remove');
   if (!rm) return;
   const row = rm.closest('.segment-row');
@@ -1480,377 +1455,28 @@ document.addEventListener('click', (e) => {
   markScheduleDirty();   // #334: local draft only — Save commits
 });
 
-document.addEventListener('change', (e) => {
-  const settings = document.getElementById('settings-content');
-  if (!settings || !(e.target instanceof Node) || !settings.contains(e.target)) return;
-  if (!e.target.classList || !e.target.classList.contains('time-input')) return;
-  updateSegmentRowHint(e.target.closest('.segment-row'));
-  markScheduleDirty();   // #334: local draft only — Save commits
+// 时段选择器（原子段字段 = 整段一颗触发钮，js/timeWheel.js 单源）：
+// 委托单点绑定——面板确认回写 dataset 后刷新行内跨零点徽标 + 落本地草稿。
+// 精确输入行（.tw-in）在面板内、不走 settings 容器，故不再需要 change 委托。
+attachTimeTriggers(document, {
+  onRangeChange(btn) {
+    const row = btn.closest('.segment-row');
+    if (!row) return;
+    updateSegmentRowHint(row);
+    markScheduleDirty();   // #334: local draft only — Save commits
+  },
 });
-
-function flushConfigToServer() {
-  const json = JSON.stringify(state.parsedConfig, null, 2);
-  state.configText = json;
-  sendWs({type: 'updateConfig', config: json});
-}
 
 // Listen for config validation errors
 onMessage('error', (data) => {
   if (data.message && typeof data.message === 'string' && data.message.includes('Provider')) {
-    // Show validation errors from backend
-    const toast = document.createElement('div');
-    toast.className = 'cfg-toast cfg-toast-error';
-    toast.textContent = data.message;
-    document.body.appendChild(toast);
-    setTimeout(() => toast.remove(), 5000);
+    // Show validation errors from backend.
+    // notice-unify 批（2026-11-18）：本处曾是**第二份 toast**（自绘 .cfg-toast 玻璃卡
+    // ＋自带 5s 生命周期）——并回全站唯一瞬时提示源 showToast（语义 = error；玻璃材质 /
+    // 图标 / token 全部单源，见 scripts/check-notice-unify.mjs）。cfg-toast 类已删除。
+    window.__showToast?.(data.message, 'error');
   }
 });
-
-// --- Provider model-list auto-fetch (B1) ---
-// Model choices fetched for the currently open provider modal. Set on a
-// successful POST /api/provider/models; renderModelRowContent reads it so
-// both existing and newly added rows offer a dropdown instead of free text.
-// The proxy endpoint may not exist yet (404) — fetch failure degrades to
-// manual input without blocking the flow.
-// Elements are normalized to {id, contextLength} — the backend may send plain
-// strings (old contract) or objects with an optional contextLength (e.g.
-// OpenRouter exposes context_length; OpenAI/Anthropic do not).
-let providerModelChoices = null;
-
-function providerAuthHeaders() {
-  const tok = localStorage.getItem(key('token')) || '';
-  return tok ? { Authorization: `Bearer ${tok}` } : {};
-}
-
-/** Normalize one models[] element: 'id-string' | {id, contextLength?} →
- *  {id, contextLength|null}. Unknown shapes are dropped. */
-function normalizeModelEntry(m) {
-  if (typeof m === 'string' && m) return { id: m, contextLength: null };
-  if (m && typeof m.id === 'string' && m.id) {
-    return { id: m.id, contextLength: Number.isFinite(m.contextLength) ? m.contextLength : null };
-  }
-  return null;
-}
-
-async function fetchProviderModels(baseUrl, apiKey) {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 10000);
-  try {
-    const resp = await fetch('/api/provider/models', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...providerAuthHeaders() },
-      body: JSON.stringify({ baseUrl, apiKey }),
-      signal: ctrl.signal,
-    });
-    const data = await resp.json().catch(() => ({}));
-    if (!resp.ok) return { ok: false, error: data.error || `HTTP ${resp.status}` };
-    const models = Array.isArray(data.models) ? data.models.map(normalizeModelEntry).filter(Boolean) : [];
-    return { ok: true, models };
-  } catch (e) {
-    return { ok: false, error: e.name === 'AbortError' ? 'timeout' : e.message };
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function contextLengthFor(id) {
-  if (!id || !providerModelChoices) return null;
-  const found = providerModelChoices.find(m => m.id === id);
-  return found && found.contextLength ? found.contextLength : null;
-}
-
-/** Fill the row's contextWindow input with the fetched contextLength — only
- *  when the input is empty (never overwrite a user-set value). maxTokens is
- *  intentionally not touched. */
-function fillContextIfEmpty(row) {
-  if (!row) return;
-  const sel = row.querySelector('.cfg-model-id');
-  const ctxInput = row.querySelector('.cfg-model-ctx');
-  if (!sel || !ctxInput || ctxInput.value) return;
-  const len = contextLengthFor(sel.value);
-  if (len) ctxInput.value = len;
-}
-
-function renderModelIdSelect(currentId) {
-  const opts = providerModelChoices.map(m => m.id);
-  if (currentId && !opts.includes(currentId)) opts.unshift(currentId);
-  return `<select class="cfg-select cfg-model-id">
-    <option value="" disabled ${currentId ? '' : 'selected'}>${t('provider.modelSelectPlaceholder')}</option>
-    ${opts.map(o => `<option value="${escapeHtml(o)}" ${o === currentId ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
-  </select>`;
-}
-
-/** Convert manual id inputs in existing rows to dropdowns after a successful
- *  fetch. Current values are preserved (added as an extra option if absent
- *  from the fetched list); empty contextWindow inputs are auto-filled from
- *  the fetched contextLength. */
-function upgradeModelRowsToSelects(container) {
-  container.querySelectorAll('.cfg-model-row').forEach(row => {
-    const input = row.querySelector('input.cfg-model-id');
-    if (input) {
-      const current = input.value.trim();
-      const tmp = document.createElement('template');
-      tmp.innerHTML = renderModelIdSelect(current).trim();
-      input.replaceWith(tmp.content.firstChild);
-    }
-    fillContextIfEmpty(row);
-  });
-}
-
-/** Wire base URL → auto-fetch model list inside the provider modal: a fetch
- *  button + status line above the models list, plus debounced auto-fetch on
- *  baseUrl/apiKey change. Degrades gracefully when the proxy endpoint is
- *  missing or the provider errors — manual input stays usable. */
-function wireProviderModelFetch() {
-  const overlay = document.getElementById('cfg-modal');
-  if (!overlay) return;
-  providerModelChoices = null;
-  const baseInput = overlay.querySelector('[data-field="baseUrl"]');
-  const keyInput = overlay.querySelector('[data-field="apiKey"]');
-  const container = overlay.querySelector('[data-field="models"]');
-  const group = container?.closest('.cfg-form-group');
-  if (!baseInput || !container || !group) return;
-
-  const statusRow = document.createElement('div');
-  statusRow.className = 'cfg-fetch-status-row';
-  statusRow.innerHTML = `<button type="button" class="cfg-fetch-models-btn">${t('provider.fetchModels')}</button><span class="cfg-fetch-status"></span>`;
-  group.insertBefore(statusRow, container);
-  const fetchBtn = statusRow.querySelector('.cfg-fetch-models-btn');
-  const status = statusRow.querySelector('.cfg-fetch-status');
-
-  let fetchGen = 0; // race guard: stale responses (older trigger) are dropped
-  async function runFetch() {
-    const baseUrl = baseInput.value.trim();
-    if (!baseUrl || !/^https?:\/\//.test(baseUrl)) {
-      status.textContent = '';
-      status.className = 'cfg-fetch-status';
-      return;
-    }
-    const gen = ++fetchGen;
-    fetchBtn.disabled = true;
-    status.textContent = t('provider.fetchingModels');
-    status.className = 'cfg-fetch-status loading';
-    const res = await fetchProviderModels(baseUrl, keyInput ? keyInput.value.trim() : '');
-    if (gen !== fetchGen || !overlay.isConnected) return;
-    fetchBtn.disabled = false;
-    if (res.ok && res.models.length > 0) {
-      providerModelChoices = res.models;
-      upgradeModelRowsToSelects(container);
-      // A successful list fetch with a non-empty key doubles as credential
-      // validation — flag the key as valid. Anonymous providers (empty key)
-      // never get this hint.
-      const hasKey = !!(keyInput && keyInput.value.trim());
-      status.textContent = t('provider.fetchModelsLoaded', { count: res.models.length })
-        + (hasKey ? ` · ${t('provider.keyValid')}` : '');
-      status.className = 'cfg-fetch-status ok';
-    } else {
-      providerModelChoices = null;
-      status.textContent = t('provider.fetchModelsFailed');
-      status.className = 'cfg-fetch-status fail';
-    }
-  }
-
-  fetchBtn.addEventListener('click', runFetch);
-  let debounceTimer = null;
-  const autoFetch = () => { clearTimeout(debounceTimer); debounceTimer = setTimeout(runFetch, 400); };
-  baseInput.addEventListener('change', autoFetch);
-  keyInput?.addEventListener('change', autoFetch);
-  // Delegated: picking a model from the dropdown auto-fills an empty
-  // contextWindow from the fetched contextLength (never overwrites).
-  container.addEventListener('change', (e) => {
-    if (e.target.matches('select.cfg-model-id')) fillContextIfEmpty(e.target.closest('.cfg-model-row'));
-  });
-}
-
-// --- Provider modal ---
-/** Persist a newly added provider: mutate parsedConfig + flush. The backend
- *  auto-creates the first preset from a new provider — the legacy global
- *  default-model field is retired (global-default preset semantics, #339),
- *  so there is no frontend chain write here. Exported for the chat-native
- *  onboarding flow (onboarding-redesign-spec §5.1) — one write path. */
-export function saveNewProvider(name, data) {
-  if (!state.parsedConfig) state.parsedConfig = {llm: {providers: {}}};
-  if (!state.parsedConfig.llm) state.parsedConfig.llm = {providers: {}};
-  if (!state.parsedConfig.llm.providers) state.parsedConfig.llm.providers = {};
-  state.parsedConfig.llm.providers[name] = data;
-  state.configDirty = true;
-  flushConfigToServer();
-}
-
-/**
- * Onboarding wizard entry: run the same add-provider modal outside the
- * settings panel. onSaved fires after the config has been flushed.
- */
-export function openProviderWizard(onSaved) {
-  showProviderModal(null, null, (name, data) => {
-    saveNewProvider(name, data);
-    if (typeof onSaved === 'function') onSaved(name);
-  });
-}
-
-function showProviderModal(existingName, existingData, onSave) {
-  const isEdit = !!existingName;
-  const p = existingData || {baseUrl: '', apiKey: '', protocol: 'anthropic', models: []};
-  const initialModels = p.models.length > 0 ? p.models.map(m => ({
-    ...m,
-  })) : [{id: '', maxTokens: 131072, contextWindow: 200000}];
-
-  showModal({
-    title: isEdit ? t('provider.edit', { name: existingName }) : t('provider.add'),
-    fields: [
-      {key: 'name', label: t('provider.id'), type: 'text', value: existingName || '', placeholder: t('provider.idPlaceholder'), disabled: isEdit},
-      {key: 'baseUrl', label: t('provider.baseUrl'), type: 'text', value: p.baseUrl || '', placeholder: 'https://api.example.com/v1'},
-      {key: 'apiKey', label: 'API Key', type: 'text', password: true, value: p.apiKey && p.apiKey !== '***' ? p.apiKey : '', placeholder: isEdit ? t('provider.keyPlaceholder') : t('provider.required')},
-      {key: 'protocol', label: t('provider.protocol'), type: 'select', value: p.protocol || 'anthropic', options: ['anthropic', 'openai']},
-      {key: 'models', label: t('provider.models'), type: 'models', value: initialModels},
-    ],
-    onConfirm(values) {
-      const name = values.name.trim();
-      if (!name) { window.__showToast?.(t('provider.idRequired'), 'error'); return; }
-      if (/\s/.test(name)) { window.__showToast?.(t('provider.noSpaces'), 'error'); return; }
-      let baseUrl = values.baseUrl.trim();
-      if (!baseUrl) { window.__showToast?.(t('provider.baseUrlRequired'), 'error'); return; }
-      // Auto-add trailing slash
-      if (!baseUrl.endsWith('/')) baseUrl += '/';
-      const apiKey = values.apiKey.trim() || '***';
-      if (!isEdit && apiKey === '***') { window.__showToast?.(t('provider.keyRequired'), 'error'); return; }
-      const validModels = values.models.filter(m => m.id && m.id.trim());
-      if (validModels.length === 0) { window.__showToast?.(t('provider.modelRequired'), 'error'); return; }
-      // Vision is never written from this form (B1 裁定 2026-08-25): the
-      // edit-modal checkbox snapshot polluted nebflow.json ModelConfig.vision
-      // (inline outranks models.json runtime annotations). An explicit inline
-      // vision set by hand rides through untouched; new models omit the key.
-      const modelsOut = validModels.map(m => {
-        const prev = (p.models || []).find(x => x.id === m.id);
-        return prev && prev.vision !== undefined ? { ...m, vision: prev.vision } : m;
-      });
-      onSave(name, {
-        baseUrl,
-        apiKey,
-        protocol: values.protocol,
-        models: modelsOut,
-      });
-    }
-  });
-  // baseUrl/apiKey change → auto-fetch model list (dropdown); degrades to
-  // manual input when the proxy endpoint is unavailable.
-  wireProviderModelFetch();
-}
-
-// --- Generic modal ---
-function showModal({title, fields, onConfirm}) {
-  // Remove existing modal
-  document.getElementById('cfg-modal')?.remove();
-
-  const renderField = (f) => `
-          <div class="cfg-form-group">
-            <label class="cfg-label">${escapeHtml(f.label)}</label>
-            ${f.type === 'select' ? `<select class="cfg-input" data-field="${f.key}" ${f.disabled ? 'disabled' : ''}>
-              ${f.options.map(o => `<option value="${o}" ${o === f.value ? 'selected' : ''}>${o}</option>`).join('')}
-            </select>` : f.type === 'textarea' ? `<textarea class="cfg-input cfg-textarea" data-field="${f.key}" placeholder="${escapeHtml(f.placeholder || '')}">${escapeHtml(f.value || '')}</textarea>` :
-            f.type === 'models' ? `<div class="cfg-models-container" data-field="${f.key}">
-              ${f.value.map((m, i) => renderModelRow(m, i)).join('')}
-              <button class="cfg-model-add" type="button">${t('model.add')}</button>
-            </div>` :
-            f.password ? `<div class="cfg-password-wrap"><input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" autocomplete="off" style="-webkit-text-security:disc" ${f.disabled ? 'disabled' : ''}><button class="cfg-eye-btn" type="button" tabindex="-1" aria-label="Toggle visibility">${eyeSvg}</button></div>` :
-            f.type === 'number' ? `<input class="cfg-input" type="number" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.min != null ? `min="${f.min}"` : ''} ${f.disabled ? 'disabled' : ''}>` :
-            `<input class="cfg-input" type="text" data-field="${f.key}" value="${escapeHtml(f.value || '')}" placeholder="${escapeHtml(f.placeholder || '')}" ${f.disabled ? 'disabled' : ''}>`}
-          </div>`;
-
-  const overlay = document.createElement('div');
-  overlay.id = 'cfg-modal';
-  overlay.className = 'cfg-modal-overlay';
-  overlay.innerHTML = `
-    <div class="cfg-modal">
-      <div class="cfg-modal-title">${escapeHtml(title)}</div>
-      <div class="cfg-modal-body">
-        ${fields.map(renderField).join('')}
-      </div>
-      <div class="cfg-modal-actions">
-        <button class="cfg-btn cfg-btn-cancel" id="cfg-modal-cancel">${t('modal.cancel')}</button>
-        <button class="cfg-btn cfg-btn-save" id="cfg-modal-save">${t('settings.save')}</button>
-      </div>
-    </div>`;
-
-  document.body.appendChild(overlay);
-
-  // Wire up models add/remove
-  overlay.querySelectorAll('.cfg-model-add').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const container = btn.parentElement;
-      const row = document.createElement('div');
-      row.className = 'cfg-model-row';
-      row.innerHTML = renderModelRowContent();
-      container.insertBefore(row, btn);
-      row.querySelector('.cfg-model-remove').addEventListener('click', () => row.remove());
-      row.querySelector('.cfg-model-id').focus();
-    });
-  });
-  overlay.querySelectorAll('.cfg-model-remove').forEach(btn => {
-    btn.addEventListener('click', () => btn.closest('.cfg-model-row').remove());
-  });
-
-  // Wire up eye toggle
-  overlay.querySelectorAll('.cfg-eye-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const input = btn.parentElement.querySelector('input');
-      const isMasked = input.style.webkitTextSecurity !== 'none';
-      input.style.webkitTextSecurity = isMasked ? 'none' : 'disc';
-      btn.innerHTML = isMasked ? eyeOffSvg : eyeSvg;
-    });
-  });
-
-  const close = () => overlay.remove();
-  document.getElementById('cfg-modal-cancel').addEventListener('click', close);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
-  document.getElementById('cfg-modal-save').addEventListener('click', () => {
-    const values = {};
-    overlay.querySelectorAll('[data-field]:not([data-field="models"])').forEach(el => {
-      values[el.dataset.field] = el.value;
-    });
-    // Collect models
-    const modelsContainer = overlay.querySelector('[data-field="models"]');
-    if (modelsContainer) {
-      values.models = [];
-      modelsContainer.querySelectorAll('.cfg-model-row').forEach(row => {
-        const id = row.querySelector('.cfg-model-id').value.trim();
-        if (!id) return;
-        values.models.push({
-          id,
-          maxTokens: parseInt(row.querySelector('.cfg-model-max').value) || 131072,
-          contextWindow: parseInt(row.querySelector('.cfg-model-ctx').value) || 200000,
-        });
-      });
-    }
-    onConfirm(values);
-    close();
-  });
-}
-
-function renderModelRowContent(m) {
-  const id = m ? m.id : '';
-  const max = m ? m.maxTokens : '';
-  const ctx = m ? m.contextWindow : '';
-  const idField = providerModelChoices && providerModelChoices.length > 0
-    ? renderModelIdSelect(id)
-    : `<input class="cfg-input cfg-model-id" type="text" value="${escapeHtml(id)}" placeholder="${t('model.idPlaceholder')}">`;
-  // Vision is auto-detected at runtime (B3) and shown as a read-only badge on
-  // provider cards — no per-model control in this form (B1 裁定 2026-08-25).
-  return `${idField}
-<input class="cfg-input cfg-model-max" type="number" value="${max}" placeholder="${t('model.maxTokensPlaceholder')}">
-<input class="cfg-input cfg-model-ctx" type="number" value="${ctx}" placeholder="${t('model.contextPlaceholder')}">
-<button class="cfg-model-remove" type="button" title="${t('provider.remove')}">&times;</button>`;
-}
-
-function renderModelRow(m, index) {
-  return `<div class="cfg-model-row">${renderModelRowContent(m)}</div>`;
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
-}
 
 // ---------- Session Sidebar ----------
 export function formatSessionTime(ts) {
@@ -1873,12 +1499,16 @@ function renderOneSessionItem(s, container, opts = {}) {
   const inFolder = opts.inFolder || false;
   const item = document.createElement('div');
   const isSelected = state.selectedSessionIds.has(s.id);
-  item.className = 'session-item'
+  // 侧栏族（ui-unification-20261103-sidebar）：.ds-side-row = 形态唯一家
+  // （design-system.css），.session-item 保留为 DOM 寻址钩子（JS 查询 + spec）。
+  item.className = 'session-item ds-side-row'
     + (inFolder ? ' in-folder' : '')
-    + (s.id === state.activeSessionId ? ' active' : '')
-    + (state.pinnedSessions.has(s.id) ? ' pinned' : '')
-    + (isSelected ? ' selected' : '');
+    + (s.id === state.activeSessionId ? ' ds-side-row--active active' : '')
+    + (state.pinnedSessions.has(s.id) ? ' ds-side-row--pinned pinned' : '')
+    + (isSelected ? ' ds-side-row--selected selected' : '');
   item.dataset.id = s.id;
+  // B3-2 生产者：会话行的跨重渲稳定 key（重渲后按 key 回焦，见 renderSessionSidebar）。
+  item.dataset.focusKey = `session:${s.id}`;
   item.draggable = true;
   item.addEventListener('dragstart', (e) => {
     const selected = state.selectedSessionIds;
@@ -1890,37 +1520,38 @@ function renderOneSessionItem(s, container, opts = {}) {
       e.dataTransfer.setData('text/plain', s.id);
     }
     e.dataTransfer.effectAllowed = 'move';
-    item.classList.add('dragging');
+    item.classList.add('dragging', 'ds-side-row--dragging');
     showDeleteZone();
   });
   item.addEventListener('dragend', () => {
-    item.classList.remove('dragging');
+    item.classList.remove('dragging', 'ds-side-row--dragging');
     document.querySelectorAll('.folder-item.drag-over').forEach(el => el.classList.remove('drag-over'));
     hideDeleteZone();
   });
   const statusCls = getSessionStatusClass(s.id);
   const draft = state.sessionInputDrafts[s.id];
+  // 行内文字形态走族内槽（.ds-side-title 主文案 / .ds-side-meta 时间与草稿），
+  // 旧 class 全保留为钩子（重命名 contenteditable 与查询都按旧名）。
   const draftHtml = draft && draft.text
-    ? '<div class="session-draft">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
+    ? '<div class="session-draft ds-side-meta ds-side-meta--dim">' + escapeHtml(draft.text.replace(/\n/g, ' ').slice(0, 60)) + '</div>'
     : '';
-  const deleteBtnHtml = '<button class="session-delete" title="' + t('session.delete') + '"><i data-lucide="x"></i></button>';
+  const deleteBtnHtml = '<button class="session-delete ds-side-danger" title="' + t('session.delete') + '"><i data-lucide="x"></i></button>';
   item.innerHTML =
     '<div class="session-info">' +
-    '<div class="session-name">' + escapeHtml(s.name) + '</div>' +
-    (draftHtml || '<div class="session-time">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
+    '<div class="session-name ds-side-title">' + escapeHtml(s.name) + '</div>' +
+    (draftHtml || '<div class="session-time ds-side-meta">' + formatSessionTime(s.updatedAt || s.createdAt) + '</div>') +
     '</div>' +
     '<div class="session-status ' + statusCls + '">' +
     '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
-    '<div class="status-compact-spinner"><i data-lucide="minimize-2"></i></div>' +
     '<div class="status-dot"></div>' +
     '</div>' +
     deleteBtnHtml;
   // Double-click to rename (only in normal mode)
-  const nameEl = item.querySelector('.session-name');
+  const nameEl = /** @type {HTMLElement} */ (item.querySelector('.session-name'));
   if (state.selectedSessionIds.size === 0) {
     nameEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
-      nameEl.contentEditable = true;
+      nameEl.contentEditable = 'true';
       nameEl.focus();
       const range = document.createRange();
       range.selectNodeContents(nameEl);
@@ -1929,7 +1560,7 @@ function renderOneSessionItem(s, container, opts = {}) {
       sel.addRange(range);
     });
     const finishRename = () => {
-      nameEl.contentEditable = false;
+      nameEl.contentEditable = 'false';
       const newName = nameEl.textContent.trim();
       if (newName && newName !== s.name) {
         sendWs({type: 'renameSession', sessionId: s.id, name: newName});
@@ -1938,23 +1569,24 @@ function renderOneSessionItem(s, container, opts = {}) {
       }
     };
     nameEl.addEventListener('blur', finishRename);
+    bindImeGuard(nameEl);
     nameEl.addEventListener('keydown', (e) => {
+      if (isImeComposing(e, nameEl)) return; // ⑤ 组字期间 ↑↓/Enter/Esc 交还输入法
       if (e.key === 'Enter') {
-        if (e.isComposing || e.keyCode === 229) return;
         e.preventDefault(); nameEl.blur();
       }
       if (e.key === 'Escape') { nameEl.textContent = s.name; nameEl.blur(); }
     });
   }
   if (state.selectedSessionIds.size === 0) {
-    item.querySelector('.session-delete').onclick = (e) => {
+    (/** @type {HTMLElement} */ (item.querySelector('.session-delete'))).onclick = (e) => {
       e.stopPropagation();
       if (typeof window.__showDeleteModal === 'function') window.__showDeleteModal(s.id, s.name);
     };
   }
   item.onclick = (e) => {
-    if (e.target.closest('.session-name[contenteditable="true"]')) return;
-    if (e.target.closest('.session-delete')) return;
+    if ((/** @type {Element} */ (e.target)).closest('.session-name[contenteditable="true"]')) return;
+    if ((/** @type {Element} */ (e.target)).closest('.session-delete')) return;
     const hasSelection = state.selectedSessionIds.size > 0;
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
@@ -1996,11 +1628,22 @@ function updateHeaderSessionName() {
   const sessionNameEl = chatViews.primary?.dom?.sessionNameEl;
   const active = state.sessions.find(s => s.id === state.activeSessionId);
   if (active) {
-    const agentName = active.agentName || 'Nebula';
+    const agentName = active.agentName || ROOT_AGENT_KEY;
     // Show agent display name in center (session name is redundant when there's only one session).
     if (sessionNameEl) {
-      const agent = state.agentsData.find(a => a.name === agentName);
-      sessionNameEl.textContent = agent ? (agent.displayName || agent.name) : agentName;
+      // Root agent reads the SINGLE display-name read point (rootName.js): both
+      // the in-session onboarding rename override (state.rootDisplayName) and the
+      // persisted `displayName` live there. The old agentsData-only read was the
+      // 「起名不影响 Header」 gap — it ignored the override and fell back to the
+      // bare 'Nebula' literal whenever the agentsData row had not arrived.
+      // N1 (unnamed-state batch 2026-10-06): UNNAMED root → the title area is an
+      // EMPTY string — the mechanism name is a key, not a display fallback, and
+      // the empty <span> keeps the header's center-slot layout intact (no jump).
+      // Named root → display name as before; non-root agents keep their own name.
+      const label = agentName === ROOT_AGENT_KEY
+        ? (isRootNamed() ? rootDisplayName() : '')
+        : agentDisplayName(agentName);
+      sessionNameEl.textContent = label;
       sessionNameEl.style.display = '';
     }
   } else {
@@ -2008,7 +1651,21 @@ function updateHeaderSessionName() {
   }
 }
 
+// Onboarding rename → refresh the header center in place (author 2026-10-05:
+// 「起名是会影响Header的标题的」). A rename does not change the session-list
+// fingerprint, so no render path would otherwise fire; onboarding.js dispatches
+// `nebflow-root-name-change` (event, not import — keeps the module graph acyclic).
+window.addEventListener('nebflow-root-name-change', () => { updateHeaderSessionName(); });
+
 export function renderSessionSidebar(sessionData, activeId) {
+  // B3-2：侧栏整表重建（`sessionList.innerHTML = ''` + 全量重排）会换掉当前聚焦的
+  // `.session-item` / `.folder-item`。重渲前后按 key 回焦，Shift+] 的落脚点不再丢。
+  const list = state.dom.sessionList;
+  return withFocusKey(list instanceof HTMLElement ? list : null, () => renderSessionSidebarInner(sessionData, activeId));
+}
+
+/** 侧栏重建本体（重渲保焦包装见 renderSessionSidebar）。 */
+function renderSessionSidebarInner(sessionData, activeId) {
   state.sessions = sessionData || [];
   const prevActiveId = state.activeSessionId;
   if (activeId) {
@@ -2017,6 +1674,7 @@ export function renderSessionSidebar(sessionData, activeId) {
   }
   // If active session changed (new session, agent session, delete active), reset chat area
   if (activeId && activeId !== prevActiveId) {
+    emit(window, 'AGENT_VIEW_REQUESTED', { sessionId: activeId });
     setActiveView(chatViews.primary);
     saveInputDraft(prevActiveId);
     resetChatForActiveSession();
@@ -2126,12 +1784,12 @@ export function renderSessionSidebar(sessionData, activeId) {
   const allFolders = state.folders || [];
   const agentGroups = {};
   visibleSessions.forEach(s => {
-    const agent = s.agentName || 'Nebula';
+    const agent = s.agentName || ROOT_AGENT_KEY;
     if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
     agentGroups[agent].sessions.push(s);
   });
   allFolders.forEach(f => {
-    const agent = f.agentName || 'Nebula';
+    const agent = f.agentName || ROOT_AGENT_KEY;
     if (!agentGroups[agent]) agentGroups[agent] = { sessions: [], folders: [] };
     agentGroups[agent].folders.push(f);
   });
@@ -2146,8 +1804,8 @@ export function renderSessionSidebar(sessionData, activeId) {
     // Agent group header (only when multiple agents exist)
     if (agentOrder.length > 1) {
       const header = document.createElement('div');
-      header.className = 'agent-group-header';
-      header.textContent = agentName;
+      header.className = 'agent-group-header ds-side-label ds-side-label--meta';
+      header.textContent = agentDisplayLabel(agentName);
       sessionList.appendChild(header);
     }
 
@@ -2377,8 +2035,16 @@ export function resetChatForActiveSession() {
           content.style.display = visible ? 'none' : '';
           label.classList.toggle('expanded', !visible);
         };
+      } else {
+        // 重连折叠持久批（2026-10-20）口径对齐（残片清理批 2026-10-29）：busy
+        // 重建面恒折叠 —— 会话切换重放腿与 historyReplay 同一契约，不得把缓冲
+        // 的思考全文摊开；用户可点 label 手动展开。
+        content.style.display = 'none';
+        bindCollapsibleToggle(label, () => content);
       }
-      content.innerHTML = renderMarkdownWithMath(pv.stream.thinkingText, true, { cache: done }) + (!done ? '<span class="cursor"></span>' : '');
+      // 残片清理批：重放补发的 thinking 段按历史渲染，不带流式游标（与
+      // historyReplay 同批语义；真仍在飞的轮次由 live 增量帧的 rAF 自带游标）。
+      content.innerHTML = renderMarkdownWithMath(pv.stream.thinkingText, true, { cache: done });
       bubble.appendChild(label);
       bubble.appendChild(content);
       row.appendChild(bubble);
@@ -2392,7 +2058,7 @@ export function resetChatForActiveSession() {
       row.className = 'row ai';
       pv.stream.currentAiBubble = document.createElement('div');
       pv.stream.currentAiBubble.className = 'bubble ai';
-      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
+      pv.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(pv.stream.aiText, true, { cache: !isStreaming, stream: isStreaming }) + (isStreaming ? '<span class="cursor"></span>' : '');
       row.appendChild(pv.stream.currentAiBubble);
       chat.appendChild(row);
       if (!isStreaming) {
@@ -2402,6 +2068,17 @@ export function resetChatForActiveSession() {
     }
 
     smartScroll();
+  } else if (sid) {
+    // 骨架占位卡整件退役（作者令 2026-11-05 12:28「我们目前的逻辑是通过一个卡片来
+    // 显示加载过程 进来就应该是加载好的 这个占位逻辑多余了」；实拍形态 = 聊天流顶部
+    // 4 条大圆角占位泡，含右侧用户位**绿泡**）。
+    // 🔴 旧形态的真 bug：本支每次重渲都挂，摘除却只发生在 historyPage 帧 ⇒ 已渲染
+    // 真消息的会话重渲后「占位与真内容同框」，且没有新 historyPage 到达时占位永不
+    // 退场。现在：线程**真的空**（一条消息都没渲染）才出一条细加载行 —— 既有
+    // `.history-loader`（spinner + 「加载中…」，与翻页加载同一个件，非卡片/非气泡
+    // 形态），historyPage 到场由 main.js 处理器同帧摘除。三档判据因此仍分开：
+    // 加载中 = 这一行；有内容 = 零占位；失败/空态各有自己的面（不吃本条）。
+    if (!pv.dom.chat.children.length) showHistoryLoader();
   }
 
   if (state.sessionPendingTools[sid]) {
@@ -2416,7 +2093,10 @@ export function resetChatForActiveSession() {
 
   if (!isBusy) pv.dom.input.focus();
 
-  renderTaskList([], undefined, sid); // 首参占位——旧任务入参退役（2026-09-05 裁定纯节点视图）
+  // 任务面换血（ReminderIsland 复刻批 2026-11-02）：本槽位渲染 = 待办列表
+  //（renderTodoTaskList；旧 delegate 链块渲染 taskList.renderTaskList 代码零删除、
+  // 本面零触发——模块仍被 todoFace/mobile/taskPanel 引用，数据面活在别面）。
+  renderTodoTaskList(sid);
   if (state.updateBgTasksUI) state.updateBgTasksUI();
   if (state.updateBgAgentIndicator) state.updateBgAgentIndicator();
   if (state.updateBypassToggle) state.updateBypassToggle(pv);
@@ -2497,21 +2177,16 @@ export function deleteFolder(folderId) {
 }
 
 // ---------- Session status state machine ----------
-// Priority: attention > compacting-bg > busy > marked unread > unread > idle
+// Priority: attention > busy > marked unread > unread > idle
 // Only one indicator visible at a time, controlled by a single CSS class.
-// Attention takes priority over compacting so AskUser/permission prompts are visible
-// even while the session is still technically compacting.
+// Attention takes priority so AskUser/permission prompts are visible.
 //
-// Compact logic:
-//   - Active session compacting: green compact info shown in chat area status bar;
-//     sidebar shows 'busy' (falls through).
-//   - Non-active session compacting: sidebar shows 'compacting' spinner.
+// 压缩中无独立可见态（作者令 2026-10-09 ①「『压缩中』可见指示列为拆除项」，
+// compaction-pill-remove 批）：compactingSessionIds 仅剩功能职责（输入闸 /
+// 排队闸），侧栏会话/文件夹行不再显示压缩指示（压缩 spinner 元素与样式已拆）。
 
 function getSessionStatusClass(sessionId) {
   if (state.attentionSessions.has(sessionId)) return 'attention';
-  // Only show 'compacting' spinner in sidebar for non-active sessions.
-  // Active session shows compact info in the chat area status bar instead.
-  if (state.compactingSessionIds.has(sessionId) && sessionId !== state.activeSessionId) return 'compacting';
   if (state.busySessionIds.has(sessionId)) return 'busy';
   if (state.markedUnreadSessions.has(sessionId) || state.unreadSessions.has(sessionId)) return 'unread';
   return '';
@@ -2598,7 +2273,7 @@ function showSessionCtxMenu(x, y, sessionId) {
 
   // Submenu interactions
   const subTrigger = menu.querySelector('[data-action="move-to-folder"]');
-  const subMenu = menu.querySelector('#ctx-folder-submenu');
+  const subMenu = /** @type {HTMLElement} */ (menu.querySelector('#ctx-folder-submenu'));
   let subTimer = null;
 
   subTrigger.addEventListener('mouseenter', () => {
@@ -2616,7 +2291,7 @@ function showSessionCtxMenu(x, y, sessionId) {
 
   subMenu.querySelectorAll('.ctx-sub').forEach(el => {
     el.addEventListener('click', () => {
-      const fid = el.dataset.folderId;
+      const fid = (/** @type {HTMLElement} */ (el)).dataset.folderId;
       sendWs({ type: 'moveSessionToFolder', sessionId, folderId: fid || null });
       dismissCtxMenu();
     });
@@ -2937,31 +2612,29 @@ function markSessionActivity(sessionId) {
 
 // Listen for state changes from other modules (dispatched via CustomEvent)
 window.addEventListener('session-busy', (e) => {
-  updateSessionStatus(e.detail.sessionId);
+  updateSessionStatus(/** @type {CustomEvent<{sessionId: string}>} */ (e).detail.sessionId);
   computeAgentStates();
 });
 
 window.addEventListener('session-attention', (e) => {
-  setSessionAttention(e.detail.sessionId, e.detail.attention);
+  const detail = /** @type {CustomEvent<{sessionId: string, attention: string}>} */ (e).detail;
+  setSessionAttention(detail.sessionId, detail.attention);
   computeAgentStates();
 });
 
 window.addEventListener('session-unread', (e) => {
-  updateSessionStatus(e.detail.sessionId);
-  markSessionActivity(e.detail.sessionId);
+  updateSessionStatus(/** @type {CustomEvent<{sessionId: string}>} */ (e).detail.sessionId);
+  markSessionActivity(/** @type {CustomEvent<{sessionId: string}>} */ (e).detail.sessionId);
 });
 
 window.addEventListener('session-compacting', (e) => {
-  updateSessionStatus(e.detail.sessionId);
+  updateSessionStatus(/** @type {CustomEvent<{sessionId: string}>} */ (e).detail.sessionId);
   computeAgentStates();
 });
 
-/** Refresh header model-info bar for the active session. */
-export function initHeaderModelInfo() {
-  if (typeof state.updateHeaderModelInfo === 'function') {
-    state.updateHeaderModelInfo();
-  }
-}
+// 头部用量环刷新入口已随 2026-10-23 上下文用量显示退役批删除
+//（作者令逐字「把桌面端的上下文用量显示也去掉」）。
+// 防复活钉：tests/remove-context-usage.spec.mjs。
 
 
 /** Determine which agent a new session/folder should belong to, based on context.
@@ -2975,7 +2648,7 @@ export function getTargetAgent() {
   // 2. Active session
   const active = (state.sessions || []).find(s => s.id === state.activeSessionId);
   if (active?.agentName) return active.agentName;
-  return 'Nebula';
+  return ROOT_AGENT_KEY;
 }
 
 /** Resolve the target folder ID for creating new sessions/folders, based on context.
@@ -3034,7 +2707,7 @@ export function createNewFolder(parentFolderId) {
     '</div>';
   container.insertBefore(row, container.firstChild);
 
-  const input = row.querySelector('.folder-new-input');
+  const input = /** @type {HTMLInputElement} */ (row.querySelector('.folder-new-input'));
   if (typeof lucide !== 'undefined') createIconsIn(row);
   input.focus();
 
@@ -3049,7 +2722,10 @@ export function createNewFolder(parentFolderId) {
     }
   };
 
+  // ⑤ 组字期间 Enter/Esc 交还输入法（非组字态行为逐键不变）。
+  bindImeGuard(input);
   input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return;
     if (e.key === 'Enter') { e.preventDefault(); confirm(); }
     if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   });
@@ -3094,9 +2770,7 @@ function getFolderStatusClass(folderId, sessions) {
   for (const s of folderSessions) {
     if (state.attentionSessions.has(s.id)) return 'attention';
   }
-  for (const s of folderSessions) {
-    if (state.compactingSessionIds.has(s.id) && s.id !== state.activeSessionId) return 'compacting';
-  }
+  // 压缩中指示已拆除（作者令 2026-10-09 ①）——文件夹行不再有 compacting 态。
   for (const s of folderSessions) {
     if (state.busySessionIds.has(s.id)) return 'busy';
   }
@@ -3114,10 +2788,12 @@ function renderFolderItem(folder, sessions, container) {
   const isExpanded = state.expandedFolders.has(folder.id);
   const isPinned = state.pinnedFolders.has(folder.id);
 
+  // 侧栏族：树行 = .ds-side-row .ds-side-row--tree（32px 热区 + 紧内距）；
+  // .folder-item 保留为 DOM 寻址钩子（拖放态 .drag-over 仍写在旧 class 上）。
   const folderEl = document.createElement('div');
-  folderEl.className = 'folder-item'
-    + (isPinned ? ' pinned' : '')
-    + (state.activeFolderId === folder.id ? ' active' : '');
+  folderEl.className = 'folder-item ds-side-row ds-side-row--tree'
+    + (isPinned ? ' ds-side-row--pinned pinned' : '')
+    + (state.activeFolderId === folder.id ? ' ds-side-row--active active' : '');
   folderEl.dataset.folderId = folder.id;
   folderEl.draggable = true;
 
@@ -3132,32 +2808,31 @@ function renderFolderItem(folder, sessions, container) {
         : '<i data-lucide="chevron-right"></i>') +
     '</div>' +
     '<div class="folder-icon"><i data-lucide="folder"></i></div>' +
-    '<div class="folder-name">' + escapeHtml(folder.name) + '</div>' +
-    (folder.projectRoot ? '<span class="folder-badge" title="' + escapeHtml(folder.projectRoot) + '"><i data-lucide="hard-drive" style="width:12px;height:12px"></i></span>' : '') +
+    '<div class="folder-name ds-side-title">' + escapeHtml(folder.name) + '</div>' +
+    (folder.projectRoot ? '<span class="folder-badge ds-side-meta" title="' + escapeHtml(folder.projectRoot) + '"><i data-lucide="hard-drive" style="width:12px;height:12px"></i></span>' : '') +
     '<div class="folder-status ' + statusCls + '">' +
       '<div class="status-spinner"><i data-lucide="loader-2"></i></div>' +
-      '<div class="status-compact-spinner"><i data-lucide="minimize-2"></i></div>' +
       '<div class="folder-status-dot"></div>' +
     '</div>' +
-    '<button class="folder-delete" title="' + t('sidebar.folderDelete') + '"><i data-lucide="x"></i></button>';
+    '<button class="folder-delete ds-side-danger" title="' + t('sidebar.folderDelete') + '"><i data-lucide="x"></i></button>';
 
   // Drag: folder itself can be dragged (into another folder) or to delete zone
   folderEl.addEventListener('dragstart', (e) => {
     e.dataTransfer.setData('text/plain', 'folder:' + folder.id);
     e.dataTransfer.effectAllowed = 'move';
-    folderEl.classList.add('dragging');
+    folderEl.classList.add('dragging', 'ds-side-row--dragging');
     showDeleteZone();
   });
   folderEl.addEventListener('dragend', () => {
-    folderEl.classList.remove('dragging');
+    folderEl.classList.remove('dragging', 'ds-side-row--dragging');
     document.querySelectorAll('.folder-item.drag-over').forEach(el => el.classList.remove('drag-over'));
     hideDeleteZone();
   });
 
   // VSCode-style: click selects folder + expand/collapse
   folderEl.addEventListener('click', (e) => {
-    if (e.target.closest('.folder-delete')) return;
-    if (e.target.closest('.folder-name[contenteditable="true"]')) return;
+    if ((/** @type {Element} */ (e.target)).closest('.folder-delete')) return;
+    if ((/** @type {Element} */ (e.target)).closest('.folder-name[contenteditable="true"]')) return;
     setActiveFolder(folder.id);
     toggleFolder(folder.id);
   });
@@ -3169,9 +2844,9 @@ function renderFolderItem(folder, sessions, container) {
   });
 
   // Double-click to rename folder (inline, same as session)
-  const folderNameEl = folderEl.querySelector('.folder-name');
+  const folderNameEl = /** @type {HTMLElement} */ (folderEl.querySelector('.folder-name'));
   const startFolderRename = () => {
-    folderNameEl.contentEditable = true;
+    folderNameEl.contentEditable = 'true';
     folderNameEl.focus();
     const range = document.createRange();
     range.selectNodeContents(folderNameEl);
@@ -3184,7 +2859,7 @@ function renderFolderItem(folder, sessions, container) {
     startFolderRename();
   });
   const finishFolderRename = () => {
-    folderNameEl.contentEditable = false;
+    folderNameEl.contentEditable = 'false';
     const newName = folderNameEl.textContent.trim();
     if (newName && newName !== folder.name) {
       sendWs({ type: 'renameFolder', folderId: folder.id, name: newName });
@@ -3193,9 +2868,10 @@ function renderFolderItem(folder, sessions, container) {
     }
   };
   folderNameEl.addEventListener('blur', finishFolderRename);
+  bindImeGuard(folderNameEl);
   folderNameEl.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, folderNameEl)) return; // ⑤ 组字期间交还输入法
     if (e.key === 'Enter') {
-      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault(); folderNameEl.blur();
     }
     if (e.key === 'Escape') { folderNameEl.textContent = folder.name; folderNameEl.blur(); }
@@ -3227,10 +2903,10 @@ function renderFolderItem(folder, sessions, container) {
     // Rules.md entry — only shown when rules exist for this folder
     if (state.foldersWithRules && state.foldersWithRules.has(folder.id)) {
       const rulesItem = document.createElement('div');
-      rulesItem.className = 'session-item in-folder rules-item';
+      rulesItem.className = 'session-item in-folder rules-item ds-side-row ds-side-row--tree';
       rulesItem.innerHTML =
         '<div class="session-icon"><i data-lucide="file-text" style="width:14px;height:14px;color:var(--color-text-muted)"></i></div>' +
-        '<div class="session-name">rules.md</div>';
+        '<div class="session-name ds-side-title">rules.md</div>';
       rulesItem.addEventListener('click', (e) => {
         e.stopPropagation();
         openRulesEditor(folder.id, folder.name);
@@ -3257,7 +2933,7 @@ function renderFolderItem(folder, sessions, container) {
       folderEl.classList.add('drag-over');
     });
     childrenContainer.addEventListener('dragleave', (e) => {
-      if (!childrenContainer.contains(e.relatedTarget)) {
+      if (!childrenContainer.contains(/** @type {Node|null} */ (e.relatedTarget))) {
         folderEl.classList.remove('drag-over');
       }
     });
@@ -3299,8 +2975,11 @@ function showFolderCtxMenu(x, y, folderId) {
   }
   html +=
     '<div class="ctx-separator"></div>' +
-    '<div class="ctx-item" data-action="delete" style="color:var(--color-error)">' + t('ctx.deleteFolder') + '</div>';
+    // ui-status-redesign（S10 / 盘点 #47）：常显危险文字项字转常规色，危险语义由
+    // 行首 trash-2 红图标承载；hover 时刻字转红（ctx.css :hover 交互红保留）。
+    '<div class="ctx-item" data-action="delete">' + statusIcon('trash-2', 12, 'st-err') + '<span>' + t('ctx.deleteFolder') + '</span></div>';
   menu.innerHTML = html;
+  createIconsIn(menu);
 
   menu.querySelector('[data-action="toggle-pin"]').addEventListener('click', () => {
     if (isPinned) state.pinnedFolders.delete(folderId);
@@ -3317,7 +2996,7 @@ function showFolderCtxMenu(x, y, folderId) {
     const folderEl = state.dom.sessionList.querySelector(`.folder-item[data-folder-id="${folderId}"]`);
     const nameEl = folderEl ? folderEl.querySelector('.folder-name') : null;
     if (nameEl) {
-      nameEl.contentEditable = true;
+      nameEl.contentEditable = 'true';
       nameEl.focus();
       const range = document.createRange();
       range.selectNodeContents(nameEl);
@@ -3332,10 +3011,31 @@ function showFolderCtxMenu(x, y, folderId) {
     createNewFolder(folderId);
   });
 
-  // Set project root — opens directory picker
+  // Set project root — opens the unified directory picker (workspacePicker.js).
+  // Clear commits projectRoot:null (button shown only when a root is set);
+  // both commit pipes dispatch 'project-root-changed' exactly like the retired
+  // in-module path picker did.
   menu.querySelector('[data-action="set-project-root"]').addEventListener('click', () => {
     if (!folder) return;
-    openPathPicker(folderId, folder.projectRoot);
+    import('./workspacePicker.js').then(({ openPicker }) => {
+      openPicker({
+        startPath: folder.projectRoot || '~',
+        title: t('workspacePicker.projectTitle'),
+        // picker-device-switch 批：项目根绑定本机会话工作区（回写面无设备定语——
+        // setFolderProjectRoot 只收路径串），选择器内禁用设备切换，杜绝远端路径
+        // 静默落本机的错觉（G.12）。新建/迁移项目与文件浏览器的入口不受影响。
+        deviceSwitch: false,
+        showClear: !!folder.projectRoot,
+        onPick: (path) => {
+          sendWs({ type: 'setFolderProjectRoot', folderId: folder.id, projectRoot: path });
+          window.dispatchEvent(new CustomEvent('project-root-changed'));
+        },
+        onClear: () => {
+          sendWs({ type: 'setFolderProjectRoot', folderId: folder.id, projectRoot: null });
+          window.dispatchEvent(new CustomEvent('project-root-changed'));
+        },
+      });
+    });
     dismissCtxMenu();
   });
 
@@ -3364,223 +3064,6 @@ function showFolderCtxMenu(x, y, folderId) {
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
   activeCtxMenu = menu;
-}
-
-/** Open rules editor modal for a folder — Nebflow standard modal. */
-let activeRulesFolderId = null;
-let activeRulesExists = false;
-function openRulesEditor(folderId, folderName) {
-  activeRulesFolderId = folderId;
-  activeRulesExists = state.foldersWithRules && state.foldersWithRules.has(folderId);
-  const title = document.getElementById('rules-modal-title');
-  const input = document.getElementById('rules-input');
-  const deleteBtn = document.getElementById('rules-modal-delete');
-  title.textContent = t('rules.title') + ' — ' + folderName;
-  input.value = '';
-  input.placeholder = t('rules.placeholder');
-  deleteBtn.style.display = activeRulesExists ? 'inline-block' : 'none';
-  deleteBtn.textContent = t('rules.delete');
-  document.getElementById('rules-overlay').classList.add('on');
-  document.getElementById('rules-modal').classList.add('show');
-  // Fetch current content
-  sendWs({ type: 'getRules', folderId });
-  setTimeout(() => input.focus(), 50);
-}
-
-function closeRulesEditor() {
-  activeRulesFolderId = null;
-  document.getElementById('rules-overlay').classList.remove('on');
-  document.getElementById('rules-modal').classList.remove('show');
-}
-
-/** Handle rulesData from server. */
-export function handleRulesData(data) {
-  if (activeRulesFolderId === data.folderId) {
-    const input = document.getElementById('rules-input');
-    if (input) input.value = data.content || '';
-  }
-}
-
-/** Handle rulesSaved from server. */
-export function handleRulesSaved(data) {
-  if (data.folderId) {
-    if (!state.foldersWithRules) state.foldersWithRules = new Set();
-    state.foldersWithRules.add(data.folderId);
-    // Re-render sidebar to show rules.md entry
-    const activeId = state.activeSessionId;
-    renderSessionSidebar(state.sessions, activeId);
-    closeRulesEditor();
-  }
-}
-
-/** Handle rulesDeleted from server. */
-export function handleRulesDeleted(data) {
-  if (data.folderId) {
-    if (state.foldersWithRules) state.foldersWithRules.delete(data.folderId);
-    const activeId = state.activeSessionId;
-    renderSessionSidebar(state.sessions, activeId);
-    closeRulesEditor();
-  }
-}
-
-// ----- Rules Modal wiring (called from modal.js initModals) -----
-export function initRulesModal() {
-  document.getElementById('rules-modal-cancel').addEventListener('click', closeRulesEditor);
-  document.getElementById('rules-overlay').addEventListener('click', (e) => {
-    if (e.target.id === 'rules-overlay') closeRulesEditor();
-  });
-  document.getElementById('rules-modal-save').addEventListener('click', () => {
-    const content = document.getElementById('rules-input').value;
-    sendWs({ type: 'saveRules', folderId: activeRulesFolderId, content });
-  });
-  document.getElementById('rules-modal-delete').addEventListener('click', () => {
-    if (!activeRulesFolderId) return;
-    sendWs({ type: 'deleteRules', folderId: activeRulesFolderId });
-  });
-}
-
-// ===== Path Picker Modal =====
-let pathPickerFolderId = null;
-let pathPickerCurrentPath = '';
-let pathPickerCallback = null;
-
-export function openPathPicker(folderId, currentRoot) {
-  pathPickerFolderId = folderId;
-  pathPickerCallback = null;
-  const startPath = currentRoot || '~';
-  document.getElementById('path-picker-title').textContent = t('pathPicker.title');
-  document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
-  document.getElementById('path-picker-clear').textContent = t('pathPicker.clear');
-  document.getElementById('path-picker-select').textContent = t('pathPicker.select');
-  // Show/hide clear button based on current state
-  document.getElementById('path-picker-clear').style.display = currentRoot ? 'inline-block' : 'none';
-  document.getElementById('path-picker-overlay').classList.add('on');
-  document.getElementById('path-picker-modal').classList.add('show');
-  browseTo(startPath);
-}
-
-export function openPathPickerCallback(currentRoot, callback) {
-  pathPickerFolderId = null;
-  pathPickerCallback = callback;
-  const startPath = currentRoot || '~';
-  document.getElementById('path-picker-title').textContent = t('pathPicker.title');
-  document.getElementById('path-picker-cancel').textContent = t('modal.cancel');
-  document.getElementById('path-picker-select').textContent = t('pathPicker.select');
-  document.getElementById('path-picker-clear').style.display = 'none';
-  document.getElementById('path-picker-overlay').classList.add('on');
-  document.getElementById('path-picker-modal').classList.add('show');
-  browseTo(startPath);
-}
-
-function closePathPicker() {
-  pathPickerFolderId = null;
-  pathPickerCallback = null;
-  pathPickerCurrentPath = '';
-  document.getElementById('path-picker-overlay').classList.remove('on');
-  document.getElementById('path-picker-modal').classList.remove('show');
-}
-
-function browseTo(path) {
-  sendWs({ type: 'browsePath', path });
-}
-
-function buildBreadcrumb(path) {
-  const bc = document.getElementById('path-picker-breadcrumb');
-  const parts = path.split('/').filter(Boolean);
-  let html = '';
-  let accumulated = '';
-  // root
-  if (path.startsWith('/')) {
-    html += '<span data-path="/">/</span>';
-    accumulated = '/';
-  }
-  parts.forEach((part, i) => {
-    accumulated += (accumulated.endsWith('/') ? '' : '/') + part;
-    const p = accumulated;
-    if (i < parts.length - 1) {
-      html += ' / <span data-path="' + escapeHtml(p) + '">' + escapeHtml(part) + '</span>';
-    } else {
-      html += ' / ' + escapeHtml(part);
-    }
-  });
-  bc.innerHTML = html;
-  bc.querySelectorAll('span[data-path]').forEach(span => {
-    span.addEventListener('click', () => browseTo(span.dataset.path));
-  });
-}
-
-export function handleBrowseResult(data) {
-  const list = document.getElementById('path-picker-list');
-  if (!list) return;
-  pathPickerCurrentPath = data.path || '';
-  buildBreadcrumb(pathPickerCurrentPath);
-  const entries = data.entries || [];
-  list.innerHTML = '';
-  list.removeAttribute('data-empty');
-  if (data.error) {
-    list.setAttribute('data-empty', data.error);
-    return;
-  }
-  // Parent directory item — hidden at filesystem root
-  if (pathPickerCurrentPath !== '/') {
-    const parentItem = document.createElement('div');
-    parentItem.className = 'pp-item';
-    parentItem.innerHTML = '<span class="pp-icon">..</span><span class="pp-name">..</span>';
-    parentItem.addEventListener('click', () => {
-      const parts = pathPickerCurrentPath.replace(/\/$/, '').split('/');
-      parts.pop();
-      const parent = parts.join('/') || '/';
-      browseTo(parent);
-    });
-    list.appendChild(parentItem);
-  }
-
-  if (entries.length === 0) {
-    const emptyHint = document.createElement('div');
-    emptyHint.style.cssText = 'text-align:center;padding:24px;color:var(--color-frame-text-muted);font-size:12px;';
-    emptyHint.textContent = t('pathPicker.empty');
-    list.appendChild(emptyHint);
-    return;
-  }
-
-  entries.forEach(entry => {
-    const item = document.createElement('div');
-    item.className = 'pp-item';
-    item.innerHTML = '<span class="pp-icon">&#128193;</span><span class="pp-name">' + escapeHtml(entry.name) + '</span>';
-    item.addEventListener('click', () => browseTo(entry.path));
-    list.appendChild(item);
-  });
-}
-
-export function initPathPicker() {
-  document.getElementById('path-picker-cancel').addEventListener('click', closePathPicker);
-  document.getElementById('path-picker-overlay').addEventListener('click', (e) => {
-    if (e.target.id === 'path-picker-overlay') closePathPicker();
-  });
-  document.getElementById('path-picker-select').addEventListener('click', () => {
-    // Callback mode (Explorer folder picker)
-    if (pathPickerCallback) {
-      pathPickerCallback(pathPickerCurrentPath);
-      closePathPicker();
-      return;
-    }
-    // Folder mode
-    if (!pathPickerFolderId) return;
-    sendWs({ type: 'setFolderProjectRoot', folderId: pathPickerFolderId, projectRoot: pathPickerCurrentPath });
-    closePathPicker();
-    window.dispatchEvent(new CustomEvent('project-root-changed'));
-  });
-  document.getElementById('path-picker-clear').addEventListener('click', () => {
-    if (pathPickerCallback) {
-      pathPickerCallback(null);
-      closePathPicker();
-      return;
-    }
-    if (!pathPickerFolderId) return;
-    sendWs({ type: 'setFolderProjectRoot', folderId: pathPickerFolderId, projectRoot: null });
-    closePathPicker();
-    window.dispatchEvent(new CustomEvent('project-root-changed'));
-  });
 }
 
 export function moveSessionToFolder(sessionId, folderId) {

@@ -1,0 +1,53 @@
+# GitHub release-notes configuration.
+#
+# `generate_release_notes: true` stays on in both release workflows; this file only
+# chooses HOW the generated notes are grouped. Anything that does not carry one of the
+# labels below lands in the default "Other changes" category, so the categories are a
+# sorting aid, not a filter — no change is dropped by being unlabelled.
+#
+# Wording contract for the human-written part of the notes (same source as the
+# user-visible naming rule):
+#   * the device subsystem is **Device Interconnect** / 「设备互联」 in every
+#     user-visible string; its retired internal name and the internal account
+#     shorthand never appear in release text (any casing, including comments);
+#   * the account is a **nebflow account** (email + password) — no third-party sign-in;
+#   * never promise zero-loss / guaranteed / real-time delivery for friend messages,
+#     and never describe Friends as multi-account or team collaboration;
+#   * forwarding a turn to a friend's agents is limited to orchestrated Nebula runs —
+#     a hand-sent message is not forwarded under the sender's identity.
+#
+# First release that carries Friends: the generated list is not enough — the notes must
+# name the feature in the human-written section (what it does, what it needs, what it
+# does not promise), with "Friends" pulled out of the catch-all category below.
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+      - internal
+  categories:
+    # Keep this category first: the release that reveals Friends points at it, and any
+    # later friend work stays in one place instead of scattering across Features.
+    - title: Friends
+      labels:
+        - friends
+        - friend
+    - title: Features
+      labels:
+        - feature
+        - enhancement
+    - title: Fixes
+      labels:
+        - bug
+        - fix
+    - title: Documentation
+      labels:
+        - documentation
+        - docs
+    - title: Build, CI and packaging
+      labels:
+        - build
+        - ci
+        - packaging
+    - title: Other changes
+      labels:
+        - "*"

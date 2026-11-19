@@ -31,7 +31,7 @@ class CancelCurrentTurnUnwedgeSpec extends CatsEffectSuite:
       ctx = LocalActorContext(
         self = ref,
         system = system,
-        log = nebflow.core.NebflowLogger.forName("nebflow.actor"),
+        log = nebflow.shared.NebflowLogger.forName("nebflow.actor"),
         activeTurnFibers = fibers,
         childrenRef = children
       )
@@ -47,6 +47,7 @@ class CancelCurrentTurnUnwedgeSpec extends CatsEffectSuite:
     yield
       assert(returned.isRight, s"cancelCurrentTurn must return promptly, got $returned")
       assertEquals(cleared.size, 0, "tracking map must be cleared immediately")
+    end for
   }
 
   private sealed trait Command

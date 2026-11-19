@@ -1,81 +1,591 @@
 package nebflow.core.tools
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.*
-import nebflow.core.NebflowLogger
+import nebflow.core.*
+import nebflow.core.delegate.DelegateRegistry
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowMailStore, MailQueueStore, TeamSessionRegistry}
-import nebflow.core.project.{ProjectActor, ProjectRuntimeRegistry}
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import nebflow.core.flow.MailQueueStore
+import nebflow.core.project.*
+import nebflow.shared.{MailQueueItem, NebflowLogger, *}
 
+import scala.concurrent.duration.*
 
+// 定位器参数窄化,AgentActor 构造改经工厂镜像
 /**
- * Agent-to-agent communication tool.
- *
- * Two delivery modes (via `delivery` parameter):
- * - immediate (default): Async send. Injected at next turn boundary. If recipient
- *   is idle, starts a new turn. If busy, merged into the current turn. The standard
- *   communication method.
- * - queue: Serialized FIFO. Persisted to disk (survives restart). Each queued mail
- *   triggers a full turn — processed one at a time, only after the current task
- *   completes. Use for serial task chains: "do this, then that, then that."
- *
- * The former `ask` mode (synchronous context fork) was removed entirely
- * (2026-08-27 user ruling) — see git history if that mechanism is ever needed.
+ * Role-scoped agent communication. Frozen/restart-held delegates retain supplements
+ * in their durable mailbox until explicit manual recovery. Normal completed delegates
+ * continue under the same identity only when their saved history is verified.
  */
 object MailTool extends Tool:
   private val logger = NebflowLogger(getClass)
 
-  /** Routing rule: senders without a team context mail TEAM names only. */
-  private val TeamOnlyRoutingError =
-    "Agents outside a team mail TEAM names only (e.g. \"nebflow-project\") — the team Manager dispatches to members. \"team/agent\" explicit addresses and bare short names are not routable from outside a team."
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3：此处置曾有一条
+  // `TeamOnlyRoutingError`（「团队外的发信方只能发团队名；显式 team/agent 地址与
+  // 裸短名在团队外不可路由」）—— 团队地址面整体退役后该判据无对象，随三形态
+  // （团队名 / `team/agent` / 裸团队内短名）一并删除。团队名此后落通用
+  // 「不认识的地址」错误（`unresolvableError`），无专门错误码、无特判。
+
+  /** Nebula root agent 定义名（分层地址面与 root 解析的判据单点；值单源于 RootAgentIdentity.Name）。 */
+  private val RootAgentName = RootAgentIdentity.Name
+
+  // ============================================================
+  //  target face and retirement word
+  // table (**single source**; the report, specs and descriptions cite this same source;
+  // a second literal copy is forbidden).
+  //   MAIL_TARGET_MISSING    both missing: `address` not filled (the device leg is
+  //                          retired; the target face is address-only)
+  //   MAIL_DEVICE_RETIRED    a stale caller still sends `device=` => explicit refusal
+  //                          (fail-closed tombstone, same shape as the `delivery`
+  //                          tombstone — the schema key is deleted and the engine
+  //                          does zero JSON-Schema validation => the stale key still
+  //                          reaches call(), where one read line refuses it)
+  //   MAIL_KERNEL_EXCLUSIVE  the kernel continuation leg is Nebula-exclusive:
+  //                          every non-Nebula caller is refused
+  //   MAIL_KERNEL_NOT_LIVE   the `kernel:<id>` instance is not live (terminal state /
+  //                          unknown id) => explicit refusal
+  //   MAIL_KERNEL_SPAWN_RETIRED  a bare `kernel` address (the former spawn leg) => explicit
+  //                          refusal (Delegate is the only
+  //                          kernel trigger; Mail communicates only)
+  //   MAIL_PROJECT_TRIGGER_UNSUPPORTED  a project address (`project:<name>` or a bare
+  //                          mounted project name) => explicit refusal — Mail carries no
+  //                          project trigger face (task dispatching is Delegate's entry;
+  //                          Mail communicates only)
+  //   MAIL_TASK_PARAM_UNSUPPORTED  a stale caller still sends `task=` => explicit refusal
+  //   MAIL_ASK_EXCLUSIVE     the `ask:<id>` continuation leg is root-only (the same
+  //                          authorization face as the delegate continuation leg):
+  //                          every non-root caller is refused
+  //   MAIL_ASK_NOT_FOUND     no ask file binding exists for the id => explicit
+  //                          refusal (never a silent drop)
+  //   MAIL_ASK_NOT_ROUTABLE  the binding exists but its bound file is gone or no
+  //                          longer askable (md/html/ebook) — the session can no
+  //                          longer wake => explicit refusal
+  //   MAIL_ASK_UNAVAILABLE   this instance has no ask face mounted (ask services
+  //                          not installed) => explicit refusal
+  //                          (fail-closed tombstone, same shape as the `delivery` /
+  //                          `device` tombstones — the schema key is deleted and the
+  //                          engine does zero JSON-Schema validation => the stale key
+  //                          still reaches call(), where one read line refuses it)
+  // ============================================================
+  val ErrTargetMissing: String = "MAIL_TARGET_MISSING"
+  val ErrDeviceLegRetired: String = "MAIL_DEVICE_UNSUPPORTED"
+  val ErrKernelExclusive: String = "MAIL_KERNEL_EXCLUSIVE"
+  val ErrKernelNotLive: String = "MAIL_KERNEL_NOT_LIVE"
+  val ErrKernelSpawnRetired: String = "MAIL_KERNEL_SPAWN_UNSUPPORTED"
+  val ErrProjectTriggerUnsupported: String = "MAIL_PROJECT_TRIGGER_UNSUPPORTED"
+  val ErrTaskParamUnsupported: String = "MAIL_TASK_PARAM_UNSUPPORTED"
+  val ErrAskExclusive: String = "MAIL_ASK_EXCLUSIVE"
+  val ErrAskNotFound: String = "MAIL_ASK_NOT_FOUND"
+  val ErrAskNotRoutable: String = "MAIL_ASK_NOT_ROUTABLE"
+  val ErrAskUnavailable: String = "MAIL_ASK_UNAVAILABLE"
+
+  /** Project-address refusal (pure constructor, for direct spec testing). */
+  private[tools] def projectTriggerUnsupportedError(address: String): ToolError =
+    ToolError(
+      s"[$ErrProjectTriggerUnsupported] Mail does not trigger project dispatchers — '$address' is a " +
+        "project address, and project addresses are not Mail targets (a bare mounted project name is " +
+        "not either). Mail is a pure communication primitive: it creates no task, continues none and " +
+        "revives none. Task dispatching is Delegate's face — call Delegate(task=<self-contained brief>, " +
+        "project=<mounted project>) instead. Nothing was sent."
+    )
+
+  /** Stale-caller refusal for the removed `task=` parameter (pure constructor, for direct spec testing). */
+  private[tools] def taskParamUnsupportedError(task: String): ToolError =
+    ToolError(
+      s"[$ErrTaskParamUnsupported] This tool takes no 'task' parameter — Mail carries no task-dispatch " +
+        "face (it cannot create, continue or revive a task; the ledger's task numbers are not Mail " +
+        "addresses). Dispatch or continue work with Delegate(task=<self-contained brief>, " +
+        "project=<mounted project>) instead. Nothing was sent (task='" + task + "')."
+    )
+
+  /**
+   * Both-missing error (verbatim word table; after the device leg retired, the target face is `address`-only).
+   *
+   * The tail pointer is SEAL-AWARE. With the
+   * friends feature sealed (explicit opt-out re-seal — `"features": {"friends":
+   * false}`; open by default since the 功能开放批 2026-10-30), SendMessage's
+   * friend/group/local targets — including the this-machine local copy — answer
+   * `FRIENDS_SEALED`, so the pointer names the surviving `device:` target
+   * explicitly; unsealed, the original sentence is kept verbatim (zero
+   * behavior change while the flag is off). `def` (not `val`): the latch is a
+   * boot-time constant, but this word table must follow it without a second
+   * source.
+   */
+  private[tools] def targetMissingMessage: String =
+    s"[$ErrTargetMissing] Missing target: fill 'address' (an agent/team target — e.g. " +
+      "\"delegate:<id>\"/\"node:<id>\" (Nebula root), a team name, or a member short name; project " +
+      "addresses are not Mail targets — dispatching is Delegate's face). This tool takes no 'device' " +
+      "parameter (MAIL_DEVICE_UNSUPPORTED); " +
+      (if nebflow.core.FriendsSeal.isSealed then
+         "files for another machine go via SendMessage's `device:` target — its friend/group/local " +
+           "targets (including the local this-machine copy) are sealed (FRIENDS_SEALED) until the " +
+           "feature is unsealed (remove the `\"features\": {\"friends\": false}` key from the config file " +
+           "and restart)."
+       else "files for another machine's user go via SendMessage.")
+
+  /** Retirement refusal for a stale caller's `device=` (pure constructor, for direct spec testing). */
+  private[tools] def deviceLegRetiredError(device: String): ToolError =
+    ToolError(
+      s"[$ErrDeviceLegRetired] This tool takes no 'device' parameter — cross-device " +
+        "agent mail is not a Mail face, so nothing was sent and nothing is queued. Got device='" + device + "'. To move files or " +
+        "text to another MACHINE use SendMessage (pure transport; that machine's agent is not informed). To " +
+        "reach an AGENT use 'address': \"delegate:<id>\"/\"kernel:<id>\" or \"node:<id>\" (Nebula root only), a team name or " +
+        "member short name. Project addresses are not Mail targets — dispatching is Delegate's face."
+    )
+
+  /** Kernel-leg unauthorized-caller refusal (Nebula-exclusive). */
+  private[tools] def kernelExclusiveError(address: String, role: String): ToolError =
+    ToolError(
+      s"[$ErrKernelExclusive] The kernel address leg is EXCLUSIVE to the Nebula root session: dispatchers, " +
+        "team agents and nodes cannot start or continue a kernel instance. " +
+        s"Nothing was sent (address='$address', your role: $role). Route the work through Nebula instead — " +
+        "mail your report to Nebula and let it dispatch."
+    )
+
+  /** Explicit refusal for the RETIRED bare-kernel spawn leg (Delegate triggers kernels; Mail communicates). */
+  private[tools] def kernelSpawnRetiredError(address: String): ToolError =
+    ToolError(
+      s"[$ErrKernelSpawnRetired] A bare 'kernel' address does not start an instance — kernel " +
+        "triggering is Delegate-only (the Delegate result carries the continuation address " +
+        "kernel:<id>). Nothing was sent (address='" + address + "'). To continue a LIVE instance, " +
+        "mail its address \"kernel:<id>\"; to start a new one, call Delegate."
+    )
+
+  /** Explicit refusal when the `kernel:<id>` instance is not live (fail-closed). */
+  private[tools] def kernelNotLiveError(id: String): ToolError =
+    ToolError(
+      s"[$ErrKernelNotLive] No live kernel instance 'kernel:$id' — kernel instances are one-shot Delegate " +
+        "sessions: when an instance finishes, its result is delivered back to your session and its address " +
+        "stops being routable. Nothing was sent. Start a new instance with Delegate(task=...)."
+    )
+
+  // ── ask leg（ask-mail 批 2026-11-16）：`ask:<id>` 续聊腿的拒绝词族 ──────────
+
+  /** Ask-leg unauthorized-caller refusal (root-only — the delegate continuation face). */
+  private[tools] def askExclusiveError(address: String, role: String): ToolError =
+    ToolError(
+      s"[$ErrAskExclusive] The ask address leg is EXCLUSIVE to the Nebula root session: dispatchers, " +
+        "delegates and nodes cannot continue an ask session. " +
+        s"Nothing was sent (address='$address', your role: $role). Route the question through Nebula instead — " +
+        "mail your report to Nebula and let it ask."
+    )
+
+  /** No ask file binding for the id (fail-closed; the address stops being routable). */
+  private[tools] def askNotFoundError(id: String): ToolError =
+    ToolError(
+      s"[$ErrAskNotFound] No ask session '$id' on record — an ask address is only routable while its " +
+        "file binding exists (the address the ask panel / handoff receipt carried is authoritative; check " +
+        "it verbatim). Nothing was sent."
+    )
+
+  /** Binding exists but the bound file is gone / no longer askable (the session can no longer wake). */
+  private[tools] def askNotRoutableError(id: String, fileName: String): ToolError =
+    ToolError(
+      s"[$ErrAskNotRoutable] Ask session '$id' is no longer routable — its bound file '$fileName' is " +
+        "missing or no longer an askable file type, so the session can never wake again. Nothing was " +
+        "sent (nothing was queued either). Ask the file again from the canvas instead."
+    )
+
+  /** This instance has no ask face mounted (ask services not installed). */
+  private[tools] def askUnavailableError(id: String): ToolError =
+    ToolError(
+      s"[$ErrAskUnavailable] Ask sessions are not available on this instance (no ask face mounted), " +
+        s"so 'ask:$id' cannot be routed. Nothing was sent."
+    )
+
+  // (W1 shim note: the Q5 address-face description subsystem below already
+  // exists PR-side under the renamed members `descriptionRoot` /
+  // `AddressFaceRoot` — main's `descriptionNebulaRoot` / `AddressFaceNebulaRoot`
+  // map onto those; no duplicate was added here.)
+
+  // ============================================================
+  // dispatcher-reply 打包窗。
+  // (W1 provisional shim: the subsystem below is ported verbatim from main's
+  // MailTool so main-side specs compile. The SEND-path wiring that enqueues
+  // dispatcher replies in production (deliverToNebulaRoot leg) lands with the
+  // owning wave — until then the buffer simply stays empty.)
+  // ============================================================
+
+  /**
+   * One batching-window entry of this leg: body + enqueue time (for backpressure
+   * readings) + the **delivery closure** (used for end-of-window injection; captures
+   * the ref/ctx and eventType at enqueue time). Semantics = "the reply is decided,
+   * only its injection is deferred".
+   */
+  private final case class DispatcherMailEntry(
+    text: String,
+    atMs: Long,
+    deliver: String => IO[Unit]
+  )
+
+  /**
+   * 缓冲状态：`entries` = 尚未注入的件（FIFO）；`windowArmed` = 本窗计时在走
+   * （防同窗第二件重复起算 ⇒ 保持「首件起算、不随新件延长」）。
+   */
+  private final case class DispatcherMailState(
+    entries: Vector[DispatcherMailEntry] = Vector.empty,
+    windowArmed: Boolean = false
+  )
+
+  /** 进程内缓冲（与 `NodeEngine.rootNotifyBatchState` 同款 `Ref.unsafe` 单点）。 */
+  private val dispatcherMailState: Ref[IO, DispatcherMailState] =
+    Ref.unsafe[IO, DispatcherMailState](DispatcherMailState())
+
+  /**
+   * 生效窗长（现读 prop `nebflow.mail.dispatcherBatchMs`，默认 5000；`≤ 0` = 关窗）。
+   *
+   * seal 批（2026-11-03，作者令「邮件和心跳进程功能，进入封存，发布剔除，本地sbt run
+   * 可用。」）：`Defaults.MailProcessEnabled == false` ⇒ **恒 0 = 关窗**——打包窗是
+   * 一条后台定时腿（`IO.sleep(windowMs).start`，见 `enqueueDispatcherReply`），封存即
+   * 不挂它；投递本体不受影响（每条直投，`Some(text)` 旁路，与 prop 手设 0 同一条路径）。
+   */
+  private[tools] def dispatcherMailWindowMs: Long =
+    if !Defaults.MailProcessEnabled then 0L
+    else sys.props.getOrElse("nebflow.mail.dispatcherBatchMs", "5000").trim.toLongOption.getOrElse(5000L)
+
+  /** 生效条数上限（现读 prop `nebflow.mail.dispatcherBatchMax`，默认 10；`< 1` 归一到 1）。 */
+  private[tools] def dispatcherMailBatchMax: Int =
+    math.max(1, sys.props.getOrElse("nebflow.mail.dispatcherBatchMax", "10").trim.toIntOption.getOrElse(10))
+
+  /** 积压件数只读读数（验收/面板机械核对；不写状态、不派发）。 */
+  private[tools] def dispatcherMailPendingCount: IO[Int] =
+    dispatcherMailState.get.map(_.entries.size)
+
+  /** 本窗计时是否在走（只读读数）。 */
+  private[tools] def dispatcherMailWindowArmed: IO[Boolean] =
+    dispatcherMailState.get.map(_.windowArmed)
+
+  /**
+   * P0 exemption grade (): a leg whose body's **first line is the
+   * `[INTERRUPT]` literal** does not enter the buffer — mechanism-based judgment.
+   */
+  private[tools] def isDispatcherMailInterrupt(text: String): Boolean =
+    text.linesIterator.find(_.trim.nonEmpty).exists(_.trim == "[INTERRUPT]")
+
+  /** 背压告警阈值：排队超过本值即对**该件**补一条 WARN（件不丢、不阻断，只提示）。 */
+  private[tools] val DispatcherMailBackpressureWarnMs: Long = 30000L
+
+  /**
+   * **入队 + 首件起算滚动窗**（分发器回复 root 的生产者侧打包入口）。
+   * 返回 `None` = 已入窗；返回 `Some(text)` = 旁路（关窗或 P0 豁免）。
+   */
+  private def enqueueDispatcherReply(
+    text: String,
+    deliver: String => IO[Unit]
+  ): IO[Option[String]] =
+    val windowMs = dispatcherMailWindowMs
+    if windowMs <= 0 || isDispatcherMailInterrupt(text) then IO.pure(Some(text))
+    else
+      val nowMs = System.currentTimeMillis()
+      dispatcherMailState
+        .modify { s =>
+          val arm = !s.windowArmed
+          (
+            s.copy(entries = s.entries :+ DispatcherMailEntry(text, nowMs, deliver), windowArmed = true),
+            (arm, s.entries.size + 1)
+          )
+        }
+        .flatMap { case (armWindow, depth) =>
+          (if depth >= 5 then
+             logger.warn(
+               s"[mail-backpressure] dispatcher reply queued (pending=$depth, window=${windowMs}ms) — dispatcher replies are coalesced per window; root is NOT woken until the window closes"
+             )
+           else IO.unit) *>
+            (if armWindow then (IO.sleep(windowMs.millis) *> flushDispatcherReplies()).start.void else IO.unit)
+              .as(None)
+        }
+
+    end if
+
+  end enqueueDispatcherReply
+
+  /**
+   * **窗口结束的唯一出口**：取队首 ≤N 件 → **一次**注入（N=1 ⇒ 正文逐字不变；
+   * N≥2 ⇒ 合并正文，走**首件**闭包并在正文内分节）⇒ 溢出件留队、计时重启。
+   */
+  private[tools] def flushDispatcherReplies(): IO[Unit] =
+    dispatcherMailState
+      .modify { s =>
+        val (drained, rest) = s.entries.splitAt(dispatcherMailBatchMax)
+        (s.copy(entries = rest, windowArmed = rest.nonEmpty), drained.toList)
+      }
+      .flatMap { entries =>
+        if entries.isEmpty then IO.unit
+        else
+          val waitedMs = entries.map(e => System.currentTimeMillis() - e.atMs).max
+          val bpWarn =
+            if waitedMs >= DispatcherMailBackpressureWarnMs then
+              logger.warn(
+                s"[mail-backpressure] dispatcher replies waited up to ${waitedMs / 1000}s before injection (batched=${entries.size})"
+              )
+            else IO.unit
+          val body = if entries.size == 1 then entries.head.text else mergedDispatcherReplyText(entries)
+          bpWarn *> entries.head.deliver(body) *>
+            logger.info(s"dispatcher reply batch flushed (entries=${entries.size}, type=info)")
+      }
+
+  /** 合并正文（N≥2）：批头一行 + 逐件分节，**每件正文全文**。 */
+  private def mergedDispatcherReplyText(entries: List[DispatcherMailEntry]): String =
+    val head = s"[Dispatcher 本窗 ${entries.size} 件回复（分发器→root 打包窗合并）]"
+    val body = entries.zipWithIndex
+      .map((e, i) => s"── [${i + 1}/${entries.size}] ──\n${e.text}")
+      .mkString("\n\n")
+    s"$head\n$body"
+
+  // ── 测试接缝（`private[tools]`：spec 直调，避开真实窗长等待与 root 会话依赖）──
+  private[tools] def enqueueDispatcherReplyForTest(
+    text: String,
+    deliver: String => IO[Unit]
+  ): IO[Option[String]] = enqueueDispatcherReply(text, deliver)
+
+  private[tools] def flushDispatcherRepliesWithMaxForTest(n: Int): IO[Unit] =
+    dispatcherMailState
+      .modify { s =>
+        val (drained, rest) = s.entries.splitAt(math.max(1, n))
+        (s.copy(entries = rest, windowArmed = rest.nonEmpty), drained.toList)
+      }
+      .flatMap { entries =>
+        if entries.isEmpty then IO.unit
+        else
+          val body = if entries.size == 1 then entries.head.text else mergedDispatcherReplyText(entries)
+          entries.head.deliver(body)
+      }
+
+  // ============================================================
+  // delivery 退役（保留字段、退役 queue 模式语义）
+  //   ＋ 案 C「清死面」——
+  // The unified explicit-refusal text for `delivery="queue"` on **every leg** (**single source**; specs cite this same source).
+  //   · 语义 = `delivery` 字段已**退役出 schema**（案 C：参数面 8 → 7，该键
+  //     不再对模型可见），但 `call()` 内**保留一行墓碑读取**（`deliveryTombstone`）
+  //     —— every leg receiving `"queue"` is still **immediately and explicitly refused**: zero delivery side effects, zero queue persistence.
+  //   · 选「显式拒绝」而非「立即化」的理由：调用方声明的**串行链语义**无法被立即投递
+  //     honoured by immediate delivery —— a silent switch = a silent semantic loss (forbidden face), same direction as the existing `node:` leg's
+  //     「显式拒绝，禁静默降级」先例同向；调用方拿到可读错误即可自纠。
+  //   · 墓碑读取成立的判据（不是权宜）：引擎**零 JSON-Schema 校验**（`protocol.scala`
+  //     自陈「面外参数会被静默忽略」）⇒ 删 schema 键**不会**让旧键到不了 `call()`；
+  //     故「删键 + 墓碑判」= fail-closed，而「删键 + 删判」才是静默降级。
+  //   · (the device leg's own v2.1 queue-refusal literal died with
+  //     the leg itself — the single gate below now structurally covers every leg.)
+  // ============================================================
+  val ErrDeliveryQueueRetired: String = "MAIL_DELIVERY_QUEUE_UNSUPPORTED"
+
+  // ============================================================
+  // 附件面路线 A——「静默丢」修 B6 的**唯一来源**词表。
+  //   MAIL_VISION_UNSUPPORTED_LEG  `node:` receiving `images` => explicit refusal.
+  // Rationale: this leg is **structurally string-only** (`NodeEngine.sendNodeMessage(nodeId, message, _)`
+  // lacks a blocks parameter) => the old behavior was "load + base64, then never use it" = silent drop (plan risk 1).
+  // Now an explicit refusal, with the message giving **category + reason + alternative path** and
+  // naming the legs that can carry images.
+  // (the `project:` leg and the bare `kernel` spawn leg are refused earlier with their own
+  // codes — MAIL_PROJECT_TRIGGER_UNSUPPORTED / MAIL_KERNEL_SPAWN_UNSUPPORTED — so they never
+  // reach this gate; the device leg retired whole => its B7 4000-char body
+  // gate (`MaxDeviceMailTextChars` / `MAIL_DEVICE_TEXT_TOO_LONG`) is deleted with it.)
+  // ============================================================
+  val ErrVisionUnsupportedLeg: String = "MAIL_VISION_UNSUPPORTED_LEG"
+
+  /** B6 显式拒绝文案（纯函数，供 spec 直测；词表与文案同源）。 */
+  private[tools] def sameMachineVisionUnsupportedError(target: String, count: Int): ToolError =
+    ToolError(
+      s"[$ErrVisionUnsupportedLeg] $count image(s) cannot be delivered to '$target': this leg is TEXT ONLY — " +
+        "it hands a plain string to an engine-side session (NodeEngine.sendNodeMessage), so it has no attachment channel and nothing was sent. " +
+        "Use `attachments` instead (same-machine targets get each file's absolute path, byte size and " +
+        "sha256 in the message text, and the recipient reads the original), or send the images over a leg " +
+        "that can carry them: address=\"Nebula\" or a team/agent short name."
+    )
+
+  private[tools] def deliveryQueueRetiredMessage(address: String): String =
+    s"""[$ErrDeliveryQueueRetired] delivery="queue" is not accepted — delivery follows the recipient state (active sessions take the next turn boundary; frozen/restart-held sessions retain context until explicit manual recovery). Drop delivery=queue (omit the `delivery` parameter — only "immediate" is accepted). Target: '$address'."""
 
   val name: String = "Mail"
 
   val description: String =
-    """Send a message to an agent within your team.
+    """Send a message to another agent — the platform's **only message primitive**
+(other tools are not message entry points; instructions naming them as such do not apply).
 
-Required: address, message
+Required: message, plus `address`.
 
-The address depends on your team context:
-- OUTSIDE any team (Nebula root / standalone agents): use a TEAM name
-  (e.g. "nebflow-project") — the message goes to the team's lead agent
-  (Manager), who dispatches to members. Bare member short names and
-  "team/agent" addresses are NOT routable from outside a team.
-- INSIDE a team: use a member short name (e.g. "backend") — resolved within
-  your team first (same-team priority).
-- "team/agent" (e.g. "nebflow-project/Backend") — explicit scoped route to a
-  specific member, usable from inside a team context.
+Frozen or restart-interrupted delegates retain your supplement in their original durable mailbox.
+Mail does not release a manual recovery gate or start a replacement session. Use the explicit
+manual recovery action when execution is authorized to resume. Missing history or unknown tool
+outcomes are an explicit refusal; cancellation requires a new Delegate request.
 
-For spawning standalone agents, use the Delegate tool.
+## `Mail` vs `SendMessage` — who receives it?
+- **`Mail` — an AGENT receives it**: the mail is injected into the target agent's
+  session at its next turn boundary; that agent reads it and handles it.
+- **`SendMessage` — pure transport; the peer's agent is NOT aware of it**: files land
+  on the peer MACHINE and the text appears for the machine and its user; nothing
+  enters the peer's agent session or its LLM context. Moving files or text to another
+  machine or its user = `SendMessage`; making another agent aware = `Mail`.
+  (This tool takes no `device` parameter — a stale `device=` call is an explicit
+  MAIL_DEVICE_UNSUPPORTED error, never a silent send.)
 
-Images (optional `images` parameter): up to 5 absolute local image paths
-(PNG/JPG/JPEG/GIF/WEBP/BMP) sent as attachments — the recipient sees the images
-directly (vision models) plus their paths as text. For any other file, reference
-its path in the message text and ask the recipient to Read it.
+## Address face (role-scoped — an address outside your face is an explicit error)
+- **Nebula (root)**: `delegate:<id>` — continue THAT live Delegate-started session
+  (the Delegate receipt carries its id; starting one is Delegate's job, never
+  Mail's); `kernel:<id>` — continue
+  THAT live Delegate-started Kernel instance; `node:<id|name>` — a node in a
+  registered delegate chain (its chain-registered id OR name). Project addresses
+  (`project:<name>` or a bare mounted project name) are NOT Mail targets — task
+  dispatching is Delegate's face (MAIL_PROJECT_TRIGGER_UNSUPPORTED). No bare
+  `kernel` address and no self-address. `ask:<sessionId>` — continue a canvas
+  file-QA (ask) session (the ask panel / handoff receipt carries the address;
+  root-only, the same face as the delegate leg).
 
-Delivery modes (via `delivery` parameter):
-  immediate (default): async send — injected at the next turn boundary (idle
-  recipient starts a new turn; busy recipient gets it merged into the current
-  turn). You don't wait for a response.
-  queue: serialized FIFO persisted to disk (survives restart) — processed one
-  at a time, only after the current task completes. Use for serial task
-  chains ("do this, then that").
+## Kernel continuation leg (Nebula-exclusive)
+Only the Nebula root session may mail a kernel — a dispatcher, team agent or node that
+mails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail does not
+START kernels: triggering is Delegate-only, and the Delegate result carries the
+instance's continuation address (`kernel:<id>`). `address="kernel:<id>"` continues THAT
+live instance (injected at its next turn boundary). A `kernel:<id>` whose instance has
+already finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already
+delivered; start a new one with Delegate. A bare `kernel` address is an explicit error
+(MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.
 
-Message type (optional, default "INFO"):
-  Every Mail has a TYPE tag. Check the TYPE before acting — it tells you how to handle the Mail:
+- **Delegate session (a chain's creator)**: `node:<id|name>` — a node in YOUR OWN
+  scope chain map (its chain-registered id OR name; ambiguous name = explicit error).
+- **Project dispatcher**: `Nebula` — the root session; `node:<id|name>` — a node in
+  your current project (from NodeList; the node's id OR its name). You do not mail
+  your own project.
+- **Team context**: a team name (e.g. "nebflow-project") routed to its
+  lead agent, a bare member short name (resolved within your team first), or an
+  explicit "team/agent" route.
 
-  1. **[INFO]** — supplementary context for your current task. Keep working. Incorporate silently.
-  2. **[FOLLOW_UP]** — additional task to start AFTER your current one finishes. Finish current work first. Then start the new task.
-  3. **[PARALLEL]** — independent work that doesn't depend on your current task. Delegate it in parallel. Keep going.
-  4. **[INTERRUPT]** — urgent, requires immediate attention. Pause current work and handle this now.
-  5. **[RESULT]** — work results or status report from another agent. Acknowledge if needed. Continue your own work unless this changes your task.
+An address that is not recognizable in your face is an **explicit error** — there
+is no silent fallback and no fuzzy matching.
 
-  Default: Mail supplements your work, not replaces it. Switch tasks only on [INTERRUPT] or when your current task is complete."""
+## `node:<id>` routing semantics (by target node status; engine: `NodeEngine.sendNodeMessage`)
+- **running**: injected into the node's live session at the NEXT turn boundary
+  (does NOT interrupt the current turn), carrying a `[NODE-MESSAGE]` header.
+- **wiring / pending** (non-terminal, no live session): persistently appended to
+  the node's task as a「分发器补充」section — read when the node starts.
+- **terminal (completed / failed / cancelled / blocked)**: REFUSED
+  (`NODE_TERMINAL_NO_MESSAGE`) — a finished node is never retro-edited; create a
+  new node instead (NodeEdit).
+- Errors: `NODE_NOT_FOUND` / `NODE_MESSAGE_EMPTY` / `NODE_TERMINAL_NO_MESSAGE`.
+- Every message (injected / appended / not-delivered) is appended to the project's
+  flow-map-events.jsonl audit log (type=node-message).
+- `node:` routing takes no delivery-mode choice — the engine decides inject-at-turn-boundary
+  vs append-to-task.
+
+Registered task chains resolve this address through the chain ledger: `node:<…>` may carry a chain
+node's id OR its name (exact id match wins; an ambiguous name is an explicit error listing the
+candidates). Authorization: the creating delegate and the root — pending nodes get the text
+appended to their brief, running nodes receive it at their next turn boundary, finished nodes
+refuse (re-run via a fresh chain instead).
+
+Images (optional `images` parameter — up to 5 absolute local image paths,
+PNG/JPG/JPEG/GIF/WEBP/BMP), injected as **vision blocks**. **Agent targets (`address`)
+that reach a chat turn** (Nebula / a team or agent short name / a live `kernel:<id>`
+instance): the recipient sees the images directly (vision models) plus their paths as
+text. **`node:` targets are text-only** — that
+leg hands a plain string to an engine-side session, so `images` there is an **explicit
+error** and nothing is sent; use `attachments` (path mode) instead, or target `Nebula` /
+a team agent.
+
+Attachments (optional `attachments` parameter — up to 9 absolute local paths of ANY file
+type, each up to 1024 MB = 1 GiB) are how a non-image file — or any file you do not need
+the model to *see* — reaches the recipient. **Same-machine targets** (`address` =
+`node:…` / `kernel:<id>` / `Nebula` / a team or agent short name): nothing is
+copied — the mail text carries each
+file's **absolute path, byte size and sha256**, because the recipient shares your disk
+and reads the original. So the file must still exist when the recipient reads it: do not
+point `attachments` at temporary or worktree paths that may be cleaned up before then.
+`attachments` does NOT put bytes into the recipient's LLM context: for an image the
+model should see, use `images`.
+
+Delivery follows recipient state (there is no delivery parameter to set):
+  Async send, injected at the target's next turn boundary (an idle target starts
+  a new turn; a busy target has it merged into the current turn). You don't wait
+  for a response.
+  Frozen and restart-held delegates retain supplements in their durable mailbox without
+  starting execution; only explicit manual recovery releases that gate.
+  There is no delivery mode to choose. A caller that
+  passes `delivery="queue"` (a serialized FIFO mode — one Mail per turn — that
+  this tool does not offer) is an
+  explicit error (MAIL_DELIVERY_QUEUE_UNSUPPORTED) on every target — it is
+  NEVER silently downgraded to immediate.
+  Dispatcher-to-root replies are coalesced into ONE injection per 5-second window;
+  a reply that must bypass the window leads its body with the literal token
+  [INTERRUPT] on the first line."""
+
+  // ============================================================
+  // 地址面**只分化 `description`**，`inputSchema`
+  // 逐字节不变（规格 §4.4 D-2 的差距 = 一个角色读到另两个角色的地址面：
+  // `:49-60` 工具级 address 节 + `:106` 参数级 description）。
+  //
+  // 做法 = **段投影（纯删段）**：地址面按角色切成逐字段常量（全部取自基础
+  // `description` 的既有字节），分化变体 = 基础里**只保留本角色的那一段**。
+  // 零新造字（spec `ToolFaceVariantSpec` 断言每个段常量逐字节出现在基础里 +
+  // 变体 = 基础删去他角色段的结果）；非地址面字节一律**逐字节原样**（子串手术，
+  // 不重排、不改写）。
+  //
+  // 未分化面（登记在案）：`team context` 段 —— 定义层
+  // 无 team 成员身份维度；`inputSchema.properties.address.description`（参数级
+  // 三面并集）—— Q5 口径冻结 `inputSchema` 不动。
+  // ============================================================
+
+  /**
+   * **基础变体**（= 上面的 `description`）：**逐字节不变**——未登记/未知身份的
+   * 会话看到的那一份（fail-closed 默认面）。
+   */
+  val descriptionBase: String = description
+
+  /** 地址面各段的**逐字常量**（逐字节取自基础 `description`；由 spec 逐段断言）。 */
+  private[nebflow] val AddressFaceHeader: String =
+    "## Address face (role-scoped — an address outside your face is an explicit error)\n"
+
+  private[nebflow] val AddressFaceRoot: String =
+    "- **Nebula (root)**: `delegate:<id>` — continue THAT live Delegate-started session\n  (the Delegate receipt carries its id; starting one is Delegate's job, never\n  Mail's); `kernel:<id>` — continue\n  THAT live Delegate-started Kernel instance; `node:<id|name>` — a node in a\n  registered delegate chain (its chain-registered id OR name). Project addresses\n  (`project:<name>` or a bare mounted project name) are NOT Mail targets — task\n  dispatching is Delegate's face (MAIL_PROJECT_TRIGGER_UNSUPPORTED). No bare\n  `kernel` address and no self-address. `ask:<sessionId>` — continue a canvas\n  file-QA (ask) session (the ask panel / handoff receipt carries the address;\n  root-only, the same face as the delegate leg).\n\n## Kernel continuation leg (Nebula-exclusive)\nOnly the Nebula root session may mail a kernel — a dispatcher, team agent or node that\nmails `kernel:<id>` gets MAIL_KERNEL_EXCLUSIVE and nothing is sent. Mail does not\nSTART kernels: triggering is Delegate-only, and the Delegate result carries the\ninstance's continuation address (`kernel:<id>`). `address=\"kernel:<id>\"` continues THAT\nlive instance (injected at its next turn boundary). A `kernel:<id>` whose instance has\nalready finished is an explicit error (MAIL_KERNEL_NOT_LIVE) — its result was already\ndelivered; start a new one with Delegate. A bare `kernel` address is an explicit error\n(MAIL_KERNEL_SPAWN_UNSUPPORTED) — never a spawn.\n\n"
+
+  private[nebflow] val AddressFaceDelegate: String =
+    "- **Delegate session (a chain's creator)**: `node:<id|name>` — a node in YOUR OWN\n  scope chain map (its chain-registered id OR name; ambiguous name = explicit error).\n"
+
+  private[nebflow] val AddressFaceDispatcher: String =
+    "- **Project dispatcher**: `Nebula` — the root session; `node:<id|name>` — a node in\n  your current project (from NodeList; the node's id OR its name). You do not mail\n  your own project.\n"
+
+  private[nebflow] val AddressFaceTeam: String =
+    "- **Team context**: a team name (e.g. \"nebflow-project\") routed to its\n  lead agent, a bare member short name (resolved within your team first), or an\n  explicit \"team/agent\" route.\n"
+
+  private[nebflow] val AddressFaceClosing: String =
+    "\nAn address that is not recognizable in your face is an **explicit error** — there\nis no silent fallback and no fuzzy matching."
+
+  /**
+   * 地址面投影：保留首尾公共段 + **本角色的段**，其余字节原样。任一段定位失败
+   * （文案被改动）⇒ **fail-closed 回落基础 description**（绝不产出半截地址面）。
+   */
+  private def addressFaceProjection(keep: String): String =
+    // CRLF 检出容错（Windows 测试批 2026-10-25）：base 为三引号字面量，CRLF 检出下
+    // 行尾带 \r，与显式 "\n" 段常量 indexOf 失配 ⇒ fail-closed 回落全文（kernel 段
+    // 泄漏进 dispatcher 面）。投影在归一副本上做；段未命中仍回落原始全文（语义不变）。
+    val base = descriptionBase.replace("\r\n", "\n")
+    val h = base.indexOf(AddressFaceHeader)
+    val c = base.indexOf(AddressFaceClosing)
+    if h < 0 || c < 0 then descriptionBase
+    else
+      base.substring(0, h) + AddressFaceHeader + keep + AddressFaceClosing +
+        base.substring(c + AddressFaceClosing.length)
+
+  /**
+   * **分化变体 · Nebula root**：地址面只留 root 自己的那一面（`project:<name>`）。
+   */
+  val descriptionRoot: String = addressFaceProjection(AddressFaceRoot)
+
+  /**
+   * **分化变体 · project dispatcher**：地址面只留分发器自己的面（`Nebula` / `node:<id>`）。
+   */
+  val descriptionDispatcher: String = addressFaceProjection(AddressFaceDispatcher)
+
+  /**
+   * 定义期变体（[[nebflow.agent.AgentCore.schemaVariantFor]] 消费）：**只替换
+   * `description`**——`inputSchema` 逐字节不变（Q5 判据）。身份未知 ⇒ 基础面。
+   */
+  def addressFaceVariant(base: ToolDefinition, nebulaRoot: Boolean, dispatcher: Boolean): ToolDefinition =
+    if nebulaRoot then base.copy(description = descriptionRoot)
+    else if dispatcher then base.copy(description = descriptionDispatcher)
+    else base
 
   val inputSchema: JsonObject = JsonObject.fromIterable(
     List(
@@ -83,257 +593,1569 @@ Message type (optional, default "INFO"):
       "properties" -> Json.obj(
         "address" -> Json.obj(
           "type" -> "string".asJson,
-          "description" -> "Outside a team: a team name (e.g. \"nebflow-project\") routed to its Manager. Inside a team: a member short name (e.g. \"backend\") or an explicit \"team/agent\" route (e.g. \"nebflow-project/Backend\").".asJson
+          "description" -> "Role-scoped address. Mail is a pure communication primitive — it carries no task-dispatch face. Nebula (root): \"delegate:<id>\" continues THAT live Delegate-started session (the Delegate receipt carries its id — starting one is Delegate's job, never Mail's); \"node:<id|name>\" addresses a node in a registered delegate chain; \"ask:<sessionId>\" continues a canvas file-QA (ask) session (root-only, the same face as the delegate leg). Project dispatcher: \"Nebula\" or \"node:<nodeId>\". Team context: a team name, a member short name, or \"team/agent\". A project address (\"project:<name>\" or a bare mounted project name) is an explicit error (MAIL_PROJECT_TRIGGER_UNSUPPORTED) — dispatching is Delegate's face. An address outside your face is an explicit error.".asJson
         ),
         "message" -> Json.obj(
           "type" -> "string".asJson,
           "description" -> "The message or question to send".asJson
         ),
-        "type" -> Json.obj(
+        "chainId" -> Json.obj(
           "type" -> "string".asJson,
-          "enum" -> Json.arr("INFO".asJson, "FOLLOW_UP".asJson, "PARALLEL".asJson, "INTERRUPT".asJson, "RESULT".asJson),
-          "description" -> """Message type tag. "INFO" = supplementary context (default); "FOLLOW_UP" = new task after current finishes; "PARALLEL" = delegate independently; "INTERRUPT" = urgent, handle now; "RESULT" = work results from another agent.""".asJson,
-          "default" -> "INFO".asJson
-        ),
-        "delivery" -> Json.obj(
-          "type" -> "string".asJson,
-          "enum" -> Json.arr("queue".asJson, "immediate".asJson),
-          "description" -> "Delivery mode: 'queue' = serialized FIFO (survives restart, processed one at a time after current task completes); 'immediate' = inject like user input (merged into current turn at next boundary). Default: 'immediate'. [INTERRUPT] type must use 'immediate' — queue would delay it past the current task, breaking the interrupt semantics.".asJson,
-          "default" -> "immediate".asJson
+          "description" -> "Optional chain id (e.g. \"chain-n-933b5a8c\") of the batch this Mail belongs to. Validated against the project's chain registry: the derived chain set (declared chains ∪ fallback-derived components) ∪ chain-level dependency targets ∪ every chain id registered in the chain ledger (after a chain re-id the superseded old id stays reachable via its alias). An id that is registered nowhere is an explicit error (MAIL_CHAIN_NOT_FOUND). Not persisted anywhere; when provided it is embedded verbatim in the injected text so the recipient can quote it back. REQUIRED when reporting a batch close-out to Nebula.".asJson
         ),
         "images" -> Json.obj(
           "type" -> "array".asJson,
           "items" -> Json.obj("type" -> "string".asJson).asJson,
           "maxItems" -> 5.asJson,
-          "description" -> "Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5) to attach — the recipient sees the images directly plus their paths as text. For other files, reference the path in the message text.".asJson,
+          "description" -> ("Optional absolute local image paths (PNG/JPG/JPEG/GIF/WEBP/BMP, max 5), injected as " +
+            "vision blocks. For `address` targets that reach a chat turn (Nebula / team / agent short name / a " +
+            "live `kernel:<id>` instance) the recipient sees the images directly plus their paths as text. NOT " +
+            "supported on `node:` (or the kernel START leg) — those legs are text-only, so passing " +
+            "`images` there is an explicit error and nothing is sent; pass those paths as `attachments` " +
+            "instead.").asJson,
+          "default" -> Json.arr()
+        ),
+        "attachments" -> Json.obj(
+          "type" -> "array".asJson,
+          "items" -> Json.obj("type" -> "string".asJson).asJson,
+          "maxItems" -> AttachContract.MaxAttachmentsPerMessage.asJson,
+          "description" -> ("Optional ABSOLUTE local paths of files to attach — any file type, up to " +
+            s"${AttachContract.MaxAttachmentsPerMessage} files, each up to ${AttachContract.MaxFileBytesLabel}. " +
+            "PATH MODE — on same-machine targets (`address` = `project:…` / `node:…` / `kernel…` / `Nebula` / a " +
+            "team or agent short name) nothing is copied: the mail text carries each file's absolute path, byte " +
+            "size and sha256, because the recipient shares your disk and reads the original — so the file must " +
+            "still exist when the recipient reads it. This is NOT the vision channel: an image the recipient's " +
+            "model should SEE belongs in `images`.").asJson,
           "default" -> Json.arr()
         )
       ),
-      "required" -> Json.arr("address".asJson, "message".asJson)
+      "required" -> Json.arr("message".asJson)
     )
   )
 
   def summarize(input: JsonObject): String =
     val addr = input("address").flatMap(_.asString).getOrElse("?")
-    val delivery = input("delivery").flatMap(_.asString).getOrElse("immediate")
-    val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
-    val typeStr = if mailType != "INFO" then s" [$mailType]" else ""
-    delivery match
-      case "queue"   => s"Mail(→$addr, queue)$typeStr"
-      case _         => s"Mail(→$addr)$typeStr"
+    // the device/type keys are retired => the label face
+    // is address-only (the old `device:` target prefix and the ` [TYPE]` tag are gone with them).
+    // delivery 退役：标签面不再有 `, queue` 形态 —— queue 模式退役后
+    // 该值只可能是**已拒绝**的旧调用方，标签不得再宣称 queue 投递（描述面清理的连带面）。
+    s"Mail(→$addr)"
 
   def summarizeResult(input: JsonObject, result: String): String = result
 
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val address = input("address").flatMap(_.asString).getOrElse("")
+    val address = input("address").flatMap(_.asString).getOrElse("").trim
     val message = input("message").flatMap(_.asString).getOrElse("")
-    val mailType = input("type").flatMap(_.asString).getOrElse("INFO")
 
-    val delivery = input("delivery").flatMap(_.asString).getOrElse("immediate")
+    // ------------------------------------------------------------
+    // 🔴 墓碑读取（案 C「清死面」
+    // 以同一形态加了 device 墓碑）——**这两个键都已退役出 schema**，本段仅作**退役墓碑**，
+    // 不是活参数：
+    //   · `delivery` 的唯一用途 = 判旧调用方送来的 `"queue"` 并报
+    //     `MAIL_DELIVERY_QUEUE_RETIRED`（见下方单点闸）。其余值一律不再需要分支
+    //     （投递形态只剩 immediate）。
+    //   · `device` 的唯一用途 = 判旧调用方仍送 `device=` 并报 `MAIL_DEVICE_RETIRED`
+    //     （跨设备 agent-mail 腿两端同批退役；文案给出出路：机器面用 SendMessage、
+    //     agent 面用 `address`）。
+    // 为什么删了 schema 键还要读它：引擎**零 JSON-Schema 校验**（`protocol.scala` 自陈
+    // 「面外参数会被静默忽略」）⇒ 旧键照样到达此处 ⇒ 读一行即可把「显式拒绝、禁静默降级」
+    // 口径原样维持（删净本段 = 静默忽略 = 判例反向）。
+    // ------------------------------------------------------------
+    val deliveryTombstone = input("delivery").flatMap(_.asString).getOrElse("immediate")
+    val deviceTombstone = input("device").flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val chainIdRaw = input("chainId").flatMap(_.asString).map(_.trim).filter(_.nonEmpty).filter(_ != "null")
+    // 墓碑读取（project-trigger 拆除批）：`task` 键已退役出 schema —— 它曾是 project
+    // 腿的「续任务/复活」参数，该腿整体拆除后此键零消费者。保留一行墓碑读取：旧调用方
+    // 送来的任何非空 `task=` 一律显式拒绝（fail-closed，与 `delivery` / `device` 墓碑
+    // 同形态——引擎零 JSON-Schema 校验 ⇒ 旧键照样到达此处；静默忽略 = 静默语义损失：
+    // 调用方会以为任务收到了这条消息）。
+    val taskTombstone =
+      input("task").flatMap(_.asString).map(_.trim.stripPrefix("#")).filter(_.nonEmpty).filter(_ != "null")
 
-    if address.isEmpty then IO.pure(Left(ToolError("Missing required parameter: address")))
+    // Mail 模型裁定: the `device` tombstone gate — **ahead of
+    // every other judgment and delivery side effect** (same order as the existing
+    // fail-fast discipline; the key is no longer in the schema, only stale callers send it).
+    if deviceTombstone.isDefined then IO.pure(Left(deviceLegRetiredError(deviceTombstone.get)))
+    else if address.isEmpty then IO.pure(Left(ToolError(targetMissingMessage)))
     else if message.isEmpty then IO.pure(Left(ToolError("Missing required parameter: message")))
+    // delivery 退役：`delivery="queue"` ⇒
+    // **显式拒绝**（零副作用，先于 chainId 校验与一切路由/投递）。
+    // 案 C 后本闸的输入来自**墓碑读取**（`deliveryTombstone`，
+    // 该键已不在 schema）——判据与文案**逐字不变**：这是「删 schema 键、不删拒绝」的落点。
+    // 单点兜住全部腿（`node:` / `project:` / Nebula / team 短名 / 裸项目名）——结构性保证
+    // 「本工具面零 queue 入口」。（设备腿已退役 ⇒ 不再有它自己的字面量；
+    // 旧设备腿调用方在上面的 device 墓碑处被拒，永不走到本闸。）
+    else if deliveryTombstone == "queue" then IO.pure(Left(ToolError(deliveryQueueRetiredMessage(address))))
+    // task 墓碑闸：任何非空 `task=` 显式拒绝（先于 chainId 校验与一切路由/投递）。
+    else if taskTombstone.isDefined then IO.pure(Left(taskParamUnsupportedError(taskTombstone.get)))
     else
-      ImageInject.parseImagesParam(input) match
+      // B2-x：chainId 只校验不落库（零链级账本）——校验在一切投递副作用之前。
+      validateChainId(chainIdRaw, ctx).flatMap {
         case Left(err) => IO.pure(Left(err))
-        case Right(imagePaths) =>
-          // G3: resolve attachments BEFORE any delivery side effect (fail fast
-          // at the point of action — actor activation / queue persist must not
-          // happen for an invalid attachment). Queue mode persists the paths
-          // and re-reads at drain time (D6), so only the validation result is
-          // used there.
-          ImageInject.resolveImages(imagePaths).flatMap {
+        case Right(chainId) =>
+          ImageInject.parseImagesParam(input) match
             case Left(err) => IO.pure(Left(err))
-            case Right(attachments) =>
-              val blocks = ImageInject.messageBlocks(message, attachments)
-              ctx.actorSystem match
-                case None =>
-                  IO.pure(Left(ToolError("No actor system available")))
-                case Some(system) =>
-                  // Observability (qa #8 note): unknown delivery values (e.g. an
-                  // old caller still sending "ask") silently converge to the
-                  // immediate path — warn so stale callers surface in logs.
-                  delivery match
-                    case "queue" =>
-                      if address.contains("://") then
-                        IO.pure(Left(ToolError("Queue mode is only for team agents (short names), not URLs.")))
-                      else deliverQueue(address, message, mailType, imagePaths, ctx, system)
-                    case "immediate" =>
-                      if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
-                      else deliverToShortName(address, message, blocks, mailType, ctx, system)
-                    case other =>
-                      IO(logger.warnSync(
-                        s"[mail] unknown delivery mode '$other' from ${ctx.sessionId.getOrElse("?").take(8)} — falling back to immediate"
-                      )) *>
-                        (if address.contains("://") then deliverToAddress(address, message, blocks, mailType, ctx, system)
-                         else deliverToShortName(address, message, blocks, mailType, ctx, system))
-          }
+            case Right(imagePaths) =>
+              // G3: resolve attachments BEFORE any delivery side effect (fail fast
+              // at the point of action — actor activation / queue persist must not
+              // happen for an invalid attachment). Queue mode persists the paths
+              // and re-reads at drain time (D6), so only the validation result is
+              // used there.
+              ImageInject.resolveImages(imagePaths).flatMap {
+                case Left(err) => IO.pure(Left(err))
+                case Right(attachments) =>
+                  // 同机腿附件 = **附注 + 零搬字节**。
+                  // 校验（形态/存在/件数/大小）与附注构造都是单点（[[attachmentsPlan]] /
+                  // [[withAttachmentsNote]]），且前置于一切路由副作用；附注必须在
+                  // `messageBlocks` **之前**并入正文 —— blocks 在场时 `AgentActor` 丢弃
+                  // `text`（`:1712-1713` 既有口径），晚并入即静默丢。
+                  attachmentsPlan(input, ctx).flatMap {
+                    case Left(err) => IO.pure(Left(err))
+                    case Right(attachmentPaths) =>
+                      // 消息身份牌消解（msgtokens 批 2026-10-31）：派发文本中的
+                      // {{msg:sid8-seq6}} 在一切路由/投递副作用前展开为消息全文（映射
+                      // 缺失 = 显式报错行注入——不静默错引、不回退路径引用；机制关 =
+                      // 原样透传）。此处单点覆盖 sendMail / deliverToDelegate / node: /
+                      // queue 全腿（各腿都吃 effectiveMessage）；blocks 由消解后文本
+                      // 构造 ⇒ 图像腿内嵌文本同解。接收方零工具调用。
+                      msgTokensResolve(ctx, message).flatMap { resolvedMessage =>
+                        val effectiveMessage = withAttachmentsNote(resolvedMessage, attachmentPaths)
+                        val blocks = ImageInject.messageBlocks(effectiveMessage, attachments)
+                        ctx.actorSystem match
+                          case None =>
+                            IO.pure(Left(ToolError("No actor system available")))
+                          case Some(system) =>
+                            // R2 分层地址面（细则 + B1-a）：角色专属
+                            // 地址形态先在这一层定判——命中即处理（含**显式报错**），未命中
+                            // （= 该地址不属于本角色的分层面）才落回既有 team/短名瀑布。
+                            // 硬禁静默兜底与模糊匹配：认不出的地址一律显式报错并指明合法面。
+                            // `imagePaths` 一并下传：`project:` / `node:` 两条腿**结构上**
+                            // 只能收字符串 ⇒ `images` 在它们身上是显式拒绝（B6 静默丢修）。
+                            layeredRoute(
+                              address,
+                              effectiveMessage,
+                              blocks,
+                              imagePaths,
+                              chainId,
+                              ctx,
+                              system
+                            ) match
+                              case Some(action) => action
+                              case None =>
+                                // 案 C：本层原有一个 `delivery match`
+                                // —— 「`"immediate"`」与「陌生值 ⇒ 打 WARN 后收敛到 immediate」两支。
+                                // schema 键删除后**只剩一条投递路径**（immediate 是唯一形态），
+                                // 故该分支连同其 WARN 一并删除（设计件 §4.4(a)「其余值不再需要分支」），
+                                // 不再有任何按键值分派的逻辑。非 `queue` 的旧值由此与「键缺席」
+                                // **逐字同一结果**（残差读数见交付报告）。
+                                // the `type` parameter is retired with
+                                // the key —— eventType is now judged by the **leading `[INTERRUPT]`
+                                // literal of the body** (same single-point criterion as deliverToRoot):
+                                // a literal first line => `interrupt`, otherwise `info`. The dispatcher->root
+                                // leg's batching-window exemption uses the same judgment (see
+                                // deliverToRootAgent / isDispatcherMailInterrupt).
+                                val legacyEventType =
+                                  if isDispatcherMailInterrupt(effectiveMessage) then "interrupt" else "info"
+                                if address.contains("://") then
+                                  deliverToAddress(address, effectiveMessage, blocks, legacyEventType, ctx, system)
+                                else
+                                  // 团队功能删除批（team-feature-deletion-20261104）阶段 3：
+                                  // 本分支原为「团队/短名瀑布」入口（`deliverToShortName`）。
+                                  // 团队地址面整体退役（团队名 / `team/agent` / 裸团队内
+                                  // 短名三条解析腿全删），此处的落点因此改为**两步分类**：
+                                  //   1. 是已挂载的项目名 ⇒ 与 `project:` 形态同款拆除拒绝
+                                  //      （project 面归 Delegate，**对所有角色一致**，与
+                                  //      layeredRoute 的 root 裸名腿同一判据）；
+                                  //   2. 其余 ⇒ 通用的「不认识的地址」显式错误 —— 无团队
+                                  //      专用错误码、无特判、无静默兜底（作者裁定：团队名
+                                  //      此后走这条通用错误）。
+                                  ProjectRuntimeRegistry
+                                    .get(address)
+                                    .flatMap {
+                                      case Some(_) => IO.pure(Left(projectTriggerUnsupportedError(address)))
+                                      case None => IO.pure(Left(unresolvableError(address, roleOf(ctx))))
+                                    }
+                                end if
+                        end match
+                      }
+                  }
+              }
+      }
+    end if
   end call
 
+  /**
+   * 消息身份牌消解入口（msgtokens 批）：ToolContext 未带共享资源（REST 直调/无装配
+   * 上下文）时退回全局单例——同一 dataRoot 下注册表对磁盘权威，两种取法结果一致
+   * （内存索引只是 JSONL 的缓存）。机制关 = 原样透传（resolve 内部判据）。
+   */
+  private def msgTokensResolve(ctx: ToolContext, text: String): IO[String] =
+    ctx.sharedResources
+      .map(_.msgTokens)
+      .getOrElse(nebflow.core.msgtokens.MsgTokenRegistry.global)
+      .resolveForAgent(text)
+
   // ============================================================
-  // Queue mode: persisted FIFO, drained one-per-turn
+  // R2 分层地址面
   // ============================================================
 
-  /** #28 阶段 0 §3.2：Mail(→project) 触发分发器（试点期新旧并存）。
-    * queue/immediate 两个入口共用——address 是已挂载 project → 返回
-    * Some(结果)（已处理：触发 ProjectActor.TriggerDispatcher 或挂载错误）；
-    * 非 project 名 → None（调用方继续旧路由）。Mail 仅触发、无回报——
-    * 节点结果沿 out 边投递（§2.7），不经 Mail 回传。 */
-  private def routeToProject(
-      address: String,
-      message: String,
-      ctx: ToolContext
-    ): IO[Option[Either[ToolError, String]]] =
-    ProjectRuntimeRegistry.get(address).flatMap {
-      case None => IO.pure(None)
-      case Some(rt) =>
-        rt.actorRef match
-          case None =>
-            IO.pure(Some(Left(ToolError(s"Project '$address' has no mounted ProjectActor — re-mount it"))))
-          case Some(ref) =>
-            val rootSid = ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
-            (ref ! ProjectActor.ProjectCommand.TriggerDispatcher(message, rootSid)).void
-              .as(Some(Right(s"Project '$address' dispatcher triggered")))
+  /**
+   * 发送者角色（授权面分层判据 = **引擎侧身份**，不用 senderName 字符串匹配）。
+   * S6=C（N1 刀3 · v3 §7.2）新增 Delegate 面：delegate 会话（引擎侧
+   * `DelegateSessions.isDelegateSession` 前缀判据单点）的地址面 = 自己作用域的
+   * `node:<id|name>` 腿（挂载面授权在 buildAllowedToolSet 尾段，工具内本枚举
+   * 分层为第二保险——双保险同 TaskBoard 纪律）。
+   */
+  private enum SenderRole:
+    case Root, Dispatcher, Delegate, Standalone
+
+  private def roleOf(ctx: ToolContext): SenderRole =
+    if ctx.isDispatcher then SenderRole.Dispatcher
+    else if nebflow.core.delegate.DelegateSessions.isDelegateSession(ctx.sessionId) then SenderRole.Delegate
+    else if ctx.agentDef.exists(_.name == MailTool.RootAgentName) then SenderRole.Root
+    // 团队功能删除批（team-feature-deletion-20261104）阶段 3：原第四类 `Teamish`
+    // （团队成员）随团队地址面一并退役 —— 团队名 / `team/agent` / 裸团队内短名三条
+    // 解析腿同时删除，角色面收敛为 Root / Dispatcher / Delegate 三类，其余一切
+    // 会话落本类（`Standalone`：普通子代理、节点会话等，**无团队授权语境**）。
+    else SenderRole.Standalone
+
+  // AgentControl name/address 批（2026-11-05）：三个续聊/投递前缀的**字符串单源**
+  // 移入 MailAddress（读面 = AgentControl list/status 与后台代理面板行，给出的地址
+  // 必须能原样粘进本工具的 address 参数）。此处只留窄别名，解析分支逐字不动。
+  private val NodePrefix = nebflow.core.delegate.MailAddress.NodePrefix
+  private val ProjectPrefix = "project:"
+
+  /**
+   * kernel leg: the `kernel:<id>` continuation
+   * form's prefix (the bare `kernel` form = start a new instance, judged in
+   * [[layeredRoute]]). id = the full session id `delegate-kernel-<8hex>` (the registry
+   * key, unambiguous).
+   */
+  private val KernelPrefix = nebflow.core.delegate.MailAddress.KernelPrefix
+
+  /** 统一 delegate 续聊地址前缀。 */
+  private val DelegatePrefix = nebflow.core.delegate.MailAddress.DelegatePrefix
+
+  /** canvas ask 会话地址前缀（单源在 MailAddress；ask-mail 批 2026-11-16）。 */
+  private val AskPrefix = nebflow.core.delegate.MailAddress.AskPrefix
+
+  /**
+   * 分层地址面判据（name/address 批 2026-11-05）：该字符串是否落在本工具的
+   * **分层地址腿**（`delegate:` / `kernel:` / `node:`，前缀 + 非空 target）。
+   *
+   * 用途：读面（AgentControl list/status 的 address 列、后台代理面板的地址 chip）
+   * 产出的地址必须能原样投进本工具——单测拿它做「形态可解析」的断言（真发信会
+   * 碰真实例，本批硬约束禁）。判据用的是**同一组前缀常量**（单源在 MailAddress），
+   * 所以它不会说谎：前缀改了这里跟着改，读面跟着改。
+   */
+  def isLayeredAddress(address: String): Boolean =
+    layeredAddressFormOf(address).isDefined
+
+  /** 分层地址形态名（"delegate" / "kernel" / "node" / "ask"）；非分层面或 target 为空 ⇒ None。 */
+  def layeredAddressFormOf(address: String): Option[String] =
+    val a = Option(address).getOrElse("").trim
+    if a.startsWith(DelegatePrefix) then
+      Option(a.stripPrefix(DelegatePrefix).trim).filter(_.nonEmpty).map(_ => "delegate")
+    else if a.startsWith(KernelPrefix) then
+      Option(a.stripPrefix(KernelPrefix).trim).filter(_.nonEmpty).map(_ => "kernel")
+    else if a.startsWith(NodePrefix) then Option(a.stripPrefix(NodePrefix).trim).filter(_.nonEmpty).map(_ => "node")
+    else if a.startsWith(AskPrefix) then Option(a.stripPrefix(AskPrefix).trim).filter(_.nonEmpty).map(_ => "ask")
+    else None
+
+  private def rootFace: String =
+    "\"delegate:<id>\"/\"kernel:<id>\"（续聊）、\"node:<节点id或名>\"（已登记 delegate 链）或 \"ask:<会话id>\"（canvas 文件问答会话）——项目地址（project:<名> 或裸挂载项目名）不是 Mail 面，派发走 Delegate"
+  private def dispatcherFace: String = "\"Nebula\"（root）或 \"node:<节点id或名>\""
+
+  private def delegateFace: String =
+    "\"node:<节点id或名>\"（你自己作用域链图内的节点）或 \"Nebula\"（向根会话汇报中间读数/阻断——续命派生实例同享此腿）"
+
+  /** 普通会话（原团队成员面）在团队地址面退役后**没有**自己的 Mail 地址面。 */
+  private def standaloneFace: String =
+    "无 —— 只有项目分发器、delegate 会话与 Nebula root 拥有 Mail 地址面（团队地址面已于 2026-11-04 整体退役）"
+
+  /** 分层地址面的显式越界报错（细则：错误消息必须指明**该角色的合法地址面**）。 */
+  private def outOfFaceError(address: String, role: SenderRole): ToolError =
+    val face = role match
+      case SenderRole.Root => rootFace
+      case SenderRole.Dispatcher => dispatcherFace
+      case SenderRole.Delegate => delegateFace
+      case SenderRole.Standalone => standaloneFace
+    ToolError(
+      s"Address '$address' is outside your address face. Your role may only mail: $face. " +
+        "There is no silent fallback and no fuzzy matching — use one of the listed forms."
+    )
+
+  private def unresolvableError(address: String, role: SenderRole): ToolError =
+    ToolError(
+      s"Cannot resolve address '$address' — it is not a recognizable target in your address face (${role match
+          case SenderRole.Root => rootFace
+          case SenderRole.Dispatcher => dispatcherFace
+          case SenderRole.Delegate => delegateFace
+          case SenderRole.Standalone => standaloneFace
+        }). No fallback was applied."
+    )
+
+  /**
+   * 分层地址分派。返回 Some(结果) = 本地址形态属分层面（已处理，含显式报错）；
+   * None = 不属分层面（调用方继续既有 team/短名瀑布——D-6：legacy 面不随批收口）。
+   *
+   * delivery 退役：本层**不再持有 `delivery` 参数**——「非设备腿禁
+   * queue」由 `call` 的单点前置闸统一下判（该闸在设备腿分支之后、本层之前），
+   * 故本层结构上**零 queue 分支**（`project:` 腿原先「两分支同体」也已折成单支）。
+   * project-trigger 拆除批：本层**不再持有 `task` 参数**——project 腿已拆除，
+   * `task=` 由 `call` 的墓碑闸统一下判。project 地址（`project:<name>` 形态与
+   * Root 的裸挂载项目名）= 显式拒绝，零触发面（派发 = Delegate 唯一入口）。
+   */
+  private def layeredRoute(
+    address: String,
+    message: String,
+    blocks: Option[List[ContentBlock]],
+    imagePaths: List[String],
+    chainId: Option[String],
+    ctx: ToolContext,
+    system: ActorSystem
+  ): Option[IO[Either[ToolError, String]]] =
+    val role = roleOf(ctx)
+    // ── delegate leg: the Nebula-exclusive
+    // continuation address ── `delegate:<id>` 续聊/补充；旧 `kernel:<id>` 形态
+    // 作为别名同路（同一 id 空间，存量回执不打断），裸 `kernel` 保持墓碑。
+    if address == "kernel" then Some(IO.pure(Left(kernelSpawnRetiredError(address))))
+    else if address.startsWith(DelegatePrefix) || address.startsWith(KernelPrefix) then
+      val (prefix, isLegacyForm) =
+        if address.startsWith(DelegatePrefix) then (DelegatePrefix, false) else (KernelPrefix, true)
+      Some(
+        if role != SenderRole.Root then IO.pure(Left(kernelExclusiveError(address, role.toString)))
+        else deliverToDelegate(address.stripPrefix(prefix).trim, message, blocks, ctx, system, isLegacyForm)
+      )
+    else if address.startsWith(AskPrefix) then
+      // ── ask leg: the canvas file-QA continuation address（ask-mail 批 2026-11-16）──
+      // `ask:<会话id>` = root-only 续聊腿（与 delegate 续聊同授权面）：编排方（Spider）
+      // 经 handoff 回执拿到地址后，可继续向该 ask 会话投递问题/补充。会话身份归 ask
+      // 绑定表（AskSessionRegistry，经 AskGatewayServices 服务定位——gateway 装配、
+      // core 消费）；绑定缺席/文件失联 = 显式拒绝（零静默投递、零隐式排队）。
+      val askId = address.stripPrefix(AskPrefix).trim
+      Some(
+        if askId.isEmpty then
+          IO.pure(
+            Left(ToolError(s"Malformed address '$address' — expected \"ask:<会话id>\" (the id the ask panel / handoff receipt carried)."))
+          )
+        else if role != SenderRole.Root then IO.pure(Left(askExclusiveError(address, role.toString)))
+        else deliverToAsk(askId, message, ctx, system)
+      )
+    else if address.startsWith(NodePrefix) then
+      // S6=C（N1 刀3 · v3 §7.2）：`node:<id|name>` 授权面扩 = 创建者 delegate ＋
+      // root（现分发器语境照旧）。三腿分治：
+      //   - delegate 会话 → 自己作用域链图（NodeTools.resolveRuntime 作用域单点，
+      //     双寻址 A5 序：id 精确命中即止 → name 唯一 → 歧义列候选不猜）；
+      //   - project dispatcher → 既有 per-project 腿（ctx.projectName 解析域），
+      //     同一双寻址单点；
+      //   - root → 跨全部已挂载 delegate 作用域解析（root 无单一项目语境；>1 作用
+      //     域命中 = 显式歧义列 scope 限定候选）。
+      //   - teamish → 既有越界报错（合法面文案指明，零静默兜底）。
+      val nodeRef = address.stripPrefix(NodePrefix).trim
+      Some(
+        if nodeRef.isEmpty then IO.pure(Left(ToolError(s"Malformed address '$address' — expected \"node:<节点id或名>\".")))
+        else if role == SenderRole.Delegate then
+          countMailUsage(
+            deliverToScopeNode(nodeRef, withChainAnnotation(message, chainId), imagePaths, ctx),
+            chainId,
+            ctx
+          )
+        else if role == SenderRole.Dispatcher then
+          countMailUsage(
+            deliverToNode(nodeRef, withChainAnnotation(message, chainId), imagePaths, ctx),
+            chainId,
+            ctx
+          )
+        else if role == SenderRole.Root then
+          countMailUsage(
+            deliverToRootNodeRef(nodeRef, withChainAnnotation(message, chainId), imagePaths, ctx),
+            chainId,
+            ctx
+          )
+        else IO.pure(Left(outOfFaceError(address, role)))
+      )
+    else if address.startsWith(ProjectPrefix) then
+      // Project-trigger 拆除：project 地址对**一切角色**都是显式拒绝（Mail 不再
+      // 触发项目分发器，零建任务、零复活、零 TriggerDispatcher——派发面唯一入口 =
+      // Delegate）。与裸 `kernel` 起实例腿同款退役形态：统一拒绝词 + 指路 Delegate，
+      // 硬禁静默降级。
+      Some(IO.pure(Left(projectTriggerUnsupportedError(address))))
+    else if address == MailTool.RootAgentName then
+      role match
+        case SenderRole.Root =>
+          Some(
+            IO.pure(
+              Left(
+                ToolError(
+                  s"Address \"Nebula\" is your own (self) address — it is not in your address face ($rootFace)."
+                )
+              )
+            )
+          )
+        case SenderRole.Dispatcher =>
+          Some(
+            countMailUsage(
+              deliverToRootAgent(address, withChainAnnotation(message, chainId), blocks, ctx, system),
+              chainId,
+              ctx
+            )
+          )
+        case SenderRole.Standalone =>
+          // 团队功能删除批（team-feature-deletion-20261104）阶段 3：此处原为
+          // `case Teamish => None`（落回团队/短名瀑布，由 canMailRoot 的 team-lead
+          // 两条判据决定「团队成员能否直接给 root 发信」）。团队退役 ⇒ 这两条判据
+          // （`isManager` + `team.lead` 名匹配）一并删除，root 准入判据只剩
+          // `ctx.isDispatcher` —— 而 Standalone 按定义就不是分发器 ⇒ 显式拒绝
+          // （零静默兜底，文案给出面）。
+          Some(IO.pure(Left(rootDeniedError(ctx.agentDef.map(_.name).getOrElse("")))))
+        // 会话续命名与位修正批（2026-11-03 · 作者 16:53 缺陷⑧）：delegate 会话的
+        // **Nebula 腿**回归——此前 delegate 面上 Nebula 地址 = 显式越界，续命派生
+        // 实例（乃至原 delegate）连向根会话汇报中间读数/阻断报告的通道都没有
+        // （作者截图实证：派生体只被允许 `node:*`，损失全部实时可见性）。现按
+        // **dispatcher 同款腿**投递（同一 `deliverToRootAgent` 单点：root 会话解析
+        // 走 `ctx.rootSessionId` 优先 → session meta 唯一 Nebula 兜底，零新机制）。
+        // 落点仍是 root 议会话，不是「自己给自己发」（发信者恒排除，见 resolveRoots）。
+        case SenderRole.Delegate =>
+          Some(
+            countMailUsage(
+              deliverToRootAgent(address, withChainAnnotation(message, chainId), blocks, ctx, system),
+              chainId,
+              ctx
+            )
+          )
+    else if role == SenderRole.Root then
+      // Nebula 的裸名形态 = 裸项目名。Project-trigger 拆除后：命中已挂载项目 ⇒
+      // 与 `project:` 形态同款显式拒绝（零触发）；未命中 ⇒ 显式 unresolvable。
+      // 注册表探测在此只作**分类**（这是不是项目名），不作触发。
+      Some(
+        ProjectRuntimeRegistry.get(address).flatMap {
+          case Some(_) => IO.pure(Left(projectTriggerUnsupportedError(address)))
+          case None => IO.pure(Left(unresolvableError(address, role)))
+        }
+      )
+    else if role == SenderRole.Dispatcher then
+      // 分发器不给自己项目发（细则）——裸名一律越界报错。
+      Some(IO.pure(Left(outOfFaceError(address, role))))
+    else None
+    end if
+  end layeredRoute
+
+  /**
+   * chainId 逐字进注入文本（R-18；腿②③一致）。只影响注入体——**不落 Mail 自身任何库**
+   * （R-17/B2-x「只校验、不落库」逐字保留）；引用**计数**另经批三+ 的 `mail-usage` 面钩子
+   * 记进链号台账（[[countMailUsage]] → `ChainLedgerStore.noteReference` 的 `externalRefs`）
+   * ——「mail 参数入库」与「引用面计数」是两件事，本行前句不因后者改写。
+   */
+  private def withChainAnnotation(message: String, chainId: Option[String]): String =
+    chainId match
+      case Some(id) => s"[mail chainId: $id]\n$message"
+      case None => message
+
+  /** chainmodel 批三+：引用面 id 字面量（与 `ChainLedger.ReferenceFaces` 登记逐字同值）。 */
+  private val FaceMailUsage = "mail-usage"
+
+  /**
+   * **引用面 `mail-usage` 计数钩子（轴 b）** —— 登记表 `incWhen` 的逐字落点：「Mail 携带
+   * chainId **且投递成功**」。
+   *
+   * 只包**正文已注入链号注解**的两条腿（`node:` 腿 / Nebula 腿，注解单点 =
+   * [[withChainAnnotation]]）：注解没进正文的腿（`project:` / 裸项目名 / 短名 / 设备腿 ——
+   * 设备腿的 chainId 明确「只校验不带出」）**结构上不产生**该引用 ⇒ 不计数。
+   * `Left`（未投递 / 越界 / 终态拒绝 / 校验失败）⇒ **零计数**（引用没发生）。
+   * best-effort：落账失败只 WARN（见 `NodeEngine.noteChainReference`），不回滚已投递的 Mail。
+   */
+  private def countMailUsage(
+    action: IO[Either[ToolError, String]],
+    chainId: Option[String],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    action.flatMap {
+      case r @ Right(_) if chainId.nonEmpty =>
+        noteChainReferences(ctx, chainId.toList, FaceMailUsage).as(r)
+      case r => IO.pure(r)
     }
 
+  /**
+   * 引用面计数落点（best-effort；`projectName` 空 ⇒ 无可计之处）。
+   *
+   * 「项目未挂载」对本钩子**不可达**：`node:` 腿在项目未挂载时本就投递失败（⇒ `Left` ⇒
+   * 不计数），Nebula 腿的发信会话恒属已挂载项目。故该分支为断言式 `IO.unit`（不猜、不静默
+   * 吞错——真出偏差时 `NodeEngine` 侧 WARN 仍可观察）。
+   */
+  private def noteChainReferences(ctx: ToolContext, ids: List[String], faceId: String): IO[Unit] =
+    ctx.projectName.map(_.trim).filter(_.nonEmpty) match
+      case None => IO.unit
+      case Some(name) =>
+        ProjectRuntimeRegistry.get(name).flatMap {
+          case Some(rt) =>
+            ids.distinct.foldLeft(IO.unit)((acc, id) => acc *> rt.engine.noteChainReference(id, faceId))
+          case None => IO.unit
+        }
+
+  /**
+   * B2-x / R-17 + **chainmodel 批三 ①（chainmail）**：`chainId` **只校验、不落库**
+   * （本方法零副作用；台账只**读**、**禁回填**）。无项目上下文时只做形态校验（无链集可对）；
+   * 有项目上下文则按**台账解析**给出可达集合：
+   *   声明链 ∪ 兜底派生链 ∪ 链级依赖目标链 ∪ 台账已登记旧号别名
+   * （判据单点 = `NodeEngine.mailChainIds` / `resolveMailChainId` → `FlowMapStore`；
+   * 热面未命中再经台账冷档兜底 ⇒ 「链号改号后旧号永久可达」，见设计件 §二(b)/(c) 第 4 面）。
+   *
+   * 🔴 **负判据保留**（判红线）：完全未登记号（含归档区封存链号）照旧
+   * `MAIL_CHAIN_NOT_FOUND`（`MAIL_CHAIN_NOT_FOUND` = 非空但不可达）——禁把校验放宽成
+   * 「未知也放行」。改造前口径 = 纯派生链集比对（零台账），旧号在链号重归后必然失效。
+   */
+  private[tools] def validateChainId(chainId: Option[String], ctx: ToolContext): IO[Either[ToolError, Option[String]]] =
+    chainId match
+      case None => IO.pure(Right(None: Option[String]))
+      case Some(id) =>
+        ctx.projectName match
+          case None => IO.pure(Right(Some(id): Option[String]))
+          case Some(projectName) =>
+            ProjectRuntimeRegistry.get(projectName).flatMap {
+              case None => IO.pure(Right(Some(id): Option[String])) // 项目未挂载：无链集可对，交投递侧报错
+              case Some(rt) =>
+                rt.engine.resolveMailChainId(id).flatMap {
+                  case Some(_) => IO.pure(Right(Some(id): Option[String]))
+                  case None =>
+                    // 错误路径才取「已知链」清单（避免每次成功校验都多一次全量派生）
+                    rt.engine.mailChainIds.map { ids =>
+                      Left(
+                        ToolError(
+                          s"Unknown chainId '$id' in project '$projectName' (MAIL_CHAIN_NOT_FOUND). " +
+                            s"Known chains: ${
+                                if ids.isEmpty then "(none registered)" else ids.toList.sorted.mkString(", ")
+                              }. " +
+                            "chainId is validated only — it is never persisted; omit it if the Mail does not belong to a batch."
+                        )
+                      )
+                    }
+                }
+            }
+
+  /**
+   * 本会话作为发信方的**来源标注**（单点构造）：
+   * 接管方 agent 自身名（与前端 `ownAgentName()` 同名空间，见
+   * [[nebflow.agent.InjectionAttribution]] 的字段名/取值域契约）+ 所属 Team 名
+   * + 邮件类型（eventType）。两条项目腿（腿① 项目、腿② 节点）与 leg③
+   * `sendMail` 共用同一取值口径 —— 三种 Mail 形态的气泡顶栏因此同源。
+   *
+   * `intake`（「必须显示 MAIL」⇒ 选项 C）是
+   * **调用方声明的收件通道判别**，**不由本方法统一置位**：本方法是共用构造点，
+   * 各腿收件面**呈现口径不同** ——
+   *   - 旧腿①（`routeToProject` → 分发器收件面）：曾传
+   *     [[InjectionAttribution.IntakeMail]] ⇒ 标签显示 `Mail`。Project-trigger
+   *     拆除批后该腿整体退役 ⇒ 本工具面**零置位点**（`intake` 键保留 = 存量
+   *     历史行渲染 + 透传面契约不变；落盘行照常解码）；
+   *   - 腿②（`deliverToNode` → 节点收件面）：**不传**（默认 `None`）——
+   *     `source` 保持 `"system"` ⇒ 标签恒 `System` + `[NODE-MESSAGE]` 文本头
+   *     逐字不变（节点收件面单独立项）；
+   *   - 腿③（`sendMail` → 非 project 面）：**不传**（默认 `None`）——
+   *     `source` 已是 `"mail"` ⇒ 标签恒 `Mail`，呈现零漂移。
+   * 若在此统一置位，腿② 的标签会被抬成 `Mail` ⇒ **越界扩面**（禁动面）。
+   *
+   * `project` 与 `intake` **相反**：**三条腿同源置位**
+   * ——取本会话所属项目（`ToolContext.projectName`）= 四段式 `PROJECT` 段的**链首级**
+   * 「发送方所属项目」。与 `intake`（收件通道的**呈现判别**，逐腿口径不同）无关：
+   * 「发送方项目域」在任一收件面上都不改变该腿的标签语义，故单点置位零越界。
+   * 腿②（→`node:`，发送方与本会话同项目）往返零漂移；腿①（`project:`，跨项目 /
+   * 越面调用）由此从 **收件方**项目**纠正为发送方项目**。`None`（本会话无项目上下文，
+   * 如 Nebula root / 团队会话）⇒ 发射面回落根域 `NEBULA`（`leg1SenderProject`）。
+   */
+  private def mailAttribution(
+    eventType: String,
+    ctx: ToolContext,
+    intake: Option[String] = None
+  ): IO[InjectionAttribution] =
+    val senderName = ctx.agentDef.map(_.name).getOrElse(MailTool.RootAgentName)
+    // 团队功能删除批（team-feature-deletion-20261104）阶段 3：`senderTeam` 原取
+    // `teamOfSession(发信会话)`，团队退役后恒为 `None`（字段本体保留 = 存量历史行
+    // 渲染 / 透传面契约不变，只是不再有产出点）。
+    IO.pure(
+      InjectionAttribution(
+        sender = Some(senderName),
+        senderTeam = None,
+        eventType = Some(eventType.toLowerCase),
+        intake = intake,
+        project = ctx.projectName
+      )
+    )
+
+  end mailAttribution
+
+  /**
+   * 腿②（分发器 → 节点）：**复用引擎侧单点** `NodeEngine.sendNodeMessage`——三态判据
+   * 与三个错误码**不复制**（复制必然漂移）。注入 source 保持 `"system"`（D-3：
+   * 节点侧既有呈现零 UI 行为变化）；来源标注经 attribution 参数传（sender/
+   * senderTeam/eventType），节点会话蓝气泡顶栏因此可辨「来自谁」。
+   *
+   * S6=C（N1 刀3 · A5 双寻址）：地址 payload 升格为 `<id|name>`——解析单点 =
+   * [[NodeTools.resolveNodeRefIO]]（id 精确命中即止 → name 唯一 → 歧义显式列候选
+   * `CHAIN_ADDR_AMBIGUOUS` / 零命中 `CHAIN_NODE_NOT_FOUND`；活动区未命中兜归档区，
+   * 与 NodeEdit/NodeList/NodeCancel 三调用点同一判据源）。解析域 = 调用会话的
+   * per-project face（ctx.projectName，既有判定零改动）。
+   */
+  private def deliverToNode(
+    nodeRef: String,
+    message: String,
+    imagePaths: List[String],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    // B6（静默丢修）：本腿结构上只能收字符串 ⇒ `images` 无承载面。
+    // 旧行为 = 静默丢（零报错、零投递）；现行为 = 显式拒绝（判据与文案见
+    // [[sameMachineVisionUnsupportedError]]）。
+    if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"node:$nodeRef", imagePaths.size)))
+    else
+      ctx.projectName match
+        case None | Some("") =>
+          IO.pure(
+            Left(
+              ToolError(
+                s"Cannot route to node '$nodeRef' — this session has no project context (the 'node:' leg resolves the project from the calling session)."
+              )
+            )
+          )
+        case Some(projectName) =>
+          ProjectRuntimeRegistry.get(projectName).flatMap {
+            case Some(rt) =>
+              NodeTools.resolveNodeRefIO(rt, nodeRef).flatMap {
+                case Left(err) => IO.pure(Left(ToolError(err)))
+                case Right(node) =>
+                  mailAttribution("info", ctx).flatMap { attribution =>
+                    rt.engine.sendNodeMessage(node.id, message, Some(attribution)).map(_.left.map(ToolError(_)))
+                  }
+              }
+            case None =>
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"Project '$projectName' is not mounted — cannot route to node '$nodeRef'. Re-mount / restart (projects mount at startup)."
+                  )
+                )
+              )
+          }
+
+  /**
+   * 腿②′（S6=C · N1 刀3 · v3 §7.2 ①授权面扩）：**delegate 会话 → 自己作用域链图**
+   * 的 `node:<id|name>` 腿。解析域 = [[NodeTools.resolveRuntime]]（delegate 会话只
+   * 解析自己作用域图——查无宿主 `DELEGATE_SCOPE_UNAVAILABLE` fail-closed、显式他项目
+   * `DELEGATE_SCOPE_FOREIGN`，与 NodeEdit/NodeList/NodeCancel 同一单点）；双寻址 =
+   * [[NodeTools.resolveNodeRefIO]]（A5 序，同上）。投递 = 同一引擎单点
+   * `sendNodeMessage`（三态判据 + `node-message` EventLog 审计皆现成，零第二实现）。
+   * 挂载面授权在 buildAllowedToolSet 尾段（本腿为工具内第二保险）。
+   */
+  private def deliverToScopeNode(
+    nodeRef: String,
+    message: String,
+    imagePaths: List[String],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"node:$nodeRef", imagePaths.size)))
+    else
+      NodeTools.resolveRuntime(None, ctx).flatMap {
+        case Left(err) => IO.pure(Left(ToolError(err)))
+        case Right(rt) =>
+          NodeTools.resolveNodeRefIO(rt, nodeRef).flatMap {
+            case Left(err) => IO.pure(Left(ToolError(err)))
+            case Right(node) =>
+              mailAttribution("info", ctx).flatMap { attribution =>
+                rt.engine.sendNodeMessage(node.id, message, Some(attribution)).map(_.left.map(ToolError(_)))
+              }
+          }
+      }
+
+  /**
+   * 腿②″（S6=C · N1 刀3 · v3 §7.2 ①授权面扩）：**root → 已登记 delegate 链节点**。
+   * root 无单一项目语境 ⇒ 解析域 = **全部已挂载 delegate 作用域宿主**
+   * （[[nebflow.core.project.DelegateFlowHosts.all]]）；每域内 A5 序双寻址（同一
+   * [[NodeTools.resolveNodeRefIO]] 单点），跨域 >1 命中 = 显式歧义列 **scope 限定**
+   * 候选（不猜不取首）；恰 1 命中 = 投该域引擎（同一 `sendNodeMessage` 单点）；零
+   * 命中 = 显式未找到（提示到属主 delegate 会话 NodeList 核对）。per-project 分发
+   * 器腿不经此腿（逐字节不变）。
+   */
+  private def deliverToRootNodeRef(
+    nodeRef: String,
+    message: String,
+    imagePaths: List[String],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    if imagePaths.nonEmpty then IO.pure(Left(sameMachineVisionUnsupportedError(s"node:$nodeRef", imagePaths.size)))
+    else
+      nebflow.core.project.DelegateFlowHosts.all.flatMap { hosts =>
+        hosts
+          .traverse { h =>
+            NodeTools.resolveNodeRefIO(h.projectRuntime, nodeRef).map(_.map(n => (h, n)))
+          }
+          .flatMap { hits =>
+            val resolved = hits.collect { case Right(pair) => pair }
+            val failures = hits.collect { case Left(err) => err }
+            if resolved.size > 1 then
+              val candidates =
+                resolved
+                  .map((h, n) => s"scope ${h.delegateId} → ${n.id}(${n.task.getOrElse("").take(30)})")
+                  .mkString(", ")
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"'$nodeRef' matches ${resolved.size} nodes across delegate scopes — $candidates — " +
+                      "address by node id, or rename. (CHAIN_ADDR_AMBIGUOUS)"
+                  )
+                )
+              )
+            else
+              resolved.headOption match
+                case Some((h, node)) =>
+                  mailAttribution("info", ctx).flatMap { attribution =>
+                    h.engine.sendNodeMessage(node.id, message, Some(attribution)).map(_.left.map(ToolError(_)))
+                  }
+                case None =>
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        s"no node '$nodeRef' (id or name) in any mounted delegate chain scope" +
+                          (if hosts.isEmpty then " (no delegate scopes are mounted right now)"
+                           else
+                             s" (${hosts.size} scope(s) checked${
+                                 if failures.isEmpty then ""
+                                 else "; per-scope lookup notes: " + failures.mkString(" | ")
+                               })") +
+                          " — check NodeList on the owning delegate session. (CHAIN_NODE_NOT_FOUND)"
+                      )
+                    )
+                  )
+            end if
+          }
+      }
+
+  // ============================================================
+  // kernel leg ("Delegate triggers kernels; Mail is demoted to communication"): the ONLY kernel address leg left is
+  // `kernel:<id>` = inject into that **live** Delegate-spawned instance (registry
+  // kind=Delegate with session-id match); after the instance goes terminal (one-shot
+  // Delegate semantics: the result has already been returned to root along
+  // source="delegate") the address is **unroutable** => explicit refusal
+  // ([[kernelNotLiveError]]), same family as the `node:` leg's three-state judgment
+  // ("running injectable / terminal refused").
+  // The bare-kernel SPAWN leg (`address="kernel"`) is
+  // RETIRED: triggering is Delegate-only; a bare "kernel" address is an
+  // explicit MAIL_KERNEL_SPAWN_RETIRED refusal in [[layeredRoute]] (fail-closed
+  // tombstone, never a silent forward).
+  // The Nebula-exclusivity ruling carries over verbatim: a non-root caller mailing
+  // `kernel:<id>` is refused ([[kernelExclusiveError]], SenderRole != Root =>
+  // MAIL_KERNEL_EXCLUSIVE). The result-return chain has zero tool-face change (the
+  // existing BackoffSupervisor parent uplink).
+  // ============================================================
+
+  /**
+   * Kernel-leg delivery — continuation only (the caller's NebulaRoot identity has
+   * already been verified in [[layeredRoute]]; the bare-kernel SPAWN leg retired in
+   * Delegate is the only kernel trigger).
+   */
+  /** Existing identities only; manual recovery gates retain supplements without execution. */
+  private def deliverToDelegate(
+    id: String,
+    message: String,
+    blocks: Option[List[ContentBlock]],
+    ctx: ToolContext,
+    system: ActorSystem,
+    isLegacyForm: Boolean
+  ): IO[Either[ToolError, String]] =
+    nebflow.core.delegate.SessionStartLease
+      .exclusive(id) {
+        (ctx.sharedResources, ctx.actorSystem) match
+          case (Some(resources), Some(_)) =>
+            for
+              record <- IO.blocking(DelegateRegistry.find(id))
+              task <- resources.subAgentTaskStore.findByTaskId(id)
+              live <- resources.agentRegistry.get.map(_.get(id))
+              result <- record match
+                case Some(current) if current.cancelRequestedAt.nonEmpty =>
+                  IO.pure(
+                    Left(
+                      ToolError("Delegate was manually cancelled; create new work explicitly (DELEGATE_CANCELLED)")
+                    )
+                  )
+                case Some(current) if current.mode.contains(nebflow.core.delegate.DualModeConfig.ModeMerger) =>
+                  // Legacy merger identities are read-only history: the merger face is
+                  // retired, so the address can never resume. Any merge-request backlog
+                  // lives on the recorded workspace ledger for manual disposition.
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        s"Delegate '$id' is a recorded merger identity — the merger role is retired and this address " +
+                          "can never resume. Any in-flight merge requests it owned are listed on the workspace ledger " +
+                          "for manual disposition; integration is now the author's explicit decision. (DELEGATE_MERGER_RETIRED)"
+                      )
+                    )
+                  )
+                case Some(current)
+                    if nebflow.core.delegate.SessionResumption.requiresManual(
+                      Some(current),
+                      task,
+                      live
+                    ) =>
+                  queueRecoverySupplement(id, message, blocks, ctx)
+                case Some(current) =>
+                  // Round-model decision point (inside the start-lease critical
+                  // section, naturally mutually exclusive with revival/continuation):
+                  // a settled identity (state-derived reading — no archive flag) with
+                  // no tombstone and no busy signal gets a NEW round (roundNo+1, fresh
+                  // roundId, diff baseline re-anchored); anything busy (actor
+                  // registered, or an in-flight / frozen task row) stays in the
+                  // CURRENT round — Mail injects, never builds a second execution body.
+                  openNewRoundIfSettled(current, task, live) *>
+                    deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
+                case _ =>
+                  deliverToDelegateAdmitted(id, message, blocks, ctx, system, isLegacyForm)
+            yield result
+          case _ => IO.pure(Left(ToolError("Cannot deliver to the delegate leg: missing resources")))
+      }
+      .handleError(error => Left(ToolError(s"Mail could not safely deliver: ${error.getMessage}")))
+
+  end deliverToDelegate
+
+  /**
+   * Round-model opening point for Mail (thin wrapper — the decision itself is the
+   * pure single point [[nebflow.core.delegate.DelegateRoundLedger.decideMailRound]]).
+   * Called inside the start-lease critical section of [[deliverToDelegate]], so it is
+   * naturally mutually exclusive with revival/continuation starts. A failed registry
+   * write falls back to the current-round continuation (the legacy leg) — Mail never
+   * errors out of a delivery just because round bookkeeping could not land.
+   */
+  private def openNewRoundIfSettled(
+    record: DelegateRegistry.Record,
+    task: Option[SubAgentTask],
+    liveEntry: Option[AgentRecord]
+  ): IO[Unit] =
+    IO.blocking {
+      val identityClosed = nebflow.core.delegate.DelegateVisibility.readOf(record.id).identityClosed
+      nebflow.core.delegate.DelegateRoundLedger
+        .decideMailRound(record, task.map(_.status), liveEntry.isDefined, identityClosed)
+    }.flatMap {
+      case nebflow.core.delegate.DelegateRoundLedger.MailRoundDecision.OpenNewRound =>
+        IO.blocking(nebflow.core.delegate.DelegateRoundLedger.openNewRound(record)).void.handleErrorWith { e =>
+          NebflowLogger
+            .forName("nebflow.core.tools.mail")
+            .warn(s"new-round opening failed for '${record.id}' (${e.getMessage}) — continuing in the current round")
+        }
+      case _ => IO.unit
+    }.handleErrorWith(_ => IO.unit)
+
+  private def queueRecoverySupplement(
+    id: String,
+    message: String,
+    blocks: Option[List[ContentBlock]],
+    ctx: ToolContext
+  ): IO[Either[ToolError, String]] =
+    val invocation = Option(ctx.toolCallId).filter(_.nonEmpty).getOrElse(java.util.UUID.randomUUID().toString)
+    val identity = s"mail-supplement:${ctx.sessionId.getOrElse("unknown")}:$invocation:$id"
+    val event = AgentCommand.ExternalEvent(
+      "mail",
+      "info",
+      message,
+      metadata = JsonObject(
+        "sender" -> ctx.agentDef.map(_.name).getOrElse("").asJson,
+        "senderSessionId" -> ctx.sessionId.getOrElse("").asJson,
+        "recoveryHeld" -> true.asJson
+      ),
+      correlationId = Some(identity),
+      blocks = blocks
+    )
+    nebflow.core.mail.SessionMailbox
+      .mailOnce(id, event, "mail-supplement", identity, producer = "mail", deduplicateReceipts = true)
+      .map {
+        case nebflow.core.mail.SessionMailbox.MailResult.Failed(error) =>
+          Left(ToolError(s"Could not persist the supplement: $error"))
+        case _ =>
+          Right(
+            s"[delegate #$id] Supplement saved in the original session mailbox; execution remains stopped. " +
+              "Explicit manual recovery is required (MANUAL_RECOVERY_REQUIRED). Retaining this supplement does not resume execution or replay a tool."
+          )
+      }
+
+  end queueRecoverySupplement
+
+  /**
+   * `ask:<会话id>` 投递腿（ask-mail 批 2026-11-16）：注入该 ask 会话的**下一轮边界**
+   * （与 delegate 补充同语义），授权已由 [[layeredRoute]] 的 root-only 闸收敛。
+   *
+   * 三态：
+   *  · live（统一注册表有活 actor）⇒ `ExternalEvent("mail", "inject", …)` 直投
+   *    （askReply 同款已证腿——idle 面收到即渲染注入泡并触发一轮应答；忙面进
+   *    pendingEvents 于回合边界排入）；
+   *  · 不 live ⇒ `SessionMailbox.mailOnce` 落该会话邮箱（delegate 补充同款持久
+   *    队列；ask 会话下次唤醒（askOpen/askQuestion）时由 MailboxDrain 排干注入）；
+   *  · 绑定缺席 / 文件失联 / ask 面未装配 ⇒ 显式拒绝词（见错误族），零静默。
+   *
+   * 无 AgentKind 闸：`ask-` 会话 id 命名空间 + 绑定表在场即身份判据（ask 会话
+   * 不进 DelegateRegistry，AgentKind 亦无 ask 值）。
+   */
+  private def deliverToAsk(
+    id: String,
+    message: String,
+    ctx: ToolContext,
+    system: ActorSystem
+  ): IO[Either[ToolError, String]] =
+    nebflow.core.ask.AskGatewayServices.instance match
+      case None => IO.pure(Left(askUnavailableError(id)))
+      case Some(svc) =>
+        svc.registry.byId(id).flatMap {
+          case None => IO.pure(Left(askNotFoundError(id)))
+          case Some(binding) =>
+            // routable 闸：ask 会话无显式终态（绑定不清理）——「不可达」面 = 绑定文件
+            // 缺席或不再可问（spawn 面 agentDefFor 同判据拒绝 ⇒ 邮箱永不被排干，
+            // 静默积压正是作者令「显式错误不静默」要挡的形态）。
+            IO.blocking {
+              val p = os.Path(binding.file, os.pwd)
+              os.isFile(p) && nebflow.core.ask.AskSessions.isAskable(binding.file)
+            }.flatMap { routable =>
+              if !routable then IO.pure(Left(askNotRoutableError(id, binding.fileName)))
+              else
+                (ctx.sharedResources, ctx.actorSystem) match
+                  case (Some(res), Some(sys)) =>
+                    res.agentRegistry.get.flatMap { reg =>
+                      reg.get(id)
+                        .fold(IO.pure(Option.empty[AgentRecord]))(entry =>
+                          sys.isAlive(entry.ref.path).map(alive => Option.when(alive)(entry))
+                        )
+                        .flatMap {
+                          case Some(rec) =>
+                            val metadata = JsonObject(
+                              "agentName" -> ctx.agentDef.map(_.name).getOrElse("").asJson,
+                              "senderSessionId" -> ctx.sessionId.getOrElse("").asJson,
+                              "askMailAddress" -> (AskPrefix + id).asJson
+                            )
+                            (rec.ref ! AgentCommand.ExternalEvent(
+                              "mail",
+                              "inject",
+                              message,
+                              metadata,
+                              None
+                            )) *>
+                              nebflow.core.UsageTracker
+                                .record("mail", ctx.sessionId.getOrElse(""))
+                                .as(
+                                  Right(
+                                    s"[ask:$id] Message injected into the live ask session for its next turn boundary."
+                                  )
+                                )
+                          case _ => queueAskMail(id, message, ctx)
+                        }
+                    }
+                  case _ =>
+                    IO.pure(Left(ToolError("Cannot deliver to the ask leg: missing resources.")))
+            }
+        }
+  end deliverToAsk
+
+  /** ask 腿的不 live 面补充（delegate `queueRecoverySupplement` 同款持久邮箱队列）。 */
+  private def queueAskMail(id: String, message: String, ctx: ToolContext): IO[Either[ToolError, String]] =
+    val invocation = Option(ctx.toolCallId).filter(_.nonEmpty).getOrElse(java.util.UUID.randomUUID().toString)
+    val identity = s"ask-mail:${ctx.sessionId.getOrElse("unknown")}:$invocation:$id"
+    val event = AgentCommand.ExternalEvent(
+      "mail",
+      "inject",
+      message,
+      metadata = JsonObject(
+        "agentName" -> ctx.agentDef.map(_.name).getOrElse("").asJson,
+        "senderSessionId" -> ctx.sessionId.getOrElse("").asJson,
+        "askMailAddress" -> (AskPrefix + id).asJson
+      ),
+      correlationId = Some(identity)
+    )
+    nebflow.core.mail.SessionMailbox
+      .mailOnce(id, event, "ask-mail", identity, producer = "mail", deduplicateReceipts = true)
+      .map {
+        case nebflow.core.mail.SessionMailbox.MailResult.Failed(error) =>
+          Left(ToolError(s"Could not persist the ask message: $error"))
+        case _ =>
+          Right(
+            s"[ask:$id] The ask session is not live right now — message saved in its session mailbox; " +
+              "it is injected when the ask session next opens (askOpen/askQuestion)."
+          )
+      }
+  end queueAskMail
+
+  private def deliverToDelegateAdmitted(
+    id: String,
+    message: String,
+    blocks: Option[List[ContentBlock]],
+    ctx: ToolContext,
+    system: ActorSystem,
+    isLegacyForm: Boolean
+  ): IO[Either[ToolError, String]] =
+    (ctx.sharedResources, ctx.actorSystem) match
+      case (Some(res), Some(sys)) =>
+        if id.isEmpty then
+          IO.pure(
+            Left(
+              ToolError(
+                s"Malformed address — expected \"delegate:<instanceId>\" (the id the Delegate receipt carried)."
+              )
+            )
+          )
+        else
+          DelegateRegistry.find(id) match
+            case None =>
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"No delegate instance '$id' on record (DELEGATE_NOT_FOUND) — the Delegate receipt's continuation address is authoritative; check it verbatim."
+                  )
+                )
+              )
+            case Some(record) =>
+              res.agentRegistry.get.flatMap { reg =>
+                reg
+                  .get(id)
+                  .filter(entry => nebflow.actor.ExternalAgentRecord.isMessagable(entry.kind) && entry.ref != null)
+                  .fold(IO.pure(Option.empty[AgentRecord]))(entry =>
+                    sys.isAlive(entry.ref.path).map(alive => Option.when(alive)(entry))
+                  )
+                  .flatMap {
+                    case Some(rec) if rec.kind == AgentKind.Delegate =>
+                      (rec.ref ! AgentCommand.UserInput(
+                        text = message,
+                        replyTo = rec.supervisorRef,
+                        source = Some("mail"),
+                        sender = ctx.agentDef.map(_.name),
+                        eventType = Some("info"),
+                        blocks = blocks,
+                        fromUser = false,
+                        clientMessageId = Option(ctx.toolCallId)
+                          .filter(_.nonEmpty)
+                          .map(call => s"mail:${ctx.sessionId.getOrElse("")}:$call")
+                      )) *>
+                        IO.blocking(DelegateRegistry.clearStandby(id)).void *>
+                        nebflow.core.UsageTracker
+                          .record("mail", ctx.sessionId.getOrElse(""))
+                          .as(
+                            Right(
+                              s"[delegate #$id] Message injected into the existing live instance for its next turn boundary."
+                            )
+                          )
+                    case _ =>
+                      // 不 live：外部执行器 ⇒ resume 续聊 / mailbox 排队（external-executors 真通路替换 DELEGATE_EXECUTOR_PENDING 墓碑——同一
+                      // `delegate:<id>` 地址面零新面，S15 注入通道）；内置执行器 ⇒ 续起。
+                      // 续起腿的 parentRef = 原记录 parentSessionId 的**活引用**（续聊
+                      // 结果回传锚点）——历史上这里传 None ⇒ BackoffSupervisor/
+                      // ExternalSessionRunner 的终态通知成了 no-op，续聊会话跑完后结果
+                      // 静默蒸发（实测 2026-10-09 两起：会话从存活列表消失、父会话零
+                      // 消息、工作实际已完成）。父不 live 时传 None 也可，监督者的
+                      // terminal-result-undelivered 兜底会发出可见告警，绝不静默。
+                      resolveContinuationParentRef(res, record).flatMap { parentRef =>
+                        if record.executor != nebflow.core.executor.ExecutorRegistry.DefaultId then
+                          nebflow.core.executor.ExternalSessionRunner
+                            .continueExternal(
+                              record,
+                              message,
+                              parentRef = parentRef,
+                              wsSend = ctx.wsSend,
+                              resources = res,
+                              messageId = Option(ctx.toolCallId).filter(_.nonEmpty)
+                                .map(call => s"mail:${ctx.sessionId.getOrElse("")}:$call")
+                                .getOrElse(java.util.UUID.randomUUID().toString)
+                            )
+                            .map(_.left.map(ToolError(_)))
+                        else continueDelegate(record, id, message, ctx, sys, res, parentRef, blocks)
+                      }
+                  }
+              }
+      case _ =>
+        IO.pure(Left(ToolError("Cannot deliver to the delegate leg: missing resources.")))
+
+  /**
+   * 续聊腿的结果回传锚点：原 delegate 记录里 `parentSessionId`（当初派发者会话，
+   * 通常是 Nebula 根）的**当前活引用**。None = 父会话此刻不在统一注册表（已删除/
+   * 重启后未重挂）——续聊仍可起，但其终态结果没有可投递对象，由监督者的
+   * terminal-result-undelivered 兜底发出可见告警（绝不允许静默丢失）。
+   */
+  private def resolveContinuationParentRef(
+    res: nebflow.core.AgentRuntimePort,
+    record: DelegateRegistry.Record
+  ): IO[Option[ActorRef[AgentCommand]]] =
+    if record.parentSessionId.isEmpty then IO.pure(None)
+    else
+      res.agentRegistry.get.map(
+        _.get(record.parentSessionId)
+          .filter(entry => nebflow.actor.ExternalAgentRecord.isMessagable(entry.kind))
+          .flatMap(entry => Option(entry.ref))
+      )
+
+  /**
+   * Verified continuation keeps the original identity and scope. Missing context,
+   * cancellation or a manual recovery gate never falls back to creating a new delegate.
+   */
+  private def continueDelegate(
+    record: DelegateRegistry.Record,
+    id: String,
+    message: String,
+    ctx: ToolContext,
+    system: ActorSystem,
+    res: AgentRuntimePort,
+    parentRef: Option[ActorRef[AgentCommand]],
+    blocks: Option[List[ContentBlock]] = None
+  ): IO[Either[ToolError, String]] =
+    val displayTitle = nebflow.core.delegate.SessionResumption.displayTitle(record)
+    // 转录读数（缺失或读不明则拒绝，不派生替代身份）。
+    val transcriptProbe: IO[Either[String, Int]] =
+      res.sessionStore
+        .loadMessagesForSession(id)
+        .map(msgs => Right(msgs.size): Either[String, Int])
+        .handleError(e => Left(e.getMessage))
+    transcriptProbe.flatMap { probe =>
+      nebflow.core.delegate.SessionResumption.judge(record, probe.left.toOption, probe.getOrElse(0)) match
+        case nebflow.core.delegate.SessionResumption.Verdict.InPlace(_, _) =>
+          resumeDelegateInPlace(record, id, message, ctx, system, res, displayTitle, parentRef, blocks)
+        case nebflow.core.delegate.SessionResumption.Verdict.Refuse(reason) =>
+          IO.pure(
+            Left(ToolError(s"Continuation refused; the original identity and saved state are preserved: $reason"))
+          )
+    }
+
+  end continueDelegate
+
+  /** ① 原位续腿：同 id、转录追加、链归属不变（回执逐项说破）。 */
+  private def resumeDelegateInPlace(
+    record: DelegateRegistry.Record,
+    id: String,
+    message: String,
+    ctx: ToolContext,
+    system: ActorSystem,
+    res: AgentRuntimePort,
+    displayTitle: String,
+    parentRef: Option[ActorRef[AgentCommand]],
+    blocks: Option[List[ContentBlock]] = None
+  ): IO[Either[ToolError, String]] =
+    val brief =
+      s"""[supplement for the SAME delegate session $id — resumed in place; your history is loaded above]
+[workspace] ${record.cwd} (file tools need absolute paths; Bash cwd is not guaranteed)
+
+$message"""
+    nebflow.core.delegate.SessionResumption
+      .resumeInPlaceLocked(nebflow.core.delegate.SessionResumption.Deps(res, system, ctx.wsSend), record, brief, blocks)
+      .map {
+        case Right(out) =>
+          record.taskId.foreach { tid =>
+            scala.util.Try(
+              TaskLedgerStore
+                .open()
+                .appendNoteSync(
+                  tid,
+                  s"Mail supplement → resumed IN PLACE (same session ${out.delegateId}, transcript ${out.transcriptMessages} msgs appended)",
+                  from = TaskLedgerHistory.Origins.Nebula,
+                  actor = TaskLedgerHistory.Actors.Nebula
+                )
+            )
+          }
+          val parentNote =
+            if out.parentLive then ""
+            else
+              s"\nNOTE: the original parent session '${record.parentSessionId}' is not live right now. If its saved session still exists, " +
+                "the result waits in its durable mailbox until its next wake; otherwise the outcome remains in the task panel."
+          Right(
+            s"[delegate #$id] No live actor was holding this instance — your message RESUMED IT IN PLACE: " +
+              s"**same session id** (`$id`), transcript appended (${out.transcriptMessages} messages replayed, nothing rewritten), " +
+              "same workspace and task ledger. The batch's chain nodes keep their owner, so their completion events and " +
+              s"supplements still reach this session. Display name: \"$displayTitle\" (stable across generations).$parentNote"
+          )
+        case Left(reason) =>
+          // 原位续失败：**显式报错**，绝不静默改走派生（派生 = id 增殖 + 归属断裂，
+          // 正是本批要根治的形态）。记录与转录全在盘上，重试同一条腿即可。
+          Left(
+            ToolError(
+              s"DELEGATE_RESUME_IN_PLACE_FAILED: could not resume delegate '$id' in place: $reason. " +
+                "The registry record, transcript and scope map are preserved. Inspect the missing or unknown state before retrying; Mail never creates a replacement session."
+            )
+          )
+      }
+      .flatMap {
+        case Left(error) =>
+          IO.blocking(DelegateRegistry.isFrozen(id)).flatMap {
+            case true =>
+              queueRecoverySupplement(id, message, blocks, ctx).map(
+                _.map(saved => s"Continuation could not start (${error.message}); $saved")
+              )
+            case false => IO.pure(Left(error))
+          }
+        case result => IO.pure(result)
+      }
+
+  end resumeDelegateInPlace
+
+  // ============================================================
+  // 附件面路线 A——`attachments` 通用附件面
+  //   设计要点（plan §2 方案 A / §1 面 3）：
+  //   ① **上限只引用 `AttachContract`**（件数 9 / 单件 1 GiB）——本文件
+  //      零硬编码副本（判据：`grep` 只见 `AttachContract` 单点）；
+  //   (2) validation **precedes every delivery side effect** (same order as the existing images judgment G3);
+  //   (3) same-machine leg semantics (the device leg is retired => only
+  //       this one remains): **zero bytes are moved**; the body gets a note with "absolute path +
+  //       byte count + sha256" ([[withAttachmentsNote]])
+  //        —— 接收方与发送方共享同一磁盘，路径即取件；
+  //   ④ 🔴 附件**不进 LLM 上下文**（与 `FriendMessageTool.scala:85` 逐字口径一致）。
+  // ============================================================
+
+  /**
+   * `attachments` 参数的**形态解析**（纯函数，与 `ImageInject.parseImagesParam` 同族口径）：
+   * 缺省 ⇒ `Nil`；非数组 / 含非字符串项 ⇒ 显式错误；空白项丢弃；**件数闸**用
+   * `AttachContract.checkAttachmentCount`（上限数单点）。
+   */
+  private[tools] def parseAttachments(input: JsonObject): Either[ToolError, List[String]] =
+    val raw = input("attachments") match
+      case Some(arr) =>
+        arr.asArray match
+          case Some(items) =>
+            items.flatMap(_.asString) match
+              case strings if strings.size == items.size => Right(strings.map(_.trim).filter(_.nonEmpty).toList)
+              case _ => Left(ToolError("attachments must be an array of file path strings."))
+          case None => Left(ToolError("attachments must be an array of file path strings."))
+      case None => Right(Nil)
+    raw.flatMap(paths =>
+      AttachContract
+        .checkAttachmentCount(paths.size)
+        .left
+        .map(e =>
+          ToolError(
+            s"${e.render} — pass at most ${AttachContract.MaxAttachmentsPerMessage} files " +
+              s"(got ${paths.size}). Nothing was sent."
+          )
+        )
+        .map(_ => paths)
+    )
+
+  end parseAttachments
+
+  /**
+   * `attachments` 的**投递前判据**（单点；两条腿共用同一次校验，任一不过 ⇒ 显式错误、
+   * **零投递副作用**）。判据序：
+   *   ① 形态/件数 = [[parseAttachments]]（含 `AttachContract.checkAttachmentCount`）；
+   *   ② 绝对路径形态：对**原始串**判（`os.Path` 构造会把相对段绝对化 ⇒ 构造后再判恒真）；
+   *   ③ 存在且**是文件**（不存在 / 是目录 ⇒ 各自显式错误，不合并成一句）；
+   *   ④ 单件大小 = `AttachContract.checkFileSize`（>1 GiB ⇒ `ATTACH_TOO_LARGE` + actual/limit）。
+   * 返回 = 通过判据的本地绝对路径串（`Nil` = 本次未带附件，两条腿零改动）。
+   */
+  private[tools] def attachmentsPlan(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, List[String]]] =
+    parseAttachments(input) match
+      case Left(err) => IO.pure(Left(err))
+      case Right(Nil) => IO.pure(Right(Nil))
+      case Right(paths) =>
+        IO.blocking {
+          val relative = paths.filter(p => !nebflow.shared.PathUtil.isAbsolute(p))
+          if relative.nonEmpty then
+            Left(
+              ToolError(
+                "attachments paths must be absolute, got: " + relative.map(p => s"'$p'").mkString(", ") +
+                  ". The recipient resolves the path note as-is on this machine, so the paths must be " +
+                  "resolvable as-is — pass ABSOLUTE paths of files on this machine. Nothing was sent."
+              )
+            )
+          else
+            val missing = paths.filter(p => !java.nio.file.Files.exists(java.nio.file.Paths.get(p)))
+            val dirs = paths.filter(p =>
+              java.nio.file.Files.exists(java.nio.file.Paths.get(p)) &&
+                java.nio.file.Files.isDirectory(java.nio.file.Paths.get(p))
+            )
+            if missing.nonEmpty then
+              Left(
+                ToolError(
+                  "attachments does not exist: " + missing.map(p => s"'$p'").mkString(", ") +
+                    ". Nothing was sent — check the path (a file must still exist at send time; worktree or " +
+                    "temporary files are often cleaned up)."
+                )
+              )
+            else if dirs.nonEmpty then
+              Left(
+                ToolError(
+                  "attachments is a directory, not a file: " + dirs.map(p => s"'$p'").mkString(", ") +
+                    ". Attach individual files."
+                )
+              )
+            else
+              val sizes = paths.map(p => java.nio.file.Files.size(java.nio.file.Paths.get(p)))
+              AttachContract.checkMessage(sizes) match
+                case Left(e) =>
+                  Left(
+                    ToolError(
+                      s"${e.render} — the limit is ${AttachContract.MaxFileBytesLabel} per file and " +
+                        s"${AttachContract.MaxAttachmentsPerMessage} files per message. Nothing was sent."
+                    )
+                  )
+                case Right(_) => Right(paths)
+            end if
+          end if
+        }
+
+  /**
+   * 同机腿的附件附注（**零搬字节**：接收方与发送方共享同一磁盘，路径即取件）。
+   *
+   * 逐件给三读数（plan §1 面 5 腿一 A-1 逐字）：**绝对路径 + 字节数 + sha256（发送时算）**。
+   * 🔴 附件**不进 LLM 上下文**（与 `FriendMessageTool.scala:85` 逐字口径一致）——附注只是
+   * 文本，模型想看内容必须自己 `Read`。
+   * `Nil` ⇒ 原样返回（本次未带附件 ⇒ 字节级零改动，既有调用方零漂移）。
+   */
+  private[tools] def withAttachmentsNote(message: String, attachmentPaths: List[String]): String =
+    if attachmentPaths.isEmpty then message
+    else
+      val lines = attachmentPaths.map { p =>
+        val path = java.nio.file.Paths.get(p)
+        s"  - $p (${java.nio.file.Files.size(path)} B, sha256 ${sha256OfFile(path)})"
+      }
+      message +
+        s"\n[Mail 附件] ${attachmentPaths.size} 件通用文件（本机同盘，未复制）——用 Read 读下列绝对路径取内容" +
+        "（附件不进 LLM 上下文，必须先 Read）：\n" + lines.mkString("\n")
+
+  /**
+   * 逐件 sha256（hex）。由 `SeedService.sha256File:597-599` 同款口径（`MessageDigest` +
+   * `%02x`），供同机腿附注的「发送时算」读数用。读盘异常 ⇒ 附注里退化成
+   * `unreadable`（附注绝不因为算摘要失败而中断投递；存在性已在 [[attachmentsPlan]] 判过）。
+   */
+  private def sha256OfFile(path: java.nio.file.Path): String =
+    try
+      val md = java.security.MessageDigest.getInstance("SHA-256")
+      md.digest(java.nio.file.Files.readAllBytes(path)).map("%02x".format(_)).mkString
+    catch case _: Exception => "unreadable"
+
+  /**
+   * 腿③（分发器 → root）：**解析到真正的 Nebula root 会话**。
+   * 硬禁三种静默行为：① 回落成发信者自身 ② 落到非 Nebula 的 Root 会话
+   * ③ 解析失败仍报成功——解析不到即**显式报错**（并不指明合法地址面）。
+   */
+  private def deliverToRootAgent(
+    address: String,
+    message: String,
+    blocks: Option[List[ContentBlock]],
+    ctx: ToolContext,
+    system: ActorSystem
+  ): IO[Either[ToolError, String]] =
+    val senderSessionId = ctx.sessionId.getOrElse("")
+    // the `type` parameter is retired with the key --
+    // the event type is judged here by the body's leading `[INTERRUPT]` literal
+    // (same single-point criterion as the dispatcher-reply window exemption;
+    // [[isDispatcherMailInterrupt]]). A literal first line => `interrupt`, else `info`.
+    val eventType = if isDispatcherMailInterrupt(message) then "interrupt" else "info"
+    ctx.sharedResources match
+      case None => IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
+      case Some(res) =>
+        resolveRootRef(res, senderSessionId, ctx.rootSessionId).flatMap {
+          case Some((sid, ref)) =>
+            sendMail(ref, RootAgentName, message, blocks, eventType, ctx, system).map {
+              case Right(_) =>
+                Right(
+                  s"Message sent to Nebula (root session ${sid.take(8)}). The root agent will process it."
+                )
+              case Left(err) => Left(err)
+            }
+          case None => IO.pure(Left(rootUnresolvedError(senderSessionId)))
+        }
+    end match
+  end deliverToRootAgent
+
+  private def rootUnresolvedError(senderSessionId: String): ToolError =
+    ToolError(
+      "Cannot resolve the Nebula root session (NEBULA_ROOT_UNRESOLVED). No Mail was delivered — this is an explicit " +
+        "failure, not a silent success. Expected: exactly one live Root session whose session meta names agent 'Nebula' " +
+        s"and which is not the sender itself (${
+            if senderSessionId.isEmpty then "sender session unknown" else senderSessionId.take(8)
+          }). Check that the gateway's Nebula window session is running, then retry; your legal address face is " +
+        s"$dispatcherFace."
+    )
+
+  // ============================================================
+  // Legacy queue layer: persisted FIFO, drained one-per-turn
+  // ============================================================
+  // 退役登记（delivery 退役；**未摘除面**）：
+  // queue 模式退役、且 `delivery` 键已退役出 schema（案 C）⇒
+  // 本层自此起**在本工具面零生产调用方**（`call` 的单点前置闸——喂给它的
+  // 正是墓碑读取 `deliveryTombstone`——已显式拒绝一切非设备腿的 `delivery="queue"`，
+  // `layeredRoute` 结构上不再持有 `delivery` 参数）。本层**保留不动**（禁摘除）：① spec 直调
+  // （`MailToolRootSenderSpec` / `MailQueueNebulaSpec` / `ColdQueueActivationSpec` /
+  // `MailIdleGateWiringSpec` —— 它们钉的是 idle-gate / 冷激活 / 根解析等**已落契约**，
+  // 与退役面正交）；② 在库消费者仍在（`AgentActor` 的 legacy 队列排空、
+  // `RestApiRoutes` 的队列检视/取消端点 —— 禁碰）。摘除属另议。
+  //
+  // Project-trigger 拆除批：本层原有的 queue→project 对称腿（`routeToProject` 直调，
+  // 「#28 阶段 0 §3.2 试点期新旧并存」）已随触发链整体拆除——queue 形态下项目名
+  // 不再触达 `ProjectActor.TriggerDispatcher`（该形态本就生产不可达；摘除的是
+  // D-5 登记的「退役未摘除」残面，与立即路径的拆除同批对称收口）。
+
   private[tools] def deliverQueue(
-      address: String,
-      message: String,
-      mailType: String,
-      imagePaths: List[String],
-      ctx: ToolContext,
-      system: ActorSystem
-    ): IO[Either[ToolError, String]] =
+    address: String,
+    message: String,
+    eventType: String,
+    imagePaths: List[String],
+    ctx: ToolContext,
+    system: ActorSystem
+  ): IO[Either[ToolError, String]] =
     val senderSessionId = ctx.sessionId.getOrElse("")
     val senderName = ctx.agentDef.map(_.name).getOrElse("")
 
-    TeamSessionRegistry.teamOfSession(senderSessionId).flatMap {
-      case None =>
-        if address == "Nebula" && senderName != "Nebula" then
-          canMailNebula(senderName, senderSessionId).flatMap { canMail =>
-            if canMail then resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
-            else
-              IO.pure(
-                Left(ToolError("Cannot mail Nebula directly. You are a team worker. Report to your Manager via Mail."))
-              )
-          }
-        else resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
-      case Some(teamName) =>
-        checkTeamScope(address, teamName, senderSessionId, senderName).flatMap {
-          case Some(error) => IO.pure(Left(ToolError(error)))
-          case None        => resolveAndQueue(address, message, mailType, imagePaths, ctx, system, senderSessionId)
-        }
-    }
+    // 团队功能删除批（team-feature-deletion-20261104）阶段 3：本层原有的
+    // `teamOfSession` 分叉（团队成员 → checkTeamScope 闸门 / 团队外 → canMailRoot
+    // 闸门）随团队地址面整体删除。本层**保留**（退役登记见上方 §Legacy queue
+    // layer），在本工具面仍零生产调用方；它现在只服务 Nebula 一条腿。
+    if address == RootAgentName && senderName != RootAgentName && !ctx.isDispatcher then
+      IO.pure(Left(rootDeniedError(senderName)))
+    else resolveAndQueue(address, message, eventType, imagePaths, ctx, system, senderSessionId)
   end deliverQueue
 
-  /** Resolve target session (team name → lead, or short name) then queue the mail. */
+  /** Resolve target session (Nebula root only — the team/short-name legs are gone) then queue the mail. */
   private def resolveAndQueue(
-      address: String,
-      message: String,
-      mailType: String,
-      imagePaths: List[String],
-      ctx: ToolContext,
-      system: ActorSystem,
-      senderSessionId: String
-    ): IO[Either[ToolError, String]] =
+    address: String,
+    message: String,
+    eventType: String,
+    imagePaths: List[String],
+    ctx: ToolContext,
+    system: ActorSystem,
+    senderSessionId: String
+  ): IO[Either[ToolError, String]] =
+    // 团队功能删除批（team-feature-deletion-20261104）阶段 3：本方法原有的
+    // ① 团队名 → lead 解析腿（`EntityLoader.loadTeam` + `findTeamAgent`）、
+    // ② 裸短名解析腿（`resolveSessionId`），随团队/短名地址面一并删除。
+    // 队列表层剩下的可寻址面 = `Nebula`（唯一有 root 解析单点的地址）。
+    // 其余地址一律落「不认识」判定（`mailNotFound` 的文案面已随团队口径改写）。
     for
-      teamOpt <- EntityLoader.loadTeam(address)
-      result <- teamOpt match
-        case Some(team) =>
-          for
-            leadSidOpt <- TeamSessionRegistry.findTeamAgent(address, team.lead)
-            r <- leadSidOpt match
-              case Some(targetSid) => queueToSession(targetSid, team.lead, message, mailType, imagePaths, ctx, system, senderSessionId)
-              case None =>
-                IO.pure(Left(ToolError(s"Team '$address' is not mounted. Use Load(type: \"team\", name: \"$address\") first.")))
-          yield r
-        case None =>
-          for
-            // Mail(→project) 路由（#28 阶段 0，§3.2 试点期新旧并存）：
-            // project 名 → ProjectActor.TriggerDispatcher（触发分发器会话）。
-            // 团队名路由优先（旧体系照常）；project 名兜底（新体系试点）。
-            // Mail 仅做触发、无回报——节点结果沿 out 边投递（§2.7），不靠 Mail。
-            pr <- routeToProject(address, message, ctx).flatMap {
-              case Some(r) => IO.pure(r)
-              case None =>
-                for
-                  senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
-                  sr <- senderTeamOpt match
-                    case None if address != "Nebula" =>
-                      IO.pure(Left(ToolError(TeamOnlyRoutingError)))
-                    case _ =>
-                      for
-                        targetRes <- ctx.sharedResources match
-                          case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
-                          case None      => IO.pure(Right(None))
-                        sr2 <- targetRes match
-                          case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
-                          case Right(Some(targetSid)) =>
-                            queueToSession(targetSid, address, message, mailType, imagePaths, ctx, system, senderSessionId)
-                          case Right(None) if address == "Nebula" =>
-                            queueToNebula(message, mailType, imagePaths, ctx, system, senderSessionId, address)
-                          case Right(None) => mailNotFound(address)
-                      yield sr2
-                yield sr
-            }
-          yield pr
+      projectHit <- ProjectRuntimeRegistry.get(address)
+      result <- projectHit match
+        case Some(_) => IO.pure(Left(projectTriggerUnsupportedError(address)))
+        case None if address == RootAgentName =>
+          queueToRoot(message, eventType, imagePaths, ctx, system, senderSessionId, address, None)
+        case None => IO.pure(Left(unresolvableAddressInQueueError(address)))
     yield result
+
+  /** 遗留队列层的「不认识的地址」落点（团队/短名腿退役后的通用判定，无专门错误码）。 */
+  private def unresolvableAddressInQueueError(address: String): ToolError =
+    ToolError(
+      s"Cannot resolve address '$address' — it is not a recognizable target of the legacy queue layer " +
+        "(only \"Nebula\" is routable there). No fallback was applied."
+    )
 
   /**
    * Queue-mode routing to the Nebula root agent (issue #312).
    *
-   * resolveSessionId's contract for "Nebula" is Right(None) = "route to the
-   * root agent directly" (see its "team/Nebula" branch) — but the caller must
-   * locate the root session: the Nebula root is a Root-kind AgentRecord in the
-   * agent registry, NOT a team session in sessionMap. Before this fix a queue
-   * Mail to "Nebula" fell into mailNotFound with a misleading "only Team Lead
-   * can communicate with Nebula" error even when the sender IS the Team Lead
-   * (Manager→Nebula queue rejected; immediate mode was fine because it
-   * resolves the actor by name via system.resolve). Permission is already
-   * enforced upstream: deliverQueue runs checkTeamScope first, so only
-   * canMailNebula senders reach here with address == "Nebula".
+   * `resolveSessionId`'s legacy contract for "Nebula" was Right(None) = "route to
+   * the root agent directly" (see the "team/Nebula" branch of the retired team
+   * session registry) — but the caller must locate the root session: the Nebula
+   * root is a Root-kind AgentRecord in the agent registry, NOT a session in any
+   * team map. Before this fix a queue Mail to "Nebula" fell into mailNotFound
+   * with a misleading "only Team Lead can communicate with Nebula" error even
+   * when the sender IS the Team Lead (Manager→Nebula queue rejected; immediate
+   * mode was fine because it resolves the actor by name via system.resolve).
+   * The team-lead leg is retired with the team feature (stage 3): permission is
+   * now enforced upstream in [[deliverQueue]] by the single `ctx.isDispatcher`
+   * criterion, so only a dispatcher reaches here with address == "Nebula".
    */
-  private[tools] def queueToNebula(
-      message: String,
-      mailType: String,
-      imagePaths: List[String],
-      ctx: ToolContext,
-      system: ActorSystem,
-      senderSessionId: String,
-      address: String
-    ): IO[Either[ToolError, String]] =
+  private[tools] def queueToRoot(
+    message: String,
+    eventType: String,
+    imagePaths: List[String],
+    ctx: ToolContext,
+    system: ActorSystem,
+    senderSessionId: String,
+    address: String,
+    chainId: Option[String]
+  ): IO[Either[ToolError, String]] =
     ctx.sharedResources match
       case Some(res) =>
-        resolveNebulaRootSession(res).flatMap {
-          case Some(nebulaSid) =>
-            queueToSession(nebulaSid, address, message, mailType, imagePaths, ctx, system, senderSessionId)
-          case None => mailNotFound(address)
+        resolveRootSession(res, senderSessionId, ctx.rootSessionId).flatMap {
+          case Some(rootSid) =>
+            queueToSession(
+              rootSid,
+              address,
+              withChainAnnotation(message, chainId),
+              eventType,
+              imagePaths,
+              ctx,
+              system,
+              senderSessionId
+            )
+          case None => IO.pure(Left(rootUnresolvedError(senderSessionId)))
         }
-      case None => mailNotFound(address)
+      case None => IO.pure(Left(ToolError("Cannot resolve the Nebula root session: missing resources.")))
 
-  /** The Nebula root agent's sessionId from the unified agent registry (Root kind). */
-  private[tools] def resolveNebulaRootSession(res: SharedResources): IO[Option[String]] =
-    res.agentRegistry.get.map(_.collectFirst { case (_, rec) if rec.kind == AgentKind.Root => rec.sessionId })
+  /**
+   * The Nebula root agent's sessionId — **the true Nebula root**, not "any Root record"
+   * (追加条款). 解析序（两档，任一档解析不出 ⇒ None ⇒ 调用方显式报错）：
+   *   ① **preferredRootSid**（调用方会话的 `ctx.rootSessionId`）——spawn 本分发器会话的
+   *      那个 root 会话，确定性最高、零歧义；命中失败**不**静默改选别的 Root 会话；
+   *   ② 无 preferred 时按 **session meta**（`agentName == "Nebula"`）判定，且必须唯一。
+   * 两档都**排除发信者自身**（硬禁「回落成发信者自身」）。
+   */
+  private[tools] def resolveRootSession(
+    res: AgentRuntimePort,
+    senderSessionId: String,
+    preferredRootSid: Option[String] = None
+  ): IO[Option[String]] =
+    resolveRoots(res, senderSessionId, preferredRootSid).map(_.headOption.map(_._1))
 
-  /** Persist to MailQueueStore, activate target, send MailQueued command.
-    * private[tools] for ColdQueueActivationSpec (issue #22). */
+  /**
+   * Root records eligible as "the Nebula root"（判据见 [[resolveRootSession]] 文档）。
+   * 返回 0 或 ≥2 项都由调用方判为「解析不出」——**绝不**静默挑一条。
+   *
+   * Visibility `private` -> `private[nebflow]` —— the former
+   * device-mail intake leg (`nebflow.neblink.social.DeviceMailInbox`) injected into this machine's
+   * Nebula session through this **single resolution point**.
+   *  that intake leg is retired with the tunnel face
+   * (the tunnel side logs WARN and ignores `agent_mail` frames), but the **visibility is not
+   * reverted** — the same-machine injection path and the specs still go through this single
+   * point (a second copy of the same expression is forbidden: two copies always drift). Zero
+   * semantic change, zero authorization-face change.
+   */
+  private[nebflow] def resolveRoots(
+    res: AgentRuntimePort,
+    senderSessionId: String,
+    preferredRootSid: Option[String]
+  ): IO[List[(String, ActorRef[AgentCommand])]] =
+    res.agentRegistry.get.flatMap { reg =>
+      val rootRecs = reg.values.toList
+        .filter(rec => rec.kind == AgentKind.Root && rec.ref != null && rec.sessionId != senderSessionId)
+        .sortBy(_.sessionId)
+      preferredRootSid.map(_.trim).filter(_.nonEmpty) match
+        case Some(pid) =>
+          // 档①：确定性解析（本分发器会话的触发 root）。找不到 ⇒ 空（不回落、不改选）。
+          IO.pure(rootRecs.find(_.sessionId == pid).map(rec => List((rec.sessionId, rec.ref))).getOrElse(Nil))
+        case None =>
+          // 档②：session meta 判定（agentName == "Nebula"）——要求唯一。
+          val store = res.sessionStore
+          if store == null then IO.pure(Nil)
+          else
+            rootRecs.flatTraverse { rec =>
+              store.getSessionMeta(rec.sessionId).map { meta =>
+                if meta.flatMap(_.agentName).contains(RootAgentName) then List((rec.sessionId, rec.ref)) else Nil
+              }
+            }
+    }
+
+  private def resolveRootRef(
+    res: AgentRuntimePort,
+    senderSessionId: String,
+    preferredRootSid: Option[String]
+  ): IO[Option[(String, ActorRef[AgentCommand])]] =
+    resolveRoots(res, senderSessionId, preferredRootSid).map {
+      case List(one) => Some(one)
+      case _ => None // 0 命中或 ≥2 命中（歧义）都算解析不出 → 显式报错
+    }
+
+  /**
+   * Persist to MailQueueStore, activate target, send MailQueued command.
+   * private[tools] for ColdQueueActivationSpec (issue #22).
+   */
   private[tools] def queueToSession(
-      sessionId: String,
-      shortName: String,
-      message: String,
-      mailType: String,
-      imagePaths: List[String],
-      ctx: ToolContext,
-      system: ActorSystem,
-      senderSessionId: String
-    ): IO[Either[ToolError, String]] =
-    val senderName = ctx.agentDef.map(_.name).getOrElse("Nebula")
-    val item = MailQueueStore.MailQueueItem(
+    sessionId: String,
+    shortName: String,
+    message: String,
+    eventType: String,
+    imagePaths: List[String],
+    ctx: ToolContext,
+    system: ActorSystem,
+    senderSessionId: String
+  ): IO[Either[ToolError, String]] =
+    val senderName = ctx.agentDef.map(_.name).getOrElse(RootAgentIdentity.Name)
+    val item = MailQueueItem(
       id = s"mail-q-${java.util.UUID.randomUUID().toString.take(8)}",
       from = senderName,
       fromSession = senderSessionId,
       message = message,
-      `type` = mailType,
+      `type` = eventType,
       timestamp = System.currentTimeMillis(),
       // D6: persist paths (not base64) — re-read + re-compress at drain time
       imagePaths = imagePaths
@@ -343,9 +2165,7 @@ Message type (optional, default "INFO"):
         for
           // 1. Persist to queue (survives restart)
           _ <- MailQueueStore.append(sessionId, item)
-          // 2. Record in mailbox history
-          _ <- onMailDelivered(senderSessionId, sessionId, shortName, message, ctx)
-          // 3. Get or activate the target actor (#22: with liveness probe —
+          // 2. Get or activate the target actor (#22: with liveness probe —
           // a stale dead ref would swallow MailQueued into an unconsumed queue)
           refOpt <- MailTool.this.liveActorOrActivate(sessionId, resources, actorSystem, ctx)
           // 4. Send MailQueued command (triggers drain on the live actor)
@@ -359,322 +2179,143 @@ Message type (optional, default "INFO"):
           // 4+5. Emit WS event regardless of activation outcome (the item IS
           // persisted either way — the frontend should see the queue grow)
           pendingCount <- MailQueueStore.size(sessionId)
-          _ <- emitWsEvent(ctx, Json.obj(
-            "type" -> "mailQueued".asJson,
-            "sessionId" -> sessionId.asJson,
-            "from" -> senderName.asJson,
-            "to" -> shortName.asJson,
-            "preview" -> message.take(200).asJson,
-            "pendingCount" -> pendingCount.asJson,
-            "timestamp" -> item.timestamp.asJson
-          ))
+          _ <- emitWsEvent(
+            ctx,
+            Json.obj(
+              "type" -> "mailQueued".asJson,
+              "sessionId" -> sessionId.asJson,
+              "from" -> senderName.asJson,
+              "to" -> shortName.asJson,
+              "preview" -> message.take(200).asJson,
+              "pendingCount" -> pendingCount.asJson,
+              "timestamp" -> item.timestamp.asJson
+            )
+          )
         yield refOpt match
           case Some(_) =>
-            Right(s"Message queued to $shortName. Will be processed after current work completes (position #$pendingCount in queue).")
+            Right(
+              s"Message queued to $shortName. Will be processed after current work completes (position #$pendingCount in queue)."
+            )
           case None =>
             // #22 honesty: activation failed (session meta or agent def not
             // loadable). The item IS on disk and will drain on the agent's
             // next successful activation — but claiming "will be processed"
             // unconditionally was a silent-loss lie.
-            Left(ToolError(
-              s"Message persisted to $shortName's queue (position #$pendingCount), but cold activation FAILED — session metadata or agent definition not found for session ${sessionId.take(8)}. " +
-                s"The item will drain once the agent is loadable (check the agent exists in its team). See logs: \"[mail] activation failed\"."
-            ))
+            Left(
+              ToolError(
+                s"Message persisted to $shortName's queue (position #$pendingCount), but cold activation FAILED — session metadata or agent definition not found for session ${sessionId.take(8)}. " +
+                  s"The item will drain once the agent is loadable (check the agent exists in its team). See logs: \"[mail] activation failed\"."
+              )
+            )
       case _ =>
         IO.pure(Left(ToolError(s"Cannot deliver queue mail to '$shortName': missing resources")))
+    end match
   end queueToSession
 
   private def emitWsEvent(ctx: ToolContext, event: Json): IO[Unit] =
     ctx.wsSend match
       case Some(send) => send(event).handleErrorWith(_ => IO.unit)
-      case None       => IO.unit
+      case None => IO.unit
 
   // ============================================================
   // Normal mode: async delivery
   // ============================================================
 
   private def deliverToAddress(
-      address: String,
-      message: String,
-      blocks: Option[List[ContentBlock]],
-      mailType: String,
-      ctx: ToolContext,
-      system: ActorSystem
-    ): IO[Either[ToolError, String]] =
-    system.resolve[AgentCommand](address).attempt.flatMap {
-      case Right(ref) => sendMail(ref, address, message, blocks, mailType, ctx, system)
-      case Left(err) => IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
-    }
-
-  private def deliverToShortName(
-      address: String,
-      message: String,
-      blocks: Option[List[ContentBlock]],
-      mailType: String,
-      ctx: ToolContext,
-      system: ActorSystem
-    ): IO[Either[ToolError, String]] =
-    val senderSessionId = ctx.sessionId.getOrElse("")
-    val senderName = ctx.agentDef.map(_.name).getOrElse("")
-
-    TeamSessionRegistry.teamOfSession(senderSessionId).flatMap {
-      case None =>
-        if address == "Nebula" && senderName != "Nebula" then
-          canMailNebula(senderName, senderSessionId).flatMap { canMail =>
-            if canMail then deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
-            else
-              IO.pure(
-                Left(
-                  ToolError(
-                    "Cannot mail Nebula directly. You are a team worker. Report to your Manager via Mail."
-                  )
-                )
-              )
-          }
-        else deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
-      case Some(teamName) =>
-        checkTeamScope(address, teamName, senderSessionId, senderName).flatMap {
-          case Some(error) => IO.pure(Left(ToolError(error)))
-          case None =>
-            deliverShortNameUnscoped(address, message, blocks, mailType, ctx, system, senderSessionId)
-        }
-    }
-  end deliverToShortName
-
-  /**
-   * Who may mail Nebula directly: a registered team Manager (managerMap) OR
-   * any team lead by definition (agent.json lead of a mounted/defined team).
-   * The name-based fallback covers fork/temporary sessions — a forked Manager
-   * keeps the Manager agentDef (and its lead role) but its sessionId is not
-   * registered in managerMap, so sid-only checks would wrongly reject it.
-   */
-  private def canMailNebula(senderName: String, senderSessionId: String): IO[Boolean] =
-    TeamSessionRegistry.isManager(senderSessionId).flatMap { isMgr =>
-      if isMgr then IO.pure(true)
-      else if senderName.isEmpty then IO.pure(false)
-      else EntityLoader.listTeams().map(_.values.exists(_.lead == senderName))
-    }
-
-  /** Locate the Nebula root agent's actor in the unified AgentRegistry (kind == Root). */
-  private def resolveNebulaRef(resources: SharedResources): IO[Option[ActorRef[AgentCommand]]] =
-    resources.agentRegistry.get.map(_.collectFirst { case (_, rec) if rec.kind == AgentKind.Root => rec.ref })
-
-  private[tools] def deliverShortNameUnscoped(
     address: String,
     message: String,
     blocks: Option[List[ContentBlock]],
-    mailType: String,
-    ctx: ToolContext,
-    system: ActorSystem,
-    senderSessionId: String
-  ): IO[Either[ToolError, String]] =
-    for
-      teamOpt <- EntityLoader.loadTeam(address)
-      result <- teamOpt match
-        case Some(team) =>
-          for
-            leadSidOpt <- TeamSessionRegistry.findTeamAgent(address, team.lead)
-            r <- leadSidOpt match
-              case Some(targetSid) =>
-                for
-                  res <- deliverToSession(targetSid, team.lead, message, blocks, mailType, ctx, system)
-                  _ <- res match
-                    case Right(_) => onMailDelivered(senderSessionId, targetSid, team.lead, message, ctx)
-                    case Left(_) => IO.unit
-                yield res
-              case None =>
-                IO.pure(
-                  Left(
-                    ToolError(
-                      s"Team '$address' is not mounted. Use Load(type: \"team\", name: \"$address\") first."
-                    )
-                  )
-                )
-          yield r
-
-        case None =>
-          // Mail(→project) 路由（§3.2，immediate 路径对称）——先于旧 short-name 解析。
-          for
-            pr <- routeToProject(address, message, ctx).flatMap {
-              case Some(r) => IO.pure(r)
-              case None =>
-                // Not a team name — short agent name. Routable only for senders
-                // with a team context (same-team priority); outside a team, only
-                // team names and "Nebula" are valid (user ruling 08-24 — the
-                // team/agent escape hatch is closed for root senders).
-                for
-                  senderTeamOpt <- TeamSessionRegistry.teamOfSession(senderSessionId)
-                  sr <- senderTeamOpt match
-                    case None if address != "Nebula" =>
-                      IO.pure(Left(ToolError(TeamOnlyRoutingError)))
-                    case _ =>
-                      for
-                        targetRes <- ctx.sharedResources match
-                          case Some(res) => TeamSessionRegistry.resolveSessionId(senderSessionId, address, res.sessionStore)
-                          case None => IO.pure(Right(None))
-                        sr2 <- targetRes match
-                          case Left(ambErr) => IO.pure(Left(ToolError(ambErr)))
-                          case Right(Some(targetSid)) =>
-                            for
-                              res <- deliverToSession(targetSid, address, message, blocks, mailType, ctx, system)
-                              _ <- res match
-                                case Right(_) => onMailDelivered(senderSessionId, targetSid, address, message, ctx)
-                                case Left(_) => IO.unit
-                            yield res
-                          case Right(None) =>
-                            val isNebulaTarget = address == "Nebula" || address.endsWith("/Nebula")
-                            if isNebulaTarget then
-                              for
-                                // Prefer the parent-actor route (team agents have their
-                                // parent registered at mount time). Fork/temporary sessions
-                                // have no registered parent — fall back to the Nebula root
-                                // session's actor in the unified AgentRegistry.
-                                parentActorOpt <- TeamSessionRegistry.getParentActor(senderSessionId)
-                                res <- parentActorOpt match
-                                  case Some(ref) => sendMail(ref, "Nebula", message, blocks, mailType, ctx, system)
-                                  case None =>
-                                    ctx.sharedResources match
-                                      case Some(res) =>
-                                        resolveNebulaRef(res).flatMap {
-                                          case Some(ref) => sendMail(ref, "Nebula", message, blocks, mailType, ctx, system)
-                                          case None => mailNotFound(address)
-                                        }
-                                      case None => mailNotFound(address)
-                              yield res
-                            else mailNotFound(address)
-                            end if
-                      yield sr2
-                yield sr
-            }
-          yield pr
-    yield result
-
-  /** Marker a team's rules.md can set to opt in to cross-team explicit Mail. */
-  private val CrossTeamMailMarker = "allow-cross-team-mail: true"
-
-  /**
-   * Explicit "team/agent" addresses targeting another team are blocked by
-   * default for non-lead senders (decision 20) — the escalation path is
-   * Manager → Nebula. A team opts in by writing
-   * `<!-- allow-cross-team-mail: true -->` in its rules.md. Leads (any team
-   * Manager / lead — same judgment as canMailNebula) always pass.
-   *
-   * Unaffected: same-team explicit routes, short names, and the Nebula root
-   * (no team context — it never reaches checkTeamScope).
-   */
-  private def checkCrossTeamExplicitRoute(
-    address: String,
-    senderTeam: String,
-    isLead: Boolean
-  ): IO[Option[String]] =
-    if !address.contains("/") then IO.pure(None)
-    else
-      val targetTeam = address.substring(0, address.indexOf('/'))
-      if targetTeam == senderTeam || isLead then IO.pure(None)
-      else
-        EntityLoader.loadTeamRules(senderTeam).map { rules =>
-          if rules.contains(CrossTeamMailMarker) then None
-          else
-            Some(
-              s"Cross-team Mail to '$address' is blocked by default. You are in team '$senderTeam'. " +
-                "Ask your Manager to escalate to Nebula, or have the team opt in via its rules.md " +
-                "(allow-cross-team-mail: true)."
-            )
-        }
-
-  /** Visible for tests (package-private). */
-  private[tools] def checkTeamScope(
-    address: String,
-    teamName: String,
-    senderSessionId: String,
-    senderName: String
-  ): IO[Option[String]] =
-    for
-      teamOpt <- EntityLoader.loadTeam(address)
-      canNebula <- canMailNebula(senderName, senderSessionId)
-      crossTeam <- checkCrossTeamExplicitRoute(address, teamName, canNebula)
-    yield teamOpt match
-      case Some(_) if address == teamName =>
-        None
-      case Some(_) =>
-        Some(s"Cannot mail outside your team. You are in team '$teamName'. Use your Manager to escalate to Nebula.")
-      case None if address == "Nebula" && canNebula =>
-        None
-      case None if address == "Nebula" =>
-        Some("Cannot mail Nebula directly. Use Mail(\"manager\", ...) to report to your Team Lead.")
-      case None =>
-        crossTeam
-
-  /** Deliver to a session — ensure actor exists, then send Mail. */
-  private def deliverToSession(
-    sessionId: String,
-    shortName: String,
-    message: String,
-    blocks: Option[List[ContentBlock]],
-    mailType: String,
+    eventType: String,
     ctx: ToolContext,
     system: ActorSystem
   ): IO[Either[ToolError, String]] =
-    (ctx.sharedResources, ctx.actorSystem) match
-      case (Some(resources), Some(actorSystem)) =>
-        for
-          // Check if actor already running (#22: probe liveness — dead cached
-          // ref would swallow ImmediateInput into an unconsumed queue)
-          refOpt <- MailTool.this.liveActorOrActivate(sessionId, resources, actorSystem, ctx)
-          result <- refOpt match
-            case Some(ref) => sendMail(ref, shortName, message, blocks, mailType, ctx, system)
-            case None =>
-              TeamSessionRegistry.getParentActor(sessionId).flatMap {
-                case Some(ref) => sendMail(ref, shortName, message, blocks, mailType, ctx, system)
-                case None => mailNotFound(shortName)
-              }
-        yield result
-      case _ =>
-        IO.pure(Left(ToolError(s"Cannot activate session for '$shortName': missing resources")))
-
-  /** getRunningActor + liveness probe (#22): a cached ref whose actor loop
-    * has exited (crash / TTL / stop whose deathwatch cleanup missed) still
-    * accepts offers into an unconsumed queue — a queue-mode Mail delivered to
-    * it persists, sends MailQueued into the void, and NEVER activates the
-    * agent: no error, no retry, silent loss (issue #22's mechanism). Probe
-    * the actor system registry; dead ref → reactivate. */
-  private def liveActorOrActivate(
-      sessionId: String,
-      resources: SharedResources,
-      system: ActorSystem,
-      ctx: ToolContext
-  ): IO[Option[ActorRef[AgentCommand]]] =
-    TeamSessionRegistry.getRunningActor(sessionId).flatMap {
-      case Some(ref) =>
-        system.isAlive(ref.path).flatMap {
-          case true => IO.pure(Some(ref))
-          case false =>
-            logger.warn(
-              s"[mail] stale actor ref for session=${sessionId.take(8)} — actor dead but actorMap kept it; reactivating (issue #22)"
-            ) *> activateAgent(sessionId, resources, system, ctx)
-        }
-      case None =>
-        // #407 fix（E2E 实证）：用户消息触发的 team 成员 spawn（ensureRootAgent）
-        // 只写统一 agentRegistry、不写 TeamSessionRegistry.actorMap——只查 actorMap
-        // 会误判「无 live actor」→ activateAgent 重复 spawn（双活：旧 actor 在途
-        // turn 与恢复 actor 并存，queue Mail 的 gate 投递错位、turn 完成不 drain）。
-        // 回退统一注册表找 live record（ref 非 null 且 actor 存活），命中则复用。
-        resources.agentRegistry.get.flatMap { reg =>
-          reg.get(sessionId).filter(_.ref != null) match
-            case Some(rec) =>
-              system.isAlive(rec.ref.path).flatMap {
-                case true  => IO.pure(Some(rec.ref))
-                case false => activateAgent(sessionId, resources, system, ctx)
-              }
-            case None => activateAgent(sessionId, resources, system, ctx)
-        }
+    system.resolve[AgentCommand](address).attempt.flatMap {
+      case Right(ref) => sendMail(ref, address, message, blocks, eventType, ctx, system)
+      case Left(err) => IO.pure(Left(ToolError(s"Failed to resolve address '$address': ${err.getMessage}")))
     }
 
-  /** Activate a team agent session by spawning an AgentActor (replaces FlowAgentActivator).
-    * Package-visible for the lifecycle spec (respawn history + death watch). */
+  /**
+   * 「不能给 root 发」的显式归因文案（R-15）。
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：原文案按「不是分发器
+   * 也不是团队 lead」分档，且指路「经 Team Lead / Manager 上报」——团队退役后这两
+   * 条归因都不成立。现文案只保留**唯一存活的判据** `ctx.isDispatcher`（root 准入
+   * 面收敛为分发器一条腿；delegate 会话的 Nebula 腿在 [[layeredRoute]] 另判，不
+   * 走本分支）。
+   */
+  private def rootDeniedError(senderName: String): ToolError =
+    val who = if senderName.isEmpty then "This sender" else s"'$senderName'"
+    ToolError(
+      s"Cannot mail Nebula directly: $who is not a project dispatcher. Direct delivery to root is the " +
+        "dispatcher face (and, separately, the delegate face for its own continuation instances). " +
+        "Your legal address face does not include \"Nebula\"."
+    )
+
+  // ════════════════════════════════════════════════════════════════
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3 —— 团队地址面退役
+  // ════════════════════════════════════════════════════════════════
+  // 本段原有五件（作者裁定「硬删，不留 MAIL_TEAM_REMOVED 之类特判」）：
+  //   · `deliverToShortName`             —— 团队外裸名的分叉（团队成员的
+  //     `checkTeamScope` 闸门 / 团队外的 `canMailRoot` 闸门）；
+  //   · `canMailRoot`                    —— root 准入三判据（分发器 / 团队
+  //     Manager / 团队 lead 名匹配）；
+  //   · `deliverShortNameUnscoped`       —— 「团队名 → lead」与「裸短名 →
+  //     resolveSessionId」两条解析腿；
+  //   · `checkCrossTeamExplicitRoute` + `CrossTeamMailMarker` —— 跨团队 Mail
+  //     默认阻止 + rules.md 的 `allow-cross-team-mail: true` 开关；
+  //   · `checkTeamScope` + `deliverToSession` —— 同团队/跨团队判定，与「按
+  //     sessionId 找到成员 actor 再投递」的收尾腿。
+  // 五件全部删除，**不留任何团队专用错误码**：团队名 / `team/agent` / 裸团队内
+  // 短名此后落通用的「不认识的地址」错误（[[unresolvableError]]，由 `call` 的
+  // 分层面落空分支给出）。判定与依据见
+  // reports-evidence/team-feature-deletion/stage3/README.md §Mail。
+
+  /**
+   * getRunningActor + liveness probe (#22): a cached ref whose actor loop
+   * has exited (crash / TTL / stop whose deathwatch cleanup missed) still
+   * accepts offers into an unconsumed queue — a queue-mode Mail delivered to
+   * it persists, sends MailQueued into the void, and NEVER activates the
+   * agent: no error, no retry, silent loss (issue #22's mechanism). Probe
+   * the actor system registry; dead ref → reactivate.
+   */
+  private def liveActorOrActivate(
+    sessionId: String,
+    resources: AgentRuntimePort,
+    system: ActorSystem,
+    ctx: ToolContext
+  ): IO[Option[ActorRef[AgentCommand]]] =
+    // 团队功能删除批（team-feature-deletion-20261104）阶段 3：本方法原先是
+    // 「先查团队会话登记表的 actorMap，落空再回退统一 agentRegistry」两档。
+    // 登记表本体删除后**只剩 agentRegistry 一档**（#407 的修复腿本就是它，
+    // 而 actorMap 侧自 dual-write 起就与它同源）—— 零语义变化：命中且存活即复用，
+    // 死引用或零记录才走冷激活（issue #22 的探活纪律逐字保留）。
+    resources.agentRegistry.get.flatMap { reg =>
+      reg.get(sessionId).filter(_.ref != null) match
+        case Some(rec) =>
+          system.isAlive(rec.ref.path).flatMap {
+            case true => IO.pure(Some(rec.ref))
+            case false =>
+              logger.warn(
+                s"[mail] stale actor ref for session=${sessionId.take(8)} — registry kept a dead ref; reactivating (issue #22)"
+              ) *> activateAgent(sessionId, resources, system, ctx)
+          }
+        case None => activateAgent(sessionId, resources, system, ctx)
+    }
+
+  /**
+   * Activate a session by spawning an AgentActor (replaces FlowAgentActivator).
+   * Package-visible for the lifecycle spec (respawn history + death watch).
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：本腿原为「Mail 冷激活
+   * 团队 agent」，其三条团队专用输入（parentSessionMap 的挂载根、parentForRecord 的
+   * Manager 链、actorMap 双写）随团队会话登记表一并删除。当前唯一调用面 = 遗留
+   * queue 层（`queueToSession` → [[liveActorOrActivate]]，该层禁摘除，见其退役登记）
+   * 与其 spec；rootSessionId 锚点改取**调用方会话的 root 桶**（`ctx.rootSessionId`，
+   * 与分发器/节点注入同源），零团队语境。
+   */
   private[tools] def activateAgent(
     sessionId: String,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     actorSystem: ActorSystem,
     ctx: ToolContext
   ): IO[Option[ActorRef[AgentCommand]]] =
@@ -682,22 +2323,21 @@ Message type (optional, default "INFO"):
       sessionOpt <- resources.sessionStore.getSessionMeta(sessionId)
       _ <- IO {
         if sessionOpt.isEmpty then
-          logger.warn(s"[mail] activation failed: session ${sessionId.take(8)} not found in session store (issue #22 observability)")
+          logger.warn(
+            s"[mail] activation failed: session ${sessionId.take(8)} not found in session store (issue #22 observability)"
+          )
       }
       refOpt <- sessionOpt.traverse_ { session =>
         val agentName = session.agentName.getOrElse("")
         for
-          // P2: resolve the Nebula root session (permission-policy anchor) first
-          // so the spawned agent inherits the root's policy bucket and its
-          // InteractionRequests render in the Nebula window.
-          parentSidOpt <- TeamSessionRegistry.parentSessionOf(session.flowName.getOrElse(""))
-          rootSid = parentSidOpt.getOrElse(session.id)
-          // Block 0 registration chain: member → its Manager; Manager → mounting
-          // root; unknown → None (registration falls back to the caller sid).
-          parentSid <- TeamSessionRegistry.parentForRecord(session.id)
-          policyOpt <- resources.permissionPolicies.get.map(_.get(rootSid))
-          safetyMode =
-            policyOpt.map(p => nebflow.core.SafetyMode.toString(p.safetyMode)).getOrElse(session.safetyMode)
+          // P2: 权限桶锚点 = 调用方会话的 root 会话（团队挂载根已随团队退役消失；
+          // 该锚点与节点/分发器注入同源，保证 InteractionRequest 仍渲染在 root 窗口）。
+          rootSid <- IO.pure(ctx.rootSessionId.getOrElse(session.id))
+          // permshield：有效档位 = 应用级全局持久值，走**唯一入口**
+          // `SharedResources.effectiveSafetyMode`。既不读 `session.safetyMode`
+          // （`_index.json` 的盘上遗留值：全局 confirm-edits 时被 Mail 激活的成员会
+          // 继承盘上 auto-all），也不再有会话覆盖面。
+          safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
           entryOpt <- session.flowName match
             case Some(teamName) => EntityLoader.loadTeamAgent(teamName, agentName)
             case None => EntityLoader.loadAgent(agentName)
@@ -767,10 +2407,11 @@ Message type (optional, default "INFO"):
               // session — the Teams panel double-entry ghost. Delegate /
               // SubTask / DAG spawns already name actors by their
               // nodeSessionId; this aligns the Mail path with them.
+              // AgentActor 构造改经工厂
+              // 镜像(resources 以 this 代入,实参逐字,零行为差)。
               ref <- actorSystem.spawn(
-                AgentActor(
+                resources.agentActorBehavior(
                   agentDef = agentDef,
-                  resources = resources,
                   wsSend = teamWsSend,
                   depth = 1,
                   parentRef = ctx.agentActorRef,
@@ -784,31 +2425,27 @@ Message type (optional, default "INFO"):
                 ),
                 session.id
               )
-              // Death watch: Mail-spawned team agents live OUTSIDE
-              // FlowTreeActor's watch system, so their death was completely
-              // silent — actorMap kept the dead ref (Mails to it vanished),
-              // agentRegistry kept the record, busyMap kept the last turn's
-              // busy flag, and getActiveAgents reported a running ghost for
-              // hours. This watcher fires the cleanup FlowTreeActor runs for
-              // its own spawns: unregister + clear busy + leave a log trail
-              // (the silent death itself was the observability gap).
+              // Death watch: a Mail-activated actor lives OUTSIDE any tree watch
+              // system, so its death would be completely silent — the registry
+              // would keep the dead ref (Mails to it vanished) and getActiveAgents
+              // would report a running ghost for hours. The watcher leaves a log
+              // trail and drops the registry record.
               _ <- actorSystem.spawn(
                 MailTool.teamAgentDeathWatch(session.id, entry.name, ref, resources),
                 s"deathwatch-${session.id.take(8)}"
               )
-              _ <- TeamSessionRegistry.registerActor(session.id, ref)
               _ <- resources.agentRegistry.update(
                 _ + (
                   session.id -> AgentRecord(
                     sessionId = session.id,
                     ref = ref,
+                    // 团队会话 kinds 面：团队退役后本腿已无生产调用方（仅遗留队列层
+                    // spec 直调），kind 值保持 `Team` 以免动枚举（作者未裁定枚举去留）。
                     kind = AgentKind.Team,
                     rootSessionId = rootSid,
                     parentRef = ctx.agentActorRef,
-                    // Block 0 registration chain (supervision trio §B2): a
-                    // member's parent is its team Manager; the Manager's parent
-                    // is the mounting root. Fallback = the activating caller.
-                    parentSessionId = parentSid.getOrElse(ctx.sessionId.getOrElse(""))
+                    // Block 0 链的 parent 语义随团队退役收敛为「激活方会话」。
+                    parentSessionId = ctx.sessionId.getOrElse("")
                   )
                 )
               )
@@ -825,30 +2462,33 @@ Message type (optional, default "INFO"):
         yield ()
         end for
       }
-      ref <- TeamSessionRegistry.getRunningActor(sessionId)
+      // 团队功能删除批阶段 3：读回注册结果的口径从「团队会话登记表的 actorMap」
+      // 改为统一 agentRegistry（同一份记录的另一半已随登记表删除）。
+      ref <- resources.agentRegistry.get.map { reg =>
+        reg.get(sessionId).map(_.ref).filter(_ != null)
+      }
     yield ref
 
   /**
-    * Death watch for Mail-activated team agents (deep follow-up #1,
-    * 2026-08-17): MailTool spawns these actors outside FlowTreeActor's
-    * watch system, so their death was completely silent — actorMap kept
-    * the dead ref (subsequent Mails to it vanished into a dead queue),
-    * agentRegistry kept the record, busyMap kept the last turn's busy
-    * flag, and getActiveAgents reported a running ghost for hours
-    * (the snapshot source of the Teams panel bare running rows).
-    *
-    * The watcher mirrors the cleanup FlowTreeActor runs for its own
-    * spawns (unregisterActor + resume scheduling) plus the piece that
-    * handler lacks — clearing the busy flag — and leaves a log trail:
-    * silent death was itself the observability defect.
-    *
-    * Package-visible for the deathwatch spec.
-    */
+   * Death watch for Mail-activated agents (deep follow-up): MailTool spawns these
+   * actors outside any tree watch system, so their death was completely silent —
+   * the registry kept the dead ref (subsequent Mails to it vanished into a dead
+   * queue) and getActiveAgents reported a running ghost for hours.
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：本看护原做「登记表
+   * actorMap 注销 + 登记表 busyMap 清零 + 统一注册表记录删除 + 日志」四件；登记表
+   * 两件随团队会话面删除，只剩「agentRegistry 记录删除 + 日志留痕」——注册表卫生
+   * 属通用能力（记录不清则长期持有死 ref），原样保留，issue #22 语义不变。
+   * 注意：它**不**删会话本体（session store / 历史）；会话级清理由
+   * WebSocketRoutes.removeRootAgent / deleteSession 负责，避免双写竞态。
+   *
+   * Package-visible for the deathwatch spec.
+   */
   private[tools] def teamAgentDeathWatch(
-      sessionId: String,
-      agentName: String,
-      watched: ActorRef[AgentCommand],
-      resources: SharedResources
+    sessionId: String,
+    agentName: String,
+    watched: ActorRef[AgentCommand],
+    resources: AgentRuntimePort
   ): Behavior[SystemSignal] =
     Behaviors.setup { wctx =>
       wctx.watch(watched).map { _ =>
@@ -857,16 +2497,20 @@ Message type (optional, default "INFO"):
             IO.pure(this)
 
           override def onSignal(
-              ctx: ActorContext[SystemSignal],
-              signal: SystemSignal
+            ctx: ActorContext[SystemSignal],
+            signal: SystemSignal
           ): IO[Behavior[SystemSignal]] =
             signal match
               case SystemSignal.Terminated(_) =>
-                TeamSessionRegistry.unregisterActor(sessionId, resources) *>
-                  TeamSessionRegistry.markIdle(sessionId) *>
-                  logger.info(
-                    s"team agent actor stopped: agent=$agentName session=$sessionId — registry unregistered, busy cleared"
-                  ).as(Behaviors.stopped[SystemSignal])
+                // 统一注册表的记录清理**保留**（原登记表 unregisterActor 的
+                // agentRegistry 那一半）——这是注册表卫生，不是团队能力：
+                // 记录不清则 agentRegistry 长期持有死 ref。
+                resources.agentRegistry.update(_ - sessionId) *>
+                  logger
+                    .info(
+                      s"mail-activated agent actor stopped: agent=$agentName session=$sessionId — agentRegistry record dropped"
+                    )
+                    .as(Behaviors.stopped[SystemSignal])
       }
     }
   end teamAgentDeathWatch
@@ -876,71 +2520,45 @@ Message type (optional, default "INFO"):
     label: String,
     message: String,
     blocks: Option[List[ContentBlock]],
-    mailType: String,
+    eventType: String,
     ctx: ToolContext,
     system: ActorSystem
   ): IO[Either[ToolError, String]] =
-    val senderName = ctx.agentDef.map(_.name).getOrElse("Nebula")
+    val senderName = ctx.agentDef.map(_.name).getOrElse(RootAgentIdentity.Name)
     val senderSid = ctx.sessionId.getOrElse("")
     for
-      // Resolve the sender's team so the injected bubble can show "team/agent" attribution.
-      teamOpt <- TeamSessionRegistry.teamOfSession(senderSid)
       _ <- ref ! AgentCommand.ImmediateInput(
         message,
         // G3 attachments: blocks already contain the message text as the first
         // Text block (AgentActor drops `text` when blocks are present).
         blocks = blocks,
         source = Some("mail"),
-        eventType = Some(mailType.toLowerCase),
+        eventType = Some(eventType.toLowerCase),
         sender = Some(senderName),
-        senderTeam = teamOpt,
-        delivery = Some("immediate")
+        // 团队功能删除批阶段 3：`senderTeam` 原取发信会话的团队名，团队退役后
+        // 恒 `None`（字段本体保留 = 存量历史行渲染 / 透传面契约不变）。
+        senderTeam = None,
+        delivery = Some("immediate"),
+        // 气泡四段式统一 · R-A 补：四段式 `PROJECT` 段链首级 =
+        // **发送方所属项目**。本腿（分发器 → root）的收件会话是 root 会话（无项目
+        // 上下文）⇒ 不置位时第二段恒落根域 `NEBULA`，与「发送方所属项目」判据相反。
+        // 置本会话项目域即与 `mailAttribution` 同源（构造点 = 发送方侧，唯一取值处）。
+        project = ctx.projectName,
+        // ② 服务端注入（agent→agent 邮件），不是真人输入 —— 显式表态。
+        fromUser = false
       )
       _ <- nebflow.core.UsageTracker.record("mail", senderSid)
     yield Right(s"Message sent to $label. The agent will process it.")
+    end for
 
   end sendMail
 
-  private def mailNotFound(address: String): IO[Either[ToolError, String]] =
-    val msg =
-      if address == "Nebula" then
-        s"Cannot deliver to 'Nebula': only Team Lead can communicate with Nebula. Use Mail(\"manager\", ...) to report to your Team Lead."
-      else s"Cannot deliver to '$address'. Use a team name or agent short name."
-    IO.pure(Left(ToolError(msg)))
-
-  private def onMailDelivered(
-    fromSid: String,
-    toSid: String,
-    toName: String,
-    message: String,
-    ctx: ToolContext
-  ): IO[Unit] =
-    val preview = message.take(200)
-    for
-      fromOpt <- TeamSessionRegistry.agentOfSession(fromSid)
-      toInfo <- TeamSessionRegistry.instanceAndAgentOfSession(toSid)
-      senderName = fromOpt.orElse(ctx.agentDef.map(_.name)).getOrElse("Nebula")
-      (teamName, fromName) = toInfo match
-        case Some((inst, _)) => (inst, senderName)
-        case None => ("", fromOpt.getOrElse(fromSid.take(8)))
-      parentSid <- TeamSessionRegistry.parentSessionOf(teamName)
-      mailboxSid = parentSid.getOrElse(ctx.sessionId.getOrElse(""))
-      _ <-
-        if teamName.nonEmpty then
-          FlowMailStore.append(mailboxSid, teamName, FlowMailStore.MailRecord(fromName, toName, message))
-        else IO.unit
-      _ <- ctx.wsSend match
-        case Some(send) =>
-          val event = Json.obj(
-            "type" -> "flowMail".asJson,
-            "from" -> fromName.asJson,
-            "to" -> toName.asJson,
-            "flowName" -> teamName.asJson,
-            "preview" -> preview.asJson
-          )
-          send(event).handleErrorWith(_ => IO.unit)
-        case None => IO.unit
-    yield ()
-    end for
-  end onMailDelivered
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3：本文件原有两个收尾方法
+  // 随团队面一并删除 ——
+  //   · `mailNotFound`（「Use a team name or agent short name」文案 + 团队 lead 指路）
+  //     —— 团队/短名腿退役后零调用方，且其文案指向不再存在的地址形态；
+  //   · `onMailDelivered`（团队信箱落盘 `FlowMailStore.append` + `flowMail` WS 帧）
+  //     —— 团队信箱归属面随团队退役消失；`flowMail` 帧在本仓前端零 handler
+  //     （ws.js 自述 2026-09-05 移除），生产者删除后该帧不再产生。
+  // 判定与依据见 reports-evidence/team-feature-deletion/stage3/README.md §Mail。
 end MailTool

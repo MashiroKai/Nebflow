@@ -73,6 +73,13 @@
     const orbPresets = await import('/js/orbPresets.js');
     const ui = await import('/js/orbSettingsUI.js');
 
+    // voiceseal 批（批 #508）测试同步（行为零改）：本 harness 测「未封存态」的
+    // orb 预设/渲染管线 —— 语音封存 flag（features.voice，生产默认封存 ⇒
+    // getMicOrb/initMicOrb 返回 null）须在挂载前解封（与 volume-harness 的
+    // connected=true 同一 state.default 预置口径）。
+    const state = await import('/js/state.js');
+    state.default.parsedConfig = { features: { voice: true } };
+
     micOrb.initMicOrb();
 
     window.__micorbTest = {

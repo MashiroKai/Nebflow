@@ -1,11 +1,13 @@
 ---
 name: visual-report
-description: 可视化汇报工具。用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表，再用 Pop 工具在 Canvas 中展示。当需要制作图表、架构图、流程图、数据可视化、可视化报告时使用。
+description: 可视化汇报工具。用专业工具（matplotlib/graphviz/plotly 等）生成 SVG 图表，落盘后在交付文本里给绝对路径（展示权归 Nebula，节点不调用 Pop）。当需要制作图表、架构图、流程图、数据可视化、可视化报告时使用。
 ---
 
 # Visual Report — 可视化汇报
 
-用专业工具生成高质量可视化内容，通过 Pop 展示。
+用专业工具生成高质量可视化内容，落盘交付（展示与打开归 Nebula——节点侧无展示面，禁在交付文本里指示人类打开路径）。
+
+**读者体验（结论先行、体量上限、术语翻译、读者轴落位、图预算声明）见本文「人读交付体例」节**；本 skill 专注图表生成层。
 
 ## 核心原则
 
@@ -13,13 +15,13 @@ description: 可视化汇报工具。用专业工具（matplotlib/graphviz/plotl
 
 **语言跟随用户。** 图表中的标题、轴标签、图例、注释等所有文字，必须使用用户当前对话使用的语言。用户用中文则全中文标注，用英文则全英文。不要混用。
 
-**样式嵌入和暗色模式适配参见 `design-cards` 插件的 `card-design`。** 本 skill 专注图表生成层的审美——配色、排版、标注、布局。
+**样式嵌入和暗色模式适配见 Plugin Catalog 的 `design-cards` 插件的 `card-design`（该插件不由本包携带，未列出则不适用）。** 本 skill 专注图表生成层的审美——配色、排版、标注、布局。
 
 ## 工作流
 
 1. 用 Bash 运行专业工具 → **输出 SVG 格式**
-2. 用 Pop 工具在 Canvas 中展示 → `Pop(filePath="/tmp/output.svg")`
-3. 如需多张图，重复以上步骤
+2. 输出到文件（如 `<ws>/output.svg`）→ 把绝对路径写进交付文本
+3. 单文档 **≤3 图**（硬性）：命中类别 n ≤3 全画，n >3 只画权重前 3（结论依赖的数据关系 > 时间线 > 流程/调用链 > 三方对比 > 结构/分层），其余降级表格/文字并在首屏加一行「图预算超限」声明；被省略类别是结论唯一载体 ⇒ 拆文档
 
 ## 什么时候用可视化
 
@@ -30,7 +32,7 @@ description: 可视化汇报工具。用专业工具（matplotlib/graphviz/plotl
 - 科学可视化：等高线图、矢量场、极坐标图、3D 曲面
 
 **不适合：**
-- 简单的文本摘要（直接说）
+- 简单的文本摘要（直接说）——纯文字交付的体量与骨架约束见本文「人读交付体例」节（首屏 <8 KB/80 行、正文硬顶 20,300 字符、四段骨架）
 - 无数据支撑的装饰性图形
 - 可以用表格清晰表达的少量数据
 
@@ -134,7 +136,7 @@ SEQUENTIAL = ['#e8eaed', '#b8bfd4', '#8893b3', '#586792', '#3a4a75', '#1e2e58']
 - **标签**：edge label 简短（协议名、数据类型），不要放完整句子
 
 ```bash
-cat > /tmp/arch.dot << 'EOF'
+cat > <ws>/.nebflow/tmp/arch.dot << 'EOF'
 digraph {
   rankdir=LR
   node [shape=box, style="filled,rounded", fontname="-apple-system", fontsize=12]
@@ -148,7 +150,7 @@ digraph {
   Server -> DB     [label="SQL"]
 }
 EOF
-dot -Tsvg -o /tmp/arch.svg /tmp/arch.dot
+dot -Tsvg -o <ws>/arch.svg <ws>/.nebflow/tmp/arch.dot
 ```
 
 ## SVG 生成示例
@@ -180,21 +182,46 @@ ax.set_title('信号对比')
 ax.yaxis.grid(True, alpha=0.3)
 ax.legend(loc='upper left', bbox_to_anchor=(1, 1), frameon=False)
 plt.tight_layout(pad=1.5)
-plt.savefig('/tmp/chart.svg', format='svg')
+plt.savefig('<ws>/chart.svg', format='svg')
 ```
 
 ## 什么时候生成完整 HTML 报告
 
-满足以下**任一**触发条件时，产出完整 HTML 报告（而非裸 SVG + 文字回复）：
+只有在**信息本身需要视觉承载**、且产出物确实是**人读交付件**时，才产出完整 HTML 报告（而非裸 SVG + 文字回复）：
 
-1. **内容需要视觉确认**——报告本身是给人审阅/验收的成品（设计方案、评审结论、数据分析交付物）；
-2. **可视化的可读性显著优于 Markdown**——信息有空间结构或大量图表，平铺文字会丢失关系。
+1. **信息有空间结构或大量图表**——平铺文字会丢失关系。这是**必要条件**：不满足即直接文字/单图回答；
+2. **且**下列其一：① 该件是给人读的交付/汇报件（人读件落 `~/.nebflow/docs/<域>/`，体量与四段骨架见本文「人读交付体例」节）；② 交付形态本身要求 HTML（交互式报告、需直选回传的视觉选择题）。
 
-两个条件都不满足时，直接文字/单图回答，不为汇报而汇报。
+**过程件不是 HTML 报告的触发对象**：设计方案、评审结论、取证记录、台账等过程件走 `<ws>/.nebflow/` 或本项目既有阶段文档路径，需要配图时按本 skill 出图。不为汇报而汇报。
+
+## Project wiki documents (vault delivery)
+
+A markdown/HTML report that belongs to a project's knowledge base (project
+review, investigation record, design note) MUST be delivered into the
+project's document vault: `<data_root>/projects/<project>/.stand/docs/` (the
+project's registration dir, next to its `project.json` — author ruling
+2026-11-03), attachments under `<vault>/attachments/`, written in the
+Obsidian-compatible style
+carried by the `wiki-docs` skill of this plugin. Concretely:
+
+- Title = first H1; the document cites the documents it builds on with
+  wikilinks (`[[doc]]`, `[[doc#Heading]]`, `[[glossary#^concept-id]]`).
+- Every new concept is explained at first mention, or referenced to the
+  document/section that explains it — the citation is what lets a reader
+  reach the source, and what the term registry resolves.
+- Write it as people read: plain words (no `人面子` / `印象` / `赋能` style
+  abstraction), the overall answer in one paragraph at the top, one bold
+  conclusion line per section, the argument inside `<details>` folds, one
+  ```human card per part, captioned figures with minimal in-image text
+  (wiki-docs clauses ⑨⑩⑪). Zero links to sources is an incomplete
+  deliverable; zero graph density is not a problem.
+
+Full conventions (vault layout, citation discipline, glossary block ids):
+`skills/wiki-docs/SKILL.md` in this plugin.
 
 ## SVG 的暗色模式适配
 
-生成的 SVG 文件本身要能在亮/暗主题下都可读（HTML 外壳的 CSS 变量规范见 `design-cards` 插件的 `card-design`，此处只管 SVG 内容层）：
+生成的 SVG 文件本身要能在亮/暗主题下都可读（HTML 外壳的 CSS 变量规范见 Plugin Catalog 的 `design-cards` 插件的 `card-design`，此处只管 SVG 内容层）：
 
 - **不在 SVG 里硬编码前景色**：线条/文字优先用 `currentColor`，或在 SVG 内嵌 `<style>` 用 CSS 变量引用；
 - **SVG 内嵌媒体查询**（独立 SVG 文件被 `<img>` 引用时也生效）：
@@ -209,16 +236,16 @@ plt.savefig('/tmp/chart.svg', format='svg')
 
 ## 可视化 HTML 报告
 
-创建完整 HTML 报告时，将 SVG 图表 + HTML 布局 + CSS 写入一个 `.html` 文件，用 Pop 打开。
+创建完整 HTML 报告时，将 SVG 图表 + HTML 布局 + CSS 写入一个 `.html` 文件，落盘后把**绝对路径**写进交付文本（人读件落 `~/.nebflow/docs/<域>/`；展示权归 Nebula，节点不调用 Pop）。
 
-**样式规范参见 `design-cards` 插件的 `card-design`** — CSS 变量、圆角、字体、暗色模式适配、SVG 嵌入策略。以下仅展示结构：
+**样式规范见 Plugin Catalog 的 `design-cards` 插件的 `card-design`** — CSS 变量、圆角、字体、暗色模式适配、SVG 嵌入策略。以下仅展示结构：
 
 ```bash
 # 1. 生成图表
-python3 /tmp/plot.py  # 输出 /tmp/chart.svg
+python3 <ws>/.nebflow/tmp/plot.py  # 输出 <ws>/chart.svg
 
 # 2. 创建 HTML 报告（样式用 CSS 变量，不要硬编码 hex）
-cat > /tmp/report.html << 'HTMLEOF'
+cat > ~/.nebflow/docs/<域>/report.html << 'HTMLEOF'
 <!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><style>
@@ -240,6 +267,87 @@ h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
 </html>
 HTMLEOF
 
-# 3. 用 Pop 展示
-Pop(filePath="/tmp/report.html")
+# 3. 交付：把绝对路径写进交付文本（展示权归 Nebula）
+echo ~/.nebflow/docs/<域>/report.html
 ```
+
+---
+
+## 人读交付体例（节点 result 的一屏摘要与人读件共用）
+
+给**人**看的文档与给机器看的取证件是两类东西：人读件落 `~/.nebflow/docs/<域>/`（活文档 `<topic>.md`、阶段件 `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md`——**topic 前置、时间块后置**，topic 用小写 kebab（英文/拼音）或原样中文，禁用 report/doc/notes 这类空词单独成题；同秒冲突在时间块后接 `-<n>`，有归属才带 chainId 尾段、不得编造），取证件/过程件落 `<ws>/.nebflow/{Spec,evidence,reports,tasks,results,tmp}/`；写在 `<ws>/.nebflow/**` 下再声明「人读」无效，要给人看必须外移。
+
+**首屏四段骨架（顺序固定）**：
+
+1. `### 结论` —— ≤5 行，**第一句就是结论**（不是背景、不是「本次任务」、不是过程叙述）。
+2. `### 要做什么 / 有什么影响` —— 两栏表；影响必须回答「要不要你决定」「有什么功能会变」。
+3. `### 大白话` —— **≤150 字符**、零术语：不含反引号、不含 `file:line`、不含 `n-xxxxxxxx`/`chain-`、不含未翻译英文词（`agent`/`Canvas` 等）。
+4. `### 术语对照` —— 每个非日常词一句人话（无则写「无」）；术语只在此处第二次出现（第一次在正文首用时就地解释）。
+
+**体量预算**：首屏 **< 8 KB 且 < 80 行**；正文（首字节 → `## 附录` 之前）按场景封顶——验收 ≤4,000 字符、改 bug·加功能 ≤8,000、调研·复盘 ≤12,764、产品设计 = 绝对硬顶 **20,300 字符**；`## 附录` 之后 ≤ 正文 5×、须有目录、**不得载唯一结论**。超出即先砍到上限再交付（禁「先发后砍」），长取证内容进附录。
+
+**交付尾行**：完整件落盘 → result 文本 = 一屏摘要（骨架同上）+ **一句**「完整交付物：`<绝对路径>`」，禁粘长正文；禁在交付文本里指示人类打开路径（展示权归 Nebula，节点不调用 Pop）。
+
+**该画必须画**：数值对比/趋势（≥2 组数值，或含 vs/对比/相差/倍数）⇒ 横向条形图；流程/调用链/状态机（全文箭头 ≥3）或结构/分层/拓扑 ⇒ graphviz；时间线（≥4 事件）⇒ 时间轴。预算与取舍见上文「工作流」第 3 条（单文档 ≤3 图 + 权重前 3 + 首屏「图预算超限」声明）；被省略类别是结论唯一载体 ⇒ 拆文档。
+
+## Markdown 编写规则（图片嵌入 / 可跳转目录 / LaTeX 公式）
+
+**① 图片与材料尽量嵌入，不要只给路径。** 用图语法把载体内联进正文：`![信号对比](</abs/path/chart.svg>)`。反例 = 路径文本冒充内容（`图表见 /abs/path/chart.svg`）——路径/文件清单只能作附录或清单件（取证批次的 `MANIFEST.md` / `index.json`）。大图集（> 20 张）：正文只嵌**决策相关子集**（对照拼图 `cmp-*`、逐项配对图 `adj-*`），全量清单进附录。内嵌路径须落在可服务面：`<ws>/.nebflow/evidence*/**` 或 `~/.nebflow/{projects,uploads,plots,workspace-items,voice-models}/**`（`~/.nebflow/docs/**` 会被拒）。
+
+**② 内容多加可跳转目录。** 触发阈值 = 文档含 ≥3 个二级章节，或正文 > 6,000 字符；在正文开头列锚点目录，标题即锚点，标题改名时目录同批更新：
+
+```markdown
+- [结论](#结论)
+- [改动面](#改动面)
+```
+
+短于一屏的文档不加目录（目录本身占首屏预算）。
+
+**③ 公式一律用 LaTeX。** 行内写法 `$p = \frac{n}{N}$`；独立公式 `$$ … $$` 单独成段：
+
+```markdown
+$$
+p = \frac{n}{N}
+$$
+```
+
+反例：`E = m*c^2`（纯文本，上下标丢失）、把公式截图成 PNG 贴进文档（不可检索、不可复制）。
+
+**④ 排版与缩写（文档面，作者裁定 2026-11-05 11:09 / 11:11）。** 三件事在每一份
+**文档产出**上都要成立（vault 知识文档、人读件、HTML 报告正文同理）：
+
+- **缩进**：正文段落首行以 `&emsp;&emsp;` 起行。Markdown 没有布局——**两个半角空格
+  会被 HTML 折叠吃掉，四个半角空格直接把这段变成代码块**（本部署 marked v12.0.2
+  实测）；HTML 实体 `&emsp;` 在 Obsidian 与 marked 两面都稳定生效。标题 / 列表 /
+  表格 / 引用 / 围栏 / 图片行与可视长度 <40 字符的短行不缩进。
+- **彩色**：Markdown 原生无色，只能内联 HTML `<span style="color:…">`。**一篇文档
+  ≤4 处**（建议 ≤3），只给**关键结论**与**风险/警告**；一般强调用加粗。语义钉死：
+  蓝 `#5e6ad2` = 结论/判定、红 `#d0342c` = 风险/警告、绿 `#12874a` = 已验证/通过
+  （三色在亮/暗两主题都实测过对比度）。
+- **缩写**：领域缩写（GCR / SCD / DPC / MC / NIEL…）与机构缩写（ICRP / IAEA /
+  CERN / NIST…）在**文档首次出现处**必须给全称或挂词条：`银河宇宙线（GCR）`、
+  `GCR（Galactic Cosmic Rays）`、`[[GCR]]（全称）`；单位与通用技术词走允许清单。
+
+机器面：`skills/wiki-docs/scripts/check_wiki_docs.py` 的 R7 `doc-color` / R8
+`doc-indent` / R9 `abbrev-expansion`（条款原文与正反例见
+`skills/wiki-docs/SKILL.md` 条款 ⑦⑧ 与「Document typography」「Abbreviations」两节）。
+新制文档（文件名时间块 ≥ `20261105_111100` 或在 frontmatter 声明 `style:`）按违规
+判，存量文档先记 advisory。
+
+**⑤ 写作风格（写作风格批 v2，作者令 2026-11-05 12:09）。** 四件事在每一份文档上
+都要成立，条款原文与模板见 `skills/wiki-docs/SKILL.md` 条款 ⑨⑩⑪ 与「Plain
+language」「Document skeleton」「Card face」「Figures in a document」四节：
+
+- **平实语言**：能用平实动词+名词说清的，不用抽象名词包裹；禁用词表（`人面子` /
+  `印象` / `抓手` / `赋能` / `闭环` …）住在 wiki-docs 的标记块里，命中即报 `文件:行`。
+- **结论先行 + 细节折叠**：开头一段总体结论；每个 `##` 章节首行一句加粗结论；论证
+  细节放进 `<details><summary>…</summary>`（两台渲染器都认的唯一形态）。
+- **卡片分区**：每部分一张 ```` ```human ```` 卡（= 产品现成的 `.nf-human-card`），
+  卡里只放结论与关键数字，论证进紧随其后的折叠块。
+- **图的简约风格与图注**：图内只留轴标签、刻度、短图例（每条一行）；灰阶配色 +
+  虚实线区分，无网格、无图内标题；解释放图注（`图 N …` 一句结论，≤120 字符）与
+  正文。基准 = DOSTEL `figures/20261103_cabin_neutron_energy_weight_flux/` 那批，
+  参数单源 `figures/20261103_neutron_energy_weight_flux/scripts/fig_style.py`。
+
+机器面：R10 `plain-language` / R11 `doc-structure` + `detail-fold` / R12
+`image-caption`（`--style-since-v2` 是 v2 自己的生效界，缺省 `20261105_130000`）。

@@ -1,0 +1,18 @@
+FAIL  [chromium/desktop/light/zh-CN] 通用小 LLM 设置行使用统一行令牌
+node:internal/modules/run_main:104
+    triggerUncaughtException(
+    ^
+
+locator.textContent: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for locator('#small-llm-settings-row').locator('select').locator('option').first()[22m
+
+    at leg (/Users/kaiyu/Claude code/Stand-wt/small-llm-20261116/tests/model-chain-slim.spec.mjs:183:73)
+    at async file:///Users/kaiyu/Claude%20code/Stand-wt/small-llm-20261116/tests/model-chain-slim.spec.mjs:327:7 {
+  log: [
+    "  - waiting for locator('#small-llm-settings-row').locator('select').locator('option').first()"
+  ],
+  name: 'TimeoutError'
+}
+
+Node.js v23.9.0

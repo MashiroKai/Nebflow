@@ -14,11 +14,15 @@
 // persist to localStorage and dispatch CHANGE_EVENT — the live orb
 // re-resolves its board (uniform-only, no setStateCfg, no flicker).
 //
-// This module is standalone (no ws/state imports) so test harnesses can
-// mount the section without the app shell.
+// This module imports no ws layer (it can be mounted without a gateway), so test
+// harnesses can mount the section standalone. It does read the root agent's
+// DISPLAY name (rootName.js, personal-agent batch 2026-10-04) for the busy-state
+// label — the same light state.js dependency micOrb.js already carries.
 
 import { t, getLocale } from './i18n.js';
+import { rootNameParams } from './rootName.js';
 import { toggleHTML, setToggleState } from './toggle.js';
+import { setRow } from './settingsRows.js';
 import { OrbRenderer } from './micOrb.js';
 import {
   PRESETS, ASH, DEFAULT_BASE, DEFAULT_STATE_MAP,
@@ -83,25 +87,27 @@ export function renderAppearanceSection() {
   const stateRows = ['idle'].concat(Object.keys(DEFAULT_STATE_MAP)).map((k) => {
     const resolved = presetIdFor(k, sel);
     return `<div class="orb-state-row" data-state="${k}">
-      <span class="orb-state-name">${t(stateI18nKey(k))}</span>
+      <span class="orb-state-name">${t(stateI18nKey(k), rootNameParams())}</span>
       ${swatches(resolved)}
-      <select class="cfg-select orb-state-select" data-state="${k}" style="width:auto" aria-label="${t(stateI18nKey(k))}">${presetOptions(resolved, true)}</select>
+      <select class="cfg-select orb-state-select" data-state="${k}" style="width:auto" aria-label="${t(stateI18nKey(k), rootNameParams())}">${presetOptions(resolved, true)}</select>
     </div>`;
   }).join('');
+  // settings-ios-rows 批 2026-11-06：行壳收编为设置页唯一行族（setRow）——
+  // 旧 .settings-row/.settings-label 已随行族统一样式删除，此处零残留。
   return `<div id="orb-appearance-body">
-    <div class="settings-row">
-      <span class="settings-label">${t('settings.appearance.orbBase')}</span>
-      <select class="cfg-select" id="orb-base-select" style="width:auto">${presetOptions(sel.base, false)}</select>
-    </div>
-    <div class="cfg-hint">${t('settings.appearance.orbBaseHint')}</div>
-    <div class="orb-state-map-title settings-label">${t('settings.appearance.stateMap')}</div>
+    ${setRow({
+      title: t('settings.appearance.orbBase'),
+      control: `<select class="cfg-select set-field" id="orb-base-select" style="width:auto">${presetOptions(sel.base, false)}</select>`,
+      hint: t('settings.appearance.orbBaseHint'),
+    })}
+    <div class="orb-state-map-title">${t('settings.appearance.stateMap')}</div>
     <div class="orb-state-map">${stateRows}</div>
     <div class="cfg-hint">${t('settings.appearance.stateMapHint')}</div>
-    <div class="settings-row">
-      <span class="settings-label">${t('settings.appearance.custom')}</span>
-      ${toggleHTML({ on: customOn, id: 'orb-custom-toggle', label: t('settings.appearance.custom') })}
-    </div>
-    <div class="cfg-hint">${t('settings.appearance.customHint')}</div>
+    ${setRow({
+      title: t('settings.appearance.custom'),
+      control: toggleHTML({ on: customOn, id: 'orb-custom-toggle', label: t('settings.appearance.custom') }),
+      hint: t('settings.appearance.customHint'),
+    })}
     <div id="orb-custom-body" ${customOn ? '' : 'hidden'}>
       <div class="orb-custom-controls">
         <span class="orb-slot-label">${t('settings.appearance.customSource')}</span>
@@ -117,7 +123,7 @@ export function renderAppearanceSection() {
         <span class="cfg-hint">${t('settings.appearance.preview')}</span>
       </div>
     </div>
-    <div style="margin-top:8px">
+    <div style="margin-top:var(--ds-space-2)">
       <button class="cfg-btn" id="orb-appearance-reset">${t('settings.appearance.reset')}</button>
     </div>
   </div>`;

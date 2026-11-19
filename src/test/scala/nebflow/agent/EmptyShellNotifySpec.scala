@@ -6,42 +6,50 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.actor.*
-import nebflow.core.PathUtil
 import nebflow.core.FileChangeTracker
+import nebflow.core.mail.SessionMailbox
 import nebflow.core.compact.HistoryArchiver
+import nebflow.core.delegate.{DelegateJudge, DelegateRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{ContentBlock, Message, MessageRole, PathUtil, SubAgentTask, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
 /**
- * 空壳通知回归测试（message-truncation-report.md 方案 A）：
- * 子 agent 最后一条 assistant 消息为纯空白（"\n\n"）时，
- * 完成通知 payload 必须是 "(no text output)"，而非 `"描述":\n\n\n` 空壳形态。
+ * 空壳通知回归测试（message-truncation-report.md 方案 A ＋ 四修① 2026-10-07 更订
+ * ＋ P5 静默完成治理第二波更新）：
  *
- * 修复前：text.nonEmpty 判断让 "\n\n" 溜过 → 空壳 payload
- * 修复后：text.trim.nonEmpty → 走 "(no text output)" 分支
+ *  - 四修①后，「纯空白尾＋全会话零工具调用」= 空烧形态 → 不再是干净完成：
+ *    监督者走重启/续推预算（maxRestarts=2），预算耗尽 → 照常交付完成回执
+ *    （直接交付批 dcc430e42），但空回执**显式非静默**：payload 携带结构化
+ *    `[delegate-diagnostic] no-final-text; …; empty-run` 行（判定机判词行已随
+ *    直接交付批退役——引擎不伪造判词，诚实面 = 诊断行）。
+ *  - trim guard 的存续面：**有工具调用**、终文纯空白 → 非空烧（真的干了活）→
+ *    照常完成，payload 仍是 "(no text output)"（原方案的空壳防护不变）。
+ *  - 正常文本尾 → `"描述":\n<text>` 形态（原契约不变）。
  */
 class EmptyShellNotifySpec extends CatsEffectSuite:
 
   /** A child that replies Completed with the given messages, replying to whoever asked. */
   private def completingChild(messages: List[Message]): Behavior[AgentCommand] =
-    Behaviors.receiveMessage[AgentCommand] {
-      case AgentCommand.UserInput(_, replyTo, _, _, _, _, _, _, _, _) =>
-        // NOTE: `!` returns IO[Unit] (the send action) — it MUST be chained
-        // into the returned IO, not discarded by foreach.
-        val send = replyTo.fold(IO.unit)(ref => ref ! AgentEvent.Completed("", messages))
-        send *> IO.pure(Behaviors.stopped[AgentCommand])
-      case _ => IO.pure(Behaviors.stopped[AgentCommand])
-    }
+    def loop: Behavior[AgentCommand] =
+      Behaviors.receiveMessage[AgentCommand] {
+        case AgentCommand.UserInput(_, replyTo, _, _, _, _, _, _, _, _, _, _, _, _) =>
+          // NOTE: `!` returns IO[Unit] (the send action) — it MUST be chained
+          // into the returned IO, not discarded by foreach.
+          val send = replyTo.fold(IO.unit)(ref => ref ! AgentEvent.Completed("", messages))
+          send *> IO.pure(loop)
+        case _ => IO.pure(loop)
+      }
+    loop
 
   /** Spy parent that captures ExternalEvent payloads (loops on itself). */
   private def spyParent(captured: cats.effect.Ref[IO, List[String]]): Behavior[AgentCommand] =
     Behaviors.receiveMessage[AgentCommand] {
-      case AgentCommand.ExternalEvent(_, _, payload, _, _) =>
+      case AgentCommand.ExternalEvent(_, _, payload, _, _, _) =>
         captured.update(_ :+ payload).as(spyParent(captured))
       case _ => IO.pure(spyParent(captured))
     }
@@ -87,11 +95,13 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       voiceMutedRef = voiceMuted
     )
 
-  /** Run one Completed round-trip: child replies Completed(messages) to the
-    * supervisor; returns the payload the spy parent captured. */
+  /**
+   * Run one Completed round-trip: child replies Completed(messages) to the
+   * supervisor; returns the payload the spy parent captured.
+   */
   private def runCompletedPayload(
-      testName: String,
-      messages: List[Message]
+    testName: String,
+    messages: List[Message]
   ): String =
     val system = ActorSystem(s"empty-shell-$testName")
     val tmp = os.temp.dir()
@@ -101,6 +111,39 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       val captured = cats.effect.Ref.unsafe[IO, List[String]](Nil)
       val program = for
         resources <- mkResources(system, tmp)
+        _ <- IO {
+          DelegateJudge.DelegateJudgePort.clear()
+          DelegateRegistry.put(
+            DelegateRegistry.Record(
+              id = s"$testName-child",
+              executor = "nebflow",
+              cwd = os.pwd.toString,
+              project = None,
+              taskId = None,
+              parentSessionId = s"$testName-parent-session",
+              title = "empty shell test",
+              createdAt = System.currentTimeMillis(),
+              reportStatus = Some("finish")
+            )
+          )
+        }
+        _ <- resources.sessionStore.getOrCreateSession(s"$testName-parent-session", "parent")
+        _ <- resources.sessionStore.getOrCreateSession(s"$testName-child", "child")
+        _ <- resources.subAgentTaskStore.recordTask(
+          SubAgentTask(
+            taskId = s"$testName-child",
+            parentSessionId = s"$testName-parent-session",
+            agentName = "Worker",
+            prompt = "ignored",
+            description = "empty shell test",
+            status = "running",
+            retryCount = 0,
+            spawnedAt = System.currentTimeMillis(),
+            completedAt = None,
+            lastError = None,
+            source = "delegate"
+          )
+        )
         parent <- system.spawn(spyParent(captured), s"$testName-parent")
         child <- system.spawn(completingChild(messages), s"$testName-child")
         supervisor <- system.spawn(
@@ -115,19 +158,23 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
             parentSessionId = s"$testName-parent-session",
             resources = resources,
             initialPrompt = "ignored",
-            source = "delegate"
+            source = "delegate",
+            minBackoff = 50.millis,
+            maxBackoff = 100.millis
           ),
           s"$testName-supervisor"
         )
         // Trigger: child gets UserInput with replyTo = supervisor, replies Completed.
         _ <- child ! AgentCommand.UserInput("go", Some(supervisor))
-        // 20s (was 5s): under full-suite parallel load the actor round-trip
-        // (UserInput → Completed → supervisor forward) can exceed 5s of CPU
-        // contention — known flake, green path returns in <1s so the longer
-        // ceiling costs nothing unloaded. Kept below munit's 30s test timeout.
-        _ <- waitUntil(20.seconds)(captured.get.map(_.nonEmpty))
-        payloads <- captured.get
-      yield payloads.head
+        // Delegate terminal delivery moved from parentRef push to the parent's durable
+        // SessionMailbox. Wait on the authoritative event row, not the legacy actor spy.
+        _ <- waitUntil(20.seconds)(
+          SessionMailbox.scanPending(s"$testName-parent-session").map(
+            _.exists(_.event.eventType == "completed")
+          )
+        )
+        events <- SessionMailbox.scanPending(s"$testName-parent-session")
+      yield events.find(_.event.eventType == "completed").get.event.payload
 
       program.unsafeRunSync()
     finally
@@ -135,7 +182,13 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
 
-  test("whitespace-only tail produces '(no text output)', not an empty shell") {
+    end try
+
+  end runCompletedPayload
+
+  test(
+    "四修①: whitespace-only tail + zero tools = empty burn → restart chain, budget exhausted ⇒ completion delivered but EXPLICITLY marked: payload carries the no-final-text diagnostic with empty-run (never a fake silent completion)"
+  ) {
     // Last assistant message: thinking block + whitespace-only text ("\n\n")
     val messages = List(
       Message(MessageRole.User, Left("do the thing")),
@@ -145,8 +198,51 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
       )
     )
     val payload = runCompletedPayload("ws", messages)
-    assert(payload.contains("(no text output)"), s"expected '(no text output)' marker, got: ${payload.take(80)}")
-    assert(!payload.trim.endsWith(":"), s"payload must not end with bare colon (empty shell), got: ${payload.take(80)}")
+    // 空回执显式化（P5 第二波重钉现行语义）：空烧终态 = 完成回执 + 结构化诊断行
+    //（空烧 → empty-run 标记在场）；trim guard 面与 blocked 退役面保持。
+    assert(
+      payload.contains("(no text output)"),
+      s"trim-guard face must survive, got: ${payload.take(200)}"
+    )
+    assert(
+      payload.contains("[delegate-diagnostic] no-final-text"),
+      s"the silent completion must carry the structured diagnostic, got: ${payload.take(300)}"
+    )
+    assert(
+      payload.contains("empty-run"),
+      s"zero-tool burn must be marked empty-run, got: ${payload.take(300)}"
+    )
+    assert(
+      !payload.contains("[delegate-judge] verdict: blocked"),
+      "blocked 判词已按 #566 退役 —— delegate 面不得再产出 blocked 终态"
+    )
+  }
+
+  test(
+    "tools were called + whitespace tail ⇒ NOT an empty burn: trim guard keeps '(no text output)' on the completion path"
+  ) {
+    val messages = List(
+      Message(MessageRole.User, Left("do the thing")),
+      Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("t1", "Bash", io.circe.JsonObject.empty)))),
+      Message(MessageRole.User, Right(List(ContentBlock.ToolResult("t1", "ok")))),
+      Message(
+        MessageRole.Assistant,
+        Right(List(ContentBlock.Thinking("analysis..."), ContentBlock.Text("\n\n")))
+      )
+    )
+    val payload = runCompletedPayload("ws2", messages)
+    assert(payload.contains("(no text output)"), s"expected '(no text output)' marker, got: ${payload.take(120)}")
+    assert(
+      !payload.trim.endsWith(":"),
+      s"payload must not end with bare colon (empty shell), got: ${payload.take(120)}"
+    )
+    // P5 第二波：干了活没说话的完成（非空烧）诊断行随行——toolCalls 计数、
+    // 无 empty-run 标记（任意工具调用即排除空烧）。
+    assert(
+      payload.contains("[delegate-diagnostic] no-final-text") && payload.contains("toolCalls=1"),
+      s"textless-but-worked completion must carry the diagnostic, got: ${payload.take(300)}"
+    )
+    assert(!payload.contains("empty-run"), s"tool work disqualifies empty-run, got: ${payload.take(300)}")
   }
 
   test("normal text tail still produces '\"desc\":\\n<text>' form") {

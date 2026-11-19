@@ -1,20 +1,41 @@
 // viewers/xlsx.js — XLSX viewer (SheetJS, lazily loaded, multi-sheet tabs).
 // Migrated verbatim from fileViewers.js (viewXlsx).
 
-import { getToken, escapeHtml } from './shared.js';
+import { escapeHtml } from './shared.js';
+import { reMint } from '../nfTicket.js';
+import { nfViewerUrl } from '../nfFileCache.js';
 
-/** XLSX viewer — fetch binary, parse with SheetJS, render first sheet as table */
-async function viewXlsx(pane, { absPath, fileName }) {
+/** XLSX viewer — fetch binary, parse with SheetJS, render first sheet as table
+ *
+ *  `objectUrl` = 附件预览腿（attachmentPreview.js）：整件字节已由应用内鉴权路由取回，
+ *  blob: URL 直接交给 SheetJS（fetch 后 `arrayBuffer()`），无本机路径 ⇒ 不触票据链。
+ *  与 `pdf.js` / `image.js` 的 `objectUrl` 腿**同构**（同一模式，非第二套取字节路）。
+ *
+ *  canvas-office-render-fix 批（2026-10-06）：取件失败的自愈与 image.js/video.js
+ *  **同构**（T3/T4 纪律）——票据腿取件失败 ⇒ 恰好一次 reMint 重取票＋重试；第二败
+ *  即定局，落既有错误面板。blob 腿无可刷新的凭据 ⇒ 不重试（image.js 同守卫）。 */
+async function viewXlsx(pane, { absPath, fileName, objectUrl }) {
   pane.innerHTML = `<div class="canvas-md-viewer" style="display:flex;align-items:center;justify-content:center;color:var(--color-text-muted);opacity:0.5;">Loading spreadsheet...</div>`;
-  const tok = getToken();
-  const url = `/api/nf-file?path=${encodeURIComponent(absPath)}&token=${encodeURIComponent(tok)}`;
-  try {
+  const fetchBytes = async (/** @type {string} */ url) => {
     const resp = await fetch(url);
     if (!resp.ok) {
       const detail = await resp.text().catch(() => '');
       throw new Error(`HTTP ${resp.status}${detail ? ': ' + detail : ''}`);
     }
-    const arrayBuffer = await resp.arrayBuffer();
+    return resp.arrayBuffer();
+  };
+  let retried = false;
+  try {
+    let arrayBuffer;
+    try {
+      // M2 账本接缝（imgdoor #542 推广批）：票据腿经 nfViewerUrl——账本命中 = blob
+      // URL 直开（第二次打开零取数），未命中走既有票据链并入账 `nf:<absPath>`。
+      arrayBuffer = await fetchBytes(await nfViewerUrl({ absPath, objectUrl, pane }));
+    } catch (err) {
+      if (retried || !absPath || objectUrl) throw err;
+      retried = true;
+      arrayBuffer = await fetchBytes(await reMint(absPath));
+    }
     // Load SheetJS lazily (non-module script, attaches to window.XLSX)
     if (typeof window.XLSX === 'undefined') {
       await new Promise((resolve, reject) => {
@@ -41,7 +62,7 @@ async function viewXlsx(pane, { absPath, fileName }) {
     const sheet = wb.Sheets[sheetName];
     const html = window.XLSX.utils.sheet_to_html(sheet, { editable: false });
     const sheetTabs = wb.SheetNames.map((name, i) =>
-      `<button class="xlsx-sheet-tab ${i === 0 ? 'active' : ''}" data-sheet="${escapeHtml(name)}">${escapeHtml(name)}</button>`
+      `<button class="canvas-button xlsx-sheet-tab ${i === 0 ? 'active' : ''}" data-sheet="${escapeHtml(name)}">${escapeHtml(name)}</button>`
     ).join('');
     pane.innerHTML = `
       <div class="canvas-xlsx-viewer">

@@ -1,0 +1,631 @@
+// nfTicket.js — short-lived, per-path read tickets for /api/nf-file.
+//
+// Why this exists (2026-09-11, C batch "断凭据腿"): GET /api/nf-file used to
+// be gated by the permanent, path-agnostic gateway token, which every rendered
+// asset URL carried in its query string — so the token leaked into srcdoc,
+// DOM, screenshots and every network log entry, and any holder could read any
+// path the extension whitelist allowed. The endpoint now takes a per-path
+// ticket minted by POST /api/nf-ticket (itself authenticated by the cookie /
+// Bearer token, never by a URL parameter), with a TTL (R3 = 1800s default,
+// `nfFile.ticketTtlSeconds` in nebflow.json) and unlimited reads inside it
+// (R4 — pdf Range requests, .svg double-fetch and video seek all need it).
+//
+// Placement/import discipline (plan D-17): this module is imported by BOTH
+// viewers/shared.js and cardRegistry.js. It therefore MUST NOT statically
+// import viewers/shared.js (that would form shared → nfTicket → shared), and
+// it deliberately does not import ws.js either: the mint request rides the
+// same-origin cookie, with a Bearer retry as the fallback.
+
+import { key } from './branding.js';
+
+/** @typedef {{ t: string, exp: number, size?: number, cid?: string }} CachedTicket */
+
+const MINT_URL = '/api/nf-ticket';
+const MINT_TIMEOUT_MS = 8000;
+
+/** §4.3 F6: three consecutive failures in one round short-circuits the rest. */
+const FAILURE_BREAKER = 3;
+/** §4.3 F6: the breaker is round-scoped — it re-arms after this window. */
+const BREAKER_WINDOW_MS = 15000;
+/** Re-mint a little before the server-side expiry so an in-flight use wins. */
+const EXPIRY_SKEW_MS = 5000;
+
+// ── 鉴权拒绝静默退避（authgate 批 2026-10-22 · 作者报障登出级 bug）──────────
+//
+// 修前形态：mint 终态 401/403 ⇒ `noteAuthRejected('nf-ticket')` ⇒ sessionGate
+// 横幅「登录状态已过期」+ 1.5s 后 `location.reload()`。触发面里最重的一条：
+// **聊天向上滚动加载历史**——getHistory 本体走早已建立的 WS（不 401），但补进来的
+// 旧行携带 `/api/nf-file` 资产 ⇒ 渲染即铸票 ⇒ relay 源 15min 会话 cookie 过期
+// （或本地源 host 会话失效）⇒ 首个铸票 401/403 就把整页拉去重登——
+// 「上滑看历史 → 被迫重登」。作者令：**历史/资产拉取失败一律静默重试（带退避），
+// 绝不登出会话**；#520 的可见面 + 自愈 reload 职责整体归还 12h 保活腿
+// （sessionGate.armSessionKeepalive，闲置拍点，不打断阅读）。
+//
+// 本批之后 mint 面对鉴权拒绝的行为 = **指数退避静默重试**：0.5s 起拍、每次 ×2、
+// 30s 封顶；退避窗内 `mintTickets` 直接吃缓存降级（无票 URL ⇒ 端点 401 ⇒ 既有
+// 逐元素失败面），绝不 reload、绝不横幅。成功一手即清零。
+const AUTH_BACKOFF_BASE_MS = 500;
+const AUTH_BACKOFF_MAX_MS = 30000;
+
+/** @type {Map<string, CachedTicket>} */
+const cache = new Map();
+/** @type {Promise<unknown>|null} in-flight mint round (dedupe, §4.3 F4) */
+let inFlight = null;
+let consecutiveFailures = 0;
+let breakerUntil = 0;
+/** 连续鉴权失败计数 + 当前退避窗（见上方 authgate 批注释）。 */
+let authFails = 0;
+let authBackoffUntil = 0;
+
+// ── 铸票判决记账（文档里放图批 2026-11-05）────────────────────────────────
+//
+// `POST /api/nf-ticket` 的应答里除了 `tickets` 还有 `rejected: [{path, reason}]`
+// ——那是**端点自己的判决**（`not-found` = 文件不存在、`credential-*` = 该位置
+// 不许读、`extension-not-allowed` = 扩展名不服务）。前端此前把这张判决表整个
+// 丢掉，只剩「没有票 ⇒ 发出无票 URL ⇒ 端点回 401」这一条退化路径：
+// 读者看到的失败原因就成了「票据被拒（401）」，而真实原因是**文件不存在**。
+// 一张图有多个候选路径（文档目录 / vault 根 / vault 附件目录）时这张表更值钱：
+// 被拒的候选可以**直接跳过**（零请求），把级联缩成恰一次成功取字节。
+// 记账按 TTL 过期：文件可能在下一轮之前被写出来，判决不能让失败粘住。
+/** @type {Map<string, { reason: string, at: number }>} */
+const rejectCache = new Map();
+const REJECT_TTL_MS = 60_000;
+
+/**
+ * 最近一轮铸票的**被拒路径**读数（path → 服务端 reason）。过期项自动剔除。
+ * 空 Map = 没拒过 / 尚无判决（此时调用方按「未知」处理，走既有退化腿）。
+ * @returns {Map<string, string>}
+ */
+export function ticketRejects() {
+  const now = Date.now();
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  for (const [p, v] of rejectCache) {
+    if (now - v.at > REJECT_TTL_MS) { rejectCache.delete(p); continue; }
+    out.set(p, v.reason);
+  }
+  return out;
+}
+
+/**
+ * Remove the credential-bearing parameters (`token` / `ticket`) from a URL.
+ *
+ * One implementation for every display surface — the card failure placeholder
+ * (cardRegistry.js) and the markdown image tooltip (viewers/markdown.js) both
+ * call it, so the two can never drift into two different regexes. T2: a
+ * credential must never reach a serializable export or a UI text face.
+ * @param {unknown} url
+ * @returns {string}
+ */
+export function stripCredentialParams(url) {
+  return String(url == null ? '' : url)
+    .replace(/([?&])(token|ticket)=[^&]*/g, '$1')
+    .replace(/[?&]$/, '');
+}
+
+/** Fresh matcher for an `/api/nf-file` URL embedded in HTML text.
+ *
+ * The character class deliberately STOPS at `)` (plus quotes, whitespace and
+ * the tag/attr delimiters, C2-21 / self-correction ⑨). The pre-batch class
+ * `[^"'\s]+` did not, and the Card tool emits UNQUOTED CSS `url()` (that
+ * output was locked by the now-retired `CardToolScanFaceSpec:103`) — so on one line the
+ * match ran through `)}</style><img` and the credential was appended after a
+ * tag name (DOM mangled), and across lines it landed OUTSIDE the `)`, leaving
+ * the URL unauthenticated and the declaration broken. Quoted `src="…"` /
+ * `url("…")` stop at the quote; unquoted `url(…)` stops at the paren.
+ *
+ * ONE matcher for the card path (cardRegistry.js) and the Canvas viewer path
+ * (viewers/shared.js) — two copies of this regex is exactly how the original
+ * bug survived in one place after being fixed in the other. */
+export function nfFileUrlRe() {
+  return /\/api\/nf-file\?path=[^"'\s)<>,;]+/g;
+}
+
+/** Decode one `path=` query value into the filesystem path it names.
+ *
+ *  A bare `+` in a query string means a SPACE — both encoders in this chain
+ *  agree on that: the tools build the URL with the JVM form encoder
+ *  (`java.net.URLEncoder`, space → `+`, literal plus → `%2B`) and the frontend
+ *  builds its own with `encodeURIComponent` (space → `%20`, literal plus →
+ *  `%2B`). `decodeURIComponent` alone folds NEITHER, so a JVM-encoded space
+ *  stayed a literal `+`: the mint was asked for `/Users/…/Claude+code/…`, the
+ *  server saw a path that does not exist, the candidate came back rejected, the
+ *  markup kept its ticket-free URL and the image answered 401 — the author's
+ *  card rendered its `img could not be loaded` placeholder (2026-09-16 imgfix
+ *  batch). Folding `+` first is correct for every producer here; `%2B` (a real
+ *  plus in a filename) is untouched.
+ *  @param {string} raw @returns {string|null} null when the escapes are malformed */
+export function decodePathParam(raw) {
+  try {
+    return decodeURIComponent(String(raw).replace(/\+/g, ' '));
+  } catch (e) {
+    return null;
+  }
+}
+
+/** Decoded `path` values referenced by a chunk of HTML (the mint candidates).
+ *  Empty set ⇒ zero mint requests (§4.3 F1). */
+export function nfFilePathsIn(html) {
+  /** @type {Set<string>} */
+  const out = new Set();
+  String(html || '').replace(nfFileUrlRe(), (url) => {
+    const q = /[?&]path=([^&]*)/.exec(url);
+    if (q) {
+      const p = decodePathParam(q[1]);
+      if (p !== null) out.add(p); // malformed escapes — skip
+    }
+    return url;
+  });
+  return [...out];
+}
+
+/**
+ * Append the per-path ticket to every `/api/nf-file` URL in a chunk of HTML —
+ * and, when the mint应答把内容 cid 带回来了（按对象复用批 2026-11-18·第 1 件），
+ * rewrite the `<img>` byte URLs to the **content-addressed** exit
+ * `/api/nf-obj/<cid>/<name>` instead. That is what makes the Card/iframe leg
+ * and the ledger/叠卡/灯箱/查看器 leg fetch the SAME URL for the same object,
+ * so the second leg is a browser-cache hit with zero byte transit.
+ *
+ * Scope discipline (why only `<img>`): the content-addressed route has no
+ * Range leg — `<video>`/`<audio>` keep their ticket URL so seek/streaming
+ * semantics are untouched (「不做：视频账本 Range 腿」). URLs that already
+ * carry a ticket are only upgraded in place, never double-stamped.
+ * @param {string} html @param {Map<string,string>} tickets
+ */
+export function injectTickets(html, tickets) {
+  const src = String(html == null ? '' : html);
+  if (!src) return src;
+  // `<img …>` tag spans (byte URLs inside them may be content-addressed).
+  /** @type {Array<[number, number]>} */
+  const spans = [];
+  const tagRe = /<img\b[^>]*>/gi;
+  let m;
+  while ((m = tagRe.exec(src)) !== null) spans.push([m.index, m.index + m[0].length]);
+  const inImg = (offset) => spans.some(([a, b]) => offset >= a && offset < b);
+  const has = !!(tickets && typeof tickets.get === 'function' && tickets.size > 0);
+  return src.replace(nfFileUrlRe(), (url, offset) => {
+    const q = /[?&]path=([^&]*)/.exec(url);
+    if (!q) return url;
+    const p = decodePathParam(q[1]);
+    if (p === null) return url;
+    // 内容寻址优先（仅 img + 非流式 + cid 在场）：URL 变成内容的函数。
+    if (inImg(offset)) {
+      const cid = cidOf(p);
+      if (cid && !isStreamingPath(p)) return objUrl(p, cid);
+    }
+    if (/[?&]ticket=/.test(url)) return url;
+    if (!has) return url;
+    const t = tickets.get(p);
+    return t ? url + '&ticket=' + encodeURIComponent(t) : url;
+  });
+}
+
+/** @returns {string} the raw credential, for the Bearer retry only. */
+function storedToken() {
+  try {
+    return localStorage.getItem(key('token')) || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+/** @returns {string} */
+function currentSessionId() {
+  const w = /** @type {{ __nfSessionId?: string }} */ (/** @type {any} */ (window));
+  if (typeof w.__nfSessionId === 'string') return w.__nfSessionId;
+  try {
+    const raw = localStorage.getItem(key('sessionId'));
+    if (raw) return raw;
+  } catch (e) { /* storage unavailable */ }
+  return '';
+}
+
+/** @param {string} p @returns {boolean} */
+function isFresh(p) {
+  const hit = cache.get(p);
+  return !!hit && hit.exp - EXPIRY_SKEW_MS > Date.now();
+}
+
+/** @param {string[]} paths @returns {Map<string, string>} */
+function collected(paths) {
+  /** @type {Map<string, string>} */
+  const out = new Map();
+  for (const p of paths) {
+    const hit = cache.get(p);
+    if (hit) out.set(p, hit.t);
+  }
+  return out;
+}
+
+/** @param {unknown} paths @returns {string[]} */
+function normalize(paths) {
+  if (!Array.isArray(paths)) return [];
+  /** @type {string[]} */
+  const out = [];
+  for (const p of paths) {
+    if (typeof p === 'string' && p && !out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
+/**
+ * One mint request. NEVER rejects (§4.3 F2/F3): every failure mode resolves
+ * with "no tickets for these paths", and the caller builds the same
+ * credential-free URL it would have built before this batch — the endpoint
+ * then 401s and the existing per-element failure chain (placeholder /
+ * onerror) handles it. That is what keeps a mint outage from blanking every
+ * card on screen (§4.3 F5).
+ * @param {string[]} paths
+ * @returns {Promise<void>}
+ */
+async function mintRound(paths) {
+  const body = JSON.stringify({ sessionId: currentSessionId(), paths });
+  const send = (/** @type {Record<string, string>} */ extraHeaders) =>
+    fetch(MINT_URL, {
+      method: 'POST',
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: Object.assign({ 'Content-Type': 'application/json' }, extraHeaders),
+      body,
+      signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
+    });
+
+  try {
+    let resp = await send({});
+    if (resp.status === 401 || resp.status === 403) {
+      // Cookie blocked (same condition ws.js probes for). The token, when one
+      // is stored, goes in the Authorization header — never back into a URL.
+      const tok = storedToken();
+      if (tok) resp = await send({ Authorization: 'Bearer ' + tok });
+    }
+    if (!resp.ok) {
+      // authgate 批（2026-10-22）：401/403 = 同源凭据被拒（relay 门 15min 票过期 /
+      // host 会话失效）。**不再**拉 sessionGate（登出级 bug：上滑历史渲染铸票一发
+      // 401 就整页重登）——记一次退避后静默返回，走既有逐元素降级面；重试节奏由
+      // authBackoffUntil 把关（下方 mintTickets），绝不登出会话。其余状态照旧走
+      // 熔断计数。
+      if (resp.status === 401 || resp.status === 403) {
+        authFails += 1;
+        authBackoffUntil = Date.now() +
+          Math.min(AUTH_BACKOFF_BASE_MS * Math.pow(2, authFails - 1), AUTH_BACKOFF_MAX_MS);
+      }
+      throw new Error('mint HTTP ' + resp.status);
+    }
+    const data = await resp.json();
+    // F3: a 200 whose body is not an object, or carries no `tickets` mapping
+    // (the catch-all harness shape `{}`), means "no tickets available". It is
+    // counted as a failure for the breaker and logged once — but it is still
+    // NOT an error thrown at the caller: rendering continues with credential-
+    // free URLs (§4.3 F2/F3 share one degradation path).
+    const tickets = data && typeof data === 'object' ? data.tickets : null;
+    if (!tickets || typeof tickets !== 'object') throw new Error('mint response carried no tickets');
+    for (const p of Object.keys(tickets)) {
+      const v = tickets[p];
+      const t = v && typeof v === 'object' ? v.t : null;
+      const exp = v && typeof v === 'object' ? v.exp : null;
+      const size = v && typeof v === 'object' && Number.isFinite(v.size) ? v.size : 0;
+      // cid 并键（按对象复用批 2026-11-18·第 1 件）：**服务端自算**的整件 sha256
+      // 前 32 hex。在场 ⇒ 前端可构造 `/api/nf-obj/<cid>/<name>`（内容寻址 URL）。
+      // 缺席（旧 mock / 大件 / 不可读）⇒ 逐字回落既有票据 URL，零行为差异。
+      const cid = v && typeof v === 'object' && typeof v.cid === 'string' ? v.cid : '';
+      if (typeof t === 'string' && t) {
+        // size 并键（铸票面顺带 stat，2026-10-23 console-fastpath 批·腿③）：
+        // 大文件 LAN 直传阈值判定用；缺席/0 = 未知尺寸（不直传，诚实降级）。
+        cache.set(p, { t, exp: typeof exp === 'number' ? exp : Date.now() + 1800000, size, cid });
+        rejectCache.delete(p);   // 有票 ⇒ 上一轮的拒绝判决作废
+      }
+    }
+    // 判决表（见 rejectCache 头注）：被端点拒绝的路径记下 reason，调用方据此
+    // 跳过该候选并把**真实原因**写进失败占位，而不是退化成一个 401。
+    const rejected = Array.isArray(data.rejected) ? data.rejected : [];
+    for (const r of rejected) {
+      const p = r && typeof r === 'object' ? r.path : null;
+      if (typeof p !== 'string' || !p) continue;
+      rejectCache.set(p, { reason: String((r && r.reason) || ''), at: Date.now() });
+    }
+    consecutiveFailures = 0;
+    breakerUntil = 0;
+    authFails = 0;
+    authBackoffUntil = 0;
+  } catch (e) {
+    consecutiveFailures += 1;
+    if (consecutiveFailures >= FAILURE_BREAKER) breakerUntil = Date.now() + BREAKER_WINDOW_MS;
+    console.warn('[nfTicket] mint failed:', e && /** @type {Error} */ (e).message ? /** @type {Error} */ (e).message : e);
+  }
+}
+
+/**
+ * Mint (or reuse) tickets for a batch of absolute paths.
+ *
+ * Contract (§4.3, frozen):
+ *   F1 candidate set empty      → ZERO requests, resolves an empty Map
+ *   F2 network error / 5xx      → resolves the map WITHOUT those paths
+ *   F3 200 with no `tickets`    → same as F2
+ *   F4 partial success          → per path, never contagious
+ *   F5 batch                    → per-path independence, never an all-empty page
+ *   F6 repeated failures        → breaker: ≤3 requests per round
+ *
+ * @param {string[]} paths
+ * @returns {Promise<Map<string, string>>}
+ */
+export async function mintTickets(paths) {
+  const wanted = normalize(paths);
+  if (wanted.length === 0) return new Map(); // F1 — no request at all
+  // Dedupe: an in-flight round may already be minting some of these.
+  while (inFlight) {
+    const current = inFlight;
+    await current;
+    if (inFlight === current) break;
+  }
+  const fresh = wanted.filter((p) => !isFresh(p));
+  if (fresh.length === 0) return collected(wanted);
+  if (Date.now() < breakerUntil) return collected(wanted); // F6
+  // authgate 批：鉴权退避窗内零请求（静默重试的「退避」半边）——直接吃缓存
+  // 降级，绝不抛、绝不登出；窗开（0.5s→30s 指数）后下一轮自然重试。
+  if (Date.now() < authBackoffUntil) return collected(wanted);
+  const round = mintRound(fresh);
+  inFlight = round;
+  try {
+    await round;
+  } finally {
+    if (inFlight === round) inFlight = null;
+  }
+  return collected(wanted);
+}
+
+/**
+ * The ticket-authenticated URL for one path.
+ *
+ * When no ticket is available the URL comes back in the pre-batch shape
+ * (path only, no credential) — the caller renders it, the endpoint answers
+ * 401, and the viewer's existing failure path takes over.
+ * @param {string} path
+ * @returns {Promise<string>}
+ */
+export async function ticketUrl(path) {
+  const map = await mintTickets([path]);
+  const t = map.get(path);
+  const base = '/api/nf-file?path=' + encodeURIComponent(path);
+  return t ? base + '&ticket=' + encodeURIComponent(t) : base;
+}
+
+/**
+ * Forget the cached tickets for these paths and mint fresh ones.
+ *
+ * Used by the T3 self-healing paths (403 → re-mint once → retry) and, more
+ * importantly, by every RE-MOUNT: a replayed ticket is forbidden (T2 ②), so a
+ * card that comes back from a discarded browsing context mints again instead
+ * of re-using the srcdoc it was built with.
+ * @param {string[]} paths
+ * @returns {Promise<Map<string, string>>}
+ */
+export async function reMintAll(paths) {
+  const list = normalize(paths);
+  // Settle any in-flight round FIRST. It may be minting (and caching) the very
+  // entries we are about to drop; deleting before it lands would let its write
+  // survive the delete, `mintTickets` would then see a "fresh" ticket and skip
+  // the request — silently reusing the value this call exists to replace
+  // (T2 ②: never reuse a ticket across mounts / lightbox opens).
+  while (inFlight) {
+    const current = inFlight;
+    await current;
+    if (inFlight === current) break;
+  }
+  for (const p of list) cache.delete(p);
+  // A deliberate re-mint is a new round: clear the failure breaker so a
+  // recovery attempt is not short-circuited by an earlier outage (§4.3 F6 is
+  // round-scoped by design) — and the auth backoff with it (authgate 批：用户
+  // 手动重试/开图重铸是明确的新一轮，不吃上一轮的退避窗)。
+  consecutiveFailures = 0;
+  breakerUntil = 0;
+  authFails = 0;
+  authBackoffUntil = 0;
+  return mintTickets(list);
+}
+
+/**
+ * Drop the cached ticket for `path` and mint a fresh one. Returns the new URL,
+ * or the credential-free URL when the re-mint failed.
+ * @param {string} path
+ * @returns {Promise<string>}
+ */
+export async function reMint(path) {
+  const map = await reMintAll([path]);
+  return urlWithTicket(path, map.get(path) || '');
+}
+
+/** Synchronous accessor for callers that already awaited `ticketUrl`. */
+export function cachedTicket(path) {
+  const hit = cache.get(path);
+  return hit ? hit.t : '';
+}
+
+/** Build a URL from an already-known ticket (no await). */
+export function urlWithTicket(path, ticket) {
+  const base = '/api/nf-file?path=' + encodeURIComponent(path);
+  return ticket ? base + '&ticket=' + encodeURIComponent(ticket) : base;
+}
+
+// ── 内容寻址 URL（按对象复用批 2026-11-18 · 第 1 件）────────────────────────
+// 铸票应答带回内容 cid（**服务端自算**的整件 sha256 前 32 hex）⇒ 前端可构造
+// `/api/nf-obj/<cid>/<name>`。URL 于是变成**内容**的函数：跨腿、跨挂载、跨会话
+// 恒同 ⇒ 服务端 `private, max-age=31536000, immutable` 让第二条腿在浏览器缓存里
+// 命中（零字节、零请求）。凭据**不在 URL 里**（cookie / Authorization 头）——
+// 本 URL 比票据 URL 更严：票据 URL 把凭据摊在 query 里。
+//
+// 三条纪律：
+//   ① cid 缺席（旧 mock / 大件 / 不可读）⇒ **逐字**回落既有票据 URL；
+//   ② 视频/音频不走内容寻址（Range/流式 seek 语义留在 /api/nf-file）；
+//   ③ 服务端不给 cid 的超大件同样自动回落（两条腿各自诚实降级）。
+
+/** 必须保留 Range 流式腿的扩展名（视频/音频）⇒ 不内容寻址。 */
+const STREAMING_EXT_RE = /\.(mp4|webm|mov|m4v|ogv|mp3|wav|ogg|m4a|aac|flac|opus)$/i;
+
+/** 该路径是否属流式件（视频/音频）。@param {string} path @returns {boolean} */
+export function isStreamingPath(path) {
+  return STREAMING_EXT_RE.test(String(path || '').split(/[?#]/)[0]);
+}
+
+/** 已铸票路径的内容 cid（无票/应答无 cid ⇒ ''）。@param {string} path @returns {string} */
+export function cidOf(path) {
+  const hit = cache.get(path);
+  return hit && typeof hit.cid === 'string' ? hit.cid : '';
+}
+
+/** 内容寻址 URL 的末段名（只决定 Content-Type；字节由 cid 定）。 */
+export function objNameOf(path) {
+  const seg = String(path || '').split(/[\\/]/).pop() || '';
+  return seg.split(/[?#]/)[0] || 'object';
+}
+
+/** `/api/nf-obj/<cid>/<name>`（凭据走 cookie/Authorization 头，绝不进 URL）。
+ *  模板字面量形态是**有意的**：`check-api-routes.mjs` 只对模板插值做段归一
+ *  （整段插值 ⇒ `:` 通配段），拼接式写法会被抽成缺段的路径而与该闸
+ *  「前端调用必有后端承接」判据失配。 */
+export function objUrl(path, cid) {
+  return `/api/nf-obj/${encodeURIComponent(cid)}/${encodeURIComponent(objNameOf(path))}`;
+}
+
+/**
+ * 取字节 URL 的**内容寻址优先**形态（账本/查看器腿单点）。
+ *
+ * 合帧铸票后：cid 在场且非流式件 ⇒ `/api/nf-obj/<cid>/<name>`；否则逐字回落
+ * `urlWithTicket`（= `queuedTicketUrl` 的 URL 形状）。绝不 reject（与
+ * `queuedTicketUrl` 同失败契约）。
+ * @param {string} path @returns {Promise<string>}
+ */
+export async function contentAddressedUrl(path) {
+  const map = await mintTicketsQueued([path]);
+  const ticket = map.get(path) || '';
+  const cid = cidOf(path);
+  if (cid && !isStreamingPath(path)) return objUrl(path, cid);
+  return urlWithTicket(path, ticket);
+}
+
+// ── 大文件 LAN 直传（console-fastpath 批 2026-10-23·作者令腿③）────────────────
+// 阈值判定三键齐备才出直传 URL：① 铸票面已知尺寸 ≥ LAN_DIRECT_MIN_BYTES
+// （4 MiB——nfFileCache 桶预算 32/96/128MiB 的下游、256KiB body_frame 的 16
+// 帧跨境 vs 直传的净赚线）；② 本会话近路探测已验证在册（nearpath.js 的
+// getNearPath——环回/LAN 候选 nf-reach 命中记录）；③ 票据本身有效。
+// 凭据语义与同源腿逐字一致：ticket 在 URL query，服务端 ACAO/PNA 已放
+// （NfFileRoutes NfFileCorsHeaders）——直传是**字节路由**变更，不是鉴权变更。
+
+/** LAN 直传阈值：≥4 MiB 才绕隧道（小文件走 relay 无感，直传预检反而是开销）。 */
+export const LAN_DIRECT_MIN_BYTES = 4 * 1024 * 1024;
+
+/**
+ * 大文件直传绝对 URL；不适用（尺寸未知/低于阈值/无在册近路/无票）⇒ null，
+ * 调用方走原票据腿。动态 import nearpath.js：保持本模块的静态 import 面与
+ * imgdoor 批前逐字一致（placement 纪律——本模块被 viewers/shared 与
+ * cardRegistry 双方导入，静态边只增不减地谨慎）。
+ * @param {string} path
+ * @returns {Promise<string|null>}
+ */
+export async function largeFileDirectUrl(path) {
+  try {
+    const hit = cache.get(path);
+    if (!hit || !(hit.size >= LAN_DIRECT_MIN_BYTES)) return null;
+    const { getNearPath } = await import('./nearpath.js');
+    const near = getNearPath();
+    if (!near || !near.base) return null;
+    return near.base + '/api/nf-file?path=' + encodeURIComponent(path) + '&ticket=' + encodeURIComponent(hit.t);
+  } catch (_) {
+    return null; // 直传面任何意外 = 回落原票据腿（绝不硬失败）
+  }
+}
+
+/** Test seam: forget every cached ticket and breaker state. */
+export function resetTickets() {
+  cache.clear();
+  inFlight = null;
+  consecutiveFailures = 0;
+  breakerUntil = 0;
+  authFails = 0;
+  authBackoffUntil = 0;
+}
+
+// ── 合帧批量铸票（imgdoor #542 · 档1 + 票据计数面）───────────────────────────
+// 同一渲染帧里 N 张本机图片各问一次票据 ⇒ 今天的 `ticketUrl(path)` 每张一发
+// POST /api/nf-ticket（N 图 = N 铸票）。本出口把同一宏任务窗（setTimeout 0 一拍）
+// 内排队的路径**合成一次批量铸票**（服务端本就批量：`nfTicketRoutes` 收
+// `paths[]` 逐路径出票）⇒ N 图 ≤ 1 铸票；点击开图的 `ticketUrl` 在批量落账后
+// 全部命中 per-path 缓存 ⇒ 零追加铸票。
+//
+// 失败契约与 `mintTickets` 同族（绝不 reject）：缺失路径 resolve 空串，调用方
+// 走既有无票 URL 降级（端点 401 → 各自可见失败面）。熔断（F6）复用既有状态。
+
+/** @typedef {{ promise: Promise<string>, resolve: (t: string) => void }} BatchWaiter */
+/** @type {Map<string, BatchWaiter>} 排队路径 → 该路径的 waiter（resolve('') = 缺席） */
+const batchWaiters = new Map();
+/** @type {string[]} 当前合帧窗内待铸的路径（去重） */
+let batchPending = [];
+/** @type {number|null} 合帧窗定时器 */
+let batchTimer = null;
+
+/** @param {string} path @returns {Promise<string>} 已缓存则当场给，否则进队。 */
+function queueOne(path) {
+  const hit = cache.get(path);
+  if (hit && isFresh(path)) return Promise.resolve(hit.t);
+  const existing = batchWaiters.get(path);
+  if (existing) return existing.promise;
+  /** @type {(t: string) => void} */
+  let resolve = () => {};
+  const promise = new Promise((r) => { resolve = r; });
+  batchWaiters.set(path, { promise, resolve });
+  batchPending.push(path);
+  return promise;
+}
+
+function flushBatch() {
+  batchTimer = null;
+  const paths = batchPending;
+  batchPending = [];
+  const waiters = new Map(batchWaiters);
+  batchWaiters.clear();
+  if (paths.length === 0) return;
+  mintTickets(paths).then((map) => {
+    for (const [p, waiter] of waiters) waiter.resolve(map.get(p) || '');
+  });
+}
+
+/**
+ * 合帧批量铸票：本拍（同一 setTimeout 0 窗）内所有调用合并为一次
+ * `POST /api/nf-ticket`（N 图 ≤ 1 铸票的机械保证，spec 按请求数断言）。
+ * @param {string[]} paths
+ * @returns {Promise<Map<string, string>>} 拿到票的路径 → 票（缺席路径不在表内）
+ */
+export function mintTicketsQueued(paths) {
+  const wanted = normalize(paths);
+  if (wanted.length === 0) return Promise.resolve(new Map());
+  if (batchTimer === null) batchTimer = setTimeout(flushBatch, 0);
+  // queueOne 与 wanted 严格同序同长（未命中者进队，命中者当场 resolve）。
+  return Promise.all(wanted.map(queueOne)).then((list) => {
+    /** @type {Map<string, string>} */
+    const out = new Map();
+    for (let i = 0; i < wanted.length; i++) {
+      const t = /** @type {string} */ (list[i]);
+      if (t) out.set(wanted[i], t);
+    }
+    return out;
+  });
+}
+
+/**
+ * `ticketUrl` 的合帧版（设备内联图片直显腿用）：N 张图同帧渲染只发一次铸票。
+ * 拿不到票 ⇒ 既有无票 URL（端点 401 → 该 `<img>` 的 onerror 摘槽，逐字现状）。
+ * @param {string} path
+ * @returns {Promise<string>}
+ */
+export async function queuedTicketUrl(path) {
+  const map = await mintTicketsQueued([path]);
+  return urlWithTicket(path, map.get(path) || '');
+}
+
+/** Test seam: 丢弃未合帧的队列（不影响已入账票据）。 */
+export function resetBatchQueue() {
+  if (batchTimer !== null) { clearTimeout(batchTimer); batchTimer = null; }
+  for (const waiter of batchWaiters.values()) waiter.resolve('');
+  batchWaiters.clear();
+  batchPending = [];
+}

@@ -1,0 +1,654 @@
+/* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
+package nebflow.gateway
+
+import cats.effect.IO
+import cats.syntax.all.*
+import io.circe.Json
+import io.circe.syntax.*
+import nebflow.actor.RootAgentIdentity
+import nebflow.core.*
+import nebflow.core.project.*
+import nebflow.core.tools.NodeTools
+import nebflow.shared.PathUtil
+import org.http4s.*
+import org.http4s.circe.CirceEntityCodec.*
+import org.http4s.dsl.io.*
+
+/**
+ * 项目域(projects,F 步 2026-09-24):原 RestApiRoutes.routes 巨型 match 的
+ * /projects 全族 case(列表/归档/flow-map 快照/归档批次/节点结果全文/
+ * agent.md 读写)逐字迁入,行为保持;经 RestApiRoutes.routes 级联挂载,
+ * 各臂首段路径字面量与其余域互不重叠。
+ */
+private[gateway] object ProjectsRoutes:
+
+  def routes(ctx: RestApiCtx): HttpRoutes[IO] =
+    import ctx.*
+    HttpRoutes.of[IO] {
+      // ── Project + Flow Map REST（#28 阶段 0，前端 Project 面板 + Flow Map 视图数据源）──
+      // 契约（同步 Frontend，与 NodeList 工具同 shape）：
+      //   GET /projects → 200 {projects:[{name, workspace, agentFile, description, createdAt}]}
+      //                   （归档项目不在列——ProjectStore.list 源头过滤，迁移方案 v2 §6.1）
+      //   GET /projects/<name>/flow-map → 200 {nodes:[...], worktrees:[...], meta:{...}}
+      //                   （2026-09-05 载荷收敛：节点条目=元数据 only——无 result 全文/摘要，
+      //                   hasResult 标记 + description/taskPreview；结果全文按需取 ↓）
+      //   GET /projects/<name>/flow-map/archive → 200 {batches:[...], ttlMs, count}
+      //                   （裁定④「TTL 分开」批：归档面板数据源；显示窗 24h 内批次聚合）
+      //   GET/PUT /projects/<name>/agent.md → 200 {content} / {saved:true}
+      //   POST /projects/<name>/archive → 200 {archived:true, archivedAt}（§6.1 显式人工
+      //                   归档：仅 project.json 打标记，零删除零移动；幂等；单程无取消）
+      //   POST /projects/<name>/description → 200 {saved:true[,unchanged:true]}（台账 #920
+      //                   面板侧描述更新：body {description}，写穿 ProjectStore.updateDescription；
+      //                   成功腿广播 projectDescriptionUpdated 帧，幂等腿不发帧）
+      // 未挂载/不存在 → 404 {error}; 需 auth（withAuth）。
+      // 注意：routes 挂载在 Router("/api" -> ...) 下，路径必须写相对段
+      // （Root / "projects"），写 "api" 会双前缀 /api/api（QA P1②）。
+      // ── Legacy workspace ledger view (read-only) ─────────────────────────
+      // The managed-workspace mechanism is retired: no cleanup, no merge
+      // requests, no baseline writes. This endpoint stays as the read face for
+      // the recorded history the old mechanism left behind — rows render as
+      // recorded, nothing is executed, resumed or cleaned.
+      case req @ GET -> Root / "projects" / name / "workspaces" =>
+        withAuth(req) {
+          ProjectStore.load(name).flatMap {
+            case None => NotFound(Json.obj("error" -> "Project not found".asJson))
+            case Some(project) if ProjectStore.effectiveDevice(project) != "self" =>
+              Conflict(Json.obj("error" -> "Remote workspace lifecycle is not available on this device".asJson))
+            case Some(project) =>
+              IO.blocking {
+                val ws = os.Path(ProjectStore.brainWorkspace(project), PathUtil.dataRoot)
+                val ledger = nebflow.core.delegate.WorkspaceLedger.default
+                val repository = nebflow.core.delegate.WorkspaceLedger.repositoryKey(ws)
+                val snapshot = ledger.snapshot
+                Json.obj(
+                  "revision" -> snapshot.revision.asJson,
+                  "workspaces" -> snapshot.workspaces.filter(_.repository == repository).asJson,
+                  "mergeRequests" -> snapshot.requests.filter(_.repository == repository).asJson,
+                  "merger" -> snapshot.mergers.find(_.repository == repository).asJson,
+                  "mergerInitialization" -> snapshot.mergers
+                    .find(_.repository == repository)
+                    .flatMap(m => snapshot.mergerBootstraps.get(m.delegateId))
+                    .map(seed => Json.obj("status" -> seed.status.asJson, "error" -> seed.error.asJson))
+                    .asJson,
+                  "suggestions" -> Json.arr(),
+                  "advisorError" -> Json.Null,
+                  "facts" -> Json.obj(),
+                  "cleanups" -> snapshot.cleanups.filter { case (id, _) =>
+                    snapshot.workspaces.exists(w => w.id == id && w.repository == repository)
+                  }.asJson
+                )
+              }.flatMap(Ok(_))
+                .handleErrorWith(e => Conflict(Json.obj("error" -> e.getMessage.asJson)))
+          }
+        }
+
+      case req @ GET -> Root / "project-open-apps" =>
+        withAuth(req) {
+          IO.blocking(ProjectOpenApps.detect().map { a =>
+            Json.obj("id" -> a.id.asJson, "label" -> a.label.asJson,
+              "icon" -> ProjectOpenApps.iconPath(a).map(_ => s"/api/project-open-apps/${a.id}/icon").asJson)
+          }).flatMap(apps => Ok(Json.obj("apps" -> apps.asJson)))
+        }
+
+      case req @ GET -> Root / "project-open-apps" / id / "icon" =>
+        withAuth(req) {
+          IO.blocking(ProjectOpenApps.detect().find(_.id == id).flatMap(ProjectOpenApps.iconPath).map(java.nio.file.Files.readAllBytes(_))).flatMap {
+            case None => NotFound()
+            case Some(bytes) => IO.pure(Response[IO](status = Status.Ok,
+              headers = Headers(org.http4s.headers.`Content-Type`(MediaType.image.png)),
+              body = fs2.Stream.emits(bytes).covary[IO]))
+          }
+        }
+
+      case req @ POST -> Root / "projects" / name / "open-in-app" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val path = body.hcursor.get[String]("path").getOrElse("")
+            val appId = body.hcursor.get[String]("app").getOrElse("")
+            ProjectStore.list().flatMap { projects =>
+              projects.find(_.name == name) match
+                case None => NotFound(Json.obj("error" -> "Project not found".asJson))
+                case Some(project) if ProjectStore.effectiveDevice(project) != "self" =>
+                  BadRequest(Json.obj("error" -> "Remote workspaces cannot be opened on the engine host".asJson))
+                case Some(project) =>
+                  ProjectOpenApps.registeredPath(path, project.workspace) match
+                    case Left(error) => BadRequest(Json.obj("error" -> error.asJson))
+                    case Right(real) => ProjectOpenApps.detect().find(_.id == appId) match
+                      case None => BadRequest(Json.obj("error" -> "Application is not available".asJson))
+                      case Some(app) => IO.blocking(ProjectOpenApps.launch(app, real)).attempt.flatMap {
+                        case Right(0) => Ok(Json.obj("opened" -> true.asJson))
+                        case Right(code) => InternalServerError(Json.obj("error" -> s"Application opener exited with code $code".asJson))
+                        case Left(e) => InternalServerError(Json.obj("error" -> s"Could not open application: ${e.getMessage}".asJson))
+                      }
+            }
+          }
+        }
+
+      case req @ GET -> Root / "projects" =>
+        withAuth(req) {
+          (ProjectStore.list(), ProjectStore.listAll())
+            .mapN { (projects, all) =>
+              // unmount-console 面板批 2026-11-02：additive `unmounted` 数组——卸载态
+              // 项目的可见去处（「已卸载」分组数据源；行形与 mounted 行同构 +
+              // unmountedAt）。老前端忽略未知键零破坏；已归档项目仍不出列（归档保持
+              // 单程语义，remount 也不复活）。
+              val unmountedRows = all
+                .filter(pd => pd.unmounted.contains(true) && !pd.archived.contains(true))
+                .sortBy(pd => -(pd.unmountedAt.getOrElse(0L)))
+                .map(pd =>
+                  Json.obj(
+                    "name" -> pd.name.asJson,
+                    "workspace" -> pd.workspace.asJson,
+                    "agentFile" -> pd.agentFile.asJson,
+                    "description" -> pd.description.asJson,
+                    "createdAt" -> pd.createdAt.asJson,
+                    "origin" -> pd.origin
+                      .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)),
+                    "device" -> ProjectStore.effectiveDevice(pd).asJson,
+                    "unmountedAt" -> pd.unmountedAt.getOrElse(0L).asJson
+                  )
+                )
+              Json.obj(
+                "projects" -> projects
+                  .map(p =>
+                    Json.obj(
+                      "name" -> p.name.asJson,
+                      "workspace" -> p.workspace.asJson,
+                      "agentFile" -> p.agentFile.asJson,
+                      "description" -> p.description.asJson,
+                      "createdAt" -> p.createdAt.asJson,
+                      // ui-device-faces 批（2026-10-10 · 设计稿 §6 后端②）：additive
+                      // `origin{device,path}|null`（面C 徽标数据源；键名对齐 project.json
+                      // 的 ProjectOrigin Codec）。老前端忽略未知键零破坏；存量项目（无
+                      // origin 盘面）= 显式 null。
+                      "origin" -> p.origin
+                        .fold(Json.Null)(o => Json.obj("device" -> o.device.asJson, "path" -> o.path.asJson)),
+                      // 台账 #913 ②（2026-10-26）：additive `device` —— workspace 所在
+                      // 设备的**存储值**（"self" = 本机 / 对端 deviceId；判定单点 =
+                      // ProjectStore.effectiveDevice）。显示名由前端按需解析（面板既有
+                      // origin 徽标同域）；老前端忽略未知键零破坏。
+                      "device" -> ProjectStore.effectiveDevice(p).asJson
+                    )
+                  )
+                  .asJson,
+                "unmounted" -> unmountedRows.asJson
+              )
+            }
+            .flatMap(Ok(_))
+        }
+
+      // POST /projects/<name>/archive — 归档（迁移方案 v2 §6.1）：显式人工动作唯一入口
+      // （面板按钮/明确指令）。语义：仅 project.json 打归档标记（零删除零移动，workspace
+      // 原样）；列表出口过滤（list 源头）→ 面板即时消失；startupMount 同源跳过 → 重启
+      // 不自动挂载；运行中 ProjectActor/会话不强制拆除（registry 与 Mail 路由不受影响）。
+      // 幂等：重复归档不重写。单程：本批无取消归档 API（手工删两键可恢复）。
+      //
+      // 项目级实时事件（tabrealtime 批 2026-09-17 · 作者裁定 (b) 方案 B / (e) 两身份事件）：
+      // 成功分支经**既有** `wsHub.broadcast` 全连接广播一帧 `projectArchived`
+      // （载荷逐字 §D-2：type / project / archivedAt；帧形由 ProjectActor.projectArchivedFrame
+      // 单点生产）——与既有广播先例同族（:306 configUpdated / :1767 / :1792 / :1830），
+      // 🔴 不自建第二套推送面、不改帧外壳语义。
+      // 幂等重归档（已归档 → 不重写文件）同样返回 Right(at) ⇒ 同样发一帧，语义为
+      // 「该项目的归档态此刻为真」；前端按名定点删除对「卡已不在」是 no-op（无重复渲染）。
+      case req @ POST -> Root / "projects" / name / "archive" =>
+        withAuth(req) {
+          ProjectStore.archive(name).flatMap {
+            case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+            case Right(at) =>
+              // `*>`：先广播（IO[Unit]）再回响应（Ok(...) 本体已是 IO[Response]）
+              wsHub.broadcast(ProjectActor.projectArchivedFrame(name, at)) *>
+                Ok(Json.obj("archived" -> true.asJson, "archivedAt" -> at.asJson))
+          }
+        }
+
+      // POST /projects/<name>/unmount — 控制台「取消加载」按钮的引擎缝（unmount-console
+      // 面板批 2026-11-02）：与编排侧 Project 工具 `action="unmount"` **同一条引擎通路**
+      // （同一单点 ProjectUnmount.unmount、同一保护顺序 停飞→摘面→零删除——禁两套行为）。
+      // 契约：
+      //   · 需 auth（withAuth）；零 body；
+      //   · Left（不存在/未挂载/排空超时中止）→ 404 {"error": "<可行动文案>"}（本文件
+      //     族惯例——文案自带「重试安全/挂载面零触碰」语义）；
+      //   · Right(report) → 200 {project, chainsCancelled, nodesCancelled, sessionsCancelled,
+      //     delegatesCancelled, unmountedAt, alreadyUnmounted}（确认卡后续态与审计对账面）；
+      //   · 成功腿已由 ProjectUnmount 内部广播 projectUnmounted 帧（前端定点退场 +
+      //     落「已卸载」分组）并追加 flow-map-events.jsonl 审计行（actor=console）。
+      case req @ POST -> Root / "projects" / name / "unmount" =>
+        withAuth(req) {
+          ProjectUnmount
+            .unmount(name, ctx.sharedResources.agentRegistry, json => ctx.wsHub.broadcast(json), actor = "console")
+            .flatMap {
+              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+              case Right(r) =>
+                Ok(
+                  Json.obj(
+                    "project" -> r.project.asJson,
+                    "chainsCancelled" -> r.chainsCancelled.asJson,
+                    "nodesCancelled" -> r.nodesCancelled.asJson,
+                    "sessionsCancelled" -> r.sessionsCancelled.asJson,
+                    "delegatesCancelled" -> r.delegatesCancelled.asJson,
+                    "unmountedAt" -> r.unmountedAt.asJson,
+                    "alreadyUnmounted" -> r.alreadyUnmounted.asJson
+                  )
+                )
+            }
+        }
+
+      // POST /projects/<name>/remount — 控制台「已卸载」分组「重新加载」按钮的引擎缝
+      // （unmount-console 面板批 2026-11-02）：与编排侧 Project 工具 `action="remount"`
+      // 同一条引擎通路（同一单点 ProjectRemount.remount：校验盘面定义→摘卸载标记→挂载）。
+      // rootSessionId = 真顶层根——ensureActiveAgentSession(RootAgentIdentity.Name) 与
+      // GatewayMain.startupMount **同一唯一真源**（幂等：boot 已补建 ⇒ 现查返回同会话），
+      // 🔴 不自造占位根（freshinstall-rootsessionid 红线）。契约：
+      //   · 需 auth；Left（不存在/已归档/挂载失败）→ 404 {"error"}；
+      //   · Right(report) → 200 {project, remountedAt, alreadyMounted}；成功腿已广播
+      //     projectRemounted 帧（前端定点恢复卡片）+ 追加 project-remounted 审计行。
+      case req @ POST -> Root / "projects" / name / "remount" =>
+        withAuth(req) {
+          ctx.sessionStore.ensureActiveAgentSession(RootAgentIdentity.Name).flatMap { root =>
+            ProjectRemount
+              .remount(
+                name,
+                ctx.sharedResources.actorSystem,
+                ctx.sharedResources,
+                root.id,
+                Some((json: Json) => ctx.wsHub.broadcast(json)),
+                actor = "console"
+              )
+              .flatMap {
+                case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+                case Right(r) =>
+                  Ok(
+                    Json.obj(
+                      "project" -> r.project.asJson,
+                      "remountedAt" -> r.remountedAt.asJson,
+                      "alreadyMounted" -> r.alreadyMounted.asJson
+                    )
+                  )
+              }
+          }
+        }
+
+      // GET /projects/<name>/inflight — 在飞工作计数（unmount-console 面板批
+      // 2026-11-02）：控制台「取消加载」确认卡的数据源——点卸载前如实展示「几条链/
+      // 几个节点/几个会话」。只读面（零副作用）：计数判据与 ProjectUnmount.stopInFlight
+      // 的取消靶集合同源（单点 = ProjectUnmount.inFlight）。未挂载/不存在 → 404。
+      case req @ GET -> Root / "projects" / name / "inflight" =>
+        withAuth(req) {
+          ProjectUnmount.inFlight(name, ctx.sharedResources.agentRegistry).flatMap {
+            case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+            case Some(f) =>
+              Ok(
+                Json.obj(
+                  "project" -> f.project.asJson,
+                  "chains" -> f.chains.asJson,
+                  "runningNodes" -> f.runningNodes.asJson,
+                  "dispatcherSessions" -> f.dispatcherSessions.asJson,
+                  "delegateSessions" -> f.delegateSessions.asJson,
+                  "total" -> f.total.asJson
+                )
+              )
+          }
+        }
+
+      // POST /projects/<name>/description — 面板侧描述更新（台账 #920 2026-10-27）：
+      // #917 给了 Project 工具 `action="update"`（agent 面），本端点补**面板侧**同一
+      // 写穿面（单点 = 既有 ProjectStore.updateDescription：只改 description 一个字段
+      // 的手术式原位写；空串 = 删键；幂等同值零写入）。语义照 archive 腿：
+      //   · 需 auth（withAuth）；body {description}（缺键按空串 = 清空——显式语义）；
+      //   · 项目不存在 / 名字非法 → 404 {"error"}（updateDescription 的 Left 面）；
+      //   · Right("updated") → 广播一帧 `projectDescriptionUpdated`（帧单点
+      //     ProjectActor.projectDescriptionUpdatedFrame，经既有 wsHub 全连接）+
+      //     200 {"saved":true}；
+      //   · Right("unchanged")（同值幂等腿，零写入）→ 200 {"saved":true,"unchanged":true}
+      //     **不发帧**（无状态变化，面板不重写）。
+      // 已归档/未挂载项目同样可改（定义级元数据，非挂载动作——与 #917 工具面同口径）。
+      case req @ POST -> Root / "projects" / name / "description" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val description = body.hcursor.downField("description").as[String].getOrElse("")
+            ProjectStore.updateDescription(name, description).flatMap {
+              case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+              case Right("unchanged") =>
+                Ok(Json.obj("saved" -> true.asJson, "unchanged" -> true.asJson))
+              case Right(_) =>
+                // `*>` 同 archive 腿：先广播帧再回响应；帧带本次写入的存储值
+                // （updateDescription 已对空白入参做删键/trim 归一）。
+                wsHub.broadcast(
+                  ProjectActor.projectDescriptionUpdatedFrame(name, description, System.currentTimeMillis())
+                ) *> Ok(Json.obj("saved" -> true.asJson))
+            }
+          }
+        }
+
+      // ── 链控三端点（chainview 批 2026-10-01 · 引擎面）────────────────────────
+      //
+      // POST /projects/<name>/chains/<chainId>/{pause|resume|cancel}
+      //
+      // 契约（与本文件既有 projects 族逐条同形）：
+      //   · 需 auth（withAuth）；路径相对 Router("/api") 挂载（见文件头注，禁写 "api" 段）；
+      //   · 项目未挂载 → 404 {"error": "project '<name>' not mounted"}
+      //   · 引擎返回可行动错误（CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER / CHAIN_CANCELLED）
+      //     → 404 {"error": "<码>: <可行动说明>"}（链不存在是「找不到资源」；
+      //     CHAIN_SINGLE_MEMBER / CHAIN_CANCELLED 是「现存资源不适用该动作」——
+      //     两者都是可行动的 refusal，不是服务端故障，故不用 5xx）
+      //   · 成功 → 200 {"chainId", "title", "status", "memberIds", "pausedAt", "cancelledAt"}
+      //   · **零派生纪律**（与 chainCancel 腿同款 V8）：本腿只把面板传来的 chainId 当
+      //     查找键；成员 / 状态 / 级联闭包**全在后端单点**解析
+      //     （`FlowMapStore.chainMembersOf` + `ChainLedgerStore.chainControlOf`）
+      //     ⇒ 🔴 本文件**禁**出现 topologicalChains / combinedNodes / memberIds /
+      //     ChainInfo（判据见 ChainCascadeSpec V8 守卫的同款口径）。
+      //   · 每条成功腿发一帧 `chainState`（`ProjectActor.chainStateFrame` 单点），
+      //     经**既有** wsHub.broadcast 全连接广播（与上方 archive 腿同面，🔴 零第二套推送面）。
+
+      /**
+       * 三端点共用的骨架见 object 级 [[chainControlRoute]]（本块内**禁**放 `def`：
+       * 路由块的 case 序列是单个部分函数字面量，case 之间不容许定义）。
+       */
+
+      case req @ POST -> Root / "projects" / name / "chains" / chainId / "pause" =>
+        withAuth(req) {
+          chainControlRoute(
+            ctx,
+            name,
+            chainId,
+            (rt, cid) => rt.engine.pauseChain(cid),
+            FlowMapEventLog.ChainStateChangedType,
+            ctl => FlowMapEventLog.chainStateChangedSummary(ctl.status, ctl.pausedAt.getOrElse(0L))
+          )
+        }
+
+      case req @ POST -> Root / "projects" / name / "chains" / chainId / "resume" =>
+        withAuth(req) {
+          chainControlRoute(
+            ctx,
+            name,
+            chainId,
+            (rt, cid) => rt.engine.resumeChain(cid),
+            FlowMapEventLog.ChainStateChangedType,
+            ctl => FlowMapEventLog.chainStateChangedSummary(ctl.status, System.currentTimeMillis())
+          )
+        }
+
+      // cancel：复用既有链级取消原语（级联闭包 / 逐节点终态化 / 聚合通知 / chain-cancelled
+      // 审计全套零重写），**仅在全成功后**追加台账 cancelled 状态（`cancelChainAndRecord`）。
+      case req @ POST -> Root / "projects" / name / "chains" / chainId / "cancel" =>
+        withAuth(req) {
+          chainControlRoute(
+            ctx,
+            name,
+            chainId,
+            (rt, cid) =>
+              rt.engine
+                .cancelChainAndRecord(
+                  cid,
+                  CancelSource.User,
+                  s"cancelled from REST chain control (project=$name)"
+                )
+                .map(_.map(_._2)),
+            FlowMapEventLog.ChainStateChangedType,
+            ctl => FlowMapEventLog.chainStateChangedSummary(ctl.status, ctl.cancelledAt.getOrElse(0L))
+          )
+        }
+
+      case req @ GET -> Root / "projects" / name / "flow-map" =>
+        withAuth(req) {
+          ProjectRuntimeRegistry.get(name).flatMap {
+            case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+            case Some(rt) =>
+              // M2 缓存语义小刀（v2 §3.1 ① · 快照行）：ETag = **结构键** `meta.updatedAt`
+              // （FlowMapStore.mutate 每次变更必 bump 的变更计数——载荷自版本化）。不用
+              // 内容 hash：载荷含逐秒演算的 TTL 展示读数（NodePayload 的 ttlLeft 族），
+              // 内容 hash 永不命中。键变 ⇒ 快照真变 ⇒ 304 语义零漏。
+              NodeTools.buildNodeListPayload(rt).flatMap { payload =>
+                val updatedAt = payload.hcursor.downField("meta").downField("updatedAt").as[Long].toOption.getOrElse(0L)
+                val nodeCount = payload.hcursor.downField("nodes").as[List[Json]].toOption.map(_.size).getOrElse(0)
+                HttpCache.conditionalOk(req, payload, HttpCache.ofSeed(s"flow-map:$updatedAt:$nodeCount"))
+              }
+          }
+        }
+
+      // GET /projects/<name>/flow-map/archive — Flow Archive 分批内容（裁定④「TTL 分开」批
+      // 2026-09-07）：归档面板（右上角「已归档任务链」入口）的后端数据源。聚合返回显示窗
+      // （24h = NodeEngine.TtlDisplayMs，与前端 ARCHIVE_TTL_MS 同值，服务端单点把关）内
+      // 全部批次；成员 = NodePayload 元数据（结果全文走 nodes/<id>/result 按需通道，归档
+      // 节点由 findNode 兜底命中）。选聚合不选按批拉取：面板需全量列表，24h 窗口规模小，
+      // 与 flow-map 快照一次性拉取模式一致。批次按 completedAt 倒序。未挂载 → 404 {error}。
+      case req @ GET -> Root / "projects" / name / "flow-map" / "archive" =>
+        withAuth(req) {
+          ProjectRuntimeRegistry.get(name).flatMap {
+            case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+            case Some(rt) =>
+              for
+                arch <- rt.store.archiveSnapshot
+                bt <- rt.store.archiveBatches
+                now <- IO(System.currentTimeMillis())
+                inWindow = bt.values.toList
+                  .flatMap { meta =>
+                    val members = meta.nodeIds.flatMap(id => arch.nodes.get(id)).toList.sortBy(_.createdAt)
+                    val completedAt = members.flatMap(_.completedAt).foldLeft(0L)(math.max)
+                    if members.isEmpty || (completedAt > 0L && now - completedAt > NodeEngine.TtlDisplayMs) then None
+                    else
+                      Some(
+                        Json.obj(
+                          "id" -> meta.id.asJson,
+                          "archivedAt" -> meta.archivedAt.asJson,
+                          "completedAt" -> completedAt.asJson,
+                          "members" -> members.map(n => NodePayload.buildNodeJson(n, now)).asJson
+                        )
+                      )
+                  }
+                  .sortBy(j => -(j.hcursor.get[Long]("completedAt").toOption.getOrElse(0L)))
+                // M2 缓存语义小刀（v2 §3.1 ① · 归档行）：ETag = **结构键**
+                // （批数 + 最大 archivedAt/completedAt——归档一经落库不改，键稳定）。
+                // ⚠ 申报一处设计偏差：v2 §3.1 表该行写 `Cache-Control: private,
+                // immutable`（TTL=24h）；本实现改用 ETag/304 + `private, no-cache`——
+                // 路由响应是**滚动 24h 窗聚合**（窗内批次随时间自然出窗），immutable
+                // 会让浏览器在 max-age 窗内完全跳过再验证 ⇒ flowMapArchive 的「新增
+                // 链 id diff」新鲜性面（toast/脉冲）最长冻结 24h，既有功能破防。
+                // 批级不可变语义留给未来的按批端点（登记为后续项，非本批裁）。
+                payload = Json.obj(
+                  "batches" -> inWindow.asJson,
+                  "ttlMs" -> NodeEngine.TtlDisplayMs.asJson,
+                  "count" -> inWindow.size.asJson
+                )
+                maxArchived = inWindow.flatMap(_.hcursor.get[Long]("archivedAt").toOption).foldLeft(0L)(math.max)
+                maxCompleted = inWindow.flatMap(_.hcursor.get[Long]("completedAt").toOption).foldLeft(0L)(math.max)
+                resp <- HttpCache.conditionalOk(
+                  req,
+                  payload,
+                  HttpCache.ofSeed(s"archive:${inWindow.size}:$maxArchived:$maxCompleted")
+                )
+              yield resp
+          }
+        }
+
+      // GET /projects/<name>/flow-map/nodes/<nodeId>/result — 节点结果全文按需单点取
+      // （2026-09-04 作者反馈「归档详情窗节点结果要能完整显示」；2026-09-05 载荷收敛后
+      // 这是结果全文的两条按需通道之一，另一条 = NodeList(detail=<nodeId>) 工具参数，
+      // 同源：FlowMapStore 内存 result = 加载时从 per-node 文件 results/<nodeId>.md
+      // 水合的全文）。快照/WS 事件统一走 NodePayload.buildNodeJson 的元数据 only 载荷
+      // （无 result 键），hasResult 标记驱动前端按需拉取。FlowMapStore.findNode 活动
+      // 区优先、归档区兜底。未挂载/节点不存在 → 404 {error}（前端静默回退）。
+      case req @ GET -> Root / "projects" / name / "flow-map" / "nodes" / nodeId / "result" =>
+        withAuth(req) {
+          ProjectRuntimeRegistry.get(name).flatMap {
+            case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+            case Some(rt) =>
+              rt.store.findNode(nodeId).flatMap {
+                case None => NotFound(Json.obj("error" -> s"node '$nodeId' not found".asJson))
+                case Some(n) =>
+                  // 裁定②历史参照 REST 通道（20260907 上下文经济学批）：默认载荷仅
+                  // blocked 态携带 blockedFeedback——非 blocked 终态的历史残留经本
+                  // 端点按需取（条件键：无历史反馈的节点不带，键集零漂移）。
+                  val histFeedback = n.blockedFeedback.toList.map(bf => "blockedFeedback" -> bf.asJson)
+                  // 裁定⑤c 双层化：长描述仅 detail 通道（同 NodeList detail=，条件键）
+                  val descLong = n.descriptionLong.toList.map(d => "descriptionLong" -> d.asJson)
+                  Ok(
+                    Json
+                      .obj(
+                        "id" -> n.id.asJson,
+                        "name" -> n.name.asJson,
+                        "status" -> n.status.asJson,
+                        "result" -> n.result.asJson
+                      )
+                      .deepMerge(Json.obj((histFeedback ++ descLong)*))
+                  )
+              }
+          }
+        }
+
+      // GET /projects/<name>/flow-map/nodes/<nodeId>/file-changes — per-node changed-
+      // file diff report (file-diff feature: written by FileChangeReport at node
+      // completion; per-file path/changeType/added/removed/source + diffText or a
+      // degradation reason). Pure disk read: missing (legacy nodes / zero changes)
+      // or corrupt file → 404 {error}; the frontend silently skips the diff section.
+      case req @ GET -> Root / "projects" / name / "flow-map" / "nodes" / nodeId / "file-changes" =>
+        withAuth(req) {
+          ProjectRuntimeRegistry.get(name).flatMap {
+            case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+            case Some(rt) =>
+              IO.blocking {
+                // 跨设备批（2026-10-25）：引擎本机存储座位（本机项目 = workspace；
+                // 设备项目 = brain 根——设备路径不是本机盘路径）。
+                val f = os.Path(
+                  ProjectStore.brainWorkspace(rt.project),
+                  PathUtil.dataRoot
+                ) / ".nebflow" / FileChangeReport.FileChangesDirName / s"$nodeId.json"
+                if os.exists(f) then Right(os.read(f))
+                else Left(())
+              }.flatMap {
+                case Right(text) =>
+                  io.circe.parser.parse(text) match
+                    case Right(json) => Ok(json)
+                    case Left(_) => NotFound(Json.obj("error" -> s"file-change report for '$nodeId' is corrupt".asJson))
+                case Left(_) => NotFound(Json.obj("error" -> s"no file-change report for node '$nodeId'".asJson))
+              }
+          }
+        }
+
+      // GET /projects/<name>/agent.md — 项目 agent 指令读取（#27「点击查看」；仿 team rules.md）。
+      // E.3 双轨移除（裁定 13）：只读工作区根 AGENTS.md（canonical）——旧位
+      // `.nebflow/Agent.md` 优先逻辑删除，迁移由 ProjectStore.load 统一执行
+      // （本路由先 load 再读，旧位真文件/symlink 在 load 时已落根）。响应形状
+      // {content} 不变（前端零改动）。URL 不变。
+      case req @ GET -> Root / "projects" / name / "agent.md" =>
+        withAuth(req) {
+          ProjectStore.load(name).flatMap {
+            case None => NotFound(Json.obj("error" -> s"project '$name' not found".asJson))
+            case Some(pd) =>
+              // 跨设备批（2026-10-25）：读本机大脑根的 AGENTS.md 镜像——设备项目的
+              // 权威件在设备本盘，挂载时经设备通道镜像回 brain 根（编辑面 PUT 推回）。
+              // 本机项目 = workspace 本身（现状逐字节）。
+              val p = os.Path(ProjectStore.brainWorkspace(pd), PathUtil.dataRoot) / "AGENTS.md"
+              if os.exists(p) then Ok(Json.obj("content" -> os.read(p).asJson))
+              else NotFound(Json.obj("error" -> s"project '$name' has no AGENTS.md".asJson))
+          }
+        }
+
+      // PUT /projects/<name>/agent.md — 保存。E.3 双轨移除（裁定 13）：只落工作区根
+      // AGENTS.md（canonical）；旧位优先/穿透写逻辑删除（旧位由 ProjectStore.load
+      // 迁移——本路由先 load，同请求内迁移先行完成）。响应形状 {saved:true} 不变。
+      // 跨设备批（2026-10-25）：设备项目 = 落本机 brain 镜像 + **设备通道推回**
+      // 设备真实路径（对端 Write 工具覆盖写）；推送失败只 WARN（镜像已是最新，设备
+      // 侧下次挂载拉取对齐），响应仍 {saved:true}（契约零漂移）。
+      case req @ PUT -> Root / "projects" / name / "agent.md" =>
+        withAuth(req) {
+          ProjectStore.load(name).flatMap {
+            case None => NotFound(Json.obj("error" -> s"project '$name' not found".asJson))
+            case Some(pd) =>
+              req.as[Json].flatMap { body =>
+                val content = body.hcursor.downField("content").as[String].getOrElse("")
+                val p = os.Path(ProjectStore.brainWorkspace(pd), PathUtil.dataRoot) / "AGENTS.md"
+                // 设备项目：best-effort 推回设备真实路径（设备通道 Write 覆盖写）；
+                // 本机项目 = 无设备腿（IO.unit，现状逐字节）。
+                val pushToDevice: IO[Unit] =
+                  ProjectStore.deviceOrigin(pd) match
+                    case None => IO.unit
+                    case Some(o) =>
+                      nebflow.core.tools.RemoteExecutor.current.fold(IO.unit)(exec =>
+                        exec.peerById(o.device).flatMap {
+                          case None =>
+                            IO(
+                              nebflow.shared.NebflowLogger
+                                .forName("nebflow.projects.routes")
+                                .warnSync(s"[device] agent.md push skipped: device '${o.device}' not online")
+                            )
+                          case Some(peer) =>
+                            exec
+                              .writeRemoteFileForScaffold(
+                                peer,
+                                s"${ProjectCreateService.stripTrailingSlashes(o.path)}/AGENTS.md",
+                                content
+                              )
+                              .handleErrorWith(e => IO.pure(Left(s"push failed: ${e.getMessage}")))
+                              .flatMap {
+                                case Right(_) => IO.unit
+                                case Left(err) =>
+                                  IO(
+                                    nebflow.shared.NebflowLogger
+                                      .forName("nebflow.projects.routes")
+                                      .warnSync(
+                                        s"[device] agent.md push to '${o.device}' failed: $err (local mirror is authoritative until next mount)"
+                                      )
+                                  )
+                              }
+                        }
+                      )
+                IO.blocking {
+                  os.makeDir.all(p / os.up)
+                  AtomicJson.writeSync(p, content)
+                } *> pushToDevice.handleErrorWith(_ => IO.unit) *> Ok(Json.obj("saved" -> true.asJson))
+              }
+          }
+        }
+
+    }
+  end routes
+
+  /**
+   * 链控三端点（pause / resume / cancel）共用的「挂载解析 + 链查找 + 审计 + 状态帧 + 响应」
+   * 骨架（单点，禁三处各拼一份）。
+   *
+   * 🔴 为什么是 object 级私有方法而**不是** `HttpRoutes.of { ... }` 跨 case 的 `def`：
+   * 路由块的 `case` 序列是**单个部分函数字面量**（`{ CaseClauses }`），Scala 3 不允许在
+   * case 之间插 `def` 定义 —— 放在块内是编译错，不是风格问题。故本方法留在块外，
+   * `ctx` 经参数显式传入（原本由块内 `import ctx.*` 隐式带入）。
+   */
+  private def chainControlRoute(
+    ctx: RestApiCtx,
+    name: String,
+    chainId: String,
+    action: (ProjectRuntime, String) => IO[Either[String, ChainLedger.ChainControl]],
+    auditType: String,
+    auditSummary: ChainLedger.ChainControl => String
+  ): IO[Response[IO]] =
+    import ctx.*
+    if chainId.trim.isEmpty then BadRequest(Json.obj("error" -> "chainId is required".asJson))
+    else
+      ProjectRuntimeRegistry.get(name).flatMap {
+        case None => NotFound(Json.obj("error" -> s"project '$name' not mounted".asJson))
+        case Some(rt) =>
+          action(rt, chainId).flatMap {
+            case Left(err) => NotFound(Json.obj("error" -> err.asJson))
+            case Right(ctl) =>
+              // 台账审计留痕（失败只 WARN——审计面 best-effort，与链族既有写点同纪律）
+              FlowMapEventLog
+                .append(
+                  // 引擎本机存储座位（跨设备批 2026-10-25）：设备项目 = brain 根。
+                  ProjectStore.brainWorkspace(rt.project),
+                  rt.project.name,
+                  "",
+                  auditType,
+                  auditSummary(ctl),
+                  Some(ctl.chainId)
+                )
+                .handleErrorWith(e => IO(logger.warn(s"$auditType audit append failed: ${e.getMessage}")))
+                .flatTap(_ => wsHub.broadcast(ProjectActor.chainStateFrame(rt.project.name, ctl)))
+                .flatMap(_ => NodeTools.chainControlPayload(rt, ctl))
+                .flatMap(Ok(_))
+          }
+      }
+    end if
+  end chainControlRoute
+
+end ProjectsRoutes

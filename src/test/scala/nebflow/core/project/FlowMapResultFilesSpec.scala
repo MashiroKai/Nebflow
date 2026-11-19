@@ -35,7 +35,7 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
   private def readJson(p: os.Path): io.circe.Json =
     jsonParse(os.read(p)) match
       case Right(j) => j
-      case Left(e)  => fail(s"corrupt json at $p: $e")
+      case Left(e) => fail(s"corrupt json at $p: $e")
 
   // ── 1. 落盘拆分 ─────────────────────────────────────────
 
@@ -44,8 +44,14 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
     val full = longResult
     for
       store <- FlowMapStore.open("demo", ws.toString)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-big" -> node("n-big", "big").copy(status = NodeLifecycle.Completed, result = Some(full), ttlExpireAt = Some(now + 100000)))))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-big" -> node("n-big", "big")
+              .copy(status = NodeLifecycle.Completed, result = Some(full), ttlExpireAt = Some(now + 100000))
+          )
+        )
+      )
       raw <- IO.blocking(os.read(ws / ".nebflow" / "flow-map.json"))
       j = readJson(ws / ".nebflow" / "flow-map.json")
       nBig = j.hcursor.downField("nodes").downField("n-big")
@@ -62,14 +68,20 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
       assertEquals(snap.nodes("n-big").result, Some(full))
       // 文件在 results/ 目录
       assert(os.exists(ws / ".nebflow" / "results"), "results dir must exist after split")
+    end for
   }
 
   test("persist split: short result keeps full text in JSON (summary == full) + file materialized") {
     val ws = freshWorkspace()
     for
       store <- FlowMapStore.open("demo", ws.toString)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-small" -> node("n-small", "small").copy(status = NodeLifecycle.Completed, result = Some("short ok")))))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-small" -> node("n-small", "small").copy(status = NodeLifecycle.Completed, result = Some("short ok"))
+          )
+        )
+      )
       j = readJson(ws / ".nebflow" / "flow-map.json")
       nSmall = j.hcursor.downField("nodes").downField("n-small")
       summary <- IO.fromEither(nSmall.downField("result").as[String])
@@ -77,6 +89,7 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
     yield
       assertEquals(summary, "short ok")
       assertEquals(fileFull, "short ok")
+    end for
   }
 
   // ── 2. 重开水合（重启后全文仍可得——重投扫描/详情端点同源）──
@@ -86,8 +99,11 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
     val full = longResult
     for
       store <- FlowMapStore.open("demo", ws.toString)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-h2" -> node("n-h2", "hydrate2").copy(status = NodeLifecycle.Completed, result = Some(full)))))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map("n-h2" -> node("n-h2", "hydrate2").copy(status = NodeLifecycle.Completed, result = Some(full)))
+        )
+      )
       reopened <- FlowMapStore.open("demo", ws.toString)
       snap <- reopened.snapshot
       fromArchive <- reopened.findNode("n-h2")
@@ -101,9 +117,16 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
   test("legacy migration: inline full result → file materialized + JSON slimmed + .bak backup (idempotent)") {
     val ws = freshWorkspace()
     val full = longResult
-    val legacyJson = FlowMapState(project = "legacy", updatedAt = now, nodes = Map(
-      "n-old" -> node("n-old", "old", NodeLifecycle.Completed).copy(result = Some(full), ttlExpireAt = Some(now + 100000))
-    )).asJson.noSpaces
+    val legacyJson = FlowMapState(
+      project = "legacy",
+      updatedAt = now,
+      nodes = Map(
+        "n-old" -> node("n-old", "old", NodeLifecycle.Completed).copy(
+          result = Some(full),
+          ttlExpireAt = Some(now + 100000)
+        )
+      )
+    ).asJson.noSpaces
     for
       _ <- IO.blocking {
         os.makeDir.all(ws / ".nebflow")
@@ -119,7 +142,9 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
       hasFile <- IO.blocking(os.exists(ws / ".nebflow" / "results" / "n-old.md"))
       fileFull <- IO.blocking(os.read(ws / ".nebflow" / "results" / "n-old.md"))
       bakExists <- IO.blocking(os.exists(ws / ".nebflow" / "flow-map.json.bak"))
-      bakHasFull <- IO.blocking { val bak = os.read(ws / ".nebflow" / "flow-map.json.bak"); bak.contains(full.take(100)) }
+      bakHasFull <- IO.blocking {
+        val bak = os.read(ws / ".nebflow" / "flow-map.json.bak"); bak.contains(full.take(100))
+      }
     yield
       assertEquals(snap.nodes("n-old").result, Some(full), "migrated memory must hold full text")
       assertEquals(jsonSummary.length, 501, "converged JSON must carry summary")
@@ -127,14 +152,19 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
       assertEquals(fileFull, full)
       assertEquals(bakExists, true, "first migration must back up the original JSON")
       assertEquals(bakHasFull, true, ".bak must contain the pre-migration (full-text) form")
+    end for
   }
 
   test("legacy migration idempotent: second open does not overwrite .bak, files stable") {
     val ws = freshWorkspace()
     val full = longResult
-    val legacyJson = FlowMapState(project = "legacy2", updatedAt = now, nodes = Map(
-      "n-old2" -> node("n-old2", "old2", NodeLifecycle.Completed).copy(result = Some(full))
-    )).asJson.noSpaces
+    val legacyJson = FlowMapState(
+      project = "legacy2",
+      updatedAt = now,
+      nodes = Map(
+        "n-old2" -> node("n-old2", "old2", NodeLifecycle.Completed).copy(result = Some(full))
+      )
+    ).asJson.noSpaces
     for
       _ <- IO.blocking {
         os.makeDir.all(ws / ".nebflow")
@@ -158,8 +188,14 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
     val full = longResult
     for
       store <- FlowMapStore.open("demo-arch", ws.toString)
-      _ <- store.mutate(s => s.copy(nodes = s.nodes ++ Map(
-        "n-done" -> node("n-done", "done", NodeLifecycle.Completed).copy(result = Some(full), ttlExpireAt = Some(now - 1)))))
+      _ <- store.mutate(s =>
+        s.copy(nodes =
+          s.nodes ++ Map(
+            "n-done" -> node("n-done", "done", NodeLifecycle.Completed)
+              .copy(result = Some(full), ttlExpireAt = Some(now - 1))
+          )
+        )
+      )
       removed <- store.sweepCompletedChains(now)
       fromArchive <- store.findNode("n-done")
       archJson = readJson(ws / ".nebflow" / "flow-map-archive" / "chain-n-done.json")
@@ -173,6 +209,7 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
       assertEquals(jsonSummary.length, 501)
       assertEquals(pointer, "results/n-done.md")
       assertEquals(fileFull, full)
+    end for
   }
 
   // ── 5. 默认载荷收敛（REST / WS / 工具三层同源）─────────────
@@ -183,24 +220,40 @@ class FlowMapResultFilesSpec extends CatsEffectSuite:
       node("n1", "N1", NodeLifecycle.Completed).copy(
         description = Some("do the thing"),
         task = Some("the long task that must NOT leak into payload as fallback"),
-        result = Some(longResult)), now2)
+        result = Some(longResult)
+      ),
+      now2
+    )
     val legacy = NodePayload.buildNodeJson(
-      node("n2", "N2", NodeLifecycle.Completed).copy(
-        task = Some("first line stays\nsecond line hidden"),
-        result = Some("tiny")), now2)
+      node("n2", "N2", NodeLifecycle.Completed)
+        .copy(task = Some("first line stays\nsecond line hidden"), result = Some("tiny")),
+      now2
+    )
     val freshNode = NodePayload.buildNodeJson(
-      node("n3", "N3").copy(description = Some("fresh desc"), task = Some("entry task")), now2)
+      node("n3", "N3").copy(description = Some("fresh desc"), task = Some("entry task")),
+      now2
+    )
     val keysWithAll = withAll.asObject.map(_.keys.toSet).getOrElse(Set.empty)
     val keysLegacy = legacy.asObject.map(_.keys.toSet).getOrElse(Set.empty)
     val keysFresh = freshNode.asObject.map(_.keys.toSet).getOrElse(Set.empty)
-    assertEquals(
-      keysWithAll.contains("result"), false, "payload must NOT carry result (summary or full)")
-    assert(!legacy.asObject.get.toString.contains("the long task"), "task full text must not leak (taskPreview bounded)")
+    assertEquals(keysWithAll.contains("result"), false, "payload must NOT carry result (summary or full)")
+    assert(
+      !legacy.asObject.get.toString.contains("the long task"),
+      "task full text must not leak (taskPreview bounded)"
+    )
     assertEquals(withAll.hcursor.get[Boolean]("hasResult").toOption, Some(true))
     assertEquals(withAll.hcursor.get[String]("description").toOption, Some("do the thing"))
     assertEquals(legacy.hcursor.get[Boolean]("hasResult").toOption, Some(true))
-    assertEquals(legacy.hcursor.get[Option[String]]("description").toOption, Some(None), "legacy node description = null")
-    assertEquals(legacy.hcursor.get[String]("taskPreview").toOption, Some("first line stays"), "legacy fallback = task first line")
+    assertEquals(
+      legacy.hcursor.get[Option[String]]("description").toOption,
+      Some(None),
+      "legacy node description = null"
+    )
+    assertEquals(
+      legacy.hcursor.get[String]("taskPreview").toOption,
+      Some("first line stays"),
+      "legacy fallback = task first line"
+    )
     assert(!keysFresh.contains("hasResult"), "no-result node must not carry hasResult (conditional field)")
     assert(!keysFresh.contains("taskPreview"), "description-bearing node must not carry taskPreview")
     // 条件字段不漂移基集合：fresh（无结果）∪ legacy(+taskPreview+hasResult) ∪ withAll(+hasResult)

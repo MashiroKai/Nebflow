@@ -1,10 +1,13 @@
 // nodeData.js — Project / Node / Flow Map 数据与契约常量的单一来源。
 //
-// 契约：~/.nebflow/docs/Nebflow/20260901_project-node-contract.md（Backend #28 0b）。
+// 契约：project-node-contract 设计件（内部留档）（Backend #28 0b）。
 // 所有 REST 端点与 WS 事件路径集中在本文件，前端据此对接后端。
 //
 //   GET /api/projects → {projects:[{name,workspace,agentFile,description,createdAt}]}
-//   GET /api/projects/<name>/flow-map → NodeList 载荷 {nodes[],worktrees[],meta}
+//   GET /api/projects/<name>/flow-map → NodeList 载荷 {nodes[],worktrees[],chains?[],meta}
+//     （链级抽象 P0：chains = 顶层旁挂条件键 [{id,title,entries,ends,memberIds}]，
+//     title 后端三级推导下发；节点 payload 条件键 chainId——可能缺失，缺失 = 孤立
+//     节点。旧后端无这两键，前端零派生优雅降级）
 //     未挂载 → 404 {error}
 //   GET /api/projects/<name>/flow-map/archive → Flow Archive 分批 {batches[],ttlMs,count}
 //     （裁定④「TTL 分开」批：归档面板后端数据源；显示窗 24h）未挂载 → 404 {error}
@@ -14,6 +17,7 @@
 //   nodeCreated / nodeUpdated / nodeCompleted / nodeRemoved
 
 import { authHeaders } from './flowHelpers.js';
+import { noteAuthRejected } from './sessionGate.js';
 
 // ── 契约常量（与 Backend #28 0b 对齐）──────────────────────
 export const API = {
@@ -26,6 +30,12 @@ export const API = {
   // 快照/事件载荷只带 hasResult 标记（元数据 only），全文仅此端点按需提供；
   // 未挂载/无节点 404
   nodeResult: (name, nodeId) => `/api/projects/${encodeURIComponent(name)}/flow-map/nodes/${encodeURIComponent(nodeId)}/result`,
+  // Per-node changed-file diff report (file-diff feature): GET →
+  // {nodeId,generatedAt,root,files:[...]}. The engine computes and persists it
+  // at node completion (<workspace>/.nebflow/file-changes/<nodeId>.json); this
+  // endpoint is a pure disk read. Not mounted / no report (legacy nodes, zero
+  // changes) → 404 (the frontend silently skips the diff section).
+  nodeFileChanges: (name, nodeId) => `/api/projects/${encodeURIComponent(name)}/flow-map/nodes/${encodeURIComponent(nodeId)}/file-changes`,
   // Flow Archive 分批内容（裁定④「TTL 分开」批 2026-09-07）：归档面板数据源——
   // GET → {batches:[{id,archivedAt,completedAt,members:[NodePayload 元数据]}],ttlMs,count}；
   // 服务端按显示窗（24h）过滤聚合；未挂载 404
@@ -33,7 +43,38 @@ export const API = {
   // 项目 AGENTS.md（契约 §1）：GET 读 → {content} / PUT 存 → body {content} → {saved:true}；
   // URL 不变，磁盘读写工作区根 AGENTS.md（旧 .nebflow/Agent.md 由后端回落兼容）
   agentFile: (name) => `/api/projects/${encodeURIComponent(name)}/agent.md`,
+  // 链控三端点（chainview 批 2026-10-01 · 引擎面契约，见 ProjectsRoutes 的
+  // `chainControlRoute`）：POST /api/projects/<name>/chains/<chainId>/{pause|resume|cancel}
+  //   · 需 auth；路径相对 Router("/api") 挂载
+  //   · 成功 200 → {chainId,title,status,memberIds,pausedAt,cancelledAt}
+  //   · 失败 404 → {error:"<码>: <可行动说明>"}（CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER /
+  //     CHAIN_CANCELLED）；每条成功腿另广播一帧 `chainState`（WS 单点，前端据此刷新）
+  chainControl: (name, chainId, action) =>
+    `/api/projects/${encodeURIComponent(name)}/chains/${encodeURIComponent(chainId)}/${action}`,
+  // 项目描述写穿（台账 #920 2026-10-27，#917 工具面的面板侧补全）：
+  // POST /api/projects/<name>/description，body {description}（空串 = 清空）
+  //   · 成功 200 → {saved:true}（幂等同值腿另带 unchanged:true，零写入不发帧）
+  //   · 404 → {error}（项目不存在 / 名字非法）；成功腿广播 projectDescriptionUpdated 帧
+  projectDescription: (name) => `/api/projects/${encodeURIComponent(name)}/description`,
+  // 项目硬卸载（unmount-console 面板批 2026-11-02，与 Project 工具 action="unmount"
+  // 同一条引擎通路）：POST /api/projects/<name>/unmount（零 body）
+  //   · 成功 200 → {project,chainsCancelled,nodesCancelled,sessionsCancelled,
+  //     delegatesCancelled,unmountedAt,alreadyUnmounted}；成功腿广播 projectUnmounted 帧
+  //   · 404 → {error}（不存在/未挂载/排空超时中止——挂载面零触碰，重试安全）
+  projectUnmount: (name) => `/api/projects/${encodeURIComponent(name)}/unmount`,
+  // 卸载态项目恢复挂载（同批，与 Project 工具 action="remount" 同一通路）：
+  // POST /api/projects/<name>/remount（零 body）
+  //   · 成功 200 → {project,remountedAt,alreadyMounted}；成功腿广播 projectRemounted 帧
+  //   · 404 → {error}（不存在/已归档/挂载失败——卸载态保持，重试安全）
+  projectRemount: (name) => `/api/projects/${encodeURIComponent(name)}/remount`,
+  // 在飞工作计数（同批）：GET /api/projects/<name>/inflight →
+  // {project,chains[],runningNodes[],dispatcherSessions[],delegateSessions[],total}
+  // 未挂载 → 404 {error}
+  projectInflight: (name) => `/api/projects/${encodeURIComponent(name)}/inflight`,
 };
+
+/** 链控合法动作（与引擎面三条端点一一对应；禁前端自造第四种）。 */
+export const CHAIN_CONTROL_ACTIONS = ['pause', 'resume', 'cancel'];
 
 export const NODE_WS = {
   created: 'nodeCreated',
@@ -42,11 +83,13 @@ export const NODE_WS = {
   removed: 'nodeRemoved',
 };
 
-// blocked（20260902 反馈路径设计 §4.2）：Node→分发器反馈重入的终态——turn 正常结束
-// 但节点声明无法继续，需分发器调整任务/拓扑；待办语义（ttlExpireAt=None 常驻活动图）。
+// blocked 已退役（no-blocked-semantics 一期：blocked 终态整体退役，引擎零写点——
+// 节点不清 ⇒ AskHost 问信任的 root，不申报停等态）。'blocked' 仅为渲染 legacy 存量行
+// 保留（旧盘面已写入的行按原样式展示；新图不会出现该状态）。
 export const NODE_STATUS = ['pending', 'running', 'completed', 'failed', 'blocked', 'cancelled', 'wiring'];
 
-// 节点状态 → 面板状态色 class（复用 flow-run 的 solar 状态色，见 flowCss.js）
+// 节点状态 → 面板状态色 class（复用 flow-run 的 solar 状态色，见 flowCss.js；
+// blocked 色仅 legacy 存量行命中）
 export const NODE_STATUS_CLS = {
   pending: 'pending',
   running: 'running',
@@ -58,36 +101,141 @@ export const NODE_STATUS_CLS = {
 };
 
 // ── 数据访问层（真实 REST，契约 §1/§3）───────────────────
+/** Project list, wire-verbatim (GET /api/projects, needs auth) — returns the
+ *  response text alongside the parsed rows; `raw` is the raw wire payload (not
+ *  a local re-serialization).
+ *  Retention note (projcreate-redesign batch, 2026-09-24): this function's
+ *  original consumer was the Projects panel "source" view (A-wave ②), which the
+ *  author's ruling (a) removed entirely. The function is KEPT because
+ *  `fetchProjects` — its only live consumer (taskList.js) — still uses it as the
+ *  single request point; `fetchProjects` now discards the `raw` field. The
+ *  earlier batch's claim that "both sides can never read different payloads" no
+ *  longer applies to any UI surface (keeping this function leaves taskList's
+ *  fetch leg untouched).
+ *  @returns {Promise<{projects: Array<any>, unmounted: Array<any>, raw: string}>} */
+export async function fetchProjectsRaw() {
+  const r = await fetch(API.projects, { headers: authHeaders() });
+  if (!r.ok) {
+    // 403 族收口（scan-bind-403 批 2026-10-22）：作者实报「项目列表加载失败
+    // projects 403」。401/403 = 同源凭据被拒（引擎重启清零宿主会话 / relay 门
+    // 会话过期）⇒ 交 sessionGate 统一可见面 + 自愈 reload（与 nfTicket #520
+    // 同纪律）；错误消息照旧带状态码供面板错误态显示。5xx 保持静默降级。
+    if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
+    throw new Error(`projects ${r.status}`);
+  }
+  const raw = await r.text();
+  let data = null;
+  try { data = JSON.parse(raw); } catch (_) { data = null; }
+  // unmount-console 面板批 2026-11-02：additive `unmounted` 数组（「已卸载」分组
+  // 数据源；旧后端无该键 ⇒ []，面板零分组——向后兼容零破坏）。
+  return {
+    projects: Array.isArray(data?.projects) ? data.projects : [],
+    unmounted: Array.isArray(data?.unmounted) ? data.unmounted : [],
+    raw,
+  };
+}
+
 /** 项目列表。GET /api/projects（需 auth）→ {projects:[...]} */
 export async function fetchProjects() {
-  const r = await fetch(API.projects, { headers: authHeaders() });
-  if (!r.ok) throw new Error(`projects ${r.status}`);
-  const data = await r.json();
-  return Array.isArray(data?.projects) ? data.projects : [];
+  const { projects } = await fetchProjectsRaw();
+  return projects;
 }
 
 /** 某项目 Flow Map 快照。GET /api/projects/<name>/flow-map（需 auth）→ NodeList 载荷。
  *  未挂载（404）返回带 notMounted 标记的空 NodeList——调用方据此区分「项目没在跑」
  *  与「项目在跑但没有节点」（两者旧版都渲染成"暂无节点"，无法诊断）；
- *  其余错误上抛由调用方展示 loadFail。 */
-export async function fetchFlowMap(projectName) {
-  const r = await fetch(API.flowMap(projectName), { headers: authHeaders() });
-  if (r.status === 404) {
-    return { nodes: [], worktrees: [], meta: { project: projectName, updatedAt: Date.now() }, notMounted: true };
+ *  其余错误上抛由调用方展示 loadFail。
+ *
+ *  有界等待（project-slow-folders 批 2026-10-28）：现场「DOSTEL 项目卡摘要
+ *  加载中…久久不出」的中继链形态 = 流量拥塞下 fetch 既不成功也**不失败**（挂死
+ *  到浏览器级超时，分钟级）——卡片摘要槽的骨架脉冲全程无终态。取值理由同
+ *  NODE_RESULT_TIMEOUT_MS：网关本地内存读正常为毫秒级；12s 覆盖中继抖动。
+ *  超时 abort 上抛 ⇒ loadCardSummary 既有 catch 落 `unknown` 态（idle 文案 +
+ *  title 保持可点），不再永挂骨架。AbortError 与网络失败同归 catch，零新增
+ *  状态面；timeoutMs 可被 window.__nfFlowMapTimeoutMs 覆盖（仅 e2e seam）。 */
+export const FLOW_MAP_TIMEOUT_MS = Number(globalThis.__nfFlowMapTimeoutMs) > 0
+  ? Number(globalThis.__nfFlowMapTimeoutMs)
+  : 12000;
+
+export async function fetchFlowMap(projectName, timeoutMs = FLOW_MAP_TIMEOUT_MS) {
+  const ctrl = typeof AbortController === 'function' && timeoutMs > 0 ? new AbortController() : null;
+  const timer = ctrl ? setTimeout(() => ctrl.abort(), timeoutMs) : 0;
+  try {
+    const r = await fetch(API.flowMap(projectName), { headers: authHeaders(), signal: ctrl?.signal });
+    if (r.status === 404) {
+      return { nodes: [], worktrees: [], meta: { project: projectName, updatedAt: Date.now() }, notMounted: true };
+    }
+    if (!r.ok) throw new Error(`flow-map ${r.status}`);
+    return await r.json();
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-  if (!r.ok) throw new Error(`flow-map ${r.status}`);
-  return await r.json();
 }
+
+/** 节点结果全文取用超时（ms，2026-09-11 fmresult 批）。取值理由：结果端点是网关
+ *  本地内存读（单节点 results/<id>.md 水合全文），正常往返为毫秒级（实测 <20ms，
+ *  见 fmresult-placeholder 批证据）；12s 留足网关在 agent 回合
+ *  高峰/归档大批量下的抖动余量，同时把「占位无限挂起」压缩为有界等待——超过即落
+ *  明确错误态（原因 + 可操作提示），用户不再面对无终态的「…」。 */
+export const NODE_RESULT_TIMEOUT_MS = 12000;
+/** 超时标记 message（与 fetch 自身的网络拒绝区分）。 */
+const NODE_RESULT_TIMEOUT_MSG = 'nf-result-timeout';
+
+/**
+ * 节点结果三态结果对象（见 fetchNodeResultDetail 文档）。
+ * @typedef {{state: 'ok', result: string}
+ *   | {state: 'empty'}
+ *   | {state: 'http', status: number}
+ *   | {state: 'network'}
+ *   | {state: 'timeout'}} NodeResultOutcome
+ */
 
 /** 节点结果全文。GET /api/projects/<name>/flow-map/nodes/<nodeId>/result（需 auth）→ {id,name,status,result}。
  *  20260905 载荷收敛：NodePayload 快照/事件为元数据 only（无 result 键，hasResult 标记），
- *  详情窗打开时经本调用按需取全文；节点不存在/项目未挂载（404）返回 null——调用方
- *  静默兜底。result 为 null（节点无结果）→ null。 */
-export async function fetchNodeResult(projectName, nodeId) {
-  const r = await fetch(API.nodeResult(projectName, nodeId), { headers: authHeaders() });
-  if (!r.ok) return null;
-  const data = await r.json();
-  return typeof data?.result === 'string' ? data.result : null;
+ *  详情窗打开时经本调用按需取全文。
+ *
+ *  2026-09-11 fmresult 批：返回值由「全文 | null」升级为**三态结果对象**——旧形态把
+ *  「节点无结果（200 + result:null）」与「端点不可达（404/5xx/网络/超时）」压成同一个
+ *  null，详情窗只能一律落空态文案 ⇒ 「错误态与空态混淆」且挂死请求让占位「…」永无终态。
+ *  状态语义（消费端 = flowMapArchive 结果区终态判定）：
+ *    ok      200 且 result 为非空字符串（全文）
+ *    empty   200 但 result 非字符串/空白（节点确实没有结果——不是错误）
+ *    http    非 2xx（404 = 节点不在活动区/归档区或项目未挂载；5xx = 服务异常）
+ *    network fetch 拒绝或响应不可解析（断网/连接被拒/坏响应）
+ *    timeout 超时无响应（AbortController 中止，见 NODE_RESULT_TIMEOUT_MS）
+ *  调用方按 state 分流：ok → 换装、empty → 空态、其余 → 明确错误态。
+ *  @param {string} projectName @param {string} nodeId @param {number=} timeoutMs
+ *  @returns {Promise<NodeResultOutcome>} */
+export async function fetchNodeResultDetail(projectName, nodeId, timeoutMs = NODE_RESULT_TIMEOUT_MS) {
+  const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+  /** @type {any} */
+  let timer = 0;
+  try {
+    /** 超时守（2026-09-11 fmresult 批）：结果端点无响应时旧实现让详情窗占位「…」
+     *  无限挂起（用户无任何终态、无重试线索）。本 Promise 到点即 abort 底层请求并
+     *  以固定 message 标记超时（与网络拒绝区分）。 */
+    const timeout = new Promise((_, rej) => {
+      timer = setTimeout(() => {
+        rej(new Error(NODE_RESULT_TIMEOUT_MSG)); // 先落超时判定（abort 触发的 AbortError 会先入微任务队列抢跑）
+        if (ctrl) ctrl.abort();
+      }, timeoutMs);
+    });
+    const res = await /** @type {Response} */ (await Promise.race([
+      fetch(API.nodeResult(projectName, nodeId), ctrl ? { headers: authHeaders(), signal: ctrl.signal } : { headers: authHeaders() }),
+      timeout,
+    ]));
+    if (!res.ok) return { state: 'http', status: res.status };
+    const data = await res.json();
+    const result = typeof data?.result === 'string' ? data.result : '';
+    return result.trim() ? { state: 'ok', result } : { state: 'empty' };
+  } catch (e) {
+    const err = /** @type {any} */ (e);
+    // AbortError 仅由本函数的超时 abort 产生（无其它取消源）⇒ 同样归入 timeout。
+    const isTimeout = !!(err && (err.message === NODE_RESULT_TIMEOUT_MSG || err.name === 'AbortError'));
+    return { state: isTimeout ? 'timeout' : 'network' };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** Flow Archive 分批内容（裁定④「TTL 分开」批）。GET .../flow-map/archive（需 auth）
@@ -101,6 +249,133 @@ export async function fetchFlowMapArchive(projectName) {
     return Array.isArray(data?.batches) ? data.batches : null;
   } catch (_) {
     return null;
+  }
+}
+
+/**
+ * 链控三动作（pause / resume / cancel）统一取数点。POST /api/projects/<name>/chains/<chainId>/<action>
+ * （需 auth）。返回可判别结果对象——调用方据此分流（成功刷新 / 拒绝提示 / 网络错误），
+ * 不抛异常（面板腿不因单次链控失败而中断）。
+ *
+ * 契约（引擎面 `ProjectsRoutes.chainControlRoute`）：
+ *   ok   200 —— data = {chainId,title,status,memberIds,pausedAt,cancelledAt}|{chainId,status,...}
+ *   http 非 2xx —— status + data.error（404 携带 CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER /
+ *        CHAIN_CANCELLED 码前缀与可行动说明）
+ *   network fetch 拒绝或响应不可解析
+ * @param {string} projectName @param {string} chainId
+ * @param {'pause'|'resume'|'cancel'} action
+ * @returns {Promise<{state:'ok', data:any}|{state:'http', status:number, data:any}|{state:'network'}>}
+ */
+export async function controlChain(projectName, chainId, action) {
+  if (!CHAIN_CONTROL_ACTIONS.includes(action)) return { state: 'network' };
+  try {
+    const r = await fetch(API.chainControl(projectName, chainId, action), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * 项目描述写穿（台账 #920 2026-10-27）。POST /api/projects/<name>/description，
+ * body {description}（空串 = 清空）。三态结果对象（与 fetchNodeResultDetail 同族）：
+ *   ok      200（data.saved === true；幂等腿 data.unchanged === true，零写入不发帧）
+ *   http    非 2xx（404 = 项目不存在 / 名字非法；401/403 走 sessionGate 同族上报）
+ *   network fetch 拒绝
+ * @param {string} projectName @param {string} description
+ */
+export async function updateProjectDescription(projectName, description) {
+  try {
+    const r = await fetch(API.projectDescription(projectName), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ description: String(description ?? '') }),
+    });
+    if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * 项目硬卸载（unmount-console 面板批 2026-11-02）。POST /api/projects/<name>/unmount
+ * （零 body；引擎单点 = ProjectUnmount，先停飞后摘面，零工作区删除）。三态结果对象
+ * （与 updateProjectDescription 同族）：
+ *   ok      200（data.project / data.unmountedAt / data.alreadyUnmounted…）
+ *   http    非 2xx（404 = 不存在/未挂载/排空超时中止——挂载面零触碰，重试安全）
+ *   network fetch 拒绝
+ * @param {string} projectName
+ */
+export async function unmountProject(projectName) {
+  try {
+    const r = await fetch(API.projectUnmount(projectName), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * 卸载态项目恢复挂载（unmount-console 面板批 2026-11-02）。POST
+ * /api/projects/<name>/remount（零 body；引擎单点 = ProjectRemount：校验盘面定义→
+ * 摘卸载标记→挂载）。三态结果对象同族：
+ *   ok      200（data.project / data.remountedAt / data.alreadyMounted）
+ *   http    非 2xx（404 = 不存在/已归档/挂载失败——卸载态保持，重试安全）
+ *   network fetch 拒绝
+ * @param {string} projectName
+ */
+export async function remountProject(projectName) {
+  try {
+    const r = await fetch(API.projectRemount(projectName), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * 在飞工作计数（unmount-console 面板批 2026-11-02）。GET
+ * /api/projects/<name>/inflight → {chains[],runningNodes[],dispatcherSessions[],
+ * delegateSessions[],total}（确认卡「如实展示在飞工作」的数据源；只读零副作用）。
+ * 三态结果对象同族；404 = 项目未挂载/不存在。
+ * @param {string} projectName
+ */
+export async function fetchProjectInflight(projectName) {
+  try {
+    const r = await fetch(API.projectInflight(projectName), { headers: authHeaders() });
+    if (r.status === 401 || r.status === 403) noteAuthRejected('projects');
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
   }
 }
 
@@ -141,4 +416,11 @@ export async function saveAgentFile(name, content) {
   });
   if (!r.ok) throw new Error(`agent.md save ${r.status}`);
   return { ok: true };
+}
+
+export async function fetchProjectWorkspaces(name) {
+  const response = await fetch(`/api/projects/${encodeURIComponent(name)}/workspaces`, { headers: authHeaders() });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error || `workspaces ${response.status}`);
+  return data;
 }

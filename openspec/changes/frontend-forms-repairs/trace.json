@@ -1,0 +1,279 @@
+{
+  "version": 1,
+  "change": "frontend-forms-repairs",
+  "mappings": [
+    {
+      "requirement": "FRM-REQ-001",
+      "scenario": "FRM-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/sidebar/providersUi.js",
+        "src/main/resources/web/js/sidebar/providerPanel.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-001 validation failure keeps the form open without sending anything"
+        },
+        {
+          "path": "tests/forms-provider-consumer.spec.mjs",
+          "name": "FRM-SCN-001 actual provider form keeps values after failed confirmation and closes on retry"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-001",
+      "scenario": "FRM-SCN-008",
+      "implementation": [
+        "src/main/resources/web/js/sidebar/providersUi.js",
+        "src/main/resources/web/js/sidebar/providerPanel.js",
+        "src/main/scala/nebflow/gateway/WsConfigHandlers.scala"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-008 LLM provider form closes only on its own acknowledgement and keeps the draft otherwise"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-008 LLM provider save without any answer keeps the draft after the timeout"
+        },
+        {
+          "path": "src/test/scala/nebflow/gateway/ws/WsUpdateConfigRequestIdSpec.scala",
+          "name": "a saved config is acknowledged with the request id of that save"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-001",
+      "scenario": "FRM-SCN-012",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/WsConfigHandlers.scala",
+        "src/main/resources/web/js/main.js",
+        "src/main/resources/web/js/sidebar/providersUi.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-008 a refused provider save is reported on the form and leaves the running turn and the conversation alone"
+        },
+        {
+          "path": "src/test/scala/nebflow/gateway/ws/WsUpdateConfigRequestIdSpec.scala",
+          "name": "a rejected config is answered with an error that carries the request id and names the request"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-002",
+      "scenario": "FRM-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/mobile/todoAppleFace.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-002 mobile todo edit submits a null tag when the tag is cleared and keeps it otherwise"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-002 mobile todo edit puts an empty project on the wire when the tag is cleared and sends nothing when it is untouched"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-002",
+      "scenario": "FRM-SCN-003",
+      "implementation": [
+        "src/main/resources/web/js/scheduled-task.js",
+        "src/main/resources/web/js/todoFace.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-003 desktop todo edit and create drafts survive unrelated store updates"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-003 desktop scheduled-task draft survives a refresh and is rebuilt for another target"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-003 mobile todo bottom-sheet draft survives unrelated store updates"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-002",
+      "scenario": "FRM-SCN-009",
+      "implementation": [
+        "src/main/resources/web/js/scheduled-task.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-009 mobile scheduled drawer keeps its draft across a refresh and rebuilds it for a reopened or different target"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-003",
+      "scenario": "FRM-SCN-004",
+      "implementation": [
+        {
+          "path": "src/main/resources/web/js/sidebar/jevTestButton.js",
+          "deleted": true
+        }
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The JeV probe implementation and its covering tests were deleted by the JeV retirement (jev-retire batch, 2026-11-16): src/main/resources/web/js/sidebar/jevTestButton.js, src/test/scala/nebflow/gateway/infra/JevProvidersAlignmentSpec.scala and tests/jev-imagegen-test-buttons.spec.mjs no longer exist, and /api/jev/test was retired with them. No synonym test survives; this requirement is superseded and needs the author to rule on dropping it.",
+        "steps": "Confirm the retirement in git history (jev-retire batch, 2026-11-16) and check that src/main/resources/web/js/sidebar/jevTestButton.js and tests/jev-imagegen-test-buttons.spec.mjs are absent from the tree.",
+        "expected": "The trace records the deletion rather than a fabricated passing test; FRM-REQ-003 (JeV probe) is void once the author rules the retirement supersedes it."
+      }
+    },
+    {
+      "requirement": "FRM-REQ-003",
+      "scenario": "FRM-SCN-013",
+      "implementation": [
+        {
+          "path": "src/main/resources/web/js/sidebar/jevTestButton.js",
+          "deleted": true
+        }
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "Same retirement as FRM-SCN-004: the JeV probe button that refused a probe without a chosen adapter was deleted with the JeV domain, so no implementation or named test survives for this scenario.",
+        "steps": "Check that src/main/resources/web/js/sidebar/jevTestButton.js and its specs are absent from the tree after the jev-retire batch (2026-11-16).",
+        "expected": "The trace records the deletion instead of asserting a passing test; the scenario is void until the author rules on FRM-REQ-003."
+      }
+    },
+    {
+      "requirement": "FRM-REQ-004",
+      "scenario": "FRM-SCN-005",
+      "implementation": [
+        "src/main/resources/web/js/main/bgAgents.js",
+        "src/main/resources/web/js/freezeState.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-005 a frozen delegate offers wake only when the authoritative block says it is wakeable"
+        },
+        {
+          "path": "tests/forms-repair.test.mjs",
+          "name": "FRM-SCN-005 wakeableOf follows the authoritative block"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-004",
+      "scenario": "FRM-SCN-014",
+      "implementation": [
+        "src/main/resources/web/js/freezeState.js",
+        "src/main/resources/web/js/main/bgAgents.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-005 a delegate-frozen row shows or hides wake the same way for a live frame and a snapshot block"
+        },
+        {
+          "path": "tests/forms-repair.test.mjs",
+          "name": "FRM-SCN-005 a delegate-frozen reason is wakeable whichever frame described the row"
+        },
+        {
+          "path": "tests/forms-repair.test.mjs",
+          "name": "FRM-SCN-005 families that recover on their own stay without a wake action when no block is present"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-005",
+      "scenario": "FRM-SCN-006",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/PresenceRoutes.scala",
+        "src/main/scala/nebflow/core/ModelRoles.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
+          "name": "PUT kernel chain clears only differing kernel pins; main, other-category and unknown-category pins are kept"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-005",
+      "scenario": "FRM-SCN-010",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/PresenceRoutes.scala",
+        "src/main/scala/nebflow/core/ModelRoles.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ModelRolesSpec.scala",
+          "name": "pinOwnerSlot owns slot families and main conversations, not slotless background families or blank ids"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-005",
+      "scenario": "FRM-SCN-016",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/PresenceRoutes.scala",
+        "src/main/scala/nebflow/core/ModelRoles.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/rest/ModelChainRoutesSpec.scala",
+          "name": "a session choice made after a category update survives until that category is edited again"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-006",
+      "scenario": "FRM-SCN-007",
+      "implementation": [
+        "src/main/resources/web/js/main/bgAgents.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-007 the background badge counts active rows while retained rows keep the entry available"
+        },
+        {
+          "path": "tests/forms-repair.test.mjs",
+          "name": "FRM-SCN-007 active count excludes retained history and structural parent"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-006",
+      "scenario": "FRM-SCN-015",
+      "implementation": [
+        "src/main/resources/web/js/main/bgAgents.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-007 running and restarting archived children count as active while completed ones stay listed without counting"
+        },
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-007 a running flow step counts as active while a pending step stays listed without counting"
+        }
+      ]
+    },
+    {
+      "requirement": "FRM-REQ-007",
+      "scenario": "FRM-SCN-011",
+      "implementation": [
+        "src/main/resources/web/js/bgAgentMobileChrome.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/forms-ui-consumers.spec.mjs",
+          "name": "FRM-SCN-011 mobile background conversation keeps the status capsule, one details control and one stop control"
+        }
+      ]
+    }
+  ]
+}

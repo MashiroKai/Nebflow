@@ -1,11 +1,10 @@
 package nebflow.gateway
 
 import cats.effect.IO
-import io.circe.{Json, JsonObject}
 import io.circe.parser.parse
 import io.circe.syntax.*
-import nebflow.core.{NebflowLogger, PathUtil}
-import nebflow.shared.Defaults
+import io.circe.{Json, JsonObject}
+import nebflow.shared.{Defaults, NebflowLogger, PathUtil}
 
 import java.net.URI
 import java.net.http.{HttpClient, HttpRequest, HttpResponse}
@@ -16,9 +15,25 @@ import java.util.Base64
 object SttService:
   private val logger = NebflowLogger.forName("nebflow.stt")
 
-  /** STT 配置文件路径。def（非 val）——PathUtil.dataRoot 可被测试 setDataRoot
-    * 重定向，val 会在类加载时冻结（#295）。 */
+  /**
+   * STT 配置文件路径。def（非 val）——PathUtil.dataRoot 可被测试 setDataRoot
+   * 重定向，val 会在类加载时冻结（#295）。
+   */
   def configPath: os.Path = PathUtil.dataRoot / "stt-config.json"
+
+  /**
+   * STT 总开关的盘上读数（settings-panel 批 D 件 2026-10-28）。**缺席 = true**
+   * ——存量用户零感知（老配置文件无此键 ⇒ 行为逐字不变）；显式 false = STT
+   * 整体停用（前端入口/快捷键全收 + 引擎 transcribe 拒绝）。
+   */
+  def readEnabledFromDisk: Boolean =
+    try
+      if !os.exists(configPath) then true
+      else
+        parse(os.read(configPath)).toOption
+          .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
+          .getOrElse(true)
+    catch case _: Exception => true
 
   def create(): IO[Option[SttService]] =
     IO.blocking {
@@ -27,13 +42,15 @@ object SttService:
         parse(os.read(configPath)).toOption.flatMap { json =>
           val hc = json.hcursor
           val apiKeyOpt = hc.downField("apiKey").as[String].toOption.filter(_.nonEmpty)
-          apiKeyOpt.flatMap { apiKey =>
+          apiKeyOpt.flatMap { storedKey =>
+            val apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(PathUtil.dataRoot, storedKey, "stt-runtime")
             val model = hc.downField("model").as[String].getOrElse(Defaults.SttDefaultModel)
             val endpoint = hc
               .downField("endpoint")
               .as[String]
               .getOrElse(Defaults.SttDefaultEndpoint)
-            Some(new SttService(apiKey, model, endpoint))
+            val enabled = hc.downField("enabled").as[Boolean].toOption.getOrElse(true)
+            Some(new SttService(apiKey, model, endpoint, enabled))
           }
         }
     }.flatMap {
@@ -42,11 +59,22 @@ object SttService:
     }
   end create
 
-  /** #295 A2：字段级三态。None=字段省略（保留旧值）；Some(None)=显式空串
-    * （清除该字段）；Some(Some(v))=设值（已 trim、非空）。 */
+  /**
+   * #295 A2：字段级三态。None=字段省略（保留旧值）；Some(None)=显式空串
+   * （清除该字段）；Some(Some(v))=设值（已 trim、非空）。
+   */
   type SttField = Option[Option[String]]
 
-  final case class SttConfigPatch(endpoint: SttField, apiKey: SttField, model: SttField):
+  final case class SttConfigPatch(
+    endpoint: SttField,
+    apiKey: SttField,
+    model: SttField,
+    // settings-panel 批 D 件（2026-10-28）：总开关三态——None=省略（保留旧值，
+    // 存量载荷零变化）；Some(true/false)=显式设值。不参与 clearsEverything
+    // （开关不是凭据字段：清空三串仍回退浏览器腿，开关值随文件保留）。
+    enabled: Option[Boolean] = None
+  ):
+
     /** 全部字段显式清除——等价于清空整个配置。 */
     def clearsEverything: Boolean =
       List(endpoint, apiKey, model).forall(_.contains(None))
@@ -58,6 +86,7 @@ object SttService:
    * - 字段省略 → 保留旧值（merge 侧处理，本次不触碰）
    * - 字段显式空串/纯空白 → 清除该字段
    * - 字段设值 → 校验后写入（endpoint 须 http(s)://；model/apiKey 非空即可）
+   * - enabled（D 件）：省略=保留；显式=布尔设值（非布尔 400）
    *
    * 旧 validateConfig 把「省略」与「显式空」折叠成同一路径且整文件替换，
    * 导致二次保存（前端 apiKey 恒空、省略该字段）时旧 key 被覆盖丢失。
@@ -71,77 +100,108 @@ object SttService:
           val v = raw.trim
           if v.isEmpty then Right(Some(None)) // explicit empty — clear this field
           else Right(Some(Some(v)))
+    val enabledField: Either[String, Option[Boolean]] =
+      payload.hcursor.downField("enabled").as[Option[Boolean]] match
+        case Left(_) => Left("STT field 'enabled' must be a boolean if present")
+        case Right(v) => Right(v)
     for
       endpoint <- field("endpoint")
       apiKey <- field("apiKey")
       model <- field("model")
+      enabled <- enabledField
       _ <- endpoint.flatten match
         case Some(e) if !e.startsWith("http://") && !e.startsWith("https://") =>
           Left(s"STT endpoint must start with http:// or https:// (got: ${e.take(60)})")
         case _ => Right(())
-    yield SttConfigPatch(endpoint, apiKey, model)
+    yield SttConfigPatch(endpoint, apiKey, model, enabled)
+
+  end parsePatch
 
   /**
    * patch 叠加旧配置（#295 A2 纯函数）。省略=保留旧值；显式空=删字段；
    * 设值=覆写。返回 None=合并后无任何字段（未配置态——调用方删文件，
    * 服务回退浏览器 Web Speech）。部分字段存在但缺 apiKey 时 create()
    * 返回 None（无代理服务），字段保留在盘上待 key 回填。
+   * enabled（D 件）：省略=保留旧文件值（无旧文件=true 缺省）；显式=覆写。
    */
   def mergeConfig(old: Option[Json], patch: SttConfigPatch): Option[Json] =
     def oldField(name: String): Option[String] =
       old.flatMap(_.hcursor.downField(name).as[String].toOption).filter(_.nonEmpty)
     def apply(name: String, f: SttField): Option[(String, Json)] =
       f match
-        case None         => oldField(name).map(v => name -> v.asJson) // omitted — keep
-        case Some(None)   => None // explicit clear
+        case None => oldField(name).map(v => name -> v.asJson) // omitted — keep
+        case Some(None) => None // explicit clear
         case Some(Some(v)) => Some(name -> v.asJson)
-    val fields = List(
-      apply("endpoint", patch.endpoint),
-      apply("apiKey", patch.apiKey),
-      apply("model", patch.model)
-    ).flatten
-    if fields.isEmpty then None
-    else Some(Json.fromJsonObject(JsonObject.fromIterable(fields)))
+    // D 件（2026-10-28）：清空三串且**没有**显式关停 ⇒ None（整体删档，回退
+    // 浏览器腿——既有语义逐字保留）。唯一例外 = 显式 enabled=false：文件保留
+    // {enabled:false}，停用态跨重启存活（否则一次清空即把总开关静默翻回开）。
+    val clearsToOff = patch.clearsEverything && patch.enabled != Some(false)
+    if clearsToOff then None
+    else
+      val fields = List(
+        apply("endpoint", patch.endpoint),
+        apply("apiKey", patch.apiKey),
+        apply("model", patch.model)
+      ).flatten ++ (patch.enabled match
+        // 显式 = 覆写；省略 = 保留旧文件值（enabled 是总开关，A2「省略=保留」
+        // 语义对它一体适用——否则一次普通保存就把停用态静默翻回开）。
+        case Some(v) => List("enabled" -> v.asJson)
+        case None =>
+          old.flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
+            .map(v => List("enabled" -> v.asJson)).getOrElse(List.empty)
+      )
+      Some(Json.fromJsonObject(JsonObject.fromIterable(fields)))
+
+  end mergeConfig
 
   /**
-   * serverConfig 广播的 stt 节（#295）：{sttConfigured, endpoint?, model?}——
-   * **apiKey 永不外露**（key 不落地前端铁律）。未配置时仅 sttConfigured:false。
+   * serverConfig 广播的 stt 节（#295）：{sttConfigured, sttEnabled, endpoint?,
+   * model?}——**apiKey 永不外露**（key 不落地前端铁律）。`sttEnabled`（D 件
+   * 2026-10-28）= 总开关盘上读数（缺席=true 缺省）——未配置/停用形态都要让
+   * 前端拿到同一真值，入口/快捷键据此全收。IO 形态：enabled 读盘（调用方两处
+   * 均在 IO 语境）。
    */
-  def serverConfigNode(svc: Option[SttService]): Json =
+  def serverConfigNode(svc: Option[SttService]): IO[Json] = IO.blocking {
+    val enabled = readEnabledFromDisk
     svc match
       case Some(s) =>
         Json.obj(
           "sttConfigured" -> true.asJson,
+          "sttEnabled" -> enabled.asJson,
           "endpoint" -> s.endpoint.asJson,
           "model" -> s.model.asJson
         )
       case None =>
-        Json.obj("sttConfigured" -> false.asJson)
+        Json.obj("sttConfigured" -> false.asJson, "sttEnabled" -> enabled.asJson)
+  }
 end SttService
 
 /**
-  * STT 语音识别服务。按 endpoint 后缀自动识别两种协议（2026-08-21 MiMo 支持）：
-  *
-  * 1. **chat/completions 协议**——endpoint 以 `/chat/completions` 结尾。MiMo 的
-  *    「OpenAI API Compatibility」是 chat 协议而非 transcriptions（无
-  *    /v1/audio/transcriptions，全部 404）。实测定稿：input_audio data-URL
-  *    (WAV base64) + asr_options.language（仅 auto/zh/en），转写文本在
-  *    choices[0].message.content。
-  * 2. **multipart transcriptions 协议**（原有路径）——OpenAI Whisper 风格服务。
-  *
-  * 不加新配置字段，按 endpoint 后缀分流。配置文件: ~/.nebflow/stt-config.json
-  * {
-  *   "apiKey": "your-key",
-  *   "model": "mimo-v2.5-asr",
-  *   "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
-  * }
-  */
+ * STT 语音识别服务。按 endpoint 后缀自动识别两种协议（2026-08-21 MiMo 支持）：
+ *
+ * 1. **chat/completions 协议**——endpoint 以 `/chat/completions` 结尾。MiMo 的
+ *    「OpenAI API Compatibility」是 chat 协议而非 transcriptions（无
+ *    /v1/audio/transcriptions，全部 404）。实测定稿：input_audio data-URL
+ *    (WAV base64) + asr_options.language（仅 auto/zh/en），转写文本在
+ *    choices[0].message.content。
+ * 2. **multipart transcriptions 协议**（原有路径）——OpenAI Whisper 风格服务。
+ *
+ * 不加新配置字段，按 endpoint 后缀分流。配置文件: ~/.nebflow/stt-config.json
+ * {
+ *   "apiKey": "your-key",
+ *   "model": "mimo-v2.5-asr",
+ *   "endpoint": "https://api.xiaomimimo.com/v1/chat/completions"
+ * }
+ */
 class SttService private[gateway] (
   apiKey: String,
   /** 转录模型名（serverConfig 广播可见；apiKey 永不外露）。 */
   val model: String,
   /** 转录端点（serverConfig 广播可见；apiKey 永不外露）。 */
-  val endpoint: String
+  val endpoint: String,
+  /** 总开关（settings-panel 批 D 件）：false = STT 整体停用——引擎腿同步拒绝
+    * （前端入口已收，这是纵深第二层：直连 WS transcribe 帧也拿不到转写）。 */
+  val enabled: Boolean = true
 ):
   private val logger = NebflowLogger.forName("nebflow.stt")
 
@@ -158,7 +218,8 @@ class SttService private[gateway] (
    * @return Right(识别文本) 或 Left(错误消息，回传前端)
    */
   def transcribe(wavBytes: Array[Byte], language: Option[String]): IO[Either[String, String]] =
-    if wavBytes.isEmpty then IO.pure(Left("Empty audio data"))
+    if !enabled then IO.pure(Left("STT is disabled in settings"))
+    else if wavBytes.isEmpty then IO.pure(Left("Empty audio data"))
     else if isChatCompletionsEndpoint then transcribeViaChat(wavBytes, language)
     else transcribeViaMultipart(wavBytes, language)
   end transcribe
@@ -167,18 +228,20 @@ class SttService private[gateway] (
   private def isChatCompletionsEndpoint: Boolean =
     endpoint.trim.endsWith("/chat/completions")
 
-  /** chat 协议语言映射：MiMo asr_options.language 仅接受 auto/zh/en。前端传
-    * BCP-47（zh-CN/en-US/...）——startsWith 前缀映射，其余（含 None）→ auto。 */
+  /**
+   * chat 协议语言映射：MiMo asr_options.language 仅接受 auto/zh/en。前端传
+   * BCP-47（zh-CN/en-US/...）——startsWith 前缀映射，其余（含 None）→ auto。
+   */
   private def mapLanguage(language: Option[String]): String =
     language.map(_.trim.toLowerCase) match
       case Some(l) if l.startsWith("zh") => "zh"
       case Some(l) if l.startsWith("en") => "en"
-      case _                             => "auto"
+      case _ => "auto"
 
   /** MiMo 风格 chat/completions ASR（2026-08-21 实测定稿，0.8s 中文转写验证）。 */
   private def transcribeViaChat(
-      wavBytes: Array[Byte],
-      language: Option[String]
+    wavBytes: Array[Byte],
+    language: Option[String]
   ): IO[Either[String, String]] =
     val audioB64 = Base64.getEncoder.encodeToString(wavBytes)
     val body = Json.obj(
@@ -219,19 +282,23 @@ class SttService private[gateway] (
         parse(response.body()).toOption match
           case Some(json) =>
             json.hcursor
-              .downField("choices").downArray
-              .downField("message").downField("content").as[String] match
+              .downField("choices")
+              .downArray
+              .downField("message")
+              .downField("content")
+              .as[String] match
               case Right(text) => Right(text.trim)
-              case Left(_)     => Left("STT API returned unexpected format")
+              case Left(_) => Left("STT API returned unexpected format")
           case None => Left("Empty response from STT API")
+      end if
     }.handleErrorWith { e =>
       logger.warn(s"STT transcription failed: ${e.getMessage}").as(Left(e.getMessage))
     }
   end transcribeViaChat
 
   private def transcribeViaMultipart(
-      wavBytes: Array[Byte],
-      language: Option[String]
+    wavBytes: Array[Byte],
+    language: Option[String]
   ): IO[Either[String, String]] =
     // Build multipart/form-data body
     val boundary = "----nebflow-stt-" + System.currentTimeMillis().toHexString

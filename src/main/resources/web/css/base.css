@@ -1,10 +1,73 @@
 :root {
+  /* 2026-10-30 按钮体系单源重设计（作者令「按钮不要绿色…像 SpaceX」）：
+     --color-primary/-hover **冻结保留原绿值**，语义从「交互主色」降级为
+     「身份/状态专用绿」（通知点/运行点/繁忙 spinner/caret/链接等状态面继续
+     消费，与官网 --color-pixel identity-only 裁定同构）。可交互主操作一律
+     走墨族 --btn-primary-* → --btn-ink-*（蓝 focus/链接 = --btn-focus-ring），
+     见 sapphire.css 五类 token 块与 stand-tokens.css 三态解析块。 */
   --color-primary: #07c160;
   --color-primary-hover: #06ad56;
   --color-error: #f44336;
+  /* 危险操作文字色（E4，2026-09-16 群聊批）：**单源 token** —— 值逐字取自原
+     `friends.css` 的群危险键字面量（`.fm-gs-danger: #d64545`），本批只做「字面量
+     → token」的搬迁（零新增色值：删除行与新增行同为 `#d64545`，集合差 = ∅），
+     消费点 = `.fm-gs-danger` 一处（🔴 禁扩散到其他面）。
+     ── 2026-09-16 按钮批（第二段）对比度治理（作者裁定「危险红对比度按既有可读性
+     铁律执行：三档 ≥4.5:1，禁换口径、禁压暗达标」）：
+       旧值 → 亮档 4.38:1（白底）/ 4.05:1（页面底）⇒ **判红**（危险红 ≥4.5:1）；
+       新值 → 5.44:1 / 5.03:1 ✔（比旧值**更深**：压暗达标 = 降低判定背景后声称
+       达标，本处是加深红值本身并**双底都读**，判据未动）。
+       暗档旧值同行（无 dark 覆盖）→ 3.76:1（面板底）⇒ 判红；暗档新值（见下方
+       dark 块）→ 5.56:1 ✔。旧值→新值的具体色值 + 新读数逐条申报见本批交付
+       §R5′/§J2（值本体写在本行下方两行，注释内不复制色值）。 */
+  --color-danger: #c0392b;
   --color-success: #4caf50;
   --color-warning: #ff9800;
+  /* 我方气泡底色：恢复 UI 巡检改蓝前的历史绿 #95ec69（9158a5fab）。
+     · 出处不猜：这枚「浅蓝」并非新造色值，而是**仓内确有的一档历史值** ——
+       sapphire 淡染（亮 #cdd9ec / 暗 #29354d），首次落地于 UI 巡检批 commit
+       9158a5fab（作者 2026-11-07 11:40 令「禁止出现微信式高饱和绿…该颜色应是
+       会话气泡组件的单点 token」）：`git log -S"color-bubble-user"` 全history
+       只有 4 个值（微信绿 #95ec69 / 近白 #ecebe7 / 浅蓝 #cdd9ec / 中性深 #33312d），
+       其中唯一带蓝相的即本档 —— 作者口中的「之前的浅蓝色」= 这一档。
+     · 三档沿革（同一令牌，均出自作者逐条令）：微信绿 95ec69 →（11:40 禁绿）
+       浅蓝 cdd9ec →（12:25「还是很丑啊」）近白 ecebe7 →（14:37「用户绿色不行吗」）
+       绿 95ec69 →（本批「改回之前的浅蓝色」）**浅蓝 cdd9ec**。结构不变：归属方
+       两档 + 单点纪律照旧（glass.css「气泡归属方底色单点」块消费本令牌，
+       check-bubble-side.mjs R1–R5 判据不动，零新增令牌）。
+     · 正文色不在此处：.bubble.user 吃 --nf-bub-ours-ink = --color-text（亮档深字
+       #1b1e26 落在 #cdd9ec 上 ≈ 11.7:1 ✔ / 暗档浅字 #e8eaed 落在 #29354d 上
+       ≈ 10.0:1 ✔）—— 浅蓝档**两主题各自成立**，不需要为它另造压暗字色
+       （绿档当年 1.21:1 的病根正是绿底亮度过高，浅蓝档没有这个病）。 */
   --color-bubble-user: #95ec69;
+  /* 我方气泡**正文色**（bubble-contrast 批 2026-11-07 14:37 立、bubble-lightblue 批
+     2026-11-07 回撤暗档覆写）：绿档时代（#95ec69，L≈0.673）浅字只有 1.21:1，故当时
+     给暗档另造了深墨绿字 #12240d。作者最新令把底色改回**浅蓝档**（亮 #cdd9ec /
+     暗 #29354d）后，该压暗理由**不复存在**：两档各按本主题正文色即可（亮档深字
+     11.7:1 / 暗档浅字 10.0:1），故本令牌两档一律 = --color-text —— 与「正文色随
+     主题」的既有单一来源一致，零新增字色值。对方白气泡照旧吃 --color-text。 */
+  --nf-bub-ours-ink: var(--color-text);
+
+  /* ── 状态载体 token（ui-status-redesign 批，2026-10-05 作者拍板分叉①=A）──
+     铁律一「语义色只上载体，不上正文」：红/黄/绿仅允许出现在图标/圆点/描边/
+     底纹/进度环上；11–13px 状态词与通知正文一律 --status-word（= 既有
+     frame-text-muted 中性字，零新值）。四枚中唯一新增色值 = --status-warn-icon
+     亮档 #b45309（现值 #ff9800 图形对比 2.2:1 不达 WCAG 1.4.11 的 3:1）；
+     其余值均为仓内既有值或既有暗档值（#d64545 = 前 fm-gs-danger 旧值 /
+     #2e7d32 / #66bb6a / #f26b6b / #ffa83c = sapphire --amber-dark 暗档值）。
+     --color-error / --color-danger 保留现值不迁移：改版后正文字不再消费红
+     token，红 token 转供图标/描边/底纹（危险按钮族仍走 --btn-danger-*）。 */
+  /* 定时任务蓝（schedule-todo-unify 批 2026-11-06 单源）：值逐字取自
+     reminder.css 既有字面量 rgb(91, 127, 191)（触发时刻/已完成打卡圆，本批只做
+     「字面量 → token」搬迁，集合差 = ∅）。语义 = 定时/计划类信息蓝 —— 定时任务
+     页与待办页（tfl 完成打卡 / swipe 保留图标）按作者令「以定时任务为准」同
+     消费本 token，不许各留一套。 */
+  --color-info: rgb(91, 127, 191);
+  --status-error-icon: #d64545;   /* 图标档：亮 4.4:1（图形 ≥3:1 ✓） */
+  --status-warn-icon: #b45309;    /* 图标档：亮 5.0:1 ✓（全案唯一新值） */
+  --status-success-icon: #2e7d32; /* 图标档：亮 5.1:1 ✓（仓内已有值） */
+  --status-word: var(--color-frame-text-muted); /* 状态词中性字（零新值） */
+  --st-ic-align: -0.125em; /* 状态图标行内基线微调 */
 
   /* Content area — light */
   --color-bg: #f5f6f8;
@@ -33,9 +96,32 @@
   --color-frame-input-bg: #f5f6f8;
   --color-frame-input-border: #ddd;
   --color-frame-input-text: #3a3d45;
+
+  /* ── 搜索结果角色徽标（chatSearch 异色批 2026-10-30 作者令②：结果列表用户/
+     AI 异色，跟随面板明暗 token）。徽标字 = 10px 小字 → AA 4.5:1 判读，底色
+     取面板底（--color-modal-bg 亮 #fff / 暗 #1c1f27；徽标 tint 仅 ~8% 透过，
+     保守按面板底读数）。用户 = 微信绿族（与 --color-bubble-user 同族压深——
+     原绿 #95ec69 亮底 1.3:1 不可用）；AI/助手 = sapphire 族。
+     亮档读数：user 5.4:1 ✓ / ai 5.2:1 ✓（旧值 #5b7fbf 仅 4.0:1，顺带抬达标）；
+     暗档读数见 dark 块。 */
+  --search-kind-user: #067a40;
+  --search-kind-user-bg: rgba(6, 122, 64, 0.08);
+  --search-kind-ai: #4a6da7;
+  --search-kind-ai-bg: rgba(91, 127, 191, 0.08);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── 状态图标基类（ui-status-redesign 批）────────────────────────────────
+   utils.js statusIcon() 产出（lucide createElement，class="st-ic …"）与
+   <i data-lucide class="st-ic"> 兜底同享：行内对齐 + 禁收缩；颜色永远由消费方
+   CSS 类给语义 token（SVG stroke=currentColor，JS 串禁硬编码色值）。 */
+.st-ic { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; line-height: 0; vertical-align: var(--st-ic-align); }
+.st-ic svg, svg.st-ic { display: block; }
+/* 语义档三色（只上图标载体）：与状态 token 同名成对，供 statusIcon()/模板串引用。 */
+.st-err { color: var(--status-error-icon); }
+.st-warn { color: var(--status-warn-icon); }
+.st-ok { color: var(--status-success-icon); }
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--color-bg);
@@ -55,6 +141,10 @@ body {
     --color-bg: #13161c;
     --color-surface: #1c1f27;
     --color-bubble-ai: #1c1f27;
+    /* 用户气泡暗档恢复绿档；暗底正文使用历史深墨绿 #12240d（a62dd7300），
+       避免浅字落在绿底上的低对比。 */
+    --color-bubble-user: #95ec69;
+    --nf-bub-ours-ink: #12240d;
     --color-text: #e8eaed;
     --color-text-muted: #7b7e88;
     --color-text-dim: #9ba0aa;
@@ -76,6 +166,26 @@ body {
     --color-frame-input-bg: #0e1117;
     --color-frame-input-border: #2a2d35;
     --color-frame-input-text: #c8cad0;
+
+    /* 搜索结果角色徽标暗档（#1c1f27 面板底读数）：user 8.6:1 ✓ / ai 6.1:1 ✓
+       （旧值暗档仅 4.1:1，抬档达标；tint 同步提亮保可见）。 */
+    --search-kind-user: #6fce8e;
+    --search-kind-user-bg: rgba(111, 206, 142, 0.12);
+    --search-kind-ai: #7d9fd4;
+    --search-kind-ai-bg: rgba(125, 159, 212, 0.12);
+
+    /* 危险族暗档（2026-09-16 按钮批）：`--color-danger` 此前**无 dark 覆盖**
+       ⇒ 暗档沿用亮档旧深红（面板底 3.76:1 / 页面底 4.14:1）⇒ 判红。暗档改成
+       **提亮**值（暗底提亮方向；与亮档「加深」方向相反、判据同一）：新读数 =
+       面板底 5.56:1 / 玻璃底 5.87:1 / 页面底 6.12:1 ✔（三档均 ≥4.5:1）。 */
+    --color-danger: #f26b6b;
+
+    /* 状态载体 token 暗档（ui-status-redesign 批）：与 --color-danger 暗档同值
+       (#f26b6b)；warn 暗档 = sapphire --amber-dark 既有值 (#ffa83c, 8.6:1 ✓)；
+       success 暗档 = 仓内既有 (#66bb6a, 7.0:1 ✓)。 */
+    --status-error-icon: #f26b6b;
+    --status-warn-icon: #ffa83c;
+    --status-success-icon: #66bb6a;
   }
 
   /* Dark mode scrollbar */
@@ -95,6 +205,18 @@ body {
 :root {
   --panel-ease: cubic-bezier(0.32, 0.72, 0, 1);
   --panel-duration: 0.32s;
+
+  /* ── 设计语言动效 token（设计语言批 2026-10-21；账本唯一一份在 stand-dev
+     插件包 assets/design-system/，本仓不保留第二份）──
+     --dur-1 微变换（icon scale/按下）· --dur-2 hover 色彩/边框/底纹（官网
+     160ms 同源）· --dur-3 主题与表面切换（官网 240ms 同源）· 入场 200ms
+     modalIn 家族（--ease-enter）· 几何属性用 --ease-std（官网
+     cubic-bezier(0.4,0,0.2,1) 同源）。transition 禁 all、逐属性列出。 */
+  --dur-1: 120ms;
+  --dur-2: 160ms;
+  --dur-3: 240ms;
+  --ease-enter: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-std: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ---------- Sidebar Collapse ---------- */
@@ -128,23 +250,21 @@ body.sidebar-collapsed #sidebar {
   border: 1px solid transparent; /* reserves edge space for glass hover */
   background: none;
   color: var(--color-frame-text-muted);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
-  margin-right: 6px;
+  margin-right: var(--ds-space-1h);
   flex-shrink: 0;
   padding: 0;
-  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
-.panel-toggle-btn:hover {
-  color: var(--color-frame-text-bright);
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
+@media (hover: hover) {
+  .panel-toggle-btn:hover {
+    color: var(--color-frame-text-bright);
+    background: var(--glass-control-bg-hover);
+    border-color: var(--glass-control-border);
+  }
 }
+
 
 /* ── Scrollbar: fixed slim width ── */
 /* Fixed 6px width everywhere. Previous auto-slim toggled between 6px/10px,
@@ -164,7 +284,7 @@ body.sidebar-collapsed #sidebar {
 }
 ::-webkit-scrollbar-thumb {
   background: rgba(0,0,0,0.15);
-  border-radius: 3px;
+  border-radius: var(--ds-radius-badge);
 }
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(0,0,0,0.25);
@@ -216,20 +336,18 @@ body.sidebar-collapsed #sidebar {
   height: 28px;
   padding: 0;
   border: 1px solid transparent; /* reserves edge space for glass hover */
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.2s ease, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s ease, color 0.2s ease, border-color 0.15s;
 }
 .bypass-toggle:hover {
+  /* 扁平契约（check-flat-buttons 的 toggle/switch 判据段 2026-11-05 补盲后抓出）：
+     原先这里是两条 inset 内高光（上白下黑 = 浮雕厚度）。撤掉后 hover 反馈只走
+     背景升一档 + 描边，与全站扁平按钮同一口径。 */
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
 }
 /* Shield icon color changes with safety mode */
 .bypass-toggle[data-mode="confirm-edits"] {
@@ -238,8 +356,10 @@ body.sidebar-collapsed #sidebar {
 .bypass-toggle[data-mode="auto-edits"] {
   color: #e8923c;
 }
+/* ui-status-redesign：auto-all 的红落在盾形图标（图案载体 ✓）上，色值归
+   --status-error-icon token（暗档随 token 提亮，亮档 4.4:1 图形达标）。 */
 .bypass-toggle[data-mode="auto-all"] {
-  color: var(--color-error);
+  color: var(--status-error-icon);
 }
 /* Dropdown menu — positioned relative to #main (not #header) so
    backdrop-filter can blur chat content instead of being trapped
@@ -250,14 +370,12 @@ body.sidebar-collapsed #sidebar {
   right: 24px;
   min-width: 120px;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 10px;
-  padding: 4px;
+  border-radius: var(--ds-radius-button);
+  padding: var(--ds-space-1);
   display: none;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--ds-space-half);
   z-index: 300;
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
@@ -289,20 +407,23 @@ body.sidebar-collapsed #sidebar {
 .header-dropdown-menu button {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
   color: var(--color-frame-text);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   cursor: pointer;
   text-align: left;
   transition: background 0.12s;
 }
-.header-dropdown-menu button:hover {
-  background: var(--color-surface);
+@media (hover: hover) {
+  .header-dropdown-menu button:hover {
+    background: var(--color-surface);
+  }
 }
+
 .header-dropdown-menu button.active {
   color: var(--color-primary);
   font-weight: 500;
@@ -316,62 +437,4 @@ body.sidebar-collapsed #sidebar {
 }
 .header-dropdown-menu button[data-mode="confirm-edits"]::before { background: var(--color-frame-text-muted); }
 .header-dropdown-menu button[data-mode="auto-edits"]::before { background: #e8923c; }
-.header-dropdown-menu button[data-mode="auto-all"]::before { background: var(--color-error); }
-
-/* F4 (#433): global fallback permission toast — glass panel, no overlay */
-#global-perm-toasts {
-  position: fixed;
-  top: 16px;
-  right: 16px;
-  z-index: 10000;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  max-width: 360px;
-}
-.global-perm-toast {
-  background: var(--bg-secondary-translucent, rgba(255, 255, 255, 0.72));
-  backdrop-filter: blur(16px) saturate(1.4);
-  -webkit-backdrop-filter: blur(16px) saturate(1.4);
-  border: 0.5px solid var(--border-light, rgba(0, 0, 0, 0.06));
-  border-radius: 12px;
-  padding: 12px 14px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.12);
-  font-size: 13px;
-}
-.global-perm-toast-title {
-  font-weight: 600;
-  margin-bottom: 4px;
-}
-.global-perm-toast-body {
-  opacity: 0.78;
-  word-break: break-all;
-  margin-bottom: 10px;
-  max-height: 3.6em;
-  overflow: hidden;
-}
-.global-perm-toast-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
-.global-perm-toast-btn {
-  border: 0.5px solid var(--border-light, rgba(0, 0, 0, 0.08));
-  border-radius: 8px;
-  padding: 4px 12px;
-  font-size: 12px;
-  cursor: pointer;
-  background: var(--bg-tertiary, rgba(255, 255, 255, 0.6));
-}
-.global-perm-toast-btn.approve { color: #07C160; font-weight: 600; }
-.global-perm-toast-btn.deny { opacity: 0.75; }
-@media (prefers-color-scheme: dark) {
-  .global-perm-toast {
-    background: rgba(30, 30, 34, 0.72);
-    border-color: rgba(255, 255, 255, 0.08);
-  }
-  .global-perm-toast-btn {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.12);
-  }
-}
+.header-dropdown-menu button[data-mode="auto-all"]::before { background: var(--status-error-icon); }

@@ -3,17 +3,35 @@
 // Lazy-loads directories via `listDir` WS message. Clicking a file sends
 // `readFile`, opens the content as a Canvas tab (markdown/code/html).
 // Expand/collapse state is kept in-memory (not persisted).
-// Folder picker button in the header opens the path picker modal.
+// The header folder button opens the unified directory picker
+// (workspacePicker.js) to set the tree root.
 
 import state from './state.js';
 import { key } from './branding.js';
-import { sendWs, onMessage } from './ws.js';
-import { openPathPickerCallback } from './sidebar.js';
-import { createIconsIn } from './utils.js';
+import { sendWs, onMessage, onReconnect } from './ws.js';
+import { createIconsIn, escapeHtml } from './utils.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
 import { appendRefToActiveView } from './input.js';
 import { showSidePanel } from './activityBar.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { withFocusKey } from './focusTrap.js';
+// keyboard-first 三期：树键位搬进规则表（keyRules.js 的 explorer.tree.*），
+// 本模块只提供动作函数 + 一个派生上下文键（选中态）。
+import { provideContextKey, KEYS } from './keyContext.js';
+
+// explorer.js 拆分(FE组件化批次五 2026-09-28):选择状态族与文件规则小簇迁至 js/explorer/
+// 子模块 —— selection.js(多选模型族,簇私态 selectedPaths/anchorPath 整态随迁)、
+// fileRules.js(getFileInfo/shouldHide + FILE_ICONS/HIDDEN_DIRS 两表随迁)。子模块不得
+// 反向 import 本文件;本文件公共导出面(initExplorer/openExplorerAt/refreshExplorer)
+// 不变,外部 import 方零改动。树内拖放族(B)与外部拖入导入族(A)本批降级留主体:其函数
+// 体直接读写 explorerRoot/dragMoveSrc/currentDir 文件级可变态且调用面横跨簇外主体。
+import { selectedPaths, applySelectionClasses, selectSingle, clearSelection, pruneSelection, handleSelectClick, injectSelectionHostFns } from './explorer/selection.js';
+import { getFileInfo, shouldHide } from './explorer/fileRules.js';
+// selection.js 的 rangeSelect/updateSelectionBar 需主体 getTargetDir/deleteSelected
+//(该两段留守本文件):模块求值即注入,函数声明提升保证此处已可引用。
+injectSelectionHostFns({ getTargetDir, deleteSelected });
 
 // ── State ──────────────────────────────────────────────────────────────
 
@@ -21,25 +39,295 @@ import { showSidePanel } from './activityBar.js';
  *  Persisted to localStorage so it survives restarts. */
 let explorerRoot = null;
 const EXPLORER_ROOT_KEY = key('explorer_root');
+/**
+ * Explorer root ORIGIN device (ui-device-faces 批 2026-10-10 · 设计稿 §2.1)：远端项目
+ * 「在文件浏览器中打开」以 {path, device} 建根——整棵树同源一设备，所有 listDir /
+ * readFile 都 additive 携带 `device` 键（后端远端腿）；本机根 = null，**零键**（self
+ * 守卫：后端对解析为本机的 device 显式回错）。localStorage 伴生键 additive；旧值
+ * 缺 device = 本机，存量零迁移。
+ */
+let explorerRootDevice = null;
+const EXPLORER_ROOT_DEVICE_KEY = key('explorer_root_device');
+
+/** 本机根记忆（picker-device-switch 批）：切到远端浏览前记住本机根，切回本机时还原
+ *  （不跨窗口重开——重启后回落缺省项目目录，无数据丢失：根只是视图偏好）。 */
+let localRootMemory = null;
 
 function loadPersistedRoot() {
   try {
     const saved = localStorage.getItem(EXPLORER_ROOT_KEY);
-    return saved || null;
+    if (!saved) return null;
+    // 伴生 device 键只在 root 在场时有效（悬挂 device = 视为本机根）。
+    explorerRootDevice = localStorage.getItem(EXPLORER_ROOT_DEVICE_KEY) || null;
+    if (!explorerRootDevice) localRootMemory = saved;
+    return saved;
   } catch (_) { return null; }
 }
 
-function persistRoot(path) {
+function persistRoot(path, device = null) {
   explorerRoot = path;
+  explorerRootDevice = path ? (device || null) : null;
+  if (!explorerRootDevice && path) localRootMemory = path; // 本机根入记忆（切远端后可还原）
   try {
     if (path) localStorage.setItem(EXPLORER_ROOT_KEY, path);
     else localStorage.removeItem(EXPLORER_ROOT_KEY);
+    if (explorerRootDevice) localStorage.setItem(EXPLORER_ROOT_DEVICE_KEY, explorerRootDevice);
+    else localStorage.removeItem(EXPLORER_ROOT_DEVICE_KEY);
   } catch (_) {}
   updateExplorerTitle();
 }
 
+/** hard-drive icon（lucide 同源描边；芯片/徽标两处共用一串 SVG）。 */
+const DEVICE_HD_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>';
+const DEV_ICON_CHECK =
+  '<svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+const DEV_CHEV_SVG =
+  '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
+
+/** 头部设备 chip 的菜单开合态 + 花名册 self（显示名缓存，模块级——chip 常驻后跨
+ *  paint 复用；picker-device-switch 批）。 */
+let explorerDevMenuOpen = false;
+let explorerDevMenuAnchorRect = null; // placeExplorerDevMenu 落位的 chip 视口矩形（滚动判移用）
+let explorerRosterSelf = null;
+
+/**
+ * 头部设备 chip（picker-device-switch 批 2026-10-30 改造）：由「远端根才出现的只读
+ * 徽标」升级为**常驻设备切换钮**（作者报单：「文件浏览器，那也应该要加设备选择」）——
+ * 点开菜单平级列出 self（花名册名，所有设备平等）+ peers，选中即换浏览目标：
+ * listDir/readFile 走既有 additive `device` 腿（零新端点）；离线对端行置灰禁选 +
+ * 「离线」标注。写操作边界不变：远端根只读闸（refuseRemoteWrite）+ 写入口摘除。
+ */
+function renderExplorerDeviceChip() {
+  const header = document.querySelector('.explorer-header');
+  if (!header) return;
+  let anchor = /** @type {HTMLElement | null} */ (header.querySelector('.explorer-dev-anchor'));
+  if (!anchor) {
+    anchor = document.createElement('span');
+    anchor.className = 'explorer-dev-anchor';
+    const chip = document.createElement('button');
+    chip.type = 'button';
+    chip.id = 'explorer-device-btn';
+    chip.className = 'dev-chip';
+    chip.setAttribute('aria-haspopup', 'listbox');
+    chip.setAttribute('aria-expanded', 'false');
+    chip.setAttribute('aria-label', t('explorer.deviceSelectAria'));
+    anchor.append(chip);
+    const titleEl = header.querySelector('.explorer-title');
+    if (titleEl) titleEl.after(anchor);
+    else header.appendChild(anchor);
+    chip.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (explorerDevMenuOpen) closeExplorerDevMenu();
+      else openExplorerDevMenu();
+    });
+    document.addEventListener('pointerdown', explorerDevOutsideClose, true);
+  }
+  // 菜单体 = body 级浮层（弹层浮出批 2026-11-01）：不再挂在锚内——#sidebar→
+  // #sidebar-panel→.panel→#explorer-section 全链 overflow:hidden 会几何裁切弹层，
+  // 且 #sidebar 自带 backdrop-filter 把毛玻璃采样困在自己子树里（同款坑
+  // base.css .header-dropdown-menu 注释在先）。创建一次，开合复用。
+  if (!document.querySelector('.dev-menu.explorer-dev-menu')) {
+    const menu = document.createElement('div');
+    menu.className = 'dev-menu explorer-dev-menu';
+    menu.hidden = true;
+    document.body.appendChild(menu);
+  }
+  paintExplorerDevChip();
+}
+
+/** chip 标签包一层 .dev-nm（弹层浮出批）：窄栏受挤时在标签上省略号（放不下才
+ *  省略 + title 悬浮全名），替代旧 110px 硬截。 */
+function devChipLabelEl(text) {
+  const nm = document.createElement('span');
+  nm.className = 'dev-nm';
+  nm.textContent = text;
+  return nm;
+}
+
+/** chip 常态绘制：当前 origin 设备（远端 = 花名册名 + 离线琥珀点；本机 = self 名）。 */
+function paintExplorerDevChip() {
+  const chip = /** @type {HTMLElement | null} */ (document.getElementById('explorer-device-btn'));
+  if (!chip) return;
+  const deviceId = explorerRootDevice;
+  const selfName = (explorerRosterSelf && explorerRosterSelf.name) || '';
+  const label = deviceId || selfName || t('workspacePicker.thisDevice');
+  chip.classList.remove('is-offline');
+  chip.innerHTML = DEVICE_HD_SVG;
+  chip.appendChild(devChipLabelEl(label));
+  chip.insertAdjacentHTML('beforeend', DEV_CHEV_SVG);
+  chip.title = deviceId || selfName;
+  chip.setAttribute('aria-expanded', String(explorerDevMenuOpen));
+  // 显示名 + 离线态异步补写（花名册 60s 内存缓存；失败回落 deviceId 直显）。
+  if (deviceId) {
+    import('./deviceRoster.js').then(async ({ resolveDeviceName, isDeviceOnline }) => {
+      if (!explorerRootDevice || !chip.isConnected) return;
+      const [name, online] = await Promise.all([resolveDeviceName(explorerRootDevice), isDeviceOnline(explorerRootDevice)]);
+      if (!explorerRootDevice || !chip.isConnected) return;
+      chip.textContent = '';
+      chip.innerHTML = DEVICE_HD_SVG;
+      chip.appendChild(devChipLabelEl(name));
+      chip.insertAdjacentHTML('beforeend', DEV_CHEV_SVG);
+      chip.title = explorerRootDevice;
+      if (online === false) {
+        chip.classList.add('is-offline');
+        const dot = document.createElement('span');
+        dot.className = 'warn-dot';
+        chip.prepend(dot);
+      }
+    }).catch(() => {});
+  } else if (!selfName) {
+    // 本机显示名补写（花名册 self 名；未取到 = 回落「本机」串，绝不直出「local」）。
+    import('./deviceRoster.js').then(async ({ getDeviceRoster }) => {
+      const roster = await getDeviceRoster();
+      if (!roster.self || explorerRootDevice || !chip.isConnected) return;
+      explorerRosterSelf = roster.self;
+      chip.textContent = '';
+      chip.innerHTML = DEVICE_HD_SVG;
+      chip.appendChild(devChipLabelEl(roster.self.name));
+      chip.insertAdjacentHTML('beforeend', DEV_CHEV_SVG);
+      chip.title = roster.self.name;
+    }).catch(() => {});
+  }
+}
+
+function closeExplorerDevMenu() {
+  if (!explorerDevMenuOpen) return;
+  explorerDevMenuOpen = false;
+  explorerDevMenuAnchorRect = null;
+  const menu = /** @type {HTMLElement | null} */ (document.querySelector('.dev-menu.explorer-dev-menu'));
+  if (menu) { menu.hidden = true; menu.innerHTML = ''; }
+  const chip = document.getElementById('explorer-device-btn');
+  if (chip) chip.setAttribute('aria-expanded', 'false');
+  document.removeEventListener('scroll', explorerDevViewportChanged, true);
+  window.removeEventListener('resize', explorerDevViewportChanged);
+}
+
+/** @param {Event} e */
+function explorerDevOutsideClose(e) {
+  if (!explorerDevMenuOpen) return;
+  const tgt = /** @type {Element|null} */ (e.target);
+  if (tgt && tgt.closest('.explorer-dev-anchor, .dev-menu.explorer-dev-menu')) return;
+  closeExplorerDevMenu();
+}
+
+/** 弹层开着时滚动/改窗：锚 chip 视口矩形没动（无关容器的杂散 scroll——focus 滚动
+ *  等会打到 overflow:hidden 的 #sidebar 上，实测 chip 位移为零）→ 原地重锚不收；
+ *  锚真动了 → 收（fixed 按 chip 矩形锚定，锚失效即收，不做跟踪重排）。 */
+function explorerDevViewportChanged() {
+  if (!explorerDevMenuOpen) return;
+  const chip = document.getElementById('explorer-device-btn');
+  const a = explorerDevMenuAnchorRect;
+  if (!chip || !a) { closeExplorerDevMenu(); return; }
+  const r = chip.getBoundingClientRect();
+  const still = Math.abs(r.left - a.left) < 1 && Math.abs(r.top - a.top) < 1 && Math.abs(r.bottom - a.bottom) < 1;
+  if (still) placeExplorerDevMenu();
+  else closeExplorerDevMenu();
+}
+
+/** body 级 fixed 菜单按 chip 视口矩形锚定（弹层浮出批 2026-11-01）：chip 下方
+ *  6px 起弹；右/下缘出视口时 8px 边距内回收；下方放不下且上方容得下时上翻。 */
+function placeExplorerDevMenu() {
+  const chip = document.getElementById('explorer-device-btn');
+  const menu = /** @type {HTMLElement | null} */ (document.querySelector('.dev-menu.explorer-dev-menu'));
+  if (!chip || !menu || menu.hidden) return;
+  const r = chip.getBoundingClientRect();
+  const M = 8;
+  menu.style.left = '0px';
+  menu.style.top = '0px'; // 先归零再量自然尺寸（上翻腿要用真实高）
+  const mw = menu.offsetWidth;
+  const mh = menu.offsetHeight;
+  let x = r.left;
+  let y = r.bottom + 6;
+  if (x + mw > window.innerWidth - M) x = Math.max(M, window.innerWidth - M - mw);
+  if (y + mh > window.innerHeight - M) {
+    const above = r.top - M;
+    y = above >= mh ? r.top - mh - 6 : Math.max(M, window.innerHeight - M - mh);
+  }
+  menu.style.left = Math.round(x) + 'px';
+  menu.style.top = Math.round(y) + 'px';
+  explorerDevMenuAnchorRect = { left: r.left, top: r.top, bottom: r.bottom };
+}
+
+function openExplorerDevMenu() {
+  explorerDevMenuOpen = true;
+  const chip = document.getElementById('explorer-device-btn');
+  const menu = /** @type {HTMLElement | null} */ (document.querySelector('.dev-menu.explorer-dev-menu'));
+  if (chip) chip.setAttribute('aria-expanded', 'true');
+  if (!menu) return;
+  document.addEventListener('scroll', explorerDevViewportChanged, true);
+  window.addEventListener('resize', explorerDevViewportChanged);
+  menu.hidden = false;
+  placeExplorerDevMenu(); // 空壳先落位（花名册回来重排一次）
+  import('./deviceRoster.js')
+    .then(({ getDeviceRoster }) => getDeviceRoster())
+    .then((roster) => {
+      if (!explorerDevMenuOpen) return;
+      explorerRosterSelf = roster.self;
+      paintExplorerDevChip();
+      const rows = [
+        // 「所有设备平等」：self 以花名册设备名平级在列，无本机/self 特殊化。
+        roster.self
+          ? { id: roster.self.id, name: roster.self.name, online: true, self: true }
+          : { id: 'self', name: t('workspacePicker.thisDevice'), online: true, self: true },
+        ...roster.peers.map((p) => ({ id: p.id, name: p.name, online: p.online, self: false })),
+      ];
+      menu.innerHTML = '';
+      const currentId = explorerRootDevice || (explorerRosterSelf && explorerRosterSelf.id) || null;
+      for (const row of rows) {
+        const selected = row.id === currentId;
+        const item = document.createElement('button');
+        item.type = 'button';
+        item.className = 'dev-item' + (selected ? ' active' : '') + (row.online ? '' : ' disabled');
+        if (!row.online) item.disabled = true;
+        item.innerHTML =
+          '<span class="dot' + (row.online ? '' : ' off') + '"></span>' +
+          '<span class="nm">' + escapeHtml(row.name) + '</span>';
+        if (selected) item.innerHTML += DEV_ICON_CHECK;
+        else if (!row.online) item.innerHTML += '<span class="off-tag">' + escapeHtml(t('project.deviceOfflineTag')) + '</span>';
+        if (row.online) item.addEventListener('click', (e) => { e.stopPropagation(); selectExplorerDevice(row); });
+        menu.appendChild(item);
+      }
+      const foot = document.createElement('div');
+      foot.className = 'dev-menu-foot';
+      foot.textContent = t('project.deviceMenuFoot');
+      menu.appendChild(foot);
+      placeExplorerDevMenu(); // 行集落定后按真实尺寸重锚（宽度自适应最长设备名）
+    })
+    .catch(() => {
+      // 花名册不可得 = 回落单本机行，不弹错误（可继续本机浏览）。
+      if (!explorerDevMenuOpen) return;
+      menu.innerHTML = '';
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'dev-item active';
+      item.innerHTML = '<span class="dot"></span><span class="nm">' + escapeHtml(t('workspacePicker.thisDevice')) + '</span>' + DEV_ICON_CHECK;
+      item.addEventListener('click', (e) => { e.stopPropagation(); selectExplorerDevice({ id: 'self', name: '', online: true, self: true }); });
+      menu.appendChild(item);
+      placeExplorerDevMenu();
+    });
+}
+
+/**
+ * 选中一台浏览设备：本机 = 还原本机根（记忆缺失则回落缺省项目目录）；对端 = 从该
+ * 设备根起建远端只读树。整树同源一设备的既有纪律不变（listDir/readFile device 腿）。
+ * @param {{id: string, name: string, online: boolean, self: boolean}} row
+ */
+function selectExplorerDevice(row) {
+  closeExplorerDevMenu();
+  if (!row || row.self) {
+    if (!explorerRootDevice) return; // 已在本机：无操作
+    rerootExplorer(localRootMemory, null);
+    return;
+  }
+  if (row.id === explorerRootDevice) return; // 同设备：无操作
+  if (!explorerRootDevice && explorerRoot) localRootMemory = explorerRoot; // 本机根入记忆
+  rerootExplorer('/', row.id); // 远端从根起（listDir device 腿，只读）
+}
+
 function updateExplorerTitle() {
-  const titleEl = document.querySelector('.explorer-title');
+  const titleEl = /** @type {HTMLElement | null} */ (document.querySelector('.explorer-title'));
   if (!titleEl) return;
   if (explorerRoot) {
     const name = explorerRoot.split('/').pop() || explorerRoot;
@@ -48,6 +336,13 @@ function updateExplorerTitle() {
   } else {
     titleEl.textContent = t('panel.explorer');
     titleEl.title = '';
+  }
+  renderExplorerDeviceChip();
+  // 远端根 = 只读视图（本批只开列目录 + 单文件取件两条腿）：写入口整排摘除。
+  const remote = !!explorerRootDevice;
+  for (const id of ['explorer-new-file-btn', 'explorer-new-folder-btn']) {
+    const btn = document.getElementById(id);
+    if (btn) btn.hidden = remote;
   }
 }
 
@@ -61,154 +356,7 @@ let currentDir = '';
 /** Loading indicator set — prevents double-fetching the same dir. */
 const loadingDirs = new Set();
 
-// ── Selection model (multi-select) ──────────────────────────────────────
-
-/** Selected item paths (relative to explorer root). */
-const selectedPaths = new Set();
-/** Anchor path for shift-range selection (last plain-clicked / cmd-added item). */
-let anchorPath = null;
-
-/** Re-apply `.selected` classes to match selectedPaths (after render/refresh). */
-function applySelectionClasses() {
-  const tree = document.getElementById('explorer-tree');
-  if (!tree) return;
-  tree.querySelectorAll('.explorer-item.selected').forEach(el => {
-    if (!selectedPaths.has(el.dataset.path)) el.classList.remove('selected');
-  });
-  for (const p of selectedPaths) {
-    const el = tree.querySelector(`.explorer-item[data-path="${CSS.escape(p)}"]`);
-    if (el) el.classList.add('selected');
-  }
-}
-
-/** Replace selection with a single path and make it the anchor. */
-function selectSingle(path) {
-  selectedPaths.clear();
-  selectedPaths.add(path);
-  anchorPath = path;
-  applySelectionClasses();
-  updateSelectionBar();
-}
-
-/** Cmd/Ctrl+click — toggle path in/out of the selection. */
-function toggleSelection(path) {
-  if (selectedPaths.has(path)) {
-    selectedPaths.delete(path);
-    if (anchorPath === path) anchorPath = null;
-  } else {
-    selectedPaths.add(path);
-    anchorPath = path;
-  }
-  applySelectionClasses();
-  updateSelectionBar();
-}
-
-/** Ordered visible sibling rows of a directory's children container. */
-function getSiblingPaths(parentDir) {
-  const container = parentDir
-    ? document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(parentDir)}"] > .explorer-children`)
-    : document.querySelector('.explorer-root > .explorer-children');
-  if (!container) return null;
-  const out = [];
-  for (const child of container.children) {
-    const item = child.classList.contains('explorer-item')
-      ? child
-      : child.querySelector(':scope > .explorer-item');
-    if (item && item.dataset.path !== undefined) out.push(item.dataset.path);
-  }
-  return out;
-}
-
-/** Shift+click — range-select visible siblings from anchor to target.
- *  Cross-level (different parent dir) degenerates to single-select of target. */
-function rangeSelect(from, to) {
-  if (getTargetDir(from) !== getTargetDir(to)) {
-    selectSingle(to);
-    return;
-  }
-  const sibs = getSiblingPaths(getTargetDir(to));
-  const i = sibs ? sibs.indexOf(from) : -1;
-  const j = sibs ? sibs.indexOf(to) : -1;
-  if (i === -1 || j === -1) {
-    selectSingle(to);
-    return;
-  }
-  selectedPaths.clear();
-  for (let k = Math.min(i, j); k <= Math.max(i, j); k++) selectedPaths.add(sibs[k]);
-  applySelectionClasses();
-  updateSelectionBar();
-}
-
-/** Clear selection + anchor (Esc, blank click, root/session switch). */
-function clearSelection() {
-  if (!selectedPaths.size && !anchorPath) return;
-  selectedPaths.clear();
-  anchorPath = null;
-  applySelectionClasses();
-  updateSelectionBar();
-}
-
-/** Remove a deleted path from the selection model. */
-function pruneSelection(path) {
-  const had = selectedPaths.delete(path);
-  if (anchorPath === path) anchorPath = null;
-  if (had) {
-    applySelectionClasses();
-    updateSelectionBar();
-  }
-}
-
-/** Floating action bar (appears when ≥2 items selected), pinned to tree top. */
-function updateSelectionBar() {
-  const section = document.getElementById('explorer-section');
-  if (!section) return;
-  let bar = document.getElementById('explorer-selection-bar');
-  if (selectedPaths.size < 2) {
-    if (bar) bar.remove();
-    return;
-  }
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.id = 'explorer-selection-bar';
-    bar.className = 'explorer-selection-bar';
-
-    const count = document.createElement('span');
-    count.className = 'explorer-selection-count';
-
-    const delBtn = document.createElement('button');
-    delBtn.className = 'explorer-selection-delete';
-    delBtn.textContent = t('explorer.delete');
-    delBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      deleteSelected();
-    });
-
-    bar.appendChild(count);
-    bar.appendChild(delBtn);
-    section.appendChild(bar);
-  }
-  bar.querySelector('.explorer-selection-count').textContent =
-    t('explorer.selectedCount', { count: selectedPaths.size });
-}
-
-/** Shared click routing for tree rows.
- *  @returns {boolean} true if the click was consumed as a selection op
- *                     (caller must NOT run its default open/toggle behavior). */
-function handleSelectClick(e, path) {
-  if (e.metaKey || e.ctrlKey) {
-    e.preventDefault();
-    toggleSelection(path);
-    return true;
-  }
-  if (e.shiftKey && anchorPath && anchorPath !== path) {
-    e.preventDefault();
-    rangeSelect(anchorPath, path);
-    return true;
-  }
-  // Plain click — single-select + anchor; default behavior continues.
-  selectSingle(path);
-  return false;
-}
+// ── Selection model → 已迁 ./explorer/selection.js(FE组件化批次五 2026-09-28,行为保持)────
 
 // ── Drag-to-move (VS Code-style) ──────────────────────────────────────
 // Files drag with the existing 'application/x-nebflow-file' MIME (shared with
@@ -304,6 +452,7 @@ function bindTreeDragMove(tree) {
     const src = dragMoveSrc;
     setDropTarget(null);
     if (dir === null || !isValidDropTarget(src.path, dir)) return;
+    if (refuseRemoteWrite()) return;
     e.preventDefault();
     e.stopPropagation();
     sendWs({ type: 'movePath', sessionId: state.activeSessionId, path: src.path, targetDir: dir, rootPath: explorerRoot });
@@ -558,6 +707,7 @@ function confirmImportConflict(name) {
  *  Sequential per top item; same-name items prompt Replace / Keep Both /
  *  Cancel. Refreshes + expands the target dir when done. */
 async function importExternalDrop(dataTransfer, targetDir) {
+  if (refuseRemoteWrite()) return;
   let tops;
   try { tops = collectTopDropItems(dataTransfer); }
   catch (e) { window.__showToast?.(String(e?.message || e), 'error'); return; }
@@ -628,49 +778,401 @@ function refreshImportTarget(targetDir) {
 
 function $(sel) { return document.querySelector(sel); }
 
-/** File extension → lucide icon name + color class. */
-const FILE_ICONS = {
-  scala: { icon: 'file-code', cls: 'f-scala' },
-  java:  { icon: 'file-code', cls: 'f-java' },
-  py:    { icon: 'file-code', cls: 'f-py' },
-  js:    { icon: 'file-code', cls: 'f-js' },
-  ts:    { icon: 'file-code', cls: 'f-ts' },
-  css:   { icon: 'file-code', cls: 'f-css' },
-  html:  { icon: 'file-code', cls: 'f-html' },
-  json:  { icon: 'braces',    cls: 'f-json' },
-  yaml:  { icon: 'file-text', cls: 'f-yaml' },
-  yml:   { icon: 'file-text', cls: 'f-yaml' },
-  md:    { icon: 'file-text', cls: 'f-md' },
-  xml:   { icon: 'file-code', cls: 'f-xml' },
-  sql:   { icon: 'database',  cls: 'f-sql' },
-  sh:    { icon: 'terminal',  cls: 'f-sh' },
-};
+// FILE_ICONS/HIDDEN_DIRS/getFileInfo/shouldHide 已迁 ./explorer/fileRules.js(FE组件化批次五,行为保持)。
 
-/** Directories to hide in the tree (build artifacts, VCS, etc.). */
-const HIDDEN_DIRS = new Set([
-  '.git', '.svn', 'target', 'node_modules', 'dist', 'build',
-  '.gradle', '.idea', '.vscode', '__pycache__', '.cache',
-  '.meta', 'DerivedData',
-]);
+// ── 行构造收口 + 键盘漫游（B1-1/B1-2，keyboard-first 二期）──────────────
+// 改造前的事实（本批实测）：`.explorer-item` 是 `<div>`，`role`/`tabindex` 命中 0；
+// `mode.js:170-177` 只是给它们**临时**补了 `tabindex="-1"`，所以焦点进得去、
+// 按不动 —— "键盘打不开文件"的准确表述就是这四个字。
+//
+// 本段建立三个不变量：
+//   ① 每行都有稳定身份：`role="treeitem"` + `aria-level` + `data-focus-key="explorer:<path>"`
+//      （后者同时是全树 `data-focus-key` 标记通道的**首批生产者**，B3-2 的保焦协议
+//      从此不再只有 `#id` 与 DOM 路径两级）。
+//   ② 同一时刻**恰好一行** `tabindex=0`（roving）；行的 tabindex 由本模块独占，
+//      其他模块（mode.js）不得再改写它。
+//   ③ 键位语义由 `treeKeyAction` 一处定义：↑↓ 相邻行 / ←→ 收展 / Home End 两端 /
+//      Enter 激活（目录=收展，文件=走既有打开路径）；**哪个键触发哪个动作**在
+//      keyRules.js 的规则表里（三期起，本文件不留键名字面量）。
 
-function getFileInfo(name) {
-  const ext = name.split('.').pop()?.toLowerCase() || '';
-  return FILE_ICONS[ext] || { icon: 'file', cls: 'f-default' };
+/**
+ * 树行工厂：三处行（目录 / 文件 / 新建输入行）共用同一份 a11y + 缩进契约。
+ * 收口前三个构造各写一遍 `className` 与 `paddingLeft`，A11y 属性一处都没有 ——
+ * 这正是"三处行构造"必须收成一个函数的原因：漏一处就等于漏一类行。
+ * @param {'folder'|'file'|'creating'} kind
+ * @param {string} path 树内相对路径（creating 行没有路径）
+ * @param {number} depth 缩进档位（0 = 根列表项）
+ * @returns {HTMLElement}
+ */
+function makeExplorerRow(kind, path, depth) {
+  const row = document.createElement('div');
+  row.className = kind === 'folder'
+    ? 'explorer-item explorer-folder'
+    : kind === 'file' ? 'explorer-item explorer-file' : 'explorer-item explorer-creating';
+  if (path) row.dataset.path = path;
+  // 文件行多留一格箭头位（既有视觉口径，逐像素不变）
+  row.style.paddingLeft = `${depth * 14 + (kind === 'file' ? 22 : 8)}px`;
+  if (kind === 'creating') {
+    // 新建行 = 输入框宿主：行本身不可聚焦、不进 Tab 序（Tab 落在内部 input 上）
+    row.setAttribute('role', 'none');
+    return row;
+  }
+  row.setAttribute('role', 'treeitem');
+  row.setAttribute('aria-level', String(depth + 1));
+  row.tabIndex = -1; // roving：由 syncRoving() 把"当前行"改回 0
+  row.dataset.focusKey = `explorer:${path}`; // data-focus-key 生产者（B3-2 的输入）
+  if (kind === 'folder') row.setAttribute('aria-expanded', 'false');
+  return row;
 }
 
-function shouldHide(name, isDir) {
-  return isDir && HIDDEN_DIRS.has(name);
+/** 当前树里可漫游的行（可见 = 非 0 尺寸；DOM 序 = 视觉序）。 @returns {HTMLElement[]} */
+function treeRows() {
+  const tree = document.getElementById('explorer-tree');
+  if (!tree) return [];
+  /** @type {HTMLElement[]} */
+  const out = [];
+  for (const el of tree.querySelectorAll('.explorer-item[role="treeitem"]')) {
+    if (!(el instanceof HTMLElement)) continue;
+    if (!el.offsetWidth && !el.offsetHeight) continue; // 折叠子树里的行
+    out.push(el);
+  }
+  return out;
+}
+
+/** 记住的漫游锚点（重渲/重载后仍指向同一路径）。 */
+let treeFocusPath = '';
+
+/**
+ * 让「恰好一行 tabindex=0」成立，并返回该行。
+ * @param {string} [preferPath] 想落在哪一行（缺省沿用记录的锚点，锚点消失则首行）
+ * @returns {HTMLElement|null}
+ */
+function syncRoving(preferPath) {
+  const rows = treeRows();
+  if (!rows.length) return null;
+  const want = preferPath === undefined ? treeFocusPath : preferPath;
+  let target = /** @type {HTMLElement|null} */ (null);
+  for (const el of rows) if (el.dataset.path === want) { target = el; break; }
+  if (!target) target = rows[0];
+  for (const el of rows) el.tabIndex = el === target ? 0 : -1;
+  treeFocusPath = target.dataset.path || '';
+  return target;
+}
+
+/**
+ * 把焦点搬到某行（并同步 roving）。
+ * @param {HTMLElement|null} el
+ * @returns {void}
+ */
+function focusTreeRow(el) {
+  if (!(el instanceof HTMLElement)) return;
+  treeFocusPath = el.dataset.path || '';
+  syncRoving(treeFocusPath);
+  el.focus({ preventScroll: true });
+  el.scrollIntoView({ block: 'nearest' });
+}
+
+/** 行所属的父目录行（← 在收起态/文件行上退一层用）。 @param {HTMLElement} row @returns {HTMLElement|null} */
+function parentTreeRow(row) {
+  const wrapper = row.closest('.explorer-dir-wrapper');
+  const parentWrapper = wrapper?.parentElement?.closest('.explorer-dir-wrapper');
+  const parentRow = parentWrapper?.querySelector(':scope > .explorer-folder');
+  return parentRow instanceof HTMLElement ? parentRow : null;
+}
+
+/**
+ * 树上的按键语义（一处定义，事件委托到容器 —— 行是重渲即换的，绑在行上会漏）。
+ * @param {KeyboardEvent} e
+ * @returns {void}
+ */
+/**
+ * 文件树键盘动作（keyboard-first 三期：唯一的键盘入口）。
+ *
+ * 改造前 = `onTreeKeydown(e)`：一个挂在树容器上的 keydown 监听，串 `switch (e.key)`
+ * 直接把键名与动作写死，并自带 `closest('input, textarea, …')` 早退。三期把
+ * 「是哪个键」搬到规则表（keyRules.js 的 explorer.tree.*，条件
+ * `explorerTreeFocus`），本函数只保留「哪个动作、作用在谁身上」——键名在这里
+ * 一个字面量都不留。
+ *
+ * @param {'down'|'up'|'home'|'end'|'expand'|'collapse'|'activate'} action
+ * @returns {void}
+ */
+export function treeKeyAction(action) {
+  const t = document.activeElement;
+  const row = t instanceof HTMLElement ? t.closest('.explorer-item[role="treeitem"]') : null;
+  if (!(row instanceof HTMLElement)) return;
+  const rows = treeRows();
+  const i = rows.indexOf(row);
+  if (i < 0) return;
+  const isFolder = row.classList.contains('explorer-folder');
+
+  switch (action) {
+    case 'down':
+      focusTreeRow(i + 1 < rows.length ? rows[i + 1] : row);
+      return;
+    case 'up':
+      focusTreeRow(i > 0 ? rows[i - 1] : row);
+      return;
+    case 'home':
+      focusTreeRow(rows[0] || row);
+      return;
+    case 'end':
+      focusTreeRow(rows[rows.length - 1] || row);
+      return;
+    case 'expand':
+      if (!isFolder) return;
+      if (row.getAttribute('aria-expanded') !== 'true') {
+        // 展开 = 复用既有 click 语义（handleSelectClick 在无修饰键时返回 false，
+        // 随后 toggleDir 走原来的深度与加载管线），不另写一份展开逻辑。
+        row.click();
+      } else {
+        focusTreeRow(rows[i + 1] || row); // 已展开 → 进第一个子行
+      }
+      return;
+    case 'collapse':
+      if (isFolder && row.getAttribute('aria-expanded') === 'true') {
+        row.click(); // 收起（同一份 click 语义）
+        return;
+      }
+      focusTreeRow(parentTreeRow(row));
+      return;
+    case 'activate': {
+      if (isFolder) { row.click(); return; }
+      // 文件行：与单击监听**同一条激活路径**（openFile → readFile →
+      // fileContent → workspace-open-item），不直接派发事件绕过取数腿。
+      const path = row.dataset.path || '';
+      openFile(path, path.split('/').pop() || path);
+      return;
+    }
+    default:
+  }
+}
+
+/**
+ * 清除文件树选中（三期：规则 `explorer.selection.clear` 的唯一动作入口）。
+ *
+ * 改造前这是文档级 keydown 里的一句 `clearSelection()`，条件是「有选中 + 焦点不在
+ * 新建输入行」。**那条腿在 EDIT 模式下也会穿透**（在对话输入框里按 Esc 同样清空
+ * 选中项）—— 三期把条件写进规则的 `when`：`explorerSelection && !textInputFocus`。
+ * @returns {void}
+ */
+export function clearTreeSelection() {
+  clearSelection();
 }
 
 // ── Render ─────────────────────────────────────────────────────────────
 
+// ── B7-4 树搜索 + 排序（文档后续批，2026-11-01）───────────────────────────
+// 病灶（计划 §B7-4）：树没有搜索框、没有排序控件，而服务端的顺序是**硬编码**
+// 的（目录优先 + 名字升序，见 dirListing 的成功腿）—— 用户除了滚动没有别的办法，
+// 大目录直接不可用。
+//
+// 两条都在**客户端**做，理由有三：
+//   ① 零协议改动：dirListing 帧的形状不动，后端不用跟着改（也不动排序口径）。
+//   ② 零 CSS 依赖：控件用既有 `.explorer-*` 家族 class + 少量内联样式，本批
+//      **不碰 css/ 一字**（`app-*.css` 哈希因此不动，见 staleTabHint.js 先例）。
+//   ③ 目录恒在前：目录不是文件的一种排序值，换排序只重排**同级文件**——
+//      VS Code 同语义，也避免"排序把目录挪走"这种找不到路的意外。
+//
+// 搜索是「已渲染行」的浅过滤：只有展开过的目录里的行在 DOM 里，未展开的深处
+// 命中不了（要深层全量命中得先全量 listDir，那是另一个量级的改动，本批不做）。
+// 目录名自身命中时整枝保留，避免"明明搜到了目录名却看不见"。
+const EXPLORER_SORT_KEY = 'nf.explorerSort';
+/** @type {'default'|'name-asc'|'name-desc'|'mtime-desc'|'size-desc'} */
+let explorerSortMode = (() => {
+  try {
+    const v = localStorage.getItem(EXPLORER_SORT_KEY);
+    return v === 'name-asc' || v === 'name-desc' || v === 'mtime-desc' || v === 'size-desc' ? v : 'default';
+  } catch { return 'default'; }
+})();
+
+const SORT_CYCLE = /** @type {const} */ (['default', 'name-asc', 'name-desc', 'mtime-desc', 'size-desc']);
+
+function sortModeLabel(/** @type {string} */ m) {
+  return m === 'name-asc' ? t('explorer.sortNameAsc')
+    : m === 'name-desc' ? t('explorer.sortNameDesc')
+      : m === 'mtime-desc' ? t('explorer.sortMtime')
+        : m === 'size-desc' ? t('explorer.sortSize')
+          : t('explorer.sortDefault');
+}
+
+/**
+ * 渲染前重排一轮目录条目：目录恒在前，文件按当前模式排序。
+ *
+ * **默认模式是 `default`（原样返回服务端顺序），不是 `name-asc`**：实测
+ * `localeCompare` 的排序与 `FileBrowser` 的服务端顺序并不逐条等价（`.gitignore`
+ * 与 `CONTRIBUTING.md`/`contributing` 的先后就不同）⇒ 拿 name-asc 当默认会把
+ * 11 张基线推出 DIFF（bbox {117..219, 114..144} = 一行树文字换位）。
+ * 排序是**用户显式选的视图偏好**，默认态必须与服务端顺序逐字节一致。
+ * @param {any[]} entries
+ * @returns {any[]}
+ */
+function sortExplorerEntries(entries) {
+  if (explorerSortMode === 'default') return entries.slice();
+  const nm = (/** @type {any} */ a, /** @type {any} */ b) => String(a?.name ?? '').localeCompare(String(b?.name ?? ''), undefined, { numeric: true, sensitivity: 'base' });
+  const num = (/** @type {any} */ v) => Number(v) || 0;
+  const cmp = explorerSortMode === 'name-desc' ? (/** @type {any} */ a, /** @type {any} */ b) => nm(b, a)
+    : explorerSortMode === 'mtime-desc' ? (/** @type {any} */ a, /** @type {any} */ b) => (num(b.mtime) - num(a.mtime)) || nm(a, b)
+      : explorerSortMode === 'size-desc' ? (/** @type {any} */ a, /** @type {any} */ b) => (num(b.size) - num(a.size)) || nm(a, b)
+        : nm;
+  const dirs = entries.filter((e) => e && e.type === 'dir');
+  const files = entries.filter((e) => e && e.type !== 'dir');
+  dirs.sort(cmp);
+  files.sort(cmp);
+  return [...dirs, ...files];
+}
+
+/** 搜索框 + 排序钮（JS 注入：index.html 归 B4 独占，本批不碰）。幂等。
+ *
+ *  **默认收起（`hidden`）不是保守，是闸的要求**：视觉基线 28 张逐像素比对，
+ *  侧栏 header 每一张都拍——常驻一行会把 14 张基线全部推出 DIFF（实测
+ *  bbox {61..294, 37..333} = 侧栏头部），那等于用「允许差异」把视觉闸的
+ *  整条侧栏护栏买断。所以控制条按需展开，且**不新造任何快捷键面**：
+ *    · 树上有焦点时敲任意可打印字符 ⇒ 展开并把它当第一个过滤字符（列表型 typeahead，
+ *      VS Code 同名手感；原本空按这些键没有语义，不抢任何既有键）；
+ *    · `Ctrl/Cmd+F` 且焦点在侧栏内 ⇒ 展开（局部范围，不进全局 keymap 注册表，
+ *      因此不会和命令面板/搜索面的既有 combo 打架）。
+ */
+function ensureExplorerSearch() {
+  if (document.getElementById('explorer-search')) return;
+  const header = document.querySelector('#explorer-section .explorer-header');
+  if (!header) return;
+  const row = document.createElement('div');
+  row.id = 'explorer-search-row';
+  row.className = 'explorer-search-row';
+  row.hidden = true;   // 默认不占位：基线零像素变化
+  // 注意：光设 `hidden` 属性**打不过**内联 display（UA 的 [hidden]{display:none} 优先级最低）
+  // —— 这里连 display 一起关，展开时一起开。踩过一次：属性 true 但行照样占位，
+  // 整棵树下移，14 张基线全 DIFF。
+  row.setAttribute('style', 'display:none;align-items:center;gap:var(--ds-space-1h);padding:var(--ds-space-half) var(--ds-space-2) var(--ds-space-1h);');
+  const input = document.createElement('input');
+  input.type = 'search';
+  input.id = 'explorer-search';
+  input.className = 'explorer-search-input';
+  input.placeholder = t('explorer.searchPlaceholder');
+  input.setAttribute('aria-label', t('explorer.searchPlaceholder'));
+  input.setAttribute('style', 'flex:1 1 auto;min-width:0;padding:var(--ds-space-1) var(--ds-space-2);border-radius:var(--ds-radius-input);'
+    + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);'
+    + 'color:inherit;font:var(--ds-fs-hint)/1.4 inherit;');
+  input.addEventListener('input', () => applyTreeFilter(input.value));
+  input.addEventListener('keydown', (e) => {
+    // Esc 只收自己的过滤词并收起（不吞事件给全局：层栈/壳的 Esc 契约逐字保留）
+    if (e.key === 'Escape') {
+      if (input.value) { input.value = ''; applyTreeFilter(''); return; }
+      closeExplorerSearch();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const hit = /** @type {HTMLElement|null} */ (document.querySelector('#explorer-tree .explorer-file:not([hidden])'));
+      if (hit) hit.click(); // 既有激活路径（click 委派），不另造第二条
+    }
+  });
+  const sortBtn = document.createElement('button');
+  sortBtn.id = 'explorer-sort';
+  sortBtn.className = 'explorer-action-btn';
+  sortBtn.type = 'button';
+  sortBtn.title = sortModeLabel(explorerSortMode);
+  sortBtn.setAttribute('aria-label', sortModeLabel(explorerSortMode));
+  sortBtn.textContent = sortModeLabel(explorerSortMode);
+  sortBtn.setAttribute('style', 'flex:0 0 auto;font:var(--ds-fs-hint)/1.2 inherit;padding:var(--ds-space-1) var(--ds-space-2);border-radius:var(--ds-radius-input);'
+    + 'border:1px solid rgba(255,255,255,0.14);background:rgba(255,255,255,0.06);color:inherit;cursor:pointer;');
+  sortBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const i = SORT_CYCLE.indexOf(/** @type {any} */ (explorerSortMode));
+    explorerSortMode = SORT_CYCLE[(i + 1) % SORT_CYCLE.length];
+    try { localStorage.setItem(EXPLORER_SORT_KEY, explorerSortMode); } catch { /* ignore */ }
+    sortBtn.textContent = sortModeLabel(explorerSortMode);
+    sortBtn.title = sortModeLabel(explorerSortMode);
+    sortBtn.setAttribute('aria-label', sortModeLabel(explorerSortMode));
+    renderTree(); // 重渲即重排（已展开目录会按需重取，与换根同一条腿）
+  });
+  row.append(input, sortBtn);
+  header.appendChild(row);
+
+  // 唯一的展开腿：树上有焦点时敲可打印字符 ⇒ typeahead 过滤。
+  // 为什么不挂 Ctrl+F：**这个 combo 已经被产品占了**（实测按下后焦点落到
+  // `#search-keyword`，也就是既有的搜索面）。一个 combo 两个主人正是键盘首批
+  // 要消灭的病灶，所以本批不再造第二个；typeahead 用的键原本在树上是空操作，
+  // 不会与任何既有绑定重叠。全局 keymap 注册表因此**零增量**。
+  document.getElementById('explorer-tree')?.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (typeof e.key !== 'string' || e.key.length !== 1 || !/\S/.test(e.key)) return;
+    const searchRow = document.getElementById('explorer-search-row');
+    if (searchRow && !searchRow.hidden) return;   // 已在过滤态 ⇒ 由输入框接管
+    e.preventDefault();
+    openExplorerSearch(e.key);
+  }, true);
+}
+
+/** 展开搜索条并落焦（`seed` = typeahead 的第一个字符）。 */
+function openExplorerSearch(seed) {
+  const row = document.getElementById('explorer-search-row');
+  const input = /** @type {HTMLInputElement|null} */ (document.getElementById('explorer-search'));
+  if (!row || !input) return;
+  row.hidden = false;
+  row.style.display = 'flex';
+  input.value = seed || '';
+  input.focus();
+  applyTreeFilter(input.value);
+}
+
+/** 收起搜索条并清掉过滤（行恢复原样）。 */
+function closeExplorerSearch() {
+  const row = document.getElementById('explorer-search-row');
+  const input = /** @type {HTMLInputElement|null} */ (document.getElementById('explorer-search'));
+  if (input) input.value = '';
+  if (row) { row.hidden = true; row.style.display = 'none'; }
+  applyTreeFilter('');
+}
+
+/**
+ * 浅过滤（只作用于已渲染的行）。文件行按名字匹配；目录行在其子树还有命中时
+ * 保留，否则整枝隐藏。空查询 = 全部恢复。
+ * @param {string} q
+ */
+function applyTreeFilter(q) {
+  const tree = document.getElementById('explorer-tree');
+  if (!tree) return;
+  const needle = String(q || '').trim().toLowerCase();
+  const files = /** @type {HTMLElement[]} */ ([...tree.querySelectorAll('.explorer-item.explorer-file')]);
+  if (!needle) {
+    for (const f of files) f.hidden = false;
+    for (const d of /** @type {HTMLElement[]} */ ([...tree.querySelectorAll('.explorer-item.explorer-folder')])) d.hidden = false;
+    return;
+  }
+  for (const f of files) {
+    const name = (f.dataset.path || '').split('/').pop() || '';
+    f.hidden = !name.toLowerCase().includes(needle);
+  }
+  // 目录：自底向上，子树有可见文件或目录名自身命中 ⇒ 保留
+  const dirs = /** @type {HTMLElement[]} */ ([...tree.querySelectorAll('.explorer-item.explorer-folder')]).reverse();
+  for (const d of dirs) {
+    const selfHit = ((d.dataset.path || '').split('/').pop() || '').toLowerCase().includes(needle);
+    const wrapper = d.closest('.explorer-dir-wrapper');
+    const childVisible = !!(wrapper && wrapper.querySelector('.explorer-children .explorer-item:not([hidden])'));
+    d.hidden = !(selfHit || childVisible);
+  }
+}
+
 function renderTree() {
   const body = $('#explorer-tree');
   if (!body) return;
-  clearSelection();
-  body.innerHTML = '';
-  // Root-level listing — path "" means project root
-  body.appendChild(buildDirNode('', true, 0));
+  // B1-1：容器补 `role="tree"`（行补 treeitem）。写在 JS 而不是 index.html：
+  // index.html 是 B4 的独占文件（计划 §四），树语义归本模块。
+  body.setAttribute('role', 'tree');
+  body.setAttribute('aria-label', t('explorer.title') || 'Files');
+  // B3-2：整树重建是「重渲丢焦点」最典型的一面 —— 旧行节点全被换掉。行自带
+  // `data-focus-key="explorer:<path>"`（B1-1 的生产者），所以按 key 就能把焦点
+  // 送回**同一路径的新行**；没有这条接线时，刷新一次树焦点就掉回 body。
+  withFocusKey(body, () => {
+    clearSelection();
+    body.innerHTML = '';
+    // Root-level listing — path "" means project root
+    body.appendChild(buildDirNode('', true, 0));
+  });
+  ensureExplorerSearch();
+  syncWatch();
 }
 
 function buildDirNode(path, isRoot, depth) {
@@ -694,10 +1196,7 @@ function buildDirNode(path, isRoot, depth) {
   }
 
   const name = path.split('/').pop();
-  const row = document.createElement('div');
-  row.className = 'explorer-item explorer-folder';
-  row.dataset.path = path;
-  row.style.paddingLeft = `${depth * 14 + 8}px`;
+  const row = makeExplorerRow('folder', path, depth);
 
   const chevron = document.createElement('span');
   chevron.className = 'explorer-chevron';
@@ -736,7 +1235,7 @@ function buildDirNode(path, isRoot, depth) {
     e.stopPropagation();
     // Cmd/Ctrl or Shift click = selection only — never expand/collapse
     if (handleSelectClick(e, path)) return;
-    toggleDir(path, chevron, children, depth);
+    toggleDir(path, chevron, children, depth, row);
   });
 
   wrapper.appendChild(row);
@@ -746,10 +1245,7 @@ function buildDirNode(path, isRoot, depth) {
 
 function buildFileNode(path, depth) {
   const name = path.split('/').pop();
-  const node = document.createElement('div');
-  node.className = 'explorer-item explorer-file';
-  node.dataset.path = path;
-  node.style.paddingLeft = `${depth * 14 + 22}px`; // extra indent for chevron space
+  const node = makeExplorerRow('file', path, depth);
 
   const info = getFileInfo(name);
   const icon = document.createElement('span');
@@ -807,12 +1303,22 @@ function buildFileNode(path, depth) {
 
 // ── Actions ────────────────────────────────────────────────────────────
 
-function toggleDir(path, chevronEl, childrenEl, depth) {
+/**
+ * 展开/收起一个目录行。`rowEl` 给了就同步 `aria-expanded`（键盘/读屏同源事实）。
+ * @param {string} path
+ * @param {Element} chevronEl
+ * @param {HTMLElement} childrenEl
+ * @param {number} depth
+ * @param {HTMLElement|null} [rowEl]
+ * @returns {void}
+ */
+function toggleDir(path, chevronEl, childrenEl, depth, rowEl = null) {
   if (expandedDirs.has(path)) {
     // Collapse
     expandedDirs.delete(path);
     chevronEl.classList.remove('expanded');
     childrenEl.style.display = 'none';
+    if (rowEl) rowEl.setAttribute('aria-expanded', 'false');
   } else {
     // Expand — always reload to pick up file system changes
     expandedDirs.add(path);
@@ -820,29 +1326,371 @@ function toggleDir(path, chevronEl, childrenEl, depth) {
     chevronEl.classList.add('expanded');
     childrenEl.style.display = '';
     childrenEl.innerHTML = '';
+    if (rowEl) rowEl.setAttribute('aria-expanded', 'true');
     loadDir(path, childrenEl, depth);
+  }
+  // The visible-dir set changed — the watch subscription follows it (throttled).
+  syncWatch();
+}
+
+// ── listDir 有界等待（project-slow-folders 批 2026-10-28）─────────────────
+// 现场事故（作者报障 2026-10-28 15:5x）：dirListing 帧迟到/丢失（中继拥塞 /
+// 连接重建 / 出站帧丢弃）后 pendingLoads 与 loadingDirs 永不清理 ⇒ 加载行
+// 「加载中…」永挂，且三条自愈腿（fsChanged→reloadVisibleDir、focus→
+// refreshExpandedDirs、慢对账 reconcileTick）全被各自的 `!loadingDirs.has()`
+// 闸挡住——没有任何路径能把树救回来，直到用户重开浏览器面板。
+// 修复 = 每次发帧挂一只定时器：①超时先**静默重发**一次（对端恢复后丢帧自愈，
+// 不闪错误）；②再超时落既有错误行 + 重试钮（远端腿 B3 同款 UI），并释放
+// pendingLoads / loadingDirs，让三条自愈腿恢复工作。dirListing 到达即摘表。
+// 零帧形变化；LOAD_TIMEOUT_MS 可被 window.__nfExplorerLoadTimeoutMs 覆盖
+// （仅 e2e seam 用短时限，生产恒默认）。
+const LOAD_TIMEOUT_MS = Number(globalThis.__nfExplorerLoadTimeoutMs) > 0
+  ? Number(globalThis.__nfExplorerLoadTimeoutMs)
+  : 10000;
+/** 1 次原始发送 + 1 次静默重发；两次都无应答才落错误终态。 */
+const LOAD_MAX_ATTEMPTS = 2;
+// reqId → { timer, attempt }
+const loadTimers = new Map();
+
+function armListDirTimeout(reqId, attempt) {
+  disarmListDirTimeout(reqId);
+  const timer = setTimeout(() => onListDirTimeout(reqId, attempt), LOAD_TIMEOUT_MS);
+  loadTimers.set(reqId, { timer });
+}
+
+function disarmListDirTimeout(reqId) {
+  const rec = loadTimers.get(reqId);
+  if (rec) {
+    clearTimeout(rec.timer);
+    loadTimers.delete(reqId);
   }
 }
 
-function loadDir(path, container, depth) {
+/** 全量摘表（openExplorerAt / refreshExplorer 的清场腿，同 pendingLoads 生命周期）。 */
+function disarmAllListDirTimeouts() {
+  for (const { timer } of loadTimers.values()) clearTimeout(timer);
+  loadTimers.clear();
+}
+
+function onListDirTimeout(reqId, attempt) {
+  loadTimers.delete(reqId);
+  const pending = pendingLoads.get(reqId);
+  if (!pending) return; // 应答已到（摘表竞态窗口）—— 零操作
+  if (attempt < LOAD_MAX_ATTEMPTS) {
+    // 静默重发：释放闸后走同一条 loadDir 管线（重新登记 pendingLoads + 挂新定时器）。
+    loadingDirs.delete(pending.path);
+    loadDir(pending.path, pending.container, pending.depth, attempt + 1);
+    return;
+  }
+  // 终态：错误行 + 重试钮（远端腿 B3 同款收尾），并释放两闸让自愈腿恢复。
+  pendingLoads.delete(reqId);
+  loadingDirs.delete(pending.path);
+  renderListDirTimeout(pending);
+}
+
+/** 超时终态错误行（与远端腿失败同材质：图标 + 文案 + [重试]）。 */
+function renderListDirTimeout(pending) {
+  const { container, path, depth } = pending;
+  if (!container.isConnected) return;
+  container.querySelector('.explorer-loading')?.remove();
+  if (container.querySelector('.explorer-error')) return; // error 帧已先落 —— 不叠加
+  const errRow = document.createElement('div');
+  errRow.className = 'explorer-error';
+  errRow.innerHTML =
+    '<svg class="st-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>';
+  const txt = document.createElement('span');
+  txt.textContent = t('explorer.listTimeout');
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'retry';
+  retry.textContent = t('explorer.retry');
+  retry.addEventListener('click', (e) => {
+    e.stopPropagation();
+    errRow.remove();
+    loadingDirs.delete(path || '');
+    loadDir(path, container, depth);
+  });
+  txt.appendChild(retry);
+  errRow.appendChild(txt);
+  container.prepend(errRow);
+}
+
+function loadDir(path, container, depth, attempt = 1) {
   if (loadingDirs.has(path)) return;
   loadingDirs.add(path);
+  // 静默重发腿：摘掉上一轮残留的加载行（不叠两层 loading）。
+  if (attempt > 1) container.querySelector('.explorer-loading')?.remove();
 
-  // Loading indicator
+  // Loading indicator. 远端根（面B B2）：「正在从 <设备> 读取…」+ sapphire spinner
+  // （既有 loading 行语言；spinner 在减动效下停转——见 split.css 降级块）。
   const loading = document.createElement('div');
   loading.className = 'explorer-loading';
-  loading.textContent = t('explorer.loading');
+  if (explorerRootDevice) {
+    loading.classList.add('is-remote');
+    loading.innerHTML = '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+    loading.appendChild(document.createTextNode(t('explorer.loadingRemote', { device: explorerRootDevice })));
+    // 显示名补写（R-B1「加载行报设备名」）：先以 deviceId 立行（同步、零依赖），
+    // 花名册就绪后就地换文本——行已被应答摘除时零操作（isConnected 守卫）。
+    import('./deviceRoster.js')
+      .then(({ resolveDeviceName }) => resolveDeviceName(explorerRootDevice))
+      .then((name) => {
+        if (!name || !loading.isConnected || !explorerRootDevice) return;
+        if (loading.lastChild && loading.lastChild.nodeType === Node.TEXT_NODE) {
+          loading.replaceChild(
+            document.createTextNode(t('explorer.loadingRemote', { device: name })),
+            loading.lastChild
+          );
+        }
+      })
+      .catch(() => {});
+  } else {
+    loading.textContent = t('explorer.loading');
+  }
   container.appendChild(loading);
 
   // Store container reference for the WS response handler
   const reqId = path || '__root__';
   pendingLoads.set(reqId, { container, depth, path });
+  // 有界等待（project-slow-folders 批）：应答丢失/迟到不再永挂「加载中…」。
+  armListDirTimeout(reqId, attempt);
 
-  sendWs({ type: 'listDir', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
+  // 🔴 self 守卫（设计稿 §2.1）：本机根**不发** device 键（后端对解析为本机的
+  // device 回显错误帧）；只有 remote 根的 listDir 才携带。
+  sendWs({
+    type: 'listDir', sessionId: state.activeSessionId, path, rootPath: explorerRoot,
+    ...(explorerRootDevice ? { device: explorerRootDevice } : {}),
+  });
 }
 
 // Map: reqId → { container, depth, path }
 const pendingLoads = new Map();
+
+/** Row pickup states (面B B4/B5 · ui-device-faces 批): path → true while a remote
+ *  single-file fetch is in flight. The row DOM carries `data-pickup`; the map only
+ *  gates re-entry (a second click on a fetching row must not double-send). */
+const pendingPickups = new Set();
+
+/** 行内取件态三切（loading / failed / 清除）。图标换 spinner、行减淡、行尾标签。 */
+function setPickupState(path, state) {
+  const row = /** @type {HTMLElement | null} */ (document.querySelector(`.explorer-item.explorer-file[data-path="${CSS.escape(path)}"]`));
+  if (!row) return;
+  row.querySelector('.pickup-tag')?.remove();
+  row.querySelector('.fail-ic')?.remove();
+  // 行内图标 = `.explorer-icon`（buildFileNode 的图标 span；曾误写 `.ic` —— 该类
+  // 不在行内任何元素上，spinner 挂载/清理会双双静默 no-op）。
+  row.querySelector('.explorer-icon .spin')?.remove();
+  if (state) {
+    row.dataset.pickup = state;
+  } else {
+    delete row.dataset.pickup;
+    return;
+  }
+  if (state === 'loading') {
+    const icon = row.querySelector('.explorer-icon');
+    if (icon) {
+      const spin = document.createElement('span');
+      spin.innerHTML = '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>';
+      icon.prepend(spin.firstChild);
+    }
+    const tag = document.createElement('span');
+    tag.className = 'pickup-tag';
+    tag.textContent = t('explorer.pickupLoading');
+    row.appendChild(tag);
+  } else if (state === 'failed') {
+    const fail = document.createElement('span');
+    fail.className = 'fail-ic';
+    fail.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>';
+    row.appendChild(fail);
+  }
+}
+
+/** 取件失败玻璃浮条（.explorer-selection-bar 同材质族；设计稿 B5）。单例：新失败
+ *  覆盖旧条。[重试] = 重发该文件 readFile；[关闭] = 摘条 + 行复原。 */
+function showPickupFailureBar(path, error) {
+  hidePickupFailureBar();
+  const section = document.getElementById('explorer-section');
+  if (!section) return;
+  const bar = document.createElement('div');
+  bar.className = 'explorer-pickup-bar';
+  const icon = document.createElement('span');
+  icon.className = 'bar-ic';
+  icon.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>';
+  const txt = document.createElement('span');
+  txt.className = 'bar-msg';
+  txt.textContent = error || t('explorer.pickupFailed');
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'bar-act';
+  retry.setAttribute('data-pickup-retry', '1');
+  retry.textContent = t('explorer.retry');
+  retry.addEventListener('click', (e) => {
+    e.stopPropagation();
+    hidePickupFailureBar();
+    rowFailState(path, true);
+    openFile(path, path.split('/').pop() || path);
+  });
+  const close = document.createElement('button');
+  close.type = 'button';
+  close.className = 'bar-act';
+  close.setAttribute('data-pickup-close', '1');
+  close.textContent = t('explorer.pickupClose');
+  close.addEventListener('click', (e) => {
+    e.stopPropagation();
+    hidePickupFailureBar();
+    rowFailState(path, true);
+  });
+  bar.append(icon, txt, retry, close);
+  section.appendChild(bar);
+}
+
+function hidePickupFailureBar() {
+  document.querySelector('.explorer-pickup-bar')?.remove();
+}
+
+// ── 取件进度条（M2 · 设计 v1 §4.4 统一进度面契约 + §7 M2-1）─────────────────
+// 作者令「Windows 下载进度条」的前端面：设备腿取件改分块拉取后，每块落盘回一帧
+// `fileProgress`（权威读数 = 落盘长度，禁假进度）。本条按契约五条实现：
+//   · 定界：totalBytes 可得 ⇒ 百分比；缺席 ⇒ 不定态转圈（禁假进度）；
+//   · 速度：滑动窗口均值（4s 窗，1s 刷新）；
+//   · 可取消：常驻「取消」键 ⇒ `fileTransferCancel` 帧（后端翻旗标，块间停发）；
+//   · 失败：既有失败浮条 + 重试（重试 = 重发 readFile ⇒ **从续传点继续**，落盘件
+//     幂等对齐——续传语义在后端 BrowseGetCursor）；
+//   · 健康可见（零超时纪律）：>max(10s, 2×上块耗时) 无字节推进 ⇒ 转黄「停滞」态
+//     提示可取消——**纯视觉**，永不定时杀传输（后端无整体超时，慢 = 块小 + 可见）。
+
+/** @typedef {{ bytes: number, total: number, lastChunkMs: number, lastAt: number, samples: Array<{t: number, bytes: number}>, timer: number|null }} PickupProgress */
+/** @type {Map<string, PickupProgress>} path → 进行中取件的进度读数 */
+const pickupProgress = new Map();
+
+const PROGRESS_SAMPLE_WINDOW_MS = 4000;
+const PROGRESS_STALL_BASE_MS = 10000;
+
+function formatMb(n) {
+  const v = Number(n) || 0;
+  if (v >= 1024 * 1024 * 1024) return (v / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+  if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(1) + ' MB';
+  return Math.max(1, Math.round(v / 1024)) + ' KB';
+}
+
+/** 进度浮条（单例——同失败浮条族；新取件覆盖旧条）。 */
+function showPickupProgress(path, device) {
+  hidePickupFailureBar();
+  const section = document.getElementById('explorer-section');
+  if (!section) return;
+  let bar = /** @type {HTMLElement|null} */ (document.querySelector('.explorer-pickup-bar.explorer-pickup-progress'));
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'explorer-pickup-bar explorer-pickup-progress';
+    bar.innerHTML =
+      '<svg class="bar-ic spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>' +
+      `<span class="bar-msg"></span>` +
+      '<span class="pickup-pct" data-pickup-pct></span>' +
+      '<span class="pickup-speed" data-pickup-speed></span>';
+    const cancel = document.createElement('button');
+    cancel.type = 'button';
+    cancel.className = 'bar-act';
+    cancel.setAttribute('data-pickup-cancel', '1');
+    cancel.textContent = t('explorer.pickupCancel');
+    bar.appendChild(cancel);
+    section.appendChild(bar);
+  }
+  bar.setAttribute('data-pickup-path', path);
+  bar.removeAttribute('data-stalled');
+  /** @type {HTMLElement|null} */ (bar.querySelector('[data-pickup-cancel]'))?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    // 取消信令（Q2 推荐默认 = 拉取形态本地旗标）：后端翻旗标、块间停发，回
+    // fileContent(cancelled) 终态帧 → clearPickupProgress。无在途 = 幂等 no-op。
+    sendWs({ type: 'fileTransferCancel', path, ...(device ? { device } : {}) });
+  });
+  if (!pickupProgress.has(path)) {
+    pickupProgress.set(path, { bytes: 0, total: 0, lastChunkMs: 0, lastAt: Date.now(), samples: [], timer: null });
+  }
+  startStallWatch(path);
+}
+
+/** 停滞看护（纯视觉，1s 一拍）：超阈值无推进 ⇒ 条转黄 + 提示；推进恢复即摘。 */
+function startStallWatch(path) {
+  const st = pickupProgress.get(path);
+  if (!st || st.timer !== null) return;
+  st.timer = window.setInterval(() => {
+    const s = pickupProgress.get(path);
+    const bar = /** @type {HTMLElement|null} */ (document.querySelector('.explorer-pickup-bar.explorer-pickup-progress'));
+    if (!s || !bar || bar.getAttribute('data-pickup-path') !== path) {
+      if (s && s.timer !== null) { clearInterval(s.timer); s.timer = null; }
+      return;
+    }
+    const threshold = Math.max(PROGRESS_STALL_BASE_MS, 2 * (s.lastChunkMs || 0));
+    if (Date.now() - s.lastAt > threshold) {
+      bar.setAttribute('data-stalled', '1');
+      const speed = /** @type {HTMLElement|null} */ (bar.querySelector('[data-pickup-speed]'));
+      if (speed) speed.textContent = t('explorer.pickupStalled');
+    }
+  }, 1000);
+}
+
+/** 每块进度帧：权威读数直接入条（bytes/total 来自后端落盘确认）。 */
+function updatePickupProgress(path, bytesReceived, totalBytes, chunkMs) {
+  let st = pickupProgress.get(path);
+  if (!st) { showPickupProgress(path, explorerRootDevice || ''); st = pickupProgress.get(path); }
+  if (!st) return;
+  const now = Date.now();
+  st.samples.push({ t: now, bytes: bytesReceived });
+  while (st.samples.length > 2 && now - st.samples[0].t > PROGRESS_SAMPLE_WINDOW_MS) st.samples.shift();
+  st.bytes = bytesReceived;
+  st.total = totalBytes;
+  st.lastChunkMs = chunkMs || st.lastChunkMs;
+  st.lastAt = now;
+  const bar = /** @type {HTMLElement|null} */ (document.querySelector('.explorer-pickup-bar.explorer-pickup-progress'));
+  if (!bar || bar.getAttribute('data-pickup-path') !== path) return;
+  bar.removeAttribute('data-stalled');
+  const pctEl = /** @type {HTMLElement|null} */ (bar.querySelector('[data-pickup-pct]'));
+  const speedEl = /** @type {HTMLElement|null} */ (bar.querySelector('[data-pickup-speed]'));
+  const msgEl = /** @type {HTMLElement|null} */ (bar.querySelector('.bar-msg'));
+  if (msgEl) msgEl.textContent = path.split('/').pop() || path;
+  if (totalBytes > 0 && pctEl) {
+    const pct = Math.max(0, Math.min(100, Math.round((bytesReceived / totalBytes) * 100)));
+    pctEl.textContent = `${pct}% · ${formatMb(bytesReceived)} / ${formatMb(totalBytes)}`;
+    bar.setAttribute('data-pickup-pct', String(pct));
+  } else if (pctEl) {
+    pctEl.textContent = formatMb(bytesReceived);
+  }
+  if (speedEl) {
+    // 滑动窗口速度（首尾样本差 / 时间差；窗口内只有一拍 ⇒ 不显速度，避免假读数）。
+    const first = st.samples[0];
+    const last = st.samples[st.samples.length - 1];
+    const dt = last.t - first.t;
+    if (first && last && dt > 250 && last.bytes > first.bytes) {
+      const rate = (last.bytes - first.bytes) / (dt / 1000);
+      speedEl.textContent = formatMb(rate) + '/s';
+    }
+  }
+}
+
+/** 终态清理（成功/失败/取消三态共用）：摘条 + 停看护。 */
+function clearPickupProgress(path) {
+  const st = pickupProgress.get(path);
+  if (st && st.timer !== null) clearInterval(st.timer);
+  pickupProgress.delete(path);
+  const bar = /** @type {HTMLElement|null} */ (document.querySelector('.explorer-pickup-bar.explorer-pickup-progress'));
+  if (bar && (!path || bar.getAttribute('data-pickup-path') === path)) bar.remove();
+}
+
+// 逐块进度帧（后端 readRemoteFile 分块拉取腿；GLOBAL 类型——进度不切视图）。
+onMessage('fileProgress', (msg) => {
+  if (!msg || typeof msg.path !== 'string' || !msg.path) return;
+  if (!explorerRootDevice || msg.device !== explorerRootDevice) return; // 他设备的进度不接
+  if (!pendingPickups.has(msg.path)) return; // 不是本窗发起的取件（防串扰）
+  updatePickupProgress(msg.path, Number(msg.bytesReceived) || 0, Number(msg.totalBytes) || 0, Number(msg.chunkMs) || 0);
+});
+
+/** 失败行复原（[关闭]/[重试] 共用）：摘失败叹号 + 摘 data-pickup。 */
+function rowFailState(path, clear) {
+  const row = /** @type {HTMLElement | null} */ (document.querySelector(`.explorer-item.explorer-file[data-path="${CSS.escape(path)}"]`));
+  if (row) {
+    row.querySelector('.fail-ic')?.remove();
+    if (clear) delete row.dataset.pickup;
+  }
+}
 
 function openFile(path, fileName, pinned = false) {
   // Update currentDir to the file's parent so "New File" creates in the same folder
@@ -854,9 +1702,19 @@ function openFile(path, fileName, pinned = false) {
       setActiveTab(tabId);
       return;
     }
+    // 面B B4：远端根 = 单文件按需取件（direction=get scope=browse），行内 loading 态。
+    // 🔴 同目录其余行不受影响；本机根零态零键（存量逐字节）。
+    const remote = !!explorerRootDevice;
+    if (remote && !pendingPickups.has(path)) {
+      pendingPickups.add(path);
+      setPickupState(path, 'loading');
+    }
     // Request file content — response arrives as 'fileContent' WS message,
     // which triggers 'workspace-open-item' event that canvas.js listens for.
-    sendWs({ type: 'readFile', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
+    sendWs({
+      type: 'readFile', sessionId: state.activeSessionId, path, rootPath: explorerRoot,
+      ...(remote ? { device: explorerRootDevice } : {}),
+    });
     // Store pinned flag for the fileContent handler
     pendingPinned.set(path, pinned);
   });
@@ -867,12 +1725,20 @@ const pendingPinned = new Map();
 // Track background-refresh requests (canvas.js scheduleFileRefresh) keyed by
 // file path — their fileContent responses must not steal tab activation.
 const pendingRefresh = new Set();
+// Track manual re-read requests (canvas 文件刷新批: refresh button) keyed by
+// file path — their fileContent responses carry `manual` so canvas.js
+// re-renders even without inline content (binary legs: no content field).
+const pendingManual = new Set();
 
 // Listen for canvas tab restore requests — set pinned state before readFile
 window.addEventListener('explorer-preload-pinned', (e) => {
-  if (e.detail && e.detail.path) {
-    pendingPinned.set(e.detail.path, e.detail.pinned !== false);
-    if (e.detail.refresh) pendingRefresh.add(e.detail.path);
+  const detail = /** @type {CustomEvent<{path?: string, pinned?: boolean, refresh?: boolean, manual?: boolean}>} */ (e).detail;
+  if (detail && detail.path) {
+    pendingPinned.set(detail.path, detail.pinned !== false);
+    if (detail.refresh) pendingRefresh.add(detail.path);
+    // (any-cast: this listener's `e.detail` lines are already in the checkJs
+    // baseline — the new leg must not add to that count.)
+    if (/** @type {any} */ (e).detail?.manual) pendingManual.add(/** @type {any} */ (e).detail.path);
   }
 });
 
@@ -891,20 +1757,66 @@ onMessage('dirListing', (msg) => {
   const pending = pendingLoads.get(reqId);
   pendingLoads.delete(reqId);
   loadingDirs.delete(msg.path);
+  disarmListDirTimeout(reqId); // 有界等待摘表（project-slow-folders 批）
 
   if (!pending) return;
 
   if (msg.error) {
-    pending.container.innerHTML = `<div class="explorer-error">${msg.error}</div>`;
+    // 面B B3（ui-device-faces 批）：远端目录失败 = **显式错误行 + 重试链**，且已列
+    // 元数据行保留（最后已知清单，不假装不存在）。本机腿维持现状（整容器错误行）。
+    if (!explorerRootDevice) {
+      pending.container.innerHTML = `<div class="explorer-error">${msg.error}</div>`;
+      return;
+    }
+    pending.container.querySelector('.explorer-loading')?.remove();
+    // 头部 chip 琥珀点（--status-warn-icon 载体；设备离线的可感知位）。
+    document.querySelector('.explorer-header .dev-chip')?.classList.add('is-offline');
+    const errRow = document.createElement('div');
+    errRow.className = 'explorer-error';
+    errRow.innerHTML =
+      '<svg class="st-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></svg>';
+    const txt = document.createElement('span');
+    txt.textContent = msg.error || '';
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'retry';
+    retry.textContent = t('explorer.retry');
+    retry.addEventListener('click', (e) => {
+      e.stopPropagation();
+      errRow.remove();
+      loadingDirs.delete(msg.path || '');
+      loadDir(pending.path, pending.container, pending.depth);
+    });
+    txt.appendChild(retry);
+    errRow.appendChild(txt);
+    pending.container.prepend(errRow);
     return;
   }
 
+  // 成功腿：摘离线琥珀点（设备回来 = chip 回常态）。
+  document.querySelector('.explorer-header .dev-chip')?.classList.remove('is-offline');
   pending.container.innerHTML = '';
   const entries = msg.entries || [];
   const depth = pending.depth + 1;
 
+  // M2 顺带对账（v1 §6.1「取数时顺带比对」腿 · 本机腿）：列目录本来就带回每件的
+  // size+mtime——与账本 version（size:mtimeMs）不一致的条目静默淘汰（下次打开按
+  // 未命中走）。零新增请求（数据已在此次往返里）；设备腿不比（对端清单非本机真值）。
+  if (!explorerRootDevice && msg.resolvedPath && entries.length) {
+    const reconciles = entries
+      .filter((/** @type {any} */ e) => e && e.type !== 'dir')
+      .map((/** @type {any} */ e) => ({
+        path: `${msg.resolvedPath}/${e.name}`,
+        size: Number(e.size) || 0,
+        mtimeMs: Number(e.mtime) || 0,
+      }));
+    if (reconciles.length) {
+      void import('./nfFileCache.js').then(({ nfCacheReconcile }) => nfCacheReconcile(reconciles)).catch(() => {});
+    }
+  }
+
   let hasVisible = false;
-  for (const entry of entries) {
+  for (const entry of sortExplorerEntries(entries)) {
     if (shouldHide(entry.name, entry.type === 'dir')) continue;
     hasVisible = true;
 
@@ -935,6 +1847,10 @@ onMessage('dirListing', (msg) => {
     const kids = child.querySelector('.explorer-children');
     if (chevron && kids) {
       chevron.classList.add('expanded');
+      // 重渲后的行是新节点：aria-expanded 必须跟着恢复，否则读屏/断言看到的
+      // 是"已展开的子树 + 收起的语义"这种自相矛盾的状态。
+      const fRow = child.querySelector(':scope > .explorer-folder');
+      if (fRow instanceof HTMLElement) fRow.setAttribute('aria-expanded', 'true');
       kids.style.display = '';
       kids.innerHTML = '';
       loadDir(p, kids, p.split('/').length);
@@ -943,6 +1859,10 @@ onMessage('dirListing', (msg) => {
 
   // Directory re-rendered — restore .selected classes from the selection model
   applySelectionClasses();
+
+  // roving 锚点跟随重渲（新行是全新节点：不重算就"没有一行 tabindex=0"，
+  // Tab 再也进不来 —— 这正是"重渲后键盘失灵"的形态）。
+  syncRoving();
 
   if (typeof lucide !== 'undefined') createIconsIn(pending.container);
 });
@@ -962,18 +1882,46 @@ onMessage('fileContent', (msg) => {
         content: msg.content || '',
         size: msg.size || 0,
         name: msg.fileName || msg.path.split('/').pop() || msg.path,
-        error: msg.error || null,
+        // A >8MiB text file now arrives as a stream descriptor: it carries no
+        // content, and the attachment pipeline cannot inline bytes it did not
+        // receive. Say so explicitly instead of letting it degrade to the
+        // pipeline's generic "looks binary" message (input.js stays untouched).
+        error: msg.error
+          || (msg.stream
+            ? `file is too large to attach inline (${Math.round((msg.size || 0) / (1024 * 1024))}MB)`
+            : null),
       },
     }));
     return;
   }
   if (msg.error) {
+    // 面B B5（ui-device-faces 批）：远端单文件取件失败 —— 失败**绝不静默、绝不换源**
+    // （G.12：离线就是错误，不落本机路径）：行复原为 failed 标记 + 底部玻璃浮条
+    // （可读原因 + [重试][关闭]）。本机腿维持既有「骨架标签」纪律（F3）零变化。
+    clearPickupProgress(msg.path || '');
+    if (msg.cancelled) {
+      // M2 取件取消终态（v1 §4.4）：用户主动取消 ≠ 传输失败——行静默复原 +
+      // 简短可读提示（摘条即确认；不落失败浮条、不进重试链）。
+      if (pendingPickups.has(msg.path)) {
+        pendingPickups.delete(msg.path);
+        setPickupState(msg.path, null);
+      }
+      console.info('pickup cancelled:', msg.path);
+      return;
+    }
+    if (pendingPickups.has(msg.path)) {
+      pendingPickups.delete(msg.path);
+      setPickupState(msg.path, 'failed');
+      showPickupFailureBar(msg.path, msg.error);
+      return;
+    }
     console.warn('readFile error:', msg.error);
     // F3 (2026-08-30 作者裁定 + 方案 §8.4 F3): readFile 失败不再静默丢弃——保留
     // 「文件不可读」骨架标签（标题 + 提示），让用户可感知而非标签无声消失。
     // 若该路径已有打开标签（后台刷新失败），canvas 端保留原内容不覆盖。
     pendingPinned.delete(msg.path);
     const isBackground = pendingRefresh.delete(msg.path);
+    const isManual = pendingManual.delete(msg.path);
     const filePath = msg.path;
     window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: {
       id: `file:${filePath}`,
@@ -985,16 +1933,35 @@ onMessage('fileContent', (msg) => {
       error: msg.error,
       pinned: false,
       background: isBackground,
+      manual: isManual,
     }}));
     return;
   }
   // Open in canvas
+  // 面B B5 成功腿：行复原（摘 loading 态）——既有查看器直开流程原样（文本内联 /
+  // 二进制经 /api/nf-file 取本地 pickup 件，absPath = uploads 白名单子树）。
+  clearPickupProgress(msg.path || '');
+  if (pendingPickups.has(msg.path)) {
+    pendingPickups.delete(msg.path);
+    setPickupState(msg.path, null);
+    hidePickupFailureBar();
+  }
+  // M2 hash 副键（v1 §6.3 多设备同文件去重）：分块腿整件 sha256 的免费副产品随帧
+  // 送达——记进账本（viewer 取数入账时带上，同内容跨设备只存一份字节）。
+  if (msg.absPath && msg.wholeSha256) {
+    void import('./nfFileCache.js').then(({ nfCacheNoteHash }) => {
+      nfCacheNoteHash(msg.absPath, String(msg.wholeSha256));
+    }).catch(() => {});
+  }
   const tabId = `file:${msg.path}`;
   const pinned = pendingPinned.get(msg.path) || false;
   pendingPinned.delete(msg.path);
   // Background refresh responses (activation-triggered) re-render in place but
   // must not yank the user back to that tab.
   const background = pendingRefresh.delete(msg.path);
+  // Manual re-read (refresh button): the item carries `manual` so canvas.js
+  // re-renders binary tabs too (their readFile leg carries no content).
+  const manual = pendingManual.delete(msg.path);
   const item = {
     id: tabId,
     title: msg.fileName || msg.path,
@@ -1006,6 +1973,12 @@ onMessage('fileContent', (msg) => {
     rootPath: explorerRoot,
     pinned,
     background,
+    manual,
+    // Text-stream descriptor passthrough (卡 §五 step ④): a >8MiB text file comes
+    // back WITHOUT content + `stream:{v:1,kind:"text"}` + `mtimeMs`. canvas.js and
+    // fileViewers.js consume these two fields; nothing else here changes.
+    stream: msg.stream || null,
+    mtimeMs: msg.mtimeMs || 0,
   };
   window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: item }));
 });
@@ -1016,23 +1989,37 @@ export function initExplorer() {
   // Restore persisted root on startup
   explorerRoot = loadPersistedRoot();
   updateExplorerTitle();
+  // B7-4：树搜索框 + 排序钮（JS 注入，幂等；index.html 归 B4 不碰）
+  ensureExplorerSearch();
 
-  // Wire folder picker button — uses callback mode (no folderId needed)
-  const folderBtn = document.getElementById('explorer-folder-btn');
+  // Wire folder picker button — opens the unified directory picker
+  // (workspacePicker.js) in callback mode: the picked path becomes the tree
+  // root (persisted; tree collapses and re-renders from the new root).
+  const folderBtn = /** @type {(HTMLElement & {_bound?: boolean})|null} */ (document.getElementById('explorer-folder-btn'));
   if (folderBtn && !folderBtn._bound) {
     folderBtn._bound = true;
     folderBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      openPathPickerCallback(explorerRoot, (selectedPath) => {
-        persistRoot(selectedPath);
-        expandedDirs.clear();
-        renderTree();
+      import('./workspacePicker.js').then(({ openPicker }) => {
+        openPicker({
+          startPath: explorerRoot || '~',
+          // picker-device-switch 批：远端根下「换根」在同一设备的盘上选（既有 device
+          // 腿）；面板顶部设备行仍可换设备，onPick 第二参回传选择时的 origin。
+          device: explorerRootDevice || undefined,
+          deviceName: explorerRootDevice || undefined,
+          title: t('workspacePicker.projectTitle'),
+          onPick: (selectedPath, pickedDevice) => {
+            persistRoot(selectedPath, pickedDevice || null);
+            expandedDirs.clear();
+            renderTree();
+          },
+        });
       });
     });
   }
 
   // New File button
-  const newFileBtn = document.getElementById('explorer-new-file-btn');
+  const newFileBtn = /** @type {(HTMLElement & {_bound?: boolean})|null} */ (document.getElementById('explorer-new-file-btn'));
   if (newFileBtn && !newFileBtn._bound) {
     newFileBtn._bound = true;
     newFileBtn.addEventListener('click', (e) => {
@@ -1042,7 +2029,7 @@ export function initExplorer() {
   }
 
   // New Folder button
-  const newFolderBtn = document.getElementById('explorer-new-folder-btn');
+  const newFolderBtn = /** @type {(HTMLElement & {_bound?: boolean})|null} */ (document.getElementById('explorer-new-folder-btn'));
   if (newFolderBtn && !newFolderBtn._bound) {
     newFolderBtn._bound = true;
     newFolderBtn.addEventListener('click', (e) => {
@@ -1052,7 +2039,7 @@ export function initExplorer() {
   }
 
   // Context menu — right-click on tree items
-  const tree = document.getElementById('explorer-tree');
+  const tree = /** @type {(HTMLElement & {_dragMoveBound?: boolean, _ctxBound?: boolean})|null} */ (document.getElementById('explorer-tree'));
 
   // Drag-to-move: delegated drop targets on folder rows + root blank area.
   if (tree && !tree._dragMoveBound) {
@@ -1071,11 +2058,11 @@ export function initExplorer() {
   if (tree && !tree._ctxBound) {
     tree._ctxBound = true;
     tree.addEventListener('contextmenu', (e) => {
-      const item = e.target.closest('.explorer-item');
+      const item = (/** @type {Element} */ (e.target)).closest('.explorer-item');
       if (item) {
         e.preventDefault();
         e.stopPropagation();
-        const p = item.dataset.path;
+        const p = (/** @type {HTMLElement} */ (item)).dataset.path;
         // Right-click on an unselected item → make it the sole selection
         // (menu falls back to single-path actions). Right-click on a selected
         // item keeps the selection (menu offers batch actions).
@@ -1085,19 +2072,26 @@ export function initExplorer() {
     });
     // Click on blank tree area → clear selection
     tree.addEventListener('click', (e) => {
-      if (!e.target.closest('.explorer-item')) clearSelection();
+      if (!(/** @type {Element} */ (e.target)).closest('.explorer-item')) clearSelection();
     });
   }
 
-  // Esc clears the selection (unless an inline create input has focus)
-  if (!window.__explorerEscBound) {
-    window.__explorerEscBound = true;
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && selectedPaths.size && !e.target.closest?.('.explorer-creating')) {
-        clearSelection();
-      }
+  // ── 键盘腿（B1-2 → 三期）─────────────────────────────────────────────
+  // 改造前这里挂 `kbdTree.addEventListener('keydown', onTreeKeydown)`；三期键位搬进
+  // 规则表（条件 = `explorerTreeFocus`，由 keyContext 从 focus 现算），容器只留
+  // **roving 锚点**这一件与键盘无关的事（谁搬的焦点都算数）。
+  const kbdTree = /** @type {(HTMLElement & {_kbdBound?: boolean})|null} */ (document.getElementById('explorer-tree'));
+  if (kbdTree && !kbdTree._kbdBound) {
+    kbdTree._kbdBound = true;
+    kbdTree.addEventListener('focusin', (e) => {
+      const row = (/** @type {Element} */ (e.target)).closest?.('.explorer-item[role="treeitem"]');
+      if (row instanceof HTMLElement && row.dataset.path) syncRoving(row.dataset.path);
     });
   }
+
+  // 选中态 → 上下文键（派生：值现场读 selectedPaths，不推送）。
+  // 规则的 `when` 直接引用它（`explorerSelection && !textInputFocus`）。
+  provideContextKey(KEYS.explorerSelection, () => selectedPaths.size > 0);
 
   // Close context menu on any interaction outside the menu.
   // Use mousedown + capture so it fires BEFORE child stopPropagation calls.
@@ -1115,6 +2109,8 @@ export function initExplorer() {
   });
 
   bindFocusRefresh();
+  bindWatchReconnect();
+  bindSlowReconcile();
 
   if (state.activeSessionId) {
     expandedDirs.clear();
@@ -1123,6 +2119,15 @@ export function initExplorer() {
 }
 
 // ── File operations (create, delete) ──────────────────────────────────
+
+/** 远端根只读闸（ui-device-faces 批 · 面B 边界）：本批只开 listDir 元数据 + 单文件
+ *  取件两条腿；create/delete/move 的 device 腿不存在，放行会把帧落**本机**同形路径
+ *  （G.12 路径错觉 = 静默错写）。显式 toast 拒绝，绝不静默。 */
+function refuseRemoteWrite() {
+  if (!explorerRootDevice) return false;
+  window.__showToast?.(t('explorer.remoteReadonly'), 'error');
+  return true;
+}
 
 /** Determine the directory to create in: the selected/expanded folder, or root. */
 function getTargetDir(forPath) {
@@ -1141,8 +2146,9 @@ function absPathFor(relPath) {
 
 /** Show inline input for creating a new file or folder in the tree.
  *  @param {boolean} isDir — true for folder, false for file
- *  @param {string} dirPath — directory to create in (relative to root). Defaults to currentDir. */
+ *  @param {string} [dirPath] directory to create in (relative to root). Defaults to currentDir. */
 function startCreateNode(isDir, dirPath) {
+  if (refuseRemoteWrite()) return;
   // If no dirPath given, use the last expanded folder (currentDir)
   if (dirPath === undefined) dirPath = currentDir || '';
 
@@ -1158,7 +2164,7 @@ function startCreateNode(isDir, dirPath) {
       if (!expandedDirs.has(dirPath)) {
         const row = wrapper.querySelector('.explorer-folder');
         const chevron = wrapper.querySelector('.explorer-chevron');
-        const children = wrapper.querySelector('.explorer-children');
+        const children = /** @type {HTMLElement|null} */ (wrapper.querySelector('.explorer-children'));
         if (row && chevron && children) {
           expandedDirs.add(dirPath);
           currentDir = dirPath;
@@ -1183,9 +2189,7 @@ function startCreateNode(isDir, dirPath) {
 
   // Create inline input row
   const depth = dirPath ? dirPath.split('/').length + 1 : 1;
-  const inputRow = document.createElement('div');
-  inputRow.className = 'explorer-item explorer-creating';
-  inputRow.style.paddingLeft = `${depth * 14 + 8}px`;
+  const inputRow = makeExplorerRow('creating', '', depth);
 
   const icon = document.createElement('span');
   icon.className = 'explorer-icon';
@@ -1217,7 +2221,10 @@ function startCreateNode(isDir, dirPath) {
 
   const cancel = () => inputRow.remove();
 
+  // ⑤ 组字期间 Enter/Esc 交还输入法（非组字态行为逐键不变）。
+  bindImeGuard(input);
   input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return;
     if (e.key === 'Enter') { e.preventDefault(); commit(); }
     else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
   });
@@ -1226,6 +2233,7 @@ function startCreateNode(isDir, dirPath) {
 
 /** Delete a file or folder. */
 function deleteNode(path) {
+  if (refuseRemoteWrite()) return;
   const name = path.split('/').pop();
   const send = () => sendWs({ type: 'deletePath', sessionId: state.activeSessionId, path, rootPath: explorerRoot });
   if (typeof window.__showConfirm === 'function') {
@@ -1237,6 +2245,7 @@ function deleteNode(path) {
 
 /** Batch-delete every path in the current selection — one confirm, one WS message. */
 function deleteSelected() {
+  if (refuseRemoteWrite()) return;
   const paths = [...selectedPaths];
   if (!paths.length) return;
   const send = () => sendWs({ type: 'deletePaths', sessionId: state.activeSessionId, paths, rootPath: explorerRoot });
@@ -1423,15 +2432,25 @@ function refreshDirOf(path) {
  * #files-btn click) because the icon toggles the bar CLOSED when Files is
  * already the active panel.
  * @param {string} path — absolute workspace path
+ * @param {string=} device — 远端 origin 设备（ui-device-faces 批 · 面B 入口对偶：
+ *   机制缺省 {self, workspace} 的 UI 对偶；缺省 = 本机根，零 device 键）
  */
-export function openExplorerAt(path) {
+export function openExplorerAt(path, device) {
   if (!path) return;
-  persistRoot(path);
+  rerootExplorer(path, device || null);
+  showSidePanel('files');
+}
+
+/** 换根公共体（openExplorerAt / 头部设备切换钮共用）：落根 + 清树态 + 重渲染。 */
+function rerootExplorer(path, device) {
+  persistRoot(path, device || null);
   expandedDirs.clear();
   loadingDirs.clear();
   pendingLoads.clear();
+  disarmAllListDirTimeouts();
+  pendingPickups.clear();
+  hidePickupFailureBar();
   clearSelection();
-  showSidePanel('files');
   renderTree();
 }
 
@@ -1439,6 +2458,7 @@ export function refreshExplorer(sessionId) {
   expandedDirs.clear();
   loadingDirs.clear();
   pendingLoads.clear();
+  disarmAllListDirTimeouts();
   clearSelection();
   if (sessionId) {
     renderTree();
@@ -1446,6 +2466,9 @@ export function refreshExplorer(sessionId) {
     const body = $('#explorer-tree');
     if (body) body.innerHTML = '';
   }
+  // Session switch: re-subscribe to the new session's project root (renderTree
+  // path) or drop the subscription entirely (no session → empty tree).
+  syncWatch();
 }
 
 // ── Focus refresh ─────────────────────────────────────────────────────
@@ -1492,5 +2515,146 @@ function bindFocusRefresh() {
   window.addEventListener('focus', onRegainFocus);
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) onRegainFocus();
+  });
+}
+
+// ── Real-time watch (explorer-rt · chain-n-1981ce87 case C hybrid) ────
+// Main path: server pushes `fsChanged{rootPath, dirs, overflow}` and the
+// affected visible dirs reload through the SAME pipeline as the focus leg
+// (loadDir → dirListing → expand/selection restore). Fallback legs —
+// expand-reload, focus refresh, canvas tab-activation refresh — are untouched;
+// a slow reconcile timer (below) covers OVERFLOW / reconnect event-loss
+// windows. Failure toasts ride the existing `fileOpError` → `__showToast`
+// channel; zero new visual components.
+
+const WATCH_SYNC_THROTTLE_MS = 250; // collapse expand/collapse bursts
+let watchRootSent = undefined;      // undefined = never subscribed; '' or abs path = current
+let watchSyncTimer = null;
+
+/** Visible dir set (root + every expanded dir), explorer-relative paths. */
+function visibleWatchDirs() {
+  return ['', ...[...expandedDirs]];
+}
+
+/** (Re-)send watchSubscribe for the current root + visible dir set; drops the
+ *  previous subscription when the root changed. Idempotent — safe to call on
+ *  every tree mutation. No active session ⇒ unsubscribe (empty tree). */
+function syncWatch(immediate = false) {
+  clearTimeout(watchSyncTimer);
+  watchSyncTimer = setTimeout(() => {
+    const rootPath = explorerRoot || '';
+    // 远端根（面B）：watch 面是本机盘语义（对端无订阅腿）——不订阅、只清旧订阅，
+    // 防止把远端根当本机路径挂上本机 watcher（路径错觉防护）。降级重列 = 既有
+    // 慢对账定时器照常（展开即重列 + refreshExpandedDirs）。
+    if (explorerRootDevice) {
+      if (watchRootSent !== undefined) {
+        sendWs({ type: 'watchUnsubscribe', sessionId: state.activeSessionId, rootPath: watchRootSent });
+        watchRootSent = undefined;
+      }
+      return;
+    }
+    if (!state.activeSessionId) {
+      if (watchRootSent !== undefined) {
+        sendWs({ type: 'watchUnsubscribe', sessionId: state.activeSessionId, rootPath: watchRootSent });
+        watchRootSent = undefined;
+      }
+      return;
+    }
+    if (watchRootSent !== undefined && watchRootSent !== rootPath) {
+      sendWs({ type: 'watchUnsubscribe', sessionId: state.activeSessionId, rootPath: watchRootSent });
+    }
+    sendWs({ type: 'watchSubscribe', sessionId: state.activeSessionId, rootPath: explorerRoot, dirs: visibleWatchDirs() });
+    watchRootSent = rootPath;
+  }, immediate ? 0 : WATCH_SYNC_THROTTLE_MS);
+}
+
+/** Reload one visible directory's children container in place — same shape
+ *  as the per-dir leg of refreshExpandedDirs (zero new render mechanism).
+ *  Dirs that are not visible (collapsed/absent) are skipped: their next
+ *  expand reloads from disk anyway. */
+function reloadVisibleDir(dirPath) {
+  if (dirPath) {
+    if (!expandedDirs.has(dirPath)) return;
+    const wrapper = document.querySelector(`.explorer-dir-wrapper[data-path="${CSS.escape(dirPath)}"]`);
+    // Direct child only: a bare descendant query would match a nested
+    // wrapper's container first on some structures (same reason
+    // refreshExpandedDirs/getSiblingPaths scope their queries).
+    const children = wrapper?.querySelector(':scope > .explorer-children');
+    if (children && !loadingDirs.has(dirPath)) {
+      children.innerHTML = '';
+      loadDir(dirPath, children, dirPath.split('/').length);
+    }
+  } else {
+    const rootChildren = document.querySelector('.explorer-root > .explorer-children');
+    if (rootChildren && !loadingDirs.has('')) {
+      rootChildren.innerHTML = '';
+      loadDir('', rootChildren, 0);
+    }
+  }
+}
+
+onMessage('fsChanged', (msg) => {
+  // Only frames for the root this panel currently watches.
+  if ((msg.rootPath || '') !== (explorerRoot || '')) return;
+  if (msg.overflow) {
+    // Watch-service overflow: events were dropped server-side — tighten the
+    // reconcile period (card: shorter cycle only after OVERFLOW/reconnect) and
+    // degrade to a full visible-tree reload (equivalent to the focus leg).
+    boostReconcile();
+    if (document.querySelector('.explorer-root')) refreshExpandedDirs();
+  } else {
+    for (const d of (msg.dirs || [])) reloadVisibleDir(d);
+  }
+  // File content may have changed too — canvas re-checks the active file tab
+  // (dirty-guarded, debounced, cooldown there; zero new mechanism).
+  window.dispatchEvent(new CustomEvent('explorer-focus-refresh'));
+});
+
+// ── Slow reconcile (fallback leg #4) ──────────────────────────────────
+// Covers the "silent event loss" residual surface: baseline 120 s, tightened
+// to 60 s for 5 minutes after an OVERFLOW or a reconnect. Visibility-gated
+// (hidden tabs skip the tick — same gate as the focus leg).
+
+const RECONCILE_TICK_MS = 60000;        // timer granularity
+const RECONCILE_BASE_MS = 120000;       // healthy-watch period
+const RECONCILE_BOOST_MS = 60000;       // post-OVERFLOW/reconnect period
+const RECONCILE_BOOST_WINDOW_MS = 300000;
+let reconcileNextAllowedAt = 0;
+let reconcileBoostUntil = 0;
+let reconcileTimer = null;
+
+function boostReconcile() {
+  reconcileBoostUntil = Date.now() + RECONCILE_BOOST_WINDOW_MS;
+}
+
+function reconcileTick() {
+  if (document.hidden) return;
+  const now = Date.now();
+  if (now < reconcileNextAllowedAt) return;
+  reconcileNextAllowedAt = now + (now < reconcileBoostUntil ? RECONCILE_BOOST_MS : RECONCILE_BASE_MS);
+  if (!document.querySelector('.explorer-root')) return;
+  refreshExpandedDirs();
+  window.dispatchEvent(new CustomEvent('explorer-focus-refresh', { detail: { reconcile: true } }));
+}
+
+function bindSlowReconcile() {
+  if (reconcileTimer) return;
+  reconcileTimer = setInterval(reconcileTick, RECONCILE_TICK_MS);
+}
+
+/** Bind reconnect compensation once (called from initExplorer): subscriptions
+ *  die with the connection (server clears the table on close) — re-subscribe
+ *  immediately and run one full visible-tree reconcile. */
+function bindWatchReconnect() {
+  const win = /** @type {any} */ (window);
+  if (win.__explorerWatchReconnectBound) return;
+  win.__explorerWatchReconnectBound = true;
+  onReconnect(() => {
+    boostReconcile();
+    syncWatch(true);
+    if (document.querySelector('.explorer-root')) {
+      refreshExpandedDirs();
+      window.dispatchEvent(new CustomEvent('explorer-focus-refresh'));
+    }
   });
 }

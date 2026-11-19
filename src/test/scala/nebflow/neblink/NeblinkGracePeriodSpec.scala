@@ -1,9 +1,12 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+
 import cats.effect.std.Dispatcher
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import munit.CatsEffectSuite
+import nebflow.shared.PeerInfo
 
 import scala.concurrent.duration.*
 

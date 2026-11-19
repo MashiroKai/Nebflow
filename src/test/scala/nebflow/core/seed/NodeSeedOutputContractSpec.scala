@@ -1,0 +1,85 @@
+package nebflow.core.seed
+
+import munit.FunSuite
+
+/**
+ * node-output contract · 定义面钉子（2026-09-24 立面；govmemory 批 2026-09-25 随
+ * seed 对齐改写判据；builtin-def 批 2026-10-03 随 agent 定义上收代码再改判据源；
+ * P0-1 批 2026-10-03 判据源名对齐；提示词来源拆分批 2026-10-08 判据源＝**节点面**）。
+ *
+ * govmemory 批按方案 §1.1/§1.2 把运行面纪律逐段并入 general 的 system prompt
+ * （运行面 dual-track 交付体例取代原单轨段）。该 prompt 的**唯一权威源**现为
+ * `nebflow.core.entity.BuiltinAgents`（builtin-def 批 2026-10-03 作者令①「唯一标准
+ * 源就是代码」——seed/agents 资源树已删，磁盘 system.md 是死信），本 spec 的判据源
+ * 随之指向代码定义。**提示词来源拆分批（2026-10-08）**：`nebflow` 执行名的系统
+ * 提示词按会话面拆成两个独立来源——flow 节点面（`NebflowNodePrompt`，经 `entry`
+ * 解析）与 delegate 面（`NebflowDelegatePrompt`，经 `delegateEntry` 解析，delegate 终态语义
+ * 纪律，判据门 = `nebflow.core.entity.PromptFaceSplitSpec`）。
+ * 本 spec 判定的是**节点面来源**（判据源 = `entry(ExecutorName).systemPrompt`，
+ * 即 `NodeStarter` → `EntityLoader.loadAgent` 的节点 spawn 实读路径）。现行钉面
+ * （①②随 2026-10-07 N3 修订批 dual-track 体例退役翻转）：
+ *  ① 末条输出 = 自身交付物（首内容行＝节点身份句「You are a task node」开头即承
+ *     载；曾为 dual-track 双轨体例开头承载）；
+ *  ② 结果自包含（五要素 Report 段在位）＋ dual-track 体例防复活（!Deliver in two
+ *     parts；曾钉双轨强制「both parts are mandatory」，随体例退役翻转）；
+ *  ③ 终态申报义务**不在**提示词面（终态申报工具通道退役——申报义务与未申报不终态
+ *     语义已随段删除；终态协议由引擎贡献面 `NodeEngine.ProtocolFootnote` 注入）；
+ *  ④ 代码级 prompt **零 HTML 注释**（种子面的「批源注记」形态随种子退役——注释不
+ *     进模型上下文，代码定义从结构上就不携带它）。
+ *
+ * P0-1 批（2026-10-03）**判据源名对齐**：builtin-merge 批把节点执行名从 `general`
+ * 改为 `BuiltinAgents.ExecutorName`（= `nebflow`），节点会话实收的提示词因此是本
+ * `entry(ExecutorName)` 条目；本 spec 原钉 `entry("general")`，在 f646eeeaa 形态上
+ * 恒 `None`（`general` 已非 builtin）⇒ 3/3 假红。契约文本本身**未削弱**：本批把
+ * 该契约原样回填进执行 agent 的代码提示词（现 = `BuiltinAgents.NebflowNodePrompt`），
+ * 判据源随之改为「节点实际执行的 agent」，而不是放宽断言。
+ *
+ * 面性质：本文件只读 `BuiltinAgents` 的代码定义，不写盘、不碰 `PathUtil.dataRoot`。
+ * 引擎贡献面（`NodeEngine.ProtocolFootnote`，终态文本锚定协议单点）不在本 spec
+ * 判定内。delegate 面来源与双面分离判据 = `PromptFaceSplitSpec`。
+ */
+class NodeSeedOutputContractSpec extends FunSuite:
+
+  /** 节点实际执行的 agent 名（建位落名 + spawn 读名的同一单点）。 */
+  private val executorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
+
+  private def promptText: String =
+    nebflow.core.entity.BuiltinAgents
+      .entry(executorName)
+      .map(_.systemPrompt)
+      .getOrElse(fail(s"BuiltinAgents must carry a code-defined '$executorName' entry"))
+
+  private def contentLines: List[String] =
+    promptText.split("\n", -1).toList.filterNot(_.trim.startsWith("<!--"))
+
+  test("执行 agent 代码级 prompt 首内容行 = 节点身份句（末条输出 = 自身交付物；五要素 Report 段在位）"):
+    val firstContent = contentLines
+      .dropWhile(_.trim.isEmpty)
+      .headOption
+      .getOrElse(
+        fail("prompt has no content lines")
+      )
+    assert(firstContent.startsWith("You are a task node"), s"首内容行语域被改：${firstContent.take(80)}")
+    val text = promptText
+    assert(text.contains("your final assistant text IS the deliverable"), "交付物身份句在位（node deliverable semantics）")
+    assert(text.contains("## Report (your final text)"), "五要素 Report 段在位（single-track evidence block）")
+    assert(!text.contains("Deliver in two parts"), "dual-track 体例已退役（防复活）")
+    // 退役体例零复活（零出现）
+    assertEquals(contentLines.count(_.contains("Deliver in two parts")), 0, "dual-track 体例已退役（任何行零出现，防复活）")
+
+  test("执行 agent 代码级 prompt 输出契约语义在正文 + 申报义务不在提示词面"):
+    val text = promptText
+    // 五要素 Report 段语义行在位
+    assert(text.contains("(1) what you did"), "五要素语义行在位")
+    // 终态申报义务不在提示词面（申报工具通道退役——义务句留场即「顺手写回」形态）
+    assert(!text.contains("call it before wrapping up"), "申报工具义务句不得留在提示词面")
+    assert(!text.contains("Report first, then write your wrap-up text"), "申报先行句不得留在提示词面")
+    // 节点工具面行在位（执行面陈述）
+    assert(text.contains("Read / Write / Edit / Glob / Grep / Bash / AskUserQuestion"), "节点工具面行在位")
+
+  test("执行 agent 代码级 prompt 零 HTML 注释（种子批源注记形态随种子退役；注释不进模型上下文）"):
+    // builtin-def 批：prompt = 代码定义，从结构上不携带种子面的 HTML 批源注记。
+    // 若有人把注记形态带进代码定义，本条即红（注释行剥离判据的形态前提随之作废）。
+    val commented = promptText.split("\n", -1).toList.filter(_.contains("<!--"))
+    assertEquals(commented, Nil, "代码级 prompt 不得携带 HTML 注释行（种子注记形态已退役）")
+end NodeSeedOutputContractSpec

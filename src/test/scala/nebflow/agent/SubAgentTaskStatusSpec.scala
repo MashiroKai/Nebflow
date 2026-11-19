@@ -6,13 +6,14 @@ import cats.syntax.all.*
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, ActorRef, Behavior, Behaviors}
+import nebflow.actor.{AgentCommand, AgentError, AgentErrorType, AgentEvent, status}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig, SubAgentTask}
 
 import scala.concurrent.duration.*
 
@@ -27,6 +28,13 @@ import scala.concurrent.duration.*
  * under the correct parent session transitions out of "running".
  */
 class SubAgentTaskStatusSpec extends CatsEffectSuite:
+
+  // 数据根隔离（监督链自动恢复批 2026-10-22 收口）：终态清理链与 F2 兜底（ChainStore /
+  // DelegateRegistry / CompactionQueueStore）都走全局 dataRoot——本套件此前跑在真实数据
+  // 根上（HEAD 起 ChainStore 即泄漏，F2 兜底新增写面），同 JVM 内邻套件的全局根切换/
+  // 遗留纤维会挤压 3s 等待窗。每件用例换上自己的 tmp 根，套件尾恢复。
+  private val originalRoot = PathUtil.dataRoot
+  override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
 
   // Never called on the code paths under test — the supervisor only touches
   // subAgentTaskStore / agentRegistry / wsSend.
@@ -45,6 +53,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
 
   private def mkResources(system: ActorSystem, tmp: os.Path): IO[SharedResources] =
     for
+      _ <- IO(PathUtil.setDataRoot(tmp / "data"))
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
       rateLimiter <- RateLimiter.create()
       tracker <- FileChangeTracker.create(os.pwd.toString)
@@ -95,7 +104,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -110,6 +119,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
     val childSid = "delegate-child-1"
     for
       resources <- mkResources(system, tmp)
+      _ <- IO(nebflow.core.delegate.DelegateJudge.DelegateJudgePort.clear())
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       child <- system.spawn(ignoreChild, "fake-child-1")
       supervisor <- system.spawn(
@@ -124,11 +134,17 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
           parentSessionId = parentSid,
           resources = resources,
           initialPrompt = "do the thing",
-          source = "delegate"
+          source = "subtask"
         ),
         "supervisor-1"
       )
-      _ <- supervisor ! AgentEvent.Completed(childSid, Nil)
+      // 四修①（2026-10-07）：Nil 消息 = 空烧形态，会走重启/续推链——本件钉的是
+      // parentSessionId 状态落盘管线，给一条真实终文绕开空烧判据（空烧语义由
+      // BackoffSupervisorEmptyBurnSpec 专钉）。
+      _ <- supervisor ! AgentEvent.Completed(
+        childSid,
+        List(nebflow.shared.Message(nebflow.shared.MessageRole.Assistant, Left("done, result is 42")))
+      )
       _ <- waitUntil(3.seconds)(
         resources.subAgentTaskStore
           .loadTasks(parentSid)
@@ -152,6 +168,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
     val childSid = "delegate-child-2"
     for
       resources <- mkResources(system, tmp)
+      _ <- IO(nebflow.core.delegate.DelegateJudge.DelegateJudgePort.clear())
       _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
       child <- system.spawn(ignoreChild, "fake-child-2")
       supervisor <- system.spawn(
@@ -166,7 +183,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
           parentSessionId = parentSid,
           resources = resources,
           initialPrompt = "do the thing",
-          source = "delegate"
+          source = "subtask"
         ),
         "supervisor-2"
       )
@@ -176,8 +193,10 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
           agentId = childSid,
           agentName = "Worker",
           depth = 1,
-          errorType = AgentErrorType.LlmFailed,
-          message = "boom: provider down",
+          // This spec verifies task-store terminal status; use a deterministic tool failure so
+          // the current provider-freeze policy does not park the delegate before terminalization.
+          errorType = AgentErrorType.ToolFailed,
+          message = "boom: tool pipeline failed",
           cause = None
         )
       )

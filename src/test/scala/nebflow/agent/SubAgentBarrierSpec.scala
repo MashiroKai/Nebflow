@@ -2,7 +2,8 @@ package nebflow.agent
 
 import io.circe.JsonObject
 import io.circe.syntax.*
-import nebflow.core.ToolExecResult
+import nebflow.actor.AgentCommand
+import nebflow.shared.ToolExecResult
 import nebflow.shared.ToolCall
 import munit.FunSuite
 
@@ -53,6 +54,31 @@ class SubAgentBarrierSpec extends FunSuite:
     val (drained, remaining) = TurnBoundaryDrains.drainBarrier(queue, compactionPending = false, outstanding = 0)
     assertEquals(drained.map(_.payload), List("subtask-result-1", "delegate-result-2", "subtask-result-3"))
     assert(remaining.isEmpty)
+  }
+
+  test("duplicate terminal identity is recognized before it can decrement the barrier twice") {
+    val terminal = subtask(1).copy(correlationId = Some("child-1"))
+    val duplicate = terminal.copy(payload = "duplicate terminal replay")
+    assert(nebflow.core.processor.DeliveredReceiptLedger.isDuplicateIdentity(Set.empty, List(terminal), duplicate))
+
+    val (drained, remaining) = TurnBoundaryDrains.drainBarrier(
+      List(terminal, delegate(2)),
+      compactionPending = false,
+      outstanding = 0
+    )
+    assertEquals(drained.map(_.payload), List(terminal.payload, "delegate-result-2"))
+    assertEquals(remaining, Nil)
+  }
+
+  test("freeze receipts do not release a child-result slot; failed terminal receipts do") {
+    val frozen = AgentCommand.ExternalEvent("delegate", "frozen", "parked", correlationId = Some("frozen-child"))
+    val failed =
+      AgentCommand.ExternalEvent("subtask", "failed", "failed terminal", correlationId = Some("failed-child"))
+    assert(!TurnBoundaryDrains.isSubagentResult(frozen))
+    assert(TurnBoundaryDrains.isSubagentResult(failed))
+    val (drained, remaining) = TurnBoundaryDrains.drainBarrier(List(failed), compactionPending = false, outstanding = 0)
+    assertEquals(drained, List(failed))
+    assertEquals(remaining, Nil)
   }
 
   test("batch complete: non-subagent events keep the one-at-a-time drain") {
@@ -111,11 +137,11 @@ class SubAgentBarrierSpec extends FunSuite:
 
   test("countBarrierIncrements: mixed batch counts only ephemeral successes") {
     val batch = List(
-      call("Delegate") -> ok,                          // 1 (ephemeral)
-      call("Delegate", Some("persistent")) -> ok,      // 0 (persistent excluded)
-      call("SubTask") -> ok,                           // 1
-      call("Delegate") -> err,                         // 0 (failed)
-      call("Read") -> ok                               // 0 (not a sub-agent)
+      call("Delegate") -> ok, // 1 (ephemeral)
+      call("Delegate", Some("persistent")) -> ok, // 0 (persistent excluded)
+      call("SubTask") -> ok, // 1
+      call("Delegate") -> err, // 0 (failed)
+      call("Read") -> ok // 0 (not a sub-agent)
     )
     assertEquals(TurnBoundaryDrains.countBarrierIncrements(batch), 2)
   }

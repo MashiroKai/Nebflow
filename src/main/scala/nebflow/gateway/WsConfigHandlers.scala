@@ -1,0 +1,1093 @@
+/* 从 WebSocketRoutes 迁出(行为保持重构,2026-09-24)。 */
+package nebflow.gateway
+
+import nebflow.neblink.core.*
+
+import cats.effect.std.{Dispatcher, Queue}
+import cats.effect.{Deferred, IO, Ref}
+import cats.syntax.all.*
+import fs2.{Pipe, Stream}
+import io.circe.parser.parse
+import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
+import nebflow.actor.{ActorSystem as RootActorSystem, *}
+import nebflow.agent.*
+import nebflow.core.*
+import nebflow.core.entity.EntityLoader
+import nebflow.core.mcp.McpManager
+import nebflow.core.project.{CancelSource as ChainCancelSource, *}
+import nebflow.core.schedule.FreezeSchedule.given
+import nebflow.core.skill.SkillService
+import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.gateway.NfFilePolicy.*
+import nebflow.gateway.WsDispatch.{inboundEnvelope, parsedJson}
+import nebflow.llm.*
+import nebflow.service.*
+import nebflow.shared.*
+import org.http4s.*
+import org.http4s.circe.CirceEntityCodec.*
+import org.http4s.dsl.io.*
+import org.http4s.headers.`Content-Type`
+import org.http4s.server.websocket.WebSocketBuilder2
+import org.http4s.websocket.WebSocketFrame
+
+import scala.concurrent.duration.*
+import scala.io.Source
+
+/** 配置域(config setters):思考/冻结/STT/TTL/模型档/安全档/MCP 等配置读写臂。 */
+private[gateway] object WsConfigHandlers:
+
+  private[gateway] val handlers: Map[String, WsDispatch.WsHandler] = Map(
+    "skipFreeze" -> handleSkipFreeze,
+    "setThinking" -> handleSetThinking,
+    "setWorkSchedule" -> handleSetWorkSchedule,
+    "setSttConfig" -> handleSetSttConfig,
+    "getToolResultTtl" -> handleGetToolResultTtl,
+    "setToolResultTtl" -> handleSetToolResultTtl,
+    "setVoiceMuted" -> handleSetVoiceMuted,
+    "setLlmLog" -> handleSetLlmLog,
+    "getLlmLog" -> handleGetLlmLog,
+    "getModelOptions" -> handleGetModelOptions,
+    "setSessionModel" -> handleSetSessionModel,
+    "getCompactThreshold" -> handleGetCompactThreshold,
+    "setCompactThreshold" -> handleSetCompactThreshold,
+    "setSafetyMode" -> handleSetSafetyMode,
+    "setBypass" -> handleSetBypass,
+    "getConfig" -> handleGetConfig,
+    "getToolsList" -> handleGetToolsList,
+    "setOnboardingState" -> handleSetOnboardingState,
+    "setOnboardingAnswers" -> handleSetOnboardingAnswers,
+    "finishOnboarding" -> handleFinishOnboarding,
+    "getOnboardingModels" -> handleGetOnboardingModels,
+    "probeLlm" -> handleProbeLlm,
+    "updateConfig" -> handleUpdateConfig,
+    "toggleMcpServer" -> handleToggleMcpServer
+  )
+
+  private def handleSkipFreeze(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // 冻结「跳过本次」按钮（2026-08-25 前端联调）：无文本跳过命令——
+    // 不注入假消息气泡污染上下文，直调 skipCurrentFreezeWindow（置
+    // freezeSkipUntilRef = 当前窗口结束时刻 + FreezeScheduler.scan 全局
+    // 解冻，语义与用户消息触发完全一致；窗口结束后 skip 自然过期，下一
+    // 冻结段照常冻结）。无 payload、无回执（fire-and-forget）。
+    skipCurrentFreezeWindow
+
+  private[gateway] def decodeGlobalThinkingEffort(thinking: Option[Json]): Either[String, Option[ThinkingEffort]] =
+    thinking match
+      case None => Right(None)
+      case Some(value) if value.isNull => Right(None)
+      case Some(value) => value.hcursor.downField("effort").as[Option[ThinkingEffort]].left.map(_.message)
+
+  private def handleSetThinking(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val hc = json.hcursor
+    val thinkingOpt = hc.downField("thinking").as[Option[io.circe.Json]].toOption.flatten
+    // thinking-config 批（2026-10-28，设计 §5）：payload 带 provider+model 键 =
+    // 按模型层写路（缺省 = 全局，老前端零感知）。
+    val providerOpt = hc.downField("provider").as[Option[String]].toOption.flatten
+    val modelOpt = hc.downField("model").as[Option[String]].toOption.flatten
+
+    (providerOpt, modelOpt) match
+      case (Some(pid), Some(mid)) => setModelThinkingLayer(ctx, pid, mid, thinkingOpt, wsSend)
+      case _ =>
+        // null/absent means toggled off; {enabled: false} also means off; otherwise default true
+        val enabled = thinkingOpt match
+          case None | Some(io.circe.Json.Null) => false
+          case Some(v) => v.hcursor.downField("enabled").as[Boolean].getOrElse(true)
+        val budgetTokens = thinkingOpt match
+          case None | Some(io.circe.Json.Null) => 32000
+          case Some(v) => v.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
+        decodeGlobalThinkingEffort(thinkingOpt) match
+          case Left(error) =>
+            wsSend(ApiJson.configUpdateFailed(s"思考模式保存失败: $error"))
+          case Right(effort) =>
+            val clearThinking =
+              thinkingOpt.flatMap(_.hcursor.downField("clearThinking").as[Option[Boolean]].toOption.flatten)
+            val tc = ThinkingConfig(enabled, budgetTokens, effort, clearThinking)
+            logger.info(
+              s"Thinking mode set to: enabled=$enabled budgetTokens=$budgetTokens effort=${effort.map(_.wireName)}"
+            ) *>
+              nebflow.service.ConfigService.writeLocked(persistThinkingConfig(tc)).attempt.flatMap {
+                case Left(e) =>
+                  logger.warn(s"Failed to persist thinking config: ${e.getMessage}") *>
+                    wsSend(ApiJson.configUpdateFailed(s"思考模式保存失败: ${e.getMessage}"))
+                case Right(_) =>
+                  sharedResources.thinkingConfigRef.set(tc) *> broadcastServerConfig
+              }
+        end match
+    end match
+  end handleSetThinking
+
+  /**
+   * 按模型 thinking 层写路（thinking-config 批，设计 §5）：payload
+   * `{thinking:{effort:"high"|null, enabled:true|false|null}, provider, model}`。
+   * thinking 缺席 = 整层清除（= 完全继承）。定点写盘 + 内存 configRef 同步 patch
+   * （热生效，不用重启/重载）+ 广播回声；失败回执 configUpdateFailed。
+   */
+  private def setModelThinkingLayer(
+    ctx: WsDispatchCtx,
+    providerId: String,
+    modelId: String,
+    thinkingOpt: Option[io.circe.Json],
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    import ctx.*
+    val patch: Either[String, ThinkingMode.ThinkingLayerPatch] = thinkingOpt match
+      case None => Right(ThinkingMode.ThinkingLayerPatch()) // 空 patch = 摘除整个 thinking 节点
+      case Some(v) => v.as[ThinkingMode.ThinkingLayerPatch].left.map(_.message)
+    patch match
+      case Left(err) =>
+        logger.warn(s"setThinking(model) rejected: $err") *>
+          wsSend(ApiJson.configUpdateFailed(s"思考档位保存失败: $err"))
+      case Right(p) =>
+        val persist = IO.blocking {
+          val existing =
+            if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
+            else "{}"
+          val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+          parse(existing) match
+            case Left(e) => Left(s"配置解析失败: ${e.message}")
+            case Right(cfgJson) =>
+              ThinkingMode.patchLayerIntoConfig(cfgJson, providerId, modelId, p) match
+                case Left(err) => Left(err)
+                case Right(updated) =>
+                  // Restricted form (keyaudit-quickfix ①)：0600 落盘（同族先例）。
+                  nebflow.core.AtomicJson.writeSyncRestricted(path, updated.spaces2)
+                  Right(())
+        }
+        ConfigService.writeLocked(persist).attempt.flatMap {
+          case Left(e) =>
+            logger.warn(s"Failed to persist thinking layer: ${e.getMessage}") *>
+              wsSend(ApiJson.configUpdateFailed(s"思考档位保存失败: ${e.getMessage}"))
+          case Right(Left(err)) =>
+            logger.warn(s"Failed to persist thinking layer: $err") *>
+              wsSend(ApiJson.configUpdateFailed(s"思考档位保存失败: $err"))
+          case Right(Right(())) =>
+            // 内存 configRef 从盘上重读（每请求解析读它 ⇒ 热生效，不用重启/重载；
+            // NebflowServiceConfig 无 Encoder，走 loadServiceConfig 而非内存 patch）。
+            IO.blocking(nebflow.shared.Config.loadServiceConfig()).attempt.flatMap {
+              case Right(fresh) => configRef.set(fresh)
+              case Left(_) => IO.unit // 重读失败不回滚已落盘值（下次 reload 收敛）
+            } *>
+              broadcastServerConfig *>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "thinkingLayerSaved".asJson,
+                  "provider" -> providerId.asJson,
+                  "model" -> modelId.asJson
+                )
+              )
+        }
+    end match
+  end setModelThinkingLayer
+
+  private def handleSetWorkSchedule(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // 冻结调度（freeze-schedule spec ⑦ + 2026-08-25 裁定「设置关闭保留
+    // 配置」）：payload {type, workSchedule:{enabled?, segments?}}——
+    // 缺键从现有配置继承（toggle off 只置 disabled、segments 不清空不
+    // 重置；显式 segments:[] 仍可清空）。校验失败拒绝保存（配置不变）
+    // 并回 configUpdateFailed；成功 → ref 热更 + targeted write + 广播 +
+    // 立即让所有 Frozen agent 重评估（不用等 30s 轮询——改配置关功能即恢复）。
+    val json = parsedJson(text)
+    val payload = json.hcursor
+      .downField("workSchedule")
+      .as[Option[io.circe.Json]]
+      .toOption
+      .flatten
+      .getOrElse(json)
+    for
+      current <- sharedResources.freezeScheduleRef.get
+      merged <- IO.pure(nebflow.core.schedule.FreezeSchedule.mergeValidate(current, payload))
+      _ <- merged match
+        case Right(cfg) =>
+          // 冻结修复（2026-08-27）排序：写盘成功才热更 ref——persist 失败时
+          // 内存与盘保持一致并回执 failed（此前 persist 静默吞错 + ref 先行，
+          // 会造成「UI 已关、重启后又冻」的假保存）。写盘段持 config 写锁。
+          logger.info(s"Freeze schedule set: enabled=${cfg.enabled} segments=${cfg.segments.size}") *>
+            nebflow.service.ConfigService.writeLocked(persistWorkSchedule(cfg)).attempt.flatMap {
+              case Left(e) =>
+                logger.warn(s"Failed to persist work schedule: ${e.getMessage}") *>
+                  wsSend(ApiJson.configUpdateFailed(s"冻结配置保存失败: ${e.getMessage}"))
+              case Right(_) =>
+                sharedResources.freezeScheduleRef.set(cfg) *>
+                  broadcastServerConfig *>
+                  // 立即让所有 Frozen agent 重评估（不用等 30s 轮询——改配置
+                  // 关功能即恢复）。
+                  nebflow.core.processor.FreezeScheduler.scan(sharedResources)
+            }
+        case Left(err) =>
+          logger.warn(s"Invalid workSchedule payload rejected: $err") *>
+            wsSend(ApiJson.configUpdateFailed(err))
+    yield ()
+    end for
+  end handleSetWorkSchedule
+
+  private def handleSetSttConfig(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // #295 STT 可配置（用户 2026-08-18 拍板）→ A2 部分更新语义
+    // （2026-08-20）：payload {type, sttConfig: {endpoint?, apiKey?,
+    // model?}}。字段省略=保留旧值（前端空 key 输入框省略字段——旧
+    // 整文件替换语义会把已存 apiKey 覆盖丢失，此为 #295 A2 根因）；
+    // 字段显式空串=清除该字段；合并后无任何字段=删配置文件（回退
+    // 免费浏览器 Web Speech）。endpoint 设值须 http(s)://，model
+    // 非空，apiKey 原样存（key 不落地前端——serverConfig 广播只含
+    // sttConfigured/endpoint/model，永不回传 apiKey）。写盘走
+    // AtomicJson 原子写；写后 SttService.create() 重建热更
+    // （transcribe 立即走新配置）。
+    // 未走信封助手:字段级 Option 链(parse 后即取 sttConfig,回退 Json.obj()),非裸 parse-or-Null 同形,保持原样(2026-09-24)
+    val payload = parse(text).toOption
+      .flatMap(_.hcursor.downField("sttConfig").as[Option[Json]].toOption.flatten)
+      .getOrElse(Json.obj())
+    SttService.parsePatch(payload) match
+      case Left(err) =>
+        logger.warn(s"Invalid sttConfig payload rejected: $err") *>
+          wsSend(ApiJson.configUpdateFailed(err))
+      case Right(patch) =>
+        val oldCfgOpt = IO.blocking {
+          if os.exists(SttService.configPath) then parse(os.read(SttService.configPath)).toOption
+          else None
+        }
+        oldCfgOpt.flatMap { oldCfg =>
+          SttService.mergeConfig(oldCfg, patch) match
+            case Some(cfgJson) =>
+              val persistCfg = IO.blocking {
+                cfgJson.mapObject { obj =>
+                  obj("apiKey").flatMap(_.asString) match
+                    case Some(value) => obj.add("apiKey", Json.fromString(
+                      nebflow.core.secrets.ConfigCredentialStore.persist(nebflow.shared.PathUtil.dataRoot, value)))
+                    case None => obj
+                }
+              }
+              persistCfg.flatMap(j => AtomicJson.writeRestricted(SttService.configPath, j.noSpaces)) *>
+                SttService.create().flatMap { svc =>
+                  sttServiceRef.set(svc) *> logger.info(
+                    s"STT config set: endpoint=${svc.map(_.endpoint).getOrElse("(defaults)")}"
+                  )
+                } *>
+                broadcastServerConfig *>
+                wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+            case None =>
+              (if os.exists(SttService.configPath) then IO.blocking(os.remove(SttService.configPath))
+               else IO.unit) *>
+                sttServiceRef.set(None) *>
+                logger.info("STT config cleared (fallback to browser Web Speech)") *>
+                broadcastServerConfig *>
+                wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+        }
+    end match
+  end handleSetSttConfig
+
+  private def handleGetToolResultTtl(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // #341 WS 尾巴：TTL 设置面板读当前生效配置（Ref 是权威——含未
+    // 重启的热更值）。无敏感字段，全量回显。
+    sharedResources.toolResultTtlRef.get.flatMap { cfg =>
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "toolResultTtl".asJson,
+          "config" -> cfg.asJson
+        )
+      )
+    }
+  end handleGetToolResultTtl
+
+  private def handleSetToolResultTtl(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // #341 WS 尾巴：payload {type, config:{enabled,ttlMinutes,
+    // keepRecent}}（全量替换，三字段必填；minChars 已移除，旧负载
+    // 携带该字段静默忽略）。STRICT 校验（负数/非整数/超界/缺字段 →
+    // 数/非整数/超界/缺字段 → 拒绝并 warn，回 configUpdateFailed——与
+    // boot 时 fail-safe load 不同：交互面必须把错误亮给用户）。
+    // 成功 → nebflow.json toolResultTtl 节 read-merge + AtomicJson
+    // 原子写 + Ref 热更（下个 LLM 请求生效，镜像 freezeScheduleRef）
+    // → 回 toolResultTtlSaved。
+    // 未走信封助手:字段级 Option 链(parse 后即取 config,回退 Json.Null),非裸 parse-or-Null 同形,保持原样(2026-09-24)
+    val payload = parse(text).toOption
+      .flatMap(_.hcursor.downField("config").as[Option[Json]].toOption.flatten)
+      .getOrElse(Json.Null)
+    nebflow.core.compact.ToolResultTtlConfig.parseStrict(payload) match
+      case Left(err) =>
+        logger.warn(s"Invalid toolResultTtl payload rejected: $err") *>
+          wsSend(ApiJson.configUpdateFailed(err))
+      case Right(cfg) =>
+        val persist = IO.blocking {
+          val existing =
+            if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
+            else "{}"
+          val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+          parse(existing).foreach { json =>
+            val updated = json.mapObject(_.add("toolResultTtl", cfg.asJson))
+            // writeSyncRestricted (not write): we are already inside IO.blocking —
+            // the IO-returning variant would be built, not run. Restricted form
+            // (keyaudit-quickfix ①): the config file lands 0600, not umask 0644.
+            AtomicJson.writeSyncRestricted(path, updated.noSpaces)
+          }
+        }
+        // 冻结修复（2026-08-27）：同族排序——persist 成功才热更 ref，
+        // 失败回执 failed（写盘段持 config 写锁）。
+        nebflow.service.ConfigService.writeLocked(persist).attempt.flatMap {
+          case Left(e) =>
+            logger.warn(s"Failed to persist toolResultTtl: ${e.getMessage}") *>
+              wsSend(ApiJson.configUpdateFailed(s"TTL 配置保存失败: ${e.getMessage}"))
+          case Right(_) =>
+            sharedResources.toolResultTtlRef.set(cfg) *>
+              logger.info(
+                s"Tool result TTL set: enabled=${cfg.enabled} ttlMinutes=${cfg.ttlMinutes} " +
+                  s"keepRecent=${cfg.keepRecent}"
+              ) *>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "toolResultTtlSaved".asJson,
+                  "config" -> cfg.asJson
+                )
+              )
+        }
+    end match
+  end handleSetToolResultTtl
+
+  private def handleSetVoiceMuted(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // 未走信封助手:字段级 Option 链(parse 后即取 muted,回退 false),非裸 parse-or-Null 同形,保持原样(2026-09-24)
+    val muted = parse(text).toOption
+      .flatMap(_.hcursor.downField("muted").as[Boolean].toOption)
+      .getOrElse(false)
+    sharedResources.voiceMutedRef.set(muted)
+
+  private def handleSetLlmLog(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // 默认关批（2026-09-13）：缺字段不再视为「开」——与新默认态一致
+    // （fail-safe：无明确指令不改状态；UI 恒带 enabled，见 sidebar.js）。
+    // 未走信封助手:字段级 Option 链(parse 后即取 enabled,回退 false),非裸 parse-or-Null 同形,保持原样(2026-09-24)
+    val enabled = parse(text).toOption
+      .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
+      .getOrElse(false)
+    // 持久化优先（D-A：显式改动过的值须跨重启保持）：落盘成功才热更
+    // 内存态，镜像 setToolResultTtl 的「persist 成功才热更」排序——
+    // 不产生「内存已改、盘上未改」的窗口。落盘失败 = fail-loud：
+    // WARN + configUpdateFailed，并回**权威现值**让 UI 与实际一致。
+    nebflow.service.ConfigService.setLlmLogEnabled(enabled).attempt.flatMap {
+      case Right(_) =>
+        LlmLogWriter.setEnabled(enabled)
+        logger.info(s"LLM log set to: $enabled") *>
+          wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> enabled.asJson))
+      case Left(e) =>
+        logger.warn(s"Failed to persist llmLog.enabled=$enabled: ${e.getMessage}") *>
+          wsSend(ApiJson.configUpdateFailed(s"LLM 日志开关保存失败: ${e.getMessage}")) *>
+          wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
+    }
+  end handleSetLlmLog
+
+  private def handleGetLlmLog(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
+
+  private def handleGetModelOptions(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val sessionId = inboundEnvelope(text).sessionId
+    sharedResources.providerRegistry.getAllModelsDetailed().flatMap { models =>
+      sharedResources.sessionModelOverrides.get.flatMap { overrides =>
+        val currentOpt = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}")
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "modelOptions".asJson,
+            "sessionId" -> sessionId.asJson,
+            "models" -> models.map { case (ref, label, desc) =>
+              io.circe.Json.obj(
+                "ref" -> ref.asJson,
+                "label" -> label.asJson,
+                "description" -> desc.asJson
+              )
+            }.asJson,
+            "current" -> currentOpt.asJson,
+            "source" -> (if currentOpt.isDefined then "override" else "follow").asJson
+          )
+        )
+      }
+    }
+  end handleGetModelOptions
+
+  private def handleSetSessionModel(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+    val modelRef = json.hcursor.downField("modelRef").as[Option[String]].getOrElse(None)
+    if sessionId.nonEmpty then
+      (modelRef match
+        case Some(ref) =>
+          sharedResources.providerRegistry.getCandidateForRef(ref).flatMap {
+            case Some(candidate) =>
+              sessionStore.updateSessionModel(sessionId, Some(ref)) *>
+                sharedResources.sessionModelOverrides.update(_ + (sessionId -> candidate)) *>
+                IO.pure(Right(s"${candidate.providerId}/${candidate.model}"))
+            case None =>
+              IO.pure(Left(s"Unknown model: $ref"))
+          }
+        case None =>
+          sessionStore.updateSessionModel(sessionId, None) *>
+            sharedResources.sessionModelOverrides.update(_ - sessionId).as(Right("default"))
+      ).flatMap {
+        case Right(ref) =>
+          // Notify agent actor of context window change for compaction threshold
+          val notifyAgent = sharedResources.sessionModelOverrides.get.flatMap { overrides =>
+            overrides.get(sessionId) match
+              case Some(candidate) =>
+                ensureAgent(sessionId)(ref => ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow))
+              case None => IO.unit
+          }
+          notifyAgent *> wsSend(
+            io.circe.Json
+              .obj("type" -> "sessionModelSet".asJson, "sessionId" -> sessionId.asJson, "modelRef" -> ref.asJson)
+          )
+        case Left(err) =>
+          // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族(type 值不同,不与 configUpdateFailed 收敛集混并),保持手写(2026-09-25)
+          wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
+      }
+    else IO.unit
+    end if
+  end handleSetSessionModel
+
+  private def handleGetCompactThreshold(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // ctxthresh 批（2026-09-15 方案 A）：面板打开时读**权威值**——Ref 含未
+    // 重启的热更值，盘上 meta 含跨重启保留值（先例 getToolResultTtl）。
+    // 未走信封助手:回退写法为非限定 Json.Null,与 io.circe.Json.Null 家族形态不一致,按边界保持原样(2026-09-24)
+    val json = parse(text).toOption.getOrElse(Json.Null)
+    val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+    if sid.nonEmpty then compactThresholdInfo(sid).flatMap(wsSend) else IO.unit
+
+  private def handleSetCompactThreshold(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // ctxthresh 批：payload {sessionId, ratio: number|null}（ratio=null ⇒
+    // 恢复默认 = 清覆盖）。STRICT 校验（镜像 setToolResultTtl 的交互面纪律）：
+    // 值域逐字 = 作者卡答「上限90%，下限…大于15%」⇒ `15% < r ≤ 90%`
+    // （CompactThresholdOverride.isValid）。越界 ⇒ **拒绝并亮错**，不做静默
+    // 钳制——「钳回」是 UI 侧滑杆的动态下限职责（js/ctxthresh.js）。
+    // 成功路径 = persist-then-hot 三步（盘上 SessionMeta → 内存 Ref → 通知
+    // 活体 root agent）+ 回权威回显帧。
+    // 🔴 作用域闸（首行）= fail-closed + Nebula 身份门（2026-09-15 返工，见
+    // `isRootScopeSession`）——非 Nebula 会话 / 幽灵 id / 未注册且非活跃者
+    // 一律走 reject 分支，**绝不落盘**。
+    // 未走信封助手:回退写法为非限定 Json.Null,与 io.circe.Json.Null 家族形态不一致,按边界保持原样(2026-09-24)
+    val json = parse(text).toOption.getOrElse(Json.Null)
+    val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+    val rawRatio = json.hcursor.downField("ratio").as[Option[Double]].toOption.flatten
+    if sid.isEmpty then IO.unit
+    else
+      val reject = (msg: String) =>
+        logger.warn(s"Rejected setCompactThreshold for $sid: $msg") *>
+          wsSend(
+            Json.obj(
+              "type" -> Json.fromString("compactThresholdError"),
+              "sessionId" -> Json.fromString(sid),
+              "message" -> Json.fromString(msg)
+            )
+          )
+      isRootScopeSession(sid).flatMap { isRoot =>
+        if !isRoot then reject("scope: only the root session (Nebula window) may override")
+        else if rawRatio.exists(r => !CompactThresholdOverride.isValid(r)) then
+          reject(
+            s"ratio must satisfy 15% < r <= 90% (got ${rawRatio.getOrElse(Double.NaN)})"
+          )
+        else
+          val persist = sessionStore.updateSessionCompactThreshold(sid, rawRatio) *>
+            sharedResources.sessionCompactThreshold.update { m =>
+              rawRatio.fold(m - sid)(r => m + (sid -> r))
+            } *>
+            ensureAgent(sid)(ref => ref ! AgentCommand.SetCompactThresholdRatio(rawRatio))
+          persist.handleErrorWith { e =>
+            logger.warn(s"setCompactThreshold failed for $sid: ${e.getMessage}") *>
+              wsSend(
+                Json.obj(
+                  "type" -> Json.fromString("compactThresholdError"),
+                  "sessionId" -> Json.fromString(sid),
+                  "message" -> Json.fromString(e.getMessage)
+                )
+              )
+          } *> compactThresholdInfo(sid).flatMap(wsSend)
+      }
+    end if
+  end handleSetCompactThreshold
+
+  private def handleSetSafetyMode(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // ── 通道处置（permshield S1，2026-09-13 作者重裁「候选 B」）────────────
+    // **改造为写全局持久**（不退役），理由：
+    //   ① 盾牌是作者指定的唯一 UI 调整入口（「就使用 header 的盾牌来调整」），
+    //      它发的就是这个帧；退役该帧 ⇒ 盾牌在 F1 落地前完全失效（功能回归）。
+    //   ② 作者口径「落全局持久（跟盾牌走同一条路，重启后仍生效）」要的正是
+    //      改这条通道的**写入目标**，不是删掉它。
+    // 处置后语义：写 `nebflow.json` 的 `safety.defaultMode`（与 REST
+    // `PUT /api/safety/mode` 同一个持久函数 ⇒ 同一路），广播 `configUpdated`
+    // （所有客户端同步），再推本连接会话列表。
+    // 🔴 旧行为「本会话临时覆盖、不落盘」**已消失**：档位不再有会话维度。
+    // `sessionId` 仅用于回推列表（档位本身是应用级的，对所有会话一致）。
+    val json = parsedJson(text)
+    val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+    val rawMode = json.hcursor.downField("safetyMode").as[String].toOption
+    // 三档显式白名单：未知值**拒绝**（旧行为是静默 `getOrElse("confirm-edits")`
+    // ——把拼错/缺失的值悄悄变成最严档，用户无感且不可诊断）。拒绝 ⇒ 不落盘。
+    val modeOpt = rawMode.flatMap(nebflow.core.SafetyMode.fromWire)
+    if sid.nonEmpty then
+      modeOpt match
+        case None =>
+          // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "error".asJson,
+              "message" -> s"unknown safetyMode '${rawMode.getOrElse("")}' — valid: confirm-edits, auto-edits, auto-all".asJson
+            )
+          )
+        case Some(mode) =>
+          persistGlobalSafetyMode(nebflow.core.SafetyMode.toString(mode))
+            .flatMap(_ => sendAgentSessionList(wsSend, sid))
+            .handleErrorWith { e =>
+              // 落盘失败 = 档位**没有**改变（fail-loud，不静默回滚）
+              logger.error(s"setSafetyMode persist failed: ${e.getMessage}", e) *>
+                // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
+                wsSend(
+                  io.circe.Json.obj(
+                    "type" -> "error".asJson,
+                    "message" -> s"failed to persist safety mode '${nebflow.core.SafetyMode.toString(mode)}': ${e.getMessage}".asJson
+                  )
+                )
+            }
+    else IO.unit
+    end if
+  end handleSetSafetyMode
+
+  private def handleSetBypass(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // Backward compat: old clients send { bypass: Boolean }（等价于
+    // setSafetyMode 的两档特例）——permshield S1 起同样**写全局持久**；
+    // 该帧已无任何前端调用点（`grep -rn setBypass src/main/resources/web` = 0），
+    // 保留仅因 wire 向后兼容（老客户端 / 外部脚本）。
+    val json = parsedJson(text)
+    val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
+    val bypass = json.hcursor.downField("bypass").as[Boolean].getOrElse(false)
+    val mode = if bypass then "auto-all" else "confirm-edits"
+    if sid.nonEmpty then
+      persistGlobalSafetyMode(mode)
+        .flatMap(_ => sendAgentSessionList(wsSend, sid))
+        .handleErrorWith { e =>
+          logger.error(s"setBypass persist failed: ${e.getMessage}", e) *>
+            // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "error".asJson,
+                "message" -> s"failed to persist safety mode '$mode': ${e.getMessage}".asJson
+              )
+            )
+        }
+    else IO.unit
+  end handleSetBypass
+
+  private def handleGetConfig(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    configService.isConfigured.flatMap { configured =>
+      configService.getConfig.flatMap { cfg =>
+        nebflow.core.OnboardingService.readState().flatMap { onboarding =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "configData".asJson,
+              "config" -> cfg.asJson,
+              "configured" -> configured.asJson,
+              // null = no marker yet (fresh install); frontend shows the wizard
+              "onboarding" -> onboarding.map(_.name).asJson,
+              // 本机设备名（设备角标本名批 2026-10-27 加法字段，老客户端忽略未知键）：
+              // 引擎自身身份读数（device.json deviceName；无身份 ⇒ 主机名兜底，
+              // 恒非「local」字样）。原值直出（含隔离 `-iso-<hex8>` 后缀）——剥后缀
+              // 是前端显示面职责，身份面保真。
+              "selfDevice" -> io.circe.Json.obj(
+                "name" -> nebflow.neblink.core.DeviceIdentity.selfDeviceNameOrHost.asJson
+              )
+            )
+          )
+        }
+      }
+    }
+  end handleGetConfig
+
+  /**
+   * A4 (perf-481): serve the tool-description list on demand.
+   *
+   * The list used to be embedded in every `serverConfig` frame (connect +
+   * every config broadcast, ~93.5 KB each). The frontend asks for it once per
+   * connection instead; the frame shape is unchanged (`{type:"toolsList", tools}`)
+   * so `state.availableTools` stays populated by the same assignment.
+   */
+  private def handleGetToolsList(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    ctx.sendToolsList(wsSend)
+  end handleGetToolsList
+
+  private def handleSetOnboardingState(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // F3 onboarding state machine: pending | done | skipped.
+    // HARD GATE (server-side, user ruling 2026-08-15): done is
+    // rejected unless a successful probeLlm is on record — the WS
+    // surface can no longer bypass the gate the frontend enforces.
+    val stJson = parsedJson(text)
+    val stStr = stJson.hcursor.downField("state").as[String].getOrElse("")
+    nebflow.core.OnboardingService.OnboardingState.fromString(stStr) match
+      case Some(st) =>
+        nebflow.core.OnboardingService.setState(st).flatMap {
+          case Right(applied) =>
+            wsSend(io.circe.Json.obj("type" -> "onboardingStateSet".asJson, "state" -> applied.name.asJson))
+          case Left(reason) =>
+            // 未走 ApiJson 信封助手:{type:error,code,message} 三键(带 code),按 ok+code 族同款裁定单列,保持手写(2026-09-25)
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "error".asJson,
+                "code" -> "probe_required".asJson,
+                "message" -> reason.asJson
+              )
+            )
+        }
+      case None =>
+        // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
+        wsSend(
+          io.circe.Json.obj("type" -> "error".asJson, "message" -> s"invalid onboarding state: $stStr".asJson)
+        )
+    end match
+  end handleSetOnboardingState
+
+  /**
+   * Onboarding 问卷逐题落账（personal-agent 批 2026-10-04）。
+   *
+   * 帧形：`{type:"setOnboardingAnswers", answers:{<id>:{kind,label,scope,value}}}`。
+   * 逐题 upsert（不整表覆盖——一题一卡逐题推进，覆盖会抹掉前面已答的题）。
+   *
+   * 本题面只落**答案**；产物（Soul.md / User.md / displayName）由
+   * [[handleFinishOnboarding]] 在收尾时统一落盘（避免每题都写文件）。
+   */
+  private def handleSetOnboardingAnswers(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val answersJson = parsedJson(text).hcursor.downField("answers").focus
+    answersJson.flatMap(_.asObject) match
+      case None =>
+        wsSend(
+          io.circe.Json.obj("type" -> "error".asJson, "message" -> "invalid onboarding answers payload".asJson)
+        )
+      case Some(obj) =>
+        val patch = obj.toMap.map((k, v) => k -> (v: io.circe.Json))
+        nebflow.core.OnboardingService
+          .mergeAnswers(patch)
+          .attempt
+          .flatMap {
+            case Right(_) =>
+              wsSend(
+                io.circe.Json.obj("type" -> "onboardingAnswersSaved".asJson, "count" -> patch.size.asJson)
+              )
+            case Left(e) =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "error".asJson,
+                  "message" -> s"failed to persist onboarding answers: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}".asJson
+                )
+              )
+          }
+    end match
+  end handleSetOnboardingAnswers
+
+  /**
+   * Onboarding 收尾产物落盘（personal-agent 批 2026-10-04）。
+   *
+   * 帧形：`{type:"finishOnboarding", answers:{...}, modelRef?, contextWindow?}`。
+   * 一次调用做三件事（全部单一存储、零旁路）：
+   *   ① 模型选择 + context window 写回**与设置面同一配置存储**
+   *      （`llm.providers.<id>.models[].contextWindow`，经 `updateConfig` 单点）；
+   *   ② `Soul.md` / `User.md` 产物落盘（全跳过也写结构完整骨架）——
+   *      🔴 记忆面**零模型痕迹**（作者 2026-10-05「配置模型不需要进记忆」：
+   *      模型选择只活在 ① 的配置存储里，产物文件不渲染任何模型行）；
+   *   ③ 起名结果写 `agents/<root>/agent.json` 的 `displayName`（🔴 身份键不变）。
+   * 回执带两份文件的路径 / 字节数与生效窗口，供前端完成摘要显示。
+   */
+  private def handleFinishOnboarding(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val answersJson = json.hcursor.downField("answers").focus.flatMap(_.asObject).map(_.toMap).getOrElse(Map.empty)
+    val answers = answersJson.flatMap { (id, v) =>
+      val c = v.hcursor
+      val kindStr = c.downField("kind").as[String].getOrElse("choice")
+      // 多选：values 数组并集成一行文本（与 v2 demo 的 `约定：A；B` 同形）
+      val value = c.downField("values").as[Array[String]].toOption match
+        case Some(vs) => vs.mkString("；")
+        case None => c.downField("value").as[String].getOrElse("")
+      Some(
+        id -> nebflow.core.OnboardingArtifacts.Answer(
+          id = id,
+          label = c.downField("label").as[String].getOrElse(id),
+          scope = c.downField("scope").as[String].getOrElse("soul"),
+          kind = nebflow.core.OnboardingArtifacts.Kind.fromString(kindStr),
+          value = value
+        )
+      )
+    }
+    val modelRef = json.hcursor.downField("modelRef").as[String].toOption.filter(_.nonEmpty)
+    val ctxWindow = json.hcursor.downField("contextWindow").as[Option[Int]].toOption.flatten
+    // 模型选择先写配置（同一存储单点）；随后落产物。配置写失败不阻断产物
+    // （产物是记忆面，与 provider 配置无依赖）——但回执如实带上错误。
+    //
+    // 两处落点（作者第 2 条「选定模型 + context window 写回同一配置存储」）：
+    //   ① contextWindow → `llm.providers.<id>.models[].contextWindow`（provider 面）
+    //   ② 选定 ref      → `agents/<root>/agent.json` 的 `model` 键（模型链面，
+    //      设置面板 `/model` PUT 的同一字段）——少了 ② 用户选的大脑进不了任何
+    //      配置面，设置面 `GET /api/agents/Nebula/model` 仍是 `resolvedFrom:"seed"`
+    //      （round-2 复核的 fail 判据）。两处都走设置面自己的键，无第二存储。
+    val modelWrite: IO[Option[String]] = modelRef match
+      case None => IO.pure(None)
+      case Some(ref) =>
+        for
+          cfgStr <- configService.getConfig
+          chainRes <- nebflow.core.OnboardingModelStep.writeSelectedChain(ref)
+          chainErr <- chainRes match
+            case Left(err) => IO.pure(Some(err))
+            case Right(_) => IO.pure(None)
+          ctxErr <- IO
+            .blocking {
+              io.circe.parser.parse(cfgStr).toOption match
+                case None => Left("current config is unreadable")
+                case Some(json) => nebflow.core.OnboardingModelStep.applySelectionJson(json, ref, ctxWindow)
+            }
+            .flatMap {
+              case Left(err) => IO.pure(Some(err))
+              case Right(patched) =>
+                configService.updateConfig(patched.noSpaces).map {
+                  case Left(err) => Some(err)
+                  case Right(_) => None
+                }
+            }
+        yield chainErr.orElse(ctxErr)
+    end modelWrite
+    modelWrite.flatMap { modelErr =>
+      nebflow.core.OnboardingArtifacts
+        // 产物只吃问卷答案（记忆面）；modelRef 只走上面的配置写回（①），不进产物。
+        .apply(answers)
+        .flatMap { res =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "onboardingArtifacts".asJson,
+              "soulPath" -> res.soulPath.asJson,
+              "soulBytes" -> res.soulBytes.asJson,
+              "userPath" -> res.userPath.asJson,
+              "userBytes" -> res.userBytes.asJson,
+              "agentName" -> res.agentName.asJson,
+              "allSkipped" -> res.allSkipped.asJson,
+              "skipped" -> res.skipped.asJson,
+              "modelWriteError" -> modelErr.asJson
+            )
+          )
+        }
+        .handleErrorWith { e =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "error".asJson,
+              "message" -> s"failed to write onboarding artifacts: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}".asJson
+            )
+          )
+        }
+    }
+  end handleFinishOnboarding
+
+  /**
+   * Onboarding 模型步骤的**可用模型列表**（与设置面同源）。
+   *
+   * 帧形：`{type:"getOnboardingModels"}` → `{type:"onboardingModels", providers:[...],
+   * models:[...], source:"configured"}`。数据源 = 已配置 provider 的
+   * `llm.providers[*].models[*]`（设置面板保存的同一份数据）；在线探测仍走设置面既有的
+   * `POST /api/provider/models`，本帧**不重复实现**探测。
+   */
+  private def handleGetOnboardingModels(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    configService.getConfig.flatMap { cfgStr =>
+      IO.blocking {
+        // 🔴 必须先过 Config.ensureLlmDefaults：`NebflowServiceConfig` 的 `llm`
+        // 是唯一的非 Option 字段，而 circe 的 deriveDecoder **不认** case class
+        // 默认值 ⇒ 冷启动中间态（种子只写 `plugins.trust`、无 `llm` 节）的原始
+        // JSON 直接 `.as[...]` 必然解失败，全新 home 上此帧回
+        // `{type:"error", ...}`，引导的模型步骤在主路径上断掉。单一实现与
+        // [[Config.loadServiceConfig]] 完全同源（此处原先漏了这一步）。
+        io.circe.parser
+          .parse(cfgStr)
+          .toOption
+          .map(nebflow.shared.Config.ensureLlmDefaults)
+          .flatMap(_.as[nebflow.shared.NebflowServiceConfig].toOption)
+      }.flatMap {
+        case None =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "error".asJson,
+              "message" -> "current config is unreadable".asJson
+            )
+          )
+        case Some(cfg) =>
+          val rows = nebflow.core.OnboardingModelStep.listConfiguredModels(cfg)
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "onboardingModels".asJson,
+              "source" -> "configured".asJson,
+              "providers" -> nebflow.core.OnboardingModelStep.configuredProviders(cfg).asJson,
+              "models" -> io.circe.Json.arr(rows.map(_.asJson)*)
+            )
+          )
+      }
+    }
+  end handleGetOnboardingModels
+
+  private def handleProbeLlm(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // Onboarding HARD GATE (user ruling 2026-08-15): one real LLM call
+    // through the chain. The welcome message may only be sent after this
+    // returns ok=true.
+    //
+    // `modelRef` (optional) = the model the user picked in the model step; it is
+    // passed THROUGH to OnboardingService.probeLlm so the probe measures that
+    // model instead of the seed chain (verifier round-2 finding: without it a
+    // dead picked brain still probed ok=true). The frame keeps working when the
+    // field is absent (skip / legacy client) — then the global chain decides.
+    val modelRef =
+      parsedJson(text).hcursor.downField("modelRef").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+    // The current config body rides along so the probe can refuse a picked ref
+    // that names a model the config does not contain (an unknown id resolves to
+    // no candidate, so the chain would otherwise cover for it and report ok —
+    // E2E section G4). Same store the Settings panel reads, read once here.
+    val probe =
+      if modelRef.isDefined then configService.getConfig.map(cfg => (Some(cfg): Option[String]))
+      else IO.pure(None)
+    probe.flatMap(cfgOpt => nebflow.core.OnboardingService.probeLlm(sharedResources.llm, modelRef, cfgOpt)).flatMap {
+      pr =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "probeResult".asJson,
+            "ok" -> pr.ok.asJson,
+            "provider" -> pr.provider.asJson,
+            "error" -> pr.error.asJson,
+            // Echo the measured ref so the caller (and an out-of-band reading) can
+            // tell WHICH model answered rather than assuming the picked one did.
+            "requested" -> modelRef.asJson
+          )
+        )
+    }
+  end handleProbeLlm
+
+  private def handleUpdateConfig(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val cfg = parse(text).flatMap(_.hcursor.downField("config").as[String]).getOrElse("")
+    val requestId = parse(text).toOption.flatMap(_.hcursor.downField("requestId").as[String].toOption)
+    if cfg.nonEmpty then
+      // 冻结修复（2026-08-27）：runtime 热更键以内存 ref 为权威——调用方的
+      // config 快照可能陈旧（页面加载时刻底稿），不覆写则任意 provider 类
+      // 保存会把 workSchedule/thinkingConfig/toolResultTtl 回滚到快照值。
+      (
+        sharedResources.freezeScheduleRef.get,
+        sharedResources.thinkingConfigRef.get,
+        sharedResources.toolResultTtlRef.get
+      ).mapN { (wsCfg, thCfg, ttlCfg) =>
+        Map[String, io.circe.Json](
+          "workSchedule" -> wsCfg.asJson,
+          "thinkingConfig" -> thCfg.asJson,
+          "toolResultTtl" -> ttlCfg.asJson
+        )
+      }.flatMap { runtimeOverrides =>
+        configService.updateConfig(cfg, runtimeOverrides).flatMap {
+          case Left(err) =>
+            // 未走 ApiJson 信封助手:{type:error,message} 是通用错误帧族,不与 configUpdateFailed 收敛集混并,保持手写(2026-09-25)
+            // `msgType` names the rejected request (the same convention as the scheduled-task
+            // rejections in WsTasksWorkspaceHandlers), so a client can tell a refused config save
+            // from a failed conversation turn instead of treating every `error` frame as one.
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "error".asJson,
+                "msgType" -> "updateConfig".asJson,
+                "message" -> err.asJson,
+                "requestId" -> requestId.asJson
+              )
+            )
+          case Right(_) =>
+            // #311: the first provider/model save seeds/repairs the default
+            // preset (from the just-saved llm.model chain) so agent model
+            // resolution never silently falls to a hidden global chain.
+            IO
+              .delay(nebflow.core.presets.PresetStore().ensureDefaultPreset())
+              .attempt
+              .flatMap {
+                case Right(_) => IO.unit
+                case Left(e) => logger.warn(s"Default preset seeding failed: ${e.getMessage}")
+              } *>
+              // Hot-reload: update in-memory config and clear adapter cache
+              sharedResources.providerRegistry
+                .reloadConfig(Some(sharedResources.sessionModelOverrides))
+                .attempt
+                .flatMap {
+                  case Right(staleIds) =>
+                    // #33: keep the persisted session meta in sync — dropped
+                    // overrides also clear their modelRef on disk so the UI
+                    // state matches the in-memory session overrides.
+                    staleIds.traverse_(id => sessionStore.updateSessionModel(id, None)) *>
+                      logger.info("Config hot-reloaded successfully")
+                  case Left(e) =>
+                    logger.warn(s"Config hot-reload failed: ${e.getMessage}")
+                } *> wsSend(
+                io.circe.Json
+                  .obj("type" -> "configUpdated".asJson, "success" -> true.asJson, "requestId" -> requestId.asJson)
+              )
+        }
+      }
+    else IO.unit
+    end if
+  end handleUpdateConfig
+
+  private def handleToggleMcpServer(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // 未走信封助手:此处产出 HCursor(失败回退 Json.Null.hcursor),非 Json 回退同形,保持原样(2026-09-24)
+    val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+    val serverId = hc.downField("serverId").as[String].getOrElse("")
+    val enabled = hc.downField("enabled").as[Boolean].getOrElse(false)
+    if serverId.nonEmpty then
+      configRef.get.flatMap { cfg =>
+        cfg.mcpServers.getOrElse(Map.empty).get(serverId) match
+          case Some(mcpCfg) =>
+            val action =
+              if enabled then mcpManager.enableServer(serverId, mcpCfg) else mcpManager.disableServer(serverId)
+            // 冻结修复（2026-08-27）：persist 持锁 + 失败回执（不再静默）。
+            action *>
+              nebflow.service.ConfigService
+                .writeLocked(persistMcpServerEnabled(serverId, enabled))
+                .attempt
+                .flatMap {
+                  case Left(e) =>
+                    logger.warn(s"Failed to persist MCP server state: ${e.getMessage}") *>
+                      wsSend(ApiJson.configUpdateFailed(s"MCP 状态保存失败: ${e.getMessage}")) *>
+                      broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
+                  case Right(_) => broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
+                }
+          case None =>
+            logger.warn(s"toggleMcpServer: server '$serverId' not found in config") *> IO.unit
+      }
+    else IO.unit
+    end if
+  end handleToggleMcpServer
+
+end WsConfigHandlers

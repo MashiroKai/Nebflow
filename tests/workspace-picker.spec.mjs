@@ -1,12 +1,18 @@
 // workspace-picker.spec.mjs — ProjectCreate「选择工作区」卡 + 应用内目录浏览器 E2E。
 //
 // 覆盖面（前端卡片层与弹窗层；后端为 sbt 编译/资产契约覆盖）：
-//  - T1 卡片渲染：SVG 文件夹图标 + 「选择工作区」大目标 + 候选 chips 次级化；
-//    点击（目标/卡片空白整体）→ 直接打开应用内目录浏览器（workspacePicker.js，
-//    2026-09-06 作者拍板：复用文件浏览器「选择目录」设计 + 新建文件夹，不走系统对话框）
+//  - T1 卡片渲染：SVG 文件夹图标 + 「选择工作区」大目标；2026-09-09 作者裁定
+//    后端不下发候选——无候选 chips、无「其他…」（该条**未被** 09-17 裁定取代）；
+//    2026-09-17 作者裁定 ②-7 取代了「空 options = 自由输入 textarea 直接可见」一条
+//    ——本卡 freeInput=false ⇒ 正常路径 DOM 无 textarea（选择面不可用时的降级
+//    兜底面见 tests/project-create-panel.spec.mjs T3/T4）；点击（目标/卡片空白整体）
+//    → 直接打开应用内目录浏览器（workspacePicker.js，2026-09-06 作者拍板：复用
+//    文件浏览器「选择目录」设计 + 新建文件夹，不走系统对话框）
 //  - T2 应用内浏览器弹窗：fixture 目录树导航 / 新建文件夹 / 选中确认 →
-//    askUserAnswer 携带所选路径 + 卡片回显
-//  - T3 弹窗取消 → 卡片回待选态（留再次选择/手输余地）
+//    askUserAnswer 携带所选路径 + 卡片回显（选中即满足作答并自动确认）
+//  - T3 弹窗取消 → 卡片回待选态（留再次选择余地）
+//
+// 运行需真实隔离实例（本 spec 走真实 ws 分发入口）：本批未跑（见报告 R7/开放项）。
 //
 // 入站帧注入方式：捕获真实 ws.js 分发入口（state.ws.onmessage 原闭包），
 // 之后以 FakeEvent 调用——走真实 GLOBAL/TERMINAL 路由 + onMessage 订阅链。
@@ -21,6 +27,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { establishSession } from './helpers/session-rail.mjs';
 
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8300';
 const NEBFLOW_HOME = process.env.NEBFLOW_HOME ?? '/tmp/nb-ws-picker-home';
@@ -37,14 +44,19 @@ const TOKEN = process.env.NEBFLOW_TOKEN ?? defaultToken();
 const SID = 'e2e-ws-picker-session';
 const RID = 'req-wsp-1';
 
+// 2026-09-17 作者裁定后的真实面板载荷形态：后端不下发候选（options 空）+ dirPicker
+// + freeInput=false（②-7：前端不渲染自由输入 textarea、不恢复草稿）。
 const DIR_PICK_ITEM = {
-  question: 'ProjectCreate 需要项目工作区路径（E2E fixture 问题文案）',
+  question: 'ProjectCreate 需要项目工作区路径（E2E fixture 问题文案）— 点击上方「选择工作区」打开应用内目录浏览器（可逐级浏览、新建文件夹，含隐藏目录）；选择后即完成创建。',
   dirPicker: true,
-  options: [{ label: '/tmp/ws-fixture/alpha' }, { label: '/tmp/ws-fixture/beta' }],
+  freeInput: false,
+  options: [],
 };
 
 async function setup(page, item = DIR_PICK_ITEM, requestId = RID) {
-  await page.goto(`${BASE_URL}/?token=${TOKEN}`);
+  // Stage D: the URL token rail is retired — establish the session through
+  // the one-time console ticket chain (helpers/session-rail.mjs).
+  await establishSession(BASE_URL, TOKEN, page);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(600);
 
@@ -98,7 +110,7 @@ function lastCard(page) {
 // ============================================================
 
 test.describe('workspace-picker card', () => {
-  test('T1 SVG 图标 + 选择工作区大目标；点击直接打开应用内目录浏览器；候选 chips 次级化', async ({ page }) => {
+  test('T1 SVG 图标 + 选择工作区大目标；无候选无其他…；点击直接打开应用内目录浏览器', async ({ page }) => {
     await setup(page);
     const box = lastCard(page);
     const target = box.locator('.ws-pick-target');
@@ -113,11 +125,13 @@ test.describe('workspace-picker card', () => {
     await expect(target.locator('.ws-pick-title')).toHaveText(/选择工作区|Pick Workspace/);
     await expect(target.locator('.ws-pick-hint')).toContainText(/应用内目录浏览器|in-app folder browser/i);
 
-    // 候选 chips 次级化：仍是 option-btn（机制不变）但带 demote 类
-    const chips = box.locator('.option-btn.ws-pick-candidate');
-    await expect(chips).toHaveCount(2);
-    const chipBox = await chips.first().boundingBox();
-    expect(chipBox.height).toBeLessThan(40); // 视觉弱化，非主体
+    // 2026-09-09 作者裁定：无候选 chips、无「其他…」按钮（该条未被 09-17 裁定取代）
+    await expect(box.locator('.option-btn')).toHaveCount(0);
+    await expect(box.locator('.ws-pick-candidate')).toHaveCount(0);
+    // 2026-09-17 作者裁定 ②-7：freeInput=false ⇒ 正常路径 DOM 无自由输入 textarea
+    // （改造前该读数 = 1）；未作答时确认仍禁用（门控由选择面写入解锁）
+    await expect(box.locator('.option-custom-input')).toHaveCount(0);
+    await expect(box.locator('.option-confirm')).toBeDisabled();
 
     // 点击大目标 → 直接打开应用内目录浏览器（workspacePicker.js），发 wsBrowse.list 出站帧
     await target.click();
@@ -128,16 +142,17 @@ test.describe('workspace-picker card', () => {
     ]);
     await expect(target).toHaveClass(/picking/); // 选择中态
 
-    // 关闭弹窗（取消）→ 回待选态，再走手输路径兜底：Other… 输入 + 确认可独立作答
+    // 关闭弹窗（取消）→ 回待选态（②-7 后不再有手输兜底面，重选 = 再点大目标）
     await page.locator('.wsp-cancel').click();
     await expect(target).not.toHaveClass(/picking/);
-    await box.locator('.option-btn', { hasText: /其他|Other/ }).last().click();
-    await box.locator('.option-custom-input').fill('/tmp/manual-path');
-    await box.locator('.option-confirm').click();
+    await expect(box.locator('.option-custom-input')).toHaveCount(0);
+    // 再点大目标 → 选中此目录 → 点选即自动提交（②-5 保持现状），无需再点确认
+    await target.click();
+    await page.locator('.wsp-pick').click();
+    await expect.poll(() => page.evaluate(() => window.__captured.filter(m => m.type === 'askUserAnswer').length)).toBe(1);
     const after = await page.evaluate(() => window.__captured);
-    expect(after).toEqual([
-      { type: 'wsBrowse.list', path: '~', sessionId: SID },
-      { type: 'askUserAnswer', sessionId: SID, answers: ['/tmp/manual-path'], requestId: RID },
+    expect(after.filter(m => m.type === 'askUserAnswer')).toEqual([
+      { type: 'askUserAnswer', sessionId: SID, answers: ['~'], requestId: RID },
     ]);
   });
 
@@ -196,7 +211,7 @@ test.describe('workspace-picker card', () => {
     await expect(box.locator('.option-answer')).toContainText('/Users/e2e/fixture-root/ws-a/ws-new');
   });
 
-  // T3 — 弹窗取消 → 卡片回待选态（留再次选择/手输余地）
+  // T3 — 弹窗取消 → 卡片回待选态（留再次选择余地）
   test('T3 弹窗取消 → 卡片回待选态', async ({ page }) => {
     await setup(page);
     const box = lastCard(page);

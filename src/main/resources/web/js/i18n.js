@@ -17,6 +17,10 @@ if (!LOCALES[current]) current = 'zh-CN';
  * Supports nested keys via dot notation: 'settings.runtime'
  * Falls back to key itself if not found.
  * '{brand}' is always interpolated from brand.js (no need to pass it).
+ * '{lowerBrand}' likewise interpolates brand.lowerName (console switch batch
+ * 2026-10-15): locale copy spelled in the lowercase form ("nebflow account")
+ * keys on it so the rendered case stays verbatim under the default brand —
+ * '{brand}' would uppercase it and violate the zero-visual-change rule.
  */
 export function t(key, params) {
   const dict = LOCALES[current] || zhCN;
@@ -26,8 +30,8 @@ export function t(key, params) {
     val = en[key];
   }
   if (val === undefined) return key;
-  if (params || val.indexOf('{brand}') !== -1) {
-    const p = { brand: brand.productName, ...params };
+  if (params || val.indexOf('{brand}') !== -1 || val.indexOf('{lowerBrand}') !== -1) {
+    const p = { brand: brand.productName, lowerBrand: brand.lowerName, ...params };
     return val.replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
   }
   return val;
@@ -97,6 +101,7 @@ export function applyLocaleToHtml() {
     'activity-avatar': ['title', 'activity.login'],
     'usage-btn': ['title', 'activity.usage'],
     'projects-btn': ['title', 'project.title'],
+    'wiki-btn': ['title', 'wiki.tabTitle'],
     // 2026-09-04 件 B：#agents-btn 改挂「插件」页（原「智能体」入口移除，
     // key 换成 activity.plugins；activity.agents 保留给封存面板恢复的旧标签页）。
     'agents-btn': ['title', 'activity.plugins'],
@@ -111,10 +116,6 @@ export function applyLocaleToHtml() {
     'rules-modal-title': ['text', 'rules.title'],
     'rules-modal-cancel': ['text', 'rules.cancel'],
     'rules-modal-save': ['text', 'rules.save'],
-    'path-picker-title': ['text', 'pathPicker.title'],
-    'path-picker-cancel': ['text', 'modal.cancel'],
-    'path-picker-clear': ['text', 'pathPicker.clear'],
-    'path-picker-select': ['text', 'pathPicker.select'],
     'canvas-close-btn': ['title', 'modal.close'],
     'settings-modal-close': ['title', 'modal.close'],
     'search-modal-close': ['title', 'modal.close'],
@@ -129,7 +130,7 @@ export function applyLocaleToHtml() {
     if (!el) continue;
     if (attr === 'text') el.textContent = t(key);
     else if (attr === 'title') el.title = t(key);
-    else if (attr === 'placeholder') el.placeholder = t(key);
+    else if (attr === 'placeholder') (/** @type {HTMLInputElement} */ (el)).placeholder = t(key);
   }
 
   // Buttons/titles not covered by the map above
@@ -145,12 +146,18 @@ export function applyLocaleToHtml() {
   ];
   for (const [id, attr, key] of extras) {
     const el = document.getElementById(id);
-    if (el) el[attr] = t(key);
+    if (!el) continue;
+    // searchtitle-i18n (2026-10-06): 'text' must map to textContent — the old
+    // `el[attr] = …` was a silent NO-OP for it (a <span> has no `text` IDL
+    // attribute), so #search-modal-title kept its hardcoded English default in
+    // zh mode while its locale key ('search.title') sat wired but never applied.
+    if (attr === 'text') el.textContent = t(key);
+    else el[attr] = t(key);
   }
 
   // Agent modal field labels (by data-i18n attribute)
   document.querySelectorAll('[data-i18n]').forEach(el => {
-    el.textContent = t(el.dataset.i18n);
+    el.textContent = t((/** @type {HTMLElement} */ (el)).dataset.i18n);
   });
 
   // (The agent editor modal's placeholder/button localization was retired
@@ -159,7 +166,7 @@ export function applyLocaleToHtml() {
 
   // Memory tabs
   document.querySelectorAll('.memory-tab').forEach(tab => {
-    const scope = tab.dataset.scope;
+    const scope = (/** @type {HTMLElement} */ (tab)).dataset.scope;
     const key = 'memory.' + scope;
     tab.textContent = t(key);
   });
@@ -185,7 +192,7 @@ export function applyLocaleToHtml() {
     'auto-all': 'bypass.autoAll',
   };
   document.querySelectorAll('#bypass-menu button[data-mode]').forEach(btn => {
-    const key = bypassModeKeys[btn.dataset.mode];
+    const key = bypassModeKeys[(/** @type {HTMLElement} */ (btn)).dataset.mode];
     if (key) btn.textContent = t(key);
   });
 
@@ -195,7 +202,7 @@ export function applyLocaleToHtml() {
 
   // Settings nav item title
   const settingsNavItem = document.querySelector('.nav-item[data-tab="settings"]');
-  if (settingsNavItem) settingsNavItem.title = t('nav.settings');
+  if (settingsNavItem) (/** @type {HTMLElement} */ (settingsNavItem)).title = t('nav.settings');
 
   // Session panel title
   const sessionPanelTitle = document.querySelector('#panel-sessions .panel-title');

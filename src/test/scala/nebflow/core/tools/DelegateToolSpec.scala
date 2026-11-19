@@ -6,11 +6,36 @@ import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.{AgentDef, AgentLibrary}
-import nebflow.core.PathUtil
+import nebflow.actor.AgentDef
+import nebflow.agent.AgentLibrary
+import nebflow.shared.PathUtil
 
+/**
+ * DelegateTool 前门（2026-09-11 Delegate 恢复批 · 极简内核形态）：
+ *
+ *  1. schema 面：恰两参数 `task`/`project`（unified-delegate 批 2026-10-03——
+ *     只填任务与可选项目；旧 `description`/`agent`/`lifecycle`/`taskDescription`/
+ *     `images`/`preset`/`prompt` 全部退役——旧断言在本文件里逐条反向钉死；
+ *     `device` 亦于 2026-09-14 作者裁定 U1/U2 随 schema 摘除）。
+ *  2. Target resolution: the built-in `kernel` def, CODE-DEFINED (builtin-def
+ *     batch 2026-10-03, author directive ① "code is the single source of truth"):
+ *     resolveKernelDef returns the BuiltinAgents kernel def — no disk read, no
+ *     seed mirror, no fail-safe tiers (all retired). The former "definition not
+ *     found" refusal stays retired; its negative is re-pinned below, plus a
+ *     negative pin that stray disk files cannot influence the code prompt.
+ *  3. Concurrency: NO cap (author decision 2026-09-26 — the former R9 gate U4=D1,
+ *     limit 4 per root session, is retired; pinned at the source face below).
+ *  4. 设备面：**本工具已无 `device` 参数**（本地编排件；远端只发生在内核六件上）。
+ *     本文件反向钉死该摘除：stray `device` 键**不被消费**（无预检、不拦、不出现在
+ *     摘要），调用照常走到 spawn 前置检查。
+ *  5. description hard facts: self-contained brief / continuation address
+ *     `delegate:<id>` / no concurrency cap / workspace face.
+ *
+ * 无 ActorSystem 的用例停在「requires ActorSystem and SharedResources」——spawn
+ * 链本身由隔离实例 e2e 覆盖（见交付结果 §②）。
+ */
 class DelegateToolSpec extends CatsEffectSuite:
-  private val tempRoot: os.Path = os.pwd / "target" / "test-delegate-agent"
+  private val tempRoot: os.Path = os.pwd / "target" / "test-delegate-kernel"
   PathUtil.setDataRoot(tempRoot)
   private val agentsDir = tempRoot / "agents"
   private val lib = AgentLibrary(agentsDir)
@@ -19,7 +44,12 @@ class DelegateToolSpec extends CatsEffectSuite:
     IO.delay { if os.exists(tempRoot) then os.remove.all(tempRoot) } *>
       IO.delay { os.makeDir.all(agentsDir) }
 
-  private def writeAgent(name: String, category: String = "standalone"): Unit =
+  /** 写一个 agent 定义（默认写内核；`name` 可换以验证「目标恒为 kernel」）。 */
+  private def writeAgent(
+    name: String = "kernel",
+    category: String = "standalone",
+    touchSystemMd: Boolean = true
+  ): Unit =
     val dir = agentsDir / name
     os.makeDir.all(dir)
     os.write(
@@ -28,23 +58,21 @@ class DelegateToolSpec extends CatsEffectSuite:
         .obj(
           "name" -> name.asJson,
           "description" -> s"$name agent".asJson,
-          "useWhen" -> "".asJson,
           "tools" -> Json.arr("*".asJson),
           "category" -> category.asJson
         )
         .noSpaces
     )
-    os.write(dir / "system.md", s"You are $name.")
+    if touchSystemMd then os.write(dir / "system.md", s"You are $name.")
 
   end writeAgent
 
-  // Build a minimal ToolContext with just agentLibrary set (no ActorSystem etc.)
-  private def ctxWith(lib: Option[AgentLibrary] = Some(lib)): ToolContext =
+  private def ctxWith(libOpt: Option[AgentLibrary] = Some(lib)): ToolContext =
     ToolContext(
       sessionId = Some("test"),
       sessionStore = None,
-      agentDef = Some(AgentDef(name = "Caller", description = "", tools = List("*"), systemPrompt = "")),
-      agentLibrary = lib,
+      agentDef = Some(AgentDef(name = "Nebula", description = "", tools = List("*"), systemPrompt = "")),
+      agentLibrary = libOpt,
       agentActorRef = None,
       actorSystem = None,
       sharedResources = None,
@@ -54,224 +82,386 @@ class DelegateToolSpec extends CatsEffectSuite:
       projectRoot = ""
     )
 
-  test("agent parameter with non-existent agent returns error"):
+  private def props: Set[String] =
+    DelegateTool.inputSchema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
+
+  private def required: List[String] =
+    DelegateTool.inputSchema("required").flatMap(_.asArray).map(_.flatMap(_.asString).toList).getOrElse(Nil)
+
+  test("unavailable recovery mode rejects admission before attachment validation and spawn"):
+    val input = JsonObject(
+      "task" -> "work".asJson,
+      "attachments" -> "not-an-array".asJson
+    )
     for
-      _ <- reset()
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson, "agent" -> "Ghost".asJson)
-      result <- DelegateTool.call(input, ctxWith())
+      protectedResult <- DelegateTool.callWithRecoveryMode(input, ctxWith(), Some("local-leaf-b1"))
+      invalidResult <- DelegateTool.callWithRecoveryMode(input, ctxWith(), Some("unknown"))
+      absentResult <- DelegateTool.callWithRecoveryMode(input, ctxWith(), None)
+      emptyResult <- DelegateTool.callWithRecoveryMode(input, ctxWith(), Some(""))
+      legacyResult <- DelegateTool.callWithRecoveryMode(input, ctxWith(), Some("off"))
     yield
-      assert(result.isLeft, "should return Left")
-      assert(
-        result.swap.toOption.get.message.contains("not found"),
-        s"error should mention 'not found': ${result.swap.toOption.get.message}"
+      assertEquals(
+        protectedResult,
+        Left(ToolError("Delegate recovery B1 is unavailable; admission is disabled (unsupported-boundary)."))
       )
+      assertEquals(invalidResult, Left(ToolError("Invalid Delegate recovery mode; admission is disabled.")))
+      val attachmentError = Left(ToolError("attachments must be an array of absolute file path strings."))
+      assertEquals(absentResult, attachmentError)
+      assertEquals(emptyResult, attachmentError)
+      assertEquals(legacyResult, attachmentError)
 
-  test("agent parameter with non-standalone agent returns error"):
+  // ---------- 1. schema 面 ----------
+
+  test("schema: exactly task/name/project/executor/mode/attachments — retired parameters stay gone"):
+    // external-executors 批 #1225（S14 运行时半）：`executor` 入场。
+    // 面板命名批（2026-10-31）：`name` 入场（≤12 字，maxLength 钉死）。
+    // delegate-param-decisions 批（2026-11-04）：`mode` 值域收敛，`worktree` 语义改为
+    // 「worktree 的 name」。
+    // 附件传输批（2026-11-05）：`attachments` 入场（判据与六例见
+    // [[DelegateAttachmentsSpec]]）。
+    // 过时测试修复（2026-11-15）：随基线 3007e48da「Retire the engine-managed delegate
+    // worktrees and the dedicated merger」补齐漏改断言——`worktree`/`force` 参数与
+    // merger 模式随该批整体退役（同批已删 WorktreeReuseSelectionSpec 等 400+ 行
+    // 专属 spec），本测试的面断言漏改。现值 = 附件传输批后的六参 + 二值 mode。
+    assertEquals(props, Set("task", "name", "project", "executor", "mode", "attachments"))
+    assertEquals(required, List("task"))
+    val nameMaxLen: Option[Int] = io.circe.Json
+      .fromJsonObject(DelegateTool.inputSchema)
+      .hcursor
+      .downField("properties")
+      .downField("name")
+      .downField("maxLength")
+      .as[Int]
+      .toOption
+    assertEquals(
+      nameMaxLen,
+      Some(12),
+      "name must carry maxLength 12 (author ruling ≤12 chars)"
+    )
+    // 分配器已删：schema enum 里绝不能再出现 auto（静默映射的反面）。
+    val modeEnum: List[String] = io.circe.Json
+      .fromJsonObject(DelegateTool.inputSchema)
+      .hcursor
+      .downField("properties")
+      .downField("mode")
+      .downField("enum")
+      .as[List[String]]
+      .toOption
+      .getOrElse(Nil)
+    // merger 随专职合并器退役（3007e48da 同批）⇒ 值域 = 恰二值，无 auto。
+    assertEquals(modeEnum, List("kernel", "dispatcher"), "mode enum is exactly kernel|dispatcher, no auto/merger")
+    // 退役参数不得以任何形态回流。
+    for retired <- List("worktree", "force") do
+      assert(!props.contains(retired), s"retired parameter `$retired` must stay gone from the schema")
+    // 描述文本与代码同步（作者令：文档与代码不同步等于没改）——旧口径的假话
+    // 必须在 schema 与工具描述两处都消失。
+    val modeDesc = io.circe.Json
+      .fromJsonObject(DelegateTool.inputSchema)
+      .hcursor
+      .downField("properties")
+      .downField("mode")
+      .downField("description")
+      .as[String]
+      .toOption
+      .getOrElse("")
+    assert(!modeDesc.contains("mode allocator decides"), modeDesc)
+    assert(!modeDesc.contains("JeV -> LLM fallback"), modeDesc)
+    assert(modeDesc.contains("deterministically"), modeDesc)
+    val toolDesc = DelegateTool.description
+    assert(
+      !toolDesc.contains("mode allocator decides"),
+      "the model-visible tool description must not carry the removed allocator copy"
+    )
+    assert(!toolDesc.contains("creates a fresh worktree exactly as before"), toolDesc)
+    // worktree 退役口径（3007e48da）：引擎不再分配 worktree——模型可见描述必须
+    // 说清新政策（委托自管 git worktree），不许残留「自动新建/复用」旧承诺。
+    assert(!toolDesc.contains("Omit it ONLY for read-only tasks"), toolDesc)
+    assert(toolDesc.contains("allocates no worktrees"), toolDesc)
+
+  test("name parameter: short-name guidance is model-visible (dispatch prompt face)"):
+    // 面板命名批（2026-10-31 ②）：dispatch 提示词面（description = 模型可见指导）
+    // 必须带「用短名概括批次」口径——锚点：行首显短名，扫一眼分辨哪批是哪批。
+    val d = DelegateTool.description
+    assert(d.contains("name"), "description must document the name parameter")
+    assert(
+      d.toLowerCase.contains("12 character") || d.contains("12 characters") || d.contains("12 字符") || d.contains("≤12"),
+      "description must state the ≤12-char bound"
+    )
+    assert(
+      d.toLowerCase.contains("background-agents panel") || d.toLowerCase.contains("panel"),
+      "description must state the panel surface the name lands on"
+    )
+
+  test("description carries the hard facts (self-contained brief / delegate: address / no concurrency cap)"):
+    val d = DelegateTool.description
+    assert(d.toLowerCase.contains("self-contained brief"), "description must state the brief fact")
+    assert(d.contains("delegate:<id>"), "description must state the continuation address form")
+    assert(
+      d.contains("No hard concurrency limit"),
+      "description must state the author-directed no-limit face (2026-09-26)"
+    )
+    assert(!d.contains("at most 4"), "the retired 4-cap wording must be gone from the description")
+    // unified-delegate 守护：kernel:<id> 旧地址形态不再出现在 description
+    assert(!d.contains("kernel:<id>"), "the retired kernel:<id> address must be gone, got the description")
+    assert(!d.contains("persistent"), "persistent mode must be gone")
+
+  test("summarize: task first-line label — stray keys must NOT surface"):
+    assertEquals(
+      DelegateTool.summarize(JsonObject("task" -> "pull the log\nsecond line".asJson)),
+      "Delegate(pull the log)"
+    )
+    // label = 任务首行截断 60；stray 键（description/device）不被消费。
+    assertEquals(
+      DelegateTool.summarize(JsonObject("task" -> "pull the log".asJson, "device" -> "KAI".asJson)),
+      DelegateTool.summarize(JsonObject("task" -> "pull the log".asJson))
+    )
+    val long = "x" * 80
+    assert(DelegateTool.summarize(JsonObject("task" -> long.asJson)).length < 80, "long first line is truncated")
+
+  // ---------- 2. 目标解析 ----------
+
+  test("task is required: empty task fails with a self-describing error"):
     for
       _ <- reset()
-      _ <- IO(writeAgent("TeamWorker", category = "team"))
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson, "agent" -> "TeamWorker".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "should return Left")
-      assert(
-        result.swap.toOption.get.message.contains("not a standalone"),
-        s"error should mention 'not a standalone': ${result.swap.toOption.get.message}"
-      )
+      input = JsonObject("task" -> "  ".asJson)
+      res <- DelegateTool.call(input, ctxWith())
+    yield res match
+      case Left(err) => assert(err.message.contains("Missing required parameter: task"), err.message)
+      case Right(v) => fail(s"expected failure for empty task, got: $v")
 
-  test("agent parameter with standalone agent resolves (spawns target, not self)"):
+  test("kernel definition missing => fail-safe built-in def, NOT a refusal (kernelgen-ext 2026-09-26)"):
     for
       _ <- reset()
-      _ <- IO(writeAgent("Coder"))
-      input = JsonObject(
-        "prompt" -> "write code".asJson,
-        "description" -> "code task".asJson,
-        "agent" -> "Coder".asJson
-      )
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      // Without ActorSystem the tool returns Left "Delegate requires ActorSystem..."
-      // — but only AFTER agent resolution succeeds. If agent resolution failed,
-      // we'd get a "not found" / "not standalone" error instead.
-      assert(result.isLeft, "should return Left (no ActorSystem)")
-      assert(
-        !result.swap.toOption.get.message.contains("not found"),
-        "should not be a 'not found' error — agent resolved OK"
-      )
-      assert(
-        !result.swap.toOption.get.message.contains("not a standalone"),
-        "should not be a 'not standalone' error — agent resolved OK"
-      )
-      assert(
-        result.swap.toOption.get.message.contains("ActorSystem"),
-        s"should be the ActorSystem error (agent resolved, spawn failed): ${result.swap.toOption.get.message}"
-      )
-
-  test("no agent parameter is rejected — self-clone banned (#28)"):
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Coder"))
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "must be rejected — nothing may spawn")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("Missing required parameter: agent"), s"must name the missing agent param: $msg")
-      assert(msg.contains("#28"), s"must cite issue #28: $msg")
-      assert(msg.contains("Coder"), s"must list targetable standalone agents: $msg")
-
-  test("no agent parameter rejected even without a library (#28)"):
-    for
-      _ <- reset()
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson)
-      result <- DelegateTool.call(input, ctxWith(lib = None))
-    yield
-      assert(result.isLeft, "must be rejected before any library/spawn concern")
-      assert(
-        result.swap.toOption.get.message.contains("Missing required parameter: agent"),
-        s"got: ${result.swap.toOption.get.message}"
-      )
-
-  test("agent='Nebula' is rejected — root orchestrator must never be spawned (#28)"):
-    for
-      _ <- reset()
-      // category defaults to "standalone" exactly like the runtime Nebula def —
-      // the category check alone must NOT let it through
-      _ <- IO(writeAgent("Nebula"))
-      _ <- IO(writeAgent("Coder"))
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson, "agent" -> "Nebula".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "must be rejected — nothing may spawn")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("must never be spawned"), s"must explain the #28 ban: $msg")
-      assert(!msg.contains("ActorSystem"), s"rejection happens at resolve time, before spawn: $msg")
-
-  test("agent naming the caller itself is rejected — self-clone via the back door (#28)"):
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Caller")) // ctx.agentDef is named "Caller"
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson, "agent" -> "Caller".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "must be rejected — nothing may spawn")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("calling agent itself"), s"must identify the self-target: $msg")
-      assert(!msg.contains("ActorSystem"), s"rejection happens at resolve time, before spawn: $msg")
-
-  test("agent parameter but no agentLibrary returns 'No agent library' error"):
-    for
-      _ <- reset()
-      input = JsonObject("prompt" -> "do work".asJson, "description" -> "task".asJson, "agent" -> "Coder".asJson)
-      result <- DelegateTool.call(input, ctxWith(lib = None))
-    yield
-      assert(result.isLeft)
-      assert(result.swap.toOption.get.message.contains("No agent library"), s"got: ${result.swap.toOption.get.message}")
-
-  test("empty prompt returns error before agent resolution"):
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Coder"))
-      input = JsonObject("prompt" -> "".asJson, "description" -> "task".asJson, "agent" -> "Coder".asJson)
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft)
-      assert(result.swap.toOption.get.message.contains("Missing required parameter: prompt"))
-
-  test("summarize includes target agent when specified"):
-    val input = JsonObject("description" -> "task".asJson, "agent" -> "Coder".asJson)
-    val summary = DelegateTool.summarize(input)
-    assert(summary.contains("Coder"), s"summarize should include target agent: $summary")
-
-  test("summarize without agent does not include arrow"):
-    val input = JsonObject("description" -> "task".asJson)
-    val summary = DelegateTool.summarize(input)
-    assert(!summary.contains("→"), s"summarize should not include arrow without agent: $summary")
-
-  test("stray flow parameter is ignored — Delegate spawns sub-agents only (2026-09-06 retirement)"):
-    // 2026-09-06 工具面裁撤批：FlowTrigger 已退役，R1 split 时代的「flow=
-    // 引导拒绝」分支随之删除。传入 flow= 不再产生专用错误——它不是合法参数，
-    // 静默忽略后按缺 agent 正常拒绝（自含目录清单）。
-    for
-      _ <- reset()
-      input = JsonObject(
-        "prompt" -> "do work".asJson,
-        "description" -> "task".asJson,
-        "flow" -> "code-review".asJson
-      )
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "missing agent must still reject the call")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("Missing required parameter: agent"), s"normal agent-missing path: $msg")
-      assert(!msg.contains("FlowTrigger"), s"FlowTrigger guidance must be gone (retired): $msg")
-
-  test("inputSchema no longer includes the flow parameter"):
-    val props = DelegateTool.inputSchema("properties").flatMap(_.asObject)
-    assert(props.isDefined, "properties should be an object")
-    assert(!props.get.contains("flow"), "flow parameter must be gone from the schema")
-
-  test("inputSchema includes agent parameter"):
-    val schema = DelegateTool.inputSchema
-    val props = schema("properties").flatMap(_.asObject)
-    assert(props.isDefined, "properties should be an object")
-    assert(props.get.contains("agent"), "schema should include 'agent' property")
-
-  test("inputSchema requires agent (#28)"):
-    val schema = DelegateTool.inputSchema
-    val required = schema("required").flatMap(_.asArray).toList.flatten.flatMap(_.asString)
-    assert(required.contains("agent"), s"agent must be a required parameter: $required")
-
-  test("inputSchema no longer includes the fork parameter (#28)"):
-    val props = DelegateTool.inputSchema("properties").flatMap(_.asObject)
-    assert(props.isDefined, "properties should be an object")
-    assert(!props.get.contains("fork"), "fork must be gone — it only applied to the banned self-clone path")
-
-  test("inputSchema includes preset parameter (#291)"):
-    val schema = DelegateTool.inputSchema
-    val props = schema("properties").flatMap(_.asObject)
-    assert(props.isDefined, "properties should be an object")
-    assert(props.get.contains("preset"), "schema should include 'preset' property")
-
-  test("preset parameter with unknown name returns self-describing error (#291)"):
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Coder"))
-      input = JsonObject(
-        "prompt" -> "do work".asJson,
-        "description" -> "task".asJson,
-        "agent" -> "Coder".asJson,
-        "preset" -> "Bogus".asJson
-      )
-      result <- DelegateTool.call(input, ctxWith())
-    yield
-      assert(result.isLeft, "unknown preset must fail")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("'Bogus' not found"), s"error should mention the preset name: $msg")
-      assert(msg.contains("Available presets:"), s"error should list available presets: $msg")
-
-  test("preset parameter with existing name passes preset resolution (fails later on missing ActorSystem)"):
-    // A valid preset resolves the def; with no ActorSystem the failure must be
-    // about the missing actor system, NOT about the preset.
-    for
-      _ <- reset()
-      _ <- IO(writeAgent("Coder"))
-      _ <- IO.delay {
-        os.write.over(
-          tempRoot / "model-presets.json",
-          """{"defaultPreset":"general","presets":{"general":{"name":"general","description":"","preferred":"mock/mock-model","fallbacks":[]}}}"""
+      input = JsonObject("task" -> "do work".asJson)
+      res <- DelegateTool.call(input, ctxWith())
+    yield res match
+      case Left(err) =>
+        // The engine never refuses to start a kernel because the disk def is
+        // missing: resolveKernelDef synthesizes the built-in def (prompt chain:
+        // runtime mirror -> classpath seed -> embedded default) and the call
+        // reaches the spawn prerequisites — here failing only on the absent
+        // ActorSystem (suite runs without one by design).
+        assert(err.message.contains("requires ActorSystem"), err.message)
+        assert(
+          !err.message.contains("Kernel agent definition"),
+          "the old kernel-missing refusal must be retired, got: " + err.message
         )
-      }
-      input = JsonObject(
-        "prompt" -> "do work".asJson,
-        "description" -> "task".asJson,
-        "agent" -> "Coder".asJson,
-        "preset" -> "general".asJson
+        assert(
+          !err.message.contains("Restore the definition and retry"),
+          "the old restore-and-retry refusal must be retired, got: " + err.message
+        )
+      case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
+
+  test(
+    "code-defined def: stray disk files CANNOT influence the kernel prompt (single source = code, builtin-def 2026-10-03)"
+  ):
+    for
+      _ <- reset()
+      // 写入全套磁盘假定义（mirror system.md + agent.json）：对收敛名都是死信
+      _ = os.write.over(agentsDir / "kernel" / "system.md", "MIRROR-PROMPT-MARKER", createFolders = true)
+      _ = os.write.over(
+        agentsDir / "kernel" / "agent.json",
+        Json.obj("name" -> "kernel".asJson, "description" -> "STRAY-DESCRIPTION-MARKER".asJson).noSpaces,
+        createFolders = true
       )
-      result <- DelegateTool.call(input, ctxWith())
+      res <- IO.delay(nebflow.core.entity.BuiltinAgents.entry("nebflow").map(_.toAgentDef).get)
     yield
-      assert(result.isLeft, "no ActorSystem → Left")
-      val msg = result.swap.toOption.get.message
-      assert(msg.contains("ActorSystem"), s"valid preset should pass; failure is about ActorSystem: $msg")
-      assert(!msg.contains("not found"), s"valid preset must not be reported missing: $msg")
+      assertEquals(res.name, "nebflow")
+      assert(
+        !res.systemPrompt.contains("MIRROR-PROMPT-MARKER"),
+        "the disk mirror is a dead letter — the prompt comes from BuiltinAgents (code)"
+      )
+      assert(
+        !res.description.contains("STRAY-DESCRIPTION-MARKER"),
+        "the disk agent.json is a dead letter — the description comes from BuiltinAgents (code)"
+      )
+      assertEquals(res.category, "standalone", "converged name pins the category")
+
+  test("code-defined def carries the kernel contract (when-to-use / boundary / plugin pointer)"):
+    for
+      _ <- reset() // empty agents dir: nothing on disk at all — code is enough
+      res <- IO.delay(nebflow.core.entity.BuiltinAgents.entry("nebflow").map(_.toAgentDef).get)
+    yield
+      assertEquals(res.name, "nebflow")
+      assert(
+        res.systemPrompt.contains("`<injected-plugins>` is the capability assigned to you"),
+        "the plugin-assignment discipline reached the merged prompt (wording aligned 2026-10-08: the pre-split assertion string 'is your capability assignment' no longer matched HEAD's model-visible text — an existing red, realigned here to the standing wording, no assertion weakened: BLOCKED + no-HTML-comment pins stay)"
+      )
+      assert(
+        res.systemPrompt.contains(
+          "a missing required capability => STOP: declare what is missing and the options in your report"
+        ),
+        "the capability-boundary contract reached the merged prompt"
+      )
+      assert(!res.systemPrompt.contains("BLOCKED"), "the delegate prompt carries no BLOCKED anchor grammar")
+      assert(!res.systemPrompt.startsWith("<!--"), "the code prompt carries no seed-machinery HTML comment")
+
+  test("unified-delegate: default workspace is created and the call reaches spawn prerequisites"):
+    for
+      _ <- reset()
+      res <- DelegateTool.call(JsonObject("task" -> "do work".asJson), ctxWith())
+    yield
+      assert(res.left.exists(_.message.contains("requires ActorSystem")), res.toString)
+      assert(os.exists(tempRoot / "general"), "the default general workspace is created on first contextless dispatch")
+
+  test("unified-delegate: an unmounted project is an explicit refusal, nothing spawned"):
+    for
+      _ <- reset()
+      res <- DelegateTool.call(JsonObject("task" -> "do work".asJson, "project" -> "no-such-project".asJson), ctxWith())
+    yield assert(res.left.exists(_.message.contains("DELEGATE_PROJECT_UNMOUNTED")), res.toString)
+
+  test("continuation address: the receipt-facing constant is the delegate: form"):
+    val line = nebflow.core.delegate.DelegateRegistry.continuationLine("delegate-kernel-abc12345")
+    assert(line.contains("\"delegate:delegate-kernel-abc12345\""), line)
+    assert(!line.contains("kernel:delegate"), line)
+
+  test("no agent library: resolution no longer depends on it — the call reaches the spawn prerequisites"):
+    for res <- DelegateTool.call(JsonObject("task" -> "t".asJson), ctxWith(libOpt = None))
+    yield assert(res.left.exists(_.message.contains("requires ActorSystem")), res.toString)
+
+  test("target is fixed to the built-in kernel def — a non-kernel agent named in the call is impossible"):
+    for
+      _ <- reset()
+      _ = writeAgent(name = "kernel")
+      _ = writeAgent(name = "Coder")
+      // 合法内核定义存在 + 无 ActorSystem ⇒ 走到 spawn 前置检查（证明解析成功）
+      res <- DelegateTool.call(JsonObject("task" -> "do work".asJson), ctxWith())
+    yield res match
+      case Left(err) => assert(err.message.contains("requires ActorSystem"), err.message)
+      case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
+
+  test("depth limit still applies (kernel is a leaf, depth < MaxDepth required)"):
+    for
+      _ <- reset()
+      _ = writeAgent(name = "kernel")
+      deep = ctxWith().copy(depth = DelegateTool.MaxDepth)
+      res <- DelegateTool.call(JsonObject("task" -> "t".asJson), deep)
+    yield assert(res.left.exists(_.message.contains("Maximum sub-agent depth")), res.toString)
+
+  // ---------- 3. Concurrency cap retired (author decision 2026-09-26: no hard limit) ----------
+  // The former R9 gate (ruling U4=D1, limit 4 per root session) is gone: InFlight /
+  // concurrencyError / concurrencyCheck were removed from DelegateTool and nothing
+  // replaced them. The two tests below pin the retirement: the prompt faces carry the
+  // no-limit wording (three copies kept in sync), and the spawn-path source carries no
+  // cap code - re-adding a gate turns the source-face test red (consciousness gate for
+  // a cap comeback; the 2026-08 rate-limit incident note stays on the object comment).
+
+  test("no hard concurrency limit: description and the code-defined prompt carry the no-limit wording in sync"):
+    val d = DelegateTool.description
+    val prompt = nebflow.core.entity.BuiltinAgents.entry("nebflow").map(_.systemPrompt).getOrElse("")
+    val faces = List(
+      "description" -> d,
+      "code-defined prompt (BuiltinAgents)" -> prompt
+    )
+    for (name, text) <- faces do
+      assert(
+        text.contains("No hard concurrency limit"),
+        s"$name must promise no hard concurrency limit (author 2026-09-26)"
+      )
+      assert(!text.contains("at most 4"), s"$name must not carry the retired 4-cap wording: $name")
+    // builtin-def 批：种子资源已退役——classpath 上不得再有 seed/agents 面。
+    val gone = Option(getClass.getClassLoader.getResource("seed/agents/kernel/system.md"))
+    assert(
+      gone.isEmpty,
+      "seed/agents resources are retired (builtin-def 2026-10-03) — the classpath must not carry them"
+    )
+
+  test(
+    "the concurrency gate stays retired at the source face (the 5th concurrent spawn is admitted - nothing rejects it)"
+  ):
+    val src = os.read(os.pwd / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "DelegateTool.scala")
+    assert(!src.contains("MaxConcurrentPerRoot"), "the retired cap constant must stay out of the spawn-path source")
+    assert(!src.contains("concurrencyCheck"), "the retired gate check must stay out of the spawn-path source")
+    assert(!src.contains("concurrencyError"), "the retired gate error must stay out of the spawn-path source")
+    assert(
+      !src.contains("case class InFlight"),
+      "the retired in-flight snapshot type must stay out of the spawn-path source"
+    )
+
+  // ---------- 4. 设备面摘除后的行为（2026-09-14 作者裁定 U1/U2） ----------
+  // 摘除前本段 = 「设备预检 fail-fast 正控 + 负控」两条（预检函数已随 S1b 全删）。
+  // 同步到新形态（同条数、非弱化）：**stray `device` 键不再被本工具消费**——
+  // 既无预检也无拦截，调用与不带 device 时走同一条路（spawn 前置检查）。
+
+  test("device face removed: a stray device key is NOT consumed — the call proceeds to the spawn prerequisite"):
+    for
+      _ <- reset()
+      _ = writeAgent(name = "kernel")
+      res <- DelegateTool.call(
+        JsonObject("task" -> "restart the service".asJson, "description" -> "x".asJson, "device" -> "KAI".asJson),
+        ctxWith()
+      )
+    yield res match
+      case Left(err) =>
+        assert(err.message.contains("requires ActorSystem"), err.message)
+        // 旧 fail-fast 文案必须已删净（否则就是「schema 摘了、实现还在处理」的漂移）
+        assert(!err.message.contains("""device="KAI""""), err.message)
+        assert(!err.message.toLowerCase.contains("neblink"), err.message)
+        assert(!err.message.contains("run LOCALLY"), err.message)
+      case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
+
+  test("device face removed 负控: no device parameter ⇒ identical behaviour (local runs are the only mode)"):
+    for
+      _ <- reset()
+      _ = writeAgent(name = "kernel")
+      res <- DelegateTool.call(JsonObject("task" -> "do work".asJson), ctxWith())
+    yield res match
+      case Left(err) =>
+        // 走到 spawn 前置检查即证明没有设备面拦截（工具本体已不读 device）
+        assert(err.message.contains("requires ActorSystem"), err.message)
+      case Right(v) => fail(s"expected spawn-prerequisite failure, got: $v")
+
+  // ---------- 5. 内核工具面常量（装配面单点来源） ----------
+
+  test(
+    "nebflow tool face = BaseTools + AskHost + Subagent (8 items; AskUserQuestion root-only per c6329920e) and excludes orchestration/message tools"
+  ):
+    val face = nebflow.agent.AgentCore.NebflowFixedTools
+    // 过时测试修复（2026-11-15）：随基线 c6329920e「Restrict AskUserQuestion to
+    // root tool face」补齐漏改断言——执行面提问件 = AskHost（correlated request
+    // 问 root），AskUserQuestion（问用户卡）收归 Nebula root 面
+    // （AgentCore.RootOrchestrationTools；AllowedToolSetSpec 同款钉法）。
+    assertEquals(face, nebflow.agent.AgentCore.BaseTools + "AskHost" + "Subagent")
+    // tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 工具整体退役
+    // ⇒ 本面九 → **十件回落为九件**（本批确实改了机制面，非为过测放宽）：带 `device` 者
+    // 仍恰为六件（`RemoteExecutor.remoteableTools` 未动，wait mode is on Bash and does not change the remote-executable set），
+    // 该不变式由 `RemoteableDeviceParamSpec` 逐件钉死。
+    // c6329920e（2026-11-10）：AskUserQuestion → AskHost ⇒ 九件回落八件。
+    assertEquals(face.size, 8)
+    assert(!face.contains("AskUserQuestion"), "executor face must not hold AskUserQuestion (root-only)")
+    assert(
+      nebflow.agent.AgentCore
+        .fixedToolsFor(AgentDef(name = "Nebula", description = "", tools = Nil, systemPrompt = ""))
+        .contains("AskUserQuestion"),
+      "root face retains AskUserQuestion"
+    )
+    // R2 2026-09-12 承继：执行 agent 面零 Mail（无消息工具）；编排/管控/退役件
+    // 一律不在（Delegate 派发、AgentControl 管控归 Nebula；Task/NodeMessage 已删净）。
+    Set("Delegate", "SubTask", "Task", "NodeMessage", "TaskBoard", "ChainWrite", "AgentControl", "Mail", "Pop")
+      .foreach { t =>
+        assert(!face.contains(t), s"nebflow must not hold: $t")
+      }
+    assertEquals(
+      nebflow.agent.AgentCore
+        .fixedToolsFor(AgentDef(name = "nebflow", description = "", tools = Nil, systemPrompt = "")),
+      face
+    )
+
+  test("subagent tool face is six tools including registered Bash — no Write/Edit, messaging or recursion"):
+    val face = nebflow.agent.AgentCore.SubagentFixedTools
+    assertEquals(face, Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash"))
+    assert(ToolRegistry.TOOL_MAP("Bash") eq BashTool)
+    Set("Write", "Edit", "Mail", "Subagent", "Delegate").foreach { t =>
+      assert(!face.contains(t), s"subagent must not hold: $t")
+    }
+    assertEquals(
+      nebflow.agent.AgentCore
+        .fixedToolsFor(AgentDef(name = "subagent", description = "", tools = Nil, systemPrompt = "")),
+      face
+    )
+
+  test("nebflow agent.json declaration is inert (ConvergedAgentNames) — mechanism-fixed only"):
+    assert(nebflow.agent.AgentCore.ConvergedAgentNames.contains("nebflow"))
+    assert(nebflow.agent.AgentCore.ConvergedAgentNames.contains("subagent"))
+
 end DelegateToolSpec

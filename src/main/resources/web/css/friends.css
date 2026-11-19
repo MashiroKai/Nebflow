@@ -11,11 +11,11 @@
   right: -3px;
   min-width: 18px;
   height: 18px;
-  padding: 0 5px;
-  border-radius: 9999px;
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-pill);
   background: var(--color-primary);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 18px;
   text-align: center;
@@ -24,13 +24,41 @@
   box-sizing: border-box;
 }
 
+/* ── 条目字号放大批（作者 2026-10-31 12:50 令：联系人/消息列表条目内容
+   字号大一些，对标微信；只动这两个面的条目文字，聊天气泡内文字不动。
+   21:36 追加令口径修订：只放大手机端，电脑端还原放大前值——桌面规则
+   逐字回退 12:50 批前基准（见下方各基值），放大档收进 body.mobile-layer
+   覆盖块（手机层激活 = 手机端；窄桌面窗仍走桌面档，语义不随宽度漂移）。
+   档位（桌面基准 / 手机层档，主文案 16px 级）：
+     行名 .fm-row-name        13 / 16px（手机层 +line-height 1.4 呼吸感）
+     行副文案 .fm-row-sub     11 / 13px（手机层 +line-height 1.4）
+     会话摘要 .fm-conv-summary 12 / 14px
+     会话时间 .fm-conv-time   11 / 12px
+     行内垫  .fm-row          7px 10px / 9px 10px（手机层行高呼吸感同步；
+                        横向保 10px——180px 最窄侧栏下被拉黑行贴边临界）
+     同步随动件（手机层档）：.fm-remark-edit（与行名同档）、.fm-nf-label、
+     头像首字母 .fm-avatar-36/40。（.fm-status-text 状态词双档均 11px ——
+     最窄侧栏贴边临界，不在本批 named 范围。） */
+/* 手机层覆盖块（21:36 追加令）：以下逐条压上方桌面基值， specificity
+   （元素+双类）高于裸类规则，无需 !important；桌面与手机渲染互不越界。 */
+body.mobile-layer .fm-row { padding: var(--ds-space-2) var(--ds-space-inline-x); }
+body.mobile-layer .fm-avatar-36 { font-size: var(--ds-fs-mobile-callout); }
+body.mobile-layer .fm-avatar-40 { font-size: var(--ds-fs-lead); }
+body.mobile-layer .fm-row-name { font-size: var(--ds-fs-mobile-callout); line-height: 1.4; }
+body.mobile-layer .fm-row-sub { font-size: var(--ds-fs-body); line-height: 1.4; }
+body.mobile-layer .fm-remark-edit { font-size: var(--ds-fs-mobile-callout); }
+body.mobile-layer .fm-nf-label { font-size: var(--ds-fs-mobile-callout); }
+body.mobile-layer .fm-conv-time { font-size: var(--ds-fs-hint); }
+body.mobile-layer .fm-conv-summary { font-size: var(--ds-fs-subtitle); }
+body.mobile-layer .fm-req-time { font-size: var(--ds-fs-hint); }
+
 /* ── Shared row/list primitives ─────────────────────────── */
 .fm-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border-radius: 10px;
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-2) var(--ds-space-inline-x); /* 桌面档（12:50 批前基准；手机层 9px 见头部覆盖块） */
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -38,8 +66,8 @@
 .fm-row:hover { background: var(--glass-control-bg-hover); }
 
 .fm-row:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--glass-control-border);
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
 }
 
 .fm-row[aria-selected="true"] {
@@ -61,13 +89,21 @@
 }
 
 .fm-avatar img { width: 100%; height: 100%; object-fit: cover; }
-.fm-avatar-36 { width: 36px; height: 36px; font-size: 14px; }
-.fm-avatar-40 { width: 40px; height: 40px; font-size: 15px; }
+.fm-avatar-36 { width: 36px; height: 36px; font-size: var(--ds-fs-subtitle); }
+.fm-avatar-40 { width: 40px; height: 40px; font-size: var(--ds-fs-title); }
+
+/* ① 设备行头像（作者 2026-09-15：「设备在消息列表里的头像应该要和在联系人面板里
+   一致」）：字形 = `platformDisplay` 单点（`neblink.js:401-414`）产出的平台 `<svg>`，
+   与联系人面板设备行**逐字节同形**；本规则只定**本槽位的落点尺寸**（该 svg 自带
+   15×15 属性，40px 头像里按 `.fm-avatar-40` 的 15px 字号档按比例放大到 20px）。
+   🔴 颜色继承 `.fm-avatar` 的 `--color-text-muted`（字形自身 fill/stroke =
+   currentColor / stroke=currentColor）⇒ 亮暗双主题零新增色值、零字面量。 */
+.fm-avatar-device svg { width: 20px; height: 20px; }
 
 .fm-row-meta { flex: 1; min-width: 0; }
 
 .fm-row-name {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   color: var(--color-text, #000);
   overflow: hidden;
@@ -76,22 +112,56 @@
 }
 
 .fm-row-sub {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* ── 换行口径 R1–R7（2026-09-12 波2 · 作者令「一行内容不够显示的时候要换行」）──
+   作用域 = 请求行（.fm-req-row）+ 搜索结果卡（.fm-result-card）+ 好友行
+   （.fm-friend-row，同一 primitive 随动）。会话列表摘要 .fm-conv-summary 与
+   弹窗标题 .fm-modal-name/.fm-modal-id 保持单行省略（R7，避免回归既有 A6 断言）。
+   撤 nowrap（不再单行截断）→ 断词（overflow-wrap:anywhere 吃长 URL/无空格串，
+   word-break:normal 保 CJK 自然断行）→ 多行上限 3 行 + 尾省略号。
+   文本区保底 .fm-row-meta flex:1 1 96px / min-width:72px（保底值维持既有 72px
+   ——180px 最窄侧栏被拉黑行贴边临界，floor 随字号涨即破 L6 无溢出断言；
+   动作区 flex:0 0 auto 永不被挤压（R5）；四层容器任一不得
+   scrollWidth > clientWidth（R6，禁用 overflow-x:hidden 掩盖）。 */
+.fm-req-row .fm-row-name,
+.fm-req-row .fm-row-sub,
+.fm-result-card .fm-row-name,
+.fm-result-card .fm-row-sub,
+.fm-friend-row .fm-row-name,
+.fm-friend-row .fm-row-sub {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  white-space: normal;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: normal;
+  line-height: 1.45;
+  overflow: hidden;
+}
+
+.fm-req-row .fm-row-meta,
+.fm-result-card .fm-row-meta,
+.fm-friend-row .fm-row-meta {
+  flex: 1 1 96px;
+  min-width: 72px;
+}
+
 .fm-row-badge {
   flex-shrink: 0;
   min-width: 16px;
   height: 16px;
-  padding: 0 4px;
-  border-radius: 9999px;
+  padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-pill);
   background: var(--color-primary);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 16px;
   text-align: center;
@@ -101,7 +171,7 @@
 
 .fm-status-text {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta); /* 状态词保持 11px：180px 最窄侧栏被拉黑行贴边临界（L6 无溢出断言），不在本批 named 范围 */
   color: var(--color-text-muted, #888);
 }
 
@@ -114,10 +184,39 @@
   color: var(--color-text-muted, #888);
 }
 
+/* ⑦ 好友备注行内编辑器（2026-09-12 批）：行内把 .fm-row-name 换成输入框。
+   形态对齐既有行内编辑惯例（.folder-new-input / .explorer-name-input）——
+   零新色值，全部走既有 token；字号/行高与 .fm-row-name 同档（桌面 13px /
+   1.4；21:36 口径修订后手机层随动 16px / 1.4，见文件头覆盖块），因此提交
+   前后行高不变，只多出输入框的边框与内距。 */
+.fm-remark-edit {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  font-size: var(--ds-fs-body);
+  font-family: inherit;
+  font-weight: 500;
+  line-height: 1.4;
+  border-radius: var(--ds-radius-chip);
+  border: 1px solid var(--glass-etched-border);
+  background: var(--glass-etched-bg);
+  color: var(--color-text, #000);
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+
+.fm-remark-edit::placeholder {
+  color: var(--color-text-muted, #888);
+  font-weight: 400;
+}
+
+.fm-remark-edit:focus-visible { border-color: rgb(var(--sapphire) / 0.5); }
+
 .fm-empty {
-  padding: 24px 12px;
+  padding: var(--ds-space-6) var(--ds-space-3);
   text-align: center;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
   line-height: 1.6;
 }
@@ -127,12 +226,32 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  padding: 32px 12px;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-8) var(--ds-space-3);
+}
+
+/* ── 会话列表取数失败态（empty-state-must-not-lie 批 2026-11-05）─────────
+   形态与 `.fm-login-empty` 同族（居中一列：事实一句 + 动作一枚），**不与
+   `.fm-empty`（空态）共用类名** —— 两者外观相近但语义相反，共用会让「失败
+   伪装成空」重新长出来（本批修的正是这个）。 */
+.fm-list-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-6) var(--ds-space-3);
+}
+
+.fm-list-error-text {
+  font-size: var(--ds-fs-hint);
+  /* 取色走 token，**不**带 hex 兜底：设计 token 门禁只许基线下降（禁新字面量）。 */
+  color: var(--color-text-muted);
+  text-align: center;
+  line-height: 1.6;
 }
 
 .fm-login-text {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
   text-align: center;
   line-height: 1.6;
@@ -142,10 +261,10 @@
 #fm-contacts-body {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 10px;
+  padding: var(--ds-space-1) var(--ds-space-2) var(--ds-space-block-y);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 
 /* 搜索块（0906 布局修复）：列布局 = 输入行 + 独立整宽结果区。
@@ -153,45 +272,111 @@
 .fm-search-block {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 4px 2px 8px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-half) var(--ds-space-2);
 }
 
 .fm-search {
   display: flex;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 
 .fm-search-input {
   flex: 1;
   min-width: 0;
-  padding: 6px 10px;
-  font-size: 13px;
-  border-radius: 8px;
-  border: 1px solid var(--glass-etched-border);
-  background: var(--glass-etched-bg);
+}
+/* desktop-search-field 批（2026-11-17）：输入件移入 .sf-field.nf-glass 壳
+   （js/contacts.js#buildSearch）⇒ 内距/字号/字色让位壳内统一档
+   （css/searchField.css --sfs-* / inputSurface 裸件成员表），此处只留行内几何。 */
+
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
+
+/* ── ④ 控件面：搜索键 / 同意 / 拒绝（2026-09-12 波2）──────────────────────
+   材质全部落既有 token（--glass-send-* 中性灰族 + --color-text + 亮档
+   --glass-send-shadow*），零新色值。`button.` 前缀提高特异度：本键同时带
+   `.glass-control` 类，而 sapphire.css 后加载 ⇒ 同特异度会退回玻璃基底值。
+   修复的既有缺陷：圆角 0 → 8px（D1）、未声明 color 吃 UA buttontext（暗档
+   1.32:1，D2）、hover/active 与 rest 逐值相同（D3）、disabled 用元素 opacity
+   .55（P4 已退役表达，D5）、焦点环走 UA 蓝环（D6）。
+   作者 2026-09-12 裁定 1：同意/拒绝两键 = 中性玻璃（方案件推荐的绿实色作废），
+   亮/暗两档都必须可辨 —— 同意取族内顶档填充（--glass-send-bg-active）+ 字重
+   500 + 描边随态递进；拒绝取族内 rest 档 + 字重 400 + 全量四态 ramp。主次由
+   「填充差 + 字重差」表达，暗档背景 Δ = .10（≥ 裁定红线 .08）。 */
+button.fm-search-btn {
+  flex-shrink: 0;
+  font-size: var(--ds-fs-btn);
+  font-family: inherit;
+  font-weight: 500;
+  padding: var(--ds-space-1h) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
   color: var(--color-text, #000);
-  outline: none;
-  transition: border-color 0.15s ease;
+  background: var(--glass-send-bg);
+  border: 1px solid var(--glass-send-border);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease;
+}
+@media (hover: hover) {
+  button.fm-search-btn:hover {
+    background: var(--glass-send-bg-hover);
+    border-color: var(--glass-send-border-hover);
+  }
 }
 
-.fm-search-input:focus-visible { border-color: rgb(var(--sapphire) / 0.5); }
+button.fm-search-btn:active {
+  background: var(--glass-send-bg-active);
+  border-color: var(--glass-send-border-active);
+}
+/* 禁用 = 禁用材质（非元素 opacity）。加载态不换文案（④-P5）：label 保持
+   「搜索/Search」+ 区域三点脉冲 + aria-busy，消除 50→74 的宽度跳动。 */
+button.fm-search-btn:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: not-allowed;
+}
+button.fm-search-btn:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
+}
 
-.fm-search-btn { flex-shrink: 0; font-size: 12px; padding: 6px 12px; }
+/* 亮档反馈层（作者 2026-09-11 P4 裁定：亮底衬上白 alpha 填充递进肉眼不可辨，
+   改用边框 + 投影）。
+   ── 扁平化批 2026-11-05：亮档三行投影退役 ────────────────────────────
+   投影是厚度道具（作者令「不管是 hover 还是点击 或者按下」都要扁平），不该是
+   亮档可辨性的唯一手段。可辨性改由**描边 + 底阶**承担：rest/hover/active 三块的
+   --glass-send-border → -hover → -active 与 --glass-send-bg → -hover → -active
+   本来就逐级递进；P4 当初加影是为了补「白 alpha 底差看不见」，而描边档是深色描边
+   （亮底上对比更高），已经把可辨性接过来了。暗档本就是这个口径
+   （--glass-send-shadow* = none），两档从此同构。 */
 
 /* 结果区（命中 / 未找到 / 加载 / 失败 共用容器卡）：独立块，整宽 */
 .fm-result-card {
-  padding: 10px;
-  border-radius: 12px;
+  padding: var(--ds-space-inset);
+  border-radius: var(--ds-radius-xl);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
+}
+
+/* ② 动效（2026-09-14 交付批 · 作者令「动画也可以设计的流畅一点」）：
+   卡入场 = 纯淡入（160ms ease-out，**无位移**）——卡片在每次 render() 重建，
+   故背景刷新（friend_event / 面板重激活）也会重放一次；纯淡入在这个重放场景
+   下几乎不可察觉，而「位移 + 淡入」会读成跳动。发送成功后的卡态翻转
+   （「发送」→「等待对方处理」）同样走这条入场，即发送反馈。 */
+.fm-result-card {
+  animation: fm-card-in 160ms ease-out both;
+}
+
+@keyframes fm-card-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 /* 结果人区块（微信式分层）：头像 / 显示名 / @Username 两行 */
 .fm-result-person {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-space-inline-gap);
   min-width: 0;
 }
 
@@ -201,21 +386,21 @@
   align-items: center;
   justify-content: flex-end;
   flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-2);
 }
 
 /* 卡内空态文案收紧（列表级 .fm-empty 的 24px 竖排距在卡内过大） */
-.fm-result-card .fm-empty { padding: 14px 12px; }
-.fm-result-card .fm-empty-hint { margin: -6px 12px 2px; }
+.fm-result-card .fm-empty { padding: 14px var(--ds-space-3); }
+.fm-result-card .fm-empty-hint { margin: -6px var(--ds-space-3) var(--ds-space-half); }
 
 /* 加载态：区域级三点脉冲（reduced-motion 退化静态点） */
 .fm-searching {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
-  padding: 12px;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-3);
 }
 
 .fm-searching i {
@@ -229,35 +414,84 @@
 .fm-searching i:nth-child(2) { animation-delay: 0.2s; }
 .fm-searching i:nth-child(3) { animation-delay: 0.4s; }
 
-.fm-add-btn { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
+.fm-add-btn { flex-shrink: 0; font-size: var(--ds-fs-btn); padding: var(--ds-space-1h) var(--ds-space-3); }
 
+/* ② 验证附言框入场：旧形态「点加好友 → 框瞬间出现」是突兀跳变。淡入 + 2px 上浮
+   220ms ease-out（作者常例 200–400ms ease-out）；只在用户动作后出现
+   （verify 态仅由「加好友」/ 搜索提交进入，非背景刷新重建）。 */
 .fm-verify-box {
   display: flex;
-  gap: 6px;
-  margin-top: 8px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-2);
+  animation: fm-rise-in 220ms ease-out both;
+}
+
+@keyframes fm-rise-in {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: none; }
 }
 
 .fm-verify-input {
   flex: 1;
   min-width: 0;
-  padding: 5px 10px;
-  font-size: 12px;
-  border-radius: 8px;
-  border: 1px solid var(--glass-etched-border);
-  background: var(--glass-bg);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
+  font-size: var(--ds-fs-hint);
   color: var(--color-text, #000);
-  outline: none;
+}
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
+
+.fm-verify-box .glass-control { flex-shrink: 0; font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) var(--ds-space-3); }
+
+/* ③ 同框「取消」键（2026-09-14 交付批）：旧形态**零自有样式**——sapphire.css 的
+   发送族选择器用 `:not(.fm-verify-cancel)` 把它排除后，本键吃 UA 默认（实测
+   `border-radius: 0px`、`color: rgb(0,0,0)` 纯黑 = D2 类「吃 UA buttontext」缺陷），
+   与同框发送键（10px / 全对比正文色）并排即成方角黑字异类 ⇒ 同框按钮对的
+   主次关系无法读。本块按 09-12 裁定「次操作 = 族内 rest 档 + 400 字重 + 全量
+   四态 ramp」补齐（模板 = 同文件 `button.fm-req-decline` 拒绝键），圆角随发送组
+   取 10px。🔴 单独可退：删除本块即回到旧形态，零耦合其它面。 */
+button.fm-verify-cancel {
+  font-family: inherit;
+  font-weight: 400;
+  border-radius: var(--ds-radius-button);
+  color: var(--color-text, #000);
+  background: var(--glass-send-bg);
+  border: 1px solid var(--glass-send-border);
+  transition: background 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease;
+}
+@media (hover: hover) {
+  
+  button.fm-verify-cancel:hover {
+    background: var(--glass-send-bg-hover);
+    border-color: var(--glass-send-border-hover);
+  }
 }
 
-.fm-verify-box .glass-control { flex-shrink: 0; font-size: 12px; padding: 5px 12px; }
+
+button.fm-verify-cancel:active {
+  background: var(--glass-send-bg-active);
+  border-color: var(--glass-send-border-active);
+}
+
+button.fm-verify-cancel:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: not-allowed;
+}
+
+button.fm-verify-cancel:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
+}
 
 /* 「新的朋友」 entry */
 .fm-nf-entry {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
-  border-radius: 10px;
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.15s ease;
 }
@@ -265,8 +499,8 @@
 .fm-nf-entry:hover { background: var(--glass-control-bg-hover); }
 
 .fm-nf-entry:focus-visible {
-  outline: none;
-  box-shadow: 0 0 0 2px var(--glass-control-border);
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
 }
 
 .fm-nf-icon {
@@ -284,63 +518,117 @@
 
 .fm-nf-icon svg { width: 17px; height: 17px; }
 
-.fm-nf-label { flex: 1; font-size: 13px; font-weight: 500; color: var(--color-text, #000); }
+.fm-nf-label { flex: 1; font-size: var(--ds-fs-body); font-weight: 500; color: var(--color-text, #000); }
 
 .fm-nf-chevron { color: var(--color-text-muted, #888); display: flex; }
 .fm-nf-chevron svg { width: 14px; height: 14px; }
 
-.fm-requests { padding: 2px 0 4px; }
+/* ②「新的朋友」区展开入场（旧形态 = 瞬间插入）。与验证框共用 fm-rise-in。 */
+.fm-requests { padding: var(--ds-space-half) 0 var(--ds-space-1); animation: fm-rise-in 200ms ease-out both; }
 
 .fm-req-group {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-text-muted, #888);
-  margin: 8px 10px 2px;
+  margin: var(--ds-space-2) var(--ds-space-indent-x) var(--ds-space-half);
 }
 
-.fm-req-row { cursor: default; }
+/* 请求行：放不下就换行（R5/R6）——动作区整体落到第二行右对齐，绝不挤压文本、
+   绝不被 .panel{overflow:hidden} 裁掉（180px 现状：拒绝键右缘 268.6 > 面板右缘
+   239 被裁；.fm-row-meta 仅 8.42px / 0px）。 */
+.fm-req-row { cursor: default; flex-wrap: wrap; row-gap: var(--ds-space-1h); }
 .fm-req-row:hover { background: transparent; }
 
-.fm-req-btns { display: flex; gap: 6px; flex-shrink: 0; }
+.fm-req-btns { display: flex; gap: var(--ds-space-1h); flex: 0 0 auto; margin-left: auto; }
 
-.fm-req-accept { font-size: 12px; padding: 4px 10px; }
-
-.fm-req-decline {
-  font-size: 12px;
-  padding: 4px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--glass-control-border);
-  background: transparent;
+/* 同意 = 主操作（中性玻璃顶档 + 500 字重；描边随态递进） */
+button.fm-req-accept {
+  font-size: var(--ds-fs-btn);
+  font-family: inherit;
+  font-weight: 500;
+  padding: var(--ds-space-1) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
   color: var(--color-text, #000);
+  background: var(--glass-send-bg-active);
+  border: 1px solid var(--glass-send-border);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: border-color 0.15s ease, color 0.15s ease;
+}
+@media (hover: hover) {
+  button.fm-req-accept:hover { border-color: var(--glass-send-border-hover); }
 }
 
-.fm-req-decline:hover { background: var(--glass-control-bg-hover); }
+button.fm-req-accept:active { border-color: var(--glass-send-border-active); }
+button.fm-req-accept:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: not-allowed;
+}
+button.fm-req-accept:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
+}
+
+/* 拒绝 = 次操作（中性玻璃 rest 档 + 400 字重 + 全量四态 ramp） */
+button.fm-req-decline {
+  font-size: var(--ds-fs-btn);
+  font-family: inherit;
+  font-weight: 400;
+  padding: var(--ds-space-1) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
+  color: var(--color-text, #000);
+  background: var(--glass-send-bg);
+  border: 1px solid var(--glass-send-border);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease,
+              color 0.15s ease;
+}
+@media (hover: hover) {
+  button.fm-req-decline:hover {
+    background: var(--glass-send-bg-hover);
+    border-color: var(--glass-send-border-hover);
+  }
+}
+
+button.fm-req-decline:active {
+  background: var(--glass-send-bg-active);
+  border-color: var(--glass-send-border-active);
+}
+button.fm-req-decline:disabled {
+  background: var(--glass-send-bg-disabled);
+  border-color: var(--glass-send-border-disabled);
+  color: color-mix(in srgb, var(--color-text, #000) 50%, transparent);
+  cursor: not-allowed;
+}
+button.fm-req-decline:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 2px;
+}
 
 /* ── Messages panel: conversation list (§3.2) ───────────── */
 #fm-conversations {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 8px 10px;
+  padding: var(--ds-space-1) var(--ds-space-2) var(--ds-space-block-y);
 }
 
-.fm-conv-top { display: flex; align-items: baseline; gap: 8px; }
+.fm-conv-top { display: flex; align-items: baseline; gap: var(--ds-space-2); }
 
 .fm-conv-time {
   flex-shrink: 0;
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   font-variant-numeric: tabular-nums;
 }
 
-.fm-conv-bottom { display: flex; align-items: center; gap: 8px; }
+.fm-conv-bottom { display: flex; align-items: center; gap: var(--ds-space-2); }
 
 .fm-conv-summary {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -353,53 +641,374 @@
   max-width: 92vw;
   height: 70vh;
   max-height: 80vh;
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   display: flex;
   flex-direction: column;
   padding: 0;
   overflow: hidden;
   position: relative;
+  /* ── 窗头让位的两个派生量（contact-panel-unify 链「顶栏与输入框仿照主会话」）──
+     窗头 = **离流悬浮覆盖**（`.fm-modal-header` position:absolute，见下），所以
+     滚动区必须自己让出窗头的可视足迹，否则首条消息被压在窗头底下：
+       --fm-head-h     = 窗头实测高（= 令牌公式 2×内距 + 头像行 + 2×描边）
+       --fm-head-clear = 窗头高 + 净空（`--nf-head-gap`，替代被摘除的那条分隔线）
+     两个值都从 stand-tokens.css 的 `--nf-head-*` 派生 ⇒ 令牌一改，两面同步，
+     不存在「窗头改了高、让位忘了跟」的第二次手写。（判据：窗头 abs 覆盖 +
+     滚动容器 padding-top 让位；另一条路「flow 负向顶入窗头高」不用 —— 负边距
+     会把滚动条的贴底判定与 anchor 读数一起带偏。） */
+  --fm-head-h: var(--nf-head-h-avatar);
+  --fm-head-clear: calc(var(--fm-head-h) + var(--nf-head-gap));
 }
 
+/* ── 修正③（作者 2026-09-19 04:22）：「对话框样式参考主窗口（弹窗面板 = 毛玻璃
+   既定规矩不变；只对齐主窗口的标题 / 圆角 / 间距语言）」。逐条对齐面：
+     · 圆角 —— `.fm-modal` = 20px，与主窗口弹窗族（`.cfg-modal` / `#settings-modal` /
+       `#search-modal`，均 20px）**逐值相等**（既有，未改）。
+     · 标题区距 —— 由 `14px 16px 10px` 对齐到主窗口标题带
+       `padding: 12px 16px 12px 20px`（`.settings-modal-header` / `.search-modal-header`；
+       2026-10-30 收敛批随主窗重钉——主窗值由 3dae0857c 控制台设计语言批改为
+       `12px 16px 12px 20px`，本面同步收敛，parity 锚保持逐值相等）。
+     · 标题字重/字号 —— 500 → **600**（主窗口 `#settings-modal-title` / `#search-modal-title`
+       = 15px/600；亦合设计系统「标题 600」铁律）。
+     · 标题色 —— `--color-text` → `--color-frame-text-bright`（主窗口弹窗标题同款 token；
+       两 token 在两主题下**取值逐字相同** ⇒ 视觉零变化，纯 token 级对齐）。
+     · 🔴 **有据偏离 1**：不加 `border-bottom` —— 分隔职责已由紧邻的 `.fm-flow`
+       `border-top: 1px solid var(--glass-etched-border)` 承担；再加一条即**双发丝线**。
+       token 差异（etched vs glass）为 fm 窗内既有统一口径（`.fm-flow` / `.fm-input-bar` /
+       `.fm-select-bar` 三处同族），本批不动（改它须同步 4 处断言，收益 ≠ 0 但风险无关本令）。
+     · 🔴 **有据偏离 2**：`.fm-modal` 宽度 560px / 高度 70vh 保持 —— 主窗口弹窗宽度
+       由内容定（400/640px 等），无「弹窗宽度」单一语言项。 */
+/* ── 窗头 = 悬浮玻璃条（contact-panel-unify 链 · 作者令 2026-11-06「顶栏做成完全
+   悬浮且无边缘的样式，内容可以从下方穿过」+「仿照主会话」）──────────────────
+   上面那段「有据偏离 1」的两条前提**已被本令取代**（逐条对账，不是悄悄改）：
+     · 它当年靠 `.fm-flow` 的 border-top 假装分隔线 → 本令要「无边缘」，那条线
+       已摘除（见 `.fm-flow`），分隔改由**留白**承担（净空 = `--nf-head-gap`）；
+     · 它当年让窗头「沾在流里、与弹窗标题带对齐」→ 本令要「完全悬浮」，窗头改为
+       `position:absolute` 覆盖在滚动区之上，与主会话 `#header` 同一套材质与令牌。
+   材质/内距/圆角/零下边缘 = css/glass.css「顶部悬浮头」共享声明（两面同一条），
+   令牌 = css/stand-tokens.css 的 `--nf-head-*`。本块只写**落位与高度**：
+     · position:absolute 的包含块 = `.fm-modal`（position:relative，既有）⇒
+       窗头不随消息滚动、也不吃 `.fm-flow` 的裁剪；
+     · height 走派生量 `--fm-head-h`（内容盒恰好 = 头像行 40：62 − 2×1 描边 − 2×10
+       内距 = 40）⇒ 头像槽零挤压、行基线不变；
+     · z-index 2：压在滚动区之上（滚动区无 z-index ⇒ 同级后声明即可，显式写死
+       防将来有人给流加定位后窗头被穿到下面）。 */
 .fm-modal-header {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  height: var(--fm-head-h);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px 10px;
+  gap: var(--ds-space-inline-gap);
 }
 
-.fm-modal-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+/* 桌面好友/群/设备聊天窗头：沿用手机会话头「按钮—居中头像—按钮」的
+   视觉骨架，但不迁移手机专属返回/三点操作。桌面现有操作仍由群设置、关闭、
+   设备描述等原节点承载；身份槽居中，姓名落在头像下方。手机层有自己的
+   .mh-idhead 结构和几何，本规则仅作用于桌面。 */
+@media (min-width: 701px) {
+  body:not(.mobile-layer) .fm-modal {
+    --fm-head-h: 116px;
+    --fm-head-clear: calc(var(--fm-head-h) + var(--nf-head-gap));
+  }
+  body:not(.mobile-layer) .fm-modal-header {
+    display: block;
+  }
+  body:not(.mobile-layer) .fm-modal-header > .fm-modal-avatar {
+    position: absolute;
+    top: var(--nf-head-pad-y);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1;
+  }
+  body:not(.mobile-layer) .fm-modal-header > .fm-modal-title {
+    position: absolute;
+    top: calc(var(--nf-head-pad-y) + 40px + var(--ds-space-1));
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(70%, 360px);
+    justify-content: center;
+    align-items: center;
+    gap: var(--ds-space-2);
+    overflow: visible;
+    white-space: nowrap;
+  }
+  body:not(.mobile-layer) .fm-modal-header > .fm-gs-open {
+    position: absolute;
+    left: var(--nf-head-pad-x);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  body:not(.mobile-layer) .fm-modal-header > .fm-modal-close {
+    position: absolute;
+    right: var(--nf-head-pad-x);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  body:not(.mobile-layer) .fm-modal-header > .fm-modal-select-count {
+    position: absolute;
+    right: calc(var(--nf-head-pad-x) + 32px);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+}
+
+/* 会话窗头头像槽（40px 档；**窗头头像槽**，三类全挂（作者 2026-09-21 16:54 令
+   「好友/群/设备类对话框统一显示头像」）：群窗 = 组合头像，好友（单聊）窗 =
+   好友档案头像（`avatarEl`），设备窗 = 平台图标（`.fm-avatar-device`，同会话列表
+   设备行那一枚）。头像本体 = `.fm-avgrid`（唯一实现 groupAvatarGrid）／`.fm-avgrid`
+   或标题首字母那一枚／`.fm-avatar-device svg`。类名与几何均既有 ⇒ 零新规则。 */
+.fm-modal-avatar { flex-shrink: 0; display: inline-flex; align-items: center; }
+
+.fm-modal-title { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: var(--ds-space-2); }
+
+/* H（决策卡 C/D/G/H）→ **收窄**（作者 2026-09-17 令：「让 header 可点击展开的范围
+   只是群名和按钮」）：群设置入口的第二挂点 = **群名本身**（`.fm-modal-name`），不再是
+   整条标题带。原形态把类挂在 `.fm-modal-title` 上，而它是 `.fm-modal-header` 的唯一
+   `flex:1` 项 ⇒ 可点面 = 头像槽右缘到 `.fm-gs-open` 左缘的**整条中间带**（含成员数
+   文本与全部空白）。现在类随 handler 一并迁到 `.fm-modal-name`：
+     · `padding: 4px 8px` + `margin: -4px -8px`（**热区内边距一档**，4px 基数档）=
+       字形盒之外再给一圈可点区（纯字形热区过窄、点不准），而**负外边距把热区的
+       扩张全部落在盒外** ⇒ 群名文本与成员数文本的**渲染位置与改前逐像素相同**
+       （窗头高度亦仍为 64px 档，该行 26px < 40px 头像行；读数见报告 §P2/§P3）。
+     · 非群窗不挂 `fm-modal-title-btn` 类 ⇒ 好友/设备窗零影响（设备窗无本类）。 */
+.fm-modal-title-btn { cursor: pointer; border-radius: var(--ds-radius-chip); padding: var(--ds-space-1) var(--ds-space-2); margin: -4px -8px; }
+@media (hover: hover) {
+  /* 类已挂在 `.fm-modal-name` 自身 ⇒ hover 规则必须是**同元素**（原 `.fm-modal-title-btn
+     .fm-modal-name` 后代式选择器随迁后失效，见上）。 */
+  .fm-modal-name.fm-modal-title-btn:hover { color: var(--color-primary); }
+}
+
+/* 🔴 焦点环一律走 outline（禁 box-shadow）：sapphire.css:872-882 的幽灵族
+   `:is(… .fm-modal-title-btn …) { box-shadow: none }`（该行 880）取参数**最高**特异度
+   = `.neblink-peer.fm-device-row` (0,2,0)，与本处 `.fm-modal-title-btn:focus-visible`
+   的 (0,2,0) 打平；sapphire.css 在 friends.css 之后载入（index.html:42 / :50）
+   ⇒ 后者整体吃掉本处的 box-shadow。故旧形态
+   `outline: none; box-shadow: 0 0 0 2px var(--glass-control-border)` 计算值恒为
+   `none`（实测双主题「聚焦 vs 未聚焦」逐像素差 = 0 ＝ 零焦点指示，**非**「弱环/低对比环」）。
+   outline 侧无同类冲突源；`outline-width/-style/-color` 与设计系统既有可见环
+   （chat.css:2699 `.ws-pick-target:focus-visible`）**逐字同款**。
+   `outline-offset: 0`（先例为 2px）＝ 有据偏离，非自由取值：本元素 `margin: -8px`
+   使 `.fm-modal-id`（成员数）起始 x == 本元素 border-right ⇒ offset 2px 时环最右
+   绘制像素（x=609）压过成员数首字 ink（x=607）**2px**（4x 对照图可见「3」被环切断）；
+   offset 0 ⇒ 环最右像素 == 标签 ink 左缘（gap 0px，零穿越），可见性读数不变。 */
+.fm-modal-title-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
 
 .fm-modal-name {
-  font-size: 15px;
-  font-weight: 500;
+  font-size: var(--ds-fs-title);
+  font-weight: 600;
   letter-spacing: -0.01em;
-  color: var(--color-text, #000);
+  color: var(--color-frame-text-bright, #1b1e26);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* 多选态头部（D5）：计数由底部条迁到**头部**，窗头右端出现「退出」键。
+   形态语言 = 主窗口弹窗标题带内的次级件（`.fm-modal-id` 同族字号 11-12px +
+   `--color-frame-text-muted`；按钮圆角 8px 与全站按钮档一致：主窗口
+   `.search-modal` 内的 8px 档）。🔴 计数文案沿用既有 i18n key（不改文案）。 */
+.fm-modal-select-count {
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.fm-fwd-cancel {
+  flex-shrink: 0;
+  font-family: inherit;
+  font-size: var(--ds-fs-hint);
+  font-weight: 500;
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-input);
+  border: 1px solid var(--glass-etched-border);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.fm-fwd-cancel:hover { background: var(--color-frame-hover); }
+.fm-fwd-cancel:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
+
+/* ── ④ 转发窗口（D7 · 本批**新增面**，照案形态）─────────────────────────────
+   形似「创建群聊」+ 作者令②「可输入附言 + 选择好友」。四段 = ① 附言（下沉面，
+   2 行）② 已选 chip 回显（可单个移除）③ 好友/会话多选列表（勾选圆 = 22px，与多选态
+   同一族 / 同一选中档）④ 目标会话行 + 动作行。
+   🔴 铁律 1：**无 overlay 遮罩**（面板直接浮在聊天窗上方，零背景暗化/模糊），面板
+   本体毛玻璃 —— 复用的正是既有 `.cfg-modal`（= `--glass-bg` + blur）⇒ 零新材质。
+   🔴 二期项（照案标注）：**多选转发到其他会话（多目标）**为既定二期 ⇒ 本批目标会话
+   行为「单一目标」完整形态（多目标只需把该行扩成可写多值，布局不变）。
+   宽度 420px（设计稿 §3③）。
+   🔴 零新色值：全部消费既有 token（`--glass-etched-*` / `--color-frame-*` /
+   `--sapphire` / `--color-text*`）。 */
+.fm-fwd-modal {
+  width: 420px;
+  max-width: 92vw;
+  max-height: 80vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.fm-fwd-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-1);
+  min-height: 0;
+}
+/* 附言 = 下沉面（比面板底更暗；亮/暗两档各一值，与引用块的 D1 同族口径）。 */
+.fm-fwd-note {
+  width: 100%;
+  box-sizing: border-box;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border: none;
+  border-radius: var(--ds-radius-button);
+  background: rgba(0, 0, 0, 0.03);
+  box-shadow: inset 0 0 0 1px var(--glass-etched-border);
+  font-family: inherit;
+  font-size: var(--ds-fs-body);
+  line-height: 1.45;
+  color: var(--color-text);
+  resize: none;
+  min-height: 44px;
+  max-height: 72px;
+  outline: none;
+}
+.fm-fwd-note::placeholder { color: var(--color-text-muted, #888); }
+@media (prefers-color-scheme: dark) {
+  .fm-fwd-note { background: rgba(255, 255, 255, 0.05); }
+}
+/* 已选回显（chip 平铺，可单个移除） */
+.fm-fwd-chips { display: flex; flex-wrap: wrap; gap: var(--ds-space-2); }
+.fm-fwd-chips:empty { display: none; }
+.fm-fwd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-2) var(--ds-space-1) var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
+  background: var(--glass-etched-bg);
+  box-shadow: inset 0 0 0 1px var(--glass-etched-border);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text);
+}
+.fm-fwd-chip-x {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: transparent;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  cursor: pointer;
+  border-radius: 50%;
+}
+.fm-fwd-chip-x:hover { color: var(--color-text); background: var(--color-frame-hover); }
+/* 多选列表（好友 / 会话） */
+.fm-fwd-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--ds-radius-xl);
+  box-shadow: inset 0 0 0 1px var(--glass-etched-border);
+}
+.fm-fwd-empty {
+  padding: var(--ds-space-3);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  text-align: center;
+}
+.fm-fwd-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  background: transparent;
+  border: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  width: 100%;
+}
+.fm-fwd-row + .fm-fwd-row { border-top: 1px solid var(--glass-etched-border); }
+.fm-fwd-row:hover { background: var(--color-frame-hover); }
+.fm-fwd-row:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: -2px; }
+/* 勾选圆 = 多选态同一族（22px / 1.5px 描边 / 选中 = sapphire 实心 + 白勾）。 */
+.fm-fwd-check {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--glass-etched-border-focus);
+  color: transparent;
+}
+.fm-fwd-check svg { width: 12px; height: 12px; display: block; }
+.fm-fwd-row.on .fm-fwd-check { background: rgb(var(--sapphire)); border-color: rgb(var(--sapphire)); color: #fff; }
+.fm-fwd-row-mid { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--ds-space-hair); }
+.fm-fwd-row-name {
+  font-size: var(--ds-fs-body);
+  color: var(--color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-fwd-row-sub {
+  font-size: var(--ds-fs-meta);
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 目标会话行（单一目标；多目标 = 二期，见上） */
+.fm-fwd-target {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-button);
+  background: var(--glass-etched-bg);
+  box-shadow: inset 0 0 0 1px var(--glass-etched-border);
+  font-size: var(--ds-fs-hint);
+}
+.fm-fwd-target-label { color: var(--color-frame-text-muted, var(--color-text-muted, #888)); }
+.fm-fwd-target-name {
+  color: var(--color-text);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-fwd-footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-3) var(--ds-space-4) 14px;
+  border-top: 1px solid var(--glass-etched-border);
+}
+
 .fm-modal-id {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.fm-forward-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: 8px;
-  flex-shrink: 0;
-}
-
-.fm-forward-btn svg { width: 15px; height: 15px; }
+/* 窗头转发按钮（.fm-forward-btn）规则已删除：作者 2026-09-12 裁定移除窗头转发
+   入口（转发只保留按消息的两条：气泡内按钮 + 气泡右键，共用 forwardBubble）。
+   规则一并删掉，避免成为死 CSS。 */
 
 /* 信任模式 v1: 窗头信任状态指示。sapphire chip（开启态一眼可辨），色相复用
    既有 --sapphire token 的 alpha 变体（零新色），形态对齐 fm-msg-*-badge pill。 */
@@ -408,15 +1017,15 @@
 .fm-trust-badge {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: 11px;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   line-height: 1;
   color: rgb(var(--sapphire) / 0.95);
   background: rgb(var(--sapphire) / 0.10);
   border: 1px solid rgb(var(--sapphire) / 0.28);
-  border-radius: 9999px;
-  padding: 3px 9px;
+  border-radius: var(--ds-radius-pill);
+  padding: var(--ds-space-1) var(--ds-space-2);
   white-space: nowrap;
 }
 
@@ -429,8 +1038,8 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  font-size: 17px;
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-lead);
   color: var(--color-text-muted, #888);
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
@@ -443,11 +1052,11 @@
   top: 48px;
   left: 50%;
   transform: translateX(-50%);
-  padding: 5px 14px;
-  border-radius: 9999px;
+  padding: var(--ds-space-1h) 14px;
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text, #000);
   z-index: 2;
   pointer-events: none;
@@ -455,139 +1064,1026 @@
 
 .fm-offline-bar,
 .fm-blocked-bar {
-  margin: 0 16px 6px;
-  padding: 6px 10px;
+  margin: 0 var(--ds-space-4) var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   text-align: center;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted, #888);
   background: var(--glass-etched-bg);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
 }
 
-/* Message flow — bubbles per spec §5 (dropbox token values) */
+/* Message flow — 气泡几何 / 出向底色 / 元信息 pill / 时间排版 = 与 dropbox 面
+   同源，写在 sapphire.css 的 "Shared message surface" 段（同一批值只写一次）。
+   本文件只留好友面专有声明：消息流布局、pre-wrap 正文、chip、操作组。 */
 .fm-flow {
   flex: 1;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 8px 16px 10px;
-  border-top: 1px solid var(--glass-etched-border);
+  gap: var(--ds-space-inline-gap);
+  /* 窗头让位 = 令牌派生量（不是又一个手写数）：
+       padding-top = --fm-head-clear（窗头高 + 净空）
+     滚动起来以后内容照样从窗头底下过 —— 这是滚动容器的 padding-top 的本义：
+     它属于**滚动内容**，滚上去就会钻到 padding 区里（= 窗头背后），静止贴顶时
+     首条消息恰好落在窗头下缘之外。
+     🔴 `border-top` 已摘除（作者令「无边缘」）：那条 1px etched 线是「顶栏有边缘 /
+     内容被切断」的直接成因之一。分隔职责改由留白承担（净空 = --nf-head-gap，写入
+     --fm-head-clear 一档）；窗内其余两处（.fm-select-bar / .fm-device-desc）本来就
+     靠间距分开，无第二条线依赖它。 */
+  padding: var(--fm-head-clear) var(--ds-space-4) var(--ds-space-block-y);
 }
 
-.fm-msg { display: flex; flex-direction: column; max-width: 78%; }
-.fm-msg.out { align-self: flex-end; align-items: flex-end; }
-.fm-msg.in  { align-self: flex-start; align-items: flex-start; }
-
-.fm-msg-bubble {
-  padding: 8px 12px;
-  border-radius: 14px;
-  font-size: 13px;
+/* ⑩ 消息流状态行（作者 2026-09-14 17:21 令「不要空白」）：消息区**永不为空** ——
+   无本地缓存且尾窗在飞 ⇒ 「加载中…」；回包为空 ⇒ 「暂无消息」。
+   `margin:auto` 让它在纵向 flex 的消息流里居中；取色只用既有主题 token
+   （亮/暗同源，无新字面量色值）。 */
+.fm-flow-status {
+  margin: auto;
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
-  word-break: break-word;
-  white-space: pre-wrap;
-  color: var(--color-text, #000);
-}
-
-.fm-msg.out .fm-msg-bubble {
-  background: rgba(91, 127, 191, 0.15);
-  border: 1px solid rgba(91, 127, 191, 0.18);
-}
-
-.fm-msg.in .fm-msg-bubble {
+  text-align: center;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
   background: var(--glass-etched-bg);
-  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-pill);
 }
 
-.fm-msg-meta {
+/* 好友消息正文保留换行语义（dropbox 面走纯文本渲染，不共享此条） */
+.fm-msg-bubble { white-space: pre-wrap; }
+
+/* ── 气泡族改挂主会话（四会话统一批 2026-11-05）─────────────────────────────
+   气泡本体 = 主会话**同一个类族** `.bubble`（chat.css 单点：内距 10-14 / 圆角 16
+   / 字阶 --ds-fs-bubble / 行高 1.55 / 出向 --nf-bub-ours-bg / 入向
+   --nf-bub-theirs-bg + 1px 描边 + 柔影 / 方向尾角 4px）。本文件只留**行壳**与主
+   会话 `.row` 的关系差：
+     · 主会话：`.row`（全宽）> `.bubble`（max-width 80%）；
+     · 会话窗：`.fm-msg`（= 行壳，max-width 80%）> `.bubble`（100% of 行壳）。
+   两者等效上限都是「消息列宽的 80%」，且泡本体永远吃满行壳（内容自适应）。
+   80% 的**值的家** = design-system.css `--ds-bubble-max-w`（与主会话同 token）
+   —— 会话窗不再从 `--msg-bubble-max-w`（78%，现仅 dropbox 面消费）取数。 */
+/* Row-shell direction was accidentally removed from sapphire.css by the
+   four-thread unification. Shared bubble styling does not replace row layout. */
+.fm-msg {
   display: flex;
+  flex-direction: column;
+  max-width: var(--ds-bubble-max-w);
+}
+.fm-msg.out { align-self: flex-end; align-items: flex-end; }
+.fm-msg.in { align-self: flex-start; align-items: flex-start; }
+.fm-msg > .bubble { max-width: 100%; }
+
+/* Author selection: use the primary conversation bubble and footer styling on
+   desktop as well as mobile; retain only the FM row layout above. */
+
+/* ── 跨天居中日期行（日期行上移批 2026-11-06 作者令②）─────────────────────────
+   「跨天只显示一次」：日期层从每条 footer（formatFooterTime 分层档，每条都显）
+   上移到本行——同一天的消息不再重复日期。壳 = 主会话 footer **同一枚**
+   `.duration-badge`（chat.css 单源，零第二套 pill 实现）；本文件只给「居中」
+   与行距两个宿主档，禁另造日期行样式。label 单点 = `formatFooterDay`
+   （timeFormat.js，与主会话 footer 同一桶梯）。今天 = 纯时钟档无日期行（改前
+   亦如此，行为零变化）。 */
+.fm-day-sep {
+  align-self: center;
+  flex: none;
+}
+/* 日期行不是时钟切换热区（无时刻可切）⇒ 摘掉 badge-time 的 pointer 档，
+   其余（字号/字色/字距档）全部继承主会话 footer 同款。 */
+.fm-day-sep .duration-badge-time { cursor: default; }
+
+/* ── 附件卡（fm-att-card-unify 批 2026-11-02 · fm-att-component-lib 批同日换代）─────
+   卡面本体 = 主会话卡语言（chat.css 的 `.file-card` / `.pop-media-flat` /
+   `.pop-stack-area` 家族），渲染出口 = popArtifacts 标准组件（`buildMediaFlat` /
+   `buildMediaStack` / `buildFileCard`，JS 单点，禁第二套卡实现/描边/几何算术）。
+   本段只留三窗宿主绑定声明：
+     · `.fm-att` = 卡根**标记类**（QA/spec 钩子 + 状态位挂点），零视觉；
+     · **卡出泡**（component-lib 批 · 作者令「卡不带边缘」）：附件组 = 消息行的兄弟
+       节点（自由卡区，主会话 `.row.user-media` 同构）——卡不进 `.fm-msg-bubble`，
+       泡只装正文/引用块；媒体独占消息泡不渲染（旧 `.fm-msg-bubble-media` 去 chrome
+       特例随结构退役，死 CSS 不留）；
+     · 状态等价适配：`expired`（终态：灰态 + 名字划线，真名/大小保留，无键）/
+       `uploading` / `unreadable`（灰态，无键——不可下载者绝不渲染成可点按钮）。 */
+.fm-att-list {
+  /* 排列格式变体（容器基线排布 = chat.css `.pop-group, .fm-att-list` 单定义块，
+     2026-11-18 统一批）：本处只留**变体档**——间距档 / 落位 / 宽度档。 */
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-2);
+  max-width: 100%;
+}
+.fm-msg.out .fm-att-list { align-items: flex-end; }
+.fm-msg.in .fm-att-list { align-items: flex-start; }
+/* 卡区加宽标记（messages.js 挂）：叠卡盒 220 + 扇形出画 + 「展开 N」角标 ≈ 350px，
+   行 78% 上限放不下 ⇒ 带卡区的行放开 max-width（泡宽 = 内容自适应，不受影响）。 */
+.fm-msg.fm-msg-atts { max-width: 100%; }
+
+/* 状态态（视觉判据沿用 §B.7 ②1 既有口径：真名/大小保留、灰态、无键）。 */
+.fm-att.fm-att-expired .fc-name { text-decoration: line-through; }
+.fm-att.fm-att-expired,
+.fm-att.fm-att-uploading,
+.fm-att.fm-att-unreadable { opacity: 0.72; }
+
+/* 媒体卡根（`.fm-att-media`）= **平面媒体卡**（单件媒体面）的列容器：媒体面 + 设备
+   挂件（零自有 chrome —— 卡语言全在面内）；文件卡挂设备挂件需要整行折行。
+   🔴 fm-stack-pill-align 批 2026-11-02 作用域钉：本规则**只**覆盖平面媒体卡根
+   （`messages.js::attachmentCard` 的卡根）。叠卡组（`.fm-att-stack`）**不是**本类
+   —— 叠卡组若挂上 `fm-att-media`，这里的 `flex-direction: column` 会把组件
+   `.pop-stack-area` 的横排行几何压成竖排，「展开 N」钮从「栈卡侧方、垂直居中」
+   掉到栈卡下方（＝作者所指「展开钮位置与主会话不同」的根因）。标记类口径以
+   `messages.js::buildMediaStackGroup` 头注为准：叠卡组只挂 `.fm-att` + `.fm-att-stack`。 */
+.fm-att.fm-att-media {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--ds-space-half);
+  min-width: 0;
+}
+.file-card.fm-att { flex-wrap: wrap; }
+
+/* 叠卡宿主绑定（fm-att-component-lib 批 2026-11-02；fm-stack-pill-align 批同日校正）：
+   叠卡形态/几何全部属组件（chat.css `.pop-stack-area`/`.media-layer` 单点）；此处只做
+   **宿主侧别镜像**——主会话由 `.row.pop-artifact.user`（出向 = 扇形朝左 + 钮在左）
+   与 `.row.pop-artifact:not(.user)`（入向 = 扇形朝右 + 钮在右）承载，三窗行类是
+   `.fm-msg.out/in` ⇒ 同值常量镜像到本宿主（非第二套算术：translate/rotate/pill
+   间距逐值取自 chat.css:4960-4963 / 4916-4930 既有规则）。
+   🔴 组件默认位 = 主会话逐字同款（钮恒在栈卡**朝会话中轴**一侧、垂直居中、盒间距
+   48px = pill margin 32 + flex gap 16）；本段只是把「哪侧朝中轴」按行侧镜像过来 ——
+   fm 调用点**不传**任何位置类 opts（见 popArtifacts.buildMediaStack 头注）。 */
+.fm-msg .pop-stack-area { width: max-content; max-width: 100%; }
+.fm-msg.out .pop-stack-area > .pill { margin-right: var(--ds-space-8); }
+.fm-msg.in .pop-stack-area > .pill { order: 3; margin-left: var(--ds-space-8); }
+.fm-msg.out .pop-stack-view .media-layer.layer-mid { transform: translateX(-14px) rotate(-2deg); }
+.fm-msg.out .pop-stack-view .media-layer.layer-back { transform: translateX(-26px) rotate(-3.5deg); }
+
+/* 下载键（主会话 `.msg-copy.msg-dl` 键族；字形 = popArtifacts 单点导出）：
+   文件卡卡尾 = `.fwd-btn` 位（margin-left:auto）；媒体卡 = `.pop-media-canvas` 角标位。
+   `fm-att-dl` 同时是卡级预览的嵌套控件豁免判据（messages.makeCardPreviewable）与
+   既有 QA 钩子——只作标记，不再带自有 chrome（旧文本键样式随统一退役）。 */
+.file-card .fm-att-dl {
+  margin-left: auto;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+}
+.file-card .fm-att-dl svg { width: 16px; height: 16px; }
+.fm-att-dl:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+
+/* 可点面（点击 = Canvas 预览）：cursor 由卡面自带（file-card/pop-media-flat 既有
+   pointer），这里只保留键盘焦点环（可达性与改前同档）。 */
+.fm-att-previewable:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+
+/* ── 图片附件直显槽（`.fm-att-inline` 旧段）已随 fm-att-card-unify 批退役 ──────────
+   图片附件的出帧面 = 主会话媒体卡（chat.css `.pop-media-flat` + popArtifacts
+   `buildMediaFlat`，渲染出口单点）；字节腿仍在 `messages.js::attachInlineImage`
+   （账本/LRU/预览字段/本机句柄/票据链逐字保留），骨架期 = 媒体卡的既有 CSS 回退盒
+   （220px 4/3），真帧比例由面内 `fitLayer` 于 load 时落地（主会话同款节奏）。
+   旧槽的 260×200 上限盒 / 比夹取（`inlineBoxFor`）/ 禁放大算术随槽退役；
+   `applyInlineRatio` 仍由发送侧小图腿调用（变量写入成惰性读数，无消费者即无视觉面）。 */
+
+.fm-att-dl:disabled { opacity: 0.5; cursor: default; }
+
+/* ── 附件发送上传卡（attachcl 批，2026-09-16）──────────────────────────
+   好友窗与群窗**共用**同一枚渲染器（`attachUpload.renderUploadCards`），故本段规则
+   是两面唯一的外观定义（禁按会话面分叉）。
+   取色只用既有 token（`--glass-etched-*` / `--glass-control-border` / `--color-frame-hover`
+   / `--color-error` / `--sapphire`）⇒ 亮暗双主题同源、零新增字面量色值。
+   四态必须**视觉可区分**（同 §B.7 ②1 的既有口径）：
+     · uploading —— 进度条 + 「上传中 n%」+ 取消键（唯一可点态）
+     · sent      —— 「已发送」，无按钮
+     · failed    —— 错误色边框 + 可判读原因（**未发送**）
+     · cancelled / skipped —— 灰态 + 「已取消/未上传」（终态，无按钮）
+   断行：长文件名必须能折行（`min-width:0` + `overflow-wrap`），窄视口不溢出。 */
+.fm-upload-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  margin: 0 var(--ds-space-4) var(--ds-space-1h);
+}
+.fm-upload-list[hidden] { display: none; }
+
+/* 卡语言统一（fm-att-card-unify 批）：`.fm-upload` 卡本体 = 主会话文件面
+   （`.file-card`，chat.css 单点），本段只留上传态专有声明 —— wrap（进度条/注记行
+   需要整行折行）、状态注记取色、取消/重试键位。全部 `fm-upload-*` 类名保留
+   （QA/spec 取件面零变化）。 */
+.fm-upload {
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.fm-upload .fc-meta { flex: 1; min-width: 0; }
+.fm-upload-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.fm-upload-note {
+  flex-basis: 100%;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+}
+.fm-upload-sent .fm-upload-note { color: var(--color-frame-text-muted, var(--color-text-muted, #888)); }
+.fm-upload-cancelled,
+.fm-upload-skipped { opacity: 0.72; }
+.fm-upload-failed { border-color: var(--status-error-icon); }
+/* ui-status-redesign（盘点 #42 同族 / S5）：失败注记词转中性字 + 词前图标。 */
+.fm-upload-failed .fm-upload-note { color: var(--status-word); }
+.fm-upload-failed .fm-upload-note .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
+.fm-upload-progress {
+  flex-basis: 100%;
+  height: 3px;
+  border-radius: var(--ds-radius-thin);
+  background: var(--glass-etched-border);
+  overflow: hidden;
+}
+.fm-upload-progress-bar {
+  height: 100%;
+  background: rgb(var(--sapphire));
+  transition: width 0.2s ease-out;
+}
+.fm-upload-cancel {
+  margin-left: auto;
+  flex-shrink: 0;
+  align-self: center;
+  border: 1px solid var(--glass-control-border);
+  border-radius: var(--ds-radius-chip);
+  background: transparent;
+  color: var(--color-text, #000);
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  cursor: pointer;
+}
+.fm-upload-cancel:hover { background: var(--color-frame-hover); }
+.fm-upload-cancel:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+
+/* 附件消息的正文（与占位正文区分：占位文本被隐藏时不留空行） */
+.fm-msg-text { white-space: pre-wrap; }
+.fm-msg-text:not(:last-child) { margin-bottom: var(--ds-space-half); }
+
+/* ── 正文 markdown 面（fm-md-social 批 · 2026-11-02 19:30 作者令）───────────────
+   「好友/群聊/设备里的聊天也要支持渲染 markdown」。渲染器 = 主会话同一条
+   `utils.renderMarkdownWithMath`（`{safe:true}` 外部输入档），本段只补**元素样式
+   作用域**——与 `chat.css` 的 `.bubble.ai*` 段、`flowMap.css` 的 `.fm-md` 段同一族
+   规则语言（同一批产品里第三处消费点，不是第三套渲染器）。
+   🔴 作用域只到 `.fm-msg-md`（= 正文里**确实有** md 语法的那些气泡）：无语法的
+   普通一句话走 `.fm-msg-text` 纯文本腿，本段一条都不命中 ⇒ 间距/行高/字色逐字节
+   不变（A3 回归门的实现前提）。
+   🔴 取色一律走主题 token（--color-frame-hover / --color-border / --sapphire）：
+   亮暗两档同源自适应，禁裸 hex（与 flowMap.css `.fm-md` 段同一条纪律）。
+   🔴 字号：正文继承气泡的既有档（13px）——**本批不动既有排版**（改后纯文本与
+   markdown 正文同档，同屏不出现两种正文字号）；新增元素只加下限 13px 与
+   ≥44×44 热区，见下。 */
+
+/* 正文容器：markdown 腿关掉 pre-wrap（块级元素已由 marked 结构化，pre-wrap 会把
+   源码里的换行叠成双倍行距；`breaks:true` 已把单个换行转成 <br>）。 */
+.fm-msg-text.fm-msg-md { white-space: normal; min-width: 0; max-width: 100%; }
+
+/* 🔴 宽度约束（本批实测发现的产品缺陷，非夹具问题）：`.fm-msg` 是 flex column +
+   `align-items: flex-start` ⇒ `.fm-msg-bubble` 的 cross-size = fit-content，而
+   flex 项的 `min-width: auto` 会把它顶到 **min-content**（= nowrap 表格/长代码行的
+   最宽内容）。实测 390 视口下气泡撑到 484px（行上限 279px）⇒ 表格/代码块被
+   `.fm-flow` 的 overflow-x:hidden 直接裁掉，横滚永远出不来（改前纯文本腿没有
+   这个问题 —— 文本会折行，min-content 只有最长单词）。
+   修法 = 只给**带 markdown 正文的气泡**解掉 min-content 下限（`:has()` 精确
+   作用域；纯文本气泡一个像素都不动，A3 回归门逐字节守）：气泡宽 = min(fit-content,
+   行宽) ⇒ 内部 `table`/`pre` 的 `max-width:100%` 才有确定参照系，`overflow-x:auto`
+   才真的产生滚动。 */
+.fm-msg-bubble:has(> .fm-msg-text.fm-msg-md) { min-width: 0; max-width: 100%; }
+
+.fm-msg-md p { margin: var(--ds-space-1) 0; }
+.fm-msg-md p:first-child { margin-top: 0; }
+.fm-msg-md p:last-child { margin-bottom: 0; }
+/* 全局 reset（base.css `* { margin:0; padding:0 }`）把 ul/ol 缩进清零 ⇒ 圆点会掉到
+   气泡左内边距之外（chat.css 同款注释）。此处补回 18px 档。 */
+.fm-msg-md ul, .fm-msg-md ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); padding: 0; }
+.fm-msg-md li { margin: var(--ds-space-half) 0; }
+.fm-msg-md li > p { margin: var(--ds-space-half) 0; }
+.fm-msg-md strong, .fm-msg-md b { font-weight: 600; }
+.fm-msg-md em { font-style: italic; }
+.fm-msg-md del { text-decoration: line-through; opacity: 0.75; }
+.fm-msg-md a {
+  color: rgb(var(--sapphire));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  /* 外链钮热区：行内锚的纵向不足 44px ⇒ ::before 外扩命中盒（视觉形态不变，
+     触控面达 Apple 档；mobileLayer.css 的 --mhit 同一手法）。 */
+  position: relative;
+}
+/* 命中盒外扩（44×44 下限；行内锚本体高度 ≈ 行高，纵向补足）。 */
+.fm-msg-md a.md-ext::before {
+  content: '';
+  position: absolute;
+  inset: -14px -10px;
+  border-radius: var(--ds-radius-input);
+}
+/* 外链标识（明显可辨，不靠配色单打）：右上小箭头，与 `target=_blank` 语义同源，
+   点击仍走二次确认（messages.js onMdExtClick）。 */
+.fm-msg-md a.md-ext::after {
+  content: '↗';
+  position: absolute;
+  top: -0.45em;
+  right: -0.62em;
+  font-size: 0.72em;
+  line-height: 1;
+  opacity: 0.72;
+  pointer-events: none;
+}
+/* 图片降级牌（safe 档不自动取远端字节）：小牌 + 图钉语义（glyph 走 ::after，
+   ::before 仍是命中盒）。 */
+.fm-msg-md a.md-ext-img {
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 3px;
-  font-size: 11px;
-  color: var(--color-text-muted, #888);
+  gap: var(--ds-space-1);
+  max-width: 100%;
+  padding: var(--ds-space-half) var(--ds-space-2);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--glass-etched-bg);
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 图片牌前缀字形走**文字**而非 emoji/图标（emoji-当图标是已登记的清剿面）：
+   方括号 = 「这张图没加载，是个链接」的既有表达。 */
+.fm-msg-md a.md-ext-img::after {
+  content: '↗';
+  position: static;
+  margin-left: var(--ds-space-half);
+  opacity: 0.72;
+  pointer-events: none;
 }
 
-.fm-msg-time { font-variant-numeric: tabular-nums; }
+.fm-msg-md h1, .fm-msg-md h2, .fm-msg-md h3,
+.fm-msg-md h4, .fm-msg-md h5, .fm-msg-md h6 {
+  margin: var(--ds-space-2) 0 var(--ds-space-1);
+  font-weight: 600;
+  line-height: 1.35;
+}
+.fm-msg-md h1 { font-size: 1.35em; }
+.fm-msg-md h2 { font-size: 1.22em; }
+.fm-msg-md h3 { font-size: 1.1em; }
+.fm-msg-md h4, .fm-msg-md h5, .fm-msg-md h6 { font-size: 1em; }
+
+.fm-msg-md blockquote {
+  border-left: 3px solid var(--color-border);
+  margin: var(--ds-space-1h) 0;
+  padding-left: var(--ds-space-inline-x);
+  color: var(--color-text-muted);
+}
+.fm-msg-md hr {
+  border: none;
+  border-top: 1px solid var(--color-border);
+  margin: var(--ds-space-2) 0;
+}
+
+/* 行内代码：等宽 + 底纹（与 chat.css `.bubble.ai code` 同形，取色换 token）。 */
+.fm-msg-md code {
+  background: var(--color-frame-hover);
+  padding: var(--ds-space-hair) var(--ds-space-1);
+  border-radius: var(--ds-radius-badge);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  /* 可读辅助字下限 13px（Apple footnote 档）：气泡正文 13px ⇒ 代码不得更小。 */
+  font-size: var(--ds-fs-body);
+  word-break: break-all;
+}
+
+/* 代码块：块级容器 + 横向滚动 + 右缘**模糊淡出**（不用省略号 —— 长内容/超宽内容
+   的既有表达法；mask 只在溢出侧生效，短代码块不产生视觉差）。 */
+.fm-msg-md pre {
+  background: var(--color-frame-hover);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-block-y);
+  border-radius: var(--ds-radius-input);
+  margin: var(--ds-space-1h) 0;
+  overflow-x: auto;
+  line-height: 1.45;
+  scrollbar-color: var(--color-border) transparent;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+}
+.fm-msg-md pre code {
+  background: none;
+  padding: 0;
+  font-size: var(--ds-fs-body);
+  word-break: normal;
+  white-space: pre;
+}
+/* 复制按钮的定位上下文（渲染管线注入 `.code-block-wrap` + `.code-copy-btn`，
+   按钮是 absolute；缺这条会落到最近定位祖先 = 气泡右上角压住内容 ——
+   flowMap.css `.fm-md` 段同款注释、同一处修补）。 */
+.fm-msg-md .code-block-wrap { position: relative; margin: var(--ds-space-1h) 0; }
+.fm-msg-md .code-block-wrap pre { margin: 0; padding-top: var(--ds-space-3); }
+/* 复制钮热区 ≥44×44（Apple HIG）：本体保持既有小钮视觉，::before 外扩命中盒。
+   触摸端（hover:none）常显（无 hover 可依赖）。 */
+.fm-msg-md .code-copy-btn { position: absolute; }
+.fm-msg-md .code-copy-btn::before {
+  content: '';
+  position: absolute;
+  inset: -12px -6px;
+}
+@media (hover: none) {
+  .fm-msg-md .code-copy-btn { opacity: 1; }
+}
+
+/* 表格：小屏横向滚动（作者令「不许挤成一团」）+ 右缘模糊淡出；单元格换行关闭
+   ⇒ 列不被压成竖排字。 */
+.fm-msg-md table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: var(--ds-space-1h) 0;
+  font-size: var(--ds-fs-body);
+  scrollbar-color: var(--color-border) transparent;
+  -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+  mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent 100%);
+}
+.fm-msg-md th, .fm-msg-md td {
+  border: 1px solid var(--color-border);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  white-space: nowrap;
+  text-align: left;
+}
+.fm-msg-md th { background: var(--color-frame-hover); font-weight: 600; }
+
+/* 数学（KaTeX 产物）与 mermaid 占位：超宽同样横向滚动而不是撑破气泡。 */
+.fm-msg-md .katex-display { overflow-x: auto; overflow-y: hidden; }
+.fm-msg-md .nf-mermaid { max-width: 100%; overflow-x: auto; }
 
 /* Chips: agent-sent + forwarded (§3.3 R6/R7) — pill, etched bg, no new color */
-.fm-msg-agent-badge,
+/* 转发徽章（消息元信息行槽位；材质本就与 agent 徽章同族）。
+   🔴 `.fm-msg-agent-badge` 已随 F1 单源化移出本规则（现状 = `sapphire.css` 的
+   `.agent-badge, .fm-msg-agent-badge` 一处定义；禁在此复写第二份）。 */
 .fm-msg-forwarded-badge {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: var(--color-frame-text-muted, var(--color-text-muted, #888));
   background: var(--glass-etched-bg);
-  border-radius: 9999px;
-  padding: 1px 8px;
+  border-radius: var(--ds-radius-pill);
+  padding: var(--ds-space-hair) var(--ds-space-2);
 }
 
+/* 操作组（复制 / 转发）= 常显。作者 2026-09-12 裁定 3：「复制和转发按钮一直
+   显示」（派工单「改 hover」的方向以本条为准）。显隐只能用 opacity——
+   display:none / visibility:hidden 会跳版（占位恒 42px）并把按钮移出 Tab 序；
+   现状实测悬停前后气泡与时间几何逐值不变。 */
 .fm-msg-actions {
   display: inline-flex;
-  gap: 2px;
-  opacity: 0;
-  transition: opacity 0.12s ease;
+  align-items: center;
+  gap: var(--ds-space-1h);   /* S18：现状 2px → 6px ⇒ 时间→按钮 = 6(pill gap) + 1(divider) + 6 = 13px，
+                 与主对话实测 13px 档一致（同时把「复制 ↔ 转发」间距拉到 6px，见 E3） */
+  opacity: 1;
+  transition: opacity 0.15s;   /* S20：现状 .12s ease → 归一 .15s（全站动画 150-300ms 纪律） */
 }
 
-.fm-msg:hover .fm-msg-actions,
-.fm-msg:focus-within .fm-msg-actions { opacity: 1; }
+/* 时间与按钮之间的分隔线 = 主会话**真节点**同族（`.duration-badge-divider` /
+   设备面 `.dropbox-msg-divider` / 本面 `.fm-msg-divider`，单一几何定义在
+   sapphire.css:865-872：1px×10px currentColor @ .2 + flex-shrink:0）。
+   fm-footer-align 批 2026-11-02：旧形态的 `.fm-msg-actions::before` 伪元素
+   （「视觉等价、结构不同」）随真节点上场退役 —— 主会话/设备面/好友面三处
+   同构同款，死规则不留。 */
 
+/* 触摸端兜底（全仓首个 (hover: none) 分支）：常显档下天然可见，本规则为零成本
+   显式声明，防将来回退到揭示式显隐时触摸端不可达。S13：随三面复制键统一扩为
+   复制键选择器（好友面 .fm-msg-act；设备面同款声明在 dropbox.css）。 */
+@media (hover: none) {
+  .fm-msg-actions { opacity: 1; }
+  .fm-msg-act { opacity: 1; }
+}
+
+/* S08/S09/S10：复制键盒收敛到主对话口径（chat.css:783-789）= 13×13 盒 / padding 1px
+   / r4 / svg 11px / 常驻 `.35`（R2 = 常显半透明）/ hover **仅**透明度 .6
+   （去掉现状的色变 + 圆角底色）。
+   🔴 回归登记（G4/E3）：`.fm-msg-act` 是「复制 + 转发」两颗按钮的共用类 ⇒ 本段
+   同时把转发键缩到 13×13、并把它一并纳入常驻 .35 与 hover .6 档（转发键无主对话
+   对照，属「顺带改样」，已记入变更单）。 */
 .fm-msg-act {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
-  padding: 0;
+  width: 13px;
+  height: 13px;
+  padding: var(--ds-space-hair);
   border: none;
-  border-radius: 5px;
+  border-radius: var(--ds-radius-badge);
   background: transparent;
-  color: var(--color-text-muted, #888);
+  color: var(--color-text);
+  opacity: 0.35;
   cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease;
+  transition: opacity 0.15s;
 }
 
-.fm-msg-act:hover { color: var(--color-text, #000); background: var(--color-frame-hover); }
-.fm-msg-act svg { width: 12px; height: 12px; }
+.fm-msg-act:hover { opacity: 0.6; }
+.fm-msg-act svg { width: 11px; height: 11px; }
 
-/* sending → spinner pulse (§6.2); failed → red ! + click resend */
-.fm-sending .fm-msg-time {
-  animation: fm-pulse 1.2s ease-in-out infinite;
+/* S14/R3：复制成功反馈——原好友面**完全缺失**（点复制零反馈），现收敛到主对话
+   语义（绿对勾 + 1500ms 复位，逻辑在 messages.js）并保持「绿勾全亮」= opacity 1。
+   置于 `:hover` 之后 ⇒ 同特异度(0,2,0)后置获胜，悬停中也不被压回 .6。 */
+.fm-msg-act.copied { color: #34c759; opacity: 1; }
+
+/* S15/R4：复制失败就地提示态（图标转错误色；文案由 utils.js 的
+   `markCopyFailed()` 以 `aria-live` 行注入，不用 toast）。
+   fm-footer-align 批 2026-11-02：取色对齐主会话同一规则（chat.css:1065
+   `.msg-copy.copy-failed { color: var(--status-error-icon) }`）—— 同 token、
+   同失败色（旧值 `--color-error` 是另一档红族，取色单源）。 */
+.fm-msg-act.copy-failed { color: var(--status-error-icon); opacity: 1; }
+
+/* 焦点环补齐（现状 = 浏览器默认蓝环）：与 .fm-row:focus-visible 同款 */
+.fm-msg-act:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.6);
+  outline-offset: 0;
 }
 
+/* ── 手机档热区（≥44×44，Apple 硬标准）—— ui-final-four ⑧（2026-11-03）──────────
+   修前实测：`.fm-msg-act` 本体 13×13（真 hit-test 探针 = 13×13）、`.fm-msg-time`
+   30×12 ⇒ 手机档**全部不达 44**；同一 footer 族在**主对话面**早已补齐
+   （css/mobileLayer.css:4789-4805 `body.mobile-layer :is(.duration-badge .msg-copy,
+   .duration-badge-time)`），消息面这条生产线漏了同一档 —— 本段把它补齐，**解法逐字
+   同源**（不另造第二套）。
+   ⚠ 同源解法已随作者令 2026-11-05 09:29 换代（「手机端的消息的footer…跟电脑端不
+   一致，间距拉的很开」）：主对话面把 footer 键**横向回自然宽 + 半个键缝外扩**、
+   键缝抬到 --ds-space-3（12px）；本段的「本体加宽到 44」是旧档，会把好友会话的
+   模式 pill 撑成与主对话面**不同**的间距 ⇒ 同步换代，保持两端同一套语义：
+     · 本体回自然宽（= 桌面同款，图标仍 11px、时间仍 12px，视觉零放大）；
+     · ::after 横向 = 本体宽 + 一个键缝（左右各半缝，与邻键命中盒相邻不重叠）；
+     · ::after 纵向 = max(100%, 44) ⇒ 一排横键真正需要的纵轴仍是 44；
+     · 键缝 = --ds-space-3（12px）⇒ 相邻键中心距 25px ≥ 24（WCAG 2.5.8 间距例外）。
+   完整推导与主对话面的实测对照见 css/mobileLayer.css 的 .duration-badge 块头。
+   🔴 本段挂 `body.mobile-layer`（与 mobileLayer.css 同开关）：桌面档零影响；
+   本文件是消息面样式所有权面，手机覆盖不落 mobileLayer.css（另一腿所有）。 */
+/* 🔴 四会话统一批 2026-11-05：原 `body.mobile-layer .fm-msg-meta { gap:
+   var(--ds-space-3) }` 已撤 —— pill 改挂 `.duration-badge` 后，同一手机档在
+   mobileLayer.css `body.mobile-layer .duration-badge` 一条声明里给出（同值 12，
+   本批实测键缝一致）。同值双写正是要挡的漂移形态。 */
+body.mobile-layer .fm-msg-time,
+body.mobile-layer .fm-msg-act {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+body.mobile-layer .fm-msg-time::after,
+body.mobile-layer .fm-msg-act::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(100% + var(--ds-space-3));
+  height: max(100%, var(--mhit, 44px));
+  transform: translate(-50%, -50%);
+  border-radius: var(--ds-radius-button);
+}
+
+/* ── 发送态 / 失败态载面 = **气泡左侧单一槽位**（sendstate 批，2026-09-18）──────
+   作者设计令（逐字）：「不要出现正在发送的条幅，改为在气泡左侧，用spinner来显示状态，
+   发送失败就是❌，类似于微信的做法。」
+   几何：环 14px / 2px 描边；红圈 18px（复用既有 `.fm-retry`）。两者**纵向同心**
+   （top 11px + 14/2 = 18px；top 9px + 18/2 = 18px = 气泡首行中心：padding-top 8px +
+   行高 13px×1.5/2 ≈ 17.75px），横向同在气泡左缘之外（-22px / -26px，环左留 8px 呼吸）。
+   取色**零新造**：`--glass-etched-border`（sapphire 10% 描边）/ `rgb(var(--sapphire))`
+   （弧顶）/ `--color-error`（既有失败色）/ `--color-frame-hover`（既有 hover 底）。
+   🔴 「一次只留一个载面」：旧条幅（quiet 上传卡）已按作者令**整条退场**
+   （装配点 `js/attachUpload.js::uploadCardEl`）；同一状态的旧第二载面（`.fm-msg-time`
+   的 `fm-pulse` 脉冲）在本批同时**退位**（下方该规则已删）。
+   🔴 reduced-motion：本段在文件内**早于** `@media (prefers-reduced-motion: reduce)`
+   块（`:1113` 起）⇒ 该块的停转覆盖照既有「后出现者胜出」语义生效，无需在此复述。 */
+.fm-msg.fm-sending { position: relative; }
+.fm-msg.fm-sending::before {
+  content: '';
+  position: absolute;
+  left: -22px;
+  top: 11px;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--glass-etched-border);
+  border-top-color: rgb(var(--sapphire));
+  border-radius: 50%;
+  animation: fm-send-spin 0.8s linear infinite;
+}
+
+@keyframes fm-send-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ⚠ 本批后 `fm-pulse` 的**唯一消费者** = 搜索态三点（`.fm-searching i`，本文件 `:364`）。
+   原第二处消费者（`.fm-sending .fm-msg-time` 的时间戳脉冲）已随「一次只留一个载面」
+   退位 ⇒ keyframes 本身**不得删**（删了搜索态三点会静止）。 */
 @keyframes fm-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
 }
 
+/* 失败 = 同一槽位（气泡左侧 18px 红圈「!」）。字形与取色 = **既有** `.fm-retry`
+   （定义见下方），本批只改**落位**：从气泡**下方**（流内）移到气泡**左侧**（绝对定位）。
+   可点性照旧 = 既有唯一创建点 `messages.js` 的 handler（同键 `sendCurrent` 重发
+   ⇒ 服务端按同键回放 ⇒ 不多落一条）；hover 底 = 既有 `--color-frame-hover`。 */
+.fm-msg.fm-failed { position: relative; }
+.fm-msg.fm-failed .fm-retry {
+  position: absolute;
+  left: -26px;
+  top: 9px;
+  margin-top: 0;   /* 退掉 `.fm-retry` 的流内落位（原本落在气泡下方的 meta 之后） */
+}
+.fm-msg.fm-failed .fm-retry:hover { background: var(--color-frame-hover); }
+
 .fm-failed .fm-msg-bubble { opacity: 0.7; }
 
 .fm-retry {
-  margin-top: 3px;
+  margin-top: var(--ds-space-1);
   width: 18px;
   height: 18px;
   border-radius: 50%;
-  border: 1px solid var(--color-error);
+  /* ui-status-redesign（盘点 #44，B 组）：图案载体（18px 红圈「!」+ 重试钮）保留，
+     色值归 --status-error-icon token（暗档随 token 提亮）。 */
+  border: 1px solid var(--status-error-icon);
   background: transparent;
-  color: var(--color-error);
-  font-size: 11px;
+  color: var(--status-error-icon);
+  font-size: var(--ds-fs-meta);
   font-weight: 600;
   line-height: 1;
   cursor: pointer;
   flex-shrink: 0;
 }
 
-/* Input bar */
-.fm-input-bar {
+/* ══ msgmenu 一期（客户端，作者 2026-09-18 19:2x 四答）══════════════════════
+   引用 + 多选转发两个新面。🔴 零新色值 / 零新图标体系：全部取既有 token 与既有
+   lucide 图标；🔴 零删除/零撤回项（本段无任何 danger 档使用）。────────────────── */
+
+/* ── ④ 菜单层级修正（**既有缺陷修复**，msgmenu 批实测捕获）──────────────────
+   读数：共用件 `.fm-context-menu` 的 `z-index: 5000`（`split.css:86-99`，加载序
+   **在 friends.css 之后**），而聊天窗覆层 `.cfg-modal-overlay` 的 `z-index: 10000`
+   （`sidebar.css:1219`，`position: fixed; inset: 0`）⇒ 窗内右键出的菜单**画在覆层
+   之下**：覆层底色是 `--overlay-bg`（**全透明**）⇒ 肉眼看不出，但 `elementFromPoint`
+   与真指针点击都命中覆层 ⇒ ① 菜单项点不动；② 点击还会被覆层的 `e.target === overlay`
+   分支当成「点外」⇒ **把聊天窗关掉**。本批的验收判据（菜单项逐项点击得预期面）
+   要求修掉它。
+   口径：**只抬 fm 菜单**（消费侧覆盖，禁改共用件规则 ⇒ explorer/canvas 两个消费者
+   零影响）；选择器 `body > .fm-context-menu`（特异度 0,1,1 > 共用件 0,1,0）⇒ 不依赖
+   加载序（split.css 后加载也压不掉）。零新色值。 */
+body > .fm-context-menu { z-index: 10001; }
+
+/* ── Profile 面（联系人 / 群；件一 2026-11-02）───────────────────────────────
+   壳 = 既有 `.cfg-modal-overlay` + `.cfg-modal`（modal.css），此处只补本面自己的
+   字段/英雄区样式。零裸 hex：全部走 var(--color-*) / var(--glass-*)（sapphire 单源）。 */
+#profile-face-overlay[hidden] { display: none; }
+/* ── 3(c) 面板全宽（panel-language 批 2026-11-06，作者令逐字「面板宽度与形态：
+   不要做成弹窗，要运用整个面板的宽度」）────────────────────────────────────
+   .pf-modal 不再是 420px 居中窄卡。所在表面 = 覆层本身（fixed inset 0、底
+   --overlay-bg 全透明 ⇒ 无压暗遮罩、无「遮罩 + 居中卡」弹窗形态）：
+   · 桌面（body:not(.mobile-layer)）：覆层 align/justify 改 stretch、面板 100%×100%
+     撑满所在表面全宽（1440 视口实测读数 = 1440/1440，见 tests/panel-language.spec.mjs）；
+   · 手机层：mobileLayer.css「A 族」既有铺平规则接管（375 读数 = 375/375，同一实现）。
+   宽度纪律 = 规范 panel-spec.md §5；覆盖 .cfg-modal 的 400px/92vw/85vh/圆角壳用
+   id 前缀选择器（特异度 1,1,0 > 0,1,0，不依赖文件序）；border-radius: 0 = 圆角
+   8 档阶梯档内（check-design-tokens 不计档内值）。 */
+body:not(.mobile-layer) #profile-face-overlay {
+  align-items: stretch;
+  justify-content: stretch;
+}
+#profile-face-overlay .pf-modal {
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  max-height: none;
+  border-radius: 0;
+}
+.pf-edit-bar.ds-chrome-band {
+  top: auto;
+  bottom: var(--sp-safe-bottom, env(safe-area-inset-bottom));
   display: flex;
-  gap: 8px;
-  padding: 10px 16px 14px;
+  justify-content: space-between;
+  padding: 0 var(--ds-space-4) var(--ds-space-4);
+  z-index: 2;
+}
+.pf-edit-bar[hidden] { display: none; }
+.pf-edit-bar > button { pointer-events: auto; }
+.pf-edit-submit { color: var(--ds-accent); }
+.pf-has-pending .pf-fields { padding-bottom: calc(76px + var(--sp-safe-bottom, env(safe-area-inset-bottom))); }
+.pf-modal > .sp-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-3);
+}
+.pf-modal > .sp-panel-header > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-hero.sp-identity {
+  /* 🔴 三点入口批（2026-11-05 作者令「头像小一点。布局扁平化」）：
+     旧形态 = 居中列的英雄区（头像 + 名字 + 副行三行堆叠，视觉上是一张「封面卡」）；
+     新形态 = **左对齐单行**（40px 头像 + 名字/副行两行文本并排），无分隔线、无背景、
+     无卡片盒 ⇒ 层数从「壳 > 英雄区 > 头像/名字/副行」压到「壳 > 英雄行 > 头像 + 文本列」。 */
+  display: flex;
+  flex-direction: row;
+  text-align: left;
+  align-items: center;
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-block-y) var(--ds-panel-pad-x) var(--ds-space-2);
+}
+.pf-hero-id {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-half);
+  min-width: 0;
+  flex: 1;
+}
+.pf-hero-name {
+  font-size: var(--ds-fs-title);
+  font-weight: var(--ds-fw-title);
+  color: var(--color-text);
+  text-align: left;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pf-hero-sub {
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-secondary);
+  text-align: left;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 行容器：行与行之间**只靠留白**（旧形态是每行一条 border-top 分隔线 + 各自内距，
+   实测 5 条分隔线 + 5 层盒；新形态零分隔线、零卡片盒，间距统一走 --ds-space-3）。 */
+.pf-fields {
+  display: flex;
+  flex-direction: column;
+  /* 3(e) 分组间距单源（panel-language 批）：扁平分组流一档 = --ds-panel-group-gap
+     16px（design-system.css §⑲；改前 = --ds-space-3 12px，同值族见规范 §4）。 */
+  gap: var(--ds-panel-group-gap);
+  padding: var(--ds-space-2) var(--ds-panel-pad-x) var(--ds-space-2);
+}
+.pf-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  padding-top: 0;
+  border-top: none;
+}
+.pf-field:first-child { padding-top: 0; }
+.pf-field-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ds-space-2);
+}
+.pf-field-line {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+}
+.pf-field-line > .pf-input { flex: 1; min-width: 0; }
+.pf-label {
+  font-size: var(--ds-fs-body);
+  color: var(--color-text-secondary);
+  flex: none;
+}
+/* 「本地缓存·未同步」标记：字段真源在上游、上游当前无接口 ⇒ 必须可见（禁假装已同步）。 */
+.pf-cache-hint {
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-frame-border-light);
+  border-radius: var(--ds-radius-chip);
+  padding: 0 var(--ds-space-1h);
+  line-height: 16px;
+  white-space: nowrap;
+}
+/* ── 三态同步徽标（profile-sync 徽标批 2026-11-06 作者令 3(a)）─────────────────
+   壳 = 既有 `.pf-cache-hint` 一枚（同一实现，零第二套 chip）；态只换**文字**，
+   色彩零新增（三态词汇 = 已同步/待同步/仅本地，语言包单源）。空档 = 读失败/未知
+   （`data-sync-state=""`）⇒ 折叠隐藏——「读不到」不冒充任何一态。 */
+.pf-sync-badge:empty { display: none; }
+.pf-save {
+  flex: none;
+  font: inherit;
+  font-size: var(--ds-fs-hint);
+  padding: var(--ds-space-1h) var(--ds-space-3);
+  border-radius: var(--ds-radius-button);
+  cursor: pointer;
+}
+.pf-save:disabled { opacity: 0.55; cursor: default; }
+
+/* ── 扁平行：导航行 + 开关行（三点入口批 2026-11-05）─────────────────────────
+   两族同一几何：整行可点高（--ds-hit-tap-lg = 48px 档）、左标签右控件、零背景
+   零描边（留白分隔），与「搜索聊天记录 / 消息免打扰 / 顶置」三条新行一一对应。
+   开关本体不在这里画：走共享组件 `js/toggle.js` 的 `.nb-toggle`（css/sidebar.css），
+   本文件只定它在行内的落位。 */
+.pf-nav,
+.pf-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  /* 点面行高节奏单源（panel-language 批）：--ds-panel-row-h = --ds-hit-tap-lg 48 档。 */
+  min-height: var(--ds-panel-row-h);
+  padding: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  font: inherit;
+  color: var(--color-text);
+}
+.pf-nav {
+  cursor: pointer;
+  width: 100%;
+}
+.pf-nav:focus-visible,
+.pf-nav:hover .pf-nav-chev { color: var(--color-text); }
+.pf-nav-label,
+.pf-switch-label {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ds-fs-body);
+  color: var(--color-text);
+}
+.pf-nav-sub {
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+.pf-nav-chev {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  color: var(--color-text-muted);
+}
+.pf-nav-chev svg { width: 16px; height: 16px; }
+.pf-switch-ctl {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+.pf-note {
+  margin: 0;
+  padding: var(--ds-space-half) var(--ds-panel-pad-x) 14px;
+  font-size: var(--ds-fs-hint);
+  line-height: 17px;
+  color: var(--color-text-muted);
+}
+
+/* ── ① 引用块（气泡内，被引消息摘要 + 可辨识样式）──────────────────────────
+   🔴 **D1（作者 2026-09-19 04:22 照案）= 下沉面**：材质由「浮起卡面（`--color-surface`
+   + `--msg-meta-card-shadow`）」改为**比气泡底再退一档的填充 + 零阴影**（light
+   `rgba(0,0,0,.035)` / dark `rgba(255,255,255,.055)`，值 = 设计稿拟改稿实测值）。
+   依据 = 参考图实测「引用面是全场最暗的一层且无阴影」（设计稿 §2.2）。代价（稿面已列）：
+   与 `.fm-msg-meta` pill 共享的 `--msg-meta-card-shadow` 消费点少一处 —— 🔴 **token
+   本身不动、不删**（pill 仍是唯一消费者，`sapphire.css` 的 "Shared message surface"
+   段 + `scripts/check-msgstyle-single-source.mjs` 的 A2/A4 单源判据仍成立）。
+   间距 4/8 → **6/10**；圆角 6 → **10**（嵌套圆角：外 14 − 内缩 4，避免尖角贴圆角）。
+   🔴 仍不加左缘指示条 / 高亮条（设计硬约束「无 accent bars」）。
+   🔴 文本 2 行封顶落在内层 `.fm-quote-text`（块盒本身不夹取）。 */
+/* 好友引用牌复用 chat.css 的 `.msg-quote-block` / `.msg-quote-text` / `.msg-quote-note`
+   与 `nf-glass`；本地不再声明引用牌视觉规则。 */
+
+/* ── ①-b 引用块**可点态**（quotejump 批 · 作者令「必须可跳」）──────────────────
+   🔴 判据单点 = `data-quote-jump="ready"`（坐标可解析）。不可得 ⇒ 无指针、无按钮
+   语义（禁「点了没反应」的半成品入口，见 `messages.js` 的 `paintJumpAffordance`）。
+   焦点环 / 高亮取**既有** sapphire 半透明档（`--sapphire-tint-15` / `rgb(var(--sapphire) / 0.5)`，
+   与 :184 `:focus-visible` 同款值）⇒ 零新色值；🔴 高亮**不是**左缘色条/高亮条
+   （设计硬约束「无 accent bars」）—— 是一次性整块 fade，与 `.search-hit-flash` 同族。 */
+.fm-quote-block[data-quote-jump="ready"] { cursor: pointer; }
+.fm-quote-block[data-quote-jump="ready"]:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.5);
+  outline-offset: 1px;
+}
+.fm-msg.fm-quote-target { animation: fmQuoteTargetFlash 1.8s ease; border-radius: var(--ds-radius-xl); }
+@keyframes fmQuoteTargetFlash {
+  0% { background: var(--sapphire-tint-15); }
+  100% { background: transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fm-msg.fm-quote-target { animation-duration: 0.01s; }
+}
+
+/* ── ② 引用态条（**输入条下方**；宿主 = `.fm-quote-strip`）──────────────────
+   🔴 **D2（照案）**：落位由「输入条上方」改为**输入条下方**（参考图实测层序 =
+   输入字段在上 / 引用条在下；DOM 顺序亦随改，见 `messages.js` 的挂载序）。
+   组件本体 = 既有输入框引用块（`renderRefBlock(mode:'input')` → `.att-ref-fm`），
+   本段只定**宿主盒**的落位与外边距。
+   🔴 **修正①（2026-09-19 04:22）**：「引用条的 ❌ 与样式一律参考主窗口既有模式，
+   非稿面形态」⇒ ① ❌ 用主窗口同类件（实心圆白 ✕，`.fm-quote-remove`，见
+   `input.css` 的 `.att-remove` 共享块），**不落稿面的 ⊗ 变体**；② 条体材质/圆角/间距
+   **零新增** —— 就是主窗口输入框引用卡自身的 `.att-ref-fm`（etched 面 + 8px 圆角
+   + 5/8 内边距），不按稿面另造「下沉面 + 10px 圆角」第二套。
+   `[hidden]` 必须压过 display ⇒ 用 `:not([hidden])`。 */
+.fm-quote-strip {
+  padding: 0 var(--ds-space-4) var(--ds-space-block-y);
+}
+.fm-quote-strip:not([hidden]) { display: block; }
+.fm-quote-strip .att-ref { max-width: 100%; }
+/* ❌ 的落位（形态/材质在 input.css 的共享块；此处只定宿主内的排布）。 */
+.fm-quote-remove { align-self: center; margin-left: var(--ds-space-2); }
+.fm-quote-remove:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+
+/* ── ③ 多选态：勾选面（固定左列）+ 头部计数 + 等分动作条 ──────────────────
+   🔴 **D4（照案）**：勾选圆 16px → **22px**、`left:-16px` → `left:0`（**通栏固定左列**）、
+   `top:10px` → `top:9px`（与 40px 头像**垂直居中**对齐）。
+   为什么必须是通栏：`.fm-msg` 出向是 `align-self:flex-end` + `max-width:78%` ⇒ 沿用
+   行内 `left` 时出向的圆会落到**行中部**（设计稿本轮真渲染已复现该形态）。判据 =
+   进/出两向圆心 x **逐值相等**（同一条左列）。多选期行放开为通栏 + 左内边距 30px 让位。
+   🔴 勾选面是真实 `<button role="checkbox">`（键盘可达）。 */
+.fm-flow.fm-select-mode .fm-msg { max-width: 100%; width: 100%; padding-left: 30px; }
+.fm-msg.fm-selecting { position: relative; }
+/* 🔴 「一次只留一个载面」在多选态的延伸：多选期间气泡左侧槽位归勾选面，
+   发送态环与失败重发键**不渲染**（不是透明度压制 ⇒ elementFromPoint 打不到）。 */
+.fm-msg.fm-selecting.fm-sending::before { display: none; }
+.fm-msg.fm-selecting.fm-failed .fm-retry { display: none; }
+.fm-msg-check {
+  position: absolute;
+  left: 0;
+  top: 9px;
+  box-sizing: border-box;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--glass-etched-border-focus);
+  background: transparent;
+  color: transparent;              /* 未选中：勾不可见（零新色值 —— 透明即「无」） */
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.fm-msg-check svg { width: 12px; height: 12px; display: block; }
+/* 🔴 **D3（照案 · A 档）= sapphire 实心 + 白勾**：守「每视口至多一个彩色强调事件」
+   （不引入第二处微信绿语义 ⇒ 绿仍专属发送键）。色值全部 = 既有 `--sapphire` token。 */
+.fm-msg.fm-selected .fm-msg-check {
+  background: rgb(var(--sapphire));
+  border-color: rgb(var(--sapphire));
+  color: #fff;
+}
+.fm-msg-check:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 2px; }
+
+/* 多选工具条（**等分动作** / 计数已上移头部）：与输入条同族（发丝上边线 + 同一节奏）。
+   🔴 **D5（照案）**：计数由底部条迁到**头部**（`.fm-modal-select-count`），底部条只留动作；
+   动作**等分**（`flex:1`）。可用动作 = 转发 / 逐条转发 / 合并转发（二期）+ 退出 ——
+   实际接线 3 项（转发=转发窗口（D7）/ 逐条转发=既有目标选择器 / 退出），合并转发标二期。 */
+.fm-select-bar {
+  padding: var(--ds-space-block-y) var(--ds-space-4) var(--ds-space-3);
   border-top: 1px solid var(--glass-etched-border);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted, #888);
+}
+.fm-select-bar:not([hidden]) { display: flex; align-items: center; gap: var(--ds-space-2); }
+/* 🔴 计数件**整个从底部条撤除**（D5）：宿主 = 窗头 `.fm-modal-select-count`，
+   底部条内**零** `.fm-select-count` 节点 ⇒ 此处**不保留**旧选择器规则（留则成死规则：
+   没有任何 DOM 命中它，且会误导「计数还在条里、只是被藏起来」）。`modalEls.selectCount`
+   的落点已随迁到窗头宿主（`messages.js` 的 `selectCount`），语义不变。 */
+.fm-select-act,
+.fm-select-exit {
+  flex: 1;
+  font-family: inherit;
+  font-size: var(--ds-fs-hint);
+  font-weight: 500;
+  padding: var(--ds-space-2) 14px;
+  border-radius: var(--ds-radius-button);
+  border: 1px solid var(--glass-etched-border);
+  background: transparent;
+  color: var(--color-text);
+  cursor: pointer;
+}
+.fm-select-act:hover:not(:disabled),
+.fm-select-exit:hover { background: var(--color-frame-hover); }
+.fm-select-act:disabled { opacity: 0.4; cursor: not-allowed; }
+.fm-select-act:focus-visible,
+.fm-select-exit:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: 0; }
+
+/* Input bar ── 悬浮毛玻璃条（contact-panel-unify 链 · 作者令 2026-11-06：
+   「输入框：同样采用悬浮、毛玻璃半透明、带大圆角的设计」）─────────────────────
+   与主会话 `#input-bar` **同一套 —— 现在是真的同一份定义**（composer 统一批
+   2026-11-18 · 作者令「dimensions / padding / rounded corners / glass tokens
+   一套」）：
+     · 外壳几何（position/radius/padding/gap/flex-shrink）与内件几何
+       （padding/字阶/行高/max-height）**移入 css/input.css** 的
+       `#input-bar, .fm-input-bar` 与 `#input, .fm-input` 两条单定义块；
+       本文件只留**落位**（margin 一档 —— 容器差异，不是组件差异）。
+       改前这里另写 `padding: 6/12` + `gap: 8` + 自己的 radius，与主条差 4px
+       两处、件型也不同（单行 input vs textarea）—— 正是作者点名的分叉。
+     · 材质 = `.nf-glass`（DOM 上挂着，js/messages/fmComposer.js）⇒ 玻璃底/模糊/
+       细边/三档影全走唯一毛玻璃标准；本文件零 backdrop-filter、零自写色值；
+     · 内件 = `textarea.cfg-input.fm-input.nf-field--bare`（裸件档：外壳已给材质，
+       内件只留字与 caret —— 与主会话 `#input` 同档，禁「框里套框」）。
+   🔴 原 `border-top: 1px solid var(--glass-etched-border)` 与 `padding: 10/16/14`
+   一并摘除 —— 那条线是「输入条有边缘」的直接成因，与本令的「无边缘+悬浮」相反。 */
+.fm-input-bar {
+  /* 落位（容器差异）：流内悬浮，左右/下各留一档间距，四边不贴窗体边。 */
+  margin: 0 var(--ds-space-3) var(--ds-space-3);
 }
 
 .fm-input { flex: 1; min-width: 0; }
 .fm-input:disabled { opacity: 0.5; cursor: not-allowed; }
+/* voicefix 批 腿 B（作者 2026-09-21 14:0x ③）：好友/群聊输入条最左的**简单麦克风**。
+   控件本体 = 主窗既有 `.icon-btn` 族（几何/玻璃 hover 零新增）；录音中反馈 =
+   主窗既有 `.icon-btn.recording`（微信绿 + voicePulse，input.css，零新值）；
+   本段只补布局对位与转写中态（sapphire = 既有 token，与主窗退役前同族语义）。 */
+.fm-mic-btn { flex-shrink: 0; align-self: center; }
+.fm-mic-btn.processing { color: rgb(var(--sapphire)); }
 .fm-send-btn { flex-shrink: 0; }
-.fm-send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Disabled material now lives in sapphire.css's neutral-gray send ramp
+   (--glass-send-*), so only the cursor stays here. Dropping the old
+   element-wide `opacity: 0.5` avoids a second, compounding disabled
+   expression (it would fade fill .18 to ~.09 and desync this chip from
+   ①/③, which keep `opacity: 1`). */
+.fm-send-btn:disabled { cursor: not-allowed; }
 
 /* ── Reduced motion (§8): all motion ≤0.01s, spinner static ── */
 @media (prefers-reduced-motion: reduce) {
@@ -601,9 +2097,17 @@
   .activity-badge {
     transition-duration: 0.01s !important;
   }
-  .fm-sending .fm-msg-time { animation: none; opacity: 0.6; }
-  .fm-sending .fm-msg-time::after { content: '…'; }
+  /* 发送态（sendstate 批）：状态载面 = 气泡左侧环 ⇒ 偏好 reduce 时**停转但可见**
+     （「状态可辨」语义不降级，不是加速播）。旧载面（`.fm-msg-time` 的脉冲 +
+     `::after` 的「…」）已随「一次只留一个载面」整条退位 ⇒ 此处不再复述覆盖
+     （原 `animation:none; opacity:.6` 与 `::after{content:'…'}` 两行同时删除：
+     留任一行都会让 reduce 档比常态多出**第二个**发送态读面）。 */
+  .fm-msg.fm-sending::before { animation: none; }
   .fm-searching i { animation: none; opacity: 0.5; }
+  /* ② 本批新增的三条入场动画：尊重偏好 ⇒ 直接不播（不是加速播，避免位移残影）。 */
+  .fm-result-card,
+  .fm-verify-box,
+  .fm-requests { animation: none; }
   /* A16: chat modal open animation ≤0.01s (overlay fade is sidebar.css's
      cfg-fade-in 0.15s — squash only our instance, shared class untouched). */
   #fm-chat-overlay { animation-duration: 0.01s !important; }
@@ -615,11 +2119,14 @@
 .fm-load-more-row {
   display: flex;
   justify-content: center;
-  padding: 8px 0 4px;
+  padding: var(--ds-space-2) 0 var(--ds-space-1);
 }
 .fm-load-more {
-  font-size: 12px;
-  padding: 5px 14px;
+  font-size: var(--ds-fs-hint);
+  padding: var(--ds-space-1h) 14px;
+  /* 同族按钮圆角档（.fm-forward-btn 8px / .fm-search-input 8px /
+     .fm-req-decline 8px）——现状 0px 方角是全站按钮族（5/8/10px）之外的孤例。 */
+  border-radius: var(--ds-radius-input);
   opacity: 0.85;
 }
 .fm-load-more:hover { opacity: 1; }
@@ -628,10 +2135,10 @@
 /* 未找到态的常识提示行（主文案下方的次要说明） */
 .fm-empty-hint {
   text-align: center;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
   opacity: 0.8;
-  margin: -16px 12px 12px;
+  margin: -16px var(--ds-space-3) var(--ds-space-3);
   line-height: 1.5;
 }
 
@@ -639,10 +2146,680 @@
 .fm-req-time {
   flex-shrink: 0;
   align-self: center;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted, #888);
-  margin-left: 8px;
+  margin-left: auto;
+  padding-left: var(--ds-space-2);
 }
 
-/* 搜索按钮 loading 态 */
-.fm-search-btn:disabled { opacity: 0.55; cursor: default; }
+/* 搜索按钮 disabled 态已迁到本文件上方的中性灰族块（button.fm-search-btn:disabled
+   = 禁用材质 + color-mix 文字色 + cursor:not-allowed）。旧的元素级 `opacity: .55`
+   是 P4 批已退役的表达（缺陷 D5），已删除。 */
+
+/* ══ 群组一期（friendgroups 客户端腿）═════════════════════════════════
+   会话行群标识 / 窗头设置按钮 / 群设置抽屉 / 建群对话框 / 群邀请区 /
+   群成员头像九宫格。
+   复用既有 token（--sapphire / --glass-control-bg-hover / --color-text*），
+   零新色（先例：fm-trust-badge 的 alpha 变体口径）。 */
+
+/* ── 群成员头像大球（方向 C「行数最少化」· 解算器移植）───────────────────
+   几何 = 取证批解算器 `ga-builder.js::__gaSolve('rows', n)` 的**解**（运行期零解算）：
+     · 大球 = ⌀size **圆形容器**（`border-radius:50%` + 1px 描边）；可用半径
+       `R = size × 0.45`（40 档 = 18px = 内容圆 19px 内缩 1px 保险边）
+     · 小球 = **圆形**；球径 `d(n)` 由「**行数最少化** + 每行不越出**该行弦长** +
+       相邻球缝 ≥ 1.5px」三条约束取**最大**解出（逐档解见下方 `.fm-avgrid-n<n>` 表）
+     · 行模式（每行枚数）= `friendGroups.AVATAR_ROW_PATTERNS`（同一解题的另一半）
+     · 球径用 `cqw`（= 本容器**内容盒**宽度的 1%）表达 ⇒ 尺寸档 40/64/96 自动等比；
+       缝宽 1.5px 取解算器口径（最小球间缝 G，密排档实测 ≈1.5px）
+   旧几何（方形槽 `border-radius:5px` + 格宽 = 容器宽 ÷ 该行格数）已退役 —— 它把
+   头像 `cover` 摊成竖条（40 档 2 人档格 `19.5×40`，可见面积仅 48.8%、变形 51.2%）。
+   类名 `.fm-avgrid*` 的**唯一**生产方 = friendGroups.groupAvatarGrid（唯一实现，
+   三处落点共用：会话列表群行 / 群会话窗头 / 群信息面板头）。 */
+.fm-avgrid {
+  position: relative;
+  flex-shrink: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-half);
+  padding: 0;
+  border: 1px solid var(--glass-etched-border);
+  border-radius: 50%;
+  background: var(--color-surface);
+  /* cqw 的度量基准 = 本容器内容盒（逐档球径表用 cqw ⇒ 换尺寸档只换本行 width/height） */
+  container-type: size;
+}
+.fm-avgrid-40 { width: 40px; height: 40px; }
+.fm-avgrid-row {
+  display: flex;
+  width: 100%;
+  flex: 0 0 auto;
+  min-height: 0;
+  gap: var(--ds-space-half);
+  align-items: center;
+  justify-content: center;
+}
+.fm-avgrid-cell {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--fm-avgrid-ball);
+  height: var(--fm-avgrid-ball);
+  border-radius: 50%;
+  background: var(--glass-etched-bg);
+  /* token 必在（sapphire.css 亮/暗双档定义）⇒ 本批新增行**不带 fallback 字面量**
+     （任务书：新增行零色值字面量）。 */
+  color: var(--color-text-muted);
+  font-weight: 500;
+  font-size: calc(var(--fm-avgrid-ball) * 0.42);
+  line-height: 1;
+}
+.fm-avgrid-cell img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 逐档球径表（= 解算器输出 d(n)，单位 cqw；40 档 1cqw = 0.38px ⇒ 各行注释给 px 值）。
+   数字口径 = d ÷ 38 × 100（38 = 40 档内容盒宽度 = 40 − 2×1px 描边）。 */
+.fm-avgrid-n1 { --fm-avgrid-ball: 68.421cqw; }   /* ⌀26.0（单球居中） */
+.fm-avgrid-n2 { --fm-avgrid-ball: 45.263cqw; }   /* ⌀17.2（2 枚一行，弦长满） */
+.fm-avgrid-n3 { --fm-avgrid-ball: 36.842cqw; }   /* ⌀14.0（2+1） */
+.fm-avgrid-n4 { --fm-avgrid-ball: 36.842cqw; }   /* ⌀14.0（2+2） */
+.fm-avgrid-n5 { --fm-avgrid-ball: 28.947cqw; }   /* ⌀11.0（1+3+1，中行吃满弦长） */
+.fm-avgrid-n6 { --fm-avgrid-ball: 26.316cqw; }   /* ⌀10.0（3+3） */
+.fm-avgrid-n7 { --fm-avgrid-ball: 26.316cqw; }   /* ⌀10.0（2+3+2） */
+.fm-avgrid-n8 { --fm-avgrid-ball: 21.579cqw; }   /* ⌀8.2（3+3+2） */
+.fm-avgrid-n9 { --fm-avgrid-ball: 21.579cqw; }   /* ⌀8.2（3+3+3，密排档） */
+/* 超 9 降级 `+N`（N = memberCount − 9）：**占最后一格**（真实球位 ⇒ 零遮挡）。
+   旧形态是右下角绝对定位角标（12 人档重叠 98.26px²）⇒ 已退役。
+   本类与 `.fm-avgrid-cell` 同特异度、源码序在后 ⇒ 只覆写底色/字色/字号。 */
+.fm-avgrid-more {
+  background: var(--color-text-dim);
+  color: var(--color-surface);
+  font-weight: 600;
+  font-size: calc(var(--fm-avgrid-ball) * 0.5);
+}
+
+/* 会话行「群」标识（L2 行内 chip，形态对齐 fm-row-badge 家族的 pill） */
+.fm-group-tag {
+  flex-shrink: 0;
+  font-size: var(--ds-fs-meta);
+  line-height: 1;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
+  background: rgb(var(--sapphire) / 0.12);
+  color: rgb(var(--sapphire) / 0.95);
+  align-self: center;
+}
+
+/* 窗头群设置按钮（仅群窗；图标钮，复用 fm-msg-act 的图标档尺寸） */
+.fm-gs-open {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: none;
+  background: transparent;
+  border-radius: var(--ds-radius-chip);
+  color: var(--color-text-muted, #888);
+  cursor: pointer;
+}
+.fm-gs-open:hover { color: var(--color-text, #000); }
+.fm-gs-open svg { width: 16px; height: 16px; }
+
+/* 群设置抽屉（窗头下方、消息区上方；可滚动） */
+.fm-group-settings {
+  border-bottom: 1px solid rgb(var(--sapphire) / 0.12);
+  padding: var(--ds-space-block-y) 14px var(--ds-space-3);
+  max-height: 46vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-inline-gap);
+}
+.fm-gs-section { display: flex; flex-direction: column; gap: var(--ds-space-1h); }
+/* 抽屉「群信息头」规则组（`.fm-gs-head` / `-avatar` / `-meta` / `-name` / `-sub`）
+   已按作者 2026-09-17 令**整组删除**：该块（组合头像 + 群名 + 成员数）在展开面板里
+   是会话窗头的重复显示。删除理由 = 唯一消费方 `friendGroups.buildGroupSettings` 的
+   首块同批摘除 ⇒ 留则成为死规则（本仓既有先例：`.fm-forward-btn`、`.fm-device-note`
+   均按「避免死 CSS」同批随块删除）。成员数仍有独立面 = `.fm-gs-count`（下方保留）。 */
+.fm-gs-title { font-size: var(--ds-fs-meta); font-weight: 600; color: var(--color-text-muted, #888); }
+.fm-gs-title-row { display: flex; align-items: baseline; gap: var(--ds-space-1h); }
+.fm-gs-count { font-size: var(--ds-fs-meta); color: var(--color-text-muted, #888); }
+.fm-gs-rename { display: flex; gap: var(--ds-space-1h); align-items: center; }
+.fm-gs-rename-input { flex: 1; min-width: 0; font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) var(--ds-space-2); }
+.fm-gs-rename-input:disabled { opacity: 0.55; cursor: default; }
+.fm-gs-save { flex-shrink: 0; font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) var(--ds-space-3); }
+
+/* 成员行（显示名 + 角色标签 + 操作位：设/撤管理员 + 移出群聊） */
+.fm-member-list { display: flex; flex-direction: column; }
+.fm-member-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-half);
+  border-radius: var(--ds-radius-chip);
+  min-width: 0;
+}
+.fm-member-row:hover { background: var(--glass-control-bg-hover); }
+.fm-member-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text, #000);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-role-tag {
+  flex-shrink: 0;
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
+  background: rgb(var(--sapphire) / 0.12);
+  color: rgb(var(--sapphire) / 0.95);
+}
+/* 成员行操作位（同族位置面：设/撤管理员 + 移出群聊）
+   E3（决策卡 E/E3/E4/E5）：`.fm-gs-kick` 尺寸档从自成一套的 11px/3px 8px
+   **归一为 12px 文字键档**（= `.fm-gs-action` 的 12px / 5px 12px），材质仍由
+   sapphire 的 Glass Control Pattern B 承担（本规则只定尺寸档，零色值）。 */
+.fm-gs-kick,
+.fm-gs-role { flex-shrink: 0; font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) var(--ds-space-3); }
+
+/* 抽屉动作区（添加成员 / 退群 / 解散；owner 禁退群提示） */
+.fm-gs-actions { gap: var(--ds-space-2); }
+.fm-gs-action { align-self: flex-start; font-size: var(--ds-fs-btn); padding: var(--ds-space-1h) var(--ds-space-3); }
+/* 危险键色值单源化（E4）→ ui-status-redesign（S10 / 盘点 #47）演进：常显危险
+   文字键字转常规色，危险语义由键内 unplug 红图标承载（friendGroups.js 注入），
+   hover 时刻整键（字＋图标）转红 = 交互红保留（铁律三）。--color-danger 的
+   消费点仍收敛于本类一处（hover 态），单源令不破。 */
+.fm-gs-danger { color: var(--color-text); }
+.fm-gs-danger .st-ic { color: var(--status-error-icon); margin-right: var(--ds-space-1h); }
+.fm-gs-danger:hover, .fm-gs-danger:hover .st-ic { color: var(--btn-danger-ink); }
+.fm-gs-hint { font-size: var(--ds-fs-meta); color: var(--color-text-muted, #888); }
+.fm-gs-picker { display: flex; flex-direction: column; gap: var(--ds-space-2); margin-top: var(--ds-space-1h); }
+.fm-gs-picker .fm-msg-btn { align-self: flex-start; }
+
+/* ── 群设置抽屉的按键圆角（uifix 批 · 作者令 2026-09-17）────────────────────
+   作者原话：「群组里的按钮没有采用我们一直以来的设计风格，圆角 玻璃。」
+   【取证】改前实测：抽屉内 5 类键（`.fm-gs-save` / `.fm-gs-action`(+`-addmember`
+   /`-danger`) / `.fm-gs-role` / `.fm-gs-kick`）计算样式 **`border-radius: 0px`**，
+   而同一页面其余**全部**可见按钮都带圆角（10px / 6px / 5px / 4px / 50% 四档，
+   分组读数见 `.nebflow/evidence/20260917_uifix/raw/style_BEFORE.json` 的
+   `sweepWithDrawer.byRadius`，`r=0px` 组**只含本抽屉这五个类**）⇒ 全站唯一
+   零圆角孤岛 = 作者看到的那一处。玻璃材质本身**已在**（同批实测
+   `backdrop-filter: blur(10px) saturate(1.2)` + 双层 inset 边 + 双层投影，
+   本文件零改动），缺的只有圆角。
+   【修法】只补 `border-radius`，值取**既有常例 10px**（同批实测的各族基准）：
+     · `sapphire.css:326` 发送键族 `:is(#dropbox-send-btn, .cfg-btn.fm-send-btn,
+       button.fm-verify-send, button.fm-send-chip, button.fm-create-submit)` 的
+       `border-radius: 10px`（其头注逐字：「与 09-14 裁定『圆角 10px 常例』同档」）；
+     · `sapphire.css:557` 登录键族 `border-radius: 10px`；
+     · `friends.css:411` `button.fm-verify-cancel` 的 `border-radius: 10px`
+       （其头注逐字：「圆角随发送组取 10px」）。
+   🔴 零新 token、零新字面量色值、零改 `sapphire.css` 共享 token 值；🔴 只补
+   圆角，不动材质/几何/字重/状态（现状四态由 sapphire 按键族块承担，保持单源）。
+   🔴 选择器**限定在本抽屉内**（`.fm-group-settings` 后代）⇒ 不波及抽屉外的
+   `.fm-msg-btn`（`contacts.js:744`「发消息」键同用该类名，那是另一个面）。 */
+.fm-group-settings button {
+  border-radius: var(--ds-radius-button);
+}
+
+/* ══ 建群对话框（fm-modal 骨架复用；好友多选名册）════════════════════════════
+   2026-09-16 视觉重做（作者 07:46 令：「至少群聊面板很丑」）；**2026-11-06 统一
+   面板批**（作者 08:48 令）改三段 = ① 顶栏（`.fm-modal-header` + 左上返回圆钮
+   `.fm-pick-back` + 标题一次）→ ② 主体（`.fm-pick-body` 内的两个
+   `.fm-gs-section`）→ ③ 右下悬浮加号（`.fm-pick-fab`）。原 ④ 底部操作区
+   （`.fm-pick-foot` + `button.fm-create-submit`）整件退役。②的章节标签 / 输入行取
+   **群设置抽屉同族**类名（`.fm-gs-section` / `.fm-gs-title` / `.fm-gs-title-row` /
+   `.fm-gs-rename` / `.fm-gs-rename-input`）⇒ 两面板层次同源（禁另起一套间距 / 字号档）。
+   🔴 零新增色值字面量：本段新增声明全部引用既有 token（`--sapphire-tint-*` /
+   `--sapphire-edge-*` / `--glass-*` / `--color-*`），无十六进制、无函数式色值。
+   🔴 作用域收窄（禁回归）：`.fm-pick-list` / `.fm-pick-row` / `.fm-pick-tick` 同时
+   是**群设置抽屉**「添加成员」选择面的载体 ⇒ 这三条基线规则一字不改（本段内仍是
+   原文），本批全部以 `.fm-pick-modal` 前缀收窄作用域，抽屉侧读数不变（报告 §⑤）。 */
+.fm-pick-modal {
+  width: 420px;
+  max-width: 92vw;
+  height: auto;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+/* 已选人数徽标：pill 形态，与 `.fm-group-tag` / `.fm-trust-badge` 同族（sapphire
+   淡染 + 描边 + tabular-nums）；0 人档保持中性 muted（未选 = 无选中事实，不抢主色）。 */
+.fm-pick-count {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  padding: var(--ds-space-hair) var(--ds-space-2);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-pill);
+  background: var(--glass-etched-bg);
+  color: var(--color-text-muted);
+  font-size: var(--ds-fs-meta);
+  font-weight: 500;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.fm-pick-count.on {
+  border-color: var(--sapphire-edge-strong);
+  background: var(--sapphire-tint-10);
+  color: var(--color-text);
+}
+.fm-pick-list {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  max-height: 42vh;
+  min-height: 120px;
+  border: 1px solid rgb(var(--sapphire) / 0.1);
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-1);
+}
+.fm-pick-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+  min-width: 0;
+}
+.fm-pick-row:hover { background: var(--glass-control-bg-hover); }
+.fm-pick-row.on { background: rgb(var(--sapphire) / 0.1); }
+.fm-pick-tick {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  color: rgb(var(--sapphire) / 0.95);
+  visibility: hidden;
+  display: inline-flex;
+}
+.fm-pick-row.on .fm-pick-tick { visibility: visible; }
+.fm-pick-tick svg { width: 14px; height: 14px; }
+
+/* ── 建群面板作用域收窄层（`.fm-pick-modal` 前缀；上方基线规则不动）────────── */
+/* 主体滚动区：输入区 + 列表区同处一个滚动容器（单一滚动条，禁嵌套双滚动） */
+.fm-pick-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-half) var(--ds-space-4) var(--ds-space-3);
+}
+/* 列表区行几何 = 联系人面板 `.fm-row` 同族值（gap 10px / padding 7px 10px /
+   radius 10px；头像仍 36px 档）⇒ 名册行高与联系人面板一致。 */
+.fm-pick-modal .fm-pick-list {
+  max-height: none; /* 滚动上移到 .fm-pick-body（单一滚动容器） */
+  min-height: 132px;
+  border-radius: var(--ds-radius-button);
+  gap: var(--ds-space-half);
+}
+.fm-pick-modal .fm-pick-row {
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-button);
+  transition: background 0.15s ease, box-shadow 0.15s ease;
+}
+/* 选中态（判别面三重可辨，**禁只靠颜色微差**）：① 行底 sapphire 淡染
+   ② 整行内描边环 ③ 行尾勾选框「空心圈 → 淡染填充 + 勾形出现」。 */
+.fm-pick-modal .fm-pick-row.on {
+  background: var(--sapphire-tint-10);
+  box-shadow: inset 0 0 0 1px var(--sapphire-edge-strong);
+}
+/* 勾选框：常显（未选 = 空心圈，本身就是「可勾」的可读信号），18px 圆档；
+   勾形颜色沿基线 `.fm-pick-tick` 的 sapphire 档继承（不重复声明）。 */
+.fm-pick-modal .fm-pick-tick {
+  visibility: visible;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--sapphire-edge-strong);
+  border-radius: var(--ds-radius-pill);
+  box-sizing: border-box;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.fm-pick-modal .fm-pick-tick svg { width: 12px; height: 12px; opacity: 0; }
+.fm-pick-modal .fm-pick-row.on .fm-pick-tick {
+  background: var(--sapphire-tint-15);
+  border-color: var(--glass-etched-border-focus);
+}
+.fm-pick-modal .fm-pick-row.on .fm-pick-tick svg { opacity: 1; }
+/* 空态引导（0 人可邀）：可读引导文案（i18n `contacts.createGroupEmpty`） */
+.fm-pick-modal .fm-pick-list .fm-empty { padding: 26px var(--ds-space-4); }
+/* ══ 统一面板批（2026-11-06 作者令 08:48）════════════════════════════════════
+   形态三条 → 本块三条（只承载**落位与尺寸档**）：
+     · 顶栏 = 左上返回圆钮 + 标题（标题全局面只此一处，字阶取项目面板同一套）
+     · 关闭件 = 右上 X 退役（原 `.fm-modal-close` 不再发射）
+     · 主操作 = 右下悬浮圆形加号（原 `.fm-pick-foot` 底部文本键「创建」整件退役）
+   两条圆钮**零自有材质**：底色/模糊/描边/hover/active/disabled/focus-visible 全部
+   归 css/glass.css「圆钮级浮件档」的 `.g2-fab` 成员（与 #deck-fab / .ask-fab /
+   页面壳返回钮同一条规则），毛玻璃底归 `.nf-glass` 单源 —— 本文件不复制一份。 */
+.fm-pick-header {
+  gap: var(--ds-space-2);
+  /* 20 → 12：圆钮左缘与 canvas 浮钮同缘（--cv-head-inset-x 12），钮外不再多一档 8px 空垫 */
+  padding-left: var(--ds-space-3);
+}
+/* 左上返回圆钮：几何 = `.g2-fab` 基准（40px 圆 / 图标 --cv-icon 18px），本类只做
+   flex 收口。手机 48 档（= 页面壳 `.mobile-back-btn` 同档）在 mobileLayer.css 统一块。 */
+.fm-pick-back {
+  flex-shrink: 0;
+  align-self: center;
+}
+/* 右下悬浮加号：尺寸/圆角/图标 = `.g2-fab`（--cv-size-circle 40 / --cv-icon 18）；
+   离边距 = **消费**既有 Canvas 右下悬浮圆钮的两条落位令牌（.ask-fab 的
+   --ask-fab-gap 14 / --ask-fab-bottom 24，那边改这边跟手，禁写第二份字面量）；
+   层级 = 本卡片内最高一层（包含块 = `.cfg-modal` 的 relative，正文与滚动容器均在
+   其下；与 body 级 250 不同层带，故取本层 2 —— 同一语义「压在内容之上」）。
+   🔴 圆钮族零投影（flat-button 批 2026-11-05）：`.nf-glass` 自带的 --nf-glass-shadow
+   在本枚圆钮上显式退役，否则同一族里会长出「有影的第二种圆钮」。 */
+.fm-pick-fab {
+  position: absolute;
+  right: var(--ask-fab-gap, 14px);
+  bottom: calc(var(--ask-fab-bottom, 24px) + env(safe-area-inset-bottom, 0px));
+  z-index: 2;
+}
+/* 圆钮族零投影（flat-button 批 2026-11-05）：`.nf-glass` 是**面级**浮件的玻璃工具类，
+   它自带 `--nf-glass-shadow` 三档栈；同一族里的圆钮（#deck-fab / .ask-fab /
+   .mobile-back-btn）实测 box-shadow = none。本面两枚圆钮因此显式摘影 —— 不摘就会在
+   「同一份毛玻璃」里长出**有影的第二种圆钮**（正是作者判死的那种分裂）。
+   特异性 (0,2,0) > `.nf-glass` (0,1,0)：friends.css 在 glass.css 之前加载
+   （index.html:69 vs :117），故必须压过它，不能靠文件序。 */
+.fm-pick-modal .fm-pick-back,
+.fm-pick-modal .fm-pick-fab {
+  box-shadow: none;
+}
+/* 主体底部让位：加号压在列表右下角之上 ⇒ 末行不得落进它的命中盒
+   （让位 = 钮下离距 + 钮径 + 一档缝）。 */
+.fm-pick-modal .fm-pick-body {
+  padding-bottom: calc(var(--ask-fab-bottom, 24px) + var(--cv-size-circle, 40px) + var(--ds-space-3));
+}
+
+/* 群邀请区（联系人面板；行结构复用 fm-req-row，标题复用 fm-req-group） */
+.fm-group-invites { animation: fm-rise-in 200ms ease-out both; }
+.fm-invite-row { cursor: default; }
+
+/* 群成员小头像（28px 档；成员行密度高于列表行） */
+.fm-avatar-28 { width: 28px; height: 28px; font-size: var(--ds-fs-hint); }
+
+/* 群气泡发送者名（仅入站；名册未到时空槽，hydrate 后就地回填）。
+   宽度上限**不写死数值**：消费消息列宽的单源 token `--msg-bubble-max-w`
+   （③A3 判据；定义落点 = sapphire.css「Shared message surface」段）——
+   本面写死字面量即失去「改一处两侧同步」，门禁 `check-msgstyle-single-source.mjs`
+   直接判红。token 值未变（78%）⇒ 本行计算值逐字等价。 */
+.fm-msg-sender {
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted, #888);
+  margin: 0 var(--ds-space-1) var(--ds-space-half);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: var(--msg-bubble-max-w);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   设备会话统一批 MVP-1（2026-09-15）：联系人面板设备段 + 设备会话行 + 设备文件卡
+   —— 全部复用既有 fm-* 行模型/附件卡基类，本段只补**设备专有**的少量声明。
+   取色一律走既有主题 token（亮/暗双主题同源，零新字面量色值；卡 §6.1/§9 P8）。
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* 设备展开体容器（②：设备入口 = 「新的朋友」同族折叠结构，本容器 = 其展开体；
+   原静态段标题 `.fm-section-title` 随该形态作废 —— 标签已上移到入口行 `.fm-nf-label`）。 */
+.fm-device-list { margin-top: var(--ds-space-half); }
+
+/* 全设备统一更新（fleet 批 2026-11-01）：设置·设备页的「全部更新」条。
+   动作本体与进度全部在 `js/fleetUpdate.js` 的阻塞卡里（零新视觉家族）——本处只做
+   **入口行几何**：右贴边、与设备列表同缩进；材质沿用 glass-control token（零裸 hex）。 */
+.fm-device-fleet-bar {
+  display: flex; justify-content: flex-end; align-items: center;
+  padding: var(--ds-space-half) var(--ds-space-1) var(--ds-space-1h); gap: var(--ds-space-1h);
+}
+.fm-device-fleet-bar .fleet-btn {
+  font-size: var(--ds-fs-meta); padding: var(--ds-space-1) var(--ds-space-inline-x); border-radius: var(--ds-radius-input); cursor: pointer;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  color: var(--color-frame-text);
+}
+@media (hover: hover) {
+  .fm-device-fleet-bar .fleet-btn:hover { background: var(--glass-control-bg-hover); }
+}
+
+.fm-device-row { cursor: pointer; }
+/* 设备行在线态：徽章本体（.neblink-presence）样式在 neblink.css（全局已加载）——
+   本处只做**槽位**（右贴边、不参与行内文本压缩）。 */
+.fm-device-presence { flex-shrink: 0; margin-left: auto; display: inline-flex; align-items: center; }
+/* 设备会话行 chip（与群 chip 同形，换语义色不改几何） */
+.fm-device-tag { background: rgb(var(--sapphire) / 0.18); }
+
+/* 设备文件卡状态位（卡 D4 语义保留；fm-att-card-unify 批：宿主 = 主会话卡面 ——
+   文件卡/媒体卡都是 flex 容器，整行挂件用 `flex-basis:100%` 通吃两种宿主；
+   媒体卡的状态行落媒体面下方（上缘 4px 呼吸）。类名零改名（QA 钩子同源）。 */
+.fm-att-device-status { flex-basis: 100%; margin-top: var(--ds-space-half); font-size: var(--ds-fs-meta); color: var(--color-text-muted, #888); }
+.fm-att-device-path {
+  flex-basis: 100%;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted, #888);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fm-att-device-progress {
+  flex-basis: 100%;
+  height: 3px;
+  border-radius: var(--ds-radius-thin);
+  background: var(--glass-etched-border);
+  overflow: hidden;
+}
+.fm-att-device-progress-bar {
+  height: 100%;
+  background: rgb(var(--sapphire));
+  transition: width 0.2s ease-out;
+}
+
+/* 设备会话（2026-09-15 八点返工后；2026-09-16 devrow 再收）：
+   ① **设备描述入口**（⑤c 引入，② 2026-09-15 夜返工，devrow 2026-09-16 07:53 改位）：
+      **默认收起 = 一枚小键**，点击就地展开编辑面板（textarea + 保存/取消）。旧形态
+      （常驻只读文本条 + 点击换行内 input）随 ② 整体替换；`.fm-device-desc-text` /
+      `.fm-device-desc-empty` 两条规则同批删除（旧渲染点已不存在 ⇒ 禁死规则）。
+      🔴 devrow：键**上窗头行**（见下 `.fm-modal-title > .fm-device-desc-btn`）——
+      旧形态键挂在 `.fm-device-desc` 行里 ⇒ 与名块**分两行**（作者 07:53 截图令）。
+      几何沿用原留存条档位（不新增布局座）；材质全部引用既有 `--glass-*` token
+      族 + 既有 `.glass-control`（Glass Control standard，`sapphire.css:159-262`）
+      ⇒ 🔴 零新增字面量色值。
+      注：原 P10 留存明示条 `.fm-device-note` 已被 ⑤b 删除（作者令：不要显示该信息）。
+   ② 本机所发气泡的送达/已读状态位（设备回执读面，§8.7 device_message_receipts）。 */
+.fm-device-desc {
+  margin: 0 var(--ds-space-4) var(--ds-space-1h);
+  /* devrow：本行现在**只承载展开面板**（键已上窗头行）——收起态无子节点，
+     由下方 `:empty` 整条隐去（禁留空行占位）。展开态面板占满一行。 */
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
+}
+/* devrow 收起态：面板不在场 ⇒ 本行零子节点 ⇒ 整条不占位（不留 6px 尾距）。 */
+.fm-device-desc:empty { display: none; }
+/* 窗头悬浮批（contact-panel-unify 链）：窗头离流以后，**设备窗描述面板行**成了
+   滚动区之前唯一还会落在窗体顶缘的流内件 ⇒ 展开时它必须自己让出窗头的可视足迹，
+   否则抽屉直接压在窗头玻璃下面。让位量同样取令牌派生量（= 窗头高），并让紧随其后
+   的 `.fm-flow` 只剩净空一档（用 `:has()` 精确判定，不给别窗加规则）。 */
+.fm-modal > .fm-device-desc:not(:empty) { margin-top: var(--fm-head-clear); }
+.fm-modal:has(> .fm-device-desc:not(:empty)) > .fm-flow { padding-top: var(--nf-head-gap); }
+.fm-device-desc-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
+  font-size: var(--ds-fs-btn);
+  font-family: inherit;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  line-height: 1.4;
+}
+/* 🔴 devrow（作者 2026-09-16 07:53）：小键进窗头行 ⇒ 与名块同一 flex 行、键在名右侧、
+   垂直居中。三点都是本行的硬要求：
+   · `align-self: center` —— `.fm-modal-title` 是 `align-items: baseline`（名称与平台
+     标签跨字号对齐用），基线对齐会把图标键压到名块基线上；本键显式改**行内居中**。
+   · `flex-shrink: 0` —— 长设备名**先截断**（`.fm-modal-name` 自带
+     `overflow:hidden` + `text-overflow:ellipsis` + `white-space:nowrap` ⇒ 自动最小尺寸 0），
+     键**不参与压缩**、不被挤走、不换行（`.fm-modal-title` 为 nowrap flex 行）。
+   · 热区地板 24×24 —— 判据 = **同窗头既有小键先例的最小值**：`.fm-modal-close`
+     `24px×24px`（本文件 `:684-687`）/ `.fm-gs-open` `26px×26px`（本文件 `:1102-1108`）；
+     24×24 亦 = WCAG 2.5.8（Target Size Minimum, AA）触达标准。原 33×21 **低于**该地板
+     （21 < 24）⇒ 本批以 `min-width/min-height` 抬到地板（宽度天然 33 已达标，读数见报告）。 */
+.fm-modal-title > .fm-device-desc-btn {
+  align-self: center;
+  flex-shrink: 0;
+  min-width: 24px;
+  min-height: 24px;
+  justify-content: center;
+}
+@media (hover: hover) {
+  .fm-device-desc-btn:hover { color: var(--color-text); }
+}
+
+.fm-device-desc-btn[aria-expanded='true'] { color: var(--color-text); }
+.fm-device-desc-btn svg { width: 13px; height: 13px; flex-shrink: 0; }
+.fm-device-desc-panel {
+  flex: 1 1 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2);
+  border-radius: var(--ds-radius-button);
+}
+.fm-device-desc-input {
+  width: 100%;
+  font-size: var(--ds-fs-hint);
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 44px;
+}
+.fm-device-desc-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--ds-space-1h);
+}
+.fm-device-desc-actions button {
+  padding: var(--ds-space-1) var(--ds-space-3);
+  border-radius: var(--ds-radius-input);
+  font-size: var(--ds-fs-btn);
+  font-family: inherit;
+  cursor: pointer;
+}
+/* 文字链保存 = 链接语义（2026-10-30 按钮体系批：--color-primary 冻结为身份/状态绿，
+   链接蓝单源 --btn-focus-ring，设计稿 §5.1「含 .fm-device-desc-save 一类文字链」） */
+.fm-device-desc-save { color: var(--btn-focus-ring); font-weight: 500; }
+.fm-device-desc-cancel { color: var(--color-text-muted); }
+.fm-device-desc-actions button:disabled { cursor: not-allowed; opacity: 0.6; }
+.fm-msg-device-receipt {
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text-muted, #888);
+  margin-left: var(--ds-space-1h);
+}
+.fm-msg-device-receipt[data-receipt-state='read'] {
+  color: rgb(var(--sapphire));
+}
+
+/* ══ Desktop: friend, group and device conversations in the main chat area (FCC-REQ-007) ════════════════════════════
+   The conversation window is the same element tree as ever; on desktop it is hosted inside #main instead of a dialog
+   (js/messages/mainHost.js). The Agent view stays in the DOM, hidden and inert. The conversation's identity lives in
+   #header, which keeps its own left and right controls. Mobile keeps the dialog shell its page controller adopts. */
+#fm-chat-overlay.fm-chat-host {
+  position: absolute;
+  inset: 0;
+  z-index: 15;               /* above the hidden Agent view, below the header (30) */
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;      /* the window itself takes the events; the header above stays reachable */
+}
+/* Panels the window raises over itself (the forward window) float centred above it and take events. */
+#fm-chat-overlay.fm-chat-host > .fm-fwd-modal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 3;
+  pointer-events: auto;
+}
+#fm-chat-overlay.fm-chat-host > .fm-modal-main {
+  pointer-events: auto;
+  flex: 1;
+  min-height: 0;
+  width: auto;
+  max-width: none;
+  height: auto;
+  max-height: none;
+  border-radius: 0;
+}
+/* The window's input bar follows the Agent input bar: same edge slot, bottom flush with the main column. */
+.fm-modal-main > .fm-input-bar { margin: 0 var(--ds-main-col-edge-x) 0; }
+.fm-modal-main > .fm-modal-toast { top: calc(var(--fm-head-h) + var(--ds-space-2)); }
+/* The group drawer opens at the top of the window, below the header. */
+.fm-modal-main > .fm-group-settings { margin-top: var(--fm-head-clear); }
+.fm-modal-main:has(> .fm-group-settings) > .fm-flow { padding-top: var(--nf-head-gap); }
+
+/* Header identity: one compact row in the centre of #header, same size language as the Agent name it replaces. */
+#header .fm-main-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  max-width: 100%;
+}
+#header .fm-main-head > .fm-modal-avatar { zoom: 0.7; }   /* the 40px identity avatar becomes the header's 28px icon */
+#header .fm-main-head > .fm-modal-title { flex: 0 1 auto; align-items: center; min-width: 0; }
+#header .fm-main-head .fm-modal-id { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Going back to the Agent is the flipped avatar in the activity bar; one way back, not two. */
+#header .fm-main-head > .fm-modal-close { display: none; }
+
+/* The Agent-only header controls rest while a conversation is shown. They are addressed through .header-right (a
+   class that exists only in #header), not through #header itself: the glass gate reads a #header ancestor as "this
+   surface sits in the top band" and would then judge those controls' own translucent fills. */
+#main.fm-social-main .header-center > :not(.fm-main-head) { display: none; }
+#main.fm-social-main .header-right > #bypass-dropdown,
+#main.fm-social-main .header-right > #voice-toggle-btn,
+#main.fm-social-main .header-right > #bg-indicator,
+#main.fm-social-main .header-right > #pending-asks-indicator,
+#main.fm-social-main .header-right > #held-receipts-indicator,
+#main.fm-social-main .header-right > #bgagent-indicator { display: none; }
+/* The Agent view is not shown, and nothing that belongs to it (its return pill, its top band) shows through. */
+#main.fm-social-main > #chat,
+#main.fm-social-main > #input-area,
+#main.fm-social-main > #top-overlays,
+#main.fm-social-main > #g2-edge-fade,
+#main.fm-social-main > .scroll-new-pill { visibility: hidden; }
+
+/* Activity-bar avatar: the account face flips to the Agent face while a conversation is shown. */
+#activity-avatar .activity-avatar-agent {
+  display: none;
+  width: 100%;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  overflow: hidden;
+  pointer-events: none;
+}
+#activity-avatar[data-face='agent'] .activity-avatar-agent { display: flex; }
+#activity-avatar[data-face='agent'] > picture,
+#activity-avatar[data-face='agent'] > .activity-avatar-photo,
+#activity-avatar[data-face='agent'] > .activity-avatar-letter { display: none; }
+.activity-avatar-agent-photo { width: 100%; height: 100%; object-fit: cover; }
+.activity-avatar-agent-logo { width: 24px; height: 24px; object-fit: contain; }
+/* The flip lasts as long as FLIP_MS in js/activityBar.js, which changes the face at half time and then removes the class. */
+#activity-avatar.is-flipping { animation: nf-avatar-flip 0.28s ease-in-out; }
+@keyframes nf-avatar-flip { 0% { transform: rotateY(0); } 50% { transform: rotateY(90deg); } 100% { transform: rotateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  #activity-avatar.is-flipping { animation: none; }
+}

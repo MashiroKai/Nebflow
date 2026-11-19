@@ -2,75 +2,47 @@
    Modal Styles — Sapphire Glass Design
    ═══════════════════════════════════════════════════════════════════════ */
 
-/* ── Overlay (shared) ──────────────────────────────────────────────────── */
+/* ── Overlay (shared) ────────────────────────────────────────────────────
+   形（position/inset/遮罩底/居中/层级带）自 ui-unification-20261103-overlays
+   起 = design-system.css `.ds-overlay` 层类族单点（遮罩底 = var(--ds-overlay)
+   恒透明 + z = var(--ds-z-overlay)，#modal-overlay 走 `ds-overlay--top`
+   确认族顶带 11000）。本文件只留**显隐机制**：display:none → .on 显。
+   id 特异性（100）高于族类（10）⇒ 开关语义逐字不变。 */
 #modal-overlay,
 #memory-overlay,
 #rules-overlay,
-#path-picker-overlay,
 #settings-overlay,
 #search-overlay {
-  position: fixed;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: var(--overlay-bg);
   display: none;
-  align-items: center;
-  justify-content: center;
-  z-index: 310;
 }
-/* Confirm/generic modal layer — TOP of the overlay stack (dialog-unify
-   2026-09-05): confirms can be triggered from inside ANY panel (settings
-   310, daemon popover 300, cfg-modal 10000, onboarding 320). #modal-overlay
-   and #settings-overlay are body-level siblings, so a plain z-index compare
-   decides paint order — no stacking-context traps. Below only the toast
-   (10000, bottom-right corner, no overlap with the centered dialog). */
-#modal-overlay { z-index: 11000; }
 #modal-overlay.on,
 #memory-overlay.on,
 #rules-overlay.on,
-#path-picker-overlay.on,
 #settings-overlay.on,
 #search-overlay.on { display: flex; }
 
-/* ── Shared Modal Glass Card ───────────────────────────────────────────── */
+/* ── Shared Modal Glass Card ─────────────────────────────────────────────
+   统一按钮玻璃批 2026-11-01：卡面材质（--glass-bg + blur24 sat1.15 双写 +
+   三档栈阴影，亮暗双档）整块迁 css/glass.css 面级浮件档单源（迁移前
+   modal.css 与 #header/#input-bar 三处同值三档栈字面量并存——收归后改一处
+   全站生效）；本文件只留卡片几何（padding/overflow）。
+   弹层层族批 2026-11-01→03（ui-unification-20261103-overlays）：壳形
+   （position:relative 定位基座 + 圆角 --ds-radius-shell + 入场动效
+   modalIn×--ds-dur-layer×--ds-ease-enter）收编 design-system.css
+   `.ds-layer` 层类族单点 —— DOM 挂 `ds-layer` 钩子类，本文件不再声明
+   position/border-radius/animation。 */
 #modal-box,
 #delete-box,
 #conflict-box,
 #memory-modal,
 #rules-modal,
-#path-picker-modal,
 #settings-modal,
 #search-modal,
 #onboarding-panel,
+.model-panel,
 .wsp-panel {
-  position: relative;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-
-  padding: 20px;
+  padding: var(--ds-space-5);
   overflow-y: auto;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
-}
-@media (prefers-color-scheme: dark) {
-  #modal-box,
-  #delete-box,
-  #conflict-box,
-  #memory-modal,
-  #rules-modal,
-  #path-picker-modal,
-  #settings-modal,
-  #search-modal,
-  #onboarding-panel,
-  .wsp-panel {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
 }
 
 /* Top-edge refraction line — sapphire crystal dome */
@@ -79,10 +51,10 @@
 #conflict-box::before,
 #memory-modal::before,
 #rules-modal::before,
-#path-picker-modal::before,
 #settings-modal::before,
 #search-modal::before,
 #onboarding-panel::before,
+.model-panel::before,
 .wsp-panel::before {
   content: '';
   position: absolute;
@@ -99,17 +71,11 @@
   z-index: 1;
 }
 
-/* ── Modal Animation ───────────────────────────────────────────────────── */
-@keyframes modalIn {
-  from {
-    opacity: 0;
-    transform: scale(0.96) translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
+/* ── Modal Animation ─────────────────────────────────────────────────────
+   @keyframes modalIn 已迁 design-system.css（弹层层族批：入场键帧与
+   「时长 --ds-dur-layer / 缓动 --ds-ease-enter」同家单点）。按名字引用的
+   外部消费方（secrets.css / social.css / chat.css / mobileLayer.css）零改动
+   ——键帧全局解析，与加载序无关。 */
 
 /* ── Shared Input Style (etched into glass surface) ────────────────────── */
 .modal-input,
@@ -117,59 +83,36 @@
 #memory-content-input,
 #rules-input {
   width: 100%;
-  background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  font-size: var(--ds-fs-body);
   font-family: ui-monospace, SFMono-Regular, monospace;
   line-height: 1.5;
   resize: vertical;
-  outline: none;
   box-sizing: border-box;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 #modal-input {
   font-family: inherit;
 }
 
-/* Sapphire focus glow */
-.modal-input:focus,
-#modal-input:focus,
-#memory-content-input:focus,
-#rules-input:focus {
-  border-color: rgba(91, 127, 191, 0.5) !important;
-  box-shadow:
-    0 0 0 2px rgba(91, 127, 191, 0.08),
-    0 0 0 4px rgba(91, 127, 191, 0.04);
-  outline: none;
-}
-@media (prefers-color-scheme: dark) {
-  .modal-input:focus,
-  #modal-input:focus,
-  #memory-content-input:focus,
-  #rules-input:focus {
-    border-color: rgba(91, 127, 191, 0.4) !important;
-    box-shadow:
-      0 0 0 2px rgba(91, 127, 191, 0.12),
-      0 0 0 4px rgba(91, 127, 191, 0.06);
-  }
-}
+/* 焦点态：.modal-input / #modal-input / #memory-content-input / #rules-input
+   已收编 css/inputFocus.css（input-focus-ring 批 2026-11-05）。原块外面叠
+   2px + 4px 两圈蓝外发光（还带 !important 抢 border-color）—— 本批整体摘除，
+   外部环不再存在；.cfg-input 面同一套。 */
 
 /* ── Shared Button Styles ──────────────────────────────────────────────── */
 
 /* Neutral / Cancel button */
 #modal-cancel,
 #delete-cancel,
+#delete-alt,
 #conflict-cancel,
 #conflict-keep-both,
 #memory-modal-actions button,
-#rules-modal-actions button,
-#path-picker-actions button {
-  font-size: 12px;
-  padding: 6px 16px;
-  border-radius: 8px;
+#rules-modal-actions button {
+  font-size: var(--ds-fs-btn);
+  padding: var(--ds-space-1h) var(--ds-space-4);
+  border-radius: var(--ds-radius-input);
   cursor: pointer;
   font-family: inherit;
   border: 1px solid var(--glass-border);
@@ -177,58 +120,62 @@
   color: var(--color-frame-text-dim);
   transition: all 0.25s ease;
 }
-#modal-cancel:hover,
-#delete-cancel:hover,
-#conflict-cancel:hover,
-#conflict-keep-both:hover,
-#memory-modal-actions button:hover,
-#rules-modal-actions button:hover,
-#path-picker-actions button:hover {
-  background: rgba(91, 127, 191, 0.08);
-  border-color: var(--sapphire-edge-strong);
-  color: var(--color-frame-text-bright);
-  box-shadow:
-    0 0 8px rgba(120, 160, 220, 0.08),
-    0 0 20px rgba(120, 160, 220, 0.04);
+@media (hover: hover) {
+  #modal-cancel:hover,
+  #delete-cancel:hover,
+  #delete-alt:hover,
+  #conflict-cancel:hover,
+  #conflict-keep-both:hover,
+  #memory-modal-actions button:hover,
+  #rules-modal-actions button:hover {
+    background: rgba(91, 127, 191, 0.08);
+    border-color: var(--sapphire-edge-strong);
+    color: var(--color-frame-text-bright);
+  }
 }
 
-/* Primary / Save button — sapphire style */
-#memory-modal-save,
-#path-picker-select {
-  border-color: rgba(91, 127, 191, 0.35) !important;
-  color: rgb(91, 127, 191) !important;
-  background: rgba(91, 127, 191, 0.06) !important;
+/* 可选第三动作（卸载批 2026-10-29：showConfirm opts.alt——「仅停用」腿）。默认
+   hidden 属性收起，零调用方 = 零形态变化；样式 = 中性族（可逆次选，danger 主选
+   留给确认钮）。 */
+#delete-alt[hidden] { display: none; }
+
+/* Primary / Save button — 墨族主操作（2026-10-30 按钮体系批：save = 主操作语义，
+   蓝幽灵退出，与 #modal-confirm 同 --btn-primary-* 墨族 token 单源）。
+   统一按钮玻璃批 2026-11-01：hover 浮影字面量归非悬浮墨玻璃包 --ig-shadow
+   （glass.css ④ 档，变体⑤定稿；底色/字色仍走 --btn-primary-* 墨族单源）。 */
+#memory-modal-save {
+  border-color: var(--btn-primary-bg) !important;
+  color: var(--btn-primary-ink) !important;
+  background: var(--btn-primary-bg) !important;
 }
-#memory-modal-save:hover,
-#path-picker-select:hover {
-  background: rgba(91, 127, 191, 0.14) !important;
-  border-color: rgba(91, 127, 191, 0.55) !important;
+#memory-modal-save:hover {
+  background: var(--btn-primary-bg-hover) !important;
+  border-color: var(--btn-primary-bg-hover) !important;
   box-shadow:
-    0 0 12px rgba(120, 160, 220, 0.15),
-    0 0 24px rgba(120, 160, 220, 0.08) !important;
-  color: rgb(91, 127, 191) !important;
+    inset 0 1px 0 var(--ig-highlight),
+    var(--ig-shadow) !important;
+  color: var(--btn-primary-ink) !important;
 }
 
-/* Destructive button */
+/* Destructive button — 危险族单源（2026-10-30 按钮体系批 §5.3 红系统一：
+   字面红 rgba(220,60,60,…) 并入 --btn-danger-*（红单源 = --color-danger）） */
 #delete-confirm,
 #conflict-replace,
-#rules-modal-delete,
-#path-picker-clear {
-  border: 1px solid rgba(220, 60, 60, 0.3) !important;
-  color: rgba(220, 60, 60, 0.85) !important;
-  background: rgba(220, 60, 60, 0.04) !important;
+#rules-modal-delete {
+  border: 1px solid var(--btn-danger-stroke) !important;
+  color: var(--btn-danger-ink) !important;
+  background: var(--btn-danger-bg) !important;
   transition: all 0.25s ease;
 }
 #delete-confirm:hover,
 #conflict-replace:hover,
-#rules-modal-delete:hover,
-#path-picker-clear:hover {
-  background: rgba(220, 60, 60, 0.08) !important;
-  border-color: rgba(220, 60, 60, 0.5) !important;
+#rules-modal-delete:hover {
+  background: var(--btn-danger-tint) !important;
+  border-color: var(--btn-danger-stroke) !important;
   box-shadow:
     0 0 12px rgba(220, 60, 60, 0.1),
     0 0 24px rgba(220, 60, 60, 0.05) !important;
-  color: #e55 !important;
+  color: var(--btn-danger-ink) !important;
 }
 
 /* Neutral confirm — reversible actions only (showConfirm opts.tone='neutral',
@@ -239,8 +186,6 @@
   border: 1px solid var(--glass-control-border) !important;
   color: var(--color-text) !important;
   background: var(--glass-control-bg) !important;
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   transition: all 0.25s ease;
 }
 #delete-box.confirm-neutral #delete-confirm:hover {
@@ -254,124 +199,133 @@
     0 4px 12px var(--glass-control-shadow-hover) !important;
 }
 
-/* ── Confirm button (main modal — primary green) ──────────────────────── */
+/* ── Confirm button (main modal — 墨族主操作，2026-10-30 按钮体系批：绿实心底
+   退役，hover 绿 glow 改中性抬升影，token 单源随面板主题 ink-swap) ───────── */
 #modal-confirm {
-  padding: 8px 18px;
+  padding: var(--ds-space-2) var(--ds-space-5);
   border: none;
-  border-radius: 10px;
-  background: var(--color-primary);
-  color: #fff;
-  font-size: 14px;
+  border-radius: var(--ds-radius-button);
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-ink);
+  font-size: var(--ds-fs-subtitle);
   cursor: pointer;
   font-family: inherit;
   transition: background 0.15s, box-shadow 0.2s;
 }
 #modal-confirm:hover {
-  background: var(--color-primary-hover);
+  background: var(--btn-primary-bg-hover);
   box-shadow:
-    0 0 12px rgba(7, 193, 96, 0.15),
-    0 0 24px rgba(7, 193, 96, 0.08);
+    0 2px 8px rgba(0, 0, 0, 0.12),
+    0 2px 12px rgba(0, 0, 0, 0.07);
+}
+
+/* 主对话框取消键 = 幽灵族（2026-10-30 按钮体系批 B5：蓝退出对话框，蓝仅保留
+   focus/链接用途；覆盖上方中性键的 sapphire tint 底/描边，只留字墨两档）。 */
+#modal-cancel {
+  background: none;
+  border-color: transparent;
+  color: var(--btn-ghost-ink);
+  box-shadow: none;
+}
+#modal-cancel:hover {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--btn-ghost-ink-hover);
 }
 
 /* ---------- Main Modal ---------- */
 #modal-box {
-  border-radius: 20px;
-  padding: 24px;
+  padding: var(--ds-space-6);
   width: 340px;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #modal-title {
-  font-size: 16px;
+  font-size: var(--ds-fs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
-  margin-bottom: 16px;
+  margin-bottom: var(--ds-space-4);
 }
 #modal-input {
-  border-radius: 12px;
-  padding: 10px 14px;
-  font-size: 14px;
+  padding: var(--ds-space-block-y) 14px;
+  font-size: var(--ds-fs-subtitle);
   font-family: inherit;
 }
 #modal-actions {
   display: flex;
-  gap: 8px;
-  margin-top: 16px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-4);
   justify-content: flex-end;
 }
 #modal-cancel {
-  padding: 8px 18px;
-  border-radius: 10px;
-  font-size: 14px;
+  padding: var(--ds-space-2) var(--ds-space-5);
+  border-radius: var(--ds-radius-button);
+  font-size: var(--ds-fs-subtitle);
 }
 
 /* ---------- Delete Session Modal ---------- */
 #delete-box {
-  border-radius: 20px;
-  padding: 24px;
+  padding: var(--ds-space-6);
   width: 340px;
   display: none;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #delete-title {
-  font-size: 16px;
+  font-size: var(--ds-fs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
-  margin-bottom: 12px;
+  margin-bottom: var(--ds-space-3);
 }
 #delete-msg {
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   color: var(--color-frame-text-muted);
   line-height: 1.5;
-  margin-bottom: 16px;
+  margin-bottom: var(--ds-space-4);
 }
 #delete-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--ds-space-2);
   justify-content: flex-end;
 }
 #delete-cancel {
-  padding: 8px 18px;
-  border-radius: 10px;
-  font-size: 14px;
+  padding: var(--ds-space-2) var(--ds-space-5);
+  border-radius: var(--ds-radius-button);
+  font-size: var(--ds-fs-subtitle);
 }
 #delete-confirm {
-  padding: 8px 18px;
-  border-radius: 10px;
-  font-size: 14px;
+  padding: var(--ds-space-2) var(--ds-space-5);
+  border-radius: var(--ds-radius-button);
+  font-size: var(--ds-fs-subtitle);
 }
 
 /* ---------- Drop Conflict Dialog ---------- */
 #conflict-box {
-  border-radius: 20px;
-  padding: 24px;
+  padding: var(--ds-space-6);
   width: 340px;
   display: none;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #conflict-title {
-  font-size: 16px;
+  font-size: var(--ds-fs-callout);
   font-weight: 600;
   color: var(--color-frame-text-bright);
-  margin-bottom: 12px;
+  margin-bottom: var(--ds-space-3);
 }
 #conflict-msg {
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   color: var(--color-frame-text-muted);
   line-height: 1.5;
-  margin-bottom: 16px;
+  margin-bottom: var(--ds-space-4);
   word-break: break-word;
 }
 #conflict-actions {
   display: flex;
-  gap: 8px;
+  gap: var(--ds-space-2);
   justify-content: flex-end;
 }
 #conflict-cancel,
 #conflict-keep-both,
 #conflict-replace {
-  padding: 8px 18px;
-  border-radius: 10px;
-  font-size: 14px;
+  padding: var(--ds-space-2) var(--ds-space-5);
+  border-radius: var(--ds-radius-button);
+  font-size: var(--ds-fs-subtitle);
 }
 
 /* ---------- Agent Editor Modal — retired 2026-09-06 ----------
@@ -382,30 +336,76 @@
 /* ---------- Memory Modal ---------- */
 #memory-modal {
   display: none;
-  border-radius: 20px;
   width: 520px;
   max-height: 80vh;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
-#memory-modal.show { display: block; }
+/* 外滚动条退役批（2026-11-07 作者报障「记忆面板外部多了一个滚动条」）：面板改
+   纵列 flex —— 头部（页签/标题）与动作行固定，内容面可收缩（min-height:0），
+   长文本的真滚动只在编辑器 #memory-content-input 自身。
+   实测口径（tests/memory-panel-scroll.spec.mjs，桌面 1440×900/1280×720/1024×640/
+   900×560 × 亮暗 × 字号 ×1/×1.5/×2、手机 375×812/320×568）：
+     · 内容装得下 ⇒ 与改前逐像素同形（可滚量 0，视觉零变化）；
+     · 小屏/放大字体/编辑器被拖高 ⇒ 编辑器按三行地板收缩，Save/Cancel 恒在面板内
+       可点（改前：动作行被顶到 80vh 之外，只能靠那条外滚动条去找）。
+   面板自身的 overflow-y:auto（上方弹窗共享档）留作极端兜底，矩阵内不会触发。 */
+#memory-modal.show { display: flex; flex-direction: column; }
+#memory-content-input {
+  /* 三行地板：行高 1.5 与本面一致 ⇒ 放大字体时地板同比放大，永不成一条缝。 */
+  flex: 0 1 auto;
+  min-height: calc(3 * 1.5 * var(--ds-fs-body));
+}
 #memory-modal-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
-  margin-bottom: 12px;
+  margin-bottom: var(--ds-space-3);
 }
+
+/* ── 合并面板（面板合并批 2026-10-23）：顶层两分区页签（智能体 / 记忆）────
+   分区显隐 = #memory-modal[data-pane] 属性 + CSS（memory.js switchPane 写）；
+   视觉语言 = .memory-tab 同族（字阶/下划线激活态），零新 token。 */
+.merged-tabs {
+  display: flex;
+  gap: var(--ds-space-half);
+  margin-bottom: var(--ds-space-stack-gap);
+  border-bottom: 1px solid var(--glass-border);
+}
+.merged-tab {
+  padding: var(--ds-space-1h) 14px;
+  font-size: var(--ds-fs-body);
+  font-weight: 500;
+  border: none;
+  background: none;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+  font-family: inherit;
+  margin-bottom: -1px;
+}
+.merged-tab:hover { color: var(--color-frame-text); }
+.merged-tab.active {
+  color: rgb(91, 127, 191);
+  border-bottom-color: rgb(91, 127, 191);
+}
+/* 智能体分区在场时收起记忆分区的 scope 行/内容面/动作行（反之 .ap-pane 由
+   chat.css 的 data-pane 规则收起）。手机层的读态卡/编辑钮同维收起见
+   mobileLayer.css（.mh-memory-cards / .mh-memory-edit）。 */
+#memory-modal[data-pane='agent'] .memory-tabs,
+#memory-modal[data-pane='agent'] #memory-modal-body,
+#memory-modal[data-pane='agent'] #memory-modal-actions { display: none; }
 
 /* Memory Tabs */
 .memory-tabs {
   display: flex;
-  gap: 2px;
-  margin-bottom: 12px;
+  gap: var(--ds-space-half);
+  margin-bottom: var(--ds-space-3);
   border-bottom: 1px solid var(--glass-border);
   padding-bottom: 0;
 }
 .memory-tab {
-  padding: 6px 14px;
-  font-size: 12px;
+  padding: var(--ds-space-1h) 14px;
+  font-size: var(--ds-fs-hint);
   border: none;
   background: none;
   color: var(--color-frame-text-muted);
@@ -424,176 +424,91 @@
 #memory-modal-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--ds-space-inline-gap);
+  /* 可收缩（不长大）：内容面让出溢出的高度给动作行，见上方「外滚动条退役批」。 */
+  flex: 0 1 auto;
+  min-height: 0;
 }
 #memory-modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--ds-space-2);
   margin-top: 14px;
+  flex: 0 0 auto;
 }
 
 /* ---------- Rules Editor Modal ---------- */
 #rules-modal {
   display: none;
-  border-radius: 20px;
   width: 520px;
   max-height: 80vh;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #rules-modal.show { display: block; }
 #rules-modal-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
-  margin-bottom: 12px;
+  margin-bottom: var(--ds-space-3);
 }
 #rules-modal-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--ds-space-inline-gap);
 }
 #rules-modal-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--ds-space-2);
   margin-top: 14px;
 }
 #rules-modal-delete { margin-right: auto; }
 
-/* ---------- Path Picker Modal ---------- */
-#path-picker-modal {
-  border-radius: 20px;
-  width: 520px;
-  max-height: 80vh;
-  flex-direction: column;
-  overflow: hidden;
-  display: none;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-}
-#path-picker-modal.show { display: flex; }
-#path-picker-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--color-frame-text-bright);
-  margin-bottom: 12px;
-}
-#path-picker-breadcrumb {
-  font-size: 12px;
-  color: var(--color-frame-text-muted);
-  margin-bottom: 10px;
-  word-break: break-all;
-  line-height: 1.4;
-  padding: 6px 10px;
-  background: var(--glass-etched-bg);
-  border-radius: 8px;
-  border: 1px solid var(--glass-border);
-}
-#path-picker-breadcrumb span {
-  color: rgb(91, 127, 191);
-  cursor: pointer;
-}
-#path-picker-breadcrumb span:hover {
-  text-decoration: underline;
-}
-#path-picker-list {
-  flex: 1;
-  min-height: 200px;
-  max-height: 360px;
-  overflow-y: auto;
-  border: 1px solid var(--glass-border);
-  border-radius: 8px;
-  background: var(--glass-etched-bg);
-}
-#path-picker-list:empty::after {
-  content: attr(data-empty);
-  display: block;
-  text-align: center;
-  padding: 32px;
-  color: var(--color-frame-text-muted);
-  font-size: 12px;
-}
-.pp-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--color-frame-text);
-  border-bottom: 1px solid var(--color-frame-border-light);
-  transition: background 0.1s;
-}
-.pp-item:last-child { border-bottom: none; }
-.pp-item:hover { background: var(--color-frame-hover); }
-.pp-item.selected { background: rgba(91, 127, 191, 0.08); }
-.pp-icon { color: var(--color-frame-text-muted); flex-shrink: 0; width: 16px; text-align: center; }
-.pp-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#path-picker-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 14px;
-}
-
 /* ---------- Settings: Config ---------- */
 .cfg-input {
   width: 100%;
-  background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
-  border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, monospace;
-  outline: none;
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  padding: var(--ds-input-pad);
+  /* 设计语言批整改判例③：面板输入 = 正文同档 13px（本批落令牌）。 */
+  font-size: var(--ds-fs-body);
+  font-family: var(--ds-font-mono);
   box-sizing: border-box;
 }
-.cfg-input:focus {
-  border-color: rgba(91, 127, 191, 0.5);
-  box-shadow:
-    0 0 0 2px rgba(91, 127, 191, 0.08),
-    0 0 0 4px rgba(91, 127, 191, 0.04);
-}
-@media (prefers-color-scheme: dark) {
-  .cfg-input:focus {
-    border-color: rgba(91, 127, 191, 0.4);
-    box-shadow:
-      0 0 0 2px rgba(91, 127, 191, 0.12),
-      0 0 0 4px rgba(91, 127, 191, 0.06);
-  }
-}
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06 ——
+   全站输入件只有一种底/边/圆角/影与一种焦点态；本文件不再写第二套）。 */
 .cfg-eye-btn {
   background: none;
   border: none;
-  color: var(--color-frame-text-dim, #999);
+  color: var(--ds-text-dim);
   cursor: pointer;
-  padding: 4px 2px;
-  border-radius: 4px;
+  padding: var(--ds-space-1) var(--ds-space-half);
+  border-radius: var(--ds-radius-badge);
   transition: color 0.15s;
   flex-shrink: 0;
   display: flex;
   align-items: center;
 }
-.cfg-eye-btn:hover {
-  color: var(--color-frame-text-bright, #333);
+@media (hover: hover) {
+  .cfg-eye-btn:hover {
+    color: var(--ds-text-bright);
+  }
 }
+
 .cfg-eye-btn svg {
   width: 16px;
   height: 16px;
 }
 
-/* ---------- Settings Modal (centered popup, replaces the sidebar panel) -- */
+/* ---------- Settings Modal (centered popup, replaces the sidebar panel) --
+   设计语言批 2026-10-21：宽度 560 = 弹窗 md 档（账本在 stand-dev 插件包 tokens 章 §7）；
+   头部内距归栅格 12/16/20（与 #secrets-modal / #search-modal 同值——弹窗头
+   全站一档），标题 15px/600 = 面板标题档。 */
 #settings-modal {
   display: none;
-  border-radius: 20px;
   width: 560px;
   max-width: calc(100vw - 48px);
   max-height: 85vh;
   padding: 0;
   overflow: hidden;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #settings-overlay.on #settings-modal {
   display: flex;
@@ -603,12 +518,12 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 14px 12px 20px;
+  padding: var(--ds-modal-head-pad);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
 }
 #settings-modal-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
 }
@@ -616,7 +531,6 @@
 /* ---------- Chat History Search Modal ---------------------------------- */
 #search-modal {
   display: none;
-  border-radius: 20px;
   width: 640px;
   max-width: calc(100vw - 48px);
   max-height: 85vh;
@@ -626,7 +540,6 @@
      instead of being clipped. Backgrounds are corner-clipped by border-radius
      regardless; no flow child paints outside the box. */
   overflow: visible;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 #search-overlay.on #search-modal {
   display: flex;
@@ -636,21 +549,21 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 14px 12px 20px;
+  padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-3) var(--ds-space-5);
   border-bottom: 1px solid var(--glass-border);
   flex-shrink: 0;
 }
 #search-modal-title {
-  font-size: 15px;
+  font-size: var(--ds-fs-title);
   font-weight: 600;
   color: var(--color-frame-text-bright);
 }
 .search-controls {
-  padding: 12px 16px;
+  padding: var(--ds-space-3) var(--ds-space-4);
   border-bottom: 1px solid var(--glass-border);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-shrink: 0;
   position: relative;   /* anchor for #search-date-popover */
 }
@@ -659,34 +572,44 @@
   background: var(--glass-etched-bg);
   color: var(--color-frame-input-text);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  font-size: var(--ds-fs-body);
   font-family: inherit;
   outline: none;
   box-sizing: border-box;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
-#search-keyword:focus {
-  border-color: rgba(91, 127, 191, 0.5);
-  box-shadow:
-    0 0 0 2px rgba(91, 127, 191, 0.08),
-    0 0 0 4px rgba(91, 127, 191, 0.04);
-}
+/* 焦点态：#search-keyword 已收编 css/inputFocus.css（2026-11-05）。 */
 .search-filters {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   flex-wrap: wrap;
 }
-.search-filters .cfg-select { width: auto; font-size: 12px; }
+.search-filters .cfg-select { width: auto; font-size: var(--ds-fs-hint); }
 #search-go { margin-left: auto; }
+/* ── 会话内独立搜索（3(b) 会话内独立搜索批 2026-11-06 作者令）─────────────────
+   会话档（overlay 挂 data-conv-scope="1"）只搜当前会话 ⇒ 范围/agent 两枚 select
+   语义不存在（「全部会话/主会话/按 agent 筛」是 agent 会话面的词汇）⇒ 折叠。
+   状态行的会话名前缀（chatSearch.statusSummary）承担 scope 可见化。 */
+/* 🔴 样式锚 = 内容面（#search-modal）而非 overlay 载体：手机层页面化后 modal 被
+   re-parent 进页面体（navController overlayFaceByPage.search），以载体为锚的后代
+   选择器随收编断链（2026-11-06 C2 实证：display=inline-block）。setConvScope 把
+   data-conv-scope 双写在载体与内容面上 ⇒ 桌面（modal 在 overlay 内）与手机收编态
+   同一条规则命中。 */
+#search-modal[data-conv-scope="1"] .search-filters .cfg-select { display: none; }
+/* 会话档实例层级（C5 实证批 2026-11-06）：面板从资料面/会话窗（.cfg-modal-overlay
+   族 z-index 10000，见 friends.css 层级注）里调起，310 档会被**仍在场的会话窗**
+   整体盖住（桌面实证）⇒ 会话档开态升入 10200（> 10000 / body>.fm-context-menu
+   10001，< timeWheel 11000）。主对话入口（无 data-conv-scope）层级零变化。 */
+#search-overlay[data-conv-scope="1"].on { z-index: 10200; }
 
 /* ── Category tabs (v3.1, WeChat retrieval-window paradigm) ─────────────── */
 .search-tabs {
   display: flex;
   align-items: stretch;
-  gap: 4px;
+  gap: var(--ds-space-1);
   height: 32px;
   overflow-x: auto;
   scrollbar-width: none;
@@ -697,9 +620,9 @@
   position: relative;
   background: transparent;
   border: none;
-  padding: 0 10px;
+  padding: 0 var(--ds-space-inline-x);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 400;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -707,7 +630,7 @@
   flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
 }
 .search-tab:hover { color: var(--color-frame-text-bright); }
 /* Active indicator: inset 2px bottom bar (zero layout height), scaleX in. */
@@ -716,7 +639,7 @@
   position: absolute;
   left: 8px; right: 8px; bottom: 0;
   height: 2px;
-  border-radius: 1px;
+  border-radius: var(--ds-radius-thin);
   background: rgba(91, 127, 191, 0.8);
   transform: scaleX(0);
   transition: transform 0.15s ease-out;
@@ -738,7 +661,7 @@
   justify-content: center;
   width: 14px; height: 14px;
   border-radius: 50%;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -752,15 +675,24 @@
 #search-date-popover {
   position: absolute;
   top: 100%;              /* below the controls block */
-  margin-top: 6px;
+  margin-top: var(--ds-space-1h);
   width: 264px;
   z-index: 20;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(24px) saturate(1.15);
-  backdrop-filter: blur(24px) saturate(1.15);
+  /* 2026-10-08 readability fix: this popover lives INSIDE #search-modal, and
+     an ancestor with its own backdrop-filter forms a backdrop root — the blur
+     below can only sample paints within the modal subtree, so the half
+     hanging over the chat stayed sharp through the 0.55-white --glass-bg
+     veil. The blur stays (it still frosts the card-overlap half, and
+     msg-search-v3-smoke B5 pins it); the tint is deepened so bleed-through
+     text is illegible (light: white .88, macOS-popover frost range). */
+  /* glass-unify 批 2026-11-05：本面原来自带一档 α=.88（暗档 α=.92）——
+     这正是作者否掉的「各面各写半透明白」：同一个毛玻璃在不同文件里有四种
+     白度（.55/.60/.72/.88），谁透谁不透全凭当次手感。全站唯一标准只有一档
+     ⇒ 改用 --nf-glass-bg（α=.97），手感问题由标准本体解决，不由本面解决。 */
+  background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border);
-  border-radius: 12px;
-  padding: 12px;
+  border-radius: var(--ds-radius-xl);
+  padding: var(--ds-space-3);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0px 2px 8px rgba(0, 0, 0, 0.04),
@@ -769,6 +701,7 @@
 }
 @media (prefers-color-scheme: dark) {
   #search-date-popover {
+    background: var(--nf-glass-bg);  /* glass-unify 批：同唯一标准（原来这里另写了一份 α=.92 暗档） */
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 2px 8px rgba(0, 0, 0, 0.20),
@@ -779,7 +712,9 @@
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
 }
-/* 8px top arrow pointing at the Date tab. --cal-arrow-left set by JS. */
+/* 8px top arrow pointing at the Date tab. --cal-arrow-left set by JS.
+   background: inherit → tracks the popover body tint (incl. the dark override)
+   so the arrow never seams against the deepened frost. */
 #search-date-popover::before {
   content: '';
   position: absolute;
@@ -787,7 +722,7 @@
   left: var(--cal-arrow-left, 50%);
   width: 8px; height: 8px;
   transform: translateX(-50%) rotate(45deg);
-  background: var(--glass-bg);
+  background: inherit;
   border-left: 1px solid var(--glass-border);
   border-top: 1px solid var(--glass-border);
 }
@@ -795,18 +730,18 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  margin-bottom: var(--ds-space-2);
 }
 .cal-title {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 600;
   color: var(--color-frame-text-bright);
 }
-.cal-pills { display: flex; gap: 6px; }
+.cal-pills { display: flex; gap: var(--ds-space-1h); }
 .cal-pill {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 999px;
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-half) var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
   cursor: pointer;
   font-family: inherit;
 }
@@ -817,11 +752,9 @@
   overflow-y: auto;
   min-width: 72px;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(24px) saturate(1.15);
-  backdrop-filter: blur(24px) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 10px;
-  padding: 4px;
+  border-radius: var(--ds-radius-button);
+  padding: var(--ds-space-1);
   box-shadow:
     0px 2px 8px rgba(0, 0, 0, 0.06),
     0px 8px 24px rgba(0, 0, 0, 0.08);
@@ -832,11 +765,11 @@
   text-align: center;
   background: transparent;
   border: none;
-  padding: 4px 10px;
-  font-size: 12px;
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
+  font-size: var(--ds-fs-hint);
   font-family: inherit;
   color: var(--color-frame-text);
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
 }
 .cal-pill-option:hover,
@@ -844,11 +777,11 @@
 .cal-weekdays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  margin-bottom: 2px;
+  margin-bottom: var(--ds-space-half);
 }
 .cal-weekdays span {
   text-align: center;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 400;
   color: var(--color-frame-text-muted);
   line-height: 22px;
@@ -856,7 +789,7 @@
 .cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  row-gap: 2px;
+  row-gap: var(--ds-space-half);
 }
 .cal-day {
   width: 32px; height: 32px;
@@ -867,7 +800,7 @@
   background: transparent;
   border: none;
   border-radius: 50%;
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 400;
   font-family: inherit;
   color: var(--color-frame-text);
@@ -891,14 +824,14 @@
 .cal-foot {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-top: 10px;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-stack-gap);
 }
 .cal-clear {
   background: transparent;
   border: none;
-  padding: 2px 4px;
-  font-size: 11px;
+  padding: var(--ds-space-half) var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
   font-family: inherit;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -908,8 +841,8 @@
 .cal-cancel {
   background: transparent;
   border: none;
-  padding: 4px 6px;
-  font-size: 12px;
+  padding: var(--ds-space-1) var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
   font-family: inherit;
   color: var(--color-frame-text-muted);
   cursor: pointer;
@@ -919,28 +852,51 @@
 /* ── Lazy-render sentinel (v3.1) ────────────────────────────────────────── */
 .search-sentinel { height: 1px; }
 #search-status {
-  padding: 4px 16px;
-  font-size: 11px;
+  padding: var(--ds-space-1) var(--ds-space-4);
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   flex-shrink: 0;
 }
 #search-status:empty { padding: 0; }
+.search-batch-open {
+  align-self: flex-start;
+  margin: 0 var(--ds-space-4) var(--ds-space-2);
+}
+.search-batch-open[hidden] { display: none; }
 #search-results {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 4px 10px 12px;
+  padding: var(--ds-space-1) var(--ds-space-inline-x) var(--ds-space-3);
   scrollbar-color: var(--color-frame-border) transparent;
 }
 .search-hint {
   text-align: center;
-  padding: 32px 16px;
-  font-size: 12px;
+  padding: var(--ds-space-8) var(--ds-space-4);
+  font-size: var(--ds-fs-hint);
   color: var(--color-frame-text-muted);
 }
+/* 检索续取尾钮（检索全覆盖批 2026-11-07）：结果流尾部的「加载更多」入口。
+   消息流档走 .search-sentinel 无限滚动（滚到底即续取，无需按钮）；本钮只服务
+   媒体网格档（网格自带哨兵渲染，续取需要一个显式落点）与手动触发的兜底。
+   文案含「已加载 n/m 条」——分段加载如实读数，禁静默截断。 */
+.search-more-tail {
+  display: block;
+  margin: var(--ds-space-3) auto var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-4);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text-muted);
+  background: var(--color-frame-hover);
+  border: 1px solid var(--color-frame-border);
+  border-radius: var(--ds-radius-button);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+.search-more-tail:hover { color: var(--color-frame-text-bright); }
+.search-more-tail:disabled { opacity: 0.6; cursor: default; }
 .search-result {
-  padding: 8px 10px;
-  border-radius: 10px;
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   transition: background 0.12s;
 }
@@ -948,11 +904,11 @@
 .search-result-head {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 3px;
+  gap: var(--ds-space-2);
+  margin-bottom: var(--ds-space-1);
 }
 .search-result-session {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   font-weight: 600;
   color: var(--color-frame-text-bright);
   overflow: hidden;
@@ -961,19 +917,31 @@
   max-width: 40%;
 }
 .search-result-type {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.4px;
   color: rgb(91, 127, 191);
   background: rgba(91, 127, 191, 0.08);
-  border-radius: 5px;
-  padding: 1px 6px;
+  border-radius: var(--ds-radius-chip);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
   flex-shrink: 0;
+}
+/* 作者令②（2026-10-30）：结果列表用户/AI 异色——token 见 base.css
+  （--search-kind-*，面板明暗双档、小字 4.5:1 判读）。agent（注入蓝泡）与 ai
+  同档（同为 AI 侧）；tool 行只剩浏览流，沿用默认 sapphire 不动。 */
+.search-result-type.type-user {
+  color: var(--search-kind-user);
+  background: var(--search-kind-user-bg);
+}
+.search-result-type.type-ai,
+.search-result-type.type-agent {
+  color: var(--search-kind-ai);
+  background: var(--search-kind-ai-bg);
 }
 .search-result-time {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
@@ -983,12 +951,12 @@
    badge hints at the open-in-Canvas affordance. */
 .search-result[data-artifact="1"] .search-result-type::after {
   content: '↗';
-  margin-left: 5px;
+  margin-left: var(--ds-space-1h);
   opacity: 0.65;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
 }
 .search-result-preview {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   line-height: 1.5;
   color: var(--color-frame-text-dim);
   overflow: hidden;
@@ -1000,8 +968,8 @@
 .search-result-preview mark {
   background: rgba(91, 127, 191, 0.28);
   color: inherit;
-  border-radius: 3px;
-  padding: 0 1px;
+  border-radius: var(--ds-radius-badge);
+  padding: 0 var(--ds-space-hair);
 }
 
 /* Group header — session name + hit count (scope=all only).
@@ -1009,9 +977,9 @@
 .search-group-header {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  padding: 10px 10px 2px;
-  font-size: 11px;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-block-y) var(--ds-space-inline-x) var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
 }
 .search-group-header .search-result-session { max-width: 70%; }
@@ -1027,8 +995,34 @@
 #search-results { transition: opacity 0.12s ease; }
 #search-results[data-loading="true"] { opacity: 0.5; }
 
+/* ── Inline card body in a result row (v2, 2026-09-11) ──────────────────────
+   A hit whose tool message produced a Card expands that card body under the
+   preview, rendered by the shared card registry (.html-card-wrap /
+   .html-card-iframe — no card styling of its own). Rows without a card add no
+   node at all; the .search-result* rules above are untouched. */
+.search-result-card {
+  margin-top: var(--ds-space-2);
+  width: 100%;
+  max-width: 100%;
+}
+/* Failure of the card body must be visible inside the row (never silent).
+   ui-status-redesign（盘点 #28，S9 同族）：11px 通知句转中性字，红由左侧 2px
+   描边（图案）＋行首 circle-alert 图标承载。 */
+.search-result-card-warn {
+  margin-top: var(--ds-space-1h);
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
+  font-size: var(--ds-fs-meta);
+  line-height: 1.45;
+  color: var(--status-word);
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-error-icon) 26%, transparent);
+  border-left: 2px solid var(--status-error-icon);
+}
+.search-result-card-warn .st-ic { width: 12px; height: 12px; margin: var(--ds-space-hair) var(--ds-space-1h) 0 0; flex-shrink: 0; }
+
 /* Inline retry button in the status line (error state). */
-#search-status .cfg-btn { margin-left: 8px; }
+#search-status .cfg-btn { margin-left: var(--ds-space-2); }
 
 @media (prefers-color-scheme: dark) {
   /* Same sapphire hue, raised alpha for legibility on dark glass. */
@@ -1059,12 +1053,12 @@
 }
 .search-hit-flash {
   animation: searchHitFlash 1.8s ease;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
 }
 
 /* ---------- Memory Button (header) ---------- */
 
-/* ---------- Nebflow Toast Notification ---------- */
+/* ---------- Stand Toast Notification ---------- */
 /* 2026-09-03 glass redesign (author ruling): material aligned to the
    .glass-control standard (sapphire.css tokens); type semantics expressed
    ONLY by the leading glyph icon color — the 3px left accent strip is gone.
@@ -1072,20 +1066,18 @@
    token's own media definitions), so no dark-mode override block is needed. */
 .nebflow-toast {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
-  z-index: 10000;
+  bottom: var(--ds-space-5);    /* 右下角座位内距（20px 档 = --ds-space-5） */
+  right: var(--ds-space-5);
+  z-index: var(--ds-z-toast);   /* 弹层堆叠带（design-system.css ⑭：通知 10000） */
   max-width: 400px;
-  padding: 12px 16px;
-  border-radius: 12px;
-  font-size: 13px;
+  padding: var(--ds-space-3) var(--ds-space-4);
+  border-radius: var(--ds-radius-xl);   /* 12px 既有档 = --ds-radius-xl 同值 */
+  font-size: var(--ds-fs-body);
   line-height: 1.4;
   opacity: 0;
   transform: translateY(10px);
   transition: opacity 0.25s, transform 0.25s;
   background: var(--glass-control-bg);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border: 1px solid var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -1099,25 +1091,96 @@
   opacity: 1;
   transform: translateY(0);
 }
-/* Type semantics: leading glyph, colored per type (no color strip). */
+
+/* 通知让位底缘（2026-11-19）：canvas 打开时，通知不压 canvas 底部控件带
+   （.canvas-zoom-bar / 文档圆钮族 + 手机 dock 之上的控件行）—— 实测带高单源 =
+   `--canvas-bottom-clearance`（viewers/shared.js syncBottomClearance 量出的
+   「浮钮带顶 → 面板底缘 + 12 呼吸」，split.css「底部浮钮让位」块同一处），
+   该实测值同时发布到 documentElement，body 级浮层（本通知）才读得到。
+   守卫 = `body.canvas-open`：canvas 关上后该实测值不再刷新，守卫保证陈旧值零消费
+   （通知退回右下角 20px 座位）。位置只有一个来源（本族两条规则共用同一条带），
+   不新造第二套定位。 */
+body.canvas-open .nebflow-toast {
+  bottom: calc(var(--ds-space-5) + var(--canvas-bottom-clearance, 0px));
+}
+
+/* Type semantics: leading glyph, colored per type (no color strip).
+   ui-status-redesign（盘点 #26 / D 组，S7 全站归一）：字形 → lucide 真图标
+   （modal.js 注入），色档保留 = 图标载体；error 档色值归 --status-error-icon
+   token（暗档随 token 提亮）。 */
 .nebflow-toast-icon {
-  margin-right: 8px;
-  font-size: 14px;
+  margin-right: var(--ds-space-2);
+  font-size: var(--ds-fs-subtitle);
   font-weight: 600;
   line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
 }
-.nebflow-toast-error .nebflow-toast-icon { color: #f44336; }
+.nebflow-toast-icon .st-ic { width: 15px; height: 15px; }
+.nebflow-toast-error .nebflow-toast-icon { color: var(--status-error-icon); }
 .nebflow-toast-info .nebflow-toast-icon { color: var(--color-primary); }
-.nebflow-toast-success .nebflow-toast-icon { color: var(--color-success); }
+.nebflow-toast-success .nebflow-toast-icon { color: var(--status-success-icon); }
 .nebflow-toast-link {
   display: inline-block;
-  margin-left: 10px;
-  padding: 3px 10px;
-  font-size: 12px;
+  margin-left: var(--ds-space-indent-x);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   text-decoration: none;
   cursor: pointer;
 }
+
+/* Rich toast（canvas 保存失败批 2026-11-18 起；notice-unify 批 2026-11-18 把形状
+   开关扩到 closable / hint / action 三态）：图标 + 正文列 + 关闭钮三栏。正文列内
+   msg 一行、hint 一行（次级色 = 可执行的下一步）、可选动作钮（如「撤销」）。只有传了
+   opts.closable / opts.hint / opts.action 时才是这个结构，普通 toast 的 DOM/样式零改动。 */
+.nebflow-toast-rich {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-2);
+}
+/* rich 走 flex gap，别再叠图标自带的右边距（否则间距翻倍）。 */
+.nebflow-toast-rich .nebflow-toast-icon { margin-right: 0; }
+.nebflow-toast-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.nebflow-toast-hint {
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
+  line-height: 1.35;
+  color: var(--color-frame-text-dim);
+}
+.nebflow-toast-action {
+  margin-top: var(--ds-space-1h);
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-primary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.nebflow-toast-action:disabled { opacity: 0.5; cursor: default; }
+.nebflow-toast-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  margin: -4px -6px -4px 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+}
+.nebflow-toast-close:hover { color: var(--color-text); }
 
 
 /* ── Onboarding wizard (first-run) ─────────────────────────────────────── */
@@ -1133,40 +1196,403 @@
   z-index: 320;
 }
 #onboarding-panel {
-  border-radius: 20px;
   width: 480px;
   max-width: calc(100vw - 48px);
-  padding: 32px 28px 24px;
+  padding: var(--ds-space-8) 28px var(--ds-space-6);
   text-align: center;
   overflow: visible;
-  animation: modalIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .onboarding-title {
-  font-size: 20px;
+  font-size: var(--ds-fs-display);
   font-weight: 600;
   letter-spacing: -0.02em;
   color: var(--color-text);
 }
 .onboarding-sub {
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   color: var(--color-text-muted);
-  margin-top: 10px;
+  margin-top: var(--ds-space-stack-gap);
   line-height: 1.6;
 }
+/* ui-status-redesign（盘点 #37，S9 同族·CSS-only 限界）：13px 红字 → 中性正文，
+   红由左侧 2px 描边＋淡红底（图案载体）承载。词前图标需动 onboarding.js（该文件
+   现带他人既有暂存改动，本批禁触）——留待与 onboarding-ux 批合流时补图标。 */
 .onboarding-error {
-  font-size: 13px;
-  color: var(--color-error);
-  margin-top: 12px;
+  font-size: var(--ds-fs-body);
+  color: var(--status-word);
+  margin-top: var(--ds-space-3);
   word-break: break-word;
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-input);
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border-left: 2px solid var(--status-error-icon);
 }
 .onboarding-status {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text-muted);
-  margin-top: 12px;
+  margin-top: var(--ds-space-3);
 }
 .onboarding-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--ds-space-inline-gap);
   justify-content: center;
-  margin-top: 24px;
+  margin-top: var(--ds-space-6);
+}
+
+/* ── /model panel (modelPanel.js — modelcfg Phase 1) ──────────────────────
+   Dual-mode chain configuration. Mounted on .cfg-modal-overlay (transparent
+   overlay — no dimming — per the dialog ruling); the card joins the shared
+   glass family above. Row chrome reuses .agent-detail-model-row (sidebar.css);
+   chain chips are the shared .mchain family (sidebar.css). */
+.model-panel {
+  display: flex;
+  flex-direction: column;
+  width: 540px;
+  max-width: calc(100vw - 48px);
+  max-height: 85vh;
+  padding: 0;
+  outline: none;
+}
+.mp-header {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-3);
+  padding: 14px 14px var(--ds-space-3) var(--ds-space-5);
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+.mp-title {
+  font-size: var(--ds-fs-title);
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+}
+.mp-modes {
+  display: flex;
+  gap: var(--ds-space-half);
+  margin-left: auto;
+  padding: var(--ds-space-half);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--glass-etched-bg);
+}
+.mp-mode-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 500 var(--ds-fs-btn) -apple-system, sans-serif;
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.mp-mode-btn.on {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+/* 台账 #937：/model 面板级降级面 —— 全角色读数失败（401/断连）时替下
+   per-role blocks 的显式失败态：居中告警 + 可读原因 + 重试入口。修前该
+   形态 = 静默僵面（禁用钮 + 隐藏组，无一处说明），作者 14:19 报障
+   「能打开但上面都点不了」的体验面即此。 */
+.mp-load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-inline-gap);
+  padding: 56px var(--ds-space-6);
+  text-align: center;
+}
+.mp-load-error-icon { color: var(--color-text-muted); }
+.mp-load-error-title { font-size: var(--ds-fs-subtitle); font-weight: 600; color: var(--color-text); }
+.mp-load-error-hint { font-size: var(--ds-fs-hint); color: var(--color-text-muted); max-width: 360px; }
+.mp-load-error-retry { margin-top: var(--ds-space-1); }
+.mp-close { flex-shrink: 0; }
+/* Divergence banner — visibility is owned by the dep-visibility widget
+   (f(mode, fork state)); the stylesheet only defines the visible shape. */
+.mp-banner {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-5);
+  border-bottom: 1px solid var(--glass-border);
+}
+.mp-banner-text {
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.mp-banner-view { margin-left: auto; }
+.mp-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-4);
+  overflow-y: auto;
+}
+.mp-followers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+}
+
+/* ── 层级下钻配置面（configDrill.js — 配置面风格统一批 2026-10-31 作者令：
+   JeV/生图配置面与 LLM 配置同款族）────────────────────────────────────
+   透明承接层复用 .cfg-modal-overlay（无压暗遮罩铁律）；玻璃盒复用 .cfg-modal
+   族（+440px 中档宽）；头部 = 15px/600 标题 + panel-btn 关闭（mp-header 同档）。
+   盒体 flex 纵排、内容区自滚——头部不随内容滚走。手机层：A 族铺平规则对
+   .cfg-modal-overlay 全族生效，且缩档时模块自关浮层（settingsSub 层级子页
+   接管），双保险零冲突。 */
+.config-drill-modal {
+  width: 440px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.config-drill-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-3) 14px var(--ds-space-3) var(--ds-space-5);
+  border-bottom: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+.config-drill-title {
+  font-size: var(--ds-fs-title);
+  font-weight: 600;
+  color: var(--color-frame-text-bright);
+}
+.config-drill-body {
+  padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-4);
+  overflow-y: auto;
+}
+/* 设置页回退链节（modelPanel.js mountModelChainSection 内容面）：编辑器行
+   满宽铺开，节内顶距归 0（节自带 hint 间距）。 */
+.chain-section-face .mp-editor { margin-top: var(--ds-space-2); }
+.mp-settings-role-panel { display: flex; flex-direction: column; gap: var(--ds-space-2); padding: var(--ds-space-3); margin-bottom: var(--ds-space-2); }
+.mp-settings-role-panel .mp-role-head { padding: 0; white-space: normal; overflow-wrap: anywhere; }
+.mp-settings-role-model { width: 100%; min-width: 0; min-height: 44px; }
+#model-chain-section-body .chain-section-error { padding: var(--ds-space-6) var(--ds-space-3); }
+#model-chain-section-body:empty { display: none; }
+.mp-roleblock {
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-xl);
+  background: var(--glass-etched-bg);
+  overflow: hidden;
+}
+.mp-role-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-3);
+}
+.mp-role-head-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+.mp-role-head-toggle:hover { background: var(--color-frame-hover); }
+.mp-role-name {
+  font: 600 var(--ds-fs-body) -apple-system, sans-serif;
+  color: var(--color-text);
+}
+.mp-chev {
+  display: flex;
+  color: var(--color-text-muted);
+  transition: transform 0.15s;
+}
+.mp-chev.open { transform: rotate(180deg); }
+.mp-head-preview {
+  margin-left: auto;
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 50%;
+}
+.mp-status {
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  background: rgba(128, 128, 128, 0.12);
+  border-radius: var(--ds-radius-badge);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  flex-shrink: 0;
+}
+.mp-status-main {
+  font-weight: 600;
+  color: var(--color-text);
+}
+.mp-status-fork {
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.1);
+  border: 1px solid rgb(var(--sapphire) / 0.22);
+}
+.mp-role-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1h);
+  padding: 0 var(--ds-space-3) var(--ds-space-block-y);
+}
+.mp-note {
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.mp-followers-label { font-weight: 500; }
+.mp-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  flex-wrap: wrap;
+  margin-top: var(--ds-space-half);
+}
+.mp-foot .mp-note { min-width: 0; }
+.mp-editor { display: flex; flex-direction: column; gap: var(--ds-space-1h); }
+.mp-rows { display: flex; flex-direction: column; gap: var(--ds-space-1h); }
+.mp-row-unavailable { opacity: 0.45; }
+/* 拖拽手柄（指针版拖拽，modelPanel.js）：touch-action:none 让触屏在手柄面
+   起拖不被浏览器手势接管；行体其余部分保留原生滚动（/model 配置面手机端
+   滚动/拖动修，2026-10-31 作者报障）。 */
+.mp-drag {
+  touch-action: none;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+/* 时段闸（model-schedule-unavailable 批 2026-10-29）：链行尾的窗口小注。 */
+.mp-window {
+  font: 400 var(--ds-fs-meta) ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.mp-prov {
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  background: rgba(128, 128, 128, 0.12);
+  border-radius: var(--ds-radius-badge);
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  flex-shrink: 0;
+}
+.mp-model {
+  font: 500 var(--ds-fs-hint) ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text);
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mp-pos {
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.mp-addrow {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  flex-wrap: wrap;
+  margin-top: var(--ds-space-half);
+}
+.mp-add-select {
+  flex: 1;
+  min-width: 170px;
+  height: 28px;
+  color: var(--color-text);
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
+  padding: 0 var(--ds-space-2);
+  cursor: pointer;
+}
+/* F 批 2026-11-17（下拉统一）：select 被 .nf-select 包裹后，本行的伸缩职责
+   （flex:1 / min-width）上移到包裹层——select 在格内仍 100% 跟随。 */
+.mp-addrow .nf-select { flex: 1; min-width: 170px; }
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
+/* ui-status-redesign（盘点 #38，S9 同族）：11.5px 红字 → 中性正文 + 行首
+   circle-alert 红图标（modelPanel.js 注入）。 */
+.mp-inline-err {
+  display: none;
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
+  color: var(--status-word);
+}
+.mp-inline-err .st-ic { width: 12px; height: 12px; margin-right: var(--ds-space-1); vertical-align: -2px; }
+.mp-inline-err.on { display: block; }
+@media (prefers-color-scheme: dark) {
+  .mp-add-select { background: rgba(255, 255, 255, 0.03); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mp-chev { transition: none; }
+  .mp-mode-btn { transition: none; }
+}
+
+/* ── Jev / 生图 切换分组（jev-imagegen-align-llm 批 2026-11-02，契约 §E.4）──
+   /model 面板与设置页节共用同一份 DOM 产出（modelPanel.js renderSwitchGroups）；
+   新 class 全在 `.mp-group` 命名空间下（**绝不用** .mp-roleblock —— degraded
+   spec 钉其计数恒为 2）。零新字面量色值：全走既有 token。 */
+.mp-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.mp-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-frame-input-bg);
+}
+.mp-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 600 var(--ds-fs-hint) -apple-system, sans-serif;
+  color: var(--color-text);
+  list-style: none;
+  cursor: pointer;
+}
+/* <summary> 的原生三角收起（折叠形态仍可点击/键盘展开）。 */
+.mp-group-head::-webkit-details-marker { display: none; }
+div.mp-group > .mp-group-head { cursor: default; }
+.mp-group-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mp-group-cur {
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.mp-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mp-group-hint {
+  font: 400 var(--ds-fs-meta) -apple-system, sans-serif;
+  color: var(--color-text-muted);
+}
+.mp-group-empty {
+  font: 400 var(--ds-fs-hint) -apple-system, sans-serif;
+  color: var(--status-word);
+}
+.mp-group-switch {
+  width: 100%;
+  height: 28px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: 500 var(--ds-fs-meta) -apple-system, sans-serif;
+  padding: 0 8px;
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.mp-group-switch:focus { border-color: rgb(var(--sapphire) / 0.4); }
+.mp-group-switch:disabled { opacity: 0.55; cursor: default; }
+@media (prefers-reduced-motion: reduce) {
+  .mp-group-switch { transition: none; }
 }

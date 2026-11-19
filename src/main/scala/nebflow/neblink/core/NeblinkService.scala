@@ -1,0 +1,722 @@
+package nebflow.neblink.core
+
+import nebflow.neblink.relay.PresenceCandidateProbe
+
+import nebflow.neblink.identity.*
+import nebflow.neblink.relay.*
+
+import nebflow.neblink.logto.*
+import cats.effect.std.{Dispatcher, Queue, Semaphore}
+import cats.effect.{IO, Ref}
+import cats.syntax.all.*
+import io.circe.Json
+import io.circe.syntax.*
+import nebflow.core.NeblinkServicePort
+import nebflow.shared.{NebflowLogger, PeerInfo}
+import sttp.client4.*
+
+import scala.concurrent.duration.*
+
+// ============================================================
+// Sync command protocol — public so callers can send commands
+// ============================================================
+
+sealed trait SyncCommand
+
+object SyncCommand:
+  /** Start periodic sync. */
+  case object StartSync extends SyncCommand
+
+  /** Stop periodic sync. */
+  case object StopSync extends SyncCommand
+
+  /** Periodic sync timer fired. */
+  private[neblink] case object SyncTick extends SyncCommand
+
+  /** A peer was discovered — wake up the sync loop for an immediate cycle. */
+  case object PeerDiscovered extends SyncCommand
+end SyncCommand
+
+/**
+ * Core neblink service — NebLink P2P device discovery and cross-device tool execution.
+ *
+ * Event-driven design:
+ *   - IO-based sync loop replaces the old Pekko actor.
+ *   - NebLink Server is the trust boundary — no account or cloud relay needed.
+ *   - Sync runs continuously; discovery hook is set by GatewayMain at startup.
+ */
+class NeblinkService private (
+  identityRef: Ref[IO, DeviceIdentity],
+  configRef: Ref[IO, NeblinkConfig],
+  peersRef: Ref[IO, Map[String, PeerInfo]],
+  peerDescRef: Ref[IO, Map[String, String]],
+  serverPort: Int,
+  private val syncQueue: Queue[IO, SyncCommand],
+  private val dispatcher: Dispatcher[IO],
+  private val relayTunnelEnsureGate: Semaphore[IO],
+  private val peerRemovalGracePeriod: FiniteDuration = 15.seconds
+) extends NeblinkServicePort: // 严格DAG第⑥步第二批裁定(2026-09-27,R3):原地混入 core 窄口(identity/peers/scanNow/addDataHandler/sendData/relayClientOpt/httpBackend/relayTunnelOpt/presenceServiceOpt,签名镜像,行为保持)
+  private val logger = NebflowLogger.forName("nebflow.neblink")
+
+  /** IPs of peers discovered via NebLink Server. Trusted for incoming connections. */
+  @volatile private var trustedPeerIps: Set[String] = Set.empty
+
+  /** NebLink client (relay) — set by GatewayMain at startup so services can use relay fallback. */
+  @volatile private var _relayClient: Option[NeblinkClient] = None
+
+  /** Relay tunnel — set by GatewayMain so status endpoint can report relay availability. */
+  @volatile private var _relayTunnel: Option[NeblinkRelayTunnel] = None
+
+  /** Presence service — set by GatewayMain so status endpoint can check direct WS connections. */
+  @volatile private var _presenceService: Option[NeblinkPresenceService] = None
+
+  def setRelayClient(client: Option[NeblinkClient]): Unit = _relayClient = client
+  def relayClientOpt: Option[NeblinkClient] = _relayClient
+
+  def setRelayTunnel(tunnel: NeblinkRelayTunnel): Unit = _relayTunnel = Some(tunnel)
+  def relayTunnelOpt: Option[NeblinkRelayTunnel] = _relayTunnel
+
+  // ===== 踢下线停摆位（2026-09-14 踢旧批 r2，作者 17:07 裁定 C+B·客户端一刀）=====
+  //
+  // 为什么放在**服务**上而不是隧道里（r2 唯一失败点的返工面 1/2）：被踢端要停的不止
+  // 隧道腿。「同 (deviceId, network) 有新会话」时服务端 `relay.rs disconnect_device`
+  // 会推 `disconnect` 帧并断隧道，但**自动重注册腿**（心跳 401 → `NeblinkClient.doLogin`
+  // → `LogtoSilentRelogin` → `POST /api/device/register`）与隧道是两条独立的腿，而且
+  // register 发生在 persist **之前**（`LogtoSilentRelogin.scala` 的 `.register` 先于
+  // `NeblinkEnrollment.persist`）⇒ 只在隧道里记停摆位，挡不住重注册（r1 实测：踢后
+  // ~24s 自愈链照样 register 成功）。
+  //
+  // 因此停摆位提升为**入网咽喉可读状态**，由三种消费者共读同一真值：
+  //   ① 隧道 `connectLoop`（不重连）② `NeblinkClient` 的自动登录/自愈入口（不重登）
+  //   ③ `LogtoSilentRelogin`（**register 之前的门**）。
+  // 写侧唯一 = 隧道收到 `disconnect` 帧（`noteServerDisconnect`）；清侧唯一 =
+  // **用户显式登录**（`NeblinkEnrollment.persist(explicitUserAction = true)`）。
+  //
+  // 范围（诚实边界）：进程内状态。重启进程 = 用存储的 deviceToken 走一次 session 交换
+  // ⇒ 重新入网（同一 token 已被服务端作废时会 401，不会重注册——register 只在
+  // `LogtoSilentRelogin` 里发，而它被本位挡住）。跨实例语义 = 每个被踢实例各自停摆，
+  // 因此互踢链在「被踢方」断掉；没有中央协调、没有 wire 协商（零 wire 新增）。
+  // 0 = 未被踢。
+  @volatile private var _kickParkedAtMs: Long = 0L
+
+  /** 停摆时刻（0 = 未停摆）。 */
+  def kickParkedAtMs: Long = _kickParkedAtMs
+
+  /** 是否处于「被服务端踢下线后的停摆态」。 */
+  def kickParked: Boolean = _kickParkedAtMs > 0L
+
+  /** 记录停摆（幂等：已停摆者保留**首次**时刻，不被后续帧刷新）。返回是否本次才置位。 */
+  def markKickParked(atMs: Long = System.currentTimeMillis()): Boolean =
+    if _kickParkedAtMs != 0L then false
+    else
+      _kickParkedAtMs = atMs
+      true
+
+  /** 解除停摆（唯一合法调用面 = 用户显式登录）。返回调用前是否处于停摆。 */
+  def clearKickPark(): Boolean =
+    val was = _kickParkedAtMs != 0L
+    _kickParkedAtMs = 0L
+    was
+
+  /**
+   * **证据式解除停摆**（kaiauth 修法批 ①配套，2026-09-16 作者「治本」已批）。
+   *
+   * 与 [[clearKickPark]] 的区别：本方法的**调用方承担举证责任** —— 只有
+   * 「新凭据已铸成**且**经一次成功交换证明有效」这一读数为真时才可调用
+   * （唯一调用面 = `NeblinkEnrollment.persistImpl` 的证明步骤；失败路径**不**调用）。
+   * 因此这里不重复判定证据，只做三件事：清位 + 唤醒隧道 + 留一行可判读日志。
+   *
+   * WHY 需要它（修前的死循环）：停摆位的读侧是三条腿（隧道 connectLoop /
+   * `NeblinkClient` 自动登录门 / `LogtoSilentRelogin` 的 register 前门），而**清侧
+   * 修前只有一条**（用户显式登录）⇒ 「自动路径铸成了有效新凭据、却因为同一次 enroll
+   * 踢掉了自己而被停摆」这一状态**没有任何自动出口**（诊断报告 §9③：唯一出口 =
+   * 人显式登录）。案 C 的语义**逐字保留**（显式登录仍是**无条件**解除口，见
+   * `NeblinkEnrollment.persist(explicitUserAction = true)`）；本方法只是**新增**
+   * 一条**带证据、有界、失败绝不解锁**的自动解除腿。
+   *
+   * 防风暴边界（本方法不放宽的部分）：停摆期**照旧**不发任何自动登录/register
+   * （三条读侧门全部原样）；本方法只在**一次已经成功走完的 enroll** 内部被调用。
+   */
+  def liftKickParkAfterProvenCredential: IO[Unit] =
+    IO(clearKickPark()).flatMap { wasParked =>
+      if wasParked then
+        logger.warn(
+          "NebLink kick park lifted: a freshly minted device credential was proven by a " +
+            "successful session exchange (automatic, evidence-gated — not a user login)"
+        ) *> _relayTunnel.fold(IO.unit)(_.wakeAfterCredentialProven())
+      else IO.unit
+    }
+
+  /**
+   * Relay tunnnel "make sure it is running" starter (2026-09-11 tunnel
+   * lifecycle fix). GatewayMain stays the tunnel ASSEMBLY owner and registers
+   * the starter here; enrollment paths (`NeblinkEnrollment.persist`, which
+   * hot-swaps the client) only ask for the tunnel to be ensured — they never
+   * build one. Held in a Ref (not a bare `@volatile`), and the ensure path is
+   * serialized by `relayTunnelEnsureGate`.
+   */
+  private val relayTunnelStarter: Ref[IO, Option[IO[Unit]]] = Ref.unsafe[IO, Option[IO[Unit]]](None)
+
+  /**
+   * 登记 starter。**返回 IO**：调用点必须把它放进 IO 位置（`*>` / for 生成器）——
+   * cats-effect 惯例（同 `updateTrustedIps` / `setDiscoveryHook`），写成裸语句会
+   * 静默不执行。
+   */
+  def setRelayTunnelStarter(starter: IO[Unit]): IO[Unit] = relayTunnelStarter.set(Some(starter))
+
+  /**
+   * Single-flight `ensure`: serialized (Semaphore) delegation to the starter.
+   *
+   * WHY it matters: `stop()` on logout used to kill the tunnel forever — the
+   * only recovery was a process restart. After a re-login the tunnel must come
+   * back, and two concurrent ensures (e.g. enroll + a second device-flow
+   * callback) must not spawn two loops. Idempotent end-to-end: the starter is
+   * `NeblinkRelayTunnel.ensure()`, whose CAS makes it a no-op while running.
+   */
+  def ensureRelayTunnel: IO[Unit] =
+    relayTunnelEnsureGate.permit.use { _ =>
+      relayTunnelStarter.get.flatMap {
+        case Some(starter) => starter
+        case None => IO.unit
+      }
+    }
+
+  def setPresenceService(ps: NeblinkPresenceService): Unit = _presenceService = Some(ps)
+  def presenceServiceOpt: Option[NeblinkPresenceService] = _presenceService
+
+  /** Update trusted peer IPs (from NebLink Server discovery). */
+  def updateTrustedIps(ips: Set[String]): IO[Unit] = IO { trustedPeerIps = ips }
+
+  /** Devices scheduled for removal after grace period. Prevents UI flicker from brief WS disconnects. */
+  private val pendingRemovals: Ref[IO, Set[String]] =
+    Ref.unsafe[IO, Set[String]](Set.empty)
+
+  /** Callbacks fired when a peer goes online/offline. Wired to WsHub.broadcast by GatewayMain. */
+  private val peerChangeCallbacks: Ref[IO, List[IO[Unit]]] =
+    Ref.unsafe[IO, List[IO[Unit]]](Nil)
+
+  /** Register a callback to fire when peers come or go. */
+  def addPeerChangeCallback(cb: IO[Unit]): IO[Unit] =
+    peerChangeCallbacks.update(_ :+ cb)
+
+  private def notifyPeersChanged: IO[Unit] =
+    peerChangeCallbacks.get.flatMap(_.traverse_(_.handleErrorWith(_ => IO.unit)))
+
+  /** Discovery hook — set to NeblinkDiscovery.discoverCycle at startup. */
+  private val discoveryHookRef: Ref[IO, IO[Unit]] = Ref.unsafe[IO, IO[Unit]](IO.unit)
+
+  /** Set the discovery hook (called periodically by the sync loop). */
+  def setDiscoveryHook(hook: IO[Unit]): IO[Unit] = discoveryHookRef.set(hook)
+
+  /** Set diagnostic function for the scan endpoint. */
+  private val diagnosticRef: Ref[IO, IO[io.circe.Json]] =
+    Ref.unsafe[IO, IO[io.circe.Json]](IO.pure(io.circe.Json.obj("error" -> "not configured".asJson)))
+  def setDiagnostic(fn: IO[io.circe.Json]): IO[Unit] = diagnosticRef.set(fn)
+  def diagnosticScan: IO[io.circe.Json] = diagnosticRef.get.flatten
+
+  // ===== Identity =====
+
+  def identity: IO[DeviceIdentity] = identityRef.get
+
+  /** Update device capabilities, user description, and/or avatar URL. Persists to disk. */
+  def updateDeviceInfo(
+    capabilities: Option[Map[String, String]] = None,
+    userDescription: Option[String] = None,
+    avatarUrl: Option[String] = None,
+    githubLogin: Option[String] = None
+  ): IO[Unit] =
+    for
+      updated <- identityRef.modify { id =>
+        val newId = id.copy(
+          capabilities = capabilities.getOrElse(id.capabilities),
+          userDescription = userDescription.getOrElse(id.userDescription),
+          // Only overwrite avatarUrl when a non-empty value is supplied; an empty
+          // string clears it, None leaves it untouched.
+          avatarUrl = avatarUrl match
+            case Some(url) => Some(url).filter(_.nonEmpty)
+            case None => id.avatarUrl,
+          githubLogin = githubLogin match
+            case Some(login) => Some(login).filter(_.nonEmpty)
+            case None => id.githubLogin
+        )
+        (newId, newId)
+      }
+      _ <- DeviceIdentity.save(updated)
+    yield ()
+
+  /** Update a peer's description locally and persist to disk. */
+  def updatePeerDescription(deviceId: String, description: String): IO[Unit] =
+    for
+      _ <- peersRef.update { peers =>
+        peers.get(deviceId) match
+          case Some(p) => peers + (deviceId -> p.copy(userDescription = description))
+          case None => peers
+      }
+      updated <- peerDescRef.modify { descs =>
+        val next = descs + (deviceId -> description)
+        (next, next)
+      }
+      _ <- PeerDescriptionStore.save(updated)
+    yield ()
+
+  /** Send a command to the sync loop. */
+  def sendSync(cmd: SyncCommand): IO[Unit] = syncQueue.offer(cmd)
+
+  /** Launch the background sync loop. Call once at startup. */
+  def startSyncLoop: IO[Unit] = syncLoop(true)
+
+  // ===== Config =====
+
+  def neblinkConfig: IO[NeblinkConfig] = configRef.get
+
+  /**
+   * 活动面闸（腿 A「`enabled=false` 不得跨重启」；作者 2026-09-22 二择裁定 A 腿）。
+   *
+   * 🔴 `enabled` 的**既有语义零改动** —— 它仍只是 `/api/neblink/status` 的登录态
+   * 上报位（`RestApiRoutes.scala:768`：`loggedIn = cred.isDefined && cfg.enabled`）。
+   * 本方法只**新增一个读取点**，用于「活动面」gate；本腿明禁动其语义。
+   *
+   * 为什么闸落在 `enabled` 而不是「启动时不建 service」（作者给定的修法方向）：
+   * `/api/neblink/enroll` 等登录面挂在 `neblinkService` 上（`RestApiRoutes.scala:1106`
+   * 的 enroll 路由与 `:3841` 的 `withNeblink` 公共前置），不建 service ⇒ 用户
+   * **再也无法重新登录**。
+   * 正解 = **服务照建**（保住登录能力），只让**活动面**在 `enabled=false` 时空转。
+   * 登出后重启：服务在、地址在、可重新登录；但不再拨号、不再灌连接表。
+   *
+   * **运行期可判（非仅启动期）**：本方法每拍现读 `configRef`；`enabled` 的两个运行期
+   * 写面 = 登录成功（`NeblinkEnrollment.scala:201`，`enabled = true`）与登出第 5 步
+   * （`RestApiRoutes.scala:4484` 的 `updateConfig(_.copy(enabled = false))`，登出第 5 步）。
+   * ⇒ 重新登录后活动面**无需重启**
+   * 即恢复（该形态由 `NeblinkActivityGateSpec` 钉住）。
+   *
+   * 消费面（活动面四腿，逐条见报告 §2）：`syncLoop`（本文件）／
+   * `NeblinkDiscovery.discoverCycle` / `heartbeatCycle`／`NeblinkPresenceService.syncPeers`
+   * （presence 拨号）／`NeblinkRelayTunnel.connectLoop`（relay 隧道外发）。
+   */
+  def activityEnabled: IO[Boolean] = configRef.get.map(_.enabled)
+
+  def updateConfig(fn: NeblinkConfig => NeblinkConfig): IO[Unit] =
+    configRef
+      .modify { cfg =>
+        val u = fn(cfg); (u, u)
+      }
+      .flatMap(NeblinkConfig.save)
+
+  // ===== Peers =====
+
+  def peers: IO[List[PeerInfo]] = peersRef.get.map(_.values.toList)
+
+  /** Clear all peers (used on logout). Triggers peer-change callbacks. */
+  def clearPeers: IO[Unit] =
+    peersRef.set(Map.empty) *> notifyPeersChanged
+
+  /** Apply any persisted description override to a peer. */
+  private def applyDescOverride(peer: PeerInfo): IO[PeerInfo] =
+    peerDescRef.get.map { descs =>
+      descs.get(peer.deviceId).filter(_.nonEmpty) match
+        case Some(d) => peer.copy(userDescription = d)
+        case None => peer
+    }
+
+  /**
+   * Add or update a single peer. Fires the change callback when the peer is
+   * newly discovered **or when it comes back online** after having been
+   * flagged offline.
+   *
+   * 回归批（fleet 统一更新 2026-11-02，离线补推哨兵的触发腿）：修前只在 `isNew`
+   * 时通知 ⇒ 一台**已在名册里但被标下线**的设备重新上线时，名册腿只做原地覆盖，
+   * 订阅方（fleet 哨兵「设备上线即补推」）永远收不到「它回来了」这一刻 ⇒ 离线队列
+   * 只能等引擎重启后靠 `restore()` 兜底。判据取**既有新鲜度谓词**
+   * （[[NeblinkService.isPeerOnline]]，本实例 `configRef` 的 syncIntervalSec），
+   * 前后两次读数都由它算 ⇒ 不新增第二套「在线」定义，也不新增定时器。
+   */
+  def upsertPeer(peer: PeerInfo): IO[Unit] =
+    for
+      _ <- pendingRemovals.update(_ - peer.deviceId)
+      syncSec <- configRef.get.map(_.syncIntervalSec)
+      prevIsNew <- peersRef.get.map(!_.contains(peer.deviceId))
+      finalPeer <- applyDescOverride(peer)
+      newlyOnline <- peersRef.modify { peers =>
+        val now = System.currentTimeMillis()
+        // 候选集保真（presence-direct 批 C-1）：入站 presence/announce/handshake 带的记录
+        // `endpoints = Nil`，整记录替换会把名册给的全量候选集抹成单地址（≤1 拍即塌缩）。
+        // 名册腿（endpoints 非空）原样通过 ⇒ 零行为变化。
+        val kept = PresenceCandidateProbe.mergeObserved(peers.get(peer.deviceId), finalPeer)
+        val wasOnline = peers.get(peer.deviceId).exists(p => NeblinkService.isPeerOnline(p, now, syncSec))
+        val isOnline = NeblinkService.isPeerOnline(kept, now, syncSec)
+        (peers + (peer.deviceId -> kept), prevIsNew || (isOnline && !wasOnline))
+      }
+      _ <- if newlyOnline then notifyPeersChanged else IO.unit
+    yield ()
+
+  /** Schedule peer removal after grace period. If peer reconnects before timeout, removal is cancelled. */
+  def removePeer(deviceId: String): IO[Unit] =
+    for
+      alreadyPending <- pendingRemovals.get.map(_.contains(deviceId))
+      hasPeer <- peersRef.get.map(_.contains(deviceId))
+      _ <-
+        if !alreadyPending && hasPeer then
+          for
+            _ <- pendingRemovals.update(_ + deviceId)
+            _ <- (IO.sleep(peerRemovalGracePeriod) *>
+              pendingRemovals
+                .modify { pending =>
+                  if pending.contains(deviceId) then (pending - deviceId, true)
+                  else (pending, false)
+                }
+                .flatMap { shouldRemove =>
+                  if shouldRemove then
+                    peersRef
+                      .modify { peers =>
+                        (peers - deviceId, peers.contains(deviceId))
+                      }
+                      .flatMap { wasPresent =>
+                        if wasPresent then notifyPeersChanged else IO.unit
+                      }
+                  else IO.unit
+                }).start.void
+          yield ()
+        else IO.unit
+    yield ()
+
+  /**
+   * Add or update a single peer from an announce push.
+   *
+   *  Device descriptions are never exchanged between devices — they are purely local
+   *  annotations stored in peerDescRef. We apply any saved description here.
+   */
+  def handleAnnounce(info: DeviceDiscoveryInfo, remoteIp: String, port: Int): IO[Unit] =
+    identityRef.get.flatMap { id =>
+      if info.deviceId == id.deviceId then IO.unit // ignore self-announce
+      else
+        val peer = PeerInfo(
+          deviceId = info.deviceId,
+          deviceName = info.deviceName,
+          platform = info.platform,
+          address = s"http://$remoteIp:$port",
+          capabilities = info.capabilities
+        )
+        for
+          _ <- pendingRemovals.update(_ - info.deviceId)
+          finalPeer <- applyDescOverride(peer)
+          // C-1 候选集保真：announce 的 `endpoints = Nil` 不得抹掉名册候选（见 PresenceCandidateProbe）。
+          _ <- peersRef.update { ps =>
+            ps + (info.deviceId -> PresenceCandidateProbe.mergeObserved(ps.get(info.deviceId), finalPeer))
+          }
+          _ <- logger.debug(s"Peer announced: ${info.deviceName} at ${peer.address}")
+        yield ()
+    }
+
+  /** Check if an IP is trusted — peer IPs discovered via NebLink Server. */
+  def isTrustedPeer(remoteAddr: String): Boolean =
+    trustedPeerIps.contains(remoteAddr)
+
+  /**
+   * Server-pushed device presence (presence v2 DeviceStatusUpdate frame, C6).
+   *
+   * Drives the SAME freshness field as the heartbeat/discovery path, so
+   * /neblink/status and the UI badge flip within one push (<2s) instead of
+   * waiting for the next heartbeat cycle. Push is primary; the periodic
+   * heartbeat pull remains as the frame-loss fallback (C5) — a later sync
+   * that still reports the peer refreshes lastSeen again.
+   *
+   *  - online: refresh lastSeen and fire the change callback. If the device
+   *    is unknown locally, the push carries no endpoints, so trigger a
+   *    discovery cycle to pull its full info instead.
+   *  - offline: age lastSeen to epoch — the freshness predicate (C3) reports
+   *    offline. The row stays (offline badge) until the server drops the
+   *    device from responses and syncPeers evicts it (C2).
+   */
+  def applyServerPeerStatus(deviceId: String, online: Boolean): IO[Unit] =
+    for
+      _ <- if online then pendingRemovals.update(_ - deviceId) else IO.unit
+      known <- peersRef.modify { peers =>
+        peers.get(deviceId) match
+          case Some(p) =>
+            val updated =
+              if online then p.copy(lastSeen = System.currentTimeMillis())
+              else p.copy(lastSeen = 0L)
+            (peers + (deviceId -> updated), true)
+          case None => (peers, false)
+      }
+      _ <-
+        if known then notifyPeersChanged
+        else if online then sendSync(SyncCommand.PeerDiscovered) // pull full info for the newcomer
+        else IO.unit
+    yield ()
+
+  /** Handle an incoming handshake from a peer. Called by the REST endpoint. */
+  def handleHandshake(
+    deviceId: String,
+    deviceName: String,
+    platform: String,
+    callerIp: String,
+    port: Int,
+    callerSecret: String = ""
+  ): IO[Unit] =
+    val address = s"http://$callerIp:$port"
+    val peer = PeerInfo(deviceId, deviceName, platform, address, callerSecret)
+    for
+      _ <- pendingRemovals.update(_ - deviceId)
+      finalPeer <- applyDescOverride(peer)
+      // C-1 候选集保真：handshake 的 `endpoints = Nil` 不得抹掉名册候选（见 PresenceCandidateProbe）。
+      _ <- peersRef.update { ps =>
+        ps + (deviceId -> PresenceCandidateProbe.mergeObserved(ps.get(deviceId), finalPeer))
+      }
+      _ <- logger.info(s"Peer joined: $deviceName at $address")
+    yield ()
+  end handleHandshake
+
+  // ===== Sync =====
+
+  /** Run one sync cycle: NebLink discovery. */
+  def runSyncCycle: IO[Unit] = discoveryHookRef.get.flatten
+
+  /**
+   * 批 C（§3.6）**消息面对账拍**，跑在**本类既有 45s 拍**（`syncLoop`）上 ——
+   * 🔴 禁新造第三套定时器（取证稿 §3.6 ①：既有 45s 拍 与 前端 10s beacon 之外
+   * 不再加第三个周期）。
+   *
+   * 装配来源 = **既有**引用：`NeblinkRelayTunnel.friendService` 是 GatewayMain 早已
+   * 传入的 `Some(friendService)`（boot 装配点未变、本批**零 GatewayMain 改动**）。
+   * 未装配（未登录 / boot 早期 / 测试夹具）⇒ `None` ⇒ 显式 no-op（不静默走第二条实现）。
+   *
+   * 与 `runSyncCycle` 的**分工不混**：本腿只做好友消息面（逐会话水位对账 + 差态补齐），
+   * `runSyncCycle` 仍是 discovery/heartbeat，二者共用同一拍但互不依赖。
+   */
+  def runMessageReconcile: IO[Unit] =
+    IO(relayTunnelOpt).flatMap {
+      case Some(t) => t.friendService.fold(IO.unit)(_.reconcileConversations())
+      case None => IO.unit
+    }
+
+  /** Trigger discovery immediately and return current peers. */
+  def scanNow: IO[List[PeerInfo]] =
+    discoveryHookRef.get.flatten *> peers
+
+  // ===== Shared HTTP backend (used by RemoteExecutor for P2P tool calls) =====
+
+  /**
+   * P2P HTTP backend with a short 3s connect timeout (P0-1): unreachable peers
+   * fail fast instead of stalling 15s+ per attempt, so the relay fallback kicks
+   * in quickly. Read timeout is still controlled per-request via .readTimeout().
+   */
+  private[nebflow] lazy val httpBackend: sttp.client4.SyncBackend =
+    sttp.client4.httpclient.HttpClientSyncBackend.usingClient(
+      java.net.http.HttpClient
+        .newBuilder()
+        .connectTimeout(java.time.Duration.ofSeconds(3))
+        .build()
+    )
+
+  // ===== Data Channel =====
+
+  /** Handlers for incoming WS data messages from peers. */
+  private val dataHandlers: Ref[IO, List[Json => IO[Unit]]] =
+    Ref.unsafe[IO, List[Json => IO[Unit]]](Nil)
+
+  /** Register a handler for incoming data messages from peers. */
+  def addDataHandler(handler: Json => IO[Unit]): IO[Unit] =
+    // P6 步2 判别读数（2026-10-14）：注册即报「注册后表规模 + 实例指纹」，与分发面
+    // 「handlers=N svc=…」对照——判「表丢失」「注册进别实例」「同实例正常」三态。
+    dataHandlers.modify { l =>
+      val n = l :+ handler
+      (n, n.size)
+    }.flatMap { sizeAfter =>
+      IO.blocking(logger.infoSync(s"P6 probe: addDataHandler size-after=$sizeAfter svc=${System.identityHashCode(this)}"))
+    }
+
+  /** Forward an incoming WS data message to all registered handlers. */
+  private[nebflow] def handleDataMessage(payload: Json): IO[Unit] =
+    dataHandlers.get.flatMap { handlers =>
+      // P6 诊断探针批（2026-10-14 步2 · 可观测性修复②）：原 `logger.debug`/`logger.warn`
+      // 返回 IO[Unit]，在 IO.blocking 同步块 / 语句位置被丢弃 ⇒ 「Data frame received」
+      // 与「Data frame DROPPED」从未真正输出（spawn 断点追查的死日志坑，M10 审计登记
+      // 过同款）。改用 *Sync 变体真打；并补 handlers=N 读数（步2 判别读数：B 侧收到帧
+      // 却无 DeviceDelegate 入口日志时，用 handler 表规模判别「表空」还是「表非空但
+      // DeviceDelegate 缺席」）。分发语义零改动。
+      // ⚠ 冲突面：本文件在作者 4 件 WIP 内，合并时将与其 WIP 冲突。
+      IO.blocking(logger.debugSync(
+        s"Data frame received: channel=${payload.hcursor.downField("channel").as[String].getOrElse("?")} " +
+          s"bytes=${payload.noSpaces.length} handlers=${handlers.size} svc=${System.identityHashCode(this)}"
+      )) *>
+        (if handlers.isEmpty then
+           // A data frame with NO registered handler is an integration fault
+           // (the sender believed the channel live) — never silently dropped.
+           logger.warnSync(
+             s"Data frame DROPPED: no data handler registered (channel=${payload.hcursor.downField("channel").as[String].getOrElse("?")})"
+           )
+           IO.unit
+         else
+           // 注：此处的 logger.debug（IO 版）在 handleErrorWith 链内会真跑，勿改
+           // Sync 变体（类型不符且不必要）——步2 复核留痕。
+           handlers.traverse_(_.apply(payload).handleErrorWith(e => logger.debug(s"Data handler error: ${e.getMessage}"))))
+    }
+
+  /**
+   * Send function for outgoing WS data messages. Set by GatewayMain after
+   * NeblinkPresenceService is created. Default returns false (no connection).
+   * Returns true if the message was sent over an active WS connection.
+   */
+  private val sendDataFnRef: Ref[IO, (String, String, Json) => IO[Boolean]] =
+    Ref.unsafe[IO, (String, String, Json) => IO[Boolean]]((_, _, _) => IO.pure(false))
+
+  /** Wire the send function (called once at startup by GatewayMain). */
+  def setSendDataFn(fn: (String, String, Json) => IO[Boolean]): IO[Unit] =
+    sendDataFnRef.set(fn)
+
+  /** Send a data message to a peer over the WS presence connection. Returns true if sent. */
+  def sendData(deviceId: String, channel: String, payload: Json): IO[Boolean] =
+    sendDataFnRef.get.flatMap(_(deviceId, channel, payload))
+
+  // ===== File Transfer (P2P, peer IP auth) =====
+
+  /**
+   * Validate that a relative path is safe — no traversal, no absolute paths.
+   * Returns the normalized os.RelPath, or an error message.
+   */
+  private def validateTransferPath(relPath: String): Either[String, os.RelPath] =
+    val normalized = java.nio.file.Paths.get(relPath).normalize
+    if normalized.startsWith("..") || normalized.isAbsolute then
+      Left(s"Invalid path: $relPath (must be relative, no .. traversal)")
+    else
+      try Right(os.RelPath(normalized.toString))
+      catch case _: Exception => Left(s"Invalid path: $relPath")
+
+  /** Receive a file pushed by a peer. Writes under project root. Returns bytes written. */
+  def receiveFile(relPath: String, content: Array[Byte], overwrite: Boolean): IO[Long] =
+    validateTransferPath(relPath) match
+      case Left(err) => IO.raiseError(new IllegalArgumentException(err))
+      case Right(rel) =>
+        val dest = os.pwd / rel
+        if !overwrite && os.exists(dest) then
+          IO.raiseError(new IllegalArgumentException(s"File already exists: $relPath (use overwrite=true to replace)"))
+        else
+          IO.blocking {
+            os.write(dest, content, createFolders = true)
+            content.length.toLong
+          }
+
+  /** Read a file for a peer that requested it. Returns None if file doesn't exist or path invalid. */
+  def sendFile(relPath: String): IO[Option[Array[Byte]]] =
+    validateTransferPath(relPath) match
+      case Left(_) => IO.pure(None)
+      case Right(rel) =>
+        IO.blocking {
+          val file = os.pwd / rel
+          if os.exists(file) && os.isFile(file) then Some(os.read.bytes(file))
+          else None
+        }
+
+  // ============================================================
+  // Sync loop — event-driven, no polling when idle
+  // ============================================================
+
+  private def syncLoop(running: Boolean): IO[Unit] =
+    for
+      // 🔴 腿 A 活动面闸（2026-09-22 作者二择裁定 A 腿）：`enabled=false` 时本拍
+      // **不跑任何外发腿**（discovery 钩子 = 服务端登录/心跳 + syncPeers 拨号）。
+      // 逐拍**现读**（不是启动期快照）⇒ 登出/重登的运行期变化一拍内生效，无需重启：
+      //   · 登出第 5 步 `enabled=false` ⇒ 本闸合上（`RestApiRoutes.scala:4484`）；
+      //   · 登录成功 `enabled=true`（`NeblinkEnrollment.scala:201`）⇒ 本闸张开。
+      // 空转形态 = **仍在同一 45s 拍上醒来**（下面 sleepIO 不动）⇒ 只是本拍两个
+      // cycle 体被跳过；这样重登后最多等一拍（45s）即恢复，且 45s 唤醒本身不触网。
+      active <- activityEnabled
+      _ <-
+        if running && active then
+          runSyncCycle.handleErrorWith(e => logger.warn(s"Sync cycle failed: ${e.getMessage}").void)
+        else IO.unit
+      // 批 C（§3.6）：同一拍上再跑一次**好友消息面对账**。独立 try/catch ⇒ 消息面
+      // 故障不会吃掉 discovery 腿，反之亦然（两腿共用拍但语义隔离）。未装配
+      // friendService 时 runMessageReconcile 是显式 no-op。
+      // 腿 A 闸同时覆盖本腿：它同样是**外发**（上游 REST 补拉）⇒ `enabled=false` 时不跑。
+      _ <-
+        if running && active then
+          runMessageReconcile.handleErrorWith(e => logger.warn(s"Message reconcile cycle failed: ${e.getMessage}").void)
+        else
+          logger.debug(
+            "sync beat suppressed: NebLink is disabled (enabled=false) — zero outbound legs this beat"
+          )
+      interval <- configRef.get.map(_.syncIntervalSec.max(10).seconds)
+      sleepIO: IO[Unit] = if running then IO.sleep(interval) else IO.never
+      result <- IO.race(sleepIO, syncQueue.take)
+      nextRunning = result match
+        case Left(_) => running
+        case Right(cmd) => processSyncCommand(cmd, running)
+      _ <- syncLoop(nextRunning)
+    yield ()
+
+  private def processSyncCommand(cmd: SyncCommand, currentlyRunning: Boolean): Boolean =
+    cmd match
+      case SyncCommand.StartSync => true
+      case SyncCommand.StopSync => false
+      case SyncCommand.PeerDiscovered => currentlyRunning // just wake up the loop
+      case SyncCommand.SyncTick => currentlyRunning
+
+end NeblinkService
+
+object NeblinkService:
+  private val logger = NebflowLogger.forName("nebflow.neblink")
+
+  /**
+   * Peer "online" freshness window (millis). A peer counts as online only if
+   * it appeared in a server heartbeat/discovery response within this window
+   * (PeerInfo.lastSeen is refreshed on every successful sync).
+   *
+   * The floor of 90s matches the NebLink Server's own online TTL (90s), and
+   * the 2x sync-interval term gives two full heartbeat cycles of slack before
+   * a peer is flagged offline — transient single-cycle misses (network jitter,
+   * one failed heartbeat) never flip the badge.
+   */
+  def onlineFreshnessMs(syncIntervalSec: Int): Long =
+    math.max(90_000L, syncIntervalSec.toLong.max(1) * 2 * 1000)
+
+  /** Freshness predicate: has this peer been seen within the online window? */
+  def isPeerOnline(peer: PeerInfo, nowMs: Long, syncIntervalSec: Int): Boolean =
+    nowMs - peer.lastSeen <= onlineFreshnessMs(syncIntervalSec)
+
+  def create(
+    serverPort: Int = nebflow.shared.Defaults.brandDefaultPort,
+    dispatcher: Dispatcher[IO]
+  ): IO[NeblinkService] =
+    createInternal(serverPort, dispatcher, 15.seconds)
+
+  /** Test-only factory with custom grace period. */
+  private[neblink] def createForTest(
+    serverPort: Int,
+    dispatcher: Dispatcher[IO],
+    gracePeriod: FiniteDuration
+  ): IO[NeblinkService] =
+    createInternal(serverPort, dispatcher, gracePeriod)
+
+  private def createInternal(
+    serverPort: Int,
+    dispatcher: Dispatcher[IO],
+    gracePeriod: FiniteDuration
+  ): IO[NeblinkService] =
+    for
+      identity <- DeviceIdentity.loadOrCreate
+      config <- NeblinkConfig.load
+      peerDescs <- PeerDescriptionStore.load
+      idRef <- Ref.of[IO, DeviceIdentity](identity)
+      cfgRef <- Ref.of[IO, NeblinkConfig](config)
+      peersRef <- Ref.of[IO, Map[String, PeerInfo]](Map.empty)
+      descRef <- Ref.of[IO, Map[String, String]](peerDescs)
+      syncQueue <- Queue.unbounded[IO, SyncCommand]
+      relayTunnelGate <- Semaphore[IO](1)
+      service = new NeblinkService(
+        idRef,
+        cfgRef,
+        peersRef,
+        descRef,
+        serverPort,
+        syncQueue,
+        dispatcher,
+        relayTunnelGate,
+        gracePeriod
+      )
+      // Start sync loop — NebLink Server is the trust boundary, no login needed.
+      _ = dispatcher.unsafeRunAndForget(service.startSyncLoop)
+    yield service
+
+end NeblinkService

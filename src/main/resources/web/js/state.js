@@ -52,6 +52,53 @@ function safeParse(json, fallback) {
   try { const v = JSON.parse(json); return (v !== null && v !== undefined) ? v : fallback; } catch { return fallback; }
 }
 
+// ── 路径订阅面（ask-paradigm-a 批 2026-11-03：组件范式基座）──────────────────
+// 与下面默认导出的关系：既有 60+ 消费者**直接读字段**（state.xxx），那条腿一行不动、
+// 也**不会**被通知（没有 Proxy，直读绕过一切钩子）；本表只服务按路径订阅的新调用点
+// （组件化后的 Ask 面等）。要通知就必须显式走 state.set —— 这是刻意的：改动路径
+// 可见，不存在「谁偷偷改了状态」的黑箱。
+/**
+ * 订阅表。path 为 '' 表示订阅全量（任何写入都通知）。
+ * @type {{path: string, fn: (value: any, path: string) => void}[]}
+ */
+const subs = [];
+
+/**
+ * 按点路径读值（中间层缺失返回 undefined）。
+ * @param {any} root
+ * @param {string} path
+ * @returns {any}
+ */
+function readPath(root, path) {
+  if (!path) return root;
+  let node = root;
+  for (const seg of path.split('.')) {
+    if (node === null || node === undefined) return undefined;
+    node = node[seg];
+  }
+  return node;
+}
+
+/**
+ * 值是否**真的变了**（Object.is 之外，普通对象/数组/Set 按结构比较）。
+ * @param {any} a
+ * @param {any} b
+ * @returns {boolean}
+ */
+function sameValue(a, b) {
+  if (Object.is(a, b)) return true;
+  if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;
+  if (a instanceof Set || b instanceof Set) {
+    if (!(a instanceof Set) || !(b instanceof Set) || a.size !== b.size) return false;
+    for (const v of a) { if (!b.has(v)) return false; }
+    return true;
+  }
+  if (Array.isArray(a) !== Array.isArray(b)) return false;
+  const ka = Object.keys(a); const kb = Object.keys(b);
+  if (ka.length !== kb.length) return false;
+  return ka.every((k) => Object.prototype.hasOwnProperty.call(b, k) && sameValue(a[k], b[k]));
+}
+
 // Shared mutable state
 export default {
   // WebSocket
@@ -81,12 +128,21 @@ export default {
   answeredPermissions: new Set(),
   legacyMigrated: false,
 
-  // Per-session safety mode: "confirm-edits" | "auto-edits" | "auto-all"
-  safetyModes: {},  // sessionId → mode string
+  // Permission mode: "confirm-edits" | "auto-edits" | "auto-all".
+  // Application-level since permshield S1/F1 (2026-09-13) — the session
+  // dimension no longer exists, so every entry holds the same global value.
+  // Kept as a per-session map purely because the header shield resolves the
+  // mode by the active session id (see main.js `applyGlobalSafetyMode`).
+  safetyModes: {},  // sessionId → mode string (all entries = the global mode)
 
   // Chat streaming (per-session status sets - view-level state lives on ChatView)
   busySessionIds: new Set(),
   sessionBusyTimeouts: {},
+  // freezetimeout B2 (2026-09-20, chain-n-36a3f13d 施工图 §4.2②③): 入站通道活性水位。
+  // ws.js 每收到一帧 WS 消息就推进它 —— 这是「判定模型缺独立活性信号」缺口下**前端
+  // 唯一可得的活性证据**（后端独立通道 = B1，作者裁决项，本批禁碰）。busy 看门在阶梯
+  // 到点时用它区分「慢」与「死」：本档内有过入站帧 ⇒ 只呈现/放宽，绝不进错误态。
+  lastWsInboundAt: 0,
   compactingSessionIds: new Set(),
   // Freeze schedule: sessionId set whose agent is parked at a dispatch boundary
   // (work hours ended after a tool round). Sending a message to a frozen session
@@ -116,8 +172,52 @@ export default {
   // 2026-09-01); the panel simply ignores unknown fields.
   toolResultTtl: null,
 
-  // Timestamp of the last textDelta/thinkingDelta received (ms).
+  // Timestamp of the last textDelta/thinkingDelta received (ms). GLOBAL — any
+  // session's stream refreshes it, so it cannot answer "is THIS session's
+  // stream alive". The per-session twin below is the one busy-lifecycle
+  // decisions read.
   lastStreamActivity: 0,
+
+  // busy-stuck-fix (2026-10-20): per-session timestamp of the last stream-frame
+  // activity (textDelta/thinkingDelta/thinking/textDone/toolStart/toolHeartbeat).
+  // Twin of the GLOBAL lastStreamActivity above at per-session granularity —
+  // the messageDuplicate receipt guard and the turn-start confirmation net both
+  // need "has THIS session streamed since T", which a global stamp cannot
+  // answer (any other busy session's deltas would keep masking a phantom).
+  sessionStreamActivity: {},
+
+  // busy-stuck-fix (2026-10-20): per-session pending "turn-start confirmation"
+  // timer ids (setTimeout handle). Armed by every optimistic busy arm
+  // (send / drainMessageQueue / dispatchOfflineItem); cancelled by the engine's
+  // authoritative new-turn signals (sessionBusy{busy:true}, any terminal frame,
+  // or this session's own stream activity). Fires only when NO turn ever
+  // started — clearing the phantom busy the optimistic arm created. Owners
+  // (arm/cancel/fire bodies) live in main.js; these state slots are the
+  // cross-module seam (input.js/chat.js call state.armTurnConfirm?.(sid) —
+  // same pattern as updateSafetyToggle below).
+  turnConfirmTimers: {},
+  armTurnConfirm: null,
+  cancelTurnConfirm: null,
+  // queue-idle-flush (2026-10-23): cross-module seam for the queued-message
+  // drain trigger (owner body scheduleQueueDrain lives in main.js). Stop
+  // button (input.js) and the watchdog true-death close (chat.js) are both
+  // REAL busy→idle transitions — after clearing busy they must trigger the
+  // queue drain, or queued items strand with the UI showing idle.
+  scheduleQueueDrain: null,
+  // Confirmation window (ms). A real root-session turn is confirmed by the
+  // engine's sessionBusy{busy:true} within RTT of acceptance (AgentIdle emits
+  // it before the LLM call). Overridable for spec timing.
+  turnConfirmMs: 20000,
+
+  // ①-2 (2026-09-11, queue-direct-pass diagnosis §1.2 G3): per-session timestamp
+  // of the last TERMINAL frame (done/error/interrupted/timeout/maxTokens/
+  // compactFailed — everything clearBusyFor handles). While an entry is live, a
+  // late streaming frame must not re-arm busy: the re-armed flag sends every
+  // later Enter into the local queue with no further terminal frame to drain it
+  // ⇒ the message never leaves the browser (症状①). Superseded only by facts
+  // that prove a NEW turn began (backend sessionBusy{busy:true} or a locally
+  // dispatched user message) — see markTerminal/canArmBusy/clearTerminal below.
+  lastTerminalAt: {},
 
   // Multi-agent (global color assignment - per-view bubbles live on ChatView)
   agentColors: {},
@@ -132,6 +232,25 @@ export default {
 
   // Per-session turn start time: sessionId -> timestamp (ms)
   turnStartTimes: {},
+
+  // thinkingtimer-fix（2026-10-28 报障「思考中的计时离得也太远了」：turn 已跑很远，
+  // dots 只显示 1m58s）：sid -> 当前「思考中」工作段起点（epoch ms）。与
+  // turnStartTimes **分账**——turnStartTimes 服务时长徽章（textDone 经
+  // consumeTurnDuration 即消费删除）与 busy 对账（input.js rearmBusyQueueDrains
+  // 重连腿会重盖），两者都会在 turn 中途被推进/删除；直接拿来当 dots 计时锚，
+  // 计时就在每个 LLM 尝试/重试/重连边界被重置（显示「当前尝试」耗时而非「当前
+  // 阶段」累计耗时）。phaseStartAt 只在真阶段边界盖戳（真人派发 / 引擎空闲开轮 /
+  // roundComplete / 工具边界收段后的重开），内部重试（retryStatus、流重启、
+  // 重连历史整替）一律不触碰——生命周期与盖戳/清除点见 main.js phaseStamp 族注。
+  phaseStartAt: {},
+
+  // resend-dedup 批（修复批 #569）：每会话最近一次**真人派发**的 clientMessageId。
+  // 写点 = input.js 的真人派发点（send() 普通/ask/skill 三支 + drainMessageQueue）。
+  // 读点 = chat.js resendLastInput（重试/重发腿）——同一条逻辑消息的任何重发都
+  // 复用**同一个** id：服务端按 id 去重（recentMessageIds 命中 ⇒ 丢弃 + 回执），
+  // 已送达的重发因此天然无害；真未送达时服务端没见过该 id ⇒ 正常受理。断线重连
+  // 场景（WS 断开任意时长后重连）不依赖「断开了多久」，只依赖 id。
+  lastUserSendId: {},
 
   // Per-session pending tool card: sessionId -> DOM row element
   sessionToolCards: {},
@@ -148,6 +267,21 @@ export default {
 
   // Agent panel
   agentsData: [],
+  // Root agent DISPLAY name, set the moment onboarding writes one (optimistic
+  // paint before agentList re-pushes). `null` = read it off agentList instead.
+  // 🔴 Display only: the mechanism key stays "Nebula" (task book §2 C).
+  rootDisplayName: null,
+  // Root agent NAMED-verdict from the agent.json probe (rootName.js
+  // initRootNameProbe, askuser-bubblename batch): true = a non-blank
+  // `displayName` key exists in agents/Nebula/agent.json; false = unnamed or
+  // probe failed/absent; null = probe not settled yet. Judgement face only —
+  // the agentsData `displayName` row is fallback-poisoned (gateway folds the
+  // unset case to the mechanism name) and must never feed the named-judgement.
+  rootAgentFileNamed: null,
+  // The probe's authoritative display name (same file, same read the server's
+  // displayNameForRoot does). Display-chain leg for the boot race where the
+  // header renders before agentList arrives; null = unnamed / probe unsettled.
+  rootAgentFileName: null,
   selectedAgent: null,
   configText: '',
   parsedConfig: null,        // structured config parsed from JSON
@@ -178,10 +312,8 @@ export default {
 
   serverThinking: null,
 
-  // App update state (updateCheck.js) — fed by updateCheckResult; drives the
-  // settings-btn green dot and the About-section echo after a re-render.
-  updateAvailable: false,
-  latestVersion: '',
+  // App update state（updateAvailable/latestVersion，原 updateCheck.js 消费）已随
+  // auth-trim 批（2026-10-20 作者令）删除：设置页更新功能退役。
 
   // Batch selection (like VS Code Explorer)
   batchMode: false,
@@ -210,6 +342,19 @@ export default {
   // parent session isn't currently displayed, preventing stale indicators.
   sessionBgAgents: {},
 
+  // 冻结通知策略批（2026-11-05）：一批冻结的**静默统计**（后端 `delegateFreezeDigest`
+  // 帧；面板头部读数的数据源）。可恢复冻结（provider 故障族）不推消息，只有这样
+  // 作者主动打开面板时能看到「N 条已冻结（可唤醒）」。缺省 null = 未收到帧。
+  freezeDigest: null,
+
+  // 台账 #929（后台子智能体跨设备透明）：远端设备投影行（引擎 remoteAgents 帧）。
+  // deviceId -> { deviceName, online, rows: { [sessionId]: row } }。行 = 引擎摘要
+  // （title/source/status/startedAt/endedAt/retryCount），LWW 已在引擎投影仓收敛，
+  // 前端原样呈现；本地同 sessionId 行存在时本仓行被抑制（本地行胜——更富、可交互）。
+  // 断联语义：对端离线时引擎保留最后态 + online=false（不消失不假装死亡），前端标
+  // 「设备离线」角标；重连由引擎对账推补齐。
+  remoteBgAgents: {},
+
   // Per-agent aggregate state: agentName -> 'working' | 'waiting' | 'compressing' | 'complete' | 'idle'
   agentStates: {},
   // Debounce timer for complete state
@@ -228,12 +373,60 @@ export default {
   updateBgTasksUI: null,
 
   // Per-session model info: sessionId -> { model, contextWindow, inputTokens }
+  // (pipeline kept after the 2026-10-23 usage-ring display removal — popup
+  // model badges still consume `.model`.)
   sessionModelInfo: safeParse(localStorage.getItem(key('model_info')), {}),
   updateBypassToggle: null,
   updateSafetyToggle: null,
-  COMPACT_THRESHOLD: 0.90,
-  updateHeaderModelInfo: null,
 
   // Persistent notifications (survive session switches)
   notifications: [],
+
+  // ── 路径订阅面（新代码用；既有直读不受影响，见文件上方订阅表的说明）──────
+  /**
+   * 订阅一个点路径。path 为 ''/null/undefined ⇒ 订阅全量。
+   * 通知口径：写入路径与订阅路径互为前缀（父写子、子写父）即通知，同步调用。
+   * @param {string|null|undefined} path 点路径（'a.b.c'）
+   * @param {(value: any, path: string) => void} fn 回调：本订阅路径上的当前值 + 写入路径
+   * @returns {() => void} unsubscribe（重复调用无害）
+   */
+  subscribe(path, fn) {
+    const entry = { path: typeof path === 'string' ? path : '', fn };
+    subs.push(entry);
+    return () => {
+      const i = subs.indexOf(entry);
+      if (i >= 0) subs.splice(i, 1);
+    };
+  },
+
+  /**
+   * 点路径写入（中间层不存在则创建普通对象）。值真的变了才同步通知受影响订阅者；
+   * 单个订阅者抛错被吞并 console.warn —— 一个订阅者绝不炸掉写入。
+   * 注意：必须以 `state.set(...)` 形态调用（内部用 this 作根）。
+   * @param {string} path 点路径（'a.b.c'）
+   * @param {any} val 新值
+   * @returns {boolean} 值真的变了（已写入）= true；无变化或空路径 = false
+   */
+  set(path, val) {
+    const p = typeof path === 'string' ? path : '';
+    if (!p) return false;
+    const parts = p.split('.');
+    let node = /** @type {any} */ (this);
+    for (let i = 0; i < parts.length - 1; i++) {
+      const seg = parts[i];
+      if (node[seg] === null || typeof node[seg] !== 'object') node[seg] = {};
+      node = node[seg];
+    }
+    const leaf = parts[parts.length - 1];
+    if (sameValue(node[leaf], val)) return false;
+    node[leaf] = val;
+    for (const sub of [...subs]) {
+      const hit = sub.path === '' || sub.path === p
+        || p.startsWith(`${sub.path}.`) || sub.path.startsWith(`${p}.`);
+      if (!hit) continue;
+      try { sub.fn(readPath(this, sub.path), p); } catch (err) { console.warn('[state] subscribe 回调抛错（已吞，写入不受影响）', err); }
+    }
+    return true;
+  },
 };
+

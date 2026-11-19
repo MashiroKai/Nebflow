@@ -1,6 +1,25 @@
+// chat-ui-package 批①②（2026-11-16）：对话 UI 壳（主输入条 / 搜索壳）在
+// chatMount.js 里工厂装配 —— 必须是**首位 import**：#input-bar / #search-overlay
+// 的静态壳要在任何应用模块求值取节点之前填充完成（时序契约见 chatMount.js 头注）。
+import './chatMount.js';
+import { renderProviderFailureStatus } from './providerFailureStatus.js';
 import { key } from './branding.js'; // MUST be first: storage-key migration runs at module init, before state.js/i18n.js read localStorage.
 import state from './state.js';
-import { initBranding } from './brand.js';
+import { installPanelBackSwipeWire as initBackSwipe, hasBackHandler, topBackHandler } from './gesture/backSwipe.js';
+import { initBranding, brand } from './brand.js';
+
+// ask-paradigm-a（2026-11-03）：vanilla 组件范式基座三件（dom / events / component）
+// 目前只有下游组件 import 才进构建图，入口侧在这里显式登记一次 ——
+// `scripts/build-web.mjs` 的孤儿守卫要求 web/js/**/*.js 每个文件都出现在 esbuild
+// metafile inputs 里。三个模块在 import 期零副作用（纯导出），不改变启动顺序。
+import './dom.js';
+import './events.js';
+import './component.js';
+// 输入嫌体（input-surface-unify 批 2026-11-06）：把「最近一次交互是键盘还是指针」
+// 写进 html[data-nf-modality]，供 css/inputSurface.css 的焦点态读取 —— 纯 CSS
+// 做不到「点进去不出环 / Tab 进去出环」，因为浏览器对文本输入件的 :focus-visible
+// 口径恒为真。模块零副作用地只挂两个捕获期监听。
+import './focusModality.js';
 
 // Branding first: correct the tab title before any other module body runs.
 initBranding();
@@ -11,153 +30,240 @@ initBranding();
 // file's body), so throwing here stops the boot before anything opens WS
 // connections or restores canvas tabs — which is what recursed.
 if (document.documentElement.dataset.nfEmbedded === '1') {
-  document.title = 'nebflow (embedded)';
+  // Tab title follows the same uppercase brand-token rule as initBranding().
+  document.title = `${brand.lowerName.toUpperCase()} (embedded)`;
   document.addEventListener('DOMContentLoaded', () => {
-    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:13px -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:24px;text-align:center">nebflow 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
+    document.body.innerHTML = '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font:var(--ds-fs-body) -apple-system,BlinkMacSystemFont,sans-serif;color:#888;padding:var(--ds-space-6);text-align:center">Stand 预览已停止——该页面试图在应用内嵌套启动（已防止无限递归）。</div>';
   });
   throw new Error('[nf] embedded context — boot refused (anti-recursion guard)');
 }
+// 探针面（2026-11-01 装置批）：嵌入式守卫之后装 —— 预览页不登记，与守卫同口径。
+// 为什么在产品侧：打包后 `/js/xxx.js` 路由不存在、导出名被压成单字母别名，
+// 验证脚本只能从产品自己的模块图取到**同一实例**，否则键盘闸永远只能验源树。
+installProbeSurface();
 import { LS_SESSIONS_KEY, LS_MODEL_INFO_KEY } from './state.js';
-import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath } from './utils.js';
+import { initSpinner, initMarkdown, smartScroll, renderMarkdownWithMath, isNearBottom, shouldFollowBottom, initScrollFollow, refreshScrollPill, countsAsRealMessage, setMentionListProvider, setTodoListProvider, enhanceMentionSpansInDom, bgHealthNorm } from './utils.js';
+// mermaid-md batch (2026-10-23): ONE global hydration point — every markdown
+// face that shares renderMarkdownWithMath gets its ```mermaid placeholders
+// hydrated by this observer (chat bubbles, flow/report cards, popups). The
+// canvas md viewer additionally hydrates explicitly in viewers/markdown.js.
+import { armMermaidAutoHydrate } from './mermaidRenderer.js';
+// rich-render 批（2026-11-05 作者令 08:53/08:55）：```svg 与按需装载的 KaTeX 走
+// 同一套围栏水合（fenceKit），同样在一处接线。
+import { armSvgFenceHydrate } from './svgFence.js';
+import { armMathHydrate } from './mathRender.js';
+// human-face batch (2026-10-30): ```human 卡内 [[词条]] 短形引用 → hover 气泡
+// （termTip.js 共享件，API 兜底腿）。同一 body 级 MutationObserver 先例。
+import { armTermCiteAutoHydrate } from './termCite.js';
+import { registerActionableProvider, notifyActionableChanged } from './actionable.js';
+import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
+// 待办引用面（待办结构化批 2026-11-05）：`#` 待办引用补全 provider + 渲染侧待办
+// 清单 provider。两个模块都在这里 import 一次，引擎与渲染从此各有一份真源。
+import './todoComplete.js';
+import { todoStore } from './todoStore.js';
+import { initServiceWorker } from './swReg.js'; // console-load-perf 批：温访问秒开注册器（load 后注册，降级零影响）
+import { initHotStampWatch } from './hotStamp.js'; // 台账 #919：热更新地基——asset stamp 轮询自愈（端点缺席 = 静默空转）
+// 冻结状态两套真相批（2026-11-05）：冻结面的合并/派生单点在 freezeState.js
+// （`mergeFreeze` 按后端权威块的 asOf 定序，允许「不再冻结」降级）。
+import { mergeFreeze } from './freezeState.js';
 import { connect, onMessage, sendWs, onReconnect } from './ws.js';
 import {
   setBusy, clearBusy, clearStatus,
   renderUserBubble, renderInjectedBubble, appendAiText, finishAi,
   appendAgentText, finishAgent, getAgentColor,
   renderTool, renderToolPending, renderError, renderTimeoutNotice,
+  feedBusyWatchdog, removeStillProcessingNotice,
   renderSystemBubble, renderRetryStatus, clearRetryStatus,
-  renderCompactStartCard, renderCompactDoneCard, renderCompactFailCard,
+  renderCompactDoneCard,
   showOptions, renderAskUser, renderPermissionPrompt, closeAskUserCard,
+  renderModelUnavailable,
+  reclaimAskUserCards,
   renderAttachmentPreview,
   appendAskAnswer, finishAskAnswer, renderAskError,
   appendThinkingDelta, finishThinking,
   appendToolStreamDelta, cancelToolStreamRAF,
+  finalizeStreamingFaces,
+  bareProcessRows,
   formatResumeClock
 } from './chat.js';
-import { notePendingAsk, removePendingAsk, resetPendingAsks, initPendingAsks } from './askPending.js';
+// stream-ux redesign (2026-10-03): the pre-token 「思考中」 placeholder lives
+// ON the turn line (dots + live timer), not in a bubble row.
+import { startWorklineDots, beginRound } from './workline.js';
+import { replayHistoryPageInitialLoad } from './chat/historyReplay.js';
+// 进场落底「武装窗」撤窗口（手机端进场落顶修复批 · 2026-11-02）：回看补页腿
+// （分帧挂载 + 相对补偿）必须与每帧钉底互斥 —— 见下方补页分支的注释。
+import { cancelSettleBottom } from './chat/settleBottom.js';
+import { installMsgTokenChip } from './chat/msgTokenChip.js'; // msgchip 批：带短名引用小牌交互/取数腿
+import { notePendingAsk, removePendingAsk, applyPendingAskSnapshot, pendingSnapshotFailed, initPendingAsks, requestPendingAskSync, startPendingAskSync } from './askPending.js';
+import { initScrollUnderGlass } from './scrollUnderGlass.js'; // uifix ⑤
+import { startSelectEnhancer } from './dropdown.js'; // 下拉统一批（F 批 2026-11-17）：select → 点击展开点选
 import {
   initNavTabs, renderSessionSidebar, renderAgentList, renderSettings,
   deleteSession, formatSessionTime, setSessionAttention,
-  initHeaderModelInfo,
   persistUnread, createNewFolder, getCurrentFolderId,
   resetChatForActiveSession,
   computeAgentStates
 } from './sidebar.js';
 import { initOnboarding } from './onboarding.js';
+import { rootDisplayName, initRootNameProbe, reprobeRootName } from './rootName.js';
 import {
   showNewSessionModal, hideModals, confirmNewSession,
   showDeleteModal, confirmDeleteSession,
   showDeleteFolderModal,
   initModals
 } from './modal.js';
-import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, restoreFromBackendHistory, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
+import { send, handleSlash, addFileAttachment, initInput, initGlobalFileDrop, injectUserMessage, enterAskMode, cancelAskMode, registerSkillCommands, drainMessageQueue, restoreQueue, takeRealUserTurn } from './input.js';import { saveMsg, loadMsgs, restoreFromStorage, mountHistoryPageChunked, captureHistoryAnchor, restoreHistoryAnchor, migrateLegacyIfNeeded, emergencyCacheCleanup, findLastRealMessage, saveAskMsgDedup } from './persistence.js';
 import { initMicOrb } from './micOrb.js';
+// delegate 链真 provider（N1 刀3 · #1228 setSource 换源）：模块副作用 = setSource
+// 挂 liveSource + boot 首刷 + WS 触发防刷/重连对账。渲染面（taskList/delegateChainView
+// 读取口调用）零改动；夹具在场 = stub 读取口恒夹具优先（harness 兼容缝）。
+import { refreshScopedTasks, onDurableTasksChanged } from './delegateChainProvider.js';
+// keyboard-first 一期（2026-11-01）：键盘层引导 —— 模块副作用 = 建模式指示器 +
+// 注册 meta/edit 双模态直键 + 命令面板命令表（keymap.js / mode.js /
+// commandPalette.js / focusTrap.js 四件，入口仅此一行）。为什么走 import 而不是
+// index.html 第三个 module entry：scripts/build-web.mjs 只认 main.js 与
+// mobile/bootstrap.js 两个 entryPoint（第三个 entry 不进 bundle ⇒ 生产 404）。
+import './keyboardBoot.js';
+// 键盘/焦点 QA 探针面（2026-11-01 装置批）：把 keyboard-check 需要的模块句柄登记
+// 到 window.__nfProbeSurface。只读句柄、无行为副作用，见 probeSurface.js 头注。
+import { installProbeSurface } from './probeSurface.js';
+// delegate-ui 批（2026-10-08 · 定稿蓝本 §1.2）：面板两级化（C2/R6）经 stub 读取口
+// 取 G1 编排模式（rows）与 G3 星型子代理投影（children）——读 port 单缝，禁渲染面
+// 直连 WS/REST（数据权威恒在 provider 镜像）。
+import { listDelegateRows, listDelegateChildren, getChainByTask } from './delegateChainStub.js';
+// 来源链批（作者令 2026-11-01 19:23）：后台 agent badge 标注来源链——「上层 · 下层」
+// 名字链（delegate 短名/subagent 名/node 名）。解析 = 纯显示层既有镜像读数
+// （bgSourceChain 单点；引擎侧 id 生成与协议字段零触碰）。
+import { chainForTask, chainLabel } from './bgSourceChain.js';
 // taskList.js 引用已随旧任务区退役移除（2026-09-05 10:54 裁定）：面板渲染
 // 由 taskList.js 自包含节点订阅驱动，session 切换重渲走 sidebar.js。
 import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
+// The app-document half of the preview link ruling (chat markdown bubbles /
+// EPUB chapters have no frame guarding them): bound once at boot below.
+import { bindDocMarkupLinkBridge } from './viewers/shared.js';
 import { escapeHtml, isBgAgentId } from './utils.js';
+// 三行结构批（2026-11-05）：后台任务行状态位的唯一发射点（图标 + 色调 + 无障碍词
+// 单表，与智能体行同一份 bgRowStatus）。
+import { bgStatusHtml } from './bgRowStatus.js';
+// 本机设备名登记（设备角标本名批 2026-10-27）：configData.selfDevice.name（引擎
+// 自身身份读数，加法字段）→ deviceRoster 本机显示名缓存——工具卡设备角标本机字面
+// （local/self）的解析第二源（花名册 self 为第一源），两源皆缺不渲染、绝不「local」。
+import { noteSelfDeviceName, currentSelfDeviceName } from './deviceRoster.js';
 import { showMemoryButton, handleMemoryData, handleMemoryChanged, initMemory, clearMemoryCache } from './memory.js';
-import { handleRulesData, handleRulesSaved, handleRulesDeleted, handleBrowseResult, initRulesModal, initPathPicker } from './sidebar.js';
+import { initBgMergedPanel } from './bgMergedPanel.js';
+import { addNotification } from './notificationBanner.js';
+import { handleRulesData, handleRulesSaved, handleRulesDeleted, initRulesModal } from './sidebar.js';
 import { t, getLocale } from './i18n.js';
 import { applyLocaleToHtml } from './i18n.js';
+// M2 本地加速批：引擎侧文件失效广播 → 账本精确淘汰（v1 §6.1 事件失效腿）；
+// 历史页指纹账（v2 §3.1 ① 历史页行——对账基础，渲染语义候 Q18 裁）。
+import { nfCacheInvalidatePath, noteHistoryFingerprint } from './nfFileCache.js';
 // #27 Project 标签页 + Flow Map 标签页（方向调整：均为 Canvas 标签页形态）
 import { registerCanvasPanelButton } from './canvas.js';
 import { openProjectsTab } from './projectTab.js';
 import { initScheduledTask, refreshScheduledTasks } from './scheduled-task.js';
+import { initScheduleApi } from './scheduleApi.js';
 import { initDaemons } from './daemons.js';
+import { initPerception } from './perception.js';
 import { initChatSearch } from './chatSearch.js';
+import { initFileSearch } from './fileSearch.js';
 import { initUsageDashboard } from './usageDashboard.js';
 import { initExplorer, refreshExplorer } from './explorer.js';
 import { initChatView, chatViews, findViewBySessionId, activeView, setActiveView } from './chatView.js';
+// 🔴 引用入口移入 footer 批（2026-11-02 11:00）的 initQuoteItemButton 接线随
+// 2026-11-03 10:11 ②（输入框引用图标移除）整链退役：本文件不再 import 该装配面。
+// 回合活动流条（turnActivity.js，对话层活性批 2026-10-22）已整链退役 ——
+// 2026-10-23 作者令逐字「这个活动面板我不是让删掉吗，就是对话框上面这个」。
+// 防复活钉：tests/turn-activity-stream.spec.mjs。
 import { isErrorReason, normalizeReason, applyErrorFrozen, clearErrorFrozen, renderEscalationCard } from './errorRecovery.js';
 import { handleFlowAgentHistory, openStepPopup as openFlowStepPopup } from './flowAgentPopup.js';
 import { handleBgAgentHistory, openStepPopup as openBgAgentPopup, cleanupBgAgentView } from './bgAgentPopup.js';
+import { openBgTaskOutput } from './bgTaskOutputPopup.js';
 import { fmtUptime, isFailedSnapshotStatus } from './managePanel.js';
 import { initNeblink } from './neblink.js';
-import { initUpdateCheck } from './updateCheck.js';
+// 全设备统一更新（fleet 批 2026-11-01）：阻塞式状态卡 + 「全部更新 / 更新此设备」
+// 两个动作面的唯一属主（纯订阅 `fleetUpdate` 帧，服务端为唯一真源）。
+import { initFleetUpdate } from './fleetUpdate.js';
 import { initDropbox } from './dropbox.js';
 import { initContacts } from './contacts.js';
 import { initMessages } from './messages.js';
-import { formatLiveDuration } from './chat.js';
+// desktop-search-field 批（2026-11-17）：「消息」面板顶部搜索框（社交消息检索，
+// 与手机常驻条同一引擎 js/socialSearchCore.js）；随好友门控同拍装配。
+import { initPanelSearch } from './panelSearch.js';
 import { collapseTurn, failTurn } from './turnGroup.js';
 import { initCanvas, restoreTabs, closeCanvas, openCanvas } from './canvas.js';
+import { initAskDock } from './askDock.js';
+// canvas-inline-diff-review（2026-11-16）：ask_edit/ask_write 直接落盘的 canvas
+// 审阅页签（原文档内联 diff 逐块/全量接受拒绝）。
+import { initAskEditReview } from './askEditReview.js';
 import { initLightbox } from './lightbox.js';
-// Side-effect import: flowAnim.js is the rAF orbit driver for Flow Map /
-// flow-run node dots (.solar-node). It used to ride in via the legacy
-// flow-canvas module (deleted 2026-09-05 旧 UI 退役); anchor it here so
-// Flow Map's orbit animation stays alive from boot.
-import './flowAnim.js';
+// flowAnim.js side-effect import REMOVED (flowmaptab-retire, #1228 两裁② 停用清单
+// 面 3 · 上游 a60af705d 申报 S10/S11 零复用——链视图为静态卡列表，动效全由 CSS 承担).
+// The module stays on disk orphan-exempted in scripts/build-web.mjs, pending the
+// #1229 per-project REST/WS retirement batch (tests/fixtures/orbit-anim-harness.html
+// still imports it directly for tests/orbit-anim.spec.mjs).
+// 上下文用量环批（ctxring，2026-09-15 方案 A 起）已整链退役 —— 2026-10-23
+// 作者令逐字「把桌面端的上下文用量显示也去掉」：环渲染器（含压缩阈值环上
+// 拖动的自包含模块）随批删除。防复活钉：tests/remove-context-usage.spec.mjs。
 // Side-effect import: agentManager.js keeps the sealed agents panel +
 // per-agent detail tabs alive (canvas-tab-restore for persisted 'agents'
 // tabs); plugins.js owns the activity-bar entry now (2026-09-04 件 B).
 import './agentManager.js';
 import { openPlugins } from './plugins.js';
 import { initColResizers } from './colResizer.js';
-import { initActivityBar, toggleSideBar, enableFriendPanels } from './activityBar.js';
-import { friendsEnabled } from './featureFlags.js';
+import { initActivityBar, toggleSideBar, enableFriendPanels, enableWikiGraphEntry } from './activityBar.js';
+// diff 拆面板批（2026-10-22）：左栏「变更文件」面板 boot 挂点（面板 DOM + 注册；
+// 调用时序在 initActivityBar 之后——持久化的陈旧面板 id 先行回落 files，diff
+// 面板是瞬态视图，由交付消息上的摘要条按需唤起）。
+import { initDiffPanel } from './diffPanel.js';
+import { initAgentProfile } from './agentProfile.js';
+// Social interface cards (socpanel batch, 2026-09-19): entry #social-btn +
+// config dialog. Wiring is document-level, so it survives the friends gate
+// detaching/re-attaching the entry (see socialPanel.js initSocialPanel).
+import { initSocialPanel } from './socialPanel.js';
+// Secrets dialog (secrets-frontend batch, 2026-09-27): standalone modal opened
+// from the settings page entry row (#btn-open-secrets). Document-level wiring,
+// so it survives the settings re-renders that rebuild that button.
+import { initSecretsPanel } from './secretsPanel.js';
+// PDF note/ask 批（2026-11-18）：PDF 页锚备注 + 提问侧栏。
+import { initPdfPanel } from './pdfPanel.js';
+import { friendsEnabled, voiceEnabled, voiceOrbEnabled, wikiGraphEnabled } from './featureFlags.js';
+// voiceseal 批（批 #508）：全双工语音 + 同源语音气泡 封存面的 DOM 挡板
+// （hidden 挡面，零删除；flag = features.voice，默认封存）。
+import { applyVoiceSeal } from './voiceSeal.js';
+// FE 组件化批次七(2026-09-28):main.js 顶层函数族抽取 —— import 回绑(主体调用点逐字不动;
+// window.* 挂钩行与顶层 setInterval/addEventListener 挂点保留在 main.js 原位置)。
+import { stopThinkingTimer } from './main/thinkingTimer.js';
+import { applyLocalFreeze, setFrozenBarState, skipCurrentFreeze } from './main/freeze.js';
+import { showHistoryLoader, hideHistoryLoader, showHistoryEnd, clearHistoryIndicators } from './main/historyIndicators.js';
+import { updateBgAgentIndicator, bgAgentKindFromSession, renderBgAgentDropdown, armBgUptimeTick, fetchActiveAgentsOnOpen, clearBgStuck, bgScopeRootForBucket, refreshAllBgAgentIndicators } from './main/bgAgents.js';
+// 术语统一批（2026-11-06 作者令「统一 根据英文」）：身份/类型徽标词只从单源词表取
+// （js/termWords.js）——后台任务面板的 mode chip 不再走 locale 键。
+import { badgeWord } from './termWords.js';
+// uifix 批（2026-10-22 作者令「附件放在对话框上面，不要遮挡文字」）：附件条 in-flow
+// 独立行的溢出折叠腿（+N 收展）—— 桌面/手机层共用单点，桌面启动即挂观察链（幂等）。
+import { watchAttachmentStrip } from './attachStripFold.js';
+// R1 门面化（2026-11-02）：下游反适配脚本的公开扩展面。模块副作用 = 装配
+// window.__nfAdaptApi（镜像内 ui/js/nf-adapt.js 跑在 bundle 之外、产物树没有
+// js/ 目录 ⇒ 它只能读 window，不能相对 import）。尾部位置：所有被发布的符号
+// 模块都先于本文件求值。写完即被 esbuild 视为有副作用的入口成员（bare import
+// 不会被摇掉——产物 grep `__nfAdaptApi` 可验）。
+import './nfAdaptApi.js';
 
 // Friends release gating latch (2026-09-08): false until the first configData
 // of the boot decides the flag (see the configData handler below).
 let friendsGateDecided = false;
 
-// ---------- Live thinking timer ----------
-let _thinkingTimerInterval = null;
-let _thinkingTimerEl = null;
+// voiceseal 批（批 #508）语音封存 latch：同好友批 —— 本 boot 首帧 configData
+// 一次性判定（不热切换，flag 改动刷新页面生效）。latch 前两面维持 index.html
+// 的静态封存姿态（`hidden`，预绘制零闪现）。
+let voiceGateDecided = false;
 
-function startThinkingTimer() {
-  stopThinkingTimer(); // clean any previous
-  const sid = state.activeSessionId;
-  const startTime = state.turnStartTimes[sid];
-  if (!startTime) return;
+// graphseal 批（作者手写想法① 2026-10-29）wiki-graph 边栏入口封存 latch：
+// 同好友/语音批 —— 本 boot 首帧 configData 一次性判定（缺席 = 封存 = 默认藏
+// 入口；显式 "features": {"wikiGraph": true} 回挂，配置改动刷新页面生效）。
+let wikiGraphGateDecided = false;
 
-  // Insert timer element into the existing thinking placeholder
-  const placeholder = activeView.dom.chat.querySelector('.thinking-placeholder');
-  if (!placeholder) return;
-
-  // Remove old thinking text, replace with indicator structure
-  placeholder.innerHTML = '';
-  const indicator = document.createElement('div');
-  indicator.className = 'thinking-indicator';
-
-  // Animated dots
-  for (let i = 0; i < 3; i++) {
-    const dot = document.createElement('span');
-    dot.className = 'thinking-dot';
-    if (i === 1) dot.style.animationDelay = '0.15s';
-    if (i === 2) dot.style.animationDelay = '0.3s';
-    indicator.appendChild(dot);
-  }
-
-  // Label
-  const label = document.createElement('span');
-  label.className = 'thinking-indicator-label';
-  label.textContent = t('chat.thinking.now') || '思考中';
-  indicator.appendChild(label);
-
-  // Live timer
-  const timer = document.createElement('span');
-  timer.className = 'thinking-timer';
-  timer.textContent = formatLiveDuration(Date.now() - startTime);
-  indicator.appendChild(timer);
-
-  placeholder.appendChild(indicator);
-  _thinkingTimerEl = timer;
-
-  // Tick every second
-  _thinkingTimerInterval = setInterval(() => {
-    if (_thinkingTimerEl) {
-      _thinkingTimerEl.textContent = formatLiveDuration(Date.now() - startTime);
-    }
-  }, 1000);
-}
-
-function stopThinkingTimer() {
-  if (_thinkingTimerInterval) {
-    clearInterval(_thinkingTimerInterval);
-    _thinkingTimerInterval = null;
-  }
-  _thinkingTimerEl = null;
-}
 // Expose for cross-module cleanup (input.js)
 window.__stopThinkingTimer = stopThinkingTimer;
 
@@ -195,7 +301,7 @@ state.dom = {
   bgDropdownEl: document.getElementById('bg-dropdown'),
   bgDropdownListEl: document.getElementById('bg-dropdown')?.querySelector('.bg-dropdown-list'),
   // Header status indicators — surfaced on state.dom for ws.js indicator updates.
-  headerModelInfoEl: document.getElementById('header-model-info'),
+  // (头部用量环的 dom 槽已随 2026-10-23 退役批移除。)
   bypassToggleEl: document.getElementById('bypass-toggle'),
   bgagentIndicatorEl: document.getElementById('bgagent-indicator'),
   bgagentDropdownEl: document.getElementById('bgagent-dropdown'),
@@ -224,7 +330,6 @@ initChatView(
     voiceBtn: document.getElementById('voice-btn'),
     voiceOverlay: document.getElementById('voice-overlay'),
     voiceText: document.getElementById('voice-text'),
-    headerModelInfoEl: document.getElementById('header-model-info'),
     bgIndicatorEl: document.getElementById('bg-indicator'),
     bgCountEl: document.getElementById('bg-indicator')?.querySelector('.bg-count'),
     bgDropdownEl: document.getElementById('bg-dropdown'),
@@ -236,8 +341,20 @@ initChatView(
   }
 );
 
+// 🔴 引用入口（#quote-item-btn）装配已退役（作者令 2026-11-03 10:11 ②「输入框引用
+// 图标移除，不留替代按钮」）：输入框动作行不再引用 `initQuoteItemButton`——
+// 装配面本体在 msgQuote.js 同批摘除，本处不留调用点、不留死入口。
+// （叠卡单张引用能力面 startItemQuote 仍在，入口另行设计。）
+
 // D6 批 F2: pending-ask bar + header badge wiring (click = jump to oldest ask).
 initPendingAsks();
+// 修复批 2026-10-25「待答徽章常显」：对账请求单点化（since 戳随行）——重连、
+// 可见期节拍与页面重新可见共用一个 requestPendingAskSync，镜像不再只靠重连自愈。
+startPendingAskSync(sendWs);
+initScrollUnderGlass(); // uifix ⑤：浮层毛玻璃裙边降级探测器
+startSelectEnhancer(); // 下拉统一批（ui-unify-panels F 批 2026-11-17）：原生 select 全站收编为点击展开点选（观察器常驻，新 select 出生即收编）
+initServiceWorker(); // console-load-perf 批：温访问秒开（/sw.js 未上线的引擎上为静默空转）
+initHotStampWatch(); // 台账 #919：热更新地基——stamp 轮询自愈（/api/nf-asset-stamp 缺席的引擎上为静默空转）
 
 // ---------- 2. Init libraries ----------
 // Guard: Safari may execute module scripts before CDN scripts finish loading.
@@ -262,6 +379,34 @@ await waitForGlobals();
 if (typeof marked !== 'undefined') initMarkdown();
 if (typeof lottie !== 'undefined') initSpinner();
 if (typeof lucide !== 'undefined') lucide.createIcons();
+armMermaidAutoHydrate(); // mermaid-md batch: global ```mermaid placeholder hydration
+armSvgFenceHydrate(); // rich-render batch: ```svg fence hydration
+armMathHydrate(); // rich-render batch: on-demand KaTeX hydration (.nf-math)
+armTermCiteAutoHydrate(); // human-face batch: global ```human card term-cite linkify
+
+// Mention-render batch (2026-09-27): the message renderer reads the shared
+// project list through this provider — mentionComplete.js owns the single
+// list + fetch cache, and utils.js gains no module-graph edge. Warm the list
+// once at boot, and when it FIRST arrives run ONE targeted DOM pass so
+// messages rendered as plain text before arrival (boot race) gain their
+// mention spans without any user action.
+setMentionListProvider(() => ({ projects: getProjectsSnapshot(), gen: getProjectsListGen() }));
+preheatProjects();
+onProjectsArrival(() => { enhanceMentionSpansInDom(); });
+
+// `#` 待办引用（待办结构化批 2026-11-05）：同一个渲染管线读待办清单，代次由
+// todoStore 的每次变更自增（LRU 键含代次 ⇒ 待办改名/完成/新建后不会命中旧 HTML）。
+// 首次到达时同样跑一次 DOM 补齐，让清单未到时已画成纯文本的气泡长出 chip。
+let todoRefGen = 0;
+let todoArrivalEnhanced = false;
+setTodoListProvider(() => ({ todos: todoStore.openItems(), gen: todoRefGen }));
+todoStore.subscribe(() => {
+  todoRefGen++;
+  if (!todoArrivalEnhanced && todoStore.openItems().length > 0) {
+    todoArrivalEnhanced = true;
+    enhanceMentionSpansInDom();
+  }
+});
 
 // ---------- 3. Register WS message handlers ----------
 
@@ -278,6 +423,83 @@ function markSessionUnread(sessionId) {
   }
   window.dispatchEvent(new CustomEvent('session-unread', { detail: { sessionId } }));
 }
+
+// ── 「未读 = 只计真消息」判据（2026-09-16 msunread 批）──────────────────────
+// 口径（作者 2026-09-12「未读 / 新消息计数口径」，出处
+// `~/.nebflow/docs/Nebflow/20260912_204831_unread-count-spec.md` §4 行 10）：
+// **只计真消息** —— thinking、工具调用与结果、系统注入 / 后台回执都不计；
+// 「只跑了工具、没有正文」的 turn（纯工具 turn）**不置**未读；含「真人消息 /
+// 助手可见回复」的 turn 照常置未读。
+//
+// 判据**只有一处**：`utils.js#countsAsRealMessage`（其判据源 = `turnGroup.js` 的
+// 行分类 isTuckableRow / isExcludedRow / isInjectedRow）。本文件**不另立第二套
+// 口径**：下面的投影只把「这个 turn 渲染出来的行」还原成行类，**逐行交回单点去
+// 判**，所以口径要改只需改那一处。
+//
+// 为什么需要投影：`markSessionUnread` 只在 `view === null` 时被调用（该会话不在
+// 主窗 / 弹窗上 —— 见 ws.js 的 hidden-view gating：帧照收、DOM 不建），此时本
+// turn 的行没有 DOM 承载，只活在会话级缓冲里（本文件的 stream 处理器为**所有**
+// 会话积累缓冲：textDelta 743 / toolCallDetected 813 / toolStart 868 / done 的
+// flush 1100-1122）。行类逐字取自 chat.js 的真实渲染点：正文行 `.row ai`
+// （appendAiText）、思考行 `.row ai thinking-row`（appendThinkingDelta）、工具卡
+// `.row tool`（renderTool）——投影只还原**已经存在的内容种类**，不新造种类。
+const TURN_ROW_CLASS = Object.freeze({
+  ai: 'row ai',
+  thinking: 'row ai thinking-row',
+});
+
+/** 非激活会话的「本 turn 有没有真消息」判定：把会话级缓冲还原成行类，逐行问单点。
+ *  输入只取**本 turn 自己的**会话级缓冲（它们在每个终态帧被删除，故不跨 turn）：
+ *   · `state.sessionPendingAiMessages[sid]` —— 工具 / round 边界处切段的正文
+ *     （813/868 只在 `sessionTexts` 非空时 push ⇒ 段内文本必非空）；
+ *   · `state.sessionTexts[sid]` —— 当前轮尚未切段的正文。
+ *  另两条腿**不作证据**（逐条给理由）：
+ *   · 工具腿：`done` 处理开头已清 `state.sessionPendingTools[sid]`（1081），且
+ *     `.row.tool` 本就被单点排除 ⇒ 无需还原；
+ *   · `state.pendingRestore[sid]`：其写入点之一挂在 `textDone` 分支上，而当前后端
+ *     **不发射** `textDone`（`grep textDone src/main/scala` 只命中一处注释）⇒ 该值
+ *     可能是**上一 turn** 留下的（1113），读它会跨 turn 污染判据。
+ *  本函数只判**助手腿**（正文 / 思考）。「真人消息腿」（r2 补，R-1）见紧随其后的
+ *  `takeRealUserTurn`（input.js）—— 两条腿在 `done` 的未读门上取「或」。 */
+function turnProducedRealMessage(sid) {
+  if (!sid) return false;
+  const rows = [];
+  const project = (cls) => {
+    const row = document.createElement('div');
+    row.className = cls;
+    rows.push(row);
+  };
+  const segments = state.sessionPendingAiMessages[sid] || [];
+  if (segments.some((seg) => ((seg && seg.text) || '').trim() !== '')) project(TURN_ROW_CLASS.ai);
+  if ((state.sessionTexts[sid] || '').trim() !== '') project(TURN_ROW_CLASS.ai);
+  if ((state.sessionThinkingBuffers[sid] || '').trim() !== '') project(TURN_ROW_CLASS.thinking);
+  // 判据 = 单点，本文件不作任何「哪一行算真消息」的独立判断。
+  return rows.some((row) => countsAsRealMessage(row));
+}
+
+// ── 真人消息腿（2026-09-16 msunread-r2；复核 r1 的 R-1 阻断项）──────────────
+// R-1：非激活会话里「含**真实用户消息**、但助手无可见回复」的 turn 被助手腿误判成
+// 纯工具 turn ⇒ 不置未读（改前是置的 ⇒ 计划外行为变更）。任务书 ① 的「纯工具 turn」
+// 定义是「turn 内**不含**真实用户消息 / 助手可见回复」⇒ 含真人消息的 turn 照常置未读。
+// 本腿补这一半。作者 2026-09-16 裁定 = 择 ①（HB 必须置未读），并授权最小扩面至
+// `web/js/input.js`（仅「turn 级标志 + 终态清理」）。
+//
+// **痕迹 = `input.js#takeRealUserTurn` 的 turn 级标志**（per-session Set）：
+//   · 置位点 = input.js 的四个**真人派发**点（与 `state.turnExpecting[sid] = true`
+//     **同点同条件**）：send() 的 skill / ask / 普通三支 + drainMessageQueue 一支。
+//   · 为什么不能复用 `state.turnExpecting`：后端 `sessionBusy{busy:true}`（本文件
+//     2819）同样置位 ⇒ **纯程序 turn（REST/CLI）与真人 turn 不可分**（真渲染读数：
+//     REST 腿与真人腿的 `sessionBusy` 帧数一致，均被置位）。
+//   · 为什么不用客户端消息缓存：**已在真渲染里被证伪**（r2 探针：真人腿 `done` 时刻
+//     `LS_SESSIONS_KEY` 内该会话的数组为 `["tool","tool","tool"]`——真人条目**不在**
+//     其中，且全缓存无任何会话持有该真人文本；缓存另有非 turn 作用域的写者/剪枝者
+//     ⇒ 不能作为痕迹）。故改由 input.js 的 turn 级标志承担。
+//   · 终态清理 = main.js 四个终态（done/error/timeout/maxTokens）调用
+//     `takeRealUserTurn(sid)`（取用即清 ⇒ 同一枚真人消息只置一次未读）。
+// 边界（逐字申报，见本批报告 §局限）：input.js 另有两条真人派发路径**未挂标志**
+//  （队列「立即发送」的 `sendWs({type:'immediateInput'})` 支、插件卡片
+//    `injectUserMessage`）—— 二者今日也不置 `turnExpecting`，本批按「最小改动 +
+//    与既有标记同点」不动它们 ⇒ 这两条路径下的「无可见回复」turn 仍不置未读。
 
 // Show/hide notification dot on an agent avatar
 function updateAgentNotificationDot(agentName) {
@@ -304,15 +526,415 @@ function consumeTurnDuration(sid) {
   return Date.now() - startTime;
 }
 
+// ── thinkingtimer-fix（2026-10-28 · 报障「思考中的计时离得也太远了」）──────────
+// 「思考中」dots 计时锚（state.phaseStartAt）的生命周期。语义（作者视角裁定）：
+// 思考中计时显示**当前阶段的连续耗时**——从阶段开始累计，含内部重试等待（用户
+// 不关心内部重试切分）；阶段多次尝试不重置、连续累计；阶段切换才归零。
+//
+//   盖戳（新阶段起点，phaseStamp / phaseStampIfMissing）：
+//     · 派发腿（input.js send / dispatchOfflineItem / drain newTurn / 插件注入）
+//       —— 真人开 turn = 新阶段；
+//     · sessionBusy{busy:true} 空闲开轮 —— 引擎自主新 turn（pendingEvents 注入轮
+//       等非派发开轮）；
+//     · roundComplete —— 引擎宣告上一轮定稿、新轮起跑 = 阶段切换；
+//     · 流帧族（thinking/thinkingDelta/textDelta）phaseStampIfMissing —— 段未开时
+//       开段：引擎自主轮的首帧、深度会话（无 sessionBusy 帧）、以及工具边界收段
+//       后的重开兜底。
+//   清除（阶段真结束，phaseClear）：
+//     · clearBusyFor —— 终态帧族（done/error/interrupted/timeout/maxTokens/
+//       compactFailed）唯一必经点；
+//     · 工具边界（toolCallDetected / toolStart）—— 工具调用意味着上一 LLM 轮已
+//       完整产出（思考中等待段随工具接管该行而终结），下一段等下一轮首帧重开。
+//   刻意**不触碰**（内部重试/重连边界，锚必须存活——这是本修的主体）：
+//     · retryStatus —— 尝试失败遥测，turn 仍在跑；
+//     · textDone —— 时长徽章消费 turnStartTimes 的挂点，轮中段到达不构成阶段
+//       边界（同轮重试重流不重置）；
+//     · sessionBusy{busy:false} 单独帧 —— 终态对的第二帧（done 已清）或
+//       speculative 幻影清除（DeathWatcher 误报 / 崩溃恢复竞态），单独到达不权威；
+//     · input.js rearmBusyQueueDrains 重连腿 —— 那里重盖的是 turnStartTimes 对账
+//       基点（turn-start 确认网用），显示锚不在其职责面；
+//     · 重连历史初载重放 —— 整替会拆掉 dots 行，锚在 state 里存活，下一帧重建
+//       的 dots 从原段起点继续计数（单调，不闪跳）。
+// ⇒ 重试风暴/重连整替期间显示单调递增；只有真阶段切换才归零。
+function phaseStampIfMissing(sid) {
+  if (sid && !state.phaseStartAt[sid]) state.phaseStartAt[sid] = Date.now();
+}
+function phaseStamp(sid) {
+  if (sid) state.phaseStartAt[sid] = Date.now();
+}
+function phaseClear(sid) {
+  if (sid) delete state.phaseStartAt[sid];
+}
+
+// Helper: schedule the queued-message drain. SINGLE definition of the drain
+// wiring shared by every turn-terminal signal — the terminal-frame family
+// (clearBusyFor: done / error / interrupted / timeout / maxTokens /
+// compactFailed) and, since ①-2 (2026-09-11), the backend's authoritative
+// sessionBusy{busy:false}. Keeping one body means the two entry points cannot
+// drift apart (the whole point of ①-2: the idle signal had NO drain wiring, so
+// a lost 'done' stranded the local queue forever — 症状① G1/G3).
+//
+// per-turn 幂等闸（2026-09-20 chain-msgqueue 阶段 B · 方案 A，作者令；2026-10-23
+// queue-idle-flush 批改造为「派发冷却 + 运行中事实」双条件闸）：原设计逐字口径 =
+// 「send first queued message as normal UserInput」（input.js，单数 + first）⇒ 一次
+// turn 结束只派发 **1** 条；而引擎对每一轮**固定发两帧**终止信号（`Done *>
+// emitSessionBusy(busy=false)`，AgentFinishTurn.finishTurnCont）⇒ 同一窗口内本
+// helper 被调 2 次、余件会被提前捞进对话流（显示态 ≠ 投递态 = 报障本体）。
+//
+// 旧闸形 = per-session 布尔窗口令牌（派发即关窗，「新一轮事实」才开窗）。病史：
+// 关窗后的开窗**只**依赖 sessionBusy{busy:true} / 流帧两族事实——凡派发开启的
+// turn 客户端看不到任何新轮事实（queued /compact 的压缩轮、零流帧轮、幻影派发、
+// 断线丢 busy{true} 帧），窗口就永远关着：之后每个终止帧照样触发 drain 定时器，
+// 却全数卡死在窗口闸上 ⇒ 「回复完成进入空闲了，队列就是不动」（2026-10-23 作者
+// 报障「有时候空闲后不自动投递」的精确条件）。
+//
+// 新闸形（事件驱动 + 幂等，两条件缺一不可地挡重复、绝不滞留触发）：
+//   ① 派发冷却窗（QUEUE_DRAIN_COOLDOWN_MS）：每次**真实派发**起算 C ms 内的触发
+//     一律压下——它只可能是同一 turn 终态对的第二帧（done 与 busy{false} 同刻
+//     发出，帧间隔为调度噪声级）；压下不丢弃：定时器改挂到冷却边界再判（re-arm），
+//     瞬时错误轮（终态落在冷却窗内）到点照常投递。
+//   ② 运行中事实闸：上一次派发后该会话已收到新轮事实（queueTurnFactAt：busy{true}
+//     / 流帧族的时间戳）且 busy 尚未清 ⇒ 被派件开启的 turn 还在跑，等它自己的终态
+//     来触发，不抢跑（终态对的第二帧迟到越窗也一样挡下——旧窗口防「同窗双投」的
+//     职责由 ①+② 共同保留）。**零新轮事实的会话不受 ② 挡**（factAt=0）：压缩轮 /
+//     流哑轮 / 幻影派发 / 丢帧正是不产生事实的形态 —— 空闲即投递，不滞留。
+// 无件可派 / WS 未开 ⇒ 直接返回不落冷却戳（留待后续终止帧，防「队列停摆」）。
+const QUEUE_DRAIN_COOLDOWN_MS = 2000;
+// sid -> 最近一次真实派发时刻（冷却窗起算点）
+const lastQueueDispatchAt = new Map();
+// sid -> 最近一次「引擎新轮」事实（sessionBusy{busy:true} / 流帧族）时刻
+const queueTurnFactAt = new Map();
+// At most ONE in-flight drain timer per session: each turn end emits two
+// terminal frames (done + sessionBusy{busy:false}) and each used to arm its
+// own 50ms timer — the second could fire after a new turn re-opened the
+// window gate, dispatching the next queued item in the same window. Dedupe
+// by sid so the terminal-frame pair collapses to a single pending timer.
+const pendingDrainTimers = new Map();
+
+// ── busy-stuck-fix (2026-10-20 · 会话 busy 态卡死修复批) ─────────────────────
+// 「轮次已结束但 busy 不清」的幻影 busy 收口。病史：#569 起服务端对已受理过的
+// clientMessageId 丢弃不开 turn（AgentIdle/AgentFrozen/AgentProcessing 三处去重点
+// + messageDuplicate 回执），而客户端三条派发腿（send / drainMessageQueue /
+// dispatchOfflineItem）在写帧成功后**乐观置位 busy**——「帧写出去」从此不再蕴含
+// 「turn 会跑」。判重回执本应收掉幻影，但旧消费面有两个缺口：
+//   ① 15s 守卫读的是**全局** state.lastStreamActivity——任何其他会话（多代理
+//     工作区常态）15s 内有流帧，回执就永不收 busy ⇒ 幻影 busy 永久；
+//   ② 收掉 busy 也不 scheduleQueueDrain ⇒ 幻影期间排队的消息在唯一的
+//     「终态→drain」挂点全部缺席后永远停摆（报障本体：后续消息入队发不出）。
+// 另有无回执的幻影形态（补发重放被旧后端/丢帧窗吞掉、冻结唤醒搁置）：看门的
+// 真死分支在 WS 存活时被 pong 活性证据永久挡住（by design，判的是慢非幻影），
+// 同样无兜底。
+// 修法两件（均在客户端，引擎零触碰）：
+//   Fix 1 = messageDuplicate 回执升级为**权威无-turn 信号**：按 clientMessageId
+//     精确对账（回执 id === 本会话最新派发 id）+ 本会话流活动对账，命中即收
+//     busy 并照常 drain；对不上 id 的回执回落 per-session 15s 静默窗（语义同旧
+//     守卫，粒度改本会话）。
+//   Fix 2 = 乐观置位改为**草签**：派发腿武装一张 turn-start 确认网（20s），引擎
+//     的权威开turn 信号（sessionBusy{busy:true} / 终态帧 / 本会话流帧）任一到场
+//     即撤；到点仍无任何 turn 事实 ⇒ 判定幻影，收 busy + drain。根会话在 idle
+//     受理瞬间就发 busy{busy:true}（AgentIdle 在 pipeLlmCall 之前），确认延迟
+//     = RTT，20s 只会在「真的没有 turn」时走满。depth>0 会话（delegate-/node-/
+//     dispatcher-/subtask-/team- 前缀，引擎从不发 sessionBusy 帧）**不**武装
+//     本网（首帧延迟不可上界，网会误伤慢流）——它们由 Fix 1 + 看门阶梯兜。
+function cancelTurnConfirm(sid) {
+  if (!sid) return;
+  const t = state.turnConfirmTimers[sid];
+  if (t) { clearTimeout(t); delete state.turnConfirmTimers[sid]; }
+}
+function armTurnConfirm(sid) {
+  if (!sid) return;
+  cancelTurnConfirm(sid);
+  // queue-idle-return：任何新派发（send / drain / offline 补发——三腿都先走本函数）
+  // = 证据链重置，重连对账网就此作废（新 turn 的 busy/终态事实接管闸面；网若留存
+  // 会在新 turn 静默期误裁「黑暗窗终态丢失」）。置于 depth>0 早退**之前**：delegate
+  // 族派发同样要撤网。
+  cancelQueueReconcileNet(sid);
+  // depth>0 家族不武装（见上）：引擎对这些会话从不出 sessionBusy 帧。
+  if (String(sid).startsWith('delegate-') || String(sid).startsWith('subtask-') ||
+      String(sid).startsWith('node-') || String(sid).startsWith('dispatcher-') ||
+      String(sid).startsWith('team-')) return;
+  const budget = Number(state.turnConfirmMs) || 20000;
+  state.turnConfirmTimers[sid] = setTimeout(() => {
+    delete state.turnConfirmTimers[sid];
+    // 到点仍须 busy 才有意义（终态帧/回执已撤网的场景在此早退）。
+    if (!state.busySessionIds.has(sid)) return;
+    // queue-one-per-turn（2026-10-24）：引擎权威开轮事实（sessionBusy{busy:true} /
+    // 流帧族，晚于本网武装所随的派发）在场 ⇒ turn **真实在跑**——首 token 前的静默
+    // （慢上游 thinking 阶段）不是幻影，绝不能在此收 busy（收掉 = 队列 drain 闸失守，
+    // 下一条排队件被投进仍在跑的 turn = 2026-10-24 15:41 病历）。本网只裁「无任何
+    // 开轮事实」的真幻影；静默真轮的兜底归看门阶梯（真死收口自带上位证据）。
+    const factAt = queueTurnFactAt.get(sid) || 0;
+    if (factAt > (state.turnStartTimes[sid] || 0)) return;
+    // 本会话窗口内有流帧 ⇒ turn 事实上在跑（慢首帧），绝不是幻影 ⇒ 不动。
+    const sinceStream = Date.now() - (state.sessionStreamActivity[sid] || 0);
+    if (sinceStream < budget) return;
+    console.warn('[busy-confirm] no turn-start fact within ' + budget + 'ms — clearing phantom busy:', sid);
+    delete state.turnExpecting[sid];
+    if (state.sessionBusyTimeouts[sid]) {
+      clearTimeout(state.sessionBusyTimeouts[sid]);
+      delete state.sessionBusyTimeouts[sid];
+    }
+    clearBusy(sid);
+    // 与其他终态路径同律：幻影期间排队的消息照常 flush（红线：修 busy 误判，
+    // 队列语义不动——drain 自身的冷却窗/运行中事实闸/投递未决闸/ws 闸照旧把关）。
+    // 真幻影 = 引擎永不开轮 ⇒ 永无终态戳，此处落**权威无-turn** settle 戳放行队列
+    // （queue-idle-flush R2 形态的确认网版）。
+    state.lastTerminalAt[sid] = Date.now();
+    scheduleQueueDrain(sid);
+  }, budget);
+}
+// 跨模块接缝：input.js（三条派发腿 + stop 键）与 chat.js（看门真死收口）经
+// state 槽调用（与 updateSafetyToggle 同款模式，避免新增静态 import 环）。
+state.armTurnConfirm = armTurnConfirm;
+state.cancelTurnConfirm = cancelTurnConfirm;
+// queue-idle-flush：stop 键（input.js）与看门真死收口（chat.js）都是**真实**的
+// busy→idle 迁移，清 busy 后必须触发队列 drain（旧实现两处只清不排 ⇒ 队列滞留）。
+// 同一族：main.js 后台代理对账器直接调本模块函数。
+state.scheduleQueueDrain = scheduleQueueDrain;
+// 本会话流活动戳（全局 lastStreamActivity 的 per-session 孪生，busy-stuck-fix）。
+// 调用点 = 与 armBusyFromStream 同族的流帧处理器 + toolHeartbeat 族（工具执行期
+// 本会话事实上活着，确认网不得在其窗口内走满）。
+function stampSessionStreamActivity(sid) {
+  if (sid) state.sessionStreamActivity[sid] = Date.now();
+}
+
+// queue-idle-flush：触发统一走 scheduleQueueDrain ⇒ 定时器体抽成 armQueueDrainTimer
+// （冷却窗内的触发 re-arm 到冷却边界再判，不丢触发——瞬时错误轮的终态落在冷却窗内，
+// 直接丢弃会让队列滞留到下一个无谓的终止帧才有投递机会）。
+function scheduleQueueDrain(sid) {
+  if (!sid) return;
+  if (pendingDrainTimers.has(sid)) return; // drain timer already armed for this session
+  // Delay lets the UI finalize the finished turn first (unchanged 50ms).
+  armQueueDrainTimer(sid, 50);
+}
+
+function armQueueDrainTimer(sid, delay) {
+  const t = setTimeout(() => {
+    pendingDrainTimers.delete(sid);
+    const now = Date.now();
+    const dispatchedAt = lastQueueDispatchAt.get(sid) || 0;
+    // ① 派发冷却窗：C ms 内的触发只可能是同 turn 终态对的第二帧 —— 压下但改挂到
+    //    冷却边界再判（re-arm 占回同一个 pending 槽，后续触发被 has() 去重）。
+    if (now - dispatchedAt < QUEUE_DRAIN_COOLDOWN_MS) {
+      armQueueDrainTimer(sid, dispatchedAt + QUEUE_DRAIN_COOLDOWN_MS - now);
+      return;
+    }
+    // 与 input.js drainMessageQueueNow 的同两条守卫同义：无件可派 / WS 未开 ⇒ 不落
+    // 冷却戳（留待后续终止帧，防「队列停摆」= 症状① 复发）。
+    const q = state.messageQueue[sid];
+    if (!q || q.length === 0) return;
+    if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+    // ② 运行中事实闸：上次派发后已有新轮事实且 busy 未清 ⇒ 被派件开启的 turn 还在
+    //    跑，等它自己的终态来触发（终态对迟到第二帧越窗同挡——同窗双投防线）。
+    //    零事实（factAt=0）不受挡：压缩轮 / 流哑轮 / 幻影 / 丢帧形态空闲即投递。
+    if (state.busySessionIds.has(sid)) {
+      const factAt = queueTurnFactAt.get(sid) || 0;
+      if (factAt > dispatchedAt) return;
+    }
+    // ③ 投递未决闸（queue-one-per-turn，2026-10-24 作者裁定「回合结束才投下一条」）：
+    //    上次派发开启的 turn 已被引擎确认开轮（新轮事实晚于派发）但**尚未终态**（终态
+    //    戳未越过派发时刻）⇒ 该 turn 还在跑——此时纵然 busy 标志已被哪条 speculative
+    //    腿提前清掉（turn-start 确认网误判静默慢轮 / 陈旧 sessionBusy{false} / 判重
+    //    回执回落腿），也**不得**把下一条排队件投进仍在跑的 turn。实测病历 2026-10-24
+    //    15:41（Nebula 会话）：m1 派发开轮后 26s，m2 于 m1 turn 运行中被投出，服务端
+    //    排队后在同一 turn 内被消费 = 作者报障「排队的消息一次性发送」。
+    //    放行条件 = 终态事实（done / sessionBusy{false} / compactComplete / stop 键 /
+    //    看门真死 / 对账器 / 判重幻影收口——各权威收口点落 lastTerminalAt 戳）越过
+    //    派发时刻。这是**事实闸不是计时器**：投递跟随回合边界，不做固定间隔节流。
+    //    零新轮事实形态（fact ≤ dispatchedAt：压缩轮无 busy{true} / 幻影派发 / 断线丢
+    //    busy{true}）不受本闸挡——queue-idle-flush 的「零事实空闲即投递」语义逐字保留。
+    const unresolvedFactAt = queueTurnFactAt.get(sid) || 0;
+    const termStampedAt = state.lastTerminalAt[sid] || 0;
+    if (unresolvedFactAt > dispatchedAt && termStampedAt <= dispatchedAt) return;
+    lastQueueDispatchAt.set(sid, Date.now()); // 本次派发 = 冷却窗起点
+    drainMessageQueue(sid);
+  }, delay);
+  pendingDrainTimers.set(sid, t);
+}
+
+// ── queue-idle-return（2026-10-25 · 排队消息空闲不投递复发 · 手机后台化场景批）──
+// 作者报障（2026-10-25 13:58 逐字）：「我在消息队列里的消息 你轮次结束进入空闲
+// 但是消息不注入」——作者主用手机 Safari。前两批（queue-idle-flush / queue-one-
+// per-turn）修的都是「帧在页面活着时到达」的闸形；手机形态下帧恰在页面冻结窗内
+// 到场/丢失，两处缺口读码定谳（批报告 §1/§2）：
+//
+// 缺口 A（回前台无补触发腿）：iOS Safari 后台/锁屏冻结页面的 timers+WS——drain
+//   的既有触发面（终态帧族 / busy{false} / compactComplete / 幻影收口）全部前提是
+//   「触发事件在页面活着时被处理」。冻结窗内到场的终态帧要么挂起到恢复后（缓冲
+//   形态自愈），要么随 socket 死亡永久丢失——后者没有任何腿再触发 drain。
+//
+// 缺口 B（断线窗丢终态帧 = 缺戳死锁形）：busy{true} 在场、done+busy{false} 双丢、
+//   WS 重连后永无后续帧的形态里，投递未决闸（③）的前提「有在跑事实 ∧ 无越界终
+//   态戳」永远成立——但那是断线前的旧知识，turn 实际已在黑暗窗内结束。六处权威
+//   终态戳全部依赖「终态帧到场」，本形态永无帧到场；三条既有兜底腿又全部失效：
+//   后台代理对账器**豁免活跃会话**（main.js busySessionIds 同步段）、看门真死分支
+//   被重连后的 pong 活性证据永久挡住（chat.js hasLiveness）、turn-start 确认网早已
+//   被 busy{true} 撤网 ⇒ 队列永久滞留 = 作者报障本体。
+//
+// 修法（全事件驱动；**禁计时器节流不破**——正常形态投递仍跟随事实边界，对账网
+// 只裁「证据被切断」的失证形态，与 turn-start 确认网同款先例、同残余申报）：
+//   A. 补触发腿三条：visibilitychange→visible / pageshow(bfcache persisted) /
+//      WS 重连——对所有队列非空会话 scheduleQueueDrain。纯重触发：冷却窗/运行中
+//      事实闸/投递未决闸/ws 闸照旧裁决，一次一条语义零改动。
+//   B. 重连对账网：重连（= 帧流被切断的权威事件）时对「持有形态」会话（队列非空
+//      ∧ busy ∧ 有在跑事实 ∧ 无越界终态戳）武装对账网（预算同 turnConfirmMs 旋钮）。
+//      到点复核：期间有终态戳或本会话流活动（流帧/工具心跳 = turn 活着）⇒ 撤网
+//      不动，活轮自身的终态稍后照常触发投递；仍持死证 ⇒ 裁定「终态丢失于黑暗窗」：
+//      落重连 settle 终态戳 + 清 stale busy + scheduleQueueDrain。残余 = 重连恰落在
+//      首 token 前静默 thinking 轮 ⇒ 误裁 ⇒ 下一条投进在跑 turn、服务端排队闸受理
+//      逐条边界消费（不重复不丢失）——与 queue-one-per-turn §5 已申报的零事实放行
+//      同一残余等级，且比它晚一个网预算才发生。
+
+/** 重连对账网计时器（sid → timer）。与 turnConfirmTimers 分槽：语义不同（开端网 /
+ *  终态失证网），撤网点不同，零共享态。 */
+const _queueReconcileTimers = new Map();
+
+function cancelQueueReconcileNet(sid) {
+  const t = _queueReconcileTimers.get(sid);
+  if (t) { clearTimeout(t); _queueReconcileTimers.delete(sid); }
+}
+
+/** 缺口 B：对「持有形态」会话武装重连对账网。武装判据 = 投递未决闸（③）正在
+ *  持且其前提是断线前旧知识（事实晚于派发、戳未越界、busy 未清）。 */
+function armQueueReconcileNet(sid) {
+  if (!sid) return;
+  const q = state.messageQueue[sid];
+  if (!q || q.length === 0) return;                              // 无件不网
+  if (!state.busySessionIds.has(sid)) return;                    // 空闲形态补触发腿即可
+  const dispatchedAt = lastQueueDispatchAt.get(sid) || 0;
+  if ((queueTurnFactAt.get(sid) || 0) <= dispatchedAt) return;   // 零事实形态：闸不持
+  if ((state.lastTerminalAt[sid] || 0) > dispatchedAt) return;   // 已有越界终态戳：闸自放
+  if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
+  cancelQueueReconcileNet(sid);
+  const armedAt = Date.now();
+  const budget = Number(state.turnConfirmMs) || 20000;
+  _queueReconcileTimers.set(sid, setTimeout(() => {
+    _queueReconcileTimers.delete(sid);
+    // 到点复核（期间任一事实到场即撤网，投递归既有触发面）：
+    if ((state.lastTerminalAt[sid] || 0) > armedAt) return;        // 真终态到场
+    if ((state.sessionStreamActivity[sid] || 0) > armedAt) return; // 流帧/工具心跳 = turn 活着
+    if (!state.busySessionIds.has(sid)) {
+      // busy 已清而无戳（终态对 done 半帧丢失的防御形态）：空闲即终态，落戳放行。
+      state.lastTerminalAt[sid] = Date.now();
+      scheduleQueueDrain(sid);
+      return;
+    }
+    // 仍持死证：黑暗窗内终态丢失 ⇒ settle 戳 + 清 stale busy + 补触发。
+    console.warn('[queue-reconcile] post-reconnect no terminal/life evidence — settling dark-window turn:', sid);
+    state.lastTerminalAt[sid] = Date.now();
+    clearBusy(sid);
+    scheduleQueueDrain(sid);
+  }, budget));
+}
+
+/** 缺口 A：补触发清扫——对所有队列非空会话重触发 drain（幂等：pendingDrainTimers
+ *  去重 + 闸面裁决）。可见回前台 / bfcache 恢复 / WS 重连三条腿共用。 */
+function sweepQueueDrains() {
+  for (const [sid, items] of Object.entries(state.messageQueue)) {
+    if (Array.isArray(items) && items.length > 0) scheduleQueueDrain(sid);
+  }
+}
+
+// 补触发腿注册（模块面，ws.js visibilitychange 先例）：手机回前台 + bfcache 恢复。
+// WS 重连腿在 main.js 既有 onReconnect 回调内（与 history/agents 重取同位）。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') sweepQueueDrains();
+});
+window.addEventListener('pageshow', (e) => { if (e && e.persisted) sweepQueueDrains(); });
+
+// Helper: ①-2 (2026-09-11) busy re-arm gate for STREAMING frames.
+// A streaming frame that lands after this session's terminal frame must not
+// re-arm busy: `state.lastTerminalAt[sid]` is stamped by clearBusyFor (every
+// terminal event) and superseded by facts that prove a NEW turn began
+// (sessionBusy{busy:true} / a locally dispatched user message). Without the
+// gate, one late frame leaves busy on with no further terminal event ⇒ every
+// later Enter goes into the local queue and is never sent (症状① G3).
+// The bounded window keeps depth>0 (sub-agent) sessions — which emit no
+// sessionBusy frame at all — out of a permanent lock: a frame arriving later
+// than the window cannot be a straggler of the finished turn (WS frames are
+// ordered, so a frame delivered after `done` was emitted after it).
+const TERMINAL_ARM_GUARD_MS = 5000;
+function armBusyFromStream(sid) {
+  // 2026-09-20 chain-msgqueue 阶段 B：流式帧 = 本轮正在产出 ⇒ 这是「新一轮开始」的
+  // 事实。queue-idle-flush：事实由旧的「开 drain 窗口」改记为 queueTurnFactAt 时间戳
+  // （新闸形的运行中事实闸消费面）。🔴 必须置于下方 busy 闸**之前**：派发后 busy 已被
+  // setBusy(sid) 置 true，放进闸后本支对已 busy 的会话永不执行 ⇒ depth>0 会话（不发
+  // sessionBusy 帧）的队列在第一次派发后即停摆（症状① 复发）。
+  if (sid) queueTurnFactAt.set(sid, Date.now());
+  // busy-stuck-fix：本会话流活动戳（确认网的活性对账源）——必须同样置于 busy 闸
+  // 之前：busy 中的会话正是确认网在场的会话，它的流帧恰恰是要记账的事实。
+  stampSessionStreamActivity(sid);
+  if (!sid || state.busySessionIds.has(sid)) return;
+  const termAt = state.lastTerminalAt[sid];
+  if (termAt && Date.now() - termAt <= TERMINAL_ARM_GUARD_MS) return;
+  setBusy(sid);
+}
+
+// composer-resync（2026-10-28）：重连后 AgentRegistry 快照是 sessionBusyIds 的
+// 唯一权威重同步源。瞬时 done/sessionBusy(false) 在断连窗内丢失时，historyPage
+// 已能把完成轮渲染出来，旧客户端却永久保留断线前的停止钮。服务端明确回 false
+// 必须强制收敛 busy + 终态账 + 队列触发；明确回 true 则恢复真实在飞轮。
+// 「后台忙」不混进这里：后端只把 Processing 映成 true；Idle 的后台 job 等待期
+// 仍由既有任务/子代理面板解释，不制造一个不可解释的 composer 停止态。
+function applyAuthoritativeSessionBusy(sid, busy) {
+  if (!sid) return;
+  if (busy) {
+    queueTurnFactAt.set(sid, Date.now());
+    cancelTurnConfirm(sid);
+    delete state.lastTerminalAt[sid];
+    state.turnExpecting[sid] = true;
+    if (!state.busySessionIds.has(sid)) setBusy(sid);
+    return;
+  }
+  delete state.turnExpecting[sid];
+  cancelTurnConfirm(sid);
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  if (state.busySessionIds.has(sid)) clearBusy(sid);
+  // 权威 idle 同时是黑暗窗终态事实：放行队列的「有开轮事实、无越界终态戳」闸。
+  state.lastTerminalAt[sid] = Date.now();
+  // 残片清理批（2026-10-29）：权威 idle = 终态事实 —— 收口该会话视图的在场流式
+  // 面（done 帧在断连窗内丢失时，重放腿从陈旧缓冲重建的流式态思考块在此收口；
+  // 与 done/error 终态兜底同一入口），并清终态后已无消费方的流缓冲（引擎序
+  // done → sessionBusy{false}：正常轮缓冲已被 done 消费；断连重同步形态下残留
+  // 缓冲只有「下一场重放再建一次流式面」这一个消费方，删）。
+  const idleView = findViewBySessionId(sid);
+  if (idleView) finalizeStreamingFaces(idleView);
+  if (state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
+  if (state.sessionTexts[sid]) delete state.sessionTexts[sid];
+  scheduleQueueDrain(sid);
+  applyLocalFreeze();
+}
+
+onMessage('sessionBusyStates', (msg) => {
+  const states = msg.states || {};
+  for (const [sid, busy] of Object.entries(states)) {
+    applyAuthoritativeSessionBusy(sid, busy === true);
+  }
+});
+
 // Helper: clear busy for a specific session, then drain any queued messages.
 // Called by ALL terminal events (done, error, interrupted, timeout, maxTokens,
 // compactFailed) — not just 'done' — so the queue drains regardless of how the
 // turn ended.
 function clearBusyFor(msg) {
   const sid = msg.sessionId || state.activeSessionId;
+  // freezetimeout B2: 任何终态帧都收掉「仍在处理」行（busy 可能已被别的路径清掉，
+  // 故不依赖下面 clearBusy 的条件分支）。
+  if (sid) removeStillProcessingNotice(sid);
+  // busy-stuck-fix：终态帧 = turn 跑完的权威事实 ⇒ turn-start 确认网撤网。
+  cancelTurnConfirm(sid);
   if (state.busySessionIds.has(sid)) {
     clearBusy(sid);
   }
+  // ①-2 (2026-09-11): record this terminal frame — armBusyFromStream gates on it
+  // until a new turn supersedes it.
+  if (sid) state.lastTerminalAt[sid] = Date.now();
+  phaseClear(sid); // thinkingtimer-fix：终态 = 「思考中」段真结束（锚清；下一段由
+  //                  派发腿/空闲开轮/下一帧重盖。sessionBusy{false} 单独帧刻意不清
+  //                  ——它是终态对的第二帧或 speculative 幻影清除，见生命周期注）。
   if (state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
@@ -328,6 +950,15 @@ function clearBusyFor(msg) {
       fv.dom.inputBar.classList.remove('frozen', 'frozen-error');
       delete fv.dom.inputBar.dataset.frozen;
       delete fv.dom.inputBar.dataset.errorFrozen;
+      // F-1 (2026-09-10): removing the class is NOT enough. setFrozenBarState(v,
+      // true) is what disabled #input + #voice-btn/#attach-btn/#send-btn/
+      // #stop-btn, and setFrozenBarState(v, false) is the ONLY place those
+      // attributes are removed. Without this call the bar looks unfrozen while
+      // every control stays disabled, and applyLocalFreeze's self-heal branch
+      // (else-if requires bar.classList.contains('frozen')) can never fire
+      // because we just removed that class → the composer stays dead until a
+      // reload. Class and attributes must always be cleared together.
+      setFrozenBarState(fv, false);
       // Error-recovery family: also drop the amber reason strip (UI-7 cleanup).
       clearErrorFrozen(sid);
       // Restore the mode-appropriate placeholder when the frozen session is
@@ -338,28 +969,19 @@ function clearBusyFor(msg) {
     }
   }
   // Drain queued messages after a short delay to let the UI finalize first
-  if (sid) {
-    setTimeout(() => drainMessageQueue(sid), 50);
-  }
+  // (①-2: same helper the sessionBusy{busy:false} path now calls).
+  scheduleQueueDrain(sid);
   // Release the send lock for the view displaying this session
   const view = findViewBySessionId(sid);
   if (view) view.isSending = false;
 }
-// Helper: reset activity-based stream timeout for a busy session
+// Helper: reset activity-based stream timeout for a busy session.
+// freezetimeout B2 (2026-09-20): 判定/动作已分离，本函数退化为「喂活」——阶梯看门
+// （档位 / 到点判定 / 呈现 / 真死收口）唯一属主 = chat.js#armBusyWatchdog /
+// feedBusyWatchdog / onBusyWatchdogDeadline（诊断施工图 §4.2②③）。
 function resetStreamTimeout(sid) {
   if (!sid || !state.busySessionIds.has(sid)) return;
-  if (state.sessionBusyTimeouts[sid]) {
-    clearTimeout(state.sessionBusyTimeouts[sid]);
-  }
-  state.sessionBusyTimeouts[sid] = setTimeout(() => {
-    if (state.busySessionIds.has(sid)) {
-      import('./chat.js').then(({ renderTimeoutNotice, clearBusy, clearStatus }) => {
-        const v = findViewBySessionId(sid);
-        if (v) { setActiveView(v); renderTimeoutNotice(); clearStatus(); }
-        clearBusy(sid);
-      });
-    }
-  }, state.streamTimeoutMs + 30000);
+  feedBusyWatchdog(sid);
 }
 
 // ── Freeze schedule (work hours) events ──────────────────────────────────
@@ -402,6 +1024,15 @@ onMessage('frozen', (msg) => {
       if (isError) {
         // Amber family: .frozen-error (never .frozen — UI-1 mutex).
         applyErrorFrozen(v, { sessionId: sid, reason, retryCount: msg.retryCount, escalation: msg.escalation });
+        // Same defect family as F-1 above: applyErrorFrozen only swaps the
+        // CLASS. If a schedule-window tick had disabled this bar moments
+        // earlier (window active + the session was briefly idle), removing
+        // '.frozen' leaves the disabled attributes behind with no class left
+        // for applyLocalFreeze to heal — the amber bar is then visually
+        // "type to retry" while the composer is dead. The error family must
+        // always hand back an enabled composer (retry button + typing are its
+        // two exits).
+        setFrozenBarState(v, false);
       } else {
         v.dom.inputBar.classList.add('frozen');
         v.dom.inputBar.dataset.frozen = 'true';
@@ -445,147 +1076,8 @@ onMessage('resumed', (msg) => {
   }
 });
 
-// ── ⑩ Local schedule freeze (2026-08-24 ruling) ───────────────────────────
-// "处于冻结时间段，如果没有在工作过程（idle），也应该立即冻结消息输入框" —
-// the frozen display follows the schedule window itself, not just the
-// backend's park events (which only fire at dispatch boundaries mid-work).
-// Determined locally from the serverConfig-echoed schedule; the event path
-// (frozen/resumed) keeps authority over parked (frozenSessions) sessions.
-function freezeWindowState() {
-  const ws = state.workSchedule;
-  if (!ws || !ws.enabled || !Array.isArray(ws.segments)) return null;
-  const now = new Date();
-  const cur = now.getHours() * 60 + now.getMinutes();
-  for (const seg of ws.segments) {
-    const [sh, sm] = String(seg.start || '').split(':').map(Number);
-    const [eh, em] = String(seg.end || '').split(':').map(Number);
-    if ([sh, sm, eh, em].some(Number.isNaN)) continue;
-    const s = sh * 60 + sm, e = eh * 60 + em;
-    // Blacklist semantics; cross-midnight segments (start > end) are legal.
-    const inside = s < e ? (cur >= s && cur < e) : (cur >= s || cur < e);
-    if (inside) {
-      const end = new Date(now);
-      end.setHours(eh, em, 0, 0);
-      if (end <= now) end.setDate(end.getDate() + 1); // cross-midnight → tomorrow
-      return { resumeAt: end.getTime() };
-    }
-  }
-  return null;
-}
-
-// Frozen state makes the whole input bar inert EXCEPT the "跳过本次" button
-// (08-25 22:28 user ruling: no more "send a message to wake" — the freeze window
-// blocks input + mic until the user explicitly skips). The textarea and the
-// mic/attach/send/stop controls all get disabled; only the skip control stays
-// interactive. `disabled` (not readonly) so the inert textarea fires no keydown
-// and can never send. Un-frees by removing the attributes.
-
-// The system-freeze targets the MAIN composer (#input-bar = chatViews.primary's
-// input bar). During a sub-agent event dispatch ws.js momentarily routes the
-// module-global activeView to the popup view (or null); a freeze driven by the
-// schedule window must still free/freeze the visible main composer, so never
-// rely on the transient activeView here — resolve the primary view (which owns
-// #input-bar) with an activeView fallback for pre-boot (before primary is built).
-function freezeTargetView() {
-  if (chatViews.primary && chatViews.primary.dom && chatViews.primary.dom.inputBar) return chatViews.primary;
-  return activeView;
-}
-function setFrozenBarState(v, frozen) {
-  const bar = v && v.dom && v.dom.inputBar;
-  if (!bar) return;
-  const input = v.dom.input;
-  if (input) {
-    if (frozen) { input.setAttribute('disabled', ''); input.setAttribute('aria-disabled', 'true'); }
-    else { input.removeAttribute('disabled'); input.setAttribute('aria-disabled', 'false'); }
-  }
-  for (const sel of ['#voice-btn', '#attach-btn', '#send-btn', '#stop-btn']) {
-    const el = bar.querySelector(sel);
-    if (!el) continue;
-    if (frozen) el.setAttribute('disabled', '');
-    else el.removeAttribute('disabled');
-  }
-}
-
-function applyLocalFreeze() {
-  const v = freezeTargetView();
-  const bar = v && v.dom && v.dom.inputBar;
-  if (!bar || !v.sessionId) return;
-  const win = freezeWindowState();
-  const parked = state.frozenSessions.has(v.sessionId); // event path owns it
-  const busy = state.busySessionIds.has(v.sessionId);   // woken mid-window: working
-  // A user who clicked "跳过本次" voided the current window (08-25 ruling:
-  // skip is not permanent — it expires at the window end, so the next window
-  // re-freezes). skipActiveForWindow() merges the in-memory mirror with the
-  // authoritative backend freezeState.skipped (which survives a reload — that
-  // mirror is lost on refresh). See skip-active note below.
-  const skipped = skipActiveForWindow(win);
-  if (win && !parked && !busy && !skipped) {
-    if (!bar.classList.contains('frozen')) {
-      bar.classList.add('frozen');
-      bar.dataset.frozen = 'true';
-      setFrozenBarState(v, true);
-      if (v.dom.input) v.dom.input.placeholder = t('chat.frozenPlaceholder', { time: formatResumeClock(win.resumeAt) });
-    }
-  } else if ((!win || busy || skipped) && !parked && bar.classList.contains('frozen')) {
-    bar.classList.remove('frozen');
-    delete bar.dataset.frozen;
-    setFrozenBarState(v, false);
-    import('./input.js').then(({ applyInputModes }) => applyInputModes());
-  }
-}
 // Window boundary crossings (window start/end) without any event: tick.
 setInterval(applyLocalFreeze, 60000);
-
-// ── Skip-current-freeze (user ruling 08-25 14:40: "跳过本次" makes the current
-//    freeze window void so the user can keep talking — the message "跳过了才让
-//    说"). Skip is NOT permanent: it expires at the window end (skipFrozenUntil
-//    = resumeAt), so the next schedule window freezes again. ──────────────────
-// Mirrors the backend skipCurrentFreezeWindow (freezeSkipUntilRef). The button
-// also sends {type:'skipFreeze'} — a no-op on backends that have not yet
-// implemented the command (it hits the catch-all with empty content, recording
-// nothing — no fake bubble, no mis-route), and the authoritative wake once they
-// have (skipCurrentFreezeWindow unfreezes all parked agents). The local mirror
-// is what makes the UI recover immediately, independent of the backend.
-let skipFrozenUntil = 0;
-
-// Is the CURRENT schedule window (win = freezeWindowState()) voided by a skip?
-// Two signals — the in-session local mirror (skipFrozenUntil, set by the button
-// click, survives immediate UI recovery) and the authoritative backend snapshot
-// (state.freezeState.skipped, survives a reload where the mirror is lost). The
-// snapshot is time-bounded by nextChangeAt (the skipped window's end) so a stale
-// skip expires when that window ends and the next schedule window re-freezes.
-function skipActiveForWindow(win) {
-  if (!win) return false;
-  if (skipFrozenUntil > Date.now()) return true;
-  const fs = state.freezeState;
-  if (fs && fs.skipped && (fs.nextChangeAt == null || fs.nextChangeAt > Date.now())) return true;
-  return false;
-}
-
-function skipCurrentFreeze() {
-  // Record the window end so applyLocalFreeze won't re-freeze the rest of this
-  // window. Guarded: when no local window is found (e.g. the backend parked via
-  // event before the schedule echo landed), we still un-freeze the UI — the
-  // button appearing means .frozen is present, so the click must always work.
-  const win = freezeWindowState();
-  if (win) skipFrozenUntil = win.resumeAt;
-  // Best-effort authoritative wake on the backend (safe no-op if unimplemented).
-  sendWs({ type: 'skipFreeze' });
-  // Immediate local UI unwind: un-freeze the active input bar (skip only the
-  // schedule-frozen state — never the amber error-recovery family).
-  const v = freezeTargetView();
-  const bar = v && v.dom && v.dom.inputBar;
-  if (bar) {
-    if (!bar.classList.contains('frozen-error')) {
-      bar.classList.remove('frozen');
-      delete bar.dataset.frozen;
-      setFrozenBarState(v, false);
-    }
-  }
-  if (v && v.dom && v.dom.input) {
-    import('./input.js').then(({ applyInputModes }) => applyInputModes());
-  }
-}
 
 // Wire the frozen-mode "跳过本次" button (single static element; shown via CSS
 // only while #input-bar has the schedule-frozen class).
@@ -603,15 +1095,23 @@ onMessage('agentFrozen', (msg, view) => {
     state.sessionBgAgents[sid][aid].frozenResumeAt = msg.resumeAt || null;
     // Error-recovery family: pass the reason (UI-7 amber dot vs sapphire).
     state.sessionBgAgents[sid][aid].freezeReason = normalizeReason(msg.reason);
+    // 冻结态误报批（2026-11-05）：后端判定分类随帧到（freezeKind/needsHuman/
+    // autoRecoverable）——面板据此决定「自动恢复中（不给按钮）」还是「需人工（给
+    // 唤醒/重启）」，不再从 reason 猜。缺字段（旧后端）⇒ 空串，freezeState.js 回落
+    // 同一张表。
+    state.sessionBgAgents[sid][aid].freezeKind = msg.freezeKind || '';
+    state.sessionBgAgents[sid][aid].needsHuman = msg.needsHuman === true;
+    state.sessionBgAgents[sid][aid].freezeReasonWire = msg.reason || '';
     if (view) renderBgAgentDropdown();
   }
   // R4-a (wait-timeout-fix, audit 20260903 Q2-A): a sub-agent freeze parks the
   // ROOT session's turn at its outstanding-subagent barrier — busy stays true
   // with zero activity events, so the root sessionBusyTimeout would false-fire
-  // at streamTimeoutMs+30s, send interrupt and kill a turn that is merely
-  // waiting for the barrier (「冻结期间响应超时」 across a multi-hour freeze).
-  // Mirror the 'frozen' handler (F8/F4): clear the root session's timer;
-  // agentResumed → next activity event re-arms it (existing contract).
+  // at streamTimeoutMs+30s (freezetimeout B2 前：发 interrupt 掐掉仍在等屏障的
+  // turn，即「冻结期间响应超时」；B2 后：到点只呈「仍在处理」，不再动手——本处
+  // 抑制仍保留，免去无谓的呈现)。Mirror the 'frozen' handler (F8/F4): clear the
+  // root session's timer; agentResumed → next activity event re-arms it
+  // (existing contract).
   if (state.sessionBusyTimeouts[sid]) {
     clearTimeout(state.sessionBusyTimeouts[sid]);
     delete state.sessionBusyTimeouts[sid];
@@ -632,6 +1132,11 @@ onMessage('agentResumed', (msg, view) => {
     state.sessionBgAgents[sid][aid].frozen = false;
     state.sessionBgAgents[sid][aid].frozenResumeAt = null;
     state.sessionBgAgents[sid][aid].freezeReason = null;
+    // 冻结态误报批（2026-11-05）：恢复即清分类三字段——否则行会带着上一轮的
+    // 「需人工」判定留在面板上（冻结已解、按钮还在）。
+    state.sessionBgAgents[sid][aid].freezeKind = '';
+    state.sessionBgAgents[sid][aid].needsHuman = false;
+    state.sessionBgAgents[sid][aid].freezeReasonWire = '';
     if (view) renderBgAgentDropdown();
   }
   // 现象2 fix: when background agents wake, re-evaluate the foreground freeze
@@ -657,7 +1162,7 @@ onMessage('thinkingDelta', (msg, view) => {
   if (sid) state.sessionThinkingBuffers[sid] = (state.sessionThinkingBuffers[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
   state.lastStreamActivity = Date.now();
-  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
+  armBusyFromStream(sid); // ①-2: gated — a late frame must not re-arm busy after a terminal frame
   if (view) {
     stopThinkingTimer();
     // Remove the generic thinking placeholder if it exists
@@ -667,30 +1172,38 @@ onMessage('thinkingDelta', (msg, view) => {
       if (row) row.remove();
       if (activeView.stream.currentAiBubble === existing) activeView.stream.currentAiBubble = null;
     }
-    // Guard: only create thinking bubbles when a turn is expected (user sent
-    // message or server explicitly started a new round). Prevents stray thinking
-    // bubbles from late-arriving thinkingDelta after done has been processed.
-    if (!state.turnExpecting[sid] && !activeView.stream.currentThinkingBubble && !activeView.stream.currentAiBubble) {
+    // 残片清理批（2026-10-29 报障「回复已完成 但下面还是有一个思考过程流式卡在
+    // 那」）晚到帧闸：开/续流式面要求 turn 在场（真人派发 turnExpecting ∨ 引擎
+    // busy）。终态后到达的增量帧 —— 在场面 ⇒ 终态兜底漏了（渲染器 bug 形态），
+    // 就地收口；无在场面 ⇒ 纯丢弃。两条路都绝不开新流式块、绝不挂流式态。
+    // （旧闸的 `∨ currentThinkingBubble ∨ currentAiBubble` 通过腿放宽了这条纪律
+    // —— 残留的开面会让后续晚到帧一直续流，正是报障残片的存活通道。）
+    if (!(state.turnExpecting[sid] || state.busySessionIds.has(sid))) {
+      finalizeStreamingFaces(activeView);
       return;
     }
-    appendThinkingDelta(msg.delta);
+    phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段（重试重流不重置既有段）
+    // B2 (RC-2): hand the frame's identity (round, block) to the renderer.
+    appendThinkingDelta(msg.delta, { round: msg.round, block: msg.block });
   }
 });
 
 onMessage('textDelta', (msg, view) => {
   const sid = msg.sessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
+  phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段（重试重流不重置既有段）
   // Accumulate text for ALL sessions
   if (sid) state.sessionTexts[sid] = (state.sessionTexts[sid] || '') + msg.delta;
   resetStreamTimeout(sid);
   state.lastStreamActivity = Date.now();
-  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
+  armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
   if (view) {
     stopThinkingTimer();
     clearRetryStatus();
     // Finish thinking bubble before first text delta
     if (activeView.stream.currentThinkingBubble) finishThinking();
-    appendAiText(msg.delta);
+    // B2 (RC-2): hand the frame's identity (round, block) to the renderer.
+    appendAiText(msg.delta, { round: msg.round, block: msg.block });
   }
 });
 
@@ -723,22 +1236,24 @@ onMessage('thinking', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   resetStreamTimeout(sid);
-  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
+  armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
   if (view) {
-    // Guard against duplicate thinking bubbles: check both state ref and DOM.
-    const existing = activeView.dom.chat.querySelector('.thinking-placeholder');
-    if (!activeView.stream.currentAiBubble && !existing) {
-      const { chat } = activeView.dom;
-      const row = document.createElement('div');
-      row.className = 'row ai';
-      activeView.stream.currentAiBubble = document.createElement('div');
-      activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
-      row.appendChild(activeView.stream.currentAiBubble);
-      chat.appendChild(row);
-      smartScroll();
-      // Start live timer after a brief moment so DOM is settled
-      requestAnimationFrame(() => startThinkingTimer());
+    // 残片清理批晚到帧闸：`thinking` 段起点帧此前**零闸** —— 终态后到达会原地
+    // 开一条新工作线（dots 段），等不到终态帧即成残片。与 thinkingDelta 同一
+    // 判据：turn 不在场 ⇒ 不开面、不重开段锚；在场面就地收口。
+    if (!(state.turnExpecting[sid] || state.busySessionIds.has(sid))) {
+      finalizeStreamingFaces(activeView);
+      return;
     }
+    phaseStampIfMissing(sid); // thinkingtimer-fix：段未开则开段——引擎自主轮首帧 / 深度
+    //                          会话 / 工具收段后的重开；既有段（重试重发帧）原样保留。
+    // stream-ux redesign (2026-10-03): the pre-token face is the turn line's
+    // dots item — no placeholder bubble row any more (the old guard checked
+    // currentAiBubble + a .thinking-placeholder row; the line is idempotent
+    // per kind, so re-issued `thinking` frames cannot double-show).
+    // thinkingtimer-fix：锚 = 当前「思考中」段的 phaseStartAt（非 turnStartTimes
+    // ——后者会被时长徽章消费/重连腿重盖，正是报障的计时重置源）。
+    startWorklineDots(activeView, state.phaseStartAt[sid]);
   }
 });
 
@@ -746,6 +1261,8 @@ onMessage('toolCallDetected', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
   if (msg.name === 'AskUserQuestion') return;
   const sid = msg.sessionId;
+  phaseClear(sid); // thinkingtimer-fix：工具调用 = 上一 LLM 轮已完整产出，「思考中」
+  //                  等待段随工具接管该行而终结；下一段等下一轮首帧重开（阶段切换归零）。
   if (sid && !state.sessionPendingTools[sid]) state.sessionPendingTools[sid] = { label: msg.name };
 
   // Flush accumulated text buffer for ALL sessions at tool call boundary.
@@ -763,7 +1280,7 @@ onMessage('toolCallDetected', (msg, view) => {
     if (state.sessionThinkingBuffers[sid]) delete state.sessionThinkingBuffers[sid];
   }
 
-  if (sid && !state.busySessionIds.has(sid)) setBusy(sid);
+  armBusyFromStream(sid); // ①-2: gated (see armBusyFromStream)
   if (view) {
     clearRetryStatus();
     if (activeView.stream.currentThinkingBubble) finishThinking();
@@ -789,10 +1306,15 @@ onMessage('toolCallDetected', (msg, view) => {
         delete state.sessionToolCards[sid];
       }
     }
-    renderToolPending(msg.name, msg.sessionId);
-    // Reset tool argument streaming for the new tool call
-    activeView.stream.toolStreamText = '';
-    activeView.stream.toolStreamToolName = msg.name;
+    // 残片清理批晚到帧闸：终态后到达的工具帧不开新面（待命卡 + 工作线 spinner 项
+    // 都是流式面 —— 报障残片的 [› + spinner + 单行流] 形态的工具族腿）。turn 不在
+    // 场 ⇒ 跳过开卡；在飞收口腿（finishThinking/finishAi/flush）照旧幂等跑。
+    if (state.turnExpecting[sid] || state.busySessionIds.has(sid)) {
+      renderToolPending(msg.name, msg.sessionId);
+      // Reset tool argument streaming for the new tool call
+      activeView.stream.toolStreamText = '';
+      activeView.stream.toolStreamToolName = msg.name;
+    }
   }
 });
 
@@ -801,6 +1323,7 @@ onMessage('toolStart', (msg, view) => {
   // Skip pending card for AskUser — the askUser event handles rendering directly
   if (msg.label && msg.label.startsWith('AskUser')) return;
   const toolStartSid = msg.sessionId;
+  phaseClear(toolStartSid); // thinkingtimer-fix：同 toolCallDetected——工具边界收段
   if (toolStartSid) state.sessionPendingTools[toolStartSid] = { label: msg.label };
 
   // Flush accumulated text buffer for ALL sessions at tool boundary.
@@ -819,7 +1342,10 @@ onMessage('toolStart', (msg, view) => {
   }
 
   if (view) {
-    if (!state.busySessionIds.has(msg.sessionId || state.activeSessionId)) setBusy(msg.sessionId || state.activeSessionId);
+    // ①-2 (2026-09-11): the tool frame used to arm busy unconditionally — a
+    // toolStart straggler after `done` switched busy back on with no future
+    // terminal event to clear it (症状① G3, diagnosis §1.2). Gated now.
+    armBusyFromStream(msg.sessionId || state.activeSessionId);
     clearRetryStatus();
     // Finish the current AI bubble so that text after tool execution goes into a new bubble
     if (activeView.stream.currentThinkingBubble) finishThinking();
@@ -833,13 +1359,17 @@ onMessage('toolStart', (msg, view) => {
     }
     // In ask mode, finalize the current ask bubble so the tool card renders below it
     if (activeView.stream.currentAskBubble) finishAskAnswer();
-    renderToolPending(msg.label, msg.sessionId);
-    // Tag the card with the full tool label so toolEnd can find the right card
-    // when multiple tools share the session (single sessionToolCards slot).
-    const startedRow = state.sessionToolCards[msg.sessionId];
-    if (startedRow) {
-      const cardEl = startedRow.querySelector('.tool-card');
-      if (cardEl) cardEl.dataset.toolLabel = msg.label;
+    // 残片清理批晚到帧闸（同 toolCallDetected）：终态后到达的 toolStart 不开新
+    // 待命卡 + 不落工作线 spinner 项。
+    if (state.turnExpecting[toolStartSid] || state.busySessionIds.has(toolStartSid)) {
+      renderToolPending(msg.label, msg.sessionId);
+      // Tag the card with the full tool label so toolEnd can find the right card
+      // when multiple tools share the session (single sessionToolCards slot).
+      const startedRow = state.sessionToolCards[msg.sessionId];
+      if (startedRow) {
+        const cardEl = startedRow.querySelector('.tool-card');
+        if (cardEl) cardEl.dataset.toolLabel = msg.label;
+      }
     }
   }
 });
@@ -865,99 +1395,17 @@ onMessage('toolArgDelta', (msg, view) => {
 });
 
 // --- Terminal events ---
-// Always clear busySessionId. DOM + status only for active session. Always mark unread for non-active.
+// Always clear busySessionId. DOM + status only for active session. Unread for a
+// NON-active session is gated on the 口径 (2026-09-16 msunread 批): only a turn
+// that produced a real message marks it — see turnProducedRealMessage above.
+// The failure terminals (error / timeout / maxTokens) stay ungated: their
+// terminal row is `.row error` (chat.js:1407/1421), which countsAsRealMessage
+// accepts ⇒ the turn is a real message by the same single criterion.
 
-// Header model info display
-if (!state.sessionModelInfo) state.sessionModelInfo = {};
-
-function formatTokens(n) {
-  if (n == null) return '';
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return Math.round(n / 1000) + 'k';
-  return String(n);
-}
-
-function updateHeaderModelInfo() {
-  // The header element lives in the primary window only (popups pass
-  // headerModelInfo: null), so always render the PRIMARY view's session —
-  // using activeView here dropped repaints whenever a bg-agent/flow popup was
-  // active while the primary session's usageUpdate/done arrived.
-  const el = document.getElementById('header-model-info');
-  if (!el) return;
-  const sid = chatViews.primary?.sessionId || state.activeSessionId;
-  const info = sid ? state.sessionModelInfo[sid] : null;
-  // Header shows the context-usage ring only — the model name label was
-  // removed per user request (#313). The model is still surfaced via the
-  // ring's tooltip so the info isn't lost, just no longer visually present.
-  const hasRing = !!(info && info.contextWindow);
-  if (!hasRing) {
-    el.textContent = '';
-    el.style.display = 'none';
-    el.dataset.mode = '';
-    return;
-  }
-  const mode = 'r';
-
-  const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
-  const pct = Math.min(Math.round(ratio * 100), 100);
-  let barColor = '#4caf50';
-  if (ratio > 0.5) barColor = '#d4a030';
-  if (ratio > 0.75) barColor = '#e53935';
-
-  const thresholdPct = Math.round((info.compactThreshold || state.COMPACT_THRESHOLD) * 100);
-  const outPart = info.outputTokens != null ? ` · +${formatTokens(info.outputTokens)} out` : '';
-  const tooltip = [
-    info.model || '',
-    info.inputTokens != null
-      ? `${formatTokens(info.inputTokens)} / ${formatTokens(info.contextWindow)} tokens (${pct}%)${outPart} · threshold ${thresholdPct}%`
-      : `${formatTokens(info.contextWindow)} context window`,
-  ].filter(Boolean).join(' · ');
-
-  const R = 15;
-  const CIRC = 2 * Math.PI * R;
-  const dashLen = CIRC * pct / 100;
-  const thresholdAngle = thresholdPct * 3.6;
-
-  el.style.display = 'inline-flex';
-
-  // In-place update when the rendered structure matches the current mode.
-  if (el.dataset.mode === mode) {
-    const ring = /** @type {HTMLElement|null} */ (el.querySelector('.ctx-ring-wrap'));
-    if (ring) {
-      ring.title = tooltip;
-      const ringFill = ring.querySelector('circle:nth-child(2)');
-      if (ringFill) {
-        ringFill.setAttribute('stroke', barColor);
-        ringFill.setAttribute('stroke-dasharray', `${dashLen} ${CIRC}`);
-      }
-      const ringLine = ring.querySelector('.ctx-ring-threshold');
-      if (ringLine) ringLine.setAttribute('transform', `rotate(${thresholdAngle} 18 18)`);
-      const ringPct = ring.querySelector('.ctx-ring-pct');
-      if (ringPct) ringPct.textContent = String(pct);
-    }
-    return;
-  }
-
-  // Structure change (ring appearing or disappearing) — rebuild.
-  el.dataset.mode = mode;
-  el.innerHTML = `
-    <div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
-      <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
-        <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
-        <circle cx="18" cy="18" r="${R}" fill="none" stroke="${barColor}" stroke-width="3.5"
-                stroke-dasharray="${dashLen} ${CIRC}"
-                stroke-linecap="round"
-                transform="rotate(-90 18 18)"
-                style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
-        <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
-              transform="rotate(${thresholdAngle} 18 18)"
-              class="ctx-ring-threshold"/>
-      </svg>
-      <span class="ctx-ring-pct">${pct}</span>
-    </div>
-  `;
-}
-state.updateHeaderModelInfo = updateHeaderModelInfo;
+// 头部上下文用量环显示已整链退役（2026-10-23 作者令逐字「把桌面端的上下文
+// 用量显示也去掉」）：环渲染器与压缩阈值拖动模块不再存在。
+// state.sessionModelInfo（state.js）管道保留 —— 弹窗模型徽章仍消费 `.model`。
+// 防复活钉：tests/remove-context-usage.spec.mjs。
 
 // Real-time usage update after each LLM round (multi-round tool calling)
 onMessage('usageUpdate', (msg, view) => {
@@ -974,7 +1422,6 @@ onMessage('usageUpdate', (msg, view) => {
       compactThreshold: msg.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-    if (view) updateHeaderModelInfo();
   }
 });
 
@@ -1001,13 +1448,29 @@ onMessage('done', (msg, view) => {
     // 视图是拦截器切入的弹窗视图（ws.js bg/flow interceptor），须临时切到归属
     // 视图渲染再还原（与 agentDone 2s 收尾同款模式）；后端取消链路补发的
     // agentDone 帧先经 ws.js 转换为会话级 done 到达此处。
+    // Flow 会话可见性批（2026-11-01）：桶键两步解析——① 直查（主桶键=视图会话，
+    // 既有形态）；② delegate 作用域桶键经 bgScopeRootForBucket 反查宿主主桶（链行
+    // 挂主桶组头下，宿主视图才持有指示器）。判读与 updateBgAgentIndicator 同款
+    // 「无可刷新视图」口径：拦截器为先建的 step 视图（无指示器）不得终止解析，
+    // 否则开面板场景的终态重渲染在第一拍短路（B1 实证——头行滞留「链运行中」）。
+    // ③ 全视图重算兜底：链全终态拍作用域桶整桶清空，桶键再无可反查的行——延续
+    // 态组头消失的同一拍，徽标必须归零回收（「链运行中」绝不滞留死链）。
+    const resolveTargetView = (sid) => {
+      let v = findViewBySessionId(sid);
+      if (!v || !v.dom || !v.dom.bgagentIndicatorEl) {
+        v = findViewBySessionId(bgScopeRootForBucket(sid));
+      }
+      return v && v.dom && v.dom.bgagentIndicatorEl ? v : null;
+    };
     for (const root of touchedRoots) {
-      const targetView = findViewBySessionId(root);
+      const targetView = resolveTargetView(root);
       if (targetView) {
         const savedView = activeView;
         setActiveView(targetView);
         updateBgAgentIndicator();
         setActiveView(savedView);
+      } else {
+        refreshAllBgAgentIndicators();
       }
     }
   }
@@ -1031,8 +1494,14 @@ onMessage('done', (msg, view) => {
       compactThreshold: msg.compactThreshold != null ? msg.compactThreshold : state.sessionModelInfo[sid]?.compactThreshold
     };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-    if (view) updateHeaderModelInfo();
   }
+  // 2026-09-16 msunread: 未读判据必须在下面 flush 删掉会话级缓冲**之前**取 ——
+  // 非激活会话没有 DOM，本 turn 的行只活在缓冲里（见 turnProducedRealMessage）；
+  // 真人腿同刻取：flush 会给非激活会话落盘助手条目，晚取会把缓存末条换成助手行。
+  const turnHadRealMessage = view ? false : turnProducedRealMessage(msg.sessionId);
+  // 真人消息腿（r2）：**不得 || 短路**（取用即清要走到；活动会话侧也要收口）。
+  // 该痕迹 = input.js 的 per-session Set，与本次 flush 无关（无时序脆弱性）。
+  const turnHadRealUserMessage = takeRealUserTurn(msg.sessionId);
   // Flush any remaining buffered text/thinking for this session
   if (msg.sessionId) {
     if (!view) {
@@ -1045,7 +1514,10 @@ onMessage('done', (msg, view) => {
       if (state.sessionTexts[msg.sessionId] || thinkingText) {
         const text = state.sessionTexts[msg.sessionId] || '';
         // Save final round's text/thinking as the main message
-        saveMsg({type: 'ai', text, thinking: thinkingText || undefined, durationMs, model: msg.model}, msg.sessionId);
+        // replay-terminal 批（2026-10-28，案一「A 根治」）：done 落盘条目盖
+        // terminal:true —— localStorage 恢复腿与后端历史腿同判据（缓存条目
+        // 形状与后端 UiMessage.Ai.terminal 对齐）。
+        saveMsg({type: 'ai', text, thinking: thinkingText || undefined, durationMs, model: msg.model, terminal: true}, msg.sessionId);
         // pendingRestore only contains the LAST round's data (not concatenated across rounds),
         // so dedup against backend history (last Ai message) works correctly.
         state.pendingRestore[msg.sessionId] = { text, thinking: thinkingText || undefined, durationMs, model: msg.model };
@@ -1082,6 +1554,9 @@ onMessage('done', (msg, view) => {
     const data = finishAi(durationMs, msg.model);
     if (data) {
       data.thinking = thinkingText || undefined;
+      // replay-terminal 批：done 终态条目盖 terminal:true（与后端 UiMessage.Ai
+      // 落盘同批语义；刷新后 localStorage 恢复腿据此折叠该轮）。
+      data.terminal = true;
       saveMsg(data, msg.sessionId);
     } else if (thinkingText) {
       // Thinking-only response (no text): keep thinking bubble expanded
@@ -1093,7 +1568,8 @@ onMessage('done', (msg, view) => {
         if (label) label.classList.add('expanded');
       }
       // Save without text field so restoreFromStorage doesn't render an empty bubble
-      saveMsg({ type: 'ai', thinking: thinkingText, durationMs, model: msg.model }, msg.sessionId);
+      // replay-terminal 批：纯思考轮的 done 同为轮终态 —— terminal:true 随条目。
+      saveMsg({ type: 'ai', thinking: thinkingText, durationMs, model: msg.model, terminal: true }, msg.sessionId);
     }
     Object.keys(activeView.stream.agentBubbles).forEach(id => finishAgent(id));
     activeView.stream.agentBubbles = {};
@@ -1116,7 +1592,14 @@ onMessage('done', (msg, view) => {
       title: lastBadge?.querySelector('.duration-badge-time')?.textContent || '',
       sessionId: sid,
     });
-  } else {
+    // 残片清理批终态兜底：常规收口（finishThinking/finishAi/collapseTurn）之后，
+    // 在场流式块全数 final 化 —— 终态后仍有流式残片 = 渲染器 bug 形态（晚到帧
+    // 开出的第二块 / 指针不在场的重建面），一视同仁就地收口。
+    finalizeStreamingFaces(activeView);
+  } else if (turnHadRealMessage || turnHadRealUserMessage) {
+    // 未读门（2026-09-16 msunread）：**只计真消息** ⇒ 纯工具 turn（thinking +
+    // 工具、没有正文，也不含真实用户消息，本 turn 不产出任何被 countsAsRealMessage
+    // 接受的行）不置未读。r2：加性并入「真人消息腿」（见 takeRealUserTurn / input.js）。
     markSessionUnread(msg.sessionId);
   }
   // Queue drainage handled by clearBusyFor above — no duplicate call here.
@@ -1136,27 +1619,57 @@ onMessage('roundComplete', (msg, view) => {
       prevData.thinking = tThinking || undefined;
       saveMsg(prevData, msg.sessionId);
     }
-    // Show thinking placeholder for the upcoming round — backend sent sessionBusy(true)
-    // after roundComplete, so the agent is still working.
+    // Show the turn line's dots for the upcoming round — backend sent
+    // sessionBusy(true) after roundComplete, so the agent is still working
+    // (stream-ux redesign: the dots live ON the line, not in a bubble).
     if (sid && state.busySessionIds.has(sid)) {
       if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
-      const { chat } = activeView.dom;
-      const existing = chat.querySelector('.thinking-placeholder');
-      if (!activeView.stream.currentAiBubble && !existing) {
-        const row = document.createElement('div');
-        row.className = 'row ai';
-        activeView.stream.currentAiBubble = document.createElement('div');
-        activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
-        row.appendChild(activeView.stream.currentAiBubble);
-        chat.appendChild(row);
-        smartScroll();
-        requestAnimationFrame(() => startThinkingTimer());
+      // thinkingtimer-fix：roundComplete = 上一轮定稿、新轮起跑 = 真阶段边界 ⇒
+      // 「思考中」段在新轮起点重新盖戳（阶段切换归零），随后按新锚重挂 dots。
+      phaseStamp(sid);
+      // （c）面（作者 2026-10-08 裁定）：subagent 弹窗在飞过程行 = 9.19 裸行形态 —
+      // 轮界点面恢复 9.19 的 .thinking-placeholder 气泡（9.19 main.js roundComplete
+      // 同构；首个 thinking delta 到达时既有移除腿照常拆掉它），不建 turn-line
+      // dots。差异申报：9.19 的 live 秒计时器不恢复——UI-G（10-03 静态窗令，
+      // 后令治前令）弹窗零定时器；.nf-static 容器内 CSS 动画本就归零。
+      if (bareProcessRows(activeView)) {
+        const chat = activeView.dom.chat;
+        const existing = chat.querySelector('.thinking-placeholder');
+        if (!activeView.stream.currentAiBubble && !existing) {
+          const row = document.createElement('div');
+          row.className = 'row ai';
+          activeView.stream.currentAiBubble = document.createElement('div');
+          activeView.stream.currentAiBubble.className = 'bubble ai thinking-placeholder';
+          row.appendChild(activeView.stream.currentAiBubble);
+          chat.appendChild(row);
+          smartScroll();
+        }
+      } else {
+        // thinkingtimer-fix：锚 = 本轮新盖的段起点（phaseStartAt），非 turnStartTimes。
+        startWorklineDots(activeView, state.phaseStartAt[sid]);
       }
     }
+    // UI-B: this IS the round boundary. Order matters — startWorklineDots above
+    // may build a brand-new line (round resets to 0 there), so the advance must
+    // come AFTER it, or the first round of a new turn would be numbered 1.
+    // Re-issuing the dots on a line that is already up does not reset the
+    // counter, which is exactly right: the same turn keeps its round sequence.
+    beginRound(activeView);
   }
 });
 
 onMessage('error', (msg, view) => {
+  // schedule-created-card 批（2026-11-05）：定时任务/待办卡片的**局部写失败**
+  // （卡片内联编辑/取消被引擎拒绝）不是回合错误 —— 它既不清 busy、也不 failTurn、
+  // 更不落错误气泡（错误已在卡片上就地显示 + 用户输入保留，js/scheduleCard.js）。
+  // 本批实测（隔离实例真浏览器）：不拦的话，卡上一次失败的保存会顺手把正在跑的
+  // 回合标成失败、并在消息流里多冒一条与卡内错误重复的红行。
+  if (msg.msgType === 'updateScheduledTask' || msg.msgType === 'deleteScheduledTask') return;
+  // A provider-form save that the gateway refused is answered with msgType 'updateConfig' and
+  // the save's own requestId. It belongs to that form (sidebar/providersUi.js keeps its draft open
+  // and reports the failure there), so it must neither end the running turn nor paint an error row
+  // into the conversation. A refusal without a requestId keeps the generic handling below.
+  if (msg.msgType === 'updateConfig' && msg.requestId) return;
   clearBusyFor(msg);
   const sid = msg.sessionId || state.activeSessionId;
   delete state.sessionPendingTools[sid];
@@ -1182,12 +1695,105 @@ onMessage('error', (msg, view) => {
     finishThinking();
     finishAi();
     failTurn(activeView); // #346: group but keep expanded for troubleshooting
+    finalizeStreamingFaces(activeView); // 残片清理批终态兜底（错误终态同律）
     renderError(msg.message);
     clearStatus();
   } else {
     saveMsg({type: 'error', text: msg.message}, msg.sessionId);
+    // 未读门（2026-09-16 msunread）在本支**不适用**：失败终态行 = `.row.error`
+    // （chat.js:1407），countsAsRealMessage 计入 ⇒ 本 turn 有真消息。
+    takeRealUserTurn(msg.sessionId); // 真人消息腿终态清理（取用即清；返回值不参与判定）
     markSessionUnread(msg.sessionId);
   }
+});
+
+// ── resend-dedup 批（修复批 #569）：服务端按 clientMessageId 去重的**回执**帧 ──
+// 形状：{type:'messageDuplicate', sessionId, clientMessageId}。服务端三处去重点
+// （AgentIdle 直投 / AgentFrozen 唤醒 / AgentProcessing 排队）丢弃重复帧时发出。
+// 客户端语义：这条消息**已经被受理过** ⇒ 本地不再等它的 turn。
+//
+// busy-stuck-fix（2026-10-20 · 报障「轮次已结束 busy 不清、后续消息入队发不出」）：
+// 回执升级为**权威无-turn 信号**，收幻影 busy 的守卫从「全局 15s 流活动窗」改为
+// 精确对账，两个缺口收口：
+//   ① 旧守卫读**全局** state.lastStreamActivity——多代理工作区里任何其他会话的
+//     流帧都续命本会话的幻影 busy ⇒ 回执永不收 busy（报障主因）。改读本会话的
+//     state.sessionStreamActivity；并优先走 id 对账精确腿：
+//       · msg.clientMessageId === state.lastUserSendId[sid]（本会话最新派发的幂等键）
+//         且派发点之后本会话**零流活动** ⇒ busy 就是这条重复派发的幻影草签 ⇒ 收。
+//         （派发点都无条件重盖 state.turnStartTimes[sid]，对账基准用它。）
+//       · id 对不上（回执指旧消息/无 id）⇒ 回落 per-session 15s 静默窗——语义同旧
+//         守卫，粒度从全局收敛到本会话。
+//   ② 收 busy 之后照常 scheduleQueueDrain——幻影期间排队的消息由本回执路径flush
+//     （与 clearBusyFor / sessionBusy{busy:false} 两条终态路径同律）。旧实现不
+//     drain ⇒ 队列唯一的排空挂点全部缺席 = 报障的「入队发不出」半边。
+// 呈现面零动作不变：同 id 重发本就不渲染第二个气泡。
+onMessage('messageDuplicate', (msg) => {
+  const sid = msg.sessionId || state.activeSessionId;
+  console.info('[ws] messageDuplicate receipt:', { sessionId: sid, clientMessageId: msg.clientMessageId });
+  if (!sid) return;
+  delete state.turnExpecting[sid];
+  // busy-stuck-fix：回执本身就是 turn-start 确认网的（否定）答案 ⇒ 撤网。
+  cancelTurnConfirm(sid);
+  // 看门计时槽位直清（与 input.js armBusyWatchdogFor 的清法同款，零新导出面）。
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  if (!state.busySessionIds.has(sid)) return;
+  const dispatchAt = state.turnStartTimes[sid] || 0;
+  const streamedSinceDispatch = (state.sessionStreamActivity[sid] || 0) > dispatchAt;
+  const idMatchesLatestSend = !!msg.clientMessageId && msg.clientMessageId === state.lastUserSendId[sid];
+  const sinceSidStream = Date.now() - (state.sessionStreamActivity[sid] || 0);
+  const phantomBusy = idMatchesLatestSend
+    ? !streamedSinceDispatch            // 精确腿：本会话在派发后零流活动 = 幻影草签
+    : sinceSidStream >= 15000;          // 回落腿：per-session 15s 静默（旧守卫的会话级口径）
+  if (phantomBusy) {
+    // clearBusy 内部已收「仍在处理」行（chat.js clearBusy ⇒ removeStillProcessingNotice）。
+    import('./chat.js').then(({ clearBusy }) => {
+      clearBusy(sid);
+      // busy-stuck-fix ②：幻影收口照常 drain（与终态帧族同一挂点；drain 自身的
+      // 冷却窗/运行中事实闸/投递未决闸 / ws 闸照旧把关，队列语义零改动）。queue-idle-flush：
+      // 幻影派发零新轮事实 ⇒ 运行中事实闸不挡，冷却窗（2s）到界后余件照常投递
+      // ——旧布尔窗口在此永久关死 = 队列滞留缺陷形态之一。
+      // queue-one-per-turn：**精确腿**（回执 id = 本会话最新派发 id）= 权威「该派发
+      // 不会有 turn/终态」事实 ⇒ 落终态戳放行投递未决闸；**回落腿**（id 对不上的陈旧
+      // 回执 + 15s 静默）不落戳——它可能撞上真实静默轮，投递未决闸须继续把关。
+      if (idMatchesLatestSend) state.lastTerminalAt[sid] = Date.now();
+      scheduleQueueDrain(sid);
+    }).catch(() => {});
+  }
+});
+
+// ── attach-split 批（2026-10-24 现场事故修复）：服务端超限帧的**有声拒绝**回执 ──
+// 形状：{type:'messageTooLarge', sessionId, clientMessageId, sizeBytes, limitBytes}
+// （WebSocketRoutes.handleMessage 超限支发出）。语义：这条消息**整体未被投递**
+// （旧服务端 10MB 上限静默丢弃的取代面 = 用户可见错误 + 收幻影 busy，禁假成功气泡
+// 沉默）。新前端拆分阈值 8MB 使本帧只在「未升级前端撞 64MB 新上限」或旧前端
+// 单帧 >64MB 时出现 —— 防守纵深，出现即必须可见。
+onMessage('messageTooLarge', (msg) => {
+  const sid = msg.sessionId || state.activeSessionId;
+  console.warn('[ws] messageTooLarge receipt:', {
+    sessionId: sid, clientMessageId: msg.clientMessageId,
+    sizeBytes: msg.sizeBytes, limitBytes: msg.limitBytes
+  });
+  const text = t('send.messageTooLarge', {
+    size: Math.round((msg.sizeBytes || 0) / 1048576),
+    limit: Math.round((msg.limitBytes || 0) / 1048576)
+  });
+  addNotification('reminder', text, { dismissAfter: 0 });
+  // 乐观置位的 busy 是幻影（服务端从未受理 turn）⇒ 按 messageDuplicate 同款
+  // 口径收掉：撤确认网、清看门槽、清 busy、照常 drain 排队件。
+  if (!sid) return;
+  delete state.turnExpecting[sid];
+  cancelTurnConfirm(sid);
+  if (state.sessionBusyTimeouts[sid]) {
+    clearTimeout(state.sessionBusyTimeouts[sid]);
+    delete state.sessionBusyTimeouts[sid];
+  }
+  const view = findViewBySessionId(sid);
+  if (view) renderError(text);
+  clearBusy(sid);
+  scheduleQueueDrain(sid);
 });
 
 onMessage('interrupted', (msg, view) => {
@@ -1211,6 +1817,7 @@ onMessage('interrupted', (msg, view) => {
     finishThinking();
     finishAi();
     failTurn(activeView); // #346: interrupted turns stay expanded
+    finalizeStreamingFaces(activeView); // 残片清理批终态兜底（打断终态同律）
     clearStatus();
   }
 });
@@ -1228,9 +1835,13 @@ onMessage('timeout', (msg, view) => {
     finishThinking();
     finishAi();
     failTurn(activeView); // #346: timed-out turns stay expanded
+    finalizeStreamingFaces(activeView); // 残片清理批终态兜底（超时终态同律）
     renderTimeoutNotice();
     clearStatus();
   } else {
+    // 未读门（2026-09-16 msunread）不适用：超时终态行 = `.row.error`
+    // （renderTimeoutNotice，chat.js:1421）⇒ 被 countsAsRealMessage 计入。
+    takeRealUserTurn(msg.sessionId); // 真人消息腿终态清理（取用即清；返回值不参与判定）
     markSessionUnread(msg.sessionId);
   }
 });
@@ -1255,19 +1866,43 @@ onMessage('maxTokens', (msg, view) => {
     finishThinking();
     finishAi();
     failTurn(activeView); // #346: truncated turns stay expanded
+    finalizeStreamingFaces(activeView); // 残片清理批终态兜底（截断终态同律）
     renderError('Max tokens reached — response truncated');
     clearStatus();
   } else {
+    // 未读门（2026-09-16 msunread）不适用：截断终态行 = `.row.error`
+    // （renderError，chat.js:1407）⇒ 被 countsAsRealMessage 计入。
+    takeRealUserTurn(msg.sessionId); // 真人消息腿终态清理（取用即清；返回值不参与判定）
     markSessionUnread(msg.sessionId);
   }
 });
 
 // --- AskUser / Permission ---
+onMessage('modelUnavailable', (msg, view) => {
+  // model-fallback-card 批（2026-11-18 作者裁定 14:37）：统一「模型不可用」卡
+  // ——任何槽共用同一张（`msg.slot` 是载荷字段）。best-effort 追加进当前会话流
+  // （容器缺失 = 不抛，卡仍可就地由调用方挂载）。
+  try {
+    const host =
+      document.getElementById('chat-stream') ||
+      document.querySelector('.chat-stream') ||
+      document.getElementById('messages');
+    const card = renderModelUnavailable(msg);
+    if (host && card) host.appendChild(card);
+    else console.warn('[modelUnavailable] no chat container; card not mounted', msg && msg.slot);
+  } catch (e) {
+    console.warn('[modelUnavailable] render failed', e);
+  }
+});
+
 onMessage('askUser', (msg, view) => {
   const sid = msg.sessionId;
-  if (sid) setSessionAttention(sid, true);
+  // AskUser is an interactive question, not an unread message arrival.
   // D6 批 F2: upsert the global pending mirror (requestId-keyed, idempotent —
   // live first-send and replayed snapshot frames both land here).
+  // 附件位（本批）**刻意不进镜像**：`toEntry` 登记的字段面只服务待办条/徽标/跳转，
+  // 附件在那里零消费者；会话切换后的补渲染由 hub 的订阅重放帧（本文件 :1520 腿，
+  // 附完整 payload 含 attachments）承担 ⇒ 登记=多一份无消费方的状态。
   notePendingAsk(msg);
   // AskUser waits for human response — suppress stream timeout indefinitely
   if (sid && state.sessionBusyTimeouts[sid]) {
@@ -1275,31 +1910,38 @@ onMessage('askUser', (msg, view) => {
     delete state.sessionBusyTimeouts[sid];
   }
   // D6 批 F1: source-label passthrough (project/nodeName) for the badge.
-  const askSource = { project: msg.project, nodeName: msg.nodeName };
+  // 归属命名批（2026-11-05）：ownerName = 引擎侧解析的 delegate 批次短名，
+  // 与 project/nodeName 同路透传（卡片与待办条同一 `askSourceParts` 口径）。
+  const askSource = { project: msg.project, nodeName: msg.nodeName, ownerName: msg.ownerName };
   // 刷新存活 (2026-09-03): replayed frames — the hub snapshot re-sent by the
   // backend right after the initial historyPage of a session (re)subscribe
   // (browser refresh, WS reconnect, session switch). This is state
   // re-delivery of a card the backend still considers pending, NOT a new ask:
   //  - the history-restored card carries no data-request-id (UiMessage.AskUser
-  //    persists only {type, items}), so the chat-input close frame
-  //    (askUserAnswered{requestId}) and #12 precise answer routing cannot find
-  //    it — rebind by re-rendering with the live requestId;
-  //  - a duplicate replay would stack cards — remove THIS ask's unanswered
-  //    cards first (answered/locked cards and other pending asks stay).
+  //    persists only {type, items}) — REBIND by re-rendering with the live
+  //    requestId;
+  //  - a duplicate replay would stack cards — remove THIS ask's cards first.
   // Answered-before-replay cannot race: the hub snapshot only lists slots
   // still pending, so an answered ask is never replayed.
-  if (msg.replayed) {
+  //
+  // 双开缺陷批「案 A②」（2026-09-21，chain-askuserdup）— 判据换成 **id 优先**：
+  // 改前这里逐卡算 `answered = !!box.querySelector('.option-answer')`，只删「未作答」
+  // 的旧卡；而历史恢复路径给**仍 pending** 的卡也补了一行 `.option-answer`（案 A①
+  // 已修）⇒ 判据对这笔卡恒为「已答」⇒ 不删 ⇒ 重放卡挂成第二张，同 id 两卡且首卡恒死
+  // （历史卡已 lockOptionBox，`closeAskUserCard` 又只认 `[data-request-id]` ⇒ 引擎
+  // 够不到它）。现统一走 chat.js 的**单一判据** `reclaimAskUserCards`：先按
+  // `data-request-id === msg.requestId` **无条件**移除既有卡，再兜底无 id 的历史
+  // 恢复卡（旧 .ui.json 行不落 requestId ⇒ 只能靠形态兜底）。案 B 落盘 requestId 后
+  // ①路径对**新旧**历史卡都成立。案 C：重放帧带 `replaces:true`（替代语义标），与
+  // `replayed:true` 同帧 ⇒ 两标皆认。
+  if (msg.replayed || msg.replaces) {
     if (view) {
-      view.dom.chat.querySelectorAll('.row.ai .option-box').forEach(box => {
-        const rid = box.dataset.requestId || '';
-        const answered = !!box.querySelector('.option-answer');
-        if (!answered && (!rid || rid === msg.requestId)) box.closest('.row.ai').remove();
-      });
-      const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource);
+      reclaimAskUserCards(view.dom.chat, msg.requestId, { legacyTwin: true });
+      const rdata = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource, msg.attachments);
       if (rdata) saveAskMsgDedup(rdata, msg.sessionId, msg.requestId);
     } else if (sid) {
       // Non-active session: persist (deduped) so it can be restored on session switch
-      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName }, sid, msg.requestId);
+      saveAskMsgDedup({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, ownerName: msg.ownerName, attachments: msg.attachments }, sid, msg.requestId);
     }
     return;
   }
@@ -1311,26 +1953,24 @@ onMessage('askUser', (msg, view) => {
       const prevData = finishAi();
       if (prevData) saveMsg(prevData, sid);
     }
-    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource);
+    // 案 A③（双开缺陷批 2026-09-21）：live 腿也过**同一判据**再挂卡 ⇒ 「一 id 一活卡」
+    // 在**任何**入口成立，顺手覆盖 `#433 F4` 兜底扇出把同一 requestId 经 broadcast
+    // 多次送达同一窗的同 id 多送路径（两卡同 id 时后来的真身替换先前那张）。
+    reclaimAskUserCards(activeView.dom.chat, msg.requestId, { legacyTwin: true });
+    const data = renderAskUser(msg.items, msg.sessionId, msg.agentName, msg.requestId, askSource, msg.attachments);
     if (data) saveMsg(data, msg.sessionId);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName }, sid);
+    saveMsg({ type: 'askUser', items: msg.items, agentName: msg.agentName, requestId: msg.requestId, project: msg.project, nodeName: msg.nodeName, ownerName: msg.ownerName, attachments: msg.attachments }, sid);
   }
 });
 
-// Chat-input passthrough (author ruling 2026-08-29 23:50): while an AskUser
-// card is pending, a message typed into the input box is consumed by the
-// backend as that tool call's answer; it then broadcasts askUserAnswered so
-// every attached client locks the card locally (same end-state as answering
-// on the card). The user's text already landed as a normal user bubble.
-onMessage('askUserAnswered', (msg) => {
-  closeAskUserCard(msg.sessionId, msg.requestId);
-  // D6 批 F2: chat-input direct answer (hub broadcasts this frame only for
-  // that path) resolves the pending mirror entry; card answers remove
-  // themselves locally in the confirm/cancel callbacks (chat.js).
-  removePendingAsk(msg.requestId);
-});
+// 输入框直通退役（2026-09-14 作者令 / 落地 e59ed251d，uiclean 批 2026-09-15 收尾）：
+// 与之配套的 `askUserAnswered` 接收点已摘除——该帧**只**由 hub 的
+// `handleChatInputAnswer` 广播，该函数随直通腿一并删除 ⇒ 引擎侧发送方集合 = ∅
+// （`grep -rn '"askUserAnswered"' src/main/scala/` 零命中；帧类型在引擎侧一律为
+// 字面量，无「按类名生成」的旁路生产者）。卡片锁定仅剩两条活入口：
+// `askUserClosed`（本文件下一条）与卡片自身确认/取消回调（chat.js confirm/cancel）。
 
 // D6 批 F2 (spec §3.4 来源死亡路): the source node's pending ask is closed by
 // the engine (cancelNode cascade — the CleanupForSession hub command lands in
@@ -1338,97 +1978,104 @@ onMessage('askUserAnswered', (msg) => {
 // handling is in place ahead of it). Lock the card with the source-closed
 // note and drop the bar entry.
 onMessage('askUserClosed', (msg) => {
-  closeAskUserCard(msg.sessionId, msg.requestId, t('askUser.sourceClosed'));
+  // #250 ②: the hub now also closes pending cards when the owning turn is
+  // interrupted (`reason:"turn-interrupted"`), not only when the source session
+  // died — map the reason to a matching lock note (unknown/absent reason keeps
+  // the historical text).
+  // askucancel 批位2（2026-10-08）：用户取消终结（hub CancelRequest 广播；reason
+  // 缺省 "user-cancelled"、自定义串透传，见 InteractionHub.handleCancelRequest）
+  // ⇒ 卡片转「已取消」锁定态。既有两路零回归：`turn-interrupted` → 本轮中断文案；
+  // 缺席（来源死亡，handleCleanupForSession 无 reason 键）与 `caller-withdrew`
+  // （#147 调用侧撤回，语义 ≠ 用户取消）→ 历史来源关闭文案。
+  // 重启孤儿对账批（2026-10-22）：`expired-orphan`（引擎 boot 清点跨重启残留
+  // 挂起提问，PendingAskLedger.bootReconcile 广播）→ 专用过期文案——「有数无卡」
+  // 的账面由引擎在对账里收口，卡片锁进与原因相符的终态。
+  const note = msg.reason === 'turn-interrupted' ? t('askUser.turnInterrupted')
+    : msg.reason === 'expired-orphan' ? t('askUser.expiredOrphan')
+    // 修复批 2026-10-25「待答徽章常显」：hub complete() 现随作答广播本帧
+    // （reason:"answered"）——没亲手作答的标签页/设备由此清零+翻卡。已答卡
+    // （.option-answer 在场）被 closeAskUserCard 幂等跳过，作答面文案不被覆盖。
+    : msg.reason === 'answered' ? t('askUser.answeredElsewhere')
+    : (msg.reason && msg.reason !== 'caller-withdrew') ? t('askUser.cancelled')
+    : t('askUser.sourceClosed');
+  closeAskUserCard(msg.sessionId, msg.requestId, note);
   removePendingAsk(msg.requestId);
 });
 
-// F4 (#433): global actionable toast for permission cards whose target root
-// session is unreachable. Glass panel, no overlay dimming (弹窗禁令). Stack
-// top-right; removed on answer or on permissionExpired for the same root sid.
-let __permToastHost = null;
-function showGlobalPermissionToast(msg) {
-  const sid = msg.sessionId || '';
-  if (!__permToastHost) {
-    __permToastHost = document.createElement('div');
-    __permToastHost.id = 'global-perm-toasts';
-    document.body.appendChild(__permToastHost);
-  }
-  const card = document.createElement('div');
-  card.className = 'global-perm-toast';
-  card.dataset.rootSid = sid;
-  const title = document.createElement('div');
-  title.className = 'global-perm-toast-title';
-  title.textContent = t('perm.fallbackTitle', { agent: msg.sourceAgent || '?' });
-  const body = document.createElement('div');
-  body.className = 'global-perm-toast-body';
-  body.textContent = `${msg.toolName || ''}${msg.summary ? ' · ' + msg.summary : ''}`;
-  const actions = document.createElement('div');
-  actions.className = 'global-perm-toast-actions';
-  const send = (approved) => {
-    if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-      state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved, ...(msg.requestId && { requestId: msg.requestId }) }));
-    }
-    card.remove();
-  };
-  const denyBtn = document.createElement('button');
-  denyBtn.className = 'global-perm-toast-btn deny';
-  denyBtn.textContent = t('perm.fallbackDeny');
-  denyBtn.addEventListener('click', () => send(false));
-  const okBtn = document.createElement('button');
-  okBtn.className = 'global-perm-toast-btn approve';
-  okBtn.textContent = t('perm.fallbackApprove');
-  okBtn.addEventListener('click', () => send(true));
-  actions.appendChild(denyBtn);
-  actions.appendChild(okBtn);
-  card.appendChild(title);
-  card.appendChild(body);
-  card.appendChild(actions);
-  __permToastHost.appendChild(card);
-  // Safety net: the backend auto-denies after 5 min — retire the card by then.
-  setTimeout(() => card.remove(), 5 * 60 * 1000);
-}
+// askucancel 批位2（2026-10-08）：卡上/渠道取消的裁决回执（{type, ok, requestId,
+// state, error?}，state ∈ cancelled/unknown/not-ask-user/no-hub/bad-request）。
+// ok=true 的关卡面已由 askUserClosed 广播先行承载（引擎序：hub 先广播后回执，
+// 见 handleCancelRequest ③）；仅 !ok 需要可见提示 —— 幂等 unknown / 非 AskUser 卡 /
+// 无 hub / 请求形状错时卡不转「已取消」，静默 = 点了没反应（#250 ⑥ 同款教训）。
+onMessage('askUserCancelResult', (msg) => {
+  if (msg && msg.ok) return;
+  const st = (msg && msg.state) || 'unknown';
+  window.__showToast?.(t('askUser.cancelFailed', { state: st }), 'error');
+});
 
-function dismissGlobalPermissionToasts(rootSid) {
-  if (!__permToastHost) return;
-  __permToastHost.querySelectorAll('.global-perm-toast').forEach(el => {
-    if (!rootSid || el.dataset.rootSid === rootSid) el.remove();
-  });
-}
+// 飞书/渠道作答的桌面翻面帧（askuser-remote P1 反射补口 2026-10-09，feishu-answer-card-flip）：
+// 桥面作答（飞书卡片点击/微信编号回复）此前只进 hub + 会话注入，桌面活卡不翻面、
+// .ui.json 无作答行 ⇒「我在飞书回答了问题，但是好像前端的问题卡片没有做相应的变化」。
+// 引擎（WebSocketRoutes.forwardBridgeInteractionAnswer）现落库 + 广播本帧；
+// closeAskUserCard 以**作答原文**为锁定文案（与卡片自身确认路径同一终态 '-> <answer>'），
+// requestId 寻址、已答幂等跳过（与 askUserClosed 双达安全）；pending 条目随卡清。
+onMessage('askUserAnsweredRemote', (msg) => {
+  if (!msg || !msg.requestId) return;
+  closeAskUserCard(msg.sessionId, msg.requestId, msg.answerText);
+  removePendingAsk(msg.requestId);
+});
+
+// #250 ③: global pending-AskUser snapshot (hub ListAllPendingAsks). One frame
+// for every root — the mirror is reconciled against the single authority in one
+// pass (drop what the hub no longer has, add what it has), independent of which
+// session is subscribed/re-fetched. Replaces the old reconnect-time global clear
+// whose rebuild only happened for the (re)subscribed session. `failed:true`
+// keeps the local mirror and shows a notice (never silently claims "nothing
+// pending"). `since` 戳由 askPending.requestPendingAskSync 单点维护（修复批
+// 2026-10-25）：重连 / 可见期节拍 / 重新可见补账三条请求路共用它。
+onMessage('pendingAsksSnapshot', (msg) => {
+  if (msg.failed) { pendingSnapshotFailed(); return; }
+  applyPendingAskSnapshot(msg.asks);
+});
+
+// #250 ⑥: the hub dropped an answer (shape mismatch / unknown requestId / no
+// kind-compatible slot) and, by #12, deliberately kept the card. That used to be
+// a WARN log only — the user saw a click that did nothing. Surface it (glass
+// toast, no overlay dimming — 弹窗禁令).
+onMessage('interactionAnswerRejected', (msg) => {
+  const key = {
+    'shape-mismatch': 'askUser.rejectShape',
+    'unknown-request-id': 'askUser.rejectUnknown',
+    'no-kind-compatible': 'askUser.rejectNoMatch',
+    // askuser-secret 批（2026-10-08）：秘密槽明文回流（旧前端不识别 secret 键，
+    // 值打进了普通 answers）——hub 拒收保卡，值未存储；toast 指引刷新。
+    'secret-slot-mismatch': 'askUser.rejectSecret',
+    // askuser-dragdrop 实施批（2026-10-19，批 #551）：答案侧附件终验拒收（secret
+    // 卡 / 路径越界 / 超限——纵深防御面；正常前端无此路径，作者修正②）。
+    'attach-rejected': 'askUser.rejectAttach'
+  }[msg.reason] || 'askUser.rejectGeneric';
+  window.__showToast?.(t(key), 'error');
+});
 
 onMessage('askPermission', (msg, view) => {
   const sid = msg.sessionId;
-  // F4 (#433): fallback card — the card's target root session is unreachable
-  // (deleted / zombie / never had a client). The backend fanned it out to all
-  // roots with fallback:true; render a global actionable toast instead of
-  // routing the card into a session that cannot be opened. Also catch the
-  // un-flagged variant whose sessionId is not in the session list (older
-  // backend or non-flagged graveyard route). Answers match by requestId, so
-  // answering from this toast completes the pending request from any window.
-  if (msg.fallback || (sid && !state.sessionAgentMap[sid])) {
-    showGlobalPermissionToast(msg);
-    if (msg.sourceSession && state.sessionAgentMap[msg.sourceSession]) {
-      setSessionAttention(msg.sourceSession, true);
-    }
-    return;
-  }
-  // Bypass mode: auto-approve immediately without showing attention indicator.
-  // This must run for BOTH active and non-active sessions — previously only
-  // active sessions got bypass treatment (inside renderPermissionPrompt),
-  // leaving non-active sessions stuck with a yellow indicator that never clears.
-  if (sid && state.bypassSessions.has(sid)) {
-    if (view) {
-      // Active session: renderPermissionPrompt detects bypass, sends approval,
-      // and shows the "auto-approved" badge. Let it handle everything.
-      renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId, msg.safetyMode);
-    } else {
-      // Non-active session: auto-approve directly (renderPermissionPrompt is never called).
-      if (state.ws && state.ws.readyState === WebSocket.OPEN) {
-        state.ws.send(JSON.stringify({ type: 'permissionAnswer', sessionId: sid, approved: true, ...(msg.requestId && { requestId: msg.requestId }) }));
-      }
-      saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, autoApproved: true, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId }, sid);
-    }
-    return;
-  }
+  // permission-landing 批 P2（2026-11-18）：F4 #433 的全局 fallback toast 腿整体
+  // 退役（原生弹窗形态，弹窗禁令）。后端现在把原目标 root 不可达的卡**重定锚**到
+  // 一个真实可达的 root（帧带 retargetedFrom/retargetReason，卡片在落点会话的
+  // 对话流内渲染并注明原因）；sid 不在 sessionAgentMap 的旧帧（后端未升级/列表
+  // 未加载）不再弹 toast——非活动会话统一走 saveMsg 持久化，会话打开时恢复。
+  //
+  // 🔴 Silent auto-approve path REMOVED (permshield F1, 2026-09-13, per S1's
+  // backend disposition): this block used to auto-answer `permissionAnswer
+  // {approved:true}` with zero user interaction for any session the client had
+  // collected into `state.bypassSessions` (derived from the list frame's
+  // `safetyMode === 'auto-all'`). Post-S1 there is no session-scoped dimension
+  // and an `auto-all` global makes `ToolReversibility.isReversible` return true
+  // for every tool (AgentCore `permissionDecision` → Allow), so the backend
+  // never emits `askPermission` in that mode — the branch had no card left to
+  // answer while still being able to approve silently if one ever arrived.
+  // No silent permission write remains on the frontend: every permission answer
+  // now originates from a user click on a rendered card.
   if (sid) setSessionAttention(sid, true);
   // Permission prompt waits for human response — suppress stream timeout indefinitely
   if (sid && state.sessionBusyTimeouts[sid]) {
@@ -1441,16 +2088,15 @@ onMessage('askPermission', (msg, view) => {
   // disabled because answeredPermissions still holds this sid.
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
-    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId, msg.safetyMode);
+    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId, msg.safetyMode, msg.retargetedFrom);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId, safetyMode: msg.safetyMode }, sid);
+    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId, safetyMode: msg.safetyMode, retargetedFrom: msg.retargetedFrom }, sid);
   }
 });
 
 onMessage('permissionExpired', (msg, view) => {
   const sid = msg.sessionId;
-  dismissGlobalPermissionToasts(sid); // F4 (#433): retire any fallback toast for this root
   if (!sid) return;
   // Mark as answered so the prompt isn't re-created on session switch
   state.answeredPermissions.add(sid);
@@ -1464,6 +2110,23 @@ onMessage('permissionExpired', (msg, view) => {
   setSessionAttention(sid, false);
 });
 
+// --- M2 缓存失效广播（v1 §6.1 事件失效腿 · 设计 §7 M2-3）---
+// 引擎侧文件被改/删/移（Write/Edit 工具、编辑器保存、资源管理器删除/移动）⇒
+// `nf-cache-invalidate {path}` 广播 ⇒ 账本按 path 精确淘汰——「命中零取数」的陈旧窗
+// 从 TTL 级收敛为一次事件。失败不响（缓存故障 ⇒ 未命中，回取数腿）。
+onMessage('nf-cache-invalidate', (msg) => {
+  const p = msg && msg.path;
+  if (typeof p === 'string' && p) {
+    void nfCacheInvalidatePath(p).catch(() => {});
+    // B7-2（文档后续批，2026-11-01）：账本淘汰之外，**编辑器也要知道**。
+    // 改造前这条广播只喂 nf-file 账本，打开中的页签一概不知情 —— 干净页签
+    // 靠 scheduleFileRefresh 的冷却窗口碰运气，脏页签则被静默跳过（用户接着
+    // 保存就覆盖掉别人的改动）。canvas.js 收到后按「干净 ⇒ 重读 / 脏 ⇒ 冲突条」
+    // 分流（该文件同批注释）。
+    window.dispatchEvent(new CustomEvent('nf-file-external-change', { detail: { path: p } }));
+  }
+});
+
 // --- Session list (global) ---
 let restoredSessionId = null;
 onMessage('sessionList', (msg, view) => {
@@ -1472,11 +2135,14 @@ onMessage('sessionList', (msg, view) => {
   const allFolders = msg.folders || [];
   allSessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || 'Nebula'; });
 
-  // Restore safety mode from persisted session metadata
+  // Safety mode (permshield S1/F1, 2026-09-13): the mode is APPLICATION-level —
+  // the session dimension was deleted backend-side, so every session's frame
+  // value is the same global value. `state.safetyModes` stays as a per-session
+  // mirror only because the shield lookup is keyed by the active session id.
+  // The old `state.bypassSessions` derivation (and the silent auto-approve it
+  // fed) is gone — see chat.js `renderPermissionPrompt`.
   state.safetyModes = {};
   allSessions.forEach(s => { if (s.safetyMode) state.safetyModes[s.id] = s.safetyMode; });
-  // Derive bypassSessions (auto-all) for chat.js auto-approve compatibility
-  state.bypassSessions = new Set(allSessions.filter(s => s.safetyMode === 'auto-all').map(s => s.id));
 
   state.folders = allFolders;
   state.foldersWithRules = new Set(msg.foldersWithRules || []);
@@ -1484,7 +2150,12 @@ onMessage('sessionList', (msg, view) => {
   const activeId = msg.activeId;
 
   renderSessionSidebar(allSessions, activeId);
-  initHeaderModelInfo();
+  // F-1 (permshield F1, 2026-09-13): a session list frame is one of the two
+  // "another writer changed the global mode" arrival paths (the other is
+  // configData). Without this refresh the header shield kept the stale mode
+  // after a global change until the user switched sessions — the pre-fix code
+  // updated state.safetyModes and stopped there.
+  state.updateSafetyToggle?.();
   // Mark the initial session as restored — getHistory is already sent by
   // resetChatForActiveSession (called inside renderSessionSidebar when activeId changes).
   if (!restoredSessionId && activeId) {
@@ -1499,36 +2170,16 @@ onMessage('sessionList', (msg, view) => {
   applyLocalFreeze();
 });
 
-// --- History pagination indicators ---
-function showHistoryLoader() {
-  let loader = activeView.dom.chat.querySelector('.history-loader');
-  if (loader) return;
-  loader = document.createElement('div');
-  loader.className = 'history-loader';
-  loader.innerHTML = '<div class="history-spinner"></div><span>' + t('chat.loading') + '</span>';
-  activeView.dom.chat.prepend(loader);
-}
-
-function hideHistoryLoader() {
-  document.querySelectorAll('.history-loader').forEach(el => el.remove());
-}
-
-function showHistoryEnd() {
-  if (activeView.dom.chat.querySelector('.history-end')) return;
-  const end = document.createElement('div');
-  end.className = 'history-end';
-  end.textContent = t('chat.noMoreMessages');
-  activeView.dom.chat.prepend(end);
-}
-
-function clearHistoryIndicators() {
-  activeView.dom.chat.querySelectorAll('.history-loader, .history-end').forEach(el => el.remove());
-}
-
 // --- Backend history page ---
 // For initial load: replaces chat content.
 // For scroll-up pagination: prepends older messages before existing content.
 onMessage('historyPage', (msg, view) => {
+  // M2 缓存语义小刀（v2 §3.1 ① · 历史页行）：页指纹入账（`hist:<sid>` localStorage，
+  // LRU 上限 40 会话）。只存键不存渲染——「本地先行渲染」语义是设计件登记的开放
+  // 问题 Q18（候作者裁）；本批只把对账基础（total/offset/last/lastAt）留在本地。
+  if (msg && msg.sessionId && msg.pageFingerprint) {
+    try { noteHistoryFingerprint(msg.sessionId, msg.pageFingerprint); } catch { /* 读数面，失败不响 */ }
+  }
   // Background sub-agent sessions are handled by the bg-agent popup viewer.
   if (handleBgAgentHistory(msg)) return;
   // Flow agent sessions are handled by the popup viewer, not the primary chat.
@@ -1537,206 +2188,23 @@ onMessage('historyPage', (msg, view) => {
   const sid = msg.sessionId;
   hideHistoryLoader();
   if (!view) return;
-  view.pagination.loading = false;
 
   // Use explicit flag instead of historyOffset === 0 to prevent double-clear.
   const isInitialLoad = view.pagination.pendingInitialLoad;
+  // perf 台账 #922（2026-10-26）：放闸只发生在初载腿与迟到/重复帧——补页腿的
+  // `loading` 闸必须跨**异步挂载**保持 true（改前 = 帧到即无条件 loading=false，
+  // 挂载窗内任何滚动事件都会打出同游标重复请求 ⇒ 同页双挂载 ⇒ 历史行成对重复）。
+  if (isInitialLoad) view.pagination.loading = false;
   if (isInitialLoad) {
-    view.pagination.pendingInitialLoad = false;
-    // Initial load or full refresh — replace
-    cleanupCardIframes(activeView.dom.chat);
-    activeView.dom.chat.innerHTML = '';
-    // Reset sessionToolCards — innerHTML clear above removes all tool pending
-    // card DOM nodes, but renderToolPending uses sessionToolCards[sid] as an
-    // existence check. A stale DOM reference causes it to skip card creation
-    // (update-in-place on a detached node), leaving no spinner visible.
-    Object.keys(state.sessionToolCards).forEach(sid => delete state.sessionToolCards[sid]);
-    // Clear history indicators before rendering
-    clearHistoryIndicators();
-    view.pagination.offset = msg.offset;
-    view.pagination.total = msg.total;
-    view.pagination.hasMore = msg.hasMore;
-    // #346 boundary fix (2026-08-24): when the session is still mid-turn at
-    // reload/reconnect, the trailing segment must stay flat — grouping it
-    // would stamp it 'failed' and strand a zombie group (see turnGroup.js).
-    const isStillBusy = state.busySessionIds.has(sid);
-    restoreFromBackendHistory(msg.messages, { busyTail: isStillBusy });
-
-    // Detect if the agent is waiting for AskUser — in that case it's NOT actively streaming.
-    // Issue #43 (2026-09-03): agent-injected user bubbles (delegate results,
-    // Mail, flow/node notifications) legitimately queue AFTER a still-pending
-    // askUser entry — requiring askUser to be the literal LAST message made
-    // the pending detection fail exactly when results arrived during the
-    // wait, and the restored card stayed locked with no way to answer.
-    // findLastRealMessage (shared with persistence.js, spec-covered) scans
-    // backward over injected bubbles; a non-injected user message after the
-    // askUser means an answer was recorded (card click or chat-input
-    // passthrough) — the ask is no longer pending.
-    const histMsgs = msg.messages;
-    const lastHistMsg = findLastRealMessage(histMsgs) || undefined;
-    const isAskUserPending = lastHistMsg && lastHistMsg.type === 'askUser'
-      && Array.isArray(lastHistMsg.items) && lastHistMsg.items.length > 0;
-    const isAskPermissionPending = lastHistMsg && lastHistMsg.type === 'askPermission'
-      && lastHistMsg.toolName;
-
-    if (isAskUserPending || isAskPermissionPending) {
-      // Agent is blocked on AskUser/AskPermission — clear stale sessionTexts so we don't create
-      // a phantom streaming bubble for text that's already in history.
-      delete state.sessionTexts[sid];
-    }
-
-    // Re-create streaming/completed state from sessionTexts/sessionThinkingBuffers/pendingRestore.
-    // (isStillBusy computed above for the busyTail history-restore hint.)
-    if (!isAskUserPending && !isAskPermissionPending) {
-      // If the backend history already includes the completed message, clean up pendingRestore
-      // to avoid duplication. Check last AI message text+thinking match.
-      const pendingData = state.pendingRestore[sid];
-      if (pendingData && !isStillBusy) {
-        const histMsgs = msg.messages;
-        const lastAiMsg = histMsgs && [...histMsgs].reverse().find(m => m.type === 'ai' && (m.text || m.thinking));
-        const textMatch = lastAiMsg && lastAiMsg.text === pendingData.text;
-        const thinkingMatch = lastAiMsg && lastAiMsg.thinking === pendingData.thinking;
-        // Exact match: both text and thinking (or both absent) match.
-        // Loose match: text matches and thinking is absent on both sides, or
-        //             thinking matches and text is absent on both sides.
-        const looseMatch = lastAiMsg && (
-          (textMatch && (!lastAiMsg.thinking || !pendingData.thinking || thinkingMatch)) ||
-          (!lastAiMsg.text && !pendingData.text && thinkingMatch)
-        );
-        if (textMatch || looseMatch) {
-          delete state.pendingRestore[sid];
-        }
-        // If texts don't match, keep pendingRestore — it may be from a turn
-        // the backend hasn't persisted yet. The sessionPendingAiMessages fix
-        // ensures text is not concatenated across rounds, so even if rendered
-        // as extra bubbles, the content is correct (not duplicated/concatenated).
-      }
-
-      const pd = state.pendingRestore[sid];
-      // After historyPage restores the authoritative state, clean up any remaining
-      // per-session buffer state that wasn't consumed by the active streaming path.
-      // This prevents stale data from leaking through on subsequent restores.
-      if (!isStillBusy && !pd && !state.sessionTexts[sid]) {
-        delete state.sessionThinkingBuffers[sid];
-        delete state.sessionPendingAiMessages[sid];
-      }
-      const thinkBuf = state.sessionThinkingBuffers[sid] || pd?.thinking;
-      const txtBuf = state.sessionTexts[sid] || pd?.text;
-
-      // Restore thinking bubble
-      if (thinkBuf) {
-        activeView.stream.thinkingText = thinkBuf;
-        const hasText = !!txtBuf;
-        const done = hasText || !isStillBusy;
-        const chat = activeView.dom.chat;
-        const row = document.createElement('div');
-        row.className = 'row ai thinking-row';
-        const bubble = document.createElement('div');
-        bubble.className = 'bubble ai thinking-bubble' + (done ? ' thinking-done' : '');
-        const label = document.createElement('div');
-        label.className = 'thinking-label' + (done ? ' collapsible' : '');
-        label.textContent = t('chat.thinkingLabel');
-        const content = document.createElement('div');
-        content.className = 'thinking-content';
-        if (done) {
-          content.style.display = 'none';
-          label.classList.add('expanded');
-          label.onclick = () => {
-            const visible = content.style.display !== 'none';
-            content.style.display = visible ? 'none' : '';
-            label.classList.toggle('expanded', !visible);
-          };
-        }
-        content.innerHTML = renderMarkdownWithMath(activeView.stream.thinkingText, true, { cache: done }) + (!done ? '<span class="cursor"></span>' : '');
-        bubble.appendChild(label);
-        bubble.appendChild(content);
-        row.appendChild(bubble);
-        chat.appendChild(row);
-        activeView.stream.currentThinkingBubble = done ? null : bubble;
-      }
-
-      // Restore text bubble
-      if (txtBuf) {
-        activeView.stream.aiText = txtBuf;
-        const chat = activeView.dom.chat;
-        const row = document.createElement('div');
-        row.className = 'row ai';
-        activeView.stream.currentAiBubble = document.createElement('div');
-        activeView.stream.currentAiBubble.className = 'bubble ai';
-        activeView.stream.currentAiBubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText, true, { cache: !isStillBusy }) + (isStillBusy ? '<span class="cursor"></span>' : '');
-        row.appendChild(activeView.stream.currentAiBubble);
-        chat.appendChild(row);
-        if (!isStillBusy) {
-          activeView.stream.currentAiBubble = null;
-          activeView.stream.aiText = '';
-          delete state.pendingRestore[sid];
-        }
-      }
-
-      const askBuf = state.sessionAskBuffers[sid];
-      if (isStillBusy && askBuf && askBuf.answer) {
-        activeView.stream.askAnswerText = askBuf.answer;
-        const chat = activeView.dom.chat;
-        const row = document.createElement('div');
-        activeView.stream.currentAskBubble = document.createElement('div');
-        activeView.stream.currentAskBubble.className = 'bubble ai';
-        const label = document.createElement('div');
-        label.className = 'ask-label';
-        label.textContent = t('chat.askLabel');
-        const content = document.createElement('div');
-        content.innerHTML = renderMarkdownWithMath(activeView.stream.askAnswerText, true, { cache: false }) + '<span class="cursor"></span>';
-        activeView.stream.currentAskBubble.appendChild(label);
-        activeView.stream.currentAskBubble.appendChild(content);
-        row.appendChild(activeView.stream.currentAskBubble);
-        chat.appendChild(row);
-      }
-      // Re-create pending tool card if this session has an in-progress tool.
-      // Also restored in sidebar.js resetChatForActiveSession() for immediate
-      // feedback before history arrives. This re-creation ensures the spinner
-      // persists after the async getHistory roundtrip clears the DOM.
-      if (state.sessionPendingTools[sid]) {
-        renderToolPending(state.sessionPendingTools[sid].label, sid);
-      }
-    }
-
-    // Re-create interactive AskUser if the last history message is an unanswered askUser.
-    // Must be OUTSIDE the busySessionIds check — a non-active session that received
-    // AskUser was never added to busySessionIds (setBusy only runs for the active session).
-    // Simply check if the last history message is askUser with items — if already answered,
-    // there would be subsequent Ai/Tool messages after it, so it wouldn't be the last message.
-    if (isAskUserPending) {
-      // Remove ALL disabled askUser rows (restored by restoreFromBackendHistory).
-      activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
-        if (row.querySelector('.option-box')) row.remove();
-      });
-      renderAskUser(lastHistMsg.items, sid, lastHistMsg.agentName, lastHistMsg.requestId, { project: lastHistMsg.project, nodeName: lastHistMsg.nodeName });
-    }
-
-    // Re-create interactive AskPermission if the last history message is an unanswered askPermission.
-    // Same logic as AskUser — if already answered, there would be subsequent tool messages.
-    // Guard: skip if the user has already answered this permission in the current session
-    // (tool is still executing, askPermission is still the last history entry).
-    if (isAskPermissionPending && !state.answeredPermissions.has(sid)) {
-      // Remove the disabled askPermission row (restored by restoreFromBackendHistory).
-      activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
-        if (row.querySelector('.permission-pending-box')) row.remove();
-      });
-      renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession, lastHistMsg.sourceTeam, lastHistMsg.requestId, lastHistMsg.safetyMode);
-    }
-
-    // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)
-    // is complete, ensure the viewport shows the latest content.
-    // Uses rAF to avoid layout thrashing — fires after any pending style calculations.
-    requestAnimationFrame(() => {
-      const chat = view.dom.chat;
-      if (view.stream.scrollSnapped || chat.scrollHeight - chat.scrollTop - chat.clientHeight < 60) {
-        chat.scrollTop = chat.scrollHeight;
-        view.stream.scrollSnapped = true;
-      }
-      // Second pass after deferred markdown rendering settles
-      setTimeout(() => { chat.scrollTop = chat.scrollHeight; }, 150);
-    });
-
+    // 重连折叠持久批（2026-10-20，续作 chain 69e5e2e1）：初载重放腿整体迁至
+    // chat/historyReplay.js —— main.js 与 reconnect-collapse harness 同源驱动
+    // 真实代码；幂等重放（#570 家族封口 + 整块重挂载抽动收敛）与折叠态跨重放
+    // 持久两枚修复随腿内嵌。分页字段更新在腿内无条件完成。
+    replayHistoryPageInitialLoad(msg, view);
+  } else if (msg.offset >= view.pagination.offset) {
+    // Skipping duplicate response（迟到/重复帧：闸放行）
+    view.pagination.loading = false;
+    return;
   } else {
     // Scroll-up pagination — prepend older messages
     // Guard against duplicate historyPage responses (e.g. from double getHistory on initial load):
@@ -1747,288 +2215,91 @@ onMessage('historyPage', (msg, view) => {
     // offset-0 response (SessionStore.getHistoryPage: offset=max(0,before-
     // limit), messages=slice(offset, ...)) — skipping it made the oldest
     // ≤50 messages unreachable and looped the top loader forever.
-    if (msg.offset >= view.pagination.offset) {
-      // Skipping duplicate response
-      return;
-    }
+    // perf 台账 #922（2026-10-26）：补页走**分帧构建**挂载腿
+    // （persistence.mountHistoryPageChunked）——同一枚 buildHistoryRow（单源），
+    // 但整页一枚长任务被拆成 rAF 切片 + 大工具正文/markdown 空闲升级批；渲染
+    // 遮蔽门横跨全程（门内宽限窗 miss 走 ws.js 遮蔽旁路）。`loading` 闸保持
+    // 到 onDone（升级批 drain 完）才放行 —— 期间不会发出第二页请求。
     const chat = activeView.dom.chat;
-    const prevScrollHeight = chat.scrollHeight;
-    const prevScrollTop = chat.scrollTop;
-    // Insert before first child
-    const fragment = document.createDocumentFragment();
-    const tempDiv = document.createElement('div');
-    const origChat = activeView.dom.chat;
-    activeView.dom.chat = tempDiv;
-    restoreFromBackendHistory(msg.messages, { scrollToBottom: false });
-    activeView.dom.chat = origChat;
-    // Move rendered children to fragment, skip animation on prepended rows
-    while (tempDiv.firstChild) {
-      const child = tempDiv.firstChild;
-      if (child.classList && child.classList.contains('row')) {
-        child.classList.add('prepend-skip-anim');
-      }
-      fragment.appendChild(child);
-    }
-    chat.prepend(fragment);
-    // Restore scroll position so user stays at the same message
-    const newScrollHeight = chat.scrollHeight;
-    chat.scrollTop = prevScrollTop + (newScrollHeight - prevScrollHeight);
-    view.pagination.offset = msg.offset;
-    view.pagination.hasMore = msg.hasMore;
-    if (!view.pagination.hasMore) showHistoryEnd();
+    // The anchor is captured at prepend time, after any intervening user gesture.
+    // 进场落底武装窗（2026-11-02 手机端进场落顶修复批）：**回看补页腿撤窗**——
+    // 本腿以 `chat.prepend + scrollTop += 增量` 相对补偿把读者钉在原来读的那一行，
+    // 而武装窗的每帧钉底会把这笔补偿直接抹掉（把回看的人拽回底部）。撤窗放在
+    // 补页腿入口（不是 onBuilt 里）：构建切片期间窗口的任何一帧都不该再钉底。
+    // 撤窗是幂等的，窗口本就没武装时是空操作。
+    cancelSettleBottom(chat);
+    // 陈页守卫：会话切换/重连初载会 `resetPagination()` **整替** pagination
+    // 对象（chatView.js:175 / sidebar.js:2194）——守卫用对象**身份**比对
+    // （数值比对在「新会话初载恰回同 offset」的窄竞态下会漏判）。
+    const paginationAtStart = view.pagination;
+    mountHistoryPageChunked(msg.messages, { scrollAnchor: chat }, {
+      onBuilt: (container) => {
+        // 中途被整替（resetPagination 换对象）⇒ 本页作废（行未挂载，整页弃置；
+        // 已挂载行只会随 wipe 一起被清）。
+        if (view.pagination !== paginationAtStart) return false;
+        const fragment = document.createDocumentFragment();
+        while (container.firstChild) {
+          const child = container.firstChild;
+          if (child.classList && child.classList.contains('row')) {
+            child.classList.add('prepend-skip-anim');
+          }
+          fragment.appendChild(child);
+        }
+        const anchor = captureHistoryAnchor(chat);
+        const previousOverflowAnchor = chat.style.overflowAnchor;
+        chat.style.overflowAnchor = 'none';
+        chat.prepend(fragment);
+        restoreHistoryAnchor(anchor);
+        chat.style.overflowAnchor = previousOverflowAnchor;
+        view.pagination.offset = msg.offset;
+        view.pagination.hasMore = msg.hasMore;
+        if (!view.pagination.hasMore) showHistoryEnd();
+        return true;
+      },
+      onDone: () => {
+        view.pagination.loading = false;
+        hideHistoryLoader();
+        // 停在顶部续拉：用户已滚到顶且还有更旧页 ⇒ 不等下一次滚动手势，直接
+        // 预取下一页（单飞闸在握；hasMore 收口 / 非本会话时不续）。
+        if (chat.scrollTop < 100 && view.pagination.hasMore && !view.pagination.loading &&
+            state.activeSessionId === msg.sessionId && view.pagination.offset > 0) {
+          view.pagination.loading = true;
+          sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: view.pagination.offset });
+        }
+      },
+    }).catch(() => {
+      // 构建异常：放闸 + 收指示器，绝不楔死分页（与迟到帧同款落点）。
+      view.pagination.loading = false;
+      hideHistoryLoader();
+    });
   }
 });
 
-// --- Multi-agent events ---
-// Background sub-agent activity shows a header indicator (like Bash background tasks).
-// No tool cards or text rendered in the chat — the parent's Delegate tool
-// card (spinner → result) is the only chat-level feedback.
-// Click the indicator to see a dropdown with per-agent status.
-
-function updateBgAgentIndicator(targetSid) {
-  // Update the indicator of the view that DISPLAYS the session owning these
-  // sub-agents — not blindly activeView. Sub-agent events are routed through
-  // the popup's ChatView (activeView temporarily points there; popup views
-  // have no indicator element), which previously left the primary badge stale
-  // while the dropdown re-rendered from live data on click — showing e.g.
-  // count=2 on the badge but 3 rows inside (a stuck sub-agent that emits no
-  // further events never triggered another badge refresh).
-  const view = targetSid ? findViewBySessionId(targetSid) : activeView;
-  if (!view) return;
-  const el = view.dom.bgagentIndicatorEl;
-  if (!el) return;
-  const sid = view.sessionId;
-  const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
-  const count = Object.keys(bgAgents).length;
-  if (count > 0) {
-    el.classList.remove('hidden');
-    el.querySelector('.bgagent-count').textContent = count;
-  } else {
-    el.classList.add('hidden');
-    el.setAttribute('aria-expanded', 'false');
-    const dropdown = view.dom.bgagentDropdownEl;
-    if (dropdown) dropdown.classList.add('hidden');
-  }
-  if (view === activeView) renderBgAgentDropdown();
-}
 state.updateBgAgentIndicator = updateBgAgentIndicator;
 
-// ── Sub-agents panel (2026-08-25 spec, frozen @142535e9) ─────────────
-// Row = [status dot + label][kind chip][name · task][uptime][retries ×N]
-//       + secondary lines: stuck alert label / current tool subtitle.
-// User rulings locked in the spec: barrier hidden, retries only when >0,
-// NO kind grouping (chip instead), NO inline stuck buttons (operations
-// live in the agent popup — A13).
-
-/** Derive the AgentKind from the session-id prefix when the snapshot kind is
- *  absent (live agentStart carries no kind field). */
-function bgAgentKindFromSession(sessionId) {
-  const raw = sessionId || '';
-  if (raw.startsWith('team-')) return 'Team';
-  if (raw.startsWith('delegate-')) return 'Delegate';
-  if (raw.startsWith('subtask-')) return 'SubTask';
-  if (raw.startsWith('dag-')) return 'Flow';
-  if (raw.startsWith('ephemeral-')) return 'Ephemeral';
-  // #28 可观测接线: Project 节点/分发器后端注册为 AgentKind.Flow → 面板 kind
-  // 徽章显示 Flow（与快照 kind 一致）。
-  if (raw.startsWith('node-')) return 'Flow';
-  if (raw.startsWith('dispatcher-')) return 'Flow';
-  return '';
-}
-
-/** Background-task bucket keying (2026-09-05 fix): every backend
- *  backgroundTaskUpdate envelope now carries rootSessionId (ToolContext.rootSessionId,
- *  falling back to the executor's own sessionId), and the BgTaskRegistry snapshot
- *  (activeBgTasks) is grouped by the same key — the frontend keys directly on it.
- *  The old heuristic reverse-lookup (bgTaskRootFor, added 2026-08-25) walked
- *  state.sessionBgAgents to map delegate-/subtask- sessions back to their root,
- *  but silently mis-keyed whenever that mapping was absent (host restart, page
- *  refresh, agent already finished) — tasks landed in orphan buckets and the
- *  owning window's badge went stale (count>0 with an empty dropdown). Deleted:
- *  the authoritative key makes the heuristic both unnecessary and harmful.
- *  Defensive fallback for envelopes lacking rootSessionId (old backend /
- *  REST-invoked tools): key on msg.sessionId as-is. */
-
-/** Row state machine (spec §3): done > stuck > frozen > error > idle > active. */
-function bgRowState(info) {
-  if (info.done) return 'done';
-  if (info.stuck) return 'stuck';
-  if (info.frozen) return 'frozen';
-  if (isFailedSnapshotStatus(info.status)) return 'error';
-  const st = info.status || '';
-  if (st === 'Idle' || st === 'WaitingForUser' || st === 'idle') return 'idle';
-  return 'active';
-}
-
-// Uptime tick: while the dropdown is open, refresh .bg-task-uptime text in
-// place every 15s (no full re-render — keeps keyboard focus). Self-terminates
-// once the dropdown hides, regardless of which close path ran.
-let bgUptimeTick = null;
-function armBgUptimeTick(view) {
-  if (bgUptimeTick) clearTimeout(bgUptimeTick);
-  bgUptimeTick = setTimeout(() => {
-    bgUptimeTick = null;
-    const dd = view && view.dom.bgagentDropdownEl;
-    if (dd && !dd.classList.contains('hidden')) {
-      dd.querySelectorAll('.bg-task-uptime[data-started-at]').forEach(el => {
-        const started = Number(el.getAttribute('data-started-at'));
-        if (started > 0) el.textContent = fmtUptime(Date.now() - started);
-      });
-      armBgUptimeTick(view);
-    }
-  }, 15000);
-}
-
-function renderBgAgentDropdown() {
-  if (!activeView) return;
-  const dropdownEl = activeView.dom.bgagentDropdownEl;
-  const listEl = activeView.dom.bgagentDropdownListEl;
-  if (!listEl) return;
-  const sid = activeView?.sessionId;
-  const bgAgents = (sid && state.sessionBgAgents[sid]) || {};
-  const entries = Object.entries(bgAgents);
-  // Panel header carries the live count (aria-live polite, spec §5).
-  const headerEl = dropdownEl ? dropdownEl.querySelector('.bg-dropdown-header') : null;
-  if (headerEl) headerEl.textContent = t('subagents.header', { count: entries.length });
-  if (entries.length === 0) {
-    // Empty state (spec §6): restrained i18n line, never fake rows.
-    listEl.innerHTML = '<div class="bg-dropdown-empty">' + escapeHtml(t('subagents.empty')) + '</div>';
-    return;
-  }
-  listEl.innerHTML = entries.map(([id, info]) => {
-    const rowState = bgRowState(info);
-    const terminal = rowState === 'done' || rowState === 'error';
-    const statusLabel = t('subagents.status.' + (rowState === 'active' ? 'running' : rowState));
-    const dotClass = {
-      active: 'bg-status-active', idle: 'bg-status-idle', stuck: 'bg-status-stuck',
-      error: 'bg-status-error', frozen: 'bg-status-frozen', done: 'bg-status-done',
-    }[rowState];
-    const kind = info.kind || bgAgentKindFromSession(info.sessionId || id);
-    const kindPart = kind ? '<span class="bg-task-kind">' + escapeHtml(kind) + '</span>' : '';
-    // Project attribution (2026-09-06 author ruling): Flow rows carry the
-    // owning project's name next to the kind chip — muted plain text,
-    // visually subordinate to the chip, never competing with the node name.
-    // Absent (Root/direct delegates) → no badge at all.
-    const projectPart = info.project
-      ? '<span class="bg-task-project" title="' + escapeHtml(info.project) + '">' + escapeHtml(info.project) + '</span>'
-      : '';
-    const displayName = info.name || id;
-    const taskText = info.task ? displayName + ' · ' + info.task : displayName;
-    const namePart = '<span class="bg-task-name" title="' + escapeHtml(taskText) + '">' + escapeHtml(taskText) + '</span>';
-    // Uptime (spec §2.2): relative duration while non-terminal; hidden once done.
-    const uptimePart = (!terminal && info.startedAt)
-      ? '<span class="bg-task-uptime" data-started-at="' + info.startedAt + '">' + escapeHtml(fmtUptime(Date.now() - info.startedAt)) + '</span>'
-      : '';
-    // Retries chip: only when >0 (0 is noise — user ruling ②).
-    const retries = info.retryCount || 0;
-    const retriesPart = retries > 0
-      ? '<span class="bg-task-retries" title="' + escapeHtml(t('manage.retry')) + ' ×' + retries + '">×' + retries + '</span>'
-      : '';
-    // Stuck: restrained red label with idle seconds (manage-panel semantics).
-    // NO inline cancel/restart buttons — operations live in the agent popup (A13).
-    // Hard-recovery P7 (2026-09-07): the label mirrors the REAL action the
-    // backend performed (halt / hard-abort / restart / failed) — "auto-
-    // restarting" only ever shows when an actual restart was triggered.
-    const stuckPart = (rowState === 'stuck' && info.stuck)
-      ? '<span class="bg-task-stuck" role="alert">' + escapeHtml(
-          info.stuck.action === 'restart'
-            ? t('manage.stuckAutoRestart')
-            : info.stuck.action === 'hard-abort'
-              ? t('manage.stuckHardAbort')
-              : info.stuck.action === 'failed'
-                ? t('manage.stuckFailed')
-                : t('manage.stuck', { secs: info.stuck.idleSecs ?? '' })
-        ) + '</span>'
-      : '';
-    const toolLabel = info.currentTool || '';
-    const toolPart = (toolLabel && !terminal)
-      ? '<span class="bgagent-tool" title="' + escapeHtml(toolLabel) + '">↳ ' + escapeHtml(toolLabel) + '</span>'
-      : '';
-    // The sub-agent's OWN session id — agentStart carries it as
-    // msg.nodeSessionId (delegate-*/subtask-*/team-<sid>/dag-*). Every row
-    // is clickable; the click handler strips the team- prefix and routes
-    // dag-*/bare sids to the flow popup (same view the Flow panel uses).
-    const sessionId = info.sessionId || (isBgAgentId(id) ? id : '');
-    const clickAttr = sessionId
-      ? `data-bg-key="${escapeHtml(id)}" data-node-session-id="${escapeHtml(sessionId)}"`
-      : '';
-    return '<div class="bg-task-row' + (rowState === 'done' ? ' done' : '') + '" role="listitem" tabindex="0" ' + clickAttr + '>' +
-      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
-      '<div class="bg-task-info">' +
-        // Meta slots (state / kind / uptime) on the FIRST line — fixed set,
-        // never wraps the name (user ruling 21: agent name is ALWAYS the
-        // second line, visually separated from the labels).
-        '<div class="bg-task-line bg-task-meta">' +
-          '<span class="bg-task-state bg-state-' + rowState + '">' + escapeHtml(statusLabel) + '</span>' +
-          kindPart + projectPart + retriesPart + uptimePart +
-        '</div>' +
-        '<div class="bg-task-line bg-task-name-line">' + namePart + '</div>' +
-        stuckPart + toolPart +
-      '</div>' +
-    '</div>';
-  }).join('');
-
-  // Wire click handlers for sub-agent rows
-  listEl.querySelectorAll('[data-node-session-id]').forEach(row => {
-    row.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const rawSessionId = row.getAttribute('data-node-session-id');
-      const info = bgAgents[row.getAttribute('data-bg-key')];
-      if (info && rawSessionId) {
-        // Capture the dropdown BEFORE opening the popup — openStepPopup
-        // switches activeView to the popup view whose fakeDom has no dropdown.
-        const dropdown = activeView.dom.bgagentDropdownEl;
-        // team-<sid> wraps the agent's bare session id (its ui.json key) —
-        // strip it, matching how the retired Team panel used to open these
-        // popups; live team-agent events keep flowing into the same view.
-        const sessionId = rawSessionId.replace(/^team-/, '');
-        if (isBgAgentId(rawSessionId)) {
-          // delegate-*/subtask-* → bg-agent popup (ephemeral sessions,
-          // live-rendered; history only persists at completion).
-          openBgAgentPopup(rawSessionId, info.name, info.task);
-        } else {
-          // dag-*/bare sid → flow popup — the SAME entry the Flow/Team panel
-          // uses, so live events flow into one shared view instead of
-          // building a duplicate hidden view per popup module.
-          openFlowStepPopup(row.getAttribute('data-bg-key'), info.name, info.name, '', sessionId);
-        }
-        // Close the dropdown
-        if (dropdown) dropdown.classList.add('hidden');
-      }
-    });
-  });
-
-  // Keyboard (spec §7 / APG listbox): Enter/Space opens the row's popup,
-  // ArrowUp/ArrowDown move between rows. Property assignment — idempotent
-  // across re-renders (no listener accumulation).
-  listEl.onkeydown = (e) => {
-    const row = e.target && e.target.closest ? e.target.closest('.bg-task-row') : null;
-    if (!row) return;
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      row.click();
-    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault();
-      const rows = [...listEl.querySelectorAll('.bg-task-row')];
-      const i = rows.indexOf(row);
-      const next = rows[e.key === 'ArrowDown' ? i + 1 : i - 1];
-      if (next) next.focus();
-    }
-  };
-}
-
 // Toggle dropdown on indicator click — register for ALL views
+// 后台合并批（2026-10-23 ⑥）：bgagent 键与 bg 键开**同一个**后台面板
+// （#bg-dropdown，含「智能体」分节 —— bgMergedPanel.js 收编）；
+// 旧幽灵面 #bgagent-dropdown 恒 display:none，不再被解隐。
 Object.values(chatViews).forEach(v => {
   const indicator = v.dom.bgagentIndicatorEl;
-  const dropdown = v.dom.bgagentDropdownEl;
+  const dropdown = v.dom.bgDropdownEl;
   if (!indicator || !dropdown) return;
   const toggle = (e) => {
     e.stopPropagation();
     setActiveView(v);
     const opening = dropdown.classList.contains('hidden');
     if (opening) {
-      renderBgAgentDropdown();
+      fetchActiveAgentsOnOpen();
+      // 面板拆分批（2026-10-31 ④ · 作者追加令）：桌面端两键各开单族视图——本键
+      // （智能体键）只显智能体节；手机端（mobile-layer）维持合并单面板不变，视图
+      // 类由 CSS（body:not(.mobile-layer) 闸）兜住不生效。
+      if (!document.body.classList.contains('mobile-layer')) {
+        dropdown.classList.remove('bg-view-tasks');
+        dropdown.classList.add('bg-view-agents');
+      }
       dropdown.classList.remove('hidden');
+      renderBgAgentDropdown();
       armBgUptimeTick(v);
     } else {
       dropdown.classList.add('hidden');
@@ -2096,38 +2367,48 @@ onMessage('agentStart', (msg, view) => {
     // msg.sessionId on delegate/subtask events is the PARENT session (injected
     // by routeWsSend), so using it here loaded the host's history (串台).
     sessionId: msg.nodeSessionId || '',
+    // 面板树批（2026-10-29 ①）：父会话归属（agentStart 入口帧注入——delegate/
+    // subtask/subagent/dag 各 spawn 路由单点；快照 face 同键）。前端派生树据此
+    // 把子行缩进挂到父 delegate 组头下；跨 turn 与 kind/startedAt 同款保留。
+    parentSessionId: msg.parentSessionId || (prev && prev.parentSessionId) || '',
+    // 面板命名批（2026-10-31 ②）：批次短名（live 帧 routeWsSend 注入；快照面
+    // activeAgentEntryJson 同键）——跨 turn 保留同款合并语义。
+    delegateName: msg.delegateName || (prev && prev.delegateName) || '',
+    // name/address 批（2026-11-05）：续传地址（live 帧 routeWsSend 注入；快照面
+    // activeAgentEntryJson 同键）——跨 turn 保留同款合并语义。
+    mailAddress: msg.mailAddress || (prev && prev.mailAddress) || '',
     kind: (prev && prev.kind) || bgAgentKindFromSession(msg.nodeSessionId || ''),
     // Project attribution badge: live frames carry it only on agentStart
     // (routeSubagentWsSend injects it for node-*/dispatcher-* sessions);
     // non-project frames have no field — carry over from the previous entry
     // (same cross-turn preservation as kind/startedAt/retryCount).
     project: msg.project || (prev && prev.project) || '',
-    startedAt: (prev && prev.startedAt) || Date.now(),
-    status: 'Processing',
-    retryCount: (prev && prev.retryCount) || 0,
-    stuck: null,
-    frozen: false,
-    currentTool: null,
-    done: false,
-  };
+    // Task attribution badge (2026-09-27 taskbadge batch): live frames carry
+    // taskId/taskTitle only on agentStart (routeSubagentWsSend injects them for
+    // Project-domain sessions); absent → carry over from the previous entry.
+    // Empty = no attribution → no badge rendered (empty-value contract).
+    taskId: msg.taskId || (prev && prev.taskId) || '',
+    taskTitle: msg.taskTitle || (prev && prev.taskTitle) || '',
+      startedAt: (prev && prev.startedAt) || Date.now(),
+      status: 'Processing',
+      retryCount: (prev && prev.retryCount) || 0,
+      stuck: null,
+      frozen: false,
+      currentTool: null,
+      done: false,
+      // #752 空闲细分（快照恢复字段跨 turn 保留——与 kind/startedAt/retryCount
+      // 同款「实时行更丰富不降级」合并语义；下一拍快照到达后以快照为准刷新）。
+      bgWaiting: (prev && prev.bgWaiting) || [],
+      heldReceipts: (prev && prev.heldReceipts) || 0,
+      unreadReceipts: (prev && prev.unreadReceipts) || 0,
+      outstandingSubagents: (prev && prev.outstandingSubagents) || 0,
+      lastActivityMs: (prev && prev.lastActivityMs) || 0,
+    };
   // Always refresh the badge of the view displaying the OWNING session (sid),
   // regardless of which view this event was routed through (popup views have
   // no indicator; activeView-based updates silently no-op'd).
   updateBgAgentIndicator(sid);
 });
-
-// Sub-agents panel (2026-08-25): any activity on a stuck entry clears the
-// stuck flag — the row falls back to its live state on the next render.
-function clearBgStuck(msg) {
-  const sid = msg.rootSessionId || msg.sessionId;
-  const aid = msg.agentId;
-  if (!sid || !aid) return;
-  const entry = state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid];
-  if (entry && entry.stuck) {
-    entry.stuck = null;
-    updateBgAgentIndicator(sid);
-  }
-}
 
 onMessage('agentTextDelta', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
 onMessage('agentToolCallDetected', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
@@ -2140,6 +2421,9 @@ onMessage('agentToolStart', (msg, view) => {
   const aid = msg.agentId || (view && view.stream.activeAgentId);
   if (aid && state.sessionBgAgents[sid] && state.sessionBgAgents[sid][aid]) {
     state.sessionBgAgents[sid][aid].currentTool = msg.label;
+    // 实时活动 = 「本行仍在跑」的见证（合并规则 ③ 的陈旧判据）：工具活动关闭
+    // 陈旧窗 —— 只有「连续未命中且其间零活动」的行才可能被淘汰。
+    state.sessionBgAgents[sid][aid]._missSince = null;
     if (view) renderBgAgentDropdown();
   }
 });
@@ -2149,8 +2433,16 @@ onMessage('agentToolEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); })
 // 事件段）由后端每 30s 推送心跳重置 busy timer，前端 630s 纯静默超时不再误杀
 // 正在干活的 turn。agentToolHeartbeat（子代理原事件）与 toolHeartbeat（主会话
 // /转换后）都重置对应会话计时器（与 agentToolEnd 既有重置面一致）。
-onMessage('toolHeartbeat', (msg, view) => { resetStreamTimeout(msg.sessionId); });
-onMessage('agentToolHeartbeat', (msg, view) => { resetStreamTimeout(msg.rootSessionId || msg.sessionId); });
+onMessage('toolHeartbeat', (msg, view) => {
+  resetStreamTimeout(msg.sessionId);
+  // busy-stuck-fix：工具执行期心跳 = 本会话 turn 事实上活着——记入本会话流活动，
+  // 防 turn-start 确认网在长工具调用（无 delta 窗口）期间误判幻影。
+  stampSessionStreamActivity(msg.sessionId || msg.rootSessionId);
+});
+onMessage('agentToolHeartbeat', (msg, view) => {
+  resetStreamTimeout(msg.rootSessionId || msg.sessionId);
+  stampSessionStreamActivity(msg.rootSessionId || msg.sessionId);
+});
 onMessage('agentEnd', (msg, view) => { resetStreamTimeout(msg.sessionId); });
 
 onMessage('agentThinking', (msg, view) => { resetStreamTimeout(msg.sessionId); clearBgStuck(msg); });
@@ -2175,8 +2467,267 @@ onMessage('taskStuck', (msg) => {
   }
 });
 
+// ── Held-receipt 投递可靠性批（2026-10-21 · fix 3 可见化；2026-10-29 过程态摘除）──
+// WS `heldReceipts` 帧（发射面：actor 的 hold/drain/flush 点 + HeldDeliveryWatchdog
+// unread 广播）：{sessionId(持有积压的父会话), held, unread}。前端两件事：
+//   ① state.sessionHeldReceipts[sessionId] 记账（held=被屏障扣留的已产出回执数，
+//      unread=催注穷尽的未读终态数；两零 = 清除条目）；
+//   ② 头部胶囊 #held-receipts-indicator 按**当前活跃会话**的**终态**渲染 —
+//      2026-10-29 作者令（「这个警告我不是让隐藏吗？」同判扩散，过程态零用户面）：
+//      held 是过程态（屏障在回合边界自动 drain，用户无杠杆）⇒ **零显示**（引擎
+//      日志/帧面可查即可）；只有 unread（催注穷尽 = 补投也丢了）作为终态失败
+//      提示保留。归零即隐。seal: UserFaceProcessStateSealSpec。
+// 会话切换不重发帧：监听 nebflow-session-change（sidebar.js 派发）重渲胶囊。
+function renderHeldReceiptsCapsule() {
+  const el = document.getElementById('held-receipts-indicator');
+  if (!el) return;
+  const sid = state.activeSessionId;
+  const rec = (sid && state.sessionHeldReceipts && state.sessionHeldReceipts[sid]) || null;
+  const total = rec ? (rec.unread || 0) : 0;
+  el.classList.toggle('hidden', total === 0);
+  const count = el.querySelector('.pa-count');
+  if (count) count.textContent = total > 9 ? '9+' : String(total);
+  el.title = total > 0
+    ? t('heldReceipts.unread', { n: total })
+    : t('heldReceipts.title');
+}
+window.addEventListener('nebflow-session-change', renderHeldReceiptsCapsule);
+// ask-badge 批（2026-10-28「黄色问题胶囊无问题仍显示计数」排查面③）：held 计数
+// 的**权威重同步**入口 —— 服务端 `getHeldReceipts` 直回既有 `heldReceipts` 帧型
+// （幂等置位 + 重渲，零新消费点）。失步形态与 #1019 忙碌态同源：held/unread 只由
+// hold/drain/flush 实时帧驱动，断连丢帧 / 半开窗 / 跨会话切换后本地计数再无对账
+// 路，徽标对早已收口的积压常显。两路索取：WS 重连（帧流被切断的权威事件）+
+// 会话切换（胶囊按活跃会话渲染，切回即对账该会话的权威计数）。
+function fetchHeldReceiptsSnapshot() {
+  const sid = state.activeSessionId;
+  if (sid) sendWs({ type: 'getHeldReceipts', sessionId: sid });
+}
+onReconnect(fetchHeldReceiptsSnapshot);
+window.addEventListener('nebflow-session-change', fetchHeldReceiptsSnapshot);
+onMessage('heldReceipts', (msg) => {
+  const sid = msg.sessionId || '';
+  if (!sid) return;
+  const held = msg.held || 0;
+  const unread = msg.unread || 0;
+  state.sessionHeldReceipts = state.sessionHeldReceipts || {};
+  if (held <= 0 && unread <= 0) delete state.sessionHeldReceipts[sid];
+  else state.sessionHeldReceipts[sid] = { held, unread };
+  renderHeldReceiptsCapsule();
+  // 认知二期产品批②：未读回执（催注穷尽 = 需要作者行动的终态）计入可行动徽标。
+  notifyActionableChanged();
+});
+// 可行动判据（P6）提供者注册：未读回执总数（跨会话求和；held 为过程态零显示，
+// 同胶囊语义）。
+registerActionableProvider(() =>
+  Object.values(state.sessionHeldReceipts || {})
+    .reduce((s, r) => s + ((r && r.unread) || 0), 0));
+// ── P0 面板投影批（设计稿 20261030_background-task-lifecycle §3.2/§3.4）──────
+// WS `bgHealth` 徽标帧（发射面 = BgTaskRegistry.syncHealthBadge，heldReceipts
+// 同款计数对账广播）：{type:'bgHealth', unread, suspect, escalated}——全表健康
+// 计数（无 sessionId）。P0 消费 = 计数记账（state.bgHealthCounts，数据面供后续
+// 徽标渲染/排查）；可见健康色由面板行从快照 bgWaiting[].health / activeBgTasks
+// [].health 直渲（行级同源），本帧不驱动行重渲——P1 reconciler 上线后行健康
+// 变化经快照回填（uptick 30s）落地，计数帧在此留权威对账面。
+onMessage('bgHealth', (msg) => {
+  state.bgHealthCounts = {
+    unread: Number(msg.unread) || 0,
+    suspect: Number(msg.suspect) || 0,
+    escalated: Number(msg.escalated) || 0,
+  };
+});
+// delegateWaiting（平台修复批 fix 4）：delegate ready-to-merge 停靠——快照/面板
+// 由 activeAgents status:"Waiting" 承载；本帧仅作 Sub-Agents 行的实时态提示（行
+// 仍在则置 waiting 标记并刷新指示器）。
+onMessage('delegateWaiting', (msg) => {
+  const bare = (msg.sessionId || '').replace(/^team-/, '');
+  if (!bare) return;
+  for (const [rootSid, agents] of Object.entries(state.sessionBgAgents)) {
+    for (const info of Object.values(agents)) {
+      const entrySid = (info.sessionId || '').replace(/^team-/, '');
+      if (entrySid !== bare) continue;
+      // 案A 待命批 2026-10-31（状态矩阵批收编）：mode 扩 standby（待命≠候合并）；
+      // detail = 申报的「在等什么」（徽标 tooltip）。mode 缺席缺省 'merge'（旧帧兼容）。
+      info.waiting = { mode: msg.mode || 'standby', detail: msg.detail || '', roundComplete: !!msg.roundComplete };
+      updateBgAgentIndicator(rootSid);
+    }
+  }
+});
+
+// ═══ 错误冻结批（2026-11-01）：delegate 错误冻结态的前端面 ═══════════════════
+// backend `delegateFrozen` 帧（BackoffSupervisor.freezeAndHold）→ 面板行置冻结标记。
+// 与 agentFrozen（时间表/错误族冻结，sapphire/琥珀点）显式区分：本族是**错误冻结**
+// = 就地停住等唤醒（可唤醒续做，不是失败也不是「待命」）。字段隔离：frozen/
+// frozenSince/frozenReason/wakeAddress（不与 freezeReason 混用——后者是
+// error-recovery 归因色的输入）。
+function applyDelegateFrozen(rootSid, sid, patch) {
+  if (!sid) return false;
+  let touched = false;
+  for (const agents of Object.values(state.sessionBgAgents)) {
+    for (const info of Object.values(agents || {})) {
+      const entrySid = (info && info.sessionId || '').replace(/^team-/, '');
+      if (entrySid !== sid) continue;
+      Object.assign(info, patch);
+      touched = true;
+    }
+  }
+  const view = rootSid ? findViewBySessionId(rootSid) : null;
+  if (view) renderBgAgentDropdown && renderBgAgentDropdown();
+  return touched;
+}
+
+onMessage('delegateFrozen', (msg) => {
+  const sid = String(msg.sessionId || msg.agentId || '').replace(/^team-/, '');
+  if (!sid) return;
+  // 冻结状态两套真相批（2026-11-05）：帧若带权威块（`freeze`），分类/可唤醒性
+  // 一律由它定（不再从线值二次猜测）；缺块 = 旧后端，走既有扁平字段。
+  if (msg.freeze) {
+    for (const agents of Object.values(state.sessionBgAgents)) {
+      for (const info of Object.values(agents || {})) {
+        if (((info && info.sessionId) || '').replace(/^team-/, '') !== sid) continue;
+        mergeFreeze(info, msg.freeze);
+      }
+    }
+  }
+  applyDelegateFrozen(msg.rootSessionId, sid, {
+    frozen: true,
+    frozenSince: msg.frozenSince || Date.now(),
+    frozenReason: msg.frozenReason || '',
+    frozenReasonLabel: msg.frozenReasonLabel || '',
+    frozenDetail: msg.frozenDetail || '',
+    wakeAddress: msg.wakeAddress || ('delegate:' + sid),
+  });
+  // 同一行上残留的 waiting（候合并/待命）语义被冻结覆盖——冻结是更硬的停态。
+  for (const agents of Object.values(state.sessionBgAgents)) {
+    for (const info of Object.values(agents || {})) {
+      if ((info && info.sessionId || '').replace(/^team-/, '') === sid) info.waiting = undefined;
+    }
+  }
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
+// 长期无人唤醒提示（dormantSweep，缺省冻结满 24h 起）：行上追加「长期冻结」警示
+// ——与 delegateFrozen 同字段面，只多一个 dormantHours 读数（tooltip 用）。
+onMessage('delegateFrozenDormant', (msg) => {
+  const sid = String(msg.sessionId || '').replace(/^team-/, '');
+  if (!sid) return;
+  applyDelegateFrozen(msg.rootSessionId, sid, {
+    frozen: true,
+    frozenSince: msg.frozenSince || null,
+    frozenReason: msg.frozenReason || '',
+    dormantHours: Number(msg.ageHours) || 0,
+    wakeAddress: msg.wakeAddress || ('delegate:' + sid),
+  });
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
+// 会话被唤醒的状态变更帧（冻结状态两套真相批 2026-11-05）：**任何腿**（面板唤醒 /
+// Mail 唤醒 / 自动恢复 / 同 id 复活）清掉冻结后都由后端推这一帧——面板据此把
+// 「需唤醒」即时收起。旧版 Mail 唤醒腿不发帧，面板于是永远停在旧值（本轮报障）。
+onMessage('delegateWoken', (msg) => {
+  const sid = String(msg.sessionId || '').replace(/^team-/, '');
+  if (!sid) return;
+  let touched = false;
+  for (const agents of Object.values(state.sessionBgAgents)) {
+    for (const info of Object.values(agents || {})) {
+      if (((info && info.sessionId) || '').replace(/^team-/, '') !== sid) continue;
+      // 权威块（含 frozen=false）优先；旧后端帧缺块 ⇒ 按「已唤醒」直接清扁平字段。
+      if (msg.freeze) {
+        mergeFreeze(info, msg.freeze);
+      } else {
+        Object.assign(info, {
+          frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0,
+          freezeKind: '', needsHuman: false, freezeReasonWire: '', delegateFrozen: false, wakeAddress: '',
+        });
+      }
+      if (msg.status) info.status = msg.status;
+      info.waiting = undefined;
+      touched = true;
+    }
+  }
+  if (touched) renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
+// 面板「唤醒」动作回执（delegateWakeResult）：成功 ⇒ 撤掉冻结标记（同一会话续跑，
+// 行回到普通进行中）；失败 ⇒ 保留冻结标记并抛出可见告警（绝不静默）。
+// 冻结态误报批（2026-11-05）：回执三态分明——`mode=live|revived|restart` 是真的动了
+// 会话（撤标记）；`ok=false` 一律保留标记 + 弹出后端的原话（含 mode：自动恢复族会
+// 明确说「不需要唤醒，原因 X 到期自己续跑」）——失败绝不伪装成已恢复。
+onMessage('delegateWakeResult', (msg) => {
+  const sid = String(msg.sessionId || '').replace(/^team-/, '');
+  if (!sid) return;
+  const ok = !!msg.ok;
+  // 冻结状态两套真相批（2026-11-05 10:42 报障的正脸）：回执里带 `freeze` 块时，
+  // **以块为准**——面板若显示「需唤醒」而服务端说「已不是冻结态」，这一帧就把面板
+  // 纠正过来（收起按钮 → 显示运行中），而不是让用户对着一句 `frozenReason=none`
+  // 发愣。旧后端无块 ⇒ 保留既有语义（ok 才撤标记）。
+  if (msg.freeze) {
+    let touched = false;
+    for (const agents of Object.values(state.sessionBgAgents)) {
+      for (const info of Object.values(agents || {})) {
+        if (((info && info.sessionId) || '').replace(/^team-/, '') !== sid) continue;
+        // 唤醒成功 ⇒ 直接用服务端块（非冻结）；失败 ⇒ 也用它（可能是"仍然冻结"，
+        // 那正是要保留的真相）。
+        if (mergeFreeze(info, msg.freeze)) touched = true;
+        if (ok && msg.actualStatus) info.status = msg.actualStatus;
+      }
+    }
+    if (!touched) {
+      // 行不在本地面板（另一台设备/已刷新）也要落地：交给扁平通道兜底。
+      applyDelegateFrozen(null, sid, ok ? { frozen: false, frozenSince: null, frozenReason: '' } : {});
+    }
+  } else {
+    applyDelegateFrozen(null, sid, ok
+      ? {
+        frozen: false, frozenSince: null, frozenReason: '', frozenDetail: '', dormantHours: 0,
+        freezeKind: '', needsHuman: false, freezeReasonWire: '', freezeReason: null, freezeResumeAt: null,
+      }
+      : {});
+  }
+  if (!ok) {
+    console.warn('[delegateWake] failed for', sid, msg.mode || '', msg.error || '');
+    window.__showToast?.(msg.error || t('subagents.wakeFailed'), 'error');
+  }
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
+// 冻结通知策略批（2026-11-05 作者令两连）：**静默统计帧**（后端
+// `FreezeAlertSweep.digestTick` → `delegateFreezeDigest`）。被压掉的逐条冻结通知的唯一
+// 去处 = 面板头部读数（「N 条已冻结（可唤醒）」/「M 条冻结待你处理」）＋ 逐行徽标。
+// 零弹窗、零消息、零 toast：可恢复的冻结不该在消息流里出现。
+onMessage('delegateFreezeDigest', (msg) => {
+  state.freezeDigest = {
+    total: Number(msg.total) || 0,
+    recoverable: Number(msg.recoverable) || 0,
+    needsHuman: Number(msg.needsHuman) || 0,
+    windowMs: Number(msg.windowMs) || 0,
+    items: Array.isArray(msg.items) ? msg.items : [],
+    providerGroups: Array.isArray(msg.providerGroups) ? msg.providerGroups : [],
+  };
+  // 逐项读数回灌到对应行（自动续跑次数 / 次数用尽标记）——行 tooltip 要用。
+  for (const it of state.freezeDigest.items) {
+    const sid = String((it && it.sessionId) || '').replace(/^team-/, '');
+    if (!sid) continue;
+    applyDelegateFrozen(it.parentSessionId, sid, {
+      frozenDetail: it.detail || '',
+      autoResumes: Number(it.autoResumes) || 0,
+      autoResumesExhausted: !!it.autoResumesExhausted,
+    });
+  }
+  for (const view of Object.values(chatViews)) {
+    renderProviderFailureStatus(view, state.freezeDigest, (id) =>
+      import('./bgAgentPopup.js').then(m => m.openStepPopup(id)));
+  }
+  renderBgAgentDropdown && renderBgAgentDropdown();
+});
+
 onMessage('agentDone', (msg, view) => {
   resetStreamTimeout(msg.sessionId);
+  // composer-resync（2026-10-28）：agentDone 若直接携带会话 id（无 nodeSessionId
+  // 的子代理路由戳），就是该会话的轮终态，必须走与 done 同一条 clearBusyFor 收口。
+  // 子代理 agentDone 经 ws.js convertAgentEvent 转 done 已清子会话；父会话本身的
+  // busy 不得被携带 rootSessionId/sessionId 的子代理终态误清，故 nodeSessionId
+  // 在场时这里保持旧行为（只收面板行）。
+  if (msg.sessionId && !msg.nodeSessionId) clearBusyFor(msg);
   const sid = msg.rootSessionId || msg.sessionId || state.activeSessionId;
   if (!sid) return;
   const aid = msg.agentId || (view && view.stream.activeAgentId);
@@ -2229,9 +2780,10 @@ onMessage('agentDone', (msg, view) => {
 
 // --- Session switch → explorer / task list refresh ---
 window.addEventListener('nebflow-session-change', (e) => {
-  refreshExplorer(e.detail.sessionId);
-  refreshScheduledTasks(e.detail.sessionId);
-  if (e.detail.sessionId) sendWs({ type: 'getTaskList', sessionId: e.detail.sessionId });
+  const { sessionId } = /** @type {CustomEvent<{sessionId: string}>} */ (e).detail;
+  refreshExplorer(sessionId);
+  refreshScheduledTasks(sessionId);
+  if (sessionId) sendWs({ type: 'getTaskList', sessionId });
   // ⑩ the frozen input-bar visual follows the newly activated session.
   applyLocalFreeze();
 });
@@ -2256,10 +2808,15 @@ onMessage('compactStart', (msg, view) => {
   resetStreamTimeout(sid);
   setCompacting(sid, true);
   if (view) {
-    renderCompactStartCard(view);
-    // Persist the same system text as before — history restore renders it as
-    // a quiet notice card; the live status card is a live-view-only element.
-    saveMsg({ type: 'system', content: t('chat.compacting') }, sid);
+    // 作者令 2026-10-09 10:23 ①（compaction-pill-remove 批）：「压缩中」可见
+    // 指示已拆除——本帧不再起卡。帧本身保留：setCompacting 供输入闸
+    // （input.js isBusy）与排队闸（队列 drain）使用，saveMsg 供历史记录
+    // （重放腿按 restoreCompactCardRow 抑制起条目）。
+    // 作者令 2026-10-28 11:44（zero-trace 批）：完成卡已全面停渲染（唯一例外 =
+    // 0.95 硬守卫 emergency 卡，无 compactStart 帧不吃用时戳）⇒ compactStartTs
+    // 用时戳元数据随之拆除。缓存条目带 i18nKey：localStorage 重放腿与 ui.json
+    // 腿同判（restoreCompactCardRow 一点静默），不再漏成 notice 行。
+    saveMsg({ type: 'system', content: t('chat.compacting'), i18nKey: 'chat.compacting' }, sid);
   }
 });
 
@@ -2268,14 +2825,15 @@ onMessage('compactComplete', (msg, view) => {
   if (!sid) return;
   resetStreamTimeout(sid);
   setCompacting(sid, false);
-  // Compaction shrinks the live context — refresh the usage ring immediately
-  // instead of leaving the pre-compaction (near-threshold) value up until the
-  // next LLM round's usageUpdate. outputTokens is stale per-turn data, drop it.
+  // Compaction shrinks the live context — refresh the stored usage immediately
+  // (popup model badges / future consumers) instead of leaving the
+  // pre-compaction (near-threshold) value up until the next LLM round's
+  // usageUpdate. outputTokens is stale per-turn data, drop it.
+  // (The header usage ring display was retired 2026-10-23.)
   if (msg.after != null) {
     const prev = state.sessionModelInfo[sid] || {};
     state.sessionModelInfo[sid] = { ...prev, inputTokens: msg.after, outputTokens: undefined };
     try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-    updateHeaderModelInfo();
   }
   // Compaction completes outside the normal done chain — finish any
   // streaming agent bubbles so their cursors don't linger.
@@ -2285,16 +2843,33 @@ onMessage('compactComplete', (msg, view) => {
     view.stream.activeAgentId = null;
   }
   if (view) {
-    const detail = msg.reportPath ? ` (report: ${msg.reportPath.split('/').pop()})` : '';
-    const text = t('chat.compacted', { before: msg.before, after: msg.after, detail });
-    renderCompactDoneCard(view, { before: msg.before, after: msg.after, detail });
-    saveMsg({ type: 'system', content: text }, sid);
+    // 2026-09-15 作者令：压缩不再落 report ⇒ 帧内不再带 reportPath，
+    // 「report: xxx.md」尾巴随生成链一并删除（detail 保持空串，i18n 占位符不变）。
+    // 作者令 2026-10-28 11:44（zero-trace 批）：回落同步压缩完成卡**停渲染**——
+    // 帧与 ui.json 记录照常留账（审计可查），界面上不再出现「✓ 上下文已压缩」卡。
+    // 唯一可见例外 = 0.95 硬守卫 emergencyClean 真清上下文（数据有损）时的
+    // emergency 卡（安全阀，保留现状口径）。
+    const text = t('chat.compacted', { before: msg.before, after: msg.after, detail: '' });
+    delete view.compactStartTs; // 防陈旧用时戳串入后续 emergency 卡
+    if (msg.emergency) {
+      renderCompactDoneCard(view, { before: msg.before, after: msg.after, detail: '' });
+    }
+    // 缓存条目带 i18nKey + params（emergency 随行）——重放腿按 restoreCompactCardRow
+    // 一点静默/放行；WS 帧由后端 recording send 照常落 ui.json（数据面零削减）。
+    saveMsg({
+      type: 'system', content: text, i18nKey: 'chat.compacted',
+      params: { before: msg.before, after: msg.after, ...(msg.emergency ? { emergency: true } : {}) }
+    }, sid);
   }
   // Drain queued messages only if agent is NOT busy. During auto-compaction
   // with resume, the agent immediately starts a resume turn after compactComplete.
   // The 'done' event after the resume turn will drain correctly when idle.
+  // queue-one-per-turn（2026-10-24）：compactComplete = 压缩轮的**终态事实**（压缩轮
+  // 常态无 busy{true}/流帧新轮事实，done 亦可能在压缩窗内缺席）⇒ 落终态戳，投递未决闸
+  // （armQueueDrainTimer ③）对压缩轮形态照常放行（queue-idle-flush R1 语义保留）。
   if (sid && !state.busySessionIds.has(sid)) {
-    import('./input.js').then(({ drainMessageQueue }) => setTimeout(() => drainMessageQueue(sid), 50));
+    state.lastTerminalAt[sid] = Date.now();
+    scheduleQueueDrain(sid);
   }
 });
 
@@ -2310,19 +2885,25 @@ onMessage('compactFailed', (msg, view) => {
     view.stream.activeAgentId = null;
   }
   if (view) {
+    // 作者令 2026-10-28 11:44（zero-trace 批）：compactFailed 卡**停渲染**——
+    // 引擎已有退避+熔断+应急兜底，UI 不再重复报错；记录照常落盘（saveMsg，
+    // 数据面零削减）。熔断终局面（下方 renderError）同刀静默：回落路径零卡
+    // 零横幅，唯一可见例外仍是 0.95 硬守卫 emergency 卡。
     const text = t('chat.compactFailed', { attempt: msg.attempt, maxAttempts: msg.maxAttempts });
-    renderCompactFailCard(view, text);
-    saveMsg({ type: 'system', content: text }, sid);
+    // 缓存条目带 i18nKey + params：重放腿按 restoreCompactCardRow 一点静默
+    saveMsg({
+      type: 'system', content: text, i18nKey: 'chat.compactFailed',
+      params: { attempt: msg.attempt, maxAttempts: msg.maxAttempts }
+    }, sid);
   }
   if (msg.attempt >= msg.maxAttempts) {
-    if (view) {
-      renderError(t('chat.compactCircuitBreaker', { attempt: msg.attempt }));
-    }
+    // 熔断终局：仅做功能面收尾（busy 清位）——错误行渲染随 zero-trace 拆除
+    // （应急兜底 = 0.95 硬守卫会在真清上下文时给出唯一可见提示）。
     clearBusyFor(msg);
   } else {
     // Retry path — also drain queue in case user sent messages during compaction
     if (sid) {
-      import('./input.js').then(({ drainMessageQueue }) => setTimeout(() => drainMessageQueue(sid), 50));
+      scheduleQueueDrain(sid);
     }
   }
 });
@@ -2339,6 +2920,16 @@ onMessage('agentList', (msg, view) => {
   }
 });
 
+// --- identity-sync 批（2026-10-23）：智能体名称/头像跨机收敛落地广播 ────────
+// 引擎把另一台机器推来的身份状态 LWW 收敛落盘后，向本端面板推 agentIdentityChanged
+// ——立即重读（rootName 探针重跑 + agentsData 行刷新 + 会话头重绘），不等刷新/重启。
+onMessage('agentIdentityChanged', (msg) => {
+  reprobeRootName();
+  sendWs({ type: 'listAgents' });
+  try { window.dispatchEvent(new CustomEvent('nebflow-agent-identity-changed', { detail: { agent: msg && msg.agent } })); }
+  catch { /* 早于 window 就绪等：探针/agentsData 两腿已覆盖 */ }
+});
+
 onMessage('agentSessionList', (msg, view) => {
   // Unified list — accept all sessions regardless of which agent triggered the request
   const agentName = msg.agentName;
@@ -2350,14 +2941,14 @@ onMessage('agentSessionList', (msg, view) => {
   // Build sessionId -> agentName mapping
   sessions.forEach(s => { state.sessionAgentMap[s.id] = s.agentName || agentName; });
 
-  // Restore bypass state from persisted session metadata
-  state.bypassSessions = new Set(sessions.filter(s => s.safetyMode === 'auto-all').map(s => s.id));
+  // Safety mode mirror (global, permshield S1/F1) — no bypassSessions anymore.
   state.safetyModes = {};
   sessions.forEach(s => { if (s.safetyMode) state.safetyModes[s.id] = s.safetyMode; });
 
   // Render sidebar — active highlight shows the current active session
   renderSessionSidebar(sessions, state.activeSessionId);
-  initHeaderModelInfo();
+  // F-1: same second arrival path as `sessionList` above (agent-scoped list).
+  state.updateSafetyToggle?.();
 });
 
 // agentSystemPrompt / agentSystemPromptSaved WS handlers retired 2026-09-06
@@ -2372,9 +2963,13 @@ onMessage('serverConfig', (msg, view) => {
     state.serverThinking = msg.thinking;
     state.thinkingMode = msg.thinking;
   }
-  if (msg.tools) {
-    state.availableTools = msg.tools;
-  }
+  // Tool descriptions do NOT ride this frame (perf-481 A4): the server no longer
+  // attaches `tools` to `serverConfig`, so the old `if (msg.tools)` assignment
+  // here was a dead second writer next to the `toolsList` handler below. Removed
+  // rather than kept for compatibility — `msg.tools` can never be set by the
+  // shipped server, and a second writer face is exactly the drift source A4
+  // removed. The single writer is `onMessage('toolsList', ...)` (per-connection,
+  // on demand).
   // !== undefined (not truthiness): the schedule node must sync even when
   // falsy-but-present ({enabled:false,...}) so the settings panel always
   // echoes server truth (freeze-consistency fix 2026-08-27).
@@ -2396,8 +2991,20 @@ onMessage('serverConfig', (msg, view) => {
     state.freezeState = msg.freezeState;
     applyLocalFreeze();
   }
+  // 陈旧 SPA 指纹提示（门户身份透传批·方案 B 小刀③，2026-10-28 作者令④）：
+  // 引擎当前前端资源指纹（serverConfig 帧随行）与本页被 serve 时注入的
+  // window.__WEB_FINGERPRINT__ 比对——两者皆在场且不等 ⇒ 本标签页是旧版前端
+  // （B1：长命标签页跨引擎重启续命，device stamp/近路自升级/新版半边全不跑）
+  // ⇒ 顶栏提示刷新。任一缺席（旧引擎/无注入脸）⇒ 静默，绝不假阳。
+  if (msg.webFingerprint && window.__WEB_FINGERPRINT__ && msg.webFingerprint !== window.__WEB_FINGERPRINT__) {
+    import('./staleTabHint.js').then((m) => m.showStaleTabHint()).catch(() => {});
+  }
   if (msg.stt) {
     state.stt = msg.stt;
+    // settings-panel 批 D 件（2026-10-28）：STT 总开关停用态 = body.stt-disabled
+    // ——输入栏 mic 气泡入口与好友消息 mic 的 CSS 藏匿单点（voiceEngine.sttEnabled
+    // 门是纵深第二层）。缺省开（sttEnabled 缺席/true = 不挂类，存量零感知）。
+    document.body.classList.toggle('stt-disabled', state.stt?.sttEnabled === false);
     // STT config echo — re-render the settings panel so the status indicator
     // (configured / free-browser-path) stays authoritative (#295).
     const settingsOverlay = document.getElementById('settings-overlay');
@@ -2411,11 +3018,36 @@ onMessage('serverConfig', (msg, view) => {
 // (09-05 五项裁定①：MCP 概念由 Plugins 系统全面取代，设置页入口移除)。
 // The backend still broadcasts mcpServersUpdate for other consumers.
 
+
+// --- Tool list (perf-481 A4) ---
+// The tool descriptions used to ride every `serverConfig` frame (~93.5 KB each,
+// connect + every config broadcast). They are now fetched once per connection
+// via `getToolsList`. Same assignment as before, so `state.availableTools`
+// keeps its single writer face.
+onMessage('toolsList', (msg) => {
+  if (msg.tools) state.availableTools = msg.tools;
+});
 onMessage('configData', (msg, view) => {
+  // 入场加载卡（接管/入场同族批 2026-11-01 作者令③）：「同步数据」项的真实完成
+  // 信号——首帧 configData 落地即数据面就位（揭幕随后同步发生，露出的是已
+  // 渲染完的壳）。迟到帧（重连/配置更新）经门脚本 revealed 旗标零副作用。
+  try { window.__nfEntry && window.__nfEntry.mark && window.__nfEntry.mark('data', 'done'); } catch (_) {}
   state.configText = msg.config || '';
   state._freshConfigText = state.configText; // Cache for slider's fetch-before-save
   try { state.parsedConfig = JSON.parse(state.configText); } catch { state.parsedConfig = null; }
   state.configDirty = false;
+  // 本机设备名登记（设备角标本名批 2026-10-27）：引擎自身身份读数随帧入缓存
+  // （selfDevice.name 加法字段；老引擎帧无此键 ⇒ 空值不覆盖，花名册源照旧）。
+  noteSelfDeviceName(msg.selfDevice?.name);
+  // F-1 (permshield F1, 2026-09-13): the config snapshot carries the ONE
+  // authoritative global mode (`safety.defaultMode`) and is re-fetched on every
+  // `configUpdated` broadcast — i.e. this is the arrival path for "another
+  // writer changed the global mode" (shield write from another window, REST
+  // `PUT /api/safety/mode`, or the permission card's escalation). Applying it
+  // here keeps the header shield in sync within this frame; the old code
+  // re-rendered only the settings modal and left the shield stale.
+  const cfgMode = state.parsedConfig?.safety?.defaultMode;
+  if (cfgMode) state.applyGlobalSafetyMode?.(cfgMode);
   // Friends release gating (2026-09-08, see featureFlags.js): latch the flag
   // decision on the first configData of the boot — configData re-fires on
   // every config save, but the gate does not live-toggle; a flag edit takes
@@ -2427,10 +3059,37 @@ onMessage('configData', (msg, view) => {
       enableFriendPanels();
       initContacts();
       initMessages();
+      initPanelSearch();
     }
   }
+  // Voice seal latch（voiceseal 批 #508 → 纠正批 #513 双参化）：分面受控。
+  //   · 面 A 全双工（#voice-mode-overlay）— voiceEnabled()（默认封存，#508
+  //     形态原样维持）：ON → 摘 `hidden`；OFF → 幂等补挂（静态兜底重申）。
+  //   · 面 B 语音气泡（#mic-orb-wrap）— voiceOrbEnabled()（默认**显示**，
+  //     #513 纠正：#508 连带藏气泡 = 理解过宽）：显式 voiceOrb:false 才藏。
+  //   orb 挂载门 = voiceOrbMountable()（flag ON + 配置已到，#508 的 latch 挂载
+  //   时序）：boot 期 initMicOrb() 在配置未到时 no-op，本 latch 在 flag ON 时
+  //   initMicOrb() 完成挂载；显式 voiceOrb:false ⇒ 不挂 + 气泡补挂 `hidden`。
+  // latch 前不可能存在全双工会话（入口 display:none 不可交互、WS 未连 ⇒ 发送腿
+  // 不存在），故无需处理「打开中的会话」迁移。
+  if (!voiceGateDecided) {
+    voiceGateDecided = true;
+    applyVoiceSeal(voiceEnabled(), voiceOrbEnabled());
+    if (voiceOrbEnabled()) initMicOrb();
+  }
+  // Wiki-graph 边栏入口封存 latch（graphseal 批，作者手写想法① 2026-10-29）：
+  // 缺席 = 封存（activityBar.js boot 已摘 `#wiki-btn`，维持藏态即可）；显式
+  // "features": {"wikiGraph": true} → enableWikiGraphEntry() 回挂静态槽
+  // （Projects 与 Plugins 之间 + 补 i18n 标题）。点击接线在 canvas.js 的
+  // #activity-bar 事件委托上（回挂接线修复批 2026-10-30）——与按钮元素是否
+  // 在场无关，回挂即复活；per-element 绑定曾在封存态下注册落空（监听从未
+  // 挂上）。词条/文档关联引用链路零触碰。
+  if (!wikiGraphGateDecided) {
+    wikiGraphGateDecided = true;
+    if (wikiGraphEnabled()) enableWikiGraphEntry();
+  }
   const editor = document.getElementById('config-editor');
-  if (editor) editor.value = state.configText;
+  if (editor) (/** @type {HTMLTextAreaElement} */ (editor)).value = state.configText;
   // Re-render settings if the modal is open
   const settingsOverlay = document.getElementById('settings-overlay');
   if (settingsOverlay && settingsOverlay.classList.contains('on')) {
@@ -2448,22 +3107,29 @@ onMessage('configUpdated', (msg, view) => {
 });
 
 // --- Model selection (input-bar picker) ---
-// modelOptions now just feeds the input-bar picker's "add model" list; the
-// /model slash command and the bubble chooser have been removed.
+// modelOptions feeds the input-bar picker's "add model" list; the same refs
+// are the /model panel's fallback static list (modelPanel.js getAllModelRefs).
 onMessage('modelOptions', (msg, view) => {
   const models = msg.models || [];
   state.allModelRefs = models.map(m => m.ref).filter(Boolean);
+  if (msg.sessionId) {
+    state.sessionModelSelections ||= {};
+    state.sessionModelSelections[msg.sessionId] = msg.current || '';
+  }
 });
 
 onMessage('sessionModelSet', (msg, view) => {
+  if (!msg.sessionId) return;
+  state.sessionModelSelections ||= {};
+  state.sessionModelSelections[msg.sessionId] = msg.modelRef === 'default' ? '' : msg.modelRef;
 });
 
 // --- Runtime model change (fallback kicked in) ---
 onMessage('modelChanged', (msg, view) => {
   if (msg.newModel) {
     state.currentModel = msg.newModel;
-    // Record the ACTUAL model on the session so the header model label /
-    // tooltip switch from the configured to the used model immediately —
+    // Record the ACTUAL model on the session so consumers (popup model
+    // badges) switch from the configured to the used model immediately —
     // previously this event only set the global currentModel (unread by any
     // UI), so a GLM→deepseek fallback left the display showing the old model.
     const sid = msg.sessionId || state.activeSessionId;
@@ -2471,7 +3137,6 @@ onMessage('modelChanged', (msg, view) => {
       const prev = state.sessionModelInfo[sid] || {};
       state.sessionModelInfo[sid] = { ...prev, model: msg.newModel };
       try { localStorage.setItem(LS_MODEL_INFO_KEY, JSON.stringify(state.sessionModelInfo)); } catch(e) {}
-      updateHeaderModelInfo();
     }
   }
 });
@@ -2498,22 +3163,71 @@ onMessage('user', (msg, view) => {
   // window on restore ("outgoing Delegate prompt shows as blue bubble").
   // Sub-agent streams restore from their own backend history instead.
   if (!msg.nodeSessionId) {
-    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null }, sid);
+    // intake (mailbadge batch 2026-09-13): 收件通道判别字段 —— 与 source 同批
+    // 落盘/读取，旧帧缺该字段 ⇒ null（回落路径逐字不变）。
+    // header（气泡四段式统一批 2026-09-15，R-C 补）：引擎在唯一发射点产出的整串
+    // `KIND · PROJECT · SUBJECT · STATE` 必须与帧同源落进缓存 —— 两条缓存恢复读路径
+    // （persistence.js 的 restoreFromStorage / restoreFromBackendHistory）都读 `m.header`，
+    // 漏落这一枚 ⇒ 走缓存的重载把 header 丢成 undefined、降级成旧标签。
+    // 旧帧缺该字段 ⇒ null（同 intake：缺席即回落，逐字不变）。
+    // fileChanges（file-diff → 委托结果行 bug #58 修）：delegate 终态 diff 载荷随行
+    // 进缓存——两条缓存恢复读路径读 `m.fileChanges`，漏落 ⇒ 重载丢 diff（header 先例）。
+    // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷随行进缓存——缓存恢复
+    // 路径读 `m.schedule`，漏落 ⇒ 重载降级成无载荷卡（header 先例）。旧帧缺该字段
+    // ⇒ null（缺席即回落，逐字不变）。
+    // askAddress（ask-mail 批 2026-11-16）：ask 续聊地址随行进缓存（header 先例）
+    // ——两条缓存恢复读路径（persistence.js）读 `m.askAddress`，漏落这一枚 ⇒ 走缓存
+    // 的重载丢地址 chip。旧帧缺该字段 ⇒ null（缺席即回落，逐字不变）。
+    saveMsg({ type: 'user', text: msg.text, injected: true, source: msg.source || null, eventType: msg.eventType || null, sender: msg.sender || null, senderTeam: msg.senderTeam || null, delivery: msg.delivery || null, intake: msg.intake || null, header: msg.header || null, fileChanges: msg.fileChanges || null, schedule: msg.schedule || null, askAddress: msg.askAddress || null }, sid);
   }
-  if (sid === state.activeSessionId && view) {
-    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery);
+  // Window ownership. First disjunct = the pre-existing rule, unchanged: a frame
+  // whose sessionId is the globally active session renders into the active view.
+  // Second disjunct adds the sub-agent case: a node-/dispatcher- frame keeps its
+  // OWN sessionId (NodeRunner.routeSubagentWsSend), so it can never satisfy the
+  // first disjunct — it may render ONLY into the popup view that owns its
+  // nodeSessionId. `view === activeView` is required because renderInjectedBubble
+  // targets activeView; `activeView.sessionId === msg.nodeSessionId` is the
+  // ownership test (a different sub-agent's frame must not land in this window).
+  // Frames WITHOUT nodeSessionId cannot satisfy the second disjunct at all, so
+  // their behaviour is bit-for-bit the pre-existing one.
+  if ((sid === state.activeSessionId && view) ||
+      (view && view === activeView && msg.nodeSessionId && activeView.sessionId === msg.nodeSessionId)) {
+    // 气泡四段式统一批（2026-09-15）：帧上的 `header`（引擎已渲染）逐字透传——
+    // 缺席（旧帧 / 词表外 source）时 `buildInjectedRow` 回落既有标签组装。
+    // fileChanges（bug #58 修）：delegate 终态 diff 载荷同位透传（缺席 = 旧行为）。
+    // schedule（schedcard 批 2026-10-29）：定时任务卡片载荷同位透传——
+    // `source==='schedule'` 的帧在 builder 内走专属卡分支（缺席 = 旧行为）。
+    // askAddress（ask-mail 批 2026-11-16）：ask 续聊地址同位透传（缺席 = 旧行为）。
+    renderInjectedBubble(msg.text, msg.source, msg.timestamp, msg.eventType, msg.sender, msg.senderTeam, msg.delivery, msg.intake, msg.header, msg.fileChanges, msg.schedule, msg.askAddress);
     smartScroll();
   }
 });
 
+// --- Cross-device Nebula mail: injection failure alert (device-mail batch,
+// 2026-09-15). 注入失败禁静默 ⇒ backend retries, then broadcasts this frame;
+// the banner is the visible half (the other two readings are the WARN log and
+// the audit line). Nothing is injected, so there is no bubble to show.
+onMessage('deviceMailInjectFailed', (msg) => {
+  addNotification('device-mail', t('deviceMail.injectFailed', {
+    device: msg.fromDevice || '?',
+    attempts: msg.attempts ?? '?',
+    agent: rootDisplayName(),
+  }));
+});
+
 // --- Bridge user message (e.g. from external platform) ---
+// 媒体统一适配批（2026-10-20）：帧上的 `attachments`（社交通道入站媒体指针登记
+// 行 [{name,type,path}]，控制台 attJson 同形）增加性透传 —— renderUserBubble 的
+// 既有媒体气泡面接管（图=Pop 媒体面/文件=文件卡，字节走 nf-file 票腿）；旧后端
+// 缺该键 ⇒ []（纯文本行，逐字现状）。存量行随缓存/ui.json 恢复时走
+// unifyUserMediaFace 的「已存至」识别（popArtifacts 单点）。
 onMessage('bridgeUser', (msg, view) => {
   const sid = msg.sessionId;
   if (!sid) return;
   state.turnExpecting[sid] = true;
-  saveMsg({type: 'user', text: msg.text}, sid);
+  saveMsg({type: 'user', text: msg.text, attachments: Array.isArray(msg.attachments) ? msg.attachments : []}, sid);
   if (sid === state.activeSessionId) {
-    renderUserBubble(msg.text, []);
+    renderUserBubble(msg.text, Array.isArray(msg.attachments) ? msg.attachments : []);
     smartScroll();
   }
 });
@@ -2542,11 +3256,60 @@ onMessage('messageRecalled', (msg) => {
 onMessage('sessionBusy', (msg, view) => {
   const sid = msg.sessionId || state.activeSessionId;
   if (msg.busy) {
+    // ①-2 (2026-09-11): the backend authoritatively started a NEW turn — supersede
+    // this session's terminal stamp so the new turn's streaming frames may arm
+    // busy again (without this the re-arm gate would lock the session out).
+    if (sid) delete state.lastTerminalAt[sid];
+    // 2026-09-20 chain-msgqueue 阶段 B：同一事实复位 per-turn drain 闸（引擎新轮 ⇒ 新的
+    // turn 窗口；与上一行 lastTerminalAt 的取代口径逐字同源）。queue-idle-flush：旧布尔
+    // 窗口的「开窗」改为 queueTurnFactAt 时间戳（运行中事实闸的事实源；depth>0 会话
+    // 只靠流帧族那一支）。
+    if (sid) queueTurnFactAt.set(sid, Date.now());
+    // busy-stuck-fix：引擎权威开turn 信号到场 ⇒ turn-start 确认网撤网（本次置位
+    // 不是幻影）。
+    cancelTurnConfirm(sid);
+    // thinkingtimer-fix：空闲开轮 = 引擎自主新 turn（pendingEvents 注入轮等非派发
+    // 开轮）⇒ 新「思考中」段起点。已在 busy 中的重申不是阶段边界，不盖（保单调——
+    // 重试风暴期间引擎可能重发 busy{true}，重盖会把计时打回零）。
+    const busySid = msg.sessionId;
+    if (busySid && !state.busySessionIds.has(busySid)) phaseStamp(busySid);
     setBusy(msg.sessionId);
     // Server explicitly set busy — mark as expecting a turn (e.g. pendingEvents round)
     if (sid) state.turnExpecting[sid] = true;
   } else {
     clearBusy(msg.sessionId);
+    // ①-2 (2026-09-11, 队列不自动发出 症状①): sessionBusy{busy:false} is the
+    // AUTHORITATIVE end-of-turn signal — it is what drives state.busySessionIds —
+    // yet it had NO drain wiring, so when the 'done' frame was lost the local
+    // queue stayed parked forever (diagnosis §1.2 G1/G3). It now rides the SAME
+    // drain as the terminal-frame family (clearBusyFor → scheduleQueueDrain,
+    // 50ms), reusing the existing drain path rather than adding one.
+    // queue-one-per-turn（2026-10-24）：终态戳**条件落**——「无在跑确认轮」（开轮
+    // 事实不晚于上次派发 = done+busy{true} 双丢形态）时本帧是唯一终态信号，必须落
+    // 戳（G1/G3 语义保留）；「有在跑确认轮」时未伴随 done 的 busy{false} = speculative
+    // /幻影清除（DeathWatcher 误报广播 / 崩溃恢复竞态），落戳会把投递未决闸（③）
+    // 放开 = 「排队消息投进运行中 turn」病历复发——不落戳，真实终态（done 终态对 /
+    // 各权威收口戳）随后到场再放行。
+    if (sid && ((queueTurnFactAt.get(sid) || 0) <= (lastQueueDispatchAt.get(sid) || 0))) {
+      state.lastTerminalAt[sid] = Date.now();
+    }
+    // Two decidable properties of doing it here:
+    //   (a) one drain per turn window (2026-09-20 chain-msgqueue 阶段 B): the
+    //       'done' + sessionBusy{false} pair the engine emits for EVERY turn
+    //       (AgentFinishTurn.finishTurnCont) now collapses to a SINGLE drain —
+    //       the pair's second frame lands inside the dispatch cooldown window
+    //       (scheduleQueueDrain ①) and is re-armed to the boundary, where the
+    //       running-turn fact gate (②) holds it while the next turn streams ⇒
+    //       ONE queued item per turn, the rest stay in `#queue-bar` as 排队中 (N).
+    //       Previously the pair delivered two DISTINCT queued items (never the
+    //       same one twice — drainMessageQueue shifts the head before sending),
+    //       which put a message into the chat flow a full turn before it was ever
+    //       sent (显示态 ≠ 投递态).
+    //   (b) compaction window: no drain while compacting — same rule as the
+    //       compactComplete handler below (`!busySessionIds.has(sid)`) and
+    //       input.js:494 (`isBusy = busy || compacting`); the resume turn right
+    //       after compactComplete performs the drain.
+    if (sid && !state.compactingSessionIds.has(sid)) scheduleQueueDrain(sid);
     // Defensive: if the 'done' event was lost but backend sent busy=false,
     // finish any active streaming bubble so the cursor disappears and the
     // duration badge is rendered.
@@ -2599,6 +3362,98 @@ onMessage('sessionBusy', (msg, view) => {
 // --- Background task indicator in header ---
 let _bgTimer = null;
 
+// ── Terminal-row eviction (2026-09-10 裁定 R1 + R3 + R4) ────────────────────
+// Terminal rows (completed/failed/cancelled) are still retained so the user can
+// reopen them to read the output — but for a BOUNDED window: after
+// TERMINAL_ROW_TTL_MS the row leaves the BUCKET, which is the panel's single
+// render source (renderBgDropdown reads state.sessionBgTasks, main.js:2677).
+// Evicting the DOM alone would resurrect the row on the next panel open. At most
+// TERMINAL_ROW_MAX terminal rows are retained per session bucket; beyond that the
+// oldest one (by finishedAt) is evicted. Non-terminal rows
+// (running/cancelling/idle/stuck) are never cleared here, and no path wipes a
+// whole bucket (the unfinished tasks must stay visible).
+const TERMINAL_ROW_TTL_MS = 60000;
+const TERMINAL_ROW_MAX = 5;
+
+/** The terminal triple (same set the row state machine treats as ended). */
+function isTerminalBgStatus(status) {
+  return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+/** taskId of the row whose output detail card is currently open — the popup
+ *  stamps `data-task-id` on its overlay (bgTaskOutputPopup.js) — else null.
+ *  R2: that row's eviction countdown is paused while its output is being read. */
+function openBgOutputTaskId() {
+  const overlay = document.querySelector('.bgt-overlay');
+  return overlay ? overlay.getAttribute('data-task-id') : null;
+}
+
+/** Retention sweep over ONE session bucket (mutates in place; true = changed).
+ *  · terminal row whose eviction deadline passed  → dropped from the bucket
+ *  · terminal row whose output card is open       → deadline re-armed from now
+ *    (R2: paused while reading, and the close restarts a FULL window instead of
+ *    expiring the row on close)
+ *  · more than TERMINAL_ROW_MAX retained terminal rows → oldest by finishedAt out */
+function sweepBgTerminalRows(tasks, now) {
+  const openCardTaskId = openBgOutputTaskId();
+  const kept = [];
+  let changed = false;
+  for (const task of tasks) {
+    if (!isTerminalBgStatus(task.status)) { kept.push(task); continue; }
+    if (openCardTaskId && task.taskId === openCardTaskId) {
+      task.evictAt = now + TERMINAL_ROW_TTL_MS;
+      kept.push(task);
+      continue;
+    }
+    // Defensive: a terminal row without a deadline (old bucket shape / a frame
+    // path that predates this change) still gets one — from its own finishedAt —
+    // so retention can never become unbounded again.
+    if (typeof task.evictAt !== 'number') {
+      task.evictAt = (typeof task.finishedAt === 'number' ? task.finishedAt : now) + TERMINAL_ROW_TTL_MS;
+    }
+    if (task.evictAt <= now) { changed = true; continue; }
+    kept.push(task);
+  }
+  const terminal = kept.filter(task => isTerminalBgStatus(task.status));
+  if (terminal.length > TERMINAL_ROW_MAX) {
+    const survivors = new Set(terminal
+      .slice()
+      .sort((a, b) => (b.finishedAt || 0) - (a.finishedAt || 0))
+      .slice(0, TERMINAL_ROW_MAX));
+    for (let i = kept.length - 1; i >= 0; i--) {
+      if (isTerminalBgStatus(kept[i].status) && !survivors.has(kept[i])) { kept.splice(i, 1); changed = true; }
+    }
+  }
+  if (changed) tasks.splice(0, tasks.length, ...kept);
+  return changed;
+}
+
+/** Sweep every session bucket, then refresh the badges of the sessions that
+ *  changed (badge count == list row count is the same-source invariant: both read
+ *  this bucket). Called from the 1s ticker — never from the render path — so
+ *  eviction does not wait for the panel to be opened. */
+function sweepAllBgTerminalRows() {
+  const now = Date.now();
+  const changedSids = [];
+  for (const [sid, bucket] of Object.entries(state.sessionBgTasks || {})) {
+    if (!Array.isArray(bucket) || bucket.length === 0) continue;
+    if (sweepBgTerminalRows(bucket, now)) changedSids.push(sid);
+  }
+  for (const sid of changedSids) refreshBgBadgeFor(sid);
+  return changedSids;
+}
+
+/** Start the 1s ticker while ANY bucket still holds rows — the old gate
+ *  ("dropdown open ∧ something running/cancelling") let a closed panel freeze
+ *  terminal rows forever, so the badge never came back down on its own. */
+function ensureBgTimer() {
+  if (_bgTimer) return;
+  if (!activeView) return;
+  const anyRows = Object.values(state.sessionBgTasks || {}).some(b => Array.isArray(b) && b.length > 0);
+  if (!anyRows) return;
+  startBgTimer();
+}
+
 function formatDuration(ms) {
   const s = Math.floor(ms / 1000);
   if (s < 60) return `${s}s`;
@@ -2618,10 +3473,15 @@ function formatDuration(ms) {
 // 进本面板、会话行只进 subagent 面板（key space 天然分离），节点/分发器来源的
 // 任务在本面板以来源 chip 显式标注「由 <节点> 开启」，subagent 面板不重复渲染。
 
-/** Task row state machine: cancelling > stuck (heartbeat idle>10min) > idle
- *  (>2min) > running. Terminal tasks are removed from the bucket upstream. */
+/** Task row state machine: cancelling > (terminal) > stuck (heartbeat idle>10min)
+ *  > idle (>2min) > running. Terminal tasks (completed/failed/cancelled) stay in
+ *  the bucket for TERMINAL_ROW_TTL_MS so the user can reopen them for output
+ *  viewing, then the retention sweep (sweepBgTerminalRows) drops them — the panel
+ *  refreshes (reconnect / activeBgTasks snapshot) is no longer the only cleanup. */
 function bgTaskRowState(task) {
   if (task.status === 'cancelling') return 'cancelling';
+  if (task.status === 'failed') return 'failed';
+  if (task.status === 'completed' || task.status === 'cancelled') return 'done';
   const hb = task.heartbeat;
   if (hb) {
     if (hb.idleMs > 600000) return 'stuck';
@@ -2632,22 +3492,103 @@ function bgTaskRowState(task) {
 
 /** Resolve the origin chip {cat, label}: backend origin fields are
  *  authoritative; fall back to the registering session-id prefix (old
- *  backend / REST-invoked tools carry no origin). */
+ *  backend / REST-invoked tools carry no origin).
+ *  多设备后台任务可见批（2026-10-25）：cat="device" = 设备通道后台任务
+ *  （Bash device=<win> + run_in_background）——chip 回答「跑在哪台设备」，
+ *  与 nebula/dispatcher/node（谁开启）并列可辨。旧后端快照回退（origin 字段
+ *  缺席）：设备任务描述恒带 `[<设备>] ` 前缀（RemoteExecutor 形态）且
+ *  kind=remote —— 前缀识别优先于会话前缀启发（后者只分得出「谁开启」），
+ *  兜底 'device'。 */
 function bgTaskOrigin(task) {
+  // 归属批（作者令 2026-10-31「后台任务行标归属」）：归属槽位 = 开启任务的会话的
+  // delegate 批次短名（行 ownerName，注册帧 + 快照帧同源）——有短名显短名
+  // （cat=delegate 专属样式），无 name 回退既有来源显示（下方原逻辑逐字不动）。
+  const owner = String(task.ownerName || '').trim();
+  if (owner) return { cat: 'delegate', label: owner };
   let cat = task.origin || '';
   let label = task.originLabel || '';
+  const deviceFromDesc = (!cat || cat === 'device') ? bgDeviceFromDescription(task.description) : '';
   if (!cat) {
-    const s = task.sessionId || '';
-    if (s.startsWith('node-')) cat = 'node';
-    else if (s.startsWith('dispatcher-')) cat = 'dispatcher';
-    else cat = 'nebula';
+    if (deviceFromDesc && task.kind === 'remote') {
+      cat = 'device';
+      label = deviceFromDesc;
+    } else {
+      const s = task.sessionId || '';
+      if (s.startsWith('node-')) cat = 'node';
+      else if (s.startsWith('dispatcher-')) cat = 'dispatcher';
+      else cat = 'nebula';
+    }
   }
+  // Nebula 退役批（作者令 2026-11-01「界面里不该再有 Nebula 的身影」）：主 agent
+  // 开启的任务一律标**用户给它起的名字**（单一显示名读点 rootDisplayName —— 未命名
+  // 读通用称呼）。后端 originLabel 携带的是机制名（BgTaskRegistry.originFor =
+  // RootAgentIdentity.Name），只作数据面标记，**不上屏** ⇒ 此分支整体覆盖 label。
+  // 后台 agent 的 chip 不变：delegate 短名 / dispatcher / node 名 / 设备名 = 自身身份。
+  if (cat === 'nebula') return { cat, label: rootDisplayName() };
   if (!label) {
-    label = cat === 'nebula' ? 'Nebula'
-      : cat === 'dispatcher' ? (task.sessionId ? 'dispatcher' : 'dispatcher')
+    label = cat === 'dispatcher' ? (task.sessionId ? 'dispatcher' : 'dispatcher')
+      : cat === 'device' ? (deviceFromDesc || 'device')
       : (task.sessionId || 'node');
   }
   return { cat, label };
+}
+
+/** Device-name fallback for the origin chip: remote bg descriptions carry a
+ *  `[<device>] ` prefix (RemoteExecutor description shape) — extract it.
+ *  No prefix (local tasks / unknown shape) → '' (caller falls back to 'device'). */
+function bgDeviceFromDescription(desc) {
+  const m = /^\s*\[([^\][\n]{1,64})\]\s/.exec(String(desc || ''));
+  return m ? m[1] : '';
+}
+
+/** 行设备名（设备同级批 · 作者令 2026-11-01「本地/远程这组徽标整对退役」）：每行
+ *  一律标注**跑在哪台设备**，本机与远端同级——远端 = 对端设备名（注册帧 originLabel，
+ *  旧快照回退描述 `[<设备>] ` 前缀）；本机 = 本机设备名（花名册 self /
+ *  configData.selfDevice 同源同步读数，剥隔离 `-iso-<hex8>` 后缀，见
+ *  deviceRoster.currentSelfDeviceName）。两源皆缺 ⇒ 空串 = 零渲染——**绝不回退
+ *  「本地/remote」字样**（与工具卡设备角标 deviceTagHtml 同纪律）。 */
+function bgTaskDeviceLabel(task) {
+  const isRemote = task.kind === 'remote' || task.origin === 'device';
+  if (isRemote) {
+    const fromOrigin = task.origin === 'device' ? String(task.originLabel || '').trim() : '';
+    return fromOrigin || bgDeviceFromDescription(task.description);
+  }
+  const self = currentSelfDeviceName();
+  return (self && self.display) ? self.display : '';
+}
+
+// ── #753 同族任务聚合（waiter N 递增族刷屏治理 · 面板侧）────────────────────
+// 实证：delegate-nebflow-59f171d8 八分钟造 88 个 waiter 刷爆面板（81 条同行）。
+// 同族判据 = description 去数字归一（"background waiter 67" → "background waiter
+// N"；无数字描述原样自成族）——族内 ≥ BG_FAMILY_GROUP_MIN 条即聚合为一行组头，
+// 默认收起（计数+聚合状态一目了然），点击展开成员行（成员行保留既有取消/输出
+// 卡交互）。展开态按 (桶sid, 族键) 记在模块级 Map——重渲不失。
+const BG_FAMILY_GROUP_MIN = 3;
+
+/** 同族键：数字串归一为 N + 空白折叠 + 小写。空描述 → ''（不参与聚合）。 */
+function bgFamilyKey(desc) {
+  const s = String(desc || '').replace(/\d+/g, 'N').replace(/\s+/g, ' ').trim().toLowerCase();
+  return s;
+}
+
+/** 族头显示基名：取首成员描述、去数字（与族键同规，保原大小写/空白单折叠）。 */
+function bgFamilyBaseLabel(members) {
+  const first = members.find((m) => m && (m.description || m.taskId));
+  return String((first && (first.description || first.taskId)) || '')
+    .replace(/\d+/g, 'N')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// 展开态账本：key = `${bucketSid}\u0000${familyKey}` → true（展开）。上限护栏：
+// 超 512 键整表清空（防长会话累积泄漏；收起态是默认态，清零无感）。
+const bgFamilyExpanded = new Map();
+
+function bgAggregateDot(states) {
+  if (states.includes('stuck')) return 'bg-status-stuck';
+  if (states.includes('failed')) return 'bg-status-error';
+  if (states.includes('running') || states.includes('idle') || states.includes('cancelling')) return 'bg-status-active';
+  return 'bg-status-done';
 }
 
 function renderBgDropdown() {
@@ -2655,9 +3596,18 @@ function renderBgDropdown() {
   const listEl = activeView.dom.bgDropdownListEl;
   const dropdown = activeView.dom.bgDropdownEl;
   if (!listEl || !dropdown) return 0;
-  // Show running AND cancelling tasks (cancelling tasks stay visible until backend confirms)
-  const visible = tasks.filter(t => t.status === 'running' || t.status === 'cancelling');
-  // Panel header carries the live count (aria-live polite — subagent parity).
+  // Enforce the retention deadline at RENDER time too (not only on the 1s tick):
+  // a panel open / badge refresh must never paint a row whose window already
+  // ended, otherwise the ticker's ≤1s lag shows up as a resurrected row.
+  sweepBgTerminalRows(tasks, Date.now());
+  // Show running, cancelling, AND retained terminal tasks (completed/failed/
+  // cancelled). Terminal rows stay for their retention window (they are removed
+  // from the bucket by sweepBgTerminalRows once their deadline passes) so the user
+  // can reopen them to view output — the 2026-09-09 output-viewing feature, now
+  // bounded by TERMINAL_ROW_TTL_MS / TERMINAL_ROW_MAX. The visible set and the badge
+  // count share the same source (the bucket), so the badge always equals the rows.
+  const visible = tasks.filter(t =>
+    t.status === 'running' || t.status === 'cancelling' || isTerminalBgStatus(t.status));  // Panel header carries the live count (aria-live polite — subagent parity).
   const headerEl = dropdown.querySelector('.bg-dropdown-header');
   if (headerEl) headerEl.textContent = t('bg.header', { count: visible.length });
   if (visible.length === 0) {
@@ -2669,72 +3619,287 @@ function renderBgDropdown() {
     return 0;
   }
   const now = Date.now();
-  listEl.innerHTML = visible.map(task => {
+  // ── 同族聚合装配（#753）：族内 ≥ BG_FAMILY_GROUP_MIN 条 → 一行组头（默认收起，
+  //    点击展开成员行）；零散任务照旧单行。装配产出 = 有序 item 流（group/member/
+  //    single），渲染与事件绑定同源走 data-task-id / data-family-key。
+  const bucketSid = activeView?.sessionId || '';
+  const familyByKey = new Map();
+  for (const task of visible) {
+    const key = bgFamilyKey(task.description || task.taskId);
+    if (!key) continue;
+    if (!familyByKey.has(key)) familyByKey.set(key, []);
+    familyByKey.get(key).push(task);
+  }
+  const familyKeys = new Set(
+    [...familyByKey.entries()].filter(([, arr]) => arr.length >= BG_FAMILY_GROUP_MIN).map(([k]) => k)
+  );
+  const famTaskByKey = new Map(); // taskId → task（绑定事件用；同桶内 taskId 唯一）
+  for (const task of visible) famTaskByKey.set(task.taskId, task);
+
+  // 行 HTML 构造（原内联 map 体抽出；extraCls = member 缩进/普通两类）。
+  const taskRowHtml = (task, extraCls = '') => {
     const rowState = bgTaskRowState(task);
-    const statusLabel = rowState === 'cancelling' ? t('bg.cancelling')
+    // Terminal labels ride on the authoritative status (completed/failed/
+    // cancelled are distinct); running ladder uses the heartbeat-derived state.
+    const statusLabel =
+      task.status === 'completed' ? t('bg.completed')
+      : task.status === 'failed' ? t('bg.failed')
+      : task.status === 'cancelled' ? t('bg.cancelled')
+      : rowState === 'cancelling' ? t('bg.cancelling')
       : rowState === 'stuck' ? t('bg.stuck')
       : t('bg.running');
-    const dotClass = {
-      running: 'bg-status-active', idle: 'bg-status-idle',
-      stuck: 'bg-status-stuck', cancelling: 'bg-status-done',
-    }[rowState];
-    const stateClass = rowState === 'stuck' ? ' bg-state-stuck'
-      : rowState === 'cancelling' ? ' bg-state-done' : '';
+    // 三行结构批：状态位走 bgRowStatus 单表（图标 + 色调 + 无障碍词），行内不再写
+    // 中文状态词——词只作 aria-label / title / sr-only 文本存在。
+    const bgState = rowState === 'failed' ? 'error' : rowState;
+    const endedClass = (rowState === 'done' || rowState === 'failed') ? ' bg-task-ended' : '';
     const { cat, label } = bgTaskOrigin(task);
-    const originPart = '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
-      escapeHtml(t('bg.openedBy', { origin: label })) + '">' + escapeHtml(label) + '</span>';
-    const kindPart = task.kind
-      ? '<span class="bg-task-kind">' + escapeHtml((task.kind === 'local' || task.kind === 'remote') ? t('bg.kind.' + task.kind) : task.kind) + '</span>'
+    // 设备同级批（作者令 2026-11-01「本地/远程这组徽标整对退役」）：行内一律带设备
+    // chip（本机也是普通设备——读设备名册现名，不再出现「本地」字样），原
+    // 本地/远程 kind chip 整对删除（读面 bgTaskDeviceLabel）。
+    const deviceLabel = bgTaskDeviceLabel(task);
+    const devicePart = deviceLabel
+      ? '<span class="bg-task-origin bg-origin-device" title="' +
+        escapeHtml(t('bg.runsOn', { origin: deviceLabel })) + '">' + escapeHtml(deviceLabel) + '</span>'
+      : '';
+    // 来源链批（作者令 2026-11-01 19:23「后台 agent badge 标注来源链」）：来源 chip
+    // 升级为「上层 · 下层」名字链（delegate 短名 → 其下 subagent/node 名；链级全
+    // 名字，悬浮 title 给全链，过长走 .bg-task-origin 既有省略规则）。解析不到
+    // （chainForTask 空链/单段）= 既有单名显示逐字节不变——根直派 delegate 恰单段
+    // （「只显示自己」）、根会话自开单段（主 agent 显示名）、设备任务链不掺轴。
+    // 链在场时 chip 样式走 bg-origin-delegate 归属槽位（链本质 = 归属标注）。
+    const chainText = chainLabel(chainForTask(task, bucketSid));
+    // 来源 chip（谁开启：delegate 短名 / nebula / dispatcher / node）。设备任务的
+    // 名称已由 devicePart 承载 ⇒ 此处零渲染（禁同一行双写设备名）；其余类别语义
+    // 不变——「跑在哪」（bg.runsOn）与「谁开启」（bg.openedBy）两轴仍分列。
+    const originTitle = chainText
+      ? t('bg.openedBy', { origin: chainText })
+      : cat === 'device'
+        ? t('bg.runsOn', { origin: label })
+        : t('bg.openedBy', { origin: label });
+    const originPart = cat === 'device'
+      ? ''
+      : chainText
+        ? '<span class="bg-task-origin bg-origin-delegate" title="' +
+          escapeHtml(originTitle) + '">' + escapeHtml(chainText) + '</span>'
+        : '<span class="bg-task-origin bg-origin-' + cat + '" title="' +
+          escapeHtml(originTitle) + '">' + escapeHtml(label) + '</span>';
+    // 任务模式标注批（2026-10-30 作者令）+ 术语统一批（2026-11-06 作者令「统一 根据
+    // 英文」）：开启任务的 delegate 会话生效执行形态（注册帧 + 快照帧 ownerMode 字段）。
+    // 词面 = 单源徽标词表（js/termWords.js）；空/脏值（旧后端/非 delegate/双模式闸关）
+    // 零渲染——与 origin chip 同纪律。样式类读数据值，不读词面。
+    const modeWord = (task.ownerMode === 'kernel' || task.ownerMode === 'dispatcher')
+      ? badgeWord(task.ownerMode) : '';
+    const modePart = modeWord
+      ? '<span class="bg-task-mode bg-mode-' + task.ownerMode + '" title="' +
+        escapeHtml(t('bg.modeTitle', { mode: modeWord })) + '">' + escapeHtml(modeWord) + '</span>'
+      : '';
+    const persistentPart = task.persistent === true
+      ? '<span class="bg-task-mode bg-mode-service" title="' + escapeHtml(t('bg.persistent')) + '">' + escapeHtml(t('bg.persistent')) + '</span>'
+      : '';
+    // 健康色点（P0 面板投影批 · 设计稿 §3.4）：快照帧行内 health 字段派生——
+    // 绿=healthy / 黄=suspect / 红=escalated；bgHealthNorm 双端容错（脏值回落
+    // healthy、空值（旧后端）零渲染不膨胀行高）。与智能体行 bgWaiting[].health
+    // 同一词表同一账本（禁第二状态源）。
+    // panel-ia 批（2026-11-03 · 作者「信息太多、太杂」）：健康点只在**非健康**
+    // 时上位——healthy 行原本已是「状态点 + 状态词 + 绿健康点」三枚状态元素叠在
+    // 一行上（同一件事说三遍）；健康色因此改为**异常信号**（suspect/escalated
+    // 出点、healthy 静默）。判读链不变：词表/账本/后端字段零改动。
+    const healthWord = bgHealthNorm(task.health);
+    const healthPart = (healthWord && healthWord !== 'healthy')
+      ? '<span class="bg-health-dot bg-health-' + healthWord + '" title="' + escapeHtml(t('bg.health.' + healthWord)) + '" aria-hidden="true"></span>'
       : '';
     const hb = task.heartbeat;
-    const linesPart = (hb && rowState !== 'cancelling')
-      ? '<span class="bg-task-lines">' + escapeHtml(t('bg.lines', { count: hb.outputLines })) + '</span>'
+    // 行数 chip（#753）：实时行用心跳 outputLines；快照恢复行（无心跳）用
+    // activeBgTasks 快照的 outputLines（BgTaskOutputStore 当前总行数）。
+    const lines = (hb && typeof hb.outputLines === 'number') ? hb.outputLines : (typeof task.outputLines === 'number' ? task.outputLines : 0);
+    const linesPart = (rowState !== 'cancelling')
+      ? '<span class="bg-task-lines">' + escapeHtml(t('bg.lines', { count: lines })) + '</span>'
       : '';
+    // 退出码 chip（通知详情批 2026-10-24）：终态帧携带 exitCode ⇒ 行内直接可判
+    // 成败（旧形态要点开详情卡才知道）；复用详情卡既有文案键 bg.detail.exit。
+    const exitPart = (typeof task.exitCode === 'number')
+      ? '<span class="bg-task-exit">' + escapeHtml(t('bg.detail.exit', { code: task.exitCode })) + '</span>'
+      : '';
+    // 耗时段：运行行走表钟（now - startedAt，1s ticker 按 data-task-id 刷新）；
+    // 终态行冻结（终态帧 durationMs 权威，缺省回落 finishedAt - startedAt）——
+    // 旧行为终态后仍在走表直到淘汰（「已完成 · 已运行 8 分钟」谎报形态）。
+    // 冻结不靠去 data-task-id（面板生命周期 e2e 用它寻址行，保留）——靠 ticker
+    // 侧「终态不改写」守卫（ensureBgTimer tick）。
+    const isEndedTask = isTerminalBgStatus(task.status);
+    const frozenMs = (typeof task.durationMs === 'number') ? task.durationMs
+      : (isEndedTask && typeof task.finishedAt === 'number' && task.startedAt
+        ? Math.max(0, task.finishedAt - task.startedAt) : null);
     const uptimePart = task.startedAt
-      ? '<span class="bg-task-uptime" data-task-id="' + escapeHtml(task.taskId) + '">' + escapeHtml(formatDuration(now - task.startedAt)) + '</span>'
+      ? '<span class="bg-task-uptime" data-task-id="' + escapeHtml(task.taskId) + '">' +
+        escapeHtml(formatDuration(isEndedTask && frozenMs != null ? frozenMs : now - task.startedAt)) + '</span>'
       : '';
     const desc = task.description || task.taskId;
     const nameTitle = desc + ' · ' + task.taskId;
-    return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + '" role="listitem" tabindex="0">' +
-      '<span class="bg-task-status ' + dotClass + '" aria-hidden="true"></span>' +
+    // Terminal rows: no cancel button (nothing to cancel) — the row itself is
+    // the click target for output viewing. Running rows keep the cancel button.
+    // 扁平按钮批（2026-11-05 · 作者令「取消按钮需要设计一下，用我们最新的扁平风
+    // 按钮风格」）：本体直接挂 design-system 扁平六态基类 `.ds-btn` + 危险档
+    // `.ds-btn--danger`（ghost：透明底 + danger 字色 + hover 危险洗底 + 按下缩放 +
+    // 焦点描边环；零渐变/零阴影/零位移——flat-button-spec 的契约面）。破坏性语义
+    // 靠三件事保留：① danger 字色（红）恒定可见；② 文案就是「取消」（不做图标化
+    // 弱化）；③ title 明说不可恢复。`.bg-task-cancel` 只留几何（尺寸/间距）。
+    const cancelPart = (rowState === 'cancelling' || rowState === 'running' || rowState === 'idle' || rowState === 'stuck')
+      ? '<button class="ds-btn ds-btn--danger bg-task-cancel" type="button"'
+        + (rowState === 'cancelling' ? ' disabled' : '')
+        + ' title="' + escapeHtml(t('bg.cancelTip')) + '"'
+        + ' aria-label="' + escapeHtml(t('bg.cancelTip')) + '">'
+        + escapeHtml(rowState === 'cancelling' ? t('bg.cancelling') : t('bg.cancel')) + '</button>'
+      : '';
+    // ── 三行/二行结构（UI 批 2026-11-05 · 作者令「后台任务也是。name·状态·输出·time
+    //    第二行 badge」）────────────────────────────────────────────────────────
+    //   · L1 `.bg-task-name-line`：name · 状态图标（bgRowStatus 单点）· 输出摘要
+    //     （行数 chip / 退出码）· time（margin-left:auto 钉右）；
+    //   · L2 `.bg-task-meta`（badges）：设备 / 来源链 / 执行模式 —— 独立成行、可换行。
+    // 既有锚（.bg-task-name-line / .bg-task-meta / .bg-task-lines / .bg-task-state）
+    // 全部保留：回归套件按类取数，本批只改**归行**，不改读点。
+    const badgeParts = devicePart + originPart + modePart + persistentPart;
+    return '<div class="bg-task-row' + (rowState === 'cancelling' ? ' bg-task-cancelling' : '') + endedClass + extraCls + '" role="listitem" tabindex="0" data-task-id="' + escapeHtml(task.taskId) + '">' +
       '<div class="bg-task-info">' +
-        '<div class="bg-task-line bg-task-meta">' +
-          '<span class="bg-task-state' + stateClass + '">' + escapeHtml(statusLabel) + '</span>' +
-          originPart + kindPart + linesPart + uptimePart +
-        '</div>' +
-        '<div class="bg-task-line bg-task-name-line">' +
+        '<div class="bg-task-line bg-task-name-line bg-task-row-line1">' +
           '<span class="bg-task-name" title="' + escapeHtml(nameTitle) + '">' + escapeHtml(desc) + '</span>' +
+          bgStatusHtml(rowState === 'cancelling' ? 'cancelling' : rowState, { label: statusLabel }) +
+          healthPart + linesPart + exitPart + uptimePart +
+        '</div>' +
+        (badgeParts
+          ? '<div class="bg-task-line bg-task-meta bg-task-row-line2 bg-task-badges">' + badgeParts + '</div>'
+          : '') +
+      '</div>' +
+      cancelPart +
+    '</div>';
+  };
+
+  // 族头 HTML（聚合行：状态聚合点 + 族名 ×N + 运行中计数 + Σ行数 + 族龄）。
+  const familyGroupHtml = (key, members) => {
+    const expanded = bgFamilyExpanded.get(bucketSid + '\u0000' + key) === true;
+    const states = members.map((m) => bgTaskRowState(m));
+    const runningCount = states.filter((s) => s === 'running' || s === 'idle' || s === 'stuck').length;
+    const cancellingCount = states.filter((s) => s === 'cancelling').length;
+    // 族头聚合态（三行结构批）：聚合点词表 → bgRowStatus 状态键（stuck > failed >
+    // running/idle/cancelling > done 的优先级同 bgAggregateDot，单表出图标/色调）。
+    const aggTone = bgAggregateDot(states).replace('bg-status-', '');
+    const aggState = aggTone === 'error' ? 'error' : aggTone;
+    const stateWord = runningCount > 0
+      ? t('bg.familyRunning', { count: runningCount })
+      : cancellingCount > 0 ? t('bg.cancelling')
+      : t('bg.familyDone', { count: members.length });
+    const totalLines = members.reduce((acc, m) => {
+      const hb = m.heartbeat;
+      const n = (hb && typeof hb.outputLines === 'number') ? hb.outputLines : (typeof m.outputLines === 'number' ? m.outputLines : 0);
+      return acc + n;
+    }, 0);
+    const linesPart = totalLines > 0
+      ? '<span class="bg-task-lines">' + escapeHtml(t('bg.lines', { count: totalLines })) + '</span>' : '';
+    const startedAts = members.map((m) => m.startedAt).filter((x) => typeof x === 'number' && x > 0);
+    const earliest = startedAts.length ? Math.min(...startedAts) : 0;
+    const uptimePart = earliest
+      ? '<span class="bg-task-uptime">' + escapeHtml(formatDuration(now - earliest)) + '</span>' : '';
+    const base = bgFamilyBaseLabel(members);
+    // panel-ia 批（2026-11-03）：组头行序同批翻转——族名（身份）在前，
+    // 聚合状态/计数/行数/族龄退到第二行。
+    // 族头行（三行结构批 · 同款二行）：L1 族名 · 聚合状态图标 · 族龄；L2 计数/行数徽标。
+    return '<div class="bg-task-row bg-task-row-family" role="listitem" tabindex="0" aria-expanded="' + (expanded ? 'true' : 'false') + '" data-family-key="' + escapeHtml(key) + '">' +
+      '<div class="bg-task-info">' +
+        '<div class="bg-task-line bg-task-name-line bg-task-row-line1">' +
+          '<span class="bg-task-name" title="' + escapeHtml(base || key) + '">' + escapeHtml(base || key) + '</span>' +
+          bgStatusHtml(aggState, { label: stateWord }) +
+          '<span class="bg-family-caret" aria-hidden="true">' + (expanded ? '▾' : '▸') + '</span>' +
+          uptimePart +
+        '</div>' +
+        '<div class="bg-task-line bg-task-meta bg-task-row-line2 bg-task-badges">' +
+          '<span class="bg-task-kind" title="' + escapeHtml(t('bg.familyTitle', { count: members.length })) + '">' +
+            escapeHtml(t('bg.familyCount', { count: members.length })) + '</span>' +
+          linesPart +
         '</div>' +
       '</div>' +
-      '<button class="bg-task-cancel" type="button">' + escapeHtml(rowState === 'cancelling' ? t('bg.cancelling') : t('bg.cancel')) + '</button>' +
     '</div>';
-  }).join('');
+  };
 
-  // Wire cancel buttons (unchanged semantics: optimistic cancelling state +
-  // cancelBackgroundJob WS command — regression red line).
-  listEl.querySelectorAll('.bg-task-row').forEach((row, i) => {
-    const task = visible[i];
+  // 装配：visible 序不变——每族只在首个成员位渲染（收起=组头一行；展开=组头+全
+  // 成员），族外任务单行。
+  const htmlParts = [];
+  const emittedFamilies = new Set();
+  for (const task of visible) {
+    const key = bgFamilyKey(task.description || task.taskId);
+    if (key && familyKeys.has(key)) {
+      if (emittedFamilies.has(key)) continue; // 成员行由组头展开承载
+      emittedFamilies.add(key);
+      const members = familyByKey.get(key);
+      const expanded = bgFamilyExpanded.get(bucketSid + '\u0000' + key) === true;
+      htmlParts.push(familyGroupHtml(key, members));
+      if (expanded) for (const m of members) htmlParts.push(taskRowHtml(m, ' bg-task-row-member'));
+    } else {
+      htmlParts.push(taskRowHtml(task));
+    }
+  }
+  listEl.innerHTML = htmlParts.join('');
+
+  // ── 事件绑定（data 属性寻址——分组装配后行序 ≠ visible 序）──────────
+  // 族头：点击/Enter 切换展开态（模块级账本 + 单键翻转 → 整表重渲）。
+  // stopPropagation 必需：重渲会detach被点行，事件继续冒泡到 document 的
+  // 「点击外部关闭」守卫时 contains(已脱离节点)=false ⇒ 面板被误关（展开一帧
+  // 即收起的实测形态）；拦在行级则守卫收不到本次点击。
+  listEl.querySelectorAll('[data-family-key]').forEach((row) => {
+    const key = row.getAttribute('data-family-key');
+    row.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (e.target.closest('.bg-task-cancel')) return;
+      const fullKey = bucketSid + '\u0000' + key;
+      if (bgFamilyExpanded.get(fullKey) === true) bgFamilyExpanded.delete(fullKey);
+      else {
+        if (bgFamilyExpanded.size > 512) bgFamilyExpanded.clear(); // 护栏（防累积泄漏）
+        bgFamilyExpanded.set(fullKey, true);
+      }
+      renderBgDropdown();
+    });
+  });
+  // 任务行：取消按钮 + 输出详情卡（与改前逐字节同语义，仅寻址方式改 data 键）。
+  listEl.querySelectorAll('.bg-task-row[data-task-id]').forEach((row) => {
+    const task = famTaskByKey.get(row.getAttribute('data-task-id'));
     if (!task) return;
     const cancelBtn = row.querySelector('.bg-task-cancel');
-    if (!cancelBtn) return;
-    if (task.status === 'cancelling') {
-      cancelBtn.disabled = true;
-      cancelBtn.classList.add('cancelling');
+    if (cancelBtn) {
+      if (task.status === 'cancelling') {
+        cancelBtn.disabled = true;
+        cancelBtn.classList.add('cancelling');
+      }
+      cancelBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        // Immediate visual feedback — optimistically show cancelling state
+        cancelBtn.disabled = true;
+        cancelBtn.classList.add('cancelling');
+        cancelBtn.textContent = t('bg.cancelling');
+        task.status = 'cancelling';
+        sendWs({ type: 'cancelBackgroundJob', sessionId: activeView?.sessionId, jobId: task.taskId });
+      });
     }
-    cancelBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      // Immediate visual feedback — optimistically show cancelling state
-      cancelBtn.disabled = true;
-      cancelBtn.classList.add('cancelling');
-      cancelBtn.textContent = t('bg.cancelling');
-      task.status = 'cancelling';
-      sendWs({ type: 'cancelBackgroundJob', sessionId: activeView?.sessionId, jobId: task.taskId });
+    // Row click target (2026-09-09 output viewing): open the glass detail card.
+    // Cancel button stopPropagation above; a click anywhere else on a terminal
+    // OR running row opens the card. Remote tasks degrade in the card itself.
+    // 来源链批（2026-11-01 19:23）：桶键随行传入详情卡——卡面来源行走同一条链解析。
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.bg-task-cancel')) return; // belt — cancel already stopsPropagation
+      openBgTaskOutput(task, bucketSid);
+    });
+    // Keyboard parity (APG listbox precedent): Enter/Space on a focused row
+    // opens the detail card; ArrowUp/Down navigation stays in the shared handler.
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        e.stopPropagation();
+        openBgTaskOutput(task, bucketSid);
+      }
     });
   });
 
   // Keyboard (APG listbox parity with subagent panel): ArrowUp/ArrowDown move
-  // between rows. Rows have no click target (tasks open no popup); Tab reaches
-  // the row's cancel button. Property assignment — idempotent across re-renders.
+  // between rows; Enter/Space on a focused row opens the detail card (wired
+  // per-row above); Tab reaches the row's cancel button (running rows).
+  // Property assignment — idempotent across re-renders.
   listEl.onkeydown = (e) => {
     const row = e.target && e.target.closest ? e.target.closest('.bg-task-row') : null;
     if (!row) return;
@@ -2744,6 +3909,13 @@ function renderBgDropdown() {
       const i = rows.indexOf(row);
       const next = rows[e.key === 'ArrowDown' ? i + 1 : i - 1];
       if (next) next.focus();
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      // #753 族头键盘等价（APG listbox 先例，subagent 面板同款）：Enter/Space
+      // 触发行 click（族头 = 展开翻转；任务行走各自 per-row Enter/Space 处理器，
+      // 但本处统一 row.click() 对两类行都是同一语义 —— 任务行的 per-row keydown
+      // 已 stopPropagation，不会双触发）。
+      e.preventDefault();
+      row.click();
     }
   };
   return visible.length;
@@ -2754,14 +3926,25 @@ function startBgTimer() {
   const v = activeView; // capture at start time — interval fires later when activeView may have drifted
   if (!v) return;
   _bgTimer = setInterval(() => {
+    // R1/R3 retention sweep FIRST and for every bucket: it must run whatever the
+    // dropdown state is, otherwise a closed panel freezes terminal rows (and the
+    // badge) until the next reconnect.
+    sweepAllBgTerminalRows();
     const dropdown = v.dom.bgDropdownEl;
-    if (!dropdown || dropdown.classList.contains('hidden')) { stopBgTimer(); return; }
-    const tasks = state.sessionBgTasks[v.sessionId] || [];
-    const now = Date.now();
-    dropdown.querySelectorAll('.bg-task-uptime[data-task-id]').forEach(el => {
-      const t = tasks.find(t => t.taskId === el.dataset.taskId);
-      if (t && t.startedAt) el.textContent = formatDuration(now - t.startedAt);
-    });
+    if (dropdown && !dropdown.classList.contains('hidden')) {
+      const tasks = state.sessionBgTasks[v.sessionId] || [];
+      const now = Date.now();
+      dropdown.querySelectorAll('.bg-task-uptime[data-task-id]').forEach(el => {
+        const t = tasks.find(t => t.taskId === el.dataset.taskId);
+        // 终态行不走表（通知详情批 2026-10-24）：span 渲染时已不带 data-task-id，
+        // 此守卫是双保险——快照行先 running 后终态的窗口里不被 ticker 改写回走表值。
+        if (t && t.startedAt && !isTerminalBgStatus(t.status)) el.textContent = formatDuration(now - t.startedAt);
+      });
+    }
+    // Idle out once every bucket is empty; ensureBgTimer() restarts it on the next
+    // frame / badge refresh (this is what keeps a non-empty bucket ticking even
+    // while the panel stays closed).
+    if (!Object.values(state.sessionBgTasks || {}).some(b => Array.isArray(b) && b.length > 0)) stopBgTimer();
   }, 1000);
 }
 
@@ -2782,8 +3965,18 @@ function updateBgTasksUI(targetView) {
   // flow canvas (getRunningFlows), not in this indicator.
   const tasks = state.sessionBgTasks[view.sessionId] || [];
   const now = Date.now();
+  // Drop already-expired terminal rows before counting: the badge must equal the
+  // rows the panel would paint (same bucket, same deadline) — the 1s ticker alone
+  // would let the badge over-count for up to a second after the deadline.
+  sweepBgTerminalRows(tasks, now);
+  // Retained terminal rows (completed/failed/cancelled) keep the indicator visible
+  // for their retention window so the user can reopen them for output viewing; the
+  // 1s sweep removes them from the bucket when the window ends (badge falls with
+  // them). Same predicate set as renderBgDropdown's visible filter ⇒ badge == rows.
+  // The 3s finishedAt clause only guards the brief window right after a terminal
+  // frame lands.
   const active = tasks.filter(task =>
-    task.status === 'running' || task.status === 'cancelling' ||
+    task.status === 'running' || task.status === 'cancelling' || isTerminalBgStatus(task.status) ||
     (task.finishedAt && (now - task.finishedAt < 3000))
   );
   const totalCount = active.length;
@@ -2797,13 +3990,20 @@ function updateBgTasksUI(targetView) {
   } else {
     el.classList.add('hidden');
     el.setAttribute('aria-expanded', 'false');
+    // §3 invariant (badge count == listed rows): the TTL sweep now drives the
+    // count to 0 as a NORMAL path (a lone terminal row expiring), so the stale
+    // last value must be zeroed — otherwise the hidden badge keeps counting a
+    // row that no longer exists (0 rows ⇔ badge "0", hidden).
+    countEl.textContent = '0';
     if (dropdown) dropdown.classList.add('hidden');
     stopBgTimer();
   }
   if (dropdown && !dropdown.classList.contains('hidden')) {
-    const n = renderBgDropdown();
-    if (n > 0) startBgTimer(); else stopBgTimer();
+    renderBgDropdown();
   }
+  // R1/R3: keep the retention ticker alive whenever any bucket holds rows — the
+  // eviction (and the badge falling back) must not wait for the panel to be opened.
+  ensureBgTimer();
 }
 
 /** Refresh the badge of the view that DISPLAYS the session owning `sid`'s
@@ -2830,12 +4030,20 @@ Object.values(chatViews).forEach(v => {
       // redesign — subagent parity; the stale-count empty-dropdown fork fixed
       // 2026-09-05 now surfaces as a proper empty state instead of nothing).
       renderBgDropdown();
+      // 面板拆分批（2026-10-31 ④ · 作者追加令）：桌面端本键（后台任务键）只显
+      // 任务节；手机端 mobile-layer 维持合并单面板（CSS 闸兜住视图类）。
+      if (!document.body.classList.contains('mobile-layer')) {
+        dropdown.classList.remove('bg-view-agents');
+        dropdown.classList.add('bg-view-tasks');
+      }
       dropdown.classList.remove('hidden');
-      const tasks = state.sessionBgTasks[v.sessionId] || [];
-      if (tasks.some(t => t.status === 'running' || t.status === 'cancelling')) startBgTimer();
+      // Any retained row (terminal included) keeps the 1s sweep running while the
+      // panel is open; ensureBgTimer() also covers the bucket-non-empty case.
+      ensureBgTimer();
     } else {
       dropdown.classList.add('hidden');
-      stopBgTimer();
+      // The retention ticker keeps running while the bucket is non-empty (the
+      // sweep must not depend on the panel being open) — see ensureBgTimer().
     }
     indicator.setAttribute('aria-expanded', String(opening));
   };
@@ -2856,7 +4064,9 @@ document.addEventListener('click', (e) => {
       if (indicator) indicator.setAttribute('aria-expanded', 'false');
     }
   });
-  stopBgTimer();
+  // (No stopBgTimer() here: the 1s retention ticker is owned by ensureBgTimer()
+  // and idles out on its own once every bucket is empty. Stopping it on a stray
+  // document click used to freeze terminal-row eviction until the next event.)
 });
 
 onMessage('backgroundTaskUpdate', (msg, view) => {
@@ -2874,7 +4084,7 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
   // 'cancelled' is terminal too: AgentActor.killSessionShellProcesses emits
   // status="cancelled" on restart/Stop — treating it as non-terminal left
   // ghost entries in the bucket forever (never shown, never removed).
-  const isTerminal = msg.status === 'completed' || msg.status === 'failed' || msg.status === 'cancelled';
+  const isTerminal = isTerminalBgStatus(msg.status);
   if (idx >= 0) {
     tasks[idx].status = msg.status;
     if (msg.description && !tasks[idx].description) tasks[idx].description = msg.description;
@@ -2884,9 +4094,21 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
     if (msg.kind && !tasks[idx].kind) tasks[idx].kind = msg.kind;
     if (msg.origin && !tasks[idx].origin) tasks[idx].origin = msg.origin;
     if (msg.originLabel && !tasks[idx].originLabel) tasks[idx].originLabel = msg.originLabel;
+    // 任务模式标注批（2026-10-30）：ownerMode 随注册帧携带一次，缺省回填不覆盖。
+    if (msg.ownerMode && !tasks[idx].ownerMode) tasks[idx].ownerMode = msg.ownerMode;
+    // 归属批（2026-10-31）：delegate 批次短名随注册帧携带一次，同纪律缺省回填。
+    if (msg.ownerName && !tasks[idx].ownerName) tasks[idx].ownerName = msg.ownerName;
     if (isTerminal) {
-      tasks[idx].finishedAt = Date.now();
+      // Retention deadline (R1): the 1s sweep removes the row from the bucket when
+      // it passes; while the row's output card is open the deadline is re-armed
+      // each tick (R2 — paused reading), so closing restarts a full window.
+      tasks[idx].finishedAt = typeof msg.finishedAt === 'number' ? msg.finishedAt : Date.now();
+      tasks[idx].evictAt = Date.now() + TERMINAL_ROW_TTL_MS;
     }
+    // 通知详情批（2026-10-24）：终态帧只增键——退出码（行内 exit chip）与耗时
+    // （冻结时长，不再终态后走表）。运行帧不带 ⇒ 缺读零变化（向后兼容）。
+    if (typeof msg.exitCode === 'number') tasks[idx].exitCode = msg.exitCode;
+    if (typeof msg.durationMs === 'number') tasks[idx].durationMs = msg.durationMs;
     if (msg.heartbeat) tasks[idx].heartbeat = msg.heartbeat;
   } else {
     tasks.push({
@@ -2895,37 +4117,54 @@ onMessage('backgroundTaskUpdate', (msg, view) => {
       status: msg.status,
       startedAt: msg.startedAt || Date.now(),
       heartbeat: msg.heartbeat || null,
-      finishedAt: isTerminal ? Date.now() : undefined,
+      finishedAt: (isTerminal && typeof msg.finishedAt === 'number') ? msg.finishedAt : (isTerminal ? Date.now() : undefined),
+      evictAt: isTerminal ? Date.now() + TERMINAL_ROW_TTL_MS : undefined,
+      // 通知详情批（2026-10-24）：终态帧只增键（退出码/耗时）——仅终态帧创建的行
+      // 也同权获得 exit chip 与冻结时长。
+      exitCode: (isTerminal && typeof msg.exitCode === 'number') ? msg.exitCode : undefined,
+      durationMs: (isTerminal && typeof msg.durationMs === 'number') ? msg.durationMs : undefined,
       // 来源标注（2026-09-07 重设计）：注册会话 id（兜底推导用）+ 后端权威
       // origin/originLabel/kind（BgTaskRegistry.originFor 推导，信封同源）。
       sessionId: msg.sessionId || '',
       kind: msg.kind || '',
       origin: msg.origin || '',
-      originLabel: msg.originLabel || ''
+      originLabel: msg.originLabel || '',
+      ownerMode: msg.ownerMode || '',
+      ownerName: msg.ownerName || ''
     });
   }
-  // Remove terminal tasks after a brief delay so user sees the count update.
+  // Terminal rows are RETAINED in the bucket for a bounded window (2026-09-09
+  // output viewing, bounded 2026-09-10 by R1/R3): the user reopens them to view
+  // output, then the 1s sweep drops them once evictAt passes (max TERMINAL_ROW_MAX
+  // retained). The old 3s setTimeout removal is gone; retention is no longer
+  // unbounded-until-refresh either. Sweep once right here so a burst of terminal
+  // frames cannot leave the bucket over the cap until the next tick.
+  sweepBgTerminalRows(tasks, Date.now());
   // Refresh the OWNING view's badge (findViewBySessionId(sid)), not the
   // ws.js-routed activeView: sub-agent events arrive with view=null (no popup)
   // or a popup ChatView, and skipping/retargeting the refresh is what froze
   // the root window's count while the bucket drained (the reported
   // "count>0 but empty dropdown" fork).
-  if (isTerminal) {
-    const taskId = msg.taskId;
-    setTimeout(() => {
-      const existing = state.sessionBgTasks[sid];
-      if (existing) {
-        state.sessionBgTasks[sid] = existing.filter(t => t.taskId !== taskId);
-        const v = findViewBySessionId(sid);
-        if (v && v.mounted) updateBgTasksUI(v);
-      }
-    }, 3000);
-  }
   refreshBgBadgeFor(sid);
 });
 
+// #753 速率闸告警（bgRateAlert 帧，引擎熔断触发沿单发）：toast 告警——作者
+// 不点开面板也看得见「某会话在刷后台任务」。msg={sessionId, rootSessionId,
+// count, windowSec, cooldownSec}。静默降级：toast 模块缺席（极端加载序）只丢
+// 提示不丢闸（闸在引擎侧，前端帧只是告警面）。
+onMessage('bgRateAlert', (msg) => {
+  const params = {
+    count: msg.count ?? '?',
+    windowSec: msg.windowSec ?? '?',
+    cooldownSec: msg.cooldownSec ?? '?',
+  };
+  import('./modal.js').then((m) => m.showToast(t('bg.rateAlert', params), 'info')).catch(() => {});
+});
+
 // --- /ask command ---
+import { selectionAskFrame, initSelectionAsk } from './selectionAsk.js';
 onMessage('askTextDelta', (msg, view) => {
+  if (selectionAskFrame('askTextDelta', msg)) return;
   const sid = msg.sessionId || state.activeSessionId;
   if (sid && !state.turnStartTimes[sid]) state.turnStartTimes[sid] = Date.now();
   // Accumulate ask text for ALL sessions
@@ -2936,6 +4175,7 @@ onMessage('askTextDelta', (msg, view) => {
   if (view) appendAskAnswer(msg.delta);
 });
 onMessage('askDone', (msg, view) => {
+  if (selectionAskFrame('askDone', msg)) return;
   const sid = msg.sessionId || state.activeSessionId;
   const durationMs = consumeTurnDuration(sid) || msg.durationMs;
   const buf = sid ? state.sessionAskBuffers[sid] : null;
@@ -2946,11 +4186,13 @@ onMessage('askDone', (msg, view) => {
     const question = buf ? buf.question : '';
     finishAskAnswer(durationMs, msg.model);
     if (question || answer) {
-      saveMsg({ type: 'ask', question, answer, durationMs, model: msg.model }, msg.sessionId);
+      // R1（footer 统一 · 带时间，2026-09-14）：本地缓存行也落真实时刻 —— 缓存路径
+      // 原先无 timestamp ⇒ 刷新后 ask 行 footer 只能 copy-only（与后端 .ui.json 同批修）。
+      saveMsg({ type: 'ask', question, answer, durationMs, model: msg.model, timestamp: Date.now() }, msg.sessionId);
     }
   } else if (buf && (buf.question || buf.answer)) {
     // Non-active session: save buffered ask to localStorage
-    saveMsg({ type: 'ask', question: buf.question, answer: buf.answer, durationMs, model: msg.model }, sid);
+    saveMsg({ type: 'ask', question: buf.question, answer: buf.answer, durationMs, model: msg.model, timestamp: Date.now() }, sid);
   }
   if (sid) delete state.sessionAskBuffers[sid];
   // Clean up thinking buffer so the subsequent 'done' event doesn't save
@@ -2959,6 +4201,7 @@ onMessage('askDone', (msg, view) => {
   if (activeView?.stream?.currentThinkingBubble) finishThinking();
 });
 onMessage('askError', (msg, view) => {
+  if (selectionAskFrame('askError', msg)) return;
   const sid = msg.sessionId || state.activeSessionId;
   if (sid) delete state.sessionAskBuffers[sid];
   if (view) renderAskError(msg.message);
@@ -2990,19 +4233,23 @@ onMessage('memoryData', (msg, view) => handleMemoryData(msg));
 onMessage('memoryChanged', (msg, view) => handleMemoryChanged(msg));
 onMessage('memorySaved', () => { /* saved confirmation, no action needed */ });
 onMessage('memoryStatus', (msg, view) => showMemoryButton());
+// Memory-queue alert handler retired 2026-09-25 (govmemory batch): the memory
+// queue / consolidation track are gone, so the engine no longer emits the
+// `memoryQueueAlert` frame (see ws.js).
 
 // --- Rules ---
 onMessage('rulesData', (msg, view) => handleRulesData(msg));
 onMessage('rulesSaved', (msg, view) => handleRulesSaved(msg));
 onMessage('rulesDeleted', (msg, view) => handleRulesDeleted(msg));
 
-// --- Browse Result (path picker) ---
-onMessage('browseResult', (msg, view) => handleBrowseResult(msg));
+// browseResult frames (the unified directory picker's filter/goto channel) are
+// consumed by workspacePicker.js via per-request dynamic onMessage subscriptions
+// — no module-level subscriber anymore (pickeruni batch retired the static one).
 
-// Update check chain (updateCheckResult/updateStarted/updateCompleted) moved
-// to updateCheck.js — it also owns the silent auto-check scheduling and the
-// settings-btn green dot (09-05 五项裁定⑤). initUpdateCheck() is called in
-// the boot section below.
+// Update check chain (updateCheckResult/updateStarted/updateCompleted) 曾迁
+// updateCheck.js（09-05 五项裁定⑤）—— 该文件已随 auth-trim 批（2026-10-20 作者令）
+// 整体删除：设置页更新功能退役（检查/静默自动检查/绿点全链），未来由官网统一检测
+// 更新取代。
 
 
 // ---------- 4. Cross-module wiring ----------
@@ -3020,14 +4267,16 @@ onMessage('forkComplete', (msg, view) => {
     if (e.key !== 'Escape') return;
 
     // Full-screen overlay modals — click the overlay to trigger its close handler
+    // (the directory picker is NOT listed: it owns its own Esc handling since
+    // the pickeruni batch and closes with its cancel semantics.)
     const overlays = [
       '#memory-overlay', '#rules-overlay',
-      '#path-picker-overlay', '#modal-overlay', '#agent-overlay',
+      '#modal-overlay', '#agent-overlay',
     ];
     for (const sel of overlays) {
       const el = document.querySelector(sel);
       if (el && getComputedStyle(el).display !== 'none') {
-        el.click();
+        (/** @type {HTMLElement} */ (el)).click();
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -3067,7 +4316,7 @@ onMessage('forkComplete', (msg, view) => {
   }, true); // capture phase — intercept before other handlers
 })();
 
-// #396 Header adaptive layout (spec .nebflow/Spec/20260825_header-collision-spec.md,
+// #396 Header adaptive layout (spec the header-collision spec (internal),
 // frozen; v2 revised 2026-09-09 11:36 作者裁定): measurement-driven priority
 // hiding + center clamp — ANY width zero icon overlap; no flex-wrap; no "⋯"
 // overflow menu (user 2026-08-25 裁定: 仅自动隐藏). Fixed set (never hidden):
@@ -3076,9 +4325,11 @@ onMessage('forkComplete', (msg, view) => {
 // v2 (2026-09-09 11:36): ONE survival-priority chain over ALL hideable items,
 // HIGH→LOW — narrowing hides from the tail: the background-task/sub-agent
 // capsules (+ pending-asks, same content-driven capsule family) hide LAST
-// (author ruling: 后台任务/后台agent 优先显示), memory-btn + header-model-info
-// next, then the legacy right-cluster P1→P5 order (bypass → voice → search →
-// reminder → daemon; spec §3.2). Collision volume is fully measured
+// (author ruling: 后台任务/后台agent 优先显示), memory-btn next — the
+// header status: the usage ring held this tier until its 2026-10-23 removal
+// (上下文用量显示整链退役) — then the legacy right-cluster P1→P5 order
+// (bypass → voice → search → reminder → daemon; spec §3.2). Collision volume
+// is fully measured
 // (getBoundingClientRect / offsetWidth / intrinsic center width) — the old
 // empirical constants (memW fallback 28, CS_GAP=8) are gone. A hysteresis dead
 // zone keeps the hide/show cut from oscillating at the critical width.
@@ -3102,8 +4353,8 @@ onMessage('forkComplete', (msg, view) => {
     'bg-indicator',            // v2 tier 1 — hides LAST (11:36 裁定)
     'bgagent-indicator',       // v2 tier 1
     'pending-asks-indicator',  // v2 tier 1 (same capsule family)
+    'held-receipts-indicator', // v2 tier 1 (held-receipt 投递可靠性批 2026-10-21，同胶囊族)
     'memory-btn',              // v2 tier 2
-    'header-model-info',       // v2 tier 2
     'daemon-btn',              // v2 tier 3 — legacy P-order reversed: daemon
     'reminder-btn',            //   survives longest …
     'search-btn',
@@ -3117,8 +4368,8 @@ onMessage('forkComplete', (msg, view) => {
   let raf = null;
 
   // Content-driven visibility: the `hidden` attribute (memory before enable)
-  // or the `hidden` class (bg capsules with 0 tasks, context ring without
-  // data) takes an item OUT of the chain — it occupies no space (0 tasks = no
+  // or the `hidden` class (bg capsules with 0 tasks) takes an item OUT of the
+  // chain — it occupies no space (0 tasks = no
   // badge, unchanged). Same for elements that do not render at all: the
   // shelved TTS entry stays `display:none` via css/voice.css, so its chain
   // slot is dormant (it can never collide; if TTS ships again the slot wakes
@@ -3215,7 +4466,7 @@ onMessage('forkComplete', (msg, view) => {
   // normal resizes, but a direct listener keeps the reflow independent of RO
   // delivery timing (devtools zoom steps, initial programmatic resizes).
   window.addEventListener('resize', layout, { passive: true });
-  // Content-driven items: when one APPEARS (context ring gets data, memory
+  // Content-driven items: when one APPEARS (memory
   // enables, a bg capsule shows, the name arrives via sessionList WS) it grows
   // its cluster WITHOUT resizing #header, so the header alone would miss the
   // reflow and leave a stale (too-loose) clamp (§8 A2). Observing them is
@@ -3223,7 +4474,7 @@ onMessage('forkComplete', (msg, view) => {
   // fires one extra observer pass that converges (a steady-state pass changes
   // nothing → no further observer events).
   ['sidebar-toggle', 'session-name', 'bg-indicator', 'bgagent-indicator',
-    'pending-asks-indicator', 'memory-btn', 'header-model-info', 'canvas-toggle-btn']
+    'pending-asks-indicator', 'memory-btn', 'canvas-toggle-btn']
     .forEach(id => { const el = byId(id); if (el) ro.observe(el); });
   layout();
 })();
@@ -3233,10 +4484,25 @@ applyLocaleToHtml(); // Apply locale to static HTML elements
 initNavTabs();
 initModals();
 initRulesModal();
-initPathPicker();
 initInput(chatViews.primary);
-initMicOrb(); // Mic bubble orb v8.2.2 (#419) — binds #voice-btn canvas/css-orb
+// msgchip 批（2026-11-01 作者令「消息身份牌系统升级」）：带短名引用小牌的点击委托
+// 单点安装（幂等；渲染面在 utils.js 单管线内，取数/popover 在 chat/msgTokenChip.js）。
+installMsgTokenChip();
+// 会话头头像 + profile 面板（mobile-mockup-375 v3 批 · 扩展③）：头像/名称两端
+// 同款 —— 同一 DOM 节点（.header-center 首位），形态差异全在 CSS 层。
+initAgentProfile();
+// visup-b 批（作者 2026-09-19 04:22 修正④）：输入区的 micOrb 气泡形态退役 ⇒
+// `initMicOrb()` 现在是 no-op（挂载判据 = `#mic-canvas` 在场；主区已无该 canvas）。
+// 调用点保留：设置面/预览面的 OrbRenderer 管线仍由本模块导出，且未来若重挂输入区
+// orb 只需恢复 index.html 的 canvas（一处）。麦克风反馈改由 input.js 承担。
+// voicefix 批（2026-09-21 ③）回退修正④ ⇒ 输入区光球重新在位，本调用重新生效。
+// voiceseal 批（批 #508）：封存态 no-op —— 纠正批（#513）换轨：挂载门 =
+// voiceOrbMountable()（气泡 flag 默认 ON + 配置已到）。boot 期配置未到 ⇒
+// no-op（防「预挂后 voiceOrb:false 收不回」）；实际挂载由上方 configData
+// latch 在 voiceOrbEnabled() 时调 initMicOrb() 完成（#508 同款时序）。
+initMicOrb(); // Mic orb renderer — latch-mounted (#513): boot call is a no-op until configData arrives
 initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
+watchAttachmentStrip(); // uifix 批 2026-10-22：附件条 in-flow 行折叠腿（+N 收展），桌面启动即挂（两层共用，幂等）
 
 // Keep the last chat message visible above the floating #input-area.
 // #input-area (position:absolute; bottom:0) overlays #chat and has variable
@@ -3249,29 +4515,249 @@ initGlobalFileDrop(); // #303 — document-level drag & drop onto input bars
   const chat = document.getElementById('chat');
   if (!inputArea || !chat || !window.ResizeObserver) return;
   const updateChatPadding = () => {
-    // offsetHeight covers all in-flow children (queue-bar + input-bar + the
-    // area's own 10px bottom padding). Absolutely-positioned children
-    // (voice-overlay, slash-dropdown) are excluded — they overlay the chat
-    // transiently above the bar, so they must not inflate the padding.
-    const inputHeight = inputArea.offsetHeight;
+    // Reserve the actual overlap with #chat, not the composer's full height:
+    // on mobile/keyboard viewports their bottom edges need not coincide. The
+    // rendered rect includes safe-area padding and fractional CSS pixels.
+    // Absolutely-positioned children (voice-overlay, slash-dropdown) remain
+    // excluded because they do not contribute to the composer's border box.
+    const chatRect = chat.getBoundingClientRect();
+    const inputRect = inputArea.getBoundingClientRect();
+    const inputHeight = Math.max(0, chatRect.bottom - inputRect.top);
+    // Read the scroll state BEFORE the write (msgfix 批 · 作者 2026-09-19 睡前令):
+    // growing the reserve pushes the whole content down by the delta, so a reading
+    // taken *after* the write answers "is the user still near the bottom?" with the
+    // new geometry — the write would invalidate its own predicate and the last
+    // message would stay parked behind the taller input bar (measured: 129/129 px
+    // of the last row covered). Same order as the sibling top block below
+    // (read → write → correct), which is what the previous batch already did right.
+    const nearBottom = isNearBottom(chat);
     // +2px: minimal breathing room so the last message sits flush above the
     // input bar without touching the glass edge.
     chat.style.setProperty('padding-bottom', `${inputHeight + 2}px`, 'important');
-    // Only re-scroll if the user is already near the bottom — don't yank
-    // them away from history they're reading.
-    const nearBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 100;
+    // Only re-scroll if the user was already near the bottom — don't yank
+    // them away from history they're reading (shared NEAR_BOTTOM_PX unit).
+    // This runs *after* the write, so the pin lands on the grown reserve.
     if (nearBottom) chat.scrollTop = chat.scrollHeight;
+    // Keep the "↓ N new messages" pill parked above the input bar even while
+    // its height changes (multi-line input, queue bar, voice panel).
+    refreshScrollPill(chatViews.primary);
   };
   const ro = new ResizeObserver(updateChatPadding);
   ro.observe(inputArea);
+  // A virtual keyboard / browser chrome can move the composer without changing
+  // its own size, so ResizeObserver alone will not refresh the scroll reserve.
+  // visualViewport also reports keyboard-driven viewport changes on mobile.
+  window.addEventListener('resize', updateChatPadding, { passive: true });
+  window.visualViewport?.addEventListener('resize', updateChatPadding, { passive: true });
+  window.visualViewport?.addEventListener('scroll', updateChatPadding, { passive: true });
   updateChatPadding();
 })();
+
+// Keep the FIRST chat message clear of the top overlays (the sibling of the
+// #input-area block above, at the other end of #chat).
+//
+// Why the first message is occluded (cold start, few messages — measured
+// 2026-09-18): #header (position:absolute; margin-top 16px) and #top-overlays
+// (#task-list / #ask-pending-bar / #notification-banner — position:absolute at
+// top:68px) are OUT of #main's flow, so #chat's in-flow box still starts at the
+// header's CENTER (margin-top 45px = 16px offset + half of the 50px header) and
+// its 8px padding-top is the only top inset. With few messages the content is
+// shorter than the viewport, so there is no scroll position that "naturally
+// avoids" the overlays: scrollTop is pinned to 0 and the content is top-aligned
+// → the first message's first line lands at y=69 while the task card's bottom
+// is at y=247.6 (expanded) / 106 (collapsed) → 22 of 22px of that line covered
+// (fully hidden); only with ≥1 screen of content does scrolling slide messages
+// out from under the band.
+//
+// Fix = reserve the band's MEASURED height as #chat padding-top:
+//   - padding-top, NOT margin-top: #chat's box top stays at the header center so
+//     scrolled content still slides under the glass header (the existing design
+//     intent); at scrollTop 0 the content starts below the band instead.
+//   - Re-measured whenever the band can change — one ResizeObserver on #header
+//     and on #top-overlays covers all three cases the band depends on: the
+//     initial render, the task list's expand/collapse (its max-height .3s
+//     transition resizes the observed container every frame), and the
+//     appearance/disappearance of #ask-pending-bar / #notification-banner items.
+//     There is no feedback loop: header/overlays are absolutely positioned, so
+//     #chat's padding cannot move them.
+//   - The band is the topmost overlay STACK's box — max(#header bottom,
+//     #top-overlays bottom) — not "painted pixels only": #notification-banner
+//     is an 8px padding box even with zero items, and that transparent strip
+//     still answers hit-tests over the top of a message (measured 2026-09-18:
+//     with no task list at all, 7 of the first line's 22px hit-tested to
+//     #notification-banner). The container box is also the stable invariant —
+//     #task-list clips itself (#task-list.has-tasks { max-height:50vh;
+//     overflow:hidden }), so the container never over-reserves for a clipped
+//     card.
+(() => {
+  const header = document.getElementById('header');
+  const overlays = document.getElementById('top-overlays');
+  const chat = document.getElementById('chat');
+  if (!header || !overlays || !chat || !window.ResizeObserver) return;
+  // 液体玻璃 v2 批：顶缘滚入渐隐带计入顶带实测（仅手机端渲染；桌面 display:none
+  // ⇒ getBoundingClientRect 全零，本行桌面恒无副作用）。静止态内容首（页标题/
+  // 首条消息）让位到渐隐带之下，滚动态内容穿入渐隐带「先糊后没」。
+  const edgeFade = document.getElementById('g2-edge-fade');
+  // 会话页头同构批（件二+件三，作者令 2026-11-02 15:xx）：手机层会话身份头回到
+  // **悬浮**形态（.mh-idhead，绝对定位、零全宽带，见 mobileLayer.css 文件尾批次块）
+  // —— 单行三段式批（2026-11-02 07:23）的 fixed 真顶栏及其「按顶栏下缘实测让位」
+  // 链（mobileHead / getMobileHead / headRo / 建拆层广播监听）**整条退役**：
+  // 悬浮头不再是 #chat 的流内首件，也没有可测的「顶栏下缘」——让位回到本文件的
+  // 单一真值 bandBottom()（手机层 = 顶缘渐隐带 88 底缘 ⇒ reserve 96，与四种会话
+  // 身份头的可视足迹 96 同值；会话页面壳侧由 CSS 直接给同一 96）。  // chat.css's #chat padding-top (the no-overlay breathing room baseline).
+  const BASE_TOP_PAD = 8;
+  const bandBottom = () => Math.max(
+    header.getBoundingClientRect().bottom,
+    overlays.getBoundingClientRect().bottom,
+    edgeFade ? edgeFade.getBoundingClientRect().bottom : 0,
+  );
+  const syncTopReserve = () => {
+    const chatBox = chat.getBoundingClientRect();
+    // Not laid out yet (zero-size box) — the observer fires again as soon as it is.
+    // uifix ⑤（2026-10-20）：原守卫 `if (!chatTop)` 把「视口 top 恰为 0」当未布局
+    // （页面滚过表头即触发），观察器自此永久静默——带改 overlay 后 chat 顶回到
+    // #main 顶，滚动态下 top=0 是常态，守卫改判零尺寸盒。
+    if (!chatBox.width && !chatBox.height) return;
+    /* 顶部消失点批（2026-10-22 作者追加令）：UI 批⑦的「#chat 盒顶钉 header 盒底
+       （margin-top 实测写入，内容不可能高于 header）」随本令**退役** —— 新契约 =
+       消失点锚定 **Header 顶缘**：内容滚动时从 Header 玻璃下**穿过**（透出磨砂），
+       在 Header 上缘处消失（#chat 的 mask 裁剪，锚点变量 --chat-top-clip 由本观察器
+       按实测写入；chat.css 的 #chat mask 消费）。margin 恒 0（盒顶回 #top-overlays
+       带底），让位仍由下方 padding reserve 承担（静止态首条消息在 header 之下，
+       滚动态内容上穿）。桌面⇄手机层同规（手机层渐隐裙边同步退役，见
+       scrollUnderGlass.css 契约注记）。 */
+    const chatTop = chatBox.top;
+    /* 手机端白屏批（作者 10-31 15:38 截图令）：手机层（body.mobile-layer）下
+       桌面 #header display:none（rect 全零），「header.top − chat.top」失去锚
+       意义——任何让 #chat 盒瞬态上移的读数（iOS 固定层橡皮筋回弹 / 键盘位移
+       等 getBoundingClientRect 含 transform 的瞬态）都会把 clip 写成数百 px
+       的垃圾值；观察器只挂在 header/overlays resize 上，转场结束后无重测 ⇒
+       垃圾值持久化 ⇒ #chat mask 把消息区顶部整段裁没（作者所见：ask 卡上方
+       一大段白、卡内容全没、只剩 取消/确认 浮在半空）。手机层顶缘渐隐带
+       #g2-edge-fade 自带「滚入渐隐」语义（先糊后没），chat 顶部**不需要**再挂
+       mask ⇒ 手机层 clip 恒 0。桌面公式不变。 */
+    const mobileLayer = document.body.classList.contains('mobile-layer');
+    const clipTop = mobileLayer
+      ? 0
+      : Math.max(0, Math.ceil(header.getBoundingClientRect().top - chatTop));
+    if ((parseFloat(chat.style.getPropertyValue('--chat-top-clip')) || 0) !== clipTop) {
+      chat.style.setProperty('--chat-top-clip', clipTop + 'px');
+    }
+    /* 会话页头同构批（件二+件三，2026-11-02）：让位 = **单一真值 bandBottom()**
+       （手机层 = 顶缘渐隐带 88 底缘 ⇒ 96；桌面 = header/overlays 实测）——
+       单行三段式批的「顶栏下缘 − chat 顶 + 8」分支随该批的 fixed 顶栏一并退役
+       （悬浮身份头 .mh-idhead 不在流内、也不占版面，故没有可让位的「顶栏下缘」；
+       会话页的同类让位由 CSS `.mobile-page[data-page=conversation] .mobile-page-body`
+       给同一 96，四种会话内容起点同值）。 */    const reserve = Math.max(BASE_TOP_PAD, Math.ceil(bandBottom() - chatTop) + BASE_TOP_PAD);
+    const prev = parseFloat(getComputedStyle(chat).paddingTop) || BASE_TOP_PAD;
+    if (Math.abs(prev - reserve) < 0.5) return;
+    const delta = reserve - prev;
+    // Read the scroll state BEFORE the write: the reserve moves the whole
+    // content down by `delta`, and which correction is right depends on where
+    // the user is (same units as the sibling block above).
+    const st = chat.scrollTop;
+    const nearBottom = isNearBottom(chat);
+    chat.style.setProperty('padding-top', `${reserve}px`, 'important');
+    if (st === 0) return;
+    // Bottom-following wins over position-keeping while at the bottom (shared
+    // NEAR_BOTTOM_PX intent) — re-pinned every observer tick, so a task list
+    // expand/collapse cannot drift the last message behind the input bar.
+    if (nearBottom) { chat.scrollTop = chat.scrollHeight; return; }
+    // Otherwise keep the reading position: compensate 1:1 (the browser clamps
+    // if the now-taller content cannot honor it). Deliberately NOT compensated
+    // when st === 0 (few messages: everything is in the viewport, top-aligned)
+    // — that downward shift is exactly what moves the first message out from
+    // under the band.
+    chat.scrollTop = st + delta;
+  };
+  /* 写入延到下一帧（胶囊面交互批 2026-11-04 ⑤ 连带修）：
+     RO 回调里直接写 #chat 的 padding-top / --chat-top-clip，在 WebKit 上会触发
+     「ResizeObserver loop completed with undelivered notifications」——带内一有
+     内容（手机层待办胶囊上手机层后默认有、ask-pending-bar/通知横幅同理；HEAD
+     上把 bar 造出内容即可复现同一句）就报一次 console error，污染「零 console
+     error」类断言。改为 rAF 一跳再写：语义不变（reserve 仍是带底实测驱动、幂等
+     轻写），只是把写动作移出 RO 投递周期，浏览器不再判为环。 */
+  const ro = new ResizeObserver(() => { requestAnimationFrame(syncTopReserve); });
+  ro.observe(header);
+  ro.observe(overlays);
+  // 手机端白屏批：渐隐带 #g2-edge-fade 是 bandBottom() 的成员且随手机层
+  // 显隐（display 切换 = 尺寸 88↔0 变化）——把它也挂进观察器，层翻转/带显隐
+  // 后 reserve/clip 必有一拍重测，不依赖「resize 恰好也来」的时序。
+  if (edgeFade) ro.observe(edgeFade);
+  // 顶部消失点批（2026-10-22，原 UI 批⑦ resize 兜底）：桌面⇄手机层翻转
+  // （matchMedia 768px，mobile/bootstrap.js）走窗口 resize 兜底重算——層翻转时
+  // header 尺寸恰好不变也不漏（幂等轻写）。
+  window.addEventListener('resize', syncTopReserve, { passive: true });
+  syncTopReserve();
+})();
+
+// uifix-taskbar-flow (2026-10-09): #top-overlays is in normal flow now (chat.css),
+// so the task list / banner band RESIZES #chat's viewport instead of covering it.
+// The scrolled content never moves (scrollTop untouched — zero jump by
+// construction) and the reserve block above self-parks at the 8px baseline (the
+// band's bottom can no longer exceed chat's top). The one state that still
+// needs help here: EXPAND shrinks the chat viewport ⇒ the last message ends up
+// below the fold (COLLAPSE self-corrects via the browser's scrollTop clamp).
+// Re-pin with the app's OWN follow intent — shouldFollowBottom (latch ‖ live
+// near-bottom, shared NEAR_BOTTOM_PX unit): the latch is refreshed by every
+// scroll event INCLUDING these pins, so the pin stays exactly as sticky as the
+// user's own follow state — a manual scroll up disarms it on that event, a
+// scroll back re-arms it. Mid-scroll readers are never yanked; nobody who kept
+// to the bottom loses the latest turn. This handler only writes scrollTop and
+// refreshes the pill geometry — the latch and pill counters stay follow-batch
+// owned (single source).
+//
+// KNOWN-PREEXISTING (measured 2026-10-09 e2e, NOT this fix's scope): content
+// growing BELOW the viewport (streaming text reveal, late markdown re-render)
+// fires NO scroll event, so the follow latch never refreshes and render-site
+// smartScroll pins miss growth gaps — a pinned reader can be stranded above the
+// fold during boot history replay (dist wobbles 91~652px, old AND new layout).
+// Domain of the scroll-follow batch — handing the diagnosis over.
+(() => {
+  const overlays = document.getElementById('top-overlays');
+  const chat = document.getElementById('chat');
+  if (!overlays || !chat || !window.ResizeObserver) return;
+  const view = () => (typeof chatViews !== 'undefined' ? chatViews.primary : null);
+  const pinIfFollowing = () => {
+    if (document.hidden) return;
+    if (!shouldFollowBottom(view(), chat)) return;
+    chat.scrollTop = chat.scrollHeight;
+    refreshScrollPill(view());
+  };
+  new ResizeObserver(() => {
+    if (overlays.getBoundingClientRect().height === 0) return;
+    pinIfFollowing();
+  }).observe(overlays);
+})();
 initMemory();
+initBgMergedPanel(); // 后台合并批（2026-10-23 ⑥）：子智能体列表收编进 #bg-dropdown 单面板
 initExplorer();
 initCanvas();
+// 滑返批（作者令 2026-11-07 12:17「全局次级面板的ui交互 都应该要能支持从左向右滑返回
+// 上一层」）：装**单点**次级面板滑返层（登记面 + 手势面 + Esc 通路）。本行只做装配，
+// 各面板由清单自动接线（js/gesture/backSwipe.js 的 PANELS），零第二套关闭逻辑。
+initBackSwipe();
+// 只读探针（滑返批取证用：机械断言登记栈深度/栈顶面板 id，零行为副作用）。
+/** @type {Window & {__backSwipeProbe?: () => {has: boolean, top: string | null, depth: number}}} */ (window).__backSwipeProbe = () => ({
+  has: hasBackHandler(),
+  top: topBackHandler()?.id || null,
+  depth: Number(document.documentElement.dataset.backSwipeDepth || 0),
+});
+initAskDock(); // canvas ask mode 批（2026-10-28）：右下角入口 + 每文件独立会话气泡列
+initSelectionAsk(); // 选区 Ask 批（2026-11-18）：气泡同侧选区按钮 + 共用件 Ask 对话框
+initAskEditReview(); // canvas-inline-diff-review（2026-11-16）：审阅页签动作/快捷键接线
 initColResizers();
 // #27: Project 标签页按钮（取代 Team/Flow 主导位置）——打开发布 projects 标签页
 registerCanvasPanelButton('projects', 'projects-btn', () => openProjectsTab());
+// wiki-graph batch (2026-10-14): star button opens the wiki document graph
+// tab — same 4-state panel-button machine as Projects (dynamic import keeps
+// the boot path free of one more eager module).
+import('./wikiGraph.js').then(({ openWikiGraphTab }) => {
+  registerCanvasPanelButton('wiki-graph', 'wiki-btn', () => openWikiGraphTab());
+}).catch(() => { /* module unavailable — the button stays inert */ });
+// In-file Ctrl/Cmd+F routing (file content first, chat search as fallback —
+// the fallback itself lives in chatSearch.js's own binding).
+initFileSearch();
 
 // Remove UI initialization lock — all layout setup is done.
 // Double-rAF ensures the browser has painted at least one frame with
@@ -3283,6 +4769,8 @@ requestAnimationFrame(() => {
 });
 
 initActivityBar();
+// diff 拆面板批（2026-10-22）：注册态须在 boot 即就位（首个交付摘要条点击前）。
+initDiffPanel();
 document.getElementById('canvas-toggle-btn')?.addEventListener('click', () => {
   // Toggle Canvas open/close — closing does NOT clear tabs.
   if (document.body.classList.contains('canvas-open')) {
@@ -3305,45 +4793,93 @@ restoreTabs().then((restored) => {
 });
 // Auto-restore is triggered from sessionList handler (needs activeSessionId)
 initScheduledTask();
+// schedule-created-card 批（2026-11-05）：消息内嵌定时任务/待办卡片的入站帧单点
+// （scheduledTaskUpdated / Deleted / Completed / error / List）——挂在启动期一次，
+// 卡片本体（js/scheduleCard.js）只调 js/scheduleApi.js 的方法面。
+initScheduleApi();
 initDaemons();
+initPerception();
 initChatSearch();
 initUsageDashboard();
 initNeblink();
-initUpdateCheck();
+initFleetUpdate();
+initSocialPanel();
+initSecretsPanel();
+// PDF note/ask 批（2026-11-18）：PDF 页锚备注 + 提问侧栏（无配置门槛，常驻注册）。
+initPdfPanel();
 initDropbox();
 // initContacts()/initMessages() are NOT called here — they are friends-feature
 // modules, started from the configData handler only when the release gate
 // (featureFlags.js friendsEnabled) is on.
 
-// Preload Monaco Editor during idle time so first file open is instant.
-// Monaco (~2MB from CDN) is the main cause of first-open lag.
-const _idleCb = window.requestIdleCallback || ((fn) => setTimeout(fn, 2000));
-_idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMonaco().catch(() => {})));
+// Monaco is NOT preloaded anymore (W3, mobile-quickwins 2026-10-20): the idle
+// preload pulled ~932KB gzip (31% of boot bytes) on every first load — mobile
+// and desktop alike — for an editor most sessions never open. All consumers
+// (viewers/monaco.js, viewers/shared.js, canvas.js) dynamic-import
+// monacoEditor.js at open time, so the first code-file open pays the load
+// instead of every boot.
 
-// ---------- Safety mode dropdown ----------
+// ---------- Safety mode dropdown (header shield) ----------
+// permshield S1/F1 (2026-09-13): the shield is the **only** UI entry point for
+// the permission ladder. It writes the application-level persisted mode
+// (`nebflow.json → safety.defaultMode`; WS `setSafetyMode` → backend
+// `persistGlobalSafetyMode`) — the same single path as REST `PUT /api/safety/mode`
+// and the permission card's escalation ⇒ in force for every session and still
+// in force after a restart. The settings-page dropdown that used to duplicate
+// this control was deleted (作者重裁候选 B ①「删设置页，盾牌改成写全局」).
 (function initSafetyToggle() {
-  const TITLES = {
-    'confirm-edits': '安全模式：确认编辑 (Write/Edit/Bash 需确认)',
-    'auto-edits': '安全模式：编辑放行 (仅 Bash 需确认)',
-    'auto-all': '安全模式：全部放行 (无需确认)',
-  };
+  const SAFETY_MODES = ['confirm-edits', 'auto-edits', 'auto-all'];
+  // Per-mode tooltip (bilingual). Reuses the shield-menu labels for the mode
+  // name and states the "global + persists across restarts" semantics — the
+  // guidance that used to live in the settings page hint now lives here, at the
+  // only remaining control (the old hint claimed the shield applied to the
+  // current session only and reverted after a restart — no longer true).
+  const titleFor = (mode) => t('bypass.title.' + (SAFETY_MODES.includes(mode) ? mode : 'confirm-edits'));
+
+  /** Effective mode: local per-session mirror first, then the config snapshot.
+   *  Fallback `'auto-all'` MUST equal the backend's missing-key branch
+   *  (`GlobalSafety.defaultMode` → `fold(SafetyMode.AutoAll)`,
+   *  permissions.scala:146) or the shield would show a mode the backend is not
+   *  actually enforcing. */
+  function currentMode(view) {
+    const v = view || activeView;
+    const m = (v && v.sessionId && state.safetyModes[v.sessionId]) || state.parsedConfig?.safety?.defaultMode;
+    return SAFETY_MODES.includes(m) ? m : 'auto-all';
+  }
 
   state.updateSafetyToggle = function(view) {
     const v = view || activeView;
     if (!v || !v.sessionId) return;
-    const mode = state.safetyModes[v.sessionId] || 'confirm-edits';
+    const mode = currentMode(v);
     const btn = document.getElementById('bypass-toggle');
     if (btn) {
       btn.setAttribute('data-mode', mode);
-      btn.title = TITLES[mode] || TITLES['confirm-edits'];
+      btn.title = titleFor(mode);
     }
     // Highlight active option in dropdown
     document.querySelectorAll('#bypass-menu button').forEach(b => {
-      b.classList.toggle('active', b.dataset.mode === mode);
+      b.classList.toggle('active', (/** @type {HTMLElement} */ (b)).dataset.mode === mode);
     });
   };
 
   state.updateBypassToggle = state.updateSafetyToggle;
+
+  /**
+   * Apply the **global** mode to the local mirror and refresh the shield
+   * (single exit point for F-1). Both arrival paths must go through here:
+   *   ① the shield's own write (click handler below);
+   *   ② **another writer changed the global** — `configData` snapshot arrival
+   *      (REST PUT / another window / permission-card escalation) and
+   *      `sessionList` / `agentSessionList` frame arrival.
+   * The mode is application-level ⇒ every session in the mirror gets the same
+   * value, so the shield reads identically under any active session.
+   */
+  state.applyGlobalSafetyMode = function(mode, view) {
+    if (!SAFETY_MODES.includes(mode)) return false;
+    Object.keys(state.safetyModes).forEach(id => { state.safetyModes[id] = mode; });
+    state.updateSafetyToggle(view);
+    return true;
+  };
 
   const btn = document.getElementById('bypass-toggle');
   const menu = document.getElementById('bypass-menu');
@@ -3361,25 +4897,36 @@ _idleCb(() => import('./monacoEditor.js').then(({ preloadMonaco }) => preloadMon
         e.stopPropagation();
         const mode = item.dataset.mode;
         if (!v.sessionId) return;
-        state.safetyModes[v.sessionId] = mode;
-        if (mode === 'auto-all') {
-          state.bypassSessions.add(v.sessionId);
-        } else {
-          state.bypassSessions.delete(v.sessionId);
-        }
-        state.updateSafetyToggle(v);
+        // Global mode: mirror it for every session locally (optimistic), then
+        // let the server frame be authoritative — the backend persists FIRST
+        // and broadcasts `configUpdated`; a persist failure comes back as an
+        // error frame and the next configData/sessionList restores the truth.
+        state.applyGlobalSafetyMode(mode, v);
         sendWs({ type: 'setSafetyMode', sessionId: v.sessionId, safetyMode: mode });
+        // 🔴 No silent persistence: say out loud that this is the app-wide
+        // stored mode and that it survives a restart (作者：禁静默持久化).
+        window.__showToast?.(t('bypass.modeSetGlobal', { mode: t(modeLabelKey(mode)) }), 'success');
         menu.classList.remove('show');
       });
     });
     // Close dropdown on outside click
     document.addEventListener('mousedown', (e) => {
-      if (!menu.contains(e.target) && e.target !== btn) {
+      if (!menu.contains(/** @type {Node} */ (e.target)) && e.target !== btn) {
         menu.classList.remove('show');
       }
     }, true);
+    // Locale switch: this tooltip is mode-specific i18n, so the generic
+    // `bypass.toggle` data-i18n binding cannot restore it — re-render from the
+    // current mode rather than leaving a stale-language title.
+    window.addEventListener('locale-changed', () => state.updateSafetyToggle(v));
   }
 })();
+
+/** Mode string → shield-menu label key (shared with the dropdown buttons so the
+ *  toast and the menu can never disagree on a label). */
+function modeLabelKey(mode) {
+  return { 'confirm-edits': 'bypass.confirmEdits', 'auto-edits': 'bypass.autoEdits', 'auto-all': 'bypass.autoAll' }[mode] || 'bypass.confirmEdits';
+}
 
 // Sidebar collapse toggle — visibility is owned by the activityBar panel
 // registry (single state source); both entries below call the same API.
@@ -3436,10 +4983,19 @@ document.getElementById('new-folder-btn')?.addEventListener('click', () => creat
 // while the frontend was disconnected. On reconnect, re-fetch the active
 // session's history so the user sees the latest state.
 onReconnect(() => {
-  // D6 批 F2: reset the pending-ask mirror — the hub replays the still-pending
-  // snapshot (ListPendingAsks) right after the history refresh below, so the
-  // bar rebuilds from the single authority and never strands stale entries.
-  resetPendingAsks();
+  // identity-sync 批（2026-10-23）：重连 = 会话恢复 —— 离线期间另一台机器改的
+  // 名称/头像（引擎侧已由跨机收敛通道落盘）在此重读：rootName 探针重跑 +
+  // agentsData 行刷新（会话头重绘由 agentProfile 的重连钩子强制对账补齐）。
+  reprobeRootName();
+  sendWs({ type: 'listAgents' });
+  // D6 批 F2 + #250 ③: rebuild the pending-ask mirror from the hub's GLOBAL
+  // snapshot (pendingAsksSnapshot) instead of clearing it locally — clearing
+  // globally while the backend only replayed for the (re)subscribed session
+  // stranded the bar/badge at 0 whenever the active session was not the root
+  // session carrying the cards (silently lost todo signal).
+  // `since` 闸（race 保护）单点在 askPending.requestPendingAskSync（修复批
+  // 2026-10-25「待答徽章常显」）：与可见期节拍/补账路共用，重放帧不再豁免对账。
+  requestPendingAskSync();
   const sid = state.activeSessionId;
   if (sid) {
     const view = findViewBySessionId(sid);
@@ -3458,8 +5014,21 @@ onReconnect(() => {
   // Sync background sub-agent state — agentStart events are not replayed
   // after a page refresh, so the indicator count would be lost without this
   sendWs({ type: 'getActiveAgents' });
+  refreshScopedTasks(sid);
+  // composer-resync：activeAgents 不含 root session，不能拿它推断主会话闲忙。
+  // 断连窗内 done/sessionBusy(false) 不重放，必须另查 AgentRegistry 权威相位；
+  // 活跃会话也纳入（旧快照同步恰恰把它豁免，正是幽灵停止钮缺口）。
+  const busySyncIds = [...new Set([state.activeSessionId, ...state.busySessionIds].filter(Boolean))];
+  if (busySyncIds.length) sendWs({ type: 'getSessionBusy', sessionIds: busySyncIds });
   // Re-fetch session list — sessions may have been created/removed during disconnect
   sendWs({ type: 'listSessions' });
+  // queue-idle-return（2026-10-25）：重连 = 帧流被切断的权威事件——两条补腿：
+  //   ① 补触发清扫：断线窗内被 ws 闸/丢帧吞掉的 drain 触发在此补发（缺口 A）；
+  //   ② 重连对账网：持有形态（busy + 有在跑事实 + 无越界终态戳）的会话武装对账
+//      网——黑暗窗内终态丢失的缺戳死锁形在此收口（缺口 B，函数头注见 schedule
+//      QueueDrain 邻域）。
+  sweepQueueDrains();
+  for (const qsid of Object.keys(state.messageQueue)) armQueueReconcileNet(qsid);
 });
 
 // ---------- Reconnect: sync background tasks ----------
@@ -3486,13 +5055,24 @@ onMessage('activeBgTasks', (msg) => {
         startedAt: t.startedAt || (prev ? prev.startedAt : Date.now()),
         heartbeat: (prev && prev.heartbeat) || t.heartbeat || null,
         finishedAt: prev ? prev.finishedAt : undefined,
+        evictAt: prev ? prev.evictAt : undefined,
         // 来源/kind（2026-09-07 重设计）：快照为权威源（BgTaskRegistry
         // activeTasksJson 已补 origin/originLabel/kind），旧后端缺省时沿用
         // 本地 embellishment，再缺省由 bgTaskOrigin 按 sessionId 前缀兜底。
         sessionId: t.sessionId || (prev ? prev.sessionId : '') || '',
         kind: t.kind || (prev ? prev.kind : '') || '',
         origin: t.origin || (prev ? prev.origin : '') || '',
-        originLabel: t.originLabel || (prev ? prev.originLabel : '') || ''
+        originLabel: t.originLabel || (prev ? prev.originLabel : '') || '',
+        // 任务模式标注批（2026-10-30）：执行形态随快照下发；旧后端缺省沿用本地
+        // embellishment，再缺省 = ''（零渲染）。
+        ownerMode: t.ownerMode || (prev ? prev.ownerMode : '') || '',
+        // 归属批（2026-10-31）：delegate 批次短名随快照下发；旧后端缺省沿用本地
+        // embellishment，再缺省 = ''（前端回退既有来源显示）。
+        ownerName: t.ownerName || (prev ? prev.ownerName : '') || '',
+        // P0 面板投影批（设计稿 §3.4）：行健康字段随快照同行（BgTaskRegistry
+        // 行内派生）；旧后端缺省沿用本地 embellishment，再缺省 = ''（前端
+        // bgHealthNorm 容错：空/脏值回落 healthy 或零渲染）。
+        health: t.health || (prev ? prev.health : '') || ''
       };
     });
   }
@@ -3507,25 +5087,72 @@ onMessage('activeBgTasks', (msg) => {
   if (activeView) updateBgTasksUI(activeView);
 });
 
+// Committed task terminal state reconciles the child session, never its parent.
+onDurableTasksChanged((rows) => {
+  const roots = new Set();
+  for (const row of rows) {
+    if (!['completed', 'failed', 'cancelled', 'pending-recovery'].includes(row.status)) continue;
+    clearBusy(row.taskId);
+    delete state.turnExpecting[row.taskId];
+    if (row.rootSessionId) roots.add(row.rootSessionId);
+  }
+  for (const root of roots) updateBgAgentIndicator(root, { keepDropdownOpen: true });
+});
+
 // ---------- Reconnect: sync background sub-agents ----------
 // Backend responds to getActiveAgents with currently-running sub-agents:
 //   { type: "activeAgents", agents: [{ sessionId, agentId, agentName, rootSessionId, kind }] }
-// Rebuild sessionBgAgents from backend truth — real-time agentStart events
-// are not replayed after a page refresh (F5), and anything not listed has
-// finished (the backend registry no longer tracks it).
+// MERGE sessionBgAgents with backend truth — real-time agentStart events are
+// not replayed after a page refresh (F5), so the getActiveAgents snapshot is
+// the restore path for rows that predate the reload. 批 snapmerge-impl（作者令
+// 2026-09-19 ①）: the snapshot is **merged into** the rendered row set instead
+// of rebuilding it (`state.sessionBgAgents = {}`, the old whole-bucket wipe).
+// The wipe emptied a panel the user had just opened whenever the backfill came
+// back empty/partial — a fresh or isolated instance, a registry race, a live
+// frame still in flight while the panel opened: the panel stayed open and lost
+// every row ("开而行内容消失"). Merge semantics (three classes, see below) +
+// the dropcol guard at `updateBgAgentIndicator` (per call site) together give:
+// open ⇒ rows kept, terminal ⇒ still collapses.
+/** 陈旧窗（毫秒）：被保留的行「连续未命中快照且其间零实时活动」持续超过此时长才
+ *  淘汰 —— 「保留」的机械上界，防永久幽灵行（旧 ghost-row 教训）。取值理由：
+ *  终态清理（agentDone 2s / 会话级 done 立即）是主路径，本窗只是**丢帧兜底**，
+ *  必须长于任何一次「快照请求在途 → 行刚落库」的竞态，短于一次会话的观感尺度。 */
+const BG_SNAPSHOT_STALE_MS = 30000;
 onMessage('activeAgents', (msg) => {
   const agents = msg.agents || [];
-  // Rebuild sessionBgAgents from backend truth
-  state.sessionBgAgents = {};
+  // ── 合并规则 ①: 快照列出的条目以**快照为准** ──────────────────────────
+  // 同 key ⇒ 按快照刷新（name/task/status/kind/project/startedAt/retryCount）。
+  // 快照不携带的字段（currentTool/stuck/frozen* —— 只由实时帧写入）保留本地值，
+  // 回填不得把实时帧已经写得更丰富的行降级。`done` 单调：本地已收到的终态优先于
+  // 快照行（其 2s 清理定时器随后自会移除）。
+  const seen = new Set();   // `${sid}\u0000${key}` —— 本次快照覆盖到的行
   const activeRootSessions = new Set();
   for (const a of agents) {
     const sid = a.rootSessionId || a.sessionId;
     if (!sid || !a.agentId) continue;
-    // #28 可观测接线: 不再过滤 node-* —— 节点/分发器会话与 Delegate/SubTask
-    // 同一快照重建路径（旧 ghost-row 根因已后端修复: 事件现携带 rootSessionId,
+    // #28 可观测接线: 不过滤 node-* —— 节点/分发器会话与 Delegate/SubTask
+    // 同一快照路径（旧 ghost-row 根因已后端修复: 事件现携带 rootSessionId,
     // 终态由 done handler 清理, 快照只报运行中的 registry 条目）。
     if (!state.sessionBgAgents[sid]) state.sessionBgAgents[sid] = {};
-    state.sessionBgAgents[sid][a.agentId] = {
+    const bucket = state.sessionBgAgents[sid];
+    // Cross-keyspace dedupe（与 agentStart 同规则, W1-d）: 快照行键 = 裸
+    // sessionId, 实时行键 = actor 路径 agentId（mail-*）。同属一个 agent 时实时行
+    // 更丰富 ⇒ 保留实时行、只登记「快照已佐证」（合并不得把同一 agent 渲染两行）。
+    const bare = (a.sessionId || '').replace(/^team-/, '');
+    const twinKey = bare
+      ? Object.keys(bucket).find(k => k !== a.agentId && (((bucket[k] || {}).sessionId || '').replace(/^team-/, '') === bare))
+      : undefined;
+    const twin = twinKey ? bucket[twinKey] : null;
+    if (twin && !twin.done && !isFailedSnapshotStatus(twin.status)) {
+      twin._missSince = null;
+      // 冻结面同样以快照权威块定序（实时行更丰富，但「已不是冻结态」是硬事实）。
+      mergeFreeze(twin, a.freeze || null);
+      seen.add(sid + '\u0000' + twinKey);
+      activeRootSessions.add(sid);
+      continue;
+    }
+    const prev = bucket[a.agentId] || null;
+    const entry = {
       name: a.agentName || a.agentId,
       task: a.task || '',
       sessionId: a.sessionId || '',
@@ -3533,19 +5160,160 @@ onMessage('activeAgents', (msg) => {
       // (Delegate/SubTask/Ephemeral operable, Team/Flow read-only); startedAt
       // powers uptime restore; status ("Error(msg)" form) powers the failed
       // state and retryCount the retries chip after a page refresh (backend
-      // fields landed @179a009e).
-      kind: a.kind || '',
+      // fields landed @179a009e). Snapshot-absent values fall back to the local
+      // entry (merge, not rebuild: an older snapshot must not blank a field the
+      // live frames already filled in).
+      kind: a.kind || (prev && prev.kind) || '',
+      // 面板树批（2026-10-29 ①）：快照 authority（registry parentSessionId 单源）；
+      // 旧后端无字段 → 缺省回落本地值（同 project/kind 合并类——不降级已渲染行）。
+      parentSessionId: a.parentSessionId || (prev && prev.parentSessionId) || '',
+      // 面板命名批（2026-10-31 ②）：批次短名随快照出帧；旧后端无字段 → 回落本地
+      // 值（同 parentSessionId 合并类——不降级已渲染行）。
+      delegateName: a.delegateName || (prev && prev.delegateName) || '',
+      // name/address 批（2026-11-05）：Mail 续传地址随快照出帧（后端 MailAddress
+      // 单点推导）——面板行地址 chip 的唯一数据源；旧后端无字段 ⇒ 回落本地值
+      // （同 delegateName 合并类，不降级已渲染行）。空 = 本 kind 无 Mail 面 ⇒ 零 chip。
+      mailAddress: a.mailAddress || (prev && prev.mailAddress) || '',
       // Project attribution (2026-09-06): activeAgents restore entries carry
       // project for node-*/dispatcher-* rows (AgentRecord.project →
       // activeAgentEntryJson); empty string → no badge.
       project: a.project || '',
-      startedAt: a.startedAt || null,
+      // Task attribution (2026-09-27 taskbadge batch): restore entries carry
+      // taskId + taskTitle (AgentRecord.taskId + ledger title →
+      // activeAgentEntryJson); empty string = no attribution → no badge.
+      // Snapshot is authority — same merge class as project/kind above.
+      taskId: a.taskId || '',
+      taskTitle: a.taskTitle || '',
+      startedAt: a.startedAt || (prev && prev.startedAt) || null,
       status: a.status || '',
-      retryCount: typeof a.retryCount === 'number' ? a.retryCount : 0,
-      currentTool: null,
-      done: false,
+      // 面板行活性位批（2026-11-18 · 方案 A）：引擎**权威活性位**随快照出帧（后端
+      // WebSocketRoutes.panelRowActivity 单点派生：注册表在册 ∧ status==Processing ∧
+      // 未停靠/未冻结/未重启中断 ⇒ true）。与上一行 `status`（turn 相位）显式分家——
+      // 相位说「actor 在哪个阶段」，本键说「此刻是不是真在跑」。快照是权威（同
+      // project/kind 合并类）；旧后端无此键 ⇒ undefined，呈现面行为与今天逐字一致
+      // （**禁止把「未提供」当 false**，见 bgRowState / bgTaskRowHtml 的判据）。
+      engineActive: typeof a.active === 'boolean'
+        ? a.active
+        : (prev && typeof prev.engineActive === 'boolean' ? prev.engineActive : undefined),
+      // 同一判据的分类线值（running / standby / frozen / pending-recovery / idle）——
+      // 取证与副行读词用；缺席 = 空串（falsy 契约同 project/taskId）。
+      engineActiveState: a.activeState || (prev && prev.engineActiveState) || '',
+      // 案A 待命批 2026-10-31（状态矩阵批收编）：快照行带 standbySince（DelegateRegistry
+      // 待命停靠时刻）⇒ 待命徽标随刷新复原（delegateWaiting 实时帧的恢复脸；快照缺席
+      // ⇒ 保留本地 waiting 值，不降级已渲染行）。
+      waiting: (prev && prev.waiting) || (a.standbySince ? { mode: 'standby', detail: '' } : undefined),
+      retryCount: typeof a.retryCount === 'number' ? a.retryCount : ((prev && prev.retryCount) || 0),
+      // 只由实时帧写入的字段：快照不表态 ⇒ 保留本地值（不降级已渲染行）。
+      // currentTool 例外面：实时值优先，实时缺席时快照 currentToolName 兜底
+      // （#752 最近动作摘要在刷新恢复路径可用——旧行为刷新后工具行丢失）。
+      currentTool: (prev && prev.currentTool) || a.currentTool || null,
+      stuck: (prev && prev.stuck) || null,
+      // 冻结状态两套真相批（2026-11-05 10:42 报障「显示需要我唤醒，点了又说不在冻结
+      // 态」）：冻结面改为**带时间戳的权威块**驱动。快照每一行都带 `freeze` 块
+      // （后端 FreezeTruth 派生：frozen / kind / needsHuman / **wakeable** / asOf），
+      // 而且**包括 `frozen:false` 的块**——旧合并 `frozen: (prev && prev.frozen) || …`
+      // 只增不减，Mail 唤醒清掉后端冻结槽后快照「不表态」也照旧保留 true，面板于是
+      // 永远挂着「需唤醒」而闸那边早已不是冻结态（两套真相的正脸）。
+      // 下面这段是**旧后端（无 freeze 块）**的兼容回落；有块时一律由 mergeFreeze 覆写
+      // （asOf 定序，允许降级）。
+      frozen: (prev && prev.frozen) || a.status === 'Frozen' || false,
+      freezeResumeAt: (prev && prev.freezeResumeAt) || null,
+      freezeReason: (prev && prev.freezeReason) || null,
+      freezeKind: (prev && prev.freezeKind) || a.frozenKind || '',
+      needsHuman: a.needsHuman === true || !!(prev && prev.needsHuman),
+      freezeReasonWire: (prev && prev.freezeReasonWire) || a.freezeReasonWire || '',
+      // 权威块本体（新后端）；缺席 ⇒ null（mergeFreeze 不动，回落上面扁平字段）。
+      freeze: a.freeze || (prev && prev.freeze) || null,
+      // 错误冻结批（2026-11-01）：**delegate 错误冻结**的刷新恢复面——快照
+      // frozenSince / frozenReason（DelegateRegistry 冻结槽，线值 `delegate-frozen:<reason>`）
+      // 在场 ⇒ 行「已冻结」徽标 + 原因 tooltip + 唤醒按钮随刷新复原（delegateFrozen
+      // 实时帧的恢复脸）；快照缺席 ⇒ 保留本地值（不降级已渲染行，同 standbySince
+      // 合并类）。`delegateFrozen` 判别位把错误冻结与时间表冻结（agentFrozen 帧的
+      // sapphire 点）分开——只有本族渲染原因徽标与唤醒入口。
+      ...(() => {
+        const wire = String(a.frozenReason || '');
+        const isErr = wire.indexOf('delegate-frozen') === 0;
+        const prevErr = !!(prev && prev.delegateFrozen);
+        if (!isErr && !prevErr) return { delegateFrozen: false };
+        // Diagnostic suffix (engine-fault freeze detail batch: `…[trigger=…; errorType=…]`)
+        // belongs to the audit face — the code lookup reads the bare code before '['.
+        const code = wire.indexOf('delegate-frozen:') === 0
+          ? wire.slice('delegate-frozen:'.length).replace(/\[.*$/, '')
+          : '';
+        return {
+          delegateFrozen: true,
+          frozen: true,
+          frozenSince: a.frozenSince || (prev && prev.frozenSince) || null,
+          frozenReason: wire || ((prev && prev.frozenReason) || ''),
+          // 后端实时帧带来的中文短名优先；快照恢复路径按线值本地映射（双语文案
+          // 同下表——与 DelegateFreeze.reasonLabelZh 逐字一致，缺词回落原文）。
+          frozenReasonLabel: (prev && prev.frozenReasonLabel) || ({
+            'llm-failure': t('subagents.frozenReasonLlm'),
+            'tool-failure': t('subagents.frozenReasonTool'),
+            'engine-fault': t('subagents.frozenReasonEngine'),
+            'cancelled-by-quota': t('subagents.frozenReasonQuota'),
+          }[code] || code),
+          frozenDetail: (prev && prev.frozenDetail) || '',
+          wakeAddress: a.wakeAddress || ((prev && prev.wakeAddress) || ('delegate:' + String(a.sessionId || ''))),
+          dormantHours: (prev && prev.dormantHours) || 0,
+        };
+      })(),
+      // `done` 单调：本地已收到的终态事件优先于快照行（其 2s 清理随后自会移除）。
+      done: !!(prev && prev.done),
+      // #752 空闲细分（快照为权威——引擎 bg-wait 屏障 / actor 回执快照的单点）：
+      // bgWaiting = 会话自有等待型后台任务（等什么）、heldReceipts/unreadReceipts =
+      // 扣留回执、outstandingSubagents = barrier spawn 计数、lastActivityMs = agent
+      // 侧活动戳（长空闲徽标判据）、currentToolName = 快照侧最近工具（实时帧缺席
+      // 时的兜底——prev 实时值优先）。旧后端无字段 → 缺省值（空数组/0），falsy 契约。
+      bgWaiting: Array.isArray(a.bgWaiting) ? a.bgWaiting : [],
+      heldReceipts: typeof a.heldReceipts === 'number' ? a.heldReceipts : ((prev && prev.heldReceipts) || 0),
+      unreadReceipts: typeof a.unreadReceipts === 'number' ? a.unreadReceipts : ((prev && prev.unreadReceipts) || 0),
+      outstandingSubagents: typeof a.outstandingSubagents === 'number' ? a.outstandingSubagents : ((prev && prev.outstandingSubagents) || 0),
+      lastActivityMs: typeof a.lastActivityMs === 'number' ? a.lastActivityMs : ((prev && prev.lastActivityMs) || 0),
+      // 陈旧后台代理面板批（2026-11-08）：终态硬事实随快照落行（引擎侧 = 底层
+      // SubAgentTask 记录已终态 ⇒ 这一行其实早就干完了；注册表行滞留不再冒充在飞）。
+      // 合并纪律：ended 单调（本地已收到的终态事实优先于缺席的快照行），时长/终点
+      // 以快照为准、快照缺席回落本地（同 project/kind 合并类——不降级已渲染行）。
+      taskStatus: a.taskStatus || ((prev && prev.taskStatus) || ''),
+      ended: a.ended === true || !!(prev && prev.ended),
+      endedAt: (typeof a.endedAt === 'number' ? a.endedAt : ((prev && prev.endedAt) || null)),
+      durationMs: (typeof a.durationMs === 'number' ? a.durationMs : ((prev && prev.durationMs) || null)),
+      // 本行已被本次快照覆盖 ⇒ 陈旧窗关闭（陈旧判据见下方分类 ③）。
+      _missSince: null,
     };
+    // 冻结面收口（冻结状态两套真相批 2026-11-05）：权威块按 asOf 定序落进本行，
+    // 含「不再冻结」的块——唤醒后快照即可把「需唤醒」降级，无需任何手动刷新。
+    mergeFreeze(entry, a.freeze || null);
+    bucket[a.agentId] = entry;
+    seen.add(sid + '\u0000' + a.agentId);
     activeRootSessions.add(sid);
+  }
+  // ── 合并规则 ②: 快照**未**列出的本地行逐类裁定（三类，逐条给判据）──────
+  // ① 终态/已结束 —— **可清**，且就地清：证据 = 本客户端**已收到**的终态事实
+  //    （agentDone 2s 路径 / 会话级 done 分支置的 `done`，或失败状态），
+  //    🔴 绝非「快照没列它」这一沉默本身。
+  // ② 快照未列但本地仍在跑 —— **保留**：判据 = `!done && !失败状态`（本行没有收到
+  //    任何终态事件）。空/部分回包（新实例·隔离实例·registry 竞态·开面板时实时帧
+  //    仍在途）因此不得清掉已渲染行集。
+  // ③ 过期/陈旧 —— **可清**：被保留的行自**首次**未命中起连续未命中已达
+  //    BG_SNAPSHOT_STALE_MS，且其间**零实时活动**（agentStart 重建条目、
+  //    agentToolStart 归零窗口）⇒ 淘汰。「保留」不会退化成永久幽灵行。
+  //    终态必清的机械读数 = ① + agentDone 2s 定时器 + 会话级 done 分支 + 本类。
+  const now = Date.now();
+  for (const [sid, bucket] of Object.entries(state.sessionBgAgents)) {
+    for (const [key, info] of Object.entries(bucket)) {
+      if (seen.has(sid + '\u0000' + key)) continue;
+      if (info && (info.done || isFailedSnapshotStatus(info.status))) {   // ①
+        delete bucket[key];
+        continue;
+      }
+      if (!info) continue;
+      if (info._missSince == null) info._missSince = now;                 // ②
+      else if (now - info._missSince >= BG_SNAPSHOT_STALE_MS) {           // ③
+        delete bucket[key];
+      }
+    }
+    if (Object.keys(bucket).length === 0) delete state.sessionBgAgents[sid];
   }
   // Sync busySessionIds: clear sessions that are no longer active on the backend.
   // A 'done' event missed during WS disconnect leaves the session stuck as busy
@@ -3555,26 +5323,139 @@ onMessage('activeAgents', (msg) => {
   for (const sid of [...state.busySessionIds]) {
     if (sid !== state.activeSessionId && !activeRootSessions.has(sid)) {
       clearBusy(sid);
+      // queue-idle-flush：对账器清的也是**真实** busy→idle 迁移（后端快照证实该
+      // 会话无活跃 agent）⇒ 与终态帧族同律触发队列 drain；会话若确在跑 turn，
+      // 派发帧由服务端排队闸受理，投递时序不乱。
+      // queue-one-per-turn：后端快照 = 权威空闲证据 ⇒ 落终态戳放行投递未决闸
+      // （断线丢终态帧形态的收口腿：无戳则队列在此永久滞留）。
+      state.lastTerminalAt[sid] = Date.now();
+      scheduleQueueDrain(sid);
     }
   }
-  if (activeView) updateBgAgentIndicator();
+  // 批 dropcol-impl (作者令 2026-09-19 ①): 本处理器是「开面板回填」路径 —— 回包为空
+  // 也不得关闭用户刚打开的面板（keepDropdownOpen）。终态路径（agentDone/done）与
+  // 面板外点击/toggle 语义不传此选项 ⇒ 收起行为逐条不变（按调用点区分）。
+  if (activeView) updateBgAgentIndicator(null, { keepDropdownOpen: true });
   // Recompute agent nav states — the visual indicator depends on busySessionIds
   computeAgentStates();
 });
 
-// Scroll listener (primary window)
+// ---------- 台账 #929（后台子智能体跨设备透明）：远端设备投影行 ----------
+// 引擎面 = AgentSessionSync（数据通道 session-sync 收敛 + remoteAgents 帧广播/
+// 快照捎带两路）。本处理器是前端唯一消费点：
+//   · 分设备重组进 state.remoteBgAgents（LWW 已在引擎投影仓收敛，原样呈现）；
+//   · **本地行胜**去重：同一 sessionId 已存在于任何本地桶（DeviceDelegate 形态
+//     下同一 spawn 两侧各有任务行）⇒ 丢弃远端孪生（本地行更富、可交互）——
+//     与 agentStart/activeAgents 的 cross-keyspace dedupe（W1-d）同一条规则；
+//   · 终态行（completed/failed/cancelled）⇒ 翻终态 + 2s 清理（agentDone 同律），
+//     已清理的 (device,session) 记忆化——快照捎带在揭示窗内重发同一终态行不再
+//     复活（snapmerge「done 单调」教训的同款防线）；
+//   · 断联语义：online=false 行原样保留（不消失不假装死亡），渲染层标「设备
+//     离线」角标；重连由引擎对账推 + 在线角标重播补齐。
+// 徽标计数红线：远端行**不进** per-session 徽标计数（updateBgAgentIndicator 按
+// 视图会话桶计数，远端行是跨会话集——计入会错误归属）。
+const REMOTE_TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
+const remoteTerminalTimers = {};
+/** 已清理终态行的记忆化：rowKey → 清理时的 updatedAt（同戳重发不复活）。 */
+const dismissedRemoteRows = new Map();
+
+onMessage('remoteAgents', (msg) => {
+  const agents = Array.isArray(msg.agents) ? msg.agents : [];
+  const byDevice = {};
+  for (const a of agents) {
+    if (!a || !a.sessionId) continue;
+    const dev = a.deviceId || 'unknown';
+    const rowKey = dev + '\u0000' + a.sessionId;
+    // 已清理的终态行：同戳（或更旧）重发不再复活；戳更新（同 id 重新被投影——
+    // 理论外形态）⇒ 放行使最新态可见。
+    if (dismissedRemoteRows.has(rowKey)) {
+      const prevTs = dismissedRemoteRows.get(rowKey) || 0;
+      if ((a.updatedAt || 0) <= prevTs) continue;
+      dismissedRemoteRows.delete(rowKey);
+    }
+    if (!byDevice[dev]) {
+      byDevice[dev] = { deviceName: a.deviceName || dev, online: a.deviceOnline !== false, rows: {} };
+    }
+    byDevice[dev].rows[a.sessionId] = {
+      sessionId: a.sessionId,
+      title: a.title || '',
+      source: a.source || '',
+      status: a.status || '',
+      startedAt: a.startedAt || 0,
+      endedAt: a.endedAt || null,
+      updatedAt: a.updatedAt || 0,
+      retryCount: a.retryCount || 0,
+    };
+  }
+  // 本地行胜去重（跨设备投影不遮本地行）。
+  const localSessionIds = new Set();
+  for (const bucket of Object.values(state.sessionBgAgents || {})) {
+    for (const info of Object.values(bucket || {})) {
+      const sid = String((info && info.sessionId) || '').replace(/^team-/, '');
+      if (sid) localSessionIds.add(sid);
+    }
+  }
+  for (const dev of Object.keys(byDevice)) {
+    for (const sid of Object.keys(byDevice[dev].rows)) {
+      if (localSessionIds.has(sid)) delete byDevice[dev].rows[sid];
+    }
+    if (Object.keys(byDevice[dev].rows).length === 0) delete byDevice[dev];
+  }
+  state.remoteBgAgents = byDevice;
+  scheduleRemoteTerminalCleanup();
+  // Closed panels render the current projection when opened.
+  renderBgAgentDropdown();
+});
+
+/** 终态行 2s 清理（agentDone → 2s cleanup 同律）：翻终态可见，随后从投影态移除。 */
+function scheduleRemoteTerminalCleanup() {
+  for (const [dev, d] of Object.entries(state.remoteBgAgents)) {
+    for (const sid of Object.keys(d.rows)) {
+      const row = d.rows[sid];
+      if (!REMOTE_TERMINAL_STATUSES.has(row.status)) continue;
+      const key = dev + '\u0000' + sid;
+      if (remoteTerminalTimers[key]) continue;
+      remoteTerminalTimers[key] = setTimeout(() => {
+        delete remoteTerminalTimers[key];
+        const d2 = state.remoteBgAgents[dev];
+        if (!d2 || !d2.rows[sid]) return;
+        const row = d2.rows[sid];
+        delete d2.rows[sid];
+        dismissedRemoteRows.set(key, row.updatedAt || 0);
+        if (Object.keys(d2.rows).length === 0) delete state.remoteBgAgents[dev];
+        renderBgAgentDropdown();
+      }, 2000);
+    }
+  }
+}
+
+// Scroll listener (primary window). B4 (2026-10-04): the follow-intent latch
+// refresh and the ↓ N pill now ride ONE listener, installed by initScrollFollow
+// below — the same place that owns the latch element (`view.dom.chat`). This
+// module keeps only the pagination gate and hands it to that installer, so the
+// primary window has exactly one scroll handler probing geometry once per event
+// (before the fix: this listener probed for the latch AND utils.js probed again
+// for the pill, three times per event → 6 forced reads per wheel step).
 const _primChat = chatViews.primary.dom.chat;
-_primChat.addEventListener('scroll', () => {
+// perf 台账 #922（2026-10-26）：上滑预取提前量。触顶（<100px）才发 getHistory =
+// 必等一个网络来回 + 整页构建才见旧消息；改在接近顶部前就预取下一页（单飞闸
+// 不变），页到时用户通常刚滚到顶 —— 感知等待≈0，也把「一次巨页」摊成流水线。
+const HISTORY_PREFETCH_PX = 400;
+const _primScrollGate = () => {
   const pv = chatViews.primary;
-  pv.stream.scrollSnapped = _primChat.scrollTop + _primChat.clientHeight >= _primChat.scrollHeight - 40;
   // Scroll-to-top: load older messages
-  if (_primChat.scrollTop < 100 && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
+  if (_primChat.scrollTop < HISTORY_PREFETCH_PX && pv?.pagination?.hasMore && !pv?.pagination?.loading && pv?.pagination?.offset > 0) {
     pv.pagination.loading = true;
     setActiveView(pv);
     showHistoryLoader();
     sendWs({ type: 'getHistory', sessionId: state.activeSessionId, limit: 50, beforeIndex: pv.pagination.offset });
   }
-}, { passive: true });
+};
+
+// Per-view scroll-follow machinery for the primary window (row counting +
+// "↓ N new messages" pill + the follow-intent latch + the pagination gate).
+// Popups attach their own in ensureStepView.
+initScrollFollow(chatViews.primary, { onScroll: _primScrollGate });
 
 // ---------- 6. Expose global Nebflow API for plugins ----------
 // Theme tokens extracted from CSS custom properties — agents can read these for consistency.
@@ -3613,8 +5494,40 @@ window.Nebflow = {
 };
 
 // ---------- 8. Start ----------
+// Authored markup rendered into the APP DOCUMENT (chat markdown bubbles, EPUB
+// chapter content) is not a sandboxed frame — nothing catches a link there, so
+// an ordinary `[x](path)` used to replace the whole application document. Bind
+// the one shared link leg (viewers/shared.js) before the first message renders.
+bindDocMarkupLinkBridge();
 emergencyCacheCleanup(); // Purge bloated localStorage cache before any writes
+// Root named-verdict probe (rootName.js, askuser-bubblename batch B-1): the
+// agentList displayName row is fallback-poisoned, so the persisted-name face
+// (header / ask badge / pending rows) reads the agent.json probe instead.
+// Fire-and-forget — the verdict re-renders the faces via
+// `nebflow-root-name-change` when it lands.
+initRootNameProbe();
+// 入场加载卡（接管/入场同族批 2026-11-01 作者令③）：「界面模块」项的真实完成
+// 信号——执行到这里 = 模块图 + vendor 全局 + 壳装配全部落地（本文件体顶端
+// await waitForGlobals 已把 vendor 面纳入同一门槛），入场揭幕等的就是这条。
+try { window.__nfEntry && window.__nfEntry.mark && window.__nfEntry.mark('ui', 'done'); } catch (_) {}
 connect();
 chatViews.primary.dom.input.focus();
+
+// canvas 查看源码提速批（作者令 2026-10-25）：Monaco 空闲预载。
+// 归因：`monacoEditor.js` 的 preloadMonaco 一直无人调用——「查看源码」首击
+// 独扛 loader.js → editor/main.js（~3.6MB）整条 AMD 链 + 解析执行（本机
+// 实测见 reports/20261025*_canvas-file-refresh），跨机访问再叠每请求 RTT，
+// 点击后转圈数秒。空闲时段预载后，点击只剩 createEditor（毫秒级）。
+// 移动端跳过（源码态无入口，白占内存）；失败静默（首击照旧懒加载兜底）。
+const idleWin = /** @type {any} */ (window);
+const idlePreload = typeof idleWin.requestIdleCallback === 'function'
+  ? idleWin.requestIdleCallback.bind(idleWin)
+  : (/** @type {() => void} */ cb) => setTimeout(cb, 2200);
+idlePreload(() => {
+  import('./activityBar.js').then(({ isMobileViewport }) => {
+    if (isMobileViewport()) return;
+    import('./monacoEditor.js').then(({ preloadMonaco }) => { preloadMonaco(); }).catch(() => {});
+  }).catch(() => {});
+}, { timeout: 10000 });
 
 // Cloud STT — no model preloading needed.

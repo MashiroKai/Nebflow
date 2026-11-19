@@ -3,6 +3,7 @@ import sbt._
 object Dependencies {
   // Versions
   val CatsEffectVer = "3.6.1"
+  val CatsCoreVer = "2.13.0"
   val Fs2Ver = "3.11.0"
   val CirceVer = "0.14.12"
   val Http4sVer = "0.23.30"
@@ -12,6 +13,8 @@ object Dependencies {
   val OsLibVer = "0.11.3"
   val MunitVer = "1.1.0"
   val MunitCEVer = "2.0.0"
+  val PekkoVer = "2.0.0"
+  val pekkoActorTyped = "org.apache.pekko" %% "pekko-actor-typed" % PekkoVer
 
   // CLI
   val scopt = "com.github.scopt" %% "scopt" % ScoptVer
@@ -29,6 +32,10 @@ object Dependencies {
 
   // Effect
   val catsEffect = "org.typelevel" %% "cats-effect" % CatsEffectVer
+  // cats-core 被大量源文件直接使用（cats.syntax / cats.data / cats.kernel），
+  // 但此前只经 cats-effect 的传递边带入 —— 显式声明后，cats-effect 升级
+  // 不再能悄悄改掉我们的 cats 版本。2.13.0 = cats-effect 3.6.1 现解析版本。
+  val catsCore = "org.typelevel" %% "cats-core" % CatsCoreVer
 
   // JSON
   val circeCore = "io.circe" %% "circe-core" % CirceVer
@@ -44,14 +51,20 @@ object Dependencies {
   val http4sDsl         = "org.http4s" %% "http4s-dsl"          % Http4sVer
   val http4sCirce       = "org.http4s" %% "http4s-circe"        % Http4sVer
 
-  // Actor
-  val PekkoVer = "1.1.3"
-  val pekkoActorTyped = "org.apache.pekko" %% "pekko-actor-typed" % PekkoVer
-  val pekkoActorTestkitTyped = "org.apache.pekko" %% "pekko-actor-testkit-typed" % PekkoVer % Test
-
   // Logging
   val logbackClassic = "ch.qos.logback" % "logback-classic" % "1.5.16"
   val logbackCore    = "ch.qos.logback" % "logback-core" % "1.5.16"
+
+  // Feishu (Lark) official Java SDK — oapi-sdk, long-connection (WebSocket) mode.
+  // Coordinates `com.larksuite.oapi:oapi-sdk` verified against Maven Central
+  // (2.8.5 = latest as of 2026-09-23, release 2026-08-04; bytecode major 52,
+  // below this repo's -release:17 target). The SDK declares slf4j-api 1.7.30,
+  // which cannot bind to logback 1.5.x (2.x ServiceLoader binding) — the
+  // explicit slf4j-api pin below arbitrates that conflict (highest wins).
+  val FeishuOapiSdkVer = "2.8.5"
+  val feishuOapiSdk    = "com.larksuite.oapi" % "oapi-sdk" % FeishuOapiSdkVer
+  val Slf4jApiVer      = "2.0.16"
+  val slf4jApi         = "org.slf4j" % "slf4j-api" % Slf4jApiVer
 
   // Browser automation (optional — "provided" scope, detected at runtime)
   val PlaywrightVer = "1.52.0"
@@ -59,6 +72,13 @@ object Dependencies {
 
   // Diff
   val diffUtils = "io.github.java-diff-utils" % "java-diff-utils" % "4.12"
+
+  // Search data layer (datalayer-spec 批 2026-10-30，设计稿 §4.1-4.3）：
+  // SQLite FTS5 分片索引，单文件、零服务、Apache 2.0。Native lib 会被
+  // sbt-assembly 打进 fat jar（SQLite 无官方纯-JDBC/无-native 变体可用；
+  // 备选降级 = 纯 Scala 内存倒排，接口不变——见设计稿 R3）。
+  val SqliteJdbcVer = "3.47.1.0"
+  val sqliteJdbc    = "org.xerial" % "sqlite-jdbc" % SqliteJdbcVer
 
   // Testing
   val munit = "org.scalameta" %% "munit" % MunitVer % Test

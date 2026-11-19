@@ -57,8 +57,9 @@ const SHOT_WIDTHS = [1920, 1280, 1049, 900, 720, 560, 524, 375];
 const LADDER = [];
 for (let w = 360; w <= 1920; w += 20) LADDER.push(w);
 // 优先级链（生存优先级 高→低）——与 main.js CHAIN 严格同步
+// （header-model-info 用量环 2026-10-23 随上下文用量显示退役移出链条）
 const CHAIN = ['bg-indicator', 'bgagent-indicator', 'pending-asks-indicator',
-  'memory-btn', 'header-model-info', 'daemon-btn', 'reminder-btn',
+  'memory-btn', 'daemon-btn', 'reminder-btn',
   'search-btn', 'voice-toggle-btn', 'bypass-dropdown'];
 // 迟滞带宽——与 main.js HYST_PX 严格同步
 const HYST_PX = 12;
@@ -76,9 +77,9 @@ if (MODE === 'before') {
  *  works on both old and new implementations — no __headerLayout dependency). */
 const PROBE = () => {
   const CHAIN = ['bg-indicator', 'bgagent-indicator', 'pending-asks-indicator',
-    'memory-btn', 'header-model-info', 'daemon-btn', 'reminder-btn',
+    'memory-btn', 'daemon-btn', 'reminder-btn',
     'search-btn', 'voice-toggle-btn', 'bypass-dropdown'];
-  const LEAVES = ['sidebar-toggle', 'header-model-info', 'session-name', 'memory-btn',
+  const LEAVES = ['sidebar-toggle', 'session-name', 'memory-btn',
     'search-btn', 'bypass-toggle', 'voice-toggle-btn', 'reminder-btn', 'daemon-btn',
     'bg-indicator', 'pending-asks-indicator', 'bgagent-indicator', 'canvas-toggle-btn'];
   const vis = (el) => {

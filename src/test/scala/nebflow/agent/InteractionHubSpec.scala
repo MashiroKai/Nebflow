@@ -4,6 +4,7 @@ import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import munit.CatsEffectSuite
+import nebflow.actor.*
 
 import scala.concurrent.duration.*
 
@@ -40,6 +41,75 @@ class InteractionHubSpec extends CatsEffectSuite:
       sourceAgent = sourceAgent,
       sourceSession = "team-abc"
     )
+
+  test("hub permission audit omits sensitive source, input and exception messages") {
+    val secret = "SENTINEL_HUB_PRIVATE_8562"
+    val names = List("nebflow.agent.interaction", "nebflow.audit")
+    val appenders = names.map { name =>
+      val logger = org.slf4j.LoggerFactory.getLogger(name).asInstanceOf[ch.qos.logback.classic.Logger]
+      val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+      (logger, appender)
+    }
+    import scala.jdk.CollectionConverters.*
+    val system = nebflow.actor.ActorSystem("hub-redaction")
+    IO { appenders.foreach { case (l, a) => a.start(); l.addAppender(a) } }.bracket { _ =>
+      (for
+        hub <- mkHub(system)
+        rendered <- Deferred[IO, Unit]
+        answer <- Deferred[IO, Boolean]
+        _ <- hub ! InteractionHubCommand.RegisterRoot(
+          secret,
+          (json: Json) =>
+            if json.hcursor.downField("type").as[String].toOption.contains("askPermission") then
+              rendered.complete(()).void *> IO.raiseError(new RuntimeException(secret))
+            else IO.unit
+        )
+        request = permRequest(secret, answer, secret, secret).copy(
+          sourceSession = secret,
+          payload = Json.obj("type" -> Json.fromString("askPermission"), "input" -> Json.fromString(secret))
+        )
+        _ <- hub ! InteractionHubCommand.Request(request)
+        _ <- rendered.get.timeout(5.seconds)
+        accepted <- hub.?[Boolean](reply =>
+          InteractionHubCommand.DecideBridgePermission(secret, secret, InteractionKind.Permission, true, reply)
+        )
+        _ <- answer.get.timeout(5.seconds)
+        _ <- system.stopAll
+        events = appenders.flatMap(_._2.list.asScala.toList.map(_.getFormattedMessage))
+      yield
+        assert(accepted)
+        assert(events.exists(_.contains("event=ask")))
+        assert(events.forall(!_.contains(secret)))
+      ).guarantee(system.stopAll)
+    }(_ => IO { appenders.foreach { case (l, a) => l.detachAppender(a); a.stop() } })
+  }
+
+  test("real hub admits exactly one of concurrent bridge permission decisions") {
+    val system = nebflow.actor.ActorSystem("hub-bridge-race")
+    (for
+      hub <- mkHub(system)
+      rendered <- Deferred[IO, Unit]
+      result <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => rendered.complete(()).void)
+      _ <- hub ! InteractionHubCommand.Request(permRequest("race", result))
+      _ <- rendered.get.timeout(5.seconds)
+      rejected <- hub.?[Boolean](reply =>
+        InteractionHubCommand.DecideBridgePermission("race", "wrong-root", InteractionKind.Permission, true, reply)
+      )
+      decisions <- List(true, false).parTraverse { value =>
+        hub
+          .?[Boolean](reply =>
+            InteractionHubCommand.DecideBridgePermission("race", "root-1", InteractionKind.Permission, value, reply)
+          )
+          .map(value -> _)
+      }
+      completed <- result.get.timeout(5.seconds)
+    yield
+      assert(!rejected)
+      assertEquals(decisions.count(_._2), 1)
+      assertEquals(completed, decisions.find(_._2).get._1)
+    ).guarantee(system.stopAll)
+  }
 
   test("permission request renders card at rootSessionId with requestId and source") {
     val system = nebflow.actor.ActorSystem("hub-test")
@@ -116,14 +186,14 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   test("askUser request renders question and routes answers back to replyTo") {
     val system = nebflow.actor.ActorSystem("hub-test")
-    val items = List(nebflow.core.AskItem("Continue?", List(nebflow.core.AskOption("yes"))))
+    val items = List(nebflow.shared.AskItem("Continue?", List(nebflow.shared.AskOption("yes"))))
     for
       hub <- mkHub(system)
       sent <- Ref.of[IO, List[Json]](Nil)
       _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
       replyTo <- system.spawn(
         nebflow.actor.Behaviors.receiveMessage[List[String]] { answers =>
-          nebflow.core.NebflowLogger.forName("test").info(s"answers=$answers").as(nebflow.actor.Behaviors.stopped)
+          nebflow.shared.NebflowLogger.forName("test").info(s"answers=$answers").as(nebflow.actor.Behaviors.stopped)
         },
         "ask-reply-sink"
       )
@@ -157,13 +227,26 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   // ---------- #12: approval link reliability ----------
 
-  // ===== 第六件 (2026-08-30): chat-input passthrough for pending AskUser =====
+  // ===== 输入框直通退役 (2026-09-14 作者令) =====
+  // 第六件 (2026-08-30) 的 chat-input 直通腿 + hub 侧 AnswerViaChatInput /
+  // handleChatInputAnswer + `via="chat-input"` 审计行已整体删除（U2 死码全删口径）；
+  // 其六个用例（消费最老卡 / kind 过滤 / 无卡回落 / B2 多卡拒绝 / 单卡正控 /
+  // 跨 session 不串扰）断言的都是**已删行为** ⇒ 一并删除，不做「只删一半」。
+  // 输入框文本的去向（普通消息 = dispatchUserText）与「不再成为卡片答案」的负控
+  // 由 gateway 侧源契约 spec（UserTextGateSpec）钉住；卡片入口作答的正控由本文件
+  // 其余用例（Answered / requestId 精确路由 / F4 扇出）覆盖。
 
-  /** 有界轮询同步点（2b93cbe5 / ad0a50ad 加固模式）：hub 的 Request/Answered
-    * 都是 forkTurn 异步 fiber——固定 sleep 后直读观察面（sent / sink Ref）在
-    * 满载调度下有竞态（CI 0.125s 断言竞态先例）。轮询等条件成立（超时清晰红）
-    * 再断言，断言语义不变。 */
-  private def awaitCond(cond: IO[Boolean], timeout: FiniteDuration = 5.seconds, every: FiniteDuration = 25.millis): IO[Unit] =
+  /**
+   * 有界轮询同步点（2b93cbe5 / ad0a50ad 加固模式）：hub 的 Request/Answered
+   * 都是 forkTurn 异步 fiber——固定 sleep 后直读观察面（sent / sink Ref）在
+   * 满载调度下有竞态（CI 0.125s 断言竞态先例）。轮询等条件成立（超时清晰红）
+   * 再断言，断言语义不变。
+   */
+  private def awaitCond(
+    cond: IO[Boolean],
+    timeout: FiniteDuration = 5.seconds,
+    every: FiniteDuration = 25.millis
+  ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
         case true => IO.unit
@@ -174,17 +257,20 @@ class InteractionHubSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  /** 卡片识别（type + requestId 双匹配）——作为「pending 槽已注册」的确定性
-    * 信号：hub 的 handleRequest 先 pending.update 再渲染，卡片进 sent ⟹ 槽在册。 */
+  /**
+   * 卡片识别（type + requestId 双匹配）——作为「pending 槽已注册」的确定性
+   * 信号：hub 的 handleRequest 先 pending.update 再渲染，卡片进 sent ⟹ 槽在册。
+   */
   private def isCard(tpe: String, requestId: String)(j: Json): Boolean =
     j.hcursor.downField("type").as[String].contains(tpe) &&
       j.hcursor.downField("requestId").as[String].contains(requestId)
 
   private def askRequest(
-      requestId: String,
-      gotAnswers: Ref[IO, Option[List[String]]],
-      rootSid: String = "root-1",
-      system: nebflow.actor.ActorSystem
+    requestId: String,
+    gotAnswers: Ref[IO, Option[List[String]]],
+    rootSid: String = "root-1",
+    system: nebflow.actor.ActorSystem,
+    payloadAgentName: Option[String] = None
   ): IO[InteractionRequest] =
     system
       .spawn(
@@ -197,7 +283,10 @@ class InteractionHubSpec extends CatsEffectSuite:
         InteractionRequest(
           requestId = requestId,
           kind = InteractionKind.AskUser,
-          payload = Json.obj("items" -> Json.arr(), "agentName" -> Json.fromString("Frontend")),
+          payload = Json.obj(
+            "items" -> Json.arr(),
+            "agentName" -> Json.fromString(payloadAgentName.getOrElse("Frontend"))
+          ),
           reply = InteractionReply.AskUserReply(Some(sink)),
           rootSessionId = rootSid,
           sourceAgent = "Frontend",
@@ -205,137 +294,44 @@ class InteractionHubSpec extends CatsEffectSuite:
         )
       }
 
-  test("chat-input passthrough: pending AskUser consumes text as tool result + card closes + slot removed") {
-    val system = nebflow.actor.ActorSystem("hub-passthrough-1")
+  /** ListPendingAsks 的 reply 通道：收快照后 complete Deferred。 */
+  private def awaitReply(
+    d: Deferred[IO, List[Json]],
+    system: nebflow.actor.ActorSystem
+  ): nebflow.actor.ActorRef[List[Json]] =
+    system
+      .spawn(
+        nebflow.actor.Behaviors.receiveMessage[List[Json]] { l =>
+          d.complete(l).void.as(nebflow.actor.Behaviors.stopped)
+        },
+        s"pending-snapshot-sink-${System.nanoTime()}"
+      )
+      .unsafeRunSync()
+
+  // U3（作者裁定 2026-09-11：显示 `subagent · <任务摘要>`）：内核会话的来源标注
+  // 由 AgentActor 写进 payload.agentName；hub 渲染时必须**保留**它（既有的
+  // `add("agentName", sourceAgent)` 会覆盖）。断言含重放路径（ListPendingAsks）。
+  test("U3: payload's explicit agentName (kernel 'subagent · <task>') survives rendering + replay") {
+    val system = nebflow.actor.ActorSystem("hub-kernel-label")
+    val label = "subagent · 拉 D:\\build 日志"
     for
       hub <- mkHub(system)
       sent <- Ref.of[IO, List[Json]](Nil)
       _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
-      gotAnswers <- Ref.of[IO, Option[List[String]]](None)
-      req <- askRequest("pt-1", gotAnswers, system = system)
+      got <- Ref.of[IO, Option[List[String]]](None)
+      req <- askRequest("k-1", got, system = system, payloadAgentName = Some(label))
       _ <- hub ! InteractionHubCommand.Request(req)
-      // 确定性同步点：卡片渲染可见 ⟹ pending 槽已注册（先注册后渲染）
-      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "pt-1"))))
-      answered <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "自由输入的回答", answered)
-      hit <- answered.get
-      // sink actor 收 `r ! List(text)` 是 fire-and-forget——有界轮询等记账落定
-      _ <- awaitCond(gotAnswers.get.map(_.isDefined))
-      answers <- gotAnswers.get
-      _ <- IO.sleep(50.millis)
-      events <- sent.get
+      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "k-1"))))
+      replayed <- Deferred[IO, List[Json]]
+      _ <- hub ! InteractionHubCommand.ListPendingAsks("root-1", awaitReply(replayed, system))
+      snapshot <- replayed.get
       _ <- system.stopAll
     yield
-      assertEquals(hit, true) // gateway must NOT fall back to normal dispatch
-      assertEquals(answers, Some(List("自由输入的回答"))) // free-text IS the tool result
-      // frontend card-close signal broadcast with the consumed requestId
-      val close = events.find(_.hcursor.downField("type").as[String].contains("askUserAnswered")).get
-      assertEquals(close.hcursor.downField("requestId").as[String], Right("pt-1"))
-      assertEquals(close.hcursor.downField("via").as[String], Right("chat-input"))
-    end for
-  }
-
-  test("chat-input passthrough: permission cards are never consumed (kind filter)") {
-    val system = nebflow.actor.ActorSystem("hub-passthrough-2")
-    for
-      hub <- mkHub(system)
-      sent <- Ref.of[IO, List[Json]](Nil)
-      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
-      dPerm <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.Request(permRequest("pt-perm", dPerm))
-      // kind filter 必须在卡片确已注册的前提下才被真正检验——等渲染可见再答
-      _ <- awaitCond(sent.get.map(_.exists(isCard("askPermission", "pt-perm"))))
-      answered <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "hello", answered)
-      hit <- answered.get
-      _ <- IO.sleep(50.millis)
-      permState <- dPerm.tryGet
-      _ <- system.stopAll
-    yield
-      assertEquals(hit, false) // fall back to normal dispatch
-      assertEquals(permState, None) // permission card untouched, still answerable
-    end for
-  }
-
-  test("chat-input passthrough: no pending card → false (normal dispatch preserved)") {
-    val system = nebflow.actor.ActorSystem("hub-passthrough-3")
-    for
-      hub <- mkHub(system)
-      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
-      answered <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "plain message", answered)
-      hit <- answered.get
-      _ <- system.stopAll
-    yield assertEquals(hit, false)
-    end for
-  }
-
-  test("chat-input passthrough: consumes only the OLDEST AskUser — queued cards survive untouched") {
-    val system = nebflow.actor.ActorSystem("hub-passthrough-4")
-    for
-      hub <- mkHub(system)
-      sent <- Ref.of[IO, List[Json]](Nil)
-      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
-      gotA <- Ref.of[IO, Option[List[String]]](None)
-      gotB <- Ref.of[IO, Option[List[String]]](None)
-      reqA <- askRequest("pt-old", gotA, system = system)
-      _ <- hub ! InteractionHubCommand.Request(reqA)
-      // 同步点：A 渲染可见 ⟹ A 的 pending.update（含 createdAt）已完成
-      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "pt-old"))))
-      // 时钟分辨率保险：createdAt 是毫秒粒度，且两 Request 的 forkTurn fiber
-      // 并发执行——确保 B 的注册时间严格晚于 A（同毫秒 tie 会退化成
-      // m.toList 哈希序定 OLDEST，非确定）
-      _ <- IO.sleep(10.millis)
-      reqB <- askRequest("pt-new", gotB, system = system)
-      _ <- hub ! InteractionHubCommand.Request(reqB)
-      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "pt-new"))))
-      answered <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "first answer", answered)
-      hit <- answered.get
-      // sink actor fire-and-forget 记账——有界轮询落定再读
-      _ <- awaitCond(gotA.get.map(_.isDefined))
-      aAns <- gotA.get
-      // 场景② invariant: the QUEUED (newer) card is untouched — still answerable
-      _ <- hub ! InteractionHubCommand.Answered(
-        InteractionAnswered("pt-new", "root-1", Json.obj("answers" -> Json.arr(Json.fromString("later pick"))))
-      )
-      _ <- awaitCond(gotB.get.map(_.isDefined))
-      bAns <- gotB.get
-      _ <- system.stopAll
-    yield
-      assertEquals(hit, true)
-      assertEquals(aAns, Some(List("first answer"))) // oldest consumed
-      assertEquals(bAns, Some(List("later pick"))) // queued card intact
-    end for
-  }
-
-  test("chat-input passthrough: session-scoped — another root's pending card is not routed") {
-    val system = nebflow.actor.ActorSystem("hub-passthrough-5")
-    for
-      hub <- mkHub(system)
-      sent <- Ref.of[IO, List[Json]](Nil)
-      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
-      gotA <- Ref.of[IO, Option[List[String]]](None)
-      reqA <- askRequest("pt-x", gotA, rootSid = "root-other", system = system)
-      _ <- hub ! InteractionHubCommand.Request(reqA)
-      // root-other 未注册 → F4 扇出渲染到 root-1（fallback 卡）——渲染可见
-      // ⟹ 外域卡已在 pending 注册，session 过滤被真正检验
-      _ <- awaitCond(sent.get.map(_.exists(isCard("askUser", "pt-x"))))
-      answered <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.AnswerViaChatInput("root-1", "wrong window", answered)
-      hit <- answered.get
-      aAns <- gotA.get
-      // the foreign card is still consumable by its own session
-      _ <- hub ! InteractionHubCommand.Answered(
-        InteractionAnswered("pt-x", "root-other", Json.obj("answers" -> Json.arr(Json.fromString("right window"))))
-      )
-      _ <- awaitCond(gotA.get.map(_.isDefined))
-      aAns2 <- gotA.get
-      _ <- system.stopAll
-    yield
-      assertEquals(hit, false) // no cross-session routing
-      assertEquals(aAns, None)
-      assertEquals(aAns2, Some(List("right window"))) // card survived, still answerable
+      val card = sent.get.unsafeRunSync().find(isCard("askUser", "k-1")).get
+      assertEquals(card.hcursor.downField("agentName").as[String], Right(label))
+      assertEquals(card.hcursor.downField("sourceAgent").as[String], Right("Frontend"))
+      val replayedCard = snapshot.find(_.hcursor.downField("requestId").as[String].contains("k-1")).get
+      assertEquals(replayedCard.hcursor.downField("agentName").as[String], Right(label))
     end for
   }
 
@@ -392,7 +388,7 @@ class InteractionHubSpec extends CatsEffectSuite:
 
   test("#12 fallback skips kind-incompatible cards — askUser answer never wires into an older permission card") {
     val system = nebflow.actor.ActorSystem("hub-test")
-    val items = List(nebflow.core.AskItem("Continue?", List(nebflow.core.AskOption("yes"))))
+    val items = List(nebflow.shared.AskItem("Continue?", List(nebflow.shared.AskOption("yes"))))
     for
       hub <- mkHub(system)
       _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (_: Json) => IO.unit)
@@ -434,10 +430,12 @@ class InteractionHubSpec extends CatsEffectSuite:
     end for
   }
 
-  // ===== F4 (#433): unreachable-root fanout =====
+  // ===== permission-landing 批 P0（2026-11-18）：不可达 root 的落点重定锚 =====
+  //（取代 F4 #433 的全 root fallback 扇出——全局 toast = 原生弹窗形态，弹窗禁令后
+  // 不再存在；现口径 = 单一确定性可达落点 + 原因标，答复按 requestId 收口。）
 
-  test("F4: unreachable root fans the card out to other registered roots with fallback flag") {
-    val system = nebflow.actor.ActorSystem("hub-test-f4a")
+  test("P0 retarget: unreachable root lands the card on the lexicographically-first reachable root, no fallback frame") {
+    val system = nebflow.actor.ActorSystem("hub-test-landing-a")
     for
       hub <- mkHub(system)
       sentA <- Ref.of[IO, List[Json]](Nil)
@@ -445,33 +443,55 @@ class InteractionHubSpec extends CatsEffectSuite:
       _ <- hub ! InteractionHubCommand.RegisterRoot("live-root", (j: Json) => sentA.update(_ :+ j))
       _ <- hub ! InteractionHubCommand.RegisterRoot("live-root-2", (j: Json) => sentB.update(_ :+ j))
       deferred <- Deferred[IO, Boolean]
-      // root "zombie" never registered — the incident shape
-      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-1", deferred, rootSid = "zombie"))
+      // root "zombie" never registered — the incident shape (project node whose
+      // mount root has no in-process client window)
+      _ <- hub ! InteractionHubCommand.Request(permRequest("landing-1", deferred, rootSid = "zombie"))
       _ <- IO.sleep(100.millis)
       eventsA <- sentA.get
       eventsB <- sentB.get
       cardA = eventsA.find(_.hcursor.downField("type").as[String].contains("askPermission")).get
-      cardB = eventsB.find(_.hcursor.downField("type").as[String].contains("askPermission")).get
       _ <- system.stopAll
     yield
-      // both live roots got the card, flagged fallback with the zombie root id
-      assertEquals(cardA.hcursor.downField("fallback").as[Boolean], Right(true))
-      assertEquals(cardB.hcursor.downField("fallback").as[Boolean], Right(true))
-      assertEquals(cardA.hcursor.downField("fallbackRoot").as[String], Right("zombie"))
-      assertEquals(cardB.hcursor.downField("fallbackRoot").as[String], Right("zombie"))
-      // requestId preserved so an answer from ANY window completes the pending
-      assertEquals(cardA.hcursor.downField("requestId").as[String], Right("f4-1"))
+      // single deterministic landing (lexicographic min) — NOT a fanout
+      assertEquals(cardA.hcursor.downField("sessionId").as[String], Right("live-root"))
+      assertEquals(eventsB.count(_.hcursor.downField("type").as[String].contains("askPermission")), 0)
+      // in-chat card shape: no fallback flag (that was the native-toast pathway),
+      // retarget attribution carried instead
+      assertEquals(cardA.hcursor.downField("fallback").focus, None)
+      assertEquals(cardA.hcursor.downField("retargetedFrom").as[String], Right("zombie"))
+      assertEquals(cardA.hcursor.downField("retargetReason").as[String], Right("target-root-unreachable"))
+      // requestId preserved so the answer completes the pending slot
+      assertEquals(cardA.hcursor.downField("requestId").as[String], Right("landing-1"))
     end for
   }
 
-  test("F4: answering a fanned-out card by requestId completes the pending deferred") {
-    val system = nebflow.actor.ActorSystem("hub-test-f4b")
+  test("P0 direct: reachable root keeps the byte-identical direct route (no retarget keys)") {
+    val system = nebflow.actor.ActorSystem("hub-test-landing-b")
+    for
+      hub <- mkHub(system)
+      sent <- Ref.of[IO, List[Json]](Nil)
+      _ <- hub ! InteractionHubCommand.RegisterRoot("root-1", (j: Json) => sent.update(_ :+ j))
+      deferred <- Deferred[IO, Boolean]
+      _ <- hub ! InteractionHubCommand.Request(permRequest("landing-2", deferred, rootSid = "root-1"))
+      _ <- IO.sleep(100.millis)
+      events <- sent.get
+      card = events.find(_.hcursor.downField("type").as[String].contains("askPermission")).get
+      _ <- system.stopAll
+    yield
+      assertEquals(card.hcursor.downField("sessionId").as[String], Right("root-1"))
+      assertEquals(card.hcursor.downField("retargetedFrom").focus, None)
+      assertEquals(card.hcursor.downField("retargetReason").focus, None)
+    end for
+  }
+
+  test("P0 retarget + answer: a card answered from its landing session by requestId completes the pending deferred") {
+    val system = nebflow.actor.ActorSystem("hub-test-landing-c")
     for
       hub <- mkHub(system)
       sent <- Ref.of[IO, List[Json]](Nil)
       _ <- hub ! InteractionHubCommand.RegisterRoot("live-root", (j: Json) => sent.update(_ :+ j))
       deferred <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-2", deferred, rootSid = "zombie"))
+      _ <- hub ! InteractionHubCommand.Request(permRequest("landing-3", deferred, rootSid = "zombie"))
       _ <- IO.sleep(100.millis)
       card = sent.get.map(_.find(_.hcursor.downField("type").as[String].contains("askPermission")).get).unsafeRunSync()
       // user answers from the LIVE window (sessionId = live-root), card was for zombie —
@@ -489,17 +509,26 @@ class InteractionHubSpec extends CatsEffectSuite:
     end for
   }
 
-  test("F4: no registered roots at all keeps the original WARN-drop behavior") {
-    val system = nebflow.actor.ActorSystem("hub-test-f4c")
+  test("P0 zero-reachable: slot is retained (late answer still lands) instead of dropping the request") {
+    val system = nebflow.actor.ActorSystem("hub-test-landing-d")
     for
       hub <- mkHub(system)
       deferred <- Deferred[IO, Boolean]
-      _ <- hub ! InteractionHubCommand.Request(permRequest("f4-3", deferred, rootSid = "zombie"))
+      _ <- hub ! InteractionHubCommand.Request(permRequest("landing-4", deferred, rootSid = "zombie"))
       _ <- IO.sleep(100.millis)
-      // pending slot still registered — the deferred remains completable
-      completed <- deferred.tryGet
+      // no client ever saw a card — the deferred must remain unsettled (the
+      // requester's bounded wait owns the fail-closed conclusion) …
+      before <- deferred.tryGet
+      // … but the slot stays answerable: a root registering later + answering by
+      // requestId (bridge leg) still wakes the waiter
+      _ <- hub ! InteractionHubCommand.Answered(
+        InteractionAnswered("landing-4", "zombie", Json.obj("approved" -> Json.fromBoolean(true)))
+      )
+      answered <- deferred.get.timeout(2.seconds)
       _ <- system.stopAll
-    yield assertEquals(completed, None) // timed-out path still owns auto-deny
+    yield
+      assertEquals(before, None)
+      assertEquals(answered, true)
     end for
   }
 

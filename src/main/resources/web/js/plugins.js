@@ -1,18 +1,122 @@
 // plugins.js — Plugins page (Canvas tab, activity-bar entry «插件»/Plugins).
 //
-// 2026-09-04 作者裁定（插件面板重设计——统一插件系统 + 每插件一开关）：
-//   • 统一插件系统：Skill 与 MCP 已统一为「插件」。页面只呈现插件卡片，
-//     skill/MCP 仅作卡片内的内容构成标注语（含 N 个技能·可展开 preview /
-//     MCP server 名+transport / 内建工具白名单 +N），不再是独立板块。
-//   • 每插件一个启停开关（页面唯一操作件）：
-//       on  = POST /api/plugins/:name/approve （trust 表记录当前目录 digest）
-//       off = POST /api/plugins/:name/revoke  （删 trust 条目，回落 untrusted）
-//     enabled ≡ trusted：不做独立 enabled 字段——trust digest 门底层语义
-//     （内容变更即回落待审）不删，开关即目录可见性（GET /plugins/catalog
-//     只列 trusted，分发器目录同源）。数据源 GET /api/plugins 全量注册表。
+// 2026-10-21 作者令批（插件面板七条，纯插件视角收口）：
+//   ① 只看纯插件：agent 区块整段退役（列表/摘要行/深链绑定/枚举过滤全删）——
+//      本页从此只呈现插件条目（agent 管理面归 agentManager 既有入口）。
+//   ② plugin.md = 插件必要文件（引擎侧 PluginInjection 同批切链）：包根 Plugin.md
+//      是插件功能描述单源；本面板 Plugin.md 入口照旧（探针在场显形 + Canvas 深链）。
+//   ③ 展开态布局收紧：展开态行摘要从 visibility:hidden（占位留白）改 display:none
+//      （空间塌缩），详情区间距收密——信息密度优先。
+//   ④ 「变更」提示退役：contentChanged 不再驱动任何面板 UI（药丸 amber 档、
+//      `.plugins-card-hint.changed`、卡片 changed 类全删；blocked 面保留）。
+//      🔴 契约字段 `contentChanged` 仍在 payload（C6 契约保留），本页不再消费。
+//   ⑤ 顶部统计 = skill 总数 + MCP server 总数（全注册表面口径，`plugins-stats`）。
+//   ⑥ skill 列表改胶囊：详情区 skills 改「胶囊小图标 + skill 描述」紧凑列表；
+//      点击胶囊经既有 /api/plugin-assets/<name>/skills/<skill>/SKILL.md 路由取
+//      SKILL.md 原文，走既有 Canvas 通路（workspace-open-item → markdown viewer）
+//      打开文档——旧「id+描述+preview 内联渲染」形态退役。
+//   ⑦ 旧域品牌残留：面板可见文案链（插件 description/skill 描述）随
+//      seed `website` 包文案一并清扫（mystand.space 现役域），本文件零 brand 字面量。
+//
+// 2026-09-13 作者裁定（插件「无审批」批——「装了就是信任」）：
+//   ① 方案 = A「在位即信任 + 保留封禁」（引擎轨；`plugins.trust.*` 记录不再决定
+//      装载、零迁移）；② 内容变更 = 不停（内容一变**不**抖掉在飞节点的插件 MCP）。
+//   本文件是该批的**前端主交付**，消费两轨共用的**冻结契约 C6**：GET /api/plugins
+//   每项含 `trusted` / `blocked`（新）/ `contentChanged`（新）。
+//
+//   • **条目式形态（2026-10-07 作者 09:40 令，与微信②令同规格）**：默认每插件
+//     **仅一条目行**（chevron ＋ 名称 ＋ 版本/作者 meta ＋ 状态药丸 ＋ 一行摘要），
+//     点击条目行展开**详情区**（再点收回，accordion 语义自洽）；🔴 零 locale 键值
+//     变化——行摘要/详情正文全部现读既有字段（description / skills / mcpServers /
+//     toolsExtension / viewerContributions），入口与清单不新造文案。详情区构成：
+//       ├ 完整描述（与行摘要同字段；展开态行摘要隐藏防重复）
+//       ├ skills 清单（逐 skill id＋描述＋preview 既有投影；多 skill 时清单内滚动）
+//       ├ Plugin.md 入口（**包根有该文件才在场**：既有 /api/plugin-assets/<name>/
+//       │   Plugin.md 路由探针 200 ⇒ 在场——🔴 引擎/scala 零改动，approvalManifest
+//       │   契约无在场字段，探针一次/包/会话缓存；封禁包服务端 fail-closed 404 ⇒
+//       │   入口永不在场；点击经**既有 Canvas 通路**（workspace-open-item →
+//       │   markdown viewer）呈现内容，本面板只做入口呈现。可见标注 = 文件名
+//       │   「Plugin.md」本身（数据投影，非 locale 串），探测/读取失败 toast 走
+//       │   setPluginDispatch 同族（原始错误消息，零新串）。
+//       ├ 组件面（mcp/skills/org.nebflow 现读投影 = 既有 comp chips 族；org.nebflow
+//       │   行 = viewerContributions.viewers[].name 数据投影，无贡献不渲染）
+//       └ 启停操作钮 = 既有派发开关**原样收进展开态**（钩子/语义/乐观翻转零变，
+//           只动层级）。
+//     🔴 **单 toggle 定版（2026-10-29 作者令「为什么我们插件面板里有两个 toggle？」）**：
+//     每卡**恰一个**开关 = 详情区 `[data-plugin-dispatch]`。2026-10-07 14:13 令①引入的
+//     收起态行尾第二视图（`[data-plugin-dispatch-row]`）整组退场——同一状态源的两处
+//     视图被读作「两个 toggle」（面板实证：pipelines 卡右上 + 展开区中部各一枚），
+//     一个控制启停的原则下行尾视图是冗余件：视图合一回详情区单点，钩子/语义/乐观
+//     翻转/收敛管线零变（少一个消费方而已）。
+//     展开态默认收起；收敛管线（applyRegistryStates）保持节点身份 ⇒ 展开态跨
+//     轮询/开关收敛保持；整页重渲（locale 切换 / tab 恢复）无记忆 ⇒ 默认收起
+//     （🔴 不新造持久化）。
+//
+//   • **卸载入口（2026-10-29 作者令「除了 toggle，我们应该还要多一个卸载」）**：
+//     详情区 actions 行新增「卸载」钮（[data-plugin-uninstall]，每卡恰一，与派发
+//     开关同排）。二次确认极简档 = 既有 #delete-box 三键形态（showConfirm opts.alt
+//     第三动作）：主确认「卸载并删除目录」（POST remove {deleteDir:true}，danger）、
+//     第三键「仅停用（保留目录）」（POST remove {deleteDir:false}）、取消即退。
+//     语义分界：**卸载 = 移除出册**（`plugins.removed.<name>` 台账 + 存在台账墓碑，
+//     种子不自愈装回；重装 = stand plugin add 显式复职）；**停用 = 可逆**（revoke
+//     面板无入口，属 API / CLI）。成功后卡片随下一拍注册表收敛消失（出册 = 注册表
+//     面整体不可见），失败 toast 原始错误（F1 纪律同族）。
+//
+//   • 统一插件系统（2026-09-04 重设计，形态不变）：Skill 与 MCP 统一为「插件」，
+//     页面只呈现插件条目，skill/MCP 仅作条目展开详情区的内容构成标注语（含
+//     N 个技能 / MCP server 名+transport / 内建工具白名单 +N）。
+//
+//   • **条目行形态（2026-10-07 条目式批改口径，原「卡片形态 C7」的头部/控件几何
+//     随脸退役）**：
+//       ┌ 内容审批开关 `[data-plugin-switch]` **退场**——「在位即信任」下它恒 on，
+//       │   留着只是噪声；且它的 off 会停掉在飞节点的插件 MCP（作者 09-12 踩过的坑）。
+//       ├ 状态药丸（**条目行右端**）绑 `blocked` / `contentChanged`（**不绑 `trusted`**）：
+//       │   已封禁 > 内容已变更 > 默认（在位即信任）三态（优先级见 pluginStatus）。
+//       │   🔴 **2026-09-15 作者令（先删文字、后删空框）**：默认态不出文字；
+//       │   文字为空 ⇒ **整个药丸元素不渲染**（「删掉空框」）——判据是**元素
+//       │   count = 0**，不是「元素在但不可见」（🔴 禁 CSS 遮盖式假修）。
+//       │   封禁 / 内容已变更**仍出字且照常渲染**（那是可行动信号，不是说明性小字）。
+//       └ 派发开关 `[data-plugin-dispatch]` = **展开详情区内**控件（原「唯一控件」
+//           ——`.plugins-item-actions` 行，2026-10-07 条目式批收进展开态）；
+//           🔴 **单 toggle 定版（2026-10-29 作者令）**：2026-10-07 14:13 令①的收起态
+//           行尾第二视图（`data-plugin-dispatch-row`）随本批整组退场——每卡恰一开关
+//           （见上「单 toggle 定版」段）；
+//           🔴 **2026-09-15 作者令：
+//           可见文案「任务分发器可见性」小字整体删除**（toggle 本体自明）——
+//           `plugins.dispatchLabel` 仅作 **aria-label** 保留（可访问性面；
+//           2026-09-14 作者三裁之批一引入，2026-09-15 只删可见文本）。
+//
+//   • **封禁 / 解封 UI 全量退场（2026-09-14 作者三裁之批一）**：右上「更多」按钮、
+//     其就地菜单行、封禁/解封按钮（`[data-plugin-more]` / `[data-plugin-menu]` /
+//     `[data-plugin-block]`）及其动作函数一并删除——作者定方案 B 时**已知并接受**
+//     「在飞止损只能走 API / CLI」的代价：POST /api/plugins/:name/revoke（语义 = 封禁，
+//     路径名保留 ⇒ 零迁移）/ POST :name/unblock。🔴 **端点 / CLI / 引擎面零改动**
+//     （闸 A–E、MCP ≤30s 停一律不动）；`plugins.revoked.<n>` 命名空间、`blocked` 契约
+//     字段、`PluginBlockPolicy` 语义**原样保留**——面板仍显示「已封禁」药丸 + 禁用态
+//     开关 + 可行动注记（指向 API / CLI），只是不再提供面板入口。
+//
+//   • **派发开关语义（2026-09-12 令 1，作者原话「插件的开关，应该只影响任务分发器对
+//     未来节点的派发，而不能影响目前的」）**：只写 `plugins.dispatch`（作者意图层，
+//     durable）⇒ 关闭只挡住**未来派发**，已在飞/已派发节点零影响。
+//     有效值 = `trusted ∧ (authorEnabled ∨ transition)`；内容恒受信后 =
+//     `authorEnabled ∨ transition` ⇒ 本开关仅在下面两种情形不可用（渲染 disabled +
+//     一行**可行动**注记，而不是允许点击后回弹）：
+//       (a) 该包**被封禁**（封禁 ⇒ 不进目录 + 闸拒）⇒ 解封走 API / CLI
+//           （面板入口已随 2026-09-14 面板收敛批退场）；
+//       (b) 临时派发授权（transition）生效中 ⇒ 有效值由授权层拥有。
+//     目录可见性（GET /plugins/catalog）与分发器目录同源。
+//
+//   • **F1「零静默、可行动」纪律（本批延续）**：任何用户动作都必须产生可行动结果。
+//     面板上仅存的动作（派发开关）走「乐观翻转 → 后端确认 → 回读注册表原地收敛」，
+//     失败即回滚乐观态 + toast 报错，绝不让动作静默无效。（原封禁动作的落盘核对
+//     用语 `plugins.actionNoEffect` 已随该动作一并退场——消费方与文案同时删除。）
+//
+//   • `/approve` 端点**兼容保留但 UI 主线不再调用**（审批语义已退场）。
 //   • 智能体区块收缩为摘要行：名称/描述/preset 现状，点击进既有 agent
 //     详情编辑（openAgentDetail 深链复用）；订阅 chips（PUT skills 写回）
-//     与平铺 config row 移除——插件不再逐 agent 配置，每个插件一个开关。
+//     与平铺 config row 移除——插件不再逐 agent 配置，每个插件两个开关
+//     （内容 / 派发 —— 其中「内容」面已随 2026-09-13 无审批批退场，现为
+//     「派发开关」单控件，见本文件头）。
 //   • 独立 MCP（state.mcpServers）展示从本页移除；设置页入口亦随 0905
 //     设置清理批移除（MCP 概念由本插件系统全面取代）——前端已不消费
 //     state.mcpServers / mcpServersUpdate，底层 MCP 机制保留。
@@ -22,12 +126,14 @@
 //   • 实时自动同步：面板可见（document.visibilityState=visible）且激活
 //     （canvas 开启 + plugins tab 为 active pane）时，每 6s GET /api/plugins；
 //     registry 名称集 diff——新插件按排序位插入卡片（plugins-card-entering
-//     短动画）；消失的插件回退整页重渲（renderPlugins 同一管线）；仅信任
-//     状态变化时逐卡原地更新，零全列表重绘。智能体区块不参与轮询（轻量，
-//     只轮插件注册表一个端点）。
-//   • 启停原地状态切换：开关点击乐观翻转（switch/pill 即时反馈）→ POST
-//     approve/revoke → 成功后后台拉 registry 逐卡原地收敛（UI ≡ backend，
+//     短动画）；消失的插件回退整页重渲（renderPlugins 同一管线）；状态
+//     （blocked / contentChanged / 派发）变化时逐卡原地更新，零全列表重绘。
+//     智能体区块不参与轮询（轻量，只轮插件注册表一个端点）。
+//   • 原地状态切换：派发开关点击乐观翻转（switch/pill 即时反馈）→ POST
+//     enable/disable → 成功后后台拉 registry 逐卡原地收敛（UI ≡ backend，
 //     无全列表重绘）；失败回滚乐观态 + toast 报错。全程无 page reload。
+//     （2026-09-13 无审批批曾让封禁/解封复用同一条收敛管线；该动作用户入口已随
+//     2026-09-14 面板收敛批删除 ⇒ 本管线现只承载派发开关一条路径。）
 //   • 开关换用共享组件 js/toggle.js（nb-toggle：插件面板与设置页统一契约，
 //     role=switch + 键盘可操作 + 全局 token 双主题自适应）。
 // No new backend contract is invented anywhere; every endpoint above is
@@ -36,81 +142,179 @@
 
 import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas, registerCanvasPanelButton } from './canvas.js';
 import { t } from './i18n.js';
-import { escapeHtml } from './utils.js';
-import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
-import { fetchAgents, fetchAgentModel, openAgentDetail } from './agentManager.js';
+import { contentText } from './contentI18n.js';
+import { escapeHtml, statusIcon } from './utils.js';
+import { toggleHTML, setToggleState } from './toggle.js';
+import { key } from './branding.js';
+import { openLoginModal } from './activityBar.js';
+// 登录失效单例闩（作者根因批 2026-10-31）：插件面板的 401/403 与好友域共用
+// friendsApi.js 的全局闩 —— 同一失效回合全站只派一次 fm-auth-required，
+// 面板不再各自为政、不各自拉登录弹窗。
+import { notifyAuthRequired } from './friendsApi.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function esc(s) { return escapeHtml(s); }
 
-/** Short display ref for a model chain (last path segment). */
-function shortModel(ref) {
-  if (!ref) return '';
-  const idx = ref.lastIndexOf('/');
-  return idx >= 0 ? ref.slice(idx + 1) : ref;
-}
-
-/** Authorized JSON fetch (same token pattern as agentManager.js). */
+/** Authorized JSON fetch (same token pattern as agentManager.js).
+ *
+ *  🔴 2026-09-22 作者裁定 (c) 之③（**潜在功能缺陷**，本批最高优先项）：改前此处
+ *  硬编码 legacy 字面 token 键（`nebflow_` + `token` 的裸拼写）。品牌改名后该键
+ *  失配 ⇒ **有登录态也读不到 token** ⇒ 本面板**永远**失败（外观与「未登录」相同，
+ *  却是被 token 键吃掉的）。现取命名空间形态 `key('token')`，与全站同族先例逐字
+ *  同形（`agentManager.js:18` / `avatarCache.js:78` / `chatSearch.js:732` /
+ *  `daemons.js:263` / `dropbox.js:205` / `neblink.js:261`）。
+ *  （🔴 本注释刻意**不**复写那个 legacy 字面量：R1 的判据 = 单引号包裹的 legacy
+ *   token 键在**本文件** grep **零命中** —— 注释里留副本会污染读数。）
+ *
+  *  鉴权失败面（裁定 (c) 之①）：`status ∈ {401,403}` 时经 `friendsApi.js` 的
+  *  `notifyAuthRequired()` 派 **既有** 全局事件 `fm-auth-required`（单例闩 ——
+  *  一个失效回合全站只派一次，作者根因批 2026-10-31）——**不新造形态**，
+  *  由既有两个消费方（`messages.js` / `contacts.js` 的 fm-auth-required 监听）
+  *  开页面内登录卡（`{auto:true, deferPopup:true}`，零 window.open）。
+ *  · 本函数**只**在 `!resp.ok && (401|403)` 时派事件：200 路径零触碰（不读 body、
+ *    不改 headers、不改返回值），非鉴权错误（5xx / 404 / 网络错）**不派**事件。
+ *  · ⚠ **不搬好友域码表**：`friendsApi.js` 的 `FRIEND_TERMINAL_CODES` /
+ *    `GROUP_DOMAIN_ERRORS`（「域语义码不派登录链」判据）是好友/群域正典，
+ *    `/api/plugins` 不产这类语义码 ⇒ 跨域挪用 = 新造第二套形态，故此处**只**判状态码。
+ *  · 调用方仍拿到原 resp（红线：本函数是**可见性**升级，不是拦截层）。 */
 async function api(path, opts = {}) {
-  const tok = localStorage.getItem('nebflow_token') || '';
+  const tok = localStorage.getItem(key('token')) || '';
   if (tok) opts.headers = { ...(opts.headers || {}), Authorization: `Bearer ${tok}` };
-  return fetch(path, opts);
+  const resp = await fetch(path, opts);
+  if (!resp.ok && (resp.status === 401 || resp.status === 403)) {
+    notifyAuthRequired();
+  }
+  return resp;
 }
 
 /** GET /api/plugins — 注册表全量（approvalManifest + 拒载原因）。
- *  Response: { plugins: [manifest…], rejected: [{name, reason}] } */
+ *  Response: { plugins: [manifest…], rejected: [{name, reason}] }
+ *
+ *  失败面（本批新增 `.status` 挂载，形态照 `friendsApi.js:154-160`）：错误对象带上
+ *  HTTP 状态码，供渲染面分态 —— `401/403` ⇒ 登录引导卡（裁定 (c) 之②），其余
+ *  （5xx / 404 / 网络）⇒ 既有「加载失败」文案（原键保留，不删）。 */
 async function fetchPluginRegistry() {
   const resp = await api('/api/plugins');
-  if (!resp.ok) throw new Error(`GET /api/plugins ${resp.status}`);
+  if (!resp.ok) {
+    const err = /** @type {Error & {status?: number}} */ (new Error(`GET /api/plugins ${resp.status}`));
+    err.status = resp.status;
+    throw err;
+  }
   return resp.json();
 }
 
-/** Classify a manifest's trust state for display.
- *  • trusted → switch on.
- *  • untrusted + digest-changed reason → off + 「内容已变更」 hint
- *  • untrusted otherwise（never approved / 其他）→ off + 常规提示。
+/** GET /api/plugins/updates — **源化插件的更新面**（作者令 2026-11-01 22:55「运行时插件
+ *  不是应该要能热更新吗，立即使用我们最新的版本」）。
+ *  Response: { sources: [{name, state, kind, source, installedVersion, installedCommit,
+ *             remoteVersion, remoteCommit, updateAvailable, checkedAt, detail}], updatable }
  *
- *  TODO(plugin-protocol 线吸收): reason 文案匹配是 legacy 兜底——建议后端在
- *  approvalManifest 的 trust 块增加结构化 `reasonCode` 字段（建议枚举
- *  'digest_changed' | 'never_approved' | 'other'），前端优先消费 reasonCode、
- *  仅在缺失时回落到文案匹配。届时后端 reason 文案可自由改写/本地化，
- *  不再是前端展示分类的单一事实。（checkjs-gate-fix 批 2026-09-05 登记） */
-function trustInfo(manifest) {
-  const trust = manifest.trust || { status: 'untrusted', reason: '' };
-  if (trust.status === 'trusted') return { on: true, changed: false, reason: '' };
-  const reason = String(trust.reason || '');
-  // Structured code wins when the backend provides it (future reasonCode).
-  const code = String(trust.reasonCode || '').toLowerCase().trim();
-  if (code) {
-    if (code === 'digest_changed' || code === 'changed') return { on: false, changed: true, reason };
-    if (code === 'never_approved') return { on: false, changed: false, reason };
-    return { on: false, changed: false, reason }; // unknown code → generic hint
+ *  **只在面板整页渲染（打开/切回/手动刷新）时拉一次**——每包一次 ls-remote + 浅克隆，
+ *  绝不进 6s 轮询（PLUGINS_POLL_MS 那一拍只读本地注册表）。失败**不抛**：更新面是
+ *  增量可见性，取不到 = 本页不显示来源行（注册表主体照常呈现，零静默降级到底线之上）。 */
+async function fetchPluginUpdates() {
+  try {
+    const resp = await api('/api/plugins/updates');
+    if (!resp.ok) return { sources: [], updatable: 0, error: `HTTP ${resp.status}` };
+    return await resp.json();
+  } catch (e) {
+    return { sources: [], updatable: 0, error: String(e?.message || e) };
   }
-  // Legacy fallback: loose phrase matching over the backend's English copy.
-  // i-flag + synonym stems + 中英双语关键词，文案微调不致翻转展示分类；
-  // 无法识别的文案按「未变更」处理（保守默认，与既有行为一致）。
-  const neverApproved = /never\s+approved|unapproved|no\s+(?:prior\s+)?approval|未(?:曾|经)?(?:批准|审核)|尚未批准/i.test(reason);
-  const digestChanged = /digest|changed|modified|mismatch|hash|re-?approv|内容(?:已)?(?:变更|修改)|重新批准/i.test(reason);
-  const changed = neverApproved ? false : digestChanged;
-  return { on: false, changed, reason };
+}
+
+/** Index the update payload by package name (cards look themselves up). */
+function updatesByName(payload) {
+  const map = new Map();
+  for (const s of (payload?.sources || [])) map.set(s.name, s);
+  return map;
+}
+
+/** Classify a manifest's CONTENT state — 2026-10-21 作者令④：「变更」提示退役后
+ *  本页唯一内容态 = blocked（面板 change 提示逻辑整体退役；payload 的
+ *  `contentChanged` 字段仍在契约里，本页不再消费）。
+ *  • `blocked: true` → 已封禁（引擎轨：不进目录 + 闸拒 + 在飞 MCP ≤30s 停）
+ *  • 其余          → 已启用（在位即信任） */
+function pluginStatus(manifest) {
+  return {
+    blocked: manifest.blocked === true,
+  };
+}
+
+/** Pill class + pill text for a status — single source shared by the
+ *  full render (renderPluginCard) and the in-place convergence
+ *  (applyPluginCardState), so the two can never drift apart.
+ *
+ *  🔴 在位即信任 ⇒「已启用」是默认态的冗余小字（2026-09-15 作者令：开关态由
+ *  toggle 本体自明，面板不留说明性小字）⇒ 默认态**不出文字**。
+ *  🔴 **2026-09-15 作者裁定「删掉空框」**：`text === ''` ⇒ 渲染点**不生成 pill 元素**
+ *  （`applyPluginCardState` 侧则**移除**既有元素）——判据 = DOM 里 `.plugins-state-pill`
+ *  count = 0，🔴 **不是**「元素在、用 CSS 藏起来」。`blocked` 仍出字并照常渲染
+ *  （可行动信号）。`key` 仅在出字时被消费（元素缺席 ⇒ 无类可挂）。
+ *  （2026-10-21 作者令④：amber「changed」档随面板 change 提示退役整档删除。） */
+function pillOf(status) {
+  const key = status.blocked ? 'blocked' : 'on';
+  const text = status.blocked ? t('plugins.stateBlocked') : '';
+  return { key, text };
+}
+
+/** Pill inner HTML（ui-status-redesign，S13 / 盘点 #52）：pill = 图案载体（红底
+ *  红边保留），字转中性、词前 ban 图标（封禁形状语义）；amber changed 档不在
+ *  本批 54 点范围（红系盘点），字形不变。 */
+function pillInnerHtml(pill) {
+  const icon = pill.key === 'blocked' ? statusIcon('ban', 10, 'st-err') : '';
+  return icon + escapeHtml(pill.text);
+}
+
+/** Classify a manifest's DISPATCH-permission state (令 1 派发面,
+ *  `manifest.dispatch`; drives the card's single control — the top-right
+ *  「任务分发器可见性」 switch, 2026-09-14 面板收敛批).
+ *
+ *  The switch writes exactly one thing — `dispatch.authorEnabled`（作者意图层）——
+ *  so it is ENABLED only when that write is the thing that decides the effective
+ *  value. Whenever it is not, the control is rendered `disabled` + an actionable
+ *  note (`blocked`) instead of accepting a click that the backend would echo as
+ *  `ok:true` while the effective value never moved (设计件 R1 代价① / R9-A）：
+ *    • 该包**被封禁** ⇒ 有效值恒 false（封禁 ⇒ 不进目录 + 闸拒）⇒ 解封走 API / CLI；
+ *    • 临时派发授权（transition）生效中 ⇒ 有效值由授权层拥有 ⇒ 到期/清除后
+ *      本开关自动按作者意图生效。
+ *  （2026-09-14 面板收敛批：原文「标签/提示文案与封禁动作完全分家，保证两动作可辨」
+ *  随封禁 UI 退场失效——面板现只剩本控件一个动作。）*/
+function dispatchState(manifest, blocked) {
+  const d = manifest.dispatch || {};
+  // 兼容默认（零迁移）：无 dispatch 记录 ⇒ 跟随内容信任面 = true。
+  const authorEnabled = typeof d.authorEnabled === 'boolean' ? d.authorEnabled : true;
+  const transitionActive = d.transitionActive === true;
+  if (blocked) {
+    return { on: false, blocked: 'blocked',
+      title: t('plugins.dispatchBlockedBlocked'), note: t('plugins.dispatchBlockedBlocked') };
+  }
+  if (transitionActive) {
+    return { on: d.enabled !== false, blocked: 'transition',
+      title: t('plugins.dispatchBlockedTransition'), note: t('plugins.dispatchBlockedTransition') };
+  }
+  // 2026-09-15 作者令：「派发已关闭——只影响未来派发；已在跑的节点保持其插件许可」
+  // 小字整体删除（开关态由 toggle 本体自明）⇒ 普通关态不再出 note。
+  // （blocked / transition 两态的 note 保留——那是**可行动**注记，非说明性小字。）
+  return { on: authorEnabled, blocked: '',
+    title: authorEnabled ? t('plugins.dispatchOnTitle') : t('plugins.dispatchOffTitle'),
+    note: '' };
 }
 
 // ── Data assembly ──────────────────────────────────────────
+
 /**
  * Load everything the page needs in one pass.
- * @returns {Promise<{registry: object, agents: Array}>}
+ * （2026-10-21 作者令①「只看纯插件」：agents 枚举整段退役——本页数据面只剩
+ *  插件注册表一个端点。）
+ * （2026-11-01 源化批：+ 更新面 `/api/plugins/updates`——**用户驱动的单次拉取**，
+ *  与注册表并行发起；更新面失败只降级「来源行不显示」，注册表主体照常渲染。）
+ * @returns {Promise<{registry: object, updates: object}>}
  */
 async function loadPluginsData() {
-  const [registry, agents] = await Promise.all([fetchPluginRegistry(), fetchAgents()]);
-  return { registry, agents };
-}
-
-/** Per-agent model snapshot for the summary row's preset/model pills. */
-async function loadAgentSummaries(agents) {
-  return Promise.all(agents.map(async a => ({
-    ...a,
-    model: await fetchAgentModel(a.name).catch(() => null),
-  })));
+  const [registry, updates] = await Promise.all([
+    fetchPluginRegistry(),
+    fetchPluginUpdates(),
+  ]);
+  return { registry, updates };
 }
 
 // ── Rendering ──────────────────────────────────────────────
@@ -137,30 +341,39 @@ function pluginsContentEl() {
   if (!content) {
     content = document.createElement('div');
     content.id = 'plugins-content';
+    // 统一安全区（canvas-overlap-fix 批 2026-11-05）：canvas 顶行胶囊是浮层，
+    // 面板正文的首块必须让到 --cv-safe-top（桌面 56 / 手机 72）之下 —— 类本身
+    // 在 split.css「统一布局层」块里定义，本处只挂类，不写任何像素。
+    content.className = 'canvas-safe-top cv-safe-pad';
     pane.appendChild(content);
   }
   return content;
 }
 
-/** Composition annotation: skill count (expandable → previews). */
-function compositionSkills(skills, id) {
+/** Composition annotation: skill count（2026-10-07 条目式批：组件面投影 chip——
+ *  逐 skill 清单改由详情区 `.plugins-item-skills` 直接呈现，本 chip 不再是展开
+ *  toggle；`plugins.skillPreviewTitle` 的「展开」提示随之退场（title 属性删除，
+ *  零键值变化）。 */
+function compositionSkills(skills) {
   if (!skills.length) return '';
-  return `<button type="button" class="plugins-comp plugins-comp-toggle" data-expand="${esc(id)}"
-    aria-expanded="false" title="${esc(t('plugins.skillPreviewTitle'))}">${esc(t('plugins.compositionSkills', { n: skills.length }))}</button>`;
+  return `<span class="plugins-comp">${esc(t('plugins.compositionSkills', { n: skills.length }))}</span>`;
 }
 
-/** Expandable per-skill blocks (id + description + preview excerpt). */
-function skillExpandHtml(id, skills) {
+/** 详情区 per-skill 胶囊清单（2026-10-21 作者令⑥）：「胶囊小图标 + skill 描述」
+ *  紧凑列表；点击胶囊取该 skill 的 SKILL.md 原文经既有 Canvas 通路打开（见
+ *  openSkillDoc）。旧「id+描述+preview 内联渲染」形态退役（preview 不再下发到
+ *  DOM——文档全文归 Canvas 文档页）。🔴 契约无 per-skill 状态字段（PluginSkill =
+ *  id/name/description/path，approvalManifest 下发 id/description/preview）⇒
+ *  胶囊可用性随插件级状态药丸。 */
+function skillListHtml(skills, pluginName) {
   if (!skills.length) return '';
   const items = skills.map(s => `
-    <div class="plugins-skill-item">
-      <div class="plugins-skill-item-head">
-        <span class="plugins-skill-item-id">${esc(s.id)}</span>
-        <span class="plugins-skill-item-desc">${esc(s.description || '')}</span>
-      </div>
-      ${s.preview ? `<pre class="plugins-skill-preview">${esc(s.preview)}</pre>` : ''}
-    </div>`).join('');
-  return `<div class="plugins-skill-expand" data-expand-for="${esc(id)}" hidden>${items}</div>`;
+    <button type="button" class="plugins-skill-capsule" data-skill-doc="${esc(pluginName)}"
+      data-skill-id="${esc(s.id)}" title="${esc(contentText('skill', s.id, 'desc', s.description || ''))}">
+      ${statusIcon('file-text', 11, '')}
+      <span class="plugins-skill-capsule-desc">${esc(contentText('skill', s.id, 'desc', s.description || ''))}</span>
+    </button>`).join('');
+  return `<div class="plugins-item-skills">${items}</div>`;
 }
 
 /** Composition annotation: MCP servers (name + transport, command/env in tooltip). */
@@ -183,171 +396,396 @@ function compositionTools(tools) {
   return `<span class="plugins-comp" title="${esc(tools.join(', '))}">${esc(t('plugins.compositionTools', { n: tools.length }))}</span>`;
 }
 
-/** Plugin card: identity + description summary + composition annotations
- *  + the enable switch (the page's only control). */
-function renderPluginCard(manifest) {
-  const { on, changed, reason } = trustInfo(manifest);
+/** Composition annotation: org.nebflow/viewers.json 现读投影（canvas-media 批
+ *  2026-10-05 OD-2=V-C 内联下发的 `viewerContributions`）——viewer 名清单。
+ *  🔴 纯数据投影：前缀 = 包内目录命名空间字面量 `org.nebflow`（插件包布局事实，
+ *  非 locale 串），条目 = viewers[].name 声明数据；无贡献 ⇒ 不渲染（seed 12 包
+ *  现状全无 viewers.json ⇒ 本 chip 现网零在场，为未来声明包预备）。 */
+function compositionViewers(manifest) {
+  const vc = manifest.viewerContributions;
+  const names = (vc && typeof vc === 'object' && !Array.isArray(vc) && Array.isArray(vc.viewers))
+    ? vc.viewers.map(v => (v && typeof v === 'object' && typeof v.name === 'string') ? v.name : '').filter(Boolean)
+    : [];
+  if (!names.length) return '';
+  return `<span class="plugins-comp" title="${esc(names.join(', '))}">${esc(`org.nebflow: ${names.join('、')}`)}</span>`;
+}
+
+/** 条目行下行 chevron（2026-10-07 补充令改形：与社交面板 .social-item-chevron
+ *  同语言——chevron-down 展开翻转 180°；纯图标零文案）。 */
+const ITEM_CHEVRON_SVG = '<svg class="plugins-item-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+
+/** Plugin item row (multi-line card-item form, 2026-10-07 补充令五点口径):
+ *  line 1 = 完整 puzzle 图标 + 名称（独立行不截断，长名自然换行）+ 版本/作者
+ *  meta；右上 = 状态药丸 + chevron-down（展开翻转 180°，社交条目行同语言）；
+ *  line 2 = 一行摘要（独立行、最多两行 line-clamp 超出省略）。行高随内容自适应。
+ *  the whole row toggles the detail area (accordion 语义 = 点击展开 / 再点收回,
+ *  逐条目独立自洽).
+ *
+ *  DOM hooks (contract for tests AND for any future refactor):
+ *    `[data-plugin-item]`     — 条目行（点击/键盘 toggle 展开态；role=button +
+ *                               aria-expanded/aria-controls 可访问性面）
+ *    `.plugins-item-detail`   — 展开详情区（默认 hidden；accordion 载体）
+ *    `[data-plugin-dispatch]` — 任务分发器可见性开关·详情区 actions 行（**每卡唯一**
+ *                               开关；2026-10-29 单 toggle 定版：收起态行尾第二视图
+ *                               `[data-plugin-dispatch-row]` 整组退场）
+ *    `.plugins-card-state`    — 条目行右上状态区（药丸 + chevron 载体）
+ *    `[data-plugin-doc]`      — Plugin.md 入口（探针在场才显形；默认 hidden）
+ *    `[data-plugin-uninstall]`— 卸载钮（详情区 actions 行；二次确认三键：
+ *                               删除目录 / 仅停用 / 取消——2026-10-29 卸载批）
+ *    `[data-skill-doc]`       — skill 胶囊（2026-10-21 作者令⑥：点击取 SKILL.md
+ *                               经既有 Canvas 通路打开；data-skill-id = skill id）
+ *  🔴 2026-09-14 面板收敛批退场钩子（**生产代码零使用**，判据见报告静态腿）：
+ *    `[data-plugin-more]` / `[data-plugin-menu]` / `[data-plugin-block]`
+ *  🔴 内容审批开关（hook `data-plugin-switch`）已随 2026-09-13 无审批批**退场**。
+ *  🔴 旧「skills chip toggle」机构（`.plugins-comp-toggle` / `[data-expand-for]` /
+ *     `.plugins-skill-expand`）随 2026-10-07 条目式批退场——skills 清单改由详情区
+ *     直接呈现（2026-10-07 前的面板形态见 git 历史）。
+ *  🔴 旧「skill 条目内联渲染」（`.plugins-skill-item` 族 + `.plugins-skill-preview`）
+ *     随 2026-10-21 作者令⑥退场——skills 改胶囊深链（见上 [data-skill-doc]）。 */
+/** 源化插件的「来源 + 版本」行（作者令 2026-11-01 22:55：面板要显示当前版本与源、
+ *  有新版本时提示、并给一个用户驱动的更新动作）。
+ *  只在 `updates.sources` 里出现过的包渲染本行（seed 分发的包 = 无源声明 ⇒ 零变化，
+ *  面板文案与旧版逐字节一致）；三种态各自的可见形状：
+ *    • `current`      「来源: <src> · v1.2.0（已是最新）」——无按钮
+ *    • `outdated`     「来源: <src> · v1.1.0 → v1.2.0」+「更新」按钮（[data-plugin-update]）
+ *    • `unreachable`  「来源: <src> · v1.1.0（远端不可达，保持本地版本）」+ detail 原因
+ *                     ——**可行动**信号（检查源/网络），不是把包标成坏了：包照常在位。
+ *    • `not-installed`「来源: <src> · 未安装」+「更新」按钮（= 首次安装腿）
+ *  数据全部来自 `GET /api/plugins/updates`（payload 形状在 `fetchPluginUpdates` 注释里）；
+ *  🔴 文案走 locale 键，禁在 JS 里写死中文。 */
+function sourceRowHtml(name, updates) {
+  const st = updates?.get?.(name);
+  if (!st) return '';
+  const ver = st.remoteVersion && st.remoteVersion !== st.installedVersion
+    ? `${st.installedVersion || '—'} → ${st.remoteVersion}`
+    : (st.installedVersion || st.remoteVersion || '—');
+  const stateText = {
+    current: t('plugins.sourceCurrent'),
+    outdated: t('plugins.sourceOutdated'),
+    unreachable: t('plugins.sourceUnreachable'),
+    'not-installed': t('plugins.sourceNotInstalled'),
+  }[st.state] || '';
+  const action = st.updateAvailable
+    ? `<button type="button" class="plugins-item-update" data-plugin-update="${esc(name)}"
+         title="${esc(t('plugins.sourceUpdateTitle', { from: st.installedVersion || '—', to: st.remoteVersion || '—' }))}">
+         ${statusIcon('arrow-down-circle', 12, '')}${esc(t('plugins.sourceUpdate'))}</button>`
+    : '';
+  return `<div class="plugins-source-row" data-plugin-source="${esc(name)}" data-source-state="${esc(st.state)}">
+    <span class="plugins-source-text">${esc(t('plugins.sourceLabel', { source: st.source || '—', version: ver, state: stateText }))}</span>
+    ${action}
+    <span class="plugins-source-detail"${st.state === 'unreachable' ? '' : ' hidden'}>${esc(st.detail || '')}</span>
+  </div>`;
+}
+
+function renderPluginCard(manifest, updates) {
+  const status = pluginStatus(manifest);
+  const disp = dispatchState(manifest, status.blocked);
+  const pill = pillOf(status);
   const skills = Array.isArray(manifest.skills) ? manifest.skills : [];
   const servers = Array.isArray(manifest.mcpServers) ? manifest.mcpServers : [];
   const tools = Array.isArray(manifest.toolsExtension) ? manifest.toolsExtension : [];
   // Raw name (no pre-escaping): HTML attribute interpolation escapes at the
-  // template site (data-expand/data-expand-for), and the event handler
-  // CSS.escape()s the dataset value before the attribute-selector lookup.
-  // The old esc()-here + esc()-at-template double escape mangled names with
-  // &/quotes and left the querySelector concatenation one refactor away
-  // from a selector injection.
-  const expandId = `skills-${manifest.name}`;
+  // template site (data-plugin-item/aria-controls/data-plugin-doc), same
+  // discipline the old data-expand hook carried.
+  const name = manifest.name;
+  const detailId = `plugins-detail-${name}`;
 
   const metaBits = [];
   if (manifest.version) metaBits.push(`v${manifest.version}`);
   if (manifest.author) metaBits.push(t('plugins.author', { author: manifest.author }));
 
-  const switchTitle = on
-    ? t('plugins.switchDisableTitle')
-    : (changed ? t('plugins.switchReenableTitle') : t('plugins.switchEnableTitle'));
+  const desc = contentText('plugin', name, 'desc', manifest.description || '');
+  const composition = compositionSkills(skills) + compositionMcp(servers)
+    + compositionTools(tools) + compositionViewers(manifest);
 
-  return `<div class="plugins-card${on ? ' on' : ''}${changed ? ' changed' : ''}" data-plugin="${esc(manifest.name)}">
-    <div class="plugins-card-head">
-      <div class="plugins-card-id">
-        <span class="plugins-card-name">${esc(manifest.name)}</span>
+  return `<div class="plugins-card${status.blocked ? ' blocked' : ' on'}" data-plugin="${esc(name)}">
+    <div class="plugins-card-head" data-plugin-item="${esc(name)}" role="button" tabindex="0"
+      aria-expanded="false" aria-controls="${esc(detailId)}" title="${esc(t('plugins.detail'))}">
+      <div class="plugins-item-id">
+        ${statusIcon('puzzle', 14, 'plugins-item-icon')}
+        <span class="plugins-card-name">${esc(contentText('plugin', name, 'name', name))}</span>
         ${metaBits.length ? `<span class="plugins-card-meta">${esc(metaBits.join(' · '))}</span>` : ''}
       </div>
       <div class="plugins-card-state">
-        <span class="plugins-state-pill${on ? ' on' : ''}">${esc(on ? t('plugins.stateOn') : t('plugins.stateOff'))}</span>
-        ${toggleHTML({
-          on,
-          label: t('plugins.switchLabel'),
-          title: switchTitle,
-          attrs: `data-plugin-switch="${esc(manifest.name)}"`,
-        })}
+        ${pill.text ? `<span class="plugins-state-pill ${pill.key}">${pillInnerHtml(pill)}</span>` : ''}
+        ${ITEM_CHEVRON_SVG}
       </div>
+      <span class="plugins-item-summary">${esc(desc)}</span>
     </div>
-    ${manifest.description ? `<div class="plugins-card-desc">${esc(manifest.description)}</div>` : ''}
-    ${(skills.length || servers.length || tools.length)
-      ? `<div class="plugins-card-composition">${compositionSkills(skills, expandId)}${compositionMcp(servers)}${compositionTools(tools)}</div>`
-      : ''}
-    ${changed ? `<div class="plugins-card-hint">${esc(t('plugins.changedHint'))}</div>` : ''}
-    ${(!on && !changed && reason) ? `<div class="plugins-card-hint dim" title="${esc(reason)}">${esc(t('plugins.offHint'))}</div>` : ''}
-    ${skillExpandHtml(expandId, skills)}
+    <div class="plugins-item-detail" id="${esc(detailId)}" hidden>
+      ${manifest.description ? `<div class="plugins-card-desc">${esc(desc)}</div>` : ''}
+      <div class="plugins-dispatch-note"${disp.note ? '' : ' hidden'}>${esc(disp.note)}</div>
+      ${status.blocked ? `<div class="plugins-card-hint blocked">${esc(t('plugins.blockedHint'))}</div>` : ''}
+      ${composition ? `<div class="plugins-card-composition">${composition}</div>` : ''}
+      ${sourceRowHtml(name, updates)}
+      <div data-review-timeline hidden></div>
+      <div class="plugins-item-actions">
+        <button type="button" class="plugins-item-doc" data-plugin-doc="${esc(name)}" hidden>${statusIcon('file-text', 12, '')}Plugin.md</button>
+        <span class="plugins-card-dispatch">
+          ${toggleHTML({
+            on: disp.on,
+            disabled: !!disp.blocked,
+            // 可见的「任务分发器可见性」小字已整体删除（2026-09-15 作者令：开关
+            // 本体自明）。取舍 = 保留**可访问性面**：aria-label 仍用该 key
+            // （🔴 不得把 toggle 的 aria-label 删成空）。
+            label: t('plugins.dispatchLabel'),
+            title: disp.title,
+            attrs: `data-plugin-dispatch="${esc(name)}"`
+              + (disp.blocked ? ` data-dispatch-blocked="${esc(disp.blocked)}"` : ''),
+          })}
+        </span>
+        <button type="button" class="plugins-item-uninstall" data-plugin-uninstall="${esc(name)}"
+          title="${esc(t('plugins.uninstallTitle'))}">
+          ${statusIcon('trash-2', 12, '')}${esc(t('plugins.uninstall'))}
+        </button>
+      </div>
+      ${skillListHtml(skills, name)}
+    </div>
   </div>`;
 }
 
-/** Rejected (load-failed) plugin card — informational only, no switch. */
+/** Rejected (load-failed) plugin row — informational only, no controls, not
+ *  expandable（无详情可展开 ⇒ 无 chevron/role=button；拒载原因即条目行摘要；
+ *  多行卡式同构：图标＋名称行 / 摘要行，badge 常在——2026-10-07 补充令改形）。
+ *  迁移批（2026-10-29 作者令「两个插件拒载修复」）：旧官方名包
+ *  （`nebflow-qa`/`nebflow-frontend-dev`，随批重命名为 `qa`/`frontend-dev`）的
+ *  OFFICIAL_IMPERSONATION 拒载给出「已迁移」处置提示（点名新名 + 迁移动作），
+ *  而不是裸报错——判据 = 保留前缀硬闸错误码 + 名字在迁移映射表（旧实例侧的
+ *  存量包目录不会随分发改名，得让作者面看到去向）。 */
+const MIGRATED_OFFICIAL_NAMES = { 'nebflow-frontend-dev': 'frontend-dev', 'nebflow-qa': 'qa' };
+
 function renderRejectedCard(entry) {
+  const migrated = entry.reason?.includes('OFFICIAL_IMPERSONATION')
+    ? MIGRATED_OFFICIAL_NAMES[entry.name]
+    : undefined;
   return `<div class="plugins-card rejected" data-plugin="${esc(entry.name)}">
     <div class="plugins-card-head">
-      <div class="plugins-card-id">
+      <div class="plugins-item-id">
+        ${statusIcon('puzzle', 14, 'plugins-item-icon')}
         <span class="plugins-card-name">${esc(entry.name)}</span>
+      </div>
+      <div class="plugins-card-state">
         <span class="plugins-rejected-pill">${esc(t('plugins.rejected'))}</span>
       </div>
+      <span class="plugins-item-summary">${esc(entry.reason || '')}</span>
     </div>
-    <div class="plugins-card-desc">${esc(entry.reason || '')}</div>
+    ${migrated ? `<div class="plugins-card-hint migrated" data-plugin-migrated="${esc(entry.name)}">${esc(t('plugins.migratedHint', { name: entry.name, newName: migrated }))}</div>` : ''}
   </div>`;
 }
 
-/** Agent summary row: name + description + preset/model 现状 — the whole row
- *  deep-links into the per-agent detail editor (openAgentDetail). */
-function renderAgentRow(agent) {
-  const model = agent.model || {};
-  const preset = model.preset || '';
-  const resolved = model.preferred || model.current || model.default || '';
-  const meta = [
-    preset ? esc(preset) : '',
-    resolved ? esc(shortModel(resolved)) : '',
-  ].filter(Boolean).map(p => `<span class="plugins-agent-meta-pill">${p}</span>`).join('');
-  return `<div class="plugins-agent-row" data-detail-agent="${esc(agent.name)}" role="button" tabindex="0"
-    title="${esc(t('plugins.detail'))}">
-    <span class="plugins-agent-name">${esc(agent.displayName || agent.name)}</span>
-    <span class="plugins-agent-desc">${esc(agent.description || '')}</span>
-    <span class="plugins-agent-meta">${meta}</span>
-    <svg class="plugins-agent-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
-  </div>`;
+/** 顶部统计（2026-10-21 作者令⑤）：skill 总数 + MCP server 总数（全注册表面
+ *  口径——逐包 skills/mcpServers 求和；纯数据投影 + locale 计数键）。 */
+function topStatsHtml(plugins) {
+  const skillCount = plugins.reduce((n, p) => n + (Array.isArray(p.skills) ? p.skills.length : 0), 0);
+  const mcpCount = plugins.reduce((n, p) => n + (Array.isArray(p.mcpServers) ? p.mcpServers.length : 0), 0);
+  return `<span class="plugins-stats" data-cv-hint="foot" data-plugins-stats>
+    <span class="plugins-stats-item" data-stat-skills="${skillCount}">${esc(t('plugins.statSkills', { n: skillCount }))}</span>
+    <span class="plugins-stats-sep" aria-hidden="true">·</span>
+    <span class="plugins-stats-item" data-stat-mcp="${mcpCount}">${esc(t('plugins.statMcp', { n: mcpCount }))}</span>
+  </span>`;
 }
 
 /** Render the whole page into the Plugins tab pane. */
 export function renderPlugins() {
   const content = pluginsContentEl();
   if (!content) return;
-  content.innerHTML = `<div class="plugins-loading">${esc(t('plugins.loading'))}</div>`;
+  content.innerHTML = `<div class="plugins-loading" data-cv-hint="loading">${esc(t('plugins.loading'))}</div>`;
 
-  Promise.all([loadPluginsData()]).then(async ([{ registry, agents }]) => {
+  loadPluginsData().then(async ({ registry, updates }) => {
     if (!content.isConnected) return; // tab closed while fetching
 
     const plugins = (registry.plugins || []).slice().sort((a, b) => a.name.localeCompare(b.name));
     const rejected = (registry.rejected || []).slice().sort((a, b) => a.name.localeCompare(b.name));
-    const summaries = await loadAgentSummaries(agents);
-    if (!content.isConnected) return;
+    const updateMap = updatesByName(updates);
 
+    // 纯插件视角（2026-10-21 作者令①）：单一插件区块；顶部统计 = skill + MCP 口径。
     const listHtml = `
       <div class="plugins-section" id="plugins-section-plugins">
-        <div class="plugins-section-title">${esc(t('plugins.list'))}</div>
-        <div class="plugins-section-hint">${esc(t('plugins.listHint'))}</div>
+        <div class="plugins-section-title" data-cv-hint="divider">${esc(t('plugins.list'))}</div>
+        <div class="plugins-section-hint" data-cv-hint="page">${esc(t('plugins.listHint'))}</div>
         <div class="plugins-card-list">${(plugins.length || rejected.length)
-          ? plugins.map(renderPluginCard).join('') + rejected.map(renderRejectedCard).join('')
-          : `<span class="plugins-none">${esc(t('plugins.empty'))}</span>`}</div>
-      </div>
-      <div class="plugins-section" id="plugins-section-agents">
-        <div class="plugins-section-title">${esc(t('plugins.agents'))}</div>
-        <div class="plugins-section-hint">${esc(t('plugins.agentsHint'))}</div>
-        <div class="plugins-agent-list">${summaries.length
-          ? summaries.map(renderAgentRow).join('')
-          : `<span class="plugins-none">${esc(t('plugins.noAgents'))}</span>`}</div>
+          ? plugins.map(p => renderPluginCard(p, updateMap)).join('') + rejected.map(renderRejectedCard).join('')
+          : `<span class="plugins-none" data-cv-hint="empty">${esc(t('plugins.empty'))}</span>`}</div>
       </div>`;
 
     content.innerHTML = `
       <div class="plugins-topbar">
         <span class="plugins-title">${esc(t('activity.plugins'))}</span>
+        ${topStatsHtml(plugins)}
       </div>
-      ${listHtml}`;
+      ${listHtml}
+      <button type="button" data-plugins-add aria-label="Add plugin" style="position:fixed;right:24px;bottom:24px;z-index:10">+</button>
+      <div data-plugins-add-dialog hidden role="dialog" aria-label="Add plugin">
+        <label>Install link <input data-plugins-add-input></label>
+        <button type="button" data-plugins-add-resolve>Preview</button>
+        <div data-plugins-add-error hidden></div>
+        <div data-plugins-add-preview hidden><span data-install-link-id></span> <span data-install-link-version></span></div>
+        <button type="button" data-plugins-add-install disabled>Install</button>
+        <button type="button" data-plugins-add-close>Cancel</button>
+      </div>
+      <div data-install-link-modal hidden role="dialog" aria-label="Install plugin">
+        <span data-install-link-id></span> <span data-install-link-version></span>
+        <button type="button" data-install-link-install>Install</button>
+        <button type="button" data-install-link-dismiss>Cancel</button>
+      </div>`;
 
     bindPluginsEvents(content);
+    bindInstallLinks(content);
   }).catch(err => {
     if (!content.isConnected) return;
-    content.innerHTML = `<div class="plugins-loading">${esc(t('plugins.loadFailed', { error: err?.message || err }))}</div>`;
+    // 失败分态（2026-09-22 作者裁定 (c) 之②）：401/403 ⇒ 面板内**可见兜底**登录引导卡；
+    // 其余（5xx / 404 / 网络 / 解析）⇒ 既有「加载失败」文案（原键**保留**）。
+    // 分工逐字照 `contacts.js:747` 注释所述（「401/403→登录失效卡+重登按钮
+    // （`fm-auth-required` 全局链保留，卡片为兜底可见反馈）」）：链负责弹窗、
+    // 卡片负责**面板内可见反馈**（用户没看到弹窗时面板不留白、不误报「加载失败」）。
+    if (err?.status === 401 || err?.status === 403) renderAuthRequired(content);
+    else content.innerHTML = `<div class="plugins-loading" data-cv-hint="loading">${esc(t('plugins.loadFailed', { error: err?.message || err }))}</div>`;
   });
 }
 
-/** Optimistic in-place flip of one card's switch + pill (no re-render).
- *  Used on click; the same helper rolled back (= set the OPPOSITE state)
- *  when the POST fails. */
-function flipCardState(card, enable) {
-  const sw = card.querySelector('[data-plugin-switch]');
-  if (sw) {
-    setToggleState(sw, enable);
+/** 登录引导卡（本批裁定 (c) 之②「未登录 · 需注册」可见降级）—— 形态照
+ *  `contacts.js:794-810 buildSearchError()` 的 `auth` 分态：`fm-empty` 语义文案
+ *  + `fm-result-foot` 内的 `glass-control fm-login-btn` 重登键 → `openLoginModal()`。
+ *  🔴 只**复用**既有 `fm-*` 类与 `.fm-login-btn`（登录键族正典，sapphire.css:538
+ *  起）：零新 class 形态、零新 token、零新色值；不往 CSS 面加任何东西
+ *  （本批改动面 = `web/js/plugins.js` + `locales/{en,zh-CN}.js`）。
+ *  重登键是**真手势** ⇒ 按族内既有纪律走无参 `openLoginModal()`（不加 `{auto:true}`：
+ *  自动档是给非手势调用方的 burst 守卫，手势调用不受限，同四枚既有键逐字同形）。 */
+function renderAuthRequired(content) {
+  content.innerHTML = `
+    <div class="plugins-topbar">
+      <span class="plugins-title">${esc(t('activity.plugins'))}</span>
+    </div>
+    <div class="plugins-section">
+      <div class="fm-result-card fm-search-error" role="alert" data-plugins-auth-card>
+        <div class="fm-empty" data-cv-hint="empty">${esc(t('plugins.authRequired'))}</div>
+        <div class="fm-result-foot">
+          <button type="button" class="glass-control fm-login-btn" data-plugins-relogin>${esc(t('plugins.relogin'))}</button>
+        </div>
+      </div>
+    </div>`;
+  content.querySelector('[data-plugins-relogin]')?.addEventListener('click', () => openLoginModal());
+}
+
+/** The per-card dispatch-toggle view（单 toggle 定版 2026-10-29）：详情区 actions 行
+ *  `[data-plugin-dispatch]` 是每卡唯一开关。乐观翻转/收敛/释放三条路径都经本集。 */
+function dispatchToggles(card) {
+  return card ? card.querySelectorAll('[data-plugin-dispatch]') : [];
+}
+
+/** Optimistic in-place flip of one card's DISPATCH switch (no re-render) —
+ *  the only optimistic path left on the card (the content switch retired
+ *  2026-09-13), same in-flight latch discipline. */
+function flipDispatchState(card, on) {
+  for (const sw of dispatchToggles(card)) {
+    setToggleState(sw, on);
     sw.disabled = true; // in-flight guard — released by state convergence
   }
-  const pill = card.querySelector('.plugins-state-pill');
-  if (pill) {
-    pill.textContent = t(enable ? 'plugins.stateOn' : 'plugins.stateOff');
-    pill.classList.toggle('on', enable);
+}
+
+/** Release the in-flight guards after a terminal state (converged or rolled
+ *  back) so the card's controls are clickable again. The dispatch control is
+ *  only released when it is NOT blocked — blocked means "a click could not move
+ *  the effective value", which is carried as `data-dispatch-blocked` on the
+ *  element (see dispatchState); a blocked control stays disabled by design
+ *  (零静默空操作)。
+ *  （2026-09-14 面板收敛批：原同时释放的封禁/解封按钮已随该动作退场。） */
+function releaseCardActions(card) {
+  for (const dsw of dispatchToggles(card)) {
+    if (!dsw.hasAttribute('data-dispatch-blocked')) dsw.disabled = false;
   }
 }
 
-/** Release the in-flight guard after a terminal state (converged or rolled
- *  back) so the switch is clickable again. */
-function releaseSwitch(card) {
-  const sw = card.querySelector('[data-plugin-switch]');
-  if (sw) sw.disabled = false;
-}
-
-/** Enable/disable one plugin via the trust endpoints. Optimistic UI first
- *  (click already flipped the card), then converge from the registry —
- *  GET /api/plugins stays the single source of truth, applied IN PLACE
- *  (per-card state sync, never a full-list redraw). On failure: roll the
- *  optimistic flip back + toast. No page reload anywhere on this path. */
-async function setPluginEnabled(name, enable, card) {
-  const path = `/api/plugins/${encodeURIComponent(name)}/${enable ? 'approve' : 'revoke'}`;
+/** Dispatch-permission action (令 1 派发面) — POST /api/plugins/:name/(enable|disable).
+ *  Only bound on cards where the control is interactive (see dispatchState) —
+ *  the backend write would not move the effective value otherwise.
+ *  （2026-09-14 面板收敛批：原「与封禁动作钩子/文案分家（设计件 R9-A 视觉可分）」
+ *  的定语已随封禁 UI 退场失效 —— 面板现只剩这一个控件。） */
+async function setPluginDispatch(name, enable, card) {
+  const path = `/api/plugins/${encodeURIComponent(name)}/${enable ? 'enable' : 'disable'}`;
   try {
     const resp = await api(path, { method: 'POST' });
     const body = await resp.json().catch(() => ({}));
     if (!resp.ok || body.error) throw new Error(body.error || `HTTP ${resp.status}`);
     const registry = await fetchPluginRegistry().catch(() => null);
-    if (registry) applyRegistryStates(registry); // re-enables the switch too
-    else releaseSwitch(card); // registry unreachable — keep optimistic state
+    if (registry) applyRegistryStates(registry); // re-derives both controls
+    else releaseCardActions(card); // registry unreachable — keep optimistic state
   } catch (e) {
-    flipCardState(card, !enable); // roll back the optimistic flip
-    releaseSwitch(card);
+    flipDispatchState(card, !enable); // roll back the optimistic flip
+    releaseCardActions(card);
     window.__showToast?.(String(e?.message || e), 'error');
+  }
+}
+
+// ── Uninstall（2026-10-29 卸载批）─────────────────────────────────────────
+// 卸载 = 移除出册（引擎 `plugins.removed` 台账 + 种子存在台账墓碑；默认删目录），
+// 与「封禁 = 可逆停用」语义分界见文件头。二次确认用既有 #delete-box 三键形态：
+// `window.__showConfirm(title, msg, onConfirm, { alt })`——主确认 danger「卸载并
+// 删除目录」、第三动作中性「仅停用（保留目录）」、取消即退。确认器缺席（极端
+// 装载序）⇒ 什么都不做（零静默无操作，flowMapTab 既有纪律同款：绝不无确认直发
+// 不可逆动作）。
+
+/** 二次确认 + 两腿分发。 */
+function confirmUninstall(name) {
+  if (typeof window.__showConfirm !== 'function') {
+    console.warn('[plugins] uninstall needs the confirm dialog (window.__showConfirm) — refused');
+    return;
+  }
+  window.__showConfirm(
+    t('plugins.uninstallTitle'),
+    t('plugins.uninstallConfirm', { name }),
+    () => uninstallPlugin(name, true), // 主确认 = 默认腿：删目录
+    {
+      tone: 'danger',
+      confirmLabel: t('plugins.uninstallDeleteLabel'),
+      alt: { label: t('plugins.uninstallKeepLabel'), onAlt: () => uninstallPlugin(name, false) },
+    }
+  );
+}
+
+/** POST /api/plugins/:name/remove（{deleteDir}）→ 成功后整页重渲（出册卡片随
+ *  注册表收敛消失；失败 toast 原始错误消息——F1「零静默、可行动」同族）。 */
+async function uninstallPlugin(name, deleteDir) {
+  try {
+    const resp = await api(`/api/plugins/${encodeURIComponent(name)}/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deleteDir }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok || body.error) throw new Error(body.error || `HTTP ${resp.status}`);
+    window.__showToast?.(body.message || t('plugins.uninstalled', { name }), 'success');
+    renderPlugins(); // 出册 = 注册表不可见；重渲即消失（轮询收敛同样会摘卡）
+  } catch (e) {
+    window.__showToast?.(String(e?.message || e), 'error');
+  }
+}
+
+// ── Source update（2026-11-01 源化批，作者令「立即使用我们最新的版本」）────────
+// 面板上的第二个真动作（第一个 = 派发开关）：把「远端源上的最新版本」拉到本机并
+// **零重启生效**（引擎侧装载读面是 mtime 缓存，换装后下一条读命令即见新内容）。
+// 语义边界（与卸载/开关同族垂直分工）：
+//   • 只对**有源声明**的包在位（`GET /api/plugins/updates` 列出的那些）；seed 分发的
+//     包没有源行，也就没有本钮——面板对它们逐字节零变化。
+//   • 失败（远端不可达 / 分支不存在 / 布局不符）⇒ 引擎侧**原子换装**保证在位版本零
+//     变化；本函数只 toast 原始错误（F1 纪律），不需要任何 UI 回滚。
+//   • 成功后整页重渲：版本号（→ 前后对比）、来源行状态、审计都在引擎侧，前端不猜。
+
+/** POST /api/plugins/:name/source/update → toast + 整页重渲。 */
+async function runPluginUpdate(name) {
+  try {
+    const resp = await api(`/api/plugins/${encodeURIComponent(name)}/source/update`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok || body.error) throw new Error(body.error || `HTTP ${resp.status}`);
+    window.__showToast?.(body.message || t('plugins.sourceUpdated', { name }), 'success');
+    renderPlugins(); // 版本号/来源行随注册表 + 更新面刷新
+  } catch (e) {
+    window.__showToast?.(String(e?.message || e), 'error');
+    renderPlugins(); // 重新拉一次更新面（远端态可能刚变化）；在位版本由引擎保证未动
   }
 }
 
@@ -361,46 +799,93 @@ function registryOrder(registry) {
   return { plugins, rejected };
 }
 
-/** Update one card's DOM in place to match its manifest (trust state, pill,
- *  hints). Preserves node identity, listeners and the expanded skill block —
- *  this is how state changes avoid any list redraw. */
+/** Update one card's DOM in place to match its manifest (status pill / card
+ *  classes, dispatch state, hints). Preserves node identity, listeners and the
+ *  accordion expansion state — this is how state changes avoid any list redraw.
+ *  （2026-09-14 面板收敛批：原「次级动作行的展开态不在这里重置」一段随该行退场
+ *  删除——面板已无就地菜单。2026-10-07 条目式批：展开态 = `.expanded` class +
+ *  detail `[hidden]` 属性，均不在本函数触碰面 ⇒ 跨轮询/开关收敛保持。） */
 function applyPluginCardState(card, manifest) {
-  const { on, changed, reason } = trustInfo(manifest);
-  card.classList.toggle('on', on);
-  card.classList.toggle('changed', changed);
-  const sw = card.querySelector('[data-plugin-switch]');
-  if (sw) {
-    setToggleState(sw, on);
-    sw.disabled = false;
-    sw.title = on
-      ? t('plugins.switchDisableTitle')
-      : (changed ? t('plugins.switchReenableTitle') : t('plugins.switchEnableTitle'));
-  }
-  const pill = card.querySelector('.plugins-state-pill');
-  if (pill) {
-    pill.textContent = t(on ? 'plugins.stateOn' : 'plugins.stateOff');
-    pill.classList.toggle('on', on);
-  }
-  // Amber re-approval hint (digest changed) and the dim off-hint.
-  let hint = card.querySelector('.plugins-card-hint:not(.dim)');
-  if (changed) {
-    if (!hint) {
-      hint = document.createElement('div');
-      hint.className = 'plugins-card-hint';
-      card.insertBefore(hint, card.querySelector('.plugins-skill-expand'));
+  const status = pluginStatus(manifest);
+  const disp = dispatchState(manifest, status.blocked);
+  const pill = pillOf(status);
+  card.classList.toggle('on', !status.blocked);
+  card.classList.toggle('blocked', status.blocked);
+  // 状态药丸：绑 blocked（2026-10-21 作者令④：change 档退役）。🔴 空文案态 ⇒ **零元素**
+  // （作者 2026-09-15 令「删掉空框」）：在位的移除、缺位的**不创建**；有文字态
+  // （blocked）照常新建 / 更新 —— 收敛路径与整页重渲共用 `pillOf()` 单一判据。
+  let pillEl = card.querySelector('.plugins-state-pill');
+  if (!pill.text) {
+    pillEl?.remove();
+  } else if (pillEl) {
+    pillEl.innerHTML = pillInnerHtml(pill);
+    pillEl.classList.remove('on', 'blocked');
+    pillEl.classList.add(pill.key);
+  } else {
+    const stateBox = card.querySelector('.plugins-card-state');
+    if (stateBox) {
+      pillEl = document.createElement('span');
+      pillEl.className = `plugins-state-pill ${pill.key}`;
+      pillEl.innerHTML = pillInnerHtml(pill);
+      stateBox.insertBefore(pillEl, stateBox.firstChild);
     }
-    hint.textContent = t('plugins.changedHint');
-  } else hint?.remove();
-  let dim = card.querySelector('.plugins-card-hint.dim');
-  if (!on && !changed && reason) {
-    if (!dim) {
-      dim = document.createElement('div');
-      dim.className = 'plugins-card-hint dim';
-      card.insertBefore(dim, card.querySelector('.plugins-skill-expand'));
-    }
-    dim.textContent = t('plugins.offHint');
-    dim.title = reason;
-  } else dim?.remove();
+  }
+  // 派发面（令 1）：开关态 = 作者意图层；blocked 时 disabled + 注明原因。
+  // 单 toggle（2026-10-29 定版）：唯一开关在详情区 actions 行——遍历 dispatchToggles 收敛。
+  for (const dsw of dispatchToggles(card)) {
+    setToggleState(dsw, disp.on);
+    dsw.disabled = !!disp.blocked;
+    dsw.title = disp.title;
+    if (disp.blocked) dsw.setAttribute('data-dispatch-blocked', disp.blocked);
+    else dsw.removeAttribute('data-dispatch-blocked');
+  }
+  const dnote = card.querySelector('.plugins-dispatch-note');
+  if (dnote) {
+    dnote.hidden = !disp.note;
+    dnote.textContent = disp.note;
+  }
+  // 卡片级提示：只剩「已封禁」（error 族，可行动）——2026-10-21 作者令④：
+  // 「变更」提示条退役（setCardHint 的 changed 腿随批删除）。
+  setCardHint(card, 'blocked', status.blocked, t('plugins.blockedHint'));
+}
+
+/** Insert / update / remove one card-level hint row (kept inside the expanded
+ *  detail area, before the skill list — created on demand).
+ *  ui-status-redesign（盘点 #52）：blocked 提示条 = 行首 ban 图标 + 中性正文
+ *  （红底红边图案由 CSS 保留）。
+ *  2026-10-07 条目式批：锚点自已退场的 `.plugins-skill-expand` 改挂
+ *  `.plugins-item-skills`（详情区末位的 skills 清单）。
+ *  2026-10-21 作者令④：changed 腿退役——本函数只剩 blocked 一个消费方。 */
+function setCardHint(card, kind, show, text) {
+  let el = card.querySelector(`.plugins-card-hint.${kind}`);
+  if (!show) { el?.remove(); return; }
+  if (!el) {
+    el = document.createElement('div');
+    el.className = `plugins-card-hint ${kind}`;
+    card.insertBefore(el, card.querySelector('.plugins-item-skills'));
+  }
+  el.innerHTML = (kind === 'blocked' ? statusIcon('ban', 11, 'st-err') : '') + escapeHtml(text);
+}
+
+/** Derived per-card rendering signature (status + dispatch面). Convergence
+ *  only touches a card whose signature drifted, so a steady backend still
+ *  costs zero DOM writes. */
+function cardSignature(manifest) {
+  const status = pluginStatus(manifest);
+  const disp = dispatchState(manifest, status.blocked);
+  return `${status.blocked ? 1 : 0}|${disp.on ? 1 : 0}|${disp.blocked}|${disp.note}`;
+}
+
+/** The same signature read back off the DOM (used to detect drift). */
+function domCardSignature(card) {
+  const dsw = card.querySelector('[data-plugin-dispatch]');
+  const note = card.querySelector('.plugins-dispatch-note');
+  return [
+    card.classList.contains('blocked') ? 1 : 0,
+    dsw?.classList.contains('on') ? 1 : 0,
+    dsw?.getAttribute('data-dispatch-blocked') || '',
+    note && !note.hidden ? note.textContent : '',
+  ].join('|');
 }
 
 /** Insert a card element at its registry position (trusted block sorted by
@@ -423,13 +908,13 @@ function insertCardSorted(list, cardHtml, name, isRejected) {
 }
 
 /** Converge the visible list with a fresh registry — the ONLY sync entry:
- *  • trust-state drift → per-card in-place update (no redraw);
- *  • brand-new trusted plugins → inserted at sorted position with a short
- *    enter animation;
+ *  • status / dispatch drift → per-card in-place update (no redraw);
+ *  • brand-new plugins → inserted at sorted position with a short enter
+ *    animation;
  *  • new rejected entries → inserted (informational cards);
  *  • disappeared plugins → full re-render fallback (renderPlugins, same
  *    pipeline as the initial load).
- *  Returns the list of newly inserted trusted card elements (may be []). */
+ *  Returns the list of newly inserted card elements (may be []). */
 function applyRegistryStates(registry) {
   const content = pluginsContentEl();
   const list = content?.querySelector('#plugins-section-plugins .plugins-card-list');
@@ -443,12 +928,10 @@ function applyRegistryStates(registry) {
   for (const m of plugins) {
     const card = cardsByName.get(m.name);
     if (!card || card.classList.contains('rejected')) continue;
-    const ti = trustInfo(m);
-    const domOn = card.querySelector('[data-plugin-switch]')?.classList.contains('on') ?? false;
-    if (domOn !== ti.on || card.classList.contains('changed') !== ti.changed) {
+    if (domCardSignature(card) !== cardSignature(m)) {
       applyPluginCardState(card, m);
     } else {
-      releaseSwitch(card); // states agree — just make sure the switch is live
+      releaseCardActions(card); // states agree — just make sure the controls are live
     }
   }
 
@@ -481,6 +964,73 @@ function applyRegistryStates(registry) {
   return inserted;
 }
 
+const askedInstallHashes = new Set();
+let clipboardCheckInFlight = false;
+async function previewInstallLink(link) {
+  const response = await api('/api/plugins/install-link/resolve?link=' + encodeURIComponent(link));
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to resolve install link');
+  return data;
+}
+async function postInstallLink(link) {
+  const response = await api('/api/plugins/install-link', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ link }) });
+  const data = await response.json();
+  if (!response.ok || !data.ok) throw new Error(data.error || 'Installation failed');
+}
+function fillInstallPreview(el, data) {
+  el.querySelector('[data-install-link-id]').textContent = data.id;
+  el.querySelector('[data-install-link-version]').textContent = data.version;
+}
+function bindInstallLinks(content) {
+  const dialog = content.querySelector('[data-plugins-add-dialog]');
+  const input = dialog.querySelector('[data-plugins-add-input]');
+  const preview = dialog.querySelector('[data-plugins-add-preview]');
+  const error = dialog.querySelector('[data-plugins-add-error]');
+  const install = dialog.querySelector('[data-plugins-add-install]');
+  let approvedLink = null;
+  content.querySelector('[data-plugins-add]').onclick = () => { dialog.hidden = false; };
+  dialog.querySelector('[data-plugins-add-close]').onclick = () => { dialog.hidden = true; };
+  input.oninput = () => { approvedLink = null; install.disabled = true; preview.hidden = true; };
+  dialog.querySelector('[data-plugins-add-resolve]').onclick = async () => {
+    const link = input.value.trim(); approvedLink = null; install.disabled = true; preview.hidden = true; error.hidden = true;
+    try {
+      const data = await previewInstallLink(link);
+      if (input.value.trim() !== link) return;
+      fillInstallPreview(preview, data); preview.hidden = false; approvedLink = link; install.disabled = false;
+    } catch (e) { error.textContent = e.message; error.hidden = false; }
+  };
+  install.onclick = async () => {
+    if (!approvedLink || input.value.trim() !== approvedLink) return;
+    install.disabled = true;
+    try { await postInstallLink(approvedLink); dialog.hidden = true; renderPlugins(); }
+    catch (e) { error.textContent = e.message; error.hidden = false; install.disabled = false; }
+  };
+}
+window.addEventListener('focus', async () => {
+  if (!pluginsPanelActive() || clipboardCheckInFlight || !navigator.clipboard?.readText) return;
+  clipboardCheckInFlight = true;
+  try {
+    const link = await navigator.clipboard.readText();
+    if (!link.startsWith('stand://plugin/install?')) return;
+    const url = new URL(link);
+    const sha = url.searchParams.get('s');
+    if (!sha || !/^[a-f0-9]{64}$/i.test(sha) || askedInstallHashes.has(sha.toLowerCase())) return;
+    askedInstallHashes.add(sha.toLowerCase());
+    const data = await previewInstallLink(link);
+    if (!pluginsPanelActive()) return;
+    const modal = /** @type {HTMLElement|null|undefined} */ (pluginsContentEl()?.querySelector('[data-install-link-modal]'));
+    if (!modal) return;
+    fillInstallPreview(modal, data); modal.hidden = false;
+    /** @type {HTMLElement} */ (modal.querySelector('[data-install-link-dismiss]')).onclick = () => { modal.hidden = true; };
+    /** @type {HTMLElement} */ (modal.querySelector('[data-install-link-install]')).onclick = async (event) => {
+      /** @type {HTMLButtonElement} */ (event.currentTarget).disabled = true;
+      try { await postInstallLink(link); modal.hidden = true; renderPlugins(); }
+      catch (e) { /** @type {HTMLButtonElement} */ (event.currentTarget).disabled = false; window.alert(e.message); }
+    };
+  } catch { /* clipboard access and rejected previews do not install */ }
+  finally { clipboardCheckInFlight = false; }
+});
+
 // ── Poller: keep the list live while the panel is visible & active ───────
 // Double gate (author ruling 2026-09-05): the tab must be the ACTIVE canvas
 // pane AND the document must be visible. Interval 6s — light (one GET), and
@@ -501,6 +1051,11 @@ async function pluginsPollTick() {
   try {
     const registry = await fetchPluginRegistry();
     if (!pluginsPanelActive()) return; // tab closed mid-flight
+    // 登录引导卡在屏时**没有**卡片列表（`applyRegistryStates` 找不到目标列表会直接
+    // 归零返回）⇒ 登录成功后必须整页重渲，否则用户「重登 → 成功」后面板仍停在引导卡
+    // 上（= 动作静默无效，违本文件头的 F1「零静默、可行动」纪律）。判据 = 引导卡元素
+    // 在场（二值、可断言）；在屏时这一拍改走 `renderPlugins()` 原地收敛。
+    if (pluginsContentEl()?.querySelector('[data-plugins-auth-card]')) { renderPlugins(); return; }
     applyRegistryStates(registry);
   } catch { /* transient — next tick retries */ }
 }
@@ -514,55 +1069,199 @@ function startPluginsPolling() {
   });
 }
 
-/** Bind one plugin card's interactions (switch + skill-expand toggles).
- *  Shared by the full render and the live-sync insert path. Idempotent via
- *  WeakSets (not expando properties — checkJs zero-new-errors discipline). */
-const boundPluginSwitches = new WeakSet();
-const boundCompToggles = new WeakSet();
+// 切语言即重渲（contenti18n 批）：插件名/描述与 agent 名/描述走 locale 映射
+// （js/contentI18n.js），语言一变已渲染的 DOM 必须跟着重渲——本批前此处零监听。
+// 面板可见且为活动 pane 时才重渲，沿用 pluginsPanelActive() 既有判据：不可见时
+// 用户看不到旧文案，而重新激活该 tab 走 openPlugins() → renderPlugins() 自然取新值。
+window.addEventListener('locale-changed', () => {
+  if (pluginsPanelActive()) renderPlugins();
+});
 
-function bindCardEvents(card) {
-  const sw = card.querySelector('[data-plugin-switch]');
-  if (sw && !boundPluginSwitches.has(sw)) {
-    boundPluginSwitches.add(sw);
-    sw.addEventListener('click', () => {
-      if (sw.disabled) return;
-      const name = sw.dataset.pluginSwitch;
-      const enable = !sw.classList.contains('on');
-      const cardEl = sw.closest('.plugins-card');
-      flipCardState(cardEl, enable); // optimistic — converged/rolled back async
-      setPluginEnabled(name, enable, cardEl);
-    });
+// ── Plugin.md 入口（2026-10-07 条目式批）───────────────────────────────────
+// 在场判据 = 既有 /api/plugin-assets/<name>/Plugin.md 路由 200（StaticRoutes
+// .pluginAssetsRoutes；GET-only；auth = the same-origin HttpOnly session
+// cookie — stage D removed the legacy token-carrying fallbacks）。
+// 🔴 引擎/scala 零改动红线：approvalManifest 契约无在场字段，
+// 探针是唯一零 scala 判据；一次/包/会话缓存（Promise<string|null>）。
+// 封禁包：服务端 fail-closed 404（「封禁包永不内联」同向）⇒ 入口永不在场。
+// 点击 = 点击时现取正文 → 既有 Canvas 通路（workspace-open-item → markdown
+// viewer）；失败 toast 走 setPluginDispatch 同族（原始错误消息，零新串）。
+
+/** Cached per-name probe: resolves to the doc text when present, else null.
+ *  Never rejects (network/HTTP failures degrade to null ⇒ 入口不显形). */
+const pluginMdDocs = new Map();
+
+function pluginMdUrl(name) {
+  return `/api/plugin-assets/${encodeURIComponent(name)}/Plugin.md`;
+}
+
+function probePluginMd(name) {
+  if (!pluginMdDocs.has(name)) {
+    pluginMdDocs.set(name, fetch(pluginMdUrl(name)).then(r => (r.ok ? r.text() : null)).catch(() => null));
   }
-  card.querySelectorAll('.plugins-comp-toggle').forEach(btn => {
-    if (boundCompToggles.has(btn)) return;
-    boundCompToggles.add(btn);
-    btn.addEventListener('click', () => {
-      const block = card.querySelector(`[data-expand-for="${CSS.escape(btn.dataset.expand)}"]`);
-      if (!block) return;
-      const show = block.hidden;
-      block.hidden = !show;
-      btn.setAttribute('aria-expanded', show ? 'true' : 'false');
-      btn.classList.toggle('open', show);
-    });
+  return pluginMdDocs.get(name);
+}
+
+/** Fresh fetch at click time (single source of truth; throws on failure). */
+async function fetchPluginMd(name) {
+  const resp = await fetch(pluginMdUrl(name));
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return resp.text();
+}
+
+/** Reveal the entry when (and only when) the package root has Plugin.md.
+ *  Idempotent via WeakSet（本文件既有纪律：不用 expando 属性）。The probe
+ *  resolves once per name; a later re-render reuses it (no re-fetch). */
+const mountedDocEntries = new WeakSet();
+
+function mountPluginMdEntry(card) {
+  const btn = card?.querySelector('[data-plugin-doc]');
+  const name = card?.getAttribute('data-plugin');
+  if (!btn || !name || mountedDocEntries.has(btn)) return;
+  mountedDocEntries.add(btn);
+  probePluginMd(name).then(text => {
+    if (text && btn.isConnected) btn.hidden = false; // 在场 ⇒ 入口在场；否则永缺席
+  });
+  btn.addEventListener('click', async () => {
+    try {
+      const content = await fetchPluginMd(name);
+      // 既有 Canvas 通路（explorer.js fileContent 臂同款事件契约 → canvas.js
+      // openWorkspaceItem → fileViewers markdown viewer）——本面板只做入口。
+      window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: {
+        id: `plugin-md:${name}`,
+        title: 'Plugin.md',
+        itemType: 'markdown',
+        content,
+        pinned: false,
+        background: false,
+      }}));
+    } catch (e) {
+      window.__showToast?.(String(e?.message || e), 'error');
+    }
   });
 }
 
-/** Bind interactions: per-plugin switches (optimistic in-place toggling),
- *  skill-expand toggles, agent summary rows → per-agent detail tab.
- *  (The manual refresh button was removed 2026-09-05 — the poller keeps the
- *  list live; see startPluginsPolling.) */
-function bindPluginsEvents(content) {
-  content.querySelectorAll('.plugins-card').forEach(bindCardEvents);
+/** skill 胶囊深链（2026-10-21 作者令⑥）：点击时现取该 skill 的 SKILL.md 原文 →
+ *  既有 Canvas 通路（workspace-open-item → markdown viewer）打开文档页。路由 =
+ *  既有 /api/plugin-assets/<name>/skills/<skill>/SKILL.md（封禁包服务端
+ *  fail-closed 404 ⇒ toast 原始错误，零新串——与 Plugin.md 入口同族）。 */
+async function openSkillDoc(pluginName, skillId) {
+  const skillName = skillId.startsWith(`${pluginName}/`) ? skillId.slice(pluginName.length + 1) : skillId;
+  const url = `/api/plugin-assets/${encodeURIComponent(pluginName)}/skills/${encodeURIComponent(skillName)}/SKILL.md`;
+  try {
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const content = await resp.text();
+    window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: {
+      id: `plugin-skill-md:${skillId}`,
+      title: `${skillId} · SKILL.md`,
+      itemType: 'markdown',
+      content,
+      pinned: false,
+      background: false,
+    }}));
+  } catch (e) {
+    window.__showToast?.(String(e?.message || e), 'error');
+  }
+}
 
-  // Agent summary row → per-agent detail tab (summary / preset / system
-  // prompt — the tools/skills/flows capability sections were retired
-  // 2026-09-06 with the tool-face batch).
-  content.querySelectorAll('[data-detail-agent]').forEach(el => {
-    el.addEventListener('click', () => openAgentDetail(el.dataset.detailAgent));
-    el.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openAgentDetail(el.dataset.detailAgent); }
+/** Bind one plugin item's interactions (row accordion toggle, dispatch switch,
+ *  Plugin.md entry, skill capsules). Shared by the full render and the
+ *  live-sync insert path. Idempotent via WeakSets (not expando properties —
+ *  checkJs zero-new-errors discipline).
+ *  （2026-09-14 面板收敛批：「更多」菜单开合与封禁/解封两条绑定随该 UI 退场；
+ *  2026-10-07 条目式批：skills chip toggle 绑定随该机构退场，改为条目行
+ *  accordion toggle。） */
+const boundDispatchSwitches = new WeakSet();
+const boundItemRows = new WeakSet();
+/** 源化插件「更新」钮的绑定台账（2026-11-01 源化批；与上面两个 WeakSet 同款纪律）。 */
+const boundUpdateButtons = new WeakSet();
+
+function bindCardEvents(card) {
+  // 条目行 accordion（2026-10-07 条目式批）：点击/Enter/Space 展开⇄收回详情区，
+  // aria-expanded 同步；逐条目独立（互不挤占）。
+  const row = card.querySelector('[data-plugin-item]');
+  if (row && !boundItemRows.has(row)) {
+    boundItemRows.add(row);
+    const toggleItem = () => {
+      const detail = card.querySelector('.plugins-item-detail');
+      if (!detail) return;
+      const show = detail.hidden;
+      detail.hidden = !show;
+      card.classList.toggle('expanded', show);
+      row.setAttribute('aria-expanded', show ? 'true' : 'false');
+    };
+    row.addEventListener('click', toggleItem);
+    row.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleItem(); }
+    });
+  }
+  // 派发开关（令 1 派发面）：只写 plugins.dispatch；blocked 时控制件自带
+  // disabled，故此处点击不可达（零静默空操作）。单 toggle（2026-10-29 定版）：
+  // 唯一开关在详情区 actions 行（accordion 行为面之外）；stopPropagation 为
+  // 防御性保留——冒泡不得翻整行（与 skill 胶囊同款纪律）。
+  for (const dsw of dispatchToggles(card)) {
+    if (boundDispatchSwitches.has(dsw)) continue;
+    boundDispatchSwitches.add(dsw);
+    dsw.addEventListener('click', (e) => {
+      e.stopPropagation(); // 详情区控件：冒泡不得翻整行 accordion（防御性，同胶囊）
+      if (dsw.disabled) return;
+      const name = dsw.dataset.pluginDispatch;
+      const enable = !dsw.classList.contains('on');
+      const cardEl = dsw.closest('.plugins-card');
+      flipDispatchState(cardEl, enable); // optimistic — converged/rolled back async
+      setPluginDispatch(name, enable, cardEl);
+    });
+    dsw.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') e.stopPropagation();
+    });
+  }
+  // 源化插件的「更新」钮（作者令 2026-11-01 22:55）：POST /api/plugins/:name/source/update
+  // → 成功后整页重渲（版本号/来源行随注册表 + 更新面刷新，用户直接看到 → 后的版本）。
+  // 失败 toast 原始错误（F1「零静默、可行动」同族）——最常见的失败就是远端不可达，
+  // 此时**不会有任何落盘变化**（原子换装），所以报错即可、无需回滚 UI。
+  const upd = card.querySelector('[data-plugin-update]');
+  if (upd && !boundUpdateButtons.has(upd)) {
+    boundUpdateButtons.add(upd);
+    upd.addEventListener('click', (e) => {
+      e.stopPropagation(); // 详情区控件：冒泡不得翻整行 accordion
+      if (upd.disabled) return;
+      upd.disabled = true; // in-flight guard（拉取可能数十秒）
+      runPluginUpdate(upd.getAttribute('data-plugin-update') || '');
+    });
+  }
+  // skill 胶囊（2026-10-21 作者令⑥）：点击取 SKILL.md 进 Canvas（浅绑定即可——
+  // 胶囊元素随卡片重渲重建，无跨重渲身份）。
+  card.querySelectorAll('[data-skill-doc]').forEach(capsule => {
+    capsule.addEventListener('click', (e) => {
+      e.stopPropagation(); // 胶囊在 accordion 行为面之外，但冒泡出详情区不得翻整行
+      const plugin = capsule.getAttribute('data-skill-doc');
+      const skillId = capsule.getAttribute('data-skill-id');
+      if (plugin && skillId) openSkillDoc(plugin, skillId);
     });
   });
+  // 卸载（2026-10-29 卸载批）：二次确认三键（删除目录 / 仅停用 / 取消）后
+  // POST /api/plugins/:name/remove。浅绑定同胶囊——按钮随卡片重渲重建。
+  card.querySelectorAll('[data-plugin-uninstall]').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation(); // 冒泡不得翻整行 accordion（同胶囊纪律）
+      const plugin = btn.getAttribute('data-plugin-uninstall');
+      if (plugin) confirmUninstall(plugin);
+    });
+  });
+  mountPluginMdEntry(card);
+}
+
+/** Bind interactions: the item-row accordion toggle, the dispatch switch
+ *  (optimistic in-place toggling), the Plugin.md entry, the skill capsules.
+ *  （agent 摘要行深链绑定随 2026-10-21 作者令①「只看纯插件」退役。
+ *  The manual refresh button was removed 2026-09-05 — the poller keeps the
+ *  list live; see startPluginsPolling. The 更多 secondary action was removed
+ *  2026-09-14 with the block/unblock UI. The skills chip-toggle was removed
+ *  2026-10-07 with the itemized form — the skill list now lives in the detail
+ *  area.） */
+function bindPluginsEvents(content) {
+  content.querySelectorAll('.plugins-card').forEach(bindCardEvents);
 }
 
 // ── Wiring ─────────────────────────────────────────────────

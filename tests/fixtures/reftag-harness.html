@@ -89,12 +89,20 @@
     },
     html: {
       refType: 'html-element',
-      source: { kind: 'web', url: 'https://nebflow.space/docs/global-reference', title: 'Global Reference — Nebflow Docs' },
+      source: { kind: 'web', url: 'https://mystand.space/docs/global-reference', title: 'Global Reference — Nebflow Docs' },
       anchor: { kind: 'element', selector: '#spec > section.quota > table', tag: 'table', text: '配额表：每会话上限…' },
     },
     longfile: {
       refType: 'file',
       source: { kind: 'workspace', path: '/Users/dev/Documents/20260902_超长标题截断省略号验证_这是一个非常非常长的文件名用来验证固定宽度下省略号生效.txt' },
+      anchor: { kind: 'none' },
+    },
+    // imageref-media（2026-10-09 修复批）：图片文件引用（explorer 引用/拖拽同构
+    // 输入形状）——消息内面必须分流到 Pop 媒体预览卡，不再是 att-ref-card。
+    imagefile: {
+      refType: 'file',
+      source: { kind: 'workspace', path: '/Users/dev/Desktop/截屏2026-10-09 07.45.12.png',
+                fileName: '截屏2026-10-09 07.45.12.png', title: '截屏2026-10-09 07.45.12.png' },
       anchor: { kind: 'none' },
     },
     // ── 20260903 文件名重复修复回归输入 ──
@@ -172,10 +180,15 @@
       const card = document.querySelector('#message-stage .att-ref-card');
       if (!card) return null;
       const q = (sel) => card.querySelector(sel);
+      // 卡片语言统一批（2026-10-26）：file/document 引用 = .file-lang 面 ——
+      // 标题走 .fc-name、类型标签并入 .fc-icon 扩展名色块（badge 字段读旧面
+      // .att-ref-card-badge，file-lang 回落图标块文本；html-element 旧面照旧）。
       return {
         refType: card.dataset.refType,
-        title: q('.att-ref-card-title')?.textContent ?? '',
-        badge: q('.att-ref-card-badge')?.textContent ?? '',
+        fileLang: card.classList.contains('file-lang'),
+        title: q('.att-ref-card-title')?.textContent ?? q('.fc-name')?.textContent ?? '',
+        badge: q('.att-ref-card-badge')?.textContent ?? q('.fc-icon')?.textContent ?? '',
+        iconCls: q('.fc-icon')?.className ?? '',
         source: q('.att-ref-card-source')?.textContent ?? null,
         sourceAbsent: !q('.att-ref-card-source'),
         text: card.textContent,

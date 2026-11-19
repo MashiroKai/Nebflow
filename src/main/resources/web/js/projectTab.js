@@ -1,46 +1,702 @@
+import { mountProjectWorkspaces } from './projectWorkspaces.js';
+import { openDropdownMenu } from './dropdownMenu.js';
 // projectTab.js — Project 标签页（#27 方向调整：项目入口以标签页呈现，参考 team 面板设计）。
 // 点击侧边栏 Project 按钮 → 打开 `projects` Canvas 标签页；一行/卡片一个 project，
-// 沿用 .team-card 视觉与交互范式。点击 project name → 同一标签页就地切换到其
-// Flow Map 视图（不新开标签页），左上角「返回项目列表」切回列表；
-// 空 Flow Map（无节点）的项目 title 不可点。AGENTS.md 入口 → rules 式查看/编辑 overlay。
+// 沿用 .team-card 视觉与交互范式。点击 project name → 同一标签页就地切换到
+// delegate-chain 链视图（#1228 两裁②：per-project Flow Map 就地视图停用，入口改指
+// per-task 链视图）；顶栏「返回任务列表」关闭页签回任务面板。AGENTS.md 入口 → rules
+// 式查看/编辑 overlay。
+//
+// ── 实时更新 + 载入/归档动画（tabrealtime 批 2026-09-17 · 作者五项裁定 (a)-(e)）──────
+// (a) 「项目标签页」= 本页签内的**项目卡片列表**（取证报告§主读法；代码面不存在
+//     「每项目一 tab」结构）⇒ 实施面只在此列表。
+// (b) 方案 B（正典）：后端补 projectCreated / projectArchived 两事件（载荷逐字取证
+//     §D-2），前端在本文件订阅——🔴 方案 A（订阅既有 toolCallDetected / toolEnd）不取，
+//     也不作兜底（语义寄生、脆弱、错位）。
+// (c) 同批加低频兜底重拉（见文末「兜底 C」）：进程外改动（有人直接编辑/删除
+//     project.json）任何事件方案都覆盖不到。🔴 (c) 明确**不并** D（canvas.js state 3
+//     补拉）⇒ 本文件与 canvas.js 零交互；「切回页签看到陈旧列表」由兜底 C 的 60s 窗
+//     覆盖，state 3 另立小批。
+// (d) FLIP 进本批（唯一零跳变路径，辅助模块 = web/js/listFlip.js）。
+// (e) 两身份事件（不采单 projectsChanged：需前端拉全量分辨、语义不清）。
+//
+// 🔴 渲染出口硬约束（取证 §F-2）：旧出口是 `scroll.innerHTML = projects.map(...)`
+// **全量替换**——退场动画与全量替换互斥（重拉返回会把动画中的 DOM 直接换掉）。
+// 本批改为**名单差集 → 按名定点增删**：新增 = 只插该卡的节点（anchor.after / prepend），
+// 移除 = 退场动画结束后定点 el.remove()，刷新 = 只定点写该卡的摘要槽；
+// 其余卡片的节点身份（data-project）、顺序与实例在增删/刷新中全部保持不变。
+// 事件到达即起步动画（不等重拉返回）；重拉只在「名单与磁盘不一致」时产生一次定点增删。
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
 import { esc, authHeaders } from './flowHelpers.js';
+import { onMinuteTick, statusIcon } from './utils.js';
 import { t } from './i18n.js';
-import { fetchProjects, fetchFlowMap, summarize, API } from './nodeData.js';
-import { renderFlowMapInto } from './flowMapTab.js';
+import { rootNameParams } from './rootName.js';
+import { contentText } from './contentI18n.js';
+import { fetchProjectsRaw, fetchFlowMap, summarize, unmountProject, fetchProjectInflight } from './nodeData.js';
+// 🔴 flowmaptab-retire（#1228 两裁② 停用清单面 1）：per-project Flow Map 就地视图停用，
+// 对 flowMapTab 渲染入口的静态 import 随之摘除——flowMapTab.js 自此脱离模块图
+// （build-web ORPHAN_EXEMPTIONS 在案），文件留盘候 #1229 per-project REST/WS 退役批
+// 随引擎面整体删除；渲染件单源 = fmNodeCard.js（S10/S11 链视图在用）。
 import { openAgentFile } from './agentFileViewer.js';
+import { playFlip, prefersReducedMotion, snapshotRects } from './listFlip.js';
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { withFocusKey } from './focusTrap.js';
+import state from './state.js';
+
+// 两段动画取值（🔴 逐字对齐取证报告 §F「统一取值」表，零新造）：
+// 入场本体 220ms / 退场本体 280ms / 一次性强调环 900ms / 邻卡 FLIP 240ms /
+// 骨架脉冲 1.2s（CSS 侧）/ reduced-motion 降级 = 无动画。
+// 缓动两段均 cubic-bezier(0.16, 1, 0.3, 1)（§F 统一取值表；与 reminderRowRemove
+// 0.35s 同族、向 0.28s 档收）。CSS 侧同名值落 web/css/projectPanel.css。
+const PROJECT_CARD_ENTER_MS = 220;        // §F 入场本体
+const PROJECT_CARD_EXIT_MS = 280;         // §F 退场本体
+const PROJECT_NEW_EMPHASIS_MS = 900;      // §F 一次性强调环保持时长
+const PROJECT_NEW_EMPHASIS_REDUCED_MS = 2000; // §F-3 降级：静态环保持 ~2s（新卡仍可辨识）
+const PROJECT_FLIP_MS = 240;              // §F 邻卡 FLIP 衔接
+const PROJECT_FLIP_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)'; // split.css:503 flex 族同值
 
 function openProjectTab() {
   const pane = getTabPane('projects');
   if (!pane) return;
   ensureFlowCss();
-  // 视图状态复位为列表：projects 标签页是「项目列表 ⇄ Flow Map 就地视图」双态页，
-  // 列表渲染进 .team-scroll；若当前在 Flow Map 就地视图（nav-bar + flowmap-view-body），
-  // 先清掉再建滚动体，避免列表渲染进旧 Flow Map 滚动体、或 nav-bar 残留在列表上方。
+  // 视图状态复位为列表：projects 标签页是「项目列表 ⇄ delegate-chain 就地视图」双态页，
+  // 列表渲染进 .team-scroll；若当前在就地视图（nav-bar + 视图体），先清掉再建滚动体，
+  // 避免列表渲染进旧视图滚动体、或 nav-bar 残留在列表上方。
   pane.dataset.projectsView = 'list';
-  delete pane.dataset.flowMapProject;
   if (pane.querySelector('.flowmap-nav-bar')) pane.innerHTML = '';
-  const scroll = ensureScroll(pane);
+  const scroll = ensureScroll(pane); // mounts the "+" FAB at one single point (returns with any DOM rebuild)
+  resetProjectsRetry(); // 用户动作打开面板 = 新一轮序列，重试预算重置
   renderProjectsInto(scroll);
 }
 
+/** 滚动体（卡片列表容器）+ 屏幕阅读器状态行。
+ *  状态行（§F-3 可访问性）：`aria-live="polite"` 挂在**独立的状态行**上，
+ *  🔴 不挂 `.team-scroll` 本体（全量/定点渲染会让逐卡文本被反复播报）。
+ *  容器 `tabindex="-1"`：退场时若焦点在卡内且无下一张卡，焦点移交给容器
+ *  （§F-3③；无 tabindex 的元素 focus() 是 no-op）。 */
 function ensureScroll(pane) {
   let scroll = pane.querySelector('.team-scroll');
   if (!scroll) {
     pane.innerHTML = '';
+    const live = document.createElement('div');
+    live.className = 'project-live-status';
+    live.setAttribute('role', 'status');
+    live.setAttribute('aria-live', 'polite');
+    pane.appendChild(live);
     scroll = document.createElement('div');
     scroll.className = 'team-scroll';
+    scroll.tabIndex = -1;
     pane.appendChild(scroll);
   }
+  // 🔴 可达性硬约束：本行必须在 `return scroll;` **之前**。落在 `return` 之后时
+  // `git merge-file` 试算 rc=0 零冲突、`checkJs` 不红，但挂载语句不可达 ⇒ 钮永不
+  // 出现且**零报警**（本批唯一的静默失败形态）。
+  attachProjectsCreateFab(pane); // 「+」钮：同款单点挂载（DOM 重建后随之回归；幂等）
   return scroll;
+}
+
+/** 实时播报（polite 状态行）。文案 key = project.createdAnnounce / project.archivedAnnounce。 */
+function announceProjects(scroll, text) {
+  if (!scroll || !text) return;
+  const live = scroll.closest('.canvas-tab-pane')?.querySelector('.project-live-status');
+  if (live) live.textContent = text;
 }
 
 /** 打开 Project 标签页（由 activity bar Project 按钮调用）。 */
 export function openProjectsTab() {
   openTab('projects', t('project.title'), { type: 'projects', closable: true });
   openProjectTab();
+}
+
+// ── 右下角「+」钮 + 轻弹层（projcreate 批 · 乙案，作者 2026-09-23 九裁后解禁）──────
+// 🔴 2026-09-24 author ruling #4 (this projcreate-redesign batch):
+//   D2(b) reuse the existing creation core => submit no longer prefills the chat
+//         input; it goes through the `projectCreate` WS command instead (backend =
+//         ProjectCreateService, the same creation core the ProjectCreate tool uses);
+//   D4    the dialog gains a PATH PICKER (reusing `workspacePicker.js`'s
+//         `openPicker`, no second implementation), which fills the path in —
+//         replacing "the user hand-types a path".
+// Two pre-existing keys thereby lose their call sites (the author's 2026-09-23 plan
+// document §4 already named them as superseded):
+//   `project.createPrefill` (builds the one sentence sent to the agent) and
+//   `project.createInputUnavailable` (the forward path's "chat input not found" state).
+//   🔴 Both keys are KEPT in this batch (key-face cleanup is outside this batch's
+//   write face; only their call sites = 0 are recorded) — see the deliverable's
+//   "superseded" section.
+const PROJECTS_CREATE_FAB = 'proj-create-fab';
+const PROJECT_CREATE_OVERLAY = 'proj-create-overlay';
+const PROJECT_CREATE_DESC_ID = 'proj-create-desc';
+const PROJECT_CREATE_WS_ID = 'proj-create-ws';
+const PROJECT_CREATE_DEV_ID = 'proj-create-dev';
+/** 描述上限（作者已裁③：必填 + 上限 500 字）。计数与校验共用同一度量（码位）。 */
+const PROJECT_CREATE_MAX = 500;
+/** Direct-create reply timeout (ms). The gateway chain is local memory + disk, so
+ *  normally milliseconds; 12s is only a bounded backstop (same shape as this
+ *  file's existing `NODE_RESULT` fetch timeout). A timeout reports an explicit
+ *  error — never an unbounded hang. */
+const PROJECT_CREATE_ACK_TIMEOUT_MS = 12_000;
+
+/** 唯一在飞的弹层上下文（单例：重开先关旧的）。`null` = 无层。 */
+let createDialogCtx = null;
+
+/** 描述长度度量（码位，非 UTF-16 码元）——计数显示与上限校验**共用**此函数，
+ *  否则超限提示与计数器会出现互不一致的口径。 */
+function projectCreateLength(value) {
+  return [...value].length;
+}
+
+/** 关层。`restoreFocus` = true 时把焦点归还「+」钮（取消/Esc/点空白三条路径），
+ *  false 时留给调用方（提交后焦点须落在主输入框，见 submit 分支）。 */
+function closeProjectsCreateDialog(restoreFocus) {
+  const ctx = createDialogCtx;
+  if (!ctx) return;
+  createDialogCtx = null;
+  if (ctx.escHandler) window.removeEventListener('keydown', ctx.escHandler, true);
+  if (ctx.devOutsideClose) document.removeEventListener('pointerdown', ctx.devOutsideClose, true);
+  ctx.overlay.remove();
+  // 触发钮可能已随 DOM 重建脱树 ⇒ 只在仍在文档内时归还焦点（否则 focus() 是 no-op）。
+  if (restoreFocus && document.contains(ctx.trigger)) ctx.trigger.focus();
+}
+
+/** 挂载右下角「+」钮。幂等两重：① 已在场则不重建（`ensureScroll` 每次渲染/刷新都会
+ *  被调用，重建会换节点、抢焦点）；② 视图守卫——就地 Flow Map 视图摘钮并早退
+ *  （该视图自带 `.fm-fab`，同角落 16/16，两枚同锚点圆钮会互相遮挡）。
+ *
+ *  🔴 调用点必须落在 `ensureScroll` 内 `return scroll;` **之前**（见该处注释与
+ *  §二 可达性硬约束：落在之后 = 静默死代码，零报警）。 */
+function attachProjectsCreateFab(pane) {
+  if (!pane) return;
+  // 视图守卫（作者已裁⑦：「+」仅列表视图）。delegate-chain 视图（S10/S11，#1228
+  // 换源接线批；per-project Flow Map 视图已停用退役）同为非列表视图：摘钮早退
+  // （链视图无创建面，亦无同锚浮钮冲突）。
+  if (pane.dataset.projectsView === 'delegate-chain') {
+    pane.querySelector(`.${PROJECTS_CREATE_FAB}`)?.remove();
+    return;
+  }
+  if (pane.querySelector(`.${PROJECTS_CREATE_FAB}`)) return; // 已在场 ⇒ 幂等早退
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = PROJECTS_CREATE_FAB;
+  // 图标沿本文件既有范式（`<i data-lucide>` + `createIconsIn`），不新引图标库。
+  btn.innerHTML = '<i data-lucide="plus"></i>';
+  // title 与 aria-label **同键双挂**：读屏与悬停同源，不可能不一致。
+  btn.title = t('project.createOpen');
+  btn.setAttribute('aria-label', t('project.createOpen'));
+  btn.setAttribute('aria-haspopup', 'dialog');
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openProjectsCreateDialog(btn);
+  });
+  pane.appendChild(btn);
+  import('./utils.js').then(({ createIconsIn }) => createIconsIn(btn));
+}
+
+/** 打开轻弹层（单例）。结构 = `chat.css` 既有 `.wsp-*` 族（不自造弹层），
+ *  面板材质由 `modal.css` 共享玻璃卡组（`.wsp-panel`）承担；🔴 背景**零暗化零模糊**
+ *  ——`.wsp-overlay` 底色 = `var(--overlay-bg)` = `transparent`（视觉铁律 1，逐字依据
+ *  `chat.css:2775-2776` 注释）。描述框复用既有 `.modal-input`（`modal.css:115-158`，
+ *  含 `resize:vertical` + sapphire focus 辉光；本文件不新造输入件材质）。 */
+function openProjectsCreateDialog(trigger) {
+  closeProjectsCreateDialog(false); // 单例：重开先关旧的（不归还焦点，焦点归新层）
+
+  const overlay = document.createElement('div');
+  // 弹层层族批：`ds-overlay` 遮罩形单点 / `.wsp-overlay` 保留为寻址钩子。
+  overlay.className = `wsp-overlay ds-overlay ${PROJECT_CREATE_OVERLAY}`;
+  overlay.innerHTML =
+    '<div class="wsp-panel proj-create-panel ds-layer" role="dialog" aria-modal="true"' +
+      ` aria-label="${esc(t('project.createTitle'))}">` +
+      `<div class="wsp-title">${esc(t('project.createTitle'))}</div>` +
+      `<label class="proj-create-label" for="${PROJECT_CREATE_DESC_ID}">${esc(t('project.createDescLabel'))}</label>` +
+      // 🔴 placeholder = C1 逐字（含作者 2026-09-20 08:04 令原句）
+      `<textarea id="${PROJECT_CREATE_DESC_ID}" class="modal-input proj-create-desc" rows="5"` +
+        ` placeholder="${esc(t('project.createDescPlaceholder'))}"></textarea>` +
+      '<div class="proj-create-meter">' +
+        '<span class="proj-create-error" role="alert" hidden></span>' +
+        '<span class="proj-create-count"></span>' +
+      '</div>' +
+      // ── 存放设备行（ui-device-faces 批 · 设计稿 §1/开放题①）：描述 meter 之下、
+      //    工作区路径之上——设备是路径的定语（先定设备，路径选择器才知道去哪台机器
+      //    浏览；G.13 校验序第一步也是设备解析）。缺省 self ⇒ 提交帧不带 device 键 =
+      //    机制面缺省腿逐字节。数据源 = /api/neblink/status（self + peers，零新后端面）。
+      //    设备平级设计语言（作者 2026-10-30 裁定「所有设备是平等的」）：本行无 self 特殊
+      //    文案/图标分级——self 显示名 = 花名册本名，详见 renderDeviceUI/openDeviceMenu。──
+      `<label class="proj-create-label" for="${PROJECT_CREATE_DEV_ID}">${esc(t('project.deviceLabel'))}</label>` +
+      '<div class="dev-row">' +
+        `<button type="button" class="dev-btn" id="${PROJECT_CREATE_DEV_ID}" aria-haspopup="listbox" aria-expanded="false">` +
+          '<span class="dev-ic"></span>' +
+          '<span class="dev-nm"></span>' +
+          '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>' +
+        '</button>' +
+        // 菜单挂在 .dev-row 内（position:absolute 锚定按钮下方；hidden 属性控显隐，
+        // 渲染守卫 = projectPanel.css `.dev-menu[hidden]{display:none}`——缺它时空菜单
+        // 以「min-width:300px 玻璃细条」残留在按钮下方内容区（2026-10-30 作者报障②）。
+        '<div class="dev-menu" hidden></div>' +
+      '</div>' +
+      // 语义提示行（self/远端同一行位；文案按存放关系陈述、不点名「本机」——平级设计语言）。
+      '<div class="dev-hintline" data-cv-hint="page" hidden></div>' +
+      // ── D4 path slot (author 2026-09-24 D4: "use a path picker to choose, rather
+      //    than relying on the user typing a path") ──
+      // 🔴 A typeable text box is deliberately NOT provided: the path can only be
+      //   written by the picker, so there is no fake control that "takes input but
+      //   does nothing / the front end cannot validate" (the very reason the
+      //   upstream retired slot table dropped the path box). The echo element is
+      //   display-only.
+      `<label class="proj-create-label" for="${PROJECT_CREATE_WS_ID}">${esc(t('project.createWorkspaceLabel'))}</label>` +
+      '<div class="proj-create-path-row">' +
+        `<button type="button" class="glass-control proj-create-pick" id="${PROJECT_CREATE_WS_ID}">${esc(t('project.createWorkspacePick'))}</button>` +
+        `<span class="proj-create-path" data-picked="0">${esc(t('project.createWorkspaceNone'))}</span>` +
+      '</div>' +
+      '<div class="wsp-foot proj-create-foot">' +
+        '<span class="proj-create-hint"></span>' +
+        '<span class="wsp-foot-btns">' +
+          `<button type="button" class="wsp-cancel">${esc(t('project.createCancel'))}</button>` +
+          `<button type="button" class="wsp-pick">${esc(t('project.createSubmit'))}</button>` +
+        '</span>' +
+      '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  const descEl = /** @type {HTMLTextAreaElement} */ (overlay.querySelector(`#${PROJECT_CREATE_DESC_ID}`));
+  const countEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-count'));
+  const errorEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-error'));
+  const cancelEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-cancel'));
+  const submitEl = /** @type {HTMLElement} */ (overlay.querySelector('.wsp-pick'));
+  const pickEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-pick'));
+  const pathEl = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-path'));
+  // ── 存放设备行（面A）控件引用：pickedDevice = null ⇔ self（缺省，提交帧零 device 键）。
+  //    逻辑主体（renderDeviceUI/菜单/选中）在 renderPath 定义之后装配（见下方同标注段）。──
+  const devBtn = /** @type {HTMLElement} */ (overlay.querySelector('.dev-btn'));
+  const devMenu = /** @type {HTMLElement} */ (overlay.querySelector('.dev-menu'));
+  const devHint = /** @type {HTMLElement} */ (overlay.querySelector('.dev-hintline'));
+  const wsLabel = /** @type {HTMLElement} */ (overlay.querySelector(`label[for="${PROJECT_CREATE_WS_ID}"]`));
+
+  /** Chosen workspace (the single authoritative value; `null` = not chosen). Written
+   *  only by the picker — there is no hand-typed input face. */
+  let pickedPath = null;
+
+  /** 计数器（上限可发现）。ui-status-redesign（盘点 #50）：超限不再染红数字——
+   *  数字转中性，行首 triangle-alert 琥珀图标（非阻断超量 = 警示档）。 */
+  const renderCount = () => {
+    const n = projectCreateLength(descEl.value);
+    countEl.innerHTML = (n > PROJECT_CREATE_MAX ? statusIcon('triangle-alert', 11, 'st-warn') : '') + esc(t('project.createDescCount', { n: String(n) }));
+    countEl.classList.toggle('is-over', n > PROJECT_CREATE_MAX);
+  };
+  /** Report an error: `role="alert"` row shown in place, NEVER silently swallowed
+   *  (the dialog stays open and the values are not cleared).
+   *  ui-status-redesign（盘点 #35，S9 同族）：行首 circle-alert 红图标 + 中性正文。 */
+  const showError = (msg) => {
+    errorEl.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + esc(msg) + '</span>';
+    errorEl.hidden = false;
+  };
+  /** 面A A6（远端失败）：错误行升级为「中性正文 + 错误码尾注 + 行内动作链接」。
+   *  动作映射（设计稿 §1.3，机制面四码）：重试恒发（幂等，G.13 重试安全）；
+   *  REMOTE_SCAFFOLD_FAILED → [换一台设备…]（重开设备菜单）；DEVICE_OFFLINE /
+   *  DEVICE_ROUTE_UNAVAILABLE → [改用这台设备]（回缺省腿重发）；REMOTE_DIR_UNVERIFIED
+   *  → 仅 [重试]（A4 只读浏览器是长期解）。self 失败（device=null）保持既有形态零变化。 */
+  const showErrorResult = (msg, device) => {
+    if (!device) { showError(msg); return; }
+    const m = /\(([A-Z][A-Z0-9_]+)\)\s*$/.exec(msg);
+    const code = m ? m[1] : null;
+    const body = m ? msg.slice(0, m.index).trimEnd() : msg;
+    errorEl.innerHTML = statusIcon('circle-alert', 12, 'st-err');
+    const span = document.createElement('span');
+    span.appendChild(document.createTextNode(body));
+    if (code) {
+      const codeEl = document.createElement('span');
+      codeEl.className = 'err-code';
+      codeEl.textContent = ` (${code})`;
+      span.appendChild(codeEl);
+    }
+    const acts = document.createElement('span');
+    acts.className = 'err-acts';
+    const addAct = (label, fn) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'err-act';
+      b.textContent = label;
+      b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+      acts.appendChild(b);
+    };
+    if (code !== 'DEVICE_ROUTE_UNAVAILABLE') addAct(t('project.createErrRetry'), () => { clearError(); submit(); });
+    if (code === 'REMOTE_SCAFFOLD_FAILED') addAct(t('project.createErrSwitchDevice'), () => { clearError(); openDeviceMenu(); });
+    if (code === 'DEVICE_OFFLINE' || code === 'DEVICE_ROUTE_UNAVAILABLE') {
+      addAct(t('project.createErrSwitchLocal'), () => {
+        clearError();
+        pickedDevice = null;
+        renderDeviceUI();
+        submit();
+      });
+    }
+    if (acts.childNodes.length) span.appendChild(acts);
+    errorEl.appendChild(span);
+    errorEl.hidden = false;
+  };
+  const clearError = () => {
+    errorEl.hidden = true;
+    errorEl.innerHTML = '';
+  };
+  const renderPath = () => {
+    // 面A A3：远端模式路径回显前缀设备 chip（.path-chip，材质 = .project-empty-tag 族）。
+    if (pickedDevice) {
+      pathEl.innerHTML =
+        `<span class="path-chip">${DEV_ICON_DEVICE}${esc(pickedDevice.name)}</span>`;
+      pathEl.appendChild(document.createTextNode(pickedPath || t('project.createWorkspaceNone')));
+    } else {
+      pathEl.textContent = pickedPath || t('project.createWorkspaceNone');
+    }
+    pathEl.dataset.picked = pickedPath ? '1' : '0';
+  };
+
+  // ── 存放设备行（面A · ui-device-faces 批 2026-10-10；设备平级设计语言 2026-10-30）──
+  // pickedDevice = null ⇔ self（缺省，提交帧零 device 键 = 机制面缺省腿逐字节）；
+  // {id, name} ⇔ 远端（提交帧 additive device=<deviceId>；路径选择改走应用内浏览器
+  // 的 device 腿——原生对话框只能看本机盘）。本段落在 renderPath 之后（TDZ 安全）。
+  /** 设备平级（作者 2026-10-30 裁定「所有设备是平等的」，上升为设计语言）：
+   *  · 选择器按钮单一图标形、无本机/远端分级 class 与着色；
+   *  · 下拉行 = 名称 + 在线点 + 勾选，self 与 peers 同一视觉权重（self 显示名 =
+   *    花名册本名，不再本地化为「本机（这台 Mac）」）；
+   *  · 连接方式（direct/relay）弱化为行 title tooltip，不与设备名抢视觉；
+   *  · isSelf 标记只服务提交线（self ⇒ 零 device 键），不参与任何视觉分级。 */
+  /** @type {null | {id: string, name: string}} */
+  let pickedDevice = null;
+  /** 花名册 self 读数缓存（按钮缺省显示名；花名册未拉到时回退 locale 键）。 */
+  /** @type {null | {id: string, name: string}} */
+  let selfRow = null;
+  let deviceMenuOpen = false;
+  /** 设备图标（平级设计语言：self/远端同一 hard-drive 形，无 monitor 特殊形）。 */
+  const DEV_ICON_DEVICE =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/><line x1="6" x2="6.01" y1="16" y2="16"/><line x1="10" x2="10.01" y1="16" y2="16"/></svg>';
+  const DEV_ICON_INFO =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="16" y2="12"/><line x1="12" x2="12.01" y1="8" y2="8"/></svg>';
+  const DEV_ICON_CHECK =
+    '<svg class="ck" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+
+  /** 设备行总渲染（btn 形 / label 变体 / pick 钮变体 / 语义提示行 / 路径回显）。 */
+  const renderDeviceUI = () => {
+    const remote = !!pickedDevice;
+    const ic = devBtn.querySelector('.dev-ic');
+    if (ic) ic.innerHTML = DEV_ICON_DEVICE;
+    const nm = devBtn.querySelector('.dev-nm');
+    if (nm) nm.textContent = remote ? pickedDevice.name : (selfRow?.name || t('project.deviceSelf'));
+    devBtn.setAttribute('aria-expanded', String(deviceMenuOpen));
+    wsLabel.textContent = remote
+      ? t('project.createWorkspaceLabelRemote', { device: pickedDevice.name })
+      : t('project.createWorkspaceLabel');
+    pickEl.textContent = remote
+      ? t('project.createWorkspacePickRemote', { device: pickedDevice.name })
+      : t('project.createWorkspacePick');
+    // 语义提示行：self/远端同一行位（菜单展开时让位）。文案按存放关系陈述、
+    // 不点名「本机」——远端多一句「仅登记指针」的事实说明（平级设计语言 2026-10-30）。
+    devHint.hidden = deviceMenuOpen;
+    devHint.innerHTML = DEV_ICON_INFO;
+    devHint.appendChild(document.createTextNode(
+      remote
+        ? t('project.createDeviceHintline', { device: pickedDevice.name })
+        : t('project.createDeviceHintlineSelf', { device: selfRow?.name || t('project.deviceSelf') })
+    ));
+    renderPath();
+  };
+
+  /** 选中一台设备。🔴 路径是设备定语：换设备 = 清空已选路径（旧路径属于另一台
+   *  机器的盘，不跨设备复用——回显随之复位，由 renderDeviceUI → renderPath 承担）。
+   *  isSelf 行 ⇒ pickedDevice = null（提交帧零 device 键 = 机制面缺省腿；纯提交线
+   *  优化，视觉无任何 self 分级——平级设计语言）。 */
+  const selectDevice = (row) => {
+    pickedDevice = row && !row.isSelf ? { id: row.id, name: row.name } : null;
+    pickedPath = null;
+    closeDeviceMenu();
+    renderDeviceUI();
+  };
+
+  const closeDeviceMenu = () => {
+    if (!deviceMenuOpen) return;
+    deviceMenuOpen = false;
+    devMenu.hidden = true;
+    devMenu.innerHTML = '';
+    renderDeviceUI();
+  };
+
+  /** 设备菜单（设计稿 A2 + 平级设计语言 2026-10-30）：self + peers（/api/neblink/status），
+   *  同一行语言 = 名称 + 在线点（--color-primary）+ 选中勾；连接方式（direct/relay）只进
+   *  行 title tooltip。在线绿点；离线行禁选（灰点 + 「离线」tag + 减淡，disabled 钮）——
+   *  不给"点了必失败"的按钮；竞态兜底 = 后端 DEVICE_OFFLINE fail-closed。 */
+  const openDeviceMenu = () => {
+    deviceMenuOpen = true;
+    devMenu.hidden = false;
+    renderDeviceUI();
+    import('./deviceRoster.js')
+      .then(({ getDeviceRoster }) => getDeviceRoster())
+      .then((roster) => {
+        if (!deviceMenuOpen) return;
+        devMenu.innerHTML = '';
+        // self 与 peers 同一视觉权重：self 显示名 = 花名册本名（平级设计语言——
+        // 不再有本地化「本机（这台 Mac）」特殊行）；isSelf 只服务提交线 device 键语义。
+        if (roster.self) selfRow = { id: roster.self.id, name: roster.self.name };
+        const rows = [
+          { isSelf: true, id: roster.self?.id || 'self', name: roster.self?.name || t('project.deviceSelf'), online: true, direct: true },
+          ...roster.peers.map((p) => ({ isSelf: false, id: p.id, name: p.name, online: p.online, direct: p.direct })),
+        ];
+        const currentId = pickedDevice?.id || null;
+        for (const row of rows) {
+          const selected = row.isSelf ? !currentId : currentId === row.id;
+          const item = document.createElement('button');
+          item.type = 'button';
+          item.className = 'dev-item' + (selected ? ' active' : '') + (row.online ? '' : ' disabled');
+          if (!row.online) item.disabled = true;
+          // 连接方式弱化：不进行间标签，只作次级说明（tooltip）——不与设备名抢视觉。
+          item.title = row.direct ? 'direct' : 'relay';
+          item.innerHTML =
+            `<span class="dot${row.online ? '' : ' off'}"></span>` +
+            `<span class="nm">${esc(row.name)}</span>`;
+          if (selected) item.innerHTML += DEV_ICON_CHECK;
+          else if (!row.online) item.innerHTML += `<span class="off-tag">${esc(t('project.deviceOfflineTag'))}</span>`;
+          if (row.online) item.addEventListener('click', (e) => { e.stopPropagation(); selectDevice(row); });
+          devMenu.appendChild(item);
+        }
+        const foot = document.createElement('div');
+        foot.className = 'dev-menu-foot';
+        foot.textContent = t('project.deviceMenuFoot');
+        devMenu.appendChild(foot);
+      })
+      .catch(() => {
+        // 花名册不可得 = 回落 self 单选（现状形态），不弹错误（可继续 self 创建）。
+        if (!deviceMenuOpen) return;
+        devMenu.innerHTML = '';
+        selectDevice(null);
+      });
+  };
+
+  devBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (deviceMenuOpen) closeDeviceMenu();
+    else openDeviceMenu();
+  });
+  // 点面板其它区域收菜单（弹层自身保持打开；与 Esc 关层路径互不影响）。
+  const devOutsideClose = (e) => {
+    if (!deviceMenuOpen) return;
+    const tgt = /** @type {Element | null} */ (e.target);
+    if (tgt && (tgt.closest('.dev-menu') || tgt.closest('.dev-btn'))) return;
+    closeDeviceMenu();
+  };
+  document.addEventListener('pointerdown', devOutsideClose, true);
+
+  // ── Path picker (D4): REUSE the existing in-app folder browser, no second impl ──
+  // The call pattern follows `chat.js`'s dirPicker branch verbatim (dynamic import →
+  // openPicker({onPick, onCancel})); sessionId may be omitted (openPicker falls back
+  // to state.activeSessionId internally, and the browse frames go over the GLOBAL
+  // route). Dynamic import + catch => an explicit error on module-load failure,
+  // never a hang.
+  //
+  // 🔴 One MEASURED reuse trap (a pre-existing defect found in this batch; the
+  //   shared file is NOT modified): `closePicker()` uses
+  //   `document.querySelector('.wsp-overlay')` — the FIRST overlay — while this
+  //   dialog is appended before the picker => a naive reuse removes THIS dialog
+  //   thinking it is the picker. Mitigation (in this file only, zero shared-file
+  //   changes): detach this overlay (via `remove()`, keeping the element reference)
+  //   before opening the picker, then re-append it on onPick/onCancel => while the
+  //   picker is up, the document's only `.wsp-overlay` is the picker's own, so
+  //   `closePicker` behaves as designed. After re-appending, focus returns to the
+  //   "choose path" button (so focus never rests on the detached old node).
+  const openPathPicker = () => {
+    import('./workspacePicker.js')
+      .then(({ openPicker }) => {
+        const anchor = document.activeElement;
+        overlay.remove(); // detach for now; the element reference (and its listeners/state) is kept
+        // 面A A4：远端设备选中 ⇒ 路径选择自动切应用内浏览器的 device 腿（原生对话框
+        // 只能看本机盘）。device 模式 = 只读远端浏览（无 mkdir/手打路径，G.13 目录须
+        // 已存在）；本机照旧同一选择器（缺省腿，零 device 键）。
+        if (pickedDevice) {
+          openPicker({
+            device: pickedDevice.id,
+            deviceName: pickedDevice.name,
+            // 初始路径 = 对端家目录：`~` 由**接收端**展开为它自己的 user.home（通道
+            // 能力内的合法起点）。🔴 勿用 `/`——POSIX 根在 Windows 对端会被
+            // normalizeSeparators 折成 `\`，parse 失败 = 开箱「Invalid path: \」
+            // （2026-10-30 作者报障①根因）。picking again reopens at the last pick.
+            startPath: pickedPath || '~',
+            // picker-device-switch 批：选择器内可切设备——onPick 第二参 = 选择时的
+            // origin；与「存放设备」不一致的路径绝不回写（路径是设备定语，混写 =
+            // G.12 路径错觉），显式报错请用户重选。
+            onPick: (p, pickedOn) => {
+              if ((pickedOn || null) !== (pickedDevice && pickedDevice.id)) {
+                reattach();
+                showError(t('project.createDeviceMismatch'));
+                return;
+              }
+              pickedPath = p;
+              renderPath();
+              clearError();
+              reattach();
+            },
+            onCancel: () => reattach(),
+          });
+        } else {
+          openPicker({
+            startPath: pickedPath || '~',
+            onPick: (p, pickedOn) => {
+              if (pickedOn) { // 本机腿不该带回 origin——带回即面板内切过设备，按混写拒
+                reattach();
+                showError(t('project.createDeviceMismatch'));
+                return;
+              }
+              pickedPath = p;
+              renderPath();
+              clearError();
+              reattach();
+            },
+            onCancel: () => reattach(),
+          });
+        }
+        function reattach() {
+          document.body.appendChild(overlay);
+          const back = /** @type {HTMLElement | null} */ (
+            anchor && overlay.contains(anchor) ? anchor : submitEl
+          );
+          back?.focus();
+        }
+      })
+      .catch(() => showError(t('project.createWorkspacePickFail')));
+  };
+
+  /** Submit = a REAL creation (D2(b)): straight to the existing creation core via
+   *  the `projectCreate` WS command.
+   *  🔴 No more chat-input prefill, no more waiting for the user to press send;
+   *  failures are shown EXPLICITLY (dialog stays open, values not cleared). */
+  const submit = () => {
+    const raw = descEl.value;
+    const n = projectCreateLength(raw);
+    if (n === 0) { showError(t('project.createDescRequired')); return; }          // (3) required
+    if (n > PROJECT_CREATE_MAX) { showError(t('project.createDescTooLong')); return; } // (3) cap 500
+    if (!pickedPath) { showError(t('project.createWorkspaceRequired')); return; } // D4 path required
+    clearError();
+    const device = pickedDevice; // 提交时刻的设备语义（finish 回调沿用同一读数）
+    submitEl.setAttribute('disabled', 'disabled');
+    const hint = /** @type {HTMLElement} */ (overlay.querySelector('.proj-create-hint'));
+    if (device) {
+      // 面A A5：远端创建中 = spinner + 四步静态说明 chips。🔴 诚实边界：后端目前是
+      // 单帧终态（projectCreateResult），无逐步事件——chips 是静态说明不是实时进度
+      // （真步进 = 二期 projectCreateProgress 广播，本批不新增后端面）。设备/路径
+      // 控件随提交一并禁用（防中途改语义）。
+      devBtn.setAttribute('disabled', 'disabled');
+      pickEl.setAttribute('disabled', 'disabled');
+      hint.innerHTML =
+        '<span class="creating-row">' +
+          '<svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>' +
+          '<span class="creating-txt"></span>' +
+          '<span class="step"><span class="step-n">1</span><span class="step-t"></span></span><span class="step-sep">→</span>' +
+          '<span class="step"><span class="step-n">2</span><span class="step-t"></span></span><span class="step-sep">→</span>' +
+          '<span class="step"><span class="step-n">3</span><span class="step-t"></span></span><span class="step-sep">→</span>' +
+          '<span class="step"><span class="step-n">4</span><span class="step-t"></span></span>' +
+        '</span>';
+      hint.querySelector('.creating-txt').textContent = t('project.createRemotePending', { device: device.name });
+      const stepNames = [t('project.createStep1'), t('project.createStep2'), t('project.createStep3'), t('project.createStep4')];
+      hint.querySelectorAll('.step-t').forEach((el, i) => { el.textContent = stepNames[i] || ''; });
+    } else {
+      hint.textContent = t('project.createPending');
+    }
+    let settled = false;
+    const finish = (msg) => {
+      if (settled) return;
+      settled = true;
+      unsub();
+      clearTimeout(timer);
+      if (msg?.ok) {
+        // Success: close without returning focus (the user decides the next
+        // step). The panel inserts the card via the existing `projectCreated`
+        // frame, which this file already subscribes to — no re-pull here.
+        closeProjectsCreateDialog(false);
+      } else {
+        // Failure is surfaced in place: the layer stays open and the entered
+        // values are kept, so the user can fix and retry (never a silent swallow).
+        showErrorResult(String(msg?.error || t('project.createFailGeneric')), device);
+        hint.textContent = '';
+        submitEl.removeAttribute('disabled');
+        devBtn.removeAttribute('disabled');
+        pickEl.removeAttribute('disabled');
+      }
+    };
+    const unsub = onMessage('projectCreateResult', finish);
+    const timer = setTimeout(() => finish(null), PROJECT_CREATE_ACK_TIMEOUT_MS);
+    // 面A A6（设计稿 §1.2）：本机提交**不带 device 键**（机制面缺省腿逐字节）；
+    // 远端提交 additive `device` = 设备 id（稳定标识，非显示名）。
+    sendWs({
+      type: 'projectCreate',
+      sessionId: state.activeSessionId,
+      workspace: pickedPath,
+      description: raw,
+      ...(device ? { device: device.id } : {}),
+    });
+  };
+
+  descEl.addEventListener('input', () => { clearError(); renderCount(); });
+  // ⑤ 中文输入收归（作者裁定 2026-09-12）：描述框是多行文本 ⇒ 必须绑组字登记。
+  bindImeGuard(descEl);
+  cancelEl.addEventListener('click', () => closeProjectsCreateDialog(true));
+  submitEl.addEventListener('click', submit);
+  pickEl.addEventListener('click', openPathPicker);
+  // 点遮罩空白 = 取消（沿 `workspacePicker.js:119` 既有范式）。
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) closeProjectsCreateDialog(true); });
+
+  // 窗口**捕获级** keydown（沿 `bgTaskOutputPopup.js:622-628`）：Esc 关层 + 焦点归还。
+  // 🔴 组字期间 Esc 交还输入法（不关层）——`isImeComposing` 是库内唯一判定源。
+  // 🔴 While this dialog is detached (the picker is in flight) it does not respond:
+  //   Esc then belongs to the picker (its own semantics), and this dialog's
+  //   escHandler closing the layer first would leave the picker host-less => bail out.
+  const escHandler = (e) => {
+    if (e.key !== 'Escape') return;
+    if (!overlay.isConnected) return;
+    if (isImeComposing(e, descEl)) return;
+    e.stopPropagation();
+    closeProjectsCreateDialog(true);
+  };
+  window.addEventListener('keydown', escHandler, true);
+
+  // devOutsideClose（面A）：层关闭时随层摘除（见 closeProjectsCreateDialog）。
+  createDialogCtx = { overlay, escHandler, trigger, devOutsideClose };
+  renderCount();
+  renderDeviceUI(); // 首开即渲染设备行（原实现首开空白、首次点击才填充——平级设计语言顺带补齐）
+  renderPath();
+  descEl.focus(); // 打开即聚焦描述文本域
+}
+
+// ── 迟到对账（2026-09-14 项目面板冷启动缺陷修复）───────────────────────────────
+// 缺陷（考古实测）：面板取数**只有**「打开面板」与「节点 WS 事件」两条触发，首取失败后
+// **没有任何恢复通道**——gateway 冷启动窗口内打开面板 ⇒ 落 error 态并驻留 60.0s 零自愈
+// （服务器已回来、WS 也已自动重连），只有用户「关面板重开」才恢复。
+// 本段给出两条**互相独立**的迟到对账通道（任一即可闭合窗口）：
+//   ① scheduleProjectsRetry：首取失败后按下面档位有界退避重拉（不依赖任何外部信号）；
+//   ② 文件尾 onReconnect：WS 重连时面板若非 ready 立即补一次（taskList.js 既有范式；
+//      原 flowMapTab 对照件随 per-project 视图停用退役，#1228 两裁②）。
+// 两条通道都复用下面 renderProjectsInto 的既有分支判定，**不新造状态、不改 empty/error
+// 判定**——空态与错误态依旧是两条独立分支，重试只是让「数据迟到」这件事能被再问一次。
+// 不掩盖失败：预算穷尽后仍停在 error 并保留原始原因（真有故障时错误态照旧驻留）。
+// 档位依据：实测冷启动窗口 boot ≈25.3s（证据 server-s2-restart.log）；若 10s 内穷尽，
+// 在「WS 被环境闸住」时无法自愈，故末两档放宽到 10s/20s（自首次失败起累计 ≈40s）。
+const PROJECT_RETRY_DELAYS_MS = [1000, 3000, 6000, 10000, 20000];
+let projectsRetryTimer = null;
+let projectsRetryAttempt = 0;
+
+/** 重试预算归零 + 摘掉在途定时器。触发点 = 用户动作（打开/重开面板）与 WS 重连
+ *  ——两者都表示「条件已变」，旧预算不再适用。 */
+function resetProjectsRetry() {
+  projectsRetryAttempt = 0;
+  if (projectsRetryTimer) { clearTimeout(projectsRetryTimer); projectsRetryTimer = null; }
+}
+
+/** 有界退避：首取失败后按 PROJECT_RETRY_DELAYS_MS 逐档重拉；穷尽即停在 error。 */
+function scheduleProjectsRetry(scroll) {
+  if (projectsRetryAttempt >= PROJECT_RETRY_DELAYS_MS.length) return;
+  const delay = PROJECT_RETRY_DELAYS_MS[projectsRetryAttempt++];
+  if (projectsRetryTimer) clearTimeout(projectsRetryTimer);
+  projectsRetryTimer = setTimeout(() => {
+    projectsRetryTimer = null;
+    // pane 已关（scroll 脱树）⇒ 停手：不让定时器在后台空转打 REST。
+    if (!scroll.isConnected) return;
+    if (scroll.dataset.projectsState === 'ready') return;
+    renderProjectsInto(scroll);
+  }, delay);
 }
 
 async function renderProjectsInto(scroll) {
@@ -57,208 +713,769 @@ async function renderProjectsInto(scroll) {
   }
   let projects;
   try {
-    projects = await fetchProjects();
+    // Only mounted projects are shown; the API retains its unmounted data for remount.
+    const raw = await fetchProjectsRaw();
+    projects = raw.projects;
   } catch (e) {
     if (stale()) return;
-    // 静默失败（旧行为：await 抛出 → 停在 loading，卡片数 0 且无任何提示）
-    // 改为显式错误态，可诊断、可断言。
-    scroll.dataset.projectsState = 'error';
-    scroll.innerHTML = `<div class="team-empty">
-      <div style="font:600 14px -apple-system;color:var(--color-text-muted)">${esc(t('project.loadFail'))}</div>
+    // 已有卡片 ⇒ **保留现列表**（一次刷新失败不该把可见列表换成错误页——兜底 C 的
+    // 低频重拉失败尤其不能毁掉用户正看的列表）；无卡片 ⇒ 显式错误态（可诊断可断言，
+    // 旧行为：await 抛出 → 停在 loading、卡片数 0 且无任何提示）。
+    if (!scroll.querySelector('.project-card')) {
+      scroll.dataset.projectsState = 'error';
+      scroll.innerHTML = `<div class="team-empty">
+      <div style="font:600 var(--ds-fs-subtitle) -apple-system;color:var(--color-text-muted)">${esc(t('project.loadFail'))}</div>
       <div class="hint">${esc(e?.message || '')}</div>
     </div>`;
+      // 迟到对账通道 ①：服务/网络恢复后自己把列表补上（不等用户动作、不等 WS）。
+      scheduleProjectsRetry(scroll);
+    }
     return;
   }
   if (stale()) return;
+  resetProjectsRetry(); // 取数成功（无论空态/就绪态）⇒ 本轮重试预算归零
   if (!projects || projects.length === 0) {
-    scroll.dataset.projectsState = 'empty';
-    scroll.dataset.projectCount = '0';
-    scroll.innerHTML = `<div class="team-empty">
-      <div style="font:600 14px -apple-system;color:var(--color-text-muted)">${esc(t('project.empty'))}</div>
-      <div class="hint">${esc(t('project.emptyHint'))}</div>
-    </div>`;
+    if (scroll.querySelector('.project-card')) {
+      // 名单变空但卡还在 ⇒ 逐卡定点退场（动画），最后一卡退完后由 afterCardsChanged
+      // 落空态——不在此刻用 innerHTML 把退场中的卡直接换掉。
+      scroll.dataset.projectsState = 'empty';
+      for (const card of projectCards(scroll)) startCardExit(scroll, card);
+    } else {
+      renderEmptyState(scroll);
+    }
     return;
   }
-  // 摘要逐项容错：单个项目的 flow-map 失败（未挂载/500）不得连累整列卡片
-  // （旧 Promise.all 一拒全拒 → 一个项目出错整页停在 loading）。
-  const summaries = await Promise.all(projects.map(async (p) => {
-    try { return summarize(await fetchFlowMap(p.name)); }
-    catch (_) { return null; }
-  }));
-  if (stale()) return;
   scroll.dataset.projectsState = 'ready';
-  scroll.dataset.projectCount = String(projects.length);
-  scroll.innerHTML = projects.map((p, i) => projectCardHtml(p, summaries[i])).join('');
-  bindProjectClicks(scroll);
+  // 名单差集 → 按名定点增删（🔴 不再全量 innerHTML 替换：那会吃掉动画，也换掉全部卡节点）。
+  reconcileProjectCards(scroll, projects);
+  // 面C：徽标显示名/离线态走花名册异步补写（reconcile 定点建卡后扫一遍）。
+  applyDevBadges(scroll);
+  // 摘要**渐进填充**（取证 §F-1 结构性发现）：不再 `Promise.all` 等全部 flow-map 到齐
+  // 才写第一笔 DOM——先按名单画全卡（名称/工作区即刻可见），摘要槽走骨架脉冲，
+  // 逐项目到齐后就地填入。单项目 flow-map 慢/悬挂只影响它自己的槽（旧实现会把整列
+  // 钉在旧内容上）。
+  for (const p of projects) loadCardSummary(scroll, p.name);
+}
+
+/** 卡节点集合（文档顺序）。 */
+function projectCards(scroll) {
+  return [...scroll.querySelectorAll('.project-card')];
+}
+
+/** 稳定卡（排除退场在途者）——用于名单比对、顺序锚点与计数。 */
+function stableCards(scroll) {
+  return projectCards(scroll).filter((el) => el.dataset.exiting !== '1');
+}
+
+/** 按名取卡（用遍历而非属性选择器：项目名可能含引号等选择器特殊字符）。 */
+function cardByName(scroll, name) {
+  if (!scroll || !name) return null;
+  return projectCards(scroll).find((el) => el.dataset.project === name) || null;
+}
+
+/** 清掉 loading / empty / error 占位件。 */
+function clearPlaceholders(scroll) {
+  for (const el of [...scroll.children]) {
+    if (!el.classList.contains('project-card')) el.remove();
+  }
+}
+
+/** 名单差集 → 按名定点增删（P3 硬判据）：
+ *  ① 新名单里没有的卡 → 退场 → 定点 remove；② 新名单里有而 DOM 里没有的 → 定点插入；
+ *  ③ 顺序漂移只搬动漂移的那张卡自身（身份/实例不变）。
+ *  其余卡片一律不重建：不进 innerHTML、不重绑事件（重绑会叠监听器）。 */
+function reconcileProjectCards(scroll, projects) {
+  // B3-2：名单差集重建（语言切换时还会整表重建）会摘掉/换掉卡内节点。卡内按钮
+  // 没有 id 也没有 data-focus-key ⇒ 走协议的第三级 DOM 路径（同形重建位序不变）。
+  return withFocusKey(scroll, () => reconcileProjectCardsInner(scroll, projects));
+}
+
+/** 卡阵差集重建本体（重渲保焦包装见 reconcileProjectCards）。 */
+function reconcileProjectCardsInner(scroll, projects) {
+  if (rebuildCardsOnce) {
+    // 语言切换一次性重建（见文末 locale-changed）：卡内文案（含 contentI18n 的项目名/
+    // 描述）必须整体重写，定点刷新覆盖不到全部静态标签 ⇒ 只此一路径允许重建，
+    // 且静默（不是增删事件，不播入场动画）。
+    rebuildCardsOnce = false;
+    for (const card of projectCards(scroll)) card.remove();
+  }
+  const wanted = new Set(projects.map((p) => p.name));
+  for (const card of projectCards(scroll)) {
+    if (!wanted.has(card.dataset.project)) startCardExit(scroll, card);
+  }
+  // 🔴 占位件（loading / empty / error）**无条件**清掉：它们是「列表尚未就绪」的替身，
+  // 不是列表内容——权威名单一到就必须让位，无论此刻 DOM 里有没有卡。
+  // 旧写法 `if (projectCards(scroll).length)` 只在**已有卡**时清：本批出口从
+  // `innerHTML = projects.map(...)`（全量替换，天然吃掉占位件）改为定点增删后，
+  // **首渲**（DOM 里 0 张卡、只有 loading 占位）走 clearPlaceholders 被整个跳过 ⇒
+  // 卡片随后替前插入，loading 节点作为兄弟**残留**（冷启动「加载项目…」常驻的根因；
+  // 同理「空态 → 有项目」转换会残留 `.team-empty`）。clearPlaceholders 只摘非
+  // `.project-card` 子节点，对退场在途的卡零影响 ⇒ 无条件调用安全且幂等。
+  clearPlaceholders(scroll);
+  let anchor = null;
+  for (const p of projects) {
+    let card = cardByName(scroll, p.name);
+    if (!card) card = insertProjectCard(scroll, p, anchor);
+    else if (prevStableCard(card) !== anchor) moveProjectCard(scroll, card, anchor);
+    anchor = card;
+  }
+  scroll.dataset.projectCount = String(stableCards(scroll).length);
+}
+
+/** 前一张「稳定」卡（跳过退场在途者）——顺序比对用，避免退场卡把邻卡误判成漂移。 */
+function prevStableCard(card) {
+  let el = card.previousElementSibling;
+  while (el && !(el.classList.contains('project-card') && el.dataset.exiting !== '1')) {
+    el = el.previousElementSibling;
+  }
+  return el;
+}
+
+/** 定点插入一张卡：只新建/插入该节点（邻卡位置变化交给 FLIP 过渡）。 */
+function insertProjectCard(scroll, p, anchor) {
+  const before = snapshotRects(projectCards(scroll));
+  const card = createProjectCard(p);
+  if (anchor && anchor.isConnected) anchor.after(card);
+  else scroll.prepend(card);
+  playFlip(before, { duration: PROJECT_FLIP_MS, easing: PROJECT_FLIP_EASE });
+  playCardEnter(card);
+  return card;
+}
+
+/** 定点搬动一张卡（顺序漂移修复）：身份/实例不变，位置变化由 FLIP 过渡。 */
+function moveProjectCard(scroll, card, anchor) {
+  const before = snapshotRects(projectCards(scroll));
+  if (anchor && anchor.isConnected) anchor.after(card);
+  else scroll.prepend(card);
+  playFlip(before, { duration: PROJECT_FLIP_MS, easing: PROJECT_FLIP_EASE });
+}
+
+/** 定点退场：施加退场类 → 动画结束（reduced-motion 为即时）→ remove + FLIP 衔接邻卡。
+ *  `data-exiting` 兼作幂等闸：同一张卡不会被二次退场（本页归档的回声帧 / 兜底重拉
+ *  与事件叠加时都靠它去重）。 */
+function startCardExit(scroll, card) {
+  if (!card || !card.isConnected || card.dataset.exiting === '1') return;
+  card.dataset.exiting = '1';
+  releaseCardFocus(card); // §F-3③：退场前把焦点移出（卡随后不可交互）
+  // 退场期对卡内全部交互件加闸（§F-3：`reminderRowRemove` 同款 pointer-events:none
+  // 由 CSS 承担；这里补键盘面 tabindex/marker，防 Tab 落进正在消失的卡）。
+  for (const el of card.querySelectorAll('button, a, [tabindex]')) {
+    el.setAttribute('tabindex', '-1');
+  }
+  const finish = () => {
+    if (!card.isConnected) return;
+    const before = snapshotRects(projectCards(scroll).filter((el) => el !== card));
+    card.remove(); // 定点移除：只摘这一张卡的节点
+    playFlip(before, { duration: PROJECT_FLIP_MS, easing: PROJECT_FLIP_EASE });
+    afterCardsChanged(scroll);
+  };
+  if (prefersReducedMotion()) { finish(); return; } // §F-3：降级 = 无动画 + 同步 remove()
+  card.classList.add('is-exiting');
+  const onEnd = (e) => {
+    // animationend 会从子元素冒泡（骨架脉冲也有 animation）⇒ 只认卡自身
+    if (e.target !== card) return;
+    card.removeEventListener('animationend', onEnd);
+    finish();
+  };
+  card.addEventListener('animationend', onEnd);
+  // 定时器兜底（动画被主题/降级规则覆盖时 animationend 不保证到达）
+  setTimeout(() => { card.removeEventListener('animationend', onEnd); finish(); },
+    PROJECT_CARD_EXIT_MS + 60);
+}
+
+/** 焦点移交（§F-3③）：焦点在退场卡内 ⇒ 移交下一张卡的项目标题，无下一张则移交容器。
+ *  （N2 project-tool 批 2026-10-06：面板手动卸载按钮随「被 Project 工具 unmount 面替代」
+ *  移除——原移交目标「下一张卡的归档按钮」随之改为本卡唯一交互件 .team-card-title。） */
+function releaseCardFocus(card) {
+  if (!card.contains(document.activeElement)) return;
+  const cards = projectCards(card.parentElement);
+  const idx = cards.indexOf(card);
+  const next =
+    cards.slice(idx + 1).find((c) => c.dataset.exiting !== '1')
+    || cards.slice(0, idx).reverse().find((c) => c.dataset.exiting !== '1');
+  const target = next?.querySelector('.team-card-title') || card.parentElement;
+  target?.focus?.();
+}
+
+/** 增删后的账目收口：计数 + 「最后一张卡也没了 ⇒ 落空态」（等退场在途者退完）。 */
+function afterCardsChanged(scroll) {
+  if (!scroll || !scroll.isConnected) return;
+  scroll.dataset.projectCount = String(stableCards(scroll).length);
+  const pendingExit = projectCards(scroll).some((el) => el.dataset.exiting === '1');
+  if (!stableCards(scroll).length && !pendingExit) renderEmptyState(scroll);
+}
+
+/** 空态（一键引导版，作者 2026-09-16 裁定方向 B · 仅预填）。
+ *  既有两行文案不动，其下 1 枚 CTA + 1 行披露注（点击只预填、不发送）。
+ *  材质不在此写——按现行单源 `.glass-control`（sapphire.css:147 基类 + `button.glass-control`
+ *  四态）；样式在 flowCss.js 限布局/排版。 */
+function renderEmptyState(scroll) {
+  scroll.dataset.projectsState = 'empty';
+  scroll.dataset.projectCount = '0';
+  scroll.innerHTML = `<div class="team-empty">
+      <div style="font:600 var(--ds-fs-subtitle) -apple-system;color:var(--color-text-muted)">${esc(t('project.empty'))}</div>
+      <div class="hint">${esc(t('project.emptyHint', rootNameParams()))}</div>
+      <button class="glass-control team-empty-cta" type="button" data-projects-empty-cta="1"><i data-lucide="message-circle"></i>${esc(t('project.emptyCta', rootNameParams()))}</button>
+      <div class="hint team-empty-cta-note">${esc(t('project.emptyCtaHint'))}</div>
+    </div>`;
+  bindEmptyCta(scroll);
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(scroll));
 }
 
-function projectCardHtml(p, summary) {
-  const running = summary?.running || 0;
-  const brief = summary?.notMounted ? t('project.notMounted') : (summary?.brief || t('project.idle'));
-  const summaryCls = running > 0 ? 'running' : '';
-  // 无节点 → 点进 Flow Map 无意义：title 不可点（无 data-open-flowmap）、灰显 + 「暂无节点」角标。
-  // summary 为 null = flow-map 拉取失败（状态未知）→ 保持可点，让用户进视图看错误态；
-  // 只有确认无节点（total === 0，含未挂载）才禁用。
-  const empty = summary !== null && (summary?.total ?? 0) === 0;
-  const titleOpenAttr = empty ? '' : ` data-open-flowmap="${esc(p.name)}"`;
-  const titleTooltip = empty ? t('project.noNodesHint', { name: p.name }) : t('project.openFlowMap', { name: p.name });
+// ── 已卸载分组 + 取消加载/重新加载（unmount-console 面板批 2026-11-02）─────────
+// 卸载后的项目在面板里有**可见去处**：列表尾部「已卸载」分组（灰态行 = 名字 +
+// 工作区 + 「重新加载」钮）。动作走与编排侧 Project 工具**同一条引擎通路**的
+// REST 单点（unmount = ProjectUnmount，remount = ProjectRemount）；WS 帧回声
+// （projectUnmounted / projectRemounted）驱动定点增删，零全量重渲。
+// 「取消加载」确认卡（作者令硬要求）：点按钮 → 先拉 /inflight 在飞计数 →
+// 确认卡如实展示（几条链/几个节点/几个会话）+ 后果文案（在飞停止 / 上下文消失 /
+// 不能派活 / 本地文件零删除）→ 确认才 POST。弹层复用既有 #delete-box
+// （window.__showConfirm，tone:'neutral'——卸载可逆有 remount，非 danger 红）。
+
+/** 卸载按钮图标 SVG——卡头 inline，不引新图标面。
+ *
+ * 🔴 图标语义修正（作者报障 2026-11-02「取消加载按钮怎么是一个 wifi？」）：
+ * 旧值 4 段圆弧 + 底点 = **WiFi 信号字形**（与 lucide `wifi` 逐 path 同形：
+ * M2 8.5a14.5… / M5 12.5a10… / M8.5 16a5… / M12 20h.01），把「网络连接」
+ * 语义挂到了「卸载」动作上——注释写的是 unplug，路径却是 wifi，名实不符。
+ * 换成语义正确的 **unplug**（插头自插座拔出：插脚 + 插座缺口，lucide 同名
+ * 图标同形），对应「取消加载 = 项目从上下文里拔出来，本地文件全部保留」的
+ * 真实语义。 */
+const UNMOUNT_BTN_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="m19 5 3-3"/><path d="m2 22 3-3"/>' +
+  '<path d="M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z"/>' +
+  '<path d="M7.5 13.5 10 11"/><path d="M10.5 16.5 13 14"/>' +
+  '<path d="m12 6 6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z"/></svg>';
+
+/** 「取消加载」确认卡：先拉在飞计数（失败 = 计 0 但文案如实声明），再走既有
+ *  #delete-box（tone:'neutral'）。确认后才发 POST——零确认零请求。 */
+async function openUnmountConfirm(name) {
+  let counts = null;
+  const res = await fetchProjectInflight(name).catch(() => null);
+  if (res && res.state === 'ok') counts = res.data || null;
+  const chains = Array.isArray(counts?.chains) ? counts.chains.length : 0;
+  const nodes = Array.isArray(counts?.runningNodes) ? counts.runningNodes.length : 0;
+  const sessions =
+    (Array.isArray(counts?.dispatcherSessions) ? counts.dispatcherSessions.length : 0) +
+    (Array.isArray(counts?.delegateSessions) ? counts.delegateSessions.length : 0);
+  const inflightLine = t('project.unmountInflight', {
+    chains: String(chains),
+    nodes: String(nodes),
+    sessions: String(sessions),
+  });
+  const message = `${inflightLine}\n${t('project.unmountConfirm', { name })}`;
+  const go = () => doUnmountProject(name);
+  if (typeof window.__showConfirm === 'function') {
+    window.__showConfirm(t('project.unmountTitle', { name }), message, go, {
+      tone: 'neutral',
+      confirmLabel: t('project.unmountConfirmGo'),
+    });
+  } else if (window.confirm?.(message)) {
+    go();
+  }
+}
+
+/** 执行卸载：POST 走引擎单点（先停飞→摘面→零删除）。成功态交给 projectUnmounted
+ *  帧回声（定点退场 + 落「已卸载」分组）；失败显式 toast（在飞排空未停完是可重试
+ *  失败，文案如实透传后端错误）。 */
+async function doUnmountProject(name) {
+  const res = await unmountProject(name);
+  if (res.state !== 'ok') {
+    const detail = res.state === 'http' ? String(res.data?.error || res.status) : 'network';
+    window.__showToast?.(t('project.unmountFail', { name, detail }), 'error');
+    // 失败回声兜底：若卸载其实已发生（帧丢失），下一次兜底重拉会纠正名单。
+    rerenderProjectsTab();
+  }
+}
+
+// ── 面C · 项目卡设备徽标（ui-device-faces 批 2026-10-10 · 设计稿 §3）────────────
+// 本机项目零徽标（无感缺省——存量行逐字节不变）；远端项目 title 旁一枚 `.dev-badge`：
+// hard-drive 图形 + 设备显示名（花名册异步补写，失败回落 deviceId 直显）；离线设备
+// 追加琥珀点（`.warn-dot`，色 = 既有 --status-warn-icon token）+ `is-offline` 形。
+// 徽标是**只读元数据**显示面：不可点、无行为（入口仍是既有「在文件浏览器中打开」钮，
+// 面C 的行为补全 = 该钮 additive `data-open-device`，见 bindProjectCard）。
+
+/** 行.origin → {device, path} | null（畸形/缺失 = null；设备 id 必须非空字符串）。 */
+function projectOriginOf(row) {
+  const o = row?.origin;
+  if (!o || typeof o !== 'object') return null;
+  const device = typeof o.device === 'string' ? o.device.trim() : '';
+  const path = typeof o.path === 'string' ? o.path : '';
+  return device ? { device, path } : null;
+}
+
+/** 徽标行判定（台账 #920 2026-10-27 · 多设备交互上下文补全）：
+ *  origin 在场（跨设备创建的项目）→ origin 原样；origin 缺席而 #913 的 `device`
+ *  存储值在（本机直建、effectiveDevice 回填/标注的行——GET /api/projects 与
+ *  projectCreated 帧自 2026-10-26 起 additive 携带）⇒ {device, path:''} 兜底，
+ *  让这类远端项目同样拿到徽标（title 无 path 段，花名册补名同面）。
+ *  `self`/`local`/空 = 本机 ⇒ null（「本机项目零徽标」缺省纪律逐字不变）。 */
+function projectBadgeOf(row) {
+  const origin = projectOriginOf(row);
+  if (origin) return origin;
+  const dev = typeof row?.device === 'string' ? row.device.trim() : '';
+  if (!dev || dev === 'self' || dev === 'local') return null;
+  return { device: dev, path: '' };
+}
+
+/** hard-drive 图形（与 explorer.js 的 chip 同源描边；此处内联一份避免静态依赖）。 */
+const DEV_BADGE_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<line x1="22" x2="2" y1="12" y2="12"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>';
+
+/** 徽标 markup（title = device id + origin path 元数据，测试断言 title 含 id）。 */
+function devBadgeHtml(origin) {
+  if (!origin) return '';
+  return `<span class="dev-badge" data-device-id="${esc(origin.device)}" data-origin-path="${esc(origin.path)}">${DEV_BADGE_SVG}<span class="dev-badge-nm">${esc(origin.device)}</span></span>`;
+}
+
+/** 花名册补写（动态 import deviceRoster.js——与 explorer chip 同款异步补名 + 离线态）。
+ *  扫描 scroll 内全部 `.dev-badge`，就绪后定点写显示名 / 琥珀点 / title。 */
+function applyDevBadges(scroll) {
+  if (!scroll) return;
+  import('./deviceRoster.js').then(async ({ resolveDeviceName, isDeviceOnline }) => {
+    const badges = [...scroll.querySelectorAll('.dev-badge[data-device-id]')];
+    await Promise.all(badges.map(async (badge) => {
+      const id = badge.getAttribute('data-device-id') || '';
+      if (!id) return;
+      const [name, online] = await Promise.all([resolveDeviceName(id), isDeviceOnline(id)]);
+      if (!badge.isConnected) return;
+      const nm = badge.querySelector('.dev-badge-nm');
+      if (nm && name) nm.textContent = name;
+      // 台账 #920：origin 兜底徽标（#913 device 存储值）无 path 段 ⇒ title 走
+      // 无 path 专用键（不产「路径 」空尾巴）。
+      const path = badge.getAttribute('data-origin-path') || '';
+      const titleKey = online === false
+        ? (path ? 'project.devBadgeOfflineTitle' : 'project.devBadgeDeviceOfflineTitle')
+        : (path ? 'project.devBadgeTitle' : 'project.devBadgeDeviceTitle');
+      badge.title = t(titleKey, { device: id, path });
+      badge.classList.toggle('is-offline', online === false);
+      const dotNeeded = online === false && !badge.querySelector('.warn-dot');
+      if (dotNeeded) {
+        const dot = document.createElement('span');
+        dot.className = 'warn-dot';
+        badge.prepend(dot);
+      }
+      if (online !== false) badge.querySelector('.warn-dot')?.remove();
+    }));
+  }).catch(() => {}); // 花名册不可用 = 退化为 deviceId 直显（不缓存失败，见 deviceRoster）
+}
+
+/** 单卡模板。摘要槽**初始为骨架态**（渐进填充），title 初始按「摘要未知」处理（可点）；
+ *  真实态由 applyCardSummary / applyCardEmptyState 定点写入（不重建节点）。
+ *  面C：origin 在场 ⇒ title 旁插 `.dev-badge`；工作区行 open 钮 additive
+ *  `data-open-device`（bindProjectCard 据此把远端根交给 explorer 的 device 腿）。
+ *  台账 #920（2026-10-27）：徽标源改走 [[projectBadgeOf]]（origin 缺席时 `device`
+ *  存储值兜底，本机行仍零徽标）；描述行**恒渲染**（空 = 占位文案）+ 行尾一枚
+ *  编辑钮——面板侧描述写穿入口（POST description，见 startDescriptionEdit）。 */
+function projectCardHtml(p) {
+  const name = p.name;
+  const badgeOf = projectBadgeOf(p);
+  const badge = devBadgeHtml(badgeOf);
+  const desc = typeof p.description === 'string' ? p.description : '';
   return `
-    <div class="team-card project-card${empty ? ' is-empty' : ''}" data-project="${esc(p.name)}" data-running="${running}" ${empty ? 'data-empty-flowmap="1"' : ''}>
+    <div class="team-card project-card" data-project="${esc(name)}" data-running="0">
       <div class="team-card-header">
-        <div class="team-card-title${empty ? ' empty' : ''}"${titleOpenAttr} title="${esc(titleTooltip)}">${esc(p.name)}${empty ? `<span class="project-empty-tag">${esc(t('project.noNodes'))}</span>` : ''}</div>
-        <div class="team-card-summary ${summaryCls}"><span class="dot"></span>${esc(brief)}</div>
-        <button class="project-archive-btn" data-archive-project="${esc(p.name)}" title="${esc(t('project.archive'))}" aria-label="${esc(t('project.archiveTitle', { name: p.name }))}"><i data-lucide="archive"></i></button>
+        <!-- 入口键（project 域 Flow Map 提示键）已随晨裁②退役照荐落（§3.3 在案）：卡标题
+             不再挂「打开 Flow Map」提示（点击改指行为保留——delegate-chain 链视图，#1228 两裁②）。 -->
+        <div class="team-card-title"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span>${badge}<span class="project-empty-tag" data-cv-hint="empty" hidden>${esc(t('project.noNodes'))}</span></div>
+        <div class="team-card-summary is-pending"><span class="dot"></span><span class="project-summary-skeleton" aria-hidden="true"></span></div>
+        <button class="project-unmount-btn" data-unmount-project="${esc(name)}" title="${esc(t('project.unmountBtn'))}" aria-label="${esc(t('project.unmountBtn'))} ${esc(name)}" aria-haspopup="dialog">${UNMOUNT_BTN_SVG}</button>
       </div>
       <div class="project-fields">
         <div class="project-field" title="${esc(p.workspace)}">
           <span class="project-field-label">${esc(t('project.workspace'))}</span>
           <span class="project-field-value mono">${esc(p.workspace)}</span>
-          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}" title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}"><i data-lucide="folder-open"></i></button>
+          <button class="project-open-btn" data-open-workspace="${esc(p.workspace || '')}"${badgeOf ? ` data-open-device="${esc(badgeOf.device)}"` : ''} title="${esc(t('project.openWorkspace'))}" aria-label="${esc(t('project.openWorkspace'))}" aria-haspopup="menu" aria-expanded="false"><i data-lucide="folder-open"></i><span aria-hidden="true">⌄</span></button>
         </div>
         <div class="project-field">
           <span class="project-field-label">${esc(t('project.agentFileLabel'))}</span>
-          <button class="project-link-btn" data-open-agent="${esc(p.name)}">${esc(t('project.agentFileOpen'))}</button>
+          <button class="project-link-btn" data-open-agent="${esc(name)}">${esc(t('project.agentFileOpen'))}</button>
         </div>
         <div class="project-field">
           <span class="project-field-label">${esc(t('project.runningAgents'))}</span>
-          <span class="project-field-value tabular" data-running-count="${esc(p.name)}">${running}</span>
+          <span class="project-field-value tabular" data-running-count="${esc(name)}">0</span>
         </div>
-        ${p.description ? `<div class="project-field"><span class="project-field-value desc">${esc(p.description)}</span></div>` : ''}
+        <div class="project-field project-desc-row">
+          <span class="project-field-label">${esc(t('project.descLabel'))}</span>
+          <span class="project-field-value desc${desc ? '' : ' is-empty'}" data-desc-value="${esc(name)}" data-desc-raw="${esc(desc)}">${desc ? esc(contentText('project', name, 'desc', desc)) : esc(t('project.descEmpty'))}</span>
+          <button class="project-desc-edit-btn" data-edit-desc="${esc(name)}" title="${esc(t('project.descEdit'))}" aria-label="${esc(t('project.descEdit'))}"><i data-lucide="pencil"></i></button>
+        </div>
       </div>
     </div>`;
 }
 
-function bindProjectClicks(scroll) {
-  scroll.querySelectorAll('[data-open-flowmap]').forEach((el) => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      // 同标签页切换：不开新标签页，当前 projects 标签页就地显示 Flow Map 视图
-      // （左上角「返回项目列表」回到列表视图）。
-      openFlowMapInPlace(el.getAttribute('data-open-flowmap') || '');
-    });
-  });
-  scroll.querySelectorAll('[data-open-agent]').forEach((el) => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openAgentFile(el.getAttribute('data-open-agent') || '');
-    });
-  });
-  scroll.querySelectorAll('[data-open-workspace]').forEach((el) => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      // §3.5「在文件浏览器中打开」——把侧边栏文件浏览器的根切到工作区并展开面板。
-      // 动态 import：projectTab 是 Canvas 标签页模块，静态依赖 explorer 会把
-      // 文件树拉进项目面板的首屏加载路径（且 explorer → activityBar → ... 更容易
-      // 绕出循环依赖）。
-      const path = el.getAttribute('data-open-workspace') || '';
-      if (!path) return;
-      import('./explorer.js').then(({ openExplorerAt }) => {
-        openExplorerAt(path);
-        window.__showToast?.(t('project.workspaceOpened', { path }), 'info');
-      }).catch(() => window.__showToast?.(t('project.openWorkspaceFail'), 'error'));
-    });
-  });
-  scroll.querySelectorAll('[data-archive-project]').forEach((el) => {
-    el.addEventListener('click', (e) => {
-      e.stopPropagation();
-      archiveProject(el.getAttribute('data-archive-project') || '');
-    });
-  });
+/** 建卡元素（含该卡自身的图标与事件绑定——按卡一次，不重绑）。 */
+function createProjectCard(p) {
+  const wrap = document.createElement('div');
+  wrap.innerHTML = projectCardHtml(p).trim();
+  const card = wrap.firstElementChild;
+  if (!card) return null;
+  bindProjectCard(card);
+  if (selectedProjectApp !== 'builtin') updateProjectOpenIcon(card.querySelector('.project-open-btn'));
+  import('./utils.js').then(({ createIconsIn }) => createIconsIn(card));
+  return card;
 }
 
-/** 归档项目（迁移方案 v2 §6.1）：显式人工动作——确认弹层（防误触，复用
- *  window.__showConfirm 既有确认范式）→ POST /api/projects/<name>/archive →
- *  列表重渲（后端 ProjectStore.list 源头过滤归档项，卡片即时消失，无需刷新页面，
- *  对齐 WS 事件驱动的 rerenderProjectsTab 既有刷新机制）。
- *  零删除零移动：仅 project.json 打归档标记，workspace 与定义文件全部保留。
- *  tone:'neutral'——归档可逆（可取消归档），确认钮不用 danger 红。 */
-function archiveProject(name) {
-  if (!name) return;
-  window.__showConfirm?.(
-    t('project.archiveTitle', { name }),
-    t('project.archiveConfirm', { name }),
-    async () => {
-      try {
-        const r = await fetch(`${API.projects}/${encodeURIComponent(name)}/archive`, {
-          method: 'POST',
-          headers: authHeaders(),
-        });
-        if (!r.ok) throw new Error(`archive ${r.status}`);
-        window.__showToast?.(t('project.archiveDone', { name }), 'success');
-        rerenderProjectsTab();
-      } catch (e) {
-        window.__showToast?.(t('project.archiveFail', { name }), 'error');
-      }
-    },
-    { tone: 'neutral' }
-  );
-}
-
-/** 同标签页进入 Flow Map 视图：不新开标签页，当前 projects 标签页就地切换。
- *  pane 结构：.flowmap-nav-bar（左上角「← 项目名」单元素返回入口，点击回列表；
- *  右侧 .flowmap-summary 摘要槽——2026-09-06 顶栏合并批，两行并一行，摘要内容由
- *  flowMapTab.renderFlowMap/renderFlowMapDiff 按 pane 口径查找写入）
- *  + .flowmap-view-body（Flow Map 渲染体）。
- *  Flow Map 的 fetch/渲染/TTL 由 flowMapTab 负责（renderFlowMapInto），这里只管
- *  视图骨架与返回导航；body 挂 .flowmap-view-body 类供 flowMapTab 的 TTL ticker 定位。
- *  highlightNodeId：渲染完成后滚动定位并高亮该节点（任务列表节点条目点击跳转）。
- *  同项目视图已打开时走快速路径：不重建 pane DOM（轨道动画不被打断），仅重渲 + 高亮。 */
-function openFlowMapInPlace(projectName, highlightNodeId) {
-  if (!projectName) return;
-  openTab('projects', t('project.title'), { type: 'projects', closable: true });
-  const pane = getTabPane('projects');
-  if (!pane) return;
-  const sameView = pane.dataset.projectsView === 'flow-map'
-    && pane.dataset.flowMapProject === projectName;
-  if (!sameView) {
-    ensureFlowCss();
-    pane.dataset.projectsView = 'flow-map';
-    pane.dataset.flowMapProject = projectName;
-    pane.innerHTML = `
-      <div class="flowmap-nav-bar">
-        <button class="flowmap-back-btn" data-back-to-projects type="button" title="${esc(projectName)}" aria-label="${esc(t('project.backToProjects'))}">
-          <i data-lucide="arrow-left"></i><span class="flowmap-back-name">${esc(projectName)}</span>
-        </button>
-        <span class="flowmap-summary flowmap-nav-summary" aria-live="polite"></span>
-      </div>
-      <div class="flowmap-view-body" data-fm-project="${esc(projectName)}"></div>`;
-    pane.querySelector('[data-back-to-projects]').addEventListener('click', (e) => {
-      e.stopPropagation();
-      showProjectsList();
-    });
-    import('./utils.js').then(({ createIconsIn }) => createIconsIn(pane));
+/** 摘要三态定点写入（只写该卡的摘要槽与运行数/可点性，不触碰其他卡）：
+ *  - `pending`：骨架脉冲（flow-map 在途，§F 1.2s；判据 = 尚未知有无节点 ⇒ title 保持可点）
+ *  - `ok`     ：真实摘要（running 数 / brief / 是否无节点）
+ *  - `unknown`：flow-map 拉取失败（状态未知）⇒ 保持可点（原语义：让用户进视图看错误态）。 */
+function applyCardSummary(card, state, summary) {
+  if (!card || !card.isConnected) return;
+  const running = state === 'ok' ? (summary?.running || 0) : 0;
+  card.dataset.running = String(running);
+  const count = card.querySelector('[data-running-count]');
+  if (count) count.textContent = String(running);
+  const slot = card.querySelector('.team-card-summary');
+  if (slot) {
+    slot.classList.toggle('running', running > 0);
+    slot.classList.toggle('is-pending', state === 'pending');
+    if (state === 'pending') {
+      slot.innerHTML = '<span class="dot"></span><span class="project-summary-skeleton" aria-hidden="true"></span>';
+    } else {
+      const brief = state === 'ok'
+        ? (summary?.notMounted ? t('project.notMounted') : (summary?.brief || t('project.idle')))
+        : t('project.idle');
+      slot.innerHTML = `<span class="dot"></span>${esc(brief)}`;
+    }
   }
-  ensureFlowCss(); // same-view 快速路径（如 tab 恢复后直接跳转）也要保证样式在
-  renderFlowMapInto(pane.querySelector('.flowmap-view-body'), projectName,
-    { highlightNodeId: highlightNodeId || '' });
+  if (state === 'pending') return; // 在途：不判定「无节点」，title 保持可点
+  // 无节点（total === 0，含未挂载）⇒ title 不可点 + 灰显 + 「暂无节点」角标；
+  // summary 为 null（拉取失败）⇒ 状态未知 ⇒ 保持可点。
+  applyCardEmptyState(card, state === 'ok' && summary !== null && (summary?.total ?? 0) === 0);
 }
 
-/** 任务列表节点条目点击跳转入口（taskList.js 动态 import）：打开（或聚焦）某项目
- *  的 Flow Map 就地视图并高亮该节点。 */
-export function openProjectFlowMapAt(projectName, nodeId) {
-  openFlowMapInPlace(projectName, nodeId);
+/** title 可点性/空态角标定点切换（原模板里的 `empty` 分支现在按摘要到达时刻补写）。 */
+function applyCardEmptyState(card, empty) {
+  card.classList.toggle('is-empty', empty);
+  if (empty) card.setAttribute('data-empty-flowmap', '1');
+  else card.removeAttribute('data-empty-flowmap');
+  const title = card.querySelector('.team-card-title');
+  if (!title) return;
+  title.classList.toggle('empty', empty);
+  // Project titles no longer open the retired panorama.
+  title.removeAttribute('title');
+  const tag = title.querySelector('.project-empty-tag');
+  if (tag) tag.hidden = !empty;
 }
 
-/** 返回项目列表：重置视图状态并重渲列表（projects 标签页同页切换回列表视图）。 */
-function showProjectsList() {
-  const pane = getTabPane('projects');
-  if (!pane) return;
-  openProjectTab();
+/** 单卡摘要取数 + 定点填充（渐进填充；失败只影响该卡槽）。 */
+function loadCardSummary(scroll, name) {
+  if (!name) return;
+  const seq = renderSeq;
+  fetchFlowMap(name)
+    .then((fm) => {
+      if (seq !== renderSeq) return;
+      applyCardSummary(cardByName(scroll, name), 'ok', summarize(fm));
+    })
+    .catch(() => {
+      if (seq !== renderSeq) return;
+      applyCardSummary(cardByName(scroll, name), 'unknown', null);
+    });
 }
+
+/** 入场（220ms 淡入 + 2px 上浮）+ 一次性强调环（900ms 后摘除）+ 屏幕阅读器「新」标记。
+ *  reduced-motion（§F-3）：无动画 + 静态环保持 ~2s（「哪张新」仍可判读，语义完整）。 */
+function playCardEnter(card) {
+  if (!card) return;
+  const reduced = prefersReducedMotion();
+  const header = card.querySelector('.team-card-header');
+  let mark = null;
+  if (header) {
+    mark = document.createElement('span');
+    mark.className = 'project-new-mark';
+    mark.textContent = t('project.new');
+    header.insertBefore(mark, header.firstChild);
+  }
+  card.classList.add('is-new');
+  if (!reduced) card.classList.add('is-entering');
+  setTimeout(() => {
+    card.classList.remove('is-new');
+    card.classList.remove('is-entering');
+    mark?.remove();
+  }, reduced ? PROJECT_NEW_EMPHASIS_REDUCED_MS : PROJECT_NEW_EMPHASIS_MS);
+}
+
+let selectedProjectApp = 'builtin';
+let selectedProjectIcon = '';
+const projectIconCache = new Map();
+async function projectAppIcon(app) {
+  if (!app.icon) return '';
+  if (!projectIconCache.has(app.icon)) {
+    projectIconCache.set(app.icon, fetch(app.icon, { headers: authHeaders() })
+      .then(response => response.ok ? response.blob() : Promise.reject())
+      .then(blob => URL.createObjectURL(blob)).catch(() => ''));
+  }
+  return projectIconCache.get(app.icon);
+}
+function updateProjectOpenIcon(button) {
+  const existing = button.querySelector('.project-open-current-icon, svg, i[data-lucide]');
+  if (selectedProjectApp === 'builtin') {
+    if (!existing || existing.classList.contains('project-open-current-icon')) {
+      existing?.remove();
+      const icon = document.createElement('i'); icon.dataset.lucide = 'folder-open';
+      button.prepend(icon);
+      import('./utils.js').then(({ createIconsIn }) => createIconsIn(button));
+    }
+  } else {
+    existing?.remove();
+    if (selectedProjectIcon) {
+      const image = document.createElement('img'); image.className = 'project-open-current-icon';
+      image.alt = ''; image.src = selectedProjectIcon; image.onerror = () => image.remove();
+      button.prepend(image);
+    }
+  }
+}
+let closeProjectOpenMenu = () => {};
+async function showProjectOpenMenu(button, name) {
+  closeProjectOpenMenu();
+  const path = button.getAttribute('data-open-workspace') || '';
+  if (!path) return;
+  const device = button.getAttribute('data-open-device') || '';
+  let apps = [];
+  if (!device) {
+    try {
+      const response = await fetch('/api/project-open-apps', { headers: authHeaders() });
+      if (response.ok) apps = (await response.json()).apps || [];
+    } catch (_) { /* Built-in remains available offline. */ }
+  }
+  const menu = document.createElement('div');
+  menu.className = 'project-open-menu nf-glass';
+  menu.setAttribute('role', 'menu');
+  const options = [{ id: 'builtin', label: '内置' }, ...apps];
+  await Promise.all(apps.map(async app => { app.iconUrl = await projectAppIcon(app); }));
+  for (const app of options) {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(app.id === selectedProjectApp));
+    item.innerHTML = `<span class="project-open-app-icon"></span><span>${esc(app.label)}</span><span aria-hidden="true">${app.id === selectedProjectApp ? '✓' : ''}</span>`;
+    if (app.iconUrl) {
+      const image = document.createElement('img'); image.src = app.iconUrl; image.alt = '';
+      image.onerror = () => image.remove(); item.firstElementChild.append(image);
+    } else if (app.id === 'builtin') {
+      item.firstElementChild.innerHTML = '<i data-lucide="folder-open"></i>';
+      import('./utils.js').then(({ createIconsIn }) => createIconsIn(item));
+    }
+    item.addEventListener('click', async () => {
+      closeProjectOpenMenu();
+      try {
+        if (app.id === 'builtin') {
+          const { openExplorerAt } = await import('./explorer.js');
+          openExplorerAt(path, device || undefined);
+        } else {
+          const response = await fetch(`/api/projects/${encodeURIComponent(name)}/open-in-app`, {
+            method: 'POST', headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path, app: app.id })
+          });
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || 'Open failed');
+        }
+        selectedProjectApp = app.id;
+        selectedProjectIcon = app.iconUrl || '';
+        document.querySelectorAll('.project-open-btn').forEach(updateProjectOpenIcon);
+      } catch (error) { window.__showToast?.(error.message || t('project.openWorkspaceFail'), 'error'); }
+    });
+    menu.append(item);
+  }
+  closeProjectOpenMenu = openDropdownMenu(button, menu);
+}
+
+/** 单卡事件绑定（随卡生命周期，一次）。
+ *  title 的点击**总是**绑定，命中与否由 `data-open-flowmap` 在场判定——定点刷新下
+ *  卡的「无节点」态会随后到达的摘要改变，按属性选择器择时绑定会漏/重。 */
+function bindProjectCard(card) {
+  mountProjectWorkspaces(card, card.dataset.project);
+  card.querySelector('[data-open-agent]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openAgentFile(e.currentTarget?.getAttribute('data-open-agent') || '');
+  });
+  card.querySelector('[data-open-workspace]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    showProjectOpenMenu(e.currentTarget, card.dataset.project || '');
+  });
+  // 台账 #920（2026-10-27）：描述行编辑钮 —— 面板侧写穿入口（POST /api/projects/
+  // <name>/description；单点 = nodeData.updateProjectDescription）。保存成功由
+  // applyProjectDescription 定点写回本卡（WS 帧回声对同值幂等写零感）。
+  card.querySelector('[data-edit-desc]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    startDescriptionEdit(card);
+  });
+  // unmount-console 面板批 2026-11-02：「取消加载」钮 —— 确认卡（含在飞计数）→
+  // 确认才 POST /api/projects/<name>/unmount（引擎单点 = ProjectUnmount，与编排侧
+  // Project 工具同一通路；先停飞→摘面→零工作区删除）。卸载回声 = projectUnmounted 帧。
+  card.querySelector('[data-unmount-project]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openUnmountConfirm(card.dataset.project || '');
+  });
+  // N2 project-tool 批（2026-10-06）：原 `[data-archive-project]` 手动卸载按钮随
+  // 「面板手动卸载被工具面替代」移除；本批（作者令 2026-11-02）面板卸载入口以
+  // 「取消加载」钮回归（语义与工具面同路——见上）。REST POST /projects/<name>/archive
+  // 保留（软下线档现语义不动），仍无面板入口。
+}
+
+// ── 描述行编辑（台账 #920 2026-10-27 · 面板侧描述写穿的交互面）──────────────────
+// 就地编辑（不弹层）：值槽 → textarea + 保存/取消，Esc = 取消。写入走
+// updateProjectDescription 三态（ok / http / network）；成功即定点写回 + toast，
+// 失败保持编辑器打开（用户输入不丢）+ 错误 toast。幂等腿（unchanged）静默收编辑器。
+// 🔴 零全量重渲：所有 DOM 变更都定点在本卡的描述行内。
+
+/** 描述值槽定点写（保存成功与 projectDescriptionUpdated 帧共用面）。 */
+function applyProjectDescription(card, description) {
+  if (!card || !card.isConnected) return;
+  const slot = card.querySelector('[data-desc-value]');
+  if (!slot) return;
+  const desc = typeof description === 'string' ? description : '';
+  slot.dataset.descRaw = desc;
+  const name = card.dataset.project || '';
+  slot.textContent = desc ? contentText('project', name, 'desc', desc) : t('project.descEmpty');
+  slot.classList.toggle('is-empty', !desc);
+}
+
+/** 收起编辑器（恢复值槽可见性；DOM 只增删编辑器节点本体）。 */
+function closeDescriptionEditor(card, editor) {
+  editor?.remove();
+  delete card.dataset.descEditing;
+  const slot = card.querySelector('[data-desc-value]');
+  if (slot) slot.hidden = false;
+}
+
+/** 进入就地编辑。幂等闸 = `data-desc-editing`（同卡不叠第二份编辑器）。 */
+function startDescriptionEdit(card) {
+  if (!card || !card.isConnected || card.dataset.descEditing === '1') return;
+  const name = card.dataset.project || '';
+  const slot = card.querySelector('[data-desc-value]');
+  if (!slot) return;
+  const raw = slot.dataset.descRaw || '';
+  card.dataset.descEditing = '1';
+  slot.hidden = true;
+
+  const editor = document.createElement('div');
+  editor.className = 'project-desc-editor';
+  const ta = document.createElement('textarea');
+  ta.className = 'project-desc-input modal-input';
+  ta.rows = 3;
+  ta.value = raw;
+  ta.placeholder = t('project.descPlaceholder');
+  const acts = document.createElement('div');
+  acts.className = 'project-desc-acts';
+  const save = document.createElement('button');
+  save.type = 'button';
+  save.className = 'glass-control project-desc-save';
+  save.textContent = t('project.descSave');
+  const cancel = document.createElement('button');
+  cancel.type = 'button';
+  cancel.className = 'project-desc-cancel';
+  cancel.textContent = t('project.descCancel');
+  acts.append(save, cancel);
+  editor.append(ta, acts);
+  // 插在描述行之后（不进 .project-field 行内——编辑态比单行高，行内会撑破栅格）。
+  slot.closest('.project-field')?.after(editor);
+  // 编辑器内任何点击不吃到面板/卡级交互（与卡内其他钮同纪律）。
+  editor.addEventListener('click', (e) => e.stopPropagation());
+  ta.focus();
+
+  const onCancel = () => closeDescriptionEditor(card, editor);
+  cancel.addEventListener('click', onCancel);
+  ta.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.stopPropagation(); onCancel(); }
+  });
+  save.addEventListener('click', async () => {
+    const next = ta.value;
+    save.disabled = true;
+    cancel.disabled = true;
+    try {
+      const { updateProjectDescription } = await import('./nodeData.js');
+      const res = await updateProjectDescription(name, next);
+      if (res.state === 'ok') {
+        const unchanged = res.data?.unchanged === true;
+        closeDescriptionEditor(card, editor);
+        applyProjectDescription(card, next);
+        if (!unchanged) window.__showToast?.(t('project.descSaved', { name }), 'info');
+      } else {
+        save.disabled = false;
+        cancel.disabled = false;
+        window.__showToast?.(t('project.descSaveFail', {
+          detail: res.state === 'http' ? String(res.status) : 'network',
+        }), 'error');
+      }
+    } catch (_) {
+      save.disabled = false;
+      cancel.disabled = false;
+      window.__showToast?.(t('project.descSaveFail', { detail: 'network' }), 'error');
+    }
+  });
+}
+
+// ── 空态 CTA：一键引导（方向 B · 行为 = 仅预填）────────────────────────────────
+// 作者卡裁定（2026-09-16）：空态给「一键引导」；**行为硬约束 = 仅预填**——把预填文案
+// 写进主输入框 + 聚焦该输入框；🔴 禁自动发送、🔴 禁走 `injectUserMessage`（等价判据 =
+// 点击后零网络请求、零消息产生）。落点说明：`#input` 是 index.html:276 的静态主输入框，
+// 与 main.js:225 交给 ChatView('primary') 的 `dom.input` 是**同一个元素**，故本文件不需要
+// 新增任何输入模块出口。唯一副作用通道 = 写值后派发一次冒泡 `input` 事件，交给输入模块
+// **既有**的两条监听（input.js 的 auto-grow 高度自适应、活动视图锚定 setActiveView）——
+// 本分支零新增监听、零新增网络调用、不触碰任何发送路径。文案全部来自 i18n 键。
+
+/** 绑定空态 CTA 的点击（单枚按钮，就地绑定）。 */
+function bindEmptyCta(scroll) {
+  scroll.querySelectorAll('[data-projects-empty-cta]').forEach((el) => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      prefillProjectPrompt();
+    });
+  });
+}
+
+/** 把预填指令写进主输入框并聚焦（🔴 只写值 + 聚焦，不发送）。
+ *  @param {string=} text — 预填正文；缺省 = 既有空态 CTA 文案（`project.emptyPrefill`），
+ *    故空态 CTA 行为逐字不变。「+」钮弹层提交时传入带描述的模板
+ *    （`project.createPrefill`）——两者共用本函数，语义单点（§7.11 统一入口）。
+ *  @returns {boolean} false ⇒ 注入目标不可得（调用方须显式报错，禁静默吞）。 */
+export function prefillProjectPrompt(text) {
+  const input = /** @type {HTMLTextAreaElement | null} */ (document.getElementById('input'));
+  if (!input) return false;
+  input.value = text || t('project.emptyPrefill');
+  // 冒泡 input 事件 = 输入模块既有监听（auto-grow / 活动视图锚定）的入口；
+  // 不新增监听、不触发发送、不产生任何网络调用。
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.focus();
+  return true;
+}
+
+/** 🔴 N2 project-tool 批（2026-10-06）：`archiveProject` 整件随面板手动卸载面移除
+ *  ——原「确认弹层 → POST /api/projects/<name>/archive → 定点退场」的面板按钮已被
+ *  Project 工具 `action="unmount"` 工具面替代（范围句第 4 条；面板卸载入口自此不存在，
+ *  卸载回声 = projectUnmounted 帧，见文末订阅）。软下线 REST（POST archive）保留、
+ *  现语义不动（仅失去面板入口）；locale 键面清理不在本批写面（projcreate 批先例：
+ *  失去调用点的键保留，键 face 归清理批），`project.archive*` 五键调用点归零在案。 */
+
+/** 🔴 flowmaptab-retire（#1228 两裁② 停用清单面 1）：per-project Flow Map 就地视图
+ *  整块退役（原 openFlowMapInPlace / openProjectFlowMapAt / openProjectFlowMapChain /
+ *  showProjectsList 四件随分支删除）——projectsView='flow-map' 视图种类自此不再产生，
+ *  项目卡标题入口改指 delegate-chain 链视图（见 bindProjectCard）。渲染/高亮件由上游
+ *  a60af705d 单源拆出（fmNodeCard.js），本文件零重复拆出、零复制双权威；flowMapTab.js
+ *  留盘候 #1229 随 REST/WS 引擎面整体退役。 */
 
 /** 供 test hook / 多标签页刷新。节点事件突发时防抖，避免每事件重拉全部项目+flowmap。
- *  视图分流：就地 Flow Map 视图刷新该项目的图（不闪回列表）；列表视图刷新卡片。 */
+ *  视图分流：delegate-chain 视图按 pane 记忆的模式重渲（不闪回列表）；列表视图刷新卡片。 */
 let projectsRenderTimer = null;
 let renderSeq = 0;
+/** 一次性重建闸：仅语言切换置位（卡内文案必须整体重写，定点刷新覆盖不到全部静态
+ *  标签）；`reconcileProjectCards` 消费后立即清零 ⇒ 至多重建一轮。 */
+let rebuildCardsOnce = false;
 export function rerenderProjectsTab() {
   clearTimeout(projectsRenderTimer);
   projectsRenderTimer = setTimeout(() => {
     const pane = getTabPane('projects');
     if (!pane) return;
-    if (pane.dataset.projectsView === 'flow-map' && pane.dataset.flowMapProject) {
-      const body = pane.querySelector('.flowmap-view-body');
-      if (body) renderFlowMapInto(body, pane.dataset.flowMapProject);
+    // delegate-chain 视图分流（S10/S11 · #1228 换源接线批）：按 pane 记忆的模式
+    // 重渲链视图（数据面 = stub 读取口现读；不闪回列表）。
+    if (pane.dataset.projectsView === 'delegate-chain') {
+      import('./delegateChainView.js')
+        .then(({ rerenderDelegateChainPane }) => rerenderDelegateChainPane(pane))
+        .catch(() => {});
       return;
     }
     renderProjectsInto(ensureScroll(pane));
@@ -272,17 +1489,205 @@ window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => 
   if (e.detail?.id === 'projects') openProjectTab();
 });
 
-// WS 事件驱动：列表视图的项目卡片（运行数/摘要）防抖刷新。Flow Map 就地视图的
-// 节点事件刷新由 flowMapTab 的增量管线负责（事件 payload 直接 diff 渲染 + 过渡
-// 动画）——这里若也全量重拉会覆盖它的 DOM、杀掉动画，故视图分流时跳过 flow-map。
-import { onMessage } from './ws.js';
+// WS 事件驱动：列表视图的项目卡片（运行数/摘要）防抖刷新。delegate-chain 就地视图
+// 不动列表 DOM（其数据面 = stub 读取口，刷新走 rerenderProjectsTab 的视图分流）。
+// 本批起这里的「重拉」不再全量替换 DOM：`renderProjectsInto` 只做名单差集 + 定点增删
+// （同名单 = 零 DOM 变更，仅摘要槽定点刷新），故事件驱动的刷新不会吃掉任何动画。
+import { onMessage, onReconnect, sendWs } from './ws.js';
 function rerenderProjectsListView() {
   const pane = getTabPane('projects');
   if (!pane) return;
-  if (pane.dataset.projectsView === 'flow-map') return;
+  // 非列表视图（delegate-chain 链视图）不动列表 DOM。
+  if (pane.dataset.projectsView === 'delegate-chain') return;
   rerenderProjectsTab();
 }
 onMessage('nodeCreated', () => rerenderProjectsListView());
 onMessage('nodeUpdated', () => rerenderProjectsListView());
 onMessage('nodeCompleted', () => rerenderProjectsListView());
 onMessage('nodeRemoved', () => rerenderProjectsListView());
+
+// ── 项目级实时事件（方案 B · 裁定 (b)/(e)）──────────────────────────────────
+// 后端两处 emit（NodeTools 创建腿 / RestApiRoutes 归档腿）经既有 wsHub 广播面全连接
+// 下发；帧形 = projectCreated{project,row,mounted} / projectArchived{project,archivedAt}
+// （载荷逐字 §D-2）。帧无 sessionId ⇒ 必须在 ws.js 的 GLOBAL_MSG_TYPES 内，否则
+// 会被当成「无 sessionId 的会话内事件」而把 activeView 切到 primary（视图被抢走）。
+// 处理原则：**只做定点增删，不触发全量重拉**（一次创建 = 一次定点插入；重拉归兜底 C），
+// 故事件到达即刻起步动画，且不会与重拉竞争 DOM。面板不在列表视图（pane 不存在 /
+// 就地 flow-map 视图 / 仍在 loading·error）时不动 DOM：空面板会在打开时现拉，
+// loading/error 交给既有取数路径（`rerenderProjectsTab` 走防抖重拉）。
+
+/** 列表视图的滚动体（面板没开 / 处于 delegate-chain 视图 ⇒ null）。 */
+function projectsListScroll() {
+  const pane = getTabPane('projects');
+  if (!pane) return null;
+  if (pane.dataset.projectsView === 'delegate-chain') return null;
+  const scroll = /** @type {HTMLElement | null} */ (pane.querySelector('.team-scroll'));
+  return scroll && scroll.isConnected ? scroll : null;
+}
+
+/** 事件行 → 卡片行（§D-2 `row` 与 GET /api/projects 行同构，五字段）。
+ *  缺 row 时按 `project` 名兜底：仅名字可用也先立卡（摘要槽随后定点填充），
+ *  避免「事件到了却因为字段缺失不立卡」这种静默丢帧。
+ *  面C（ui-device-faces 批 2026-10-10）：additive `origin` = {device,path}——远端项目
+ *  的创建落点（后端两出口 additive 补齐：GET /api/projects 行 + projectCreated 帧 row）。
+ *  缺失/畸形 ⇒ null（= 本机项目，零徽标，存量行逐字节）。
+ *  台账 #920（2026-10-27）：additive `device`（#913 存储值）随行透传——
+ *  徽标兜底面（projectBadgeOf）与设备上下文消费同源。 */
+function normalizeProjectRow(msg) {
+  const name = msg?.project ?? msg?.row?.name;
+  if (!name || typeof name !== 'string') return null;
+  const row = msg?.row && typeof msg.row === 'object' ? msg.row : {};
+  return {
+    name,
+    workspace: typeof row.workspace === 'string' ? row.workspace : '',
+    description: typeof row.description === 'string' ? row.description : '',
+    origin: projectOriginOf(row),
+    device: typeof row.device === 'string' ? row.device : '',
+  };
+}
+
+function onProjectCreatedFrame(msg) {
+  const scroll = projectsListScroll();
+  if (!scroll) return;
+  const state = scroll.dataset.projectsState;
+  if (state !== 'ready' && state !== 'empty') { rerenderProjectsTab(); return; }
+  const row = normalizeProjectRow(msg);
+  if (!row || cardByName(scroll, row.name)) return; // 幂等：已在列表 ⇒ 零 DOM 变更（无重复渲染）
+  if (state === 'empty') { clearPlaceholders(scroll); scroll.dataset.projectsState = 'ready'; }
+  insertProjectCard(scroll, row, stableCards(scroll).slice(-1)[0] || null); // 末尾插入（§F-1）
+  scroll.dataset.projectCount = String(stableCards(scroll).length);
+  // 摘要渐进填充（与 renderProjectsInto 的 listed 卡同机制）：插卡 = 骨架态起步，
+  // flow-map 到齐后就地写入（未挂载/空闲/运行数）。事件插入卡此前只停在骨架。
+  loadCardSummary(scroll, row.name);
+  applyDevBadges(scroll); // 面C：插卡徽标走花名册异步补名（row.origin 带 device id）
+  announceProjects(scroll, t('project.createdAnnounce', { name: row.name }));
+}
+
+function onProjectArchivedFrame(msg) {
+  const scroll = projectsListScroll();
+  if (!scroll) return;
+  const state = scroll.dataset.projectsState;
+  if (state !== 'ready' && state !== 'empty') { rerenderProjectsTab(); return; }
+  const name = typeof msg?.project === 'string' ? msg.project : '';
+  if (!name) return;
+  const card = cardByName(scroll, name);
+  if (!card) return; // 已不在列表（含本页归档的回声 / 幂等重归档）⇒ no-op，无重复渲染
+  startCardExit(scroll, card); // 退场动画（280ms）→ 定点 remove + FLIP 衔接邻卡
+  announceProjects(scroll, t('project.archivedAnnounce', { name }));
+}
+
+/** 卸载回声（N2 project-tool 批 2026-10-06；unmount-console 面板批 2026-11-02 扩）：
+ *  unmount 成功腿（工具腿 / 控制台 REST 腿同一单点）广播 `projectUnmounted{project,unmountedAt}`
+ *  ——按名定点退场 + aria 播报；随后防抖重拉一次，让 GET /api/projects 的 additive
+ *  `unmounted` 名单把该项目落进「已卸载」分组（可见去处）。卸载后 GET /api/projects
+ *  名单源（ProjectStore.list）源头过滤 ⇒ 卡不会再回来。`data-exiting` 幂等闸吸收重复帧。 */
+function onProjectUnmountedFrame(msg) {
+  const scroll = projectsListScroll();
+  if (!scroll) return;
+  const state = scroll.dataset.projectsState;
+  if (state !== 'ready' && state !== 'empty') { rerenderProjectsTab(); return; }
+  const name = typeof msg?.project === 'string' ? msg.project : '';
+  if (!name) return;
+  const card = cardByName(scroll, name);
+  if (card) startCardExit(scroll, card); // 已不在列表 / 面板未展示该项目 ⇒ 跳过退场，仍走重拉补分组
+  announceProjects(scroll, t('project.unmountedAnnounce', { name }));
+  rerenderProjectsTab(); // 对账已挂载项目名单
+}
+
+/** 重新加载回声（unmount-console 面板批 2026-11-02）：remount 成功腿（控制台 REST
+ *  腿 / 工具腿同一单点 ProjectRemount）广播 `projectRemounted{project,row,remountedAt}`
+ *  ——row 与 projectCreated 同构 ⇒ 按名定点恢复卡片 + 摘「已卸载」灰态行 + 播报。
+ *  幂等：卡已在 ⇒ 只摘灰态行（零重复渲染）。 */
+function onProjectRemountedFrame(msg) {
+  const scroll = projectsListScroll();
+  if (!scroll) return;
+  const state = scroll.dataset.projectsState;
+  if (state !== 'ready' && state !== 'empty') { rerenderProjectsTab(); return; }
+  const row = normalizeProjectRow(msg);
+  if (!row) { rerenderProjectsTab(); return; }
+  const existing = cardByName(scroll, row.name);
+  if (!existing) {
+    if (state === 'empty') { clearPlaceholders(scroll); scroll.dataset.projectsState = 'ready'; }
+    insertProjectCard(scroll, row, stableCards(scroll).slice(-1)[0] || null);
+    scroll.dataset.projectCount = String(stableCards(scroll).length);
+    loadCardSummary(scroll, row.name);
+    applyDevBadges(scroll);
+  }
+  announceProjects(scroll, t('project.remountedAnnounce', { name: row.name }));
+}
+
+/** 描述更新帧（台账 #920 2026-10-27）：REST POST description 成功腿广播
+ *  `projectDescriptionUpdated{project,description,updatedAt}`——按名定点写该卡的
+ *  描述槽（零重渲、零重拉；与本文件其他项目级帧同一纪律）。编辑中（`data-desc-editing`）
+ *  的卡**不写**（不打断用户输入；保存请求本身带权威值，服务端为唯一真源）。
+ *  帧无 sessionId ⇒ 必须在 ws.js 的 GLOBAL_MSG_TYPES 内（见文下 onMessage 订阅注）。 */
+function onProjectDescriptionUpdatedFrame(msg) {
+  const scroll = projectsListScroll();
+  if (!scroll) return;
+  const state = scroll.dataset.projectsState;
+  if (state !== 'ready' && state !== 'empty') { rerenderProjectsTab(); return; }
+  const name = typeof msg?.project === 'string' ? msg.project : '';
+  const description = typeof msg?.description === 'string' ? msg.description : '';
+  if (!name) return;
+  const card = cardByName(scroll, name);
+  if (!card) return; // 面板未展示该项目 ⇒ no-op
+  if (card.dataset.descEditing === '1') return; // 编辑中不覆盖输入
+  applyProjectDescription(card, description);
+  announceProjects(scroll, t('project.descSaved', { name }));
+}
+
+onMessage('projectCreated', (msg) => onProjectCreatedFrame(msg));
+onMessage('projectArchived', (msg) => onProjectArchivedFrame(msg));
+onMessage('projectUnmounted', (msg) => onProjectUnmountedFrame(msg));
+onMessage('projectRemounted', (msg) => onProjectRemountedFrame(msg));
+onMessage('projectDescriptionUpdated', (msg) => onProjectDescriptionUpdatedFrame(msg));
+
+// ── 兜底 C：低频重拉（裁定 (c) 同批）──────────────────────────────────────────
+// 为什么必须有：进程外改动（有人直接编辑/删除 `~/.nebflow/projects/<name>/project.json`，
+// 或另一个实例写的盘）**任何事件方案都覆盖不到**——全仓无文件 watcher。取证 §H-5 明确
+// 声明此为不可覆盖面 ⇒ 事件面 + 低频重拉是唯一闭合方案。
+// perf-481 A5：原先此处自持一个 60s `setInterval`，与 taskList.js 的相对时间拍**各自**
+// 计时 ⇒ 两次无关突发落在任意时刻。现改挂**全页共享的墙上分钟栅格**（utils.onMinuteTick）：
+// 周期仍是 1 分钟（请求数不变），但两拍合流为**每分钟一次突发**，且相位锚在分钟边界
+// 而非页面加载时刻。
+// 门控（§D-3）：文档可见 ∧ projects 页签在前台（`.canvas-tab-pane.active`，split.css:643）
+// ∧ 非 flow-map 就地视图 ∧ 面板已出列表（ready/empty；loading/error 由既有有界退避
+// 重试 + onReconnect 腿负责，不在此叠加第二个重试源）。
+// 与事件面不冲突：事件到达即刻定点增删、不等轮询；轮询仅在「名单与磁盘不一致」时
+// 产生一次定点增删（同名单 ⇒ reconcile 零 DOM 变更，只定点刷新摘要槽）。
+onMinuteTick(() => {
+  if (document.visibilityState !== 'visible') return;
+  const pane = getTabPane('projects');
+  if (!pane || !pane.classList.contains('active')) return;
+  const scroll = projectsListScroll();
+  if (!scroll) return;
+  const state = scroll.dataset.projectsState;
+  if (state !== 'ready' && state !== 'empty') return;
+  renderProjectsInto(scroll);
+});
+
+// 切语言即重渲（contenti18n 批）：项目名/描述走 locale 映射（js/contentI18n.js），
+// 语言一变列表卡片必须重渲——本批前此处零监听。复用上面的视图分流判据
+// （rerenderProjectsListView：pane 不存在或正处就地 Flow Map 视图时不动）。
+// 🔴 定点刷新覆盖不到卡内全部静态标签（工作区/AGENTS.md/归档 aria 等）⇒ 语言切换
+// 是本文件**唯一**允许重建卡节点的路径（一次性标志，见 reconcileProjectCards）。
+window.addEventListener('locale-changed', () => {
+  rebuildCardsOnce = true;
+  rerenderProjectsListView();
+});
+
+// 迟到对账通道 ②：WS 重连 = 代码里既有的「服务已回来」真信号（ws.js:416 逐个回调）。
+// 面板此刻若不是 ready（error / loading / 空壳），立即补一次取数与渲染——冷启动期间
+// 无人建节点，节点事件面天然为空，这条信号是本面板此前唯一缺的入口。
+// 已 ready 的面板不重拉：重连抖动不该反复打 REST（列表权威刷新仍归上面的节点事件面）。
+onReconnect(() => {
+  const pane = getTabPane('projects');
+  if (!pane) return;
+  // 视图分流同上面的节点事件面（delegate-chain 链视图无列表重拉面）。
+  if (pane.dataset.projectsView === 'delegate-chain') return;
+  const scroll = /** @type {HTMLElement | null} */ (pane.querySelector('.team-scroll'));
+  if (!scroll || !scroll.isConnected) return;
+  if (scroll.dataset.projectsState === 'ready') return;
+  resetProjectsRetry(); // 条件已变（连接恢复）⇒ 重试预算重置
+  renderProjectsInto(scroll);
+});

@@ -1,0 +1,1362 @@
+// secretsPanel.js — Unified secrets management dialog (standalone modal).
+//
+// secrets-frontend batch, 2026-09-27. Author ruling 2026-09-27 19:20:
+// NOT an embedded section inside #settings-modal — the list lives in this
+// DEDICATED dialog of its own (capacity not bounded by the settings modal);
+// the settings page carries only a one-row entry button (sidebar.js
+// renderSettings → #btn-open-secrets, i18n key `settings.secrets`).
+//
+// 行内化 (author ruling 2026-10-09 07:42: 「我想直接就是把密钥的值放在条目
+// 这一页啊，有个小眼睛去点。平时就是点点点，直接就可以查看修改，不需要弹窗」):
+// the editor sub-dialog (#secrets-form) AND the floating「+」(#secrets-fab)
+// are RETIRED. Every operation happens inline in the list rows.
+//
+// 行内化二轮 · 原位展开编辑 (author feedback 2026-10-09 08:32: 「可以对Ui布局
+// 再进行优化一下 不用都放同一行，保持极简干净的布局，另外修改的时候也不要
+// 影响布局，就在原位进行修改。…就是原位进行修改」— iPhone 提醒事项式)：
+// the row is now a two-face unit:
+//   · Rest face = ONE minimal line: name (left) + permission badge (only
+//     when permissive — the security signal stays on the list face). NO
+//     buttons, NO field, NO metadata — the eye, the editor and delete do not
+//     exist in the resting DOM.
+//   · Click the row → it expands IN PLACE downward into its edit detail
+//     (value field + eye + meta + 保存/删除); rows below shift naturally —
+//     no popup, no global reflow. One row open at a time.
+//
+// 行内化三轮 · 点点微调 (author feedback 2026-10-09 23:06: 「密钥面板这个
+// 点点的长度跟这个密钥的长度不一致。然后没有点击展开的时候，可以不显示点点」):
+//   · Rest face drops the dots span entirely (收起不显示点点) — the only
+//     value face left is the expanded detail's field placeholder.
+//   · That placeholder is LENGTH-FAITHFUL: one dot per stored byte, from the
+//     list's `size` metadata (maskPlaceholder below) — no value is read to
+//     paint it; byte-exact for ASCII secrets, and over-wide dots clip inside
+//     the one-row field (css .secrets-value::placeholder white-space: pre).
+//   · 保存 / Enter commits through the existing PUT; click-outside commits
+//     a CHANGED field (Reminders dismiss-to-save) and collapses; Esc
+//     collapses WITHOUT committing; failure keeps the detail open with the
+//     text for another try; success flashes 「已保存 ✓」on the resting face.
+//   · Eye (masked+empty) → ONE authenticated GET /api/secrets/{name}/value
+//     → plaintext fills the field, mask off. Eye again → mask ON and the
+//     FETCHED plaintext burns back to the placeholder face (清空回占位，
+//     下次揭示再拉). Collapsing the row removes the whole detail (a stronger
+//     burn). A locally-typed draft is never burned by the eye — masking
+//     local text is a presentation-only toggle.
+//   · Create: the dashed「＋ 新建密钥」tail row (always present, list end)
+//     expands in place into a name+value draft; Enter / 保存 submits through
+//     the existing POST; Esc discards.
+//   · Delete: unchanged (in-detail control, hover danger tint, glass confirm,
+//     DELETE ?confirm=<name>).
+//
+// 层级收进批（作者实拍令 2026-11-01 15:36「修弹层层级：密钥子面板现在比父级
+// 设置面板还大还压外层（实拍可见溢出），子面板尺寸必须收进父面板内，层级视觉
+// 服从父级」＋「删掉全部『权限过宽』红标——这徽标整概念退役」＋「布局重排：
+// 键名列/元信息列网格化、间距统一」＋「清杂质：rollback 回滚备份不是密钥，
+// 从密钥面板剔除」）四件：
+//   · 层级：专用弹窗架构不变（2026-09-27 裁定），但几何**服从父级**——
+//     openSecretsPanel 现读 #settings-modal 实矩形，把本面板钳进父面板内
+//     （每侧 24px 收进带；CSS 兜底 512px ≤ 父 560px），两壳同为视口居中 ⇒
+//     子框恒在父框内；手机层铺满屏形态不受影响（body.mobile-layer 跳过）。
+//   · 红标退役：rest 行不再有 permission badge（ok/permissive 两态俱退，
+//     locale 键同批删除）；wire 的 mode 字段原样保留（后端零改动）。
+//   · 网格化：rest 行改两列 grid——键名列（左，省略号）＋元信息列（右对齐，
+//     size · mtime，tabular-nums 列对齐）；元信息自展开详情上移到 rest 面，
+//     详情只剩值域 + 引用行 + 操作行；行行同形，别一行一个样。
+//   · 清杂质：`*rollback*` 名单面剔除是后端单点（SecretsStore.isArchiveBackup，
+//     列表/目录/指针/CLI 四面同源），本面板零前端过滤。
+//
+// 🔴 SECURITY DISCIPLINE (plan card §二, readback ruling 2026-10-09 07:03,
+//   unchanged in spirit by 行内化):
+//   · The list carries METADATA ONLY (name/size/mtime/mode/refs) and the
+//     module strips any stray `value` key off the wire rows. The ONE
+//     value-bearing call this module makes is GET /api/secrets/{name}/value
+//     (authenticated, single-name) — issued ONLY by an eye click on a
+//     masked-and-empty field, never while the list renders. One fetch per
+//     reveal: a click while the fetch is in flight CANCELS it (token bump),
+//     and the per-row token (revealSeq) drops stale replies so a slow
+//     response can never land in a re-masked field, a re-rendered row or a
+//     closed panel.
+//   · A fetched plaintext exists in exactly two places — the row field
+//     (revealed) and the baselines Map (change-detection baseline, entry
+//     deleted the moment the field re-masks / rests / the panel closes).
+//     Re-masking clears the field; committing clears it too. Never
+//     localStorage, never an attribute, never rendered into the list.
+//   · Names go through escapeHtml when interpolated into templates; every
+//     dynamic text is set via textContent. innerHTML carries literals and
+//     escaped names only — never a value. Logs/errors carry names and
+//     STATUS codes only.
+//
+// 可查询批（作者令 2026-11-18 21:31「secret 要加上说明和关键词 tag，方便被查询
+// 使用，同时据此对 secret 面板布局和显示进行优化」）：the resting row grows a
+// second line (description) and a chip lane (keyword tags, each chip clickable
+// as a filter), and the body grows a search box + a tag bar. The expanded
+// detail gains a metadata block (description input + tag input) that commits
+// through the SAME PATCH the CLI's `secrets meta` and the AskUser sink write
+// to. 🔴 Still one value face per row and only while open: the list, the
+// filters, the chips and the metadata editor all ride METADATA — no new value
+// path exists, and the filter matcher deliberately mirrors the backend's
+// SecretsQuery terms (keyword = case-insensitive substring over
+// name/description/tags/consumers; tag filter = ALL selected tags must be
+// carried) so the panel and the CLI cannot disagree about the same query.
+
+// Precedents: socialPanel.js (module shape, glass dialog family, api()),
+// daemons.js:454-456 (window.__showConfirm), sidebar.js renderSettings
+// (entry row), sidebar.js jev save-state (inline「已保存 ✓」feedback,
+// statusIcon('circle-check', 11, 'st-ok')), css/secrets.css (this batch;
+// sapphire.css untouched). All user-visible copy goes through t()
+// (i18n.js); en + zh-CN locale files ship the same key set in the same
+// batch.
+
+import { t } from './i18n.js';
+import { pushLayer, popLayer } from './focusTrap.js';
+import { escapeHtml, createIconsIn, statusIcon } from './utils.js';
+import { getAuthToken } from './neblink.js';
+// ── Eye toggle glyphs: SINGLE SOURCE = sidebar/providersUi.js ────────────
+// 小扫尾批 2026-10-22：本文件私有 EYE_SVG/EYE_OFF_SVG 副本（lucide v0.454
+// 眼形）退役，与 chat.js AskUser 密钥卡（设计语言批 2026-10-21 先例）及设置
+// 页 provider 密码域（sidebar.js）收敛到同一枚 providersUi 单源眼（feather
+// 眼形，16px stroke: currentColor——按钮色 token 驱动双色主题墨色）。全应用
+// 眼形自此唯一：换眼形改一处，所有密码域像素级一致（渲染对照证据
+// evidence/20261022_secrets-eye-converge/）。providersUi 单向提供，无环
+// （其依赖 state/ws/i18n/providerModels 均不回指本面板；main.js 顶层装配）。
+import { eyeSvg, eyeOffSvg } from './sidebar/providersUi.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层 secrets 面板铺满屏 + 左上返回（桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
+
+// ── State ────────────────────────────────────────────────────────────────
+/**
+ * One listed secret, as this panel keeps it: METADATA ONLY. The shaping in
+ * fetchSecrets() drops every unknown key, so a `value` (or any other) key on
+ * the wire can never reach a render — the panel's value face stays exactly
+ * the expanded detail's field, fed by the one explicit readback call.
+ * @typedef {object} SecretRow
+ * @property {string} name
+ * @property {number} size
+ * @property {number|null} mtime
+ * @property {string} mode
+ * @property {string[]} refs
+ * @property {string} variableName
+ * @property {string} description
+ * @property {string[]} tags
+ * @property {string} path
+ */
+
+/** @type {SecretRow[]} */
+let secrets = [];
+/** Free-text filter over name/description/tags/consumers (可查询批). */
+let filterQuery = '';
+/** Selected tag filters — an entry must carry ALL of them (intersection, the
+ *  same semantics as the CLI's `--tag a,b` and the REST `?tag=`).
+ *  @type {Set<string>} */
+let filterTags = new Set();
+/** Monotonic reveal token source. Each eye-driven fetch takes the next
+ *  token and stamps it on the row; only the STILL-CURRENT token for that
+ *  row may apply the reply (a slow response must never land in a re-masked
+ *  field, a re-rendered row or a closed panel — seq guard, 防串行). */
+let revealSeq = 0;
+/** Change-detection baselines: name → the stored value CURRENTLY DISPLAYED
+ *  in that row's field (set by the fetch reply, deleted on re-mask / rest /
+ *  commit / panel close). An undefined baseline simply means "unknown" —
+ *  any non-empty local text then counts as a change (overwrite intent).
+ *  The map holds plaintext ONLY while that plaintext is on screen.
+ *  @type {Map<string, string>} */
+const baselines = new Map();
+/** Whether the tail row is expanded into the create draft. */
+let draftOpen = false;
+/** One draft POST at a time. */
+let draftBusy = false;
+/** The row currently expanded into its edit detail ('' = none). One at a
+ *  time — expanding one row commits-and-collapses the previously open one. */
+let openName = '';
+/** Row to re-expand after the next renderList: a commit-triggered re-read
+ *  must not eat the row the user just clicked. */
+let pendingOpen = '';
+/** Row to flash「已保存 ✓」on after the next renderList — the flash lives on
+ *  the row's RESTING face (the detail is gone by then). */
+let savedFlashName = '';
+/** Focusable-element trap state (which element opened the dialog). */
+let lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (null);
+let initialized = false;
+
+// ── Backend adapter (same token pattern as socialPanel.js) ───────────────
+/**
+ * Narrow option shape on purpose: this module only ever issues JSON requests,
+ * and a `RequestInit`-wide type is what makes the header merge un-inferable
+ * (`checkJs` gate: new files must be clean).
+ * @typedef {object} ApiOpts
+ * @property {string} [method]
+ * @property {Record<string, string>} [headers]
+ * @property {string} [body]
+ */
+/**
+ * @param {string} path
+ * @param {ApiOpts} [opts]
+ * @returns {Promise<Response>}
+ */
+async function api(path, opts = {}) {
+  /** @type {Record<string, string>} */
+  const headers = { ...(opts.headers || {}) };
+  const tok = getAuthToken();
+  if (tok) headers['Authorization'] = `Bearer ${tok}`;
+  return fetch(path, { ...opts, headers });
+}
+
+/** GET /api/secrets — metadata only; the contract has no read-value face.
+ *  The query params are NOT sent: filtering happens client-side over the
+ *  already-loaded metadata, so a chip click or a keystroke never waits on a
+ *  round trip. The backend exposes the same matcher for machine callers
+ *  (`?q=&tag=`), and both derive from one term definition. */
+async function fetchSecrets() {
+  const resp = await api('/api/secrets');
+  if (!resp.ok) throw new Error(`GET /api/secrets ${resp.status}`);
+  const data = await resp.json();
+  const rows = Array.isArray(data && data.secrets) ? data.secrets : [];
+  // Defensive shaping: keep the known metadata fields only. A `value` key (or
+  // anything else) on the wire is dropped here and can never reach a render.
+  return rows.map((s) => ({
+    name: typeof s.name === 'string' ? s.name : '',
+    size: typeof s.size === 'number' ? s.size : 0,
+    mtime: typeof s.mtime === 'number' ? s.mtime : null,
+    mode: typeof s.mode === 'string' ? s.mode : '',
+    refs: Array.isArray(s.refs) ? s.refs.filter((r) => typeof r === 'string') : [],
+    variableName: typeof s.variableName === 'string' ? s.variableName : '',
+    description: typeof s.description === 'string' ? s.description : '',
+    tags: Array.isArray(s.tags) ? s.tags.filter((t) => typeof t === 'string' && t) : [],
+    // 可查询批: the consumption path comes from the list payload (the backend
+    // renders it with the SAME helper `stand secrets` prints), so the panel
+    // never has to guess the data root. It is a PATH — never a value.
+    path: typeof s.path === 'string' ? s.path : '',
+  })).filter((s) => s.name);
+}
+
+// ── Query face (可查询批) ────────────────────────────────────────────────
+/** Fold one raw tag the way the backend's SecretsCatalog.normalizeTag does
+ *  (lowercase, non-keyword characters → `-`, trimmed, 32 max) — the panel
+ *  and the store therefore agree on what a tag IS.
+ *  @param {string} raw @returns {string} */
+function normalizeTag(raw) {
+  const folded = raw.trim().toLowerCase().replace(/[^a-z0-9._-]/g, '-');
+  return folded.slice(0, 32).replace(/^-+/, '').replace(/-+$/, '');
+}
+
+/** Parse a comma/space separated tag expression into normalized, de-duped
+ *  tags (same input form the CLI's `--tag` speaks).
+ *  @param {string} raw @returns {string[]} */
+function parseTags(raw) {
+  /** @type {string[]} */
+  const out = [];
+  for (const token of raw.split(/[,\s]+/)) {
+    const t = normalizeTag(token);
+    if (t && !out.includes(t) && out.length < 16) out.push(t);
+  }
+  return out;
+}
+
+/** Does one row satisfy the active filters? Mirrors the backend matcher:
+ *  keyword = case-insensitive substring over name/variable/description/tags/
+ *  consumers; tags = the row must carry every selected tag.
+ *  @param {SecretRow} s @returns {boolean} */
+function rowMatches(s) {
+  if (filterTags.size && ![...filterTags].every((t) => s.tags.includes(t))) return false;
+  const q = filterQuery.trim().toLowerCase();
+  if (!q) return true;
+  const haystack = [s.name, s.variableName, s.description, ...s.tags, ...s.refs].join(' ').toLowerCase();
+  return haystack.includes(q);
+}
+
+/** The rows currently on screen (filter applied, order preserved).
+ *  @returns {SecretRow[]} */
+function visibleSecrets() {
+  return secrets.filter(rowMatches);
+}
+
+/** Every tag present in the loaded set, sorted — the tag bar's vocabulary.
+ *  @returns {string[]} */
+function allTags() {
+  /** @type {Set<string>} */
+  const set = new Set();
+  for (const s of secrets) for (const t of s.tags) set.add(t);
+  return [...set].sort();
+}
+
+/** Toggle one tag filter and re-render (a filter change never refetches —
+ *  the vocabulary is already in `secrets`). Selecting a tag while a row is
+ *  expanded is a pure view change: the open row is closed through the
+ *  commit path first, so a filter click can never silently discard edits. */
+function toggleTagFilter(tag) {
+  const commitOpen = () => {
+    const open = openRowEl();
+    if (open) void collapseRow(open, { commit: true });
+  };
+  commitOpen();
+  const next = new Set(filterTags);
+  if (next.has(tag)) next.delete(tag); else next.add(tag);
+  filterTags = next;
+  renderList();
+}
+
+/** Drop every active filter (the search box and the tag set). */
+function clearFilters() {
+  const open = openRowEl();
+  if (open) {
+    // The open row's own resting face is about to be re-rendered away —
+    // honour the same dismiss-to-save reading as any other collapse.
+    void collapseRow(open, { commit: true });
+  }
+  filterQuery = '';
+  filterTags = new Set();
+  const input = document.getElementById('secrets-search-input');
+  if (input instanceof HTMLInputElement) input.value = '';
+  renderList();
+}
+
+/**
+ * GET /api/secrets/{name}/value — the ONE value-bearing call this module makes
+ * (readback ruling 2026-10-09, carried into 行内化): issued only by an eye
+ * click on a masked-and-empty row field; the list face stays metadata-only.
+ * The authenticated response carries exactly {name, value}. Errors reject
+ * with a `.status` so the caller can reuse the shared error-copy mapping.
+ * @param {string} name
+ * @returns {Promise<string>}
+ */
+async function fetchSecretValue(name) {
+  const resp = await api(`/api/secrets/${encodeURIComponent(name)}/value`);
+  if (!resp.ok) {
+    // `.status` rides the error so the caller can reuse the shared error-copy
+    // mapping (Object.assign keeps the checkJs face of Error clean).
+    throw Object.assign(new Error(`GET /api/secrets/${name}/value ${resp.status}`), { status: resp.status });
+  }
+  const data = await resp.json().catch(() => null);
+  return data && typeof data.value === 'string' ? data.value : '';
+}
+
+/**
+ * Map an error status to its translated copy (plan card 问2 error family).
+ * Unknown statuses fall back to the generic io line. Error bodies carry a
+ * name + code, never a value — this face only reads the STATUS.
+ * @param {number} status
+ * @returns {string}
+ */
+function errorText(status) {
+  switch (status) {
+    case 400: return t('secrets.invalidName');
+    case 403: return t('secrets.reservedName');
+    case 404: return t('secrets.error.notFound');
+    case 409: return t('secrets.error.conflict');
+    default: return t('secrets.error.io', { code: String(status) });
+  }
+}
+
+// ── Selection helpers ────────────────────────────────────────────────────
+/** @returns {HTMLElement|null} */
+function overlay() { return document.getElementById('secrets-overlay'); }
+/** @returns {HTMLElement|null} */
+function modal() { return document.getElementById('secrets-modal'); }
+/** @returns {HTMLElement|null} */
+function listEl() { return document.querySelector('#secrets-list'); }
+/** @returns {HTMLElement|null} */
+function addRowEl() { return listEl()?.querySelector('.secrets-add-row') || null; }
+
+/**
+ * The panel's readiness state, exposed the standard way: `aria-busy` on the
+ * list section while a backend read/write is in flight (same convention as
+ * socialPanel.js setBusy) — an outside observer never guesses with a timer.
+ * @param {boolean} on
+ */
+function setBusy(on) {
+  const el = document.getElementById('secrets-section');
+  if (el) el.setAttribute('aria-busy', on ? 'true' : 'false');
+}
+
+/** Byte size with a thousands separator (tabular-nums face, plan card §三). */
+function formatSize(bytes) {
+  return `${bytes.toLocaleString('en-US')} B`;
+}
+
+/**
+ * The expanded edit field's mask placeholder: ONE dot per stored BYTE, taken
+ * from the list row's `size` metadata (三轮 2026-10-09 23:06:「点点的长度跟
+ * 这个密钥的长度不一致」— the fixed 6-dot face could not describe the stored
+ * length; this one does). A placeholder NEVER reads the value: byte-size is
+ * the length proxy the list already carries (SecretsStore writes the value
+ * byte-for-byte, so bytes == characters for ASCII secrets; multi-byte values
+ * may paint slightly more dots). The glyph reuses the i18n dotsPlaceholder
+ * face so the dot is the same character the panel has always shown; a
+ * degenerate/unknown size falls back to that same fixed face.
+ * @param {number} size byte length from the list metadata
+ * @returns {string}
+ */
+function maskPlaceholder(size) {
+  const face = t('secrets.dotsPlaceholder') || '••••••';
+  const glyph = face.charAt(0) || '•';
+  return glyph.repeat(Number.isFinite(size) && size > 0 ? size : face.length);
+}
+
+/** Epoch millis → M-D HH:mm (locale-neutral numeric face; the UI never
+ *  localizes secret metadata through toLocaleString date formats). */
+function formatMtime(ms) {
+  if (!ms) return '';
+  const d = new Date(ms);
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${mm}-${dd} ${hh}:${mi}`;
+}
+
+// ── Row helpers ──────────────────────────────────────────────────────────
+/** @param {HTMLElement} row @returns {HTMLTextAreaElement|null} */
+function rowField(row) {
+  const f = row.querySelector('[data-edit]');
+  return f instanceof HTMLTextAreaElement ? f : null;
+}
+/** @param {HTMLElement} row @returns {HTMLElement|null} */
+function rowEye(row) {
+  const e = row.querySelector('[data-eye]');
+  return e instanceof HTMLElement ? e : null;
+}
+
+/**
+ * Paint the mask state onto one eye button. This is the ONLY place an eye's
+ * face is written, so the glyph, the label and aria-pressed can never
+ * disagree. The label names the ACTION the click performs (reveal while
+ * masked, mask while revealed) — the standard disclosure-toggle reading.
+ * @param {HTMLElement|null} eye
+ * @param {boolean} masked
+ */
+function eyeFace(eye, masked) {
+  if (!eye) return;
+  eye.innerHTML = masked ? eyeSvg : eyeOffSvg;
+  const key = masked ? 'secrets.showValue' : 'secrets.hideValue';
+  eye.setAttribute('aria-label', t(key));
+  eye.title = t(key);
+  eye.setAttribute('aria-pressed', masked ? 'false' : 'true');
+}
+
+/** The row element currently expanded into its edit detail, or null. */
+function openRowEl() {
+  if (!openName) return null;
+  const row = listEl()?.querySelector(`.secrets-row[data-name="${CSS.escape(openName)}"]`);
+  return row instanceof HTMLElement ? row : null;
+}
+
+/**
+ * Burn one row's detail back to its resting face (dots). Everything transient
+ * dies here: the displayed plaintext lives only inside the detail subtree, so
+ * removing it is the strongest possible 回遮清空 — no field, no value, no
+ * placeholder-but-dots anywhere.
+ * @param {HTMLElement} row
+ * @param {string} name
+ */
+function closeRowFace(row, name) {
+  baselines.delete(name);
+  row.querySelector('.secrets-row-detail')?.remove();
+  row.removeAttribute('data-open');
+  row.querySelector('[data-row-head]')?.setAttribute('aria-expanded', 'false');
+}
+
+/**
+ * Expand a row in place: build its edit detail beneath the resting head (the
+ * rows below shift naturally — no popup, no global reflow). Exactly ONE row
+ * is open at a time: expanding over an open row commits-and-collapses that
+ * one first and re-opens this one after the re-read settles (pendingOpen).
+ * @param {HTMLElement} row
+ */
+function expandRow(row) {
+  const name = row.dataset.name || '';
+  if (!name || openName === name || row.querySelector('.secrets-row-detail')) return;
+  const s = secrets.find((x) => x.name === name);
+  if (!s) return;
+  if (openName) {
+    const prev = openRowEl();
+    if (prev) {
+      pendingOpen = name;
+      void collapseRow(prev, { commit: true });
+      return; // renderList re-expands us after the re-read
+    }
+  }
+  if (draftOpen) discardDraft(false);
+  const head = row.querySelector('[data-row-head]');
+  row.setAttribute('data-open', '');
+  head?.setAttribute('aria-expanded', 'true');
+  head?.insertAdjacentHTML('afterend', detailHTML(s));
+  openName = name;
+  rowField(row)?.focus(); // click row → ready to type
+}
+
+/**
+ * Collapse a row back to its resting face.
+ *  · commit:false — Esc semantics: discard the typed draft, collapse now.
+ *  · commit otherwise — the completion path (保存 / Enter / click-outside):
+ *    an unchanged field just collapses (no request); a changed one commits.
+ *    可查询批: TWO faces commit here, each only when it actually changed —
+ *    the value field through the existing PUT (the plaintext's single
+ *    appearance) and the metadata block (说明 + 标签) through the PATCH the
+ *    CLI's `secrets meta` also writes to. Skipping the metadata request when
+ *    nothing changed is what keeps a value save from clearing the label:
+ *    PATCH is whole-replace by contract, so it is only ever issued with the
+ *    full, current field set.
+ * Either way an in-flight reveal for this row is killed first: the token
+ * bump turns a late reply into a stale drop (迟到丢弃), and the revealing
+ * flag is cleared so a future re-expansion starts honest.
+ * @param {HTMLElement} row
+ * @param {{commit?: boolean}} [opts]
+ * @returns {Promise<void>}
+ */
+async function collapseRow(row, opts = {}) {
+  const name = row.dataset.name || '';
+  if (openName === name) openName = '';
+  row.dataset.revealToken = String(++revealSeq);
+  delete row.dataset.revealing;
+  if (opts.commit === false) { closeRowFace(row, name); return; }
+  const field = rowField(row);
+  const val = field ? field.value : '';
+  const baseline = baselines.get(name);
+  const valueChanged = !!field && !!val && baseline !== val;
+  const descValue = rowDescription(row);
+  const tagsValue = rowTags(row);
+  const known = secrets.find((x) => x.name === name);
+  const knownDesc = known ? known.description : '';
+  const knownTags = known ? known.tags.join(',') : '';
+  const metaChanged = !!known && (descValue !== knownDesc || tagsValue.join(',') !== knownTags);
+  if (!valueChanged && !metaChanged) {
+    closeRowFace(row, name);
+    return;
+  }
+  if (row.dataset.committing) return; // one commit in flight per row
+  row.dataset.committing = '1';
+  setBusy(true);
+  try {
+    if (valueChanged) {
+      const resp = await api(`/api/secrets/${encodeURIComponent(name)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: val }), // the plaintext's single appearance
+      });
+      if (!resp.ok) {
+        window.__showToast?.(errorText(resp.status), 'error');
+        return; // keep the detail + typed text for another try
+      }
+    }
+    if (metaChanged) {
+      const resp = await api(`/api/secrets/${encodeURIComponent(name)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        // Whole-replace body: BOTH catalogue fields travel every time (the
+        // variable name is left to the server's derived default by omitting
+        // it — the panel does not own that field).
+        body: JSON.stringify({ description: descValue, tags: tagsValue }),
+      });
+      if (!resp.ok) {
+        window.__showToast?.(errorText(resp.status), 'error');
+        return;
+      }
+    }
+    baselines.delete(name);
+    savedFlashName = name;
+    await loadAll(); // fresh metadata; the row lands closed, flash paints
+  } catch {
+    window.__showToast?.(t('secrets.error.io', { code: 'io' }), 'error');
+  } finally {
+    delete row.dataset.committing;
+    setBusy(false);
+  }
+}
+
+/** @param {HTMLElement} row @returns {string} */
+function rowDescription(row) {
+  const el = row.querySelector('[data-edit-desc]');
+  return el instanceof HTMLInputElement ? el.value.trim() : '';
+}
+
+/** @param {HTMLElement} row @returns {string[]} */
+function rowTags(row) {
+  const el = row.querySelector('[data-edit-tags]');
+  return el instanceof HTMLInputElement ? parseTags(el.value) : [];
+}
+
+// ── Rendering ────────────────────────────────────────────────────────────
+/**
+ * One tag chip. Rendered on a row's sub lane AND in the tag bar; both are
+ * FILTER controls (`data-tag`), never value affordances. `data-on` marks a
+ * chip whose tag is currently selected (the bar's reading: a filter, not a
+ * label). Chips are real buttons outside the row's head button — no nested
+ * interactive element exists anywhere in this panel.
+ * @param {string} tag
+ * @param {boolean} on
+ * @returns {string}
+ */
+function chipHTML(tag, on) {
+  return `<button type="button" class="secrets-chip" data-tag="${escapeHtml(tag)}"${on ? ' data-on' : ''} aria-pressed="${on ? 'true' : 'false'}">#${escapeHtml(tag)}</button>`;
+}
+
+/** The row's sub lane: tag chips + the path + the consumers. Rendered only
+ *  when at least one of them exists (an empty lane would just add height). */
+function subHTML(s) {
+  const chips = s.tags.map((t) => chipHTML(t, filterTags.has(t))).join('');
+  const facts = [
+    `<span class="m" title="${escapeHtml(t('secrets.path'))}: ${escapeHtml(s.path)}">${statusIcon('folder', 10)}${escapeHtml(s.path)}</span>`,
+  ];
+  if (s.refs.length) {
+    facts.push(
+      `<span class="m" title="${escapeHtml(t('secrets.referencedBy', { refs: s.refs.join(', ') }))}">${statusIcon('link', 10)}${escapeHtml(s.refs.join(', '))}</span>`
+    );
+  }
+  if (!chips && !s.refs.length && !s.path) return '';
+  return `<div class="secrets-row-sub">
+      ${chips ? `<div class="secrets-chipline">${chips}</div>` : ''}
+      <div class="secrets-row-facts">${facts.join('')}</div>
+    </div>`;
+}
+
+/**
+ * One row's RESTING face（可查询批 2026-11-01 网格化重排之上再排一层）：
+ * line 1 = 键名（左）+ 最后更新（右，tabular-nums）; line 2 = 说明;
+ * sub lane = 标签 chips + 路径 + 消费方. Metadata only — no value face exists
+ * in this template, and the value's single appearance stays the expanded
+ * detail's field. The head is a real button: the whole top block is the tap
+ * target (Reminders row affordance); the chips live OUTSIDE it (a button may
+ * not nest a button).
+ * @param {SecretRow} s
+ * @returns {string}
+ */
+function rowHTML(s) {
+  const name = escapeHtml(s.name);
+  // The meta column keeps the size (existing gate: R7 asserts the resting meta
+  // carries "B" — 网格化批 2026-11-01) plus 最后更新（可查询批: the author's
+  // layout asks for the updated stamp on the row).
+  const meta = [
+    `<span class="m">${statusIcon('box', 10)}${escapeHtml(formatSize(s.size))}</span>`,
+    `<span class="m">${statusIcon('clock', 10)}${escapeHtml(formatMtime(s.mtime))}</span>`,
+  ].join('');
+  const desc = s.description ? escapeHtml(s.description) : '';
+  return `<div class="secrets-row" data-name="${name}">
+      <button type="button" class="secrets-row-head" data-row-head="${name}" aria-expanded="false" aria-controls="secrets-detail-${name}" title="${escapeHtml(t('secrets.rowHint'))}">
+        <span class="secrets-row-name">${name}</span>
+        <span class="secrets-row-side">
+          <span class="secrets-row-meta">${meta}</span>
+          <span class="secrets-row-status" role="status" aria-live="polite"></span>
+        </span>
+        <span class="secrets-row-desc"${desc ? '' : ' hidden'}>${desc}</span>
+      </button>
+      ${subHTML(s)}
+    </div>`;
+}
+
+/**
+ * One row's EXPANDED detail（原位展开编辑）: the value field (empty at rest,
+ * placeholder dots, masked) + eye + 保存/删除, and — 可查询批 — the metadata
+ * block (说明 + 标签). 保存 commits whichever face changed: a changed value
+ * goes through the existing PUT, a changed description/tag list through the
+ * PATCH (`secrets meta`'s wire twin). The metadata inputs are pre-filled from
+ * the loaded metadata, so opening a row never fetches anything.
+ * @param {SecretRow} s
+ * @returns {string}
+ */
+function detailHTML(s) {
+  const name = escapeHtml(s.name);
+  const refsLine = s.refs.length
+    ? `<div class="secrets-row-meta"><span class="m">${statusIcon('link', 10)}${escapeHtml(t('secrets.referencedBy', { refs: s.refs.join(', ') }))}</span></div>`
+    : '';
+  const pathLine = `<div class="secrets-row-meta">
+      <span class="m" title="${escapeHtml(t('secrets.path'))}">${statusIcon('folder', 10)}${escapeHtml(s.path)}</span>
+    </div>`;
+  const field = `<textarea class="secrets-input secrets-value masked" rows="1" data-edit="${name}" placeholder="${escapeHtml(maskPlaceholder(s.size))}" title="${escapeHtml(t('secrets.overwriteHint'))}" aria-label="${escapeHtml(t('secrets.value'))}: ${escapeHtml(s.name)}" autocomplete="off" spellcheck="false"></textarea>`;
+  const eye = `<button type="button" class="secrets-value-eye" data-eye="${name}" aria-label="${escapeHtml(t('secrets.showValue'))}" aria-pressed="false" title="${escapeHtml(t('secrets.showValue'))}">${eyeSvg}</button>`;
+  const metaBlock = `<div class="secrets-row-metablock">
+      <input type="text" class="secrets-input" data-edit-desc="${name}" value="${escapeHtml(s.description)}" placeholder="${escapeHtml(t('secrets.descriptionPlaceholder'))}" aria-label="${escapeHtml(t('secrets.description'))}" autocomplete="off" spellcheck="false">
+      <input type="text" class="secrets-input" data-edit-tags="${name}" value="${escapeHtml(s.tags.join(', '))}" placeholder="${escapeHtml(t('secrets.tagsPlaceholder'))}" aria-label="${escapeHtml(t('secrets.tags'))}" autocomplete="off" spellcheck="false">
+    </div>`;
+  return `<div class="secrets-row-detail" id="secrets-detail-${name}" data-detail="${name}">
+      <div class="secrets-row-value">${field}${eye}</div>
+      ${pathLine}
+      ${refsLine}
+      ${metaBlock}
+      <div class="secrets-row-actions">
+        <button type="button" class="glass-control cfg-btn cfg-btn-sm" data-delete="${name}">${escapeHtml(t('secrets.delete'))}</button>
+        <button type="button" class="cfg-btn cfg-btn-primary cfg-btn-sm" data-save="${name}">${escapeHtml(t('secrets.save'))}</button>
+      </div>
+    </div>`;
+}
+
+/** Collapsed tail-row face: the dashed「＋ 新建密钥」trigger (cfg-btn-add
+ *  dashed language; the FAB + empty-state button retired with the modal).
+ *  The ＋ glyph is part of the i18n value (both locales), not the template. */
+function addTriggerHTML() {
+  return `<button type="button" class="secrets-add-trigger" data-add>${escapeHtml(t('secrets.tailAdd'))}</button>`;
+}
+
+/** Expanded tail-row face: the in-place create draft (name + value + the two
+ *  optional metadata fields, inline error line, 保存 confirm; Enter submits,
+ *  Esc discards). The draft eye is a presentation-only mask toggle on the
+ *  TYPED value — nothing is stored yet, so it never fetches. 可查询批: the
+ *  description/tags inputs are sent WITH the value in the one POST, so a new
+ *  secret is queryable from its first second. */
+function draftHTML() {
+  return `<div class="secrets-add-form">
+      <input type="text" class="secrets-input" data-draft-name placeholder="${escapeHtml(t('secrets.nameHint'))}" aria-label="${escapeHtml(t('secrets.name'))}" autocomplete="off" spellcheck="false">
+      <div class="secrets-row-value">
+        <textarea class="secrets-input secrets-value masked" rows="1" data-draft-value placeholder="${escapeHtml(t('secrets.valuePlaceholder'))}" aria-label="${escapeHtml(t('secrets.value'))}" autocomplete="off" spellcheck="false"></textarea>
+        <button type="button" class="secrets-value-eye" data-draft-eye aria-label="${escapeHtml(t('secrets.showValue'))}" aria-pressed="false" title="${escapeHtml(t('secrets.showValue'))}">${eyeSvg}</button>
+      </div>
+      <div class="secrets-row-value">
+        <input type="text" class="secrets-input" data-draft-desc placeholder="${escapeHtml(t('secrets.descriptionPlaceholder'))}" aria-label="${escapeHtml(t('secrets.description'))}" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="secrets-row-value">
+        <input type="text" class="secrets-input" data-draft-tags placeholder="${escapeHtml(t('secrets.tagsPlaceholder'))}" aria-label="${escapeHtml(t('secrets.tags'))}" autocomplete="off" spellcheck="false">
+      </div>
+      <div class="secrets-add-actions">
+        <span class="secrets-draft-error" role="alert" hidden></span>
+        <button type="button" class="cfg-btn cfg-btn-primary" data-draft-save>${escapeHtml(t('secrets.save'))}</button>
+      </div>
+    </div>`;
+}
+
+/** One chip as a REAL element. The tag bar builds its chips this way (DOM
+ *  construction — the component-contract gate counts bare markup assignments
+ *  per file and only allows that number to fall, so the toolbar adds none);
+ *  the row's sub lane renders the same face as HTML text inside the row
+ *  template, which is why chipHTML stays. Both carry an identical class /
+ *  `data-tag` / `data-on` / `aria-pressed` face, so the one delegated click
+ *  handler serves both without knowing which built them.
+ * @param {string} tag
+ * @param {boolean} on
+ * @returns {HTMLButtonElement}
+ */
+function chipNode(tag, on) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'secrets-chip';
+  b.dataset.tag = tag;
+  b.textContent = `#${tag}`;
+  b.setAttribute('aria-pressed', on ? 'true' : 'false');
+  if (on) b.setAttribute('data-on', '');
+  return b;
+}
+
+/** The tag bar: every tag present in the loaded set as a toggle chip, plus a
+ *  clear chip while any filter is active. Purely a view over already-loaded
+ *  metadata — it never issues a request. */
+function renderToolbar() {
+  const bar = document.getElementById('secrets-tagbar');
+  const count = document.getElementById('secrets-count');
+  const input = document.getElementById('secrets-search-input');
+  if (input instanceof HTMLInputElement && input.value !== filterQuery) input.value = filterQuery;
+  const sh = document.getElementById('secrets-search');
+  if (sh instanceof HTMLElement) sh.setAttribute('data-active', filterQuery || filterTags.size ? 'true' : 'false');
+  if (bar) {
+    const tags = allTags();
+    const nodes = [];
+    if (filterQuery || filterTags.size) {
+      const clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'secrets-chip secrets-chip-clear';
+      clear.dataset.tagClear = '';
+      clear.textContent = t('secrets.clearFilters');
+      nodes.push(clear);
+    }
+    tags.forEach((to) => nodes.push(chipNode(to, filterTags.has(to))));
+    bar.replaceChildren(...nodes);
+    bar.hidden = tags.length === 0 && !filterQuery && filterTags.size === 0;
+  }
+  if (count) {
+    const rows = visibleSecrets();
+    count.textContent =
+      filterQuery || filterTags.size
+        ? t('secrets.countFiltered', { n: rows.length, total: secrets.length })
+        : t('secrets.count', { n: secrets.length });
+  }
+}
+
+/** Full list render from backend truth (metadata only), filter applied. The
+ *  tail add row is ALWAYS present (empty list → guidance copy + the same row;
+ *  a filter with no hits → the no-match copy). A render is a truth reset:
+ *  rows come back at the resting face (openName cleared), then the two
+ *  transient wishes replay — pendingOpen (the row the user clicked while a
+ *  commit's re-read was in flight) and savedFlashName (the「已保存 ✓」flash
+ *  on the resting face). */
+function renderList() {
+  renderToolbar();
+  const list = listEl();
+  if (!list) return;
+  const rows = visibleSecrets();
+  let empty = '';
+  if (!secrets.length) empty = `<div class="cfg-empty">${escapeHtml(t('secrets.empty'))}</div>`;
+  else if (!rows.length) empty = `<div class="cfg-empty">${escapeHtml(t('secrets.noMatch'))}</div>`;
+  list.innerHTML =
+    empty +
+    rows.map(rowHTML).join('') +
+    `<div class="secrets-add-row"${draftOpen ? ' data-open' : ''}>${draftOpen ? draftHTML() : addTriggerHTML()}</div>`;
+  openName = ''; // fresh DOM — nothing is expanded yet
+  if (pendingOpen) {
+    const row = list.querySelector(`.secrets-row[data-name="${CSS.escape(pendingOpen)}"]`);
+    pendingOpen = '';
+    if (row instanceof HTMLElement) expandRow(row);
+  }
+  if (savedFlashName) {
+    paintRowSaved(savedFlashName);
+    savedFlashName = '';
+  }
+}
+
+/** Captions living in index.html (the shell is text-free; the panel
+ *  translates its own subtree — socialPanel.js applyStaticText precedent).
+ *  行内化: only the shell header remains static; every row/draft caption is
+ *  rendered fresh by rowHTML/draftHTML on each renderList. */
+function applyStaticText() {
+  const map = [
+    ['secrets-modal-title', 'secrets.title'],
+    ['secrets-modal-close', 'secrets.close', 'title'],
+    ['secrets-search-input', 'secrets.searchPlaceholder', 'placeholder'],
+    ['secrets-search-input', 'secrets.searchPlaceholder', 'aria-label'],
+    ['secrets-tagbar', 'secrets.tags', 'aria-label'],
+  ];
+  for (const [id, key, attr] of map) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (attr) el.setAttribute(attr, t(key)); else el.textContent = t(key);
+  }
+}
+
+// ── Load ─────────────────────────────────────────────────────────────────
+/** Read the list; failures degrade to the empty state with an error line —
+ *  the panel never fakes data it did not read. */
+async function loadAll() {
+  setBusy(true);
+  try {
+    secrets = await fetchSecrets();
+    renderList();
+    // secrets-ui-redesign (2026-10-08): nudge the settings-page entry row's
+    // count pill — sidebar.js listens for `secrets-changed`, busts its 60s
+    // cache and re-reads this same metadata-only list.
+    window.dispatchEvent(new CustomEvent('secrets-changed'));
+  } catch {
+    secrets = [];
+    openName = '';
+    pendingOpen = '';
+    savedFlashName = '';
+    const list = listEl();
+    if (list) {
+      list.innerHTML = `<div class="cfg-empty">${escapeHtml(t('secrets.error.io', { code: 'io' }))}</div><div class="secrets-add-row">${addTriggerHTML()}</div>`;
+    }
+  } finally {
+    setBusy(false);
+  }
+}
+
+// ── Reveal (the eye) ─────────────────────────────────────────────────────
+/**
+ * The row eye. Three readings by field state:
+ *  · revealed → mask ON; FETCHED plaintext burns back to the placeholder
+ *    face (清空回占位，下次揭示再拉); a locally-typed draft is KEPT (masking
+ *    it is presentation-only — it never left the user's hands).
+ *  · masked + local text → unmask in place (no fetch, no overwrite).
+ *  · masked + empty → THE value fetch: exactly one authenticated GET, reply
+ *    applied only if this row's token is still current, the field is still
+ *    attached, the panel is still open and the field is still masked+empty.
+ * @param {HTMLElement} row
+ */
+function revealRow(row) {
+  const field = rowField(row);
+  const eye = rowEye(row);
+  if (!field || !eye) return;
+  const name = row.dataset.name || '';
+  if (!field.classList.contains('masked')) {
+    field.classList.add('masked');
+    if (field.dataset.held === 'fetched') { field.value = ''; delete field.dataset.held; }
+    baselines.delete(name);
+    eyeFace(eye, true);
+    return;
+  }
+  if (field.value) { // local typed draft → presentation-layer unmask only
+    field.classList.remove('masked');
+    eyeFace(eye, false);
+    return;
+  }
+  if (row.dataset.revealing) {
+    // A fetch is in flight and the field is still masked+empty: this click
+    // CANCELS the pending reveal — the token bump makes the late reply a
+    // stale drop (fast-toggle seq guard, 防串行).
+    row.dataset.revealToken = String(++revealSeq);
+    delete row.dataset.revealing;
+    return;
+  }
+  const token = String(++revealSeq);
+  row.dataset.revealing = '1';
+  row.dataset.revealToken = token;
+  fetchSecretValue(name).then((value) => {
+    delete row.dataset.revealing;
+    if (row.dataset.revealToken !== token) return;   // a newer toggle owns the row
+    if (!field.isConnected) return;                  // row re-rendered away
+    const ov = overlay();
+    if (!ov || !ov.classList.contains('on')) return; // panel closed meanwhile
+    if (!field.classList.contains('masked') || field.value) return; // typed meanwhile
+    baselines.set(name, value);
+    field.dataset.held = 'fetched';
+    field.value = value;
+    field.classList.remove('masked');
+    eyeFace(eye, false);
+  }).catch((e) => {
+    delete row.dataset.revealing;
+    if (row.dataset.revealToken !== token || !field.isConnected) return;
+    const status = e && typeof e.status === 'number' ? e.status : 0;
+    window.__showToast?.(status ? errorText(status) : t('secrets.error.io', { code: 'io' }), 'error');
+  });
+}
+
+// ── Inline edit (commit / revert) ────────────────────────────────────────
+/** Client-side name shape check (plan card 问5: ^[a-z0-9][a-z0-9._-]{0,63}$;
+ *  hard reds: no leading dot, no .tmp suffix). The server re-validates —
+ *  this is face guidance, not the authority.
+ * @param {string} name
+ * @returns {boolean}
+ */
+function validName(name) {
+  return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(name) && !name.endsWith('.tmp');
+}
+
+/**
+ * Flash「已保存 ✓」into a row's status slot (jev card save-state precedent:
+ * role=status live region, ~1.6s decay, cleared only if still connected).
+ * The slot overlays the row's meta column (grid 批: same cell, absolutely
+ * positioned; the meta hides via [data-flashing] so the flash never shifts
+ * the row) on the RESTING head — the flash lands after the commit's re-read
+ * has already collapsed the detail.
+ */
+function paintRowSaved(name) {
+  const row = listEl()?.querySelector(`.secrets-row[data-name="${CSS.escape(name)}"]`);
+  const st = row?.querySelector('.secrets-row-status');
+  if (!(row instanceof HTMLElement) || !(st instanceof HTMLElement)) return;
+  st.innerHTML = statusIcon('circle-check', 11, 'st-ok') + escapeHtml(t('secrets.saved'));
+  row.setAttribute('data-flashing', '');
+  setTimeout(() => {
+    if (!st.isConnected) return;
+    st.innerHTML = '';
+    row.removeAttribute('data-flashing');
+  }, 1600);
+}
+
+// ── Create draft (tail row) ──────────────────────────────────────────────
+/** Expand the tail row into the draft (in place —焦点自动落名称字段). The
+ *  draft and an open row are mutually exclusive: expanding the draft
+ *  commits-and-collapses any open row first (one expansion at a time). */
+function openDraftInPlace(focus = true) {
+  const row = addRowEl();
+  if (!row) return;
+  const open = openRowEl();
+  if (open) void collapseRow(open, { commit: true });
+  draftOpen = true;
+  row.setAttribute('data-open', '');
+  row.innerHTML = draftHTML();
+  const nameInput = row.querySelector('[data-draft-name]');
+  if (focus && nameInput instanceof HTMLElement) nameInput.focus();
+}
+
+/** Collapse the draft back to the dashed trigger; the draft burns here. */
+function discardDraft(refocus = true) {
+  draftOpen = false;
+  const row = addRowEl();
+  if (!row) return;
+  row.removeAttribute('data-open');
+  row.innerHTML = addTriggerHTML();
+  if (refocus) {
+    const trigger = row.querySelector('[data-add]');
+    if (trigger instanceof HTMLElement) trigger.focus();
+  }
+}
+
+function showDraftError(msg) {
+  const err = addRowEl()?.querySelector('.secrets-draft-error');
+  if (err instanceof HTMLElement) {
+    err.innerHTML = statusIcon('circle-alert', 11, 'st-err') + escapeHtml(msg);
+    err.hidden = false;
+  }
+}
+
+function clearDraftError() {
+  const err = addRowEl()?.querySelector('.secrets-draft-error');
+  if (err instanceof HTMLElement) { err.hidden = true; err.textContent = ''; }
+}
+
+/**
+ * Submit the draft through the existing POST path (create mode of the old
+ * editor: client-side name shape check, 409 → conflict copy, value into the
+ * body once). Success collapses the draft and re-reads the list — the new
+ * row lands from backend truth.
+ * @returns {Promise<void>}
+ */
+async function submitDraft() {
+  if (draftBusy) return;
+  const row = addRowEl();
+  if (!row) return;
+  const nameEl = row.querySelector('[data-draft-name]');
+  const valueEl = row.querySelector('[data-draft-value]');
+  const descEl = row.querySelector('[data-draft-desc]');
+  const tagsEl = row.querySelector('[data-draft-tags]');
+  const name = nameEl instanceof HTMLInputElement ? nameEl.value.trim() : '';
+  const value = valueEl instanceof HTMLTextAreaElement ? valueEl.value : '';
+  // 可查询批: the two optional metadata fields ride the SAME POST, so a new
+  // secret is queryable from its first second (no second round trip). Both
+  // are metadata — the value stays the only secret in the body.
+  const description = descEl instanceof HTMLInputElement ? descEl.value.trim() : '';
+  const tags = tagsEl instanceof HTMLInputElement ? parseTags(tagsEl.value) : [];
+  clearDraftError();
+  if (!name || !validName(name)) {
+    showDraftError(t('secrets.invalidName'));
+    if (nameEl instanceof HTMLElement) nameEl.focus();
+    return;
+  }
+  if (!value) {
+    showDraftError(t('secrets.error.emptyValue'));
+    if (valueEl instanceof HTMLElement) valueEl.focus();
+    return;
+  }
+  draftBusy = true;
+  setBusy(true);
+  try {
+    const resp = await api(`/api/secrets/${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // The plaintext's single appearance; description/tags are metadata and
+      // are omitted when empty so the body stays the minimal {value} shape.
+      body: JSON.stringify(
+        description || tags.length ? { value, description, tags } : { value }
+      ),
+    });
+    if (!resp.ok) { showDraftError(errorText(resp.status)); return; }
+    draftOpen = false;
+    await loadAll(); // the new row lands in place
+  } catch {
+    showDraftError(t('secrets.error.io', { code: 'io' }));
+  } finally {
+    draftBusy = false;
+    setBusy(false);
+  }
+}
+
+// ── Delete (unified glass confirm, daemons.js:454-456 precedent) ─────────
+/**
+ * Two-step delete: the glass confirm carries the name (and the referenced-by
+ * warning when refs exist); the server enforces its own `confirm=<name>`
+ * parameter on top (plan card 问7 double insurance).
+ * @param {string} name
+ */
+function requestDelete(name) {
+  const row = secrets.find((s) => s.name === name);
+  const refs = row ? row.refs : [];
+  const msg = refs.length
+    ? t('secrets.deleteConfirmRefs', { name, refs: refs.join(', ') })
+    : t('secrets.deleteConfirm', { name });
+  if (typeof window.__showConfirm !== 'function') return; // never delete without a confirm
+  window.__showConfirm(t('secrets.deleteTitle'), msg, async () => {
+    setBusy(true);
+    try {
+      const resp = await api(`/api/secrets/${encodeURIComponent(name)}?confirm=${encodeURIComponent(name)}`, {
+        method: 'DELETE',
+      });
+      if (!resp.ok) {
+        window.__showToast?.(errorText(resp.status), 'error');
+        await loadAll(); // 409 referenced re-reads the fresh refs list
+        return;
+      }
+      baselines.delete(name);
+      await loadAll();
+    } catch {
+      window.__showToast?.(t('secrets.error.io', { code: 'io' }), 'error');
+    } finally {
+      setBusy(false);
+    }
+  });
+}
+
+// ── Open / close / focus ─────────────────────────────────────────────────
+/**
+ * 层级收进批 (author ruling 2026-11-01:「子面板尺寸必须收进父面板内，层级视觉
+ * 服从父级」): clamp this dialog INTO the parent settings modal's live rect,
+ * inset 24px per side. Both shells are viewport-centered flex children, so a
+ * strictly smaller centered box is geometrically contained — no positioning
+ * math needed, only the size clamp. CSS already carries the static fallback
+ * (512px ≤ parent 560px, max-height 85vh−48px ≤ parent 85vh); this refines the
+ * height to the parent's ACTUAL (content-driven) height so a short settings
+ * panel can never be overspilled by a taller child. Mobile layer: skipped —
+ * body.mobile-layer stretches both to fullscreen (铺满屏批), containment
+ * already holds there. Re-fit on viewport resize while open; inline styles
+ * are cleared on close so a later non-settings open (defensive) starts clean.
+ */
+function fitToParent() {
+  const ov = overlay();
+  const m = modal();
+  if (!ov || !ov.classList.contains('on') || !m) return;
+  if (document.body.classList.contains('mobile-layer')) return;
+  const parent = document.getElementById('settings-modal');
+  if (!parent) return;
+  const r = parent.getBoundingClientRect();
+  if (r.width < 80 || r.height < 80) return; // parent unmeasurable (anomaly) → leave CSS fallback
+  const inset = 24;
+  m.style.maxWidth = `${Math.max(320, Math.round(r.width - inset * 2))}px`;
+  m.style.maxHeight = `${Math.max(280, Math.round(r.height - inset * 2))}px`;
+}
+
+/** Resize listener while the dialog is open (removed on close). */
+function onWindowResizeFit() { fitToParent(); }
+
+export function openSecretsPanel() {
+  const ov = overlay();
+  if (!ov) return;
+  lastFocusedBeforeOpen = /** @type {HTMLElement|null} */ (document.activeElement);
+  ov.classList.add('on');
+  // B4：密钥面板入层栈。本壳的 Esc 三段契约（草稿 / 展开行 / 关闭）由它自己的
+  // capture 盾独占 ⇒ 层不加 onEscape（否则草稿态会被直接关窗吞掉）。
+  pushLayer(ov, { name: 'secrets' });
+  // 弹窗退场批：跨档重排后补注左上返回（幂等；非手机层不注入）。
+  mobileSheetBack(ov, closeSecretsPanel);
+  applyStaticText();
+  fitToParent();
+  window.addEventListener('resize', onWindowResizeFit);
+  const first = modal()?.querySelector('button, input, select');
+  if (first && 'focus' in first) /** @type {HTMLElement} */ (first).focus();
+  loadAll();
+}
+
+export function closeSecretsPanel() {
+  const ov = overlay();
+  if (!ov) return;
+  // Everything transient burns here: displayed plaintext (the baselines are
+  // deleted entry-by-entry as details close, but a hard clear cannot hurt —
+  // no value ever outlives the panel), the draft and the expansion state
+  // (the DOM rebuilds from backend truth on the next open).
+  baselines.clear();
+  draftOpen = false;
+  openName = '';
+  pendingOpen = '';
+  savedFlashName = '';
+  // 可查询批: the filters are transient view state like every other field
+  // above — a fresh open starts from the whole store.
+  filterQuery = '';
+  filterTags = new Set();
+  const search = document.getElementById('secrets-search-input');
+  if (search instanceof HTMLInputElement) search.value = '';
+  popLayer(ov); // B4：出栈 + 回焦
+  ov.classList.remove('on');
+  window.removeEventListener('resize', onWindowResizeFit);
+  const m = modal();
+  if (m) { m.style.maxWidth = ''; m.style.maxHeight = ''; }
+  // Focus back to the settings entry row button (or wherever we came from).
+  const btn = document.getElementById('btn-open-secrets');
+  if (btn) btn.focus();
+  else lastFocusedBeforeOpen?.focus?.();
+}
+
+/** The dialog has no dimming backdrop (iron rule 1) — clicking the empty
+ *  overlay area is the click-outside affordance. */
+function onOverlayClick(ev) {
+  if (ev.target === overlay()) closeSecretsPanel();
+}
+
+/**
+ * Escape shield — CAPTURE phase (family precedent: main.js's global Esc
+ * handler shields #modal-overlay the same way). Three-stage contract, now
+ * expansion-aware (行内化二轮): draft open → discard the draft; a row is
+ * expanded → collapse it WITHOUT committing (Esc = 放弃并收起, the typed
+ * draft burns with the detail); otherwise close the dialog. Capture on
+ * document runs before every bubble-phase listener, so handling + stopping
+ * the event here gives this contract exclusive ownership of Esc while this
+ * dialog is open. Scoped strictly to "this overlay is open". When the
+ * unified confirm dialog (#modal-overlay, opened by the delete flow) is up,
+ * the global capture handler owns that Esc — this shield stands down.
+ */
+function onKeydownCapture(ev) {
+  if (ev.key !== 'Escape') return;
+  const ov = overlay();
+  if (!ov || !ov.classList.contains('on')) return;
+  const confirmOverlay = document.getElementById('modal-overlay');
+  if (confirmOverlay && confirmOverlay.classList.contains('on')) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  if (draftOpen) { discardDraft(); return; }
+  const row = openRowEl();
+  if (row) { void collapseRow(row, { commit: false }); return; }
+  closeSecretsPanel();
+}
+
+/**
+ * Bubble-phase keys inside the dialog: Tab = focus trap; Enter (no shift)
+ * completes — a row's edit field commits-and-collapses its row (same path
+ * as the 保存 button), a draft field submits the draft (both preventDefault
+ * so the textarea never swallows the newline). Enter on a resting head
+ * button is the button's native click → expandRow.
+ */
+function onKeydown(ev) {
+  const ov = overlay();
+  if (!ov || !ov.classList.contains('on')) return;
+  if (ev.key === 'Enter' && !ev.shiftKey) {
+    const target = ev.target instanceof Element ? ev.target : null;
+    if (!target) return;
+    if (target.matches('[data-edit]')) {
+      ev.preventDefault();
+      const row = target.closest('.secrets-row');
+      if (row instanceof HTMLElement) void collapseRow(row, { commit: true });
+      return;
+    }
+    // 可查询批: Enter inside the metadata block commits the same way the
+    // 保存 button does (the value field, the description and the tag list
+    // all ride one completion path).
+    if (target.matches('[data-edit-desc],[data-edit-tags]')) {
+      ev.preventDefault();
+      const row = target.closest('.secrets-row');
+      if (row instanceof HTMLElement) void collapseRow(row, { commit: true });
+      return;
+    }
+    if (target.matches('[data-draft-name],[data-draft-value]')) {
+      ev.preventDefault();
+      void submitDraft();
+      return;
+    }
+    return;
+  }
+  if (ev.key !== 'Tab') return;
+  const m = modal();
+  if (!m) return;
+  const focusables = /** @type {HTMLElement[]} */ ([
+    ...m.querySelectorAll('button, input, select, textarea, [href], [tabindex]:not([tabindex="-1"])'),
+  ]).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null);
+  if (!focusables.length) return;
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  const active = /** @type {HTMLElement|null} */ (document.activeElement);
+  if (ev.shiftKey && (active === first || !m.contains(active))) {
+    ev.preventDefault();
+    last.focus();
+  } else if (!ev.shiftKey && active === last) {
+    ev.preventDefault();
+    first.focus();
+  }
+}
+
+function onDocumentClick(ev) {
+  const target = /** @type {HTMLElement|null} */ (ev.target instanceof Element ? ev.target : null);
+  if (!target) return;
+  if (target.closest('#btn-open-secrets')) { openSecretsPanel(); return; }
+  if (target.closest('#secrets-modal-close')) { closeSecretsPanel(); return; }
+  // 可查询批 · tag chips (row lane AND tag bar) — a toggle on the filter set.
+  // Checked BEFORE the resting-head branch so a chip click never doubles as
+  // an expand (the chips live outside the head button, but the guard keeps
+  // the reading explicit).
+  if (target.closest('[data-tag-clear]')) { clearFilters(); return; }
+  const chip = target.closest('[data-tag]');
+  if (chip instanceof HTMLElement && chip.dataset.tag) {
+    toggleTagFilter(chip.dataset.tag);
+    return;
+  }
+  // 可查询批 · the toolbar is a VIEW control, not a row interaction: clicking
+  // into the search box (or an empty spot of the tag bar) must not be read as
+  // the dismiss-to-save click-outside gesture.
+  if (target.closest('.secrets-toolbar')) return;
+  // Resting head (行内化二轮): the whole row is the tap target. Click a
+  // resting row → expand it in place; click the OPEN row's head again →
+  // commit-and-collapse (the dismiss-to-save reading, symmetric toggle).
+  const head = target.closest('[data-row-head]');
+  if (head instanceof HTMLElement) {
+    const row = head.closest('.secrets-row');
+    if (row instanceof HTMLElement) {
+      if (openName === row.dataset.name) void collapseRow(row, { commit: true });
+      else expandRow(row);
+    }
+    return;
+  }
+  // Create entry (行内化 2026-10-09 07:42): the dashed tail row — the ONLY
+  // create face (FAB + empty-state button retired with the editor modal).
+  if (target.closest('[data-add]')) { openDraftInPlace(); return; }
+  // Row eye (the value fetch / mask toggle) — lives in the expanded detail;
+  // the draft's own eye ([data-draft-eye]) is presentation-only below.
+  const eye = target.closest('[data-eye]');
+  if (eye instanceof HTMLElement && eye.dataset.eye) {
+    const row = eye.closest('.secrets-row');
+    if (row instanceof HTMLElement) revealRow(row);
+    return;
+  }
+  if (target.closest('[data-draft-eye]')) {
+    const wrap = target.closest('.secrets-add-row');
+    const field = wrap?.querySelector('[data-draft-value]');
+    const draftEye = wrap?.querySelector('[data-draft-eye]');
+    if (field instanceof HTMLTextAreaElement) {
+      const masked = !field.classList.contains('masked');
+      field.classList.toggle('masked', masked);
+      eyeFace(draftEye instanceof HTMLElement ? draftEye : null, masked);
+    }
+    return;
+  }
+  if (target.closest('[data-draft-save]')) { void submitDraft(); return; }
+  // Detail actions: 保存 = the explicit commit-and-collapse; 删除 = the
+  // unchanged glass-confirm flow. Both sit INSIDE the open row, so neither
+  // trips the outside-collapse below.
+  const save = target.closest('[data-save]');
+  if (save instanceof HTMLElement) {
+    const row = save.closest('.secrets-row');
+    if (row instanceof HTMLElement) void collapseRow(row, { commit: true });
+    return;
+  }
+  const del = target.closest('[data-delete]');
+  if (del instanceof HTMLElement && del.dataset.delete) requestDelete(del.dataset.delete);
+  // Click-outside completion (点行外): a click anywhere outside the open row
+  // finishes it — a changed field PUTs (Reminders dismiss-to-save), then the
+  // row collapses. Standing down for clicks inside the glass confirm overlay
+  // (#modal-overlay — its 取消/删除 buttons are outside the row; the delete
+  // flow owns those clicks, and a cancel must NOT collapse the row mid-flow).
+  const open = openRowEl();
+  if (open && target.closest('.secrets-row') !== open && !target.closest('#modal-overlay')) {
+    void collapseRow(open, { commit: true });
+  }
+}
+
+/** Row fields feed only their own value (value discipline); any local input
+ *  marks the field's content as a LOCAL draft — the eye then knows a
+ *  re-mask must keep it, and a fetched value can never be confused with
+ *  user text. Fetch replies set the value programmatically → no input
+ *  event → the flag stays honest. (Blur is deliberately NOT a commit in
+ *  the 二轮 model — completion is owned by 保存 / Enter / the click-outside
+ *  collapse, so a stray focusout can never double-fire a PUT.) */
+function onInput(ev) {
+  const target = ev.target;
+  // 可查询批: the search box filters live over the loaded metadata. A row
+  // that happens to be open is committed-and-closed FIRST (once: the first
+  // keystroke collapses it, later keystrokes are pure filtering) — a filter
+  // change must never silently discard a typed edit.
+  if (target instanceof HTMLInputElement && target.id === 'secrets-search-input') {
+    const open = openRowEl();
+    if (open) void collapseRow(open, { commit: true });
+    filterQuery = target.value;
+    renderList();
+    return;
+  }
+  const el = target instanceof HTMLTextAreaElement ? target : null;
+  if (!el || !el.matches('[data-edit]')) return;
+  el.dataset.held = 'local';
+}
+
+/** Boot wiring. Idempotent; document-level (survives settings re-renders —
+ *  the entry button is rebuilt by every renderSettings call). */
+export function initSecretsPanel() {
+  if (initialized) return;
+  initialized = true;
+  document.addEventListener('click', onDocumentClick);
+  document.addEventListener('keydown', onKeydownCapture, true);
+  document.addEventListener('keydown', onKeydown);
+  document.addEventListener('input', onInput);
+  overlay()?.addEventListener('click', onOverlayClick);
+  // 返回语义 = 面板关闭（含明文清场，与窗头 X/Esc 同路径）。
+  const ovBack = overlay();
+  if (ovBack) mobileSheetBack(ovBack, closeSecretsPanel);
+  window.addEventListener('locale-changed', () => {
+    applyStaticText();
+    renderList();
+  });
+  applyStaticText();
+}
+
+// The dialog shell is built by index.html (text-free, like #social-modal);
+// boot only creates the icons inside it.
+if (typeof document !== 'undefined') {
+  const boot = () => createIconsIn(document.getElementById('secrets-modal') || document.body);
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+}

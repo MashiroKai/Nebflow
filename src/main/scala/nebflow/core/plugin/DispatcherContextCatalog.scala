@@ -1,87 +1,64 @@
 package nebflow.core.plugin
 
 import cats.effect.IO
-import cats.syntax.all.*
-import nebflow.core.presets.PresetStore
 
 /**
- * DispatcherContextCatalog —— 分发器上下文双目录渲染（dispatcher-ctx 批，2026-09-05）。
+ * DispatcherContextCatalog —— 分发器上下文目录渲染（描述单源起插件段收敛为单点委托）。
  *
- * 分发器 spawn/重入 prompt 组装（ProjectActor.pluginCatalogText）注入两段目录，
- * 让分发器「按任务需求为节点选配 plugins 与 preset」时不用猜：
+ * 分发器 spawn/重入 prompt 组装（ProjectActor.pluginCatalogText）注入能力目录，
+ * 让分发器「按任务需求为节点选配 plugins」时不用猜：
  *
- * 1. **Plugin 能力目录**——过滤链与 [[PluginRegistry.renderCatalog]] 完全同源
- *    （`PluginsConfig.enabled` 总闸 + `scan().filter(_.trust.trusted)`），
- *    行渲染改为能力向：manifest `capability` 字段优先，缺省回落 description。
- *    停用/未信任插件不出现（§B.3 默认拒绝）。兼容注：plugin-panel-redesign 批
- *    （a89a1e7e，未落）引入每插件开关——落地后本过滤链须衔接（trusted 且
- *    per-plugin enabled 才出现），衔接点=本文件 pluginSection 的 filter 链。
+ * 1. **Plugin 能力目录**——段头/过滤链/行渲染/缺席注记单点全部在 [[PluginRegistry.renderCatalog]]
+ *    （`PluginsConfig.enabled` 总闸 + `scan().filter(_.trust.trusted)`），本类只委托。
+ *    描述单源（人审与分发器目录渲染同一份内容）：
+ *    manifest `description` 是唯一描述源，`capability` 键退役为 deprecated——存量包
+ *    仍带该键不报错（KnownManifestKeys 登记），渲染层忽略。creator spec D10 双渲染器
+ *    收敛已一并落地（调试 REST GET /plugins/catalog 与注入段同字节输出）。
+ *    停用/未信任插件不出现（§B.3 默认拒绝）。兼容注：每插件开关
+ *    （未落地）引入后——落地后本过滤链须衔接（trusted 且
+ *    per-plugin enabled 才出现），衔接点=PluginRegistry.renderCatalog 的 filter 链。
  *
- * 2. **Model Preset 场景目录**——全部 preset（不经 plugins 总闸），每条
- *    "name — description" 一行、无 description 只出 name；数据源复用
- *    [[PresetStore.catalogLines]]（08-20 preset description 动态注入先例，
- *    read-fresh：每次渲染现读 model-presets.json，改后即时生效）。
+ * 2. **~~Model Preset 场景目录~~**（整体退役）——原目录段
+ *    服务「分发器按任务为节点选 preset」（NodeEdit `preset` 参数）。口径：节点
+ *    无自有模型方案设置，节点模型 = Nebula 主链（SchemePolicy 每 turn 动态跟随），
+ *    `preset` 参数已退役（NODE_PRESET_RETIRED）——目录失去唯一消费者，保留只会
+ *    诱导 LLM 调用被拒参数并挤占上下文。
  *
  * 机制选型（对齐 skillCatalog order 800 / phase2b 先例）：**注入目录段**而非
- * 新增查询工具——两目录是参考数据（非操作指令），分发器单次会话、目录规模小
- * （当前 16 插件 + 数 preset，量化见 .nebflow/Spec/dispatcher-context-catalog.md），
- * 多造工具徒增一次往返；反方考量（目录膨胀挤占上下文）由格式精简
- * （每条 1-2 行）+ capability 单行句压制，超限再议按需查询。
+ * 新增查询工具——目录是参考数据（非操作指令），分发器单次会话、目录规模小
+ * （当前 16 插件，量化见 dispatcher-context-catalog 规格件），多造工具徒增一次
+ * 往返；反方考量（目录膨胀挤占上下文）由行格式精简（每条 1-2 行）压制。
  *
- * 渲染规则：两段都空 → ""（调用方不注入空段，先例同 renderCatalog）。
+ * 渲染规则：段空 → ""（调用方不注入空段，先例同 renderCatalog）。可见性
+ * （静默缩容）：插件段段尾可带缺席注记（「另有 N 个插件未载入（装载
+ * 失败 x / 信任未批准 y / digest 漂移 z）」）——目录缩容不再无声；注记只出计数，
+ * 包名+原因清单在启动健康摘要日志（PluginRegistry.healthSummary）。
  */
 object DispatcherContextCatalog:
 
-  /** Plugin Catalog 段头——与 PluginRegistry.renderCatalog 保持同款（分发器
-    * system.md「Plugin Catalog 认知」按此头部识别目录段）。 */
-  private val PluginHeader =
-    "# Plugin Catalog（可分配能力包，NodeEdit 的 plugins 参数按 name 引用；能力句 = 该插件让节点具备什么能力）"
+  /** Plugin 能力目录段：单点委托 [[PluginRegistry.renderCatalog]]（段头/行格式/过滤链与调试预览同字节输出，无本地重复实现）。 */
+  def pluginSection(): IO[String] = PluginRegistry.renderCatalog()
 
-  private val PresetHeader =
-    "# Model Preset Catalog（模型预设场景目录，NodeEdit/agent 定义的 preset 参数按 name 引用；场景句 = 该 preset 适配的任务性质）"
+  /**
+   * 插件段 + 数据根渲染：与 [[render]] 注入首条
+   * 消息的插件段同字节规则（`{{data_root}}` 同上渲染）——会话内收敛提醒
+   * （AgentCore 的 plugin-surface 通道）拿它当**权威现值**，与首条消息里的
+   * spawn 期快照区分开。substituteDataRoot 单点复用，勿复制实现。
+   */
+  def pluginSectionResolved(): IO[String] =
+    pluginSection().map(nebflow.shared.PathUtil.substituteDataRoot)
 
-  /** 单插件目录行：capability 优先、缺省回落 description（渲染规则单点）。
-    * 尾缀保留 [skills | mcp | tools] 结构清单（与 renderCatalog 同款）——
-    * 工具面（tools: WebSearch…）本身是能力信号。 */
-  private def pluginLine(p: PluginRegistry.PluginDef): String =
-    val cap = p.capability.getOrElse:
-      if p.description.isEmpty then p.name else p.description
-    val skills = if p.skills.isEmpty then "-" else p.skills.map(s => s.id.split('/')(1)).mkString(", ")
-    val mcp = if p.mcpServers.isEmpty then "-" else p.mcpServers.keys.mkString(", ")
-    val tools = if p.toolsExtension.isEmpty then "" else s" | tools: ${p.toolsExtension.mkString(", ")}"
-    s"- ${p.name}: $cap [skills: $skills | mcp: $mcp$tools]"
-
-  /** Plugin 能力目录段：enabled 总闸开 + 全部受信插件（停用/未信任不出现）。
-    * 无受信插件 → ""。 */
-  def pluginSection(): IO[String] =
-    PluginsConfig.enabled.flatMap {
-      case false => IO.pure("")
-      case true =>
-        PluginRegistry.scan().map { all =>
-          val trusted = all.filter(_.trust.trusted).sortBy(_.name)
-          if trusted.isEmpty then ""
-          else PluginHeader + "\n" + trusted.map(pluginLine).mkString("\n")
-        }
-    }
-
-  /** Model Preset 场景目录段：全部 preset，read-fresh（catalogLines 内部
-    * Try 包裹——读失败降级 Nil = 段省略，不炸 prompt 组装）。行 = 既有渲染器
-    * "name — description" 输出加列表前缀，与插件行格式对齐。 */
-  def presetSection(): IO[String] =
-    IO.blocking(PresetStore.catalogLines()).map {
-      case Nil   => ""
-      case lines => PresetHeader + "\n" + lines.map("- " + _).mkString("\n")
-    }
-
-  /** 双目录拼装入口（ProjectActor.pluginCatalogText 挂接点）：非空段以空行
-    * 相接；全空 → ""。 */
+  /**
+   * 目录拼装入口（ProjectActor.pluginCatalogText 挂接点）：原「插件段 + preset 段
+   * 双目录」中的 preset 段已退役——本入口即插件段的 substituteDataRoot
+   * 包装（签名保留，调用点零改动）。
+   *
+   * 数据根渲染（home 硬编码 → 运行时动态化）：段内 `{{data_root}}`
+   * （如插件 manifest description 里写的路径形态）在此渲染为**本实例**的数据根
+   * ——PathUtil.substituteDataRoot 单点（与 AgentCore.buildSystemPrompt /
+   * NodeEngine.injectedPluginBlock 同一实现，勿复制）。
+   */
   def render(): IO[String] =
-    (pluginSection(), presetSection()).mapN { (pluginPart, presetPart) =>
-      (pluginPart.nonEmpty, presetPart.nonEmpty) match
-        case (true, true)   => pluginPart + "\n\n" + presetPart
-        case (true, false)  => pluginPart
-        case (false, true)  => presetPart
-        case (false, false) => ""
-    }
+    pluginSection().map(nebflow.shared.PathUtil.substituteDataRoot)
 
 end DispatcherContextCatalog

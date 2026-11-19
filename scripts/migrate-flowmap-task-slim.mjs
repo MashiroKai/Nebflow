@@ -25,7 +25,7 @@
 //   node scripts/migrate-flowmap-task-slim.mjs --dry-run --root /tmp/fixture-projs
 //
 // Env/args:
-//   --root <dir>   项目根（默认 ~/.nebflow/projects）
+//   --root <dir>   项目根（🔴 必填——历史缺省 ~/.nebflow/projects 是 legacy 根，已移除缺省）
 //   --dry-run      只算不写
 //   --yes          实跑确认（缺省拒绝写入并退出码 2）
 
@@ -34,7 +34,6 @@ import {
   copyFileSync, readdirSync, rmSync,
 } from 'node:fs';
 import { join, resolve, dirname, basename } from 'node:path';
-import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
@@ -180,7 +179,16 @@ function main() {
   const dryRun = argv.includes('--dry-run');
   const apply = argv.includes('--yes');
   const rootIdx = argv.indexOf('--root');
-  const root = rootIdx >= 0 ? resolve(argv[rootIdx + 1]) : join(homedir(), '.nebflow', 'projects');
+  // --root is REQUIRED: this one-shot tool predates the data-root switch and its
+  // historical default (~/.nebflow/projects) silently scans the LEGACY root on
+  // current machines. Forcing the operator to name the root makes every run
+  // explicit about which brand's data it touches.
+  if (rootIdx < 0 || !argv[rootIdx + 1]) {
+    console.error('REFUSED  --root <dir> is required (no default — the historical default pointed at the legacy ~/.nebflow/projects root).');
+    console.error('Usage: node scripts/migrate-flowmap-task-slim.mjs --dry-run --root <dir> | --yes --root <dir>');
+    process.exit(2);
+  }
+  const root = resolve(argv[rootIdx + 1]);
 
   if (!dryRun && !apply) {
     console.error('REFUSED  实跑需显式 --yes（红线 B3：先 --dry-run 报作者过目）。');

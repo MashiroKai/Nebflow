@@ -1,0 +1,532 @@
+/* timeWheel.css — 时间滚轮选择器（Apple 滚轮同构）视觉层
+ *
+ * 设计出处 = docs/design/20261101_163000_time-wheel-picker-spec__delegate-nebflow-0c50686f.zh-CN.md §7
+ * （样张 …-mockup….html style 段为参考实现）。实施批 2026-11-03（作者令 22:16/22:20）。
+ *
+ * 纪律：
+ *  · 零色值字面量 —— 颜色一律走既有 token（--glass-* / --color-* / rgb(var(--sapphire) / α)）。
+ *  · 圆角只落令牌阶梯（8/10/16/20/999 或 var(--ds-radius-*)）；字号只落 11/12/13/15/20。
+ *  · 热区 ≥ 44×44（触发字段 / 列 / 钮 / 胶囊 / 删除），禁 hover 位移（只换色与描边）。
+ *  · z 档：popover 10001（provider 弹窗 10000 之上）/ sheet 11000（body.mobile-layer 铺平之上）。
+ *  · html.no-backdrop（无 backdrop-filter 引擎）→ 面板实色填充，视觉不破。
+ */
+
+/* ══ 触发字段（原子段 = 整段唯一触发点，R7）══════════════════════════════ */
+.tw-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  min-width: 124px;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-3);
+  font-family: inherit;
+  font-size: var(--ds-fs-body);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  border-radius: var(--ds-radius-input);
+  box-shadow: var(--ds-shadow-control);
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+.tw-trigger:hover { background: var(--glass-control-bg-hover); }
+.tw-trigger:focus-visible,
+.tw-trigger.open {
+  outline: none;
+  border-color: rgb(var(--sapphire) / 0.6);
+  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
+}
+.tw-trigger svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--color-text-muted);
+}
+.tw-tv { display: inline-flex; align-items: baseline; gap: var(--ds-space-half); }
+.tw-dash {
+  font-style: normal;
+  color: var(--color-text-muted);
+  padding: 0 var(--ds-space-hair);
+}
+
+/* ══ 面板本体（popover / sheet 两皮共用，规格 = 同构）═════════════════════ */
+.tw-panel {
+  position: fixed;
+  z-index: 10001;
+  display: none;
+  box-sizing: border-box;
+  color: var(--color-text);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--ds-shadow-panel);
+}
+.tw-panel.in,
+.tw-panel.out { display: block; }
+html.no-backdrop .tw-panel { background: var(--color-surface); }
+
+.tw-panel.popover {
+  width: 300px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  border-radius: var(--ds-radius-shell);
+  padding: var(--ds-space-block-y) 14px var(--ds-space-3);
+  transform-origin: top left;
+}
+.tw-panel.popover.in {
+  animation: tw-pop-in 160ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+.tw-panel.popover.out {
+  animation: tw-pop-out 120ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+@keyframes tw-pop-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@keyframes tw-pop-out {
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
+}
+
+.tw-panel.sheet {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 11000;
+  width: auto;
+  max-height: 92vh;
+  overflow-y: auto;
+  border-radius: var(--ds-radius-shell) var(--ds-radius-shell) 0 0;
+  border-bottom: none;
+  padding: var(--ds-space-1h) var(--ds-space-4) calc(14px + env(safe-area-inset-bottom, 0px));
+  transform-origin: bottom center;
+}
+.tw-panel.sheet.in {
+  animation: tw-sheet-in 280ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+.tw-panel.sheet.out {
+  animation: tw-sheet-out 200ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+@keyframes tw-sheet-in {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes tw-sheet-out {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+
+.tw-grabber {
+  width: 36px;
+  height: 5px;
+  border-radius: var(--ds-radius-pill);
+  background: var(--color-text-muted);
+  opacity: 0.45;
+  margin: var(--ds-space-half) auto var(--ds-space-1h);
+  touch-action: none;
+  cursor: grab;
+}
+
+/* ══ 头行 ═══════════════════════════════════════════════════════════════ */
+.tw-head {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-half) 0 var(--ds-space-2);
+}
+.tw-title {
+  flex: 1;
+  text-align: center;
+  font-size: var(--ds-fs-title);
+  font-weight: 600;
+  line-height: 1.3;
+}
+.tw-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-inline-x);
+  font-family: inherit;
+  font-size: var(--ds-fs-body);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--ds-radius-input);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+@media (hover: hover) {
+  .tw-btn:hover {
+    background: var(--glass-etched-bg);
+    color: var(--color-text);
+  }
+}
+
+.tw-btn.tw-confirm { color: var(--color-primary); font-weight: 600; }
+.tw-btn.tw-confirm:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ══ 滚轮区 ══════════════════════════════════════════════════════════════ */
+.tw-wheel-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-half);
+  padding: 0 var(--ds-space-half);
+}
+.tw-col {
+  position: relative;
+  width: 54px;
+  min-width: 44px;
+  height: 200px;
+  overflow: hidden;
+  border-radius: var(--ds-radius-button);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  outline: none;
+  cursor: grab;
+}
+.tw-col:active { cursor: grabbing; }
+.tw-col:focus-visible { box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.35); }
+.tw-col-date { width: 104px; }
+.tw-strip {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  will-change: transform;
+}
+.tw-item {
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--ds-fs-display);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  opacity: 0.15;
+  transform: scale(0.94);
+  pointer-events: none;
+}
+.tw-col-date .tw-item { font-size: var(--ds-fs-body); }
+.tw-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 40px;
+  margin-top: -20px;
+  border-radius: var(--ds-radius-button);
+  background: var(--glass-etched-bg);
+  border-top: 1px solid var(--glass-etched-border);
+  border-bottom: 1px solid var(--glass-etched-border);
+  pointer-events: none;
+  z-index: 2;
+}
+.tw-fade {
+  position: absolute;
+  left: -6px;
+  right: -6px;
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 3;
+  /* 上下渐隐（参考实拍的边缘衰减）；用关键字色，禁裸色值字面量 */
+  -webkit-mask-image: linear-gradient(180deg, transparent 4%, black 30%, black 70%, transparent 96%);
+  mask-image: linear-gradient(180deg, transparent 4%, black 30%, black 70%, transparent 96%);
+}
+.tw-sep {
+  flex: none;
+  padding: 0 var(--ds-space-1h);
+  font-size: var(--ds-fs-body);
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+.tw-panel.popover .tw-wheel-sep { padding: 0 var(--ds-space-2); }
+
+/* ══ 快捷档 / 星期（同族胶囊；热区 44）═══════════════════════════════════ */
+.tw-chips,
+.tw-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-block-y) 0 var(--ds-space-half);
+}
+.tw-days[hidden],
+.tw-chips[hidden] { display: none; }
+.tw-days-label {
+  align-self: center;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+  padding-right: var(--ds-space-half);
+}
+.tw-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-3);
+  font-family: inherit;
+  font-size: var(--ds-fs-hint);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  border-radius: var(--ds-radius-pill);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.tw-chip:hover {
+  color: var(--color-text);
+  background: var(--glass-control-bg-hover);
+}
+.tw-chip.on {
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.12);
+  border-color: rgb(var(--sapphire) / 0.45);
+}
+.tw-day { min-width: 44px; padding: 0 var(--ds-space-2); }
+
+/* ══ 状态行（跨零点 / 起止相等，互斥）════════════════════════════════════ */
+.tw-status {
+  display: none;
+  margin-top: var(--ds-space-2);
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-input);
+  font-size: var(--ds-fs-hint);
+  font-weight: 500;
+  line-height: 1.45;
+}
+.tw-status.show { display: block; }
+.tw-status-cross.show {
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.1);
+  border: 1px solid rgb(var(--sapphire) / 0.18);
+}
+.tw-status-equal.show {
+  color: var(--status-error-icon);
+  background: color-mix(in srgb, var(--status-error-icon) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--status-error-icon) 22%, transparent);
+}
+
+/* ══ 精确输入兜底行（纯键盘 / 精确分钟通道）═════════════════════════════ */
+.tw-input-row {
+  display: none;
+  align-items: center;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-2);
+}
+.tw-input-row.show { display: flex; }
+.tw-in {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-inline-x);
+  font-family: inherit;
+  font-size: var(--ds-fs-body);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text);
+  background: var(--glass-control-bg);
+  border: 1px solid var(--glass-control-border);
+  border-radius: var(--ds-radius-input);
+  outline: none;
+}
+.tw-in:focus {
+  border-color: rgb(var(--sapphire) / 0.6);
+  box-shadow: 0 0 0 2px rgb(var(--sapphire) / 0.12);
+}
+.tw-in.err {
+  border-color: color-mix(in srgb, var(--status-error-icon) 55%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--status-error-icon) 10%, transparent);
+}
+.tw-input-toggle {
+  margin-top: var(--ds-space-1);
+  min-height: 44px;
+  padding: 0 var(--ds-space-2);
+  font-family: inherit;
+  font-size: var(--ds-fs-meta);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.tw-input-toggle:hover {
+  color: var(--color-text);
+  background: var(--glass-etched-bg);
+}
+.tw-input-toggle[hidden] { display: none; }
+
+/* ══ 段列表行（落点侧通用：原子字段 + 徽标 + 删除）═══════════════════════ */
+.tw-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  flex-wrap: wrap;
+  padding: var(--ds-space-1) 0;
+}
+.tw-row-label {
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+  flex-shrink: 0;
+}
+.tw-row-note {
+  font-size: var(--ds-fs-meta);
+  font-weight: 500;
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.1);
+  border: 1px solid rgb(var(--sapphire) / 0.22);
+  border-radius: var(--ds-radius-chip);
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.tw-row-note[hidden] { display: none; }
+.tw-del {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--ds-fs-title);
+  line-height: 1;
+  color: var(--color-text-muted);
+  background: transparent;
+  border: none;
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.tw-del:hover {
+  color: var(--color-text);
+  background: var(--glass-etched-bg);
+}
+.tw-add-row {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin-top: var(--ds-space-1h);
+  padding: 0 14px;
+  font-family: inherit;
+  font-size: var(--ds-fs-hint);
+  font-weight: 500;
+  color: var(--color-text);
+  background: var(--glass-control-bg);
+  border: 1px dashed var(--glass-control-border);
+  border-radius: var(--ds-radius-input);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.tw-add-row:hover { background: var(--glass-control-bg-hover); }
+.tw-empty {
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+  padding: var(--ds-space-1h) 0;
+}
+/* 段列表容器（provider 级不可用时段 / per-model 不可用时段共用一个盒子） */
+.tw-windows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-half);
+  align-items: flex-start;
+  width: 100%;
+}
+.tw-windows .tw-row { width: 100%; }
+/* per-model 行内嵌：模型行本身是 flex（sidebar.css .cfg-model-row），
+   本块 flex-basis:100% 独占一整行，行内其余控件布局零改。
+   换行只在编辑弹窗的模型列表里开（.cfg-models-container 仅弹窗用；
+   卡片只读列表 .cfg-model-list 不受影响）。 */
+.cfg-models-container > .cfg-model-row { flex-wrap: wrap; }
+.cfg-model-windows {
+  flex: 1 1 100%;
+  min-width: 0;
+  margin: var(--ds-space-half) 0 var(--ds-space-1h);
+  padding-left: var(--ds-space-half);
+  border-left: 2px solid var(--glass-etched-border);
+}
+
+/* ══ 宿主适配档（窄宿主面板内的弹窗）══════════════════════════════════════
+   2026-11-07 作者报障：「这个界面也是，感觉大小比例失衡了。弹窗的内容比主界面
+   还大。」实拍复核（桌面 1280/1440 真实 Chromium）：定时任务面与待办面的宿主
+   面板分别是 360 / 420 宽，弹窗却是 300×278 的定尺 —— 高 278 > 待办宿主整面
+   273，且右缘越出宿主 6px（848 vs 842），滚轮 20px 数字 / 40px 行高 / 200px
+   列高，字号比宿主正文（13）大两档。它不是「另一个面」，是**同一个选择器在
+   小宿主里的唯一一档**：
+     · 触发钮所在宿主面板宽 < 480（= 面板档浮层：定时任务 360 / 待办 420）⇒
+       js/timeWheel.js place() 挂 `.host-fit`，弹窗按宿主尺度收档（下述）；
+     · 宿主是大面（设置页 / provider 弹窗 ≥ 480）⇒ 维持原档，桌面其它落点零感知；
+     · 手机层是另一条皮（`.tw-panel.sheet`，底部抽屉），本块零命中 —— 触控尺寸
+       （列 ≥44、钮 44、胶囊 44）原样保留。
+   值的出处：圆角/间距/字号全部取设计刻度表（--ds-space-* / --ds-fs-*），
+   列宽/行高/列高是本组件自己的三档几何（与 base 档同语义同源，只是收一档）。 */
+.tw-panel.popover.host-fit {
+  width: 264px;
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-3);
+}
+.tw-panel.popover.host-fit .tw-head {
+  gap: var(--ds-space-1h);
+  padding: 0 0 var(--ds-space-1);
+}
+.tw-panel.popover.host-fit .tw-title { font-size: var(--ds-fs-body); }
+.tw-panel.popover.host-fit .tw-btn {
+  padding: 0 var(--ds-space-2);
+  font-size: var(--ds-fs-body);
+}
+/* 滚轮列：46/96 宽 × 150 高（5 档可见），行高 30 —— 与下方 JS 的量测口径一致
+   （js/timeWheel.js 的 Wheel 几何从**计算样式**读，禁第二份常数）。 */
+.tw-panel.popover.host-fit .tw-col {
+  width: 46px;
+  height: 150px;
+}
+.tw-panel.popover.host-fit .tw-col-date { width: 96px; }
+.tw-panel.popover.host-fit .tw-item {
+  height: 30px;
+  font-size: var(--ds-fs-lead);
+}
+.tw-panel.popover.host-fit .tw-col-date .tw-item { font-size: var(--ds-fs-hint); }
+.tw-panel.popover.host-fit .tw-band {
+  height: 30px;
+  margin-top: -15px;
+}
+.tw-panel.popover.host-fit .tw-sep { padding: 0 var(--ds-space-1); }
+/* 段列表行（range 腿落在窄宿主时的兜底）：行内控件保持 44 命中盒，横距收一档。 */
+.tw-panel.popover.host-fit .tw-row { gap: var(--ds-space-1h); }
+
+/* ══ 手机层（body.mobile-layer）局部适配：列宽与胶囊随屏宽铺开 ═══════════ */
+body.mobile-layer .tw-panel.sheet .tw-col { width: 62px; }
+body.mobile-layer .tw-panel.sheet .tw-col-date { width: 120px; }
+body.mobile-layer .tw-row { gap: var(--ds-space-inline-gap); }
+
+/* ══ reduced-motion：皮动画全退化（既有纪律）═════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .tw-panel.popover.in,
+  .tw-panel.popover.out,
+  .tw-panel.sheet.in,
+  .tw-panel.sheet.out { animation: none; }
+  .tw-trigger,
+  .tw-btn,
+  .tw-chip,
+  .tw-in,
+  .tw-del,
+  .tw-add-row,
+  .tw-input-toggle { transition: none; }
+}

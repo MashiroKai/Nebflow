@@ -12,24 +12,28 @@ import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.{GenericRequest, Response, StreamBackend}
 
-/** WebSearch P0 request-construction assertions (E2-1/2/3):
-  *   - zhipu: web_search tool APPENDED to the agent tools (deepMerge must
-  *     not clobber them — the spec's explicit regression point)
-  *   - qwen: enable_search:true, no tools mutation
-  *   - kimi: $web_search builtin_function + thinking FORCED disabled (and
-  *     reasoning_effort absent) even when the caller asked for thinking
-  *   - no capability → request byte-identical to the pre-P0 shape
-  *   - extractSearchInfo (zhipu `web_search` / qwen `search_info`)
-  *   - extractToolCalls keeps rawArguments byte-faithful (kimi echo source)
-  */
+/**
+ * WebSearch P0 request-construction assertions (E2-1/2/3):
+ *   - zhipu: web_search tool APPENDED to the agent tools (deepMerge must
+ *     not clobber them — the spec's explicit regression point)
+ *   - qwen: enable_search:true, no tools mutation
+ *   - kimi: $web_search builtin_function + thinking FORCED disabled (and
+ *     reasoning_effort absent) even when the caller asked for thinking
+ *   - no capability → request byte-identical to the pre-P0 shape
+ *   - extractSearchInfo (zhipu `web_search` / qwen `search_info`)
+ *   - extractToolCalls keeps rawArguments byte-faithful (kimi echo source)
+ */
 class OpenAiAdapterSearchSpec extends CatsEffectSuite:
 
-  /** Capturing in-memory backend: serves a canned JSON response, records the
-    * serialized request body of the (non-streaming) sendMessage call. */
+  /**
+   * Capturing in-memory backend: serves a canned JSON response, records the
+   * serialized request body of the (non-streaming) sendMessage call.
+   */
   private class CapturingBackend(responseBody: String) extends StreamBackend[IO, Fs2Streams[IO]]:
     @volatile var capturedBody: String = ""
+
     def send[T](
-        request: GenericRequest[T, Fs2Streams[IO] & sttp.capabilities.Effect[IO]]
+      request: GenericRequest[T, Fs2Streams[IO] & sttp.capabilities.Effect[IO]]
     ): IO[Response[T]] =
       IO.delay {
         capturedBody = request.body match
@@ -38,11 +42,15 @@ class OpenAiAdapterSearchSpec extends CatsEffectSuite:
       } *> IO.pure(
         Response(Right(responseBody).asInstanceOf[T], sttp.model.StatusCode.Ok, "", Nil)
       )
+
     def monad: sttp.monad.MonadError[IO] =
       new sttp.client4.impl.cats.CatsMonadError[IO](using IO.asyncForIO)
     def close(): IO[Unit] = IO.unit
 
-  private val okResponse = """{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"""
+  end CapturingBackend
+
+  private val okResponse =
+    """{"choices":[{"message":{"content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"""
 
   private val bashTool = ToolDefinition("Bash", "run shell", JsonObject("type" -> "object".asJson))
   private val readTool = ToolDefinition("Read", "read file", JsonObject("type" -> "object".asJson))
@@ -118,7 +126,9 @@ class OpenAiAdapterSearchSpec extends CatsEffectSuite:
 
   // ── E2-3: kimi ───────────────────────────────────────────────────────
 
-  test("kimi: thinking FORCED disabled (reasoning_effort absent) even with enabled thinking; builtin_function appended") {
+  test(
+    "kimi: thinking FORCED disabled (reasoning_effort absent) even with enabled thinking; builtin_function appended"
+  ) {
     val body = requestBody(
       SendMessageParams(
         messages = List(Message(MessageRole.User, Left("hi"))),
@@ -170,9 +180,9 @@ class OpenAiAdapterSearchSpec extends CatsEffectSuite:
 
   test("extractSearchInfo: zhipu web_search array") {
     val resp =
-      parse("""{"choices":[{"message":{"content":"a"}}],"web_search":[{"title":"t","url":"https://e.com/x"}]}""")
-        .toOption
-        .get
+      parse(
+        """{"choices":[{"message":{"content":"a"}}],"web_search":[{"title":"t","url":"https://e.com/x"}]}"""
+      ).toOption.get
     val info = adapter.extractSearchInfo(resp)
     assert(info.isDefined)
     assertEquals(info.get.asArray.get.size, 1)
@@ -180,9 +190,9 @@ class OpenAiAdapterSearchSpec extends CatsEffectSuite:
 
   test("extractSearchInfo: qwen search_info object") {
     val resp =
-      parse("""{"choices":[{"message":{"content":"a"}}],"search_info":{"search_results":[{"url":"https://e.com/y"}]}}""")
-        .toOption
-        .get
+      parse(
+        """{"choices":[{"message":{"content":"a"}}],"search_info":{"search_results":[{"url":"https://e.com/y"}]}}"""
+      ).toOption.get
     val info = adapter.extractSearchInfo(resp)
     assert(info.isDefined)
     assert(info.get.isObject)

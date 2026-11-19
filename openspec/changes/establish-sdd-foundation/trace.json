@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "change": "establish-sdd-foundation",
+  "mappings": [
+    {
+      "requirement": "EW-REQ-001",
+      "scenario": "EW-SCN-001",
+      "implementation": [
+        "openspec/README.md",
+        "openspec/config.yaml",
+        "openspec/tooling-scope.json",
+        "CONTRIBUTING.md",
+        "CONTRIBUTING.zh-CN.md",
+        "openspec/changes/establish-sdd-foundation/proposal.md",
+        "openspec/changes/establish-sdd-foundation/design.md",
+        "openspec/changes/establish-sdd-foundation/tasks.md",
+        "openspec/changes/establish-sdd-foundation/trace.json",
+        "openspec/specs/engineering-workflow/spec.md",
+        "openspec/changes/establish-sdd-foundation/specs/engineering-workflow/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "Proportional design quality and honest exclusions require human judgement beyond artifact existence checks.",
+        "steps": "Compare the proposal, design, tasks, and capability deltas to the implemented paths and the stated initial scope.",
+        "expected": "Intent and acceptance are explicit; integration tasks remain open until verified; historical application paths are not presented as mechanically covered."
+      }
+    },
+    {
+      "requirement": "EW-REQ-002",
+      "scenario": "EW-SCN-002",
+      "implementation": ["scripts/check-sdd.mjs"],
+      "tests": [
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "valid artifacts pass without claiming test execution or diff coverage" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "proposed additions do not need promotion into accepted current specs" }
+      ]
+    },
+    {
+      "requirement": "EW-REQ-002",
+      "scenario": "EW-SCN-003",
+      "implementation": ["scripts/check-sdd.mjs"],
+      "tests": [
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "malformed requirement and scenario IDs fail closed" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "duplicate requirement IDs fail closed" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "duplicate scenario IDs fail closed" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "every delta scenario requires a mapping" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "unsafe relative, absolute and Windows paths fail closed" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "symlink escape fails closed even when the target child is missing" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "empty tests require a complete reasoned manual exception" }
+      ]
+    },
+    {
+      "requirement": "EW-REQ-003",
+      "scenario": "EW-SCN-004",
+      "implementation": ["scripts/check-sdd.mjs"],
+      "tests": [{ "path": "scripts/tests/check-sdd.test.mjs", "name": "valid artifacts pass without claiming test execution or diff coverage" }]
+    },
+    {
+      "requirement": "EW-REQ-003",
+      "scenario": "EW-SCN-005",
+      "implementation": ["scripts/check-sdd.mjs"],
+      "tests": [
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "explicit base catches committed staged unstaged and untracked scoped changes" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "historical application paths stay outside initial diff coverage" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "deletions require explicit deleted references and respect the supplied base" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "historical active deletions permit later mapped changes in every worktree state" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "new deletion claims for paths absent at the base fail closed" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "new active traces cannot inherit deletion claims from another change" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "historical deletions cannot move to a different requirement or scenario mapping" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "base references without deleted true cannot authenticate a historical deletion" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "malformed base traces fail closed when historical deletion proof is needed" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "historical deletions still reject restored files and unsafe paths" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "renames cover both the removed source and destination" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "current additions cannot hide behind an old file-level mapping" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "current scenario additions and content edits require matching MODIFIED deltas" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "explicit scope registry expands tooling without covering the application tree" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "scope deletion cannot disable coverage recorded at the explicit base" }
+      ]
+    },
+    {
+      "requirement": "EW-REQ-003",
+      "scenario": "EW-SCN-006",
+      "implementation": ["scripts/check-sdd.mjs"],
+      "tests": [
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "unknown base fails closed rather than falling back to no-base mode" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "explicit base requires a repository and rejects option-like refs" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "missing base value and unknown CLI options fail closed" }
+      ]
+    },
+    {
+      "requirement": "EW-REQ-004",
+      "scenario": "EW-SCN-007",
+      "implementation": ["scripts/check-sdd.mjs"],
+      "tests": [
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "archives validate structure without requiring old files or current scenario IDs" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "archiving the last active change passes its exact transition without a bookkeeping change" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "a change proposed implemented and archived in one diff passes without a base-active proposal" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "new archives reject incomplete tasks incorrect reconciliation and missing live links" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "new archives require actual diff deletions and reject fabricated absent paths" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "new archive coverage cannot be reused for later code changes from an old archive" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "new archives do not cover unlisted implementation changes" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "archive transitions require completed tasks and unchanged approved artifacts" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "archive mappings do not authorize unrelated tooling changes" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "accepted additions reconcile current specs while archiving" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "normal REMOVED rationale needs no scenario and archived removals must be absent" }
+      ]
+    },
+    {
+      "requirement": "EW-REQ-005",
+      "scenario": "EW-SCN-008",
+      "implementation": [
+        "openspec/README.md",
+        { "path": "src/main/resources/seed/plugins/stand-dev/Plugin.md", "deleted": true },
+        { "path": "src/main/resources/seed/plugins/stand-dev/plugin.json", "deleted": true },
+        { "path": "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/SKILL.md", "deleted": true },
+        { "path": "src/main/resources/seed/plugins/stand-dev/skills/stand-dev/references/backend/nebflow-backend.md", "deleted": true }
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "Independent source documentation and progressive loading require source review. The four stale seed files are removed for source-only distribution after baseline comparison; this is not an installed-plugin change.",
+        "steps": "Follow the Stand dev source links from the README, inspect the skill entry and task-relevant references, and compare the OpenSpec README scope.",
+        "expected": "The independent source is identifiable, only relevant references are loaded, and OpenSpec does not duplicate the full engineering rulebook or claim an installed update."
+      }
+    },
+    {
+      "requirement": "QG-REQ-001",
+      "scenario": "QG-SCN-001",
+      "implementation": [
+        "scripts/run-checks.mjs", "scripts/tests/run-checks.test.mjs", "package.json", "Makefile",
+        ".github/workflows/ci.yml", ".github/workflows/auto-release.yml", ".gitlab-ci.yml",
+        "openspec/specs/quality-gates/spec.md",
+        "openspec/changes/establish-sdd-foundation/specs/quality-gates/spec.md"
+      ],
+      "tests": [{ "path": "scripts/tests/run-checks.test.mjs", "name": "registry names are unique and all checks have explicit bounded argv" }],
+      "manual": {
+        "reason": "Local registry tests cannot prove remote CI jobs executed or that external platform configuration is active.",
+        "steps": "Inspect npm, Make, and CI static entrypoints against the shared registry; run integration verification separately.",
+        "expected": "Shared checks delegate to the same registry, and unexecuted remote CI or application suites are not reported as passed."
+      }
+    },
+    {
+      "requirement": "QG-REQ-001",
+      "scenario": "QG-SCN-002",
+      "implementation": ["scripts/run-checks.mjs"],
+      "tests": [{ "path": "scripts/tests/run-checks.test.mjs", "name": "runner records success, nonzero exit, spawn failure, signal and timeout" }]
+    },
+    {
+      "requirement": "QG-REQ-002",
+      "scenario": "QG-SCN-003",
+      "implementation": ["scripts/check-js-types.mjs", "scripts/tests/check-js-types.test.mjs"],
+      "tests": [
+        { "path": "scripts/tests/check-js-types.test.mjs", "name": "clean success and recognized diagnostics are accepted" },
+        { "path": "scripts/tests/check-js-types.test.mjs", "name": "compiler and configuration failures fail closed" },
+        { "path": "scripts/tests/check-js-types.test.mjs", "name": "baseline comparison retains count, new-file and zero-error gates" },
+        { "path": "scripts/tests/check-js-types.test.mjs", "name": "real compiler subprocess handles success, diagnostic exit, crash, signal and timeout" }
+      ]
+    },
+    {
+      "requirement": "QG-REQ-003",
+      "scenario": "QG-SCN-004",
+      "implementation": [
+        "scripts/check-sdd.mjs", "openspec/README.md", "openspec/toolchain.json",
+        "scripts/check-openspec.mjs", "scripts/tests/check-openspec.test.mjs"
+      ],
+      "tests": [
+        { "path": "scripts/tests/check-openspec.test.mjs", "name": "official validator failures and unsafe versions fail closed" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "valid artifacts pass without claiming test execution or diff coverage" },
+        { "path": "scripts/tests/check-sdd.test.mjs", "name": "trace command fields are rejected and never executed" }
+      ]
+    },
+    {
+      "requirement": "QG-REQ-004",
+      "scenario": "QG-SCN-005",
+      "implementation": ["scripts/tests/check-sdd.test.mjs", "eslint.config.mjs", "package.json", "package-lock.json"],
+      "tests": [{ "path": "scripts/tests/check-sdd.test.mjs", "name": "valid artifacts pass without claiming test execution or diff coverage" }],
+      "manual": {
+        "reason": "The test file contains the individual negative fixtures; a trace link alone cannot attest to their execution or lint success.",
+        "steps": "Run node --test scripts/tests/check-sdd.test.mjs and the scoped tooling lint; inspect each fixture's temporary-directory cleanup.",
+        "expected": "All listed tests pass, fixtures clean up their roots, and tooling lint runs only its declared scope."
+      }
+    }
+  ]
+}

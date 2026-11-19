@@ -2,8 +2,7 @@ package nebflow.service
 
 import cats.effect.IO
 import io.circe.parser.parse
-import nebflow.core.Branding
-import nebflow.core.PathUtil
+import nebflow.shared.{Branding, PathUtil}
 import os.Path
 
 /**
@@ -17,14 +16,18 @@ object ConfigSnapshot:
   private def backupDir: Path = PathUtil.dataRoot / "backups"
   private val MaxSnapshots = 5
 
-  /** Snapshot file prefix — matches BOTH the brand config name and the
-    * hardcoded legacy "nebflow.json." so pre-rename snapshots stay
-    * restorable (L3 rebrand compat; identical names collapse to one). */
-  private def snapshotPrefixes: List[String] = List(Branding.configFileName + ".", "nebflow.json.")
+  /**
+   * Snapshot file prefix — matches the brand config name and the historical
+   * name (pre-rename snapshots stay restorable). The legacy spelling comes from
+   * the single source [[nebflow.shared.PathUtil.LegacyConfigFileName]], never a
+   * literal at a new call site (config-single-source batch 2026-11-05).
+   */
+  private def snapshotPrefixes: List[String] =
+    List(Branding.configFileName + ".", nebflow.shared.PathUtil.LegacyConfigFileName + ".")
 
   /** Save current config as a timestamped snapshot. */
   def save(): IO[Unit] = IO.blocking {
-    val configPath = nebflow.llm.Config.DefaultConfigPath
+    val configPath = nebflow.shared.Config.DefaultConfigPath
     if !os.exists(configPath) then ()
     else
       os.makeDir.all(backupDir)
@@ -32,23 +35,30 @@ object ConfigSnapshot:
         .now()
         .format(java.time.format.DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss"))
       val snapshot = backupDir / s"${Branding.configFileName}.$ts"
-      os.copy.over(configPath, snapshot, createFolders = true)
+      // Never copy a legacy inline provider credential to a new snapshot.
+      // Convert first; the snapshot remains recoverable through the same references.
+      val source = parse(os.read(configPath)).fold(
+        _ => throw new IllegalArgumentException("Cannot snapshot invalid configuration"), identity)
+      val converted = ConfigService.persistSearchCredentials(ConfigService.persistProviderCredentials(source))
+      nebflow.core.AtomicJson.writeSyncRestricted(snapshot, converted.spaces2)
       prune()
   }
 
-  /** Restore the latest valid snapshot to config path. Returns true if restored.
-    *
-    * 2026-09-07 插件信任持久化修复（防御纵深）：收窄触发条件——只在当前配置
-    * **真正损坏（非法 JSON / 不可读）** 时恢复。一个「合法 JSON 但字段不全」的
-    * 配置（如冷启动种子写入的 plugins.trust 对象、无 llm 节）**不是**损坏——用
-    * 陈旧 {} 快照打回会摧毁这段时间的可信写入（信任表 / 已配置 provider 等）。
-    * 该形态现可被 Config.loadServiceConfig 正常解码（llm 缺省），恢复仅兜底真
-    * 损坏文件。
-    */
+  /**
+   * Restore the latest valid snapshot to config path. Returns true if restored.
+   *
+   * 2026-09-07 插件信任持久化修复（防御纵深）：收窄触发条件——只在当前配置
+   * **真正损坏（非法 JSON / 不可读）** 时恢复。一个「合法 JSON 但字段不全」的
+   * 配置（如冷启动种子写入的 plugins.trust 对象、无 llm 节）**不是**损坏——用
+   * 陈旧 {} 快照打回会摧毁这段时间的可信写入（信任表 / 已配置 provider 等）。
+   * 该形态现可被 Config.loadServiceConfig 正常解码（llm 缺省），恢复仅兜底真
+   * 损坏文件。
+   */
   def restoreLatest(): IO[Boolean] = IO.blocking {
-    // Write path (brand name) — restoring is a write, and completes the
-    // config-file rename migration like any other write.
-    val configPath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
+    // Corrupt check goes through the READ face (legacy-name fallback); the
+    // restore itself is a WRITE, so it always lands on the canonical name.
+    val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+    val writePath = PathUtil.configJsonWritePath(PathUtil.dataRoot)
     // 当前配置是否真损坏（而非「合法 JSON、只是字段不全」）。
     val corrupt =
       try
@@ -61,7 +71,7 @@ object ConfigSnapshot:
         parse(os.read(snap)).isRight
       } match
         case Some(snap) =>
-          os.copy.over(snap, configPath, createFolders = true)
+          os.copy.over(snap, writePath, createFolders = true)
           true
         case None => false
   }

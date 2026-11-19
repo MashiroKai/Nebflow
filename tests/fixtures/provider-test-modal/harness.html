@@ -1,0 +1,53 @@
+<!doctype html>
+<!-- provider-test-modal-harness — test page for
+     tests/provider-model-test-button.spec.mjs (settings-panel-fourfix batch ②,
+     2026-10-29: connectivity test button relocated INTO the provider edit modal).
+
+     Drives the REAL production modal (js/sidebar/providersUi.js
+     showProviderModal → showModal + wireProviderModelFetch + wireProtocolHelper
+     + the fourfix test-results block) over a throwaway static server; every
+     network face is intercepted by the spec (zero engine dependency).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<title>provider test modal harness</title>
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/sidebar.css">
+<style>
+  body { margin: 0; padding: 24px; max-width: 640px;
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+  #toast-slot { margin-top: 16px; font-size: 12px; color: #c33; min-height: 16px; }
+</style>
+</head>
+<body>
+  <div id="mount"></div>
+  <div id="toast-slot" role="status"></div>
+  <script type="module">
+    window.__showToast = (msg) => {
+      const slot = document.getElementById('toast-slot');
+      slot.textContent = String(msg);
+    };
+    const mod = await import('/js/sidebar/providersUi.js');
+    const mode = new URLSearchParams(location.search).get('mode') || 'edit';
+    const saved = {
+      baseUrl: 'https://api.example.com/v1/',
+      apiKey: 'sk-fixture-stored-key',
+      protocol: 'openai',
+      models: [
+        { id: 'deepseek/deepseek-v4.1-flash', contextWindow: 128000 },
+        { id: 'gpt-5.5', contextWindow: 400000 },
+      ],
+    };
+    window.__onSave = (name, data) => {
+      document.getElementById('toast-slot').textContent = 'saved:' + name;
+    };
+    if (mode === 'edit') {
+      mod.showProviderModal('cmdcode', saved, window.__onSave);
+    } else {
+      mod.showProviderModal(null, null, window.__onSave);
+    }
+    document.body.dataset.ready = '1';
+  </script>
+</body>
+</html>

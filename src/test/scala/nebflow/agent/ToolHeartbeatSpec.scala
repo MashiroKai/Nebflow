@@ -40,7 +40,8 @@ class ToolHeartbeatSpec extends CatsEffectSuite:
     for
       beats <- Ref.of[IO, Int](0)
       emit = beats.update(_ + 1)
-      err <- ToolHeartbeat.span(emit, 30.millis)(IO.sleep(40.millis) *> IO.raiseError[Unit](new RuntimeException("boom")))
+      err <- ToolHeartbeat
+        .span(emit, 30.millis)(IO.sleep(40.millis) *> IO.raiseError[Unit](new RuntimeException("boom")))
         .attempt
       countAtFail <- beats.get
       _ <- IO.sleep(120.millis) // heartbeats MUST NOT continue after io settled

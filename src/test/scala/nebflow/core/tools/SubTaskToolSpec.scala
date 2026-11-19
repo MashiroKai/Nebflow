@@ -5,7 +5,7 @@ import io.circe.Json
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.AgentDef
+import nebflow.actor.AgentDef
 
 /**
  * SubTaskTool — #28 structural defense: the root orchestrator (Nebula) must

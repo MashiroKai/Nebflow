@@ -1,0 +1,289 @@
+/* 从 WebSocketRoutes 迁出(行为保持重构,2026-09-24)。 */
+package nebflow.gateway
+
+import cats.effect.std.{Dispatcher, Queue}
+import cats.effect.{Deferred, IO, Ref}
+import cats.syntax.all.*
+import fs2.{Pipe, Stream}
+import io.circe.parser.parse
+import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
+import nebflow.actor.{ActorSystem as RootActorSystem, AgentCommand}
+import nebflow.agent.*
+import nebflow.core.*
+import nebflow.core.entity.EntityLoader
+import nebflow.core.mcp.McpManager
+import nebflow.core.project.{CancelSource as ChainCancelSource, *}
+import nebflow.core.schedule.FreezeSchedule.given
+import nebflow.core.skill.SkillService
+import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.gateway.NfFilePolicy.*
+import nebflow.llm.*
+import nebflow.service.*
+import nebflow.shared.{NebflowLogger, *}
+import org.http4s.*
+import org.http4s.circe.CirceEntityCodec.*
+import org.http4s.dsl.io.*
+import org.http4s.headers.`Content-Type`
+import org.http4s.server.websocket.WebSocketBuilder2
+import org.http4s.websocket.WebSocketFrame
+
+import scala.concurrent.duration.*
+import scala.io.Source
+
+/**
+ * F 步消息分派注册表(行为保持重构,2026-09-24):键 = handleMessage 原 msgType match 的
+ * case 字符串(一字不差),查不到时的回退 = 原 `case _` 腿(留在 WebSocketRoutes 里,
+ * 其文本被 PasteAttachmentGuardSpec/UserTextGateSpec 钉死)。各域 handler 经
+ * WsDispatchCtx 取 WebSocketRoutes 的私有依赖;ctx 仅持引用/eta 展开,构建零副作用。
+ */
+private[gateway] object WsDispatch:
+
+  type WsHandler = (WsDispatchCtx, String, io.circe.Json => IO[Unit], ExplorerWatchSession) => IO[Unit]
+
+  private[gateway] val handlers: Map[String, WsHandler] = List(
+    WsSessionChatHandlers.handlers,
+    WsConfigHandlers.handlers,
+    WsSkillsAsksHandlers.handlers,
+    WsTasksWorkspaceHandlers.handlers,
+    WsFileOpsHandlers.handlers,
+    WsDropboxHandlers.handlers,
+    WsMemoryFoldersHandlers.handlers,
+    WsAskHandlers.handlers,
+    WsSystemHandlers.handlers
+  ).reduce(_ ++ _)
+
+  /**
+   * 入站消息信封(行为保持重构,2026-09-24):收敛两类完全同形的重复惯用法——
+   * parse(text) 后取字段(parse 失败回退 io.circe.Json.Null,见 parsedJson)与
+   * downField("sessionId") 取会话 id(缺失/非串回退空串,Either.getOrElse 与
+   * toOption.getOrElse 同果,统一走 inboundEnvelope(text).sessionId)。边界:
+   * 仅覆盖这两族;先绑定 json/hcursor 再取多字段的站点、字段级 Option 链、直接
+   * 产出 HCursor 等近形不收敛(见各站点一行注释),回退与错误响应逐处保持原状。
+   */
+  private[gateway] case class InboundEnvelope(json: Json):
+    def sessionId: String = json.hcursor.downField("sessionId").as[String].getOrElse("")
+
+  private[gateway] def parsedJson(text: String): Json =
+    parse(text).toOption.getOrElse(io.circe.Json.Null)
+
+  private[gateway] def inboundEnvelope(text: String): InboundEnvelope =
+    InboundEnvelope(parsedJson(text))
+
+end WsDispatch
+
+/**
+ * 分发上下文:值成员为原类私有 val/构造参数的引用;def 成员为原类私有方法的
+ * 委托(参数名与原方法一致,命名参数/柯里化调用形态逐字可用)。impl 参数为
+ * 非成员构造参数,不进入 `import ctx.*` 的可见面。
+ */
+final class WsDispatchCtx(
+  val logger: NebflowLogger,
+  val sessionService: SessionService,
+  val agentService: AgentService,
+  val configService: ConfigService.type,
+  val configRef: Ref[IO, NebflowServiceConfig],
+  val sessionStore: SessionStore,
+  val sharedResources: SharedResources,
+  val mcpManager: McpManager,
+  val sttServiceRef: Ref[IO, Option[SttService]],
+  val textSearch: TextStreamSearch,
+  val sessionTextBuffers: Ref[IO, Map[String, String]],
+  val sessionThinkingBuffers: Ref[IO, Map[String, String]],
+  val sessionTurnStarts: Ref[IO, Map[String, Long]],
+  replayPendingAsksImpl: (String, io.circe.Json => IO[Unit]) => IO[Unit],
+  listAllPendingAsksImpl: (io.circe.Json => IO[Unit]) => IO[Unit],
+  applyPermissionUpgradeImpl: (String, nebflow.core.SafetyMode) => IO[Unit],
+  persistGlobalSafetyModeImpl: String => IO[Unit],
+  removeRootAgentImpl: String => IO[Unit],
+  stopChildDelegateActorsImpl: String => IO[Unit],
+  forwardInteractionAnswerImpl: (String, String, io.circe.Json) => IO[Unit],
+  isRootScopeSessionImpl: String => IO[Boolean],
+  compactThresholdInfoImpl: String => IO[Json],
+  ensureAgentImpl: String => (nebflow.actor.ActorRef[AgentCommand] => IO[Unit]) => IO[Unit],
+  maybeSessionKickImpl: (String, String) => IO[Unit],
+  broadcastServerConfigImpl: () => IO[Unit],
+  persistThinkingConfigImpl: ThinkingConfig => IO[Unit],
+  persistWorkScheduleImpl: nebflow.core.schedule.FreezeScheduleConfig => IO[Unit],
+  persistMcpServerEnabledImpl: (String, Boolean) => IO[Unit],
+  broadcastMcpServersUpdateImpl: () => IO[Unit],
+  sendAgentSessionListImpl: (io.circe.Json => IO[Unit], String) => IO[Unit],
+  sendAgentSessionListByNameImpl: (io.circe.Json => IO[Unit], String) => IO[Unit],
+  sendMemoryStatusImpl: (io.circe.Json => IO[Unit], String) => IO[Unit],
+  /**
+   * A4 (perf-481): the on-demand tool-description list. It used to ride every
+   * `serverConfig` frame (~93.5 KB each); the frontend now asks for it once per
+   * connection via `getToolsList`.
+   */
+  sendToolsListImpl: (io.circe.Json => IO[Unit]) => IO[Unit],
+  expandTildeImpl: String => String,
+  wsBrowseEventImpl: (String, String, Option[String], List[String], Option[String]) => Json,
+  /**
+   * picker-trunc batch (main-side 2026-09-22): the `browsePath` frame builders,
+   * seam-injected from the WebSocketRoutes companion object (pure core). The
+   * handler composes the frames; the object owns their shape so
+   * `PickerBrowseFrameSpec` can pin them directly.
+   */
+  browseResultFrameImpl: (os.Path, String, String, Int) => Json,
+  browseErrorFrameImpl: (String, String, String, String) => Json,
+  browseEntryCapImpl: Int,
+  resolveExplorerBaseRootImpl: (String, Option[String]) => IO[String],
+  admitWorkOrRefuseImpl: (io.circe.Json => IO[Unit]) => IO[Unit] => IO[Unit],
+  handleUserTextImpl: (String, String, String, Boolean, Option[nebflow.bridge.ResolvedDevice], Option[String]) => IO[Unit],
+  /** device-provenance 批：帧 `device` 键 → 花名册解析读数（缺席 ⇒ None ⇒ 不标注）。 */
+  deviceProvenanceImpl: io.circe.Json => IO[Option[nebflow.bridge.ResolvedDevice]],
+  skipCurrentFreezeWindowImpl: () => IO[Unit],
+  executeAskImpl: (String, String, io.circe.Json => IO[Unit]) => IO[Unit],
+  executeSkillImpl: (String, String, String, io.circe.Json => IO[Unit]) => IO[Unit],
+  /**
+   * `projectCreate` WS command (main-side, projcreate-redesign `372b54d54`):
+   * the direct frontend creation face. Both seams come from WebSocketRoutes —
+   * `resolveRootSessionId` is the server-side delivery-root resolution the tool
+   * face shares (identity is VERIFIED, never fabricated), and the broadcast
+   * channel is the same `wsHub` the created project's `projectCreated` frame
+   * travels on (one push face, never a second one).
+   */
+  resolveRootSessionIdImpl: String => IO[String],
+  projectCreateBroadcastImpl: io.circe.Json => IO[Unit]
+):
+
+  def replayPendingAsks(
+    sessionId: String,
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    replayPendingAsksImpl(sessionId, wsSend)
+  def listAllPendingAsks(wsSend: io.circe.Json => IO[Unit]): IO[Unit] = listAllPendingAsksImpl(wsSend)
+
+  def applyPermissionUpgrade(
+    sessionId: String,
+    mode: nebflow.core.SafetyMode
+  ): IO[Unit] =
+    applyPermissionUpgradeImpl(sessionId, mode)
+  def persistGlobalSafetyMode(mode: String): IO[Unit] = persistGlobalSafetyModeImpl(mode)
+  def removeRootAgent(sessionId: String): IO[Unit] = removeRootAgentImpl(sessionId)
+  def stopChildDelegateActors(sessionId: String): IO[Unit] = stopChildDelegateActorsImpl(sessionId)
+
+  def forwardInteractionAnswer(
+    requestId: String,
+    sessionId: String,
+    payload: io.circe.Json
+  ): IO[Unit] =
+    forwardInteractionAnswerImpl(requestId, sessionId, payload)
+  def isRootScopeSession(sessionId: String): IO[Boolean] = isRootScopeSessionImpl(sessionId)
+  def compactThresholdInfo(sessionId: String): IO[Json] = compactThresholdInfoImpl(sessionId)
+
+  def ensureAgent(sessionId: String)(f: nebflow.actor.ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
+    ensureAgentImpl(sessionId)(f)
+  def maybeSessionKick(sessionId: String, trigger: String): IO[Unit] = maybeSessionKickImpl(sessionId, trigger)
+  def broadcastServerConfig: IO[Unit] = broadcastServerConfigImpl()
+  def persistThinkingConfig(tc: ThinkingConfig): IO[Unit] = persistThinkingConfigImpl(tc)
+  def persistWorkSchedule(cfg: nebflow.core.schedule.FreezeScheduleConfig): IO[Unit] = persistWorkScheduleImpl(cfg)
+
+  def persistMcpServerEnabled(
+    serverId: String,
+    enabled: Boolean
+  ): IO[Unit] =
+    persistMcpServerEnabledImpl(serverId, enabled)
+  def broadcastMcpServersUpdate: IO[Unit] = broadcastMcpServersUpdateImpl()
+
+  def sendAgentSessionList(
+    wsSend: io.circe.Json => IO[Unit],
+    sessionId: String
+  ): IO[Unit] =
+    sendAgentSessionListImpl(wsSend, sessionId)
+
+  def sendAgentSessionListByName(
+    wsSend: io.circe.Json => IO[Unit],
+    agentName: String
+  ): IO[Unit] =
+    sendAgentSessionListByNameImpl(wsSend, agentName)
+
+  def sendMemoryStatus(
+    wsSend: io.circe.Json => IO[Unit],
+    sessionId: String
+  ): IO[Unit] =
+    sendMemoryStatusImpl(wsSend, sessionId)
+
+  /** A4 (perf-481): on-demand tool list — the `getToolsList` response face. */
+  def sendToolsList(wsSend: io.circe.Json => IO[Unit]): IO[Unit] = sendToolsListImpl(wsSend)
+
+  def expandTilde(path: String): String = expandTildeImpl(path)
+
+  def wsBrowseEvent(
+    evType: String,
+    path: String,
+    parent: Option[String],
+    entries: List[String],
+    err: Option[String]
+  ): Json =
+    wsBrowseEventImpl(evType, path, parent, entries, err)
+
+  /** picker-trunc batch: the `browsePath` success frame (see the seam doc above). */
+  def browseResultFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
+    browseResultFrameImpl(dir, displayPath, query, cap)
+
+  /** picker-trunc batch: the `browsePath` failure frame (typed `errorKind`). */
+  def browseErrorFrame(displayPath: String, kind: String, msg: String, query: String): Json =
+    browseErrorFrameImpl(displayPath, kind, msg, query)
+
+  /**
+   * How many entries a `browsePath` frame carries before `truncated` turns on —
+   * the ONE ruler for that leg (was a literal `take(200)`).
+   */
+  def browseEntryCap: Int = browseEntryCapImpl
+
+  def resolveExplorerBaseRoot(
+    sessionId: String,
+    overrideRoot: Option[String]
+  ): IO[String] =
+    resolveExplorerBaseRootImpl(sessionId, overrideRoot)
+
+  def admitWorkOrRefuse(wsSend: io.circe.Json => IO[Unit])(cont: IO[Unit]): IO[Unit] =
+    admitWorkOrRefuseImpl(wsSend)(cont)
+
+  def handleUserText(
+    sessionId: String,
+    content: String,
+    source: String,
+    fromUser: Boolean,
+    device: Option[nebflow.bridge.ResolvedDevice] = None,
+    // P3 磁盘邮箱批（作者 2026-11-05 10:46）：客户端幂等键（cid）加性尾参——
+    // `userMessage` 腿原本在网关处把 cid 蒸发掉，主腿因此没有幂等面。
+    clientMessageId: Option[String] = None
+  ): IO[Unit] =
+    handleUserTextImpl(sessionId, content, source, fromUser, device, clientMessageId)
+
+  /** device-provenance 批：帧 `device` 键的来源设备解析（见 WebSocketRoutes.deviceProvenanceOf）。 */
+  def deviceProvenance(json: io.circe.Json): IO[Option[nebflow.bridge.ResolvedDevice]] =
+    deviceProvenanceImpl(json)
+
+  def skipCurrentFreezeWindow: IO[Unit] = skipCurrentFreezeWindowImpl()
+
+  def executeAsk(
+    sessionId: String,
+    question: String,
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    executeAskImpl(sessionId, question, wsSend)
+
+  def executeSkill(
+    skillName: String,
+    input: String,
+    sessionId: String,
+    wsSend: io.circe.Json => IO[Unit]
+  ): IO[Unit] =
+    executeSkillImpl(skillName, input, sessionId, wsSend)
+
+  /**
+   * Resolve the permission-policy bucket (delivery root) of a sessionId — the
+   * same server-side judge `ensureAgent`/`askUserAnswer` use, so `projectCreate`
+   * never invents a root.
+   */
+  def resolveRootSessionId(sessionId: String): IO[String] = resolveRootSessionIdImpl(sessionId)
+
+  /**
+   * The `projectCreate` broadcast channel: the SAME `wsHub` the node events and
+   * the created project's `projectCreated` frame use.
+   */
+  def projectCreateBroadcast(json: io.circe.Json): IO[Unit] = projectCreateBroadcastImpl(json)
+end WsDispatchCtx

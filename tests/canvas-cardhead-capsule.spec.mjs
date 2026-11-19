@@ -1,0 +1,447 @@
+// canvas-cardhead-capsule.spec.mjs — UI 批⑨ 卡头毛玻璃胶囊 + 手势集验收（作者令 2026-10-21）
+//
+// 作者令 A/B/C/D 四链路 spec 钉：
+//   CC0 胶囊形态 —— .canvas-header 浮层胶囊：absolute top 10 顶带 + 横轴面板
+//        居中（居中批 2026-10-23 作者令「相对与canvas居中显示」：移位批顶左 →
+//        canvas 横轴中线；环开态环锚常驻顶带不沉降 —— 顶部修正批 2026-10-23
+//        撤销对称批沉降，见 canvas-capsule-ring.spec.mjs）、border-radius
+//        999px、backdrop blur 玻璃、fit-content（< 面板宽）；#canvas-content 顶满
+//        全高（rect.top === slide top，内容不再为 header 预留）；.scroll-under-glass
+//        裙边在挂（::after 24px + pointer-events none）；穿底 = 内容 pane 从面板顶
+//        铺起（pane top ≤ 胶囊 top，文字可进胶囊区）。
+//   CC1 按压触感 —— 按住胶囊 → .is-pressed（computed transform scale < 1），
+//        松手即清；未动松手 = 点击界内零动作（页数/激活不变）。
+//   CC2 换卡链 —— 按住下滑 70px 释放 = 下一张（deckBuildRing 同环同向：
+//        dy>0=+1，deck 同语义）；上滑 70px = 上一张（环绕）。
+//   CC3 关卡链 —— 按住左滑 90px 释放 = closeTab（deck 划走关闭同语义），
+//        tabCount −1。
+//   CC4 引用链 —— 胶囊右键 = 既有 canvas-tab-context-menu（「引用当前页」在挂；
+//        点击后 #attachment-preview 出引用 chip）；deck 开时同菜单追加
+//        「关闭/关闭其他」三项（stopPropagation 不与面板菜单双弹）。
+//   CC5 分区（滚动冲突消解）—— 手势只绑胶囊：胶囊竖滑换卡前后 pane scrollTop
+//        不变；内容区滚轮正常滚 pane（零劫持）；胶囊 touch-action:none。
+//   CC6 【dock 批换代 2026-10-29】手机 375 = canvas 独立整页：入口 = 底 dock
+//        canvas 键；呈现 = chip 卡片条 + 工具条 ‹计数›/X + 文档区（前卡头胶囊
+//        /卡头直滑/长按引用钮/bottom sheet 族退役，长按引用链不在本页恢复）。
+//        换卡 = 文档区横滑（轴锁/阈 48，环式；横滑永不关卡）+ 工具条 ‹ ›；
+//        关卡只走工具条 X（邻卡落位）；离开 canvas 页 = 页签保留、回页恢复
+//        活动卡（closeCanvas 语义闭环）。
+//
+// 断言通道 = window.__canvasDeck.state()（open/activeId/tabCount/tabs）+ DOM 计算
+// 样式 + 合成 PointerEvent（手机腿）。桌面拖拽走真实 mouse（pointer 事件全链）。
+//
+// 运行：node tests/canvas-cardhead-capsule.spec.mjs
+
+import { chromium } from 'playwright';
+import { readFileSync } from 'node:fs';
+import { createServer } from 'node:http';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { installTicketMock } from './nf-ticket-mock.mjs';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const WEB_DIR = resolve(HERE, '../src/main/resources/web');
+const PORT = Number(process.env.PORT || 8166);
+const BASE = `http://127.0.0.1:${PORT}`;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+let pass = 0, fail = 0;
+function ok(name, cond, detail = '') {
+  console.log(`${cond ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`);
+  if (cond) pass++; else fail++;
+}
+const approx = (a, b, tol) => Math.abs(a - b) <= tol;
+
+const MIME = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
+  '.woff2': 'font/woff2', '.woff': 'font/woff',
+};
+const server = createServer((req, res) => {
+  const url = new URL(req.url, BASE);
+  let p = decodeURIComponent(url.pathname);
+  if (p === '/') p = '/index.html';
+  const file = join(WEB_DIR, p);
+  if (!file.startsWith(WEB_DIR)) { res.writeHead(403); res.end(); return; }
+  try { const b = readFileSync(file); res.writeHead(200, { 'Content-Type': MIME[file.slice(file.lastIndexOf('.'))] || 'application/octet-stream' }); res.end(b); }
+  catch { if (!res.headersSent) { res.writeHead(404); res.end(); } else res.end(); }
+});
+await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
+const browser = await chromium.launch();
+
+/* 可变文件表：workspace-open-item 直灌（主窗/移动层同通路）。bravo 长文（140 行）
+ * 供 CC0-5 穿底 / CC5 分区滚动。 */
+const TALL = '# bravo\n\n' + Array.from({ length: 140 }, (_, i) => `bravo 行 ${i + 1}：滚动穿底样本文本`).join('\n') + '\n';
+const FILE_CONTENTS = new Map([
+  ['/tmp/ch-fixture/alpha.md', { content: '# alpha\n\nalpha mock body v1\n', itemType: 'markdown' }],
+  ['/tmp/ch-fixture/bravo.md', { content: TALL, itemType: 'markdown' }],
+]);
+
+async function boot({ colorScheme = 'dark', viewport = { width: 1440, height: 900 } } = {}) {
+  const ctx = await browser.newContext({ viewport, colorScheme });
+  await ctx.addInitScript(() => {
+    localStorage.setItem('nebflow_token', 't'); localStorage.setItem('neblink_token', 't');
+    localStorage.setItem('nebflow_locale', 'zh-CN'); localStorage.setItem('neblink_locale', 'zh-CN');
+    localStorage.setItem('nebflow_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+    localStorage.setItem('neblink_canvas_tabs', JSON.stringify({ v: 2, tabs: [] }));
+  });
+  await ctx.route('**/api/**', (r) => r.fulfill({ status: 404, json: {} }));
+  await installTicketMock(ctx);
+  await ctx.routeWebSocket(/\/ws/, (ws) => {
+    ws.send(JSON.stringify({ type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {} }));
+    ws.send(JSON.stringify({ type: 'sessionList', sessions: [{ id: 'sess-1', agentName: 'Nebula', title: 'T', updatedAt: Date.now() }], activeId: 'sess-1', folders: [] }));
+    ws.onMessage((raw) => {
+      let m; try { m = JSON.parse(raw); } catch { return; }
+      if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
+      else if (m.type === 'pop.readFile') {
+        const rec = FILE_CONTENTS.get(m.path);
+        ws.send(JSON.stringify({
+          type: 'fileContent', path: m.path, absPath: m.path,
+          content: rec ? rec.content : '', itemType: rec ? rec.itemType : 'markdown',
+          fileName: (m.path || '').split('/').pop(), size: rec ? rec.content.length : 0,
+        }));
+      }
+    });
+  });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e.message || e).slice(0, 200)));
+  await page.goto(BASE + '/index.html');
+  await page.waitForSelector('body.mobile-layer, #activity-bar', { timeout: 15000 });
+  await sleep(500);
+  return { ctx, page, errors };
+}
+
+async function openFile(page, absPath) {
+  const rec = FILE_CONTENTS.get(absPath);
+  const title = absPath.split('/').pop();
+  await page.evaluate(({ absPath, title, content, itemType }) => {
+    window.dispatchEvent(new CustomEvent('workspace-open-item', {
+      detail: { id: 'file:' + absPath, itemType, title, content, absPath, pinned: true },
+    }));
+  }, { absPath, title, content: rec.content, itemType: rec.itemType });
+  await page.waitForSelector(`.canvas-tab-pane[data-tab-id="file:${absPath}"]`, { timeout: 10000, state: 'attached' });
+}
+
+const stateOf = (page) => page.evaluate(() => window.__canvasDeck.state());
+async function pollUntil(page, cond, ms = 4000) {
+  const t0 = Date.now();
+  let s = await stateOf(page);
+  while (Date.now() - t0 < ms) {
+    s = await stateOf(page);
+    if (cond(s)) return s;
+    await sleep(120);
+  }
+  return s;
+}
+
+/** 胶囊标题区中心（避开右缘 pop 钮：取 x=40% 处）。 */
+async function capsulePoint(page) {
+  return page.evaluate(() => {
+    const hdr = document.querySelector('#canvas-panel .canvas-header');
+    const r = hdr.getBoundingClientRect();
+    return { x: r.left + r.width * 0.4, y: r.top + r.height / 2, rect: { l: r.left, t: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height } };
+  });
+}
+
+/** 真实 mouse 拖拽胶囊（pointer 事件全链：down → 步进 move → up）。 */
+async function dragCapsule(page, ddx, ddy, steps = 10) {
+  const p = await capsulePoint(page);
+  await page.mouse.move(p.x, p.y);
+  await page.mouse.down();
+  for (let i = 1; i <= steps; i++) await page.mouse.move(p.x + (ddx * i) / steps, p.y + (ddy * i) / steps);
+  await page.mouse.up();
+  await sleep(150);
+}
+
+const headerInfo = (page) => page.evaluate(() => {
+  const hdr = document.querySelector('#canvas-panel .canvas-header');
+  const cs = getComputedStyle(hdr);
+  const after = getComputedStyle(hdr, '::after');
+  const slide = document.getElementById('canvas-slide').getBoundingClientRect();
+  const content = document.getElementById('canvas-content').getBoundingClientRect();
+  const pane = document.querySelector('.canvas-tab-pane.active');
+  const pr = pane ? pane.getBoundingClientRect() : null;
+  const hr = hdr.getBoundingClientRect();
+  return {
+    position: cs.position, radius: cs.borderRadius, blur: cs.backdropFilter, top: cs.top,
+    hClass: hdr.className,
+    width: hr.width,
+    slideW: slide.width, slideL: slide.left, slideR: slide.right, slideT: slide.top, slideH: slide.height,
+    hdrL: hr.left, hdrT: hr.top, hdrB: hr.bottom,
+    contentT: content.top, contentB: content.bottom,
+    paneT: pr ? pr.top : null,
+    skirtH: after.height, skirtPtr: after.pointerEvents,
+    touchAction: cs.touchAction,
+  };
+});
+
+/* ════════ 桌面腿：CC0 形态 / CC1 按压 / CC2 换卡 / CC5 分区 / CC4 引用 / CC3 关卡 ════════ */
+{
+  const { ctx, page, errors } = await boot({ colorScheme: 'dark' });
+  await openFile(page, '/tmp/ch-fixture/alpha.md');
+  await openFile(page, '/tmp/ch-fixture/bravo.md');      // bravo 活动页签；ring=[bravo, alpha]
+  // 关掉 boot 自带面板页签（plugins），换卡环只剩两张文件卡 —— 期望值确定化
+  await page.evaluate(() => document.querySelector('.canvas-tab[data-tab-id="plugins"] .canvas-tab-close')?.click());
+  await sleep(400);
+  const s0 = await stateOf(page);
+  ok('D0 前置：双文件页签开，bravo 活动', s0.tabCount === 2 && s0.activeId === 'file:/tmp/ch-fixture/bravo.md',
+    `n=${s0.tabCount} active=${s0.activeId}`);
+
+  /* 换卡期望 = 环邻位（页签条 DOM 序 = tabs Map 序 = deckBuildRing 源序） */
+  const ringNeighbor = (dir) => page.evaluate((d) => {
+    const ids = [...document.querySelectorAll('#canvas-tab-bar .canvas-tab')].map((el) => el.dataset.tabId);
+    const cur = window.__canvasDeck.state().activeId;
+    const i = ids.indexOf(cur);
+    return ids[(i + d + ids.length) % ids.length];
+  }, dir);
+  const nextOf = await ringNeighbor(1);
+  const prevOf = await ringNeighbor(-1);
+
+  /* ── CC0 胶囊形态 ── */
+  const h = await headerInfo(page);
+  ok('CC0-1 胶囊定位：absolute + top 10px 顶带 + 圆角 999px（居中批 2026-10-23：纵轴保持顶带，横轴居中见 CC0-3）',
+    h.position === 'absolute' && h.top === '10px' && (h.radius === '999px' || h.radius === '9999px'), `${h.position}/${h.top}/${h.radius}`);
+  ok('CC0-2 毛玻璃：backdrop blur 在挂 + .scroll-under-glass 类在挂',
+    h.blur !== 'none' && h.hClass.includes('scroll-under-glass'), `${h.blur}`);
+  ok('CC0-3 fit-content 胶囊：宽 < 面板宽 + 横轴面板居中（居中批 2026-10-23 作者令「相对与canvas居中显示」：居左退役，左右缝相等 ±3px）',
+    h.width < h.slideW - 40 && approx(h.hdrL - h.slideL, h.slideR - (h.hdrL + h.width), 3),
+    `w=${h.width.toFixed(0)} slide=${h.slideW.toFixed(0)} left=${(h.hdrL - h.slideL).toFixed(1)} right=${(h.slideR - h.hdrL - h.width).toFixed(1)}`);
+  ok('CC0-4 内容全高：#canvas-content 顶贴 slide 顶（不再为 header 预留）',
+    approx(h.contentT, h.slideT, 1), `content.top=${h.contentT.toFixed(1)} slide.top=${h.slideT.toFixed(1)}`);
+  ok('CC0-5 穿底结构：内容 pane 顶 ≤ 胶囊顶（文字可进胶囊区）',
+    h.paneT !== null && h.paneT <= h.hdrT + 1, `pane.top=${h.paneT?.toFixed(1)} hdr.top=${h.hdrT.toFixed(1)}`);
+  ok('CC0-6 裙边在挂：::after 高 24px + pointer-events none（穿底渐隐载体）',
+    h.skirtH === '24px' && h.skirtPtr === 'none', `h=${h.skirtH} pe=${h.skirtPtr}`);
+  ok('CC0-7 手势面分区：胶囊 touch-action:none（不劫持内容滚动）', h.touchAction === 'none', h.touchAction);
+
+  /* ── CC1 按压触感 ── */
+  const p1 = await capsulePoint(page);
+  await page.mouse.move(p1.x, p1.y);
+  await page.mouse.down();
+  await sleep(120);
+  const pressed = await page.evaluate(() => {
+    const hdr = document.querySelector('#canvas-panel .canvas-header');
+    const m = new DOMMatrixReadOnly(getComputedStyle(hdr).transform === 'none' ? undefined : getComputedStyle(hdr).transform);
+    return { cls: hdr.classList.contains('is-pressed'), scale: m.a };
+  });
+  await page.mouse.up();
+  await sleep(120);
+  const released = await page.evaluate(() => !document.querySelector('#canvas-panel .canvas-header').classList.contains('is-pressed'));
+  ok('CC1-1 按住 = 按压形（.is-pressed + scale<1）', pressed.cls && pressed.scale < 0.999, `cls=${pressed.cls} scale=${pressed.scale.toFixed(3)}`);
+  ok('CC1-2 松手即清 + 点击界内零动作（页数/激活不变）',
+    released && (await stateOf(page)).tabCount === 2 && (await stateOf(page)).activeId === s0.activeId);
+
+  /* ── CC2 换卡链（下滑=下一张 / 上滑=上一张，deck 同环同向）── */
+  await dragCapsule(page, 0, 70);
+  const sDown = await pollUntil(page, (x) => x.activeId === nextOf);
+  ok('CC2-1 下滑 70px 释放 = 下一张（ring 邻位 +1，deck dy>0 同向）',
+    sDown.activeId === nextOf, `active=${sDown.activeId} expect=${nextOf}`);
+  const prevOf2 = await ringNeighbor(-1);              // 换卡后重算（激活已易主）
+  await dragCapsule(page, 0, -70);
+  const sUp = await pollUntil(page, (x) => x.activeId === prevOf2);
+  ok('CC2-2 上滑 70px 释放 = 上一张（ring 环绕 −1）',
+    sUp.activeId === prevOf2, `active=${sUp.activeId} expect=${prevOf2}`);
+
+  /* ── CC5 分区：胶囊手势不滚动内容；内容滚轮正常 ── */
+  const scrolled = await page.evaluate(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const scrollers = [...pane.querySelectorAll('*')].filter((el) => el.scrollHeight > el.clientHeight + 4);
+    if (scrollers.length) { scrollers[0].scrollTop = 40; return scrollers[0].scrollTop; }
+    return -1;
+  });
+  ok('CC5-0 前置：bravo 长文可滚（scroller scrollTop=40）', scrolled === 40, `scrollTop=${scrolled}`);
+  const paneBox = await page.evaluate(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const r = pane.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: Math.min(r.top + 220, r.bottom - 40) };
+  });
+  await page.mouse.move(paneBox.x, paneBox.y);
+  await page.mouse.wheel(0, 160);
+  await sleep(250);
+  const afterWheel = await page.evaluate(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const sc = [...pane.querySelectorAll('*')].filter((el) => el.scrollHeight > el.clientHeight + 4);
+    return sc.length ? sc[0].scrollTop : -1;
+  });
+  ok('CC5-1 内容区滚轮正常滚 pane（零劫持，scrollTop 40→>40）', afterWheel > 40, `scrollTop=${afterWheel}`);
+  await dragCapsule(page, 0, 30);                        // 次阈竖拖（轴锁成立但 <48 换卡阈）
+  const sPart = await stateOf(page);
+  const scrollKept = await page.evaluate(() => {
+    const pane = document.querySelector('.canvas-tab-pane.active');
+    const sc = [...pane.querySelectorAll('*')].filter((el) => el.scrollHeight > el.clientHeight + 4);
+    return sc.length ? sc[0].scrollTop : -1;
+  });
+  ok('CC5-2 胶囊手势零滚动劫持：次阈竖拖后激活不变 + pane scrollTop 不变',
+    sPart.activeId === sUp.activeId && scrollKept === afterWheel, `active=${sPart.activeId} scroll=${scrollKept} (was ${afterWheel})`);
+
+  /* ── CC4 引用链（右键菜单）── */
+  const p4 = await capsulePoint(page);
+  await page.mouse.click(p4.x, p4.y, { button: 'right' });
+  await sleep(200);
+  const menu1 = await page.evaluate(() => {
+    const m = document.querySelector('.canvas-tab-context-menu');
+    return m ? { text: m.textContent, n: m.querySelectorAll('button').length } : null;
+  });
+  ok('CC4-1 胶囊右键 = 既有引用菜单（.canvas-tab-context-menu + 引用当前页）',
+    !!menu1 && menu1.text.includes('引用当前页'), menu1 ? `btn=${menu1.n}` : 'no menu');
+  await page.evaluate(() => { const b = [...document.querySelectorAll('.canvas-tab-context-menu button')].find((x) => x.textContent.includes('引用当前页')); if (b) b.click(); });
+  await sleep(250);
+  const chip1 = await page.evaluate(() => {
+    const att = document.getElementById('attachment-preview');
+    return att ? att.children.length : -1;
+  });
+  ok('CC4-2 引用当前页点击 → #attachment-preview 出引用 chip（消息引用机制形态复用）', chip1 > 0, `children=${chip1}`);
+
+  // deck 开：胶囊仍在面板顶层（deck 卡不盖顶带）—— 右键 = 同一张菜单三项
+  //（引用/关闭/关闭其他，与面板级菜单同款 actions；单菜不双弹）
+  await page.click('#deck-fab');
+  await sleep(700);
+  const sDeck = await stateOf(page);
+  ok('CC4-3 前置：deck 开', sDeck.open && sDeck.M >= 2, `open=${sDeck.open} M=${sDeck.M}`);
+  const p4b = await capsulePoint(page);
+  await page.mouse.click(p4b.x, p4b.y, { button: 'right' });
+  await sleep(200);
+  const menu2 = await page.evaluate(() => {
+    const ms = document.querySelectorAll('.canvas-tab-context-menu');
+    const m = ms[ms.length - 1];
+    return m ? { count: ms.length, text: m.textContent } : null;
+  });
+  ok('CC4-4 deck 态胶囊右键：单菜单 + 三项（引用当前页/关闭/关闭其他，stopPropagation 不双弹）',
+    !!menu2 && menu2.count === 1 && menu2.text.includes('引用当前页') && menu2.text.includes('关闭其他'),
+    menu2 ? `menus=${menu2.count} text=${menu2.text.slice(0, 40)}` : 'no menu');
+  await page.keyboard.press('Escape');
+  await sleep(400);
+
+  /* ── CC3 关卡链（左滑 = closeTab）── */
+  const nBefore = (await stateOf(page)).tabCount;
+  await dragCapsule(page, -90, 0);
+  const sClose = await pollUntil(page, (x) => x.tabCount === nBefore - 1);
+  ok('CC3-1 左滑 90px 释放 = 关卡（closeTab 共核，tabCount −1 且落邻位）',
+    sClose.tabCount === nBefore - 1, `n=${sClose.tabCount} (was ${nBefore}) active=${sClose.activeId}`);
+  ok('R0 主文档零 JS 错误（桌面腿）', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+/* ════════ 手机腿 375：CC6 canvas 独立整页（dock 批 2026-10-29 判据换代）════════ */
+{
+  const { ctx, page, errors } = await boot({ colorScheme: 'dark', viewport: { width: 375, height: 812 } });
+  const mobile = await page.evaluate(() => document.body.classList.contains('mobile-layer'));
+  await openFile(page, '/tmp/ch-fixture/alpha.md');
+  await openFile(page, '/tmp/ch-fixture/bravo.md');
+  // 关掉 boot 自带面板页签（plugins）—— 文档卡环确定化（docTabs 本就滤面板 pane）
+  await page.evaluate(() => document.querySelector('.canvas-tab[data-tab-id="plugins"] .canvas-tab-close')?.click());
+  await sleep(400);
+  // 入口 = 底 dock canvas 键（前右列液态下拉键退役）。
+  await page.locator('#mobile-dock .dock-key[data-dock="canvas"]').click();
+  await page.waitForSelector('.mobile-page[data-page="canvas"].live', { timeout: 8000 });
+  await sleep(400); // 滑入终态
+  const info = await page.evaluate(() => {
+    const pg = document.querySelector('.mobile-page[data-page="canvas"]');
+    const h = pg.querySelector('.canvas-tab-pane .canvas-header');
+    return {
+      chips: [...pg.querySelectorAll('.mf-strip-chip')].map((c) => ({ on: c.classList.contains('on'), label: c.textContent })),
+      paneHeaderDisplay: h ? getComputedStyle(h).display : 'gone',
+      panelDisplay: getComputedStyle(document.getElementById('canvas-panel')).display,
+      adopted: pg.querySelectorAll('.mf-cv-host .canvas-tab-pane').length,
+      cardsLive: document.body.classList.contains('mf-cards-live'),
+    };
+  });
+  ok('CC6-0 前置：canvas 独立整页 + chip 卡条（2 卡）+ pane 收编 + 桌面卡头退场 + 悬浮 sheet 恒隐',
+    mobile && info.chips.length === 2 && info.adopted === 1
+      // .canvas-header 是面板级元素（住 #canvas-panel 内）不随 doc pane 进页 —
+      // 'gone'（未收进页）与 'none'（页内显式退场）同为达标终态（口径同 sheet T1）。
+      && ['gone', 'none'].includes(info.paneHeaderDisplay)
+      && info.panelDisplay === 'none' && !info.cardsLive,
+    `chips=${info.chips.map((c) => c.label).join(',')} adopted=${info.adopted} panel=${info.panelDisplay} paneHead=${info.paneHeaderDisplay}`);
+
+  /* 可见文字口径（canvas-tab-reference 作者令 2026-11-18 22:10 后回到**严格形态**）：
+     引用钮改成**图标钮**（无文本子节点、无可见文字）之后，签的**可见文字应严格等于
+     文件名** —— 这就是本条要断的不变式，不再需要「名字归名字」的让步。
+     读数用**具名**方式取（不用 `chip.textContent` 一把抓）：
+       · `NAME_SEL` = 承载文件名的具名元素（`.mf-strip-label`），其 textContent 读数；
+       · `chipVisibleText()` = 递归收集签的**文本节点集合**（跳过引用钮子树
+         `.mf-strip-quote`），拼接后即「签面上真正画出来的字」——应严格等于文件名。
+     钮自身的断言（图标在挂 / 零文本子节点 / 可达 aria-label / 命中盒 ≥44px /
+     elementFromPoint 顶层 / tap 后 composer 出 `.att-ref`）由
+     tests/canvas-tab-reference.spec.mjs 的 R1–R4、R11 承担（含 zh/en 两档），此处不重复造。 */
+  const NAME_SEL = '.mf-strip-chip.on .mf-strip-label';
+  const QUOTE_SEL = '.mf-strip-quote';
+  const activeName = () => page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    return el ? el.textContent : '';
+  }, NAME_SEL);
+  /** 签的可见文字 = 文本节点集合拼接（跳过引用钮子树；图标钮不加字）。 */
+  const chipVisibleText = () => page.evaluate(({ chipSel, skipSel }) => {
+    const chip = document.querySelector(chipSel);
+    if (!chip) return null;
+    const out = [];
+    const walk = (n) => {
+      for (const c of n.childNodes) {
+        if (c.nodeType === Node.TEXT_NODE) out.push(c.nodeValue);
+        else if (c.nodeType === Node.ELEMENT_NODE && !c.matches(skipSel)) walk(c);
+      }
+    };
+    walk(chip);
+    return out.join('');
+  }, { chipSel: '.mf-strip-chip.on', skipSel: QUOTE_SEL });
+
+  /** 文档区合成 touch PointerEvent 序列（down → 步进 move → up；轴锁/阈同真机）。 */
+  async function swipeHost(x, y, dx, dy, steps = 8) {
+    await page.dispatchEvent('.mf-cv-host', 'pointerdown',
+      { pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: y, bubbles: true });
+    for (let i = 1; i <= steps; i++) {
+      await page.dispatchEvent('.mf-cv-host', 'pointermove',
+        { pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: x + (dx * i) / steps, clientY: y + (dy * i) / steps, bubbles: true });
+      await sleep(16);
+    }
+    await page.dispatchEvent('.mf-cv-host', 'pointerup',
+      { pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, buttons: 0, clientX: x + dx, clientY: y + dy, bubbles: true });
+    await sleep(300);
+  }
+
+  // CC6-1 状态保留语义闭环（前「下滑收层」退役）：离开 canvas 页 → 页签保留；
+  // 回页 → 活动卡 bravo 不变（closeCanvas 语义在页面栈上延续）。
+  await page.locator('#mobile-dock .dock-key[data-dock="workbench"]').click();
+  await sleep(400);
+  const stLeave = await stateOf(page);
+  ok('CC6-1 离开 canvas 页 = 页签保留（tabCount 2 不变）',
+    stLeave.tabCount === 2, `n=${stLeave.tabCount}`);
+  await page.locator('#mobile-dock .dock-key[data-dock="canvas"]').click();
+  await page.waitForSelector('.mobile-page[data-page="canvas"].live', { timeout: 8000 });
+  await sleep(400);
+  const tRe = await activeName();
+  const vRe = await chipVisibleText();
+  ok('CC6-1b 回页 = 状态保留（活动卡可见文字严格 = bravo.md，页 live）',
+    vRe === 'bravo.md' && tRe === 'bravo.md',
+    `visText=${JSON.stringify(vRe)} nameEl(${NAME_SEL})=${JSON.stringify(tRe)}`);
+
+  // CC6-2 文档区横滑 = 换下一张（前「卡头上滑换卡」迁入 host；bravo → alpha 环绕）
+  const hb = await page.locator('.mf-cv-host').boundingBox();
+  await swipeHost(hb.x + hb.width - 40, hb.y + hb.height / 2, -120, 0);
+  const t2 = await activeName();
+  const v2 = await chipVisibleText();
+  ok('CC6-2 文档区横滑左 = 下一张文档卡（bravo→alpha 环绕，可见文字严格 = alpha.md）',
+    v2 === 'alpha.md' && t2 === 'alpha.md',
+    `visText=${JSON.stringify(v2)} nameEl(${NAME_SEL})=${JSON.stringify(t2)}`);
+  const sAfterSwipe = await stateOf(page);
+  ok('CC6-2b 横滑零关卡（tabCount 2 不变）', sAfterSwipe.tabCount === 2, `n=${sAfterSwipe.tabCount}`);
+
+  // CC6-3 关卡只走工具条 X（前「卡头直滑左 = 关卡」退役）：tabCount 2→1
+  const n0 = (await stateOf(page)).tabCount;
+  await page.locator('.mobile-page[data-page="canvas"] .mf-cv-close').click();
+  const s6 = await pollUntil(page, (x) => x.tabCount === 1);
+  ok('CC6-3 工具条 X = 关卡（tabCount 2→1，邻卡落位）', n0 === 2 && s6.tabCount === 1, `n=${s6.tabCount}`);
+
+  // CC6-4/5【退役】卡头长按触感 + 引用钮浮出链随卡头胶囊族一并退役（dock 批
+  // 不在 13:31/13:36/13:38 令范围内恢复）；桌面 CC4 引用链原样保留。
+  ok('R1 主文档零 JS 错误（手机腿）', errors.length === 0, errors.slice(0, 2).join(' | '));
+  await ctx.close();
+}
+
+
+await browser.close();
+server.close();
+console.log(`\ncanvas-cardhead-capsule: ${pass} PASS / ${fail} FAIL`);
+process.exit(fail ? 1 : 0);

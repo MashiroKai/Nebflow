@@ -1,0 +1,214 @@
+package nebflow.agent
+
+import nebflow.neblink.social.*
+
+import munit.FunSuite
+
+import scala.io.Source
+import scala.util.matching.Regex
+import nebflow.actor.InjectionAttribution
+
+/**
+ * bluebubble 批（2026-09-12）：注入来源标注的**单点定义 / 两侧同源**契约门。
+ *
+ * 背景：作者 2026-09-12 19:42 报「任务分发器会话看不到蓝气泡」。修法把注入
+ * 来源字段的定名权收口到后端
+ * [[InjectionAttribution]]（`nebflow.agent` 包顶层），前端只做**呈现**：
+ *   - 判据：`web/js/persistence.js#isOutgoingInjection`（sender == 本会话 agent 名）
+ *   - 呈现：`web/js/chat/injectedRows.js#INJECTED_SOURCE_LABELS` / `#injectedSourceLabel`
+ *     （2026-09-28 FE 组件化批次三拆分：该族原在 `web/js/chat.js`，拆出后 chat.js 只留
+ *     转发 export；本 spec 随迁到真实实现落点，先例 1c4cbb0）
+ * 后端是唯一定名源 ⇒ 后端每加一个 source 取值，前端**必须显式登记**（表项
+ * 或 `injectedSourceLabel` 里的显式分支），**禁靠首字母大写兜底**——兜底对
+ * 多词源名（`background` → 兜底恰好对，但语义是偶然）、大小写变体不设防，
+ * 且新源名会静默以错误标签展示。
+ *
+ * 本 spec 是纯文本契约门（不起服务、不读运行时状态）：改后端集合而忘改前端
+ * ⇒ 此处红。
+ */
+class InjectionSourceContractSpec extends FunSuite:
+
+  private val repoRoot = os.pwd
+
+  // 注入行族（source 标签表 / injectedSourceLabel / 类名串）2026-09-28 随 FE 组件化批次三
+  // 迁到 js/chat/injectedRows.js（chat.js 只留 `export { … } from './chat/injectedRows.js'`
+  // 的转发）。呈现侧契约不变，pin 随迁到实现落点；本面此后若再拆，同法改指。
+  private val injectedRowsPath =
+    repoRoot / "src" / "main" / "resources" / "web" / "js" / "chat" / "injectedRows.js"
+
+  private val persistenceJsPath =
+    repoRoot / "src" / "main" / "resources" / "web" / "js" / "persistence.js"
+
+  private def read(path: os.Path): String =
+    // 真实前端源码缺失 = 环境问题（spec 必须跑在仓根），显式失败而非静默跳过。
+    assert(os.exists(path), s"前端源码不存在：$path（本 spec 必须在仓根运行）")
+    val src = Source.fromFile(path.toIO, "UTF-8")
+    try src.mkString
+    finally src.close()
+
+  private lazy val injectedRowsJs: String = read(injectedRowsPath)
+
+  /** `const INJECTED_SOURCE_LABELS = { ... };` 的表体。 */
+  private lazy val sourceLabelTableBody: String =
+    val start = injectedRowsJs.indexOf("const INJECTED_SOURCE_LABELS")
+    assert(start >= 0, "js/chat/injectedRows.js 里找不到 INJECTED_SOURCE_LABELS —— 前端登记面被搬迁/改名？")
+    val open = injectedRowsJs.indexOf('{', start)
+    val close = injectedRowsJs.indexOf('}', open)
+    assert(open >= 0 && close > open, "INJECTED_SOURCE_LABELS 表体解析失败（不是对象字面量？）")
+    injectedRowsJs.substring(open + 1, close)
+
+  /**
+   * 表内显式登记的 source key（`name: 'Label'`）。
+   *
+   *  外部注入统一通道批（2026-11-05）：解析面**扩展为同时认引号键**
+   *  （如 `'frozen-waiting': 'FrozenWaiting'`）——带连字符的 source 名不是合法 JS 标识符，
+   *  只能用引号键登记；旧解析器只认裸标识符键 ⇒ 这类登记对门禁**不可见**，
+   *  等于「登记了但门禁以为没登记」。判据（表项 ∪ 显式分支）不变，只放宽词的形态。
+   */
+  private lazy val registeredSourceKeys: Set[String] =
+    val keyRe: Regex =
+      """(?m)(?:'([A-Za-z_][A-Za-z0-9_-]*)'|"([A-Za-z_][A-Za-z0-9_-]*)"|([A-Za-z_][A-Za-z0-9_]*))\s*:\s*'[^']*'""".r
+    keyRe
+      .findAllMatchIn(sourceLabelTableBody)
+      .map(m => Option(m.group(1)).orElse(Option(m.group(2))).getOrElse(m.group(3)))
+      .toSet
+
+  /**
+   * `injectedSourceLabel` 函数体里显式分支处理的 source 字面量
+   * （`source === 'node'` 形态：表现格式与通用模板不同，故不走表）。
+   */
+  private lazy val explicitBranchSources: Set[String] =
+    val fnStart = injectedRowsJs.indexOf("export function injectedSourceLabel")
+    assert(fnStart >= 0, "js/chat/injectedRows.js 里找不到 injectedSourceLabel —— 前端呈现入口被搬迁/改名？")
+    val fnEnd = injectedRowsJs.indexOf("\nexport ", fnStart + 1) match
+      case -1 => injectedRowsJs.length
+      case other => other
+    val body = injectedRowsJs.substring(fnStart, fnEnd)
+    val branchRe: Regex = """source\s*===\s*'([A-Za-z_][A-Za-z0-9_]*)'""".r
+    branchRe.findAllMatchIn(body).map(_.group(1)).toSet
+
+  /** 前端登记面覆盖的 source（表 ∪ 显式分支）。 */
+  private lazy val frontendRegistered: Set[String] =
+    registeredSourceKeys ++ explicitBranchSources
+
+  test("① 后端自定名集合被 pin —— 新增/删除 source 必须显式改本 spec（提醒同步前端登记面）"):
+    assertEquals(
+      InjectionAttribution.BackendNamedSources,
+      Set(
+        "mail",
+        "task",
+        "dispatch",
+        "system",
+        "node",
+        "skill",
+        "delegate",
+        "subtask",
+        "flow",
+        "tool",
+        "background",
+        // b64 批（2026-09-13）：链级摘要通道（source=chain，NodeEngine.deliverChainSummary）
+        "chain",
+        // device-mail 批（2026-09-15）：跨设备 Nebula 邮件收件腿
+        // （source=deviceMail，DeviceMailInbox 的会话注入；前端走 i18n 显式分支
+        // 「来自 <from_device> 的 Nebula」，同 `node` 先例 —— 故不在表内，靠
+        // explicitBranchSources 覆盖本门）。
+        "deviceMail",
+        // schedcard 批（2026-10-29）：定时任务触发腿（ScheduledTaskService.triggerTask
+        // 落盘/广播 source="schedule"；前端走 buildInjectedRow 专属卡分支 + 表项
+        // schedule:'Schedule' 兜底标签）。
+        "schedule",
+        // #822 复活批「Schedule 双面化」（2026-10-29，单口合并时登记）：待办浮出腿
+        // （ScheduledTaskService.surfaceDigest 落盘/广播 source="todo"，每日 09:00
+        // 待办汇总 digest；前端走通用注入泡 + 表项 todo:'Todo'——刻意不进
+        // schedule 专属卡，二者呈现语义不同）。
+        "todo",
+        // 外部注入统一通道批（2026-11-05，作者 08:44 报障「所有外部注入消息应有统一
+        // 途径和蓝色气泡通知」）：可见性门 `visibleExternalEventSource` 从白名单翻成
+        // 总函数后，这一族外部事件**首次**真的产生注入行 ⇒ 后端显式定名 + 前端
+        // `INJECTED_SOURCE_LABELS` 同批显式登记（禁首字母大写兜底）。
+        //   bg-lifecycle      BgLifecycleReconciler 的后台任务生命周期催办
+        //   waiting-dock-care TaskStuckWatcher 的等待坞超时升级
+        //   chain-orphan      ProjectCrashRecovery 的孤儿链回收通报
+        //   team              AgentActor.notifyEscalation 的团队错误升级链
+        "bg-lifecycle",
+        "waiting-dock-care",
+        "chain-orphan",
+        "team",
+        // 冻结重放静默批（2026-11-06，作者原话「llm 不稳定 不需要向上通知…现在还是
+        // 在给你报障」）：解冻轮把静默族冻结回执合成**一条**「等待恢复中」状态行，
+        // 来源单独定名（呈现面按它渲染「等待恢复中」而不是「已冻结」）。
+        "frozen-waiting"
+      ),
+      "BackendNamedSources 变更 ⇒ 同步检查 web/js/chat.js#INJECTED_SOURCE_LABELS 并更新本 pin"
+    )
+    assert(
+      InjectionAttribution.BackendNamedSources.contains(InjectionAttribution.SourceSystem),
+      s"SourceSystem='${InjectionAttribution.SourceSystem}' 必须在 BackendNamedSources 内（否则前端登记门覆盖不到它）"
+    )
+
+  test("② 前端登记面 ⊇ 后端自定名集合（禁首字母大写兜底）"):
+    val missing = InjectionAttribution.BackendNamedSources.diff(frontendRegistered)
+    assert(
+      missing.isEmpty,
+      s"后端自定的 source 未在前端显式登记（表项或 injectedSourceLabel 显式分支）：${missing.toList.sorted.mkString(", ")}" +
+        s"｜已登记：${frontendRegistered.toList.sorted.mkString(", ")}"
+    )
+
+  test("③ 登记表标签非空且非兜底形态（每个 key 映射到显式字符串标签）"):
+    // 键形态与 [[registeredSourceKeys]] 同步放宽（含引号键；外部注入统一通道批）。
+    val labelRe: Regex =
+      """(?m)(?:'([A-Za-z_][A-Za-z0-9_-]*)'|"([A-Za-z_][A-Za-z0-9_-]*)"|([A-Za-z_][A-Za-z0-9_]*))\s*:\s*'([^']*)'""".r
+    val labels = labelRe
+      .findAllMatchIn(sourceLabelTableBody)
+      .map(m => Option(m.group(1)).orElse(Option(m.group(2))).getOrElse(m.group(3)) -> m.group(4))
+      .toList
+      .toMap
+    assert(registeredSourceKeys.nonEmpty, "INJECTED_SOURCE_LABELS 为空表 —— 登记面被清空？")
+    registeredSourceKeys.foreach { k =>
+      val v = labels.getOrElse(k, "")
+      assert(
+        v.nonEmpty && v.head.isUpper,
+        s"INJECTED_SOURCE_LABELS['$k'] 标签必须是显式非空展示名（当前='$v'）"
+      )
+    }
+    // 后端集合中的多值源必须逐个有标签（表内登记者），不允许只靠 charAt 兜底。
+    InjectionAttribution.BackendNamedSources.intersect(registeredSourceKeys).foreach { k =>
+      assert(labels.contains(k), s"$k 在表中但无标签")
+    }
+
+  test("④ 两侧同源字段名：后端写盘字段 ⇄ 前端 live 帧读取 / 历史恢复读取"):
+    // 线格式字段名（后端唯一发射点写 WS 帧 + UiMessage.User 落盘的同一批名字）。
+    val wireFields = List("injected", "source", "eventType", "sender", "senderTeam", "delivery")
+    val mainJs = read(repoRoot / "src" / "main" / "resources" / "web" / "js" / "main.js")
+    val persistenceJs = read(persistenceJsPath)
+
+    // live 消费点（main.js#onMessage('user')）逐字段读取帧字段。
+    wireFields.foreach { f =>
+      assert(
+        mainJs.contains(s"msg.$f"),
+        s"main.js 的注入帧消费点未读字段 msg.$f —— 后端字段与 live 呈现面脱钩？"
+      )
+    }
+    // 历史恢复点（persistence.js 两条 restore 路径）逐字段读 UiMessage 行。
+    wireFields.foreach { f =>
+      assert(
+        persistenceJs.contains(s"m.$f"),
+        s"persistence.js 的注入行恢复路径未读字段 m.$f —— 后端落盘字段与历史呈现面脱钩？"
+      )
+    }
+    assert(
+      injectedRowsJs.contains("injected-source-label"),
+      "chat.js 缺 injected-source-label 类名 —— 注入气泡的标签容器被改名？"
+    )
+    // 判据（persistence.js#isOutgoingInjection）读 sender——本会话自身外发不渲染
+    // （后端 sender 的取值域恒 = 发送方 agent 自身名，见 InjectionAttribution 契约注释）。
+    assert(
+      persistenceJs.contains("isOutgoingInjection"),
+      "persistence.js 缺 isOutgoingInjection —— 注入气泡判据被搬迁/改名？"
+    )
+    assert(
+      persistenceJs.contains("m.sender"),
+      "persistence.js#isOutgoingInjection 判据必须读 sender（与后端 sender 字段同源）"
+    )
+
+end InjectionSourceContractSpec

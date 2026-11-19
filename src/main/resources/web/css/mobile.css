@@ -1,0 +1,106 @@
+/* mobile.css — small-viewport shell adaptation (≤768px). Loaded LAST on
+   purpose: it overrides the desktop shell geometry. Every rule lives inside
+   the media query, so desktop rendering stays byte-identical.
+
+   The problem it solves (measured at 375px, audit 2026-10-12): the desktop
+   flex row (Activity Bar + Side Bar + chat) has no width collapse of its
+   own — the page simply overflowed horizontally (~481px document width) and
+   the browser let the user pan around a half-visible shell. Here the open
+   Side Bar becomes an overlay drawer sliding over the chat, the document
+   can never pan sideways, and the composer gets phone ergonomics (16px
+   input text so iOS never auto-zooms on focus, safe-area padding for
+   viewport-fit=cover). */
+
+/* Scrim element — inert by default on every viewport (the .show activation
+   only exists inside the phone media query, so desktop can never show it).
+   Created and synced by activityBar.js through the same setSideBarCollapsed
+   API every other toggle uses; tapping it closes the drawer. */
+#mobile-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(8, 10, 16, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+@media (max-width: 768px) {
+  html,
+  body {
+    overflow-x: hidden;
+  }
+
+  /* Open Side Bar = overlay drawer pinned beside the Activity Bar. Fixed
+     positioning takes it out of the flex row, so the chat column gets the
+     full remaining width instead of being squeezed past the screen edge. */
+  body:not(.sidebar-collapsed) #sidebar {
+    position: fixed;
+    top: 10px;
+    bottom: 10px;
+    left: 60px; /* clears the 48px Activity Bar + its gutters */
+    width: min(320px, calc(100vw - 76px));
+    max-height: none;
+    margin: 0;
+    z-index: 90;
+  }
+
+  /* Belt: a collapsed drawer can never intercept touches mid-transition. */
+  body.sidebar-collapsed #sidebar {
+    visibility: hidden;
+  }
+
+  body:not(.sidebar-collapsed) #mobile-scrim.show {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Chat column must be allowed to shrink inside the flex row. */
+  #main {
+    min-width: 0;
+    flex: 1 1 auto;
+  }
+
+  /* 桌面边距还原批（2026-10-31 17:15 作者令）：chat.css 主规则的水平内距已
+     回退为 0（桌面回归靠边），手机端现行 16px 不在本批范围 —— 由本媒体
+     查询承接，保持 ≤768px 视口的现行形态逐字节不变。 */
+  #chat {
+    padding-left: var(--ds-space-4);
+    padding-right: var(--ds-space-4);
+  }
+
+  /* Rich message content must scroll inside its box, never widen the page. */
+  #main pre,
+  #main table {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  #main img {
+    max-width: 100%;
+  }
+
+  /* iOS auto-zooms a focused input whose font-size is under 16px.
+     composer 统一批（2026-11-18）：手机字档是**视口级**差异，不是面差异 ——
+     `#input` 走 `#main textarea` 已收编，消息面 `.fm-input` 不在 `#main` 里，
+     改前漏掉（手机 14.5px ⇒ iOS 聚焦自动放大）。两面显式同列。 */
+  #main textarea,
+  #main input[type='text'],
+  #main input[type='password'],
+  #main input:not([type]),
+  .fm-input {
+    font-size: var(--ds-fs-mobile-callout);
+  }
+
+  /* Notch / home indicator: keep the composer clear of system chrome
+     (viewport-fit=cover is set on the meta viewport).
+     瘦身批 2026-10-31（与 input.css 底缘外留白同令）：12px → 8px。 */
+  #input-area {
+    padding-bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+
+  /* The desktop drag handle has no touch interaction — don't render a
+     hover-only affordance on the chat edge. */
+  .col-resizer {
+    display: none;
+  }
+}

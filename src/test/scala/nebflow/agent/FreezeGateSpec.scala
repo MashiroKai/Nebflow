@@ -8,17 +8,37 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord,
+  AgentStatus,
+  Escalation,
+  escalation,
+  messages,
+  status
+}
 import nebflow.actor.{ActorRef, ActorSystem, Behavior, Behaviors}
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.processor.{FreezeScheduler, TaskStuckWatcher}
 import nebflow.core.schedule.{FreezeScheduleConfig, FreezeSegment}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
-import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{ContentBlock, FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.gateway.WsHub
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{
+  ContentBlock,
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 
@@ -36,8 +56,10 @@ class FreezeGateSpec extends CatsEffectSuite:
     counter: cats.effect.Ref[IO, Int],
     requests: cats.effect.Ref[IO, List[LlmRequest]]
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -45,20 +67,24 @@ class FreezeGateSpec extends CatsEffectSuite:
       Stream.eval(counter.update(_ + 1) *> requests.update(_ :+ req)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
-  /** 工具轮 mock：首请求返回 Read tool call，Done 前留关窗时间窗；后续纯文本。
-    * 关窗窗口的确定性化（B4/B5 flake 治本，移植 beta 2e46e565 同款）：默认 400ms
-    * 定长 sleep 下，满载调度可让测试线程的「观察到首轮 → 关窗（schedRef.set）」
-    * 赶不上窗口——续轮 dispatch 溜过仍然开着的 gate → 永不 Frozen → 超时红。
-    * 传入 `firstDoneGate` 后，首请求的 Done 改为等该 Deferred——测试在关窗完成
-    * 后才 complete，Done→工具→续轮 gate 检查时配置必然已冻结，窗口竞争不可能发生。 */
+  /**
+   * 工具轮 mock：首请求返回 Read tool call，Done 前留关窗时间窗；后续纯文本。
+   * 关窗窗口的确定性化（B4/B5 flake 治本，移植 beta 2e46e565 同款）：默认 400ms
+   * 定长 sleep 下，满载调度可让测试线程的「观察到首轮 → 关窗（schedRef.set）」
+   * 赶不上窗口——续轮 dispatch 溜过仍然开着的 gate → 永不 Frozen → 超时红。
+   * 传入 `firstDoneGate` 后，首请求的 Done 改为等该 Deferred——测试在关窗完成
+   * 后才 complete，Done→工具→续轮 gate 检查时配置必然已冻结，窗口竞争不可能发生。
+   */
   private class ToolThenTextLlm(
     counter: cats.effect.Ref[IO, Int],
     requests: cats.effect.Ref[IO, List[LlmRequest]],
     filePath: String,
     firstDoneGate: Option[cats.effect.Deferred[IO, Unit]] = None
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -67,16 +93,22 @@ class FreezeGateSpec extends CatsEffectSuite:
         case 1 =>
           val holdOpen: Stream[IO, Nothing] = firstDoneGate match
             case Some(g) => Stream.eval(g.get).drain
-            case None    => Stream.sleep[IO](400.millis).drain
-          Stream(StreamChunk.ToolCallChunk(nebflow.shared.ToolCall(
-            id = "tc-read-1",
-            name = "Read",
-            input = io.circe.JsonObject("file_path" -> filePath.asJson)
-          ))) ++ holdOpen ++
+            case None => Stream.sleep[IO](400.millis).drain
+          Stream(
+            StreamChunk.ToolCallChunk(
+              nebflow.shared.ToolCall(
+                id = "tc-read-1",
+                name = "Read",
+                input = io.circe.JsonObject("file_path" -> filePath.asJson)
+              )
+            )
+          ) ++ holdOpen ++
             Stream(StreamChunk.Done(None, None))
         case _ =>
           Stream(StreamChunk.TextDelta("done"), StreamChunk.Done(None, None))
       }
+
+  end ToolThenTextLlm
 
   private def mkResources(
     system: ActorSystem,
@@ -190,6 +222,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // ── B13: 2026-08-25 用户消息全局跳过——skipUntil 未到期 → gate 放行 ──
@@ -238,6 +271,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("B13: skipUntil expired → freeze gate blocks again (next segment freezes normally)") {
@@ -281,9 +315,11 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
-  test("B4: idle ExternalEvent dispatch path is gated (frozen, zero calls)") {    val system = ActorSystem("freeze-b4-evt")
+  test("B4: idle ExternalEvent dispatch path is gated (frozen, zero calls)") {
+    val system = ActorSystem("freeze-b4-evt")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
     val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
@@ -323,6 +359,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("B4: ToolsComplete continuation is gated — tool ran, next LLM round frozen") {
@@ -341,7 +378,12 @@ class FreezeGateSpec extends CatsEffectSuite:
         events <- IO.ref(List.empty[Json])
         schedRef <- IO.ref(openConfig) // 不冻结启动第一轮
         doneGate <- cats.effect.Deferred[IO, Unit] // 关窗完成才放行 Done（确定性窗口）
-        resources <- mkResources(system, tmp, ToolThenTextLlm(counter, requests, target.toString, Some(doneGate)), schedRef)
+        resources <- mkResources(
+          system,
+          tmp,
+          ToolThenTextLlm(counter, requests, target.toString, Some(doneGate)),
+          schedRef
+        )
         sid = "freeze-b4-tools-agent"
         ref <- system.spawn(
           AgentActor(
@@ -377,6 +419,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // ── B5: 唤醒语义 ──────────────────────────────────────────
@@ -397,7 +440,12 @@ class FreezeGateSpec extends CatsEffectSuite:
         events <- IO.ref(List.empty[Json])
         schedRef <- IO.ref(openConfig)
         doneGate <- cats.effect.Deferred[IO, Unit] // 关窗完成才放行 Done（确定性窗口）
-        resources <- mkResources(system, tmp, ToolThenTextLlm(counter, requests, target.toString, Some(doneGate)), schedRef)
+        resources <- mkResources(
+          system,
+          tmp,
+          ToolThenTextLlm(counter, requests, target.toString, Some(doneGate)),
+          schedRef
+        )
         sid = "freeze-b5-agent"
         ref <- system.spawn(
           AgentActor(
@@ -450,6 +498,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("B5: system input while frozen is queued, not dispatched; drained after resume") {
@@ -506,6 +555,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("B5: duplicate wake clientMessageId does not double-inject") {
@@ -562,6 +612,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // ── B6: 自动恢复 ──────────────────────────────────────────
@@ -610,6 +661,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("B6: FreezeScheduler.scan delivers CheckFreezeGate to frozen agents") {
@@ -659,6 +711,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // ── Interrupt 放弃续跑 ────────────────────────────────────
@@ -710,6 +763,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // ── B11: 交互豁免 ─────────────────────────────────────────
@@ -744,8 +798,10 @@ class FreezeGateSpec extends CatsEffectSuite:
         _ <- ref ! AgentCommand.AskQuestion("what next?", sid)
         _ <- waitUntil(System.currentTimeMillis() + 8000)(counter.get.map(_ >= 1))
         regStatus <- resources.agentRegistry.get.map(_.get(sid).map(_.status))
-        _ = assert(regStatus.contains(AgentStatus.Processing) || regStatus.contains(AgentStatus.Idle),
-          s"ask turn must not freeze, got $regStatus")
+        _ = assert(
+          regStatus.contains(AgentStatus.Processing) || regStatus.contains(AgentStatus.Idle),
+          s"ask turn must not freeze, got $regStatus"
+        )
       yield ()
       program.unsafeRunSync()
     finally
@@ -753,6 +809,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("B11: freezeExempt agent dispatches inside frozen window") {
@@ -782,7 +839,7 @@ class FreezeGateSpec extends CatsEffectSuite:
           ),
           sid
         )
-        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Plan, sid, None)))
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
         // 系统注入（Gated）也应放行——豁免优先于 cause
         _ <- ref ! AgentCommand.UserInput("plan this task")
         _ <- waitUntil(System.currentTimeMillis() + 8000)(counter.get.map(_ >= 1))
@@ -795,51 +852,14 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
-  // ── B12: team busy 时序 ───────────────────────────────────
-
-  test("B12: frozen team agent stays busy in TeamSessionRegistry") {
-    val system = ActorSystem("freeze-b12")
-    val tmp = os.temp.dir()
-    val prevRoot = PathUtil.dataRoot
-    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
-    nebflow.core.LlmLogWriter.setEnabled(false)
-    PathUtil.setDataRoot(tmp / "data")
-    try
-      val program = for
-        counter <- IO.ref(0)
-        requests <- IO.ref(List.empty[LlmRequest])
-        events <- IO.ref(List.empty[Json])
-        schedRef <- IO.ref(frozenConfig())
-        resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
-        sid = "freeze-b12-agent"
-        ref <- system.spawn(
-          AgentActor(
-            agentDef = rootDef("Backend", category = "team"),
-            resources = resources,
-            wsSend = json => events.update(_ :+ json),
-            depth = 1,
-            sessionId = Some(sid),
-            sessionName = Some("b12")
-          ),
-          sid
-        )
-        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Team, sid, None)))
-        _ <- ref ! AgentCommand.UserInput("team task")
-        _ <- waitUntil(System.currentTimeMillis() + 5000)(
-          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
-        )
-        busy <- nebflow.core.flow.TeamSessionRegistry.isBusy(sid)
-        _ = assert(busy, "frozen team agent must read busy (Teams panel correctness)")
-      yield ()
-      program.unsafeRunSync()
-    finally
-      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
-      PathUtil.setDataRoot(prevRoot)
-      system.stopAll.attempt.void.unsafeRunSync()
-      os.remove.all(tmp)
-  }
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 3：原 B12 用例
+  // 「frozen team agent stays busy in TeamSessionRegistry」整条删除 —— 它断言的
+  // `TeamSessionRegistry.isBusy` 与 `markTeamBusy/markTeamIdle` 双写随团队会话
+  // 登记表一并退役（团队 busy 面板语义无对象）。删因：**团队 busy 能力已退役**，
+  // 不是「跑不过」。其余用例（含 Frozen 状态机本体）逐字未动。
 
   // ── B7: TaskStuckWatcher 豁免（纯 registry 层测试）────────
 
@@ -862,7 +882,7 @@ class FreezeGateSpec extends CatsEffectSuite:
           "b7-probe"
         )
         hubEvents <- IO.ref(List.empty[Json])
-        _ <- wsHub.register(json => hubEvents.update(_ :+ json))
+        _ <- wsHub.registerListener(json => hubEvents.update(_ :+ json))
         dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
         rateLimiter <- RateLimiter.create()
         tracker <- FileChangeTracker.create(os.pwd.toString)
@@ -894,10 +914,18 @@ class FreezeGateSpec extends CatsEffectSuite:
         )
         staleActivity = System.currentTimeMillis() - 20 * 60 * 1000L // 远超 10min 阈值
         // Frozen + 长时间无活动 → 豁免（零动作）
-        _ <- resources.agentRegistry.update(_ + ("frozen-sid" -> AgentRecord(
-          "frozen-sid", probeRef, AgentKind.Root, "frozen-sid", None,
-          startedAt = staleActivity, status = AgentStatus.Frozen, lastActivityMs = staleActivity
-        )))
+        _ <- resources.agentRegistry.update(
+          _ + ("frozen-sid" -> AgentRecord(
+            "frozen-sid",
+            probeRef,
+            AgentKind.Root,
+            "frozen-sid",
+            None,
+            startedAt = staleActivity,
+            status = AgentStatus.Frozen,
+            lastActivityMs = staleActivity
+          ))
+        )
         _ <- TaskStuckWatcher.scan(resources, wsHub, thresholdMs = 10 * 60 * 1000L)
         _ <- IO.sleep(300.millis)
         probeAfterFrozen <- probeEvents.get
@@ -921,6 +949,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // ── v2 冻结式错误恢复（20260824_frozen-error-recovery-plan §7 P0 后端验收）──
@@ -930,28 +959,56 @@ class FreezeGateSpec extends CatsEffectSuite:
     counter: cats.effect.Ref[IO, Int],
     failCount: Int
   ) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(counter.update(_ + 1)) >> Stream.eval(counter.get).flatMap { n =>
-        if n <= failCount then
-          Stream.raiseError[IO](new RuntimeException("HTTP 429 rate limit exceeded"))
+        if n <= failCount then Stream.raiseError[IO](new RuntimeException("HTTP 429 rate limit exceeded"))
         else Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
       }
 
+  end TransientFailNThenOkLlm
+
   /** 恒抛 Timeout（classifyError → Permanent）——不冻结直接 fatal 的对照 mock。 */
   private class PermanentFailLlm(counter: cats.effect.Ref[IO, Int]) extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(counter.update(_ + 1)) >>
         Stream.raiseError[IO](new RuntimeException("connection timeout after 30s"))
+
+  /**
+   * #692 场景① mock：前 failCount 次抛**类型化**网络不可达（ConnectException，
+   * isNetworkUnreachableThrowable 直判），之后成功——「断网注入 → 存活 → 恢复续跑」。
+   */
+  private class NetworkFailNThenOkLlm(
+    counter: cats.effect.Ref[IO, Int],
+    failCount: Int
+  ) extends LlmHandle[IO]:
+
+    def send(req: LlmRequest): IO[LlmResponse] =
+      IO.raiseError(new RuntimeException("send not expected in this test"))
+
+    def sendStream(
+      req: LlmRequest,
+      onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+    ): Stream[IO, StreamChunk] =
+      Stream.eval(counter.update(_ + 1)) >> Stream.eval(counter.get).flatMap { n =>
+        if n <= failCount then Stream.raiseError[IO](new java.net.ConnectException("Connection refused"))
+        else Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
+      }
+
+  end NetworkFailNThenOkLlm
 
   private def frozenEventOf(events: List[Json]): Option[Json] =
     events.find(_.hcursor.downField("type").as[String].contains("frozen"))
@@ -1017,6 +1074,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("ER-2: backoff elapsed + CheckFreezeGate → resumed, dispatch continues from checkpoint") {
@@ -1067,9 +1125,10 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
-  test("ER-3: same-reason consecutive freezes ≥3 → escalate to parent, NOT fatal") {
+  test("ER-3: same-reason consecutive provider-family freezes ≥3 stay QUIET — still Frozen, no escalation, nothing sent to the parent") {
     val system = ActorSystem("freeze-er3")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -1123,34 +1182,31 @@ class FreezeGateSpec extends CatsEffectSuite:
         // 注意：waitUntil Frozen 在 CheckFreezeGate 前已满足（本就 Frozen），必须等
         // escalation 落盘（enterFrozen 的 updateRegistryEscalation 在 touch 之后）
         _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 4))
-        _ <- waitUntil(System.currentTimeMillis() + 15000)(
-          resources.agentRegistry.get.map(_.get(sid).exists(_.escalation.isDefined))
-        )
+        // 冻结通知策略批（2026-11-05 10:36 作者令）：provider 故障 = 基础设施故障 ⇒
+        // **不进升级链、不通知上级**（上级多半也在同一波里挨饿）。给它一拍沉降窗口
+        // 再断言「父什么都没收到」。
+        _ <- IO.sleep(1200.millis)
         reg <- resources.agentRegistry.get.map(_.get(sid))
-        _ = assert(reg.exists(_.escalation.isDefined), "3rd consecutive freeze must set escalation info")
         _ = assert(
-          reg.flatMap(_.escalation).exists(_.level == 1),
-          "escalation level must start at 1"
+          reg.exists(_.escalation.isEmpty),
+          s"a provider-family freeze must NOT enter the escalation chain, got ${reg.flatMap(_.escalation)}"
         )
         _ = assert(
           reg.exists(r => r.status == AgentStatus.Frozen),
-          "3rd consecutive freeze must still be Frozen (not fatal)"
+          "consecutive provider-family freezes must still be Frozen (not fatal)"
         )
-        _ <- waitUntil(System.currentTimeMillis() + 5000)(
-          parentEvents.get.map(_.exists {
-            case AgentCommand.ExternalEvent(_, eventType, _, _, _) => eventType == "error-escalated"
-            case _ => false
-          })
+        parentEventsNow <- parentEvents.get
+        _ = assertEquals(
+          parentEventsNow.collect {
+            case AgentCommand.ExternalEvent(_, eventType, _, _, _, _) if eventType == "error-escalated" => eventType
+          },
+          Nil,
+          s"no escalation report may reach the parent for a provider failure, got $parentEventsNow"
         )
-        parentGot <- parentEvents.get.map(_.collectFirst {
-          case AgentCommand.ExternalEvent(_, eventType, _, metadata, _) if eventType == "error-escalated" =>
-            metadata("reason").flatMap(_.as[String].toOption).getOrElse("")
-        })
-        _ = assertEquals(parentGot, Some("llm-transient"), "escalation event must carry the freeze reason")
         statusAfter <- resources.agentRegistry.get.map(_.get(sid).map(_.status))
         _ = assert(
           statusAfter.contains(AgentStatus.Frozen),
-          s"3rd consecutive freeze must NOT be fatal — still Frozen, got $statusAfter"
+          s"repeated provider freezes must NOT be fatal — still Frozen, got $statusAfter"
         )
       yield ()
       program.unsafeRunSync()
@@ -1159,6 +1215,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("ER-4: Permanent failure does NOT freeze — fatal path (error event, no frozen event)") {
@@ -1203,6 +1260,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   test("ER-5: Schedule freeze regression — reason defaults to 'schedule', behavior unchanged") {
@@ -1254,6 +1312,85 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
+  }
+
+  test(
+    "ER-7: #692 network-unreachable → waiting-network freeze (survives, no terminal), recovery resumes to completion"
+  ) {
+    val system = ActorSystem("freeze-er7")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        requests <- IO.ref(List.empty[LlmRequest])
+        events <- IO.ref(List.empty[Json])
+        schedRef <- IO.ref(openConfig)
+        // #692 首败语义：网络级失败**第 1 次**即入退避等待（不烧重试预算——
+        // networkWaitable 分支先于 overload-retry），恢复后第 2 次调用成功。
+        resources <- mkResources(system, tmp, NetworkFailNThenOkLlm(counter, failCount = 1), schedRef)
+        sid = "freeze-er7-agent"
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = rootDef(),
+            resources = resources,
+            wsSend = json => events.update(_ :+ json),
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some("er7")
+          ),
+          sid
+        )
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
+        _ <- ref ! AgentCommand.UserInput("network outage then recovery")
+        // 断网注入：一次网络级失败 → waiting-network 冻结（不进终态、不烧重试预算）
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 1))
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(
+          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
+        )
+        reg <- resources.agentRegistry.get.map(_.get(sid))
+        _ = assertEquals(reg.flatMap(_.frozenReason), Some("waiting-network"), "frozenReason must be waiting-network")
+        _ = assert(reg.exists(_.escalation.isEmpty), "waiting-network never enters the escalation chain (等待无父干预语义)")
+        evs <- events.get
+        fz = frozenEventOf(evs)
+        _ = assert(fz.isDefined, "must emit frozen WS event")
+        _ = assert(
+          fz.exists(_.hcursor.downField("reason").as[String].toOption.contains("waiting-network")),
+          s"frozen event must carry reason=waiting-network, got ${fz.flatMap(_.hcursor.downField("reason").as[String].toOption)}"
+        )
+        countAtFreeze <- counter.get
+        _ <- IO.sleep(800.millis)
+        countAfter <- counter.get
+        _ = assert(
+          countAtFreeze == countAfter,
+          s"waiting-network freeze must be zero-token ($countAtFreeze vs $countAfter)"
+        )
+        // 「恢复」：退避（5s+抖动）到期后 CheckFreezeGate → resumed → 第 2 次调用成功 → turn 完成
+        _ <- IO.sleep(6500.millis)
+        _ <- ref ! AgentCommand.CheckFreezeGate
+        _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 2))
+        resumedSeen <- hasEvent(events, "resumed")
+        _ = assert(resumedSeen, "must emit resumed WS event when backoff elapsed")
+        _ <- waitUntil(System.currentTimeMillis() + 10000)(
+          resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Idle))
+        )
+        evsFinal <- events.get
+        _ = assert(
+          !evsFinal.exists(_.hcursor.downField("type").as[String].contains("error")),
+          "network outage must NEVER terminalize the turn (no error event — 网络不可达≠任务失败)"
+        )
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+    end try
   }
 
   test("ER-6: escalation target pure function — parent alive → Parent, parent missing → skip, no parent → User") {

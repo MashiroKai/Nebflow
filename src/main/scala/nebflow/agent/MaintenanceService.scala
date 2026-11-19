@@ -1,5 +1,6 @@
 package nebflow.agent
 
+import nebflow.actor.{AgentState, delegateCount, lastMaintenanceDelegateCount}
 import nebflow.shared.*
 
 /**

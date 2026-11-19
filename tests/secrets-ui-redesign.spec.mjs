@@ -1,0 +1,305 @@
+// 🔴 jev-retire 批（2026-11-16）换代注：R1（settings.jevHealth* i18n 键）/
+// R4（健康徽标三态）及截图腿「服务商面板 Jev 标签态」随 JeV 全量退役**整件删除**
+// ——jev 域已不在统一服务商面板（providerPanel.js DOMAIN_SPECS 只剩
+// llm/imagegen），settings-jev-health 徽标与 jevHealth* 键不复存在。承接件
+// jev-panel-threefix.spec 亦随本批删除。本文件余下测试（R6–R8 密钥面板自身）
+// 不受影响。
+// 🔴 provider-add-tabs 批（2026-11-06 作者令「添加服务商统一成标签切换类型 +
+// 单一服务商面板」）换代注：R2（Jev 卡折叠面）/ R3（keyRef 明文直显 + eye）/
+// R5（#btn-save-jev 内联保存反馈）随旧 Jev 表单**整件退役**——keyRef 不再是
+// 用户可编辑字段（统一表单 = 派生名对用户不可见，T2 fourfix「前端零 keyRef
+// 字眼」口径推广到 JeV），保存反馈 = 统一 toast。存活语义改由别件守：开关解耦
+// + 端点钉死 + 保存形状 → jev-panel-threefix.spec（R1'–R3b'，随 JeV 退役删除）；
+// 健康徽标三态 → 同件 R4*（随 JeV 退役删除）。R1/R4 曾改走统一面板（Jev 标签
+// 选中后断言）。本文件余下测试（R6–R8 密钥面板自身）不受影响。
+// secrets-ui-redesign.spec.mjs — 密钥面板 UI 重设计验收 spec（Jev 配置腿已随
+// JeV 退役删除——jev-retire 批 2026-11-16）。
+//
+// 设计稿：/tmp/nebflow-coldstart/general/20261008_232800_secrets-ui-redesign-proto.md
+// + proto-secrets/index.html（2026-10-08 批准方向：除创建/修改弹窗本身以外的全部项）。
+//
+// SELF-CONTAINED（settings-cleanup.spec.mjs 同款 harness）：隔离静态服务器
+// 127.0.0.1:8187 + route mock API + routeWebSocket mock WS，零真实后端、零端口冲突。
+//
+// R6 密钥入口行 — 虚线满宽 .cfg-btn-add → .secrets-entry 玻璃行卡：
+//    key 图标 +「密钥管理」+「N 个密钥」+ count pill + chevron；0 个 →
+//    「尚无密钥」+ 0；点击开独立弹窗，Esc 关闭后焦点回入口行。
+// R7 面板行卡重排 → 二轮极简 + 三轮微调（2026-10-09 23:06）：常态行 = 名称+
+//    权限徽标（收起态不再渲染值点点）；点行原位展开后 meta 图标化
+//    （box/clock/link）+ tabular-nums、遮蔽占位逐字节一颗点（长度保真）、
+//    操作钮在展开区行尾右对齐（justify-content:flex-end）；wire 形状里的
+//    value 字段绝不渲染（元数据 only 纪律不变）。
+// R8 弹窗退役（行内化 2026-10-09 07:42；二轮 08:32 原位展开）— 编辑器子弹窗
+//    #secrets-form 与 FAB #secrets-fab 不复存在；常态行无字段，点行才在原位
+//    建出遮蔽空值字段；创建入口 = 列表尾部虚线「＋ 新建密钥」行。
+//
+// 截图（亮/暗双主题）→ /tmp/nb-secrets-redesign/shots/
+// Run: npx playwright test tests/secrets-ui-redesign.spec.mjs
+
+import { test, expect } from '@playwright/test';
+import { createServer } from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { join, dirname, extname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const WEB = resolve(HERE, '..', 'src', 'main', 'resources', 'web');
+const PORT = 8187; // fixed, 8100+ per task discipline — never the host 8080
+const SHOTS = '/tmp/nb-secrets-redesign/shots';
+const MIME = { '.js': 'text/javascript', '.css': 'text/css', '.html': 'text/html', '.svg': 'image/svg+xml', '.png': 'image/png' };
+
+/** Static server rooted at the web dir (path-traversal safe). */
+function startServer() {
+  return new Promise((resolveDone) => {
+    const server = createServer(async (req, res) => {
+      try {
+        let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+        if (p === '/') p = '/index.html';
+        const file = resolve(join(WEB, p));
+        if (!file.startsWith(WEB)) { res.writeHead(403); res.end(); return; }
+        const data = await readFile(file);
+        res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream' });
+        res.end(data);
+      } catch {
+        res.writeHead(404); res.end('not found');
+      }
+    });
+    server.listen(PORT, '127.0.0.1', () => resolveDone(server));
+  });
+}
+
+let server;
+const base = `http://127.0.0.1:${PORT}`;
+test.beforeAll(async () => { server = await startServer(); });
+test.afterAll(async () => { server.close(); });
+
+/**
+ * Boot the real shell against mocks.
+ * @param {import('@playwright/test').Page} page
+ * @param {{locale?: string, colorScheme?: 'light'|'dark',
+ *           secrets?: object[]|null, secretsFail?: boolean}} opts
+ */
+async function bootPage(page, opts = {}) {
+  const {
+    locale = 'zh-CN', colorScheme = 'light',
+    secrets = null, secretsFail = false,
+  } = opts;
+  await page.emulateMedia({ colorScheme });
+  await page.addInitScript((l) => {
+    localStorage.setItem('nebflow_token', 't');
+    localStorage.setItem('neblink_token', 't');
+    localStorage.setItem('nebflow_locale', l);
+    localStorage.setItem('neblink_locale', l);
+  }, locale);
+  await page.route('**/api/**', r => r.fulfill({ json: {} })); // catch-all first (lowest priority)
+  await page.route('**/api/secrets', r => {
+    if (secretsFail) return r.fulfill({ status: 500, body: 'boom' });
+    // rows deliberately carry a `value` field that must NEVER render (R7).
+    return r.fulfill({ json: { secrets: secrets || [] } });
+  });
+
+  const frames = [];
+  let wsSend = () => {};
+  await page.routeWebSocket(/\/ws/, ws => {
+    wsSend = obj => ws.send(JSON.stringify(obj));
+    ws.onMessage(raw => {
+      let m; try { m = JSON.parse(raw); } catch { return; }
+      frames.push(m);
+      if (m.type === 'getHistory') ws.send(JSON.stringify({ type: 'historyPage', sessionId: m.sessionId, messages: [], hasMore: false, offset: 0 }));
+    });
+    ws.send(JSON.stringify({
+      type: 'configData', configured: true, onboarding: 'done', models: [], defaults: {},
+      config: JSON.stringify({ llm: { providers: {} } }),
+    }));
+    ws.send(JSON.stringify({ type: 'serverConfig', version: '1.4.0', streamTimeoutMs: 600000 }));
+    ws.send(JSON.stringify({ type: 'sessionList', sessions: [], activeId: null, folders: [] }));
+  });
+
+  await page.goto(base + '/index.html');
+  await page.waitForSelector('#activity-bar', { timeout: 15000 });
+  return { frames, send: obj => wsSend(obj) };
+}
+
+/** Open the settings modal and wait for render. */
+async function openSettings(page) {
+  await page.click('#settings-btn');
+  await page.waitForSelector('#settings-content .set-card', { timeout: 10000 });
+}
+
+// （R1 已随 JeV 退役删除——jev-retire 批 2026-11-16：jev 域不在统一服务商面板，
+// settings.jevHealth* 键与 settings-jev-health 徽标不复存在；见文件头换代注。）
+
+// （R2 已随统一面板退役——见文件头 provider-add-tabs 换代注；承接件
+// jev-panel-threefix.spec 已随 JeV 退役删除。）
+
+// （R3 已随统一面板退役——keyRef 不再是用户可见字段，见文件头换代注；
+// key 字段语义 = settings-key-reveal.spec T1（统一表单版）。）
+
+// （R4 已随 JeV 退役删除——jev-retire 批 2026-11-16：健康徽标随 jev 域下线。）
+
+// （R5 已随统一面板退役——统一表单保存反馈 = toast『已保存』，见文件头换代注。）
+
+// ══ R6 · 密钥入口行 ══════════════════════════════════════════
+const SECRETS_THREE = [
+  { name: 'anthropic-api-key', size: 812, mtime: 1728383640000, mode: '0600', refs: ['llm.anthropic.apiKey'], value: 'TOPSECRET-VALUE' },
+  { name: 'social-x-auth', size: 1248, mtime: 1728295320000, mode: '0600', refs: [], value: 'TOPSECRET-VALUE' },
+  { name: 'legacy-backup-key', size: 96, mtime: 1726140180000, mode: '0644', refs: [], value: 'TOPSECRET-VALUE' },
+];
+test('R6 entry row: 唯一可点进行 setNavRow（settings-ios-rows 批现行面；旧玻璃行卡退役）', async ({ page }) => {
+  // R6 换代注（provider-add-tabs 批 rebase 收敛，2026-11-06）：main 平行批
+  // settings-ios-rows（2026-11-06 作者令）把密钥入口收编为本页唯一可点进行
+  // setNavRow——旧 .secrets-entry 玻璃行卡与 .count-pill 计数胶囊整件退役，
+  // 计数只画一次（行右副值 #secrets-entry-sub）。本判据按现行面改钉：
+  // 图标位 + 行名 + 单一计数副值 + chevron；旧行壳/胶囊零复活（防回潮）。
+  await bootPage(page, { locale: 'zh-CN', secrets: SECRETS_THREE });
+  await openSettings(page);
+  await page.waitForFunction(() => document.getElementById('secrets-entry-sub')?.textContent === '3 个密钥');
+  const dump = await page.evaluate(() => {
+    const e = document.getElementById('btn-open-secrets');
+    return {
+      isSetNav: !!e && e.classList.contains('set-nav'),
+      oldGlassRow: !!document.querySelector('.secrets-entry'),
+      oldPill: !!document.getElementById('secrets-entry-pill'),
+      name: e?.querySelector('.set-nav-label')?.textContent.trim(),
+      sub: document.getElementById('secrets-entry-sub')?.textContent.trim(),
+      subTitle: document.getElementById('secrets-entry-sub')?.title,
+      icons: e ? e.querySelectorAll('svg').length : 0,
+      chevron: !!e?.querySelector('[data-lucide="chevron-right"], svg.lucide-chev'),
+    };
+  });
+  expect(dump.isSetNav, 'the entry is the set-nav tappable row').toBe(true);
+  expect(dump.oldGlassRow, '旧 .secrets-entry 玻璃行卡零复活').toBe(false);
+  expect(dump.oldPill, '旧计数胶囊零复活（计数只画一次）').toBe(false);
+  expect(dump.name, 'row name = 密钥管理').toBe('密钥管理');
+  expect(dump.sub, '副值计数 = 3 个密钥（唯一读数）').toBe('3 个密钥');
+  expect(dump.subTitle, '副值带 title 全文（溢出零容忍豁免件）').toBe('3 个密钥');
+  expect(dump.icons, 'key icon + chevron 两枚 svg').toBe(2);
+
+  await page.click('#btn-open-secrets');
+  await page.waitForSelector('#secrets-overlay.on', { timeout: 5000 });
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.getElementById('secrets-overlay').classList.contains('on'));
+  const focusBack = await page.evaluate(() => document.activeElement?.id);
+  expect(focusBack, 'focus returns to the entry row after close').toBe('btn-open-secrets');
+});
+test('R6 zero secrets → 尚无密钥（副值唯一读数，无胶囊）', async ({ page }) => {
+  await bootPage(page, { locale: 'zh-CN', secrets: [] });
+  await openSettings(page);
+  await page.waitForFunction(() => document.getElementById('secrets-entry-sub')?.textContent === '尚无密钥');
+  const dump = await page.evaluate(() => ({
+    sub: document.getElementById('secrets-entry-sub')?.textContent.trim(),
+    pill: !!document.getElementById('secrets-entry-pill'),
+  }));
+  expect(dump.sub, 'empty wording').toBe('尚无密钥');
+  expect(dump.pill, '计数胶囊零复活').toBe(false);
+});
+
+// ══ R7 · 面板行卡重排 ════════════════════════════════════════
+// R7 换代注（provider-add-tabs 批 2026-11-06 收敛存量红）：本判据的「mode 徽标」
+// 断言随作者裁定 2026-11-01「不要提示什么权限过宽…这徽标整概念退役」失效
+// （secretsPanel.rowHTML 不再渲染 .secrets-mode-badge，wire mode 字段保留不读）；
+// 「meta 在展开区」断言随同日网格化重排失效（meta 现常驻收起行头）。本件按现行
+// 行契约改钉：收起行 = 名 + meta（size·mtime，tabular-nums）；展开区 = 长度保真
+// 占位 + eye + 右对齐 actions + 被引用行；值面零渲染。
+test('R7 rows rest minimal (name + meta line, no dots); expanded detail = length-faithful mask + actions; metadata only', async ({ page }) => {
+  await bootPage(page, { locale: 'zh-CN', secrets: SECRETS_THREE });
+  await openSettings(page);
+  await page.click('#btn-open-secrets');
+  await page.waitForSelector('#secrets-overlay.on .secrets-row', { timeout: 5000 });
+  const dump = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('#secrets-list .secrets-row')];
+    return {
+      count: rows.length,
+      rows: rows.map(row => {
+        const head = row.querySelector('[data-row-head]');
+        return {
+          name: row.dataset.name,
+          // 2026-11-01 作者裁定：权限徽标整概念退役（wire mode 不再上屏）。
+          noModeBadge: !head?.querySelector('.secrets-mode-badge'),
+          noDots: !head?.querySelector('.secrets-row-dots'),
+          metaAtRest: !!row.querySelector('.secrets-row-meta'),
+          metaText: row.querySelector('.secrets-row-meta')?.textContent.trim() || '',
+          tabular: (() => { const m = row.querySelector('.secrets-row-meta'); return m ? getComputedStyle(m).fontVariantNumeric.includes('tabular-nums') : false; })(),
+          noActionsAtRest: !row.querySelector('.secrets-row-actions'),
+          noFieldAtRest: !row.querySelector('[data-edit]'),
+        };
+      }),
+      leak: document.body.textContent.includes('TOPSECRET-VALUE'),
+    };
+  });
+  expect(dump.count, 'three rows render').toBe(3);
+  for (const r of dump.rows) {
+    expect(r.noModeBadge, `${r.name}: 权限徽标零渲染（作者 2026-11-01 裁定）`).toBe(true);
+    expect(r.noDots, `${r.name}: 🔴 收起态不渲染遮蔽点（三轮 23:06）`).toBe(true);
+    expect(r.metaAtRest, `${r.name}: meta 常驻收起行（网格化批）`).toBe(true);
+    expect(r.metaText, `${r.name}: meta carries size`).toContain('B');
+    expect(r.tabular, `${r.name}: meta figures are tabular-nums`).toBe(true);
+    expect(r.noActionsAtRest, `${r.name}: no buttons on the resting row`).toBe(true);
+    expect(r.noFieldAtRest, `${r.name}: no edit field on the resting row`).toBe(true);
+  }
+  const zhipu = dump.rows.find(r => r.name === 'anthropic-api-key');
+  expect(zhipu, 'seeded row present').toBeTruthy();
+
+  // 展开一行：长度保真占位 + 被引用行 + 右对齐 actions 在原位展开区
+  await page.click('[data-row-head="anthropic-api-key"]');
+  await page.waitForSelector('.secrets-row[data-name="anthropic-api-key"] .secrets-row-detail', { timeout: 5000 });
+  const open = await page.evaluate(() => {
+    const row = document.querySelector('.secrets-row[data-name="anthropic-api-key"]');
+    const detail = row?.querySelector('.secrets-row-detail');
+    return {
+      refsText: detail?.textContent.trim() || '',
+      actionsAlign: detail ? getComputedStyle(row.querySelector('.secrets-row-actions') || detail).justifyContent : '',
+      phLen: row?.querySelector('[data-edit]')?.placeholder?.length || 0,
+    };
+  });
+  expect(open.refsText, 'detail carries the referenced-by line').toContain('llm.anthropic.apiKey');
+  expect(open.phLen, 'expanded mask placeholder = one dot per stored byte (三轮 长度保真)').toBe(SECRETS_THREE[0].size);
+  expect(dump.leak, '🔴 the wire `value` field never reaches any render').toBe(false);
+});
+
+// ══ R8 · 弹窗退役（行内化 2026-10-09 07:42）═════════════════════════════
+test('R8 editor modal retired: no #secrets-form / #secrets-fab; resting rows carry no field — clicking builds the masked field in place', async ({ page }) => {
+  await bootPage(page, { locale: 'zh-CN', secrets: SECRETS_THREE });
+  await openSettings(page);
+  await page.click('#btn-open-secrets');
+  await page.waitForSelector('#secrets-overlay.on .secrets-row', { timeout: 5000 });
+  const dump = await page.evaluate(() => ({
+    form: document.getElementById('secrets-form'),
+    fab: document.getElementById('secrets-fab'),
+    fieldsAtRest: document.querySelectorAll('#secrets-list .secrets-row [data-edit]').length,
+    addRow: !!document.querySelector('#secrets-list .secrets-add-row .secrets-add-trigger'),
+  }));
+  expect(dump.form, '🔴 the editor sub-dialog is retired').toBeNull();
+  expect(dump.fab, '🔴 the FAB is retired').toBeNull();
+  expect(dump.fieldsAtRest, '🔴 resting rows carry NO inline field (二轮极简)').toBe(0);
+  expect(dump.addRow, 'creation is the dashed tail row').toBe(true);
+
+  await page.click('[data-row-head="anthropic-api-key"]');
+  await page.waitForSelector('.secrets-row[data-name="anthropic-api-key"] [data-edit]', { timeout: 5000 });
+  const opened = await page.evaluate(() => ({
+    only: document.querySelectorAll('#secrets-list .secrets-row [data-edit]').length,
+    f: (() => { const x = document.querySelector('.secrets-row[data-name="anthropic-api-key"] [data-edit]'); return x instanceof HTMLTextAreaElement ? { masked: x.classList.contains('masked'), value: x.value } : null; })(),
+  }));
+  expect(opened.only, 'the expanded row builds exactly one field, in place').toBe(1);
+  expect(opened.f?.masked && opened.f?.value === '', 'the built field starts masked + empty').toBe(true);
+});
+
+// ══ 双主题截图（入口行 / 面板行卡）══════════
+// （jev 面板截图腿已随 JeV 退役删除——jev-retire 批 2026-11-16。）
+async function shots(colorScheme, tag) {
+  test(`shots[${tag}] entry row / panel rows`, async ({ page }) => {
+    await bootPage(page, { locale: 'zh-CN', colorScheme, secrets: SECRETS_THREE });
+    await openSettings(page);
+    await page.waitForFunction(() => document.getElementById('secrets-entry-sub')?.textContent === '3 个密钥');
+
+    // 1) 密钥入口行特写
+    await page.locator('#btn-open-secrets').screenshot({ path: `${SHOTS}/secrets-entry-${tag}.png` });
+
+    // 2) 面板行卡（重排后）
+    await page.click('#btn-open-secrets');
+    await page.waitForSelector('#secrets-overlay.on .secrets-row', { timeout: 5000 });
+    await page.locator('#secrets-modal').screenshot({ path: `${SHOTS}/secrets-panel-rows-${tag}.png` });
+  });
+}
+await shots('light', 'light');
+await shots('dark', 'dark');

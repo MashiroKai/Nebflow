@@ -4,16 +4,18 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.actor.RootAgentIdentity
 
 object SessionCommand extends CliCommand:
   def name = "session"
   def description = "Manage sessions"
-  def subcommands = List(SessionList, SessionCreate, SessionDelete, SessionRename, SessionHistory)
+  def subcommands = List(SessionList, SessionCreate, SessionDelete, SessionRename, SessionHistory, SessionSwitchSub)
 
   def examples = List(
-    "nebflow session list",
-    "nebflow session create --name \"My Session\"",
-    "nebflow session delete abc-123"
+    "stand session list",
+    "stand session create --name \"My Session\"",
+    "stand session delete abc-123",
+    "stand session switch abc-123"
   )
 
   private object SessionList extends CliSubcommand:
@@ -32,7 +34,10 @@ object SessionCommand extends CliCommand:
           // Use the session list via WS-equivalent command
           client
             .command(
-              Json.obj("type" -> "listAgentSessions".asJson, "name" -> ctx.args.getOrElse("agent", "Nebula").asJson)
+              Json.obj(
+                "type" -> "listAgentSessions".asJson,
+                "name" -> ctx.args.getOrElse("agent", RootAgentIdentity.Name).asJson
+              )
             )
             .map { resp =>
               if ctx.json then CliResult.Json(resp)

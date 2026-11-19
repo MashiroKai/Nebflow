@@ -1,0 +1,448 @@
+package nebflow.agent
+
+import cats.effect.IO
+import cats.effect.unsafe.implicits.global
+import io.circe.parser.decode
+import munit.FunSuite
+
+import nebflow.core.SessionStore
+import nebflow.shared.UiMessage
+
+import scala.io.Source
+
+/**
+ * 子代理收件（卡08 裁点 2，作者 2026-09-20 07:33 批「建」）——
+ * **路由表 + 落盘形态 + 禁越面**三重契约门。
+ *
+ * 三层断言（禁自查自证：每层都给可复算读数）：
+ *   ① **纯路由**（[[InjectedInboxMirror.targets]]）：白名单族命中 / 豁免族零命中 /
+ *      跨 root 反例 / 自身排除 / 族前缀判据 / 开关关闭 ⇒ 零目标。
+ *   ② **真落盘**（真 `SessionStore` + 临时目录 + 真 `appendUiMessages`）：镜像行
+ *      **逐字段同形**落到目标子代理会话流；无关根的子代理**零行**；发射者自身会话
+ *      **零增量**（禁重复显示）。
+ *   ③ **禁越面 / 单点**：镜像腿在唯一发射点收口（`"injected" -> true` 仍单命中、
+ *      11 处调用点零改）；镜像件零 `wsSend` / 零 `AgentCommand`（只落会话流、不投
+ *      agent、零 WS 帧）；后端族前缀表与前端 `isBgAgentId` **逐值同源**（两侧对账）。
+ *
+ * **开关感知（变异验红用）**：本 spec 在 [[InjectedInboxMirror.enabled]] 两个态下都
+ * 断言**相反**的数据面读数（开 ⇒ 逐族命中 + 目标会话流恰 1 行；关 ⇒ 全零）⇒ 同一
+ * 份 spec 换开关跑两次即可证明「读数真在看镜像面」（读数落 `mirror_readings.json`）。
+ * 演练形：`NEBFLOW_SUBINBOX_MIRROR=off <buildgate> run -- sbt … testOnly …`。
+ */
+class SubAgentInboxMirrorSpec extends FunSuite:
+
+  private val repoRoot = os.pwd
+
+  private def read(rel: String): String =
+    val p = repoRoot / os.RelPath(rel).segments
+    assert(os.exists(p), s"源码不存在：$p（本 spec 必须在仓根运行）")
+    val src = Source.fromFile(p.toIO, "UTF-8")
+    try src.mkString
+    finally src.close()
+
+  private lazy val agentActor: String = read("src/main/scala/nebflow/agent/AgentActor.scala")
+  // re-pin（2026-09-25 收尾族迁移）：finishTurnCont 连同其 2 处 emitInjectedUserEvent
+  // 调用点迁至 AgentFinishTurn.scala —— ③-2 的计数判据改为跨文件聚合（见该测试内注释）。
+  private lazy val agentFinishTurn: String = read("src/main/scala/nebflow/agent/AgentFinishTurn.scala")
+  // re-pin（2026-09-25 冻结域迁移）：frozen 的 SkillActivate 唤醒分支连同其 1 处
+  // emitInjectedUserEvent 调用点迁至 AgentFrozen.scala —— ③-2 的计数判据再扩一文件。
+  private lazy val agentFrozen: String = read("src/main/scala/nebflow/agent/AgentFrozen.scala")
+  // re-pin（2026-09-25 idle 域迁移）：idle 行为（UserInput 注入判源 /
+  // SkillActivate / ExternalEvent 三分支）连同其 3 处 emitInjectedUserEvent
+  // 调用点迁至 AgentIdle.scala —— ③-2 的计数判据再扩一文件。
+  private lazy val agentIdle: String = read("src/main/scala/nebflow/agent/AgentIdle.scala")
+  // re-pin（2026-09-25 processing 域迁移）：processing 行为的 3 处调用
+  // （recoverable-abort 注入 / tools-complete 注入 / external-event 气泡）随实现
+  // 迁至 AgentProcessing.scala，聚合再扩该文件（合计仍 12 = 11 处调用 + 1 处
+  // def，调用点文本逐字未动）。
+  private lazy val agentProcessing: String = read("src/main/scala/nebflow/agent/AgentProcessing.scala")
+  private lazy val mirrorSrc: String = read("src/main/scala/nebflow/agent/InjectedInboxMirror.scala")
+  /** 注入帧/落盘/广播单点（外部注入统一通道批 2026-11-05；pin 随单点迁移）。 */
+  private lazy val injectionChannel: String = read("src/main/scala/nebflow/core/InjectionChannel.scala")
+  private lazy val utilsJs: String = read("src/main/resources/web/js/utils.js")
+  // 2026-09-28 FE 组件化批次三拆分：source 标签表随注入行族迁到 js/chat/injectedRows.js
+  // （chat.js 只留转发 export）；本 tripwire 随迁到真实落点（先例 1c4cbb0）。
+  private lazy val injectedRowsJs: String = read("src/main/resources/web/js/chat/injectedRows.js")
+
+  /** 去注释后的**代码面**（禁越面判据只吃代码，注释里的说明文字不算命中）。 */
+  private def codeOf(src: String): String =
+    src.linesIterator
+      .filterNot { l =>
+        val t = l.trim
+        t.startsWith("//") || t.startsWith("*") || t.startsWith("/*") || t.startsWith("*/")
+      }
+      .mkString("\n")
+
+  /** 开关态（本 spec 两侧断言的唯一分叉点）。 */
+  private def sw: Boolean = InjectedInboxMirror.enabled
+
+  /** 开关感知期望：开 ⇒ `on`，关 ⇒ `off`。 */
+  private def gated[A](on: => A, off: => A): A = if sw then on else off
+
+  private def toggleOff[A](body: => A): A =
+    val prev = sys.props.get(InjectedInboxMirror.SwitchProp)
+    try
+      sys.props(InjectedInboxMirror.SwitchProp) = "off"
+      body
+    finally
+      prev match
+        case Some(v) => sys.props(InjectedInboxMirror.SwitchProp) = v
+        case None => sys.props.remove(InjectedInboxMirror.SwitchProp)
+
+  // ============================================================
+  // ① 纯路由（路由表逐行）
+  // ============================================================
+
+  /**
+   * 注册表候选集（`sessionId -> rootSessionId`）——覆盖全部族前缀 + 两个 root + 非族会话。
+   *
+   * P1-3 归因修正批（2026-10-03）：`subagent-` / `workflow-` 两族补入候选集——
+   * builtin-merge 批新增的 `SubagentTool` 会话即用 `subagent-` 前缀（ex-Workflow 的
+   * 内联 DAG 工具已随 tool-face-agentflow-retire 批 2026-11-05 整体退役，`workflow-`
+   * 前缀留作存量会话的身份兼容），前端 `utils.js#isBgAgentId` 早已收录，后端本表此前漏收（真产品缺陷，
+   * 同批补齐）。夹具不覆盖这两族时，`targets` 的路由表 pin 会漏掉它们。
+   */
+  private val candidates: List[(String, String)] = List(
+    "root-1" -> "root-1", // 发射者自身：永不入选
+    "delegate-A" -> "root-1", // 命中（delegate- 族）
+    "node-B" -> "root-1", // 命中（node- 族）
+    "subtask-D" -> "root-1", // 命中（subtask- 族）
+    "subagent-G" -> "root-1", // 命中（subagent- 族，builtin-merge 批新增）
+    "workflow-H" -> "root-1", // 命中（workflow- 族，builtin-merge 批新增）
+    "dispatcher-E" -> "root-1", // 命中（dispatcher- 族）
+    "external-kai-9" -> "root-1", // 命中（external- 族，#1225/37a5b37d8 前端单侧扩面，2026-10-14 redfix 后端补齐）
+    "delegate-C" -> "root-2", // 反例：别的 root 的子代理 ⇒ 不入选
+    "node-F" -> "", // 反例：无 root 归属 ⇒ 不入选
+    "7f0d0e3a-1111-2222-3333-444455556666" -> "root-1", // 反例：非子代理族前缀（team 成员等）
+    "team-abc" -> "root-1" // 反例：team- 不在前端 isBgAgentId 内
+  )
+
+  private val hitSet =
+    List("delegate-A", "dispatcher-E", "node-B", "subtask-D", "subagent-G", "workflow-H", "external-kai-9")
+
+  test("① -1 白名单族（mail / mail-queue）逐族命中：目标集 = parent 链 π 子代理族前缀，去重且稳定") {
+    assertEquals(InjectedInboxMirror.targets("root-1", "mail", candidates), gated(hitSet.sorted, Nil))
+    assertEquals(InjectedInboxMirror.targets("root-1", "mail-queue", candidates), gated(hitSet.sorted, Nil))
+    // 白名单 pin（唯一来源；改集合 ⇒ 必须同步批报告路由表）
+    assertEquals(InjectedInboxMirror.MirrorSources, Set("mail", "mail-queue"))
+    assertEquals(
+      InjectedInboxMirror.SubAgentIdPrefixes,
+      // external-（2026-10-14 redfix，报告 #8）：37a5b37d8 前端单侧扩面后端的
+      // 同源补齐——与 ③-1 前端逐值同源钉同一张表（夹具命中族同步扩，P1-3 先例）。
+      List("delegate-", "subtask-", "subagent-", "workflow-", "node-", "dispatcher-", "external-")
+    )
+    // 开关定名 pin（读法 = system property → 环境变量）
+    assertEquals(InjectedInboxMirror.SwitchProp, "nebflow.subinbox.mirror")
+    assertEquals(InjectedInboxMirror.SwitchEnv, "NEBFLOW_SUBINBOX_MIRROR")
+    assertEquals(InjectedInboxMirror.OffValues, Set("off", "false", "0"))
+  }
+
+  test("① -2 反例：豁免族逐族零命中（原生族 / node / ask / 非注入族）") {
+    for src <- List(
+        "tool",
+        "system",
+        "delegate",
+        "subtask",
+        "task",
+        "dispatch",
+        "flow",
+        "background",
+        "skill",
+        "node",
+        "ask",
+        "chain",
+        "deviceMail",
+        ""
+      )
+    do
+      assertEquals(
+        InjectedInboxMirror.targets("root-1", src, candidates),
+        Nil,
+        s"豁免族 '$src' 被镜像 —— 路由表白名单漂移"
+      )
+  }
+
+  test("① -3 反例：不相关子代理不收到（跨 root / 无归属 / 非子代理族）——逐条给读数") {
+    val t = InjectedInboxMirror.targets("root-1", "mail", candidates)
+    if sw then
+      assert(!t.contains("delegate-C"), "别的 root 的子代理被镜像（跨 root 串流）")
+      assert(!t.contains("node-F"), "无 root 归属的子代理被镜像（归属判据失效）")
+      assert(!t.contains("7f0d0e3a-1111-2222-3333-444455556666"), "非子代理族会话被镜像（越出弹窗承载面）")
+      assert(!t.contains("team-abc"), "team- 前缀会话被镜像（越出 isBgAgentId 外延）")
+      assert(!t.contains("root-1"), "发射者自身被镜像（同一窗口重复显示）")
+    assertEquals(
+      InjectedInboxMirror.targets("root-2", "mail", candidates),
+      gated(List("delegate-C"), Nil),
+      "另一 root 的镜像集必须恰为其自己的子代理（对偶读数）"
+    )
+  }
+
+  test("① -4 反例：发射者本身是子代理会话 ⇒ 零目标（镜像只在主控/根侧发射时生效）") {
+    for emitter <- List("delegate-A", "subtask-D", "node-B", "dispatcher-E") do
+      assertEquals(
+        InjectedInboxMirror.targets(emitter, "mail", candidates),
+        Nil,
+        s"发射者 $emitter 是子代理会话 —— 不应再向下镜像"
+      )
+    assertEquals(InjectedInboxMirror.isSubAgentSession("delegate-A"), true)
+    assertEquals(InjectedInboxMirror.isSubAgentSession("node-1"), true)
+    assertEquals(InjectedInboxMirror.isSubAgentSession("root-1"), false)
+    assertEquals(InjectedInboxMirror.isSubAgentSession("team-abc"), false)
+    assertEquals(InjectedInboxMirror.isSubAgentSession(""), false)
+    assertEquals(InjectedInboxMirror.isMirrorSource("mail"), true)
+    assertEquals(InjectedInboxMirror.isMirrorSource("tool"), false)
+  }
+
+  test("① -5 变异验红（开关）：默认开 ⇒ 命中；开关关 ⇒ 同一输入归零（证明读数在看镜像面）") {
+    val on = InjectedInboxMirror.targets("root-1", "mail", candidates)
+    assert(on.nonEmpty, "默认态（开关开启）必须命中")
+    assertEquals(InjectedInboxMirror.enabled, true)
+    toggleOff {
+      assertEquals(
+        InjectedInboxMirror.targets("root-1", "mail", candidates),
+        Nil,
+        "开关=off 仍未归零 —— 开关未被判据读取（假绿风险）"
+      )
+      assertEquals(InjectedInboxMirror.enabled, false)
+    }
+    assertEquals(InjectedInboxMirror.targets("root-1", "mail", candidates), on, "开关恢复后未回到命中态")
+  }
+
+  // ============================================================
+  // ② 真落盘形态（数据面 Δ）
+  // ============================================================
+
+  test("② 镜像行逐字段同形落入目标子代理会话流；无关根零行；发射者自身零增量") {
+    val evidenceOverride = sys.env.get("NEBFLOW_SUBINBOX_EVIDENCE_DIR").map(d => os.Path(d))
+    val tempRoot = evidenceOverride match
+      case Some(d) => d / "green_store"
+      case None => os.pwd / "target" / "test-subinbox-mirror"
+    if os.exists(tempRoot) then os.remove.all(tempRoot)
+    os.makeDir.all(tempRoot)
+
+    val store = SessionStore(tempRoot / "sessions", tempRoot / "tasks")
+    val row = UiMessage.User(
+      "MIRROR-PROBE mail body (chain-subinbox acceptance 2)",
+      injected = true,
+      timestamp = 1700000000123L,
+      source = Some("mail"),
+      eventType = Some("result"),
+      sender = Some("KAI"),
+      senderTeam = None,
+      delivery = Some("immediate"),
+      intake = None,
+      header = None
+    )
+    val records = List(
+      "root-1" -> "root-1",
+      "delegate-A" -> "root-1",
+      "node-B" -> "root-1",
+      "delegate-C" -> "root-2"
+    )
+    val append: InjectedInboxMirror.Append =
+      (target, r) => store.appendUiMessages(target, List(r))
+
+    val program: IO[List[String]] =
+      for
+        // 发射者自身会话的既有落盘腿（模拟改前行为：root 自己那份照写）
+        _ <- store.appendUiMessages("root-1", List(row.copy(text = "ROOT-OWN-ROW")))
+        // 无关根的子代理先落一行，证明它只受自己的 root 影响
+        _ <- store.appendUiMessages("delegate-C", List(row.copy(text = "OTHER-ROOT-ROW")))
+        hit <- InjectedInboxMirror.mirror(records, "root-1", "mail", row, append)
+        _ <- store.flushPendingUiWrites
+      yield hit
+
+    val hits = program.unsafeRunSync()
+    assertEquals(hits, gated(List("delegate-A", "node-B"), Nil))
+
+    def rowsOrEmpty(sid: String): List[UiMessage] =
+      val f = tempRoot / "sessions" / s"$sid.ui.json"
+      if !os.exists(f) then Nil
+      else decode[List[UiMessage]](os.read(f)).fold(e => fail(s"$sid.ui.json 解码失败：$e"), identity)
+
+    val rootOwn = rowsOrEmpty("root-1").collect { case u: UiMessage.User => u }
+    assertEquals(rootOwn.map(_.text), List("ROOT-OWN-ROW"), "发射者自身会话被镜像腿改动（主控回归）")
+    val otherRoot = rowsOrEmpty("delegate-C").collect { case u: UiMessage.User => u }
+    assertEquals(otherRoot.map(_.text), List("OTHER-ROOT-ROW"), "无关根的子代理被串流")
+
+    val target = rowsOrEmpty("delegate-A").collect { case u: UiMessage.User => u }
+    if sw then
+      assertEquals(target.size, 1, "目标子代理会话流的镜像行数 ≠ 1（重复/漏写）")
+      // 逐字段同形（同一实例落两处 ⇒ 同一事件在两侧窗口逐字节同形）
+      assertEquals(target.head.text, row.text)
+      assertEquals(target.head.timestamp, row.timestamp)
+      assertEquals(target.head.injected, true)
+      assertEquals(target.head.source, Some("mail"))
+      assertEquals(target.head.eventType, Some("result"))
+      assertEquals(target.head.sender, Some("KAI"))
+      assertEquals(target.head.delivery, Some("immediate"))
+      assertEquals(target.head.intake, None)
+      assertEquals(target.head.header, None)
+      val nodeRows = rowsOrEmpty("node-B").collect { case u: UiMessage.User => u }
+      assertEquals(nodeRows.map(_.text), List(row.text), "多目标并发时每个窗口各得一行")
+    else assertEquals(target, Nil, "开关关闭态下目标子代理会话流仍有镜像行（假绿）")
+    end if
+
+    // ② -变异（同批次内）：开关关 ⇒ 零目标 + 目标会话流零新增
+    val before = rowsOrEmpty("delegate-A").size
+    toggleOff {
+      assertEquals(
+        InjectedInboxMirror.mirror(records, "root-1", "mail", row.copy(text = "MUTANT"), append).unsafeRunSync(),
+        Nil
+      )
+    }
+    store.flushPendingUiWrites.unsafeRunSync()
+    assertEquals(rowsOrEmpty("delegate-A").size, before, "变异关闭后目标会话流出现新行")
+
+    evidenceOverride.foreach { d =>
+      val readings = s"""{
+  "batch": "chain-subinbox / subagent-inbox-mirror",
+  "switch": ${if sw then "\"on\"" else "\"off\""},
+  "sessions_dir": "${(tempRoot / "sessions").toString}",
+  "emitter": "root-1",
+  "mirror_source": "mail",
+  "mirror_targets_hit": ${hits.map(h => s""""$h"""").mkString("[", ",", "]")},
+  "mirror_rows_per_target": ${target.size},
+  "root_own_rows": ${rootOwn.size},
+  "unrelated_root_subagent_rows": ${otherRoot.size}
+}
+"""
+      os.write.over(tempRoot / "mirror_readings.json", readings, createFolders = true)
+      println(s"SUBINBOX-MIRROR-EVIDENCE ${(tempRoot / "mirror_readings.json").toString}")
+    }
+  }
+
+  // ============================================================
+  // ③ 禁越面 / 单点 / 两侧同源
+  // ============================================================
+
+  test("③ -1 前端登记面逐值同源：后端族前缀表 == utils.js#isBgAgentId 字面量") {
+    val jsStart = utilsJs.indexOf("export function isBgAgentId")
+    assert(jsStart > 0, "utils.js 未找到 isBgAgentId")
+    val body = utilsJs.substring(jsStart, utilsJs.indexOf("\n}", jsStart))
+    for p <- InjectedInboxMirror.SubAgentIdPrefixes do
+      assert(body.contains(s"startsWith('$p')"), s"前端 isBgAgentId 缺前缀 '$p'（两侧表已漂移）")
+    val jsPrefixes = "'([a-z]+-)'".r.findAllMatchIn(body).map(_.group(1)).toList.distinct
+    assertEquals(
+      jsPrefixes.sorted,
+      InjectedInboxMirror.SubAgentIdPrefixes.sorted,
+      "前端 isBgAgentId 前缀集与后端 SubAgentIdPrefixes 不一致（禁单侧扩面）"
+    )
+  }
+
+  test("③ -2 单点收口：注入行唯一发射点仍在，调用点零改（含 idle 窗载体腿），镜像腿挂在发射点内") {
+    // re-pin（外部注入统一通道批 2026-11-05）：帧组装 + 落盘 + 广播三面**整体迁入**
+    // `nebflow/core/InjectionChannel`（`"injected" -> true.asJson` 的单锤唯一写者随迁）。
+    // 判据语义不变：全仓只有**一处**组装注入帧、只有**一处**发射点。故此处改判
+    // 「AgentActor 内 0 命中 ∧ InjectionChannel 内恰 1 命中」。
+    assertEquals(
+      "\"injected\" -> true.asJson".r.findAllMatchIn(agentActor).size,
+      0,
+      "AgentActor 内又出现 `\"injected\" -> true.asJson` —— 注入帧出现第二个写者（单点在 InjectionChannel）"
+    )
+    assertEquals(
+      "\"injected\" -> true.asJson".r.findAllMatchIn(injectionChannel).size,
+      1,
+      "InjectionChannel 内 `\"injected\" -> true.asJson` 不再单命中 —— 注入帧写者漂移"
+    )
+    // re-pin（2026-09-25 收尾族迁移）：finishTurnCont 的 2 处调用随实现迁至
+    // AgentFinishTurn.scala，计数改为 AgentActor + AgentFinishTurn 两文件聚合
+    // （合计仍 12 = 11 处调用 + 1 处 def，调用点文本逐字未动）；def 前缀随
+    // private → private[agent] 放宽同步改写，def 本体仍留驻 AgentActor。
+    // re-pin（2026-09-25 冻结域迁移）：frozen 的 SkillActivate 唤醒分支 1 处调用
+    // 随实现迁至 AgentFrozen.scala，聚合再扩该文件（合计仍 12 = 11 处调用 +
+    // 1 处 def，调用点文本逐字未动）。
+    // re-pin（2026-09-25 idle 域迁移）：idle 行为的 3 处调用（UserInput 注入
+    // 判源 / SkillActivate / ExternalEvent）随实现迁至 AgentIdle.scala，聚合
+    // 再扩该文件（合计仍 12 = 11 处调用 + 1 处 def，调用点文本逐字未动）。
+    // re-pin（2026-09-25 processing 域迁移）：processing 行为的 3 处调用
+    // （recoverable-abort 注入 / tools-complete 注入 / external-event 气泡）
+    // 随实现迁至 AgentProcessing.scala，聚合再扩该文件（合计仍 12 = 11 处
+    // 调用 + 1 处 def，调用点文本逐字未动）。
+    // re-pin (w3-r4 rework, 2026-09-30): the idle window-carrier expansion leg
+    // (notifypack, 03724bd1d 2026-09-24) added a 12th CALL SITE inside the idle
+    // branch of AgentActor. That commit raised the tree-wide call-site count
+    // 11 -> 12. The pin below is therefore re-stated as settlement:
+    //   call sites = 12 (11 pinned by b32fbdee5 + 1 from the idle window leg),
+    //   plus 1 `def` = 13 occurrences tree-wide.
+    // The 12 constant was never re-synced after 03724bd1d (stale on every rev
+    // from that commit on, including pre-W1 main); the 2026-09-25 domain moves
+    // preserved the call sites verbatim and merely re-homed them across the
+    // five files below.
+    // re-pin (revive-mech 批 2026-10-25，对现 main 重钉)：13 钉在 main 已漂移
+    // ——2474349c6（投递屏障扣留回执缺陷直修批）等已并批新增 2 个调用点（现值
+    // 15 = 14 调用 + 1 def：AgentActor 5 / AgentFinishTurn 2 / AgentFrozen 1 /
+    // AgentIdle 4 / AgentProcessing 3），钉值未随批重同步（main 裸跑同红）。
+    // 本批（b73c3e73 复活）零调用点改动——两值同为 15，纯基线重钉非放宽。
+    // re-pin（2026-10-30 存量红清欠批，对现 main 重钉）：15 钉又漂移 ——
+    // 90a9d7b42（台账 #939 Mail 注入时机提前到 ToolsComplete 边界，2026-10-26）
+    // 在 AgentProcessing.scala 新增 1 调用点；d5ba67e59（回执补投静默化批，
+    // 2026-10-29）整体退役 AgentActor.emitForceDrainVisibility 摘除其 2 个调用点。
+    // 两批均为已落 main 的合法行为批 ⇒ 现值 14 = 13 调用 + 1 def
+    // （AgentActor 3 / AgentFinishTurn 2 / AgentFrozen 1 / AgentIdle 4 /
+    // AgentProcessing 4），纯基线重钉非放宽；镜像腿单点收口语义（下发射点内、
+    // wsSend 之后、rootSessionId 解析）不变。
+    // re-pin（外部注入统一通道批 2026-11-05，对现 HEAD 重钉）：14 钉在本分支 HEAD
+    // **改前已红**（纯存量漂移，非本批引入）——实测 HEAD 逐文件计数为
+    // AgentActor 3 / AgentFinishTurn 3 / AgentFrozen 1 / AgentIdle 4 /
+    // AgentProcessing 5 = 16（16 = 15 调用 + 1 def）。本批**零调用点增删**
+    // （只加了一个缺省参数 `dedup`，不改 `emitInjectedUserEvent(` 的出现面）
+    // ⇒ 改前改后同为 16，纯基线重钉非放宽。
+    // Pin each baseline call surface separately so additions and removals cannot cancel out.
+    val expectedOccurrences = List(
+      ("AgentActor", agentActor, 3),
+      ("AgentFinishTurn", agentFinishTurn, 2),
+      ("AgentFrozen", agentFrozen, 1),
+      ("AgentIdle", agentIdle, 4),
+      ("AgentProcessing", agentProcessing, 4)
+    )
+    expectedOccurrences.foreach { case (name, source, expected) =>
+      assertEquals(
+        "emitInjectedUserEvent\\s*\\(".r.findAllMatchIn(source).size,
+        expected,
+        s"$name injection call surface drifted from the verified baseline"
+      )
+    }
+    val emitStart = agentActor.indexOf("private[agent] def emitInjectedUserEvent(")
+    val applyStart = agentActor.indexOf("\n  def apply(", emitStart)
+    assert(emitStart > 0 && applyStart > emitStart, "发射点边界定位失败")
+    val emitBody = agentActor.substring(emitStart, applyStart)
+    assert(
+      emitBody.contains("InjectedInboxMirror.mirror("),
+      "镜像腿未挂在唯一发射点内 —— 11 处调用点的镜像扩展落点漂移"
+    )
+    assert(
+      emitBody.indexOf("InjectionChannel.deliver(") < emitBody.indexOf("*> inboxMirror"),
+      "镜像腿必须在投递（落盘+广播，InjectionChannel.deliver）之后（live 帧时序逐字不变）"
+    )
+    assert(
+      emitBody.contains("reg.iterator.map((s, rec) => (s, rec.rootSessionId))"),
+      "镜像目标解析未走注册表 parent 链（rootSessionId）"
+    )
+  }
+
+  test("③ -3 禁越面：镜像件零 WS 帧、零 agent 投递、零注入文案/生成面改动") {
+    val mirrorCode = codeOf(mirrorSrc)
+    for banned <- List("wsSend", "wsHub", "broadcast", "AgentCommand", "ImmediateInput", "UserInput") do
+      assertEquals(
+        mirrorCode.contains(banned),
+        false,
+        s"镜像件代码面出现 '$banned' —— 越出「只落会话流」面（禁 WS 帧 / 禁投 agent）"
+      )
+    assert(mirrorCode.contains("UiMessage.User"), "镜像行类型漂移（禁新造行类型）")
+    assert(mirrorCode.contains("append"), "镜像件未走既有落盘入口 append（禁新造写面）")
+    // 既有注入文案面 tripwire：header 帧字段与前端 source 标签表语义未动
+    // （外部注入统一通道批 2026-11-05：header 帧键的组装面随单点迁入
+    // InjectionChannel.frame —— 判据从「在 AgentActor 内」改为「在唯一帧组装点内」，
+    // 且 AgentActor 不得残留第二份）。
+    assert(
+      injectionChannel.contains("""Json.obj("header" -> h.asJson)"""),
+      "header 帧字段被改动（InjectionChannel.frame 是唯一组装点）"
+    )
+    assert(
+      !agentActor.contains("""Json.obj("header" -> h.asJson)"""),
+      "AgentActor 又出现第二份 header 帧组装 —— 帧组装必须单点"
+    )
+    assert(injectedRowsJs.contains("mail: 'Mail'"), "前端 source 标签表被改动 —— 渲染侧零改是本批硬边界")
+  }
+end SubAgentInboxMirrorSpec

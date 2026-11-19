@@ -24,6 +24,11 @@ import { sendWs, onMessage } from './ws.js';
 import { t } from './i18n.js';
 import { showToast } from './modal.js';
 import { isBgAgentId } from './utils.js';
+// 冻结态误报批（2026-11-05）：冻结行的恢复入口判据（需人介入才给按钮）。
+// 冻结状态两套真相批（2026-11-05）：改读后端权威块的 `wakeable`（单一真相）。
+// 冻结通知策略批（2026-11-05）：provider 故障族额外排除「重启并续跑」——这一族不是任务
+// 失败，RestartAgent 会扣 supervisor 重启预算；它只给「唤醒」（幂等 UserInput 腿）。
+import { wakeableOf, delegateFreezeIsInfra } from './freezeState.js';
 
 /** Kinds the user may stop/restart (AgentControl §4 operable bucket). */
 export const OPERABLE_KINDS = new Set(['Delegate', 'SubTask', 'Ephemeral']);
@@ -50,8 +55,28 @@ export function isProcessingStatus(status) {
 
 /** True when a restart makes sense (retry button visible).
  *  'failed' comes from the activeAgents snapshot status ("Error(msg)" form —
- *  the backend has no WS failed event for sub-agents yet). */
-export function isRetryableStatus(status) {
+ *  the backend has no WS failed event for sub-agents yet).
+ *
+ *  冻结态误报批（2026-11-05）：`frozen` **按分类**进白名单——需人介入的冻结
+ *  （循环检测 L2 / delegate 错误冻结 / 已升级到人）必须有可见的恢复入口（这里 =
+ *  「重启并续跑」= restartAgent soft，与 AgentControl restart 同机制，同会话从
+ *  检查点续跑）；自动恢复族（时间表/退避/探测）**不给按钮**（引擎正在自己做的事
+ *  不该变成用户的按钮）。判据单点 = freezeState.js（后端 FreezeDisplay 的呈现面）。
+ *  @param {string} status  @param {any} [meta] 行/弹窗 meta（读 freezeKind / 原因线值） */
+export function isRetryableStatus(status, meta) {
+  // 冻结状态两套真相批（2026-11-05）：恢复入口只认后端权威块的 `wakeable`
+  // （旧后端无块 ⇒ 退回分类表，同一张表的退化副本）。
+  // 冻结通知策略批（2026-11-05 作者令 + 对齐清单第③条）：provider 故障族再叠一把闸——
+  // 即便后端块说「可唤醒」，也**不给**「重启并续跑」（RestartAgent(Soft) 扣 2 次/5min
+  // 重启预算，而 provider 故障不是任务失败）；该族的入口是行上的「唤醒」按钮。
+  if (status === 'frozen') {
+    const m = meta || { frozen: true };
+    // ① 权威块优先：恢复入口只认后端 FreezeTruth 的 wakeable（两套真相批）。
+    if (!wakeableOf(meta || { frozen: true })) return false;
+    // ② 再叠 provider 故障族闸：即便可唤醒，也不给「重启并续跑」。
+    if (delegateFreezeIsInfra(m)) return false;
+    return true;
+  }
   return status === 'failed' || status === 'stuck' || status === 'stopped';
 }
 
@@ -115,13 +140,17 @@ export function buildManageBar() {
   const uptimeEl = document.createElement('span');
   uptimeEl.className = 'fa-uptime';
   uptimeEl.style.display = 'none';
+  // 按钮形态统一批（2026-11-18）：两枚管理钮挂设置页动作族（.cfg-btn 配色 +
+  // .set-btn 几何令牌），**不再**挂 .glass-control（材质类只给配方不给几何 ⇒ 修前
+  // 桌面 28px 圆钮 / 手机 44px 方钮两档并存，且带 glass 投影）。族类落地见
+  // scripts/check-settings-button-uniform.mjs 的登记表。
   const stopBtn = document.createElement('button');
-  stopBtn.className = 'fa-mgmt-btn fa-mgmt-stop glass-control';
+  stopBtn.className = 'fa-mgmt-btn fa-mgmt-stop cfg-btn set-btn';
   stopBtn.title = t('manage.stop');
   stopBtn.setAttribute('aria-label', t('manage.stop'));
   stopBtn.innerHTML = '<i data-lucide="square"></i>';
   const retryBtn = document.createElement('button');
-  retryBtn.className = 'fa-mgmt-btn fa-mgmt-retry glass-control';
+  retryBtn.className = 'fa-mgmt-btn fa-mgmt-retry cfg-btn set-btn';
   retryBtn.title = t('manage.retry');
   retryBtn.setAttribute('aria-label', t('manage.retry'));
   retryBtn.innerHTML = '<i data-lucide="rotate-cw"></i>';
@@ -163,7 +192,7 @@ export function syncManageControls(bar, meta, sessionId) {
   const policy = managePolicy(meta.kind || '', sessionId);
   const status = meta.status || '';
   const processing = isProcessingStatus(status);
-  const retryable = isRetryableStatus(status);
+  const retryable = isRetryableStatus(status, meta);
 
   if (!policy.operable) {
     // Read-only: greyed, disabled, tooltip explains why.

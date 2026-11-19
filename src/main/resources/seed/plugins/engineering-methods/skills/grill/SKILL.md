@@ -75,7 +75,7 @@ language: zh
 1. 执行摘要（TL;DR）— 一句话说清结论
 2. 背景与动机
 3. 核心决策（每个决策附带理由）
-4. 架构概览（用 Card 工具渲染 graphviz/mermaid 图，不用 ASCII）
+4. 架构概览（图用 graphviz/mermaid 等专业工具生成，落盘交付、交付文本给绝对路径；展示归 root 侧，不用 ASCII）
 5. 技术对比表
 6. 风险评估
 7. 下一步行动
@@ -109,4 +109,4 @@ language: zh
 - 忘记说明 trade-off（不足必须写明）
 - 输出大量废话凑字数
 - 越权写生产代码或做 UI 视觉设计
-- 用 ASCII 画架构图（用 Card 工具渲染专业图表）
+- 用 ASCII 画架构图（图用 graphviz/mermaid 等专业工具生成，落盘交付、交付文本给绝对路径；展示归 root 侧）

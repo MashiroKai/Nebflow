@@ -6,21 +6,25 @@ import cats.effect.unsafe.implicits.global
 import FreezeSchedule.given
 import munit.FunSuite
 
-/** freeze-schedule spec §6 B8/B9（#337 v1.2 黑名单语义）：FreezeSchedule 纯函数
-  * 判定 + fail-safe + 校验 + merge。segments = 冻结时段（非工作时间），段内
-  * frozen=true；支持跨午夜段（start > end）；nextChangeAt = 下一次真实翻转点。 */
+/**
+ * freeze-schedule spec §6 B8/B9（#337 v1.2 黑名单语义）：FreezeSchedule 纯函数
+ * 判定 + fail-safe + 校验 + merge。segments = 冻结时段（非工作时间），段内
+ * frozen=true；支持跨午夜段（start > end）；nextChangeAt = 下一次真实翻转点。
+ */
 class FreezeScheduleSpec extends FunSuite:
 
   // 固定日期（2026-08-19 周三）注入 now——eval 用系统时区，测试同侧构造，口径一致。
   private def at(h: Int, m: Int): Long =
-    java.time.LocalDate.of(2026, 8, 19)
+    java.time.LocalDate
+      .of(2026, 8, 19)
       .atTime(h, m)
       .atZone(java.time.ZoneId.systemDefault())
       .toInstant
       .toEpochMilli
 
   private def atTomorrow(h: Int, m: Int): Long =
-    java.time.LocalDate.of(2026, 8, 20)
+    java.time.LocalDate
+      .of(2026, 8, 20)
       .atTime(h, m)
       .atZone(java.time.ZoneId.systemDefault())
       .toInstant
@@ -261,18 +265,23 @@ class FreezeScheduleSpec extends FunSuite:
   // ── mergeIntoConfig: targeted write 语义 (B9，P4 落盘复证) ─
 
   test("mergeIntoConfig adds workSchedule node and preserves other top-level keys") {
-    val existing = parse("""{"llm":{"providers":{"glm":{"apiKey":"sk-x"}}},"thinkingConfig":{"enabled":true}}""").toOption.get
+    val existing =
+      parse("""{"llm":{"providers":{"glm":{"apiKey":"sk-x"}}},"thinkingConfig":{"enabled":true}}""").toOption.get
     val cfg = FreezeScheduleConfig(enabled = true, segments = List(FreezeSegment("23:00", "08:00")))
     val merged = FreezeSchedule.mergeIntoConfig(existing, cfg)
     // 既有顶层节原样保留
-    assertEquals(merged.hcursor.downField("llm").downField("providers").downField("glm").downField("apiKey").as[String], Right("sk-x"))
+    assertEquals(
+      merged.hcursor.downField("llm").downField("providers").downField("glm").downField("apiKey").as[String],
+      Right("sk-x")
+    )
     assertEquals(merged.hcursor.downField("thinkingConfig").downField("enabled").as[Boolean], Right(true))
     // workSchedule 写入（JSON 键名保留）且 round-trip 一致
     assertEquals(merged.hcursor.downField("workSchedule").as[FreezeScheduleConfig], Right(cfg))
   }
 
   test("mergeIntoConfig overwrites existing workSchedule node") {
-    val existing = parse("""{"workSchedule":{"enabled":true,"segments":[{"start":"08:00","end":"09:00"}]},"x":1}""").toOption.get
+    val existing =
+      parse("""{"workSchedule":{"enabled":true,"segments":[{"start":"08:00","end":"09:00"}]},"x":1}""").toOption.get
     val cfg = FreezeScheduleConfig(enabled = false, segments = Nil)
     val merged = FreezeSchedule.mergeIntoConfig(existing, cfg)
     assertEquals(merged.hcursor.downField("workSchedule").as[FreezeScheduleConfig], Right(cfg))
@@ -420,7 +429,8 @@ class FreezeScheduleSpec extends FunSuite:
   }
 
   test("freezeStateNode: disabled → frozen=false, skipped=false, nextChangeAt=null") {
-    val j = node(FreezeScheduleConfig(enabled = false, segments = List(FreezeSegment("09:00", "12:00"))), None, at(10, 0))
+    val j =
+      node(FreezeScheduleConfig(enabled = false, segments = List(FreezeSegment("09:00", "12:00"))), None, at(10, 0))
     assertEquals(nodeField(j, "enabled").flatMap(_.asBoolean), Some(false))
     assertEquals(nodeField(j, "frozen").flatMap(_.asBoolean), Some(false))
     assertEquals(nodeField(j, "skipped").flatMap(_.asBoolean), Some(false))

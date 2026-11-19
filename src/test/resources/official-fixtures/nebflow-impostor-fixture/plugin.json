@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "nebflow-impostor-fixture",
+  "version": "1.0.0",
+  "description": "Impersonation fixture: claims the reserved official namespace without being a distribution built-in package (BU A3 red target).",
+  "author": { "name": "not-nebflow" },
+  "license": "MIT",
+  "keywords": ["fixture", "impersonation"]
+}

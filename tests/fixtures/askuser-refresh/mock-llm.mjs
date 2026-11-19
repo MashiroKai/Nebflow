@@ -3,30 +3,34 @@
 // 状态机（按请求 messages 的最后一条判定）：
 //   last role === 'tool'                                  → 终答 "MOCK_DONE(<tool result 摘要>)"
 //   last user 消息含 'ask me now'                          → 工具调用 AskUserQuestion（两问：选项 + 开放）
-//   其他（padding 消息 'pad-N' 等）                         → 纯文本 "ok"
+//   last user 消息含 'ask nb now' → Schedule 创建无需等待用户的待办
+//  其他（padding 消息 'pad-N' 等）                         → 纯文本 "ok"
 // 端口取 argv[2]。仅监听 127.0.0.1。
+//
+// 需继续工作的决策通过 Schedule todo 登记，工具结果后正常输出 MOCK_DONE。
 import http from 'node:http';
 
 const PORT = Number(process.argv[2] || 18990);
 
-const ASK_ARGS = JSON.stringify({
-  questions: [
-    {
-      question: 'E2E 刷新存活验证：请选择一个选项',
-      options: [
-        { label: 'alpha', description: '选项 A' },
-        { label: 'beta', description: '选项 B' },
-      ],
-    },
-    {
-      question: 'E2E 第二问：确认执行？',
-      options: [
-        { label: 'yes', description: '执行' },
-        { label: 'no', description: '不执行' },
-      ],
-    },
-  ],
-});
+const ASK_QUESTIONS = [
+  {
+    question: 'E2E 刷新存活验证：请选择一个选项',
+    options: [
+      { label: 'alpha', description: '选项 A' },
+      { label: 'beta', description: '选项 B' },
+    ],
+  },
+  {
+    question: 'E2E 第二问：确认执行？',
+    options: [
+      { label: 'yes', description: '执行' },
+      { label: 'no', description: '不执行' },
+    ],
+  },
+];
+
+const ASK_ARGS = JSON.stringify({ questions: ASK_QUESTIONS });
+const TODO_ARGS = JSON.stringify({ action: 'create', kind: 'todo', name: 'heavy-t3-decision', content: 'Decide whether to approve the heavy test task' });
 
 function msgText(m) {
   const c = m?.content;
@@ -58,6 +62,7 @@ function decide(messages) {
     }
   }
   if (lastUserText(messages).includes('ask me now')) return { kind: 'ask' };
+  if (lastUserText(messages).includes('ask nb now')) return { kind: 'ask-nb' };
   return { kind: 'ok' };
 }
 
@@ -76,11 +81,12 @@ function chunk(delta, finish) {
 }
 
 function streamFor(decision) {
-  if (decision.kind === 'ask') {
+  if (decision.kind === 'ask' || decision.kind === 'ask-nb') {
+    const args = decision.kind === 'ask-nb' ? TODO_ARGS : ASK_ARGS;
     return [
       chunk({ role: 'assistant' }),
       chunk({
-        tool_calls: [{ index: 0, id: 'call_mock_1', type: 'function', function: { name: 'AskUserQuestion', arguments: ASK_ARGS } }],
+        tool_calls: [{ index: 0, id: 'call_mock_1', type: 'function', function: { name: decision.kind === 'ask-nb' ? 'Schedule' : 'AskUserQuestion', arguments: args } }],
       }),
       chunk({}, 'tool_calls'),
       'data: [DONE]\n\n',
@@ -117,3 +123,8 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, '127.0.0.1', () => console.log(`mock-llm on 127.0.0.1:${PORT}`));
+// The isolated runner owns stdin and requests an orderly shutdown after the gateway exits.
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (data) => {
+  if (data.trim() === 'quit') server.close(() => process.exit(0));
+});

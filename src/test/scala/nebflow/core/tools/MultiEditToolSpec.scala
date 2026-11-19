@@ -70,7 +70,10 @@ class MultiEditToolSpec extends CatsEffectSuite:
       case Left(err) =>
         assert(err.message.contains("edits[2]"), s"must name failing index: ${err.message}")
         assert(err.message.contains("not found"), s"must say not found: ${err.message}")
-        assert(err.message.toLowerCase.contains("unmodified") || err.message.contains("No changes"), s"must state file untouched: ${err.message}")
+        assert(
+          err.message.toLowerCase.contains("unmodified") || err.message.contains("No changes"),
+          s"must state file untouched: ${err.message}"
+        )
         // byte-level identity — the core atomicity assertion
         assert(java.util.Arrays.equals(Files.readAllBytes(p), originalBytes), "file bytes must be unchanged")
         // mtime must be unchanged too (no write happened)
@@ -87,8 +90,8 @@ class MultiEditToolSpec extends CatsEffectSuite:
     val p = tempFile("alpha\nbeta\n")
     val input = multiEditInput(
       p,
-      ("beta", "BETA", false),   // edit[0] produces "BETA"
-      ("BETA", "delta", false)   // edit[1] can only match after edit[0]
+      ("beta", "BETA", false), // edit[0] produces "BETA"
+      ("BETA", "delta", false) // edit[1] can only match after edit[0]
     )
     MultiEditTool.call(input, ctx).map {
       case Right(res) =>
@@ -235,7 +238,9 @@ class MultiEditToolSpec extends CatsEffectSuite:
   // -------------------------------------------------------------------------
 
   test("#11: MultiEdit refuses to create files (missing file → clear error)") {
-    val input = multiEditInput(Paths.get("/tmp/nb-multiedit-no-such-file-xyz.txt"), ("a", "b", false))
+    // 宿主 tmpdir（Windows 上 Paths.get("/tmp/…") 非绝对 ⇒ 绝对闸先于 cannot-create 报错）。
+    val input =
+      multiEditInput(Paths.get(System.getProperty("java.io.tmpdir"), "nb-multiedit-no-such-file-xyz.txt"), ("a", "b", false))
     MultiEditTool.call(input, ctx).map {
       case Left(err) => assert(err.message.contains("cannot create"), err.message)
       case Right(_) => fail("must fail")
@@ -252,9 +257,10 @@ class MultiEditToolSpec extends CatsEffectSuite:
 
   test("#13: summarize and summarizeResult") {
     val p = Paths.get("/tmp/spec/MyFile.scala")
+    // 路径段按归一形态断言（Windows toString 出反斜杠）；文件名与引号包裹契约不变。
     assertEquals(
       MultiEditTool.summarize(multiEditInput(p, ("a", "b", false), ("c", "d", false))),
-      "MultiEdit(MyFile.scala, 2 edits)\n  (\"/tmp/spec/MyFile.scala\")"
+      s"""MultiEdit(MyFile.scala, 2 edits)\n  ("${p.toString.replace('\\', '/')}")"""
     )
     val result = "OK:UPDATED MyFile.scala, 3 added, 1 removed\n@@ -1,1 +1,3 @@\n+x"
     assertEquals(MultiEditTool.summarizeResult(JsonObject(), result), "3 lines added, 1 line removed")

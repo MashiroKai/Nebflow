@@ -1,8 +1,11 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
+import nebflow.shared.PeerInfo
 
 class NeblinkModelSpec extends CatsEffectSuite:
 
@@ -96,7 +99,7 @@ class NeblinkModelSpec extends CatsEffectSuite:
   test("embeddedDefault carries the product hosted-auth constants") {
     // Product infrastructure constants (public client ids) — pinned here so
     // accidental edits surface in CI. config.json logto block can override.
-    assertEquals(LogtoConfig.embeddedDefault.endpoint, "https://auth.nebflow.space")
+    assertEquals(LogtoConfig.embeddedDefault.endpoint, "https://auth.mystand.space")
     assertEquals(LogtoConfig.embeddedDefault.pkceClientId, Some("csxh16cas0x03bgk6w7ej"))
   }
 
@@ -107,7 +110,7 @@ class NeblinkModelSpec extends CatsEffectSuite:
     assertEquals(eff, Right(Some(LogtoConfig.embeddedDefault)))
     // Exact production values, not just object equality (belt and braces).
     eff.foreach(_.foreach { lc =>
-      assertEquals(lc.endpoint, "https://auth.nebflow.space")
+      assertEquals(lc.endpoint, "https://auth.mystand.space")
       assertEquals(lc.pkceClientId, Some("csxh16cas0x03bgk6w7ej"))
     })
   }

@@ -1,10 +1,11 @@
 package nebflow.core
 
 import cats.effect.IO
+import nebflow.shared.PathUtil
 
 /**
  * 专用化改造·轨道二（引擎护栏）— team task #5（设计基线
- * docs/Nebflow/20260827_dedicated-agents-taxonomy-design.md §C）。
+ * dedicated-agents-taxonomy 设计件 §C）。
  *
  * 2026-08-27 用户裁定：flow 与 team 的 agent 应是专门定义，尽量不从全局
  * standalone 取用；被复用进流水线的节点在错位人设下会做出面向用户的表演性
@@ -29,12 +30,21 @@ object Guardrails:
 
   /**
    * T1 flow-node leaf workers 默认剥离的用户向工具集。即使 agent.json 显式
-   * 声明也不生效（同 NebulaExclusiveTools 的机制层语义）。
+   * 声明也不生效（同 RootExclusiveTools 的机制层语义）。
+   *
+   * Pop 保留（2026-09-10 作者裁定——Pop 收归 Nebula 专属后本集与其叠加，
+   * 不是被取代）：本集是 guardrails 开关驱动（dedicatedAgents.enabled）的
+   * 纵深防御，与 NebulaExclusiveTools 的常开剥离面相互独立；删除即失去
+   * 「guardrails 关也仍剥」之外的显式意图声明（且 AllowedToolSetSpec 的
+   * deck-v6 回归锚点依赖本集）。AskUserQuestion 同保留（G8 豁免在
+   * buildAllowedToolSet 消费点，不在本集）。
    */
   val FlowWorkerStrippedTools: Set[String] = Set("Pop", "AskUserQuestion")
 
-  /** Read `dedicatedAgents.enabled` from nebflow.json; false on any miss
-    * (default OFF — 轨道一验证后才允许打开). Hot-read, no caching. */
+  /**
+   * Read `dedicatedAgents.enabled` from nebflow.json; false on any miss
+   * (default OFF — 轨道一验证后才允许打开). Hot-read, no caching.
+   */
   def enabled: IO[Boolean] =
     IO.blocking {
       val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)

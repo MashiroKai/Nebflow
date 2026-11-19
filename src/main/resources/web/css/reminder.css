@@ -11,22 +11,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   color: var(--color-frame-text-muted);
   position: relative;
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-#reminder-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  #reminder-btn:hover {
+    background: var(--glass-control-bg-hover);
+    border-color: var(--glass-control-border);
+    color: var(--color-frame-text);
+  }
 }
+
 #reminder-btn svg {
   width: 16px;
   height: 16px;
@@ -43,12 +41,12 @@
   height: 14px;
   background: var(--color-primary);
   color: #fff;
-  font-size: 8px;
+  font-size: var(--ds-fs-glyph);
   font-weight: 500;
   line-height: 14px;
   text-align: center;
-  border-radius: 7px;
-  padding: 0 3px;
+  border-radius: var(--ds-radius-input);
+  padding: 0 var(--ds-space-1);
   pointer-events: none;
   box-shadow: 0 1px 3px rgba(7, 193, 96, 0.25);
 }
@@ -61,9 +59,7 @@
   width: 360px;
   max-height: min(480px, 70vh);
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   border: 1px solid var(--sapphire-edge);
   box-shadow:
     inset 0 -1px 0 0 rgba(91, 127, 191, 0.025),
@@ -76,6 +72,14 @@
   visibility: hidden;
   opacity: 0;
   pointer-events: none;
+  /* 面板是**受高约束的滚动容器**（max-height 480/70vh 就在上方）：头部/体/页脚
+     三段全部按 flex 语义书写（header/footer flex-shrink:0、body flex:1），
+     缺 display 时它们全落空 ⇒ body 长到内容高度、超出面板被 overflow:hidden
+     硬裁，且 body 自己量不出滚动（scrollHeight == clientHeight）——列表一有
+     条目，行内创建表单的「取消 / 创建」就落在面板可视区之外且**无法滚到**
+     （2026-11-07 作者报障「控件错位、挤压」的桌面实拍复核：1440 视口、
+     1 条任务时 actions 行 top 597 > 面板底 536）。 */
+  display: flex;
   flex-direction: column;
   overflow: hidden;
   transition: opacity 0.15s, visibility 0.15s;
@@ -108,11 +112,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 14px 6px;
+  padding: var(--ds-space-3) 14px var(--ds-space-1h);
   flex-shrink: 0;
 }
 .reminder-panel-title {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 600;
   color: var(--color-text);
   letter-spacing: -0.02em;
@@ -120,10 +124,10 @@
 .reminder-panel-header-right {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 .reminder-panel-count {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
   opacity: 0.3;
   font-weight: 400;
@@ -134,7 +138,7 @@
 .reminder-panel-body {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 6px 8px;
+  padding: var(--ds-space-1) var(--ds-space-1h) var(--ds-space-2);
   min-height: 100px;
   scroll-behavior: smooth;
   overscroll-behavior: contain;
@@ -143,7 +147,7 @@
 .reminder-panel-body::-webkit-scrollbar-track { background: transparent; }
 .reminder-panel-body::-webkit-scrollbar-thumb {
   background: rgba(128, 128, 128, 0.15);
-  border-radius: 2px;
+  border-radius: var(--ds-radius-thin);
 }
 
 /* ── Panel Footer ─────────────────────────────────────────────────────── */
@@ -160,17 +164,20 @@
   width: 22px;
   height: 22px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   background: transparent;
-  color: rgb(91, 127, 191);
+  color: var(--color-info);
   cursor: pointer;
   transition: all 0.15s;
   opacity: 0.7;
 }
-.reminder-create-btn:hover {
-  opacity: 1;
-  background: rgba(91, 127, 191, 0.08);
+@media (hover: hover) {
+  .reminder-create-btn:hover {
+    opacity: 1;
+    background: rgba(91, 127, 191, 0.08);
+  }
 }
+
 .reminder-create-btn:active {
   opacity: 1;
   background: rgba(91, 127, 191, 0.14);
@@ -181,31 +188,79 @@
   stroke-width: 2;
 }
 
-/* ── Empty State ──────────────────────────────────────────────────────── */
-.reminder-empty {
+/* ── 待办面板（待办分家批 2026-10-30）：侧边栏 #panel-todo ────────────────
+   行/空态/内联创建全复用 reminder-* 族（单一视觉语言）；本块只补待办面特有件：
+   待答镜像行的 chip 与跳转态。待答镜像行 = AskUserQuestion 挂起的待办镜像
+   （引擎 AskTodoBridge 产物）——整行点击跳回提问卡作答，作答后镜像随行销账。 */
+#panel-todo .reminder-panel-body {
+  /* 侧边栏面板高由 .panel 布局接管；min-height 保住空态的点击创建区。 */
+  min-height: 140px;
+}
+#panel-todo .reminder-create-btn {
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: var(--ds-radius-chip);
+  background: transparent;
+  color: var(--color-info);
+  cursor: pointer;
+  transition: all 0.15s;
+  opacity: 0.7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+@media (hover: hover) {
+  #panel-todo .reminder-create-btn:hover {
+    opacity: 1;
+    background: rgba(91, 127, 191, 0.08);
+  }
+}
+
+.todo-ask-row {
+  cursor: pointer;
+}
+.todo-ask-chip {
+  flex-shrink: 0;
+  display: inline-block;
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-meta);
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  /* 待答 = 「在等一个回答」的可行动标注：sapphire 强调族（同 .reminder-circle
+     选中态语系），区别于打卡圆钮的中性。 */
+  color: rgb(var(--sapphire));
+  background: color-mix(in srgb, rgb(var(--sapphire)) 10%, transparent);
+  border: 1px solid color-mix(in srgb, rgb(var(--sapphire)) 30%, transparent);
+}
+
+/* ── Empty State ──────────────────────────────────────────────────────── */.reminder-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  padding: 40px 16px 36px;
-  gap: 6px;
+  padding: 40px var(--ds-space-4) 36px;
+  gap: var(--ds-space-1h);
   cursor: pointer;
   user-select: none;
-  border-radius: 10px;
-  margin: 0 4px;
+  border-radius: var(--ds-radius-button);
+  margin: 0 var(--ds-space-1);
   transition: background 0.15s;
 }
 .reminder-empty:hover {
   background: rgba(91, 127, 191, 0.04);
 }
 .reminder-empty-text {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   opacity: 0.3;
   letter-spacing: -0.01em;
 }
 .reminder-empty-hint {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
   opacity: 0.18;
   letter-spacing: -0.01em;
@@ -215,10 +270,10 @@
 .reminder-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 9px 10px;
-  border-radius: 10px;
-  margin: 1px 0;
+  gap: var(--ds-space-inline-gap);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-button);
+  margin: var(--ds-space-hair) 0;
   transition: background 0.15s, opacity 0.25s, transform 0.25s;
   position: relative;
   cursor: default;
@@ -276,8 +331,8 @@
 
 /* completing animation (delete) */
 .reminder-circle.completing {
-  border-color: rgb(91, 127, 191);
-  background: rgb(91, 127, 191);
+  border-color: var(--color-info);
+  background: var(--color-info);
   animation: reminderCompletePop 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 .reminder-circle.completing svg {
@@ -292,8 +347,8 @@
 
 /* completed state (triggered) */
 .reminder-circle.completed {
-  border-color: rgb(91, 127, 191);
-  background: rgb(91, 127, 191);
+  border-color: var(--color-info);
+  background: var(--color-info);
   border-width: 0;
   cursor: default;
 }
@@ -315,10 +370,10 @@
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--ds-space-hair);
 }
 .reminder-row-text {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text);
   line-height: 1.3;
   overflow: hidden;
@@ -328,14 +383,14 @@
 }
 .reminder-row-time {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: #5B7FBF;
   opacity: 0.65;
   white-space: nowrap;
   letter-spacing: -0.01em;
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--ds-space-half);
 }
 .reminder-row-time svg {
   width: 11px;
@@ -343,36 +398,74 @@
   opacity: 0.5;
 }
 .reminder-row-last {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text);
   opacity: 0.25;
   letter-spacing: -0.01em;
   white-space: nowrap;
 }
 
+/* 认知二期产品批③打卡缺卡调整流：行内调整建议（弱化小字，不指责口吻的
+   呈现面；克制基调与 .reminder-row-last 同族）。 */
+.reminder-miss-suggest {
+  font-size: var(--ds-fs-meta);
+  line-height: 1.4;
+  color: var(--color-text);
+  opacity: 0.45;
+  letter-spacing: -0.01em;
+  margin-top: var(--ds-space-half);
+  white-space: normal;
+}
+
+/* 认知二期产品批③：待办行的取消钮（×）——中性弱显，hover 才实。 */
+.reminder-cancel {
+  align-self: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--color-text);
+  opacity: 0.25;
+  font-size: var(--ds-fs-subtitle);
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.reminder-cancel:hover {
+  opacity: 0.7;
+  background: var(--color-frame-hover);
+}
+
 /* disabled task row */
 .reminder-row.disabled .reminder-row-text { opacity: 0.4; }
 .reminder-row.disabled .reminder-row-time { opacity: 0.3; }
 
-/* overdue row */
+/* overdue row — ui-status-redesign（S12 / 盘点 #39）：红时间退役 → 中性等宽数字
+   （reminder.css 既有 tabular-nums），语义首读给行首 clock-alert 图标 +
+   「逾期」tag 图案（红边淡红底保留、字转中性）。 */
 .reminder-row.overdue .reminder-row-time {
-  color: var(--color-error);
+  color: var(--status-word);
 }
 
-/* overdue tag */
+/* overdue tag — 图案载体保留（红 8% 底 + 边），字转中性；词前 clock-alert 图标
+   由 scheduled-task.js 注入。 */
 .reminder-overdue-tag {
   display: inline-flex;
   align-items: center;
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
-  color: var(--color-error);
+  color: var(--status-word);
   background: rgba(244, 67, 54, 0.08);
-  padding: 0 5px;
-  border-radius: 3px;
-  line-height: 16px;
+  border: 1px solid color-mix(in srgb, var(--status-error-icon) 25%, transparent);
+  padding: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
+  line-height: 14px;
   letter-spacing: -0.01em;
-  margin-left: 3px;
+  margin-left: var(--ds-space-1);
 }
+.reminder-overdue-tag .st-ic { width: 9px; height: 9px; margin-right: var(--ds-space-half); }
 
 /* ── Triggered (completed) Row ────────────────────────────────────────── */
 .reminder-row.triggered {
@@ -401,11 +494,11 @@
 
 /* ===== Inline Create Row ===== */
 .reminder-inline-create {
-  padding: 8px 10px;
-  border-radius: 10px;
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-button);
   background: rgba(91, 127, 191, 0.03);
   border: 1px solid rgba(91, 127, 191, 0.10);
-  margin: 2px 2px;
+  margin: var(--ds-space-half) var(--ds-space-half);
   animation: reminderInlineIn 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 @keyframes reminderInlineIn {
@@ -416,19 +509,18 @@
 .reminder-inline-main {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-space-inline-gap);
 }
 .reminder-inline-input {
   flex: 1;
-  border: none;
-  background: transparent;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   color: var(--color-text);
-  outline: none;
   font-family: inherit;
-  padding: 3px 0;
+  padding: var(--ds-space-1) 0;
   letter-spacing: -0.01em;
 }
+/* 裸件（无底/无边/无环）：归 css/inputSurface.css 的裸件成员表（输入面唯一
+   标准批 2026-11-06）。 */
 .reminder-inline-input::placeholder {
   color: var(--color-text);
   opacity: 0.25;
@@ -437,13 +529,13 @@
 
 /* ── Inline Detail (time picker) ──────────────────────────────────────── */
 .reminder-inline-detail {
-  margin-top: 8px;
+  margin-top: var(--ds-space-2);
   padding-left: 28px;
 }
 .reminder-time-row {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 .reminder-time-row > svg,
 .reminder-time-row > i[data-lucide="clock"] {
@@ -452,33 +544,21 @@
   opacity: 0.35;
   flex-shrink: 0;
 }
-.reminder-time-row input[type="datetime-local"] {
+/* 触发时刻面：时间滚轮选择器批（2026-11-03）后不再是原生 datetime-local
+   输入框，而是同款 `.tw-trigger`（样式单源 = timeWheel.css）；此处只声明
+   它在行内的伸展（行布局归本文件）。 */
+.reminder-time-row .tw-trigger {
   flex: 1;
-  border-radius: 6px;
-  padding: 4px 8px;
-  font-size: 12px;
-  font-family: inherit;
-  color: var(--color-text);
-  background: var(--glass-etched-bg);
-  outline: none;
-  border: 1px solid var(--glass-etched-border);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  min-width: 0;
 }
-.reminder-time-row input[type="datetime-local"]:focus {
-  border-color: var(--glass-etched-border-focus);
-  box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.08);
-}
-.reminder-time-row input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  opacity: 0.3;
-  cursor: pointer;
-}
+.reminder-time-row input[type="hidden"] { display: none; }
 
 /* ── Inline Repeat Selector (segmented control) ───────────────────────── */
 .reminder-repeat-row {
   display: flex;
   align-items: center;
-  gap: 6px;
-  margin-top: 6px;
+  gap: var(--ds-space-1h);
+  margin-top: var(--ds-space-1h);
 }
 .reminder-repeat-row > svg,
 .reminder-repeat-row > i[data-lucide="repeat"] {
@@ -490,11 +570,11 @@
 .reminder-repeat-seg {
   flex: 1;
   display: flex;
-  gap: 2px;
+  gap: var(--ds-space-half);
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 2px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-half);
 }
 .reminder-repeat-seg button {
   flex: 1;
@@ -502,24 +582,24 @@
   background: transparent;
   color: var(--color-text);
   opacity: 0.45;
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   font-family: inherit;
-  padding: 3px 0;
-  border-radius: 6px;
+  padding: var(--ds-space-1) 0;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
-  transition: background 0.15s ease, opacity 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, opacity 0.15s ease;
   white-space: nowrap;
 }
-.reminder-repeat-seg button:hover {
-  opacity: 0.8;
+@media (hover: hover) {
+  .reminder-repeat-seg button:hover {
+    opacity: 0.8;
+  }
 }
+
 .reminder-repeat-seg button.active {
   opacity: 1;
   background: rgb(var(--sapphire) / 0.16);
-  box-shadow:
-    inset 0 1px 0 0 rgb(var(--sapphire) / 0.25),
-    0 0 0 1px rgb(var(--sapphire) / 0.22);
 }
 .reminder-repeat-seg button:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.5);
@@ -530,7 +610,7 @@
 .reminder-row-title {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 0;
 }
 .reminder-row-title .reminder-row-text {
@@ -539,53 +619,356 @@
 }
 .reminder-repeat-badge {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   color: rgb(var(--sapphire));
   background: rgb(var(--sapphire) / 0.1);
   border: 1px solid rgb(var(--sapphire) / 0.22);
-  border-radius: 4px;
-  padding: 0 5px;
+  border-radius: var(--ds-radius-badge);
+  padding: 0 var(--ds-space-1h);
   line-height: 15px;
   letter-spacing: -0.01em;
 }
 
-/* ===== Triggered Toast in Chat ===== */
-.reminder-trigger-bubble {
-  background: rgba(91, 127, 191, 0.04);
-  border: 1px solid rgba(91, 127, 191, 0.10);
-  border-radius: 12px;
-  padding: 10px 14px;
-  margin: 6px 0;
+/* ===== Schedule Card in Chat（schedcard 批 2026-10-29，作者令「定时任务卡片
+   防退化 + stand 配色」）=====
+   定时任务触发行的**专属卡**（builder = chat/injectedRows.js buildInjectedRow 的
+   `source==='schedule'` 分支；防退化钉面：带标记注入行永不走通用绿气泡分支）。
+   基类 `.bubble.injected` 保留（注入行族语义——turnGroup/workline/chatSearch——
+   零改动），本块只接管视觉。配色纪律：全部消费 console 统一 tokens（sapphire.css
+   `--sapphire` 族 / 玻璃族 `--glass-*` / etched 族）+ stand 单源档（stand-tokens.css
+   `--st-*`），零新色值、零自带材质（同 canvas --cv-* 单源做法）。 */
+.bubble.schedule-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1h);
+  width: fit-content;
+  max-width: min(440px, 82%);
+  padding: var(--ds-space-3) 14px var(--ds-space-block-y);
+  border-radius: var(--ds-radius-card-md);
+  /* 气泡族尾角：不就地复写 —— 本卡 = .bubble.injected 族（injectedRows.js
+     建类「bubble injected schedule-card」），尾角 4px 由 chat.css
+     `.bubble.injected` 单源下发（2026-10-30 收敛批：此处写死被判据
+     「A1/A2 气泡方向尾角 4px」（scripts/check-msgstyle-single-source.mjs）
+     判红——同值零视觉变化，纯收归）。 */
+  background:
+    linear-gradient(rgb(var(--sapphire) / 0.055), rgb(var(--sapphire) / 0.055)),
+    var(--glass-bg);
+  border: 1px solid rgb(var(--sapphire) / 0.18);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 4px 16px rgba(91, 127, 191, 0.07);
 }
-.reminder-trigger-header {
+.bubble.schedule-card p { margin: 0; } /* 卡体自管节奏，markdown 首尾段不额外撑高 */
+
+/* ── 头行：铃铛 + 「定时任务」chip + 任务名 + 重复小标 ─────────────────── */
+.schedule-card-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  color: rgb(91, 127, 191);
-  margin-bottom: 4px;
-  letter-spacing: -0.02em;
+  gap: var(--ds-space-1h);
+  min-width: 0;
 }
-.reminder-trigger-header svg {
-  width: 14px;
-  height: 14px;
+.schedule-card-head > i[data-lucide="bell-ring"],
+.schedule-card-head > svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: rgb(var(--sapphire));
+  opacity: 0.75;
+}
+.schedule-card-chip {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--ds-fs-meta);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 17px;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-chip);
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.10);
+  border: 1px solid rgb(var(--sapphire) / 0.22);
+}
+.schedule-card-name {
+  font-size: var(--ds-fs-hint);
+  font-weight: 600;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* 重复小标（循环任务才渲染）：与面板行 .reminder-repeat-badge 同 tokens 同形制 */
+.schedule-card-repeat {
+  flex-shrink: 0;
+  font-size: var(--ds-fs-meta);
+  font-weight: 500;
+  color: rgb(var(--sapphire));
+  background: rgb(var(--sapphire) / 0.1);
+  border: 1px solid rgb(var(--sapphire) / 0.22);
+  border-radius: var(--ds-radius-badge);
+  padding: 0 var(--ds-space-1h);
+  line-height: 15px;
+  letter-spacing: -0.01em;
+}
+
+/* ── 正文（任务内容，markdown 面）──────────────────────────────────────── */
+.schedule-card-body {
+  font-size: var(--ds-fs-body);
+  line-height: 1.45;
+  color: var(--color-text);
+  letter-spacing: -0.01em;
+  word-break: break-word;
+}
+.schedule-card-body p { margin: var(--ds-space-1) 0; }
+.schedule-card-body p:first-child { margin-top: 0; }
+.schedule-card-body p:last-child { margin-bottom: 0; }
+.schedule-card-body ul, .schedule-card-body ol { margin: var(--ds-space-1) 0 var(--ds-space-1) var(--ds-space-5); padding: 0; }
+.schedule-card-body pre {
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  padding: var(--ds-space-2) var(--ds-space-3) var(--ds-space-block-y);
+  border-radius: var(--ds-radius-input);
+  overflow-x: auto;
+  font-size: var(--ds-fs-hint);
+}
+
+/* ── 参考文档行（referencePath 在场才渲染）──────────────────────────────── */
+.schedule-card-ref {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  color: var(--color-text);
+  opacity: 0.55;
+  letter-spacing: -0.01em;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  min-width: 0;
+}
+.schedule-card-ref i[data-lucide],
+.schedule-card-ref svg {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
   opacity: 0.7;
 }
-.reminder-trigger-content {
-  font-size: 13px;
-  color: var(--color-text);
-  margin-bottom: 3px;
-  line-height: 1.4;
+.schedule-card-ref span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* ── 时间行：预定触发时间（结构化 schedule.triggerAt；同源时钟偏好面）────── */
+.schedule-card-time {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
+  color: rgb(var(--sapphire));
+  opacity: 0.7;
   letter-spacing: -0.01em;
 }
-.reminder-trigger-time {
-  font-size: 11px;
-  color: var(--color-text);
-  opacity: 0.3;
-  letter-spacing: -0.01em;
+.schedule-card-time i[data-lucide],
+.schedule-card-time svg {
+  width: 11px;
+  height: 11px;
+  opacity: 0.6;
 }
+
+/* ── Dark theme（sapphire rung 抬档，chat.css .bubble.injected 暗档同思路）─ */
+@media (prefers-color-scheme: dark) {
+  .bubble.schedule-card {
+    background:
+      linear-gradient(rgb(var(--sapphire) / 0.10), rgb(var(--sapphire) / 0.10)),
+      var(--glass-bg);
+    border-color: rgb(var(--sapphire) / 0.28);
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0 1px 2px rgba(0, 0, 0, 0.2),
+      0 4px 16px rgba(0, 0, 0, 0.18);
+  }
+  .schedule-card-chip {
+    background: rgb(var(--sapphire) / 0.16);
+    border-color: rgb(var(--sapphire) / 0.30);
+  }
+  .schedule-card-repeat {
+    background: rgb(var(--sapphire) / 0.14);
+    border-color: rgb(var(--sapphire) / 0.3);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   schedule-created-card 批（2026-11-05 作者令 09:03）——
+   **创建/编辑成功后**落进消息流的同一张卡（同一 .bubble.injected.schedule-card
+   家族、同一 chip/name/body/time 结构），只增三样面：状态词、元信息条（项目/
+   时间·重复/id）、原地编辑/取消面。
+
+   复用纪律：卡体、头行、chip、name、body、时间行的样式**全部来自上面那一块**
+   ——本块一个重复声明都不写，只补新节点；图标走 createIconsIn 单点。
+   令牌纪律：本块零设计字面量（颜色/字号/圆角/间距全部 --ds-* / 玻璃族令牌），
+   scripts/check-design-tokens.mjs 对本文件走「只降不增」基线。
+   响应式：卡宽沿用家族 `min(440px, 82%)` ⇒ 390 档不横向溢出；编辑控件
+   width:100% + box-sizing，**无 position:fixed/sticky**（键盘弹起时不被顶飞：
+   控件随消息流走，输入面贴着打字位），与 ime-guard 纪律同向。
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* 组件壳：display:contents ⇒ 卡体直接参与 .row 的 flex 布局（家族卡宽不改语境） */
+nf-sched-card { display: contents; }
+
+/* 状态词（事实句）：进行中 / 提交中 / PAUSED / 已完成 / 已取消 / 已不在列表 */
+.schedule-card-status {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: var(--ds-fs-meta);
+  letter-spacing: var(--ds-ls-body);
+  color: var(--color-frame-text-muted);
+}
+.schedule-card-status.is-active { color: rgb(var(--sapphire)); }
+.schedule-card-status.is-done { color: var(--status-success-icon); }
+.schedule-card-status.is-cancelled,
+.schedule-card-status.is-gone { color: var(--status-error-icon); }
+
+/* 正文长文折叠（3 行 + 展开）；展开态交还全量 */
+.schedule-card-body {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.schedule-card-body.is-open {
+  display: block;
+  -webkit-line-clamp: none;
+  overflow: visible;
+}
+.schedule-card-toggle {
+  align-self: flex-start;
+  min-height: var(--ds-hit-control);
+  padding: 0;
+  border: 0;
+  background: none;
+  color: rgb(var(--sapphire));
+  opacity: 0.8;
+  font-family: inherit;
+  font-size: var(--ds-fs-meta);
+  cursor: pointer;
+}
+.schedule-card-toggle:hover { opacity: 1; }
+
+/* 元信息条：项目标签 / 触发时间·重复（待办 = 创建日期）/ id（弱化但不隐藏） */
+.schedule-card-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  flex-wrap: wrap;
+  font-size: var(--ds-fs-meta);
+  color: var(--color-frame-text-muted);
+}
+.schedule-card-chip-item {
+  padding: 0 var(--ds-space-1h);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-badge);
+  background: var(--glass-etched-bg);
+  overflow-wrap: anywhere;
+}
+.schedule-card-id {
+  margin-left: auto;
+  font-family: var(--ds-font-mono);
+  font-size: var(--ds-fs-meta);
+  color: var(--color-frame-text-dim);
+}
+
+/* 失败面（失败必须可见；输入保留在编辑态里，不回滚成旧值） */
+.schedule-card-fail {
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border: 1px solid var(--status-error-icon);
+  border-radius: var(--ds-radius-input);
+  color: var(--status-error-icon);
+  font-size: var(--ds-fs-hint);
+  overflow-wrap: anywhere;
+}
+.schedule-card-note {
+  color: var(--color-frame-text-muted);
+  font-size: var(--ds-fs-hint);
+  overflow-wrap: anywhere;
+}
+
+/* 动作行（终态整行不渲染 ⇒ 无假按钮） */
+.schedule-card-actions {
+  display: flex;
+  gap: var(--ds-space-1h);
+  flex-wrap: wrap;
+}
+.schedule-card-btn {
+  min-height: var(--ds-hit-control);
+  padding: 0 var(--ds-space-3);
+  border: 1px solid var(--glass-etched-border);
+  border-radius: var(--ds-radius-button);
+  background: var(--glass-control-bg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--ds-fs-btn);
+  font-weight: var(--ds-fw-btn);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover) var(--ds-ease-std);
+}
+@media (hover: hover) {
+  .schedule-card-btn:hover { background: var(--glass-control-bg-hover); }
+}
+
+.schedule-card-btn.is-primary { border-color: rgb(var(--sapphire) / 0.5); color: rgb(var(--sapphire)); }
+.schedule-card-btn.is-danger { border-color: var(--status-error-icon); color: var(--status-error-icon); }
+.schedule-card-btn:focus-visible {
+  outline: var(--ds-focus-width) solid var(--btn-focus-ring);
+  outline-offset: var(--ds-border-width);
+}
+
+/* 原地编辑 / 取消确认（不跳页、不开模态） */
+.schedule-card-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  padding-top: var(--ds-space-1h);
+  border-top: 1px solid var(--glass-etched-border);
+}
+.schedule-card-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
+  color: var(--color-frame-text-muted);
+}
+.schedule-card-input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--ds-input-pad-lg);
+  color: var(--color-text);
+  font-family: inherit;
+  font-size: var(--ds-fs-body);
+  line-height: var(--ds-lh-body);
+  resize: vertical;
+}
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
+
+/* ── 点击腿（todo-card-click-left 批，2026-11-18 作者令「待办卡片要支持可以直接
+   点击 然后就到对话框有 # 的待办引用」）───────────────────────────────────────
+   待办卡整卡可点（非交互区 ⇒ 补 `#` 引用）。可点性只由 `cursor` 表达：卡的**视觉
+   语言一个字都不改**——底色/圆角/内距仍归上面 `.bubble.schedule-card` 家族块，
+   本块零几何、零颜色声明（scripts/check-design-tokens.mjs 对本文件「只降不增」）。
+   触控命中区 = 卡体自身（含头行/正文/元信息条），实测高 ≫ --ds-hit-control，
+   故不加 min-height（加了会改家族几何）。
+   卡内既有交互件仍各自为政：它们在 JS 侧被显式让路（scheduleCard.js 的
+   CARD_INTERACTIVE_SEL），本处只把它们的 cursor 拨回各自原本的值。 */
+.schedule-card-refable { cursor: pointer; }
+/* 编辑表单里的文本控件仍是文本光标（它们是输入面，不是"可点的卡"）。 */
+.schedule-card-refable textarea.schedule-card-input,
+.schedule-card-refable input.schedule-card-input { cursor: text; }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
 @media (prefers-color-scheme: dark) {
@@ -622,21 +1005,11 @@
     border-color: rgba(91, 127, 191, 0.10);
   }
 
-  .reminder-time-row input[type="datetime-local"] {
-    background: rgba(255, 255, 255, 0.04);
-    border-color: rgba(91, 127, 191, 0.08);
-    color: #e0e0e0;
-  }
-  .reminder-time-row input[type="datetime-local"]:focus {
-    border-color: rgba(91, 127, 191, 0.30);
-    box-shadow: 0 0 0 2px rgba(91, 127, 191, 0.10);
-  }
-
   .reminder-repeat-seg button.active {
     background: rgb(var(--sapphire) / 0.22);
-    box-shadow:
-      inset 0 1px 0 0 rgb(var(--sapphire) / 0.3),
-      0 0 0 1px rgb(var(--sapphire) / 0.28);
+    /* 扁平化批 2026-11-05：原「inset 顶缘高光 + 1px 描边影」两层退役。
+       选中态改由**底色 + 描边**表达（描边是线不是影，扁平允许项）。 */
+    border-color: rgb(var(--sapphire) / 0.28);
   }
   .reminder-repeat-badge {
     background: rgb(var(--sapphire) / 0.14);
@@ -647,16 +1020,13 @@
     background: rgba(255, 255, 255, 0.10);
   }
 
-  .reminder-trigger-bubble {
-    background: rgba(91, 127, 191, 0.04);
-    border-color: rgba(91, 127, 191, 0.10);
-  }
-
   .reminder-create-btn {
     opacity: 0.6;
   }
-  .reminder-create-btn:hover {
-    opacity: 1;
-    background: rgba(91, 127, 191, 0.10);
+  @media (hover: hover) {
+    .reminder-create-btn:hover {
+      opacity: 1;
+      background: rgba(91, 127, 191, 0.10);
+    }
   }
 }

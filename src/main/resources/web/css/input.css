@@ -1,52 +1,75 @@
 /* ── Floating Input Area (overlays chat bottom) ──────────────────────── */
+/* 输入框瘦身批（2026-10-31 作者令「消息输入框的上下留白尽量小 让输入框的占比
+   小一点 让主要信息凸显」）：#input-area 底缘外留白 10px → 4px（4px 栅格档）。
+   JS 让位逻辑读 #input-area.offsetHeight ⇒ 消息列底缘让位同步收紧，零 JS 改动。 */
+/* 收窄 + 齐平批 2026-11-04（UI 批次审计 D 档 R69 / R70 收口批；台账 #1475⑤，
+   作者 recall 2026-11-03 18:30 + 2026-11-04 11:09）：
+   · R69 收窄：改前 `#input-area` 是 left:0/right:0 且 bar 无 max-width ⇒ 两侧留白
+     **0.0 / 0.0**（完全顶满）。现改由本层的水平内距供留白 —— 桌面 = 共用槽
+     --ds-main-col-edge-x（design-system.css 出生行；**同一槽**由 #header 以水平外距
+     消费 ⇒ 输入条外盒与顶栏外盒左右缘逐像素重合 = 作者令「输入框宽度 = 顶栏宽度」
+     的单源实现），手机层 = --dock-inset-x (12px，见 mobileLayer.css 同名块)
+     ⇒ 桌面两侧逐值相等、且手机档与 dock 胶囊同一竖轴边距。留白走**外距**不占 bar
+     自身 padding（bar 的 6/12px 是内距，与本项无关）。
+     宽度还原批（header-input-width-align 2026-11-05，作者令「我让统一的意思是跟
+     Header 的宽度保持一致，现在反而把 Header 缩短了」）：该槽值由 16px 归零 ⇒
+     本层水平内距为 0，bar 外盒与顶栏玻璃盒同铺 #main 全宽（顶栏是锚，输入条向它
+     看齐，反方向不许做）。
+   · R70 齐平：本层底缘外留白 4px 归零 —— 让位由 #main 的 10px 底距供（见
+     split.css #main 注），input 条底缘因此与 #sidebar / #canvas-panel 底缘齐平
+     （改前差 6px / 10px）。safe-area 仍在（iOS 悬浮层场景 env() 非零时照旧让开）。 */
 #input-area {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
   z-index: 20;
-  padding: 0 0 10px 0;
+  /* Safe area (viewport-fit=cover): keeps the composer above the browser's
+     own home-indicator / toolbar controls on phone viewports. */
+  padding: 0 var(--ds-main-col-edge-x) env(safe-area-inset-bottom, 0px);
   pointer-events: none;
 }
 
-#input-bar {
+/* 输入条外壳**单一定义**（composer 统一批 2026-11-18 · 作者令「主会话与消息联系人
+   composer 真正统一为同一组件：dimensions / padding / rounded corners / glass
+   tokens 一套」）。主会话 `#input-bar` 与消息面 `.fm-input-bar` 共用这一条外壳几何：
+     · rounded corners = `--ds-radius-shell`（20px，唯一档）
+     · padding = `--ds-space-1h` / `--ds-space-2`（6 / 8）
+     · 排布 = flex row + center + `--ds-space-1` gap + flex-shrink:0
+   两面的**唯一差异是落位**（容器给 margin / 定位：`.fm-input-bar` 由 friends.css
+   的 margin 供，`#input-area` 由本文件的 absolute 底缘供）—— 几何值不再各写一份。
+   改前 `.fm-input-bar` 在 friends.css 另写 6/12 padding + 8px gap + 自己的 radius，
+   与主条差 4px 两处，正是作者点名的「不是同一个组件」。 */
+#input-bar,
+.fm-input-bar {
   position: relative;
   pointer-events: auto;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
-  padding: 8px 12px;
+  border-radius: var(--ds-radius-shell);
+  /* 瘦身批：垂直内 padding 8px → 6px（横向不动；mic-orb 64px/图标钮 36px
+     为静息态高度驱动件，本项在输入态（textarea 驱动行高）再省 4px）。
+     内距收紧批（2026-11-18 作者令「两边留白边距差不多 + 文字离两边近一点、
+     可用空间大一点」）：横向 8px → 6px（= 纵向同一档 --ds-space-1h ⇒ 外壳
+     自身四向内距同值）。实测两侧各让 2px（读数见 tests/composer-input-inset-metrics.spec.mjs）。 */
+  padding: var(--ds-space-1h) var(--ds-space-1h);
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-1);
   flex-shrink: 0;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+  /* 统一按钮玻璃批 2026-11-01：材质（--glass-bg + blur24 sat1.15 双写 +
+     --cv-shadow 三档栈 + 顶缘折射线 ::before）迁 css/glass.css 面级浮件档
+     （v2 改皮随 liquid-glass.css 退役 = 设计稿 D10 撤销，回归基准件 C 原配方）；
+     本文件只留几何与状态过渡。frozen/disconnected/voice 高特异态在本文件
+     原样保留，特异度高于包档零影响。 */
   /* 2026-08-24 frozen-input spec §4: freeze/unfreeze material transition —
-     300ms Material standard easing on the three painted properties. */
+     300ms Material standard easing on the three painted properties.
+     voice-mode batch: opacity/transform join the set — the full-duplex voice
+     overlay collapses the bar (body.voice-mode-active, see css/voiceMode.css)
+     and must be able to animate it back on exit. */
   transition: border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
     background 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-#input-bar::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg,
-    transparent 10%,
-    var(--sapphire-refraction) 50%,
-    transparent 90%
-  );
-  pointer-events: none;
-  z-index: 1;
-  border-radius: inherit;
+    box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.24s ease,
+    transform 0.26s cubic-bezier(0.4, 0, 0.2, 1);
 }
 #input-wrap {
   flex: 1;
@@ -62,15 +85,19 @@
 }
 /* Error-recovery strip (frozen-error-recovery plan §4.3 dims 2-5): icon +
    reason + retry count + retry/abandon buttons, rendered inside the input
-   wrap above the textarea — the "input bar carries the state" carrier. Amber
-   glass, distinct from the quiet sapphire schedule tint. Shared by the main
-   input bar (#input-bar) and the popup input bar (.fa-input-bar). */
+   wrap above the textarea — the "input bar carries the state" carrier.
+   极简批（2026-10-29 作者令「错误态对话框要极简」）：结构 = 1 图标 + 1 句说明 +
+   文本 chip 动作钮——图标脉冲动画退役（静态即警示，amber 只此一处点缀）；
+   按钮从「实底/描边块」收敛为 skip-freeze-btn 同族的静音文本 chip
+   （主操作 retry = amber 字，次级 abandon = 中性字，hover 才起淡底）。
+   Shared by the main input bar (#input-bar) and the popup input bar
+   (.fa-input-bar). */
 .error-recovery-strip {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px 6px 6px;
-  font-size: 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-1h) var(--ds-space-1h) var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
   color: rgb(var(--amber) / 1);
   user-select: none;
 }
@@ -79,54 +106,64 @@
   height: 18px;
   flex-shrink: 0;
   color: rgb(var(--amber));
-  animation: error-pulse 1.6s ease-in-out infinite;
 }
 .error-recovery-strip .error-recovery-text {
   min-width: 0;
   flex: 1;
   color: var(--color-text);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* N-1 (2026-09-10): the disabled retry button now carries its own reason in its
+   LABEL (chat.errorRetryNoText), so no extra text node is needed inside the
+   strip — an inserted hint span costs the reason line its width (measured: 13 →
+   3 visible chars in-row, or a 3-row strip when wrapped). Label width is
+   comparable, so the strip's geometry is unchanged. */
 .error-retry-btn,
 .error-abandon-btn {
   pointer-events: auto;
-  font: 500 12px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  border-radius: 8px;
-  padding: 3px 10px;
+  font: 500 var(--ds-fs-btn) -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
   cursor: pointer;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     border-color 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
   flex-shrink: 0;
+  /* 静音文本 chip：无底无框，色只落在字上（skip-freeze-btn 同族）。 */
+  background: transparent;
+  border: none;
 }
 .error-retry-btn {
-  background: rgb(var(--amber) / 0.16);
-  border: 1px solid rgb(var(--amber) / 0.45);
   color: rgb(var(--amber));
 }
-.error-retry-btn:hover {
-  background: rgb(var(--amber) / 0.26);
+@media (hover: hover) {
+  .error-retry-btn:hover:not(:disabled) {
+    background: rgb(var(--amber) / 0.12);
+  }
+}
+
+/* N-1 (2026-09-10): disabled retry = visibly inert (the no-op is gone, so the
+   affordance must stop looking actionable). Hover feedback is excluded above —
+   a disabled control that still lights up on hover reads as clickable. */
+.error-retry-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 .error-abandon-btn {
-  background: transparent;
-  border: 1px solid rgb(var(--color-error, 244 67 54) / 0.40);
-  color: var(--color-error, #f44336);
+  color: var(--color-text-muted);
 }
-.error-abandon-btn:hover {
-  background: rgb(var(--color-error, 244 67 54) / 0.10);
-}
-@keyframes error-pulse {
-  0%, 100% { opacity: 0.75; transform: scale(1.0); }
-  50% { opacity: 1; transform: scale(1.06); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .error-recovery-strip .error-icon {
-    animation: none;
+@media (hover: hover) {
+  .error-abandon-btn:hover {
+    background: var(--color-frame-hover, rgba(128, 128, 128, 0.12));
+    color: var(--color-text);
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
   .error-retry-btn, .error-abandon-btn {
     transition: none;
   }
@@ -136,41 +173,43 @@
    visual. (Formerly body.drag-over — the stuck-highlight bug came from a
    body-level counter that never reset; now per-bar and delegation-managed.) */
 #input-bar.drag-over,
-.fa-input-bar.drag-over {
+.fa-input-bar.drag-over,
+.ask-answer-attach-empty.drag-over {
   outline: 2px dashed var(--color-primary);
   outline-offset: -2px;
 }
 /* Frozen "ice-sealed" input bar (2026-08-24 spec, user ruling: the bar itself
-   carries the frozen state — no standalone status row). Cold sapphire glass:
-   stronger tint + border, a 3px frost ring, a frost glow, and the refraction
-   line brightened to an ice edge. Frozen ≠ disabled: the field stays fully
-   editable and the send button keeps its green (send = wake). Zero new color
-   tokens — sapphire/sapphire-glow alpha variants only. */
+   carries the frozen state — no standalone status row). Cold sapphire glass.
+
+   极简化批（2026-10-29 作者令「错误态/冻结态对话框要极简」）：状态表达收敛为
+   「1px 蓝宝描边 + 淡蓝底 + 冰蓝 placeholder」三件——3px frost ring、18px 外
+   发光、placeholder 光晕（text-shadow）三层装饰退役，材质阴影回落到常态玻璃
+   卡的三件套（frozen 与常态唯一差异 = 色相，不再有轮廓级差异）。零新色值：
+   sapphire alpha 变体 only。placeholder 的恢复时刻一句话即「一行说明」，
+   「跳过本次」是唯一主操作（08-25 22:28 ruling 不变）。
+
+   Corrected 2026-09-10 (F-1 alignment): the former note here read "Frozen ≠
+   disabled: the field stays fully editable and the send button keeps its green
+   (send = wake)" — that describes no code path. Both the frozen event branch
+   and applyLocalFreeze call setFrozenBarState(v, true) (main.js:427 / :545),
+   which puts `disabled` + aria-disabled="true" on #input, #voice-btn,
+   #attach-btn, #send-btn and #stop-btn. Only the send ICON stays full-contrast
+   by design (the `#input-bar.frozen #send-btn[disabled] svg { opacity: 1 }`
+   guard below) — a visual choice, not an enabled control. "Editable composer,
+   typing is a wake" belongs to the amber error family (.frozen-error below),
+   whose handler hands the composer back enabled right after applyErrorFrozen
+   (main.js:423); F-1 (2026-09-10) additionally made class and disabled
+   attributes always clear together (main.js:332-340) — the .frozen bar's own
+   exits are 「跳过本次」 and the schedule window ending. */
 #input-bar.frozen,
 .fa-input-bar.frozen {
-  border-color: rgb(var(--sapphire) / 0.45);
-  background: rgb(var(--sapphire) / 0.10);
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0 0 0 3px rgb(var(--sapphire) / 0.10),
-    0 0 18px rgb(var(--sapphire-glow) / 0.22),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+  border-color: rgb(var(--sapphire) / 0.35);
+  background: rgb(var(--sapphire) / 0.07);
 }
-#input-bar.frozen::before,
-.fa-input-bar.frozen::before {
-  background: linear-gradient(90deg,
-    transparent 10%,
-    rgb(var(--sapphire-glow) / 0.55) 50%,
-    transparent 90%
-  );
-}
-/* Ice-blue placeholder with a frost halo (text-shadow carries the "frosted
-   glass text" feel — blurring the glyphs themselves is forbidden). */
+/* Ice-blue placeholder — plain sapphire glyphs, no halo (极简批：text-shadow 退役). */
 #input-bar.frozen #input::placeholder,
 .fa-input-bar.frozen .fa-input::placeholder {
   color: rgb(var(--sapphire) / 0.9);
-  text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.35);
 }
 /* Skip-current-freeze button (08-25 ruling: "跳过本次" voids the current
    freeze window; 22:28 amendment — minimal text button, lowest visual weight).
@@ -180,16 +219,16 @@
 .skip-freeze-btn {
   display: none;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   flex-shrink: 0;
-  padding: 3px 8px;
-  font-size: 12px;
+  padding: var(--ds-space-1) var(--ds-space-2);
+  font-size: var(--ds-fs-btn);
   font-weight: 500;
   white-space: nowrap;
   color: rgb(var(--sapphire));
   background: transparent;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   cursor: pointer;
   transition: background 0.15s cubic-bezier(0.4, 0, 0.2, 1),
     color 0.15s cubic-bezier(0.4, 0, 0.2, 1);
@@ -199,9 +238,12 @@
   height: 14px;
   stroke-width: 2;
 }
-.skip-freeze-btn:hover {
-  background: rgb(var(--sapphire) / 0.12);
+@media (hover: hover) {
+  .skip-freeze-btn:hover {
+    background: rgb(var(--sapphire) / 0.12);
+  }
 }
+
 .skip-freeze-btn:active {
   background: rgb(var(--sapphire) / 0.2);
 }
@@ -237,55 +279,144 @@
   opacity: 1;
 }
 /* Error-recovery input bar (frozen-error-recovery plan §4.3 dim 1) — amber
-   family. Mirrors the .frozen structure EXACTLY (border/bg/ring/glow/edge/
-   transition) and swaps only the hue — the "同族" skeleton with an importable
-   hue difference. Applied alongside the error strip; the strip is the added
-   differentiation (icon + reason + retry/abandon buttons). */
+   family. 极简批（2026-10-29）：与 .frozen 同一收敛——状态表达 = 1px 琥珀描边 +
+   淡琥珀底，3px ring / 18px glow / placeholder 光晕 / 顶缘冰线提亮全部退役；
+   材质阴影保持常态玻璃卡三件套，唯一差异 = 色相。Applied alongside the error
+   strip; the strip is the added differentiation (icon + reason + actions). */
 #input-bar.frozen-error,
 .fa-input-bar.frozen-error {
-  border-color: rgb(var(--amber) / 0.45);
-  background: rgb(var(--amber) / 0.10);
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0 0 0 3px rgb(var(--amber) / 0.10),
-    0 0 18px rgb(var(--amber-glow) / 0.22),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
-}
-#input-bar.frozen-error::before,
-.fa-input-bar.frozen-error::before {
-  background: linear-gradient(90deg,
-    transparent 10%,
-    rgb(var(--amber-glow) / 0.55) 50%,
-    transparent 90%
-  );
+  border-color: rgb(var(--amber) / 0.38);
+  background: rgb(var(--amber) / 0.07);
 }
 #input-bar.frozen-error #input::placeholder,
 .fa-input-bar.frozen-error .fa-input::placeholder {
   color: rgb(var(--amber) / 0.95);
-  text-shadow: 0 0 8px rgb(var(--amber-glow) / 0.30);
 }
+/* ── Attachment strip: in-flow row above the textarea（uifix 批 2026-10-22）──
+   作者令：「设计一批附件的ui优化。让附件放在对话框上面，不要遮挡文字。」
+   附件预览从「textarea 顶缘 overlay + 44px padding 让位带」（composer-overlap
+   修复 2026-10-18 的形态）改为 #input-wrap（column flex）内的 **in-flow 独立行**
+   —— chip 条带与文字输入区完全分离，任何附件数量下零遮挡：
+   · 几何：chip bottom ≤ textarea top（quote-message B12/B2-B4/B13 的 aboveInput
+     断言面，overlay 时代被打破的 4 条红线由本形态复位）；
+   · 点击：in-flow 后空隙不再压在 textarea 上 ⇒ composer-typing 的
+     pointer-events 透传面（旧 :346-347）与 44px 让位带一并退役；
+   · 溢出（桌面层）：**换行多行**（flex-wrap: wrap）—— chip 恒可见恒可点，
+     不藏件不滚动；这也是 quote-message B12 在管断言的既批语义（「溢出走换行
+     （flex-wrap）不横向溢出」，2026-10-18 改 nowrap+横滚时被打红，本批复位）。
+     手机层仍走单行 + 「+N」折叠（v3 已批形态，纵向空间稀缺 —— 覆盖见
+     mobileLayer.css；折叠腿单点 = js/attachStripFold.js）。
+   · 不裁切：行自身保持 overflow:visible —— ✕ 圆盘的 -4px 悬出（既有形态）
+     不被条带裁顶；手机层展开态（.mh-att-expanded）才开横向滚动。 */
 #attachment-preview {
   display: flex;
-  gap: 6px;
-  margin-bottom: 4px;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  /* 瘦身批：与 textarea 的间距 6px → 4px（栅格档；in-flow 行，零遮挡语义不变）。 */
+  margin: 0 0 var(--ds-space-1);
   flex-wrap: wrap;
+  overflow: visible;
+  scrollbar-width: none;
 }
-.att-thumb {
-  width: 50px; height: 50px;
-  object-fit: cover;
-  border-radius: 6px;
-  position: relative;
-}
-.att-file {
-  background: #e0e0e0;
-  padding: 3px 8px;
-  border-radius: 6px;
-  font-size: 11px;
+/* 空条带不占任何行高/边距（发送清空后 composer 高度精确回落）。 */
+#attachment-preview:empty { margin: 0; }
+#attachment-preview::-webkit-scrollbar { display: none; }
+/* +N 折叠键（手机层折叠腿 attachStripFold.js 建；样式为两层基座）。 */
+#attachment-preview.mh-att-expanded { overflow-x: auto; }
+.mh-att-more {
+  flex: none;
+  min-width: 28px;
+  height: 28px;
+  border-radius: var(--ds-radius-input);
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  background: var(--glass-etched-bg, rgba(0, 0, 0, 0.025));
+  border: 1px solid var(--glass-border);
+  color: var(--color-text-muted, #8b8e96);
+  font-size: var(--ds-fs-meta);
+  padding: 0 var(--ds-space-2);
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
 }
+/* 折叠收件（手机层折叠腿 attachStripFold.js 落 .mh-att-collapsed）：选择器带
+   #attachment-preview 前缀提特异度 —— chip 自身的 display 声明（.att-file 的
+   inline-flex / .att-ref 的 flex 等，同为 0,1,0 且声明序更靠后）不得压过折叠
+   收件（旧手机层规则 body.mobile-layer .mh-att-collapsed 为 0,2,1 恒胜；基座
+   上移后须以 1,1,0 自保）。 */
+#attachment-preview .mh-att-collapsed { display: none; }
+#input-wrap { position: relative; }
+/* ── 统一 chip 语言（同批打磨）：缩略图与文件卡同 28px 档 / 同 8px 圆角 /
+   同条带基线 —— strip 高度恒 28px，不再随 chip 种类起伏（旧 .att-thumb 50×50
+   在 overlay 时代被 max-height:30px 裁成 50×30 杂交形态）。文件卡材质 =
+   --glass-etched-* token（主题自适应；旧硬编码 #e0e0e0 暗色下发白）。 */
+.att-thumb {
+  width: 28px; height: 28px;
+  object-fit: cover;
+  border-radius: var(--ds-radius-input);
+  border: 1px solid var(--glass-border);
+  box-sizing: border-box;
+  display: block;
+  position: relative;
+  /* 原图任何尺寸都不许撑破宿主（宽幅 3000px / 超长竖图同判据）：尺寸恒 28px 方盒
+     + cover 取景，max-width 再兜一道 —— 盒宽由父级 flex item 决定，永不超过容器。 */
+  max-width: 100%;
+}
+/* 缩略帧宿主（图片档的根元素，renderAttachmentFace 图片档）：✕ 角标的定位锚
+   （.att-remove 绝对定位的父）、卡区命中域扩张的锚。尺寸 = 内容盒（28px 档），
+   不参与弹性伸缩 —— 附件条多枚换行由条带 flex-wrap 承担。 */
+.att-thumb-wrap {
+  position: relative;
+  display: flex;
+  flex: none;
+  max-width: 100%;
+  min-width: 0;
+}
+/* A thumbnail that failed to load stays in the strip as a failed item (dashed, muted); its retry control
+   fills the thumbnail box and loads that one thumbnail again. */
+.att-thumb-wrap.is-failed {
+  width: 28px; height: 28px;
+  box-sizing: border-box;
+  border: 1px dashed var(--glass-border);
+  border-radius: var(--ds-radius-input);
+}
+.att-thumb-retry {
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.att-thumb-retry:focus-visible { outline: 2px solid var(--glass-etched-border-focus, var(--color-text-muted)); outline-offset: 1px; }
+.att-file {
+  height: 28px;
+  box-sizing: border-box;
+  position: relative;          /* ✕ 角标（.att-remove）定位锚 */
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--glass-etched-border);
+  padding: 0 var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-input);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text);
+}
+.att-file .att-file-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+}
+/* 输入框附件图标化批（作者令 2026-11-02）·基座闸：新增的扩展名色块
+   （.att-file-icon，chat.js 挂 = fileIconStyle 的 `.fc-icon` 色族同源）**默认
+   不参与布局**——本批按令「手机层优先、桌面共组件先不动」，桌面层 chip 形态
+   逐像素原样（彩色块不上桌）；手机层由 css/mobileLayer.css 作用域规则把它翻
+   成 28×28 图标盒并隐藏文件名。display:none 在此 = 桌面零回归的唯一闸门。 */
+.att-file .att-file-icon { display: none; }
 
 /* v2 §5.2: task return reference chip — sapphire tint (distinct from the
    grey .att-file), zero new color tokens (sapphire alpha variants only).
@@ -294,12 +425,14 @@
 .att-taskref {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
+  height: 28px;                    /* uifix 批 2026-10-22：同条带统一 28px 档 */
+  box-sizing: border-box;
   background: rgb(var(--sapphire) / 0.06);
   border: 1px solid rgb(var(--sapphire) / 0.25);
-  border-radius: 6px;
-  padding: 3px 8px;
-  font-size: 11px;
+  border-radius: var(--ds-radius-input);
+  padding: 0 var(--ds-space-inline-x);
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   position: relative;
   max-width: 100%;                 /* never exceed the chips container (B13) */
@@ -338,7 +471,7 @@
   min-width: 0;                    /* allow shrink → ellipsis on narrow view */
   flex-shrink: 1;
   border-left: 1px solid rgb(var(--sapphire) / 0.2);
-  padding-left: 6px;
+  padding-left: var(--ds-space-1h);
 }
 .att-taskref-opinion[hidden] {
   display: none;
@@ -360,15 +493,15 @@
 .att-ref {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   height: 28px;                  /* A1: 固定单行高（紧凑 chip），含边框 */
   box-sizing: border-box;
   max-width: 100%;
   background: rgb(var(--sapphire) / 0.06);
   border: 1px solid rgb(var(--sapphire) / 0.25);
-  border-radius: 8px;
-  padding: 0 6px;
-  font-size: 12px;
+  border-radius: var(--ds-radius-input);
+  padding: 0 var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
   color: var(--color-text);
   overflow: hidden;              /* A1 */
   cursor: pointer;
@@ -380,7 +513,7 @@
   max-height: 72px;
   align-items: flex-start;
   overflow-y: auto;
-  padding: 5px 6px;
+  padding: var(--ds-space-1h) var(--ds-space-1h);
 }
 .att-ref-icon {
   color: rgb(var(--sapphire));
@@ -391,7 +524,7 @@
 .att-ref-body {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   min-width: 0;
   flex: 1;
 }
@@ -408,7 +541,7 @@
 .att-ref-meta {
   display: none;
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   line-height: 1.5;
   min-width: 0;
   white-space: pre-line;
@@ -434,15 +567,15 @@
   max-height: 56px;              /* header + 2 行摘要的固定 footprint */
   background: var(--glass-etched-bg);
   border: 1px solid var(--glass-etched-border);
-  border-radius: 8px;
-  padding: 5px 8px;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-1h) var(--ds-space-2);
   align-items: flex-start;
 }
-.att-ref-fm .att-ref-icon { margin-top: 2px; }
+.att-ref-fm .att-ref-icon { margin-top: var(--ds-space-half); }
 .att-ref-fm-body {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--ds-space-hair);
   min-width: 0;
   flex: 1;
 }
@@ -450,7 +583,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
 }
 .att-ref-fm-name {
@@ -462,7 +595,7 @@
 }
 .att-ref-fm-date {
   color: var(--color-text-muted);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   flex-shrink: 0;
 }
 .att-ref-fm-text {
@@ -495,7 +628,7 @@
   background: transparent;
   color: var(--color-text-muted);
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   padding: 0;
 }
 .att-ref-expand:hover,
@@ -511,35 +644,132 @@
 @media (prefers-reduced-motion: reduce) {
   .att-ref { animation: none; }
 }
+
+/* ── quote-message 引用 chip（2026-10-09 用户反馈改版）: composer 引用 chip 与
+   附件 chip 同条带（宿主 = #attachment-preview，输入框上方）同大小 —— uifix 批
+   2026-10-22 统一后两族同取 28px 档（.att-file 28px 档；高度 delta=0，B12 的
+   ±4px 断言恒稳）：字号/圆角随 .att-ref 基座（12px/8px），作用域只调间距与
+   收缩面。材质（sapphire alpha token）、message-circle 图标、实心圆白 ✕ 全部
+   沿用现状（零新色值）。
+   作用域 = 附件条内的 chat-message chip（data-ref-type 锚定）：其它 .att-ref
+   chip（file/document/task/html-element）维持 .att-ref 基座 28px 档逐值不变。
+   溢出处理 = 折叠腿「+N」收展（attachStripFold.js；B12 断言的「换行不横向溢出」
+   由折叠态 display:none 同判成立 —— 条带 scrollWidth 恒 ≤ clientWidth）。── */
+#attachment-preview .att-ref[data-ref-type="chat-message"] {
+  gap: var(--ds-space-1);
+  padding: 0 var(--ds-space-1h) 0 var(--ds-space-2);
+  flex: 0 1 auto;
+  min-width: 0;
+}
+#attachment-preview .att-ref[data-ref-type="chat-message"] .att-ref-label { max-width: 220px; }
+/* 引用牌图标化（2026-11-02 11:00 作者令「引用的消息也需要图标化，文档和图片就是
+   原图标和图片缩略，文字的话就单独设计一个logo」）：chip 的类型图标三形态同盒 ——
+   图片真缩略 / 文档 `.fc-icon` 色档 / 文字 logo，一律 18px（chip 高 28px 档内留
+   5px 上下气，与既有一行式 chip 语言同族）。字形与判定单点 = js/quoteLogo.js
+   （与气泡引用块 `.msg-quote-icon` 同源）；此处只管尺寸/裁切，零新色值。 */
+.att-ref .att-ref-icon .nf-qicon {
+  --nf-qicon-size: 18px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--ds-radius-badge);
+}
+.att-ref .att-ref-icon .nf-qicon.is-thumb { background: rgba(0, 0, 0, 0.06); }
+.att-ref .att-ref-icon .nf-qicon.fc-icon { font-size: var(--ds-fs-glyph); }
+@media (prefers-color-scheme: dark) {
+  .att-ref .att-ref-icon .nf-qicon.is-thumb { background: rgba(255, 255, 255, 0.09); }
+}
+/* 引用入口键（#quote-item-btn）CSS 随键退役（作者令 2026-11-03 10:11 ②）：
+   `.icon-btn[hidden] { display:none }` 这条同权补丁原只为「没有可引叠卡时按需
+   隐身」而写；键本身移除后无消费方，规则一并摘除（.icon-btn 是 display:flex，
+   UA hidden 会被压过，将来若重引入按需隐身形态须同时补回该补丁）。 */
+/* ✕ 圆盘随 chip 同比例缩小（同字形/同色/同居中纪律，仅尺寸档位）—— 与 .att-file
+   的紧凑高度对齐；hover 态沿用共用块「红底白 ✕」钉回（input.css 上方同段）。 */
+#attachment-preview .att-ref[data-ref-type="chat-message"] .fm-quote-remove { width: 13px; height: 13px; }
+#attachment-preview .att-ref[data-ref-type="chat-message"] .fm-quote-remove svg { width: 7px; height: 7px; }
+/* 附件内联错误行（输入框错误态极简批 2026-10-31：红底色块/红字退役 → 中性
+   etched 底 + 2px 红左缘唯一载体 + 中性字，同 error-escalation-card 极简范式）。 */
 .att-error {
-  background: rgba(244, 67, 54, 0.12);
-  color: var(--color-error);
-  padding: 3px 10px;
-  border-radius: 6px;
-  font-size: 12px;
+  background: var(--glass-etched-bg, var(--color-surface));
+  border-left: 2px solid var(--status-error-icon, var(--color-error));
+  color: var(--status-word, var(--color-text));
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-chip);
+  font-size: var(--ds-fs-hint);
   transition: opacity 0.3s ease;
 }
 .att-error-fade { opacity: 0; }
-.att-remove {
-  position: absolute;
-  top: -4px; right: -4px;
-  width: 16px; height: 16px;
+/* fwdguard-impl (2026-09-17) 的 .ref-gate-hint 提示行已随 #531（2026-10-18 作者令：
+   「不应该换行，而是在原有输入框提示文字的位置进行修改」）移除 —— 闸文案改走输入框
+   自身 placeholder（js/input.js），发送键禁用态仍由既有 `#send-btn:disabled` 档
+   承担（零新增按钮配色）。 */
+/* ── 待清件「清除」键（❌）— **单一声明块、两处消费者** ────────────────────────
+   ① 主窗口图片/文件附件的 ❌（`.att-remove`，`js/chat.js` 的 renderAttachmentPreview）
+   ② 好友消息面引用条的 ❌（`.fm-quote-remove`，`js/reference.js` 的 closeStyle:'disc'
+      —— 作者 2026-09-19 04:22 **修正①**：「引用条的 ❌ 与样式一律参考主窗口既有模式」）
+   ⇒ 形态 = 主窗口既有件：`--color-error` **实心圆** + **白 ✕**，16×16。
+   🔴 **修正②（居中修复）**：旧形态的图形是**文本字符 `x`**（`font-size:10px`），
+   由 flex 居中 ⇒ 居中对象是**行盒**而非字形：行盒含上侧 ascent 空间，x-height 字形
+   的视觉中心落在行盒中线**下方**（作者截图 2 实测：✕ 形心比圆盘 bbox 中心低 1px /
+   16px 直径 ⇒ 6.25% 偏心）。现改为**几何对称的 SVG ✕**（16×16 viewBox 内
+   M4,4→L12,12 / M12,4→L4,12，形心 =(8,8) 恒等于 viewBox 中心），`display:block`
+   + flex 居中 ⇒ 图形中心与圆盘中心**逐值相等**（读数见本批报告「❌ 居中前后」）。
+   白 ✕ 色 = `#fff`（既有字面量，与旧 `color:#fff` 同值，零新色值）。 */
+.att-remove,
+.fm-quote-remove {
+  /* 角标盘径单点：位置偏移由本值算（attachment-thumb-unify 批 2026-11-05）：
+     删除钮**圆心恒压在小盒右上角**（半叠角 = 标准角标位）——修前 top/right 各
+     -4px 使盘心落在盒内 4px，16px 盘有 3/4 面积盖在 28px 缩略图上（作者报障
+     「红色 × 压在图上的错位」）。手机层只改本值（22px），偏移/命中盒自动跟随。 */
+  --att-remove-size: 16px;
+  width: var(--att-remove-size);
+  height: var(--att-remove-size);
+  padding: 0;
+  border: none;
   background: var(--color-error);
   color: #fff;
   border-radius: 50%;
-  font-size: 10px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  flex: none;
 }
-#input {
-  border: none;
-  background: transparent;
-  border-radius: 18px;
-  padding: 8px 14px;
-  font-size: 14.5px;
-  outline: none;
+.att-remove {
+  position: absolute;
+  top: calc(var(--att-remove-size) / -2);
+  right: calc(var(--att-remove-size) / -2);
+  font-size: var(--ds-fs-meta);
+}
+/* 命中域外扩到 30×30（composer-overlap 批 2026-10-18）：16px 视觉圆盘的可点域
+   过小（作者批注「×删除钮可点域」）。::after 生成外扩 7px 的透明层 —— 生成盒
+   隶属本元素，:hover 命中测试同样落在圆盘上，视觉零变化。 */
+.att-remove::after { content: ''; position: absolute; inset: -7px; border-radius: 50%; }
+.att-remove svg,
+.fm-quote-remove svg { width: 8px; height: 8px; display: block; }
+/* 共用件的 hover 态也归**同一个声明块**：`.att-ref-remove:hover`（本表 :529/:534，
+   0,2,0）会把卡内 ✕ 的底色/字色改成灰档 —— 对**圆盘形态**（`.fm-quote-remove`）
+   那是错的（红圆盘被换成灰底、白 ✕ 被换成红 ✕）。此处以同特异度、更靠后的位置
+   钉回「红底白 ✕」⇒ 形态在任何指针态下都恒等于主窗口附件 ❌。对 `.att-remove`
+   是**计算值零变化**（主窗口此前无 hover 声明，值与此处逐字相同）。 */
+.att-remove:hover,
+.fm-quote-remove:hover { background: var(--color-error); color: #fff; }
+/* 输入面唯一标准批（2026-11-06）：`#input` 是 `#input-bar` 玻璃壳里的**裸件**，
+   无底/无边/无圆角/无环四条归 css/inputSurface.css 的裸件成员表（作者令
+   2026-11-03 ④「输入区键盘态不再加高亮」在那里以具名例外落地）。本文件只留几何。 */
+/* 输入件**单一定义**（composer 统一批 2026-11-18）：主会话 `#input` 与消息面
+   `.fm-input` 是同一个件 —— `<textarea rows="1">`、同裸件档、同字阶/行高/内距、
+   同 `max-height: 200px` 自适应上限（js/input/composer.js growComposerInput 同档）。
+   `.fm-input` 额外由 friends.css 补 `flex:1; min-width:0`（横排占位——那是**容器**
+   差异，不是件差异）。 */
+#input,
+.fm-input {
+  /* 瘦身批：垂直内 padding 8px → 6px（横向 14px 不动；多行增长逻辑读
+     scrollHeight，与本 padding 无耦合）。
+     内距收紧批（2026-11-18）：横向 14px 字面量 → 裸件族单源 token
+     `--nf-field-pad-x`（= --ds-space-3 = 12px，stand-tokens.css 声明「= #input-bar」
+     的那一枚）；一处动作同时完成**去面内字面量**与**再收紧 2px/侧**，两面同值。 */
+  padding: var(--ds-space-1h) var(--nf-field-pad-x);
+  font-size: var(--ds-fs-bubble);
   width: 100%;
   line-height: 1.4;
   resize: none;
@@ -549,7 +779,8 @@
   box-sizing: border-box;
   color: var(--color-text);
 }
-#input::placeholder {
+#input::placeholder,
+.fm-input::placeholder {
   color: var(--color-text-muted);
 }
 /* Voice dictation uses the global green caret — no override needed */
@@ -558,24 +789,22 @@
   border: 1px solid transparent; /* reserves edge space for glass hover — no layout shift */
   color: var(--color-frame-text-muted);
   cursor: pointer;
-  padding: 6px;
+  padding: var(--ds-space-1h);
   width: 36px; height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
-.icon-btn:hover {
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
-  color: var(--color-frame-text);
+@media (hover: hover) {
+  .icon-btn:hover {
+    background: var(--glass-control-bg-hover);
+    border-color: var(--glass-control-border);
+    color: var(--color-frame-text);
+  }
 }
+
 .icon-btn:active { background: var(--color-frame-active); transform: scale(0.96); }
 .icon-btn.recording {
   background: #07c160;
@@ -598,16 +827,34 @@
    structure via palette uniforms; the CSS orb below is only the
    WebGL-unavailable fallback. State class lives on .mic-orb-wrap; the orb +
    ripple consume --orb-filter / --orb-glow / --orb-dot / --orb-inset.
+
+   Restored verbatim (voicefix batch, author 2026-09-21 14:0x ③): the visup-b
+   retirement (2cba0a224, 2026-09-19) reverted to the LATEST orb build —
+   source of truth = `git show 2cba0a224^:src/main/resources/web/css/input.css`
+   (not the v8.2.2 original). The settings-page orb palette (orbSettingsUI /
+   orbPresets) is NOT part of this revert: it stays exactly as-is by author
+   ruling. Simple-mic feedback classes (.icon-btn.recording / voicePulse)
+   above remain untouched — they still serve the friend/group windows.
    ============================================================================ */
 .mic-orb-wrap {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   flex-shrink: 0;
   /* Orb base gradient (dark default); light theme overrides below. */
   --orb-base: radial-gradient(120% 120% at 32% 28%, #b6cff5 0%, #8C7DD6 45%, #2f3d78 100%);
+  /* Drag tracking (input.js): the bubble follows the pointer 1:1 while
+     .dragging is held (transition suppressed), then snaps back on release. */
+  transition: transform 0.25s ease;
 }
+/* voiceseal 批（批 #508）封存面 B 的 companion 规则（social-section-remote
+   同款先例）：上面的 `display:flex` 会压过 UA 的 `[hidden]{display:none}`，
+   必须显式重申 —— 隐藏 ≠ 删除，摘掉 `hidden`（js/voiceSeal.js flag latch）
+   即原样回归，本条规则自动失效。 */
+.mic-orb-wrap[hidden] { display: none; }
+.mic-orb-wrap.dragging { transition: none; }
 .micbubble {
   position: relative;
   width: 64px;
@@ -621,6 +868,9 @@
   cursor: pointer;
   flex-shrink: 0;
   border-radius: 50%;
+  /* Keep the pointer stream flowing through the drag gesture — without this
+     a touch drag is claimed by scrolling and pointermove stops firing. */
+  touch-action: none;
 }
 .micbubble:focus-visible {
   outline: 2px solid rgb(var(--sapphire) / 0.6);
@@ -701,7 +951,10 @@
 .mic-orb-wrap.s-bg        { --orb-filter:hue-rotate(8deg) saturate(0.80) brightness(0.94); --orb-glow:rgba(144,153,203,.28); --orb-dot:#9099CB; }
 .mic-orb-wrap.s-frozen    { --orb-filter:saturate(0.40) brightness(0.75); --orb-glow:rgba(126,136,162,.16); --orb-dot:#7E88A2; }
 .mic-orb-wrap.s-frozenerr { --orb-bg:radial-gradient(120% 120% at 32% 28%, #F0D9C0 0%, #C99A6E 48%, #5E4130 100%); --orb-inset:rgba(58,38,22,0.32); --orb-filter:none; --orb-glow:rgba(214,150,110,.30); --orb-dot:#B08468; }
-.mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #FADBD4 0%, #DE575C 48%, #7E262C 100%); --orb-inset:rgba(64,16,20,0.34); --orb-filter:none; --orb-glow:rgba(229,72,77,.40); --orb-dot:#E5484D; }
+/* ui-status-redesign（盘点 #54，B 组）：麦克风错误 orb = 大图案载体（渐变材质
+   保留）；散落取值收敛——--orb-dot / --orb-glow 归 --status-error-icon token
+   （暗档随 token 提亮）。WebGL 主路径走 orbPresets 'magma'+hue（无散落字面量）。 */
+.mic-orb-wrap.s-micerr    { --orb-bg:radial-gradient(120% 120% at 32% 28%, #FADBD4 0%, #DE575C 48%, #7E262C 100%); --orb-inset:rgba(64,16,20,0.34); --orb-filter:none; --orb-glow:color-mix(in srgb, var(--status-error-icon) 40%, transparent); --orb-dot:var(--status-error-icon); }
 .mic-orb-wrap.s-offline   { --orb-filter:saturate(0) brightness(0.88); --orb-glow:rgba(150,155,165,.14); --orb-dot:#8A8F98; }
 
 /* Action layering (v8.1 §10.3③ / v8.2 §10.5, CSS fallback family):
@@ -763,111 +1016,66 @@
   .mic-orb-wrap.s-nebula .css-orb.orb { animation: none; }
   .orb-ripple { display: none; }
 }
-#send-btn {
-  /* Logo-green glass (2026-09-03 author ruling): the WeChat green #07C160 of
-     the logo, applied to the button. 0.42 washed out and read as disabled on
-     some backgrounds (PR #44 three-dim review, dim 1 confirmed). Values are
-     per-theme: the same alpha composites much darker over the dark backdrop,
-     so dark carries +0.07 alpha to hit the same perceived logo green. The
-     glass language is untouched — blur + saturate, inset edges, whisper
-     border all stay; only tint depth / border alpha / green glow change. */
-  background: rgba(7, 193, 96, 0.55);
-  -webkit-backdrop-filter: blur(8px) saturate(1.3);
-  backdrop-filter: blur(8px) saturate(1.3);
-  color: #fff;
-  /* Glass edges: whisper border (now green-tinted) + inset highlights +
-     restrained green glow (~0.2 alpha ambient — present, not loud). */
-  border: 1px solid rgba(7, 193, 96, 0.30);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.35),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 1px 4px rgba(7, 193, 96, 0.25),
-    0 0 12px rgba(7, 193, 96, 0.20),
-    0 2px 8px rgba(0, 0, 0, 0.06);
-  border-radius: 50%;
-  width: 36px; height: 36px;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
-}
-#send-btn:hover {
-  /* Deepen the tint inside the glass family — never a solid fill. */
-  background: rgba(7, 193, 96, 0.68);
-  border-color: rgba(7, 193, 96, 0.40);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.4),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.08),
-    0 2px 8px rgba(7, 193, 96, 0.30),
-    0 0 14px rgba(7, 193, 96, 0.22),
-    0 2px 12px rgba(0, 0, 0, 0.08);
-}
-#send-btn:active {
-  /* One notch deeper than hover + a pressed inset shadow — still translucent
-     (alpha < 1, blur still active). Solid fills are forbidden in this family. */
-  background: rgba(7, 193, 96, 0.75);
-  border-color: rgba(7, 193, 96, 0.45);
-  box-shadow:
-    inset 0 1px 3px rgba(0, 0, 0, 0.15),
-    0 1px 2px rgba(7, 193, 96, 0.12);
-}
-#send-btn:disabled {
-  /* PR #44 contribution, adopted: faint green (not grey) keeps the whole
-     control in the logo-green system while reading "not yet available". */
-  background: rgba(7, 193, 96, 0.16);
-  border-color: rgba(7, 193, 96, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+
+/* 形态单源已迁 design-system.css `.ds-turn-btn`（ui-unification-20261103-
+   canvas-ask-resize 批，作者令「发送按钮与终止按钮样式与主会话完全统一（同一
+   组件/同一 design-system 令牌，不得另做一套）」）：
+       · 几何 36×36 / r50% / padding 0 / 图标 18px / stroke 2.5 → --ds-turn-btn-*
+       · 两态配色 send = --ds-turn-send-*（= --ctl-send-* 微信绿考古值）
+       · 热区 ::after 外扩到 44（HIG）→ --ds-turn-hit
+   ⇒ 本文件对 `#send-btn` **零形态声明**（连 `{}` 空块都不留：空块会被读成
+   "这里还有第二套"）。只留主会话专属状态：禁用（空正文闸）/ 掉线（未连接灰档），
+   见下方 `#send-btn:disabled` 与 `#send-btn.disconnected`。
+   历史沿革（10-31 v2 药丸 → 11-03 ③ 收回圆形）见 git 与 design-system.css §⑰。 */
+/* 圆钮内的状态图标透明度档（禁用/掉线）留在消费面：它们是主会话的**状态**，
+   不是按钮形态。 */
+/* 四会话统一批 2026-11-05：**同一状态档**同时服务主会话发送键与三种会话窗的
+   发送键（三窗改挂 `.ds-turn-btn--send` 后，禁用/掉线两态必须同源 —— 否则同一
+   枚圆钮在会话窗里会「按下没反应也没变灰」）。 */
+:is(#send-btn, .fm-send-btn):disabled {
+  /* Empty-input gating changes behavior, never the shared green send face. */
   cursor: default;
+  transform: none;
 }
-#send-btn:disabled svg { opacity: 0.45; }
-#send-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
 /* Disconnected state — doubles as the connection indicator: the send button
-   fades into the faint-green family (same as :disabled) so users see they
-   can't send until the link is back. Green family, not grey — keeps the
-   button's green identity; not red — red reads as error, this reads as
-   "unavailable". */
-#send-btn.disconnected {
-  background: rgba(7, 193, 96, 0.16);
-  border-color: rgba(7, 193, 96, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
+   fades into the family's **gray** (掉线灰) so users see they can't send until
+   the link is back.
+   🔴 2026-09-15（作者逐字令）：「全局的发送按钮可能都需要优化一下设计，可以参考
+   我们主对话框的设计，如果掉线了会变成灰色，正常是绿色」 ⇒ 本档从**淡绿**
+   （原注释「Green family, not grey」）**改为灰**，并被发送键族上提到全站统一档
+   （`sapphire.css` 发送族块的 `.disconnected`，与本键同判据 `!state.connected`）。
+   原「淡绿即链接不可用」的裁定**被本令取代**（作废，不再作为待拍板项）。
+   灰取本仓既有发送族灰 token（零新增字面量色值）；rest / hover / active 三档
+   **一字未改**（`#send-btn` 仍是本批全站发送键的状态色基准）。
+   形态批（2026-11-03）：几何与两态配色已上抬 `.ds-turn-btn`；本档只剩**掉线**
+   这一个状态差分，是主会话独有的（Canvas Ask 面板无连接态钮）。 */
+:is(#send-btn, .fm-send-btn).disconnected {
+  background: var(--glass-send-bg-active);
+  border-color: var(--glass-send-border-active);
+  color: var(--color-text-muted);
   cursor: not-allowed;
 }
-#send-btn.disconnected svg { opacity: 0.45; }
-#send-btn.disconnected:hover { background: rgba(7, 193, 96, 0.16); }
-/* Dark theme: same hue, deeper tint. Over the dark backdrop rgba(7,193,96,0.55)
-   composites to a muted sea-green (≈rgb(12,116,65)) — the exact "reads
-   disabled" failure the review flagged. +0.07 alpha lands the composite in
-   unmistakable logo-green territory while staying well under solid. */
-@media (prefers-color-scheme: dark) {
-  #send-btn { background: rgba(7, 193, 96, 0.62); border-color: rgba(7, 193, 96, 0.34); }
-  #send-btn:hover { background: rgba(7, 193, 96, 0.72); border-color: rgba(7, 193, 96, 0.44); }
-  #send-btn:active { background: rgba(7, 193, 96, 0.78); border-color: rgba(7, 193, 96, 0.48); }
+:is(#send-btn, .fm-send-btn).disconnected svg { opacity: 0.45; }
+@media (hover: hover) {
+  :is(#send-btn, .fm-send-btn).disconnected:hover { background: var(--glass-send-bg-active); }
 }
 
-#stop-btn {
-  background: var(--color-error);
-  color: #fff;
-  /* Same glass material as #send-btn: blur + inset edges + whisper border */
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  -webkit-backdrop-filter: blur(8px) saturate(1.3);
-  backdrop-filter: blur(8px) saturate(1.3);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.3),
-    inset 0 -1px 0 rgba(0, 0, 0, 0.12),
-    0 1px 4px rgba(0, 0, 0, 0.12);
-  border-radius: 50%;
-  width: 36px; height: 36px;
-  cursor: pointer;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  transition: background 0.15s, box-shadow 0.15s;
-}
-#stop-btn:hover { background: #d32f2f; }
-#stop-btn svg { width: 18px; height: 18px; stroke-width: 2.5; }
+/* v3 实现批：hover/active = --ctl-send-* 绿阶（见本块头注）；10-30 墨族注释
+   与暗档绿字面量组已随换代移除（git 历史可查）。 */
+
+/* #stop-btn：几何/配色单源同上（.ds-turn-btn--stop + `.ds-turn-btn`）。
+   **默认 display:none 也已在组件层**（`.ds-turn-btn--stop`）——idle↔busy 的
+   显隐由 js/input/composer.js applyTurnChrome 内联 display 单点驱动，
+   消费面不再各写一份初始态。本块刻意留空（不留第二套形态）。 */
+
+/* ── 输入条双钮热区补齐（作者报障 2026-11-03 22:15「手机端发送按钮和终止按钮
+   大小怎么没有统一」/ 待办 #1475 第八条）────────────────────────────────
+   历史口径（保留为设计依据，声明本体已上抬）：两钮是**同位同角色的互斥两态**
+   （busy 时 #send-btn 隐 / #stop-btn 显，见 js/input/composer.js
+   applyTurnChrome）⇒ 必须同尺寸档、同热区档；主次只由颜色表达。
+   形态批（ui-unification-20261103-canvas-ask-resize）：`position: relative` 与
+   `::after` 热区外扩两条声明**已迁 design-system.css `.ds-turn-btn`**——同一对
+   按钮现在也服务 Canvas Ask 面板，热区规则只能有一份。本文件不再声明。 */
 
 /* ---------- Voice Overlay ---------- */
 .voice-overlay {
@@ -876,14 +1084,12 @@
   left: 12px;
   right: 12px;
   background: rgba(0,0,0,0.12);
-  backdrop-filter: blur(20px) saturate(1.15);
-  -webkit-backdrop-filter: blur(20px) saturate(1.15);
   border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 14px;
-  padding: 10px 14px;
+  border-radius: var(--ds-radius-card-md);
+  padding: var(--ds-space-block-y) 14px;
   display: none;
   align-items: center;
-  gap: 10px;
+  gap: var(--ds-space-inline-gap);
   z-index: 200;
   opacity: 0;
   transform: translateY(6px);
@@ -918,7 +1124,7 @@
 .voice-text {
   flex: 1;
   color: #fff;
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   line-height: 1.4;
   white-space: nowrap;
   overflow: hidden;
@@ -927,7 +1133,7 @@
 }
 .voice-hint {
   color: rgba(255,255,255,0.55);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   flex-shrink: 0;
 }
 
@@ -935,70 +1141,105 @@
    Now children of #input-area so
    backdrop-filter can blur chat content instead of being trapped inside
    #input-bar's backdrop root. */
-#slash-dropdown {
+/* #mention-dropdown (@-mention project popup, mention-routing batch) shares
+   the #slash-dropdown glass recipe verbatim — one dropdown pattern, two hosts. */
+/* 换装批（作者令 2026-10-31「@ 与 / 候选浮层对齐现行设计语言」）：材质换代
+   为悬浮件玻璃单源。统一按钮玻璃批 2026-11-01：面板材质迁 css/glass.css 面
+   级浮件档（--glass-bg + blur24 sat1.15 双写 + --cv-shadow；原 --g2-fab-*
+   F1 档随族退役，设计稿 §4 遗产处置表），本块只留几何。行内缩圆角行（r10）。
+   选中/hover 高亮换代（作者令 2026-11-01 20:03「选中项的高亮从现在的黑色
+   改成浅灰色」）：原选中行墨族 --btn-ink-* 墨面黑块退役，改浅灰 wash 三态
+   （本块 --dd-row-* 双变量，随面板主题解析）——选中 = 浅灰 wash（亮档墨灰
+   低透明 / 暗档白低透明 wash 等价映射，避免刺眼白块），字色保持本档不翻转
+   （亮档深字 / 暗档浅字对比度不变）；hover 同语言淡一档；键盘 active 与鼠标
+   hover 同一视觉语言。@ 项目浮层与 / 命令浮层共用同一套。 */
+#slash-dropdown,
+#mention-dropdown {
   position: absolute;
   bottom: 100%;
   left: 12px;
   right: 12px;
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.15),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
-  margin-bottom: 4px;
-  max-height: 200px;
+  border-radius: var(--ds-radius-card-lg);
+  margin-bottom: var(--ds-space-2);
+  max-height: 240px;
   overflow-y: auto;
   display: none;
   z-index: 50;
   pointer-events: auto;
+  padding: var(--ds-space-1h) 0;
+  /* 行态 wash 双变量（亮档默认；暗档双写见下方两组选择器） */
+  --dd-row-active: rgba(17, 24, 39, 0.08);
+  --dd-row-hover: rgba(17, 24, 39, 0.04);
 }
-#slash-dropdown.on { display: block; }
+/* 行态 wash 三态解析（结构同 stand-tokens.css --btn-ink-* 族：面板强制暗
+   优先，无 data-theme 回退 prefers-color-scheme） */
+html[data-theme="dark"] #slash-dropdown,
+html[data-theme="dark"] #mention-dropdown {
+  --dd-row-active: rgba(255, 255, 255, 0.12);
+  --dd-row-hover: rgba(255, 255, 255, 0.06);
+}
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]):not([data-theme="dark"]) #slash-dropdown,
+  html:not([data-theme="light"]):not([data-theme="dark"]) #mention-dropdown {
+    --dd-row-active: rgba(255, 255, 255, 0.12);
+    --dd-row-hover: rgba(255, 255, 255, 0.06);
+  }
+}
+#slash-dropdown.on,
+#mention-dropdown.on { display: block; }
+/* 分组标题（换装批）：两浮层顶部的类别签，纯呈现（aria-hidden，非 listbox
+   option，键盘导航/行序零影响）；字号取元信息档 11px/500。 */
+.dd-group-title {
+  padding: var(--ds-space-1) var(--ds-space-4) var(--ds-space-1h);
+  font-size: var(--ds-fs-meta);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  user-select: none;
+}
 .slash-item {
-  padding: 10px 14px;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  margin: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-button);
   cursor: pointer;
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  border-bottom: 1px solid #f0f0f0;
+  gap: var(--ds-space-half);
   position: relative;
+  transition: background-color 0.15s ease;
 }
-.slash-item:last-child { border-bottom: none; }
-.slash-item:hover, .slash-item.active {
-  background: #f0f0f0;
-}
+.slash-item + .slash-item { margin-top: var(--ds-space-half); }
+.slash-item:hover { background: var(--dd-row-hover); }
 .slash-item.active {
-  background: #e8f5e9;
+  background: var(--dd-row-active);
 }
 .slash-cmd {
-  font-size: 14px;
+  font-size: var(--ds-fs-bubble);
   font-weight: 500;
-  color: #333;
+  line-height: 1.5;
+  color: var(--color-text);
 }
 .slash-desc {
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   color: var(--color-text-muted);
 }
 .slash-when {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   opacity: 0.7;
   display: block;
-  margin-top: 2px;
+  margin-top: var(--ds-space-half);
   font-style: italic;
 }
 .slash-badge {
   display: inline-block;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 500;
   letter-spacing: 0.3px;
   text-transform: uppercase;
-  padding: 1px 6px;
-  border-radius: 4px;
-  margin: 0 6px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
+  margin: 0 var(--ds-space-1h);
   line-height: 1.4;
   vertical-align: middle;
 }
@@ -1015,8 +1256,8 @@
   display: none;
   cursor: pointer;
   color: var(--color-text-muted);
-  padding: 4px;
-  border-radius: 4px;
+  padding: var(--ds-space-1);
+  border-radius: var(--ds-radius-badge);
   transition: color 0.15s, background 0.15s;
 }
 .slash-item:hover .slash-delete {
@@ -1026,6 +1267,57 @@
 .slash-delete:hover {
   color: #e53935;
   background: rgba(229,57,53,0.1);
+}
+
+/* ── @-mention project popup (mention-routing batch) ────────────────────
+   Item rows mirror the .slash-item family (same paddings, same hover/active
+   treatment) so the two dropdowns read as one pattern. */
+.mention-item {
+  padding: var(--ds-space-2) var(--ds-space-3);
+  margin: 0 var(--ds-space-1h);
+  border-radius: var(--ds-radius-button);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-half);
+  transition: background-color 0.15s ease;
+}
+.mention-item + .mention-item { margin-top: var(--ds-space-half); }
+.mention-item:hover { background: var(--dd-row-hover); }
+.mention-item.active {
+  background: var(--dd-row-active);
+}
+.mention-name {
+  font-size: var(--ds-fs-bubble);
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--color-text);
+}
+.mention-path {
+  font-size: var(--ds-fs-hint);
+  line-height: 1.5;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Zero-match state: informational line, not a clickable row. */
+.mention-empty {
+  padding: var(--ds-space-2) var(--ds-space-4);
+  font-size: var(--ds-fs-hint);
+  color: var(--color-text-muted);
+  cursor: default;
+}
+/* 降级（glass.css 同口径：@supports + html.no-backdrop 双保险）：无
+   backdrop-filter 引擎时玻璃底回落实色档 = --glass-bg 原值（主降级块在
+   glass.css，此处为下拉自身旧块的口径收口——值同源零漂移）。 */
+@supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  #slash-dropdown,
+  #mention-dropdown { background: var(--glass-bg); }
+}
+html.no-backdrop #slash-dropdown,
+html.no-backdrop #mention-dropdown {
+  background: var(--glass-bg);
 }
 
 /* ── Queue Bar (messages typed while LLM is busy) ──────────────────────
@@ -1048,43 +1340,21 @@
 #queue-bar.visible {
   max-height: 280px;
   opacity: 1;
-  margin-bottom: 4px;
+  margin-bottom: var(--ds-space-1);
   overflow-y: auto;
-  /* Sapphire glass — identical material to #input-bar */
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  border: 1px solid var(--glass-border);
-  border-radius: 20px;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
-    0px 2px 8px rgba(0, 0, 0, 0.04),
-    0px 8px 24px rgba(0, 0, 0, 0.06);
+  border-radius: var(--ds-radius-shell);
+  /* Sapphire glass — identical material to #input-bar（材质迁 glass.css
+     面级浮件档：--glass-bg + blur24 sat1.15 双写 + --cv-shadow + 折射线） */
 }
-/* Top-edge refraction line — same technique as .glass::before */
-#queue-bar.visible::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg,
-    transparent 10%,
-    var(--sapphire-refraction) 50%,
-    transparent 90%
-  );
-  pointer-events: none;
-  z-index: 1;
-}
+/* Top-edge refraction line — 同 #input-bar（glass.css #queue-bar.visible::before） */
 
 /* ── Queue header ── */
 .queue-bar-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px 4px;
-  font-size: 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
   cursor: default;
 }
 .queue-bar-title {
@@ -1102,7 +1372,7 @@
   padding: 0;
   border: none;
   background: transparent;
-  border-radius: 4px;
+  border-radius: var(--ds-radius-badge);
   cursor: pointer;
   color: var(--color-text-muted);
   transition: background 0.15s, color 0.15s;
@@ -1127,8 +1397,8 @@
 .queue-item {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 16px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-1) var(--ds-space-4);
   transition: background 0.12s ease;
 }
 .queue-item:hover {
@@ -1143,9 +1413,9 @@
 .queue-item-grip {
   cursor: grab;
   color: var(--color-text-muted);
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   opacity: 0.5;
-  padding: 0 2px;
+  padding: 0 var(--ds-space-half);
   flex-shrink: 0;
   user-select: none;
   transition: opacity 0.15s;
@@ -1159,7 +1429,7 @@
 .queue-item-text {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.4;
   color: var(--color-text);
   white-space: nowrap;
@@ -1175,46 +1445,46 @@
 .queue-item-att {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   flex-shrink: 0;
 }
 .queue-item-att-thumb {
   width: 24px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   object-fit: cover;
   border: 1px solid var(--glass-border);
   flex-shrink: 0;
 }
 .queue-item-att-file {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   background: var(--glass-etched-bg);
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   white-space: nowrap;
   max-width: 80px;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .queue-item-att-more {
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-text-muted);
   background: var(--glass-etched-bg);
-  padding: 2px 5px;
-  border-radius: 4px;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   flex-shrink: 0;
 }
 .queue-item-actions {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--ds-space-1);
   flex-shrink: 0;
 }
 .queue-item-btn {
-  font-size: 11px;
-  padding: 3px 10px;
-  border-radius: 8px;
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-1) var(--ds-space-inline-x);
+  border-radius: var(--ds-radius-input);
   border: 1px solid var(--glass-etched-border);
   background: var(--glass-etched-bg);
   color: var(--color-text);
@@ -1226,13 +1496,16 @@
   color: var(--color-primary);
   border-color: rgb(var(--sapphire) / 0.25);
 }
-.queue-item-btn.immediate:hover {
-  background: rgb(var(--sapphire) / 0.12);
-  border-color: rgb(var(--sapphire) / 0.4);
+@media (hover: hover) {
+  .queue-item-btn.immediate:hover {
+    background: rgb(var(--sapphire) / 0.12);
+    border-color: rgb(var(--sapphire) / 0.4);
+  }
 }
+
 .queue-item-btn.recall {
-  padding: 3px 7px;
-  font-size: 12px;
+  padding: var(--ds-space-1) var(--ds-space-2);
+  font-size: var(--ds-fs-btn);
   color: var(--color-text-muted);
   border-color: transparent;
   background: transparent;
@@ -1240,21 +1513,55 @@
   align-items: center;
   justify-content: center;
 }
-.queue-item-btn.recall:hover {
-  color: var(--color-primary);
-  background: rgb(var(--sapphire) / 0.12);
+@media (hover: hover) {
+  .queue-item-btn.recall:hover {
+    color: var(--color-primary);
+    background: rgb(var(--sapphire) / 0.12);
+  }
 }
+
 .queue-item-btn.remove {
-  padding: 3px 7px;
-  font-size: 15px;
+  padding: var(--ds-space-1) var(--ds-space-2);
+  font-size: var(--ds-fs-title);
   line-height: 1;
   color: var(--color-text-muted);
   border-color: transparent;
   background: transparent;
 }
-.queue-item-btn.remove:hover {
-  color: var(--color-error);
-  background: rgba(244, 67, 54, 0.08);
+@media (hover: hover) {
+  .queue-item-btn.remove:hover {
+    color: var(--color-error);
+    background: rgba(244, 67, 54, 0.08);
+  }
+}
+
+
+/* qattachvault 批：载荷丢失失败项 —— 红左缘 + 失败注记（禁静默：失败面留在
+   屏上，撤回/移除入口照旧 = 可重传）。「立即发送」对失败项不渲染（chatQueue.js）。
+   输入框错误态极简批（2026-10-31 作者令「极简简约朴素」口径补齐，10-29
+   e12779943 对话框批的输入框面续篇）：红预算收敛到左缘 2px 描边 + 注记行首
+   图标两处图案载体，正文/注记词转中性字（--status-word），色相即状态。 */
+.queue-item.failed {
+  box-shadow: inset 2px 0 0 0 var(--status-error-icon, var(--color-error));
+}
+.queue-item.failed .queue-item-text {
+  color: var(--status-word, var(--color-text));
+  opacity: 0.85;
+}
+.queue-item-failed-note {
+  font-size: var(--ds-fs-meta);
+  color: var(--status-word, var(--color-text));
+  flex-shrink: 0;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-half);
+}
+.queue-item-failed-note .st-ic {
+  width: 11px;
+  height: 11px;
+  flex-shrink: 0;
+  color: var(--status-error-icon, var(--color-error));
 }
 
 /* ── Dark Theme ───────────────────────────────────────────────────────── */
@@ -1265,55 +1572,26 @@
       0px 2px 8px rgba(0, 0, 0, 0.20),
       0px 8px 24px rgba(0, 0, 0, 0.35);
   }
-  /* Frozen ice material — dark values (spec §5.1/§5.2) */
+  /* Frozen ice material — dark values (极简批 2026-10-29：ring/glow/光晕同灯档
+     退役，材质回落暗档常态三件套，状态差异只剩描边+底色）。 */
   #input-bar.frozen,
   .fa-input-bar.frozen {
-    border-color: rgb(var(--sapphire) / 0.50);
-    background: rgb(var(--sapphire) / 0.14);
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0 0 0 3px rgb(var(--sapphire) / 0.14),
-      0 0 18px rgb(var(--sapphire-glow) / 0.30),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
-  #input-bar.frozen::before,
-  .fa-input-bar.frozen::before {
-    background: linear-gradient(90deg,
-      transparent 10%,
-      rgb(var(--sapphire-glow) / 0.40) 50%,
-      transparent 90%
-    );
+    border-color: rgb(var(--sapphire) / 0.42);
+    background: rgb(var(--sapphire) / 0.12);
   }
   #input-bar.frozen #input::placeholder,
   .fa-input-bar.frozen .fa-input::placeholder {
     color: rgb(var(--sapphire-glow) / 0.9);
-    text-shadow: 0 0 8px rgb(var(--sapphire-glow) / 0.45);
   }
-  /* Error-recovery amber material — dark values (frozen-error-recovery §4.3) */
+  /* Error-recovery amber material — dark values (极简批：同 frozen 收敛)。 */
   #input-bar.frozen-error,
   .fa-input-bar.frozen-error {
-    border-color: rgb(var(--amber) / 0.52);
-    background: rgb(var(--amber) / 0.16);
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0 0 0 3px rgb(var(--amber) / 0.16),
-      0 0 18px rgb(var(--amber-glow) / 0.30),
-      0px 2px 8px rgba(0, 0, 0, 0.20),
-      0px 8px 24px rgba(0, 0, 0, 0.35);
-  }
-  #input-bar.frozen-error::before,
-  .fa-input-bar.frozen-error::before {
-    background: linear-gradient(90deg,
-      transparent 10%,
-      rgb(var(--amber-glow) / 0.42) 50%,
-      transparent 90%
-    );
+    border-color: rgb(var(--amber) / 0.44);
+    background: rgb(var(--amber) / 0.12);
   }
   #input-bar.frozen-error #input::placeholder,
   .fa-input-bar.frozen-error .fa-input::placeholder {
     color: rgb(var(--amber-glow) / 0.95);
-    text-shadow: 0 0 8px rgb(var(--amber-glow) / 0.40);
   }
   #input {
     color: #e0e2e5;
@@ -1323,28 +1601,21 @@
   .icon-btn:active { background: rgba(255,255,255,0.10); transform: scale(0.96); }
   .icon-btn.recording { background: #07c160; }
 
-  #slash-dropdown {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
-      0px 4px 16px rgba(0, 0, 0, 0.30),
-      0px 8px 32px rgba(0, 0, 0, 0.45);
-  }
-
   #queue-bar.visible {
     box-shadow:
       inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
       0px 2px 8px rgba(0, 0, 0, 0.20),
       0px 8px 24px rgba(0, 0, 0, 0.35);
   }
-  .queue-item-btn.immediate:hover {
-    background: rgb(var(--sapphire) / 0.18);
+  @media (hover: hover) {
+    .queue-item-btn.immediate:hover {
+      background: rgb(var(--sapphire) / 0.18);
+    }
   }
 
-  .slash-item { border-bottom-color: #2a2d35; }
-  .slash-item:hover, .slash-item.active { background: #282b33; }
-  .slash-item.active { background: rgba(7,193,96,0.12); }
-  .slash-cmd { color: #d8dae0; }
+  /* 换装批：slash/mention 浮层暗档覆写整体退役 —— 材质已换代 --g2-fab-*/
+  /* --g2-ink-* token，双档由 stand-tokens.css 自解析（data-theme + media）， */
+  /* 此处不再留字面量分支。 */
 
   .att-file { background: #282b33; }
-
 }

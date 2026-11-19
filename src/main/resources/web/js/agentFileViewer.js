@@ -23,8 +23,8 @@ export async function openAgentFile(projectName) {
   body.innerHTML = `
     <div class="flow-def-section">
       <h3>AGENTS.md</h3>
-      <p style="font:400 11px -apple-system;color:var(--color-text-muted);margin:0 0 8px;">${esc(t('agentFile.hint'))}</p>
-      <textarea class="flow-def-edit" id="flow-agentfile-textarea" style="min-height:320px;font-family:ui-monospace,SFMono-Regular,monospace;">${esc(content)}</textarea>
+      <p style="font:400 var(--ds-fs-meta) -apple-system;color:var(--color-text-muted);margin:0 0 var(--ds-space-2);">${esc(t('agentFile.hint'))}</p>
+      <textarea class="flow-def-edit" id="flow-agentfile-textarea" spellcheck="false" autocapitalize="off" autocorrect="off" style="min-height:320px;font-family:ui-monospace,SFMono-Regular,monospace;">${esc(content)}</textarea>
     </div>`;
   const saveBtn = /** @type {HTMLButtonElement|null} */ (document.getElementById('flow-agentfile-save'));
   const statusEl = /** @type {HTMLElement|null} */ (document.getElementById('flow-agentfile-status'));

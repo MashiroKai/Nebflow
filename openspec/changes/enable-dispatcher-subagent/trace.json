@@ -1,0 +1,206 @@
+{
+  "version": 1,
+  "change": "enable-dispatcher-subagent",
+  "mappings": [
+    {
+      "requirement": "DSA-REQ-001",
+      "scenario": "DSA-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/agent/AgentSessionExecution.scala",
+        "src/main/scala/nebflow/core/tools/SubagentTool.scala",
+        "openspec/changes/enable-dispatcher-subagent/proposal.md",
+        "openspec/changes/enable-dispatcher-subagent/design.md",
+        "openspec/changes/enable-dispatcher-subagent/tasks.md",
+        "openspec/changes/enable-dispatcher-subagent/verification.md",
+        "openspec/changes/enable-dispatcher-subagent/specs/dispatcher-subagent/spec.md",
+        "openspec/changes/enable-dispatcher-subagent/trace.json"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/DualModeToolFaceSpec.scala",
+          "name": "F2 dispatcher exposes Subagent alongside the four node tools"
+        },
+        {
+          "path": "src/test/scala/nebflow/agent/DualModeToolFaceSpec.scala",
+          "name": "F5 Subagent validates empty prompts for dispatcher, kernel and ordinary callers"
+        },
+        {
+          "path": "src/test/scala/nebflow/agent/DualModeGrayReleaseSpec.scala",
+          "name": "GR3 persisted dispatcher exposes Subagent and reaches prompt validation"
+        }
+      ]
+    },
+    {
+      "requirement": "DSA-REQ-001",
+      "scenario": "DSA-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/SubagentTool.scala",
+        "src/main/scala/nebflow/core/tools/BlockingSubagent.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/tools/BlockingSubagentEndToEndSpec.scala",
+          "name": "dispatcher SubagentTool.call returns final text and reaps a six-tool child"
+        }
+      ]
+    },
+    {
+      "requirement": "DSA-REQ-001",
+      "scenario": "DSA-SCN-003",
+      "implementation": [
+        "src/main/scala/nebflow/agent/AgentCore.scala",
+        "src/main/scala/nebflow/core/tools/DelegateTool.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/DualModeToolFaceSpec.scala",
+          "name": "F9 dispatcher distinguishes blocking read-only reconnaissance from chain task execution"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/tools/DualModeBriefInjectionSpec.scala",
+          "name": "I4 dispatcher brief permits blocking reconnaissance but keeps task execution on chains"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/tools/BlockingSubagentEndToEndSpec.scala",
+          "name": "dispatcher SubagentTool.call returns final text and reaps a six-tool child"
+        }
+      ]
+    },
+    {
+      "requirement": "DSA-REQ-002",
+      "scenario": "DSA-SCN-004",
+      "implementation": [
+        "src/main/scala/nebflow/agent/AgentCore.scala",
+        "src/main/scala/nebflow/core/tools/BlockingSubagent.scala",
+        "src/main/scala/nebflow/core/tools/SubagentTool.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/tools/BlockingSubagentEndToEndSpec.scala",
+          "name": "Subagent executes foreground Bash and returns its output before cleanup"
+        }
+      ]
+    },
+    {
+      "requirement": "DSA-REQ-002",
+      "scenario": "DSA-SCN-005",
+      "implementation": [
+        "src/main/scala/nebflow/agent/AgentCore.scala",
+        "src/main/scala/nebflow/core/ask/AskSessions.scala",
+        "src/main/scala/nebflow/core/tools/AskTools.scala",
+        "src/main/scala/nebflow/core/tools/registry.scala",
+        "src/main/scala/nebflow/core/delegate/KernelChildSpawnGate.scala",
+        "src/main/scala/nebflow/agent/SharedResources.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/tools/DelegateToolSpec.scala",
+          "name": "subagent tool face is six tools including registered Bash — no Write/Edit, messaging or recursion"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/delegate/KernelChildSpawnGateSpec.scala",
+          "name": "K1a kernel-mode delegate MAY spawn the recon child (def=subagent) — its fixed six tools include Bash"
+        }
+      ]
+    },
+    {
+      "requirement": "DSA-REQ-002",
+      "scenario": "DSA-SCN-006",
+      "implementation": [
+        "src/main/scala/nebflow/prompts/PromptCatalog.scala",
+        "src/main/scala/nebflow/core/entity/BuiltinAgents.scala",
+        "src/main/scala/nebflow/core/tools/SubagentTool.scala",
+        "src/main/scala/nebflow/core/tools/DelegateTool.scala",
+        "src/main/scala/nebflow/core/delegate/KernelChildSpawnGate.scala",
+        "scripts/check-prompt-single-source.mjs",
+        "openspec/changes/enable-dispatcher-subagent/bash-verification.md"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/DualModeToolFaceSpec.scala",
+          "name": "F9 dispatcher distinguishes blocking read-only reconnaissance from chain task execution"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/tools/DualModeBriefInjectionSpec.scala",
+          "name": "I4 dispatcher brief permits blocking reconnaissance but keeps task execution on chains"
+        }
+      ]
+    },
+    {
+      "requirement": "DSA-REQ-003",
+      "scenario": "DSA-SCN-007",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskSessions.scala",
+        "src/main/scala/nebflow/agent/AgentSessionExecution.scala",
+        "src/main/scala/nebflow/core/tools/registry.scala",
+        {
+          "path": "src/main/scala/nebflow/core/tools/GitQueryTool.scala",
+          "deleted": true
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/GitQuerySpec.scala",
+          "deleted": true
+        }
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
+          "name": "F1 Ask has exactly twelve tools (the registry-derived face)"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
+          "name": "F2 retired file and git tools are absent from the allowlist and registry"
+        },
+        {
+          "path": "src/test/scala/nebflow/agent/DualModeToolFaceSpec.scala",
+          "name": "Ask effective face stays independent of dispatcher and declared tools"
+        },
+        {
+          "path": "src/test/scala/nebflow/agent/DualModeToolFaceSpec.scala",
+          "name": "non-Ask roles retain Bash without gaining Ask-exclusive tools"
+        }
+      ]
+    },
+    {
+      "requirement": "DSA-REQ-003",
+      "scenario": "DSA-SCN-008",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskSessions.scala",
+        "src/main/scala/nebflow/gateway/WebSocketRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskBashExecutionSpec.scala",
+          "name": "Ask executes query-only Bash in the registered file directory and returns its output"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskBashExecutionSpec.scala",
+          "name": "Ask cwd uses only its registered file directory"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskBashExecutionSpec.scala",
+          "name": "Ask cwd rejects missing services, missing bindings and invalid bound files"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskBashExecutionSpec.scala",
+          "name": "non-Ask cwd selection remains unchanged without Ask services"
+        }
+      ]
+    },
+    {
+      "requirement": "DSA-REQ-003",
+      "scenario": "DSA-SCN-009",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskContextAssembler.scala",
+        "src/main/scala/nebflow/core/tools/AskTools.scala",
+        "openspec/changes/enable-dispatcher-subagent/ask-verification.md"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
+          "name": "F5 Ask prompt derives the tool list from the registry and states both hard constraints"
+        }
+      ]
+    }
+  ]
+}

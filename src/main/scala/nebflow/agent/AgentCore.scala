@@ -2,16 +2,15 @@ package nebflow.agent
 
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import io.circe.Json
-import io.circe.JsonObject
 import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.AgentCommand.*
+import nebflow.actor.AgentCommand.*
 import nebflow.agent.PromptSections.*
 import nebflow.core.*
 import nebflow.core.compact.*
 import nebflow.core.hooks.*
-import nebflow.core.project.ProjectRuntimeRegistry
+import nebflow.core.project.{NodeRoles, ProjectRuntimeRegistry}
 import nebflow.core.tools.*
 import nebflow.llm.{Fallback, TurnBudgetExceeded}
 import nebflow.shared.*
@@ -19,2063 +18,176 @@ import nebflow.shared.given
 
 import scala.concurrent.duration.*
 
-/**
- * WS 流事件合批管道（原 streamEmitter 内联实现，2026-09-07 抽出并修复 park 饿死）。
- *
- * 缺陷（B-after-A 冒烟悬案，2026-09-07 插桩实证）：旧实现 flush 只发生在
- * ①满 MaxBatch 条 ②距上次 flush ≥ FlushWindowMs ③ToolCall 星号族/Done 事件——
- * 没有常驻 ticker。流 parking（楔死/半开连接——hard-recovery 的目标场景）
- * 且首 delta 距管道构建 < FlushWindowMs（热连接 HTTP 往返仅 ~5ms）时，
- * 缓冲内容永不出网：UI 对恢复前的部分输出完全失明。A 会话冷启动往返
- * ~82ms 恰好越过窗口所以从未暴露。
- *
- * 修复：状态收进 Ref（ticker fiber 与主流 fiber 并发访问，必须原子）+
- * awakeEvery(FlushWindowMs) ticker 挂 `.concurrently`——parking 期间缓冲照常
- * flush；主流终止/出错时 ticker 随之取消。flush 时机语义不变：满 50 条 /
- * 窗口到期（现在真有定时器兜底）/ ToolCall* / Done（先 flush 后发，保序）。
- */
-object StreamBatching:
-
-  final case class BatchState(
-    text: String = "",
-    textCount: Int = 0,
-    thinking: String = "",
-    thinkingCount: Int = 0,
-    lastFlushMs: Long = 0L
-  )
-
-  /** One flush's WS frames — thinking first（流序：thinking 段先于 text 段），then text. */
-  final case class FlushPayload(thinking: Option[Json], text: Option[Json])
-
-  val MaxBatch = 50
-  val FlushWindowMs = 50L
-
-  def textFrame(
-    delta: String,
-    isAskMode: Boolean,
-    isSubagent: Boolean,
-    sessionId: Option[String],
-    agentPath: String
-  ): Json =
-    if isAskMode then
-      Json.obj("type" -> "askTextDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
-    else if isSubagent then AgentStreamEvent.TextDelta(delta).toJson(agentPath, true, None)
-    else Json.obj("type" -> "textDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
-
-  def thinkingFrame(delta: String, isSubagent: Boolean, sessionId: Option[String], agentPath: String): Json =
-    if isSubagent then
-      // Sub-agents emit agentThinking with a delta field. routeWsSend
-      // stamps nodeSessionId; ws.js convertAgentEvent maps agentThinking
-      // → thinkingDelta with sessionId = nodeSessionId so the popup view
-      // renders the reasoning bubble.
-      Json.obj(
-        "type" -> "agentThinking".asJson,
-        "agentId" -> agentPath.asJson,
-        "delta" -> delta.asJson,
-        "nodeSessionId" -> sessionId.asJson
-      )
-    else
-      Json.obj("type" -> "thinkingDelta".asJson, "sessionId" -> sessionId.asJson, "delta" -> delta.asJson)
-
-  def pipe(
-    wsSend: Json => IO[Unit],
-    isSubagent: Boolean,
-    sessionId: Option[String],
-    isAskMode: Boolean,
-    isCompactTurn: Boolean,
-    agentPath: String
-  ): fs2.Pipe[IO, StreamChunk, StreamChunk] =
-    stream =>
-      fs2.Stream.eval(IO.ref(BatchState(lastFlushMs = System.currentTimeMillis()))).flatMap { st =>
-        val send: FlushPayload => IO[Unit] = p => p.thinking.traverse_(wsSend) *> p.text.traverse_(wsSend)
-
-        /** Atomic take: flush now (force) or when the window has elapsed with content buffered. */
-        def take(force: Boolean): IO[Option[FlushPayload]] =
-          IO(System.currentTimeMillis()).flatMap { now =>
-            st.modify { s =>
-              val buffered = s.text.nonEmpty || s.thinking.nonEmpty
-              val due = buffered && (force || now - s.lastFlushMs >= FlushWindowMs)
-              if !due then (s, None)
-              else
-                val p = FlushPayload(
-                  Option.when(s.thinking.nonEmpty)(thinkingFrame(s.thinking, isSubagent, sessionId, agentPath)),
-                  Option.when(s.text.nonEmpty)(textFrame(s.text, isAskMode, isSubagent, sessionId, agentPath))
-                )
-                (BatchState(lastFlushMs = now), Some(p))
-            }
-          }
-
-        def onDelta(isText: Boolean, delta: String): IO[Unit] =
-          IO(System.currentTimeMillis()).flatMap { now =>
-            st.modify { s =>
-              val count = (if isText then s.textCount else s.thinkingCount) + 1
-              if count >= MaxBatch || now - s.lastFlushMs >= FlushWindowMs then
-                val merged = (if isText then s.text else s.thinking) + delta
-                val p =
-                  if isText then FlushPayload(None, Some(textFrame(merged, isAskMode, isSubagent, sessionId, agentPath)))
-                  else FlushPayload(Some(thinkingFrame(merged, isSubagent, sessionId, agentPath)), None)
-                (BatchState(lastFlushMs = now), Some(p))
-              else
-                val next =
-                  if isText then s.copy(text = s.text + delta, textCount = count)
-                  else s.copy(thinking = s.thinking + delta, thinkingCount = count)
-                (next, None)
-            }.flatMap {
-              case Some(p) => send(p)
-              case None    => IO.unit
-            }
-          }
-
-        // THE FIX（2026-09-07）：常驻 ticker——主流 parking 时缓冲照常出网。
-        val ticker = fs2.Stream
-          .awakeEvery[IO](FlushWindowMs.millis)
-          .evalMap(_ => take(force = false).flatMap(_.traverse_(send)))
-
-        stream.evalTap {
-          case StreamChunk.TextDelta(delta) if delta.nonEmpty && !isCompactTurn =>
-            onDelta(isText = true, delta)
-
-          case StreamChunk.ThinkingDelta(delta) if delta.nonEmpty && !isCompactTurn =>
-            onDelta(isText = false, delta)
-
-          case StreamChunk.ToolCallStart(name) if name != "AskUserQuestion" && !isCompactTurn =>
-            val json =
-              if isSubagent then AgentStreamEvent.ToolCallDetected(name).toJson(agentPath, true, None)
-              else Json.obj("type" -> "toolCallDetected".asJson, "sessionId" -> sessionId.asJson, "name" -> name.asJson)
-            take(force = true).flatMap(_.traverse_(send)) *> wsSend(json)
-
-          case StreamChunk.ToolCallChunk(tc) if tc.name != "AskUserQuestion" && !isCompactTurn =>
-            val json =
-              if isSubagent then
-                AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(tc)).toJson(agentPath, true, None)
-              else
-                Json.obj(
-                  "type" -> "toolStart".asJson,
-                  "sessionId" -> sessionId.asJson,
-                  "label" -> nebflow.core.summarizeToolCall(tc).asJson
-                )
-            take(force = true).flatMap(_.traverse_(send)) *> wsSend(json)
-
-          case StreamChunk.ToolArgDelta(toolName, delta) if delta.nonEmpty && !isCompactTurn && !isSubagent =>
-            val json = Json.obj(
-              "type" -> "toolArgDelta".asJson,
-              "sessionId" -> sessionId.asJson,
-              "toolName" -> toolName.asJson,
-              "delta" -> delta.asJson
-            )
-            take(force = true).flatMap(_.traverse_(send)) *> wsSend(json)
-
-          // Stream end: flush any remaining buffered text/thinking so no deltas are lost.
-          case StreamChunk.Done(_, _, _, _) => take(force = true).flatMap(_.traverse_(send))
-
-          case _ => IO.unit
-        }.concurrently(ticker)
-      }
-
-end StreamBatching
-
-private[agent] trait AgentCore:
-
-  protected val MaxDepth = 5
-
-  // R1 (wait-timeout-fix, 2026-09-03 作者裁定): the 5-minute PermissionTimeout
-  // is REMOVED. A permission confirmation is a human-in-the-loop wait — the
-  // same class as AskUser — and must never auto-deny on a timer. The old
-  // "popup missed / WS issue / AFK" lockup concern is covered by visibility
-  // mechanisms instead: the hub card + F4 fallback broadcast (unreachable root
-  // → toast on every other registered root) + pending replay on session
-  // resubscribe. The guaranteed exit is the user's own cancel (Interrupt →
-  // registry back to Idle), not a timer. See AgentCore.awaitPermissionDecision.
-
-  // Nebula 专属工具的剥离语义已收口到 AgentCore.exclusiveToolsFor 单点
-  // （2026-09-05 dream 准入例外：MemoryEdit 对 dream 放开，动作面仍限修订）。
-  // 消费点：buildAllowedToolSet 的 nebulaFiltered 与 AgentLibrary 保存侧 strip。
-
-  private val lifecycleLog = NebflowLogger.forName("nebflow.agent.lifecycle")
-
-  private[agent] type ProcessingFn =
-    (AgentDef, SharedResources, Int, Option[ActorRef[AgentCommand]], AgentState) => Behavior[AgentCommand]
-
-  private def shortUuid(id: String): String =
-    if id.startsWith("agent-") then id.drop(6).take(8)
-    else if id == "-" || id == "system" then id
-    else id.take(8)
-
-  protected def logAgentEvent(
-    agentDef: AgentDef,
-    depth: Int,
-    sessionId: Option[String],
-    sessionName: Option[String],
-    event: String,
-    detail: String = ""
-  )(using ctx: ActorContext[AgentCommand]): Unit =
-    val sid = shortUuid(sessionId.getOrElse("-"))
-    val sname = sessionName.getOrElse("-")
-    val who = if depth == 0 then s"${agentDef.name}-${shortUuid(ctx.self.path.name)}" else s"subagent-${agentDef.name}"
-    val logCtx = lifecycleLog.ctxPrefix(who, s"$sname/$sid")
-    lifecycleLog.infoSync(if detail.nonEmpty then s"$logCtx event=$event detail=$detail" else s"$logCtx event=$event")
-
-  protected def persistIfSession(resources: SharedResources, state: AgentState): IO[Unit] =
-    state.sessionId match
-      case Some(sid) => resources.sessionStore.saveMessagesForSession(sid, state.messages)
-      case None => IO.unit
-
-  protected def maybeAutoCompact(
-    agentDef: AgentDef,
-    resources: SharedResources,
-    depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]],
-    state: AgentState,
-    replyTo: Option[ActorRef[AgentEvent]],
-    processing: ProcessingFn
-  )(using ctx: ActorContext[AgentCommand]): Option[IO[Behavior[AgentCommand]]] =
-    if state.pendingCompaction.isDefined then None
-    else
-      val config = CompactConfig()
-      // ── P0-2（2026-08-22 Write-only 循环批）：满上下文硬截断前置 ──
-      // 估算/上轮上报超 0.95×window 时，LLM 依赖的压缩路径（save turn 与
-      // compact turn 都要带全量消息再调一次 LLM）数学上不可行。原
-      // emergencyClean 保底挂在 circuitBreaker 之后且失败计数是内存态
-      // （激活-失败-放弃循环中 actor 重建重置，circuitBreakerMax 永远攒不
-      // 够）——满死锁下不可达。前置到一切回退条件之前：backoff 未满足也
-      // 不能挡（否则 dispatch 裸奔超窗 LLM 调用，intake 后静默死）。
-      // estimate 是 500/msg 粗估（可高估）——但正常路径早在 80% 阈值就触发
-      // LLM 压缩，能走到 0.95 的只有「压缩持续失败/被卡」，正是 emergency
-      // 的既定场景。
-      val hardLimit = (state.contextWindow.toDouble * 0.95).toInt
-      val reported = state.latestUsage.map(_.inputTokens).filter(_ > 0)
-      val estimatedNow = TokenEstimator.estimate(state.messages)
-      // Cooldown: emergencyClean keeps the last N messages — if those tails
-      // alone still estimate above the limit, an unthrottled guard would
-      // re-fire on every dispatch of the SAME turn chain (infinite loop,
-      // found by the former SaveTurnGuardSpec P0-2). Re-checking is fine a minute later.
-      val cooldownOk =
-        System.currentTimeMillis() - state.lastCompactionFailureAt > EmergencyHardGuardCooldownMs
-      if (reported.exists(_ > hardLimit) || estimatedNow > hardLimit) && cooldownOk then
-        runEmergencyCompact(
-          agentDef,
-          resources,
-          depth,
-          parentRef,
-          state,
-          replyTo,
-          processing,
-          s"P0-2 hard-guard: estimated=$estimatedNow reported=${reported.getOrElse(0)} hardLimit=$hardLimit messages=${state.messages.size}"
-        )
-      else
-        val backoffOk =
-          if state.compactionFailures == 0 then true
-          else
-            val elapsed = System.currentTimeMillis() - state.lastCompactionFailureAt
-            val ok = config.isBackoffSatisfied(state.compactionFailures, elapsed)
-            if !ok then
-              logAgentEvent(
-                agentDef,
-                depth,
-                state.sessionId,
-                state.sessionName,
-                "auto-compact-skipped",
-                s"backoff=${config.backoffMs(state.compactionFailures)}ms elapsed=${elapsed}ms failures=${state.compactionFailures}"
-              )
-            ok
-        if !backoffOk then None
-        else if state.compactionFailures >= config.circuitBreakerMax then
-          if !config.emergencyAutoFallback then
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "auto-compact-skipped",
-              s"circuitBreakerOpen failures=${state.compactionFailures} max=${config.circuitBreakerMax}"
-            )
-            None
-          else
-            runEmergencyCompact(
-              agentDef,
-              resources,
-              depth,
-              parentRef,
-              state,
-              replyTo,
-              processing,
-              s"circuitBreakerOpen failures=${state.compactionFailures} messages=${state.messages.size}"
-            )
-
-        else
-          val inputTokensOpt = state.latestUsage.map(_.inputTokens)
-          // Unified threshold: hardcoded, role-independent (CompactThreshold).
-          val threshold = CompactThreshold.threshold(state.contextWindow)
-          val shouldCompact = inputTokensOpt match
-            case Some(inputTokens) if inputTokens > 0 && inputTokens > threshold =>
-              Some(s"inputTokens=$inputTokens threshold=$threshold")
-            case _ =>
-              val estimated = TokenEstimator.estimate(state.messages)
-              if estimated > threshold then
-                Some(s"estimated=$estimated threshold=$threshold (provider did not report inputTokens)")
-              else None
-          shouldCompact match
-            case Some(detail) =>
-              logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "auto-compact-trigger", detail)
-              Some(startDirectCompaction(agentDef, resources, depth, parentRef, state, replyTo, processing, "full"))
-            case None => None
-
-      end if
-
-  /**
-   * Emergency fallback: non-LLM rule-based compaction (extracted 2026-08-22
-   * Write-only loop batch). Strips tool results, removes old tool-result
-   * pairs, truncates to last N. Two callers:
-   *   - P0-2 hard guard: estimated/reported tokens > 0.95×contextWindow — the
-   *     LLM-dependent compaction paths are mathematically infeasible there
-   *     (both stages resend the full history; the saturated-window call dies
-   *     silently after intake — the a5431750 deadlock).
-   *   - circuitBreaker open (original behavior, unchanged).
-   * withLatestUsage(None) is load-bearing for P0-2: a stale over-limit
-   * reported usage would re-trigger the guard right after truncation.
-   */
-  /** P0-2 hard-guard cooldown: minimum spacing between emergencyClean runs
-    * for the SAME session (guards against re-fire loops when the retained
-    * tail alone still estimates above 0.95×window). */
-  protected val EmergencyHardGuardCooldownMs: Long = 60_000L
-
-  protected def runEmergencyCompact(
-    agentDef: AgentDef,
-    resources: SharedResources,
-    depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]],
-    state: AgentState,
-    replyTo: Option[ActorRef[AgentEvent]],
-    processing: ProcessingFn,
-    reason: String
-  )(using ctx: ActorContext[AgentCommand]): Option[IO[Behavior[AgentCommand]]] =
-    val config = CompactConfig()
-    logAgentEvent(agentDef, depth, state.sessionId, state.sessionName, "emergency-compact-trigger", reason)
-    val (cleaned, desc) = CompactUtils.emergencyClean(state.messages, config.emergencyKeepMessages)
-    val emergencyState = state
-      .withMessages(cleaned)
-      .withCompactionFailures(0)
-      .withLatestUsage(None)
-      // Timestamp doubles as the P0-2 hard-guard cooldown anchor (compaction
-      // failures are reset to 0 above, so the backoff reader is unaffected).
-      .withLastCompactionFailureAt(System.currentTimeMillis())
-    Some(for
-      _ <- ctx.forkTurn(
-        emitStreamIO(
-          state.wsSend,
-          AgentStreamEvent.CompactComplete(state.messages.size, cleaned.size, None),
-          isSubagent = depth > 0,
-          state.sessionId
-        ).handleErrorWith(_ => IO.unit)
-      )
-      _ <- state.sessionId.fold(IO.unit)(sid =>
-        ctx.forkTurn(
-          resources.historyArchiver
-            .archiveCompaction(
-              sessionId = sid,
-              sessionName = state.sessionName,
-              agentName = agentDef.name,
-              before = state.messages,
-              after = cleaned,
-              mode = "emergency",
-              extra = Map("description" -> desc, "reason" -> reason)
-            )
-            .void
-            .handleErrorWith(_ => IO.unit)
-        )
-      )
-      result <- pipeLlmCall(agentDef, resources, depth, parentRef, emergencyState, replyTo, processing)
-    yield result)
-
-  /**
-   * B5: whether this depth-1 agent is a team lead — a registered Manager
-   * session, or name-based lead of any defined team (covers fork/temporary
-   * sessions, same fallback as MailTool.canMailNebula). Non-lead depth-1
-   * agents (team members, flow agents, delegate sub-agents) compact with
-   * the Worker profile instead of Manager.
-   */
-  protected def isTeamLeadForCompaction(agentDef: AgentDef, sessionId: Option[String]): IO[Boolean] =
-    def nameIsLead: IO[Boolean] =
-      if agentDef.name.isEmpty then IO.pure(false)
-      else nebflow.core.entity.EntityLoader.listTeams().map(_.values.exists(_.lead == agentDef.name))
-    sessionId match
-      case Some(sid) =>
-        nebflow.core.flow.TeamSessionRegistry.isManager(sid).flatMap {
-          case true  => IO.pure(true)
-          case false => nameIsLead
-        }
-      case None => nameIsLead
-
-  /** Team Manager task tool gating (2026-08-25): is this session the lead
-    * (Manager) of its team? Strict registry lookup only — TeamSessionRegistry
-    * .managerMap is populated at mount by FlowTreeActor.createSingleTeamSession
-    * (agentName == teamDef.lead). NO nameIsLead fallback (unlike
-    * isTeamLeadForCompaction): a team MEMBER whose agent name happens to match
-    * some other team's lead must not receive the owner toolset (U2). No
-    * separate spawn-time flag needed — the registry is the single source of
-    * truth and survives Mail activation / respawn. */
-  protected def isTeamLeadStatus(agentDef: AgentDef, sessionId: Option[String]): IO[Boolean] =
-    sessionId match
-      case Some(sid) => nebflow.core.flow.TeamSessionRegistry.isManager(sid)
-      case None => IO.pure(false)
-
-  protected def startDirectCompaction(
-    agentDef: AgentDef,
-    resources: SharedResources,
-    depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]],
-    state: AgentState,
-    replyTo: Option[ActorRef[AgentEvent]],
-    processing: ProcessingFn,
-    mode: String,
-    resumeAfterCompact: Boolean = true,
-    postCompactInstruction: Option[String] = None
-  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    for
-      // B5: depth 1 must distinguish lead (Manager profile) from members
-      // (Worker profile). Depths 0 / 2+ don't need the lookup.
-      isLead <- if depth == 1 then isTeamLeadForCompaction(agentDef, state.sessionId) else IO.pure(false)
-      profile = CompactionProfile.fromDepth(depth, isLead)
-      hook = PreCompactionHooks.forProfile(profile)
-
-      // ── 1. Role-based pre-compaction extraction (fire-and-forget, non-blocking) ──
-      preHookIO = hook
-        .run(state.messages, agentDef.name, state.sessionId, None, resources)
-        .handleErrorWith(e =>
-          IO(lifecycleLog.warn(s"Pre-compaction hook failed for ${agentDef.name}: ${e.getMessage}")).void
-        )
-
-      // ── 2. Single-stage compaction ──
-      //    Memory maintenance is OUT of the compaction round (2026-08-31
-      //    redesign): compaction only compresses. Every agent goes straight
-      //    to the Compact turn (tools disabled, text-only summary).
-      jobId = s"compact-${java.util.UUID.randomUUID().toString.take(8)}"
-      reminder = CompactService.buildCompactReminder(depth, isLead, state.sessionId)
-      pending = CompactionJob(jobId, mode, None, replyTo, resumeAfterCompact, postCompactInstruction)
-      // #38 Layer B (2026-09-01): compact 轮输入先剔除超大 ToolResult（落盘
-      // 已有或在此补盘）——压缩轮只需全文概貌 + 路径引用，不需要大结果本体。
-      // 此前 compact turn 跳过 FastMicroCompact/TTL 携带全量历史，历史超
-      // provider 上限时拒绝 → 失败冷却刷新 → 永久死锁（qa-backend 失能根因之二）。
-      // 本层只改喂给压缩轮的输入；产物形态原为「summary 替换历史」，2026-09-07
-      // 尾部保真批起改为「summary + 尾部 N 轮原样保留」（见 FullCompact.preservedTail
-      // 与 CompactConfig.preservedRounds）。
-      compactionInput <- CompactUtils.prepareCompactionInput(
-        state.messages,
-        state.sessionId.getOrElse("default")
-      )
-      firstState = state
-        .withPendingCompaction(Some(pending))
-        .withMessages(compactionInput :+ reminder)
-      // F3 (2026-08-30, compact-injection-shield G3): audit snapshot of the
-      // queues held back during the compaction window. Paired with the
-      // "queues-injected-after-compaction" log emitted by the completion
-      // handler — window-start counts vs injected+remaining counts prove
-      // zero loss across the window.
-      _ <- IO(logAgentEvent(
-        agentDef,
-        depth,
-        state.sessionId,
-        state.sessionName,
-        "compaction-window-start",
-        s"phase=Compact imm=${state.execution.pendingImmediateInputs.size} " +
-          s"user=${state.execution.pendingUserInputs.size} events=${state.execution.pendingEvents.size}"
-      ))
-      _ <- ctx.forkTurn(preHookIO)
-      _ <- ctx.forkTurn(
-        emitStreamIO(
-          state.wsSend,
-          AgentStreamEvent.CompactStart(
-            mode,
-            state.latestUsage.map(_.inputTokens),
-            Some(CompactThreshold.threshold(state.contextWindow))
-          ),
-          isSubagent = depth > 0,
-          state.sessionId
-        ).handleErrorWith(_ => IO.unit)
-      )
-      result <- pipeLlmCall(agentDef, resources, depth, parentRef, firstState, replyTo, processing)
-    yield result
-
-    end for
-
-  end startDirectCompaction
-
-  // ============================================================
-  // Reminder refactor (2026-08-20, user ruling — audit
-  // docs/Nebflow/20260820_system-reminder-audit.md):
-  // time/tasks injection gating + tasks delta state.
-  // ============================================================
-
-  /** Min gap between two time reminders on system-event turns (user ruling:
-    * 「每小时通知一次。轮次的第一个 user turn 注入等」). Real-user turns
-    * always inject. Initialized to construction time: a fresh actor (spawn /
-    * restart) stays quiet on system events for the first hour — real user
-    * input is the orientation trigger, not background noise. */
-  private val TimeReminderMinGapMs = 60 * 60 * 1000L
-
-  @volatile private var lastTimeReminderMs: Long = System.currentTimeMillis()
-
-  /** Previous turn's task lines (id -> "#id [status] subject") for delta
-    * detection. Actor-local by design: one AgentActor serves one session, and
-    * a restart/compaction (lifecycle) resets it back to a full render. */
-  @volatile private var lastTaskLines: Map[String, String] = Map.empty
-
-  private val TaskLineRegex = """^\s*#(\d+)\s+(.+)$""".r
-
-  /** Extract "#id ..." task lines from a renderForPrompt output (headers and
-    * fold lines don't match and are ignored). */
-  private def parseTaskLines(rendered: String): Map[String, String] =
-    rendered.linesIterator.collect {
-      case TaskLineRegex(id, rest) => id -> s"#$id $rest".trim
-    }.toMap
-
-  /** Full / delta / unchanged task text for this turn's reminder. */
-  private def renderTasksForTurn(
-    resources: SharedResources,
-    sessionId: String,
-    lifecycleReset: Boolean
-  ): IO[String] =
-    resources.taskStore.renderForPrompt(sessionId).map { full =>
-      val current = parseTaskLines(full)
-      val text =
-        if full.isEmpty then
-          // Active set became empty — announce the clearing once, then stay quiet.
-          if lastTaskLines.nonEmpty then "All tasks done — the task list is now empty."
-          else ""
-        else if lifecycleReset || lastTaskLines.isEmpty then full
-        else if current == lastTaskLines then s"Tasks unchanged (${current.size} active)."
-        else renderTaskDelta(lastTaskLines, current)
-      lastTaskLines = current
-      text
-    }
-
-  /** "+ added / ~ changed / - removed" lines against the previous turn. */
-  private def renderTaskDelta(oldMap: Map[String, String], newMap: Map[String, String]): String =
-    val byId = (k: String) => k.toIntOption.getOrElse(Int.MaxValue)
-    val added = newMap.keySet.diff(oldMap.keySet).toList.sortBy(byId)
-    val removed = oldMap.keySet.diff(newMap.keySet).toList.sortBy(byId)
-    val changed = newMap.collect { case (k, v) if oldMap.get(k).exists(_ != v) => k }.toList.sortBy(byId)
-    val sb = new StringBuilder
-    sb.append(s"## Task changes (${newMap.size} active)\n")
-    added.foreach(id => sb.append(s"+ ${newMap(id)}\n"))
-    changed.foreach(id => sb.append(s"~ ${newMap(id)}\n"))
-    removed.foreach(id => sb.append(s"- ${oldMap(id)}\n"))
-    sb.toString
-
-  /** Devices delta: "+ entry" for new devices, "- entry" for gone ones.
-    * Falls back to the full block when only ordering/hints changed (entries
-    * identical) so the agent still gets a coherent picture. */
-  private def devicesDeltaLines(oldInfo: String, newInfo: String): String =
-    def entries(s: String): Vector[String] =
-      s.split("[;\n]").map(_.trim).filter(_.nonEmpty).toVector
-    val oldE = entries(oldInfo)
-    val newE = entries(newInfo)
-    val added = newE.filterNot(oldE.contains)
-    val removed = oldE.filterNot(newE.contains)
-    if added.isEmpty && removed.isEmpty then newInfo
-    else (added.map("+" + _) ++ removed.map("-" + _)).mkString("\n")
-
-  protected def pipeLlmCall(
-    agentDef: AgentDef,
-    resources: SharedResources,
-    depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]],
-    state: AgentState,
-    replyTo: Option[ActorRef[AgentEvent]],
-    processing: ProcessingFn
-  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    maybeAutoCompact(agentDef, resources, depth, parentRef, state, replyTo, processing) match
-      case Some(ioBehavior) => ioBehavior
-      case None =>
-        // Phase-aware compaction: Compact turn disables tools (existing behavior).
-        val isCompactTurn = state.pendingCompaction.exists(_.phase == CompactionPhase.Compact)
-        val isAskTurn = state.askMode.isDefined
-        val tools = if isCompactTurn then Some(Nil) else buildToolList(agentDef, depth, state.isSubTaskWorker, state.isFlowNode, projectBoardSession = state.isDispatcher || state.flowNodeId.isDefined)
-        val isSubagent = depth > 0
-        val sessionIdOpt = state.sessionId
-        // Track the first model that failed (for modelChanged notification)
-        val firstFailedModel: cats.effect.Ref[IO, Option[String]] = cats.effect.Ref.unsafe(None)
-        val onAttemptCb: FallbackAttempt => IO[Unit] = attempt =>
-          // Record the first failed model for modelChanged comparison
-          firstFailedModel.get.flatMap {
-            case None => firstFailedModel.set(Some(s"${attempt.providerId}/${attempt.model}"))
-            case _ => IO.unit
-          } *> {
-            val msg = attempt.message.getOrElse(s"${attempt.providerId}/${attempt.model} failed, retrying...")
-            state.wsSend(AgentStreamEvent.RetryStatus(msg).toJson(ctx.self.path.name, isSubagent, sessionIdOpt))
-          }
-        val turnId = state.currentTurnId + 1
-        // 方案 B（审计 20260903）：当轮 LLM 请求关联 id——生成于派发前，同时
-        // 传给 LlmLogWriter（router JSONL 的 request_id）并附入 ConsumeResult
-        // （工具执行轮经 ToolContext.requestId 流入 tools JSONL），两类日志
-        // 精确对齐。Retry 重跑同一 ConsumeResult 时 id 不变（同一 LLM 响应）。
-        val llmRequestId = java.util.UUID.randomUUID().toString
-        // Compact/ask turns skip FastMicroCompact: the agent needs the full
-        // history for the summary. #38 Layer B (2026-09-01): oversized
-        // ToolResults are stripped BEFORE this point (startDirectCompaction
-        // runs prepareCompactionInput) — the compact input carries overview +
-        // persisted-path references, not the giant bodies, so this skip no
-        // longer risks a provider rejection on multi-MB histories.
-        val microResult = if isCompactTurn || isAskTurn then None else FastMicroCompact(state.messages)
-        val stateForLlm = microResult match
-          case Some(compacted) =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "fast-micro-compact",
-              s"before=${state.messages.size} after=${compacted.size}"
-            )
-            state.copy(execution = state.execution.copy(messages = compacted)).withCurrentTurnId(turnId)
-          case None => state.withCurrentTurnId(turnId)
-
-        // Synchronous context preparation (fast: file reads with mtime cache)
-        val contextIo = for
-          turnCtx <- ContextRefresher.refreshTurn(stateForLlm, resources, agentDef)
-          freshDef = turnCtx.agentDef
-          voiceMuted <- resources.voiceMutedRef.get
-          voiceEnabled = freshDef.voiceEnabled && !voiceMuted
-          // Team Manager task tools (#D 2026-08-25): the team lead (Manager)
-          // gets the owner toolset; derived from the registry at turn time so
-          // mount/unmount/hot-reload always reflects reality.
-          isTeamLead <- isTeamLeadStatus(freshDef, stateForLlm.sessionId)
-          // 轨道二 #5: hot-read the dedicatedAgents flag once per turn — flows
-          // into tool stripping (T1 leaf display tools) + identity clause.
-          guardrailsOn <- nebflow.core.Guardrails.enabled
-          allowedTools = buildAllowedToolSet(freshDef, depth, stateForLlm.isSubTaskWorker, isFlowNode = stateForLlm.isFlowNode, isTeamLead = isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn, projectBoardSession = stateForLlm.isDispatcher || stateForLlm.flowNodeId.isDefined)
-          // #16 observability: one log line per LLM call when MCP tools are
-          // injected — names the servers explicitly so phantom-tool suspicion
-          // can be settled by grepping the log instead of reconstructing
-          // requests. Zero-MCP agents stay silent (no noise).
-          mcpInjected = allowedTools.filter(_.startsWith("mcp__"))
-          _ = if mcpInjected.nonEmpty then
-            val servers = mcpInjected.map(_.split("__").apply(1)).toList.sorted
-            NebflowLogger.forName("nebflow.agent.mcp").info(
-              s"injecting ${mcpInjected.size} MCP tools from servers: ${servers.mkString(", ")} " +
-                s"(agent=${freshDef.name}, session=${stateForLlm.sessionId.getOrElse("-")})"
-            )
-          devInfo = deviceInfoBlock
-          sessionsText = formatAgentSessions(stateForLlm.agentSessions)
-          // Lifecycle nodes (new session / compaction / restart): rebuild the
-          // whole systemStable and refresh the snapshot — mid-session changes
-          // are reported via reminders instead of invalidating the cache.
-          // Computed BEFORE the task-list render: a lifecycle reset also resets
-          // the tasks delta back to a full render (2026-08-20 refactor).
-          isLifecycleRebuild = isCompactTurn || stateForLlm.cachedSystemStable.isEmpty
-          // Reminder refactor (2026-08-20, user ruling — see
-          // docs/Nebflow/20260820_system-reminder-audit.md): "real user turn"
-          // means the triggering message was typed by the user (source=None).
-          // Tool-injected User messages (mail/mail-queue/skill/flow/external)
-          // carry a source marker — system-event turns. time fires on system
-          // events at most once per hour; tasks only on real-user turns.
-          lastMsgOpt = stateForLlm.messages.lastOption
-          isUserTurn = lastMsgOpt.exists { m =>
-            m.role == MessageRole.User && !m.content.toOption.exists(_.exists(_.isInstanceOf[ContentBlock.ToolResult]))
-          }
-          isRealUserTurn = isUserTurn && lastMsgOpt.exists(_.source.isEmpty)
-          isRootAgent = freshDef.name == "Nebula"
-          // Mounted-project list (progressive disclosure 2026-09-07): Nebula
-          // only — dispatcher/node sessions skip the registry read (text stays
-          // "" → section not injected, no reminder). Root agent always gets an
-          // explicit state (sorted bullet lines or the 当前无挂载项目 placeholder).
-          mountedProjectsText <-
-            if isRootAgent then
-              ProjectRuntimeRegistry.all.map(rts =>
-                MountedProjectList.renderLines(rts.map(rt => rt.project.name -> rt.project.description))
-              )
-            else IO.pure("")
-          nowMs = System.currentTimeMillis()
-          injectTime = isUserTurn && (isRealUserTurn || nowMs - lastTimeReminderMs >= TimeReminderMinGapMs)
-          // Tasks: team 成员 only（任务工具重做 2026-08-30——任务=进展展示，
-          // Nebula 不再有任务工具、不再注入；成员 reminder 用 team scope 的
-          // 进展列表）。renderForPrompt returns the FULL list; the delta
-          // against the previous turn lives here (unchanged → one line;
-          // changed → +/-/~ lines; lifecycle → full).
-          taskTeamOpt <-
-            if isRealUserTurn then
-              stateForLlm.sessionId match
-                case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
-                case None => IO.pure(None)
-            else IO.pure(None)
-          taskListText <-
-            (taskTeamOpt, stateForLlm.sessionId) match
-              case (Some(team), Some(_)) =>
-                renderTasksForTurn(
-                  resources,
-                  nebflow.core.task.TaskStore.teamScopeKey(team),
-                  isLifecycleRebuild
-                )
-              case _ => IO.pure("")
-          // Env section text (rendered from data.sh + prompt.md) — stays in
-          // systemStable only. Reminder refactor (2026-08-20): environment
-          // CHANGE reminders are gone (user ruling); chatWidth was removed
-          // from the template so this text is constant mid-session anyway.
-          envInfo = PromptSections.envInfoSection(
-            PromptContext(chatWidth = stateForLlm.session.chatWidth)
-          )
-          // Snapshot of the dynamic values at systemStable build time.
-          currentSnapshot = SystemStableSnapshot(devInfo, sessionsText, stateForLlm.language, envInfo, mountedProjectsText)
-          promptCtx = PromptContext(
-            availableTools = allowedTools,
-            depth = depth,
-            voiceEnabled = voiceEnabled,
-            hasDevices = devInfo.nonEmpty,
-            deviceInfo = devInfo,
-            hasActiveSessions = sessionsText.nonEmpty,
-            agentSessionsText = sessionsText,
-            language = stateForLlm.language,
-            chatWidth = state.session.chatWidth,
-            agentCategory = freshDef.category,
-            agentName = freshDef.name,
-            skillCatalog = turnCtx.skillCatalog,
-            flowCatalog = turnCtx.flowCatalog,
-            teamCatalog = turnCtx.teamCatalog,
-            memoryBlock = turnCtx.memoryBlock,
-            rulesMd = turnCtx.rulesMd,
-            agentsMd = turnCtx.agentsMd,
-            isSubTaskWorker = stateForLlm.isSubTaskWorker,
-            guardrailsOn = guardrailsOn,
-            isFlowNode = stateForLlm.isFlowNode,
-            userFacingNode = stateForLlm.userFacingNode,
-            isTeamLead = isTeamLead,
-            isRootAgent = isRootAgent,
-            mountedProjectsText = mountedProjectsText
-          )
-          // systemStable: rebuilt only at lifecycle nodes; otherwise reuse the
-          // cached string byte-for-byte (provider prefix cache stays hit).
-          // Memory block (turnCtx.memoryBlock) is therefore consumed only at
-          // rebuild — memory edits take effect at the next lifecycle node.
-          // Reminder refactor (2026-08-20): sessions/environment change
-          // reminders removed (user ruling) — devices (delta) and language
-          // remain as change notifications, plus mounted projects (2026-09-07).
-          (systemStable, changeDevices, changeLanguage, changeProjects) =
-            if isLifecycleRebuild then
-              (buildSystemPrompt(freshDef, promptCtx), "", Option.empty[String], "")
-            else
-              val cached = stateForLlm.cachedSystemStable.getOrElse(
-                buildSystemPrompt(freshDef, promptCtx)
-              )
-              val snap = stateForLlm.stableSnapshot.getOrElse(currentSnapshot)
-              (
-                cached,
-                if snap.devices != devInfo then devicesDeltaLines(snap.devices, devInfo) else "",
-                if snap.language != stateForLlm.language then stateForLlm.language else None,
-                if snap.mountedProjects != mountedProjectsText then
-                  MountedProjectList.delta(snap.mountedProjects, mountedProjectsText)
-                else ""
-              )
-          reminders <- SystemReminders.collectAllIO(
-            isUserTurn,
-            resources.scheduledTaskStore,
-            stateForLlm.sessionId,
-            deviceDelta = changeDevices,
-            taskListText = taskListText,
-            language = changeLanguage,
-            isRootAgent = isRootAgent,
-            injectTime = injectTime,
-            mountedProjectsDelta = changeProjects
-          )
-          // Branch change: persist synchronously (no async message needed)
-          _ <- turnCtx.branchChange match
-            case Some(_) =>
-              stateForLlm.sessionId.traverse_(sid =>
-                resources.sessionStore
-                  .updateGitBranch(sid, turnCtx.currentBranch)
-                  .handleErrorWith(e =>
-                    NebflowLogger.forName("nebflow.agent").warn(s"Failed to persist gitBranch: ${e.getMessage}")
-                  )
-              )
-            case None => IO.unit
-          loggedReminders <- SystemReminders.logAndReturn(reminders)
-          // The time reminder is PERSISTED as a real User message in the
-          // session history: folded into the working state so it flows into
-          // the persisted history (persistIfSession saves state.messages) and
-          // into the LLM request. Older time reminders are pruned to bound
-          // history growth. Dynamic context (peak/idle windows, pending
-          // schedules) stays request-only — injected per-turn, never persisted.
-          timeReminders = loggedReminders.filter(_.category == "time")
-          contextReminders = loggedReminders.filterNot(_.category == "time")
-          timeMsg =
-            if isCompactTurn || isAskTurn || timeReminders.isEmpty then Nil
-            else List(Message(MessageRole.User, Left(SystemReminder.renderAll(timeReminders))))
-          // Reminder refactor (2026-08-20): stamp the injection time only when
-          // a time reminder actually fires — the ≥1h system-event gap is
-          // measured from the last REAL injection, not the last turn.
-          _ = if timeMsg.nonEmpty then lastTimeReminderMs = System.currentTimeMillis()
-          contextMsg =
-            if isCompactTurn || isAskTurn || contextReminders.isEmpty then Nil
-            else List(Message(MessageRole.User, Left(SystemReminder.renderAll(contextReminders))))
-          branchMsg =
-            if isCompactTurn || isAskTurn then Nil
-            else turnCtx.branchChange.toList.map(r => Message(MessageRole.User, Left(r.render)))
-          stateWithReminder =
-            if timeMsg.isEmpty then stateForLlm
-            else stateForLlm.withMessages(SystemReminders.pruneTimeReminders(stateForLlm.messages ++ timeMsg))
-          // Cache v2: persist the rebuilt systemStable + snapshot in state at
-          // lifecycle nodes (next turns reuse it). Non-lifecycle turns keep the
-          // existing cache untouched.
-          stateWithCache =
-            if isLifecycleRebuild then stateWithReminder.withSystemStableCache(systemStable, currentSnapshot)
-            else stateWithReminder
-          // Maintenance check: every N delegate/flow calls
-          maintenanceMsg =
-            if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
-              List(MaintenanceService.buildReminder(stateWithReminder.delegateCount))
-            else Nil
-          freshTools =
-            if isCompactTurn then Some(Nil)
-            else buildToolList(freshDef, depth, stateForLlm.isSubTaskWorker, stateForLlm.isFlowNode, isTeamLead, userFacingNode = stateForLlm.userFacingNode, guardrailsOn = guardrailsOn, projectBoardSession = stateForLlm.isDispatcher || stateForLlm.flowNodeId.isDefined)
-          // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
-          // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
-          // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
-          // #341 工具结果 TTL 清理（docs/Nebflow/20260820_tool-result-ttl.md）：
-          // REQUEST-ONLY——只作用于本次请求的消息副本，stateWithReminder 与
-          // 落盘会话零改动（语义三分：显示/LLM 上下文/会话文件）。门控与
-          // FastMicroCompact 相同的 turn 排除（压缩/存档/ask 需要全量输入）；
-          // keepRecent 窗保证 turn 中途的当前结果永不被清理（构造性安全）。
-          // #38 Layer B（2026-09-01）：压缩轮的「全量输入」已由入口处的
-          // prepareCompactionInput 剔除超大 ToolResult——这里 skip 保留的是
-          // M4/M5 的规则压缩与 TTL 老化语义，不再承担防超限职责。
-          // #341 WS 尾巴：配置 Ref 化——每请求读当前值，setToolResultTtl 热更
-          // 即时生效（无需重启）。
-          ttlCfg <- resources.toolResultTtlRef.get
-          ttlCleanedMessages =
-            if isCompactTurn || isAskTurn then None
-            else ToolResultTtl.cleanRequestMessages(stateWithReminder.messages, ttlCfg)
-          _ = ttlCleanedMessages.foreach { _ =>
-            logAgentEvent(
-              agentDef,
-              depth,
-              state.sessionId,
-              state.sessionName,
-              "tool-result-ttl",
-              "request-only cleanup applied (session history untouched)"
-            )
-          }
-          request = LlmRequest(
-            messages = ttlCleanedMessages.getOrElse(stateWithReminder.messages) ++ contextMsg ++ branchMsg ++ maintenanceMsg,
-            sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
-            agentId = freshDef.name,
-            tools = freshTools,
-            maxTokens = Some(resources.agentLibrary.globalMaxTokens),
-            thinking = Some(nebflow.llm.ThinkingConfig.toLlmJson(turnCtx.thinkingConfig)),
-            systemStable = Some(systemStable),
-            agentModel = freshDef.model,
-            // WebSearch P0: housekeeping turns (compact/ask) opt out of
-            // provider-native search injection — a server-side search tool
-            // must never leak into summarization loops.
-            searchAllowed = !(isCompactTurn || isAskTurn)
-          )
-        yield (turnCtx, request, stateWithCache)
-
-        // #22 (2026-08-19): the context build runs INLINE in the actor's
-        // message loop — a hang here (file lock, blocking read) freezes the
-        // whole actor with zero log artifacts and matches the "turn starts,
-        // next request never fires, no error" signature. Bound it: on breach
-        // the turn fails loudly via LlmFailed instead of freezing silently.
-        val ContextBuildTimeout = 60.seconds
-
-        val agentStartIO =
-          if depth > 0 && !isCompactTurn && !isAskTurn then
-            emitStream(
-              state.wsSend,
-              AgentStreamEvent.AgentStart(agentDef.name, agentDef.description, state.sessionName),
-              isSubagent = true,
-              state.sessionId
-            )
-          else IO.unit
-        for
-          _ <- agentStartIO
-          // P0 阶段 3：LLM 调用开始——registry 状态快照置 Processing 并 touch
-          // 活动戳（流 chunk 期间由 evalTap 持续刷新，见下方 sendStream 管道）。
-          _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing)
-          ctxTriple <- contextIo.timeout(ContextBuildTimeout).attempt
-          result <- ctxTriple match
-            case Right((turnCtx, request, stateWithReminder)) =>
-              // 审计 20260903 子项⑤：逐事件 SSE 编码器——每个流 chunk 到达即
-              // 实时落盘（时间戳=到达时刻），首 token 延迟/chunk 间隙才可实测。
-              // 编码器持有单请求的 block index 状态（原批量版 chunksToSseEvents
-              // 的可变状态迁移于此）。
-              val sseEncoder = new nebflow.core.LlmLogWriter.StreamEventEncoder(llmRequestId, request.agentId)
-              // Synchronously update gitBranch in state — no async message
-              val stateWithBranch = stateWithReminder.withGitBranch(turnCtx.currentBranch)
-              ctx.forkTurn(
-                  // ── Token 止损（2026-08-18 事故，方案 C）：per-turn LLM 重试预算 ──
-                  // 同 turn 内失败重试次数（仅 LlmFailed 分支递增；正常工具循环的
-                  // 成功调用不计）超限 → 抛 TurnBudgetExceeded（Permanent 分类，
-                  // llm-fail-retry 不会再触发）→ 下方 .attempt 捕获后发 LlmFailed，
-                  // turn 快速失败并给用户明确原因。
-                  IO.raiseWhen(stateForLlm.execution.llmCallsThisTurn >= Fallback.MaxTurnLlmCalls)(
-                    new TurnBudgetExceeded(
-                      turnId,
-                      stateForLlm.execution.llmCallsThisTurn
-                    )
-                  ) *>
-                    // 审计 20260903 子项⑤：request 行在流派发时落盘（旧批量版
-                    // 在流收集完成后才写，request→response 时间戳全部 <1.2s 失真）。
-                    LlmLogWriter.logRequest(request, llmRequestId, isSubagent, isCompactTurn) *>
-                    resources.llm
-                      .sendStream(request, onAttempt = Some(onAttemptCb))
-                      .through(streamEmitter(stateForLlm.wsSend, isSubagent, sessionIdOpt, isAskTurn, isCompactTurn))
-                      // 审计 20260903 子项⑤：逐事件实时落盘——ts 取 chunk 到达时刻。
-                      .evalTap(chunk => LlmLogWriter.logStreamEvent(sseEncoder, chunk))
-                      // P0 阶段 3：每个流 chunk touch 活动戳——流活着 = turn 有活动 =
-                      // 不判卡死。Ref.modify 是原子的，按流序逐 chunk 更新，开销可忽略。
-                      .evalTap(_ => touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing))
-                      .compile
-                      .toList
-                      .flatMap { chunks =>
-                        val cr = aggregateChunks(chunks)
-                        // Track runtime model for this session
-                        val trackModel = sessionIdOpt match
-                          case Some(sid) if cr.model.isDefined =>
-                            resources.runtimeModels.update(_ + (sid -> cr.model.get))
-                          case _ => IO.unit
-                        // Broadcast modelChanged if fallback occurred
-                        val notifyModelChanged = firstFailedModel.get.flatMap {
-                          case Some(oldModel) if cr.model.isDefined && cr.model.get != oldModel =>
-                            state.wsSend(
-                              io.circe.Json.obj(
-                                "type" -> "modelChanged".asJson,
-                                "sessionId" -> sessionIdOpt.asJson,
-                                "oldModel" -> oldModel.asJson,
-                                "newModel" -> cr.model.get.asJson
-                              )
-                            )
-                          case _ => IO.unit
-                        }
-                        trackModel *> notifyModelChanged *>
-                          LlmLogWriter.logResponse(
-                            requestId = llmRequestId,
-                            resultText = cr.text,
-                            resultToolCalls = cr.toolCalls,
-                            resultThinking = cr.thinking,
-                            resultStopReason = cr.stopReason,
-                            resultUsage = cr.usage,
-                            resultModel = cr.model
-                          ) *> IO.pure(cr.copy(requestId = Some(llmRequestId)))
-                      }
-                      .attempt
-                      .flatMap {
-                        case Right(r) => ctx.self ! LlmComplete(r, replyTo, turnId)
-                        case Left(e) => ctx.self ! LlmFailed(e, replyTo, turnId)
-                      }
-                      .handleErrorWith { e =>
-                        NebflowLogger
-                          .forName("nebflow.agent")
-                          .warn(s"pipeLlmCall failed: ${e.getMessage}")
-                          .flatMap(_ => ctx.self ! LlmFailed(e, replyTo, turnId))
-                      }
-                )
-                .map { _ =>
-                  processing(
-                    agentDef,
-                    resources,
-                    depth,
-                    parentRef,
-                    // Update lastMaintenanceDelegateCount if maintenance was triggered this turn
-                    (if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
-                       stateWithBranch.withLastMaintenanceDelegateCount(stateWithReminder.delegateCount)
-                     else stateWithBranch)
-                      .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
-                      // 方案 C（2026-08-18 误杀修复）：成功调用不计入预算——llmCallsThisTurn
-                      // 仅在 AgentActor 的 LlmFailed 重试分支递增，正常工具循环（读→改→
-                      // 编译→再改）每次成功继续调用都不再 +1。
-                  )
-                }
-            case Left(e) =>
-              // Context build timed out / failed — fail the turn loudly instead
-              // of freezing the actor. State must carry the new turnId or the
-              // LlmFailed below is discarded as stale.
-              IO(logAgentEvent(
-                agentDef,
-                depth,
-                state.sessionId,
-                state.sessionName,
-                "context-build-failed",
-                s"err=${e.getMessage.take(120)}"
-              )) *>
-                (ctx.self ! LlmFailed(
-                  ToolPipelineError(
-                    s"Turn context build failed after ${ContextBuildTimeout.toSeconds}s " +
-                      s"(file lock or blocking read?): ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
-                  ),
-                  replyTo,
-                  turnId
-                )) *>
-                IO.pure(
-                  processing(
-                    agentDef,
-                    resources,
-                    depth,
-                    parentRef,
-                    state.withCurrentTurnId(turnId)
-                  )
-                )
-        yield result
-
-        end for
-
-  protected def pipeToolExecutions(
-    agentDef: AgentDef,
-    resources: SharedResources,
-    depth: Int,
-    parentRef: Option[ActorRef[AgentCommand]],
-    state: AgentState,
-    result: ConsumeResult,
-    replyTo: Option[ActorRef[AgentEvent]],
-    processing: ProcessingFn
-  )(using ctx: ActorContext[AgentCommand]): IO[Behavior[AgentCommand]] =
-    val nextTurnIdx = state.turnIdx + 1
-    val permissionDeferredRef = cats.effect.Ref.unsafe[IO, Option[cats.effect.Deferred[IO, Boolean]]](None)
-    // #12 劝停：同 turn 同工具的用户拒绝计数（per-turn lifecycle 与
-    // permissionDeferredRef 一致——turn 结束自然清零）。
-    val permissionDenialsRef = cats.effect.Ref.unsafe[IO, Map[String, Int]](Map.empty)
-    val isSubagent = depth > 0
-    val sessionIdOpt = state.sessionId
-
-    val io = for
-      // Executor gate reads the CURRENT def — the same refresh source the
-      // per-turn schema build uses (ContextRefresher.loadCurrentDef) — so
-      // panel edits to agent.json (flows whitelist, tools) take effect on
-      // the running actor instead of waiting for an actor rebuild. This
-      // closes the 2026-08-15 follow-up: mid-session flows edits were still
-      // gated by the actor-startup snapshot ("Allowed: <stale list>").
-      teamNameOpt <- state.sessionId match
-        case Some(sid) => nebflow.core.flow.TeamSessionRegistry.teamOfSession(sid)
-        case None => IO.pure(None)
-      currentDefOpt <- ContextRefresher.loadCurrentDef(teamNameOpt, resources, agentDef)
-      effectiveDef = currentDefOpt.getOrElse(agentDef)
-      isTeamLead <- isTeamLeadStatus(effectiveDef, state.sessionId)
-      guardrailsOn <- nebflow.core.Guardrails.enabled
-      allowedTools = buildAllowedToolSet(effectiveDef, depth, state.isSubTaskWorker, state.isFlowNode, isTeamLead, userFacingNode = state.userFacingNode, guardrailsOn = guardrailsOn, projectBoardSession = state.isDispatcher || state.flowNodeId.isDefined)
-      (filteredCalls, droppedCalls) =
-        // WebSearch P0: kimi's native $web_search tool call bypasses the
-        // agent-tool whitelist — it is provider-injected (not an agent tool)
-        // and MUST pass through; filtering it here would re-create the
-        // "Tool not available" retry storm (2026-08-20 qwen incident shape).
-        val (kept, dropped) = result.toolCalls.partition(tc =>
-          allowedTools.contains(tc.name) || tc.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName
-        )
-        // warnSync: this is a synchronous code path — the plain IO-returning
-        // warn would be discarded silently (it was, before 2026-08-15).
-        if dropped.nonEmpty then
-          NebflowLogger
-            .forName("nebflow.agent")
-            .warnSync(s"Tool calls filtered (not in allowed set): ${dropped.map(_.name).distinct.mkString(", ")}")
-        (kept, dropped)
-      freshProjectRoot <- ContextRefresher.resolveProjectRootForTool(state, resources, effectiveDef)
-      effectiveProjectRoot = freshProjectRoot.getOrElse(resources.projectRoot.toString)
-      // 阶段 2a 沙箱（§A.3/§A.6）：root = 会话 projectRoot（node.worktree=Some →
-      // <workspace>/.nebflow/<wt>；None → workspace；分发器 → project workspace，
-      // H-5①）。仅 project 节点/分发器（SessionContext.sandboxEnabled）激活；
-      // Nebula 无文件工具天然豁免、team/flow/Delegate 双轨会话默认旧行为（§A.7）。
-      //
-      // [verify-fix] 2026-09-03 独立验证节点（E2E 实证）：sandbox root 必须取
-      // SessionContext.projectRoot（NodeEngine.scala:159-161 / ProjectActor spawn
-      // 写入的 worktree/workspace 路径，§A.6 唯一权威），不能沿用 effectiveProjectRoot
-      // ——后者走 folderId 链（ContextRefresher.resolveProjectRootForTool），节点会话
-      // 无 folderId → 回落 resources.projectRoot = 实例 os.pwd，E2E 实测节点的
-      // SANDBOX_DENIED 消息显示 sandbox root = 实例 cwd 而非项目 workspace。
-      // ToolContext.projectRoot 的既有 folderId 语义保持不动（防回归），只修沙箱根。
-      sandboxPolicy =
-        if state.sandboxEnabled then
-          // Nebula 根会话（2026-09-05 作者裁定 13:09）：写根=~/.nebflow 数据根
-          // （PathUtil.dataRoot，与读白名单 nebflowReadExtras 同源——NEBFLOW_HOME/
-          // --home 重定向自动跟随），让 Nebula 直接处理定义层（agents/plugins/
-          // skills/prompts/flows）与运维配置（*.json 补丁）与记忆运维。推导见
-          // SandboxPolicy.sessionRoot（isNebulaRootSession 判据：depth==0 排除
-          // NodeDef.agent="Nebula" 的节点会话——它们 root 留在 projectRoot，
-          // §A.6 零回归）。[2026-09-05 21:05 裁定] worktree 节点经显式
-          // sandboxRoot=工作区根继承项目沙箱（不收窄到 worktree 自身），优先于
-          // projectRoot；分发器/未接线节点 sandboxRoot=None 旧行为零变化。
-          val sandboxRootStr = nebflow.core.sandbox.SandboxPolicy.sessionRoot(
-            state.sandboxEnabled,
-            state.depth,
-            effectiveDef.name,
-            state.projectRoot,
-            effectiveProjectRoot,
-            state.sandboxRoot
-          )
-          try nebflow.core.sandbox.SandboxPolicy.forRoot(os.Path(sandboxRootStr), resources.sandboxConfig)
-          catch
-            case e: Exception =>
-              // projectRoot 形态异常（空串/跨盘符等）——fail-open 到旧行为并留痕，
-              // 不让策略构造失败打断会话。
-              NebflowLogger.forName("nebflow.agent")
-                .warnSync(s"sandbox policy build failed (${e.getMessage}); falling back to unsandboxed for this session")
-              nebflow.core.sandbox.SandboxPolicy.off
-        else nebflow.core.sandbox.SandboxPolicy.off
-      toolCtx = ToolContext(
-        projectRoot = effectiveProjectRoot,
-        llm = Some(resources.llm),
-        sessionStore = Some(resources.sessionStore),
-        agentActorRef = Some(ctx.self),
-        contextWindow = state.contextWindow,
-        sessionId = state.sessionId,
-        sessionName = state.sessionName,
-        rootSessionId = Some(state.rootSessionId),
-        taskStore = Some(resources.taskStore),
-        wsSend = Some(state.wsSend),
-        readTracker = state.readTracker,
-        fileHistory = state.fileHistory,
-        parentRef = parentRef,
-        depth = depth,
-        agentDef = Some(effectiveDef),
-        agentLibrary = Some(resources.agentLibrary),
-        fileLockManager = Some(resources.fileLockManager),
-        fileChangeTracker = Some(resources.fileChangeTracker),
-        hookEngine = resources.hookEngine,
-        hookContext =
-          HookContext(sessionId = state.sessionId, projectRoot = effectiveProjectRoot, cwd = effectiveProjectRoot),
-        folderId = state.folderId,
-        mailboxAddress = state.session.sessionId,
-        sharedResources = Some(resources),
-        actorSystem = Some(ctx.system),
-        messages = state.messages,
-        requestId = result.requestId,
-        bashConfig = resources.bashResilience,
-        teamName = teamNameOpt,
-        // TaskBoard 批 2（§1d 身份接线收尾）：项目任务板身份从 SessionContext 透传
-        // 进 ToolContext——TaskBoardTool 权限矩阵的引擎侧判定来源（不信客户端参数）；
-        // projectName 同批接通既有空置字段（分发器/节点 spawn 注入 → 节点会话内
-        // Node 系工具 project 缺省解析生效，证据 §6-2 空置历史就此终结）。
-        flowNodeId = state.session.flowNodeId,
-        isDispatcher = state.session.isDispatcher,
-        projectName = state.session.projectName,
-        sandbox = sandboxPolicy
-      )
-      freshResults <- filteredCalls.parTraverse { call =>
-        val skipStreaming = call.name == "AskUserQuestion"
-        val callCtx = toolCtx.copy(toolCallId = call.id)
-        (if !skipStreaming then
-           emitStreamIO(
-             state.wsSend,
-             AgentStreamEvent.ToolStart(nebflow.core.summarizeToolCall(call)),
-             isSubagent,
-             sessionIdOpt
-           )
-         else IO.unit) *>
-          (
-            // WebSearch P0: kimi's native $web_search round-trip — the caller
-            // echoes the model's arguments back VERBATIM as the tool result
-            // (Moonshot semantics: the search then runs server-side next
-            // round). Pure echo, zero side effects — bypasses the permission
-            // system (an Ask here would deadlock the round-trip on a
-            // synthetic tool the user never configured).
-            if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
-              IO.delay(
-                NebflowLogger.forName("nebflow.agent").infoSync(
-                  s"[${agentDef.name}] kimi native web search round-trip (echo ${call.rawArguments
-                      .map(_.length)
-                      .getOrElse(0)} chars)"
-                )
-              ).as(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
-                .flatTap(r => logToolStructured(call, callCtx, r))
-            else permissionDecision(resources, state, call)
-              .flatMap {
-                case PermissionDecision.Allow =>
-                  // 审计 20260903 子项①：工具执行期心跳包裹（仅实际执行段——
-                  // 权限 Ask/AskUserQuestion 等待由前端 askUser 处理器既有
-                  // 「抑制 timer」契约覆盖，包裹会反向重武装 timer，故排除）。
-                  withToolHeartbeat(nebflow.core.summarizeToolCall(call), state.wsSend, isSubagent, sessionIdOpt)(
-                    executeTool(call, callCtx)
-                  )
-                case PermissionDecision.Deny =>
-                  val denied =
-                    ToolExecResult(s"Tool ${call.name} is denied by the session permission policy", isError = true)
-                  logToolStructured(call, callCtx, denied).as(denied)
-                case PermissionDecision.Ask => askUserPermission(call, state, resources, permissionDeferredRef, permissionDenialsRef, callCtx)
-              }
-          )
-            .map(r => (call, r))
-            .attempt
-            .flatMap {
-              case Right(pair) => IO.pure(pair)
-              case Left(e) =>
-                val r = ToolExecResult(s"Tool error: ${e.getMessage}", isError = true)
-                logToolStructured(call, callCtx, r).as((call, r))
-            }
-            .flatTap { (call, r) =>
-              if call.name != "AskUserQuestion" then
-                val summary = summarizeToolResult(call, r.content)
-                val frontendContent = r.frontendContent.getOrElse(r.content)
-                emitStreamIO(
-                  state.wsSend,
-                  AgentStreamEvent.ToolEnd(
-                    nebflow.core.summarizeToolCall(call),
-                    summary,
-                    frontendContent,
-                    r.isError,
-                    input = Some(call.input)
-                  ),
-                  isSubagent,
-                  sessionIdOpt
-                )
-              else IO.unit
-            }
-            .flatMap { (call, r) =>
-              ToolResultGuard.guardResult(call, r, state.sessionId.getOrElse("default")).map(r => (call, r))
-            }
-      }
-      guardedBatch <- ToolResultGuard.guardBatch(freshResults, state.sessionId.getOrElse("default"))
-      droppedResults <- droppedCalls.traverse { call =>
-        val r = ToolExecResult(s"Tool not available: ${call.name}", isError = true)
-        logToolStructured(call, toolCtx, r).as((call, r))
-      }
-      // ── Block 3 循环检测器（supervision trio §D2-A，2026-08-27）────────
-      // guardBatch 之后、ToolsComplete 之前的单一 choke point——一切 kind 的
-      // AgentActor 工具轮都过此环。Root 例外（D3）：depth==0 的 L1 降级为
-      // L0 警告（root turn 不自动终止，错误由用户裁决）。
-      loopCfg <- nebflow.core.processor.LoopGuard.loadConfig
-      loopEvents = (guardedBatch ++ droppedResults).map { (call, r) =>
-        nebflow.core.processor.LoopGuard.RoundEvent(
-          toolName = call.name,
-          args = Json.fromJsonObject(call.input),
-          isError = r.isError,
-          errorText = if r.isError then r.content.take(160) else "",
-          permissionDenied = r.isError &&
-            r.content.startsWith(s"Tool ${call.name} is denied by the session permission policy")
-        )
-      }
-      (loopCounters, loopVerdictRaw) = nebflow.core.processor.LoopGuard.evaluate(
-        loopEvents,
-        // turnKey = 逻辑 turn 纪元（loopTurnKey）——currentTurnId 是每次 dispatch
-        // 都 +1 的序号（wiring 实证：一轮工具 = 一个新 currentTurnId，S1 永不
-        // 累计、S3 假命中），不能用。
-        state.loopTurnKey.toString,
-        state.loopCounters,
-        loopCfg,
-        // R-text：本轮助手文本输出（复读检测；result.text 为该轮全文）
-        assistantText = result.text
-      )
-      loopVerdict = loopVerdictRaw match
-        case t: nebflow.core.processor.LoopGuard.Verdict.Terminate if depth == 0 =>
-          NebflowLogger.forName("nebflow.agent").warnSync(
-            s"[loop-guard] root agent L1 suppressed (turn NOT auto-terminated): ${t.msg}"
-          )
-          nebflow.core.processor.LoopGuard.Verdict.Warn(t.msg)
-        case v => v
-      _ <- loopVerdict match
-        case f: nebflow.core.processor.LoopGuard.Verdict.Freeze =>
-          // L2：单条 ToolsComplete(freezeAfter)——handler 组装/持久化/计数器写回
-          // 后不续轮，转冻结（loopDetected 广播 + 父通知 + enterFrozen(Loop)）。
-          // 不用独立的 LoopFreezeDetected 消息：ToolsComplete 链式 dispatch 会
-          // 递增 currentTurnId，后续消息 stale 丢弃，冻结永不落地（wiring 实证）。
-          ctx.self ! ToolsComplete(
-            guardedBatch ++ droppedResults,
-            result.text,
-            replyTo,
-            None,
-            result.thinking,
-            result.thinkingSignature,
-            loopCounters = Some(loopCounters),
-            freezeAfter = Some(f.msg)
-          )
-        case t: nebflow.core.processor.LoopGuard.Verdict.Terminate =>
-          // L1：turn 以 LoopDetected 失败——不投 ToolsComplete，走 LlmFailed fatal
-          // 链（supervisor notify / team 成员父 ExternalEvent(failed) / Done / 持久化）。
-          // 计数器（含 terminatedFps）随 LlmFailed 写回——后续 turn 同 fp 复发
-          // → recurrence → L2 冻结。
-          ctx.self ! AgentCommand.LlmFailed(LoopDetectedError(t.msg), replyTo, state.currentTurnId, Some(loopCounters))
-        case w: nebflow.core.processor.LoopGuard.Verdict.Warn =>
-          // L0：正常续轮 + loopReminder（下一轮 user system-reminder 注入，D3）
-          ctx.self ! ToolsComplete(
-            guardedBatch ++ droppedResults,
-            result.text,
-            replyTo,
-            None,
-            result.thinking,
-            result.thinkingSignature,
-            loopReminder = Some(nebflow.core.processor.LoopGuard.reminderMessage(w)),
-            loopCounters = Some(loopCounters)
-          )
-        case nebflow.core.processor.LoopGuard.Verdict.Pass =>
-          ctx.self ! ToolsComplete(
-            guardedBatch ++ droppedResults,
-            result.text,
-            replyTo,
-            None,
-            result.thinking,
-            result.thinkingSignature,
-            loopCounters = Some(loopCounters)
-          )
-      // P0 阶段 3：工具执行完成——touch 活动戳（长工具执行期间流已结束，
-      // 若无此 touch 会被误判卡死；下轮 LLM 调用开始会再次 mark Processing）。
-      // Block 3：同点镜像 loopStreak/loopRounds（AgentControl list 的 loop×N）。
-      _ <- touchRegistryActivity(resources, sessionIdOpt, AgentStatus.Processing) *>
-        sessionIdOpt.fold(IO.unit) { sid =>
-          resources.agentRegistry.update { m =>
-            m.get(sid) match
-              case Some(rec) =>
-                m.updated(sid, rec.copy(
-                  loopStreak = loopCounters.streakCount,
-                  loopRounds = loopCounters.repeatStreak
-                ))
-              case None => m
-          }
-        }
-    yield ()
-
-    for _ <- ctx.forkTurn(io.handleErrorWith { e =>
-        val msg = Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-        NebflowLogger.forName("nebflow.agent").warn(s"pipeToolExecutions failed (this should be rare): $msg")
-        ctx.self ! LlmFailed(
-          ToolPipelineError(s"Tool execution pipeline failed: $msg"),
-          replyTo,
-          state.currentTurnId
-        )
-      })
-    yield
-      // loopCounters 不在此写回——它在 forkTurn 的异步 IO 内计算，行为返回时
-      // 尚不可见；经 ToolsComplete.loopCounters 由 handler 应用（见上）。
-      val updatedState = state
-        .copy(execution = state.execution.copy(turnIdx = nextTurnIdx))
-        .withLastDispatch(Some(LastDispatch(isToolExecution = true, Some(result))))
-      processing(agentDef, resources, depth, parentRef, updatedState)
-
-  end pipeToolExecutions
-
-  /**
-   * P2: permission decision reads the root session's PermissionPolicy bucket
-   * (permissionPolicies[rootSessionId]) — dynamic inheritance, NOT the
-   * per-agent state.safetyMode copy (D5). Decision order: deny → reject
-   * (no card); allow → auto-approve; otherwise reversible-by-safetyMode.
-   */
-  private enum PermissionDecision:
-    case Allow, Deny, Ask
-
-  private def permissionDecision(
-    resources: SharedResources,
-    state: AgentState,
-    call: ToolCall
-  ): IO[PermissionDecision] =
-    resources.permissionPolicies.get.flatMap { policies =>
-      val rootSid = Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
-      // F1 (#433): a bucket miss no longer silently falls back to the
-      // hardcoded ConfirmEdits default — background agents (Mail-activated
-      // team members, flow nodes, restored zombies) resolve the GLOBAL
-      // safety mode from nebflow.json `safety.defaultMode` instead, so a
-      // user-set global auto-all reaches every session source (I1/I2).
-      policies.get(rootSid) match
-        case Some(policy) =>
-          IO.pure(decide(policy, call))
-        case None =>
-          val permLogger = nebflow.core.NebflowLogger.forName("nebflow.agent.permissions")
-          nebflow.core.GlobalSafety.defaultMode.flatMap { mode =>
-            permLogger
-              .warn(
-                s"permission bucket miss for rootSid=${rootSid.take(8)} — falling back to global safety mode " +
-                  s"${nebflow.core.SafetyMode.toString(mode)} (#433 F1)"
-              )
-              .as(decide(nebflow.agent.PermissionPolicy(safetyMode = mode), call))
-          }
-    }
-
-  private def decide(policy: PermissionPolicy, call: ToolCall): PermissionDecision =
-    if policy.deny.contains(call.name) then PermissionDecision.Deny
-    else if policy.allow.contains(call.name) then PermissionDecision.Allow
-    else if ToolReversibility.isReversible(call.name, call.input, policy.safetyMode) then PermissionDecision.Allow
-    else PermissionDecision.Ask
-
-  private def askUserPermission(
-    call: ToolCall,
-    state: AgentState,
-    resources: SharedResources,
-    permissionDeferredRef: Ref[IO, Option[cats.effect.Deferred[IO, Boolean]]],
-    permissionDenialsRef: Ref[IO, Map[String, Int]],
-    toolCtx: ToolContext
-  )(using ctx: ActorContext[AgentCommand]): IO[ToolExecResult] =
-    // 递进式放行链 (2026-08-30): the card carries the session's CURRENT mode so
-    // the frontend can decide which escalation button to render (confirm-edits
-    // + Write/Edit → "upgrade to auto-edits"; auto-edits + Bash/Curl →
-    // "upgrade to auto-all"). Bucket read = same source as permissionDecision.
-    resources.permissionPolicies.get.flatMap { policies =>
-      val rootSid = Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
-      val currentMode =
-        policies.get(rootSid).map(p => nebflow.core.SafetyMode.toString(p.safetyMode)).getOrElse("confirm-edits")
-      permissionDeferredRef.modify {
-      case existing @ Some(_) =>
-        val r = ToolExecResult("Another permission request is already pending", isError = true)
-        (existing, logToolStructured(call, toolCtx, r).as(r))
-      case None =>
-        val deferred = cats.effect.Deferred.unsafe[IO, Boolean]
-        (
-          Some(deferred),
-          IO {
-            val summary = nebflow.core.summarizeToolCall(call)
-            val dangerLevel =
-              if call.name == "Bash" then
-                call.input("command").flatMap(_.asString).map(nebflow.core.tools.BashTool.dangerLevel).getOrElse(0)
-              else if call.name == "Curl" then
-                call.input("method").flatMap(_.asString).map(_.toUpperCase) match
-                  case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
-                  case _ => 0
-              else 1
-            Json.obj(
-              "type" -> "askPermission".asJson,
-              "toolName" -> call.name.asJson,
-              "summary" -> summary.asJson,
-              "input" -> call.input.asJson,
-              "dangerLevel" -> dangerLevel.asJson,
-              "safetyMode" -> currentMode.asJson
-            )
-          }.flatMap { permJson =>
-            // P2: every agent (root or sub-agent) sends the request straight to
-            // the InteractionHub — no depth/parentRef relay chain. The hub holds
-            // the Deferred, renders the card in the Nebula window and routes the
-            // answer back by requestId. NO timeout on the requesting side
-            // (R1, wait-timeout-fix): the wait is indefinite, isomorphic to
-            // AskUser (actor ask timeout=None).
-            val sourceAgent = toolCtx.agentDef.map(_.name).getOrElse("unknown")
-            val sourceSession = state.sessionId.getOrElse("")
-            val rootSessionId =
-              Option(state.session.rootSessionId).filter(_.nonEmpty).getOrElse(state.sessionId.getOrElse(""))
-            for
-              // R2 (wait-timeout-fix): the turn is now parked on a
-              // human-in-the-loop wait — mark WaitingForUser so TaskStuckWatcher
-              // skips the session (previously stayed Processing → stuck false
-              // positives; permission waits were only accidentally shielded by
-              // the removed 5min timer being < the 10min stuck threshold).
-              // Paired un-mark below: decision landed → Processing.
-              _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.WaitingForUser)
-              _ <- sendPermissionRequest(toolCtx, state, permJson, deferred, sourceAgent, sourceSession, rootSessionId)
-              // R1: wait indefinitely for the user's decision (no auto-deny).
-              approved <- AgentCore.awaitPermissionDecision(deferred)
-              _ <- permissionDeferredRef.set(None)
-              // R2 closure: the decision landed — restore Processing with a
-              // fresh activity stamp so the watcher's idle window restarts here
-              // (paired with the WaitingForUser mark above).
-              _ <- touchRegistryActivity(resources, state.sessionId, AgentStatus.Processing)
-              result <-
-                if approved then executeTool(call, toolCtx)
-                else
-                  // #12 劝停（用户 2026-08-20 批准）：第 ≥2 次用户拒绝时注入
-                  // system-reminder——对齐 retryableHint 模式，防 LLM 无限重试。
-                  // （R1 移除超时后不存在「超时不计数」路径——这里的每一次拒绝
-                  // 都是用户真实操作。）
-                  permissionDenialsRef.modify { m =>
-                    val n = m.getOrElse(call.name, 0) + 1
-                    (m.updated(call.name, n), n)
-                  }.flatMap { n =>
-                    val r = ToolExecResult(AgentCore.denialMessage(call.name, n), isError = true)
-                    logToolStructured(call, toolCtx, r).as(r)
-                  }
-            yield result
-            end for
-          }
-        )
-      }.flatten
-    }
-
-  /** Send a permission request to the InteractionHub (P2), or fall back to P1 local render. */
-  private def sendPermissionRequest(
-    toolCtx: ToolContext,
-    state: AgentState,
-    permJson: Json,
-    deferred: cats.effect.Deferred[IO, Boolean],
-    sourceAgent: String,
-    sourceSession: String,
-    rootSessionId: String
-  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
-    // Origin attribution for the permission card: team name (authoritative via
-    // TeamSessionRegistry) or flow name (parsed from sessionName "flowName/nodeId"
-    // set by FlowDagExecutor, confirmed via agentRegistry kind == Flow so a
-    // standalone agent whose sessionName happens to contain '/' is not misread).
-    val resourcesOpt = toolCtx.sharedResources
-    for
-      teamOpt <- nebflow.core.flow.TeamSessionRegistry.teamOfSession(sourceSession)
-      recordOpt <- resourcesOpt
-        .fold(IO.pure(Option.empty[AgentRecord]))(_.agentRegistry.get.map(_.get(sourceSession)))
-      flowOpt = (teamOpt, recordOpt, state.sessionName) match
-        case (None, Some(rec), Some(sn)) if rec.kind == AgentKind.Flow && sn.contains("/") =>
-          Some(sn.takeWhile(_ != '/'))
-        case _ => None
-      enrichment =
-        val teamFld = teamOpt.map(t => Json.obj("sourceTeam" -> t.asJson)).getOrElse(Json.obj())
-        val flowFld = flowOpt.map(f => Json.obj("sourceFlow" -> f.asJson)).getOrElse(Json.obj())
-        teamFld.deepMerge(flowFld)
-      enriched = permJson.deepMerge(enrichment)
-      _ <- resourcesOpt.traverse(_.interactionHubRef.get).map(_.flatten).flatMap {
-        case Some(hub) =>
-          (hub ! InteractionHubCommand.Request(
-            InteractionRequest(
-              requestId = java.util.UUID.randomUUID().toString.take(8),
-              kind = InteractionKind.Permission,
-              payload = enriched,
-              reply = InteractionReply.PermissionReply(deferred),
-              rootSessionId = rootSessionId,
-              sourceAgent = sourceAgent,
-              sourceSession = sourceSession
-            )
-          )).void
-        case None =>
-          // Hub not spawned (early boot / tests): P1 fallback — the requesting
-          // agent holds the Deferred itself and renders locally.
-          (ctx.self ! AgentCommand.SetPermissionDeferred(deferred)) *>
-            state.wsSend(
-              enriched.deepMerge(
-                Json.obj(
-                  "sessionId" -> state.sessionId.asJson,
-                  "sourceAgent" -> sourceAgent.asJson,
-                  "sourceSession" -> sourceSession.asJson
-                )
-              )
-            )
-      }
-    yield ()
-
-    end for
-
-  end sendPermissionRequest
-
-  /** 方案 B（审计 20260903）：结构化工具执行写入——经 ToolsLogWriter 异步落盘
-    * tools JSONL。所有产出 ToolExecResult 的路径（executeToolInner 内外）
-    * 统一走本 helper，保证 §2.1 九类失败路径与成功路径都有一行结构化记录；
-    * 原 nebflow.log 文本行零改动。kind 来自 agentRegistry（best-effort，
-    * 非注册上下文为 null）；requestId 经 ToolContext 透传（非 LLM 轮为 null）。 */
-  private def logToolStructured(
-      call: ToolCall,
-      ctx: ToolContext,
-      result: ToolExecResult,
-      elapsedMs: Long = 0L
-  ): IO[Unit] =
-    ctx.sharedResources.traverse(_.agentRegistry.get).flatMap { registryOpt =>
-      val kind = for
-        reg <- registryOpt
-        sid <- ctx.sessionId
-        rec <- reg.get(sid)
-      yield rec.kind.toString
-      ToolsLogWriter.log(
-        tool = call.name,
-        agent = ctx.agentDef.map(_.name),
-        sessionId = ctx.sessionId,
-        kind = kind,
-        isError = result.isError,
-        elapsedMs = elapsedMs,
-        errorText = if result.isError then result.content else "",
-        inputSummary = nebflow.core.summarizeToolCall(call),
-        resultChars = result.content.length,
-        requestId = ctx.requestId
-      )
-    }
-
-  protected def executeTool(call: ToolCall, ctx: ToolContext): IO[ToolExecResult] =
-    // WebSearch P0: defense in depth — the turn loop normally handles kimi's
-    // native $web_search before the permission gate; if one ever reaches here
-    // (e.g. via the deferred-approval path), echo instead of failing it
-    // through the malformed/registry checks below.
-    if call.name == nebflow.llm.SearchProviderResolver.KimiWebSearchToolName then
-      IO.pure(ToolExecResult(nebflow.llm.SearchProviderResolver.kimiEchoContent(call)))
-    else
-    // Issue #18: adapters mark tool calls whose arguments JSON could not be
-    // parsed (rescued past repair). Executing them would surface a misleading
-    // "parameter is required" error — report the parse failure itself instead,
-    // with the raw arguments, so the LLM can correct its JSON and retry.
-    nebflow.llm.providers.ToolInputJson.malformedDetails(call.input, call.name) match
-      case Some(msg) =>
-        val r = ToolExecResult(msg, isError = true)
-        logToolStructured(call, ctx, r).as(r)
-      case None =>
-        executeToolInner(call, ctx)
-
-  private def executeToolInner(call: ToolCall, ctx: ToolContext): IO[ToolExecResult] =
-    ToolRegistry.TOOL_MAP.get(call.name) match
-      case Some(tool) =>
-        val summary = tool.summarize(call.input)
-        val logger = NebflowLogger.forName("nebflow.handlers")
-        val agentName = ctx.agentDef.map(_.name).getOrElse("-")
-        val sessionName = ctx.sessionName.getOrElse("-")
-        val logCtx = logger.ctxPrefix(agentName, sessionName)
-        val hookEngine = ctx.hookEngine
-        val hookCtx = ctx.hookContext
-        IO.delay(System.nanoTime()).flatMap { start =>
-          hookEngine
-            .beforeTool(call.name, call.input, hookCtx)
-            .flatMap { preResult =>
-              if preResult.decision == HookDecision.Block then
-                val blockMsg = preResult.reason.getOrElse(s"Tool ${call.name} blocked by hook")
-                logger.info(s"$logCtx Hook blocked $summary: $blockMsg")
-                IO.pure(ToolExecResult(blockMsg, isError = true))
-              else
-                val finalInput = preResult.updatedInput.getOrElse(call.input)
-                val deviceOpt = finalInput("device").flatMap(_.asString).filter(_.nonEmpty).filter(_ != "local")
-                val execIO: IO[ToolExecResult] = deviceOpt match
-                  case Some(deviceName) if RemoteExecutor.current.isDefined =>
-                    val remoteInput = finalInput.remove("device")
-                    logger.info(s"$logCtx Remote tool: [${deviceName}] ${tool.summarize(remoteInput)}")
-                    RemoteExecutor.current.get.execute(deviceName, call.name, remoteInput, Some(ctx)).flatMap {
-                      case Right(result) =>
-                        hookEngine.afterTool(call.name, finalInput, result, true, hookCtx).map { postResult =>
-                          val hookSuffix = postResult.additionalContext.getOrElse("")
-                          ToolExecResult(
-                            result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                            frontendContent = Some(result)
-                          )
-                        }
-                      case Left(err) =>
-                        hookEngine.afterToolFailure(call.name, finalInput, err.message, hookCtx).map { postResult =>
-                          val appended = postResult.additionalContext match
-                            case Some(r) => s"${err.message}\n\n$r"
-                            case None => err.message
-                          ToolExecResult(appended, isError = true)
-                        }
-                    }
-                  case _ =>
-                    // WebSearch P0: Tier 2 routing — capable provider executes
-                    // the search natively (SLA-backed, with provenance); any
-                    // miss degrades to the builtin aggregation (Tier 3).
-                    val baseCall: IO[Either[ToolError, String]] = tool.call(finalInput, ctx)
-                    val routedCall: IO[Either[ToolError, String]] =
-                      if call.name == "WebSearch" then routeWebSearchThroughProvider(finalInput, ctx, baseCall)
-                      else baseCall
-                    routedCall.flatMap {
-                      case Left(err) =>
-                        hookEngine.afterToolFailure(call.name, finalInput, err.message, hookCtx).map { postResult =>
-                          val appended = postResult.additionalContext match
-                            case Some(r) => s"${err.message}\n\n$r"
-                            case None => err.message
-                          ToolExecResult(appended, isError = true)
-                        }
-                      case Right(result) =>
-                        val isFileEdit = call.name == "Edit" || call.name == "Write"
-                        val imageBlocks = tool.extractImages(finalInput, result)
-                        hookEngine.afterTool(call.name, finalInput, result, true, hookCtx).map { postResult =>
-                          val hookSuffix = postResult.additionalContext.getOrElse("")
-                          val llmContent = if false then
-                            val title = call.input("title").flatMap(_.asString).getOrElse("")
-                            s"Card${if title.nonEmpty then s" ($title)" else ""} rendered"
-                          else if isFileEdit then nebflow.core.summarizeToolResult(call, result)
-                          else result
-                          ToolExecResult(
-                            llmContent + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else ""),
-                            frontendContent = Some(result + (if hookSuffix.nonEmpty then s"\n\n$hookSuffix" else "")),
-                            imageBlocks = imageBlocks
-                          )
-                        }
-                    }
-                execIO.handleErrorWith {
-                  case _: UserAbort => IO.raiseError(new UserAbort())
-                  case e => IO.pure(ToolExecResult(s"Tool execution error: ${e.getMessage}", isError = true))
-                }
-            }
-            .flatTap { result =>
-              val elapsed = (System.nanoTime() - start) / 1_000_000
-              // 原 nebflow.log 文本行零改动（100 字截断维持现状）
-              val textLine =
-                if result.isError then
-                  logger.warn(s"$logCtx Tool $summary failed (${elapsed}ms): ${result.content.take(100)}")
-                else logger.info(s"$logCtx Tool $summary OK (${elapsed}ms)")
-              // 方案 B：结构化 JSONL（errorText 全量不截断）
-              textLine *> logToolStructured(call, ctx, result, elapsedMs = elapsed)
-            }
-        }
-      case None =>
-        // §2.1 收敛：此路径原先绕过 flatTap（无文本行、无结构化记录）——
-        // 现补结构化写入（文本行为保持零改动仍不新增）。
-        val r = ToolExecResult(s"No such tool available: ${call.name}", isError = true)
-        logToolStructured(call, ctx, r).as(r)
-
-  /** WebSearch P0: Tier 2 routing for the WebSearch tool call. When the
-    * session's provider has native search (zhipu/kimi/qwen — resolved from
-    * the agent's model chain head) and the call did NOT pin a specific
-    * engine, the search runs on the provider; results carry provenance
-    * ("Search source: provider:<id>") and structured URLs. Any miss — no
-    * capability, no search evidence, or an execution error — degrades to the
-    * builtin aggregation (Tier 3, annotated non-guaranteed). An explicitly
-    * requested engine (e.g. engine="arXiv") always goes to the builtin path:
-    * the caller asked for THAT engine. */
-  private def routeWebSearchThroughProvider(
-      input: JsonObject,
-      ctx: ToolContext,
-      fallback: IO[Either[ToolError, String]]
-  ): IO[Either[ToolError, String]] =
-    val enginePinned = input("engine").flatMap(_.asString).exists(_.trim.nonEmpty)
-    val query = input("query").flatMap(_.asString).getOrElse("")
-    if enginePinned || query.isBlank then fallback
-    else
-      nebflow.llm.SearchProviderResolver
-        .executeProviderSearchFor(
-          query,
-          ctx.llm,
-          ctx.sessionId.getOrElse(""),
-          ctx.agentDef.map(_.name).getOrElse("-"),
-          ctx.agentDef.flatMap(_.model),
-          health = ctx.sharedResources.map(_.healthMonitor)
-        )
-        .flatMap {
-          case Some(result) => IO.pure(Right(result))
-          case None         => fallback
-        }
-
-  protected def buildAllowedToolSet(
-    agentDef: AgentDef,
-    depth: Int = 0,
-    isSubTaskWorker: Boolean = false,
-    isFlowNode: Boolean = false,
-    isTeamLead: Boolean = false,
-    userFacingNode: Boolean = false,
-    guardrailsOn: Boolean = false,
-    projectBoardSession: Boolean = false
-  ): Set[String] =
-    // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
-    // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
-    // agent.json 里的文件工具声明（Nebula 六件 / dispatcher Write+Edit）由此
-    // 自动变 no-op（定义层与机制层解耦，改定义不破机制）。
-    val base =
-      if AgentCore.ConvergedAgentNames.contains(agentDef.name) then Set.empty[String]
-      else
-        agentDef.tools match
-          case Nil => Set.empty[String]
-          case List("*") => ToolRegistry.ALL_TOOLS.map(_.name).toSet
-          case names => names.toSet
-    // 阶段 2d（D.1-11）：SendFriendMessage 声明式注入通道删除——机制固定唯一
-    // 授权（NebulaOrchestrationTools，2c 起）。任何 agent.json 声明（含 "*"）
-    // 不再授能（TeamTaskTools 防逃逸先例：the tool name IS the permission
-    // boundary）。Nebula 的静态集照常携带该工具，行为零变化。
-    val declaredBase = base - "SendFriendMessage"
-    // Fixed tools are auto-injected based on agent category — they don't
-    // need to be listed in agent.json. Mail is team-only. 阶段 2d（D.1-1）：
-    // 注入唯一入口 = fixedToolsForDef——收敛三角色直接返回静态集常量（收口），
-    // team/flow/legacy standalone 走 legacy 分支。
-    val withBuiltin = declaredBase ++ AgentCore.fixedToolsFor(agentDef)
-    // FlowTrigger 白名单注入已退役（2026-09-06 工具面裁撤批，作者裁定提前执行
-    // 阶段 2d 子集）：agent.json flows 声明解析保留（决策 A①——legacy 授能中
-    // 声明字段活到阶段 3），但不再驱动任何工具注入；FlowTrigger 工具本身已从
-    // ToolRegistry 摘除。Nebula 的旧体系退役口径（2026-09-05 08:40 裁定）不变。
-    val isNebula = agentDef.name == "Nebula"
-    // Nebula 专属剥离（单点语义 AgentCore.exclusiveToolsFor）：Nebula 全保留
-    // （空集）；dream 豁免 MemoryEdit（2026-09-05 作者签准——动作面仍受
-    // MemoryEditTool 的 DREAM_APPEND_DENIED 约束，append 不可用）；其余身份
-    // 剥全集，行为零变化。
-    val nebulaFiltered = withBuiltin -- AgentCore.exclusiveToolsFor(agentDef.name)
-    // Team task tools（任务工具重做 2026-08-30）：TeamTask 三件只配 team——
-    // 注入源是 fixedToolsFor 的 category=team 分支（全体成员）。这里只做防
-    // 声明逃逸剥离：非 team agent（standalone/flow/Nebula）即使 agent.json
-    // 显式列出也不给（the tool name IS the permission boundary）。
-    val teamTaskFiltered =
-      if agentDef.category == "team" then nebulaFiltered
-      else nebulaFiltered -- AgentCore.TeamTaskTools
-    // Block 1 (supervision trio §C2, 2026-08-27): AgentControl mechanism-layer
-    // grant — a team lead (Manager) gains subtree-scoped control over its own
-    // team (members + their sub-agents; the subtree guard in AgentControlTool
-    // enforces the scope), Nebula keeps global authority. The grant is the
-    // ONLY source: declaring AgentControl in agent.json grants nothing
-    // (TeamTaskTools precedent — the tool name IS the permission boundary).
-    val controlGrant = if isNebula || isTeamLead then Set("AgentControl") else Set.empty[String]
-    val withControl = (teamTaskFiltered -- Set("AgentControl")) ++ controlGrant
-    // Task tools: Nebula/lead 专属的 session 域 TaskCreate/TaskUpdate 已退役
-    // （任务工具重做 2026-08-30）；depth≥2 的 "*" 代理仍剥离 TeamTask*（叶子
-    // 隔离）。
-    val taskFiltered = agentDef.tools match
-      case List("*") =>
-        if depth >= 2 then withControl -- AgentCore.TeamTaskTools
-        else withControl
-      case _ =>
-        withControl
-    // MCP tools: agents may use MCP tools from explicitly granted servers
-    // (mcpServers) plus their own dedicated agent-scoped servers, which are
-    // always auto-allowed. Tool names are mcp__<serverId>__<tool>; dedicated
-    // servers use serverId "agent-<agentName>-<serverName>".
-    val agentOwnPrefix = s"mcp__agent-${agentDef.name}-"
-    // 阶段 2d（D.1-9）：converged 三角色 agent.json mcpServers 声明退役——与
-    // tools 声明同批失效（裁定 11 机制固定零配置）。三角色的 MCP 唯一通道 =
-    // node.plugins 分配（pluginMcpServers，§B.4）；定义层 mcpServers 不再授能。
-    val effectiveMcpServers =
-      if AgentCore.ConvergedAgentNames.contains(agentDef.name) then Nil else agentDef.mcpServers
-    // 阶段 2b Plugins（§B.4 第 4 步）：node 分配的 plugin MCP 前缀来源——
-    // serverId `plugin_<p>_<s>` → 工具名 `mcp__plugin_<p>_<s>__<t>`。分配链
-    // （NodeEdit plugins 参数 → 信任门解析 → PluginMcpManager 启动）是唯一授权
-    // 源；untrusted plugin 根本到不了这里（resolve 即 failNode）。
-    // 注：这是「追加」而非「保留」——base 宇宙（agentDef.tools + fixed）天然
-    // 不含 mcp__* 名，须从注册表按前缀捞取并入（蓝图 §B.4-③「追加对应前缀」）；
-    // 配额期间 server 未注册的工具名自然落空（注册表即事实源）。
-    val pluginPrefixes = agentDef.pluginMcpServers.map(sid => s"mcp__${sid}__")
-    val pluginAppended =
-      if pluginPrefixes.isEmpty then taskFiltered
-      else
-        val pluginMcpNames = ToolRegistry.registeredToolNames.filter(t => pluginPrefixes.exists(t.startsWith))
-        taskFiltered ++ pluginMcpNames
-    val mcpFiltered =
-      if effectiveMcpServers.isEmpty then
-        pluginAppended.filter(t => !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || pluginPrefixes.exists(t.startsWith))
-      else
-        val prefixes = effectiveMcpServers.map(sid => s"mcp__${sid}__")
-        pluginAppended.filter(t =>
-          !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith) ||
-            pluginPrefixes.exists(t.startsWith)
-        )
-    // SubTask workers are leaf agents: no Mail / no further delegation (a
-    // self-cloned team member would otherwise inherit Mail via fixedToolsFor).
-    // Delegate is Nebula-exclusive (filtered above for everyone else); these
-    // strips also defend against a worker whose agent.json explicitly lists
-    // the tools. FlowTrigger/FlowExecute names left the strip sets at the
-    // 2026-09-06 retirement (unregistered tools have no schema — the tool
-    // name IS the permission boundary and the registry is now the wall).
-    // Mail stays for team-category nodes (they may Mail the caller's team).
-    // Team Manager task tools (#D, 2026-08-25): workers/flow nodes never
-    // mutate or even read the team task board — a SubTask worker self-cloned
-    // from a Manager would otherwise inherit TeamTask* via the isTeamLead
-    // grant. Flow-node stripping is generic leaf isolation (U5 裁定: 安全
-    // 隔离, not a flow↔task coupling design).
-    val categoryFiltered =
-      if isSubTaskWorker then
-        mcpFiltered -- (Set("Mail", "SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
-      else if isFlowNode then
-        val leafStripped = mcpFiltered -- (Set("SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
-        // 轨道二 #5（专用化护栏，设计 §C1）：T1 flow worker 默认剥离面向用户
-        // 的展示类工具——引擎级剥离而非提示词恳求（deck-v6 实证：提示词约束在
-        // 错位人设下会被推翻）。即使 agent.json 显式声明也扣掉；userFacing:true
-        // 节点（白名单）豁免。策略=「写文件给下游」≠「Pop 给用户」。
-        // G8（2026-09-08 作者 gate，D6 spec §3.2）：AskUserQuestion 对本剥离链
-        // （isFlowNode 会话，项目节点同走此分支）豁免——节点提问有来源标注
-        // 「项目 · 节点」+ node-ask 留痕事件对分发器审计可见（F1F2 批同窗落地），
-        // 与「错位人设下表演性交付」风险面不同；Pop 仍剥（展示交付无留痕约束）。
-        // 不豁免的暗坑：guardrails 一开即静默收回提问工具，「开着开着不能问了」。
-        if guardrailsOn && !userFacingNode then
-          leafStripped -- (nebflow.core.Guardrails.FlowWorkerStrippedTools - "AskUserQuestion")
-        else leafStripped
-      // Flow agents have no Mail — flow nodes report their result as plain
-      // text output consumed by the executor (the structured FlowReport
-      // verdict channel retired 2026-09-06).
-      // Structurally defends against the 08-14 P0 root cause: a flow agent
-      // whose agent.json lists Mail (or uses "*") could block forever on a
-      // Mail ask (flow callers cannot receive background notifications).
-      else if agentDef.category == "flow" then mcpFiltered - "Mail"
-      else mcpFiltered
-    // 阶段 2b Plugins（§B.6 内建工具授予）：org.nebflow/tools 申请的 builtin 工具
-    // 追加在全部角色过滤之后——信任门审批是授权权威（§B.3 审批清单必审区块），
-    // 审批通过 = 用户明确授予该节点此工具；白名单 {WebSearch, WebFetch, Curl, Pop}
-    // 在 PluginRegistry 装载层强制，此处再过滤一次（纵深防御：损坏的 AgentDef
-    // 也造不出白名单外授予）。编排类工具（Task/Mail/NodeEdit 等）永不进白名单，
-    // §C.1 静态矩阵不被 plugin 授予绕过。
-    val pluginGranted = categoryFiltered ++ agentDef.pluginTools.filter(nebflow.core.plugin.PluginRegistry.BuiltinToolWhitelist)
-    // TaskBoard（20260908 任务板批 2，规格 §1c）：project 会话按身份挂载——
-    // projectBoardSession = isDispatcher || flowNodeId.isDefined（分发器/项目节点）。
-    // 追加点在全部角色过滤与 NebulaExclusiveTools 剥离【之后】：分发器固定面
-    // 九件先被 nebulaFiltered 剥、此处按会话身份重挂，两段不冲突；双轨 flow/
-    // team/Nebula 会话 flag=false 恒不挂（工具面 + 工具内身份拒绝双保险 §1d-4）。
-    if projectBoardSession then pluginGranted + "TaskBoard" else pluginGranted
-
-  end buildAllowedToolSet
-
-  protected def buildToolList(
-    agentDef: AgentDef,
-    depth: Int = 0,
-    isSubTaskWorker: Boolean = false,
-    isFlowNode: Boolean = false,
-    isTeamLead: Boolean = false,
-    userFacingNode: Boolean = false,
-    guardrailsOn: Boolean = false,
-    projectBoardSession: Boolean = false
-  ): Option[List[ToolDefinition]] =
-    val allowedSet = buildAllowedToolSet(agentDef, depth, isSubTaskWorker, isFlowNode, isTeamLead, userFacingNode, guardrailsOn, projectBoardSession)
-    // 2026-09-06 工具面裁撤批：FlowReport 的 per-node contract describe 注入
-    // 随工具退役一并移除（contract 数据本体仍在 AgentDef.flowContract，引擎
-    // spawn 注入路径零触碰）。
-    Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
-      if !allowedSet.contains(td.name) then None
-      else Some(td)
-    })
-
-  protected def emitStream(
-    wsSend: io.circe.Json => IO[Unit],
-    event: AgentStreamEvent,
-    isSubagent: Boolean = true,
-    sessionId: Option[String] = None
-  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
-    val eventName = event.getClass.getSimpleName
-    val json = event.toJson(ctx.self.path.name, isSubagent, sessionId)
-    ctx.forkTurn(
-      wsSend(json).handleErrorWith(e =>
-        NebflowLogger.forName("nebflow.agent").warn(s"emitStream($eventName) failed: ${e.getMessage}")
-      )
-    )
-
-  /**
-   * Direct wsSend for use inside Fiber context (pipeLlmCall, pipeToolExecutions).
-   * Do NOT call from receive handlers — use emitStream instead (non-blocking forkTurn wrapper).
-   */
-  protected def emitStreamIO(
-    wsSend: io.circe.Json => IO[Unit],
-    event: AgentStreamEvent,
-    isSubagent: Boolean = true,
-    sessionId: Option[String] = None
-  )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
-    wsSend(event.toJson(ctx.self.path.name, isSubagent, sessionId))
-
-  /**
-   * 工具执行期心跳（审计 20260903 子项①，RemoteExecutor 活动心跳先例的 WS
-   * 面补充）：io 运行期间每 Defaults.ToolHeartbeatSec 秒发一条 toolHeartbeat
-   * WS 事件喂活前端 busy timer——前台长工具执行（toolStart→toolEnd 之间零
-   * 事件）不再触发前端 630s 纯静默超时误杀仍在干活的 turn（实测 56/359
-   * turn 超 630s）。心跳发送失败绝不影响工具执行（吞掉 + 告警日志）。
-   */
-  protected def withToolHeartbeat[A](
-    label: String,
-    wsSend: io.circe.Json => IO[Unit],
-    isSubagent: Boolean,
-    sessionId: Option[String]
-  )(io: IO[A])(using ctx: ActorContext[AgentCommand]): IO[A] =
-    val emit = emitStreamIO(wsSend, AgentStreamEvent.ToolHeartbeat(label), isSubagent, sessionId)
-      .handleErrorWith(e =>
-        NebflowLogger.forName("nebflow.agent").warn(s"toolHeartbeat emit failed: ${e.getMessage}")
-      )
-    ToolHeartbeat.span(emit, Defaults.ToolHeartbeatSec.seconds)(io)
-
-  protected def streamEmitter(
-    wsSend: io.circe.Json => IO[Unit],
-    isSubagent: Boolean = true,
-    sessionId: Option[String] = None,
-    isAskMode: Boolean = false,
-    isCompactTurn: Boolean = false
-  )(using ctx: ActorContext[AgentCommand]): fs2.Pipe[IO, StreamChunk, StreamChunk] =
-    stream =>
-      // ── WS 事件合批（2026-09-07 抽出为 StreamBatching 并修复 park 饿死）──
-      // 旧内联实现的 flush 只发生在「满 50 条 / 距上次 flush ≥50ms / ToolCall /
-      // Done」——无常驻 ticker。流一旦 parking（楔死/半开连接，正是
-      // hard-recovery 的目标场景）且首 delta 距管道构建 <50ms（热连接往返仅
-      // ~5ms），缓冲文本永远不出网：UI 对恢复前的部分输出完全失明
-      // （B-after-A 冒烟悬案实证：[sse-chunk] 到达而 WS 帧缺席，2026-09-07）。
-      StreamBatching.pipe(
-        wsSend,
-        isSubagent = isSubagent,
-        sessionId = sessionId,
-        isAskMode = isAskMode,
-        isCompactTurn = isCompactTurn,
-        agentPath = ctx.self.path.name
-      )(stream)
-
-  protected def aggregateChunks(chunks: List[StreamChunk]): ConsumeResult =
-    val text = chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
-    val thinking = chunks.collect { case StreamChunk.ThinkingDelta(d) => d }.mkString
-    val thinkingSignature = chunks.collectFirst { case StreamChunk.ThinkingSignature(s) => s }
-    val toolCalls = chunks.collect { case StreamChunk.ToolCallChunk(tc) => tc }
-    val usage = chunks
-      .collectFirst { case StreamChunk.Done(_, Some(u), _, _) if u.inputTokens > 0 => u }
-      .orElse(chunks.collectFirst { case StreamChunk.Done(_, u, _, _) => u }.flatten)
-    val stopReason = chunks.collectFirst { case StreamChunk.Done(sr, _, _, _) => sr }.flatten
-    val model = chunks.collectFirst { case StreamChunk.Done(_, _, Some(meta), _) =>
-      s"${meta.providerId}/${meta.model}"
-    }
-    val contextWindow = chunks.collectFirst { case StreamChunk.Done(_, _, _, cw) => cw }.flatten
-    ConsumeResult(
-      text,
-      toolCalls,
-      Nil,
-      stopReason,
-      usage,
-      Option.when(thinking.nonEmpty)(thinking),
-      thinkingSignature,
-      model,
-      contextWindow
-    )
-
-  end aggregateChunks
-
-  protected def buildSystemPrompt(
-    agentDef: AgentDef,
-    ctx: PromptContext
-  ): String =
-    val rawPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
-    // SubTask workers inherit the parent's system.md for domain knowledge but
-    // team interaction content is stripped (no team / no Mail / no reporting).
-    val base = if ctx.isSubTaskWorker then SubTaskPrompt.stripTeamContent(rawPrompt) else rawPrompt
-    val cleanedPrompt = PromptSections.stripAllMigrated(base)
-    val conditionalBlocks = PromptSections.buildConditionalBlocks(ctx)
-    PromptSections.assembleSystemPrompt(cleanedPrompt, conditionalBlocks)
-
-  end buildSystemPrompt
-
-  /** Format active persistent sub-agent sessions for system prompt injection. */
-  protected def formatAgentSessions(sessions: List[AgentSessionInfo]): String =
-    if sessions.isEmpty then ""
-    else
-      val lines = sessions.map: s =>
-        s"${s.address} — ${s.agentName}: ${s.taskDescription} (${s.status})"
-      "# Active Sessions\n\n" + lines.mkString("\n") +
-        "\n\nUse Mail to send follow-up instructions to any session above."
-
-  @volatile private var deviceInfoCache: (Long, String) = (0L, "")
-
-  private def deviceInfoBlock: String =
-    val now = System.currentTimeMillis()
-    val (lastUpdate, cached) = deviceInfoCache
-    if now - lastUpdate < 30000 && cached.nonEmpty then cached
-    else
-      val refreshed = RemoteExecutor.current
-        .flatMap(_.neblinkServiceOpt)
-        .flatMap { ms =>
-          try
-            import cats.effect.unsafe.implicits.global
-            val id = ms.identity.unsafeRunSync()
-            val peersList = ms.peers.unsafeRunSync()
-            val localStr =
-              s"local (${id.deviceName})" +
-                (if id.userDescription.nonEmpty then s" -${id.userDescription}" else "")
-            val peerStrs =
-              peersList.map { p =>
-                p.deviceName + (if p.userDescription.nonEmpty then s" -${p.userDescription}" else "")
-              }
-            val allDevices = (localStr :: peerStrs).mkString("; ")
-            val deviceHint =
-              if peersList.nonEmpty then
-                "\nEach tool accepts a `device` parameter. Select the appropriate device for each task."
-              else ""
-            Some(s"$allDevices$deviceHint")
-          catch case _: Exception => None
-        }
-        .getOrElse("")
-      deviceInfoCache = (now, refreshed)
-      refreshed
-
-    end if
-
-  end deviceInfoBlock
-
-  protected def summarizeToolResult(call: ToolCall, result: String): String =
-    nebflow.core.summarizeToolResult(call, result)
-
-  /**
-   * P0 阶段 3（2026-08-18，设计 §4.4）：更新 agentRegistry 的活动快照。
-   * TaskStuckWatcher 读 AgentRecord.status + lastActivityMs 判定卡死——
-   * 本 helper 是这两个字段的主要写入点（注册点默认值除外）：
-   *   - Processing：AgentCore.pipeLlmCall（LLM 调用开始 + 每个流 chunk）
-   *   - Idle：AgentActor.finishTurnCont 回 idle 分支（turn 完成）
-   * 补充写入点（#319，2026-08-19）：BashTool.startActivityBridge 在前台命令
-   * 有进展（输出/CPU/sleep）时也会刷新 lastActivityMs——防止长前台命令被
-   * TaskStuckWatcher 误判卡死。仅 touch 时间戳，不改变 status。
-   * 幂等且仅在记录存在时更新（registry 无该 session 时 no-op——不创建幽灵条目）。
-   */
-  protected def touchRegistryActivity(
-    resources: SharedResources,
-    sessionId: Option[String],
-    status: AgentStatus,
-    now: Long = System.currentTimeMillis()
-  ): IO[Unit] =
-    sessionId.fold(IO.unit) { sid =>
-      resources.agentRegistry.modify { m =>
-        m.get(sid) match
-          case Some(rec) => (m.updated(sid, rec.copy(status = status, lastActivityMs = now)), ())
-          case None => (m, ())
-      }
-    }
-
-end AgentCore
+// 拆分迁移(2026-09-25,行为保持重构):trait AgentCore 改为合成层——
+// registry-emit 基础族(AgentRegistryEmit)+ WS 流事件合批管道族(AgentStreamPipelines,
+// 2026-09-07 长裁定注记随 object StreamBatching 同文件迁出)+ 会话与工具执行族
+// (AgentSessionExecution,经 extends 前两者衔接以保 protected 互引合法)。成员可见性
+// 原样迁移;AgentActor 侧 extends AgentCore with AgentSession 与各文件
+// import AgentActor.* 的解析路径零变化。companion object AgentCore 须与 trait 同文件,
+// 故整体留驻本文件。
+private[agent] trait AgentCore extends AgentRegistryEmit with AgentStreamPipelines with AgentSessionExecution
 
 object AgentCore:
 
   /**
-   * R1 (wait-timeout-fix, 2026-09-03 作者裁定①): the permission-confirmation
-   * wait primitive — completes ONLY when the user answers, no timeout. This is
-   * the single seam for the "permission waits are unbounded" invariant;
-   * WaitTimeoutR1PermissionSpec pins it with a virtual clock (pending across
-   * 6min ≫ the removed 5min PermissionTimeout → still waiting; late answer
-   * honored). Caller: AgentCore.askUserPermission (the only permission wait).
+   * Nebula-root-session identity criterion (tool-face identity batch B1 /
+   * taskunify 2026-09-24, single source): `agentDef.name == "Nebula" && depth == 0`.
+   * Deliberately NOT the wider root-ish signals (`AgentRecord.kind == AgentKind.Root`
+   * is broader -- standalone root sessions also set kind=Root; `rootSessionId ==
+   * sessionId` needs a registry lookup = IO + registration timing). Consumers:
+   * `ToolContext.isNebulaRoot` / `ToolContext.isNebulaWriter`. (W1 provisional
+   * shim: ported verbatim from main's AgentCore -- the PR blob predates B1.)
    */
-  def awaitPermissionDecision(deferred: cats.effect.Deferred[IO, Boolean]): IO[Boolean] =
-    deferred.get
+  def isNebulaRoot(agentDef: Option[AgentDef], depth: Int): Boolean =
+    agentDef.exists(_.name == "Nebula") && depth == 0
+
+  // 严格DAG第⑥步第三批A裁定(dwfq-5c7a31ea-1,R-F):isRootAgent 下沉 actor.RootAgentIdentity、
+  // markToolProgress 下沉 actor.AgentState(签名零 agent 符号;此处不留转发别名,shim 禁令),
+  // 本对象内调用点随迁改指。
+  /**
+   * 会话工具面身份（Q4/Q5 批 2026-09-13）：定义期变体选择的**唯一输入**。
+   *
+   * 三个分量各有**既有单点**来源（禁在任何消费点重写判据表达式）：
+   *   - `isRootAgent` ⟵ [[isRootAgent]]（含 `depth` 分量）；
+   *   - `isDispatcher` ⟵ `AgentState/session.isDispatcher`（`ProjectActor` spawn 置位）；
+   *   - `nodeRole` ⟵ `SessionContext.flowNodeRole`，经 `NodeRoles` **归一 + 白名单校验**；
+   *     **缺省 / 非法 / 未登记 ⇒ `None`**（= 基础面，fail-closed）——定义层**不**
+   *     替运行期做「缺省就是 task」的身份推断：申报值域判据（已退役）曾以本字段
+   *     运行期口径，定义层据此分化会让「无身份的旁支会话」静默落到 task 变体。
+   */
+  private[agent] final case class ToolFaceIdentity(
+    isRootAgent: Boolean = false,
+    isDispatcher: Boolean = false,
+    nodeRole: Option[String] = None
+  )
+
+  private[agent] object ToolFaceIdentity:
+    /**
+     * **fail-closed 默认**：未知 / 未登记 / 缺身份的会话形态一律基础面。
+     */
+    val Base: ToolFaceIdentity = ToolFaceIdentity()
+
+  /** 身份装配单点（[[buildToolList]] 内唯一调用点）。 */
+  private[agent] def toolFaceIdentity(
+    agentDef: AgentDef,
+    depth: Int,
+    flowNodeRole: Option[String],
+    isDispatcher: Boolean
+  ): ToolFaceIdentity =
+    ToolFaceIdentity(
+      isRootAgent = RootAgentIdentity.isRootAgent(Some(agentDef), depth),
+      isDispatcher = isDispatcher,
+      nodeRole = flowNodeRole.filter(NodeRoles.isValid).map(NodeRoles.normalize)
+    )
+
+  /**
+   * 定义期 schema/描述分组：**唯一的变体选择点**（B2/L13 建立；Q4/Q5 批扩到
+   * 三个目标工具，仍是**一处选择**）。
+   *
+   * 纪律（fail-closed）：**默认分支恒为基础变体**——未登记/未来新增的会话形态
+   * 自动落基础面，绝不静默拿到分化变体。变异「默认分支改分化变体」⇒
+   * `ToolFaceVariantSpec` 必红。
+   *
+   * 只替换**同一元素**的 `description`（不插删工具元素、零成员资格改动）⇒
+   * `ALL_TOOLS` 的迭代序与工具数组逐位不变；**不得**给 `ALL_TOOLS` 加无身份维度的
+   * 缓存（加了分化立即失效，规格 §3.4 新降级面 (b)）。
+   *
+   * 身份维度优先级：root 面先判（互斥形态取 root），再 dispatcher，再节点角色。
+   */
+  private[agent] def schemaVariantFor(
+    td: ToolDefinition,
+    identity: ToolFaceIdentity
+  ): ToolDefinition =
+    // AskUserQuestion 的 schema 变体分支已随「非阻塞-only」裁定整体删除：该工具一律
+    // 以非阻塞方式提问，参数面不再有 `mode` 键 ⇒ root 面与基础面 schema 逐字节相等，
+    // 无变体可分（`ToolFaceVariantSchemaSpec` 的 AskUser 豁免同步收紧为 Set.empty）。
+    // 终态申报工具的按角色 schema 分化分支已随该工具整体退役删除（文本锚定协议
+    // 无 schema 维度）。
+    if MailTool.name == td.name then MailTool.addressFaceVariant(td, identity.isRootAgent, identity.isDispatcher)
+    else td
+
+  /**
+   * stuck 自动恢复批 P1：LoopGuard 跨轮指纹的**只读投影**（设计 §3.4 互斥点 2 的
+   * 可见性缺口）。`Counters.crossTurn` 在 AgentState 内、watcher 不可读；本函数把它
+   * 折成两个可直接比较的标量，写点与既有 loopStreak/loopRounds 镜像**同点**
+   * （`pipeToolExecutions`）——**不碰冻结面**（`AgentActor` / `LoopGuard`）。
+   *
+   *   - `loopStrikeCount` = `crossTurn` 各 fp 的失败 turn 集合大小之和（累计跨轮命中数）；
+   *   - `lastLoopFp` = 命中次数最多者，同数取字典序最小（**确定性**，不受 Map 迭代序影响）。
+   *
+   * **只读不回流判据**：两者都不参与任何判死不等式，只作为「恢复 → 又被冻结」自激
+   * 循环的识别信号（见 `TaskStuckWatcher` 互斥点 2）。
+   */
+  def projectLoopCounters(counters: nebflow.shared.Counters): (Int, String) =
+    val hits = counters.crossTurn.iterator.map { case (fp, turns) => (fp, turns.size) }.toList
+    val total = hits.iterator.map(_._2).sum
+    val lastFp = hits.sortBy { case (fp, n) => (-n, fp) }.headOption.map(_._1).getOrElse("")
+    (total, lastFp)
+
+  /**
+   * permission-landing 批 P1（2026-11-18 重派裁定）：权限等待超时上限（毫秒）。
+   *
+   * - 可配置：环境变量 `NEBFLOW_PERMISSION_WAIT_TIMEOUT_SEC`（>0 才生效）。
+   * - 缺省 600_000（10min）。理由：R1（2026-09-03）移除的是「5min 硬顶在用户
+   *   **能答** 时抢先自动拒绝」；本批要堵的是另一面——用户**答不了**（目标会话
+   *   不可达 / 无人盯屏 / 卡从未渲染）时请求方无限挂起（现场实测节点
+   *   WaitingForUser 40-60min、父链级联 Idle）。10min = 比被移除的 5min 宽松
+   *   一倍（离开座位的普通人仍来得及批），又比卡死现场小一个量级（链上停滞
+   *   的代价上限被钉死在 10min）。
+   * - 超时结局 = 失败关闭（fail-closed deny）：绝不放行，只按拒绝收口。
+   */
+  def permissionWaitTimeoutMs: Long =
+    sys.env
+      .get("NEBFLOW_PERMISSION_WAIT_TIMEOUT_SEC")
+      .flatMap(_.trim.toLongOption)
+      .filter(_ > 0)
+      .map(_ * 1000L)
+      .getOrElse(600_000L)
+
+  /** 权限等待结局：用户真实答复，或超时（等待方据此失败关闭，绝不静默）。 */
+  enum PermissionWaitOutcome:
+    /** 用户真实答复（approved=true 允许 / false 拒绝——#12 劝停计数只对这条腿生效）。 */
+    case Answered(approved: Boolean)
+    /** 有界截止到期：等待期间无任何可达窗口作答 ⇒ 调用方按拒绝收口并写明原因。 */
+    case TimedOut(afterMs: Long)
+
+  /**
+   * permission-landing 批 P1：**有界**权限等待原语（取代 R1 的无界
+   * `deferred.get`——2026-11-18 重派裁定推翻「等待无超时」口径：等待方必须有
+   * 超时）。等待期内用户作答 ⇒ [[PermissionWaitOutcome.Answered]] 如实返回
+   *（迟到回答照常生效，R1 的「人能答时不抢先拒绝」语义保留）；到期 ⇒ 先执行
+   * `withdraw`（调用方用 InteractionHubCommand.CloseRequest 精确回收槽位 + 广播
+   * 关卡帧，卡片不再挂在没人听的位置）再以 [[PermissionWaitOutcome.TimedOut]]
+   * 返回——由调用方写一条可读的失败关闭结论（不计入 #12 用户拒绝计数）。
+   * `timeoutMs <= 0` 防御性视为无界（唯一产线取值来自 [[permissionWaitTimeoutMs]]
+   * 的 >0 过滤，正常不可达）。
+   */
+  def awaitPermissionDecisionBounded(
+    deferred: cats.effect.Deferred[IO, Boolean],
+    timeoutMs: Long,
+    withdraw: IO[Unit]
+  ): IO[PermissionWaitOutcome] =
+    if timeoutMs <= 0 then deferred.get.map(PermissionWaitOutcome.Answered(_))
+    else
+      deferred.get
+        .map(PermissionWaitOutcome.Answered(_))
+        .timeoutTo(timeoutMs.millis, withdraw.as(PermissionWaitOutcome.TimedOut(timeoutMs)))
+
+  /**
+   * P0-1（2026-09-20）+ permission-landing 批 P1：mcpPermission 卡的有界等待原语
+   * ——与 [[awaitPermissionDecisionBounded]] 同一不变式（有界、超时失败关闭、
+   * 迟到回答照常生效），只是答复型别携带 `scope` / `upgradeMode`（spec §2.4）。
+   */
+  def awaitMcpPermissionDecisionBounded(
+    deferred: cats.effect.Deferred[IO, nebflow.shared.McpPermissionAnswer],
+    timeoutMs: Long,
+    withdraw: IO[Unit]
+  ): IO[Either[Long, nebflow.shared.McpPermissionAnswer]] =
+    if timeoutMs <= 0 then deferred.get.map(Right(_))
+    else
+      deferred.get
+        .map(Right(_))
+        .timeoutTo(timeoutMs.millis, withdraw.as(Left(timeoutMs)))
 
   /**
    * #12 劝停: error text for the n-th user denial of `toolName` within one
@@ -2103,143 +215,548 @@ object AgentCore:
 
   /**
    * Nebula-exclusive tools: stripped from every identity except per
-   * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryEdit only —
+   * exclusiveToolsFor (Nebula keeps all; dream admitted for MemoryNote only —
    * see DreamAdmittedTools below).
-   * - Schedule: session-scoped scheduled tasks
-   * - Delegate: 调度器/根 agent 专用——指派 standalone agent。
-   *   Team 成员委派走 SubTaskTool（self-clone + ephemeral）。
+   * - Delegate: 极简内核入口（**builtin-def 批 2026-10-03 在場恢复进
+   *   `RootOrchestrationTools`**，作者令② Delegate 直接触发 kernel；本集条目
+   *   继续承担**防声明逃逸**剥离——非 Nebula 身份的 agent.json/`"*"` 声明授不了）。
+   *   目标恒为内置 `kernel` def（代码级，BuiltinAgents 单点）；Team 成员委派走
+   *   SubTaskTool（self-clone + ephemeral）。
    *   Flow 触发不在此列——FlowTrigger 由 agent.json flows 白名单驱动注入。
-   *   2026-09-05 08:40 作者裁定后 Delegate 已不在 Nebula 固定面
-   *   （NebulaOrchestrationTools 不再携带）——本集对非 Nebula 的防逃逸剥离
-   *   语义防御性保留（legacy team/flow 成员若声明 Delegate 仍被剥）。
+   *   史实：2026-09-05 08:40 作者裁定曾把 Delegate 移出 Nebula 固定面；
+   *   2026-09-10 指令 + 2026-09-11 R2-c 裁定以「极简内核」形态回归；
+   *   promptgov 批 2026-09-17 再摘（史实归档，被 2026-10-03 作者令②取代）。
    * - AgentControl: 后台 agent 管控（list/status/cancel/restart，spec §4 安全
    *   边界矩阵——危险能力只交给根调度者）。
    * - Issue/CheckIssues（已退役，2026-09-04 作者终裁）：不再在本集——工具整体
    *   退役，报 issue 走 gh cli 由节点代劳（定义层已归档 .archived-tools-2d/）。
    *   未注册名无 schema、无执行路径，声明即惰性字符串，无须剥离。
-   * - MemoryEdit（阶段 2c §C.1 记忆行）：记忆写面原为 Nebula 专属（2026-08-31
+   * - MemoryNote（阶段 2c §C.1 记忆行）：记忆写面原为 Nebula 专属（2026-08-31
    *   裁定①）。2026-09-05 作者签准修订：写面 = Nebula + dream——dream 仅准入
    *   修订动作（remove/update/replace_section），append 在工具执行层拒绝
-   *   （DREAM_APPEND_DENIED，「dream 禁写新记忆」铁律由 MemoryEditTool 强制）。
+   *   （DREAM_APPEND_DENIED——实现该铁律的记账工具本体已随 govmemory 批
+   *   2026-09-25 整体退役，故动作面白名单现无机械面承载，见 registry 的退役注）。
    *   准入例外 = DreamAdmittedTools，剥离面经 exclusiveToolsFor 单点生效；
    *   Schedule/Delegate/AgentControl 对 dream 仍专属、不得放开。
    */
-  val NebulaExclusiveTools = Set(
+  val RootExclusiveTools = Set(
+    "AskHostReply",
+    "AskHostClarify",
     "Schedule",
     "Delegate",
     "AgentControl",
-    "MemoryEdit",
-    // TaskList（2026-09-06 TaskList 批）：Nebula 专属编排件——任务=快变状态
-    // 存储（~/.nebflow/tasks.json），与 MemoryEdit 同域隔离（非 Nebula 声明即剥）。
-    "TaskList",
-    // TaskBoard（20260908 任务板批 2）：项目域编排件（非 Nebula 专属——分发器
-    // 固定面 + project 节点会话按身份挂载），但同享本集的【防声明逃逸】通道：
-    // agent.json 声明（含 "*"）对一切非 Nebula 身份不授能。project 会话的真实
-    // 授能在 buildAllowedToolSet 末段按会话身份追加（晚于本集剥离点），分发器
-    // 固定面同理（nebulaFiltered 先剥、末段再挂）——剥离与授能两点不相干扰。
-    "TaskBoard"
+    "MemoryNote",
+    // Task（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件合一
+    // ⇒ 本集成员一对一改名 `TaskList`/`TaskBoard` → `Task`/`TaskInfo`）：Nebula
+    // 专属写面（合一账本 tasks-v2.json）+ 项目域只读件 TaskInfo——非 Nebula 身份
+    // 声明即剥（防声明逃逸）。project 会话按身份挂载；但同享本集的【防声明逃逸】
+    // 通道：agent.json 声明（含 "*"）对一切非 Nebula 身份不授能。project 会话的
+    // 真实授能在 buildAllowedToolSet 末段按会话身份追加（晚于本集剥离点）——剥离
+    // 与授能两点不相干扰。🔴 本两行曾被 PR48 重建族静默回退回旧名
+    // （TaskList/TaskBoard 均已不注册，旧名条目剥了个寂寞——"Task" 反而可被 "*"
+    // 声明授能）；2026-10-14 redfix 批按 taskunify 语义恢复。
+    "Task",
+    "TaskInfo",
+    // Pop（2026-09-10 作者裁定「我觉得把pop工具给nebula专属吧」）：Pop 收归
+    // Nebula 专属——Canvas 是用户面呈现通道，节点乱 Pop 是过程件污染的入口，
+    // 靠纪律不如靠工具面收口。本集同时是【防声明逃逸】通道：agent.json 声明
+    // （含 "*"）对一切非 Nebula 身份不授能（Pop 已从 general 固定面摘除、从
+    // 插件白名单摘除；真实授能 = NebulaOrchestrationTools 单点）。执行面另有
+    // PopTool 分发层身份闸（POP_NEBULA_ONLY）——定义层与分发层两层收口。
+    "Pop",
+    // ListFriends（好友消息改造批 ⑩，方案 `20260912_011320` §4.5 #5 推荐路线，
+    // 2026-09-12）：Nebula 专属只读好友名册——全 agent 面披露的是**全量社交图谱**
+    // （一次性给出「你是谁的好友」全集），与 TaskList/MemoryNote 同域隔离纪律一致；
+    // 且本集同时是【防声明逃逸】通道：agent.json 声明（含 "*"）对一切非 Nebula
+    // 身份不授能。本单点被两消费点共用（`buildAllowedToolSet` 的 runtime 剥离 +
+    // `AgentLibrary` 面板/定义保存侧 strip —— 见 `exclusiveToolsFor` 注释）。
+    // 选本路线而非 `buildAllowedToolSet` 内 `- "ListFriends"`（SendMessage 先例）：
+    // 两者授能结果等价，但后者不覆盖保存侧。
+    "ListFriends",
+    // Subagent（builtin-merge 批 2026-10-03）：执行 agent（nebflow）的机制面工具——
+    // 同享本集【防声明逃逸】通道：agent.json 声明（含 "*"）对非授权身份不授能
+    // （真实授能 = AgentCore.NebflowFixedTools 单点）。
+    // 🔴 "AgentFlow" 条目随 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）
+    // 摘除：该工具已整体退役、名字离开 TOOL_MAP ⇒ 声明该名本就零授能，留条目 =
+    // 表对该名永不可达的死文本（违表零膨胀纪律）。
+    "Subagent",
+    // ChainWrite（N1 刀2，v3 §5 S4）：delegate 会话专属整链登记件——同享本集
+    // 【防声明逃逸】通道：插件/agent.json 声明（含 "*"）对非 delegate 会话身份
+    // 不授能（真实授能 = buildAllowedToolSet 尾段 delegateSession 腿单点）；
+    // 工具内 DelegateSessions 身份拒绝双保险（TaskBoard 同款纪律，
+    // 剥离与授能两点不相干扰）。
+    "ChainWrite",
+    // TaskSearch（task-rag 批 #1227 / §Batch 7）：Nebula 专属只读检索件——
+    // 同享本集【防声明逃逸】通道：agent.json/插件声明（含 "*"）对一切非 Nebula
+    // 身份不授能（真实授能 = RootOrchestrationTools 单点；TaskList 同域纪律）。
+    "TaskSearch",
+    // ConversationSearch is Nebula-root-only and read-only; block agent/plugin declaration escape.
+    "ConversationSearch",
+
+    // GenerateImage（imagegen 双层批 2026-10-24，调试状态）：Nebula 专属生图件——
+    // 同享本集【防声明逃逸】通道（真实授能 = RootOrchestrationTools 单点；编译期
+    // seal 关时经 imageGenSealedStrip 从交付面剥除且本集条目随之不可达）。
+    "GenerateImage"
   )
 
-  /** dream 的 MemoryEdit 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
-    * 记忆写面 = Nebula + dream，dream 严禁写新记忆——仅放行修订动作（remove/
-    * update/replace_section），append 在工具执行层拒绝（DREAM_APPEND_DENIED）。
-    * 本集只放开【授能/剥离面】；动作面白名单在 MemoryEditTool（两道闸独立，
-    * 摘任一道 spec 即红）。 */
-  val DreamAdmittedTools = Set("MemoryEdit")
+  /**
+   * dream 的 MemoryNote 准入例外（2026-09-05 作者签准，修订 2026-08-31 裁定①）：
+   * 记忆写面 = Nebula + dream，dream 严禁写新记忆——仅放行修订动作（remove/
+   * update/replace_section），append 在工具执行层拒绝（DREAM_APPEND_DENIED）。
+   * 本集只放开【授能/剥离面】；动作面白名单原在该记账工具内（两道闸独立，
+   * 摘任一道 spec 即红）——该工具与队列族已退役（memory-family-retirement 批
+   * 2026-09-29）⇒ 动作面白名单随之消失，本集仅存授能/剥离语义。
+   */
+  val DreamAdmittedTools = Set("MemoryNote")
 
-  /** 身份 → 应剥离的 Nebula 专属工具集（剥离语义单点，两消费点共用）：
-    * Nebula → 空（专属集全保留）；dream → 原集 − DreamAdmittedTools（仅
-    * MemoryEdit 准入）；其余身份 → 原集（行为零变化）。
-    * 消费点：buildAllowedToolSet 的 nebulaFiltered（runtime 授能剥离）与
-    * AgentLibrary 面板/定义保存侧 strip——dream 声明 MemoryEdit 保存时不再
-    * 被剥掉（否则准入形同虚设）。 */
+  /**
+   * 身份 → 应剥离的 Nebula 专属工具集（剥离语义单点，两消费点共用）：
+   * Nebula → 空（专属集全保留）；dream → 原集 − DreamAdmittedTools（仅
+   * MemoryNote 准入）；其余身份 → 原集（行为零变化）。
+   * 消费点：buildAllowedToolSet 的 nebulaFiltered（runtime 授能剥离）与
+   * AgentLibrary 面板/定义保存侧 strip——dream 声明 MemoryNote 保存时不再
+   * 被剥掉（否则准入形同虚设）。
+   */
   def exclusiveToolsFor(name: String): Set[String] =
     name match
+      // 字面量保留：case 模式匹配形态（改经常量会破坏 match）；身份名单点 = RootAgentIdentity.Name
       case "Nebula" => Set.empty[String]
-      case "dream"  => NebulaExclusiveTools -- DreamAdmittedTools
-      case _        => NebulaExclusiveTools
+      case "dream" => RootExclusiveTools -- DreamAdmittedTools
+      // builtin-merge 批（2026-10-03）：执行 agent 的机制面豁免——Subagent 是
+      // NebflowFixedTools 单点授能（本集在册只为防其他身份声明逃逸）。四件 Node
+      // 工具**不**入豁免集（防 Subagent 步会话过授能——delegate 面真实授能只在
+      // buildAllowedToolSet 尾段）。tool-face-agentflow-retire 批（2026-11-05）：
+      // AgentFlow 名随工具退役从本集消失 ⇒ 豁免面收窄为 {Subagent}（N1 复名批
+      // Workflow→AgentFlow 的随名面随之终结）。
+      case "nebflow" => RootExclusiveTools -- Set("Subagent")
+      case _ => RootExclusiveTools
 
-  /** Nebula 固定工具集（阶段 2c agent 收敛，设计文档 §C.1 角色-工具静态矩阵；
-    * 裁定 11：全部机制注入不可配置）。2026-09-05 08:40 作者裁定改版：+基础文件
-    * 四件（Bash/Read/Glob/Grep——从 BaseTools 取件）+Card 解封恢复（471 行后端
-    * 工具整体回归，注册表同批恢复；其前端 iframe 消费面本批不恢复，chat 可视
-    * 渲染待前端批）、−旧体系四件（Mail/Delegate/FlowTrigger/FlowExecute——旧
-    * Team/Flow 体系对 Nebula 完全退役，Task 是唯一项目触发入口，节点结果沿
-    * out 边自动回流；工具类与注册表注册全部保留——team/flow 双轨期
-    * legacyFixedTools 对成员仍授能，零触碰）。2026-09-05 13:11 作者裁定曾把
-    * 基础六件 Read/Glob/Edit/Write/Grep/Bash 定为全体 agent 统一默认
-    * （Nebula 补齐 Write/Edit 至恰十七件）；2026-09-05 23:34 作者裁定
-    * （「把你的 bash 和编辑工具收起来」）推翻 Nebula 例外：Bash/Write/Edit
-    * 三件从本集移除、Nebula 回归纯编排——general/BaseTools 六件默认注入
-    * 不变，Nebula 是唯一例外（编排件+读三件+MemoryEdit，恰十四件）。
-    * 2026-09-06 00:48 作者裁定再摘 NodeList：节点结果沿 out 边自动投递
-    * Nebula，主动查图与「全量派发 + pending 节点、不维护状态清单」的裁定
-    * 职责重叠。2026-09-06 TaskList 批（作者 00:07 提议 + 00:11 首期无前端
-    * 拍板）：+TaskList——Nebula 专属持久任务清单（快变状态出记忆、入
-    * ~/.nebflow/tasks.json 运行时数据层；生命周期节点注入一行 open 摘要，
-    * MemoryHygieneSignal 先例）——本集恰十四件。
-    * 分组与矩阵行一一对应：
-    *   - 编排触发：Task / ProjectCreate / AgentControl（list/status/cancel/restart）
-    *   - 任务编排：TaskList（2026-09-06 TaskList 批；NebulaExclusiveTools 同批
-    *     防声明逃逸——dispatcher/general/"*" 一律剥离）
-    *   - 通信：SendFriendMessage（好友功能非旧体系，保留机制固定）
-    *   - 读三件：Read / Glob / Grep（读代码读现状；无写手——一切执行走
-    *     Project 派发）
-    *   - 可视化：Card（2026-09-05 解封，commit 793f62c1 曾整体删除）
-    *   - 用户面：AskUserQuestion / Pop；平台：Schedule / TransferFile
-    *   - 记忆：MemoryEdit（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
-    * 显式不含：Bash/Write/Edit（2026-09-05 23:34 裁定移除——Nebula 无写手）、
-    * NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
-    * dispatcher 自身面 DispatcherFixedTools 不受影响）、
-    * Mail/Delegate/FlowTrigger/FlowExecute（旧体系退役）、Web 系、
-    * TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
-    * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
-    * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：恰十四件、零 Issue、
-    * 零旧体系四件。 */
-  val NebulaOrchestrationTools = Set(
+  /**
+   * Nebula 固定工具集（阶段 2c agent 收敛，设计文档 §C.1 角色-工具静态矩阵；
+   * 裁定 11：全部机制注入不可配置）。2026-09-05 08:40 作者裁定改版：+基础文件
+   * 四件（Bash/Read/Glob/Grep——从 BaseTools 取件）+Card 解封恢复（471 行后端
+   * 工具整体回归，注册表同批恢复；其前端 iframe 消费面本批不恢复，chat 可视
+   * 渲染待前端批）、−旧体系四件（Mail/Delegate/FlowTrigger/FlowExecute——旧
+   * Team/Flow 体系对 Nebula 完全退役，节点结果沿 out 边自动回流；工具类与
+   * 注册表注册全部保留——team/flow 双轨期
+   * legacyFixedTools 对成员仍授能，零触碰）。**本条覆盖此前相关指令**：
+   * 2026-09-12「一个 Mail 统一」批（B4 取代条款）已把「`Task` = 唯一项目触发
+   * 入口」**作废**——当日口径 = **Mail 唯一消息原语 + Task 已退役**；Nebula 曾经
+   * `Mail(address="project:<name>")` 触发项目分发器（与已退役的 `Task` 同内核
+   * `ProjectActor.TriggerDispatcher`；🔴 该触发腿已随 project-trigger 拆除批
+   * 2026-10-18 整体退役——现口径见本集 "Mail" 条目批注）。2026-09-05 13:11 作者裁定曾把
+   * 基础六件 Read/Glob/Edit/Write/Grep/Bash 定为全体 agent 统一默认
+   * （Nebula 补齐 Write/Edit 至恰十七件——史实，时点 2026-09-05）；同日
+   * 23:34 作者裁定
+   * （「把你的 bash 和编辑工具收起来」）推翻 Nebula 例外：Bash/Write/Edit
+   * 三件从本集移除、Nebula 回归纯编排——general/BaseTools 六件默认注入
+   * 不变，Nebula 是唯一例外（编排件+读三件+MemoryNote，恰十四件——史实，时点 2026-09-05；
+   * 其中「读三件」= 当日形态；2026-09-16 18:41 令后曾收窄为**读一件 Read**，
+   * 该形态已被 2026-09-18 18:18 令取代 ⇒ **读三件在场恢复，史实归档**）。
+   * 2026-09-06 00:48 作者裁定再摘 NodeList：节点结果沿 out 边自动投递
+   * Nebula，主动查图与「全量派发 + pending 节点、不维护状态清单」的裁定
+   * 职责重叠。2026-09-06 TaskList 批（作者 00:07 提议 + 00:11 首期无前端
+   * 拍板）：+TaskList——Nebula 专属持久任务清单（快变状态出记忆、入
+   * ~/.nebflow/tasks.json 运行时数据层；生命周期节点注入一行 open 摘要，
+   * MemoryHygieneSignal 先例）——本集恰十四件（史实，时点 2026-09-06）。
+   * 2026-09-11 Delegate 恢复批（作者 2026-09-10 指令 + R2-c 裁定 U3/U6）：
+   * +Delegate（极简内核入口，目标恒为内置 `kernel` def——内核工具面 =
+   * KernelFixedTools 恰七件 = BaseTools 六件 + AskUserQuestion）。本件是**加法**
+   * 而非翻案：08:40 裁定的理由（旧 Team/Flow 双轨过渡件退出）不变，回归的
+   * Delegate 不携带任何 Team/Flow/Mail 语义；Mail/FlowTrigger/FlowExecute
+   * 维持退役。**在飞实测件数 = 17**（同一清单常量即单点来源，
+   * NebulaOrchestrationToolsExpectedSize）。历史沿革（史实，非当前值）：
+   * 2026-09-12 好友消息改造批 ⑩ +ListFriends → 16；2026-09-14 附件腿/退役批
+   * #145 −TransferFile → 15；2026-09-16 18:41 作者令 −Glob −Grep → 13；
+   * **2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」+5
+   * （Bash/Edit/Write/Glob/Grep）⇒ 17（在飞值）**。
+   * **取代关系登记（2026-09-18 18:18 作者令，唯一依据）**：本令**取代** ① 2026-09-16
+   * 18:41 作者令（commit `f9451705ac32c678f517c073c922e17841abdf6b`「root 工具面收缩：
+   * Nebula(root) 面摘除 Glob/Grep（15→13）」）之 **root 面部分**、② 2026-09-05 23:34
+   * 作者裁定（「把你的 bash 和编辑工具收起来」）之 **root 面部分**——**仅 root 面**；
+   * **分发器面（DispatcherFixedTools）/ 节点·基础面（BaseTools / GeneralFixedTools /
+   * KernelFixedTools）逐字不变**。故 2026-09-16「终态 = 13」与 2026-09-14
+   * 「终态 = 15，已定」两笔口径转为 **provisional/存档**，不得作为待拍板项重提。
+   * 🔴 2026-09-13「Glob/Grep 永久保留」旧裁定**不因本批复活**：本次恢复的依据**只有**
+   * 09-18 18:18 令本身——不得援引旧裁定，也不得替旧裁定翻案。
+   * 纪律不变：**不得**改断言常量去凑任何数字，也不得在树内实测值 ≠ 本常量时放宽
+   * 断言（该纪律禁的是**为过测而放宽断言**，**不禁**按作者令变更 root 面本身——
+   * 本次 12 → 17 即属后者）；⑩-9 的「终态待定」悬置口径已被作者 2026-09-14 拍板
+   * 取代，只归档、不重提。
+   * 分组与矩阵行一一对应：
+   *   - 编排触发：Mail（R2「一个 Mail 统一」批：−Task +Mail，2026-09-12）/
+   *     Project（N2 project-tool 批 2026-10-06 ⑨A 更名，原 ProjectCreate——件数
+   *     零变化，纯换名非摘除）/ AgentControl（list/status/cancel/restart）
+   *     / Delegate（2026-09-11 极简内核回归）
+   *   - 任务编排：TaskList（2026-09-06 TaskList 批；NebulaExclusiveTools 同批
+   *     防声明逃逸——dispatcher/general/"*" 一律剥离）
+   *   - 通信：SendMessage（好友功能非旧体系，保留机制固定）
+   *     / ListFriends（2026-09-12 好友消息改造批 ⑩：只读好友名册——SendMessage
+   *     的寻址前置；同 NebulaExclusiveTools 防声明逃逸）
+   *   - 读三件：Read / Glob / Grep（读代码读现状；一切执行走 Project 派发）。
+   *     **Glob/Grep 自 2026-09-18 18:18 作者令起在 root 面恢复在场**——取代
+   *     2026-09-16 18:41 摘除令之 root 面部分（**仅 root 面**；分发器面
+   *     DispatcherFixedTools 与节点/基础面 BaseTools/GeneralFixedTools/
+   *     KernelFixedTools 逐字不变）
+   *   - 搜索件：Glob / Grep（2026-09-18 18:18 作者令恢复；史实——09-16 18:41 令曾
+   *     从 root 面摘除，该摘除令之 root 面部分已被取代 ⇒ 归档）
+   *   - 写手三件：Bash / Write / Edit（**2026-09-18 18:18 作者令恢复**——取代
+   *     2026-09-05 23:34 裁定「把你的 bash 和编辑工具收起来」之 root 面部分；
+   *     **仅 root 面**，general/BaseTools 六件默认注入逐字不变。史实——23:34 裁定
+   *     曾把三件移出本集，该裁定之 root 面部分已被取代 ⇒ 归档）
+   *   - 可视化：Card（2026-09-05 解封，commit 793f62c1 曾整体删除）
+   *   - 用户面：AskUserQuestion / Pop（Pop = Nebula 专属可视化出口，2026-09-10
+   *     作者裁定；非 Nebula 身份经 NebulaExclusiveTools 剥 + PopTool 身份闸
+   *     双保险——节点交付物沿 out 边交链末端/Nebula，由 Nebula 决定是否展示）；
+   *     平台：Schedule（TransferFile 已退役 2026-09-14，能力并入 SendMessage 的
+   *     `device:` 附件腿——迁移指引见 RetiredToolGuides）
+   *   - 记忆：MemoryNote（§C.2，白名单硬编码 User.md + agents/Nebula/memory.md）
+   * 显式不含：NodeList（2026-09-06 00:48 裁定摘除——out 边自动投递取代主动查图；
+   * dispatcher 自身面 DispatcherFixedTools 不受影响）、FlowTrigger/FlowExecute
+   * （旧体系退役；**Delegate 已由 builtin-def 批 2026-10-03 作者令②恢复在集**）、
+   * Web 系、
+   * TeamTask*、SubTask、NodeEdit/NodeCancel。Issue/CheckIssues 已整体
+   * 退役（2026-09-04 作者终裁：报 issue 走 gh cli 由节点代劳，定义层已归档
+   * .archived-tools-2d/）。本集即 Nebula 工具面唯一来源：在飞十七件
+   * （2026-09-18 18:18 作者令：+Bash +Edit +Write +Glob +Grep ⇒ 17，取代两笔摘除令
+   * 之 root 面部分，**仅 root 面**；史实——本批前 12 = 09-16 18:41 令 −Glob −Grep
+   * 后再 −Delegate）、零 Issue、零旧体系
+   * FlowTrigger/FlowExecute/Task 三件（`Mail` **在**本集——R2 批翻案：
+   * Mail 从「旧体系退役件」成为唯一消息原语）。
+   * **反向指路**：Nebula 的代码定义 = `nebflow.core.entity.BuiltinAgents`
+   * （builtin-def 批 2026-10-03 起，磁盘/种子镜像退役），其 `tools` 字段
+   * **恒空且非权威面**——收敛名短路（本文件 ConvergedAgentNames 分支）使它授不
+   * 了任何件；要找 Nebula 的工具清单，只有本集。
+   */
+  val RootOrchestrationTools = Set(
+    "AskHostReply",
+    "AskHostClarify",
     // 编排触发（NodeList 2026-09-06 00:48 裁定摘除）
-    "Task",
-    "ProjectCreate",
+    // **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定 D-1/D-2/B4 取代条款）：
+    // −`Task` +`Mail`，件数 16 → 16（史实：该批净 0；当前 = 17，见
+    // NebulaOrchestrationToolsExpectedSize）。**project-trigger 拆除批（2026-10-18，
+    // 作者令「完全拆除」Mail→dispatcher 触发路径，落地 2026-10-03 作者令
+    // 「Mail 降级为用于通信」）**：Mail = 纯通信原语——项目地址（`project:<name>`
+    // 形态与裸挂载项目名）对**一切角色**显式拒绝（`MAIL_PROJECT_TRIGGER_UNSUPPORTED`），
+    // 零建任务、零复活、零 TriggerDispatcher；派发面唯一入口 = `Delegate`。
+    // Root 的 Mail 地址面 = `delegate:<id>`/`kernel:<id>` 续聊 + `node:<id|name>`
+    // （`node:<id>`/自身地址照旧显式报错或指路，硬禁静默兜底/模糊匹配）；入站不受限。
+    "Mail",
+    // Project（N2 project-tool 批 2026-10-06 ⑨A 硬替换：ProjectCreate → Project，
+    // 同参数面 + 新增 action="unmount" 硬卸载腿；旧名入 RetiredToolGuides 指路）。
+    "Project",
     "AgentControl",
-    // 任务编排（2026-09-06 TaskList 批：快变状态出记忆；首期无前端）
-    "TaskList",
+    // Delegate（**builtin-def 批 2026-10-03 作者令②在場恢复**：「使用 Delegate
+    // 直接触发 kernel，返回地址」）：极简内核入口——无项目归属的单次执行任务，
+    // 是**编排件**不是能力件（执行能力 = 内核的 KernelFixedTools 七件）。本批
+    // **取代** promptgov 批 2026-09-17（commit `99f4a5294`）的 Delegate 退役令之
+    // 授能面部分：一次性执行任务的触发面从 `Mail(address="kernel")` 收归
+    // `Delegate`，Delegate 的结果携带续聊地址 `kernel:<id>`；Mail 降级为通信
+    // 原语（`kernel:<id>` 续聊腿保留，`kernel` 起实例腿同批退役）。
+    // 史实（归档，被本批取代）：promptgov 批 13 → 12 曾摘除本件，退役口径为
+    // 「一次性执行任务改路由 general 项目」；kernelgen 批 2026-09-26 又把一次性
+    // 执行路由到 `Mail(address="kernel")`（kernelgen 批的 Mail kernel 腿 =
+    // mailmodel 批 2026-09-25 裁定 (b)）。本集件数 18 → 19（在飞值，见
+    // RootOrchestrationToolsExpectedSize）。
+    // 本集之外不变：工具本体（DelegateTool）、AgentKind/子会话机制未动；
+    // `RootExclusiveTools` 的 "Delegate" 条目继续承担**防声明逃逸**剥离（非
+    // Nebula 身份声明 Delegate 仍被剥）。
+    "Delegate",
+    // 任务编排（taskunify 合一批 2026-09-24 `75fddc5db`：TaskList/TaskBoard 双件
+    // 合一 ⇒ 本集成员一对一改名 `TaskList` → `Task`，件数不变）。`TaskList` 名已
+    // 删净退役（registry 不注册 ⇒ 调用走 RetiredToolGuides 墓碑指引）；`Task` 是
+    // Nebula 独占唯一写面（一个账本 tasks-v2.json、一个编号空间、一个变更史文件）。
+    // 🔴 本行曾被 PR48 head tree 重建族（7adc7c8a4 / 0b26aa857+ee1c8058c，09-27/28）
+    // 静默回退回 `TaskList`——2026-10-05 作者授权的 pfhygiene-taskunify-fix 批
+    // （`d23d37ba9`，补 TaskList/TaskBoard 墓碑表项）已再证「Task 活、TaskList 退役」
+    // 为在案合同；2026-10-14 redfix 批按 taskunify 语义恢复改名。
+    "Task",
+    // TaskSearch（task-rag 批 #1227 / §Batch 7）：任务语义检索（Nebula 面，
+    // 只读）——账本条目 + delegate 地址簿的 embedding/词法检索，返回 task #N/
+    // 标题/状态/执行器图标/address(delegate:<id>)/snippet；检索到的地址可直接
+    // 续派（Mail(address="delegate:<id>")）。本集件数 17 → 18（见
+    // RootOrchestrationToolsExpectedSize）。
+    "TaskSearch",
+    // Root Nebula on-demand history search, restricted by ConversationSearchTool to current data-root index.
+    "ConversationSearch",
     // 通信（好友功能非旧体系）
-    "SendFriendMessage",
-    // 读三件（08:40 解禁；23:34 裁定收走写手——Bash/Write/Edit 不在本集）
+    "SendMessage",
+    // ListFriends（好友消息改造批 ⑩，2026-09-12）：SendMessage 的**只读**前置——
+    // 名册取代「靠报错反推」。与 SendMessage 同组（通信）、同一好友数据面与词表
+    // （`nebflow.neblink.social.FriendRoster`），但零写面/零权限档/零限速（一次读）。
+    // 归属面 = 本集单点 + NebulaExclusiveTools 防声明逃逸（方案 §4.5 归属面 A 案）。
+    "ListFriends",
+    // 文件面——读件（Read）+ 搜索件（Glob/Grep）+ 写手三件（Bash/Write/Edit）。
+    // **2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」已在场
+    // 恢复 Glob/Grep/Bash/Write/Edit 五件**（取代 2026-09-16 18:41 摘除令与
+    // 2026-09-05 23:34 裁定之 root 面部分；**仅 root 面**；分发器面
+    // DispatcherFixedTools 与节点/基础面 BaseTools/GeneralFixedTools/
+    // KernelFixedTools 逐字不变）。
+    // 史实（保留为史实、标注被取代 ⇒ 归档）：0913「Glob/Grep 永久保留」裁定 →
+    // 08:40 解禁四件 → 09-16 18:41 令 −Glob −Grep（15 → 13）→ 23:34 裁定收走写手
+    // （Bash/Write/Edit 不在本集，彼时形态）。🔴 本批恢复的依据**只有** 09-18
+    // 18:18 令本身——不得援引 0913 旧裁定（该裁定不因本批复活），也不得替旧裁定翻案。
     "Read",
     "Glob",
     "Grep",
-    // 可视化（2026-09-05 解封恢复，前端消费面另批）
-    "Card",
-    // 用户面
+    // 写手三件（Bash/Write/Edit）——**2026-09-18 18:18 作者令恢复**（取代
+    // 2026-09-05 23:34 裁定「把你的 bash 和编辑工具收起来」之 root 面部分；
+    // **仅 root 面**，general/BaseTools 六件默认注入逐字不变）。
+    // 史实（归档）：09-05 23:34 裁定曾把三件从本集移除、Nebula 回归纯编排
+    // （13 → 14 → 13 的当日形态见上）。🔴 本批恢复的依据**只有** 09-18 18:18 令，
+    // 不得援引更早的旧裁定。
+    // 🔴 纪律重申（本批正是其适用场景）：**不得**改断言常量去凑任何数字，也不得在
+    // 树内实测值 ≠ 本常量时放宽断言——该纪律禁的是**为过测而放宽断言**，**不是**
+    // 禁止按作者令变更 root 面本身（本次 12 → 17 即属后者）。
+    "Bash",
+    "Write",
+    "Edit",
+    // Card **曾退役**（pop-upgrade 批 2026-10-03 作者令「去掉card工具」）：从本集
+    // 摘除（19 → 18，见 RootOrchestrationToolsExpectedSize）。**card-tool-revive
+    // 批（2026-11-18 作者令「找到我们 git 历史中的 card 工具 让 canvas ask 可以使用
+    // card 工具」）复活了工具本体，但本集逐字不含它**——复活后的授权面 = Canvas Ask
+    // 唯一（`AskSessions.AskExclusiveTools` 单点；见 registry.scala 的 "Card" 条目）。
+    // Nebula 面的「向用户展示成果」职责仍在 Pop（媒体对话内直显叠卡 / 文件卡片转发
+    // Canvas，见 PopTool 的 pop-upgrade 批注）；两张牌职责不重叠：Card = 提问者在
+    // ask 里让 agent 直接出 HTML 卡；Pop = Nebula root 展示已完成工件。
+    // 历史沿革（史实）：commit 793f62c1（2026-08-11）曾整体删除，2026-09-05 08:40
+    // 作者裁定解封恢复，2026-10-03 本集终裁摘除（工具本体同批删除），2026-11-18
+    // 复活但只给 ask。
+    // 用户面（Pop = Nebula 专属可视化出口，2026-09-10 作者裁定——Nebula 本体
+    // 专属保留；非 Nebula 身份由 NebulaExclusiveTools 剥 + PopTool 身份闸兜底）
     "AskUserQuestion",
     "Pop",
     // 平台
     "Schedule",
-    "TransferFile",
-    // 记忆（§C.2 MemoryEdit）
-    "MemoryEdit"
+    // 记忆（§C.2 MemoryNote）
+    "MemoryNote",
+    // GenerateImage（imagegen 双层批 2026-10-24；交互修正批 2026-10-30 转阻塞
+    // 语义）：Nebula 面阻塞生图件——调用挂起至图成、结果走 Pop 面原位直出；
+    // 编译期 seal 关时由 imageGenSealedStrip 在本消费点剥除（静态集与件数常量
+    // 不动，friends seal 同款条件化口径）。
+    "GenerateImage"
   )
 
-  /** 阶段 2c 收敛的三个 agent 定义名（§C.1 总览）：其 agent.json tools 声明在
-    * buildAllowedToolSet 中整体失效（base=∅）——机制固定不可配置（裁定 11），
-    * 存量 agent.json 里的文件工具声明（8684acd Nebula 六件 / dispatcher Write/
-    * Edit）自动变 no-op，无需定义层先行迁移。 */
-  val ConvergedAgentNames = Set("Nebula", "project-dispatcher", "general")
+  /**
+   * friendseal batch (2026-09-25): names stripped from the Nebula DELIVERY
+   * face while the friends feature is sealed. The static set above is
+   * UNCHANGED — its registry-full-set semantics and the
+   * `NebulaOrchestrationToolsExpectedSize` constant both stay untouched; the
+   * seal is conditionalization at this ONE consumption point (the only
+   * injection point for Nebula's fixed face, `fixedToolsFor`), reading the
+   * same `features.friends` latch as the frontend (`nebflow.core.FriendsSeal`).
+   * Currently exactly one name: `ListFriends` — sealed means the name never
+   * reaches the LLM (no schema, no description), and a hallucinated call is
+   * dropped by the allowed-set partition before any execution. SendMessage
+   * STAYS on the face (its device leg remains): sealing its friend/group/
+   * local arms happens inside the tool (`FRIENDS_SEALED`), and the
+   * `buildAllowedToolSet` base-strip of the name (declaration-escape channel)
+   * is deliberately NOT extended by this batch.
+   */
+  def friendsSealedStrip: Set[String] =
+    if nebflow.core.FriendsSeal.isSealed then Set("ListFriends") else Set.empty
 
-  /** 分发器固定工具集（§C.1）：Node 四件（List/Edit/Cancel/Message）+ 读四件
-    * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
-    * 分解不产内容）、不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）。
-    * NodeMessage（20260905 机制批，作者裁定）第八件：向已分发节点注入补充消息
-    * （running=turn 边界注入 / wiring/pending=任务追加 / 终态拒绝）。
-    * TaskBoard（20260908 任务板批 2）第九件：项目任务板全权面（§1c 挂载表——
-    * create 全量/update 全板含结构字段/close 全板/list 全板；权限判定的引擎侧
-    * 身份=isDispatcher，工具内不信客户端参数）。 */
+  /**
+   * imagegen 双层批（2026-10-24）+ 功能开放批（2026-10-30）：`GenerateImage`
+   * 的编译期 seal 剥离面——friendsSealedStrip 同款条件化口径（静态集与件数
+   * 常量不动，seal 状态只在本消费点读一次）。缺省构建（seal 编入）⇒ 空剥除、
+   * 工具在面；显式 `STAND_IMAGEGEN=0` 构建（seal=false，final val 常量折叠）⇒
+   * 名字永不抵达 LLM——幻觉调用在 allowed-set 分区即落，与 friends seal 同机制。
+   */
+  def imageGenSealedStrip: Set[String] =
+    if nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace then Set.empty
+    else Set("GenerateImage")
+
+  /**
+   * 阶段 2c 收敛的 agent 定义名（§C.1 总览，本集 = 四个在册名）：其 agent.json tools
+   * 声明在 buildAllowedToolSet 中整体失效（base=∅）——机制固定不可配置（裁定 11），
+   * 存量 agent.json 里的文件工具声明（8684acd Nebula 六件 / dispatcher Write/
+   * Edit）自动变 no-op，无需定义层先行迁移。
+   *
+   * E5 batch 2026-10-01 (dangling-name closure): this set previously carried a FIFTH
+   * name -- the memory-consolidation agent added by the 2026-09-12 memq batch (spec §5
+   * R5 O-A, compressed dual-track second track). That agent retired on 2026-09-25
+   * (`aa371d68f`: tool + `memory/queue.jsonl` queue deleted, seed resources ABSENT,
+   * zero entry in the manifest `agents:` list), so its membership here became a
+   * DANGLING name -- the criterion no longer resolves to any def that can exist. This
+   * batch deletes the member, its `fixedToolsFor` by-name branch and the `AgentDef`
+   * name constant (single-owner order: name-family closure belongs to the E5 batch
+   * alone). The set is back to its four registered names.
+   *
+   * builtin-def 批（2026-10-03 作者令①「四个 agent 代码硬编码，唯一标准源就是
+   * 代码」）：名字全集的**单一所有者** = `nebflow.core.entity.BuiltinAgents.Names`
+   * ——本集改为引用该单点（agent → core 的既有依赖方向，零新环）。四个内置定义
+   * 的 def 面同批上收进 BuiltinAgents（磁盘 agent.json/system.md 对这四名是死信）。
+   */
+  val ConvergedAgentNames = nebflow.core.entity.BuiltinAgents.Names
+
+  /**
+   * Nebula 工具面**在飞实测件数**（单点来源：所有件数断言只许引用本常量，
+   * 不得各处写裸数字）。
+   *
+   * 值 = **18** = `NebulaOrchestrationTools` 现成员数。历史沿革（史实，非当前值）：
+   * 2026-09-11 Delegate 恢复批 +1 → 15；2026-09-12 好友消息改造批 ⑩ +ListFriends
+   * → 16；2026-09-12 R2「一个 Mail 统一」批 −`Task` +`Mail` ⇒ 净 0，保持 16；
+   * 2026-09-14 附件腿/退役批（#145）`TransferFile` 退役 −1 ⇒ 15；
+   * 2026-09-16 18:41 令 root 面摘除 Glob/Grep −2 ⇒ 13；
+   * Delegate 退役批 −1 ⇒ 12；
+   * **本批：2026-09-18 18:18 作者令「恢复nebula的bash edit write glob grep」
+   * +`Bash` +`Edit` +`Write` +`Glob` +`Grep` ⇒ 17（在飞值）**。
+   * **agentflow 批（2026-10-02）：+`AgentFlow` ⇒ 18（在飞值）**——root 侧派发件
+   * （自包含任务书 → 项目分发器；终名 root #405）。与 `Mail` 不同物：`Mail` 是
+   * 消息原语、root 面逐字保留，本批不动。本增量属「按面变更」（新增成员），
+   * 非「凑数字」——下条纪律针对的是**为过测而放宽断言**。
+   *
+   * **取代关系记录（逐字，跨面）**：**2026-09-18 18:18 作者令**（原话「恢复nebula
+   * 的bash edit write glob grep」）**取代** ① 2026-09-16 18:41 作者令（原话
+   * 「去掉 nebula 的 glob 和 grep 工具…」，commit
+   * `f9451705ac32c678f517c073c922e17841abdf6b`）之 **root 面部分**、② 2026-09-05
+   * 23:34 作者裁定（「把你的 bash 和编辑工具收起来」）之 **root 面部分**——**仅
+   * root 面**。分发器面（`DispatcherFixedTools`）与节点/基础面（`BaseTools`、
+   * `GeneralFixedTools`、`KernelFixedTools`）**逐字不变**，反向钉见本文件
+   * `DispatcherFixedTools`/`BaseTools` 常量与 `AgentConvergenceSpec`/
+   * `Phase2dToolRefactorSpec` 的 dispatcher/general 断言。作者 2026-09-14
+   * 「终态 = 15，已定」与 2026-09-16「终态 = 13」两笔口径随之 **provisional/存档**
+   * （均已被本令取代，不得作为待拍板项重提）。🔴 2026-09-13「Glob/Grep 永久保留」
+   * 旧裁定**不因本批复活**：本次恢复的依据**只有** 09-18 18:18 令本身。
+   * 前批的 `Delegate` 退役属**授权面**变更（授能集合成员 −1）：**发散面**（工具本体/
+   * 会话机制）未动，不得据此推断「Delegate 整机制已退役」。
+   * 纪律不变：**不得**改本常量去凑任何数字，也不得在树内实测值 ≠ 本常量时放宽
+   * 断言——该纪律禁的是**为过测而放宽断言**，**不是**禁止按作者令变更 root 面
+   * 本身（本次 12 → 17 即属后者，属「按面变更」，非「凑数字」）。⑩-9 的两项旧
+   * 口径（「终态 = 14，与 TransferFile 退役批同窗抵平」与「终态待定」，史实）均已
+   * 被作者 2026-09-14 拍板取代——**归档，不得作为待拍板项重提**。
+   *
+   * **builtin-def 批（2026-10-03）：+`Delegate` ⇒ 19（在飞值）**——作者令②
+   * 「使用 Delegate 直接触发 kernel，返回地址；Mail 降级为用于通信」。本增量属
+   * 「按面变更」（恢复成员），**取代** promptgov 批 2026-09-17（`99f4a5294`）
+   * 的 Delegate 退役令之授能面部分（史实 −1 ⇒ 12 的那笔；史实归档，不得据此
+   * 推断 Delegate 面缺席）。
+   *
+   * **pop-upgrade 批（2026-10-03）：−`Card` ⇒ 18**——作者令
+   * 「去掉card工具，然后对Pop工具进行升级」。Card 从本集摘除并整体退役（工具
+   * 本体 + 注册表注册删除，迁移指引 = RetiredToolGuides("Card")）；展示职责并入
+   * Pop（pop-upgrade 批注见 PopTool）。本减量同属「按面变更」（作者令摘除成员），
+   * 非「凑数字」。
+   * **unified-delegate 批（2026-10-03）：−`AgentFlow` ⇒ 17（在飞值）**——派发面
+   * 统一收归 Delegate（Delegate(task, project?) 唯一派发入口；Mail 降级为按地址
+   * 通信）。迁移指引 = RetiredToolGuides("AgentFlow")。
+   *
+   * **N1 复名批（2026-10-06，作者 23:04 授权）：Workflow → AgentFlow 复名沿革**
+   * ——本批只动执行 agent 机制面（NebflowFixedTools/RootExclusiveTools/exclusive
+   * ToolsFor 随名）与墓碑表（删旧 "AgentFlow" 条目＋增 "Workflow" 条目），
+   * `NebulaOrchestrationTools` 成员与件数 **17 不变**（旧 root 侧 AgentFlow 派发件
+   * 2026-10-03 已退役，与本复名无涉——同名的先后两物，勿混）。复名连带细案沿
+   * v2 §3（案 A「仅 legacy 形态拒收」）。
+   *
+   * **task-rag 批（#1227 / §Batch 7，2026-10-07 作者令三批并行）：+`TaskSearch`
+   * ⇒ 18（在飞值）**——任务语义检索（Nebula 面只读件：embedding/词法 + 可选
+   * Jev 重排）。本增量属「按面变更」（新增成员），非「凑数字」。
+   *
+   * **imagegen 双层批（2026-10-24）：+`GenerateImage` ⇒ 19（在飞值）**——Nebula
+   * 面生图件（交互修正批 2026-10-30 起为阻塞语义；编译期 seal 门控：seal 关时经
+   * [[imageGenSealedStrip]] 在本面唯一消费点剥除，静态集不动，friends seal
+   * 同款条件化口径）。本增量同属「按面变更」。
+   *
+   * **tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：`AgentFlow` 工具整体
+   * 退役，本面件数 19 不变**——该名早在 unified-delegate 批（2026-10-03）就已离开
+   * 本集，本批零触碰 root 面；动的是执行 agent 机制面（NebflowFixedTools 十 → 九）、
+   * 注册表（删 `"AgentFlow"` 注册项）、墓碑表（"Workflow" 指路改 ChainWrite
+   * ＋"AgentFlow" 条目复活）与 orchestrationMode 的升级写点（迁入 ChainWriteTool）。
+   *
+   * **托管树退场批**：−`MergerRequest` / −`WorktreeContext` / −`WorkspaceSummary` /
+   * −`WorkspaceReconcile`（26 → 22）——managed workspace 与 merger 全链退役，四名
+   * 离开本集并从注册表删除（RetiredToolGuides 墓碑接管旧名调用）。
+   */
+  val RootOrchestrationToolsExpectedSize: Int = 22
+
+  /**
+   * 退役工具迁移指引表（R2「一个 Mail 统一」批，2026-09-12；设计件 §A.3 C-1）。
+   *
+   * **本表只产错误文案，零执行面**——不是兼容壳、不是别名、不做任何转发
+   * （B5-c 硬禁静默 no-op 与悄悄转发）。消费点 = [[executeToolInner]] 的
+   * `case None`（注册表查不到该名时）：给出「它退役了 + 改用哪个工具、怎么构造
+   * 调用」。打在未注册名上的调用**只能**来自存量提示词 / 外部客户端 / 幻觉——
+   * 恰恰是最需要指引的场景；现状兜底文案 `No such tool available: <name>`
+   * 不含迁移指引，不满足「显式报错并指明改用 Mail」的要求。
+   *
+   * 表零膨胀纪律：只收「本批删净且必须给出迁移路径」的名字，不预收未来退役项。
+   */
+  val RetiredToolGuides: Map[String, String] = Map(
+    // 旧 "Task" 墓碑条目随 project-trigger 拆除批删除（2026-10-18）：`Task` 名已被
+    // taskunify 批（`75fddc5db`，2026-09-24）复用为台账工具注册名（本文件 Root
+    // OrchestrationTools "Task" 条目），注册即令本表对该名永不可达——留条目＝死文本，
+    // 违表零膨胀纪律（AgentFlow/Project 先例同型）。条目旧文「Project triggering is
+    // now Mail」亦与拆除后的现行为相悖（派发面唯一入口 = Delegate）。
+    "NodeMessage" ->
+      """Node course-correction is now Mail — use `Mail(address="node:<节点id>", message=<补充文本>)` (same engine semantics: running = injected at the next turn boundary, wiring/pending = appended to the node task, terminal = refused).""",
+    "TransferFile" ->
+      """TransferFile is not available — its capabilities live in SendMessage: files to another of the user's devices use `SendMessage(to="device:<deviceName|deviceId>", message=<note>, attachments=[<absolute local paths>])` (chunked + both-side SHA-256, max 9 files x 1024 MB = 1 GiB each); local copies use `SendMessage(to="local", attachments=[...], targetDir=<dir>)`. Device-to-device pulls with a remote source (A->B) have no replacement.""",
+    "TaskList" ->
+      """TaskList is not available — the task ledger is `Task`, the one task-ledger tool (one ledger, one id space): `Task(action="list", assignee=..., project=...)` renders entries with state and dependencies, `Task(action="show", id=...)` renders one entry in full, and create/update/complete/close take the same `action` face.""",
+    "TaskBoard" ->
+      """TaskBoard is not available — the board's contents live in the single `Task` ledger, and the per-session face is the read-only `TaskInfo` (zero parameters — it renders the one task your session is attached to, note timeline included); any write belongs to Nebula's `Task` tool.""",
+    // 旧 "Card" 墓碑条目随 card-tool-revive 批（2026-11-18）删除：`Card` 名已在
+    // 注册表重新注册（`ToolRegistry`，"Card" -> CardTool）⇒ 本表对该名永不可达
+    // （「registry 注册即令 RetiredToolGuides 对该名失效」既有教义，Task/Project/
+    // AgentFlow 同型）——留条目＝死文本，违表零膨胀纪律。**注意本批不是复活
+    // Nebula 面**：Card 的授权面收窄为 Canvas Ask 唯一，`RootOrchestrationTools`
+    // 逐字不含本名。
+    // Workflow（N1 复名批 v2 §6.F 候选，ChainEdit 引用随 v3 作废改 ChainWrite）：
+    // 名字退役产生的新墓碑——Workflow 名已注册删除，打旧名的调用落本指引。
+    // 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：中转站 AgentFlow
+    // 也整体退役 ⇒ 本墓碑的指路目标改为**唯一现役入口** ChainWrite（旧文案指
+    // AgentFlow = 指向死名，会把本次调用再送一次空跑）。
+    "Workflow" ->
+      """Workflow is not available — its inline-DAG face has been retired too (the intermediate name AgentFlow is gone with the tool-face retirement). Register the whole chain in ONE call with `ChainWrite(nodes=[{id, name?, task, deps?, description?}], chainName?)`: same gate, same engine, plus per-node editing and id+name addressing. `agentflow` survives only as the orchestration-MODE name of a dispatcher, never as a tool.""",
+    // ProjectCreate（N2 project-tool 批 2026-10-06，⑨A 硬替换 + guard 表登记，
+    // taskunify/N1 rename 先例同型）：Project 工具更名（create 语义原样保留，
+    // 面板手动卸载被工具面替代 = 新增 action="unmount"）。名字退役产生的新墓碑
+    // ——打旧名的调用落本指引（注册面已换名，本条对活名 "Project" 永不可达）。
+    "ProjectCreate" ->
+      """ProjectCreate is not available — the tool was renamed Project (same create parameters; the panel's manual unmount is replaced by Project's own `action="unmount"` face: it stops the project's in-flight work first — nodes, chains, dispatcher/delegate sessions — then removes it from the mount face, keeping every workspace file). Resubmit as Project(workspace=...) to create/re-mount, or Project(action="unmount", name=...) to unmount.""",
+    // 旧 "AgentFlow" 墓碑条目随 N1 复名批删除（v2 §3.2 处置：AgentFlow 以新工具
+    // 注册进 TOOL_MAP——注册即令本表对该名永不可达，留条目＝死文本，违表零膨胀
+    // 纪律）。
+    // 🔴 tool-face-agentflow-retire 批（2026-11-05，作者裁定二）：AgentFlow **工具
+    // 整体退役**（注册面删除、AgentFlow 工具文件删净）⇒ 该名重新不可达，墓碑条目
+    // **按反向先例复活**（N1 复名批把 Workflow 指到 AgentFlow；本批把 AgentFlow 指到
+    // ChainWrite）。旧会话 / 存量提示词打这个名必须拿到「改用 ChainWrite 一次写全链」
+    // 的指引——不许静默消失（B5-c 可诊断退役）。
+    "AgentFlow" ->
+      """The tool is retired. `agentflow` names a MODE, not a tool: a dispatcher's node-orchestration shape (the `orchestrationMode` value written when a chain registration succeeds). To run several steps, register the WHOLE chain in ONE call: `ChainWrite(nodes=[{id, name?, task, deps?, description?}], chainName?)` — one write for the entire chain; the engine wires the deps edges so every step receives its upstream results, and the ack carries the chain id immediately (non-blocking). For one blocking read-only recon leg use `Subagent(prompt=...)`.""",
+    "MergerRequest" ->
+      """MergerRequest is not available — managed workspaces and the merger are retired. Delegates run in the dispatch workspace and manage their own git worktrees; integration into a project's main line is the author's explicit decision. To see what a delegate produced, read its final report and inspect the branch it names; to land it, the author (or a delegate under the author's explicit instruction) performs the merge.""",
+    "WorktreeContext" ->
+      """WorktreeContext is not available — the managed-workspace records it assembled are retired. A delegate's deliverable is its final report plus the commits it names; read those directly (Read/Bash on the reported branch and paths).""",
+    "WorkspaceSummary" ->
+      """WorkspaceSummary is not available — the per-project workspace coordination picture is retired. For live work, read the background-agents panel and each delegate's final report; recorded merge-request history stays on the workspace ledger file.""",
+    "WorkspaceReconcile" ->
+      """WorkspaceReconcile is not available — registered-workspace completion reconciliation is retired with the managed workspaces. A delegate's completion is its settled final report; no separate workspace confirmation exists."""
+  )
+
+  /**
+   * 分发器固定工具集（§C.1）：Node 三件（List/Edit/Cancel）+ 读四件
+   * （Read/Glob/Grep/Bash，读现状 + git worktree 管理）。不给 Write/Edit（分发器只
+   * 分解不产内容）、不给 AskUserQuestion（单次会话不阻塞等用户，§C.3）。
+   * **Mail**（R2「一个 Mail 统一」批，2026-09-12 作者裁定）：−`NodeMessage`
+   * +`Mail`，件数 9 → 9。分发器的 Mail **地址面按角色分层 = `Nebula`（root）
+   * + `node:<id>`**：不给自己项目发（`project:<name>` 形态对分发器非法 ⇒
+   * 显式报错并指明合法地址面）。旧 `NodeMessage` 已删净退役，其三态语义
+   * （running=turn 边界注入 / wiring·pending=任务追加 / 终态拒绝）整体并入
+   * `Mail(address="node:<id>")`，判据复用引擎侧单点 `NodeEngine.sendNodeMessage`。
+   * TaskBoard（20260908 任务板批 2）第九件：项目任务板全权面（§1c 挂载表——
+   * create 全量/update 全板含结构字段/close 全板/list 全板；权限判定的引擎侧
+   * 身份=isDispatcher，工具内不信客户端参数）。
+   */
   val DispatcherFixedTools = Set(
     "NodeList",
     "NodeEdit",
     "NodeCancel",
-    "NodeMessage",
+    // agentflow 批 2026-10-02：−`Mail` +`AskUserQuestion`（件数 9 → 9）。挂载点在
+    // `buildAllowedToolSet` 末段按引擎侧身份 `isDispatcher` 追加（TaskBoard/
+    // TaskBoard 同款「挂载面 + 工具内身份拒绝」双保险）。
+    "AskUserQuestion",
     "Read",
     "Glob",
     "Grep",
@@ -2247,9 +764,11 @@ object AgentCore:
     "TaskBoard"
   )
 
-  /** Team task tools（任务工具重做 2026-08-30：category=team 机制层注入
-    * 全体成员——Manager 与成员同级可用，任务=进展展示语义；不再是 lead 专属
-    * owner 集。SubTask workers / flow nodes / depth≥2 "*" agents 仍剥离）。 */
+  /**
+   * Team task tools（任务工具重做 2026-08-30：category=team 机制层注入
+   * 全体成员——Manager 与成员同级可用，任务=进展展示语义；不再是 lead 专属
+   * owner 集。SubTask workers / flow nodes / depth≥2 "*" agents 仍剥离）。
+   */
   val TeamTaskTools = Set("TeamTaskCreate", "TeamTaskUpdate", "TeamTaskList")
 
   /**
@@ -2259,40 +778,75 @@ object AgentCore:
    * Issue was removed (user ruling 2026-08-25 17:49 工具体系精简), then fully
    * retired with CheckIssues (2026-09-04 终裁: 报 issue 走 gh cli 由节点代劳) —
    * no agent has it; NebulaExclusiveTools no longer lists it either.
+   *
+   * Bash 通过 command / wait / cancel 三模式统一管理前台命令与后台任务；等待
+   * 使用 `background_job_id` + 可选 `timeout`，不另立工具。
    */
-  val BaseTools = Set(
-    "Read",
-    "Write",
-    "Edit",
-    "Glob",
-    "Grep",
-    "Bash"
-  )
+  val BaseTools = Set("Read", "Write", "Edit", "Glob", "Grep", "Bash")
 
-  /** 通用模版固定工具集（§C.1/§C.5，裁定 5 原文 8 件）：恰八件 = BaseTools
-    * 六件 + AskUserQuestion + Pop。
-    *
-    * 恢复裁定（2026-09-08 作者修订，D6 spec §3.2 G6/G7 gate）：直达作者方案
-    * ——AskUserQuestion 回归 general 默认面，节点提问经 InteractionHub 直达
-    * Nebula 窗口；分发器监督语义以 ask 留痕补齐而非路由（节点提问写
-    * node-ask 留痕事件，分发器经事件流审计可见；来源标注「项目 · 节点」随
-    * F1F2 前端批同窗落地）。9-6 历史脉络（2026-09-06 作者提议 + Nebula 背书：
-    * 「交互出口统一」曾摘除本件七件化）——其针对的「表演性交付/随意打扰」
-    * 风险由定向手段化解（来源标注 + 留痕审计 + description anti-pattern 条款），
-    * BLOCKED/pending 节点通道原样保留分层（任务级申告 vs 执行级提问）。
-    * 机制面零改动：AskUserQuestionTool/InteractionHub/流式特判照旧；
-    * Guardrails 剥离对 isFlowNode 会话豁免 AskUserQuestion（G8，见
-    * buildAllowedToolSet isFlowNode 分支注释）。Web 系不在默认面内——经
-    * §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry 删除（能力由 Edit
-    * replace_all 覆盖）。 */
-  val GeneralFixedTools: Set[String] = BaseTools + "AskUserQuestion" + "Pop"
+  /**
+   * 极简内核（Delegate 内核）固定工具面：BaseTools 六件 + AskUserQuestion。
+   * - +AskUserQuestion（R2-c，作者 2026-09-11 拍板采纳）：内核遇「必须用户拍板
+   *   才能继续」的信息（凭据/目标/口径）可直接提问，卡片渲染在派发方窗口，
+   *   来源标注 `subagent · <任务摘要>`（U3）。
+   * - 显式**不含**：Delegate/SubTask/Task（叶子纪律——内核不再派生）、Mail
+   *   （已退役）、AgentControl/Card/Pop（管控与用户面归 Nebula）、TaskBoard/
+   *   Node 系工具/TaskList/MemoryNote/Schedule（项目与编排面）、
+   *   plugin 与 MCP 工具（极简 = 机制固定、零配置面，裁定 11）。
+   *
+   * 零配置面：内核名在 ConvergedAgentNames 内 ⇒ agents/kernel/agent.json 的
+   * tools/mcpServers 声明整体失效，本常量即唯一来源。
+   */
+  // N1 复名批（v2 ①，2026-10-06）：Workflow→AgentFlow（同参数 steps =
+  // [{id, task, deps}], description）——NebflowFixedTools 随名；本集 RootExclusiveTools
+  // 成员随名（防声明逃逸面不变）。
+  // 执行 agent 固定面 = BaseTools 六件 + AskUserQuestion + Subagent。
+  // 裁定一（kernel 腿补 Subagent）**本批未落**——与不变量 R-3a
+  // （`core.delegate.KernelChildSpawnGate`：kernel 身份不得生子 actor）冲突，待作者裁决。
+  val NebflowFixedTools: Set[String] = BaseTools + "AskHost" + "Subagent"
+
+  /**
+   * Fixed reconnaissance face for the builtin Subagent target. Bash uses the normal
+   * execution pipeline; reconnaissance is role policy, not a read-only shell sandbox.
+   * No separate Write/Edit, messaging or recursive agent tools are granted.
+   */
+  val SubagentFixedTools: Set[String] = Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")
+
+  /**
+   * 通用模版固定工具集（§C.1/§C.5）：沿革「恰七件 = BaseTools 六件 + AskUserQuestion」；
+   * bash overhaul T1（2026-11-04）BaseTools 变七件 ⇒ 本面若仍在册即八件（其授权面早已
+   * 由 `NebflowFixedTools` 单点收口——general/kernel 合并为 nebflow，本常量本体已删，
+   * 此注为沿革口径，禁援引件数做过期断言）。
+   *
+   * 2026-09-10 作者裁定（「我觉得把pop工具给nebula专属吧」）：Pop 从本集摘除
+   * ——Pop 收归 Nebula 专属，通用模版（general/节点会话）不再持有；节点交付物
+   * 沿 out 边交链末端/Nebula，由 Nebula 决定是否展示（工具面 + PopTool 身份闸
+   * 双层收口）。裁定 5 原文「8 件」中的 Pop 一项由此作废，其余七件不变。
+   *
+   * 恢复裁定（2026-09-08 作者修订，D6 spec §3.2 G6/G7 gate）：直达作者方案
+   * ——AskUserQuestion 回归 general 默认面，节点提问经 InteractionHub 直达
+   * Nebula 窗口；分发器监督语义以 ask 留痕补齐而非路由（节点提问写
+   * node-ask 留痕事件，分发器经事件流审计可见；来源标注「项目 · 节点」随
+   * F1F2 前端批同窗落地）。9-6 历史脉络（2026-09-06 作者提议 + Nebula 背书：
+   * 「交互出口统一」曾摘除本件七件化）——其针对的「表演性交付/随意打扰」
+   * 风险由定向手段化解（来源标注 + 留痕审计 + description anti-pattern 条款），
+   * BLOCKED/pending 节点通道原样保留分层（任务级申告 vs 执行级提问）。
+   * 机制面零改动：AskUserQuestionTool/InteractionHub/流式特判照旧；
+   * Guardrails 剥离对 isFlowNode 会话豁免 AskUserQuestion（G8，见
+   * buildAllowedToolSet isFlowNode 分支注释）。Web 系不在默认面内——经
+   * §B.6 plugin 扩展授予；MultiEdit 已从 ToolRegistry 删除（能力由 Edit
+   * replace_all 覆盖）。
+   */
 
   /**
    * Fixed tools for a given agent — 阶段 2d（D.1-1）后的唯一注入入口。
    *
-   * 收敛三角色（§C.1 角色-工具静态矩阵，裁定 11 机制固定零配置）直接返回
-   * 静态集常量（收口）：Nebula / project-dispatcher / general 不再经过任何
-   * legacy 分支路径——2c 建集、2d 删路，常量即唯一事实源。
+   * 收敛四定义（§C.1 角色-工具静态矩阵，裁定 11 机制固定零配置；2026-09-11
+   * 极简内核批收进 kernel）直接返回静态集常量（收口）：Nebula /
+   * project-dispatcher / general / kernel 不再经过任何 legacy 分支路径——2c
+   * 建集、2d 删路，常量即唯一事实源。收敛判据**按名**
+   * （ConvergedAgentNames），category 不再能把收敛名推去 legacy 面
+   * （2026-09-11 agentdef-tidy 批，见方法体首段注释）。
    *
    * 双轨期 legacy 路径（legacyFixedTools）保留至阶段 3：
    * - team 成员：BaseTools + Mail + SubTask + TeamTask 三件（user ruling
@@ -2304,16 +858,32 @@ object AgentCore:
    *   等存量 agent 的 agent.json 未声明文件工具，依赖此路径（删除即断活
    *   agent 工具面），随阶段 2e/3 归档一并退役。
    *
-   * category 分支优先保持 2c 行为逐字节 parity（converged 定义不设 category，
-   * 恒为默认 standalone）。
+   * category 分支配 `if !converged` 守卫（2026-09-11 批前）：非收敛名的
+   * category 分支行为逐字节未动（2c parity 保持）。
    */
   def fixedToolsFor(agentDef: AgentDef): Set[String] =
+    // 纵深（2026-09-11 agentdef-tidy 批，安全）：收敛名短路 —— category 不再能
+    // 把收敛名推去 legacy 面。主收敛点在唯一 JSON 读取点
+    // AgentLibrary.loadFromDir（收敛名 category 恒 standalone）；此处兜的是
+    // **不经**该点而合成出带 category=team/flow 的收敛名 AgentDef 的路径
+    // （EntityLoader.toAgentDef 按路径推断 / 代码兜底 / 运行时 copy / 未来新增
+    // 构造点）。fixedToolsFor 是固定工具的**唯一注入入口**（buildAllowedToolSet
+    // 注入注释），在此一处收口 ⇒ 「收敛名拿 team 遗留工具面（Mail/SubTask/
+    // TeamTask*）」在结构上不可达，与 category 来源无关。
+    // 判据与 buildAllowedToolSet 的 base=∅ 同款：**按名**（ConvergedAgentNames），
+    // 避免同一收敛语义出现两套判据。非收敛名逐字节 parity：team/flow 仍落
+    // legacyFixedTools，name 分支逐字未动。
+    val converged = AgentCore.ConvergedAgentNames.contains(agentDef.name)
     agentDef.category match
-      case "team" | "flow" => legacyFixedTools(agentDef)
+      case "team" | "flow" if !converged => legacyFixedTools(agentDef)
       case _ =>
         agentDef.name match
+          // 字面量保留：case 模式匹配形态（改经常量会破坏 match）；身份名单点 = RootAgentIdentity.Name
           case "Nebula" =>
-            // 静态集收口：恰十四件、零 Issue、零旧体系四件（2026-09-06 TaskList
+            // 静态集收口（史实时点：恰十四件；**当前 = 17** = 2026-09-18 18:18
+            // 作者令 +Bash/Edit/Write/Glob/Grep 后值；此前 12 = −Delegate 批、
+            // 13 = root 面 −Glob −Grep，均史实）：
+            // 零 Issue、零旧体系四件（TaskList
             // 批：+TaskList，作者 00:07 提议 + 00:11 首期无前端拍板）。终裁记录：
             // （2026-09-04 作者裁定）Issue/CheckIssues 退役，报 issue 走 gh cli
             // 由节点代劳；定义层已归档（agent.json CheckIssues 声明删除、
@@ -2322,17 +892,40 @@ object AgentCore:
             // （2026-09-05 08:40 作者裁定）+基础四件 Bash/Read/Glob/Grep、+Card
             // 解封、−Mail/Delegate/FlowTrigger/FlowExecute 旧体系退役。
             // （2026-09-05 23:34 作者裁定：Nebula 回归纯编排）13:11 的
-            // +Write/Edit 补齐被推翻——Bash/Write/Edit 三件移出本集；
-            // general/BaseTools 六件默认注入不变，Nebula 为唯一例外
-            // （编排件+读三件+MemoryEdit）——本集即 Nebula 工具面唯一来源。
-            AgentCore.NebulaOrchestrationTools
+            // +Write/Edit 补齐被推翻——Bash/Write/Edit 三件移出本集（**该裁定之
+            // root 面部分已被 2026-09-18 18:18 令取代 ⇒ 三件在飞在场；史实归档**）；
+            // general/BaseTools 六件默认注入不变
+            // （编排件+读三件 Read/Glob/Grep+写手三件 Bash/Write/Edit+MemoryNote，
+            // 在飞恰十七件）——本集即 Nebula 工具面唯一来源。
+            // friendseal (2026-09-25): the static set above stays the single
+            // source; the friends seal strips names at this one consumption
+            // point (see friendsSealedStrip — currently ListFriends only).
+            // imagegen 双层批（2026-10-24）：GenerateImage 编译期 seal 同此一点剥除。
+            AgentCore.RootOrchestrationTools -- AgentCore.friendsSealedStrip -- AgentCore.imageGenSealedStrip
           case "project-dispatcher" => AgentCore.DispatcherFixedTools
-          case "general"            => AgentCore.GeneralFixedTools
-          case _                    => legacyFixedTools(agentDef)
+          // 合并执行 agent（builtin-merge 批 2026-10-03：kernel+general ⇒ nebflow）：
+          // 基础六件 + AskUserQuestion
+          // + Subagent（只读侦察）。tool-face-agentflow-retire 批（2026-11-05）：
+          // AgentFlow 件随工具退役摘除（九件）。
+          // 机制固定单点，不经 legacyFixedTools 的 catch-all。
+          case "nebflow" => AgentCore.NebflowFixedTools
+          // SubagentTool target: fixed six-tool reconnaissance face, including Bash.
+          case "subagent" => AgentCore.SubagentFixedTools
+          // E5 batch 2026-10-01: the former fifth member's by-name branch is deleted
+          // together with that name -- the agent retired on 2026-09-25 (`aa371d68f`)
+          // and its name constant in AgentDef went with it in this batch, so the
+          // branch is unreachable by construction.
+          case _ => legacyFixedTools(agentDef)
 
-  /** 双轨期 legacy 固定工具（team/flow 分支 + standalone BaseTools catch-all）。
-    * 阶段 3 随 team/flow 退役与 legacy agent 归档整体删除（D.1-1 残留面；
-    * 三角色 name 分支已删——收口进 fixedToolsFor 静态集派发）。 */
+    end match
+
+  end fixedToolsFor
+
+  /**
+   * 双轨期 legacy 固定工具（team/flow 分支 + standalone BaseTools catch-all）。
+   * 阶段 3 随 team/flow 退役与 legacy agent 归档整体删除（D.1-1 残留面；
+   * 三角色 name 分支已删——收口进 fixedToolsFor 静态集派发）。
+   */
   private[agent] def legacyFixedTools(agentDef: AgentDef): Set[String] =
     agentDef.category match
       // 任务工具重做（2026-08-30）：任务只配 team——TeamTask 三件机制层注入
@@ -2342,6 +935,6 @@ object AgentCore:
       case "team" => BaseTools + "Mail" + "SubTask" ++ AgentCore.TeamTaskTools
       // FlowReport 移出固定面（2026-09-06 裁撤批）——flow 节点文本输出即结果。
       case "flow" => BaseTools
-      case _      => BaseTools
+      case _ => BaseTools
 
 end AgentCore

@@ -3,7 +3,7 @@ package nebflow.core.hooks
 import io.circe.syntax.*
 import munit.FunSuite
 
-import java.nio.file.{Files => JFiles}
+import java.nio.file.Files as JFiles
 
 class HooksConfigLoaderSpec extends FunSuite:
 
@@ -15,7 +15,7 @@ class HooksConfigLoaderSpec extends FunSuite:
   override def afterEach(context: munit.AfterEach): Unit =
     if os.exists(root) then os.remove.all(root)
 
-  private def writeConfig(json: String): Unit = os.write(root / "nebflow.json", json)
+  private def writeConfig(json: String): Unit = os.write(root / nebflow.shared.Branding.configFileName, json)
 
   test("no nebflow.json -> empty config") {
     assertEquals(HooksConfigLoader.load(root), HooksConfig.empty)

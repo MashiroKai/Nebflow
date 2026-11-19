@@ -5,9 +5,9 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, parser}
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 import sttp.client4.*
-import sttp.model.Uri
+import sttp.model.{StatusCode, Uri}
 
 /**
  * HTTP client for communicating with the running Gateway.
@@ -24,7 +24,7 @@ class GatewayClient(baseUri: String, token: String):
       .header("Authorization", s"Bearer $token")
       .response(asStringAlways)
       .send(backend)
-    parseJson(resp.body, path)
+    parseJson(resp.code, resp.body, path)
   }
 
   /** HTTP POST — sends JSON body, returns JSON */
@@ -37,7 +37,7 @@ class GatewayClient(baseUri: String, token: String):
       .body(body.noSpaces)
       .response(asStringAlways)
       .send(backend)
-    parseJson(resp.body, path)
+    parseJson(resp.code, resp.body, path)
   }
 
   /** HTTP DELETE — returns JSON */
@@ -48,7 +48,7 @@ class GatewayClient(baseUri: String, token: String):
       .header("Authorization", s"Bearer $token")
       .response(asStringAlways)
       .send(backend)
-    parseJson(resp.body, path)
+    parseJson(resp.code, resp.body, path)
   }
 
   /** HTTP PATCH — sends JSON body, returns JSON */
@@ -61,7 +61,7 @@ class GatewayClient(baseUri: String, token: String):
       .body(body.noSpaces)
       .response(asStringAlways)
       .send(backend)
-    parseJson(resp.body, path)
+    parseJson(resp.code, resp.body, path)
   }
 
   /** HTTP PUT — sends JSON body, returns JSON (#339: model set → PUT /presets/:name) */
@@ -74,13 +74,22 @@ class GatewayClient(baseUri: String, token: String):
       .body(body.noSpaces)
       .response(asStringAlways)
       .send(backend)
-    parseJson(resp.body, path)
+    parseJson(resp.code, resp.body, path)
   }
 
   /** POST /api/command — generic WS-equivalent endpoint */
   def command(payload: Json): IO[Json] = post("/api/command", payload)
 
-  private def parseJson(body: String, path: String): Json =
+  /**
+   * A1: a non-2xx status is a FAILURE, not an empty payload. Before this
+   * check only `parser.parse` ran, so an error body (`{"error":"Unauthorized"}`)
+   * parsed fine and every downstream `getOrElse` fallback silently produced an
+   * empty list / `{}` / `"true"` — `session delete` printed "Session s1
+   * deleted" on a 403 with exit 0. The failure now surfaces as a real error
+   * and reaches CliRouter's error branch (exit 1, T8 message).
+   */
+  private def parseJson(code: StatusCode, body: String, path: String): Json =
+    if !code.isSuccess then throw new RuntimeException(GatewayClient.requestError(code.code, body))
     parser.parse(body) match
       case Right(json) => json
       case Left(_) =>
@@ -114,6 +123,7 @@ class GatewayClient(baseUri: String, token: String):
       .body(body.noSpaces)
       .response(asStringAlways)
       .send(backend)
+    if !resp.code.isSuccess then throw new RuntimeException(GatewayClient.requestError(resp.code.code, resp.body))
     val respBody: String = resp.body
     // Parse SSE events: data: {...}\n\n
     respBody.split("\n\n").filter(_.nonEmpty).foreach { block =>
@@ -129,15 +139,101 @@ end GatewayClient
 object GatewayClient:
   private val authPath = PathUtil.dataRoot / "auth.json"
 
+  /**
+   * CLI-side port override (C1/A4). `--port` is consumed by the JVM-level
+   * global-flag parser, which until now only told the gateway package — the
+   * CLI's HTTP client kept reading `GATEWAY_PORT`/8080, so a `--port` instance
+   * was unreachable from the CLI. This is the CLI half of that propagation;
+   * it is set from the same entry point that consumes `--port`.
+   */
+  @volatile private var portOverride: Option[Int] = None
+
+  private[nebflow] def setPort(port: Int): Unit = portOverride = Some(port)
+  private[cli] def resetPort(): Unit = portOverride = None
+
+  /**
+   * Single port resolver, SAME chain and order as the engine's bind face
+   * (`GatewayConfig.resolvePortVerdict`, 双生分家批 2026-10-31；隔离实例误伤批
+   * 2026-11-04 收口到 [[nebflow.shared.InstanceScope.decide]] 单一口径)：
+   *   显式 `--port` > `GATEWAY_PORT` env（**仅当数据根是默认根**）> config `port` 键 >
+   *   品牌缺省端口（**仅当数据根是默认根**）。
+   * 数据根被覆盖（隔离实例 / `--home` / `STAND_HOME`）时，继承来的 env 端口不算显式、
+   * 品牌缺省口不再兜底：解析不到就抛 [[nebflow.shared.PortRefusal]]（要求显式 `--port`），
+   * 绝不静默落到生产口 6138/6140。
+   * Every CLI-side port read goes through here — no second mechanism.
+   */
+  def readPort: IO[Int] = IO.blocking {
+    GatewayClient.resolvePortVerdict() match
+      case nebflow.shared.InstanceScope.PortVerdict.Resolved(port, _, warnings) =>
+        warnings.foreach(w => System.err.println(w))
+        port
+      case nebflow.shared.InstanceScope.PortVerdict.Refused(reason) =>
+        throw new nebflow.shared.PortRefusal(reason)
+  }
+
+  /** 当前 `--port` 覆盖值（只读快照；stop 面的降级链与 `readPort` 同源）。 */
+  private[cli] def portOverrideSnapshot: Option[Int] = portOverride
+
+  /** `readPort` 的纯解析（注入面：spec 直接驱全矩阵，零 env 依赖）。 */
+  private[cli] def resolvePortVerdict(
+    root: os.Path = nebflow.shared.PathUtil.dataRoot,
+    overridden: Boolean = nebflow.shared.InstanceScope.liveCaller.overridden,
+    envValue: Option[String] = nebflow.shared.Branding.env("GATEWAY_PORT"),
+    configPort: Option[Int] = nebflow.gateway.GatewayConfig.configFilePort()
+  ): nebflow.shared.InstanceScope.PortVerdict =
+    nebflow.shared.InstanceScope.decide(
+      nebflow.shared.InstanceScope.PortInputs(
+        cliPort = portOverride,
+        envPortName = s"${nebflow.shared.Branding.envPrefix}_GATEWAY_PORT",
+        envPort = envValue,
+        configPort = configPort,
+        sourceName = nebflow.shared.Branding.configFileName,
+        brandDefaultPort = nebflow.shared.Defaults.brandDefaultPort,
+        root = root,
+        overridden = overridden
+      )
+    )
+
+  /**
+   * T8 wording for a non-2xx gateway response. The detail prefers the body's
+   * `error`/`message` field (the gateway answers `403 {"error":"Unauthorized"}`,
+   * `RestApiRoutes.scala:3737-3738`) and falls back to the raw body.
+   *
+   * 台账 #924 (2026-10-26): the body's stable `code` field rides along as a
+   * ` (code: <c>)` suffix when present — the login route (and friendErr's
+   * `neblink_not_logged_in`) classify on the machine face, which the
+   * error-text-only flattening used to drop. Additive: bodies without `code`
+   * render byte-identical to before; substring classifiers are unaffected.
+   */
+  private[cli] def requestError(code: Int, body: String): String =
+    val parsed = parser.parse(body).toOption
+    val detail = parsed
+      .flatMap { j =>
+        val c = j.hcursor
+        c.downField("error")
+          .as[String]
+          .toOption
+          .orElse(c.downField("message").as[String].toOption)
+      }
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .getOrElse {
+        if body.startsWith("Not found") || body.contains("<!DOCTYPE") then
+          "Gateway REST API not available. Restart Gateway to enable CLI support."
+        else body.trim.take(200)
+      }
+    val stableCode = parsed
+      .flatMap(_.hcursor.downField("code").as[String].toOption)
+      .map(_.trim)
+      .filter(_.nonEmpty)
+    s"Gateway request failed (HTTP $code): $detail${stableCode.map(c => s" (code: $c)").getOrElse("")}"
+
+  end requestError
+
   /** Read the stored auth token */
   def readToken: IO[Option[String]] = IO.blocking {
     if os.exists(authPath) then parser.decode[String](os.read(authPath)).toOption
     else None
-  }
-
-  /** Read the Gateway port from env or default */
-  def readPort: IO[Int] = IO.blocking {
-    nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
   }
 
   /** Create a client if Gateway is running and accessible */

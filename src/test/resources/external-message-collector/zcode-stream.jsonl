@@ -1,0 +1,5 @@
+{"type":"model.streaming","payload":{"kind":"start","assistantMessageId":"stream-one"}}
+{"type":"model.streaming","payload":{"kind":"text_delta","delta":"Hello "}}
+{"type":"model.streaming","payload":{"kind":"text_delta","delta":"world"}}
+{"type":"model.streaming","payload":{"kind":"finish"}}
+{"type":"result","sessionId":"session-zcode","response":"Hello world","projection":{"status":"idle"}}

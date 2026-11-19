@@ -2,14 +2,18 @@
 
 # -- Brand values (L2 rebrand): rendered from repo-root brand.conf at -----
 # -- release time (scripts/render-brand.sh); do not edit by hand. ----------
-PRODUCT_NAME=Nebflow
-LOWER_NAME=nebflow
-HOME_DIR=.nebflow
-WRAPPER_NAME=nebflow
+PRODUCT_NAME=stand
+LOWER_NAME=stand
+HOME_DIR=.stand
+WRAPPER_NAME=stand
 set -e
 
-INSTALL_DIR="${INSTALL_DIR:-/usr/local/bin}"
-CONFIG_DIR="${HOME}/${HOME_DIR}"
+# Install base (再生治本批 2026-10-22): STAND_HOME first-priority, same rule as
+# install.sh - the uninstaller never touches a NEBFLOW_HOME-pointed legacy root.
+STAND_BASE="${STAND_HOME:-${HOME}/${HOME_DIR}}"
+
+INSTALL_DIR="${INSTALL_DIR:-${STAND_BASE}/bin}"
+CONFIG_DIR="${STAND_BASE}"
 
 echo ""
 echo "  ${PRODUCT_NAME} Uninstaller"
@@ -23,6 +27,7 @@ fi
 # Remove JAR and wrapper
 echo "[1/3] Removing ${PRODUCT_NAME} files..."
 rm -f "${INSTALL_DIR}/${WRAPPER_NAME}"
+rm -f "${INSTALL_DIR}/nebflow"   # legacy command shim (2026-10-20 rename)
 rm -f "${INSTALL_DIR}"/${LOWER_NAME}-assembly-*.jar "${INSTALL_DIR}"/nebflow-assembly-*.jar
 echo "    Removed from ${INSTALL_DIR}"
 

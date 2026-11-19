@@ -1,0 +1,1806 @@
+// wikiGraph.js — Wiki document graph (控制面迁左栏 + 触控板手感 + 多项目图谱批, 2026-10-21/22).
+//
+// The Canvas tab `wiki-graph` renders the document graph served by
+// GET /api/wiki/graph. #744-B made the graph MULTI-VAULT: every registered
+// project's `<workspace>/docs` vault is its own graph
+// (`?project=<name>`), sub-vaults (`*/docs/` inside a vault) show up as
+// aggregate nodes that drill into the child graph (`?project=X&vault=sub/docs`,
+// breadcrumb back), and the switcher defaults to the pre-#744-B merged view
+// (`?project=` absent — byte-compatible shape, no stats/view/childVaults keys).
+//
+// 作者令 2026-10-21（图谱布局重构 · 控制面迁左栏）：canvas 只显示图谱本体——
+// 力导向图 + 悬停 tooltip，控件面全部撤出 canvas；激活图谱 tab 时左栏（原文件
+// 浏览器那一栏）内容切换为「图谱控制面」，回到文件浏览态时左栏还原文件浏览器：
+//   左栏 #wiki-graph-side（#panel-sessions 内，#explorer-section 的兄弟节）
+//     搜索框 · 目录 chips 过滤 · 选中节点详情卡（徽标/摘要/目录/引出/被引/
+//     路径/打开文档，替代原浮动预览卡）· 断链清单（固定区块替代浮层）·
+//     统计行（N 篇文档 · N 条引用 · N 条未解析）
+//   canvas pane（.wiki-graph-pane）
+//     <canvas> + 悬停 tooltip；另有 .wg-panebar（仅 body.mobile-layer 显示——
+//     手机层没有左栏，紧凑控制条随 pane 收编进移动页，桌面零渲染）
+//   双向联动：左栏点目录/词条（chips/ref/断链行）→ canvas 过滤聚焦；
+//     canvas 点节点 → 左栏详情卡刷新
+// 作者令 2026-10-22（触控板手感）：触控板捏合（ctrl+wheel）/ ⌘(Ctrl)+滚轮 =
+//   以光标为锚点缩放，exp 曲线累积 zoomTarget + rAF 25% 阻尼追帧——连续捏合
+//   帧平滑无跳变（excalidraw/figma 手感）。
+// 作者令 2026-10-24（CAD 手感，覆盖 10-22 滚轮约定）：鼠标滚轮 = 以光标为锚点
+//   缩放（0.1x–4x），中键拖拽 = 平移（CAD 核心手势，拦浏览器中键自动滚动），
+//   左键语义不变；触控板不劣化：双指滚动仍 = 平移（横分量/小帧/分数 delta
+//   判定，见 wheelIsPan），捏合仍 = 缩放；约定在左栏 .wg-hint 图例注明。
+// 作者令 2026-11-01（手机端图谱触摸即拖批）：触屏零显式开关——触摸即拖（单指
+//   空白拖 = 平移 / 节点上起拖 = 拖节点，走既有 pointer 管线；画布
+//   touch-action:none 不再让浏览器手势接管 → pointercancel 病根拔除），
+//   双指捏合 = 缩放（同一 damped zoomTarget 管线，锚点 = 双指中点）；
+//   **禁做任何 pan-mode/拉手式显式模式切换**（spec 防复活钉）。
+//   亮暗双主题：canvas 沿用 --wg-* 石墨双主题表；左栏面板吃侧栏玻璃卡既有的
+//     --color-frame-* / --glass-* token（prefers-color-scheme 自动双主题）；
+//     窄面板（container query，wgside）压缩内距与徽标
+//   展开 semantics（承 2026-10-19 批 R1-R10）：图谱「变为可见」的跃迁才自动
+//     展开侧栏并激活 files 面板（showSidePanel 既有持久化 API，零新键）；
+//     可见期间手动收起 → 安静；切走再切回 → 再展开；离开绝不自动收起；
+//     移动端 ≤768px 不自动开（抽屉互斥）。
+//
+// Nodes are solid graphite dots (degree → radius 5-11 + ink depth), edges are
+// 1px straight muted lines. No glow, no pulse, no accent hue, no persistent
+// animation (the force loop stops once the layout settles). Labels: hubs by
+// default, the rest fade in with hover and zoom (LABEL_ALL_AT_SCALE ramp).
+//
+// No new vendor dependencies — the force simulation stays the small
+// velocity-Verlet loop sized for vault-scale graphs (hundreds of nodes).
+
+import { t } from './i18n.js';
+import { authHeaders } from './flowHelpers.js';
+
+const TAB_ID = 'wiki-graph';
+const GRAPH_API = '/api/wiki/graph';
+
+// Label density knobs (代审整改): hubs labeled by default; zoom reveals the
+// rest linearly until everything is labeled at LABEL_ALL_AT_SCALE.
+const LABEL_HUBS = 12;
+const LABEL_ALL_AT_SCALE = 1.5;
+const ZOOM_MIN = 0.1;  // CAD 批 2026-10-24：0.1x–4x（作者建议区间，可调）
+const ZOOM_MAX = 4.0;
+const LABEL_MAX_CHARS = 22;   // canvas label truncation (design §4)
+
+const MOBILE_MQ = '(max-width: 768px)';
+
+/** @typedef {{ref:any, id:string, label:string, dir:string, isAttach:boolean,
+ *             isVault:boolean, x:number, y:number, vx:number, vy:number,
+ *             degree:number, rank:number,
+ *             out:Array<any>, inc:Array<any>, dimmed:boolean,
+ *             outAnchors:Map<string, string>, inAnchors:Map<string, string>}} WgNode */
+
+/**
+ * Live state of the wiki graph tab (one instance at a time).
+ * @typedef {Object} WikiViewState
+ * @property {HTMLElement} pane
+ * @property {HTMLCanvasElement} canvas
+ * @property {CanvasRenderingContext2D} ctx
+ * @property {HTMLElement|null} side   — sidebar control face (#wiki-graph-side)
+ * @property {HTMLElement|null} panebar — in-pane compact bar (mobile layer only)
+ * @property {any} data
+ * @property {{nodes: WgNode[], edges: {a:WgNode,b:WgNode,anchor:string|null}[], alpha: number} | null} sim
+ * @property {number} raf
+ * @property {string} focusId
+ * @property {string} selProject — #744-B selected view: '' = merged, else project name
+ * @property {string} selVault   — #744-B drill-in vault rel ('' = root vault)
+ * @property {{project:string, device:string, vault:string, present:boolean|null}[]} vaultList
+ * @property {number} crossVault — #744-B cross-vault reference count (stats line)
+ * @property {Map<string, WgNode>} byId
+ * @property {WgNode | null} hover
+ * @property {WgNode | null} tipFor — the node the visible hover pill names
+ *             (悬停去重批 2026-10-25): showTip/showEdgeTip set it, hideTip
+ *             clears it; draw() suppresses that node's canvas label while the
+ *             pill is up (the pill already carries the name — no on-screen
+ *             duplicate), restoring it when the pill dismisses.
+ * @property {{a: WgNode, b: WgNode, anchor: string | null} | null} hoverEdge
+ *             — paragraph-level reference under the cursor (段落级引用批):
+ *               hover shows the TARGET paragraph snapshot, click jumps.
+ * @property {WgNode | null} selected
+ * @property {number} vx
+ * @property {number} vy
+ * @property {number} scale
+ * @property {number} zoomTarget — damped pinch target (scale chases it, rAF)
+ * @property {{px: number, py: number} | null} zoomAnchor — cursor anchor while chasing
+ * @property {WgNode | null} dragging
+ * @property {boolean} panning
+ * @property {{px: number, py: number} | null} lastPointer
+ * @property {ResizeObserver | null} resizeObs
+ * @property {number} W
+ * @property {number} H
+ * @property {{ink: string, muted: string, line: string} | null} colors
+ * @property {string} filter
+ * @property {string} dirFilter
+ * @property {string[]} dirs
+ * @property {{from: string, target: string}[]} unresolved
+ * @property {{name: string, error: string, stub: boolean}[]} projectErrors
+ * @property {MediaQueryList | null} themeMQ
+ * @property {(() => void) | null} onThemeChange
+ * @property {(() => void) | null} onKey
+ * @property {MutationObserver | null} bodyObs
+ */
+
+/** @type {WikiViewState | null} */
+let view = null;
+
+/** Previous "graph is the visible canvas content" value — auto-expand fires
+ *  on the FALSE→TRUE transition only (可见期间手动收起 → 安静，R5/R6/R9). */
+let sideWasVisible = false;
+
+/** Pending project for a fresh render that must open on a specific vault
+ *  (focusWikiNode passes the node's project; #744-B). */
+let pendingProject = '';
+
+/** Open (or focus) the wiki graph tab and render it. `projectHint` (#744-B)
+ *  opens the named project's vault graph instead of the merged view. */
+export async function openWikiGraphTab(focusNodeId = '', projectHint = '') {
+  if (projectHint && projectHint !== '__user__') pendingProject = projectHint;
+  const canvas = await import('./canvas.js');
+  const entry = canvas.openTab(TAB_ID, t('wiki.tabTitle'), { type: TAB_ID, closable: true });
+  if (!entry) return;
+  if (focusNodeId) {
+    // Tab already live: select + center + detail directly (the renderInto
+    // idempotence guard would otherwise swallow the focus request).
+    if (view && view.pane === entry.paneEl && view.canvas && view.canvas.isConnected) {
+      if (pendingProject && pendingProject !== view.selProject) {
+        // Switch the view first, then focus lands in the rebuild.
+        view.selProject = pendingProject;
+        view.selVault = '';
+        pendingProject = '';
+        await loadData(true);
+        if (view.focusId) rebuildSim();
+        return;
+      }
+      const n = view.byId.get(focusNodeId);
+      if (n) { select(n, true); return; }
+      view.focusId = focusNodeId; // not in the loaded data — retry after refetch
+      rebuildSim();
+      return;
+    }
+    pendingFocus = focusNodeId; // fresh/restore render applies it in rebuildSim
+  }
+  await renderInto(entry.paneEl);
+}
+
+/** Pending focus for a restore that races the first render. */
+let pendingFocus = '';
+
+// Tab restore (reload/restart: canvas.js rebuilds the pane and dispatches
+// canvas-tab-restore for panel tabs — same contract as projectTab.js).
+window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => {
+  if (e.detail && e.detail.id === TAB_ID) {
+    import('./canvas.js').then(async ({ getTabPane }) => {
+      const pane = getTabPane(TAB_ID);
+      if (pane) await renderInto(pane);
+    });
+  }
+});
+
+// Restore dispatch/load race (R4 hardening): canvas.js openPanelTab dispatches
+// canvas-tab-restore synchronously during boot, while this module may still be
+// loading (main.js imports it dynamically) — a fast server-archive fetch can
+// win that race and the dispatch fires with no listener yet. Reconcile once at
+// eval: an already-restored ACTIVE wiki pane renders exactly as the missed
+// event would have. renderInto is idempotent, so the listener path stays safe
+// when the event order is the other way around.
+import('./canvas.js').then(({ getTabPane }) => {
+  const pane = getTabPane(TAB_ID);
+  if (pane && pane.classList.contains('active')) renderInto(pane);
+}).catch(() => { /* canvas unavailable (embedded/test) — skip */ });
+
+// Tab close: stop the animation loop, drop every document-level listener and
+// hand the left column back to the file explorer — a closed tab must not keep
+// a rAF cycle (and its CPU) alive, nor the control face.
+document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
+  if (e.detail && e.detail.id === TAB_ID) teardown();
+});
+
+/** Tab switching: repaint + side-face sync on activation changes (the hidden
+ *  canvas backing store is dropped while the tab is inactive). */
+document.addEventListener('canvas-tab-switched', (/** @type {CustomEvent} */ e) => {
+  if (!e.detail) return;
+  if (e.detail.id === TAB_ID) repaintOnActivate();
+  if (view) syncSidePanel(e.detail.id === TAB_ID);
+});
+
+// Canvas panel open/close rides the body class (closeCanvas keeps tabs) —
+// observe it so closing the canvas hands the left column back to the explorer
+// even though activeTabId still points at the graph.
+function startBodyObserver() {
+  if (!view || view.bodyObs || !window.MutationObserver) return;
+  view.bodyObs = new MutationObserver(() => {
+    if (!view) return;
+    syncSidePanel(view.pane.classList.contains('active') &&
+      document.body.classList.contains('canvas-open'));
+  });
+  view.bodyObs.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+}
+
+/** Debounced refetch when the tab is re-activated (canvas.js panelTabRefresh). */
+let refetchTimer = 0;
+export function rerenderWikiGraph() {
+  clearTimeout(refetchTimer);
+  refetchTimer = setTimeout(() => {
+    if (!view || !view.pane || !view.pane.isConnected) return;
+    loadData(true).then(() => rebuildSim());
+  }, 200);
+}
+
+async function renderInto(pane) {
+  if (view && view.pane === pane && view.canvas && view.canvas.isConnected) {
+    if (pendingFocus) { view.focusId = pendingFocus; pendingFocus = ''; rebuildSim(); }
+    return;
+  }
+  const presetProject = pendingProject; // fresh render opens the hinted vault view
+  pendingProject = '';
+  teardown();
+  pane.innerHTML = '';
+  pane.classList.add('wiki-graph-pane');
+
+  // ── Canvas face: graph body + hover tooltip. Nothing else (作者令). ──
+  const canvasEl = document.createElement('canvas');
+  canvasEl.className = 'wiki-canvas';
+
+  // Hover tooltip — pane-local (position:absolute in a relative+hidden pane),
+  // so it can never surface over the conversation UI.
+  const tip = document.createElement('div');
+  tip.className = 'wg-tip';
+  tip.setAttribute('role', 'tooltip');
+  tip.innerHTML = '<div class="tt"></div><div class="ts"></div><div class="td"></div>';
+
+  // Compact in-pane bar for the MOBILE layer only (no left column on phones;
+  // CSS keeps it display:none everywhere else — desktop canvas stays pure).
+  const panebar = buildPaneBar();
+
+  pane.append(canvasEl, tip, panebar);
+
+  view = { pane, canvas: canvasEl, ctx: canvasEl.getContext('2d'),
+           side: ensureSidePanel(), panebar,
+           data: null, sim: null,
+           raf: 0, focusId: pendingFocus || '', byId: new Map(),
+           selProject: presetProject, selVault: '', vaultList: [], crossVault: 0,
+           hover: null, hoverEdge: null, selected: null, tipFor: null,
+           vx: 0, vy: 0, scale: 1, zoomTarget: 1, zoomAnchor: null,
+           dragging: null, panning: false, lastPointer: null,
+           resizeObs: null, W: 0, H: 0, colors: null,
+           filter: '', dirFilter: '', dirs: [], unresolved: [], projectErrors: [],
+           themeMQ: null, onThemeChange: null, onKey: null, bodyObs: null };
+  pendingFocus = '';
+
+  bindCanvas(canvasEl);
+  if (window.ResizeObserver) {
+    view.resizeObs = new ResizeObserver(() => resizeCanvas());
+    view.resizeObs.observe(canvasEl);
+  }
+  // Theme flip (system light/dark) mid-session: re-read the graphite palette
+  // from the pane's CSS variables and repaint on the next frame.
+  view.themeMQ = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  view.onThemeChange = () => { if (view) { readColors(); draw(); } };
+  if (view.themeMQ && view.themeMQ.addEventListener) view.themeMQ.addEventListener('change', view.onThemeChange);
+
+  // Esc — layer-by-layer exit (selection → search filter → directory filter).
+  view.onKey = (/** @type {KeyboardEvent} */ e) => {
+    if (!view || e.key !== 'Escape') return;
+    if (view.selected) { deselect(); return; }
+    if (view.filter) {
+      view.filter = '';
+      for (const input of searchInputs()) input.value = '';
+      applyFilter(); draw();
+      return;
+    }
+    if (view.dirFilter) { view.dirFilter = ''; renderChips(); applyFilter(); draw(); return; }
+    if (view.selVault) { drillIn(''); return; } // #744-B: leave the drill-in view
+  };
+  document.addEventListener('keydown', view.onKey);
+  startBodyObserver();
+
+  // Hand the left column back to the file explorer.
+  void loadVaultList();
+  await loadData(false);
+  rebuildSim();
+  renderCrumbs();
+
+  // Fresh render lands with the pane active (open) or not (background restore)
+  // — publish the side-face state either way; the transition guard inside
+  // keeps a manually collapsed sidebar quiet.
+  syncSidePanel(view.pane.classList.contains('active') &&
+    document.body.classList.contains('canvas-open'));
+}
+
+function teardown() {
+  if (!view) return;
+  if (view.raf) cancelAnimationFrame(view.raf);
+  if (view.resizeObs) view.resizeObs.disconnect();
+  if (view.themeMQ && view.onThemeChange && view.themeMQ.removeEventListener) {
+    view.themeMQ.removeEventListener('change', view.onThemeChange);
+  }
+  if (view.onKey) document.removeEventListener('keydown', view.onKey);
+  if (view.bodyObs) { view.bodyObs.disconnect(); view.bodyObs = null; }
+  // Hand the left column back to the file explorer.
+  document.body.classList.remove('wg-side-active');
+  const side = document.getElementById('wiki-graph-side');
+  if (side) side.remove();
+  sideWasVisible = false;
+  view = null;
+}
+
+// ── 左栏控制面（#wiki-graph-side — #explorer-section 的兄弟节）───────────
+
+/** Build (once) the graph control face inside the files sidebar panel.
+ *  Returns the section element, or null when the panel is unavailable
+ *  (embedded/test contexts). */
+function ensureSidePanel() {
+  const panel = document.getElementById('panel-sessions');
+  if (!panel) return null;
+  let side = document.getElementById('wiki-graph-side');
+  if (side) return side;
+  side = document.createElement('section');
+  side.id = 'wiki-graph-side';
+  side.className = 'wg-side';
+  side.setAttribute('aria-label', t('wiki.tabTitle'));
+
+  const head = document.createElement('div');
+  head.className = 'wg-side-head';
+  const title = document.createElement('span');
+  title.className = 'wg-side-title';
+  title.textContent = t('wiki.tabTitle');
+  head.appendChild(title);
+
+  // Project switcher (#744-B): one vault = one graph; '' = merged view.
+  head.appendChild(buildVaultSwitch());
+
+  // Breadcrumb row (drill-in views only; hidden in merged/root views).
+  const crumbs = document.createElement('div');
+  crumbs.className = 'wg-crumbs';
+  // canvas-hint-text 批：提示文字机检钩子（形态取值 = css/canvasHint.css 白名单）。
+  crumbs.setAttribute('data-cv-hint', 'foot');
+  crumbs.hidden = true;
+
+  const detail = document.createElement('div');
+  detail.className = 'wg-detail';
+  detail.appendChild(buildDetailSkeleton());
+
+  const broken = document.createElement('div');
+  broken.className = 'wg-broken';
+  broken.innerHTML = '<h3></h3><div class="rows"></div>';
+  broken.querySelector('h3').textContent = t('wiki.brokenTitle');
+
+  const stats = document.createElement('div');
+  stats.className = 'wg-stats';
+  stats.setAttribute('data-cv-hint', 'foot');
+
+  // 图例注明（作者令 2026-10-22：滚轮/捏合约定写进图例——左栏为家，canvas 保纯）。
+  const hint = document.createElement('div');
+  hint.className = 'wg-hint';
+  hint.setAttribute('data-cv-hint', 'divider');
+  hint.textContent = t('wiki.inputHint');
+
+  side.append(head, crumbs, buildSearchBox(), buildChipsGroup(), detail, broken, stats, hint);
+  panel.appendChild(side);
+  return side;
+}
+
+/** Project switcher select (#744-B, glass-chip family): '' = merged view,
+ *  one option per registered project/vault. Options come from
+ *  GET /api/wiki/vaults (lightweight manifest — presence flag only). */
+function buildVaultSwitch() {
+  const wrap = document.createElement('div');
+  wrap.className = 'wg-switch';
+  const sel = document.createElement('select');
+  sel.className = 'wg-switch-select';
+  sel.setAttribute('aria-label', t('wiki.allProjects'));
+  sel.addEventListener('change', () => {
+    if (!view) return;
+    view.selProject = sel.value;
+    view.selVault = '';
+    view.filter = '';
+    view.dirFilter = '';
+    for (const input of searchInputs()) input.value = '';
+    renderChips();
+    loadData(true).then(() => rebuildSim());
+  });
+  wrap.appendChild(sel);
+  return wrap;
+}
+
+/** (Re)fill every switcher select from view.vaultList + current selection. */
+function renderVaultSwitch() {
+  if (!view) return;
+  const sels = [];
+  if (view.side) sels.push(view.side.querySelector('.wg-switch-select'));
+  if (view.panebar) sels.push(view.panebar.querySelector('.wg-switch-select'));
+  const opts = [{ value: '', label: t('wiki.allProjects') }];
+  for (const v of view.vaultList) opts.push({ value: v.project, label: v.project });
+  for (const sel of sels.filter(Boolean)) {
+    sel.textContent = '';
+    for (const o of opts) {
+      const opt = document.createElement('option');
+      opt.value = o.value;
+      opt.textContent = o.label;
+      if (o.value === view.selProject) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  }
+}
+
+/** Breadcrumb row (drill-in views): X › sub — each crumb is a button that
+ *  switches back to that vault level; the LAST crumb is static (current). */
+function renderCrumbs() {
+  if (!view || !view.side) return;
+  const el = /** @type {HTMLElement|null} */ (view.side.querySelector('.wg-crumbs'));
+  if (!el) return;
+  const crumbs = (view.data && view.data.view && view.data.view.breadcrumb) || [];
+  const single = crumbs.length <= 1;
+  el.hidden = single;
+  if (single) return;
+  el.textContent = '';
+  crumbs.forEach((c, i) => {
+    const isLast = i === crumbs.length - 1;
+    if (i > 0) el.appendChild(document.createTextNode(' › '));
+    if (isLast) {
+      const s = document.createElement('span');
+      s.className = 'crumb cur';
+      s.textContent = c.name;
+      el.appendChild(s);
+      return;
+    }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'crumb';
+    b.textContent = c.name;
+    b.addEventListener('click', () => {
+      if (!view) return;
+      view.selProject = (view.data && view.data.view && view.data.view.project) || view.selProject;
+      view.selVault = c.vault === 'docs' ? '' : (c.vault || '');
+      view.filter = '';
+      view.dirFilter = '';
+      renderChips();
+      loadData(true).then(() => rebuildSim());
+    });
+    el.appendChild(b);
+  });
+}
+
+/** Search box (shared builder — side face and mobile panebar). */
+function buildSearchBox() {
+  const wrap = document.createElement('div');
+  wrap.className = 'wg-search';
+  wrap.innerHTML =
+    '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'wg-search-input';
+  input.placeholder = t('wiki.searchPlaceholder');
+  input.setAttribute('aria-label', t('wiki.searchPlaceholder'));
+  input.addEventListener('input', () => {
+    if (!view) return;
+    view.filter = input.value.trim().toLowerCase();
+    for (const other of searchInputs()) { if (other !== input) other.value = input.value; }
+    applyFilter();
+    draw();
+  });
+  wrap.appendChild(input);
+  return wrap;
+}
+
+/** Directory chips group (shared builder). One-click single-select filter. */
+function buildChipsGroup() {
+  const chips = document.createElement('div');
+  chips.className = 'wg-chips';
+  chips.setAttribute('role', 'group');
+  return chips;
+}
+
+/** Detail card skeleton (徽标/摘要/目录/引出/被引/路径/打开文档) — the sidebar
+ *  replacement of the old floating preview card. */
+function buildDetailSkeleton() {
+  const frag = document.createElement('div');
+  frag.className = 'wg-detail-card';
+  const empty = document.createElement('div');
+  empty.className = 'wg-detail-empty cv-hint-clamp';
+  empty.setAttribute('data-cv-hint', 'empty');
+  empty.title = t('wiki.detailEmpty');
+  empty.textContent = t('wiki.detailEmpty');
+  const body = document.createElement('div');
+  body.className = 'wg-detail-body';
+  body.hidden = true;
+  body.innerHTML =
+    '<header><h2></h2>' +
+    '<button class="close" type="button" aria-label="' + t('wiki.closePreview') + '">×</button></header>' +
+    '<div class="badges"></div><p class="summary"></p>' +
+    '<h3></h3><ul class="toc"></ul>' +
+    '<h3></h3><ul class="out"></ul>' +
+    '<h3></h3><ul class="in"></ul>' +
+    '<div class="path"></div>' +
+    '<button class="openbtn" type="button"></button>';
+  const h3s = body.querySelectorAll('h3');
+  h3s[0].textContent = t('wiki.secToc');
+  h3s[1].textContent = t('wiki.secOut');
+  h3s[2].textContent = t('wiki.secIn');
+  body.querySelector('.openbtn').textContent = t('wiki.openDoc');
+  body.querySelector('.close').addEventListener('click', () => deselect());
+  body.querySelector('.openbtn').addEventListener('click', () => {
+    if (!view || !view.selected) return;
+    if (view.selected.isVault) { drillIn(view.selected.ref.rel); return; } // #744-B sub-vault card
+    void openDoc(view.selected.ref);
+  });
+  frag.append(empty, body);
+  return frag;
+}
+
+/** Compact in-pane control bar — MOBILE LAYER ONLY (display:none elsewhere).
+ *  Search + chips + stats; the phone shell hosts the pane full-page and has
+ *  no left column, so the bar rides inside the pane. */
+function buildPaneBar() {
+  const bar = document.createElement('div');
+  bar.className = 'wg-panebar';
+  const stats = document.createElement('div');
+  stats.className = 'wg-stats';
+  stats.setAttribute('data-cv-hint', 'foot');
+  bar.append(buildVaultSwitch(), buildSearchBox(), buildChipsGroup(), stats);
+  return bar;
+}
+
+/** Every live search input (side face + panebar). @returns {HTMLInputElement[]} */
+function searchInputs() {
+  const out = /** @type {HTMLInputElement[]} */ ([]);
+  if (view && view.side) out.push(/** @type {HTMLInputElement|null} */ (view.side.querySelector('.wg-search-input')));
+  if (view && view.panebar) out.push(/** @type {HTMLInputElement|null} */ (view.panebar.querySelector('.wg-search-input')));
+  return out.filter(Boolean);
+}
+
+/** Every live chips container. */
+function chipsContainers() {
+  const out = [];
+  if (view && view.side) out.push(view.side.querySelector('.wg-chips'));
+  if (view && view.panebar) out.push(view.panebar.querySelector('.wg-chips'));
+  return out.filter(Boolean);
+}
+
+/** Every live detail-card root (currently the side face only). */
+function detailRoots() {
+  const out = [];
+  if (view && view.side) out.push(view.side.querySelector('.wg-detail'));
+  return out.filter(Boolean);
+}
+
+/** Every live stats line. */
+function statsContainers() {
+  const out = [];
+  if (view && view.side) out.push(view.side.querySelector('.wg-stats'));
+  if (view && view.panebar) out.push(view.panebar.querySelector('.wg-stats'));
+  return out.filter(Boolean);
+}
+
+// ── Side-face ↔ canvas visibility sync ────────────────────────────────────
+
+/** Publish "the wiki graph IS the visible canvas content" onto the left
+ *  column: body.wg-side-active swaps the explorer for the control face.
+ *  Auto-expand fires on the FALSE→TRUE transition only (R5/R6/R9 semantics —
+ *  see module header); expanding walks the persisted showSidePanel API so no
+ *  new localStorage key appears. Mobile viewport never auto-expands (drawer
+ *  exclusivity — whoever expands second wins). */
+function syncSidePanel(visible) {
+  const now = !!visible && !!view &&
+    document.body.classList.contains('canvas-open') &&
+    view.pane.isConnected;
+  document.body.classList.toggle('wg-side-active', now);
+  if (now && !sideWasVisible && !isMobileViewport()) {
+    import('./activityBar.js').then((m) => m.showSidePanel('files'))
+      .catch(() => { /* activity bar unavailable — face still swaps */ });
+  }
+  sideWasVisible = now;
+}
+
+function isMobileViewport() {
+  return !!(window.matchMedia && window.matchMedia(MOBILE_MQ).matches);
+}
+
+/** Selection from the control face must land on a visible canvas (mobile
+ *  drawer case: expanding the sidebar closed the canvas — reopen it). */
+function ensureCanvasVisible() {
+  if (document.body.classList.contains('canvas-open')) return;
+  import('./canvas.js').then((m) => m.openCanvas()).catch(() => { /* noop */ });
+}
+
+// ── Data ─────────────────────────────────────────────────────────────────
+
+/** URL for the current #744-B view: ?project=&vault= appended only when set
+ *  (absent = the pre-#744-B merged view, byte-compatible). */
+function graphUrl(force) {
+  const qs = [];
+  if (force) qs.push('force=1');
+  if (view && view.selProject) {
+    qs.push('project=' + encodeURIComponent(view.selProject));
+    if (view.selVault) qs.push('vault=' + encodeURIComponent(view.selVault));
+  }
+  return GRAPH_API + (qs.length ? '?' + qs.join('&') : '');
+}
+
+async function loadData(force) {
+  if (!view) return;
+  try {
+    const res = await fetch(graphUrl(force), { headers: { ...authHeaders() } });
+    view.data = res.ok ? await res.json() : { projects: [], nodes: [], edges: [] };
+  } catch (e) {
+    view.data = { projects: [], nodes: [], edges: [], error: String(e && e.message || e) };
+  }
+  if (view.data.error) window.__showToast?.(String(view.data.error), 'error');
+}
+
+/** Lightweight vault manifest for the switcher (#744-B). Failures keep the
+ *  previous list (the switcher degrades to merged-only, never breaks the tab). */
+async function loadVaultList() {
+  if (!view) return;
+  try {
+    const res = await fetch('/api/wiki/vaults', { headers: { ...authHeaders() } });
+    if (res.ok) {
+      const body = await res.json();
+      view.vaultList = (body && body.vaults) || [];
+    }
+  } catch (e) { /* keep previous list */ }
+  renderVaultSwitch();
+}
+
+// ── Simulation model (design §7: the force kernel survives the redesign) ──
+
+/** Deterministic PRNG — the dir-cluster seed must not jitter between refreshes. */
+function mulberry32(seed) {
+  return function () {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Directory facet of a node — the rel's first segment ('.' at the vault
+ *  root). Client-side derivation, per design §5 (no backend change). */
+function dirOfRel(rel) {
+  const i = rel.indexOf('/');
+  return i < 0 ? '.' : rel.slice(0, i);
+}
+
+function radiusOf(n) {
+  if (n.isVault) return 8; // sub-vault aggregate (#744-B): double-ring glyph
+  if (n.isAttach) return 3.5;
+  return 5 + Math.min(6, Math.sqrt(n.degree) * 1.9); // design §4: 5–11px
+}
+
+function rebuildSim() {
+  if (!view || !view.data) return;
+  const data = view.data;
+  const W = view.W || view.canvas.clientWidth || 800;
+  const H = view.H || view.canvas.clientHeight || 600;
+  const allById = new Map((data.nodes || []).map(n => [n.id, n]));
+
+  // Broken references never become nodes (design §3): stubs are dropped and
+  // their edges are counted into the stats line instead. #744-B: EXTERNAL
+  // stubs (cross-vault references) are also never nodes — they count into a
+  // separate 跨库引用 stat instead of the broken list.
+  const nodes = /** @type {WgNode[]} */ ((data.nodes || [])
+    .filter(n => !n.stub)
+    .map(n => ({
+      ref: n,
+      id: n.id,
+      label: n.title || (n.rel || '').split('/').pop(),
+      dir: dirOfRel(n.rel || ''),
+      isAttach: n.kind === 'attachment',
+      isVault: false,
+      x: 0, y: 0, vx: 0, vy: 0,
+      degree: 0, rank: 0, out: [], inc: [], dimmed: false,
+    })));
+  const byId = new Map(nodes.map(n => [n.id, n]));
+
+  // Deduplicated reference edges between real nodes. The first non-null
+  // anchor wins the dedupe (段落级引用批: the anchor rides the edge — hover
+  // resolves it against the target node's embedded `paragraphs` index, click
+  // jumps to that paragraph with highlight).
+  const seen = new Set();
+  const edgeByKey = new Map();
+  const edges = [];
+  for (const e of data.edges || []) {
+    const a = byId.get(e.from), b = byId.get(e.to);
+    if (!a || !b || a === b) continue;
+    const key = e.from + '|' + e.to;
+    if (seen.has(key)) {
+      const ex = edgeByKey.get(key);
+      if (ex && !ex.anchor && e.anchor) ex.anchor = e.anchor;
+      continue;
+    }
+    seen.add(key);
+    const edge = { a, b, anchor: e.anchor || null };
+    edgeByKey.set(key, edge);
+    edges.push(edge);
+  }
+  for (const e of edges) { e.a.out.push(e.b); e.b.inc.push(e.a); }
+  for (const n of nodes) n.degree = n.out.length + n.inc.length;
+  // Paragraph anchors per neighbor (detail card 词条 chip — informational).
+  for (const n of nodes) {
+    n.outAnchors = new Map(); n.inAnchors = new Map();
+  }
+  for (const e of edges) {
+    if (e.anchor) {
+      if (!e.a.outAnchors.has(e.b.id)) e.a.outAnchors.set(e.b.id, e.anchor);
+      if (!e.b.inAnchors.has(e.a.id)) e.b.inAnchors.set(e.a.id, e.anchor);
+    }
+  }
+
+  // Sub-vault aggregate nodes (#744-B): one per child vault, plain layout
+  // participants (repulsion + gravity, no edges). Label carries the doc count.
+  const vaultNodes = /** @type {WgNode[]} */ ((data.childVaults || []).map(c => ({
+    ref: c,
+    id: '__vault:' + c.rel,
+    label: c.name + ' (' + (c.docCount ?? 0) + ')',
+    dir: '.',
+    isAttach: false,
+    isVault: true,
+    x: 0, y: 0, vx: 0, vy: 0,
+    degree: 0, rank: 0, out: [], inc: [], dimmed: false,
+  })));
+  for (const v of vaultNodes) nodes.push(v);
+
+  // Unresolved references (edge targets that are stubs) — counted, listed in
+  // the broken section, never drawn. EXTERNAL stubs are cross-vault references
+  // (counted separately, never listed as broken). Project-level stubs surface
+  // as vault errors in the same section.
+  const unresolvedSeen = new Set();
+  const unresolved = [];
+  let cross = 0;
+  for (const e of data.edges || []) {
+    const from = allById.get(e.from), to = allById.get(e.to);
+    if (!from || !to) continue;
+    if (to.external) { cross += 1; continue; }
+    if (!to.stub) continue;
+    const key = e.from + '|' + e.to;
+    if (unresolvedSeen.has(key)) continue;
+    unresolvedSeen.add(key);
+    unresolved.push({ from: from.rel || from.title || e.from, target: to.rel || to.title || e.to });
+  }
+  view.crossVault = cross;
+  view.unresolved = unresolved;
+  view.projectErrors = (data.projects || [])
+    .filter(p => p.stub || p.error)
+    .map(p => ({ name: p.name, error: p.error || '', stub: !!p.stub }));
+  if (data.error) {
+    // Single-view degraded face (vault not found / peer offline): the error
+    // rides the broken section instead of a silent empty canvas.
+    view.projectErrors.unshift({ name: (data.view && data.view.project) || '', error: String(data.error), stub: false });
+  }
+
+  // Hub ranks (代审整改): degree-descending order drives the default label set.
+  [...nodes].sort((a, b) => b.degree - a.degree).forEach((n, i) => { n.rank = i; });
+
+  view.sim = { nodes, edges, alpha: 1 };
+  view.byId = byId;
+  view.dirs = [...new Set(nodes.map(n => n.dir))].sort();
+
+  // Dir-cluster seed (sample layout): same-directory nodes start near the
+  // same angle, so clusters read immediately while the forces settle.
+  const rnd = mulberry32(42);
+  const dirIdx = new Map(view.dirs.map((d, i) => [d, i]));
+  const R = 0.25 * Math.min(W, H);
+  for (const n of nodes) {
+    const ang = ((dirIdx.get(n.dir) + 0.5) / Math.max(1, view.dirs.length)) * Math.PI * 2;
+    n.x = W / 2 + Math.cos(ang) * R + (rnd() - 0.5) * 90;
+    n.y = H / 2 + Math.sin(ang) * R + (rnd() - 0.5) * 90;
+  }
+
+  readColors();
+  view.scale = 1;
+  view.zoomTarget = 1;
+  view.zoomAnchor = null;
+  view.vx = 0; view.vy = 0;
+  view.hover = null;
+  view.hoverEdge = null;
+  hideTip();
+
+  // Preserve selection across refetches by id (the old node objects die here).
+  const selId = view.selected ? view.selected.id : '';
+  view.selected = (selId && byId.get(selId)) || null;
+
+  renderChips();
+  renderVaultSwitch();
+  renderStats();
+  renderBroken();
+  renderCrumbs();
+  applyFilter();
+  renderDetailAll();
+
+  if (view.focusId && byId.has(view.focusId)) {
+    const n = byId.get(view.focusId);
+    view.focusId = ''; // one-shot: a data refresh must not re-center/re-open
+    select(n, true);
+  }
+  startLoop();
+}
+
+function readColors() {
+  if (!view) return;
+  let cs = null;
+  try { cs = getComputedStyle(view.pane); } catch (_) { /* detached pane */ }
+  const v = (name, fb) => ((cs && cs.getPropertyValue(name)) || '').trim() || fb;
+  view.colors = {
+    ink: v('--wg-foreground', '#141416'),
+    muted: v('--wg-muted', '#6f727b'),
+    line: v('--wg-border', '#e8e9ec'),
+  };
+}
+
+function renderChips() {
+  if (!view) return;
+  for (const chips of chipsContainers()) {
+    chips.textContent = '';
+    const mk = (label, value) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'wg-chip' + (view.dirFilter === value ? ' on' : '');
+      b.textContent = label;
+      b.addEventListener('click', () => {
+        if (!view) return;
+        view.dirFilter = view.dirFilter === value ? '' : value;
+        renderChips();
+        applyFilter();
+        draw();
+      });
+      return b;
+    };
+    chips.appendChild(mk(t('wiki.chipAll'), ''));
+    for (const d of view.dirs) chips.appendChild(mk(d === '.' ? t('wiki.chipRoot') : d + '/', d));
+  }
+}
+
+/** Stats line (bottom of the control face): N 篇文档 · N 条引用 · N 条未解析
+ *  (+#744-B: · N 条跨库引用; single views read the server-provided stats so
+ *  external placeholders never leak into the in-vault counts). */
+function renderStats() {
+  if (!view) return;
+  const d = view.data || {};
+  let docs, links;
+  if (d.stats) { docs = d.stats.docs || 0; links = d.stats.edges || 0; }
+  else {
+    docs = (d.nodes || []).filter(n => !n.stub).length;
+    links = view.sim ? view.sim.edges.length : 0;
+  }
+  let text = t('wiki.infoDocs')
+    .replace('{docs}', String(docs))
+    .replace('{links}', String(links)) +
+    t('wiki.infoUnresolved').replace('{n}', String(view.unresolved.length));
+  if (view.crossVault > 0) text += ' · ' + t('wiki.crossVault').replace('{n}', String(view.crossVault));
+  for (const el of statsContainers()) el.textContent = text;
+}
+
+/** Broken-reference section (fixed block, not an overlay): unreadable vaults
+ *  first, then the unresolved reference list. A row re-selects its SOURCE
+ *  document in the canvas. Hidden entirely when there is nothing broken. */
+function renderBroken() {
+  if (!view || !view.side) return;
+  const broken = view.side.querySelector('.wg-broken');
+  if (!broken) return;
+  const rows = broken.querySelector('.rows');
+  rows.textContent = '';
+  for (const p of view.projectErrors.slice(0, 8)) {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.textContent = (p.stub && !p.error)
+      ? t('wiki.brokenVault').replace('{project}', p.name)
+      : t('wiki.brokenProject').replace('{project}', p.name).replace('{error}', p.error);
+    rows.appendChild(row);
+  }
+  view.unresolved.slice(0, 60).forEach(({ from, target }, i) => {
+    const row = document.createElement('button');
+    row.type = 'button';
+    row.className = 'row';
+    const b = document.createElement('b');
+    b.textContent = from + ' → ';
+    row.appendChild(b);
+    row.appendChild(document.createTextNode(target));
+    row.addEventListener('click', () => {
+      const srcNode = [...view.byId.values()].find(nn => (nn.ref.rel || '') === from);
+      if (srcNode) select(srcNode, true);
+    });
+    rows.appendChild(row);
+    if (i === 59) {
+      const more = document.createElement('div');
+      more.className = 'row more';
+      more.textContent = '…';
+      rows.appendChild(more);
+    }
+  });
+  broken.classList.toggle('none', !rows.childElementCount);
+}
+
+function applyFilter() {
+  if (!view || !view.sim) return;
+  const q = view.filter;
+  const pass = filterPass();
+  view.sim.nodes.forEach(n => { n.dimmed = !pass(n); });
+}
+
+function filterPass() {
+  const q = view ? view.filter : '';
+  const dir = view ? view.dirFilter : '';
+  return (/** @type {WgNode} */ n) => {
+    if (dir && n.dir !== dir) return false;
+    if (q) {
+      const rel = (n.ref.rel || '').toLowerCase();
+      const proj = (n.ref.project || '').toLowerCase();
+      if (!(n.label.toLowerCase().includes(q) || rel.includes(q) || proj.includes(q))) return false;
+    }
+    return true;
+  };
+}
+
+function tick() {
+  const sim = view && view.sim;
+  if (!sim) return;
+  const nodes = sim.nodes, edges = sim.edges;
+  const W = view.W || 800, H = view.H || 600;
+  const kAlpha = Math.min(1, sim.alpha);
+  // Repulsion (n² — fine for vault-scale graphs).
+  for (let i = 0; i < nodes.length; i++) {
+    const a = nodes[i];
+    for (let j = i + 1; j < nodes.length; j++) {
+      const b = nodes[j];
+      let dx = a.x - b.x, dy = a.y - b.y;
+      let d2 = dx * dx + dy * dy;
+      if (d2 < 1) { dx = (Math.random() - 0.5); dy = (Math.random() - 0.5); d2 = 1; }
+      if (d2 > 160000) continue; // cut off beyond 400px
+      const f = 1800 * kAlpha / d2;
+      const d = Math.sqrt(d2);
+      const fx = dx / d * f, fy = dy / d * f;
+      a.vx += fx; a.vy += fy;
+      b.vx -= fx; b.vy -= fy;
+    }
+  }
+  // Springs.
+  for (const e of edges) {
+    const dx = e.b.x - e.a.x, dy = e.b.y - e.a.y;
+    const d = Math.max(1, Math.hypot(dx, dy));
+    const target = 110;
+    const f = (d - target) * 0.015 * kAlpha;
+    const fx = dx / d * f, fy = dy / d * f;
+    e.a.vx += fx; e.a.vy += fy;
+    e.b.vx -= fx; e.b.vy -= fy;
+  }
+  // Gravity toward center + integrate.
+  const drag = 0.85;
+  for (const n of nodes) {
+    n.vx += (W / 2 - n.x) * 0.0015 * kAlpha;
+    n.vy += (H / 2 - n.y) * 0.0015 * kAlpha;
+    if (n === view.dragging) { n.vx = 0; n.vy = 0; continue; }
+    n.vx *= drag; n.vy *= drag;
+    n.x += n.vx; n.y += n.vy;
+  }
+  sim.alpha *= 0.95; // settle ≈1.1s (design §4: convergence <1.2s, then stop)
+}
+
+function startLoop() {
+  if (!view) return;
+  cancelAnimationFrame(view.raf);
+  const loop = () => {
+    if (!view || !view.sim) return;
+    tick();
+    // 阻尼缩放追帧（作者令 2026-10-22）：跑在 draw 前，锚点补偿+scale 同帧生效。
+    const chasing = zoomChaseStep();
+    draw();
+    // Idle stop: the layout settled, no zoom chase pending and nobody is
+    // interacting — zero steady-state CPU (design §4). Any pointer/zoom/filter
+    // interaction restarts it.
+    if (view.sim.alpha < 0.02 && !chasing && !view.hover && !view.hoverEdge &&
+        !view.dragging && !view.panning) {
+      view.raf = 0;
+      return;
+    }
+    view.raf = requestAnimationFrame(loop);
+  };
+  view.raf = requestAnimationFrame(loop);
+}
+
+/** Wake the simulation/loop after user interaction (see startLoop idle stop). */
+function wake(minAlpha = 0.3) {
+  if (!view || !view.sim) return;
+  view.sim.alpha = Math.max(view.sim.alpha, minAlpha);
+  if (!view.raf) startLoop();
+}
+
+/** One-frame repaint after the wiki-graph tab is re-activated
+ *  (canvas-tab-switched). Scheduled on the NEXT animation frame so the
+ *  ResizeObserver has already restored the bitmap size — observer callbacks
+ *  run before rAF callbacks within a frame, so a synchronous draw here would
+ *  be wiped by the observer's resize. Skipped when the loop is already
+ *  running (it repaints every frame anyway). */
+function repaintOnActivate() {
+  if (!view || !view.canvas || !view.canvas.isConnected) return;
+  view.hover = null;
+  view.hoverEdge = null;
+  hideTip();
+  requestAnimationFrame(() => {
+    if (!view || !view.canvas || !view.canvas.isConnected || view.raf) return;
+    resizeCanvas();
+    draw();
+  });
+}
+
+// ── Rendering ─────────────────────────────────────────────────
+
+function resizeCanvas() {
+  if (!view || !view.canvas) return;
+  const dpr = window.devicePixelRatio || 1;
+  const w = view.canvas.clientWidth, h = view.canvas.clientHeight;
+  view.canvas.width = Math.max(1, Math.floor(w * dpr));
+  view.canvas.height = Math.max(1, Math.floor(h * dpr));
+  view.W = w; view.H = h;
+  view.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function neighborhood(node) {
+  const set = new Set([node]);
+  for (const m of node.out) set.add(m);
+  for (const m of node.inc) set.add(m);
+  return set;
+}
+
+/** How many nodes carry a default (non-hover) label at this zoom — the
+ *  代审整改 ramp: LABEL_HUBS at ≤100%, everything at LABEL_ALL_AT_SCALE. */
+function labelCountAt(scale) {
+  if (!view || !view.sim) return LABEL_HUBS;
+  const total = view.sim.nodes.length;
+  if (scale >= LABEL_ALL_AT_SCALE || total <= LABEL_HUBS) return total;
+  const frac = Math.max(0, (scale - 1) / (LABEL_ALL_AT_SCALE - 1));
+  return Math.min(total, Math.round(LABEL_HUBS + frac * (total - LABEL_HUBS)));
+}
+
+function draw() {
+  if (!view || !view.ctx) return;
+  const { ctx, sim } = view;
+  if (view.canvas.width === 1) resizeCanvas();
+  if (!sim) return;
+  const W = view.W, H = view.H;
+  if (!view.colors) readColors();
+  const C = view.colors;
+  ctx.clearRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(W / 2 + view.vx, H / 2 + view.vy);
+  ctx.scale(view.scale, view.scale);
+  ctx.translate(-W / 2, -H / 2);
+
+  // Focus set: hovered/selected node's neighborhood, or both endpoints of a
+  // hovered reference edge (段落级引用批).
+  const nodeFocus = view.hover || view.selected;
+  let near = null;
+  if (view.hoverEdge) {
+    near = neighborhood(view.hoverEdge.a);
+    near.add(view.hoverEdge.b);
+  } else if (nodeFocus) {
+    near = neighborhood(nodeFocus);
+  }
+  const pass = filterPass();
+  const labelCount = labelCountAt(view.scale);
+
+  // Edges — 1px straight muted lines (design §4: no bows, no accent hue);
+  // the focused neighborhood stays lit, everything else recedes. Anchored
+  // edges (段落级引用) carry a 2.4px graphite midpoint dot — the visual cue
+  // that this reference points at a paragraph, and what to hover.
+  for (const e of sim.edges) {
+    const isHover = view.hoverEdge && e === view.hoverEdge;
+    const hl = (near && (e.a === nodeFocus || e.b === nodeFocus)) ||
+      (isHover || (view.hoverEdge && (e.a === view.hoverEdge.a || e.b === view.hoverEdge.b)));
+    const dim = !pass(e.a) || !pass(e.b) || (near && !(near.has(e.a) && near.has(e.b)));
+    ctx.strokeStyle = C.muted;
+    ctx.globalAlpha = isHover ? 0.95 : (hl ? 0.85 : (dim ? 0.05 : 0.22));
+    ctx.lineWidth = isHover ? 1.6 : 1;
+    ctx.beginPath();
+    ctx.moveTo(e.a.x, e.a.y);
+    ctx.lineTo(e.b.x, e.b.y);
+    ctx.stroke();
+    if (e.anchor) {
+      const mx = (e.a.x + e.b.x) / 2, my = (e.a.y + e.b.y) / 2;
+      ctx.fillStyle = C.muted;
+      ctx.globalAlpha = isHover ? 1 : (hl ? 0.9 : (dim ? 0.08 : 0.55));
+      ctx.beginPath();
+      ctx.arc(mx, my, isHover ? 3 : 2.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Nodes — solid graphite dots; degree → radius and ink depth (design §4).
+  // Sub-vault aggregates (#744-B) draw as double rings and stay labeled.
+  for (const n of sim.nodes) {
+    const r = radiusOf(n);
+    const dim = n.dimmed || (near && !near.has(n));
+    ctx.globalAlpha = dim ? 0.12 : 1;
+    const shade = n.isAttach ? 0 : Math.min(1, n.degree / 8);
+    ctx.fillStyle = n.isVault ? C.ink : (shade > 0.45 ? C.ink : C.muted);
+    ctx.beginPath();
+    ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
+    ctx.fill();
+    if (n.isVault) {
+      // double ring: the aggregate marker (no accent hue — graphite only)
+      ctx.strokeStyle = C.ink;
+      ctx.globalAlpha = dim ? 0.2 : 0.75;
+      ctx.lineWidth = 1.2;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = dim ? 0.12 : 1;
+    }
+    if (n === view.selected || n === view.hover) {
+      ctx.strokeStyle = C.ink;
+      ctx.globalAlpha = dim ? 0.2 : 0.9;
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = dim ? 0.12 : 1;
+    }
+    // Label — hub-density rule (module header): hovered/selected always,
+    // their neighborhood when focused, all matches while a filter is active,
+    // otherwise only the top-`labelCount` hubs. Attachments label on
+    // hover/selection only.
+    let labelAlpha = 0;
+    if (!dim) {
+      // 悬停去重（作者报障 2026-10-25「胶囊底下，文件名称重复显示，主要是
+      // 图谱」）：悬停 pill 已在叫这个名字 —— pill 点名的节点（悬停节点 /
+      // 引用边目标）的画布标签同屏复读 = 重复显示来源，让它位；pill 收起
+      // （hideTip 清 tipFor）即恢复。选中态无 pill，标签照常。
+      const pillNamed = n === view.tipFor;
+      const isFocusNode = n === view.hover || n === view.selected ||
+      (view.hoverEdge && (n === view.hoverEdge.a || n === view.hoverEdge.b));
+      if (pillNamed) labelAlpha = 0;
+      else if (isFocusNode) labelAlpha = 1;
+      else if (n.isVault) labelAlpha = 0.72; // aggregates stay labeled (#744-B)
+      else if (near && near.has(n)) labelAlpha = 0.62;
+      else if (view.filter || view.dirFilter) labelAlpha = 0.62;
+      else if (!n.isAttach && n.rank < labelCount) labelAlpha = 0.62;
+    }
+    if (labelAlpha > 0) {
+      ctx.globalAlpha = labelAlpha;
+      ctx.fillStyle = C.ink;
+      ctx.font = (labelAlpha === 1 ? '500 ' : '400 ') + '11px -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif';
+      ctx.textAlign = 'center';
+      const label = n.label.length > LABEL_MAX_CHARS ? n.label.slice(0, LABEL_MAX_CHARS - 1) + '…' : n.label;
+      ctx.fillText(label, n.x, n.y + r + 13);
+    }
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// ── Pointer interaction ───────────────────────────────────────
+
+function toWorld(px, py) {
+  const W = view.W, H = view.H;
+  return {
+    x: (px - W / 2 - view.vx) / view.scale + W / 2,
+    y: (py - H / 2 - view.vy) / view.scale + H / 2,
+  };
+}
+
+function pick(px, py) {
+  if (!view || !view.sim) return null;
+  const p = toWorld(px, py);
+  let best = null, bestD = Infinity;
+  for (const n of view.sim.nodes) {
+    const d = Math.hypot(n.x - p.x, n.y - p.y);
+    if (d < radiusOf(n) + 5 && d < bestD) { best = n; bestD = d; }
+  }
+  return best;
+}
+
+/** Squared distance from point p to segment ab (world coords). */
+function distToSegment2(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2)) : 0;
+  const cx = ax + t * dx, cy = ay + t * dy;
+  return (px - cx) * (px - cx) + (py - cy) * (py - cy);
+}
+
+/** Nearest reference edge within 6 screen-px of the cursor (段落级引用批:
+ *  the hover surface for paragraph snapshots). Nodes always win — an edge
+ *  under a node is the node's, not the edge's. */
+function pickEdge(px, py) {
+  if (!view || !view.sim) return null;
+  const p = toWorld(px, py);
+  const tol = 6 / view.scale;
+  let best = null, bestD2 = tol * tol;
+  for (const e of view.sim.edges) {
+    const d2 = distToSegment2(p.x, p.y, e.a.x, e.a.y, e.b.x, e.b.y);
+    if (d2 < bestD2) { best = e; bestD2 = d2; }
+  }
+  return best;
+}
+
+// ── Wheel: CAD 范式 + 触控板保底 (作者令 2026-10-24；承 2026-10-22 捏合阻尼) ──
+// 惯例（CAD 标准范式；左栏 .wg-hint 注明）：
+//   鼠标滚轮 / 触控板捏合（ctrl+wheel）/ ⌘(Ctrl)+滚轮 → 以光标为锚点缩放
+//   触控板双指滚动（wheelIsPan 判定）/ Shift+滚轮     → 平移（1:1，Shift+纵滚 = 横移）
+// 平滑（阻尼追帧）：缩放不直接写 scale —— 每个事件按 exp 曲线累积进 zoomTarget，
+// rAF 每帧向目标追近 25%（速度∝剩余距离），锚点 = 最近一次指针位置 ⇒ 连续滚轮
+// 帧只表现为平滑推进，无 1.12 定步跳变；动量收尾自然滑入目标。
+
+const PINCH_K = 0.0015;   // exp 系数：滚轮一格 Δ≈120 → ≈1.2 档；触控板单帧 Δ≈2 → 微步
+const ZOOM_CHASE = 0.25;  // 每帧向 zoomTarget 追近的比例（阻尼）
+const ZOOM_SNAP = 0.0005; // 剩余差小于此直接贴合（收尾不抖）
+const WHEEL_NOTCH_PX = 48; // 鼠标滚轮一格 ≥ 48px（触控板单帧通常 ≤ 30px，见 wheelIsPan）
+
+/** WheelEvent deltas → pixels（Firefox line 档 ×16、page 档 ×视口高）。 */
+function normalizeWheelDelta(e) {
+  let x = e.deltaX, y = e.deltaY;
+  if (e.deltaMode === 1) { x *= 16; y *= 16; }
+  else if (e.deltaMode === 2) { const h = (view && view.H) || 600; x *= h; y *= h; }
+  return { x, y };
+}
+
+/** 滚轮 → 平移 or 缩放路由（作者令 2026-10-24：CAD 手感 + 触控板保底）。
+ *  缩放：ctrl/⌘（捏合/⌘滚）恒缩放；无修饰时按设备启发判定——行/页档（离散
+ *  滚轮）或 |deltaY| ≥ 一格 = 鼠标滚轮 → 缩放；横分量 ≠0、单帧 < 48px 或分数
+ *  delta = 触控板双指滚动 → 平移（不破坏 2026-10-22 触控板手感）。
+ *  Shift+滚轮恒 = 平移（shift+纵滚 = 横移，平移兜底入口之一）。 */
+function wheelIsPan(e) {
+  if (e.shiftKey) return true;
+  if (e.ctrlKey || e.metaKey) return false;
+  if (e.deltaMode !== 0) return false;           // line/page 档 = 离散滚轮
+  return e.deltaX !== 0 || Math.abs(e.deltaY) < WHEEL_NOTCH_PX || !Number.isInteger(e.deltaY);
+}
+
+/** One damped chase step toward zoomTarget (cursor-anchored when an anchor is
+ *  live, center-anchored otherwise). @returns {boolean} still chasing */
+function zoomChaseStep() {
+  if (!view) return false;
+  const diff = view.zoomTarget - view.scale;
+  if (Math.abs(diff) <= ZOOM_SNAP) {
+    view.scale = view.zoomTarget;
+    return false;
+  }
+  const next = view.scale + diff * ZOOM_CHASE;
+  if (view.zoomAnchor) {
+    const k = next / view.scale;
+    const { px, py } = view.zoomAnchor;
+    // 锚点补偿绕画布中心（draw 变换 screen = (w − W/2)·s + W/2 + v，toWorld 为其
+    // 逆）：保持 (px − W/2 − vx)/scale 不变 ⇒ 光标下的世界点逐帧纹丝不动。
+    // 旧式 px − (px − vx)·k 对齐的是 screen = w·s + v（原点左上）——偏心锚点下
+    // 内容会以 (W/2)(1−s) 级漂移（CAD 批修正，2026-10-24）。
+    const ux = px - view.W / 2, uy = py - view.H / 2;
+    view.vx = ux - (ux - view.vx) * k;
+    view.vy = uy - (uy - view.vy) * k;
+  }
+  view.scale = next;
+  return true;
+}
+
+/** Ensure the rAF loop is running WITHOUT re-energizing the layout sim —
+ *  zoom/pan must not make nodes drift (design §4 停帧 semantics preserved). */
+function ensureLoop() {
+  if (!view) return;
+  if (!view.raf) startLoop();
+}
+
+function bindCanvas(canvasEl) {
+  let moved = false;
+  let downButton = 0;   // 0 左键 / 1 中键（CAD 平移手势——松手不触发点选）
+  // 触摸即拖批（2026-11-01）：触屏双指捏合态。pointers = 活跃触点表（pointerId
+  // → 画布内坐标）；两指在场 = pinch（取消拖节点/平移，缩放锚 = 双指中点，
+  // 走与滚轮捏合同一条 damped zoomTarget 管线）；收指退 pinch 时把 lastPointer
+  // 重置到残留触点，防平移跳变；pinch 过的松手不触发点选（moved 钉死）。
+  /** @type {Map<number, {px: number, py: number}>} */
+  const pointers = new Map();
+  let pinch = null;     // {baseDist, baseScale, mid: {px, py}}
+  let pinched = false;  // 本次按序发生过 pinch ⇒ 收尾不做点选
+  const pinchMid = () => {
+    const pts = [...pointers.values()];
+    return {
+      px: (pts[0].px + pts[1].px) / 2,
+      py: (pts[0].py + pts[1].py) / 2,
+    };
+  };
+  const canvasXY = (e) => {
+    const rect = canvasEl.getBoundingClientRect();
+    return { px: e.clientX - rect.left, py: e.clientY - rect.top };
+  };
+  canvasEl.addEventListener('pointerdown', (e) => {
+    if (!view) return;
+    canvasEl.setPointerCapture(e.pointerId);
+    const { px, py } = canvasXY(e);
+    pointers.set(e.pointerId, { px, py });
+    if (pointers.size === 2) {
+      // 双指落地 = pinch 接管：单指已起的拖节点/平移全部撤销（防松指跳变）。
+      const pts = [...pointers.values()];
+      pinch = {
+        baseDist: Math.hypot(pts[0].px - pts[1].px, pts[0].py - pts[1].py) || 1,
+        baseScale: view.zoomTarget,
+        mid: { px: (pts[0].px + pts[1].px) / 2, py: (pts[0].py + pts[1].py) / 2 },
+      };
+      pinched = true;
+      view.dragging = null;
+      view.panning = false;
+      view.lastPointer = null;
+      view.zoomAnchor = pinch.mid;
+      ensureLoop();
+      return;
+    }
+    if (pointers.size > 2) return;   // 三指及以上不再改变手势语义
+    const middle = e.button === 1;
+    if (middle) e.preventDefault();  // 拦浏览器中键自动滚动（取消 pointerdown ⇒ 兼容 mousedown 不起）
+    downButton = middle ? 1 : 0;
+    const hit = middle ? null : pick(px, py);   // 中键恒平移，CAD 语义不吃节点命中
+    moved = false;
+    wake(hit ? 0.6 : 0.25);
+    if (hit) { view.dragging = hit; canvasEl.classList.add('grabbing'); }
+    else { view.panning = true; canvasEl.classList.add('grabbing'); }
+    view.lastPointer = { px, py };
+  });
+  canvasEl.addEventListener('pointermove', (e) => {
+    if (!view) return;
+    const { px, py } = canvasXY(e);
+    if (pointers.has(e.pointerId)) pointers.set(e.pointerId, { px, py });
+    if (pinch && pointers.size >= 2) {
+      // 捏合帧：距离比 → zoomTarget（阻尼追帧），锚点跟随双指中点。
+      const pts = [...pointers.values()];
+      const dist = Math.hypot(pts[0].px - pts[1].px, pts[0].py - pts[1].py) || 1;
+      pinch.mid = pinchMid();
+      view.zoomAnchor = pinch.mid;
+      view.zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, pinch.baseScale * (dist / pinch.baseDist)));
+      ensureLoop();
+      view.lastPointer = null;
+      return;
+    }
+    const last = view.lastPointer || { px, py };
+    const dx = px - last.px, dy = py - last.py;
+    if (Math.abs(dx) + Math.abs(dy) > 2) moved = true;
+    if (view.dragging) {
+      const w = toWorld(px, py);
+      view.dragging.x = w.x; view.dragging.y = w.y;
+      wake(0.35);
+    } else if (view.panning) {
+      view.vx += dx; view.vy += dy;
+      if (!view.raf) draw();
+    } else {
+      // 悬停去重批（2026-10-25）：pill 命名（tipFor）先落、画布重绘后行 ——
+      // 悬停节点/引用边目标的画布标签与 pill 同帧让位（消除同屏同名）。
+      // 重绘仅 hover/边/target 易主时触发（静息 hover 内移动零重绘）。
+      const hit = pick(px, py);
+      const prevTipFor = view.tipFor;
+      const hoverChanged = hit !== view.hover;
+      if (hoverChanged) {
+        view.hover = hit;
+        view.hoverEdge = null;
+        canvasEl.classList.toggle('hovering', !!hit);
+      }
+      if (hit) {
+        showTip(hit, px, py);
+        if ((hoverChanged || prevTipFor !== view.tipFor) && !view.raf) draw();
+      } else {
+        // Edge hover (段落级引用批): nearest edge within 6px shows the target
+        // paragraph snapshot — a plain node pick beats an edge pick.
+        const eh = pickEdge(px, py);
+        const edgeChanged = eh !== view.hoverEdge;
+        if (edgeChanged) {
+          view.hoverEdge = eh;
+          canvasEl.classList.toggle('hovering', !!eh);
+        }
+        if (eh) {
+          showEdgeTip(eh, px, py);
+          if ((edgeChanged || prevTipFor !== view.tipFor) && !view.raf) draw();
+        } else {
+          hideTip();
+          if ((edgeChanged || prevTipFor) && !view.raf) draw();
+        }
+      }
+    }
+    view.lastPointer = { px, py };
+  });
+  const endDrag = (e) => {
+    if (!view) return;
+    pointers.delete(e.pointerId);
+    // 双指 → 单指收指：pinch 退出，残留触点接管平移（lastPointer 重置防跳变；
+    // pinch 撤销过 panning —— 这里恢复，收指后单指继续拖 = 继续平移）。
+    if (pointers.size < 2) pinch = null;
+    if (pointers.size === 1) {
+      view.lastPointer = { px: [...pointers.values()][0].px, py: [...pointers.values()][0].py };
+      view.dragging = null;
+      view.panning = true;
+      canvasEl.classList.add('grabbing');
+      return;   // pinch 收指不做点选收尾（pinched 已在 moved 语义上钉死点选）
+    }
+    const wasDragging = view.dragging;
+    const wasPanning = view.panning;
+    view.dragging = null;
+    view.panning = false;
+    view.lastPointer = null;
+    canvasEl.classList.remove('grabbing');
+    hideTip();
+    if (moved || pinched) { pinched = false; return; }
+    if (wasDragging) { select(wasDragging, false); return; }
+    if (!wasPanning) return;
+    if (downButton === 1) return;   // 中键松手 = 纯平移收尾，不做点选
+    const { px, py } = canvasXY(e);
+    const hit = pick(px, py);
+    if (hit) { select(hit, false); return; }
+    // Edge click (段落级引用批): anchored edge → open the target doc at that
+    // paragraph (scroll + flash highlight); plain edge → select its target.
+    const eh = pickEdge(px, py);
+    if (eh) {
+      if (eh.anchor) { void openDoc(eh.b.ref, eh.anchor); return; }
+      select(eh.b, true);
+      return;
+    }
+    deselect();
+  };
+  canvasEl.addEventListener('pointerup', endDrag);
+  canvasEl.addEventListener('pointercancel', endDrag);
+  canvasEl.addEventListener('pointerleave', () => {
+    if (!view) return;
+    view.hover = null;
+    view.hoverEdge = null;
+    hideTip();
+    if (!view.raf) draw();
+  });
+  canvasEl.addEventListener('wheel', (e) => {
+    if (!view) return;
+    e.preventDefault();
+    const rect = canvasEl.getBoundingClientRect();
+    const d = normalizeWheelDelta(e);
+    if (wheelIsPan(e)) {
+      // 触控板双指滚动 / Shift+滚轮：平移（1:1 跟手，不误触缩放）
+      let dx = d.x, dy = d.y;
+      if (e.shiftKey && !dx) { dx = dy; dy = 0; }
+      view.vx += dx; view.vy += dy;
+      view.zoomTarget = view.scale;
+      view.zoomAnchor = null;
+      if (!view.raf) draw();
+    } else {
+      // 鼠标滚轮 / 捏合 / ⌘(Ctrl)+滚轮：光标锚点阻尼缩放（平移/缩放互不复位——
+      // 平移只动 vx/vy，缩放只动 scale+锚点补偿，两个自由度正交）。
+      view.zoomAnchor = { px: e.clientX - rect.left, py: e.clientY - rect.top };
+      view.zoomTarget = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, view.zoomTarget * Math.exp(-d.y * PINCH_K)));
+      ensureLoop();
+    }
+  }, { passive: false });
+}
+
+// ── Tooltip / detail card ─────────────────────────────────────
+
+function dirLabel(dir) { return dir === '.' ? t('wiki.chipRoot') : dir; }
+
+function showTip(node, px, py) {
+  if (!view || !view.pane) return;
+  const tip = /** @type {HTMLElement|null} */ (view.pane.querySelector('.wg-tip'));
+  if (!tip) return;
+  tip.classList.remove('para');
+  const d = node.ref;
+  if (node.isVault) {
+    // Sub-vault aggregate tooltip (#744-B): name + doc count + drill hint.
+    tip.querySelector('.tt').textContent = d.name;
+    tip.querySelector('.ts').textContent = t('wiki.vaultDocCount').replace('{n}', String(d.docCount ?? 0));
+    tip.querySelector('.td').textContent = t('wiki.enterVault');
+  } else {
+    tip.querySelector('.tt').textContent = d.title || d.rel || '';
+    tip.querySelector('.ts').textContent = d.summary
+      || (node.isAttach ? (d.rel || '') : t('wiki.noSummary'));
+    tip.querySelector('.td').textContent = dirLabel(node.dir) + ' · ' + t('wiki.tipDegree')
+      .replace('{in}', String(node.inc.length))
+      .replace('{out}', String(node.out.length));
+  }
+  view.tipFor = node;
+  placeTip(tip, px, py, 330, 110);
+}
+
+// ── Paragraph snapshot on reference-edge hover (段落级引用批) ────────
+// Hover data rides the EMBEDDED graph payload (node.paragraphs) — zero
+// requests, no interaction latency (design §5 primary path). An anchor the
+// index doesn't cover degrades to the doc-level summary; the
+// /api/wiki/paragraph seam (index → stand-recall → doc preview) stays a
+// server-side boundary the hover never blocks on.
+
+/** Resolve one edge's target paragraph from the embedded index. */
+function paragraphOf(targetRef, anchor) {
+  if (!anchor || !targetRef || !Array.isArray(targetRef.paragraphs)) return null;
+  return targetRef.paragraphs.find(p => p && p.anchor === anchor) || null;
+}
+
+/** Edge anchor (`#^id` | `#Heading` | `#L42`) → viewer jump payload
+ *  ({kind:'block',id} | {kind:'heading',text} | {kind:'line',line}) — the
+ *  same shape openLocalFileTab dispatches (markdown viewer scroll+flash). */
+function anchorToJumpPayload(anchor) {
+  if (!anchor) return undefined;
+  const raw = anchor.replace(/^#/, '');
+  if (raw.startsWith('^')) return { kind: 'block', id: raw.slice(1) };
+  const lm = raw.match(/^L(\d+)$/);
+  if (lm) return { kind: 'line', line: parseInt(lm[1], 10) };
+  return { kind: 'heading', text: raw };
+}
+
+function showEdgeTip(edge, px, py) {
+  if (!view || !view.pane) return;
+  const tip = /** @type {HTMLElement|null} */ (view.pane.querySelector('.wg-tip'));
+  if (!tip) return;
+  const d = edge.b.ref;
+  tip.classList.remove('para');
+  if (edge.b.isVault) {
+    // Sub-vault aggregate edge target (#744-B): vault card text, no paragraph.
+    tip.querySelector('.tt').textContent = d.name;
+    tip.querySelector('.ts').textContent = t('wiki.vaultDocCount').replace('{n}', String(d.docCount ?? 0));
+    tip.querySelector('.td').textContent = t('wiki.enterVault');
+  } else {
+    const para = paragraphOf(d, edge.anchor);
+    tip.classList.toggle('para', !!para);
+    if (para) {
+      tip.querySelector('.tt').textContent = '§ ' + (para.title || d.title || d.rel || '');
+      tip.querySelector('.ts').textContent = para.text || d.summary || t('wiki.noSummary');
+    } else {
+      tip.querySelector('.tt').textContent = d.title || d.rel || '';
+      tip.querySelector('.ts').textContent = d.summary || t('wiki.noSummary');
+    }
+    // 悬停去重（作者报障 2026-10-25「胶囊底下，文件名称重复显示」）：.tt 已是
+    // 这个名字 —— .td 只补元信息，不再复读一遍标题。文档名仅在 § 段落快照态
+    // （.tt = 段标题）下保留，用于交代段落属于哪篇文档（那时不是重复）。
+    const tdParts = [];
+    if (para && para.title) tdParts.push(d.title || d.rel || '');
+    tdParts.push(edge.anchor ? t('wiki.tipJump') : t('wiki.tipDegree')
+      .replace('{in}', String(edge.b.inc.length))
+      .replace('{out}', String(edge.b.out.length)));
+    tip.querySelector('.td').textContent = tdParts.join(' · ');
+  }
+  view.tipFor = edge.b;
+  placeTip(tip, px, py, 360, 150);
+}
+
+/** Shared tip placement — clamp against the MEASURED tip box so it stays
+ *  fully inside the pane. */
+function placeTip(tip, px, py, maxW, estH) {
+  tip.style.display = 'block';
+  let x = px + 14, y = py + 14;
+  if (x + maxW > view.pane.clientWidth) x = Math.max(4, px - maxW - 8);
+  if (y + estH > view.pane.clientHeight) y = Math.max(4, py - estH);
+  tip.style.left = x + 'px';
+  tip.style.top = y + 'px';
+}
+
+function hideTip() {
+  if (!view || !view.pane) return;
+  view.tipFor = null;
+  const tip = /** @type {HTMLElement|null} */ (view.pane.querySelector('.wg-tip'));
+  if (tip) tip.style.display = 'none';
+}
+
+/** Fill one detail card for a node (徽标/摘要/目录 ≤5/引出 ≤5/被引 ≤5/路径;
+ *  sub-vault aggregates get the vault card: 名称/文档数/进入子图谱). */
+function fillDetailCard(root, n) {
+  const emptyEl = root.querySelector('.wg-detail-empty');
+  const card = root.querySelector('.wg-detail-body');
+  if (!n) {
+    if (emptyEl) emptyEl.hidden = false;
+    if (card) card.hidden = true;
+    return;
+  }
+  if (emptyEl) emptyEl.hidden = true;
+  if (card) card.hidden = false;
+  if (n.isVault) return fillVaultCard(root, n);
+  const d = n.ref;
+  card.querySelector('h2').textContent = n.label;
+  const badges = card.querySelector('.badges');
+  badges.textContent = '';
+  const badgeTexts = [
+    dirLabel(n.dir) + (n.dir === '.' ? '' : '/'),
+    d.type || '',
+    d.status || '',
+    n.isAttach ? t('wiki.kindAttachment') : '',
+    (d.device && d.device !== 'self') ? t('wiki.badgeDevice').replace('{device}', d.device) : '',
+  ];
+  for (const text of badgeTexts) {
+    if (!text) continue;
+    const s = document.createElement('span');
+    s.className = 'badge';
+    s.textContent = text;
+    badges.appendChild(s);
+  }
+  card.querySelector('.summary').textContent = d.summary || t('wiki.noSummary');
+  const toc = card.querySelector('.toc');
+  toc.textContent = '';
+  for (const h of (d.headings || []).slice(0, 5)) {
+    const li = document.createElement('li');
+    li.textContent = h.t || h;
+    toc.appendChild(li);
+  }
+  const tocHead = /** @type {HTMLElement|null} */ (toc.previousElementSibling);
+  if (tocHead) tocHead.style.display = toc.children.length ? '' : 'none';
+  const refItem = (m, anchor) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ref';
+    b.textContent = m.label;
+    li.appendChild(b);
+    if (anchor) {
+      // 段落级引用 chip（informational — click stays select, the canvas
+      // edge click is the jump surface; 设计稿 §4 表格）。
+      const s = document.createElement('span');
+      s.className = 'ref-anchor';
+      s.textContent = anchor;
+      li.appendChild(s);
+    }
+    b.addEventListener('click', () => select(m, true));
+    return li;
+  };
+  const ghostItem = (text) => {
+    const li = document.createElement('li');
+    li.className = 'ghost';
+    li.textContent = text;
+    return li;
+  };
+  const outL = card.querySelector('.out');
+  outL.textContent = '';
+  n.out.slice(0, 5).forEach(m => outL.appendChild(refItem(m, n.outAnchors && n.outAnchors.get(m.id))));
+  if (!n.out.length) outL.appendChild(ghostItem(t('wiki.emptyOut')));
+  const inL = card.querySelector('.in');
+  inL.textContent = '';
+  n.inc.slice(0, 5).forEach(m => inL.appendChild(refItem(m, n.inAnchors && n.inAnchors.get(m.id))));
+  if (!n.inc.length) inL.appendChild(ghostItem(t('wiki.emptyIn')));
+  card.querySelector('.path').textContent = (d.project ? d.project + ' · ' : '') + 'docs/' + (d.rel || '');
+}
+
+/** Sub-vault aggregate card (#744-B): name / doc-count badge / drill-in button. */
+function fillVaultCard(root, n) {
+  const card = root.querySelector('.wg-detail-body');
+  const c = n.ref;
+  card.querySelector('h2').textContent = c.name;
+  const badges = card.querySelector('.badges');
+  badges.textContent = '';
+  const s = document.createElement('span');
+  s.className = 'badge';
+  s.textContent = t('wiki.kindVault');
+  badges.appendChild(s);
+  const s2 = document.createElement('span');
+  s2.className = 'badge';
+  s2.textContent = t('wiki.vaultDocCount').replace('{n}', String(c.docCount ?? 0));
+  badges.appendChild(s2);
+  card.querySelector('.summary').textContent = t('wiki.vaultBlurb');
+  card.querySelector('.toc').textContent = '';
+  /** @type {HTMLElement|null} */ (card.querySelector('.toc').previousElementSibling).style.display = 'none';
+  card.querySelector('.out').textContent = '';
+  /** @type {HTMLElement|null} */ (card.querySelector('.out').previousElementSibling).style.display = 'none';
+  card.querySelector('.in').textContent = '';
+  /** @type {HTMLElement|null} */ (card.querySelector('.in').previousElementSibling).style.display = 'none';
+  card.querySelector('.path').textContent = c.rel || '';
+  card.querySelector('.openbtn').textContent = t('wiki.enterVault');
+}
+
+/** Drill into a sub vault (#744-B): switch the view, refetch, rebuild. */
+function drillIn(rel) {
+  if (!view) return;
+  view.selProject = (view.data && view.data.view && view.data.view.project) || view.selProject;
+  view.selVault = rel || '';
+  view.filter = '';
+  view.dirFilter = '';
+  view.selected = null;
+  renderChips();
+  renderVaultSwitch();
+  loadData(true).then(() => rebuildSim());
+}
+
+/** Refresh every detail card from view.selected (canvas click → 左栏详情). */
+function renderDetailAll() {
+  if (!view) return;
+  for (const root of detailRoots()) fillDetailCard(root, view.selected);
+}
+
+/** Select a node: refresh the sidebar detail card, optionally center the
+ *  canvas on it (左栏词条 → canvas 聚焦). */
+function select(n, scroll) {
+  if (!view) return;
+  view.selected = n;
+  renderDetailAll();
+  ensureCanvasVisible();
+  if (scroll) {
+    // Center the node exactly (the control face lives outside the canvas
+    // pane — no half-width yield anymore). A pending damped pinch loses its
+    // cursor anchor (chase continues center-anchored, never fights the recenter).
+    view.zoomAnchor = null;
+    // Center = draw 变换 screen = (w − W/2)·s + W/2 + v 反解：v = (W/2 − w)·s。
+    view.vx = (view.W / 2 - n.x) * view.scale;
+    view.vy = (view.H / 2 - n.y) * view.scale;
+  }
+  wake(0.15);
+  draw();
+}
+
+function deselect() {
+  if (!view) return;
+  view.selected = null;
+  renderDetailAll();
+  draw();
+}
+
+// ── Document open (unchanged channel: every other file open in the product
+//    uses the same entries — workspace-open-item / openLocalFileTab) ──
+
+/** Open one graph document through the SAME channel every other file open in
+ *  the product uses (workspace-open-item / openLocalFileTab). `anchor` (段落级
+ *  引用批) rides the payload in the viewer jump form — the markdown viewer
+ *  scrolls to the paragraph and flashes it. Fired by the detail card's 打开文档
+ *  button (anchor omitted) and by anchored-edge clicks.
+ *  @param {any} d graph node ref
+ *  @param {string} [anchor] edge-anchor form (`#^id` | `#Heading` | `#L42`) */
+async function openDoc(d, anchor) {
+  const jump = anchorToJumpPayload(anchor);
+  const remote = d.device && d.device !== 'self';
+  if (!remote) {
+    // Local: the graph carries the project vault — rebuild the absolute path.
+    // Attachments open through the SAME channel: the viewer registry picks the
+    // pdf/image/office viewer by extension (literature one click away).
+    const proj = (view?.data.projects || []).find(p => p.name === d.project);
+    if (!proj) return;
+    const sep = proj.vault.includes('\\') ? '\\' : '/';
+    const abs = proj.vault.replace(/[\\/]+$/, '') + sep + d.rel.split('/').join(sep);
+    const { openLocalFileTab } = await import('./viewers/shared.js');
+    openLocalFileTab(abs, jump);
+    return;
+  }
+  // Remote: fetch read-only content through the peer channel. Binary viewer
+  // files (literature PDFs, figures) arrive base64 and open from a blob URL.
+  try {
+    const res = await fetch(`/api/wiki/remote-doc?device=${encodeURIComponent(d.device)}&path=${encodeURIComponent((view?.data.projects.find(p => p.name === d.project)?.vault || '') + '/' + d.rel)}`, { headers: { ...authHeaders() } });
+    if (!res.ok) { window.__showToast?.(t('wiki.remoteFetchFailed'), 'error'); return; }
+    const body = await res.json();
+    const detail = {
+      id: 'wiki-remote:' + d.id,
+      title: (d.title || d.rel) + ' · ' + d.device,
+      readOnly: true,
+    };
+    if (jump) detail.anchor = jump;
+    if (body.binary && body.contentBase64) {
+      const bin = atob(body.contentBase64);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const mime = REMOTE_MIME[d.rel.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || ''] || 'application/octet-stream';
+      detail.itemType = REMOTE_ITEM_TYPE[d.rel.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] || ''] || 'image';
+      detail.objectUrl = URL.createObjectURL(new Blob([bytes], { type: mime }));
+      detail.fileName = d.title || d.rel;
+    } else {
+      detail.itemType = 'markdown';
+      detail.content = body.content || '';
+    }
+    window.dispatchEvent(new CustomEvent('workspace-open-item', { detail }));
+  } catch (e) {
+    window.__showToast?.(t('wiki.remoteFetchFailed'), 'error');
+  }
+}
+
+/** Extension → blob mime / canvas itemType for remote attachment opens. */
+const REMOTE_MIME = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', svg: 'image/svg+xml' };
+const REMOTE_ITEM_TYPE = { pdf: 'pdf', docx: 'docx', pptx: 'pptx', xlsx: 'xlsx', epub: 'epub', png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', svg: 'image' };
+
+/** Focus a node (used by the md-viewer graph button): open the tab centered
+ *  on that document, identified by project + rel path. #744-B: opens the
+ *  node's own project vault graph, not the merged view. */
+export function focusWikiNode(project, rel) {
+  const id = `${project}:${rel.replace(/\\/g, '/')}`;
+  openWikiGraphTab(id, project);
+}
+
+// ── Harness probe (read-only) ─────────────────────────────────
+// The canvas is ONE bitmap — DOM reads cannot see nodes, so the e2e harness
+// reads laid-out coordinates here to drive real pointer events. Exposes
+// layout state only; no mutation path.
+/** @type {any} */ (window).__wikiGraphProbe = () => view && view.sim ? {
+  alpha: view.sim.alpha,
+  scale: view.scale,
+  zoomTarget: view.zoomTarget,
+  vx: view.vx, vy: view.vy, W: view.W, H: view.H,
+  nodes: view.sim.nodes.map(n => ({ id: n.id, x: n.x, y: n.y, degree: n.degree, rank: n.rank, dir: n.dir, isVault: !!n.isVault })),
+  edges: view.sim.edges.map(e => ({ from: e.a.id, to: e.b.id, anchor: e.anchor || null })),
+  anchoredEdges: view.sim.edges.filter(e => e.anchor).length,
+  hoverEdge: view.hoverEdge ? { from: view.hoverEdge.a.id, to: view.hoverEdge.b.id, anchor: view.hoverEdge.anchor } : null,
+  hover: view.hover ? view.hover.id : null,
+  tipFor: view.tipFor ? view.tipFor.id : null,   // 悬停去重批 2026-10-25：pill 点名节点
+  unresolved: view.unresolved.length,
+  crossVault: view.crossVault,
+  selProject: view.selProject, selVault: view.selVault,
+  vaultOptions: [...(view.side ? /** @type {NodeListOf<HTMLOptionElement>} */ (view.side.querySelectorAll('.wg-switch-select option')) : [])].map(o => o.value),
+  crumbs: (view.data && view.data.view && view.data.view.breadcrumb) || null,
+  filter: view.filter, dirFilter: view.dirFilter,
+  selected: view.selected ? view.selected.id : null,
+  sideMounted: !!(view.side && view.side.isConnected),
+} : null;

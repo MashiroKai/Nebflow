@@ -9,7 +9,7 @@ object SkillCommand extends CliCommand:
   def name = "skill"
   def description = "Manage skills"
   def subcommands = List(SkillList, SkillRun, SkillAuditCmd)
-  def examples = List("nebflow skill list", "nebflow skill run my-skill", "nebflow skill audit")
+  def examples = List("stand skill list", "stand skill run my-skill", "stand skill audit")
 
   private object SkillList extends CliSubcommand:
     def name = "list"
@@ -116,7 +116,8 @@ object SkillCommand extends CliCommand:
         ) ++ staleLines ++
         List(
           s"\n${r.skillsWithoutVerifiedDate} skill(s) have no parseable last_verified date.",
-          "Report only — retirement decisions belong to Nebula/Manager (eco decision 1)."
+          "Report only — removal decisions belong to Nebula/Manager (eco decision 1)."
         )
+    end formatAudit
   end SkillAuditCmd
 end SkillCommand

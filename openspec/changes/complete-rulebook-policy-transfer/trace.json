@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "change": "complete-rulebook-policy-transfer",
+  "mappings": [
+    {
+      "requirement": "RP-REQ-001",
+      "scenario": "RP-SCN-001",
+      "implementation": [
+        "openspec/changes/complete-rulebook-policy-transfer/proposal.md",
+        "openspec/changes/complete-rulebook-policy-transfer/design.md",
+        "openspec/changes/complete-rulebook-policy-transfer/tasks.md",
+        "openspec/changes/complete-rulebook-policy-transfer/trace.json",
+        "openspec/changes/complete-rulebook-policy-transfer/specs/rulebook-policy/spec.md"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "Human-owned AGENTS.md is intentionally gitignored and the rulebook has its own repository. Cross-repository policy meaning requires a source review in addition to the plugin's test_rulebook.py static regression checks.",
+        "steps": "Compare the preserved AGENTS snapshot with the compact file and the source rulebook; run python3 -B skills/stand-dev/scripts/test_rulebook.py in the stand-dev source; inspect the migration map and specific authorization.",
+        "expected": "Effective constraints have explicit destinations, source-only authorization remains bounded, rulebook tests pass, and missing legacy authorities are not silently treated as successful migration."
+      }
+    }
+  ]
+}

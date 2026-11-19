@@ -6,6 +6,17 @@ import state from './state.js';
 import { sendWs } from './ws.js';
 import { batchDeleteSelected, deleteFolder, getTargetPath, getTargetAgent, getCurrentFolderId } from './sidebar.js';
 import { t } from './i18n.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { statusIcon } from './utils.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层通用确认族铺满屏 + 左上返回——
+// 返回语义 = 取消（与 Esc/遮罩点击同腿）。桌面零变化。
+import { mobileSheetBack } from './mobile/popSheet.js';
+// keyboard-first 一期（2026-11-01）：确认/删除/新建会话/冲突五种模态统一入层栈 ——
+// 打开时落焦进模态、Tab 在模态内首尾相接、关闭后回焦到触发元素。接线点选在
+// bindModalSheetBack()（六个打开路径的共同尾部，且都在 classList.add('on') 之后）
+// 与 hideModals()（唯一关闭路径），因此**调用方零改动**。
+import { pushLayer } from './focusTrap.js';
 
 // ---------- Session Modals ----------
 export function showNewSessionModal() {
@@ -14,11 +25,33 @@ export function showNewSessionModal() {
   modalBox.style.display = 'block';
   modalInput.value = '';
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
   setTimeout(() => modalInput.focus(), 50);
 }
 
+/** @type {import('./focusTrap.js').Layer|null} */
+let modalLayer = null;
+
 export function hideModals() {
   state.dom.modalOverlay.classList.remove('on');
+  // keyboard-first 一期：出栈即回焦（触发元素还在文档里就原样还给它；
+  // 已被重渲摘掉则按 id 在新树里找，见 focusTrap.popLayer）。
+  const l = modalLayer;
+  modalLayer = null;
+  if (l) l.release();
+}
+
+/**
+ * 模态入层栈（幂等）：只在遮罩处于 on 态时生效，重复调用不叠层。
+ * 落焦到遮罩容器本身而非首个控件 —— 确认类模态若默认落焦在确认钮上，
+ * 一个 Enter 就会执行破坏性动作；容器承接焦点后第一次 Tab 才进第一个控件。
+ * @returns {void}
+ */
+function armModalTrap() {
+  const overlay = state.dom.modalOverlay;
+  if (!overlay || !overlay.classList.contains('on')) return;
+  if (modalLayer) return;
+  modalLayer = pushLayer(overlay, { name: 'modal' });
 }
 
 export function confirmNewSession() {
@@ -52,7 +85,7 @@ export function startInlineNewSession() {
   input.className = 'new-session-input';
   input.type = 'text';
   input.placeholder = t('session.namePlaceholder');
-  input.style.cssText = 'width:100%;background:var(--color-frame-input-bg);border:1px solid var(--color-frame-input-border);border-radius:6px;padding:6px 10px;color:var(--color-frame-input-text);font-size:13px;font-family:inherit;outline:none;';
+  input.style.cssText = 'width:100%;background:var(--color-frame-input-bg);border:1px solid var(--color-frame-input-border);border-radius:var(--ds-radius-chip);padding:var(--ds-space-1h) var(--ds-space-inline-x);color:var(--color-frame-input-text);font-size:var(--ds-fs-body);font-family:inherit;outline:none;';
   wrapper.appendChild(input);
   sessionList.prepend(wrapper);
   input.focus();
@@ -66,9 +99,10 @@ export function startInlineNewSession() {
     }
   };
   input.addEventListener('blur', finish);
+  bindImeGuard(input);
   input.addEventListener('keydown', (e) => {
+    if (isImeComposing(e, input)) return; // ⑤ 组字期间交还输入法
     if (e.key === 'Enter') {
-      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault(); input.blur();
     }
     if (e.key === 'Escape') { input.value = ''; input.blur(); }
@@ -81,15 +115,19 @@ let pendingFolderDelete = false;
 let pendingFolderDeleteId = null;
 
 export function showDeleteModal(sessionId, sessionName) {
-  const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
+  const { modalBox, deleteBox, deleteTitle, deleteMsg, deleteConfirmBtn, modalOverlay } = state.dom;
   modalBox.style.display = 'none';
   deleteBox.style.display = 'block';
   deleteTitle.textContent = t('delete.sessionTitle');
   deleteMsg.textContent = t('delete.sessionMsg', { name: sessionName });
+  // Label reset on the sibling open path — see showConfirm's confirmLabel note
+  // (a custom label from the social unbind flow must never leak into here).
+  if (deleteConfirmBtn) deleteConfirmBtn.textContent = t('modal.deleteConfirm');
   state.pendingDeleteId = sessionId;
   pendingBatchDelete = false;
   pendingFolderDelete = false;
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
 }
 
 export function showBatchDeleteModal() {
@@ -103,6 +141,7 @@ export function showBatchDeleteModal() {
   pendingBatchDelete = true;
   pendingFolderDelete = false;
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
 }
 
 export function showDeleteFolderModal(folderId, folderName) {
@@ -116,23 +155,38 @@ export function showDeleteFolderModal(folderId, folderName) {
   pendingBatchDelete = false;
   state.pendingDeleteId = null;
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
 }
 
 // --- Generic confirm dialog ---
 // Reuses #delete-box for any yes/no confirmation.
 let pendingConfirmCallback = null;
 
+/** Optional third-action callback for #delete-alt — reset on every open
+ *  (same no-residue discipline as pendingConfirmCallback). */
+let pendingAltCallback = null;
+
+export function canShowConfirm() { return !!state.dom?.deleteBox; }
+
 /**
- * Show a Nebflow-styled confirmation dialog.
+ * Show a Stand-styled confirmation dialog.
  * @param {string} title — dialog title
  * @param {string} message — dialog body text
  * @param {Function} onConfirm — called when user clicks Confirm
- * @param {object} [opts] 可选项 { tone?: 'danger'|'neutral' } — 'neutral'（可逆动作，
- *   如项目归档）→ 确认钮走 glass-control 中性材质（#delete-box.confirm-neutral）；
- *   默认 'danger' 保留红色语义。状态在每次打开时重设，无残留。
+ * @param {object} [opts] 可选项 { tone?: 'danger'|'neutral', confirmLabel?: string,
+ *   alt?: { label: string, onAlt: Function } } —
+ *   'neutral'（可逆动作，如项目归档）→ 确认钮走 glass-control 中性材质
+ *   （#delete-box.confirm-neutral）；默认 'danger' 保留红色语义。
+ *   confirmLabel（social-fix-confirm 2026-10-09，社交面板解绑流）：本次确认钮的
+ *   文案（如「解除绑定」）。每个打开路径都会重设按钮文案——下方与 showDeleteModal
+ *   各自回落到 modal.deleteConfirm，定制文案绝不残留到下一次弹窗。
+ *   alt（卸载批 2026-10-29，插件面板卸载流「仅停用」腿）：可选**第三动作**钮
+ *   （#delete-alt，中性材质、确认钮左侧）；缺省 = hidden 属性收起（既有两键形态
+ *   逐字不变）。与 confirmLabel 同款纪律：每个打开路径都重设（显隐 + 文案 +
+ *   回调），定制态绝不残留到下一次弹窗。
  */
 export function showConfirm(title, message, onConfirm, opts = {}) {
-  const { modalBox, deleteBox, deleteTitle, deleteMsg, modalOverlay } = state.dom;
+  const { modalBox, deleteBox, deleteTitle, deleteMsg, deleteConfirmBtn, modalOverlay } = state.dom;
   if (!deleteBox) { onConfirm?.(); return; }
   modalBox.style.display = 'none';
   deleteBox.style.display = 'block';
@@ -143,7 +197,21 @@ export function showConfirm(title, message, onConfirm, opts = {}) {
   pendingFolderDelete = false;
   state.pendingDeleteId = null;
   deleteBox.classList.toggle('confirm-neutral', opts.tone === 'neutral');
+  if (deleteConfirmBtn) deleteConfirmBtn.textContent = opts.confirmLabel || t('modal.deleteConfirm');
+  const altBtn = document.getElementById('delete-alt');
+  if (altBtn) {
+    pendingAltCallback = opts.alt?.onAlt || null;
+    altBtn.textContent = opts.alt?.label || '';
+    altBtn.hidden = !opts.alt;
+    altBtn.onclick = () => {
+      const cb = pendingAltCallback;
+      pendingAltCallback = null;
+      hideModals();
+      cb?.();
+    };
+  }
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
 }
 
 // --- Drop conflict dialog (external file drag-in, VS Code parity) ---
@@ -171,6 +239,7 @@ export function showConflict(title, message, cbs = {}) {
   conflictCallbacks = cbs;
   box.style.display = 'block';
   modalOverlay.classList.add('on');
+  bindModalSheetBack(); // 弹窗退场批：跨档重排后补注左上返回（幂等）
 }
 
 /** Reset the conflict dialog to a never-shown state (no overlay flash). */
@@ -196,29 +265,98 @@ function resolveConflict(action) {
 // color accent strip to a leading glyph icon (color-only distinction; glyph
 // colors live in modal.css). Signature and lifecycle unchanged — callers
 // keep passing (message, type).
-const TOAST_ICONS = { error: '\u2715', info: '!', success: '\u2713' };
+// ui-status-redesign（盘点 #26 / D 组，S7 全站归一）：「✕/!/✓」文本字形 → lucide
+// 真图标（circle-x / circle-alert / circle-check，currentColor——色仍由 modal.css
+// 的类型档 token 给出，JS 串零硬编码色值）。
+// ui-status-redesign（盘点 #26 / D 组，S7 全站归一）：「✕/!/✓」文本字形 → lucide
+// 真图标（circle-x / circle-alert / circle-check，currentColor——色仍由 modal.css
+// 的类型档 token 给出，JS 串零硬编码色值）。
+// 图标不带语义色类——颜色由下方 modal.css 类型档（.nebflow-toast-*）经
+// currentColor 继承给出，避免 st-err/st-ok 直涂覆盖类型档。
+//
+// notice-unify 批（2026-11-18，作者令「形成 lint 检查…统一到 2-3 种风格和类型的
+// 通知」）：本函数 = **全站唯一的瞬时提示源**（通知族「toast」型；另两型 =
+// notificationBanner 的常驻横幅、就地 inline 提示）。视觉配方只写在 css/modal.css
+// 一处，调用方只声明**类型**（error/info/success）与**形状开关**（closable / hint /
+// action），不再各自写样式。任何第二份 toast 类名（原 cfg-toast / fm-modal-toast /
+// delegate-archive-toast）已并回本函数，由 scripts/check-notice-unify.mjs 钉死：
+// 出现第四种风格或内联手写通知样式即红。类型档固定三种——形状开关不改类型数。
+const TOAST_ICONS = { error: 'circle-x', info: 'circle-alert', success: 'circle-check' };
+/** Toast 语义类型白名单（新增第四种 → check-notice-unify 报红）。 */
+export const TOAST_TYPES = ['error', 'info', 'success'];
 /**
- * Show a brief Nebflow-styled toast notification.
+ * Show a brief Stand-styled toast notification — the single transient-notice source.
  * @param {string} message — text to display
- * @param {string} type — 'error' | 'info' | 'success'
+ * @param {string} [type] severity class: 'error' (default) | 'info' | 'success'
+ * @param {object} [opts] shape switches (do not change the type count):
+ *   closable (boolean) — 加一个「×」亲手关闭钮（停留 8s 而非 4s，作者能读完再收走）;
+ *   hint (string) — 次级一行的**可执行下一步**（例如「请关闭其他控制台窗口后重试」）;
+ *   closeLabel (string) — 关闭钮的 aria-label;
+ *   action ({label, onClick}) — 正文列里的动作钮（如「撤销」）。
+ *   opts 缺省时 DOM 与旧版逐字节一致（普通 toast 零改动）。
  */
-export function showToast(message, type = 'error') {
+export function showToast(message, type = 'error', opts = {}) {
+  const kind = TOAST_TYPES.includes(type) ? type : 'info';
+  const rich = !!(opts.closable || opts.hint || opts.action);
   const toast = document.createElement('div');
-  toast.className = 'nebflow-toast nebflow-toast-' + type;
+  toast.className = 'nebflow-toast nebflow-toast-' + kind + (rich ? ' nebflow-toast-rich' : '');
   const icon = document.createElement('span');
   icon.className = 'nebflow-toast-icon';
   icon.setAttribute('aria-hidden', 'true');
-  icon.textContent = TOAST_ICONS[type] || TOAST_ICONS.info;
+  icon.innerHTML = statusIcon(TOAST_ICONS[kind], 15);
   const msg = document.createElement('span');
   msg.className = 'nebflow-toast-msg';
   msg.textContent = message;
-  toast.append(icon, msg);
-  document.body.appendChild(toast);
-  requestAnimationFrame(() => toast.classList.add('show'));
-  setTimeout(() => {
+  /** 退场单点：定时器与亲手关闭共用（rich 的动作钮也先走它）。 */
+  let timer = null;
+  const dismiss = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
     toast.classList.remove('show');
     setTimeout(() => toast.remove(), 300);
-  }, 4000);
+  };
+  // 非富通知：icon + msg 平铺（与旧版逐字节同构）；富通知：icon + 正文列（msg 一行、
+  // hint 一行、可选动作钮一钮），正文列是独立 div。两条腿都必须真的把 msg 挂进去——
+  // 早前把 `let body = toast` 当兜底会让普通 toast 变成 toast 自嵌套（HierarchyRequestError），
+  // 这里改成为每个分支各自 push 要挂的节点。
+  /** @type {Node[]} */
+  const content = [icon];
+  if (rich) {
+    const body = document.createElement('div');
+    body.className = 'nebflow-toast-body';
+    body.append(msg);
+    if (opts.hint) {
+      const hint = document.createElement('span');
+      hint.className = 'nebflow-toast-hint';
+      hint.textContent = opts.hint;
+      body.append(hint);
+    }
+    if (opts.action && opts.action.label) {
+      const act = document.createElement('button');
+      act.type = 'button';
+      act.className = 'nebflow-toast-action';
+      act.textContent = opts.action.label;
+      act.onclick = () => { dismiss(); opts.action.onClick?.(); };
+      body.append(act);
+    }
+    content.push(body);
+  } else {
+    content.push(msg);
+  }
+  toast.append(...content);
+  if (opts.closable) {
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'nebflow-toast-close';
+    close.setAttribute('aria-label', opts.closeLabel || 'Dismiss');
+    // 全站关闭钮惯例 = 文本 ×（messages.js / fileSearch.js / staleTabHint.js 同族），
+    // 不引裸 innerHTML（component-contract R5）。
+    close.textContent = '×';
+    close.onclick = dismiss;
+    toast.append(close);
+  }
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  timer = setTimeout(dismiss, opts.closable ? 8000 : 4000);
 }
 
 export function confirmDeleteSession() {
@@ -273,9 +411,10 @@ export function initModals() {
   if (newSessionBtn) newSessionBtn.onclick = startInlineNewSession;
   modalCancel.onclick = hideModals;
   modalConfirm.onclick = confirmNewSession;
+  bindImeGuard(modalInput); // ⑤ 元素级组字登记（判定见下方 keydown）
   modalInput.onkeydown = (e) => {
+    if (isImeComposing(e, modalInput)) return;
     if (e.key === 'Enter') {
-      if (e.isComposing || e.keyCode === 229) return;
       e.preventDefault(); confirmNewSession();
     }
     if (e.key === 'Escape') hideModals();
@@ -318,4 +457,17 @@ export function initModals() {
   window.__showConfirm = showConfirm;
   window.__showToast = showToast;
   /** @type {any} */ (window).__showConflict = showConflict;
+  bindModalSheetBack();
+}
+
+// 弹窗退场批：#modal-overlay 左上返回（取消语义；接管模态在场 = 无返回语义，
+// 强制二选一不被全局关闭路径误收——与 Esc/遮罩守卫同一判据）。show 路径
+// 重复调用补注：跨档重排（桌面→手机层）后 initModals 那次注入不在场
+// （mobileSheetBack 非手机层直接不注入，桌面 DOM 零变化）。
+function bindModalSheetBack() {
+  armModalTrap(); // keyboard-first 一期：六个打开路径的共同尾部 = 模态层入口
+  mobileSheetBack(state.dom.modalOverlay, () => {
+    if (conflictCallbacks) resolveConflict('cancel');
+    else hideModals();
+  });
 }

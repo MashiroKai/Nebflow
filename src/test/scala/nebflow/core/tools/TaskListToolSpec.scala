@@ -6,7 +6,7 @@ import io.circe.JsonObject
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.Files
 import java.time.Instant
@@ -44,10 +44,16 @@ class TaskListToolSpec extends FunSuite:
     os.remove.all(home)
 
   private def file: os.Path = home / "tasks.json"
+  private def histFile: os.Path = home / "tasks-history.jsonl"
+  private def archFile: os.Path = home / "tasks-history.1.jsonl"
 
-  /** 每用例从空库开始（无内存态——删文件即全新 store）。 */
+  /**
+   * 每用例从空库开始（无内存态——删文件即全新 store）。升级批：**连带删史文件**
+   * （否则跨用例串史：show 的时间线会带上上一用例的事件）。
+   */
   private def resetFile(): Unit =
-    if os.exists(file) then os.remove(file)
+    List(file, histFile, archFile).foreach(p => if os.exists(p) then os.remove(p))
+    os.list(home).filter(_.last.startsWith("tasks.json.corrupt")).foreach(os.remove(_))
 
   private def ctx: ToolContext = ToolContext(projectRoot = "/tmp")
 
@@ -64,14 +70,28 @@ class TaskListToolSpec extends FunSuite:
     call(obj(Seq("action" -> Json.fromString("update"), "id" -> Json.fromString(id)) ++ extra*))
 
   private def close(id: String, note: Option[String] = None): Either[ToolError, String] =
-    call(obj(
-      Seq("action" -> Json.fromString("close"), "id" -> Json.fromString(id)) ++
-        note.map(n => Seq("note" -> Json.fromString(n))).getOrElse(Seq.empty)*))
+    call(
+      obj(
+        Seq("action" -> Json.fromString("close"), "id" -> Json.fromString(id)) ++
+          note.map(n => Seq("note" -> Json.fromString(n))).getOrElse(Seq.empty)*
+      )
+    )
 
   private def list(project: Option[String] = None): Either[ToolError, String] =
-    call(obj(
-      Seq("action" -> Json.fromString("list")) ++
-        project.map(p => Seq("project" -> Json.fromString(p))).getOrElse(Seq.empty)*))
+    call(
+      obj(
+        Seq("action" -> Json.fromString("list")) ++
+          project.map(p => Seq("project" -> Json.fromString(p))).getOrElse(Seq.empty)*
+      )
+    )
+
+  private def show(id: String): Either[ToolError, String] =
+    call(obj("action" -> Json.fromString("show"), "id" -> Json.fromString(id)))
+
+  private def log(id: String, text: String): Either[ToolError, String] =
+    call(obj("action" -> Json.fromString("log"), "id" -> Json.fromString(id), "text" -> Json.fromString(text)))
+
+  private def err(r: Either[ToolError, String]): String = r.swap.toOption.get.message
 
   private def readDisk: Option[TaskListStore.Store] =
     if os.exists(file) then decode[TaskListStore.Store](os.read(file)).toOption else None
@@ -102,15 +122,19 @@ class TaskListToolSpec extends FunSuite:
     val disk2 = readDisk.get
     assertEquals(disk2.tasks.find(_.id == "1").get.status, "done")
     assert(disk2.tasks.find(_.id == "1").get.closedAt.isDefined, "close 记 closedAt")
-    assert(disk2.tasks.find(_.id == "1").get.note.exists(_.contains("[done] 方案已定稿")),
-      "close note 以 [done] 前缀追加，工作 note 保留")
+    assert(
+      disk2.tasks.find(_.id == "1").get.note.exists(_.contains("[done] 方案已定稿")),
+      "close note 以 [done] 前缀追加，工作 note 保留"
+    )
 
   test("update：title/note 替换、project 空串清除、blocks 全量替换（[] 清空）"):
     resetFile()
     create("任务A")
     create("任务B")
     assert(update("1", "blocks" -> io.circe.Json.arr(io.circe.Json.fromString("2"))).isRight)
-    assert(update("1", "note" -> io.circe.Json.fromString("工作备注"), "project" -> io.circe.Json.fromString("projX")).isRight)
+    assert(
+      update("1", "note" -> io.circe.Json.fromString("工作备注"), "project" -> io.circe.Json.fromString("projX")).isRight
+    )
     var disk = readDisk.get
     assertEquals(disk.tasks.find(_.id == "1").get.blocks, List("2"))
     assertEquals(disk.tasks.find(_.id == "1").get.project, Some("projX"))
@@ -184,8 +208,8 @@ class TaskListToolSpec extends FunSuite:
 
   test("依赖闸：被依赖条目未闭环时 in_progress/close 拒绝；闭环后放行；blocked 逃生通道"):
     resetFile()
-    create("上游任务")   // #1
-    create("下游任务", "blocks" -> io.circe.Json.arr(io.circe.Json.fromString("1")))  // #2 depends on #1
+    create("上游任务") // #1
+    create("下游任务", "blocks" -> io.circe.Json.arr(io.circe.Json.fromString("1"))) // #2 depends on #1
 
     // 未闭环 → in_progress 拒绝，错误列出未闭环依赖
     val r = update("2", "status" -> io.circe.Json.fromString("in_progress"))
@@ -263,8 +287,8 @@ class TaskListToolSpec extends FunSuite:
     // 手写老 closedAt（40 天前）
     val old = Instant.parse(java.time.Instant.now().minusSeconds(40L * 24 * 3600).toString)
     val disk = readDisk.get
-    val patched = disk.copy(tasks = disk.tasks.map(t =>
-      if t.id == "1" then t.copy(closedAt = Some(old.toString)) else t))
+    val patched =
+      disk.copy(tasks = disk.tasks.map(t => if t.id == "1" then t.copy(closedAt = Some(old.toString)) else t))
     os.write.over(file, patched.asJson.noSpaces)
 
     val r = create("触发清理")
@@ -275,10 +299,14 @@ class TaskListToolSpec extends FunSuite:
 
     // closedAt 解析失败 → 保守保留
     val disk3 = readDisk.get
-    val patchedBad = disk3.copy(tasks = disk3.tasks.map(t =>
-      if t.id == "2" && t.status != "done" then t else t))
-    os.write.over(file, (patchedBad.copy(tasks =
-      patchedBad.tasks :+ TaskListStore.Entry("99", "坏时间戳", "done", closedAt = Some("not-a-time")))).asJson.noSpaces)
+    val patchedBad = disk3.copy(tasks = disk3.tasks.map(t => if t.id == "2" && t.status != "done" then t else t))
+    os.write.over(
+      file,
+      (patchedBad
+        .copy(tasks = patchedBad.tasks :+ TaskListStore.Entry("99", "坏时间戳", "done", closedAt = Some("not-a-time"))))
+        .asJson
+        .noSpaces
+    )
     assert(create("再触发").isRight)
     assert(readDisk.get.tasks.exists(_.id == "99"), "解析失败的 done 条目保守保留")
 
@@ -312,8 +340,11 @@ class TaskListToolSpec extends FunSuite:
     resetFile()
     create("甲", "project" -> io.circe.Json.fromString("projA"))
     create("乙", "project" -> io.circe.Json.fromString("projB"))
-    create("丙", "project" -> io.circe.Json.fromString("projA"),
-      "blocks" -> io.circe.Json.arr(io.circe.Json.fromString("1")))
+    create(
+      "丙",
+      "project" -> io.circe.Json.fromString("projA"),
+      "blocks" -> io.circe.Json.arr(io.circe.Json.fromString("1"))
+    )
     val filtered = list(Some("projA"))
     assert(filtered.toOption.get.contains("#1"), filtered.toOption.get)
     assert(filtered.toOption.get.contains("#3"), filtered.toOption.get)
@@ -326,13 +357,119 @@ class TaskListToolSpec extends FunSuite:
 
   // ===== ⑦ 工具面隔离（硬约束）的注册表侧事实 =====
 
-  test("TaskList 进注册表；schema 恰四 action"):
-    assert(ToolRegistry.TOOL_MAP.contains("TaskList"), "registry 挂 TaskList（Nebula 注入源）")
+  test("TaskList 不再挂注册表（taskunify 2026-09-24 退役：类保留供本 spec/插件引用）；schema 恰六 action（升级批：+log/show）"):
+    // taskunify 批（registry.scala）：`TaskList`+`TaskBoard` 合并进统一台账 `Task`/`TaskInfo`，
+    // 注册表**故意不挂**旧名 ⇒ 调用旧名走 AgentCore.RetiredToolGuides 迁移指引（error text
+    // only，非兼容壳）。本类保留（MultiEdit 先例：class kept for spec/plugin reference）。
+    assert(!ToolRegistry.TOOL_MAP.contains("TaskList"), "registry 不再挂 TaskList（taskunify 退役）")
     val schema = TaskListTool.inputSchema
-    val actions = schema("properties").get.asObject.get("action").get
-      .asObject.get("enum").get.asArray.get.map(j => j.asString.get).toList
-    assertEquals(actions, List("create", "update", "list", "close"), "恰四 action")
-    // id 在 update/close 的必填校验在工具层（schema required 仅 action——与
-    // MemoryEditTool 同款：参数组合校验在 call 内做结构化报错）
+    val actions = schema("properties").get.asObject
+      .get("action")
+      .get
+      .asObject
+      .get("enum")
+      .get
+      .asArray
+      .get
+      .map(j => j.asString.get)
+      .toList
+    assertEquals(actions, List("create", "update", "list", "close", "log", "show"), "恰六 action")
+    // 新增字段进 schema（模型可见面）
+    val props = schema("properties").get.asObject.get
+    assert(props.contains("text"), "log 的 text 参数必须可见")
+    assert(props.contains("links"), "links 参数必须可见")
+    assert(props.contains("parentId"), "parentId 参数必须可见")
+    // id 在 update/close/log/show 的必填校验在工具层（schema required 仅 action——与
+    // 已退役记账工具同款：参数组合校验在 call 内做结构化报错）
+
+  // ===== ⑧ 升级批新增 action（R1 log / R2 show / R3 提示更新）=====
+
+  test("未知 action 报六值文案（含 log/show）"):
+    resetFile()
+    val r = call(obj("action" -> Json.fromString("destroy")))
+    assert(r.isLeft && err(r).contains("TASKLIST_ACTION"), r)
+    assert(err(r).contains("create/update/list/close/log/show"), err(r))
+    assert(call(obj("action" -> Json.fromString("log"))).isLeft, "log 缺 id 也必须结构化拒绝")
+    assert(err(call(obj("action" -> Json.fromString("show")))).contains("TASKLIST_PARAM"))
+
+  test("log（R1）：追加补记、**改 note 零改写**、进 show 时间线；空文本拒绝"):
+    resetFile()
+    create("任务A", "note" -> Json.fromString("当前态摘要"))
+    val r = log("1", "补记：换用 B 方案")
+    assert(r.isRight, r)
+    assert(r.toOption.get.contains("logged"), r.toOption.get)
+    assert(r.toOption.get.contains("(note untouched)"), r.toOption.get)
+    // note 零改写（log 只入史）
+    assertEquals(readDisk.get.tasks.head.note, Some("当前态摘要"), "log 不得改写 note")
+    // 进 show 的 note 主线
+    val out = show("1").toOption.get
+    assert(out.contains("## Note timeline"), out)
+    assert(out.contains("补记：换用 B 方案"), out)
+    // 空 / 空白文本拒绝
+    val empty = log("1", "   ")
+    assert(empty.isLeft && err(empty).contains("TASKLIST_PARAM"), empty)
+    // 未知 id 走既有 NO_ID 通道
+    val miss = log("999", "x")
+    assert(miss.isLeft && err(miss).contains("TASKLIST_NO_ID"), miss)
+
+  test("show（R2）：单条全文（note/links/依赖/反查）；未知 id 仍走 TASKLIST_NO_ID"):
+    resetFile()
+    create("甲", "note" -> Json.fromString("甲的备注"))
+    create("乙", "blocks" -> Json.arr(Json.fromString("1")), "links" -> Json.arr(Json.fromString("a.md")))
+    val out = show("2").toOption.get
+    assert(out.startsWith("TaskList #2 [open] 乙"), out)
+    assert(out.contains("note: (none)"), out) // 乙无 note
+    assert(out.contains("links (1): a.md"), out)
+    assert(out.contains("deps (1): #1[open] 甲"), out)
+    assert(out.contains("⚠deps-open"), out)
+    val out1 = show("1").toOption.get
+    assert(out1.contains("note (4 chars):\n甲的备注"), out1)
+    assert(out1.contains("dependents (1): #2[open] 乙"), "反查：谁依赖我")
+    assert(out1.contains("⚠dependents-open"), out1)
+    val miss = show("4242")
+    assert(miss.isLeft && err(miss).contains("TASKLIST_NO_ID"), miss)
+
+  test("show（R4）：note 主线与状态类分节 —— 覆盖两侧全文可还原、被覆盖版仍可读出"):
+    resetFile()
+    create("还原任务")
+    update("1", "note" -> Json.fromString("v1 初始做法"))
+    update("1", "note" -> Json.fromString("v2 改了做法：换用 A 方案"))
+    update("1", "note" -> Json.fromString("v3 再改：B 方案"))
+    val out = show("1").toOption.get
+    // 主区在前、状态类在后（不平铺混杂）
+    val iNote = out.indexOf("## Note timeline")
+    val iState = out.indexOf("## Other events")
+    assert(iNote > 0 && iState > iNote, s"note 主线必须在状态类之前: $out")
+    assert(out.contains("## Note timeline (3 note/log change(s) recorded)"), out)
+    assert(out.contains("## Other events (state/structural"), out)
+    // 三次变更逐次可还原，且**被覆盖前那一版**仍可读出
+    assert(out.contains("new| v1 初始做法"), out)
+    assert(out.contains("old| v1 初始做法"), s"第二次变更必须记 old 侧: $out")
+    assert(out.contains("new| v2 改了做法：换用 A 方案"), out)
+    assert(out.contains("old| v2 改了做法：换用 A 方案"), s"第三次变更必须记 old 侧: $out")
+    assert(out.contains("new| v3 再改：B 方案"), out)
+    // 状态类退居次要：只以极简行出现（不重复 note 正文）
+    assert(out.contains("create: 还原任务"), out)
+    val stateSection = out.substring(iState)
+    assert(!stateSection.contains("v2 改了做法"), s"状态类小节不得混入 note 正文: $stateSection")
+
+  test("show 时间线预算：超 50 条明示 `(+N older change(s) not shown)`（不静默截断）"):
+    resetFile()
+    create("多变更")
+    (1 to 55).foreach(i => assert(log("1", s"第 $i 次补记").isRight))
+    val out = show("1").toOption.get
+    assert(out.contains("## Note timeline (55 note/log change(s) recorded)"), out)
+    assert(out.contains("(+5 older change(s) not shown)"), s"超额必须明示: $out")
+    assert(out.contains("第 55 次补记"), "最新一条必须在")
+    assert(!out.contains("第 1 次补记"), "被丢弃的旧条不出现")
+
+  test("list（R3）：摘要行尾部指向 list|show；log 后父条目行的 note 列不变"):
+    resetFile()
+    create("任务A", "note" -> Json.fromString("摘要"))
+    log("1", "补记不进 note 列")
+    val line = list().toOption.get.linesIterator.find(_.startsWith("#1 ")).get
+    assert(line.contains("note: 摘要"), line)
+    assert(!line.contains("补记不进 note 列"), s"log 不改 note，list 的 note 列不该变: $line")
+    assert(TaskListStore.openSummaryLine().contains("TaskList(action=list|show)"), TaskListStore.openSummaryLine())
 
 end TaskListToolSpec

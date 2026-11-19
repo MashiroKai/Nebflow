@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "change": "decision-card-mvp",
+  "mappings": [
+    {
+      "requirement": "DCM-REQ-001",
+      "scenario": "DCM-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/scheduled-task.js",
+        "src/main/resources/web/js/todoStore.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/mobile-decision-preview-occlusion.spec.mjs",
+          "name": "decision-preview absence and composer/dock hit tests"
+        }
+      ]
+    },
+    {
+      "requirement": "DCM-REQ-001",
+      "scenario": "DCM-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/scheduled-task.js"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The completion/unique-count behaviour has no named automated test in this batch; the read-only projection is asserted only by the browser harness under tests/mobile-decision-preview-occlusion.spec.mjs, which covers layout, not counting.",
+        "steps": "Open the decision-card surface with one completed and one pending todo row and read the entry count; then complete the pending row and read the count again.",
+        "expected": "Only visible, undecided unique ids are counted; the completed row stays listed but stops being counted."
+      }
+    }
+  ]
+}

@@ -4,20 +4,24 @@ import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 
 /**
- * 阶段 2b Plugins——PluginRegistry spec（§B.2 装载校验 / §B.3 注册表与信任门 /
- * §B.4 第 1-2 步 / §B.8-2/3/5/7/8 对应断言）。
+ * 阶段 2b Plugins——PluginRegistry spec（§B.2 装载校验 / §B.4 第 1-2 步 /
+ * §B.8-5/7/8 + **无审批批 2026-09-13 内容面语义**）。
  *
  * 覆盖：
  * - 扫描/解析/digest：全量（skills+mcp+tools）/ 仅其一 / 双全无拒载 / manifest
  *   缺 name 拒载 / 白名单外工具拒载（§B.8-8）/ 未知字段目录宽容+告警（§B.8-5）
- * - 信任门：默认拒绝 + 错误信息含审批指引（验收 1）；approve→trusted；
- *   改文件 digest 失效拒用（§B.8-3，验收 3）；revoke→untrusted
- * - 目录注入（§B.4 第 2 步）：untrusted 不进 catalog；格式对齐蓝图
+ * - 内容面判定（**在位即信任 + 点名封禁**，无审批批 2026-09-13）：
+ *   ① 无审批记录 ⇒ 扫到即受信（resolve Right，default-deny 已取消——本条就是作者令的
+ *      正面断言）；② 内容变更（digest 漂移）**不拦装载** ⇒ 非拦截可见性 contentChanged；
+ *      ③ 封禁（deny-list）⇒ resolve Left(PLUGIN_BLOCKED) + 出目录，解封即恢复；
+ *      ④ 封禁持久性：自动 approve（种子路径）**不得**抹掉封禁（独立命名空间硬约束）。
+ * - 目录注入（§B.4 第 2 步）：封禁不进 catalog；段尾注记（缺席 / 内容已变更）；
+ *   健康摘要（含 content-changed 明细）
  * - feature flag（§G.2）：plugins.enabled=false → catalog 为空
  */
 class PluginRegistrySpec extends CatsEffectSuite:
@@ -45,13 +49,15 @@ class PluginRegistrySpec extends CatsEffectSuite:
 
   private def writeSkill(dir: os.Path, skill: String, body: String): Unit =
     os.makeDir.all(dir / "skills" / skill)
-    os.write.over(dir / "skills" / skill / "SKILL.md",
+    os.write.over(
+      dir / "skills" / skill / "SKILL.md",
       s"""---
          |name: $skill
          |description: $skill test skill
          |---
          |# $skill
-         |$body""".stripMargin)
+         |$body""".stripMargin
+    )
 
   private def writeTools(dir: os.Path, tools: List[String]): Unit =
     os.makeDir.all(dir / "org.nebflow")
@@ -61,14 +67,17 @@ class PluginRegistrySpec extends CatsEffectSuite:
   // full：skills + mcp + tools（全量形态）
   // skills-only / mcp-only：裁定 12「可只用其一」
   // empty：双全无 → 拒载（§B.8-7）
-  // bad-tools：申请白名单外工具 Task → 拒载（§B.8-8）
+  // bad-tools：申请白名单外工具 Mail → 拒载（§B.8-8）
   // messy：未知字段 + 未知目录 + 未知 org.nebflow 条目 → 宽容 + 告警（§B.8-5）
 
   private val full = pluginDir("full")
   writeManifest(full, "full")
   writeSkill(full, "howto", "read ${SKILL_DIR}/refs/spec.md for details")
-  os.write.over(full / "mcp.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"fetch":{"type":"stdio","command":"python3","args":["-c","print(1)"]}}}""")
+
+  os.write.over(
+    full / "mcp.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"fetch":{"type":"stdio","command":"python3","args":["-c","print(1)"]}}}"""
+  )
   writeTools(full, List("WebSearch", "WebFetch"))
 
   private val skillsOnly = pluginDir("skills-only")
@@ -77,17 +86,23 @@ class PluginRegistrySpec extends CatsEffectSuite:
 
   private val mcpOnly = pluginDir("mcp-only")
   writeManifest(mcpOnly, "mcp-only")
-  os.write.over(mcpOnly / "mcp.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3","args":["-c","print(1)"]}}}""")
+
+  os.write.over(
+    mcpOnly / "mcp.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3","args":["-c","print(1)"]}}}"""
+  )
 
   private val empty = pluginDir("empty")
   writeManifest(empty, "empty")
 
   private val badTools = pluginDir("bad-tools")
   writeManifest(badTools, "bad-tools")
-  os.write.over(badTools / "mcp.json",
-    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3"}}}""")
-  writeTools(badTools, List("Task")) // 编排类工具永不进白名单（§B.6）
+
+  os.write.over(
+    badTools / "mcp.json",
+    s"""{"$$schema":"${PluginRegistry.CanonicalMcpSchema}","mcpServers":{"srv":{"type":"stdio","command":"python3"}}}"""
+  )
+  writeTools(badTools, List("Mail")) // 编排类工具永不进白名单（§B.6；R2 2026-09-12：Task 退役，改判 Mail）
 
   private val messy = pluginDir("messy")
   writeManifest(messy, "messy", extra = ""","unknownField": {"x": 1}""")
@@ -97,14 +112,42 @@ class PluginRegistrySpec extends CatsEffectSuite:
   os.makeDir.all(messy / "org.nebflow")
   os.write.over(messy / "org.nebflow" / "extra.json", "{}")
 
-  // 隔离 nebflow.json（信任表读写落临时根）
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  // Plugin.md 已知面（卫生批 2026-10-28，六-1 欠账清偿）：包根第五件 = 装载器
+  // known-set 正字，装载零告警；小写变体维持 unknown-entry 告警（正字纪律——
+  // 注入面 PluginInjection 回退同认 ≠ 装载面放行，与 validator C11b 改名提示同向）。
+  private val withPluginMd = pluginDir("with-plugin-md")
+  writeManifest(withPluginMd, "with-plugin-md")
+  writeSkill(withPluginMd, "s1", "body")
+  os.write.over(withPluginMd / "Plugin.md", "# with-plugin-md\n\nPlugin.md required file (canonical name).\n")
+
+  private val lowerPluginMd = pluginDir("lower-plugin-md")
+  writeManifest(lowerPluginMd, "lower-plugin-md")
+  writeSkill(lowerPluginMd, "s1", "body")
+  os.write.over(
+    lowerPluginMd / "plugin.md",
+    "# lower-plugin-md\n\nlowercase variant — the injection face tolerates it, the loader keeps the canonical-name discipline.\n"
+  )
+
+  // 隔离 nebflow.json（审计记录 / 封禁表读写落临时根）
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
   private def scan: IO[List[PluginRegistry.PluginDef]] = PluginRegistry.scan()
   private def names: IO[Set[String]] = scan.map(_.map(_.name).toSet)
+
+  private def reset: IO[Unit] = IO {
+    os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
+    PluginRegistry.invalidateCache()
+  }
+
+  /**
+   * 本 suite 盘上 8 包的缺席注记（口径：本 spec 固定 fixtures——empty/bad-tools 载入
+   * 校验拒载；其余 6 包**在位即信任**⇒ 恒在目录里，不再构成缺席。卫生批 2026-10-28
+   * +with-plugin-md / +lower-plugin-md 两包，均装载成功）。只列非零分类。
+   */
+  private val absenceNote2 = "另有 2 个插件未载入（装载失败 2）"
 
   // ── 扫描 / 装载校验（§B.2 / §B.8-7/5/8）────────────────────
 
@@ -135,25 +178,50 @@ class PluginRegistrySpec extends CatsEffectSuite:
     }
   }
 
-  test("§B.8-8 白名单: 申请 Task（编排类）→ 装载校验拒绝") {
+  test("§B.8-8 白名单: 申请 Mail（编排类，R2 2026-09-12 取代已退役的 Task）→ 装载校验拒绝") {
     PluginRegistry.listWithRejected().map { case (loaded, rejected) =>
       assert(!loaded.exists(_.name == "bad-tools"), "bad-tools must NOT load")
       val entry = rejected.find(_._1 == "bad-tools")
       assert(entry.isDefined, s"bad-tools must be rejected, got $rejected")
-      assert(entry.get._2.contains("Task") && entry.get._2.contains("WebSearch"),
-        "rejection must name the illegal tool and the whitelist")
+      assert(
+        entry.get._2.contains("Mail") && entry.get._2.contains("WebSearch"),
+        "rejection must name the illegal tool and the whitelist"
+      )
     }
   }
 
   test("§B.8-5 前向兼容: 未知 manifest 字段/未知组件目录 → 不崩溃、宽容跳过、各产生告警") {
     scan.map(_.find(_.name == "messy")).map {
       case Some(p) =>
-        assert(p.trust.trusted || !p.trust.trusted, "loads regardless of trust state (this assert: no crash)")
         val w = p.warnings.mkString("; ")
         assert(w.contains("unknownField"), s"unknown manifest field must warn, got: $w")
         assert(w.contains("agents"), s"unknown component dir must warn, got: $w")
         assert(w.contains("extra.json"), s"unknown org.nebflow entry must warn, got: $w")
       case None => fail("'messy' plugin must load (forward-compat: skip + warn, never crash)")
+    }
+  }
+
+  test("§B.8-5 Plugin.md 已知面: 包根第五件（正字）装载零 unknown-entry 告警（六-1 清偿，消 21 包常驻告警）") {
+    scan.map(_.find(_.name == "with-plugin-md")).map {
+      case Some(p) =>
+        val w = p.warnings.mkString("; ")
+        assert(
+          !w.toLowerCase.contains("plugin.md"),
+          s"canonical Plugin.md is a known root entry — no forward-compat warning may fire, got: $w"
+        )
+      case None => fail("'with-plugin-md' plugin must load")
+    }
+  }
+
+  test("§B.8-5 Plugin.md 正字纪律: 小写 plugin.md 仍告警（注入面回退同认 ≠ 装载面放行）") {
+    scan.map(_.find(_.name == "lower-plugin-md")).map {
+      case Some(p) =>
+        val w = p.warnings.mkString("; ")
+        assert(
+          w.contains("'plugin.md'"),
+          s"lowercase plugin.md stays an unknown-entry warning (canonical-name discipline), got: $w"
+        )
+      case None => fail("'lower-plugin-md' plugin must load (warn-only face)")
     }
   }
 
@@ -175,90 +243,208 @@ class PluginRegistrySpec extends CatsEffectSuite:
       assert(b != a, s"content change must change digest ($b == $a)")
   }
 
-  // ── 信任门（默认拒绝 / approve / digest 失效 / revoke）───────
+  // ── 内容面判定（在位即信任 + 点名封禁；无审批批 2026-09-13）─────
 
-  test("§B.8-2 信任门默认拒绝: 未审批插件 resolve → Left 且错误信息含审批指引") {
-    PluginRegistry.resolve("full").map {
-      case Right(p) => fail(s"untrusted plugin must not resolve, got $p")
-      case Left(err) =>
-        assert(err.contains("PLUGIN_UNTRUSTED"), s"error must carry the gate error code, got: $err")
-        assert(err.contains("approve"), s"error must contain approval guidance, got: $err")
-        assert(err.contains("full"), "error must name the plugin")
-    }
+  test("在位即信任（正面断言）: 无审批记录包 → resolve Right（default-deny 已取消）") {
+    for
+      _ <- reset
+      resolved <- PluginRegistry.resolve("messy") // 本 spec 从未 approve 过 messy
+      scanned <- scan.map(_.find(_.name == "messy"))
+    yield
+      assert(
+        resolved.isRight,
+        s"a package with NO approval record must resolve (presence = trust), got: ${resolved.swap.toOption}"
+      )
+      assert(
+        scanned.exists(p => p.trust.trusted && !p.contentChanged),
+        "no record ⇒ trusted=true, contentChanged=false (nothing to compare against)"
+      )
+      assert(
+        !resolved.swap.toOption.getOrElse("").contains("default-deny"),
+        "the default-deny wording must be gone from every path"
+      )
   }
 
-  test("§B.3 审批: approve → trusted（digest 入表）；再 approve 幂等刷新") {
+  test("在位即信任: 无记录包进分发给新节点的 Plugin Catalog（作者令最直观的可见效果）") {
     for
+      _ <- reset
+      catalog <- PluginRegistry.renderCatalog()
+    yield
+      for n <- List("full", "skills-only", "mcp-only", "messy")
+      do assert(catalog.contains(s"- $n:"), s"record-less package '$n' must appear in the catalog:\n$catalog")
+      assert(!catalog.contains("- empty:"), "load-failed package must not render a line")
+      assertEquals(
+        catalog.linesIterator.toList.last,
+        absenceNote2,
+        s"catalog tail must aggregate the load-failed absences: $catalog"
+      )
+  }
+
+  test("§B.3 审计记录: approve 写记录（不再决定装载）、resolve 幂等仍 Right") {
+    for
+      _ <- reset
+      before <- PluginRegistry.resolve("full")
+      _ = assert(before.isRight, "presence trust must hold before any approve")
       r1 <- PluginRegistry.approve("full")
-      _ = assert(r1.isRight, s"approve must succeed: $r1")
-      resolved <- PluginRegistry.resolve("full")
-      _ = assert(resolved.isRight, s"approved plugin must resolve: ${resolved.swap.toOption}")
-    yield ()
+      _ = assert(r1.isRight, s"audit record write must succeed: $r1")
+      after <- PluginRegistry.resolve("full")
+      rec <- IO.blocking(PluginRegistry.trustRecordDigest("full"))
+    yield
+      assert(after.isRight, "an audit record must not change the loading verdict (already trusted)")
+      assert(rec.isDefined, "audit record must be on disk (seed-reconcile baseline)")
   }
 
-  test("§B.8-3 升级即重审: 审批后修改任一文件 → digest 失效拒用（spawn 期 resolve Left）") {
+  test("内容变更非拦截（§B.8-3 语义取消）: 记录后改文件 → resolve 仍 Right + contentChanged=true") {
     for
+      _ <- reset
       _ <- PluginRegistry.approve("mcp-only")
-      ok <- PluginRegistry.resolve("mcp-only")
-      _ = assert(ok.isRight, "approved plugin must resolve before modification")
+      clean <- scan.map(_.find(_.name == "mcp-only"))
+      _ = assert(clean.exists(p => p.trust.trusted && !p.contentChanged), "approved & untouched ⇒ contentChanged=false")
       _ <- IO.sleep(20.millis) // mtime 粒度保险
       _ <- IO.blocking(os.write.append(tempRoot / "plugins" / "mcp-only" / "mcp.json", "\n"))
+      _ <- IO(PluginRegistry.invalidateCache())
       after <- PluginRegistry.resolve("mcp-only")
-    yield after match
-      case Right(p) => fail(s"modified plugin must fall back to untrusted, got trusted digest=${p.digest.take(12)}")
-      case Left(err) =>
-        assert(err.contains("PLUGIN_UNTRUSTED"), s"stale digest must be refused with guidance, got: $err")
-  }
-
-  test("§B.3 撤审: revoke → 回落 untrusted（默认拒绝）") {
-    for
-      _ <- PluginRegistry.approve("skills-only")
-      _ <- PluginRegistry.resolve("skills-only").map(r => assert(r.isRight, "pre-revoke must be trusted"))
-      r <- PluginRegistry.revoke("skills-only")
-      _ = assert(r.isRight, s"revoke must succeed: $r")
-      after <- PluginRegistry.resolve("skills-only")
-    yield assert(after.isLeft, "revoked plugin must be untrusted again")
-  }
-
-  // ── 分发器目录注入（§B.4 第 2 步）─────────────────────────
-
-  test("目录注入: untrusted 不出现在 Plugin Catalog；approve 后以蓝图格式出现") {
-    // 顺序无关起点：先撤审 full（前序测试可能已批）→ before 无 full → 审批后出现
-    for
-      _ <- PluginRegistry.revoke("full")
-      before <- PluginRegistry.renderCatalog()
-      _ <- PluginRegistry.approve("full")
-      after <- PluginRegistry.renderCatalog()
+      drifted <- scan.map(_.find(_.name == "mcp-only"))
+      catalog <- PluginRegistry.renderCatalog()
+      manifest <- PluginRegistry
+        .listWithRejected()
+        .map(_._1.find(_.name == "mcp-only").map(PluginRegistry.approvalManifest))
     yield
-      assert(after.contains("# Plugin Catalog"), s"catalog header must present, got: $after")
-      assert(after.contains("- full: full fixture plugin [skills: howto | mcp: fetch | tools: WebSearch, WebFetch]"),
-        s"catalog line format must match the blueprint (§B.4), got: $after")
-      assert(!before.contains("- full:"), "untrusted plugin must NOT be in catalog before approval")
+      assert(after.isRight, s"content change must NOT gate loading any more, got: ${after.swap.toOption}")
+      assert(drifted.exists(_.contentChanged), "digest drift must surface as the non-blocking contentChanged flag")
+      assert(catalog.contains("- mcp-only:"), "a content-changed package stays in the catalog (visible, not removed)")
+      assert(catalog.contains("内容与上次记录的版本不同"), s"catalog tail must carry the content-changed note:\n$catalog")
+      assert(
+        manifest.exists(_.hcursor.downField("contentChanged").as[Boolean].getOrElse(false)),
+        "GET /plugins item must expose contentChanged=true"
+      )
   }
 
-  test("目录注入: 无受信插件 → 空串（不注入空段）") {
-    // 专用空缓存场景：临时清掉全部 trust 记录较重——用 revoke full + 断言其余信任插件仍在
-    // 的替代：新建一个孤立扫描路径不可行（dataRoot 单例）。此处断言 revoke 后缩行。
+  test("封禁: block → resolve Left(PLUGIN_BLOCKED, 文案含 unblock) + 出目录 + 清单 blocked=true") {
     for
-      _ <- PluginRegistry.revoke("full")
-      after <- PluginRegistry.renderCatalog()
-    yield assert(!after.contains("- full:"), "revoked plugin must disappear from catalog immediately")
+      _ <- reset
+      _ <- PluginBlockPolicy.block("full", "spec denial", "spec")
+      blocked <- PluginRegistry.resolve("full")
+      catalog <- PluginRegistry.renderCatalog()
+      item <- PluginRegistry
+        .listWithRejected()
+        .map(_._1.find(_.name == "full").map(PluginRegistry.approvalManifest))
+      _ <- PluginBlockPolicy.unblock("full", "spec")
+      restored <- PluginRegistry.resolve("full")
+      catalogAfter <- PluginRegistry.renderCatalog()
+    yield
+      assert(blocked.isLeft, s"a blocked package must be refused, got: $blocked")
+      val err = blocked.swap.toOption.getOrElse("")
+      assert(err.contains("PLUGIN_BLOCKED"), s"block reason must carry its error code, got: $err")
+      assert(err.contains("unblock"), s"block reason must point at the action that exists, got: $err")
+      assert(
+        !err.contains("never approved") && !err.contains("default-deny"),
+        s"the retired default-deny wording must never come back, got: $err"
+      )
+      assert(!catalog.contains("- full:"), s"a blocked package must leave the catalog:\n$catalog")
+      val it = item.getOrElse(fail("full must still be listed (blocked, not hidden)"))
+      assertEquals(it.hcursor.downField("blocked").as[Boolean].toOption, Some(true), "item.blocked must be true")
+      assertEquals(
+        it.hcursor.downField("trusted").as[Boolean].toOption,
+        Some(false),
+        "item.trusted must be false for a blocked package"
+      )
+      assertEquals(it.hcursor.downField("trust").downField("status").as[String].toOption, Some("blocked"))
+      assert(restored.isRight, "unblock must restore presence trust")
+      assert(catalogAfter.contains("- full:"), "an unblocked package must re-enter the catalog")
+  }
+
+  test("封禁持久性（硬约束）: 自动 approve（种子自愈路径）不得抹掉封禁") {
+    for
+      _ <- reset
+      _ <- PluginBlockPolicy.block("skills-only", "spec: survive auto-approve", "spec")
+      _ <- PluginRegistry.approve("skills-only") // 种子路径的等价动作（writeTrustEntry 整对象替换）
+      stillBlocked <- PluginRegistry.resolve("skills-only")
+      revokedOnDisk <- IO.blocking(os.read(tempRoot / nebflow.shared.Branding.configFileName).contains("revoked"))
+      _ <- PluginBlockPolicy.unblock("skills-only", "spec")
+      restored <- PluginRegistry.resolve("skills-only")
+    yield
+      assert(
+        stillBlocked.isLeft,
+        s"approve must NOT clear a block (independent namespace): ${stillBlocked.swap.toOption}"
+      )
+      assert(revokedOnDisk, "the block record must live in its own `plugins.revoked` namespace")
+      assert(restored.isRight, "unblock restores availability")
+  }
+
+  test("目录段尾注记: 封禁包计入缺席注记（点名不出行）") {
+    for
+      _ <- reset
+      _ <- PluginBlockPolicy.block("messy", "spec", "spec")
+      catalog <- PluginRegistry.renderCatalog()
+      _ <- PluginBlockPolicy.unblock("messy", "spec")
+    yield
+      assert(!catalog.contains("- messy:"), s"blocked package must not render a line:\n$catalog")
+      assertEquals(
+        catalog.linesIterator.toList.last,
+        "另有 3 个插件未载入（装载失败 2 / 已封禁 1）",
+        s"absence note must count the blocked package:\n$catalog"
+      )
+  }
+
+  test("健康摘要: 拒载 + 封禁 + 内容变更各一行（内容变更不缺席）") {
+    for
+      _ <- reset
+      _ <- PluginRegistry.approve("skills-only")
+      _ <- IO.sleep(20.millis)
+      _ <- IO.blocking(
+        os.write.append(tempRoot / "plugins" / "skills-only" / "skills" / "explore" / "SKILL.md", "\nmod\n")
+      )
+      _ <- PluginBlockPolicy.block("messy", "spec health", "spec")
+      _ <- IO(PluginRegistry.invalidateCache())
+      health <- PluginRegistry.healthSummary()
+      _ <- PluginBlockPolicy.unblock("messy", "spec")
+    yield
+      val text = health.getOrElse(fail("anomalous registry must produce a health summary"))
+      val lines = text.linesIterator.toList
+      // 卫生批（2026-10-28）：fixtures 增至 8 包（+with-plugin-md / +lower-plugin-md，
+      // G1 断言面）——两包均装载成功：8 on disk / 6 loaded / 5 visible（blocked 1）。
+      assert(
+        lines.head.startsWith(
+          "8 package(s) on disk, 6 loaded, 5 catalog-visible, 3 absent (load-failed 2 / blocked 1), "
+        ),
+        s"head counts must be complete: ${lines.head}"
+      )
+      assert(
+        lines.head.endsWith("content-changed") && lines.head.matches(".*, \\d+ content-changed$"),
+        s"head must count content changes: ${lines.head}"
+      )
+      assert(
+        lines.exists(l => l.contains("[load-failed] empty:") && l.contains("neither")),
+        s"rejected package must be listed with its reason: $text"
+      )
+      assert(
+        lines.exists(l => l.contains("[blocked] messy:") && l.contains("spec health")),
+        s"blocked package must be listed with its block reason: $text"
+      )
+      assert(
+        lines.exists(l => l.contains("[content-changed] skills-only:") && l.contains("not intercepted")),
+        s"content-changed package must be listed as NON-blocking: $text"
+      )
   }
 
   // ── feature flag（§G.2）────────────────────────────────
 
   test("§G.2 flag: plugins.enabled=false → catalog 为空（目录不注入）") {
     for
-      _ <- IO.blocking(os.write.over(tempRoot / "nebflow.json", """{"plugins":{"enabled":false}}"""))
+      _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, """{"plugins":{"enabled":false}}"""))
+      _ <- IO(PluginRegistry.invalidateCache())
       catalog <- PluginRegistry.renderCatalog()
       enabled <- PluginsConfig.enabled
+      _ <- IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}"))
+      _ <- IO(PluginRegistry.invalidateCache())
     yield
       assertEquals(enabled, false, "flag must read false from nebflow.json")
       assertEquals(catalog, "", "flag off must suppress the catalog injection entirely")
   }
 
   test("§G.2 flag 缺省: absent → enabled=true（fail-safe 方向 = 新能力开启）") {
-    IO.blocking(os.write.over(tempRoot / "nebflow.json", "{}")).flatMap { _ =>
+    IO.blocking(os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")).flatMap { _ =>
       PluginsConfig.enabled.map(e => assertEquals(e, true, "absent flag defaults to enabled"))
     }
   }

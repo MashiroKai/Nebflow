@@ -1,0 +1,9 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "third-party-fixture",
+  "version": "1.0.0",
+  "description": "Third-party fixture: a non-reserved name that must keep the exact pre-change load decision path.",
+  "author": { "name": "someone-else" },
+  "license": "MIT",
+  "keywords": ["fixture", "third-party"]
+}

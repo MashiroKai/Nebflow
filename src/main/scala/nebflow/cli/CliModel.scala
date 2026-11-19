@@ -2,7 +2,7 @@ package nebflow.cli
 
 import cats.effect.IO
 import io.circe.Json
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 // ===== Command definition traits =====
 
@@ -18,6 +18,13 @@ trait CliCommand:
 
   /** One-line examples */
   def examples: List[String]
+
+  /**
+   * Subcommand run when the command is invoked WITHOUT one (phase 3b: bare
+   * `stand token` mints a break-glass ticket). None = a bare invocation
+   * prints the "needs a subcommand" error (the historic shape).
+   */
+  def defaultSubcommand: Option[String] = None
 
 trait CliSubcommand:
   /** Subcommand name, e.g. "list" */
@@ -63,9 +70,12 @@ object CliResult:
   case class Text(lines: List[String]) extends CliResult
   case class Json(json: io.circe.Json) extends CliResult
   case class Error(message: String, exitCode: Int = 1) extends CliResult
-  /** Print `output` verbatim (no prefix; empty prints nothing) and exit with
-    * `code`. For machine-read stdout (`nebflow run`) where every byte of
-    * output is payload and CliResult.Error's "Error:" prefix would corrupt it. */
+
+  /**
+   * Print `output` verbatim (no prefix; empty prints nothing) and exit with
+   * `code`. For machine-read stdout (`stand run`) where every byte of
+   * output is payload and CliResult.Error's "Error:" prefix would corrupt it.
+   */
   case class Exit(code: Int, output: String = "") extends CliResult
   case object Success extends CliResult
 

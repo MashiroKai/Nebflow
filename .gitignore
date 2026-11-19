@@ -1,3 +1,7 @@
+# Project-local managed worktrees and temporary artifacts
+/.stand/worktrees/
+/.stand/tmp/
+
 # Build
 target/
 project/target/
@@ -27,9 +31,52 @@ SKEL
 archives/
 temp/
 tmp/
-docs/
+# 过程产物：报告与知识文档 —— 本地保留，永不入库（作者裁定 2026-11-02）
+# 根锚定（前导斜杠）：只忽略**仓库根**的 docs/。无斜杠形态会命中任意层级同名
+# 目录（src/web/docs/ 之类），那是误伤面而不是防线。三目录形态须与门禁
+# scripts/check-process-artifacts.sh 的 GUARDED_DIRS 逐目录对齐
+# （evidence/ reports/ 的同名规则块见本文件尾部）。
+# 落位（作者令 2026-11-03 20:02）：项目知识文档**不再住**仓库根 docs/——vault 根
+# = 项目注册目录 `<data_root>/projects/<project>/.stand/docs/`（与 project.json
+# 同级）。本行仍保留为防线：万一有人再往根 docs/ 写，它也不会入库；迁移脚本
+# `scripts/wiki-docs-migration/migrate_docs_to_ledger.py` 负责把存量搬去新家。
+/docs/
 test-envs.sh
-CHANGELOG.md
+# --- 过程产物不入库（与协作方对齐批 2026-11-03）-------------------------------
+# docs/ 一条在上面（沿用原位置，语义与本批一致）。docs/ reports/ evidence/ 曾靠
+# `git add -f` 强塞成跟踪态（162 + 504 + 2140 文件），规则与事实自相矛盾，每次
+# 与协作方合并反复拉锯。本批只从索引移除（git rm -r --cached，磁盘零删除），
+# 历史对象保留 —— 止损非回滚，clone 体积不变。
+# 执法面：scripts/check-no-tracked-artifacts.sh（CI gate）。新增产物目录时两处
+# 同步：本文件 + 该脚本的 ARTIFACT_SPECS。
+# 刻意根锚定（前导 /）：仓库内另有 scripts/data-root-migration/evidence/ 等嵌套
+# 目录仍被跟踪，无锚定规则会把它们变成「已忽略但仍跟踪」的新矛盾态。
+/reports/
+/evidence/
+/reports-evidence/
+/stand-evidence/
+# --- 过程产物不入库 · 续（同一裁定批，第二批）--------------------------------
+# 上一批只清了 docs/ reports/ evidence/ reports-evidence/ 四大目录；本批补三组：
+#   design/                              —— 38 个设计草稿与对照截图（过程材料）
+#   scripts/data-root-migration/evidence/ —— 6 个迁移执行日志（一次操作的终端输出）
+#   根目录 5 个 2026102*__flow-*.md      —— workflow 运行器回传的批次报告
+# 同样只移索引（git rm -r --cached），磁盘文件零删除，历史对象保留。
+# 写法纪律（三条都是根锚定，避免误伤子目录里的同名路径）：
+#   - /design/ 只锚仓库根的 design/，不碰任何子目录下的 design/（docs/design 等）；
+#   - 嵌套路径写成完整根相对路径，不用「*/evidence/」这类会误伤
+#     reports/*/evidence/ 的宽泛规则；
+#   - 根目录报告用 /*__flow-*.md：精确到文件名形态且只匹配根层（规则里含 /
+#     即锚定到仓库根，* 不跨目录分隔符）；刻意不加 *.md 这类宽泛形式，否则会
+#     吞掉 README 等真实文档。
+/design/
+/scripts/data-root-migration/evidence/
+/*__flow-*.md
+# CHANGELOG.md / CODEBASE.md are kept OUT of git tracking by author ruling
+# 2026-09-17 (they were tracked between 2026-09-14 and that ruling): their
+# content is archived at ~/.nebflow/docs/Nebflow/20260917_changelog-codebase-removal/,
+# and release notes are carried by the GitHub release body instead.
+/CHANGELOG.md
+/CODEBASE.md
 *demo*.html
 /nebflow
 nul
@@ -40,6 +87,8 @@ cloud/node_modules/
 *.env
 *.secret
 credentials.json
+.env
+*.env
 dist/
 beta.md
 # Root-level scratch file only (51c0882d). Must NOT match the vendored monaco
@@ -54,7 +103,9 @@ node_modules/
 test-results/
 # NOTE: package.json / package-lock.json are TRACKED since P1 (esbuild build
 # tooling, scripts/build-web.mjs) - they used to be ignored as scratch files.
-playwright.config.mjs
+# playwright.config.mjs likewise TRACKED since 2026-10-24 CI 迁移批（全量 spec
+# 收集面/隔离名单的唯一管辖点，ci.yml frontend-specs 依赖它）——旧的
+# scratch-file 忽略规则删除。
 
 # Test artifacts
 gui-test-screenshots/
@@ -78,6 +129,36 @@ node_modules/
 
 # upload-deps.sh staging (batch artifacts, never committed)
 deps-staging/
+staging/
 
 # Python bytecode cache (packaging/gen-icons.py side artifacts)
 __pycache__/
+# AGENTS.md is a local workspace file, not part of the repo (author ruling 2026-09-17 10:43)
+/AGENTS.md
+
+# --- repo-audit batch (2026-09-19) — untracked-noise classes, appended (no existing line touched)
+# One line each: what it is / why it must not enter the repo.
+# JVM crash log: hs_err_pid<PID>.log, written by the JVM itself on a hard crash — state of one
+# dead process on one machine, never source.
+hs_err_pid*
+# JVM crash-replay log: replay_pid<PID>.log, written next to hs_err — same as above, never source.
+replay_pid*
+# Heap dump: *.hprof (binary, from -XX:+HeapDumpOnOutOfMemoryError / jmap) — a multi-hundred-MB
+# memory image of one run, never source.
+*.hprof
+# Merge / patch residue: *.orig (pre-merge copy) and *.rej (rejected patch hunk) — local conflict
+# scratch of a single working copy, never source.
+*.orig
+*.rej
+# Editor residue: *.swp (vim swap) and *~ (auto backup of the previous revision) — machine-local
+# editor state, never source.
+*.swp
+*~
+.nebflow/
+
+# ZCode 工作流运行器生成的排除清单(harness-owned,不入库)
+.zcodeignore
+
+# 过程产物：调试截图 / 批报告 / 视觉基准帧 —— 本地保留，永不入库（作者裁定 2026-11-02）
+/evidence/
+/reports/

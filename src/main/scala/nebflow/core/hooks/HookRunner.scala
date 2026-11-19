@@ -4,7 +4,7 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject, parser}
-import nebflow.core.NebflowLogger
+import nebflow.shared.NebflowLogger
 
 import scala.concurrent.duration.*
 import scala.util.Using
@@ -102,7 +102,10 @@ object HookRunner:
       "TOOL_INPUT_FILE_PATH" -> payload.toolInput
         .flatMap(_("file_path").flatMap(_.asString))
         .getOrElse(""),
-      "NEBFLOW_URL" -> sys.props.getOrElse("nebflow.url", "http://localhost:8080")
+      // 活跃网关进程内 sysprop 恒被 GatewayMain 预置（cfg.port 派生）；此处兜底
+      // 亦从单一来源取默认口（端口对调批 2026-10-25：6138，曾 8080）。
+      "NEBFLOW_URL" -> sys.props
+        .getOrElse("nebflow.url", s"http://localhost:${nebflow.shared.Defaults.brandDefaultPort}")
     )
 
   // ------------------------------------------------------------------

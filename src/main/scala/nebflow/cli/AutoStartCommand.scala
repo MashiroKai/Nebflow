@@ -8,7 +8,7 @@ object AutoStartCommand extends CliCommand:
   def name = "autostart"
   def description = "Enable or disable auto-start on boot"
   def subcommands = List(AutoStartEnable, AutoStartDisable, AutoStartStatus)
-  def examples = List("nebflow autostart enable", "nebflow autostart disable", "nebflow autostart status")
+  def examples = List("stand autostart enable", "stand autostart disable", "stand autostart status")
 
   // Core logic lives in core/AutoStartService (shared with the gateway
   // settings-panel WS toggle, F2). The CLI is a thin shell over it.
@@ -51,6 +51,8 @@ object AutoStartCommand extends CliCommand:
           )
         else CliResult.text(if st.enabled then "Auto-start: enabled" else "Auto-start: disabled")
       }
+
+  end AutoStartStatus
 
   private def toCliResult(res: AutoStartService.OpResult): CliResult =
     if res.ok then CliResult.text((res.message :: res.detail)*)

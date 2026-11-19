@@ -7,8 +7,8 @@ import io.circe.parser.parse as jsonParse
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
 import nebflow.agent.SharedResources
-import nebflow.core.PathUtil
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -89,7 +89,11 @@ class ProjectArchiveSpec extends CatsEffectSuite:
       // 既有字段逐值稳定（name/description/workspace/agentFile/createdAt 不动）
       val keep = List("name", "description", "workspace", "agentFile", "createdAt")
       keep.foreach { k =>
-        assertEquals(after.hcursor.downField(k).focus, before.hcursor.downField(k).focus, s"field '$k' must be untouched")
+        assertEquals(
+          after.hcursor.downField(k).focus,
+          before.hcursor.downField(k).focus,
+          s"field '$k' must be untouched"
+        )
       }
       // 键集 = 旧键集 + 恰好两个新键（无 null 填充、无重排产物）
       val beforeKeys = before.asObject.map(_.keys.toSet).get
@@ -99,6 +103,7 @@ class ProjectArchiveSpec extends CatsEffectSuite:
       assertEquals(pd.map(_.archived), Some(Some(true)), "load must decode archived=true")
       assert(pd.flatMap(_.archivedAt).isDefined, "load must decode archivedAt")
       assert(wsFiles.toString.nonEmpty) // 占位防 unused 警告
+    end for
   }
 
   test("archive is zero-delete zero-move: workspace files and definition dir all kept, content byte-identical") {
@@ -125,6 +130,7 @@ class ProjectArchiveSpec extends CatsEffectSuite:
       // 定义目录与 project.json 仍在（打标记而非删除）
       assert(os.exists(ProjectStore.projectDir("arch-files")), "project definition dir must survive")
       assert(os.exists(ProjectStore.projectJsonPath("arch-files")), "project.json must survive")
+    end for
   }
 
   test("list() filters archived projects (panel API + startupMount single source)") {
@@ -162,10 +168,18 @@ class ProjectArchiveSpec extends CatsEffectSuite:
     yield
       // tempRoot 跨用例共享（前面用例的活跃项目仍在根下）→ 挂载数封闭断言：
       // list 返回几个挂几个（list 已滤归档项），且归档项目绝不在挂载输入里
-      assert(!projects.exists(_.name == gone), "archived project must be absent from the startupMount input (ProjectStore.list)")
-      assertEquals(mounted, projects.length, "every project list() returns must mount; archived ones never reach mountAll")
+      assert(
+        !projects.exists(_.name == gone),
+        "archived project must be absent from the startupMount input (ProjectStore.list)"
+      )
+      assertEquals(
+        mounted,
+        projects.length,
+        "every project list() returns must mount; archived ones never reach mountAll"
+      )
       assert(rtKeep.isDefined, "active project must be mounted")
       assertEquals(rtGone, None, "archived project must NOT be mounted after restart")
+    end for
   }
 
   test("archive is idempotent: second call does not rewrite the file, archivedAt unchanged") {

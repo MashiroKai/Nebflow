@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<!-- pop-media-index panel harness — #491 主题二 (WeChat-style categorized
+     retrieval). Serves the search modal skeleton (same element ids as
+     index.html's #search-overlay block — chatSearch.js is id-driven, so the
+     skeleton must mirror it), imports the REAL chatSearch.js + popMediaIndex.js
+     + popArtifacts.js, and routes fetch to in-memory fixtures (no backend, no
+     host instance).
+
+     The spec drives: the rebuilt tab strip (v3.2), the unified media grid
+     (thumbnails/time groups/source chips/in-category keyword), entry click
+     faces, and the index consistency reading (inline artifact set == index
+     agent set, PLAN §3.1). -->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>pop-media-index panel harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/modal.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+  </style>
+</head>
+<body>
+  <!-- Search modal skeleton — mirrors index.html's #search-overlay block
+       (minus lucide icons; the strip below is rebuilt by chatSearch at init). -->
+  <div id="search-overlay">
+    <div id="search-modal">
+      <div class="search-modal-header">
+        <span id="search-modal-title">Search Messages</span>
+        <button id="search-modal-close" class="panel-btn" title="Close">×</button>
+      </div>
+      <div class="search-controls">
+        <input id="search-keyword" type="text" placeholder="Keyword…" autocomplete="off"
+               role="combobox" aria-expanded="true" aria-controls="search-results">
+        <div class="search-tabs" role="tablist" aria-label="Search categories">
+          <button type="button" class="search-tab" id="search-tab-all" role="tab" aria-selected="true" data-tab="all"></button>
+          <button type="button" class="search-tab" id="search-tab-images" role="tab" aria-selected="false" data-tab="images"></button>
+          <button type="button" class="search-tab" id="search-tab-files" role="tab" aria-selected="false" data-tab="files"></button>
+          <button type="button" class="search-tab" id="search-tab-pop" role="tab" aria-selected="false" data-tab="pop"></button>
+          <button type="button" class="search-tab" id="search-tab-date" role="tab" aria-selected="false"
+                  aria-haspopup="dialog" aria-expanded="false" data-tab="date"></button>
+        </div>
+        <div class="search-filters">
+          <select id="search-scope" class="cfg-select"></select>
+          <select id="search-agent" class="cfg-select"></select>
+          <select id="search-tool" class="cfg-select"></select>
+          <button id="search-go" class="glass-control cfg-btn cfg-btn-sm">Search</button>
+        </div>
+        <div id="search-date-popover" role="dialog" hidden></div>
+      </div>
+      <div id="search-status" aria-live="polite"></div>
+      <div id="search-results" role="listbox"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const state = (await import(`${WEB}/state.js`)).default;
+    chatViews.primary = new ChatView('primary', { chat: document.createElement('div') });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'pmi-session';
+    state.ws = { readyState: 1, send: () => {} };
+    state.sessions = [{ id: 'pmi-session', name: '索引夹具会话' }];
+
+    /* ── fetch router (in-memory history fixtures) ─────────────────────── */
+
+    function svgDataUri(w, h, fill) {
+      const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + w + '" height="' + h +
+        '" viewBox="0 0 ' + w + ' ' + h + '"><rect width="100%" height="100%" fill="' + (fill || '#2a4d8f') + '"/></svg>';
+      return 'data:image/svg+xml;base64,' + btoa(svg);
+    }
+
+    const SENTINEL = '___POP_JSON___';
+    const NOW = Date.now();
+    const DAY = 24 * 3600 * 1000;
+    // Week-safe seeds: 「本周」 runs Monday 00:00 local (groupEntriesByTime).
+    // Clamping keeps the in-week fixtures inside the CURRENT week no matter
+    // which weekday the run lands on; a 40-day-old pair feeds the month bucket.
+    const WEEK_START = (() => {
+      const d = new Date();
+      const day = (d.getDay() + 6) % 7;
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate() - day).getTime();
+    })();
+    const inWeek = (ts) => Math.min(Math.max(ts, WEEK_START + 6e4), NOW - 6e4);
+    const T_IN_WEEK_LATE = inWeek(NOW - 3600e3);      // newest (injected row)
+    const T_IN_WEEK = inWeek(NOW - 7200e3);           // user row + its Pop
+    const T_LAST_MONTH = NOW - 40 * DAY;              // legacy pair → month bucket
+
+    /** The seed history: user image + user file; an agent Pop with image +
+        video + file + URL-leg items; a payload-less legacy Pop row; an
+        injected (agent) row with an image attachment. Tool rows carry no ts —
+        they anchor to the nearest earlier row with one (PLAN §3.3). */
+    window.__seedHistory = () => ([
+      {
+        type: 'user', text: '用户传了图和文件', timestamp: T_IN_WEEK,
+        attachments: [
+          { type: 'image', name: 'user-shot.png', preview: svgDataUri(800, 600, '#1f7a3f'), path: '/uploads/pmi-session/user-shot.png', size: 11111 },
+          { type: 'text', name: 'user-notes.pdf', path: '/uploads/pmi-session/user-notes.pdf', size: 22222 },
+        ],
+      },
+      {
+        type: 'tool', label: 'Pop\n  ("agent.png", "agent.mp4", "agent-doc.pdf")', summary: '3 files + 1 url', isError: false,
+        input: '{"filePath":["/tmp/a/agent.png","/tmp/a/agent.mp4","/tmp/a/agent-doc.pdf","https://example.com/spec"]}',
+        content: SENTINEL + JSON.stringify({
+          fileRefs: { inlined: 1, referenced: 3, failed: 0, omitted: 0 },
+          warnings: [], notes: [],
+          items: [
+            { kind: 'image', name: 'agent.png', path: '/tmp/a/agent.png', ext: 'png', src: svgDataUri(600, 800, '#8f2a4d') },
+            { kind: 'video', name: 'agent.mp4', path: '/tmp/a/agent.mp4', ext: 'mp4' },
+            { kind: 'file', name: 'agent-doc.pdf', path: '/tmp/a/agent-doc.pdf', ext: 'pdf', size: 33333 },
+            { type: 'popFile', id: 'url:https://example.com/spec', itemType: 'url', title: 'example spec', url: 'https://example.com/spec' },
+          ],
+        }),
+      },
+      // The ai row gives the Pop tool row its time anchor.
+      { type: 'ai', text: '产出如上。', timestamp: T_IN_WEEK + 1000 },
+      {
+        type: 'user', injected: true, source: 'task', text: '注入行的附件', timestamp: T_IN_WEEK_LATE,
+        attachments: [{ type: 'image', name: 'injected.png', preview: svgDataUri(400, 400, '#7a6a1f'), path: '/uploads/pmi-session/injected.png' }],
+      },
+      // ── the last-month pair: feeds the 按月 bucket ──
+      {
+        type: 'user', text: '上个月的 legacy', timestamp: T_LAST_MONTH, attachments: [],
+      },
+      {
+        type: 'tool', label: 'Pop\n  ("legacy.bin")', summary: 'legacy pop row', isError: false,
+        input: '{"filePath":"/tmp/legacy.bin"}',
+        content: 'legacy plain result (no payload)',
+      },
+      { type: 'ai', text: 'legacy 之后的正文。', timestamp: T_LAST_MONTH + 1000 },
+    ]);
+
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = typeof input === 'string' ? input : (input && input.url) || '';
+      if (url.includes('/api/sessions?') || /\/api\/sessions\?/.test(url)) {
+        return Promise.resolve(new Response(JSON.stringify({
+          sessions: [{ id: 'pmi-session', name: '索引夹具会话' }],
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      if (url.includes('/history')) {
+        return Promise.resolve(new Response(JSON.stringify({
+          messages: window.__seedHistory(),
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
+      }
+      return realFetch(input, init);
+    };
+
+    /* ── module exposure + boot ────────────────────────────────────────── */
+
+    const chatSearch = await import(`${WEB}/chatSearch.js`);
+    const popArtifacts = await import(`${WEB}/popArtifacts.js`);
+    const popMediaIndex = await import(`${WEB}/popMediaIndex.js`);
+
+    // The real app calls initChatSearch() from main.js at startup — the tab
+    // strip rebuild, the source chips and every binding happen there.
+    chatSearch.initChatSearch();
+
+    window.__search = chatSearch;
+    window.__pop = popArtifacts;
+    window.__idx = popMediaIndex;
+    window.__t = (await import(`${WEB}/i18n.js`)).t;
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    window.__openPanel = async () => {
+      chatSearch.openSearchModal();
+      await raf2();
+      // openSearchModal fires triggerSearch → fetch (mocked, microtask) —
+      // settle two frames more for the render.
+      await raf2();
+      await new Promise(r => setTimeout(r, 30));
+      await raf2();
+      return true;
+    };
+
+    window.__tabRead = () => Array.from(document.querySelectorAll('.search-tabs .search-tab')).map(b => ({
+      id: b.id, text: b.textContent, active: b.classList.contains('active'),
+    }));
+
+    window.__switchTab = async (tab) => {
+      const el = document.getElementById('search-tab-' + tab);
+      if (!el) return false;
+      el.click();
+      // switchTab re-runs through the 300ms progressive-search debounce — wait
+      // past it plus the render frames.
+      await new Promise(r => setTimeout(r, 480));
+      await raf2();
+      await new Promise(r => setTimeout(r, 30));
+      return true;
+    };
+
+    window.__gridRead = () => {
+      const headers = Array.from(document.querySelectorAll('#search-results .search-media-group-header'))
+        .map(h => h.textContent);
+      const cards = Array.from(document.querySelectorAll('#search-results .search-media-card')).map(c => ({
+        type: c.dataset.entryType,
+        source: c.dataset.source,
+        ts: Number(c.dataset.ts || 0),
+        name: (c.querySelector('.search-media-name') || {}).textContent || '',
+        dur: (c.querySelector('.search-media-dur') || {}).textContent || '',
+      }));
+      const chips = Array.from(document.querySelectorAll('#search-source-chips .search-source-chip')).map(b => ({
+        source: b.dataset.source, active: b.classList.contains('active'), hidden: b.closest('#search-source-chips').hidden,
+      }));
+      return { headers, cards, chips };
+    };
+
+    window.__clickChip = async (source) => {
+      const b = document.querySelector(`#search-source-chips .search-source-chip[data-source="${source}"]`);
+      if (!b) return false;
+      b.click();
+      await new Promise(r => setTimeout(r, 30));
+      await raf2();
+      return true;
+    };
+
+    window.__setKeyword = async (kw) => {
+      const el = document.getElementById('search-keyword');
+      el.value = kw;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      // The debounce is 300ms; wait past it plus render frames.
+      await new Promise(r => setTimeout(r, 450));
+      await raf2();
+      return true;
+    };
+
+    window.__openEvents = [];
+    window.addEventListener('workspace-open-item', (e) => {
+      window.__openEvents.push(e.detail ? { id: e.detail.id, absPath: e.detail.absPath, title: e.detail.title } : null);
+    });
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

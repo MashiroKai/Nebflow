@@ -2,13 +2,15 @@
 
 # -- Brand values (L2 rebrand): rendered from repo-root brand.conf at -----
 # -- release time (scripts/render-brand.sh); do not edit by hand. ----------
-$ProductName = "Nebflow"
-$LowerName = "nebflow"
-$HomeDir = ".nebflow"
+$ProductName = "stand"
+$LowerName = "stand"
+$HomeDir = ".stand"
+# Install base (再生治本批 2026-10-22): STAND_HOME first-priority, mirrors install.ps1.
+$StandBase = if ($env:STAND_HOME) { $env:STAND_HOME } else { Join-Path $env:USERPROFILE $HomeDir }
 $ProgressPreference = "SilentlyContinue"
 
 $InstallDir = "$env:LOCALAPPDATA\$ProductName"
-$ConfigDir = Join-Path $env:USERPROFILE "$HomeDir"
+$ConfigDir = $StandBase
 
 Write-Host ""
 Write-Host "  $ProductName Uninstaller" -ForegroundColor Yellow

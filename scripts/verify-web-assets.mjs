@@ -42,8 +42,9 @@ const BASE = (baseArg ?? process.env.BASE_URL ?? 'http://localhost:8080').replac
 // Root-level files the router serves at /<name>
 // (WebSocketRoutes.scala `Root / fileName` whitelist).
 const ROOT_WHITELIST = new Set([
-  'style.css', 'app.js', 'favicon.svg', 'logo.svg',
-  'favicon-32.png', 'favicon-16.png', 'favicon.ico',
+  'style.css', 'app.js', 'sw.js',
+  'favicon-16.png', 'favicon-32.png', 'favicon.svg', 'favicon.ico',
+  'favicon-180.png', 'favicon-192.png', 'favicon-512.png',
 ]);
 
 // Explicit exemptions: files that intentionally have no served route.
@@ -65,6 +66,8 @@ const EXEMPTIONS = new Map([
  *   vendor/monaco/<deep…>   → /vendor/monaco/<deep…> (multi-segment, manual parse)
  *   vendor/pdfjs/<deep…>    → /vendor/pdfjs/<deep…> (multi-segment, manual parse;
  *                             route added with the PDF viewer, c2c7d9f3)
+ *   vendor/<deep…>          → /vendor/<deep…>     (any other depth: the server's
+ *                             /vendor/ subtree passthrough serves it as-is)
  *   assets/<deep…>          → /assets/<deep…>     (dist mode only, P1 route)
  */
 function toUrl(rel) {
@@ -74,13 +77,16 @@ function toUrl(rel) {
   const [top, second] = segs;
   if (top === 'assets' && DIST_MODE) return `/assets/${segs.slice(1).join('/')}`;
   if (top === 'css') return segs.length === 2 ? `/css/${second}` : null;
+  if (top === 'brand') return `/brand/${segs.slice(1).join('/')}`;
   if (top === 'js') return `/js/${segs.slice(1).join('/')}`;
   if (top === 'vendor') {
     if (segs.length === 2) return `/vendor/${second}`;
     if (second === 'fonts') return segs.length === 3 ? `/vendor/fonts/${segs[2]}` : null;
     if (second === 'monaco') return segs.length >= 3 ? `/vendor/monaco/${segs.slice(2).join('/')}` : null;
     if (second === 'pdfjs') return segs.length >= 3 ? `/vendor/pdfjs/${segs.slice(2).join('/')}` : null;
-    return null;
+    // Server-side /vendor/ subtree passthrough serves any deeper vendor path,
+    // so any deeper file maps to a URL — no directory list to maintain here.
+    return segs.length >= 3 ? `/vendor/${segs.slice(1).join('/')}` : null;
   }
   return null;
 }

@@ -1,0 +1,657 @@
+package nebflow.core.project
+
+import cats.effect.IO
+import io.circe.Json
+import nebflow.actor.ActorSystem
+import nebflow.core.AgentRuntimePort
+import nebflow.shared.PathUtil
+import nebflow.core.tools.{RemoteExecutor, ToolError}
+
+import scala.util.Try
+
+/**
+ * Project create core — the single implementation behind BOTH creation faces:
+ *   ① `ProjectCreateTool.createChain` (the agent/tool face), and
+ *   ② the `projectCreate` WebSocket command (`WebSocketRoutes`, the direct
+ *      frontend face).
+ *
+ * Extraction ruling (author 2026-09-24, D2 = option (b) "reuse the existing
+ * create core"): the tool face becomes a thin shell over this service, so the
+ * occupancy gate, the idempotent re-mount semantics, the archive refusal and
+ * the per-file scaffold report live in ONE place and cannot drift between the
+ * two faces.
+ *
+ * Semantics are preserved verbatim from the pre-extraction tool body — the
+ * occupancy default-deny (`docs`/`listAll()` scan) still runs BEFORE any disk
+ * write, the workspace/idempotency judgement is still the single
+ * [[sameWorkspace]] function, and every error string is byte-identical.
+ *
+ * IDENTITY IS EXPLICIT — never implicit, never fabricated. Mounting is what
+ * actually makes a project live ([[ProjectRuntimeRegistry.mount]]), and the
+ * mount needs a `rootSessionId` (the delivery root: node `out="Nebula"`
+ * messages must land on the true top-level session). A call that carries no
+ * session context is REFUSED rather than given a placeholder root — see the
+ * `case None` branch of [[mountProject]] and the freshinstall-rootsessionid
+ * ruling (author 2026-09-14) it implements.
+ */
+object ProjectCreateService:
+
+  /**
+   * The identity a create call carries, passed EXPLICITLY by each caller.
+   *
+   * @param actorSystem     needed to mount; `None` => definition is written but
+   *                        the project is not mounted.
+   * @param sharedResources needed to mount (same condition as `actorSystem`).
+   * @param rootSessionId   the TRUE top-level session id (delivery root). This
+   *                        is what [[ProjectRuntimeRegistry.mount]] receives, so
+   *                        that node completion messages addressed to "Nebula"
+   *                        reach the real root and not whoever happened to mount
+   *                        the project.
+   * @param sessionId       the caller's own session id; used only as a fallback
+   *                        for `rootSessionId`, mirroring the tool's historical
+   *                        `orElse` order.
+   * @param wsSend          broadcast channel for the `projectCreated` frame.
+   *                        `None` (remote exec / no connection context) is a
+   *                        deliberate silent no-op, matching ProjectActor's
+   *                        `fold(IO.unit)` for node events.
+   */
+  final case class CreateIdentity(
+    actorSystem: Option[ActorSystem],
+    // 跨设备挂载批（2026-10-25）：放宽为 AgentRuntimePort（共享端口 trait）——
+    // 工具面 ToolContext.sharedResources 本就持 AgentRuntimePort（SharedResources
+    // 是其生产实现）；设备腿只读 neblinkService，挂载面吃 AgentRuntimePort，
+    // 具体 SharedResources 调用方照传 conform。
+    sharedResources: Option[AgentRuntimePort],
+    rootSessionId: Option[String],
+    sessionId: Option[String],
+    wsSend: Option[Json => IO[Unit]]
+  )
+
+  object CreateIdentity:
+
+    /**
+     * An identity that cannot mount (no engine resources) but can still write
+     *  the definition and broadcast the `mounted=false` frame.
+     */
+    val definitionOnly: CreateIdentity =
+      CreateIdentity(None, None, None, None, None)
+
+  /**
+   * AGENTS.md template written into a NEW workspace.
+   *
+   * L1 is deliberately EMPTY (promptopt batch W3, author ruling 2026-09-18
+   * §2.3): projects created via NodeEdit no longer pre-fill any workspace
+   * AGENTS.md content — `ensureScaffoldSync` lands a 0-byte file and the
+   * project/author owns the instructions. Semantics are unchanged: ProjectStore
+   * still backfills only missing pieces and never overwrites existing ones.
+   */
+  val AgentMdTemplate: String = ""
+
+  /**
+   * 装配形模板（台账 #913 ③，2026-10-26）：基模板 + fleet 纪律节 + 文档落位节。
+   * `fleet.enforceExplicitDevice` 关 = fleet 节为空串（向后兼容的那半条不变）；
+   * 文档落位节（作者令 2026-11-03 20:02：docs 落项目注册目录 `.stand/docs/`）恒
+   * 常驻——它是本批的落位单源在人读面的载体，任何新建项目的 AGENTS.md 自带。
+   * 消费点 = 全部脚手架写面（本地 create/幂等重挂补缺、设备腿远端脚手架），禁有
+   * 调用点仍直用基模板（否则面板内字节二态）。
+   */
+  def AgentMdTemplateFull: String =
+    AgentMdTemplate +
+      nebflow.core.device.FleetConfig.agentsMdSection +
+      ProjectStore.docsLandingSection
+
+  /**
+   * Create + idempotently mount. `name` defaults to the workspace basename.
+   *
+   * Same-name semantics (unchanged): same workspace => idempotent
+   * ("already exists" + mount); different workspace => explicit error, never a
+   * silent re-point of an existing definition.
+   *
+   * `device`（v2.1 §A.5，2026-10-09 实施批；跨设备挂载批 2026-10-25 语义升级）：
+   * 项目放哪台设备的**创建时一次性决定**。None / 字面 self = 本机创建 + 幂等挂载
+   * ——**挂载预检先行**（[[ProjectMountPreflight.checkLocalWorkspace]]：workspace
+   * 必须在引擎本机真实存在且是目录才准挂；不存在 = 结构化拒绝**零写入**——现场
+   * 事故 2026-10-24「假挂载造骨架」的闸门，铁律：绝不静默造骨架）；其余值 =
+   * 设备腿（[[createRemote]]）：目录经设备通道 stat 校验 → 脚手架经设备通道在
+   * 对端真实路径落笔 → 原子写 project.json（origin={device:D, path}）→ **挂载**
+   * （跨设备批新语义：大脑在引擎侧——FlowMap/台账全锚 [[ProjectStore.brainWorkspace]]
+   * 本机大脑根，见 [[ProjectRuntimeRegistry.mount]]；旧「远端项目不挂载」由挂载
+   * 面的设备分支取代）。
+   */
+  def create(
+    nameOpt: Option[String],
+    workspace: String,
+    description: Option[String],
+    identity: CreateIdentity,
+    device: Option[String] = None
+  ): IO[Either[ToolError, String]] =
+    val resolvedName = nameOpt.getOrElse(baseName(workspace))
+    if resolvedName.isEmpty then
+      IO.pure(
+        Left(
+          ToolError(
+            s"Cannot derive project name from workspace '$workspace' — pass 'name' explicitly"
+          )
+        )
+      )
+    else
+      device.map(_.trim).filter(_.nonEmpty) match
+        case None =>
+          // 本机腿预检（铁律 2026-10-25）：workspace 必须真实存在且是目录——
+          // 在任何磁盘写（含 project.json 定义）之前；拒绝零写入。
+          IO.blocking(ProjectMountPreflight.checkLocalWorkspace(workspace, PathUtil.dataRoot)).flatMap {
+            case Some(refusal) => IO.pure(Left(ToolError(refusal)))
+            case None => emitAndMount(resolvedName, workspace, description, identity)
+          }
+        case Some(d) if ProjectOrigin.isSelfLiteral(d) =>
+          IO.blocking(ProjectMountPreflight.checkLocalWorkspace(workspace, PathUtil.dataRoot)).flatMap {
+            case Some(refusal) => IO.pure(Left(ToolError(refusal)))
+            case None => emitAndMount(resolvedName, workspace, description, identity)
+          }
+        case Some(d) => createRemote(resolvedName, workspace, description, d, identity)
+  end create
+
+  // ============================================================
+  // Remote creation（v2.1 §A.5 远端创建腿 + G.13 半态回滚）
+  // ============================================================
+
+  /**
+   * 设备创建+挂载腿（device = 对端设备 id 或名）。序（G.13 定稿 + 跨设备批升级）：
+   *   ① 对端可达性 + 解析（按名/按 id 同一解析单点；离线 = 显式失败列在线设备）；
+   *   ② 目录存在性经 `direction=list`（scope=browse）校验（铁律：**必须真实存在
+   *     才准挂**——不可达/非目录 = 结构化拒绝，本侧零写入）；
+   *   ③ 脚手架经设备通道在对端**真实路径**补缺（AGENTS.md / .gitignore——缺件即补、
+   *     既有永不覆盖，与本地 ensureScaffold 同纪律；对端已是完整 repo = 全 skipped）；
+   *   ④ 全部成功 ⇒ 原子写 project.json（origin={device:D, path}）——**定义最后落**，
+   *     前面任何一步失败 = 本侧零写入（半态回滚 = 「无半态可回滚」）+ 可读失败文案；
+   *   ⑤ **挂载**（跨设备批 2026-10-25 新语义，取代旧「远端项目不挂载」）：大脑在
+   *     引擎侧——挂载面（ProjectRuntimeRegistry.mount）经设备通道复检存在性并把
+   *     全部引擎存储锚到本机大脑根（[[ProjectStore.brainWorkspace]]），设备路径
+   *     **绝不**作为本机存储根。挂载失败 = 定义已在但未挂载（幂等重试安全）。
+   *
+   * 幂等重试安全：目录已存在（含重试残留的脚手架件）= 可续创（Write 缺件才落笔）。
+   */
+  private def createRemote(
+    resolvedName: String,
+    workspace: String,
+    description: Option[String],
+    device: String,
+    identity: CreateIdentity
+  ): IO[Either[ToolError, String]] =
+    val neblinkOpt = identity.sharedResources.flatMap(_.neblinkService)
+    neblinkOpt match
+      case None =>
+        IO.pure(
+          Left(
+            ToolError(
+              s"Project '$resolvedName' cannot be created on device '$device': NebLink is not configured " +
+                "on this host (no device network) — create it locally (omit device) or configure NebLink first. (DEVICE_ROUTE_UNAVAILABLE)"
+            )
+          )
+        )
+      case Some(neblink) =>
+        neblink.peers.flatMap { peers =>
+          // 按名/按 id 同一解析单点（RemoteExecutor.resolvePeer）。
+          RemoteExecutor.resolvePeer(device, peers) match
+            case Left(_) =>
+              // G.12 同构显式失败（创建面）：列在线设备，绝不静默改在 host 创建。
+              val online = peers.map(_.deviceName).mkString(", ")
+              IO.pure(
+                Left(
+                  ToolError(
+                    s"project '$resolvedName' 的设备 '$device' 不在线（在线设备：${if online.isEmpty then "（无）" else online}）。" +
+                      "项目不会改在本机创建——等设备上线后重试，或去掉 device 参数在本机创建。 (DEVICE_OFFLINE)"
+                  )
+                )
+              )
+            case Right(peer) =>
+              val executorOpt = RemoteExecutor.current
+              executorOpt match
+                case None =>
+                  IO.pure(Left(ToolError("Remote executor is not initialized on this host — remote project creation unavailable. (DEVICE_ROUTE_UNAVAILABLE)")))
+                case Some(executor) =>
+                  // ② 目录校验（元数据列举——零字节；失败 = 显式失败，零本侧写入）。
+                  executor.transferListScoped(peer, workspace).flatMap {
+                    case Left(err) =>
+                      // 版本偏斜诊断（台账 #901，2026-10-26）：对端引擎早于 list 方向
+                      // （2026-10-10）⇒ legacy 接收分支答 "Unknown direction: list"——
+                      // 改诊为「升级对端引擎」而非误导性的「先去建设备目录」。
+                      // 签名不中（真不可达/真缺目录）⇒ 既有文案逐字节不变。
+                      val skewNote = RemoteExecutor.listDirectionSkewNote(err, peer.deviceName)
+                      IO.pure(
+                        Left(
+                          ToolError(
+                            skewNote match
+                              case Some(note) =>
+                                s"Project '$resolvedName' was NOT created: cannot verify directory '$workspace' on device '${peer.deviceName}' — $note. " +
+                                  "Nothing was created (zero writes on this host and on the device). (DEVICE_ENGINE_TOO_OLD)"
+                              case None =>
+                                s"Project '$resolvedName' was NOT created: cannot verify directory '$workspace' on device '${peer.deviceName}' — $err. " +
+                                  "Create/verify the directory on that device first, then retry. (REMOTE_DIR_UNVERIFIED)"
+                          )
+                        )
+                      )
+                    case Right(listing) =>
+                      // list 成功 = 目录存在（或至少可读）。非目录 → entries 缺失判。
+                      val isDir = listing.hcursor.downField("entries").focus.isDefined
+                      if !isDir then
+                        IO.pure(
+                          Left(
+                            ToolError(
+                              s"Project '$resolvedName' was NOT created: '$workspace' on device '${peer.deviceName}' is not a directory. (REMOTE_DIR_UNVERIFIED)"
+                            )
+                          )
+                        )
+                      else
+                        // ③ 远端脚手架（缺件即补、既有永不覆盖——与本地 ensureScaffold 同纪律）。
+                        // 复用 ② 的列举（同 peer 同路径二次 list = 一次多余往返 + 一次多余失败面，
+                        // 2026-10-26 #901 批去重）。
+                        scaffoldRemote(executor, peer, workspace, resolvedName, listing).flatMap {
+                          case Left(err) =>
+                            IO.pure(
+                              Left(
+                                ToolError(
+                                  s"Project '$resolvedName' was NOT created: scaffold write on device '${peer.deviceName}' failed — $err. " +
+                                    "Fix the device-side error and retry (retry is safe: missing pieces are backfilled, existing files are never overwritten). (REMOTE_SCAFFOLD_FAILED)"
+                                )
+                              )
+                            )
+                          case Right(report) =>
+                            // ④ 原子写定义（G.13：最后落笔）。失败时远端脚手架件残留
+                            //   但幂等（缺件才补）——重试安全，本侧零半态。
+                            ProjectStore
+                              .createWithScaffold(
+                                resolvedName,
+                                workspace,
+                                description,
+                                AgentMdTemplateFull,
+                                origin = Some(ProjectOrigin(peer.deviceId, stripTrailingSlashes(workspace)))
+                              )
+                              .flatMap {
+                                case Right((pd, _)) =>
+                                  // ⑤ 挂载（跨设备批新语义）：大脑在引擎侧。挂载面经
+                                  // 设备通道复检 + 全部引擎存储锚本机大脑根。失败 =
+                                  // 定义已在但未挂载（幂等，重试走 create 幂等分支）——
+                                  // 显式降级为带告警的成功（🔴 不抛：定义已落盘，抛错
+                                  // 会让调用方误以为零创建；文本点名重挂路径）。
+                                  mountDefinition(pd, identity, created = true, scaffold = None)
+                                    .handleErrorWith { e =>
+                                      IO.pure(
+                                        Right(
+                                          s"Project '${pd.name}' was created on device '${peer.deviceName}' at " +
+                                            s"${pd.origin.map(_.path).getOrElse(workspace)} (definition on this host), " +
+                                            s"but the mount step FAILED — project is NOT mounted: ${e.getMessage}. " +
+                                            "Re-invoke the same create (idempotent re-mount) once the device is reachable."
+                                        )
+                                      )
+                                    }
+                                    .map {
+                                      case Right(msg) =>
+                                        val scaffoldNote =
+                                          if report.createdCount > 0 then s" Scaffold on device: ${report.render}."
+                                          else " Scaffold on device: nothing to do (all pieces already present)."
+                                        Right(
+                                          msg +
+                                            (if msg.contains("NOT mounted") then ""
+                                             else
+                                               s" Workspace lives on device '${peer.deviceName}' at ${pd.origin.map(_.path).getOrElse(workspace)} " +
+                                                 "(file/Bash tools route there via the device channel; this host's data root " +
+                                                 s"holds only the brain ledgers under projects/${pd.name}/brain).") +
+                                            scaffoldNote
+                                        )
+                                      case l @ Left(_) => l
+                                    }
+                                case Left(err) => IO.pure(Left(ToolError(err)))
+                              }
+                        }
+                  }
+              end match
+        }
+    end match
+  end createRemote
+
+  /**
+   * 远端脚手架腿（remote-exec Write）：AGENTS.md（缺省模板 = 空）+ .gitignore
+   * （`.nebflow/` 行）。**缺件即补、既有永不覆盖**——目录元数据（direction=list）
+   * 由调用方传入（② 目录校验的同一读数；2026-10-26 #901 批去重：本腿不再自发
+   * list，同 peer 同路径二次往返删除）。已存在的件跳过（不读内容、零覆盖）；
+   * 缺失才 Write。Write 的 createFolders 语义在对端建目录（幂等）。
+   */
+  private def scaffoldRemote(
+    executor: nebflow.core.tools.RemoteExecutor,
+    peer: nebflow.shared.PeerInfo,
+    workspace: String,
+    projectName: String,
+    listing: Json
+  ): IO[Either[String, ProjectStore.ScaffoldReport]] =
+    val existing: Set[String] =
+      listing.hcursor.downField("entries").as[List[Json]].toOption.getOrElse(Nil).flatMap { e =>
+        e.hcursor.downField("name").as[String].toOption
+      }.toSet
+    val wanted: List[(String, String)] = List(
+      ("AGENTS.md", AgentMdTemplateFull),
+      (".gitignore", ".nebflow/\n")
+    )
+    val missing = wanted.filterNot((name, _) => existing.contains(name))
+    if missing.isEmpty then
+      IO.pure(Right(ProjectStore.ScaffoldReport(wanted.map(n => ProjectStore.ScaffoldItem(n._1, created = false, detail = "already present")))))
+    else
+      missing.foldLeft(IO.pure(Right(Nil): Either[String, List[ProjectStore.ScaffoldItem]])) { (acc, item) =>
+        acc.flatMap {
+          case l @ Left(_) => IO.pure(l)
+          case Right(items) =>
+            writeRemoteFile(executor, peer, s"${stripTrailingSlashes(workspace)}/${item._1}", item._2).map {
+              case Right(_) => Right(items :+ ProjectStore.ScaffoldItem(item._1, created = true))
+              case Left(err) => Left(err)
+            }
+        }
+      }.map {
+        case Right(items) => Right(ProjectStore.ScaffoldReport(items))
+        case Left(err) => Left(err)
+      }
+  end scaffoldRemote
+
+  /** 对端单文件 Write（remote-exec Write 工具；projectRoot = 该项目 workspace）。 */
+  private def writeRemoteFile(
+    executor: nebflow.core.tools.RemoteExecutor,
+    peer: nebflow.shared.PeerInfo,
+    remotePath: String,
+    content: String
+  ): IO[Either[String, String]] =
+    executor.writeRemoteFileForScaffold(peer, remotePath, content)
+
+  end writeRemoteFile
+
+  // ============================================================
+  // Internals
+  // ============================================================
+
+  /**
+   * Mount（单点，跨设备批 2026-10-25 自 emitAndMount 内的闭包提升为对象级方法）：
+   * 本机创建腿与设备创建腿共用——[[ProjectRuntimeRegistry.mount]] 自身幂等（已挂载
+   * 返回既有 runtime）。
+   *
+   * Emit face: ONLY a fresh create (`created=true`) broadcasts a frame; an
+   * idempotent re-mount does not (no visual change). A failed mount throws and
+   * therefore never emits; an absent root key returns Left and also never emits
+   * (a failure frame must not report success) — that gap is covered on the
+   * frontend by the low-frequency fallback re-pull.
+   */
+  private def mountDefinition(
+    pd: ProjectDef,
+    identity: CreateIdentity,
+    created: Boolean,
+    scaffold: Option[ProjectStore.ScaffoldReport]
+  ): IO[Either[ToolError, String]] =
+    // Per-file report (author ruling 2026-09-17 12:09): the success and
+    // idempotent result sentences both carry this run's backfill readings.
+    // The substrings existing consumers match on ("Mail(address='project:",
+    // "already exists") are unchanged — the report is appended at the tail.
+    val scaffoldSuffix: String = scaffold.fold("")(r => s" Scaffold: ${r.render}.")
+    // Project-level realtime event. Goes through the EXISTING push face (never
+    // a second one): the frame shape is produced only by
+    // [[ProjectActor.projectCreatedFrame]] (single frame-shell point).
+    def emitProjectCreated(mounted: Boolean): IO[Unit] =
+      identity.wsSend.fold(IO.unit)(send => send(ProjectActor.projectCreatedFrame(pd, mounted)))
+    (identity.actorSystem, identity.sharedResources) match
+      case (Some(system), Some(res)) =>
+        // Mount receives the UPLINE rootSessionId (the true top level), not the
+        // mounting caller's own session — otherwise out="Nebula" would deliver
+        // to the mounter (e.g. a qa node), creating a self-sustaining loop.
+        //
+        // freshinstall-rootsessionid batch M3 (author 2026-09-14 ruling ②): a
+        // mount with NO session context is ILLEGAL — aligned verbatim with the
+        // existing positive precedent (SendConfirm.scala's "filter non-empty
+        // first, then refuse explicitly"). The `orElse` does NOT filter empty
+        // values (`Some("")` would win and yield an empty delivery bucket), and
+        // the last-ditch placeholder `"default"` would be a fabricated bucket
+        // key — the author explicitly forbids fabricating a root — so both are
+        // rejected and we refuse instead.
+        val rootKey =
+          identity.rootSessionId.filter(_.nonEmpty).orElse(identity.sessionId.filter(_.nonEmpty))
+        rootKey match
+          case None =>
+            IO.pure(
+              Left(
+                ToolError(
+                  "Project refused to mount: this call carries no session context " +
+                    "(both rootSessionId and sessionId are empty or absent), so the project's delivery root " +
+                    "cannot be attributed — and inventing a placeholder root is not allowed. " +
+                    "Re-invoke Project from an agent session (Nebula / project dispatcher / project node)."
+                )
+              )
+            )
+          case Some(root) =>
+            val mountedResult = ProjectRuntimeRegistry
+              .mount(pd, system, res, identity.wsSend, root)
+              .as {
+                val verb = if created then "created" else "already exists"
+                Right(
+                  s"Project '${pd.name}' $verb and mounted. Flow Map ready at ${pd.agentFile}. " +
+                    s"Dispatch work with Mail(address='project:${pd.name}', message=...).$scaffoldSuffix"
+                )
+              }
+            // A fresh create emits BEFORE returning the result (mount succeeded
+            // => mounted=true).
+            if created then mountedResult.flatMap(r => emitProjectCreated(mounted = true).as(r))
+            else mountedResult
+        end match
+      case _ =>
+        // Definition is on disk (only ProjectStore.create's success branch gets
+        // here) but there is no engine context to mount with: the list endpoint
+        // will show it, so the frontend must be told or it stays stale =>
+        // mounted=false. An idempotent re-mount (created=false) does not emit.
+        val ready: Either[ToolError, String] =
+          Right(s"Project '${pd.name}' definition ready. Mount requires an agent session.$scaffoldSuffix")
+        if created then emitProjectCreated(mounted = false).as(ready) else IO.pure(ready)
+    end match
+  end mountDefinition
+
+  private def emitAndMount(
+    resolvedName: String,
+    workspace: String,
+    description: Option[String],
+    identity: CreateIdentity
+  ): IO[Either[ToolError, String]] =
+    /**
+     * Mount for both the freshly-created and the already-exists paths — thin
+     * delegate to the object-level [[mountDefinition]]（创建腿与设备腿共用单点，
+     * 跨设备批 2026-10-25：设备创建腿也挂载）。
+     */
+    def mountProject(
+      pd: ProjectDef,
+      created: Boolean,
+      scaffold: Option[ProjectStore.ScaffoldReport] = None
+    ): IO[Either[ToolError, String]] =
+      mountDefinition(pd, identity, created, scaffold)
+    end mountProject
+
+    // ============================================================
+    // Reverse guard (author ruling 2026-09-17 12:09, ④-4 + ④-12: default-deny,
+    // prefer a false refusal over a false creation)
+    // ============================================================
+    // The gap: the original three guards only covered "same name overwrite /
+    // same name same workspace idempotent / same name different workspace
+    // error" — "NEW name + a workspace already used by a DIFFERENT project" had
+    // ZERO guard, so a second project could silently share one workspace
+    // (flow-map / task-board / worktrees all key off the workspace; mounting
+    // both in parallel means mutual writes).
+    //
+    // Judgement discipline (ruling by ruling):
+    // - BEFORE any disk write: the occupancy check runs before ProjectStore
+    //   .create, so the refusal path writes nothing (no projects/<newName>/,
+    //   workspace file hashes unchanged).
+    // - Occupancy and idempotency share ONE function ([[sameWorkspace]]): the
+    //   same normalization (absolute + trailing-slash-stripped + CASE
+    //   INSENSITIVE). Never two divergent predicates.
+    // - NO realpath/symlink resolution (not ruled on; /tmp vs /private/tmp would
+    //   change existing semantics).
+    // - Occupancy scan source = ProjectStore.listAll() INCLUDING archived
+    //   definitions (conservative default: prefer a false refusal).
+    // - Occupant name comparison uses [[sameProjectName]]: same name (including
+    //   case-only differences) is the SAME project, so an idempotent re-mount is
+    //   not falsely refused.
+    ProjectStore.listAll().flatMap { defs =>
+      defs.find(d => !sameProjectName(d.name, resolvedName) && sameWorkspace(d.workspace, workspace)) match
+        case Some(occupant) =>
+          IO.pure(Left(ToolError(occupiedWorkspaceError(resolvedName, workspace, occupant))))
+        case None =>
+          ProjectStore.createWithScaffold(resolvedName, workspace, description, AgentMdTemplateFull).flatMap {
+            case Right((pd, report)) => mountProject(pd, created = true, scaffold = Some(report))
+            case Left(err) =>
+              // Idempotent re-mount (the key restart-recovery path): the
+              // definition already exists, so do not re-create it; backfill the
+              // scaffold (③-8: backfill missing pieces, never overwrite) — this
+              // backfill must ship in the same batch as the success semantics,
+              // otherwise it is a silent zero-write.
+              // Same name + different workspace => explicit error (never a silent
+              // reuse of the old definition).
+              // Archived projects are the exception (migration plan v2 §6.1,
+              // one-way semantics): refuse the mount — otherwise the project is
+              // mounted yet invisible in the panel (list filters archived), a
+              // zombie state; restoring means deleting the two archive keys in
+              // project.json by hand first.
+              ProjectStore.load(resolvedName).flatMap {
+                case Some(pd) if pd.archived.contains(true) =>
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        s"Project '$resolvedName' is archived (hidden from the Projects panel). " +
+                          s"Remove the 'archived'/'archivedAt' keys in ${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json to restore it first."
+                      )
+                    )
+                  )
+                // N2 project-tool 批单程语义（同 archive 先例形状，2026-10-25 去重收口时
+                // 自 ProjectTool 旧重复体并入服务面——此前 WS 面缺本分支，面板重挂会
+                // 静默复活硬卸载的项目）；unmount-console 面板批 2026-11-02 起指路改
+                // remount 通路（create 面仍不隐式复活硬卸载项目——恢复必须走显式 remount）。
+                case Some(pd) if pd.unmounted.contains(true) =>
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        s"Project '$resolvedName' is unmounted (hidden from the Projects panel; its in-flight " +
+                          s"work was stopped when it was unmounted). " +
+                          "Restore it first: Project(action=\"remount\", name=...) — the engine path shared with " +
+                          "the console's 重新加载 — or by hand remove the 'unmounted'/'unmountedAt' keys in " +
+                          s"${PathUtil.dataRootRenderValue}/projects/$resolvedName/project.json."
+                      )
+                    )
+                  )
+                case None => IO.pure(Left(ToolError(err)))
+                case Some(pd) if sameWorkspace(pd.workspace, workspace) =>
+                  // Backfill hangs ONLY on this branch (a successful idempotent
+                  // re-mount); the archived and different-workspace branches
+                  // stay zero-write.
+                  //
+                  // 跨设备批（2026-10-25）：重挂也过预检（铁律对挂载面恒成立）——
+                  // ① 设备项目：**零本机脚手架**（workspace 是设备本盘路径，本机
+                  //    落笔即假骨架事故原形）；存在性 stat + 骨架补缺全在设备通道
+                  //    （mount → DeviceProjectMount.prepare），本分支直挂。
+                  // ② 本机项目：同样必须真实存在（create 时的目录后来被删 = 拒绝
+                  //    重挂，零写入）才补缺脚手架。
+                  if ProjectStore.deviceOrigin(pd).isDefined then
+                    // 设备项目同样补文档库（它在引擎侧注册目录，不是设备盘面）——
+                    // 补缺幂等，故与直挂并行安全。
+                    ProjectStore
+                      .ensureLedgerDocs(resolvedName)
+                      .flatMap(item =>
+                        mountProject(pd, created = false, scaffold = Some(ProjectStore.ScaffoldReport(List(item))))
+                      )
+                  else
+                    IO.blocking(ProjectMountPreflight.checkLocalWorkspace(workspace, PathUtil.dataRoot)).flatMap {
+                      case Some(refusal) => IO.pure(Left(ToolError(refusal)))
+                      case None =>
+                        ProjectStore
+                          .ensureScaffold(os.Path(workspace, PathUtil.dataRoot), AgentMdTemplateFull)
+                          .flatMap(report =>
+                            ProjectStore.ensureLedgerDocs(resolvedName).flatMap { ledger =>
+                              val merged = ProjectStore.ScaffoldReport(report.items :+ ledger)
+                              mountProject(pd, created = false, scaffold = Some(merged))
+                            }
+                          )
+                    }
+                case Some(pd) =>
+                  IO.pure(
+                    Left(
+                      ToolError(
+                        s"Project '$resolvedName' already exists with a different workspace (${pd.workspace}) — " +
+                          "choose another name or reuse the existing workspace"
+                      )
+                    )
+                  )
+              }
+          }
+    }
+
+  end emitAndMount
+
+  /**
+   * Workspace normalization (absolute + trailing slashes stripped) — the ONE
+   * form shared by display and by the judgement itself. Unresolvable => None
+   * (treated as different).
+   * Do NOT fold realpath/symlink resolution into this function: it was never
+   * ruled on, and /tmp vs /private/tmp would change existing semantics.
+   */
+  def normalizeWorkspace(p: String): Option[String] =
+    Try(os.Path(p, PathUtil.dataRoot).toString).toOption.map(stripTrailingSlashes)
+
+  /**
+   * The comparison key of that same normalization (case insensitive) — the
+   * occupancy check and the idempotency check share this ONE predicate
+   * [[sameWorkspace]] (never two). Case-insensitive normalization is author
+   * ruling ④-12 ("path semantics + case-insensitive normalization"; on a
+   * case-sensitive filesystem this is the stricter direction).
+   */
+  private def workspaceKey(p: String): Option[String] =
+    normalizeWorkspace(p).map(_.toLowerCase(java.util.Locale.ROOT))
+
+  def sameWorkspace(a: String, b: String): Boolean =
+    (workspaceKey(a), workspaceKey(b)) match
+      case (Some(x), Some(y)) => x == y
+      case _ => false
+
+  /**
+   * Project identity equality (same lineage as ProjectRuntimeRegistry.get's
+   * equalsIgnoreCase fallback: project identifiers are inherently case
+   * insensitive). A same name (including case-only differences) is the SAME
+   * project, not an occupant — which keeps "same name, same workspace,
+   * idempotent re-mount" from being falsely refused (existing precedent: the
+   * project named `nebflow` has a workspace basename of `Nebflow`, differing
+   * only in case, and the live install resolves it via the registry fallback).
+   */
+  def sameProjectName(a: String, b: String): Boolean =
+    a == b || a.equalsIgnoreCase(b)
+
+  /**
+   * Occupancy error (actionable: names the occupant, its archive state, the
+   * normalized workspace, and two ways out).
+   */
+  def occupiedWorkspaceError(newName: String, workspace: String, occupant: ProjectDef): String =
+    val norm = normalizeWorkspace(workspace).getOrElse(workspace)
+    val occupantWs = normalizeWorkspace(occupant.workspace).getOrElse(occupant.workspace)
+    val arch =
+      if occupant.archived.contains(true) then " (archived)"
+      else if occupant.unmounted.contains(true) then " (unmounted)"
+      else ""
+    s"Workspace '$norm' is already used by project '${occupant.name}'$arch " +
+      s"(its project.json workspace = '$occupantWs'). Project default-denies creating '$newName' " +
+      "on an occupied workspace — a second project on the same workspace would silently share its " +
+      "flow-map / task board / worktrees. Two ways out: " +
+      s"(a) reuse the existing project — Project(name='${occupant.name}') to re-mount it, or " +
+      s"Mail(address='project:${occupant.name}', message=...) to dispatch work; " +
+      s"(b) pass a different 'workspace' directory for '$newName'."
+
+  /**
+   * Path basename (name derivation); root paths with no basename => "" (the
+   * caller reports the error).
+   */
+  def baseName(workspace: String): String =
+    Try(os.Path(workspace, PathUtil.dataRoot)).map(_.last).getOrElse("")
+
+  /**
+   * Strip trailing slashes (Scala's `stripTrailing` has no zero-arg form; slash
+   * semantics are written by hand). Shared with the panel answer parser so the
+   * two faces normalize identically.
+   */
+  def stripTrailingSlashes(s: String): String = s.replaceAll("/+$", "")
+end ProjectCreateService

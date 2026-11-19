@@ -1,8 +1,9 @@
 package nebflow.cli
 
 import cats.effect.{IO, Ref}
-import nebflow.core.{ReplUi, UserAbort}
+import nebflow.core.ReplUi
 import nebflow.shared.TerminalUtils.*
+import nebflow.shared.UserAbort
 import org.jline.reader.{LineReader, LineReaderBuilder}
 import org.jline.terminal.{Terminal, TerminalBuilder}
 
@@ -21,8 +22,7 @@ class NebflowUI(store: UiStore):
     .build()
 
   def runInteractive(modelRef: String, onInput: String => IO[Unit]): IO[Unit] =
-    // Print splash
-    Splash.lines.foreach(println)
+    Splash.printBanner()
     println(s"  model: $modelRef")
     println()
 

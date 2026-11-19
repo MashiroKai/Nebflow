@@ -5,15 +5,15 @@ import cats.effect.unsafe.implicits.global
 import fs2.Stream
 import munit.CatsEffectSuite
 import nebflow.actor.ActorSystem
+import nebflow.actor.{sessionId, status}
 import nebflow.agent.PromptSections.PromptContext
-import nebflow.core.PathUtil
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.{FlowMapStore, NodeLifecycle, ProjectDef, ProjectRuntime, ProjectRuntimeRegistry}
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.RateLimiter
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.RateLimiter
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.collection.concurrent.TrieMap
 import scala.concurrent.duration.*
@@ -21,13 +21,18 @@ import scala.concurrent.duration.*
 /**
  * 阶段 2d D.1-12：skill 目录注入停注 spec（设计 §D.1 #12 + §G.4）。
  *
- * - 新模型 node 会话（general 模版，skills:["*"] + 磁盘上存在 skill）首条
+ * - 新模型 node 会话（执行 agent，skills:["*"] + 磁盘上存在 skill）首条
  *   消息的 system prompt 不含 skill 目录段（order 800 停注）。
  * - legacy agent 会话（test-agent，同样声明）保留目录注入（双轨期，阶段 3 删）。
  * - ContextRefresher.skillCatalogEnabledFor 开关逐角色断言（Nebula 保留，
  *   skill-creator alwaysVisible 语义不变）。
- * - wire 层 D.2 判据：general 节点收到的工具定义中 Read/Pop description 自含
+ * - wire 层 D.2 判据：执行 agent 节点收到的工具定义中 Read/Pop description 自含
  *   用法指南——「删条件段后未见段 agent 不退化」在请求层证明。
+ *
+ * P1-3 归因修正（2026-10-03）：节点执行名随 builtin-merge 批收敛为
+ * [[nebflow.core.entity.BuiltinAgents.ExecutorName]]（`general` 不再是内置名）——
+ * 原夹具/断言按旧名造身份 ⇒ 1/3 假红；本批把判据源对齐生产执行名（停注语义
+ * 逐字不变，只换名），**不是**放宽断言。
  *
  * 基建复用 NodePluginChainSpec（真实 NodeEdit → NodeEngine → 首条 LlmRequest
  * 捕获），RecordingLlm 瞬回。
@@ -36,22 +41,33 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
 
   override val munitIOTimeout: FiniteDuration = 180.seconds
 
+  /**
+   * 节点实际执行的 agent 名（builtin-merge 批 2026-10-03 收敛单点）。
+   * P1-3 归因修正（2026-10-03）：旧夹具/断言按已退役名 `general` 造身份——该名已
+   * 非内置名（BuiltinAgents.Names），判据源对齐生产执行名。
+   */
+  private val executorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
+
   private val tempRoot: os.Path = os.pwd / "target" / "test-2d-skill-catalog"
   private val originalRoot = PathUtil.dataRoot
 
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
 
-  // general 模版：声明 skills:["*"]——停注改造的对象（node 会话模版）
-  os.makeDir.all(tempRoot / "agents" / "general")
+  // 执行 agent（节点会话模版）：磁盘目录对该名是**死信**（builtin-def 批 2026-10-03
+  // 起代码定义唯一权威）——夹具保留以证明「磁盘声明 skills:["*"] 不生效」这一更强
+  // 断言（代码定义 skills = Nil）。目录段结构上无从产生。
+  os.makeDir.all(tempRoot / "agents" / executorName)
+
   os.write.over(
-    tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"2d node template","skills":["*"]}"""
+    tempRoot / "agents" / executorName / "agent.json",
+    s"""{"name":"$executorName","description":"2d node template","skills":["*"]}"""
   )
-  os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n\n## 无团队上下文\n")
+  os.write.over(tempRoot / "agents" / executorName / "system.md", s"# $executorName\n\n## 无团队上下文\n")
 
   // legacy agent：同样声明 skills:["*"]——双轨期对照（必须保留注入）
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"legacy contrast agent","skills":["*"]}"""
@@ -60,6 +76,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
 
   // skill 库 fixture（modelInvocable：有 name + description 即可）
   os.makeDir.all(tempRoot / "skills" / "catalog-probe")
+
   os.write.over(
     tempRoot / "skills" / "catalog-probe" / "SKILL.md",
     """---
@@ -69,7 +86,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
       |# body""".stripMargin
   )
 
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -78,9 +95,10 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
 
   private class RecordingLlm(capture: TrieMap[String, LlmRequest]) extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(IO(capture.update(req.sessionId, req))).drain ++
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
@@ -97,7 +115,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     yield SharedResources(
       llm = llm,
       dispatcher = dispatcher,
-      sessionStore = nebflow.gateway.SessionStore(tmp / "sessions", tmp / "tasks"),
+      sessionStore = nebflow.core.SessionStore(tmp / "sessions", tmp / "tasks"),
       projectRoot = os.pwd,
       thinkingConfigRef = thinkingRef,
       rateLimiter = rateLimiter,
@@ -118,14 +136,28 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     for
       store <- FlowMapStore.open(name, ws.toString)
       engine = new nebflow.core.project.NodeEngine(
-        store, system, res,
+        store,
+        system,
+        res,
         wsSendFn = (_: io.circe.Json) => IO.unit,
         workspace = ws.toString,
         rootSessionId = "nebula-root",
         projectName = name,
-        emitEvent = (_, _, _) => IO.unit
+        emitEvent = (_, _, _) => IO.unit,
+        // 终态 hold 腿（`Defaults.NodeReportCompletionHold=true`；判定点 `NodeStarter`
+        // 桥 hold 分支——2026-09-25 H 步随启动簇迁移至 NodeStarter，行为保持重构）：
+        // 申报通道退役后旋钮休眠，测试面保留显式关（仅测试面注入、零生产改动）。
+        // 本 spec 的主题是「skill 目录停注 / wire 层工具描述」，`waitUntil(status ==
+        // Completed)` 只是取首条 `LlmRequest` 的前置——hold 腿开着 ⇒ 该条件可能
+        // 永不满足 ⇒ 60s 到点必假红，故关。
+        reportGateHold = Some(false)
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
@@ -146,6 +178,7 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     io.circe.Json.obj(
       ("project" -> io.circe.Json.fromString(project)) ::
         ("nodename" -> io.circe.Json.fromString(nodename)) ::
+        ("plugins" -> io.circe.Json.arr()) ::
         extra.toList*
     )
 
@@ -161,8 +194,8 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def runNodeAndCapture(
-      systemName: String,
-      agentName: String
+    systemName: String,
+    agentName: String
   ): (TrieMap[String, LlmRequest], IO[Option[LlmRequest]]) =
     val capture = TrieMap[String, LlmRequest]()
     val program =
@@ -174,63 +207,107 @@ class Phase2dSkillCatalogSpec extends CatsEffectSuite:
         _ <- IO(os.makeDir.all(ws))
         rt <- mountProject(s"p2d-$tag", ws, system, res)
         ctx = mkCtx(res, system, ws.toString)
-        created <- nodeEdit(nodeInput(s"p2d-$tag", s"n-$tag",
-          // 2026-09-05 agent 退役：节点执行统一 general，无 agent 参数可传。
-          "description" -> io.circe.Json.fromString("catalog probe"),
-          "task" -> io.circe.Json.fromString("catalog probe"),
-          "out" -> io.circe.Json.fromString("Nebula")), ctx)
+        created <- nodeEdit(
+          nodeInput(
+            s"p2d-$tag",
+            s"n-$tag",
+            // 2026-09-05 agent 退役：节点执行统一 general，无 agent 参数可传。
+            "description" -> io.circe.Json.fromString("catalog probe"),
+            "task" -> io.circe.Json.fromString("catalog probe"),
+            "out" -> io.circe.Json.fromString("Nebula")
+          ),
+          ctx
+        )
         _ = assert(created.isRight, s"NodeEdit must succeed: $created")
-        _ <- waitUntil(60.seconds)(rt.store.snapshot.map(
-          _.nodes.values.exists(n => n.name == s"n-$tag" && n.status == NodeLifecycle.Completed)))
+        _ <- waitUntil(60.seconds)(
+          rt.store.snapshot.map(_.nodes.values.exists(n => n.name == s"n-$tag" && n.status == NodeLifecycle.Completed))
+        )
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
         reqOpt = capture.values.headOption
       yield reqOpt
     (capture, program)
+  end runNodeAndCapture
 
   // ── D.1-12：开关与注入断言 ─────────────────────────
 
-  test("D.1-12: skillCatalogEnabledFor 逐角色——Nebula 保留，general/dispatcher 停注，legacy 保留"):
+  test("D.1-12: skillCatalogEnabledFor 逐角色——Nebula 保留，执行 agent/dispatcher 停注，legacy 保留"):
+    // P1-3 归因修正（2026-10-03）：builtin-merge 批把节点执行名从 `general` 收敛为
+    // BuiltinAgents.ExecutorName（= nebflow）⇒ 旧断言用手搓 "general" 名判「node 会话
+    // 模版停注」已指不到执行面（该名不在 ConvergedAgentNames ⇒ 函数返回 true ⇒ 假红）。
+    // 判据源对齐生产执行名 = 修根因不是放宽断言：停注语义（收敛名非 root ⇒ 停注）
+    // 逐字不变，只把名字换成执行名。
     assert(ContextRefresher.skillCatalogEnabledFor("Nebula"), "Nebula keeps the catalog (skill-creator alwaysVisible)")
-    assert(!ContextRefresher.skillCatalogEnabledFor("general"), "node 会话模版停注")
+    assert(!ContextRefresher.skillCatalogEnabledFor(executorName), "执行 agent（node 会话模版）停注")
     assert(!ContextRefresher.skillCatalogEnabledFor("project-dispatcher"), "dispatcher 停注")
+    assert(!ContextRefresher.skillCatalogEnabledFor("subagent"), "只读侦察子面同样停注（builtin-merge 批收敛名）")
     assert(ContextRefresher.skillCatalogEnabledFor("Explorer"), "legacy agent 保留至阶段 3")
     assert(ContextRefresher.skillCatalogEnabledFor("Coder"), "legacy agent 保留至阶段 3")
 
-  test("D.1-12: node 会话（general 模版）首条消息不含 per-agent skill 目录（order 800 停注）"):
-    // 注意：共享前缀层（system-prefix-for-all）已随阶段 2 批 A 退役——其
-    // JAR 内静态「## Skills」段一并消失，断言语义不受影响（本测试只钉
-    // order 800 per-agent 目录停注，设计 §D.1 #12）。
+  test("D.1-12: node 会话（执行 agent 模版）首条消息不含 per-agent skill 目录（order 800 停注）"):
+    // 共享构建前缀与 order 800 per-agent skill 目录是不同的注入面。
     // per-agent 目录的特征：目录头句「Skills live at」+ 条目行「- <skill>:」。
-    val (_, program) = runNodeAndCapture(s"p2d-gen-${scala.util.Random.nextInt(100000)}", "general")
+    // P1-3 归因修正（2026-10-03）：节点执行名现为 BuiltinAgents.ExecutorName
+    // （代码定义、skills = Nil）——本用例的判据面因此比磁盘夹具更强：目录段
+    // 结构上无从产生。
+    val (_, program) = runNodeAndCapture(s"p2d-gen-${scala.util.Random.nextInt(100000)}", executorName)
     val reqOpt = program.unsafeRunSync()
-    val req = reqOpt.getOrElse(fail("no LlmRequest captured for general node"))
+    val req = reqOpt.getOrElse(fail("no LlmRequest captured for the executor node"))
     val stable = req.systemStable.getOrElse(fail("systemStable missing"))
-    assert(!stable.contains("Skills live at"), s"general node session must NOT carry the per-agent skill catalog (order 800 停注), got:\n${stable.take(1200)}")
+    assert(
+      !stable.contains("Skills live at"),
+      s"executor node session must NOT carry the per-agent skill catalog (order 800 停注), got:\n${stable.take(1200)}"
+    )
     assert(!stable.contains("catalog-probe"), "fixture skill must not leak into node session prompt")
+    for name <- List("stand-recall", "stand-messages", "stand-plugins", "stand-terms", "stand-profile") do
+      assert(stable.contains(s"tools/$name"), s"embedded prefix must contain $name")
+    // 密钥 CLI 行（2026-11-18 作者令）：CLI 段第六条，非 tools/ 脚本而是产品 CLI 子命令。
+    assert(stable.contains("stand secrets list"), "embedded prefix must carry the secrets CLI line")
+    assert(!stable.contains("stand-branch-guard"))
+    assert(stable.contains("EVERY agent on ANY project"))
 
   // 2026-09-05 agent 退役：原「legacy agent 会话保留 per-agent skill 目录（双轨期
-  // 对照）」wire 级测试随 NodeEdit agent 参数一并退役——节点执行统一 general，
+  // 对照）」wire 级测试随 NodeEdit agent 参数一并退役——节点执行统一执行 agent
+  // （builtin-merge 批 2026-10-03 收敛为 BuiltinAgents.ExecutorName），
   // 无法再经 NodeEdit 以 legacy agent spawn 会话。legacy 角色的目录注入开关语义
   // 仍由上方 skillCatalogEnabledFor 逐角色断言覆盖（保留至阶段 3 的裁定不变）。
 
-  test("D.2 wire 层判据: general 节点收到的工具定义自含用法指南（删段不退化）"):
-    val (_, program) = runNodeAndCapture(s"p2d-wire-${scala.util.Random.nextInt(100000)}", "general")
+  test("D.2 wire 层判据: 执行 agent 节点收到的工具定义自含用法指南（删段不退化）"):
+    val (_, program) = runNodeAndCapture(s"p2d-wire-${scala.util.Random.nextInt(100000)}", executorName)
     val reqOpt = program.unsafeRunSync()
     val req = reqOpt.getOrElse(fail("no LlmRequest captured"))
     val tools = req.tools.getOrElse(fail("tools missing")).map(td => td.name -> td.description).toMap
-    val read = tools.getOrElse("Read", fail("general node must receive Read"))
-    assert(read.contains("Live results") && read.contains("Never re-read"),
-      "Read description carries the order-410 live semantics at the wire level")
-    val pop = tools.getOrElse("Pop", fail("general node must receive Pop"))
-    assert(pop.contains("professional tool") && pop.contains("never hand-draw"),
-      "Pop description carries the order-415 reporting workflow at the wire level")
-    // 2026-09-08 作者修订恢复 AskUser（D6 批D1）：general 节点 wire 层重新
-    // 收到该工具（2026-09-06 摘除断言反向）；order-400 指南仍随工具 description
-    // 自包含生效（删段不退化判据恢复钉死）
-    val ask = tools.getOrElse("AskUserQuestion", fail("general node must receive AskUserQuestion (2026-09-08 restored)"))
-    assert(ask.contains("When NOT to use"),
-      "AskUserQuestion description carries the order-400 guidance at the wire level")
-    assert(ask.contains("node-ask trace event") && ask.contains("project · node"),
-      "AskUserQuestion description carries the supervision note (D6 批D1: node-ask 留痕 + 来源标注)")
+    val read = tools.getOrElse("Read", fail("executor node must receive Read"))
+    assert(
+      read.contains("Live results") && read.contains("Never re-read"),
+      "Read description carries the order-410 live semantics at the wire level"
+    )
+    // 2026-09-10 作者裁定翻转本断言：Pop 收归 Nebula 专属——执行 agent 节点在
+    // wire 层（LLM 工具面）收不到 Pop 的 schema（定义层摘除节点固定面 +
+    // RootExclusiveTools 剥离；执行面另有 PopTool 身份闸兜底）
+    assert(
+      !tools.contains("Pop"),
+      s"executor node must NOT receive Pop (2026-09-10 作者裁定：Pop 收归 Nebula 专属), got keys: ${tools.keys.toList.sorted}"
+    )
+    // 过时测试修复（2026-11-15）：随基线 c6329920e「Restrict AskUserQuestion to root
+    // tool face」补齐漏改面——执行面提问件 = AskHost；问用户卡在 wire 层同样限根
+    // （与定义层 AllowedToolSetSpec / AskUserDualModeSchemaSpec 同一批裁定）。
+    assert(
+      !tools.contains("AskUserQuestion"),
+      s"executor node must NOT receive AskUserQuestion (c6329920e 限根裁定), got keys: ${tools.keys.toList.sorted}"
+    )
+    assert(tools.contains("AskHost"), "executor node receives AskHost (correlated request ask-root face)")
+    // order-400 指南仍随 AskUserQuestion 基线 description 自包含生效（删段不退化
+    // 判据保留，探针移到注册表基线——工具描述与身份无关，任何面拿到的都是这一份）
+    val baselineAsk = nebflow.core.tools.ToolRegistry.ALL_TOOLS
+      .find(_.name == nebflow.core.tools.AskUserQuestionTool.Name)
+      .getOrElse(fail("AskUserQuestion missing from the registry"))
+    assert(
+      baselineAsk.description.contains("When NOT to use"),
+      "AskUserQuestion baseline description carries the order-400 guidance (删段不退化)"
+    )
+    assert(
+      baselineAsk.description.contains("node-ask trace event") && baselineAsk.description.contains("project · node"),
+      "AskUserQuestion baseline description carries the supervision note (D6 批D1: node-ask 留痕 + 来源标注)"
+    )
 
 end Phase2dSkillCatalogSpec

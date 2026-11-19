@@ -9,7 +9,7 @@ name: Beta Release
 # comment-disabling, keeps YAML valid and reviewable; restore = remove one
 # line per job). The `release` job's `needs` is narrowed to build-jar so the
 # jar line (tag / GH Release / COS jar+pointer upload) keeps flowing.
-# Restore conditions (see .nebflow/Spec/desktop-trust-and-icp-filing-plan.md):
+# Restore conditions (see the desktop trust-chain / ICP filing design note):
 #   macOS  = Apple Developer ID + CI notarytool/stapler integration
 #   Windows = Certum cert + CI signtool/TSA integration (+ SmartScreen warmup)
 # Restore actions = drop `if: false`, restore needs list, re-enable the four
@@ -19,7 +19,16 @@ name: Beta Release
 
 on:
   push:
-    branches: [beta]
+    branches: [release/beta]
+  workflow_dispatch:
+    # 发布前 E2E 门禁的无污染验证路径（同 auto-release #437 先例）：dry_run=true
+    # （默认）跑 build+e2e 全链但跳过 tag/release/COS；发布验证期间门禁红线时
+    # 用它验证接线而不动发布产物。
+    inputs:
+      dry_run:
+        description: 'Skip tag/release/COS (verification only)'
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -56,8 +65,8 @@ jobs:
       - name: Check if tag already exists
         id: check
         run: |
-          if git tag -l | grep -q "^v${{ steps.version.outputs.version }}$"; then
-            echo "  Tag v${{ steps.version.outputs.version }} already exists — skipping"
+          if git tag -l | grep -q "^${{ steps.version.outputs.version }}$"; then
+            echo "  Tag ${{ steps.version.outputs.version }} already exists — skipping"
             echo "skipped=true" >> $GITHUB_OUTPUT
           else
             echo "skipped=false" >> $GITHUB_OUTPUT
@@ -88,9 +97,31 @@ jobs:
         if: steps.check.outputs.skipped == 'false'
         run: sbt -Dmunit.failOnFlaky=false test
 
+      - name: Setup Node.js
+        if: steps.check.outputs.skipped == 'false'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Build web bundle (P1)
+        if: steps.check.outputs.skipped == 'false'
+        # Same chain as ci.yml's assembly job: esbuild bundle -> build/web-dist,
+        # mounted into the jar by `-D${LOWER_NAME}.webdist=1` below. Without
+        # this step the shipped jar falls back to the SOURCE tree
+        # (WebSocketRoutes: web-dist/index.html missing -> serve web/), i.e. the
+        # release artifact was never the built tree. Friends ship UNSEALED
+        # (author ruling 2026-09-14, D1②); build-web.mjs keeps stripping as an
+        # opt-in switch — add `--strip-friends` to re-seal.
+        run: |
+          npm ci
+          node scripts/build-web.mjs
+
       - name: Build assembly
         if: steps.check.outputs.skipped == 'false'
-        run: sbt assembly
+        # -D<lowerName>.webdist=1 mounts build/web-dist into the jar (opt-in so
+        # a dev machine's plain `sbt run` never serves a stale dist tree).
+        run: sbt -D${LOWER_NAME}.webdist=1 assembly
 
       - name: Upload jar artifact
         if: steps.check.outputs.skipped == 'false'
@@ -99,6 +130,151 @@ jobs:
           name: jar
           path: target/scala-3.5.2/${{ env.LOWER_NAME }}-assembly-*.jar
           if-no-files-found: error
+          retention-days: 3
+
+  e2e:
+    name: E2E release gate (full functional)
+    # 发布前全量门禁（作者裁定 2026-11-16 11:54：E2E harness 合入 main 6dc48c6d7
+    # 后接入发布线——「全量测试安排在发布前 CI/CD」）。任一红即中止发布：
+    # release job needs 本 job。日常开发不跑全量（定向跑见 references/qa/e2e-testing.md）。
+    # 拓扑：自托管 Mac（ci-selfhosted 先例）——harness fail-closed 依赖 seatbelt
+    # (sandbox-exec 正负对照)、$E2E_CACHE_HOME/.stand/bin/sbt 门禁包装器、JDK23 与
+    # 依赖缓存，GitHub 托管 runner 均不满足；自托管分钟不计费（作者令 2026-10-21）。
+    # 双文件同步维护（沿 build-jar 双份先例）：release.yml / auto-release.yml。
+    needs: build-jar
+    if: needs.build-jar.outputs.skipped == 'false'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 75
+    env:
+      # 源钉：钉 readiness 批新 sha；clone 后 rev-parse 相等校验，漂移即红。
+      STAND_DEV_REF: 6368e13fa587c5d2f998a35f39476ebdc8562e7f
+      # 门禁语义裁定点（集中一处，--list 与执行共用；两文件同步改）：
+      # --suite functional --full = 场景目录全量枚举（E02–E10 落地自动纳入）。
+      E2E_SUITE_ARGS: "--suite functional --full"
+      # 就绪感知开关（作者裁定 2026-11-16：只跑已实现场景；READY 失败=红，
+      # NOT READY=跳过+显式列出，--list 带 readiness 列）。
+      E2E_READINESS_FLAG: "--require-ready"
+      # github.com 直连不稳（ci-selfhosted 2026-10-21 实测）：checkout 走本机代理；
+      # aliyun/npmmirror 腿不受影响。沙箱内子进程环境由 harness 全新构造，不继承。
+      https_proxy: "http://127.0.0.1:7890"
+      http_proxy: "http://127.0.0.1:7890"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # adapter 源钉 merge-base HEAD BASELINE（isolated_harness.py）与套件
+          # fingerprint 都要完整历史 —— 全量检出。
+          fetch-depth: 0
+
+      - name: Detect JDK23 (java-home 探测，不硬编码本机路径)
+        # Same logic locally: /usr/libexec/java_home -v 23
+        shell: bash
+        run: |
+          if ! E2E_JAVA_HOME="$(/usr/libexec/java_home -v 23)"; then
+            echo "::error::JDK23 not found (/usr/libexec/java_home -v 23 failed)"
+            exit 1
+          fi
+          "$E2E_JAVA_HOME/bin/java" -version 2>&1 | head -2
+          echo "E2E_JAVA_HOME=$E2E_JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: Resolve cache-home (gate wrapper assert)
+        # Same logic locally: test -x "${E2E_CACHE_HOME:-$HOME}/.stand/bin/sbt"
+        shell: bash
+        run: |
+          E2E_CACHE_HOME="${E2E_CACHE_HOME:-$HOME}"
+          if [ ! -x "$E2E_CACHE_HOME/.stand/bin/sbt" ]; then
+            echo "::error::gate sbt wrapper missing: $E2E_CACHE_HOME/.stand/bin/sbt"
+            exit 1
+          fi
+          echo "E2E_CACHE_HOME=$E2E_CACHE_HOME" >> "$GITHUB_ENV"
+
+      - name: Clone pinned stand-dev harness
+        # Same logic locally:
+        #   git clone "$STAND_DEV_HARNESS_URL" /tmp/stand-dev-harness
+        #   git -C /tmp/stand-dev-harness checkout "$STAND_DEV_REF"
+        shell: bash
+        env:
+          STAND_DEV_HARNESS_URL: ${{ vars.STAND_DEV_HARNESS_URL }}
+        run: |
+          if [ -z "$STAND_DEV_HARNESS_URL" ]; then
+            echo "::error::repository variable STAND_DEV_HARNESS_URL is required"
+            exit 1
+          fi
+          H="$RUNNER_TEMP/stand-dev-harness"
+          rm -rf "$H"
+          git clone --quiet -- "$STAND_DEV_HARNESS_URL" "$H"
+          git -C "$H" checkout --quiet "$STAND_DEV_REF"
+          if [ "$(git -C "$H" rev-parse HEAD)" != "$STAND_DEV_REF" ]; then
+            echo "::error::harness pin drift (expected $STAND_DEV_REF)"
+            exit 1
+          fi
+          test -x "$H/skills/stand-dev/scripts/isolated_harness.py"
+          echo "HARNESS=$H/skills/stand-dev" >> "$GITHUB_ENV"
+
+      - name: E2E plan (list = dry-run 原语)
+        # Same logic locally:
+        #   python3 ~/.stand/plugins/stand-dev/skills/stand-dev/scripts/run_e2e.py \
+        #     --suite functional --full --list
+        shell: bash
+        run: python3 "$HARNESS/scripts/run_e2e.py" $E2E_SUITE_ARGS $E2E_READINESS_FLAG --list
+
+      - name: Warm dependency caches (cache-home 自举，在线)
+        # Same logic locally（门禁 sbt，会话权限外 → 作者代跑）:
+        #   JAVA_HOME="$(/usr/libexec/java_home -v 23)" SBT_GATE=on SBT_GATE_SERIALIZE=on \
+        #     "$HOME/.stand/bin/sbt" -batch compile e2eClasspath
+        # 门禁包装器走全局锁（~/.stand/run/sbt.lock），与作者本机 sbt 互斥安全；
+        # 在线解析依赖落入 cache-home，供下一步离线沙箱编译只读拷贝。
+        shell: bash
+        run: |
+          env JAVA_HOME="$E2E_JAVA_HOME" SBT_GATE=on SBT_GATE_SERIALIZE=on \
+            "$E2E_CACHE_HOME/.stand/bin/sbt" -batch compile e2eClasspath
+
+      - name: Build E2E fixture (offline sandboxed compile)
+        # Same logic locally（含 sbt → 作者代跑）:
+        #   python3 ~/.stand/plugins/stand-dev/skills/stand-dev/scripts/build_e2e_fixture.py \
+        #     --repo . --output /tmp/e2e-fixture-<ts> \
+        #     --java-home "$(/usr/libexec/java_home -v 23)" --cache-home "$HOME"
+        shell: bash
+        run: |
+          E2E_FIXTURE="$RUNNER_TEMP/e2e-fixture-$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "E2E_FIXTURE=$E2E_FIXTURE" >> "$GITHUB_ENV"
+          python3 "$HARNESS/scripts/build_e2e_fixture.py" \
+            --repo "$GITHUB_WORKSPACE" --output "$E2E_FIXTURE" \
+            --java-home "$E2E_JAVA_HOME" --cache-home "$E2E_CACHE_HOME"
+
+      - name: Run full functional E2E suite (fail-closed)
+        # Same logic locally:
+        #   python3 ~/.stand/plugins/stand-dev/skills/stand-dev/scripts/run_e2e.py \
+        #     --suite functional --full --repo . --output /tmp/e2e-results-<ts> \
+        #     --adapter ~/.stand/plugins/stand-dev/skills/stand-dev/scripts/isolated_harness.py
+        # 任一场景 FAIL/NOT READY → 非零 → 发布中止（语义由 E2E_SUITE_ARGS 定）。
+        shell: bash
+        run: |
+          E2E_OUT="$RUNNER_TEMP/e2e-results-$(date -u +%Y%m%dT%H%M%SZ)"
+          echo "E2E_OUT=$E2E_OUT" >> "$GITHUB_ENV"
+          python3 "$HARNESS/scripts/run_e2e.py" $E2E_SUITE_ARGS $E2E_READINESS_FLAG \
+            --repo "$GITHUB_WORKSPACE" --output "$E2E_OUT" \
+            --adapter "$HARNESS/scripts/isolated_harness.py"
+
+      - name: Frontend gate (check:frontend)
+        # Same logic locally:
+        #   npm ci && npm install --no-save @playwright/test@1.62.0 && npm run check:frontend
+        # playwright 不入 devDependencies（仓规「由运行环境自带」；visual-harness.mjs
+        # 解析顺序注释的 CI 形态 = npm install --no-save @playwright/test）。
+        # 1.62.0 = 运行环境配对版本（2026-11-16 实证 25/25）；浏览器缺缓存时
+        # 退回系统 Edge/Chrome（visual-harness.mjs executablePath 顺序）。
+        shell: bash
+        run: |
+          npm ci
+          npm install --no-save @playwright/test@1.62.0
+          npm run check:frontend
+
+      - name: Upload E2E evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence
+          path: ${{ runner.temp }}/e2e-*
+          if-no-files-found: warn
           retention-days: 3
 
   package-macos:
@@ -229,8 +405,10 @@ jobs:
   release:
     name: Tag, Release & Mirror
     # [FROZEN 2026-09-06] needs narrowed to build-jar (package-* jobs sealed)
-    needs: [build-jar]
-    if: needs.build-jar.outputs.skipped == 'false'
+    # 2026-11-16: needs widened to [build-jar, e2e] — 发布前全量 E2E 门禁
+    # （作者裁定）阻塞 tag/release；dry_run dispatch 时跳过发布副作用。
+    needs: [build-jar, e2e]
+    if: needs.build-jar.outputs.skipped == 'false' && inputs.dry_run != true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -267,29 +445,76 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "v${{ needs.build-jar.outputs.version }}"
-          git push origin beta --tags
+          git tag "${{ needs.build-jar.outputs.version }}"
+          git push origin "refs/tags/${{ needs.build-jar.outputs.version }}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v${{ needs.build-jar.outputs.version }}"
+          tag_name: "${{ needs.build-jar.outputs.version }}"
           files: release-assets/*
           prerelease: true
           generate_release_notes: true
 
-      - name: Upload to COS (China mirror)
+      - name: Upload to OSS (China mirror)
         env:
-          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
-          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
         run: |
-          pip install coscmd 2>/dev/null
-          coscmd config -a "$COS_SECRET_ID" -s "$COS_SECRET_KEY" -b "$COS_BUCKET" -e cos.accelerate.myqcloud.com
+          # Object-storage switch 2026-09-14: pinned ossutil release (zip sha256
+          # dcc512e4a893e16bbee63bc769339d8e56b21744fd83c8212a9d8baf28767343).
+          curl -fsSL -o /tmp/ossutil.zip "https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-v1.7.19-linux-amd64.zip"
+          unzip -q -j -o /tmp/ossutil.zip -d /tmp/ossutil-bin
+          OSSUTIL=/tmp/ossutil-bin/ossutil64
+          chmod +x "$OSSUTIL"
+          "$OSSUTIL" config -e oss-cn-hangzhou.aliyuncs.com -i "$OSS_ACCESS_KEY_ID" -k "$OSS_ACCESS_KEY_SECRET" -L EN
           for f in release-assets/*; do
-            coscmd upload "$f" "$(basename "$f")" -f
-            echo "  Uploaded $(basename "$f") to COS"
+            "$OSSUTIL" cp "$f" "oss://$COS_BUCKET/$(basename "$f")" -f
+            echo "  Uploaded $(basename "$f") to OSS"
           done
           # Beta channel pointer: latest-beta-version.txt (stable writes latest-version.txt — do not clobber)
           echo -n "${{ needs.build-jar.outputs.version }}" > /tmp/latest-beta-version.txt
-          coscmd upload /tmp/latest-beta-version.txt latest-beta-version.txt -f
-          echo "  Uploaded latest-beta-version.txt to COS"
+          "$OSSUTIL" cp /tmp/latest-beta-version.txt "oss://$COS_BUCKET/latest-beta-version.txt" -f
+          echo "  Uploaded latest-beta-version.txt to OSS"
+
+      - name: Upload third-party deps to OSS (deps/ prefix)
+        env:
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+        run: |
+          # deps/ mirror anti-rot gate (installmirror batch, 2026-09-25): the
+          # deps/ prefix once stayed empty for 18 days while a stale uploader
+          # pointed at a bucket that did not exist, and both installers
+          # silently degraded to unverified installs. Every release now
+          # re-mirrors the pinned dep table (scripts/upload-deps.sh) so the
+          # prefix cannot rot silently again.
+          bash scripts/upload-deps.sh --fetch
+          bash scripts/upload-deps.sh --upload
+
+      - name: Assert deps/ availability (release gate)
+        run: |
+          # Range-GET every manifest entry: must return HTTP 200/206 AND at
+          # least one byte. A silent pass here is exactly how the 2026-09
+          # emptiness stayed invisible - any failure must fail the release.
+          set -e
+          MIRROR_BASE="https://${COS_BUCKET}.oss-cn-hangzhou.aliyuncs.com"
+          curl -fsSL --connect-timeout 8 --max-time 30 -o /tmp/deps-checksums.txt \
+            "${MIRROR_BASE}/deps/checksums.txt"
+          rows=$(grep -cE '^[0-9a-f]{64}[[:space:]]+[^[:space:]]+$' /tmp/deps-checksums.txt || true)
+          if [ "${rows:-0}" -lt 9 ]; then
+            echo "::error::deps/checksums.txt unusable (rows=${rows:-0}, need >= 9)"
+            exit 1
+          fi
+          rc=0
+          while read -r hash name; do
+            out=$(curl -sL -r 0-0 -o /dev/null -w '%{http_code} %{size_download}' \
+              --connect-timeout 8 --max-time 30 "${MIRROR_BASE}/deps/${name}")
+            code=${out%% *}; bytes=${out##* }
+            if { [ "$code" = "200" ] || [ "$code" = "206" ]; } && [ "${bytes:-0}" -ge 1 ]; then
+              echo "  [ok] deps/${name} (HTTP ${code}, ${bytes}B)"
+            else
+              echo "::error::deps/${name} not fetchable (HTTP ${code:-none}, ${bytes:-0}B)"
+              rc=1
+            fi
+          done < /tmp/deps-checksums.txt
+          exit $rc

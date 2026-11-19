@@ -14,12 +14,16 @@ import { sendWs, onMessage, setFlowStepInterceptor, setTeamMetaApplier } from '.
 import { restoreFromBackendHistory } from './persistence.js';
 import { authHeaders } from './flowHelpers.js';
 import state from './state.js';
+// Nebula 退役批（作者令 2026-11-01）：浮窗标题的 agent 名走单一显示名读点。
+import { agentDisplayName } from './rootName.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { buildManageBar, bindManageActions, syncManageControls } from './managePanel.js';
 import { isErrorReason, errorTileText, errorIcon } from './errorRecovery.js';
-import { truncateMiddle } from './utils.js';
+import { truncateMiddle, shouldFollowBottom, initScrollFollow, statusIcon } from './utils.js';
 import { cleanupCardIframes } from './cardRegistry.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层查看器铺满屏 + 左上返回（桌面零变化）。
+import { mobileSheetBack, isMobileLayer } from './mobile/popSheet.js';
 
 // ── Per-agent state ───────────────────────────────────────
 // nodeSessionId → { view: ChatView, container: div, meta: {}, historyLoaded: bool }
@@ -37,9 +41,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   display: flex; align-items: center; justify-content: center;
   z-index: 50;
   pointer-events: auto;
-  animation: fa-fade-in 0.2s ease;
 }
-@keyframes fa-fade-in { from { opacity: 0; } to { opacity: 1; } }
 
 /* Modal — fixed-position, always centered in the viewport. Not draggable. */
 .flow-agent-modal {
@@ -52,30 +54,34 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   display: flex; flex-direction: column;
   background: var(--glass-bg);
   /* Panel keeps its own glass blur; only the overlay is forbidden from dimming. */
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
-  box-shadow:
-    inset 0 1px 0 0 rgba(255,255,255,0.25),
-    0px 2px 8px rgba(0,0,0,0.04),
-    0px 8px 32px rgba(0,0,0,0.10);
-}
-@media (prefers-color-scheme: dark) {
-  .flow-agent-modal {
-    box-shadow:
-      inset 0 1px 0 0 rgba(255,255,255,0.04),
-      0px 2px 8px rgba(0,0,0,0.20),
-      0px 8px 32px rgba(0,0,0,0.35);
-  }
+  /* 全站一套毛玻璃（sapphire.css --frost-shadow 单源；design-system 的
+     --ds-shadow-panel 即其别名）：亮/暗双档由 token 自身解析——本面不再各画
+     一套三元投影（panel-ia 批 · 面板族弹窗统一收编，暗档逐字同值，亮档底影
+     收进「唯一投影」口径）。 */
+  box-shadow: var(--ds-shadow-panel);
 }
 
-/* Header — matches #header glassmorphism + sapphire refraction line. */
+/* Header — matches #header glassmorphism + sapphire refraction line.
+   ── panel-ia 批（2026-11-03 · 竖排字实拍 784832362646666_IMG_1707.jpg）────────
+   症状：卡片标题「文字卡模板升级」逐字竖排（一字一行）。根因 = **flex 压缩**，
+   不是 writing-mode / 逐字 span：旧头是一行 display:flex 且三个文本槽都可自由
+   收缩，长任务全文（.flow-agent-subtitle）与长模型串（.flow-agent-model）同场时，
+   主名槽被压到 min-content —— CJK 允许任意两字间断行 ⇒ 压缩终点就是「一列一个字」。
+   修法写成机制契约（不是一次性补丁）：
+     · .flow-agent-name 不参与收缩（flex:0 0 auto）+ 单行（nowrap）+ 自身截断
+       （max-width 46% / ellipsis）—— 无论邻居多长都不会再退回竖排；
+     · 长文本槽（subtitle / model）单行截断（nowrap + min-width:0 + ellipsis），
+       不再靠多行换行撑高头部（原形态在窄屏把头部撑到 5 行，视觉噪音主源之一）；
+     · 间距/字阶/圆角一律取 --ds-* 槽（design-system.css 单源）。
+   回归断言：evidence/panel-ia/verify-panel-ia.mjs U1/U2/U4（U4 = 真实几何探针：
+   390px 窄容器 + 长任务全文，量 .flow-agent-name 的宽高比与行数）。 */
 .flow-agent-header {
-  display: flex; align-items: center; gap: 6px;
-  padding: 10px 16px;
-  border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.08));
+  display: flex; align-items: center; gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4);
+  border-bottom: var(--ds-border-width) solid var(--glass-border);
   flex-shrink: 0;
   position: relative;
   user-select: none;
@@ -87,33 +93,71 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   height: 1px;
   background: linear-gradient(90deg,
     transparent 10%,
-    var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%,
+    var(--sapphire-refraction) 50%,
     transparent 90%);
   pointer-events: none;
   z-index: 1;
 }
 .flow-agent-name {
-  font: 600 13px -apple-system, BlinkMacSystemFont, sans-serif;
-  color: var(--color-text);
+  flex: 0 0 auto;
+  max-width: 46%;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-body);
+  font-weight: var(--ds-fw-title);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text);
 }
 .flow-agent-subtitle {
-  font: 400 11px -apple-system, sans-serif;
-  color: var(--color-text-muted);
-  margin-right: auto; margin-left: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text-muted);
+  margin-right: auto; margin-left: 0;
 }
-.flow-agent-ctx {
-  display: inline-flex; align-items: center; gap: 4px;
-  flex-shrink: 0;
-  margin-right: 8px;
+/* 模型徽标槽：单行、可收缩、自身截断（长 provider/model 串不再撑行/挤邻居）。 */
+.flow-agent-model {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 42%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--ds-font-ui);
+  font-size: var(--ds-fs-meta);
+  line-height: var(--ds-lh-title);
+  color: var(--ds-text-muted);
+  text-align: right;
 }
+.flow-agent-model .flow-agent-subtitle,
+.flow-agent-model .flow-agent-model-badge { margin: 0; min-width: 0; }
+/* 弹窗头部用量环样式已随 2026-10-23 上下文用量显示退役批删除。 */
+/* 关闭键（两个弹窗共用：flowAgentPopup 的 ✕ 是纯点击件，bgAgentPopup 的是
+   <button>——下拉收编批 2026-11-07 键盘可达口径）。两条底线在这里一次写清：
+   ① 元素复位（button 的 UA 边框/底色/字族不外泄成「第二套按钮脸」）；
+   ② 键盘可见焦点环（--ds-focus-ring 单源，Tab 到必须看得见）。 */
 .flow-agent-close {
-  cursor: pointer; font-size: 16px; line-height: 1;
-  opacity: 0.7; transition: opacity 0.15s;
-  padding: 2px 4px; color: var(--color-text);
+  cursor: pointer; font-size: var(--ds-fs-title); line-height: var(--ds-lh-tight);
+  opacity: 0.7; transition: opacity var(--ds-dur-hover) var(--ds-ease-std);
+  padding: var(--ds-space-half) var(--ds-space-1); color: var(--ds-text);
   z-index: 10;
-  border-radius: 4px;
+  flex: 0 0 auto;
+  border-radius: var(--ds-radius-badge);
+  /* 元素复位（button 形态时生效；div 形态下这几条空转） */
+  border: 0; background: transparent; font-family: var(--ds-font-ui);
 }
-.flow-agent-close:hover { opacity: 1; background: rgba(255,255,255,0.06); }
+.flow-agent-close:hover { opacity: 1; background: var(--ds-control-bg-hover); }
+.flow-agent-close:focus-visible {
+  outline: 2px solid var(--ds-focus-ring); outline-offset: 2px;
+}
 /* Code copy buttons inside popup: shift left to avoid overlapping close button */
 .flow-agent-modal .code-copy-btn { right: 40px; }
 
@@ -122,7 +166,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
    Bottom padding ≥12px: visual gap above the glass input bar (popup-input-polish §I). */
 .flow-agent-chat {
   flex: 1; overflow-y: auto;
-  padding: 12px 16px 12px;
+  padding: var(--ds-space-3) var(--ds-space-4) var(--ds-space-3);
   display: flex; flex-direction: column;
   overscroll-behavior: contain;
   scrollbar-color: var(--color-frame-border) transparent;
@@ -131,8 +175,8 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 /* Footer status bar — matches #input-bar glassmorphism + sapphire refraction */
 .flow-agent-footer {
   flex-shrink: 0;
-  display: flex; align-items: center; gap: 8px;
-  padding: 8px 16px;
+  display: flex; align-items: center; gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4);
   border-top: 1px solid var(--glass-border);
   position: relative;
   /* 2026-08-24 frozen-input spec §4: 300ms material transition */
@@ -147,7 +191,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   height: 1px;
   background: linear-gradient(90deg,
     transparent 10%,
-    var(--sapphire-refraction, rgba(99,179,237,0.25)) 50%,
+    var(--sapphire-refraction) 50%,
     transparent 90%);
   pointer-events: none;
   z-index: 1;
@@ -158,24 +202,24 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 .flow-agent-footer.running .fa-status-dot,
 .flow-agent-footer.responding .fa-status-dot {
-  background: var(--color-primary, #07c160); opacity: 1;
+  background: var(--color-primary); opacity: 1;
   animation: fa-pulse 1.4s ease-in-out infinite;
 }
 .flow-agent-footer.done .fa-status-dot {
-  background: var(--color-success, #4caf50); opacity: 1;
+  background: var(--color-success); opacity: 1;
 }
 .flow-agent-footer.failed .fa-status-dot {
-  background: var(--color-error, #f44336); opacity: 1;
+  background: var(--color-error); opacity: 1;
 }
-/* Frozen (work-schedule park, freeze-spec §3.2): sapphire dot + tint ring,
+/* Frozen (work-schedule park, freeze-spec §3.2): sapphire dot + tint,
    sapphire task text — distinct from running (pulse green) / done (green) */
 /* 2026-08-24 frozen-input spec §5.3: the footer container itself takes the
-   ice-blue material (weaker frost glow than the main input bar — hierarchy).
-   Zero new tokens: sapphire/sapphire-glow alpha variants only. */
+   ice-blue material. 极简批（2026-10-29 作者令「错误态/冻结态要极简」）：
+   12px 外发光与状态点 3px 光环退役——色相（底/描边/点/字）即状态，不再叠
+   光晕。Zero new tokens: sapphire/amber alpha variants only. */
 .flow-agent-footer.frozen {
   background: rgb(var(--sapphire) / 0.08);
   border-top-color: rgb(var(--sapphire) / 0.30);
-  box-shadow: 0 0 12px rgb(var(--sapphire-glow) / 0.18);
 }
 /* Error-recovery frozen tile (frozen-error-recovery plan UI-7): amber tint +
    amber dot — distinct from the sapphire schedule park. Applied as a modifier
@@ -183,18 +227,15 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 .flow-agent-footer.frozen.error {
   background: rgb(var(--amber) / 0.09);
   border-top-color: rgb(var(--amber) / 0.34);
-  box-shadow: 0 0 12px rgb(var(--amber-glow) / 0.18);
 }
 @media (prefers-color-scheme: dark) {
   .flow-agent-footer.frozen {
     background: rgb(var(--sapphire) / 0.12);
     border-top-color: rgb(var(--sapphire) / 0.35);
-    box-shadow: 0 0 12px rgb(var(--sapphire-glow) / 0.24);
   }
   .flow-agent-footer.frozen.error {
     background: rgb(var(--amber) / 0.14);
     border-top-color: rgb(var(--amber) / 0.40);
-    box-shadow: 0 0 12px rgb(var(--amber-glow) / 0.24);
   }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -202,7 +243,6 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 .flow-agent-footer.frozen .fa-status-dot {
   background: rgb(var(--sapphire)); opacity: 1;
-  box-shadow: 0 0 0 3px rgb(var(--sapphire) / 0.15);
   animation: none;
 }
 .flow-agent-footer.frozen .fa-task {
@@ -210,7 +250,6 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 .flow-agent-footer.frozen.error .fa-status-dot {
   background: rgb(var(--amber)); opacity: 1;
-  box-shadow: 0 0 0 3px rgb(var(--amber) / 0.18);
 }
 .flow-agent-footer.frozen.error .fa-task {
   color: rgb(var(--amber));
@@ -220,8 +259,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   height: 13px;
   color: rgb(var(--amber));
   vertical-align: -2px;
-  margin-right: 4px;
-  animation: error-pulse 1.6s ease-in-out infinite;
+  margin-right: var(--ds-space-1);
   flex-shrink: 0;
 }
 .flow-agent-footer .fa-task .fa-task-text {
@@ -237,7 +275,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
   animation: fa-pulse 1.4s ease-in-out infinite;
 }
 .flow-agent-footer.tool .fa-status-dot {
-  background: #d4a030; opacity: 1;
+  background: var(--status-warn-icon); opacity: 1;
   animation: fa-pulse 0.9s ease-in-out infinite;
 }
 /* 2026-09-03 toolline truncate fix: the phase line carries "Using tool: …"
@@ -246,9 +284,9 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
    pushes the right-side manage cluster (uptime/retries/buttons) past the
    modal's clipped edge. Hover tooltip shows the FULL label (set in JS). */
 .flow-agent-footer .fa-phase {
-  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
-  margin-left: 2px;
+  margin-left: var(--ds-space-half);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -257,7 +295,7 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 @keyframes fa-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
 .flow-agent-footer .fa-task {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   color: var(--color-text-muted);
 }
 
@@ -267,40 +305,56 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
    sapphire. Read-only kinds grey out instead of hiding (permission matrix). */
 .flow-agent-footer .fa-manage {
   margin-left: auto;
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: var(--ds-space-2);
   flex-shrink: 0;
 }
+/* 🔴 按钮形态统一批（2026-11-18 作者逐字：「包括后台智能体的恢复按钮也是」）——
+   本块**几何整件上交设置页动作族**：两枚钮的标记挂 .cfg-btn.set-btn（配色 +
+   几何令牌 --set-btn-h / --set-btn-pad-x / --ds-radius-pill / --ds-fs-btn），
+   这里只留「页脚这一行的落位 + 图标档」。修前是自写的 28px × 28px / 50%（写死在
+   本注入串里，与手机层 mobileLayer.css 的 --ds-hit-row 方钮 = 两处像素真相，
+   桌面圆钮 / 手机方钮、28 与 44 两档并存）——那正是作者实拍里「不统一的按钮」。
+   判据：scripts/check-settings-button-uniform.mjs（按钮规则禁字面量几何，只认令牌）。
+   图标本体走 --set-icon-size（与设置页图标位同源）。 */
 .flow-agent-footer .fa-mgmt-btn {
-  width: 28px; height: 28px;
-  border-radius: 50%;
-  display: flex; align-items: center; justify-content: center;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  padding: 0;
-  transition: background 0.15s, box-shadow 0.15s, border-color 0.15s, opacity 0.15s;
+  transition: background var(--dur-2) ease, border-color var(--dur-2) ease, opacity var(--dur-2) ease;
 }
-.flow-agent-footer .fa-mgmt-btn svg { width: 13px; height: 13px; stroke-width: 2.5; }
-.flow-agent-footer .fa-mgmt-stop { color: var(--color-error, #f44336); }
-.flow-agent-footer .fa-mgmt-retry { color: rgb(var(--sapphire)); }
+/* 色调：.cfg-btn:not(.cfg-btn-primary)（sapphire.css，后面加载）会在同特异度平局里
+   胜出 ⇒ 本行加一个类型选择器 button（(0,2,1) > (0,2,0)）保住危险/蓝两档 tint。 */
+.flow-agent-footer button.fa-mgmt-stop { color: var(--color-error); }
+.flow-agent-footer button.fa-mgmt-retry { color: rgb(var(--sapphire)); }
+.flow-agent-footer .fa-mgmt-btn svg {
+  width: var(--set-icon-size);
+  height: var(--set-icon-size);
+  stroke-width: 2.5;
+}
 .flow-agent-footer .fa-mgmt-btn.readonly {
   opacity: 0.35;
   cursor: not-allowed;
 }
 .flow-agent-footer .fa-retries {
-  font: 500 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 500 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   font-variant-numeric: tabular-nums;
-  color: #d4a030;
+  color: var(--status-warn-icon);
 }
 .flow-agent-footer .fa-uptime {
-  font: 400 11px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 400 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-muted);
 }
-/* Stuck: restrained red — dot + task text only, no full-panel alarm. */
+/* Stuck (盘点 #14 / #13，S2 同构)：静态红描边环点（去脉冲 alarm 动效）＋
+   任务词转中性字，语义红由词前 timer-off 图标（.st-ic token）承载。 */
 .flow-agent-footer.stuck .fa-status-dot {
-  background: var(--color-error, #f44336); opacity: 1;
-  animation: fa-pulse 0.9s ease-in-out infinite;
+  background: transparent; opacity: 1;
+  border: 1.5px solid var(--status-error-icon);
+  animation: none;
 }
-.flow-agent-footer.stuck .fa-task { color: var(--color-error, #f44336); }
+.flow-agent-footer.stuck .fa-task { color: var(--status-word); }
+.flow-agent-footer .fa-task .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
 /* Stopped (user-intent interrupt): muted dot, no alarm. */
 .flow-agent-footer.stopped .fa-status-dot {
   background: var(--color-text-muted); opacity: 0.7;
@@ -315,11 +369,15 @@ const POPUP_CSS = `<style id="flow-agent-popup-css">
 }
 
 /* Fullscreen variant — mounted on document.body, centered in the viewport.
-   No dimming backdrop and no blur: the modal floats directly above the UI. */
+   No dimming backdrop and no blur: the modal floats directly above the UI.
+   Opening animation removed 2026-09-19 (author defect report): the 0.2s
+   VIEWPORT-WIDE overlay opacity fade read as a "two-stage" opening (a whole
+   screen of blurred glass lighting up, then a small card). The panel now
+   appears at its terminal state on the very first frame. Geometry untouched;
+   other panels' animations untouched. */
 .flow-agent-overlay.fullscreen {
   position: fixed; top: 0; left: 0; right: 0; bottom: 0;
   z-index: 1000;
-  animation: fa-fade-in 0.2s ease;
 }
 .flow-agent-overlay.fullscreen .flow-agent-modal {
   position: relative;
@@ -379,9 +437,11 @@ export async function resolveFlowNodeSession(flowName, nodeId) {
   if (best) return best.sid;
   // REST fallback: includeUnindexed scans .ui.json files on disk (dag-*
   // sessions never enter the session index), sorted by -updatedAt — the first
-  // match is the latest run.
+  // match is the latest run. `includeBgAgents=1` 会话搜索范围收窄批 2026-11-01：
+  // includeUnindexed 的缺省形态已收窄到**主会话**（搜索面用）；本弹窗要看的是
+  // dag- 后台族自己的会话 ⇒ 显式取全量（同端点另一档，非前端过滤）。
   try {
-    const resp = await fetch('/api/sessions?includeUnindexed=1', { headers: authHeaders() });
+    const resp = await fetch('/api/sessions?includeUnindexed=1&includeBgAgents=1', { headers: authHeaders() });
     if (resp.ok) {
       const data = await resp.json();
       const hit = (data.sessions || []).find(s => isDagSessionOf(s.id || '', flowName, nodeId));
@@ -408,7 +468,7 @@ function ensureStepView(sessionId) {
     input: null, sendBtn: null, stopBtn: null, attachBtn: null,
     attPreview: null, slashDropdown: null, queueBar: null,
     voiceBtn: null, voiceOverlay: null, voiceText: null,
-    headerModelInfoEl: null, bgIndicatorEl: null, bgCountEl: null,
+    bgIndicatorEl: null, bgCountEl: null,
     bgDropdownEl: null, bgDropdownListEl: null,
     bgagentIndicatorEl: null, bgagentDropdownEl: null, bgagentDropdownListEl: null,
     sessionNameEl: null,
@@ -475,11 +535,10 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   popupOverlay.innerHTML = `
     <div class="flow-agent-modal">
       <div class="flow-agent-header">
-        <span class="flow-agent-name">${esc(agentName || entry.meta.agentName || '')}</span>
+        <span class="flow-agent-name">${esc(agentDisplayName(agentName || entry.meta.agentName || ''))}</span>
         <span class="flow-agent-subtitle">${esc(flowName || '')}</span>
         <span class="flow-agent-model" id="flow-agent-model"></span>
-        <span class="flow-agent-ctx" id="flow-agent-ctx"></span>
-        <div class="flow-agent-close" id="flow-agent-close">✕</div>
+        ${isMobileLayer() ? '' : '<div class="flow-agent-close" id="flow-agent-close">✕</div>'}
       </div>
       <div class="flow-agent-footer" id="flow-agent-footer">
         <span class="fa-status-dot"></span>
@@ -489,6 +548,11 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
       </div>
     </div>
   `;
+  // 3(d) 按钮去重（panel-language 批 2026-11-06）：头部 ✕ 建不建由上一行模板内联
+  // 守卫分档 —— 手机层返回键在（下方 mobileSheetBack 注入 .mfs-back）⇒ ✕ 不建
+  // （作者令「已经有返回键了，就不要再放叉号键（X）」）；桌面层无返回键 ⇒ ✕ 保留。
+  // 模板每次 open 重建 ⇒ 守卫逐次评估。🔴 判定单源 = popSheet.isMobileLayer（禁自写
+  // body.classList），守卫与 ✕ 同行相邻（机检 P2 = scripts/check-panel-unify.mjs）。
 
   // Async-fetch agent model info for header badge
   if (agentName) {
@@ -496,6 +560,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   }
 
   mountEl.appendChild(popupOverlay);
+  mobileSheetBack(popupOverlay, closeStepPopup);
 
   // Move the pre-rendered container from hidden root into the modal,
   // inserting it BEFORE the footer so the layout is header / chat / footer.
@@ -515,18 +580,20 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   // Sync footer with any meta captured before opening
   updateFooterStatus(entry);
 
-  // Render context usage ring (if model info exists for this session)
-  updatePopupCtxRing();
-
   popupOverlay.addEventListener('click', (e) => {
-    if (e.target === popupOverlay || e.target.id === 'flow-agent-close') closeStepPopup();
+    if (e.target === popupOverlay || (/** @type {Element} */ (e.target)).id === 'flow-agent-close') closeStepPopup();
   });
 
-  // Auto-scroll
-  entry.container.addEventListener('scroll', () => {
-    const atBottom = entry.container.scrollTop + entry.container.clientHeight >= entry.container.scrollHeight - 40;
-    entry.view.stream.scrollSnapped = atBottom;
-  });
+  // Auto-scroll / follow-intent latch. B4 (2026-10-04): the follow decision is
+  // delegated to initScrollFollow's registry below, where this view's chat
+  // element is also what the ↓ N pill measures (`fakeDom.chat === container`,
+  // ensureStepView). openStepPopup() runs on every open, so it must NOT install
+  // a listener of its own — a duplicate listener would put two geometry probes
+  // back on every scroll event (the B4 defect: 6 forced reads/event).
+
+  // Per-view scroll-follow machinery: row counting + "↓ N new messages" pill
+  // are per ChatView (view.stream.scrollPill) — never a global singleton.
+  initScrollFollow(entry.view);
 
   // Scroll to bottom on open + set initial snapped state
   requestAnimationFrame(() => {
@@ -553,13 +620,7 @@ export function openStepPopup(stepId, nodeLabel, agentName, flowName, nodeSessio
   }
 }
 
-// ── Context usage ring ───────────────────────────────────
-
-function fmtTokens(n) {
-  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
-  if (n >= 1000) return Math.round(n / 1000) + 'k';
-  return String(n);
-}
+// ── Model badge (context usage ring retired 2026-10-23) ──
 
 // #308 actual-model display: the header badge shows the model this agent
 // ACTUALLY used on its last LLM round (live from state.sessionModelInfo),
@@ -600,49 +661,11 @@ async function fetchAgentModelBadge(agentName) {
   } catch (e) { /* non-critical */ }
 }
 
-/** Render the context usage ring into the popup header.
- *  Matches the main window's ctx-ring style (same SVG structure, threshold line,
- *  colors, and transitions) for visual consistency. */
-function updatePopupCtxRing() {
-  if (!popupOverlay || !currentStepId) return;
-  const el = popupOverlay.querySelector('#flow-agent-ctx');
-  if (!el) return;
-  const info = state.sessionModelInfo[currentStepId];
-  if (!info || !info.contextWindow) { el.innerHTML = ''; el.style.display = 'none'; return; }
-  const ratio = info.inputTokens != null ? info.inputTokens / info.contextWindow : 0;
-  const pct = Math.min(Math.round(ratio * 100), 100);
-  let color = '#4caf50';
-  if (ratio > 0.5) color = '#d4a030';
-  if (ratio > 0.75) color = '#e53935';
-  const R = 15;
-  const CIRC = 2 * Math.PI * R;
-  const dashLen = CIRC * pct / 100;
-  const thresholdPct = Math.round((info.compactThreshold || 0.8) * 100);
-  const thresholdAngle = thresholdPct * 3.6;
-  const tooltip = info.inputTokens != null
-    ? `${fmtTokens(info.inputTokens)} / ${fmtTokens(info.contextWindow)} tokens (${pct}%) · threshold ${thresholdPct}%`
-    : `${fmtTokens(info.contextWindow)} context window`;
-  el.title = tooltip;
-  el.style.display = 'inline-flex';
-  el.innerHTML = `<div class="ctx-ring-wrap ctx-compact" title="${tooltip}">
-    <svg width="28" height="28" viewBox="0 0 36 36" class="ctx-ring-svg">
-      <circle cx="18" cy="18" r="${R}" fill="none" stroke="rgba(128,128,128,0.15)" stroke-width="3.5"/>
-      <circle cx="18" cy="18" r="${R}" fill="none" stroke="${color}" stroke-width="3.5"
-              stroke-dasharray="${dashLen.toFixed(1)} ${CIRC.toFixed(1)}"
-              stroke-linecap="round"
-              transform="rotate(-90 18 18)"
-              style="transition:stroke-dasharray 0.4s ease, stroke 0.4s ease;"/>
-      <line x1="18" y1="1.5" x2="18" y2="5" stroke="rgba(200,80,80,0.7)" stroke-width="1.5"
-            class="ctx-ring-threshold"
-            transform="rotate(${thresholdAngle.toFixed(1)} 18 18)"/>
-    </svg>
-    <span class="ctx-ring-pct">${pct}</span>
-  </div>`;
-}
-
-// Update popup ring + model badge when model info arrives for any session
-onMessage('usageUpdate', () => { if (popupOverlay) { updatePopupCtxRing(); renderModelBadge(); } });
-onMessage('done', () => { if (popupOverlay) { updatePopupCtxRing(); renderModelBadge(); } });
+// Update the popup model badge when model info arrives for any session.
+// (弹窗头部用量环已随 2026-10-23 上下文用量显示退役批删除 ——
+// 防复活钉：tests/remove-context-usage.spec.mjs。)
+onMessage('usageUpdate', () => { if (popupOverlay) renderModelBadge(); });
+onMessage('done', () => { if (popupOverlay) renderModelBadge(); });
 
 export function closeStepPopup() {
   if (!popupOverlay) return;
@@ -789,8 +812,7 @@ export function interceptFlowStep(msg) {
   if (currentStepId === msg.nodeSessionId) {
     requestAnimationFrame(() => {
       const snapped = entry.view.stream.scrollSnapped;
-      const threshold = 60;
-      if (snapped || entry.container.scrollHeight - entry.container.scrollTop - entry.container.clientHeight < threshold) {
+      if (snapped || shouldFollowBottom(entry.view, entry.container)) {
         entry.container.scrollTop = entry.container.scrollHeight;
       }
     });
@@ -868,13 +890,15 @@ function updateFooterStatus(entry) {
       }
     } else if (status === 'stuck' && entry.meta.stuck) {
       // Hard-recovery P7 (2026-09-07): label mirrors the REAL backend action.
-      taskEl.textContent = entry.meta.stuck.action === 'restart'
+      // ui-status-redesign（盘点 #14，S2）：词前 timer-off 红图标 + 中性字。
+      const stuckTxt = entry.meta.stuck.action === 'restart'
         ? t('manage.stuckAutoRestart')
         : entry.meta.stuck.action === 'hard-abort'
           ? t('manage.stuckHardAbort')
           : entry.meta.stuck.action === 'failed'
             ? t('manage.stuckFailed')
             : t('manage.stuck', { secs: entry.meta.stuck.idleSecs ?? '' });
+      taskEl.innerHTML = `${statusIcon('timer-off', 11, 'st-err')}<span class="fa-task-text">${esc(stuckTxt)}</span>`;
     } else {
       taskEl.textContent = entry.meta.task || 'Session';
     }

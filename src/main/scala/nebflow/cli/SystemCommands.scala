@@ -12,7 +12,7 @@ object HelpCommand extends CliCommand:
   def name = "help"
   def description = "Show help information"
   def subcommands = List(HelpShow)
-  def examples = List("nebflow help", "nebflow help session")
+  def examples = List("stand help", "stand help session")
 
   private object HelpShow extends CliSubcommand:
     def name = "show"
@@ -20,28 +20,39 @@ object HelpCommand extends CliCommand:
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =
-      // Delegate to CliRouter's printHelp logic
-      IO.pure(
-        CliResult.text(
-          "Use 'nebflow' without arguments to show help, or 'nebflow <command> --help' for command details."
-        )
-      )
+      // T7: the previous line said "Use 'stand' without arguments to show
+      // help" — the opposite of the implementation (no arguments starts the
+      // Gateway, Main.scala:47-50). Replaced with the pointer line that
+      // printHelp already uses (no new wording).
+      IO.pure(CliResult.text("Use 'stand <command> --help' for command details"))
 
 end HelpCommand
 
 object UpdateCommand extends CliCommand:
   def name = "update"
-  def description = "Update nebflow to the latest version"
+  def description = s"Update ${nebflow.shared.Branding.productName} to the latest version"
   def subcommands = List(UpdateRun)
-  def examples = List("nebflow update", "nebflow update --beta", "nebflow update --device DESKTOP-IJBBEOT")
+  def examples =
+    List("stand update", "stand update --beta", "stand update --device DESKTOP-IJBBEOT", "stand update --from <jar>")
 
   private object UpdateRun extends CliSubcommand:
     def name = "run"
-    def description = "Run update (--beta for latest beta, --device for remote)"
+    def description = "Run update (--from <jar> two-phase local; --beta for latest beta, --device for remote)"
 
     def params = List(
       CliParam("beta", short = Some('b'), description = "Install latest beta version", isFlag = true),
-      CliParam("device", short = Some('d'), description = "Update a remote device (requires running gateway)")
+      CliParam("device", short = Some('d'), description = "Update a remote device (requires running gateway)"),
+      CliParam(
+        "from",
+        None,
+        "Two-phase update from a local jar: Phase1 stage+verify (engine untouched) → Phase2 pointer promote + OS-detached apply with health gate and auto-rollback"
+      ),
+      CliParam(
+        "stage-only",
+        None,
+        "With --from: stop after Phase1 staging — no pointer change, no restart",
+        isFlag = true
+      )
     )
 
     def run(ctx: CliContext): IO[CliResult] =
@@ -50,41 +61,183 @@ object UpdateCommand extends CliCommand:
           // Remote update — call the target device's /api/neblink/update via neblink
           remoteUpdate(deviceName, ctx.args.get("beta").contains("true"))
         case _ =>
-          // Local update (existing behavior)
-          IO.blocking {
-            import sys.process.*
-            val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
-            val script =
-              if ctx.args.get("beta").contains("true") then
-                if isWindows then
-                  """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.core.Branding.installPs1Url + """ | iex" """
-                else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh -s -- --beta"
-              else if isWindows then """powershell -Command "& { iwr """ + nebflow.core.Branding.installPs1Url + """ | iex }" """
-              else "curl -fsSL " + nebflow.core.Branding.installUrl + " | sh"
-            val exitCode = script.!
-            if exitCode == 0 then CliResult.text("Update completed")
-            else CliResult.Error("Update failed", exitCode)
-          }
+          ctx.args.get("from") match
+            case Some(jar) if jar != "true" && jar.trim.nonEmpty =>
+              twoPhaseLocal(os.Path(jar.trim), stageOnly = ctx.args.get("stage-only").contains("true"))
+            case Some(_) =>
+              IO.pure(CliResult.Error("--from requires the jar path: stand update --from <path>/stand-assembly-<version>.jar", 1))
+            case None =>
+              // Local channel update (existing behavior, unchanged)
+              IO.blocking {
+                import sys.process.*
+                val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
+                val script =
+                  if ctx.args.get("beta").contains("true") then
+                    if isWindows then
+                      """powershell -Command "$env:CHANNEL='beta'; iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex" """
+                    else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh -s -- --beta"
+                  else if isWindows then
+                    """powershell -Command "& { iwr """ + nebflow.shared.Branding.installPs1Url + """ | iex }" """
+                  else "curl -fsSL " + nebflow.shared.Branding.installUrl + " | sh"
+                val exitCode = script.!
+                if exitCode == 0 then CliResult.text("Update completed")
+                else CliResult.Error("Update failed", exitCode)
+              }
+
+    // ── two-phase local update（台账 #916）────────────────────────────────
+
+    /**
+     * Phase1 [[UpdateStage.stage]]（校验+staging，引擎/指针零触碰）→ 全就绪才
+     * Phase2：pointer 布局 = [[nebflow.core.hotrestart.InstallPointer.promote]]
+     * 原子切（previous←旧 current，回滚锚就位）；两种布局随后都注册 OS 托管
+     * detached apply（stop→start→健康闸含版本断言→失败自动回滚旧版）。注册
+     * 失败 → 指针原样放回（staged 包留在盘上无害）。引擎未在跑 → 不注册 apply，
+     * 下一次 start 直接吃新指针/新包。
+     */
+    private[cli] def twoPhaseLocal(
+        jar: os.Path,
+        stageOnly: Boolean,
+        resolveL: () => Option[String] = () =>
+          DetachedApply.resolveLauncher(sys.env, sys.props.getOrElse("user.home", ""), isWindows),
+        doStage: (os.Path, os.Path, DetachedApply.Layout) => IO[Either[String, UpdateStage.Staged]] =
+          (j, dir, lay) => UpdateStage.stage(j, dir, lay),
+        doRegister: DetachedApply.Plan => IO[Either[String, String]] = p => DetachedApply.register(p)
+    ): IO[CliResult] =
+      IO.blocking(isWindows).flatMap { isWin =>
+        resolveL() match
+          case None =>
+            IO.pure(
+              CliResult.Error(
+                "stand launcher not found (posix: ~/.stand/bin/stand; windows: %LOCALAPPDATA%\\stand\\stand.cmd; override: STAND_LAUNCHER)",
+                1
+              )
+            )
+          case Some(launcher) =>
+            val installDir = DetachedApply.installDirOf(launcher)
+            val layout = DetachedApply.detectLayout(installDir)
+            doStage(jar, installDir, layout).flatMap {
+              case Left(err) => IO.pure(CliResult.Error(s"phase1 stage failed (nothing promoted): $err", 1))
+              case Right(staged) if stageOnly =>
+                IO.pure(
+                  CliResult.text(
+                    s"phase1 staged: ${staged.jarName} → ${staged.stagedPath} (sha256 ${staged.sha256.take(16)}…${if staged.idempotentHit then ", idempotent hit" else ""})\n  pointer untouched, engine untouched — run without --stage-only to promote + restart"
+                  )
+                )
+              case Right(staged) =>
+                val promote = IO.blocking {
+                  if layout == DetachedApply.Layout.Pointer then
+                    for
+                      preCur <- nebflow.core.hotrestart.InstallPointer.readCurrent(installDir)
+                      prePrev <- nebflow.core.hotrestart.InstallPointer.readPrevious(installDir)
+                      promoted <- nebflow.core.hotrestart.InstallPointer.promote(installDir, staged.version)
+                    yield promoted
+                      .map(_ => (preCur, prePrev): (Option[String], Option[String]))
+                      .left.map(_.toString)
+                  else IO.pure(Right((None, None): (Option[String], Option[String])))
+                }.flatten
+                promote.flatMap {
+                  case Left(err) =>
+                    IO.pure(CliResult.Error(s"phase2 promote failed (pointer untouched): $err", 1))
+                  case Right(pointersBefore) =>
+                    val port = nebflow.gateway.GatewayConfig.load.map(_.port.value)
+                    port.flatMap { p =>
+                      val pidAlive = ProcessManager.readPid().exists(ProcessManager.isRunning)
+                      val listener =
+                        IO.blocking(SingleInstanceGuard.connectProbeAccepted(p))
+                      listener.map(accepted => pidAlive || accepted).flatMap { engineRunning =>
+                        if !engineRunning then
+                          IO.pure(
+                            CliResult.text(
+                              s"phase2 done: staged ${staged.version} promoted (pointer/winsort selection face) — engine not running, next start runs ${staged.version}"
+                            )
+                          )
+                        else
+                          IO.blocking(
+                            DetachedApply.defaultPlan(
+                              DetachedApply.Kind.Update,
+                              p,
+                              Some(staged.version),
+                              ProcessManager.readPid()
+                            )
+                          ).flatMap {
+                            case Left(err) => restoreAndFail(installDir, layout, pointersBefore, err)
+                            case Right(plan) =>
+                              doRegister(plan).flatMap {
+                                case Right(msg) =>
+                                  IO.pure(
+                                    CliResult.text(
+                                      s"phase1 staged ${staged.version} (sha256 ${staged.sha256.take(16)}…) → phase2 promoted + detached apply registered\n  $msg\n  on health-gate failure the previous version is restored automatically (cause lands in the log)"
+                                    )
+                                  )
+                                case Left(err) =>
+                                  restoreAndFail(installDir, layout, pointersBefore, err)
+                              }
+                          }
+                      }
+                    }
+                  }
+            }
+      }
+
+    /** 注册失败 → 指针原样放回（staged 包留在盘上无害），报因退出。 */
+    private def restoreAndFail(
+        installDir: os.Path,
+        layout: DetachedApply.Layout,
+        pointersBefore: (Option[String], Option[String]),
+        cause: String
+    ): IO[CliResult] =
+      if layout != DetachedApply.Layout.Pointer then
+        IO.pure(CliResult.Error(s"apply registration failed (selection face unchanged): $cause", 1))
+      else
+        pointersBefore match
+          case (Some(cur), prev) =>
+            nebflow.core.hotrestart.InstallPointer
+              .writePointers(installDir, cur, prev)
+              .attempt
+              .map {
+                _ =>
+                  CliResult.Error(s"apply registration failed — pointers restored to $cur: $cause", 1)
+              }
+          case (None, _) =>
+            IO.pure(CliResult.Error(s"apply registration failed (no pointer to restore — layout had none): $cause", 1))
+
+    private def isWindows: Boolean = System.getProperty("os.name").toLowerCase.contains("win")
 
     /** Trigger update on a remote device via the gateway (P2P first, relay fallback). */
     private def remoteUpdate(deviceName: String, beta: Boolean): IO[CliResult] =
       GatewayClient.create.flatMap {
         case None =>
           IO.pure(
-            CliResult.Error("Gateway not running. Start with 'nebflow start' (local gateway needed for neblink status)")
+            CliResult.Error("Gateway not running. Start with 'stand start' (local gateway needed for neblink status)")
           )
         case Some(client) =>
-          val payload = io.circe.Json.obj("device" -> deviceName.asJson, "beta" -> beta.asJson)
-          client.post("/api/neblink/remote-update", payload).flatMap { resp =>
-            val success = resp.hcursor.downField("success").as[Boolean].getOrElse(false)
-            val msg = resp.hcursor.downField("message").as[String]
-              .orElse(resp.hcursor.downField("error").as[String])
-              .getOrElse("Unknown error")
-            if success then IO.pure(CliResult.text(s"Remote update on $deviceName: $msg"))
-            else IO.pure(CliResult.Error(msg))
-          }.handleErrorWith { e =>
-            IO.pure(CliResult.Error(s"Gateway request failed: ${e.getMessage}"))
-          }
+          // hotupdate 批 3 · G8（设计 §9:173 契约增量）：载荷**新增可选**幂等键
+          // `clientRequestId`（加法字段 + 双向容错——老端忽略未知键，本端缺席即现行为
+          // 逐字节不变）。🔴 既有 `device` / `beta` 两字段的语义与存在性零改动。
+          // 键的生成方 = 调用方：一次命令行调用 = 一次逻辑更新请求。命令行面无自动重试
+          // 链（一次尝试零重试），故无需跨调用保留键；界面侧设备行的重试复用规则见
+          // resources/web/js/contacts.js 的触发点注释。
+          val clientRequestId = java.util.UUID.randomUUID().toString
+          val payload = io.circe.Json.obj(
+            "device" -> deviceName.asJson,
+            "beta" -> beta.asJson,
+            "clientRequestId" -> clientRequestId.asJson
+          )
+          client
+            .post("/api/neblink/remote-update", payload)
+            .flatMap { resp =>
+              val success = resp.hcursor.downField("success").as[Boolean].getOrElse(false)
+              val msg = resp.hcursor
+                .downField("message")
+                .as[String]
+                .orElse(resp.hcursor.downField("error").as[String])
+                .getOrElse("Unknown error")
+              if success then IO.pure(CliResult.text(s"Remote update on $deviceName: $msg"))
+              else IO.pure(CliResult.Error(msg))
+            }
+            .handleErrorWith { e =>
+              IO.pure(CliResult.Error(s"Gateway request failed: ${e.getMessage}"))
+            }
       }
 
   end UpdateRun
@@ -93,9 +246,9 @@ end UpdateCommand
 
 object UninstallCommand extends CliCommand:
   def name = "uninstall"
-  def description = "Uninstall nebflow"
+  def description = s"Uninstall ${nebflow.shared.Branding.productName}"
   def subcommands = List(UninstallRun)
-  def examples = List("nebflow uninstall")
+  def examples = List("stand uninstall")
 
   private object UninstallRun extends CliSubcommand:
     def name = "run"
@@ -107,8 +260,8 @@ object UninstallCommand extends CliCommand:
         import sys.process.*
         val script =
           if System.getProperty("os.name").toLowerCase.contains("win") then
-            """powershell -Command "& { iwr """ + nebflow.core.Branding.uninstallPs1Url + """ | iex }" """
-          else "curl -fsSL " + nebflow.core.Branding.uninstallUrl + " | sh"
+            """powershell -Command "& { iwr """ + nebflow.shared.Branding.uninstallPs1Url + """ | iex }" """
+          else "curl -fsSL " + nebflow.shared.Branding.uninstallUrl + " | sh"
         val exitCode = script.!
         if exitCode == 0 then CliResult.text("Uninstall completed")
         else CliResult.Error("Uninstall failed", exitCode)
@@ -122,7 +275,7 @@ object VersionCommand extends CliCommand:
   def name = "version"
   def description = "Show version"
   def subcommands = List(VersionShow)
-  def examples = List("nebflow version")
+  def examples = List("stand version")
 
   private object VersionShow extends CliSubcommand:
     def name = "show"
@@ -131,13 +284,13 @@ object VersionCommand extends CliCommand:
 
     def run(ctx: CliContext): IO[CliResult] =
       if ctx.json then IO.pure(CliResult.Json(io.circe.Json.obj("version" -> nebflow.Version.string.asJson)))
-      else IO.pure(CliResult.text(s"nebflow v${nebflow.Version.string}"))
+      else IO.pure(CliResult.text(s"${nebflow.shared.Branding.productName} ${nebflow.Version.string}"))
 
 object StartCommand extends CliCommand:
   def name = "start"
   def description = "Start the Gateway server"
   def subcommands = List(StartRun)
-  def examples = List("nebflow start")
+  def examples = List("stand start")
 
   private object StartRun extends CliSubcommand:
     def name = "run"
@@ -152,44 +305,115 @@ object StopCommand extends CliCommand:
   def name = "stop"
   def description = "Stop the running Gateway"
   def subcommands = List(StopRun)
-  def examples = List("nebflow stop")
+  def examples = List("stand stop", "stand stop --force", "stand stop --tree")
 
-  private object StopRun extends CliSubcommand:
+  private[cli] object StopRun extends CliSubcommand:
     def name = "run"
-    def description = "Stop the Gateway"
-    def params = Nil
+    def description = "Stop the Gateway (--force skips the ownership gate; --tree kills an sbt-managed chain)"
+    def params = List(
+      CliParam("force", None, "Skip the ownership gate (identity check, port confirmation and the 8080/8097 dev-host gate always apply)", isFlag = true),
+      CliParam("tree", None, "Stop the whole sbt-managed process chain; degrades to a single-process stop when no sbt ancestor exists", isFlag = true)
+    )
 
     def run(ctx: CliContext): IO[CliResult] =
-      nebflow.cli.ProcessManager.stop().as(CliResult.ok)
+      runStop(stopOptions(ctx))
+
+  /**
+   * StopOutcome → CliResult mapping (piece 4): Stopped/NotRunning exit 0
+   * (not-running is idempotent success), Refused/Failed exit 1. Exposed for
+   * the spec to drive with injected deps — zero real signals there.
+   */
+  private[cli] def runStop(
+      opts: ProcessManager.StopOptions,
+      deps: ProcessManager.StopDeps = ProcessManager.StopDeps()
+  ): IO[CliResult] =
+    ProcessManager.stopHardened(opts, deps).map {
+      case ProcessManager.StopOutcome.NotRunning =>
+        CliResult.Exit(0, s"${nebflow.shared.Branding.productName} is not running")
+      case ProcessManager.StopOutcome.Stopped(message) =>
+        CliResult.Exit(0, message)
+      case ProcessManager.StopOutcome.Refused(reason) =>
+        CliResult.Error(reason, 1)
+      case ProcessManager.StopOutcome.Failed(reason) =>
+        CliResult.Error(reason, 1)
+    }
+
+  private[cli] def stopOptions(ctx: CliContext): ProcessManager.StopOptions =
+    ProcessManager.StopOptions(
+      force = ctx.args.get("force").contains("true"),
+      tree = ctx.args.get("tree").contains("true")
+    )
 
 object StatusCommand extends CliCommand:
   def name = "status"
   def description = "Check if Gateway is running"
   def subcommands = List(StatusCheck)
-  def examples = List("nebflow status")
+  def examples = List("stand status")
 
-  private object StatusCheck extends CliSubcommand:
+  private[cli] object StatusCheck extends CliSubcommand:
     def name = "check"
     def description = "Check Gateway status"
     def params = Nil
 
     def run(ctx: CliContext): IO[CliResult] =
-      val pidOpt = nebflow.cli.ProcessManager.readPid()
-      val running = pidOpt.exists(nebflow.cli.ProcessManager.isRunning)
-      val port = nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
-      if ctx.json then
-        IO.pure(
-          CliResult.Json(
-            io.circe.Json.obj(
-              "running" -> running.asJson,
-              "pid" -> pidOpt.asJson,
-              "port" -> port.asJson,
-              "version" -> nebflow.Version.string.asJson
+      GatewayClient.readPort.flatMap { port =>
+        IO.blocking {
+          val pidOpt = nebflow.cli.ProcessManager.readPid()
+          val pidRunning = pidOpt.exists(nebflow.cli.ProcessManager.isRunning)
+          // A5: the pid file alone made `status` report "✗ Gateway not running"
+          // while the gateway was actually serving (cross-home start, raced
+          // cleanup, an older build that wrote no pid). Probe the port too:
+          // an identity probe first (is the occupant ours?), then a plain TCP
+          // connect to tell "someone else is on this port" from "free".
+          val ours =
+            if pidRunning then None
+            else nebflow.cli.SingleInstanceGuard.checkPortBlocking("127.0.0.1", port)
+          val foreign =
+            if pidRunning || ours.isDefined then false
+            else nebflow.cli.SingleInstanceGuard.connectProbeAccepted(port)
+          val running = pidRunning || ours.isDefined
+
+          // Phase 2 (§3.1): ownership sidecar fields — daemon true only for
+          // launcher-started instances; no meta file → null (not false).
+          val meta = PidMeta.read()
+          val startedBy = meta.map(_.startedBy)
+          val mode = meta.flatMap(_.mode)
+          val daemon: Option[Boolean] = startedBy.map(_ == PidMeta.StartedByLauncher)
+
+          // Exit codes: 0 running / 3 not running / 4 abnormal (foreign
+          // occupant). CliResult.Exit keeps the text face prefix-free.
+          val code = if running then 0 else if foreign then 4 else 3
+
+          if ctx.json then
+            CliResult.Exit(
+              code,
+              io.circe.Json.obj(
+                "running" -> running.asJson,
+                "pid" -> pidOpt.asJson,
+                "port" -> port.asJson,
+                "version" -> nebflow.Version.string.asJson,
+                "daemon" -> daemon.asJson,
+                "startedBy" -> startedBy.asJson,
+                "mode" -> mode.asJson
+              ).spaces2
             )
-          )
-        )
-      else if running then IO.pure(CliResult.text(s"✓ Gateway running (pid: ${pidOpt.get}, port: $port)"))
-      else IO.pure(CliResult.text("✗ Gateway not running"))
+          else
+            val head =
+              if pidRunning then s"✓ Gateway running (pid: ${pidOpt.get}, port: $port)"
+              else if ours.isDefined then s"✓ Gateway running (port: $port, no pid file)"
+              else if foreign then s"✗ Gateway not running (port $port is in use by another program)"
+              else "✗ Gateway not running"
+            val metaLines = startedBy match
+              case Some(by) =>
+                List(
+                  s"  started-by: $by" +
+                    mode.fold("")(m => s" ($m)") +
+                    (if daemon.contains(true) then " [daemon]" else "")
+                )
+              case None => Nil
+            CliResult.Exit(code, (head :: metaLines).mkString("\n"))
+        }
+      }
 
     end run
 
@@ -201,7 +425,7 @@ object DoctorCommand extends CliCommand:
   def name = "doctor"
   def description = "Diagnose and fix environment issues"
   def subcommands = List(DoctorRun)
-  def examples = List("nebflow doctor", "nebflow doctor --fix")
+  def examples = List("stand doctor", "stand doctor --fix")
 
   private object DoctorRun extends CliSubcommand:
     def name = "check"
@@ -222,22 +446,23 @@ object DoctorCommand extends CliCommand:
         val checks = scala.collection.mutable.ListBuffer.empty[Diagnostic]
         val fixes = scala.collection.mutable.ListBuffer.empty[String]
         val configDir = ctx.configDir
-        val configPath = nebflow.core.PathUtil.configJsonReadPath(configDir)
+        val configPath = nebflow.shared.PathUtil.configJsonReadPath(configDir)
 
         // --- 1. Java ---
         val javaVer = sys.props.getOrElse("java.version", "unknown")
         val javaMajor =
           try javaVer.takeWhile(_.isDigit).toInt
           catch case _ => 0
-        val javaOk = javaMajor >= 11
+        val javaOk = javaMajor >= 21
         checks += Diagnostic(
           "Java",
           javaOk,
           javaVer,
           if !javaOk && fix then
-            fixes += "Java 11+ required — please install or update JDK"
-            "Java 11+ required"
-          else if !javaOk then "Java 11+ required"
+            fixes += "Java 21+ required — please install or update JDK (https://adoptium.net/temurin/releases/?version=21)"
+            "Java 21+ required — install JDK 21, then re-run 'stand doctor --fix'"
+          else if !javaOk then
+            "Java 21+ required — install JDK 21 (https://adoptium.net/temurin/releases/?version=21), then re-run 'stand doctor'"
           else ""
         )
 
@@ -260,7 +485,7 @@ object DoctorCommand extends CliCommand:
                 // Check it's a valid object (not array or primitive)
                 if json.isObject then (true, s"Valid JSON ($configPath)", "")
                 else if fix then
-                  val backupPath = configDir / "nebflow.json.bak"
+                  val backupPath = configDir / (configPath.last + nebflow.shared.PathUtil.configMigrationBackupSuffix)
                   os.move.over(configPath, backupPath)
                   os.write.over(configPath, "{}")
                   fixes += s"Invalid JSON (was ${json.name}) — backed up to $backupPath, reset to {}"
@@ -278,14 +503,14 @@ object DoctorCommand extends CliCommand:
                         (true, s"Restored from snapshot: ${snap.last}", "")
                       catch
                         case e: Exception =>
-                          val backupPath = configDir / "nebflow.json.bak"
+                          val backupPath = configDir / (configPath.last + nebflow.shared.PathUtil.configMigrationBackupSuffix)
                           try os.move.over(configPath, backupPath)
                           catch case _ => ()
                           os.write.over(configPath, "{}")
                           fixes += s"Corrupt config (parse error at ${err.message}) — backed up, reset to {}"
                           (true, "Reset to empty", "")
                     case None =>
-                      val backupPath = configDir / "nebflow.json.bak"
+                      val backupPath = configDir / (configPath.last + nebflow.shared.PathUtil.configMigrationBackupSuffix)
                       try os.move.over(configPath, backupPath)
                       catch case _ => ()
                       os.write.over(configPath, "{}")
@@ -315,7 +540,7 @@ object DoctorCommand extends CliCommand:
         // --- 5. PID file / Gateway status ---
         val pidOpt = ProcessManager.readPid()
         val gatewayRunning = pidOpt.exists(ProcessManager.isRunning)
-        val port = nebflow.core.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(8080)
+        val port = nebflow.shared.Branding.env("GATEWAY_PORT").flatMap(_.toIntOption).getOrElse(nebflow.shared.Defaults.brandDefaultPort)
         if gatewayRunning then checks += Diagnostic("Gateway", true, s"Running (pid=${pidOpt.get}, port=$port)", "")
         else
           // Stale PID file?
@@ -327,16 +552,16 @@ object DoctorCommand extends CliCommand:
               "Gateway",
               false,
               "Not running (cleaned stale PID file)",
-              "Run 'nebflow start' to start"
+              "Run 'stand start' to start"
             )
           else if pidExists then
             checks += Diagnostic(
               "Gateway",
               false,
               "Not running (stale PID file)",
-              "Run with --fix to clean, or 'nebflow start'"
+              "Run with --fix to clean, or 'stand start'"
             )
-          else checks += Diagnostic("Gateway", false, "Not running", "Run 'nebflow start'")
+          else checks += Diagnostic("Gateway", false, "Not running", "Run 'stand start'")
           end if
         end if
 
@@ -459,7 +684,7 @@ object DoctorCommand extends CliCommand:
           )
         else
           val lines = scala.collection.mutable.ListBuffer.empty[String]
-          lines += s"nebflow v${nebflow.Version.string} — diagnostics"
+          lines += s"${nebflow.shared.Branding.productName} ${nebflow.Version.string} — diagnostics"
           lines += ""
           for d <- checks do
             val icon = if d.ok then "✓" else "✗"

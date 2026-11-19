@@ -1,0 +1,241 @@
+<!doctype html>
+<!-- errorfrozen-minimal-harness.html — gallery page for the error/frozen-state
+     dialog minimalization batch (author directive 2026-10-29 13:51).
+
+     Loads the REAL production stylesheet chain (base tokens → chat → modal →
+     input → sapphire → liveness, production order subset) and the REAL
+     /js modules (errorRecovery.js / sessionGate.js / modal.js), then drives
+     each error/frozen surface with the production entry points:
+
+       ① schedule-freeze input bar   (#input-bar.frozen          — CSS state)
+       ② error-recovery input bar    (applyErrorFrozen → .frozen-error + strip)
+       ③ escalation decision card    (renderEscalationCard)
+       ④ sub-agent frozen tiles      (.flow-agent-footer.frozen[.error])
+       ⑤ error toast                 (modal.js showToast('…', 'error'))
+       ⑥ session-gate banner         (sessionGate.js noteAuthRejected)
+
+     The single real #input-bar (ids are load-bearing in input.css) is hosted
+     in the bar stage; ?state= picks which state it renders for the shot.
+     The tile footers are markup replicas — their CSS is injected by
+     flowAgentPopup.js (POPUP_CSS), imported below so the styles under test
+     are always the real ones, never a copied block.
+
+     Driven by tests/errorfrozen-capture.mjs (before/after evidence shots,
+     light + dark). -->
+<html>
+<head>
+<meta charset="utf-8">
+<title>error/frozen minimal harness</title>
+<link rel="stylesheet" href="/css/base.css">
+<link rel="stylesheet" href="/css/chat.css">
+<link rel="stylesheet" href="/css/modal.css">
+<link rel="stylesheet" href="/css/input.css">
+<link rel="stylesheet" href="/css/sapphire.css">
+<link rel="stylesheet" href="/css/liveness.css">
+<style>
+  html, body { margin: 0; padding: 0; }
+  body { min-height: 100vh; }
+  /* Chat-like backdrop: glass surfaces need content behind them to frost. */
+  .backdrop {
+    position: fixed; inset: 0; padding: 24px;
+    background:
+      radial-gradient(1200px 600px at 20% 0%, rgba(120, 160, 220, 0.16), transparent 60%),
+      radial-gradient(900px 500px at 85% 90%, rgba(7, 193, 96, 0.05), transparent 55%),
+      var(--color-bg, #f3f5f9);
+  }
+  .backdrop .bubble {
+    max-width: 460px; padding: 9px 13px; border-radius: 14px;
+    font-size: 13px; line-height: 1.55; margin-bottom: 10px;
+    background: rgb(255 255 255 / 0.55); color: #1a1a1a;
+  }
+  @media (prefers-color-scheme: dark) {
+    .backdrop .bubble { background: rgb(40 44 54 / 0.65); color: #e8eaee; }
+  }
+  #gallery {
+    position: relative; z-index: 5;
+    max-width: 760px; margin: 0 auto; padding: 20px 8px 140px;
+    display: flex; flex-direction: column; gap: 26px;
+  }
+  #gallery section { display: flex; flex-direction: column; gap: 10px; }
+  #gallery h2 {
+    margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
+    color: var(--color-frame-text-muted, #888);
+  }
+  .stage {
+    border-radius: 16px; padding: 18px;
+    background: var(--color-frame-hover, rgba(128,128,128,0.08));
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .stage.note { padding: 0; background: transparent; }
+  /* Fake chat host for the escalation card (real renderEscalationCard
+     prepends into this node). */
+  .fake-chat { display: flex; flex-direction: column; }
+  .fake-chat .row { display: flex; margin-bottom: 8px; }
+  .fake-chat .row.user { justify-content: flex-end; }
+  .fake-chat .row .bubble {
+    max-width: 70%; padding: 8px 12px; border-radius: 14px; font-size: 13px;
+    line-height: 1.5; background: var(--color-primary); color: #fff;
+  }
+  .fake-chat .row.agent .bubble { background: rgb(255 255 255 / 0.6); color: #1a1a1a; }
+  @media (prefers-color-scheme: dark) {
+    .fake-chat .row.agent .bubble { background: rgb(40 44 54 / 0.7); color: #e8eaee; }
+  }
+  /* Tile stage — two popup footers side by side (markup replica of
+     bgAgentPopup.js :489-497; styles come from flowAgentPopup.js POPUP_CSS). */
+  .tile-row { display: flex; gap: 12px; }
+  .flow-agent-footer { border-radius: 0 0 12px 12px; flex: 1; }
+</style>
+</head>
+<body>
+<div class="backdrop">
+  <div class="bubble">毛玻璃后景：玻璃面需要有内容可透。</div>
+  <div class="bubble">第二行后景内容，观察 frost 是否正常。</div>
+</div>
+
+<div id="gallery">
+  <section id="sec-bar">
+    <h2 id="bar-label">输入条状态</h2>
+    <div class="stage" id="stage-bar">
+      <!-- Real ids/classes — input.css keys on them. Mic orb omitted (not a
+           state surface under test); attach/send kept as quiet stand-ins. -->
+      <div id="input-bar">
+        <div id="input-wrap" style="position:relative;">
+          <textarea id="input" rows="1" placeholder="Type a message..." autocomplete="off"></textarea>
+        </div>
+        <button class="skip-freeze-btn" id="skip-freeze-btn" type="button">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19"/></svg>
+          <span id="skip-freeze-label">跳过本次</span>
+        </button>
+        <button class="icon-btn" id="attach-btn" aria-label="attach">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
+        </button>
+        <button id="send-btn" aria-label="send">
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+        <button id="stop-btn" aria-label="stop" hidden>
+          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section id="sec-escalation">
+    <h2>③ 升级决策卡 · renderEscalationCard</h2>
+    <div class="stage">
+      <div class="fake-chat" id="fake-chat">
+        <div class="row user"><div class="bubble user">帮我跑一下构建并修复报错</div></div>
+        <div class="row agent"><div class="bubble">构建在第 3 步失败…</div></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="sec-tiles">
+    <h2>④ 子代理冻结 tile · .flow-agent-footer.frozen[.error]</h2>
+    <div class="stage tile-row">
+      <div class="flow-agent-footer frozen" id="tile-frozen">
+        <span class="fa-status-dot"></span>
+        <span class="fa-task"><span class="fa-task-text">整理周报草稿</span></span>
+        <span class="fa-phase" style="display:none"></span>
+        <span class="fa-manage-slot"></span>
+      </div>
+      <div class="flow-agent-footer frozen error" id="tile-error">
+        <span class="fa-status-dot"></span>
+        <span class="fa-task"><!-- errorIcon injected by harness --><span class="fa-task-text">回归全量用例</span></span>
+        <span class="fa-phase" style="display:none"></span>
+        <span class="fa-manage-slot"></span>
+      </div>
+    </div>
+  </section>
+</div>
+
+<script>window.__ef = { ready: false, pageErrors: [] };</script>
+<script>window.addEventListener('error', (e) => { window.__ef.pageErrors.push(String(e.message)); });</script>
+<!-- lucide is the production icon source for statusIcon() (toast glyphs) —
+     the app loads it as a classic script before boot; same here. -->
+<script src="/vendor/lucide.min.js"></script>
+<script type="module">
+  const stateParam = new URLSearchParams(location.search).get('state') || 'all';
+
+  const { chatViews } = await import('/js/chatView.js');
+  const errorRecovery = await import('/js/errorRecovery.js');
+  const sessionGate = await import('/js/sessionGate.js');
+  const { showToast } = await import('/js/modal.js');
+  // Real tile CSS (POPUP_CSS <style> injection happens at import time).
+  await import('/js/flowAgentPopup.js');
+
+  // ── Fake view: a minimal ChatView-shaped record the real renderers accept.
+  const bar = document.getElementById('input-bar');
+  const input = document.getElementById('input');
+  const fakeChat = document.getElementById('fake-chat');
+  const view = {
+    mounted: true,
+    sessionId: 'ef-demo',
+    dom: { inputBar: bar, input, chat: fakeChat },
+  };
+  chatViews.ef = view;
+
+  // User bubble in the fake chat → lastUserMessageText() resolves → the
+  // strip's retry button renders enabled (the common live shape).
+  const rowUser = document.createElement('div');
+  rowUser.className = 'row user';
+  rowUser.innerHTML = '<div class="bubble user"><div>帮我跑一下构建并修复报错</div></div>';
+  fakeChat.insertBefore(rowUser, fakeChat.firstChild);
+
+  const tileError = document.getElementById('tile-error');
+  tileError.querySelector('.fa-task').innerHTML =
+    errorRecovery.errorIcon('llm-transient', 'error-icon') +
+    '<span class="fa-task-text">回归全量用例</span>';
+
+  window.__ef.applyBarState = (s) => {
+    // Clean slate each call (mirrors main.js's mutual-exclusion handling).
+    bar.classList.remove('frozen', 'frozen-error');
+    delete bar.dataset.frozen;
+    delete bar.dataset.errorFrozen;
+    errorRecovery.clearErrorFrozen('ef-demo');
+    for (const el of [input, bar.querySelector('#attach-btn'), bar.querySelector('#send-btn')]) {
+      if (el) el.removeAttribute('disabled');
+    }
+    input.placeholder = 'Type a message...';
+    document.getElementById('bar-label').textContent = '输入条状态';
+    if (s === 'frozen') {
+      bar.classList.add('frozen');
+      bar.dataset.frozen = 'true';
+      input.setAttribute('disabled', '');
+      input.setAttribute('aria-disabled', 'true');
+      input.placeholder = '已冻结 · 12:00 恢复';
+      document.getElementById('bar-label').textContent = '① 调度冻结 · #input-bar.frozen（sapphire 静候）';
+    } else if (s === 'error') {
+      errorRecovery.applyErrorFrozen(view, { sessionId: 'ef-demo', reason: 'network', retryCount: 2 });
+      document.getElementById('bar-label').textContent = '② 错误恢复 · .frozen-error + .error-recovery-strip（amber 族）';
+    }
+  };
+
+  // ── Escalation card (real renderer).
+  errorRecovery.renderEscalationCard({
+    sessionId: 'ef-demo',
+    agentId: 'build-watcher',
+    reason: 'llm-transient',
+    retryCount: 3,
+    level: 2,
+    escalateAt: Date.now() + 9 * 60000,
+  });
+
+  // ── Session-gate banner (real renderer; reseat unavailable, reload stubbed).
+  try { sessionStorage.removeItem('stand_auth_gate_at'); } catch (e) { /* ignore */ }
+  sessionGate._sessionGateTestHooks().setReload(() => {});
+  sessionGate._sessionGateTestHooks().setReseat(async () => false);
+  sessionGate.noteAuthRejected('probe');
+
+  // ── Error toast (fixed bottom-right; re-fired right before capture).
+  window.__ef.fireToast = () => showToast('上传失败，未发送', 'error');
+
+  const showAll = stateParam === 'all';
+  window.__ef.applyBarState(showAll ? 'error' : stateParam);
+  if (showAll) window.__ef.fireToast();
+  // Render any <i data-lucide> stand-ins (toast glyph fallback path) the same
+  // way the production boot does.
+  if (typeof lucide !== 'undefined' && lucide.createIcons) lucide.createIcons();
+  window.__ef.ready = true;
+</script>
+</body>
+</html>

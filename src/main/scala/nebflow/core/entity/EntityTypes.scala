@@ -3,8 +3,7 @@ package nebflow.core.entity
 import cats.syntax.all.*
 import io.circe.*
 import io.circe.syntax.*
-import nebflow.agent.AgentDef
-import nebflow.core.presets.PresetStore
+import nebflow.actor.AgentDef
 import nebflow.shared.AgentModelConfig
 
 // ============================================================
@@ -24,7 +23,10 @@ case class AgentEntry(
   model: Option[AgentModelConfig] = None,
   preset: Option[String] = None, // references a named preset in model-presets.json
   skills: List[String] = Nil, // skill names this agent can see (frontmatter injection)
-  flows: List[String] = Nil // legacy flows whitelist (parsed per decision A①; FlowTrigger injection retired 2026-09-06)
+  flows: List[String] =
+    Nil, // legacy flows whitelist (parsed per decision A①; FlowTrigger injection retired 2026-09-06)
+  displayName: Option[String] =
+    None // display face only (agent.json `displayName`); None = fall back to `name` (the judgement key)
 )
 
 object AgentEntry:
@@ -41,6 +43,7 @@ object AgentEntry:
       preset <- c.downField("preset").as[Option[String]]
       skills <- c.downField("skills").as[Option[List[String]]]
       flows <- c.downField("flows").as[Option[List[String]]]
+      displayName <- c.downField("displayName").as[Option[String]]
     yield AgentEntry(
       name.getOrElse(""),
       description,
@@ -53,7 +56,8 @@ object AgentEntry:
       model,
       preset,
       skills.getOrElse(Nil),
-      flows.getOrElse(Nil)
+      flows.getOrElse(Nil),
+      displayName
     )
   }
 
@@ -68,14 +72,15 @@ object AgentEntry:
       "model" -> a.model.asJson,
       "preset" -> a.preset.asJson,
       "skills" -> a.skills.asJson,
-      "flows" -> a.flows.asJson
+      "flows" -> a.flows.asJson,
+      "displayName" -> a.displayName.asJson
     )
   }
 
   /**
    * Single-source AgentEntry → AgentDef conversion (2026-08-15 FlowTrigger
    * outage fix). Every spawn path (WebSocketRoutes root agents, MailTool
-   * activations, FlowTreeActor, FlowDagExecutor nodes, ContextRefresher
+   * activations, FlowDagExecutor nodes, ContextRefresher
    * per-turn refresh, EntityLoader.findAgentByName) must go through this
    * method — hand-copied field maps at spawn sites drifted out of sync with
    * this decoder (six copies, only two carried `flows`/`skills`), which made
@@ -87,8 +92,14 @@ object AgentEntry:
    * over from the running actor in ContextRefresher).
    */
   extension (a: AgentEntry)
+
     def toAgentDef: AgentDef =
-      val (resolvedModel, _) = PresetStore().resolve(a.preset, a.model)
+      // model-chain anchor batch (2026-10-29): runtime model resolution is the
+      // /model chain policy and nothing else — own chain (settable roles) >
+      // Nebula primary chain (fresh read) > seed chain. The retired preset-name
+      // policy must not choose the fallback anchor here.
+      val (resolvedModel, _) = nebflow.core.SchemePolicy.resolveModel(a.name, a.model)
+      val resolvedPreset = if nebflow.core.SchemePolicy.isSettable(a.name) then a.preset else None
       AgentDef(
         name = a.name,
         description = a.description,
@@ -98,10 +109,12 @@ object AgentEntry:
         category = a.category,
         mcpServers = a.mcpServers,
         model = Some(resolvedModel),
-        preset = a.preset,
+        preset = resolvedPreset,
         skills = a.skills,
-        flows = a.flows
+        flows = a.flows,
+        displayName = a.displayName // display face carried through (disk custom agents: loadCustomFromDir 已解析同名字段)
       )
+  end extension
 end AgentEntry
 
 // ============================================================
@@ -150,19 +163,22 @@ object NodeRoute:
 
   /** Partial-failure policy of a parallel fan-out. */
   sealed trait OnFailMode
+
   object OnFailMode:
     /** One branch fails → pierce sibling agents (fail-fast), flow fails. Default. */
     case object Abort extends OnFailMode
+
     /** Failed branch yields a placeholder result; the barrier still releases. */
     case object Collect extends OnFailMode
 
     given Decoder[OnFailMode] = Decoder.decodeString.emap {
-      case "abort"   => Right(Abort)
+      case "abort" => Right(Abort)
       case "collect" => Right(Collect)
-      case other     => Left(s"Unknown onFail: '$other' (expected \"abort\" or \"collect\")")
+      case other => Left(s"Unknown onFail: '$other' (expected \"abort\" or \"collect\")")
     }
+
     given Encoder[OnFailMode] = Encoder.instance {
-      case Abort   => Json.fromString("abort")
+      case Abort => Json.fromString("abort")
       case Collect => Json.fromString("collect")
     }
   end OnFailMode
@@ -335,9 +351,22 @@ object FlowNode:
             m.values.filterNot(t => t == "string" || t == "array") match
               case Nil => Right(())
               case bad =>
-                Left(DecodingFailure(s"outputs slot types must be \"string\" or \"array\", got: ${bad.mkString(", ")}", c.history))
+                Left(
+                  DecodingFailure(
+                    s"outputs slot types must be \"string\" or \"array\", got: ${bad.mkString(", ")}",
+                    c.history
+                  )
+                )
           case None => Right(())
-    yield FlowNode(agent, input, onComplete, onError, maxRetries.getOrElse(0), outputs.getOrElse(Map.empty), userFacing.getOrElse(false))
+    yield FlowNode(
+      agent,
+      input,
+      onComplete,
+      onError,
+      maxRetries.getOrElse(0),
+      outputs.getOrElse(Map.empty),
+      userFacing.getOrElse(false)
+    )
   }
 
   given Encoder[FlowNode] = Encoder.instance { n =>
@@ -387,8 +416,13 @@ object FlowDagDef:
       maxFanout <- c.downField("maxFanout").as[Option[Int]]
       params <- c.downField("params").as[Option[Map[String, FlowParamSpec]]]
     yield FlowDagDef(
-      name, description, nodes, entry,
-      maxLoop.getOrElse(10), strictVerdict.getOrElse(false), maxFanout.getOrElse(4),
+      name,
+      description,
+      nodes,
+      entry,
+      maxLoop.getOrElse(10),
+      strictVerdict.getOrElse(false),
+      maxFanout.getOrElse(4),
       params.getOrElse(Map.empty)
     )
   }
@@ -425,7 +459,13 @@ object FlowParamSpec:
       t <- c.downField("type").as[String]
       _ <-
         if validTypes.contains(t) then Right(())
-        else Left(DecodingFailure(s"param type must be one of ${validTypes.toList.sorted.mkString(" | ")} (got \"$t\")", c.history))
+        else
+          Left(
+            DecodingFailure(
+              s"param type must be one of ${validTypes.toList.sorted.mkString(" | ")} (got \"$t\")",
+              c.history
+            )
+          )
       default <- c.downField("default").as[Option[Json]]
       min <- c.downField("min").as[Option[Int]]
       max <- c.downField("max").as[Option[Int]]
@@ -471,10 +511,12 @@ case class NodeResult(
   // R8-P1: structured slot values reported via FlowReport (per the node's
   // `outputs` declaration). Referenced downstream via $<nodeId>.slots.<field>.
   slots: Map[String, Json] = Map.empty,
-  /** Flow-node supervision P2 (2026-08-26): the failed agent reported its
-    * failure as agent-turn-retryable (AgentError.retryable — LLM stall /
-    * overload). The executor's Restart path uses checkpoint recovery
-    * (loadMessagesForSession) instead of a fresh re-run when this is set. */
+  /**
+   * Flow-node supervision P2 (2026-08-26): the failed agent reported its
+   * failure as agent-turn-retryable (AgentError.retryable — LLM stall /
+   * overload). The executor's Restart path uses checkpoint recovery
+   * (loadMessagesForSession) instead of a fresh re-run when this is set.
+   */
   retryable: Boolean = false
 )
 

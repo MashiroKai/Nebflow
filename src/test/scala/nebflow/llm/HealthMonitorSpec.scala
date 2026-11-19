@@ -3,9 +3,11 @@ package nebflow.llm
 import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
-import nebflow.shared.*
 import munit.CatsEffectSuite
+import nebflow.db.{Db, DbConfig, DbHandle}
+import nebflow.shared.*
 
+import java.nio.file.Files
 import scala.concurrent.duration.*
 
 class HealthMonitorSpec extends CatsEffectSuite:
@@ -14,7 +16,26 @@ class HealthMonitorSpec extends CatsEffectSuite:
   private def candidate(pid: String, model: String) =
     ModelCandidate(pid, ProviderConfig("http://localhost", "k", LlmProtocol.OpenAI), model)
 
-  private def newMonitor = ProviderHealthMonitor(null) // registry not needed for state tests
+  // ── B2 隔离注入（回归修复 2026-11-05：9 红的「真实库泄进单测」根因堵口）────
+  // B2 后 monitor 落盘面经 `db.orElse(DbHost.peek(PathUtil.dataRoot))` 兜底——测试
+  // JVM 里他套件的生产接线（TaskStuckWatcherSpec 装配链等）会把真实根 memoize 进
+  // DbHost ⇒ peek 命中 ⇒ 单测读写真实库（markDown/softAvoid 写穿真实
+  // guard/provider-avoid.json；后续测试水合回填 ⇒ reason 覆写/预避让跳过）。本
+  // spec 全部构造位显式注入测试域临时根句柄：`db` 为 Some ⇒ peek 兜底永不被求
+  // 值；每 monitor 独立临时根 ⇒ 写穿不跨测试串档（共享根 = 复刻真实库污染形态）。
+  private val openedDbs = scala.collection.mutable.ListBuffer[DbHandle]()
+
+  override def afterAll(): Unit = openedDbs.foreach(h =>
+    try h.close()
+    catch case _: Throwable => ()
+  )
+
+  private def tempDb(): DbHandle =
+    val h = Db.open(DbConfig(Files.createTempDirectory("hm-spec-db"))).unsafeRunSync()
+    openedDbs += h
+    h
+
+  private def newMonitor = ProviderHealthMonitor(null, db = Some(tempDb())) // registry not needed for state tests
 
   // ============================================================
   // markDown / filterCandidates
@@ -42,18 +63,30 @@ class HealthMonitorSpec extends CatsEffectSuite:
       assertEquals(down.map(_.providerId), List("glm"))
   }
 
-  test("markDown is idempotent") {
+  test("markDown keeps ONE entry per candidate and REFRESHES the reason to the latest failure") {
+    // 假 DOWN 批（2026-11-05）语义变更：旧实现 `case Some(Down(_)) => IO.unit` 把首次
+    // 原因钉死成化石——现场后果是 20:04 的一次传输层抖动写进表后，后 47 分钟里每次
+    // 探测/试探的真实失败形态一条都没记下来（作者面看到的永远是那句话，无法归类）。
+    // 现在：一条记录（size 仍为 1）+ 原因 = **最新**失败；since 保持首次时刻（事实面）。
     val monitor = newMonitor
 
     for
       _ <- monitor.markDown("glm", "glm-5", "error1")
-      _ <- monitor.markDown("glm", "glm-5", "error2") // no-op
-      states <- monitor.getStates
+      states1 <- monitor.getStates
+      _ <- monitor.markDown("glm", "glm-5", "error2")
+      states2 <- monitor.getStates
     yield
-      assertEquals(states.size, 1)
-      // First reason is kept
-      states.get("glm/glm-5").collect { case HealthState.Down(reason, _) =>
+      assertEquals(states2.size, 1, "one candidate must never hold two Down entries")
+      states1.get("glm/glm-5").collect { case HealthState.Down(reason, _) =>
         assertEquals(reason, "error1")
+      }
+      states2.get("glm/glm-5").collect { case HealthState.Down(reason, since) =>
+        assertEquals(reason, "error2", "the latest failure verdict is the one the operator must see")
+        assertEquals(
+          since,
+          states1.get("glm/glm-5").collect { case HealthState.Down(_, s) => s }.get,
+          "since stays the FIRST down moment (how long has it been broken is a fact, not a retry timer)"
+        )
       }
   }
 
@@ -233,45 +266,97 @@ class HealthMonitorSpec extends CatsEffectSuite:
   // probe — recovery path for Down providers
   // ============================================================
 
-  private class FakeAdapter(result: IO[AdapterResponse]) extends ProviderAdapter[IO]:
-    def sendMessage(params: SendMessageParams): IO[AdapterResponse] = result
-    def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, StreamChunk] = fs2.Stream.empty
+  // ============================================================
+  // probe — recovery path for Down providers
+  //
+  // 修 2026-10-21「供应商恢复后不回绿」：探测的 serving 判据 = 流式请求的
+  // **首个内容事件**（与真实流面 winner 同一批 chunk），流在首个事件后即取消
+  // —— 清除时点 = 探测成功时点（首事件时点），不等补全、不等周期尾部。
+  // 旧探测（非流 `hi` 补全 + 30s 帽）在「恢复但首补全慢」的思考型 provider
+  // 上每轮假失败，provider 无限滞留 DOWN——面板读面（filterCandidates /
+  // getStates 现读）永远不回绿。
+  // ============================================================
+
+  /**
+   * Stream-face fake. `chunks` are emitted in order; `delayBeforeMs` parks the
+   * first emission (budget-binding probes); `hangAfter` keeps the stream open
+   * forever afterwards (simulates a slow thinking provider whose final text
+   * never arrives inside the probe — the probe must already have cleared at
+   * the first serving event). `err` raises before any chunk.
+   */
+  private class FakeStreamAdapter(
+    chunks: Seq[StreamChunk] = Nil,
+    delayBeforeMs: Long = 0L,
+    hangAfter: Boolean = false,
+    err: Option[Throwable] = None
+  ) extends ProviderAdapter[IO]:
+
+    def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
+      IO.raiseError(new RuntimeException("probe must use the streaming face (修 2026-10-21)"))
+
+    def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, StreamChunk] =
+      err match
+        case Some(e) => fs2.Stream.raiseError[IO](e)
+        case None =>
+          val head: fs2.Stream[IO, StreamChunk] =
+            if delayBeforeMs > 0 then fs2.Stream.eval(IO.sleep(delayBeforeMs.millis)) >> fs2.Stream.emits(chunks.toList)
+            else fs2.Stream.emits(chunks.toList)
+          if hangAfter then head ++ fs2.Stream.never[IO] else head
+
+  end FakeStreamAdapter
 
   private class FakeRegistry(adapter: ProviderAdapter[IO]) extends ProviderRegistry(null, null):
+    // probe 走 getAdapterRaw（不过闸裸视图，429 反应式并发闸批）——fake 同步覆写。
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+    override def getAdapterRaw(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+    // B2 ensureGuards→hydrateGuards 会调 getCandidates()（真体走 configRef.get——
+    // null 桩即 NPE，7 红根因）；桩返回空链 = 零 guard 键面，与 B2 前形态一致。
+    override def getCandidates(): IO[List[ModelCandidate]] = IO.pure(Nil)
 
-  /** Registry that resolves a whitelist of model refs (simulates a config with
-    * a default chain that does NOT include the Down candidate — the 2026-08-25
-    * kimi scenario where kimi/k3-256k lives only in the Vision preset). */
-  private class FakeRegistry2(adapter: ProviderAdapter[IO], known: Set[String])
-      extends ProviderRegistry(null, null):
+  /**
+   * Registry that resolves a whitelist of model refs (simulates a config with
+   * a default chain that does NOT include the Down candidate — the 2026-08-25
+   * kimi scenario where kimi/k3-256k lives only in the Vision preset).
+   */
+  private class FakeRegistry2(adapter: ProviderAdapter[IO], known: Set[String]) extends ProviderRegistry(null, null):
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+    override def getAdapterRaw(providerId: String): IO[ProviderAdapter[IO]] = IO.pure(adapter)
+    // 同 FakeRegistry：hydrateGuards 的 getCandidates() 桩腿（绕开 null configRef）。
+    override def getCandidates(): IO[List[ModelCandidate]] = IO.pure(Nil)
+
     override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
       if known.contains(ref) then
         ref.split("/").toList match
           case pid :: m :: Nil => IO.pure(Some(candidate(pid, m)))
-          case _               => IO.pure(None)
+          case _ => IO.pure(None)
       else IO.pure(None)
 
-  test("probe marks Up on a successful response (empty reply OK — thinking-only)") {
-    // A thinking model (GLM-5.2) can return content="" when all tokens went to
-    // reasoning — with F3 the adapter treats that as success, so probe must markUp.
-    val adapter = FakeAdapter(IO.pure(AdapterResponse("", Nil, None)))
-    val monitor = ProviderHealthMonitor(FakeRegistry(adapter))
+  test("probe clears at the FIRST serving event — a slow thinking provider (never completes) still recovers") {
+    // The 2026-10-21 incident shape: provider recovered, but its thinking-only
+    // output streams thinking events for minutes before any final text. The
+    // old probe awaited a full completion under a 30s cap → false-failed every
+    // cycle → DOWN forever → the panel never turned green. The probe must
+    // clear at the thinking event and must NOT wait for the stream to end.
+    val adapter = FakeStreamAdapter(chunks = Seq(StreamChunk.ThinkingDelta("reasoning…")), hangAfter = true)
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter), db = Some(tempDb()))
     val c = candidate("glm", "glm-5-107")
 
     for
       _ <- monitor.markDown("glm", "glm-5-107", "first-token timeout")
+      started <- IO.realTime
       _ <- monitor.probe(c)
+      elapsed <- IO.realTime.map(_ - started)
       states <- monitor.getStates
-    yield states.get("glm/glm-5-107") match
-      case Some(HealthState.Up) => ()
-      case other => fail(s"expected Up after successful probe, got $other")
+    yield
+      states.get("glm/glm-5-107") match
+        case Some(HealthState.Up) => ()
+        case other => fail(s"first serving event must clear DOWN immediately, got $other")
+      assert(elapsed < 5.seconds, s"clear must land at the first event, not at completion/cycle tail; took $elapsed")
   }
 
-  test("probe keeps Down when the probe request fails") {
-    val adapter = FakeAdapter(IO.raiseError(new RuntimeException("probe error")))
-    val monitor = ProviderHealthMonitor(FakeRegistry(adapter))
+  test("probe keeps Down when the stream errors before any serving event") {
+    val adapter = FakeStreamAdapter(err = Some(new RuntimeException("probe error")))
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter), db = Some(tempDb()))
     val c = candidate("glm", "glm-5-107")
 
     for
@@ -283,16 +368,83 @@ class HealthMonitorSpec extends CatsEffectSuite:
       case other => fail(s"expected Down after failed probe, got $other")
   }
 
-  // ============================================================
-  // downCandidates — probe set covers ALL Down candidates
-  // (2026-08-25 kimi incident: Vision-preset candidate was never
-  // probed because the probe set was the default chain only)
-  // ============================================================
+  test("probe keeps Down on a Done-only stream (no content — the real path fails the same shape)") {
+    // Mirror of the streaming path's "Stream completed with no content" raise:
+    // a provider that answers Done without any content chunk is not serving.
+    val adapter = FakeStreamAdapter(chunks = Seq(StreamChunk.Done(None, None)))
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter), db = Some(tempDb()))
+    val c = candidate("glm", "glm-5-107")
+
+    for
+      _ <- monitor.markDown("glm", "glm-5-107", "timeout")
+      _ <- monitor.probe(c)
+      states <- monitor.getStates
+    yield states.get("glm/glm-5-107") match
+      case Some(HealthState.Down(_, _)) => ()
+      case other => fail(s"a content-less Done must NOT clear DOWN, got $other")
+  }
+
+  test("probe budget shrinks via nebflow.health.probeTimeoutSec (read at probe, never a startup constant)") {
+    val prev = System.getProperty("nebflow.health.probeTimeoutSec")
+    // First (serving) event arrives only after 10s — the 1s budget must cut
+    // the probe first (IO.sleep cancellation is the deterministic park; a
+    // bare never-emitting pull is not what the budget is about).
+    val adapter = FakeStreamAdapter(chunks = Seq(StreamChunk.TextDelta("late")), delayBeforeMs = 10_000)
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter), db = Some(tempDb()))
+    val c = candidate("glm", "glm-5-107")
+
+    // set/restore INSIDE the IO: an eager try/finally only brackets the
+    // CONSTRUCTION of the IO — the probe runs after that finally already
+    // restored the property (read-at-probe discipline is the whole point).
+    (for
+      _ <- IO(System.setProperty("nebflow.health.probeTimeoutSec", "1"))
+      _ <- IO(assertEquals(ProviderHealthMonitor.ProbeTimeoutSec, 1, "budget must shrink via the sys prop"))
+      _ <- monitor.markDown("glm", "glm-5-107", "timeout")
+      started <- IO.realTime
+      _ <- monitor.probe(c)
+      elapsed <- IO.realTime.map(_ - started)
+      states <- monitor.getStates
+    yield
+      states.get("glm/glm-5-107") match
+        case Some(HealthState.Down(_, _)) => ()
+        case other => fail(s"a beyond-budget event must not clear DOWN, got $other")
+      assert(elapsed >= 900.millis && elapsed < 8.seconds, s"budget must bind the probe; took $elapsed")
+    ).guarantee(IO {
+      if prev != null then System.setProperty("nebflow.health.probeTimeoutSec", prev)
+      else System.clearProperty("nebflow.health.probeTimeoutSec")
+    })
+  }
+
+  test("probeNow → 现读回绿: filterCandidates (the /model panel read face) reflects the clear immediately") {
+    // 不可用 → 恢复 → 回绿全链（清除时点 = 探测成功时点，非周期尾部）：
+    // markDown ⇒ probeNow（并行、首事件即清）⇒ getStates Up ∧ filterCandidates
+    // 的 up 非空。filterCandidates 正是 /api/agents/:name/model `current` 的
+    // 现读源（PresenceRoutes /model 读面），getStates 是 /api/health `providers`
+    // 的现读源——后端清除即刻反映，零缓存、零额外定时器。
+    val adapter = FakeStreamAdapter(chunks = Seq(StreamChunk.TextDelta("pong")))
+    val monitor = ProviderHealthMonitor(FakeRegistry(adapter), db = Some(tempDb()))
+    val cs = List(candidate("glm", "glm-5"), candidate("kimi", "moonshot-v1"))
+
+    for
+      _ <- monitor.markDown("glm", "glm-5", "outage")
+      (upBefore, downBefore) <- monitor.filterCandidates(cs)
+      _ <- monitor.probeNow(List(candidate("glm", "glm-5")))
+      states <- monitor.getStates
+      (upAfter, downAfter) <- monitor.filterCandidates(cs)
+    yield
+      assertEquals(upBefore.map(_.providerId), List("kimi"))
+      assertEquals(downBefore.map(_.providerId), List("glm"))
+      states.get("glm/glm-5") match
+        case Some(HealthState.Up) => ()
+        case other => fail(s"probeNow must clear the outage marker, got $other")
+      assertEquals(upAfter.map(_.providerId).toSet, Set("glm", "kimi"))
+      assertEquals(downAfter, List.empty[ModelCandidate])
+  }
 
   test("downCandidates includes Down candidates outside the default chain (kimi fix)") {
-    val adapter = FakeAdapter(IO.pure(AdapterResponse("", Nil, None)))
+    val adapter = FakeStreamAdapter(chunks = Seq(StreamChunk.TextDelta("pong")))
     // kimi/k3-256k is NOT in the default (general) chain — only in Vision preset
-    val monitor = ProviderHealthMonitor(FakeRegistry2(adapter, Set("kimi/k3-256k")))
+    val monitor = ProviderHealthMonitor(FakeRegistry2(adapter, Set("kimi/k3-256k")), db = Some(tempDb()))
 
     for
       _ <- monitor.markDown("kimi", "k3-256k", "timeout")
@@ -308,7 +460,8 @@ class HealthMonitorSpec extends CatsEffectSuite:
 
   test("downCandidates skips refs whose provider was removed from config") {
     val monitor = ProviderHealthMonitor(
-      FakeRegistry2(FakeAdapter(IO.pure(AdapterResponse("", Nil, None))), Set.empty)
+      FakeRegistry2(FakeStreamAdapter(chunks = Seq(StreamChunk.TextDelta("pong"))), Set.empty),
+      db = Some(tempDb())
     )
 
     for

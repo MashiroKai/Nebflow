@@ -1,7 +1,7 @@
 package nebflow.core.flow
 
-import nebflow.core.NebflowLogger
 import nebflow.core.entity.NodeResult
+import nebflow.shared.NebflowLogger
 
 /**
  * Unified semantics for Flow DAG nodes — single source of truth for

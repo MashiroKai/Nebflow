@@ -33,7 +33,36 @@ object CommandRegistry:
       AgentCommand,
       SkillCommand,
       PluginCommand,
-      MemoryCommand
+      MemoryCommand,
+      // CLI 命令补全批（chain-clicomplete，2026-09-20）：**append-only 新增两行**。
+      // 既有条目一字未动、未重排、未整表重格式化 —— login 段同写本件，只增不改
+      // 是避免同件冲突的唯一形态。
+      HealthCommand,
+      LogsCommand,
+      // headless 批 login 段（chain-headless-lifecycle，2026-09-20）：**append-only 新增三行**
+      // （D-H7 案 ⒝：login + logout + whoami 三件齐）。既有条目一字未动、未重排、
+      // 未整表重格式化 —— 本件为多段共写面，只增不改是避免同件冲突的唯一形态。
+      LoginCommand,
+      LogoutCommand,
+      WhoamiCommand,
+      // phase 2 daemon 批（2026-10-10）：append-only 新增 restart（stop→start
+      // 编排命令；stop 本体迁回 StopCommand 走既有注册）。
+      RestartCommand,
+      // Phase 3b session-rail batch: append-only two lines — `token`
+      // (print/rotate: break-glass ticket + token rotation) and `sessions`
+      // (revoke: console sessions, deliberately distinct from the singular
+      // chat-domain `session` command). Existing entries untouched, unsorted,
+      // un-reformatted — add-only is the only accepted shape in this file.
+      TokenCommand,
+      SessionsCommand,
+    // Phase 3c D6-guard batch: append-only one line — `bind` (confirm: the
+    // binding-transfer confirmation code minted on the OLD host; gateway
+    // and relay required, never offline-classified). Same add-only shape.
+    BindCommand,
+    // 密钥 CLI 批（密钥能力三件套 A 件，作者令 2026-11-01）：append-only 一行
+    // —— `secrets`（`stand secrets list` = 元数据清单零值；bare = 用法提示）。
+    // 同 phase 3b token/sessions 族：密钥域 CLI 读面，离线归类见 CliRouter。
+    SecretsCommand
     ).map(c => c.name -> c).toMap
 
   def get(name: String): Option[CliCommand] = commands.get(name)

@@ -1,6 +1,6 @@
 package nebflow.core.entity
 
-import nebflow.core.entity.NodeRoute.{Goto, Parallel, ParallelDynamic, Return, Switch}
+import nebflow.core.entity.NodeRoute.*
 
 /**
  * Static structure analysis of a FlowDagDef — single source of truth shared by
@@ -23,8 +23,8 @@ object FlowStructure:
    */
   def routeTargets(route: NodeRoute, cond: Option[String] = None): List[(String, Option[String])] =
     route match
-      case Goto(t)      => (t, cond) :: Nil
-      case Return       => (ReturnNode, cond) :: Nil
+      case Goto(t) => (t, cond) :: Nil
+      case Return => (ReturnNode, cond) :: Nil
       case Parallel(fan, _) => fan.map(t => (t, cond))
       // Dynamic fan: the template node stands in for its N runtime instances
       // (join/display analysis treat it as one branch — the executor arms the
@@ -38,8 +38,8 @@ object FlowStructure:
   def displayEdges(flow: FlowDagDef): List[(String, String, Option[String])] =
     flow.nodes.toList.sortBy(_._1).flatMap { (nodeId, node) =>
       node.onComplete match
-        case Goto(t)          => (nodeId, t, None) :: Nil
-        case Return           => (nodeId, ReturnNode, None) :: Nil
+        case Goto(t) => (nodeId, t, None) :: Nil
+        case Return => (nodeId, ReturnNode, None) :: Nil
         case Parallel(fan, _) => fan.map(t => (nodeId, t, None))
         case ParallelDynamic(_, template, _) => (nodeId, template, None) :: Nil
         case Switch(_, cases, _, _) =>
@@ -87,7 +87,7 @@ object FlowStructure:
   def parallelRoutes(flow: FlowDagDef): List[(String, Parallel | ParallelDynamic)] =
     def routesOf(r: NodeRoute): List[Parallel | ParallelDynamic] =
       r match
-        case p: Parallel        => p :: Nil
+        case p: Parallel => p :: Nil
         case p: ParallelDynamic => p :: Nil
         case Switch(_, cases, default, _) =>
           cases.values.toList.flatMap(routesOf) ++ default.toList.flatMap(routesOf)
@@ -100,7 +100,7 @@ object FlowStructure:
    */
   private def fanBranches(p: Parallel | ParallelDynamic): List[String] =
     p match
-      case Parallel(fan, _)         => fan
+      case Parallel(fan, _) => fan
       case ParallelDynamic(_, t, _) => t :: Nil
 
   /**
@@ -109,14 +109,16 @@ object FlowStructure:
    * in-degree is 1 (the executor arms it with N at dispatch time).
    */
   def dynamicJoinNodes(flow: FlowDagDef): Set[String] =
-    parallelRoutes(flow).collect {
-      case (_, pd: ParallelDynamic) =>
+    parallelRoutes(flow)
+      .collect { case (_, pd: ParallelDynamic) =>
         flow.nodes.get(pd.template).flatMap { t =>
           routeTargets(t.onComplete).headOption.collect {
             case (target, _) if target != ReturnNode => target
           }
         }
-    }.flatten.toSet
+      }
+      .flatten
+      .toSet
 
   /**
    * Structural validation (R8-P2 load checks). Returns a list of reject
@@ -183,7 +185,7 @@ object FlowStructure:
           // A dynamic fan arms its join with N ≥ 1 at runtime — any template
           // reaching the join can arm it, so count ≥ 1 means arming.
           case _: ParallelDynamic => reachCount >= 1
-          case _                  => reachCount >= 2
+          case _ => reachCount >= 2
       }
       if armingFans.nonEmpty then
         // valid arrival sources: downstream of any fan that arms this join
@@ -196,5 +198,6 @@ object FlowStructure:
     }
 
     errors.result()
+  end validate
 
 end FlowStructure

@@ -62,11 +62,33 @@
 // (2026-09-05 ruling — the #345 streaming-collapse regression is reverted in
 // chat.js); the terminal tuck folds it with the rest of the process.
 //
-// Zero protocol/backend changes (spec D1). History reload re-derives headers
-// heuristically (E4 P0: duration badge on the final Ai row = success).
+// Data-driven history rebuild (replay-terminal 批 2026-10-28, 案一「A 根治」):
+// the turn-terminal fact rides the persisted data (UiMessage.Ai.terminal=true
+// stamped at the backend done/agentDone write points, surfaced here as
+// data-nf-turn-terminal) — the old render-time heuristic (E4 P0: a duration
+// badge with data-nf-phrase on some Ai row = success) stays only as the
+// legacy-transcript fallback. Failed turns (no terminal, no badge) stay flat
+// (09-05 排障裁定); the busyTail tail stays open (transient).
+// 卫生批（2026-10-28）工具行等价面: a degenerate all-tool round (zero ai lines)
+// gets its terminal stamped on the round's last Tool row
+// (UiMessage.Tool.terminal=true via markRoundTerminal) — same
+// data-nf-turn-terminal read here, so the last bare tool card folds too.
 
 import { t } from './i18n.js';
-import { formatDuration, chevronSvg } from './chat.js';
+import { chevronSvg } from './chat.js';
+import { isNearBottom } from './utils.js';
+// stream-ux redesign (2026-10-03 author demo): the running turn's line and the
+// terminal badge are THE SAME node. At the terminal this module settles the
+// live work-line into the `.turn-header` in place (settleWorklineAsHeader —
+// last item rolls out, stats badge rolls in, row gains the header role); the
+// buildHeader insert below is only the fallback for turns with no live line
+// (history rebuild, popup restores). One-way dependency: workline.js imports
+// i18n + utils only, so this adds no cycle (chat.js → workline.js ← here).
+import { settleWorklineAsHeader, removeWorkline, priorTurnBadgeSettled, buildBadgeLabel, isMidTurnRow } from './workline.js';
+// output 块语法批（作者令 2026-10-31）：turn-header 角标 = 「看思考过程与工具
+// 结果」的现成入口——output 气泡的展开/收起随同一 toggle 换面（展开 = 原文
+// 全量 + <output> 语法原样现形）。
+import { setOutputExpanded } from './outputTag.js';
 
 /* ---------- row classification ---------- */
 
@@ -89,8 +111,37 @@ function isInjectedRow(row) {
 }
 
 function isNonInjectedUserRow(row) {
-  return row.classList && row.classList.contains('row') &&
-    row.classList.contains('user') && !isInjectedRow(row);
+  if (!row.classList || !row.classList.contains('row') ||
+      !row.classList.contains('user') || isInjectedRow(row)) return false;
+  // tool-card-leak-on-reload 批（2026-11-02）：回合内插话行**不是**轮起点。
+  // 作者现象「我在回复中…刷新页面 ⇒ 完整工具执行过程摊平」的根因即此：后端两个
+  // 普通用户帧落盘点与引擎回合状态无关地无条件落一条 User 行，任何非注入 user
+  // 行都被当轮边界 ⇒ 一轮被劈成两段，前段零 terminal 载体 ⇒ summarizeSegment
+  // 平铺 ⇒ 整段裸工具卡。判据 = workline.isMidTurnRow（data-nf-mid-turn 单点，
+  // 写入面：后端 midTurn=true 落盘 → persistence 两条回放腿盖戳，旧行按时间戳
+  // 蕴含推断盖同一戳；live 腿 chat.js renderUserBubble 在 busy 时盖同一戳）。
+  if (isMidTurnRow(row)) return false;
+  // Real user input: unconditional opener (unchanged — the reference shape).
+  if (!row.hasAttribute('data-nf-ask-answer')) return true;
+  // Ask ANSWER row (AskUser 强制展开修令, author 2026-10-06 19:29 → 条件化升级:
+  // AskUser badge 分组条件化, author 2026-10-07 18:36 三令之②): the gateway
+  // persists a card answer as a User message carrying `answerOf` (案 B single
+  // construction point, UiMessage.askUserAnswer). Both replay legs stamp that
+  // row `data-nf-ask-answer` (persistence.js). The static 0584bf0bb exemption
+  // ("never an opener") is now CONDITIONAL on the previous group's badge
+  // terminal state — the ONE oracle in workline.priorTurnBadgeSettled:
+  //   上一轮 badge 已终态（settled turn-header / closed exchange above）⇒ the
+  //     answer OPENS a new group below, 与用户输入同形 (its continuation's
+  //     line + badge fence below the closed group);
+  //   上一轮 badge 未到终态（the exchange the answer replies into is still
+  //     open — its own ask card found above, or an open badge-less segment）⇒
+  //     the answer stays MID-TURN: no boundary reader may treat it as an
+  //     opener (turnScope / dissolveTurnChrome / scopeFromHeader /
+  //     expandGroupContaining / buildTurnSummariesForHistory all consume this
+  //     one predicate). That keeps the reload-mid-ask → answer → terminal
+  //     exchange ONE header (0584bf0bb's defect face) and the non-blocking
+  //     ack→answer→continuation exchange ONE header (09:25 令 B family).
+  return priorTurnBadgeSettled(row.parentNode, row);
 }
 
 /** v2 tuck set: thinking rows + tool-call rows ONLY. Card deliverables
@@ -100,9 +151,35 @@ function isTuckableRow(row) {
   return row.classList.contains('tool') || row.classList.contains('thinking-row');
 }
 
+/** output 块语法批（作者令 2026-10-31）：the row carries an output-faced ai
+ *  bubble — stamped `data-nf-output` by outputTag.applyOutputFace, or
+ *  `data-nf-defer-output` by the deferred history build (the summary pass runs
+ *  synchronously BEFORE the rAF upgrade batch renders the face; the marker is
+ *  set at row-build time). Such a turn gets a header even with zero tuckable
+ *  rows: the badge is the ONLY expand entry to the raw full text. */
+function rowHasOutputFace(row) {
+  return !!(row.querySelector && row.querySelector('.bubble[data-nf-output], .bubble[data-nf-defer-output]'));
+}
+
+/** Swap every output-faced bubble in `rows` to the expanded (raw full text,
+ *  tags verbatim) or collapsed (output-only) face. No-op on plain bubbles. */
+function swapOutputFaces(rows, expanded) {
+  for (const row of rows) {
+    const b = row.querySelector('.bubble[data-nf-output]');
+    if (b) setOutputExpanded(b, expanded);
+  }
+}
+
 /* ---------- stats (数字口径从 turn 子列表统计) ---------- */
 
-const FILE_PATH_KEYS = ['file_path', 'path', 'notebook_path'];
+const FILE_PATH_KEYS = ['file_path', 'path', 'notebook_path', 'filePath'];
+
+/** One stat-worthy path value: a non-empty string, or an ARRAY of them (the
+ *  Pop batch face — one `filePath: [a, b, c]` input counts every member). */
+function statPaths(v, out) {
+  if (typeof v === 'string') { if (v.trim()) out.add(v.trim()); }
+  else if (Array.isArray(v)) v.forEach(x => { if (typeof x === 'string' && x.trim()) out.add(x.trim()); });
+}
 
 /** Compute the header stats from the turn's own row list:
  *  tools = `.row.tool` count; files = deduped file paths across tool input
@@ -121,8 +198,7 @@ function computeTurnStats(scope) {
         try {
           const inp = typeof raw === 'string' ? JSON.parse(raw) : raw;
           for (const k of FILE_PATH_KEYS) {
-            const v = inp ? inp[k] : null;
-            if (typeof v === 'string' && v.trim()) files.add(v.trim());
+            statPaths(inp ? inp[k] : null, files);
           }
         } catch { /* malformed input — skip files for this card */ }
       }
@@ -140,21 +216,33 @@ function computeTurnStats(scope) {
   return { tools, files: files.size, thinkingMs };
 }
 
-/** Fill the persistent header text: `✻ 字句 · <model> · 思考 <N>s · 工具
- *  <M> 次 · 读写 <K> 文件`. The leading ✻ phrase is the v1-designed
- *  cosmology copy (2026-09-06 restoration — 批② had dropped it); segments
- *  with no data are omitted (history turns have no thinking timing; a
- *  text+thinking turn has no tool segment; a turn without a done badge has
- *  no phrase). Written ONCE per terminal — toggling never rewrites it
- *  (数字常驻不闪). */
-function fillHeaderText(textEl, meta, stats) {
+/** The header's segments as an array: `['✻ 字句', '<model>', '工具 <M> 次',
+ *  '读写 <K> 文件']`. The leading ✻ phrase is the v1-designed cosmology copy
+ *  (2026-09-06 restoration — 批② had dropped it); segments with no data are
+ *  omitted (a text+thinking turn has no tool segment; a turn without a done
+ *  badge has no phrase). Written ONCE per terminal — toggling never rewrites
+ *  it (数字常驻不闪). Both header faces consume this: buildHeader's span and
+ *  the work-line's terminal morph (settleWorklineAsHeader).
+ *
+ *  2026-10-31 归因行瘦身批（作者 10-31 15:36 令）: the `思考 <N>s` segment is
+ *  REMOVED from the attribution line — 工具次数保留，思考耗时不再上摘要行。
+ *  `stats.thinkingMs` 仍由 computeTurnStats 统计（展开面/其它消费者可用），
+ *  只是不再成为摘要行的一段。 */
+function headerSegments(meta, stats) {
   const parts = [];
   if (meta.phrase) parts.push(meta.phrase);
   if (meta.model) parts.push(meta.model);
-  if (stats.thinkingMs > 0) parts.push(t('chat.turnHeaderThinking', { d: formatDuration(stats.thinkingMs) }));
   if (stats.tools > 0) parts.push(t(stats.tools === 1 ? 'chat.turnSummaryToolsOne' : 'chat.turnSummaryTools', { n: stats.tools }));
   if (stats.files > 0) parts.push(t('chat.turnHeaderFiles', { n: stats.files }));
-  textEl.textContent = parts.join(' · ');
+  return parts;
+}
+
+/** Render the segments into the text span: one `.nf-th-seg` per segment, one
+ *  `.nf-th-sep` (' · ') per boundary — the wrap opportunities live ONLY at the
+ *  separator spaces (segments are nowrap; 作者令 10-31), never mid-word.
+ *  textContent stays `seg · seg`, so every existing reader is unchanged. */
+function fillHeaderText(textEl, meta, stats) {
+  buildBadgeLabel(textEl, headerSegments(meta, stats));
 }
 
 /* ---------- tuck / untuck (instant — the static .nf-tucked class owns the
@@ -216,15 +304,18 @@ function bindHeaderToggle(header) {
   header.setAttribute('tabindex', '0');
   const toggle = () => {
     if (header.dataset.turnState !== 'done' && header.dataset.turnState !== 'done-expanded') return;
-    const tuckable = scopeFromHeader(header).filter(isTuckableRow);
+    const scope = scopeFromHeader(header);
+    const tuckable = scope.filter(isTuckableRow);
     if (header.dataset.turnState === 'done') {
       header.dataset.turnState = 'done-expanded';
       header.setAttribute('aria-expanded', 'true');
       untuckRows(tuckable);
+      swapOutputFaces(scope, true);
     } else {
       header.dataset.turnState = 'done';
       header.setAttribute('aria-expanded', 'false');
       tuckRows(tuckable);
+      swapOutputFaces(scope, false);
     }
   };
   header.onclick = toggle;
@@ -293,35 +384,107 @@ function dissolveTurnChrome(chat) {
 /* ---------- terminal paths ---------- */
 
 /**
- * Done path (v2 decompression model): insert the turn's stats header at the
- * turn top and tuck the thinking + tool rows (instant strip — no animation,
- * 2026-09-06). Text rows, card deliverables and injected bubbles stay
- * visible in place.
+ * Done path (stream-ux redesign 2026-10-03): the running line and the terminal
+ * badge are the SAME node. When the turn has a live work-line, it is settled
+ * INTO the `.turn-header` in place (last item rolls out, stats badge rolls in,
+ * row gains the header role + toggle); buildHeader's insert is only the
+ * fallback for turns with no live line (history rebuild, harness direct calls,
+ * popup restores). The thinking + tool rows are pre-tucked by the render path
+ * during the run (chat.js) — tuckRows here is idempotent insurance. Text rows,
+ * card deliverables and injected bubbles stay visible in place.
  *
- * Boundary defaults: no thinking AND no tools → no header, no tuck (E5
- * text-only / lone injection). Nothing visible left after tucking (E6
- * thinking-only) → keep everything flat instead. Failed-chrome heal is
- * handled by turnScope's dissolve path.
+ * Every turn with tuckable process gets the header now — the old E6 exception
+ * ("nothing would remain visible → keep flat") is gone with the redesign: the
+ * process rows are NEVER visible during the run any more, so leaving them flat
+ * at the terminal would contradict the whole-line model. A turn with no
+ * tuckable rows at all (E5: text-only / lone injection) has no line and no
+ * header (removeWorkline). Failed-chrome heal is handled by turnScope's
+ * dissolve path.
  */
 export function collapseTurn(view, meta = {}) {
   const chat = view.dom.chat;
   const scope = turnScope(chat);
   const rows = scope.filter(el => el.classList && el.classList.contains('row'));
+  // Ask ANSWER continuation (badge 并列复发修令, author 2026-10-07 09:25): a
+  // terminal that lands while the turn's scope still holds an UNANSWERED ask
+  // card is NOT a wheel-close. AskUserQuestion is non-blocking today (阻塞腿
+  // 已整体移除，AskUserQuestionTool.askUser): the ack ENDS the engine turn while
+  // its card is still pending, and the card answer arrives later as a NEW
+  // engine turn whose frames broadcast with NO user row in the live DOM. If the
+  // group closed here, the settled badge would fence the pre-answer rows and
+  // the continuation's line (workline turnAnchor → the exchange opener) would
+  // re-open ABOVE it — two parallel badge faces, the author's screenshot — and
+  // the re-terminal would dissolve that badge again (stale-cursor heal). Same
+  // ruling as 0584bf0bb's replay side, 作答不是开轮事件: keep the group OPEN —
+  // drop the line (E5: it must not outlive the turn), and leave the closure
+  // cursor untouched. The answer's continuation then joins the SAME group and
+  // the exchange's REAL terminal builds the ONE header over pre+post rows —
+  // the replay face (spec A2). Predicate = chat.js's own pending-ask selector
+  // face (an `.option-box` without a resolved `.option-answer` line, as in the
+  // session-attention broadcast); a card answered mid-turn (the confirm path
+  // appends the answer line) takes the normal close below.
+  //
+  // 展开面收回（AskUser 过程默认折叠令 · 主人 2026-10-08 现场反馈）：10-07 令的
+  // 「reveal the process rows」半面（failTurn flat-for-waiting 先例）被 10-08
+  // 反馈判为缺陷 —— 「调用 AskUser ⇒ 工具过程面板被自动展开」。9.19 双路参照
+  // （tag 2026.9.19 = a14dff6f7 与装配 jar web/js/turnGroup.js，两路提取逐字节
+  // 相等）确证 9.19 无本分支：ack 终态走普通过程（header + tuckRows，:320），
+  // 过程默认折叠、展开只由用户动作触发。故此处**不揭任何行**——组保持开启
+  // （10-07 令的结构面原样：答后续轮并入同组、一枚 header、闭组光标不动），
+  // 过程行保持出生时的 tucked 态，真实终态 settle 时照常一枚 header 收拢；
+  // 待答窗内无 header 可点 ⇒ 展开仅发生在真实终态之后（用户动作，不回归）。
+  if (rows.some(r => r.querySelector('.option-box:not(:has(.option-answer))'))) {
+    // 折叠面恢复原语（10-08 令）：tuckRows 幂等 —— 出生即 tucked 的行原样；
+    // 被 turnScope 的 stale-cursor heal（dissolveTurnChrome，**首轮即问**时闭组
+    // 光标尚不存在 ⇒ heal 必跑并剥光 tuck 标）揭开的行在此重新压回。真实终态
+    // 照常一枚 header 收拢（heal 再揭 → 普通关组 tuckRows 复原，终态同形）。
+    tuckRows(rows.filter(isTuckableRow));
+    removeWorkline(view);
+    return null; // group stays open — no header, no markClosed; rows stay tucked (2026-10-08 令)
+  }
   const tuckable = rows.filter(isTuckableRow);
-  const hasKept = rows.some(r => !isTuckableRow(r)); // something remains visible
+  // output 块语法批：零过程行但有 output 气泡的轮同样立 header——角标是
+  // 框外原文的唯一展开入口（E5 的「无可收拢则平铺」对 output 轮让位）。
   let header = null;
-  if (tuckable.length > 0 && hasKept) {
+  if (tuckable.length > 0 || rows.some(rowHasOutputFace)) {
     const stats = computeTurnStats(rows);
-    header = buildHeader(chat, scope, meta, stats);
-    header.dataset.turnState = 'done';
-    header.setAttribute('aria-expanded', 'false');
-    bindHeaderToggle(header);
-    tuckRows(tuckable); // instant strip (no animation, 2026-09-06)
+    const segments = headerSegments(meta, stats);
+    // 采用既有摘要行（过程泄漏修复批 2026-11-04）：回放腿给未终态尾段建过一枚
+    // **中性摘要行**（summarizeUnconfirmed）；该轮真正收尾时这枚节点就是本轮的
+    // 摘要行——就地改写文本/状态，绝不并列第二枚（「并列 badge」家族病灶）。
+    header = adoptHeaderAbove(chat, scope);
+    if (header) {
+      removeWorkline(view);
+      fillHeaderText(header.querySelector('.turn-header-text'), meta, stats);
+      header.title = meta.title || '';
+      header.dataset.turnState = 'done';
+      header.removeAttribute('data-nf-turn-unconfirmed');
+      header.setAttribute('aria-expanded', 'false');
+      bindHeaderToggle(header);
+    } else {
+      // Same-element settle first (「过程全部展示在这一行」): the live line rolls
+      // its last item out and the stats badge in, then becomes the header.
+      header = settleWorklineAsHeader(view, segments, meta.title || '');
+      if (!header) header = buildHeader(chat, scope, meta, stats);
+      header.dataset.turnState = 'done';
+      header.removeAttribute('data-nf-turn-unconfirmed');
+      header.setAttribute('aria-expanded', 'false');
+      bindHeaderToggle(header);
+    }
+    tuckRows(tuckable); // instant strip; pre-tucked rows are already hidden
     // keep the viewport pinned to the bottom when it was pinned (spec §4.2)
-    if (chat.scrollHeight - chat.scrollTop - chat.clientHeight < 80) {
+    // A-branch: shared NEAR_BOTTOM_PX unit (was a local 80).
+    if (isNearBottom(chat)) {
       chat.scrollTop = chat.scrollHeight;
     }
+  } else {
+    // E5: nothing to summarize — the line (if any) must not outlive the turn.
+    removeWorkline(view);
   }
+  // ORDER NOTE: the settle/morph above does not change #chat's child list (the
+  // line is already at the turn top), so the closure cursor's anchor
+  // (chat.lastElementChild) survives intact — the stale-cursor heal that
+  // governed the old remove-then-stamp ordering cannot misfire.
   markClosed(chat); // #403: LLM ended — the turn is closed even when there
                     // was nothing to tuck; later arrivals are a new turn.
   return header;
@@ -329,13 +492,21 @@ export function collapseTurn(view, meta = {}) {
 
 /**
  * Failed path: NO header (spec A5 — the summary element does not exist),
- * everything stays flat and visible for troubleshooting. A same-turn
- * re-terminal (done → error, nothing appended) lands here: turnScope's
- * dissolve heal already removed the done-chrome before this runs.
+ * everything stays flat and visible for troubleshooting. The render path
+ * PRE-TUCKS process rows during the run now, so the failure must clear those
+ * marks — a failed turn reveals every row (A5 spirit: flat for diagnosis).
+ * A same-turn re-terminal (done → error, nothing appended) lands here:
+ * turnScope's dissolve heal already removed the done-chrome before this runs.
  */
 export function failTurn(view) {
   const chat = view.dom.chat;
-  turnScope(chat); // runs the dissolve heal when the cursor is stale
+  const scope = turnScope(chat); // runs the dissolve heal when the cursor is stale
+  for (const el of scope) {
+    if (el.classList && el.classList.contains('nf-tucked')) el.classList.remove('nf-tucked');
+  }
+  // output 面同揭：失败轮平铺排障 ⇒ output 气泡回原文全量（标签现形）。
+  swapOutputFaces(scope.filter(el => el.classList && el.classList.contains('row')), true);
+  removeWorkline(view);
   markClosed(chat); // #403: terminal reached — later arrivals are a new turn
   return null;
 }
@@ -352,11 +523,13 @@ export function expandGroupContaining(el) {
     n = n.previousElementSibling;
   }
   if (!header || header.dataset.turnState !== 'done') return false;
-  const tuckable = scopeFromHeader(header).filter(isTuckableRow);
-  if (!tuckable.some(r => r.classList.contains('nf-tucked'))) return false;
+  const scope = scopeFromHeader(header);
+  const tuckable = scope.filter(isTuckableRow);
+  if (!tuckable.some(r => r.classList.contains('nf-tucked')) && !scope.some(rowHasOutputFace)) return false;
   header.dataset.turnState = 'done-expanded';
   header.setAttribute('aria-expanded', 'true');
   untuckRows(tuckable);
+  swapOutputFaces(scope, true);
   return true;
 }
 
@@ -376,8 +549,178 @@ export function expandGroupContaining(el) {
  * at the tail's first row so the terminal doesn't dissolve legitimate
  * history chrome.
  */
+/**
+ * True when the tail's completion signal postdates its last stamped ask-answer
+ * row — i.e. no answer continuation is still open after the last done badge.
+ * The plain "some Ai row carries a done badge" read (findDoneBadge) is the
+ * wrong completion oracle once a turn contains an AskUserQuestion: the tool is
+ * non-blocking, so turn 1 (the ack round) legitimately ends with a badged Ai
+ * row while the stamped ANSWER row and the answer-turn's rows keep streaming
+ * after it. Flushing such a tail rebuilt a false-complete header mid-exchange
+ * and the live continuation re-opened its line above it — the reload face of
+ * the 并列 badge bug (author 2026-10-07 09:25 令). Open tail whenever the last
+ * `data-nf-ask-answer` row outranks the last badge row (作答不是开轮事件, the
+ * 0584bf0bb stamp as the boundary oracle — no second authority). A tail with
+ * no badge at all stays open (unchanged); a badge after the last stamp is the
+ * completed exchange (unchanged).
+ */
+function exchangeComplete(tail) {
+  let badgeIdx = -1;
+  let stampIdx = -1;
+  tail.forEach((r, i) => {
+    if (r.hasAttribute('data-nf-ask-answer')) stampIdx = i;
+    // replay-terminal 批：writer 盖戳的 terminal 行与 nf-phrase 徽章同为完成
+    // 判据（数据面优先；旧行无戳 ⇒ 徽章腿原样）。
+    if (r.dataset && r.dataset.nfTurnTerminal) { badgeIdx = i; return; }
+    for (const b of r.querySelectorAll('.duration-badge')) {
+      if (b.dataset.nfPhrase) { badgeIdx = i; break; }
+    }
+  });
+  return badgeIdx > stampIdx;
+}
+
+/* ---------- 摘要行归属：scope 顶端的既有 header ---------- */
+
+/**
+ * `scope` 顶上（= 本轮回放段的开头）是否已有一枚摘要行（未终态尾段的中性摘要
+ * 行）。有 ⇒ 返回该节点供 collapseTurn 就地改写；无 ⇒ null（走原 settle/insert）。
+ *
+ * 归属判据（两条硬闸，缺一不可 —— 上一版只挡「真·开轮 user 行」，结果在
+ * `#403`（注入行开新轮）与 turn-single-badge 的 post-closure / busyTail 面上
+ * 越界取走了上一轮**已确认**的 header，两轮并成一枚 = 「badge 并列/融合」家族
+ * 病灶）。修法 = 认「出处」而非「位置」：
+ *   ① 只有带 `data-nf-turn-unconfirmed="1"` 的 header 可被采用 —— 这枚戳只由
+ *      `summarizeUnconfirmed`（回放腿给未终态段建的中性摘要行）写入，已确认轮
+ *      的 header 永不被改写（每轮各一枚，绝不融合）；
+ *   ② 回溯不跨任何 user 行（含注入行、作答行）—— 任何 user 行都是轮边界；
+ *      回放腿把 header 插在段首行之前（buildHeader 的插入点），所以本轮的
+ *      中性摘要行总在命中边界之前。
+ */
+function adoptHeaderAbove(chat, scope) {
+  const first = scope[0];
+  if (!first || first.parentNode !== chat) return null;
+  let n = first.previousElementSibling;
+  while (n) {
+    if (n.classList && n.classList.contains('turn-header')) {
+      return n.dataset && n.dataset.nfTurnUnconfirmed === '1' ? n : null;
+    }
+    if (n.classList && n.classList.contains('user')) return null; // 轮边界：不跨
+    n = n.previousElementSibling;
+  }
+  return null;
+}
+
+/* ---------- 未终态段的过程面折叠（过程泄漏修复批 2026-11-04） ---------- */
+
+/**
+ * 未终态段（段内既无 writer terminal 戳、也无 done 徽章）的**中性摘要行**。
+ *
+ * 根因（本批 P1，作者令 2026-11-04 14:14「断网或者刷新页面……直接把所有的思考
+ * 和工具过程全部呈现出来」）：live 渲染腿的过程行**出生即折叠**——
+ *   chat.js:1057 / :1348  renderTool/Pending → `'row tool nf-tucked'`
+ *   chat.js:4330          appendThinkingDelta → `'row ai thinking-row nf-tucked'`
+ * 这条「出生态折叠」正是流式期间「一行揭示行掩盖思考与工具过程」的真源：过程行
+ * 从来不是「跑完才折」，而是**从来没有可见过**；可见面只有那条流式行 → 终态
+ * settle 成 `.turn-header`。
+ * 回放腿没有出生态折叠（persistence.js 直接把行建成可见态），全靠
+ * `buildTurnSummariesForHistory` 的事后一遍折叠；而那一遍**只折有终态判据的段**
+ * （本文件 :686 `if (!termRow && !badge) return []`、:693 E6）⇒ 任何没有终态判据
+ * 的段（刷新/断网时该轮仍在飞、终态戳缺失的异常收尾、旧转录无徽章）整段平铺，
+ * 思考行与工具卡（含正文）全部现形 = 作者看到的泄露。
+ *
+ * 收敛口径 = **live 那一行摘要**两态同形：未终态段同样建一枚 `.turn-header`
+ * 摘要行（可点 = 明细完整可展开，绝不把内容丢掉）+ 过程行折叠；但**不编造成败**
+ * ——✻ 成功文案只来自 done 徽章的 `data-nf-phrase`，未终态段没有徽章 ⇒ 摘要行
+ * 只出现「模型 · 工具 N 次 · 读写 K 文件」这些过程事实，不出现「到站」式成功句。
+ * 「未确认」在 DOM 上单点可读：`data-nf-turn-unconfirmed="1"`（审计/断言面），
+ * 后续若 live done 帧到达，collapseTurn 会**采用**这枚节点改写（不并列第二枚）。
+ */
+function summarizeUnconfirmed(chat, seg, meta) {
+  if (seg.length === 0) return null;
+  // E5 边界：零过程行（纯文字轮 / 孤立注入）没有可收拢的内容 —— 不立行
+  // （立了就是一枚空壳摘要行，live 腿同样不立）。output 面由调用方另走
+  // buildHeader（output 角标是原文唯一入口）。
+  const tuckable = seg.filter(isTuckableRow);
+  if (tuckable.length === 0) return null;
+  const stats = computeTurnStats(seg);
+  const header = buildHeader(chat, seg, meta || {}, stats);
+  header.dataset.turnState = 'done';
+  header.dataset.nfTurnUnconfirmed = '1';
+  header.setAttribute('aria-expanded', 'false');
+  bindHeaderToggle(header);
+  tuckRows(tuckable);
+  return header;
+}
+
+/* ---------- 旧存量转录的插话推断（tool-card-leak-on-reload 批 2026-11-02） ---------- */
+
+/** 行的时间戳（epoch ms，0 = 不可判）。行级时间只长在 footer 徽章的
+ *  `.duration-badge-time[data-ts]` 上（createMsgFooterBadge /
+ *  createDurationBadgeElement 同款契约），除此之外无第二处时间载子。 */
+function rowTimestamp(row) {
+  const el = row.querySelector('.duration-badge-time[data-ts]');
+  const ts = el ? Number(el.getAttribute('data-ts')) : 0;
+  return Number.isFinite(ts) && ts > 0 ? ts : 0;
+}
+
+/** 该行是不是「本回合的过程行」（ai / thinking / tool）。user 行（含注入与作答）
+ *  与系统行都不算 —— 插话判定要求紧邻上方确有本回合正在进行的产出。 */
+function isProcessRow(row) {
+  if (!row.classList) return false;
+  return row.classList.contains('tool') || row.classList.contains('ai')
+    || row.classList.contains('thinking-row');
+}
+
+/**
+ * 旧存量 `.ui.json` 没有 `midTurn` 键（本批的写者字段是新增的）——为让老会话
+ * 刷新后同样不再摊平，这里用**时间戳蕴含关系**把回合内插话行补标成与写者字段
+ * 同一枚 DOM 戳（`data-nf-mid-turn`，src=inferred）。
+ *
+ * 判定（全部满足才算，任一不满足 ⇒ 不动该行，维持现状=平铺，绝不劣化）：
+ *   ① 行 = 普通 user 行（非注入、非作答行、尚未带戳）；
+ *   ② 行有时间戳 T；
+ *   ③ 向下最近的 terminal 行（`data-nf-turn-terminal`）存在，且它带
+ *      `data-nf-turn-duration`（= 该引擎回合的 durationMs）与时间戳 E，
+ *      T 落在开区间 (E - durationMs, E] 内 —— 即插话发生在该引擎回合的
+ *      **运行窗口内部**（回合结束时刻正是 terminal 行的落盘时刻）；
+ *   ④ 紧邻上方是本回合的过程行（ai/thinking/tool）且它**不是** terminal 行
+ *      —— 证明插话是「回复中插进来的」，不是新回合的第一条输入。
+ *
+ * 判据推不出（老行无 timestamp / 无 durationMs / 回合失败无 terminal）⇒ 保持
+ * 老口径（平铺），与改前逐字节同形；既有 DOM 已被写者字段标过的行不改写。
+ */
+function markInferredMidTurnRows(chat) {
+  const kids = Array.from(chat.children);
+  for (let i = 0; i < kids.length; i++) {
+    const row = kids[i];
+    if (!row.classList || !row.classList.contains('row') || !row.classList.contains('user')) continue;
+    if (isInjectedRow(row)) continue;
+    if (row.hasAttribute('data-nf-mid-turn') || row.hasAttribute('data-nf-ask-answer')) continue;
+    const t = rowTimestamp(row);
+    if (!t) continue;
+    let term = null;
+    for (let j = i + 1; j < kids.length; j++) {
+      const k = kids[j];
+      if (k.classList && k.classList.contains('user') && !isInjectedRow(k)) break; // 下一开轮行 = 窗口外
+      if (k.dataset && k.dataset.nfTurnTerminal) { term = k; break; }
+    }
+    if (!term) continue;
+    const end = rowTimestamp(term);
+    const dur = Number(term.dataset.nfTurnDuration || 0);
+    if (!end || !(dur > 0)) continue;
+    if (!(t > end - dur && t <= end)) continue;
+    const prev = i > 0 ? kids[i - 1] : null;
+    if (!prev || !isProcessRow(prev) || (prev.dataset && prev.dataset.nfTurnTerminal)) continue;
+    row.dataset.nfMidTurn = '1';
+    row.dataset.nfMidTurnSrc = 'inferred';
+  }
+}
+
 export function buildTurnSummariesForHistory(chat, opts = {}) {
   const { busyTail = false } = opts;
+  // tool-card-leak-on-reload 批（2026-11-02）：段边界判据之前先把**旧存量转录**的
+  // 回合内插话行补标（新转录由后端 midTurn 字段在行构建期直接落标）。
+  markInferredMidTurnRows(chat);
   const rows = Array.from(chat.children).filter(el => el.classList && el.classList.contains('row'));
   let segStart = 0;
   const flush = (end) => {
@@ -388,14 +731,23 @@ export function buildTurnSummariesForHistory(chat, opts = {}) {
   rows.forEach((r, i) => {
     if (isNonInjectedUserRow(r)) { flush(i); segStart = i + 1; return; }
     // #403 history side: an injected row arriving AFTER the segment already
-    // carries a done badge opens its own turn — split here.
-    if (isInjectedRow(r) && findDoneBadge(rows.slice(segStart, i))) { flush(i); segStart = i; }
+    // carries a done badge opens its own turn — split here. replay-terminal
+    // 批：terminal 盖戳行与徽章同为「段已闭合」判据（同 summarizeSegment 口径）。
+    if (isInjectedRow(r) &&
+        (findDoneBadge(rows.slice(segStart, i)) || findTerminalRow(rows.slice(segStart, i)))) {
+      flush(i); segStart = i;
+    }
   });
   const tail = rows.slice(segStart);
-  if (!busyTail || findDoneBadge(tail)) {
+  if (!busyTail || exchangeComplete(tail)) {
     flush(rows.length);
     markClosed(chat);
   } else if (tail.length > 0) {
+    // 在飞尾段（会话仍 busy）：live 腿的过程行出生即折叠（chat.js 三处
+    // nf-tucked）+ 可见面只有那条流式行 ⇒ 回放同形给一枚中性摘要行
+    // （过程泄漏修复批 2026-11-04，判据见 summarizeUnconfirmed 头注）。
+    const meta0 = { model: '', phrase: '', title: '' };
+    summarizeUnconfirmed(chat, tail, meta0);
     const idx = Array.from(chat.children).indexOf(tail[0]);
     if (idx > 0) markClosedAt(chat, idx);
   } else {
@@ -405,17 +757,38 @@ export function buildTurnSummariesForHistory(chat, opts = {}) {
 
 function summarizeSegment(chat, seg) {
   const tuckable = seg.filter(isTuckableRow);
-  if (tuckable.length === 0) return []; // E5: nothing to tuck — no header
-  if (!seg.some(r => !isTuckableRow(r))) return []; // E6: nothing would remain visible
-  // E4 P0: success = some Ai row in the segment carries a done-badge
-  // (data-nf-phrase rides the badge and is restored into the header as the
-  // leading ✻ 字句 — the v1-designed copy, 2026-09-06).
+  // output 块语法批：output 轮零过程行也立 header（角标 = 原文唯一展开入口）。
+  if (tuckable.length === 0 && !seg.some(rowHasOutputFace)) return []; // E5: nothing to tuck — no header
+  // E4 P0 done criterion — replay-terminal 批（2026-10-28，案一「A 根治」）改为
+  // 数据驱动优先：「段内存在 writer 盖戳的 terminal 行」（后端 done/agentDone
+  // 落盘 UiMessage.Ai.terminal=true；卫生批补工具行等价面——段内零 ai 行的退化
+  // 全工具轮由 markRoundTerminal 把 terminal 盖到段内最后一行 Tool 行；
+  // 回放渲染器统一转成 data-nf-turn-terminal）。
+  // 旧转录无该字段 ⇒ 回落现徽章启发式（badge 携 nf-phrase），渐进兼容——存量
+  // 历史不一次性改写。两判据任一在场即折；都不在场 = 失败/进行中段 ⇒ 平铺
+  // （09-05 排障裁定）/尾段 open（busyTail 瞬态）。徽章继续只做展示元数据载体
+  // （phrase/model 进 header）；terminal 行无徽章时 header 缺 phrase 段照样成立。
+  const termRow = findTerminalRow(seg);
   const badge = findDoneBadge(seg);
-  if (!badge) return []; // failed/unfinished segment: flat, no header
+  // 未终态段（无 writer terminal 戳、无 done 徽章）：失败收尾 / 异常中断 / 旧转录
+  // 无判据 —— 建**中性摘要行**（无 ✻ 成功文案）+ 过程行折叠：默认态不漏明细，
+  // 明细仍可点开（过程泄漏修复批 2026-11-04，判据见 summarizeUnconfirmed 头注）。
+  if (!termRow && !badge) {
+    summarizeUnconfirmed(chat, seg, { model: '', phrase: '', title: '' });
+    return [];
+  }
+  // E6: nothing would remain visible — kept for the heuristic-only face (a badge
+  // on an all-tuckable segment = uncertain legacy read, stay flat). A
+  // WRITER-STAMPED terminal row is the round-close FACT (data face, not a
+  // guess): the degenerate all-tool round (user row + N tool cards, zero ai
+  // lines) closes exactly like the live path — the header IS the round's
+  // visible face (live collapseTurn has no E6 exception).
+  if (!seg.some(r => !isTuckableRow(r)) && !termRow) return [];
+  const metaBadge = badge || (termRow ? termRow.querySelector('.duration-badge') : null);
   const meta = {
-    model: badge.dataset.nfModel || '',
-    phrase: badge.dataset.nfPhrase || '',
-    title: historyBadgeTitle(seg, badge),
+    model: (badge && badge.dataset.nfModel) || (termRow && termRow.dataset.nfModel) || '',
+    phrase: (badge && badge.dataset.nfPhrase) || '',
+    title: historyBadgeTitle(seg, metaBadge),
   };
   const stats = computeTurnStats(seg);
   const header = buildHeader(chat, seg, meta, stats);
@@ -424,6 +797,20 @@ function summarizeSegment(chat, seg) {
   bindHeaderToggle(header);
   tuckRows(tuckable); // history rebuild: static tuck
   return [header];
+}
+
+/** Writer-stamped turn-terminal row (replay-terminal 批 2026-10-28 + 卫生批工具行
+ *  等价面): the replay renderer stamps `data-nf-turn-terminal` on the row the
+ *  backend persisted at the done/agentDone frame — the terminal Ai row
+ *  (UiMessage.Ai.terminal=true), or, for a degenerate all-tool round (zero ai
+ *  lines), the round's last Tool row (UiMessage.Tool.terminal=true).
+ *  「缺席即不落键」 — legacy transcripts carry no stamp and fall back to the
+ *  badge heuristic. */
+function findTerminalRow(seg) {
+  for (let i = seg.length - 1; i >= 0; i--) {
+    if (seg[i].dataset && seg[i].dataset.nfTurnTerminal) return seg[i];
+  }
+  return null;
 }
 
 /** The turn's implicit done-marker: an AI footer badge carrying a duration

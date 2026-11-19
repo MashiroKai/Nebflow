@@ -15,6 +15,7 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import WebSocket from 'ws';
 
 const URL_BASE = process.env.NEBFLOW_URL || 'http://localhost:8095';
 const HOME = process.env.NEBFLOW_HOME_DIR;
@@ -32,7 +33,12 @@ function check(name, ok, extra = '') {
 
 function wsConnect() {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`${URL_BASE.replace('http', 'ws')}/ws?token=${encodeURIComponent(TOKEN)}`);
+    // Stage D: the token query rail on the WS handshake is retired — this
+    // client authenticates through the surviving WsAuth Bearer rail (the
+    // `ws` package can carry the Authorization header on the upgrade request).
+    const ws = new WebSocket(`${URL_BASE.replace('http', 'ws')}/ws`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
     const inbox = [];
     const waiters = [];
     ws.addEventListener('message', (ev) => {

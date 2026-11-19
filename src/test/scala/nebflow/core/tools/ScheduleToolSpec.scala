@@ -96,7 +96,9 @@ class ScheduleToolSpec extends FunSuite:
         assert(msg.contains("Cannot parse"), msg)
         assert(msg.contains("ISO 8601"), msg)
         // epoch is embedded zone-independently so the LLM can recalibrate
-        assert(msg.contains(s"$now ms"), s"should embed current epoch: $msg")
+        // 过时测试修复（2026-11-15）：时间串单源批（2026-11-05）后错误尾随
+        // TimeAnchor.line 完整锚（`epoch_ms <毫秒>`），旧 `<毫秒> ms` 尾形态退役。
+        assert(msg.contains(s"epoch_ms $now"), s"should embed current epoch: $msg")
       case Right(_) => fail("must be Left")
   }
 

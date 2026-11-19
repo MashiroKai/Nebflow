@@ -1,0 +1,5 @@
+# Design
+
+Remove only the two metadata rendering branches in `src/main/resources/web/js/bgAgentMobileChrome.js`; preserve source/created fields, task strip, dismiss and management control paths. Existing mobile test M4 requires retired fields: update its two inverse checks while retaining source, creation, task, glass and close assertions, plus M1–M3/M5–M6 and desktop D1. Do not change the model selector as part of this scoped change.
+
+The staged candidate consumer probe imports real production popup and uses fixture REST/WS; it is not yet validated, does not replace the existing full harness, and its sampled Chromium/light legs cannot establish the required WebKit, dark, real touch or desktop full regression. Before implementation test it red under an approved isolated supervisor and verify its history and date assertions; then implement and test green. Acceptance additionally requires actual matrix, screenshots, hit-test and asset verification. No promise of test execution or overall pass follows from this proposal.

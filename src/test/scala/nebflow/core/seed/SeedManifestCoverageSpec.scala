@@ -1,0 +1,216 @@
+package nebflow.core.seed
+
+import munit.FunSuite
+
+import java.net.JarURLConnection
+import java.nio.charset.StandardCharsets.UTF_8
+import scala.jdk.CollectionConverters.*
+
+/**
+ * K9 防漂移断言（**2026-09-12 重写：播种面与默认启用集解耦**）。
+ *
+ * ==旧口径（seed7 批 2026-09-11 `60539c6a`，本文件所取代的口径）==
+ * 判据 = `seed/plugins/` 资源树 **==** manifest `items` 的 `plugins:*`（双向差集 ∅）。
+ * 它把两个语义不同的集合绑成了相等关系：
+ *  - `seed/plugins/` 资源树 = **可手动装全集**（作者裁定「其余插件保留可手动装」）；
+ *  - `manifest.items` = **默认预装/播种集**（`SeedService.runSeed` 只遍历 items：
+ *    fresh home 的预装面、`reconcilePlugins` 的迭代面都是它）。
+ * 为让「树 ⊆ manifest」这一方向为绿，必须把 8 个种子目录**全部**登记为默认预装 ⇒ 同一
+ * 提交把默认集由 3 悄悄扩为 8，实质推翻 09-08 `d4baab03`「默认启用集收缩」的意图
+ * （作者 2026-09-12 报障逐字：「我们的种子插件怎么多了这么多，我只要 slideblocks /
+ * visual-report / nebflow-plugin-creator 这三种」）。归因链见取证报告
+ * `~/.nebflow/docs/Nebflow/20260912_130117_plugin-face-forensics__chain-n-bb115537.md` §A-3。
+ *
+ * ==新口径（本文件）==
+ * 两个集合**解耦**：资源树允许 ⊃ 默认预装集（不默认预装 ≠ 不可手动装），断言只锚三条
+ * 可判定的不变量——
+ *  a. **悬空**：manifest 每条 `plugins:*` 在种子树中必须有实件（含 `plugin.json` 的目录）。
+ *     悬空条目 ⇒ `SeedService.installPluginFromSeed` 只会 WARN "no seed resources — skipped"，
+ *     默认集结构性缺失且无可见信号 = 红；
+ *  b. **畸形目录**：种子树中每个目录必须是合法插件目录（含 `plugin.json`）。无 `plugin.json`
+ *     的目录既不是可手动装的有效插件，也会让 `SeedService.resourceDirList`（anchor =
+ *     `plugin.json`）返回空 ⇒ 静默 skipped = 红；
+ *  c. **默认预装集恰为 7 包**（写死条目：增删任何一条即红——原始 3 包锚出自作者
+ *     09-12「只要这三种」意图；作者裁定 2026-10-05 方案A：锚点 4→7 追认现状
+ *     （09-26 restores / 10-03 定形），见 `ExpectedDefaultPlugins`）。
+ * 被去掉的只有旧口径的「树 ⊆ manifest」方向：非默认集的种子树目录**允许存在**（它们属
+ * 可手动装全集），故本次回退默认集**零删除插件文件**。
+ *
+ * 形态：单元测试（`sbt test` 可跑，CI ci.yml 的 `Test` job 直接 `sbt test`）——无网络、
+ * 无外部状态、确定性红绿，红 = 非零退出码，天然进 CI 门。零副作用：只读 classpath
+ * （`seed/plugins/` 与 `seed/manifest.json`），不写盘、不碰 `PathUtil.dataRoot`、不起 gateway。
+ */
+class SeedManifestCoverageSpec extends FunSuite:
+
+  private val PluginsPrefix = "plugins:"
+  private val SeedPluginsResource = "seed/plugins"
+
+  /**
+   * 默认预装集（硬编码锚点；与此不符即红）。
+   *
+   * 本批 +`web-search-toolkit`（3 → 4）：Nebula 面摘除 Delegate 后，网络取数能力改由
+   * 插件面承载 ⇒ 该包必须进默认预装集，否则「落地 ≠ 生效」（种子树里有文件、任何 home
+   * 都不装它）。锚点仍是**精确集合相等**，方向未放宽。
+   *
+   * 作者裁定 2026-10-05 方案A：锚点 4→7 追认现状（09-26 restores / 10-03 定形）。
+   * 2026-10-31「开发插件统一批」：`nebflow-plugin-creator` 并入 `stand-dev`（六开发包合并，
+   * 能力零丢失），默认集条目同名替换——集合大小与语义不变。
+   *
+   * **2026-11-01 源化批（作者令「stand-dev 插件应该不进 seed 吧？运行时插件不是应该要能
+   * 热更新吗」）**：`stand-dev` 迁出 seed（7 → 6）——自研插件走**远端源**
+   * （`PluginSourceCatalog.Builtins`，git@git.ustc.edu.cn:kaiyu/stand-dev.git）由
+   * `PluginSourceSync.selfHeal()` 在 boot 期按需拉取，不再随引擎分发。判据不变：本锚点
+   * 仍是**精确集合相等**，只是面积收缩一条；「自研包不得进 seed」由下方 K9-d 单独钉死。
+   */
+  private val ExpectedDefaultPlugins: Set[String] =
+    Set(
+      "slideblocks",
+      "visual-report",
+      "web-search-toolkit",
+      "browser-use",
+      "computer-use",
+      "document-production"
+    )
+
+  /**
+   * 种子树「目录名 → 是否含 plugin.json」对照表（file 与 jar 双协议，与
+   * `SeedService.resourceDirList` 的协议判定同口径：sbt test = file，assembly = jar）。
+   */
+  private def seedTreeDirs(): Map[String, Boolean] =
+    val url = Option(getClass.getClassLoader.getResource(SeedPluginsResource)).getOrElse(
+      fail(s"classpath resource '$SeedPluginsResource' not found — seed plugin tree missing from test classpath")
+    )
+    url.getProtocol match
+      case "file" =>
+        val dir = os.Path(java.nio.file.Paths.get(url.toURI))
+        os.list(dir).filter(os.isDir).map(d => d.last -> os.exists(d / "plugin.json")).toMap
+      case "jar" =>
+        // jar 未必带目录条目 ⇒ 目录名从条目名首段归并，合法性 = 存在 `<name>/plugin.json` 条目
+        val entries = jarSeedEntries(url)
+        entries
+          .map(_.split('/').head)
+          .distinct
+          .map(n => n -> entries.contains(s"$n/plugin.json"))
+          .toMap
+      case other =>
+        fail(s"unsupported classpath protocol '$other' for $SeedPluginsResource — cannot enumerate seed tree")
+
+  end seedTreeDirs
+
+  /** jar 内 `seed/plugins/` 下**文件**条目（rel 形如 `<name>/…`，过滤掉根级散文件）。 */
+  private def jarSeedEntries(url: java.net.URL): List[String] =
+    val jar = url.openConnection().asInstanceOf[JarURLConnection].getJarFile
+    jar
+      .entries()
+      .asScala
+      .map(_.getName)
+      .filter(n => n.startsWith(s"$SeedPluginsResource/") && !n.endsWith("/"))
+      .map(_.stripPrefix(s"$SeedPluginsResource/"))
+      .filter(_.contains("/"))
+      .toList
+
+  /** 种子树中**合法插件目录**名（含 plugin.json 的一级子目录）。 */
+  private def seedPluginNames(): Set[String] =
+    seedTreeDirs().collect { case (n, true) => n }.toSet
+
+  /** manifest.items（classpath 上的同一份资源，与 `SeedService.loadManifest` 同源）。 */
+  private def manifestItems(): List[String] =
+    val in = Option(getClass.getClassLoader.getResourceAsStream("seed/manifest.json")).getOrElse(
+      fail("classpath resource 'seed/manifest.json' not found")
+    )
+    try
+      val text = new String(in.readAllBytes(), UTF_8)
+      val json = io.circe.parser.parse(text).fold(e => fail(s"seed/manifest.json invalid: ${e.getMessage}"), identity)
+      json.hcursor
+        .downField("items")
+        .as[List[String]]
+        .fold(e => fail(s"seed/manifest.json 'items' unreadable: ${e.getMessage}"), identity)
+    finally in.close()
+
+  /** manifest 声明的插件名（`plugins:*` 前缀条目）——即**默认预装/播种集**。 */
+  private def declaredPluginNames(): Set[String] =
+    manifestItems().collect { case id if id.startsWith(PluginsPrefix) => id.stripPrefix(PluginsPrefix) }.toSet
+
+  // ── a. 悬空：manifest ⊆ 种子树（唯一保留的方向）├──────────────
+  test("K9-a: every manifest plugins:* item has a seed tree — dangling ids must be empty"):
+    val seeded = seedPluginNames()
+    val declared = declaredPluginNames()
+    val dangling = (declared -- seeded).toList.sorted
+    assert(
+      dangling.isEmpty,
+      s"manifest declares ${dangling.size} plugin item(s) without seed resources " +
+        s"(SeedService would WARN 'no seed resources — skipped' and the default set would be " +
+        s"structurally absent in fresh/isolated homes): " +
+        dangling.map(n => s"plugins:$n").mkString(", ")
+    )
+
+  // ── b. 畸形：种子树每个目录都必须是合法插件目录 ──────────────
+  test("K9-b: every seed tree dir is a well-formed plugin dir (contains plugin.json)"):
+    val tree = seedTreeDirs()
+    assert(
+      tree.nonEmpty,
+      s"seed plugin tree '$SeedPluginsResource' is empty — seed resources missing from test classpath"
+    )
+    val malformed = tree.collect { case (n, false) => n }.toList.sorted
+    assert(
+      malformed.isEmpty,
+      s"seed plugin tree malformed — ${malformed.size} dir(s) without plugin.json " +
+        s"(not manually installable, and SeedService.resourceDirList returns empty for them ⇒ silent skip): " +
+        malformed.mkString(", ")
+    )
+
+  // ── c. 默认预装集恰为六条（写死锚点）────────────────────────
+  test(
+    "K9-c: default preinstall set is exactly {slideblocks, visual-report, web-search-toolkit, browser-use, computer-use, document-production}"
+  ):
+    val declared = declaredPluginNames()
+    val added = (declared -- ExpectedDefaultPlugins).toList.sorted
+    val removed = (ExpectedDefaultPlugins -- declared).toList.sorted
+    assert(
+      declared == ExpectedDefaultPlugins,
+      s"default preinstall set (manifest items plugins:*) drifted — " +
+        s"expected {${ExpectedDefaultPlugins.toList.sorted.mkString(", ")}}, " +
+        s"got {${declared.toList.sorted.mkString(", ")}} " +
+        s"(unexpected: ${if added.isEmpty then "∅" else added.mkString(", ")}; " +
+        s"missing: ${if removed.isEmpty then "∅" else removed.mkString(", ")}). " +
+        "manifest items = 默认预装/播种集（fresh home 预装面 + reconcile 迭代面）；" +
+        "增删条目会直接改变新装 home 与既有 home 的默认插件面积——改动前需作者裁定。"
+    )
+
+  // ── d. 自研插件（源化）不得进 seed 树 / manifest（2026-11-01 源化批）──
+  /**
+   * 作者令 2026-11-01 22:55「stand-dev 插件应该不进 seed 吧？运行时插件不是应该要能热更新吗」。
+   * 本规则把判定**机械钉死**：`PluginSourceCatalog.Builtins`（自研、来源在我们自己的仓）
+   * 里的任何包名，都不得出现在 `seed/manifest.json` 或 `seed/plugins/` 资源树里。
+   *
+   * 为什么必须是一条断言而不是注释：两套分发面并存时会立刻产生「谁覆盖谁」的仲裁问题
+   * （seed 的 digest 仲裁 vs 源化的 commit 换装，两条腿都能写 `plugins/<name>/`），
+   * 且 seed 那份永远滞后于仓里那一份——这正是本批要消除的病灶。往 seed 里加回一个自研包
+   * ⇒ 本条即红，且错误信息点名「走源、别走 seed」。
+   */
+  test("K9-d: source-managed builtins never appear in the seed tree or the seed manifest (self-authored packages ride the remote source)"):
+    val sourced = nebflow.core.plugin.PluginSourceCatalog.builtinNames
+    assert(sourced.nonEmpty, "PluginSourceCatalog.Builtins must declare at least the self-authored packages")
+    val inTree = sourced.intersect(seedPluginNames())
+    val inManifest = sourced.intersect(declaredPluginNames())
+    assert(
+      inTree.isEmpty,
+      s"source-managed package(s) found in the seed plugin tree: ${inTree.toList.sorted.mkString(", ")} — " +
+        "self-authored plugins ride their remote source (PluginSourceCatalog + PluginSourceSync), never the seed " +
+        "tree; two distribution faces would fight over plugins/<name>/ and the seed copy is always stale. " +
+        "Remove the directory from src/main/resources/seed/plugins/."
+    )
+    assert(
+      inManifest.isEmpty,
+      s"source-managed package(s) declared in seed/manifest.json: ${inManifest.toList.sorted.mkString(", ")} — " +
+        "manifest items are the seed preinstall set; source-managed packages are installed by " +
+        "PluginSourceSync.selfHeal() from their declaration instead."
+    )
+    // 反向锁：stand-dev（本批迁出的那个包）确实还在源声明里——防止「两边都删了」的静默丢失。
+    assert(
+      sourced.contains("stand-dev"),
+      "stand-dev must be a source-managed builtin (it left the seed tree on 2026-11-01 — it is fetched from " +
+        "git@github.com:MashiroKai/stand-dev.git, not shipped in the jar)"
+    )
+
+end SeedManifestCoverageSpec

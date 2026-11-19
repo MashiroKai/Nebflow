@@ -1,0 +1,215 @@
+package nebflow.perception
+
+import cats.effect.IO
+import io.circe.generic.semiauto.*
+import io.circe.syntax.*
+import io.circe.{Decoder, Encoder, Json}
+
+/**
+ * 感知域模型（r2 规格条目化面板 §9 + 状态机 §4.5 四色投影 + r3 极简修订）。
+ *
+ * 面板契约（§9.2）：条目 = id/icon/name/state/summary/detail；本批邮件 =
+ * 首个条目，文件/日历为预留位（面板前端渲染，后端 entries 只出真实条目）。
+ */
+object PerceptionModel:
+
+  /** 邮件条目状态（状态机八态 → 面板四色投影由 `colorOf` 承担）。 */
+  enum EntryState:
+    case Unconfigured, Connecting, Idle, Degraded, Paused, AuthFailed, Backoff, Error
+
+  object EntryState:
+    given Encoder[EntryState] = Encoder.encodeString.contramap(_.toString)
+    given Decoder[EntryState] = Decoder.decodeString.emap(s =>
+      EntryState.values.find(_.toString.equalsIgnoreCase(s)).toRight(s"unknown entry state: $s")
+    )
+
+    /** 四色投影：ok / warn / bad / dim（面板只认这四色，语义色只上载体）。 */
+    def colorOf(s: EntryState): String = s match
+      case Idle                              => "ok"
+      case Degraded | Backoff                => "warn"
+      case AuthFailed | Error                => "bad"
+      case Unconfigured | Connecting | Paused => "dim"
+
+  /** 一个邮箱账户的配置（授权码不入此结构——授权码只进 secrets）。 */
+  case class MailAccount(
+    id: String,
+    address: String,
+    provider: String = "",
+    imapHost: String = "",
+    imapPort: Int = 993,
+    smtpHost: String = "",
+    smtpPort: Int = 465,
+    smtpImplicitTls: Boolean = true,
+    displayName: Option[String] = None,
+    trustedSenders: List[String] = Nil,
+    enabled: Boolean = true,
+    /** secrets 存储里的授权码文件名（值永不落此文件）。 */
+    authCodeSecret: String = "",
+    /** 连接失败后的自动恢复：next attempt epoch-ms（0 = 无）。 */
+    nextAttemptAt: Long = 0L,
+    backoffAttempt: Int = 0,
+    createdAt: Long = 0L
+  ):
+    def secretName: String = MailAccount.secretNameFor(address)
+
+  object MailAccount:
+    def secretNameFor(address: String): String =
+      val safe = address.toLowerCase.replaceAll("[^a-z0-9._-]", "-").take(40).stripSuffix("-")
+      // SecretsStore 命名 ^[a-z0-9][a-z0-9._-]{0,63}$
+      s"perception-$safe"
+    given Encoder[MailAccount] = deriveEncoder
+    given Decoder[MailAccount] = deriveDecoder
+
+  /** 面板条目（mail 条目的 wire 形态）。 */
+  case class MailEntry(
+    id: String,
+    icon: String,
+    name: String,
+    state: EntryState,
+    summary: String,
+    /** 异常 banner 文案（人话 + 动作）；正常为空。 */
+    notice: String = "",
+    /** 展开区动作位（前端按 id 渲染既有按钮组）。 */
+    actions: List[String] = Nil
+  )
+
+  object MailEntry:
+    given Encoder[MailEntry] = deriveEncoder
+    given Decoder[MailEntry] = deriveDecoder
+
+  /** GET /api/perception/entries 的载荷（邮件条目 + 预留位由前端补）。 */
+  case class EntriesPayload(entries: List[MailEntry], serverTime: Long)
+
+  object EntriesPayload:
+    given Encoder[EntriesPayload] = deriveEncoder
+    given Decoder[EntriesPayload] = deriveDecoder
+
+  /** 一封已收新邮件（进程内传递 + 审计摘要 + 投递信封原料）。 */
+  case class IncomingMail(
+    uid: Long,
+    from: String,
+    fromDomain: String,
+    to: List[String],
+    subject: String,
+    date: String,
+    messageId: String,
+    bodyText: String
+  ):
+    def maskedCodeFree: String = this.copy(bodyText = "[omitted]").bodyText
+
+  object IncomingMail:
+    // spool 待判信封（L1 降级搁置）需要整信进 spool 文件 —— 编解码在此挂账。
+    given io.circe.Encoder[IncomingMail] = deriveEncoder
+    given io.circe.Decoder[IncomingMail] = deriveDecoder
+
+  /** 验证码窗口（单码槽）：窗开于 ask 卡弹出，窗内检测到的码只存进程内存。 */
+  case class OtpWindow(
+    windowId: String,
+    requestId: String,
+    openedAt: Long,
+    expiresAt: Long,
+    /** 当前槽内码（单槽覆盖模型：窗内第二码覆盖第一码）。 */
+    hit: Option[OtpHit] = None,
+    /** consumed = 码已被前端取走（槽清空，窗口仍开着等新码）。 */
+    consumed: Boolean = false
+  )
+
+  case class OtpHit(code: String, from: String, fromDomain: String, receivedAt: Long)
+
+  object OtpHit:
+    given Encoder[OtpHit] = deriveEncoder
+    given Decoder[OtpHit] = deriveDecoder
+
+  object OtpWindow:
+    given Encoder[OtpWindow] = deriveEncoder
+    given Decoder[OtpWindow] = deriveDecoder
+
+  /** 草稿注册表行（drafts.json；正文在草稿文件本身）。 */
+  case class DraftRecord(
+    draftId: String,
+    path: String,
+    createdAt: Long,
+    /** 快照卡生成时刻（一致性守则：mtime > snapshotAt ⇒ 快照发送 409）。 */
+    snapshotAt: Long,
+    state: String = "pending", // pending | sent | abandoned | expired
+    sentAt: Long = 0L,
+    messageId: String = "",
+    /** ask 卡 requestId（回执/关闭联动）。 */
+    requestId: String = "",
+    /** 草稿生成时的身份（回执显示）。 */
+    toSummary: String = "",
+    subject: String = "",
+    attachmentCount: Int = 0
+  )
+
+  object DraftRecord:
+    given Encoder[DraftRecord] = deriveEncoder
+    given Decoder[DraftRecord] = deriveDecoder
+
+  /** 审计行（audit.jsonl；不落全文/明码——纪律沿用 r2 §11）。 */
+  case class AuditLine(
+    ts: Long,
+    stage: String, // L0 | deliver | otp | send | digest | state
+    reason: String,
+    detail: String = ""
+  )
+
+  object AuditLine:
+    given Encoder[AuditLine] = deriveEncoder
+    given Decoder[AuditLine] = deriveDecoder
+
+  /** 投递信封（注入主代理的文本 + 优先级）。 */
+  case class DeliveryEnvelope(
+    priority: String,
+    text: String,
+    /**
+     * L1 降级搁置（r2 §5.2「LLM 不可用 → 搁置 spool 待恢复，恢复后按序补判，
+     * 不臆测投递也不臆测丢弃」）：整信随 spool 暂存，spoolLoop 回放时先补判再
+     * 决定投递/丢弃。None = 已判定信封（回放直接注入，向后兼容旧 spool 文件）。
+     */
+    pendingMail: Option[IncomingMail] = None
+  )
+
+  object DeliveryEnvelope:
+    given Encoder[DeliveryEnvelope] = deriveEncoder
+    given Decoder[DeliveryEnvelope] = deriveDecoder
+
+  /** L1 判定 seam（生产 = MailImportanceJudge.judgeViaLlm(resources.llm…)；spec 注桩）。 */
+  type MailIncomingJudge = Option[IncomingMail => IO[L1Verdict]]
+
+  /** L1（LLM 重要性判定）裁决（r2 §5.2 三值；deliver-digest 为 P3 预留不实现）。 */
+  enum L1Verdict:
+    case Deliver   // 投递全文
+    case Drop      // 丢弃
+    case Unavailable // LLM 不可用/超时/不可解析 → 搁置 spool 待恢复
+
+  object L1Verdict:
+    def readable(v: L1Verdict): String = v match
+      case Deliver     => "deliver-full"
+      case Drop        => "drop"
+      case Unavailable => "unavailable"
+
+  /** 发送请求结果（REST 面的语义化失败，回执卡直接可用）。 */
+  enum SendFailure:
+    case AuthFailed
+    case Network(msg: String)
+    case Rejected(msg: String) // 收件方拒收（5xx；4xx = 瞬时可重试，见 MailClient.isSendRetryable）
+    case Stale // 快照过期（409）
+    case MissingAttachment(paths: List[String])
+    case NoAccount
+    case Invalid(msg: String)
+    // 报障 2026-10-31（「Host did not answer in time」怒评批）新增两态：
+    case Timeout   // 服务器超时未响应（DATA 写出之前——绝无已投递风险，可安全自动重试）
+    case Ambiguous // 投递结果不明（DATA 已写出但未获服务器最终回执——可能已投递，禁盲重试防重复）
+
+  object SendFailure:
+    def readable(f: SendFailure): String = f match
+      case AuthFailed              => "授权码已失效 · 需重新连接邮箱"
+      case Network(m)              => s"网络连接异常 · 请检查网络后重发（$m）"
+      case Rejected(_)             => "收件方拒收 · 地址可能已失效"
+      case Timeout                 => "发送超时：服务器长时间未响应（大附件或慢网络时常见）· 已自动重试仍未成功，请稍后重发"
+      case Ambiguous               => "发送结果不明：未收到服务器最终确认，邮件可能已发出 · 请勿立即重发，请先确认收件人是否收到"
+      case Stale                   => "草稿已在 Canvas 中修改，请以画布内容发送"
+      case MissingAttachment(paths) => s"附件不存在：${paths.mkString("、")}"
+      case NoAccount               => "尚未连接邮箱"
+      case Invalid(m)              => m

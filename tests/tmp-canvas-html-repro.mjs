@@ -3,6 +3,7 @@
 // Run: node tests/tmp-canvas-html-repro.mjs
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
+import { installTicketMock, ticketGuard } from './nf-ticket-mock.mjs';
 
 const BASE = 'http://127.0.0.1:8977';
 const FILE = process.env.HOME + '/.nebflow/projects/html-deck-studio/ai-fpga-deck/ppt/index.html';
@@ -25,6 +26,15 @@ page.on('pageerror', e => {
   consoleErrs.push('[pageerror] ' + s.slice(0, 300));
 });
 await page.route('**/api/**', r => r.fulfill({ json: {} }));
+// C 批（票据腿）：该件无 nf-file 专属 mock，但 srcdoc 内的模块/素材仍要走
+// 票据 URL。补一条最小 nf-file mock（先判票）+ 票据假票 mock（最后注册）。
+await page.route('**/api/nf-file**', async r => {
+  if (await ticketGuard(r)) return;
+  const p = new URL(r.request().url()).searchParams.get('path') || '';
+  try { return r.fulfill({ body: readFileSync(p), contentType: 'application/octet-stream' }); }
+  catch { return r.fulfill({ status: 404 }); }
+});
+await installTicketMock(page);
 
 let serverWs = null;
 await page.routeWebSocket(/\/ws/, ws => {

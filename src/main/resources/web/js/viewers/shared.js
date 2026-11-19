@@ -3,6 +3,9 @@
 
 import { key } from '../branding.js';
 import { t } from '../i18n.js';
+import { mintTickets, nfFilePathsIn, injectTickets, decodePathParam } from '../nfTicket.js';
+// noteAuthRejected 随 wiki-graph 圆钮（addGraphToggle）批④一并退役——本件无
+// 其余 401/403 REST 直调面（2026-10-31 Canvas 改造批）。
 export function getToken() {
   return localStorage.getItem(key('token')) || '';
 }
@@ -29,8 +32,9 @@ export function buildThemeVarsCSS() {
   for (const sheet of document.styleSheets) {
     try {
       for (const rule of sheet.cssRules) {
-        if (rule.selectorText === ':root') {
-          for (const prop of rule.style) {
+        const styleRule = /** @type {CSSStyleRule} */ (rule);
+        if (styleRule.selectorText === ':root') {
+          for (const prop of styleRule.style) {
             if (prop.startsWith('--color-') || prop.startsWith('--glass') || prop.startsWith('--sapphire')) {
               const val = root.getPropertyValue(prop).trim();
               if (val) pairs.push(`${prop}:${val}`);
@@ -43,35 +47,570 @@ export function buildThemeVarsCSS() {
   return pairs.length > 0 ? `:root{${pairs.join(';')}}` : '';
 }
 
+// ── Tag-context-aware attribute walking ────────────────────────────────────
+// The pre-2026-09-12 rewriter matched `\bsrc\s*=` / `\bhref\s*=` ANYWHERE in the
+// document. `\b` matches after `-` and after a quote, so it rewrote things that
+// are not the attribute at all — measured on a real deliverable: an
+// `onclick="location.href='/zzz'"` became `location.href='/api/nf-file?path=…'`
+// (clicking it really navigated the frame), a `data-src="/tmp/…png"` lost its
+// own value, and body text that merely *contained* `href='/x'` was rewritten —
+// user-visible content corruption, on every page this viewer renders.
+// Attribute rewriting now happens inside a tag, and only on the real attribute
+// name (a `^|whitespace` guard excludes `data-href=` / `data-src=`).
+
+/** Element tags whose children are character data: the walker copies their
+ *  bodies verbatim, so an `<a href=…>` written inside a <script> string stays
+ *  data instead of being read as markup. */
+const RAW_TEXT_TAGS = new Set(['script', 'style', 'textarea', 'title']);
+
+/** Walk the element tags of an HTML string, letting `onTag` rewrite each tag's
+ *  attribute text. Returning the attribute text unchanged keeps the tag
+ *  byte-identical — the document is never re-serialized.
+ *  @param {string} html
+ *  @param {(tag: string, attrs: string) => string} onTag
+ *  @returns {string} */
+function mapTags(html, onTag) {
+  const re = /<([a-zA-Z][a-zA-Z0-9:-]*)((?:"[^"]*"|'[^']*'|[^>"'])*)>/g;
+  const lower = html.toLowerCase();
+  let out = '';
+  let last = 0;
+  /** @type {RegExpExecArray|null} */
+  let m;
+  while ((m = re.exec(html)) !== null) {
+    const tag = m[1].toLowerCase();
+    const attrs = m[2];
+    out += html.slice(last, m.index);
+    const mapped = onTag(tag, attrs);
+    out += mapped === attrs ? m[0] : '<' + m[1] + mapped + '>';
+    last = re.lastIndex;
+    if (RAW_TEXT_TAGS.has(tag) && !/\/\s*$/.test(attrs)) {
+      const close = lower.indexOf('</' + tag, last);
+      const gt = close === -1 ? -1 : html.indexOf('>', close);
+      if (gt !== -1) {
+        out += html.slice(last, gt + 1);
+        last = gt + 1;
+        re.lastIndex = last;
+      }
+    }
+  }
+  return out + html.slice(last);
+}
+
+/** Map the QUOTED attributes inside one tag's attribute text.
+ *  `onAttr(name, value)` returns the replacement value, or null to keep it.
+ *  Unquoted values are not rewritten — unchanged gap, the old regexes required
+ *  quotes too.
+ *  @param {string} attrs
+ *  @param {(name: string, value: string) => string|null} onAttr
+ *  @returns {string} */
+function mapAttrs(attrs, onAttr) {
+  return attrs.replace(/(^|\s)([a-zA-Z_:][-a-zA-Z0-9_:.]*)(\s*=\s*)(["'])([^"']*)\4/g,
+    (full, lead, name, eq, quote, value) => {
+      const next = onAttr(name.toLowerCase(), value);
+      return next === null ? full : lead + name + eq + quote + next + quote;
+    });
+}
+
+/** Escape an attribute value we produce ourselves. */
+function escapeAttrValue(v) {
+  return String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
 /** Convert local file paths in src= and href= attributes to /api/nf-file URLs.
  *  Handles: absolute paths (/tmp/..., ~/...), relative paths (relative to HTML dir).
- *  Skips: http://, https://, data:, #, javascript:, blob:, /api/ (already proxied). */
-export function resolveLocalFiles(html, dir, token) {
-  const tokParam = token ? `&token=${encodeURIComponent(token)}` : '';
-  const toFileUrl = (src) => {
+ *  Skips: http://, https://, data:, #, javascript:, blob:, /api/ (already proxied).
+ *
+ *  2026-09-11 (C batch): async, and the credential leg is a per-path ticket
+ *  instead of the global token. The scan runs FIRST and mints one batched
+ *  ticket request for every distinct candidate (an HTML deliverable commonly
+ *  references a dozen companions — one request, not a dozen); the rewrite runs
+ *  second, synchronously. A failed mint is not fatal: the URL is emitted
+ *  without a ticket, the endpoint answers 401, and the viewer's existing
+ *  failure path shows it (§4.3 F2).
+ *
+ *  2026-09-12 (canvas-preview nav parity): `<a href>` is NO LONGER turned into
+ *  a proxy URL. A proxied anchor is an in-frame same-origin HTTP navigation,
+ *  and that is exactly what the viewer's navigation guard used to answer by
+ *  destroying the pane ("Rendering was stopped…"), while `target="_blank"`
+ *  could not work either (html/md are outside the extension whitelist and a
+ *  data-root path outside the served namespaces is refused — `docs/**` was one
+ *  such path until 2026-09-16 (img-ticket 批 i, #687-A), so the popup opened a
+ *  401; the chat card sandbox has no allow-popups at all). An anchor's resolved absolute path now
+ *  rides in `data-nf-local-link` and the href itself is left byte-identical
+ *  (relative semantics, status-bar preview and CSS untouched); the click is
+ *  routed to a Canvas tab by `localLinkNavScript` + `bindLocalLinkBridge`
+ *  below. Every RESOURCE-shaped src=/href= (`<img>`, `<link>`, `<script>`,
+ *  `<video>`, `<audio>`, `<source>`, `<iframe>`, …) keeps the proxy + ticket
+ *  form: those bytes must be reachable from inside the frame, which is the
+ *  browser semantics this feature is supposed to preserve.
+ *
+ *  The `token` parameter is gone: no credential is ever built into these URLs
+ *  any more (T2 — a credential must not reach a serializable text face).
+ *
+ *  CSS `url()` / `@import` returns are NOT rewritten here — a known, unchanged
+ *  gap on this path (shared.js:60-72 only ever handled src=/href=). The Card
+ *  path DOES rewrite them (the retired CardTool side, now cardRegistry.js's
+ *  own injection); see cardRegistry.js for its own injection, which covers the
+ *  unquoted `url()` form too. */
+export async function resolveLocalFiles(html, dir) {
+  const toPath = (src) => {
     if (/^(https?:|data:|#|javascript:|blob:|\/api\/|mailto:|tel:)/i.test(src)) return null;
     if (!src || src.trim() === '') return null;
-    let resolved;
     if (src.startsWith('/') || /^[A-Za-z]:[\\/]/.test(src) || src.startsWith('~')) {
-      resolved = src.replace(/^~/, ''); // backend expands ~
-    } else if (dir) {
-      resolved = dir + '/' + src.replace(/^\.\//, '');
-    } else {
-      return null; // can't resolve without dir
+      // Keep `~` intact — the /api/nf-file endpoint expands it to the user
+      // home. The old implementation stripped the `~` prefix (contradicting
+      // this comment's claim) and sent `/x.png` — an absolute path at the
+      // filesystem root — so every `~/…` src/href in an HTML file 404'd.
+      return src;
     }
-    return `/api/nf-file?path=${encodeURIComponent(resolved)}${tokParam}`;
+    if (dir) return dir + '/' + src.replace(/^\.\//, '');
+    return null; // can't resolve without dir
   };
-  // src= attributes
-  html = html.replace(/\bsrc\s*=\s*(["'])([^"']+)\1/gi, (m, q, src) => {
-    const url = toFileUrl(src);
-    return url ? `src=${q}${url}${q}` : m;
+  /** The local file an `<a href>` points at, '' when it is not a local file.
+   *  An `/api/nf-file?path=…` anchor (a replayed card, or hand-written markup)
+   *  is decoded back to its path so the click stays on the local-file route
+   *  instead of navigating the frame to the proxy URL.
+   *
+   *  2026-09-16 (anchorpath batch): the `path=` value is a QUERY-STRING
+   *  parameter, so a bare `+` means a SPACE there — `decodeURIComponent` alone
+   *  folds NEITHER `+` nor `%2B`, so a JVM-form-encoded space
+   *  (`java.net.URLEncoder` writes a space as `+`, a literal plus as `%2B`; the
+   *  frontend's own `encodeURIComponent` writes them as `%20` / `%2B`) came
+   *  back as a literal `+`. The anchor then carried `data-nf-local-link` naming
+   *  a path that does not exist — a link click opened the wrong path (or the
+   *  unreadable-file placeholder), the same defect family the imgfix batch fixed
+   *  in `nfTicket.js` (`decodePathParam`, nfTicket.js:74-94 — the ONE statement
+   *  of this discipline in the repo; this line follows its criterion: fold the
+   *  bare `+` BEFORE decoding, leave `%2B` alone). */
+  const anchorPath = (href) => {
+    const h = href || '';
+    const proxied = /^\/api\/nf-file\?(?:[^"'#]*&)?path=([^&"']*)/i.exec(h);
+    if (proxied) {
+      // imgref rework r1 (2026-09-18): the IMPORTED single source, not a third
+      // inline spelling of the same rule. `decodePathParam` is the ONE
+      // statement of this discipline in the repo (nfTicket.js); this line used
+      // to restate it, which left three spellings in one file (this one,
+      // `routeLocalHref` below, and the frame script embedded in html.js —
+      // which cannot import and therefore stays inline by construction).
+      const p = decodePathParam(proxied[1]);
+      return p === null ? '' : p;
+    }
+    return toPath(h) || '';
+  };
+  const candidates = new Set();
+  mapTags(html, (tag, attrs) => {
+    mapAttrs(attrs, (name, value) => {
+      // `<a href>` needs no ticket any more (see the header): it is routed to
+      // the Canvas tab leg, which reads the file over the existing WS leg.
+      if (name === 'src' || (name === 'href' && tag !== 'a')) {
+        const p = toPath(value);
+        if (p) candidates.add(p);
+      }
+      return null;
+    });
+    return attrs;
   });
-  // href= attributes (for <link> stylesheets, <a> anchors with local paths)
-  html = html.replace(/\bhref\s*=\s*(["'])([^"']+)\1/gi, (m, q, href) => {
-    const url = toFileUrl(href);
-    return url ? `href=${q}${url}${q}` : m;
+  // Already-proxied `/api/nf-file?path=…` URLs are NOT left alone any more.
+  // They used to be skipped as "already resolved" — true while the credential
+  // was the global token, which such a URL did not carry either. Now a
+  // credential-free nf-file URL is a guaranteed 401, and these URLs do occur:
+  // a persisted/replayed card, or hand-written markup, arrives with the
+  // proxy URL already in it (and with a ticket that has long expired).
+  // Authentication is therefore applied to them in place.
+  for (const p of nfFilePathsIn(html)) candidates.add(p);
+  // F1: zero candidates → zero mint requests (mintTickets early-returns).
+  const tickets = await mintTickets([...candidates]);
+  const toUrl = (p) => {
+    const t = tickets.get(p);
+    return `/api/nf-file?path=${encodeURIComponent(p)}${t ? '&ticket=' + encodeURIComponent(t) : ''}`;
+  };
+  html = mapTags(html, (tag, attrs) => {
+    const isAnchor = tag === 'a';
+    let out = mapAttrs(attrs, (name, value) => {
+      if (name !== 'src' && name !== 'href') return null;
+      if (isAnchor && name === 'href') return null;   // marker attribute below, href kept as authored
+      const p = toPath(value);
+      return p ? toUrl(p) : null;
+    });
+    if (isAnchor) {
+      const m = /(^|\s)href\s*=\s*(["'])([^"']*)\2/i.exec(attrs);
+      const p = m ? anchorPath(m[3]) : '';
+      if (p) {
+        // Idempotent: a document that already carries the marker gets exactly
+        // one, with the path resolved for THIS document's directory.
+        out = out.replace(/(^|\s)data-nf-local-link\s*=\s*(["'])[^"']*\2/gi, '');
+        out += ` data-nf-local-link="${escapeAttrValue(p)}"`;
+      }
+    }
+    return out;
   });
+  // Already-proxied URLs (pass 2b) — credential injected, path untouched.
+  html = injectTickets(html, tickets);
   return html;
+}
+
+// ── Local-link routing: frame side + parent side (2026-09-12) ─────────────
+// Two halves of one channel, shared by BOTH surfaces that render agent HTML —
+// the Canvas HTML viewer (viewers/html.js) and the chat card
+// (cardRegistry.js) — so the two can never drift into two behaviours (the same
+// "one implementation" rule nfTicket.js follows for the proxy-URL regex).
+
+/** THE link-routing criterion: given an authored `href`, which leg serves it.
+ *  Deliberately ONE definition for every surface that renders authored markup
+ *  into the app document — the HTML frame's injected script (below, via
+ *  `toString()`, so the frame literally runs this code) and the parent-side
+ *  markdown viewer (viewers/markdown.js). Each surface carrying its own
+ *  predicate is how the markdown face ended up with no handler at all, and how
+ *  the frame's navigation guard ended up with a route whitelist that drifts
+ *  every time a new local-file route is added.
+ *
+ *  @param {string} href raw `href` attribute (or an already-resolved absolute
+ *    path — that is what `data-nf-local-link` carries)
+ *  @param {string} [baseDir] directory of the document the href was authored
+ *    in; required to resolve a relative href. The frame omits it: its hrefs
+ *    are already resolved to an absolute path by `resolveLocalFiles`.
+ *  @returns {{kind:'anchor'|'external'|'local'|'unresolved'|'none',
+ *             path?:string, url?:string}} `anchor` = in-page scroll (never
+ *    intercepted), `external` = http(s) URL tab, `local` = Canvas local-file
+ *    tab, `unresolved` = relative and no base to resolve against (caller shows
+ *    its own visible note), `none` = not ours (data:/javascript:/mailto:/…). */
+function routeLocalHref(href, baseDir) {
+  const h = String(href == null ? '' : href);
+  if (!h || h.charAt(0) === '#') return { kind: 'anchor' };
+  if (/^https?:\/\//i.test(h)) return { kind: 'external', url: h };
+  if (/^(data:|javascript:|blob:|mailto:|tel:|file:)/i.test(h)) return { kind: 'none' };
+  // A hand-written / replayed proxy URL is a local file, not a frame
+  // navigation: decode its path so the click stays on the local-file leg.
+  const proxied = /^\/api\/nf-file\?(?:[^"'#]*&)?path=([^&"']*)/i.exec(h);
+  if (proxied) {
+    // imgref batch (2026-09-18): ONE decoder, imported — this line used to call
+    // `decodeURIComponent` alone while `anchorPath` two functions above folded
+    // the bare `+` first (shared.js:185 vs :275: two policies in one file). A
+    // URL is a QUERY-STRING, so a bare `+` is a SPACE: the JVM form encoder
+    // writes a space as `+` and a literal plus as `%2B`. Importing the single
+    // definition removes the divergence instead of adding a third opinion.
+    const p = decodePathParam(proxied[1]);
+    return p === null ? { kind: 'none' } : { kind: 'local', path: p };
+  }
+  // A fragment addresses a section INSIDE the target file (the Canvas tab
+  // opens the file, not a scroll offset) and a query is never part of a
+  // filesystem path — drop both before resolving. `%23` survives the split and
+  // decodes below, so a `#` in a filename is unaffected.
+  const bare = h.split('#')[0].split('?')[0];
+  if (!bare) return { kind: 'unresolved' };
+  if (bare.charAt(0) === '/' || bare.charAt(0) === '~' || /^[A-Za-z]:[\\/]/.test(bare)) {
+    return { kind: 'local', path: bare };
+  }
+  if (!baseDir) return { kind: 'unresolved' };
+  let rel = bare.replace(/^\.\//, '');
+  // marked percent-encodes link destinations (CJK, spaces) — decode before
+  // joining, or the path is escaped a second time and never matches a file.
+  try { rel = decodeURIComponent(rel); } catch (_) { /* literal % in a name */ }
+  return rel ? { kind: 'local', path: baseDir + '/' + rel } : { kind: 'unresolved' };
+}
+export { routeLocalHref };
+
+/** Visible inline note for a link that routes to a local file but has no path
+ *  to open — a silent dead click is the failure mode this batch exists to
+ *  remove. ONE definition, used by the parent-side bridge and embedded by
+ *  source into the frame script (see `localLinkNavScript`).
+ *  @param {any} a the anchor element */
+function markUnsolvedLink(a) {
+  if (a.getAttribute('data-nf-link-unsolved')) return;
+  a.setAttribute('data-nf-link-unsolved', '1');
+  const s = document.createElement('span');
+  s.setAttribute('data-nf-link-unsolved-note', '1');
+  s.textContent = ' (local link: no path to open from this preview)';
+  s.style.cssText = 'font-size:var(--ds-fs-meta);color:var(--color-text-muted,#8b8e96);';
+  if (a.parentNode) a.parentNode.insertBefore(s, a.nextSibling);
+}
+export { markUnsolvedLink };
+
+/** Dormant script injected into an HTML frame: an image click is forwarded to
+ *  the parent as `{ _nfImagePreview: { src, path, alt } }` so the app's own
+ *  lightbox opens it.
+ *
+ *  Why it lives HERE (card-image-zoom batch, 2026-09-28): the Canvas HTML
+ *  viewer (viewers/html.js) already carried this script as a private constant
+ *  and the chat card (cardRegistry.js) carried none — so an image embedded in
+ *  a Card was a dead click while the same image in the Canvas opened a preview.
+ *  The card now injects the SAME script: one producer for the channel, so the
+ *  two surfaces cannot drift into two message shapes (the rule this module
+ *  already follows for `localLinkNavScript` / `routeLocalHref` / nfTicket.js).
+ *
+ *  Payload contract (unchanged, `viewers/html.js` 2026-09-11 C batch ⑧): the
+ *  payload carries the PATH, not just a ready-made URL — the parent re-mints a
+ *  fresh ticket for that path when the lightbox opens, so the frame's injected
+ *  ticket is never reused, never outlives its TTL in the parent document and
+ *  never lands in the parent DOM at all. `src` stays, credential-stripped, as
+ *  the fallback for images that are not nf-file-proxied at all (a data-URI
+ *  inline image renders through it — the same experience the Canvas has, by
+ *  the §0 ruling of this batch: no blob conversion is invented here).
+ *
+ *  Also marks every image as clickable (cursor: zoom-in + the hover hint), so
+ *  the affordance is stated instead of discoverable only by trying. An
+ *  authored `title` is never overwritten.
+ *
+ *  Precedence (the handler's leading `if(e.defaultPrevented) return;`): a
+ *  capture listener registered earlier — `localLinkNavScript` above, which both
+ *  surfaces also inject — claims a link click first, and this handler then
+ *  stands down. Consequence, measured (round-1 review, 2026-09-28): an `<img>`
+ *  inside a local-file `<a href>` FOLLOWS ITS LINK and does not also open the
+ *  preview. The Canvas leg gained this guard in this batch (its private copy
+ *  had none and emitted both messages); the card leg already behaved this way.
+ *  Pinned by Z8a/Z8b of tests/card-image-zoom.spec.mjs — do not remove the
+ *  guard without re-checking both legs.
+ *
+ *  @param {string} [hint] hover text (resolved from the locale dictionary)
+ *  @returns {string} */
+export function imgClickScript(hint = t('lightbox.clickHint')) {
+  // The hint is substituted into the literal below instead of being
+  // interpolated inside it, and that is deliberate: WebJsModuleSyntaxSpec's
+  // FRAME pass evaluates each template literal that carries a `<script>` body
+  // and compiles the EMITTED text, so a broken frame script (the `\+` →
+  // `/+/g` class this gate was built for) is caught. An interpolated literal
+  // cannot be evaluated statically, so the gate SKIPS it — substituting after
+  // the fact keeps this script under the gate. The replacer is a function so a
+  // `$` in a translation cannot be read as a replacement pattern, and the
+  // quoted placeholder is replaced WHOLE so the emitted line is a JSON string
+  // literal (double-quoted) — a translation containing an apostrophe stays
+  // valid JS.
+  return IMG_CLICK_SCRIPT.replace("'__NF_IMG_HINT__'", () => JSON.stringify(String(hint || '')));
+}
+
+/** Frame script for `imgClickScript` (template literal, no interpolation —
+ *  see the note in that function). */
+const IMG_CLICK_SCRIPT = `<script>
+(function(){
+  var HINT='__NF_IMG_HINT__';
+  function stripCredential(u){
+    return String(u||'').replace(/([?&])(token|ticket)=[^&]*/g,'$1').replace(/[?&]$/,'');
+  }
+  function pathOf(u){
+    var m=/[?&]path=([^&]*)/.exec(String(u||''));
+    if(!m) return '';
+    // Embedded by SOURCE (a frame script cannot import a module): fold a bare
+    // plus sign first, then percent-decode — byte-for-byte the criterion of
+    // nfTicket.js decodePathParam, which is the ONE statement of this
+    // discipline. Calling decodeURIComponent alone folded neither a plus sign
+    // nor %20, so a JVM-form-encoded space reached the parent as a literal plus
+    // and the lightbox re-minted its ticket for a path that does not exist.
+    // NOTE: this comment is INSIDE a template literal — never write an
+    // unescaped backtick here, and never write the two-character interpolation
+    // opener (dollar + brace): either one ends/starts an interpolation and the
+    // module stops parsing, which no Scala test used to see — see
+    // WebJsModuleSyntaxSpec, the JS-face gate added for exactly that miss.
+    // The regex below is spelled with a DOUBLED backslash on purpose: a template
+    // literal drops a lone one, so the single-backslash spelling emitted a
+    // pattern of just a plus sign into this frame script and the browser threw
+    // "Invalid regular expression: /+/g: Nothing to repeat" — the whole handler
+    // died while the module itself still parsed fine. The gate's frame-script
+    // pass pins this class (see WebJsModuleSyntaxSpec).
+    try{ return decodeURIComponent(m[1].replace(/\\+/g,' ')); }catch(e){ return ''; }
+  }
+  function markImg(el){
+    if(!el || el.nodeType!==1 || el.tagName!=='IMG') return;
+    if(el.getAttribute('data-nf-zoom-ready')) return;
+    el.setAttribute('data-nf-zoom-ready','1');
+    el.style.cursor='zoom-in';
+    if(HINT && !el.getAttribute('title')) el.setAttribute('title',HINT);
+  }
+  function markAll(){
+    var imgs=document.querySelectorAll('img');
+    for(var i=0;i<imgs.length;i++) markImg(imgs[i]);
+  }
+  document.addEventListener('click', function(e){
+    // A sibling capture listener that already claimed this click owns it:
+    // localLinkNavScript runs first (same document, registered earlier) and
+    // preventDefaults a link click, so an image inside a local/external link
+    // follows its link instead of ALSO opening a preview. This check is the
+    // whole precedence rule - registered order plus this guard - so an image
+    // that is not inside such a link still opens, and an in-page hash anchor
+    // keeps exactly the behaviour it had before this script was shared
+    // (nothing claims it). NOTE: this comment lives INSIDE a template literal
+    // - never write a backtick or the two-character interpolation opener here
+    // (WebJsModuleSyntaxSpec is the gate for that class).
+    if(e.defaultPrevented) return;
+    var img = e.target && e.target.closest ? e.target.closest('img') : null;
+    if (!img) return;
+    e.preventDefault();
+    var raw = img.currentSrc || img.src || '';
+    parent.postMessage({ _nfImagePreview: { src: stripCredential(raw), path: pathOf(raw), alt: img.alt || '' } }, '*');
+  }, true);
+  // Late-arriving images (a script, a lazy loader) get the affordance too.
+  window.addEventListener('load', function(e){ markImg(e.target); }, true);
+  if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', markAll);
+  else markAll();
+})();
+<\/script>`;
+
+/** Dormant script injected into an HTML frame: local-file and external link
+ *  clicks are routed to the parent instead of letting the frame navigate.
+ *  Registered in the capture phase on `document` (the pattern html.js's
+ *  `imgClickScript` used to be — it now lives in this module, above), so
+ *  page-level handlers cannot outrun it; covers
+ *  left-click, middle-click (`auxclick`) and keyboard activation (a synthetic
+ *  click with detail 0). `#` anchors are left to the viewer's own in-frame
+ *  scroll script, and an unresolvable local link gets a VISIBLE inline note
+ *  rather than a silent dead click.
+ *
+ *  The routing decision is `routeLocalHref` embedded by source, so the frame
+ *  and the parent-side markdown viewer share one criterion by construction.
+ *  @returns {string} */
+export function localLinkNavScript() {
+  return `<script>
+(function(){
+  var routeLocalHref = ${routeLocalHref.toString()};
+  var markUnsolvedLink = ${markUnsolvedLink.toString()};
+  function onClick(e){
+    if (e.defaultPrevented) return;
+    var a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    var r = routeLocalHref(a.getAttribute('data-nf-local-link') || a.getAttribute('href') || '', '');
+    if (r.kind === 'anchor' || r.kind === 'none') return;
+    e.preventDefault();
+    if (r.kind === 'external') {
+      parent.postMessage({ _nfOpenExternalUrl: { url: r.url } }, '*');
+      return;
+    }
+    if (r.kind !== 'local' || !r.path) { markUnsolvedLink(a); return; }
+    parent.postMessage({ _nfOpenLocalFile: {
+      path: r.path,
+      newTab: !!(e.metaKey || e.ctrlKey || e.shiftKey || e.type === 'auxclick')
+    } }, '*');
+  }
+  document.addEventListener('click', onClick, true);
+  document.addEventListener('auxclick', onClick, true);
+})();
+<\/script>`;
+}
+
+let _localLinkBridgeBound = false;
+
+/** Parent side of `localLinkNavScript`. One global listener for the whole app
+ *  (idempotent); the sender must be a frame this app renders, the same
+ *  sender-verification discipline viewers/html.js uses for `_nfZoomWheel` /
+ *  `_nfRefPick`.
+ *
+ *  The local-file leg is the one that predates this batch: `workspace-open-item`
+ *  → canvas.js `openWorkspaceItem` → `pop.readFile` → FileTypeRegistry picks a
+ *  viewer → the target opens as a Canvas tab (`.html` → HTML viewer, `.md` →
+ *  markdown, `.png` → image). No `/api/nf-file` request is made, and the read
+ *  face keeps the C batch's tightening untouched — a "browser-grade" link must
+ *  not become an argument for widening it. */
+export function bindLocalLinkBridge() {
+  if (_localLinkBridgeBound) return;
+  _localLinkBridgeBound = true;
+  window.addEventListener('message', (e) => {
+    const d = e.data;
+    if (!d || (!d._nfOpenLocalFile && !d._nfOpenExternalUrl)) return;
+    if (!isRenderedFrame(/** @type {Window|null} */ (e.source))) return;
+    const local = d._nfOpenLocalFile;
+    if (local) openLocalFileTab(String(local.path || ''));
+    else openExternalUrlTab(String(d._nfOpenExternalUrl.url || ''));
+  });
+}
+
+/** True when `src` is the contentWindow of a frame this app renders (Canvas
+ *  HTML viewer or chat card).
+ *  @param {Window|null} src @returns {boolean} */
+function isRenderedFrame(src) {
+  if (!src) return false;
+  const frames = document.querySelectorAll('iframe[data-nf-canvas-html], iframe.html-card-iframe');
+  for (const f of frames) {
+    if (/** @type {HTMLIFrameElement} */ (f).contentWindow === src) return true;
+  }
+  return false;
+}
+
+/** Open a local file as a Canvas tab.
+ *  `newTab` from the frame is intentionally NOT turned into a second tab for an
+ *  already-open path: the tab store dedupes by absPath (canvas.js:898-902) and
+ *  the author's requirement is that a link behaves the same whether or not the
+ *  markup writes `target` — form equivalence is the point, not tab bookkeeping.
+ *  Exported for the OTHER end of the same channel: the markdown viewer renders
+ *  into the app document (no frame, no postMessage), so it calls this directly.
+ *  `anchor` (wiki-graph batch) rides the open-item payload through the readFile
+ *  round trip: {kind:'block',id} | {kind:'heading',text} | {kind:'line',line}.
+ *  `refSourceTab` (词条引用批 batch 2, F5 返回原文档): the source tab id of a
+ *  REFERENCE jump — canvas.js records it on the opened entry and shows the
+ *  top-left back button (作者令 2026-10-29 11:49); undefined for plain opens.
+ *  @param {string} path
+ *  @param {any} [anchor]
+ *  @param {string} [refSourceTab] */
+export function openLocalFileTab(path, anchor, refSourceTab) {
+  if (!path) return;
+  window.dispatchEvent(new CustomEvent('workspace-open-item', {
+    detail: { id: 'file:' + path, itemType: '', content: '', absPath: path, anchor: anchor || undefined, refSourceTab: refSourceTab || undefined },
+  }));
+  revealCanvas();
+}
+
+/** Open an external http(s) link as a Canvas URL tab (canvas.js renderUrlPane,
+ *  whose sandbox already carries allow-popups), so following a link stays
+ *  inside the Canvas — the browser-grade equivalent, with no detour through the
+ *  real browser. Also the direct entry point for the markdown viewer (its links
+ *  live in the app document, not in a frame).
+ *  @param {string} url */
+export function openExternalUrlTab(url) {
+  if (!/^https?:\/\//i.test(url)) return;
+  let title = url;
+  try { title = new URL(url).hostname || url; } catch (_) { /* keep the raw url */ }
+  window.dispatchEvent(new CustomEvent('workspace-open-item', {
+    detail: { id: 'url:' + url, itemType: 'url', title, url },
+  }));
+  revealCanvas();
+}
+
+/** A click inside a chat card must be VISIBLE: with the Canvas panel closed the
+ *  tab it just opened would be invisible — indistinguishable from the dead link
+ *  this batch exists to fix. Dynamic import on purpose: canvas.js statically
+ *  imports the viewer registry, which imports this module. */
+function revealCanvas() {
+  import('../canvas.js')
+    .then((m) => { if (!m.isCanvasOpen()) m.openCanvas(); })
+    .catch(() => { /* canvas module unavailable — the event still opened the tab */ });
+}
+
+let _docMarkupLinkBridgeBound = false;
+
+/** The THIRD surface of the same ruling (2026-09-12, residual faces): authored
+ *  markup rendered INTO THE APP DOCUMENT, where there is no frame and therefore
+ *  no navigation guard behind it —
+ *    · chat markdown bubbles: utils.js `renderMarkdownWithMath` → `.bubble`
+ *      innerHTML (the AI/agent/thinking/ask-answer rows);
+ *    · EPUB chapter content: viewers/epub.js `content.innerHTML = chapters[idx].content`
+ *      (`.epub-reader-content`).
+ *  Measured 2026-09-12 (isolated instance, real chromium): clicking an ordinary
+ *  link in a chat bubble or in an EPUB chapter navigated the ENTIRE application
+ *  away — app URL became `/tmp/…/target-c.md` (a chat bubble) and `/ch2.xhtml`
+ *  (an EPUB chapter), `#activity-bar` gone; an external link left the app for
+ *  example.com entirely. Not a "stopped rendering" case: the app document is
+ *  simply replaced.
+ *  Same criterion (`routeLocalHref`), same legs as the frame and markdown
+ *  viewers: local path → Canvas local-file tab, http(s) → Canvas URL tab,
+ *  `#`/`mailto:`/… → the browser's own behaviour, unresolvable relative link →
+ *  visible inline note (never a silent dead click). One listener for every such
+ *  container, bound once per app (idempotent — html.js's `bindLocalLinkBridge`
+ *  discipline). There is no base directory to resolve against here: the markup
+ *  was authored elsewhere and only its absolute paths are meaningful. */
+export function bindDocMarkupLinkBridge() {
+  if (_docMarkupLinkBridgeBound) return;
+  _docMarkupLinkBridgeBound = true;
+  const onClick = (e) => {
+    if (e.defaultPrevented) return;   // an inner surface already claimed the click
+    const t = /** @type {any} */ (e.target);
+    const a = t && t.closest ? t.closest('.bubble a[href], .epub-reader-content a[href]') : null;
+    if (!a) return;
+    const route = routeLocalHref(a.getAttribute('href') || '', '');
+    if (route.kind === 'anchor' || route.kind === 'none') return;
+    e.preventDefault();
+    if (route.kind === 'external') { openExternalUrlTab(route.url); return; }
+    if (route.kind === 'local' && route.path) { openLocalFileTab(route.path); return; }
+    markUnsolvedLink(a);
+  };
+  document.addEventListener('click', onClick);
+  document.addEventListener('auxclick', onClick);
 }
 
 // ── Render/source toggle (markdown & HTML viewers) ─────────────────────
@@ -86,7 +625,8 @@ const CROSSHAIR_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill
  *  Source → rendered: pull the latest content from the Monaco model (survives
  *  edits), dispose the editor, re-run the viewer — which re-attaches this
  *  toggle with the updated ctx.
- *  @param {HTMLElement} pane — canvas tab pane
+ *  @param {HTMLElement & {_editorHandle?: any, _dirty?: boolean}} pane — canvas tab pane
+ *    (the expando pair is this toggle's own per-pane bookkeeping)
  *  @param {Function} renderFn — viewer function (viewMarkdown / viewHtml)
  *  @param {Object} ctx — { content, absPath, fileName } */
 export function addSourceToggle(pane, renderFn, ctx) {
@@ -96,9 +636,9 @@ export function addSourceToggle(pane, renderFn, ctx) {
   if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
 
   const btn = document.createElement('button');
-  btn.className = 'canvas-source-toggle';
+  btn.className = 'canvas-button canvas-source-toggle';
   btn.innerHTML = CODE_ICON_SVG;
-  btn.title = 'View source';
+  btn.title = t('canvas.viewSource');   // canvas 中文化批（2026-10-31 作者令①）：硬编码英文入 i18n
 
   let busy = false;  // guard against clicks during async Monaco load
   btn.addEventListener('click', async () => {
@@ -110,9 +650,11 @@ export function addSourceToggle(pane, renderFn, ctx) {
         // → Source mode
         pane.dataset.sourceMode = '1';
         btn.innerHTML = EYE_ICON_SVG;
-        btn.title = 'View rendered';
+        btn.title = t('canvas.viewRendered');
         if (pane._editorHandle) { pane._editorHandle.dispose(); pane._editorHandle = null; }
+        const updateHint = pane.querySelector('.canvas-update-hint');
         pane.innerHTML = '';
+        if (updateHint) pane.prepend(updateHint);
         pane.classList.remove('scrollable');
 
         const container = document.createElement('div');
@@ -130,6 +672,12 @@ export function addSourceToggle(pane, renderFn, ctx) {
           path: ctx.absPath || ctx.fileName,
           content: ctx.content || '',
           fileName: ctx.fileName,
+          // Optional, opt-in only (2026-09-22, A-wave ②): a source view whose
+          // backing payload has NO write channel must mount read-only — an
+          // editable buffer would let ⌘S emit a `writeFile` frame for a path
+          // that has no file behind it. Existing callers (markdown/html) pass
+          // no `readOnly` ⇒ `false` ⇒ their behaviour is byte-identical.
+          readOnly: ctx.readOnly === true,
         });
         container.querySelector('.canvas-loading')?.remove();
         pane._editorHandle = handle;
@@ -139,6 +687,16 @@ export function addSourceToggle(pane, renderFn, ctx) {
           pane._dirty = dirty;
           pane.dispatchEvent(new CustomEvent('editor-dirty-change', { detail: { dirty } }));
         });
+        // 脏点往返修复（阅读/编辑体验优化批 2026-11-01）：上一次「源码→渲染」
+        // 若带着未落盘编辑离开，渲染面把最新内容当文本内容带走了，再回源码态时
+        // createEditor 以该内容为 originalContent ⇒ 脏点消失、⌘S 被拒、外部刷新
+        // 可覆盖未保存编辑。判据带内容指纹（`_nfSourceDirtyFor === ctx.content`）：
+        // 期间若磁盘重渲换了正文，则不再补脏（那是另一份文本，不该标脏）。
+        const paneAny = /** @type {any} */ (pane);
+        if (paneAny._nfSourceDirtyFor != null && paneAny._nfSourceDirtyFor === (ctx.content || '')) {
+          handle.markDirty();
+        }
+        paneAny._nfSourceDirtyFor = null;
         pane.addEventListener('canvas-tab-activated', () => {
           if (pane._editorHandle !== handle) return;  // stale editor from an old toggle cycle
           setActiveEditor(handle);
@@ -150,18 +708,36 @@ export function addSourceToggle(pane, renderFn, ctx) {
         // unsaved edits survive the round-trip (createEditor reuses the cached
         // model — passing stale ctx.content would wipe them).
         let latest = ctx.content;
+        let carriedDirty = false;
         if (pane._editorHandle) {
           latest = pane._editorHandle.model.getValue();
+          carriedDirty = pane._editorHandle.getDirty();
           pane._editorHandle.dispose();
           pane._editorHandle = null;
         }
+        // 脏点往返修复（见 → Source mode 的对应块）：把「离开时是脏的」连同
+        // 当时的内容指纹留在 pane 上，回源码态时补回脏态。
+        /** @type {any} */ (pane)._nfSourceDirtyFor = carriedDirty ? latest : null;
         delete pane.dataset.sourceMode;
         // renderFn clears the pane and re-attaches the toggle via its own
         // addSourceToggle call, carrying the updated content forward.
+        const updateHint = pane.querySelector('.canvas-update-hint');
         await renderFn(pane, { ...ctx, content: latest });
+        if (updateHint) pane.prepend(updateHint);
+        // canvas 文件刷新批: this round trip bypasses openWorkspaceItem (no
+        // readFile), and renderFn wiped pane.innerHTML — the refresh button
+        // went with it. Tell canvas.js to re-seat it (listener registered on
+        // document in canvas.js ⇒ the event must bubble; shared.js holds no
+        // import edge back into canvas.js).
+        pane.dispatchEvent(new CustomEvent('canvas-viewer-rerendered', { bubbles: true }));
       }
     } finally {
       busy = false;
+      // 定位修复批（作者报障 2026-10-27）：刷新钮已上移到面板壳（#canvas-content
+      // 单例），源码态隐藏从「pane 内后代 CSS 选择器」改为 canvas.js 监听本事件
+      // 同步按钮可见性（同 canvas-viewer-rerendered 的解耦先例：shared.js 无
+      // 回流 canvas.js 的 import 边）。双向都发：渲染→源码隐藏，源码→渲染恢复。
+      pane.dispatchEvent(new CustomEvent('canvas-source-mode-changed', { bubbles: true }));
     }
   });
   pane.appendChild(btn);
@@ -184,7 +760,7 @@ export function addElementRefToggle(pane, opts) {
 
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.className = 'canvas-ref-select';
+  btn.className = 'canvas-button canvas-ref-select';
   btn.innerHTML = CROSSHAIR_ICON_SVG;
 
   btn.title = t('ref.selectElement');
@@ -203,9 +779,265 @@ export function addElementRefToggle(pane, opts) {
   return btn;
 }
 
+// ── In-file find toggle (wiki-graph 圆钮已随 Canvas 改造批④退役：2026-10-31
+//    作者令「去知识图谱钮（无此面板）」——md 阅读面不再开图谱；图谱面仍走
+//    工作台/项目 vault 入口与 wiki-graph 标签页，圆钮-builder 与本图标一并
+//    删，i18n 键 wiki.openGraphForDoc/notInVault/graphUnavailable 无引用面
+//    残留即孤儿，词条标签页腿不受影响）──────────────────────────────────
+
+const FIND_ICON_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.5" y2="16.5"/></svg>';
+
+/**
+ * Floating "search in this file" toggle — the same glass material and corner
+ * family as the source toggle; the button seats at `left` px (callers pass
+ * the offset that keeps one 48px gap per stacked button). Clicking (or the
+ * Ctrl/Cmd+F binding) routes through fileSearch.js: Monaco tabs get the
+ * editor's own find widget, rendered md/html tabs get the glass find bar.
+ * 单行排布批（2026-11-01 作者令 16:18）：簇左锚化（作者令「功能钮靠左、ask
+ * 单独靠右，两端对齐」）——`left` 语义与旧 `right` 值一比一（槽值原样，
+ * 角缘序镜像）；css 同批 split.css .canvas-source-toggle 注。
+ * canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
+ * 宽度也要保持一致」）：钮 40 → 48 ⇒ 槽距 48 → 56（48 + 8 缝，缝不变），
+ * 调用方槽值随之派生：md 64 → **72**（源码 16 + 48 + 8）/ html 112 → **128**
+ * （引用 72 + 48 + 8）/ monaco 16 不变（源码态无簇，单钮独坐）。缩放条同理
+ * 160 → 184（split.css）。
+ *  @param {HTMLElement} pane — canvas tab pane
+ *  @param {number} [left] - offset from the pane's left edge (default 128;
+ *    md 72 / html 128 / monaco 16 —— 48px 钮 + 8px 缝的 56px 槽距派生)
+ */
+export function addFindToggle(pane, left = 128) {
+  pane.querySelector('.canvas-find-toggle')?.remove();
+  if (getComputedStyle(pane).position === 'static') pane.style.position = 'relative';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'canvas-button canvas-find-toggle';
+  btn.innerHTML = FIND_ICON_SVG;
+  btn.title = t('find.openInFile');
+  // CSS owns mobile seats; desktop keeps the caller's requested offset.
+  btn.style.setProperty('--canvas-find-left', left + 'px');
+  btn.addEventListener('click', () => {
+    import('../fileSearch.js').then(({ openFindForPane }) => openFindForPane(pane))
+      .catch(() => { /* module unavailable — no-op */ });
+  });
+  pane.appendChild(btn);
+  return btn;
+}
+
+// ── 底部浮钮让位：滚动面末尾安全留白（canvas 正文底部遮挡修复批）─────────
+// 作者报障 2026-11-05 12:09（逐字）「因为我们现在canvas的文档的底部不是有按钮吗，
+// 按钮会挡住底部的文字，所以要允许文档再进一步上滑，保证最底部的文字能够呈现在
+// 按钮之上。不会被遮挡。」
+//
+// 现场：canvas 文档面的底部浮钮簇（源码 <> / 引用 / 查找 / 缩放条 + 壳层刷新钮）
+// 是 absolute 浮层（split.css），不占流内位置；滚动面（.canvas-md-scroll /
+// .canvas-txt-scroll / .canvas-tab-pane.scrollable）的正文照旧铺到面板底缘 ⇒
+// 滚到底时最后一行落在浮钮带**底下**（改前桌面实测：末行 bottom 比钮顶低 36px，
+// 即末行下半截被钮压住）。手机档 2026-11-02「底部控件浮层带批」已用静态
+// padding-bottom 76px 修过同一现象（mobileLayer.css），桌面档一直没有。
+//
+// 修法（治本，不写死像素）：底部让位 = **实测**浮钮带顶到面板底缘的距离 + 呼吸缝，
+// 以 CSS 变量 --canvas-bottom-clearance 发布到 pane 上（CSS 侧单点消费）。
+// 为什么必须是实测而不是常量：浮钮尺寸随档位变（桌面 --cv-size-circle 40 / 手机
+// --mtap-lg 48）、html 缩放条会因面板变窄回落第二行、刷新钮会按簇满座下移一行
+// ⇒ 常量必然在某个档位失真（手机档 76 只是 16+48+12 这一个档的读数）。
+// 为什么留白不会造成多余空白滚动：留白是**滚动内容盒的末尾垫**，滚到底时内容底缘
+// 恰好停在钮带顶之上，余下那段正好被浮钮本身占住（不是空区）；文档短到内容 +
+// 留白仍装得下（短于一屏）时 scrollHeight ≤ clientHeight ⇒ 零滚动条、零空白。
+// 零按钮场景（无底部 chrome 的面板/页签）实测为 0 ⇒ 不留空白。
+//
+// 观测面：ResizeObserver 观测 pane（宽高变化 ⇒ 浮钮换行/档位变化）+ 每一颗浮钮
+// （显示/隐藏、缩放条读数宽度变化）+ MutationObserver 盯 pane 子树增删（换页签/
+// 换查看器会重建钮）。三路统一 raf 合并到一次重算。写值只落在 pane 的 CSS 变量上
+// （不改任何 DOM 结构、不触发被观测元素的尺寸），故无自激环。
+/** 底部浮钮簇成员（与 split.css 的底部浮钮块同一族；缩放条是非圆钮成员）。 */
+const BOTTOM_CHROME_SEL = '.canvas-source-toggle, .canvas-ref-select, .canvas-find-toggle, .canvas-zoom-bar';
+/** 同一条带上、但不由本面板 pane 持有的浮钮：ask 会话钮与记事本钮（askDock.js，
+ *  桌面宿主 #canvas-panel / 手机宿主页面壳）。手机层「底部控件浮层带批」已把
+ *  ask 圆钮与文档圆钮族**逐值对齐成同一行**（mobileLayer.css 簇几何块，三钮中心
+ *  极差 0px）—— 故让位带必须按同一行算，只算 pane 内三颗会漏掉右端那颗。
+ *  几何过滤（横向相交 + 落在 pane 竖向范围内）保证「别处的 fur 钮」不会被误计。 */
+const BOTTOM_CHROME_GLOBAL_SEL = '.ask-fab, .note-fab';
+/** 末行与浮钮带顶之间的呼吸缝（与手机档 76 = 16 + 48 + 12 的 12 同一把尺）。 */
+export const BOTTOM_CLEARANCE_GAP = 12;
+
+/** 该 pane 当下的底部浮钮候选（pane 内簇 + 同带全局 fab）。canvas-auto-refresh
+ *  批（2026-11-17）：壳层刷新钮单例已随手动钮整面退役，此处不再查壳层直子。 */
+function _bottomChromeCandidates(pane) {
+  const out = [...pane.querySelectorAll(BOTTOM_CHROME_SEL)];
+  // 全局同带 fab 走**类选择器 + 几何过滤**（不用面 id 选择器：本模块无面，
+  // 跨面 id 直查会踩组件契约 R2；几何过滤本身就是判定「是否与这个 pane 同带」）。
+  for (const el of document.querySelectorAll(BOTTOM_CHROME_GLOBAL_SEL)) out.push(el);
+  return out;
+}
+
+function _chromeShown(el) {
+  if (!el || !el.isConnected || el.hidden) return false;
+  const cs = getComputedStyle(el);
+  if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+  const r = el.getBoundingClientRect();
+  return r.width > 0.5 && r.height > 0.5;
+}
+
+/**
+ * 实测底部让位高度（px）。返回 null = 本次不可测（pane 未挂载/隐藏页签），
+ * 调用方跳过写值（保留既有值，隐藏态不可见故无影响）。
+ * @param {HTMLElement} pane
+ * @returns {number|null}
+ */
+export function measureBottomClearance(pane) {
+  if (!pane || !pane.isConnected) return null;
+  const pr = pane.getBoundingClientRect();
+  if (pr.width < 1 || pr.height < 1) return null;
+  let top = Infinity;
+  for (const el of _bottomChromeCandidates(pane)) {
+    if (!_chromeShown(el)) continue;
+    const r = el.getBoundingClientRect();
+    // 只认「在面板竖向范围内、与面板横向相交」的浮钮（壳层刷新钮可能在别的
+    // 页签的座位上，或整颗隐藏 —— 两者都由本判据与 _chromeShown 排除）。
+    if (r.top < pr.top - 1 || r.top >= pr.bottom) continue;
+    if (r.right <= pr.left || r.left >= pr.right) continue;
+    if (r.top < top) top = r.top;
+  }
+  if (!Number.isFinite(top)) return 0;   // 无底部浮钮 ⇒ 零留白
+  const v = pr.bottom - top + BOTTOM_CLEARANCE_GAP;
+  return Math.max(0, Math.round(v * 100) / 100);
+}
+
+/** 重算并写 --canvas-bottom-clearance（值不变则不写，避免无谓重排）。
+ *
+ *  同一个实测值服务两个消费域，源仍是本函数唯一一次实测：
+ *    · pane 内联 style —— 正文滚动让位（split.css 文件尾）+ --cv-safe-bottom；
+ *    · documentElement —— body 级浮层（全站唯一瞬时通知 css/modal.css
+ *      `.nebflow-toast`）读得到的同一刻度，通知在 canvas 打开时抬到底部控件带之上
+ *      （与 `--canvas-overlay-top` / `--canvas-width` 同一条「canvas 几何发布到
+ *      documentElement」的既存做法，不是第二套定位）。canvas 关上后该值不再刷新，
+ *      消费侧以 `body.canvas-open` 守卫，陈旧值零消费。 */
+export function syncBottomClearance(pane) {
+  if (!pane) return null;
+  const px = measureBottomClearance(pane);
+  if (px === null) return null;
+  const next = px + 'px';
+  if (document.documentElement.style.getPropertyValue('--canvas-bottom-clearance') !== next) {
+    document.documentElement.style.setProperty('--canvas-bottom-clearance', next);
+  }
+  if (pane.style.getPropertyValue('--canvas-bottom-clearance') === next) return px;
+  pane.style.setProperty('--canvas-bottom-clearance', next);
+  return px;
+}
+
+/**
+ * 给一个 canvas tab pane 装「底部让位」观测（幂等：同 pane 重复调用只补一次同步）。
+ * 由 fileViewers.renderFile（唯一挂载点）在查看器渲染完成后调用。
+ * @param {HTMLElement} pane
+ */
+export function observeBottomClearance(pane) {
+  if (!pane) return;
+  const slot = /** @type {any} */ (pane);
+  let st = slot._nfBottomClearance;
+  if (!st) {
+    st = { ro: null, mo: null, moAttr: null, moAnc: null, els: [], raf: 0 };
+    const disconnect = () => {
+      try { st.ro?.disconnect(); } catch { /* 已断开 */ }
+      try { st.mo?.disconnect(); } catch { /* 已断开 */ }
+      try { st.moAttr?.disconnect(); } catch { /* 已断开 */ }
+      try { st.moAnc?.disconnect(); } catch { /* 已断开 */ }
+      st.ro = null; st.mo = null; st.moAttr = null; st.moAnc = null; st.els = [];
+      if (st.raf) { cancelAnimationFrame(st.raf); st.raf = 0; }
+    };
+    const observeChrome = () => {
+      if (!st.ro) return;
+      const next = _bottomChromeCandidates(pane);
+      const same = next.length === st.els.length && next.every((el, i) => el === st.els[i]);
+      if (same) return;
+      st.ro.disconnect();
+      st.ro.observe(pane, { box: 'border-box' });
+      for (const el of next) st.ro.observe(el, { box: 'border-box' });
+      // 浮钮「座位/显隐」属性的变化（查找钮 JS 写 style、换档写 class/hidden）不改
+      // 变任何被观测盒的尺寸时才需要这条腿 —— 例如窄面板下缩放条回落第二行，浮钮带
+      // 顶因此抬高。（canvas-auto-refresh 批：手动刷新钮退役前其换行是本腿主例。）
+      st.moAttr?.disconnect();
+      if (st.moAttr) for (const el of next) st.moAttr.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+      st.els = next;
+    };
+    const run = () => {
+      st.raf = 0;
+      if (!pane.isConnected) {          // 页签关闭：观测面自行退场（不靠外部拆除）
+        disconnect();
+        slot._nfBottomClearance = null;
+        return;
+      }
+      syncBottomClearance(pane);
+      observeChrome();
+    };
+    const schedule = () => { if (!st.raf) st.raf = requestAnimationFrame(run); };
+    st.ro = new ResizeObserver(schedule);
+    st.mo = new MutationObserver(schedule);
+    st.moAttr = new MutationObserver(schedule);
+    // 子树增删盯**面板壳**（pane 的父层）：换页签/换查看器重建浮钮原先只盯 pane 会
+    // 漏壳层挂载的那一次（定位修复批 2026-10-25 的壳层刷新钮；该钮已随
+    // canvas-auto-refresh 批退役，观测面保留兜换查看器的重建腿）。本函数自己只写
+    // pane 的 style 变量（attribute）⇒ 不触发这条 childList 观测，无自激环。
+    st.mo.observe(pane.parentElement || pane, { childList: true, subtree: true });
+    // 祖先「显隐/态类」腿（手机层实测补）：手机页面栈里非前台页是 **visibility:
+    // hidden 但仍整幅占位** —— 尺寸与边长全程不变，ResizeObserver 一声不响；从
+    // hidden 翻到 visible 只体现为祖先链上某个 .mobile-page 的 class/内联态换档。
+    // 不挂这条腿，手机档首次渲染（页还没推前台）量到的就是「无浮钮 = 0」，且此后
+    // 永无重算机会。观测对象刻意**不含 pane 自身**（本函数只写 pane 的 style，
+    // 排除它 = 结构上无自激环）。
+    st.moAnc = new MutationObserver(schedule);
+    {
+      let anc = pane.parentElement;
+      for (let i = 0; i < 5 && anc; i++, anc = anc.parentElement) {
+        st.moAnc.observe(anc, { attributes: true, attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'] });
+      }
+    }
+    st.ro.observe(pane, { box: 'border-box' });
+    st.els = _bottomChromeCandidates(pane);
+    for (const el of st.els) {
+      st.ro.observe(el, { box: 'border-box' });
+      st.moAttr.observe(el, { attributes: true, attributeFilter: ['style', 'class', 'hidden'] });
+    }
+    slot._nfBottomClearance = st;
+  } else {
+    st.els = _bottomChromeCandidates(pane);
+    for (const el of st.els) {
+      try { st.ro.observe(el, { box: 'border-box' }); } catch { /* 重复观测无害 */ }
+    }
+  }
+  syncBottomClearance(pane);
+}
+
 // ── ZIP utilities (EPUB viewer) ────────────────────────────────────────
 
-/** Parse ZIP central directory → map of filename → { compMethod, data (Uint8Array) } */
+// ZIP 解压预算族（单一常量纪律；pptx viewer 同批共用，epub 腿经下方两个函数自动继承）。
+// 推导：打开闸 = MaxPopReadFileBytes 100MB（TextStreamSearch.scala:277，attachmentPreview.js:50 前端镜像）——
+// 管的是「能不能进页面」；本族管「进了页面之后解压面放多大」：
+//   · 单 entry 上限 32MB —— 覆盖常规 OOXML 单部件（最大 XML/media part）数倍余量，
+//     高压缩比 zip bomb entry（解压后几十 MB 的 XML）在此拦下；
+//   · 全件解压总量 128MB —— 打开闸 100MB × ~1.28 内存表示安全系数（UTF-16 解码/数据 URL 重写放大），
+//     全程压在单 tab 内存包络内；取值严于 @aiden0z/pptx-renderer 推荐值（256MiB total）。
+// 两条上限都拦在「解压动作之前」（按 central directory 声明的未压缩尺寸预判，见 decompressZipEntry 内
+// 的实际尺寸回检兜底流式 zip 头撒谎的情形）。超限 → 可见错误（viewer 层落到各自的可见降级路径）。
+/** @type {{ maxEntryBytes: number, maxTotalBytes: number }} */
+export const ZIP_BUDGET = Object.freeze({
+  maxEntryBytes: 32 * 1024 * 1024,
+  maxTotalBytes: 128 * 1024 * 1024,
+});
+
+/** Per-source-buffer decompression accounting (weakened-KeyMap keyed by the
+ *  source ArrayBuffer so state dies with the buffer — no cross-file bleed,
+ *  no signature change for existing callers). @type {WeakMap<ArrayBuffer, {used: number}>} */
+const _zipBudgets = new WeakMap();
+function _zipBudgetFor(buffer) {
+  let st = _zipBudgets.get(buffer);
+  if (!st) { st = { used: 0 }; _zipBudgets.set(buffer, st); }
+  return st;
+}
+
+/** Parse ZIP central directory → map of filename → { compMethod, uncompSize, data (Uint8Array) }.
+ *  2026-10-06 pptx-mvp batch: also reads the CD uncompressed-size field (offset +24) and
+ *  enforces ZIP_BUDGET.maxTotalBytes across declared entry sizes (fail before inflating). */
 export function parseZipEntries(buffer) {
   const view = new DataView(buffer);
   const u8 = new Uint8Array(buffer);
@@ -218,11 +1050,13 @@ export function parseZipEntries(buffer) {
   const cdOffset = view.getUint32(eocd + 16, true);
   const cdCount = view.getUint16(eocd + 10, true);
   const entries = {};
+  let totalUncomp = 0;
   let off = cdOffset;
   for (let i = 0; i < cdCount; i++) {
     if (view.getUint32(off, true) !== 0x02014b50) break;
     const compMethod = view.getUint16(off + 10, true);
     const compSize = view.getUint32(off + 20, true);
+    const uncompSize = view.getUint32(off + 24, true);
     const nameLen = view.getUint16(off + 28, true);
     const extraLen = view.getUint16(off + 30, true);
     const commentLen = view.getUint16(off + 32, true);
@@ -232,20 +1066,69 @@ export function parseZipEntries(buffer) {
     const lNameLen = view.getUint16(localOff + 26, true);
     const lExtraLen = view.getUint16(localOff + 28, true);
     const dataOff = localOff + 30 + lNameLen + lExtraLen;
-    entries[name] = { compMethod, data: u8.subarray(dataOff, dataOff + compSize) };
+    entries[name] = { compMethod, uncompSize, data: u8.subarray(dataOff, dataOff + compSize) };
+    totalUncomp += uncompSize;
     off += 46 + nameLen + extraLen + commentLen;
+  }
+  if (totalUncomp > ZIP_BUDGET.maxTotalBytes) {
+    throw new Error(`ZIP total decompressed size ${totalUncomp} bytes exceeds budget ${ZIP_BUDGET.maxTotalBytes}`);
   }
   return entries;
 }
 
-/** Decompress a ZIP entry to text. Method 0 = stored, 8 = deflate. */
-export async function decompressZipEntry(entry) {
-  if (!entry) return '';
-  if (entry.compMethod === 0) return new TextDecoder().decode(entry.data);
+/** Shared inflation core: declared-size pre-check + method dispatch → bytes.
+ *  2026-10-30 reader-P0 batch: EPUB resource rewriting needs binary bytes
+ *  (images/fonts/CSS), not text — one core keeps both paths on the identical
+ *  ZIP_BUDGET pre-check so a lying header is rejected before any inflate. */
+async function inflateZipEntryBytes(entry) {
+  const declared = (typeof entry.uncompSize === 'number' && entry.uncompSize > 0)
+    ? entry.uncompSize
+    : (entry.compMethod === 0 ? entry.data.byteLength : 0);
+  if (declared > ZIP_BUDGET.maxEntryBytes) {
+    throw new Error(`ZIP entry decompressed size ${declared} bytes exceeds budget ${ZIP_BUDGET.maxEntryBytes}`);
+  }
+  if (entry.compMethod === 0) return entry.data;
   if (entry.compMethod === 8) {
     const ds = new DecompressionStream('deflate-raw');
     const stream = new Blob([entry.data]).stream().pipeThrough(ds);
-    return await new Response(stream).text();
+    return new Uint8Array(await new Response(stream).arrayBuffer());
   }
   throw new Error('Unsupported ZIP compression: ' + entry.compMethod);
+}
+
+/** Account `byteLength` against the per-source-buffer cumulative budget. */
+function accountZipBytes(entry, byteLength) {
+  const source = entry.data && entry.data.buffer;
+  const budget = source ? _zipBudgetFor(source) : null;
+  if (!budget) return;
+  // Actual-size accounting: header-declared sums are pre-verified in
+  // parseZipEntries; this backstop catches lying/streamed headers before a
+  // runaway multi-entry decode can exceed the family total.
+  budget.used += byteLength;
+  if (budget.used > ZIP_BUDGET.maxTotalBytes) {
+    throw new Error(`ZIP cumulative decompressed size ${budget.used} bytes exceeds budget ${ZIP_BUDGET.maxTotalBytes}`);
+  }
+}
+
+/** Decompress a ZIP entry to text. Method 0 = stored, 8 = deflate.
+ *  2026-10-06 pptx-mvp batch: ZIP_BUDGET enforcement lives here so every caller
+ *  (epub leg today, any future zip consumer) inherits the same budget family.
+ *  Pre-check uses the CD-declared uncompressed size (header lies from streamed
+ *  zips are backstopped by the actual-size re-check after decode). */
+export async function decompressZipEntry(entry) {
+  if (!entry) return '';
+  const bytes = await inflateZipEntryBytes(entry);
+  const text = new TextDecoder().decode(bytes);
+  accountZipBytes(entry, new TextEncoder().encode(text).byteLength);
+  return text;
+}
+
+/** Decompress a ZIP entry to raw bytes (EPUB image/font/CSS rewriting leg,
+ *  reader-P0 batch 2026-10-30). Same budget family as the text leg: images
+ *  count their byte length into the same per-source cumulative ledger. */
+export async function decompressZipEntryBytes(entry) {
+  if (!entry) return new Uint8Array(0);
+  const bytes = await inflateZipEntryBytes(entry);
+  accountZipBytes(entry, bytes.byteLength);
+  return bytes;
 }

@@ -1,5 +1,6 @@
 import { chromium } from 'playwright';
 import { readFileSync } from 'node:fs';
+import { installTicketMock } from './nf-ticket-mock.mjs';
 const BASE = 'http://127.0.0.1:8977';
 const FILE = process.env.HOME + '/.nebflow/projects/html-deck-studio/ai-fpga-deck/ppt/index.html';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -13,6 +14,8 @@ await ctx.addInitScript(([tok, file]) => {
 }, ['t', FILE]);
 const page = await ctx.newPage();
 await page.route('**/api/**', r => r.fulfill({ json: {} }));
+// C 批（票据腿）：同 tmp-recursion-proof.mjs —— 假票 mock 必须后注册。
+const mint = await installTicketMock(page);
 let readFileCount = 0;
 await page.routeWebSocket(/\/ws/, ws => {
   ws.onMessage(raw => {

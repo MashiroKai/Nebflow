@@ -1,0 +1,22 @@
+#!/bin/bash
+# stand CLI launcher — thin entry (authoritative copy: stand repo ops/bin/stand)
+#
+# 部署位置: ~/.stand/bin/stand (cp + chmod +x; 见 ops/README.md), 与 stand-cli-lib.sh
+# 同目录部署。本文件只是品牌配置壳, 全部实现在同目录 stand-cli-lib.sh (单一代码路径,
+# 与 nebflow 入口共享 — 隔离契约/守卫/横幅/restart --detached 均在库内)。
+#
+# 本入口管辖: NEBFLOW 不归它管 — `stand` 只动 ~/.stand (6138 缺省) 实例。
+# 历史病根与隔离契约见 ops/bin/stand-cli-lib.sh 头注释。
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_LIB="$SCRIPT_DIR/stand-cli-lib.sh"
+if [ ! -r "$_LIB" ]; then
+    echo "ERROR: stand-cli-lib.sh missing next to this entry (looked at: $_LIB)" >&2
+    echo "       repair: cp <stand-repo>/ops/bin/{stand,stand-cli-lib.sh} ~/.stand/bin/ && chmod +x ~/.stand/bin/stand" >&2
+    exit 66
+fi
+_STAND_CLI_BRAND=stand
+_STAND_CLI_ENTRY_DIR="$SCRIPT_DIR"
+_STAND_CLI_SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+# shellcheck source=stand-cli-lib.sh
+. "$_LIB"
+stand_cli_main "$@"

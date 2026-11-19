@@ -4,16 +4,23 @@ import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, messages}
 import nebflow.agent.*
-import nebflow.core.PathUtil
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.flow.{MailIdleGate, MailQueueStore, RunningFlowRegistry, TeamSessionRegistry}
+import nebflow.core.flow.{MailIdleGate, MailQueueStore, RunningFlowRegistry}
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, MailQueueItem, PathUtil, StreamChunk, ThinkingConfig}
 import nebflow.core.FileChangeTracker
 
 import scala.concurrent.duration.*
@@ -42,20 +49,22 @@ class MailIdleGateWiringSpec extends FunSuite:
 
   private class RecordingLlm extends LlmHandle[IO]:
     val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(req :: _)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO],
-      sessionStore: SessionStore
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
   ): IO[SharedResources] =
     for
       dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
@@ -87,11 +96,11 @@ class MailIdleGateWiringSpec extends FunSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -99,7 +108,10 @@ class MailIdleGateWiringSpec extends FunSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  /** fixture team（lead=boss, member=member）on disk under tmp. teamName 每测试唯一——TeamSessionRegistry 是 object 单例，同 (instance,agent) key 会跨测试残留，污染 sessionIdsOf。 */
+  /** fixture team（lead=boss, member=member）on disk under tmp —— 只是磁盘上的团队
+   *  实体（`teams/<name>/team.json` + agents/），供 `EntityLoader.loadTeamAgent` 的
+   *  重载腿读取。团队功能删除批阶段 3：团队会话登记表已删，不再有「object 单例跨
+   *  测试残留」问题；teamName 仍逐测试唯一（保持 fixture 互不干扰）。 */
   private def fixtureTeam(tmp: os.Path, teamName: String): Unit =
     val data = tmp / "data"
     PathUtil.setDataRoot(data)
@@ -122,15 +134,23 @@ class MailIdleGateWiringSpec extends FunSuite:
       actorSystem = Some(system)
     )
 
-  private def queueItem(id: String, from: String, fromSession: String, message: String): MailQueueStore.MailQueueItem =
-    MailQueueStore.MailQueueItem(
-      id = id, from = from, fromSession = fromSession,
-      message = message, `type` = "INFO",
-      timestamp = System.currentTimeMillis(), imagePaths = Nil
+  private def queueItem(id: String, from: String, fromSession: String, message: String): MailQueueItem =
+    MailQueueItem(
+      id = id,
+      from = from,
+      fromSession = fromSession,
+      message = message,
+      `type` = "INFO",
+      timestamp = System.currentTimeMillis(),
+      imagePaths = Nil
     )
 
   /** 往 registry 注入任务型子记录（parentRef=目标），模拟「目标有子 agent 在飞」。 */
-  private def injectChild(resources: SharedResources, childSid: String, parentRef: Option[nebflow.actor.ActorRef[AgentCommand]]): IO[Unit] =
+  private def injectChild(
+    resources: SharedResources,
+    childSid: String,
+    parentRef: Option[nebflow.actor.ActorRef[AgentCommand]]
+  ): IO[Unit] =
     resources.agentRegistry.update { m =>
       m + (childSid -> AgentRecord(
         sessionId = childSid,
@@ -157,9 +177,6 @@ class MailIdleGateWiringSpec extends FunSuite:
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi6/boss", agentName = Some("boss"), flowName = Some("cqi6"))
       memberMeta <- sessionStore.createSession("cqi6/member", agentName = Some("member"), flowName = Some("cqi6"))
-      _ <- TeamSessionRegistry.registerSession("cqi6", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession("cqi6", "member", memberMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi6", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // root sender record (Nebula)
       _ <- resources.agentRegistry.update(_ + ("root-sid" -> AgentRecord("root-sid", null, AgentKind.Root, "root-sid")))
@@ -171,8 +188,14 @@ class MailIdleGateWiringSpec extends FunSuite:
       _ <- injectChild(resources, "member-child", memberRef)
       // root → boss queue mail：Manager 自身+子树空闲 → 应当立即投递
       _ <- MailTool.queueToSession(
-        bossMeta.id, "boss", "A6_TEAM_BUSY_MARKER", "INFO", Nil,
-        ctxFor(resources, system, "root-sid"), system, "root-sid"
+        bossMeta.id,
+        "boss",
+        "A6_TEAM_BUSY_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, "root-sid"),
+        system,
+        "root-sid"
       )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
       reqs <- llm.requests.get
@@ -181,8 +204,10 @@ class MailIdleGateWiringSpec extends FunSuite:
 
     val (reqs, queueAfter) = io.unsafeRunSync()
     val texts = reqs.flatMap(_.messages.map(_.content.fold(identity, _.mkString)))
-    assert(clue(texts).exists(_.contains("A6_TEAM_BUSY_MARKER")),
-      "Nebula→Manager queue mail must deliver on the Manager's own idle — a sibling member's busy subtree must not block (08-28 ruling)")
+    assert(
+      clue(texts).exists(_.contains("A6_TEAM_BUSY_MARKER")),
+      "Nebula→Manager queue mail must deliver on the Manager's own idle — a sibling member's busy subtree must not block (08-28 ruling)"
+    )
     assert(clue(queueAfter).isEmpty, s"queue not drained: $queueAfter")
 
   // ---------- AC-7：规则② team 内 queue：等目标自身子树，不管其他成员 ----------
@@ -197,9 +222,6 @@ class MailIdleGateWiringSpec extends FunSuite:
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi7/boss", agentName = Some("boss"), flowName = Some("cqi7"))
       memberMeta <- sessionStore.createSession("cqi7/member", agentName = Some("member"), flowName = Some("cqi7"))
-      _ <- TeamSessionRegistry.registerSession("cqi7", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession("cqi7", "member", memberMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi7", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // 激活 member + boss（registry 记录 + live ref；boss 作 sender 记录）
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
@@ -208,8 +230,14 @@ class MailIdleGateWiringSpec extends FunSuite:
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A7_SELF_BUSY_MARKER", "INFO", Nil,
-        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+        memberMeta.id,
+        "member",
+        "A7_SELF_BUSY_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, bossMeta.id),
+        system,
+        bossMeta.id
       )
       _ <- IO.sleep(600.millis)
       _ <- llm.requests.update(_ => Nil)
@@ -240,16 +268,19 @@ class MailIdleGateWiringSpec extends FunSuite:
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi7b/boss", agentName = Some("boss"), flowName = Some("cqi7b"))
       memberMeta <- sessionStore.createSession("cqi7b/member", agentName = Some("member"), flowName = Some("cqi7b"))
-      _ <- TeamSessionRegistry.registerSession("cqi7b", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession("cqi7b", "member", memberMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi7b", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // boss（目标）自身子树空闲；member（兄弟）子树忙——不应阻塞 team 内发往 boss
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       _ <- MailTool.queueToSession(
-        bossMeta.id, "boss", "A7B_SIBLING_BUSY_OK", "INFO", Nil,
-        ctxFor(resources, system, memberMeta.id), system, memberMeta.id
+        bossMeta.id,
+        "boss",
+        "A7B_SIBLING_BUSY_OK",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, memberMeta.id),
+        system,
+        memberMeta.id
       )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
       reqs <- llm.requests.get
@@ -275,23 +306,33 @@ class MailIdleGateWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi8/boss", agentName = Some("boss"), flowName = Some("cqi8"))
-      _ <- TeamSessionRegistry.registerSession("cqi8", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi8", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       _ <- resources.agentRegistry.update(_ + ("root-sid" -> AgentRecord("root-sid", null, AgentKind.Root, "root-sid")))
       // 激活 boss（确保 registry 记录与 live ref）
       _ <- MailTool.activateAgent(bossMeta.id, resources, system, ctxFor(resources, system, "root-sid"))
       // running flow 关联 boss（Q3：sessionId 关联触发者）→ 不投递
-      _ <- RunningFlowRegistry.register(RunningFlowRegistry.RunningFlow(
-        instanceId = "flow-a8", flowName = "f8", description = "", entry = "n",
-        nodes = Map.empty, edges = Nil,
-        status = nebflow.core.flow.NodeStatus.Running,
-        startedAt = System.currentTimeMillis(),
-        sessionId = Some(bossMeta.id)
-      ))
+      _ <- RunningFlowRegistry.register(
+        RunningFlowRegistry.RunningFlow(
+          instanceId = "flow-a8",
+          flowName = "f8",
+          description = "",
+          entry = "n",
+          nodes = Map.empty,
+          edges = Nil,
+          status = nebflow.core.flow.NodeStatus.Running,
+          startedAt = System.currentTimeMillis(),
+          sessionId = Some(bossMeta.id)
+        )
+      )
       _ <- MailTool.queueToSession(
-        bossMeta.id, "boss", "A8_FLOW_BUSY_MARKER", "INFO", Nil,
-        ctxFor(resources, system, "root-sid"), system, "root-sid"
+        bossMeta.id,
+        "boss",
+        "A8_FLOW_BUSY_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, "root-sid"),
+        system,
+        "root-sid"
       )
       _ <- IO.sleep(600.millis)
       _ <- llm.requests.update(_ => Nil)
@@ -323,8 +364,6 @@ class MailIdleGateWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi10/boss", agentName = Some("boss"), flowName = Some("cqi10"))
-      _ <- TeamSessionRegistry.registerSession("cqi10", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi10", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // 队列有货（磁盘）但 agent 冷（无 actor）——activateAgent 恢复 head 触发
       _ <- MailQueueStore.append(bossMeta.id, queueItem("mail-q-a10", "tester", "root-sid", "A10_COLD_MARKER"))
@@ -351,18 +390,19 @@ class MailIdleGateWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       memberMeta <- sessionStore.createSession("cqi11a/member", agentName = Some("member"), flowName = Some("cqi11a"))
-      _ <- TeamSessionRegistry.registerSession("cqi11a", "member", memberMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // 激活 member（确保 registry 记录与 live ref）
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, "boss-sid"))
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       // immediate 投递 = ImmediateInput 注入（sendMail 内部机制），不经 MailQueued/gate
-      _ <- memberRef.traverse_(ref => ref ! AgentCommand.ImmediateInput(
-        "A11A_IMMEDIATE_OK",
-        source = Some("mail"),
-        sender = Some("boss")
-      ))
+      _ <- memberRef.traverse_(ref =>
+        ref ! AgentCommand.ImmediateInput(
+          "A11A_IMMEDIATE_OK",
+          source = Some("mail"),
+          sender = Some("boss")
+        )
+      )
       _ <- waitUntil(20.seconds)(llm.requests.get.map(_.nonEmpty))
       reqs <- llm.requests.get
     yield reqs
@@ -383,7 +423,6 @@ class MailIdleGateWiringSpec extends FunSuite:
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       memberMeta <- sessionStore.createSession("cqi11b/member", agentName = Some("member"), flowName = Some("cqi11b"))
-      _ <- TeamSessionRegistry.registerSession("cqi11b", "member", memberMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       // 先入队两件（磁盘顺序 = 注入顺序）
       _ <- MailQueueStore.append(memberMeta.id, queueItem("mail-q-1st", "boss", "boss-sid", "FIRST_MARKER"))
@@ -431,17 +470,20 @@ class MailIdleGateWiringSpec extends FunSuite:
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi12/boss", agentName = Some("boss"), flowName = Some("cqi12"))
       memberMeta <- sessionStore.createSession("cqi12/member", agentName = Some("member"), flowName = Some("cqi12"))
-      _ <- TeamSessionRegistry.registerSession("cqi12", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession("cqi12", "member", memberMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi12", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
       // member 子树忙（Delegate 在飞）→ team 内 queue mail 被 idle gate 拦截
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A12_WEDGE_MARKER", "INFO", Nil,
-        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+        memberMeta.id,
+        "member",
+        "A12_WEDGE_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, bossMeta.id),
+        system,
+        bossMeta.id
       )
       _ <- IO.sleep(600.millis) // let the deferral land (count=1, queue retained)
       _ <- llm.requests.update(_ => Nil)
@@ -455,9 +497,11 @@ class MailIdleGateWiringSpec extends FunSuite:
       _ <- removeChild(resources, "member-child")
       memberRef3 <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- memberRef3.traverse_(ref => ref ! AgentCommand.ImmediateInput("A12_TURN2", source = Some("test")))
-      _ <- waitUntil(20.seconds)(llm.requests.get.map(_.exists(r =>
-        r.messages.map(_.content.fold(identity, _.mkString)).exists(_.contains("A12_WEDGE_MARKER"))
-      )))
+      _ <- waitUntil(20.seconds)(
+        llm.requests.get.map(
+          _.exists(r => r.messages.map(_.content.fold(identity, _.mkString)).exists(_.contains("A12_WEDGE_MARKER")))
+        )
+      )
       reqs <- llm.requests.get
       queueAfter <- MailQueueStore.load(memberMeta.id)
     yield (reqs, queueAfter)
@@ -484,22 +528,31 @@ class MailIdleGateWiringSpec extends FunSuite:
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
       bossMeta <- sessionStore.createSession("cqi13/boss", agentName = Some("boss"), flowName = Some("cqi13"))
       memberMeta <- sessionStore.createSession("cqi13/member", agentName = Some("member"), flowName = Some("cqi13"))
-      _ <- TeamSessionRegistry.registerSession("cqi13", "boss", bossMeta.id)
-      _ <- TeamSessionRegistry.registerSession("cqi13", "member", memberMeta.id)
-      _ <- TeamSessionRegistry.registerManager("cqi13", bossMeta.id)
       resources <- mkResources(system, tmp, llm, sessionStore)
       _ <- MailTool.activateAgent(memberMeta.id, resources, system, ctxFor(resources, system, bossMeta.id))
       memberRef <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- injectChild(resources, "member-child", memberRef)
       // 两封 queue mail 在 idle+子树忙时相继到达（各走一次 idle gate 拦截）
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A13_FIRST_MARKER", "INFO", Nil,
-        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+        memberMeta.id,
+        "member",
+        "A13_FIRST_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, bossMeta.id),
+        system,
+        bossMeta.id
       )
       _ <- IO.sleep(300.millis)
       _ <- MailTool.queueToSession(
-        memberMeta.id, "member", "A13_SECOND_MARKER", "INFO", Nil,
-        ctxFor(resources, system, bossMeta.id), system, bossMeta.id
+        memberMeta.id,
+        "member",
+        "A13_SECOND_MARKER",
+        "INFO",
+        Nil,
+        ctxFor(resources, system, bossMeta.id),
+        system,
+        bossMeta.id
       )
       _ <- IO.sleep(600.millis) // both deferrals land; count must be 2, not 1
       _ <- llm.requests.update(_ => Nil)
@@ -507,9 +560,11 @@ class MailIdleGateWiringSpec extends FunSuite:
       _ <- removeChild(resources, "member-child")
       memberRef2 <- resources.agentRegistry.get.map(_.get(memberMeta.id).map(_.ref))
       _ <- memberRef2.traverse_(ref => ref ! AgentCommand.ImmediateInput("A13_TURN", source = Some("test")))
-      _ <- waitUntil(20.seconds)(llm.requests.get.map(_.exists(r =>
-        r.messages.map(_.content.fold(identity, _.mkString)).exists(_.contains("A13_SECOND_MARKER"))
-      )))
+      _ <- waitUntil(20.seconds)(
+        llm.requests.get.map(
+          _.exists(r => r.messages.map(_.content.fold(identity, _.mkString)).exists(_.contains("A13_SECOND_MARKER")))
+        )
+      )
       _ <- IO.sleep(1.seconds) // let the second item drain too
       reqs <- llm.requests.get
       queueAfter <- MailQueueStore.load(memberMeta.id)
@@ -523,5 +578,46 @@ class MailIdleGateWiringSpec extends FunSuite:
     assert(clue(secondIdx) >= 0, "second item never drained")
     assert(clue(firstIdx) < clue(secondIdx), s"FIFO order broken: first=$firstIdx second=$secondIdx")
     assert(clue(queueAfter).isEmpty, s"queue not fully drained: $queueAfter")
+
+  // ---------- AC-14（R2 2026-09-12）：node: 腿绕行本闸（结构性） ----------
+  // delivery 退役批（收窄版，2026-09-15 裁定 (b)）re-pin：拒绝**方向不变**（node: 腿仍
+  // **显式拒绝** queue，判定面未放宽），文案统一到退役单点（`MAIL_DELIVERY_QUEUE_RETIRED`）
+  // —— 旧的 node: 腿专属「always immediate」文案已随退役消失（其不可达性由
+  // MailDeliveryRetireSpec 反向钉死）。零队列落盘 / 零 turn 两条断言逐字保持。
+
+  test("AC-14 R2（delivery 退役批 re-pin）：node:<id> 腿不经 idle gate —— 显式拒 queue（退役单点文案）、零队列落盘、零 turn") {
+    val system = ActorSystem(s"cqi-a14-${java.util.UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir(prefix = "cqi-a14")
+    fixtureTeam(tmp, "cqi14")
+    val llm = new RecordingLlm
+
+    val io = for
+      sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
+      memberMeta <- sessionStore.createSession("cqi14/member", agentName = Some("member"), flowName = Some("cqi14"))
+      resources <- mkResources(system, tmp, llm, sessionStore)
+      res <- MailTool.call(
+        JsonObject(
+          "address" -> Json.fromString("node:n-14"),
+          "message" -> Json.fromString("节点补充"),
+          "delivery" -> Json.fromString("queue")
+        ),
+        ctxFor(resources, system, "disp-sid").copy(isDispatcher = true, projectName = Some("p14"))
+      )
+      queueCount <- MailQueueStore.size(memberMeta.id)
+      reqs <- llm.requests.get
+    yield (res, queueCount, reqs)
+
+    val (res, queueCount, reqs) = io.unsafeRunSync()
+    res match
+      case Left(err) =>
+        assert(
+          clue(err.message).contains(MailTool.ErrDeliveryQueueRetired),
+          "node: 腿必须显式拒 queue（退役单点文案，不得落入本闸）"
+        )
+        assert(!err.message.contains("always immediate"), s"旧 queue 专属文案不得复用，got: ${err.message}")
+      case Right(v) => fail(s"node: + queue 不得成功，got: $v")
+    assertEquals(queueCount, 0, "node: 腿不得落 MailQueueStore（idle gate 结构上不可达）")
+    assert(clue(reqs).isEmpty, "node: 腿不得触发任何 turn（注入/追加由引擎三态决定）")
+  }
 
 end MailIdleGateWiringSpec

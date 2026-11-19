@@ -2,7 +2,7 @@ package nebflow.core.plugin
 
 import cats.effect.IO
 import io.circe.Json
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 /**
  * Plugins feature flag（§G.2 回滚约定）：`nebflow.json` 顶层 `plugins.enabled`。
@@ -13,21 +13,48 @@ import nebflow.core.PathUtil
  * - 热读（Guardrails.enabled 同款先例）：每次判定现读配置文件——改 nebflow.json
  *   即时生效，无需重启；absent / 非法 / garbage → 默认 true（fail-safe 方向 =
  *   新能力开启，与 sandbox flag 缺省方向一致）。
+ *
+ * #523 补齐批（Jev/小模型自动分配 delegate 插件）：`plugins.autoAllocate` ——
+ * **自动分配专用闸**（与 `enabled` 总闸正交）。`enabled=true ∧ autoAllocate=false`
+ * = 「仅声明、不问模型」态：节点/链步的声明集照常解析注入，但空声明不再触发
+ * Jev/LLM 分配腿（零模型调用、零分配审计行——`PluginInjection` mode=auto-off）。
+ * 缺省 true = 现行为逐字（#1226 批分配面默认在场——翻缺省为关会静默禁用已交付
+ * 能力；取舍在报告注明，作者可一键翻转）。
  */
 object PluginsConfig:
 
   /** 热读 plugins.enabled。IO 包裹文件读取（blocking pool）。 */
   def enabled: IO[Boolean] =
-    IO.blocking {
-      val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
-      val parsed: Option[Boolean] =
-        if !os.exists(configPath) then None
-        else
-          io.circe.parser
-            .parse(os.read(configPath))
-            .toOption
-            .flatMap(_.hcursor.downField("plugins").downField("enabled").as[Option[Boolean]].toOption)
-            .flatten
-      parsed.getOrElse(true)
-    }
+    IO.blocking(readBool("enabled", default = true))
+
+  /** 热读 plugins.autoAllocate（#523）：缺省 true（现行为逐字），同 enabled 的 fail-safe 方向。 */
+  def autoAllocate: IO[Boolean] =
+    IO.blocking(readBool("autoAllocate", default = true))
+
+  /**
+   * 热读 `plugins.failOpenOnAllocationError`（缺陷①，2026-11-02）。
+   *
+   * 缺省 **false = fail-closed**：分配腿（Jev/LLM）故障时派发显式失败并在错误里
+   * 点名模式词与真因，**不再静默降级成 `plugins=[]`**（旧行为：慢模型 60s 超时 ⇒
+   * 模型拿不到 ptc_run 却"看起来正常完成"）。
+   *
+   * `true` = 回到旧语义（空集照派，只留 WARN + 分配台账）——给「分配面故障不该
+   * 阻塞派发」的部署留一键回退位。缺省方向与 enabled/autoAllocate 相反是**故意的**：
+   * 静默降级是缺陷本身，不是可接受的降级。
+   */
+  def failOpenOnAllocationError: IO[Boolean] =
+    IO.blocking(readBool("failOpenOnAllocationError", default = false))
+
+  /** plugins.<key> 单布尔热读单点（absent / 非法 / 文件缺失 → default）。 */
+  private def readBool(key: String, default: Boolean): Boolean =
+    val configPath = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+    val parsed: Option[Boolean] =
+      if !os.exists(configPath) then None
+      else
+        io.circe.parser
+          .parse(os.read(configPath))
+          .toOption
+          .flatMap(_.hcursor.downField("plugins").downField(key).as[Option[Boolean]].toOption)
+          .flatten
+    parsed.getOrElse(default)
 end PluginsConfig

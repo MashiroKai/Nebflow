@@ -259,6 +259,10 @@
 import state from './state.js';
 import { t } from './i18n.js';
 import * as orbPresets from './orbPresets.js';
+import { rootDisplayName } from './rootName.js';
+// voiceseal 批（批 #508）：语音封存 flag（features.voice，默认封存）——
+// 封存态不挂载 orb 单例（不建 GL 上下文、不起 1s 轮询，见 getMicOrb）。
+import { voiceOrbMountable } from './featureFlags.js';
 
 /* ========================================================================
    9-state definition (spec §10.1 + §10.5). v8.3.0: color language lives in
@@ -1118,7 +1122,16 @@ class MicOrb {
        path already feeds RMS through the voiceEngine listener below). */
     this.voiceTap = new VoiceTap((v) => {
       if (this.renderer && !this.renderer.failed) this.renderer.setVoiceLevel(v);
+      // Web Speech exposes no levels itself — re-broadcast the tap's readings
+      // so shared consumers (voice-mode barge-in) see the same stream the
+      // cloud path produces. Idempotent for the orb: the listener below sets
+      // the same rawVoice value.
+      if (voiceEngineMod) voiceEngineMod.dispatchMicVolume(v);
     });
+    /** @type {{ wrap: HTMLElement, canvas: HTMLCanvasElement,
+        cssOrb: HTMLElement|null, renderer: OrbRenderer, webglOk: boolean,
+        lostHandler: EventListener|null } | null} */
+    this.mirror = null;
     /* v8.3.0: persisted appearance selection (基调/状态映射/自定义) — resolved
        into renderer boards by applyTheme; reloaded on CHANGE_EVENT. */
     this.orbSel = orbPresets.loadSaved();
@@ -1137,6 +1150,7 @@ class MicOrb {
       // v8.2: feed mic volume into the renderer (listening shake). Dynamic
       // import keeps micOrb cycle-free (voiceEngine pulls in ws.js).
       import('./voiceEngine.js').then((m) => {
+        voiceEngineMod = m;
         m.setMicVolumeListener((v) => {
           if (this.renderer && !this.renderer.failed) this.renderer.setVolume(v);
         });
@@ -1159,6 +1173,73 @@ class MicOrb {
          setStateCfg, so a theme switch never re-triggers the pulse (F5). */
       this.renderer.setPalette(orbPresets.boardForState(this.state, this.orbSel, isLight));
     }
+    /* Theme switch fans out to the mirror too — uniform-only, same F5 rule
+       (no setStateCfg here: that would re-trigger the mirror's pulse). */
+    const m = this.mirror;
+    if (m && m.webglOk && m.renderer) {
+      m.renderer.setTheme(isLight);
+      m.renderer.setPalette(orbPresets.boardForState(this.state, this.orbSel, isLight));
+    }
+  }
+
+  /* ======================================================================
+     Voice-mode mirror orb (voice-mode batch): a second render surface for
+     the centered overlay bubble. The BAR orb stays the single source of
+     truth — the mirror only replays whatever apply()/applyTheme() decide.
+     ====================================================================== */
+
+  /**
+   * Bind the overlay's orb wrap as a mirror of this orb. Call again to
+   * rebind; pair with unregisterMirror() when the overlay closes.
+   * @param {HTMLElement} wrap element carrying .mic-orb-wrap state classes
+   */
+  registerMirror(wrap) {
+    this.unregisterMirror();
+    const canvas = /** @type {HTMLCanvasElement|null} */ (wrap.querySelector('.orb-canvas'));
+    if (!canvas) return;
+    const cssOrb = /** @type {HTMLElement|null} */ (wrap.querySelector('.css-orb'));
+    const renderer = new OrbRenderer(canvas, { size: 132, reducedMotion: this.reduced });
+    const m = { wrap, canvas, cssOrb, renderer, webglOk: !renderer.failed, lostHandler: null };
+    // Context loss on the mirror degrades it to the CSS fallback, exactly
+    // like the bar orb — state colors stay correct either way.
+    m.lostHandler = (e) => {
+      e.preventDefault();
+      m.webglOk = false;
+      if (m.renderer) m.renderer.pause();
+      this.applyMirror(this.state);
+    };
+    canvas.addEventListener('webglcontextlost', m.lostHandler);
+    this.mirror = m;
+    this.applyMirror(this.state);
+  }
+
+  unregisterMirror() {
+    const m = this.mirror;
+    if (!m) return;
+    this.mirror = null;
+    if (m.lostHandler) m.canvas.removeEventListener('webglcontextlost', m.lostHandler);
+    if (m.renderer) m.renderer.pause();
+  }
+
+  /** Replay one state onto the mirror (full path — state changes MAY pulse). */
+  applyMirror(key) {
+    const m = this.mirror;
+    if (!m) return;
+    const s = STATE_BY_KEY[key] || STATE_BY_KEY.idle;
+    const useCss = !m.webglOk;
+    if (m.cssOrb) {
+      m.cssOrb.className = 'css-orb orb ' + s.cls;
+      m.cssOrb.style.display = useCss ? 'block' : 'none';
+    }
+    if (m.canvas) m.canvas.style.display = useCss ? 'none' : 'block';
+    if (!useCss && m.renderer) {
+      m.renderer.setStateCfg(s);
+      const isLight = !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+      m.renderer.setTheme(isLight);
+      m.renderer.setPalette(orbPresets.boardForState(s.k, this.orbSel, isLight));
+    }
+    for (const st of STATES) m.wrap.classList.remove(st.cls);
+    m.wrap.classList.add(s.cls);
   }
 
   /**
@@ -1216,6 +1297,7 @@ class MicOrb {
         wrap.classList.add(s.cls);
       }
     }
+    this.applyMirror(s.k);
     this.updateA11y();
   }
 
@@ -1225,7 +1307,9 @@ class MicOrb {
      a11y name still describes what the control does. */
   updateA11y() {
     const s = STATE_BY_KEY[this.state] || STATE_BY_KEY.idle;
-    const label = t(s.i18n);
+    // The busy-state label names the agent the user is talking to — the DISPLAY
+    // name (rootName.js), never the mechanism key. Other states ignore `agent`.
+    const label = t(s.i18n, { agent: rootDisplayName() });
     const btnLabel = `${label} · ${t('input.voiceBtn')}`;
     if (this.btn) this.btn.setAttribute('aria-label', btnLabel);
     if (this.cssOrb) {
@@ -1352,14 +1436,34 @@ class MicOrb {
 }
 
 let instance = null;
+/* Voice-mode module cache: the dynamic import below keeps this module
+   cycle-free; the resolved module is kept so the orb-owned VoiceTap can feed
+   shared level consumers (voiceMode barge-in) on the Web Speech path. */
+let voiceEngineMod = null;
 
-/** Lazily create + return the MicOrb singleton (binds #voice-btn). */
+/**
+ * Lazily create + return the MicOrb singleton (binds #voice-btn).
+ *
+ * voiceseal 批（批 #508）→ 纠正批（#513）：挂载门从 voiceEnabled() 换为
+ * **voiceOrbMountable()**（气泡开关默认显示 + 配置已到）。#508 曾以全双工
+ * flag 连带不挂单例 = 理解过宽（作者澄清：「怎么语音气泡直接没了，我要去掉
+ * 的是hover拖动这些功能。」）；#513 起气泡默认挂载（WebGL 上下文 + 1s 状态
+ * 轮询照常服务点击听写的状态显示）。挂载时序 = #508 的 **configData latch
+ * 制**（见 featureFlags.voiceOrbMountable 注）：显式 `features.voiceOrb:false`
+ * 或配置未到时**不构造**（调用方拿到 null 后按既有 no-op 路径落空 ——
+ * notifyVoiceState / registerVoiceModeOrb 皆 null-safe）；挂载动作由 main.js
+ * 的 latch 在 flag ON 时调 initMicOrb() 完成。
+ */
 export function getMicOrb() {
+  if (!voiceOrbMountable()) return null;
   if (!instance && document.getElementById('voice-btn')) instance = new MicOrb();
   return instance;
 }
 
-/** Initialize the orb after the DOM is ready (called once from main.js). */
+/** Initialize the orb after the DOM is ready (called once from main.js).
+ *  #513：boot 期调用点保留但在挂载判据下为 no-op（配置未到不挂）；实际挂载
+ *  由 main.js 的 configData latch 在 voiceOrbEnabled() 时调用本函数完成
+ *  （#508 同款时序，气泡开关换轨）。 */
 export function initMicOrb() {
   getMicOrb();
 }
@@ -1368,6 +1472,19 @@ export function initMicOrb() {
 export function notifyVoiceState(voiceState) {
   const o = getMicOrb();
   if (o) o.notifyVoiceState(voiceState);
+}
+
+/**
+ * Register the voice-mode overlay's orb as a mirror of the bar orb (voice-mode
+ * batch). Returns an unregister cleanup — voiceMode.js calls it on exit.
+ * @param {HTMLElement} wrap
+ * @returns {() => void}
+ */
+export function registerVoiceModeOrb(wrap) {
+  const o = getMicOrb();
+  if (!o || !wrap) return () => {};
+  o.registerMirror(wrap);
+  return () => o.unregisterMirror();
 }
 
 /* v8.3.0: exported for harnesses and the settings preview orb so every orb

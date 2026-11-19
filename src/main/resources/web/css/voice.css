@@ -37,19 +37,15 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: var(--ds-radius-chip);
   flex-shrink: 0;
-  transition: background 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.15s, color 0.15s, opacity 0.15s, border-color 0.15s;
 }
 
 .voice-toggle:hover {
+  /* 扁平契约：原两条 inset 内高光（浮雕厚度）已撤，hover 只走底色升档 + 描边。 */
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
   color: var(--color-frame-text);
 }
 

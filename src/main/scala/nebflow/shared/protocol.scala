@@ -55,7 +55,9 @@ case class Message(
    * None = normal user-typed message (backward compatible: old persisted
    * messages decode with source=None).
    */
-  source: Option[String] = None
+  source: Option[String] = None,
+  messageId: Option[String] = None,
+  runId: Option[String] = None
 ):
 
   def textContent: String = content match
@@ -74,13 +76,14 @@ case class ToolDefinition(
 
 // ===== Tool Call =====
 
-/** Raw wire-format arguments string as received from the provider, kept
-  * byte-faithful alongside the parsed JsonObject. Needed by provider-native
-  * round-trip semantics (kimi $web_search: the caller must echo the model's
-  * arguments back verbatim as the tool result — re-serializing the parsed
-  * object would break byte-identity, and rescued/malformed inputs would
-  * degrade to "{}").
-  */
+/**
+ * Raw wire-format arguments string as received from the provider, kept
+ * byte-faithful alongside the parsed JsonObject. Needed by provider-native
+ * round-trip semantics (kimi $web_search: the caller must echo the model's
+ * arguments back verbatim as the tool result — re-serializing the parsed
+ * object would break byte-identity, and rescued/malformed inputs would
+ * degrade to "{}").
+ */
 case class ToolCall(id: String, name: String, input: JsonObject, rawArguments: Option[String] = None)
 
 // ===== LLM =====
@@ -97,22 +100,49 @@ case class LlmRequest(
   sessionId: String,
   agentId: String,
   tools: Option[List[ToolDefinition]] = None,
-  maxTokens: Option[Int] = None,
   thinking: Option[io.circe.Json] = None,
   /** Stable system prompt (e.g. system.md) — can be cached by the provider. */
   systemStable: Option[String] = None,
-  /** Dynamic system content (env info, reminders) — changes frequently, placed after cache breakpoint. */
+  /** Ephemeral request context, appended after history on the wire to preserve cached prefixes. */
   systemDynamic: Option[String] = None,
   /**
    * Per-agent model configuration (preferred + fallbacks). When set, the
    * candidate chain is built from this instead of the global model chain.
    */
   agentModel: Option[AgentModelConfig] = None,
-  /** WebSearch P0: provider-native search injection is allowed for this
-    * request. Housekeeping turns (compaction / save-turn) and
-    * maintenance LLM calls set this to false so a server-side search tool
-    * never leaks into summarization or memory-extraction requests. */
-  searchAllowed: Boolean = true
+  /**
+   * WebSearch P0: provider-native search injection is allowed for this
+   * request. Housekeeping turns (compaction / save-turn) and
+   * maintenance LLM calls set this to false so a server-side search tool
+   * never leaks into summarization or memory-extraction requests.
+   */
+  searchAllowed: Boolean = true,
+  /**
+   * 派发时刻并发钉链剔除账本（缺陷批 2026-11-06，provider-concurrency 批移交）：
+   * spawn 时因 provider 满载被链首扫描跳过的候选与原因（`PinnedChain.preExcluded`，
+   * AgentSessionExecution 请求构造单点下发）。进候选账本的 seeded 层——没有它，
+   * 这些候选既不在链上也没有原因 ⇒ `SILENTLY EXCLUDED`（现网实证：
+   * `UTSC/glm-5.3-flash SILENTLY EXCLUDED` 反复出现）。缺省 Nil = 未钉/无剔除
+   * （既有构造点逐字零改动）。
+   */
+  pinSkips: List[(String, CandidateSkipCause)] = Nil,
+  /**
+   * REQUEST-ONLY 装配段（cache-warmup 批 2026-11-06，作者补充令 §二）：
+   * 请求级环境/分支/维护提醒（contextMsg/branchMsg/maintenanceMsg）。
+   *
+   * 为什么必须与 [[messages]] 分离：这些提醒**不持久化**——下一轮真实历史是
+   * 「H + assistant/tool_result」，不含 R。若把它们拼进 messages，适配器的
+   * 消息尾缓存断点就会落在 R 上 ⇒ 缓存写到「H+R」，而 H+R 不是任何新请求的
+   * 前缀 ⇒ 保证性 miss（CachePrefixAssemblySpec 判据①②的红）。修复后两适配器
+   * 都把本段排在**持久历史断点之后**再上线（Anthropic 面断点钉 H 尾；OpenAI 面
+   * 拼在历史尾部保持前缀），语义与 [[systemDynamic]] 同族但保持提醒的
+   * 消息边界（两发送面、两协议、流/非流一致）。缺省 Nil = 既有构造点逐字零改动。
+   */
+  requestOnlyContext: List[Message] = Nil,
+  /** Internal observation id; provider adapters do not serialize this field. */
+  requestId: Option[String] = None,
+  /** Internal post-inheritance budget ceiling for derived sessions. */
+  subagentThinkingBudgetCap: Option[Int] = None
 )
 
 case class TokenUsage(
@@ -137,9 +167,11 @@ case class LlmResponse(
   toolCalls: List[ToolCall],
   usage: Option[TokenUsage],
   meta: LlmMeta,
-  /** WebSearch P0: structured search results from a provider-native search
-    * (zhipu `web_search` response field / qwen `search_info`), when present.
-    * None on providers/paths without structured search output. */
+  /**
+   * WebSearch P0: structured search results from a provider-native search
+   * (zhipu `web_search` response field / qwen `search_info`), when present.
+   * None on providers/paths without structured search output.
+   */
   searchInfo: Option[Json] = None
 )
 
@@ -233,7 +265,9 @@ given Encoder[Message] = Encoder.instance { msg =>
     case Left(text) => Json.obj("role" -> msg.role.name.asJson, "content" -> text.asJson)
     case Right(blocks) => Json.obj("role" -> msg.role.name.asJson, "content" -> blocks.asJson, "blocks" -> true.asJson)
   val withTs = if msg.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> msg.timestamp.asJson)) else base
-  msg.source.fold(withTs)(s => withTs.deepMerge(Json.obj("source" -> s.asJson)))
+  val withSource = msg.source.fold(withTs)(s => withTs.deepMerge(Json.obj("source" -> s.asJson)))
+  val withMessageId = msg.messageId.fold(withSource)(id => withSource.deepMerge(Json.obj("messageId" -> id.asJson)))
+  msg.runId.fold(withMessageId)(id => withMessageId.deepMerge(Json.obj("runId" -> id.asJson)))
 }
 
 given Decoder[Message] = Decoder.instance { cursor =>
@@ -248,7 +282,9 @@ given Decoder[Message] = Decoder.instance { cursor =>
       case _ => cursor.downField("content").as[String].map(Left(_))
     ts <- cursor.downField("timestamp").as[Option[Long]]
     source <- cursor.downField("source").as[Option[String]]
-  yield Message(role, content, ts.getOrElse(0L), source)
+    messageId <- cursor.downField("messageId").as[Option[String]]
+    runId <- cursor.downField("runId").as[Option[String]]
+  yield Message(role, content, ts.getOrElse(0L), source, messageId, runId)
 }
 
 // ===== UI Messages (for frontend rendering) =====
@@ -267,36 +303,235 @@ object UiMessage:
     eventType: Option[String] = None,
     sender: Option[String] = None,
     senderTeam: Option[String] = None,
-    delivery: Option[String] = None
+    delivery: Option[String] = None,
+    /**
+     * 收件通道判别（mailbadge 批 2026-09-13，选项 C）：与
+     * [[nebflow.agent.InjectionAttribution.intake]] 同一批名字（帧 ↔ 落盘同源）。
+     * 前端历史恢复路径靠它重建注入气泡标签（缺席 ⇒ 回落 `source` 表，
+     * 旧历史行渲染逐字节不变）。
+     */
+    intake: Option[String] = None,
+    /**
+     * **已渲染的四段式 header**（「气泡四段式统一」批 2026-09-15，作者 12:33 令）：
+     * 引擎侧唯一格式化函数 `nebflow.core.project.NotificationHeader` 在唯一发射点
+     * （`AgentActor#emitInjectedUserEvent`）产出的整串 `KIND · PROJECT · SUBJECT ·
+     * STATE` 随注入帧与 .ui.json **同源落盘** ⇒ live 渲染与历史恢复逐字节一致。
+     * 缺席（旧历史行 / 词表外 source）⇒ 前端回落 `injectedSourceLabel`（逐字节不变）。
+     */
+    header: Option[String] = None,
+    /**
+     * **作答行的显式来源标记**（双开缺陷批「案 B」2026-09-21，chain-askuserdup）：
+     * 值 = 本条 user 行所**作答的那个 requestId** —— 即「这是一次卡片作答」的**数据**
+     * 证据（不再靠「askUser 条目后面第一条 user 行」的邻接启发式）。
+     *
+     * WHY：卡片作答落盘原本是一条无标记的裸 `User(answerText)`，前端重建历史时必须
+     * 用 run 启发式猜（`persistence.js askUserAnswerText`：遇第一个非 user 行即
+     * break）。非阻塞提问（pending 期间 agent 仍产出 ai/tool 行 ⇒ run 被截断 ⇒ 取样
+     * null）与「作答后继续打字」两种形态下取样会偏 —— 取样 null 又被
+     * `renderAskUserHistory` 渲染成「已作答」（无条件补 `.option-answer`）⇒ 重放腿
+     * 的去重判据被击穿 ⇒ 同 id 双卡（首卡死）。同一处缺口也是 uiclean 批登记项
+     * 「#272 残余边界」的可见后果 ⇒ 本条字段一次关掉三件事：双开、#272 取值、
+     * 「历史卡不可按 id 关闭」。
+     *
+     * 缺席即不落键（`.ui.json` 旧行字节形态与旧读法**逐字不变**）：旧行无标记 ⇒
+     * 前端**必须回落「未作答」**（禁把历史一律读成「已作答」，方向见
+     * `persistence.js askUserAnswerText`）。单一构造点 = [[UiMessage.askUserAnswer]]。
+     */
+    answerOf: Option[String] = None,
+    /**
+     * **消息引用快照**（quote-message 一期 2026-10-09，spec §3.3）：本条 user 行
+     * 所携带的「引用被引消息」快照 —— **只有 User 行带 quote**（引用附着在回复行
+     * 上，微信语义；ai/tool/ask 行永不是载体）。Json 形状（引擎不解释内部字段，
+     * 原样落盘原样下发）：
+     *   { "refMessageId": String, "excerpt": String ≤80, "senderRole": String,
+     *     "senderName": String?, "ts": Long? }
+     *
+     * 写入点唯一 = `WebSocketRoutes` typeless user 帧处理（从帧 `refs` 里取
+     * `refType==='chat-message'` 首条转成 quote，与 attJson 组装同段）。缺席即不
+     * 落键 ⇒ 无引用行与旧 `.ui.json` 行字节形态**逐字相同**（intake/header/
+     * answerOf 三先例同款条件编码）；旧前端读新行时 cursor 只读已知字段，多出的
+     * quote 键无感（§3.7 兼容矩阵）。
+     */
+    quote: Option[Json] = None,
+    /**
+     * **委托批改动文件 diff 载荷**（file-diff → 委托结果行，bug #58 修
+     * 2026-10-09）：delegate 终态注入行专属 —— `AgentActor#emitInjectedUserEvent`
+     * 的唯一写点从 ExternalEvent metadata `fileChanges` 同源取（形状 =
+     * `FileChangeReport` REST 面 {nodeId, generatedAt, root, files:[{path,
+     * changeType, added, removed, source, diffText?, degradedReason?}]}，引擎不
+     * 解释内部字段，原样落盘原样下发）。前端在注入行展开体里渲染「Changes」段
+     * （+/− 高亮）。缺席即不落键 ⇒ 非 delegate 行与旧 `.ui.json` 行字节形态
+     * **逐字相同**（intake/header/answerOf/quote 先例同款条件编码）。
+     */
+    fileChanges: Option[Json] = None,
+    /**
+     * **随卡回传的答复附件清单**（askuser-dragdrop 实施批 2026-10-19，批 #551）：
+     * 仅作答行（`answerOf` 在场）携带——用户在 AskUser 卡上拖入/粘贴/点选并经
+     * `POST /api/askuser/attachments` 落盘的文件引用。形状 = 上传端点响应记录
+     * `{id, seq, name, path, sha256, size, mime, kind}`，引擎不解释内部字段，原样
+     * 落盘原样下发；前端历史恢复腿（`renderAskUserHistory` 第 6 参）读它渲染
+     * 「已回答 · 附 N 个文件」徽标 + 只读 chips。
+     *
+     * 🔴 刻意**不复用** [[User.attachments]]：那个键被用户消息媒体面
+     * （`buildUserAttachmentRows`）消费——作答行若落同键会在历史恢复时对同一批
+     * 文件**双渲染**（气泡媒体行 + 卡片 chips）。缺席即不落键（既有行字节形态与
+     * 旧读法逐字不变；intake/header/answerOf/quote/fileChanges 先例同款条件编码）。
+     */
+    answerAttachments: Option[Json] = None,
+    /**
+     * **定时任务触发行的专属卡片载荷**（schedcard 批 2026-10-29，作者令「定时任务
+     * 卡片防退化 + stand 配色」）：仅 schedule 触发注入行（`injected=true` +
+     * `source="schedule"`，唯一写点 = `ScheduledTaskService.triggerTask`）携带。
+     * Json 形状（引擎不解释内部字段，原样落盘原样下发）：
+     *   { "id": String, "name": String?, "triggerAt": Long, "repeat": String?,
+     *     "referencePath": String? }
+     * 前端据它把该行渲染为**定时任务专属卡片**（「定时任务」chip + 任务名 + 预定
+     * 时间 + 重复小标），而不是通用绿气泡/通用注入泡。缺席即不落键 ⇒ 旧 `.ui.json`
+     * 行字节形态与旧读法逐字不变（intake/header/answerOf/quote/fileChanges/
+     * answerAttachments 先例同款条件编码）；旧历史行（无标记）按现状渲染不追溯。
+     */
+    schedule: Option[Json] = None,
+    /**
+     * **回合内插话行的显式标记**（tool-card-leak-on-reload 批 2026-11-02）：
+     * 本行是用户在**引擎回合仍在进行中**送来的输入（作者现象：「我在回复中…
+     * 刷新页面 ⇒ 完整工具执行过程摊平」）。
+     *
+     * WHY（数据面）：`WebSocketRoutes` 的两个普通用户帧落盘点（`dispatchUserText`
+     * 与 typeless 用户帧腿）与引擎回合状态无关地无条件落一条 `User` 行；而前端
+     * 回放折叠的**段边界判据**（`turnGroup.js isNonInjectedUserRow`）把「任何非注入
+     * user 行」当轮起点。二者联合 ⇒ 回合中插话把同一个引擎回合劈成两段，前段
+     * **零 terminal 载体** ⇒ `summarizeSegment` 平铺 ⇒ 整段工具卡裸奔。写入方在
+     * 落盘时判定「此刻该会话是否 Processing」即把这条歧义一次消掉。
+     *
+     * 缺席即不落键（intake/header/answerOf/quote/fileChanges/answerAttachments/
+     * schedule 先例同款条件编码 ⇒ 旧 `.ui.json` 行字节形态与旧读法逐字不变；
+     * 解码宽松回落 None）。旧行降级策略 = 纯前端时间戳蕴含推断，见
+     * `turnGroup.js midTurnInferred`（零迁移、不崩、不劣化）。
+     */
+    midTurn: Option[Boolean] = None,
+    /**
+     * **ask 会话的 Mail 续聊地址**（ask-mail 批 2026-11-16，作者令「给 ASK ·
+     * INJECTED 加上地址，使编排方可通过 Mail 续聊」）：`ask:<会话id>` 形态
+     * （单源 = `nebflow.core.delegate.MailAddress.AskPrefix` + 会话 id）。
+     *
+     * 写点 = ask handoff 注入行（`WebSocketRoutes` installAskHandoffFace 的
+     * ExternalEvent metadata `askMailAddress` → `AgentActor#emitInjectedUserEvent`
+     * 唯一发射点随行）；前端在该注入泡（ASK · INJECTED）的标签行渲染**可复制**
+     * 地址 chip（后台代理面板 bg-task-addr 先例：面板零推导，引擎字段是唯一
+     * 真源）。缺席即不落键（先例同款条件编码 ⇒ 非 ask 行与旧 `.ui.json` 行
+     * 字节形态逐字不变；解码宽松回落 None）。
+     */
+    askAddress: Option[String] = None
   ) extends UiMessage:
     val typeName = "user"
+
+  end User
 
   case class Ai(
     text: String,
     durationMs: Option[Long] = None,
     model: Option[String] = None,
     thinking: Option[String] = None,
-    timestamp: Long = 0L
+    timestamp: Long = 0L,
+    /**
+     * **轮终态显式标记**（replay-terminal 批 2026-10-28，案一「A 根治」实施，
+     * 依据 `reports/20261028_113024_console-replay-compaction-audit` 案一）：本行
+     * 是该轮（上一 user 行 → 下一 user 行）的**终态 ai 行**——`WebSocketRoutes`
+     * 的 `done`/`agentDone` 轮终态落盘点随 durationMs 同批写入（append 直写或
+     * `SessionStore.updateLastAiMeta(markTerminal=true)` 回填）。回放折叠的
+     * done 判据由渲染期徽章启发式（E4：「段内存在带 `data-nf-phrase` 的时长
+     * 徽章」，推导不出即整段平铺 → 裸工具卡）升级为**数据驱动**：前端
+     * `turnGroup.js summarizeSegment` 改读「段内存在 terminal 行」优先；旧转录
+     * 无本键 ⇒ 回落现启发式（渐进兼容，不一次性改写历史）。失败轮（error 帧
+     * 不走 done 落盘点）与进行中轮（busyTail）不写本标记 ⇒ 回放维持平铺/展开
+     * （09-05 排障裁定 + 瞬态语义不变）。
+     *
+     * 缺席即不落键（intake/header/answerOf/quote/fileChanges/answerAttachments
+     * 先例同款条件编码 ⇒ 旧 `.ui.json` 行字节形态与旧读法逐字不变；解码宽松
+     * 回落 None，新增可选键绝不改变任何既有行的可解析性）。
+     */
+    terminal: Option[Boolean] = None
   ) extends UiMessage:
     val typeName = "ai"
+
+  end Ai
 
   case class Tool(
     label: String,
     summary: String,
     content: String = "",
     isError: Boolean = false,
-    input: String = ""
+    input: String = "",
+    /**
+     * **轮终态显式标记·工具行等价面**（卫生批 2026-10-28，回放批 §5 残余①根治）：
+     * 退化全工具轮（段内零 ai 行——如 Mail 单卡委托轮）在 `done`/`agentDone` 时无
+     * Ai 载体可盖 `terminal`，回填落到上一轮末条 Ai 行 ⇒ 本段无标记、回放维持平
+     * 铺（裸工具卡）。本标记由 `SessionStore.markRoundTerminal` 在「段内无 Ai 行」
+     * 分支盖到**段内最后一行工具行**上——折叠判据与 `Ai.terminal` 等价（前端
+     * `findTerminalRow`/`exchangeComplete` 同读 data-nf-turn-terminal）。
+     *
+     * 失败轮（error 帧不走 done 落盘点）与进行中轮（busyTail）不写本标记 ⇒ 两
+     * 形态红线不回归。缺席即不落键（Ai.terminal 先例同款条件编码 ⇒ 旧 `.ui.json`
+     * 行字节形态与旧读法逐字不变；解码宽松回落 None）。
+     */
+    terminal: Option[Boolean] = None
   ) extends UiMessage:
     val typeName = "tool"
 
-  case class Agent(agentId: String, text: String) extends UiMessage:
+  end Tool
+
+  case class Agent(
+    agentId: String,
+    text: String,
+    /**
+     * R1 数据面（2026-09-14 作者七答「footer 统一 · R1 = 带时间」）：历史行的
+     * footer 时间需要**落盘的真实时间戳**（live 行传 `Date.now()`、历史行原先传 `0`
+     * ⇒ 刷新后时间消失）。缺省 0 = 不落键（`.ui.json` 旧行字节形态与旧读法逐字不变）。
+     */
+    timestamp: Long = 0L
+  ) extends UiMessage:
     val typeName = "agent"
 
-  case class AskUser(items: List[Json]) extends UiMessage:
+  /**
+   * 落盘的 AskUser 提问行。
+   *
+   * `requestId`（双开缺陷批「案 B」2026-09-21，chain-askuserdup）：提问卡在 hub 里的
+   * 唯一身份，随行落盘 ⇒ 历史恢复出的卡**可 id 寻址**（重放腿按 id 替换、`askUserClosed`
+   * 关卡可达、#272 取值由数据决定）。
+   *
+   * 改前只落 `{type, items}` ⇒ 历史卡永远无 `data-request-id`：前端既无法按 id 去重
+   * （只能看「卡上有没有作答行」的 DOM 启发式，被伪造的作答行击穿），引擎也关不掉它
+   * （`chat.js closeAskUserCard` 只认 `[data-request-id]`）。
+   *
+   * 缺席即不落键（旧 `.ui.json` 行字节形态与旧读法逐字不变；旧行 ⇒ 前端回落
+   * 「按形态兜底」的去重腿，见 `chat.js sameAskCards`）。
+   */
+  case class AskUser(
+    items: List[Json],
+    requestId: Option[String] = None,
+    /**
+     * 附件引用（本批：AskUser 顶层可选参数 `attachments`）：仅作**人的可点击入口**，
+     * 内容不进模型上下文（与 `AskItem.canvas` 同族，但挂在整次提问上）。路径已在
+     * 工具调用期经 `FilePolicyPort` 校验通过，本层只搬运。
+     *
+     * 缺省 `None` ⇒ 旧 `.ui.json` 行解析（本文件 `case "askUser"`）与缺键载荷
+     * **逐字节不变**。
+     */
+    attachments: Option[List[String]] = None
+  ) extends UiMessage:
     val typeName = "askUser"
 
-  case class Ask(question: String, answer: String, durationMs: Option[Long] = None, model: Option[String] = None)
-      extends UiMessage:
+  case class Ask(
+    question: String,
+    answer: String,
+    durationMs: Option[Long] = None,
+    model: Option[String] = None,
+    /**
+     * R1 数据面：同 [[Agent.timestamp]] —— ask 行（问句 + 答案）历史 footer 的
+     * 时间取自此字段；缺省 0 = 不落键（旧行读法不变）。
+     */
+    timestamp: Long = 0L
+  ) extends UiMessage:
     val typeName = "ask"
 
   case class AskPermission(
@@ -311,6 +546,34 @@ object UiMessage:
   case class System(content: String, i18nKey: Option[String] = None, params: Option[Json] = None) extends UiMessage:
     val typeName = "system"
 
+  /**
+   * 卡片作答的**落盘行构造单点**（双开缺陷批「案 B」2026-09-21，chain-askuserdup）。
+   *
+   * 唯一消费者 = `WebSocketRoutes` 的 `askUserAnswer` 帧处理（落盘 + 转发 hub）。
+   * 收敛成一处的理由：行的形状（text = 各 answer 槽用 '\n' join + `answerOf` 标记 +
+   * timestamp）与「这是本 requestId 的作答」这一语义必须**同源**——散在调用点手写
+   * 就会再次漂移出无标记的行（正是本缺陷的成因面）。
+   *
+   * `requestId` 为空/空白 ⇒ `answerOf = None`（缺席即不落键）：无从标记来源时宁可
+   * 不标记，让前端回落邻接启发式，而不是落一个空串把「有标记」的语义也污染掉。
+   *
+   * `answerAttachments`（askuser-dragdrop 实施批 2026-10-19，批 #551）：随卡回传的
+   * 已落盘附件清单。非空 ⇒ 行文本尾部追加「（附 N 个文件）」（行内带计数利于检索；
+   * 清单本体在结构字段 `answerAttachments`，渲染层读结构不解析文本——设计稿 §3.3
+   * 原口径）。空 ⇒ 与改前逐字节同形（无尾行、不落键）。
+   */
+  def askUserAnswer(answerText: String, requestId: String, timestamp: Long, answerAttachments: List[Json] = Nil): User =
+    val rid = requestId.trim
+    val text =
+      if answerAttachments.isEmpty then answerText
+      else answerText + "\n（附 " + answerAttachments.size + " 个文件）"
+    User(
+      text,
+      timestamp = timestamp,
+      answerOf = if rid.isEmpty then None else Some(rid),
+      answerAttachments = if answerAttachments.isEmpty then None else Some(Json.fromValues(answerAttachments))
+    )
+
   given Encoder[UiMessage] = Encoder.instance {
     case m: User =>
       val base = Json.obj("type" -> "user".asJson, "text" -> m.text.asJson, "attachments" -> m.attachments.asJson)
@@ -320,15 +583,51 @@ object UiMessage:
       val withEt = m.eventType.fold(withSrc)(et => withSrc.deepMerge(Json.obj("eventType" -> et.asJson)))
       val withSender = m.sender.fold(withEt)(s => withEt.deepMerge(Json.obj("sender" -> s.asJson)))
       val withTeam = m.senderTeam.fold(withSender)(t => withSender.deepMerge(Json.obj("senderTeam" -> t.asJson)))
-      m.delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
+      val withDelivery = m.delivery.fold(withTeam)(d => withTeam.deepMerge(Json.obj("delivery" -> d.asJson)))
+      // mailbadge 批（2026-09-13，选项 C）：可选判别字段——缺席即不落键
+      // （旧 .ui.json 行的字节形态与旧读法逐字不变）。
+      val withIntake = m.intake.fold(withDelivery)(i => withDelivery.deepMerge(Json.obj("intake" -> i.asJson)))
+      // 气泡四段式统一批（2026-09-15）：**已渲染**的四段式 header（引擎单一来源，
+      // `NotificationHeader`）随行落盘 ⇒ 历史恢复路径与 live 帧逐字渲染同一串，
+      // 前端不再二次拼接。缺席即不落键（旧 .ui.json 行字节形态逐字不变；
+      // 旧行由前端 `injectedSourceLabel` 回落渲染）。
+      val withHeader = m.header.fold(withIntake)(h => withIntake.deepMerge(Json.obj("header" -> h.asJson)))
+      // 双开缺陷批「案 B」（2026-09-21，chain-askuserdup）：作答行的显式来源标记 ——
+      // 本行是某个 requestId 卡的作答记录。缺席即不落键（旧 .ui.json 行的字节形态与
+      // 旧读法逐字不变；旧行 ⇒ 前端回落「未作答」）。
+      val withAnswerOf = m.answerOf.fold(withHeader)(r => withHeader.deepMerge(Json.obj("answerOf" -> r.asJson)))
+      // quote-message 一期（2026-10-09，spec §3.3）：消息引用快照 —— 缺席即不落键
+      // ⇒ 无引用行与旧字节形态逐字相同。
+      val withQuote = m.quote.fold(withAnswerOf)(q => withAnswerOf.deepMerge(Json.obj("quote" -> q)))
+      // file-diff → 委托结果行（bug #58 修 2026-10-09）：diff 载荷缺席即不落键
+      // ⇒ 非 delegate 行与旧字节形态逐字相同。
+      val withFileChanges = m.fileChanges.fold(withQuote)(fc => withQuote.deepMerge(Json.obj("fileChanges" -> fc)))
+      // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的答复附件清单——
+      // 缺席即不落键（既有行字节形态逐字不变）。
+      val withAnswerAtts =
+        m.answerAttachments.fold(withFileChanges)(a => withFileChanges.deepMerge(Json.obj("answerAttachments" -> a)))
+      // schedcard 批（2026-10-29）：定时任务卡片载荷——缺席即不落键
+      // ⇒ 非 schedule 行与旧字节形态逐字相同。
+      val withSchedule = m.schedule.fold(withAnswerAtts)(s => withAnswerAtts.deepMerge(Json.obj("schedule" -> s)))
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话标记——只在 Some(true)
+      // 落键（缺席即不落键 ⇒ 普通用户行与旧字节形态逐字相同）。
+      val withMidTurn =
+        if m.midTurn.contains(true) then withSchedule.deepMerge(Json.obj("midTurn" -> true.asJson)) else withSchedule
+      // ask-mail 批（2026-11-16）：ask 会话的 Mail 续聊地址——缺席即不落键
+      // ⇒ 非 ask 行与旧字节形态逐字相同。
+      m.askAddress.fold(withMidTurn)(a => withMidTurn.deepMerge(Json.obj("askAddress" -> a.asJson)))
     case m: Ai =>
       val base = Json.obj("type" -> "ai".asJson, "text" -> m.text.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
       val withModel = m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
       val withThinking = m.thinking.fold(withModel)(th => withModel.deepMerge(Json.obj("thinking" -> th.asJson)))
-      if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
+      val withTs =
+        if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
+      // replay-terminal 批（2026-10-28）：轮终态标记——只在 Some(true) 落键
+      // （缺席即不落键 ⇒ 无标记行与旧字节形态逐字相同）。
+      if m.terminal.contains(true) then withTs.deepMerge(Json.obj("terminal" -> true.asJson)) else withTs
     case m: Tool =>
-      Json.obj(
+      val base = Json.obj(
         "type" -> "tool".asJson,
         "label" -> m.label.asJson,
         "summary" -> m.summary.asJson,
@@ -336,12 +635,24 @@ object UiMessage:
         "isError" -> m.isError.asJson,
         "input" -> m.input.asJson
       )
-    case m: Agent => Json.obj("type" -> "agent".asJson, "agentId" -> m.agentId.asJson, "text" -> m.text.asJson)
-    case m: AskUser => Json.obj("type" -> "askUser".asJson, "items" -> m.items.asJson)
+      // 卫生批（2026-10-28）：工具行等价终态标记——只在 Some(true) 落键
+      // （缺席即不落键 ⇒ 无标记行与旧字节形态逐字相同）。
+      if m.terminal.contains(true) then base.deepMerge(Json.obj("terminal" -> true.asJson)) else base
+    case m: Agent =>
+      val base = Json.obj("type" -> "agent".asJson, "agentId" -> m.agentId.asJson, "text" -> m.text.asJson)
+      // R1：timestamp 缺席即不落键（与 User/Ai 同款条件编码 ⇒ 旧 .ui.json 行不变）。
+      if m.timestamp > 0 then base.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else base
+    case m: AskUser =>
+      // 案 B：requestId 随行落盘（历史卡可 id 寻址）。缺席即不落键 ⇒ 旧行形态逐字不变。
+      val base = Json.obj("type" -> "askUser".asJson, "items" -> m.items.asJson)
+      val withRid = m.requestId.filter(_.nonEmpty).fold(base)(r => base.deepMerge(Json.obj("requestId" -> r.asJson)))
+      // 附件「仅在场发」：缺席即不落键 ⇒ 无附件载荷与既有形态逐字节相等。
+      m.attachments.filter(_.nonEmpty).fold(withRid)(a => withRid.deepMerge(Json.obj("attachments" -> a.asJson)))
     case m: Ask =>
       val base = Json.obj("type" -> "ask".asJson, "question" -> m.question.asJson, "answer" -> m.answer.asJson)
       val withDur = m.durationMs.fold(base)(d => base.deepMerge(Json.obj("durationMs" -> d.asJson)))
-      m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
+      val withModel = m.model.fold(withDur)(mod => withDur.deepMerge(Json.obj("model" -> mod.asJson)))
+      if m.timestamp > 0 then withModel.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withModel
     case m: AskPermission =>
       val base = Json.obj(
         "type" -> "askPermission".asJson,
@@ -370,6 +681,28 @@ object UiMessage:
           sender <- cursor.downField("sender").as[Option[String]]
           senderTeam <- cursor.downField("senderTeam").as[Option[String]]
           delivery <- cursor.downField("delivery").as[Option[String]]
+          intake <- cursor.downField("intake").as[Option[String]]
+          header <- cursor.downField("header").as[Option[String]]
+          // 案 B：作答行来源标记（旧行缺席 ⇒ None ⇒ 前端回落「未作答」）
+          answerOf <- cursor.downField("answerOf").as[Option[String]]
+          // quote-message 一期：消息引用快照（旧行无本键 ⇒ None；形态不合同样回落
+          // None —— 新增可选键绝不改变任何既有行的可解析性）
+          quote <- cursor.downField("quote").as[Option[Json]]
+          // file-diff → 委托结果行：diff 载荷（旧行无本键 ⇒ None，同上兼容纪律）
+          fileChanges <- cursor.downField("fileChanges").as[Option[Json]]
+          // askuser-dragdrop 实施批（2026-10-19，批 #551）：随卡回传的答复附件清单
+          // （旧行无本键 ⇒ None，同上兼容纪律）
+          answerAttachments <- cursor.downField("answerAttachments").as[Option[Json]]
+          // schedcard 批（2026-10-29）：定时任务卡片载荷（旧行无本键 ⇒ None，
+          // 同上兼容纪律——宽松透传，新增可选键绝不改变任何既有行的可解析性）
+          schedule <- cursor.downField("schedule").as[Option[Json]]
+          // tool-card-leak-on-reload 批（2026-11-02）：回合内插话标记（旧行无本键
+          // ⇒ None；形态不合同样回落 None —— 宽松透传，新增可选键绝不改变任何
+          // 既有行的可解析性）
+          midTurn <- cursor.downField("midTurn").as[Option[Boolean]]
+          // ask-mail 批（2026-11-16）：ask 会话的 Mail 续聊地址（旧行无本键 ⇒ None，
+          // 同上兼容纪律）
+          askAddress <- cursor.downField("askAddress").as[Option[String]]
         yield User(
           text,
           atts.getOrElse(Nil),
@@ -379,7 +712,16 @@ object UiMessage:
           eventType,
           sender,
           senderTeam,
-          delivery
+          delivery,
+          intake,
+          header,
+          answerOf.filter(_.nonEmpty),
+          quote,
+          fileChanges,
+          answerAttachments,
+          schedule,
+          midTurn,
+          askAddress.filter(_.nonEmpty)
         )
       case "ai" =>
         for
@@ -388,7 +730,10 @@ object UiMessage:
           model <- cursor.downField("model").as[Option[String]]
           thinking <- cursor.downField("thinking").as[Option[String]]
           timestamp <- cursor.downField("timestamp").as[Option[Long]]
-        yield Ai(text, durationMs, model, thinking, timestamp.getOrElse(0L))
+          // replay-terminal 批：轮终态标记（旧行无本键 ⇒ None；形态不合同样回落
+          // None —— 宽松透传，新增可选键绝不改变任何既有行的可解析性）
+          terminal <- cursor.downField("terminal").as[Option[Boolean]]
+        yield Ai(text, durationMs, model, thinking, timestamp.getOrElse(0L), terminal)
       case "tool" =>
         for
           label <- cursor.downField("label").as[String]
@@ -396,27 +741,43 @@ object UiMessage:
           content <- cursor.downField("content").as[Option[String]]
           isError <- cursor.downField("isError").as[Option[Boolean]]
           input <- cursor.downField("input").as[Option[String]]
+          // 卫生批：工具行等价终态标记（旧行无本键 ⇒ None；形态不合同样回落
+          // None —— 宽松透传，新增可选键绝不改变任何既有行的可解析性）
+          terminal <- cursor.downField("terminal").as[Option[Boolean]]
         yield Tool(
           label,
           summary,
           content.getOrElse(""),
           isError.getOrElse(false),
-          input.getOrElse("")
+          input.getOrElse(""),
+          terminal
         )
       case "agent" =>
         for
           agentId <- cursor.downField("agentId").as[String]
           text <- cursor.downField("text").as[String]
-        yield Agent(agentId, text)
+          timestamp <- cursor.downField("timestamp").as[Option[Long]] // R1：旧行缺席 ⇒ 0
+        yield Agent(agentId, text, timestamp.getOrElse(0L))
       case "askUser" =>
-        cursor.downField("items").as[List[Json]].map(AskUser(_))
+        for
+          items <- cursor.downField("items").as[List[Json]]
+          // 案 B：旧行无 requestId ⇒ None（前端回落形态兜底，不强求 id）
+          requestId <- cursor.downField("requestId").as[Option[String]]
+        yield AskUser(
+          items,
+          requestId.filter(_.nonEmpty),
+          // 附件：旧行无本键 ⇒ None；形态不合（非字符串数组）同样回落 None —— 宽松
+          // 透传：新增可选键绝不改变任何既有行的可解析性（R8 缓解）。
+          cursor.downField("attachments").as[Option[List[String]]].toOption.flatten.filter(_.nonEmpty)
+        )
       case "ask" =>
         for
           question <- cursor.downField("question").as[String]
           answer <- cursor.downField("answer").as[String]
           durationMs <- cursor.downField("durationMs").as[Option[Long]]
           model <- cursor.downField("model").as[Option[String]]
-        yield Ask(question, answer, durationMs, model)
+          timestamp <- cursor.downField("timestamp").as[Option[Long]] // R1：旧行缺席 ⇒ 0
+        yield Ask(question, answer, durationMs, model, timestamp.getOrElse(0L))
       case "askPermission" =>
         for
           toolName <- cursor.downField("toolName").as[String]

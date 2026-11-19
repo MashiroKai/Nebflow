@@ -3,8 +3,8 @@ package nebflow.core.plugin
 import cats.effect.IO
 import cats.syntax.all.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.core.tools.ToolRegistry
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 
@@ -17,8 +17,8 @@ import scala.concurrent.duration.*
  *   一个 release → 仍运行；最后一个 release → 进程关闭 + 工具注销
  * - release 幂等（双保险兜底路径二次调用 no-op）
  * - 启动失败语义（§B.5）：坏命令 → Left（failNode 载体，不静默）
- * - revalidate（§B.5 信任运行时联动）：digest 失效 → 运行中 server 停用 + 持有
- *   会话收到提醒文本
+ * - 闸 D（§B.5 内容面运行时联动；无审批批 2026-09-13 判据放宽）：**内容变更不停飞**、
+ *   **封禁立即停飞 + 持有会话收到提醒**、包消失仍停飞
  */
 class PluginMcpManagerSpec extends CatsEffectSuite:
 
@@ -30,8 +30,10 @@ class PluginMcpManagerSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
 
-  /** 最小 stdio MCP server：initialize / tools/list / tools/call 三方法。
-    * newline-delimited JSON-RPC（StdioTransport 协议）。 */
+  /**
+   * 最小 stdio MCP server：initialize / tools/list / tools/call 三方法。
+   * newline-delimited JSON-RPC（StdioTransport 协议）。
+   */
   private val serverPy: String =
     """#!/usr/bin/env python3
       |import sys, json
@@ -65,20 +67,25 @@ class PluginMcpManagerSpec extends CatsEffectSuite:
 
   // 隔离 nebflow.json + plugins 目录（trust 表读落在临时根）
   os.makeDir.all(tempRoot / "plugins")
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
   os.write.over(serverFile, serverPy)
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  private def mkPlugin(name: String, serverName: String, command: String, args: List[String]): PluginRegistry.PluginDef =
+  private def mkPlugin(
+    name: String,
+    serverName: String,
+    command: String,
+    args: List[String]
+  ): PluginRegistry.PluginDef =
     PluginRegistry.PluginDef(
       name = name,
       version = "1.0.0",
       description = s"$name fixture",
       author = "spec",
       skills = Nil,
-      mcpServers = Map(serverName -> nebflow.llm.McpServerConfig(command = Some(command), args = Some(args))),
+      mcpServers = Map(serverName -> nebflow.shared.McpServerConfig(command = Some(command), args = Some(args))),
       toolsExtension = Nil,
       digest = s"digest-$name",
       fileCount = 2,
@@ -87,7 +94,20 @@ class PluginMcpManagerSpec extends CatsEffectSuite:
       dir = tempRoot.toString
     )
 
-  private val goodPlugin = mkPlugin("echo-plugin", "srv", "python3", List(serverFile.toString))
+  /** python 解释器解析：Windows 无 `python3` 可执行名 ⇒ 依次回退 `python`/`py`
+    * （探测 = `--version` 能起进程）；全部缺席仍报 python3（与引擎
+    * MemoryRecallDaemon.pythonCmd 同口径）。Mac 上恒 python3，零行为变化。 */
+  private lazy val pythonCmd: String =
+    List("python3", "python", "py")
+      .find { c =>
+        try
+          new ProcessBuilder(c, "--version").start().waitFor(5, java.util.concurrent.TimeUnit.SECONDS)
+          true
+        catch case _: Throwable => false
+      }
+      .getOrElse("python3")
+
+  private val goodPlugin = mkPlugin("echo-plugin", "srv", pythonCmd, List(serverFile.toString))
   private val badPlugin = mkPlugin("bad-plugin", "srv", "/nonexistent-binary-xyz", Nil)
 
   // ── acquire / refcount / recycle ─────────────────────────
@@ -97,10 +117,14 @@ class PluginMcpManagerSpec extends CatsEffectSuite:
       mgr <- PluginMcpManager.create
       grant <- mgr.acquire("sess-a", List(goodPlugin)).map(_.getOrElse(fail("acquire must succeed")))
       _ = assertEquals(grant.serverIds, List("plugin_echo-plugin_srv"))
-      registered <- IO.blocking(ToolRegistry.ALL_TOOLS.map(_.name)).map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
+      registered <- IO
+        .blocking(ToolRegistry.ALL_TOOLS.map(_.name))
+        .map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
       running <- mgr.runningServers
       _ <- mgr.release("sess-a")
-      registeredAfter <- IO.blocking(ToolRegistry.ALL_TOOLS.map(_.name)).map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
+      registeredAfter <- IO
+        .blocking(ToolRegistry.ALL_TOOLS.map(_.name))
+        .map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
       runningAfter <- mgr.runningServers
     yield
       assert(registered, "plugin MCP tool must be registered under the §B.4 name during the session")
@@ -117,10 +141,14 @@ class PluginMcpManagerSpec extends CatsEffectSuite:
       mid <- mgr.runningServers
       _ <- mgr.release("sess-1")
       afterOne <- mgr.runningServers
-      toolsAfterOne <- IO.blocking(ToolRegistry.ALL_TOOLS.map(_.name)).map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
+      toolsAfterOne <- IO
+        .blocking(ToolRegistry.ALL_TOOLS.map(_.name))
+        .map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
       _ <- mgr.release("sess-2")
       afterBoth <- mgr.runningServers
-      toolsAfterBoth <- IO.blocking(ToolRegistry.ALL_TOOLS.map(_.name)).map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
+      toolsAfterBoth <- IO
+        .blocking(ToolRegistry.ALL_TOOLS.map(_.name))
+        .map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
     yield
       assertEquals(g1.serverIds, g2.serverIds, "same plugin → same serverId (one shared server)")
       assertEquals(mid.get("plugin_echo-plugin_srv"), Some(2), "refcount must be 2 with two concurrent holders")
@@ -157,47 +185,107 @@ class PluginMcpManagerSpec extends CatsEffectSuite:
         assert(!running.contains("plugin_bad-plugin_srv"), "failed server must leave no refcount residue")
   }
 
-  // ── 信任运行时联动（§B.5）────────────────────────────────
+  // ── 内容面运行时联动（§B.5；无审批批 2026-09-13 闸 D 判据放宽）────────
 
-  test("§B.5 revalidate: acquire 后 digest 失效 → 停用 + 持有会话收到系统提醒") {
-    val (reminded, setReminded) = {
+  test("闸 D 放宽: acquire 后内容变更（digest 漂移）→ **不停用**（在飞工具面不动）") {
+    val (reminded, setReminded) =
       val ref = new java.util.concurrent.ConcurrentLinkedQueue[String]()
       (ref, (sid: String, text: String) => IO(ref.add(s"$sid|$text")).void)
-    }
     for
       mgr <- PluginMcpManager.create
       _ <- mgr.acquire("sess-live", List(goodPlugin)).void
       before <- mgr.runningServers
-      // 插件 digest 失效（目录内容变更 / 撤审的运行时等价场景）
-      stalePlugin = goodPlugin.copy(digest = "digest-CHANGED")
-      _ <- mgr.revalidate(IO.pure(List(stalePlugin)), setReminded)
+      // 目录内容变更的运行时等价场景：新 digest、仍可用（在位即信任）
+      changedPlugin = goodPlugin.copy(
+        digest = "digest-CHANGED",
+        trust = PluginRegistry.TrustStatus.Trusted(0L, "digest-CHANGED")
+      )
+      affected <- mgr.revalidate(IO.pure(List(changedPlugin)), setReminded)
       after <- mgr.runningServers
-      tools <- IO.blocking(ToolRegistry.ALL_TOOLS.map(_.name)).map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
+      tools <- IO
+        .blocking(ToolRegistry.ALL_TOOLS.map(_.name))
+        .map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
+      _ <- mgr.release("sess-live")
     yield
       assertEquals(before.get("plugin_echo-plugin_srv"), Some(1), "precondition: server running")
-      assert(!after.contains("plugin_echo-plugin_srv"), "stale-digest server must be stopped by trust revalidation")
-      assert(!tools, "stale server tools must be unregistered")
-      val msgs = reminded.toArray.map(_.toString).toList
-      assert(msgs.exists(m => m.startsWith("sess-live|") && m.contains("[plugin-trust]") && m.contains("echo-plugin")),
-        s"holding session must receive a system reminder, got: $msgs")
+      assertEquals(affected, Nil, "a content change must not mark the running server stale any more")
+      assertEquals(after.get("plugin_echo-plugin_srv"), Some(1), "content change must NOT stop the in-flight server")
+      assert(tools, "in-flight tools stay registered across a content change")
+      assert(reminded.isEmpty, "no reminder on mere content drift (the node keeps working)")
+    end for
   }
 
-  test("§B.5 revalidate: digest 未变 → 不停用；无运行 server → 不扫描") {
-    val (reminded, setReminded) = {
+  test("闸 D: digest 未变 → 不停用；无运行 server → 不扫描") {
+    val (reminded, setReminded) =
       val ref = new java.util.concurrent.ConcurrentLinkedQueue[String]()
       (ref, (sid: String, text: String) => IO(ref.add(s"$sid|$text")).void)
-    }
     for
       mgr <- PluginMcpManager.create
       emptyScan <- mgr.revalidate(IO.pure(Nil), setReminded) // 无运行 server 快速路径
       _ <- mgr.acquire("sess-keep", List(goodPlugin)).void
-      _ <- mgr.revalidate(IO.pure(List(goodPlugin)), setReminded) // digest 一致
+      _ <- mgr.revalidate(IO.pure(List(goodPlugin)), setReminded) // 内容面一致
       running <- mgr.runningServers
       _ <- mgr.release("sess-keep")
     yield
       assertEquals(emptyScan, Nil, "no running servers → no scan, no stops")
-      assertEquals(running.get("plugin_echo-plugin_srv"), Some(1), "unchanged digest must keep the server running")
-      assert(reminded.isEmpty, "no reminders when trust intact")
+      assertEquals(
+        running.get("plugin_echo-plugin_srv"),
+        Some(1),
+        "unchanged content face must keep the server running"
+      )
+      assert(reminded.isEmpty, "no reminders when the content face is intact")
+    end for
+  }
+
+  test("闸 D 封禁（硬验收）: 封禁 ⇒ 运行中 server 立即停用 + 持有会话收到提醒（≤30s tick 内）") {
+    val (reminded, setReminded) =
+      val ref = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+      (ref, (sid: String, text: String) => IO(ref.add(s"$sid|$text")).void)
+    for
+      mgr <- PluginMcpManager.create
+      _ <- mgr.acquire("sess-blocked", List(goodPlugin)).void
+      before <- mgr.runningServers
+      blockedPlugin = goodPlugin.copy(trust = PluginRegistry.TrustStatus.Blocked(0L, "spec", "deny-list probe"))
+      affected <- mgr.revalidate(IO.pure(List(blockedPlugin)), setReminded)
+      after <- mgr.runningServers
+      tools <- IO
+        .blocking(ToolRegistry.ALL_TOOLS.map(_.name))
+        .map(_.exists(_.startsWith("mcp__plugin_echo-plugin_srv__")))
+    // 注：revalidate 只摘 serverRefs（既有行为），会话持有集由 release 清理——此处不断言持有集
+    yield
+      assertEquals(before.get("plugin_echo-plugin_srv"), Some(1), "precondition: server running")
+      assertEquals(affected, List("echo-plugin"), "a blocked package must be reported as affected")
+      assert(!after.contains("plugin_echo-plugin_srv"), "blocked ⇒ in-flight server must be stopped")
+      assert(!tools, "blocked ⇒ tools must be unregistered")
+      val msgs = reminded.toArray.map(_.toString).toList
+      assert(
+        msgs.exists(m => m.startsWith("sess-blocked|") && m.contains("[plugin-block]") && m.contains("echo-plugin")),
+        s"holding session must receive a block reminder, got: $msgs"
+      )
+      assert(
+        msgs.forall(m => !m.contains("Re-approve")),
+        s"the retired 'Re-approve the plugin if intended' wording must be gone, got: $msgs"
+      )
+      assert(msgs.exists(_.contains("unblock")), s"the reminder must point at the action that exists, got: $msgs")
+    end for
+  }
+
+  test("闸 D: 包从注册表消失（目录被删）→ 停用（既有行为保留）") {
+    val (reminded, setReminded) =
+      val ref = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+      (ref, (sid: String, text: String) => IO(ref.add(s"$sid|$text")).void)
+    for
+      mgr <- PluginMcpManager.create
+      _ <- mgr.acquire("sess-gone", List(goodPlugin)).void
+      affected <- mgr.revalidate(IO.pure(Nil), setReminded)
+      after <- mgr.runningServers
+    yield
+      assertEquals(affected, List("echo-plugin"), "a vanished package must still be stopped")
+      assert(!after.contains("plugin_echo-plugin_srv"), "server of a removed package must be stopped")
+      assert(
+        reminded.toArray.map(_.toString).exists(_.contains("removed from registry")),
+        "the reminder must state the removal reason"
+      )
   }
 
 end PluginMcpManagerSpec

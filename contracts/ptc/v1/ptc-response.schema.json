@@ -1,0 +1,95 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://nebflow.dev/contracts/ptc/v1/ptc-response.schema.json",
+  "title": "PTC v1 execution response (content[0].text of the ptc_run / ptc_run_rw MCP result, JSON-encoded)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "ok", "language", "profile", "duration_ms", "stdout", "stderr", "tool_calls", "tool_call_count", "error", "usage"],
+  "properties": {
+    "contract": { "const": "ptc/v1" },
+    "exec_id": { "type": ["string", "null"] },
+    "ok": { "type": "boolean" },
+    "language": { "enum": ["python", "typescript", "javascript"] },
+    "profile": { "enum": ["readonly", "readwrite"] },
+    "duration_ms": { "type": "integer", "minimum": 0 },
+    "value": { "description": "Completion value of the last expression statement of the user code, or null." },
+    "stdout": { "type": "string" },
+    "stderr": { "type": "string" },
+    "stdout_truncated": { "type": "boolean" },
+    "stderr_truncated": { "type": "boolean" },
+    "tool_calls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["seq", "tool", "args", "ok", "duration_ms"],
+        "properties": {
+          "seq": { "type": "integer", "minimum": 1 },
+          "tool": { "type": "string" },
+          "args": { "type": "object" },
+          "ok": { "type": "boolean" },
+          "duration_ms": { "type": "integer", "minimum": 0 },
+          "result_bytes": { "type": "integer", "minimum": 0 },
+          "truncated": { "type": "boolean" },
+          "error": {
+            "type": "object",
+            "required": ["category", "code", "message"],
+            "properties": {
+              "category": { "$ref": "#/definitions/category" },
+              "code": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "tool_call_count": { "type": "integer", "minimum": 0 },
+    "files_written": { "type": "array", "items": { "type": "string" } },
+    "error": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["category", "code", "phase", "message"],
+          "properties": {
+            "category": { "$ref": "#/definitions/category" },
+            "code": { "type": "string", "pattern": "^PTC_[A-Z_]+$" },
+            "phase": { "enum": ["validate", "compile", "run", "tool_call", "teardown"] },
+            "message": { "type": "string" },
+            "tool": { "type": ["string", "null"] },
+            "detail": { "type": ["object", "null"] }
+          }
+        }
+      ]
+    },
+    "usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wall_ms", "tool_calls", "output_bytes"],
+      "properties": {
+        "wall_ms": { "type": "integer", "minimum": 0 },
+        "cpu_ms": { "type": ["integer", "null"] },
+        "max_rss_kb": { "type": ["integer", "null"] },
+        "tool_calls": { "type": "integer", "minimum": 0 },
+        "output_bytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "clamped": { "type": "array", "items": { "type": "string" } }
+  },
+  "definitions": {
+    "category": {
+      "enum": [
+        "SYNTAX_ERROR",
+        "RUNTIME_ERROR",
+        "TOOL_CALL_ERROR",
+        "TIMEOUT",
+        "LIMIT_EXCEEDED",
+        "POLICY_DENIED",
+        "INVALID_REQUEST",
+        "RUNTIME_UNAVAILABLE",
+        "INTERNAL_ERROR"
+      ]
+    }
+  }
+}

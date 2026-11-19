@@ -68,7 +68,7 @@ print("seeded")
 PYEOF
 
 cd /tmp/nb-ttl-split-archive
-NEBFLOW_GATEWAY_PORT=$PORT java -cp "$CP" nebflow.Main --home "$HOME_DIR" --port $PORT start > "$BASE/instance.log" 2>&1 &
+NEBFLOW_GATEWAY_PORT=$PORT java -cp "$CP" nebflow.Main --home "$HOME_DIR" --port $PORT --foreground start > "$BASE/instance.log" 2>&1 &
 JAVA_PID=$!
 echo "java pid=$JAVA_PID"
 for i in $(seq 1 60); do

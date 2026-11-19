@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "change": "frontend-mobile-appearance-repairs",
+  "mappings": [
+    {
+      "requirement": "FMA-REQ-007", "scenario": "FMA-SCN-007",
+      "implementation": ["src/main/resources/web/css/mobileLayer.css", "src/main/resources/web/css/ask.css", "src/main/resources/web/css/split.css", "src/main/resources/web/js/viewers/shared.js", "src/main/resources/web/js/mobile/navController.js", "src/main/resources/web/js/gesture/backSwipe.js"],
+      "tests": [{"path": "tests/mobile-round2.spec.mjs", "name": "mobile round two canvas workbench badges back and top-card motion"}]
+    },
+    {
+      "requirement": "FMA-REQ-008", "scenario": "FMA-SCN-008",
+      "implementation": ["src/main/resources/web/js/messages.js", "src/main/resources/web/js/mobile/navController.js", "src/main/resources/web/css/mobileLayer.css"],
+      "tests": [{"path": "tests/mobile-round2.spec.mjs", "name": "mobile round two canvas workbench badges back and top-card motion"}]
+    },
+    {
+      "requirement": "FMA-REQ-009", "scenario": "FMA-SCN-009",
+      "implementation": ["src/main/resources/web/js/popArtifacts.js", "src/main/resources/web/css/chat.css"],
+      "tests": [{"path": "tests/mobile-round2.spec.mjs", "name": "mobile round two canvas workbench badges back and top-card motion"}]
+    },
+    {
+      "requirement": "FMA-REQ-005", "scenario": "FMA-SCN-005",
+      "implementation": ["src/main/resources/web/css/mobileLayer.css", "src/main/resources/web/css/design-system.css", "src/main/resources/web/css/input.css", "src/main/resources/web/css/sapphire.css", "src/main/resources/web/js/viewers/html.js"],
+      "tests": [{"path": "tests/mobile-canvas-toolbar-layout.spec.mjs", "name": "transparent floating bands and independent centered pagination"}, {"path": "tests/mobile-workbench-account-chat.spec.mjs", "name": "shared contact chrome and green send face"}]
+    },
+    {
+      "requirement": "FMA-REQ-006", "scenario": "FMA-SCN-006",
+      "implementation": ["src/main/resources/web/js/mobile/navController.js", "src/main/resources/web/js/mobile/meFace.js", "src/main/resources/web/js/neblink.js", "src/main/resources/web/js/sidebar.js", "src/main/resources/web/css/mobileLayer.css"],
+      "tests": [{"path": "tests/mobile-workbench-account-chat.spec.mjs", "name": "workbench hero settings row account detail and existing logout transport"}]
+    },
+    {
+      "requirement": "FMA-REQ-001", "scenario": "FMA-SCN-001",
+      "implementation": ["src/main/resources/web/js/mobile/navController.js", "src/main/resources/web/css/mobileLayer.css"],
+      "tests": [
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-001 ordinary page keeps accessible name without title capsule"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-001 project list scrolls without a title capsule"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-001 canvas document retains its interactive tab capsule"}
+      ]
+    },
+    {
+      "requirement": "FMA-REQ-002", "scenario": "FMA-SCN-002",
+      "implementation": ["src/main/resources/web/css/mobileSearchFlat.css", "src/main/resources/web/css/mobileLayer.css"],
+      "tests": [
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-002 collapsed search and back icons center in their controls"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-002 narrow search and back remain centered light"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-002 narrow search and back remain centered dark"}
+      ]
+    },
+    {
+      "requirement": "FMA-REQ-004", "scenario": "FMA-SCN-004",
+      "implementation": ["src/main/resources/web/js/mobile/navController.js"],
+      "tests": [
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-004 mobile layer removes its document touchmove listener"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-004 reduced motion cancelled edge returns immediately"}
+      ]
+    },
+    {
+      "requirement": "FMA-REQ-003",
+      "scenario": "FMA-SCN-003",
+      "implementation": [
+        "src/main/resources/web/css/glass.css",
+        "src/main/resources/web/css/mobileSearchFlat.css",
+        "openspec/changes/frontend-mobile-appearance-repairs/proposal.md",
+        "openspec/changes/frontend-mobile-appearance-repairs/design.md",
+        "openspec/changes/frontend-mobile-appearance-repairs/tasks.md",
+        "openspec/changes/frontend-mobile-appearance-repairs/specs/mobile-appearance/spec.md",
+        "openspec/changes/frontend-mobile-appearance-repairs/trace.json"
+      ],
+      "tests": [
+        {
+          "path": "tests/mobile-search-flat.spec.mjs",
+          "name": "FMA-SCN-003 search uses actual composer material"
+        },
+        {
+          "path": "tests/mobile-search-flat.spec.mjs",
+          "name": "FMA-SCN-003 todo surfaces use shared components"
+        },
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-003 todo glass hover and no-backdrop light"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-003 todo glass hover and no-backdrop dark"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-003 unsupported-backdrop fallback applies to actual todo pill"},
+        {"path": "tests/mobile-search-flat.spec.mjs", "name": "FMA-SCN-001 canvas document retains its interactive tab capsule"}
+      ]
+    }
+  ]
+}

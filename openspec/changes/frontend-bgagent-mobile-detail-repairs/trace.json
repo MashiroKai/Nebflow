@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "change": "frontend-bgagent-mobile-detail-repairs",
+  "mappings": [
+    {
+      "requirement": "FRB-REQ-001",
+      "scenario": "FRB-SCN-001",
+      "implementation": ["src/main/resources/web/js/bgAgentMobileChrome.js", "openspec/changes/frontend-bgagent-mobile-detail-repairs/proposal.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/design.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/tasks.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/specs/bgagent-mobile-detail/spec.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/trace.json"],
+      "tests": [{"path":"tests/bgagent-mobile-detail-retirement.test.mjs","name":"FRB-SCN-001 worktree and plugin omitted"}]
+    },
+    {
+      "requirement": "FRB-REQ-001",
+      "scenario": "FRB-SCN-002",
+      "implementation": ["src/main/resources/web/js/bgAgentMobileChrome.js"],
+      "tests": [{"path":"tests/bgagent-mobile-detail-retirement.test.mjs","name":"FRB-SCN-002 desktop close retained"}]
+    }
+  ]
+}

@@ -1,0 +1,972 @@
+/* ask.css — Canvas 文件 ask mode（2026-10-28 实施批；同日 22:42 v2.1 简化修订；
+ * 2026-10-29 三修批②③：FAB 通知点绿点未读条件显示 + 风格并入 canvas 统一档；
+ * 2026-11-01 文档会话批②：对话区与输入条同宽（气泡 max-width 306 档退役 =
+ * 列满档 + 列横 padding 归零，左右缘与 .ask-input 逐像素一致——作者令「对话的
+ * 宽度要和下面输入框保持一致」）。
+ *
+ * 形态 = 样张 v2.1（docs/design/20261028_canvas-ask-mode-mockup-v2.html，作者八条令
+ * 2026-10-28 17:5x + v2.1 减法令 22:42「简约一点。不需要两个箭头，就右侧一个发送
+ * 按钮」）→ canvas 右下角入口钮 → 点击输入条从按钮位置向上长出（输入 + 右侧唯一
+ * 发送钮）→ 气泡列升腾按龄渐隐 → 列顶内容级渐隐（ask-fade-content-opacity 批
+ * 2026-11-04：消息 alpha 渐到 0，零遮罩条/零底色/零边框；毛玻璃批 2026-11-06
+ * 载体改逐泡 opacity，见 .ask-col 块）→ 零面板/零弹窗/零遮罩。
+ *
+ * 三修③（作者令 2026-10-29「ask 输入条/气泡对齐 canvas 统一风格，不新造风格」）：
+ * 自造毛玻璃材质（--ask-bub-* 与 --ask-input-* 两族、品牌蓝渐变面 + 自带外投影）
+ * 整体退役，材质全部改引 canvas 控件单源 token（sapphire.css --cv-* 档 = 聊天
+ * #header 玻璃模板：--cv-bg / --cv-blur saturate(--cv-saturate) / --cv-border /
+ * --cv-shadow；hover 语言 --cv-hover-*；圆角 --cv-radius-bar）——与 #deck-fab、
+ * 圆钮簇、查找条计算样式同源。用户气泡侧色 = rgb(var(--sapphire) / 0.14)+描边
+ * 0.35（canvas aria-pressed 活性语言既有词汇）；发送钮 = 全站发送键绿家族
+ * （input.css #send-btn 基准：#07C160 / #06AD56 白字）逐字同源。
+ * 三修②（作者令 2026-10-29「小点应为绿色通知点，只在有（未读）消息时显示」）：
+ * .ask-sess-dot 底色改 var(--color-primary) 绿，由 .has-unread 驱动（JS 侧未读
+ * 判定见 askDock.js syncUnreadDot）——「has-sess 有过消息即常显紫点」退役。
+ *
+ * token 单源：玻璃基底/材质 = sapphire.css（--glass-* / --cv-* / --glass-control-*）；
+ * 品牌绿 = base.css --color-primary；文本 = --color-text(-muted)；活性蓝 = --sapphire
+ * 三元组；动效 = base.css --panel-ease/--panel-duration。本文件只承载 ask 域几何
+ * token 与组件规则——材质字面量零自带（GU2-7 同律）。
+ *
+ * 组件化范式试点批（ask-paradigm-a，2026-11-03）：
+ *   ① 承载面从「两条自由节点」变成组件内部子节点，宿主 = `<nf-ask-dock>`（light
+ *      DOM，js/askDock.js 用 define() 注册）。宿主**零布局盒**：`display: contents`
+ *      ——它不生成盒子、不建定位包含块，所以 .ask-fab / .ask-dock 的绝对定位包含块
+ *      仍是 #canvas-panel，几何与改前逐值一致（批报告附 getBoundingClientRect 对照）。
+ *   ② 消费点的字面量一律换 --ds-* 槽（令牌真身 design-system.css）：圆角 / 字号 /
+ *      色值 / 时长 / 边框宽。**只换值，选择器与视觉结果不动**；档外值按最接近的
+ *      既有 --ds-* 落（缺档清单见批报告），本文件不新造字面量。
+ *      令牌出生行（`:root` 里的 --ask-* 档）仍是本面唯一的合法字面量：它们是
+ *      ask 域 token 的定义地，不是消费点（门禁 check-design-tokens 同口径）。
+ */
+
+/* ═══ E 表几何 token（token 规格页 20261028_canvas-ask-mode-tokens.zh-CN §E；
+ *    三修批后本表只留几何/域内档——材质色全部改引全局单源 token）═══ */
+:root {
+  /* E-2 几何/材质档 */
+  /* canvas 控件尺寸对齐批（2026-11-02 作者追加令 09:41「包括 canvas 的这些控件
+   * 宽度也要保持一致」）② 全站悬浮圆钮单一真值 48：入口钮桌面 44 → **48**
+   * （= canvas 文档 chrome 档 --cv-size-circle-lg = 手机层 --mtap-lg）。同排共中线
+   * 随之重算：圆钮行（pane 内 bottom:16、48 高、pane 底 = 面板底 −8）中线在面板
+   * 系 48px ⇒ fab bottom = 48 − 24 = **24**（原 44 钮 → 22）。手机层原本 48，
+   * 本批只补桌面档（mobileLayer.css .ask-fab 48 覆盖不变）。 */
+  /* ── canvas 按钮同尺寸批（glass-unify 批 2026-11-05，作者令逐字：「canvas
+   *    的按钮都保持一个大小，现在 note 和 ask 还是比其他的按钮看着大」）──
+   * 病根：本 token 写死 48px，而 canvas 工具簇四圆钮 #deck-fab / #canvas-head-close
+   * 走的是 --cv-size-circle-lg → --cv-size-circle = **40px**（2026-11-05 件3 批
+   * 已把「底部跟顶部同档」落到 40）。于是同一行浮钮里 ask/note 48、其余 40，
+   * 差 8px —— 肉眼就是「note 和 ask 明显更大」。
+   * 处置：ask/note 不再有自己的一档，直接吃同一个尺寸 token；这样「主按钮更大」
+   * 之类意图将来也只能由**同一个 token** 表达，不许出现第二个尺寸档。
+   * 手机档（body.mobile-layer）两边同为 --mtap-lg 48，本来就一致，不动。 */
+  --ask-fab-size: var(--cv-size-circle, 40px);   /* 入口钮（命中盒=视觉径） */
+  --ask-fab-gap: 14px;           /* 钮距画布右缘 */
+  /* 单行排布批（2026-11-01 作者令 16:18）：与左锚文档工具簇行共中线——
+   * 簇在 pane 内 bottom:16、pane 底=面板底上 8px（壳 padding-bottom）→ 面板系
+   * 行带 [24..72]、中线 48px；fab 48px 时 bottom = 48−24 = 24（原 44 钮的 22
+   * 随本批 +2，中线不变）。JS 让位腿只剩通栏 epub 底栏。 */
+  --ask-fab-bottom: 24px;        /* 钮距画布下缘（JS 随通栏底栏实测让位） */
+  --ask-dock-w: 372px;           /* 覆盖层宽（= 输入框档宽） */
+  --ask-col-maxh: 316px;         /* 气泡列 max-height（小巧不占 canvas） */
+  /* 记事本批（2026-11-05）：记事本窗高（拖拽状态机写这条 —— 与 --ask-col-maxh
+   * 同档位、同一份 resizeLimits；默认高取「一页便签」量级，不遮挡文档主体）。 */
+  --note-h: 240px;
+  /* Height of the clearance band at the top of the bubble column. No per-bubble
+   * opacity or mask carries a fade here any more (a mask makes the column a backdrop
+   * root and defeats the bubbles' blur; a whole-bubble opacity washes the history out):
+   * the band is plain padding, so a bubble crossing the top edge is clipped, never dimmed.
+   * ── 短渐隐批（作者令 2026-11-05 09:32「顶部的渐隐效果要非常端距离完成」）──
+   * 值 64px（手机 56px）→ **12px**。理由与选值：
+   *   · 64px ≈ 3 行正文（行高 1.6 × 13.5px = 21.6px），衰减区比一行字还高两倍，
+   *     视觉上是「半个面板在淡出」；
+   *   · 作者档口「≤ 一个行高 / 8–16px 级别」→ 取 12px = **4px 栅格第 3 档**，
+   *     直接落 --ds-space-3（不写裸像素：本批起间距/长度一律走 --ds-space-* 档位，
+   *     与作者 2026-11-05 09:40 token 裁定同口径），≈ 0.55 行高：衰减在**半个字行
+   *     之内**结束，滚动穿过时读起来是一条硬边而不是一片雾；
+   *   · 下限不再往 8px 落：渐变是抗锯齿过渡，8px 以下在 2× 屏上会看到阶梯；
+   *   · 只作用于滚出列顶的那一小条：衰减区在滚动容器之内（padding-top 让开
+   *     它），静态首条完整清晰，正文可读区零影响。 */
+  --ask-fade-h: var(--ds-space-3);   /* 12px = 4px 栅格第 3 档 */
+  /* 毛玻璃批（2026-11-06）：`--ask-col-tail`（底缘 12px 渐出尾）随列 mask 一并退役
+   * —— mask 是 backdrop root，会架空子气泡的 backdrop-filter（改前实证：摘 blur
+   * 前后气泡实拍 mean|Δlum| = 0.22 ≈ 0 = 模糊死）；底缘收口改列 padding（下方
+   * .ask-col 块）。防复活钉：tests/ask-glass-drag.spec.mjs G2/D1。 */
+  --z-ask-dock: 24;              /* < 顶行 30（排他 z 序：永不入顶行） */
+  --ask-dot-ring: rgba(255, 255, 255, 0.9);  /* 通知点描边圈（暗档翻 #0b0e14） */
+  --ask-link: #1d4ed8;           /* cite 徽标链色（亮档） */
+}
+
+/* 暗档（点描边圈随底色翻深；cite 链色提亮——sapphire 同款 media + data-theme 双机制） */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ask-dot-ring: #0b0e14;
+    --ask-link: #9dbcfa;
+  }
+}
+html[data-theme='dark'] {
+  --ask-dot-ring: #0b0e14;
+  --ask-link: #9dbcfa;
+}
+html[data-theme='light'] {
+  /* 显式亮档（用户手选亮主题时不吃 media 暗值）——值 = :root 亮档 */
+  --ask-dot-ring: rgba(255, 255, 255, 0.9);
+  --ask-link: #1d4ed8;
+}
+
+/* ═══ 组件宿主（组件化范式试点批 ask-paradigm-a 2026-11-03）═══
+ * `<nf-ask-dock>` 是 .ask-fab 与 .ask-dock 的父节点（light DOM）——它必须是
+ * **零布局盒**：
+ *   · display: contents ⇒ 不生成盒子、不进 flex/grid 布局、不吃尺寸，两条子节点
+ *     的表现与「直接挂在 #canvas-panel 下」逐值一致（含绝对定位包含块：宿主
+ *     position 仍是 static，`.ask-fab{position:absolute}` 的包含块照旧是
+ *     #canvas-panel，改前改后 getBoundingClientRect 逐值相同）；
+ *   · 不写 position / z-index / transform：任何一条都会让宿主变成包含块或层叠
+ *     上下文，把子节点的钉位基准改掉。
+ * 不放宽任何既有选择器：.ask-fab / .ask-dock 仍是页面级单点类名（spec 仍以
+ * document.querySelector('.ask-fab') 取节点）。 */
+nf-ask-dock { display: contents; }
+
+/* ═══ ① 入口钮：右下角最靠右（作者令①，常驻可点不入顶行）═══
+ * 三修③：材质 = canvas 圆钮模板（#deck-fab / .canvas-source-toggle 同款）。
+ * 统一按钮玻璃批 2026-11-01：材质与状态档（玻璃配方/hover/active/选中/
+ * disabled/focus-visible）迁 css/glass.css 圆钮级浮件档单源（F1 覆盖层随
+ * liquid-glass.css 退役 = 设计稿 M4/D11）；本文件只留落位几何与通知点/
+ * 脉冲动画。尺寸维持 --ask-fab-size 44px（桌面档，设计稿 §5.3-3 待作者裁
+ * 不动）；手机 48px 档在 mobileLayer.css 照旧覆盖。 */
+.ask-fab {
+  position: absolute;
+  right: var(--ask-fab-gap);
+  bottom: var(--ask-fab-bottom);
+  z-index: calc(var(--z-ask-dock, 24) + 1); /* 钮本身需可点，仍 < 顶行 30 */
+  width: var(--ask-fab-size); height: var(--ask-fab-size);
+  color: var(--color-text);
+  cursor: pointer; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+}
+.ask-fab svg { width: var(--cv-icon, 18px); height: var(--cv-icon, 18px); pointer-events: none; }
+.ask-fab .ask-fab-ic-close { display: none; }
+.ask-fab.open .ask-fab-ic-chat { display: none; }
+.ask-fab.open .ask-fab-ic-close { display: block; }
+/* 会话通知点（三修②：绿点=未读通知，无未读不显示；底色=全站品牌绿单源） */
+/* 组件化范式试点批：`transition: all` 退役 —— 本档只动 opacity 与 transform
+   两条（见下方 .has-unread 的落值），逐属性枚举后行为逐帧同义；时长走
+   --ds-dur-layer（0.2s，弹层入场档），缓动是 dot 专属回弹曲线，照旧内联。 */
+.ask-fab .ask-sess-dot {
+  position: absolute; top: -1px; right: -1px; width: 10px; height: 10px; border-radius: 50%;
+  background: var(--color-primary); border: 2px solid var(--ask-dot-ring);
+  opacity: 0; transform: scale(0.4);
+  transition: opacity var(--ds-dur-layer, 0.2s) cubic-bezier(0.3, 1.36, 0.45, 1),
+              transform var(--ds-dur-layer, 0.2s) cubic-bezier(0.3, 1.36, 0.45, 1);
+}
+.ask-fab.has-unread .ask-sess-dot { opacity: 1; transform: scale(1); }
+/* 未读唤回 pulse（样张 fabPulse 同款；环色 = 活性蓝既有词汇） */
+.ask-fab.pulse { animation: askFabPulse 1.6s cubic-bezier(0.16, 1, 0.3, 1) infinite; }
+@keyframes askFabPulse {
+  0%, 100% { box-shadow: var(--cv-shadow), 0 0 0 0 rgb(var(--sapphire) / 0.5); }
+  55% { box-shadow: var(--cv-shadow), 0 0 0 9px rgb(var(--sapphire) / 0); }
+}
+
+/* ═══ 可见性闸（作者缺陷报 2026-10-29「Askmode怎么在插件面板里也有？」）═══
+ * 入口钮只在文件型标签页（有真实文件 backing 的 canvas tab）挂载显示——插件
+ * 面板/工具面板/图谱等非文件型 surface 零挂载零残留：.gate-off = display:none
+ * （出布局出命中盒，非视觉弱化），切卡离开文件 tab 即摘。闸由 askDock.syncGate
+ * 随切卡/关卡/恢复每拍落位（「常驻可点」口径 = 文件卡在场的常驻）。 */
+.ask-fab.gate-off,
+.ask-dock.gate-off,
+.note-dock.gate-off { display: none; }
+
+/* ═══ 记事本（note）批（作者令 2026-11-05 11:38「放 ask 按钮旁边，同样风格的
+ *     一个 note 按钮…点击出来一个窗口，左上角可以调整窗口大小」）══════════
+ * 本批**零第二套样式**：钮挂 `.ask-fab`（材质/尺寸/圆/图标档/hover/active/
+ * focus-visible/手机档全部来自既有单源），窗以**成员身份**进 `.ask-dock` 那一族
+ * 规则（座位/开合曲线/宽档 `.closed`/`.is-resizing`/`.gate-off`/手机档，见下方各
+ * 规则的成员名单），拖柄挂 design-system.css `.ds-resize-handle` 原件。这里新增
+ * 的只有两条落位/几何：
+ *   ① 钮的**落位**：ask 钮左邻一格（同一行同一中线，间距 = 4px 栅格一档
+ *      --ds-space-2；bottom 完全继承 --ask-fab-bottom 单源，含 JS 让位腿）；
+ *   ② 窗内**内容盒** .note-body 的几何（材质 = glass.css 面级浮件档成员）。
+ * ⚠ 让位用 **margin-right** 而不是重算 `right`：ask 钮的 right 在三处各不相同
+ * （桌面 --ask-fab-gap 14 / 手机 body.mobile-layer .ask-fab 12 / JS 让位腿只动
+ * bottom），重算任何一个值都会在另一档漂 —— margin 只是把这颗钮再往左推
+ * 「一格钮宽 + 一档 8px」，ask 钮的 right 是几都自动跟住（桌面与手机同一条规则，
+ * 零分叉、零特异性战争）。
+ * ⚠ 窗**刻意不挂** `.ask-dock` 身份类：`.ask-dock.closed` 是既有 spec
+ * （tests/ask-input-composer.spec.mjs 的 dockClosed 判据）的选择器，身份类叠加会
+ * 让那条判据失真。复用一律走「选择器成员」，不叠身份 —— 本条由新 spec N1z
+ * （全页 .ask-dock 恰 1 个）钉住。 */
+.ask-fab.note-fab {
+  margin-right: calc(var(--ask-fab-size) + var(--ds-space-2));
+}
+
+/* ═══ 选区 Ask（2026-11-18 作者令「选区操作重做」③ + 抽取批④）═══════════
+ * 旧面（2026-11-09 选区三件批）的 `.selection-ask-panel` 卡片与它的
+ * `.selection-ask-answer` 一起**整族退役**：选区提问不再另起一张窗边框卡，改走
+ * 共用件 `.ask-dock` 对话框（第二消费者）。两条新规则：
+ *   ① `.selection-ask-btn` —— 选中气泡里的文字即在**该气泡归属侧**旁边出现的一枚
+ *      小玻璃按钮（侧别由 selectionAsk.js 按实测几何写 data-ask-side，本文件只吃
+ *      几何与材质）；
+ *   ② `.ask-dock.selection-dock` —— 同一个对话框内核的第二份实例：座位从画布右下角
+ *      （绝对定位、锚 fab）换成**视口浮定位**（fixed，left/top 由 selectionAsk.js
+ *      按触发按钮那一侧写；`auto` 打掉基线里的 right/bottom 钉位）。除座位外的
+ *      形态/材质/开合/手机档全部继承 `.ask-dock` 既有规则（零第二套）。 */
+.selection-ask-btn {
+  position: fixed;
+  z-index: calc(var(--z-ask-dock, 24) + 1);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  min-height: 28px;
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-pill, 999px);
+  color: var(--ds-text);
+  font: inherit;
+  font-size: var(--ds-fs-btn, 12px);
+  font-weight: 500;
+  cursor: pointer;
+  /* 材质（底/描边/模糊）**一律不吃本文件**：节点挂唯一毛玻璃工具类 `.nf-glass`
+   * （glass.css 单一源）。本规则只留几何 + 字档 —— 玻璃规范 G1「双源」红线即此。 */
+}
+.selection-ask-btn[hidden] { display: none; }
+.selection-ask-btn:hover { border-color: var(--ds-text-muted); }
+.selection-ask-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.7); outline-offset: 1px; }
+
+.ask-dock.selection-dock {
+  position: fixed;
+  right: auto;
+  bottom: auto;
+  max-height: min(60vh, 420px);
+}
+
+/* ═══ 覆盖层（作者令④无窗体）：气泡列 + 输入条，z < 顶行（v2.1：徽标退场）═══
+ * 记事本批（2026-11-05）：`.note-dock` 是本规则的**成员**（不是副本）——同一座位
+ * /同一宽档 `--ask-dock-w`/同一条开合曲线/同一 z 序；它只是把气泡列换成一块
+ * 纯文本内容盒（.note-body）。改座位改这一条，两个浮窗同时生效。 */
+.ask-dock,
+.note-dock {
+  position: absolute;
+  right: var(--ask-fab-gap);
+  bottom: calc(var(--ask-fab-bottom) + var(--ask-fab-size) + 10px);
+  z-index: var(--z-ask-dock, 24);
+  width: var(--ask-dock-w);
+  display: flex; flex-direction: column; align-items: flex-end; gap: var(--ds-space-1h);
+  /* 液态形变批（作者令 2026-11-07 12:22）：容器层**零过渡**——形变与材质全在
+     玻璃面本体上（见下方「液态形变开合」块），容器只负责座位与 z 序。
+     旧 `transform-origin: 100% 100%` + `transition: transform …` 随 opacitiy/
+     transform 收放档一并退役（本块即开合曲线的唯一出处，改前值可 git 查）。 */
+}
+/* ── 液态形变开合（作者令 2026-11-07 12:22 逐字：「我们canvas的按钮 note 和 ask
+ *    展开的面板要使用液态形变的效果 自然展开 而且原生就是毛玻璃效果 现在会有个先
+ *    透明后毛玻璃的过程」）────────────────────────────────────────────────
+ * 病根（改前实证，两条都在本仓有同型先例）：
+ *   ① 收起态把 `opacity: 0` + `transform` 挂在**浮窗容器** .ask-dock/.note-dock 上。
+ *      opacity<1 与 transform 都会让该元素成为 **backdrop root**（本仓实证：
+ *      ask.css「毛玻璃批」2026-11-06 记录 mask 令 .ask-col 成为 backdrop root ⇒
+ *      子气泡 backdrop-filter 只能采样子树 = 采不到背景，模糊被架空）。玻璃子件
+ *      （.ask-input / .note-body / .ask-bub）在容器半透明的 240ms 里因此只能采到
+ *      空背景 ⇒ 首段读作「全透明」，容器 opacity 触到 1 的那一帧 backdrop 采样
+ *      才恢复 = 作者报的「先透明后毛玻璃」两段式；
+ *   ② 动画本体是 `translateY(16px) scale(0.6)`：与「从一个圆钮连续长成面板」的
+ *      液态形变无关（缩放还把毛玻璃的采样尺度一起缩放，模糊半径在过程中变粗）。
+ * 改法（单点，两个浮窗同源）：
+ *   · 容器**恒 opacity:1 / 零 transform / 零 mask** ⇒ backdrop root 消失，玻璃面
+ *     从隐藏态起就是真毛玻璃（材质在 .ask-input / .note-body 自身，二者本就是
+ *     glass.css 面级浮件档成员）；
+ *   · 形变载体 = **玻璃面本体自己**：收起态 = 一枚 --ask-fab-size 正圆 + 位移到
+ *     fab 圆心（dock z-24 < fab z-25 ⇒ 种子沉在钮之下，闭态零多绘、展开即「钮
+ *     长成面板」）；展开态 = 原面板几何。两端都是长度/比例 ⇒ 逐帧可插值；
+ *   · 属性集 ⊆ js/motion/liquidMorph.js 的 PROPERTY_WHITELIST（width / height /
+ *     border-radius / transform / padding）；时长与曲线只取 --lm-*（design-
+ *     system.css 单源；prefers-reduced-motion ⇒ --lm-dur 1ms 直接成型，:601-603）；
+ *   · 过程全程零 `backdrop-filter` 插值、零 `filter`/`mask` 参与 ⇒ 不出现模糊
+ *     闪断或合成跳变（作者③）。
+ * 内容（气泡列 / 文本域 / 状态行）只做**显隐**不参与材质：收起态整列
+ * `visibility: hidden`（不靠 opacity 渐隐 —— 渐隐会把 .ask-col 变成 backdrop root，
+ * 正是毛玻璃批定的禁忌）；展开时各气泡自身的 askBubIn 入场动画（.ask-bub 上，
+ * 动的是气泡自己的 opacity，不影响其 backdrop 采样）承担「自然长出」的读感。
+ * ⚠ 已知几何限制（如实记录）：`.ask-input` 的展开高度是**内容自适应（auto）**，
+ * auto 不与 40px 插值 ⇒ 它的 height 在开合首帧是一步离散值（此刻宽度只有 40px，
+ * 视觉不可辨）；记事本 .note-body 的高度两端都是 px（--note-h），是全插值形变。 */
+.ask-dock.closed,
+.note-dock.closed { pointer-events: none; }
+/* ask-mail 批（2026-11-16）：`.ask-dock.closed .ask-addr` 加盟本条收起隐身名单
+   ——地址行是面板内容件（同 colwrap 律：只显隐、不参与玻璃面形变）。 */
+.ask-dock.closed .ask-addr,
+.ask-dock.closed .ask-colwrap,
+.ask-dock.closed .ask-state-line,
+.note-dock.closed .note-status,
+.note-dock.closed .note-body > *,
+.ask-dock.closed .ask-handoff,
+.ask-dock.closed .ask-input > * { visibility: hidden; }
+.ask-dock.closed .ds-resize-handle,
+.note-dock.closed .ds-resize-handle { visibility: hidden; }
+/* 玻璃面本体的形变过渡（属性集与 --lm-* 令牌见上注；容器不参与）。
+   `transform-origin: 100% 100%` = 旧开合曲线的锚点（fab 侧、面板右下角）跟着
+   **形变载体**搬到玻璃面上：容器已零 transform，锚点留在容器上就是死属性；种子
+   位移是纯 translateY（origin 不改变结果），这条只是把「锚在钮那一角」的语义
+   钉在新的载体上（T2b 判据由 dock 改读本体）。 */
+.ask-dock .ask-input,
+.note-dock .note-body {
+  transform-origin: 100% 100%;
+  transition-property: width, height, border-radius, transform, padding, visibility;
+  transition-duration: var(--lm-dur), var(--lm-dur), var(--lm-dur), var(--lm-dur), var(--lm-dur), 0s;
+  transition-timing-function: var(--lm-ease);
+  transition-delay: 0s;
+}
+/* Closed morph seeds otherwise stack a second glass face beneath their FAB. */
+.ask-dock.closed .ask-input,
+.note-dock.closed .note-body {
+  visibility: hidden;
+  transition-delay: 0s, 0s, 0s, 0s, 0s, var(--lm-dur);
+}
+/* 收起态种子形态：fab 尺寸正圆 + 位移（10px 座缝 + 种子直径）落到 fab 圆心方向。
+   种子直径单源 = --ask-seed-size（桌面 = --ask-fab-size / 手机档 = --mtap-lg 48，
+   见 mobileLayer.css 的同名覆盖 —— 种子形态必须与那一档的入口钮同尺寸，否则
+   「钮长成面板」的起手帧会比钮大一圈）。 */
+.ask-dock,
+.note-dock { --ask-seed-size: var(--ask-fab-size); }
+.ask-dock.closed .ask-input {
+  width: var(--ask-seed-size);
+  height: var(--ask-seed-size);
+  border-radius: 50%;
+  padding: 0;
+  transform: translateY(calc(10px + var(--ask-seed-size)));
+}
+/* note 闭态种子 = 位置感知（P2 续批④ 作者令「位置跟随 note 按钮」）：ask 钮与
+   note 钮同排、note 在 ask 左邻一格（`.ask-fab.note-fab` margin）——纯
+   translateY 只能落 ask 钮位，note 窗的形变起手一直读作「ask 钮长出记事本」。
+   位移两轴改由 askDock.js syncNoteSeed 实测 note 钮圆心写入（--note-seed-dx/dy，
+   epub 阅读器让位抬升 / safe-area / 钮距档变化全跟随）；缺省 fallback = token
+   公式 --note-seed-x0/y0（note 钮圆心 = 种子自然位左移一格钮宽+缝、下移
+   10px + 种子直径，与 margin 同源），JS 未及写变量的首帧也落在 note 钮上。 */
+.note-dock {
+  --note-seed-x0: calc(-1 * (var(--ask-fab-size) + var(--ds-space-2)));
+  --note-seed-y0: calc(10px + var(--ask-seed-size));
+}
+.note-dock.closed .note-body {
+  width: var(--ask-seed-size);
+  height: var(--ask-seed-size);
+  border-radius: 50%;
+  padding: 0;
+  transform: translate(
+    var(--note-seed-dx, var(--note-seed-x0)),
+    var(--note-seed-dy, var(--note-seed-y0)));
+}
+
+/* ═══ 可拖拽改尺寸（作者令 2026-11-04「允许用户交互拖拽调整对话框大小（拖柄
+ *     可见、热区 ≥44px，按 Apple HIG）」）════════════════════════════════
+ * 形态单源 = design-system.css `.ds-resize-handle`（44×44 热区 / 18px 抓手 /
+ * 三态提亮 / nwse-resize 光标 / touch-action:none ——全部走 --ds-resize-* 槽）。
+ * 本文件只声明**落位**：面板左上角，外挂 14px 让抓手的视觉中心正好落在面板角上
+ * （dock 右 14px 钉位，向左/向上 14px 仍在画布内，视觉上不内含任何气泡文字）。
+ * 尺寸本身由 JS 写两条 CSS 变量（--ask-dock-w 宽 / --ask-col-maxh 列高），
+ * 桌面与手机**同一段 JS、同一组变量**——本文件不出现第二套拖拽实现。
+ * 记事本批：`.note-dock` 是本规则与下面四条状态档的成员——把手同一个类、同一段
+ * 外挂落位（左上 −14px）、同一段 JS 状态机（尺寸变量换成 --note-h），零第二套。 */
+.ask-dock .ds-resize-handle,
+.note-dock .ds-resize-handle { left: -14px; top: -14px; }
+/* 手机层落位差异（**只此一条**，不是第二套实现）：手机层 dock 宽 = 视口 − 24px、
+   右缘钉 12px ⇒ 面板左缘距视口左缘只有 12px，桌面那条「外挂 14px」会把把手推出
+   视口 2px（本批实测：默认态 handle.left = −2）。手机档改**内挂 left:0**（抓手
+   落在面板左上角内侧；气泡右对齐 ⇒ 左上角本就是留白区，零遮挡），外挂量为 0，
+   JS 侧实测外挂量自适应、零分叉。 */
+body.mobile-layer .ask-dock .ds-resize-handle,
+body.mobile-layer .note-dock .ds-resize-handle {
+  left: 0;
+  /* 手机内挂：臂原点回到把手盒原点（= 面板左上角）。top 沿用桌面 −14
+     （既有手机腿几何，本批不动 —— 只改可见形态，不改命中盒落位）。 */
+  --ds-resize-arm-x: 0px; --ds-resize-arm-y: 14px;
+}
+/* 拖拽中：跟手（面板尺寸过渡关掉，不加任何补间），抓手由 [data-resizing] 提亮。 */
+.ask-dock.is-resizing,
+.note-dock.is-resizing { transition: none; }
+/* 拖拽中：**玻璃面本体的液态形变过渡同样关掉**。液态形变批把 width/height 的
+   过渡从容器搬到了玻璃面（.ask-input / .note-body）上；拖柄写的是 `--ask-dock-w`
+   / `--note-h` 两条变量 = 这两个面的下游尺寸 —— 若仍带 --lm-dur 补间，每次
+   pointermove 都从当前值重新起补，跟手就变成「永远慢半拍」，落手实测几何也还是
+   中途值（改前实证：canvas-note-panel N4e 拖 −120/−140 读到的增量不足阈值）。
+   拖拽是用户直接操作 ⇒ 必须逐帧直落，故在此与容器一起关掉（与上面那条
+   「.is-resizing 期零补间」同一纪律，覆盖到面本体）。 */
+.ask-dock.is-resizing .ask-input,
+.note-dock.is-resizing .note-body { transition: none; }
+/* 直角弧的臂原点（作者令 2026-11-04 12:52 ④）：桌面把手外挂 14px ⇒ 臂落
+   14/14（正好压在面板左上角的圆角边上，视觉与玻璃面板一体）；手机内挂 ⇒ 0/0。
+   ── 单小边框批（作者令 2026-11-05 09:32「左上角那个拖动按钮，只要一个小边框
+   就行，不要那个叠起来的正方形」）──
+   可见形态只剩这一条 ::before 直角弧（2px 上/左两条边臂 + 7px 左上圆角），
+   旧态叠在它上面的 `.ds-resize-grip` 三枚 `<i>`（各 1.5px L 形，逐个
+   translate 2/4/6px、opacity .55/.35/.2）整族退役——那三枚就是「叠起来的
+   正方形」，与直角弧叠在同一角上共四条线，视觉上糊成两层方块。
+   形态定义在 design-system.css `.ds-resize-handle`（单源）；热区仍 44×44。 */
+.ask-dock .ds-resize-handle,
+.note-dock .ds-resize-handle { --ds-resize-arm-x: 14px; --ds-resize-arm-y: 14px; }
+/* 拖拽中面板外缘同步提亮一档（活性蓝既有词汇，与 .ask-input:focus-within 同值）——
+   让「正在改尺寸的是这一块」在抓手之外还有一处回显。 */
+.ask-dock.is-resizing .ask-input,
+.ask-dock.is-resizing .ask-bub { border-color: rgb(var(--sapphire) / 0.35); }
+
+/* ═══ 记事本内容盒（记事本批 2026-11-05）═══════════════════════════════════
+ * 纯文本窗的内容面：一块玻璃卡 + 一个占满的 textarea（无富文本/无页签/无分类
+ * ——作者令「不需要复杂功能，风格和 ask 的保持一致」）。
+ * 复用而非复制：
+ *   · 材质（底/描边/浮影/毛玻璃）不在此声明 —— glass.css 面级浮件档成员
+ *     `.note-body`，与 `.ask-input`（本组件输入条）同一块配方，改配方两个面一起变；
+ *   · 字/色/caret/placeholder 不在此声明 —— `.ask-input textarea` 那条既有规则
+ *     加了成员 `.note-body textarea`（同一 font 档 13.5px / 同一 caret 色）；
+ *   · 圆角走 --cv-radius-bar（与输入条同档 12px，不是新搓一个数）。
+ * 这里只声明**几何**：占满窗宽、窗高 = --note-h（拖拽状态机写的唯一一条变量）、
+ * 内距一档 12px（4px 栅格）、裁切到圆角内。 */
+.note-dock .note-body {
+  /* position:relative 只为承载 glass.css 里那条 ::before 顶缘折射线（与 .ask-input
+     的 position:relative 同一理由、同一处；内容盒内无绝对定位子件，几何不变）。 */
+  position: relative;
+  width: 100%;
+  height: var(--note-h);
+  box-sizing: border-box;
+  padding: var(--ds-space-3);
+  border-radius: var(--cv-radius-bar, 12px);
+  overflow: hidden;
+  display: flex;
+}
+/* textarea 本体只补「占满 + 可滚」（其余全部继承 .ask-input textarea 那条规则的
+ * 字档/色/无边框/无内距/无 resize —— 与 ask 输入条同一份声明）。 */
+.note-dock .note-body textarea {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+}
+
+/* ═══ 记事本存储状态行（持久化缺陷批 2026-11-05）═══════════════════════════
+ * 只在「本地镜像不可用 / 引擎断连 / 超单条上限」时出现（默认 hidden），文案见
+ * askDock.js NOTE_STATUS_TEXT —— 事实句，不教学、不给路径。
+ * 复用而非复制：**字色不在此声明**，`.note-status` 以下方 placeholder 成员块的
+ * 同一 dim 令牌着色（N8 判据：`.note-*` 独占块零材质/零色）；本块只声明几何。
+ * 位置 = 内容盒之下的独立一行（与 .note-dock 的 gap 一档），不压 textarea、
+ * 不改 --note-h 语义（窗高仍由拖拽状态机那条变量单点决定）。 */
+.note-status {
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
+  line-height: 1.4;
+  text-align: right;
+}
+.note-status[hidden] { display: none; }
+
+/* 转交状态行（ask-scope 批 2026-11-18）：作者令「转交必须机器可读 + UI 可见
+   （Ask 面板要有明确状态，如「已转交主会话」+ 转交内容摘要），不许静默」。
+   与记事本存储状态行同族（「安静的一行事实」档）：**几何只在这里声明**，
+   字色取下方 comment 成员块的同一 dim 令牌；标签色 = 身份/状态绿 --color-primary
+   （与 ask 未读通知点同一单源）。不新造面板、不弹窗、不遮内容——它只是面板 flex
+   列里的一行（有事实才占位，无事实 [hidden] 零占位）。 */
+.ask-handoff {
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
+  line-height: 1.4;
+  display: flex;
+  gap: var(--ds-space-half);
+  align-items: baseline;
+  min-width: 0;
+}
+.ask-handoff[hidden] { display: none; }
+.ask-handoff-tag { color: var(--color-primary); white-space: nowrap; }
+.ask-handoff.failed .ask-handoff-tag { color: var(--cv-hint-color-dim); }
+.ask-handoff-body { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+
+/* ══ Ask 状态行（状态可见性与失败上报批 2026-11-18）════════════════════════
+ * 出处（作者令逐字）：「Canvas Ask 对话框的状态显示不足 我不知道它在干嘛 是否
+ * 正常 LLM 失败也没有报错等 需要补充更多的信息」。
+ *
+ * 这一块是**就地 inline** 那一型（通知三型 = toast / banner / inline；收敛结论见
+ * feat/notice-unify-20261118）——**刻意不新开第四个样式族**：
+ *   · 类名 `.ask-state-line` 是组件私有身份（INTERNAL_CLASSES），不是通知族；
+ *   · 零 toast 类名（`.nebflow-toast*` 归 js/modal.js + css/modal.css 单源）；
+ *   · 零新色值：中性档吃既有 dim 令牌（与 .note-status 同一枚），两档「出问题了」
+ *     吃既有 --ds-warn-icon / --ds-danger-icon（design-system.css）。
+ *
+ * 位置 = 面板自己的独立一行（`.ask-colwrap` 与 `.ask-input` 之间），与记事本
+ * `.note-status` 同一处方：不进气泡列（气泡列 = 答案面，`.ask-stream-line` 那一条
+ * 单行仍是流式文本预览，本批零触碰）、不压输入条、不参与玻璃面形变（收起态随
+ * 其余内容件一起 visibility:hidden，见下方收起隐身名单）。
+ *
+ * 观感两类（作者令点名的区分）：正常干活 = 中性 dim（不抢注意力）；前置不可用 =
+ * warn 档；失败 = error 档。三段是并列的 flex 项，右对齐（面板右缘钉位）。 */
+.ask-state-line {
+  align-self: stretch;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
+  line-height: 1.4;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: baseline;
+  gap: 0 var(--ds-space-1);
+  color: var(--cv-hint-color-dim);
+  opacity: 1;
+}
+.ask-state-line[hidden] { display: none; }
+.ask-state-text { white-space: nowrap; }
+.ask-state-next,
+.ask-state-text { min-width: 0; }
+/* 换行段（下一步）自成的每一行都右对齐，与整行右缘钉位一致。 */
+.ask-state-next { opacity: 0.85; text-align: right; }
+.ask-state-next[hidden] { display: none; }
+/* 分隔符**不在 CSS 里**：它是「跟随前一段」的文本尾巴（askDock.js 的 ASK_SEP，
+   U+00A0 + `·`）。段首型 `::before` 会在窄屏折行时把 `·` 顶到下一行行首——本文件
+   刻意不留任何 `.ask-state-*::before` 分隔符（闸 S12 断言这一点）。 */
+/* 可复制的诊断摘要（状态码 + 脱敏错误摘要 + 耗时 + sid）：单行省略，点一下复制
+   全文（README 里的复现线索）。它是 inline 的一枚文字钮，不是第二套控件语言。 */
+.ask-state-diag {
+  min-width: 0;
+  max-width: 100%;
+  font: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: inherit;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+  cursor: pointer;
+  opacity: 0.85;
+}
+.ask-state-diag[hidden] { display: none; }
+.ask-state-line.is-warn { color: var(--ds-warn-icon); }
+.ask-state-line.is-error { color: var(--ds-danger-icon); }
+
+
+/* 气泡列：从按钮位置长出；顶缘渐隐 = 内容本体 alpha 渐到 0（作者令 2026-11-04
+ * 09:22 逐字：「canvas Ask 的这个渐隐，应该是对消息什么的降低透明度到 0 的过程，
+ * 而不是放一个过渡的条在哪，整体要是透明无边框的」）
+ * ── ask-fade-content-opacity 批（推翻 ①-批形态）──
+ * 病根（①-批 ui-unification-20261103-doc-ask-fade 实证）：渐隐本体被做成一块
+ * **独立遮罩条**——.ask-colwrap 内挂 .ask-veil（.ds-edge-fade 成员：veil 渐层底色
+ * rgba(245,246,248,.92→0) + backdrop blur/saturate + 自身 mask）。面板本体透明、
+ * 背后是文档正文 ⇒ veil 渐层把背后内容洗成一条可见的乳白横带（作者看到的「过渡
+ * 条」）；气泡跨带沿 = 一条被切掉的卡片边。这不是「消息透明度渐到 0」，是「盖一层
+ * 渐变色块」——与本令逐字相悖。
+ * 该批改法：渐隐带元素整体退役（.ask-veil 不再渲染），渐隐本体改挂滚动容器。
+ *
+ * ── 毛玻璃批（作者令 2026-11-06 09:57：「ask 的聊天气泡使用我们的毛玻璃效果
+ *    显然它使用错了 现在是半透明的效果」）──
+ * mask 载体再退役：mask 使 .ask-col 成为 **backdrop root**，子气泡的
+ * backdrop-filter 只能采样本子树（= 透明）⇒ 真模糊被架空，气泡只剩 α 洗色
+ * （作者指认的「半透明效果」；改前像素实证：气泡元素实拍摘 blur 前后
+ * mean|Δlum| = 0.22 ≈ 0）。渐隐载体曾改为逐泡 opacity，该载体已退役（FCC-REQ-004）：
+ * 整泡 opacity 让可见历史的正文整体发虚，与「历史气泡可读、不透底」冲突。现状：
+ * 顶缘不再有任何透明度渐变，滚出列顶的气泡由列容器裁切，可见部分恒不透明。
+ *   · --ask-fade-h 仅保留为列顶净空（padding），不再驱动 alpha；
+ *   · 防复活钉：tests/chat-composer-consumers.spec.mjs FCC-SCN-006（任意滚动位的
+ *     气泡计算 opacity 恒为 1）+ ask-glass-drag G2（像素）+ ask-sheet-fade-height A0b/D3
+ *     （源码面：.ask-col 零 mask、askDock.js 零 opacity 写入）。
+ * 本文件零 veil 材质残留（--ds-fade-veil / backdrop-filter 一概不引）；主对话窗
+ * #g2-edge-fade 的遮罩条手法照旧（爆炸半径不扩大）。
+ *
+ * ── 缩放空白批（作者令 2026-11-05 09:32「现在调整窗口大小会导致对话框和内容
+ *    直接有一大段空白」）──
+ * 病根不是缓存，是**几何基准错**：旧形态的收口线是 JS 写的
+ * `--ask-trunc-h = 面板高 × 50%`，而面板高 = 列 + 缝 + 输入条 —— 这条线被画在
+ * **列**上，于是「列的下半段」恒被 alpha 0 遮掉：默认档面板高 ≈348 ⇒ 截断线
+ * 174，列高 316 ⇒ 列底 142px 永远透明，而最新气泡锚在列底（flex-end）⇒ 内容
+ * 与输入条之间恒有一大段空白（本批改前实测：截断线 108px / 列高 316px / 空白
+ * 208px，且 108 是首帧缓存值，窗口放大后要等下一次 RO 才被改写）。
+ * 该批改法：底缘收口锚回「列自己的盒」（不再有任何 JS 缓存的 px）。
+ * 毛玻璃批（2026-11-06）续：收口本体从 mask 改列 padding-bottom（见 .ask-col
+ * 块），「输入条顶边 − 最新气泡底边」恒 = dock 的 row-gap（--ds-space-1h =
+ * 6px），与窗口尺寸/内容多少彻底解耦（五档机械断言见
+ * tests/canvas-ask-legibility.spec.mjs）。 */
+.ask-colwrap {
+  position: relative; width: 100%;
+  max-height: var(--ask-col-maxh);
+  display: flex; flex-direction: column; justify-content: flex-end;
+  /* ── 气泡穿入输入条批（作者令 2026-11-05 16:50 逐字：「我要求气泡消息要能从
+   *    输入框底下穿过，截止位置为输入框中间部分」）────────────────────────
+   * 几何：气泡列的盒底 = 输入条的**垂直中线**。
+   *   · 变量 --ask-under 由 askDock.js 的 ResizeObserver 实测输入条高度的一半
+   *     写入（textarea 会长高、手机档按钮更大 ⇒ 写死 px 必错）；
+   *   · dock 是 flex column 且 gap = --ds-space-1h，负 margin 与 gap 相加才是
+   *     真实间距 ⇒ 取 `-(中线 + gap)` 使列底正好压到中线；
+   *   · z 序 1 < 输入条 2 ⇒ 气泡钻到输入条**下面**被它盖住，绝不压在输入条上。
+   * 于是「穿过 + 截止到中线 + 不压输入框」三条由几何而非目测保证。 */
+  z-index: 1;
+  margin-bottom: calc(-1 * (var(--ask-under, 29px) + var(--ds-space-1h)));
+}
+.ask-col {
+  /* 列可视高 = 总档（衰减区净空在滚动容器之内，见上 —— 不再从列高里扣）。 */
+  width: 100%; max-height: var(--ask-col-maxh); overflow-y: auto;
+  display: flex; flex-direction: column; gap: var(--ds-space-1h); align-items: flex-end;
+  /* ── 毛玻璃批（作者令 2026-11-06 09:57「ask 的聊天气泡使用我们的毛玻璃效果
+   *    显然它使用错了 现在是半透明的效果」）──
+   * 本元素**禁挂 mask-image / filter / opacity<1 / 任何 backdrop-root 形态**：
+   * mask 使本元素成为 backdrop root，子气泡的 backdrop-filter 只能采样本子树
+   * （= 透明），模糊被架空 ⇒ 气泡只剩 α 洗色 = 作者指认的「半透明效果」。
+   * 改前实证（dec-maskOn vs dec-blurOff 元素实拍）：mean|Δlum| = 0.22 ≈ 0（模糊
+   * 死）；摘 mask 后 11.9（模糊活）。顶缘不再做任何透明度渐变（FCC-REQ-004）：
+   * 底缘同样不渐隐，气泡滑入输入条带时由输入条自身的玻璃模糊软化（「穿过玻璃」
+   * 的正确形态）。防复活钉：tests/ask-glass-drag.spec.mjs G2（像素）+
+   * ask-sheet-fade-height A0b（源码面）。 */
+  /* 底缘净空（作者令同日②「让 ask 的聊天 可以拉动到聊天框之上 现在被聊天框
+   * 挡住了一部分」）：padding-bottom = 输入条半高 + 列缝。列盒底被穿入批钉在
+   * 输入条垂直中线（上方 colwrap 的负 margin，几何不动），旧档内容可直达中线
+   * ⇒ 最新气泡底部恒被输入条上半盖住 ~29px 且任何滚动都拉不出来。给列一段
+   * 与被盖带等高的 padding 后，内容最低可达位 = 输入条顶缘上方一个列缝：
+   *   滚动尽头（拉动到底）⇒ 最新气泡完全在聊天框之上（可读全行）；
+   *   滚动途中 ⇒ 气泡仍从输入条玻璃底下穿过（z 1 < 2 不变，16:50 令的「穿过」
+   *   形态保留在运动态）。
+   * 静态（内容短、无滚动）同理：padding 直接把内容底抬到输入条上缘之外。
+   * --ask-under 由 askDock.js ResizeObserver 实测输入条半高写入（textarea 会长
+   * 高、手机档钮更大 ⇒ 不写死 px）。 */
+  padding: calc(var(--ask-fade-h) + var(--ds-space-1h)) 0 calc(var(--ask-under, 29px) + var(--ds-space-1h));
+  scrollbar-width: none; touch-action: pan-y; /* #988：列内纵滚原生，手势零劫持 */
+}
+.ask-col::-webkit-scrollbar { display: none; }
+
+/* ── Card 卡行（card-tool-revive 批 2026-11-18 作者裁定②）──────────────────
+ * ask 会话里 Card 工具返回的 HTML 卡在对话列里显形的行几何。
+ * 为什么需要这一段：`.ask-col` 是 `align-items: flex-end` 的 flex 列——子元素默认
+ * 按内容宽右贴（气泡族靠各自 max-width 控宽），而卡必须**占满列宽**（卡内容宽常
+ * 大于气泡帽，与主会话卡行 `.row.card-content > div { width: 100% }` 同语义）。
+ * 材质/圆角/描边**零本地声明**：卡本体由渲染单源 cardRegistry 产出
+ * （`.html-card-wrap` / `.html-card-iframe`，chat.css 段落），本组件只给行宽。
+ * 防复活钉：tests/ask-dock-card-leg.spec.mjs C3（iframe 盒宽 = 列内容盒宽）。 */
+.ask-card-row { width: 100%; }
+.ask-card-host { width: 100%; }
+
+/* ═══ 会话地址行（ask-mail 批 2026-11-16）═══════════════════════════════════
+ * ask 会话的 Mail 可达地址（`ask:<sessionId>`）常驻面板头部右贴：编排方经
+ * Mail 向该地址续聊（双向通道的门牌）。形态 = chat.css `.ask-mail-addr` /
+ * `.bg-task-addr` chip 同族（值全走 --ds-* 槽，不另起材质）：单行省略是版式
+ * 不是数据——全文在 dataset.addr 与 title，复制恒给全文。座位在 colwrap 之前
+ * （buildDock 注：穿入几何锚定「下一个兄弟」，本行不插中间）；收起态隐身随
+ * 上方 .closed 名单。hidden 属性的显式腿：本规则声明了 display ⇒ UA 的
+ * [hidden]{display:none} 会被特异压过，须自补一条（无会话时整行不占位）。 */
+.ask-dock .ask-addr {
+  align-self: flex-end;
+  max-width: 168px;
+  display: inline-flex;
+  align-items: center;
+  font-size: var(--ds-fs-meta);
+  line-height: 14px;
+  padding: var(--ds-space-hair) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  background: var(--ds-control-bg);
+  border: var(--ds-border-width) solid var(--ds-control-border);
+  color: var(--ds-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: copy;
+  user-select: all;
+}
+.ask-dock .ask-addr[hidden] { display: none; }
+.ask-dock .ask-addr:hover { color: var(--ds-text); border-color: var(--ds-text-muted); }
+.ask-dock .ask-addr.is-copied { color: rgb(var(--accent-agent-light)); border-color: rgb(var(--accent-agent-light) / 0.55); }
+
+/* 玻璃气泡（三修③：材质 = canvas --cv-* 单源）。统一按钮玻璃批 2026-11-01：
+ * 气泡禁独立 backdrop-filter（滚动性能纪律）⇒ 消费 glass.css 气泡半透明实底
+ * 档（--glass-bub-*，color-mix 从单源色出 α，无 blur）；bubble-side-color 批
+ * （2026-11-06）起 ask 气泡再不按问/答分色相 —— 全部落毛玻璃面，问我方/答我方
+ * 同材质。几何/入场动画
+ * 留本文件；浮影 = --cv-shadow 三档栈保留（glass.css .ask-bub 块）。
+ * 文档会话批②（2026-11-01）：max-width 306 档退役 = 100%（列满档）——宽内容
+ * （表格/代码块/长行）左右缘与输入条一致；窄内容仍右贴自然宽（两族气泡形态
+ * 不变，只是不再被 306px 帽压窄）。 */
+.ask-bub {
+  max-width: 100%;
+  /* 圆角档：15px 不在 --ds-radius 阶梯（4/6/8/10/12/14/16/18/20/999）⇒ 落最接近的
+     聊天浮层卡档 --ds-radius-card-lg 16px（缺档按最近档，见批报告清单）。
+     字档 13.5px = --ds-fs-row（会话行主文案既有档，逐值相等，零漂移）。 */
+  padding: var(--ds-space-2) var(--ds-space-3); border-radius: var(--ds-radius-card-lg);
+  font-size: var(--ds-fs-row); line-height: 1.6; word-break: break-word;
+  color: var(--color-text);
+  border: var(--ds-border-width) solid var(--glass-bub-ai-border);
+  box-shadow: var(--cv-shadow);
+  animation: askBubIn 0.34s cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes askBubIn { from { opacity: 0; transform: translateY(12px) scale(0.9); } }
+/* bubble-side-color 批（2026-11-06）：`.ask-bub.user { border-color: rgb(var(--sapphire)
+   / 0.35) }` 已退役 —— ask 面全部消息都代表本机账号，按「问/答」分色相即按
+   「消息类型」另开配色（作者令禁）。左右识别由贴靠侧承担。 */
+/* cite 徽标（组件化范式试点批）：字档 10.5px 低于 11px 可读下限（门禁 R3 绝对
+   判据）⇒ 落最近的 --ds-fs-meta 11px；圆角 5px 不在阶梯 ⇒ --ds-radius-badge 4px
+   （「徽标 pill / 行内 code」档，与本件语义同族）。洗蓝底/描边原为 rgb(96 165 250)
+   裸三元组，改走本文件既有的活性蓝词汇 rgb(var(--sapphire) / α)（用户气泡描边
+   同族）。逐条漂移见批报告「缺档按最近档」清单。 */
+.ask-bub .ask-cite {
+  display: inline-block; font-size: var(--ds-fs-meta); color: var(--ask-link);
+  background: rgb(var(--sapphire) / 0.13); border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.18);
+  border-radius: var(--ds-radius-badge); padding: 0 var(--ds-space-1h); margin: var(--ds-space-1) var(--ds-space-hair) 0; line-height: 1.7;
+}
+/* Transient Ask stream preview: one clipped, non-interactive line; removal is owned by
+   askDock.js on every terminal frame. No disclosure affordance or completed state. */
+.ask-stream-line {
+  align-self: flex-end;
+  flex: 0 0 auto;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  scrollbar-width: none;
+  pointer-events: none;
+  user-select: none;
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border-radius: var(--ds-radius-card-lg);
+}
+.ask-stream-line::-webkit-scrollbar { display: none; }
+
+/* ═══ ask-stream-ui（2026-11-17 作者令「参考主会话」）：思考期 spinner + 回底胶囊 ═══
+ * 思考期 = .ask-stream-line 内的三点 spinner（`.thinking-dot` 全局面在
+ * css/chat.css——主会话思考族同一形态源，workline.js startWorklineDots 同构）+
+ * 「思考中」文案（= 主会话 locale token chat.thinking.now 的字面）。首个非空
+ * textDelta 由 askDock.js updateTypingText 把整行替换为流式文本 ⇒ 与既有流式
+ * 指示（横向单行预览）不同相、零叠置。本段只写两件落位形态（dots 排布/label
+ * 间距），动画与配色单源在 chat.css 的 .thinking-dot 段，零第二套。 */
+.ask-stream-line .ask-thinking-dots {
+  display: inline-flex; align-items: center; gap: var(--ds-space-half);
+}
+.ask-stream-line .ask-thinking-label {
+  margin-left: var(--ds-space-1h);
+}
+/* 回底胶囊：本体/形态/动效单源 = css/chat.css `.scroll-new-pill`（主会话面唯一
+ * 组件 js/scrollPill.js 的落位产物，与主窗/好友窗/搜索回跳同一枚）。本文件只补
+ * ask 面的收起纪律——收起态随面板内容件一起隐身（.closed 隐身名单，同
+ * .ask-colwrap / .ask-input > * 那两条的成员法）。落位（输入条顶缘之上）与堆叠
+ * 互斥全由组件 park()/show() 现算，本文件零几何。 */
+.ask-dock.closed .scroll-new-pill { visibility: hidden; }
+
+/* ── 「按龄渐隐」退役（glass-unify 批 2026-11-05）────────────────────────
+   原规则：`.ask-bub[data-age] { opacity: var(--ask-age-alpha, 1); }`，JS 为每条
+   历史气泡写 α = max(.3, 1 − 距底条数 × .13)。作者实拍报障「只有最新一条能看清，
+   其他前面的消息又是半透明的了」的**根因就是这一条**：α 直接压在本体 opacity 上，
+   毛玻璃底随之一起变透，底下的文档正文透上来。
+   与「毛玻璃一律不透底」（作者 2026-11-05 16:46 令）正面冲突 ⇒ 整条规则删除，
+   气泡本体的 opacity 恒为 1：既不按年龄、也不按滚动位置（FCC-REQ-004；此前的
+   顶缘逐泡 opacity 渐隐一并退役——滚出列顶的内容由列容器裁切）。 */
+
+/* 输入框（作者令②：点击入口弹出的就是它；v2.1 减法 = 输入 + 右侧唯一发送钮）
+ * 三修③：条材质 = canvas 查找条 .nf-findbar 同款（--cv-* 单源 + --cv-radius-bar）；
+ * 输入面唯一标准批（2026-11-06）：圆角与焦点态归 css/inputSurface.css（.ask-input
+ * 是「输入条外壳」成员，圆角取 --nf-field-shell-radius）；原 `:focus-within`
+ * 活性蓝描边（sapphire .45 = 作者要去的「蓝框」的一处）随批摘除 —— 焦点可见性由
+ * 内层裸件在标准里拿键盘环承担，外壳不再变色。
+ * 统一按钮玻璃批 2026-11-01：材质迁 glass.css 面级浮件档，本文件只留几何。 */
+.ask-input {
+  width: 100%; position: relative;
+  display: flex; align-items: center; gap: var(--ds-space-1); padding: var(--ds-space-2) var(--ds-space-2) var(--ds-space-2) var(--ds-space-1);
+  /* 气泡穿入批（2026-11-05）：输入条必须画在气泡列之上（.ask-colwrap z:1）。
+     材质本身归 .nf-glass（stand-tokens --nf-glass-* 单源 + glass.css 配方），
+     本文件不写任何毛玻璃值 —— 作者令「输入框也要是毛玻璃效果」由类供给。 */
+  z-index: 2;
+}
+/* 输入行为包批（2026-11-02 作者令）：input → textarea（rows=1）——Shift+Enter
+ * 换行键位契约与主会话逐一对齐；单行视觉不变，超行自动长高（JS 封顶 120px）。
+ * 记事本批（2026-11-05）：`.note-body textarea` 是本规则的**成员**——字档/字族/
+ * 色/caret/placeholder/无边框/无内距/无 resize 全部同一份声明（记事本只在自己的
+ * 几何规则里补「占满 + 可滚」，见上方 .note-dock .note-body 段）。 */
+.ask-input textarea,
+.note-body textarea {
+  flex: 1; min-width: 0;
+  resize: none; overflow: hidden; display: block; padding: 0; margin: 0;
+  font: 400 var(--nf-field-fs) -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Segoe UI', Roboto, sans-serif;
+  line-height: var(--nf-field-line); color: var(--color-text); caret-color: var(--color-primary);
+}
+/* 无边框/透明底/无内距：输入面唯一标准批（2026-11-06）起由
+   css/inputSurface.css 的 `.nf-field--bare` 成员表供给（这两条选择器就在表里）
+   —— 本文件不再写第二份造型值（check-input-surface.mjs I2 判据）。 */
+/* 占位（placeholder 形态）：canvas-hint-text 批 —— 色走 dim 令牌、透明度显式
+   归 1（修前只写 `--color-text-muted`，与输入本体色太近，占位不像占位；字档
+   跟随 textarea 本体 13.5px，与 --cv-hint-fs-placeholder 13 的「同档」原则一致）。 */
+.ask-input textarea::placeholder,
+.note-body textarea::placeholder,
+/* 记事本存储状态行（持久化缺陷批 2026-11-05）：以**成员身份**取同一 dim 令牌与
+   显式 opacity:1——本块是「安静的一行事实」的色来源，`.note-status` 自己的规则
+   里零色声明（N8 判据）。 */
+.note-status,
+.ask-handoff {
+  color: var(--cv-hint-color-dim);
+  opacity: 1;
+}
+/* 发送钮 / 中断钮：**零本地形态**（作者令 ui-unification-20261103-canvas-ask-resize
+ * 「发送按钮与终止按钮样式与主会话完全统一（同一组件/同一 design-system 令牌，
+ * 不得另做一套）」）。
+ * 该批退役的第二套形态（git 可查）：`.ask-input .ask-send` / `.ask-stop` 曾自带
+ * 32×32 正圆 + 14px 图标（比主会话 36×36 + 18px 小一档），hover/active 三档也各自
+ * 声明 —— 同一对按钮在两条腿各长一套几何，正是本令要收的东西。
+ * 字形/几何收口批（ask-button-unify 2026-11-18，作者令逐字「Ask 的中止按钮中间的
+ * 方框应该和主会话的一致 发送按钮也和主会话一致吧」）：本块此前**残留三条本地覆盖**
+ * ——
+ *   ① `width/height = max(--cv-size-circle 40, 组件槽)` ⇒ 桌面 40×40 对主会话 36×36；
+ *   ② `.ds-turn-btn svg` 的图标档兜底 + `stroke-width: 2` ⇒ 线宽 2 对主会话 2.5；
+ *   ③ `:disabled { opacity: .35 }` ⇒ 组件禁用族的第二份读数（Ask 面从无 disabled
+ *      写入点，`grep disabled js/askDock.js` 零命中 ⇒ 该条不可达）。
+ * 三条全部退役：几何/线宽回到 design-system.css `.ds-turn-btn` 唯一一份，
+ * 手机腿的供源由 mobileLayer.css 的「输入条圆钮档」一条声明同时喂主会话与面板
+ * （见该块注）。`.ask-send` / `.ask-stop` 仍只是**身份钩子**（既有 spec 定位用，
+ * 本文件零规则）；改形态改那一个组件类，两处同时生效。 */
+
+/* ═══ Ask 气泡材质（作者令 2026-11-04 12:52 ② → 2026-11-05 09:32 改判）═══
+   材质本体已整段移交 glass.css 单源（`.ask-dock .ask-bub` / `.ask-dock
+   .ask-bub.user`）：那一档由半透 --cv-bg 改判成**不透明毛玻璃档**
+   （--cv-bg-opaque + #header 同款顶缘折射线），成因与做法见 glass.css 与
+   sapphire.css 的令牌注。本文件不再声明任何气泡材质属性（GU2-7 同律：
+   材质单源，几何/年龄渐隐留本面）。 */
+
+/* ═══ 底缘收口（作者令 2026-11-04 12:52 ③ → 2026-11-05 09:32 改判 → 2026-11-06 再改判）═══
+   12:52 令的形态 = 「列盒下越 + 中线（面板高 50%）截断」，由 JS 写三条 px
+   变量（--ask-trunc-from / --ask-trunc-h / --ask-col-overhang）。09:32 令
+   「调整窗口大小会导致对话框和内容直接有一大段空白」把这条形态判死：截断线
+   画在列上、基准却是面板高（列 + 缝 + 输入条），列的下半段恒被 alpha 0 遮
+   掉，最新气泡锚在列底 ⇒ 内容与输入条之间恒有一大段空白（改前实测 208px）；
+   三条 px 变量全部退役，收口锚回列自己的盒。
+   2026-11-06 毛玻璃批再改判：收口本体从 mask 百分比停点改 **列 padding-bottom
+   = --ask-under + --ds-space-1h**（mask 随批退役，成因见 .ask-col 块与上方
+   大注释）——「输入条顶边 − 最新气泡底边」恒 = 列缝 6px，拉动尽头最新气泡
+   完全在聊天框之上（作者同日令②）。
+   唯一保留 = colwrap 的 overflow:visible（12:52 令「穿过底缘」的可见性前提；
+   滚动途中气泡仍从输入条玻璃底下穿过，保留它可让列内溢出不被上级
+   硬裁——两道保险，且 tests/console-ask-grow C4 的 overflow 判据照旧成立）。 */
+.ask-colwrap { overflow: visible; }
+
+/* ═══ 移动档（body.mobile-layer；E-2 移动列 + #988 命中盒纪律）═══
+   Canvas 改造批⑨（2026-10-31 作者令「修 bug：标签页对话按钮消失」）：手机层
+   #canvas-panel display:none ⇒ FAB 改挂 body 级 fixed——钉视口右下、底 dock
+   上方（--dock-h 单源 + 10px 缝），z 260（> dock 200 / 移动页 156，< 模态 300+）；
+   可见性闸 = 文件卡 ∧ canvas 页在场（askDock.syncGate）。
+   单行排布批（2026-11-01）：dock 缝 10 → 16 + env(safe-area-inset-bottom)——
+   与左锚文档工具簇行（pane 内 bottom:16，pane 底 = 页底）同带共中线（两端同
+   48px 钮同带），ask 单独靠右；dock 输入条钉按钮行上一行。
+   dock 悬浮胶囊批（作者令 2026-11-01 21:07）：底距加 var(--dock-inset-b)——
+   dock 顶缘自 dock-h+env 上移 inset-b（胶囊底距），FAB/输入条与左锚工具簇
+   「同带共中线」的 16px 对齐关系原样保留（pane 底 = 页底 = 新顶缘，同批扩面）。 */
+body.mobile-layer .ask-fab {
+  --ask-fab-gap: 12px;
+  /* 尺寸归一修正（持久化缺陷批 2026-11-05 实测）：本档把宽度/高度硬写 48px，
+     而 `--ask-fab-size` 仍是桌面 40 档（2026-11-05 件3 批把桌面档落到 40）⇒
+     两条**依赖该 token 的几何**在手机档各偏 8px：记事本钮 margin-right
+     =「一格钮宽 + 8」算成 48（实测两钮水平缝 0，spec m1 变红），dock bottom
+     =「钮高 + 10」算成 50（实测窗底压住钮 8px）。本档把 token 对齐到实际尺寸，
+     两条几何一并归位——不在各自的选择器里各打一次补丁（token 单源）。 */
+  --ask-fab-size: 48px;
+  /* canvas 控件尺寸对齐批（2026-11-02）② 全站悬浮圆钮单一真值 48：本档原写死
+     44（mobileLayer.css 01 块同值 48 覆盖生效），两处并一 —— 手机层 48 与
+     --mtap-lg 同档，桌面档本批也升到 48（--ask-fab-size），全站一个真值。 */
+  width: 48px; height: 48px;
+  position: fixed;
+  right: var(--ask-fab-gap);
+  /* dock 座位消费单源 token（`--mobile-dock-top` = dock 高 + 底内距 + 安全区，
+     定义在 mobileLayer.css L599 块）。改前 = 同一表达式手写展开 —— 与
+     mobileLayer.css 的插件加号 / dock 背板带 / 输入卡三处逐字重复
+     （「改一处必须同步另一处」，滚域末端净空单源批 2026-11-18 一并消掉）。 */
+  bottom: calc(var(--mobile-dock-top) + 16px);
+  /* Closed morph seeds live in the dock below their action buttons. */
+  z-index: 261;
+}
+body.mobile-layer .ask-dock,
+body.mobile-layer .note-dock {
+  --ask-fab-gap: 12px;
+  --ask-fab-size: 48px;
+  --ask-dock-w: calc(100% - 24px);
+  /* 消息区加高（作者令 2026-11-03 ②「把 Ask 对话窗口里消息区域的高度再调高一点，
+   * 让它能有更多空间显示内容」）：250 → clamp(320, 46vh, 420)。
+   * 实测 390×844（同一脚本同判据，evidence doc-ask-fade）：列高 194 → 388，
+   * 静态可见内容高 194 → 326（= 388 − 渐隐净空 56 − 呼吸 6）⇒ +132px（+68%）。
+   * 下界 320 保小屏（SE 667 ⇒ 46vh=307 被抬到 320）；上界 420 保「背后文档仍留
+   * 可读区」（390×844 时面板顶距视口顶 = 264.8px ≈ 31%）。 */
+  --ask-col-maxh: clamp(320px, 46vh, 420px);
+  /* 短渐隐批 2026-11-05 09:32：56px → 12px（与桌面档同一档位 token，同一理由，
+     见 :root 里 --ask-fade-h 的令牌注）。手机档不再单独放宽衰减区。 */
+  --ask-fade-h: var(--ds-space-3);
+  position: fixed;
+  right: var(--ask-fab-gap);
+  bottom: calc(var(--mobile-dock-top) + 16px + var(--ask-fab-size) + 10px);
+  z-index: 260;
+}
+body.mobile-layer .ask-bub { font-size: var(--ds-fs-body); padding: var(--ds-space-2) var(--ds-space-3); }
+/* 表格族（同族竖排 bug 修 · 作者实拍 IMG_1721：首列「还挂旧数 / 不需动 / 待办」
+ * 逐字竖排）。根因与面板 IA 竖排 bug 同族 = 窄列被压到 min-content（CJK 可在任意
+ * 两字间断行 ⇒ min-content = 1 个字宽），不是 writing-mode。
+ * 修法三件：① 表格出块级横滚宿主（宽表横滚，不靠压列换宽度）；② 单元格给
+ * 4em 最小宽（短标签列不再塌成 1 字/行）；③ 首列（行首标签列）不折行。
+ * 字号 12 → 13px：iOS HIG 可读字档（chat.css 桌面档 12 保留，手机层单列本档）。 */
+body.mobile-layer .ask-bub.ai table {
+  display: block; max-width: 100%; overflow-x: auto;
+  font-size: var(--ds-fs-body);
+}
+body.mobile-layer .ask-bub.ai th,
+body.mobile-layer .ask-bub.ai td { min-width: 4em; }
+body.mobile-layer .ask-bub.ai th:first-child,
+body.mobile-layer .ask-bub.ai td:first-child { white-space: nowrap; }
+body.mobile-layer .ask-input textarea,
+body.mobile-layer .note-body textarea { font-size: var(--ds-fs-mobile-sub); } /* iOS 聚焦不缩放（输入行为包批：input→textarea 同律；15px = --ds-fs-mobile-sub 逐值同档） */
+
+/* ============================================================================
+ * AskUser 卡归属标注（`chat.js renderAskUser` 的 `.ask-user-source`）
+ * 归属命名批 · 作者令 2026-11-05 10:07（逐字）：「现在的后台agent的问题卡片还是
+ * 只会显示stand，delegate现在不都是有name吗，node也有name，那么可以显示
+ * delegate name，node就是 delegate name · node name」。
+ *
+ * 形态：两段式胶囊 `段① · 段②`（段① = 父批/delegate 批次短名或项目名，段② =
+ * 当前节点名）。主次靠字重与色档，不靠字号（窄屏字号一动，行高与卡面节奏全变）：
+ *   · 段① parent：500 / --color-text-muted（弱 = 父批）
+ *   · 段② node  ：700 / --color-text      （强 = 当前节点）
+ * 截断阈值（em 计量，11px 档下 1em ≈ 1 个中文字）：段① ≤ 14em、段② ≤ 18em，
+ * 各自 `text-overflow: ellipsis`；两段 min-width 各留 6em/5em —— 长批名只会被
+ * 截短，不会被压成两三个字，也不会把卡片撑破（胶囊 `max-width: 100%`）。
+ * 完整名：胶囊 `title` 恒为全量（桌面 hover / 触屏长按即读）；点按（或 Enter/
+ * Space）切 `.is-expanded` 展全文（触屏无 hover 的读取路）。
+ * 窄屏（手机层 / ≤520px 视口）：允许折成两行，**两段都不丢**（各自 max-width
+ * 100% + 可换行），分隔符留在行尾当续行锚。
+ * 材质零字面量：底色/文本/圆角/间距全走 --ds-* 与 --color-*（本文件既有纪律）。
+ * ========================================================================== */
+.ask-user-source {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  min-width: 0;
+  margin-bottom: var(--ds-space-2);
+  padding: var(--ds-space-half) var(--ds-space-2);
+  font: 600 var(--ds-fs-meta) -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  border-radius: var(--ds-radius-chip);
+  white-space: nowrap;
+}
+.ask-user-source-parent,
+.ask-user-source-node {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ask-user-source-parent { max-width: 14em; font-weight: 500; }
+.ask-user-source-node   { max-width: 18em; font-weight: 700; color: var(--color-text); }
+.ask-user-source-sep    { flex: 0 0 auto; opacity: 0.7; }
+/* 展开态（点按 / Enter / Space）：撤掉一切截断，全文可读并允许换行。 */
+.ask-user-source.is-expanded { white-space: normal; }
+.ask-user-source.is-expanded .ask-user-source-parent,
+.ask-user-source.is-expanded .ask-user-source-node {
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* 可点（仅两段时挂 role=button）——键盘可达性靠 tabIndex，焦点框沿用既有平台默认。 */
+.ask-user-source[role="button"] { cursor: pointer; }
+.ask-user-source[role="button"]:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+/* 窄屏允许段间折行；各段仍使用桌面上限和省略规则。 */
+@media (max-width: 520px) {
+  .ask-user-source { flex-wrap: wrap; white-space: normal; }
+}
+body.mobile-layer .ask-user-source { flex-wrap: wrap; white-space: normal; max-width: 100%; }

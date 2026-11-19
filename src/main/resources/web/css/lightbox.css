@@ -1,22 +1,28 @@
 /* lightbox.css — full-screen image preview overlay */
 
 :root {
-  --nf-lightbox-backdrop: rgba(27, 30, 38, 0.55); /* #1b1e26 ink @ 55% */
+  --nf-lightbox-backdrop: var(--ds-scrim-stack);
+  /* 内容适配盒 = 「图片/框图铺满多少屏幕」，**看图与看图解同一档**（作者令
+     2026-11-07「使用跟图片一样的点击打开后的查看逻辑」）。相对**浮层**取百分比，
+     不是 vw/vh：浮层在手机上会被 `syncViewportPin()` 钉到**可视视口**（动态视口 /
+     键盘弹起时都比布局视口小），用视口单位就会算出屏幕外的高度 ⇒ 内容偏上、被
+     浏览器栏吃掉 —— 这正是作者报障的「点开后有点歪」。同一份分数也是
+     js/lightbox.js `fitDiagramCanvas()` 的唯一来源（读 CSS，不在 JS 里另写一套）。 */
+  --nf-lb-fit-w: 92%;
+  --nf-lb-fit-h: 88%;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --nf-lightbox-backdrop: rgba(0, 0, 0, 0.72); }
-}
-
+/* 浮层 = 可视屏幕（默认整屏；`syncViewportPin()` 在可视视口被内缩/平移时改写成
+   内联盒，四边归位到可视区域）。`height:100dvh` 是 CSS 侧兜底：动态视口里
+   100% 会跟着「最大视口」走，dvh 跟的是当前可视高度。 */
 .nf-lightbox {
   position: fixed;
   inset: 0;
+  height: 100dvh;
   z-index: 400;              /* above modal-overlay (300/310) */
   display: none;
   align-items: center;
   justify-content: center;
   background: var(--nf-lightbox-backdrop);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
   cursor: zoom-out;
 }
 .nf-lightbox.on { display: flex; }
@@ -25,10 +31,13 @@
 body.nf-lightbox-open { overflow: hidden; }
 
 .nf-lightbox-img {
-  max-width: 92vw;
-  max-height: 88vh;
-  border-radius: 8px;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.16);
+  /* Transparent pixels otherwise reveal the dark modal scrim and hide dark
+     artwork. A white image-only mat preserves alpha and readability in both themes. */
+  background: #fff;
+  max-width: var(--nf-lb-fit-w);
+  max-height: var(--nf-lb-fit-h);
+  border-radius: var(--ds-radius-input);
+  box-shadow: var(--ds-shadow-media-card);
   cursor: default;
   opacity: 0;
   transform: scale(0.96);
@@ -42,7 +51,12 @@ body.nf-lightbox-open { overflow: hidden; }
 .nf-lightbox-close {
   position: absolute;
   top: 16px;
-  right: 16px;
+  left: 16px;
+  /* 层级：舞台（.nf-lightbox-stage，inset:0）在 DOM 里排在关闭钮之后 ⇒ 无 z-index
+     时它会盖住右上角这枚钮（mermaid-inline-center 批实测：图形模式下真实点击落到
+     舞台身上，关闭钮永远收不到 click）。看图模式因此显式抬到舞台之上（缩放条
+     z-index:2 同理，本钮在它之上）。 */
+  z-index: 3;
   width: 30px;
   height: 30px;
   display: flex;
@@ -51,9 +65,8 @@ body.nf-lightbox-open { overflow: hidden; }
   border: none;
   border-radius: 50%;
   background: transparent;
-  /* Fixed light icon: the backdrop is a dark translucent overlay in both
-     themes, so --color-text would be unreadable in light mode. */
-  color: rgba(255, 255, 255, 0.92);
+  /* The backdrop stays dark in both themes, so use the existing inverse-ink token. */
+  color: var(--ds-ink-inverse);
   cursor: pointer;
   opacity: 0.35;
   transition: opacity 150ms ease, transform 150ms ease;
@@ -69,15 +82,19 @@ body.nf-lightbox-open { overflow: hidden; }
   left: 50%;
   top: 50%;
   transform: translate(-50%, -50%);
-  padding: 10px 20px;
-  border-radius: 10px;
+  padding: var(--ds-space-block-y) var(--ds-space-5);
+  border-radius: var(--ds-radius-button);
   border: 1px solid var(--color-border);
   background: var(--color-surface);
   color: var(--color-text);
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   pointer-events: none;
 }
-.nf-lightbox-status.error { color: var(--color-error, #c94040); }
+.nf-lightbox-status.error { color: var(--color-error); }
+
+@media (prefers-color-scheme: dark) {
+  .nf-lightbox-img { background: #e8eaed; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .nf-lightbox-img, .nf-lightbox-close { transition: none; }
@@ -85,3 +102,187 @@ body.nf-lightbox-open { overflow: hidden; }
 
 /* Visual hint: images tagged .nf-zoom-img are clickable (open lightbox) */
 img.nf-zoom-img { cursor: pointer; }
+
+/* ── 图形（SVG 框图）模式 ────────────────────────────────────────────────
+   mermaid-viewer-stability 批 2026-11-06（作者令「你气泡里渲染的 要点击能变成
+   大图查看 canvas里的也要能支持」）。同一个浮层节点、同一个关闭/焦点/返回链路，
+   只多一层内容面 —— 图片模式与图形模式是同一组件的两个 mode，不是两个查看器。
+   mermaid-inline-center 批 2026-11-07：内容面几何与图片模式统一（适配盒 = 上面那
+   一档 --nf-lb-fit-*），并把「偏屏」的机制根因修掉。
+
+   ⚠ 偏屏机制根因（本批实测，非推断）：`.nf-lightbox-stage` / `.nf-lightbox-canvas`
+   这两个类名**同时属于两个组件** —— 看图浮层（本文件）与 popArtifacts 的媒体灯箱
+   （css/chat.css「the in-stream lightbox」块，stage = 竖排 flex + max-width:
+   min(92vw,1100px) + max-height:90vh，canvas = 一粒「打开画板」药丸按钮）。两套声明
+   同权重叠在一起后：绝对定位 + inset:0 与 max-width/max-height 过约束 ⇒ 舞台被钉成
+   左上角 1100×810（手机 358.8×759.6），而不是整屏；图在舞台内居中 ⇒ 视觉中心相对
+   屏幕中心左移 90 / 上移 45px（手机 15.6 / 42.2px）= 作者报障的「现在有点歪」。
+   修法：chat.css 那四条声明**收进 `.nf-lightbox--media` 作用域**（媒体灯箱独有），
+   看图浮层的舞台回到整屏。本文件的 `.nf-lightbox-canvas` 也因此重新成为唯一的
+   「纸面」声明。
+
+   交互语义（与 Canvas 窗格里的 viewers/zoom.js **刻意不同**，理由见 js/lightbox.js
+   头注）：全屏浮层里没有别的可滚内容，所以普通滚轮 = 缩放、拖动 = 平移、双指 =
+   捏合缩放，都直接作用于图。 */
+.nf-lightbox[data-nf-lb-mode="svg"] { cursor: default; }
+
+.nf-lightbox-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  touch-action: none;          /* 手势自己接管（捏合/平移），不交给浏览器滚动 */
+  cursor: grab;
+}
+.nf-lightbox-stage:active { cursor: grabbing; }
+
+/* 图纸（= 图形模式的内容盒）。宽高由 js/lightbox.js `fitDiagramCanvas()` 按**舞台
+   实盒 × --nf-lb-fit-***算出来（居中交给舞台 flex，不写坐标）；这里只留材质与
+   padding —— padding 是真值，JS 会从计算样式读回来从适配盒里扣掉，保证图**恰好**
+   落在适配盒内、不被 padding 二次缩放。 */
+.nf-lightbox-canvas {
+  transform-origin: center center;
+  will-change: transform;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 纸面：框图自带配色，浮层底是深色半透明 —— 给一档表面底，亮暗都可读。 */
+  background: var(--color-surface);
+  border-radius: var(--ds-radius-input);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24), 0 2px 8px rgba(0, 0, 0, 0.16);
+  padding: var(--ds-space-3);
+  overflow: hidden;
+}
+.nf-lightbox-canvas > svg { width: 100%; height: 100%; display: block; }
+
+.nf-lightbox-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
+  background: var(--glass-control-bg);
+  z-index: 2;
+}
+/* 浮层底是深色半透明（亮暗同款）⇒ 控件用固定浅色，与关闭钮同一处置。 */
+.nf-lightbox-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: none;
+  border-radius: var(--ds-radius-chip);
+  background: transparent;
+  color: var(--ds-ink-inverse);
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+.nf-lightbox-ctl:hover { background: var(--glass-control-bg-hover); color: var(--ds-ink-inverse); }
+.nf-lightbox-ctl:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.7);
+  outline-offset: 2px;
+}
+.nf-lightbox-ctl svg { width: 15px; height: 15px; }
+.nf-lightbox-pct {
+  min-width: 44px;
+  text-align: center;
+  font-size: var(--ds-fs-meta);
+  font-variant-numeric: tabular-nums;
+  color: var(--ds-ink-inverse);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-lightbox-canvas { transition: none; }
+  .nf-lightbox-ctl { transition: none; }
+  .nf-lightbox-av { transition: none; }
+}
+
+/* ── 画廊模式（mobile-image-lightbox 批 2026-11-17）─────────────────────
+   作者令「我想的是像微信那样的弹窗就行了」——手机层图片点击的应用内画廊面
+   （js/lightbox.js openImageGallery；只由 routeMediaClick 手机腿进入，桌面
+   不出现）。要素：遮罩居中大图（进/退场 = 既有 loaded 淡入淡出，缩略图缩放
+   起飞不做——申报制）、多图左右滑跟手切图 + 页码、下滑跟手关闭、「在标签页
+   打开」次级入口、锁底层滚动。 */
+
+/* 手机层的会话滚动容器是 #chat 自己（chat.css `#chat{overflow-y:auto}`，
+   手机层无覆盖——body.nf-lightbox-open{overflow:hidden} 锁 body 锁不到这个
+   内滚器）；.mobile-page-body 则是设置/fm 等其余手机页的滚动容器。画廊开着时
+   两个滚动面都补锁（overflow:hidden 不动 scrollTop ⇒ 关闭后回原滚动位）。
+   选择器挂 body.mobile-layer：桌面零变化。 */
+body.mobile-layer.nf-lightbox-open #chat,
+body.mobile-layer.nf-lightbox-open .mobile-page-body { overflow: hidden; }
+
+/* 跟手拖动期间浏览器不得接管手势（滚动/边缘滑）：浮层内没有别的可滚内容。 */
+.nf-lightbox[data-nf-lb-gallery="on"] { touch-action: none; overflow: hidden; background: var(--ds-media-letterbox); }
+/* 视频/音频件（画廊腿）：与 img 同一套 contain 盒；缩放/平移由 js/lightbox.js 写
+   transform（媒体查看器缩放批 2026-11-18）。transform-origin 保持 CSS 默认 center
+   —— 那正是该模块的坐标约定（元素由浮层 flex 居中 ⇒ 元素中心 = 视口中心，缩放锚点
+   与边界公式都以此原点成立）。回弹/双击还原复用既有 200ms 过渡档，不另造动画引擎。 */
+.nf-lightbox-av {
+  max-width: var(--nf-lb-fit-w);
+  max-height: var(--nf-lb-fit-h);
+  transform-origin: center;
+  transition: transform 200ms ease, opacity 200ms ease;
+  will-change: transform;
+  -webkit-user-drag: none;
+}
+body.mobile-layer .nf-lightbox .nf-lightbox-close { display: flex; }
+
+/* 滑动切图的进场档：无过渡瞬移到对侧 44px，摘类后由既有 200ms 过渡滑回中位
+   （与淡入合成；prefers-reduced-motion 时既有规则已把 .nf-lightbox-img 过渡关掉）。 */
+.nf-lightbox-img.nf-gal-in-left,
+.nf-lightbox-img.nf-gal-in-right { transition: none; }
+.nf-lightbox-img.nf-gal-in-left { transform: translateX(-44px) scale(0.96); }
+.nf-lightbox-img.nf-gal-in-right { transform: translateX(44px) scale(0.96); }
+
+/* 页码（组内 ≥2 才显示，js 控制）：底部居中胶囊，避开安全区。 */
+.nf-lightbox-pager {
+  position: absolute;
+  left: 50%;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  transform: translateX(-50%);
+  z-index: 3;
+  padding: 3px 12px;
+  border-radius: var(--ds-radius-pill);
+  background: rgb(0 0 0 / 0.45);
+  color: var(--ds-ink-inverse);
+  font-size: var(--ds-fs-meta);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;   /* 页码不截点击（遮罩点按关闭语义让位） */
+}
+
+/* 「在标签页打开」次级入口（P16 直开能力的显式保留）：关闭钮同族圆钮，居其左。 */
+.nf-lightbox-opentab {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 3;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ds-ink-inverse);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+.nf-lightbox-opentab:hover { opacity: 0.85; transform: scale(1.08); }
+.nf-lightbox-opentab:focus-visible {
+  outline: 2px solid rgb(var(--sapphire) / 0.7);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nf-lightbox-opentab { transition: none; }
+}

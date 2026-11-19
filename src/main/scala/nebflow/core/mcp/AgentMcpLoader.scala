@@ -3,8 +3,7 @@ package nebflow.core.mcp
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.parser.decode
-import nebflow.core.{NebflowLogger, PathUtil}
-import nebflow.llm.McpServerConfig
+import nebflow.shared.{McpServerConfig, NebflowLogger, PathUtil}
 
 /**
  * Loads agent-scoped MCP servers from agent directory `tools/mcp/`
@@ -21,7 +20,7 @@ import nebflow.llm.McpServerConfig
  * `mcp__agent-<agentName>-<serverName>__<tool>` and are auto-allowed for that
  * agent only (see AgentCore.buildAllowedToolSet).
  *
- * Loaded statically at Nebflow startup — not hot-reloaded.
+ * Loaded statically at Stand startup — not hot-reloaded.
  */
 object AgentMcpLoader:
   private val logger = NebflowLogger.forName("nebflow.mcp.agent")

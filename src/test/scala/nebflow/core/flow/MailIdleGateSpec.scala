@@ -1,8 +1,10 @@
 package nebflow.core.flow
 
+import cats.effect.unsafe.implicits.global
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.ActorRef
-import nebflow.agent.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
+import nebflow.actor.{AgentCommand, AgentKind, AgentRecord, AgentStatus}
 import nebflow.core.flow.RunningFlowRegistry.RunningFlow
 
 /**
@@ -86,8 +88,8 @@ class MailIdleGateSpec extends FunSuite:
     )
     assert(!MailIdleGate.isAgentTreeIdle("t", registry))
 
-  test("Ephemeral / Plan 子记录在飞 → 不空闲"):
-    for kind <- List(AgentKind.Ephemeral, AgentKind.Plan) do
+  test("Delegate / SubTask 子记录在飞 → 不空闲"):
+    for kind <- List(AgentKind.Delegate, AgentKind.SubTask) do
       val registry = Map(
         "t" -> rec("t"),
         s"child-${kind.toString}" -> rec(s"child-${kind.toString}", kind, parentRef = Some(nullRef))
@@ -148,7 +150,62 @@ class MailIdleGateSpec extends FunSuite:
     )
     assert(!MailIdleGate.isAgentTreeIdle("t", registry, checkStatus = false), "子树忙仍应判不空闲")
     val flowRegistry = Map("t" -> rec("t", status = AgentStatus.Processing))
-    assert(!MailIdleGate.isAgentTreeIdle("t", flowRegistry, List(runningFlow(Some("t"))), checkStatus = false),
-      "关联 running flow 仍应判不空闲")
+    assert(
+      !MailIdleGate.isAgentTreeIdle("t", flowRegistry, List(runningFlow(Some("t"))), checkStatus = false),
+      "关联 running flow 仍应判不空闲"
+    )
+
+  // ---------- R2 分层地址面：node: 腿绕行本闸（必须显式钉死） ----------
+
+  test("M-2 R2：node:<id> 腿不经 idle gate —— node 会话无 AgentRecord，入队即永久挂起"):
+    // ① 纯函数事实：node 会话不进 agentRegistry（registerSession 的唯一调用点 =
+    //    core/flow/FlowTreeActor.scala:502），而本闸首条判据是 registry.get(sid).exists
+    //    ⇒ 记录不存在 = **不空闲**。若 node: 邮件走 AgentActor 的 queue drain 闸，
+    //    等待条件永假 ⇒ 永久挂起（这正是「node: 腿必须绕行」的实证理由）。
+    assert(
+      !MailIdleGate.isAgentTreeIdle("node-abc-123", Map.empty[String, AgentRecord], Nil),
+      "node 会话无 AgentRecord ⇒ 闸判定不空闲（入队即永久挂起）"
+    )
+    assert(
+      !MailIdleGate.isAgentTreeIdle("node-abc-123", Map("t" -> rec("t")), Nil),
+      "node 会话不在快照内 ⇒ 同样不空闲（与注册表里有无别的会话无关）"
+    )
+    // ② 可执行旁证：MailTool 的 node: 腿在**入队之前**分派（MailTool.layeredRoute：
+    //    running=ImmediateInput 注入 / wiring·pending=task 追加 / 终态拒绝），
+    //    且非设备腿显式拒绝 delivery=queue ⇒ 结构性不可达 idle gate。
+    //    delivery 退役批（收窄版，2026-09-15 裁定 (b)）re-pin：拒绝方向不变（仍**显式
+    //    拒绝**，未放宽），文案统一到退役单点 `MAIL_DELIVERY_QUEUE_RETIRED`（旧的
+    //    node: 腿专属"always immediate"文案已随退役消失；旧文案面已被
+    //    MailDeliveryRetireSpec 反向钉死不可达）。
+    val system = nebflow.actor.ActorSystem(s"mailidle-r2-${scala.util.Random.nextInt(100000)}")
+    val ctx = nebflow.core.tools.ToolContext(
+      projectRoot = os.pwd.toString,
+      sessionId = Some("disp-sid"),
+      isDispatcher = true,
+      projectName = Some("p"),
+      actorSystem = Some(system)
+    )
+    try
+      val res = nebflow.core.tools.MailTool
+        .call(
+          JsonObject(
+            "address" -> Json.fromString("node:n-1"),
+            "message" -> Json.fromString("补充"),
+            "delivery" -> Json.fromString("queue")
+          ),
+          ctx
+        )
+        .unsafeRunSync()
+      res match
+        case Left(err) =>
+          assert(
+            err.message.contains(nebflow.core.tools.MailTool.ErrDeliveryQueueRetired),
+            s"node: 腿必须拒绝 queue 模式（退役单点文案），got: ${err.message}"
+          )
+          assert(err.message.contains("delivery=queue"), "错误须指明修复动作（去掉 delivery=queue）")
+          assert(!err.message.contains("always immediate"), s"旧 queue 专属文案不得复用，got: ${err.message}")
+        case Right(v) => fail(s"node: + queue 必须显式报错（不得落入 queue 闸），got: $v")
+    finally system.stopAll.unsafeRunSync()
+    end try
 
 end MailIdleGateSpec

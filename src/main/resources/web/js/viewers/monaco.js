@@ -11,7 +11,8 @@ async function viewMonaco(pane, ctx) {
   const { createEditor } = await import('../monacoEditor.js');
   // Create a container for Monaco
   const container = document.createElement('div');
-  container.className = 'canvas-monaco-container';
+  // P0 §6 顶垫共享类（防胶囊遮挡；桌面常态零垫、手机层/环展开态垫）
+  container.className = 'canvas-monaco-container canvas-viewer-safe-top';
   container.style.width = '100%';
   container.style.height = '100%';
   pane.innerHTML = '';
@@ -39,6 +40,11 @@ async function viewMonaco(pane, ctx) {
     setActiveEditor(handle);
     handle.focus();
   });
+
+  // wiki-graph batch: floating in-file find toggle (opens Monaco's own find
+  // widget; right:16px — the code viewer has no source toggle to stack with).
+  const { addFindToggle } = await import('./shared.js');
+  addFindToggle(pane, 16);
 
   // If this pane is already active (just opened), set as active editor
   if (pane.classList.contains('active')) {

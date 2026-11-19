@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "change": "frontend-todo-create-sheet",
+  "mappings": [
+    {
+      "requirement": "FTI-REQ-003",
+      "scenario": "FTI-SCN-006",
+      "implementation": [
+        "src/main/resources/web/js/mobile/todoAppleFace.js",
+        "src/main/resources/web/css/mobile-todo-apple.css",
+        "openspec/changes/frontend-todo-create-sheet/proposal.md",
+        "openspec/changes/frontend-todo-create-sheet/design.md",
+        "openspec/changes/frontend-todo-create-sheet/tasks.md",
+        "openspec/changes/frontend-todo-create-sheet/specs/todo-create-sheet/spec.md",
+        "openspec/changes/frontend-todo-create-sheet/trace.json"
+      ],
+      "tests": [
+        {
+          "path": "tests/todo-create-sheet.spec.mjs",
+          "name": "FTI-SCN-006 mobile create sheet consumer matrix passed"
+        }
+      ]
+    },
+    {
+      "requirement": "FTI-REQ-004",
+      "scenario": "FTI-SCN-007",
+      "implementation": ["src/main/resources/web/js/mobile/todoAppleFace.js", "src/main/resources/web/js/todoStore.js", "src/main/scala/nebflow/core/scheduler/ScheduledTaskStore.scala", "src/main/scala/nebflow/gateway/WsTasksWorkspaceHandlers.scala"],
+      "tests": [{"path":"src/test/scala/nebflow/gateway/ws/TodoUnifyFramesSpec.scala", "name":"FTI-SCN-007 correlated create retry returns same durable row and rejects identity collision"}]
+    },
+    {
+      "requirement": "FTI-REQ-005",
+      "scenario": "FTI-SCN-008",
+      "implementation": ["src/main/resources/web/js/mobile/todoAppleFace.js", "src/main/resources/web/js/input.js"],
+      "tests": [{"path":"tests/todo-create-sheet.spec.mjs", "name":"FTI-SCN-008 mobile reply keeps primary draft and attachments"}]
+    }
+  ]
+}

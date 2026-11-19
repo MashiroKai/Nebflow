@@ -13,168 +13,27 @@
 // P0 范围（v1.1）：输入框引用块定高/截断/可展开（A1-A6）+ 各入口产出引用（B 组）+ 拉到根目录（E 组）。
 // 消息内引用卡片（mode='message'）+ 点击跳转 = P1/P2，本模块预留 renderRefBlock mode 分支。
 import { t } from './i18n.js';
-
-/** Stable-ish ref id (内部用，非用户可见) — refType + monotonic counter. */
-let _refSeq = 0;
-function nextRefId(refType) {
-  _refSeq += 1;
-  return `ref:${refType}:${Date.now().toString(36)}:${_refSeq}`;
-}
-
-function extLabel(name, mime) {
-  // 20260903 filename-dup fix: an extension exists only when the BASENAME has
-  // a real dot (dot > 0, so dotfiles like .gitignore stay extension-less too).
-  // Dot-less names — canvas tabs pass tab.title (a display label, canvas.js
-  // refInputForTab) as fileName — used to fall through split('.').pop() and
-  // return the WHOLE name as the "extension", so typeLabel (chip tooltip/
-  // expanded meta line + message-card badge) rendered the full filename right
-  // next to the title that already showed it (引用块文件名重复, 09-03 截图).
-  const base = (name || '').split('/').pop() || '';
-  const dot = base.lastIndexOf('.');
-  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
-  if (ext === 'pdf') return 'PDF';
-  if (mime === 'application/pdf') return 'PDF';
-  if (['md', 'markdown'].includes(ext)) return 'MD';
-  if (['xlsx', 'xls', 'csv'].includes(ext)) return 'XLS';
-  if (['doc', 'docx'].includes(ext)) return 'DOC';
-  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return 'IMG';
-  if (ext) return ext.toUpperCase();
-  if (mime) return (mime.split('/').pop() || '').toUpperCase();
-  return 'FILE';
-}
-
-function fileIcon(name, mime) {
-  const ext = ((name || '').split('.').pop() || '').toLowerCase();
-  if (['png','jpg','jpeg','gif','webp'].includes(ext)) return 'image';
-  if (['pdf'].includes(ext) || mime === 'application/pdf') return 'file-text';
-  if (['xlsx','xls','csv'].includes(ext)) return 'table';
-  if (['md','txt','markdown'].includes(ext)) return 'file-text';
-  return 'file';
-}
-
-function previewOf(name, text, max) {
-  const s = (text || '').trim();
-  if (!s) return '';
-  const n = max || 160;
-  return s.length > n ? s.slice(0, n) + '…' : s;
-}
-
-function anchorOf(anchor) {
-  if (!anchor) return { kind: 'none' };
-  // Fold any range-only anchor to a definite kind; keep provided fields.
-  const a = { kind: 'none', ...anchor };
-  if (a.pageStart != null) a.kind = 'page';
-  else if (a.lineStart != null) a.kind = 'range';
-  else if (a.sheet) a.kind = 'cell';
-  else if (a.selector) a.kind = 'element';
-  return a;
-}
-
-function pageBadge(anchor) {
-  if (!anchor) return '';
-  if (anchor.kind === 'page' && anchor.pageStart != null) {
-    return anchor.pageEnd != null && anchor.pageEnd !== anchor.pageStart
-      ? `p.${anchor.pageStart}–${anchor.pageEnd}` : `p.${anchor.pageStart}`;
-  }
-  if (anchor.kind === 'range' && anchor.lineStart != null) {
-    return anchor.lineEnd != null && anchor.lineEnd !== anchor.lineStart
-      ? `L${anchor.lineStart}–${anchor.lineEnd}` : `L${anchor.lineStart}`;
-  }
-  if (anchor.kind === 'cell' && anchor.sheet) {
-    return `${anchor.sheet}!${anchor.cellRange || ''}`;
-  }
-  if (anchor.kind === 'element') return anchor.tag ? `<${anchor.tag}>` : '';
-  return '';
-}
-
-/**
- * 统一工厂（§2.4）：input 提供 refType + 该类型的源信息/锚点，补全成一个
- * 结构完整的 Reference。refType 判别产出；未知 refType 返回 null（调用方
- * 应兜底为普通文本/附件）。
- * @param {Object} input
- * @returns {Object|null}
- */
-export function makeReference(input) {
-  if (!input || !input.refType) return null;
-  const rt = input.refType;
-  const src = input.source || {};
-  const anchor = anchorOf(input.anchor);
-  const name = src.fileName || src.title || (src.path ? src.path.split('/').pop() : '') || '';
-
-  if (rt === 'task') {
-    const label = `@#${src.taskId != null ? src.taskId : ''} ${src.title || ''}`.trim();
-    return {
-      type: 'ref', refType: 'task', id: nextRefId('task'),
-      source: { kind: src.kind || 'task', taskId: src.taskId, sessionId: src.sessionId, title: src.title || '' },
-      anchor,
-      meta: { icon: 'clipboard', typeLabel: t('ref.typeTask') },
-      display: { label, preview: '', pageBadge: '' },
-    };
-  }
-
-  if (rt === 'file') {
-    const mime = src.mimeType || '';
-    return {
-      type: 'ref', refType: 'file', id: nextRefId('file'),
-      source: { kind: src.kind || 'workspace', path: src.path || '', fileName: name, title: src.title || name, mimeType: mime },
-      anchor,
-      // 20260903 fix: type from the PATH basename — canvas tabs pass tab.title
-      // (no extension) as fileName, so extLabel(name) would degrade to 'FILE'.
-      meta: { mimeType: mime, sizeBytes: src.sizeBytes, icon: fileIcon(name, mime), typeLabel: extLabel(src.path || name, mime) },
-      display: { label: name, preview: previewOf(name, src.preview || src.text, 160), lineBadge: pageBadge(anchor) },
-    };
-  }
-
-  if (rt === 'document') {
-    const mime = src.mimeType || '';
-    return {
-      type: 'ref', refType: 'document', id: nextRefId('document'),
-      source: { kind: src.kind || 'canvas', path: src.path || '', fileName: name, title: src.title || name, mimeType: mime },
-      anchor,
-      meta: { mimeType: mime, sizeBytes: src.sizeBytes, icon: fileIcon(name, mime), typeLabel: extLabel(src.path || name, mime) },
-      display: { label: name, preview: previewOf(name, src.preview || anchor.text, 160), pageBadge: pageBadge(anchor), lineBadge: pageBadge(anchor) },
-    };
-  }
-
-  if (rt === 'html-element') {
-    return {
-      type: 'ref', refType: 'html-element', id: nextRefId('html-element'),
-      source: { kind: src.kind || 'web', url: src.url || '', title: src.title || '', path: src.path || '' },
-      anchor,
-      meta: { icon: 'code', typeLabel: t('ref.typeElement') },
-      display: { label: src.title || '', preview: previewOf(name, anchor.text || src.preview, 160), pageBadge: pageBadge(anchor) },
-    };
-  }
-
-  // #290 A2A (addendum §3.2): friend message forward - content-bearing ref
-  // (the message body rides the payload as content.fullText, unlike the
-  // pointer refs above). Stable id pinned to the source message.
-  if (rt === 'friend-message') {
-    const content = input.content || {};
-    const fullText = String(content.fullText || '').slice(0, 4000);
-    const preview = previewOf('', content.preview || fullText, 160);
-    const friendName = src.friendName || src.friendNeblinkId || '';
-    const date = src.date || '';
-    return {
-      type: 'ref', refType: 'friend-message',
-      id: src.messageId ? `ref:fm:${src.messageId}` : nextRefId('fm'),
-      source: {
-        kind: src.kind || 'friend-message',
-        conversationId: src.conversationId || '',
-        messageId: src.messageId || '',
-        friendName,
-        friendNeblinkId: src.friendNeblinkId || '',
-        direction: src.direction === 'out' ? 'out' : 'in',
-      },
-      anchor,
-      content: { preview, fullText },
-      meta: { icon: 'message-circle', typeLabel: t('ref.typeFriendMessage'), date },
-      display: { label: t('ref.fromFriend', { name: friendName }), preview, pageBadge: date },
-    };
-  }
-
-  return null;
-}
+import { showDocumentTermCard } from './documentTermCard.js';
+// 循环门禁修复批（2026-11-04）：**模型层**（makeReference + 它用到的纯补全助手）
+// 抽到叶子模块 refModel.js。缘由：msgQuote.js 只需要「行描述符 → Reference 对象」
+// 这一步模型转换，静态 import 本模块却会把整条**渲染**链（本文件 → popArtifacts
+// 的媒体卡）一起拉进来，于是 popArtifacts → msgQuote → reference → popArtifacts
+// 成环（scripts/check-circular.mjs SCC[3]）。模型落叶子后 msgQuote 直取模型，
+// 环上最薄的边（1 符号 / 1 调用点）消失；本轮不动下面两条**有意**的边。
+// 兼容面：makeReference / extLabel / pageBadge 在本模块同名 re-export（既有 9 个
+// import 点逐字不动，同 fileIcon.js 抽叶时的惯例）。
+import { makeReference, extLabel, pageBadge } from './refModel.js';
+export { makeReference } from './refModel.js';
+// imageref-media（2026-10-09 修复批）：图片文件引用的消息内面 = Pop 媒体预览卡
+// （构建器单点在 popArtifacts —— 本模块**向** popArtifacts 单向借用，反方向由
+// refModel.js 抽叶后的 msgQuote 腿兜住：popArtifacts 只经 msgQuote 触达模型）。
+// 卡片语言统一批（2026-10-26）：文件引用卡再复用同一 `fileIconStyle` 图标规范
+// （扩展名色块档 = 引擎侧 .file-card 同源，零第二套图标语言）。
+import { buildImageRefMediaFace, fileIconStyle } from './popArtifacts.js';
+// 引用牌图标化批（2026-11-02 11:00 作者令）：composer 引用 chip 的类型图标与气泡
+// 引用块同源（quoteLogo.js 单点 —— 图片=真缩略 / 文档=.fc-icon 原图标 / 文字=
+// 引用入口图标 QUOTE_ENTRY_ICON，即 footer 引用键那颗，作者令 2026-11-02 12:58）。
+import { quoteTypeIcon } from './quoteLogo.js';
 
 /** Legacy taskRef → normalized Reference (向后兼容，§2.4 不推翻 taskRef). */
 export function normalizeTaskRef(att) {
@@ -209,6 +68,17 @@ export function refMentionText(ref) {
 
 const EXPAND_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
 const COLLAPSE_SVG = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="3" y1="21" x2="10" y2="14"/></svg>';
+/**
+ * 待清件「清除」键的 ✕ 字形 —— **单一定义，两处消费者**（作者 2026-09-19 04:22
+ * 修正②「主窗口图片附件的 ❌ 有未居中感 ⇒ 修复居中」/ 修正①「引用条的 ❌ 参考主窗口」）：
+ *   ① 主窗口图片/文件附件 ❌（`js/chat.js::renderAttachmentPreview`，class `.att-remove`）
+ *   ② 好友消息面引用条 ❌（`renderFriendInputRef` 的 `closeStyle:'disc'`，class `.fm-quote-remove`）
+ * 🔴 为什么是 SVG 而不是文本 `x`：flex 居中的对象是**行盒**，行盒含上侧 ascent 空白
+ * ⇒ x-height 字形的视觉中心落在圆盘中线**下方**（作者截图 2 实测 1px / 16px = 6.25%）；
+ * 本字形在 16×16 viewBox 内由两条对角线构成，形心 =(8,8) 恒等于 viewBox 中心，
+ * `display:block` + flex 居中 ⇒ 图形中心 == 圆盘中心（逐值相等，容差 0）。
+ */
+export const CLOSE_X_SVG = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true" focusable="false"><path d="M4 4 L12 12"/><path d="M12 4 L4 12"/></svg>';
 const ICONS = {
   file: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>',
   document: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="flex-shrink:0"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>',
@@ -230,19 +100,71 @@ function truncate(str, n) {
 /**
  * Build the reference block element.
  * @param {Object} ref  unified Reference
- * @param {{mode?:'input'|'message'}} [opts]
+ * @param {{mode?:'input'|'message', closeStyle?:'glyph'|'disc'}} [opts]
+ *   closeStyle（input 模式）：`'glyph'`（缺省）= 既有 18×18 透明描边 ✕（主窗口输入框
+ *   引用卡 `.att-ref-remove`）；`'disc'` = 主窗口同类的**实心圆白 ✕** 清除键
+ *   （`.fm-quote-remove`，形态与主窗口图片/文件附件 ❌ 同款 —— 作者 2026-09-19
+ *   04:22 修正①：「引用条的 ❌ 与样式一律参考主窗口既有模式」）。
  * @param {(ref:Object)=>void} [onRemove]  input-mode local remove callback
  * @returns {HTMLElement}
  */
-export function renderRefBlock(ref, { mode = 'input' } = {}, onRemove) {
+export function renderRefBlock(ref, { mode = 'input', closeStyle = 'glyph' } = {}, onRemove) {
   if (mode === 'message') return renderMessageRef(ref);
-  return renderInputRef(ref, onRemove);
+  return renderInputRef(ref, onRemove, closeStyle);
+}
+
+// ── 转发消息引用块「按需展开按钮」溢出重估基座（作者 2026-09-14 17:26 裁定）──
+// 触发面 = ①元素尺寸变化（ResizeObserver：视口/容器宽度变 ⇒ 折行数变；图片
+// 加载完成、字体度量变最终也落成盒尺寸变化）②窗口 resize（无 RO 环境兜底）
+// ③主题切换（亮⇄暗，字体度量可能变）④字体就绪（document.fonts.ready）。
+// 形态 = 模块级单例监听器 + wrap→sync 登记表；遍历时按 isConnected 剔除（chip
+// 随 renderAttachmentPreview 的 innerHTML 重渲被丢弃 ⇒ 零监听/观测泄漏）。
+// 重估 idempotent、无副作用、不打断用户已展开态（sync 在 .expanded 早退）。
+const fmOverflowSyncs = new Map();
+let fmOverflowArmed = false;
+let fmOverflowRO = null;
+function runFmOverflowSyncs() {
+  for (const [el, sync] of fmOverflowSyncs) {
+    if (!el.isConnected) {
+      fmOverflowSyncs.delete(el);
+      if (fmOverflowRO) fmOverflowRO.unobserve(el);
+      continue;
+    }
+    sync();
+  }
+}
+/** Arm the shared listeners (once) + observe this chip, then measure on the
+ *  next frame — renderRefBlock returns a DETACHED node (the caller appends it),
+ *  so the first real measurement must wait for layout. */
+function armFmOverflow(wrap, sync) {
+  // 天然回收点：新建 chip 时旧 chip 已被 renderAttachmentPreview 的整条重渲剔除，
+  // 在此清掉已断连条目（新 wrap 此刻尚未挂载，故先 prune 后 set）。
+  for (const [el] of fmOverflowSyncs) {
+    if (!el.isConnected) {
+      fmOverflowSyncs.delete(el);
+      if (fmOverflowRO) fmOverflowRO.unobserve(el);
+    }
+  }
+  fmOverflowSyncs.set(wrap, sync);
+  if (!fmOverflowArmed) {
+    fmOverflowArmed = true;
+    window.addEventListener('resize', runFmOverflowSyncs, { passive: true });
+    window.matchMedia?.('(prefers-color-scheme: dark)')?.addEventListener?.('change', runFmOverflowSyncs);
+    document.fonts?.ready?.then?.(() => runFmOverflowSyncs());
+    if (typeof ResizeObserver !== 'undefined') fmOverflowRO = new ResizeObserver(runFmOverflowSyncs);
+  }
+  if (fmOverflowRO) fmOverflowRO.observe(wrap);
+  if (typeof requestAnimationFrame === 'function') {
+    // 第 1 帧（挂载同 task 完成时 → 移除发生在首绘之前，无可见闪烁），
+    // 第 2 帧兜底（挂载晚于本调用 / 字体与图片度量尚未落定）。
+    requestAnimationFrame(() => { runFmOverflowSyncs(); requestAnimationFrame(runFmOverflowSyncs); });
+  }
 }
 
 // #290 A2A (addendum §3.4): friend-message input block - etched surface,
 // header 来自 {好友名} + date corner badge, body 2-line clamp, expand = full
 // text (content.fullText). Fixed footprint, zero new color tokens.
-function renderFriendInputRef(ref, onRemove) {
+function renderFriendInputRef(ref, onRemove, closeStyle) {
   const wrap = document.createElement('div');
   wrap.className = 'att-ref att-ref-fm';
   wrap.dataset.refType = 'friend-message';
@@ -284,6 +206,31 @@ function renderFriendInputRef(ref, onRemove) {
   expand.setAttribute('aria-expanded', 'false');
   expand.innerHTML = EXPAND_SVG;
   const fullText = ref.content?.fullText || '';
+
+  // 作者 2026-09-14 17:26 裁定（逐字）：「从好友那转发过来的消息，有一个展开的
+  // 按钮，这个按钮应该是转发的消息过多的时候才显示呀，位置够的情况下不用显示。」
+  // ⇒ 本控件**按需渲染**：装得下 ⇒ DOM 里不出现该控件（不是 visibility/透明占位）。
+  // 判定一律**渲染后实测**：折叠态（-webkit-line-clamp:2）下 text.scrollHeight
+  // 超过 clientHeight 才算溢出——长英文与 CJK 宽度不同，**禁按字符数静态猜测**。
+  // 初始**不渲染**该控件（连一帧的预置都不给：DOM 里从头就不出现），溢出时由
+  // 落定后的实测补上；未挂载/未布局（clientHeight=0）⇒ 不可判（null）⇒ 维持现状
+  // 等下一次重估（rAF/RO/字体就绪/resize/主题）。
+  const overflowNow = () => {
+    if (!text.isConnected) return null;
+    const clampedH = text.clientHeight;
+    if (clampedH <= 0) return null;
+    return text.scrollHeight > clampedH + 1;   // +1 = 亚像素取整容差
+  };
+  const syncExpand = () => {
+    // 已展开 ⇒ 按钮语义 = 收起，必须在场（展开态 line-clamp 解除，实测恒不溢出）。
+    if (wrap.classList.contains('expanded')) return;
+    const over = overflowNow();
+    if (over === true) {
+      if (!expand.isConnected) wrap.insertBefore(expand, rm);  // 次序：body 之后、✕ 之前
+    } else if (over === false && expand.isConnected) {
+      expand.remove();
+    }
+  };
   const toggle = (e) => {
     if (e && e.stopPropagation) e.stopPropagation();
     const expanded = wrap.classList.toggle('expanded');
@@ -291,19 +238,25 @@ function renderFriendInputRef(ref, onRemove) {
     expand.title = expanded ? t('ref.collapse') : t('ref.expand');
     expand.innerHTML = expanded ? COLLAPSE_SVG : EXPAND_SVG;
     text.textContent = expanded ? fullText : (ref.content?.preview || '');
+    if (!expanded) syncExpand();               // 收起后重估（幂等）
   };
   expand.addEventListener('click', toggle);
   wrap.addEventListener('click', toggle);
 
   const rm = document.createElement('button');
   rm.type = 'button';
-  rm.className = 'att-ref-remove';
-  rm.textContent = '×';
+  // 修正①（2026-09-19 04:22）：引用条的 ❌ 取**主窗口同类别**形态 —— 实心圆白 ✕
+  //（`.fm-quote-remove`，与主窗口附件 ❌ 同一个声明块、同一个 `CLOSE_X_SVG` 字形）。
+  // 缺省仍是本卡原来的 18px 描边 ✕（`.att-ref-remove`）⇒ 主窗口输入框零变化。
+  const disc = closeStyle === 'disc';
+  rm.className = disc ? 'att-ref-remove fm-quote-remove' : 'att-ref-remove';
+  if (disc) rm.innerHTML = CLOSE_X_SVG; else rm.textContent = '×';
   rm.title = t('ref.remove');
   rm.setAttribute('aria-label', t('ref.remove'));
   rm.addEventListener('click', (e) => { e.stopPropagation(); onRemove?.(ref); });
 
-  wrap.append(icon, body, expand, rm);
+  wrap.append(icon, body, rm);                 // expand 按需挂载（溢出才进 DOM）
+  armFmOverflow(wrap, syncExpand);             // 渲染后实测 ⇒ 落定即补正显隐
   return wrap;
 }
 
@@ -321,6 +274,7 @@ function chipIcon(ref) {
     case 'document': return ICONS.document;
     case 'task': return ICONS.clipboard;
     case 'html-element': return ICONS.code;
+    case 'chat-message': return ICONS['message-circle'];
     default: return ICONS.file;
   }
 }
@@ -333,6 +287,11 @@ function chipTitle(ref) {
   const anc = ref.anchor || {};
   if (ref.refType === 'task') {
     return (`#${src.taskId != null ? src.taskId : ''} ${src.title || ''}`).trim();
+  }
+  if (ref.refType === 'chat-message') {
+    // quote-message 一期（spec §7.2）：标题 = 被引用者名：摘要（ref.display.label
+    // 已按此拼好；名字空时回落纯摘要）。
+    return ref.display?.label || ref.content?.excerpt || '';
   }
   if (ref.refType === 'document') {
     return src.title || src.fileName || (src.path || '').split('/').pop() || '';
@@ -360,8 +319,8 @@ function chipMetaText(ref) {
   return lines.filter(Boolean).join('\n');
 }
 
-function renderInputRef(ref, onRemove) {
-  if (ref.refType === 'friend-message') return renderFriendInputRef(ref, onRemove);
+function renderInputRef(ref, onRemove, closeStyle) {
+  if (ref.refType === 'friend-message') return renderFriendInputRef(ref, onRemove, closeStyle);
   const wrap = document.createElement('div');
   wrap.className = 'att-ref';
   wrap.dataset.refType = ref.refType || '';
@@ -376,7 +335,20 @@ function renderInputRef(ref, onRemove) {
 
   const icon = document.createElement('span');
   icon.className = 'att-ref-icon';
-  icon.innerHTML = chipIcon(ref);
+  // 引用牌图标化批（2026-11-02 11:00 作者令「引用的消息也需要图标化，文档和图片就是
+  // 原图标和图片缩略，文字的话就单独设计一个logo」）：**只**改 chat-message 分支
+  // （主聊天区的消息引用），其余 refType（file/document/task/html-element）逐字节
+  // 原样 —— 本函数同时被历史 ref 卡（persistence.js mode:'message' 不走这里，但
+  // 好友窗 pending chip messages.js:4020 走）消费，作用域收在 refType 上。
+  // 类型判定/字形/缩略取用同一单点 = quoteLogo.quoteTypeIcon（与气泡引用块同源）。
+  if (ref.refType === 'chat-message') {
+    icon.appendChild(quoteTypeIcon(
+      { excerpt: ref.content?.excerpt, attachments: ref.content?.attachments, itemIndex: ref.content?.itemIndex },
+      'att-ref-qicon',
+    ));
+  } else {
+    icon.innerHTML = chipIcon(ref);
+  }
   icon.setAttribute('aria-hidden', 'true');
 
   const body = document.createElement('span');
@@ -393,8 +365,9 @@ function renderInputRef(ref, onRemove) {
   // ✕ remove (local-only, C16 draft semantics — 删除链路不变)
   const rm = document.createElement('button');
   rm.type = 'button';
-  rm.className = 'att-ref-remove';
-  rm.textContent = '×';
+  const disc = closeStyle === 'disc';
+  rm.className = disc ? 'att-ref-remove fm-quote-remove' : 'att-ref-remove';
+  if (disc) rm.innerHTML = CLOSE_X_SVG; else rm.textContent = '×';
   rm.title = t('ref.remove');
   rm.setAttribute('aria-label', t('ref.remove'));
   rm.addEventListener('click', (e) => { e.stopPropagation(); onRemove?.(ref); });
@@ -482,15 +455,106 @@ export function buildTaskRefLine(p) {
   return line;
 }
 
+/** imageref-media（2026-10-09 修复批）：文件引用是否指向图片。与 extLabel 同一
+ *  扩展名族（png/jpg/jpeg/gif/webp，reference.js:40 的 IMG 表）＋ mimeType 图像
+ *  前缀兜底（canvas 标签引用可能 fileName 无扩展名）。非图片恒 false——文件卡
+ *  只给非图片。 */
+function isImageFileRef(ref) {
+  if (!ref || ref.refType !== 'file') return false;
+  const src = ref.source || {};
+  const base = String(src.fileName || src.title || src.path || '').split('/').pop() || '';
+  const dot = base.lastIndexOf('.');
+  const ext = dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+  if (['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(ext)) return true;
+  const mime = String(src.mimeType || (ref.meta && ref.meta.mimeType) || '');
+  return mime.startsWith('image/');
+}
+
+/** 文件/文档引用的统一卡面（卡片语言统一批 2026-10-26）：与引擎侧 `.file-card`
+ *  同一套语言 —— `.fc-icon` 扩展名色块（fileIconStyle 单源）+ `.fc-name` 文件名
+ *  + `.fc-sub` 来源路径（截断）；preview 有值时保留两行钳制内容行（引用特有的
+ *  信息面，字号随 sub 档）。类型角标（badge）并入图标块（MD/PDF… 即角标），
+ *  不再双写。dataset/click 语义与旧卡逐字节一致（jumpRef 单点）。 */
+function buildFileLangRefCard(ref) {
+  const src = ref.source || {};
+  const path = typeof src.path === 'string' ? src.path : '';
+  const rawName = String(src.fileName || src.title || ref.display?.label || '');
+  const base = rawName.split('/').pop() || rawName;
+  const card = document.createElement('div');
+  card.className = 'att-ref-card file-lang';
+  // 色族 = 扩展名档（fileIconStyle 单源；基础名无扩展名时回落路径扩展名 ——
+  // canvas 页签引用的 fileName 常无点，路径才是真类型源，makeReference typeLabel
+  // 同一口径）；块内文本 = meta.typeLabel（旧 badge 的同一来源，零信息丢失 ——
+  // SCALA/MD 全称保留），无 typeLabel 才回落 fileIconStyle 截断档。
+  const extSrc = (() => {
+    const d = base.lastIndexOf('.');
+    if (d > 0) return base.slice(d + 1);
+    const pd = path.lastIndexOf('.');
+    return pd > path.lastIndexOf('/') ? path.slice(pd + 1).toLowerCase() : '';
+  })();
+  const icon = fileIconStyle(extSrc);
+  const iconEl = document.createElement('div');
+  iconEl.className = 'fc-icon ' + icon.cls;
+  iconEl.textContent = ref.meta?.typeLabel || icon.label;
+  const meta = document.createElement('div');
+  meta.className = 'fc-meta';
+  const name = document.createElement('div');
+  name.className = 'fc-name';
+  name.textContent = ref.display?.label || base || path.split('/').pop() || path || extLabel(base, src.mimeType);
+  meta.appendChild(name);
+  const sourceLine = normalizeSource(ref);
+  if (sourceLine) {               // 20260903 fix: bare-filename path → no dir, no aux row
+    const sub = document.createElement('div');
+    sub.className = 'fc-sub att-ref-card-source';
+    sub.textContent = sourceLine;
+    meta.appendChild(sub);
+  }
+  const body = document.createElement('div');
+  body.className = 'att-ref-card-content';
+  body.textContent = ref.display?.preview || '';
+  if (body.textContent) meta.appendChild(body);
+  card.append(iconEl, meta);
+  card.dataset.refType = ref.refType || '';
+  card.dataset.refPath = path;
+  const isDocument = ref.refType === 'document' || /\.(md|markdown|html?)$/i.test(path);
+  const activate = () => {
+    if (isDocument && path) showDocumentTermCard(card, { path, title: name.textContent, openDocument: resolvedPath => jumpRef(ref, resolvedPath) });
+    else jumpRef(ref);
+  };
+  card.tabIndex = 0;
+  card.setAttribute('role', 'button');
+  card.addEventListener('click', activate);
+  card.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate(); }
+  });
+  return card;
+}
+
 function renderMessageRef(ref) {
+  // imageref-media（2026-10-09 修复批）：图片文件引用先分流到 Pop 媒体预览卡
+  // （buildImageRefMediaFace）。修复前本函数对 refType:'file' 一律出 att-ref-card
+  // ——图片被渲染成「文档图标 + 文件名 + IMG 角标 + 截断路径」的文件卡（用户
+  // 2026-10-09 07:45 现场报；文档图标本身 = meta.icon 'image' 无对应 ICONS 条目、
+  // refIcon 回落 ICONS.file 的二次症状）。引用身份以 dataset 留在媒体卡上
+  // （refType/refPath），点击 = openPopArtifact 开 Canvas（与 jumpRef 同族）。
+  if (isImageFileRef(ref)) return buildImageRefMediaFace(ref);
   // Task references converge to the one-line form above (same shape as the
-  // injected [打回任务] collapse); file/document/html-element keep the card.
+  // injected [打回任务] collapse); file/document keep the card.
   if (ref.refType === 'task') {
     return buildTaskRefLine({
       taskId: ref.source?.taskId ?? '',
       title: ref.source?.title || '',
       opinion: '',
     });
+  }
+  // 卡片语言统一批（作者令 2026-10-26「用户发送的附件卡片与引擎发送的文件卡片
+  // 统一为同一套卡片语言」）：file/document 引用走 `.file-lang` 面 —— 图标 =
+  // popArtifacts.fileIconStyle 同一扩展名色块档（.fc-icon 单一来源）、字级/圆角/
+  // 底色与 .file-card 逐项同规（CSS 单点 .att-ref-card.file-lang）。跳转动作
+  // （jumpRef）/dataset 引用身份不变；html-element 引用维持原 svg 图标卡
+  // （无扩展名可言，旧面即对的语言）。
+  if (ref.refType === 'file' || ref.refType === 'document') {
+    return buildFileLangRefCard(ref);
   }
   const card = document.createElement('div');
   card.className = 'att-ref-card';
@@ -537,11 +601,11 @@ function renderMessageRef(ref) {
 // the source URL. task: referral records are back-references — no silent
 // navigation, but let the task panel reveal it if it owns the id (future); for
 // now this is a non-navigating record (the return already happened).
-function jumpRef(ref) {
+function jumpRef(ref, resolvedPath = '') {
   if (!ref) return;
   const rt = ref.refType;
   const src = ref.source || {};
-  const path = src.path || '';
+  const path = resolvedPath || src.path || '';
   if (rt === 'file' || rt === 'document') {
     if (!path) return;
     const title = ref.display?.label || src.title || path.split('/').pop();

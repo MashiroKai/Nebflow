@@ -7,24 +7,27 @@ import fs2.{Pipe, Stream}
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.actor.ActorSystem as NebulaActorSystem
+import nebflow.actor.{ActorSystem as RootActorSystem, *}
 import nebflow.agent.*
+import nebflow.core.*
 import nebflow.core.entity.EntityLoader
-import nebflow.core.flow.{FlowTreeActor, FlowTreeRegistry, TeamSessionRegistry}
 import nebflow.core.mcp.McpManager
+import nebflow.core.project.{CancelSource as ChainCancelSource, *}
 import nebflow.core.schedule.FreezeSchedule.given
 import nebflow.core.skill.SkillService
-import nebflow.core.tools.{ToolContext, ToolRegistry}
-import nebflow.core.{PathUtil, *}
+import nebflow.core.tools.*
+import nebflow.gateway.NfFilePolicy.*
+import nebflow.gateway.WsDispatch.parsedJson
 import nebflow.llm.*
 import nebflow.service.*
-import nebflow.shared.*
+import nebflow.shared.{NebflowLogger, *}
+import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.`Content-Type`
 import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
-import org.http4s.{Charset, HttpRoutes, MediaType, Response, Status, StaticFile}
+import org.typelevel.ci.CIString
 
 import scala.concurrent.duration.*
 import scala.io.Source
@@ -36,30 +39,71 @@ class WebSocketRoutes(
   configService: ConfigService.type,
   configRef: Ref[IO, NebflowServiceConfig],
   rateLimiter: RateLimiter,
-  token: String,
+  /**
+   * Phase 3b: the LIVE file token (Ref, not a boot snapshot) — a rotation
+   * swaps it and the old value dies on this running gateway immediately
+   * (criterion 7), while live sessions keep authenticating.
+   */
+  tokenRef: Ref[IO, String],
+  /** Phase 3b: the console session store (session rail on the WS-face routes). */
+  sessions: GatewaySessionStore,
   fileChangeTracker: FileChangeTracker,
   sessionStore: SessionStore,
   wsHub: WsHub,
   contextWindow: Int = Defaults.ContextWindow,
   sharedResources: SharedResources,
   mcpManager: McpManager,
-  sttService: Option[SttService] = None
+  sttService: Option[SttService] = None,
+  /**
+   * C2-6: the `/api/nf-file` ticket store, created (TTL from
+   * `nebflow.json`) and injected by GatewayMain. The default keeps every
+   * existing construction site (specs, tooling) compiling.
+   */
+  nfTicketStore: NfTicketStore = NfTicketStore.unsafeDefault(),
+  /**
+   * 按对象复用批（2026-11-18）：`GET /api/nf-obj/<cid>/<name>` 的内容寻址索引。
+   * 铸票面（nfTicketRoutes）与取字节面（nfObjRoutes）必须共享同一个实例，否则
+   * 铸票时注册的 cid 在取数面查不到。缺省 = memoized 单例（既有构造点零改动）。
+   */
+  nfObjStore: NfObjStore = NfObjStore.memoized,
+  /**
+   * C1-5 injection seam: the credential-namespace policy the read and the
+   * signing endpoints share. Memoized so the R2 inode scan is a one-off.
+   */
+  nfPathPolicy: NfPathPolicy = NfPathPolicy.memoized(),
+  /**
+   * R-1b conn-guard：per-IP WS 看护（升级面准入 + 计数）。缺省 = 全放行
+   * 实例（既有测试构造点零改动）；生产由 GatewayMain 注入实配。
+   */
+  connGuard: ConnGuard = ConnGuard.disabled,
+  /**
+   * 控制台单实例接管注册表（2026-10-27 批，设计稿
+   * reports/20261027_231456_console-single-instance/DESIGN.md）。缺省 =
+   * [[ConsoleTakeover.disabled]]（全 no-op 缺省缝，connGuard 同款——既有测试
+   * 构造点零改动）；生产由 GatewayMain 注入（sendTo=wsHub.sendTo + 总闸读数）。
+   */
+  takeover: ConsoleTakeover = ConsoleTakeover.disabled
 ):
   private val logger = NebflowLogger.forName("nebflow.ws")
+  private val attachmentOwnerStore = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
 
-  /** #295 热更：setSttConfig 写配置后重建服务并替换此 Ref——transcribe 立即
-    * 走新配置，无需重启。构造参数保留为初始值（GatewayMain 启动时装载）。 */
+  /**
+   * #295 热更：setSttConfig 写配置后重建服务并替换此 Ref——transcribe 立即
+   * 走新配置，无需重启。构造参数保留为初始值（GatewayMain 启动时装载）。
+   */
   private val sttServiceRef: Ref[IO, Option[SttService]] = Ref.unsafe(sttService)
-  private val nebulaSystem = sharedResources.actorSystem
+  private val rootSystem = sharedResources.actorSystem
 
   /** Map of sessionId -> root AgentActor ref. Concurrent-safe via Ref. */
   private val rootAgents: Ref[IO, Map[String, nebflow.actor.ActorRef[AgentCommand]]] =
     Ref.unsafe(Map.empty)
 
-  /** In-flight root-agent spawns (sessionId -> completion). WS connect now
-    * eagerly spawns the root agent (⑦ team restore), so concurrent first-use
-    * paths (connect + user message) must not double-spawn — the self-cloned
-    * actor registry would end up with two live fibers for one session. */
+  /**
+   * In-flight root-agent spawns (sessionId -> completion). WS connect now
+   * eagerly spawns the root agent (⑦ team restore), so concurrent first-use
+   * paths (connect + user message) must not double-spawn — the self-cloned
+   * actor registry would end up with two live fibers for one session.
+   */
   private val rootSpawnInFlight: Ref[IO, Map[String, Deferred[IO, Unit]]] =
     Ref.unsafe(Map.empty)
 
@@ -69,27 +113,35 @@ class WebSocketRoutes(
     metaOpt: Option[nebflow.shared.SessionMeta],
     sharedResources: SharedResources
   ): IO[AgentDef] =
-    metaOpt.flatMap(_.agentName) match
-      case Some(agentName) =>
-        sharedResources.agentLibrary.get(agentName).flatMap {
-          case Some(defn) => IO.pure(defn)
-          case None =>
-            metaOpt.flatMap(_.flowName) match
-              case Some(fn) =>
-                nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
-                  case Some(entry) => IO.pure(entry.toAgentDef)
-                  case None        => nebulaFallback(agentName)
-                }
-              case None => nebulaFallback(agentName)
-        }
-      case None =>
-        sharedResources.agentLibrary.get("Nebula").flatMap {
-          case Some(d) => IO.pure(d)
-          case None => IO.raiseError(new RuntimeException("No default agent available"))
-        }
+    // Canvas ask mode（2026-10-28 实施批）：ask 会话身份优先——绑定面给文件，
+    // 提示词 = §6 分身章 + 组装上下文（缓存缺席现场组装一次，幂等）。
+    if nebflow.core.ask.AskSessions.isAskSession(sessionId) then
+      nebflow.core.ask.AskGatewayServices.instance match
+        case Some(svc) => svc.agentDefFor(sessionId)
+        case None =>
+          IO.raiseError(new RuntimeException(s"ask session $sessionId: ask services unavailable"))
+    else
+      metaOpt.flatMap(_.agentName) match
+        case Some(agentName) =>
+          sharedResources.agentLibrary.get(agentName).flatMap {
+            case Some(defn) => IO.pure(defn)
+            case None =>
+              metaOpt.flatMap(_.flowName) match
+                case Some(fn) =>
+                  nebflow.core.entity.EntityLoader.loadTeamAgent(fn, agentName).flatMap {
+                    case Some(entry) => IO.pure(entry.toAgentDef)
+                    case None => rootFallback(agentName)
+                  }
+                case None => rootFallback(agentName)
+          }
+        case None =>
+          sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
+            case Some(d) => IO.pure(d)
+            case None => IO.raiseError(new RuntimeException("No default agent available"))
+          }
 
-  private def nebulaFallback(agentName: String): IO[AgentDef] =
-    sharedResources.agentLibrary.get("Nebula").flatMap {
+  private def rootFallback(agentName: String): IO[AgentDef] =
+    sharedResources.agentLibrary.get(RootAgentIdentity.Name).flatMap {
       case Some(d) => IO.pure(d)
       case None => IO.raiseError(new RuntimeException(s"Agent not found: $agentName, and no default agent"))
     }
@@ -103,31 +155,33 @@ class WebSocketRoutes(
           // Single-flight: WS connect + user message can race on first use.
           // The claimer spawns and completes the Deferred; joiners wait and
           // re-read the registry.
-          rootSpawnInFlight.modify { inFlight =>
-            inFlight.get(sessionId) match
-              case Some(done) => (inFlight, Right(done))
-              case None =>
-                val done = Deferred.unsafe[IO, Unit]
-                (inFlight + (sessionId -> done), Left(done))
-          }.flatMap {
-            case Right(done) =>
-              done.get *> rootAgents.get.map(_.get(sessionId)).flatMap {
-                case Some(ref) => IO.pure(ref)
+          rootSpawnInFlight
+            .modify { inFlight =>
+              inFlight.get(sessionId) match
+                case Some(done) => (inFlight, Right(done))
                 case None =>
-                  // Claimer failed before registering — retry once.
-                  rootSpawnInFlight.update(_ - sessionId) *> ensureRootAgent(sessionId)
-              }
-            case Left(done) =>
-              doSpawnRootAgent(sessionId)
-                .guaranteeCase {
-                  case cats.effect.Outcome.Succeeded(_) =>
-                    rootSpawnInFlight.update(_ - sessionId) *>
-                      done.complete(()).void.handleErrorWith(_ => IO.unit)
-                  case _ =>
-                    rootSpawnInFlight.update(_ - sessionId) *>
-                      done.complete(()).void.handleErrorWith(_ => IO.unit)
+                  val done = Deferred.unsafe[IO, Unit]
+                  (inFlight + (sessionId -> done), Left(done))
+            }
+            .flatMap {
+              case Right(done) =>
+                done.get *> rootAgents.get.map(_.get(sessionId)).flatMap {
+                  case Some(ref) => IO.pure(ref)
+                  case None =>
+                    // Claimer failed before registering — retry once.
+                    rootSpawnInFlight.update(_ - sessionId) *> ensureRootAgent(sessionId)
                 }
-          }
+              case Left(done) =>
+                doSpawnRootAgent(sessionId)
+                  .guaranteeCase {
+                    case cats.effect.Outcome.Succeeded(_) =>
+                      rootSpawnInFlight.update(_ - sessionId) *>
+                        done.complete(()).void.handleErrorWith(_ => IO.unit)
+                    case _ =>
+                      rootSpawnInFlight.update(_ - sessionId) *>
+                        done.complete(()).void.handleErrorWith(_ => IO.unit)
+                  }
+            }
     }
 
   /** The actual spawn half of ensureRootAgent (single-flight). */
@@ -138,14 +192,30 @@ class WebSocketRoutes(
       history <- sharedResources.sessionStore.loadMessagesForSession(sessionId)
       metaOpt <- sharedResources.sessionStore.getSessionMeta(sessionId)
       agentDef <- resolveAgentDef(sessionId, metaOpt, sharedResources)
-      readTracker <- nebflow.core.tools.ReadTracker.create
-      fileHistory <- nebflow.core.tools.FileHistory.create()
+      sessionCwd <- nebflow.core.ask.AskSessions.sessionCwd(
+        sessionId,
+        nebflow.core.ask.AskGatewayServices.instance.map(_.registry)
+      )
+      readTracker <- nebflow.shared.ReadTracker.create
+      fileHistory <- nebflow.shared.FileHistory.create()
       modelOverrides <- sharedResources.sessionModelOverrides.get
       contextWindow = modelOverrides.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
+      // ── ctxthresh 批（2026-09-15 方案 A，作者卡答「按方案A实施」）─────────────
+      // 🔴 **本行是全仓唯一的阈值覆盖注入点**（口径③「仅 Nebula 窗口」的**结构性**
+      // 保证，不是口号）：depth=0 的 WS 根会话 spawn 是全仓唯一的 root spawn 点，
+      // 非 root spawn（`NodeRunner` / `MailTool`）一律不传该实参 ⇒ SessionContext.compactThresholdRatio = None
+      // ⇒ 走 CompactThreshold 现值函数（口径②）。
+      //
+      // 优先级链：内存 Ref（本进程内已热更的权威值）＞ 盘上 SessionMeta（跨重启
+      // 保留值，设计 §9-O4(a)）＞ 无覆盖。Ref 在启动时为空 ⇒ 重启后由 meta 恢复。
+      thresholdOverrides <- sharedResources.sessionCompactThreshold.get
+      compactThresholdRatio =
+        thresholdOverrides.get(sessionId).orElse(metaOpt.flatMap(_.compactThresholdRatio))
+      // ─────────────────────────────────────────────────────────────────────
       // Resolve folder-level projectRoot and inherited rules
       folderId = metaOpt.flatMap(_.folderId)
       resolvedProjectRoot <- sharedResources.sessionStore.resolveProjectRoot(folderId)
-      agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+      agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
       // Compute effective projectRoot: folder setting → unified ~/.nebflow/projects
       effectiveProjectRoot <- resolvedProjectRoot match
         case Some(pr) => IO.pure(Some(pr))
@@ -154,20 +224,20 @@ class WebSocketRoutes(
           IO.blocking {
             if !os.exists(projectsDir) then os.makeDir.all(projectsDir)
           }.as(Some(projectsDir.toString))
-      // F1 (#433): global safety mode from nebflow.json `safety.defaultMode`
-      // is the default when session meta carries no explicit value — the
-      // user's global auto-all must reach every seeding site, not just the
-      // session where it was set (hot-read, same source as permissionDecision
-      // bucket-miss fallback).
-      globalMode <- nebflow.core.GlobalSafety.defaultMode
+      // 2026-09-13（permshield S1）权限档位 = **应用级持久值**：agent 参数取唯一有效
+      // 档位（`SharedResources.effectiveSafetyMode` ⇒ `nebflow.json` 的
+      // `safety.defaultMode`）。这里既不消费 `SessionMeta.safetyMode`（盘上遗留值，
+      // 非权威），也没有"本会话覆盖"可保留——档位对**所有**会话一致（作者 09-13
+      // 「落全局持久，重启后仍生效」）。
+      effectiveMode <- sharedResources.effectiveSafetyMode
       // Resolve inherited rules from folder chain
       resolvedRules = folderId.map { fid =>
-        nebflow.service.RulesStore.resolveInheritedRules(
+        nebflow.shared.RulesStore.resolveInheritedRules(
           fid,
           id => sharedResources.sessionStore.getFolderParentId(id)
         )
       }.flatten
-      ref <- nebulaSystem.spawn(
+      ref <- rootSystem.spawn(
         AgentActor(
           agentDef,
           sharedResources,
@@ -181,10 +251,10 @@ class WebSocketRoutes(
           fileHistory = Some(fileHistory),
           contextWindow = contextWindow,
           projectRoot = effectiveProjectRoot,
+          sessionCwd = sessionCwd,
           rulesMd = resolvedRules,
           folderId = folderId,
-          safetyMode = metaOpt.map(_.safetyMode)
-            .getOrElse(nebflow.core.SafetyMode.toString(globalMode)),
+          safetyMode = nebflow.core.SafetyMode.toString(effectiveMode),
           gitBranch = metaOpt.flatMap(_.gitBranch),
           rootSessionId = sessionId,
           // Nebula 会话沙箱启用（2026-09-05 作者裁定 13:09）：写根=~/.nebflow
@@ -194,12 +264,14 @@ class WebSocketRoutes(
           // （metaOpt.agentName 是可缺省的会话元数据）。其余 WS 根会话
           // （standalone 非 Nebula 聊天 / team Manager / flow 入口）保持
           // sandboxEnabled=false 现状零变化；沙箱 root 推导仍归 AgentCore。
-          sandboxEnabled = agentDef.name == "Nebula"
+          sandboxEnabled = agentDef.name == RootAgentIdentity.Name,
+          // ctxthresh 批：会话级压缩阈值比例覆盖（仅本 root spawn 注入，见上方注释）。
+          compactThresholdRatio = compactThresholdRatio
         ),
         s"agent-$sessionId"
       )
       pr = effectiveProjectRoot.getOrElse("")
-      safetyMode = metaOpt.map(_.safetyMode).getOrElse(nebflow.core.SafetyMode.toString(globalMode))
+      safetyMode = nebflow.core.SafetyMode.toString(effectiveMode)
     yield (ref, pr, safetyMode)
     agentIo.flatMap { case (ref, pr, safetyMode) =>
       val hookCtx = nebflow.core.hooks.HookContext(
@@ -210,7 +282,7 @@ class WebSocketRoutes(
       sharedResources.hookEngine
         .onSessionStart(hookCtx)
         .handleErrorWith { e =>
-          nebflow.core.NebflowLogger
+          nebflow.shared.NebflowLogger
             .forName("nebflow.hooks")
             .warn(s"SessionStart hook failed: ${e.getMessage}")
             .as(nebflow.core.hooks.HookResult.allow)
@@ -229,16 +301,81 @@ class WebSocketRoutes(
           )
         ) *>
         // P2: register this root session as the InteractionHub render
-        // target (cards/questions appear in the Nebula window) and seed
-        // its permission-policy bucket from persisted session meta
-        // (backward compatible with per-session safetyMode).
-        registerRootInteraction(sessionId, recordingWsSend) *>
-        seedPermissionPolicy(sessionId, safetyMode) *>
-        initFlowTree(sessionId, ref, pr, safetyMode)
-          .handleErrorWith(e => logger.error(s"initFlowTree failed for session $sessionId: ${e.getMessage}"))
-          .start
-          .as(ref)
+        // target (cards/questions appear in the Nebula window).
+        //
+        // 2026-09-13（permshield S1）：**没有任何按会话的权限桶可播种**——档位只有
+        // 一个来源（应用级 `safety.defaultMode`，见 SharedResources）。此前每建立
+        // 一次连接就用盘上 meta 值写桶的路径（2026-09-12 前）以及"内存覆盖"路径
+        // （2026-09-12–09-13）都已随覆盖层删除。
+        // 团队功能删除批（team-feature-deletion-20261104）阶段 1：此处原为
+        // `initFlowTree(...)` —— 每个 root 会话 spawn 就无条件建一棵「团队树」actor
+        // 并注册进树注册表。阶段 1 断掉该无条件路径，阶段 2 摘掉惰性入口
+        // （Load 工具的 team 分支），阶段 3 把类型本体与注册表一并删除 ——
+        // 至此「连接即建树」的生产者、入口、类型三层全无。
+        registerRootInteraction(sessionId, recordingWsSend).as(ref)
     }
+
+  end doSpawnRootAgent
+
+  // ── D1 后台通知·目标会话激活面（steward 批 2026-10-23；作者裁定 09:46
+  //    「目标会话死了就激活发送，不用发给root」）────────────────────────────
+
+  /**
+   * 激活（复活）已死的目标会话并把完成通知投给它。复活机制与引擎重启后的会话
+   * 恢复**同源**：[[doSpawnRootAgent]] 持久化恢复 spawn（SessionStore 水合
+   * transcript + spawn 即 `RecoverPersistedQueues` 注入队重放）——WS connect 恢复
+   * 同款，通知经重放落进目标会话新回合。
+   *
+   * 家族分派：
+   *   - registry 行已活（判活→激活竞态合拢）⇒ 直接投该会话（新鲜 ref）；
+   *   - 会话已删（SessionStore 无行）⇒ `UnknownSession`（不落盘、不激活、审计收口）；
+   *   - Delegate/SubTask ⇒ `Deferred`（复活归监督者 respawn /
+   *     boot sweep 既有恢复腿所有，不越权重挂——持久标记等自然复活重放补投）；
+   *   - Root/Team/Flow ⇒ 先把标记写进**目标会话**注入队（correlationId 幂等，
+   *     BgInboxBackstop 会话存在守卫双保险），再走恢复 spawn ⇒ 重放交付。
+   */
+  def activateSession(
+    sessionId: String,
+    pendingEvent: AgentCommand.ExternalEvent
+  ): IO[BgSessionActivator.ActivationResult] =
+    sessionStore.getSessionMeta(sessionId).flatMap {
+      case None => IO.pure(BgSessionActivator.UnknownSession) // 已删：无处激活、无处落盘
+      case Some(_) =>
+        sharedResources.agentRegistry.get.flatMap { reg =>
+          reg.get(sessionId) match
+            case Some(rec) =>
+              rootSystem.isAlive(rec.ref.path).flatMap {
+                case true =>
+                  // 激活竞态：判活到激活之间已被别人复活 ⇒ 直投新鲜 ref（零重复落盘）。
+                  (rec.ref ! pendingEvent)
+                    .as(BgSessionActivator.Activated: BgSessionActivator.ActivationResult)
+                case false => activateDeadSession(sessionId, rec.kind, pendingEvent)
+              }
+            case None => activateDeadSession(sessionId, AgentKind.Root, pendingEvent)
+        }
+    }
+
+  private def activateDeadSession(
+    sessionId: String,
+    kind: AgentKind,
+    pendingEvent: AgentCommand.ExternalEvent
+  ): IO[BgSessionActivator.ActivationResult] =
+    kind match
+      case AgentKind.Delegate | AgentKind.SubTask =>
+        IO.pure(
+          BgSessionActivator.Deferred(
+            s"session family $kind revival is owned by its supervisor respawn / boot-sweep legs"
+          )
+        )
+      case _ =>
+        // Root | Team | Flow：标记先行（spawn 重放载体），恢复 spawn 同源激活。
+        BgInboxPort.append(sessionId, pendingEvent) *>
+          ensureRootAgent(sessionId)
+            .as(BgSessionActivator.Activated: BgSessionActivator.ActivationResult)
+            .handleErrorWith(e => IO.pure(BgSessionActivator.Deferred(e.getMessage)))
+
+  // 装配（构造一次；install 幂等覆盖）。bg 完成通知的目标会话死亡 ⇒ 激活目标本身。
+  BgSessionActivator.install((sid, ev) => activateSession(sid, ev))
 
   /**
    * P2: register a root session's recording wsSend with the InteractionHub so
@@ -247,34 +384,33 @@ class WebSocketRoutes(
    */
   private def registerRootInteraction(sessionId: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
     sharedResources.interactionHubRef.get.flatMap {
-      case Some(hub) => (hub ! nebflow.agent.InteractionHubCommand.RegisterRoot(sessionId, wsSend)).void
+      case Some(hub) => (hub ! nebflow.actor.InteractionHubCommand.RegisterRoot(sessionId, wsSend)).void
       case None => IO.unit
     }
 
   private def unregisterRootInteraction(sessionId: String): IO[Unit] =
     sharedResources.interactionHubRef.get.flatMap {
-      case Some(hub) => (hub ! nebflow.agent.InteractionHubCommand.UnregisterRoot(sessionId)).void
+      case Some(hub) => (hub ! nebflow.actor.InteractionHubCommand.UnregisterRoot(sessionId)).void
       case None => IO.unit
     }
 
-  /** 刷新存活 (2026-09-03): re-send a root session's still-pending AskUser
-    * cards to THIS connection. Called after the initial historyPage of a
-    * session (re)subscribe — see the getHistory hook. Resolves the root
-    * session id first (team/flow node sessions have no hub slots of their
-    * own; their asks live under the root), then snapshots via the hub and
-    * re-renders each card byte-identical to the first send plus
-    * `replayed: true` (the frontend dedup key). Failure-tolerant: a hub
-    * hiccup degrades to "no replay", the history restore chain still applies.
-    */
+  /**
+   * 刷新存活 (2026-09-03): re-send a root session's still-pending AskUser
+   * cards to THIS connection. Called after the initial historyPage of a
+   * session (re)subscribe — see the getHistory hook. Resolves the root
+   * session id first (team/flow node sessions have no hub slots of their
+   * own; their asks live under the root), then snapshots via the hub and
+   * re-renders each card byte-identical to the first send plus
+   * `replayed: true` (the frontend dedup key). Failure-tolerant: a hub
+   * hiccup degrades to "no replay", the history restore chain still applies.
+   */
   private def replayPendingAsks(sessionId: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
     sharedResources.interactionHubRef.get.flatMap {
       case None => IO.unit
       case Some(hub) =>
         resolveRootSessionId(sessionId).flatMap { rootSid =>
           hub
-            .?[List[io.circe.Json]](reply =>
-              nebflow.agent.InteractionHubCommand.ListPendingAsks(rootSid, reply)
-            )
+            .?[List[io.circe.Json]](reply => nebflow.actor.InteractionHubCommand.ListPendingAsks(rootSid, reply))
             .flatMap(_.traverse_(frame => wsSend(frame)))
             .handleErrorWith { e =>
               logger.warn(s"Pending-ask replay failed for session $sessionId: ${e.getMessage}")
@@ -282,64 +418,101 @@ class WebSocketRoutes(
         }
     }
 
-  /** P2: seed the root session's permission-policy bucket from persisted meta. */
-  private def seedPermissionPolicy(sessionId: String, safetyMode: String): IO[Unit] =
-    val mode = nebflow.core.SafetyMode.fromString(safetyMode)
-    sharedResources.permissionPolicies.update(_ + (sessionId -> nebflow.agent.PermissionPolicy(safetyMode = mode)))
+  /**
+   * 多 AskUser 并发批（#250 第③项，2026-09-13 作者裁定「6 项全补」）：
+   * 全库 pending-AskUser 快照 → 本连接（`pendingAsksSnapshot{asks:[…]}`，单帧，
+   * 与 `ListPendingAsks` 的重放帧逐字节同构，含 `replayed: true`）。
+   *
+   * 与 `replayPendingAsks` 的分工：那条**渲染卡片进聊天流**（按会话订阅触发，职责
+   * 不变），本条只**重建待办条/badge 的本地镜像**——所以它是「一次性全局」，与
+   * 当前活动会话无关。前端消费点 = `askPending.applyPendingAskSnapshot`。
+   *
+   * hub 未装配（早期 boot / 测试）⇒ 回空快照：这是确定性结论（无 hub ⇒ 无槽位），
+   * 比「不回帧、前端镜像悬空」少一条静默路径。查询失败 ⇒ 回失败帧（不带 asks），
+   * 前端据此保留本地镜像并给可见提示——把「同步失败」与「确实没有 pending」区分开。
+   */
+  private def listAllPendingAsks(wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
+    sharedResources.interactionHubRef.get.flatMap {
+      case None =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "pendingAsksSnapshot".asJson,
+            "asks" -> List.empty[io.circe.Json].asJson
+          )
+        )
+      case Some(hub) =>
+        hub
+          .?[List[io.circe.Json]](reply => nebflow.actor.InteractionHubCommand.ListAllPendingAsks(reply))
+          .flatMap(asks =>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "pendingAsksSnapshot".asJson,
+                "asks" -> asks.asJson
+              )
+            )
+          )
+          .handleErrorWith { e =>
+            logger.warn(s"Pending-ask global snapshot failed: ${e.getMessage}") *>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "pendingAsksSnapshot".asJson,
+                  "failed" -> true.asJson,
+                  "error" -> s"pending-ask snapshot failed: ${e.getMessage}".asJson
+                )
+              ).handleErrorWith(_ => IO.unit)
+          }
+    }
 
-  /** 递进式放行链 (2026-08-30): persist + hot-apply an escalated safety mode.
-    *
-    * Scope is aligned with the existing `setSafetyMode` WS command: session
-    * meta (persisted, restored on reconnect via seedPermissionPolicy) + the
-    * in-memory policy bucket + the agent's own copy. Order matters — the
-    * bucket (the decision source) is updated BEFORE the caller forwards the
-    * answer, so the next tool decision already sees the new mode.
-    */
+  /**
+   * 递进式放行链 (2026-08-30)：把确认卡上选定的升级档**落为全局持久档位**。
+   *
+   * permshield S1（2026-09-13，作者重裁「保留递进链路…落全局持久，跟盾牌走同一条
+   * 路，重启后仍生效」）：递进链**保留**，但写入目标由"本会话内存覆盖"改为
+   * `nebflow.json` 的 `safety.defaultMode` —— 与 WS 盾牌 / REST
+   * `PUT /api/safety/mode` 共用同一个持久函数（`ConfigService.setSafetyDefaultMode`
+   * 内 `writeLocked` 串行），因此升级立即对所有会话生效且**重启后仍生效**。
+   *
+   * 顺序契约：落盘（权威源）→ 广播 `configUpdated`。判定侧每次热读该键，故下一次
+   * 工具判定即看到新档位；无需（也没有）向 agent 发状态通知。
+   */
   private def applyPermissionUpgrade(sessionId: String, mode: nebflow.core.SafetyMode): IO[Unit] =
     val modeStr = nebflow.core.SafetyMode.toString(mode)
     for
-      _ <- sessionStore.setSafetyMode(sessionId, modeStr)
-      rootSid <- resolveRootSessionId(sessionId)
-      _ <- sharedResources.permissionPolicies.update(_ + (rootSid -> nebflow.agent.PermissionPolicy(safetyMode = mode)))
-      _ <- ensureAgent(sessionId)(ref => ref ! nebflow.agent.AgentCommand.SetSafetyMode(mode))
-      _ <- logger.info(s"Permission upgrade: session $sessionId → $modeStr (persisted + bucket + agent)")
+      _ <- ConfigService.setSafetyDefaultMode(modeStr)
+      _ <- wsHub.broadcast(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
+      _ <- logger.info(
+        s"Permission upgrade (session $sessionId): global safety mode → $modeStr (persisted to safety.defaultMode; applies to every session)"
+      )
     yield ()
 
-  /** Create and register a FlowTreeActor for a session. Fire-and-forget via .start. */
-  private def initFlowTree(
-    sessionId: String,
-    agentRef: nebflow.actor.ActorRef[AgentCommand],
-    projectRoot: String,
-    safetyMode: String = "confirm-edits"
-  ): IO[Unit] =
-    val config = FlowTreeActor.TreeConfig(
-      parentAgentRef = agentRef,
-      wsSend = Some(makeRecordingWsSend(sessionId, (json: Json) => wsHub.broadcast(json))),
-      sessionId = Some(sessionId),
-      resources = sharedResources,
-      projectRoot = projectRoot,
-      safetyMode = safetyMode
-    )
-    for
-      // ⑦ (2026-08-24): mark restore in flight BEFORE spawn so a concurrent
-      // GET /api/teams/mounted (awaitRestore) waits for restoreTeams to
-      // finish instead of fast-pathing past it and returning an empty list.
-      // The completion signal always fires (signalRestoreComplete in the
-      // actor setup, even for a zero-team home), so the wait is bounded to
-      // the restore itself — no fixed stall.
-      _ <- FlowTreeRegistry.markRestoreStarted
-      treeRef <- nebulaSystem.spawn(FlowTreeActor(config), s"flow-tree-$sessionId")
-      _ <- FlowTreeRegistry.register(sessionId, treeRef)
-      _ = logger.info(s"FlowTreeActor created for session $sessionId (pipelines auto-restored on startup)")
-    yield ()
+  /**
+   * 全局档位的**单一持久写入口**（permshield S1）：WS 盾牌 `setSafetyMode` /
+   * 老客户端 `setBypass` / 确认卡递进升级三处共用，与 REST `PUT /api/safety/mode`
+   * 落在同一个函数（`ConfigService.setSafetyDefaultMode`，`writeLocked` 串行）
+   * ⇒ 一条持久路径，零第二介质。
+   *
+   * 顺序契约：**先落盘**（权威源），**再广播** `configUpdated`（各客户端同步）。
+   * 落盘失败**上浮** —— 调用方回 error 帧，绝不出现"界面已切、盘上没写"（重启即
+   * 回弹，用户可见的坏形态）。
+   */
+  private def persistGlobalSafetyMode(mode: String): IO[Unit] =
+    ConfigService.setSafetyDefaultMode(mode) *>
+      wsHub.broadcast(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
 
-  end initFlowTree
+  // 团队功能删除批（team-feature-deletion-20261104）阶段 1：`initFlowTree`
+  // （原 :490-517）整段删除 —— 它是「每次 root 会话 spawn 就无条件建一棵团队树」
+  // 的唯一定义面（markRestoreStarted + spawn 树 actor + 注册进树注册表）。
+  // 阶段 2（同一批）：注释里那条「树仍可经惰性入口 getOrCreate（LoadTool 腿）按需
+  // 建立」的腿也已摘掉（Load 工具的 team 分支删除）。
+  // 阶段 3（同一批）：树 actor / 树注册表 / 树命令三套类型本体与其
+  // `unregister` 清理腿一并删除（上面的 removeRootAgent 只剩 agentRegistry 一条）。
 
   /** Stop and remove the root AgentActor for a session. */
   private def removeRootAgent(sessionId: String): IO[Unit] =
-    FlowTreeRegistry.unregister(sessionId) *>
-      sharedResources.agentRegistry.update(_ - sessionId) *>
+    sharedResources.agentRegistry.update(_ - sessionId) *>
       unregisterRootInteraction(sessionId) *>
+      // 2026-09-13（permshield S1）：此处原为"清该会话的内存覆盖条目"。覆盖层删除后
+      // 档位是应用级的，删除会话**不得**（也不能）改动它——故本清理点整体移除。
       rootAgents.modify { agents =>
         agents.get(sessionId) match
           case Some(ref) =>
@@ -350,36 +523,19 @@ class WebSocketRoutes(
           case None => (agents, IO.unit)
       }.flatten
 
-  /** #38 Layer C (2026-09-01): team 成员会话删除闭环。
-    *
-    * 此前 deleteSession 只停 root agent（removeRootAgent）+ 删磁盘文件；
-    * team 成员 actor（qa-backend 等，注册于 TeamSessionRegistry.actorMap）
-    * 完全存活——state.messages 持 ~10MB，下一次活动（Mail/flow dispatch）
-    * 触发 persistIfSession 2s 防抖 → <id>.json 以 10MB 重建 → 删除复活
-    * （观测：deleteSession 后 ~12s 历史灌回）。修复：删除前停成员 actor +
-    * 清 TeamSessionRegistry 三处映射（actorMap / AgentRegistry / sessionMap）。
-    */
-  private def stopTeamSessionActors(sessionId: String): IO[Unit] =
-    for
-      actorOpt <- TeamSessionRegistry.getRunningActor(sessionId)
-      _ <- actorOpt match
-        case Some(ref) =>
-          logger.info(s"deleteSession: stopping team member actor for $sessionId")
-          // 注意：`ref ! msg` 本身返回 IO[Unit]（offer 的描述）——直接使用，
-          // 不能包 IO(...)（嵌套 IO[IO[Unit]]，内层 offer 永不执行——与 V1
-          // 级联修复同类 bug，#38 停成员 stop 曾因此静默无效）。
-          ref ! AgentCommand.Stop(s"session $sessionId deleted")
-        case None => IO.unit
-      _ <- TeamSessionRegistry.unregisterActor(sessionId, sharedResources)
-      pairOpt <- TeamSessionRegistry.instanceAndAgentOfSession(sessionId)
-      _ <- pairOpt match
-        case Some((inst, agent)) => TeamSessionRegistry.unregisterAgent(inst, agent, sessionId)
-        case None                => IO.unit
-    yield ()
+  // ═══ 团队功能删除批（team-feature-deletion-20261104）阶段 3：团队成员删除闭环退役
+  // 本文件原有的 `stopTeamSessionActors`（#38 Layer C 2026-09-01）做两件事：
+  // ① 从团队会话登记表的 actorMap 取成员 actor 并 Stop；② 清该登记表的三处映射
+  // （actorMap / AgentRegistry / sessionMap）。团队会话登记表本体删除后本腿零对象
+  // （actorMap 自 P1 dual-write 起就与 agentRegistry 同源，成员 actor 的停止由
+  // `removeRootAgent` + `stopChildDelegateActors`（SessionChildCascade）覆盖），
+  // 故整段删除，`WsDispatchCtx` 的接线字段一并摘除。
 
-  /** V1 (2026-09-03): Delegate/SubTask/Ephemeral 子代理级联停止——实现抽在
-    * SessionChildCascade（deleteSession/batchDelete 两条路径与单测共用同一实现），
-    * 取舍理由见该对象 doc。 */
+  /**
+   * V1 (2026-09-03): Delegate/SubTask/Ephemeral 子代理级联停止——实现抽在
+   * SessionChildCascade（deleteSession/batchDelete 两条路径与单测共用同一实现），
+   * 取舍理由见该对象 doc。
+   */
   private def stopChildDelegateActors(sessionId: String): IO[Unit] =
     SessionChildCascade.stopChildDelegateActors(sharedResources, sessionId).void
 
@@ -398,14 +554,81 @@ class WebSocketRoutes(
         case Some(hub) =>
           for
             rootSid <- resolveRootSessionId(sessionId)
-            _ <- (hub ! nebflow.agent.InteractionHubCommand.Answered(
-              nebflow.agent.InteractionAnswered(requestId, rootSid, payload)
+            _ <- (hub ! nebflow.actor.InteractionHubCommand.Answered(
+              nebflow.actor.InteractionAnswered(requestId, rootSid, payload)
             )).void
           yield ()
         case None =>
           logger.warn("Interaction answer dropped: InteractionHub not spawned") *> IO.unit
       }
     else logger.warn("Dropping interaction answer: no sessionId provided") *> IO.unit
+
+  /**
+   * askuser-remote P1 (2026-10-07): the BRIDGE answer leg — social bridges
+   * (a feishu card click, a weixin numbered reply) enter the SAME Answered
+   * convergence through this DEDICATED public method instead of the private
+   * frontend one, so bridge-sourced answers stay attributable (their own log
+   * line) and can never be confused with a frontend WS answer. Same
+   * primitives, same ghost-agent D2 guarantee: the hub is told, never
+   * routeToAgent.
+   */
+  def forwardBridgeInteractionAnswer(requestId: String, sessionId: String, payload: io.circe.Json): IO[Unit] =
+    if sessionId.nonEmpty then
+      sharedResources.interactionHubRef.get.flatMap {
+        case Some(hub) =>
+          for
+            rootSid <- resolveRootSessionId(sessionId)
+            _ <- logger.info(
+              s"bridge interaction answer: requestId=$requestId root=$rootSid keys=${payload.asObject.map(_.keys.toList.mkString(",")).getOrElse("-")}"
+            )
+            // askuser-remote P1 反射补口（2026-10-09，feishu-answer-card-flip）：
+            // 桥面作答此前只进 hub + 会话注入，桌面端两面都收不到（.ui.json 无作答行
+            // ⇒ 刷新后历史卡永远「未答」；无关卡帧 ⇒ 活卡不翻面——2026-10-09 12:36
+            // 用户报单根因）。web 腿（handleAskUserAnswer）两面都做，此处对齐：
+            // 落库行（同款单一构造点）+ askUserAnsweredRemote 翻面帧。两面 best-effort
+            // （与取消落盘同款降级：失败只 WARN，作答照常进 hub）；askUser 形闸由
+            // BridgeAnswerReflection 单点把持（许可类载荷 ⇒ 双跳过，改前行为不变）。
+            // 秘密槽判据走 hub 只读查询（SecretSlotsOf，与 web 腿 secretSlotsFor 同一
+            // 权威同一形态；查询失败 ⇒ 空集，hub 侧守卫兜底拒收明文回流）。
+            secretIdxs <- hub
+              .?[Option[List[nebflow.actor.SecretSlotSpec]]](reply =>
+                nebflow.actor.InteractionHubCommand.SecretSlotsOf(requestId, reply)
+              )
+              .map(_.getOrElse(Nil).map(_.idx).toSet)
+              .handleErrorWith(_ => IO.pure(Set.empty[Int]))
+            // 作答落库归属批（2026-11-03）：桥腿与 web 腿同一裁决单点（作者报障
+            // 「回答后台智能体的提问泄漏进主会话」）——子代理 / 节点提问 ⇒ 脱敏全文
+            // 只落提问会话，根会话（rootSid）只留不含内容的代答痕迹行；根自问 /
+            // 归属读数缺席 ⇒ 改前路径逐字不变。连接件在 [[AskAnswerPlacement]]。
+            _ <- BridgeAnswerReflection.rowFor(requestId, payload, secretIdxs).traverse_ { row =>
+              AskAnswerPlacement
+                .originOf(sharedResources, requestId)
+                .flatMap { origin =>
+                  val plan = AskAnswerPlacement.plan(origin, rootSid, row.text, requestId, row.timestamp)
+                  AskAnswerPlacement.persist(sharedResources.sessionStore, requestId, plan)
+                }
+                .handleErrorWith(e =>
+                  logger.warn(
+                    s"bridge answer ui-row append failed requestId=$requestId root=$rootSid: ${e.getMessage}"
+                  )
+                )
+            }
+            _ <- BridgeAnswerReflection.frame(rootSid, requestId, payload, secretIdxs).traverse_ { f =>
+              wsHub
+                .broadcast(f)
+                .handleErrorWith(e =>
+                  logger
+                    .warn(s"bridge answer flip broadcast failed requestId=$requestId root=$rootSid: ${e.getMessage}")
+                )
+            }
+            _ <- (hub ! nebflow.actor.InteractionHubCommand.Answered(
+              nebflow.actor.InteractionAnswered(requestId, rootSid, payload)
+            )).void
+          yield ()
+        case None =>
+          logger.warn("Bridge interaction answer dropped: InteractionHub not spawned") *> IO.unit
+      }
+    else logger.warn("Dropping bridge interaction answer: no sessionId provided") *> IO.unit
 
   /** Resolve the permission-policy bucket (root session) of a sessionId. */
   private def resolveRootSessionId(sessionId: String): IO[String] =
@@ -436,6 +659,113 @@ class WebSocketRoutes(
    * real persisted root session (user messages / plan / interrupt). Never spawns
    * a ghost for unknown sessionIds — such messages are logged and dropped.
    */
+  /**
+   * ctxthresh 批：会话的**有效上下文窗口**（只读回显用）——会话级模型覆盖优先，
+   * 否则预设派生的全局值。与 `doSpawnRootAgent` 内同一表达式同源。
+   */
+  private def effectiveContextWindowOf(sessionId: String): IO[Int] =
+    sharedResources.sessionModelOverrides.get.map(
+      _.get(sessionId).map(_.contextWindow).getOrElse(sharedResources.contextWindow)
+    )
+
+  /**
+   * ctxthresh 批：会话的阈值覆盖现值——内存 Ref（本进程内已热更的权威值）→
+   * 盘上 `SessionMeta.compactThresholdRatio`（跨重启保留值）→ None（无覆盖）。
+   */
+  private def compactThresholdOverrideOf(sessionId: String): IO[Option[Double]] =
+    sharedResources.sessionCompactThreshold.get.flatMap { m =>
+      m.get(sessionId) match
+        case some @ Some(_) => IO.pure(some)
+        case None => sessionStore.getSessionMeta(sessionId).map(_.flatMap(_.compactThresholdRatio))
+    }
+
+  /**
+   * ctxthresh 批：**身份面判据**（作用域闸的第 ① 条，独立成函数便于判读）——
+   * 会话的**有效 agent 名**必须是 `"Nebula"`。
+   *
+   * 口径来源 = 作者卡答「仅 root 会话」＋「其他的还是使用我们预设中规定的」，与既有
+   * 「Nebula 会话集」判据逐字同款（`SessionStore.listSessionsByAgent` :604-613
+   * 「Sessions without agentName match "Nebula"」= `agentName.getOrElse("Nebula")`；
+   * 客户端同款 `s.agentName || 'Nebula'`，main.js:1553）；先例 = 会话沙箱根的
+   * `SandboxPolicy.isNebulaRootSession` 用 `agentName == "Nebula"` 把 standalone 非
+   * Nebula 聊天 / team Manager / flow 入口等**其余 root 会话**一并排除（双保险）。
+   *
+   * 🔴 **判据取「声明的名字」而非 spawn 期解析出的 `AgentDef.name`**：`resolveAgentDef`
+   * 对库里不存在的名字会 `rootFallback` 回落成 Nebula（本文件 :98-102）⇒ 用解析结果
+   * 判会让 `agentName="general"` 这类会话**误判成 Nebula**（复核位探针的第 1 例正是它）。
+   * spawn 期身份另有 `agentDef.name == "Nebula"`（:216 `sandboxEnabled`），二者不冲突。
+   *
+   * 无 `SessionMeta` 的 id（`node-*` / `dag-*` / 已删会话等幽灵 id）⇒ **身份不可立
+   * ⇒ 拒**（fail-closed；它们既不在会话索引里，也不该有阈值覆盖可写）。
+   */
+  private def isRootIdentitySession(sessionId: String): IO[Boolean] =
+    sessionStore.getSessionMeta(sessionId).map {
+      case Some(meta) => meta.agentName.getOrElse(RootAgentIdentity.Name) == RootAgentIdentity.Name
+      case None => false
+    }
+
+  /**
+   * ctxthresh 批：**作用域闸**（口径①/③；静态泄漏判据见
+   * `.nebflow/tools/20260915_ctxthresh_leak-check.sh`）——本功能**仅对 Nebula 的
+   * root 会话开放**。判据 = 下列合取（全部为真才放行）：
+   *
+   *   ① **身份面**：`isRootIdentitySession`（上）——排除主窗口切过去的 standalone
+   *      非 Nebula 会话 / 节点形态 id。
+   *   ② **注册面**：已注册活体 agent 的会话，`AgentRecord.kind` 必须 == `Root`
+   *      （`kind = Root` 的唯一置位点 = `doSpawnRootAgent`，本文件 :246）。节点 /
+   *      链路 / 委托会话 kind ≠ Root ⇒ 一律拒。
+   *   ③ **未注册 ⇒ fail-closed**：唯一例外 = **本次 WS 的根会话**（= store 的活跃会话，
+   *      取法与 WS 连接面 :827 同源）。留这一格的实证理由：`switchSession`
+   *      （`SessionStore.scala:657-683`）**只动 index / 消息、不 spawn root agent**，
+   *      用户切到另一个 Nebula 会话后、发首条消息前它不在 registry 里——一律拒会
+   *      误伤这条合法面（切会话后调阈值）。除活跃会话外的未注册 id 一律拒。
+   *
+   * 🔴 **2026-09-15 返工（复核位判词 fail）**：原实现未注册 ⇒ `case None => true`
+   * **fail-open** ⇒ 未注册的 `agentName="general"` 会话 / 节点形态 id 全部被放行，
+   * 真机读数（复核位独立实例 8098，`ev_scope_probe.txt`）= 四例全 ACCEPT 且
+   * `_index.json` 落盘 `compactThresholdRatio=0.5`；且原实现只有 kind 闸，主窗口
+   * 切到 general agent 会话时点环即写进该会话并持久化（违反作者逐字口径③）。
+   * 现改为 fail-closed + Nebula 身份门（返工探针见
+   * `.nebflow/tools/20260915_ctxthresh_scope-recheck.mjs`）。
+   */
+  private def isRootScopeSession(sessionId: String): IO[Boolean] =
+    if sessionId.isEmpty then IO.pure(false)
+    else
+      isRootIdentitySession(sessionId).flatMap { isRoot =>
+        if !isRoot then IO.pure(false)
+        else
+          sharedResources.agentRegistry.get.flatMap { registry =>
+            registry.get(sessionId) match
+              case Some(rec) => IO.pure(rec.kind == AgentKind.Root)
+              case None => sessionStore.getActiveMeta.map(_.exists(_.id == sessionId))
+          }
+      }
+
+  /**
+   * ctxthresh 批：阈值面板的**权威回显载荷**（面板打开 / 设值成功 / 恢复默认后
+   * 共用同一数据源——前端不回算、不自造值，「生效绝对 token 回显」由此保证与
+   * 引擎判定面同源）。
+   */
+  private def compactThresholdInfo(sessionId: String): IO[Json] =
+    for
+      ratioOpt <- compactThresholdOverrideOf(sessionId)
+      window <- effectiveContextWindowOf(sessionId)
+    yield
+      val effective = CompactThresholdOverride.effectiveThreshold(window, ratioOpt)
+      val default = nebflow.shared.CompactThreshold.threshold(window)
+      Json.obj(
+        "type" -> Json.fromString("compactThresholdInfo"),
+        "sessionId" -> Json.fromString(sessionId),
+        "ratio" -> ratioOpt.fold(Json.Null)(Json.fromDoubleOrNull),
+        "contextWindow" -> Json.fromInt(window),
+        "effectiveThreshold" -> Json.fromInt(effective),
+        "effectiveRatio" -> Json.fromDoubleOrNull(effective.toDouble / window),
+        "defaultThreshold" -> Json.fromInt(default),
+        "defaultRatio" -> Json.fromDoubleOrNull(default.toDouble / window),
+        "minRatio" -> Json.fromDoubleOrNull(CompactThresholdOverride.minRatioFor(0.0)),
+        "maxRatio" -> Json.fromDoubleOrNull(CompactThresholdOverride.MaxRatio)
+      )
+
   private def ensureAgent(sessionId: String)(f: nebflow.actor.ActorRef[AgentCommand] => IO[Unit]): IO[Unit] =
     if sessionId.nonEmpty then
       sharedResources.agentRegistry.get.flatMap { registry =>
@@ -445,14 +775,36 @@ class WebSocketRoutes(
               logger.warn(s"Failed to route message to agent $sessionId: ${e.getMessage}")
             }
           case None =>
-            sessionStore.getSessionMeta(sessionId).flatMap {
-              case Some(_) =>
-                ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
-                  logger.warn(s"Failed to route message to agent for session $sessionId: ${e.getMessage}")
-                }
-              case None =>
-                logger.warn(s"Dropping message to unknown session $sessionId (not a real session)") *> IO.unit
-            }
+            // Canvas ask mode（ask 三修 2026-10-29，作者报障「ask 等不到回复」）：
+            // ask 会话身份归 ask 绑定表（<dataRoot>/ask/index.json），**不进**
+            // session _index ⇒ 下面的 getSessionMeta fallback 对 ask id 恒 None
+            // ——首问即被 "Dropping message to unknown session" 拒掉（2026-10-29
+            // 10:27:40 实测日志），ask agent 永不 spawn、LLM 调用永不发出。修法：
+            // ask id 在查 meta 之前先问绑定表——有绑定 = 真会话，走
+            // ensureRootAgent（其 resolveAgentDef 已有 ask 分支：组装提示词 +
+            // ask 工具早退集）；无绑定才拒（fail-closed 口径不变）。
+            if nebflow.core.ask.AskSessions.isAskSession(sessionId) then
+              nebflow.core.ask.AskGatewayServices.instance match
+                case Some(svc) =>
+                  svc.registry.byId(sessionId).flatMap {
+                    case Some(_) =>
+                      ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
+                        logger.warn(s"Failed to route message to agent for ask session $sessionId: ${e.getMessage}")
+                      }
+                    case None =>
+                      logger.warn(s"Dropping message to unbound ask session $sessionId (no file binding)") *> IO.unit
+                  }
+                case None =>
+                  logger.warn(s"Dropping message to ask session $sessionId (ask services unavailable)") *> IO.unit
+            else
+              sessionStore.getSessionMeta(sessionId).flatMap {
+                case Some(_) =>
+                  ensureRootAgent(sessionId).flatMap(f).handleErrorWith { e =>
+                    logger.warn(s"Failed to route message to agent for session $sessionId: ${e.getMessage}")
+                  }
+                case None =>
+                  logger.warn(s"Dropping message to unknown session $sessionId (not a real session)") *> IO.unit
+              }
       }
     else logger.warn("Dropping message: no sessionId provided") *> IO.unit
 
@@ -478,14 +830,11 @@ class WebSocketRoutes(
     else
       sharedResources.agentRegistry.get.flatMap { registry =>
         registry.get(sessionId) match
-          case Some(rec)
-              if rec.status == nebflow.agent.AgentStatus.Processing &&
-                rec.lastActivityMs > 0 &&
-                System.currentTimeMillis() - rec.lastActivityMs >
-                  nebflow.shared.Defaults.SessionKickIdleSec * 1000L =>
+          case Some(rec) if isKickCandidate(rec, System.currentTimeMillis()) =>
+            val idleMs = System.currentTimeMillis() - rec.lastActivityMs
             logger.info(
-              s"SessionKick ($trigger): session $sessionId Processing with no activity for " +
-                s"${(System.currentTimeMillis() - rec.lastActivityMs) / 1000}s — force-aborting in-flight LLM transport"
+              s"SessionKick ($trigger): session $sessionId Processing with no agent-side activity for " +
+                s"${idleMs / 1000}s — force-aborting in-flight LLM transport"
             ) *>
               nebflow.llm.LlmInterface
                 .transportAbortFor(sessionId)
@@ -499,42 +848,144 @@ class WebSocketRoutes(
       }
 
   /**
+   * **口径如实（wd-fix 批 2026-09-12 实读订正）**：本函数**不调用**
+   * `TaskStuckWatcher.assess` / `#classify` —— 它是同一组不等式的**第二份内联副本**，
+   * 与 [TaskStuckWatcher] 头注旧文所称的「三处同源」**不符**：
+   *   - **阈值不同**：本处 `Defaults.SessionKickIdleSec` = **150s**（设计 D-3），
+   *     watcher 的 `Defaults.StuckThresholdMs` = **600s**；
+   *   - **多一条护栏**：`toolInFlight`（本处独有，watcher 在 `classify` 里做根因分流）。
+   * ⇒ 判据源实为 2 同源（watcher 扫描 + `AgentControlTool`）+ 1 副本（本处）。
+   * 副本改走 `assess`/`classify` 属**行为变更**（阈值/护栏/分级语义全变），
+   * **不在 wd-fix 批范围内**（建议另立条目）。
+   *
+   * 2026-09-10 卡死判据换轴：kick 判据与 lastActivityMs 一并收紧为 **agent 侧**
+   * 信号，并加一条工具相位护栏（与 TaskStuckWatcher.assess 同轴）：
+   *
+   *   - lastActivityMs 现在只由 agent 侧事件写（BashTool 活动桥 / RemoteExecutor
+   *     心跳改写 processActivityMs）——旧判据「idle > 150s 就 kick」在长前台
+   *     命令期间读到的是**进程**活性，kick 语义（「LLM transport 被楔死」）错位。
+   *   - 护栏：**有工具正在执行**（0 < 工具已持续时间 ≤ ToolPhaseStuckMs）时不 kick
+   *     ——工具执行相位本就没有在飞 LLM 请求（上一轮流已结束），transport abort
+   *     是 no-op；且这条护栏避免了「新半径」：长前台命令（>150s）不再因为 agent 侧
+   *     戳停摆而被每次用户消息踢一脚。
+   *   - 工具相位**自己**超时（> ToolPhaseStuckMs）时护栏解除：让 TaskStuckWatcher
+   *     的换轴判据成为唯一接管者（此时 kick 命中 0 在飞请求，无副作用）。
+   */
+  private def isKickCandidate(rec: nebflow.actor.AgentRecord, now: Long): Boolean =
+    val kickIdleMs = nebflow.shared.Defaults.SessionKickIdleSec * 1000L
+    val agentIdleMs = if rec.lastActivityMs > 0 then now - rec.lastActivityMs else 0L
+    val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
+    val toolInFlight = toolPhaseMs > 0 && toolPhaseMs <= nebflow.shared.Defaults.ToolPhaseStuckMs
+    rec.status == nebflow.actor.AgentStatus.Processing &&
+    rec.lastActivityMs > 0 &&
+    agentIdleMs > kickIdleMs &&
+    !toolInFlight
+
+  /**
    * Public API for external sources (e.g. bridge plugins) to inject a user message
    * into a session's agent. Reuses the same logic as WebSocket user messages:
    * rate limiting, UiMessage recording, agent routing.
+   *
+   * 社交通道入站媒体统一适配批（2026-10-20）：`attachments`（(path,name,mime)
+   * 指针）在场 ⇒ 三同一登记/渲染/构块，判据 = **控制台 uploads 管线同款**
+   * （`nebflow.bridge.UnifiedMedia` 单点）：
+   *   - 登记同一：attJson=[{name,type,path}]（mime `image/` 前缀 ⇒ image，否则
+   *     file——console :1770 同式）随 `UiMessage.User` 落盘；指针登记，字节留 media 根。
+   *   - 显示同一：`bridgeUser` 帧增加性 `attachments` 键，前端既有媒体气泡面接管
+   *     （文本面 = `content` 随文，纯媒体 = ""，与控制台纯图发送同形）。
+   *   - 读取同一：image ⇒ `ImageInject.prepareImage` 管线 ⇒ `ContentBlock.Image`
+   *     随 ExternalEvent.blocks 直入 LLM；file ⇒ 标签线文本（ReadTool 同面）。
+   * 模型面文本 = faces(origin, senderId, 标签线 + 随文)，marker 块照旧只进模型面；
+   * 构块失败（超帽/读失败）⇒ 块缺省、文本线仍送达（fail-closed 降级）。
+   * 缺省形参 = 全部既有调用点（纯文本注入）逐字现状。
    */
-  def handleBridgeMessage(sessionId: String, content: String, senderId: Option[String] = None): IO[Unit] =
-    if content.isEmpty || sessionId.isEmpty then IO.unit
+  def handleBridgeMessage(
+    sessionId: String,
+    content: String,
+    senderId: Option[String] = None,
+    origin: Option[nebflow.bridge.BridgeOrigin] = None,
+    attachments: List[nebflow.bridge.BridgeAttachment] = Nil
+  ): IO[Unit] =
+    if (content.isEmpty && attachments.isEmpty) || sessionId.isEmpty then IO.unit
     else
       rateLimiter.check("bridge").flatMap { allowed =>
         if !allowed then logger.warn("Bridge rate limit exceeded")
         else
+          // Source marker relocation (source-marker batch, 2026-10-01): this is
+          // the ONE bridge→session injection point, so it is also the one place
+          // that splits an inbound message into the faces it is allowed to appear
+          // on. 🔴 THE MARKER IS MODEL-FACE ONLY: it reaches the agent's context
+          // (`ExternalEvent.payload`) and is structurally absent from the session
+          // display face (the recorded `.ui.json` row and the `bridgeUser`
+          // broadcast both take `faces.sessionDisplay`, which is the bare content
+          // by construction). The template still lives channel-agnostically on
+          // [[nebflow.bridge.BridgeOrigin]]; `origin = None` (the default, and
+          // every pre-existing caller) leaves every face byte-identical to the
+          // pre-batch behaviour.
+          val media = attachments.filter(_.path.trim.nonEmpty)
+          // 媒体统一适配批：标签线（控制台逐字同款）+ 随文 = 模型面的 content；
+          // 纯文本注入（media 空）⇒ content 原样（逐字现状）；显示面 = 随文
+          // （纯媒体 = ""，媒体卡接管聊天流——控制台纯图发送同形）。
+          val modelContent =
+            if media.isEmpty then content
+            else
+              val labels = nebflow.bridge.UnifiedMedia.labelLinesOf(media)
+              if content.trim.isEmpty then labels else labels + "\n" + content
+          val faces = nebflow.bridge.BridgeOrigin.faces(origin, senderId, modelContent)
           val source = senderId.map(id => s"[via bridge:$id]").getOrElse("[via bridge]")
-          logger.info(s"Bridge message for session $sessionId: ${content.take(60)}... $source") *>
-            // Record as UiMessage
-            sharedResources.sessionStore
-              .appendUiMessages(sessionId, List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis())))
-              .handleErrorWith(e => logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}")) *>
-            // Push to frontend in real-time so it shows without switching sessions
-            wsHub.broadcast(
-              io.circe.Json.obj(
-                "type" -> "bridgeUser".asJson,
-                "sessionId" -> sessionId.asJson,
-                "text" -> content.asJson
-              )
-            ) *>
-            // Use ExternalEvent instead of UserInput so the message is queued in
-            // pendingEvents and can be injected at the next ToolsComplete gap —
-            // avoids being stashed until the entire turn finishes.
-            ensureAgent(sessionId)(ref =>
-              ref ! AgentCommand.ExternalEvent(
-                source = "bridge",
-                eventType = "user-message",
-                payload = content,
-                metadata = io.circe.JsonObject("senderId" -> senderId.asJson),
-                correlationId = None
-              )
-            )
+          // The log line is diagnostic, not a display face: it may quote the
+          // labelled model payload. The log file is never rendered as a chat
+          // stream and never read back as a `UiMessage`.
+          logger.info(s"Bridge message for session $sessionId: ${faces.modelPayload.take(60)}... $source") *>
+            // 媒体统一适配批：vision 块先构（控制台 images 同管线；失败 ⇒ Nil，
+            // 文本线仍送达）。逐件构块按序拼合（微信腿恒单件）。
+            media.traverse(a => nebflow.bridge.UnifiedMedia.imageBlocksOf(a)).flatMap { perItem =>
+              val imageBlocks = perItem.flatten
+              // 媒体指针的 attJson（控制台同形 [{name,type,path}]）；纯文本注入 = Nil 逐字现状。
+              val attJson = nebflow.bridge.UnifiedMedia.attJsonOf(media)
+              val displayText = if media.isEmpty then faces.sessionDisplay else content
+              // Record as UiMessage — DISPLAY face: bare content, no marker.
+              // 媒体统一适配批：attJson 随行落盘（控制台同位），历史/缓存恢复走
+              // 既有媒体行渲染面。
+              sharedResources.sessionStore
+                .appendUiMessages(
+                  sessionId,
+                  List(UiMessage.User(displayText, attJson, timestamp = System.currentTimeMillis()))
+                )
+                .handleErrorWith(e => logger.warn(s"Failed to record bridge UiMessage: ${e.getMessage}")) *>
+                // Push to frontend in real-time so it shows without switching sessions
+                // — DISPLAY face: bare content, no marker.
+                // 媒体统一适配批：`attachments` 键增加性并帧（旧前端忽略未知键 =
+                // 纯文本回落，协议零破坏）。
+                wsHub.broadcast(
+                  {
+                    val base = io.circe.Json.obj(
+                      "type" -> "bridgeUser".asJson,
+                      "sessionId" -> sessionId.asJson,
+                      "text" -> displayText.asJson
+                    )
+                    if attJson.isEmpty then base
+                    else base.deepMerge(io.circe.Json.obj("attachments" -> attJson.asJson))
+                  }
+                ) *>
+                // Use ExternalEvent instead of UserInput so the message is queued in
+                // pendingEvents and can be injected at the next ToolsComplete gap —
+                // avoids being stashed until the entire turn finishes.
+                // MODEL face: the payload KEEPS the marker block (the model must stay
+                // able to tell a bridged message from a local one); the structured
+                // origin rides along in `metadata` for later consumers.
+                // 媒体统一适配批：vision 块随 `blocks` 读取同管线直入 LLM 上下文。
+                ensureAgent(sessionId)(ref =>
+                  ref ! AgentCommand.ExternalEvent(
+                    source = "bridge",
+                    eventType = "user-message",
+                    payload = faces.modelPayload,
+                    metadata = faces.metadata,
+                    correlationId = None,
+                    blocks = Option(imageBlocks).filter(_.nonEmpty)
+                  )
+                )
+            }
       }
 
   /**
@@ -545,258 +996,670 @@ class WebSocketRoutes(
     if sessionId.isEmpty then IO.unit
     else ensureAgent(sessionId)(ref => ref ! command)
 
+  /**
+   * Canvas ask mode（2026-10-28 实施批）：AskHandoffPort 注册面。唯一能装的面
+   * （ensureAgent 私有）——生产 boot 由 GatewayMain 在构造后显式调用；spec 构造
+   * 不装 ⇒ 端口保持未注册 fail-closed（转交显式报错，不静默）。
+   * 投递 = ensureAgent(绑定主会话) ! ExternalEvent(source="ask") ⇒ injected
+   * 气泡 + 来源行引擎呈现链（emitInjectedUserEvent），metadata 携 askSession/
+   * file/leg（回问芯片与反查消费）。
+   */
+  def installAskHandoffFace(): Unit =
+    nebflow.core.AskHandoffPort.install { req =>
+      val deliver = for
+        bindingOpt <- nebflow.core.ask.AskGatewayServices.instance match
+          case Some(svc) => svc.registry.byId(req.askSessionId)
+          case None => IO.pure(None)
+        result <- bindingOpt.flatMap(b => Option(b.mainSessionId).map(_.trim).filter(_.nonEmpty)) match
+          case None =>
+            IO.pure(Left(nebflow.core.tools.ToolError("转交目标主会话未就绪（ASK_HANDOFF_NO_TARGET）。")))
+          case Some(mainSid) =>
+            // ask-mail 批（2026-11-16）：正文尾行带「可续聊地址」——编排方（Spider）
+            // 的 LLM 上下文里必须有这个地址才能经 Mail(ask:<会话id>) 续聊该 ask
+            // 会话（正文是唯一必达面；metadata 的 askMailAddress 只供前端 chip 链，
+            // 不进模型上下文）。地址 = MailAddress.AskPrefix + 会话 id（单源，零推导）。
+            val mailAddress =
+              nebflow.core.delegate.MailAddress.AskPrefix + req.askSessionId
+            // ask-scope 批（2026-11-18）：人读正文 = 结构化块（AskHandoffWire 单点），
+            // 机器可读面 = metadata.handoff（同一份编码）；主会话两条腿拿同一份数据。
+            val handoff = nebflow.core.ask.AskHandoffWire.of(req)
+            val rendered = nebflow.core.ask.AskHandoffWire.injectedBody(handoff, mailAddress)
+            val metadata = io.circe.JsonObject(
+              "askSession" -> req.askSessionId.asJson,
+              "file" -> req.file.asJson,
+              "fileName" -> req.fileName.asJson,
+              "leg" -> req.leg.asJson,
+              "contextRefs" -> Json.fromValues(req.contextRefs).asJson,
+              "askMailAddress" -> mailAddress.asJson,
+              "handoff" -> nebflow.core.ask.AskHandoffWire.json(handoff)
+            )
+            handleBridgeAgentCommand(
+              mainSid,
+              AgentCommand.ExternalEvent("ask", "inject", rendered, metadata, None)
+            ).map(_ => Right(s"delivered to $mainSid"))
+      yield result
+      deliver.handleErrorWith(e => IO.pure(Left(nebflow.core.tools.ToolError(s"转交失败: ${e.getMessage}"))))
+    }
+  end installAskHandoffFace
+
   def routes: HttpRoutes[IO] =
-    WebSocketRoutes.uploadsRoutes(token) <+> WebSocketRoutes.jsRoutes <+> WebSocketRoutes.assetsRoutes <+> WebSocketRoutes.nfFileRoutes(token) <+> HttpRoutes.of[IO] {
-    case req @ GET -> Root / "ws" =>
-      // Cookie takes priority to avoid token leakage in browser history/logs/Referer.
-      // Query param kept as fallback for cross-origin or first-load scenarios.
-      val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-      val paramToken = req.params.get("token").getOrElse("")
-      // A stale cookie (e.g. written by an older build with Secure/domain
-      // attributes, so a fresh document.cookie write cannot replace it) must
-      // not lock the client out: if the cookie does not validate but a valid
-      // ?token= is presented, accept it.
-      if Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token) then
-        for
-          outbound <- Queue.unbounded[IO, WebSocketFrame]
+    StaticRoutes.uploadsRoutes(
+      tokenRef,
+      sessions
+    ) <+> StaticRoutes.jsRoutes <+> StaticRoutes.assetsRoutes <+> NfFileRoutes.nfFileRoutes(
+      nfTicketStore,
+      nfPathPolicy
+    ) <+> NfFileRoutes.nfTicketRoutes(tokenRef, nfTicketStore, nfPathPolicy, sessions, objects = nfObjStore) <+> NfFileRoutes
+      .nfObjRoutes(
+        tokenRef,
+        nfObjStore,
+        sessions
+      ) <+> NfFileRoutes
+      .nfAuthcheckRoutes(
+        tokenRef,
+        sessions
+      ) <+> NfOfficeRoutes.officeRoutes(nfTicketStore, nfPathPolicy) <+> NfFileRoutes.nfReachRoutes <+> HttpRoutes
+      .of[IO] {
+        case req @ GET -> Root / "ws" =>
+          // Phase 3b: the unified GatewayAuth criterion under WsAuth — session
+          // cookie first, then Bearer (file token; a WsAuth registration note:
+          // browsers cannot send Authorization on a WS handshake, so this leg
+          // only ever fires for non-browser clients such as CLI/script callers).
+          // Stage D retired the two file-token-in-request-target rails (the
+          // legacy `nebflow_token` cookie and the token query param) — the
+          // handshake is session-cookie driven; a presented-but-invalid high
+          // rail still falls through instead of rejecting (see GatewayAuth).
+          tokenRef.get
+            .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
+            .flatMap {
+              case None =>
+                logger.warn(
+                  s"WebSocket auth failed from ${req.remoteAddr.getOrElse("unknown")}"
+                ) *>
+                  Forbidden("Invalid token")
+              case Some(cred) =>
+                // 控制台单实例批（2026-10-27）：实例身份 = 门户会话。仅 session-rail
+                // 连接参与接管注册表；Bearer rail（CLI/脚本/headless）不注册、不被
+                // 通知、不参与竞选——非浏览器客户端没有「实例」语义，零触碰零漂移。
+                val takeoverSession: Option[String] = cred match
+                  case Credential.ViaSession(record) => Some(record.sessionId)
+                  case _ => None
+                // 接管误报根修批（2026-11-02）：浏览器稳定身份（`deviceIdentity.js` 的
+                // localStorage clientId，随 `/ws?clientId=` 带上）。会话 id 会变（过期/
+                // 重座/换浏览器），clientId 不会——接管身份必须以 clientId 为准，会话只
+                // 作退路（老缓存页不带参时的既有行为）。无鉴权含义：鉴权仍由上面
+                // GatewayAuth 的会话 cookie 决定，伪造 clientId 最坏只是不弹提示。
+                val takeoverClient: Option[String] =
+                  req.params.get("clientId").map(_.trim).filter(id => id.nonEmpty && id.length <= 128)
+                // 同端判据批（2026-11-07 作者报障「手机端反复弹已被其他位置打开」）：接管的
+                // 实例身份除 clientId 外还带**端指纹素材**（握手 UA）+ 来源 IP——
+                // clientId 是 per-origin/per-profile 的随机 UUID（设备清存储、换入口、
+                // 每次 Playwright 临时 profile 都会重新生成），单凭它判「另一处」必然误报。
+                // UA 只做端指纹与日志证据位，不参与鉴权（安全边界同 clientId 声明）。
+                val wsUa: Option[String] =
+                  req.headers.get(CIString("User-Agent")).map(_.head.value.take(256)).filter(_.nonEmpty)
+                // 门户身份透传批（方案 A1，2026-10-28）：会话身份快照——session 轨
+                // 连接把 SessionRecord 投影（accountSub/origin/sessionId）随接管入账
+                // 一起穿进收流管（下方 receivePipe 同一闭包作用域）；Bearer 轨连接恒
+                // None ⇒ 消息面行为逐字节不变（takeover 先例同点，同一信任锚：
+                // 会话记录 ← 票链 ← link-server AT 验证 + owner 核对）。
+                val sessionIdentity: Option[nebflow.bridge.SessionIdentity] = cred match
+                  case Credential.ViaSession(record) =>
+                    Some(nebflow.bridge.SessionIdentity(record.accountSub, record.origin, record.sessionId))
+                  case _ => None
+                // R-1b conn-guard：升级受理即 per-IP 检查（拒 ⇒ 可见 429，不静默；
+                // 环回恒放行）。入账延后到收流管起跑（下方 guardedReceive 会话
+                // scope bracket——升级会话未起跑即未发生，零幽灵计数），回减同
+                // scope 配对（releaseWs 凭据 + close/EOF/异常/判死四途同归）。
+                // 括号包裹 = 保持原 for 缩进不动（大段受理体零改排）。
+                val wsIp = ConnGuard.normalizeIp(req.remoteAddr)
+                connGuard.checkWs(wsIp).flatMap {
+                  case Some(reason) =>
+                    logger.warn(
+                      s"conn-guard: WS upgrade rejected ip=$wsIp reason=$reason caps=${connGuard.config.wsPerIpCap}/${connGuard.config.wsTotalCap}"
+                    ) *>
+                      TooManyRequests(
+                        s"Connection guard: WebSocket limit reached ($reason); retry later or contact the operator"
+                      )
+                  case None => (
+                    for
+                      // R-960（僵尸会话回收批 · #954 presence 同款平移）：共享装配核
+                      // [[WsZombieGuard]]——入站活跃钟 + 10s 判死拍 + deadSig 双侧直达。
+                      // console 口径（[[WsZombieGuard.ConsoleLiveness]]）：deadAfter=90s
+                      // = 3 × 客户端自 ping 间隔（ws.js HB_INTERVAL_MS=30s，服务端 pong
+                      // 应答在 WsSystemHandlers.handlePing）——容忍两拍丢失；后台标签页
+                      // 静默回收由 ws.js 唤醒腿（forceReconnect/wake-probe）接住。
+                      zombie <- WsZombieGuard.open(WsZombieGuard.ConsoleLiveness)
+                      // ── A2 (perf-481): bounded outbound queue ────────────────────
+                      // Was `Queue.unbounded`: a slow/stalled subscriber never
+                      // applied backpressure, so its queue grew without bound while
+                      // the event loop kept paying "serialize + offer" for it.
+                      //
+                      // Overflow policy (plan OD-1, per-frame class):
+                      //  · streaming increment (textDelta/thinkingDelta/…): drop the
+                      //    OLDEST frame and enqueue the new one. A stream increment is
+                      //    superseded by later ones, so losing the middle of a stream
+                      //    costs at most a few rendered characters — never final state.
+                      //  · control/status frame: do NOT drop. A dropped control frame
+                      //    is a silent lie (e.g. a lost `configUpdated` leaves the UI
+                      //    showing "saved"); a throttled one delays it. So the
+                      //    connection is torn down instead: the client reconnects and
+                      //    re-syncs from scratch (ws.js owns the reconnect + onReconnect
+                      //    resync leg), which is a visible, recoverable failure rather
+                      //    than a silent one.
+                      // The class is computed once per event inside WsHub (see there).
+                      outbound <- Queue.bounded[IO, WebSocketFrame](OutboundQueueCapacity)
+                      outboundOverflowClosed <- Deferred[IO, Unit]
+                      // console-reconnect-stability（2026-10-28）：pong 旁路队列——
+                      // 大帧阵发时心跳应答不再排在本连接 bulk FIFO 之后（机制见
+                      // [[ConsolePongLane]]）。有界 16；道满回落既有 FIFO。
+                      pongLane <- Queue.bounded[IO, WebSocketFrame](ConsolePongLane.Capacity)
 
-          perConnWsSend = (json: io.circe.Json) => outbound.offer(WebSocketFrame.Text(json.noSpaces))
-          hubConnId <- wsHub.register(perConnWsSend)
+                      perConnWsSend = (text: String, isStream: Boolean) =>
+                        outbound
+                          .tryOffer(WebSocketFrame.Text(text))
+                          .flatMap {
+                            case true => IO.unit
+                            case false if isStream =>
+                              // Full queue + droppable frame ⇒ evict oldest, then take
+                              // the slot this frame just vacated. `tryTake` returning
+                              // None (a reader drained it concurrently) is fine — the
+                              // retry below either succeeds or is counted, never loops.
+                              outbound.tryTake *> outbound.tryOffer(WebSocketFrame.Text(text)).void *>
+                                IO(wsHub.noteOverflowDrop())
+                            case false =>
+                              // Full queue + control frame ⇒ tear this connection down.
+                              // The teardown rides the queue's own stream (see
+                              // `sendStream`), so there is no process-wide state and no
+                              // cross-connection leak.
+                              IO(wsHub.noteOverflowClose()) *>
+                                logger.warn(
+                                  "WebSocket outbound queue full on a non-stream frame — closing " +
+                                    s"this connection (capacity $OutboundQueueCapacity)"
+                                ) *>
+                                outboundOverflowClosed.complete(()).void
+                          }
+                      // 在带身份声明（握手 query 不可靠批 2026-11-03）：本连接的实例
+                      // 键读数——初值 = 握手腿（query 可用时已是身份键；隧道脸无 query
+                      // = 会话退路键）。identify 帧到达后经 onIdentify 迁移并写回，
+                      // 内容闸随读数换轨（None = Bearer 轨/总闸关，直通）。
+                      takeoverHolderRef = new java.util.concurrent.atomic.AtomicReference[Option[String]](
+                        takeoverSession.map(sid => ConsoleTakeover.holderOf(sid, takeoverClient))
+                      )
+                      // Conflict detection must never suppress content delivery.
+                      // Write authorization is enforced separately by the Canvas API.
+                      gatedWsSend = (text: String, isStream: Boolean) =>
+                        perConnWsSend(text, isStream)
+                      hubConnId <- wsHub.register(gatedWsSend)
 
-          receivePipe: Pipe[IO, WebSocketFrame, Unit] = _.evalMap {
-            case WebSocketFrame.Text(text, _) =>
-              handleMessage(text, perConnWsSend).handleErrorWith { e =>
-                logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
-                IO.unit
-              }
-            case _ => IO.unit
-          }.onFinalize(
-            wsHub.unregister(hubConnId)
-          )
+                      // A1: the hub now hands connections pre-serialized text. The
+                      // handlers below (message dispatch, session list, the explorer
+                      // watch table) still reason in Json, so they get an adapter that
+                      // serializes on the way in — the point of A1 is that the *fan-out*
+                      // no longer re-serializes per connection, not that Json is banned.
+                      perConnJsonSend = (json: io.circe.Json) =>
+                        // pong 走旁路（[[ConsolePongLane]]）：道满才回落既有 FIFO
+                        // （overflow 政策同其余控制帧），其余帧路径逐字不变。
+                        if ConsolePongLane.isPong(json) then
+                          pongLane.tryOffer(WebSocketFrame.Text(json.noSpaces)).flatMap {
+                            case true => IO.unit
+                            case false => perConnWsSend(json.noSpaces, false)
+                          }
+                        else perConnWsSend(json.noSpaces, WsHub.isStreamFrame(json))
 
-          // sendStream: read from outbound queue, send via WebSocket.
-          // Client disconnects are expected (browser tab close, network change) and
-          // produce IOException during write. Catch and swallow gracefully.
-          sendStream = Stream
-            .fromQueueUnterminated(outbound)
-            .handleErrorWith { e =>
-              Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
+                      // 可见活动闸（同端判据批 B）：本连接的最近入站时刻（最密 5s 一次写，
+                      // 节流在客户端侧同款纪律）——「被顶的端是不是真的还在看」只认这个证据，
+                      // 不认「连接还挂在账上」（僵尸连接不算在看）。
+                      lastNoteMs = new java.util.concurrent.atomic.AtomicLong(0L)
+                      noteConsoleActivity: IO[Unit] =
+                        if takeoverSession.isEmpty then IO.unit
+                        else
+                          IO {
+                            val now = System.currentTimeMillis()
+                            if now - lastNoteMs.get() >= 5000L then
+                              lastNoteMs.set(now)
+                              true
+                            else false
+                          }.flatMap(fire => if fire then takeover.noteActivity(hubConnId) else IO.unit)
+
+                      // explorer-rt (chain-n-1981ce87): one watch-subscription table per
+                      // connection. Chained into the finalizer below — a dropped
+                      // connection releases every WatchService it registered.
+                      watchSession = new ExplorerWatchSession(perConnJsonSend, logger)
+
+                      // R-960：收流管装配走共享核 guardedReceive——acquire 进会话 fs2
+                      // scope（收流管起跑 = 升级会话起跑才计槽，R-1b 升级期幽灵洞结构
+                      // 封死；入账时点从「build 前」后移到「会话起跑」，与 #954 presence
+                      // 同款）；release 同 scope 配对恰好一次；任何入站帧（含 ping/pong
+                      // 与未知帧型）先触碰活跃钟再进协议分发。面内保留：消息分发与
+                      // unregister/watchSession.close finalizer。
+                      receivePipe: Pipe[IO, WebSocketFrame, Unit] = zombie.guardedReceive(
+                        connGuard.acquireWs(wsIp),
+                        connGuard.releaseWs
+                      )(
+                        _.evalMap {
+                          case WebSocketFrame.Text(text, _) =>
+                            // 控制台在用判据（2026-11-05）：页面上有任何交互流量 ⇒ 作者
+                            // 此刻就在用控制台（比「连接还在」更硬——僵尸连接不算在用）。
+                            // 节流写（最密 5s 一次），绝不失败、绝不拦帧。
+                            ConsoleActivity.touch("ws-frame") *> noteConsoleActivity *> {
+                              // 控制台单实例批：retake 帧前置拦截——连接身份（connId→session）
+                              // 只在本管上有（WsDispatchCtx 不携带），故不走 WsDispatch 注册表。
+                              // 总闸关闭时 isRetakeFrame 恒 false 侧不成立，故显式以
+                              // takeover.enabled 判：关闭 ⇒ 帧走既有未知类型回退（零漂移）。
+                              // 在带身份声明（握手 query 不可靠批 2026-11-03）：握手腿与
+                              // 声明腿同键（holderOf）⇒ 闭包三态经下方识别后归还本管、
+                              // 后续帧照常进常规分派（takeoverIdentify 不是常规帧型）。
+                              val handled =
+                                if takeover.enabled && ConsoleTakeover.isIdentifyFrame(text) then
+                                  (ConsoleTakeover.declaredClientId(text), takeoverSession) match
+                                    case (Some(cid), Some(sid)) =>
+                                      // 迁移 + 重裁决（kick 与否在 ConsoleTakeover.settle 内定），
+                                      // 再把本连接实例键写回闸读数（闸随之换轨）。
+                                      // 同端判据批：身份帧同时带自动化声明（webdriver）与握手 UA/
+                                      // 来源 IP——无它们则「同端」与「谁顶了谁」都判不出。
+                                      val meta = ConsoleTakeover.ClientMeta(
+                                        clientId = Some(cid),
+                                        ua = wsUa,
+                                        ip = Some(wsIp),
+                                        automatedDeclared = ConsoleTakeover.declaredAutomated(text)
+                                      )
+                                      takeover.onIdentifyDeclared(sid, hubConnId, Some(meta)).flatMap { h =>
+                                        IO(takeoverHolderRef.set(h))
+                                      }
+                                    // 坏体/无身份/Bearer 轨 ⇒ 静默空转（声明是加速面，不是语义面）。
+                                    case _ => IO.unit
+                                // 门户身份透传批（方案 A1）：本连接的会话身份随帧进消息
+                                // 分发（两处消费点：typeless 腿 + immediateInput 腿——
+                                // 后者经 wsDispatchContext 闭包）。Bearer 轨恒 None。
+                                else handleMessage(text, perConnJsonSend, watchSession, sessionIdentity, Some(cred))
+                              handled.handleErrorWith { e =>
+                                logger.error(s"WebSocket message handler error: ${e.getMessage}", e)
+                                IO.unit
+                              }
+                            }
+                          case _ => IO.unit
+                        }.onFinalize(
+                          wsHub.unregister(hubConnId) *> watchSession.close() *>
+                            // 控制台单实例批：连接出账（只摘连接账——掉线 ≠ 让位，owner
+                            // 不动、零出帧；#960 判死回收经本 finalizer 同样不触发提示）。
+                            takeover.onDisconnect(hubConnId)
+                        )
+                      )
+
+                      // sendStream: read from outbound queue, send via WebSocket.
+                      // Client disconnects are expected (browser tab close, network change) and
+                      // produce IOException during write. Catch and swallow gracefully.
+                      //
+                      // A2: the stream races the queue against the overflow signal, so a
+                      // control frame hitting a full queue actually ENDS the stream
+                      // (the socket closes and the client reconnects + resyncs) instead
+                      // of the frame being silently discarded. `interruptWhen` cancels
+                      // the queue side on completion, and the server's own WebSocket
+                      // close handling runs the receive pipe's finalizer.
+                      //
+                      // R-960：拆线道收敛至共享核 guardedSend——既有 overflow 中断之上
+                      // 叠判死中断（send 侧直达 ⇒ ember 写 close 帧）并把 10s 判死腿挂
+                      // 同一会话作用域（连接在则拍在，连接亡则拍亡）。
+                      sendStream = zombie.guardedSend(
+                        ConsolePongLane.prioritized(
+                          data = Stream
+                            .fromQueueUnterminated(outbound)
+                            .handleErrorWith { e =>
+                              Stream.eval(logger.debug(s"WebSocket send stream closed: ${e.getMessage}")).drain
+                            },
+                          control = Stream.fromQueueUnterminated(pongLane)
+                        ),
+                        outboundOverflowClosed
+                      )(onDead =
+                        silentMs =>
+                          // 与 presence 面同格式审计行（conn-guard: … recycled … slot released）。
+                          logger.warn(
+                            s"conn-guard: console zombie recycled ip=$wsIp silentMs=$silentMs — " +
+                              s"slot released (heartbeat dead-detection)"
+                          )
+                      )
+                      _ <- logger.info("WebSocket client connected")
+                      // 控制台在用判据（工作过程中开新标签页批 2026-11-05）：连接建立
+                      // = 「控制台真的在用」的服务端事实之一，落一笔标记件（节流写，
+                      // 绝不失败）——boot/focus 两条开门腿据此抑制自动开门。
+                      _ <- ConsoleActivity.touch("ws-connect")
+                      thinkingCfg <- sharedResources.thinkingConfigRef.get
+                      workScheduleCfg <- sharedResources.freezeScheduleRef.get
+                      skipUntil <- sharedResources.freezeSkipUntilRef.get
+                      sttSvc <- sttServiceRef.get
+                      // 统一更新收敛闭环（M3 ③④）：连接初始态即携带更新状态快照
+                      // （自报版本/构建/通道 + 最近挂账与决策）——面板更新卡纯订阅 +
+                      // 快照，零轮询。未装配 ⇒ 空对象，帧形零变化。
+                      updateSnapshot <- sharedResources.updateConvergence
+                        .traverse(_.stateJson)
+                        .map(_.flatten)
+                      // 全设备统一更新（fleet 批 2026-11-01）：连接初始态并「fleetUpdate」
+                      // 快照——状态卡纯订阅 + 快照，刷新/重连/换设备后自动接续，零轮询。
+                      // 未装配 ⇒ 空对象，帧形零变化（与上面 updateSnapshot 同纪律）。
+                      fleetSnapshot <- sharedResources.fleetUpdate
+                        .traverse(_.snapshot)
+                        .map(_.getOrElse(io.circe.Json.obj()))
+                      mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
+                        io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+                      })
+                      sttNode <- SttService.serverConfigNode(sttSvc)
+                      _ <- outbound.offer(
+                        WebSocketFrame.Text(
+                          io.circe.Json
+                            .obj(
+                              "type" -> "serverConfig".asJson,
+                              "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
+                              "version" -> nebflow.Version.string.asJson,
+                              // 陈旧 SPA 指纹提示批（方案 B 小刀③，2026-10-28）：前端
+                              // 资源指纹随连接初始态/广播帧下行；ws/main 面与本页被
+                              // serve 时注入的 window.__WEB_FINGERPRINT__ 比对，不等
+                              // ⇒ 顶栏提示刷新（治 B1 陈旧标签页续命——B3 双轨标记与
+                              // 页内自升级都依赖新版前端半边在跑）。空串 = 计算失败
+                              // （客户端真值守卫静默跳过）。
+                              "webFingerprint" -> StaticRoutes.webFingerprint.asJson,
+                              "thinking" -> thinkingCfg.asJson,
+                              "workSchedule" -> workScheduleCfg.asJson,
+                              // 现象 2 契约（2026-08-30）：连接初始态即携带全局冻结状态——
+                              // 页面加载时若已在冻结窗口（且无活跃 agent 产生 frozen 事件），
+                              // 前端输入栏禁用状态机必须能直接读到当前冻结态。
+                              "freezeState" -> nebflow.core.schedule.FreezeSchedule
+                                .freezeStateNode(
+                                  workScheduleCfg,
+                                  skipUntil,
+                                  System.currentTimeMillis()
+                                )
+                                .asJson,
+                              "stt" -> sttNode,
+                              // A4: the tool list is served on demand (`getToolsList`),
+                              // not on every connect + config broadcast — see the note
+                              // above `toolsListJson`.
+                              "mcpServers" -> mcpServers.asJson
+                            )
+                            // M3 ④：update 快照 additive 挂载（未装配 = 空对象 = 不出现键）
+                            // fleet 批：fleetUpdate 快照同款 additive 挂载（`fleetUpdate`
+                            // 键——状态卡刷新/重连后一帧接续）。
+                            .deepMerge(
+                              updateSnapshot.map(u => io.circe.Json.obj("update" -> u)).getOrElse(io.circe.Json.obj())
+                            )
+                            .deepMerge(
+                              if fleetSnapshot.isObject && fleetSnapshot.asObject.exists(!_.isEmpty) then
+                                io.circe.Json.obj("fleetUpdate" -> fleetSnapshot)
+                              else io.circe.Json.obj()
+                            )
+                            .noSpaces
+                        )
+                      )
+                      activeMeta <- sessionStore.getActiveMeta
+                      agentName = activeMeta.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
+                      // ⑦ (2026-08-24): 原为「WS connect 即恢复已挂团队」——挂在
+                      // initFlowTree → 树 actor 的 restoreTeams 上。团队功能删除批
+                      // 阶段 1 已断掉 initFlowTree（见 :490 注），此处**只保留** root
+                      // agent 的确保（ensureRootAgent 幂等，冷启 spawn / 热路径原样返回）；
+                      // 团队恢复腿随之不存在。/api/teams/mounted 在阶段 1 的中间态见
+                      // reports-evidence/team-feature-deletion/stage1/README.md §4；
+                      // 该路由本身已在阶段 2 退役（见 PresenceRoutes 同位墓碑注）。
+                      _ <- activeMeta.traverse_(meta =>
+                        ensureRootAgent(meta.id).void.handleErrorWith(e =>
+                          logger.warn(s"WS-connect root agent ensure failed for session ${meta.id}: ${e.getMessage}")
+                        )
+                      )
+                      _ <- sessionService.sendSessionList(perConnJsonSend, agentName)
+                      // 控制台单实例批（2026-10-27）：接管注册表入账 + claim 裁决——
+                      // hubConnId 已注册（推往旧主的帧走 wsHub；推往本连接的 superseded
+                      // 通知经 outbound 队列缓冲，随 serverConfig 同批送达）。Bearer 连接
+                      // takeoverSession=None 直通。事件面只有 fresh-claim 翻位与旧主回连
+                      // superseded 通知；断线/判死回收路径（onFinalize ⇒ onDisconnect）
+                      // 零出帧——掉线 ≠ 让位（设计稿 §7 边界）。
+                      _ <- takeoverSession.traverse_(sid =>
+                        takeover.onConnect(
+                          sid,
+                          hubConnId,
+                          ConsoleTakeover.ClientMeta(
+                            clientId = takeoverClient,
+                            ua = wsUa,
+                            ip = Some(wsIp),
+                            // 握手腿无法自带 webdriver（那是页面事实，见在带声明腿）；
+                            // 这里只有 UA 兜底判据（headless UA）。
+                            automatedDeclared = false
+                          )
+                        )
+                      )
+                      // R-960：入账/回减已移入收流管会话 scope（上方 guardedReceive）——
+                      // build 前不再预占槽位；升级会话未起跑 ⇒ 计数未发生（幽灵洞封死）。
+                      ws <- wsb.build(sendStream, receivePipe)
+                    yield ws
+                  )
+                }
             }
-          _ <- logger.info("WebSocket client connected")
-          thinkingCfg <- sharedResources.thinkingConfigRef.get
-          workScheduleCfg <- sharedResources.freezeScheduleRef.get
-          skipUntil <- sharedResources.freezeSkipUntilRef.get
-          sttSvc <- sttServiceRef.get
-          toolsList = ToolRegistry.ALL_TOOLS.map(t =>
-            io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson)
-          )
-          mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
-            io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
-          })
-          _ <- outbound.offer(
-            WebSocketFrame.Text(
-              io.circe.Json
-                .obj(
-                  "type" -> "serverConfig".asJson,
-                  "streamTimeoutMs" -> (Defaults.StreamTimeoutSec.toLong * 1000).asJson,
-                  "version" -> nebflow.Version.string.asJson,
-                  "thinking" -> thinkingCfg.asJson,
-                  "workSchedule" -> workScheduleCfg.asJson,
-                  // 现象 2 契约（2026-08-30）：连接初始态即携带全局冻结状态——
-                  // 页面加载时若已在冻结窗口（且无活跃 agent 产生 frozen 事件），
-                  // 前端输入栏禁用状态机必须能直接读到当前冻结态。
-                  "freezeState" -> nebflow.core.schedule.FreezeSchedule.freezeStateNode(
-                    workScheduleCfg,
-                    skipUntil,
-                    System.currentTimeMillis()
-                  ).asJson,
-                  "stt" -> SttService.serverConfigNode(sttSvc),
-                  "tools" -> toolsList.asJson,
-                  "mcpServers" -> mcpServers.asJson
-                )
-                .noSpaces
-            )
-          )
-          activeMeta <- sessionStore.getActiveMeta
-          agentName = activeMeta.flatMap(_.agentName).getOrElse("Nebula")
-          // ⑦ (2026-08-24): restore mounted teams right on WS connect — not
-          // only on first user message. Team mount recovery lives in
-          // FlowTreeActor startup (restoreTeams → TeamSessionRegistry), and
-          // the actor is only created alongside the root agent. After a
-          // restart, a client that connects but sends no message would leave
-          // /api/teams/mounted empty → "No active teams" panel. ensureRootAgent
-          // is idempotent (existing ref is returned) and chains initFlowTree
-          // on first spawn, so a plain call covers both the cold start (new
-          // agent → tree → restore) and the warm path (existing agent/tree →
-          // no-op).
-          _ <- activeMeta.traverse_(meta =>
-            ensureRootAgent(meta.id).void.handleErrorWith(e =>
-              logger.warn(s"WS-connect team restore failed for session ${meta.id}: ${e.getMessage}")
-            )
-          )
-          _ <- sessionService.sendSessionList(perConnWsSend, agentName)
-          ws <- wsb.build(sendStream, receivePipe)
-        yield ws
-      else
-        logger.warn(
-          s"WebSocket auth failed from ${req.remoteAddr.getOrElse("unknown")}"
-        ) *>
-          Forbidden("Invalid token")
-      end if
 
-    // --- Callback endpoint (外→内) ---
-    // POST /api/callbacks/inject — agent-centric, authenticated via gateway token
-    case req @ POST -> Root / "api" / "callbacks" / "inject" =>
-      val provided = extractToken(req)
-      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
-      else handleInject(req)
+        // --- Callback endpoint (外→内) ---
+        // POST /api/callbacks/inject — agent-centric, authenticated through the
+        // unified GatewayAuth criterion (WsAuth: session cookie > Bearer).
+        case req @ POST -> Root / "api" / "callbacks" / "inject" =>
+          tokenRef.get
+            .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
+            .flatMap {
+              case None => Forbidden("Invalid token")
+              case Some(_) => handleInject(req)
+            }
 
-    // GET /api/nf-file — local file serving for card iframes moved to the
-    // companion as nfFileRoutes(token) (standalone, unit-testable, same
-    // pattern as uploadsRoutes/jsRoutes); mounted ahead of this match above.
-    // 2026-09-03 Canvas interactive-HTML fix: the whitelist (NfFileAllowedExt)
-    // now also covers the text asset types (js/css/json) a multi-file HTML
-    // deliverable references from the Canvas HTML viewer.
-    case GET -> Root =>
-      // P1 single switch point: when the esbuild dist is packed on the
-      // classpath (sbt -Dnebflow.webdist=1 assembly), "/" serves the bundled
-      // dist entry; otherwise the dev source tree entry. Everything else the
-      // dist index references is either under /assets (assetsRoutes) or a
-      // byte-identical passthrough (vendor, fonts, icons) served by the
-      // existing web/ routes — no fallback logic, the entry and its hashed
-      // deps come from one atomic build-web.mjs run.
-      //
-      // L1 rebrand: both entries go through indexWithBrand, which injects
-      // the window.__BRAND__ contract before the closing head tag. The
-      // served body therefore differs from the classpath bytes, which is
-      // why this route no longer uses StaticFile's conditional-request
-      // handling (a jar-entry Last-Modified must not vouch for content we
-      // mutated) — the response stays no-cache with no validators.
-      val indexResource =
-        if WebSocketRoutes.hasBundledDist then "web-dist/index.html" else "web/index.html"
-      WebSocketRoutes.indexWithBrand(indexResource)
+        // GET /api/nf-file — local file serving for card iframes moved to the
+        // companion as nfFileRoutes(token) (standalone, unit-testable, same
+        // pattern as uploadsRoutes/jsRoutes); mounted ahead of this match above.
+        // 2026-09-03 Canvas interactive-HTML fix: the whitelist (NfFileAllowedExt)
+        // now also covers the text asset types (js/css/json) a multi-file HTML
+        // deliverable references from the Canvas HTML viewer.
+        case req @ GET -> Root =>
+          // W1 single switch point (mobile-quickwins 2026-10-20; supersedes the
+          // P1 classpath-only probe): the entry dispatches on
+          // StaticRoutes.staticSource — bundled classpath dist (jar), FRESH
+          // disk dist (build/web-dist under the engine working dir; the
+          // freshness fence is what keeps `sbt run` hot-edit serving the dev
+          // tree the moment a web/ source is newer than the dist), or the dev
+          // source tree. Everything else the dist index references is either
+          // under /assets (assetsRoutes) or a byte-identical passthrough
+          // (vendor, fonts, icons) served by the existing web/ routes — no
+          // fallback logic, the entry and its hashed deps come from one
+          // atomic build-web.mjs run.
+          //
+          // L1 rebrand: every branch goes through the brand injection before
+          // the closing head tag. The served body therefore differs from the
+          // source bytes, which is why this route does not use StaticFile's
+          // conditional-request handling (a jar-entry Last-Modified must not
+          // vouch for content we mutated) — the validator is the served-bytes
+          // WEAK ETag computed by StaticRoutes.brandInjectedResponse
+          // (静态面重验证批 2026-11-18: no-cache + If-None-Match ⇒ 304).
+          // console-fastpath 批 2026-10-23·腿②：隧道脸（TunnelOriginMark）分发到
+          // 首开内联打包面（[[StaticRoutes.indexResponseFor]]），直连脸逐字原应答。
+          StaticRoutes.indexResponseFor(req)
 
-    case HEAD -> Root =>
-      // Headers-only parity with the pre-rebrand StaticFile route (curl -I,
-      // health/link checkers). The GET case above does not match HEAD
-      // requests, and the body-stripped variant must go through the same
-      // content generation so validators never diverge between the verbs.
-      val headIndexResource =
-        if WebSocketRoutes.hasBundledDist then "web-dist/index.html" else "web/index.html"
-      WebSocketRoutes.indexWithBrand(headIndexResource).map(_.withBodyStream(Stream.empty))
+        case req @ HEAD -> Root =>
+          // Headers-only parity with the pre-rebrand StaticFile route (curl -I,
+          // health/link checkers). The GET case above does not match HEAD
+          // requests, and the body-stripped variant must go through the same
+          // content generation so validators never diverge between the verbs.
+          StaticRoutes.indexResponseFor(req).map(_.withBodyStream(Stream.empty))
 
-    case req @ GET -> Root / "css" / file =>
-      StaticFile
-        .fromResource(s"web/css/$file", Some(req))
-        .map(_.putHeaders("Cache-Control" -> "no-cache"))
-        .getOrElseF(NotFound())
+        // 卡窗白屏修复批（2026-10-22）：/index.html 入口别名 —— 与 `/` 同一
+        // brand 注入应答。独立卡窗（UI 批⑧）曾以 `/index.html?card-window=1`
+        // 开窗：本路由只派 `/`，该 URL 落根文件白名单（sw.js/favicon 族）之外
+        // ⇒ 404 空 Content-Length 体 ⇒ 独立窗整页空白（作者实测根因）。别名让
+        // 一切历史/深链入口落在真应用而非空白体；现役打开链已改 `/`
+        // （canvas.js popoutCardWindow），别名是兜底面。query 原样保留
+        // （http4s 只按 path 匹配），card-window 参数不丢。
+        case req @ GET -> Root / "index.html" =>
+          StaticRoutes.indexResponseFor(req)
 
-    // /js/** (any depth) is served by WebSocketRoutes.jsRoutes in the
-    // companion — see its scaladoc for why the DSL single-segment routes
-    // (and the per-directory cases they grew over time) were replaced.
+        case req @ HEAD -> Root / "index.html" =>
+          StaticRoutes.indexResponseFor(req).map(_.withBodyStream(Stream.empty))
 
-    case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/monaco/") =>
-      // Serve monaco editor files from bundled resources (supports nested paths).
-      // Uses manual path parsing because http4s DSL only matches single path segments.
-      val segs = req.uri.path.segments.map(_.encoded).toList
-      if segs.sizeIs < 3 then NotFound()
-      else
-        val relParts = segs.drop(2) // drop "vendor" and "monaco"
-        // Block path traversal
-        if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
-        else
-          val path = relParts.mkString("/")
-          StaticFile.fromResource(s"web/vendor/monaco/$path", Some(req)).getOrElseF(NotFound())
-      end if
+        case req @ GET -> Root / "css" / file =>
+          StaticFile
+            .fromResource(s"web/css/$file", Some(req))
+            .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+            .getOrElseF(NotFound())
 
-    case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/pdfjs/") =>
-      // Serve pdfjs viewer files (pdf.min.js / pdf.worker.min.js) from bundled
-      // resources. The single-segment vendor case below cannot match this
-      // two-level path (/vendor/pdfjs/pdf.min.js), and the fonts/monaco cases
-      // are directory-specific — without this case every pdfjs file 404s and
-      // the PDF viewer fails to boot (pdfjsLib undefined). Same guard pattern
-      // as the monaco case above (manual path parsing, traversal blocked).
-      val segs = req.uri.path.segments.map(_.encoded).toList
-      if segs.sizeIs < 3 then NotFound()
-      else
-        val relParts = segs.drop(2) // drop "vendor" and "pdfjs"
-        // Block path traversal
-        if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
-        else
-          val path = relParts.mkString("/")
-          StaticFile.fromResource(s"web/vendor/pdfjs/$path", Some(req)).getOrElseF(NotFound())
-      end if
+        // /js/** (any depth) is served by StaticRoutes.jsRoutes — see its
+        // scaladoc for why the DSL single-segment routes (and the
+        // per-directory cases they grew over time) were replaced.
 
-    case req @ GET -> Root / "vendor" / file =>
-      StaticFile.fromResource(s"web/vendor/$file", Some(req)).getOrElseF(NotFound())
-
-    case req @ GET -> Root / "vendor" / "fonts" / file =>
-      StaticFile.fromResource(s"web/vendor/fonts/$file", Some(req)).getOrElseF(NotFound())
-
-    case req @ GET -> Root / fileName =>
-      val allowed =
-        Set("style.css", "app.js", "favicon.svg", "logo.svg", "favicon-32.png", "favicon-16.png", "favicon.ico")
-      if allowed.contains(fileName) then
-        StaticFile
-          .fromResource(s"web/$fileName", Some(req))
-          .map(_.putHeaders("Cache-Control" -> "no-cache"))
-          .getOrElseF(NotFound())
-      else NotFound()
-
-    case req @ GET -> Root / "agents" / "manifest.json" =>
-      sharedResources.agentLibrary.loadAll().flatMap { agents =>
-        val json = io.circe.Json.obj(
-          "agents" -> agents.values.toList.map { a =>
-            io.circe.Json.obj(
-              "name" -> a.name.asJson,
-              "description" -> a.description.asJson,
-              "displayName" -> a.displayName.getOrElse(a.name).asJson,
-              "avatar" -> a.avatar.asJson
-            )
-          }.asJson
-        )
-        Ok(json.noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
-      }
-
-    case req @ GET -> _ if req.uri.path.renderString.startsWith("/agents/") =>
-      // Serve static files under agent directory (supports nested paths)
-      // Uses manual path parsing because http4s DSL only matches single path segments
-      val segs = req.uri.path.segments.map(_.encoded).toList
-      if segs.sizeIs < 3 then NotFound()
-      else
-        val agentName = segs(1)
-        // Block path traversal: agentName must be a simple name (no .., /, \)
-        if agentName.contains("..") || agentName.contains("/") || agentName.contains("\\") then NotFound()
-        else
-          val agentDir = AgentLibrary.defaultDir / agentName
-          val relParts = segs.drop(2)
-          // Block path traversal in relative parts
-          val safeRel = relParts.filter(s => s != ".." && !s.contains("\\"))
-          if safeRel.length != relParts.length then NotFound()
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/monaco/") =>
+          // Serve monaco editor files from bundled resources (supports nested paths).
+          // Uses manual path parsing because http4s DSL only matches single path segments.
+          val segs = req.uri.path.segments.map(_.encoded).toList
+          if segs.sizeIs < 3 then NotFound()
           else
-            val filePath = agentDir / os.RelPath(safeRel.mkString("/"))
-            // Final defense: resolve and verify the path stays under agentDir
-            if filePath.startsWith(agentDir) && os.exists(filePath) && os.isFile(filePath) then
-              StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
-            else NotFound()
-      end if
+            val relParts = segs.drop(2) // drop "vendor" and "monaco"
+            // Block path traversal
+            if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+            else
+              val path = relParts.mkString("/")
+              StaticFile
+                .fromResource(s"web/vendor/monaco/$path", Some(req))
+                .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+                .getOrElseF(NotFound())
+          end if
 
-    case req @ GET -> _ if req.uri.path.renderString.startsWith("/voice-models/") =>
-      // Serve pre-downloaded voice model files from ~/.nebflow/voice-models/
-      // Allows offline Whisper inference without CDN dependency.
-      val segs = req.uri.path.segments.map(_.encoded).toList
-      if segs.sizeIs < 2 then NotFound()
-      else
-        val relParts = segs.drop(1) // drop "voice-models"
-        // Block path traversal
-        if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
-        else
-          val modelBase = PathUtil.dataRoot / "voice-models"
-          val filePath = modelBase / os.RelPath(relParts.mkString("/"))
-          if filePath.startsWith(modelBase) && os.exists(filePath) && os.isFile(filePath) then
-            StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/pdfjs/") =>
+          // Serve pdfjs viewer files (pdf.min.js / pdf.worker.min.js) from bundled
+          // resources. The single-segment vendor case below cannot match this
+          // two-level path (/vendor/pdfjs/pdf.min.js), and the fonts/monaco cases
+          // are directory-specific — without this case every pdfjs file 404s and
+          // the PDF viewer fails to boot (pdfjsLib undefined). Same guard pattern
+          // as the monaco case above (manual path parsing, traversal blocked).
+          val segs = req.uri.path.segments.map(_.encoded).toList
+          if segs.sizeIs < 3 then NotFound()
+          else
+            val relParts = segs.drop(2) // drop "vendor" and "pdfjs"
+            // Block path traversal
+            if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+            else
+              val path = relParts.mkString("/")
+              StaticFile
+                .fromResource(s"web/vendor/pdfjs/$path", Some(req))
+                .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+                .getOrElseF(NotFound())
+          end if
+
+        case req @ GET -> Root / "vendor" / file =>
+          // 缓存击穿批 2026-10-25：单段 vendor 此前**无任何 Cache-Control**（浏览器
+          // 按启发式新鲜度缓存，旧 vendor 库可滞留数日）——统一走 assetCacheControl：
+          // 版本化请求 immutable 长效，裸请求显式 no-cache（杀启发式滞留）。
+          StaticFile
+            .fromResource(s"web/vendor/$file", Some(req))
+            .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+            .getOrElseF(NotFound())
+
+        case req @ GET -> Root / "vendor" / "fonts" / file =>
+          StaticFile
+            .fromResource(s"web/vendor/fonts/$file", Some(req))
+            .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+            .getOrElseF(NotFound())
+
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/vendor/") =>
+          // Vendor SUBTREE passthrough (canvas-office-render-fix batch,
+          // 2026-10-06): the depth ≥ 2 shapes the monaco/pdfjs/fonts and
+          // single-segment cases above cannot match — the pptx-preview MVP's
+          // vendored /vendor/pptx-renderer/* answered 404 here and the renderer
+          // never loaded (real-instance reading). Third occurrence of the
+          // per-directory outage class on /vendor (monaco → pdfjs →
+          // pptx-renderer) — the jsRoutes lesson applied to the vendor tree:
+          // served by the standalone gap-filler, unit-pinned by
+          // VendorSubtreeRoutesSpec (see StaticRoutes.vendorSubtree scaladoc).
+          // This case sits AFTER the directory-specific cases, so their
+          // behavior is byte-identical; this only fills the 404ing gap.
+          StaticRoutes.vendorSubtree(req)
+
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/brand/") =>
+          // Brand asset subtree (stand-logo-slotting batch, 2026-10-15): serves
+          // web/brand/** at any depth so the optional __BRAND__ logoUrl /
+          // logoDarkUrl reference slots can point at the slotted stand kit
+          // (/brand/stand/…) on switch day without moving the incumbent
+          // /css/logo-* files. Same gap-filler shape as the /vendor/ subtree
+          // case above — /brand/* was previously unrouted (404) and nothing
+          // referenced it, so default behavior is byte-identical; guards are
+          // the vendorSubtree precedent, pinned by BrandSubtreeRoutesSpec.
+          StaticRoutes.brandSubtree(req)
+
+        case req @ GET -> Root / fileName =>
+          val allowed =
+            Set(
+              "style.css",
+              "app.js",
+              "sw.js", // console-load-perf 批 2026-10-21: 温访问秒开 SW（根 scope 注册要求根路径脚本；no-cache 保证 SW 更新即时可见）
+              "favicon-32.png",
+              "favicon-16.png",
+              "favicon.svg",
+              "favicon.ico",
+              "favicon-180.png",
+              "favicon-192.png",
+              "favicon-512.png"
+            )
+          if allowed.contains(fileName) then
+            StaticFile
+              .fromResource(s"web/$fileName", Some(req))
+              // 缓存击穿批 2026-10-25：favicon 族引用自带内容 digest（?v=…，换 logo
+              // 即变）⇒ 版本化请求 immutable 长效；sw.js 等根文件引用不带 v ⇒ 仍
+              // no-cache（SW 更新即时可见语义不动）。
+              .map(_.putHeaders("Cache-Control" -> StaticRoutes.assetCacheControl(req)))
+              .getOrElseF(NotFound())
           else NotFound()
-  }
+
+        case req @ GET -> Root / "agents" / "manifest.json" =>
+          sharedResources.agentLibrary.loadAll().flatMap { agents =>
+            val json = io.circe.Json.obj(
+              "agents" -> agents.values.toList.map { a =>
+                io.circe.Json.obj(
+                  "name" -> a.name.asJson,
+                  "description" -> a.description.asJson,
+                  "displayName" -> a.displayName.getOrElse(a.name).asJson,
+                  "avatar" -> a.avatar.asJson
+                )
+              }.asJson
+            )
+            Ok(json.noSpaces, org.http4s.headers.`Content-Type`(org.http4s.MediaType.application.json))
+          }
+
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/agents/") =>
+          // Serve static files under agent directory (supports nested paths)
+          // Uses manual path parsing because http4s DSL only matches single path segments
+          val segs = req.uri.path.segments.map(_.encoded).toList
+          if segs.sizeIs < 3 then NotFound()
+          else
+            val agentName = segs(1)
+            // Block path traversal: agentName must be a simple name (no .., /, \)
+            if agentName.contains("..") || agentName.contains("/") || agentName.contains("\\") then NotFound()
+            else
+              val agentDir = AgentLibrary.defaultDir / agentName
+              val relParts = segs.drop(2)
+              // Block path traversal in relative parts
+              val safeRel = relParts.filter(s => s != ".." && !s.contains("\\"))
+              if safeRel.length != relParts.length then NotFound()
+              else
+                val filePath = agentDir / os.RelPath(safeRel.mkString("/"))
+                // Final defense: resolve and verify the path stays under agentDir
+                if filePath.startsWith(agentDir) && os.exists(filePath) && os.isFile(filePath) then
+                  StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+                else NotFound()
+          end if
+
+        case req @ GET -> _ if req.uri.path.renderString.startsWith("/voice-models/") =>
+          // Serve pre-downloaded voice model files from ~/.nebflow/voice-models/
+          // Allows offline Whisper inference without CDN dependency.
+          val segs = req.uri.path.segments.map(_.encoded).toList
+          if segs.sizeIs < 2 then NotFound()
+          else
+            val relParts = segs.drop(1) // drop "voice-models"
+            // Block path traversal
+            if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
+            else
+              val modelBase = PathUtil.dataRoot / "voice-models"
+              val filePath = modelBase / os.RelPath(relParts.mkString("/"))
+              if filePath.startsWith(modelBase) && os.exists(filePath) && os.isFile(filePath) then
+                StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
+              else NotFound()
+      }
 
   private val inputHistoryPath = PathUtil.dataRoot / "input_history.jsonl"
 
@@ -827,9 +1690,34 @@ class WebSocketRoutes(
 
   end logInputHistory
 
+  /**
+   * A4 (perf-481): the full tool-description list, exposed as its OWN message
+   * instead of riding every `serverConfig` frame.
+   *
+   * Why: `serverConfig` carries five small config nodes, but the tool list alone
+   * is ~93.5 KB of tool descriptions. Embedding it made EVERY config broadcast —
+   * and every WS connect — a ~93.5 KB frame to every connection, for a payload
+   * the frontend never reads: `state.availableTools` is only ever WRITTEN
+   * (`main.js:2701`) and has ZERO read sites across `web/` (measured by grep
+   * over `src/main/resources/web/`, and re-confirmed by the DOM/e2e probe leg
+   * before this change).
+   *
+   * On-demand (plan OD-2 default) rather than deleted: the field is the only
+   * provider of `state.availableTools`, so dropping it outright would silently
+   * break any future consumer. `getToolsList` serves it on request, and the
+   * frontend asks once per connection — so the cost moves from "every config
+   * broadcast × every connection" to "once per connect".
+   */
+  private def toolsListJson: io.circe.Json =
+    ToolRegistry.ALL_TOOLS
+      .map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
+      .asJson
+
+  /** A4: the on-demand face of the tool list (`getToolsList` → this frame). */
+  private def sendToolsList(wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
+    wsSend(io.circe.Json.obj("type" -> "toolsList".asJson, "tools" -> toolsListJson))
+
   private def broadcastServerConfig: IO[Unit] =
-    val toolsList =
-      ToolRegistry.ALL_TOOLS.map(t => io.circe.Json.obj("name" -> t.name.asJson, "description" -> t.description.asJson))
     for
       thinkingCfg <- sharedResources.thinkingConfigRef.get
       workScheduleCfg <- sharedResources.freezeScheduleRef.get
@@ -838,6 +1726,7 @@ class WebSocketRoutes(
       mcpServers <- mcpManager.listServers.map(_.map { case (id, enabled) =>
         io.circe.Json.obj("id" -> id.asJson, "enabled" -> enabled.asJson)
       })
+      sttNode <- SttService.serverConfigNode(sttSvc)
       _ <- wsHub.broadcast(
         io.circe.Json.obj(
           "type" -> "serverConfig".asJson,
@@ -849,13 +1738,16 @@ class WebSocketRoutes(
           // nextChangeAt）——WS 连接初始态、配置热更、skipFreeze 后均随广播刷新，
           // 前端输入栏禁用状态机以此为准（含 skip 语义，避免按 workSchedule 自行
           // 推算时误判被跳过的窗口仍冻结）。
-          "freezeState" -> nebflow.core.schedule.FreezeSchedule.freezeStateNode(
-            workScheduleCfg,
-            skipUntil,
-            System.currentTimeMillis()
-          ).asJson,
-          "stt" -> SttService.serverConfigNode(sttSvc),
-          "tools" -> toolsList.asJson,
+          "freezeState" -> nebflow.core.schedule.FreezeSchedule
+            .freezeStateNode(
+              workScheduleCfg,
+              skipUntil,
+              System.currentTimeMillis()
+            )
+            .asJson,
+          "stt" -> sttNode,
+          // A4: `tools` intentionally NOT here — see the note above the helper
+          // (it was ~93.5 KB on every broadcast; now served by `getToolsList`).
           "mcpServers" -> mcpServers.asJson
         )
       )
@@ -865,45 +1757,60 @@ class WebSocketRoutes(
 
   end broadcastServerConfig
 
-  /** Persist thinking config to nebflow.json — targeted field update.
-    * 冻结修复（2026-08-27）：不再吞写盘错误——失败必须上浮给调用方回执
-    * configUpdateFailed，否则用户看到「已保存」而重启后配置回滚（off 假成功）。
-    * 调用方负责 writeLocked 串行化。 */
+  /**
+   * Persist thinking config to nebflow.json — targeted field update.
+   * 冻结修复（2026-08-27）：不再吞写盘错误——失败必须上浮给调用方回执
+   * configUpdateFailed，否则用户看到「已保存」而重启后配置回滚（off 假成功）。
+   * 调用方负责 writeLocked 串行化。
+   */
   private def persistThinkingConfig(tc: ThinkingConfig): IO[Unit] =
     IO.blocking {
       // Read through the dual-read path (legacy fallback), write the brand
-      // name — the first write completes the config-file rename migration.
-      val existing = if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
+      // name — reads may still be served from the legacy file, writes never are.
+      val existing =
+        if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
+        else "{}"
       val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
       parse(existing).foreach { json =>
         val updated = json.mapObject { obj =>
           obj.add("thinkingConfig", tc.asJson)
         }
-        os.write.over(path, updated.spaces2, createFolders = true)
+        // Restricted form (keyaudit-quickfix ①): the config file carries provider
+        // apiKeys — the file lands 0600 instead of the umask default 0644.
+        AtomicJson.writeSyncRestricted(path, updated.spaces2)
       }
     }
 
-  /** Persist freeze schedule to nebflow.json — targeted top-level write (照抄
-    * persistThinkingConfig 的 read-merge-write 语义，merge 纯函数在
-    * FreezeSchedule.mergeIntoConfig 便于 B9 测试）。JSON 键名保留 "workSchedule"（前端契约）。
-    * 冻结修复（2026-08-27）：错误上浮不吞——调用方持锁调用并负责失败回执。 */
+  /**
+   * Persist freeze schedule to the config file — targeted top-level write (照抄
+   * persistThinkingConfig 的 read-merge-write 语义，merge 纯函数在
+   * FreezeSchedule.mergeIntoConfig 便于 B9 测试）。JSON 键名保留 "workSchedule"（前端契约）。
+   * 冻结修复（2026-08-27）：错误上浮不吞——调用方持锁调用并负责失败回执。
+   */
   private def persistWorkSchedule(cfg: nebflow.core.schedule.FreezeScheduleConfig): IO[Unit] =
     IO.blocking {
-      val existing = if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
+      val existing =
+        if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
+        else "{}"
       val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
       parse(existing).foreach { json =>
         val updated = nebflow.core.schedule.FreezeSchedule.mergeIntoConfig(json, cfg)
-        os.write.over(path, updated.spaces2, createFolders = true)
+        // Restricted form (keyaudit-quickfix ①) — same rationale as persistThinkingConfig.
+        AtomicJson.writeSyncRestricted(path, updated.spaces2)
       }
     }
 
-  /** Persist MCP server enabled state to nebflow.json — targeted field update.
-    * 冻结修复（2026-08-27）：错误上浮不吞（同族 fail-loud）。调用方持锁。 */
+  /**
+   * Persist MCP server enabled state to the config file — targeted field update.
+   * 冻结修复（2026-08-27）：错误上浮不吞（同族 fail-loud）。调用方持锁。
+   */
   private def persistMcpServerEnabled(serverId: String, enabled: Boolean): IO[Unit] =
     IO.blocking {
       // Read through the dual-read path (legacy fallback), write the brand
-      // name — the first write completes the config-file rename migration.
-      val existing = if os.exists(nebflow.llm.Config.DefaultConfigPath) then os.read(nebflow.llm.Config.DefaultConfigPath) else "{}"
+      // name — reads may still be served from the legacy file, writes never are.
+      val existing =
+        if os.exists(nebflow.shared.Config.DefaultConfigPath) then os.read(nebflow.shared.Config.DefaultConfigPath)
+        else "{}"
       val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
       parse(existing).foreach { json =>
         val updated = json.mapObject { obj =>
@@ -913,7 +1820,8 @@ class WebSocketRoutes(
           val updatedMcp = Json.fromJsonObject(mcpObj.add(serverId, updatedServer))
           obj.add("mcpServers", updatedMcp)
         }
-        os.write.over(path, updated.spaces2, createFolders = true)
+        // Restricted form (keyaudit-quickfix ①) — same rationale as persistThinkingConfig.
+        AtomicJson.writeSyncRestricted(path, updated.spaces2)
       }
     }
 
@@ -934,29 +1842,34 @@ class WebSocketRoutes(
   /** Send unified session list by looking up the session's agent name (for agentName field only). */
   private def sendAgentSessionList(wsSend: io.circe.Json => IO[Unit], sessionId: String): IO[Unit] =
     sessionStore.getSessionMeta(sessionId).flatMap { metaOpt =>
-      val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+      val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
       sendAgentSessionListByName(wsSend, agentName)
     }
 
   /** Send unified session list (all agents) — keeps sessions isolated from filtering issues. */
   private def sendAgentSessionListByName(wsSend: io.circe.Json => IO[Unit], agentName: String): IO[Unit] =
     (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-      val rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
-      wsSend(
-        io.circe.Json.obj(
-          "type" -> "agentSessionList".asJson,
-          "agentName" -> agentName.asJson,
-          "sessions" -> sessions.asJson,
-          "folders" -> folders.asJson,
-          "foldersWithRules" -> rulesFolderIds.asJson
+      val rulesFolderIds = folders.filter(f => nebflow.shared.RulesStore.exists(f.id)).map(_.id)
+      // 出口 overlay（设计 §13 #9）：列表里的逐会话 `safetyMode` = **有效档位**
+      // （覆盖 ?? 全局），不再输出盘上遗留值——前端 `state.bypassSessions`
+      // 由此只含"有效档位 = 全部放行"的会话（A-14）。
+      sharedResources.overlaySessionList(sessions).flatMap { sessionsJson =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "agentSessionList".asJson,
+            "agentName" -> agentName.asJson,
+            "sessions" -> sessionsJson,
+            "folders" -> folders.asJson,
+            "foldersWithRules" -> rulesFolderIds.asJson
+          )
         )
-      )
+      }
     }
 
   /** Push memory status for the current session to the frontend. */
   private def sendMemoryStatus(wsSend: io.circe.Json => IO[Unit], sessionId: String): IO[Unit] =
     sessionStore.getSessionMeta(sessionId).flatMap { metaOpt =>
-      val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
+      val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
       wsSend(
         io.circe.Json.obj(
           "type" -> "memoryStatus".asJson,
@@ -972,21 +1885,25 @@ class WebSocketRoutes(
       )
     }
 
-  /** '~' 前缀展开（仅前缀语义；非 ~ 开头原样返回）——wsBrowse 路径入参用。
-    * 委托 PathUtil.expandTilde：统一支持 `~` / `~/` / `~\`（Windows 分隔符形态），
-    * 并在 Windows 上做分隔符归一（os-lib 拒绝混合分隔符段）。 */
+  /**
+   * '~' 前缀展开（仅前缀语义；非 ~ 开头原样返回）——wsBrowse 路径入参用。
+   * 委托 PathUtil.expandTilde：统一支持 `~` / `~/` / `~\`（Windows 分隔符形态），
+   * 并在 Windows 上做分隔符归一（os-lib 拒绝混合分隔符段）。
+   */
   private def expandTilde(path: String): String = PathUtil.expandTilde(path)
 
-  /** 应用内工作区浏览器（Route C 兜底）的目录列表响应帧。
-    * home 供前端把 home 前缀折叠为「主目录」面包屑；err 非 null → 前端在弹窗
-    * 内联展示错误（路径非法/不可读）。 */
+  /**
+   * 应用内工作区浏览器（Route C 兜底）的目录列表响应帧。
+   * home 供前端把 home 前缀折叠为「主目录」面包屑；err 非 null → 前端在弹窗
+   * 内联展示错误（路径非法/不可读）。
+   */
   private def wsBrowseEvent(
-      evType: String,
-      path: String,
-      parent: Option[String],
-      entries: List[String],
-      err: Option[String]
-  ): Json = {
+    evType: String,
+    path: String,
+    parent: Option[String],
+    entries: List[String],
+    err: Option[String]
+  ): Json =
     val fields = scala.collection.mutable.ListBuffer(
       "type" -> Json.fromString(evType),
       "path" -> Json.fromString(path),
@@ -996,2613 +1913,117 @@ class WebSocketRoutes(
     parent.foreach(p => fields += "parent" -> Json.fromString(p))
     err.foreach(e => fields += "error" -> Json.fromString(e))
     Json.obj(fields.toList*)
-  }
+  end wsBrowseEvent
 
-  private val MaxMessageSize = 10 * 1024 * 1024 // 10MB (base64 images can be large)
+  /**
+   * picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
+   * `browsePath` frame builders. Body lives in the companion object (pure core,
+   * spec-callable — `deletePathsSafely` precedent), these are the seam the
+   * handler uses.
+   */
+  private[gateway] def browseResultFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
+    WebSocketRoutes.browseFrame(dir, displayPath, query, cap)
+
+  // attach-split 批（2026-10-24 现场事故：作者 22 张图 + 文字一条帧 ≈11MB > 旧 10MB
+  // 上限 ⇒ 整帧被静默丢弃、文字同丢、前端已渲乐观气泡 = 假成功）：上限提到 64MB。
+  // 栈内无更低帧级 cap（http4s-core 0.23.30 FrameTranscoder 无 size 限制，已核实
+  // 缓存 jar）⇒ 22 图级体积（前端 1920px/q0.8 压缩后 ~30-40MB 上限）单帧可达。
+  // 64MB 之上仍超限的帧走 :1719 的「有声拒绝」（messageTooLarge 错误帧），不再静默。
+  private val MaxMessageSize = 64 * 1024 * 1024 // 64MB (base64 image batches; see attach-split batch note)
+
+  /**
+   * A2 (perf-481): per-connection outbound queue capacity, in frames.
+   *
+   * Sized as a bounded spill buffer for a transiently slow reader, NOT as a
+   * stream buffer: the largest frame the server emits is the ~21 KB
+   * `serverConfig`/`configData` family (A4 shrinks the tool-list one further),
+   * so 1024 frames bounds one connection's pending bytes to the low tens of MB
+   * even in the worst case, while a healthy reader drains far faster than the
+   * server enqueues. A reader that stays behind for this many frames is stalled
+   * by definition and gets the OD-1 policy applied (drop-oldest for stream
+   * increments, connection teardown for control frames).
+   */
+  private[gateway] val OutboundQueueCapacity = 1024
+
+  /**
+   * Text-stream engine behind the `textWindow` / `textIndex` / `textSearch` /
+   * `textCancel` legs — state + methods live in [[TextStreamSearch]] (one
+   * instance per routes, identical lifecycle to the inline Refs it replaced).
+   * The open-path size gate it shares with `pop.readFile` is
+   * `TextStreamSearch.MaxPopReadFileBytes`.
+   */
+  private val textSearch = new TextStreamSearch
+
+  /**
+   * explorer-rt: shared explorer root resolution (listDir + watchSubscribe
+   * same judgment by construction). `overrideRoot` wins verbatim; otherwise
+   * session project root, falling back to the default projects dir — byte
+   * -for-byte the resolution listDir has always used; the canonical-path
+   * escape guard stays at the call sites (it guards a resolved subpath, not
+   * the root itself).
+   */
+  private def resolveExplorerBaseRoot(sessionId: String, overrideRoot: Option[String]): IO[String] =
+    overrideRoot match
+      case Some(root) => IO.pure(root)
+      case None =>
+        for
+          metaOpt <- sessionStore.getSessionMeta(sessionId)
+          folderId = metaOpt.flatMap(_.folderId)
+          prOpt <- sessionStore.resolveProjectRoot(folderId)
+        yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
 
   /** Public facade for REST API to call into the same message handler. */
   def handleMessagePublic(text: String, wsSend: io.circe.Json => IO[Unit]): IO[Unit] =
-    handleMessage(text, wsSend)
+    // Non-live watch session: explorer-rt subscriptions need a real WS
+    // connection (lifecycle-tied); a REST-invoked handler answers fileOpError
+    // for watch frames instead of silently leaking a WatchService.
+    // 会话身份：REST headless 轨无 WS 连接作用域 ⇒ None（门户身份透传批——
+    // REST 工作型路径行为逐字节不变）。
+    handleMessage(text, wsSend, new ExplorerWatchSession(wsSend, logger, live = false))
 
   private def handleMessage(
     text: String,
-    wsSend: io.circe.Json => IO[Unit]
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession,
+    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None,
+    handshakeCredential: Option[Credential] = None
   ): IO[Unit] =
-    if text.length > MaxMessageSize then logger.warn(s"Dropping oversized WebSocket message (${text.length} bytes)")
+    // attach-split 批（2026-10-24）：超限帧不再只留一行服务器 warn（现场事故 =
+    // 22 图整帧静默丢、文字同丢、前端乐观气泡假成功、「引擎日志零痕迹」体感）。
+    // 尽力解析 sessionId/clientMessageId 回发 `messageTooLarge` 错误帧（超限有声）——
+    // 客户端据此给出用户可见错误并收掉幻影 busy；旧前端收到未知帧型 = 无害 no-op。
+    if text.length > MaxMessageSize then
+      val overJson = parsedJson(text)
+      val overSid = overJson.hcursor.downField("sessionId").as[String].getOrElse("")
+      val overCmid = overJson.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
+      logger.warn(
+        s"Dropping oversized WebSocket message (${text.length} bytes > $MaxMessageSize limit, " +
+          s"sessionId='$overSid', clientMessageId=${overCmid.getOrElse("")}) — messageTooLarge receipt sent"
+      ) *>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "messageTooLarge".asJson,
+            "sessionId" -> overSid.asJson,
+            "clientMessageId" -> overCmid.asJson,
+            "sizeBytes" -> text.length.asJson,
+            "limitBytes" -> MaxMessageSize.asJson
+          )
+        )
     else
-      val parsed = parse(text).toOption.getOrElse(io.circe.Json.Null)
+      val parsed = parsedJson(text)
+      // 未走信封助手:parsed 绑定同时供 type 等多字段使用(全文件「先绑定 json/hcursor
+      // 再取多字段」的 sessionId 站点均按此边界保持原样,2026-09-24)
       val sessionIdForTracking = parsed.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
       val msgType = parsed.hcursor.downField("type").as[String].getOrElse("")
       for
         _ <- sharedResources.lastWsActivity.set(System.currentTimeMillis())
         _ <- nebflow.core.UsageTracker.record("ws_message", sessionIdForTracking)
-        _ <- msgType match
-          case "askUserAnswer" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            (hc.downField("answers").as[List[String]], hc.downField("sessionId").as[String]) match
-              case (Right(answers), Right(askSessionId)) =>
-                val answerText = answers.mkString("\n")
-                val requestId = hc.downField("requestId").as[String].toOption.getOrElse("")
-                sessionStore.appendUiMessages(
-                  askSessionId,
-                  List(UiMessage.User(answerText, timestamp = System.currentTimeMillis()))
-                ) *>
-                  forwardInteractionAnswer(requestId, askSessionId, io.circe.Json.obj("answers" -> answers.asJson))
-              case _ => IO.unit
-
-          // ── 工作区目录选择链（2026-09-05 作者裁定，workspace-picker 批次）──
-          // ProjectCreate「选择工作区」卡片点击 → 后端原生目录对话框（Route A）；
-          // headless/异常时 WorkspaceDirPicker 回 fallback 事件 → 前端降级应用内
-          // 浏览器（Route C，wsBrowse.list / wsBrowse.mkdir）。
-          // 关键：WS 帧串行（evalMap），对话框阻塞必须 `.start` 独立 fiber，
-          // 否则冻结整条连接（卡片后续 askUserAnswer 无法处理）。
-          case "pickWorkspaceDir" =>
-            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
-            (hc.downField("sessionId").as[String].toOption, hc.downField("requestId").as[String].toOption) match
-              case (Some(sid), Some(rid)) =>
-                WorkspaceDirPicker.pick(sid, rid, wsSend).start.void
-              case _ =>
-                logger.warn(s"pickWorkspaceDir: missing sessionId/requestId — dropped")
-
-          case "wsBrowse.list" =>
-            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
-            hc.downField("path").as[String].toOption.filter(_.nonEmpty) match
-              case None => IO.unit
-              case Some(raw) =>
-                IO.blocking {
-                  scala.util.Try(os.Path(expandTilde(raw), os.Path(sys.props("user.home")))).toOption match
-                    case None => (raw, None, List.empty[String], "invalid path")
-                    case Some(dir) =>
-                      if !os.isDir(dir) then (dir.toString, None, Nil, "not a directory")
-                      else
-                        val entries = os.list(dir)
-                          .filter(os.isDir)
-                          .map(_.last)
-                          .filterNot(_.startsWith("."))
-                          .toList.sorted
-                        // 根目录无上级（segmentCount==0）；其余经 os.up 规范化
-                        val parent = if dir.segmentCount > 0 then Some((dir / os.up).toString) else None
-                        (dir.toString, parent, entries, null: String)
-                }.flatMap { case (path, parent, entries, err) =>
-                    wsSend(wsBrowseEvent("wsBrowseList", path, parent, entries, Option(err)))
-                }.handleErrorWith { e =>
-                  wsSend(wsBrowseEvent("wsBrowseList", raw, None, Nil, Some(e.getMessage)))
-                }
-
-          case "wsBrowse.mkdir" =>
-            val hc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
-            (hc.downField("path").as[String].toOption, hc.downField("name").as[String].toOption.map(_.trim)) match
-              case (Some(raw), Some(name)) if name.nonEmpty && name != "." && name != ".." && !name.contains('/') && !name.contains('\\') =>
-                IO.blocking {
-                  val base = os.Path(expandTilde(raw), os.Path(sys.props("user.home")))
-                  os.makeDir(base / name)
-                  base / name
-                }.flatMap { created =>
-                  wsSend(Json.obj(
-                    "type" -> Json.fromString("wsBrowseMkdir"),
-                    "path" -> Json.fromString(created.toString),
-                    "ok" -> Json.fromBoolean(true)
-                  ))
-                }.handleErrorWith { e =>
-                  wsSend(Json.obj(
-                    "type" -> Json.fromString("wsBrowseMkdir"),
-                    "path" -> Json.fromString(raw),
-                    "ok" -> Json.fromBoolean(false),
-                    "error" -> Json.fromString(Option(e.getMessage).getOrElse("mkdir failed"))
-                  ))
-                }
-              case _ => IO.unit
-
-          case "permissionAnswer" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val permSessionId = json.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
-            val requestId = json.hcursor.downField("requestId").as[String].toOption.getOrElse("")
-            val upgradeRaw = json.hcursor.downField("upgradeMode").as[String].toOption
-            // #12: NEVER synthesize a deny from a malformed reply — the old
-            // getOrElse(false) turned any missing/non-boolean `approved` into
-            // a user-attributed denial the user never clicked.
-            json.hcursor.downField("approved").as[Boolean] match
-              case Right(approved) =>
-                // 递进式放行链 (2026-08-30): an invalid upgrade request never
-                // transforms the answer (rule #12 spirit) — log and proceed as
-                // the plain allow/deny the user actually clicked.
-                nebflow.core.PermissionUpgrade.parse(approved, upgradeRaw) match
-                  case Left(why) =>
-                    logger.warn(
-                      s"Permission answer upgradeMode IGNORED ($why) — proceeding as plain ${if approved then "allow" else "deny"} (requestId=$requestId)"
-                    ) *>
-                      forwardInteractionAnswer(requestId, permSessionId, io.circe.Json.obj("approved" -> approved.asJson))
-                  case Right(upgrade) =>
-                    val answerPayload = io.circe.Json.fromJsonObject(
-                      io.circe.JsonObject.fromIterable(
-                        Seq("approved" -> approved.asJson) ++
-                          upgrade.map(m => "upgradeMode" -> io.circe.Json.fromString(nebflow.core.SafetyMode.toString(m)))
-                      )
-                    )
-                    val upgradeIo = upgrade.fold(IO.unit)(m =>
-                      applyPermissionUpgrade(permSessionId, m).handleErrorWith { e =>
-                        logger.warn(s"Permission upgrade FAILED (proceeding as plain allow): ${e.getMessage}")
-                      }
-                    )
-                    logger.info(
-                      s"Permission answer: ${if approved then "approved" else "denied"}${upgrade.map(m => s" + upgrade→${nebflow.core.SafetyMode.toString(m)}").getOrElse("")}"
-                    ) *> upgradeIo *> forwardInteractionAnswer(requestId, permSessionId, answerPayload)
-              case Left(_) =>
-                logger.warn(
-                  s"Permission answer DROPPED: 'approved' missing or not a boolean (requestId=$requestId, session=$permSessionId) — a malformed reply must not become a deny (#12)"
-                )
-
-          case "interrupt" =>
-            val intSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-            // Hard-recovery P4: an interrupt aimed at a wedged turn cannot be
-            // consumed (P3 keeps the actor alive, but the parked read survives
-            // fiber cancellation) — kick the transport so the turn actually dies.
-            maybeSessionKick(intSessionId, "interrupt") *>
-              logger.info("User interrupted") *> ensureAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
-
-          case "restartAgent" =>
-            val rJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val rSessionId = rJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
-            val rLevel = rJson.hcursor.downField("level").as[String].toOption.getOrElse("soft") match
-              case "rollback" => nebflow.agent.RestartLevel.Rollback
-              case "prune" => nebflow.agent.RestartLevel.Prune
-              case "full" => nebflow.agent.RestartLevel.Full
-              case _ => nebflow.agent.RestartLevel.Soft
-            if rSessionId.nonEmpty then
-              logger.info(s"Restart agent (level=$rLevel) for session $rSessionId") *>
-                ensureAgent(rSessionId)(ref => ref ! nebflow.agent.AgentCommand.RestartAgent(rLevel))
-            else IO.unit
-
-          case "cancelAgent" =>
-            // 子 agent 管理面板（2026-08-22 缺口 1）：终止任务终态——复用
-            // AgentControlTool.doCancel 同链路（supervisor Cancelled → barrier
-            // 释放 + taskStore cancelled + Stop；无 supervisor 走降级兜底）。
-            // 区别于 interrupt（只停当前 turn，任务可继续）。用户面板路径无
-            // caller 概念（工具层的自杀/同桶守卫不适用），仅保留 kind 白名单。
-            val cJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val cSessionId = cJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
-            val cReason = cJson.hcursor.downField("reason").as[String].toOption.getOrElse("")
-            def cancelReply(ok: Boolean, extra: (String, Json)*): IO[Unit] =
-              wsSend(
-                io.circe.Json.obj(
-                  Seq(
-                    ("type", "cancelAgentResult".asJson),
-                    ("ok", ok.asJson),
-                    ("sessionId", cSessionId.asJson)
-                  ) ++ extra*
-                )
-              )
-            if cSessionId.isEmpty then
-              cancelReply(ok = false, "error" -> "cancelAgent requires sessionId".asJson)
-            else
-              logger.info(s"cancelAgent (panel) for session $cSessionId") *>
-                sharedResources.agentRegistry.get.flatMap { registry =>
-                  registry.get(cSessionId) match
-                    case None =>
-                      cancelReply(
-                        ok = false,
-                        "error" ->
-                          s"No live agent with sessionId='$cSessionId' (registry is in-memory; stale ids vanish after restart)".asJson
-                      )
-                    case Some(rec) if !nebflow.core.tools.AgentControlTool.cancelable(rec) =>
-                      cancelReply(
-                        ok = false,
-                        "error" -> s"Kind ${rec.kind} is read-only (cancelable: Delegate / SubTask / Ephemeral / Project node-dispatcher sessions)".asJson
-                      )
-                    case Some(rec) =>
-                      val reason = if cReason.nonEmpty then cReason else "cancelled from panel"
-                      // notifyWs = 本连接 wsSend：node-* 会话取消补发 agentDone
-                      // 面板帧（Sub-Agents 面板取消实时刷新修复；dispatcher-*
-                      // 由观察桥拆除点补发，不在此重发）。
-                      nebflow.core.tools.AgentControlTool
-                        .doCancel(sharedResources, rec, reason, notifyWs = Some(wsSend))
-                        .flatMap {
-                          case Right(msg) => cancelReply(ok = true, "message" -> msg.asJson)
-                          case Left(err)  => cancelReply(ok = false, "error" -> err.message.asJson)
-                        }
-                }
-
-          case "parentRestart" =>
-            // v2 冻结式错误恢复升级链（§5.3.3）：用户/父干预卡片——重启冻结中的
-            // 子 agent（断点续跑）。幂等守卫：sessionId 存在 + 处于错误族冻结
-            // （status==Frozen && frozenReason != schedule——时间表冻结是正常调度，
-            // 不可父重启）。按 kind 路由：有 supervisor（Delegate/SubTask）→ Stop →
-            // BackoffSupervisor respawn；Team 成员 → Stop + Mail 激活（history 重建）；
-            // Root → restartAgent soft（现有重启语义）。
-            val prJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val prSessionId = prJson.hcursor.downField("sessionId").as[String].toOption.getOrElse("")
-            def prReply(ok: Boolean, extra: (String, Json)*): IO[Unit] =
-              wsSend(
-                io.circe.Json.obj(
-                  Seq(
-                    ("type", "parentRestartResult".asJson),
-                    ("ok", ok.asJson),
-                    ("sessionId", prSessionId.asJson)
-                  ) ++ extra*
-                )
-              )
-            if prSessionId.isEmpty then
-              prReply(ok = false, "error" -> "parentRestart requires sessionId".asJson)
-            else
-              logger.info(s"parentRestart (error-recovery) for session $prSessionId") *>
-                sharedResources.agentRegistry.get.flatMap { registry =>
-                  registry.get(prSessionId) match
-                    case None =>
-                      prReply(
-                        ok = false,
-                        "error" ->
-                          s"No live agent with sessionId='$prSessionId' (registry is in-memory; stale ids vanish after restart)".asJson
-                      )
-                    case Some(rec)
-                        if rec.status != nebflow.agent.AgentStatus.Frozen ||
-                          !rec.frozenReason.exists(_ != "schedule") =>
-                      val notFrozenErr =
-                        s"Session '$prSessionId' is not in error-frozen state (status=${rec.status}, " +
-                          s"frozenReason=${rec.frozenReason.getOrElse("none")}) — parentRestart only applies to frozen-error agents"
-                      prReply(ok = false, "error" -> notFrozenErr.asJson)
-                    case Some(rec) if rec.kind == nebflow.agent.AgentKind.Root =>
-                      // Root agent：现有 restartAgent soft 语义（冻结中 RestartAgent
-                      // 镜像 processing——cancelCurrentTurn + restartStateFor + 续跑）
-                      (rec.ref ! nebflow.agent.AgentCommand.RestartAgent(nebflow.agent.RestartLevel.Soft)) *>
-                        prReply(ok = true, "message" -> "Root restart (soft) sent; frozen turn will resume from checkpoint".asJson)
-                    case Some(rec) if rec.kind == nebflow.agent.AgentKind.Flow =>
-                      // Project flow 会话（node-/dispatcher-）：单次会话，supervisor
-                      // 是观察桥（不 respawn）——restart 语义不成立，且 raw Stop 会
-                      // 杀 agent 而不发终态事件（node engine fiber 挂死）。拒绝并指路。
-                      prReply(
-                        ok = false,
-                        "error" ->
-                          "Project node/dispatcher sessions are single-shot — restart not supported. Cancel it and re-trigger the work.".asJson
-                      )
-                    case Some(rec) if rec.supervisorRef.isDefined =>
-                      // Delegate/SubTask：Stop → BackoffSupervisor respawn（断点续跑）
-                      (rec.ref ! nebflow.agent.AgentCommand.Stop(s"parent-restart")) *>
-                        prReply(
-                          ok = true,
-                          "message" ->
-                            "Restart sent: the supervisor will respawn from the last persisted checkpoint after a short backoff".asJson
-                        )
-                    case Some(rec) =>
-                      // Team 成员：Stop + Mail 激活（history 重建）——复用 AgentControl 工具链路
-                      val toolCtx = ToolContext(
-                        projectRoot = "",
-                        sessionId = None,
-                        sharedResources = Some(sharedResources),
-                        actorSystem = Some(sharedResources.actorSystem)
-                      )
-                      nebflow.core.tools.AgentControlTool
-                        .doRestart(sharedResources, toolCtx, rec, "parent-restart (WS)")
-                        .flatMap {
-                          case Right(msg) => prReply(ok = true, "message" -> msg.asJson)
-                          case Left(err)  => prReply(ok = false, "error" -> err.message.asJson)
-                        }
-                }
-
-          case "immediateInput" =>
-            val immJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val immSessionId = immJson.hcursor.downField("sessionId").as[String].getOrElse("")
-            val immContent = immJson.hcursor.downField("content").as[String].getOrElse("")
-            admitWorkOrRefuse(wsSend)(
-              handleUserText(immSessionId, immContent, source = "immediateInput")
-            )
-
-          // Protocol alias for immediateInput, sent by the CLI (ChatSend).
-          // Before this case existed the payload fell through to the silent
-          // `case _ => IO.unit` below — the CLI received "status: ok" while
-          // nothing was dispatched (the headless one-shot chain was broken).
-          // NOTE: ScheduledTaskActor also emits a "userMessage" broadcast, but
-          // that is a server-to-client display event (task routing goes
-          // through routeToAgent directly) — it never enters handleMessage
-          // and is unaffected by this case.
-          case "userMessage" =>
-            val umJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val umSessionId = umJson.hcursor.downField("sessionId").as[String].getOrElse("")
-            val umContent = umJson.hcursor.downField("content").as[String].getOrElse("")
-            admitWorkOrRefuse(wsSend)(
-              handleUserText(umSessionId, umContent, source = "userMessage")
-            )
-
-          // ── 热重启触发面（P1，hot-restart 批设计 §3.2）：Web UI 按钮的 WS 命令。
-          // confirm=true 必带（前端确认对话框「将等待当前工作完成后重启」的引擎侧
-          // 强制位）；waitIdle 默认 true（§7 拍板项 2 建议：UI 默认排队可取消语义
-          // 的后端形态——等待期工作照常准入）。进度经 restartStatus 帧 wsHub 广播
-          //（quiesce/draining/spawning/handing-over/completed/failed）。编排器与
-          // 触发源解耦——桌面菜单/REST API（P2）后续接同一 HotRestart.requestRestart。
-          case "restart" =>
-            val rc = parse(text).toOption.getOrElse(io.circe.Json.Null).hcursor
-            val confirmed = rc.downField("confirm").as[Boolean].getOrElse(false)
-            val waitIdle = rc.downField("waitIdle").as[Boolean].getOrElse(true)
-            val waitTimeoutMs = rc.downField("waitTimeoutMs").as[Long].getOrElse(600000L)
-            def restartReply(ok: Boolean, extra: (String, Json)*): IO[Unit] =
-              wsSend(
-                io.circe.Json.obj(
-                  Seq(("type", "restartResult".asJson), ("ok", ok.asJson)) ++ extra*
-                )
-              )
-            if !confirmed then
-              restartReply(
-                ok = false,
-                "error" -> "restart requires confirm=true — the gateway restarts in place once current work finishes".asJson
-              )
-            else
-              sharedResources.hotRestart match
-                case None =>
-                  restartReply(ok = false, "error" -> "hot restart is not available in this instance".asJson)
-                case Some(hr) =>
-                  val mode =
-                    if waitIdle then nebflow.core.hotrestart.RestartMode.WaitIdle(waitTimeoutMs)
-                    else nebflow.core.hotrestart.RestartMode.RejectIfBusy
-                  hr.requestRestart(source = "web-ui", mode = mode).flatMap {
-                    case Right(()) =>
-                      restartReply(
-                        ok = true,
-                        "message" -> "hot restart underway — the UI will reconnect automatically when the new instance is up".asJson
-                      )
-                    case Left(err) => restartReply(ok = false, "error" -> err.asJson)
-                  }
-
-          // 冻结「跳过本次」按钮（2026-08-25 前端联调）：无文本跳过命令——
-          // 不注入假消息气泡污染上下文，直调 skipCurrentFreezeWindow（置
-          // freezeSkipUntilRef = 当前窗口结束时刻 + FreezeScheduler.scan 全局
-          // 解冻，语义与用户消息触发完全一致；窗口结束后 skip 自然过期，下一
-          // 冻结段照常冻结）。无 payload、无回执（fire-and-forget）。
-          case "skipFreeze" =>
-            skipCurrentFreezeWindow
-
-          case "command" =>
-            val command = parse(text).flatMap(_.hcursor.downField("command").as[String]).getOrElse("")
-            command match
-              case "clear" =>
-                val clearSessionId =
-                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-                logger.info("Session cleared") *>
-                  sessionStore.saveMessagesForSession(clearSessionId, Nil) *>
-                  sessionStore.appendUiMessages(
-                    clearSessionId,
-                    List(UiMessage.System("Context cleared. LLM memory reset.", Some("slash.clearDone")))
-                  ) *>
-                  sharedResources.taskStore.deleteAll(clearSessionId) *>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "taskListUpdate".asJson,
-                      "tasks" -> io.circe.Json.arr(),
-                      "sessionId" -> clearSessionId.asJson
-                    )
-                  ) *>
-                  ensureAgent(clearSessionId)(ref => ref ! AgentCommand.ResetSession)
-              case "compact" =>
-                val compactSessionId =
-                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-                val instruction =
-                  parse(text).flatMap(_.hcursor.downField("instruction").as[String]).toOption.filter(_.nonEmpty)
-                logger.info("Manual compaction triggered") *>
-                  ensureAgent(compactSessionId)(ref =>
-                    ref ! AgentCommand.TriggerCompaction("full", postCompactInstruction = instruction)
-                  )
-              case "fork" =>
-                val forkSessionId =
-                  parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-                for
-                  sourceMetaOpt <- sessionStore.getSessionMeta(forkSessionId)
-                  sourceName = sourceMetaOpt.map(_.name).getOrElse("Session")
-                  _ <- logger.info(s"Forking session $forkSessionId ($sourceName)")
-                  newMeta <- sessionStore.forkSession(forkSessionId, s"Fork of $sourceName")
-                  _ <- (sessionStore.listSessions, sessionStore.listAllFolders).flatMapN { (sessions, folders) =>
-                    val rulesFolderIds = folders.filter(f => nebflow.service.RulesStore.exists(f.id)).map(_.id)
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "sessionList".asJson,
-                        "sessions" -> sessions.asJson,
-                        "folders" -> folders.asJson,
-                        "activeId" -> forkSessionId.asJson,
-                        "foldersWithRules" -> rulesFolderIds.asJson
-                      )
-                    )
-                  }
-                  _ <- wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "forkComplete".asJson,
-                      "sessionId" -> newMeta.id.asJson,
-                      "name" -> newMeta.name.asJson
-                    )
-                  )
-                yield ()
-                end for
-              case _ => IO.unit
-            end match
-
-          case "recallMessage" =>
-            val recallSessionId =
-              parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).toOption.getOrElse("")
-            if recallSessionId.nonEmpty then
-              for
-                deleted <- sessionStore.deleteLastUserMessage(recallSessionId)
-                _ <- wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "messageRecalled".asJson,
-                    "sessionId" -> recallSessionId.asJson,
-                    "success" -> deleted.asJson
-                  )
-                )
-              yield ()
-            else IO.unit
-
-          case "setThinking" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val thinkingOpt = hc.downField("thinking").as[Option[io.circe.Json]].toOption.flatten
-            // null/absent means toggled off; {enabled: false} also means off; otherwise default true
-            val enabled = thinkingOpt match
-              case None | Some(io.circe.Json.Null) => false
-              case Some(v) => v.hcursor.downField("enabled").as[Boolean].getOrElse(true)
-            val budgetTokens = thinkingOpt match
-              case None | Some(io.circe.Json.Null) => 32000
-              case Some(v) => v.hcursor.downField("budgetTokens").as[Int].getOrElse(32000)
-            val tc = ThinkingConfig(enabled, budgetTokens)
-            logger.info(s"Thinking mode set to: enabled=$enabled budgetTokens=$budgetTokens") *>
-              // 冻结修复（2026-08-27）：同族排序——persist 成功才热更，失败回执。
-              nebflow.service.ConfigService.writeLocked(persistThinkingConfig(tc)).attempt.flatMap {
-                case Left(e) =>
-                  logger.warn(s"Failed to persist thinking config: ${e.getMessage}") *>
-                    wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> s"思考模式保存失败: ${e.getMessage}".asJson))
-                case Right(_) =>
-                  sharedResources.thinkingConfigRef.set(tc) *> broadcastServerConfig
-              }
-
-          case "setWorkSchedule" =>
-            // 冻结调度（freeze-schedule spec ⑦ + 2026-08-25 裁定「设置关闭保留
-            // 配置」）：payload {type, workSchedule:{enabled?, segments?}}——
-            // 缺键从现有配置继承（toggle off 只置 disabled、segments 不清空不
-            // 重置；显式 segments:[] 仍可清空）。校验失败拒绝保存（配置不变）
-            // 并回 configUpdateFailed；成功 → ref 热更 + targeted write + 广播 +
-            // 立即让所有 Frozen agent 重评估（不用等 30s 轮询——改配置关功能即恢复）。
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val payload = json.hcursor
-              .downField("workSchedule")
-              .as[Option[io.circe.Json]]
-              .toOption
-              .flatten
-              .getOrElse(json)
-            for
-              current <- sharedResources.freezeScheduleRef.get
-              merged <- IO.pure(nebflow.core.schedule.FreezeSchedule.mergeValidate(current, payload))
-              _ <- merged match
-                case Right(cfg) =>
-                  // 冻结修复（2026-08-27）排序：写盘成功才热更 ref——persist 失败时
-                  // 内存与盘保持一致并回执 failed（此前 persist 静默吞错 + ref 先行，
-                  // 会造成「UI 已关、重启后又冻」的假保存）。写盘段持 config 写锁。
-                  logger.info(s"Freeze schedule set: enabled=${cfg.enabled} segments=${cfg.segments.size}") *>
-                    nebflow.service.ConfigService.writeLocked(persistWorkSchedule(cfg)).attempt.flatMap {
-                      case Left(e) =>
-                        logger.warn(s"Failed to persist work schedule: ${e.getMessage}") *>
-                          wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> s"冻结配置保存失败: ${e.getMessage}".asJson))
-                      case Right(_) =>
-                        sharedResources.freezeScheduleRef.set(cfg) *>
-                          broadcastServerConfig *>
-                          // 立即让所有 Frozen agent 重评估（不用等 30s 轮询——改配置
-                          // 关功能即恢复）。
-                          nebflow.core.processor.FreezeScheduler.scan(sharedResources)
-                    }
-                case Left(err) =>
-                  logger.warn(s"Invalid workSchedule payload rejected: $err") *>
-                    wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
-            yield ()
-
-          case "setSttConfig" =>
-            // #295 STT 可配置（用户 2026-08-18 拍板）→ A2 部分更新语义
-            // （2026-08-20）：payload {type, sttConfig: {endpoint?, apiKey?,
-            // model?}}。字段省略=保留旧值（前端空 key 输入框省略字段——旧
-            // 整文件替换语义会把已存 apiKey 覆盖丢失，此为 #295 A2 根因）；
-            // 字段显式空串=清除该字段；合并后无任何字段=删配置文件（回退
-            // 免费浏览器 Web Speech）。endpoint 设值须 http(s)://，model
-            // 非空，apiKey 原样存（key 不落地前端——serverConfig 广播只含
-            // sttConfigured/endpoint/model，永不回传 apiKey）。写盘走
-            // AtomicJson 原子写；写后 SttService.create() 重建热更
-            // （transcribe 立即走新配置）。
-            val payload = parse(text).toOption
-              .flatMap(_.hcursor.downField("sttConfig").as[Option[Json]].toOption.flatten)
-              .getOrElse(Json.obj())
-            SttService.parsePatch(payload) match
-              case Left(err) =>
-                logger.warn(s"Invalid sttConfig payload rejected: $err") *>
-                  wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
-              case Right(patch) =>
-                val oldCfgOpt = IO.blocking {
-                  if os.exists(SttService.configPath) then
-                    parse(os.read(SttService.configPath)).toOption
-                  else None
-                }
-                oldCfgOpt.flatMap { oldCfg =>
-                  SttService.mergeConfig(oldCfg, patch) match
-                    case Some(cfgJson) =>
-                      AtomicJson.write(SttService.configPath, cfgJson.noSpaces) *>
-                        SttService.create().flatMap { svc =>
-                          sttServiceRef.set(svc) *> logger.info(s"STT config set: endpoint=${svc.map(_.endpoint).getOrElse("(defaults)")}")
-                        } *>
-                        broadcastServerConfig *>
-                        wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
-                    case None =>
-                      (if os.exists(SttService.configPath) then IO.blocking(os.remove(SttService.configPath)) else IO.unit) *>
-                        sttServiceRef.set(None) *>
-                        logger.info("STT config cleared (fallback to browser Web Speech)") *>
-                        broadcastServerConfig *>
-                        wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
-                }
-
-          case "getToolResultTtl" =>
-            // #341 WS 尾巴：TTL 设置面板读当前生效配置（Ref 是权威——含未
-            // 重启的热更值）。无敏感字段，全量回显。
-            sharedResources.toolResultTtlRef.get.flatMap { cfg =>
-              wsSend(io.circe.Json.obj(
-                "type" -> "toolResultTtl".asJson,
-                "config" -> cfg.asJson
-              ))
-            }
-
-          case "setToolResultTtl" =>
-            // #341 WS 尾巴：payload {type, config:{enabled,ttlMinutes,
-            // keepRecent}}（全量替换，三字段必填；minChars 已移除，旧负载
-            // 携带该字段静默忽略）。STRICT 校验（负数/非整数/超界/缺字段 →
-            // 数/非整数/超界/缺字段 → 拒绝并 warn，回 configUpdateFailed——与
-            // boot 时 fail-safe load 不同：交互面必须把错误亮给用户）。
-            // 成功 → nebflow.json toolResultTtl 节 read-merge + AtomicJson
-            // 原子写 + Ref 热更（下个 LLM 请求生效，镜像 freezeScheduleRef）
-            // → 回 toolResultTtlSaved。
-            val payload = parse(text).toOption
-              .flatMap(_.hcursor.downField("config").as[Option[Json]].toOption.flatten)
-              .getOrElse(Json.Null)
-            nebflow.core.compact.ToolResultTtlConfig.parseStrict(payload) match
-              case Left(err) =>
-                logger.warn(s"Invalid toolResultTtl payload rejected: $err") *>
-                  wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> err.asJson))
-              case Right(cfg) =>
-                val persist = IO.blocking {
-                  val existing =
-                    if os.exists(nebflow.llm.Config.DefaultConfigPath) then
-                      os.read(nebflow.llm.Config.DefaultConfigPath)
-                    else "{}"
-                  val path = PathUtil.configJsonWritePath(PathUtil.dataRoot)
-                  parse(existing).foreach { json =>
-                    val updated = json.mapObject(_.add("toolResultTtl", cfg.asJson))
-                    // writeSync (not write): we are already inside IO.blocking —
-                    // the IO-returning variant would be built, not run.
-                    AtomicJson.writeSync(path, updated.noSpaces)
-                  }
-                }
-                // 冻结修复（2026-08-27）：同族排序——persist 成功才热更 ref，
-                // 失败回执 failed（写盘段持 config 写锁）。
-                nebflow.service.ConfigService.writeLocked(persist).attempt.flatMap {
-                  case Left(e) =>
-                    logger.warn(s"Failed to persist toolResultTtl: ${e.getMessage}") *>
-                      wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> s"TTL 配置保存失败: ${e.getMessage}".asJson))
-                  case Right(_) =>
-                    sharedResources.toolResultTtlRef.set(cfg) *>
-                      logger.info(
-                        s"Tool result TTL set: enabled=${cfg.enabled} ttlMinutes=${cfg.ttlMinutes} " +
-                          s"keepRecent=${cfg.keepRecent}"
-                      ) *>
-                      wsSend(io.circe.Json.obj(
-                        "type" -> "toolResultTtlSaved".asJson,
-                        "config" -> cfg.asJson
-                      ))
-                }
-
-          case "setVoiceMuted" =>
-            val muted = parse(text).toOption
-              .flatMap(_.hcursor.downField("muted").as[Boolean].toOption)
-              .getOrElse(false)
-            sharedResources.voiceMutedRef.set(muted)
-
-          case "setLlmLog" =>
-            val enabled = parse(text).toOption
-              .flatMap(_.hcursor.downField("enabled").as[Boolean].toOption)
-              .getOrElse(true)
-            LlmLogWriter.setEnabled(enabled)
-            logger.info(s"LLM log set to: $enabled") *>
-              wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> enabled.asJson))
-
-          case "getLlmLog" =>
-            wsSend(io.circe.Json.obj("type" -> "llmLogState".asJson, "enabled" -> LlmLogWriter.isEnabled.asJson))
-
-          case "getModelOptions" =>
-            val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-            sharedResources.providerRegistry.getAllModelsDetailed().flatMap { models =>
-              sharedResources.sessionModelOverrides.get.flatMap { overrides =>
-                val currentOpt = overrides.get(sessionId).map(c => s"${c.providerId}/${c.model}")
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "modelOptions".asJson,
-                    "sessionId" -> sessionId.asJson,
-                    "models" -> models.map { case (ref, label, desc) =>
-                      io.circe.Json.obj(
-                        "ref" -> ref.asJson,
-                        "label" -> label.asJson,
-                        "description" -> desc.asJson
-                      )
-                    }.asJson,
-                    "current" -> currentOpt.asJson
-                  )
-                )
-              }
-            }
-
-          case "setSessionModel" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val modelRef = json.hcursor.downField("modelRef").as[Option[String]].getOrElse(None)
-            if sessionId.nonEmpty then
-              (modelRef match
-                case Some(ref) =>
-                  sharedResources.providerRegistry.getCandidateForRef(ref).flatMap {
-                    case Some(candidate) =>
-                      sharedResources.sessionModelOverrides.update(_ + (sessionId -> candidate)) *>
-                        sessionStore
-                          .updateSessionModel(sessionId, Some(ref))
-                          .as(Right(s"${candidate.providerId}/${candidate.model}"))
-                    case None =>
-                      IO.pure(Left(s"Unknown model: $ref"))
-                  }
-                case None =>
-                  sharedResources.sessionModelOverrides.update(_ - sessionId) *>
-                    sessionStore.updateSessionModel(sessionId, None).as(Right("default"))
-              ).flatMap {
-                case Right(ref) =>
-                  // Notify agent actor of context window change for compaction threshold
-                  val notifyAgent = sharedResources.sessionModelOverrides.get.flatMap { overrides =>
-                    overrides.get(sessionId) match
-                      case Some(candidate) =>
-                        ensureAgent(sessionId)(ref => ref ! AgentCommand.UpdateContextWindow(candidate.contextWindow))
-                      case None => IO.unit
-                  }
-                  notifyAgent *> wsSend(io.circe.Json.obj("type" -> "sessionModelSet".asJson, "modelRef" -> ref.asJson))
-                case Left(err) =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-              }
-            else IO.unit
-            end if
-
-          case "switchSession" =>
-            val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-            if sessionId.nonEmpty then
-              sessionService
-                .switchSession(sessionId)
-                .flatMap { _ =>
-                  sendAgentSessionList(wsSend, sessionId) *>
-                    sendMemoryStatus(wsSend, sessionId)
-                }
-                  .handleErrorWith { e =>
-                    wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                  }
-            else IO.unit
-            end if
-
-          case "createSession" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val name = json.hcursor.downField("name").as[String].getOrElse("New Session")
-            val agentName = json.hcursor.downField("agentName").as[Option[String]].getOrElse(None)
-            val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
-            sessionService
-              .createSession(name, agentName = agentName, folderId = folderId)
-              .flatMap { meta =>
-                // Send unified session list (all agents)
-                val sendList = agentName match
-                  case Some(an) =>
-                    sendAgentSessionListByName(wsSend, an)
-                  case None =>
-                    sessionService.sendSessionList(wsSend, "Nebula")
-                sendList
-              }
-              .handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-
-          case "deleteSession" =>
-            val sessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-            if sessionId.nonEmpty then
-              // Get agent name before deleting so we can send filtered list
-              sessionStore
-                .getSessionMeta(sessionId)
-                .flatMap { metaOpt =>
-                  val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                  // Clean up text buffers for deleted session to prevent memory leak
-                  sessionTextBuffers.update(_ - sessionId) *>
-                    sessionThinkingBuffers.update(_ - sessionId) *>
-                    sessionTurnStarts.update(_ - sessionId) *>
-                    stopTeamSessionActors(sessionId) *> stopChildDelegateActors(sessionId) *> removeRootAgent(sessionId) *> sessionService
-                      .deleteSession(sessionId)
-                      .flatMap { _ =>
-                        sendAgentSessionListByName(wsSend, agentName)
-                      }
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-            end if
-
-          case "batchDeleteSessions" =>
-            val sessionIds = parse(text).flatMap(_.hcursor.downField("sessionIds").as[List[String]]).getOrElse(Nil)
-            if sessionIds.nonEmpty then
-              sessionStore
-                .getSessionMeta(sessionIds.head)
-                .flatMap { metaOpt =>
-                  val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                  sessionIds
-                    .traverse_ { sid =>
-                      sessionTextBuffers.update(_ - sid) *>
-                        sessionThinkingBuffers.update(_ - sid) *>
-                        sessionTurnStarts.update(_ - sid) *>
-                        stopTeamSessionActors(sid) *>
-                        stopChildDelegateActors(sid) *>
-                        removeRootAgent(sid) *>
-                        sessionService.deleteSession(sid)
-                    }
-                    .flatMap { _ =>
-                      sendAgentSessionListByName(wsSend, agentName)
-                    }
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-            end if
-
-          case "renameSession" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val newName = json.hcursor.downField("name").as[String].getOrElse("")
-            if sessionId.nonEmpty && newName.nonEmpty then
-              sessionService
-                .renameSession(sessionId, newName)
-                .flatMap { _ =>
-                  sendAgentSessionList(wsSend, sessionId)
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-
-          case "setSafetyMode" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val mode = json.hcursor.downField("safetyMode").as[String].getOrElse("confirm-edits")
-            if sid.nonEmpty then
-              sessionStore
-                .setSafetyMode(sid, mode)
-                .flatMap { _ =>
-                  ensureAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
-                    sendAgentSessionList(wsSend, sid)
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-
-          case "setBypass" =>
-            // Backward compat: old clients send { bypass: Boolean }
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val sid = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val bypass = json.hcursor.downField("bypass").as[Boolean].getOrElse(false)
-            val mode = if bypass then "auto-all" else "confirm-edits"
-            if sid.nonEmpty then
-              sessionStore
-                .setSafetyMode(sid, mode)
-                .flatMap { _ =>
-                  ensureAgent(sid)(ref => ref ! AgentCommand.SetSafetyMode(nebflow.core.SafetyMode.fromString(mode))) *>
-                    sendAgentSessionList(wsSend, sid)
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-
-          case "ask" =>
-            val askJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val question = askJson.hcursor.downField("question").as[String].getOrElse("")
-            val askSessionId = askJson.hcursor.downField("sessionId").as[String].getOrElse("")
-            if question.nonEmpty && askSessionId.nonEmpty then
-              executeAsk(askSessionId, question, wsSend).handleErrorWith { e =>
-                logger.warn(s"Ask failed for session $askSessionId: ${e.getMessage}")
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "askError".asJson,
-                    "sessionId" -> askSessionId.asJson,
-                    "message" -> s"Ask failed: ${e.getMessage.take(200)}".asJson
-                  )
-                )
-              }
-            else IO.unit
-
-          case "getSkills" =>
-            for
-              skills <- SkillService.listSkills()
-              _ <- wsSend(
-                io.circe.Json.obj(
-                  "type" -> "skillList".asJson,
-                  "skills" -> skills.asJson
-                )
-              )
-            yield ()
-
-          case "getTeams" =>
-            for
-              teams <- EntityLoader.listTeams()
-              flows <- EntityLoader.listFlows()
-              teamEntries = teams.values.toList
-                .sortBy(_.name)
-                .map(t =>
-                  io.circe.Json
-                    .obj("name" -> t.name.asJson, "description" -> t.description.asJson, "type" -> "team".asJson)
-                )
-              flowEntries = flows.values.toList
-                .sortBy(_.name)
-                .map(f =>
-                  io.circe.Json
-                    .obj("name" -> f.name.asJson, "description" -> f.description.asJson, "type" -> "flow".asJson)
-                )
-              _ <- wsSend(
-                io.circe.Json.obj(
-                  "type" -> "teamList".asJson,
-                  "teams" -> teamEntries.asJson,
-                  "flows" -> flowEntries.asJson
-                )
-              )
-            yield ()
-
-          case "skill" =>
-            val skillJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val skillName = skillJson.hcursor.downField("skillName").as[String].getOrElse("")
-            val skillInput = skillJson.hcursor.downField("input").as[String].getOrElse("")
-            val skillSessionId = skillJson.hcursor.downField("sessionId").as[String].getOrElse("")
-            if skillName.nonEmpty && skillSessionId.nonEmpty then
-              // Persist user message and skill activation system bubble to session history,
-              // so they survive session switching (frontend rebuilds DOM from backend history).
-              sharedResources.sessionStore.appendUiMessages(
-                skillSessionId,
-                List(
-                  UiMessage.User(skillInput, timestamp = System.currentTimeMillis()),
-                  UiMessage.System(
-                    s"Using skill: $skillName",
-                    Some("slash.skillActivated"),
-                    Some(io.circe.Json.obj("skillName" -> skillName.asJson))
-                  )
-                )
-              ) *>
-                executeSkill(skillName, skillInput, skillSessionId, wsSend).handleErrorWith { e =>
-                  logger.warn(s"Skill '$skillName' failed for session $skillSessionId: ${e.getMessage}")
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "skillError".asJson,
-                      "sessionId" -> skillSessionId.asJson,
-                      "message" -> s"Skill failed: ${e.getMessage.take(200)}".asJson
-                    )
-                  )
-                }
-            else IO.unit
-            end if
-
-          case "deleteSkill" =>
-            val delJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val delName = delJson.hcursor.downField("name").as[String].getOrElse("")
-            if delName.nonEmpty then
-              SkillService.deleteSkill(delName).flatMap { success =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "skillDeleted".asJson,
-                    "name" -> delName.asJson,
-                    "success" -> success.asJson
-                  )
-                ) *>
-                  SkillService.listSkills().flatMap { skills =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "skillList".asJson,
-                        "skills" -> skills.asJson
-                      )
-                    )
-                  }
-              }
-            else IO.unit
-            end if
-
-          // ===== Scheduled Task Management =====
-
-          case "createScheduledTask" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val crSessionId = hc.downField("sessionId").as[String].getOrElse("")
-            val crContent = hc.downField("content").as[String].getOrElse("")
-            val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
-            val crRefPath = hc.downField("referencePath").as[Option[String]].getOrElse(None)
-            val crRepeat = hc.downField("repeat").as[Option[String]].getOrElse(None)
-            if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
-              val task =
-                nebflow.core.scheduler.ScheduledTask.create(crSessionId, crContent, crTriggerAt, crRefPath, crRepeat)
-              sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
-                // Creation audit trail: without this line a lost WS create (fire-and-forget
-                // client, no ack retry) is indistinguishable from a persistence failure —
-                // see the 2026-08-17 P0 where the file was never written and no server-side
-                // trace existed to separate "message never arrived" from "arrived and broke".
-                // NOTE: infoSync/warnSync — the IO-returning info/warn would be discarded
-                // as bare statements (effect never runs).
-                logger.infoSync(
-                  s"Scheduled task created: ${task.id} session=${task.sessionId} " +
-                    s"triggerAt=${task.triggerAt} content=${task.content.take(40)}"
-                )
-                sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "scheduledTaskCreated".asJson,
-                    "task" -> io.circe.Json.obj(
-                      "id" -> task.id.asJson,
-                      "content" -> task.content.asJson,
-                      "triggerAt" -> task.triggerAt.asJson,
-                      "createdAt" -> task.createdAt.asJson,
-                      "referencePath" -> task.referencePath.asJson,
-                      "repeat" -> task.repeat.asJson
-                    )
-                  )
-                )
-              }
-            else
-              val reason =
-                if crSessionId.isEmpty then "missing sessionId"
-                else if crContent.isEmpty then "missing content"
-                else if crTriggerAt <= System.currentTimeMillis() then "triggerAt must be in the future"
-                else "unknown"
-              // Rejections must be loud: the client treats creates as fire-and-forget with
-              // an optimistic row, so a silent reject reads as "task set" until it never
-              // fires. Log it, and tag the error with the originating msgType so the
-              // frontend can route it back to the scheduled-task panel.
-              logger.warnSync(
-                s"Rejected createScheduledTask: $reason (session=$crSessionId " +
-                  s"triggerAt=$crTriggerAt content=${crContent.take(40)})"
-              )
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "error".asJson,
-                  "msgType" -> "createScheduledTask".asJson,
-                  "message" -> s"Invalid scheduled task: $reason".asJson
-                )
-              )
-            end if
-
-          case "listScheduledTasks" =>
-            val lrSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-            if lrSessionId.nonEmpty then
-              sharedResources.scheduledTaskStore.loadTasks(lrSessionId).flatMap { allTasks =>
-                // Only return pending (untriggered) tasks — triggered tasks are
-                // deleted from storage on firing, but filter as a safety net.
-                val tasks = allTasks.filterNot(_.triggered)
-                val taskJsons = tasks.map { t =>
-                  io.circe.Json.obj(
-                    "id" -> t.id.asJson,
-                    "content" -> t.content.asJson,
-                    "triggerAt" -> t.triggerAt.asJson,
-                    "createdAt" -> t.createdAt.asJson,
-                    "triggered" -> t.triggered.asJson,
-                    "triggeredAt" -> t.triggeredAt.asJson,
-                    "referencePath" -> t.referencePath.asJson,
-                    "repeat" -> t.repeat.asJson,
-                    "enabled" -> t.enabled.asJson
-                  )
-                }
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "scheduledTaskList".asJson,
-                    "tasks" -> taskJsons.asJson,
-                    "sessionId" -> lrSessionId.asJson
-                  )
-                )
-              }
-            else IO.unit
-            end if
-
-          case "deleteScheduledTask" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val drSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val drId = json.hcursor.downField("id").as[String].getOrElse("")
-            if drSessionId.nonEmpty && drId.nonEmpty then
-              sharedResources.scheduledTaskStore.deleteTask(drSessionId, drId).flatMap { _ =>
-                sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "scheduledTaskDeleted".asJson,
-                    "id" -> drId.asJson,
-                    "sessionId" -> drSessionId.asJson
-                  )
-                )
-              }
-            else IO.unit
-
-          case "toggleScheduledTask" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val tgSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val tgId = json.hcursor.downField("id").as[String].getOrElse("")
-            if tgSessionId.nonEmpty && tgId.nonEmpty then
-              sharedResources.scheduledTaskStore.toggleTask(tgSessionId, tgId).flatMap { newEnabled =>
-                sharedResources.scheduledTaskService.foreach(_.notifyTaskChange())
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "scheduledTaskToggled".asJson,
-                    "id" -> tgId.asJson,
-                    "sessionId" -> tgSessionId.asJson,
-                    "enabled" -> newEnabled.asJson
-                  )
-                )
-              }
-            else IO.unit
-
-          // ===== Task List (fetch on session switch / reconnect) =====
-
-          case "getTaskList" =>
-            val tlsSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-            if tlsSessionId.nonEmpty then
-              sharedResources.taskStore.listVisible(tlsSessionId).flatMap { tasks =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "taskListUpdate".asJson,
-                    "sessionId" -> tlsSessionId.asJson,
-                    "tasks" -> tasks.asJson
-                  )
-                )
-              }
-            else IO.unit
-
-          // ===== Complete Task (user clicks the todos-panel circle, todo-panel §7.1) =====
-
-          case "completeTask" =>
-            val ctSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-            val ctTaskId = parse(text).flatMap(_.hcursor.downField("taskId").as[String]).getOrElse("")
-            if ctSessionId.nonEmpty && ctTaskId.nonEmpty then
-              sharedResources.taskStore.complete(ctSessionId, ctTaskId, by = "user").attempt.flatMap {
-                case Right(Some(_)) =>
-                  // Return updated task list — completed items vanish from the
-                  // panel ([U3] complete = disappear), so the authoritative
-                  // refresh is what converges every client.
-                  sharedResources.taskStore.listVisible(ctSessionId).flatMap { tasks =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "taskListUpdate".asJson,
-                        "sessionId" -> ctSessionId.asJson,
-                        "tasks" -> tasks.asJson
-                      )
-                    )
-                  }
-                case Right(None) =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"Task not found: $ctTaskId".asJson))
-                case Left(err) =>
-                  // IllegalStateException — terminal task cannot be re-completed
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "taskError".asJson,
-                      "error" -> s"Cannot complete: ${err.getMessage}".asJson,
-                      "taskId" -> ctTaskId.asJson
-                    )
-                  )
-              }
-            else IO.unit
-            end if
-
-          // ===== Workspace Knowledge =====
-
-          case "listWorkspaceItems" =>
-            val wsSessionId = parse(text).flatMap(_.hcursor.downField("sessionId").as[String]).getOrElse("")
-            if wsSessionId.nonEmpty then
-              sharedResources.knowledgeStore.loadItems(wsSessionId).flatMap { items =>
-                val itemJsons = items.map { it =>
-                  io.circe.Json.obj(
-                    "id" -> it.id.asJson,
-                    "sessionId" -> it.sessionId.asJson,
-                    "title" -> it.title.asJson,
-                    "itemType" -> it.itemType.asJson,
-                    "content" -> it.content.asJson,
-                    "createdAt" -> it.createdAt.asJson
-                  )
-                }
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "workspaceItemList".asJson,
-                    "items" -> itemJsons.asJson,
-                    "sessionId" -> wsSessionId.asJson
-                  )
-                )
-              }
-            else IO.unit
-            end if
-
-          case "deleteWorkspaceItem" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val delSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val delId = json.hcursor.downField("id").as[String].getOrElse("")
-            if delSessionId.nonEmpty && delId.nonEmpty then
-              sharedResources.knowledgeStore.deleteItem(delSessionId, delId).flatMap { _ =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "workspaceItemDeleted".asJson,
-                    "id" -> delId.asJson,
-                    "sessionId" -> delSessionId.asJson
-                  )
-                )
-              }
-            else IO.unit
-
-          // ===== Explorer (File Tree) =====
-
-          case "listDir" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val exSessionId = hc.downField("sessionId").as[String].getOrElse("")
-            val subPath = hc.downField("path").as[String].getOrElse("")
-            if exSessionId.nonEmpty then
-              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
-              (for
-                pr <- overrideRoot match
-                  case Some(root) => IO.pure(root)
-                  case None =>
-                    for
-                      metaOpt <- sessionStore.getSessionMeta(exSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      prOpt <- sessionStore.resolveProjectRoot(folderId)
-                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
-                basePath = if subPath.isEmpty then os.Path(pr) else PathUtil.resolvePath(subPath, os.Path(pr))
-                canonicalBase = basePath.toIO.getCanonicalPath
-                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
-                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
-                  new RuntimeException("path outside project root")
-                )
-                entries <- IO.blocking(WebSocketRoutes.listDirEntries(basePath))
-              yield (basePath.toString, entries))
-                .flatMap { case (resolvedPath, entries) =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "dirListing".asJson,
-                      "path" -> subPath.asJson,
-                      "resolvedPath" -> resolvedPath.asJson,
-                      "entries" -> entries.asJson
-                    )
-                  )
-                }
-                .handleErrorWith { e =>
-                  logger.warn(s"listDir failed: ${e.getMessage}")
-                    *> wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> e.getMessage.asJson))
-                }
-            else IO.unit
-            end if
-
-          case "readFile" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val rdSessionId = hc.downField("sessionId").as[String].getOrElse("")
-            val filePath = hc.downField("path").as[String].getOrElse("")
-            if rdSessionId.nonEmpty && filePath.nonEmpty then
-              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten.filter(_.nonEmpty)
-              (for
-                pr <- overrideRoot match
-                  case Some(root) => IO.pure(root)
-                  case None =>
-                    for
-                      metaOpt <- sessionStore.getSessionMeta(rdSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      prOpt <- sessionStore.resolveProjectRoot(folderId)
-                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
-                basePath <-
-                  if pr.nonEmpty && os.Path(pr, os.pwd).segments.nonEmpty then
-                    IO.blocking { PathUtil.resolvePath(filePath, os.Path(pr, os.pwd)) }
-                  else IO.blocking { PathUtil.resolvePath(filePath, PathUtil.dataRoot / "projects") }
-                canonicalBase = basePath.toIO.getCanonicalPath
-                canonicalRoot = os.Path(pr, os.pwd).toIO.getCanonicalPath
-                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
-                  new RuntimeException("path outside project root")
-                )
-                content <- IO.blocking {
-                  val size = os.size(basePath)
-                  if size > 2 * 1024 * 1024 then
-                    os.read(basePath, offset = 0, count = 2 * 1024 * 1024) + "\n\n[... file truncated at 2MB]"
-                  else os.read(basePath)
-                }
-                fileSize = os.size(basePath)
-              yield (content, basePath.toString, fileSize))
-                .flatMap { case (content, absPath, fileSize) =>
-                  val ext = filePath.split('.').lastOption.getOrElse("").toLowerCase
-                  val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
-                  val itemType = entry.itemType
-                  val isBinary = entry.binary
-                  if isBinary then
-                    // Binary files: don't send content via WS — frontend fetches via /api/nf-file
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "fileContent".asJson,
-                        "path" -> filePath.asJson,
-                        "absPath" -> absPath.asJson,
-                        "itemType" -> itemType.asJson,
-                        "fileName" -> filePath.split('/').last.asJson,
-                        "size" -> fileSize.asJson
-                      )
-                    )
-                  else
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "fileContent".asJson,
-                        "path" -> filePath.asJson,
-                        "absPath" -> absPath.asJson,
-                        "content" -> content.asJson,
-                        "itemType" -> itemType.asJson,
-                        "fileName" -> filePath.split('/').last.asJson,
-                        "size" -> fileSize.asJson
-                      )
-                    )
-                  end if
-                }
-                .handleErrorWith { e =>
-                  logger.warn(s"readFile failed: ${e.getMessage}")
-                    *> wsSend(
-                      io.circe.Json
-                        .obj("type" -> "fileContent".asJson, "error" -> e.getMessage.asJson, "path" -> filePath.asJson)
-                    )
-                }
-            else IO.unit
-            end if
-
-          case "pop.readFile" =>
-            // Pop re-open: reads any absolute path without project root restriction.
-            // Agent-created files (e.g. /tmp/output.svg) should always be readable.
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val popFilePathRaw = hc.downField("path").as[String].getOrElse("")
-            // Expand a leading `~` (home shorthand: `~`, `~/`, `~\`) to the
-            // absolute home dir — historical Pop records may store `~/...`;
-            // only the server (which knows user.home) can resolve it to an
-            // absolute path. PathUtil also normalizes separators on Windows.
-            val popFilePath = PathUtil.expandTilde(popFilePathRaw)
-            if popFilePath.nonEmpty then
-              (for
-                // Cross-platform absolute check: `startsWith("/")` rejected
-                // every Windows path (C:\..., C:/..., UNC) with "path must be
-                // absolute" — the KAI file-browser bug (diag-win-paths).
-                // PathUtil.isAbsolute accepts POSIX, drive-letter and UNC forms.
-                _ <- IO.raiseUnless(PathUtil.isAbsolute(popFilePath))(
-                  new RuntimeException("path must be absolute")
-                )
-                // resolvePath (not bare os.Path): survives cross-drive paths
-                // (pwd on C:, target on D:) via the java.nio fallback.
-                basePath = PathUtil.resolvePath(popFilePath)
-                _ <- IO.raiseUnless(os.exists(basePath))(
-                  new RuntimeException(s"file not found: $popFilePath")
-                )
-                _ <- IO.raiseUnless(os.isFile(basePath))(
-                  new RuntimeException("path is not a regular file")
-                )
-                fileSize = os.size(basePath)
-                _ <- IO.raiseWhen(fileSize > 10L * 1024 * 1024)(
-                  new RuntimeException("file exceeds 10MB limit")
-                )
-                content <- IO.blocking { os.read(basePath) }
-              yield (content, basePath.toString, fileSize, popFilePath))
-                .flatMap { case (content, absPath, fileSize, origPath) =>
-                  val ext = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
-                  val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
-                  val itemType = entry.itemType
-                  val isBinary = entry.binary
-                  if isBinary then
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "fileContent".asJson,
-                        "path" -> origPath.asJson,
-                        "absPath" -> absPath.asJson,
-                        "itemType" -> itemType.asJson,
-                        "fileName" -> origPath.split('/').last.asJson,
-                        "size" -> fileSize.asJson
-                      )
-                    )
-                  else
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "fileContent".asJson,
-                        "path" -> origPath.asJson,
-                        "absPath" -> absPath.asJson,
-                        "content" -> content.asJson,
-                        "itemType" -> itemType.asJson,
-                        "fileName" -> origPath.split('/').last.asJson,
-                        "size" -> fileSize.asJson
-                      )
-                    )
-                  end if
-                }
-                .handleErrorWith { e =>
-                  logger.warn(s"pop.readFile failed: ${e.getMessage}")
-                    *> wsSend(
-                      io.circe.Json
-                        .obj(
-                          "type" -> "fileContent".asJson,
-                          "error" -> e.getMessage.asJson,
-                          "path" -> popFilePath.asJson
-                        )
-                    )
-                }
-            else IO.unit
-            end if
-
-          case "transcribe" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val audioB64 = hc.downField("audio").as[String].getOrElse("")
-            val language = hc.downField("language").as[String].toOption.filter(_.nonEmpty)
-            if audioB64.nonEmpty then
-              sttServiceRef.get.flatMap { sttService =>
-              sttService match
-                case None =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "transcription".asJson,
-                      "error" -> "STT not configured — set it up in Settings".asJson
-                    )
-                  )
-                case Some(svc) =>
-                  IO.blocking {
-                    java.util.Base64.getDecoder.decode(audioB64)
-                  }.flatMap { wavBytes =>
-                    svc.transcribe(wavBytes, language).flatMap {
-                      case Right(text) =>
-                        wsSend(
-                          io.circe.Json.obj(
-                            "type" -> "transcription".asJson,
-                            "text" -> text.asJson
-                          )
-                        )
-                      case Left(err) =>
-                        wsSend(
-                          io.circe.Json.obj(
-                            "type" -> "transcription".asJson,
-                            "error" -> err.asJson
-                          )
-                        )
-                    }
-                  }.handleErrorWith { e =>
-                    logger.warn(s"Transcribe failed: ${e.getMessage}")
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "transcription".asJson,
-                        "error" -> e.getMessage.asJson
-                      )
-                    )
-                  }
-              }
-            else IO.unit
-            end if
-
-          case "ping" => wsSend(io.circe.Json.obj("type" -> "pong".asJson))
-
-          case "createFile" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val cfSessionId = hc.downField("sessionId").as[String].getOrElse("")
-            val cfPath = hc.downField("path").as[String].getOrElse("")
-            if cfSessionId.nonEmpty && cfPath.nonEmpty then
-              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
-              (for
-                pr <- overrideRoot match
-                  case Some(root) => IO.pure(root)
-                  case None =>
-                    for
-                      metaOpt <- sessionStore.getSessionMeta(cfSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      prOpt <- sessionStore.resolveProjectRoot(folderId)
-                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
-                basePath = PathUtil.resolvePath(cfPath, os.Path(pr))
-                canonicalBase = basePath.toIO.getCanonicalPath
-                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
-                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
-                  new RuntimeException("path outside project root")
-                )
-                _ <- IO.blocking {
-                  val parent = basePath / os.up
-                  if !os.exists(parent) then os.makeDir.all(parent)
-                  if !os.exists(basePath) then os.write.over(basePath, "")
-                }
-              yield cfPath)
-                .flatMap { p =>
-                  wsSend(io.circe.Json.obj("type" -> "fileCreated".asJson, "path" -> p.asJson))
-                }
-                .handleErrorWith { e =>
-                  logger.warn(s"createFile failed: ${e.getMessage}")
-                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
-                }
-            else IO.unit
-            end if
-
-          case "createDir" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val cdSessionId = hc.downField("sessionId").as[String].getOrElse("")
-            val cdPath = hc.downField("path").as[String].getOrElse("")
-            if cdSessionId.nonEmpty && cdPath.nonEmpty then
-              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
-              (for
-                pr <- overrideRoot match
-                  case Some(root) => IO.pure(root)
-                  case None =>
-                    for
-                      metaOpt <- sessionStore.getSessionMeta(cdSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      prOpt <- sessionStore.resolveProjectRoot(folderId)
-                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
-                basePath = PathUtil.resolvePath(cdPath, os.Path(pr))
-                canonicalBase = basePath.toIO.getCanonicalPath
-                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
-                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
-                  new RuntimeException("path outside project root")
-                )
-                _ <- IO.blocking { os.makeDir.all(basePath) }
-              yield cdPath)
-                .flatMap { p =>
-                  wsSend(io.circe.Json.obj("type" -> "dirCreated".asJson, "path" -> p.asJson))
-                }
-                .handleErrorWith { e =>
-                  logger.warn(s"createDir failed: ${e.getMessage}")
-                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
-                }
-            else IO.unit
-            end if
-
-          case "deletePath" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val dpSessionId = hc.downField("sessionId").as[String].getOrElse("")
-            val dpPath = hc.downField("path").as[String].getOrElse("")
-            if dpSessionId.nonEmpty && dpPath.nonEmpty then
-              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
-              (for
-                pr <- overrideRoot match
-                  case Some(root) => IO.pure(root)
-                  case None =>
-                    for
-                      metaOpt <- sessionStore.getSessionMeta(dpSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      prOpt <- sessionStore.resolveProjectRoot(folderId)
-                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
-                basePath = PathUtil.resolvePath(dpPath, os.Path(pr))
-                canonicalBase = basePath.toIO.getCanonicalPath
-                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
-                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
-                  new RuntimeException("path outside project root")
-                )
-                // Prevent deleting the project root itself
-                _ <- IO.raiseWhen(canonicalBase == canonicalRoot)(new RuntimeException("cannot delete project root"))
-                // remove.all: single delete must cover non-empty directories too
-                // (VS Code parity — a right-click delete on a folder takes the
-                // whole subtree; previously os.remove failed on non-empty dirs
-                // and only the batch deletePaths channel could remove them).
-                // On a plain file remove.all behaves exactly like remove.
-                _ <- IO.blocking { if os.exists(basePath) then os.remove.all(basePath) }
-              yield dpPath)
-                .flatMap { p =>
-                  wsSend(io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson))
-                }
-                .handleErrorWith { e =>
-                  logger.warn(s"deletePath failed: ${e.getMessage}")
-                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
-                }
-            else IO.unit
-            end if
-
-          // F1 file-explorer single-item move: relocate a file/dir into a
-          // target directory within the same project root (rename semantics).
-          case "movePath" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val mpSessionId = hc.downField("sessionId").as[String].getOrElse("")
-            val mpPath = hc.downField("path").as[String].getOrElse("")
-            val mpTargetDir = hc.downField("targetDir").as[String].getOrElse("")
-            // targetDir may be empty: dropping onto the tree's blank root area
-            // moves the item to the project root (frontend contract).
-            if mpSessionId.nonEmpty && mpPath.nonEmpty then
-              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
-              (for
-                pr <- overrideRoot match
-                  case Some(root) => IO.pure(root)
-                  case None =>
-                    for
-                      metaOpt <- sessionStore.getSessionMeta(mpSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      prOpt <- sessionStore.resolveProjectRoot(folderId)
-                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
-                rootPath = os.Path(pr)
-                newPath <- IO
-                  .blocking(WebSocketRoutes.movePathSafely(mpPath, mpTargetDir, rootPath))
-                  .flatMap {
-                    case Right(np) => IO.pure(np)
-                    case Left(err) => IO.raiseError(new RuntimeException(err))
-                  }
-              yield (mpPath, newPath))
-                .flatMap { case (oldPath, newPath) =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "pathMoved".asJson,
-                      "oldPath" -> oldPath.asJson,
-                      "newPath" -> newPath.asJson
-                    )
-                  )
-                }
-                .handleErrorWith { e =>
-                  logger.warn(s"movePath failed: ${e.getMessage}")
-                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
-                }
-            else IO.unit
-            end if
-
-          // F1 file-explorer multi-select: batch delete in ONE round trip.
-          // Per-path guards identical to deletePath; failures are aggregated
-          // per item so a partial failure never blocks the rest.
-          case "deletePaths" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val dpsSessionId = hc.downField("sessionId").as[String].getOrElse("")
-            val dpsPaths = hc.downField("paths").as[List[String]].getOrElse(Nil)
-            if dpsSessionId.nonEmpty && dpsPaths.nonEmpty then
-              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
-              (for
-                pr <- overrideRoot match
-                  case Some(root) => IO.pure(root)
-                  case None =>
-                    for
-                      metaOpt <- sessionStore.getSessionMeta(dpsSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      prOpt <- sessionStore.resolveProjectRoot(folderId)
-                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
-                (deleted, failed) <- WebSocketRoutes.deletePathsSafely(dpsPaths, os.Path(pr))
-              yield (deleted, failed))
-                .flatMap { case (deleted, failed) =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "pathsDeleted".asJson,
-                      "deleted" -> deleted.asJson,
-                      "failed" -> failed.map { case (p, err) =>
-                        io.circe.Json.obj("path" -> p.asJson, "error" -> err.asJson)
-                      }.asJson
-                    )
-                  )
-                }
-                .handleErrorWith { e =>
-                  logger.warn(s"deletePaths failed: ${e.getMessage}")
-                  wsSend(io.circe.Json.obj("type" -> "fileOpError".asJson, "error" -> e.getMessage.asJson))
-                }
-            else IO.unit
-            end if
-
-          case "writeFile" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val hc = json.hcursor
-            val wrSessionId = hc.downField("sessionId").as[String].getOrElse("")
-            val wrFilePath = hc.downField("path").as[String].getOrElse("")
-            val wrContent = hc.downField("content").as[String].getOrElse("")
-            // Optional `encoding:"base64"` — byte-preserving writes for binary
-            // payloads (external file drag-in). Absent = plain text, the
-            // editor-save path, unchanged.
-            val wrEncoding = hc.downField("encoding").as[String].getOrElse("")
-            if wrSessionId.nonEmpty && wrFilePath.nonEmpty then
-              val overrideRoot = hc.downField("rootPath").as[Option[String]].toOption.flatten
-              (for
-                pr <- overrideRoot match
-                  case Some(root) => IO.pure(root)
-                  case None =>
-                    for
-                      metaOpt <- sessionStore.getSessionMeta(wrSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      prOpt <- sessionStore.resolveProjectRoot(folderId)
-                    yield prOpt.getOrElse((PathUtil.dataRoot / "projects").toString)
-                basePath = PathUtil.resolvePath(wrFilePath, os.Path(pr))
-                canonicalBase = basePath.toIO.getCanonicalPath
-                canonicalRoot = os.Path(pr).toIO.getCanonicalPath
-                _ <- IO.raiseUnless(canonicalBase.startsWith(canonicalRoot))(
-                  new RuntimeException("path outside project root")
-                )
-                _ <- IO.blocking {
-                  // Create parent dirs on demand so a drop-imported folder tree
-                  // lands recursively (no separate mkdir round trip). No-op when
-                  // the parent exists (editor-save path).
-                  if !os.exists(basePath / os.up) then os.makeDir.all(basePath / os.up)
-                  if wrEncoding == "base64" then
-                    os.write.over(basePath, java.util.Base64.getDecoder.decode(wrContent))
-                  else
-                    os.write.over(basePath, wrContent)
-                }
-              yield basePath.toString)
-                .flatMap { absPath =>
-                  val desc =
-                    if wrEncoding == "base64" then s"${wrContent.length} b64 chars"
-                    else s"${wrContent.length} chars"
-                  logger.info(s"File saved: $absPath ($desc)")
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "fileSaved".asJson,
-                      "path" -> wrFilePath.asJson
-                    )
-                  )
-                }
-                .handleErrorWith { e =>
-                  logger.warn(s"writeFile failed: ${e.getMessage}")
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "fileSaveError".asJson,
-                      "path" -> wrFilePath.asJson,
-                      "error" -> e.getMessage.asJson
-                    )
-                  )
-                }
-            else IO.unit
-            end if
-
-          case "getActiveBgTasks" =>
-            nebflow.core.tools.BgTaskRegistry.activeTasksJson.flatMap { tasksJson =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "activeBgTasks".asJson,
-                  "tasks" -> tasksJson
-                )
-              )
-            }
-
-          case "getActiveAgents" =>
-            // Snapshot restore for the bg-agent indicator: the frontend builds
-            // sessionBgAgents incrementally from realtime agentStart/agentDone
-            // events, which are not replayed after a browser refresh. Read the
-            // unified AgentRegistry (sessionId -> AgentRecord) and filter to
-            // active sub-agents (root agents excluded). Team agents are
-            // included only while BUSY — they are long-lived in the registry
-            // (see filterActiveAgents), so registry presence alone would
-            // report idle team agents as running ghosts.
-            // agentId == sessionId (nodeSessionId) so restored entries match
-            // subsequent realtime events (agentToolStart/agentDone key on it)
-            // — pinned by ActiveAgentsEntrySpec, see activeAgentEntryJson.
-            sharedResources.agentRegistry.get.flatMap { registry =>
-              WebSocketRoutes.filterActiveAgents(registry).flatMap { active =>
-                active
-                  .traverse { rec =>
-                    // retryCount 来自 taskStore（2026-08-22 缺口 2：快照自带三
-                    // 字段之一；Ephemeral/无任务记录 → 0）
-                    sharedResources.subAgentTaskStore.findByTaskId(rec.sessionId).flatMap { taskOpt =>
-                      sessionStore.getSessionMeta(rec.sessionId).map { meta =>
-                        WebSocketRoutes.activeAgentEntryJson(rec, meta, taskOpt.map(_.retryCount))
-                      }
-                    }
-                  }
-                  .flatMap { agents =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "activeAgents".asJson,
-                        "agents" -> agents.asJson
-                      )
-                    )
-                  }
-              }
-            }
-
-          case "cancelBackgroundJob" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val jobId = json.hcursor.downField("jobId").as[String].getOrElse("")
-            if cancelSessionId.nonEmpty && jobId.nonEmpty then
-              nebflow.core.tools.ShellSession
-                .forSession(cancelSessionId)
-                .flatMap { shell =>
-                  shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
-                    val logMsg =
-                      if cancelled then s"Cancelled background job $jobId"
-                      else s"Background job $jobId not found or already completed"
-                    logger.info(logMsg, "sessionId" -> cancelSessionId, "jobId" -> jobId) *>
-                      // Notify agent so it can process cancellation
-                      ensureAgent(cancelSessionId) { ref =>
-                        ref ! AgentCommand.ExternalEvent(
-                          source = "background-task",
-                          eventType = "cancelled",
-                          payload = s"[Background task cancelled] Job ID: $jobId",
-                          metadata = io.circe.JsonObject(
-                            "jobId" -> jobId.asJson
-                          ),
-                          correlationId = Some(jobId)
-                        )
-                      } *>
-                      // Send completion update to frontend so the task is removed from the dropdown
-                      wsSend(
-                        io.circe.Json.obj(
-                          "type" -> "backgroundTaskUpdate".asJson,
-                          "sessionId" -> cancelSessionId.asJson,
-                          // 权威分键（2026-09-05）：前端按 rootSessionId 分桶，回显
-                          // 取消请求携带的会话（即前端桶键），保证移除帧落同一桶。
-                          "rootSessionId" -> cancelSessionId.asJson,
-                          "taskId" -> jobId.asJson,
-                          "description" -> "".asJson,
-                          "status" -> "completed".asJson
-                        )
-                      )
-                  }
-                }
-                .handleErrorWith { e =>
-                  logger.warn(s"cancelBackgroundJob failed for session=$cancelSessionId job=$jobId: ${e.getMessage}")
-                  // Send a completion update even on error, so the frontend removes the task
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "backgroundTaskUpdate".asJson,
-                      "sessionId" -> cancelSessionId.asJson,
-                      "rootSessionId" -> cancelSessionId.asJson,
-                      "taskId" -> jobId.asJson,
-                      "description" -> "".asJson,
-                      "status" -> "failed".asJson
-                    )
-                  ).handleErrorWith(_ => IO.unit)
-                }
-            else IO.unit
-            end if
-
-          case "cancelFlow" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val flowName = json.hcursor.downField("name").as[String].getOrElse("")
-            val cfSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val instanceId = json.hcursor.downField("instanceId").as[String].getOrElse("")
-            if instanceId.nonEmpty then
-              // Cancel a DAG flow instance directly
-              nebflow.core.flow.RunningFlowRegistry.cancel(instanceId) *>
-                logger.info(s"Cancel DAG flow '$instanceId' requested by user via WS")
-            else if flowName.nonEmpty && cfSessionId.nonEmpty then
-              // Cancel a team pipeline flow via FlowTreeActor
-              nebflow.core.flow.FlowTreeRegistry.get(cfSessionId).flatMap {
-                case Some(treeRef) =>
-                  treeRef ! nebflow.core.flow.TreeCommand.CancelPipeline(flowName)
-                  logger.info(s"Cancel flow '$flowName' requested by user via WS")
-                case None =>
-                  logger.warn(s"Cannot cancel flow '$flowName': no FlowTreeActor for session")
-              }
-            else IO.unit
-
-          case "getHistory" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val limit = json.hcursor.downField("limit").as[Int].getOrElse(50)
-            val beforeIndex = json.hcursor.downField("beforeIndex").as[Option[Int]].getOrElse(None)
-            if sessionId.nonEmpty then
-              (sharedResources.sessionStore
-                .getHistoryPage(sessionId, limit, beforeIndex)
-                .attempt
-                .flatMap {
-                  case Right((msgs, total, offset, hasMore)) =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "historyPage".asJson,
-                        "sessionId" -> sessionId.asJson,
-                        "messages" -> msgs.asJson,
-                        "total" -> total.asJson,
-                        "offset" -> offset.asJson,
-                        "hasMore" -> hasMore.asJson
-                      )
-                    )
-                  case Left(_) =>
-                    // Send empty historyPage so the frontend doesn't get stuck
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "historyPage".asJson,
-                        "sessionId" -> sessionId.asJson,
-                        "messages" -> List.empty[io.circe.Json].asJson,
-                        "total" -> 0.asJson,
-                        "offset" -> 0.asJson,
-                        "hasMore" -> false.asJson
-                      )
-                    )
-                })
-                // 刷新存活 (2026-09-03): after the initial history page of a
-                // session (re)subscribe — browser refresh, WS reconnect
-                // (frontend onReconnect re-fetches history) or session switch —
-                // re-send the hub's still-pending AskUser cards. Ordered AFTER
-                // historyPage on the same outbound queue so the replayed frames
-                // are never wiped by the initial-load DOM clear. Pagination
-                // fetches (beforeIndex set) prepend older messages and must not
-                // trigger a replay. The hub is the single authority: an ask
-                // answered before this point is not in the snapshot. The frames
-                // carry the live requestId — the frontend dedups against the
-                // history-restored (requestId-less) card and rebinds the answer
-                // channel (chat-input close + #12 precise routing).
-                .flatMap { _ =>
-                  if beforeIndex.isEmpty then replayPendingAsks(sessionId, wsSend)
-                  else IO.unit
-                }
-                .handleErrorWith { e =>
-                  wsSend(
-                    io.circe.Json
-                      .obj("type" -> "error".asJson, "message" -> s"getHistory failed: ${e.getMessage}".asJson)
-                  )
-                }
-            else IO.unit
-            end if
-
-          case "listAgents" =>
-            agentService.listAgents.flatMap { agents =>
-              val agentsJson = agents.map { a =>
-                io.circe.Json.obj(
-                  "name" -> a.name.asJson,
-                  "description" -> a.description.asJson,
-                  "displayName" -> a.displayName.getOrElse(a.name).asJson,
-                  "avatar" -> a.avatar.asJson,
-                  "tools" -> a.tools.asJson
-                )
-              }
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "agentList".asJson,
-                  "agents" -> agentsJson.asJson
-                )
-              )
-            }
-
-          case "listAgentSessions" =>
-            val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
-            if agentName.nonEmpty then sendAgentSessionListByName(wsSend, agentName)
-            else IO.unit
-            end if
-
-          case "listSessions" =>
-            // Manual trigger for re-fetching the unified session list on WS
-            // reconnect (sessions may have been created/removed while the
-            // frontend was disconnected). Same payload as the initial push.
-            sessionService.sendSessionList(wsSend, "Nebula")
-
-          // ===== Folder Management =====
-
-          case "createFolder" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val name = json.hcursor.downField("name").as[String].getOrElse("New Folder")
-            val parentId = json.hcursor.downField("parentId").as[Option[String]].getOrElse(None)
-            val agentNameFromMsg = json.hcursor.downField("agentName").as[String].getOrElse("")
-            if name.nonEmpty then
-              val agentNameIO =
-                if agentNameFromMsg.nonEmpty then IO.pure(agentNameFromMsg)
-                else sessionStore.getActiveMeta.map(_.flatMap(_.agentName).getOrElse("Nebula"))
-              agentNameIO
-                .flatMap { agentName =>
-                  sessionService.createFolder(name, parentId, agentName).flatMap { _ =>
-                    sendAgentSessionListByName(wsSend, agentName)
-                  }
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-
-          case "renameFolder" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-            val newName = json.hcursor.downField("name").as[String].getOrElse("")
-            if folderId.nonEmpty && newName.nonEmpty then
-              sessionService
-                .renameFolder(folderId, newName)
-                .flatMap { _ =>
-                  sessionStore.getActiveMeta.flatMap { metaOpt =>
-                    val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                    sendAgentSessionListByName(wsSend, agentName)
-                  }
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-
-          case "deleteFolder" =>
-            val folderId = parse(text).flatMap(_.hcursor.downField("folderId").as[String]).getOrElse("")
-            if folderId.nonEmpty then
-              sessionService
-                .deleteFolder(folderId)
-                .flatMap { _ =>
-                  sessionStore.getActiveMeta.flatMap { metaOpt =>
-                    val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                    sendAgentSessionListByName(wsSend, agentName)
-                  }
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-
-          case "moveSessionToFolder" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val sessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-            val folderId = json.hcursor.downField("folderId").as[Option[String]].getOrElse(None)
-            if sessionId.nonEmpty then
-              sessionService
-                .moveSessionToFolder(sessionId, folderId)
-                .flatMap { _ =>
-                  sendAgentSessionList(wsSend, sessionId)
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-
-          case "moveFolder" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-            val parentId = json.hcursor.downField("parentId").as[Option[String]].getOrElse(None)
-            if folderId.nonEmpty then
-              sessionService
-                .moveFolder(folderId, parentId)
-                .flatMap { _ =>
-                  sessionStore.getActiveMeta.flatMap { metaOpt =>
-                    val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                    sendAgentSessionListByName(wsSend, agentName)
-                  }
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-
-          case "setFolderProjectRoot" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-            val projectRoot = json.hcursor.downField("projectRoot").as[Option[String]].getOrElse(None)
-            if folderId.nonEmpty then
-              sessionService
-                .setFolderProjectRoot(folderId, projectRoot)
-                .flatMap {
-                  case Right(_) =>
-                    // Use the folder's own agent name, not the active session's,
-                    // to ensure the frontend receives the update regardless of which agent tab is active.
-                    sessionStore.getFolderAgentName(folderId).flatMap { agentOpt =>
-                      val agentName = agentOpt.getOrElse("Nebula")
-                      sendAgentSessionListByName(wsSend, agentName)
-                    }
-                  case Left(err) =>
-                    wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-                }
-                .handleErrorWith { e =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-                }
-            else IO.unit
-            end if
-
-          // Directory browser for project root selection
-          case "browsePath" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val path = json.hcursor.downField("path").as[String].getOrElse("~")
-            val expanded = if path.startsWith("~") then System.getProperty("user.home") + path.drop(1) else path
-            IO.blocking {
-              val dir = os.Path(expanded, os.pwd)
-              if os.isDir(dir) then
-                val entries = os.list(dir).filter(os.isDir).sortBy(_.last)
-                val result = entries.take(200).map { p =>
-                  io.circe.Json.obj("name" -> p.last.asJson, "path" -> p.toString.asJson)
-                }
-                io.circe.Json.obj(
-                  "type" -> "browseResult".asJson,
-                  "path" -> dir.toString.asJson,
-                  "entries" -> result.asJson
-                )
-              else
-                io.circe.Json.obj(
-                  "type" -> "browseResult".asJson,
-                  "path" -> path.asJson,
-                  "entries" -> io.circe.Json.arr()
-                )
-              end if
-            }.flatMap(wsSend)
-              .handleErrorWith { e =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "browseResult".asJson,
-                    "path" -> path.asJson,
-                    "entries" -> io.circe.Json.arr(),
-                    "error" -> e.getMessage.asJson
-                  )
-                )
-              }
-
-          // ===== Folder Rules Management =====
-
-          case "getRules" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-            if folderId.nonEmpty then
-              val content = RulesStore.loadFolderRules(folderId).getOrElse("")
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "rulesData".asJson,
-                  "folderId" -> folderId.asJson,
-                  "content" -> content.asJson
-                )
-              )
-            else IO.unit
-
-          case "saveRules" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-            val content = json.hcursor.downField("content").as[String].getOrElse("")
-            if folderId.nonEmpty then
-              RulesStore.saveFolderRules(folderId, content) *>
-                wsSend(io.circe.Json.obj("type" -> "rulesSaved".asJson, "folderId" -> folderId.asJson))
-            else IO.unit
-
-          case "deleteRules" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-            if folderId.nonEmpty then
-              RulesStore.deleteFolderRules(folderId) *>
-                wsSend(io.circe.Json.obj("type" -> "rulesDeleted".asJson, "folderId" -> folderId.asJson))
-            else IO.unit
-
-          case "rulesStatus" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val folderId = json.hcursor.downField("folderId").as[String].getOrElse("")
-            if folderId.nonEmpty then
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "rulesStatus".asJson,
-                  "folderId" -> folderId.asJson,
-                  "exists" -> RulesStore.exists(folderId).asJson,
-                  "preview" -> RulesStore.preview(folderId).asJson
-                )
-              )
-            else IO.unit
-
-          case "getAgentSystemPrompt" =>
-            val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
-            if agentName.nonEmpty then
-              agentService.getSystemPrompt(agentName).flatMap { mdOpt =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "agentSystemPrompt".asJson,
-                    "name" -> agentName.asJson,
-                    "systemMd" -> mdOpt.getOrElse("").asJson
-                  )
-                )
-              }
-            else IO.unit
-
-          case "updateAgentSystemPrompt" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val agentName = json.hcursor.downField("name").as[String].getOrElse("")
-            val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
-            if agentName.nonEmpty then
-              agentService.updateSystemPrompt(agentName, systemMd) *>
-                wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
-            else IO.unit
-
-          case "updateAgentTools" =>
-            // Retired 2026-09-06 (tool-face batch): agent.json tools write-back
-            // is closed. Loud rejection (no silent no-op) so any stale client
-            // sees the retirement instead of assuming the edit landed.
-            val agentName = parse(text).toOption
-              .flatMap(_.hcursor.downField("name").as[String].toOption)
-              .getOrElse("")
-            logger.warn(s"Rejected updateAgentTools for '$agentName' — write-back retired 2026-09-06 (stage 2d tool-face batch)")
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "error".asJson,
-                "message" -> s"updateAgentTools retired: per-agent tools are mechanism/plugin-managed since 2026-09-06; agent.json is no longer written from the panel".asJson
-              )
-            )
-
-          case "createAgentSession" =>
-            val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
-            if agentName.nonEmpty then
-              (for
-                defnOpt <- sharedResources.agentLibrary.get(agentName)
-                defn <- IO.fromOption(defnOpt)(new RuntimeException(s"Agent not found: $agentName"))
-                meta <- sessionService.createSession(
-                  s"Agent: ${defn.displayName.getOrElse(defn.name)}",
-                  agentName = Some(agentName)
-                )
-                _ <- sessionService.switchSession(meta.id)
-                _ <- sessionService.sendSessionList(wsSend, agentName)
-              yield ()).handleErrorWith { e =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> e.getMessage.asJson))
-              }
-            else IO.unit
-
-          case "getMemory" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
-            val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
-            val metaIO = sessionIdParam match
-              case Some(sid) => sessionStore.getSessionMeta(sid)
-              case None => sessionStore.getActiveMeta
-            (metaIO
-              .flatMap { metaOpt =>
-                val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                val teamName = metaOpt.flatMap(_.flowName)
-                val content = scope match
-                  case "user" => MemoryStore.loadUserMemory.getOrElse("")
-                  case "agent" =>
-                    teamName match
-                      case Some(tn) => MemoryStore.loadTeamAgentMemory(tn, agentName).getOrElse("")
-                      case None => MemoryStore.loadAgentMemory(agentName).getOrElse("")
-                  case _ => ""
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "memoryData".asJson,
-                    "scope" -> scope.asJson,
-                    "content" -> content.asJson
-                  )
-                )
-              })
-              .handleErrorWith { e =>
-                logger.warn(s"getMemory error: ${e.getMessage}")
-                wsSend(
-                  io.circe.Json.obj("type" -> "error".asJson, "message" -> s"getMemory failed: ${e.getMessage}".asJson)
-                )
-              }
-
-          case "saveMemory" =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val scope = json.hcursor.downField("scope").as[String].getOrElse("session")
-            val content = json.hcursor.downField("content").as[String].getOrElse("")
-            val sessionIdParam = json.hcursor.downField("sessionId").as[String].toOption.filter(_.nonEmpty)
-            val metaIO = sessionIdParam match
-              case Some(sid) => sessionStore.getSessionMeta(sid)
-              case None => sessionStore.getActiveMeta
-            (metaIO
-              .flatMap { metaOpt =>
-                val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-                val teamName = metaOpt.flatMap(_.flowName)
-                val save = scope match
-                  case "user" => MemoryStore.saveUserMemory(content)
-                  case "agent" =>
-                    teamName match
-                      // 2026-08-31 裁定①: team agents have no memory — refuse to
-                      // resurrect deleted team memory.md files via the modal.
-                      case Some(_) => IO.unit
-                      case None => MemoryStore.saveAgentMemory(agentName, content)
-                  case _ => IO.unit
-                save *> wsSend(io.circe.Json.obj("type" -> "memorySaved".asJson, "scope" -> scope.asJson))
-              })
-              .handleErrorWith { e =>
-                logger.warn(s"saveMemory error: ${e.getMessage}")
-                wsSend(
-                  io.circe.Json.obj("type" -> "error".asJson, "message" -> s"saveMemory failed: ${e.getMessage}".asJson)
-                )
-              }
-
-          case "memoryStatus" =>
-            sessionStore.getActiveMeta.flatMap { metaOpt =>
-              val agentName = metaOpt.flatMap(_.agentName).getOrElse("Nebula")
-              val teamName = metaOpt.flatMap(_.flowName)
-              val (agentExists, agentPreview) = teamName match
-                case Some(tn) =>
-                  (MemoryStore.teamAgentExists(tn, agentName), MemoryStore.teamAgentPreview(tn, agentName))
-                case None => (MemoryStore.agentExists(agentName), MemoryStore.agentPreview(agentName))
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "memoryStatus".asJson,
-                  "user" -> io.circe.Json.obj(
-                    "exists" -> MemoryStore.userExists.asJson,
-                    "preview" -> MemoryStore.userPreview.asJson
-                  ),
-                  "agent" -> io.circe.Json.obj(
-                    "exists" -> agentExists.asJson,
-                    "preview" -> agentPreview.asJson
-                  )
-                )
-              )
-            }
-
-          case "checkUpdate" =>
-            val currentVer = nebflow.Version.string
-            val result = IO
-              .blocking {
-                try
-                  // #29: 仓库 private 后 GH API 未认证不可用——版本检查读 COS
-                  // latest-version.txt（stable 通道，与旧 releases/latest 同语义）。
-                  val url = "https://nebflow-releases-1411212853.cos.ap-nanjing.myqcloud.com/latest-version.txt"
-                  val conn = java.net.URI.create(url).toURL.openConnection()
-                  conn.setConnectTimeout(5000)
-                  conn.setReadTimeout(5000)
-                  val raw = new String(conn.getInputStream.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim
-                  if raw.nonEmpty then Some((raw, raw)) // (tag, releaseName)——COS 无 release 名，版本号兜底
-                  else None
-                catch case _: Exception => None
-              }
-              .flatMap {
-                case Some((tag, releaseName)) =>
-                  val latestVer = tag.stripPrefix("v")
-                  val hasUpdate = latestVer != currentVer
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "updateCheckResult".asJson,
-                      "currentVersion" -> currentVer.asJson,
-                      "latestVersion" -> latestVer.asJson,
-                      "hasUpdate" -> hasUpdate.asJson,
-                      "releaseName" -> releaseName.asJson
-                    )
-                  )
-                case None =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "updateCheckResult".asJson,
-                      "currentVersion" -> currentVer.asJson,
-                      "error" -> "Failed to check for updates".asJson
-                    )
-                  )
-              }
-            result
-
-          case "doUpdate" =>
-            val beta = parse(text).toOption.flatMap(_.hcursor.downField("beta").as[Boolean].toOption).getOrElse(false)
-            wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson)) *>
-              IO.blocking {
-                import sys.process.*
-                val isWindows = System.getProperty("os.name").toLowerCase.contains("win")
-                // String concat (not s"") — the powershell snippets contain
-                // $env: which an interpolator would try to resolve.
-                val script =
-                  if beta then
-                    if isWindows then
-                      """powershell -Command "$env:CHANNEL='beta'; iwr """ + Branding.installPs1Url + """ | iex" """
-                    else "curl -fsSL " + Branding.installUrl + " | sh -s -- --beta"
-                  else if isWindows then """powershell -Command "& { iwr """ + Branding.installPs1Url + """ | iex }" """
-                  else "curl -fsSL " + Branding.installUrl + " | sh"
-                val exitCode = script.!
-                if exitCode == 0 then
-                  wsSend(io.circe.Json.obj("type" -> "updateCompleted".asJson, "success" -> true.asJson))
-                else
-                  wsSend(
-                    io.circe.Json
-                      .obj(
-                        "type" -> "updateCompleted".asJson,
-                        "success" -> false.asJson,
-                        "error" -> s"Exit code: $exitCode".asJson
-                      )
-                  )
-              }.flatten
-                .handleErrorWith { e =>
-                  wsSend(
-                    io.circe.Json
-                      .obj(
-                        "type" -> "updateCompleted".asJson,
-                        "success" -> false.asJson,
-                        "error" -> e.getMessage.asJson
-                      )
-                  )
-                }
-
-          case "remoteUpdate" =>
-            def tryRelayUpdate(
-              ns: nebflow.neblink.NeblinkService,
-              peer: nebflow.neblink.PeerInfo,
-              beta: Boolean,
-              p2pError: String
-            ): IO[Unit] =
-              ns.relayClientOpt match
-                case Some(client) =>
-                  logger.info(s"P2P update failed ($p2pError), trying relay to ${peer.deviceName}") *>
-                    client.relayUpdate(peer.deviceId, beta).flatMap {
-                      case Right(msg) =>
-                        wsSend(io.circe.Json.obj(
-                          "type" -> "remoteUpdateResult".asJson,
-                          "success" -> true.asJson,
-                          "device" -> peer.deviceName.asJson,
-                          "message" -> msg.asJson
-                        ))
-                      case Left(err) =>
-                        wsSend(io.circe.Json.obj(
-                          "type" -> "remoteUpdateResult".asJson,
-                          "success" -> false.asJson,
-                          "error" -> s"P2P: $p2pError; Relay: $err".asJson
-                        ))
-                    }
-                case None =>
-                  wsSend(io.circe.Json.obj(
-                    "type" -> "remoteUpdateResult".asJson,
-                    "success" -> false.asJson,
-                    "error" -> p2pError.asJson
-                  ))
-
-            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-            val targetDevice = hc.downField("device").as[String].getOrElse("")
-            val beta = hc.downField("beta").as[Boolean].getOrElse(false)
-            if targetDevice.isEmpty then
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "remoteUpdateResult".asJson,
-                  "success" -> false.asJson,
-                  "error" -> "Missing device name".asJson
-                )
-              )
-            else
-              sharedResources.neblinkService match
-                case None =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "remoteUpdateResult".asJson,
-                      "success" -> false.asJson,
-                      "error" -> "NebLink not enabled".asJson
-                    )
-                  )
-                case Some(neblinkService) =>
-                  neblinkService.peers.flatMap { peers =>
-                    peers.find(p =>
-                      p.deviceName.equalsIgnoreCase(targetDevice) ||
-                        p.deviceName.toLowerCase.contains(targetDevice.toLowerCase)
-                    ) match
-                      case None =>
-                        wsSend(
-                          io.circe.Json.obj(
-                            "type" -> "remoteUpdateResult".asJson,
-                            "success" -> false.asJson,
-                            "error" -> s"Device '$targetDevice' not found".asJson
-                          )
-                        )
-                      case Some(peer) =>
-                        if peer.address.isEmpty then
-                          wsSend(
-                            io.circe.Json.obj(
-                              "type" -> "remoteUpdateResult".asJson,
-                              "success" -> false.asJson,
-                              "error" -> s"Device '$targetDevice' has no address".asJson
-                            )
-                          )
-                        else
-                          logger.info(
-                            s"Remote update: sending update request to ${peer.deviceName} at ${peer.address} (beta=$beta)"
-                          ) *>
-                            IO.blocking {
-                              import sttp.client4.*
-                              val body = io.circe.Json.obj("beta" -> beta.asJson).noSpaces
-                              val resp = basicRequest
-                                .post(sttp.model.Uri.unsafeParse(s"${peer.address}/api/neblink/update"))
-                                .contentType("application/json")
-                                .body(body)
-                                .readTimeout(180.seconds)
-                                .response(asStringAlways)
-                                .send(neblinkService.httpBackend)
-                              resp
-                            }.flatMap { resp =>
-                              if resp.code.isSuccess then
-                                wsSend(
-                                  io.circe.Json.obj(
-                                    "type" -> "remoteUpdateResult".asJson,
-                                    "success" -> true.asJson,
-                                    "device" -> peer.deviceName.asJson,
-                                    "message" -> "Update installed, device is restarting...".asJson
-                                  )
-                                )
-                              else
-                                // P2P returned an HTTP error — try relay before failing
-                                tryRelayUpdate(neblinkService, peer, beta, s"Remote returned HTTP ${resp.code}")
-                            }.handleErrorWith { e =>
-                              tryRelayUpdate(neblinkService, peer, beta, s"Cannot reach ${peer.deviceName}: ${e.getMessage}")
-                            }
-                    end match
-                  }
-            end if
-
-          case "getConfig" =>
-            configService.isConfigured.flatMap { configured =>
-              configService.getConfig.flatMap { cfg =>
-                nebflow.core.OnboardingService.readState().flatMap { onboarding =>
-                  wsSend(
-                    io.circe.Json.obj(
-                      "type" -> "configData".asJson,
-                      "config" -> cfg.asJson,
-                      "configured" -> configured.asJson,
-                      // null = no marker yet (fresh install); frontend shows the wizard
-                      "onboarding" -> onboarding.map(_.name).asJson
-                    )
-                  )
-                }
-              }
-            }
-
-          case "setOnboardingState" =>
-            // F3 onboarding state machine: pending | done | skipped.
-            // HARD GATE (server-side, user ruling 2026-08-15): done is
-            // rejected unless a successful probeLlm is on record — the WS
-            // surface can no longer bypass the gate the frontend enforces.
-            val stJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val stStr = stJson.hcursor.downField("state").as[String].getOrElse("")
-            nebflow.core.OnboardingService.OnboardingState.fromString(stStr) match
-              case Some(st) =>
-                nebflow.core.OnboardingService.setState(st).flatMap {
-                  case Right(applied) =>
-                    wsSend(io.circe.Json.obj("type" -> "onboardingStateSet".asJson, "state" -> applied.name.asJson))
-                  case Left(reason) =>
-                    wsSend(
-                      io.circe.Json.obj(
-                        "type" -> "error".asJson,
-                        "code" -> "probe_required".asJson,
-                        "message" -> reason.asJson
-                      )
-                    )
-                }
-              case None =>
-                wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> s"invalid onboarding state: $stStr".asJson))
-
-          case "probeLlm" =>
-            // Onboarding HARD GATE (user ruling 2026-08-15): one real LLM call
-            // through the global chain. The welcome message may only be sent
-            // after this returns ok=true.
-            nebflow.core.OnboardingService.probeLlm(sharedResources.llm).flatMap { pr =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "probeResult".asJson,
-                  "ok" -> pr.ok.asJson,
-                  "provider" -> pr.provider.asJson,
-                  "error" -> pr.error.asJson
-                )
-              )
-            }
-
-          case "autostartStatus" =>
-            // Settings panel "start on login" toggle (F2) — shared logic with
-            // the `nebflow autostart` CLI via AutoStartService.
-            nebflow.core.AutoStartService.status().flatMap { st =>
-              wsSend(
-                io.circe.Json.obj(
-                  "type" -> "autostartStatusResult".asJson,
-                  "enabled" -> st.enabled.asJson,
-                  "supported" -> st.supported.asJson,
-                  "reason" -> st.reason.asJson
-                )
-              )
-            }
-
-          case "autostartSet" =>
-            val asJson = parse(text).toOption.getOrElse(io.circe.Json.Null)
-            val enable = asJson.hcursor.downField("enabled").as[Boolean].getOrElse(false)
-            val op = if enable then nebflow.core.AutoStartService.enable() else nebflow.core.AutoStartService.disable()
-            op.flatMap { res =>
-              // Always answer with the authoritative post-op status; attach
-              // the op message on failure so the UI can toast + revert the toggle.
-              nebflow.core.AutoStartService.status().flatMap { st =>
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "autostartStatusResult".asJson,
-                    "enabled" -> st.enabled.asJson,
-                    "supported" -> st.supported.asJson,
-                    "reason" -> st.reason.asJson,
-                    "error" -> (if res.ok then None else Some(res.message)).asJson
-                  )
-                )
-              }
-            }
-
-          case "updateConfig" =>
-            val cfg = parse(text).flatMap(_.hcursor.downField("config").as[String]).getOrElse("")
-            if cfg.nonEmpty then
-              // 冻结修复（2026-08-27）：runtime 热更键以内存 ref 为权威——调用方的
-              // config 快照可能陈旧（页面加载时刻底稿），不覆写则任意 provider 类
-              // 保存会把 workSchedule/thinkingConfig/toolResultTtl 回滚到快照值。
-              (sharedResources.freezeScheduleRef.get,
-               sharedResources.thinkingConfigRef.get,
-               sharedResources.toolResultTtlRef.get).mapN { (wsCfg, thCfg, ttlCfg) =>
-                Map[String, io.circe.Json](
-                  "workSchedule" -> wsCfg.asJson,
-                  "thinkingConfig" -> thCfg.asJson,
-                  "toolResultTtl" -> ttlCfg.asJson
-                )
-              }.flatMap { runtimeOverrides =>
-              configService.updateConfig(cfg, runtimeOverrides).flatMap {
-                case Left(err) =>
-                  wsSend(io.circe.Json.obj("type" -> "error".asJson, "message" -> err.asJson))
-                case Right(_) =>
-                  // #311: the first provider/model save seeds/repairs the default
-                  // preset (from the just-saved llm.model chain) so agent model
-                  // resolution never silently falls to a hidden global chain.
-                  IO
-                    .delay(nebflow.core.presets.PresetStore().ensureDefaultPreset())
-                    .attempt
-                    .flatMap {
-                      case Right(_) => IO.unit
-                      case Left(e)  => logger.warn(s"Default preset seeding failed: ${e.getMessage}")
-                    } *>
-                  // Hot-reload: update in-memory config and clear adapter cache
-                  sharedResources.providerRegistry
-                    .reloadConfig(Some(sharedResources.sessionModelOverrides))
-                    .attempt
-                    .flatMap {
-                      case Right(staleIds) =>
-                        // #33: keep the persisted session meta in sync — dropped
-                        // overrides also clear their modelRef on disk so the UI
-                        // state matches the in-memory session overrides.
-                        staleIds.traverse_(id => sessionStore.updateSessionModel(id, None)) *>
-                          logger.info("Config hot-reloaded successfully")
-                      case Left(e) =>
-                        logger.warn(s"Config hot-reload failed: ${e.getMessage}")
-                    } *> wsSend(io.circe.Json.obj("type" -> "configUpdated".asJson, "success" -> true.asJson))
-              }
-              }
-            else IO.unit
-
-          case "toggleMcpServer" =>
-            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-            val serverId = hc.downField("serverId").as[String].getOrElse("")
-            val enabled = hc.downField("enabled").as[Boolean].getOrElse(false)
-            if serverId.nonEmpty then
-              configRef.get.flatMap { cfg =>
-                cfg.mcpServers.getOrElse(Map.empty).get(serverId) match
-                  case Some(mcpCfg) =>
-                    val action =
-                      if enabled then mcpManager.enableServer(serverId, mcpCfg) else mcpManager.disableServer(serverId)
-                    // 冻结修复（2026-08-27）：persist 持锁 + 失败回执（不再静默）。
-                    action *>
-                      nebflow.service.ConfigService.writeLocked(persistMcpServerEnabled(serverId, enabled)).attempt.flatMap {
-                        case Left(e) =>
-                          logger.warn(s"Failed to persist MCP server state: ${e.getMessage}") *>
-                            wsSend(io.circe.Json.obj("type" -> "configUpdateFailed".asJson, "message" -> s"MCP 状态保存失败: ${e.getMessage}".asJson)) *>
-                            broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
-                        case Right(_) => broadcastMcpServersUpdate.handleErrorWith(_ => IO.unit)
-                      }
-                  case None =>
-                    logger.warn(s"toggleMcpServer: server '$serverId' not found in config") *> IO.unit
-              }
-            else IO.unit
-
-          // ===== Dropbox: cross-device messaging & file transfer =====
-
-          case "dropbox-send-text" =>
-            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-            val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-            val msgText = hc.downField("text").as[String].getOrElse("")
-            if deviceId.nonEmpty && msgText.nonEmpty then
-              sharedResources.dropboxService match
-                case None =>
-                  wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
-                case Some(svc) =>
-                  svc
-                    .sendText(deviceId, msgText)
-                    .handleErrorWith(e =>
-                      wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
-                    )
-            else IO.unit
-
-          case "dropbox-file-offer" =>
-            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-            val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-            val fileName = hc.downField("fileName").as[String].getOrElse("")
-            val fileSize = hc.downField("fileSize").as[Long].getOrElse(0L)
-            val mimeType = hc.downField("mimeType").as[String].getOrElse("")
-            if deviceId.nonEmpty && fileName.nonEmpty then
-              sharedResources.dropboxService match
-                case None =>
-                  wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> "Dropbox not enabled".asJson))
-                case Some(svc) =>
-                  svc
-                    .offerFile(deviceId, fileName, fileSize, mimeType)
-                    .handleErrorWith(e =>
-                      wsSend(io.circe.Json.obj("type" -> "dropboxError".asJson, "error" -> e.getMessage.asJson))
-                    )
-            else IO.unit
-
-          case "dropbox-file-respond" =>
-            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-            val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-            val transferId = hc.downField("transferId").as[String].getOrElse("")
-            val accepted = hc.downField("accepted").as[Boolean].getOrElse(false)
-            if deviceId.nonEmpty && transferId.nonEmpty then
-              sharedResources.dropboxService match
-                case None => IO.unit
-                case Some(svc) => svc.respondToOffer(deviceId, transferId, accepted).handleErrorWith(_ => IO.unit)
-            else IO.unit
-
-          case "dropbox-get-history" =>
-            val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
-            val deviceId = hc.downField("deviceId").as[String].getOrElse("")
-            if deviceId.nonEmpty then
-              sharedResources.dropboxService match
-                case None => IO.unit
-                case Some(svc) =>
-                  svc.getHistory(deviceId).flatMap { msgs =>
-                    wsSend(
-                      io.circe.Json
-                        .obj(
-                          "type" -> "dropbox-history".asJson,
-                          "deviceId" -> deviceId.asJson,
-                          "messages" -> msgs.asJson
-                        )
-                    )
-                  }
-            else IO.unit
-            end if
-
-          case _ =>
-            val json = parse(text).toOption.getOrElse(io.circe.Json.Null)
+        _ <- WsDispatch.handlers.get(msgType) match
+          case Some(handle) =>
+            handle(wsDispatchContext(sessionIdentity), text, wsSend, watchSession)
+
+          case None =>
+            val json = parsedJson(text)
             val content = json.hcursor.downField("content").as[String].getOrElse("")
             val attachments = json.hcursor.downField("attachments").as[List[io.circe.Json]].getOrElse(Nil)
             val clientMessageId = json.hcursor.downField("clientMessageId").as[Option[String]].getOrElse(None)
@@ -3633,200 +2054,276 @@ class WebSocketRoutes(
                   // in AgentActor makes a client resend idempotent.
                   IO.uncancelable(_ =>
                     // Resolve projectRoot for local file search before processing attachments
-                    (for
-                      metaOpt <- sessionStore.getSessionMeta(msgSessionId)
-                      folderId = metaOpt.flatMap(_.folderId)
-                      projectRoot <- sessionStore.resolveProjectRoot(folderId)
-                    yield (metaOpt, projectRoot)).flatMap { (metaOpt, projectRoot) =>
-                    val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
-                    if content.nonEmpty then blocks += ContentBlock.Text(content)
+                    // device-provenance 批：帧 `device` 键解析（缺席 ⇒ None ⇒ 下方
+                    // 构块/派发逐字节不变；解析面 fail-open，绝不阻塞消息本身）。
+                    // 门户身份透传批（方案 A3）：会话身份同行（owner 等值 ⇒ 已认证
+                    // 级标记）；None（Bearer 轨/CLI/REST headless）⇒ 现状逐字节。
+                    deviceProvenanceOf(json, sessionIdentity).flatMap { deviceResolved =>
+                      (for
+                        metaOpt <- sessionStore.getSessionMeta(msgSessionId)
+                        folderId = metaOpt.flatMap(_.folderId)
+                        projectRoot <- sessionStore.resolveProjectRoot(folderId)
+                      yield (metaOpt, projectRoot)).flatMap { (metaOpt, projectRoot) =>
+                        val blocks = scala.collection.mutable.ListBuffer.empty[ContentBlock]
+                        if content.nonEmpty then blocks += ContentBlock.Text(content)
 
-                    // Map attachment index → saved/local path (only non-image files get entries)
-                    val savedPaths = scala.collection.mutable.Map.empty[Int, String]
-                    attachments.zipWithIndex.foreach { case (att, attIdx) =>
-                      val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                      val data = att.hcursor.downField("data").as[String].getOrElse("")
-                      val name = att.hcursor.downField("name").as[String].getOrElse("")
-                      val hash = att.hcursor.downField("hash").as[String].getOrElse("")
-                      val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
-                      if mimeType.startsWith("image/") && data.nonEmpty then
-                        // Save image to uploads dir so it has a local path (like non-image files)
-                        val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
-                        try
-                          os.makeDir.all(uploadDir)
-                          val ext =
-                            if mimeType.contains("png") then "png"
-                            else if mimeType.contains("webp") then "webp"
-                            else "jpg"
-                          // Use the MIME-derived extension, not the original
-                          // filename's: the frontend re-encodes uploads to JPEG
-                          // (compressImage), so "shot.png" would otherwise be
-                          // saved with JPEG bytes under a .png name — and
-                          // ReadTool maps MIME by extension.
-                          val stem = name.replaceAll("\\.[a-zA-Z0-9]+$", "")
-                          val fileName = s"${System.nanoTime()}_$stem.$ext"
-                          val safeName = fileName.replaceAll("[/\\\\]", "_").replace("..", "_")
-                          val filePath = uploadDir / safeName
-                          val decoded = java.util.Base64.getDecoder.decode(data)
-                          os.write.over(filePath, decoded)
-                          val absPath = filePath.toString
-                          if absPath.startsWith(uploadDir.toString) then
-                            savedPaths(attIdx) = absPath
-                            // Give LLM both the image (visual) and the path (forwardable via Mail)
-                            blocks += ContentBlock.Image(data, mimeType)
-                            blocks += ContentBlock.Text(s"[用户附加图片: $absPath]")
-                            logger.info(s"Saved image '$name' to $absPath (${decoded.length} bytes)")
+                        // Map attachment index → saved/local path (only non-image files get entries)
+                        val savedPaths = scala.collection.mutable.Map.empty[Int, String]
+                        val ownerAccess = handshakeCredential.collect { case Credential.ViaSession(record) =>
+                          OwnerAccess.fromAuthenticatedSession(record, attachmentOwnerStore)
+                        }
+                        // attachment-persistence 批（2026-11-18，P0「已发送的文件过一会失效」）：
+                        // 落盘身份必须与**读取面**（StaticRoutes.uploadsRoutes 的
+                        // `ownsResource("attachment", "<sid>/<file>")`）同一把钥匙。
+                        // 修前两处错：① 准入用 `access.ownsSession(msgSessionId)` 拿**聊天会话
+                        // id**去查 owner 台账的 `session:<id>` 行 —— 那些行按**网关会话 id**
+                        // （GatewaySessionStore.newSessionId()，32B base64url，例
+                        // `1lau2fyJhwUO_C0UMypAVqHwFLKOx7YteP0-uzocQjo`）注册，而 msgSessionId 是
+                        // 会话 UUID（例 `1b3416b2-09df-44a8-b8b3-d15aa75dfa98`），两个 id 空间从不
+                        // 相交 ⇒ 恒 false ⇒ 附件永不落盘；② 落盘登记用 2 参 commit（resourceId
+                        // = 裸文件名），而读取面要的是 `<sid>/<file>` ⇒ 即使落了盘也 403（2 参
+                        // commit 见 AttachmentCommitService.commit(access,key,content)）。
+                        // 现在：准入 = 已认证会话主体（ownerAccess 在场；Bearer/未知主体由
+                        // OwnerStore.createResource 的 fail-closed 拦下），落盘登记一律用
+                        // **URL 形状**的 resourceId —— 读取面的按账号授权因此真正生效。
+                        val attachmentScope: Option[String] = AttachmentScope.segmentOf(msgSessionId)
+                        val uploadRoot = Config.NebflowHome.toNIO.resolve("uploads").resolve(msgSessionId)
+                        val attachmentWrites = attachments.zipWithIndex.traverse_ { case (att, attIdx) =>
+                          val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                          val data = att.hcursor.downField("data").as[String].getOrElse("")
+                          val name = att.hcursor.downField("name").as[String].getOrElse("")
+                          val hash = att.hcursor.downField("hash").as[String].getOrElse("")
+                          val fileSize = att.hcursor.downField("size").as[Long].getOrElse(0L)
+                          if mimeType.startsWith("image/") && data.nonEmpty then
+                            val ext =
+                              if mimeType.contains("png") then "png"
+                              else if mimeType.contains("webp") then "webp"
+                              else "jpg"
+                            val stem = name.replaceAll("\\.[a-zA-Z0-9]+$", "").replaceAll("[^A-Za-z0-9._-]", "_")
+                            val keyResult = ResourceKey.from(s"${System.nanoTime()}_$stem.$ext")
+                            val decoded = scala.util.Try(java.util.Base64.getDecoder.decode(data)).toOption
+                            (ownerAccess, attachmentScope, decoded, keyResult.toOption) match
+                              case (Some(access), Some(sid), Some(bytes), Some(key)) =>
+                                AttachmentCommitService
+                                  .at(uploadRoot)
+                                  .commit(access, key, s"$sid/${key.value}", new java.io.ByteArrayInputStream(bytes))
+                                  .attempt
+                                  // flatMap（不是 map）：分支体必须**产出** IO 而不是被
+                                  // 顺手当成值丢掉。修前用 `.map { … logger.info(…) }`，
+                                  // 分支末表达式是 IO[Unit] ⇒ 整个 map 变成 IO[IO[Unit]]，
+                                  // 内层 IO 永不被执行 ⇒ "Saved image/not persisted" 两条
+                                  // 日志在落盘腿静默消失（本 P0 因此 9 天不可见）。
+                                  .flatMap {
+                                    case Right(path) =>
+                                      IO {
+                                        savedPaths(attIdx) = path.toString
+                                        blocks += ContentBlock.Image(data, mimeType)
+                                        blocks += ContentBlock.Text(s"[用户附加图片: $path]")
+                                      } *> logger.info(s"Saved image '$name' to $path")
+                                    case Left(error) =>
+                                      IO(blocks += ContentBlock.Image(data, mimeType)) *>
+                                        logger.warn(s"Image '$name' was not persisted: ${error.getMessage}")
+                                  }
+                              case _ =>
+                                blocks += ContentBlock.Image(data, mimeType)
+                                IO(
+                                  logger
+                                    .warn(s"Image '$name' was not persisted: owner access unavailable or invalid data")
+                                )
+                            end match
+                          else if mimeType.startsWith("image/") then
+                            // Image without data — cannot process
+                            blocks += ContentBlock.Text(s"[image: $name (无数据)]")
+                            IO.unit
                           else
-                            blocks += ContentBlock.Image(data, mimeType)
-                            logger.warn(s"Image '$name' path resolved outside upload dir, only sending visual")
-                        catch
-                          case e: Exception =>
-                            logger.warn(s"Failed to save image '$name': ${e.getMessage}")
-                            // Fallback: still send the image visually even if save failed
-                            blocks += ContentBlock.Image(data, mimeType)
-                        end try
-                      else if mimeType.startsWith("image/") then
-                        // Image without data — cannot process
-                        blocks += ContentBlock.Text(s"[image: $name (无数据)]")
-                      else
-                        // Non-image: try to find the file locally by name + size + hash
-                        // Search priority: project root → common user dirs → full home → Spotlight
-                        // P1 2026-08-27: attachments generated in-memory by the frontend
-                        // (large paste → pasted-text-*.txt, input.js paste handler) never
-                        // exist on disk — the fs walk + Spotlight search below is a
-                        // guaranteed miss costing 5-30s of silent processing. Skip
-                        // straight to the data-save branch when base64 data is in hand.
-                        val isFrontendBlob = name.startsWith("pasted-text-") && data.nonEmpty
-                        val home = os.home.toString
-                        val commonDirs = List("Downloads", "Desktop", "Documents")
-                          .map(d => s"$home/$d")
-                          .filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
-                        val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
-                        val localPath =
-                          if !isFrontendBlob && hash.nonEmpty && fileSize > 0 then findLocalFile(name, hash, fileSize, searchPaths)
-                          else None
-                        // Fallback: macOS Spotlight (finds files in Library, Containers, etc.)
-                        val spotlightPath = localPath match
-                          case Some(_) => localPath
-                          case None if !isFrontendBlob && hash.nonEmpty && fileSize > 0 => spotlightSearch(name, hash, fileSize)
-                          case None => None
-                        spotlightPath match
-                          case Some(path) =>
-                            savedPaths(attIdx) = path
-                            blocks += ContentBlock.Text(s"[用户附加文件: $path]")
-                            logger.info(s"Attachment '$name' resolved to local file: $path")
-                          case None if data.nonEmpty =>
-                            // Fallback: save uploaded content to disk, send path reference to LLM
-                            val uploadDir = Config.NebflowHome / "uploads" / msgSessionId
-                            try
-                              os.makeDir.all(uploadDir)
-                              val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
-                              val fileName = s"${System.nanoTime()}_$safeName"
-                              val filePath = uploadDir / fileName
-                              val decoded = java.util.Base64.getDecoder.decode(data)
-                              os.write.over(filePath, decoded)
-                              val absPath = filePath.toString
-                              if absPath.startsWith(uploadDir.toString) then
-                                savedPaths(attIdx) = absPath
-                                blocks += ContentBlock.Text(s"[用户附加文件: $absPath]")
-                                logger.info(s"Saved attachment '$name' to $absPath (${decoded.length} bytes)")
-                              else
-                                logger.warn(s"Attachment '$name' resolved outside upload dir, skipping")
-                                blocks += ContentBlock.Text(s"[file: $name (path unsafe)]")
-                            catch
-                              case e: Exception =>
-                                logger.warn(s"Failed to save attachment '$name': ${e.getMessage}")
-                                blocks += ContentBlock.Text(s"[file: $name (保存失败)]")
-                            end try
-                          case None =>
-                            // No data and not found locally — tell the LLM the file name so it can
-                            // use Read/Grep tools to locate it.
-                            logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
-                            blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
-                        end match
-                      end if
-                    }
+                            // Non-image: try to find the file locally by name + size + hash
+                            // Search priority: project root → common user dirs → full home → Spotlight
+                            // P1 2026-08-27: attachments generated in-memory by the frontend
+                            // (large paste → pasted-text-*.txt, input.js paste handler) never
+                            // exist on disk — the fs walk + Spotlight search below is a
+                            // guaranteed miss costing 5-30s of silent processing. Skip
+                            // straight to the data-save branch when base64 data is in hand.
+                            val isFrontendBlob = name.startsWith("pasted-text-") && data.nonEmpty
+                            val home = os.home.toString
+                            val commonDirs = List("Downloads", "Desktop", "Documents")
+                              .map(d => s"$home/$d")
+                              .filter(d => java.nio.file.Files.isDirectory(java.nio.file.Path.of(d)))
+                            val searchPaths = projectRoot.toList ::: commonDirs ::: List(home)
+                            val localPath =
+                              if !isFrontendBlob && hash.nonEmpty && fileSize > 0 then
+                                findLocalFile(name, hash, fileSize, searchPaths)
+                              else None
+                            // Fallback: macOS Spotlight (finds files in Library, Containers, etc.)
+                            val spotlightPath = localPath match
+                              case Some(_) => localPath
+                              case None if !isFrontendBlob && hash.nonEmpty && fileSize > 0 =>
+                                spotlightSearch(name, hash, fileSize)
+                              case None => None
+                            spotlightPath match
+                              case Some(path) =>
+                                IO {
+                                  savedPaths(attIdx) = path
+                                  blocks += ContentBlock.Text(s"[用户附加文件: $path]")
+                                  logger.info(s"Attachment '$name' resolved to local file: $path")
+                                }
+                              case None if data.nonEmpty =>
+                                val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
+                                val keyResult = ResourceKey.from(s"${System.nanoTime()}_$safeName")
+                                val decoded = scala.util.Try(java.util.Base64.getDecoder.decode(data)).toOption
+                                (ownerAccess, attachmentScope, decoded, keyResult.toOption) match
+                                  case (Some(access), Some(sid), Some(bytes), Some(key)) =>
+                                    AttachmentCommitService
+                                      .at(uploadRoot)
+                                      .commit(access, key, s"$sid/${key.value}", new java.io.ByteArrayInputStream(bytes))
+                                      .attempt
+                                      .flatMap {
+                                        case Right(path) =>
+                                          IO {
+                                            savedPaths(attIdx) = path.toString
+                                            blocks += ContentBlock.Text(s"[用户附加文件: $path]")
+                                          } *> logger.info(s"Saved attachment '$name' to $path")
+                                        case Left(error) =>
+                                          logger.warn(s"Failed to save attachment '$name': ${error.getMessage}")
+                                      }
+                                  case _ =>
+                                    IO(
+                                      logger.warn(
+                                        s"Attachment '$name' was not persisted: owner access unavailable or invalid data"
+                                      )
+                                    )
+                                end match
+                              case None =>
+                                IO {
+                                  logger.warn(s"Attachment '$name' not found locally (hash=$hash, size=$fileSize)")
+                                  blocks += ContentBlock.Text(s"[用户附加文件: $name (未找到本地路径，请用工具搜索)]")
+                                }
+                            end match
+                          end if
+                        }
 
-                    val sessionName = metaOpt.map(_.name).getOrElse("-")
-                    val agentName = metaOpt.flatMap(_.agentName).getOrElse("")
-                    logger.info(s"${logger.hl(sessionName)} User message: ${content
-                        .take(60)}${if content.length > 60 then "..." else ""}") *>
-                      logInputHistory(content, attachments, msgSessionId, sessionName, agentName) *>
-                      // Record user message as UiMessage for history
-                      (if msgSessionId.nonEmpty then
-                         val attJson = attachments.zipWithIndex.map { case (att, idx) =>
-                           val name = att.hcursor.downField("name").as[String].getOrElse("")
-                           val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
-                           val savedPath = savedPaths.getOrElse(idx, "")
-                           io.circe.Json.obj(
-                             "name" -> name.asJson,
-                             "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
-                             "path" -> (if savedPath.nonEmpty then savedPath.asJson else Json.Null)
-                           )
-                         }
-                         val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
-                         sharedResources.sessionStore
-                           .appendUiMessages(
-                             msgSessionId,
-                             List(UiMessage.User(content, attJson, injected, timestamp = System.currentTimeMillis()))
-                           )
-                           .handleErrorWith(e => logger.warn(s"Failed to record user UiMessage: ${e.getMessage}"))
-                       else IO.unit) *> {
+                        // IO.defer：本块**必须**在 attachmentWrites 跑完之后才求值。
+                        // `*>` 的右参数是 by-value 的 IO（cats-effect `def *>[B](that: IO[B])`），
+                        // 直接写 `attachmentWrites *> { … val attJson = … savedPaths … }` 会在
+                        // **构造**期就 eager 求值整块 —— 那时 savedPaths 还是空 Map，attJson
+                        // 落 path:null，即使落盘成功也照样断裂。这正是本 P0 的第二处根因
+                        // （第一处是上面的 owner 身份错配）；defer 之后读盘与写盘才同序。
+                        attachmentWrites *> IO.defer {
+                          val sessionName = metaOpt.map(_.name).getOrElse("-")
+                          val agentName = metaOpt.flatMap(_.agentName).getOrElse("")
+                          logger.info(s"${logger.hl(sessionName)} User message: ${content
+                              .take(60)}${if content.length > 60 then "..." else ""}") *>
+                            logInputHistory(content, attachments, msgSessionId, sessionName, agentName) *>
+                            // Record user message as UiMessage for history
+                            (if msgSessionId.nonEmpty then
+                               val attJson = attachments.zipWithIndex.map { case (att, idx) =>
+                                 val name = att.hcursor.downField("name").as[String].getOrElse("")
+                                 val mimeType = att.hcursor.downField("mimeType").as[String].getOrElse("")
+                                 val savedPath = savedPaths.getOrElse(idx, "")
+                                 io.circe.Json.obj(
+                                   "name" -> name.asJson,
+                                   "type" -> (if mimeType.startsWith("image/") then "image" else "file").asJson,
+                                   "path" -> (if savedPath.nonEmpty then savedPath.asJson else Json.Null)
+                                 )
+                               }
+                               // quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里
+                               // refType==='chat-message' 的**首条**转成落盘 quote 快照
+                               // （至多 1 条；与 attJson 组装同段）。缺席 ⇒ None ⇒ 编码器
+                               // 不落 quote 键 ⇒ 无引用行字节形态与旧 .ui.json 逐字相同。
+                               val quoteJson = quoteFromRefs(json)
+                               val injected = json.hcursor.downField("injected").as[Boolean].getOrElse(false)
+                               // tool-card-leak-on-reload 批（2026-11-02）：与
+                               // dispatchUserText 同一落盘判据——回合进行中送来的输入
+                               // 落 midTurn=true（回放折叠段边界的数据面依据；注入行
+                               // 由 injected 自辨，本键只对真人输入有意义）。
+                               midTurnAtPersist(msgSessionId).flatMap { midTurn =>
+                                 sharedResources.sessionStore
+                                   .appendUiMessages(
+                                     msgSessionId,
+                                     List(
+                                       UiMessage.User(
+                                         content,
+                                         attJson,
+                                         injected,
+                                         timestamp = System.currentTimeMillis(),
+                                         quote = quoteJson,
+                                         midTurn = if injected then None else midTurn
+                                       )
+                                     )
+                                   )
+                                   .handleErrorWith(e =>
+                                     logger.warn(s"Failed to record user UiMessage: ${e.getMessage}")
+                                   )
+                               }
+                               // attachmentsSaved（用户附件点击统一批 2026-10-08）：live 渲染腿
+                               // 前端只有 data/preview、没有落盘 path —— Pop 面的点击开 Canvas
+                               // 依赖 item.path（popArtifacts.openMediaItemClick / buildFileCard
+                               // 的 `if (item.path)` 闸）。把与 ui.json 同形的 [{name,type,path}]
+                               // 回传请求方连接，前端据此原位重渲用户媒体行。纯文本帧（无附件）
+                               // 不发；旧前端未知帧类型 = handlers 无登记 = no-op，协议零破坏。
+                                 *> (if attJson.nonEmpty then
+                                       wsSend(
+                                         io.circe.Json.obj(
+                                           "type" -> "attachmentsSaved".asJson,
+                                           "sessionId" -> msgSessionId.asJson,
+                                           "attachments" -> attJson.asJson
+                                         )
+                                       )
+                                     else IO.unit)
+                             else IO.unit) *> {
                               // 任务工具重做（2026-08-30）：打回语义退役——
                               // taskRefs/refs(refType=task) 的 processTaskReturns
                               // 路径整体移除。#303 D1: resolve non-task refs
                               // (file/document/html-element) into [引用: …]
                               // injection blocks; refType=task fail-open 跳过。
-                              processRefs(json, blocks).flatMap { _ =>
-                                val blocksList = blocks.toList
-                                // 刷新存活 (2026-09-03): the typeless browser send
-                                // (input.js normal Enter path) must honor the 第六件
-                                // (2026-08-30) input-passthrough contract as well.
-                                // The check used to live only in handleUserText —
-                                // reachable via WS immediateInput/userMessage, i.e.
-                                // the busy→queue→drain path. After a page refresh the
-                                // frontend busy flag is gone, so the typed text lands
-                                // on THIS branch and was queued as a NEW turn while a
-                                // pending ask blocked the session — the refreshed
-                                // input box could never answer (the #43-domain gap).
-                                // Hub hit → the text IS the answer (the user bubble is
-                                // already appended above); miss → normal dispatch,
-                                // byte-identical behavior. Ref/attachment-carrying
-                                // frames keep the default dispatch: their payloads
-                                // are structured returns, not free-text answers.
-                                val frameHasRefsPayload =
-                                  json.hcursor.downField("taskRefs").as[List[io.circe.Json]].fold(_ => false, _.nonEmpty) ||
-                                    json.hcursor.downField("refs").as[List[io.circe.Json]].fold(_ => false, _.nonEmpty)
-                                // NOTE: `blocks` always contains the content text itself
-                                // (ContentBlock.Text(content) above), so it can't
-                                // discriminate — guard on the frame's structured
-                                // payloads instead (refs fields + attachments).
-                                if attachments.isEmpty && !frameHasRefsPayload then
-                                  askPassthroughOrDispatch(
-                                    msgSessionId,
-                                    content,
-                                    clientMessageId,
-                                    blocksList,
-                                    chatWidth,
-                                    source = "typeless"
-                                  )
-                                else
-                                  ensureAgent(msgSessionId)(ref =>
-                                    ref ! AgentCommand
-                                      .UserInput(
-                                        content,
-                                        None,
-                                        clientMessageId,
-                                        Some(blocksList).filter(_.nonEmpty),
-                                        chatWidth
-                                      )
-                                  )
+                              processRefs(json, blocks, msgSessionId).flatMap { _ =>
+                                ConsoleQuoteResolver.resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens).flatMap { resolvedContent =>
+                                if content.nonEmpty then blocks.update(0, ContentBlock.Text(resolvedContent))
+                                // device-provenance 批：标记块前插为首块（正文块逐字不动；
+                                // 会话显示面已在上方 appendUiMessages 落裸正文）。None =
+                                // 未声明设备 ⇒ 逐字节现状。
+                                val blocksList = deviceResolved.fold(blocks.toList)(
+                                  nebflow.bridge.DeviceProvenance.prependMarker(_, blocks.toList)
+                                )
+                                // 输入框直通退役（2026-09-14 作者令）：typeless 帧不再探
+                                // hub 的 pending AskUser 槽位 —— 文本一律按普通消息投
+                                // AgentCommand.UserInput（= 引入直通之前的既有通道）。
+                                // 曾以直通覆盖的「刷新后 busy 标志丢失」窗口（#43-domain）
+                                // 随之回到功能前口径：pending 卡保持 pending、须点卡作答。
+                                // ref/附件携带帧本就只走本通道，形态逐字节不变。
+                                ensureAgent(msgSessionId)(ref =>
+                                  ref ! AgentCommand
+                                    .UserInput(
+                                      content,
+                                      None,
+                                      clientMessageId,
+                                      Some(blocksList).filter(_.nonEmpty),
+                                      chatWidth
+                                    )
+                                )
+                                }
                               }
+                            }
+                        }
                       }
-                  }
+                    } // end deviceResolved flatMap (device-provenance 批)
                   ) // end IO.uncancelable
               }
-            else IO.unit
+            else
+              // fwdguard-impl (2026-09-17): 本准入谓词只数 `content`/`attachments`，
+              // 而转发腿的载荷只走 `refs`（前端 input.js:672-673 又把 ref 剔出
+              // attachments）⇒「转发后不附言直接发送」的帧在此被判为空帧丢弃。
+              // 与 handleUserText 的 EMPTY 内容 WARN（:4309-4312）同族：那条只覆盖
+              // immediateInput / userMessage 两条腿，本 typeless 腿此前**全静默**
+              // （零日志零 turn，而前端已乐观置 busy ⇒ 会话永久转圈，且用户消息在
+              // 所有台账里都不留痕）。此处只补**可观测性**：🔴 准入谓词与投递腿一字
+              // 不改（作者 2026-09-17 Q1 取向：闸住前端，不放宽网关）。
+              val frameHasRefsKey = json.hcursor.downField("refs").focus.isDefined
+              logger.warn(
+                "handleMessage(typeless): dropped frame with no content and no attachments " +
+                  s"for session '$msgSessionId' — nothing dispatched " +
+                  s"(frame was sent but carried no text; refs=$frameHasRefsKey, " +
+                  s"clientMessageId=${clientMessageId.getOrElse("")})"
+              ) *> IO.unit
             end if
       yield ()
       end for
@@ -3834,71 +2331,139 @@ class WebSocketRoutes(
   end handleMessage
 
   /**
-    * Shared body for the user-text input cases ("immediateInput" from the
-    * frontend, "userMessage" from the CLI). Persists the user message as a
-    * UiMessage bubble, then dispatches ImmediateInput to the session's agent.
-    * The headless turn endpoint (POST /api/sessions/:id/turn) mirrors this
-    * same sequence via [dispatchUserText] — keep the two in sync.
-    *
-    * 2026-08-25 22:28 裁定（覆盖同日 14:40 的「用户消息=全局跳过」）：发送
-    * 文字消息**不再**触发全局解冻——冻结态下解冻的唯一入口 = skipFreeze 命令
-    * （前端「跳过本次」按钮）或冻结段自然结束。消息到达 Frozen agent 后由
-    * dispatch gate 拦截排队（B5 系统输入排队语义），不唤醒不解冻。前端在
-    * 冻结态禁用输入栏，此处不再调 skipCurrentFreezeWindow 保持语义干净。
-    */
-  /** 刷新存活 (2026-09-03): shared tail of the input-box send paths — probe the
-    * hub for a pending AskUser card; a hit delivers the text as the tool result
-    * (第六件 2026-08-30 semantics), a miss falls through to the normal dispatch
-    * byte-identically. Used by BOTH the typeless browser send and the
-    * immediateInput/userMessage path inside [[handleUserText]].
-    *
-    * @param passthroughAlreadyRecorded
-    *   true when the caller already persisted the user bubble (typeless branch
-    *   appends UiMessage.User before deciding); the hub never appends, so this
-    *   only documents ownership — kept for symmetry with handleUserText, which
-    *   appends on the hit path itself.
-    */
-  private def askPassthroughOrDispatch(
-      sessionId: String,
-      content: String,
-      clientMessageId: Option[String],
-      blocks: List[ContentBlock],
-      chatWidth: Int,
-      source: String
-  ): IO[Unit] =
-    if sessionId.nonEmpty && content.nonEmpty then
-      sharedResources.interactionHubRef.get.flatMap {
-        case Some(hub) =>
-          resolveRootSessionId(sessionId).flatMap { rootSid =>
-            Deferred[IO, Boolean].flatMap { answered =>
-              (hub ! nebflow.agent.InteractionHubCommand.AnswerViaChatInput(rootSid, content, answered)) *>
-                // QC: bounded wait — a hub crash / swallowed forkTurn must not
-                // park this gateway fiber forever; on timeout fall back to
-                // the normal dispatch path (message still reaches the agent).
-                answered.get.timeout(1.second).handleError(_ => false)
-            }.flatMap {
-              case true =>
-                logger.info(
-                  s"User text ($source) → AskUser passthrough for session $sessionId (${content.length} chars)"
-                )
-              case false =>
-                ensureAgent(sessionId)(ref =>
-                  ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocks).filter(_.nonEmpty), chatWidth)
-                )
-            }
-          }
-        case None =>
-          ensureAgent(sessionId)(ref =>
-            ref ! AgentCommand.UserInput(content, None, clientMessageId, Some(blocks).filter(_.nonEmpty), chatWidth)
-          )
-      }
-    else IO.unit
+   * F 步分发上下文:按帧把迁出臂所需的本类私有依赖打包给各域 handler
+   * (引用与 eta 展开,构建零副作用)。
+   */
+  private def wsDispatchContext(
+    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None
+  ): WsDispatchCtx =
+    WsDispatchCtx(
+      logger = logger,
+      sessionService = sessionService,
+      agentService = agentService,
+      configService = configService,
+      configRef = configRef,
+      sessionStore = sessionStore,
+      sharedResources = sharedResources,
+      mcpManager = mcpManager,
+      sttServiceRef = sttServiceRef,
+      textSearch = textSearch,
+      sessionTextBuffers = sessionTextBuffers,
+      sessionThinkingBuffers = sessionThinkingBuffers,
+      sessionTurnStarts = sessionTurnStarts,
+      replayPendingAsksImpl = replayPendingAsks,
+      listAllPendingAsksImpl = listAllPendingAsks,
+      applyPermissionUpgradeImpl = applyPermissionUpgrade,
+      persistGlobalSafetyModeImpl = persistGlobalSafetyMode,
+      removeRootAgentImpl = removeRootAgent,
+      stopChildDelegateActorsImpl = stopChildDelegateActors,
+      forwardInteractionAnswerImpl = forwardInteractionAnswer,
+      isRootScopeSessionImpl = isRootScopeSession,
+      compactThresholdInfoImpl = compactThresholdInfo,
+      ensureAgentImpl = ensureAgent,
+      maybeSessionKickImpl = maybeSessionKick,
+      broadcastServerConfigImpl = () => broadcastServerConfig,
+      persistThinkingConfigImpl = persistThinkingConfig,
+      persistWorkScheduleImpl = persistWorkSchedule,
+      persistMcpServerEnabledImpl = persistMcpServerEnabled,
+      broadcastMcpServersUpdateImpl = () => broadcastMcpServersUpdate,
+      sendAgentSessionListImpl = sendAgentSessionList,
+      sendAgentSessionListByNameImpl = sendAgentSessionListByName,
+      sendMemoryStatusImpl = sendMemoryStatus,
+      sendToolsListImpl = sendToolsList,
+      expandTildeImpl = expandTilde,
+      wsBrowseEventImpl = wsBrowseEvent,
+      browseResultFrameImpl = WebSocketRoutes.browseFrame,
+      browseErrorFrameImpl = WebSocketRoutes.browseErrorFrame,
+      browseEntryCapImpl = WebSocketRoutes.BrowseEntryCap,
+      resolveExplorerBaseRootImpl = resolveExplorerBaseRoot,
+      admitWorkOrRefuseImpl = admitWorkOrRefuse,
+      handleUserTextImpl = handleUserText,
+      // 门户身份透传批（方案 A1）：immediateInput 腿的解析缝按本连接的会话身份
+      // 闭包（None = Bearer 轨/REST headless ⇒ 解析面现状逐字节）。
+      deviceProvenanceImpl = (json: io.circe.Json) => deviceProvenanceOf(json, sessionIdentity),
+      skipCurrentFreezeWindowImpl = () => skipCurrentFreezeWindow,
+      executeAskImpl = executeAsk,
+      executeSkillImpl = executeSkill,
+      resolveRootSessionIdImpl = resolveRootSessionId,
+      projectCreateBroadcastImpl = (json: io.circe.Json) => wsHub.broadcast(json)
+    )
+  end wsDispatchContext
 
-  /** 热重启 draining 工作准入闸（hot-restart 批设计 §3.3，WS 侧 choke 点）：包裹
-    * 工作型消息入口（userMessage / immediateInput——REST 的 handleMessagePublic
-    * 同走本 handleMessage，故 REST 工作型路径一并覆盖）。draining 置位期间拒绝
-    * 并回 workRefused 帧（503 + retryAfter 语义）；遗漏准入点的兜底 = 崩溃恢复
-    * sweep（设计 R2）。非 draining 期间零开销旁路（行为与既有完全一致）。 */
+  // ─────────── 来源设备标记（device-provenance 批，2026-10-23 作者令）───────────
+  //
+  // 作者令：消息来源标记从渠道级（微信/飞书）细化到设备级——「让你能知道是哪台
+  // 设备来的，是否为我们设备列表里的设备」。本类是控制台腿的**唯一注入点**：
+  //
+  //   - 无 type 帧（输入框/队列/插件卡直投）与 `immediateInput` 帧（队列「立即
+  //     发送」）两条腿在派发前经 [[deviceProvenanceOf]] 解析帧 `device` 键；
+  //   - 标记只进模型面（`UserInput` blocks 首块 / `ImmediateInput` text 前缀），
+  //     会话显示面（`.ui.json` 行、气泡）保持裸正文——source-marker relocation
+  //     批（2026-10-01）的两 face 分离原样适用；
+  //   - 帧不带 `device`（CLI `userMessage` / REST headless / 旧前端）⇒ None ⇒
+  //     全部 face 逐字节不变（不声明不标注，不猜）。
+  //
+  // 纯函数面（解码/解析/渲染）在 [[nebflow.bridge.DeviceProvenance]]；本类只做
+  // 花名册取数（neblink self + peers，Ref 读内存价）与接线。
+
+  /** 花名册读数：self 身份 + peers 列表，映射为纯结构行。取数失败降级空册（未登记兜底，绝不冒认已登记）。 */
+  private def deviceRosterEntries
+    : IO[(Option[nebflow.bridge.DeviceRosterEntry], List[nebflow.bridge.DeviceRosterEntry])] =
+    sharedResources.neblinkService match
+      case None => IO.pure((None, Nil))
+      case Some(svc) =>
+        (
+          svc.identity.map(i => Some(nebflow.bridge.DeviceRosterEntry(i.deviceId, i.deviceName))).attempt,
+          svc.peers
+            .map(ps => ps.map(p => nebflow.bridge.DeviceRosterEntry(p.deviceId, p.deviceName)))
+            .attempt
+        ).mapN((self, peers) =>
+          (
+            self.toOption.flatten,
+            peers.getOrElse(Nil)
+          )
+        )
+
+  /**
+   * 帧的来源设备解析：`device` 键缺席/无 clientId ⇒ None（不标注——不声明不标注，
+   * 不猜）；在场 ⇒ 对照花名册 + 会话身份出 [[ResolvedDevice]]。任何花名册/凭据
+   * 异常都 fail-open（未登记/无锚），绝不影响消息本身的派发。
+   *
+   * 门户身份透传批（方案 A2/A3，2026-10-28）：`sessionIdentity` 在场时才读本机
+   * owner 锚（OwnerIdentity.localAnchor——Bearer 轨/CLI 帧零文件 IO），owner
+   * 等值命中 ⇒ 「已认证」级标记；缺席/不等 ⇒ 默认名兜底逐字。
+   */
+  private def deviceProvenanceOf(
+    json: io.circe.Json,
+    sessionIdentity: Option[nebflow.bridge.SessionIdentity] = None
+  ): IO[Option[nebflow.bridge.ResolvedDevice]] =
+    nebflow.bridge.ClientDevice.fromFrame(json) match
+      case None => IO.pure(None)
+      case Some(client) =>
+        // owner 锚按需读：仅会话轨连接付一次凭据文件读（token 键控缓存）；Bearer
+        // 轨/CLI 帧零 IO（行为逐字节不变）。
+        val anchorIO: IO[Option[nebflow.bridge.OwnerAnchor]] =
+          if sessionIdentity.isDefined then OwnerIdentity.localAnchor else IO.pure(None)
+        // flatMapN：判词日志必须绑进链——mapN 纯函数块里裸 logger.info 是孤儿
+        // IO（构造即丢弃，永不执行；与 ConsoleTicketRoutes 兑换日志同款坑）。
+        (deviceRosterEntries, anchorIO).flatMapN { case ((self, peers), anchor) =>
+          val resolved =
+            nebflow.bridge.DeviceProvenance.resolve(client, self, peers, sessionIdentity, anchor)
+          logger
+            .info(
+              s"Device provenance: '${resolved.display}' (enrolled=${resolved.enrolled}, " +
+                s"authenticated=${resolved.sessionAuthenticated}) clientId=${client.clientId.take(8)}…"
+            )
+            .as(Some(resolved))
+        }
+
+  /**
+   * 热重启 draining 工作准入闸（hot-restart 批设计 §3.3，WS 侧 choke 点）：包裹
+   * 工作型消息入口（userMessage / immediateInput——REST 的 handleMessagePublic
+   * 同走本 handleMessage，故 REST 工作型路径一并覆盖）。draining 置位期间拒绝
+   * 并回 workRefused 帧（503 + retryAfter 语义）；遗漏准入点的兜底 = 崩溃恢复
+   * sweep（设计 R2）。非 draining 期间零开销旁路（行为与既有完全一致）。
+   */
   private def admitWorkOrRefuse(wsSend: io.circe.Json => IO[Unit])(cont: IO[Unit]): IO[Unit] =
     nebflow.core.hotrestart.HotRestart.admissionGate.flatMap {
       case Right(()) => cont
@@ -3913,44 +2478,49 @@ class WebSocketRoutes(
           )
     }
 
-  private def handleUserText(sessionId: String, content: String, source: String): IO[Unit] =
+  /**
+   * Shared body for the user-text input cases ("immediateInput" from the
+   * frontend, "userMessage" from the CLI). Persists the user message as a
+   * UiMessage bubble, then dispatches ImmediateInput to the session's agent.
+   * The headless turn endpoint (POST /api/sessions/:id/turn) mirrors this
+   * same sequence via [dispatchUserText] — keep the two in sync.
+   *
+   * 2026-08-25 22:28 裁定（覆盖同日 14:40 的「用户消息=全局跳过」）：发送
+   * 文字消息**不再**触发全局解冻——冻结态下解冻的唯一入口 = skipFreeze 命令
+   * （前端「跳过本次」按钮）或冻结段自然结束。消息到达 Frozen agent 后由
+   * dispatch gate 拦截排队（B5 系统输入排队语义），不唤醒不解冻。前端在
+   * 冻结态禁用输入栏，此处不再调 skipCurrentFreezeWindow 保持语义干净。
+   */
+  /**
+   * @param fromUser
+   *   ② (2026-09-11, queue-direct-pass diagnosis §2): is this text a real
+   *   human message? Required (no default) so every entry point states its
+   *   origin. 真人口径（Nebula 代裁，可被作者推翻）= WS 直投（浏览器
+   *   `immediateInput` / 无 type 帧）+ CLI `userMessage`；REST headless
+   *   (`rest-turn`) 算程序 ⇒ false。The flag is threaded into
+   *   [[dispatchUserText]] → `AgentCommand.ImmediateInput(fromUser = …)` so the
+   *   idle judgement (`clientMessageId.isDefined || fromUser`) keeps the
+   *   human turn free of an injection source.
+   * @param device
+   *   来源设备解析读数（device-provenance 批，2026-10-23）：帧 `device` 键对照
+   *   花名册的读数；`None`（默认）= 客户端未声明 ⇒ 全部 face 逐字节不变。在场时
+   *   标记只进模型面（ImmediateInput text 前缀），UiMessage 行保持裸正文。
+   */
+  private def handleUserText(
+    sessionId: String,
+    content: String,
+    source: String,
+    fromUser: Boolean,
+    device: Option[nebflow.bridge.ResolvedDevice] = None,
+    // P3 磁盘邮箱批：客户端幂等键透传（见 dispatchUserText 同名参数）。
+    clientMessageId: Option[String] = None
+  ): IO[Unit] =
     if sessionId.nonEmpty && content.nonEmpty then
-      // 第六件 QC (2026-08-30): the passthrough probe is WS-input-box ONLY —
-      // headless REST turns ("rest-turn") go straight to dispatch so a P0
-      // benchmark POST can never silently answer a pending card.
-      if !WebSocketRoutes.probesPassthrough(source) then dispatchUserText(sessionId, content, source)
-      else
-        // 第六件 (2026-08-30): if THIS session has a pending AskUser card, the
-        // input-box text is the answer — deliver it straight through as the
-        // tool result (free-text). The agent's injection queue is untouched:
-        // queued Mails/external events stay queued with the SAME length (场景②),
-        // and the user's text itself never enqueues (no ImmediateInput on this
-        // path). Miss (no pending AskUser) → normal dispatch, byte-identical
-        // behavior (场景③).
-        sharedResources.interactionHubRef.get.flatMap {
-          case Some(hub) =>
-            resolveRootSessionId(sessionId).flatMap { rootSid =>
-              Deferred[IO, Boolean].flatMap { answered =>
-                (hub ! nebflow.agent.InteractionHubCommand.AnswerViaChatInput(rootSid, content, answered)) *>
-                  // QC: bounded wait — a hub crash / swallowed forkTurn must not
-                  // park this gateway fiber forever; on timeout fall back to
-                  // the normal dispatch path (message still reaches the agent).
-                  answered.get.timeout(1.second).handleError(_ => false)
-              }.flatMap {
-                case true =>
-                  logger.info(
-                    s"User text ($source) → AskUser passthrough for session $sessionId (${content.length} chars)"
-                  ) *>
-                    // user bubble still lands (same shape as the card "Other" path)
-                    sessionStore.appendUiMessages(
-                      sessionId,
-                      List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
-                    )
-                case false => dispatchUserText(sessionId, content, source)
-              }
-            }
-          case None => dispatchUserText(sessionId, content, source)
-        }
+      // 输入框直通退役（2026-09-14 作者令）：输入框文本一律按普通消息投递 ——
+      // 不再探 hub 的 pending AskUser 槽位，文本也不再成为卡片答案
+      // （[[dispatchUserText]] = 唯一入队路径）。pending 卡保持 pending，
+      // 只能在卡片上作答；headless REST (`rest-turn`) 与输入框同腿，形态不变。
+      dispatchUserText(sessionId, content, source, fromUser, device, clientMessageId)
     else
       // P1 2026-08-27 (frontend c1d57710): the queue "send-now" branch emitted an
       // empty-content frame (attachments dropped), which reached this path and was
@@ -3964,32 +2534,66 @@ class WebSocketRoutes(
       ) *> IO.unit
   end handleUserText
 
-  /** Normal message dispatch: user bubble + immediate injection into the
-    * agent's turn pipeline. The ONLY path that enqueues — the AskUser
-    * passthrough deliberately bypasses this (第六件, 2026-08-30).
-    */
-  private def dispatchUserText(sessionId: String, content: String, source: String): IO[Unit] =
+  /**
+   * Normal message dispatch: user bubble + immediate injection into the
+   * agent's turn pipeline. The ONLY path that enqueues user text — the
+   * input-box AskUser passthrough that used to bypass it was retired
+   * 2026-09-14 (作者令「把 AskUserQuestion 通过输入框回答的功能关了」).
+   *
+   * ② (2026-09-11): `fromUser` rides along onto the ImmediateInput so the
+   * agent can tell 真人文本 (WS immediateInput / CLI userMessage) apart from
+   * server-side injections — without it the text lands in the
+   * `clientMessageId=None ⇒ source="tool"` fallback (idle conversion) and
+   * renders as a bogus TOOL card. `fromUser` is a required parameter so no
+   * caller can silently inherit the wrong origin.
+   */
+  private def dispatchUserText(
+    sessionId: String,
+    content: String,
+    source: String,
+    fromUser: Boolean,
+    device: Option[nebflow.bridge.ResolvedDevice] = None,
+    // P3 磁盘邮箱批（作者 2026-11-05 10:46）：把 WS 边界 `:2005` 已解析出的客户端
+    // 幂等键**穿到 ImmediateInput**——改前它在 Gateway→agent 转换处蒸发，真人文字
+    // 主腿因此没有任何幂等面（重发同一帧 = 可能双跑）。加性尾参，缺席逐字现状。
+    clientMessageId: Option[String] = None
+  ): IO[Unit] =
     logger.info(s"User text ($source) for session $sessionId (${content.length} chars)") *>
-      sessionStore.appendUiMessages(
-        sessionId,
-        List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis()))
-      ) *>
+      // tool-card-leak-on-reload 批（2026-11-02）：回合内插话判定在**落盘这一瞬**
+      // 取（注册表 Processing = 引擎回合在跑），随行落 `midTurn=true`。这是回放
+      // 折叠段边界判据的数据面依据 —— 回合中插话不再把同一回合劈成两段。
+      midTurnAtPersist(sessionId).flatMap { midTurn =>
+        sessionStore.appendUiMessages(
+          sessionId,
+          List(UiMessage.User(content, Nil, timestamp = System.currentTimeMillis(), midTurn = midTurn))
+        )
+      } *>
       // Hard-recovery P4: if the target turn is wedged (Processing + idle >
       // SessionKickIdleSec), break it BEFORE queueing — the queued message
       // injects at the turn boundary the kick creates (user intent first).
       maybeSessionKick(sessionId, s"userMessage:$source") *>
-      ensureAgent(sessionId)(ref => ref ! AgentCommand.ImmediateInput(content))
-
+      // device-provenance 批：标记只进模型面（text 前缀，BridgeOrigin.compose 同序
+      // ——标记块、空行、正文）；上方 UiMessage 行保持裸正文（两 face 分离原律）。
+      (if fromUser then ConsoleQuoteResolver.resolve(content, sharedResources.scheduledTaskStore, sharedResources.msgTokens)
+       else IO.pure(content)).flatMap { resolvedContent =>
+        ensureAgent(sessionId)(ref =>
+          ref ! AgentCommand.ImmediateInput(
+            device.fold(resolvedContent)(nebflow.bridge.DeviceProvenance.compose(_, resolvedContent)),
+            fromUser = fromUser,
+            clientMessageId = clientMessageId
+          )
+        )
+      }
 
   /**
-    * 冻结「跳过本次」唯一入口（2026-08-25 22:28 裁定）：前端冻结按钮发
-    * skipFreeze 命令 → 置 freezeSkipUntilRef = 窗口结束时刻（eval 的
-    * nextChangeAt；全天冻结兜底下一午夜）并立即 FreezeScheduler.scan——所有
-    * Frozen agent 收到 CheckFreezeGate 重评估 → evalWithSkip 视为段外 →
-    * 恢复工作（drain 冻结期间排队的消息）。窗口结束后 skip 自然过期，下一
-    * 冻结段照常冻结（跳过非永久）。用户文字消息**不再**触发本函数（22:28
-    * 裁定，见 handleUserText）。
-    */
+   * 冻结「跳过本次」唯一入口（2026-08-25 22:28 裁定）：前端冻结按钮发
+   * skipFreeze 命令 → 置 freezeSkipUntilRef = 窗口结束时刻（eval 的
+   * nextChangeAt；全天冻结兜底下一午夜）并立即 FreezeScheduler.scan——所有
+   * Frozen agent 收到 CheckFreezeGate 重评估 → evalWithSkip 视为段外 →
+   * 恢复工作（drain 冻结期间排队的消息）。窗口结束后 skip 自然过期，下一
+   * 冻结段照常冻结（跳过非永久）。用户文字消息**不再**触发本函数（22:28
+   * 裁定，见 handleUserText）。
+   */
   private def skipCurrentFreezeWindow: IO[Unit] =
     for
       cfg <- sharedResources.freezeScheduleRef.get
@@ -4003,15 +2607,13 @@ class WebSocketRoutes(
             s"Freeze window skipped (skipFreeze; skipUntil=${until.map(u => new java.util.Date(u).toString).getOrElse("none")})"
           ) *>
             sharedResources.freezeSkipUntilRef.set(until) *>
-              // P0（2026-08-30）：skip 持久化——重启/刷新后重连仍可见 skipped=true
-              // （此前仅内存 Ref，后端进程重启即丢 → 输入框重新冻结）。best-effort：
-              // 写盘失败不阻塞解冻（scan/broadcast 照常），warn 留痕。
-              nebflow.core.schedule.FreezeSchedule
-                .persistSkip(nebflow.core.PathUtil.dataRoot, until)
-                .handleErrorWith(e =>
-                  logger.warn(s"Failed to persist freeze skip: ${e.getMessage}")
-                ) *>
-              nebflow.core.processor.FreezeScheduler.scan(sharedResources) *>
+            // P0（2026-08-30）：skip 持久化——重启/刷新后重连仍可见 skipped=true
+            // （此前仅内存 Ref，后端进程重启即丢 → 输入框重新冻结）。best-effort：
+            // 写盘失败不阻塞解冻（scan/broadcast 照常），warn 留痕。
+            nebflow.core.schedule.FreezeSchedule
+              .persistSkip(nebflow.shared.PathUtil.dataRoot, until)
+              .handleErrorWith(e => logger.warn(s"Failed to persist freeze skip: ${e.getMessage}")) *>
+            nebflow.core.processor.FreezeScheduler.scan(sharedResources) *>
             // 现象 2 契约（2026-08-30）：跳过 → 立即广播全局冻结态——前端输入栏
             // 状态机从 serverConfig.freezeState 读 frozen=false，不等任何 agent
             // 的 resumed 事件（无活跃 agent 时也要即时解除禁用）。
@@ -4021,14 +2623,20 @@ class WebSocketRoutes(
   end skipCurrentFreezeWindow
 
   /**
-    * Headless turn entry (P0 benchmark): dispatch a user text into a session
-    * exactly like the WS "immediateInput"/"userMessage" cases do. Exposed for
-    * RestApiRoutes' synchronous turn endpoint. Named distinctly from the WS
-    * dispatch (QC nit, 2026-08-30): no overload shadowing, and the name says
-    * REST-deterministic — this path never probes the AskUser passthrough.
-    */
+   * Headless turn entry (P0 benchmark): dispatch a user text into a session
+   * exactly like the WS "immediateInput"/"userMessage" cases do. Exposed for
+   * RestApiRoutes' synchronous turn endpoint. Named distinctly from the WS
+   * dispatch (QC nit, 2026-08-30): no overload shadowing, and the name says
+   * REST-deterministic — this path and the WS input box share the same leg
+   * ([[dispatchUserText]]); the AskUser passthrough probe they used to differ
+   * on was retired 2026-09-14.
+   */
   def dispatchHeadlessTurn(sessionId: String, content: String): IO[Unit] =
-    handleUserText(sessionId, content, source = "rest-turn")
+    // ② 口径（Nebula 代裁，可被作者推翻）：REST headless 是「程序」在投文本
+    // （P0 benchmark / 外部脚本），不是人 ⇒ 显式 fromUser = false，保持既有
+    // 注入来源标注（rest-turn 与输入框同腿：直落 dispatchUserText；输入框直通
+    // 已于 2026-09-14 退役，此处不再有来源分叉）。
+    handleUserText(sessionId, content, source = "rest-turn", fromUser = false)
 
   // ============================================================
   // Local file search for smart attachment resolution
@@ -4073,23 +2681,115 @@ class WebSocketRoutes(
     "Movies"
   )
 
-  /** #303 D1/D5: resolve unified refs (refType ≠ task) into [引用: …]
-    * injection blocks appended to the user message (spec §2.3 ③). Pointer
-    * semantics — source + anchor only, never content (D5, ≤ ~100 token).
-    * refType=task refs are gone (任务工具重做 2026-08-30, 打回退役) — they
-    * fall through as unknown and are skipped fail-open (never block the
-    * message or the other refs). */
+  /**
+   * #303 D1/D5: resolve unified refs (refType ≠ task) into [引用: …]
+   * injection blocks appended to the user message (spec §2.3 ③). Pointer
+   * semantics — source + anchor only, never content (D5, ≤ ~100 token).
+   * refType=task refs are gone (任务工具重做 2026-08-30, 打回退役) — they
+   * fall through as unknown and are skipped fail-open (never block the
+   * message or the other refs).
+   */
   private def processRefs(
     frame: io.circe.Json,
-    blocks: scala.collection.mutable.ListBuffer[ContentBlock]
+    blocks: scala.collection.mutable.ListBuffer[ContentBlock],
+    sessionId: String
   ): IO[Unit] =
     val refs = frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
-    refs.foreach { ref =>
+    refs.traverse_ { ref =>
       val refType = ref.hcursor.downField("refType").as[String].getOrElse("")
-      if refType != "task" then
-        RefResolver.resolve(ref).foreach(block => blocks += ContentBlock.Text(block))
+      if refType == "chat-message" then
+        ConsoleQuoteResolver.structured(ref, sessionId, sharedResources.msgTokens).map(block => blocks += ContentBlock.Text(block)).void
+      else IO { if refType != "task" then RefResolver.resolve(ref).foreach(block => blocks += ContentBlock.Text(block)) }
     }
-    IO.unit
+
+  /**
+   * quote-message 一期（2026-10-09，spec §3.3）：帧 refs 里 refType==='chat-message'
+   * 的首条 → 落盘 quote 快照 Json（UiMessage.User.quote）。形状（引擎不解释内部
+   * 字段，原样落盘原样下发）：
+   *   { refMessageId, excerpt ≤80, senderRole, senderName?, ts?, attachments? }
+   * 无 chat-message ref / 形态不合 ⇒ None（编码器缺席不落键，旧行字节形态不变）。
+   * excerpt 一律过 RefResolver.sanitize 再截 80（引用块快照的防伪同源）。
+   * attachments（附件批 2026-10-31 作者令「引用要支持你发的文件 图片等」）：
+   * content.attachments 的**白名单**拷贝 —— 每项只留 type（image|video|file）/
+   * name/path（sanitize + 截长，cap 8），前端 preview（data: 内联字节）不落盘。
+   *
+   * 叠卡单张引用（2026-11-02 作者令「让叠卡的图片可以分开引用」）：content 可带
+   * itemIndex（0 基，≤99）/itemTotal（该组张数，≤99）——两张量都是**位置标注**，
+   * 引用目标仍是 refMessageId（寻址/降级矩阵不变）。缺失/非法 ⇒ 不落键（旧载荷
+   * 落盘字节形态逐字不变，旧行渲染零变化）。
+   */
+  private def quoteFromRefs(frame: io.circe.Json): Option[io.circe.Json] =
+    val refs = frame.hcursor.downField("refs").as[List[io.circe.Json]].getOrElse(Nil)
+    refs.find(r => r.hcursor.downField("refType").as[String].getOrElse("") == "chat-message").flatMap { ref =>
+      val c = ref.hcursor
+      val src = c.downField("source")
+      val mid = RefResolver.sanitize(src.downField("messageId").as[String].getOrElse(""))
+      if mid.isEmpty then None
+      else
+        val excerpt = RefResolver
+          .sanitize(c.downField("content").downField("excerpt").as[String].getOrElse(""))
+          .take(80)
+        val role = RefResolver.sanitize(src.downField("senderRole").as[String].getOrElse("user"))
+        val base = scala.collection.mutable.LinkedHashMap[String, io.circe.Json](
+          "refMessageId" -> mid.asJson,
+          "excerpt" -> excerpt.asJson,
+          "senderRole" -> role.asJson
+        )
+        src
+          .downField("senderName")
+          .as[String]
+          .toOption
+          .map(RefResolver.sanitize)
+          .filter(_.nonEmpty)
+          .foreach(n => base("senderName") = n.asJson)
+        c.downField("meta")
+          .downField("ts")
+          .as[Long]
+          .toOption
+          .filter(_ > 0)
+          .foreach(ts => base("ts") = ts.asJson)
+        val atts = c
+          .downField("content")
+          .downField("attachments")
+          .as[List[io.circe.Json]]
+          .getOrElse(Nil)
+          .take(8)
+          .flatMap { a =>
+            val tpe = a.hcursor.downField("type").as[String].getOrElse("file") match
+              case "image" => "image"
+              case "video" => "video"
+              case _ => "file"
+            val name = RefResolver.sanitize(a.hcursor.downField("name").as[String].getOrElse("")).take(200)
+            val path = RefResolver.sanitize(a.hcursor.downField("path").as[String].getOrElse("")).take(600)
+            if name.isEmpty && path.isEmpty then None
+            else
+              Some(
+                io.circe.Json.obj(
+                  "type" -> tpe.asJson,
+                  "name" -> name.asJson,
+                  "path" -> (if path.nonEmpty then path.asJson else Json.Null)
+                )
+              )
+          }
+        if atts.nonEmpty then base("attachments") = io.circe.Json.fromValues(atts)
+        // 叠卡单张引用（2026-11-02）：「第 N 张」位置标注。itemIndex 0 基、≤99；
+        // itemTotal 只在 > itemIndex 且 ≤99 时落（组张数，展示「第 N/M 张」）。
+        // 两者都缺席/非法 ⇒ 不落键 ⇒ 旧载荷的快照字节形态逐字不变。
+        val itemIndex = c.downField("content").downField("itemIndex").as[Int].toOption.filter(i => i >= 0 && i <= 99)
+        itemIndex.foreach { i =>
+          base("itemIndex") = i.asJson
+          c.downField("content")
+            .downField("itemTotal")
+            .as[Int]
+            .toOption
+            .filter(n => n > i && n <= 99)
+            .foreach(n => base("itemTotal") = n.asJson)
+        }
+        Some(io.circe.Json.fromJsonObject(io.circe.JsonObject.fromIterable(base)))
+      end if
+    }
+
+  end quoteFromRefs
 
   /**
    * Search for a file by name and verify its SHA-256 hash matches.
@@ -4189,7 +2889,11 @@ class WebSocketRoutes(
     val safeName = name.replaceAll("[/\\\\]", "_").replace("..", "_")
     try
       val cmd = Seq("mdfind", "-name", safeName)
-      val output = scala.sys.process.Process(cmd).!!
+      // Platform gate (P13): `mdfind` ships on macOS only — off macOS the
+      // Spotlight fallback is a bounded no-op instead of a failing spawn.
+      val output =
+        if sys.props.getOrElse("os.name", "").toLowerCase.contains("mac") then scala.sys.process.Process(cmd).!!
+        else ""
       val lines = output.trim.split("\n").iterator.filter(_.nonEmpty)
       // Filter by size (cheap), then verify hash (expensive)
       lines.find { line =>
@@ -4215,31 +2919,32 @@ class WebSocketRoutes(
   // ============================================================
   // UI Message recording — wraps wsSend to persist frontend-renderable history
   // ============================================================
+  // process-recorder 批（2026-11-01）：本包装自此只承载 **root 帧族**（textDelta /
+  // thinking / toolStart / roundComplete / done / toolEnd / askUser / …，按 ctor
+  // `sessionId` 落盘）。agent* 帧族（按帧内 nodeSessionId 落盘）已整体移交
+  // `ProcessRecorder`（wsHub.registerListener 监听者位，单写者）——见下方 P1 注记。
+  // 下述三缓冲的键自此只有 root sessionId（node-* 键的缓冲在 recorder，含孤儿扫）。
 
-  /** Per-session accumulator for text deltas (emitted one-by-one, saved on textDone). */
+  /** Per-session accumulator for text deltas (emitted one-by-one, saved on textDone). Root-frame family only — node-* keys live in ProcessRecorder. */
   private val sessionTextBuffers: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
-  /** Per-session accumulator for thinking deltas. */
+  /** Per-session accumulator for thinking deltas. Root-frame family only. */
   private val sessionThinkingBuffers: Ref[IO, Map[String, String]] =
     Ref.unsafe[IO, Map[String, String]](Map.empty)
 
-  /** Per-session turn start time — set on first streaming event, consumed on done. */
+  /** Per-session turn start time — set on first streaming event, consumed on done. Root-frame family only. */
   private val sessionTurnStarts: Ref[IO, Map[String, Long]] =
     Ref.unsafe[IO, Map[String, Long]](Map.empty)
 
-  private def makeRecordingWsSend(
+  // `private[gateway]`：Test seam（ProcessRecorderSpec S5 root 零漂移行为钉直调；
+  // 类外无生产调用点——生产仅本类 :183/:498 两处自用）。
+  private[gateway] def makeRecordingWsSend(
     sessionId: String,
     underlying: io.circe.Json => IO[Unit]
   ): io.circe.Json => IO[Unit] = json =>
     val hc = json.hcursor
     val eventType = hc.downField("type").as[String].getOrElse("")
-    // "team-" is a frontend routing marker injected by MailTool.activateAgent,
-    // not a real session id. Strip it so Mail-activated team agent streams
-    // persist to the team session's own ui.json instead of a phantom
-    // "team-<id>" session.
-    def normalizeNodeSessionId(nsid: String): String =
-      if nsid.startsWith("team-") then nsid.drop(5) else nsid
     val record = eventType match
       case "thinkingDelta" =>
         val delta = hc.downField("delta").as[String].getOrElse("")
@@ -4333,36 +3038,47 @@ class WebSocketRoutes(
           .flatMap { startTime =>
             val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
             sessionTextBuffers
-                .modify { m =>
-                  val text = m.getOrElse(sessionId, "")
-                  (m - sessionId, text)
-                }
-                .flatMap { text =>
-                  sessionThinkingBuffers
-                    .modify { m =>
-                      val thinking = m.getOrElse(sessionId, "")
-                      (m - sessionId, thinking)
-                    }
-                    .flatMap { thinking =>
-                      val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
-                      if text.nonEmpty || thinkingOpt.isDefined then
-                        sharedResources.sessionStore.appendUiMessages(
-                          sessionId,
-                          List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis()))
+              .modify { m =>
+                val text = m.getOrElse(sessionId, "")
+                (m - sessionId, text)
+              }
+              .flatMap { text =>
+                sessionThinkingBuffers
+                  .modify { m =>
+                    val thinking = m.getOrElse(sessionId, "")
+                    (m - sessionId, thinking)
+                  }
+                  .flatMap { thinking =>
+                    val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
+                    if text.nonEmpty || thinkingOpt.isDefined then
+                      sharedResources.sessionStore.appendUiMessages(
+                        sessionId,
+                        // replay-terminal 批（2026-10-28，案一「A 根治」）：done =
+                        // 轮终态事实本身——terminal=true 与 durationMs 同批落盘，
+                        // 回放折叠不再靠渲染期徽章启发式反推（裸面 1/2/5 根治）。
+                        List(
+                          UiMessage
+                            .Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis(), terminal = Some(true))
                         )
-                      else if durationMs.isDefined then
-                        // No text to flush (already flushed at roundComplete/toolStart),
-                        // but we have a duration — backfill onto the last saved Ai message.
-                        sharedResources.sessionStore.updateLastAiMeta(
-                          sessionId,
-                          durationMs,
-                          model,
-                          System.currentTimeMillis()
-                        )
-                      else IO.unit
-                      end if
-                    }
-                }
+                      )
+                    else if durationMs.isDefined then
+                      // No text to flush (already flushed at roundComplete/toolStart),
+                      // but we have a duration — backfill onto the round's last carrier.
+                      // replay-terminal 批：回填批盖 terminal=true（markTerminal 显式传位）。
+                      // 卫生批（2026-10-28，残余①根治）：改走**段感知**的
+                      // markRoundTerminal——段内有 ai 行照旧回填；段内零 ai 行的退化
+                      // 全工具轮把 terminal 盖到段内最后一行 Tool 行（等价终态面），
+                      // 不再把新时值越段盖到上一轮的行上。
+                      sharedResources.sessionStore.markRoundTerminal(
+                        sessionId,
+                        durationMs,
+                        model,
+                        System.currentTimeMillis()
+                      )
+                    else IO.unit
+                    end if
+                  }
+              }
           }
 
       case "toolEnd" =>
@@ -4384,122 +3100,30 @@ class WebSocketRoutes(
         // We'll record a minimal agent entry for history if needed.
         IO.unit
 
-      // ── Flow agent session persistence ───────────────────────────────
-      // Flow agent events carry an injected nodeSessionId.
-      // Accumulate/flush them into that session's .ui.json
-      // so the agent popup shows full history on reopen.
-      case "agentTextDelta" =>
-        val nodeSessionId =
-          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
-        val delta = hc.downField("delta").as[String].getOrElse("")
-        nodeSessionId match
-          case Some(nsid) if delta.nonEmpty =>
-            // Record turn start for this flow agent so agentDone can compute a
-            // duration for the ✻ duration badge on its final AI message.
-            sessionTurnStarts
-              .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis())) *>
-              sessionTextBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
-          case _ => IO.unit
-
-      case "agentThinking" =>
-        // Mark turn start on the first thinking token too (some turns emit
-        // thinking before any text). Also accumulate the delta into the
-        // sub-agent's own sessionThinkingBuffers so agentToolEnd/agentDone
-        // can persist thinking into ui.json.
-        hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId) match
-          case Some(nsid) =>
-            val delta = hc.downField("delta").as[String].getOrElse("")
-            val recordThinking =
-              if delta.nonEmpty then
-                sessionThinkingBuffers.update(m => m.updatedWith(nsid)(_.map(_ + delta).orElse(Some(delta))))
-              else IO.unit
-            recordThinking *> sessionTurnStarts
-              .update(m => if m.contains(nsid) then m else m.updated(nsid, System.currentTimeMillis()))
-          case None => IO.unit
-
-      case "agentToolEnd" =>
-        val nodeSessionId =
-          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
-        val label = hc.downField("label").as[String].getOrElse("")
-        nodeSessionId match
-          case Some(nsid) if label.nonEmpty =>
-            val summary = hc.downField("summary").as[String].getOrElse("")
-            val content = hc.downField("content").as[String].getOrElse("")
-            val isError = hc.downField("isError").as[Boolean].getOrElse(false)
-            val input = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
-            // Flush any accumulated text + thinking before recording the tool, so the AI
-            // message bubble (with thinking) appears above the tool card in history.
-            sessionTextBuffers
-              .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-              .flatMap { text =>
-                sessionThinkingBuffers
-                  .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-                  .flatMap { thinking =>
-                    val flushMsg =
-                      if text.nonEmpty then
-                        sharedResources.sessionStore.appendUiMessages(
-                          nsid,
-                          List(UiMessage.Ai(text, None, None, Option.when(thinking.nonEmpty)(thinking), System.currentTimeMillis()))
-                        )
-                      else IO.unit
-                    flushMsg *> sharedResources.sessionStore.appendUiMessages(
-                      nsid,
-                      List(UiMessage.Tool(label, summary, content, isError, input))
-                    )
-                  }
-              }
-          case _ => IO.unit
-        end match
-
-      case "agentDone" =>
-        val nodeSessionId =
-          hc.downField("nodeSessionId").as[String].toOption.filter(_.nonEmpty).map(normalizeNodeSessionId)
-        nodeSessionId match
-          case Some(nsid) =>
-            // Flush any remaining accumulated text + thinking as a final AI bubble, with
-            // duration (from the turn start) and model so the popup renders the
-            // ✻ duration badge on the agent's last reply.
-            val model = hc.downField("model").as[Option[String]].getOrElse(None)
-            sessionTurnStarts
-              .modify(m => (m - nsid, m.getOrElse(nsid, 0L)))
-              .flatMap { startTime =>
-                val durationMs = if startTime > 0 then Some(System.currentTimeMillis() - startTime) else None
-                sessionTextBuffers
-                  .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-                  .flatMap { text =>
-                    sessionThinkingBuffers
-                      .modify(m => (m - nsid, m.getOrElse(nsid, "")))
-                      .flatMap { thinking =>
-                        val thinkingOpt = Option.when(thinking.nonEmpty)(thinking)
-                        if text.nonEmpty || thinkingOpt.isDefined then
-                          sharedResources.sessionStore.appendUiMessages(
-                            nsid,
-                            List(UiMessage.Ai(text, durationMs, model, thinkingOpt, System.currentTimeMillis()))
-                          )
-                        else
-                          // No text (flushed earlier by agentToolEnd) — backfill
-                          // model + timestamp onto the last saved AI message. We no
-                          // longer gate on durationMs.isDefined: when sessionTurnStarts
-                          // was never set (startTime=0 → durationMs=None), team agent
-                          // AI messages still need model and timestamp so the popup
-                          // renders the badge (model name + time). durationMs stays
-                          // None when unknown; the frontend falls back to a simpler
-                          // badge (model + timestamp, no thinking phrase).
-                          sharedResources.sessionStore.updateLastAiMeta(
-                            nsid,
-                            durationMs,
-                            model,
-                            System.currentTimeMillis()
-                          )
-                      }
-                  }
-              }
-          case _ => IO.unit
-        end match
+      // ── Flow agent session persistence：已整体移交 ProcessRecorder ─────────
+      // process-recorder 批（2026-11-01，设计稿
+      // docs/design/20261101_192000_process-recorder-design）：agent* 四分支
+      // （agentTextDelta / agentThinking / agentToolEnd / agentDone）的落盘语义
+      // 逐字迁入 `ProcessRecorder`（挂 wsHub.registerListener 的进程级录制），
+      // 本 wrapper **不再**持有 agent* 分支——单写者移交，禁共存（共存 = 同一帧
+      // 落两次 ⇒ 面板双气泡）。agent* 帧经本包装的 underlying 广播进 hub 后由
+      // recorder 接住，行为严格超集（有录制腿零损失，无录制腿④⑤⑥开始有录制）。
+      // 🔴 P1 防复活钉：本 match 内禁再现 `case "agentTextDelta"` 等四个 agent*
+      // 分支（回潮 = 双写复活；ProcessRecorderSpec 钉红）。
 
       case "askUser" =>
-        val items = hc.downField("items").as[List[io.circe.Json]].getOrElse(Nil)
-        sharedResources.sessionStore.appendUiMessages(sessionId, List(UiMessage.AskUser(items)))
+        // 案 B（双开缺陷批 2026-09-21，chain-askuserdup）：随行落盘 requestId ⇒ 历史
+        // 恢复出的卡可 id 寻址（重放腿按 id 替换、askUserClosed 关卡可达）。旧行缺席
+        // ⇒ None ⇒ 前端回落形态兜底去重腿（`chat.js sameAskCards` ②）。
+        // 附件（askUser 历史恢复批 2026-10-02，chain-askuser-histattach）：帧
+        // `attachments` 随行落盘 ⇒ 历史恢复腿读回后在卡上还原附件行（与 live 腿
+        // `renderAskUser` 同构、单点位于 `.option-box`）。帧 → 落盘行的取键形态
+        // = 伴生对象纯函数 `askUserRowFromFrame`（缺席 / 形态不合 / 空白 / 空列表
+        // 一律回落 None ⇒ 旧载荷逐字节不变）。
+        sharedResources.sessionStore.appendUiMessages(
+          sessionId,
+          List(WebSocketRoutes.askUserRowFromFrame(json))
+        )
 
       case "askPermission" =>
         val toolName = hc.downField("toolName").as[String].getOrElse("")
@@ -4513,49 +3137,13 @@ class WebSocketRoutes(
         else IO.unit
 
       case "user" =>
-        // Injected user events (from emitInjectedUserEvent) — persist so the
-        // blue injection bubble survives page refresh. Regular user messages
-        // are persisted separately in the WS message handler (not here).
-        //
-        // CRITICAL: the record target must be the event's own nodeSessionId
-        // (normalized), NOT the root WS sessionId. Sub-agent injected events
-        // (Mail delivery, Delegate/SubTask prompts) flow through the root
-        // wsSend — recording them to sessionId would accumulate every
-        // cross-agent injection into Nebula's ui.json. Matching the
-        // agentTextDelta / agentToolEnd cases above.
-        val text = hc.downField("text").as[String].getOrElse("")
-        val injected = hc.downField("injected").as[Boolean].getOrElse(false)
-        val source = hc.downField("source").as[Option[String]].getOrElse(None)
-        val evtType = hc.downField("eventType").as[Option[String]].getOrElse(None)
-        val sender = hc.downField("sender").as[Option[String]].getOrElse(None)
-        val senderTeam = hc.downField("senderTeam").as[Option[String]].getOrElse(None)
-        val delivery = hc.downField("delivery").as[Option[String]].getOrElse(None)
-        val targetSession = hc
-          .downField("nodeSessionId")
-          .as[String]
-          .toOption
-          .filter(_.nonEmpty)
-          .map(normalizeNodeSessionId)
-          .getOrElse(sessionId)
-        if text.nonEmpty && injected then
-          sharedResources.sessionStore.appendUiMessages(
-            targetSession,
-            List(
-              UiMessage.User(
-                text,
-                Nil,
-                injected = true,
-                timestamp = System.currentTimeMillis(),
-                source = source,
-                eventType = evtType,
-                sender = sender,
-                senderTeam = senderTeam,
-                delivery = delivery
-              )
-            )
-          )
-        else IO.unit
-        end if
+        // bluebubble 批（2026-09-12）：注入行（injected:true）的落盘**已上收到唯一
+        // 发射点** `AgentActor#emitInjectedUserEvent` —— 本层不再按帧嗅探重复落盘
+        // （同一行会被写两次）。理由：本层只在 wsSend 恰为**录制 send** 时生效，
+        // 而启动挂载的项目 engine.wsSendFn = 裸 wsHub.broadcast（GatewayMain.startupMount）
+        // ⇒ 分发器/节点会话的注入气泡永不落盘（作者 2026-09-12 19:42「任务分发器看不到
+        // 蓝气泡」的根因之一）。普通用户消息本就不经此处（WS message handler 单独落盘）。
+        IO.unit
 
       case "system" =>
         val content = hc.downField("content").as[String].getOrElse("")
@@ -4571,19 +3159,14 @@ class WebSocketRoutes(
         )
 
       case "compactComplete" =>
-        val before = hc.downField("before").as[Int].getOrElse(0)
-        val after = hc.downField("after").as[Int].getOrElse(0)
-        val reportPath = hc.downField("reportPath").as[String].toOption
-        val detail = reportPath.map(p => s" (report: ${p.split('/').last})").getOrElse("")
+        // 刀二（2026-10-28 无感压缩批）：emergency 标记随帧落盘（缺席即不落键，
+        // answerOf/quote 兼容先例）——前端重放腿据 params.emergency 保留 0.95 硬
+        // 守卫安全阀卡的渲染；常规压缩完成记录照常留账（数据面零削减）。
+        // 帧取键形态 = 伴生对象纯函数 compactCompleteRowFromFrame（askUserRowFromFrame
+        // 同款先例：缺席/形态不合 ⇒ 回落缺省 ⇒ 旧载荷逐字节不变）。
         sharedResources.sessionStore.appendUiMessages(
           sessionId,
-          List(
-            UiMessage.System(
-              s"Context compacted: $before → $after messages$detail",
-              Some("chat.compacted"),
-              Some(io.circe.Json.obj("before" -> before.asJson, "after" -> after.asJson, "detail" -> detail.asJson))
-            )
-          )
+          List(WebSocketRoutes.compactCompleteRowFromFrame(json))
         )
 
       case "compactFailed" =>
@@ -4666,12 +3249,6 @@ class WebSocketRoutes(
   // Callback helpers
   // ============================================================
 
-  /** Extract token from query param (localStorage), Authorization header, or cookie.
-    * Logic lives on the companion (pure, shared with nfFileRoutes); this
-    * instance alias keeps every existing call site unchanged. */
-  private def extractToken(req: org.http4s.Request[IO]): String =
-    WebSocketRoutes.extractToken(req)
-
   /**
    * POST /api/callbacks/inject
    *
@@ -4684,6 +3261,7 @@ class WebSocketRoutes(
   private def handleInject(req: org.http4s.Request[IO]): IO[org.http4s.Response[IO]] =
     req.bodyText.compile.string
       .flatMap { text =>
+        // 未走信封助手:REST 注入体的 Option 匹配(parse 失败显式回 BadRequest),非 Null 回退同形,保持原样(2026-09-24)
         parse(text).toOption match
           case None => BadRequest("Invalid JSON body")
           case Some(json) =>
@@ -4715,6 +3293,26 @@ class WebSocketRoutes(
         case e => InternalServerError(Json.obj("error" -> e.getMessage.asJson))
       }
 
+  /**
+   * 落盘判据（tool-card-leak-on-reload 批 2026-11-02）：**此刻**该会话是否有一个
+   * 引擎回合在跑。与 `sessionBusyStates`（getSessionBusy 的权威忙判据）同源
+   * （`AgentStatus.Processing`），差别只在取数时刻是**落盘这一瞬**：
+   *
+   *   true  ⇒ 这条 user 行是回合内插话 → `UiMessage.User.midTurn=Some(true)`，
+   *           回放折叠的段边界判据（turnGroup.isNonInjectedUserRow）据此**不**把
+   *           它当轮起点，同一个引擎回合仍是一段（一枚 turn-header 收全部工具卡）；
+   *   false ⇒ 普通开轮用户行（缺席即不落键，字节形态与本批前逐字相同）。
+   *
+   * 判据失效的忠实降级：注册表里没有该会话（未激活的冷会话）⇒ None ⇒ 按老口径
+   * 落成开轮行；旧存量 `.ui.json` 行同样没有本键，由前端时间戳蕴含推断回落。
+   */
+  private def midTurnAtPersist(sessionId: String): IO[Option[Boolean]] =
+    if sessionId.isEmpty then IO.pure(None)
+    else
+      sharedResources.agentRegistry.get
+        .map(reg => Option.when(reg.get(sessionId).exists(_.status == AgentStatus.Processing))(true))
+        .handleErrorWith(_ => IO.pure(None))
+
   /** Resolve a session: use provided ID, or create a new one for the agent. */
   private def resolveSession(agentName: String, sessionIdOpt: Option[String]): IO[String] =
     sessionIdOpt match
@@ -4735,518 +3333,504 @@ end WebSocketRoutes
 
 object WebSocketRoutes:
 
-  /** Extract token from query param (localStorage), Authorization header, or
-    * cookie. Pure — shared by every authenticated route through the
-    * class-side alias. */
-  private[gateway] def extractToken(req: org.http4s.Request[IO]): String =
-    val fromParam = req.params.get("token").getOrElse("")
-    if fromParam.nonEmpty then fromParam
-    else
-      val fromHeader = req.headers
-        .get[org.http4s.headers.Authorization]
-        .collectFirst { case org.http4s.headers.Authorization(org.http4s.Credentials.Token(_, t)) =>
-          t
-        }
-        .getOrElse("")
-      if fromHeader.nonEmpty then fromHeader
-      else req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-
-  /** Extension whitelist for GET /api/nf-file (local files served to
-    * card/canvas iframes).
-    *
-    * 2026-09-03 Canvas interactive-HTML fix: beyond the media types it now
-    * covers the text asset types a multi-file HTML deliverable references —
-    * `js` (companion data/script modules), `mjs`, `css`, `json`. Without
-    * them the Canvas HTML viewer renders the document shell, but the page's
-    * own boot script dies on the first missing module, BEFORE binding any
-    * event listeners — the reported "renders but nothing is clickable"
-    * failure (prototype.html:455 `const SNAP = window.FM_SNAPSHOT` →
-    * :487 seedFromSnapshot() throws on the 400'd script).
-    *
-    * Security posture unchanged: the route stays token-gated end to end, and
-    * anything running inside the srcdoc canvas iframe already executes with
-    * app-origin script privileges (viewers/html.js sandbox: allow-scripts +
-    * allow-same-origin), so serving js/css/json does not widen the trust
-    * boundary — content source remains locally opened, user-initiated
-    * deliverables.
-    *
-    * Pure + testable on purpose (same pattern as uploadsRoutes). */
-  val NfFileAllowedExt: Set[String] = Set(
-    "png",
-    "jpg",
-    "jpeg",
-    "gif",
-    "svg",
-    "webp",
-    "ico",
-    "bmp",
-    "avif",
-    "tiff",
-    "tif",
-    "mp4",
-    "webm",
-    "ogg",
-    "ogv",
-    "mov",
-    "mp3",
-    "wav",
-    "oga",
-    "flac",
-    "aac",
-    "m4a",
-    "woff",
-    "woff2",
-    "ttf",
-    "otf",
-    "pdf",
-    "docx",
-    "xlsx",
-    "xlsm",
-    "pptx",
-    "epub",
-    "js",
-    "mjs",
-    "css",
-    "json"
-  )
-
-  /** Serves whitelisted local files from disk for card iframes
-    * (GET /api/nf-file?path=xxx&token=xxx). Supports Range requests for
-    * video seeking. Standalone (zero class deps) so it is directly
-    * unit-testable (NfFileRoutesSpec); composed ahead of the instance
-    * routes like uploadsRoutes. */
-  def nfFileRoutes(token: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> Root / "api" / "nf-file" =>
-      val provided = extractToken(req)
-      if !Auth.validateToken(provided, token) then Forbidden("Invalid token")
-      else
-        val rawPath = req.params.get("path").getOrElse("")
-        if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
-        else
-          // Resolve and validate path
-          val expanded = if rawPath.startsWith("~") then sys.props("user.home") + rawPath.substring(1) else rawPath
-          val path = java.nio.file.Paths.get(expanded).normalize()
-          val ext = path.toString.lastIndexOf('.') match
-            case -1 => ""
-            case i => path.toString.substring(i + 1).toLowerCase
-          // Only allow whitelisted extensions
-          if !NfFileAllowedExt.contains(ext) then BadRequest("File type not allowed")
-          else if !java.nio.file.Files.exists(path) || !java.nio.file.Files.isRegularFile(path) then NotFound()
-          else StaticFile.fromPath(fs2.io.file.Path(path.toString), Some(req)).getOrElseF(NotFound())
-        end if
-      end if
-  }
-
   /**
-    * 第六件 QC (2026-08-30): which input sources may probe the AskUser
-    * chat-input passthrough. ONLY the WS input-box family does — the headless
-    * REST turn entry ("rest-turn", P0 benchmark) must stay deterministic and
-    * must NEVER silently answer a pending card. Pure + testable on purpose:
-    * the gate is the whole behavioral delta of the REST fix.
-    */
-  def probesPassthrough(source: String): Boolean = source != "rest-turn"
-
-  /**
-    * F1 batch delete — pure, testable core for the `deletePaths` WS case.
-    * Per-path guards are IDENTICAL to the single `deletePath` case:
-    * resolve under root, canonical-path containment check, root itself
-    * protected. Each path is attempted independently; failures (guard
-    * rejection OR io error) land in `failed` without aborting the batch.
-    * Returns (deletedPaths, failedPairs).
-    */
-  def deletePathsSafely(
-      paths: List[String],
-      root: os.Path
-  ): IO[(List[String], List[(String, String)])] =
-    paths.foldLeftM((List.empty[String], List.empty[(String, String)])) { (acc, p) =>
-      resolveGuardedForDelete(p, root) match
-        case Left(err) => IO.pure((acc._1, acc._2 :+ (p -> err)))
-        case Right(basePath) =>
-          // remove.all: batch delete from the file explorer explicitly covers
-          // non-empty directories (F1 acceptance), unlike the single-file
-          // deletePath case.
-          IO.blocking { if os.exists(basePath) then os.remove.all(basePath) }
-            .attempt
-            .map {
-              case Right(_)   => (acc._1 :+ p, acc._2)
-              case Left(e)    => (acc._1, acc._2 :+ (p -> Option(e.getMessage).getOrElse(e.toString)))
-            }
-    }
-
-  /** Resolve + guard one delete candidate (mirror of deletePath's checks). */
-  private[gateway] def resolveGuardedForDelete(path: String, root: os.Path): Either[String, os.Path] =
-    try
-      val basePath = PathUtil.resolvePath(path, root)
-      val canonicalBase = basePath.toIO.getCanonicalPath
-      val canonicalRoot = root.toIO.getCanonicalPath
-      if !canonicalBase.startsWith(canonicalRoot) then Left("path outside project root")
-      else if canonicalBase == canonicalRoot then Left("cannot delete project root")
-      else Right(basePath)
-    catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
-
-  /**
-   * Explorer listDir — pure, testable listing core with per-entry fault
-   * isolation (2026-09-02). The bare os.isDir/os.size calls used to throw out
-   * of the whole listing when a directory contained a dangling symlink (e.g.
-   * project .nebflow/flowmap-anim → worktrees/flowmap-anim whose target is
-   * gone): one bad entry produced dirListing{error} and the frontend rendered
-   * the directory as un-openable. Now each entry stats independently — a
-   * stat failure degrades THAT entry to type=file, size=0, broken=true
-   * (readFile on it already fails gracefully via fileContent{error}; the
-   * extra `broken` field is optional and today's frontend simply ignores it).
-   * os.isDir keeps its followLinks semantics; dirs sort first, then name —
-   * ordering identical to the pre-fix implementation.
+   * getSessionBusy 的纯映射：仅 Processing 是 composer「回复中/工具执行中」。
+   * Idle（含后台任务等待）/ WaitingForUser / 未知会话均为 false；未知项显式保留
+   * 在返回 Map 中，前端才能用权威 false 清掉断连前的幻影 busy，而非继续猜测。
    */
-  private[gateway] def listDirEntries(basePath: os.Path): Seq[Json] =
-    if os.exists(basePath) && os.isDir(basePath) then
-      os.list(basePath)
-        .map { p =>
-          val stat = scala.util.Try {
-            val isDir = os.isDir(p)
-            if isDir then (isDir, 0L) else (isDir, os.size(p))
-          }.toOption
-          stat match
-            case Some((isDir, size)) => (p.last, isDir, size, false)
-            case None                => (p.last, false, 0L, true)
-        }
-        .sortBy { case (name, isDir, _, _) => (if isDir then 0 else 1, name.toLowerCase) }
-        .map { case (name, isDir, size, broken) =>
-          io.circe.Json.obj(
-            "name"   -> name.asJson,
-            "type"   -> (if isDir then "dir" else "file").asJson,
-            "size"   -> size.asJson,
-            "broken" -> broken.asJson
-          )
-        }
-    else Nil
+  def sessionBusyStates(
+    registry: Map[String, AgentRecord],
+    sessionIds: List[String]
+  ): Map[String, Boolean] =
+    sessionIds.distinct.map { sid =>
+      sid -> registry.get(sid).exists(_.status == AgentStatus.Processing)
+    }.toMap
 
   /**
-   * Resolve + guard + perform one move (mirror of movePath's checks).
-   * Returns Right(relative new path) on success; Left(error message) on any
-   * guard failure or move failure. Never overwrites an existing destination.
+   * Which AgentRegistry entries getActiveAgents should report as running.
+   *
+   * **本函数交付的是「在册行」，不是「在跑行」**（方案 A 批 2026-11-18 更正旧注释）：
+   * 它按 kind 全量导出注册表条目，**没有第二个判据**——行集一字不动（刷新复原、复原
+   * 入口、唤醒徽标都靠它）。「在册即飞」只对短命子代理成立；delegate 后来长出长命停靠态
+   * （待命 / 错误冻结 / 重启中断），行内 `status` 又只是 turn 相位 ⇒ 活性位必须另给：
+   * 每行随帧出 [[panelRowActivity]] 的 `active` / `activeState`，呈现面照读、不许自造第二权威。
+   *
+   * Team agents are LONG-LIVED: activateAgent registers them on the first
+   * Mail and they stay in the registry while idle, waiting for the next
+   * Mail. "In the registry" says nothing about running.
+   *
+   * 团队功能删除批（team-feature-deletion-20261104）阶段 3：原有第二条腿「Team
+   * 记录按 busyMap 过滤」随 busy 标记面整体退役（busyMap 的唯一读者就是它，而
+   * `AgentKind.Team` 记录的唯一生产者是以团队会话登记表为底座的冷激活腿 ⇒ 两侧
+   * 同时失去数据源）。呈现面因此零变化：本仓再也产生不出 Team 记录。
+   *
+   * Standalone (zero class deps) so it is directly unit-testable
+   * (ActiveAgentsFilterSpec).
    */
-  private[gateway] def movePathSafely(path: String, targetDir: String, root: os.Path): Either[String, String] =
-    try
-      val basePath = PathUtil.resolvePath(path, root)
-      // Empty targetDir = move to the project root itself (resolvePath("")
-      // semantics are os-lib-version-sensitive — be explicit).
-      val targetBase = if targetDir.isEmpty then root else PathUtil.resolvePath(targetDir, root)
-      val canonicalBase = basePath.toIO.getCanonicalPath
-      val canonicalTarget = targetBase.toIO.getCanonicalPath
-      val canonicalRoot = root.toIO.getCanonicalPath
-      // Source and target must both stay inside the project root.
-      if !canonicalBase.startsWith(canonicalRoot) then Left("path outside project root")
-      else if !canonicalTarget.startsWith(canonicalRoot) then Left("target directory outside project root")
-      // Cannot move the project root itself.
-      else if canonicalBase == canonicalRoot then Left("cannot move project root")
-      // Source must exist; target must be an existing directory.
-      else if !os.exists(basePath) then Left("source path not found")
-      else if !(os.exists(targetBase) && os.isDir(targetBase)) then Left("target directory not found")
-      // Prevent cycles: target must not be the source itself or inside it.
-      else if canonicalTarget == canonicalBase || canonicalTarget.startsWith(canonicalBase + java.io.File.separator)
-      then Left("cannot move path into itself")
-      else
-        val newBase = targetBase / basePath.last
-        // Never overwrite an existing destination (os.move has no overwrite).
-        if os.exists(newBase) then Left("destination already exists")
-        else
-          os.move(basePath, newBase)
-          Right(newBase.relativeTo(root).toString.replace('\\', '/'))
-    catch case e: Exception => Left(Option(e.getMessage).getOrElse(e.toString))
-
-  /**
-    * P1: true when the esbuild production bundle is packed on the classpath
-    * (sbt -Dnebflow.webdist=1 assembly mounts build/ as a resource dir).
-    * Lazy — the classpath is fixed for the JVM's lifetime, so this resolves
-    * once. Single switch point for the static tree: only the "/" entry
-    * chooses between dist and dev sources; all other static routes keep
-    * serving the web/ source tree (vendor passthrough is byte-identical in
-    * both trees, and the C1 source-mode contract requires web/ paths to stay
-    * green on prod instances too).
-    */
-  lazy val hasBundledDist: Boolean =
-    getClass.getClassLoader.getResource("web-dist/index.html") != null
-
-  /**
-    * L1 rebrand: the frontend brand contract. window.__BRAND__ is the only
-    * brand source web/ may read; fields are append-only across rebrand
-    * batches (initial contract: productName, lowerName, domain; L3 batch 3
-    * appended homeDirName for the frontend's own legacy-path messaging;
-    * 2026-09-01 login-chain fix appended profileUrl — the frontend's ONLY
-    * URL input, consumed by activityBar.js to build the profile link).
-    * `domain` carries the default value (nebflow.space); a `NEBFLOW_BRAND_DOMAIN`
-    * env override may replace it (single-domain, 2026-09-07 naming ruling) —
-    * display-only, never consumed to build a URL.
-    *
-    * circe handles JSON string escaping; the serialized blob additionally
-    * escapes the forward slash of "</" because it is inlined inside a
-    * script element (script-tag breakout hardening; JSON permits `\/`).
-    */
-  private[gateway] def brandScriptTag: String =
-    s"""<script>window.__BRAND__=${brandScriptJson(
-      Branding.productName,
-      Branding.lowerName,
-      Branding.domain,
-      Branding.homeDirName,
-      Branding.profileUrl,
-    )};</script>"""
-  end brandScriptTag
-
-  /** Serialize the contract JSON (values injected for testability of the
-    * escaping hardening). */
-  private[gateway] def brandScriptJson(
-    productName: String,
-    lowerName: String,
-    domain: String,
-    homeDirName: String,
-    profileUrl: String
-  ): String =
-    Json
-      .obj(
-        "productName" -> Json.fromString(productName),
-        "lowerName"   -> Json.fromString(lowerName),
-        "domain"      -> Json.fromString(domain),
-        "homeDirName" -> Json.fromString(homeDirName),
-        "profileUrl"  -> Json.fromString(profileUrl),
-      )
-      .noSpaces
-      .replace("</", "<\\/")
-
-  /**
-    * Insert `snippet` directly before the LAST closing head tag — the one
-    * structural anchor every index variant (dev source, esbuild dist) is
-    * guaranteed to carry, emitted lowercase. None when the tag is absent:
-    * callers serve the original bytes rather than guessing a fallback
-    * position (a broken template should be visible, not papered over).
-    */
-  private[gateway] def injectBeforeHeadClose(html: String, snippet: String): Option[String] =
-    val idx = html.lastIndexOf("</head>")
-    if idx < 0 then None
-    else Some(html.substring(0, idx) + snippet + html.substring(idx))
-  end injectBeforeHeadClose
-
-  /**
-    * L1 rebrand: serve the index entry with the brand script injected.
-    * Blocking classpath read of a tiny resource (a few KB) per request —
-    * the same order of cost as the StaticFile.fromResource lookup it
-    * replaces. Response contract: no-cache, no validators (the body is
-    * content-generated, not a static file), text/html in UTF-8. The gzip
-    * middleware wraps this route from the Router "/" mount, so it sees the
-    * final injected bytes — compression order is correct by construction.
-    *
-    * The entity is written as a raw byte stream with an explicit
-    * Content-Length — deliberately NOT Ok(String)/withEntity(String):
-    * this file imports org.http4s.circe.CirceEntityCodec.* for the JSON
-    * endpoints, and that import's String entity encoder (lexical scope)
-    * wins over http4s' built-in one (implicit scope), silently encoding
-    * the whole HTML as a JSON string literal (body starts with '"',
-    * quotes escaped throughout — the page never boots). Raw bytes bypass
-    * entity-encoder resolution entirely; pinned at the HTTP response
-    * layer by IndexWithBrandServeSpec.
-    */
-  def indexWithBrand(indexResource: String): IO[Response[IO]] =
-    IO.blocking(readClasspathResourceUtf8(indexResource)).flatMap {
-      case None => NotFound()
-      case Some(html) =>
-        val served = injectBeforeHeadClose(html, brandScriptTag).getOrElse(html)
-        val bytes = served.getBytes(java.nio.charset.StandardCharsets.UTF_8)
-        IO.pure(
-          Response[IO](Status.Ok)
-            .withBodyStream(Stream.emits(bytes))
-            .withContentType(`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
-            .putHeaders(
-              "Content-Length" -> bytes.length.toString,
-              "Cache-Control"  -> "no-cache",
-            )
-        )
-    }
-  end indexWithBrand
-
-  private def readClasspathResourceUtf8(name: String): Option[String] =
-    Option(getClass.getClassLoader.getResourceAsStream(name)).map { in =>
-      val source = Source.fromInputStream(in, "UTF-8")
-      try source.mkString
-      finally in.close()
-    }
-
-  /**
-    * P1: serve the bundled asset tree (any depth under the /assets prefix —
-    * hashed entry and lazy chunks produced by build-web.mjs). Guard pattern
-    * copied from jsRoutes: trailing-slash (directory request) is rejected,
-    * path traversal (`..` and backslash) is rejected, and the lookup is a
-    * plain classpath resource join. Serves ONLY the web-dist tree — the
-    * hashed names are a dist-build artifact and never exist in dev sources.
-    * In dev every /assets request 404s; harmless, the dev index never
-    * references the /assets prefix.
-    *
-    * Standalone (zero class deps) so it is directly unit-testable; composed
-    * ahead of the instance routes like jsRoutes.
-    */
-  def assetsRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> _ if req.uri.path.renderString.startsWith("/assets/") =>
-      if req.uri.path.endsWithSlash then NotFound()
-      else
-        val relParts = req.uri.path.segments.map(_.encoded).toList.drop(1) // drop "assets"
-        if relParts.isEmpty || relParts.last.isEmpty then NotFound()
-        else if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
-        else
-          val path = relParts.mkString("/")
-          StaticFile
-            .fromResource(s"web-dist/assets/$path", Some(req))
-            .map(_.putHeaders("Cache-Control" -> "no-cache"))
-            .getOrElseF(NotFound())
-        end if
-      end if
-  }
-
-  /**
-    * G1: serve user-uploaded attachments from
-    * `~/.nebflow/uploads/<sid>/<file>`. Restored session history (ui.json)
-    * records attachments as {name,type,path}; without a route serving the
-    * uploads dir those images are unrenderable after a restart.
-    *
-    * Authenticated — unlike the voice-models route, uploads are user
-    * screenshots (sensitive). Cookie `nebflow_token` first + `?token=` query
-    * fallback (same dual-channel pattern as the /ws route): a malicious page
-    * cross-site <img>-probing the localhost gateway gets no SameSite cookie
-    * sent, while the same-origin frontend attaches it automatically. The
-    * query fallback covers cookie-less contexts (and a stale cookie, same
-    * rationale as /ws).
-    *
-    * Lives in the companion (composed ahead of the instance routes) because
-    * it touches none of the class dependencies — testable with just a
-    * gateway token.
-    */
-  def uploadsRoutes(token: String): HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> _ if req.uri.path.renderString.startsWith("/uploads/") =>
-      val cookieToken = req.cookies.find(_.name == "nebflow_token").map(_.content).getOrElse("")
-      val paramToken = req.params.get("token").getOrElse("")
-      if !(Auth.validateToken(cookieToken, token) || Auth.validateToken(paramToken, token)) then
-        Forbidden("Invalid token")
-      else
-        val segs = req.uri.path.segments.map(_.encoded).toList
-        // Path shape is exactly <sid>/<filename> — two segments after "uploads".
-        if segs.sizeIs != 3 then NotFound()
-        else
-          val relParts = segs.drop(1) // drop "uploads"
-          // Block path traversal (same guard style as voice-models)
-          if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
-          else
-            val uploadsBase = PathUtil.dataRoot / "uploads"
-            val filePath = uploadsBase / os.RelPath(relParts.mkString("/"))
-            // Final defense: the resolved path must stay under the base
-            if filePath.startsWith(uploadsBase) && os.exists(filePath) && os.isFile(filePath) then
-              StaticFile.fromPath(fs2.io.file.Path(filePath.toString), Some(req)).getOrElseF(NotFound())
-            else NotFound()
-        end if
-      end if
-  }
-
-  /** Serves everything under web/js at ANY depth. The frontend's ES modules
-    * live at /js/<file>.js, /js/locales/<lang>.js and /js/viewers/<name>.js,
-    * and any future subdirectory — this closes the "add a js subdirectory →
-    * every dynamic import 404s" outage class for good. The per-path routes
-    * it replaces (in-class single-segment /js, the /js/locales case, and the
-    * viewers-only route from 4281f720) each fixed one symptom after the
-    * fact: http4s DSL matches single path segments, so every new directory
-    * needed its own hand-written case.
-    *
-    * Manual segment parsing (same pattern and guard style as the monaco
-    * route): ".." and backslash segments are rejected; everything else is
-    * joined and looked up as a classpath resource. no-cache at EVERY depth —
-    * rebuilt classpath resources must be picked up by the browser during
-    * development (this also fixes locales, which used to ship without it).
-    *
-    * Standalone (zero class deps) so it is directly unit-testable
-    * (JsStaticRoutesSpec); composed ahead of the instance routes like
-    * uploadsRoutes.
-    */
-  def jsRoutes: HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case req @ GET -> _ if req.uri.path.renderString.startsWith("/js/") =>
-      // Trailing slash = directory request (e.g. /js/viewers/) — this route
-      // serves files only; without the guard StaticFile happily serves the
-      // classpath directory entry itself (200 with junk).
-      if req.uri.path.endsWithSlash then NotFound()
-      else
-        val relParts = req.uri.path.segments.map(_.encoded).toList.drop(1) // drop "js"
-        if relParts.isEmpty || relParts.last.isEmpty then NotFound()
-        else if relParts.exists(s => s == ".." || s.contains("\\")) then NotFound()
-        else
-          val path = relParts.mkString("/")
-          StaticFile
-            .fromResource(s"web/js/$path", Some(req))
-            .map(_.putHeaders("Cache-Control" -> "no-cache"))
-            .getOrElseF(NotFound())
-        end if
-      end if
-  }
-
-  /** Which AgentRegistry entries getActiveAgents should report as running.
-    *
-    * Task-lifecycle kinds (Delegate/Ephemeral/Flow/SubTask) are reported
-    * as-is: their presence in the registry means the task is in flight
-    * (they unregister on completion).
-    *
-    * Team agents are LONG-LIVED: activateAgent registers them on the first
-    * Mail and they stay in the registry while idle, waiting for the next
-    * Mail. "In the registry" says nothing about running — gate them on the
-    * same busy signal /api/teams/mounted uses (markBusy/markIdle around each
-    * team turn), otherwise every browser refresh reports idle team agents
-    * back as running ghosts in the bg-agent dropdown.
-    *
-    * Standalone (zero class deps) so it is directly unit-testable
-    * (ActiveAgentsFilterSpec).
-    */
   def filterActiveAgents(registry: Map[String, AgentRecord]): IO[List[AgentRecord]] =
-    val taskKinds = Set(AgentKind.Delegate, AgentKind.Ephemeral, AgentKind.Flow, AgentKind.SubTask)
-    val inFlight = registry.values.toList.filter(r => taskKinds.contains(r.kind))
-    val teamAgents = registry.values.toList.filter(_.kind == AgentKind.Team)
-    teamAgents
-      .traverseFilter(rec =>
-        TeamSessionRegistry.isBusy(rec.sessionId).map(busy => if busy then Some(rec) else None)
-      )
-      .map(_ ++ inFlight)
+    val taskKinds = Set(AgentKind.Delegate, AgentKind.Flow, AgentKind.SubTask)
+    IO.pure(registry.values.toList.filter(r => taskKinds.contains(r.kind)))
 
   /**
-    * One entry of the getActiveAgents ("activeAgents") restore reply.
-    *
-    * Contract: agentId == sessionId. The frontend keys its bg-agent map by
-    * the agentId of BOTH this restore reply and live agentStart events —
-    * a mismatch files two running rows for one session (the Teams panel
-    * double-entry ghost). Live events carry ctx.self.path.name, so every
-    * subagent spawn path must name its actor by the session id (Mail /
-    * Delegate / SubTask / DAG alike). `task` mirrors the live agentStart's
-    * taskDescription (= the session display name, e.g. "team/agent" for
-    * mounted team sessions) so restored rows render with the same team
-    * attribution as live ones.
-    *
-    * Standalone (zero class deps) so the contract is directly unit-testable
-    * (ActiveAgentsEntrySpec).
-    */
-  def activeAgentEntryJson(rec: AgentRecord, meta: Option[SessionMeta], retryCount: Option[Int] = None): Json =
+   * 面板行活性档（方案 A 批 2026-11-18 · 作者令「行集一字不动，只加一个权威活性位」）：
+   * 后台智能体面板**每一行**「此刻是否真在跑」的落点分类。`active` 是本仓唯一的活性布尔位，
+   * `wire` 是同一判据的分类线值（取证 / 前端读词用）。
+   */
+  enum PanelActivity(val wire: String, val active: Boolean):
+    case Running extends PanelActivity("running", true)
+    case Standby extends PanelActivity("standby", false)
+    case Frozen extends PanelActivity("frozen", false)
+    case PendingRecovery extends PanelActivity("pending-recovery", false)
+    case Idle extends PanelActivity("idle", false)
+
+  /**
+   * 面板行「权威活性位」的**唯一判据**（根因见
+   * `<数据根>/projects/stand/.stand/docs/agent-panel-active-source__20261118_163504.md`）。
+   *
+   * 为什么必须由引擎给：[[filterActiveAgents]] 按 kind 全量导出内存注册表条目——它是
+   * **行集导入器**，不是活性判据；行内既有的 `status` 是 **turn 相位**
+   * （Idle/Processing/Waiting/Frozen…），也不是「是否在跑」。两条进料（注册表快照 ∪
+   * 落盘任务行）都不带活性位，前端只能对未知值走保守侧（一律折成 active）——长命停靠态
+   * （待命 / 错误冻结 / 重启中断）于是被画成「进行中」并挂上运行时钟。
+   *
+   * 判据（与 [[sessionBusyStates]] 同一条单点，再叠「停靠 / 冻结 / 重启中断」分类）：
+   *   - 停靠事实（待命槽 / 冻结槽 / 重启中断行）优先 ⇒ 对应非活跃档——注册表相位与落盘槽
+   *     打架时取保守侧（「不在跑」比「在跑」代价小：错了只是少挂一枚时钟，反过来是幽灵行）；
+   *   - 否则 `status == Processing` ⇒ [[PanelActivity.Running]]（active = true）；
+   *   - 其余（Idle / Waiting / WaitingForUser / Error…）⇒ [[PanelActivity.Idle]]（非活跃）。
+   *
+   * 只读投影：纯函数、零 IO、零类依赖，不改行集、不改注册表生命周期、不动唤醒/恢复入口。
+   */
+  def panelRowActivity(
+    status: AgentStatus,
+    standbySince: Option[Long] = None,
+    frozen: Boolean = false,
+    pendingRecovery: Boolean = false
+  ): PanelActivity =
+    if pendingRecovery then PanelActivity.PendingRecovery
+    else if frozen then PanelActivity.Frozen
+    else if standbySince.exists(_ > 0) then PanelActivity.Standby
+    else if status == AgentStatus.Processing then PanelActivity.Running
+    else PanelActivity.Idle
+
+  /**
+   * 显示名契约批（2026-10-22 · 子智能体面板行显示名修复）：activeAgents 快照面
+   * 的 delegate/SubTask 行名解析链——**DelegateRegistry.Record.title（主源，spawn
+   * 落盘、跨重启存活）→ SubAgentTask.description（任务记录回填源）→ None**。
+   *
+   * 背景（作者实测批）：面板行「先长名后收缩成 session id」的根因 = 恢复脸
+   * （`activeAgentEntryJson`）对 delegate 会话既不查 meta（delegate 从不过
+   * createSession，index 恒无条目）也不查 displayName（注册点不设）⇒ 直落
+   * sessionId 兜底；而 live 脸 agentId == sessionId，同 key 合并「快照为准」
+   * 每次都把 live 长名行覆盖成短 id。两处持久面（DelegateRegistry / SubAgentTaskStore）
+   * 本就持有批次标题，此处对齐为单一解析缝。
+   *
+   * - `AgentKind.Delegate`：registryTitle 优先（跨重启权威），storeDescription 回填。
+   * - `AgentKind.SubTask`：DelegateRegistry 只装 delegate——只走 storeDescription。
+   * - 其余 kind：None（既有三档链逐字不动）。
+   *
+   * 纯函数、零类依赖（`handleGetActiveAgents` 薄调用；IO 包装在调用方）。
+   * Standalone（zero class deps）so the chain is directly unit-testable.
+   */
+  def delegateDisplayTitle(
+    kind: AgentKind,
+    registryTitle: Option[String],
+    storeDescription: Option[String]
+  ): Option[String] =
+    val store = storeDescription.filter(_.trim.nonEmpty)
+    if kind == AgentKind.Delegate then registryTitle.filter(_.trim.nonEmpty).orElse(store)
+    else if kind == AgentKind.SubTask then store
+    else None
+
+  /**
+   * 陈旧后台代理面板批（2026-11-08）：子代理**任务记录的终态词表**——面板行的
+   * 「已结束」硬事实来源。
+   *
+   * 病灶（面板滞留 + 荒谬时长）：`filterActiveAgents` 只按 `kind` 过滤注册表
+   * （Delegate/Flow/SubTask），**不看这一行背后是否早就干完了**——任务记录已
+   * `completed` 而注册表行仍在册（收殓腿失败 / 重启竞态 / 长尾）时，快照照旧把它
+   * 当「在飞」下发；前端行仍在 `!terminal` 分支 ⇒ 运行时长 `now - startedAt` 无上界
+   * 地走表（作者实证：一行挂着 690h）。本词表把「任务记录已终态」这一**硬事实**
+   * 随快照出帧，前端据此冻结为「已结束 + 真实时长」。
+   *
+   * 只收 SubAgentTask.status 的终态词（见 `SubAgentTaskModels`）——`running` /
+   * `restarting` / `ready-to-merge` / `removed` 都不是「干完了」，一律不标。
+   */
+  val TerminalTaskStatuses: Set[String] = Set("completed", "failed", "cancelled")
+
+  /**
+   * 时长合理性上界（面板「拒绝荒谬时长」的唯一尺子）：7 天（604800000 ms）。超过即
+   * 视为不可信读数（时钟漂移 / 时间戳错配 / 陈旧行）——面板一律**不渲染时长**，而不是
+   * 显示一个荒谬值（作者实证的 690h = 28.75 天正是本尺子要拦下的形态）。
+   * 前端同一把尺子：`bgAgents.js` 的 `BG_DURATION_MAX_MS`（同值同理由）。
+   */
+  val MaxPlausibleDurationMs: Long = 7L * 24L * 60L * 60L * 1000L
+
+  /**
+   * 面板行的「真实时长」单一推导缝（纯函数，可直接单测）：
+   * 需要逐字满足 THEN 条件才出值——起点已知（>0）、终点已知、终点不早于起点、
+   * 且时长不超过 [[MaxPlausibleDurationMs]]；任一不满足 ⇒ None（前端零渲染，
+   * 绝不显示负数 / null / 荒谬时长）。
+   */
+  def endedDurationMs(startedAt: Long, endedAt: Option[Long]): Option[Long] =
+    endedAt.flatMap { end =>
+      if startedAt <= 0L || end < startedAt then None
+      else
+        val dur = end - startedAt
+        if dur > MaxPlausibleDurationMs then None else Some(dur)
+    }
+
+  /**
+   * One entry of the getActiveAgents ("activeAgents") restore reply.
+   *
+   * Contract: agentId == sessionId. The frontend keys its bg-agent map by
+   * the agentId of BOTH this restore reply and live agentStart events —
+   * a mismatch files two running rows for one session (the Teams panel
+   * double-entry ghost). Live events carry ctx.self.path.name, so every
+   * subagent spawn path must name its actor by the session id (Mail /
+   * Delegate / SubTask / DAG alike). `task` mirrors the live agentStart's
+   * taskDescription (= the session display name, e.g. "team/agent" for
+   * mounted team sessions) so restored rows render with the same team
+   * attribution as live ones.
+   *
+   * `delegateTitle`（显示名契约批 2026-10-22）：delegate/SubTask 恢复行的
+   * 批次标题（由调用方经 [[delegateDisplayTitle]] 解析）；注入 agentName 链的
+   * sessionId 兜底**之前**——delegate 会话的 meta/displayName 恒缺席，无此档则
+   * 面板恢复行退化成 sessionId（作者「收缩」症状）。缺省 None = 行为与旧版逐字节
+   * 一致（向后兼容；node/team 域不受影响——其 meta/displayName 优先于本档）。
+   *
+   * Standalone (zero class deps) so the contract is directly unit-testable
+   * (ActiveAgentsEntrySpec).
+   */
+  def activeAgentEntryJson(
+    rec: AgentRecord,
+    meta: Option[SessionMeta],
+    retryCount: Option[Int] = None,
+    taskTitle: Option[String] = None, // taskbadge batch (main-side): title resolved by the caller via the ledger
+    delegateTitle: Option[String] = None, // 显示名契约批 2026-10-22: delegate/SubTask 行批次标题（delegateDisplayTitle 解析）
+    delegateName: Option[String] = None, // 面板命名批 2026-10-31: 批次短名（DelegateRegistry.Record.name，≤12 字）——行首扫读名
+    bgWaiting: List[(String, String, Long, String, String)] =
+      Nil, // #752: (jobId, description, startedAtMs, health, ownerName) — the session's own waiting-type bg tasks; ownerName = 开启会话的 delegate 批次短名（归属批 2026-10-31，空 = 非 delegate/无名）
+    standbySince: Option[Long] =
+      None, // 案A 待命批 2026-10-31（状态矩阵批收编）: delegate 待命停靠时刻（DelegateRegistry.standbySince）——快照行「待命」徽标数据源；None = 非待命（缺省，旧调用方逐字节兼容）
+    frozenSince: Option[Long] =
+      None, // 错误冻结批 2026-11-01: 冻结时刻（DelegateRegistry.frozenSince）——快照行「已冻结」徽标数据源（与 standby 的「待命」显式区分）；None = 非冻结
+    frozenReason: Option[String] = None, // 错误冻结批 2026-11-01: 冻结原因线值（`delegate-frozen:<reason>`）——徽标 tooltip / 详情卡原因行
+    wakeAddress: Option[String] = None, // 错误冻结批 2026-11-01: 唤醒地址（`delegate:<id>`）——详情卡「唤醒」按钮的动作载荷
+    // name/address 批（2026-11-05）：本行的 Mail 续传地址——MailAddress 单点推导
+    // （delegate:<id> / kernel:<id> / node:<节点名>），与 AgentControl list/status 同源。
+    // 面板行的地址 chip 只**读**它（前端零推导：地址是「可原样粘进 Mail」的令牌，
+    // 两个推导点就是两种形态的温床）。None = 本 kind 无 Mail 面 ⇒ 空串（falsy 契约）。
+    mailAddress: Option[String] = None,
+    freezeTruth: Option[nebflow.actor.FreezeTruth] =
+      None, // 冻结状态两套真相批 2026-11-05: 调用方预算的单一真相（缺省 = 本函数按 rec + 落盘槽自算，逐字节兼容旧调用方）
+    // 陈旧后台代理面板批（2026-11-08）：**底层任务记录的终态硬事实**。任务记录
+    // （SubAgentTaskStore）已终态而注册表行仍在册 = 这一行其实早就干完了；面板据此
+    // 「显式结束 + 真实时长」而不是让运行时长无上界地走表（作者实证 690h 滞留行）。
+    // 缺省 None = 无任务记录（node-/dispatcher- 等 Flow 行从不落任务记录）/ 旧调用方
+    // ⇒ ended=false，行为与旧版逐字节一致（向后兼容）。
+    //
+    // 同一字段亦为面板行活性位批（2026-11-18 · 方案 A）的载体：重启中断标记
+    // （`pending-recovery`）据此把「执行已停、等人工恢复」的行判成非活跃（见下方
+    // [[panelRowActivity]] 调用）。两批对 `taskStatus` 的读法互不冲突（读法 = 词表
+    // 判终态 / 等值判 `pending-recovery`），故单字段双用途保留。
+    taskStatus: Option[String] = None,
+    taskEndedAt: Option[Long] = None
+  ): Json =
+    // 冻结态诚实呈现批（2026-11-05）：快照行的**呈现分类**随快照出帧——与线包
+    // （AgentStreamEvent.Frozen）/ 工具面（AgentControl status）同判定单点
+    // FreezeDisplay。刷新后控制台仍能分辨「自动重试中（无按钮）」与「需人工（给
+    // 恢复按钮）」，不必从 status 字符串猜（猜错的样子就是本轮报障：一行写着
+    // Frozen、没有按钮、作者不知道自己什么时候冻的）。
+    //
+    // 冻结状态两套真相批（2026-11-05 10:42 报障「显示需要我唤醒，我点了唤醒又弹
+    // frozenReason=none」）：快照行原先**同屏读两个写点**——`frozenSince/frozenReason`
+    // 来自 delegate 落盘槽，`frozenKind/needsHuman/freezeReasonWire` 来自统一注册表
+    // 记录，两者可以一个说冻结、一个说已清。本批统一走 [[nebflow.actor.FreezeTruth]]
+    // （并集派生 + 一份分类），`frozen` 块是权威面，旧扁平字段全部由同一份读数派生
+    // （保留键名只为旧前端兼容，值不再能自相矛盾）。
+    val truth: nebflow.actor.FreezeTruth =
+      freezeTruth.getOrElse(
+        nebflow.actor.FreezeTruth.of(Some(rec), frozenReason, frozenSince, System.currentTimeMillis())
+      )
+    val freezeOf =
+      if truth.frozen then
+        Some(nebflow.actor.FreezeDisplay.ofWire(truth.reasonWire, truth.since, System.currentTimeMillis()))
+      else None
+    // 面板行活性位批（2026-11-18 · 方案 A · 作者令「行集一字不动，只加一个权威活性位」）：
+    // 本行的「此刻是否真在跑」由 [[panelRowActivity]] 单点给（与 sessionBusyStates 同一条
+    // 轴：`status == Processing`），再叠停靠/冻结/重启中断分类——三者任一在场即非活跃。
+    // 行集、既有字段、待命/冻结徽标与恢复/唤醒入口一律不动：本轮**只加位**。
+    val activity: PanelActivity = panelRowActivity(
+      rec.status,
+      standbySince = standbySince,
+      frozen = truth.frozen,
+      pendingRecovery = taskStatus.contains(SubAgentStartupRecovery.PendingRecoveryStatus)
+    )
+    // 陈旧后台代理面板批（2026-11-08）：终态硬事实（任务记录终态 ⇒ 行其实已结束），单点判定。
+    // 与上面的活性位**正交共存**：activity 答「此刻是否真在跑」，isEnded 答「底层任务记录
+    // 是否已终态」（冻结/停靠的未终态行两个读数都为真，互不覆盖）。
+    val isEnded: Boolean =
+      taskStatus.map(s => TerminalTaskStatuses.contains(s.trim.toLowerCase)).getOrElse(false)
     Json.obj(
-      "sessionId"      -> rec.sessionId.asJson,
-      "agentId"        -> rec.sessionId.asJson,
-      // agentName 三档链（20260907 节点名刷新持久化批）：indexed meta（team/主会话既有
+      "sessionId" -> rec.sessionId.asJson,
+      "agentId" -> rec.sessionId.asJson,
+      // agentName 四档链（显示名契约批 2026-10-22 扩为四档）：indexed meta（team/主会话既有
       // 归属）→ AgentRecord.displayName（Project 域注册点写入的 Flow Map 节点名 /
       // "dispatcher/<project>"——node-/dispatcher- 会话从不过 SessionStore.createSession，
       // index 恒无条目，缺此档刷新后 subagent 面板行回退 sessionId「node-xx 默认名」）
+      // → delegateTitle（delegate/SubTask 恢复行的批次标题——DelegateRegistry.Record.title
+      // 主源 / SubAgentTask.description 回填；修前此处直落 sessionId，面板行「收缩」根因）
       // → sessionId 兜底（既有行为）。
-      "agentName"      -> meta.flatMap(_.agentName).orElse(rec.displayName).getOrElse(rec.sessionId).asJson,
-      "rootSessionId"  -> rec.rootSessionId.asJson,
-      "kind"           -> rec.kind.toString.asJson,
-      "task"           -> meta.map(_.name).getOrElse("").asJson,
+      "agentName" -> meta
+        .flatMap(_.agentName)
+        .orElse(rec.displayName)
+        .orElse(delegateTitle)
+        .getOrElse(rec.sessionId)
+        .asJson,
+      "rootSessionId" -> rec.rootSessionId.asJson,
+      // 面板树批（2026-10-29 · 后台智能体面板三修①）：父会话归属随快照出帧——
+      // 前端按 parentSessionId 建派生树（delegate 组头 + 缩进子行）；父已终态/
+      // 不可见时前端降级为「孤儿提升顶层 + 来源标注」。AgentRecord.parentSessionId
+      // 在 Delegate/SubTask/BlockingSubagent/FlowDag(dag-)/dispatcher-/node-（本批
+      // 面板代际层级批 2026-11-06 补齐：分发器 = 挂载 root、节点/loop worker/verify
+      // = 在册分发器，兜底 rootSessionId——写点 ProjectActor.spawnDispatcher /
+      // NodeStarter.startNode / NodeLoopRunner.spawnLoopSession）注册点均有值；
+      // 缺省 "" = 无归属（前端 falsy，零徽标零认领——与 project/taskId 同契约）。
+      "parentSessionId" -> rec.parentSessionId.asJson,
+      // 面板命名批（2026-10-31 · 作者令②）：批次短名随快照出帧（live 面由
+      // routeWsSend 在 agentStart 同键注入）——前端行首扫读名数据源；空串 = 无名
+      // 旧数据（前端回落既有截断式标题显示，falsy 契约同 project/taskId）。
+      "delegateName" -> delegateName.getOrElse("").asJson,
+      // name/address 批（2026-11-05）：Mail 续传地址随快照出帧（与 AgentControl
+      // list/status 同一推导点 MailAddress）——后台代理面板行渲染地址 chip。
+      // 空串 = 本 kind 无 Mail 面（falsy 契约同 project/taskId）。
+      "mailAddress" -> mailAddress.getOrElse("").asJson,
+      "kind" -> rec.kind.toString.asJson,
+      "task" -> meta.map(_.name).getOrElse("").asJson,
       // 2026-08-22 缺口 2：快照自带可刷新恢复三字段（向后兼容——旧字段不动，
       // 旧前端无感）。status=AgentStatus toString（Idle/Processing/.../Error）；
       // startedAt epoch ms（0=unknown）；retryCount 来自 taskStore（缺省 0——
       // Ephemeral 不落 taskStore）。不加 agentStatus 变更广播（改动面大，裁定
       // 不做——快照轮询由前端按需刷新）。
-      "status"         -> rec.status.toString.asJson,
-      "startedAt"      -> rec.startedAt.asJson,
-      "retryCount"     -> retryCount.getOrElse(0).asJson,
-      // 项目归属（2026-09-06 作者裁定：面板 Flow 徽标旁标注项目名）——恢复路径
-      // 数据源。仅 Project 域会话（node- 与 dispatcher- 前缀，注册时写
-      // AgentRecord.project）有值；其余空串（前端 falsy → 不渲染徽标）。实时路径
-      // 不经此字段（agentStart 帧由 routeSubagentWsSend 转发层注入，见 NodeRunner）。
-      "project"        -> rec.project.getOrElse("").asJson
+      "status" -> rec.status.toString.asJson,
+      // 面板行活性位批（2026-11-18 · 方案 A）：**权威活性位**随行出帧——`active` 是唯一的
+      // 「是否在跑」布尔位（判据单点 [[panelRowActivity]]，与 sessionBusyStates 同轴），
+      // `activeState` 是同一判据的分类线值（running / standby / frozen / pending-recovery /
+      // idle）供取证与前端读词。与上面 `status`（turn 相位）显式分家：相位说「actor 在哪个
+      // 阶段」，活性位说「它此刻是不是真在跑」——呈现面只许读这位，不许再从相位猜
+      // （猜错的样子就是作者报障：29 天龄待恢复行标着「进行中」+ 690h 时钟）。
+      // 缺省调用方（旧测试）不传 taskStatus ⇒ 仍得一位（非停靠行 = status==Processing），
+      // 故本键**恒在**，前端「未提供」只对旧后端成立。
+      "active" -> activity.active.asJson,
+      "activeState" -> activity.wire.asJson,
+      "startedAt" -> rec.startedAt.asJson,
+      "retryCount" -> retryCount.getOrElse(0).asJson,
+      // ── 陈旧后台代理面板批（2026-11-08）：终态硬事实 + 真实时长 ──────────────
+      // taskStatus = 底层 SubAgentTask.status 原样（"" = 无任务记录，falsy 契约同
+      // project/taskId）；ended = 该 status ∈ TerminalTaskStatuses（任务记录说「干完了」
+      // ——注册表行滞留不再冒充在飞）；endedAt = 任务记录的 completedAt；
+      // durationMs = 由 endedDurationMs 单点推导的真实时长（起点/终点/上界任一不合
+      // ⇒ null = 「荒谬时长」被拒收，前端零渲染）。
+      "taskStatus" -> taskStatus.getOrElse("").asJson,
+      "ended" -> isEnded.asJson,
+      "endedAt" -> (if isEnded then taskEndedAt else None).asJson,
+      "durationMs" -> (if isEnded then endedDurationMs(rec.startedAt, taskEndedAt) else None).asJson,
+      // 案A 待命批 2026-10-31（状态矩阵批收编）：delegate 待命停靠时刻（epoch ms；
+      // null = 非待命）。快照行的「待命」徽标数据源——delegateWaiting 实时帧
+      // （mode=standby）在浏览器刷新后靠本字段复原（delegateTitle 同款读面一次
+      // lookup 带出）。
+      "standbySince" -> standbySince.asJson,
+      // 错误冻结批（2026-11-01）：冻结三字段随快照出帧——`frozenSince`（epoch ms，
+      // null = 非冻结）驱动行徽标「已冻结」，`frozenReason`（线值）给徽标 tooltip /
+      // 详情卡原因行，`wakeAddress` 是详情卡「唤醒」按钮的投递地址。三者缺省 None
+      // ⇒ 旧调用方逐字节兼容（null = falsy，前端零徽标）。
+      //
+      // 冻结状态两套真相批（2026-11-05）：三字段一律由 `truth` 派生——**冻结就说冻结、
+      // 清掉就说清**（旧实现里 `wakeAddress` 跟着落盘槽走、`frozenKind` 跟着内存态走，
+      // 于是「面板给按钮、后端拒绝」的同屏矛盾有了土壤）。
+      "frozenSince" -> (if truth.frozen then truth.since else None).asJson,
+      "frozenReason" -> (if truth.frozen then Option(truth.reasonWire).filter(_.nonEmpty) else None).asJson,
+      // 唤醒地址 = 可操作性本身：只有「冻结且需人」才给地址（自动恢复族给地址 =
+      // 教用户去做一件引擎正在自己做的事）。
+      "wakeAddress" -> (if truth.wakeable then Some(s"delegate:${rec.sessionId}") else None).asJson,
+      // 冻结态诚实呈现批（2026-11-05）：呈现分类三字段 + registry 侧冻结原因线值。
+      // `frozenReasonWire` 与上面的 `frozenReason`（DelegateRegistry 冻结槽，仅
+      // delegate 错误冻结族）分工：本字段是 **AgentRecord** 的原因线值（schedule /
+      // loop / llm-transient / delegate-frozen:* 全族），供徽标 tooltip 与「谁停的」
+      // 说明。空串 = 非冻结（falsy 契约同 project/taskId）。
+      "frozenKind" -> truth.kindWire.asJson,
+      "needsHuman" -> truth.needsHuman.asJson,
+      "autoRecoverable" -> truth.autoRecoverable.asJson,
+      "freezeReasonWire" -> truth.reasonWire.asJson,
+      // 冻结状态两套真相批（2026-11-05）：**权威面**——面板可操作性与唤醒闸读同一份
+      // 读数（`wakeable`），并按 `asOf` 定序合并（旧的「快照缺席就保留本地值」单调
+      // 合并在冻结面上会把一次唤醒永久吞掉）。
+      "freeze" -> truth.json,
+      // #752 空闲细分（快照恢复路径的数据源；live 行由实时帧写 currentTool，快照
+      // 字段合并时不降级实时值——前端 merge 规则）。currentTool = 在飞/最后工具名
+      // （最近动作摘要）、lastActivityMs = agent 侧最近活动戳（长空闲徽标判据）。
+      "currentTool" -> rec.currentToolName.getOrElse("").asJson,
+      "lastActivityMs" -> rec.lastActivityMs.asJson,
+      // Project attribution (2026-09-06 author ruling): Flow rows carry the
+      // owning project's name next to the kind chip — muted plain text,
+      // visually subordinate to the chip, never competing with the node name.
+      // Absent (Root/direct delegates) → no badge at all.
+      "project" -> rec.project.getOrElse("").asJson,
+      // taskbadge batch 2026-09-27: sub-agents panel task attribution on the
+      // snapshot face; taskId = the registration-time snapshot (dispatcher slot /
+      // NodeDef), taskTitle = resolved by the caller via the unified ledger.
+      // Empty string = no badge rendered (falsy contract, same as `project`).
+      "taskId" -> rec.taskId.getOrElse("").asJson,
+      "taskTitle" -> taskTitle.getOrElse("").asJson,
+      // held-receipt 投递可靠性批（2026-10-21 · fix 3 可见化快照面）：pendingEventCount
+      // = 被 HOLD 的已产出回执数（actor 权威快照）、unreadReceiptCount = 催注穷尽后
+      // 的未读终态数（HeldDeliveryWatchdog 独占写）。空 = 0 → 前端 falsy 不渲染
+      // （同 project/taskId 徽标契约）。
+      "heldReceipts" -> rec.pendingEventCount.asJson,
+      "unreadReceipts" -> rec.unreadReceiptCount.asJson,
+      // #752 空闲细分：「等子代理」判据的另一半——barrier 上的 spawn 计数
+      // （issue #31 Fix D 幻影屏障可见化的既有快照字段，随批补进快照出帧）。
+      "outstandingSubagents" -> rec.outstandingSubagents.asJson,
+      // #752 空闲细分：「等后台任务」——会话自有等待型任务（BgTaskRegistry
+      // waitingBySession，调用方一次全表扫描传入）。[{taskId, description,
+      // startedAt, health}]；空数组 = 无（前端 falsy 判 length）。启动戳毫秒，
+      // 前端算时长；health = 行内健康字段派生（BgHealth.of），面板健康色同源。
+      // bgWaitingCount（修复批 2026-10-24 spec ①「状态面可见任务数断言」）：在飞
+      // 任务数的显式字段——面板与取证直接读数，不必从数组长度反推（数组空 =
+      // 0，两字段恒一致）。
+      "bgWaitingCount" -> bgWaiting.size.asJson,
+      "bgWaiting" -> bgWaiting.map { case (jobId, description, startedAtMs, health, ownerName) =>
+        Json.obj(
+          "taskId" -> jobId.asJson,
+          "description" -> description.asJson,
+          "startedAt" -> startedAtMs.asJson,
+          // P0 面板投影批（设计稿 §3.4）：健康色随行——值 = 行内健康字段经
+          // BgHealth.of 派生（调用方从 registry 行直取，快照与实时帧同源）；
+          // 非法值在写缝已归一，此处逐字透传（前端兜底容错）。
+          "health" -> health.asJson,
+          // 后台任务归属批（2026-10-31）：等待任务的归属短名随行（行内
+          // ownerName 直取；空 = 非 delegate/无名 ⇒ 前端回退现显示）。
+          "ownerName" -> ownerName.asJson
+        )
+      }.asJson
     )
+  end activeAgentEntryJson
+
+  // ============================================================
+  // picker-trunc batch (main-side 2026-09-22): the browsePath frame
+  // builders — pure core, owned by this object so `PickerBrowseFrameSpec`
+  // can call them directly. The WS `browsePath` command wiring (the call
+  // site that emits these frames) lives in WsFileOpsHandlers.handleBrowsePath,
+  // which reaches them through the class-level seams (browseResultFrame /
+  // browseErrorFrame / BrowseEntryCap).
+  // ============================================================
+
+  /**
+   * How many entries a `browsePath` frame carries before `truncated` turns on —
+   * the ONE ruler for that leg (was a literal `take(200)`).
+   */
+  private[gateway] val BrowseEntryCap: Int = 2000
+
+  /**
+   * picker-trunc (2026-09-22 author ruling, A+B+C in ONE batch) — the
+   * `browsePath` success frame. Pure core: the spec calls it directly.
+   *
+   * A. **No silent truncation**: `total` is the full FILTERED entry count and
+   *    `truncated` says whether the cap cut it.
+   * B. `query` filters SERVER-side (case-insensitive substring on the entry
+   *    name) BEFORE the cap; `query` is echoed back so the frontend can
+   *    discard a frame that answers a stale filter string.
+   */
+  private[gateway] def browseFrame(dir: os.Path, displayPath: String, query: String, cap: Int): Json =
+    val q = query.trim.toLowerCase
+    // ONE listing pass: lexical order (pre-existing), then filter, then cap.
+    val all = os
+      .list(dir)
+      .filter(os.isDir)
+      .map(_.last)
+      .toList
+      .sorted
+    val matched = if q.isEmpty then all else all.filter(_.toLowerCase.contains(q))
+    val shown = matched.take(cap)
+    Json.obj(
+      "type" -> "browseResult".asJson,
+      "path" -> displayPath.asJson,
+      "entries" -> shown
+        .map(n => Json.obj("name" -> n.asJson, "path" -> (dir / n).toString.asJson))
+        .asJson,
+      "total" -> matched.size.asJson,
+      "truncated" -> (matched.size > shown.size).asJson,
+      "query" -> query.asJson
+    )
+
+  end browseFrame
+
+  /**
+   * The `browsePath` failure frame (C): same shape, empty `entries`, plus a
+   * typed `errorKind` (`invalid-path` / `not-a-directory` / `unreadable`).
+   */
+  private[gateway] def browseErrorFrame(displayPath: String, kind: String, msg: String, query: String): Json =
+    Json.obj(
+      "type" -> "browseResult".asJson,
+      "path" -> displayPath.asJson,
+      "entries" -> Json.arr(),
+      "total" -> 0.asJson,
+      "truncated" -> false.asJson,
+      "query" -> query.asJson,
+      "errorKind" -> kind.asJson,
+      "error" -> msg.asJson
+    )
+
+  // ============================================================
+  // askUser 历史恢复批 (2026-10-02, chain-askuser-histattach): the
+  // `askUser` frame → persisted-row builder — pure core, owned by this
+  // object so the paired spec can feed raw frame JSON. The WS
+  // recording leg (`WebSocketRoutes#makeRecordingWsSend`, `case "askUser"`)
+  // calls it exactly once, so the frame→row shape has ONE construction
+  // point (the persistence leg) and stays disjoint from the restoral leg
+  // (`WsSessionChatHandlers.handleGetHistory` → `SessionStore.getHistoryPage`
+  // → `given Encoder[UiMessage]`).
+  // ============================================================
+
+  /**
+   * `askUser` frame → the row written to `.ui.json`.
+   *
+   * Key-reading shape is the SAME loose fallback as the decoder
+   * (`UiMessage`'s `case "askUser"`): absent / malformed ⇒ `None`;
+   * blank `requestId` ⇒ `None`; empty `attachments` ⇒ `None` (dual of the
+   * encoder's "emit only in presence, empty ⇒ no key" rule — an absent or
+   * blank frame must produce byte-identical legacy rows).
+   */
+  private[gateway] def askUserRowFromFrame(frame: Json): UiMessage.AskUser =
+    val hc = frame.hcursor
+    val items = hc.downField("items").as[List[Json]].getOrElse(Nil)
+    val askRid = hc.downField("requestId").as[String].toOption.filter(_.nonEmpty)
+    val attachments = hc
+      .downField("attachments")
+      .as[Option[List[String]]]
+      .toOption
+      .flatten
+      .filter(_.nonEmpty)
+    UiMessage.AskUser(items, askRid, attachments)
+
+  /**
+   * 刀二（2026-10-28 无感压缩批）：`compactComplete` 帧 → ui.json 落盘行的纯函数
+   * 单点（askUserRowFromFrame 同款可测性先例）。数据面零削减：i18nKey/before/after
+   * 与旧载荷逐字节不变；`emergency` 仅在帧携带 true 时落键（0.95 硬守卫安全阀的
+   * 重放腿判据，前端 restoreCompactCardRow 按 params.emergency 放行该卡渲染）。
+   */
+  private[gateway] def compactCompleteRowFromFrame(frame: Json): UiMessage.System =
+    val hc = frame.hcursor
+    val before = hc.downField("before").as[Int].getOrElse(0)
+    val after = hc.downField("after").as[Int].getOrElse(0)
+    val emergency = hc.downField("emergency").as[Boolean].getOrElse(false)
+    val params = io.circe.Json
+      .obj("before" -> before.asJson, "after" -> after.asJson)
+      .deepMerge(if emergency then io.circe.Json.obj("emergency" -> io.circe.Json.True) else io.circe.Json.obj())
+    UiMessage.System(
+      s"Context compacted: $before → $after messages",
+      Some("chat.compacted"),
+      Some(params)
+    )
+end WebSocketRoutes

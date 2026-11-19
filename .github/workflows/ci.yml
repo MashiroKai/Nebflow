@@ -5,34 +5,109 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # 手动全量（CI 迁移批 2026-10-24）：任意分支上一键跑全套，与 push/PR 同范围。
+  workflow_dispatch: {}
 
 env:
-  SBT_OPTS: "-Xms512m -Xmx2g"
+  # 2026-10-24 CI 迁移批（作者令「试试ci放github上跑」）：本机 sbt test 两次事故
+  # （Metaspace OOM、进程假死 5h）后，sbt 启动 JVM 内存钉为作者本机验证过的组合
+  # —— -Xmx3g -XX:MaxMetaspaceSize=2g（Metaspace 上限是 OOM 的直接解）。
+  # fork 出的测试 JVM 不受此影响（build.sbt MaxRAMPercentage=12.5 单点管辖）。
+  SBT_OPTS: "-Xms512m -Xmx3g -XX:MaxMetaspaceSize=2g"
   COURSIER_REPOSITORIES: "ivy2Local|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2"
 
 jobs:
-  js-types:
-    name: JS Types (checkJs gate)
+  dropdown-contract:
+    name: Dropdown contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - name: Dropdown lint
+        run: node scripts/check-dropdown.mjs
+      - name: Dropdown single-control guard
+        run: node scripts/check-dropdown-single-control.mjs
+      - run: npm install --no-save --no-package-lock @playwright/test@1.62.0
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/dropdown-menu.test.mjs
+      - run: node tests/project-open-contract.test.mjs
+
+  static:
+    name: Static quality gates
+    timeout-minutes: 15
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - name: Install TypeScript
-        run: npm install --no-save --no-package-lock typescript@5.5
-      - name: checkJs vs baseline
-        # A1 gate: any new file with errors, any (file, code) count increase,
-        # or any total increase above tests/type-baseline.json fails the job.
-        run: node scripts/check-js-types.mjs
-      - name: Circular deps (static imports)
-        # P2-4 gate: static-import SCC analysis - any cycle fails. Dynamic
-        # import() is the sanctioned escape hatch and is not counted.
-        run: node scripts/check-circular.mjs
+          cache: npm
+      - name: Install locked tooling
+        run: npm ci
+      - name: Checkout-only static registry
+        run: npm run check:static
+      - name: Official OpenSpec validation
+        if: ${{ !cancelled() }}
+        run: npm run check:openspec -- --download
+      - name: Explicit-base SDD coverage
+        if: ${{ !cancelled() }}
+        shell: bash
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            [[ "$PR_BASE" =~ ^[0-9a-f]{40}$ && ! "$PR_BASE" =~ ^0+$ ]]
+            base="$PR_BASE"
+          else
+            base="${PUSH_BEFORE:-}"
+          fi
+          if [[ "$base" =~ ^[0-9a-f]{40}$ && ! "$base" =~ ^0+$ ]]; then
+            git cat-file -e "$base^{commit}" 2>/dev/null || git fetch --no-tags origin "$base"
+          else
+            test -n "$DEFAULT_BRANCH"
+            git fetch --no-tags origin "$DEFAULT_BRANCH"
+            base=$(git merge-base HEAD FETCH_HEAD)
+          fi
+          git cat-file -e "$base^{commit}"
+          npm run check:commit-attribution -- "$base..HEAD"
+          npm run check:sdd-changed -- --base "$base"
+      - name: Delivery checker self-test
+        run: python3 -B scripts/tests/test-delivery.py
+      - name: Delivery artifacts
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+        run: python3 scripts/check-delivery.py --base "$PR_BASE" --head HEAD
+
+  mobile-send-scale-lint:
+    name: Mobile send / voice scale lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm install --no-save --no-package-lock @playwright/test@1.62.0
+      - run: npx playwright install --with-deps chromium
+      - run: node tests/mobile-send-scale.mjs
 
   user-knowledge-gate:
     name: User Knowledge Gate (#338)
+    timeout-minutes: 10
     # Fail-fast static gate: user-specific knowledge (provider gateway IDs,
     # personal paths, API keys) must not leak into src/main Scala sources.
     # Same logic locally: bash scripts/check-user-knowledge.sh
@@ -42,19 +117,159 @@ jobs:
       - name: Check src/main for user-specific identifiers
         run: bash scripts/check-user-knowledge.sh
 
+  plugin-seed-parity:
+    name: Plugin seed parity (approved standard present in the seed tree)
+    timeout-minutes: 10
+    # Seed-parity gate (2026-11-05 seed-parity batch). Why it exists: three
+    # batches of approved wiki-docs rules (clause 6 images-live-with-the-doc,
+    # clauses 7/8 typography + abbreviations, R6-R9 + the abbreviation
+    # allowlist block + the 49-case regression fixture) shipped only in the
+    # RUNNING instance, while the repo seed stayed at the five-clause era.
+    # The seed is what a fresh install gets (SeedService.seedPlugin copies the
+    # whole directory from the classpath), so a stale seed hands every new
+    # home - and every machine - an obsolete standard, and a re-approve makes
+    # the digest arbitration overwrite the instance back to it.
+    # CI has no <data-root>/plugins, so this step runs the SELF-CHECK leg only:
+    # the seed itself must carry R1-R9, the allowlist markers, clauses 1-8 and
+    # the fixture (which is executed: >= 49 cases, all green). The instance vs
+    # seed drift leg needs a live instance and runs locally / pre-release.
+    # Same logic locally: tools/plugin-seed-parity --self-check (or
+    # `make plugin-seed-parity`, which also runs the drift leg when the
+    # instance is present).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Seed self-check (R1-R9 + allowlist block + fixture case count)
+        run: python3 tools/plugin-seed-parity --self-check
+
   dead-logging-gate:
     name: Dead Logging Gate
-    # Fail-fast static gate: NebulaLogger double-wrap (IO(IO[Unit]) — inner
+    timeout-minutes: 10
+    # Fail-fast static gate: NebflowLogger double-wrap (IO(IO[Unit]) — inner
     # log never runs; all known instances sat on error-recovery paths).
     # Same logic locally: bash scripts/check-dead-logging.sh
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Check src/main for NebulaLogger double-wrap
+      - name: Check src/main for NebflowLogger double-wrap
         run: bash scripts/check-dead-logging.sh
+
+  jdk-baseline-gate:
+    name: JDK Baseline Gate (21)
+    timeout-minutes: 10
+    # Fail-fast static gate. TWO constants, NOT one number:
+    #   JDK_BASELINE        = 21  runtime floor, declared on five surfaces —
+    #                             release/install.sh, release/install.ps1, the
+    #                             README badge / build-from-source line,
+    #                             Dockerfile:1, and the GatewayMain start gate.
+    #   JDK_BYTECODE_TARGET = 17  the artifact's bytecode/API target, strictly
+    #                             BELOW the floor (build.sbt -release, A-5/A-7a).
+    # Pinning the bytecode target back to 21 is a REGRESSION, not a fix: major 65
+    # makes a 17 JVM fail to load nebflow.Main at all, so the "requires Java 21"
+    # banner becomes unreachable and `update`/`doctor`/`version` (the self-repair
+    # path) get welded shut. Dropping the target to 17 does NOT loosen the API
+    # surface — release 17's API surface is a subset of 21's — and Scala 3.5.2
+    # cannot split "API 21 / bytecode 17" (same -release setting; measured).
+    # A-5 asserts build.sbt == JDK_BYTECODE_TARGET; A-7a asserts the target is
+    # strictly below the floor. The Java-17 runtime half (A-7b + A-6) runs in
+    # docker-test because it needs the assembly artifact; same script, --jar mode.
+    # No needs: runs in parallel with compile and fails in seconds.
+    # Same logic locally: bash scripts/check-jdk-baseline.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert JDK 21 across every declaration surface (+ bytecode target below the floor)
+        run: bash scripts/check-jdk-baseline.sh
+
+  installer-home-gate:
+    name: Installer Default Home Gate (~/.stand)
+    timeout-minutes: 10
+    # Fail-fast static gate (再生治本批 2026-10-22): the installer/shim default
+    # home is STAND_HOME env first, then brand homeDirName (~/.stand) — the
+    # installer NEVER writes the legacy ~/.nebflow root and setup_path retires
+    # leftover legacy PATH entries. History: a stale default-home installer
+    # re-seeded 153M of ~/.nebflow scaffolding on 10-20 after the data-root
+    # migration; this gate pins the switch shut.
+    # Same logic locally: bash scripts/check-installer-home.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert installer default home derives from STAND_HOME / brand homeDirName
+        run: bash scripts/check-installer-home.sh
+
+  legacy-domain-gate:
+    name: Legacy Domain Gate (retired bare domain)
+    timeout-minutes: 10
+    # Fail-fast static gate (#831 旧域清扫批 2026-10-25): the RETIRED bare
+    # domain must not reappear as a browser-entry literal — install/portal/
+    # profile/device URLs all point at mystand.space now (brand.conf single
+    # source). Service subdomains (neblink./auth./api. legacy hosts) are
+    # exempt by the bare-domain regex; frozen history/tool/guard paths are
+    # whitelisted IN the script, each entry with a justification.
+    # Same logic locally: node scripts/check-legacy-domain.mjs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no bare retired-domain literal outside the whitelist
+        run: node scripts/check-legacy-domain.mjs
+
+  no-tracked-artifacts-gate:
+    name: No Tracked Artifacts Gate (过程产物不入库)
+    timeout-minutes: 10
+    # 与协作方对齐批 2026-11-03 (Mashiro 提，作者批准): docs/ reports/ evidence/
+    # reports-evidence/ 是过程产物目录，只存在于工作区，绝不进索引。它们曾靠
+    # `git add -f` 被强塞成跟踪态（162 + 504 + 2140 文件），与 .gitignore 规则
+    # 自相矛盾 —— 每次与协作方合并都要拉锯一遍。本门禁就是防回归：索引里再出现
+    # 任何一条产物路径即红。
+    # 探针先行：脚本先证明 git ls-files 在本 checkout 真的能列出东西（探 src），
+    # 否则「零命中」只是假绿 —— 检测器瞎了必须红，不能静默放行。
+    # 退出码非 0 = 有产物被跟踪（或 git 面不可信）。
+    # Same logic locally: bash scripts/check-no-tracked-artifacts.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Assert no process-artifact directory is tracked
+        run: bash scripts/check-no-tracked-artifacts.sh
+
+  lint:
+    name: Lint (scalafmt + scalafix)
+    timeout-minutes: 25
+    # Format gate: `make lint` / `make check` existed but were never wired into
+    # CI — only -Xfatal-warnings compile was enforced. This job runs the same
+    # scalafmtCheckAll as the Makefile quality targets so a formatting
+    # regression fails the build instead of relying on contributor discipline.
+    # scalafix gate wired 2026-09-25: the 43 [DisableSyntax.return] violations
+    # were rewritten case-by-case (guard chains → Either/Option
+    # for-comprehensions with by-name guard helpers) and the residual
+    # OrganizeImports drift was auto-fixed with `sbt scalafix`, so
+    # `scalafix --check` now holds at green on this branch.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 23
+          cache: sbt
+      - name: Setup sbt
+        shell: bash
+        run: |
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
+      - name: scalafmt + scalafix check
+        shell: bash
+        run: sbt scalafmtCheckAll "scalafix --check"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
 
   compile:
     name: Compile (${{ matrix.os }})
+    timeout-minutes: 30
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -65,14 +280,14 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
           cache: sbt
       - name: Setup sbt
         shell: bash
         run: |
           curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
           echo "[info] sbt-launch.jar size: $(wc -c < /tmp/sbt-launch.jar) bytes"
@@ -80,8 +295,54 @@ jobs:
         shell: bash
         run: sbt compile
 
+  api-routes-live:
+    # 路由存在性哨兵 · 运行期腿（empty-state-must-not-lie 批 · 件三②，2026-11-05）。
+    # 静态腿（上面 `API route existence (frontend calls x gateway route registry)`）判
+    # 「源码里注册了没」；这一条判「启动后真的答不答」——后者才是 2026-11-05 事故的
+    # 现场判据：`GET /api/conversations` 的 case 被误删后，前端拿到 404、面板渲染成
+    # 「暂无会话」，而当时所有静态门禁与测试全绿。
+    # 判据：沙箱实例起来后逐条打前端调用面（清单由 `check-api-routes.mjs --emit-paths`
+    # 单一真源给出），任一路径全 method 404 ⇒ 红。
+    # 隔离：数据根 mktemp（--home + STAND_HOME + NEBFLOW_HOME 三重注入）、端口 8097，
+    # 拒绝 6138/8080/<1024；端口已占用则拒绝复用；只 kill 自己 spawn 的进程组。
+    # Linux-only（脚本的端口复核用 lsof）：Windows runner 走静态腿已足够。
+    name: API route existence (live)
+    timeout-minutes: 40
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 23
+          cache: sbt
+      - name: Setup sbt
+        shell: bash
+        run: |
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
+      - name: Boot sandbox instance and probe every frontend-called route
+        shell: bash
+        # Same logic locally: node scripts/check-api-routes-live.mjs (or `make api-routes-live`)
+        run: node scripts/check-api-routes-live.mjs --port 8097 --timeout 1200
+
   test:
     name: Test
+    # 首轮实测（scratch run 40051038872）：GitHub 4 核 ubuntu 冷缓存全量 >45min
+    # 未完成（仍在线性执行 suite、非挂死）⇒ 放宽到 90min。本机 M 芯全量约
+    # 15–30min 的 suite 在 4 核无热缓存 runner 上时长量级不同，勿按本机体感设限。
+    timeout-minutes: 90
+    # 二轮实测（run 40057027901，03:49:57）：in-process 测试 JVM（Test 不 fork，
+    # 与 sbt 同 JVM）约 40min 后堆耗尽——ConsoleFastpathSpec 处
+    # OutOfMemoryError: Java heap space，随后 sbt 僵死 53min 才被超时杀。
+    # 全局 3g（作者本机验证组合，针对 Metaspace）对 40min+ 的长跑不够 ⇒
+    # 本 job 单点提到 6g（runner 16GB 充裕）；ExitOnOutOfMemoryError（bootstrap
+    # 已全局加）保证 OOM 立即红、不再僵死烧满超时。
+    env:
+      SBT_OPTS: "-Xms512m -Xmx6g -XX:MaxMetaspaceSize=2g"
     runs-on: ubuntu-latest
     needs: compile
     steps:
@@ -89,14 +350,14 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
           cache: sbt
       - name: Setup sbt
         shell: bash
         run: |
           curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Install ripgrep (Glob/Grep runtime dependency)
@@ -107,14 +368,15 @@ jobs:
 
   assembly:
     name: Build JAR
+    timeout-minutes: 45
     runs-on: ubuntu-latest
-    needs: [compile, test]
+    needs: [static, compile, test]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
           cache: sbt
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -126,12 +388,19 @@ jobs:
         run: |
           npm ci
           node scripts/build-web.mjs
+      - name: Friends release-strip assertion (dual-form gate)
+        # Gate (author ruling 2026-09-14, D6): the build/web-dist produced just
+        # above must carry the friends feature in its UNSEALED form — the
+        # script's default expectation is `present`, i.e. exactly the default
+        # form build-web.mjs emits. `--expect stripped` is the re-seal gate for
+        # a `node scripts/build-web.mjs --strip-friends` artifact.
+        run: node tests/release-strip-friends.static.mjs
       - name: Setup sbt
         shell: bash
         run: |
           curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
           mkdir -p /tmp/sbt-bin
-          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
           chmod +x /tmp/sbt-bin/sbt
           echo "/tmp/sbt-bin" >> $GITHUB_PATH
       - name: Brand values from brand.conf
@@ -158,6 +427,7 @@ jobs:
 
   smoke-test:
     name: Smoke Test (${{ matrix.os }})
+    timeout-minutes: 20
     runs-on: ${{ matrix.os }}
     needs: assembly
     strategy:
@@ -178,7 +448,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
       - uses: actions/download-artifact@v4
         with:
           name: ${{ env.LOWER_NAME }}-jar
@@ -206,7 +476,7 @@ jobs:
           SERVER_PID=$!
           echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
           for i in $(seq 1 30); do
-            if curl -s http://localhost:8080/ > /dev/null 2>&1; then
+            if curl -s http://localhost:6138/ > /dev/null 2>&1; then
               echo "Server started after ${i}s"
               break
             fi
@@ -221,11 +491,11 @@ jobs:
         shell: bash
         run: |
           echo "--- Health check ---"
-          curl -sf http://localhost:8080/api/health && echo "" || echo "FAIL"
+          curl -sf http://localhost:6138/api/health && echo "" || echo "FAIL"
           echo "--- Static assets ---"
-          curl -s -o /dev/null -w "GET / -> %{http_code}\n" http://localhost:8080/
+          curl -s -o /dev/null -w "GET / -> %{http_code}\n" http://localhost:6138/
           echo "--- Config endpoint ---"
-          CONFIG=$(curl -sf http://localhost:8080/api/config 2>&1) && echo "${CONFIG:0:200}..." || echo "Config not available"
+          CONFIG=$(curl -sf http://localhost:6138/api/config 2>&1) && echo "${CONFIG:0:200}..." || echo "Config not available"
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -235,7 +505,7 @@ jobs:
         # Traversal-based: every file under src/main/resources/web must be
         # served 200. New files are covered automatically; an unroutable file
         # fails the job.
-        run: node scripts/verify-web-assets.mjs http://localhost:8080
+        run: node scripts/verify-web-assets.mjs http://localhost:6138
       - name: Stop server
         if: always()
         shell: bash
@@ -245,6 +515,7 @@ jobs:
 
   frontend-smoke:
     name: Frontend Smoke (Playwright, real backend)
+    timeout-minutes: 40
     runs-on: ubuntu-latest
     needs: assembly
     steps:
@@ -259,7 +530,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          java-version: 23
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -279,7 +550,7 @@ jobs:
           SERVER_PID=$!
           echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
           for i in $(seq 1 60); do
-            if curl -s http://localhost:8080/api/health > /dev/null 2>&1; then
+            if curl -s http://localhost:6138/api/health > /dev/null 2>&1; then
               echo "Server started after ${i}s"
               break
             fi
@@ -296,14 +567,15 @@ jobs:
         # escapes quotes throughout — grep for window.__BRAND__ would still
         # match inside the escaped body, which is exactly how that bug once
         # slipped through. Assert on raw bytes instead:
-        #  1. first 15 bytes are exactly "<!DOCTYPE html" (no leading '"')
+        #  1. first 15 bytes are exactly "<!DOCTYPE html>" (full open tag — no
+        #     leading '"'; the literal must match the head -c 15 grab byte-for-byte)
         #  2. the injected contract appears with RAW quotes: "productName":
         shell: bash
         run: |
-          BODY=$(curl -s http://localhost:8080/)
+          BODY=$(curl -s http://localhost:6138/)
           FIRST15=$(printf '%s' "$BODY" | head -c 15)
-          if [ "$FIRST15" != "<!DOCTYPE html" ]; then
-            echo "FAIL: index does not start with <!DOCTYPE html (got: $FIRST15)"
+          if [ "$FIRST15" != "<!DOCTYPE html>" ]; then
+            echo "FAIL: index does not start with <!DOCTYPE html> (got: $FIRST15)"
             printf '%s' "$BODY" | head -c 200
             exit 1
           fi
@@ -318,6 +590,31 @@ jobs:
         # Token comes from the fresh instance's own ~/.nebflow/auth.json —
         # smoke.spec.mjs reads it when NEBFLOW_TOKEN is not set.
         run: npx playwright test tests/smoke.spec.mjs
+      - name: Bridge fresh-instance token (instance-backed spec suite)
+        shell: bash
+        # 2026-10-24 CI 迁移批：补足 node 全量的 instance-backed 面。服务器首启
+        # 自动生成 ~/.stand/auth.json（Auth.loadOrCreateToken；dataRoot 解析
+        # src/main/scala/nebflow/shared/paths.scala），各 spec 的 token 契约
+        # （NEBFLOW_TOKEN / $NEBFLOW_HOME/auth.json / $NEBFLOW_HOME_DIR/auth.json）
+        # 由这里统一桥接；BASE_URL / NEBFLOW_URL 全部钉到本 job 的 :6138 实例
+        #（引擎默认口，端口对调落地批 2026-10-25，曾 8080）。
+        run: |
+          echo "NEBFLOW_TOKEN=$(cat "$HOME/.stand/auth.json")" >> "$GITHUB_ENV"
+          echo "NEBFLOW_HOME=$HOME/.stand" >> "$GITHUB_ENV"
+          echo "NEBFLOW_HOME_DIR=$HOME/.stand" >> "$GITHUB_ENV"
+          echo "BASE_URL=http://localhost:6138" >> "$GITHUB_ENV"
+          echo "NEBFLOW_URL=http://localhost:6138" >> "$GITHUB_ENV"
+      - name: Instance-backed specs (askuser / workspace-picker / plugins panels)
+        shell: bash
+        run: npx playwright test tests/askuser.spec.mjs tests/askuser-attach.spec.mjs tests/workspace-picker.spec.mjs tests/plugins-panel-redesign.spec.mjs tests/plugins-panel-two-actions.spec.mjs
+      - name: Instance-backed spec (clientconn-wake, standalone script)
+        shell: bash
+        run: node tests/clientconn-wake.spec.mjs
+      - name: Instance-backed spec (session-rail, standalone, destructive — must run last)
+        shell: bash
+        # session-rail 故意排最后：它会轮换 token 并吊销全部会话（spec 自带
+        # 断言即此），throwaway 实例上无害，但跑了之后别的 spec 的会话全废。
+        run: node tests/session-rail.spec.mjs
       - name: Verify web assets (C1, dist tree)
         shell: bash
         # The CI jar contains the P1 bundle — guard the PUBLISHED tree.
@@ -326,14 +623,128 @@ jobs:
         run: |
           npm ci
           node scripts/build-web.mjs
-          node scripts/verify-web-assets.mjs --root build/web-dist http://localhost:8080
+          node scripts/verify-web-assets.mjs --root build/web-dist http://localhost:6138
       - name: Stop server
         if: always()
         shell: bash
         run: kill $SERVER_PID 2>/dev/null || true
 
+  review-registration-observation:
+    name: Registered browser regressions (non-blocking observation)
+    # These previously unregistered suites have known failures and fixture requirements.
+    # Report each leg independently; promotion to a blocking gate requires green evidence.
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 23
+      - uses: sbt/setup-sbt@v1
+      - name: Install browser dependencies
+        run: |
+          npm ci
+          npm install --no-save --no-package-lock @playwright/test@1.62.0
+          npx playwright install --with-deps chromium
+      - name: Mobile touch targets
+        continue-on-error: true
+        run: node tests/mobile-touch-target.spec.mjs --out "$RUNNER_TEMP/touch-targets.json"
+      # 2026-11-18：`tests/canvas-writer-live.spec.mjs` 断言的是已退役的「控制台接管／
+      # 取得控制权」状态机（同一批下线：ConsoleTakeoverRoutes / takeoverModal.js），
+      # 已随本任务删除，故此处不再点名它。取代它的真实闸门是下面这条（真服务器：席位
+      # 唯一、第二窗 PUT 被拒、零误报），自足面则由 tests/canvas-readonly-toast.spec.mjs
+      # 覆盖（孤窗静默即位、被拒写只出真实保存失败文案、无任何接管面）。
+      - name: Canvas writer ownership (real gateway)
+        run: sbt "testOnly nebflow.gateway.CanvasWriterLegacyPutSpec"
+
+  row-center-lint:
+    name: Rendered row-center lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Playwright
+        run: |
+          npm install --no-save --no-package-lock @playwright/test@1.62.0
+          npx playwright install --with-deps chromium
+      - name: Check rendered rows
+        run: PW_SELFCONTAINED_ONLY=1 npx playwright test tests/ask-mail-channel.spec.mjs -g 'row-center' --reporter=line
+
+  frontend-specs:
+    name: Frontend Specs (self-contained suite, Playwright)
+    # 2026-10-24 CI 迁移批：补足 node 全量面。本机全量 = sbt test + tests/*.spec.mjs；
+    # 此前 CI 只跑 smoke.spec.mjs 一个。本 job 跑自足 spec（自带 stub 服务 /
+    # page.route 静态面 / WS 回放，零后端零外网）中走 @playwright/test 的全部——
+    # 收集面与隔离名单单点管辖于 playwright.config.mjs（独立 node 脚本不进收集面，
+    # instance-backed 由 frontend-smoke 点名跑）。workers=1 钉在配置里：大量 spec
+    # 绑定固定默认端口（8117–8300，有重复占用），并行必撞。
+    # 首轮观察期 continue-on-error：这批 spec 从未在 CI 跑过，先取一轮真实基线
+    # （失败列表在 job 日志可见），全绿后翻成硬门禁（= 删除本行）。
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 23
+          cache: sbt
+      - name: Setup sbt
+        shell: bash
+        run: |
+          curl -fL "https://maven.aliyun.com/repository/central/org/scala-sbt/sbt-launch/1.10.10/sbt-launch-1.10.10.jar" -o /tmp/sbt-launch.jar
+          mkdir -p /tmp/sbt-bin
+          printf '#!/bin/bash\nexec java $SBT_OPTS -XX:+UseParallelGC -XX:+ExitOnOutOfMemoryError -jar /tmp/sbt-launch.jar "$@"\n' > /tmp/sbt-bin/sbt
+          chmod +x /tmp/sbt-bin/sbt
+          echo "/tmp/sbt-bin" >> $GITHUB_PATH
+      - name: Install Playwright (chromium + webkit)
+        # webkit：nffile-three-tier / nffile-503-backoff / imgcard-click-safari-compat /
+        # mdscroll-toc-scroll 四个 spec 显式 import webkit（Safari 行为兼容面）。
+        run: |
+          npm install --no-save --no-package-lock @playwright/test@1.62.0
+          npx playwright install --with-deps chromium webkit
+      - name: Run self-contained spec suite
+        env:
+          # project-panel-archive.spec.mjs 的默认 SHOT_DIR 是 mac 形态
+          # （/Users/dev/...），ubuntu 上必须覆盖到可写目录。
+          ARCHIVE_SHOT_DIR: ${{ runner.temp }}/archive-shots
+        run: PW_SELFCONTAINED_ONLY=1 npx playwright test
+      - name: Toggle knob centered (pixel-level four-way gaps)
+        # toggle-center 批 2026-11-06（作者原话逐字：「我们的toggle按钮需要重新设计
+        # 中间的按钮相对于边框都没有居中」）。上一批交的是**设计值**（轨道 40×22 /
+        # 圆钮 16 / 内衬 2 / 行程 18），四个数各自自洽，但 `top/left` 写在 absolute
+        # 伪元素上是相对 **padding box** 的 —— 手填的「缝」于是把 1px 描边记了两次账：
+        # 桌面档恰好抵消（22−2−16 = 4 = 2×2），手机档（51×31 / 钮 27）没有 ⇒ 屏幕上
+        # 上 3 / 下 1、开档右缝 1（关档左缝 3）= 2px 偏心。
+        # 判据（CSS px，**浏览器实测**，不读声明值）：|上距−下距| ≤ 0.5、
+        # |左距(关)−右距(开)| ≤ 0.5，覆盖桌面（40×22）+ 手机（body.mobile-layer，
+        # 51×31）× 亮/暗；两路读数（CDP 伪元素 border box + DSF=4 哨兵色像素包围盒）
+        # 必须互相吻合 ≤ 0.5。
+        # 只在本 job 跑（唯一装了 chromium 的静态面 job）；本机同逻辑：
+        # node scripts/check-toggle-geometry.mjs（或 `make toggle-geometry`）。
+        # 静态形态腿（居中三式必须是推导式、禁手填）在 js-types job 的
+        # check-toggle-unify.mjs 里，与字节级漂移一起挡。
+        run: node scripts/check-toggle-geometry.mjs
+      # （CI 迁移批 2026-10-24）失败 trace 上传步骤已删：账号 Artifact 存储
+      # 配额已耗尽（二轮实测 Failed to CreateArtifact: Artifact storage quota
+      # has been hit）——保留只会把 job 染红且传不上去。失败判据走 playwright
+      # 的 list 输出 + GitHub step summary；配额释放后再议 trace 回传。
+
   docker-test:
     name: Docker Build Test
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     needs: assembly
     steps:
@@ -353,8 +764,31 @@ jobs:
         run: docker build --build-arg lower_name=${LOWER_NAME} -t ${LOWER_NAME}:test .
       - name: Test container starts
         run: |
-          docker run -d --name ${LOWER_NAME}-test -p 8080:8080 ${LOWER_NAME}:test
+          docker run -d --name ${LOWER_NAME}-test -p 6138:6138 ${LOWER_NAME}:test
           sleep 5
           docker logs ${LOWER_NAME}-test 2>&1 | head -20
-          curl -sf http://localhost:8080/api/health || echo "Health check failed"
+          curl -sf http://localhost:6138/api/health || echo "Health check failed"
           docker stop ${LOWER_NAME}-test
+      - name: Java 17 reproduction — banner reachable + self-repair path alive (A-7b/A-6)
+        # The only assertion that makes "Java 17 is incompatible" visible in CI:
+        # the step above never fails on a broken container — `curl -sf … || echo`
+        # swallows the health check, so it is green on any JVM whatsoever.
+        # Reuses this job's already-downloaded assembly and runs it inside
+        # eclipse-temurin:17-jre with --network none:
+        #   A-7b  nebflow/Main.class in the jar must be major 61 (declared target
+        #         17) — a static read of the artifact, seconds.
+        #   A-6 §1 bare start must reach the HUMAN-READABLE refusal: "requires
+        #         Java 21" + upgrade guidance + Jar:/Java: lines, NON-ZERO exit.
+        #         Accepting a bare UnsupportedClassVersionError here would mean
+        #         the gate never ran — that form is now a FAILURE.
+        #   A-6 §2 version/help/doctor/update must each RUN (non-empty output, no
+        #         UnsupportedClassVersionError, version prints "<lowerName> <version>"
+        #         with lowerName from brand.conf) — the self-repair entries must
+        #         survive on the machine that needs upgrading. `update` in an offline
+        #         container is judged by
+        #         reaching its own logic (its own error), not by class loading.
+        #   Any command still running after 90s = FAILURE (never a hang, never
+        #   a pass).
+        # Container discipline lives in the script: `--network none`, no
+        # --network host, no port mapping, named container + EXIT trap cleanup.
+        run: bash scripts/check-jdk-baseline.sh --jar "$(ls target/scala-3.5.2/${LOWER_NAME}-assembly-*.jar | head -1)"

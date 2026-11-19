@@ -1,26 +1,34 @@
 # Contributing
 
-This guide is for developers preparing changes to this repository. It covers environment setup, building, testing, and the branch/commit/PR conventions. The repository is currently private — there is no external contribution process.
+This guide is for developers preparing changes to this repository. It covers environment setup, building, testing, and the branch/commit/PR conventions. Development happens on an internal USTC Git instance (`https://git.ustc.edu.cn/kaiyu/nebflow`) — external pull requests are not accepted. The GitHub repository (`github.com/MashiroKai/Nebflow`) stays frozen read-only as the historical archive; it no longer receives pushes, issues, or pull requests.
 
 ## Prerequisites
 
 | Requirement | Version | Notes |
 |---|---|---|
-| JDK | 21 | CI (`.github/workflows/ci.yml`) builds and tests on Temurin 21; the JVM flags in `build.sbt` (generational ZGC) also require 21 |
+| JDK | 23 for local development | GitHub build/test jobs use Temurin 23; the runtime floor remains 21 and artifact bytecode targets 17 |
 | sbt | 1.10.10 | Pinned in `project/build.properties` |
-| Node.js | 20 | Only needed for the web bundle build, frontend tests, and frontend checks |
+| Node.js | 20 | Web bundle, locked tooling, script tests, and checkout-only static checks |
 
 No `.jvmopts` or `.sdkmanrc` is used; toolchain versions live in `project/build.properties` and the CI workflow.
+
+**Two constants, not one number — the build JDK and the artifact's bytecode target are deliberately different.** `-release:17` in `build.sbt` sets the *artifact* target (class-file major 61), while the *runtime floor* stays 21. Do not "fix" `-release:17` back to `-release:21`:
+
+- A major-65 artifact cannot even be loaded by a 17 JVM, so the human-readable `requires Java 21` refusal (`src/main/scala/nebflow/core/JvmRequirement.scala`) becomes unreachable — the start gate never runs — and `stand update | doctor | version`, the self-repair path a user needs *on the machine being upgraded*, are welded shut.
+- It does not loosen the API surface: `-release` pins both the API surface and the bytecode target, and release 17's API surface is a subset of 21's. The 21 floor is enforced at runtime by the `GatewayMain` start gate, `doctor`, the installers, the Dockerfile, and `scripts/check-jdk-baseline.sh`.
+- Scala 3.5.2 cannot split "API surface 21 / bytecode 17" (`-release` and `-java-output-version` are the same setting; supplying both yields `Flag -java-output-version set repeatedly`, and `-java-output-version:17` alone lowers the API surface too).
+
+Consequently `scripts/check-jdk-baseline.sh` asserts `-release == JDK_BYTECODE_TARGET` (A-5), that the target is strictly below the floor (A-7a), and that the built jar's `nebflow/Main.class` is major 61 (A-7b) with the 17-side behaviour checked at runtime (A-6) — see the script header.
 
 ## Build and run locally
 
 ```bash
 sbt compile        # compile
 sbt assembly       # fat JAR -> target/scala-3.5.2/
-sbt run            # start the web server at http://localhost:8080
+sbt run            # start the web server at http://localhost:6138
 ```
 
-To isolate a dev server from anything already on 8080, give it its own home and port (`--home` / `--port` are global flags):
+To isolate a dev server from the running gateway (default port 6138), give it its own home and port (`--home` / `--port` are global flags):
 
 ```bash
 sbt "run --home /tmp/nb-dev --port 8090"
@@ -34,6 +42,12 @@ node scripts/build-web.mjs    # esbuild bundle -> build/web-dist
 ```
 
 The `Makefile` wraps the common invocations: `make compile`, `make run`, `make assembly`, `make install` (JAR to `~/.local/bin`), and `make check` (compile + format/lint checks, see [Code style](#code-style)).
+
+## Delegate progress notifications
+
+The top-level `stand.json` setting `"delegateProgressNotifications": true` opts into
+held delegate progress messages. It defaults to false when absent. Terminal delegate
+notifications are unaffected. Set the key to false or remove it to suppress progress.
 
 ## Testing
 
@@ -64,26 +78,153 @@ BASE_URL=http://localhost:8090 NEBFLOW_TOKEN=... npx playwright test tests/smoke
 
 CI runs the smoke suite against a freshly built JAR, so a green local run plus green CI is the bar for frontend changes.
 
+### Mobile composer scale lint
+
+For the main composer at the mobile viewport, the send button's circular border box must be 0.625 times the voice button's circular border-box height, in both dimensions (tolerance 0.5 CSS px). The author confirmed the 40px size and 0.625 coefficient on 2026-11-17. The reference is the voice button's stable 64px interaction box, not the animated canvas sphere diameter. Send and stop remain the same size. The hit boundary must extend at least N=2 CSS px beyond the visual border on all four sides, giving a minimum 44px edge-to-edge reach for the 40px button. The browser gate actually clicks the four axis points 2px outside and checks delivery; the 4px-outside points are recorded but need not hit. This axis-point contract does not claim that the corners of a 44px square are clickable. Desktop and other composers are outside this rule. The self-contained browser gate `node tests/mobile-send-scale.mjs` runs after the Playwright setup above; CI's `mobile-send-scale-lint` is blocking. It samples light and dark at 390×844; it is not a replacement for broader visual and interaction testing.
+
+### Rendered row-center check
+
+Run locally after the Playwright setup above; CI runs the same command in the
+`row-center-lint` job without `continue-on-error` (the wider `frontend-specs`
+job is currently non-blocking; branch protection is configured separately):
+
+```sh
+npx playwright test tests/ask-mail-channel.spec.mjs -g 'row-center' --reporter=line
+```
+
+The check audits visible DOM in its mocked main-chat and open Canvas/Ask dock
+states; it does not claim to cover unvisited screens or states. A content row is
+an in-flow horizontal flex row or single-row grid with at least two visible
+items sharing a vertical interval. Legacy inline text plus inline elements is
+also measured so unwrapped text cannot evade the check. Text fragments use a
+Range; elements use their bounding boxes. The maximum pairwise vertical-center
+spread above 1 CSS px fails, with selectors and measurements. One pixel allows
+layout rounding (the corrected ASK row measured 0.016px), while a 4px defect
+still fails. Absolutely/fixed positioned elements are not row layout items.
+
+Explicit exemption: `body`, the page-level shell whose children are full panels
+rather than adjacent content items. Its differing panel heights are reported as
+an exemption, not silently dropped or hidden by a larger tolerance. A single
+row is a collection of adjacent content items, not a whole page or panel layout.
+Add any further exemption with a specific selector and rationale, not a blanket
+threshold change. Dynamic, hidden, unrendered and unvisited states require their
+own harnesses; an empty report is not a product-wide geometry guarantee.
+
+
 ## Branches and commits
 
-- Branch off `main` with a short descriptive name; keep a branch scoped to one change.
+The author designated `feat/base` on 2026-11-17 as this repository's **only long-lived feat base branch** and feature integration baseline, created from local `main` at `0f9f5aab762f601d382e8121fc7c994f366d4c06`. It is reserved: only the author may create or delete it. New development branch names must use scoped `feat/*` or `bug/*`; `fix/*` remains rejected for new branches. Existing `fix/*` development branches are grandfathered for integration into `feat/base`.
+
+Ordinary development, including fixes and batches, starts from and returns to `feat/base` after verification, not directly to `main`. The author-approved release hotfix exception below starts from and returns to `main`. Promote the integrated `feat/base` to `main` in a single feat:base-to-main merge, subject to author approval. Only the author personally pushes release lines; no one may do so on the author's behalf.
+
+The branch classes are:
+
+| Branch | Purpose |
+|---|---|
+| `main` | Promotion baseline; author controls integration. |
+| `feat/base` | Reserved feature integration baseline. |
+| `feat/*` | Ordinary development, branched from and merged into `feat/base`. |
+| `bug/*` | Normally from and back to `feat/base`; release hotfixes from and back to `main`. |
+| `achieve/*` | Archives, for example a JeV preservation branch; not an MR source. |
+| `release/beta` | Author-controlled beta release line. |
+| `release/stable` | Author-controlled stable release line. |
+
+The author's `release:beta` / `release:stable` terminology maps to `release/beta` / `release/stable`: Git branch names cannot contain a colon. Ordinary development returns to `feat/base`; approved `feat/base` is promoted to `main`, and `main` may be synced back into `feat/base`.
+
+```mermaid
+flowchart LR
+  BASE[feat/base] --> F[ordinary development]
+  F --> BASE
+  BASE -->|author promotion| M[main]
+  M -->|sync| BASE
+  M --> B[bug/* release hotfix]
+  B -->|author approval| M
+  M -->|author chooses| RB[release/beta]
+  RB -->|author after beta verification| RS[release/stable]
+  M -. archival .-> A[achieve/*]
+```
+
+For a release problem, branch `bug/*` from `main`, fix and verify it, then the author approves and lands it on `main` and chooses whether and where to propagate it. Use `stand-wt.py new NAME --branch bug/NAME --base main --target main`; copy its `Hotfix-Main-Baseline: <sha>` line into the MR description. CI checks that SHA is an ancestor of both `origin/main` and the source checkout; it is an audit record, not proof of a genuine hotfix or authorization. Only the author pushes release lines. Local checks and repository CI only prevent mistakes, cannot prove hotfix authenticity or enforce authority; USTC server permissions and author MR approval are required.
+
 - Stage files explicitly (`git add <file>`); avoid `git add -A`.
-- Commit subjects in practice carry an optional `type(scope):` prefix — types like `fix` / `feat` / `test` / `docs` / `refactor`, scopes like `web` / `tools` / `engine` / `project` / `gateway`. The subject may be English or Chinese and should state the cause or intent, not just the symptom. Merge commits to `main` follow `Merge <branch>: <summary>`.
+- Commit subjects use an optional `type(scope):` prefix; write an English subject describing the intent.
+
+### Release flow
+
+After the integrated feat base is approved and merged into `main`, the author alone controls promotion to release. The author may merge `main` into `release/beta`; its pipeline publishes the beta channel. After verifying the beta, the author may merge `release/beta` into `release/stable`; its pipeline publishes the stable channel. Release lines are downstream only: never merge or write them back to `main`. Ordinary fixes start from and return to the feat base before promotion; approved release hotfixes follow the `main` procedure above.
+
+### Local guard
+
+`tools/stand-branch-guard --help` documents exit codes and invocation. Check names with `--check-branch NAME` and MR sources with `--check-pr-source NAME`. To opt into pre-push checks, install a hook in the active worktree's hooks path (do not overwrite an existing hook); its body can call `exec /absolute/path/to/tools/stand-branch-guard --check-push "$@"`. Git supplies destination records on stdin. `--allow` is a deliberate local override, not permission to push or bypass server rules; the author alone may authorize protected pushes. Tags are not branch destinations. The guard does not enforce the separate prohibition on direct USTC pushes; server permissions and operator discipline must do so.
+
+### USTC server protection checklist (author only)
+
+1. In the project, inspect **Settings → Repository → Protected branches** (or the equivalent for the installed GitLab version); record existing rules and overlapping wildcard effects before changing them.
+2. Protect `main`, `feat/base`, `release/beta`, and `release/stable`. Set push/merge permissions to the named author only where the installed edition supports per-user rules; otherwise use the narrowest role available and restrict membership accordingly. Disable force pushes and deletion for these branches. Configure required review and successful pipelines where supported. Verify the effective permissions, including broader wildcard rules and administrative bypasses.
+3. Restrict USTC write access so non-authors cannot push directly. Ordinary development MRs target `feat/base`; promotion to `main` is the single feat:base merge. The author must approve every `bug/*` hotfix MR targeting `main` and alone push the chosen release line. GitLab branch protection by itself may not enforce source-name restrictions or distinguish one user from others with the same role; use an instance-supported server-side push/MR rule or author-controlled permissions, and document any edition limitation rather than claiming enforcement.
+4. Set the project merge method to **Fast-forward merge** if available. Test with a non-author account and disposable branches: forbidden direct pushes and unauthorized merges must fail; allowed author workflow and source-name checks must behave as intended. Do not force-update protected refs during testing.
+5. On USTC, archive the legacy branches as `achieve/beta-20261116` and `achieve/release-20261116`, verify the archive refs point to the original tips, then delete the legacy branches. Adjust protection only as necessary under author control; do not delete before verification. Confirm the new release-line protections and pipelines before publication.
+
+## Delivery artifacts and pull requests
+
+The platform-wide worktree and temporary artifact rules are authoritative in the installed stand-dev plugin's `skills/stand-dev/references/engine/workspace-artifacts.md`.
+
+For this repository, use `python3 scripts/stand-wt.py [--root <project-checkout>] new <wtname> [--branch <branch>]`; the same optional `--root` (alias `--project`) selects the project for `list`, `audit`, and `clean`. `python3 scripts/check-delivery.py --root <checkout> --manifest-only` checks a selected checkout.
+
+Each development branch delivers one tracked `delivery/<batch-name>/` directory per reviewed range. Use a short, unique batch name. Commit reviewable artifacts, not credentials, private data, bulky logs or transient execution evidence; process evidence remains untracked in the platform-prescribed temporary location. Sanitize screenshots and keep them reasonably sized. Committed artifacts travel with the reviewed commit and survive across machines; reviewers must assess their content, not merely their existence.
+
+For changes to `src/main/resources/web/`, provide `before.png` and `after.png` of the same scenario and viewport, plus `screenshots.md` with **Viewport**, **Scenario**, and **Fixture or command** headings and reproducible values. For changes to `src/main/scala/`, `src/main/java/`, `openspec/specs/`, or `openspec/changes/`, provide `changes.md` with **What**, **Why**, and **Impact**; `state-machine.md` with before and after Mermaid `stateDiagram` diagrams; and `behavior.md` with a before/after Mermaid comparison diagram. Explicitly show unchanged states or behavior when applicable. If both classes apply, deliver both sets. Reviewers must also classify other paths manually (including design or frontend changes outside these prefixes) and require the corresponding artifacts; the path classifier is not a semantic proof.
+
+`npm run check:wt` and the default static profile check the inferred linked-worktree manifest; use `stand-wt.py audit <wtname>` to refresh it. The primary checkout explicitly reports the local-only check as skipped.
+
+Check the exact commits with `python3 scripts/check-delivery.py --base <base-commit> --head <head-commit>` (head defaults to `HEAD`). It inspects committed Git trees and the diff, not uncommitted files; it requires a single changed delivery directory and each required file to change within the range. The check validates PNG signatures and document markers only, not image decoding, visual equivalence, diagram correctness, or completeness. It fails closed for bad revisions and missing artifacts. Both CI surfaces run it for pull/merge requests against the declared diff base. Check each branch's complete review range locally as well; a later change must update its own delivery. The template records the paths and the human completeness attestation.
+
+When stopping a branch and reporting its SHA, also report its `delivery/<batch-name>/` path and attest which required artifacts are complete, or explicitly say none is applicable with the reviewed classification and explain any missing artifacts. This is a handoff, not authorization to merge. The author alone verifies and lands the branch.
 
 ## Pull requests
 
-- PRs target `main`. Keep the diff minimal and scoped to one change.
-- Before opening: `sbt compile` and the affected tests green. For Scala changes also run `make check` (scalafmt + scalafix); for frontend changes run the type/cycle gates and the affected Playwright specs (see below).
-- CI (`.github/workflows/ci.yml`) runs the JS type/cycle gates, compile + full test suite (Ubuntu and Windows), JAR assembly, smoke + Playwright frontend suite, and a Docker build. A PR is mergeable when CI is green.
+- Ordinary USTC MRs target `feat/base` and use `feat/*` or `bug/*` sources, with existing `fix/*` branches grandfathered. Only the separate `feat/base` promotion and author-approved `bug/*` release hotfixes target `main`. The author opens MRs and merges after verification; keep each diff minimal and scoped to one change. Contributors and agents do not push directly to USTC.
+- Before opening: run the gates appropriate to the change and affected tests. For Scala changes run `sbt compile` and `make check` (scalafmt + scalafix); for frontend changes run the type/cycle gates and the affected Playwright specs (see below).
+- The static quality job is blocking in both `.github/workflows/ci.yml` and `.gitlab-ci.yml`; the latter includes merge requests and every branch. `.github/workflows/auto-release.yml` also requires this same entrypoint before building. Existing advisory browser jobs remain advisory. Configuration describes intended execution, not evidence that a remote CI run has passed.
 
 ## Code style
 
 - **Scala 3** (3.5.2, significant indentation). Formatting is enforced by scalafmt and scalafix — `make check` runs `sbt scalafmtCheckAll "scalafix --check"`. The compiler runs with `-Xfatal-warnings`: fix the warning, don't suppress it.
-- **Frontend** is vanilla JS with no TS build step; correctness is gated by two static checks (both run in CI):
+- **Frontend** is vanilla JS with no TypeScript build step. The shared registry in `scripts/run-checks.mjs` owns checkout-only check membership. Install pinned tools with `npm ci`; no check downloads a compiler or linter implicitly.
+
+Canvas control changes: add `canvas-button` to each new canvas button and register dynamic emitters in `scripts/check-canvas-buttons.mjs`; reader templates are scanned automatically. Run `npm run check:frontend` and the affected visual fixture. The current registry is not a complete DOM-wide proof, especially for embedded content.
+
+### Checkout-only quality gates
 
 ```bash
-node scripts/check-js-types.mjs    # checkJs vs tests/type-baseline.json (baseline only goes down)
-node scripts/check-circular.mjs    # static-import cycle gate
+npm ci
+npm run check:static                       # shared blocking static profile
+npm run test:scripts                       # node --test scripts/tests/*.test.mjs
+npm run lint:tools                         # new/modified engineering tools only
+npm run check:sdd                          # all current/change/archive artifacts, no diff coverage claim
+npm run check:sdd-changed -- --base main    # explicit base, additional changed-path coverage
+npm run check:openspec -- --download        # pinned upstream validator; requires network
+node scripts/run-checks.mjs --profile static --list
+make frontend-gates                       # dependency-free Node source sentinels only
+make check-static                         # same as npm run check:static
 ```
 
-`check-js-types.mjs --update` regenerates the baseline after intentional type fixes. Dynamic `import()` is the sanctioned way to break a genuine cycle; static import cycles fail the gate.
+`make check-sdd`, `make test-scripts`, and `make lint-tools` wrap the corresponding npm scripts. These Node-only targets do not probe Maven mirrors or start services. `make check` additionally runs Scala compilation/format/lint. Installed-plugin parity remains an explicit `make plugin-seed-parity` check; it is not a checkout-only success signal. JVM, browser, runtime, and live-plugin checks remain separate and need their own prerequisites and evidence.
+
+The static profile reuses the existing frontend/CI source checks plus tooling lint, script tests, and SDD validation. It reports each named command's elapsed time and exit status, with bounded execution and heartbeat output; spawn failures, signals, and timeouts fail the profile. `--list`/`--dry-run` prints commands without running them. The optional `sdd-changed` profile requires `--base` and rejects invalid Git refs; the default static profile always validates full SDD artifacts without a base. Structural trace validation does not execute referenced tests or establish semantic correctness.
+
+`check-js-types.mjs` uses locked local TypeScript and compares recognized source diagnostics against `tests/type-baseline.json`. Configuration errors, unknown output (including unexplained indented output), empty failed output, process errors, signals, and timeouts fail closed. `--update` writes a baseline only after valid compiler output; use it only to reduce reviewed type debt, never to hide a regression. Static import cycles fail the cycle gate; dynamic `import()` is the existing escape hatch where appropriate.
+
+### Visual regression baseline
+
+`tests/visual/` + `scripts/visual-baseline.mjs` (adopted 2026-11-01) render six scenarios (`--list`) in dark and light through a **zero-port** harness — `page.route` serves `src/main/resources/web` from disk with a MockWS injection, so it structurally cannot reach a running instance (or the host gateway port) — and pixel-compare each shot against a committed baseline PNG.
+
+```bash
+make check-visual              # = node scripts/visual-baseline.mjs --check --max-ratio 0.0005 (gate)
+make check-visual VISUAL_MAX_RATIO=0   # strict zero-diff run
+make visual-baseline          # = --update → writes a DRAFT into the review area only (never the committed baseline)
+make visual-baseline-promote  # = --promote --i-reviewed → pushes that reviewed draft into tests/visual/baseline/
+node scripts/visual-baseline.mjs --check --filter canvas --determinism
+```
+
+Baselines are stored **per host platform key**: `tests/visual/baseline/<process.platform>-<browserLabel>/` (e.g. `win32-msedge-156`, `darwin-chromium-151`). Pixels are not comparable across OS/browser builds, so a host without its own baseline directory reports `MISS` on every shot — a red, never a silent pass. `win32-msedge-156/` was recorded on the author's Windows + Edge host and belongs to the **Windows runner leg**; on another host record your own set with `make visual-baseline` (draft → `.nebflow/visual-baseline/<platform>/baseline-draft/`), eyeball it, then land it with `make visual-baseline-promote` and commit `tests/visual/baseline/<platform>/`. **Recording is two-stage on purpose**: `--update` used to write straight into the committed baseline directory while the docs claimed a review area existed, so a routine re-record silently replaced the reference frames the gate compares against — the review step was unimplementable. Now `--update` cannot touch `tests/visual/baseline/` at all; only `--promote --i-reviewed` can, and a bare CLI `--promote` without the acknowledgement flag is refused with the draft inventory printed. Tolerances are strict zero by default in the script (`--tolerance` / `--max-ratio` widen them explicitly — loosening a baseline is not a fix for a real pixel change); `make check-visual` passes `--max-ratio 0.0005` because both recorded hosts showed 12–16 px of random antialiasing drift on the 1 px pane border of the two monaco scenarios (0.002–0.003%, deterministic within a run, so it is host rendering noise rather than product jitter). Use `make check-visual VISUAL_MAX_RATIO=0` for a strict zero-diff run — recommended on the Windows runner leg, whose baselines were captured noise-free. Run it after frontend changes that can move layout; the GitHub CI legs do not carry it yet (no matching platform baselines there).

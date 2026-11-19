@@ -1,8 +1,12 @@
 package nebflow.neblink
 
+import nebflow.neblink.core.*
+import nebflow.neblink.relay.*
+
 import cats.effect.IO
 import cats.effect.std.Dispatcher
 import munit.CatsEffectSuite
+import nebflow.shared.PeerInfo
 
 import scala.concurrent.duration.*
 
@@ -45,12 +49,28 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
   /** Heartbeat stub client — never touches the network. */
   private def stubClient(peers: List[NeblinkPeerInfo]): NeblinkClient =
     new NeblinkClient(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"), 0):
-      override def heartbeat: IO[Either[String, List[NeblinkPeerInfo]]] = IO.pure(Right(peers))
+      override def heartbeat: IO[Either[String, HeartbeatOutcome]] = IO.pure(Right(HeartbeatOutcome(peers, None)))
+
+  /** Discovery stub — 覆写 `discover`（`discoverCycle` / `discoverViaServer` 的入口），不触网。 */
+  private def discoverStubClient(peers: List[NeblinkPeerInfo]): NeblinkClient =
+    new NeblinkClient(NeblinkServerConfig(url = "http://127.0.0.1:9", networkId = "n1", secret = "s"), 0):
+      override def discover(
+        deviceId: String,
+        deviceName: String,
+        platform: String,
+        endpoints: List[NeblinkEndpoint]
+      ): IO[Either[String, List[NeblinkPeerInfo]]] = IO.pure(Right(peers))
 
   private def withStack[A](use: (NeblinkService, NeblinkPresenceService, NeblinkDiscovery) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(0, dispatcher, testGrace)
+        // 腿 A 活动面闸（chain neblink-lifecycle-fix）的前置条件：本 suite 测的是
+        // 「外发腿返回的名册如何收敛本地表」，桩 client 模拟的就是服务端响应 ⇒
+        // 夹具必须表达「已登录/已启用」形态（enabled=true），否则 heartbeatCycle /
+        // discoverCycle 被 gate 压成空转、用例失去判别力。与其他夹具
+        // （NeblinkLogoutRoutesSpec.mkStack、NeblinkRelayTunnel*Spec）同款形态。
+        _ <- ms.updateConfig(_.copy(enabled = true))
         ps = new NeblinkPresenceService(ms, 0)(dispatcher)
         discovery = new NeblinkDiscovery(ms, 0, ps, None)
         out <- use(ms, ps, discovery)
@@ -61,7 +81,9 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(0, dispatcher, testGrace)
-        tunnel = new NeblinkRelayTunnel(ms, "http://127.0.0.1:9", () => None)(dispatcher)
+        // 2026-09-11：构造参 serverUrl 已移除（连接期 live 解析）。本 spec 只驱动
+        // 帧解析，从不起隧道 ⇒ 无需配置 server 址。
+        tunnel = new NeblinkRelayTunnel(ms, () => IO.pure(None))(dispatcher)
         out <- use(ms, tunnel)
       yield out
     }
@@ -130,7 +152,11 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
         _ <- discovery.heartbeatCycle
         _ <- IO.sleep(testGrace + 300.millis)
         after <- ms.peers
-      yield assertEquals(after.exists(_.deviceId == "kai-ghost"), false, "heartbeat with empty response must evict ghost")
+      yield assertEquals(
+        after.exists(_.deviceId == "kai-ghost"),
+        false,
+        "heartbeat with empty response must evict ghost"
+      )
     }
   }
 
@@ -207,8 +233,10 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
         after <- ms.peers
       yield
         val p = after.find(_.deviceId == "dead").getOrElse(fail("offline-flagged peer stays listed"))
-        assert(!NeblinkService.isPeerOnline(p, System.currentTimeMillis(), 45),
-          "a heartbeat response carrying online=false must not mark the peer fresh")
+        assert(
+          !NeblinkService.isPeerOnline(p, System.currentTimeMillis(), 45),
+          "a heartbeat response carrying online=false must not mark the peer fresh"
+        )
     }
   }
 
@@ -218,21 +246,30 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
         _ <- ms.upsertPeer(peer("camel"))
         _ <- ms.upsertPeer(peer("snake"))
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"camel","online":false}""").toOption.get)
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"camel","online":false}""").toOption.get
+        )
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","device_id":"snake","online":false}""").toOption.get)
+          io.circe.parser.parse("""{"type":"device_status_update","device_id":"snake","online":false}""").toOption.get
+        )
         after <- ms.peers
       yield
         val now = System.currentTimeMillis()
-        assert(!after.exists(p => p.deviceId == "camel" && NeblinkService.isPeerOnline(p, now, 45)), "camelCase frame must apply")
-        assert(!after.exists(p => p.deviceId == "snake" && NeblinkService.isPeerOnline(p, now, 45)), "snake_case frame must apply")
+        assert(
+          !after.exists(p => p.deviceId == "camel" && NeblinkService.isPeerOnline(p, now, 45)),
+          "camelCase frame must apply"
+        )
+        assert(
+          !after.exists(p => p.deviceId == "snake" && NeblinkService.isPeerOnline(p, now, 45)),
+          "snake_case frame must apply"
+        )
     }
   }
 
   test("DeviceStatusUpdate frame without deviceId is ignored, not fatal") {
     withTunnel { (_, tunnel) =>
       tunnel.handleDeviceStatusUpdate(
-        io.circe.parser.parse("""{"type":"device_status_update","online":false}""").toOption.get)
+        io.circe.parser.parse("""{"type":"device_status_update","online":false}""").toOption.get
+      )
     }
   }
 
@@ -243,22 +280,30 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
   // from the upcoming server online-broadcast would have been misread as
   // OFFLINE. These tests pin the dual-field toleration.
 
-  test("DeviceStatusUpdate status-string frame (current server wire) flips a peer online/offline (fix-client-events #1)") {
+  test(
+    "DeviceStatusUpdate status-string frame (current server wire) flips a peer online/offline (fix-client-events #1)"
+  ) {
     withTunnel { (ms, tunnel) =>
       for
         _ <- ms.upsertPeer(peer("srv"))
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"srv","status":"online"}""").toOption.get)
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"srv","status":"online"}""").toOption.get
+        )
         afterOnline <- ms.peers
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"srv","status":"offline"}""").toOption.get)
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"srv","status":"offline"}""").toOption.get
+        )
         afterOffline <- ms.peers
       yield
         val now = System.currentTimeMillis()
-        assert(afterOnline.exists(p => p.deviceId == "srv" && NeblinkService.isPeerOnline(p, now, 45)),
-          "status:online must mark the peer online")
-        assert(!afterOffline.exists(p => p.deviceId == "srv" && NeblinkService.isPeerOnline(p, now, 45)),
-          "status:offline must mark the peer offline")
+        assert(
+          afterOnline.exists(p => p.deviceId == "srv" && NeblinkService.isPeerOnline(p, now, 45)),
+          "status:online must mark the peer online"
+        )
+        assert(
+          !afterOffline.exists(p => p.deviceId == "srv" && NeblinkService.isPeerOnline(p, now, 45)),
+          "status:offline must mark the peer offline"
+        )
     }
   }
 
@@ -267,12 +312,15 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
       for
         _ <- ms.upsertPeer(peer("cs"))
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"cs","status":"ONLINE"}""").toOption.get)
+          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"cs","status":"ONLINE"}""").toOption.get
+        )
         after <- ms.peers
       yield
         val now = System.currentTimeMillis()
-        assert(after.exists(p => p.deviceId == "cs" && NeblinkService.isPeerOnline(p, now, 45)),
-          "status:ONLINE (upper-case) must still mark online")
+        assert(
+          after.exists(p => p.deviceId == "cs" && NeblinkService.isPeerOnline(p, now, 45)),
+          "status:ONLINE (upper-case) must still mark online"
+        )
     }
   }
 
@@ -282,12 +330,55 @@ class NeblinkPresenceConvergenceSpec extends CatsEffectSuite:
         _ <- ms.upsertPeer(peer("both"))
         // online:true takes priority over a contradictory status:string
         _ <- tunnel.handleDeviceStatusUpdate(
-          io.circe.parser.parse("""{"type":"device_status_update","deviceId":"both","online":true,"status":"offline"}""").toOption.get)
+          io.circe.parser
+            .parse("""{"type":"device_status_update","deviceId":"both","online":true,"status":"offline"}""")
+            .toOption
+            .get
+        )
         after <- ms.peers
       yield
         val now = System.currentTimeMillis()
-        assert(after.exists(p => p.deviceId == "both" && NeblinkService.isPeerOnline(p, now, 45)),
-          "online:true must win over status:offline")
+        assert(
+          after.exists(p => p.deviceId == "both" && NeblinkService.isPeerOnline(p, now, 45)),
+          "online:true must win over status:offline"
+        )
+    }
+  }
+
+  // ===== ② self 过滤对称化（名册入口带 self ⇒ 本机把自己列进设备面并拨通自己）=====
+  //
+  // 判据源 = `NeblinkService.handleAnnounce:329`（announce 路径已有 self 过滤）；名册路径
+  // `NeblinkClient.toNeblinkPeers` 改前没有同判据。两条 namelist 腿（心跳 / 发现）必须**都**过闸。
+  // 🔴 改前红臂取在**调用点级**（discovery 两条腿）：直接调 `toNeblinkPeers(_, Some(self))` 的
+  // spec 在改前**不存在该签名**（编译不过），而调用点级红臂改前可编译、且同时钉住两个调用点。
+
+  test("② 心跳腿：服务端名册回传本机自身时不得进设备面（self 条目被剔除）") {
+    withStack { (ms, _, discovery) =>
+      for
+        me <- ms.identity
+        _ <- discovery.setClient(Some(stubClient(List(serverPeer(me.deviceId), serverPeer("peer-2")))))
+        _ <- discovery.heartbeatCycle
+        after <- ms.peers
+      yield
+        assertEquals(
+          after.exists(_.deviceId == me.deviceId),
+          false,
+          s"本机自身（${me.deviceId}）不得出现在设备面：${after.map(_.deviceId)}"
+        )
+        assert(after.exists(_.deviceId == "peer-2"), s"非 self 条目必须照旧入册：${after.map(_.deviceId)}")
+    }
+  }
+
+  test("② 发现腿：discoverViaServer 同样不得把本机自身写进设备面") {
+    withStack { (ms, _, discovery) =>
+      for
+        me <- ms.identity
+        _ <- discovery.setClient(Some(discoverStubClient(List(serverPeer(me.deviceId), serverPeer("peer-3")))))
+        _ <- discovery.discoverCycle
+        after <- ms.peers
+      yield
+        assertEquals(after.exists(_.deviceId == me.deviceId), false, s"发现腿同样必须剔除 self：${after.map(_.deviceId)}")
+        assert(after.exists(_.deviceId == "peer-3"), s"非 self 条目照旧入册：${after.map(_.deviceId)}")
     }
   }
 

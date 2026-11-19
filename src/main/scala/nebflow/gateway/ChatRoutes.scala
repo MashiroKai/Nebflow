@@ -1,97 +1,188 @@
 package nebflow.gateway
 
-import cats.effect.IO
+import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.NebflowError
 import nebflow.gateway.GatewayCodecs.given
-import nebflow.llm.FallbackExhaustedError
+import nebflow.shared.*
 import nebflow.shared.given
-import nebflow.shared.{LlmHandle, LlmRequest, StreamChunk}
 import org.http4s.circe.CirceEntityCodec.*
 import org.http4s.dsl.io.*
 import org.http4s.headers.Authorization
 import org.http4s.{HttpRoutes, ServerSentEvent}
 
-class ChatRoutes(handle: LlmHandle[IO], token: String):
+class ChatRoutes(
+  handle: LlmHandle[IO],
+  /**
+   * Phase 3b: the LIVE file token (Ref, not a boot snapshot) — a rotation
+   * swaps it and the old Bearer dies on this running gateway immediately.
+   */
+  tokenRef: Ref[IO, String],
+  /** Phase 3b: the console session store (the new session rail). */
+  sessions: GatewaySessionStore = GatewaySessionStore.unsafeCreate()
+):
 
+  /**
+   * Phase 3b: the unified GatewayAuth criterion under `OpenAiCompat` —
+   * Bearer(file) + the NEW session rail; no param/legacy-cookie/PAT (no
+   * surface growth). The 401 semantics are UNCHANGED, including the
+   * body split: a request that presented an `Authorization: Bearer …`
+   * header gets "Invalid token"; anything else gets "Missing Authorization
+   * header" (the OpenAI-compat face's deliberate shape). The header-present
+   * probe keeps that split exact even though the criterion now also accepts
+   * session cookies.
+   */
   private def checkAuth(req: org.http4s.Request[IO]): IO[Either[org.http4s.Response[IO], Unit]] =
-    IO.delay {
-      req.headers.get[Authorization] match
-        case Some(Authorization(org.http4s.Credentials.Token(org.http4s.AuthScheme.Bearer, t))) =>
-          if Auth.validateToken(t, token) then Right(())
-          else
-            Left(
-              org.http4s
-                .Response[IO](status = org.http4s.Status.Unauthorized)
-                .withEntity(Json.obj("error" -> "Invalid token".asJson))
-            )
-        case _ =>
+    tokenRef.get
+      // GatewayOwnership callers derive principals only from the validated server
+      // session cookie. A Bearer credential (file token or PAT) has no account
+      // owner and must not authenticate owner-scoped gateway/chat requests.
+      .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.StaticAuth))
+      .map {
+        case Some(_) => Right(())
+        case None =>
+          val presentedBearer = req.headers.get[Authorization].exists {
+            case Authorization(org.http4s.Credentials.Token(org.http4s.AuthScheme.Bearer, _)) => true
+            case _ => false
+          }
           Left(
             org.http4s
               .Response[IO](status = org.http4s.Status.Unauthorized)
-              .withEntity(Json.obj("error" -> "Missing Authorization header".asJson))
+              .withEntity(
+                if presentedBearer then Json.obj("error" -> "Invalid token".asJson)
+                else Json.obj("error" -> "Missing Authorization header".asJson)
+              )
           )
-    }
+      }
 
   def routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case req @ POST -> Root / "v1" / "chat" =>
       checkAuth(req).flatMap {
         case Left(resp) => IO.pure(resp)
         case Right(_) =>
-          req
-            .as[LlmRequest]
-            .flatMap { llmReq =>
-              handle.send(llmReq).flatMap(resp => Ok(resp.asJson))
-            }
-            .handleErrorWith {
-              case e: FallbackExhaustedError =>
-                val attemptSummaries =
-                  e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
-                val msg = NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
-                BadGateway(Json.obj("error" -> msg.asJson, "attempts" -> e.attempts.asJson))
-              case other =>
-                val msg = NebflowError.toUserMessage(
-                  NebflowError.Internal(
-                    Option(other.getMessage).getOrElse("internalError")
-                  )
-                )
-                InternalServerError(Json.obj("error" -> msg.asJson))
-            }
+          // visionfix (甲): the failure mapping needs the REQUEST (to know
+          // whether it carried images), and the request only exists inside the
+          // decode continuation — so the decode result is bound explicitly
+          // instead of letting the outer `handleErrorWith` reach back for a
+          // variable it cannot see. Decode failures take the no-request branch,
+          // which reproduces the previous mapping verbatim (generic "Internal"
+          // wording); no other observable behaviour changes.
+          req.as[LlmRequest].attempt.flatMap {
+            case Right(llmReq) =>
+              handle
+                .send(llmReq)
+                .flatMap(resp => Ok(resp.asJson))
+                .handleErrorWith(llmFailureResponse(Some(llmReq)))
+            case Left(decodeErr) =>
+              llmFailureResponse(None)(decodeErr)
+          }
       }
 
     case req @ POST -> Root / "v1" / "chat" / "stream" =>
       checkAuth(req).flatMap {
         case Left(resp) => IO.pure(resp)
         case Right(_) =>
-          req
-            .as[LlmRequest]
-            .flatMap { llmReq =>
+          req.as[LlmRequest].attempt.flatMap {
+            case Right(llmReq) =>
               val sseStream = handle
                 .sendStream(llmReq)
                 .map(toSse)
                 .handleErrorWith { err =>
                   fs2.Stream.emit(errorSse(err))
                 }
-              Ok(sseStream)
-            }
-            .handleErrorWith {
-              case e: FallbackExhaustedError =>
-                val attemptSummaries =
-                  e.attempts.map(a => s"${a.providerId}/${a.model}: ${a.reason.map(_.toString).getOrElse("unknown")}")
-                val msg = NebflowError.toUserMessage(NebflowError.LlmFailed(e.getMessage, attemptSummaries))
-                BadGateway(Json.obj("error" -> msg.asJson, "attempts" -> e.attempts.asJson))
-              case other =>
-                val msg = NebflowError.toUserMessage(
-                  NebflowError.Internal(
-                    Option(other.getMessage).getOrElse("internalError")
-                  )
-                )
-                InternalServerError(Json.obj("error" -> msg.asJson))
-            }
+              Ok(sseStream).handleErrorWith(llmFailureResponse(Some(llmReq)))
+            case Left(decodeErr) =>
+              llmFailureResponse(None)(decodeErr)
+          }
+      }
+
+    // OpenAI wire-format alias (batch B2, "立项（最小形态）" — author ruling
+    // 2026-09-24). ONE extra path on the SAME routes value, behind the SAME
+    // `checkAuth` gate: no second auth face, no `/v1/models`, no SSE semantics,
+    // no new dependency. `OpenAiChatShim` owns the whole line-format
+    // conversion; this case only does auth → parse → convert → send → convert,
+    // so the two in-tree paths above keep their existing semantics.
+    //
+    // The body is read as RAW TEXT (`bodyText.compile.string` — the same idiom
+    // as RestApiRoutes.scala:2463 / WebSocketRoutes.scala:5704) and parsed
+    // explicitly with `io.circe.parser`: this face must own its parse-failure
+    // path (the OpenAI error envelope), and `req.as[Json]` / `req.as[String]`
+    // resolve through the ambient implicit EntityEncoders (with this file's
+    // circe imports they are the JSON-aware decoders), so neither is a stable
+    // carrier for a wire-format contract. Raw stream → String removes that
+    // coupling.
+    case req @ POST -> Root / "v1" / "chat" / "completions" =>
+      checkAuth(req).flatMap {
+        case Left(resp) => IO.pure(resp)
+        case Right(_) =>
+          req.bodyText.compile.string.attempt.flatMap {
+            case Left(_) => openAiRejected(OpenAiChatShim.malformedBody)
+            case Right(raw) =>
+              io.circe.parser.parse(raw) match
+                case Left(_) => openAiRejected(OpenAiChatShim.malformedBody)
+                case Right(body) =>
+                  OpenAiChatShim.toLlmRequest(body) match
+                    case Left(rejected) => openAiRejected(rejected)
+                    case Right(llmReq) =>
+                      handle
+                        .send(llmReq)
+                        .flatMap(resp => Ok(OpenAiChatShim.toOpenAiResponse(resp)))
+                        .handleErrorWith(llmFailureResponse(Some(llmReq)))
+          }
       }
   }
+
+  /**
+   * OpenAI-shaped refusal: the same 4xx status the shim declares plus the
+   * OpenAI error envelope (`type`/`param`/`code`), so a caller that parses the
+   * OpenAI error shape gets usable feedback instead of a bare status.
+   */
+  private def openAiRejected(
+    rejected: OpenAiChatShim.Rejected
+  ): IO[org.http4s.Response[IO]] =
+    IO.pure(
+      org.http4s
+        .Response[IO](status = org.http4s.Status.fromInt(rejected.status).getOrElse(org.http4s.Status.BadRequest))
+        .withEntity(OpenAiChatShim.errorEnvelope(rejected))
+    )
+
+  /**
+   * visionfix (甲): shared failure mapping for both chat faces. `llmReq` is
+   * `None` only on a decode failure, where there is no request to inspect.
+   * The "images could not be delivered" wording is chosen from
+   * `FallbackExhaustedError.hadImage` (set at the send point in
+   * `LlmInterface`) or, as a fallback, from the request body — `hadImageIn` is
+   * the single predicate.
+   */
+  private def llmFailureResponse(
+    llmReq: Option[LlmRequest]
+  ): Throwable => IO[org.http4s.Response[IO]] = {
+    case e: FallbackExhaustedError =>
+      val hadImg = e.hadImage || llmReq.exists(nabflowHadImage)
+      // flysin 收口批（2026-11-04）：与 AgentProcessing 同源——统一走
+      // `NebflowError.llmFailure`（唯一的字段装配点）。上游明说「该模型不收图」
+      // 时点名模型，别让 REST/OpenAI 面回落到笼统的 provider 失败。
+      val msg = NebflowError.toUserMessage(NebflowError.llmFailure(e, hadImage = hadImg))
+      BadGateway(Json.obj("error" -> msg.asJson, "attempts" -> e.attempts.asJson))
+    case other =>
+      val msg = NebflowError.toUserMessage(
+        NebflowError.Internal(
+          Option(other.getMessage).getOrElse("internalError")
+        )
+      )
+      InternalServerError(Json.obj("error" -> msg.asJson))
+  }
+
+  /**
+   * visionfix (甲): did this REST request carry image content? Used to pick the
+   * "images could not be delivered" wording instead of a generic chain failure.
+   * `LlmInterface.hadImageIn` is the single predicate (public for exactly this
+   * cross-package use).
+   */
+  private def nabflowHadImage(req: LlmRequest): Boolean =
+    nebflow.llm.LlmInterface.hadImageIn(req.messages)
 
   private def toSse(chunk: StreamChunk): ServerSentEvent =
     ServerSentEvent(data = Some(chunk.asJson.noSpaces))

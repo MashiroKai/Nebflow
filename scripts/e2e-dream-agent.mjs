@@ -3,7 +3,7 @@
 //
 // 验收链（真实全环）：隔离 NEBFLOW_HOME + 隔离实例（sbt run --home/--port，
 // 绝非 8080 宿主）+ OpenAI 兼容 stub LLM（内嵌，捕获全部请求）：
-//   0. snapshot-on-write 集成：Nebula turn① → stub 回 MemoryEdit(target=user,
+//   0. snapshot-on-write 集成：Nebula turn① → stub 回 MemoryNote(target=user,
 //      append) → 断言 <home>/memory-backups/<ts>/User.md 含【写前真身】且
 //      User.md 含新条目（备份先于写、fail-closed 的实例级证据）
 //   1. Nebula turn② → stub 回 Task(project="dream-accept", task=梦境日审…)
@@ -18,22 +18,27 @@
 //   5. 断言 flow-map 节点 completed 且 result 含报告标记（out 边投递链）
 //
 // Run（worktree 根）：node scripts/e2e-dream-agent.mjs
-// Env：KEEP=1 保留 fixture（默认跑完即删）；GATEWAY_PORT=8098 MOCK_PORT=18998
+// Env：默认跑完**不删** fixture（要清理设 CLEAN=1 / NB_CLEAN=1；NB_DRY_RUN=1 只跑删除守卫断言）；
+//      GATEWAY_PORT=8098 MOCK_PORT=18998
 // （与 8095/8096/8097 及其 stub 端口错开）。
 
 import { spawn, execSync } from 'node:child_process';
 import http from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, cpSync, rmSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, cpSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { guardFixtureHome, safeRm } from './lib/delguard.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const GATEWAY_PORT = Number(process.env.GATEWAY_PORT || 8098);
 const MOCK_PORT = Number(process.env.MOCK_PORT || 18998);
 const BASE = `http://127.0.0.1:${GATEWAY_PORT}`;
 const HOME = process.env.NEBFLOW_HOME || join(tmpdir(), `nb-dream-e2e-${Date.now()}`);
+// R4 删除守卫：解析后的真实绝对路径必须落 tmpdir 之下（≠ tmpdir 自身）——早期 fail-fast，先于任何 spawn。
+// NB_DRY_RUN=1：只跑断言、不删除、不 spawn（下游负控入口）。
+guardFixtureHome(HOME, { label: 'e2e-dream-agent' });
 const DISPATCHER_SRC = process.env.DISPATCHER_AGENT_SRC || join(homedir(), '.nebflow', 'agents', 'project-dispatcher');
 const DREAM_SRC = join(REPO, 'staging', 'agents-dream');
 const PROJECT = 'dream-accept';
@@ -68,8 +73,8 @@ async function cleanup() {
       }
     } catch { /* no listener — good */ }
   }
-  if (!process.env.KEEP) { try { rmSync(HOME, { recursive: true, force: true }); } catch { /* best effort */ } }
-  else console.log(`KEEP=1 — fixture home retained: ${HOME}`);
+  // 删除点二次断言；默认不删（要清理设 CLEAN=1）——非 tmp 隔离 home 在此处也会被拒
+  safeRm(HOME, { label: 'e2e-dream-agent' });
 }
 for (const sig of ['SIGINT', 'SIGTERM', 'uncaughtException', 'unhandledRejection']) {
   process.on(sig, async (e) => { if (e) console.error(e); await cleanup(); process.exit(1); });
@@ -144,14 +149,14 @@ function streamFor(body) {
     }
     return finalOk();
   }
-  // nebula：turn1 = MemoryEdit（snapshot 集成），turn2 = Task(→dream-accept)，其余收尾
+  // nebula：turn1 = MemoryNote（snapshot 集成），turn2 = Task(→dream-accept)，其余收尾
   const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
   const turn = lastUser ? msgText(lastUser) : '';
   if (last?.role === 'tool') return finalOk(); // 工具回填轮收尾（防 stub 循环发同工具）
   if (turn.includes('E2E turn1')) {
     return done([
       chunk({ role: 'assistant', content: '' }),
-      chunk(toolCall('call_memedit', 'MemoryEdit', { target: 'user', action: 'append', content: SNAPSHOT_NEW })),
+      chunk(toolCall('call_memnote', 'MemoryNote', { target: 'user', action: 'append', content: SNAPSHOT_NEW })),
       chunk({}, 'tool_calls'),
     ]);
   }
@@ -261,16 +266,16 @@ async function api(path, method = 'GET', body) {
   return { status: res.status, json: await res.json().catch(() => null), text: await res.text().catch(() => '') };
 }
 
-// turn①：MemoryEdit append → snapshot-on-write 集成断言
+// turn①：MemoryNote append → snapshot-on-write 集成断言
 const sess = await api('/sessions', 'POST', { name: 'e2e-dream', agentName: 'Nebula' });
 const sid = sess.json?.id ?? sess.json?.sessionId;
 check('create Nebula session', sess.status === 200 && !!sid, JSON.stringify(sess.json || {}).slice(0, 120));
 {
   const t1 = await api(`/sessions/${sid}/turn`, 'POST', {
-    content: 'E2E turn1：立即调用 MemoryEdit 工具，target=user，action=append，content 一条单行条目。除此之外什么都不要做。',
+    content: 'E2E turn1：立即调用 MemoryNote 工具，target=user，action=append，content 一条单行条目。除此之外什么都不要做。',
     timeoutSec: 150,
   });
-  check('Nebula turn1 completes (MemoryEdit fired)', t1.status === 200, `status=${t1.status}`);
+  check('Nebula turn1 completes (MemoryNote fired)', t1.status === 200, `status=${t1.status}`);
 }
 {
   let landed = false, backupHit = false;
@@ -278,7 +283,7 @@ check('create Nebula session', sess.status === 200 && !!sid, JSON.stringify(sess
     await sleep(1000);
     landed = existsSync(join(HOME, 'User.md')) && readFileSync(join(HOME, 'User.md'), 'utf8').includes(SNAPSHOT_NEW);
   }
-  check('MemoryEdit append landed in fixture User.md', landed);
+  check('MemoryNote append landed in fixture User.md', landed);
   const root = join(HOME, 'memory-backups');
   if (existsSync(root)) {
     for (const d of readdirSync(root)) {
@@ -317,11 +322,11 @@ const ctxOf = (c) => (c ? (c.messages || []).map((m) => `${m.role}: ${msgText(m)
 
 check('dispatcher spawn request captured', !!disp);
 check('dream node spawn request captured (agent definition loaded)', !!dream1 && sysOf(dream1).includes('梦境审计员'));
-check('dream node is NOT given write tools (MemoryEdit/Write absent from its tool surface)',
+check('dream node is NOT given write tools (MemoryNote/Write absent from its tool surface)',
   !!dream1 && (() => { const s = sysOf(dream1); return true; })() && (() => {
     // 工具面在请求 tools 数组里——captured 未存 tools，改从 dream1 请求原文不可得；用磁盘定义断言
     const def = JSON.parse(readFileSync(join(HOME, 'agents', 'dream', 'agent.json'), 'utf8'));
-    return !def.tools.includes('Write') && !def.tools.includes('Edit') && !def.tools.includes('MemoryEdit');
+    return !def.tools.includes('Write') && !def.tools.includes('Edit') && !def.tools.includes('MemoryNote');
   })());
 check('dream node Read follow-up captured', !!dream2);
 check('audit read exception: fixture User.md read INSIDE dream sandbox (tool result carries seed)',

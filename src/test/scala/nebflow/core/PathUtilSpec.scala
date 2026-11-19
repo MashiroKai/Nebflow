@@ -3,6 +3,7 @@ package nebflow.core
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.FunSuite
+import nebflow.shared.PathUtil
 
 class PathUtilSpec extends FunSuite:
 
@@ -80,7 +81,7 @@ class PathUtilSpec extends FunSuite:
   }
 
   // ===== isAbsolute: dual-platform semantics matrix =====
-  // Regression gate for the KAI file-browser fix (diag-win-paths): pop.readFile
+  // Regression gate for the file-browser Windows-path fix (diag-win-paths): pop.readFile
   // used naive `startsWith("/")`, rejecting every Windows path form. These are
   // pure string checks — identical results on any host OS.
 
@@ -114,7 +115,7 @@ class PathUtilSpec extends FunSuite:
   }
 
   test("isAbsolute: drive-like edge cases") {
-    assertEquals(PathUtil.isAbsolute("C"), false)  // single char, no colon
+    assertEquals(PathUtil.isAbsolute("C"), false) // single char, no colon
     assertEquals(PathUtil.isAbsolute("CX"), false) // colon check is position 1 only
     assertEquals(PathUtil.isAbsolute(":C"), false)
   }

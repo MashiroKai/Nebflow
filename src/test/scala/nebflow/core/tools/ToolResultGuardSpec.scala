@@ -4,16 +4,16 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import munit.CatsEffectSuite
-import nebflow.core.{PathUtil, ToolExecResult}
-import nebflow.shared.{Defaults, ToolCall}
+import nebflow.shared.{Defaults, PathUtil, ToolCall, ToolExecResult}
 
 import java.nio.file.Files
 
-/** #38 Layer A — Read 豁免堵死 + guard 对 ∞ 防御回退（2026-09-01）。
-  *
-  * 回归护栏：任何工具（含 Read）的超大单结果必须走落盘+预览路径；
-  * 回读落盘文件被 Read 守卫拦截（Read 上限 = 50K，非 ∞）。
-  */
+/**
+ * #38 Layer A — Read 豁免堵死 + guard 对 ∞ 防御回退（2026-09-01）。
+ *
+ * 回归护栏：任何工具（含 Read）的超大单结果必须走落盘+预览路径；
+ * 回读落盘文件被 Read 守卫拦截（Read 上限 = 50K，非 ∞）。
+ */
 class ToolResultGuardSpec extends CatsEffectSuite:
 
   private val testRoot = Files.createTempDirectory("tool-result-guard-test")
@@ -77,7 +77,9 @@ class ToolResultGuardSpec extends CatsEffectSuite:
   test("error results skip the guard (existing semantics preserved)"):
     val big = "e" * (Defaults.DefaultMaxResultSizeChars + 5_000)
     val guarded =
-      ToolResultGuard.guardResult(toolCall("Read"), ToolExecResult(content = big, isError = true), "sess-e").unsafeRunSync()
+      ToolResultGuard
+        .guardResult(toolCall("Read"), ToolExecResult(content = big, isError = true), "sess-e")
+        .unsafeRunSync()
     assertEquals(guarded.content, big)
 
   // ---- Batch 预算（M2 既有语义回归护栏）----

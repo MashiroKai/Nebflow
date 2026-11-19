@@ -1,0 +1,112 @@
+{
+  "version": 1,
+  "change": "profile-multidevice",
+  "mappings": [
+    {
+      "requirement": "DIS-REQ-001",
+      "scenario": "DIS-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/profileDevices.js",
+        "src/main/resources/web/js/settingsIdentity.js",
+        "src/main/resources/web/js/mobile/meFace.js",
+        "src/main/scala/nebflow/gateway/NeblinkRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": ": per-device independent sign-out is scoped and isolated"
+        }
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-001",
+      "scenario": "DIS-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/profileDevices.js",
+        "src/main/scala/nebflow/gateway/NeblinkRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-devices-geometry.spec.mjs",
+          "name": "device"
+        }
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-002",
+      "scenario": "DIS-SCN-003",
+      "implementation": [
+        "src/main/resources/web/js/profileDevices.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": "mobile: one status tick repaints every live device list, not just the first"
+        }
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-002",
+      "scenario": "DIS-SCN-004",
+      "implementation": [
+        "src/main/resources/web/js/profileDevices.js",
+        "src/main/resources/web/js/dom.js",
+        "src/main/resources/web/js/settingsIdentity.js",
+        "src/main/resources/web/js/mobile/meFace.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": ": device list shows name / platform / recent activity / status / current device"
+        }
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-003",
+      "scenario": "DIS-SCN-005",
+      "implementation": [
+        "src/main/resources/web/js/profileDevices.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": ": device list shows name / platform / recent activity / status / current device"
+        }
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-004",
+      "scenario": "DIS-SCN-006",
+      "implementation": [
+        "src/main/resources/web/js/mobile/navController.js",
+        "src/main/resources/web/js/mobile/meFace.js",
+        "src/main/resources/web/js/settingsIdentity.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": ": profile is a single page — no edit action, no subpages"
+        },
+        {
+          "path": "tests/settings-identity-card.spec.mjs",
+          "name": "identity"
+        }
+      ]
+    },
+    {
+      "requirement": "DIS-REQ-005",
+      "scenario": "DIS-SCN-007",
+      "implementation": [
+        "openspec/changes/profile-multidevice/design.md",
+        "src/main/resources/web/js/profileDevices.js",
+        "src/main/scala/nebflow/gateway/NeblinkRoutes.scala"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The claim is a written scope statement (which domain a change touches, with source locations), not an executable behaviour. Console sessions carry no device id in the gateway session record, so no test can assert the boundary; the source reading is the evidence.",
+        "steps": "Read openspec/changes/profile-multidevice/design.md and compare it with src/main/resources/web/js/profileDevices.js (device identity readout and sign-out scoping), src/main/scala/nebflow/gateway/NeblinkRoutes.scala (device-scoped route) and the session-record definition (no device id field).",
+        "expected": "The writing names the device identity source and the sign-out scope with file:line, and states console-session transparency as the boundary of the change instead of leaving it implicit."
+      }
+    }
+  ]
+}

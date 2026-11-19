@@ -33,8 +33,10 @@ object RunningFlowRegistry:
     status: NodeStatus, // running | completed | failed | cancelled
     startedAt: Long,
     completedAt: Option[Long] = None,
-    sessionId: Option[String] = None, // #407: triggering agent's OWN session — Mail idle gate associates in-flight flows via f.sessionId.contains(sid); do NOT repurpose to root
-    rootSessionId: Option[String] = None // #412: outermost root session — badge ownership / window routing (distinct from sessionId)
+    sessionId: Option[String] =
+      None, // #407: triggering agent's OWN session — Mail idle gate associates in-flight flows via f.sessionId.contains(sid); do NOT repurpose to root
+    rootSessionId: Option[String] =
+      None // #412: outermost root session — badge ownership / window routing (distinct from sessionId)
   )
 
   private val flows: Ref[IO, Map[String, RunningFlow]] = Ref.unsafe(Map.empty)
@@ -68,7 +70,7 @@ object RunningFlowRegistry:
       abortSignals.modify { m =>
         m.get(instanceId) match
           case Some(existing) => (m, existing)
-          case None           => (m + (instanceId -> fresh), fresh)
+          case None => (m + (instanceId -> fresh), fresh)
       }
     }
 
@@ -106,7 +108,7 @@ object RunningFlowRegistry:
       cancelSignals.modify { m =>
         m.get(instanceId) match
           case Some(existing) => (m, existing)
-          case None           => (m + (instanceId -> fresh), fresh)
+          case None => (m + (instanceId -> fresh), fresh)
       }
     }
 
@@ -161,14 +163,16 @@ object RunningFlowRegistry:
    * Called periodically to prevent unbounded memory growth.
    */
   def cleanupStale(retentionMs: Long = 5 * 60 * 1000): IO[Unit] =
-    flows.modify { m =>
-      val now = System.currentTimeMillis()
-      val kept = m.filterNot { (_, rf) =>
-        (rf.status == NodeStatus.Completed || rf.status == NodeStatus.Failed) &&
-        rf.completedAt.exists(now - _ > retentionMs)
+    flows
+      .modify { m =>
+        val now = System.currentTimeMillis()
+        val kept = m.filterNot { (_, rf) =>
+          (rf.status == NodeStatus.Completed || rf.status == NodeStatus.Failed) &&
+          rf.completedAt.exists(now - _ > retentionMs)
+        }
+        (kept, kept)
       }
-      (kept, kept)
-    }.flatMap(kept => cancelSignals.update(sig => sig.filter((id, _) => kept.contains(id))))
+      .flatMap(kept => cancelSignals.update(sig => sig.filter((id, _) => kept.contains(id))))
 
   def toJson(flow: RunningFlow): JsonObject = JsonObject.fromIterable(
     List(

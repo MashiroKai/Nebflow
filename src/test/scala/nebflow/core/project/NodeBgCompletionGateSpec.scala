@@ -7,14 +7,15 @@ import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behaviors}
-import nebflow.agent.{AgentCommand, AgentEvent, AgentKind, AgentLibrary, AgentRecord, SharedResources}
-import nebflow.core.PathUtil
+import nebflow.actor.{AgentCommand, AgentEvent, AgentKind, AgentRecord}
+import nebflow.agent.{AgentLibrary, SharedResources, SpecResources}
 import nebflow.core.processor.TaskStuckWatcher
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ToolContext}
-import nebflow.gateway.{RateLimiter, SessionStore, WsHub}
-import nebflow.llm.{ModelCandidate, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, StreamChunk}
+import nebflow.core.tools.{BgTaskRegistry, FileLockManager, NodeEditTool, ShellSession, ToolContext}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.gateway.WsHub
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
@@ -30,8 +31,8 @@ import scala.concurrent.duration.*
  * - G4 超时/停滞杀 → failed 注明：等待集内任务被看护杀（registry 终局记账）
  *   → 节点 Failed（非 Cancelled——杀因原文措辞净化）+ result 含杀因与 agent
  *   消化失败通知后的最终输出
- * - G5 等待总上限兜底：等待期超 bgWaitCapMs → Failed + 注明（后台任务不能
- *   卡死节点）
+ * - G5 等待总上限兜底 → **转挂起**（killruling 批裁定 #17）：等待期超 backgroundWaitCapMs →
+ *   节点**保持 Running**（挂起中，不再 failed）+ `bg-wait-timeout` 事件
  * - G6 下游 out 交互：节点（out 指向下游节点）先等后台（bg-wait 留痕）再
  *   finalize completed——bg 等待先于终态投递发生
  * - G7 卡死防护：等待期 agent=Idle，TaskStuckWatcher 不命中（Idle 永不判
@@ -51,9 +52,14 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
   private val tempRoot: os.Path = os.pwd / "target" / "test-node-bg-gate"
   private val originalRoot = PathUtil.dataRoot
 
-  PathUtil.setDataRoot(tempRoot)
+  // 构造期换根纪律（2026-09-18 判例 6a68914c1 同款残件，S1 组负载敏红族）：**先清树，最后换根**
+  // —— 若先 setDataRoot 再 os.remove.all，此刻全局根已指向本树，前序套件收尾期仍在跑的
+  // 异步写入（按 PathUtil.dataRoot 落盘）会在删树遍历中途把目录重新建出来 ⇒ 构造期
+  // DirectoryNotEmptyException / 组合跑互踩（构造期换根纪律的残件族）。
   os.remove.all(tempRoot)
+  PathUtil.setDataRoot(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "test-agent")
+
   os.write.over(
     tempRoot / "agents" / "test-agent" / "agent.json",
     """{"name":"test-agent","description":"bg gate regression agent","tools":[],"category":"standalone"}"""
@@ -61,17 +67,23 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
   os.write.over(tempRoot / "agents" / "test-agent" / "system.md", "# test-agent\n")
   // 2026-09-05 agent 退役：新建节点执行统一 general——fixture 侧补 general agent
   os.makeDir.all(tempRoot / "agents" / "general")
-  os.write.over(tempRoot / "agents" / "general" / "agent.json",
-    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}""")
+
+  os.write.over(
+    tempRoot / "agents" / "general" / "agent.json",
+    """{"name":"general","description":"general executor","tools":[],"category":"standalone"}"""
+  )
   os.write.over(tempRoot / "agents" / "general" / "system.md", "# general\n")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
 
-  /** 后台任务模拟 stub LLM：首轮请求时在 BgTaskRegistry 登记一个等待型任务
-    * （模拟 agent 起 run_in_background 后台命令——真实登记在 BashTool，spec 用
-    * registry 直种等价），应答请求首行；后续轮（通知唤醒轮）应答 "bg-noted"。
-    * 登记的 jobId/sessionId 记入 Ref 供 spec 断言与清理。 */
+  /**
+   * 后台任务模拟 stub LLM：首轮请求时为本节点会话起**真后台进程**（
+   * ShellSession.executeBackground——death-watch 批：活性探针读内核进程事实，
+   * 合成行会被判 owner-lost 收割，hold 语义无从钉住）并登记等待型任务，
+   * 应答请求首行；后续轮（通知唤醒轮）应答 "bg-noted"。
+   * 登记的 jobId/sessionId 记入 Ref 供 spec 断言与 cleanupBg 清理。
+   */
   private class BgStubLlm(persistent: Boolean = false, registerTask: Boolean = true):
     val jobIds: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
     val nodeSessions: Ref[IO, List[String]] = Ref.unsafe[IO, List[String]](Nil)
@@ -79,68 +91,72 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     // 循环依赖解法（handle 需 res，mkResources 需 handle）：spec 在 mkResources
     // 后回填 res；首轮 LLM 请求发生在回填之后，时序安全。
     @volatile var res: SharedResources = null
+    /** death-watch 批 fixture 收尾：行对应真进程——杀后台进程 + 毁会话（幂等）。 */
+    def cleanupBg: IO[Unit] =
+      for
+        sids <- nodeSessions.get
+        jids <- jobIds.get
+        _ <- sids.traverse_ { sid =>
+          ShellSession
+            .peekSession(sid)
+            .flatMap(_.fold(IO.unit)(sh => jids.traverse_(j => sh.cancelBackgroundJob(j).attempt.void))) *>
+            ShellSession.destroySession(sid).attempt.void
+        }
+      yield ()
+
+
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
       def sendStream(
-          req: LlmRequest,
-          onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+        req: LlmRequest,
+        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
       ): Stream[IO, StreamChunk] =
-        Stream.eval {
-          for
-            turn <- turnCount.updateAndGet(_ + 1)
-            _ <-
-              if turn == 1 && registerTask then
-                // 首轮：找到本节点会话（kind=Flow + node- 前缀），登记等待型任务
-                Option(res) match
-                  case None => IO.raiseError(new RuntimeException("spec res not injected"))
-                  case Some(r) =>
-                    r.agentRegistry.get.flatMap { reg =>
-                      reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
-                        case Some(rec) =>
-                          val jobId = s"bg-gate-spec-${java.util.UUID.randomUUID().toString.take(8)}"
-                          BgTaskRegistry.register(jobId, rec.sessionId, "spec bg task", "local", "nebula-root", persistent) *>
-                            jobIds.update(_ :+ jobId) *> nodeSessions.update(_ :+ rec.sessionId)
-                        case None => IO.raiseError(new RuntimeException("node session record not found at first LLM request"))
-                    }
-              else IO.unit
-          yield turn
-        }.flatMap { turn =>
-          val text = req.messages.map(_.textContent).mkString("\n")
-          val reply = if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "bg-noted"
-          Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
-        }
+        Stream
+          .eval {
+            for
+              turn <- turnCount.updateAndGet(_ + 1)
+              _ <-
+                if turn == 1 && registerTask then
+                  // 首轮：找到本节点会话（kind=Flow + node- 前缀），登记等待型任务
+                  Option(res) match
+                    case None => IO.raiseError(new RuntimeException("spec res not injected"))
+                    case Some(r) =>
+                      r.agentRegistry.get.flatMap { reg =>
+                        reg.values.find(rec => rec.kind == AgentKind.Flow && rec.sessionId.startsWith("node-")) match
+                          case Some(rec) =>
+                            val jobId = s"bg-gate-spec-${java.util.UUID.randomUUID().toString.take(8)}"
+                            ShellSession.forSession(rec.sessionId).flatMap { shell =>
+                              shell.executeBackground("sleep 3600", jobIdOverride = Some(jobId)) *>
+                                BgTaskRegistry.register(
+                                  jobId,
+                                  rec.sessionId,
+                                  "spec bg task",
+                                  "local",
+                                  "nebula-root",
+                                  persistent
+                                )
+                            } *>
+                              jobIds.update(_ :+ jobId) *> nodeSessions.update(_ :+ rec.sessionId)
+                          case None =>
+                            IO.raiseError(new RuntimeException("node session record not found at first LLM request"))
+                      }
+                else IO.unit
+            yield turn
+          }
+          .flatMap { turn =>
+            val text = req.messages.map(_.textContent).mkString("\n")
+            val reply = if turn == 1 then text.linesIterator.nextOption().getOrElse("").take(200) else "bg-noted"
+            Stream(StreamChunk.TextDelta(reply), StreamChunk.Done(None, None))
+          }
 
-  private def mkResources(system: ActorSystem, tmp: os.Path, llm: LlmHandle[IO]): IO[SharedResources] =
-    for
-      dispatcher <- cats.effect.std.Dispatcher.parallel[IO].allocated.map(_._1)
-      rateLimiter <- RateLimiter.create()
-      tracker <- nebflow.core.FileChangeTracker.create(os.pwd.toString)
-      fileLocks <- FileLockManager.create
-      thinkingRef <- Ref.of[IO, ThinkingConfig](ThinkingConfig())
-      modelOverrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
-      voiceMuted <- Ref.of[IO, Boolean](false)
-    yield SharedResources(
-      llm = llm,
-      dispatcher = dispatcher,
-      sessionStore = SessionStore(tmp / "sessions", tmp / "tasks"),
-      projectRoot = os.pwd,
-      thinkingConfigRef = thinkingRef,
-      rateLimiter = rateLimiter,
-      fileChangeTracker = tracker,
-      contextWindow = 100_000,
-      agentLibrary = new AgentLibrary(tmp / "agents"),
-      taskStore = FileTaskStore,
-      historyArchiver = null,
-      fileLockManager = fileLocks,
-      sessionModelOverrides = modelOverrides,
-      providerRegistry = null,
-      healthMonitor = null,
-      actorSystem = null,
-      voiceMutedRef = voiceMuted
-    )
+  end BgStubLlm
 
-  /** 根会话记录器：deliverToNebula 投递终点记账。 */
-  private def registerRecorder(res: SharedResources, system: ActorSystem, sid: String): IO[Ref[IO, List[AgentCommand]]] =
+  /** 根会话记录器：deliverToRoot 投递终点记账。 */
+  private def registerRecorder(
+    res: SharedResources,
+    system: ActorSystem,
+    sid: String
+  ): IO[Ref[IO, List[AgentCommand]]] =
     for
       recorded <- Ref.of[IO, List[AgentCommand]](Nil)
       ref <- system.spawn(recorderBehavior(recorded), s"rec-${scala.util.Random.nextInt(100000)}")
@@ -155,12 +171,48 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
   private def recordedImmediate(recorded: Ref[IO, List[AgentCommand]]): IO[List[AgentCommand.ImmediateInput]] =
     recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
 
+  /**
+   * 投递观察 = **显式等批 flush**（批 3 · 本机侧 2026-09-16；任务书两选项之②；
+   * 批 4 · 同族小批 2026-09-16 起 G4/G9 亦改用本 helper——两处与 G1/G2 逐字同款，无第二形态）：
+   *
+   * 完成通知是**异步**投递——`completedNodeR` 先落 store（`status=Completed` 在此刻
+   * 可见），随后同一 fiber 才走 `deliverOut` → `deliverToNebula`（2026-09-25 D 步随投递段
+   * 迁至 `NodeDelivery.scala`，原 `NodeEngine.scala:1805`）→ 根会话 `ImmediateInput`。故「状态读到 Completed 后**立刻**读通知队列」是天然竞态：
+   * 读方（测试线程）可能先于投递方（完成 fiber）被调度 ⇒ CI 慢机器/换页压力下即红。
+   * 判据本体「节点完成必须投递」**逐字不变**（等不到 ⇒ 仍然红），只是把「读一次」
+   * 换成「有界等它到」；等待上限沿用既有 15s（未加大 timeout）。
+   *
+   * 同时（任务书选项之①）[[mountProject]] 注入 `notifyQuietMs = Some(1L)`：关掉
+   * `notify.quietMs` 的 5s 去抖/打包窗（2026-09-25 行号漂移重锚，成员未迁移：
+   * `ProjectTypes.scala` 的 `NotifyPolicy.NotifyQuietMsDefaultMs`（原 `:409`） /
+   * `NodeEngine` 构造器接缝 `notifyQuietMs` → `dispatchNotify` 装配（原
+   * `NodeEngine.scala:138`）），使 dispatch-notify 腿在用例内**确定性**地不引入 5s 延迟。
+   */
+  private def awaitDelivery(
+    recorded: Ref[IO, List[AgentCommand]],
+    needle: String,
+    timeout: FiniteDuration = 15.seconds
+  ): IO[List[AgentCommand.ImmediateInput]] =
+    waitUntil(timeout)(recordedImmediate(recorded).map(_.exists(_.text.contains(needle)))) *>
+      recordedImmediate(recorded)
+
   private def mountProject(
     name: String,
     ws: os.Path,
     system: ActorSystem,
     res: SharedResources,
-    bgWaitCapMs: Long = 3_600_000L
+    backgroundWaitCapMs: Long = 3_600_000L,
+    // noderpt 批 A 段（2026-09-11）：完成门两条腿的显式注入。
+    //  - bgGateCompletionHold = **true**：本 spec 的主题就是腿 1（后台任务存活 hold）
+    //    的既有行为（G1–G8），生产默认已封存（false）⇒ 此处置回旧行为作对照；
+    //  - reportGateHold = **false**：终态 hold 腿不在本 spec 主题内，且其
+    //    桩 LLM 无锚定申报 ⇒ 打开会让 G1/G2/G5/G6 全部滞留 Running（G9 覆盖）。
+    bgGateCompletionHold: Boolean = true,
+    reportGateHold: Boolean = false,
+    // 批 3（本机侧 2026-09-16）：`notify.quietMs` 去抖/打包窗**在用例内确定性关闭**
+    // （1ms，即 `NotifyPolicy.parseQuietMs` 允许的下界；缺省 5s）。语义 = 只把「窗口」
+    // 压到近零，不动投递判据/不改生产缺省（生产缺省仍 5s，`NotifyPolicy` 单点不变）。
+    notifyQuietMs: Option[Long] = Some(1L)
   ): IO[ProjectRuntime] =
     for
       store <- FlowMapStore.open(name, ws.toString)
@@ -173,15 +225,48 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
         rootSessionId = "nebula-root",
         projectName = name,
         emitEvent = (_, _, _) => IO.unit,
-        bgWaitCapMs = bgWaitCapMs
+        backgroundWaitCapMs = backgroundWaitCapMs,
+        bgGateCompletionHold = Some(bgGateCompletionHold),
+        reportGateHold = Some(reportGateHold),
+        notifyQuietMs = notifyQuietMs
       )
-      pd = ProjectDef(name = name, workspace = ws.toString, agentFile = (ws / "AGENTS.md").toString, createdAt = System.currentTimeMillis())
+      pd = ProjectDef(
+        name = name,
+        workspace = ws.toString,
+        agentFile = (ws / "AGENTS.md").toString,
+        createdAt = System.currentTimeMillis()
+      )
       rt = ProjectRuntime(pd, store, engine, system, res, None)
       _ <- ProjectRuntimeRegistry.register(rt)
     yield rt
 
+  /**
+   * 后台任务快照的有界等（S1 组负载敏红修复 · round 2 **根因**收口）：
+   *
+   * 观测到的红 = G2/G4 的 `waitUntil: condition not met in time`（节点在后台完成通知后
+   * 永不进终态）。逐层取证（引擎侧临时 tracer + 事件日志）结论：
+   *   - 唤醒轮**确实跑过并跑完**（`turn-complete msgs=3 textLen=8`，非桩未回、非通知丢失）；
+   *   - 桥**确实收到**第二个 `Completed`（nmsg=4）；
+   *   - 但桥的复检 `BgTaskRegistry.waitingFor(sessionId)` **读回非空**（= 本用例刚「注销」的
+   *     那个 jobId）⇒ 走 hold 分支静默重 hold（`holdEmitted` 已置位 ⇒ 无新事件、无留痕）
+   *     ⇒ 节点挂到 `backgroundWaitCapMs`（本 spec 注入 1h）⇒ 30s/20s 等待红。
+   *
+   * 为什么等待集没排空：`AgentRecord.status` **出生即 `Idle`**（`AgentState.scala:45`，
+   * re-pin 2026-09-25：随 protocol.scala 三拆迁入，字段逐字未动），而
+   * [[waitIdle]] 的判据恰是 `status == Idle` ⇒ 负载下 [[waitIdle]] 可在**首轮 LLM 调用之前**
+   * 返回（会话刚 spawn、agent 尚未执行 UserInput）；而后台任务是在**首个 `sendStream` 内**
+   * 登记的（桩的 `BgStubLlm`）⇒ 那一刻 `llm.jobIds` 仍是空表 ⇒ 后面
+   * `jobs.traverse_(BgTaskRegistry.unregister)` 沦为**空转**（注销 0 件）⇒ 等待集永不排空。
+   * 这解释了「本树 1/5–1/11 红、负载敏、两树皆在（预存在）」三点。
+   *
+   * 修法 = 有界等「快照可见」（同批 :447-449 / awaitDelivery 同款纪律，判据本体零改动）：
+   * 登记永远不发生 ⇒ 这里超时红（不掩盖），断言/失败计数逐条不变。
+   */
+  private def awaitJobs(llm: BgStubLlm, timeout: FiniteDuration = 10.seconds): IO[List[String]] =
+    waitUntil(timeout)(llm.jobIds.get.map(_.nonEmpty)) *> llm.jobIds.get
+
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
@@ -194,10 +279,20 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     go(System.currentTimeMillis() + timeout.toMillis)
 
   private def nodeInput(project: String, nodename: String, extra: (String, Json)*): Json =
-    Json.obj(("project" -> Json.fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: extra.toList*)
+    Json.obj(
+      ("project" -> Json
+        .fromString(project)) :: ("nodename" -> Json.fromString(nodename)) :: ("plugins" -> Json.arr()) :: extra.toList*
+    )
 
-  private def createNode(project: String, ws: os.Path, name: String, task: String,
-      extraOut: Option[String] = None, res: SharedResources = null, system: ActorSystem = null): IO[Unit] =
+  private def createNode(
+    project: String,
+    ws: os.Path,
+    name: String,
+    task: String,
+    extraOut: Option[String] = None,
+    res: SharedResources = null,
+    system: ActorSystem = null
+  ): IO[Unit] =
     val ctx = ToolContext(
       projectRoot = ws.toString,
       sessionId = Some("spec-sid"),
@@ -208,28 +303,35 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val extras = List(
       "description" -> Json.fromString("bg gate spec node"),
       "task" -> Json.fromString(task),
-      "out" -> Json.fromString(extraOut.getOrElse("Nebula"))
+      // 2026-09-12 批 A1：本 spec 断言的是「投递到根」，接线须写**显式门集**
+      // （`{pass,failed}/result`）；bare `"Nebula"` 今日 = 纯出口标记（零投递）。
+      "out" -> Json.fromString(extraOut.getOrElse("(pass,failed)Nebula"))
     )
     NodeEditTool
       .call(nodeInput(project, name, extras*).asObject.get, ctx)
       .map(_.left.map(_.message))
       .flatMap {
         case Left(err) => IO.raiseError(new AssertionError(s"NodeEdit failed: $err"))
-        case Right(_)  => IO.unit
+        case Right(_) => IO.unit
       }
+
+  end createNode
 
   private def byName(rt: ProjectRuntime, name: String): IO[NodeDef] =
     rt.store.snapshot.map(_.nodes.values.find(_.name == name)).map {
       case Some(n) => n
-      case None    => fail(s"node '$name' must exist")
+      case None => fail(s"node '$name' must exist")
     }
 
   /** 等节点 agent 回 Idle（turn 1 结束），返回 (nodeSessionId, agentRef)。 */
-  private def waitIdle(res: SharedResources, timeout: FiniteDuration = 15.seconds): IO[(String, nebflow.actor.ActorRef[AgentCommand])] =
+  private def waitIdle(
+    res: SharedResources,
+    timeout: FiniteDuration = 15.seconds
+  ): IO[(String, nebflow.actor.ActorRef[AgentCommand])] =
     def go(deadline: Long): IO[(String, nebflow.actor.ActorRef[AgentCommand])] =
       res.agentRegistry.get.flatMap { reg =>
         reg.values.find(r => r.kind == AgentKind.Flow && r.sessionId.startsWith("node-")) match
-          case Some(rec) if rec.status == nebflow.agent.AgentStatus.Idle =>
+          case Some(rec) if rec.status == nebflow.actor.AgentStatus.Idle =>
             IO.pure((rec.sessionId, rec.ref))
           case _ =>
             if System.currentTimeMillis() >= deadline then
@@ -237,6 +339,8 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
             else IO.sleep(50.millis) >> go(deadline)
       }
     go(System.currentTimeMillis() + timeout.toMillis)
+
+  end waitIdle
 
   /** 模拟后台任务完成通知（BashTool makeNotifyCallback 同构 ExternalEvent）。 */
   private def notifyBgCompleted(ref: nebflow.actor.ActorRef[AgentCommand], description: String): IO[Unit] =
@@ -265,21 +369,25 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g1-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm(registerTask = false)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g1", ws, system, res)
       _ <- createNode("bg-g1", ws, "plain-a", "result-PLAIN", res = res, system = system)
       _ <- waitUntil(15.seconds)(byName(rt, "plain-a").map(_.status == NodeLifecycle.Completed))
       a <- byName(rt, "plain-a")
-      imms <- recordedImmediate(recorded)
+      // 批 3：显式等批 flush（见 awaitDelivery）——投递是异步腿，读一次即红（CI 实测）
+      imms <- awaitDelivery(recorded, "[Node 'plain-a' completed]")
+      // G1 是「零后台任务」用例（registerTask=false）⇒ 此处**刻意**不用 awaitJobs（它等
+      // 「快照非空」，本用例的正确期望恰是空表）；断言本体逐字不变。
       jobs <- llm.jobIds.get
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(a.status, NodeLifecycle.Completed, "no-bg node must complete immediately")
       assertEquals(a.result, Some("result-PLAIN"))
       assert(imms.exists(_.text.contains("[Node 'plain-a' completed]")), "delivery must happen immediately")
       assertEquals(jobs, Nil, "no bg task registered in this test")
+    end for
   }
 
   // ── G2 三态·等待型拦截：hold → 后台完 → 唤醒轮 → 放行投递 ────
@@ -290,14 +398,14 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g2-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g2", ws, system, res)
       _ <- createNode("bg-g2", ws, "wait-a", "result-ALPHA", res = res, system = system)
       // turn 1 结束（agent Idle），bg 任务仍在册 → 节点必须保持 Running（hold）
       (nodeSid, agentRef) <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       // beta.57 CI G2 治本（20260908）：固定 sleep 猜窗口改有界轮询——等桥真正
       // 完成 turn-1 持留处理（bg-wait 审计事件落盘）才继续，消除「唤醒轮
       // Completed 先于 hold 建立到达」的时序脆弱；「若未 hold 就错误终态化」
@@ -308,15 +416,22 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       waiting <- BgTaskRegistry.waitingFor(nodeSid)
       // 后台任务完成：unregister（回调同构）+ ExternalEvent 通知 → 唤醒轮
       _ <- jobs.traverse_(BgTaskRegistry.unregister)
+      // 放行前置同步点（round 2）：等待集必须**先排空**再发完成通知 —— 否则桥的复检读到
+      // 非空会静默重 hold（无新事件）⇒ 节点挂到 cap 才红。排不空 ⇒ 在此**显式**超时红
+      // （不再以 30s 下游等待的面目出现）；放行判据/断言本体零改动。
+      _ <- waitUntil(5.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.isEmpty))
       _ <- notifyBgCompleted(agentRef, "spec bg task")
       // 放行窗口 20s→30s：CI 负载头部空间（本地实测释放 ~4ms，绿路径时长不变）
-      _ <- waitUntil(30.seconds)(byName(rt, "wait-a").map(n =>
-        n.status == NodeLifecycle.Completed || n.status == NodeLifecycle.Failed))
+      _ <- waitUntil(30.seconds)(
+        byName(rt, "wait-a").map(n => n.status == NodeLifecycle.Completed || n.status == NodeLifecycle.Failed)
+      )
       done <- byName(rt, "wait-a")
-      postImms <- recordedImmediate(recorded)
+      // 批 3：显式等批 flush（见 awaitDelivery）——「放行后才投递」的判据本体不变；
+      // 等不到即红（不掩盖），等待上限沿用既有 15s（未加大）。
+      postImms <- awaitDelivery(recorded, "[Node 'wait-a' completed]")
       events <- readEvents(ws)
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(midRun.status, NodeLifecycle.Running, "node must stay Running while bg task pending (hold)")
       assertEquals(midImms, Nil, "no delivery while holding")
@@ -324,8 +439,15 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       assertEquals(done.status, NodeLifecycle.Completed, "node must complete after bg task finishes")
       assertEquals(done.result, Some("bg-noted"), "result must be the LAST turn text (agent consumed the notification)")
       assert(postImms.exists(_.text.contains("[Node 'wait-a' completed]")), "delivery must happen only after release")
-      assert(events.exists(_.contains("\"bg-wait\"")), s"bg-wait audit event expected, got: ${events.mkString("|").take(400)}")
-      assert(events.exists(_.contains("\"bg-released\"")), s"bg-released audit event expected, got: ${events.mkString("|").take(400)}")
+      assert(
+        events.exists(_.contains("\"bg-wait\"")),
+        s"bg-wait audit event expected, got: ${events.mkString("|").take(400)}"
+      )
+      assert(
+        events.exists(_.contains("\"bg-released\"")),
+        s"bg-released audit event expected, got: ${events.mkString("|").take(400)}"
+      )
+    end for
   }
 
   // ── G3 三态·服务型不等待：persistent 过滤 ────────────────────
@@ -336,7 +458,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g3-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm(persistent = true)
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g3", ws, system, res)
@@ -353,14 +475,15 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       jobIdsNow <- llm.jobIds.get
       rawStill <- BgTaskRegistry.activeTasksJson.map { j =>
         j.toString.contains("spec bg task") && jobIdsNow.nonEmpty &&
-          j.toString.contains("taskId")
+        j.toString.contains("taskId")
       }
       _ <- llm.jobIds.get.flatMap(_.traverse_(BgTaskRegistry.unregister))
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(done.status, NodeLifecycle.Completed, "persistent task must not hold the node")
       assertEquals(waiting, Nil, "waitingFor must filter persistent tasks")
       assert(rawStill, "persistent task stays registered for the frontend WS snapshot")
+    end for
   }
 
   // ── G4 超时/停滞杀 → failed 注明（拒绝静默 completed）─────────
@@ -371,62 +494,91 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g4-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g4", ws, system, res)
       _ <- createNode("bg-g4", ws, "kill-a", "result-KILL", res = res, system = system)
       (nodeSid, agentRef) <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       _ <- waitUntil(10.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.nonEmpty))
       // 模拟看护杀回调（BashTool gateLedger 同构）：unregister + 终局记账。
       // 杀因原文含 "cancelled"（B1 idle 杀文案）——failed 注明必须净化，
       // 且节点终态必须是 Failed 而非 Cancelled（completeNode 路由回归红线）。
-      _ <- jobs.traverse_(jid => BgTaskRegistry.unregister(jid) *>
-        BgTaskRegistry.markFailed(jid, nodeSid, "nebula-root", "spec bg task",
-          "Background command was idle (no output) for 300s and was automatically cancelled."))
+      _ <- jobs.traverse_(jid =>
+        BgTaskRegistry.unregister(jid) *>
+          BgTaskRegistry.markFailed(
+            jid,
+            nodeSid,
+            "nebula-root",
+            "spec bg task",
+            "Background command was idle (no output) for 300s and was automatically cancelled."
+          )
+      )
+      _ <- waitUntil(5.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.isEmpty))
       _ <- notifyBgCompleted(agentRef, "spec bg task")
       _ <- waitUntil(20.seconds)(byName(rt, "kill-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "kill-a")
-      imms <- recordedImmediate(recorded)
+      // 批 4：显式等批 flush（见 awaitDelivery）——投递是异步腿，读一次即红；判据本体逐字不变
+      imms <- awaitDelivery(recorded, "[Node 'kill-a' failed]")
       ledgerLeft <- BgTaskRegistry.drainFailures(nodeSid)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(done.status, NodeLifecycle.Failed, "guard-killed wait-set task must fail the node, not complete it")
       assert(done.result.exists(_.contains("killed by the background guard")), s"annotation expected: ${done.result}")
       assert(done.result.exists(_.contains("automatically auto-stopped")), s"cause (scrubbed) expected: ${done.result}")
-      assert(!done.result.exists(_.contains("automatically cancelled")), "raw cause wording must be scrubbed (cancelNode routing)")
-      assertEquals(done.result.map(_.contains("bg-noted")), Some(true), "agent final output must be preserved in the annotation")
+      assert(
+        !done.result.exists(_.contains("automatically cancelled")),
+        "raw cause wording must be scrubbed (cancelNode routing)"
+      )
+      assertEquals(
+        done.result.map(_.contains("bg-noted")),
+        Some(true),
+        "agent final output must be preserved in the annotation"
+      )
       assert(imms.exists(m => m.text.contains("[Node 'kill-a' failed]")), "failed delivery must happen")
       assertEquals(ledgerLeft, Nil, "failure ledger must be consumed by the bridge (no leak)")
+    end for
   }
 
-  // ── G5 等待总上限兜底：后台任务不能卡死节点 ──────────────────
+  // ── G5 等待总上限 → **转挂起**（killruling 批裁定 #17）────────────────────
 
-  test("G5: wait cap (small injected) finalizes node as FAILED with annotation while task pending") {
+  test("G5: wait cap (small injected) SUSPENDS the node — stays Running, never failed") {
     val ws = tempRoot / "ws-g5"
     os.makeDir.all(ws)
     val system = ActorSystem(s"bg-g5-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
-      rt <- mountProject("bg-g5", ws, system, res, bgWaitCapMs = 1200L)
+      rt <- mountProject("bg-g5", ws, system, res, backgroundWaitCapMs = 1200L)
       _ <- createNode("bg-g5", ws, "cap-a", "result-CAP", res = res, system = system)
       _ <- waitIdle(res)
-      jobs <- llm.jobIds.get
-      // 任务一直不完成 → 1.2s 兜底 → failed
-      _ <- waitUntil(20.seconds)(byName(rt, "cap-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      jobs <- awaitJobs(llm)
+      // 任务一直不完成 → 1.2s 兜底 → **转挂起**（节点保持 Running）
+      // 判据 = `bg-wait-timeout` 事件出现（阈值到点的确定性读数）——不再等终态
+      // （改判后本路径**不产生终态**，等 Terminal 会永久挂）。
+      _ <- waitUntil(20.seconds)(readEvents(ws).map(_.exists(_.contains("\"bg-wait-timeout\""))))
+      _ <- IO.sleep(500.millis) // 给「假如仍有终态写」留观察窗口（护栏）
       done <- byName(rt, "cap-a")
       events <- readEvents(ws)
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(done.status, NodeLifecycle.Failed, "wait cap must fail the node (never hang)")
-      assert(done.result.exists(_.contains("wait cap exceeded")), s"cap annotation expected: ${done.result}")
+      // 🔴 改后断言（原 2 条 :502-503 ⇒ 改后仍 2 条 + 保留 :504/:505 两条 = 4 条，断言数不减）
+      assertEquals(
+        done.status,
+        NodeLifecycle.Running,
+        "wait cap must SUSPEND the node (kept Running) — never finalize it failed (killruling ruling #17)"
+      )
+      assert(
+        done.result.forall(!_.contains("wait cap exceeded")),
+        s"no failed cap annotation may be written any more: ${done.result}"
+      )
       assert(events.exists(_.contains("\"bg-wait\"")), "bg-wait audit expected")
       assert(events.exists(_.contains("\"bg-wait-timeout\"")), "bg-wait-timeout audit expected")
+    end for
   }
 
   // ── G6 下游 out 交互：bg 等待先于终态投递 ──────────────────────
@@ -437,34 +589,48 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g6-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g6", ws, system, res)
       // seed 下游 wiring 节点——出边指向下游（区别于 G2 的 out=Nebula）
-      _ <- rt.store.mutate(st => st.copy(nodes = st.nodes ++ Map(
-        "n-g6-down" -> NodeDef(id = "n-g6-down", name = "bg-down", agent = "test-agent",
-          task = None, status = NodeLifecycle.Wiring, out = List(OutEdge.nebula),
-          createdAt = System.currentTimeMillis())))).void
-      _ <- createNode("bg-g6", ws, "down-a", "result-HOLDBG",
-        extraOut = Some("n-g6-down"), res = res, system = system)
+      _ <- rt.store
+        .mutate(st =>
+          st.copy(nodes =
+            st.nodes ++ Map(
+              "n-g6-down" -> NodeDef(
+                id = "n-g6-down",
+                name = "bg-down",
+                agent = "test-agent",
+                task = None,
+                status = NodeLifecycle.Wiring,
+                out = List(OutEdge.root),
+                createdAt = System.currentTimeMillis()
+              )
+            )
+          )
+        )
+        .void
+      _ <- createNode("bg-g6", ws, "down-a", "result-HOLDBG", extraOut = Some("n-g6-down"), res = res, system = system)
       (nodeSid, agentRef) <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       // 同 G2 治本：hold 建立改 bg-wait 事件有界轮询（替代固定 sleep 猜窗口）
       _ <- waitUntil(15.seconds)(readEvents(ws).map(_.exists(_.contains("\"bg-wait\""))))
       midRun <- byName(rt, "down-a")
       // 后台完成 → 放行 → completeNode → completed（无 hold 分流）
       _ <- jobs.traverse_(BgTaskRegistry.unregister)
+      _ <- waitUntil(5.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.isEmpty))
       _ <- notifyBgCompleted(agentRef, "spec bg task")
       _ <- waitUntil(30.seconds)(byName(rt, "down-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "down-a")
       events <- readEvents(ws)
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(midRun.status, NodeLifecycle.Running, "bg wait happens before finalize (node stays running)")
       assertEquals(done.status, NodeLifecycle.Completed, "after bg release the node finalizes as completed")
       assertEquals(done.result, Some("bg-noted"))
       assert(events.exists(_.contains("\"bg-wait\"")), "bg-wait audit expected before completed")
+    end for
   }
 
   // ── G7 卡死防护：等待期 Idle 不被 TaskStuckWatcher 命中 ───────
@@ -475,13 +641,13 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g7-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g7", ws, system, res)
       _ <- createNode("bg-g7", ws, "stuck-a", "result-STUCK", res = res, system = system)
       (nodeSid, _) <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       _ <- waitUntil(10.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.nonEmpty))
       // 预置 giveUp 计数（≥ StopAttempts+2）：若（变异后）scan 命中 Idle 节点，
       // 立即 giveUp → 桥 Cancelled → 节点 cancelled。正常实现 scan 只看 Processing
@@ -492,10 +658,11 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
       a <- byName(rt, "stuck-a")
       stillRegistered <- res.agentRegistry.get.map(_.contains(nodeSid))
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
       assertEquals(a.status, NodeLifecycle.Running, "waiting Idle node must never be a stuck candidate")
       assert(stillRegistered, "agent record must survive the scan")
+    end for
   }
 
   // ── G8 通知轮真卡死的正确行为：桥 Cancelled 通道取消节点 ──────
@@ -506,24 +673,69 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     val system = ActorSystem(s"bg-g8-${scala.util.Random.nextInt(100000)}")
     val llm = BgStubLlm()
     for
-      res <- mkResources(system, tempRoot, llm.handle)
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
       _ <- IO(llm.res = res)
       recorded <- registerRecorder(res, system, "nebula-root")
       rt <- mountProject("bg-g8", ws, system, res)
       _ <- createNode("bg-g8", ws, "givup-a", "result-GIVEUP", res = res, system = system)
       (nodeSid, agentRef) <- waitIdle(res)
-      jobs <- llm.jobIds.get
+      jobs <- awaitJobs(llm)
       _ <- waitUntil(10.seconds)(BgTaskRegistry.waitingFor(nodeSid).map(_.nonEmpty))
       // 模拟 TaskStuckWatcher 对真卡死通知轮的 giveUp（supervisorRef Cancelled 同链）
       reg <- res.agentRegistry.get
       supRef = reg(nodeSid).supervisorRef
       _ <- supRef.traverse_(sup =>
-        (sup ! AgentEvent.Cancelled(nodeSid, "stuck — released by TaskStuckWatcher (test proxy)")).void)
+        (sup ! AgentEvent.Cancelled(nodeSid, "stuck — released by TaskStuckWatcher (test proxy)")).void
+      )
       _ <- waitUntil(20.seconds)(byName(rt, "givup-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
       done <- byName(rt, "givup-a")
       _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
-      _ <- system.stopAll.handleErrorWith(_ => IO.unit)
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
+    yield assertEquals(
+      done.status,
+      NodeLifecycle.Cancelled,
+      "giveUp Cancelled via bridge must cancel the held node (correct behavior, no hang)"
+    )
+    end for
+  }
+
+  // ── G9 封存档（noderpt 批 A 段改点①）：flag 关 ⇒ 不 hold（等待型任务存续也放行）──
+
+  test("G9: with the bg completion-hold sealed, a pending wait-set task no longer blocks finalization") {
+    val ws = tempRoot / "ws-g9"
+    os.makeDir.all(ws)
+    val system = ActorSystem(s"bg-g9-${scala.util.Random.nextInt(100000)}")
+    val llm = BgStubLlm()
+    for
+      res <- SpecResources.mkResources(system, tempRoot, llm.handle)
+      _ <- IO(llm.res = res)
+      recorded <- registerRecorder(res, system, "nebula-root")
+      // 本用例 = 封存档（生产默认）：bgGateCompletionHold=false
+      rt <- mountProject("bg-g9", ws, system, res, bgGateCompletionHold = false)
+      _ <- createNode("bg-g9", ws, "sealed-a", "result-SEALED", res = res, system = system)
+      // 注意：封存后节点**首轮即终态化**（不再有 hold 窗口）⇒ 不能用 waitIdle（会话
+      // 已被清理）。等待型任务在首轮 LLM 请求时由桩登记 —— 等登记可见即可。
+      _ <- waitUntil(15.seconds)(llm.nodeSessions.get.map(_.nonEmpty))
+      sids <- llm.nodeSessions.get
+      nodeSid = sids.headOption.getOrElse(fail("stub never saw the node session"))
+      // 登记在册的等待型任务必须**不**拦节点（封存后的正面收益：bg 存活不再是完成
+      // 门的判据）
+      waiting <- BgTaskRegistry.waitingFor(nodeSid)
+      _ <- waitUntil(20.seconds)(byName(rt, "sealed-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      done <- byName(rt, "sealed-a")
+      // 批 4：显式等批 flush（见 awaitDelivery）——同 G1/G2/G4；等不到即红（判据本体逐字不变）
+      imms <- awaitDelivery(recorded, "[Node 'sealed-a' completed]")
+      events <- readEvents(ws)
+      jobs <- awaitJobs(llm)
+      _ <- jobs.traverse_(BgTaskRegistry.unregister).attempt.void
+      _ <- llm.cleanupBg *> system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(done.status, NodeLifecycle.Cancelled, "giveUp Cancelled via bridge must cancel the held node (correct behavior, no hang)")
+      assertEquals(done.status, NodeLifecycle.Completed, "sealed gate: a pending wait-set task must not hold the node")
+      assertEquals(done.result, Some("result-SEALED"), "first-turn text finalizes immediately")
+      assert(imms.exists(_.text.contains("[Node 'sealed-a' completed]")), "delivery is not delayed by the bg task")
+      assert(waiting.nonEmpty, "the wait-set task was registered and present (evidence the gate is what changed)")
+      assert(!events.exists(_.contains("\"bg-wait\"")), "no bg-wait hold event may be emitted when sealed")
+      assert(!events.exists(_.contains("\"bg-released\"")), "no release event either (no hold happened)")
+    end for
   }
 end NodeBgCompletionGateSpec

@@ -2,14 +2,17 @@ package nebflow.agent
 
 import munit.FunSuite
 import cats.effect.unsafe.implicits.global
-import nebflow.core.PathUtil
+import nebflow.actor.AgentCommand
 import io.circe.parser.decode
 import io.circe.syntax.*
+import nebflow.shared.PathUtil
 import scala.compiletime.uninitialized
 
-/** F2 (2026-08-30, compact-injection-shield batch 2): durable queue store
-  * round-trip, clear-on-empty, corrupt-tolerance, and the codec field matrix
-  * (blocks / source / metadata survive the round trip). */
+/**
+ * F2 (2026-08-30, compact-injection-shield batch 2): durable queue store
+ * round-trip, clear-on-empty, corrupt-tolerance, and the codec field matrix
+ * (blocks / source / metadata survive the round trip).
+ */
 class CompactionQueueStoreSpec extends FunSuite:
 
   private var prevRoot: os.Path = uninitialized
@@ -34,6 +37,10 @@ class CompactionQueueStoreSpec extends FunSuite:
     delivery = Some("queue")
   )
   private val imm2 = AgentCommand.ImmediateInput("plain-imm", source = None)
+
+  /** ② (2026-09-11): a REAL user text that travelled the ImmediateInput leg. */
+  private val immHuman = AgentCommand.ImmediateInput("human text", source = None, fromUser = true)
+
   private val ev1 = AgentCommand.ExternalEvent(
     source = "subtask",
     eventType = "completed",
@@ -44,7 +51,11 @@ class CompactionQueueStoreSpec extends FunSuite:
   private val ev2 = AgentCommand.ExternalEvent("bridge", "user-message", "payload-2")
 
   test("save/load round-trip preserves every field (imms + events)") {
-    val q = CompactionQueueStore.PersistedQueues(imms = List(imm1, imm2), events = List(ev1, ev2))
+    val q = CompactionQueueStore.PersistedQueues(
+      imms = List(imm1, imm2),
+      events = List(ev1, ev2),
+      outstandingSubagentResults = 3
+    )
     CompactionQueueStore.save("sid-rt", q).unsafeRunSync()
     val loaded = CompactionQueueStore.load("sid-rt").unsafeRunSync()
     assert(loaded.isDefined, "load must return the persisted queues")
@@ -66,6 +77,28 @@ class CompactionQueueStoreSpec extends FunSuite:
     assertEquals(got.events.head.correlationId, Some("corr-1"))
     assertEquals(got.events(1).source, "bridge")
     assertEquals(got.events(1).payload, "payload-2")
+    assertEquals(got.outstandingSubagentResults, 3)
+  }
+
+  test("② human-origin bit survives 入队 ↔ 崩溃恢复 round-trip (fromUser)") {
+    val q = CompactionQueueStore.PersistedQueues(imms = List(immHuman, imm1, imm2), events = Nil)
+    CompactionQueueStore.save("sid-human", q).unsafeRunSync()
+    val got = CompactionQueueStore.load("sid-human").unsafeRunSync().get
+    assertEquals(got.imms.size, 3)
+    assertEquals(got.imms.head.fromUser, true, "真人位必须在入队↔恢复往返后保住")
+    assertEquals(got.imms.head.source, None)
+    assertEquals(got.imms(1).fromUser, false, "服务端注入位不得被误置")
+    assertEquals(got.imms(2).fromUser, false)
+  }
+
+  test("② pre-② snapshot without the field decodes as fromUser=false (backward compatible)") {
+    val file = tmp / "data" / "sessions" / "sid-prefix" / "injection-queues.json"
+    os.makeDir.all(file / os.up)
+    os.write(file, """{"imms":[{"text":"old","source":"mail"}],"events":[]}""")
+    val got = CompactionQueueStore.load("sid-prefix").unsafeRunSync().get
+    assertEquals(got.imms.size, 1)
+    assertEquals(got.imms.head.fromUser, false)
+    assertEquals(got.imms.head.source, Some("mail"))
   }
 
   test("save of empty queues clears the file") {
@@ -93,7 +126,7 @@ class CompactionQueueStoreSpec extends FunSuite:
     assertEquals(CompactionQueueStore.load("").unsafeRunSync(), None)
   }
 
-  test("legacy file missing imms/events decodes with empty defaults (forward compat)") {
+  test("legacy file missing imms/events/barrier decodes with empty defaults (forward compat)") {
     val file = tmp / "data" / "sessions" / "sid-legacy" / "injection-queues.json"
     os.makeDir.all(file / os.up)
     os.write(file, """{"imms":[]}""")
@@ -101,6 +134,21 @@ class CompactionQueueStoreSpec extends FunSuite:
     assert(loaded.isDefined)
     assertEquals(loaded.get.imms, Nil)
     assertEquals(loaded.get.events, Nil)
+    assertEquals(loaded.get.outstandingSubagentResults, 0)
+  }
+
+  test("barrier-only snapshot is retained and can be cleared after settlement") {
+    val file = tmp / "data" / "sessions" / "sid-barrier" / "injection-queues.json"
+    CompactionQueueStore
+      .save("sid-barrier", CompactionQueueStore.PersistedQueues(outstandingSubagentResults = 2))
+      .unsafeRunSync()
+    assert(os.exists(file), "an in-flight batch must keep a durable recovery marker")
+    assertEquals(
+      CompactionQueueStore.load("sid-barrier").unsafeRunSync().map(_.outstandingSubagentResults),
+      Some(2)
+    )
+    CompactionQueueStore.save("sid-barrier", CompactionQueueStore.PersistedQueues()).unsafeRunSync()
+    assert(!os.exists(file), "settled empty state must clear the recovery marker")
   }
 
 end CompactionQueueStoreSpec

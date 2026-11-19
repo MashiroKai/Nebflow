@@ -1,15 +1,260 @@
 package nebflow.shared
 
 import scala.concurrent.duration.*
+import nebflow.prompts.PromptCatalog
 
 /**
  * Default configuration values used across the codebase.
  * Centralized here to avoid magic numbers scattered in multiple files.
  */
 object Defaults:
+  /**
+   * 兜底上下文窗口——**语义已降级**（案② B6 · `chain-llmstall-fix`，2026-09-21）：
+   * 历史语义 = 「模型配置缺 `contextWindow` 字段时的取值」；B2 落地后语义 =
+   * **「真值未知时的保守上限」**——即 provider 未上报 `modelMaxContext` 且配置里也没有
+   * 显式值时，本值是该 model 被假定的可受理窗口。
+   *
+   * 🔴 本批**不改数值**（128000 逐字不变）：改值会同时移动「缺字段时」与「真值未知时」
+   * 两个场景的读数，而本批的红验锚点只覆盖 clamp 算式（`PerModelContextClampSpec`）。
+   * 语义登记在此，供后续「保守上限该取多少」的独立决策引用。
+   * 消费点：`ProviderRegistry.effectiveContextWindow`（取数单点）与
+   * `ModelCandidate.contextWindow` 的默认值。
+   */
   val ContextWindow = 128000
-  val MaxTokens = 16384
-  val MaxTokensCompact = 4096
+
+  /**
+   * Internal output cap (`max_tokens`) for the Anthropic-protocol face, which
+   * REQUIRES the field. **NOT user configurable** — maxcfg batch (2026-09-16,
+   * author ruling "我觉得直接去掉这个参数，以后少一个配置项") removed the
+   * `llm.providers.*.models[].maxTokens` config key; this constant is the
+   * replacement source.
+   *
+   * 128000 (output-cap raise, author ruling 2026-10-21 「应该是我们设置的不合理
+   * 总输出上限小于思考上限了 把总输出上限改为128000」): the previous 16384 was
+   * SMALLER than the 32000 thinking budget, so a reasoning model could burn the
+   * entire allowance on thinking alone and end the turn with zero visible
+   * output (stopReason=max_tokens, `MaxTokensStubText` empty-burn shape). The
+   * value must never sit below the thinking ceiling [[MaxThinkingBudget]]
+   * (32768); 128000 leaves 4× headroom above it.
+   *
+   * The raw constant is NOT sent blindly: AnthropicAdapter clamps the outgoing
+   * value per model (family output caps + context-window input headroom) before
+   * it reaches the wire — endpoints that would 400 on a 128000 request (smaller
+   * real output caps, or a context window that must also hold the input) never
+   * see it. Auxiliary faces (health probe / small-judge / allocator) pin the
+   * proven-safe [[ProbeMaxTokens]] instead of this constant.
+   *
+   * AnthropicAdapter still raises it above the thinking budget when needed —
+   * the Anthropic API requires `budget_tokens < max_tokens`.
+   *
+   * 引擎侧生效需重启窗（本批报告已注明，不等待）。
+   */
+  val MaxTokens = 128000
+
+  /**
+   * Auxiliary-face output cap (output-cap raise batch, 2026-10-21). Health
+   * probes, the delegate small-judge legs and the LLM allocator are
+   * single-token / tiny-JSON calls: they need no large output allowance, and
+   * after the 128000 raise a verbatim constant would hand every probe a
+   * max_tokens that strict endpoints (glm flash tiers et al.) may 400 —
+   * flipping providers DOWN fleet-wide. 16384 = the pre-raise serving value,
+   * years-proven on every live endpoint. Sent verbatim (no clamp leg): it is
+   * engine-internal and already known-safe; for the same reason a probe keeps
+   * working on tiny-window configs exactly as before this batch.
+   */
+  val ProbeMaxTokens = 16384
+
+  /**
+   * Internal ceiling for `thinking.budget_tokens` (maxcfg batch 2026-09-16).
+   * Replaces the former `candidate.maxTokens / 2` thinking clamp, which tied
+   * the thinking budget to the removed user config: with the old default
+   * (`maxTokens = 16384`) every request's budget was clamped to 8192, silently
+   * downgrading "high" thinking (32768) to the `medium` effort class through
+   * `OpenAiAdapter.budgetToEffort` (≤8192 → medium).
+   *
+   * 32768 = the highest budget the product can produce
+   * (`web/js/sidebar.js` `EFFORT_BUDGETS.high`), so no reachable configuration
+   * is ever clamped; the clamp keeps its original job of bounding hand-edited /
+   * legacy values (`sidebar.js effortFromConfig` tolerates legacy > 32768) that
+   * crash some providers (zhipu/glm — see `interface.scala` thinking clamp).
+   */
+  val MaxThinkingBudget = 32768
+
+  /**
+   * 四修④（2026-10-07 修复令，作者令原文「subagent 单发调用设 thinking 上限（对齐
+   * UI 客户端 budgetTokens=32000 形态），防 20 分钟空烧再现」）：**worker 侧思考
+   * 预算帽**。任何被派生的会话（depth>0：delegate / subtask / team 成员）的
+   * `thinking.budget_tokens` 都被钳到本值以下——根会话可由用户在 UI 调高预算，
+   * worker 不得继承放大版预算空烧（现场：鹦鹉骑自行车 delegate，thinking 146K
+   * 字符、textLen=0、零工具调用、stopReason=max_tokens，20 分钟零产出）。
+   *
+   * 32000 = UI 客户端缺省形态（`ThinkingConfig` 缺省 + `WsConfigHandlers`
+   * budgetTokens 缺省 + `sidebar.js EFFORT_BUDGETS` 的 high 档），非新数值。
+   */
+  val SubagentThinkingBudgetCap = 32000
+
+  /**
+   * 四修①（2026-10-07 修复令）：max_tokens 空烧的收尾文案单点——
+   * `AgentCompactionHandlers.handleEmptyResponse` 的 isMaxTokens 腿用它作为
+   * turn 终文，`BackoffSupervisor` 的空轮判据与 `DelegateTerminal` 的确定性
+   * 预检据**同串**识别该形态（三处共用本常量，禁字面量散落）。
+   */
+  val MaxTokensStubText: String = "[Response truncated: max output tokens reached]"
+
+  // ── sleep-poll 禁令批（作者令 2026-10-20，实撞案例 delegate-nebflow-747cd36a）──
+  //
+  // 案例复盘：747cd36a 在 `sleep 570; echo wN` 心跳循环里轮询 5h16m（27 拍），
+  // 等一个后台 sbt test。根因双链：①其交付链要求回归绿才交付 + 历史教训
+  // 「delegate 结束回合=会话终结=后台作业被带走」让同步轮询成为表面安全姿势
+  // （A 段等待屏障拆除该前提）；②LoopGuard R-call 判同参指纹，echo wN 每拍
+  // 变参 ⇒ 指纹恒新、永不命中（B 段护栏补位）。
+
+  /**
+   * 启动注入铁律文本单点（sleep-poll 禁令批 C 段）：delegate brief /
+   * 节点 ProtocolFootnote / subagent·workflow 步首条消息三面同源注入
+   * （文字面禁字面量散落——三消费点只引本常量）。措辞三要素：禁止 +
+   * 正确姿势（run_in_background + 结束回合）+ 作者门控事件（重启/批准）处置。
+   */
+  val NoSleepPollRule: String = PromptCatalog.Shared.NoSleepPollRule
+
+  /**
+   * 插件能力查询行（stand-plugins 批，作者令 2026-10-23：像记忆检索一样把插件
+   * 目录做成只读 CLI，在各级提示词里告知用法——「除了自动分配，还能主动获取」）。
+   *
+   * 注入面（同源单点，勿散落复制）：delegate brief（`DelegateTool.assembleBrief`）
+   * 与节点 ProtocolFootnote 前缀（`NodeEngineContract.protocolFootnoteFor`）——两个
+   * **有 Bash** 的启动面。subagent 只读侦察面无 Bash（`BlockingSubagent` 不注入——
+   * 查询通道不可达，注入即纯噪音）；root / 分发器提示词在 BuiltinAgents 各自正文
+   * 接线（决策面自带声明权）。
+   *
+   * 纪律边界（一行两半）：查询人人可用（只读零副作用）；**挂载权仍在派发侧**——
+   * 缺能力时在结果里声明所需插件与用途，由派发面挂载，绝不自挂（安全边界不动）。
+   * 单行形态与 ResetHazardLine 的 `[reset hazard]` 同族（`[plugin discovery]` 前缀戳，
+   * 模型扫读即识别）。
+   */
+  val PluginDiscoveryLine: String = PromptCatalog.Shared.PluginDiscoveryLine
+
+  /**
+   * output 块语法批（作者令 2026-10-31 16:13，16:16 修订标签式）：用户可见输出
+   * 铁律单点。只有 `<output>...</output>` 成对标签包裹的内容会呈现给用户——
+   * 框外（推理、工具叙述、机器面细节）默认一概摘除不显示，用户点开角标才见
+   * 全文（且标签语法原样现形）；未包裹的历史内容照常全显（降级语义）。
+   *
+   * 注入面（同源单点，勿散落复制）：delegate brief（`DelegateTool.assembleBrief`）、
+   * 节点 ProtocolFootnote 前缀（`NodeEngineContract.protocolFootnoteFor`）、
+   * subagent/workflow 步首条消息（`BlockingSubagent.promptWithRule`）；root 侧
+   * 同文在两处——`BuiltinAgents.NebulaPromptTemplate` 的 Voice 节 bullet（风格面）
+   * 与 `PromptSections` order-375 独立段（systemStable 行为契约面，条件
+   * isRootAgent；output 块注入链核验批 2026-10-31：单 bullet 显著性不足被实证，
+   * 独立段为引擎编译注入的存在性保证）。
+   * 风格面：块内写法类微信（短句、结论先行、零客套）；有用户画像
+   * （`~/.stand/User.md` 交流方式段，经 ContextRefresher 注入）按画像调整，
+   * 无画像默认中文简洁直白。
+   */
+  val OutputBlockRule: String = PromptCatalog.Shared.OutputBlockRule
+
+  /**
+   * SendMessage/Pop 边界（作者 2026-10-31 22:10 令 + 22:30 追加令）：SendMessage
+   * 只发 NebLink 好友/群/设备；给用户走渠道（微信/飞书等社交腿）的消息与文件
+   * 一律 Pop 或正常回复，不经 SendMessage。追加令明示「不能只进画像记忆，要改在
+   * 提示词源」——order-375（OutputBlockRule 同源单点）同款机制：本常量为段体
+   * 单点，PromptSections order-376 条件段（isRootAgent）逐字引用；与
+   * `FriendMessageTool.FullDescription/SealedDescription` 的 Scope 节、
+   * `BuiltinAgents.NebulaPromptTemplate` Tool surface 行同口径三处并存
+   * （工具面 = 调用边界，提示词面 = 存在性保证）。
+   */
+  val SendMessageScopeRule: String = PromptCatalog.Shared.SendMessageScopeRule
+
+  /**
+   * 密钥教义节（密钥能力三件套批 B 件，作者令 2026-11-01「agent/分发器提示词加
+   * 『密钥的使用与创建』一节」）：跨会话凭证纪律单点。段体 = 本常量；
+   * 注入面 = `PromptSections` order-377 **always 段**（所有 agent 会话——root /
+   * 分发器 / delegate / 节点 / team 成员一视同仁：凭证经任务文本流进每张面，
+   * 纪律就必须在每张面上，不按 isRootAgent 收窄）。与 order-375/376（root-only）
+   * 同族同体例：`── 标题 ──` 头 + 条款行，引牌不引文——机制细节（secret 问题
+   * 字段、指针回执形状）的单一权威 = AskUserQuestion 工具 description，本节
+   * 不复述；清单面 = `stand secrets list`（元数据面，零值）。
+   */
+  val SecretsRule: String =
+    """── Secrets (credentials) ──
+      |Credentials (API keys, tokens, passwords) live ONLY in the secrets store — never in chat text, files, logs or commits.
+      |- CREATE — credential-class items only, via an AskUserQuestion secret question (`secret: true`): the author pastes the value, the engine stores it owner-only, and you receive ONLY a pointer receipt. Name = lowercase-hyphen with a purpose prefix (`<service>-<purpose>`, e.g. `aliyun-oss`); never type a value into any file, command line or log.
+      |- CONSUME — the receipt's `location` is a PATH: interpolate `"$(cat <location>)"` inside a Bash sub-shell so the value exists only in that command, or use `$VARIABLE` when the secret is allowlisted in the config file (`secrets.inject`). Mechanics: the AskUserQuestion tool description; inventory: `stand secrets list` (metadata only, never values).
+      |- IRON RULES — never print or echo a value, never write one to disk, never commit one, never forward one in a message: a value is a service input only.""".stripMargin
+
+  /**
+   * 引牌教义·带短名引用（msgchip 批，作者令 2026-11-01 20:17「消息身份牌系统升级」
+   * 第 4 条）：回复作者消息时的引用形态单点。与既有「引牌不引文」口径同源收口——
+   * 引用 = 牌（`{{msg:牌号|短名}}`）+ 要点转述，**不整段复述原文**；一次回复对应
+   * 多条消息时逐条各引一枚（每条消息一枚牌，短名各自起名），不合并复述。
+   *
+   * 语法（与 `nebflow.core.msgtokens.MsgTokenRegistry.TokenRegex` 同一条规则）：
+   * 牌面 `{{msg:sid8-seq6}}` 后接「|短名」；短名 = 2-12 字为宜（硬上限 40，字符集
+   * 禁 `{` `}` `|` 换行），给被引消息起的功能性名字（如「输入统一令」「迁移三裁定」）。
+   * 短名是**纯展示注记**：前端把带名牌渲染成显示短名的小牌（点击看原文）；派发
+   * 消解（msgcard-agent-expand 批 2026-11-05）时牌展开为完整原文块，短名进展开
+   * 抬头（`[引用 · 短名 · 来自 作者 · 时间 · 共 N 字]`）、正文恒为全文——派发文本
+   * 里带不带短名都可，带则收信方多一个可读标签。
+   *
+   * 注入面：`PromptSections` order-378 **always 段**（所有 agent 会话——牌经 Mail /
+   * delegate brief / node 消息流进每张面，任何面上都可能引用上游消息；同
+   * order-377 SecretsRule 的收窄判据，不按 isRootAgent 收窄）。静态体落
+   * systemStable（生命周期节点重建时携带，前缀缓存友好）；**随下个生命周期生效**
+   * （在飞旧上下文不回改）。机制细节（铸造/消解管线）的单一权威 =
+   * MsgTokenRegistry 文件头 + msgtoken reminder，本节不复述。
+   */
+  val MsgQuoteRule: String =
+    """── Quote with message cards (引牌不引文) ──
+      |When your reply answers the author's (user's) message(s), cite each quoted message with its card plus a short name — do NOT restate the original text in full. Form: `{{msg:<sid8>-<seq>|<short-name>}}` (a `|` + short name right after the card face). The short name is the replyer's compact functional label for that message (2-12 chars ideal; no `{` `}` `|` or newlines), e.g. 输入统一令 / 迁移三裁定. One card per answered message: a reply that corresponds to several messages cites each one separately. Say the POINT in your own words next to the card; the full text already lives behind the card (click the chip in the chat to see it).
+      |Delivery rule (agent-facing legs: Mail body, Delegate brief, node messages, subagent/step prompts): a card is expanded before injection into the FULL original text — header `[引用 · <short name> · 来自 <author> · <time> · 共 N 字]`, then the verbatim body (never truncated; long quotes are kept whole with a marker), then `[引用结束 · …]`. So write the card, not a paraphrase, and keep the exact `msg:` prefixed form: a card that is malformed (e.g. missing `msg:`, wrong seq width) or whose mapping is missing is replaced by an explicit `[引用未能解析：<original>] 原因：…` marker — never passed through literally.""".stripMargin
+
+  /**
+   * 时间纪律节（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知问题」）：
+   * 模型面的时间纪律单点。段体 = 本常量；注入面 = `PromptSections` order-379
+   * **always 段**（所有 agent 会话——相对时间误判不分角色，同 order-377/378 的收窄
+   * 判据）。静态体落 systemStable（生命周期节点重建时携带）。
+   *
+   * 分工：**锚**由引擎发（[[TimeAnchor]]：每请求 `systemDynamic` 现取 + 每回合起始轮
+   * 持久化 `Current time:` 行），**用法**由本段规定（换算，不许计算；没锚不许说绝对
+   * 日期）。两者同批落地，缺一即为半修：只有锚没有纪律 = 模型照旧按印象推算；
+   * 只有纪律没有锚 = 纪律要求它读一条不存在的时间。
+   */
+  val TimeDisciplineRule: String = PromptCatalog.Shared.TimeDisciplineRule
+
+  /**
+   * A 段（等待屏障）开关：delegate 会话结束回合时存在未结等待型后台作业 ⇒
+   * 不终态化（hold + 完成通知唤醒 + 复检），对齐 Project node 完成闸语义。
+   * 默认 **true**（作者令本体行为）；现读 prop `nebflow.delegate.completionHold.enabled`
+   * 可关（回退开关——关闭即恢复旧「Completed 即终判」行为）。
+   */
+  def DelegateCompletionHoldEnabled: Boolean =
+    sys.props.getOrElse("nebflow.delegate.completionHold.enabled", "true").toBoolean
+
+  /**
+   * 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）：delegate 终态
+   * 交付回执的确认宽限——首投/每次重投后 `now - deliveredAt` 超本值仍无父会话
+   * ack ⇒ 重投一拍（节拍 = 本值；重投达 3 次停投留痕）。默认 **10 分钟**；
+   * 现读 prop `nebflow.delegate.deliveryAckGraceMs`（BgGateWaitTimeoutMs 同款
+   * 每次调用现读先例；≤0 = 立即重投）。
+   */
+  def DelegateDeliveryAckGraceMs: Long =
+    sys.props.getOrElse("nebflow.delegate.deliveryAckGraceMs", (10 * 60 * 1000L).toString).toLong
+
+  /**
+   * B 段（sleep-poll 护栏）开关：前台命令含 sleep>N 秒 ⇒ 工具级介入
+   * （首次警告放行 + 同类心跳 N 次后拒绝并升级面板）。默认 **true**；
+   * 现读 prop `nebflow.shell.sleepPollGuard.enabled` 可关。
+   */
+  def SleepPollGuardEnabled: Boolean =
+    sys.props.getOrElse("nebflow.shell.sleepPollGuard.enabled", "true").toBoolean
+
+  /** B 段阈值（s，作者建议 60）：命令内最大 sleep 秒数 ≤ 阈值 = 零开销透传。 */
+  def SleepPollThresholdSec: Int =
+    sys.props.getOrElse("nebflow.shell.sleepPollThresholdSec", "60").toInt
+
+  /** B 段升级档：本会话第 N 次（含本次）超阈值 sleep-poll 命令 ⇒ 拒绝执行。 */
+  def SleepPollEscalateAfter: Int =
+    sys.props.getOrElse("nebflow.shell.sleepPollEscalateAfter", "3").toInt
 
   /**
    * Stream inactivity timeout — resets on every stream event (text/tool/compaction).
@@ -87,8 +332,76 @@ object Defaults:
    */
   val TimeoutAvoidWindowMs: Long = 45_000L
 
-  /** Bash tool max timeout in ms. */
-  val BashMaxTimeoutMs: Long = 3_600_000L
+  /**
+   * 配额类失败的软回避窗（ms，作者令 2026-09-21 19:16 腿 b）：**计划性额度耗尽**
+   * （HTTP 403 / 429 且上游 code 1308；现读 = kimi 5h 额度闸 16:47:33.722 +
+   * zhipu 5h 使用上限 17:54:58）既不是「死」（探测恢复无意义：额度不会因探测
+   * 回来）也不是「瞬时」（45s 窗内不会自愈），而是**窗口型不可用** ⇒ 触发**换链**
+   * （该 candidate 退出本轮候选、立即推进下一根），不做阻塞式等待。
+   *
+   * 取值 300s 的三条理由（分层必需的最小新增常量，逐条申报）：
+   *   1. ≫ [[TimeoutAvoidWindowMs]]（45s）——分层必须**可判别**，否则等价于没分层
+   *      （判据面：配额窗 / 瞬时窗比值 > 3，见 QuotaChainSwitchSpec）；
+   *   2. > [[nebflow.llm.ProviderHealthMonitor.ProbeIntervalSec]]（120s）——不烧
+   *      配额死 provider 的探测请求（旧路径 markDown 每 120s 烧一次必然失败的探测）；
+   *   3. ≪ 5 小时额度窗（实测 5h 闸），**刻意有界**：误判或额度提前重置的代价 =
+   *      每窗最多一次快速失败（配额类判为不可自愈 ⇒ 零退避立即换链），不会把候选链
+   *      长期打窄。interface.scala 错误分支消费。
+   */
+  val QuotaAvoidWindowMs: Long = 300_000L
+
+  /**
+   * Bash tool foreground auto-background threshold in ms (default 60 minutes).
+   *
+   * main-agent-nonblocking 批（2026-10-21 作者裁定重申「主 agent 一点不能阻塞」）
+   * 语义收缩：本值不再是**前台预算的取值点**——前台预算迁往
+   * [[ForegroundWaitBudgetMs]]（默认 300s，短预算量级）。
+   * 本值剩两个消费面：
+   *   1. BashTool 解析显式 `timeout` 入参时的上限钳（schema 契约 "max 3600000"
+   *      保持不变——钳的是入参字面；2026-11-10 起前台实际等待 = 显式入参本身，
+   *      不再经 [[ForegroundWaitBudgetMs]] 二次钳制）；
+   *   2. remote-exec 同步面的超时上限（该面按协议等远端真结果，不适用短预算）。
+   *
+   * bashautobg batch (2026-09-25 author order: "the hard cap should not exist;
+   * auto-move to background at 60min; backgrounded commands have no limit"):
+   * this value is no longer a kill line. I2-style prop face: system prop
+   * `nebflow.bash.maxTimeoutMs`, read at every call so specs can compress the
+   * threshold (kill-switch precedent: ForegroundSampleIntervalMs).
+   */
+  def BashMaxTimeoutMs: Long =
+    sys.props.getOrElse("nebflow.bash.maxTimeoutMs", "3600000").toLong
+
+  /**
+   * Bash 前台等待预算（ms，默认 300000 = 300s）——**主 agent 前台零阻塞**的取值点。
+   *
+   * main-agent-nonblocking 批（2026-10-21 作者裁定重申）：作者当日两次实撞——前台
+   * 克隆 1GB+ 大仓无输出运行，60min 前台预算（旧 BashMaxTimeoutMs 缺省）从未到点，
+   * 600s 无输出停滞阈值（ForegroundNoProgressTimeoutMs）先触发把进程**杀**掉，
+   * 主会话每次硬冻结 10 分钟。裁定：前台命令运行超过**短预算**（作者可调，建议
+   * 60-120s 量级）即自动转后台（拿后台 job id 回执继续跑，完成照旧通知；不杀进程）。
+   * 2026-11-10 作者令：缺省值上调 120s → 300s（键名与转后台不杀语义不变）。
+   *
+   * 语义要点：
+   *   - 判据 = **时间**，与输出活性无关——有输出的长命令同样在预算到点转后台，
+   *     不因「还在吐进度」占着主会话（实现 = exec fiber 与预算 sleep 的 racePair，
+   *     天然只看时间）；
+   *   - 显式 `timeout` 入参即等待上限（2026-11-10 作者令：可超本值，不再 min
+   *     钳制；解析面仍钳 BashMaxTimeoutMs）——本值 = 无显式入参时的缺省面；
+   *   - 预算到点 → adoptAsBackgroundJob（回执含 job id + 查询方式），进程不杀；
+   *   - 语义收缩的连带：默认 300s < ForegroundNoProgressTimeoutMs（600s）⇒ 前台
+   *     no-progress ceiling 在缺省面**结构性不可达**（自然消亡）；仅当作者把预算
+   *     调大于 600s 时，ceiling 作为前台真挂死兜底保留。转后台后的任务豁免
+   *     ceiling（JobHealth.adoptedAsBackground）。
+   *
+   * 配置面（三档，等价取值）：
+   *   1. nebflow.json 顶层键 `bashForegroundWaitBudgetMs`（GatewayMain fail-safe
+   *      读取 → BashResilienceConfig → ToolContext，与 #391 既有键同族）——**作者主面**；
+   *   2. system prop `nebflow.bash.foregroundWaitBudgetMs`（每次调用现读，
+   *      I2 kill-switch 先例）；
+   *   3. BashResilienceConfig.foregroundWaitBudgetMs 缺省 = 本值（测试注入同款）。
+   */
+  def ForegroundWaitBudgetMs: Long =
+    sys.props.getOrElse("nebflow.bash.foregroundWaitBudgetMs", "300000").toLong
 
   /** Curl tool max timeout in seconds. */
   val CurlMaxTimeoutSec: Int = 120
@@ -105,6 +418,77 @@ object Defaults:
   /** Background job idle threshold (no output) before flagging as stuck, in seconds. */
   val BgStuckThresholdSec: Int = 600
 
+  // ---- 会话级后台任务创建速率闸（#753 面板刷屏熔断批）----
+  // 实证：delegate-nebflow-59f171d8 八分钟造 88 个 Decision-point waiter 刷爆
+  // 后台任务面板。判据/文案单点 = BgTaskRegistry.BgRateGate（纯判定面），
+  // IO 面 = BgTaskRegistry.gateCreation（BashTool 两条后台创建路径的前置闸）。
+
+  /**
+   * 速率闸滚动窗口（ms）。每 prop 四值同款 I2 缝（BgIdleTimeoutSec 先例）：
+   * `nebflow.bg.rateWindowMs`，默认 10min。
+   */
+  def BgRateWindowMs: Long =
+    sys.props.getOrElse("nebflow.bg.rateWindowMs", (10L * 60L * 1000L).toString).toLong
+
+  /**
+   * 告警档阈值：窗口内创建数达到（本拍计入后 ≥）即引擎告警日志，不拒绝。
+   * `nebflow.bg.rateWarnAfter`，默认 12。
+   */
+  def BgRateWarnAfter: Int =
+    sys.props.getOrElse("nebflow.bg.rateWarnAfter", "12").toInt
+
+  /**
+   * 熔断档阈值：窗口内**既有**创建数达到即熔断 + 拒绝本拍。取值留足合法
+   * 批量作业余量（编译+测试+dev server 一个会话 10min 内远用不到 20 个）；
+   * 实证事故 88 个/8min 远超此档。`nebflow.bg.rateBreakerAfter`，默认 20。
+   */
+  def BgRateBreakerAfter: Int =
+    sys.props.getOrElse("nebflow.bg.rateBreakerAfter", "20").toInt
+
+  /**
+   * 熔断冷却（ms）：熔断触发后该会话新后台任务创建被拒的时长，到期自动解除
+   * （窗口计数照常滚动，解除后从当前计数重新起步）。
+   * `nebflow.bg.rateBreakerCooldownMs`，默认 10min。
+   */
+  def BgRateBreakerCooldownMs: Long =
+    sys.props.getOrElse("nebflow.bg.rateBreakerCooldownMs", (10L * 60L * 1000L).toString).toLong
+
+  /**
+   * 后台任务终态通知（agent 注入气泡 + 前台面板）携带的**输出尾段行数**（作者报障
+   * 2026-10-24「后台任务通知很不详细甚至有截断」批）：完成/失败通知正文只带末尾
+   * 本值行 + 截断标注（总行数 + jobId 指回），全文照旧由 BgTaskOutputStore 落盘、
+   * 面板行点击经 REST 详情卡查看——通知面不背大输出，回看面不丢字节。
+   * `nebflow.bg.notifyTailLines`，默认 20（BgRateWindowMs 同款 I2 prop 缝）。
+   */
+  def BgNotifyTailLines: Int =
+    sys.props.getOrElse("nebflow.bg.notifyTailLines", "20").toInt
+
+  /**
+   * Bash 读线程**尾窗行数上限**（bash overhaul T5，作者令 2026-11-04「组织优化
+   * bash，用业界成熟做法完整实现，一步到位」）：读线程只保留命令输出的**最后**
+   * 本值行（与 [[BashTailBytes]] 取小，行粒度回退），越过预算即把**完整输出**
+   * 溢写进 `<java.io.tmpdir>/stand-bash-<epochMs>-<rand>.log` 并在回执末行回路径。
+   *
+   * 为什么是**尾**而不是头：构建/测试日志的价值集中在末尾（失败点、断言、堆栈），
+   * 头部多是启动横幅。旧口径「保头 10MB 丢尾」与「通知面只带尾 20 行」两个面各丢
+   * 一头（缺陷 D6），业界成熟做法（pi `truncateTail`）统一为保尾 + 全文落盘。
+   *
+   * 2000 行 ≈ 一个完整 sbt 测试失败段（栈帧 + 汇总），单条命令上下文的可读上限。
+   * 纯常量（不留 prop 缝）：改它会直接改**模型可见回执**的形态，属契约级变更，
+   * 应由代码评审承担，不做运行时可漂移。
+   */
+  val BashTailLines: Int = 2000
+
+  /**
+   * Bash 读线程**尾窗字节上限**（同 T5 批）：与 [[BashTailLines]] **同时**满足才
+   * 算进预算（取小）——防「少而巨行」（压缩日志/minified JSON）把上下文撑爆。
+   *
+   * 50KB 的量级依据：一手工具的上下文预算里「一条命令回执」应远小于摘要预算
+   * （模型侧一次回执吃掉的 token 约 12–15k，绝大多数命令远低于此），而 50KB 足够
+   * 装下真实报错段；再大的部分一律由溢写文件承担（回执只回路径）。
+   */
+  val BashTailBytes: Long = 50L * 1024L
+
   /**
    * Background job idle timeout — if a background command produces no output
    * for this many seconds, it is automatically cancelled and the agent is
@@ -115,8 +499,15 @@ object Defaults:
    * 5 minutes is long enough for legitimate slow commands (npm install, sbt
    * compile) that produce no output for a while, but short enough to recover
    * a stuck agent within a reasonable timeframe.
+   *
+   * **I2 prop 面（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T5**）**：
+   * system prop `nebflow.shell.bgIdleTimeoutSec`，默认 `300` = **旧行为现行取值**
+   * （现场读数出处 = 本行；I2 前为 `val BgIdleTimeoutSec = 300`）。每次调用现读
+   * （`BgGateWaitTimeoutMs` / `NodeDestroyWindowMs` 同款先例）。🔴 I2 **只落参数面、
+   * 不上调**——设计件 T5 的提案值 900s（15min）归 I5 翻值；本层默认不变 ⇒ 零行为变化。
    */
-  val BgIdleTimeoutSec: Int = 300
+  def BgIdleTimeoutSec: Int =
+    sys.props.getOrElse("nebflow.shell.bgIdleTimeoutSec", "300").toInt
 
   // ---- Bash 卡死防护（#26，2026-08-30 用户裁定：恢复前台直跑语义）----
   // 08-25 #391「5 分钟自动转后台」已推翻：前台命令不再自动转后台、不设命令级
@@ -136,6 +527,20 @@ object Defaults:
 
   /** 硬超时后的停滞观察窗口（s）：停滞连续满此值 → killProcessTree + TimeoutException。 */
   val BashStuckWindowSec: Int = 120
+
+  /**
+   * bashautobg batch (2026-09-25 author order: "backgrounded commands have no
+   * limit"): sentinel for NO hard timeout on waiting-type background tasks —
+   * `runningMs > hardTimeoutMs` is never true against this value, so the B2
+   * hard-timeout stall kill becomes unreachable. The production face (BashTool:
+   * both explicit `run_in_background` and foreground auto-backgrounding) passes
+   * this value unconditionally — full-class exemption, one unified semantics
+   * "background has no time limit". The ShellSession parameter face keeps
+   * accepting finite values for spec injection (mechanism testability).
+   * NOT covered by this exemption: the B1 alert-only sensor and the foreground
+   * no-progress ceiling (the stall watchdog is not a time limit).
+   */
+  val BashBackgroundNoHardTimeoutMs: Long = Long.MaxValue
 
   // ---- 节点完成闸（bgtask-completion-gate 批，作者 2026-09-05 18:29 裁定）----
   // 节点完成判定不仅要求 turn 完成，还要求其等待型后台任务全部完成才投递。
@@ -157,9 +562,311 @@ object Defaults:
    * 延长至 4h（BgGateNodeHardTimeoutMs），总上限取 2h < 4h——闸兜底先于单任务
    * 上限触发；串行多任务的合法长链由「每次后台完成复检时重臂」保护（有活动
    * 就重置）。system prop `nebflow.bgtask.gate.timeoutMs` 可调（CompletionGate
-   * kill-switch 先例；每次调用现读，测试可即时翻转）。 */
+   * kill-switch 先例；每次调用现读，测试可即时翻转）。
+   */
   def BgGateWaitTimeoutMs: Long =
     sys.props.getOrElse("nebflow.bgtask.gate.timeoutMs", (2 * 60 * 60 * 1000L).toString).toLong
+
+  /**
+   * **R5 · delegate 回合尾等待屏障的空闲上限**（ms，默认 15min；0/负 = 关闭本腿）。
+   *
+   * 与 [[BgGateWaitTimeoutMs]]（墙钟总额 2h）互补：总额管的是「等太久」，空闲上限
+   * 管的是「等的东西根本不动」。等待集里每个后台作业最近都没有新输出（且已超此
+   * 上限）⇒ 放行回合收尾，带诚实注记交付父会话。
+   *
+   * 实证（停顿审计 20261104_164800 §4-R5）：`delegate-nebflow-79c40e17` 14:17:34
+   * 起被一个 `Find stand-website dir` 作业吊住 1h49m（未到 2h 总额）⇒ 回合永不
+   * 收尾 ⇒ 无 Completed ⇒ 合并窗 leg 永不安装 ⇒ 队头不可投递、整条合并队列 2h
+   * 零放行。墙钟总额是这条链的最后兜底，但它太粗——空闲上限是切断这条上游的
+   * 精细闸。
+   *
+   * system prop `nebflow.bgtask.turnend.idleCapMs`（`BgGateWaitTimeoutMs` 同款
+   * 现读先例；生产无在线翻转路由，改值需重启宿主）。委托侧构造器缝见
+   * `BackoffSupervisor(bgIdleCapMs = …)`（spec 注入点）。
+   */
+  def BgTurnEndIdleCapMs: Long =
+    sys.props.getOrElse("nebflow.bgtask.turnend.idleCapMs", (15 * 60 * 1000L).toString).toLong
+
+  /**
+   * **#2141 · 监督检查退避阶梯（作者裁定 2026-11-12「是分钟 不是秒」）**——
+   * delegate 等待屏障 hold 期间向被监督会话注入的**可见检查通知**的相邻间隔序列
+   * （ms）。默认 `10min → 30min → 60min`，阶梯走完后封顶按末档（60min）重复；
+   * 每个等待期（supervision generation）只有一个计时器（臂号闸复用既有
+   * BgCompletionCapTick 面），真实进展（等待集缩小）把阶梯重置回首档。
+   *
+   * 单位是**分钟**级——不设秒级默认（秒级会造成通知轰炸）。system prop
+   * `nebflow.supervision.checkBackoffMs`（逗号分隔 ms 现读，BgGateWaitTimeoutMs
+   * 同款先例；空/全非正 = 关闭检查腿，回到既有纯兜底行为）。spec 验收走
+   * `BackoffSupervisor(checkBackoffMs = …)` 构造器缝注入毫秒级小值 + 虚拟推进，
+   * 不真实等待。
+   */
+  def SupervisionCheckBackoffMs: List[Long] =
+    sys.props
+      .getOrElse("nebflow.supervision.checkBackoffMs", "600000,1800000,3600000")
+      .split(',')
+      .toList
+      .flatMap(_.trim.toLongOption)
+      .filter(_ > 0L)
+
+  // ── 节点生命周期收敛批（noderpt 批 A 段，2026-09-11 作者裁定）───────────────
+  //
+  // 完成门的两条腿各自独立开关（同一闸门、两个判据）；腿 2 的放行面检查已随
+  // 终态申报工具通道整体退役移除（完成 = 末条 assistant 文本单通道），其旋钮
+  // 休眠保留（NodeEngine 构造缝的 spec 兼容面）：
+  //   腿 1（后台任务存活）：`BgGateCompletionHold` —— 默认 **true = 默认保结果**
+  //     （bash-overhaul T4 批，作者令 2026-11-04 + 自查件
+  //     20261104_110500_our-bash-tool-defects.md D2：旧缺省 false ⇒ 「结束回合 =
+  //     丢结果」，与 Bash 工具描述承诺相反；翻转后丢弃必须显式声明）；
+  //   腿 2（休眠旋钮）：`NodeReportCompletionHold` —— 无生产读点。
+  //
+  // 两者都是「现读」prop（sys.props.getOrElse，BgGateWaitTimeoutMs 同款先例）——
+  // 生产侧无在线翻转路由，改值需重启宿主生效；spec 侧走 NodeEngine 构造入参
+  // （`bgGateCompletionHold` / `reportGateHold`）避开全局 prop 的跨 suite 污染。
+
+  /**
+   * 完成门腿 1 开关（`nebflow.bgGate.completionHold`，默认 `true` = **默认保结果**）：
+   * true = 桥观察 `Completed` 时查 `BgTaskRegistry.waitingFor` 并 hold（含 armCap 兜底
+   * 计时器），名下等待型后台任务全部完成后自动续（配合 Bash 的 `background_job_id` + `timeout` 有界等待，
+   * 「结束回合 → 后台任务完成 → 自动续」即默认路径）；false = 跳过等待集检查直接走
+   * 放行分支（不再因「后台任务还在跑」拦节点）——**丢弃结果必须显式声明**：
+   * `-Dnebflow.bgGate.completionHold=false` 或 `nebflow.json` 同名键（后者须经启动面
+   * 转成 `-D` 才生效；生产 `nebflow.json` 今日**无**该键 ⇒ 缺省面 = 保结果）。
+   *
+   * 缺省面依据（T4 批，作者令 2026-11-04 + 自查件 D2，
+   * `projects/stand/.stand/docs/20261104_110500_our-bash-tool-defects.md`）：旧缺省
+   * false 让「结束回合 = 丢结果」（通知投给死会话，现场 `bg-notify-undelivered`），
+   * 与工具描述承诺（结束回合不丢结果）恰好相反；且第 10 次同参调用 Terminate 后
+   * 再等十来秒后台任务本可回结果。hold 代码与 armCap 逐字保留，显式关即退回封存面。
+   * 每次调用现读（spec/运维可即时翻转）。
+   */
+  def BgGateCompletionHold: Boolean =
+    sys.props.getOrElse("nebflow.bgGate.completionHold", "true").trim.equalsIgnoreCase("true")
+
+  /**
+   * 完成门腿 2 开关（`nebflow.noderpt.completionHold`，默认 `true`；**休眠旋钮**——
+   * 申报槽闸的放行面检查已随终态申报工具通道整体退役移除，本 prop 无生产读点，
+   * 仅作 NodeEngine 构造缝的 spec 兼容面保留）。
+   */
+  def NodeReportCompletionHold: Boolean =
+    sys.props.getOrElse("nebflow.noderpt.completionHold", "true").trim.equalsIgnoreCase("true")
+
+  /**
+   * mount-stalled **告警升级**间隔（`nebflow.stall.reNotifyMs`，默认 **600000 = 10min**；
+   * engine-defects 批 #85，2026-09-15）：同一停滞期在首条 `mount-stalled` 之后每过本
+   * 间隔**再发一条**（summary 带 `escalation=#N`），直到节点脱离停滞集。≤0 = 退回
+   * 「每轮都发」以外的旧行为无效（<=0 时引擎按 0 处理 ⇒ 每轮重发，仅调试用）。
+   *
+   * 动因（真身 `.nebflow/flow-map-events.jsonl:5553` + `:5581`）：R4 `pendingSuccession`
+   * 形态下 barrier 被**永久** hold（唯一出口 = 分发器人工 `NodeEdit`），节点 `wiring`
+   * 不动却以「开态 rank 更小者」身份占着合并队列临界区 ⇒ 整条合并队列静默死锁；旧
+   * 「单发 Set」让这种可持续数十分钟的停滞只留下一条事件 = 事实上的静默。
+   * 每次调用现读（spec/运维可即时翻转）。
+   */
+  def StallReNotifyMs: Long =
+    sys.props.getOrElse("nebflow.stall.reNotifyMs", (10 * 60 * 1000L).toString).trim.toLong
+
+  // ── 终态延迟销毁窗口（noderpt 批 B 段，2026-09-11 作者裁定：一律存活 30 分钟再销毁）──
+
+  /**
+   * 终态延迟销毁窗口（`nebflow.noderpt.destroyWindowMs`，默认 **30 分钟**——与
+   * `ShellSession` 的内建 `SessionTTL = 30.minutes` 同量级对齐，后者为 `private`
+   * 常量不可跨包复用，故在此独立声明并显式注明对齐关系）。
+   *
+   * 语义（作者裁定形态 (b)）：节点**终态时刻只登记不杀进程**（`destroyAt = T + 本窗口`
+   * 落节点持久字段）——窗口内进程/任务照跑、输出照写、**允许读取取证**，仅**禁止新
+   * spawn**（新后台任务 / 新会话）；到点由 `NodeEngine.sweepDestroyWindows`
+   * （`ProjectActor.TtlTick` 30s 节拍）执行 `BgTaskRegistry.reclaimSession` + 逐条
+   * `finalizeTask` + 释放 `ShellSession.sessions` 条目 + 清 `destroyAt`（幂等）。
+   * 挂起腿不登记窗口（即时收割不变）。
+   *
+   * 每次调用现读（验收可压到秒级；spec 亦可走 NodeEngine 构造入参 `destroyWindowMs`
+   * 注入，避开全局 prop 的跨 suite 污染，`bgGateCompletionHold` 同款）。
+   */
+  def NodeDestroyWindowMs: Long =
+    sys.props.getOrElse("nebflow.noderpt.destroyWindowMs", (30 * 60 * 1000L).toString).toLong
+
+  /**
+   * 分发器会话空闲保活窗（`nebflow.dispatcher.idleWindowMs`，默认 **4 小时**；
+   * 令 3 分发器生命周期设计 §3.4；🔴 killruling 批 2026-09-23 作者裁定 **#63** 把
+   * 阈值从 30 分钟**抬到小时级**，本批按 `4 * 60 * 60 * 1000L` 落）。
+   *
+   * 语义：分发器会话的生命周期从「turn 级」升级为「派发批次级 + 空闲窗」——
+   * 观察桥在 `pendingInjected` 归零的那个 `Completed` **不再立即拆除**，改为记
+   * `idleSince`；此后窗口内任何经 `ProjectActor` 两个命令入口到达的派发/重入
+   * 都复用**同一会话**（含其上下文，连贯性收益）；`now - idleSince ≥ 本窗口`
+   * 时由 `TtlTick`（30 s 节拍）扫描腿走既有 `teardown` 拆除 ⇒ 下一个派发重新
+   * spawn（与今天同款）。
+   *
+   * 与 `NodeDestroyWindowMs` 同款先例：`sys.props` **每次调用现读**（spec /
+   * 运维可即时翻转——验收可把窗口压到秒级做等效实验）。
+   * **`≤ 0` = 关闭保活**（回到 turn 级即拆的旧行为）= 零风险回退开关
+   * （与 `RootNotifyQuietMs` 的「`≤0` = 关闭打包」同款措辞；判据点 =
+   * `ProjectActor.sweepIdleDispatchers` 的 `if windowMs <= 0 then IO.unit`）。
+   *
+   * 🔴 **代价（抬阈值换来，必须显式登记）**：会话驻留更久 ⇒ 内存 / 句柄占用与
+   * 「空闲会话被误当活会话」的窗口同时变长。涨到 4 h 后「实际拆会话次数」的
+   * 可观测读数 = `flow-map-events.jsonl` 的 `dispatcher-idle-expired` 逐条时刻
+   * 反推会话存活时长分布（改前阈 30 min ⇒ 分布被 30 min 截断）。
+   *
+   * 有效空闲窗 = **[窗口, 窗口 + 30 s]**（`TtlTick` 节拍粒度，设计 §3.1-4）。
+   */
+  def DispatcherIdleWindowMs: Long =
+    sys.props.getOrElse("nebflow.dispatcher.idleWindowMs", (4 * 60 * 60 * 1000L).toString).toLong
+
+  /**
+   * 分发器**唤醒看门狗**静默阈值（`nebflow.dispatcher.wakeWatchdogMs`，默认 **2 分钟**；
+   * dispatcher-hang 修复批 2026-11-18）。
+   *
+   * 语义：delegate 作用域引擎（dispatcher 模式的链都挂在这里）每 ~30s tick 检查一次
+   * 「作用域图上有节点（终态或非终态）∧ 根会话（= dispatcher 本人）registry 状态
+   * Idle ∧ 距**锚点**（图上任何节点时间戳 / 根会话 agent 侧活动 / 上次看门狗唤醒，
+   * 三者取最大）已静默 ≥ 本阈值」⇒ 注入一条 fallback 唤醒（`ImmediateInput`，与
+   * 节点终态通知同通道族），驱动 dispatcher 继续推进或收口汇报。
+   *
+   * 默认 2 分钟的依据：正常链推进的最慢合法节拍 = 30s 引擎 tick + 5s 通知打包窗 +
+   * 秒级 turn 往返，三者之和 ≪ 1 分钟；2 分钟 = 「长期无人推进」的可辨下界
+   * （事故形态实测静默 2h+），且与 [[DispatcherIdleWindowMs]]（4h 保活拆除）量级
+   * 解耦——本看门狗管「该动不动」，保活窗管「该拆不拆」，互不越界。
+   *
+   * 唤醒次数**有界**（见 [[DispatcherWakeWatchdogMaxWakes]]，默认 3 次）：每次链面
+   * 出现新进展（图上时间戳前进）预算重置；耗尽后落一条**可读结论**事件
+   * （`dispatcher-wake-watchdog` outcome=exhausted）并停止注入——绝不无限骚扰、
+   * 也绝不静默挂死。**`≤ 0` = 关闭看门狗**（回滚开关，与 `DispatcherIdleWindowMs`
+   * 的「`≤0` = 关闭保活」同款措辞）。每次调用现读（spec/运维可即时翻转）。
+   */
+  def DispatcherWakeWatchdogMs: Long =
+    sys.props.getOrElse("nebflow.dispatcher.wakeWatchdogMs", (2 * 60 * 1000L).toString).toLong
+
+  /**
+   * 分发器唤醒看门狗**单静默期预算**（`nebflow.dispatcher.wakeWatchdogMaxWakes`，
+   * 默认 **3**；dispatcher-hang 修复批 2026-11-18）：同一个静默期内最多注入的
+   * fallback 唤醒条数。3 = 「两次自然恢复机会 + 一次最后确认」——链真死时第 1~3
+   * 次唤醒分别覆盖「通知被吞 / turn 中途死亡 / 派发遗漏」三类单点丢失，仍无进展即
+   * 判「非唤醒可解」，落 exhausted 结论交人工/上层注意，而不是无限重试。
+   * `< 1` 归一为 1（防 0 把结论腿也关掉）。每次调用现读。
+   */
+  def DispatcherWakeWatchdogMaxWakes: Int =
+    math.max(1, sys.props.getOrElse("nebflow.dispatcher.wakeWatchdogMaxWakes", "3").trim.toInt)
+
+  /**
+   * Dispatcher session lifetime **anchor** (taskunify merge batch 2026-09-24, ruling d①
+   * "pure task-terminal anchor").
+   *
+   * `true` (**new production default**) = the criterion becomes "the task this dispatcher
+   * is bound to reached a terminal state (`completed` / `closed`)" — task terminal ⇒ the
+   * session is torn down + one distinguishable `dispatcher-task-terminal` event; the 4 h
+   * idle window is no longer consulted. `false` = **fallback** to the current idle-window
+   * behaviour (byte-for-byte as today).
+   *
+   * 🔴 **Fallback switch shape (ruling T wording "explicit switch `<=0`/`off`" + current
+   * convention)**: this key is read from `sys.props`; `off` / `false` / `0` / a negative
+   * value all mean **off** (back to the idle window). It is in the same family as
+   * [[DispatcherIdleWindowMs]]'s "`<=0` = keep-alive off", but this key is boolean, so
+   * `off` is accepted too. **Enablement is never silent**: the startup line
+   * `TASKLEDGER_LIFECYCLE_ANCHOR` lands in the gateway log (mechanically greppable).
+   *
+   * 🔴 **Quantitative cap (design §4d / risk table "session leak · unbounded growth" —
+   * mandatory)**: once the criterion is "destroy only on task terminal", a task that never
+   * reaches a terminal state means unbounded session residency (measured baseline: under
+   * the 4 h window `~/.nebflow/sessions/` already holds 1,817 dispatcher sessions / 4.6 GB).
+   * ⇒ the concurrency cap lives in [[DispatcherMaxConcurrentSessions]]; exceeding it is an
+   * **explicit refusal + alert** (never a silent over-spawn).
+   */
+  def DispatcherLifecycleAnchorTaskTerminal: Boolean =
+    val raw = sys.props.getOrElse("nebflow.dispatcher.lifecycleAnchor", "task-terminal").trim.toLowerCase
+    raw match
+      case "off" | "false" | "0" | "no" | "idle" => false
+      case _ => true
+
+  /**
+   * **Concurrency cap on dispatcher sessions per project** (taskunify merge batch
+   * 2026-09-24; design §4d mandatory anti-leak item).
+   *
+   * After the anchor change, "a task that never reaches a terminal state ⇒ unbounded
+   * session residency" is this batch's largest resource risk ⇒ this key sets a hard upper
+   * bound: **when the cap is reached a new spawn is explicitly refused + alerted** (not a
+   * silent over-spawn, not a silent drop — the refusal text names the project, the current
+   * concurrency, the cap and the way out). `<= 0` = **gate off** (fallback).
+   *
+   * Value rationale (mailmodel batch 2026-09-25, author ruling (a) "no upper limit,
+   * concurrency allowed"): the trigger model is now **one dispatcher per task** (per-taskId
+   * slot table — the old singleton precondition for raising the cap is gone), so the
+   * default moves **1 → 0**: `0` is the gate-off semantics = **unbounded** concurrency,
+   * bounded instead by the task-terminal anchor (teardown on terminal). The `sys.props`
+   * override (`nebflow.dispatcher.maxConcurrentSessions`) stays available as the anti-leak
+   * lever when a deployment needs a hard bound.
+   */
+  def DispatcherMaxConcurrentSessions: Int =
+    sys.props.getOrElse("nebflow.dispatcher.maxConcurrentSessions", "0").toInt
+
+  /**
+   * 🔴 **Unified-ledger enable switch + uplink fail-closed gate** (taskunify merge batch
+   * 2026-09-24; author Q2ⓐ "strict fail-closed" + implplan §10.3 hard requirement 3).
+   *
+   * `false` (**production default = legacy behaviour**) = the uplink circuit **does not
+   * check attribution** (byte-for-byte as today: node failed / completed / landing /
+   * reentry / cancel / redelivery are all delivered as before). `true` = fail-closed is
+   * enabled: the uplink checks the node's attribution fingerprint `taskId`;
+   * **no fingerprint (or not registered in the ledger) ⇒ refused**, with the ruling-T
+   * **double trace** (event face [[FlowMapEventLog.UplinkRefusedType]] + WARN log face),
+   * the text carrying "node id + refusal reason + way out".
+   *
+   * 🔴 **Why the default is off (it is not an oversight)**: implplan §10.3 criterion ①
+   * states "started without the switch ⇒ behaviour byte-for-byte as today"; and the Q2ⓐ
+   * legacy cost is registered (all existing nodes have zero fingerprints ⇒ everything
+   * refused). ⇒ default off means **the fallback path IS the default state**, and enabling
+   * the gate is **one explicit action** (the `TASKLEDGER_ENABLED` startup line is
+   * mechanically greppable, criterion 10.3②).
+   *
+   * Accepted values: `false`/`off`/`0`/`no` ⇒ off (same family as
+   * [[DispatcherLifecycleAnchorTaskTerminal]]).
+   */
+  def TaskLedgerUplinkFailClosed: Boolean =
+    val raw = sys.props.getOrElse("nebflow.taskledger.enabled", "false").trim.toLowerCase
+    raw match
+      case "true" | "on" | "1" | "yes" => true
+      case _ => false
+
+  /**
+   * Loud-alert window for the **first N** refusals after enablement (ruling T: "the first
+   * N refusals after enablement alert loudly"). A refusal inside the window also emits an
+   * ALERT-level log line (prefix `[UPLINK-REFUSED]`), so the known cost — "every existing
+   * node is refused the moment the gate turns on" — is **immediately visible** instead of
+   * drowning in routine WARNs. `<= 0` = no extra alert.
+   */
+  def TaskLedgerUplinkLoudAlertFirstN: Int =
+    sys.props.getOrElse("nebflow.taskledger.loudAlertFirstN", "10").toInt
+
+  // ── loop 预算（nrloop 一期 2026-09-12；设计 §3.6「轮次帽 + 时间帽」）────────────
+  //
+  // 两维独立、**任一命中即熔断**（额度帽不做——一期范围 OUT，设计 §3.6 作者裁定 R6
+  // 一期只做 (b) 轮次 + 时间）。判定单点 `LoopBudget.decide` 收两个阈值，熔断动作
+  // 三档统一在 `NodeEngine.circuitBreakLoop`。两者都是「现读」prop
+  // （`sys.props.getOrElse`，`BgGateWaitTimeoutMs` / `NodeDestroyWindowMs` 同款先例）
+  // ——spec / 运维可即时翻转；≤0 = 关闭该维（见 `LoopBudget.decide`）。
+
+  /**
+   * loop 轮次帽（`nebflow.nrloop.maxRounds`，默认 **3**）：同一 verifier 对同一
+   * 重跑目标累计申报 `fail` 达到此轮数 ⇒ 熔断（verifier 终态化 `failed` + result
+   * 写 reason + 计量、`loop-budget` 事件、失败通知）——不再登记新一轮重跑意图。
+   *
+   * 为什么 3：重跑是「同一判定再来一次」，三轮内无改善基本可判结构性缺陷（与
+   * `RetryCap` 系的量级一致）；阈值调优留给运维（改 prop 即生效，无需重建流程）。
+   */
+  def LoopMaxRounds: Int =
+    sys.props.getOrElse("nebflow.nrloop.maxRounds", "3").toInt
+
+  /**
+   * loop 时间帽（`nebflow.nrloop.maxWallClockMs`，默认 **4h**）：重跑目标节点自
+   * `loopStartedAt` 置位起累计墙钟达到此值 ⇒ 熔断（同上三档动作；由
+   * `NodeEngine.sweepLoopBudgets` 在 `ProjectActor.TtlTick` 30s 节拍扫描）。
+   *
+   * 为什么 4h：与节点会话硬上限 `BgGateNodeHardTimeoutMs` 同量级（循环重跑的总
+   * 时长不该超过单节点会话能活的时长——超了说明它早就不是在「重跑」而是在「卡住」，
+   * 该由熔断而非静默等待收场）。
+   */
+  def LoopMaxWallClockMs: Long =
+    sys.props.getOrElse("nebflow.nrloop.maxWallClockMs", (4 * 60 * 60 * 1000L).toString).toLong
 
   // ---- Tool Result Guard ----
 
@@ -180,6 +887,39 @@ object Defaults:
 
   /** Preview size in characters for persisted tool results. */
   val ToolResultPreviewSize: Int = 2048
+
+  // ---- Session UI cache bounds (gateway SessionStore, chain-uicache-lru 2026-09-25) ----
+
+  /**
+   * Max number of sessions whose UI messages (`<id>.ui.json` render history)
+   * stay cached in memory in `nebflow.core.SessionStore` (W1 re-anchor: was
+   * `nebflow.gateway.SessionStore`; the class moved with the PR48 refactor family). Once an insert
+   * pushes the cache past this count (or past `UiCacheMaxBytes`), the
+   * least-recently-used entries are evicted — in memory only: the disk files
+   * are untouched and are re-read on demand.
+   *
+   * Why 32: a cached entry runs ~10-15MB for a long session (the per-session
+   * replay file is already trimmed to `SessionStore.MaxStoredUiMessages`), so
+   * 32 entries is roughly 384-480MB before the byte gate below clamps the
+   * total — enough to keep the active session plus recently viewed sessions
+   * hot, while the cache no longer grows without bound over multi-day uptime
+   * (two runtime OOMs traced to this cache; rescue report residual risk #1).
+   */
+  val UiCacheMaxEntries: Int = 32
+
+  /**
+   * Byte budget for the SessionStore UI cache (see `UiCacheMaxEntries`). Each
+   * entry is charged a bounded estimate of its in-memory residency (2 bytes
+   * per char for UTF-16 strings plus fixed per-message overhead — see
+   * `SessionStore.estimateUiCacheBytes`); entries are evicted in LRU order
+   * until the estimated total is back under this cap.
+   *
+   * Why 256MB: pins the cache's heap footprint at a level comparable to the
+   * rest of the gateway's steady-state residency, so fat card-heavy entries
+   * (which the per-session trim does not shrink — card content is never
+   * truncated) cannot accumulate into a runtime OOM.
+   */
+  val UiCacheMaxBytes: Long = 256L * 1024 * 1024
 
   // ---- Mail queue delivery dedup (P0 投递层指纹去重) ----
 
@@ -213,11 +953,616 @@ object Defaults:
    * this long is considered stuck. 10min is far above the llm-fail retry chain
    * upper bound (8s×3 + provider probe 120s) — every retry action touches the
    * activity stamp, so a healthy agent in the retry chain is never misjudged.
+   *
+   * **I2 prop 面（nodestate-bash 批 2026-09-14；设计件 §4.4.1 **T3**）**：
+   * system prop `nebflow.stuck.thresholdMs`，默认 `600000` = **旧行为现行取值**
+   * （现场读数出处 = 本行；I2 前为 `val StuckThresholdMs = 10 * 60 * 1000L`）。每次
+   * 调用现读（`ToolPhaseStuckMs` 已同款）。🔴 I2 **只落参数面、不上调**——设计件 T3 的
+   * 提案值 1800s 归 I5 翻值；本层默认不变 ⇒ 零行为变化（含 `TaskStuckWatcher` 两个
+   * 默认参数位与 `GatewayMain` 取数点，`val → def` 对调用方零改动）。
    */
-  val StuckThresholdMs: Long = 10 * 60 * 1000L
+  def StuckThresholdMs: Long =
+    sys.props.getOrElse("nebflow.stuck.thresholdMs", "600000").toLong
 
   /** TaskStuckWatcher scan interval. */
   val StuckWatcherIntervalSec: Int = 30
+
+  /**
+   * **node-stuck 通报的挂等轴阈值**（node-stuck-notify 批，2026-09-11）：一个
+   * flow-map 节点停在 `WaitingForUser`（等人工回答）**超过本阈值**才向 dispatcher
+   * 通报一次。判据与写点见 `NodeStuckNotify.assessWaiting`。
+   *
+   * 取 900s（15min）的理由 = **保守**：挂等的推进者是人，人的响应延迟天然是分钟级；
+   * 阈值低于人的正常响应窗就变成噪声（这正是既有卡死扫描**显式豁免**
+   * `WaitingForUser` 的理由）。15min 之后仍未落地 ⇒ 派发方/用户值得知道。
+   *
+   * system prop `nebflow.nodeStuckNotify.waitingMs`，每次调用现读（kill-switch 先例，
+   * 与 [[StuckThresholdMs]] / [[ToolPhaseStuckMs]] 同款）。无进展轴的阈值不另开
+   * 旋钮——它逐字复用卡死扫描阈值 [[StuckThresholdMs]]（与恢复链同源单点）。
+   */
+  def NodeStuckNotifyWaitingMs: Long =
+    sys.props.getOrElse("nebflow.nodeStuckNotify.waitingMs", "900000").toLong
+
+  // ---- Held-receipt delivery reliability（平台修复批：delegate 回执投递可靠性）----
+
+  /**
+   * HeldDeliveryWatchdog 扫描周期（秒）。扫描器职责 = 投递可靠性自检（fix 2）：
+   * idle 会话有已产出回执但 N 分钟未注入 → 判投递失败催注重投。**不是**任务超时
+   * ——「无超时」哲学不动，本扫描器只催注回执、绝不杀会话。
+   */
+  val HeldDeliveryScanIntervalSec: Int = 60
+
+  /**
+   * 回执被 HOLD 后首催间隔（ms）——「N 分钟未投递」的 N（10min）。首催前窗口
+   * 留给正常屏障语义（并行批次汇聚注入）；到期仍在 held ⇒ 判投递失败、进入
+   * 指数退避催注链。
+   */
+  val HeldDeliveryFirstRetryMs: Long = 10 * 60 * 1000L
+
+  /** 催注退避封顶（ms）：10min ×2 递增到此值后走平（≈30min 一催）。 */
+  val HeldDeliveryMaxBackoffMs: Long = 30 * 60 * 1000L
+
+  /**
+   * 催注穷尽阈值：催注 HeldDeliveryMaxAttempts 次后回执仍 held ⇒ exhausted 终态
+   * 落盘（台账 exhausted 旗 + 父会话「N 条未读回执」徽标），调度器停催；父会话
+   * 任何后续事件走「先补注入未读回执」腿消费（fix 1）。
+   */
+  val HeldDeliveryMaxAttempts: Int = 5
+
+  // ── 后台任务生命周期 reconciler（设计稿 20261030_background-task-lifecycle §3，P1 批）──
+  //
+  // 判据数值 = 稿 §9-③ 默认档（作者未另拍板前按此落地）：suspect = 空闲 >
+  // max(基线×3, 10min)；escalated = 催注 3 次（10/20/40min 退避）无进展 或
+  // 空闲 > 基线×10。基线 = 任务自基线（头 K 分钟活跃间隔中位，§3.3/§9-② 自基线
+  // 方案）。全部现读 prop（BgGateWaitTimeoutMs 同款先例）⇒ spec 可即时翻转；
+  // 本控制器全部动作为 提醒/徽标/通知/审计，零 wall-clock 判死（红线照旧）。
+
+  /**
+   * P1 控制器总闸：`nebflow.bglifecycle.enabled`，缺省 true；false = reconciler
+   * 每拍 no-op（逐字回到 P0 现状——纯投影、零健康轨行为）。
+   */
+  def BgLifecycleEnabled: Boolean =
+    sys.props.getOrElse("nebflow.bglifecycle.enabled", "true").toBoolean
+
+  /** 扫描拍频（秒）——稿 §3.2 的 30s 档（HeldDeliveryScanIntervalSec 同款形态）。 */
+  val BgLifecycleScanIntervalSec: Int = 30
+
+  /**
+   * 自基线观测窗 K（ms）：任务头 K 分钟的活跃间隔采样窗，到龄冻结中位为基线
+   * （稿 §3.3「任务头 K 分钟的观测中位×系数」；§9-② 建议先自基线+全局默认档）。
+   * 全程零采样的任务冻结基线 = 0 ⇒ 判据恒走地板档（suspect=10min，escalated 的
+   * ×10 腿仅基线>0 时生效）。
+   */
+  def BgLifecycleBaselineWindowMs: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.baselineWindowMs", (10 * 60 * 1000L).toString).toLong
+
+  /** suspect 判据系数 N（稿默认档 3）：suspect ⟺ 空闲 > max(基线×N, 地板)。 */
+  def BgLifecycleSuspectBaselineFactor: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.suspectBaselineFactor", "3").toLong
+
+  /** suspect 空闲地板（ms，稿默认档 10min）——慢任务/零采样任务豁免档（R5）。 */
+  def BgLifecycleSuspectMinIdleMs: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.suspectMinIdleMs", (10 * 60 * 1000L).toString).toLong
+
+  /** escalated 空闲判据系数 M（稿默认档 10）：空闲 > 基线×M（基线>0）⇒ 直达升级。 */
+  def BgLifecycleEscalateBaselineFactor: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.escalateBaselineFactor", "10").toLong
+
+  /** 催注穷尽阈值 k（稿默认档 3）：k 次指数退避催注仍无进展 ⇒ escalated。 */
+  def BgLifecycleMaxNudges: Int =
+    sys.props.getOrElse("nebflow.bglifecycle.maxNudges", "3").toInt
+
+  /** 首催间隔（ms，稿默认档 10min——HeldDeliveryFirstRetryMs 哲学同款：首催前窗口留给正常推进）。 */
+  def BgLifecycleNudgeFirstMs: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.nudgeFirstMs", (10 * 60 * 1000L).toString).toLong
+
+  /** 催注退避封顶（ms，稿默认档 40min——§9-③「10/20/40min 退避」链的封顶档）。 */
+  def BgLifecycleNudgeMaxBackoffMs: Long =
+    sys.props.getOrElse("nebflow.bglifecycle.nudgeMaxBackoffMs", (40 * 60 * 1000L).toString).toLong
+
+  // ── Delegate 待命态看护（案A 批 2026-10-31：终态申报扩 standby 申报 +
+  //    显式待命停靠；状态矩阵批 2026-11-01 收编：complete×standby 停靠看护 +
+  //    complete×idle（未申报）提醒腿——作者令「system reminder 提醒它调整状态，
+  //    不终判」；JeV 判断注入（案B2）作者本轮未点名，由提醒腿承担。退避档
+  //    10s→30s→60s 各一次后转 10min 档对齐现有提醒哲学）。
+  //    全部提醒类动作，零 wall-clock 判死（「无超时」红线照旧——待命/空等挂起
+  //    绝不因超时被终态化；提醒穷尽后回纯事件驱动，Mail 随时唤醒）。
+
+  /**
+   * 待命提醒总闸：`nebflow.delegate.standby.nudgeEnabled`，缺省 true；false =
+   * 待命/空等挂起期零提醒（纯事件驱动回退——行为对齐总闸开前的矩阵主干语义）。
+   */
+  def DelegateStandbyNudgeEnabled: Boolean =
+    sys.props.getOrElse("nebflow.delegate.standby.nudgeEnabled", "true").toBoolean
+
+  /**
+   * 短档退避序列（ms）——审计草案 B1 档 10s→30s→60s 各一次。prop 覆写
+   * （`nebflow.delegate.standby.nudgeDelaysMs`）= 逗号分隔毫秒清单（spec 即时翻转
+   * 小档做确定性测试——caretaker 每拍现读，新停靠轮自动拾取）；解析失败/空清单 =
+   * 缺省档。
+   */
+  def DelegateStandbyNudgeDelaysMs: List[Long] =
+    sys.props
+      .get("nebflow.delegate.standby.nudgeDelaysMs")
+      .map { raw =>
+        val parsed =
+          raw.split(",").toList.map(_.trim).filter(_.nonEmpty).flatMap(s => scala.util.Try(s.toLong).toOption)
+        if parsed.nonEmpty then parsed else List(10_000L, 30_000L, 60_000L)
+      }
+      .getOrElse(List(10_000L, 30_000L, 60_000L))
+
+  /** 短档穷尽后的长档间隔（ms，缺省 10min——对齐 held/bg-lifecycle 首催档哲学）。 */
+  def DelegateStandbyNudgeLongMs: Long =
+    sys.props.getOrElse("nebflow.delegate.standby.nudgeLongMs", (10 * 60 * 1000L).toString).toLong
+
+  /**
+   * 长档重复次数（缺省 3——BgLifecycleMaxNudges 同款哲学）。短档各一次 + 长档 N 次
+   * 穷尽后停催（回纯事件驱动；Mail 到达照常唤醒——🔴 绝不因提醒穷尽给待命会话
+   * 安任何 wall-clock 终判——状态矩阵批：complete×standby/complete×idle 都不是
+   * 终态组合）。
+   */
+  def DelegateStandbyNudgeLongMax: Int =
+    sys.props.getOrElse("nebflow.delegate.standby.nudgeLongMax", "3").toInt
+
+  /**
+   * **应答后提醒下限**（ms，缺省 600000 = 10min · prop
+   * `nebflow.delegate.standby.answerFloorMs`）——作者 2026-11-03 18:14 裁定的退避
+   * 判据：「会话已经答过（重申待命/无变化）之后，绝不再 1 分钟连戳」。口径 =
+   * 同一待命期内 `answers > 0` **或** `attempt >= 2` 的相邻提醒间隔一律取
+   * `max(退避档, floor)`（见 [[nebflow.core.delegate.DelegateStandbyCare.effectiveDelay]]）；
+   * 首档（会话尚未被提醒过）照旧走短档，保留「刚空等就提醒」的及时性。
+   * prop 覆写 = 单值毫秒（spec 用 600 跑真 caretaker 验实测间隔）。
+   */
+  def DelegateStandbyNudgeAnswerFloorMs: Long =
+    sys.props.getOrElse("nebflow.delegate.standby.answerFloorMs", (10 * 60 * 1000L).toString).toLong
+
+  // ── Delegate 错误冻结（错误冻结批 2026-11-01 · 作者令「所有因错误状态的
+  //    delegate 应该上报之后 要能保留状态 冻结态 方便被唤醒 接着做」）────────
+  //    语义：delegate 因错误结束 ⇒ **冻结**（frozen）而非 failed 终止——同会话
+  //    就地停住、状态落盘跨重启存活、上报一条冻结回执（不是失败回执），唤醒
+  //    （Mail `delegate:<id>` / 面板「唤醒」）即**在原会话上下文上继续**。
+  //    与 standby（自愿待命）显式分工：standby = 回合正常收尾等活，
+  //    frozen = 异常冻结等唤醒；引擎不自动重试（冻结即停，唤醒才是重试）。
+  //    全部现读 prop（spec 可即时翻转边界）。
+
+  /**
+   * 错误冻结总闸：`nebflow.delegate.freeze.enabled`，缺省 true；false =
+   * 错误路径回既有 failed 终止链（逐字节回本批前现状——冻结腿、回执、面板
+   * 徽标、长期兜底扫描一并旁路）。
+   */
+  def DelegateFreezeEnabled: Boolean =
+    sys.props.getOrElse("nebflow.delegate.freeze.enabled", "true").toBoolean
+
+  /** Delegate terminal and saved-state TTL (7 days), shared by every cleanup surface. */
+  val DelegateTerminalTtlMs: Long = 7L * 24L * 3600L * 1000L
+
+  /** Compatibility accessor: freeze retention now uses the single terminal TTL. */
+  def DelegateFreezeRetentionDays: Long = DelegateTerminalTtlMs / (24L * 3600L * 1000L)
+
+  /**
+   * 长期无人唤醒的首次面板提示窗（ms，缺省 24h）：冻结超此龄 ⇒
+   * `delegateFrozenDormant` 帧 + WARN（一次，进程内去重）。prop
+   * `nebflow.delegate.freeze.dormantRemindMs`。
+   */
+  def DelegateFreezeDormantRemindMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.dormantRemindMs", (24L * 3600 * 1000).toString).toLong
+
+  /**
+   * 单 delegate 冻结-唤醒循环次数上限（缺省 3）：超过则后续错误按既有 failed 终态
+   * 收殓（反复冻结-唤醒死循环的护栏——「冻结即停」不等于无限循环）。0 = 不限。
+   * prop `nebflow.delegate.freeze.maxRevives`。
+   */
+  def DelegateFreezeMaxRevives: Int =
+    sys.props.getOrElse("nebflow.delegate.freeze.maxRevives", "3").toInt
+
+  // ── 可恢复冻结降噪批（2026-11-05 作者令逐字「然后frozen这种可恢复的，不需要通知，」）
+  //    判定与聚合规则单点 = [[nebflow.core.delegate.FreezeNotice]]；本段只放参数面，
+  //    全部现读 prop（spec 可即时翻转边界，无需重启编译面外的状态）。──────────────
+
+  /**
+   * 冻结降噪总闸：`nebflow.delegate.freeze.silence`，缺省 true。
+   *
+   * true = 按 [[nebflow.core.delegate.FreezeNotice]] 的判定表分流：**可恢复类冻结
+   * 不推任何消息**（面板就地标记 + 静默统计），**需人处理类合并成一条聚合告警**；
+   * false = 逐字节回本批前行为（每次冻结一条冻结回执直投父会话）。
+   */
+  def DelegateFreezeSilence: Boolean =
+    sys.props.getOrElse("nebflow.delegate.freeze.silence", "true").toBoolean
+
+  /**
+   * 静默统计的「同一波」时间窗（ms，缺省 10 分钟）：`frozenSince` 落在
+   * `now - window` 之后的冻结记录算同一波，面板统计行只汇总这一波（更老的冻结
+   * 仍逐条在面板行上，只是不进「本波 N 条」读数）。prop
+   * `nebflow.delegate.freeze.digestWindowMs`。
+   *
+   * **只管面板读数，不管告警**（provider 冻结告警合并窗批 2026-11-05 19:08）：告警腿
+   * 读 [[nebflow.core.delegate.FreezeNotice.fullDigest]]（全量在冻集）。此前告警腿也读
+   * 本窗，与「本轮冻结 ≥30 分钟才升级」的时限判据错配 —— 冻过 10 分钟的条目先从
+   * digest 掉出去，30 分钟时限因此永远触发不了。
+   */
+  def DelegateFreezeDigestWindowMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.digestWindowMs", (10L * 60 * 1000).toString).toLong
+
+  /**
+   * **同一错误类型的合并窗口**（ms，缺省 30 分钟，作者令 2026-11-05 19:08「30分钟才提醒，
+   * 而且是有一个合并窗口，把同类型的错误合并后一起汇报，不要分开汇报」）：provider 故障
+   * 族的告警按**错误类型族**（`ProviderFault.familyWire`）归并成一条，同一类型在本窗内
+   * **最多一条**；窗内新来的同类冻结并入同一条（不另发）。窗口按 **tumbling** 滚动
+   * （锚点 = 上次发出时刻），因此同类两次汇报的间隔恒 ≥ 本窗，也不会因持续新增而永远
+   * 推迟。确定性缺陷**不受本窗约束**（即时单独通知）。prop
+   * `nebflow.delegate.freeze.digestMergeWindowMs`。
+   */
+  def DelegateFreezeDigestMergeWindowMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.digestMergeWindowMs", (30L * 60 * 1000).toString).toLong
+
+  /**
+   * 同一批**确定性缺陷**告警的重投冷却（ms，缺省 30 分钟）：去重键 = 父会话 + 冻结 id 集
+   * （同一批缺陷不因 30s 扫描拍重发；**新出现的缺陷 id 变了 = 新键 = 立即发**，所以真失败
+   * 永远不会被合并逻辑吞掉）。provider 故障族不用本参数（它们走
+   * [[DelegateFreezeDigestMergeWindowMs]]）。prop `nebflow.delegate.freeze.alertReArmMs`。
+   */
+  def DelegateFreezeAlertReArmMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.alertReArmMs", (30L * 60 * 1000).toString).toLong
+
+  /**
+   * **引擎自动续跑总闸**（缺省 **true**）：2026-11-05 10:36 作者令推翻了旧裁定
+   * 「引擎不自动重试」——「我们引擎要做的就行检测恢复了能接着工作」。
+   *
+   * 开：`FreezeAlertSweep` 在既有 30s 拍上按 provider 可用性（[[ProviderHealthPort]]
+   * 的既有探测结果，**零真实调用**）判定，恢复即用既有唤醒腿续跑被冻结的批（同一
+   * 会话、续在检查点、已完成的不重做），次数上限 [[DelegateFreezeAutoResumeMax]]、
+   * 间隔按 [[DelegateFreezeAutoResumeBackoffMs]] 递增。
+   * 关：引擎不再自动续跑，只由人唤醒（回旧裁定形态）。prop
+   * `nebflow.delegate.freeze.autoResume`。
+   */
+  def DelegateFreezeAutoResume: Boolean =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResume", "true").toBoolean
+
+  /**
+   * 自动续跑的首个龄阈（ms，缺省 60 秒）：冻结存活超过该龄才尝试第一次自动续跑
+   * （供应商抖动/退避窗口内不抢跑，避免「恢复一点点→又冻→又续」的抖动）。
+   * prop `nebflow.delegate.freeze.autoResumeAfterMs`。
+   */
+  def DelegateFreezeAutoResumeAfterMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResumeAfterMs", (60L * 1000).toString).toLong
+
+  /**
+   * 单个冻结点最多自动续跑次数（缺省 3）：用尽 ⇒ 该批不再自动续跑，升级为**一条**
+   * 聚合的「需用户处理」告警（作者令「连续失败到上限才升级成一条需用户处理的告警」）。
+   * 0 = 不限（不推荐）。prop `nebflow.delegate.freeze.autoResumeMax`。
+   */
+  def DelegateFreezeAutoResumeMax: Int =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResumeMax", "3").toInt
+
+  /**
+   * 自动续跑的递增间隔基数（ms，缺省 60 秒）：第 n 次尝试不早于
+   * `冻结时刻 + afterMs + base × (2^(n-1) − 1)`（60s / 120s / 240s …递增）。
+   * prop `nebflow.delegate.freeze.autoResumeBackoffMs`。
+   */
+  def DelegateFreezeAutoResumeBackoffMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResumeBackoffMs", (60L * 1000).toString).toLong
+
+  /**
+   * 自动续跑间隔的**上限**（ms，缺省 5 分钟）：指数递增到该值即封顶，此后每次尝试
+   * 恒按此间隔（provider 故障降噪批 2026-11-05：作者令「按退避（指数退避 + 上限，
+   * 别用固定 5 秒死循环）自动重试/唤醒」）。缺了上限，`base × 2^(n-1)` 会在十几次
+   * 尝试后长成一整天，等于让冻结件自生自灭。prop
+   * `nebflow.delegate.freeze.autoResumeBackoffMaxMs`。
+   */
+  def DelegateFreezeAutoResumeBackoffMaxMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResumeBackoffMaxMs", (300L * 1000).toString).toLong
+
+  /**
+   * **升级为摘要通知的时限**（ms，缺省 30 分钟）：provider 故障族的冻结只在
+   * 「长时间仍不可恢复」（自该 delegate 本轮冻结起点算起超过本时限）时，才升级成
+   * 一条**摘要式**通知（作者令「如果长时间（给出你选的上限，例如 30 分钟）仍不可
+   * 恢复，才升级为一条摘要式通知」）。此前按「尝试次数用尽」升级，3 次尝试 8 分钟
+   * 就报，等于把一次正常的上游抖动变成作者的事。确定性缺陷不受本时限约束
+   * （立即进聚合告警）。prop `nebflow.delegate.freeze.escalateAfterMs`。
+   */
+  def DelegateFreezeEscalateAfterMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.escalateAfterMs", (30L * 60 * 1000).toString).toLong
+
+  /**
+   * **健康表容忍窗**（ms，缺省 10 分钟）：健康表只能**延迟**自动续跑，不许无限期
+   * 压住它。本轮冻结超过本窗后，即使健康表上还有 Down 项也照常按封顶退避尝试续跑
+   * （provider 故障降噪批 2026-11-05 — fallback 那条旧缺陷的正解）。
+   *
+   * 为什么需要：健康表只装**被判过死的**候选，健康的候选往往**根本没有条目**（探针
+   * 只探 Down 的）。于是「kimi 403 被 markDown、cmdcode 从未被探过」的真实盘面
+   * 表现为 `{kimi/k3: Down}`——旧判据「表里一条 Down 都没有」永假 ⇒ 冻结批永远等
+   * 不到续跑，作者面正是「fallback 队列里明明有可用模型，却报所有模型不可用并冻
+   * 结」。容忍窗到期即强制走一次续跑（唤醒腿把活交给 `Fallback`，那里才看得见完整
+   * 候选链）；真全灭时子会话很快再冻一次，被轮次台账归进同一轮，退避与升级时限都
+   * 不重置。0 = 不等（立刻强制续跑）。prop
+   * `nebflow.delegate.freeze.autoResumeForceAfterMs`。
+   */
+  def DelegateFreezeAutoResumeForceAfterMs: Long =
+    sys.props.getOrElse("nebflow.delegate.freeze.autoResumeForceAfterMs", (10L * 60 * 1000).toString).toLong
+
+  // ── death-watch 误报修复批（2026-10-31 作者令「修」，根因 docs/20261031_owner-lost.md
+  //    §4 修法清单 ①②③⑤⑥ 的参数面；全部现读 prop，spec 可即时翻转边界）──────────
+
+  /**
+   * 幼龄行豁免窗（ms，默认 10s）：行龄 < 本窗 ⇒ death-watch 跳过本轮判死（spawn/
+   * 句柄/任务图落位的毫秒~秒级窗口；瞬起瞬崩合法 case 不误伤——实证 5ae83e33）。
+   * 唯 `owner session gone` 分支不受本窗豁免（会话已殁是结构性死证，不抢在窗内）。
+   */
+  def BgDeathWatchYoungRowExemptMs: Long =
+    sys.props.getOrElse("nebflow.bg.deathWatch.youngRowExemptMs", "10000").toLong
+
+  /**
+   * 句柄未落豁免的期限（ms，默认 5min）：行龄超本窗而 OS 进程句柄仍未落
+   * （重启恢复/收编的句柄永不再落形态）⇒ 豁免逾期，降级回普通判死路径——
+   * 堵「永久 Alive」僵尸免疫反向缺陷（实证 46a86d3f 型的另一半）。
+   */
+  def BgDeathWatchHandleGraceMs: Long =
+    sys.props.getOrElse("nebflow.bg.deathWatch.handleGraceMs", (5 * 60 * 1000L).toString).toLong
+
+  /**
+   * 判死二次确认窗（ms，默认 5s）：`not owned by session` / `process dead` /
+   * `handle never landed` verdict 落地收割前，复查该 job 输出行数是否在本窗内
+   * 仍有增长（缓冲最近 append 戳）——有增长 ⇒ 判 Alive 跳过一拍（低成本防真活着
+   * 被误埋——实证 887c8244 当时正在输出编译日志）。
+   */
+  def BgDeathWatchOutputGrowthConfirmMs: Long =
+    sys.props.getOrElse("nebflow.bg.deathWatch.outputGrowthConfirmMs", "5000").toLong
+
+  /**
+   * 2026-09-10 卡死判据换轴（取证 20260910_130621_flow-node-activity-signal-forensics.md）：
+   * **工具相位**卡死阈值——同一 turn 内单个工具调用持续超过此值、且该 turn 仍
+   * 未完成（status == Processing）→ 判卡死，走既有 L1→L4 分级恢复/告警链路。
+   *
+   * 与 `StuckThresholdMs` 同档（10min，即既有前台 no-progress ceiling 的档位），
+   * 但语义不同：`StuckThresholdMs` 量的是「agent 侧事件流停滞」（LLM 流楔死形态），
+   * 本值量的是「单个工具调用不返回」（进程占死形态）。两者都不引用进程 CPU——
+   * 这正是本次事故必须换轴的原因：被占死的会话 agent 侧早已停摆（零 LLM turn、
+   * 零 chunk），而进程 CPU 微动让旧判据永不失明。
+   *
+   * system prop `nebflow.stuck.toolPhaseMs`，每次调用现读（kill-switch 先例，
+   * 下游真实形态复现验收靠它缩短窗口）。
+   */
+  def ToolPhaseStuckMs: Long =
+    sys.props.getOrElse("nebflow.stuck.toolPhaseMs", "600000").toLong
+
+  /**
+   * R6（取消静默死锁修复批 2026-09-10，作者裁定 R6 方案 2）：工具相位判据的
+   * **授权宽限**——判据尊重命令自己声明的合法时长：
+   *
+   *   toolOverdue ⟺ now - currentToolStartedAt > 有效阈值
+   *   有效阈值 = [[declaredToolTimeoutMs]] > 0 ? max(ToolPhaseStuckMs, declared + Slack)
+   *                                        : ToolPhaseStuckMs
+   *
+   * **已裁定（2026-09-10）：以 `max` 为准。** 设计文档 §6-R6 的逐字公式为
+   * `min(ToolPhaseStuckMs, deadline + slack)`，与该裁定项的两条验收口径
+   * （「大 timeout 且持续推进 → 改造后不判」/「不带 timeout 仍 10min 判死」）
+   * 不自洽——`min` 在大 timeout 时退化为 10min，案例 1 照旧误杀；`min` 亦与本项
+   * 立论（设计 §6-R6：尊重命令自己声明的合法时长）自相矛盾。故实现口径 = `max`
+   * （**只放宽不收紧**；未声明 `timeout` 的工具仍按默认档 10min 判死），实现单点 =
+   * `ToolStuckJudgment.effectiveToolPhaseMs`。设计文档 §6-R6 已加同源订正注记。
+   *
+   * 背景：三例误杀的案例 1 命令自带 `timeout=900000ms`（15min 授权），判据在其
+   * 11.2 分钟处开火。判据此前与工具自报授权时长零耦合。
+   *
+   * 取值理由：watcher 扫描周期 `StuckWatcherIntervalSec` = 30s；60s = 2 拍 —— 命令
+   * 声明的时长一到，最多 2 拍（≈60s+拍相位）内判死，既不因拍相位漏判，也不把
+   * 「合法时长刚过」误判为「早已卡死」。未声明时长的工具零行为变化（仍 10min）。
+   *
+   * system prop `nebflow.stuck.toolDeadlineSlackMs`，每次调用现读（kill-switch 先例）。
+   */
+  def ToolDeadlineSlackMs: Long =
+    sys.props.getOrElse("nebflow.stuck.toolDeadlineSlackMs", "60000").toLong
+
+  /**
+   * 子代理等待面的**活性判定窗**（子代理等待三缺口批 2026-10-25，缺口①）：
+   * `BlockingSubagent` spawn 子会话后，预算窗内子会话**零事件帧**（连
+   * `agentStart` 都没发）= 判子死——工具以结构化失败 `subagent-never-started`
+   * 返回，父 agent 自行处置（重试/绕过），不再干等 15min 硬顶。
+   *
+   * 哲学对齐 #692：有活性事实才继续等，等不到事实是「对端死亡判定」，不是超时杀。
+   * 默认 120s ≫ 任何正常 spawn→首帧路径（actor spawn + turn 派发是毫秒级），
+   * 只会命中「子会话真死」形态；远小于 [[Timeout]]（15min）。
+   *
+   * system prop `nebflow.subagent.startBudgetMs`，每次调用现读（kill-switch 先例，
+   * 同 [[StuckThresholdMs]] 族）。
+   */
+  def SubagentStartBudgetMs: Long =
+    sys.props.getOrElse("nebflow.subagent.startBudgetMs", "120000").toLong
+
+  /**
+   * 工具调用自己声明的授权时长（ms）。R6 唯一取数口：读工具入参 JSON 的 `timeout`
+   * 字段（Bash 工具既有授权参数，语义 = 该命令被允许跑多久）。
+   *
+   * **只读调用方声明的值，不读工具内部默认值**（默认值 = 引擎授权上限，不是「命令
+   * 声明的合法时长」——把默认值当声明会让所有工具都变成「已声明」，从而把 10min
+   * 判据静默改写成工具默认时长 + slack）。缺字段 / 非正数 / 非数 → 0（= 未声明，
+   * 判据回落到 ToolPhaseStuckMs）。
+   *
+   * 不改 Bash 工具自身的授权超时语义（红线 R6-3）：本函数只被判据消费。
+   */
+  def declaredToolTimeoutMs(toolInput: io.circe.JsonObject): Long =
+    toolInput("timeout").flatMap(_.asNumber).flatMap(_.toLong).filter(_ > 0L).getOrElse(0L)
+
+  /**
+   * 2026-09-10 卡死判据换轴（阈值解耦）：前台 no-progress ceiling 的「有进展」
+   * CPU 判据——与 BashTool 活动桥接的 `shell.CpuActiveThresholdNanos`（10ms）
+   * **不再共用常量**。10ms/30s = 0.033% 单核，任何「活着且有偶发唤醒」的进程
+   * （dev server 的 file watcher/HMR tick）都轻松越过 → 该 10 分钟安全网被
+   * 微动无条件解除（本次事故前台命令跑了 2h50m 未被杀，即此因）。
+   *
+   * 语义（2026-09-10 验收项 3 修复后与实现逐字对齐，见 shell.scala
+   * `foregroundNoProgressWatch`）：每 `ForegroundSampleIntervalMs` 采一次进程 CPU，
+   * 与**上一个采样窗**的采样值相减；差值**严格大于**本值才算「本窗有进展」（重置
+   * 判死窗口）。输出行数增长同样算进展。基线在重置与不重置两条分支**都**推进 ⇒
+   * 比较的永远是单窗增量，不是「自上次重置以来的累计量」（旧实现漏推 no-reset
+   * 分支的基线，把有效门槛压到 1.754 ms/s——声明值与实现差 19 倍，本条注释的
+   * 「不再是跨窗口失效的绝对差值」当时与实现相反；现已按本条实现）。
+   *
+   * 有效门槛量化：每窗 CPU 增量 ≤ 本值（默认 1e9 ns / 30s 窗 = 33.3 ms/s =
+   * **3.3% 单核**）的进程算「无进展」⇒ 连续 `ForegroundNoProgressTimeoutMs`
+   * （默认 600s = 20 窗）即被杀。事故实测 CPU 微动 1.786 ms/s（0.18% 单核 ≈
+   * 54ms/30s，比门槛低 18.7 倍）⇒ 必然在 10min 窗口内被收掉。反向（#319 保护
+   * 不变）：每窗烧 > 本值 CPU 的长跑（构建/测试）或任何有输出的命令照常续跑。
+   *
+   * system prop `nebflow.shell.foregroundCpuProgressNanos`（每次调用现读）。
+   * 注意：本值按「每个采样窗」计量——缩短 `nebflow.shell.foregroundSampleIntervalMs`
+   * 会使等效速率门槛按同比例升高，短窗测试须等比调小本值。
+   */
+  def ForegroundCpuProgressNanos: Long =
+    sys.props.getOrElse("nebflow.shell.foregroundCpuProgressNanos", "1000000000").toLong
+
+  /**
+   * 前台 no-progress ceiling 的 CPU 采样窗（默认 30s，与 ForegroundCpuProgressNanos
+   * 的「1s/窗」配对；判死窗口 = 20 个采样窗）。system prop
+   * `nebflow.shell.foregroundSampleIntervalMs`，每次调用现读（kill-switch 先例）——
+   * 下游真实形态复现 / 验收可把 10min 级单臂压到分钟级（须 > 0）。
+   */
+  def ForegroundSampleIntervalMs: Long =
+    sys.props.getOrElse("nebflow.shell.foregroundSampleIntervalMs", "30000").toLong
+
+  /**
+   * 前台 no-progress ceiling 的判死窗口（默认 600000ms = 10min，即 20 个采样窗）：
+   * 前台命令零输出、且每个采样窗的 CPU 增量都 ≤ ForegroundCpuProgressNanos 持续至此
+   * → killProcessTree + 带说明的 TimeoutException（命令级；与 #319「前台直跑不转后台」
+   * 并存——本判死是停滞兜底，不改变直跑语义）。system prop
+   * `nebflow.shell.foregroundNoProgressTimeoutMs`，每次调用现读（kill-switch 先例）。
+   */
+  def ForegroundNoProgressTimeoutMs: Long =
+    sys.props.getOrElse("nebflow.shell.foregroundNoProgressTimeoutMs", "600000").toLong
+
+  // ── 节点状态机 × 前台 Bash 终态重构批 —— **I2「参数与开关层」**（2026-09-14）──────
+  //
+  // 设计件（唯一权威）：
+  //   ~/.nebflow/docs/Nebflow/20260914_075109_nodestate-bash-terminal-redesign__chain-n-6ff25c31.md
+  //   §1.3 阈值唯一取值点 / §4.2 自动转后台 / §4.3.3 A1 豁免预算 / §4.4.1 T1–T8 /
+  //   §4.4.2 G1–G3 分级 / §7.2 O1–O7 裁定值。
+  //
+  // I2 纪律（三条，即验收面）：
+  //   ① **只落参数面、不接线** —— 本节全部取值在 I2 内**零消费点**（消费点 = I3–I7）
+  //      ⇒「零行为变化」是**结构性**的（没有任何活代码读它们），不靠默认值凑；
+  //   ② **既存现网阈值（T1–T8 中的已生效项）默认值 = 旧行为现行取值**，逐项注明
+  //      「现场读数出处」；🔴 I2 **禁上调**——设计件提案值（1800s / 900s / 300s / 1e9）
+  //      的翻值归 I5；
+  //   ③ **本批新增腿的参数**（旧行为 = 无此腿）默认值 = 设计件逐字给定值，并给出
+  //      `≤ 0 = 关闭本腿 = 回到逐字现状` 的 kill-switch（设计 §2 的唯一例外形态）。
+  //
+  // 形态：一律 `sys.props.getOrElse` **每次调用现读**（`BgGateWaitTimeoutMs` /
+  // `NodeDestroyWindowMs` / `LoopMaxRounds` 同款先例）⇒ 验收「翻转 prop 后现读生效」。
+  //
+  // 索引（现状值 = I2 落笔前现读的树，逐项 file:line）：
+  //   T1 `ForegroundNoProgressTimeoutMs` ……… 本文件（上方，**已有** prop）  600000
+  //   T2 `ToolPhaseStuckMs` ………………………… 本文件（上方，**已有** prop）  600000
+  //   T3 `StuckThresholdMs` ………………………… 本文件（本节上方，I2 **新加**） 600000
+  //   T4 `SessionKickIdleSec` ……………………… 本文件（下方，**已有** prop）    150
+  //   T5 `BgIdleTimeoutSec` ………………………… 本文件（上方，I2 **新加**）      300
+  //   T6 ~~`StuckDetectionGracePeriod`~~ … 🔴 **已退役（killruling 批 2026-09-23，裁定 #3）**
+  //                                          —— 随 M3 机制同删，取数点 `StuckDetectionGraceSec` 已无
+  //   T7 `CpuActiveThresholdNanos` ……… `core/tools/shell.scala`（I2 收数点 → 本节） 1e7ns
+  //   T8 死会话 bg-wait **无时限**豁免 …… `core/project/NodeEngine.scala`（本批新增腿）
+  // 🔴 T7 的取数点按 §1.3「阈值唯一取值点」纪律**收敛到本节**（与 T1–T5 同点），
+  //    `shell.scala` 的既有名字降为 delegating def（零调用点改动）——差异已登记。
+  // 🔴 T6 行**留档不留值**：该行由 killruling 批（2026-09-23 作者裁定 #3「去」）退役，
+  //    非 I5 翻值（原提案 300s 随机制一并作废）。
+  // ───────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * **I2 新参**（设计 §4.2；O1 裁定值）：前台命令的**非 sleep 墙钟**预算（ms）——
+   * `Σ(非 sleep 相位的墙钟) ≥ 本值` ⇒ 该前台命令自动转后台（同一进程树移交后台监护，
+   * 复用既有后台链）。计时定义（相位累加 / `sleep` 区分）见
+   * [[ForegroundSleepExemptBudgetMs]]；转场动作与抑制条件 S1–S5 归 I4。
+   *
+   * 默认 `300_000`（5min）= 设计 §4.2 逐字给定值（O1 备选：作者可改；#391 原值即 5min）。
+   * **`≤ 0` = 关闭本腿 = 回到逐字现状**（前台直跑、不自动转后台 = #26 语义）。
+   *
+   * 🔴 I2 零消费点（消费点 = I4）⇒ 现值不改变任何行为。
+   */
+  def ForegroundAutoBackgroundMs: Long =
+    sys.props.getOrElse("nebflow.shell.autoBackgroundMs", "300000").toLong
+
+  /**
+   * **I2 新参**（设计 §4.3.3 **A1**；O2 裁定值）：`sleep` 相位**豁免预算上限**（ms）——
+   * 累计豁免（`sleepExempt`）达到本值后动态相位识别**不再暂停计时**（相位照常识别与
+   * 留痕，A5）⇒「豁免不是免检牌，只买 A1 这么多时间」。
+   *
+   * 默认 `600_000`（10min）= 设计 A1 逐字给定值。**`≤ 0` = 无上限 = 回到逐字旧行为**
+   * （无期限豁免的形态由 I5 删除；本层只提供上限参数）。
+   *
+   * 🔴 I2 零消费点（消费点 = I3 识别器 + I5 四消费点切换）。
+   */
+  def ForegroundSleepExemptBudgetMs: Long =
+    sys.props.getOrElse("nebflow.shell.sleepExemptBudgetMs", "600000").toLong
+
+  /**
+   * **I2 新参**（设计 §4.1 出口 B；**O5** 裁定值）：已申报（armed）节点在
+   * `AgentEvent.Completed` 未到达时的**结果冻结宽限**（ms）——到期且会话仍活 ⇒
+   * 引擎自冻结果（transcript tail）并走既有单咽喉 drain 分流。
+   *
+   * 默认 `120_000` = 4×`TtlTick`（30s 节拍）= 设计 O5 逐字给定值。
+   * **`≤ 0` = 关闭自冻出口 = 回到逐字现状**（终态仍只由 `Completed` / 会话死亡驱动）。
+   *
+   * 🔴 I2 零消费点（消费点 = I7 三出口）。
+   */
+  def ReportFreezeGraceMs: Long =
+    sys.props.getOrElse("nebflow.noderpt.reportFreezeGraceMs", "120000").toLong
+
+  /**
+   * **I2 新参**（设计 §4.4.1 **T8**）：死会话（registry 无记录）+ 在途后台任务时收敛
+   * 豁免的上限（ms）——超时仍收敛 `failed`（reason 注明「会话死 + 后台任务仍在跑」）。
+   * 修的是今天「死会话 + 在途后台任务 ⇒ **无时限**永久滞留 Running」。
+   *
+   * 默认 `1_800_000`（30min）= 设计 T8 逐字给定值。
+   * **`≤ 0` = 无上限 = 回到逐字旧行为**（今天的无时限豁免）。
+   *
+   * 🔴 I2 零消费点（消费点 = I6 死会话收敛腿）。
+   */
+  def DeadSessionBgCompletionGraceMs: Long =
+    sys.props.getOrElse("nebflow.noderpt.deadSessionBgCompletionGraceMs", "1800000").toLong
+
+  /**
+   * **I2 新参**（设计 §4.4.2 **G2** `demand-report`）：G1 标记可疑后仍持续本值（s）⇒
+   * 注入一条提醒轮要求节点显式 report（进程保留）。
+   *
+   * 默认 `300` = 设计 G2 逐字给定值。**`≤ 0` = 关闭分级腿 = 回到逐字现状**
+   * （判据命中 ⇒ 直接收割，无 G1/G2 可见性）。
+   *
+   * 🔴 I2 零消费点（消费点 = I5 的 G1/G2/G3 分级）。
+   */
+  def StuckSuspectTickSec: Int =
+    sys.props.getOrElse("nebflow.stuck.suspectTickSec", "300").toInt
+
+  /**
+   * **I2 新参**（设计 §4.4.2 **G3** `harvest`）：G2 要求申报后仍持续本值（s）且无任何
+   * agent 侧事件 ⇒ 升级为现状收割动作（前台 kill 树 / 工具相位 L1→L4；
+   * `destructiveAllowed` 闸门不变）。
+   *
+   * 默认 `900` = 设计 G3 逐字给定值。**`≤ 0` = 关闭分级腿 = 回到逐字现状**（直接收割）。
+   *
+   * 🔴 I2 零消费点（消费点 = I5）。
+   */
+  def StuckDemandTickSec: Int =
+    sys.props.getOrElse("nebflow.stuck.demandTickSec", "900").toInt
+
+  /**
+   * **T7 prop 面**（设计 §4.4.1 T7；I2 在本层新建取数点）：**后台**判据仍在用的 CPU
+   * 活动阈值（ns / 采样窗）——`(cpu2 - cpu1) > 本值` 才算「本窗有进展」。
+   *
+   * 现状值 = 10ms（`core/tools/shell.scala` 原 `private[tools] val
+   * CpuActiveThresholdNanos = 10_000_000L`）⇒ **默认 `10000000` = 旧行为现行取值**；
+   * 设计提案值 `1_000_000_000`（与前台 [[ForegroundCpuProgressNanos]] 重新对齐，
+   * 修「10ms/2s = 0.5% 单核即算忙」的同型盲区）归 I5 翻值。每次调用现读。
+   *
+   * 🔴 killruling 批（2026-09-23 作者裁定 #3）：本项**保留**——删 M3 后消费点仍在
+   * （`shell.scala` 的 B1 `isStalled` 判据 + B2 同款双条件 + `BashTool` 活动桥共三处），
+   * 不是孤儿。
+   */
+  def CpuActiveThresholdNanos: Long =
+    sys.props.getOrElse("nebflow.shell.cpuActiveThresholdNanos", "10000000").toLong
+
+  // 🔴 **T6 `StuckDetectionGraceSec` 已退役**（killruling 批 2026-09-23，作者裁定 #3「去」）：
+  // 原「后台 30 s 停滞探测杀的宽限期」prop 随 M3 机制整块删除——删后**零消费点**
+  // （i2 批的先例纪律「删机制则同删其 prop，留着会误导『还以为有 30 s 档』」）。
+  // 退役前默认值 = `30`（旧行为现行取值）。挂死反馈时延 30s → 300s（B1），见
+  // `nebflow.core.tools.shell` 顶注 + `.nebflow/Spec/20260907_bash-timeout-mechanism-audit.md`。
 
   // ---- boot-time 崩溃恢复（crash-recovery 批 2026-09-07）----
 
@@ -238,6 +1583,170 @@ object Defaults:
    */
   def CrashRecoveryConcurrency: Int =
     sys.props.getOrElse("nebflow.crashRecovery.concurrency", "3").toInt
+
+  /**
+   * 宿主启动自动重入总开关（boot-wake 批 2026-09-13；方案件 A 档 A1「控制面唤醒腿」，
+   * 作者 09-13 裁定「重启后唤醒源 = 直接上 A（自动重入）」）。
+   *
+   * 默认 **true**：方案 §2 A ⑤ 给出的 prop 名与回滚形态（`nebflow.boot.dispatcherWake`
+   * + 「回滚 = 置 false + 重启宿主」）即本字段；方案 §7.6 把「默认值」列为待作者回答项，
+   * 但默认关会让本轮缺陷（重启后控制面缺席、停摆窗无上界）原样保留 ⇒ 与裁定反向，
+   * 故取 true，并在实现节点如实登记该判断（分歧时改一行默认值即可）。
+   *
+   * false = GatewayMain 不挂本腿，且 `BootDispatcherWake.wakeAll` 自身零动作（零事件、
+   * 零标记、零触发、零日志）——**完全回到本批前现状**；本腿纯唤醒、零节点写，回滚后
+   * 无半恢复态残留。system prop 每次调用现读（`CrashRecoveryEnabled` 同款 kill-switch
+   * 先例，测试/运维可即时翻转）。
+   */
+  def BootDispatcherWakeEnabled: Boolean =
+    sys.props.getOrElse("nebflow.boot.dispatcherWake", "true").toBoolean
+
+  // ---- 项目独占执行面（exclusivity 批 2026-10-15，双活根治一）----
+
+  /**
+   * boot 期两认领面的项目级排除表（双活根治一）：逗号分隔项目名**精确匹配**——命中者
+   * boot 期双面跳过：crash-recovery sweep 不认领（`recoverAll` 逐项目过滤 + 一行
+   * `excluded-by-config` 日志）＋ boot-wake 不重入（`wakeAll` 零触碰跳过：零清单构建、
+   * 零标记零事件——被排除项目 workspace 运行态零磁盘接触；留痕 = `excluded-by-config`
+   * 一行日志 + boot 汇总行 `<p>=skipped(excluded-by-config)` 条目）。
+   *
+   * 用途 = 双宿主（8080/8090）共享同一项目存储时，非属主实例对独占项目零认领零唤醒
+   * （作者裁定 nebflow/CZT/SiPM康普顿成像＝8090 独占；8080 宿主侧经 relaunch 脚本注入
+   * 本 prop）。注意本表**只覆盖 boot 期 sweep+re-entry 两面**——项目注册/trigger 竞态面
+   * 与 delegate 作用域 sweep 不在本批（设计备忘 dual-engine-exclusivity-design「后续项」）。
+   *
+   * 空 = 无排除（逐字节回到现状）。system prop `nebflow.sweep.excludeProjects`（每次
+   * 调用现读，`BootDispatcherWakeEnabled` 同款 kill-switch 先例）；名字须与
+   * `ProjectStore` 在册项目名逐字一致（trim 后精确 equals，无大小写/宽度归一）。
+   */
+  def SweepExcludeProjects: Set[String] =
+    sys.props
+      .getOrElse("nebflow.sweep.excludeProjects", "")
+      .split(",")
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .toSet
+
+  // ---- delegate 监督链自动恢复（boot 复活腿，2026-10-22 作者令）----
+
+  /**
+   * delegate boot 复活总开关（监督链自动恢复批，设计
+   * `docs/design/delegate-supervision-revival-design.zh-CN.md` §2.2 #1）：默认
+   * true——引擎重启时在飞的内置执行器 delegate 由 SubAgentStartupRecovery 复活腿从
+   * transcript checkpoint 续跑（同 id），父会话最终收续作结果而非收殓通知。
+   * false = 复活腿整体旁路，全部孤儿落既有收殓链（**逐字节回本批前现状**——收殓、
+   * F2 幂等通知、重启打断标记腿零变化）。system prop
+   * `nebflow.delegate.revival.enabled`（每次调用现读，`CrashRecoveryEnabled`
+   * 同款 kill-switch 先例，测试可即时翻转）。
+   */
+  def DelegateRevivalEnabled: Boolean =
+    sys.props.getOrElse("nebflow.delegate.revival.enabled", "true").toBoolean
+
+  /**
+   * 重启/崩溃恢复**手动模式**（重启手动恢复批，作者令 2026-11-06 20:36 逐字「由于
+   * 重启/软件崩溃导致的错误，不用向上通知，不自动恢复，保存状态后，由用户手动恢复，
+   * 粒度可以是逐个点击，也可以是子agent面板一键全部恢复」）：true（缺省）= boot
+   * sweep 不自动复活、不收殓判死、零向上通知——在飞孤儿一律标
+   * `pending-recovery`（失效/待恢复态，子 agent 面板可见），由用户经
+   * `ManualRevival`（逐个 / 一键全部）手动复活。false = 既有自动复活腿逐字节不变
+   * （测试/回退开关）。system prop `nebflow.startup.recovery.manual`（每次调用现读）。
+   */
+  def RestartRecoveryManual: Boolean =
+    sys.props.getOrElse("nebflow.startup.recovery.manual", "true").toBoolean
+
+  /**
+   * 单 delegate 复活次数上限（判据 §2.2 #6）：达限后不再复活、落收殓链。
+   * system prop `nebflow.delegate.revival.maxPerTask` 可调。
+   */
+  def DelegateRevivalMaxPerTask: Int =
+    sys.props.getOrElse("nebflow.delegate.revival.maxPerTask", "2").toInt
+
+  /**
+   * 复活年龄预算（毫秒，判据 §2.2 #7）：spawnedAt 距今超龄的孤儿不诈尸（陈年
+   * 孤儿复活多半派发意图已过期）。默认 7 天。system prop
+   * `nebflow.delegate.revival.maxAgeMs` 可调。
+   */
+  def DelegateRevivalMaxAgeMs: Long =
+    sys.props.getOrElse("nebflow.delegate.revival.maxAgeMs", (7L * 24 * 3600 * 1000).toString).toLong
+
+  /**
+   * 单 boot 复活总数上限（判据 §2.2 #8）：按 spawnedAt 新者优先，超额者走收殓——
+   * 病态转录批量复活的 LLM 洪峰护栏。system prop
+   * `nebflow.delegate.revival.bootCap` 可调。
+   */
+  def DelegateRevivalBootCap: Int =
+    sys.props.getOrElse("nebflow.delegate.revival.bootCap", "8").toInt
+
+  /**
+   * 复活 spawn 并发上限（慢段信号量，`ProjectCrashRecovery` 慢段同款护栏）。
+   * system prop `nebflow.delegate.revival.concurrency` 可调。
+   */
+  def DelegateRevivalConcurrency: Int =
+    sys.props.getOrElse("nebflow.delegate.revival.concurrency", "2").toInt
+
+  // ---- 优雅关机 interrupted 非终态（中断恢复语义批 2026-09-13，spec
+  //      `20260908_interrupt-recovery-semantics.md` §2.3/§2.7，作者裁定方案 A）----
+
+  /**
+   * 优雅关机中断回滚总开关（spec §2.7）：默认 true——SIGINT/SIGTERM 单钩子
+   * （`GracefulInterruptHook`）按序执行「置 draining → 全部 Running 逐节点 CAS 翻
+   * interrupted → abort 在飞 LLM」，`failNode`/`autoFailDeadRunning` 的 draining
+   * 守卫拦掉 abort 诱发的失败链，boot sweep 资格集含 Interrupted 自动续跑。
+   *
+   * false = **完全回本批前现状（逐字节）**：无钩子翻态（只有原样 abort 在飞 LLM、
+   * token 燃烧防线不弱化）、无守卫（draining 永不置位）、资格集不含 Interrupted。
+   * system prop `nebflow.shutdownInterrupt.enabled`（每次调用现读——
+   * [[CrashRecoveryEnabled]] 同款，测试可即时翻转）。
+   */
+  def ShutdownInterruptEnabled: Boolean =
+    sys.props.getOrElse("nebflow.shutdownInterrupt.enabled", "true").toBoolean
+
+  /**
+   * `GracefulInterruptHook` 翻态整体超时上限（毫秒）——**全仓唯一取值点**（除本处
+   * 零散落；测试一律经 `GracefulInterruptHook.run(timeoutMs)` /
+   * `interruptRunningNodes(timeoutMs)` 的可注入参数，不经本常量）。
+   *
+   * **已定值（作者 2026-09-13 AskUser 卡逐字裁定）= 5 秒**（卡片口径：「重启最快；
+   * 来不及收尾的节点直接被标『已中断』」；经分发器 NodeMessage 2026-09-13 09:35 注入
+   * 落地）。spec §5 未决① 原「建议 10s」**自此作废**（作者口径覆盖）——改值只改本行。
+   *
+   * 语义 = 翻态预算：超时 ⇒ 放弃剩余翻转（残余 Running 走 kill -9 同款 boot sweep
+   * 路径，行为安全降级——见 `GracefulInterruptHook.Report.timedOut`）。
+   */
+  val ShutdownInterruptTimeoutMs: Long = 5_000L
+
+  // ---- 宿主睡眠感知（hostresume 批 2026-09-22，设计卡
+  //      20260921_235342_host-interrupt-resume-design §4 #9，作者「七项全照推荐」裁定）----
+
+  /**
+   * 宿主睡眠/唤醒感知总开关（设计卡 D-2，作者裁定「默认 true + kill-switch」）。
+   * 默认 true：`WakeSensor` 双钟断流纤维随 boot 链挂载（`projectTtlScanner` 邻位，
+   * server listen 前就绪）；检测到的睡眠窗进 `PowerStateTracker` 窗集——
+   * `TaskStuckWatcher` 两轴与整流 no-progress 守卫的时间基修正据此扣减睡眠冻结秒
+   * （设计卡 D-6：首批消费点仅此两处）——另加 boot-wake.json 台账 append（kind=sleep /
+   * kind=wake）与 `host-wake` 审计事件（D-7：仅审计，不揽分发器）。
+   *
+   * false = **完全回本批前现状（逐字节）**：GatewayMain 不挂感知纤维（零新 fiber）、
+   * 窗集恒空且消费入口直通裸差值 ⇒ 修正量恒为零（判词与文案逐字不变）、台账/事件
+   * 零写点。system prop `nebflow.wake.sense.enabled`（每次调用现读——
+   * [[CrashRecoveryEnabled]] 同款 kill-switch 先例，测试/运维可即时翻转）。
+   */
+  def WakeSenseEnabled: Boolean =
+    sys.props.getOrElse("nebflow.wake.sense.enabled", "true").toBoolean
+
+  /**
+   * 断流 slop（毫秒，**常量**——`L3VerifyDelayMs`「第一版为常量」先例，标定后再决定
+   * 是否外放）：墙钟 Δ 超前单调钟 Δ 超过此值才判睡眠窗。45s = 3×15s 探测周期——
+   * 吸收 NTP 步进（Δwall≈Δnano ⇒ 差值≈0，设计卡 §6 口径 5）与 DarkWake 突刺
+   * （取证实测 19s 缝 < 45s ⇒ 不产生窗，§6 口径 4）。
+   */
+  val WakeSenseSlopMs: Long = 45_000L
+
+  /**
+   * 探测周期（s）：15s 周期纤维 ⇒ 唤醒后 ≤15s 检出（设计卡 §2.1 A1 判定）。
+   * 常量（同上先例）；检测精度受其下限约束，不改扫描族任何既有定时器。
+   */
+  val WakeSenseTickSec: Int = 15
 
   // ---- 引擎活挂硬恢复（hard-recovery 批 2026-09-07，设计 §2/§8/§9）----
 
@@ -267,6 +1776,190 @@ object Defaults:
   def KickVerifyBoundSec: Int =
     sys.props.getOrElse("nebflow.hardRecovery.verifyBoundSec", "60").toInt
 
+  // ---- R8 看门狗自身监测（2026-09-10 机制设计 §2–§4）----
+
+  /**
+   * R8 方向②（L3 有效性自检）：L3 开火后 `T+N` 复查该会话/节点的**行为面**结局
+   * （设计 §3.4）。默认 120s = 4×`StuckWatcherIntervalSec`：
+   *   - 必须 > L3 内部的硬编码 `IO.sleep(5s)` + 最慢 transcript 读；
+   *   - 必须是扫描间隔的整数倍 ⇒ **零新增定时器**（复查搭既有扫描轮）；
+   *   - 桥侧延迟实测 3ms ⇒ 120s 已给 24 倍余量。
+   *
+   * **第一版为常量，不做配置项**（设计 §3.4 末：标定后再决定是否外放）。测试/e2e
+   * 通过 `TaskStuckWatcher.scan` 的 `l3VerifyDelayMs` 参数注入缩短的窗口，
+   * **不引入 system prop**（生产只有一个值：120s）。
+   */
+  val L3VerifyDelayMs: Long = 120_000L
+
+  /**
+   * R8 方向③（影子模式 / dry-run）：**只记录不动作**的标定开关，默认 `false`
+   * （生产行为零变化；本期默认不启用——机制备好，等标定窗口需要时再开，设计 §5）。
+   *
+   * `true` 时 `TaskStuckWatcher.recover` 内**全部破坏性动作**被禁止（设计 §4.4
+   * 表 1–9：inflight hard-cancel / transportAbort / `reclaimSession` 进程 kill /
+   * 子 agent `AgentCommand.Stop` / `bridgeCancelled` / `RestartAgent(Full)` /
+   * `hardResumeFlowNode` / `emitSubagentPanelDone` / `broadcastStuck` WS 帧），
+   * **只保留** ① 结构化事件（`WatchdogEventLog`）+ 日志——否则「关掉看门狗来研究
+   * 看门狗」是无观测面的死路（设计 §4.1）。
+   *
+   * 作用域**仅** `TaskStuckWatcher.recover`：`SessionKick`
+   * （`WebSocketRoutes.maybeSessionKick`）与 watcher 的 `hardResumeFlowNode` 调用点
+   * 之外无第二含义（设计 §4.3 末，避免一个 flag 两套语义）。
+   *
+   * 与 `HardRecoveryEnabled` **正交**：`shadow=true` 时忽略 hard，一律不动手
+   * （shadow 是更强的「只看」）。
+   *
+   * 代价（须知会）：影子期内**真实卡死不被恢复**（设计 §4.5 末）。
+   * system prop `nebflow.stuck.shadow`，每次 `recover` 现读（kill-switch 先例）。
+   */
+  def StuckShadowMode: Boolean =
+    sys.props.getOrElse("nebflow.stuck.shadow", "false").trim.equalsIgnoreCase("true")
+
+  // ---- stuck 判据序 / 正信号门（stuck 自动恢复批 P1，2026-09-11 作者裁定 R-3）----
+
+  /**
+   * 正信号（**进展证据**）新鲜窗的**基础值**（默认 60s = 2× 工具活动桥采样间隔 30s）。
+   *
+   * **wd-fix 批（2026-09-12 作者裁定「方向 A」，第 ii 刀）：有效窗不再恒等于本值**——
+   * 有效窗 = `max(本值, [[declaredToolTimeoutMs]] / [[StuckProgressSignalWindowDivisor]])`
+   * （**单调不减**：命令声明的授权越长，窗不得越小 ⇒ 禁出现「授权越长反而越容易被判死」；
+   * **未声明 `timeout` ⇒ 本值，行为逐字零变化**）。计算单点 =
+   * `TaskStuckWatcher.effectiveProgressWindowMs`。
+   * 动因（取证 §3.1 第 2 条 / §3.3 第 ii 刀）：本值与工具自己声明的授权时长**零耦合**，
+   * 使「声明 3600s 授权、安静 74s / 61s」的两条真实命令被判死（生产样本
+   * `node-8920254c` / `node-35ad3b69`，有效阈值 3660s）⇒ R6「尊重命令自己声明的合法
+   * 时长」被 60s 正信号窗**部分抵消**。联动后声明 3600s ⇒ 窗 360s，两样本不再判死。
+   *
+   * 语义（作者裁定 R-3 的口径，**方向性是全部要害**）：正信号 = 上一个采样窗内
+   * 该会话的在飞工具**确有推进**（stdout 行数增长 ∨ 单窗 CPU 增量 > 活动桥阈值）。
+   * 结构化来源 = 工具活动桥采样点（[[nebflow.agent.AgentCore.markToolProgress]]），
+   * **不解析任何自有日志**（设计 §2.3 原则 2）。
+   *
+   * 判据消费方向（唯一）：
+   *   - **只阻止判死**：`currentToolStartedAt > 0 ∧ 正信号新鲜（有效窗内）` ⇒ 归
+   *     **类② 假阳性**，本拍不动作、只记 `suspect`；**与「是否已超授权」解耦**
+   *     （wd-fix 批第 i 刀：去掉旧的 `toolPhaseMs ≤ 有效阈值 ∧` 前置——超授权的处置权
+   *     交回工具自身授权超时 / 前台 no-progress ceiling，watcher 不越权判死）；
+   *   - **绝不促成判死**：判死仍是 [[TaskStuckWatcher.assessDetailed]] 的两条不等式，
+   *     正信号不出现在任何「满足即判死」的合取项里 ⇒ **不构成对红线 R6-4
+   *     「判据不引进程 CPU」的放松**（作者 2026-09-11 已确认）。
+   *
+   * system prop `nebflow.stuck.progressSignalWindowMs`，每次判定现读（kill-switch 先例）。
+   */
+  def StuckProgressSignalWindowMs: Long =
+    sys.props.getOrElse("nebflow.stuck.progressSignalWindowMs", "60000").toLong
+
+  /**
+   * 正信号新鲜窗**随授权联动**的除数（wd-fix 批，2026-09-12 作者裁定「方向 A」第 ii 刀）：
+   * 有效窗 = `max([[StuckProgressSignalWindowMs]], [[declaredToolTimeoutMs]] / 本值)`
+   * （声明 3600s ⇒ 窗 360s > 实测安静段 74s，两样本不再判死；未声明 ⇒ 基础窗 60s）。
+   *
+   * **常量，不做 system prop**：生产只有一个值（设计参考实现 `N/10`，无标定需求），
+   * 而窗的边界由 `TaskStuckWatcher.effectiveProgressWindowMs` **单点**计算——测试直接
+   * 传参即可覆盖联动口径，不必翻转 prop（与 `L3VerifyDelayMs` 同款「第一版为常量」纪律）。
+   */
+  val StuckProgressSignalWindowDivisor: Long = 10L
+
+  // ---- stuck 自动恢复：挂起腿有界等待（P2，2026-09-11）----
+
+  /**
+   * 挂起腿的**有界等待**上限（默认 15s）——替代 L3 里那个固定 `IO.sleep(5s)`。
+   *
+   * 设计 §6.2 风险 1 的原话：「`IO.sleep(5s)` 是固定时序竞态……**未证「永远 ≤5s」**」。
+   * 改法（§3.6 选项 B 的代价点）= 轮询**可观测的终止确认**（会话从
+   * `agentRegistry` 摘除 = 引擎 fiber 的清理段已完成）而不是赌一个固定时长：
+   *   - 确认到达 ⇒ 立刻 resume（通常远快于 5s，恢复延迟下降）；
+   *   - 超时未确认 ⇒ **降级**：不 resume，按恢复未生效走一次上报（诚实失败，
+   *     不把「可能仍在运行的旧会话」与「新 resume 会话」叠在一起）。
+   *
+   * 轮询步长见 [[StuckSuspendPollMs]]。
+   * system prop `nebflow.stuck.suspendWaitMs`（kill-switch 先例，测试可缩窗）。
+   */
+  def StuckSuspendWaitMs: Long =
+    sys.props.getOrElse("nebflow.stuck.suspendWaitMs", "15000").toLong
+
+  /** 挂起腿终止确认的轮询步长（默认 250ms）。system prop `nebflow.stuck.suspendPollMs`。 */
+  def StuckSuspendPollMs: Long =
+    sys.props.getOrElse("nebflow.stuck.suspendPollMs", "250").toLong
+
+  // ---- stuck 自动恢复：重试预算 / 退避 / 冷却（P3，2026-09-11 作者裁定 R-2）----
+  //
+  // 作者 2026-09-11 拍板「R-2 = 按建议值落成 Defaults 常量」，即设计 §3.3 表的前五
+  // 行数值**原样**成为常量（不重新标定）。语义：作者对 token 放大高度敏感 ⇒
+  // **禁无条件重试**——恢复是一次性的、有预算的、有冷却的动作，不是循环。
+  //
+  // 全部走 system prop kill-switch 先例（与上面几条同款），但**默认值 = 裁定值**：
+  // prop 只为隔离实例/测试缩窗，不改变生产语义。
+
+  /**
+   * 单代次恢复预算（默认 **1**）：一个「卡死 episode」内最多一次恢复尝试。
+   *
+   * 理由（§3.3）：「类②误杀（本样本形态）**一次即够**——恢复后若同形态再卡，
+   * 说明不是误判」。episode 边界 = 会话离开 stuck 候选集那一刻（[[TaskStuckWatcher.scan]]
+   * 中与 `stopCounts` 同点的 `genAttempts` 复位）。
+   *
+   * system prop `nebflow.stuck.recoveryMaxPerGen`。
+   */
+  def StuckRecoveryMaxPerGen: Int =
+    sys.props.getOrElse("nebflow.stuck.recoveryMaxPerGen", "1").toInt
+
+  /**
+   * 全链恢复预算（默认 **2**，含跨代次）：同一会话累计最多两次恢复。
+   *
+   * 理由（§3.3）：「与 `BackoffSupervisor.maxRestarts=2` 同档心智；防
+   * 『恢复→再卡→再恢复』链」。跨代次 ⇒ 不随 episode 复位（只随会话消失复位）。
+   *
+   * system prop `nebflow.stuck.recoveryMaxPerChain`。
+   */
+  def StuckRecoveryMaxPerChain: Int =
+    sys.props.getOrElse("nebflow.stuck.recoveryMaxPerChain", "2").toInt
+
+  /**
+   * 退避曲线（默认 **30s → 120s → 600s**；基点 = 扫描周期 30s）。
+   *
+   * §3.3：30s 与 `StuckWatcherIntervalSec` 对齐；120s 与 `L3VerifyDelayMs` 同档；
+   * 600s = 阈值档。取值 = `StuckRecoveryBackoffMs(attempt)`（attempt 超界时取末项 =
+   * 上限，不再增长）。
+   */
+  val StuckRecoveryBackoffMs: List[Long] = List(30_000L, 120_000L, 600_000L)
+
+  /**
+   * 退避曲线的查询口径：第 `attempt` 次恢复之后的静默时长（attempt 从 1 起；
+   * ≤0 或超界按端点夹取）。纯函数，可独立单测。
+   */
+  def stuckRecoveryBackoffMs(attempt: Int): Long =
+    if StuckRecoveryBackoffMs.isEmpty then 0L
+    else StuckRecoveryBackoffMs(math.max(1, math.min(attempt, StuckRecoveryBackoffMs.size)) - 1)
+
+  /**
+   * 恢复后冷却（默认 **20min** = 2×`StuckThresholdMs`）：一次恢复完成后，
+   * 本会话在冷却窗内**零动作**（§3.4 判定序第 3 步）。
+   *
+   * 理由（§3.3）：「防『恢复后立刻又被同轴判死』的自激振荡」。
+   * system prop `nebflow.stuck.recoveryCooldownMs`。
+   */
+  def StuckRecoveryCooldownMs: Long =
+    sys.props.getOrElse("nebflow.stuck.recoveryCooldownMs", "1200000").toLong
+
+  /**
+   * transcript 重放封顶（默认 **40 条**）：resume 时最多重放最近 40 条消息。
+   *
+   * 理由（§3.3）：直击「重发全量 ~250k 上下文 = token 放大面」的教训。
+   * 消费点 = [[nebflow.core.project.NodeEngine.hardResumeNode]]（封顶 + prompt 声明）。
+   * system prop `nebflow.stuck.recoveryReplayMaxMsgs`。
+   */
+  def StuckRecoveryReplayMaxMsgs: Int =
+    sys.props.getOrElse("nebflow.stuck.recoveryReplayMaxMsgs", "40").toInt
+
+  /**
+   * 互斥点 2（§3.4）的检测窗（默认 **60s** = 扫描周期 ×2）：恢复完成后该窗内若
+   * LoopGuard 跨轮命中计数**上升**（或会话进入 Loop 冻结）⇒ 写 `recovery-loop-detected`
+   * 事件、**立即停恢复链** + 一次上报（= 「反复卡 ⇒ 反复重试」的机器识别点）。
+   * system prop `nebflow.stuck.recoveryLoopDetectMs`。
+   */
+  def StuckRecoveryLoopDetectMs: Long =
+    sys.props.getOrElse("nebflow.stuck.recoveryLoopDetectMs", "60000").toLong
+
   /**
    * 流式请求的 per-request HttpClient 开关（设计 D-1 方案 A）：默认 true——
    * sendStream 每个 attempt 独立 HttpClient + backend + dispatcher，transport
@@ -285,6 +1978,84 @@ object Defaults:
   def LlmConnectTimeoutSec: Int =
     sys.props.getOrElse("nebflow.hardRecovery.connectTimeoutSec", "30").toInt
 
+  // ---- 记忆检索库自动入库（memory-recall 批 2026-10-22）----
+  //
+  // 作者令：「这个进库 应该要是我们使用stand自动的能力」——主 agent 会话消息落盘
+  // 后自动增量进 <dataRoot>/memory-db/（经 tools/stand-recall --update），替代
+  // 旧的人工 `--update` 例行。挂接点 = 独立驻留守护（MemoryRecallDaemon，定时
+  // 探测 + 节流），持久化路径零改动。
+
+  /**
+   * 自动入库总开关（kill-switch）：默认 true（作者令即「自动」）。false = 守护
+   * 不启动（GatewayMain 装配点 IO.unit，零纤维零探测零子进程）——**完全回到
+   * 本批前现状**（人工 `stand-recall --update` 照常可用）。system prop
+   * `nebflow.memoryRecall.enabled`（每次调用现读，`CrashRecoveryEnabled` 同款
+   * kill-switch 先例，测试/运维可即时翻转）。
+   */
+  def MemoryRecallEnabled: Boolean =
+    sys.props.getOrElse("nebflow.memoryRecall.enabled", "true").toBoolean
+
+  /**
+   * 探测节拍（秒）：守护每拍做一次廉价脏探测（sessions/ 目录 stat 指纹对比），
+   * 指纹无变化不花任何子进程开销。30s 拍 × 数百文件 stat = 毫秒级，可忽略。
+   */
+  val MemoryRecallTickSec: Int = 30
+
+  /**
+   * 更新节流窗（毫秒，作者令「如 ≥5 分钟间隔」）：两次真实 `stand-recall
+   * --update` 子进程之间的最小间隔——节流按**尝试**计（失败也占窗，下一窗才
+   * 静默重试 ⇒ 不出重试风暴），单次 --update 实测 ~3s（10140 条库），占空比
+   * ~1%。**测试**经 `MemoryRecallDaemon.launch(tick, minInterval)` 参数注入
+   * 短窗，不经本常量。
+   */
+  val MemoryRecallMinIntervalMs: Long = 5L * 60L * 1000L
+
+  /**
+   * 单次 `stand-recall --update` 子进程超时（秒）。实测 ~3s（10140 条库，低载
+   * mac）；300s = ~100 倍余量，超时即杀进程按失败计（占节流窗，下窗重试）。
+   */
+  val MemoryRecallTimeoutSec: Int = 300
+
+  // ---- 邮件 / 心跳进程封存（seal 批 2026-11-03；作者令逐字「邮件和心跳进程功能，
+  //      进入封存，发布剔除，本地sbt run 可用。」）----
+  //
+  // 「封存」= 代码全留、默认关闭、不再随实例启动——**封的是进程/定时器**，不是工具本体：
+  // `Mail` 工具的单次投递、daemon 面板的单次 start/stop 调用都照旧可用（那些是工具
+  // 调用面，不是后台进程）。开关单点在本对函数，接线点经
+  // [[nebflow.core.boot.ProcessSeal]]（零注册记账 + 一行封存说明日志）。
+  //
+  // 复活（本机开发/复盘）：`sbt run` 加 `-Dnebflow.mail.process.enabled=true`
+  // `-Dnebflow.heartbeat.enabled=true`（或用 `-D…=true` 的 `sbt -J` 形式），无需改码。
+  // 发布剔除 = 打包脚本 / Dockerfile 里显式写 `-D…=false`（同一 mainClass，装配级默认）。
+
+  /**
+   * 邮件后台进程总开关（默认 **false = 封存**）。关 = 以下后台面零注册：
+   *   - 邮件感知守护进程（`perception-daemon`：IMAP 轮询/sweep/digest/spool/idle 五循环，
+   *     经心跳（daemon 家族）托管）——`PerceptionDaemonDock.prepare` 直接 None（不写 token
+   *     不 upsert），`DaemonService` boot 门再挡（历史 `daemons.json` 残留条目也不拉）；
+   *   - 分发器回复打包窗定时腿（`MailTool.dispatcherMailWindowMs` ⇒ 0 = 关窗，单条直投）；
+   *   - 设备邮件 15s 回执超时腿（`DeviceMailAck.await` 不挂腿）；
+   *   - held 回执催注扫描（`HeldDeliveryWatchdog.run` 不进 boot 链）。
+   * system prop `nebflow.mail.process.enabled`（每次调用现读——`MemoryRecallEnabled`
+   * 同款 kill-switch 先例，测试/运维可即时翻转）。
+   */
+  def MailProcessEnabled: Boolean =
+    sys.props.getOrElse("nebflow.mail.process.enabled", "false").toBoolean
+
+  /**
+   * 心跳进程总开关（默认 **false = 封存**）。此处的「心跳进程」= **daemon 家族托管
+   * 进程**（作者 2026-10-29 裁定逐字「独立daemon吧 正好和我们心跳进程合并 那就是管daemon的」；
+   * 前端 `#daemon-btn` 的 title 即「心跳进程」，见 GLOSSARY.md 感知行）。
+   *
+   * 关 = boot 扇出零 spawn（`DaemonService.autoStart` 的 boot 门全挡）、随之零
+   * reader/monitor/health-check/low-rate-takeover/auto-restart 纤维；面板与
+   * `start/stop` 单次调用面保留（工具本体不封）。孤儿回收（`reclaimStaleDaemons`）
+   * **保留**：一次性清理上一实例遗留的子进程，属收尸不属进程。
+   * system prop `nebflow.heartbeat.enabled`（同上，现读）。
+   */
+  def HeartbeatProcessEnabled: Boolean =
+    sys.props.getOrElse("nebflow.heartbeat.enabled", "false").toBoolean
+
   // ---- STT（语音输入，可配置转录服务，#295）----
 
   /** STT 默认模型（OpenAI 兼容音频转录 API 的公共模型名，非用户配置）。 */
@@ -302,17 +2073,162 @@ object Defaults:
   val FreezeCheckIntervalSec: Int = 30
 
   /**
+   * #692（网络不可达退避等待修批，2026-10-21 作者令）：重启屏障 watchdog 的
+   * 「无进展」判读阈值——任务行在飞（running/restarting）∧ registry 无活体 ∧
+   * 当前状态已持续 ≥ 本值 ⇒ 判重启屏障僵死，强制诚实终态化（restarting-watchdog）。
+   * 取值 10min ≈ 10× respawn 最大退避（60s+抖动）+ spawn 时长——健康 respawn 链
+   * 无论如何跑不完这个窗口（写库态后行要么回到活体、要么已终态化）。10-21 实测
+   * 僵尸窗 = 7.5h，本阈值把它压到 10min 量级。
+   */
+  val RestartingStallWatchdogMs: Long = 600_000L
+
+  /**
    * v2 冻结式错误恢复升级链（§5.1-5.2）：进入升级链后等待父决策的窗口。
    * 每级窗口相同（从升级链启动算起逐级顺延）；用户级不设超时（最终仲裁，
    * 卡片持久化等待）。与 TaskStuckWatcher 卡死阈值同量级（用户有合理决策窗口）。
    */
   val ErrorEscalateAfterMs: Long = 10 * 60 * 1000L
+
+  // ── 升级链通知风暴闸（v2 反推送风暴批，2026-10-28 作者报障「一直重复推送」）────
+  //
+  // 实证（stand.log 19:23-20:10）：同一 provider-down 波及 root + 7 个 delegate
+  // 子会话，各自独立 10min 升级梯且时间错开 ⇒ 每 10min 一波（L2→L5 共 4 波 ≈
+  // 28 条 error-escalated ExternalEvent）逐条打断父会话整回合。事件无销账点
+  // （恢复/父决策后升级链状态永不关闭）、同级无去重、同源无合并、总量无上限
+  // ——四面缺一即风暴。本组常量是「总量总闸」的窗口/上限取值。
+  val EscalationNotifyWindowMs: Long = 60 * 60 * 1000L
+  val EscalationNotifyCapPerHour: Int = 6
+
+  // ── root 通道通知打包窗（notifybatch 批 2026-09-18，作者三决策）──────────────────
+  //
+  // 动因：同一族「节点终态事件」在**分发器通道**已有打包窗（`DispatchNotify` 的
+  // `NotifyBatch`，首件起算 5s 滚动窗 ⇒ N 件合并为一次注入），而**root 通道**
+  // （`NodeEngine.deliverToNebula`）逐件 offer、零缓冲 ⇒ 密集扇出在 root 侧退化为
+  // 「一条 = 一个 turn」（现网读数 `batch=1` 178/178）。本批在 root 通道补同款
+  // 生产者侧打包窗（消费侧 `AgentActor.drainHead` 与 2026-09-15 裁定**零改动**）。
+  //
+  // **只做「打包窗 + 合并注入」**：作者决策③ —— **不折叠**（无超龄阈值、无折叠摘要
+  // 行、**无 `RootNotifyFoldMs`**；既有 `deliverStaleSummary` 路径零行为改动）。
+
+  /**
+   * root 通道通知打包窗长度（`nebflow.notify.rootQuietMs`，默认 **5000 = 5s**）。
+   *
+   * 语义（照抄 `DispatchNotify.DefaultWindowMs` 滚动窗口口径）：**首件到达起算**、
+   * 不随新件延长 ⇒ 单件延迟上界 = 窗长；窗口结束时把本窗的件**合并为一次注入**
+   * （`NodeEngine.flushRootNotify`）。与 `NotifyPolicy.NotifyQuietMsDefaultMs`
+   * （`notify.quietMs`，同值 5s）**是两个通道各自的窗**，键名/语义互不隶属。
+   *
+   * **`≤ 0` = 关闭打包**（同步逐条 offer = 引入本窗之前的逐字行为）= 一个参数即回旧
+   * 行为：既是运维回滚面，也是既有 spec 的确定性接缝（spec 侧亦可用构造入参
+   * `rootNotifyQuietMs = Some(0)` 注入，避开全局 prop 的跨 suite 污染，
+   * `notifyQuietMs` / `destroyWindowMs` / `stallReNotifyMs` 同款纪律）。
+   *
+   * 每次调用现读（`sys.props.getOrElse`，`NodeDestroyWindowMs` 同款先例）。
+   */
+  def RootNotifyQuietMs: Long =
+    sys.props.getOrElse("nebflow.notify.rootQuietMs", "5000").trim.toLong
+
+  /**
+   * root 通道打包**条数上限**（`nebflow.notify.rootBatchMax`，默认 **10**）。
+   *
+   * 一次注入的上下文增量由此有界（实测单件 result 5–9 KB ⇒ 10 件 ≈ 50–90 KB，仍在
+   * 正常 turn 量级；与 `AgentActor` 的 token 纪律相容）。溢出形态 = **留队下一窗口**
+   * （作者决策③下唯一合法形态：不折叠、不降格摘要行）⇒ 批内 FIFO、批间拼接序 ==
+   * 到达顺序（对齐 2026-09-15 裁定「到达顺序不变」），**不丢件**。
+   *
+   * 每次调用现读；`< 1` 按 1 处理（防 0/负值把窗口变成死循环）。
+   */
+  def RootNotifyBatchMax: Int =
+    sys.props.getOrElse("nebflow.notify.rootBatchMax", "10").trim.toIntOption.getOrElse(10)
+
+  /**
+   * 引擎默认网关端口 —— **单一来源**（端口对调落地批 2026-10-25；作者令 2026-10-23
+   * 「默认改 6138——下次重启生效」的引擎代码面收口）。
+   *
+   * 事故链（2026-10-25）：作者手动 `sbt run` 起引擎走旧默认 8080，微信 side-car
+   * （msgloop）投递目标 `127.0.0.1:6138/.../weixin-ilink/ingress` 全部
+   * tcp_refused —— 微信入站全断。此前 10-23 对调只落在 ops 显式传参
+   * （autostart/restart/stand CLI 均 `NEBFLOW_GATEWAY_PORT=6138` / `--port 6138`），
+   * 引擎代码默认值没跟，裸启动即分叉。自此引擎侧「默认端口」读数统一从 Defaults
+   * 收口；双生分家批（2026-10-31）起多品牌世界的消费面一律引用
+   * [[brandDefaultPort]]（品牌感知），本常量退居「stand/原生默认」的角色。
+   *
+   * 8080 让渡给 9.19 自有根实例（其启动器缺省 8080 不变），故 ProcessManager
+   * 的 ProtectedPorts（8080/8097 dev-host 硬闸）**保持不动**；沙箱不走本值
+   * （沙箱口 = 高位随机，`SandboxRuntime` 自有分配面）。
+   */
+  val GatewayPort = 6138
+
+  /**
+   * **nebflow 品牌自有缺省口 = 6140**（双生实例分家批 2026-10-31，作者裁定
+   * 「同机双产品必须各自独立启动……给 nebflow 独立默认端口，如 6140 之类」；
+   * 取代双实例并存批 2026-10-30 的 8080 选择）。
+   *
+   * 事故链（2026-10-31，Windows 实机）：实机上的 nebflow 产品是 10-25 后构建
+   * （`nebflow-assembly-2026.10.26-beta.1.jar`），引擎代码默认口只有一个
+   * [[GatewayPort]]（6138）——两个品牌的产品裸启动都落 6138，stand 先占口后
+   * `nebflow` 的守卫把 stand 实例当自己人 focus（或经弃用 shim nebflow.cmd→
+   * stand.cmd 直接拉起 stand）。考古结论：nebflow 从无前例的独立默认口——8080
+   * 年代它是全引擎唯一主默认（对调前的旧值），6138 年代它跟着新主默认撞车；
+   * 本常量是它的第一个真正独立默认。
+   *
+   * 8080 自此只属 9.19 自有根实例（其 launcher 缺省是那个年代的主默认）——
+   * 该实例仍用 `NEBFLOW_GATEWAY_PORT=8080` / `--port 8080` 管辖，引擎任何品牌
+   * 都不绑定 8080（ProcessManager ProtectedPorts 的 8080/8097 硬闸保持不动）。
+   *
+   * 生效面 = 品牌感知解析链的兜底档（`--port` > `GATEWAY_PORT` env > config
+   * `port` 键 > 本值），见 [[brandDefaultPortFor]] / `GatewayConfig.resolvePort`；
+   * 读数/报错文案面（点名「占口的是另一实例」）走 [[legacyPortOf]]。
+   * CLI 侧同名真值在 `ops/bin/stand-cli-lib.sh` 的 BRAND-MAP（`stand_brand_default_port`），
+   * 两侧由 `CliBrandDefaultsSpec` 文本对账钉住。
+   */
+  val NebflowBrandGatewayPort = 6140
+
+  /**
+   * 品牌小写名（brand.conf `lowerName`）→ 该品牌引擎的缺省绑定口 ——
+   * **纯核心**（spec 直接驱多品牌矩阵，不受本构建 brand.conf 冻结限制）：
+   * `nebflow` = [[NebflowBrandGatewayPort]]（6140，独立默认），其余（含 `stand`
+   * 与任何未来/未知品牌）= [[GatewayPort]]（6138，本仓原生默认）。双生分家批的
+   * 铁律：同机两品牌的**引擎兜底口必须错开**，绝不允许回落到同一默认值。
+   */
+  def brandDefaultPortFor(lowerName: String): Int =
+    if lowerName == "nebflow" then NebflowBrandGatewayPort else GatewayPort
+
+  /**
+   * 本构建的品牌缺省口（`Branding.lowerName` 现读）：stand 构建 = 6138，
+   * nebflow 构建 = 6140。引擎侧凡「本引擎默认网关口」语义的兜底读数（绑定 /
+   * CLI readPort / doctor / prompt 变量 / Rollback 复起 / FlowTree /
+   * RestApiRoutes 构造 / neblink 对端口兜底）一律引用本函数，不直接引用
+   * [[GatewayPort]] —— 否则 nebflow 品牌构建会把自家读数写成 stand 的口。
+   */
+  def brandDefaultPort: Int = brandDefaultPortFor(Branding.lowerName)
+
+  /**
+   * 命令品牌 → 其缺省端口（双实例并存批 2026-10-30 的读数面单点；分家批换源）。
+   *  `stand` = [[GatewayPort]]（6138），`nebflow` = [[NebflowBrandGatewayPort]]（6140）。
+   *  认不出的品牌返回 `"?"`（调用方据此只说「对家实例」，不编数字）。
+   *  CLI 侧同名真值在 `ops/bin/stand-cli-lib.sh` 的 `stand_brand_default_port`。
+   */
+  def legacyPortOf(brand: String): String =
+    brand match
+      case "nebflow" => NebflowBrandGatewayPort.toString
+      case "stand" => GatewayPort.toString
+      case _ => "?"
 end Defaults
 
-/** Bash 卡死防护配置（#26：前台直跑语义；hardTimeout/stuckWindow/healthCheck
- * 只服务显式 run_in_background 后台任务。nebflow.json 顶层键可覆盖。 */
+/**
+ * Bash 卡死防护配置（#26：前台直跑语义；hardTimeout/stuckWindow/healthCheck
+ * 只服务显式 run_in_background 后台任务。nebflow.json 顶层键可覆盖。
+ *
+ * main-agent-nonblocking 批（2026-10-21 作者裁定）新增 `foregroundWaitBudgetMs`：
+ * 前台等待预算（默认 300s，作者可调）——前台命令超预算即自动转后台（不杀），
+ * 主 agent 前台零阻塞的取值点。实例级一份（SharedResources.bashResilience →
+ * 全部会话共用：主 agent / 子 agent / 节点同纪律，无 per-agent 差异化面）。
+ */
 case class BashResilienceConfig(
   hardTimeoutMs: Long = Defaults.BashBackgroundHardTimeoutMs,
   stuckWindowSec: Int = Defaults.BashStuckWindowSec,
-  healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec
+  healthCheckIntervalSec: Int = Defaults.BgHealthCheckIntervalSec,
+  /** 前台等待预算 ms（缺省 = Defaults.ForegroundWaitBudgetMs = 300s）。 */
+  foregroundWaitBudgetMs: Long = Defaults.ForegroundWaitBudgetMs
 )

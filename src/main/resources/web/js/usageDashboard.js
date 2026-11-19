@@ -23,6 +23,7 @@ import { t, getLocale } from './i18n.js';
 import state from './state.js';
 import { authHeaders } from './flowHelpers.js';
 import { createIconsIn } from './utils.js';
+import { withFocusKey } from './focusTrap.js';
 
 /** Providers known not to report cache fields (spec §6.9c).
  *  Empty since 2026-08-21: reconciliation (report f5e80ca §4 F2) confirmed kimi
@@ -30,7 +31,6 @@ import { createIconsIn } from './utils.js';
  *  provider). Mechanism kept; list empty — extend here if a new case appears. */
 const NO_CACHE_PROVIDERS = [];
 
-const MS_DAY = 86400000;
 const YEAR_WEEKS = 52; // 52 full weeks before the current week column (53 cols)
 
 // ── module state ────────────────────────────────────────────────────
@@ -74,6 +74,11 @@ function startOfToday() {
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
+function addDays(ms, days) {
+  const d = new Date(ms);
+  d.setDate(d.getDate() + days);
+  return d.getTime();
+}
 function dateKeyOf(ms) {
   const d = new Date(ms);
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -89,16 +94,15 @@ function keyToMs(key) {
 function yearWindow() {
   const today = startOfToday();
   const dow = new Date(today).getDay(); // 0 = Sunday
-  const thisSunday = today - dow * MS_DAY;
-  const from = thisSunday - YEAR_WEEKS * 7 * MS_DAY;
-  return { from, to: today + MS_DAY };
+  const from = addDays(today, -dow - YEAR_WEEKS * 7);
+  return { from, to: addDays(today, 1) };
 }
 /** Summary-card window driven by the stats-range buttons (ruling ④). */
 function statWindow() {
   const today = startOfToday();
   const days = { '1d': 1, '1w': 7, '1m': 30, '3m': 90 }[statRange] || 7;
-  const from = statRange === '1d' ? today : today - (days - 1) * MS_DAY;
-  return { from, to: today + MS_DAY };
+  const from = addDays(today, 1 - days);
+  return { from, to: addDays(today, 1) };
 }
 
 // ── formatting (spec §5.4) ──────────────────────────────────────────
@@ -442,14 +446,14 @@ async function loadSummary() {
   const { from, to } = statWindow();
   const fp = filterParams();
   const today = startOfToday();
-  const wkStart = today - 6 * MS_DAY; // rolling 7-day week incl. today (absolute)
+  const wkStart = addDays(today, -6); // rolling 7 calendar days including today
   try {
     const [totals, todayH, yestH, thisW, lastW, agents, models] = await Promise.all([
       fetchAgg({ from, to, ...fp }),
-      fetchAgg({ dim: 'hour', from: today, to: today + MS_DAY, ...fp }),
-      fetchAgg({ dim: 'hour', from: today - MS_DAY, to: today, ...fp }),
-      fetchAgg({ from: wkStart, to: today + MS_DAY, ...fp }),
-      fetchAgg({ from: wkStart - 7 * MS_DAY, to: wkStart, ...fp }),
+      fetchAgg({ dim: 'hour', from: today, to: addDays(today, 1), ...fp }),
+      fetchAgg({ dim: 'hour', from: addDays(today, -1), to: today, ...fp }),
+      fetchAgg({ from: wkStart, to: addDays(today, 1), ...fp }),
+      fetchAgg({ from: addDays(wkStart, -7), to: wkStart, ...fp }),
       fetchAgg({ dim: 'agent', from, to, ...fp }),
       fetchAgg({ dim: 'model', from, to, ...fp }),
     ]);
@@ -534,7 +538,7 @@ async function loadHeatmap() {
       }
     }
     windowKeys = [];
-    for (let ms = from; ms < to; ms += MS_DAY) windowKeys.push(dateKeyOf(ms));
+    for (let ms = from; ms < to; ms = addDays(ms, 1)) windowKeys.push(dateKeyOf(ms));
     renderHeatmap();
   } catch (err) {
     mainFailCount++;
@@ -595,6 +599,15 @@ function fillSelect(sel, keys, current) {
 
 // ── summary cards ───────────────────────────────────────────────────
 function renderSummary() {
+  const wrap = document.getElementById('usage-summary');
+  if (!wrap || !lastTotals) return;
+  // B3-2：汇总卡阵 = `innerHTML = ''` 全重建（卡片内含可点钻取面）。重渲前后按
+  // key 回焦；卡内没有 id/标记 ⇒ 第三级 DOM 路径（同形重建位序不变）。
+  withFocusKey(wrap, renderSummaryCards);
+}
+
+/** 汇总卡阵重建本体（重渲保焦包装见 renderSummary）。 */
+function renderSummaryCards() {
   const wrap = document.getElementById('usage-summary');
   if (!wrap || !lastTotals) return;
   wrap.innerHTML = '';
@@ -867,7 +880,7 @@ async function loadCurve(dateKey) {
   const curve = document.getElementById('usage-curve');
   if (!curve) return;
   const from = keyToMs(dateKey);
-  const to = from + MS_DAY;
+  const to = addDays(from, 1);
   const fp = filterParams();
   const dimFp = heatDim !== 'total' && heatDimValue ? { [heatDim]: heatDimValue } : {};
   curve.innerHTML = '';
@@ -1002,7 +1015,7 @@ async function loadDrill(dateKey) {
   const drill = document.getElementById('usage-drill');
   if (!drill) return;
   const from = keyToMs(dateKey);
-  const to = from + MS_DAY;
+  const to = addDays(from, 1);
   const fp = filterParams();
   const dimFp = heatDim !== 'total' && heatDimValue ? { [heatDim]: heatDimValue } : {};
   drill.innerHTML = '';

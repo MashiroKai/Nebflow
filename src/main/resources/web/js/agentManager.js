@@ -3,15 +3,18 @@
 //
 // 2026-09-06 工具面裁撤批（作者裁定提前执行阶段 2d 子集）：Agent 详情页的
 // tools/skills/flows 三区（可配置 chips + 写回）整体退役——能力配置收敛回
-// 定义文件与 plugin 分配。本页保留：摘要头 + Model preset 选择 + System
-// Prompt 编辑器（WS updateAgentSystemPrompt 仍是唯一写通道）。
+// 定义文件与 plugin 分配。本页保留：摘要头 + 只读模型链展示 + System
+// Prompt 编辑器（WS updateAgentSystemPrompt 仍是唯一写通道）。链编辑
+// 统一走 /model 面板（modelPanel.js）。
 
 import { key } from './branding.js';
 import { sendWs } from './ws.js';
 import { openTab, getTabPane, hasTab, setActiveTab, isCanvasOpen, openCanvas } from './canvas.js';
 import { t } from './i18n.js';
+import { contentText } from './contentI18n.js';
 import { createIconsIn } from './utils.js';
-import * as presets from './presets.js';
+import { chainRefs, resolvedChainChipsHtml, modelSourceNoteKey, SETTABLE_ROLES } from './modelPanel.js';
+import { rootNameParams, agentDisplayName, ROOT_AGENT_KEY } from './rootName.js';
 
 // ── Helpers ────────────────────────────────────────────────
 function getToken() { return localStorage.getItem(key('token')) || ''; }
@@ -70,17 +73,20 @@ export async function fetchAgentModel(name) {
 /** Render a single agent card HTML string. */
 function renderAgentCard(a) {
   const name = esc(a.name);
-  const display = esc(a.displayName || a.name);
-  const desc = esc(a.description || '');
-  const initial = esc((a.displayName || a.name || '?').charAt(0).toUpperCase());
-  const isNebula = a.name === 'Nebula';
+  // Nebula 退役批：显示名走单一读点（根 agent = 用户起的名字，未命名 = 通用称呼；
+  // 其余 agent = 自身显示名）——机制名永不上屏。
+  const shown = agentDisplayName(a.name);
+  const display = esc(contentText('agent', a.name, 'name', shown));
+  const desc = esc(contentText('agent', a.name, 'desc', a.description || ''));
+  const initial = esc((shown || '?').charAt(0).toUpperCase());
+  const isNebula = a.name === ROOT_AGENT_KEY;
   const isGlobalStandalone = (a.layer === 'global' || !a.layer) && (a.category || 'standalone') === 'standalone';
-  // Nebula is the orchestrator, not a delegatable standalone — never shows the badge.
+  // The root agent is the orchestrator, not a delegatable standalone — never shows the badge.
   const showBadge = isGlobalStandalone && !isNebula;
   const badge = showBadge
     ? '<span class="agent-mgr-standalone-badge">可直接委派</span>'
     : '';
-  // ⑧ Nebula: orbit icon avatar (identity must be stable — custom avatar not accepted)
+  // ⑧ Root agent: orbit icon avatar (identity must be stable — custom avatar not accepted)
   // + orchestrator badge pill. All other cards keep letter/custom-avatar logic.
   const avatar = isNebula
     ? '<span class="agent-mgr-avatar"><i data-lucide="orbit" style="width:16px;height:16px"></i></span>'
@@ -122,6 +128,9 @@ function agentsContentEl() {
   if (!content) {
     content = document.createElement('div');
     content.id = 'agents-content';
+    // 统一安全区（canvas-overlap-fix 批 2026-11-05）：canvas 顶行胶囊是浮层，
+    // 面板正文首块让到 --cv-safe-top 之下；类定义在 split.css「统一布局层」块。
+    content.className = 'canvas-safe-top cv-safe-pad';
     pane.appendChild(content);
   }
   return content;
@@ -131,11 +140,11 @@ function agentsContentEl() {
 export function renderAgentManager() {
   const content = agentsContentEl();
   if (!content) return;
-  content.innerHTML = `<div class="agent-mgr-loading">${t('agentManager.loading')}</div>`;
+  content.innerHTML = `<div class="agent-mgr-loading" data-cv-hint="loading">${t('agentManager.loading')}</div>`;
 
   fetchAgents().then(agents => {
     if (agents.length === 0) {
-      content.innerHTML = `<div class="agent-mgr-empty">${t('agentManager.noAgents')}</div>`;
+      content.innerHTML = `<div class="agent-mgr-empty" data-cv-hint="empty">${t('agentManager.noAgents')}</div>`;
       return;
     }
 
@@ -158,8 +167,8 @@ export function renderAgentManager() {
     // (entity-icons-visual-spec §3.2). Nebula is extracted from the global
     // standalone list: it understands intent / dispatches / accepts, it is
     // not a delegatable executor like the standalone agents below.
-    const nebula = global.find(a => a.name === 'Nebula');
-    const standalone = global.filter(a => a.name !== 'Nebula');
+    const nebula = global.find(a => a.name === ROOT_AGENT_KEY);
+    const standalone = global.filter(a => a.name !== ROOT_AGENT_KEY);
 
     if (nebula) {
       html += `<div class="agent-mgr-group agent-mgr-group-orchestrator">`;
@@ -199,8 +208,8 @@ export function renderAgentManager() {
 
     // Bind card clicks (single = preview, double = pinned — VS Code style)
     content.querySelectorAll('.agent-mgr-card').forEach(card => {
-      card.addEventListener('click', () => openAgentDetail(card.dataset.agent));
-      card.addEventListener('dblclick', () => openAgentDetail(card.dataset.agent, true));
+      card.addEventListener('click', () => openAgentDetail((/** @type {HTMLElement} */ (card)).dataset.agent));
+      card.addEventListener('dblclick', () => openAgentDetail((/** @type {HTMLElement} */ (card)).dataset.agent, true));
     });
 
     // Async-populate model tags
@@ -208,40 +217,31 @@ export function renderAgentManager() {
   });
 }
 
-/** Fetch model info and inject a short tag into the card.
- *  Shows `方案: <displayName> · <model>` when the agent references a preset;
- *  a "默认方案" badge when resolving via the default preset. */
+/** Fetch model info and inject a short tag into the card: the head of the
+ *  agent's effective chain + the fallback dot when the running ref differs. */
 async function populateModelTag(name) {
-  const [model, presetData] = await Promise.all([fetchAgentModel(name), presets.fetchPresets()]);
+  const model = await fetchAgentModel(name);
   if (!model) return;
-  // preferred is the configured model — trust it over `current`
-  // (current is only a reference from the backend resolution).
-  const current = model.preferred || model.current || model.default || '';
-  if (!current) return;
+  const head = chainRefs(model.effectiveChain)[0] || '';
+  if (!head) return;
   const tag = document.querySelector(`.agent-mgr-model-tag[data-agent="${esc(name)}"]`);
   if (!tag) return;
-  const presetName = model.preset || '';
-  const preset = presetName ? (presetData?.presets || []).find(p => p.name === presetName) : null;
-  const label = preset
-    ? `${t('preset.pillPrefix')}${preset.name} · ${shortModel(current)}`
-    : shortModel(current);
-  const isFallback = model.preferred && current !== model.preferred;
-  // resolvedFrom arrives with backend P2; fall back to legacy heuristic without it
-  const showDefaultBadge = model.resolvedFrom
-    ? (model.resolvedFrom === 'default-preset' || model.resolvedFrom === 'global')
-    : !model.preferred;
-  tag.innerHTML = `<span class="agent-mgr-model-pill${isFallback ? ' fallback' : ''}">${esc(label)}</span>${showDefaultBadge ? `<span class="agent-mgr-default-badge">${t('preset.defaultBadge')}</span>` : ''}`;
+  const current = model.current || head;
+  const isFallback = !!model.current && model.current !== head;
+  tag.innerHTML = `<span class="agent-mgr-model-pill${isFallback ? ' fallback' : ''}">${esc(shortModel(head))}</span>`;
 }
 
 // ── Canvas detail tab ──────────────────────────────────────
 
 /** Open a Canvas tab showing the agent detail page.
  *  Exported for plugins.js: the plugins page's subscription-map rows deep-
- *  link here for per-agent editing (summary / preset / system prompt — the
- *  tools/skills/flows capability sections were retired 2026-09-06). The
- *  detail tab is per-agent content, NOT the sealed standalone list entry. */
+ *  link here for per-agent editing (summary / model-chain readout / system
+ *  prompt — the tools/skills/flows capability sections were retired
+ *  2026-09-06). The detail tab is per-agent content, NOT the sealed
+ *  standalone list entry. */
 export async function openAgentDetail(name, pin = false) {
   const tabId = `agent:${name}`;
+  openAgentDetailIds.add(name);
   openTab(tabId, name, { type: 'agent', pinned: pin });
   const pane = getTabPane(tabId);
   if (!pane) return;
@@ -249,88 +249,126 @@ export async function openAgentDetail(name, pin = false) {
   // Loading state
   pane.innerHTML = `<div class="agent-detail-loading">${t('agentManager.loading')}</div>`;
 
-  // Fetch detail + model + presets in parallel
-  const [detail, model, presetData] = await Promise.all([
+  // Fetch detail + model in parallel
+  const [detail, model] = await Promise.all([
     fetchAgentDetail(name),
     fetchAgentModel(name),
-    presets.fetchPresets(),
   ]);
 
-  renderAgentDetail(pane, name, detail, model, presetData);
+  renderAgentDetail(pane, name, detail, model);
 }
 
-/** Re-render the read-only model chain + current-run line after a preset change. */
-function renderResolvedModel(pane, model) {
-  const chainEl = pane.querySelector('#agent-detail-preset-chain');
-  if (chainEl) chainEl.innerHTML = presets.resolvedChainHtml(model || {});
+/** Fill the read-only model section: source note + effective chain chips +
+ *  current-run line (running ref + fallback dot). Editing lives in the /model
+ *  panel — this page is display-only. */
+function renderModelSection(pane, model) {
+  const noteEl = pane.querySelector('#agent-detail-model-note');
+  if (noteEl) noteEl.textContent = t(modelSourceNoteKey(model || {}), rootNameParams());
+  const chainEl = pane.querySelector('#agent-detail-model-chain');
+  if (chainEl) chainEl.innerHTML = resolvedChainChipsHtml(model || {});
   const currentEl = pane.querySelector('#agent-detail-model-current');
   if (currentEl) {
-    const current = model?.current || model?.preferred || model?.default || '';
-    const isFallback = model?.preferred && current && current !== model.preferred;
+    const head = chainRefs(model?.effectiveChain)[0] || '';
+    const current = model?.current || head;
+    const isFallback = !!model?.current && head && current !== head;
     currentEl.innerHTML = current
-      ? `${t('preset.current')}: <span class="agent-detail-current-ref">${esc(current)}</span>${isFallback ? `<span class="agent-detail-fallback-dot" title="fallback"></span>` : ''}`
+      ? `${esc(t('model.currentRun'))}: <span class="agent-detail-current-ref">${esc(current)}</span>${isFallback ? `<span class="agent-detail-fallback-dot" title="fallback"></span>` : ''}`
       : '';
   }
 }
 
-function renderAgentDetail(pane, name, detail, model, presetData) {
-  const displayName = detail?.displayName || detail?.name || name;
+function renderAgentDetail(pane, name, detail, model) {
+  // Nebula 退役批：详情头同样走单一显示名读点（机制名不上屏）。
+  const displayName = agentDisplayName(detail?.name || name);
   const description = detail?.description || '';
   const extends_ = detail?.extends || '';
+  // builtin-def 批（2026-10-03 作者令①）：代码定义的内置 agent 在详情页只读——
+  // prompt 不给编辑器、不给保存通道（WS 写通道后端同样显式拒绝，双层收口）。
+  const builtin = !!detail?.builtin;
+  // contenti18n 批：详情面文案走 locale 映射（键 = agent id）。`displayName` 本身
+  // 不替换——头像首字母（:297）仍取原名，只有文本节点本地化。
+  const contentAgentId = detail?.name || name;
 
   // System prompt
   const prompt = detail?.systemPrompt || '';
 
-  // Preset (P4): agent references a named preset; chain is read-only.
-  const presetName = model?.preset || '';
-  const resolvedFrom = model?.resolvedFrom || '';
-  const presetList = presetData?.presets || [];
-  const defaultPreset = presetList.find(p => p.name === presetData?.defaultPreset);
-  const showDefaultBadge = resolvedFrom
-    ? (resolvedFrom === 'default-preset' || resolvedFrom === 'global')
-    : !presetName;
+  // prompt-panel 面板批（2026-10-09）：builtin nebflow 的提示词双面页签——
+  // delegate 面（默认，与列表行/详情头的 Delegate 目标描述同面）+ node 面
+  // （flow 节点会话收到的正文）。faces 由 GET /api/agents/:name 的 `promptFaces`
+  // 下发（判据单点 = BuiltinAgents.panelPromptFaces，仅两面确异时非空）；单面
+  // agent 该区不渲染，展示与批前逐字节一致。页签只读（内置提示词无编辑器）。
+  const faces = builtin && Array.isArray(detail?.promptFaces) ? detail.promptFaces : [];
+  const showFaces = faces.length > 1;
+  const FACE_LABEL_KEYS = { delegate: 'agentManager.faceDelegate', node: 'agentManager.faceNode' };
+  const FACE_HINT_KEYS = { delegate: 'agentManager.faceDelegateHint', node: 'agentManager.faceNodeHint' };
+  const faceTabsHtml = showFaces ? `
+        <div class="agent-detail-face-tabs" id="agent-detail-face-tabs">${faces.map((f, i) => `
+          <button type="button" class="agent-detail-face-tab${i === 0 ? ' active' : ''}" data-face="${esc(f.face || '')}">${esc(t(FACE_LABEL_KEYS[f.face]) || f.face)}</button>`).join('')}
+        </div>
+        <div class="agent-detail-face-hint" data-cv-hint="page" id="agent-detail-face-hint">${esc(t(FACE_HINT_KEYS[faces[0].face] || ''))}</div>` : '';
 
   pane.innerHTML = `
     <div class="agent-detail">
       <div class="agent-detail-header">
         <span class="agent-detail-avatar">${esc(displayName.charAt(0).toUpperCase())}</span>
         <div class="agent-detail-header-info">
-          <div class="agent-detail-name">${esc(displayName)}</div>
-          ${description ? `<div class="agent-detail-desc">${esc(description)}</div>` : ''}
-          ${extends_ ? `<div class="agent-detail-extends">extends: ${esc(extends_)}</div>` : ''}
+          <div class="agent-detail-name">${esc(contentText('agent', contentAgentId, 'name', displayName))}${builtin ? `<span class="agent-detail-builtin-badge" title="${esc(t('plugins.builtinTitle'))}">${esc(t('plugins.builtinBadge'))}</span>` : ''}</div>
+          ${description ? `<div class="agent-detail-desc">${esc(contentText('agent', contentAgentId, 'desc', description))}</div>` : ''}
+          ${extends_ ? `<div class="agent-detail-extends" data-cv-hint="foot">extends: ${esc(extends_)}</div>` : ''}
+          ${builtin ? `<div class="agent-detail-builtin-note" data-cv-hint="foot">${esc(t('agentManager.builtinNote'))}</div>` : ''}
         </div>
       </div>
 
       <div class="agent-detail-section">
-        <div class="agent-detail-label">Model${showDefaultBadge ? `<span class="agent-detail-default-badge">${t('preset.defaultBadge')}</span>` : ''}</div>
-        <select class="agent-detail-preset-select" id="agent-detail-preset-select">
-          <option value="">${t('preset.useDefault')}${defaultPreset ? `（${esc(defaultPreset.name)}）` : ''}</option>
-          ${presetList.map(p => `<option value="${esc(p.name)}"${p.name === presetName ? ' selected' : ''}>${esc(p.name)}</option>`).join('')}
-        </select>
-        <div class="agent-detail-preset-chain" id="agent-detail-preset-chain"></div>
+        <div class="agent-detail-label">Model</div>
+        <div class="agent-detail-scheme-note" id="agent-detail-model-note"></div>
+        <div class="agent-detail-model-chain" id="agent-detail-model-chain"></div>
         <div class="agent-detail-model-current" id="agent-detail-model-current"></div>
+        ${SETTABLE_ROLES.has(name) ? `<div class="agent-detail-scheme-note">${esc(t('model.viaSlash'))}</div>` : ''}
       </div>
 
       <div class="agent-detail-section" id="agent-detail-prompt-section">
         <div class="agent-detail-label-row">
           <span class="agent-detail-label">${t('agentManager.systemPrompt')}</span>
-          <button class="agent-detail-prompt-toggle" id="agent-detail-prompt-toggle" title="${t('agentManager.viewSource')}">${CODE_ICON_SVG}</button>
+          ${builtin ? '' : `<button class="agent-detail-prompt-toggle" id="agent-detail-prompt-toggle" title="${t('agentManager.viewSource')}">${CODE_ICON_SVG}</button>`}
         </div>
+        ${faceTabsHtml}
         <div class="agent-detail-prompt-render canvas-md-viewer" id="agent-detail-prompt-render"></div>
-        <textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" style="display:none">${esc(prompt)}</textarea>
-        <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">${t('agentManager.save')}</button>
+        ${builtin ? '' : `<textarea class="agent-detail-prompt-edit" data-agent="${esc(name)}" spellcheck="false" autocapitalize="off" autocorrect="off" style="display:none">${esc(prompt)}</textarea>
+        <button class="agent-detail-save-btn" id="agent-detail-save-prompt" style="display:none">${t('agentManager.save')}</button>`}
       </div>
     </div>`;
 
-  // Model section (P4): preset dropdown + read-only resolved chain.
-  renderResolvedModel(pane, model);
-  const presetSel = pane.querySelector('#agent-detail-preset-select');
-  presetSel?.addEventListener('change', async () => {
-    await presets.setAgentPreset(name, presetSel.value || null);
-    const fresh = await fetchAgentModel(name);
-    if (pane.isConnected) renderResolvedModel(pane, fresh);
-    populateModelTag(name); // keep the sidebar card pill in sync
-  });
+  // Model section: read-only resolved chain (source note + chips + current).
+  renderModelSection(pane, model);
+
+  if (builtin) {
+    // Read-only face: rendered prompt only, no editor, no save.
+    // prompt-panel 面板批（2026-10-09）：双面时默认渲染第一面（delegate 面），
+    // 点页签切换正文与标注行；单面时 faces 为空 → 回落 detail.systemPrompt，
+    // 行为与批前一致。
+    const roRender = pane.querySelector('#agent-detail-prompt-render');
+    const hintEl = pane.querySelector('#agent-detail-face-hint');
+    let activeFace = faces[0] || null;
+    const renderActiveFace = () => {
+      import('./utils.js').then(({ renderMarkdownWithMath }) => {
+        if (pane.isConnected) roRender.innerHTML = renderMarkdownWithMath(activeFace ? (activeFace.systemPrompt || '') : prompt);
+      });
+    };
+    renderActiveFace();
+    if (showFaces) {
+      const tabsEl = pane.querySelector('#agent-detail-face-tabs');
+      tabsEl?.addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-face]');
+        if (!btn) return;
+        activeFace = faces.find(f => f.face === btn.dataset.face) || faces[0];
+        tabsEl.querySelectorAll('.agent-detail-face-tab').forEach(b => b.classList.toggle('active', b === btn));
+        if (hintEl) hintEl.textContent = t(FACE_HINT_KEYS[activeFace.face] || '');
+        renderActiveFace();
+      });
+    }
+    return;
+  }
 
   // System prompt: rendered markdown view ↔ source textarea toggle.
   // Rendered mode is default; Save only shows in source mode.
@@ -383,7 +421,24 @@ export function isAgentsTabOpen() {
 //   • canvas-tab-restore 仍监听 'agents'：旧会话持久化的智能体标签页刷新后
 //     照常渲染（保留函数只藏入口，不悬挂已存在的标签页）。
 window.addEventListener('canvas-tab-restore', (e) => {
-  if (e.detail?.id === 'agents') {
+  if ((/** @type {CustomEvent<{id?: string}>} */ (e)).detail?.id === 'agents') {
     renderAgentManager();
+  }
+});
+
+// 切语言即重渲（contenti18n 批）：agent 名/描述走 locale 映射（js/contentI18n.js），
+// 语言一变，已渲染的列表与已打开的详情面板都必须随动——本批前此处零监听。
+// 详情面按 tabId `agent:<name>` 定位（openAgentDetail 登记），面板已卸载即摘除登记。
+const openAgentDetailIds = new Set();
+window.addEventListener('locale-changed', () => {
+  if (isAgentsTabOpen()) renderAgentManager();
+  for (const id of [...openAgentDetailIds]) {
+    const pane = getTabPane(`agent:${id}`);
+    if (!pane || !pane.isConnected) { openAgentDetailIds.delete(id); continue; }
+    Promise.all([fetchAgentDetail(id), fetchAgentModel(id)])
+      .then(([detail, model]) => {
+        if (pane.isConnected) renderAgentDetail(pane, id, detail, model);
+      })
+      .catch(() => { /* 重渲失败保持旧文案——不因语言切换把面板打成错误态 */ });
   }
 });

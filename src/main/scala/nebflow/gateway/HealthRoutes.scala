@@ -1,0 +1,426 @@
+/* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
+package nebflow.gateway
+
+import nebflow.neblink.core.*
+
+import cats.effect.IO
+import cats.syntax.all.*
+import fs2.Stream
+import io.circe.Json
+import io.circe.syntax.*
+import nebflow.core.hotrestart.HealthPayload
+import nebflow.shared.{ Branding, NebflowLogger }
+import org.http4s.*
+import org.http4s.circe.CirceEntityCodec.*
+import org.http4s.dsl.io.*
+import org.http4s.headers.`Content-Type`
+
+/**
+ * 健康域(health,F 步 2026-09-24):原 RestApiRoutes.routes 巨型 match 的
+ * /health、/health/conn、/usage/aggregate、/tts、/command case 逐字迁入,
+ * 行为保持;经 RestApiRoutes.routes 级联首位挂载,各臂首段路径字面量与
+ * 其余域互不重叠。
+ *
+ * 本地加速 M1 批 ②/④(v2 §3.3):/health 增「同机近路探测」面 —— 环回腿
+ * 并 `deviceId` 键(门户探测身份核对锚)+ 门户 origin 白名单 CORS 应答
+ * (GET/OPTIONS 预检);非环回/非白名单 = 载荷与响应头逐字不变(现状即
+ * 降级兜底)。判据与应答助手见 companion 末段。
+ */
+private[gateway] object HealthRoutes:
+
+  def routes(ctx: RestApiCtx): HttpRoutes[IO] =
+    import ctx.*
+    HttpRoutes.of[IO] {
+      // Health check (P2-6 layered, 2026-08-25): `providers` = per-model health
+      // (up / down:<reason>), `search` = Tier 2a standalone search API health
+      // (unconfigured/up/down) — INDEPENDENT of model health, so "模型配额 DOWN
+      // 但搜索 API 正常" is visible at a glance. `status` stays "ok" while the
+      // gateway serves (the watchdog keys on HTTP 200).
+      case req @ GET -> Root / "health" =>
+        // Payload construction is SINGLE-SOURCED in
+        // `nebflow.core.hotrestart.HealthPayload.build` (hotupdate batch 2, G3): the
+        // hot-restart door self-check (tier 3 "port-serving" / tier 4 "version-match")
+        // reads the very same payload over HTTP, so the version a successor
+        // advertises can never drift from what this endpoint serves. Fields,
+        // field order and value semantics are unchanged (byte-compatible body).
+        // 统一更新收敛闭环（M3 ③）：`update` 键 = 最近挂账/决策读数，**仅当有状态
+        // 可报时出现**（无键 = 默认载荷逐字节不变，探针契约零回归）。
+        // 本地加速批 ②（v2 §3.3 步骤1-2）：环回腿额外并 `deviceId` 键 —— 门户页
+        // 同机探测的身份核对锚（与 URL `?device=` 一致才允许近路切换）。键只在
+        // 「环回腿 ∧ 本机已铸身份」时出现，与 `update` 键同一「有状态才出现」
+        // 纪律；非环回腿/未铸身份 = 默认载荷逐字节不变。CORS 白名单应答只发生
+        // 在环回腿上（见 probeCorsHeaders）——LAN/隧道腿照旧零 CORS 头。
+        sharedResources.updateConvergence
+          .traverse(_.healthJson)
+          .map(_.flatten)
+          .flatMap { extra =>
+            val updateKey = extra.map(u => Json.obj("update" -> u)).getOrElse(Json.obj())
+            // 429 反应式并发闸批（作者令 2026-10-29 21:32）：`throttle` 键 = 各
+            // provider 账户的当前限流档位（limit/rung/inFlight/queued）。「有状态
+            // 才出现」纪律同 `update`/`deviceId`：总闸关或从无闸 ⇒ None ⇒ 载荷
+            // 逐字节不变（探针契约零回归）。
+            //
+            // fleet 批（2026-11-01）：`fleet` 键 = **能力自报**（protocol / hotUpdate /
+            // minRemoteVersion）——全设备统一更新的「接口能力自报」腿就是读它，另一腿
+            // 是版本号门槛（`UpdateCapability.verdict`）。未装配 fleet 协调器 ⇒ 不出现键
+            // （同纪律：默认载荷逐字节不变，探针契约零回归）。
+            val fleetKey = sharedResources.fleetUpdate
+              .map(_ =>
+                Json.obj(
+                  "fleet" -> nebflow.core.hotupdate.FleetUpdateCoordinator.selfReportJson(writable = true)
+                )
+              )
+              .getOrElse(Json.obj())
+            sharedResources.providerRegistry.throttleHealthJson.flatMap { throttleKey =>
+              // provider 并发占坑（provider-concurrency 批，2026-11-06）：`providerConcurrency`
+              // 键 =「有状态才出现」纪律同 throttle——registry 未装配（测试/极早期）⇒
+              // Null ⇒ 键不出现，默认载荷逐字节不变。
+              sharedResources.providerConcurrencyJson.flatMap { concKey =>
+                val concStateKey = if concKey.isNull then Json.obj() else Json.obj("providerConcurrency" -> concKey)
+                val extraAll =
+                  throttleKey.fold(updateKey)(t => updateKey.deepMerge(Json.obj("throttle" -> t)))
+                    .deepMerge(concStateKey)
+                HealthPayload.build(sharedResources.healthMonitor, extraAll.deepMerge(fleetKey))
+              }
+            }
+          }
+          .flatMap(nearPathProbePayload(req, _))
+          .flatMap(Ok(_).map(_.putHeaders(probeCorsHeaders(req)*)))
+
+      // 同机近路探测的预检腿（本地加速批 ②，v2 §3.3）：门户页（公网 https）
+      // 探本机回环 /api/health 属 Private-Network 请求，Chromium 先发 OPTIONS
+      // 预检；此前该路径落空（/api 树 404）⇒ 探测必败。应答同 probeCorsHeaders
+      // 白名单闸 —— 非白名单 origin / 非环回腿 = 裸 204 无 CORS 头（浏览器不可
+      // 读 ⇒ 门户停留现状，批 ④ 的降级语义）。
+      case req @ OPTIONS -> Root / "health" =>
+        NoContent().map(_.putHeaders(probeCorsHeaders(req)*))
+
+      // 同机近路探测的「端口锚」腿（本地回路短路批，2026-10-22 诊断修复批——
+      // 「本地点大文件触发重连」：控制台页经隧道加载时，本机文件字节全走
+      // 隧道把心跳 pong 饿死 ⇒ 前端 3-miss 自我逐出。修法 = 控制台页自检
+      // 近路跳回 http://127.0.0.1:<port>，本地文件从此零隧道）。
+      // 经 withAuth 门（会话凭据）：端口不是身份面，但只服务已入座会话；
+      // 身份核对锚仍由环回 /health 的 deviceId 键承担——本端点给端口、
+      // 环回探测给身份，两键合起来才构成「同机确认」。无缓存（no-store 由
+      // 调用方带，此处载荷小、读数随配置）。
+      case req @ GET -> Root / "health" / "loopback-info" =>
+        withAuth(req) {
+          // 近路 miss 诊断面（门户身份透传批·方案 B 小刀②，2026-10-28）：本端点
+          // 只有「经 relay 加载的控制台页」的自升级链会调（直连腿 /api/portal/status
+          // 先 404 短路）——一次 INFO 行把「页面走到了近路判定链第 2 步」钉进引擎
+          // 侧日志；后续 miss（环回探测被 PNA 拒/deviceId 不等）发生在浏览器侧，
+          // 前端另有 sessionStorage miss 原因键（ws.js 近路腿）与nearpath 端点
+          // enrolled=false 日志（LAN 腿）同族可答「为什么没走 localhost」。
+          logger.info(
+            s"nearpath: loopback-info served (relay-leg page probing local port anchor, " +
+              s"host=${req.headers.get[org.http4s.headers.Host].map(_.host).getOrElse("unknown")})"
+          ) *>
+            Ok(Json.obj("port" -> ctx.gatewayPort.asJson))
+        }
+
+      // 「身份像素」腿（近路批 2026-11-04·四道闸根因修复）：WebKit 上 https 页面对
+      // `http://127.0.0.1` 的跨源 fetch 是 **active mixed content**，网络层之前就被
+      // 拦（实测台 FINDINGS §3 闸③）⇒ 前端闸③ 改用 **passive 子资源**（`<img>`）取证。
+      // 本臂就是那张像素：只在「请求从**环回 socket** 进来 ∧ `expect` == 本机
+      // deviceId」时回一张哨兵尺寸（5×3）的 PNG，其余一切 = 404（空 body、零 CORS 头）。
+      //   · 环回 socket 是**机械事实**（[[LoopbackLeg]] 读 socket 对端，客户端不可伪造）；
+      //   · `expect` 全等 ⇒ 答得出这张图 = 「我持有你在隧道腿（闸①）拿到的那个
+      //     deviceId」，而同机环回连接不可能跨机 ⇒ 前端拿到的就是**同机正证**；
+      //   · 零凭据：像素由 `<img>` 无 CORS 加载、带不了 Authorization；安全面就是
+      //     「环回腿 ∧ expect 全等」——猜不到 deviceId 的进程只能拿 404；
+      //   · no-store：身份换了必须立刻看到新答案（尺寸哨兵见 [[LoopbackPixel]]）。
+      case req @ GET -> Root / "health" / "loopback-pixel.png" =>
+        IO.blocking(nebflow.neblink.core.DeviceIdentity.readDeviceIdOnly)
+          .flatMap(own => LoopbackPixel.reply(req, own))
+
+      // 像素臂的预检腿：若某浏览器版本对「公网 origin → 环回」的 image 请求发 PNA
+      // 预检，用与 /health 同族的白名单头应答（不发预检的浏览器不会触及本臂）。
+      case req @ OPTIONS -> Root / "health" / "loopback-pixel.png" =>
+        NoContent().map(_.putHeaders(probeCorsHeaders(req)*))
+
+      // 近路「命中/回落」上报面（近路批·引擎侧可观测面，2026-11-04；审计
+      // `20261104_103020_local-acceleration-audit.md` §2.4/§8-1 的落点）。**零凭据**：
+      // 与 /health/conn 同级无 withAuth（页面入座前后都要能报，载荷只有计数）；
+      // 计数与日志全在 [[NearPathStats]]（进程内，不落盘）。应答恒 204 —— 观测面
+      // 不产生错误码（坏 body / 非法 event / 超限 = 静默丢弃）。
+      case req @ POST -> Root / "health" / "nearpath-event" =>
+        NearPathStats.event(req).map(_.putHeaders(nearPathCorsHeaders(req)*))
+
+      // 近路事件上报的预检腿（跨源 JSON POST 必先 OPTIONS；此前该路径落空 ⇒ 浏览器
+      // 不可读 ⇒ 事件永远到不了引擎 = 「靠猜」的根因之一）。非白名单 origin = 裸 204。
+      case req @ OPTIONS -> Root / "health" / "nearpath-event" =>
+        NoContent().map(_.putHeaders(nearPathCorsHeaders(req)*))
+
+      // 近路读数端点的预检腿（只读 GET,跨源读同样要 CORS；无简单请求豁免）。
+      case req @ OPTIONS -> Root / "health" / "nearpath" =>
+        NoContent().map(_.putHeaders(nearPathCorsHeaders(req)*))
+
+      // 近路读数面（只读、零凭据、no-store）：`{"hit","miss","reasons","hitLastAt",
+      // "missLastAt","redeemedLoopback"}` —— 键集合是对前端的契约（近路批逐字对接），
+      // 新增键只能走新端点。载荷全来自 [[NearPathStats]] 的内存计数。
+      case req @ GET -> Root / "health" / "nearpath" =>
+        Ok(NearPathStats.payload)
+          .map(_.putHeaders((nearPathCorsHeaders(req) :+ NoStoreHeader)*))
+
+      // 连接面只读读数（R-1b conn-guard 批，设计件 §C④-4）：零凭据面（仅
+      // 对端 IP + 计数 + 上限/超时口径 + fd 代理）。与 /health 同级无令牌门
+      // （watchdog/作者探视用）；不含任何 header/body/token 内容。
+      //
+      // perf-481 A2：并入 `outbound` 段 = 出站队列溢出的**机械读数面**。
+      // 判据「溢出计数非零 ∧ 队列长度有界」在返工前**零读点**（计数只有定义、
+      // 无任何消费者）⇒ 结构性不可观测。本段把它挂到既有只读健康面上（不新开
+      // 端点、不新增凭据/令牌面）：`capacity` 是每连接出站队列上界（有界性本身
+      // 的读数），`overflowDrops` / `overflowCloses` 是两个只增计数。
+      // 实例级读数：`ctx.wsHub` 就是 GatewayMain 里那个 hub（同一实例），
+      // 也在 WebSocketRoutes 里接收溢出事件 ⇒ 计数与生产事件流同一来源。
+      case GET -> Root / "health" / "conn" =>
+        connGuard.snapshot.flatMap { s =>
+          Ok(
+            ConnGuard
+              .healthJson(s, ConnGuard.fdCount())
+              .deepMerge(Json.obj("outbound" -> wsHub.outboundStatsJson(wsRoutes.OutboundQueueCapacity)))
+          )
+        }
+
+      // Token consumption dashboard aggregate (2026-08-18): structured LLM usage
+      // telemetry with dimension slicing.
+      //   dim=provider|model|agent|hour|day (absent = totals only)
+      //   from/to = epoch millis, inclusive lower / exclusive upper (both optional)
+      //   provider/model/agent = exact-match filters, applied before grouping
+      //     (dashboard D1: orthogonal to dim — all absent = unfiltered, and an
+      //     empty value is treated as absent for backward compatibility)
+      case req @ GET -> Root / "usage" / "aggregate" =>
+        withAuth(req) {
+          val params = req.uri.multiParams
+          val dim = params.get("dim").flatMap(_.headOption)
+          val from = params.get("from").flatMap(_.headOption).flatMap(_.toLongOption)
+          val to = params.get("to").flatMap(_.headOption).flatMap(_.toLongOption)
+          val provider = params.get("provider").flatMap(_.headOption).filter(_.nonEmpty)
+          val model = params.get("model").flatMap(_.headOption).filter(_.nonEmpty)
+          val agent = params.get("agent").flatMap(_.headOption).filter(_.nonEmpty)
+          sharedResources.usageRecordStore
+            .aggregate(dim, from, to, provider, model, agent)
+            // M2 缓存语义小刀（v2 §3.1 ① · 用量聚合行）：ETag = 载荷内容寻址——窗口
+            // 与过滤参数决定聚合输入，已完结小时的聚合输出不可变（UsageAggCache 小时
+            // 粒度 cell），窗口不变 + 未进新数据 ⇒ 载荷逐字节稳定 ⇒ 内容 hash 命中
+            // 304（条件往返 ≈2ms，v1 §A.1 实测锚）。`private`：withAuth 之后（#538 同规）。
+            .flatMap(agg => HttpCache.conditionalOk(req, agg.asJson, HttpCache.ofJson(agg.asJson)))
+        }
+
+      // TTS 语音合成。门控（2026-09-20 收尾批）：原注记「无需 auth，内部调用」**已作废** ——
+      // 唯一调用方是登录态 webui（`web/js/chat.js` `VoicePlayer._fetchTts`，本批已补带
+      // `Authorization`）。与其余 REST 面同门：无令牌 403、带令牌照走业务体（`withAuth`
+      // 纯套壳，业务体逐行保留）。门的判据在业务判据（`ttsService` 是否配置）**之前**。
+      case req @ POST -> Root / "tts" =>
+        withAuth(req) {
+          ttsService match
+            case None => NotFound(Json.obj("error" -> "TTS not configured".asJson))
+            case Some(svc) =>
+              req.as[Json].flatMap { body =>
+                val text = body.hcursor.downField("text").as[String].getOrElse("")
+                svc.synthesize(text).flatMap {
+                  case Some(bytes) =>
+                    IO.pure(
+                      Response[IO](
+                        status = Status.Ok,
+                        headers = Headers(`Content-Type`(MediaType.audio.wav)),
+                        body = Stream.emits(bytes).covary[IO]
+                      )
+                    )
+                  case None => NotFound(Json.obj("error" -> "TTS synthesis failed".asJson))
+                }
+              }
+        }
+
+      // Generic command endpoint — mirrors WS messages
+      case req @ POST -> Root / "command" =>
+        withAuth(req) {
+          req.as[Json].flatMap { payload =>
+            val responseRef = cats.effect.Ref.unsafe[IO, Option[Json]](None)
+            val wsSend = (json: Json) => responseRef.set(Some(json))
+            wsRoutes.handleMessagePublic(payload.noSpaces, wsSend).flatMap { _ =>
+              responseRef.get.flatMap {
+                case Some(resp) => Ok(resp)
+                case None => Ok(Json.obj("status" -> "ok".asJson))
+              }
+            }
+          }
+        }
+
+    }
+  end routes
+
+  // ── 同机近路探测面（本地加速 M1 批 ②/④，接口契约 = v2 §3.3 步骤1-2/5）─────
+
+  /**
+   * `deviceId` 并键（身份核对锚）：只在**环回腿**上读本机身份（零写盘、零铸造
+   * 的 `readDeviceIdOnly`；PortalUrl.startupUrl 同一读法先例）。LAN/隧道腿不并
+   * ——`/health` 无令牌门（watchdog 用），deviceId 不该因本批而变成 LAN 可枚举
+   * 量；跨设备本无近路，探测面只服务本机门户页。未铸身份 ⇒ 载荷原样（门户
+   * 探测读不到 deviceId ⇒ 不切换 = 停留门户，批 ④ 降级语义）。
+   */
+  private def nearPathProbePayload(req: Request[IO], base: Json): IO[Json] =
+    if !LoopbackLeg.isLoopback(req) then IO.pure(base)
+    else
+      IO.blocking(nebflow.neblink.core.DeviceIdentity.readDeviceIdOnly).flatMap {
+        case None => IO.pure(base)
+        case Some(id) => IO.pure(base.deepMerge(Json.obj("deviceId" -> id.asJson)))
+      }
+
+  /**
+   * 「身份像素」面（闸③ 腿 B，近路批 2026-11-04）。语义 = 「同机正证」：
+   * 只有同时满足
+   *   1. 请求来自**真实环回 socket**（[[LoopbackLeg]]，socket 对端不可伪造），
+   *   2. `?expect=` 与**本机 deviceId 全等**（身份未铸 ⇒ 拿不到它的进程只能 404）
+   * 时回 200 + 一张哨兵尺寸的 PNG；其余（隧道/LAN 腿、expect 缺失/不等、身份未铸）
+   * 一律 404 —— 对前端而言「答不出来」与「不是本机」同义（都 ⇒ 停留隧道腿）。
+   *
+   * 为什么尺寸就是判据：`<img>` 的 `naturalWidth/Height` 跨源可读（不受 canvas
+   * taint 限制），而 5×3 是占位进程/反代几乎不可能偶然命中的哨兵；偶中也需要先
+   * 知道 deviceId（见上 2）⇒ 只提高门槛，不放宽判据。
+   */
+  private[gateway] object LoopbackPixel:
+
+    /** 哨兵尺寸：与 `web/js/ws.js` 的 `NEARPATH_PIXEL_W/H` 双写，改动须成对（spec 钉住）。 */
+    val Width: Int = 5
+    val Height: Int = 3
+
+    /** 5×3 灰度 PNG（71 B；IHDR 宽高即哨兵。进程内常量，不落盘、不读盘）。 */
+    private val Body: Array[Byte] = java.util.Base64.getDecoder.decode(
+      "iVBORw0KGgoAAAANSUhEUgAAAAUAAAADCAAAAAB+XZokAAAADklEQVR4nGNoAAEGJBIAQ5IHgWsiQOYAAAAASUVORK5CYII="
+    )
+
+    /**
+     * 像素应答（`private[gateway]` 供 spec 直读：「环回腿 × expect 全等」2×2 矩阵
+     * 无需活身份文件即可钉死；`ownId` 由路由从 `DeviceIdentity.readDeviceIdOnly` 注入）。
+     */
+    private[gateway] def reply(req: Request[IO], ownId: Option[String]): IO[Response[IO]] =
+      val expect = req.uri.multiParams.get("expect").flatMap(_.headOption).map(_.trim).filter(_.nonEmpty)
+      (ownId, expect) match
+        case (Some(own), Some(want)) if own == want && LoopbackLeg.isLoopback(req) =>
+          NebflowLogger.forName("nebflow.rest-api")
+            .info("nearpath: loopback-pixel served (identity match; same-machine proof for the passive leg)") *> IO.pure(
+            Response[IO](
+              status = Status.Ok,
+              headers = Headers(
+                `Content-Type`(MediaType.image.png),
+                Header.Raw(org.typelevel.ci.CIString("Content-Length"), Body.length.toString),
+                NoStoreHeader
+              ),
+              body = Stream.emits(Body).covary[IO]
+            )
+          )
+        case (Some(_), Some(want)) => IO.pure(Response[IO](Status.NotFound))
+        case _                     => IO.pure(Response[IO](Status.NotFound))
+
+  end LoopbackPixel
+
+  /** 预检缓存窗（探测是低频动作，600s 与 nf-reach 同族量级）。 */
+  private val ProbeCorsMaxAge: String = "600"
+
+  /**
+   * CORS 白名单（v2 §3.3 步骤1「网关对本机健康端点回 CORS 白名单，新增一小刀」）。
+   *
+   * 白名单源 = 门户 URL 的 origin（brand.conf `portalUrl` + 门户 env 覆盖
+   * （`Branding.env("PORTAL_URL")` 双前缀，同 PortalUrl.livePortalEnv 口径））
+   * **＋ 设备中继 origin**（brand.conf `serverUrl`，本地回路短路批 2026-10-22）：
+   * 控制台页本身托管在中继 origin 下，它发起的环回近路探测与中继 consoleUrl
+   * 同族（同为我们控制的 origin）——Mac 本机场景正是这一页需要读到环回探测的
+   * deviceId 才能跳回本地直连接口。
+   * **不是 `*`**：载荷含 deviceId/version（本机指纹面），只有门户 origin 配读；
+   * 其他一切 origin（含任意 localhost 端口页面）零 CORS 头 ⇒ 浏览器读不到 ⇒
+   * 近路判定不成立 = 停留门户（批 ④）。
+   *
+   * 且整个应答**只在环回腿上发生**（`LoopbackLeg`）：门户页探的正是本机网关，
+   * 跨设备场景不存在近路，不该给「从另一台设备探到的本机实例」开 CORS。
+   * PNA 头（Allow-Private-Network）与 nf-reach 同款：公网页面 → 回环目标的
+   * Chromium 私网预检必须由服务端应答。
+   */
+  def probeCorsHeaders(req: Request[IO]): List[Header.ToRaw] =
+    val reqOrigin = req.headers.headers
+      .find(h => h.name.toString.equalsIgnoreCase("Origin"))
+      .map(_.value.trim)
+      .filter(_.nonEmpty)
+    val allowed =
+      LoopbackLeg.isLoopback(req) &&
+        reqOrigin.exists(o => canonicalOrigin(o).exists(allowedProbeOrigins.contains))
+    if !allowed then Nil
+    else
+      val origin = reqOrigin.getOrElse("")
+      List(
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Origin"), origin),
+        Header.Raw(org.typelevel.ci.CIString("Vary"), "Origin"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Methods"), "GET, OPTIONS"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Headers"), "content-type"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Private-Network"), "true"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Max-Age"), ProbeCorsMaxAge)
+      )
+
+  end probeCorsHeaders
+
+  /** 近路读数端点的应答头：不缓存（计数每秒都在变，缓存即撒谎）。 */
+  private val NoStoreHeader: Header.ToRaw =
+    Header.Raw(org.typelevel.ci.CIString("Cache-Control"), "no-store")
+
+  /**
+   * 近路事件/读数的 CORS 家族（近路批 2026-11-04）：与 [[probeCorsHeaders]] **同一
+   * 白名单、同一头形状**，只有两点不同，且两点都是本面的语义必需：
+   *
+   *  1. **不限腿**：上报方可能是环回腿页面（近路已走通时的 hit），也可能是隧道腿页面
+   *     （回落时的 miss）——「隧道腿与环回腿两侧都可能来打」。白名单仍只有我们自己的
+   *     门户/中继 origin（不是 `*`），跨设备/公网页面照旧读不到、写不进。
+   *  2. `Allow-Methods` 含 **POST**（probeCorsHeaders 只有 GET/OPTIONS：探测面是只读）。
+   *
+   * 载荷零敏感面（计数 + 原因 token），因此环回腿限制对本面没有披露收益，只有
+   * 「隧道腿报不上来」的代价 ⇒ 白名单即闸。
+   */
+  def nearPathCorsHeaders(req: Request[IO]): List[Header.ToRaw] =
+    val allowed = requestOrigin(req).exists(o => canonicalOrigin(o).exists(allowedProbeOrigins.contains))
+    if !allowed then Nil
+    else
+      List(
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Origin"), requestOrigin(req).getOrElse("")),
+        Header.Raw(org.typelevel.ci.CIString("Vary"), "Origin"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Methods"), "GET, POST, OPTIONS"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Headers"), "content-type"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Allow-Private-Network"), "true"),
+        Header.Raw(org.typelevel.ci.CIString("Access-Control-Max-Age"), ProbeCorsMaxAge)
+      )
+
+  end nearPathCorsHeaders
+
+  /** 请求自申报的 Origin（仅 CORS 白名单比对用；腿判定另走 LoopbackLeg）。 */
+  private def requestOrigin(req: Request[IO]): Option[String] =
+    req.headers.headers
+      .find(h => h.name.toString.equalsIgnoreCase("Origin"))
+      .map(_.value.trim)
+      .filter(_.nonEmpty)
+
+  /** 白名单 origin 集（纯函数，spec 直读）：门户 base + 门户 env 覆盖 + 中继 origin。 */
+  private[gateway] def allowedProbeOrigins: Set[String] =
+    List(
+      Option(Branding.portalUrl),
+      Branding.env("PORTAL_URL"),
+      Option(Branding.serverUrl)
+    ).flatten
+      .flatMap(u => canonicalOrigin(u))
+      .toSet
+
+  /**
+   * origin 归一（scheme+host 小写 + 缺省端口抹除）：`https://x:443/a` 与
+   * `https://x` 同一 origin。非 http(s)/无 host（坏值、`about:…`）⇒ None。
+   */
+  private[gateway] def canonicalOrigin(url: String): Option[String] =
+    try
+      val u = new java.net.URI(url)
+      val scheme = Option(u.getScheme).map(_.toLowerCase)
+      val host = Option(u.getHost).map(_.toLowerCase)
+      (scheme, host) match
+        case (Some(s), Some(h)) =>
+          val explicit = Option(u.getPort).filter(p => p != -1)
+          val port = explicit.filterNot(p => (s == "https" && p == 443) || (s == "http" && p == 80))
+          Some(port.fold(s"$s://$h")(p => s"$s://$h:$p"))
+        case _ => None
+    catch case _: Exception => None
+
+end HealthRoutes

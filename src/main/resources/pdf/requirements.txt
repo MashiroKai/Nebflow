@@ -1,0 +1,69 @@
+# PDF parser leg — pinned Python dependency set (PDF note/ask).
+#
+# The parser (`pdf_parse.py`) runs as a SUBPROCESS with its own dependency set;
+# the JVM gains no library from it (build.sbt is unchanged). This file is the
+# reproducibility contract for that set.
+#
+# License position (the reason this file exists at all): the parser leg used to
+# be PyMuPDF, which is AGPL-3.0. The author decided AGAINST any AGPL dependency,
+# so the set below is permissive-only:
+#
+#   pdfplumber      MIT          text lines, geometric reading order, table finder
+#   pypdf           BSD-3-Clause document structure, encryption verdict, images
+#   pdfminer.six    MIT          (pdfplumber's text engine)
+#   Pillow          MIT-CMU      (image geometry/decode used by pypdf and pdfplumber)
+#   pypdfium2       BSD-3/Apache-2.0 (pdfplumber's renderer; unused by this parser
+#                                but part of pdfplumber's declared dependency set)
+#   cryptography    Apache-2.0 OR BSD-3-Clause (pdfminer.six, for encrypted files)
+#   cffi            MIT          (cryptography)
+#   pycparser       BSD-3-Clause (cffi)
+#   charset-normalizer MIT       (pdfminer.six)
+#
+# No AGPL, no LGPL, no copyleft in this path.
+#
+# Install (reference environment: Python 3.14, macOS arm64; direct dependencies
+# are pdfplumber + pypdf, everything else is their resolved tree):
+#
+#     python3 -m pip install -r requirements.txt
+#
+# Source-reproducible install with hash verification (no wheels, no binary
+# surprises; Pillow/cffi/pypdfium2/cryptography are then built locally):
+#
+#     python3 -m pip install --require-hashes --no-binary :all: -r requirements.txt
+#
+# The sha256 values below are the SOURCE distribution digests (platform
+# independent — the canonical pin), so pip runs in hash-checked mode and installs
+# from those sources: the four binary packages (Pillow / cffi / pypdfium2 /
+# cryptography) get a locally built wheel on the machine that installs. That is
+# the point — the pinned bytes are the pinned bytes on every platform, and the
+# measured install below took ~90s on a 16GB arm64 macOS box.
+#
+# Measured (2026-11-18, Python 3.14.6, macOS arm64):
+#     pdfplumber 0.11.10 | pypdf 7.1.0 | pdfminer.six 20260107 | Pillow 13.0.0
+#     pypdfium2 5.15.2 | cryptography 50.0.2 | cffi 2.1.1 | pycparser 3.12
+#     charset-normalizer 3.5.2
+#
+# One-step bootstrap (creates the venv, installs this file, prints the knob):
+#     scripts/tests/pdf_python_env.sh
+#
+# The interpreter is selected by ONE knob: `STAND_PDF_PYTHON` (default
+# `python3`). Nothing else in this feature picks an interpreter.
+
+pdfplumber==0.11.10 \
+    --hash=sha256:b95b2d28c66efb0a794a83b88c6c6aea5987532a445d20a1cbcfa657022e6e57
+pypdf==7.1.0 \
+    --hash=sha256:ca3fa902369e98a6d2cb7b56396de902b72ef9bb3c1e8706c1bfc7d8bd0cf0d7
+pdfminer.six==20260107 \
+    --hash=sha256:96bfd431e3577a55a0efd25676968ca4ce8fd5b53f14565f85716ff363889602
+Pillow==13.0.0 \
+    --hash=sha256:cdcd1ba258178f7356d74170c9a81ba4eab6a5d55748bc402a5a2a6fe6be3510
+pypdfium2==5.15.2 \
+    --hash=sha256:0185193bbdf0cc39f0bf31954c25f12edb81048bcb628ea4fc3dccf8d2ce2aef
+cryptography==50.0.2 \
+    --hash=sha256:7b46165bb56eb4704e2eaaf86f3c940d19154535d9b0ca7d6d590b04060e00d5
+cffi==2.1.1 \
+    --hash=sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be
+pycparser==3.12 \
+    --hash=sha256:f03387877eab82ce01bbdfd0ba7252ee55a90b1c708d5129e2ce915475cf1db6
+charset-normalizer==3.5.2 \
+    --hash=sha256:39de2a259fc954455c57274dc94c79d5842774e1247a016aff30bc0efed0f4ef

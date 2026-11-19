@@ -1,0 +1,10 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "nebflow-official-fixture",
+  "version": "1.0.0",
+  "description": "Official-identity fixture package: stands in for a distribution built-in official package so the digest-preset-trust arm stays testable before the first real official package ships.",
+  "author": { "name": "nebflow" },
+  "homepage": "https://nebflow.space",
+  "license": "MIT",
+  "keywords": ["fixture", "official-identity"]
+}

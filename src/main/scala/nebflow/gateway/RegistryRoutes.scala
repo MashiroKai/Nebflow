@@ -1,0 +1,199 @@
+/* 从 RestApiRoutes 迁出(行为保持重构,2026-09-24)。 */
+package nebflow.gateway
+
+import cats.effect.IO
+import cats.syntax.all.*
+import io.circe.syntax.*
+import io.circe.{Json, parser}
+import nebflow.actor.RootAgentIdentity
+import nebflow.core.entity.EntityLoader
+import org.http4s.*
+import org.http4s.circe.CirceEntityCodec.*
+import org.http4s.dsl.io.*
+
+/**
+ * 注册表面板域(F 步 2026-09-24):原 RestApiRoutes.routes 巨型 match 的
+ * /models 全族、/agents(全局面板)、/folders、/mcp、/memory case 逐字迁入,
+ * 行为保持;经 RestApiRoutes.routes 级联挂载,各臂首段路径字面量与其余域
+ * 互不重叠(/agents/:name 参数族在 PresenceRoutes,与本域仅字面量单段
+ * GET /agents 判然不同形)。
+ */
+private[gateway] object RegistryRoutes:
+
+  def routes(ctx: RestApiCtx): HttpRoutes[IO] =
+    import ctx.*
+    HttpRoutes.of[IO] {
+      // Models
+      case req @ GET -> Root / "models" =>
+        withAuth(req) {
+          sharedResources.providerRegistry.getAllModels().flatMap { models =>
+            Ok(Json.obj("models" -> models.map { case (ref, label) =>
+              Json.obj("ref" -> ref.asJson, "label" -> label.asJson)
+            }.asJson))
+          }
+        }
+
+      // GET /models/candidates — config-single-source batch (author ruling ③
+      // 2026-11-05): the READABLE candidate plan — "which provider/model will the
+      // next call try, in which order", plus the chain refs that no longer resolve
+      // and the section's warnings. Same computation the request path uses
+      // (`ProviderRegistry.candidatePlan`), so it cannot drift from reality.
+      case req @ GET -> Root / "models" / "candidates" =>
+        withAuth(req) {
+          // provider 并发占坑（provider-concurrency 批，2026-11-06）：追加
+          // `providerConcurrency` 键（assignable[].{providerId,inUse,cap,full} +
+          // totalActors；cap=null=不限）——作者核对「当前每个 provider 的在用
+          // actor 数 / 某个 actor 选中的链首」的读数面。既有键零改。
+          sharedResources.providerRegistry.candidatePlan().flatMap { plan =>
+            sharedResources.providerConcurrencyJson.flatMap { conc =>
+              Ok(plan.deepMerge(Json.obj("providerConcurrency" -> conc)))
+            }
+          }
+        }
+
+      // GET /models/capability-tags — list predefined capability tags
+      case req @ GET -> Root / "models" / "capability-tags" =>
+        withAuth(req) {
+          Ok(
+            Json.obj(
+              "tags" -> List(
+                Json.obj(
+                  "key" -> "vision".asJson,
+                  "label" -> "图片理解".asJson,
+                  "description" -> "支持 image_url 图片输入".asJson
+                )
+              ).asJson
+            )
+          )
+        }
+
+      // GET /models/capabilities — list all models with their capability tags
+      case req @ GET -> Root / "models" / "capabilities" =>
+        withAuth(req) {
+          Ok(nebflow.llm.ModelRegistry.loadForApi.asJson)
+        }
+
+      // PUT /models/capabilities — update a single model's capability tags
+      case req @ PUT -> Root / "models" / "capabilities" =>
+        withAuth(req) {
+          req.as[Json].flatMap { body =>
+            val providerId = body.hcursor.downField("providerId").as[String].getOrElse("")
+            val modelId = body.hcursor.downField("modelId").as[String].getOrElse("")
+            // B3 Phase 2: vision is tri-state — absent in the request body keeps
+            // the existing annotation instead of collapsing to false.
+            val visionOpt = body.hcursor.downField("vision").as[Option[Boolean]].toOption.flatten
+            val capabilities = body.hcursor.downField("capabilities").as[List[String]].getOrElse(Nil)
+            if providerId.nonEmpty && modelId.nonEmpty then
+              val key = s"$providerId/$modelId"
+              val current = nebflow.llm.ModelRegistry.loadForApi
+              val updatedEntry = current.models.get(key) match
+                case Some(existing) =>
+                  existing.copy(
+                    vision = visionOpt.orElse(existing.vision),
+                    capabilities = capabilities
+                  )
+                case None =>
+                  nebflow.llm.ModelRegistry.ModelEntry(
+                    vision = visionOpt,
+                    capabilities = capabilities
+                  )
+              val updatedModels = current.models + (key -> updatedEntry)
+              nebflow.llm.ModelRegistry.save(updatedModels)
+              // visionfix (甲): the human annotation channel is deliberately KEPT —
+              // `vision` written here is user intent and is the only authority left
+              // on the capability face (O6 optimistic default applies only when the
+              // field is absent).
+              //
+              // The former `clearOverride` companion call is gone with the runtime
+              // heuristic: it existed solely to lift an in-memory auto-demotion
+              // override plus its empty-completion counters, and both are deleted,
+              // so there is no runtime state for an explicit annotation to outrank.
+              Ok(Json.obj("status" -> "ok".asJson))
+            else BadRequest(Json.obj("error" -> "providerId and modelId required".asJson))
+            end if
+          }
+        }
+
+      // Agents — global layer only（2026-09-05 08:40 作者裁定：面板数据源收敛）。
+      // 旧三层聚合（global+team+flow）的 team/flow 两层是面板污染源——team/flow
+      // 入口已随 sidebar flag 封存，域 agent 不应出现在全局面板。global 层以
+      // agent.json 存在为准（EntityLoader.loadAgentFromDir 无 agent.json 即 None
+      // 丢弃），天然只回 keeper 定义；.archived / 惰性残留目录不出现（面板收敛
+      // spec 钉死）。layer 字段保留恒 "global"（agentManager.js 的 layer 过滤
+      // 兼容；scope 字段仅旧 team/flow 条目携带，随两层删除自然消失）。
+      //
+      // builtin-def 批（2026-10-03 作者令①）：四件收敛 agent（Nebula /
+      // project-dispatcher / general / kernel）为**代码定义**，恒在册、磁盘死信
+      // （EntityLoader.listAgents 单点合并）；响应带 `builtin: true` = 面板只读
+      // 标记（写通道对 builtin 名显式拒绝）。
+      //
+      // 2026-10-07 14:13 作者令②：「任务分发器」面板隐藏——本 handler 是枚举链
+      // **第二过滤点**（判据单点 = BuiltinAgents.PanelHiddenNames / panelVisible，
+      // 第一过滤点在其定义处）。🔴 藏的是可见性不是生命：只过滤本**列表枚举**，
+      // 单取 GET /api/agents/:name、模型链读写、注册/旧轨/生命周期零触碰；
+      // #1229 物理删除仍候 S19③ 收口闸。
+      case req @ GET -> Root / "agents" =>
+        withAuth(req) {
+          for
+            globalAgents <- EntityLoader.listAgents()
+            globalList = globalAgents.values.toList
+              .filter(a => nebflow.core.entity.BuiltinAgents.panelVisible(a.name))
+              .map { a =>
+                Json.obj(
+                  "name" -> a.name.asJson,
+                  "description" -> a.description.asJson,
+                  "displayName" -> a.displayName.getOrElse(a.name).asJson,
+                  "category" -> a.category.asJson,
+                  "layer" -> "global".asJson,
+                  "builtin" -> nebflow.core.entity.BuiltinAgents.isBuiltin(a.name).asJson
+                )
+              }
+            result <- Ok(Json.obj("agents" -> globalList.asJson))
+          yield result
+        }
+
+      // Folders
+      case req @ GET -> Root / "folders" =>
+        withAuth(req) {
+          val agentName = req.params.get("agent").getOrElse(RootAgentIdentity.Name)
+          sessionStore.listFolders(agentName).flatMap { folders =>
+            Ok(Json.obj("folders" -> folders.asJson))
+          }
+        }
+
+      // MCP servers
+      case req @ GET -> Root / "mcp" =>
+        withAuth(req) {
+          IO.blocking {
+            val configPath = nebflow.shared.Config.DefaultConfigPath
+            if os.exists(configPath) then
+              parser
+                .parse(os.read(configPath))
+                .toOption
+                .flatMap(_.hcursor.downField("mcpServers").as[Map[String, Json]].toOption)
+            else None
+          }.flatMap {
+            case Some(servers) => Ok(Json.obj("mcpServers" -> io.circe.Json.fromFields(servers)))
+            case None => Ok(Json.obj("mcpServers" -> Json.obj()))
+          }
+        }
+
+      // Memory
+      case req @ GET -> Root / "memory" =>
+        withAuth(req) {
+          val scope = req.params.get("scope").getOrElse("agent")
+          sessionStore.getActiveMeta.flatMap { metaOpt =>
+            val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
+            val folderId = metaOpt.flatMap(_.folderId).getOrElse("")
+            val content = scope match
+              case "user" => nebflow.shared.MemoryStore.loadUserMemory.getOrElse("")
+              case "agent" => nebflow.shared.MemoryStore.loadSoulMemory(agentName).getOrElse("")
+              case _ => ""
+            Ok(Json.obj("scope" -> scope.asJson, "content" -> content.asJson))
+          }
+        }
+
+    }
+  end routes
+
+end RegistryRoutes

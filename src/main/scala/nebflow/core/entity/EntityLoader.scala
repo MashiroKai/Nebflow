@@ -3,8 +3,8 @@ package nebflow.core.entity
 import cats.effect.IO
 import io.circe.parser.parse as jsonParse
 import io.circe.syntax.*
-import nebflow.agent.AgentDef
-import nebflow.core.{NebflowLogger, PathUtil}
+import nebflow.actor.AgentDef
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 /**
  * Loads Team/Flow/Agent definitions from disk.
@@ -149,9 +149,33 @@ object EntityLoader:
 
   end loadAgentFromDir
 
-  /** Load agent entry from `agents/<name>/agent.json` + `system.md`. */
+  /**
+   * Load agent entry from `agents/<name>/agent.json` + `system.md`.
+   * builtin-def 批（2026-10-03 作者令①）：四个收敛名的条目来自代码
+   * （BuiltinAgents 单点；每次现读 model sidecar）——磁盘目录死信。
+   *
+   * P0-1 旧数据兼容批（2026-10-03）：**退役名解析兜底**。builtin-merge 批把
+   * `general` / `kernel` 合并为执行 agent `nebflow`，但存量节点 JSON 的
+   * `agent` / `verify` 字段、旧会话元数据仍带旧名——全新 home 上
+   * `agents/general/` 目录根本不存在 ⇒ 落 `loadAgentFromDir` 得 None ⇒ 旧项目
+   * 节点在新环境建不出/spawn 不了。本兜底把退役名解析到合并后的执行 agent
+   * （[[BuiltinAgents.resolveRetired]] 单点表），**保留**自定义名的磁盘解析语义
+   * 与 `loadAgentFromDir` 的 dir-name 回落（见 EntityLoaderSpec）。
+   *
+   * 顺序：内置名（代码）→ 磁盘目录（自定义名）→ 退役名回落（代码）。
+   * 磁盘优先于退役表是刻意的：用户若在 `agents/kernel/` 放了自己的定义，读侧
+   * 仍按用户的定义解析（磁盘是用户面）；只有磁盘落空时才回落到内建执行器。
+   */
   def loadAgent(name: String): IO[Option[AgentEntry]] =
-    IO.blocking { loadAgentFromDir(agentsDir / name) }
+    if BuiltinAgents.isBuiltin(name) then IO.blocking { BuiltinAgents.entry(name) }
+    else
+      IO.blocking { loadAgentFromDir(agentsDir / name) }.flatMap {
+        case some @ Some(_) => IO.pure(some)
+        case None =>
+          BuiltinAgents.resolveRetired(name) match
+            case Some(current) => IO.blocking { BuiltinAgents.entry(current) }
+            case None => IO.pure(None)
+      }
 
   /** Load team-local agent: `teams/<teamName>/agents/<agentName>/` → fallback to global. */
   def loadTeamAgent(teamName: String, agentName: String): IO[Option[AgentEntry]] =
@@ -173,14 +197,20 @@ object EntityLoader:
       case None => loadAgent(agentName) // fallback to global
     }
 
-  /** List all agents with runtime category inference. */
+  /**
+   * List all agents with runtime category inference.
+   * builtin-def 批：四件代码定义恒在册（不限磁盘），磁盘扫描只收自定义名。
+   */
   def listAgents(): IO[Map[String, AgentEntry]] =
     for
+      builtins <- IO.blocking { BuiltinAgents.entries() }
       rawAgents <- IO.blocking {
         if !os.exists(agentsDir) then Map.empty[String, AgentEntry]
         else
           os.list(agentsDir)
             .filter(os.isDir)
+            // 收敛名不入扫盘面（代码单点，磁盘死信）
+            .filter(dir => !BuiltinAgents.isBuiltin(dir.last))
             .flatMap { dir =>
               val name = dir.last
               loadAgentFromDir(dir).map(name -> _)
@@ -190,8 +220,8 @@ object EntityLoader:
       teams <- listTeams()
       flows <- listFlows()
       // Infer category for agents that have default "standalone"
-      inferred = rawAgents.map { (name, entry) =>
-        if entry.category == "standalone" then
+      inferred = (builtins ++ rawAgents).map { (name, entry) =>
+        if entry.category == "standalone" && !BuiltinAgents.isBuiltin(name) then
           val inferred = classifyAgent(name, teams, flows)
           name -> entry.copy(category = inferred)
         else name -> entry
@@ -223,10 +253,12 @@ object EntityLoader:
           .foldLeft(Map.empty[String, AgentEntry])(_ ++ _)
     }
 
-  /** Agent names declared under flows/<flowName>/agents/ — flow-local agents
-    * that loadFlowAgent resolves BEFORE falling back to the global library.
-    * #424: predefined-flow compilation (LoadTool/FlowTriggerTool) must accept
-    * these as valid, so callers merge them into the compiler's agentNames. */
+  /**
+   * Agent names declared under flows/<flowName>/agents/ — flow-local agents
+   * that loadFlowAgent resolves BEFORE falling back to the global library.
+   * #424: predefined-flow compilation (LoadTool/FlowTriggerTool) must accept
+   * these as valid, so callers merge them into the compiler's agentNames.
+   */
   def listFlowAgentNames(flowName: String): IO[Set[String]] =
     IO.blocking {
       val dir = flowsDir / flowName / "agents"
@@ -252,6 +284,12 @@ object EntityLoader:
    *  so we scan all agent subdirectories and match by the resolved name.
    */
   def findAgentByName(name: String): IO[Option[AgentDef]] =
+    // 0. builtin-def 批（2026-10-03 作者令①）：收敛名 = 代码定义单点，先于
+    //    一切磁盘层（磁盘目录死信）。
+    if BuiltinAgents.isBuiltin(name) then IO.blocking { BuiltinAgents.entry(name).map(_.toAgentDef) }
+    else findOnDisk(name)
+
+  private def findOnDisk(name: String): IO[Option[AgentDef]] =
     for
       // 1. Global agents — name == dir name, fast path
       globalOpt <- IO.blocking {
@@ -374,7 +412,10 @@ object EntityLoader:
    *   surfaces (REST routes / user editing on disk). Do not add new callers;
    *   slated for removal.
    */
-  @deprecated("W3: entity write path retired — EntityLoader is read-only; teams are created via their owning surfaces", "since 2026-08-15")
+  @deprecated(
+    "W3: entity write path retired — EntityLoader is read-only; teams are created via their owning surfaces",
+    "since 2026-08-15"
+  )
   def writeTeam(team: TeamDef): IO[Unit] =
     writeJson(teamsDir / team.name / "team.json", team.asJson.noSpaces)
 
@@ -385,7 +426,10 @@ object EntityLoader:
    *   no production caller; flows are created/edited as flow.json files by
    *   their owning surfaces. Do not add new callers; slated for removal.
    */
-  @deprecated("W3: entity write path retired — EntityLoader is read-only; flows are created via their owning surfaces", "since 2026-08-15")
+  @deprecated(
+    "W3: entity write path retired — EntityLoader is read-only; flows are created via their owning surfaces",
+    "since 2026-08-15"
+  )
   def writeFlow(flow: FlowDagDef): IO[Unit] =
     writeJson(flowsDir / s"${flow.name}.json", flow.asJson.noSpaces)
 
@@ -397,7 +441,10 @@ object EntityLoader:
    *   surfaces (AgentLibrary update methods, REST PUT endpoints). Do not add
    *   new callers; slated for removal.
    */
-  @deprecated("W3: entity write path retired — EntityLoader is read-only; agents are created via their owning surfaces", "since 2026-08-15")
+  @deprecated(
+    "W3: entity write path retired — EntityLoader is read-only; agents are created via their owning surfaces",
+    "since 2026-08-15"
+  )
   def writeAgent(entry: AgentEntry): IO[Unit] =
     IO.blocking {
       val dir = agentsDir / entry.name
@@ -439,10 +486,13 @@ object EntityLoader:
       .map(a => s"agent '$a' not found")
       .toList
     val badRoutes = flow.nodes.toList.flatMap { (id, node) =>
-      FlowStructure.routeTargets(node.onComplete).collect {
-        case (target, _) if target != FlowStructure.ReturnNode && !flow.nodes.contains(target) =>
-          s"node '$id' routes to unknown node '$target'"
-      }.distinct
+      FlowStructure
+        .routeTargets(node.onComplete)
+        .collect {
+          case (target, _) if target != FlowStructure.ReturnNode && !flow.nodes.contains(target) =>
+            s"node '$id' routes to unknown node '$target'"
+        }
+        .distinct
     }
     entryMissing ++ missingAgents.distinct ++ badRoutes
 
@@ -471,7 +521,7 @@ object EntityLoader:
       // fanout over cap) with a clear reason instead of letting them fail at
       // runtime in confusing ways. Agent-existence checks stay in validateFlow.
       FlowStructure.validate(fd) match
-        case Nil   => Right(fd)
+        case Nil => Right(fd)
         case errs => Left(s"invalid flow structure: ${errs.mkString("; ")}")
       end match
     }

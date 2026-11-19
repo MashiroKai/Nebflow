@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<!-- schedule-card harness.html — static test harness for the schedcard 批
+     (2026-10-29, 作者令「定时任务卡片防退化 + stand 配色」).
+
+     Imports the REAL frontend render modules (chatView.js / persistence.js /
+     chat.js — no stubs, no bundling) and drives the three render legs the
+     scheduled-task trigger actually flows through:
+
+       window.__replayCache(rows)   → seed localStorage + restoreFromStorage()
+                                      (the refresh path — 退化态旧行在这里
+                                      渲染成绿泡、新标记行渲染成专属卡)
+       window.__replayBackend(rows) → restoreFromBackendHistory(rows)
+                                      (the backend-history page path)
+       window.__liveInject(rows)    → renderInjectedBubble(...) per row
+                                      (the live WS frame path)
+       window.__census()            → DOM-contract readings (green bubbles vs
+                                      schedule cards, chip/name/repeat/time
+                                      presence, injected-family classes)
+       window.__reset()             → clear #chat
+
+     Rows are the exact shapes the backend writes:
+       退化态旧行  = { type:'user', text, timestamp }             (无标记)
+       新标记行    = { type:'user', text, injected:true,
+                       source:'schedule', eventType:'trigger',
+                       timestamp, schedule:{id,name?,triggerAt,
+                       repeat?,referencePath?} }
+
+     Served over a throwaway static file server spawned and killed by the spec
+     itself (never the 8080 host) — same discipline as tests/fixtures/history-replay.
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>schedule-card harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/reminder.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #f5f6f8); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView, activeView } = await import(`${WEB}/chatView.js`);
+    const stateMod = await import(`${WEB}/state.js`);
+    const state = stateMod.default;
+    const { LS_SESSIONS_KEY } = stateMod;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'schedcard-harness';
+    chatViews.primary.sessionId = 'schedcard-harness';
+    // No real socket may exist in this harness.
+    window.__captured = [];
+    state.ws = { readyState: 1, send: (data) => window.__captured.push(JSON.parse(data)) };
+
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    // ---- Driver 1: localStorage cache restore (post-refresh path) ----
+    window.__replayCache = async (rows) => {
+      const all = {};
+      all[state.activeSessionId] = rows;
+      localStorage.setItem(LS_SESSIONS_KEY, JSON.stringify(all));
+      const { restoreFromStorage } = await import(`${WEB}/persistence.js`);
+      restoreFromStorage();
+      await raf2();
+    };
+
+    // ---- Driver 2: backend history restore (historyPage path) ----
+    window.__replayBackend = async (rows) => {
+      const { restoreFromBackendHistory } = await import(`${WEB}/persistence.js`);
+      restoreFromBackendHistory(rows);
+      await raf2();
+    };
+
+    // ---- Driver 3: live WS frame path (renderInjectedBubble) ----
+    window.__liveInject = async (rows) => {
+      const chat = await import(`${WEB}/chat.js`);
+      for (const m of rows) {
+        if (m.type !== 'user' || !m.injected) continue;
+        chat.renderInjectedBubble(m.text, m.source, m.timestamp, m.eventType, m.sender || '', m.senderTeam || '',
+          m.delivery || null, m.intake || null, m.header || null, m.fileChanges || null, m.schedule || null);
+      }
+      await raf2();
+    };
+
+    // ---- Census: DOM contract only (classes / dataset / text) ----
+    window.__census = () => {
+      const chat = document.getElementById('chat');
+      const cards = Array.from(chat.querySelectorAll('.bubble.schedule-card'));
+      return {
+        greenBubbles: Array.from(chat.querySelectorAll('.row.user > .bubble.user')).map(b => b.textContent.trim().slice(0, 40)),
+        scheduleCards: cards.map(c => ({
+          injectedBase: c.classList.contains('injected'),
+          dataAnchor: c.dataset.nfSchedule === '1',
+          chip: c.querySelector('.schedule-card-chip')?.textContent || null,
+          name: c.querySelector('.schedule-card-name')?.textContent || null,
+          repeat: c.querySelector('.schedule-card-repeat')?.textContent || null,
+          time: c.querySelector('.schedule-card-time')?.textContent || null,
+          ref: c.querySelector('.schedule-card-ref span')?.textContent || null,
+          bodyHead: (c.querySelector('.schedule-card-body')?.textContent || '').trim().slice(0, 30),
+        })),
+        genericInjected: Array.from(chat.querySelectorAll('.bubble.injected:not(.schedule-card)')).length,
+      };
+    };
+
+    window.__reset = async () => { chatEl.innerHTML = ''; await raf2(); };
+
+    window.__ready = true;
+  </script>
+</body>
+</html>

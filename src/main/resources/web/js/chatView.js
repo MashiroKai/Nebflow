@@ -1,3 +1,4 @@
+import { renderProviderFailureStatus } from './providerFailureStatus.js';
 // chatView.js — Session-scoped chat view instance.
 //
 // Each window that displays a chat session holds one ChatView instance.
@@ -12,6 +13,9 @@
 
 import state from './state.js';
 import { cleanupCardIframes } from './cardRegistry.js';
+// quote-message 一期：引用条随视图生命周期（切会话 = saveDraft/restoreDraft 往返，
+// chat-message ref 在 pendingAttachments 里随草稿同存同取；strip 显隐在此单点同步）。
+import { renderQuoteStrip } from './msgQuote.js';
 
 // ── Active view (set by ws.js before handler dispatch) ──────────────────
 // Module-level mutable binding. ES module imports are live: when
@@ -23,6 +27,35 @@ export function setActiveView(v) { activeView = v; }
 // P2-4 cycle cut: utils.js and cardRegistry.js read the active view through
 // this state.js accessor instead of statically importing this module.
 state.getActiveView = () => activeView;
+
+// ── Motion scope: the ONE window-role decision (UI-G, author 2026-10-03) ───
+//
+// Author ruling 19:59: 「只需要主Nebula有流式输出，气泡动画等效果，subagent窗口
+// 要尽量克制，节省资源。」 Every motion switch in the render layer reads THIS
+// predicate — no per-call-site special-casing. A view that renders a subagent /
+// flow popup is built with its own id ('bgagent-…', 'flow-…', 'search-float'),
+// only the main Nebula conversation is 'primary'.
+//
+// The switch has exactly TWO application points, both driven by this one
+// predicate (nothing else may special-case a window role):
+//
+//   1. RENDER-TIME (CSS): a non-primary view's chat container gets the
+//      `nf-static` class in the constructor below. ONE CSS rule
+//      (chat.css `.nf-static, .nf-static *`) then zeroes every `animation`
+//      and every `transition` inside that container — no per-element
+//      handling, no per-feature opt-out list.
+//   2. EVENT-TIME (JS): modules that would arm a timer / rAF read
+//      `view.motionEnabled()` before arming it. Consumers:
+//        · workline.js    — dots live-seconds setInterval, exit setTimeout,
+//                           enter-late hold, terminal roll.
+//        · popArtifacts.js — the expand/collapse height transition's timer.
+//      `view.motionEnabled()` is a method (not a free function import) so the
+//      leaf modules stay leaves: workline.js imports i18n + utils only, and
+//      popArtifacts.js reaches it through the existing `state.getActiveView`
+//      accessor — neither gains a chatView.js import edge.
+export function isMainWindow(view) {
+  return !!view && view.id === 'primary';
+}
 
 // ── ChatView class ──────────────────────────────────────────────────────
 
@@ -68,6 +101,9 @@ export class ChatView {
     // ── Input state ──
     this.pendingAttachments = [];
     this.inputDrafts = {};      // sessionId -> { text, attachments, skillMode }
+    // @deprecated ⑤-A4（作者裁定 2026-09-12）：IME 组字态现由 imeGuard.js 的
+    // 元素级判定承担（`el.dataset.imeComposing`，写入点唯一 = bindImeGuard）。
+    // 本字段保留一版不删（本批未穷尽潜在读者面），新代码勿再读写。
     this.composing = false;
 
     // ── Skill mode ──
@@ -86,6 +122,10 @@ export class ChatView {
     // ── Input history navigation (per-view) ──
     this.historyIndex = -1;
     this.historyDraft = '';
+    /** Attachment objects the history recall added to `pendingAttachments` (replaced on the next recall). */
+    this.historyRecalledAtts = [];
+    /** Bumped on every recall so a slow payload read never lands on a newer position. */
+    this.historyRecallTicket = 0;
 
     // ── Voice recognition ──
     this.recognition = null;
@@ -101,6 +141,21 @@ export class ChatView {
 
     // ── Send lock (prevents rapid double-send within a single view) ──
     this.isSending = false;
+
+    // ── Motion role (UI-G 2026-10-03) ──
+    // The single window-role switch every render module reads through
+    // `view.motionEnabled()` (see isMainWindow above). Subagent / flow popup
+    // views render static: no CSS animation, no periodic timers, no rAF loops.
+    // Bound once so it can be passed around unbound.
+    this.motionEnabled = () => isMainWindow(this);
+    // Application point 1 (CSS): mark the non-primary container `nf-static`
+    // ONCE, here, so the single chat.css rule kills every animation and every
+    // transition inside it — the popup keeps its static content (克制 ≠ 破功)
+    // but runs none of the main window's motion. Done at construction rather
+    // than per-render so no render path can forget it.
+    if (!isMainWindow(this) && this.dom && this.dom.chat) {
+      this.dom.chat.classList.add('nf-static');
+    }
   }
 
   /** Reset streaming state — called when switching to a different session. */
@@ -163,6 +218,8 @@ export class ChatView {
     this.slashSelectedIndex = -1;
     this.historyIndex = -1;
     this.historyDraft = '';
+    this.historyRecalledAtts = [];
+    this.historyRecallTicket += 1;
   }
 
   /** Switch this view to display a different session. */
@@ -177,7 +234,18 @@ export class ChatView {
     // Clear chat area — release card iframe observers/browsing contexts first
     if (this.dom.chat) {
       cleanupCardIframes(this.dom.chat);
-      this.dom.chat.innerHTML = '';
+      /* 液体玻璃 v2 批：手机端页标题入流层 .g2-chat-head（chatChrome.js 自 #header
+         迁入的头像/会话名/记忆钮）随内容流留在首位 —— innerHTML='' 会连它一起销毁
+         （agentProfile 的槽位节点只建一次，不重建），改为保留该层的定向清空。
+         桌面无此节点 ⇒ 分支等价原 innerHTML=''（零行为差）。 */
+      const head = this.dom.chat.querySelector(':scope > .g2-chat-head');
+      if (head) {
+        for (const node of [...this.dom.chat.childNodes]) {
+          if (node !== head) this.dom.chat.removeChild(node);
+        }
+      } else {
+        this.dom.chat.innerHTML = '';
+      }
     }
     // Clear queue bar — will be re-rendered by the event listener in input.js
     if (this.dom.queueBar) {
@@ -186,6 +254,8 @@ export class ChatView {
     }
     // Restore draft for the new session
     this.restoreDraft(sessionId);
+    renderProviderFailureStatus(this, state.freezeDigest, id =>
+      import('./bgAgentPopup.js').then(module => module.openStepPopup(id)));
     // Notify queue bar to re-render for the new session
     window.dispatchEvent(new CustomEvent('queuebar-refresh', { detail: { sessionId } }));
   }
@@ -225,6 +295,12 @@ export class ChatView {
     this.dom.input.style.height = 'auto';
     // Render attachment preview for restored image/file attachments
     if (this.dom.attPreview) this.dom.attPreview.innerHTML = '';
+    // quote-message 一期：引用 chip 随新会话草稿复原/清空（数据单点 = pendingAttachments；
+    // 2026-10-09 改版：chip 宿主 = 附件条 attPreview，与附件同一落面 —— popups 无
+    // attPreview 宿主 ⇒ 跳过，renderQuoteStrip 内部动态导入亦兜底早退，零影响）。
+    if (this.dom.attPreview) {
+      renderQuoteStrip({ attPreviewEl: this.dom.attPreview, attachments: this.pendingAttachments });
+    }
     if (this.pendingAttachments.length > 0) {
       import('./chat.js').then(({ renderAttachmentPreview }) => {
         setActiveView(this);

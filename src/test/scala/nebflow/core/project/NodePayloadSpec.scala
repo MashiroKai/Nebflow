@@ -2,14 +2,16 @@ package nebflow.core.project
 
 import munit.FunSuite
 
-/** NodePayload.buildNodeJson 的 plugins 条件序列化契约（Flow Map 节点卡显示插件分配批
-  * 2026-09-06）。卡片副行 `preset · p1, p2` 的数据源 = 本字段；契约两点：
-  *
-  * 1. 带插件分配节点 → 载荷携带 "plugins" 名字数组（只放名字，禁塞描述全文）；
-  * 2. 无插件节点 → 载荷不携带该键（条件字段与 deps/merge/loop 同构，字段集零漂移；
-  *    精确键集另有 NodeEventPushSpec NodeListKeys 断言兜底）。
-  *
-  * 纯单元级（NodeDef → Json 单点序列化，无 engine/actor），任何环境可跑。 */
+/**
+ * NodePayload.buildNodeJson 的 plugins 条件序列化契约（Flow Map 节点卡显示插件分配批
+ * 2026-09-06）。卡片副行 `preset · p1, p2` 的数据源 = 本字段；契约两点：
+ *
+ * 1. 带插件分配节点 → 载荷携带 "plugins" 名字数组（只放名字，禁塞描述全文）；
+ * 2. 无插件节点 → 载荷不携带该键（条件字段与 deps/merge/loop 同构，字段集零漂移；
+ *    精确键集另有 NodeEventPushSpec NodeListKeys 断言兜底）。
+ *
+ * 纯单元级（NodeDef → Json 单点序列化，无 engine/actor），任何环境可跑。
+ */
 class NodePayloadSpec extends FunSuite:
 
   test("buildNodeJson: plugin-assigned node carries plugins name array") {
@@ -18,13 +20,13 @@ class NodePayloadSpec extends FunSuite:
       name = "带插件",
       agent = "general",
       preset = Some("dev"),
-      plugins = List("nebflow-frontend-dev", "nebflow-backend-dev"),
+      plugins = List("frontend-dev", "nebflow-backend-dev"),
       createdAt = 1000L
     )
     val j = NodePayload.buildNodeJson(node, now = 2000L)
     assertEquals(
       j.hcursor.get[List[String]]("plugins").toOption,
-      Some(List("nebflow-frontend-dev", "nebflow-backend-dev")),
+      Some(List("frontend-dev", "nebflow-backend-dev")),
       "payload must carry the plugins name array for plugin-assigned nodes"
     )
   }
@@ -39,21 +41,32 @@ class NodePayloadSpec extends FunSuite:
   }
 
   test("buildNodeJson: blocked node carries blockedFeedback; non-blocked terminals omit the key (裁定②)") {
-    val bf = BlockedFeedback("task-underspecified", "缺交付物定义", "补充验收标准")
+    val bf = NodeFeedback("task-underspecified", "缺交付物定义", "补充验收标准")
     val base = NodeDef(id = "n-bf", name = "bf", agent = "general", createdAt = 1000L)
-    // blocked 态：键在 + 结构化三字段透传（封顶属 BlockedReader 入库单点）
-    val jb = NodePayload.buildNodeJson(base.copy(status = NodeLifecycle.Blocked, blockedFeedback = Some(bf)), now = 2000L)
+    // legacy 存量 blocked 行：键在 + 结构化三字段透传（引擎零写点，仅存量行展示面）
+    val jb =
+      NodePayload.buildNodeJson(base.copy(status = NodeLifecycle.Blocked, blockedFeedback = Some(bf)), now = 2000L)
     val bfCur = jb.hcursor.downField("blockedFeedback")
-    assertEquals(bfCur.get[String]("category").toOption, Some("task-underspecified"), "blocked node must carry structured feedback")
+    assertEquals(
+      bfCur.get[String]("category").toOption,
+      Some("task-underspecified"),
+      "blocked node must carry structured feedback"
+    )
     assertEquals(bfCur.get[String]("detail").toOption, Some("缺交付物定义"))
     assertEquals(bfCur.get[String]("suggestion").toOption, Some("补充验收标准"))
     // 无反馈的 blocked 节点也不带键（字段存在才条件序列化）
     val jbNoFeedback = NodePayload.buildNodeJson(base.copy(status = NodeLifecycle.Blocked), now = 2000L)
-    assert(!jbNoFeedback.asObject.exists(_.contains("blockedFeedback")), "blocked without feedback body must not carry the key")
+    assert(
+      !jbNoFeedback.asObject.exists(_.contains("blockedFeedback")),
+      "blocked without feedback body must not carry the key"
+    )
     // 非 blocked 终态：历史残留不进默认载荷（裁定② 核心——审计实测 9 节点泄漏 11.6KB）
     for st <- List(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled) do
       val j = NodePayload.buildNodeJson(base.copy(status = st, blockedFeedback = Some(bf)), now = 2000L)
-      assert(!j.asObject.exists(_.contains("blockedFeedback")), s"status=$st must NOT carry blockedFeedback (裁定②), got keys: ${j.asObject.map(_.keys.toList.sorted)}")
+      assert(
+        !j.asObject.exists(_.contains("blockedFeedback")),
+        s"status=$st must NOT carry blockedFeedback (裁定②), got keys: ${j.asObject.map(_.keys.toList.sorted)}"
+      )
   }
 
   test("buildNodeJson: no-three-key node payload key set is byte-level zero drift (裁定③)") {
@@ -63,10 +76,36 @@ class NodePayloadSpec extends FunSuite:
     val j = NodePayload.buildNodeJson(node, now = 2000L)
     // P1 out 语义门控：out 条件序列化（Nil 不带键，同 blockedFeedback/plugins 同构）
     // → 基础键集不再恒含 out；有边节点 = 基础集 + out
-    val expected = Set("id", "name", "agent", "description", "status", "in", "hasWorktree", "worktree", "blockCount", "createdAt", "completedAt", "ttlLeftSec")
-    assertEquals(j.asObject.map(_.keys.toSet), Some(expected), "key set must be exactly the base set (no skill/mcp/preset; out omitted when Nil)")
-    val withOut = NodePayload.buildNodeJson(node.copy(out = List(OutEdge.nebula)), now = 2000L)
-    assertEquals(withOut.asObject.map(_.keys.toSet), Some(expected + "out"), "node with out edges must carry the canonical edge array key")
+    // A7（2026-09-12 批 W2「out 可空置」）：**无出边**节点另带条件键 `wiringGap`
+    // （"pending"/"retained"，缺键 = 有 out）——有 out 节点字段集**字节级零漂移**。
+    // 本用例主题（skill/mcp/preset 三键移除）不变，故无出边基准集显式并入该键；
+    // 键值语义由 OutNullableDeliverySpec ⑦D 覆盖。
+    val base = Set(
+      "id",
+      "name",
+      "agent",
+      "description",
+      "status",
+      "in",
+      "hasWorktree",
+      "worktree",
+      "blockCount",
+      "createdAt",
+      "completedAt",
+      "ttlLeftSec"
+    )
+    val expected = base + "wiringGap"
+    assertEquals(
+      j.asObject.map(_.keys.toSet),
+      Some(expected),
+      "key set must be exactly the no-out base set (no skill/mcp/preset; out omitted when Nil)"
+    )
+    val withOut = NodePayload.buildNodeJson(node.copy(out = List(OutEdge.root)), now = 2000L)
+    assertEquals(
+      withOut.asObject.map(_.keys.toSet),
+      Some(base + "out"),
+      "node with out edges must carry the canonical edge array key (and no wiringGap)"
+    )
     // 存量节点（三键有值）照常携带——条件序列化而非删除
     val legacy = node.copy(skill = Some("s"), mcp = Some("m"), preset = Some("p"))
     val jl = NodePayload.buildNodeJson(legacy, now = 2000L)

@@ -1,0 +1,226 @@
+package nebflow.core
+
+import munit.FunSuite
+import nebflow.shared.AgentModelConfig
+import nebflow.shared.PathUtil // W1 shim: main had nebflow.core.PathUtil; PR moved it to shared
+
+/**
+ * SchemePolicy v2 — role-based model-chain resolution:
+ * own chain (settable roles) > Nebula primary chain (everyone else, fresh
+ * read) > seed chain (Nebula unconfigured).
+ *
+ * P1-2 对齐（2026-10-03）：builtin-merge 批把 `kernel`+`general` 合并为执行
+ * agent（BuiltinAgents.ExecutorName）⇒ SettableAgents 收敛为三元组；旧名经
+ * `resolveRetired` 单点表继续可解析（旧数据 sidecar 语义不变），本 spec 的
+ * 夹具按「现名 + 退役名仍可解析」双层断言重写。
+ */
+class SchemePolicySpec extends FunSuite:
+
+  /** 执行 agent 名（builtin-merge 批收敛单点）。 */
+  private val executorName: String = nebflow.core.entity.BuiltinAgents.ExecutorName
+
+  private val lowCost = AgentModelConfig(
+    preferred = Some("zhipu/GLM-5.3-Flash"),
+    fallbacks = List("cmdcode/deepseek/deepseek-v4.1-flash", "kimi/kimi-k3")
+  )
+  private val other = AgentModelConfig(preferred = Some("kimi/kimi-k3"), fallbacks = List("deepseek/deepseek-flash"))
+
+  private def withRoot(name: String)(body: os.Path => Unit): Unit =
+    val tmp = os.pwd / "target" / s"scheme-policy-v2-$name-${System.nanoTime().toHexString}"
+    os.makeDir.all(tmp)
+    PathUtil.setDataRoot(tmp)
+    try body(tmp)
+    finally
+      PathUtil.setDataRoot(os.Path("/tmp"))
+      os.remove.all(tmp)
+
+  private def writeAgent(root: os.Path, name: String, json: String): Unit =
+    val dir = root / "agents" / name
+    os.makeDir.all(dir)
+    os.write.over(dir / "agent.json", json)
+
+  private def writeNebula(root: os.Path, model: Option[AgentModelConfig]): Unit =
+    val modelJson = model
+      .map(m =>
+        s"""{"preferred":${m.preferred
+            .map(p => s"\"$p\"")
+            .getOrElse("null")},"fallbacks":${m.fallbacks.map(s => s"\"$s\"").mkString("[", ",", "]")}}"""
+      )
+      .getOrElse("null")
+    writeAgent(root, "Nebula", s"""{"name":"Nebula","model":$modelJson}""")
+
+  private def providersJson(entries: (String, String)*): String =
+    val providers = entries
+      .map { case (pid, mid) =>
+        s""""$pid":{"baseUrl":"http://127.0.0.1:1","apiKey":"k","protocol":"openai","models":[{"id":"$mid","contextWindow":8192}]}"""
+      }
+      .mkString(",")
+    s"""{"llm":{"providers":{$providers}}}"""
+
+  // ── write gate ────────────────────────────────────────────
+
+  test("SettableAgents = the three roles + the model-slot wire names (f12de863c); retired spellings stay resolvable") {
+    // f12de863c（roles 收敛批 P1-1/P1-2/P1-3）：写闸并入 ModelRoles.Slots 的槽
+    // wire 名（REST GET/PUT /agents/:name/model 的合法槽面），三角色照旧。
+    // 恰集 = 角色 ∪ 槽 wire 名——写闸必须严格跟随槽注册表，不得有额外临时名。
+    assertEquals(
+      SchemePolicy.SettableAgents,
+      Set("Nebula", "project-dispatcher", executorName) ++ ModelRoles.Slots.map(_._1),
+      "the write gate must be exactly roles + slot wire names (no ad-hoc additions)"
+    )
+    // P0-1/P1-2 old-data face: a stored retired-name sidecar keeps the pre-merge
+    // settability (resolveRetired single-point table) — the convergence does NOT
+    // silently move those chains onto the Nebula primary chain.
+    // （kernel 兼有槽 wire 名身份；general 走退役改名表。）
+    assert(SchemePolicy.isSettable("kernel"), "kernel keeps settability (slot wire name + rename table)")
+    assert(SchemePolicy.isSettable("general"), "retired name general keeps settability via the rename table")
+    assert(!SchemePolicy.isSettable("some-custom"), "custom names are not settable")
+  }
+
+  // ── level 1: own chain (settable roles) ──────────────────
+
+  test("Nebula with an own chain resolves to it (own-chain)") {
+    withRoot("nebula-own") { root =>
+      writeNebula(root, Some(lowCost))
+      val (chain, from) = SchemePolicy.resolveModel("Nebula", Some(lowCost))
+      assertEquals(chain, lowCost)
+      assertEquals(from, SchemePolicy.OwnChainSource)
+    }
+  }
+
+  test("each follower role with an own chain resolves to it (fork)") {
+    withRoot("fork") { root =>
+      writeNebula(root, Some(lowCost))
+      for name <- List(executorName, "project-dispatcher") do
+        val (chain, from) = SchemePolicy.resolveModel(name, Some(other))
+        assertEquals(chain, other, s"$name own chain must win")
+        assertEquals(from, SchemePolicy.OwnChainSource, s"$name resolvedFrom")
+    }
+  }
+
+  test("an empty own chain is treated as absent (follow)") {
+    withRoot("empty-own") { root =>
+      writeNebula(root, Some(lowCost))
+      val (chain, from) = SchemePolicy.resolveModel(executorName, Some(AgentModelConfig.empty))
+      assertEquals(chain, lowCost)
+      assertEquals(from, SchemePolicy.NebulaChainSource)
+    }
+  }
+
+  // ── level 2: follow the Nebula primary chain ─────────────
+
+  test("followers without an own chain inherit Nebula's chain (nebula-chain)") {
+    withRoot("follow") { root =>
+      writeNebula(root, Some(lowCost))
+      for name <- List(executorName, "project-dispatcher", "custom-agent") do
+        val (chain, from) = SchemePolicy.resolveModel(name, None)
+        assertEquals(chain, lowCost, s"$name must follow Nebula")
+        assertEquals(from, SchemePolicy.NebulaChainSource, s"$name resolvedFrom")
+    }
+  }
+
+  test("non-role agents follow Nebula; their stored chain is not read") {
+    withRoot("non-role") { root =>
+      writeNebula(root, Some(lowCost))
+      writeAgent(root, "coder", """{"name":"coder","model":{"preferred":"x/y","fallbacks":[]}}""")
+      // resolution input is the caller's duty: passing the stored chain of a
+      // non-role agent must still land on Nebula (stored refs stay audit-only)
+      val (chain, from) = SchemePolicy.resolveModel("coder", Some(AgentModelConfig(Some("x/y"), Nil)))
+      assertEquals(chain, lowCost)
+      assertEquals(from, SchemePolicy.NebulaChainSource)
+    }
+  }
+
+  test("followers re-read Nebula's chain on every call (live follow)") {
+    withRoot("live-follow") { root =>
+      writeNebula(root, Some(lowCost))
+      assertEquals(SchemePolicy.resolveModel(executorName, None)._1, lowCost)
+      os.write.over(
+        root / "agents" / "Nebula" / "agent.json",
+        """{"name":"Nebula","model":{"preferred":"kimi/kimi-k3","fallbacks":[]}}"""
+      )
+      val (chain, from) = SchemePolicy.resolveModel(executorName, None)
+      assertEquals(chain.preferred, Some("kimi/kimi-k3"))
+      assertEquals(from, SchemePolicy.NebulaChainSource)
+    }
+  }
+
+  test("nebulaChain reads the raw stored chain without resolution") {
+    withRoot("raw-nebula") { root =>
+      assertEquals(SchemePolicy.nebulaChain(), None)
+      writeNebula(root, Some(other))
+      assertEquals(SchemePolicy.nebulaChain(), Some(other))
+    }
+  }
+
+  test("unconfigured model never derives authorization from provider inventory") {
+    withRoot("fail-closed") { root =>
+      os.write.over(root / nebflow.shared.Branding.configFileName, providersJson("Z" -> "m2"))
+      val (chain, _) = SchemePolicy.resolveModel("Nebula", None)
+      assertEquals(chain.preferred, None)
+    }
+  }
+
+  // ── level 3: seed chain ──────────────────────────────────
+
+  test("unconfigured Nebula falls to the providers-derived seed chain") {
+    withRoot("seed-providers") { root =>
+      os.write.over(root / nebflow.shared.Branding.configFileName, providersJson("Z" -> "m2", "A" -> "m1"))
+      writeNebula(root, None)
+      val (chain, from) = SchemePolicy.resolveModel("Nebula", None)
+      assertEquals(chain, AgentModelConfig.empty) // first provider in field order
+      assertEquals(from, SchemePolicy.SeedSource)
+    }
+  }
+
+  test("missing Nebula agent.json: followers fall to the seed chain (fail-safe)") {
+    withRoot("seed-no-root") { root =>
+      os.write.over(root / nebflow.shared.Branding.configFileName, providersJson("Z" -> "m2"))
+      val (chain, from) = SchemePolicy.resolveModel(executorName, None)
+      assertEquals(chain, AgentModelConfig.empty)
+      assertEquals(from, SchemePolicy.SeedSource)
+    }
+  }
+
+  test("unconfigured install resolves to an empty chain (registry all-candidates path)") {
+    withRoot("seed-empty") { root =>
+      val (chain, from) = SchemePolicy.resolveModel(executorName, None)
+      assertEquals(chain, AgentModelConfig.empty)
+      assertEquals(from, SchemePolicy.SeedSource)
+    }
+  }
+
+  test("corrupt Nebula agent.json degrades to the seed chain (never throws)") {
+    withRoot("seed-corrupt") { root =>
+      writeAgent(root, "Nebula", "{not json")
+      os.write.over(root / nebflow.shared.Branding.configFileName, providersJson("Z" -> "m2"))
+      val (chain, from) = SchemePolicy.resolveModel(executorName, None)
+      assertEquals(chain, AgentModelConfig.empty)
+      assertEquals(from, SchemePolicy.SeedSource)
+    }
+  }
+
+  test("seed chain: legacy llm.model wins over providers while it exists") {
+    withRoot("seed-llmmodel") { root =>
+      os.write.over(
+        root / nebflow.shared.Branding.configFileName,
+        """{"llm":{"providers":{"Z":{"baseUrl":"http://127.0.0.1:1","apiKey":"k","protocol":"openai","models":[{"id":"m2","contextWindow":8192}]}},"""
+          + """"model":{"default":"Z/m9","fallbacks":["A/m1"]}}}"""
+      )
+      assertEquals(SchemePolicy.readSeedChain(), Nil)
+      assertEquals(SchemePolicy.legacySeedCandidate(), Some("Z/m9"))
+    }
+  }
+
+  test("seed chain: absent llm.model falls to providers; empty install yields Nil") {
+    withRoot("seed-order") { root =>
+      os.write.over(root / nebflow.shared.Branding.configFileName, providersJson("Y" -> "y1", "X" -> "x1"))
+      assertEquals(SchemePolicy.readSeedChain(), Nil)
+      assertEquals(SchemePolicy.legacySeedCandidate(), Some("Y/y1"))
+      os.write.over(root / nebflow.shared.Branding.configFileName, """{"llm":{"providers":{}}}""")
+      assertEquals(SchemePolicy.readSeedChain(), Nil)
+      os.remove(root / nebflow.shared.Branding.configFileName)
+      assertEquals(SchemePolicy.readSeedChain(), Nil)
+    }
+  }
+end SchemePolicySpec

@@ -1,10 +1,17 @@
 // chatSearch.js — Chat history search modal (v3.1: WeChat retrieval-window paradigm).
 //
-// Header button (or Cmd/Ctrl+F) opens a centered modal (no dimming backdrop,
-// no blur). v3.1 information architecture on top of the v2.1 contract:
+// v3.2 (#491 主题二, author 2026-10-05 「把Pop的内容按图片/视频/链接/文件等，
+// 微信的这样的设计来进行分类和检索。用户输入的文件和LLM Pop的文件，按这个方式
+// 一起管理」): the standalone Pop tab is retired. Categories read the UNIFIED
+// media index (popMediaIndex.js — user attachments + LLM Pop payloads in one
+// model): tabs are 全部 / 图片与视频 / 文件 / 链接 / 日期; the typed tabs
+// render a thumbnail grid grouped 本周/按月 with source chips (全部来源/用户/
+// 助手) and in-category keyword search over entry fields. The standalone Pop
+// tab and its search.tabPop key are gone; tool-name category matching retired.
+// v3.1 information architecture on top of the v2.1 contract:
 //   - Opens straight into a browse stream of recent messages (no idle hint).
-//   - Category tabs (All / Images / Files / Pop) filter orthogonally with
-//     scope; switching tabs keeps the keyword and re-runs.
+//   - Category tabs filter orthogonally with scope; switching tabs keeps the
+//     keyword and re-runs.
 //   - Date is an ANCHOR, not a filter: the calendar popover stages a single
 //     day, OK applies it as a scroll anchor and the list loads
 //     bidirectionally around it (before/after cursor pages, seamless across
@@ -27,28 +34,222 @@
 // Messages are fetched via the REST API (backend is the source of truth):
 //   GET /api/sessions?includeUnindexed=1 → session list incl. unindexed
 //   GET /api/sessions/{id}/history       → UiMessage list per session
+//
+// v2 (2026-09-11 author ruling): a hit whose tool message produced a Card
+//   renders that card body inline under the preview (same renderer as the
+//   chat: renderWithRegistry). Every other row keeps its exact DOM/styling.
+//
+// 弹窗退场批①（2026-10-31 作者令「点检索结果不再弹窗显示那条消息，改为主会话
+//   直接跳转定位（滚动+高亮）」）：v2 的「点击非 Pop 命中开独立消息浮窗」
+//   （chatSearchFloat.js，2026-09-11 msgsearch v2 浮层批引入）整体退役——
+//   chatSearchFloat.js 已删除，非 Pop 命中恢复考古版主会话定位腿
+//   （jumpToResult/scrollToMessage/flashRow + WS 翻页驱动，21fab56d5 考古），
+//   滚动用就近滚容器 scrollTop 口径（msgQuote.js 同纪律，禁 scrollIntoView
+//   泄漏 overflow:hidden 祖先）。手机层同一条腿：关搜索面后回聊天根再定位。
 
 import state from './state.js';
+import { openDropdownMenu } from './dropdownMenu.js';
 import { key } from './branding.js';
-import { chatViews } from './chatView.js';
-import { switchToSession } from './sidebar.js';
-import { sendWs } from './ws.js';
 import { t, getLocale } from './i18n.js';
-import { escapeHtml } from './utils.js';
+import { pushLayer, popLayer } from './focusTrap.js';
+import { escapeHtml, statusIcon } from './utils.js';
 import { popArtifactFromInput, openPopArtifact } from './chat.js';
+import { indexMedia, entryMatchesTab, entryMatchesKeyword, groupEntriesByTime } from './popMediaIndex.js';
+import { openMediaLightbox } from './popArtifacts.js';
+// 媒体点击统一批（P16 · 2026-11-11 作者令「电脑端的媒体统一都是canvas打开，手机端
+// 的媒体统一都是直接打开」）：媒体命中项点击的分流单点——手机 = 系统直开；桌面带
+// path = Canvas 页签；兜底 = openMediaLightbox。
+import { routeMediaClick } from './mediaOpenRoute.js';
+import { ticketUrl } from './nfTicket.js';
+// 二次加载清剿批（2026-10-24 · #816 同法）：媒体网格的 agent 引用**图片**缩略字节
+// 改经 nfFileCache 账本单点（nfViewerSource）——命中零抓取 / 未命中取数即入账。
+import { nfViewerSource } from './nfFileCache.js';
+import { attachmentImageUrl } from './persistence.js';
+// ⑤ 中文输入收归（作者裁定 2026-09-12）：组字判定唯一来源 = imeGuard.js。
+import { bindImeGuard, isImeComposing } from './imeGuard.js';
+import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
+import { chatViews } from './chatView.js';
+import { sendWs } from './ws.js';
 import { expandGroupContaining } from './turnGroup.js';
+// 跳转回位胶囊（作者令 2026-11-01）：样式逐字复用现役「↓ N 条新消息」胶囊
+// （.scroll-new-pill 同家族），锚点/降级/消失时机契约见 searchReturnPill.js 头注。
+import { captureReturnAnchor, armReturnPill } from './searchReturnPill.js';
+import { mountSearchSourceChips } from './searchSourceChips.js';
+import { activeSocialScope } from './messages/mainHost.js';
 
-const MAX_RESULTS = 200;      // search-mode cap (v2.1 one-shot query)
+// 检索全覆盖批（2026-11-07，作者报障「搜索为什么不是搜全部的内容，可以分段显示
+// 但是我要能查看」）：**取消「前 200 条」硬顶**。搜索模式改为「首屏一页 + 滚到底
+// 续取下一页」——服务端 `GET /api/search/chat?limit&offset` 本就是真分页（total +
+// offset），前端此前只取了第一页就没有下文，于是 200 条以外的历史命中「存在但永远
+// 看不到」。现在续取直到 total 取尽，可一路翻到最早一条；渲染仍走
+// RENDER_BATCH + 哨兵懒渲染（手机不会一次渲染上千行），状态行恒报
+// 「已加载 N/M 条」（search.loadedOf）。
+const SEARCH_PAGE = 50;       // 首屏/每页命中数（服务端 limit clamp ≤200）
+const SEARCH_PAGE_MAX = 200;  // 单页上限（与服务端 clamp 同一口径）
 const FETCH_PAGE = 100;       // stream page size (spec §6.3 caps a page at ≤200;
                               // 100 keeps cursor pagination reachable for B9's ≥120-seed)
 const RENDER_BATCH = 50;      // lazy-render batch (spec §6.1)
-const FETCH_CONCURRENCY = 4;
+const FETCH_CONCURRENCY = 1;
 const DEBOUNCE_MS = 300;
+const SEARCH_TIMEOUT_MS = 15000;
 const PAGE_JUMP = 5;
 
-const CONTENT_TABS = ['all', 'images', 'files', 'pop'];
-const TAB_I18N = { all: 'search.tabAll', images: 'search.tabImages', files: 'search.tabFiles', pop: 'search.tabPop' };
+// ── 数据层检索骨架（datalayer-spec 批 2026-10-30，设计稿 §4.5 C2-C6）─────
+// 搜索模式优先走服务端 SQLite FTS5 索引查询 `GET /api/search/chat`
+// （分片谓词 + ETag 凭证 304）；503/失败 ⇒ 回落旧全扫路径（设计稿 §4.6 R4
+// 灰度零风险：新旧并行，旧路径保底可回退）。游空档（无关键词）维持既有
+// 全量拉取流——设计稿 C3 只切搜索模式。
+const SEARCH_API_ENABLED = true;
+/** 五 tab → 索引类型片谓词（media/files/links 用 TAB_KINDS）。 */
+const TAB_KINDS = { media: ['media'], files: ['file'], links: ['link'] };
+/** all/date tab 的索引类型片：只搜对话（2026-10-30 作者令①——tool call/result
+ *  不入索引不入结果；tool 行只留在浏览流，工件走 media/file/link 分类片）。 */
+const SEARCH_KINDS_ALL = ['message'];
 
+// ── C6 条件请求缓存（§4.4 凭证腿前端半边）：规范化查询 url → {etag, body}。
+// 二次同查询带 If-None-Match，304 ⇒ 零重发，用缓存体渲染；会话变更 ⇒
+// 服务端 ETag 必变 ⇒ 200 新体覆缓存（精确失效，不做内容缓存）。──────────
+const searchEtagCache = new Map();
+
+// ── C5 多选一次打开（作者令②）：选择态与批量打开 ─────────────
+/** @type {Set<string>} 已选条目 id（媒体卡 = entry.id；结果行 = key）。 */
+let multiSelected = new Set();
+let multiAnchor = -1;        // Shift 范围选择的锚点（lastResults 下标）
+let fileSelectionMode = false;
+
+/** 条目选择 id：媒体卡 = entry.id；结果行 = key。 */
+function selIdOf(res) { return (res && (res.key || res.id)) || ''; }
+
+/** 选择态可视面：data-key 匹配的卡/行挂/摘 .multi-sel（样式随
+ *  search-media-active-style 同款内联注入——chat.css 本批锁定）。 */
+function paintMultiClass(id, on) {
+  const results = document.getElementById('search-results');
+  if (results && !results.hasAttribute('aria-multiselectable')) {
+    results.setAttribute('aria-multiselectable', 'true');
+    results.querySelectorAll('[role="option"]').forEach(el => {
+      const item = /** @type {HTMLElement} */ (el);
+      el.setAttribute('aria-selected', String(multiSelected.has(item.dataset.key || '')));
+    });
+  }
+  document.querySelectorAll(`#search-results [data-key="${CSS.escape(id)}"]`)
+    .forEach(el => {
+      el.classList.toggle('multi-sel', on);
+      el.setAttribute('aria-selected', String(on));
+    });
+}
+
+/** Return selected, Canvas-openable files in result order, de-duplicated by path. */
+function selectedFilesForCanvas() {
+  const files = [];
+  const seen = new Set();
+  for (const res of lastResults) {
+    if (!multiSelected.has(selIdOf(res))) continue;
+    let file = null;
+    if (res.type === 'file' && res.ref) file = { filePath: res.ref, title: res.name };
+    else if (!res.type) file = popArtifactFromInput(res.tool, res.input);
+    if (!file?.filePath || seen.has(file.filePath)) continue;
+    seen.add(file.filePath);
+    const mime = String(res.mime || res.mimeType || '').toLowerCase();
+    const path = file.filePath.toLowerCase().split(/[?#]/)[0];
+    const kind = mime.startsWith('video/') ? 'video' : mime.startsWith('image/') ? 'image'
+      : /\.(?:mp4|webm|mov|m4v|ogv)$/.test(path) ? 'video'
+      : /\.(?:png|jpe?g|gif|webp|avif|svg|bmp|heic)$/.test(path) ? 'image' : 'file';
+    files.push({ ...file, kind, source: res.source, thumbRef: res.thumbRef });
+  }
+  return files;
+}
+
+/** Keep the action bar tied to selected Canvas-openable files, not other rows. */
+function syncMultiAction() {
+  const select = document.getElementById('search-select-files');
+  if (select) {
+    select.hidden = currentTab !== 'files';
+    select.textContent = t(fileSelectionMode ? 'search.cancelSelection' : 'search.selectFiles');
+    select.setAttribute('aria-pressed', String(fileSelectionMode));
+  }
+  const button = batchOpenButton;
+  if (!button) return;
+  const count = selectedFilesForCanvas().length;
+  button.hidden = count === 0;
+  button.textContent = t('search.openSelectedInCanvas', { n: count });
+}
+
+function openSelectedFilesInCanvas() {
+  const files = selectedFilesForCanvas();
+  if (!files.length) return;
+  closeSearchModal();
+  // Dispatch synchronously so each mobile media route can reserve a tab in the gesture.
+  for (const file of files) routeSelectedFile(file);
+}
+
+/** Cmd/Ctrl 点选：翻转入/出选择集；锚点恒更新到点中行。 */
+function multiToggleAt(idx) {
+  const res = lastResults[idx];
+  const id = selIdOf(res);
+  if (!id) return;
+  if (multiSelected.has(id)) { multiSelected.delete(id); paintMultiClass(id, false); }
+  else { multiSelected.add(id); paintMultiClass(id, true); }
+  multiAnchor = idx;
+  syncMultiAction();
+}
+
+/** Shift 范围选：锚点 ⇒ 点中行（含两端）并入选择集；无锚 ⇒ 退化为点选。 */
+function multiRangeTo(idx) {
+  if (multiAnchor < 0 || multiAnchor >= lastResults.length) { multiToggleAt(idx); return; }
+  const lo = Math.min(multiAnchor, idx), hi = Math.max(multiAnchor, idx);
+  for (let i = lo; i <= hi; i++) {
+    const id = selIdOf(lastResults[i]);
+    if (id && !multiSelected.has(id)) { multiSelected.add(id); paintMultiClass(id, true); }
+  }
+  syncMultiAction();
+}
+
+/** 全选本组（Cmd/Ctrl+A）：当前结果面全部条目。 */
+function multiSelectAll() {
+  lastResults.forEach((res) => {
+    const id = selIdOf(res);
+    if (id && !multiSelected.has(id)) { multiSelected.add(id); paintMultiClass(id, true); }
+  });
+  multiAnchor = lastResults.length - 1;
+  syncMultiAction();
+}
+
+/** 批量打开：逐条走既有 activateMediaEntry/activateResult 单点路由
+ * （entry 有 type = 媒体卡；否则 = 结果行）。不建持久化结果集——会话内
+ * 一次性打开（未决项④裁定）。 */
+function openMultiSelected() {
+  const files = selectedFilesForCanvas();
+  if (files.length) openSelectedFilesInCanvas();
+  for (const res of lastResults) {
+    if (!multiSelected.has(selIdOf(res))) continue;
+    if (res.type === 'file' || (!res.type && popArtifactFromInput(res.tool, res.input))) continue;
+    if (res.type) activateMediaEntry(res);
+    else activateResult(res);
+  }
+}
+
+/** 结果面重建（新查询/切 tab/新渲染）⇒ 选择态清零。 */
+function resetMulti() {
+  multiSelected = new Set();
+  multiAnchor = -1;
+  const results = document.getElementById('search-results');
+  results?.removeAttribute('aria-multiselectable');
+  results?.querySelectorAll('[role="option"]').forEach(el => {
+    el.classList.remove('multi-sel');
+    el.setAttribute('aria-selected', String(el.classList.contains('active')));
+  });
+  syncMultiAction();
+}
+
+// v3.2: the date tab JOINS the roving enumeration (keyboard arrows now cross
+// it naturally); it keeps its anchor semantics — clicking it opens the calendar
+// popover, it never switches the category.
+const CONTENT_TABS = ['all', 'media', 'files', 'links', 'date'];
+const TAB_I18N = { all: 'search.tabAll', media: 'search.tabMedia', files: 'search.tabFiles', links: 'search.tabLinks', date: 'search.tabDate' };
+/** Tabs rendered as the unified media-entry grid (popMediaIndex entries). */
+const MEDIA_TABS = ['media', 'files', 'links'];
+
+let batchOpenButton = /** @type {HTMLButtonElement|null} */ (null);
 let initialized = false;
 let lastResults = [];        // loaded window items in display order
 let modelKeys = new Map();   // item key → model index
@@ -60,7 +261,8 @@ let searchAbort = null;      // AbortController for the in-flight search
 let debounceTimer = 0;
 
 // ── v3.1 view state ────────────────────────────────────────
-let currentTab = 'all';      // 'all' | 'images' | 'files' | 'pop'
+let currentTab = 'all';      // 'all' | 'media' | 'files' | 'links' (+ 'date' anchor tab)
+let currentSource = '';      // media-grid source chip: '' | 'user' | 'agent'
 /** @type {{y:number, m0:number, d:number}|null} applied date anchor (local) */
 let anchorDate = null;
 let calOpen = false;
@@ -68,9 +270,11 @@ let calView = { y: 0, m0: 0 };       // calendar grid month being displayed
 /** @type {{y:number, m0:number, d:number}|null} staged (unconfirmed) pick */
 let calStaged = null;
 let pillListboxEl = null;    // open year/month listbox element
+/** Mounted source-chip component API; lifetime follows the search modal's DOM. */
+let sourceChips = null;
 
 // ── Stream state (browse/anchor modes) ─────────────────────
-/** @type {Array<{id:string, name:string, all:any[], view:any[], start:number, end:number, el:HTMLElement|null, headerEl:HTMLElement|null}>} */
+/** @type {Array<{id:string, name:string, all:any[], view:any[], entries:any[], start:number, end:number, el:HTMLElement|null, headerEl:HTMLElement|null, convSource?:boolean}>} */
 let streamSessions = [];
 /** @type {Array<any>} sessions with non-empty windows, in display order */
 let streamGroups = [];
@@ -78,6 +282,54 @@ let streamMode = 'browse';   // 'browse' | 'anchor' | 'search'
 let pageInFlight = false;
 let sentinelEl = null;
 let sentinelObserver = null;
+/** C4：媒体网格分批渲染的专属哨兵观察器（与文本流 sentinelObserver 互斥，
+ *   renderStreamFresh/renderMediaGrid 各管各的，切换时先 disconnect）。 */
+let mediaGridObserver = null;
+
+// ── 会话内独立搜索（3(b) 会话内独立搜索批 2026-11-06 作者令）────────────────
+// 「会话窗内搜索只搜当前会话（scope 隔离，不串全局）」。`convScope` 非空时：
+//   · 数据源 = 好友/群会话消息（`/api/conversations/{id}/messages`，friendsApi
+//     单点），**不是** agent 会话 history；FTS 索引快路（/api/search/chat 只索引
+//     agent 会话）整体跳过，恒走全量拉取路径；
+//   · 范围/agent 两枚 select 语义不存在 ⇒ overlay 挂 `data-conv-scope="1"`
+//     （modal.css 折叠），`isGrouped` 恒 false（单会话无分组头）；
+//   · 状态行前缀 = 会话名（scope 隔离可见化）；
+//   · 结果跳转 = 打开该会话窗 + `messages.revealMessage`（会话窗既有跳转缝）。
+// 清档点只有 `closeSearchModal`——主对话搜索钮 / 手机搜索页不带 scope ⇒ 恒 null。
+/** @type {{id:string, name:string}|null} */
+let convScope = null;
+
+// ── 检索分页状态（检索全覆盖批 2026-11-07）────────────────────────────────
+// 搜索模式的「已取到第几页 / 还有没有下一页」唯一状态点。两种源：
+//   · mode='index'：服务端索引真分页（url 里带 limit/offset，续取即 offset+=page）；
+//   · mode='local'：数据已全量在手（旧全扫回落路径、好友/群/设备会话档），
+//     续取 = 逐段揭示内存里的命中（零请求），revealed 记录已揭示条数。
+// `total` 恒为**命中总数**（索引给 total；本地路径 = 命中数组长度），UI 据此报
+// 「已加载 N/M 条」，more=false 才停（= 已翻到最早一条）。
+/**
+ * @typedef {{mode:'index'|'local', url:string, offset:number, total:number,
+ *   loaded:number, revealed:number, pageSize:number, more:boolean,
+ *   loading:boolean, failed:boolean}} SearchPager
+ */
+/** @type {SearchPager|null} */
+let searchPager = null;
+/** 索引分页腿的查询基址（q/kinds/sid——续取页由它 + offset 现造，禁另存一份）。 */
+let searchIndexPages = null;
+/** 索引分页腿的会话名表（首页一次性装填，续取页沿用——名字口径恒定）。 */
+let searchNameById = new Map();
+/** 本地分页源（mode='local'）的**全量**命中数组（排序后）；index 模式恒空。 */
+let searchAllRows = [];
+/** 续取尾钮节点（媒体网格档；模块内持有引用 ⇒ 不再跨面 getElementById 直查）。 */
+let searchTailEl = null;
+/** 结果面/状态面的现役节点（续取腿要用；renderStreamFresh 现装 ⇒ 零新增跨面直查）。 */
+let searchResultsEl = /** @type {HTMLElement|null} */ (null);
+let searchStatusEl = /** @type {HTMLElement|null} */ (null);
+/** 主弹层现役节点（locale 重绘腿要用；openSearchModal 现装 ⇒ 零新增跨面直查 ——
+ *  component-contract R2 基线只许减不许增：locale-changed 监听器（FE 整合新增腿）
+ *  一律读这里的缓存，不再自带 getElementById 直查）。 */
+let searchOverlayEl = /** @type {HTMLElement|null} */ (null);
+/** 日历弹层现役节点（locale 重绘腿要用；openCalendar 现装、closeCalendar 清档 ⇒ 同上）。 */
+let calPopEl = /** @type {HTMLElement|null} */ (null);
 
 /**
  * Typed element lookups (getElementById returns bare HTMLElement).
@@ -90,16 +342,109 @@ const inputById = (id) => /** @type {HTMLInputElement|null} */ (document.getElem
  * @returns {HTMLSelectElement|null}
  */
 const selectById = (id) => /** @type {HTMLSelectElement|null} */ (document.getElementById(id));
+const filterOptions = new Map();
+let closeToolMenu = () => {};
+function setFilterOptions(id, options, value = '') {
+  const button = /** @type {(HTMLElement & {value: string})|null} */ (document.getElementById(id));
+  if (!button) return;
+  filterOptions.set(id, options);
+  button.value = options.some(o => o.value === value) ? value : (options[0]?.value || '');
+  button.textContent = options.find(o => o.value === button.value)?.label || '';
+}
+function setToolOptions(options, value = '') { setFilterOptions('search-tool', options, value); }
+function openToolMenu(button) {
+  closeToolMenu();
+  const menu = document.createElement('div');
+  menu.className = 'project-open-menu nf-glass';
+  menu.setAttribute('role', 'menu');
+  for (const option of filterOptions.get(button.id) || []) {
+    const item = document.createElement('button');
+    item.type = 'button'; item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(option.value === button.value));
+    const icon = document.createElement('span'), label = document.createElement('span'), check = document.createElement('span');
+    label.textContent = option.label; check.textContent = option.value === button.value ? '✓' : '';
+    check.setAttribute('aria-hidden', 'true'); item.append(icon, label, check);
+    item.addEventListener('click', () => {
+      closeToolMenu();
+      if (button.value === option.value) return;
+      button.value = option.value; button.textContent = option.label;
+      button.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    menu.append(item);
+  }
+  closeToolMenu = openDropdownMenu(button, menu);
+}
 
-const isGrouped = () => (selectById('search-scope')?.value || 'current') === 'all';
+// 会话档（convScope）恒单会话 ⇒ 无分组形态（与 scope=current 同视）。
+const isGrouped = () => !convScope && (selectById('search-scope')?.value || 'current') === 'all';
 
 // ── Init ───────────────────────────────────────────────────
 export function initChatSearch() {
   if (initialized) return;
   initialized = true;
 
-  document.getElementById('search-btn')?.addEventListener('click', openSearchModal);
+  // v3.2: the tab strip is REBUILT from CONTENT_TABS — the static HTML carries
+  // the retired images/pop scaffold, and the strip must stay the single
+  // normative tab list (index.html stays untouched; the category set is code-
+  // owned). Runs before every binding below reads the nodes.
+  buildTabBar();
+  mountSourceChips();
+
+  // 媒体直开批: the keyboard-selected media card's focus ring. chat.css is
+  // locked this batch (parallel media batches own it), so the one-rule ring
+  // rides this inline injection instead — receipt-documented — mirroring the
+  // sibling .search-result.active idiom (modal.css): accent border + inset
+  // bar in the same rgba(91,127,191,·) family. No new copy, no new tokens.
+  if (!document.getElementById('search-media-active-style')) {
+    const st = document.createElement('style');
+    st.id = 'search-media-active-style';
+    st.textContent = '.search-media-card.active{border-color:rgba(91,127,191,.9);' +
+      'box-shadow:inset 2px 0 0 rgba(91,127,191,.5),0 0 0 1px rgba(91,127,191,.35);}';
+    document.head.appendChild(st);
+  }
+
+  // C5 多选批: selection ring for multi-selected cards/rows — same locked-css
+  // inline-injection receipt as above; .multi-sel rides the accent family,
+  // dashed to stay distinguishable from the roving .active ring.
+  if (!document.getElementById('search-multi-sel-style')) {
+    const st = document.createElement('style');
+    st.id = 'search-multi-sel-style';
+    st.textContent = '.search-media-card.multi-sel,.search-result.multi-sel{' +
+      'outline:2px dashed rgba(91,127,191,.85);outline-offset:1px;}';
+    document.head.appendChild(st);
+  }
+
+  // While a friend, group or device conversation is shown in the main area, the header search is that conversation's
+  // search (scoped to it); otherwise it is the Agent history search.
+  document.getElementById('search-btn')?.addEventListener('click', () => openSearchModal(activeSocialScope()));
   document.getElementById('search-modal-close')?.addEventListener('click', closeSearchModal);
+  const resultsEl = document.getElementById('search-results');
+  let batchOpen = batchOpenButton;
+  if (!batchOpen) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    batchOpen = button;
+    batchOpen.id = 'search-open-selected-files';
+    batchOpen.className = 'glass-control cfg-btn cfg-btn-sm search-batch-open';
+    batchOpen.hidden = true;
+    resultsEl?.before(batchOpen);
+  }
+  batchOpenButton = batchOpen;
+  batchOpen.addEventListener('click', openSelectedFilesInCanvas);
+  const selectFiles = document.createElement('button');
+  selectFiles.id = 'search-select-files';
+  selectFiles.type = 'button';
+  selectFiles.className = 'glass-control cfg-btn cfg-btn-sm search-batch-open';
+  selectFiles.hidden = true;
+  batchOpen.before(selectFiles);
+  selectFiles.addEventListener('click', () => {
+    fileSelectionMode = !fileSelectionMode;
+    if (!fileSelectionMode) {
+      for (const id of multiSelected) paintMultiClass(id, false);
+      resetMulti();
+    }
+    syncMultiAction();
+  });
   const overlay = document.getElementById('search-overlay');
   overlay?.addEventListener('click', (e) => {
     if (e.target === overlay) closeSearchModal();
@@ -110,19 +455,26 @@ export function initChatSearch() {
   // Progressive search: typing and filter changes re-search after a 300ms
   // debounce.
   document.getElementById('search-keyword')?.addEventListener('input', scheduleSearch);
+  // ⑤ 元素级组字登记：模态键盘契约（capture 阶段）读同一个谓词。
+  bindImeGuard(document.getElementById('search-keyword'));
   for (const id of ['search-scope', 'search-agent', 'search-tool']) {
     document.getElementById(id)?.addEventListener('change', scheduleSearch);
   }
 
-  // Category tabs (click). Date tab toggles the calendar popover instead of
-  // switching category; its inline × clears the anchor.
+  for (const id of ['search-scope', 'search-agent', 'search-tool']) {
+    document.getElementById(id)?.addEventListener('click', event => openToolMenu(event.currentTarget));
+  }
+
+  // Category tabs (click). The date tab (now IN the roving enumeration but
+  // never a category) toggles the calendar popover instead of switching; its
+  // inline × clears the anchor.
   for (const tab of CONTENT_TABS) {
+    if (tab === 'date') continue;
     document.getElementById(`search-tab-${tab}`)?.addEventListener('click', () => switchTab(tab));
   }
   document.getElementById('search-tab-date')?.addEventListener('click', (e) => {
     if (!(e.target instanceof Element)) return;
     if (e.target.closest('.search-date-clear')) { e.stopPropagation(); clearAnchor(); return; }
-    if (currentTab === 'pop') return;   // aria-disabled: anchor is meaningless for ts=0 tool messages
     toggleCalendar();
   });
 
@@ -141,15 +493,19 @@ export function initChatSearch() {
   document.addEventListener('keydown', onModalKeydown, true);
 
   // Cmd/Ctrl+F opens the modal (Slack mode). Yield to Monaco's own find
-  // when a canvas editor has focus.
+  // when a canvas editor has focus, and to the in-file search when a
+  // canvas FILE tab is active (code/md/html content search, 2026-10-14) —
+  // the chat history search stays the fallback for non-file states.
   document.addEventListener('keydown', (e) => {
     if (!(e.metaKey || e.ctrlKey) || (e.key !== 'f' && e.key !== 'F')) return;
     if (e.target instanceof Element && e.target.closest('.monaco-editor')) return;
+    import('./fileSearch.js').then(({ findInActiveTab }) => {
+      findInActiveTab().then((handled) => {
+        if (!handled) openSearchModal(activeSocialScope());
+      }).catch(() => openSearchModal(activeSocialScope()));
+    }).catch(() => openSearchModal(activeSocialScope()));
     e.preventDefault();
-    openSearchModal();
   });
-
-  const resultsEl = document.getElementById('search-results');
 
   // Result click — event delegation on the results container
   resultsEl?.addEventListener('click', (e) => {
@@ -158,11 +514,16 @@ export function initChatSearch() {
     if (!el) return;
     const idx = modelKeys.get(el.dataset.key || '');
     const res = idx === undefined ? null : lastResults[idx];
-    if (res) activateResult(res);
+    if (!res) return;
+    // C5 多选：Cmd/Ctrl 点选、Shift 范围（批量打开 = Cmd/Ctrl+Enter）。
+    if (e.metaKey || e.ctrlKey) { e.preventDefault(); multiToggleAt(idx); return; }
+    if (e.shiftKey) { e.preventDefault(); multiRangeTo(idx); return; }
+    activateResult(res);
   });
-  // Hovering a result clears the keyboard selection.
+  // Hovering a result clears the keyboard selection — media-grid cards join
+  // the same contract (媒体直开批; additive selector, text rows unaffected).
   resultsEl?.addEventListener('mouseover', (e) => {
-    if (e.target instanceof Element && e.target.closest('.search-result')) setActive(-1);
+    if (e.target instanceof Element && e.target.closest('.search-result, .search-media-card')) setActive(-1);
   });
 
   // Anchor mode: scrolling to the very top loads a NEWER page (after cursor).
@@ -201,19 +562,66 @@ export function initChatSearch() {
 }
 
 // ── Modal open/close ───────────────────────────────────────
-export function openSearchModal() {
+/**
+ * 会话档装填（3(b)：唯一写点）。`scope = {convId, convName}` ⇒ 只搜该会话；
+ * null/缺 convId ⇒ 清档（主对话搜索钮 / 手机搜索页的既有全局形态零变化）。
+ * overlay 的 `data-conv-scope` = modal.css 折叠范围/agent select 的判定锚 +
+ * QA 断言面。
+ * @param {{convId: string, convName?: string}|null} [scope]
+ */
+function setConvScope(scope) {
+  convScope = scope && scope.convId
+    ? { id: String(scope.convId), name: String(scope.convName || scope.convId) }
+    : null;
   const overlay = document.getElementById('search-overlay');
   if (!overlay) return;
+  if (convScope) overlay.dataset.convScope = '1';
+  else delete overlay.dataset.convScope;
+  // 🔴 内容面同挂（收编批对账）：手机层页面化后 **#search-modal 被移入页面体**
+  //（navController overlayFaceByPage.search）——overlay 载体原地留作状态源，但
+  // CSS 选择器以载体为锚的后代匹配会随收编断链 ⇒ 落位属性必须**双写**（载体 =
+  // QA/桌面 z 档锚；内容面 = 收编后仍跟随面走的样式锚）。
+  const modal = document.getElementById('search-modal');
+  if (modal) {
+    if (convScope) modal.dataset.convScope = '1';
+    else delete modal.dataset.convScope;
+  }
+}
+
+/** 手机层「页面化入口」的会话档暂存（3(b)）：pushPage('search') 没有**参数通道**
+ *  （navController `case 'search'` 无参调 openSearchModal()），而手机层 body 级
+ *  overlay 在页面世界是 pointer-events:none 的状态载体（mobileLayer.css「遮罩/
+ *  指针全退」族）⇒ 直接开面板 = 面可见但点不可交互。profileFace therefore：
+ *  stageConvScope(scope) + pushPage('search')，页面激活时 openSearchModal() 在此
+ *  **一次性消费**暂存（显式参优先；主入口无暂存 ⇒ 行为与改前逐字一致）。 */
+let pendingConvScope = null;
+
+/** 暂存会话档（单发；下一次 openSearchModal() 消费后清零）。 */
+export function stageConvScope(scope) {
+  pendingConvScope = scope && scope.convId ? scope : null;
+}
+
+export function openSearchModal(scope = null) {
+  const overlay = document.getElementById('search-overlay');
+  if (!overlay) return;
+  searchOverlayEl = overlay; // locale 重绘腿的现装缓存（见模块级声明）
+  const eff = scope || pendingConvScope || null; // 手机页面化入口的暂存消费（见上）
+  pendingConvScope = null;
+  setConvScope(eff || null); // 3(b)：会话档先落位（resetSearchState 不清它）
   resetSearchState();   // Spotlight mode: every open is a fresh session
   renderStaticLabels();
   syncTabsUI();
   overlay.classList.add('on');
+  // B4：搜索模态入层栈。本壳自己有 capture 键盘契约（onModalKeydown，含 Tab 陷阱），
+  // 它先于层栈处理器注册 ⇒ Tab 仍由它独占；层提供的是「栈内身份 + 关闭回焦」。
+  pushLayer(overlay, { name: 'search' });
   const kw = inputById('search-keyword');
   if (kw) { kw.value = ''; kw.focus(); }
   triggerSearch();      // open-into-browse: no idle hint state anymore
 }
 
 export function closeSearchModal() {
+  closeToolMenu();
   // Abort any in-flight search and drop pending work.
   searchSeq++;
   searchAbort?.abort();
@@ -222,7 +630,15 @@ export function closeSearchModal() {
   if (calOpen) closeCalendar(false);
   sentinelObserver?.disconnect();
   sentinelEl = null;
-  document.getElementById('search-overlay')?.classList.remove('on');
+  // Card bodies in the result list own sandboxed iframes — release their
+  // browsing contexts/observers while the modal is closed (the next open
+  // re-renders the list from scratch).
+  const resultsEl = document.getElementById('search-results');
+  if (resultsEl) cleanupCardIframes(resultsEl);
+  const ov = document.getElementById('search-overlay');
+  if (ov) popLayer(ov); // B4：出栈 + 回焦（同一落点：打开它的按钮）
+  ov?.classList.remove('on');
+  setConvScope(null); // 3(b)：会话档随面板关闭清档 ⇒ 主对话入口恒全局形态
   document.getElementById('search-btn')?.focus();   // return focus to the opener
 }
 
@@ -238,6 +654,9 @@ function resetSearchState() {
   lastTotal = 0;
   activeIndex = -1;
   currentTab = 'all';
+  fileSelectionMode = false;
+  resetMulti();
+  currentSource = '';
   anchorDate = null;
   calStaged = null;
   if (calOpen) closeCalendar(false);
@@ -245,6 +664,12 @@ function resetSearchState() {
   streamGroups = [];
   streamMode = 'browse';
   pageInFlight = false;
+  searchPager = null;
+  searchAllRows = [];
+  searchIndexPages = null;
+  searchNameById = new Map();
+  searchTailEl?.remove();
+  searchTailEl = null;
   sentinelObserver?.disconnect();
   sentinelEl = null;
   const resultsEl = document.getElementById('search-results');
@@ -254,37 +679,35 @@ function resetSearchState() {
 
 /** Fill labels/placeholders that depend on the current locale. */
 function renderStaticLabels() {
-  const scope = document.getElementById('search-scope');
-  if (scope) {
-    scope.innerHTML =
-      `<option value="current">${escapeHtml(t('search.scopeCurrent'))}</option>` +
-      `<option value="all">${escapeHtml(t('search.scopeAll'))}</option>`;
-  }
-  const tool = document.getElementById('search-tool');
-  if (tool) {
-    tool.innerHTML = `<option value="">${escapeHtml(t('search.allTypes'))}</option>`;
-  }
-  const agent = document.getElementById('search-agent');
-  if (agent) {
-    agent.innerHTML = `<option value="">${escapeHtml(t('search.allAgents'))}</option>`;
-  }
+  setFilterOptions('search-scope', [
+    { value: 'current', label: t('search.scopeCurrent') },
+    { value: 'all', label: t('search.scopeAll') }
+  ], 'current');
+  setToolOptions([{ value: '', label: t('search.allTypes') }]);
+  setFilterOptions('search-agent', [{ value: '', label: t('search.allAgents') }]);
   for (const tab of CONTENT_TABS) {
     const el = document.getElementById(`search-tab-${tab}`);
     if (el) el.textContent = t(TAB_I18N[tab]);
   }
   syncDateTabLabel();
+  syncSourceChips();
   const go = document.getElementById('search-go');
   if (go) go.textContent = t('search.go');
   const status = document.getElementById('search-status');
   if (status) status.textContent = '';
   const results = document.getElementById('search-results');
   if (results) results.setAttribute('aria-label', t('search.title'));
+  // Batch-open button label follows the locale too (count re-derived from the
+  // live selection; hidden stays untouched while no openable file is picked).
+  syncMultiAction();
 }
 
 // ── Category tabs ──────────────────────────────────────────
 function switchTab(tab) {
   if (tab === currentTab) return;
   currentTab = tab;
+  fileSelectionMode = false;
+  resetMulti();
   syncTabsUI();
   scheduleSearch();   // keyword is kept; re-run in the new category range
 }
@@ -307,17 +730,18 @@ function syncTabsUI() {
     toolSel.setAttribute('aria-disabled', disabled ? 'true' : 'false');
     toolSel.title = disabled ? t('search.toolDisabledHint') : '';
   }
-  // Date anchor is meaningless in the Pop tab (tool messages carry ts=0).
+  // v3.2: no tab disables the date anchor any more — the index derives entry
+  // times (nearest earlier row with a ts), so anchoring stays meaningful in
+  // every category. (search.dateDisabledInPop's only consumer is gone; the
+  // locale key itself stays untouched — it is outside the §6 candidate list.)
   const dateTab = document.getElementById('search-tab-date');
   if (dateTab) {
-    const dateDisabled = currentTab === 'pop';
-    dateTab.setAttribute('aria-disabled', dateDisabled ? 'true' : 'false');
-    dateTab.title = dateDisabled ? t('search.dateDisabledInPop') : '';
     dateTab.classList.toggle('active', !!anchorDate);
     dateTab.setAttribute('aria-selected', anchorDate ? 'true' : 'false');
     dateTab.setAttribute('aria-expanded', calOpen ? 'true' : 'false');
   }
   syncDateTabLabel();
+  syncSourceChips();
 }
 
 /** Date tab label: plain "Date", or the anchor's short date + × clearer. */
@@ -352,6 +776,7 @@ function openCalendar() {
   const pop = document.getElementById('search-date-popover');
   const tab = document.getElementById('search-tab-date');
   if (!pop || !tab) return;
+  calPopEl = pop; // locale 重绘腿的现装缓存（见模块级声明）
   const today = new Date();
   const base = anchorDate || { y: today.getFullYear(), m0: today.getMonth(), d: today.getDate() };
   calView = { y: base.y, m0: base.m0 };
@@ -371,6 +796,7 @@ function openCalendar() {
 function closeCalendar(refocus) {
   calOpen = false;
   calStaged = null;
+  calPopEl = null; // locale 重绘腿缓存同步清档（下一次 openCalendar 现装）
   pillListboxEl?.remove();
   pillListboxEl = null;
   const pop = document.getElementById('search-date-popover');
@@ -543,13 +969,28 @@ function openPillListbox(pill, pop) {
 function onModalKeydown(e) {
   const overlay = document.getElementById('search-overlay');
   if (!overlay?.classList.contains('on')) return;
-  if (e.isComposing) return;   // never intercept IME composition keys
+  const expandedFilter = /** @type {HTMLElement|null} */ (document.querySelector('.search-filters [aria-expanded="true"]'));
+  if (expandedFilter) {
+    if (e.key === 'Escape') { e.preventDefault(); e.stopImmediatePropagation(); closeToolMenu(); expandedFilter.focus(); }
+    return;
+  }
+  // ⑤ 收归：单一谓词（元素级 dataset 兜底 + 事件级 isComposing/keyCode 229）。
+  if (isImeComposing(e, e.target instanceof HTMLElement ? e.target : null)) return;
 
   const modal = document.getElementById('search-modal');
   const ae = document.activeElement;
   // Native keyboard behavior wins inside selects.
   const inNativeControl = !!(ae && modal?.contains(ae) && ae.tagName === 'SELECT');
   const onTab = !!(ae instanceof Element && ae.classList?.contains('search-tab'));
+
+  // C5 全选本组：Cmd/Ctrl+A（输入框内让原生全选文本）。
+  if ((e.metaKey || e.ctrlKey) && (e.key === 'a' || e.key === 'A')) {
+    if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    multiSelectAll();
+    return;
+  }
 
   switch (e.key) {
     case 'Escape': {
@@ -573,7 +1014,17 @@ function onModalKeydown(e) {
       if (inNativeControl || ae?.tagName === 'BUTTON') return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      if (activeIndex >= 0 && lastResults[activeIndex]) activateResult(lastResults[activeIndex]);
+      // C5 批量打开：Cmd/Ctrl+Enter 且选择集非空 ⇒ 逐条走既有激活路由。
+      if ((e.metaKey || e.ctrlKey) && multiSelected.size > 0) {
+        openMultiSelected();
+        return;
+      }
+      if (activeIndex >= 0 && lastResults[activeIndex]) {
+        // 媒体直开批: under the typed grid tabs the roving selection walks
+        // media cards — Enter runs the SAME activation a card click does.
+        if (MEDIA_TABS.includes(currentTab)) activateMediaEntry(lastResults[activeIndex]);
+        else activateResult(lastResults[activeIndex]);
+      }
       return;
     }
     case 'ArrowLeft':
@@ -638,14 +1089,17 @@ function moveActive(delta, clamp) {
   setActive(i, true);
 }
 
-/** Apply (i >= 0) or clear (i < 0) the keyboard-selected result. */
+/** Apply (i >= 0) or clear (i < 0) the keyboard-selected result. Works over
+ *  BOTH row faces — result rows AND media-grid cards (媒体直开批: the cards
+ *  join the roving enumeration; the media-card selector in the clear step is
+ *  additive, text rows never match it). */
 function setActive(i, scroll = false) {
   const resultsEl = document.getElementById('search-results');
   if (!resultsEl) return;
-  const prev = /** @type {HTMLElement|null} */ (resultsEl.querySelector('.search-result.active'));
+  const prev = /** @type {HTMLElement|null} */ (resultsEl.querySelector('.search-result.active, .search-media-card.active'));
   if (prev) {
     prev.classList.remove('active');
-    prev.setAttribute('aria-selected', 'false');
+    if (!resultsEl.hasAttribute('aria-multiselectable')) prev.setAttribute('aria-selected', 'false');
     prev.tabIndex = -1;
   }
   activeIndex = i;
@@ -653,10 +1107,10 @@ function setActive(i, scroll = false) {
   if (i < 0) { kw?.removeAttribute('aria-activedescendant'); return; }
   const item = lastResults[i];
   if (!item) return;
-  const el = /** @type {HTMLElement|null} */ (resultsEl.querySelector(`[data-key="${CSS.escape(item.key)}"]`));
+  const el = /** @type {HTMLElement|null} */ (resultsEl.querySelector(`[data-key="${CSS.escape(item.key || item.id || '')}"]`));
   if (!el) return;
   el.classList.add('active');
-  el.setAttribute('aria-selected', 'true');
+  el.setAttribute('aria-selected', resultsEl.hasAttribute('aria-multiselectable') ? String(multiSelected.has(selIdOf(item))) : 'true');
   el.tabIndex = 0;
   kw?.setAttribute('aria-activedescendant', el.id);
   if (scroll) el.scrollIntoView({ block: 'nearest' });
@@ -686,7 +1140,9 @@ function trapFocus(e) {
 }
 
 // ── Progressive search scheduling ──────────────────────────
-function scheduleSearch() {
+/** 导出缝（mobile-secondary-screens 实施批）：手机层角色筛选 change 后走同一
+ *  去抖调度（与 scope/tool select 的 change 监听同一条路径）；桌面调用面零变化。 */
+export function scheduleSearch() {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(triggerSearch, DEBOUNCE_MS);
 }
@@ -705,10 +1161,39 @@ function authHeaders() {
   return tok ? { Authorization: `Bearer ${tok}` } : {};
 }
 
+// A tunnel budget applies to all requests, so remember its cooldown across
+// tab changes and retries. Abort superseded searches instead of waking them.
+let searchRateLimitUntil = 0;
+async function searchFetch(url, options = {}) {
+  const wait = Math.max(0, searchRateLimitUntil - Date.now());
+  if (wait) await new Promise((resolve, reject) => {
+    const signal = options.signal;
+    if (signal?.aborted) { reject(new DOMException('Aborted', 'AbortError')); return; }
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, wait);
+    function abort() { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); }
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+  const response = await fetch(url, options);
+  if (response.status === 429) {
+    const header = response.headers.get('Retry-After');
+    const seconds = header && /^\d+$/.test(header) ? Number(header) : 60;
+    const delay = Math.min(3600, Math.max(1, seconds));
+    searchRateLimitUntil = Math.max(searchRateLimitUntil, Date.now() + delay * 1000);
+    const error = new Error(`请求过于频繁，请等待 ${delay} 秒后重试`);
+    error.name = 'SearchRateLimitError';
+    throw error;
+  }
+  return response;
+}
+
 async function fetchSessionList(signal) {
-  // includeUnindexed=1: also returns delegate-*/subtask-*/dag-* sessions whose
-  // ui.json exists on disk but which never entered the session index.
-  const resp = await fetch('/api/sessions?includeUnindexed=1', { headers: authHeaders(), signal });
+  // includeUnindexed=1：会话搜索范围收窄批（2026-11-01，作者 17:29 令）之后，
+  // 服务端只回**主会话**（索引会话 ∪ 盘上主会话；后台 agent 族 delegate/subtask/
+  // subagent/workflow/node/dispatcher/external/dag 一条不回——判据单点 =
+  // nebflow.shared.SessionScope）。范围收口在服务端数据源层（+ 索引库
+  // /api/search/chat 同判据），所以本文件与手机层、搜索浮钮等所有入口**零过滤
+  // 代码**即自动一致；禁在前端追加事后剔除。
+  const resp = await searchFetch('/api/sessions?includeUnindexed=1', { headers: authHeaders(), signal });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = await resp.json();
   return data.sessions || [];
@@ -728,12 +1213,101 @@ async function fetchHistory(sessionId, signal, cursor = {}) {
   if (cursor.after != null) params.set('after', String(cursor.after));
   if (cursor.limit != null) params.set('limit', String(cursor.limit));
   const qs = params.toString();
-  const resp = await fetch(
+  const resp = await searchFetch(
     `/api/sessions/${encodeURIComponent(sessionId)}/history${qs ? `?${qs}` : ''}`,
     { headers: authHeaders(), signal });
-  if (!resp.ok) return [];
-  const data = await resp.json();
-  return data.messages || [];
+  // 2026-10-20 搜索空结果修复批：非 2xx 不再吞成 [] —— 中继隧道抖动窗（实测
+  // 2026-10-20 16:50 隧道断连，28 条在途 portal http cycle 同时 "Output closed"，
+  // 控制台收 502/504/截断体）曾把 fetchHistory 吞成 [] ⇒ 搜索面假装「0 条结果」，
+  // 传输故障与真空数据不可分辨（作者报障「搜消息记录零结果」的机制）。
+  //   · 404 = 会话已删 ⇒ 合法空（scope=all 扫 6345 会话时单会话消失不炸全队）；
+  //   · 其余非 2xx ⇒ 抛（fetchSessionList 同律）⇒ runSearch/
+  //     runStream 既有 catch ⇒ showError 渲染「加载失败: … + 重试」钮；
+  //   · 2xx 但体损坏（messages 缺失/非数组 = 截断体）⇒ 同样抛。
+  if (resp.status === 404) return [];
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  const data = await resp.json().catch((e) => {
+    if (e && e.name === 'AbortError') throw e;
+    return null;
+  });
+  if (!data || !Array.isArray(data.messages)) throw new Error('malformed history payload');
+  return data.messages;
+}
+
+// ── 会话消息源（3(b) 会话内独立搜索批 2026-11-06）──────────────────────────
+// 好友/群会话的消息**不住** agent 会话 history 里——唯一取数点 = friendsApi 的
+// `getMessages`（`GET /api/conversations/{id}/messages`，id-keyset 前向分页，
+// 服务端 clamp 1..200）。动态 import：chatSearch 不新增对 friendsApi 的静态边
+// （静态图闸 check-circular 的既有形态；运行期才需要）。
+//
+// 适配纪律：wire 行 `{id, senderId, kind, body, createdAt, attachments?}` →
+// UiMessage 形 `{type, text, timestamp, attachments}`，让 normalizeMessage /
+// indexMedia / buildView **零改动**复用（单一渲染管线，禁第二套归一化）：
+//   · type 恒 'user' —— 人类会话两条腿都是人，kind 徽标只有 user|agent|ai|tool
+//     四档，对方标 ai/agent 是撒谎 ⇒ 全部按「用户」档（方向信息由会话窗本面承载，
+//     搜索行不再重复一套方向词汇）；
+//   · 附件类型由**文件名**判（messages.js mediaFaceKindOf 同判据：图片/视频扩展名
+//     ⇒ image/video，其余 file）——wire 行没有独立类型字段，名字就是判据；
+//   · timestamp = createdAt 的 epoch ms（ISO/数字都吃；解析不动 = 0，排序面兜底）。
+function convRowToUiMessage(m) {
+  const ts = Date.parse(m && m.createdAt);
+  const atts = (Array.isArray(m && m.attachments) ? m.attachments : []).map((a) => {
+    const name = String((a && a.name) || '');
+    const type = isVideoAttachmentName(name) ? 'video'
+      : (isImageAttachmentName(name) ? 'image' : 'file');
+    return { type, name };
+  }).filter((a) => a.type === 'image' || a.type === 'video' || a.name);
+  // 🔴 wire id 必须随行透传（normalizeConv 把 ord 换回真实消息 id 的数据源）——
+  // 会话窗跳转缝 revealMessage 认的是 `data-message-id`（= wire id），丢了 id
+  // 就只能落回数组下标 ⇒ 跳转永不命中。
+  return { id: m && m.id, type: 'user', text: String((m && m.body) || ''), timestamp: Number.isFinite(ts) ? ts : 0, attachments: atts };
+}
+
+/** 会话行名判据（与 messages.js mediaFaceKindOf 同源的两把刷子；本地实现避免
+ *  静态引 messages.js——它静态引本仓最重的模块图）。 */
+const CONV_IMG_RE = /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|svg)$/i;
+const CONV_VID_RE = /\.(mp4|mov|m4v|webm|avi|mkv)$/i;
+const isImageAttachmentName = (n) => CONV_IMG_RE.test(n || '');
+const isVideoAttachmentName = (n) => CONV_VID_RE.test(n || '');
+
+/**
+ * 全量拉一个会话的消息（升序），翻页到尽（50×200=10000 行硬顶——单会话检索
+ * 足够；到顶即停）。非 2xx 由 friendsApi req() 抛 ⇒ runStream/runSearch 既有
+ * catch ⇒ showError 渲染失败态（与 fetchHistory 同律）。
+ * @param {string} conversationId
+ * @param {AbortSignal} [_signal] 占位（friendsApi req 无信号位；seq 守卫弃陈旧跑）
+ * @returns {Promise<any[]>} UiMessage 形数组（文档序）
+ */
+async function fetchConvHistory(conversationId, _signal) {
+  const api = await import('./friendsApi.js');
+  const out = [];
+  let after = 0;
+  const LIMIT = 200;
+  for (let page = 0; page < 50; page++) {
+    const batch = await api.getMessages(conversationId, { after, limit: LIMIT });
+    if (!Array.isArray(batch)) throw new Error('malformed conversation payload');
+    out.push(...batch.map(convRowToUiMessage));
+    if (batch.length < LIMIT) break;
+    const next = Number(batch[batch.length - 1] && batch[batch.length - 1].id);
+    if (!Number.isFinite(next) || next <= after) break; // id 不前进 ⇒ 防死循环
+    after = next;
+  }
+  return out;
+}
+
+/**
+ * 会话档归一（normalizeAll 的 conv 包装）：归一后把每行的 `ord` 换回**真实消息
+ * id**——normalizeMessage 的 ord = 数组下标，而会话窗跳转缝（messages.revealMessage）
+ * 认的是 `data-message-id`（= wire id）。适配器 1:1 保序（convRowToUiMessage 恒
+ * 产出非空行 ⇒ norm.all 与 raw 同长同序），长度不齐 = 适配器回归 ⇒ 保下标不换
+ * （fail-safe，宁可用下标也不贴错 id）。
+ */
+function normalizeConv(raw, meta) {
+  const norm = normalizeAll(raw, meta);
+  if (norm.all.length === raw.length) {
+    norm.all.forEach((n, i) => { n.ord = Number(raw[i] && raw[i].id) || n.ord; });
+  }
+  return norm;
 }
 
 /** Run async tasks with a concurrency limit. */
@@ -754,11 +1328,57 @@ async function mapLimit(items, limit, fn, onProgress) {
 }
 
 // ── Message normalization ──────────────────────────────────
+/**
+ * Message-source classification — THE single point (author ruling 2026-09-19,
+ * "检索分类粒度": 「用户消息」= the author's own input ONLY; the agent-produced
+ * blue bubble is its own class). Every consumer — the filters/badges/counts
+ * below AND the result rows' kind badges — derives from this one
+ * function; never re-map UiMessage.type to a kind anywhere else.
+ *
+ *   - 'user'  ⇔ type === 'user' ∧ injected !== true
+ *               Real input by the author (also: the recorded answer on an
+ *               askUser card). UiMessage.User's encoder writes `injected` ONLY
+ *               when true (shared/protocol.scala) ⇒ a MISSING key means a real
+ *               user row, which is why pre-field legacy history rows stay
+ *               'user' as well.
+ *   - 'agent' ⇔ type === 'user' ∧ injected === true
+ *               Agent-produced injected row (node result / mail / deviceMail /
+ *               task / dispatch / background …) rendered as a blue bubble.
+ *               Same divider the history readers already use: persistence.js
+ *               skips `injected` rows when it scans for the author's real
+ *               answer, and turnGroup.js renders them as `.bubble.injected` —
+ *               an injected row is NOT a user message.
+ *   - 'ai'    ⇔ type ∈ {ai, agent, ask} — the raw `agent` TYPE is an assistant
+ *               message; it is NOT the `agent` KIND above.
+ *   - 'tool'  ⇔ type === 'tool'. Everything else (system / askUser /
+ *               askPermission …) is not searchable → null.
+ * @param {any} m raw UiMessage (see shared/protocol.scala UiMessage encoder)
+ * @returns {'user'|'agent'|'ai'|'tool'|null}
+ */
+export function messageKind(m) {
+  switch (m?.type) {
+    case 'user':
+      return m.injected === true ? 'agent' : 'user';
+    case 'ai':
+    case 'agent':
+    case 'ask':
+      return 'ai';
+    case 'tool':
+      return 'tool';
+    default:
+      return null;
+  }
+}
+
 // Extract searchable plain text per UiMessage type (see shared/protocol.scala
 // UiMessage encoder for the JSON shape). Attachment names are merged into the
 // searchable text so the Images/Files categories can be keyword-hit by
 // filename (spec §6.1); attachments render as text only, never inline images.
+// The row's `kind` always comes from messageKind() — the switch below only
+// picks the text/attachment shape per raw type.
 function normalizeMessage(m, ord) {
+  const kind = messageKind(m);
+  if (kind === null) return null; // system/askUser/askPermission etc. are not searchable
   switch (m.type) {
     case 'user': {
       const attachments = (Array.isArray(m.attachments) ? m.attachments : [])
@@ -766,16 +1386,16 @@ function normalizeMessage(m, ord) {
         .filter(a => a.type || a.name);
       const attText = attachments.map(a => `📎 ${a.name}`).filter(s => s.trim().length > 2).join('\n');
       return {
-        kind: 'user', ord, attachments,
+        kind, ord, attachments,
         text: (m.text || '') + (attText ? `\n${attText}` : ''),
         ts: m.timestamp || 0,
       };
     }
     case 'ai':
-      return { kind: 'ai', ord, attachments: [], text: (m.text || '') + (m.thinking ? '\n' + m.thinking : ''), ts: m.timestamp || 0 };
+      return { kind, ord, attachments: [], text: (m.text || '') + (m.thinking ? '\n' + m.thinking : ''), ts: m.timestamp || 0 };
     case 'tool':
       return {
-        kind: 'tool', ord, attachments: [],
+        kind, ord, attachments: [],
         tool: m.label || '',
         input: m.input,   // raw tool input (JSON string) — Pop artifacts parse from it
         text: [m.summary, m.input, m.content].filter(Boolean).join('\n'),
@@ -787,26 +1407,25 @@ function normalizeMessage(m, ord) {
         ts: 0,
       };
     case 'agent':
-      return { kind: 'ai', ord, attachments: [], text: m.text || '', ts: 0 };
+      return { kind, ord, attachments: [], text: m.text || '', ts: 0 };
     case 'ask':
-      return { kind: 'ai', ord, attachments: [], text: [m.question, m.answer].filter(Boolean).join('\n'), ts: 0 };
+      return { kind, ord, attachments: [], text: [m.question, m.answer].filter(Boolean).join('\n'), ts: 0 };
     default:
-      return null; // system/askUser/askPermission etc. are not searchable
+      return null; // unreachable — messageKind() already gated the raw type
   }
 }
 
 // ── Filters (category tab × tool select) ───────────────────
+/** v3.2: typed tabs read the UNIFIED INDEX — membership is the message's own
+ *  entry types, so user attachments and LLM Pop content land in the same
+ *  categories (the standalone Pop tab and its tool-name test are retired;
+ *  legacy payload-less rows are covered by the index's degrade path). */
 function matchesTab(m) {
+  const entries = m.mediaEntries || [];
   switch (currentTab) {
-    case 'images': return m.attachments.some(a => a.type === 'image');
-    case 'files': return m.attachments.some(a => a.type !== 'image');
-    // Pop tool messages (Canvas 展示); legacy 'Card' labels kept for history
-    // recorded before the tool rename.
-    case 'pop': {
-      if (m.kind !== 'tool') return false;
-      const n = cleanToolName(m.tool);
-      return n === 'Pop' || n === 'Card';
-    }
+    case 'media': return entries.some(e => e.type === 'image' || e.type === 'video');
+    case 'files': return entries.some(e => e.type === 'file');
+    case 'links': return entries.some(e => e.type === 'link');
     default: return true;
   }
 }
@@ -822,27 +1441,61 @@ function activeToolFilter() {
   return currentTab === 'all' ? (selectById('search-tool')?.value || '') : '';
 }
 
+/** 手机层 P2 角色筛选缝（mobile-secondary-screens 实施批；v3.6 作者裁定②的
+ *  角色档：全部来源/用户/助手/AI/工具）。档值只由手机层 js/mobile/searchFace.js
+ *  写入 window.__mhSearchKind（'' = 全部来源）；桌面路径恒 undefined ⇒ 恒真，
+ *  零行为改动。词表 = data-kind 同款（user|agent|ai|tool）。 */
+function matchesKind(m) {
+  const kind = (typeof window !== 'undefined' && /** @type {any} */ (window).__mhSearchKind) || '';
+  return !kind || m.kind === kind;
+}
+
 /** Filtered + display-sorted view: timestamped newest-first, untimestamped
  *  (ts=0: tool/ask/agent) last by reverse document order. */
 function buildView(all) {
   const toolSel = activeToolFilter();
-  const arr = all.filter(m => matchesTab(m) && matchesTool(m, toolSel));
+  const arr = all.filter(m => matchesTab(m) && matchesTool(m, toolSel) && matchesKind(m));
   arr.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || (b.ord - a.ord));
   return arr;
 }
 
-function normalizeAll(raw) {
+/** Normalize one session's raw history: the message view (searchable rows)
+ *  PLUS the unified media index over the SAME array (popMediaIndex.js). Each
+ *  normalized message carries its own entries on `.mediaEntries` (the typed
+ *  tabs' message-level membership), and the session's full entry list comes
+ *  back for the media grid. */
+function normalizeAll(raw, meta) {
   const all = [];
   raw.forEach((m, i) => {
     const n = normalizeMessage(m, i);
     if (n) all.push(n);
   });
-  return all;
+  const entries = indexMedia(raw, meta || {});
+  const byOrd = new Map();
+  for (const e of entries) {
+    if (!byOrd.has(e.msgOrd)) byOrd.set(e.msgOrd, []);
+    byOrd.get(e.msgOrd).push(e);
+  }
+  for (const n of all) n.mediaEntries = byOrd.get(n.ord) || [];
+  return { all, entries };
 }
 
 /** End-of-day (23:59:59.999 local) epoch ms for an anchor date. */
 function anchorEndTs(a) {
   return new Date(a.y, a.m0, a.d, 23, 59, 59, 999).getTime();
+}
+
+// A deadline covers the entire operation, including fallback and response bodies.
+// Invalidate the sequence before aborting: even a non-cooperative request cannot
+// overwrite the timeout error when it eventually completes.
+function searchDeadline(ac, seq, statusEl, resultsEl) {
+  return setTimeout(() => {
+    if (seq !== searchSeq) return;
+    ++searchSeq;
+    ac.abort();
+    resultsEl.removeAttribute('data-loading');
+    showError(statusEl, new Error(t('search.timeout')));
+  }, SEARCH_TIMEOUT_MS);
 }
 
 // ── Stream mode (browse / anchor) ──────────────────────────
@@ -861,14 +1514,20 @@ async function runStream() {
   streamMode = anchorDate ? 'anchor' : 'browse';
   resultsEl.dataset.loading = 'true';
   statusEl.textContent = t('search.searching');
+  const deadline = searchDeadline(ac, mySeq, statusEl, resultsEl);
 
   try {
     let sessions;
-    if (scope === 'current') {
+    if (convScope) {
+      // 3(b)：会话档 = 只搜当前会话（scope 隔离）。数据源 = 会话消息 API
+      // （fetchConvHistory 适配），agent 会话清单完全不进视野。
+      sessions = [{ id: convScope.id, name: convScope.name, convSource: true }];
+    } else if (scope === 'current') {
       const sid = state.activeSessionId;
       if (!sid) {
         if (mySeq !== searchSeq) return;
         resultsEl.removeAttribute('data-loading');
+        clearResults(resultsEl);
         resultsEl.innerHTML = `<div class="search-hint">${escapeHtml(t('search.emptyCategory'))}</div>`;
         statusEl.textContent = t('search.noSession');
         streamSessions = [];
@@ -891,9 +1550,16 @@ async function runStream() {
       // Anchor page: newest page at or below the anchor day's end. Browse
       // page: newest page from the latest. Params are the cursor contract;
       // today's backend ignores them and returns everything.
-      const raw = await fetchHistory(s.id, ac.signal,
-        anchorEnd ? { before: anchorEnd, limit: FETCH_PAGE } : { limit: FETCH_PAGE });
-      const all = normalizeAll(raw);
+      // 3(b)：会话档（convSource）= 全量拉取（会话消息 API 是 id-keyset 前向分页，
+      // fetchConvHistory 一次性翻完），游标参数不适用。
+      const raw = s.convSource
+        ? await fetchConvHistory(s.id, ac.signal)
+        : await fetchHistory(s.id, ac.signal,
+            anchorEnd ? { before: anchorEnd, limit: FETCH_PAGE } : { limit: FETCH_PAGE });
+      const norm = s.convSource
+        ? normalizeConv(raw, { sessionId: s.id, sessionName: s.name || s.id })
+        : normalizeAll(raw, { sessionId: s.id, sessionName: s.name || s.id });
+      const all = norm.all;
       const view = buildView(all);
       let start = 0;
       if (anchorEnd) {
@@ -903,8 +1569,11 @@ async function runStream() {
         start = ai === -1 ? Math.max(0, view.length - FETCH_PAGE) : ai;
       }
       return {
-        id: s.id, name: s.name || s.id, all, view,
-        start, end: Math.min(view.length, start + FETCH_PAGE),
+        id: s.id, name: s.name || s.id, all, view, entries: norm.entries,
+        convSource: !!s.convSource,
+        start,
+        // 3(b)：会话档已全量在手 ⇒ end 一次到位（分页加载器对 conv 档也另有守卫）。
+        end: s.convSource ? view.length : Math.min(view.length, start + FETCH_PAGE),
         el: null, headerEl: null,
       };
     }, showProgress ? (done, total) => {
@@ -921,6 +1590,8 @@ async function runStream() {
     if (e.name === 'AbortError' || mySeq !== searchSeq) return;
     resultsEl.removeAttribute('data-loading');
     showError(statusEl, e);
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
@@ -934,13 +1605,20 @@ function onSentinel() {
     updateStatus();
     return;
   }
-  if (streamMode === 'search') return;   // one-shot mode never paginates
+  if (streamMode === 'search') {
+    // 检索全覆盖批 2026-11-07：渲染批次耗尽且还有未取命中 ⇒ 续取下一页（无限
+    // 滚动——这就是「一直往下翻到最早一条」的实现，取代原来的「前 200 条」硬顶）。
+    if (searchPager && searchPager.more) loadMoreSearch();
+    return;
+  }
   loadBeforePages();
 }
 
 /** Older page(s): extend each session window downward (before cursor). */
 async function loadBeforePages() {
-  const targets = streamSessions.filter(s => s.end < s.view.length);
+  // 3(b)：会话档（convSource）全量已在手 ⇒ 永不进入 agent 会话分页（守卫防回归
+  // ——conv id 误进 fetchHistory 会打到不存在的会话路由上）。
+  const targets = streamSessions.filter(s => !s.convSource && s.end < s.view.length);
   if (!targets.length) return;
   pageInFlight = true;
   const mySeq = searchSeq;
@@ -949,7 +1627,9 @@ async function loadBeforePages() {
       const lastLoaded = s.view[s.end - 1];
       const raw = await fetchHistory(s.id, searchAbort?.signal,
         { before: lastLoaded?.ts ?? 0, limit: FETCH_PAGE });
-      s.all = normalizeAll(raw);
+      const norm = normalizeAll(raw, { sessionId: s.id, sessionName: s.name });
+      s.all = norm.all;
+      s.entries = norm.entries;
       s.view = buildView(s.all);
       s.end = Math.min(s.view.length, s.end + FETCH_PAGE);
       s.start = Math.min(s.start, s.end);
@@ -969,7 +1649,8 @@ async function loadBeforePages() {
  *  cursor) and PREPEND, preserving the scroll position. Existing entries
  *  stay put (zero removal, zero reorder - spec B13). */
 async function loadAfterPages() {
-  const targets = streamSessions.filter(s => s.start > 0);
+  // 3(b)：会话档守卫（同 loadBeforePages——全量在手，永不分页）。
+  const targets = streamSessions.filter(s => !s.convSource && s.start > 0);
   if (!targets.length) return;
   pageInFlight = true;
   const mySeq = searchSeq;
@@ -983,7 +1664,9 @@ async function loadAfterPages() {
       const firstLoaded = s.view[s.start];
       const raw = await fetchHistory(s.id, searchAbort?.signal,
         { after: firstLoaded?.ts ?? 0, limit: FETCH_PAGE });
-      s.all = normalizeAll(raw);
+      const norm = normalizeAll(raw, { sessionId: s.id, sessionName: s.name });
+      s.all = norm.all;
+      s.entries = norm.entries;
       s.view = buildView(s.all);
       s.start = Math.max(0, s.start - FETCH_PAGE);
       const items = [];
@@ -1017,6 +1700,403 @@ async function loadAfterPages() {
 }
 
 // ── Search mode (keyword) — v2.1 one-shot query ────────────
+
+/**
+ * C3：搜索模式的索引快路（GET /api/search/chat——分片谓词 + FTS5 命中 +
+ * ETag 凭证）。返回 true = 结果已渲染（或本查询已中止/被取代，UI 归更新
+ * 的查询所有）；false = 索引不可用，调用方回落旧全扫（§4.6 R4 灰度零风险：
+ * 新旧并行，旧路径逐字保底）。
+ *
+ * 谓词纪律（§4.1 ③）：current 档带 sid（会话键谓词）；all 档 kinds 必给
+ * （五 tab 映射——media/files/links 用 TAB_KINDS，all/date = message 单
+ * 片〔作者令①：tool 片退役，服务端亦剥除/过滤——见 SEARCH_KINDS_ALL〕）。
+ * agentSel 保留既有前端过滤语义（all 档按会话 agent 名过滤；current 档与
+ * 旧路径同——不过滤），在命中侧按 sid 归组前过滤会话清单。
+ *
+ * C6：同查询二次发起带 If-None-Match（searchEtagCache 按规范化 url 存
+ * 凭证）；304 ⇒ 零重发，缓存体直接渲染；200 ⇒ 新凭证+新体覆缓存。
+ */
+/**
+ * 索引检索的分页 URL 构造（分页腿唯一构造点：首屏与续取页同源，禁第二套拼装）。
+ * @param {{q:string, kinds:string[], sid:string}} base 查询基址
+ * @param {number} offset 已取条数（下一页起点）
+ * @returns {string}
+ */
+function indexPageUrl(base, offset) {
+  const params = new URLSearchParams({
+    q: base.q, kinds: base.kinds.join(','),
+    limit: String(SEARCH_PAGE), offset: String(Math.max(0, offset)),
+  });
+  if (base.sid) params.set('sid', base.sid);
+  return `/api/search/chat?${params.toString()}`;
+}
+
+async function runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsEl) {
+  try {
+    let sessions;
+    let sessionNameById = new Map();
+    if (scope === 'current') {
+      const sid = state.activeSessionId;
+      if (!sid) {
+        if (mySeq !== searchSeq) return true;
+        resultsEl.removeAttribute('data-loading');
+        clearResults(resultsEl);
+        resultsEl.innerHTML = `<div class="search-hint">${escapeHtml(t('search.noResults'))}<br>${escapeHtml(t('search.noResultsSuggestion'))}</div>`;
+        statusEl.textContent = t('search.noSession');
+        streamSessions = [];
+        lastResults = [];
+        renderedCount = 0;
+        lastTotal = 0;
+        return true;
+      }
+      const local = (state.sessions || []).find(s => s.id === sid);
+      sessions = [{ id: sid, name: local?.name || sid }];
+      sessionNameById = new Map([[sid, local?.name || sid]]);
+    } else {
+      sessions = await fetchSessionList(ac.signal);
+      if (mySeq === searchSeq) populateAgentFilter(sessions, agentSel);
+      if (agentSel) sessions = sessions.filter(s => agentNameOf(s) === agentSel);
+      sessionNameById = new Map(sessions.map(s => [s.id, s.name || s.id]));
+    }
+
+    const kinds = MEDIA_TABS.includes(currentTab) ? (TAB_KINDS[currentTab] || []) : SEARCH_KINDS_ALL;
+    const pages = { q: kw, kinds, sid: scope === 'current' ? (state.activeSessionId || '') : '' };
+    const url = indexPageUrl(pages, 0);
+
+    // C6 条件请求：缓存凭证命中 ⇒ 带 If-None-Match，304 零重发。
+    const cached = searchEtagCache.get(url);
+    const headers = { ...authHeaders() };
+    if (cached) headers['If-None-Match'] = cached.etag;
+    const resp = await searchFetch(url, { headers, signal: ac.signal });
+    /** 首页到手 ⇒ 落分页档（续取基址/已取偏移/命中总数/是否还有下一页）。 */
+    const take = (body) => {
+      const n = Array.isArray(body.hits) ? body.hits.length : 0;
+      const total = Number(body.total) || 0;
+      searchPager = {
+        mode: 'index', url, offset: n, total, loaded: 0, revealed: 0,
+        pageSize: SEARCH_PAGE, loading: false, failed: false, more: n < total,
+      };
+      searchIndexPages = pages;
+      searchNameById = sessionNameById;
+      return applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, resultsEl, false);
+    };
+    if (resp.status === 304 && cached) return take(cached.body);
+    if (!resp.ok) return false;          // 503 降级面 / 5xx ⇒ 回落旧全扫
+    const etag = resp.headers.get('ETag') || '';
+    const body = await resp.json();
+    // 形状把关：夹具/代理误答的 200（hits/total 缺字段）不得吞掉结果——
+    // 不是合法索引响应 ⇒ 回落旧全扫（与 fetchHistory 的 malformed 同律）。
+    if (!body || !Array.isArray(body.hits) || typeof body.total !== 'number') return false;
+    if (etag) searchEtagCache.set(url, { etag, body });
+    return take(body);
+  } catch (e) {
+    if (e.name === 'AbortError' || e.name === 'SearchRateLimitError') throw e;
+    if (mySeq !== searchSeq) return true;   // 已被取代：UI 归新查询，勿回落
+    return false;                           // 网络错/体损坏 ⇒ 回落旧全扫
+  }
+}
+
+/**
+ * 索引命中 → 既有渲染管线（与旧全扫路径同一 streamSessions/lastResults
+ * 模型，渲染/键盘/浮窗零分叉）。媒体三 tab 用 hit.extra 的 popMediaIndex
+ * 条目形状直渲染（C4——免重抽）；all/date tab 补 wrapItem 同款字段面。
+ */
+function applyIndexResults(body, sessions, sessionNameById, mySeq, statusEl, resultsEl, append = false) {
+  if (mySeq !== searchSeq) return true;
+  // 旧库残留兜底（与服务端同口径）：tool 片不入对话检索结果，前端再滤一层防御。
+  const hits = ((body && Array.isArray(body.hits)) ? body.hits : []).filter(h => h.kind !== 'tool');
+  const pager = searchPager;
+  const nameOf = (sid) => sessionNameById?.get(sid) || searchNameById.get(sid) || sid;
+
+  if (MEDIA_TABS.includes(currentTab)) {
+    const entries = [];
+    for (const h of hits) {
+      const extra = (h.extra && typeof h.extra === 'object') ? h.extra : {};
+      const e = {
+        ...extra,
+        id: extra.id || `${h.sid}:${h.ord}`,
+        sessionId: h.sid,
+        sessionName: nameOf(h.sid),
+        msgOrd: typeof extra.msgOrd === 'number' ? extra.msgOrd : h.ord,
+        ts: h.ts || extra.ts || 0,
+      };
+      if (currentSource && e.source !== currentSource) continue;
+      entries.push(e);
+    }
+    entries.sort((a, b) => (b.ts - a.ts) || (b.msgOrd - a.msgOrd));
+    if (append) {
+      // 续取页：尾部追加（不重排已渲染面、不重置滚动位）。
+      mergeMediaEntries(entries);
+      appendMediaGrid(entries, resultsEl);
+      if (pager) { pager.loaded += entries.length; }
+      syncSearchTail(resultsEl);
+      updateStatus();
+      return true;
+    }
+    streamSessions = sessions.map(s => {
+      const mine = entries.filter(e => e.sessionId === s.id);
+      return { id: s.id, name: s.name || s.id, all: [], view: mine, entries: mine,
+               start: 0, end: mine.length, el: null, headerEl: null };
+    });
+    if (pager) pager.loaded = entries.length;
+    buildModel();          // message view empty under grid tabs — keep state coherent
+    renderStreamFresh(resultsEl, statusEl);
+    syncSearchTail(resultsEl);
+    return true;
+  }
+
+  // all/date tab：message 行（作者令①后 tool 片不再出现在命中里——服务端
+  // 剥除/过滤；上面的 tool 过滤分支仅为兼容旧索引体的防御，永不触发）。
+  // tool 过滤/手机角色筛选沿用既有前端谓词。
+  if (!append) {
+    populateToolFilter(
+      [{ all: hits.map(h => ({ kind: h.kind, tool: (h.extra && h.extra.tool) || '' })) }],
+      selectById('search-tool')?.value || '');
+  }
+  const toolSel = activeToolFilter();
+  const rows = [];
+  for (const h of hits) {
+    // kind 词汇对齐前端 messageKind（user|agent|ai|tool）——索引片只有
+    // message|tool 两档，message 的角色由 extra.role 投影（adapter 同源）。
+    const kind = h.kind === 'tool' ? 'tool' : ((h.extra && h.extra.role) || 'ai');
+    const m = { kind, tool: (h.extra && h.extra.tool) || '' };
+    if (!matchesTool(m, toolSel)) continue;
+    if (!matchesKind(m)) continue; // 手机层角色筛选缝（桌面恒真）
+    rows.push({
+      sessionId: h.sid,
+      sessionName: nameOf(h.sid),
+      kind,
+      tool: m.tool,
+      input: '',
+      text: h.snippet || '',
+      // 索引行不投影原始 segments——跳转定位按 (sid, ord, kind) 直查 +
+      // 文本/时间戳兜底（chatSearch.js#scrollToMessage，C3 兼容面）。
+      summary: '',
+      content: '',
+      ts: h.ts,
+      ord: h.ord,
+      // 压缩前归档段（adapter 的 origin='archive'）：回放窗口外的老消息，命中
+      // 行照常出结果与排序，跳转退化为「归档提示」（见 jumpToResult 注释）。
+      origin: (h.extra && h.extra.origin) || '',
+      attachments: [],
+    });
+  }
+  rows.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || (b.ord - a.ord));
+  if (pager) pager.loaded += rows.length;
+
+  if (append) {
+    if (rows.length) mergeSearchRows(rows);
+    buildModel();
+    renderNextBatch();
+    syncSearchTail(resultsEl);
+    updateStatus();
+    return true;
+  }
+
+  lastTotal = typeof body.total === 'number' ? body.total : rows.length;
+  streamSessions = sessions.map(s => {
+    const view = rows.filter(r => r.sessionId === s.id);
+    return {
+      id: s.id, name: s.name || s.id, all: [], view,
+      start: 0, end: view.length, el: null, headerEl: null,
+    };
+  });
+  buildModel();
+  renderStreamFresh(resultsEl, statusEl);
+  syncSearchTail(resultsEl);
+  if (anchorDate) scrollToAnchorInResults();
+  return true;
+}
+
+/**
+ * 续取页命中并入现有会话窗口（检索全覆盖批）：新会话（首页没出现过的 sid）现建
+ * 窗口 + 分组头，渲染侧 renderNextBatch 再按需开组（组序 = 队尾，与「命中按时间
+ * 降序」一致：后续页恒为更旧的行）。
+ * @param {any[]} rows 已排序的新命中行
+ */
+function mergeSearchRows(rows) {
+  const bySid = new Map(streamSessions.map(s => [s.id, s]));
+  for (const r of rows) {
+    let s = bySid.get(r.sessionId);
+    if (!s) {
+      s = { id: r.sessionId, name: r.sessionName || r.sessionId, all: [], view: [],
+            entries: [], start: 0, end: 0, el: null, headerEl: null };
+      bySid.set(r.sessionId, s);
+      streamSessions.push(s);
+    }
+    s.view.push(r);
+  }
+  for (const s of streamSessions) {
+    if (!s.view.length) continue;
+    s.view.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || ((b.ord || 0) - (a.ord || 0)));
+    s.end = s.view.length;
+  }
+}
+
+/** 续取页媒体条目并入现有网格视图（免重抽的条目形状原样入列）。 */
+function mergeMediaEntries(entries) {
+  const bySid = new Map(streamSessions.map(s => [s.id, s]));
+  for (const e of entries) {
+    let s = bySid.get(e.sessionId);
+    if (!s) {
+      s = { id: e.sessionId, name: e.sessionName || e.sessionId, all: [], view: [],
+            entries: [], start: 0, end: 0, el: null, headerEl: null };
+      bySid.set(e.sessionId, s);
+      streamSessions.push(s);
+    }
+    s.entries.push(e);
+    s.view.push(e);
+    s.end = s.entries.length;
+  }
+  if (entries.length) {
+    entries.forEach((e) => {
+      if (modelKeys.has(e.id)) return;
+      modelKeys.set(e.id, lastResults.length);
+      lastResults.push(e);
+    });
+    renderedCount = lastResults.length;
+  }
+}
+
+/** 媒体网格续取页：按时间分组续开组（同标签的连续组并进上一格），卡片逐张追加。 */
+function appendMediaGrid(entries, resultsEl) {
+  if (!resultsEl || !entries.length) return;
+  const tail = searchTailEl;
+  const frag = document.createDocumentFragment();
+  const groups = groupEntriesByTime(entries, new Date());
+  let gridEl = null;
+  let lastLabel = '';
+  const lastHeader = resultsEl.querySelector('.search-media-group-header:last-of-type');
+  const lastGrid = resultsEl.querySelector('.search-media-grid:last-of-type');
+  if (lastHeader && lastGrid) { lastLabel = lastHeader.textContent || ''; gridEl = lastGrid; }
+  for (const g of groups) {
+    const label = g.key === 'undated' ? '' : (g.key === 'week'
+      ? t('search.groupThisWeek') : t('search.groupMonth', { n: g.m0 + 1 }));
+    if (label && label !== lastLabel) {
+      const header = document.createElement('div');
+      header.className = 'search-media-group-header';
+      header.textContent = label;
+      frag.appendChild(header);
+      gridEl = document.createElement('div');
+      gridEl.className = 'search-media-grid';
+      frag.appendChild(gridEl);
+      lastLabel = label;
+    } else if (!gridEl) {
+      gridEl = document.createElement('div');
+      gridEl.className = 'search-media-grid';
+      frag.appendChild(gridEl);
+    }
+    for (const en of g.entries) gridEl.appendChild(mediaEntryCard(en));
+  }
+  if (tail) resultsEl.insertBefore(frag, tail);
+  else resultsEl.appendChild(frag);
+}
+
+/** 续取尾钮（媒体网格档；消息流档走 .search-sentinel 无限滚动）。 */
+function syncSearchTail(resultsEl) {
+  if (!resultsEl) return;
+  const p = searchPager;
+  if (!p || !p.more) {
+    searchTailEl?.remove();
+    searchTailEl = null;
+    return;
+  }
+  let el = searchTailEl;
+  if (!el || !el.isConnected) {
+    el = document.createElement('button');
+    el.type = 'button';
+    el.className = 'search-more-tail';
+    el.addEventListener('click', () => { loadMoreSearch(); });
+    resultsEl.appendChild(el);
+    searchTailEl = el;
+  }
+  el.textContent = t('search.loadMore', { n: p.loaded, m: p.total });
+  el.disabled = false;
+}
+
+/**
+ * 检索续取（检索全覆盖批 2026-11-07，作者报障「为什么不是搜全部的内容，可以
+ * 分段显示但是我要能查看」）：把下一页命中并入结果面，直到 total 取尽。
+ *   · mode='local'：旧全扫回落路径 / 好友·群·设备会话档——全量命中已在内存，
+ *     续取 = 逐段揭示（零请求、零重复扫描）；
+ *   · mode='index'：服务端索引真分页（offset 续取，服务端 limit clamp ≤200）。
+ * 失败只落 pager.failed（尾钮重试），不打断已上屏的结果。
+ */
+async function loadMoreSearch() {
+  const p = searchPager;
+  if (!p || !p.more || p.loading) return;
+  const resultsEl = searchResultsEl;
+  const statusEl = searchStatusEl;
+  if (!resultsEl || !statusEl) return;
+  const mySeq = searchSeq;
+  p.loading = true;
+  p.failed = false;
+  try {
+    if (p.mode === 'local') {
+      p.revealed = Math.min(p.total, p.revealed + SEARCH_PAGE);
+      p.more = p.revealed < p.total;
+      p.loaded = p.revealed;
+      streamSessions = buildLocalSearchWindows(searchAllRows, p.revealed);
+      buildModel();
+      renderNextBatch();
+      syncSearchTail(resultsEl);
+      updateStatus();
+      return;
+    }
+    if (!searchIndexPages) { p.more = false; return; }
+    const url = indexPageUrl(searchIndexPages, p.offset);
+    const cached = searchEtagCache.get(url);
+    const headers = { ...authHeaders() };
+    if (cached) headers['If-None-Match'] = cached.etag;
+    const resp = await searchFetch(url, { headers, signal: searchAbort?.signal });
+    let body = null;
+    if (resp.status === 304 && cached) body = cached.body;
+    else if (resp.ok) {
+      body = await resp.json();
+      const etag = resp.headers.get('ETag') || '';
+      if (etag && body) searchEtagCache.set(url, { etag, body });
+    }
+    if (mySeq !== searchSeq) return;
+    if (!body || !Array.isArray(body.hits) || typeof body.total !== 'number') {
+      p.failed = true;
+      return;
+    }
+    const n = body.hits.length;
+    p.offset += n;
+    p.total = body.total;
+    // n === 0 或 offset 已过 total ⇒ 收口（禁死循环）；服务端 total 变小时同收口。
+    p.more = n > 0 && p.offset < p.total;
+    applyIndexResults(body, [], new Map(), mySeq, statusEl, resultsEl, true);
+  } catch (e) {
+    if (e.name === 'AbortError') return;
+    p.failed = true;
+  } finally {
+    if (mySeq === searchSeq) { p.loading = false; updateStatus(); }
+  }
+}
+
+/**
+ * 本地分页源的会话窗口构造：view 按**全局名次**升序（新→旧），end = 该会话落在
+ * 「已揭示名次」内的条数——揭示边界按全局名次切一刀，禁逐会话各切一刀（否则
+ * 各会话进度不一，「已加载 N/M」读数与可见面会对不上）。
+ * @param {any[]} rows 全量命中（已排序）
+ * @param {number} revealed 已揭示的全局条数
+ */
+function buildLocalSearchWindows(rows, revealed) {
+  const bySid = new Map();
+  rows.forEach((r, i) => {
+    let s = bySid.get(r.sessionId);
+    if (!s) {
+      s = { id: r.sessionId, name: r.sessionName || r.sessionId, all: [], view: [],
+            entries: [], start: 0, end: 0, el: null, headerEl: null };
+      bySid.set(r.sessionId, s);
+    }
+    s.view.push(r);
+    if (i < revealed) s.end += 1;
+  });
+  return [...bySid.values()];
+}
+
 async function runSearch() {
   const mySeq = ++searchSeq;
   searchAbort?.abort();
@@ -1033,14 +2113,35 @@ async function runSearch() {
   streamMode = 'search';
   resultsEl.dataset.loading = 'true';
   statusEl.textContent = t('search.searching');
+  // 每次新查询清零分页档（续取腿只能挂在本次查询的档上）。
+  searchPager = null;
+  searchAllRows = [];
+  searchIndexPages = null;
+  searchNameById = new Map();
+  searchTailEl?.remove();
+  searchTailEl = null;
+  const deadline = searchDeadline(ac, mySeq, statusEl, resultsEl);
 
   try {
+    // C3：索引快路优先——成功（或已被更新的查询取代/中止）⇒ handled；
+    // 索引不可用（503/5xx/网络错）⇒ false，继续旧全扫路径（§4.6 R4 保底）。
+    // 3(b)：会话档恒跳过索引快路——FTS 索引只覆盖 agent 会话，会话消息不在
+    // 索引里；跳过 = 直接走全量拉取路径（fetchConvHistory），scope 零泄漏。
+    if (SEARCH_API_ENABLED && kw && !convScope) {
+      const handled = await runSearchIndex(kw, scope, agentSel, ac, mySeq, statusEl, resultsEl);
+      if (handled) return;
+    }
+
     let sessions;
-    if (scope === 'current') {
+    if (convScope) {
+      // 3(b)：会话档 = 只搜当前会话。agent 会话清单不进视野（scope 隔离）。
+      sessions = [{ id: convScope.id, name: convScope.name, convSource: true }];
+    } else if (scope === 'current') {
       const sid = state.activeSessionId;
       if (!sid) {
         if (mySeq !== searchSeq) return;
         resultsEl.removeAttribute('data-loading');
+        clearResults(resultsEl);
         resultsEl.innerHTML = `<div class="search-hint">${escapeHtml(t('search.noResults'))}<br>${escapeHtml(t('search.noResultsSuggestion'))}</div>`;
         statusEl.textContent = t('search.noSession');
         streamSessions = [];
@@ -1059,8 +2160,13 @@ async function runSearch() {
 
     const showProgress = sessions.length > 1;
     const perSession = await mapLimit(sessions, FETCH_CONCURRENCY, async (s) => {
-      const raw = await fetchHistory(s.id, ac.signal);
-      return { session: s, all: normalizeAll(raw) };
+      const raw = s.convSource
+        ? await fetchConvHistory(s.id, ac.signal)
+        : await fetchHistory(s.id, ac.signal);
+      const norm = s.convSource
+        ? normalizeConv(raw, { sessionId: s.id, sessionName: s.name || s.id })
+        : normalizeAll(raw, { sessionId: s.id, sessionName: s.name || s.id });
+      return { session: s, all: norm.all, entries: norm.entries };
     }, showProgress ? (done, total) => {
       if (mySeq === searchSeq) statusEl.textContent = t('search.progress', { done, total });
     } : null);
@@ -1069,14 +2175,42 @@ async function runSearch() {
 
     populateToolFilter(perSession.map(p => ({ all: p.all })), selectById('search-tool')?.value || '');
 
+    // v3.2: typed media tabs search ENTRY FIELDS, not message text (PLAN §3.5)
+    // — the one-shot contract (debounce upstream, seq race guard, cap) stays.
+    if (MEDIA_TABS.includes(currentTab)) {
+      const entries = [];
+      for (const { entries: es } of perSession) {
+        for (const e of es || []) {
+          if (!entryMatchesTab(e, currentTab)) continue;
+          if (currentSource && e.source !== currentSource) continue;
+          if (kw && !entryMatchesKeyword(e, kw)) continue;
+          entries.push(e);
+        }
+      }
+      entries.sort((a, b) => (b.ts - a.ts) || (b.msgOrd - a.msgOrd));
+      streamSessions = sessions.map(s => {
+        const mine = entries.filter(e => e.sessionId === s.id);
+        return { id: s.id, name: s.name || s.id, all: [], view: mine, entries: mine,
+                 start: 0, end: mine.length, el: null, headerEl: null };
+      });
+      buildModel();          // message view empty under grid tabs — keep state coherent
+      renderStreamFresh(resultsEl, statusEl);
+      return;
+    };
+
     // Match (v2.1 semantics, plus the category tab filter)
+    // 作者令①（2026-10-30）：关键词搜索只搜对话——tool call/result 行不入结果
+    // （与索引快路 kinds=message 同口径；tool 行只在浏览流出现，工件走
+    // media/files/links 分类索引）。
     const kwLower = kw.toLowerCase();
     const toolSel = activeToolFilter();
     const results = [];
     for (const { session, all } of perSession) {
       for (const m of all) {
+        if (m.kind === 'tool') continue;
         if (!matchesTab(m)) continue;
         if (!matchesTool(m, toolSel)) continue;
+        if (!matchesKind(m)) continue; // 手机层角色筛选缝（桌面恒真）
         if (!m.text.toLowerCase().includes(kwLower)) continue;
         results.push({
           sessionId: session.id,
@@ -1099,24 +2233,30 @@ async function runSearch() {
 
     // Newest first (timestamped), untimestamped last
     results.sort((a, b) => ((b.ts || 0) - (a.ts || 0)) || (b.ord - a.ord));
-    const capped = results.slice(0, MAX_RESULTS);
+    // 检索全覆盖批 2026-11-07：不再截断前 N 条——全量命中进分页档（mode='local'，
+    // 数据已在手 ⇒ 续取 = 逐段揭示，零请求），首段揭示 SEARCH_PAGE 条，滚到底续揭示。
+    searchAllRows = results;
+    searchIndexPages = null;
     lastTotal = results.length;
+    const firstReveal = Math.min(results.length, SEARCH_PAGE);
+    searchPager = {
+      mode: 'local', url: '', offset: firstReveal, total: results.length,
+      loaded: firstReveal, revealed: firstReveal, pageSize: SEARCH_PAGE,
+      loading: false, failed: false, more: firstReveal < results.length,
+    };
 
     // Reuse the stream render pipeline: one pseudo window per session.
-    streamSessions = sessions.map(s => {
-      const view = capped.filter(r => r.sessionId === s.id);
-      return {
-        id: s.id, name: s.name || s.id, all: [], view,
-        start: 0, end: view.length, el: null, headerEl: null,
-      };
-    });
+    streamSessions = buildLocalSearchWindows(results, firstReveal);
     buildModel();
     renderStreamFresh(resultsEl, statusEl);
+    syncSearchTail(resultsEl);
     if (anchorDate) scrollToAnchorInResults();
   } catch (e) {
     if (e.name === 'AbortError' || mySeq !== searchSeq) return;
     resultsEl.removeAttribute('data-loading');
     showError(statusEl, e);
+  } finally {
+    clearTimeout(deadline);
   }
 }
 
@@ -1151,8 +2291,8 @@ function wrapItem(s, viewIdx) {
     input: m.input,
     text: m.text,
     // #41: copy the raw tool segments too — this wrapper is what the click
-    // handler actually hands to scrollToMessage; without them the jump site
-    // sees undefined candidates under every locale.
+    // handler hands to the message window (chatSearchFloat); without them the
+    // window's hit-locating candidates are undefined under every locale.
     summary: m.summary || '',
     content: m.content || '',
     ts: m.ts,
@@ -1184,14 +2324,36 @@ function buildModel() {
   lastTotal = streamMode === 'search' ? lastTotal : lastResults.length;
 }
 
+/** Drop the rendered list. Card bodies own sandboxed iframes, so their
+ *  observers/browsing contexts are released FIRST (cardRegistry contract:
+ *  cleanup before a mass DOM removal — a re-search reruns on every keystroke).
+ *  @param {HTMLElement} resultsEl */
+function clearResults(resultsEl) {
+  cleanupCardIframes(resultsEl);
+  resultsEl.innerHTML = '';
+}
+
 /** Fresh full render of the current window (initial load / mode switch). */
 function renderStreamFresh(resultsEl, statusEl) {
+  searchResultsEl = resultsEl;
+  searchStatusEl = statusEl;
   resultsEl.removeAttribute('data-loading');
   sentinelObserver?.disconnect();
   sentinelEl = null;
-  resultsEl.innerHTML = '';
+  mediaGridObserver?.disconnect();
+  mediaGridObserver = null;
+  resetMulti();              // C5：结果面重建 ⇒ 选择态清零
+  clearResults(resultsEl);
   renderedCount = 0;
   activeIndex = -1;
+
+  // v3.2: the typed media tabs render the ENTRY GRID (thumbnails, time groups,
+  // source chips) — a different view over the same fetched history, so the
+  // message-stream pipeline below is untouched for all/date tabs.
+  if (MEDIA_TABS.includes(currentTab)) {
+    renderMediaGrid(resultsEl, statusEl);
+    return;
+  }
 
   if (!lastResults.length) {
     // Empty state: browse/category empties use the single-line category key;
@@ -1250,14 +2412,42 @@ function renderNextBatch() {
     const el = resultElement(item);
     if (grouped) {
       const s = bySid.get(item.sessionId);
-      s?.el?.appendChild(el);
+      if (s && s.el) s.el.appendChild(el);
+      else if (s) {
+        // 续取页带来的**新会话**（首页没出现过的 sid）：组容器现建、落在队尾
+        // ——命中按时间降序，后续页恒更旧，组序与既有面一致。
+        s.el = appendGroupShell(resultsEl, s);
+        s.el.appendChild(el);
+      } else {
+        resultsEl.insertBefore(el, sentinelEl);
+      }
     } else {
       resultsEl.insertBefore(el, sentinelEl);
     }
     appended++;
   }
   renderedCount += appended;
+  if (grouped) for (const s of streamGroups) updateGroupHeader(s);
   return appended > 0;
+}
+
+/**
+ * 分组壳（组容器 + 头）现建并挂到结果流尾部（续取页新会话 / 首屏分组共用形态）。
+ * @param {HTMLElement} resultsEl
+ * @param {{id:string, name:string, end:number, start:number, el:HTMLElement|null, headerEl:HTMLElement|null}} s
+ * @returns {HTMLElement} 组容器
+ */
+function appendGroupShell(resultsEl, s) {
+  const g = document.createElement('div');
+  g.className = 'search-group';
+  const header = document.createElement('div');
+  header.className = 'search-group-header';
+  g.appendChild(header);
+  if (sentinelEl && sentinelEl.parentNode === resultsEl) resultsEl.insertBefore(g, sentinelEl);
+  else resultsEl.appendChild(g);
+  s.headerEl = header;
+  updateGroupHeader(s);
+  return g;
 }
 
 function updateStatus() {
@@ -1266,12 +2456,21 @@ function updateStatus() {
   if (isGrouped()) for (const s of streamGroups) updateGroupHeader(s);
 }
 
-/** Status line: result count (+ truncation notice in search mode only). */
+/** Status line: 已加载/总数（检索全覆盖批——不再有「仅显示前 N 条」的截断尾注）。 */
 function statusSummary() {
-  const base = t('search.results', { n: lastTotal });
-  return streamMode === 'search' && lastTotal > MAX_RESULTS
-    ? `${base} (${t('search.truncated', { n: MAX_RESULTS })})`
-    : base;
+  // 3(b) 会话档：前缀 = 会话名（scope 隔离可见化——「只搜当前会话」要读得出来）。
+  // 手机层 P2 计数行（v3.6 作者裁定②）全局档仍带「主会话」前缀；桌面全局档零改动。
+  const prefix = convScope
+    ? convScope.name
+    : (document.body.classList.contains('mobile-layer') ? t('search.scopeMain') : '');
+  const pager = streamMode === 'search' ? searchPager : null;
+  const total = pager ? pager.total : lastTotal;
+  const loaded = pager ? pager.loaded : lastTotal;
+  // 还有未取命中 ⇒ 报「已加载 N/M 条」（可继续下翻到最早一条）；取尽 ⇒ 报总数。
+  const count = (pager && total > loaded)
+    ? t('search.loadedOf', { n: loaded, m: total })
+    : t('search.results', { n: total });
+  return prefix ? `${prefix} · ${count}` : count;
 }
 
 /** Error state: message + an inline retry button (glass control). */
@@ -1281,6 +2480,11 @@ function showError(statusEl, e) {
   btn.type = 'button';
   btn.className = 'glass-control cfg-btn cfg-btn-sm';
   btn.textContent = t('search.retry');
+  if (e.name === 'SearchRateLimitError') {
+    btn.disabled = true;
+    const delay = Math.max(0, searchRateLimitUntil - Date.now());
+    setTimeout(() => { btn.disabled = false; }, delay);
+  }
   btn.addEventListener('click', triggerSearch);
   statusEl.appendChild(btn);
 }
@@ -1311,10 +2515,10 @@ function populateAgentFilter(sessions, keepValue) {
     if (name) counts.set(name, (counts.get(name) || 0) + 1);
   }
   const sorted = [...counts.keys()].sort((a, b) => a.localeCompare(b));
-  sel.innerHTML =
-    `<option value="">${escapeHtml(t('search.allAgents'))}</option>` +
-    sorted.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${counts.get(n)})</option>`).join('');
-  if ([...sel.options].some(o => o.value === keepValue)) sel.value = keepValue;
+  setFilterOptions('search-agent', [
+    { value: '', label: t('search.allAgents') },
+    ...sorted.map(n => ({ value: n, label: `${n} (${counts.get(n)})` }))
+  ], keepValue);
 }
 
 /** Rebuild the tool filter options from the tool labels in the fetched set.
@@ -1332,17 +2536,88 @@ function populateToolFilter(perSession, keepValue) {
     }
   }
   const sorted = [...counts.keys()].sort();
-  sel.innerHTML =
-    `<option value="">${escapeHtml(t('search.allTypes'))}</option>` +
-    `<option value="__any__">${escapeHtml(t('search.anyTool'))}</option>` +
-    sorted.map(n => `<option value="${escapeHtml(n)}">${escapeHtml(n)} (${counts.get(n)})</option>`).join('');
-  // Restore previous selection if still available
-  if ([...sel.options].some(o => o.value === keepValue)) sel.value = keepValue;
+  setToolOptions([
+    { value: '', label: t('search.allTypes') },
+    { value: '__any__', label: t('search.anyTool') },
+    ...sorted.map(n => ({ value: n, label: `${n} (${counts.get(n)})` }))
+  ], keepValue);
 }
 
 // ── Result rendering ───────────────────────────────────────
+/** Card marker written by the Card tool (`___CARD_HTML___{json}`) — the same
+ *  payload chat.js / persistence.js feed to renderWithRegistry when they draw
+ *  a tool message's card body. */
+const CARD_MARKER_RE = /^___\w+_HTML___/;
+
+/** The card payload to hand to renderWithRegistry for this row, or null when
+ *  the message carries no card body. */
+function cardPayloadOf(r) {
+  if (r.kind !== 'tool') return null;
+  const c = r.content;
+  if (typeof c === 'string' && CARD_MARKER_RE.test(c)) return c;
+  if (c && typeof c === 'object' && typeof c.html === 'string' && c.html) return c;
+  return null;
+}
+
+/** True when the message WAS a Card delivery, so a missing/unrenderable body
+ *  is a visible failure rather than a no-op (row gets an inline warning). */
+function expectsCardBody(r) {
+  return r.kind === 'tool' && cleanToolName(r.tool) === 'Card';
+}
+
+/** Inline warning strip inside a result row (failure must be visible, never
+ *  console-only and never a silently missing card). ui-status-redesign（盘点
+ *  #28，S9 同族）：行首 circle-alert 红图标 + 中性正文。 */
+function mountRowNotice(rowEl, msg) {
+  const existing = rowEl.querySelector('.search-result-card-warn');
+  if (existing) { existing.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + escapeHtml(msg) + '</span>'; return existing; }
+  const el = document.createElement('div');
+  el.className = 'search-result-card-warn';
+  el.setAttribute('role', 'status');
+  el.innerHTML = statusIcon('circle-alert', 12, 'st-err') + '<span>' + escapeHtml(msg) + '</span>';
+  rowEl.appendChild(el);
+  return el;
+}
+
+/**
+ * Render a historical card body inside a result row through the shared card
+ * registry renderer (no bespoke card DOM). Every failure branch is surfaced in
+ * the row itself.
+ * @param {HTMLElement} host  the row's `.search-result-card` container
+ * @param {any} payload       renderWithRegistry payload (marker string/object)
+ * @param {HTMLElement} rowEl the owning result row (notice target)
+ */
+function mountResultCard(host, payload, rowEl) {
+  const fail = (msg) => {
+    host.dataset.cardState = 'failed';
+    mountRowNotice(rowEl, msg);
+  };
+  if (!payload) { fail(t('search.cardUnavailable')); return; }
+  let ok = false;
+  try {
+    ok = renderWithRegistry(host, payload);
+  } catch (e) {
+    console.debug('[chatSearch] card render threw', e);
+    fail(t('search.cardRenderFailed'));
+    return;
+  }
+  if (!ok) { fail(t('search.cardRenderFailed')); return; }
+  host.dataset.cardState = 'rendered';
+  // Late failure detector: a card iframe that got its srcdoc but never reported
+  // a height means its own content/assets never rendered (the height protocol
+  // is the only signal the parent gets from inside the sandboxed frame).
+  setTimeout(() => {
+    if (!host.isConnected || host.dataset.cardState !== 'rendered') return;
+    const frame = host.querySelector('iframe[data-nf-card-id]');
+    if (!(frame instanceof HTMLIFrameElement)) { fail(t('search.cardRenderFailed')); return; }
+    if (frame.hasAttribute('srcdoc') && !frame.style.height) fail(t('search.cardLoadFailed'));
+  }, 4000);
+}
+
 /** One result row element. data-key is the stable identity (sessionId:ord);
- *  data-ts / data-kind / data-attachments are the QA assertion surface. */
+ *  data-ts / data-kind / data-attachments are the QA assertion surface.
+ *  data-kind carries the full kind vocabulary ('user' | 'agent' | 'ai' |
+ *  'tool') — 'agent' = the injected blue-bubble class, a class of its own. */
 function resultElement(r) {
   const kw = (inputById('search-keyword')?.value || '').trim();
   // Queue #2: Pop/Card artifact rows (Canvas-openable) get data-artifact="1" —
@@ -1352,7 +2627,9 @@ function resultElement(r) {
     ? `${escapeHtml(t('search.typeTool'))} · ${escapeHtml(cleanToolName(r.tool))}`
     : r.kind === 'user'
       ? escapeHtml(t('search.typeUser'))
-      : escapeHtml(t('search.typeAi'));
+      : r.kind === 'agent'
+        ? escapeHtml(t('search.typeAgent'))
+        : escapeHtml(t('search.typeAi'));
   const time = r.ts ? formatTime(r.ts) : '';
   const attTypes = (r.attachments || []).map(a => a.type).filter(Boolean).join(' ');
   const tpl = document.createElement('template');
@@ -1364,7 +2641,17 @@ function resultElement(r) {
     </div>
     <div class="search-result-preview">${highlightPreview(r.text, kw)}</div>
   </div>`;
-  return /** @type {HTMLElement} */ (tpl.content.firstElementChild);
+  const el = /** @type {HTMLElement} */ (tpl.content.firstElementChild);
+  // Card-bearing messages get their card body expanded right under the
+  // preview; every other row keeps its exact previous DOM (zero new nodes).
+  const payload = cardPayloadOf(r);
+  if (payload || expectsCardBody(r)) {
+    const host = document.createElement('div');
+    host.className = 'search-result-card';
+    el.appendChild(host);
+    mountResultCard(host, payload, el);
+  }
+  return el;
 }
 
 /** Preview snippet centered on the first keyword match, with <mark> highlights. */
@@ -1406,30 +2693,375 @@ function formatTime(ts) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${hh}:${mm}`;
 }
 
-// ── Jump to message ────────────────────────────────────────
-// DOM matching normalizes away whitespace and non-alphanumeric characters so
-// markdown formatting (**bold**, `code`, list bullets) doesn't break the match.
-const stripForMatch = (s) => (s || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+// ── v3.2 media grid (#491 主题二) ───────────────────────────
+// The unified-index view: one grid per typed tab, grouped 本周/按月, source
+// chips (全部来源/用户/助手), in-category keyword over entry fields. Entries
+// are REFERENCES — thumbnails mint at render time through the single URL
+// builders (inline data URI → uploads route for user refs → nf-file ticket for
+// agent refs); video duration badges lazy-load via <video preload=metadata>
+// (PLAN §3.4 default: zero backend change).
 
-// ── Jump-to-message ────────────────────────────────────────
-// The chat view initially renders only the newest 50 messages and pages older
-// history on scroll-to-top, so a search hit can sit far outside the loaded
-// window — a pure DOM scan fails "most of the time" (2026-08-18 user report).
-// scrollToMessage therefore drives the same WS pagination the scroll listener
-// uses: while the target is unmatched and the view has older pages, request
-// them (50 at a time) and retry, up to JUMP_MAX_PAGES / JUMP_DEADLINE_MS.
-const JUMP_TICK_MS = 250;
-const JUMP_MAX_PAGES = 40;        // 40 × 50 = 2000 messages of lookback
-const JUMP_DEADLINE_MS = 25000;   // overall budget
+/** Rebuild the tab strip from CONTENT_TABS. index.html keeps its static
+ *  scaffold untouched; THIS list is the normative set (v3.2: images/pop tabs
+ *  retired, media/links added, date joins the roving enumeration). */
+function buildTabBar() {
+  const wrap = document.querySelector('#search-modal .search-tabs');
+  if (!wrap) return;
+  wrap.innerHTML = CONTENT_TABS.map(tab => tab === 'date'
+    ? `<button type="button" class="search-tab" id="search-tab-date" role="tab" aria-selected="false" aria-haspopup="dialog" aria-expanded="false" data-tab="date"></button>`
+    : `<button type="button" class="search-tab" id="search-tab-${tab}" role="tab" aria-selected="false" data-tab="${tab}"></button>`
+  ).join('');
+}
+
+// Lifecycle/method contract for the chat-search UI:
+//   initChatSearch() mounts one-time modal bindings; openSearchModal/closeSearchModal
+//     own modal visibility, focus trapping and cleanup of transient search state.
+//   buildTabBar() and mountSourceChips() own the controls' DOM construction;
+//     searchSourceChips owns only the source-filter row and exposes sync/unmount.
+//   chatSearch owns search data, query scheduling, result rendering, calendar
+//     staging, keyboard focus/roving navigation and result-to-chat navigation.
+//   Mobile searchFace only pins scope and contributes its role select; it calls
+//     the compatibility scheduleSearch() method rather than owning search logic.
+// Method compatibility surface: initChatSearch, openSearchModal, closeSearchModal,
+// scheduleSearch and stageConvScope remain the integration methods.
+
+/** Mount the source-chip component; query/filter behavior remains here. */
+function mountSourceChips() {
+  const controls = /** @type {HTMLElement|null} */ (document.querySelector('#search-modal .search-controls'));
+  if (!controls || sourceChips) return;
+  sourceChips = mountSearchSourceChips(controls, {
+    getSource: () => currentSource,
+    onChange: (source) => {
+      currentSource = source;
+      syncSourceChips();
+      // Re-filter from the already-fetched entries — no refetch.
+      if (MEDIA_TABS.includes(currentTab)) {
+        const resultsEl = document.getElementById('search-results');
+        const statusEl = document.getElementById('search-status');
+        if (resultsEl && statusEl) { clearResults(resultsEl); renderMediaGrid(resultsEl, statusEl); }
+      }
+    },
+  });
+}
+
+/** Keep the component state synchronized without exposing its internal DOM. */
+function syncSourceChips() {
+  sourceChips?.sync({ visible: MEDIA_TABS.includes(currentTab) });
+}
+
+/** All index entries across the loaded sessions. */
+function collectEntries() {
+  const out = [];
+  for (const s of streamSessions) for (const e of (s.entries || [])) out.push(e);
+  return out;
+}
+
+/** The grid's data set: tab membership × source chip × in-category keyword. */
+function filteredEntries() {
+  let entries = collectEntries().filter(e => entryMatchesTab(e, currentTab));
+  if (currentSource) entries = entries.filter(e => e.source === currentSource);
+  const kw = (inputById('search-keyword')?.value || '').trim();
+  if (kw) entries = entries.filter(e => entryMatchesKeyword(e, kw));
+  entries.sort((a, b) => (b.ts - a.ts) || (b.msgOrd - a.msgOrd));
+  return entries;
+}
+
+/** Thumbnail URL for one entry: inline data URI wins; user refs ride the
+ *  uploads route; agent refs mint an nf-file ticket — the same two byte legs
+ *  the inline faces use. Returns a promise (ticket minting is async). */
+function resolveEntryThumb(e) {
+  if (e.thumbRef) return Promise.resolve(e.thumbRef);
+  if (!e.ref) return Promise.resolve('');
+  if (e.source === 'user') {
+    let url = '';
+    try { url = attachmentImageUrl(e.ref) || ''; } catch { url = ''; }
+    return Promise.resolve(url);
+  }
+  return ticketUrl(e.ref).catch(() => '');
+}
+
+/** Image-grid thumb bytes for one agent-ref entry, via the **ledger single
+ *  point** (二次加载清剿批 2026-10-24 · #816 同法): `nf:<ref>` hit = blob URL
+ *  (zero fetch — the same bytes the bubble/Canvas faces already registered);
+ *  miss = the existing ticketed fetch + `nfCachePut` (exactly once, so the
+ *  Canvas open of that image then reuses them). Failure ⇒ the pre-batch
+ *  ticketed-URL leg, verbatim. Video thumbs stay on `resolveEntryThumb`
+ *  (Range/metadata-probe semantics ride the native media stack, not the
+ *  byte ledger — same boundary #816 drew for <video>). */
+function resolveEntryImageThumb(e) {
+  if (e.thumbRef || !e.ref || e.source === 'user') return resolveEntryThumb(e);
+  return nfViewerSource({ absPath: e.ref, objectUrl: null })
+    .then(({ url }) => url)
+    .catch(() => resolveEntryThumb(e));
+}
+
+function mediaEntryCard(e) {
+  const card = document.createElement('div');
+  card.className = 'search-media-card';
+  card.dataset.entryType = e.type;
+  card.dataset.source = e.source;
+  card.dataset.ts = String(e.ts || 0);
+  card.dataset.entryId = e.id;
+  // 媒体直开批: the card JOINS the panel's roving enumeration — same option
+  // face the result rows carry (resultElement), so setActive/moveActive/Enter
+  // drive cards through the exact machinery text rows use. key = the entry id.
+  card.dataset.key = e.id;
+  card.id = 'sr-' + e.id;
+  card.setAttribute('role', 'option');
+  card.setAttribute('aria-selected', 'false');
+  card.tabIndex = -1;
+  if (e.type === 'image' || e.type === 'video') {
+    if (e.type === 'image') {
+      const img = document.createElement('img');
+      img.className = 'search-media-thumb';
+      img.alt = e.name;
+      img.loading = 'lazy';
+      img.draggable = false;
+      resolveEntryImageThumb(e).then(url => { if (img.isConnected && url) img.src = url; }).catch(() => {});
+      // 冷启动批④（2026-10-30 SVG 缩略图「?」占位案）：img 为主形态（网格
+      // object-fit 尺寸语言），onerror 回退 <object type="image/svg+xml"> ——
+      // 兜「旧账本 blob 无 MIME / 引擎不认 img 内 SVG」两形；object 形态下
+      // 再错才落 search-media-broken 占位。
+      img.addEventListener('error', () => {
+        if (!img.isConnected || img.dataset.nfObjFallback === '1') { card.classList.add('search-media-broken'); return; }
+        img.dataset.nfObjFallback = '1';
+        const obj = document.createElement('object');
+        obj.className = 'search-media-thumb';
+        obj.type = 'image/svg+xml';
+        obj.data = img.src;
+        obj.setAttribute('aria-label', e.name);
+        obj.addEventListener('error', () => card.classList.add('search-media-broken'));
+        img.replaceWith(obj);
+      });
+      card.appendChild(img);
+    } else {
+      // Duration badge rides the browser's own metadata probe — the payload
+      // carries no duration field (PLAN §3.4: front-end lazy fill chosen over
+      // a backend read leg).
+      const vid = document.createElement('video');
+      vid.className = 'search-media-thumb';
+      vid.preload = 'metadata';
+      vid.muted = true;
+      vid.playsInline = true;
+      resolveEntryThumb(e).then(url => { if (vid.isConnected && url) vid.src = url; }).catch(() => {});
+      const chip = document.createElement('div');
+      chip.className = 'search-media-dur';
+      vid.addEventListener('loadedmetadata', () => {
+        const d = Math.round(vid.duration);
+        if (Number.isFinite(d) && d > 0) {
+          chip.textContent = Math.floor(d / 60) + ':' + String(d % 60).padStart(2, '0');
+        }
+      });
+      card.appendChild(vid);
+      card.appendChild(chip);
+    }
+    const name = document.createElement('div');
+    name.className = 'search-media-name';
+    name.textContent = e.name;
+    name.title = e.name;
+    card.appendChild(name);
+  } else if (e.type === 'link') {
+    const icon = document.createElement('div');
+    icon.className = 'search-media-ext link';
+    icon.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>';
+    const body = document.createElement('div');
+    body.className = 'search-media-linkbody';
+    const label = document.createElement('div');
+    label.className = 'search-media-name';
+    label.textContent = e.name;
+    const url = document.createElement('div');
+    url.className = 'search-media-url';
+    url.textContent = e.ref;
+    body.append(label, url);
+    card.append(icon, body);
+  } else {
+    const icon = document.createElement('div');
+    icon.className = 'search-media-ext' + (e.ext ? '' : ' generic');
+    icon.textContent = (e.ext || 'file').toUpperCase().slice(0, 4);
+    const body = document.createElement('div');
+    body.className = 'search-media-linkbody';
+    const label = document.createElement('div');
+    label.className = 'search-media-name';
+    label.textContent = e.name;
+    label.title = e.ref || e.name;
+    body.appendChild(label);
+    card.append(icon, body);
+  }
+  // Source badge (user / assistant) — the alignment marker (主题三).
+  const badge = document.createElement('span');
+  badge.className = 'search-media-source src-' + e.source;
+  badge.textContent = t(e.source === 'user' ? 'search.sourceUser' : 'search.sourceAgent');
+  card.appendChild(badge);
+  const time = document.createElement('span');
+  time.className = 'search-media-time';
+  time.textContent = e.ts ? formatTime(e.ts) : '';
+  card.appendChild(time);
+  // C5 多选：Cmd/Ctrl 点选、Shift 范围（卡片的直开单击语义保留给裸点）。
+  card.addEventListener('click', (ev) => {
+    if ((fileSelectionMode && currentTab === 'files') || ev.metaKey || ev.ctrlKey || ev.shiftKey) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const idx = modelKeys.get(e.id);
+      if (idx === undefined) return;
+      if (ev.shiftKey) multiRangeTo(idx);
+      else multiToggleAt(idx);
+      return;
+    }
+    activateMediaEntry(e);
+  });
+  return card;
+}
+
+function routeSelectedFile(file) {
+  if (file.kind === 'file') {
+    openPopArtifact(file.filePath, file.title);
+    return;
+  }
+  const resolver = file.source === 'user'
+    ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
+    : undefined;
+  const item = { kind: file.kind, name: file.title, path: file.filePath, src: file.thumbRef || '', resolver };
+  routeMediaClick(item, openPopArtifact, () => openMediaLightbox(item));
+}
+
+/** Grid activation: media (image/video) with an absolute path opens CANVAS —
+ *  the SAME single point the in-chat media card's whole-face click uses (三修 ②
+ *  openMediaItemClick → openPopArtifact → workspace-open-item); the Canvas
+ *  image/video viewer mints its own /api/nf-file ticket and re-mints once on a
+ *  load error, so the reMint leg is the pathway's own — nothing re-wired here.
+ *  Act-and-exit mirrors the file branch below (v2 ruling). A pathless entry
+ *  (a live user attachment whose bytes ride inline — Canvas cannot open a
+ *  pathless file) keeps the #491 主题三 lightbox zoom, the in-chat split.
+ *  媒体点击统一批（P16 · 2026-11-11 作者令）：媒体格的分流上收 routeMediaClick
+ *  单点——手机层 = 系统直开（与聊天流媒体同一矩阵）；桌面行为逐字保留。
+ *  File → the workspace-open-item single point, link → a new tab.
+ *  mobile-image-lightbox 批（2026-11-17）：手机图片改开画廊（routeMediaClick
+ *  手机腿），当前结果集内的全部图片为组（左右滑切图）；桌面逐字不变。 */
+function activateMediaEntry(e) {
+  if (e.type === 'image' || e.type === 'video') {
+    closeSearchModal();
+    const itemOf = (r) => ({
+      kind: r.type,
+      name: r.name,
+      src: r.thumbRef || '',
+      path: r.ref || '',
+      resolver: r.source === 'user'
+        ? (p) => { try { return attachmentImageUrl(p) || ''; } catch { return ''; } }
+        : undefined,
+    });
+    const item = itemOf(e);
+    // 图组 = 当前结果集（lastResults）内的全部图片；视频/文件不入组。
+    const pics = (lastResults || []).filter((r) => r && r.type === 'image');
+    const gi = pics.indexOf(e);
+    const group = gi >= 0 ? pics.map(itemOf) : undefined;
+    routeMediaClick(
+      group ? group[gi] : item,
+      openPopArtifact,
+      () => openMediaLightbox(item),
+      group,
+      gi >= 0 ? gi : undefined
+    );
+  } else if (e.type === 'file') {
+    // Act-and-exit, mirroring the artifact-row routing (v2 ruling): the modal
+    // closes and the file opens in Canvas through the single point.
+    if (e.ref) {
+      closeSearchModal();
+      openPopArtifact(e.ref, e.name);
+    }
+  } else if (e.type === 'link') {
+    window.open(e.ref, '_blank', 'noopener');
+  }
+}
+
+/** Fresh grid render: time groups → headers → card grids. */
+function renderMediaGrid(resultsEl, statusEl) {
+  syncSourceChips();
+  activeIndex = -1;
+  const entries = filteredEntries();
+  lastTotal = entries.length;
+  // 媒体直开批: the grid JOINS the panel's roving enumeration — entries ride
+  // lastResults under their own ids so ArrowUp/Down + Enter run the SAME
+  // machinery the result rows use (setActive/moveActive + the Enter branch);
+  // the cards carry the matching data-key/id/role=option face. The text path
+  // never sees this state: buildModel rebuilds lastResults on every switch.
+  lastResults = entries;
+  modelKeys = new Map(entries.map((en, i) => [en.id, i]));
+  renderedCount = entries.length;
+  if (!entries.length) {
+    const kw = (inputById('search-keyword')?.value || '').trim();
+    resultsEl.innerHTML = kw
+      ? `<div class="search-hint">${escapeHtml(t('search.noResults'))}<br>${escapeHtml(t('search.noResultsSuggestion'))}</div>`
+      : `<div class="search-hint">${escapeHtml(t('search.emptyCategory'))}</div>`;
+    statusEl.textContent = statusSummary();
+    return;
+  }
+  clearResults(resultsEl);
+  statusEl.textContent = statusSummary();
+
+  // C4 分批渲染：首块 RENDER_BATCH 张卡立刻上屏（Top Hit 预选契约不变），
+  // 尾部哨兵可见时续渲下一块（与文本行 renderNextBatch 的
+  // RENDER_BATCH/IntersectionObserver 同思路）——千级条目的网格不再一次
+  // 性卡主线程。分组边界跨块时先封口旧 grid、再开新组的 header+grid。
+  mediaGridObserver?.disconnect();
+  const groups = groupEntriesByTime(entries, new Date());
+  let pi = 0, ci = 0, gridEl = null, firstPainted = false;
+
+  const openGroup = (g) => {
+    if (g.key !== 'undated') {
+      const header = document.createElement('div');
+      header.className = 'search-media-group-header';
+      header.textContent = g.key === 'week'
+        ? t('search.groupThisWeek')
+        : t('search.groupMonth', { n: g.m0 + 1 });
+      resultsEl.appendChild(header);
+    }
+    gridEl = document.createElement('div');
+    gridEl.className = 'search-media-grid';
+    resultsEl.appendChild(gridEl);
+  };
+
+  const paintNext = () => {
+    let painted = 0;
+    while (pi < groups.length && painted < RENDER_BATCH) {
+      const g = groups[pi];
+      if (!gridEl) openGroup(g);
+      const take = Math.min(g.entries.length - ci, RENDER_BATCH - painted);
+      for (let k = 0; k < take; k++) gridEl.appendChild(mediaEntryCard(g.entries[ci++]));
+      painted += take;
+      if (ci >= g.entries.length) { pi++; ci = 0; gridEl = null; }
+    }
+    if (!firstPainted) {
+      firstPainted = true;
+      if (entries.length) setActive(0);   // Top-Hit contract（同 renderStreamFresh）
+    }
+    // 仍有未渲块 ⇒ 尾部挂哨兵，可见续渲；渲完 ⇒ 摘哨兵。
+    mediaGridObserver?.disconnect();
+    mediaGridObserver = null;
+    if (pi < groups.length || ci < (groups[pi]?.entries.length || 0)) {
+      const sentinel = document.createElement('div');
+      sentinel.className = 'search-sentinel';
+      resultsEl.appendChild(sentinel);
+      const ob = new IntersectionObserver((obs) => {
+        for (const en of obs) {
+          if (en.isIntersecting) { paintNext(); break; }
+        }
+      }, { root: resultsEl });
+      ob.observe(sentinel);
+      mediaGridObserver = ob;
+    }
+  };
+
+  paintNext();
+}
 
 // ── Result activation ───────────────────────────────────────
 /**
  * Activate a result row (click or Enter). Pop/Card artifact messages (with a
  * Canvas-openable filePath — same detection as the message bubble's Pop card)
- * open the content DIRECTLY in Canvas, no message jump; everything else keeps
- * the locate-and-jump behavior. The modal closes in both cases (act-and-exit
- * convention — jumpToResult already closes; a Canvas tab opened under an open
- * modal would be hidden behind it).
+ * open the content DIRECTLY in Canvas, no message jump; everything else
+ * locates-and-jumps in the MAIN session (scroll + highlight, 弹窗退场批①
+ * 2026-10-31: the v2 message float window is retired). The modal closes in
+ * both cases (act-and-exit).
  */
 function activateResult(res) {
   const art = popArtifactFromInput(res.tool, res.input);
@@ -1441,22 +3073,102 @@ function activateResult(res) {
   jumpToResult(res);
 }
 
+// ── Jump to message（弹窗退场批①：考古回退 21fab56d5 口径 + msgQuote 滚动纪律）──
+// DOM matching normalizes away whitespace and non-alphanumeric characters so
+// markdown formatting (**bold**, `code`, list bullets) doesn't break the match.
+const stripForMatch = (s) => (s || '').replace(/[^\p{L}\p{N}]/gu, '').toLowerCase();
+
+// The chat view initially renders only the newest 50 messages and pages older
+// history on scroll-to-top, so a search hit can sit far outside the loaded
+// window — a pure DOM scan fails "most of the time" (2026-08-18 user report).
+// scrollToMessage therefore drives the same WS pagination the scroll listener
+// uses: while the target is unmatched and the view has older pages, request
+// them (50 at a time) and retry, up to JUMP_MAX_PAGES / JUMP_DEADLINE_MS.
+const JUMP_TICK_MS = 250;
+const JUMP_MAX_PAGES = 40;        // 40 × 50 = 2000 messages of lookback
+const JUMP_DEADLINE_MS = 25000;   // overall budget
+
 function jumpToResult(res) {
+  // 3(b)：会话档行跳会话窗（jumpToConvResult）——主会话锚点/分页机制全不适用。
+  if (convScope) { jumpToConvResult(res); return; }
+  // 跳转回位胶囊（作者令 2026-11-01）：先于任何 DOM/滚动变更捕获跳转前锚点
+  // （跨会话跳转在模块内主动清锚 = 不设胶囊，锚住在另一条会话流里无法保真）。
+  captureReturnAnchor(res);
   closeSearchModal();
-  switchToSession(res.sessionId);
+  // 手机层：检索面收编在「搜索」页里——关闭后面回聊天根再定位（搜索页 CLOSE_WATCH
+  // 对账弹栈在观察器微任务里跑；goHome 幂等先行清栈，观察器到来时 top 已非
+  // search ⇒ 不会双弹）。
+  if (document.body.classList.contains('mobile-layer')) {
+    import('./mobile/navController.js').then((m) => m.goHome()).catch(() => { /* 导航缺席：聊天根本就在场 */ });
+  }
+  // 跨会话：切会话是异步腿（history 重放落后一拍），scrollToMessage 的
+  // pendingInitialLoad 闸保证初载完成前不发分页请求。
+  if (res.sessionId && res.sessionId !== state.activeSessionId) {
+    import('./sidebar.js').then(({ switchToSession }) => {
+      switchToSession(res.sessionId);
+    }).catch(() => { /* 切换失败：scrollToMessage 的同会话守卫会静默收口 */ });
+  }
   scrollToMessage(res, { pages: 0, start: Date.now(), settleTicks: 0 });
+}
+
+/**
+ * 3(b) 会话档跳转：关闭面板 → 开该会话窗（messages.openConversation，好友/群/
+ * 设备三窗同一入口；手机层 watchChatModal 收编链自动接管）→ `revealMessage`
+ * （会话窗既有跳转缝，2026-10-31 搜索批：自带 keyset 翻旧页 + 滚动居中 + 闪烁）。
+ * 跳转回位胶囊不设——锚住在另一条会话流里无法保真（jumpToResult 跨会话裁定同源）。
+ * `res.ord` = 真实消息 id（normalizeConv 覆写）；定位失败 = 可见 toast，不静默。
+ * @param {any} res 会话档结果行（{sessionId: conversationId, ord: messageId}）
+ */
+async function jumpToConvResult(res) {
+  closeSearchModal();
+  // 🔴 会话档跳转**不走 goHome**（2026-11-06 C5 实证批）：面板是从**会话窗**（手机
+  // 「会话」页）里调起的——closeSearchModal 摘 .on ⇒ CLOSE_WATCH 弹回「会话」页，
+  // 窗还开着（同一会话）。jumpToResult 的 goHome 腿在这里是**复制错位**：它把
+  // 「会话」页一并弹掉 ⇒ closePageFace('conversation') 的异步 closeChat 链与紧接着
+  // 的 openConversation 赛跑（closeChat 摘 overlay ⇒ watchChatModal 对账「弹页」
+  // ⇒ 又一轮 closePageFace ⇒ closeChat 落在**新窗**头上把整窗摘除，实测
+  // reveal=true 后整窗消失）。跳转 = 直接 openConversation（幂等整建）+ revealMessage。
+  try {
+    const msg = await import('./messages.js');
+    await msg.openConversation(res.sessionId);
+    const ok = await msg.revealMessage(res.ord);
+    if (!ok) window.__showToast?.(t('search.jumpFailed'), 'error');
+  } catch (e) {
+    console.debug('[chatSearch] conv jump failed', e && e.message);
+    window.__showToast?.(t('search.jumpFailed'), 'error');
+  }
 }
 
 /** @param {HTMLElement} el */
 function flashRow(el) {
   expandGroupContaining(el); // #346 E10: reveal collapsed turn before scrolling
-  el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  // 就近滚容器（overflow-y auto/scroll 的最近祖先）内平滑居中——禁
+  // scrollIntoView（泄漏进 overflow:hidden 祖先，msgQuote.js 同纪律）。
+  let scroller = el.parentElement;
+  while (scroller && scroller !== document.body) {
+    const oy = getComputedStyle(scroller).overflowY;
+    if (oy === 'auto' || oy === 'scroll') break;
+    scroller = scroller.parentElement;
+  }
+  if (scroller && scroller !== document.body) {
+    const fr = scroller.getBoundingClientRect();
+    const nr = el.getBoundingClientRect();
+    const max = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
+    const top = Math.max(0, Math.min(max,
+      scroller.scrollTop + (nr.top - fr.top) - Math.max(0, (scroller.clientHeight - nr.height) / 2)));
+    scroller.scrollTo({ top, behavior: 'smooth' });
+    // 跳转回位胶囊（作者令 2026-11-01）：定位成功即落地出胶囊；top = 落地滚动的
+    // 目标位（searchReturnPill 的到位豁免用它区分「程序滚动」与「用户滚离」）。
+    armReturnPill(top);
+  }
+  el.classList.remove('search-hit-flash');
+  void el.offsetWidth;   // restart the flash animation on repeat jumps
   el.classList.add('search-hit-flash');
   setTimeout(() => el.classList.remove('search-hit-flash'), 1800);
 }
 
 /**
- * @param {any} res search result ({sessionId, text, ts})
+ * @param {any} res search result ({sessionId, kind, text, summary, content, ts})
  * @param {{pages:number, start:number, settleTicks:number}} st jump state
  */
 function scrollToMessage(res, st) {
@@ -1506,11 +3218,15 @@ function scrollToMessage(res, st) {
     // History fully loaded and still no match — allow a few settle ticks for
     // deferred markdown rendering, then give up.
     if (++st.settleTicks > 4) {
-      (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');
+      // 压缩前归档段的命中（origin='archive'）：消息本体不在回放窗口里（.ui.json
+      // 只留最新段），定位必然落空 ⇒ 报「归档」而非「没找到」（不撒谎的失败态）。
+      (/** @type {any} */ (window)).__showToast?.(
+        t(res.origin === 'archive' ? 'search.jumpArchived' : 'search.jumpFailed'), 'error');
       return;
     }
   } else if (expired) {
-    (/** @type {any} */ (window)).__showToast?.(t('search.jumpFailed'), 'error');
+    (/** @type {any} */ (window)).__showToast?.(
+      t(res.origin === 'archive' ? 'search.jumpArchived' : 'search.jumpFailed'), 'error');
     return;
   }
   setTimeout(() => scrollToMessage(res, st), JUMP_TICK_MS);
@@ -1520,15 +3236,18 @@ function scrollToMessage(res, st) {
 // Rendered results are re-drawn too so badges/status stay localized; the
 // calendar grid (weekday header / month names) re-renders as well.
 window.addEventListener('locale-changed', () => {
-  if (!document.getElementById('search-overlay')?.classList.contains('on')) return;
+  // 跨面直查零新增（R2 基线只许减不许增）：overlay/pop/results/status 一律读
+  // 模块级现装缓存（openSearchModal / openCalendar / renderStreamFresh 维护）。
+  if (!searchOverlayEl?.classList.contains('on')) return;
   renderStaticLabels();
   syncTabsUI();
-  if (calOpen) {
-    const pop = document.getElementById('search-date-popover');
-    if (pop) renderCalendar(pop);
+  if (calOpen && calPopEl) {
+    renderCalendar(calPopEl);
   }
   // Redraw the rendered window in the new locale (badges/times are localized).
-  const resultsEl = document.getElementById('search-results');
-  const statusEl = document.getElementById('search-status');
-  if (resultsEl && lastResults.length) renderStreamFresh(resultsEl, /** @type {HTMLElement} */ (statusEl));
+  const resultsEl = searchResultsEl;
+  const statusEl = searchStatusEl;
+  if (resultsEl && (lastResults.length || MEDIA_TABS.includes(currentTab))) {
+    renderStreamFresh(resultsEl, /** @type {HTMLElement} */ (statusEl));
+  }
 });

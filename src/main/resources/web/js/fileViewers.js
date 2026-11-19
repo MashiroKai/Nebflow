@@ -9,9 +9,14 @@
 // 'url' intentionally stays out of the registry - it is handled inline by
 // canvas.js (no file-extension semantics).
 
-import { escapeHtml } from './viewers/shared.js';
+import { t } from './i18n.js';
+// 底部浮钮让位（canvas 正文底部遮挡修复批 2026-11-05）：正文滚动面末尾安全留白的
+// 唯一接线点。shared.js 不 import 本模块（无环：本文件静态 import 是单向边，
+// viewers/* 也都已静态 import shared.js）。
+import { observeBottomClearance } from './viewers/shared.js';
 import codeViewer, { jsonViewer, csvViewer } from './viewers/monaco.js';
 import markdownViewer from './viewers/markdown.js';
+import textReaderViewer from './viewers/textReader.js';
 import yamlViewer from './viewers/yaml.js';
 import htmlViewer from './viewers/html.js';
 import imageViewer from './viewers/image.js';
@@ -20,6 +25,9 @@ import docxViewer from './viewers/docx.js';
 import xlsxViewer from './viewers/xlsx.js';
 import pptxViewer from './viewers/pptx.js';
 import epubViewer from './viewers/epub.js';
+import mobiViewer from './viewers/mobi.js';
+import videoViewer from './viewers/video.js';
+import largeTextViewer from './viewers/largeText.js';
 
 const registry = new Map();  // itemType → viewer protocol object
 
@@ -31,11 +39,46 @@ export function registerViewer(viewer) {
   registry.set(viewer.name, viewer);
 }
 
+// ── Viewer teardown (阅读/编辑体验优化批 2026-11-01) ──────────────────────
+// 修前形态：ViewerProtocol 只有 render（utils.js:43-50），注册表唯一的入口
+// renderFile 也不留任何「谁渲染了这个 pane」的账 —— 页签关闭时 canvas.js 只
+// 调 disposeTabEditor（Monaco/流式客户端）+ paneEl.remove()，阅读器挂在
+// document/window 上的钩子、observer、pdf.js 文档与 worker 全部继续存活
+// （勘察：readerChrome 每实例 1 keydown + 1 MutationObserver + 1 ResizeObserver，
+// pdf.js 每档 1 个永不 destroy 的 PDFDocumentProxy）。本批先补协议与调用点。
+//
+// 账记在 pane 上（`_nfViewerDispose`）而不是 WeakMap：canvas.js 的
+// disposeTabEditor 是同步函数、且不 import 本模块（modal 化前的既有纪律：
+// canvas 只做动态 import，静态边会成环），一个属性免掉一次动态 import。
+/** @type {string} */
+const DISPOSE_SLOT = '_nfViewerDispose';
+
+/**
+ * 卸载某个 pane 上当前 viewer 的资源（幂等：调过即清账）。
+ * 调用点两条：本文件的 renderFile（重渲前）与 canvas.js disposeTabEditor
+ * （关闭页签的所有路径）。
+ * @param {HTMLElement|null|undefined} pane
+ */
+export function disposeViewer(pane) {
+  if (!pane) return;
+  const slot = /** @type {any} */ (pane);
+  const fn = slot[DISPOSE_SLOT];
+  if (typeof fn !== 'function') return;
+  slot[DISPOSE_SLOT] = null;
+  try {
+    fn();
+  } catch (err) {
+    // 卸载失败不得阻断渲染/关闭链路（与 renderFile 的 catch 同族纪律）。
+    console.warn('Viewer dispose error:', err);
+  }
+}
+
 function registerBuiltIns() {
   for (const viewer of [
     codeViewer, jsonViewer, csvViewer,
     markdownViewer, yamlViewer, htmlViewer,
-    imageViewer, pdfViewer, docxViewer, xlsxViewer, pptxViewer, epubViewer,
+    imageViewer, pdfViewer, docxViewer, xlsxViewer, pptxViewer, epubViewer, mobiViewer,
+    videoViewer,
   ]) {
     // The built-in viewer modules predate the ViewerProtocol typedef and
     // destructure ctx fields with locally-required shapes — cast at this
@@ -46,17 +89,101 @@ function registerBuiltIns() {
 registerBuiltIns();
 
 /**
+ * File name → viewer itemType，判据 = **注册表自身**各 viewer 声明的 `extensions`。
+ *
+ * 🔴 禁新增第二张扩展名表：仓内 ext→itemType 的真源有两处且各自权威 ——
+ * 服务端 `nebflow.core.workspace.FileTypeRegistry`（读文件时定 itemType）与
+ * 本注册表各 viewer 的 `extensions`（渲染面能力）。本函数只把后者**读出来**，
+ * 不复制任何一份表（两张表迟早漂移）。
+ *
+ * @param {string} fileName
+ * @returns {string|null} itemType；无 viewer 认领该扩展名 ⇒ `null`
+ *   （调用方据此落**可见**降级，禁静默）。`code` viewer 不声明扩展名
+ *   （它是未知文本类型的注册表回落项），故不在此返回 'code'。
+ */
+export function itemTypeForFileName(fileName) {
+  const m = /\.([A-Za-z0-9]+)\s*$/.exec(String(fileName || ''));
+  if (!m) return null;
+  const ext = '.' + m[1].toLowerCase();
+  for (const viewer of registry.values()) {
+    if (Array.isArray(viewer.extensions) && viewer.extensions.includes(ext)) return viewer.name;
+  }
+  return null;
+}
+
+/**
+ * #750（nf-file 媒体面高载 503 硬失败批）：渲染腿终态错误的**就地重拉**面。
+ * 修前形态：`Failed to render: <err.message>` 一块死文案——过载 503（上游先于
+ * 网关放弃的裸 503）与确定性失败同貌，用户唯一出路是刷新整页。本面板在既有
+ * 同一句话下加「重试」键（`canvas.retry` 既有 i18n 键；`data-nf-retry` 与
+ * attachmentPreview 的失败面板同族）：点击后原 ctx 原样重入 [[renderFile]]——
+ * 票据链/nfViewerUrl 重走（blob 账本命中则零取数直渲染），不刷新整页。
+ * 动态文本（err.message）一律 textContent 防 XSS。
+ */
+function renderViewerError(pane, ctx, err) {
+  pane.classList.add('scrollable');
+  pane.innerHTML = '';
+  const box = document.createElement('div');
+  box.className = 'canvas-error';
+  const msg = document.createElement('div');
+  msg.textContent = `Failed to render: ${err && err.message ? err.message : err}`;
+  box.appendChild(msg);
+  const retry = document.createElement('button');
+  retry.type = 'button';
+  retry.className = 'viewer-retry-btn';
+  retry.textContent = t('canvas.retry');
+  retry.setAttribute('data-nf-retry', '1');
+  retry.addEventListener('click', () => {
+    if (!pane.isConnected) return;
+    pane.innerHTML = '';
+    renderFile(pane, ctx).catch(() => {});
+  });
+  box.appendChild(retry);
+  pane.appendChild(box);
+}
+
+/**
  * Render file content into a Canvas tab pane using the appropriate viewer.
  * Falls back to the code viewer if no viewer matches.
  * @param {HTMLElement} pane - the tab content pane
  * @param {import('./utils.js').ViewerContext} ctx
  */
 export async function renderFile(pane, ctx) {
-  const viewer = registry.get(ctx.itemType) || registry.get('code');
+  // 上一个 viewer 的资源先卸（重渲/切格式都会走到这里）：协议新增的可选
+  // dispose(pane) 是唯一出口，未实现的 viewer 等于「pane 之外无残留」。
+  disposeViewer(pane);
+  // ── Single-point stream branch (project rule: unified factory + one renderer) ──
+  // A file opened through the streaming descriptor carries NO content: it is
+  // rendered by the read-only virtual-scroll view and fed by on-demand windows.
+  // This is the ONE place that decides it — callers only forward `ctx.stream`.
+  const stream = /** @type {any} */ (ctx).stream;
+  // 阅读器 P1 批（设计稿 §3.1 格式矩阵）：.txt 转换渲染进统一阅读 chrome
+  // （epub/txt/md 共内核）。判据 = itemType 回落 'code' + .txt 扩展名——
+  // 注册表（服务端 FileTypeRegistry）不动，单点分流在此（stream 腿优先，
+  // 大文本仍走 largeText 分块读取视图）。
+  const ext = String(ctx.fileName || ctx.absPath || '').split('.').pop().toLowerCase();
+  const viewer = (stream && stream.kind === 'text')
+    ? largeTextViewer
+    : (ext === 'txt' && ctx.itemType === 'code')
+      ? textReaderViewer
+      : (registry.get(ctx.itemType) || registry.get('code'));
   try {
+    // 记账：本 viewer 声明了 dispose 才记（否则 pane 之外无残留，无事可做）。
+    const withDispose = /** @type {any} */ (viewer);
+    if (typeof withDispose.dispose === 'function') {
+      /** @type {any} */ (pane)[DISPOSE_SLOT] = () => withDispose.dispose(pane);
+    }
     await viewer.render(pane, ctx);
   } catch (err) {
     console.warn('Viewer error:', err);
-    pane.innerHTML = `<div class="canvas-error">Failed to render: ${escapeHtml(err.message)}</div>`;
+    renderViewerError(pane, ctx, err);
+  }
+  // 底部浮钮让位（canvas 正文底部遮挡修复批 2026-11-05）：渲染完成后实测本 pane
+  // 底部浮钮带高度 ⇒ 写 --canvas-bottom-clearance 供滚动面末尾垫消费（含错误态
+  // 面板 —— 错误文案同样不该被浮钮压住）。单点接线：所有内置查看器都走这里。
+  try {
+    observeBottomClearance(pane);
+  } catch (err) {
+    console.warn('Bottom clearance unavailable:', err);
   }
 }

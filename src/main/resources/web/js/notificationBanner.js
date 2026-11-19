@@ -3,13 +3,15 @@
 // (which does state.dom.chat.innerHTML = '') does NOT clear them.
 
 import state from './state.js';
+import { statusIcon } from './utils.js';
 
 let notificationIdCounter = 0;
+const notificationTimers = new Map();
 
 /** Add a notification to the persistent banner.
- *  @param type  'skill' | 'reminder'
- *  @param text  Notification message text
- *  @param opts  { dismissAfter: ms (0 = no auto-dismiss) }
+ *  @param {string} type  family tag — 'skill' | 'reminder' | 'task' | 'conn' | 'device-mail' (styling + dedup key, values are open)
+ *  @param {string} text  Notification message text
+ *  @param {{ dismissAfter?: number }} [opts]  auto-dismiss delay in ms (0 = never)
  */
 export function addNotification(type, text, opts = {}) {
   const id = 'notif-' + (++notificationIdCounter);
@@ -32,11 +34,20 @@ export function addNotification(type, text, opts = {}) {
   renderNotifications();
 
   if (opts.dismissAfter > 0) {
-    setTimeout(() => dismissNotification(id), opts.dismissAfter);
+    const timer = setTimeout(() => {
+      notificationTimers.delete(id);
+      dismissNotification(id);
+    }, opts.dismissAfter);
+    notificationTimers.set(id, timer);
   }
 }
 
 export function dismissNotification(id) {
+  const timer = notificationTimers.get(id);
+  if (timer !== undefined) {
+    clearTimeout(timer);
+    notificationTimers.delete(id);
+  }
   const el = document.querySelector(`.notif-item[data-id="${id}"]`);
   if (el) {
     el.classList.add('dismissing');
@@ -65,11 +76,15 @@ function renderNotifications() {
 
   let html = '';
   toShow.forEach(n => {
-    const iconLabel = n.type === 'skill' ? 'S' : (n.type === 'reminder' ? 'R' : (n.type === 'conn' ? '!' : 'N'));
+    // ui-status-redesign（盘点 #7 / D 组）：conn 型「红方块＋白字符 !」→ wifi-off
+    // 真图标（红 = 图标载体 token），skill/reminder 首字母方块照旧；正文行不动。
+    const iconHtml = n.type === 'conn'
+      ? statusIcon('wifi-off', 13, 'st-err')
+      : (n.type === 'skill' ? 'S' : (n.type === 'reminder' ? 'R' : 'N'));
     const escapedText = escapeHtml(n.text);
     html += `
       <div class="notif-item" data-id="${escapeHtml(n.id)}">
-        <span class="notif-icon ${escapeHtml(n.type)}">${iconLabel}</span>
+        <span class="notif-icon ${escapeHtml(n.type)}">${iconHtml}</span>
         <span class="notif-text">${escapedText}</span>
         <button class="notif-close" data-id="${escapeHtml(n.id)}">&times;</button>
       </div>`;
@@ -81,7 +96,7 @@ function renderNotifications() {
   banner.querySelectorAll('.notif-close').forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        dismissNotification(btn.dataset.id);
+        dismissNotification((/** @type {HTMLElement} */ (btn)).dataset.id);
       });
     });
 }

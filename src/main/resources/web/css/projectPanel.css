@@ -4,16 +4,16 @@
 .project-card .project-fields {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 10px 14px 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-block-y) 14px var(--ds-space-3);
   border-top: 1px solid var(--color-border);
-  margin-top: 10px;
+  margin-top: var(--ds-space-stack-gap);
 }
 
 .project-field {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   min-width: 0;
 }
 
@@ -22,12 +22,12 @@
      different widths and a ragged left edge on the value column reads as
      three unrelated rows instead of one field table. */
   flex: 0 0 76px;
-  font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text-muted);
 }
 
 .project-field-value {
-  font: 400 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 400 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: var(--color-text);
   white-space: nowrap;
   overflow: hidden;
@@ -59,58 +59,92 @@
   border: none;
   background: transparent;
   padding: 0;
-  font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  font: 500 var(--ds-fs-btn)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   color: rgb(var(--sapphire) / 1);
   cursor: pointer;
   transition: opacity 150ms ease;
 }
-.project-link-btn:hover { opacity: 0.75; text-decoration: underline; }
-.project-link-btn:focus { outline: none; }
-.project-link-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: 4px; }
+@media (hover: hover) {
+  .project-link-btn:hover { opacity: 0.75; text-decoration: underline; }
+}
+
+.project-link-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset); border-radius: var(--ds-radius-badge); }
 
 .project-open-btn {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
   border: 1px solid var(--color-border);
-  border-radius: 7px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  margin-left: 4px;
+  margin-left: var(--ds-space-1);
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
-
-.project-open-btn:hover {
-  color: rgb(var(--sapphire) / 1);
-  border-color: rgb(var(--sapphire) / 0.45);
-  background: rgb(var(--sapphire) / 0.08);
+@media (hover: hover) {
+  
+  .project-open-btn:hover {
+    color: rgb(var(--sapphire) / 1);
+    border-color: rgb(var(--sapphire) / 0.45);
+    background: rgb(var(--sapphire) / 0.08);
+  }
 }
 
-.project-open-btn svg { width: 15px; height: 15px; }
 
-/* 归档按钮（迁移方案 v2 §6.1）：卡片头部显式人工归档入口，尺寸/形态对齐
-   .project-open-btn（26×26 icon 按钮，位于 header 摘要右侧）。归档可逆
-   （可取消归档）→ 不用 danger 红语义；静态 ghost、hover 全玻璃材质，
+.project-open-btn svg { width: 15px; height: 15px; }
+.project-open-btn { width: 40px; height: 40px; gap: 3px; }
+.project-open-current-icon, .project-open-app-icon img, .project-open-app-icon svg { width: 20px; height: 20px; object-fit: contain; }
+.project-open-menu {
+  --dropdown-min-width: 180px;
+  --dropdown-item-height: 40px;
+  --dropdown-icon-column: 24px;
+  --dropdown-check-column: 20px;
+  --dropdown-hover: rgb(var(--sapphire) / 0.15);
+  --dropdown-focus: rgb(var(--sapphire));
+  position: fixed; z-index: 10000; min-width: var(--dropdown-min-width); padding: 4px;
+  max-width: calc(100vw - 16px); max-height: calc(100vh - 16px);
+  overflow-y: auto; box-sizing: border-box;
+  border: 1px solid var(--color-border); border-radius: var(--ds-radius-input);
+  box-shadow: var(--shadow-md);
+}
+.project-open-menu button {
+  display: grid; grid-template-columns: var(--dropdown-icon-column) 1fr var(--dropdown-check-column); align-items: center;
+  width: 100%; min-height: var(--dropdown-item-height); padding: 0 8px; border: 0;
+  border-radius: var(--ds-radius-input); background: transparent;
+  color: var(--color-frame-text); text-align: left; cursor: pointer;
+}
+.project-open-menu button[aria-checked="true"], .project-open-menu button:hover, .project-open-menu button:focus-visible { background: var(--dropdown-hover); }
+.project-open-menu button:focus-visible { outline: 2px solid var(--dropdown-focus); outline-offset: -2px; }
+
+/* 取消加载按钮（unmount-console 面板批 2026-11-02）：卡片头部显式人工卸载入口
+   （原 .project-archive-btn 面位回归，类名随语义更替）。尺寸/形态对齐
+   .project-open-btn（26×26 icon 按钮，位于 header 摘要右侧）。卸载可逆（「已卸载」
+   分组可重新加载）→ 中性玻璃，不用 danger 红语义；静态 ghost、hover 全玻璃材质，
    走 sapphire.css Pattern A（同 .session-delete 等 icon 控件族，2026-09-05）。 */
-.project-archive-btn {
+.project-unmount-btn {
   flex: 0 0 auto;
   width: 26px;
   height: 26px;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 150ms ease, color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
 }
-.project-archive-btn svg { width: 15px; height: 15px; }
+.project-unmount-btn svg { width: 15px; height: 15px; }
+.project-unmount-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset); }
 
 /* ── Flow Map 就地视图（同标签页切换，projectTab.openFlowMapInPlace）────────── */
 
@@ -121,9 +155,9 @@
 .flowmap-nav-bar {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--ds-space-3);
   flex: 0 0 auto;
-  padding: 10px 14px;
+  padding: var(--ds-space-block-y) 14px;
   border-bottom: 1px solid var(--color-border);
   background: var(--glass-bg);
 }
@@ -131,23 +165,26 @@
 .flowmap-back-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--ds-space-1h);
   max-width: min(60%, 420px); /* 顶栏合并批：100%→60% 给右侧摘要让位，超出由名字 span ellipsis 承接 */
   min-width: 0;
   border: 1px solid var(--color-border);
-  border-radius: 8px;
+  border-radius: var(--ds-radius-input);
   background: transparent;
   color: var(--color-text);
-  font: 500 12px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  padding: 6px 10px;
+  font: 500 var(--ds-fs-btn)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
   cursor: pointer;
   transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
 }
-.flowmap-back-btn:hover {
-  color: rgb(var(--sapphire) / 1);
-  border-color: rgb(var(--sapphire) / 0.45);
-  background: rgb(var(--sapphire) / 0.08);
+@media (hover: hover) {
+  .flowmap-back-btn:hover {
+    color: rgb(var(--sapphire) / 1);
+    border-color: rgb(var(--sapphire) / 0.45);
+    background: rgb(var(--sapphire) / 0.08);
+  }
 }
+
 .flowmap-back-btn svg { width: 14px; height: 14px; flex: 0 0 auto; }
 .flowmap-back-btn .flowmap-back-name {
   min-width: 0;
@@ -192,13 +229,878 @@
   color: var(--color-text-muted);
 }
 
+/* 「空」标记（empty 形态 · M 档）：项目/团队卡上「暂无描述」这类行内空态标记。 */
 .project-empty-tag {
-  font: 500 10px/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  color: var(--color-text-muted);
-  margin-left: 6px;
-  padding: 2px 6px;
-  border-radius: 4px;
+  font-size: var(--cv-hint-fs-m);
+  font-weight: var(--cv-hint-fw-s);
+  line-height: var(--cv-hint-lh-m);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--cv-hint-color);
+  margin-left: var(--ds-space-1h);
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-badge);
   background: var(--color-frame-hover);
   white-space: nowrap;
   vertical-align: 2px;
 }
+.project-empty-tag[hidden] { display: none; }
+
+/* ── 载入 / 归档动画（tabrealtime 批 2026-09-17）────────────────────────────────
+   取值逐字对齐取证报告 §F「统一取值」表（.nebflow/reports/20260917_tabrealtime-forensic.md）：
+     入场本体 220ms `cubic-bezier(0.16, 1, 0.3, 1)`（friends.css:379 同族）
+     一次性强调环保持 900ms（JS 摘 class）
+     退场本体 280ms `cubic-bezier(0.16, 1, 0.3, 1)`（reminderRowRemove 0.35s 同族，向 0.28s 档收）
+     邻卡 FLIP 240ms `cubic-bezier(0.4, 0, 0.2, 1)`（split.css:503 flex 族）＝ JS 侧，见 web/js/listFlip.js
+     骨架脉冲 1.2s `ease-in-out`（friends.css:364 逐字同值）
+   🔴 零新色值：骨架底 = `--color-frame-hover`（已双档），强调环 = `--sapphire`（唯一
+   主题敏感件 = 环 alpha：亮 0.28 / 暗 0.45，§F-3）。
+   🔴 不复用 `--panel-ease`/`--panel-duration`（base.css:115-116）：其值
+   `cubic-bezier(0.32,0.72,0,1)`/`0.32s` 与 §F 规定的两段取值不等 ⇒ 复用即违反 P5 的
+   「时长/缓动逐字照 §F」。此处只作**本文件局部**动画参数（非设计 token）。 */
+.project-card {
+  --project-card-in-ms: 220ms;
+  --project-card-out-ms: 280ms;
+  --project-card-ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 入场（新卡）：淡入 + 2px 上浮（friends.css:379 `fm-rise-in` 同族，位移仅 2px——
+   本面板每次事件都会定点刷新，位移越小越不打断相邻阅读）。
+   🔴 填充模式必须是 `backwards`（**不能** `both`/`forwards`）：动画层的声明优先于内联
+   样式，`forwards`/`both` 在动画结束后仍把 `to { transform: none }` 钉在**动画层**上
+   ⇒ 会持续压掉邻卡 FLIP 的内联 `translate()` 反向补偿（listFlip.js），表现为归档时
+   邻卡整段跳变。实测（.nebflow/evidence/20260917_projtabrealtime/06-flip-attribution.txt）：
+   `both` 时内联 `translate(-590.672px, 201.594px)` 被计算成 `matrix(1,0,0,1,0,0)`（跳 590.67px）；
+   改 `backwards` 后同刻计算值 = 内联值（首帧零位移，240ms 平滑落位）。
+   `backwards` 只承担「动画开始前的首帧不闪最终态」，动画结束后该动画不再参与层叠。 */
+.project-card.is-entering {
+  animation: projectCardIn var(--project-card-in-ms) var(--project-card-ease) backwards;
+}
+@keyframes projectCardIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 一次性强调环（900ms 后由 JS 摘 class；静态环 ⇒ reduced-motion 下语义不变）。
+   亮/暗两档只差 alpha；用 inset 形态避开卡片自身的 `overflow: hidden`
+   （flowCss.js:31）与滚动容器的裁剪边缘（§F-3④ 焦点环同款判据）。 */
+.project-card.is-new { box-shadow: inset 0 0 0 2px rgb(var(--sapphire) / 0.28); }
+@media (prefers-color-scheme: dark) {
+  .project-card.is-new { box-shadow: inset 0 0 0 2px rgb(var(--sapphire) / 0.45); }
+}
+
+/* 退场（归档）：淡出 + 6px 右滑 280ms；`pointer-events: none` 关掉整卡交互面
+   （§F-3：`reminderRowRemove` 同款；键盘面由 JS 置 tabindex=-1 承担）。 */
+.project-card.is-exiting {
+  animation: projectCardOut var(--project-card-out-ms) var(--project-card-ease) forwards;
+  pointer-events: none;
+}
+@keyframes projectCardOut {
+  0%   { opacity: 1; transform: translateX(0); }
+  100% { opacity: 0; transform: translateX(6px); }
+}
+
+/* 摘要槽骨架（载体脉冲，无 skeleton/shimmer 先例 ⇒ 取「卡形占位 + 复用脉冲」族）：
+   1.2s ease-in-out 无限循环，底色走已双档的 `--color-frame-hover`。 */
+.project-card-summary.is-pending { color: transparent; }
+.project-summary-skeleton {
+  display: inline-block;
+  width: 46px;
+  height: 7px;
+  border-radius: var(--ds-radius-badge);
+  background: var(--color-frame-hover);
+  animation: projectSkeletonPulse 1.2s ease-in-out infinite;
+}
+@keyframes projectSkeletonPulse {
+  0%, 100% { opacity: 0.45; }
+  50%      { opacity: 1; }
+}
+
+/* 新卡「新」标记（屏幕阅读器）：强调环期间挂在 .team-card-header 首位，随环一起摘除。 */
+.project-new-mark {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* 面板内实时状态行（aria-live="polite"，§F-3①）：视觉隐藏、只播报。
+   🔴 挂在独立状态行上（不是 `.team-scroll` 本体）——挂列表本体时定点增删会让
+   逐卡文本被反复播报。 */
+.project-live-status {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ── 右下角「+」钮 + 让位规则（projcreate 批 · 乙案）──────────────────────────
+   材质**零新造**：逐值照 `.canvas-ref-select`（split.css:770-792）——同 40×40 圆、
+   同 `--glass-control-*` 玻璃族、同 hover scale(1.05)、同 opacity .6 静息档；
+   Seat `right:16px` (projfab-ui-impl batch, 2026-09-25 author order: anchor the
+   FAB against the pane's bottom-right edge; supersedes the earlier `right:64px`
+   inset). Alignment basis for the value: symmetric with the untouched
+   `bottom:16px` on the 4px grid, and it matches the sibling corner FAB in this
+   very pane — `.fm-fab` seats at `top:16px; right:16px` (flowMap.css:723), same
+   40x40 `--glass-control-*` circle family.
+   🔴 不改 `split.css:739-766`（那会同时动到 md/html 查看器）。
+   z-index 沿既有浮层档 45（flowMap.css `.fm-fab` 同档；本 pane 现读零竞争件）。 */
+.proj-create-fab {
+  position: absolute;
+  bottom: 16px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 45;
+  color: var(--color-text);
+  transition: all 0.2s ease;
+  opacity: 0.6;
+}
+@media (hover: hover) {
+  .proj-create-fab:hover {
+    background: var(--glass-control-bg-hover);
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+
+.proj-create-fab:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
+  opacity: 1;
+}
+
+/* ── 「项目流程图」圆钮（任务列表文件夹树批 · 方案 A2 · 2026-10-09）────────────
+   L1 顶栏结构入口钮退役（R7）后，L2 唯一命名入口迁挂项目面板列表视图：叠在「+」
+   钮上方 10px（16+40+10=66），材质 = .proj-create-fab 逐值克隆（--glass-control-*
+   玻璃族，零新色值）；icon = lucide network 同源描边（inline svg 17px）。
+   幂等+视图守卫范式复用 attachProjectsCreateFab（delegate-chain 视图摘钮早退）。 */
+.proj-flowmap-fab {
+  position: absolute;
+  bottom: 66px;
+  right: 16px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-control-border);
+  background: var(--glass-control-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 45;
+  color: var(--color-text);
+  transition: all 0.2s ease;
+  opacity: 0.6;
+  padding: 0;
+}
+.proj-flowmap-fab svg { width: 17px; height: 17px; }
+@media (hover: hover) {
+  .proj-flowmap-fab:hover {
+    background: var(--glass-control-bg-hover);
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}
+
+.proj-flowmap-fab:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
+  opacity: 1;
+}
+
+/* 让位：列表底部为「+」钮留空，防遮挡末行卡。
+   🔴 判据（上游 §三.5 实算）：`.team-scroll` 内容盒底边 = 12 + 24 = 36（距面板底），
+   落在钮的纵向带 [16, 56] 内；取 P = 72 = 16 + 40 + 16（4px 基数）⇒ 内容盒底边
+   = 12 + 72 = 84 > 钮顶 56 ⇒ 纵向间隙 28px，两轴全不相交（可机械断言）。
+   🔴 为什么作用域限定而不是直接改 `.team-scroll`：`.team-scroll` 是
+   teams / flow 面板**共用**类（flowCss.js:17）⇒ 直接改会外溢。
+   选择器用 `[data-type="projects"]` 而**不新建 JS class**：pane 上现读已有该属性
+   （canvas.js:580 设；:1339-1346 持久化 `t.type`、:1455-1456 恢复时回传 ⇒ 刷新后仍
+   成立），且沿本仓既有 `[data-type="flow"]` 惯例（flowCss.js:8-11）——零 JS 造类。
+   特异度 (0,3,0) > `.team-scroll` (0,1,0) ⇒ 按特异度胜出，与样式表顺序无关。 */
+.canvas-tab-pane[data-type="projects"] .team-scroll { padding-bottom: 72px; }
+
+/* ══ 面板头「穿顶」带（件4 · 2026-11-05 作者令）══════════════════════════
+   作者原话：「canvas 顶部的这种内容一开始不允许在按钮下，但是滑动后可以从按钮下
+   穿过的这种设计要落实到其他的面板……这样式和 Canvas 的统一。」
+   两条铁律：**元素不许为了腾地方而消失**；**两态都要成立** = 初始不遮挡/不重叠，
+   滚动后才允许从按钮/胶囊下穿过。
+
+   机制单源 = canvas 标题胶囊三件（实测活变量，spec REF 腿钉死）：
+     ① 胶囊 = **滚动容器之外的绝对浮层**：`.canvas-header` position:absolute /
+        top 10 / z-index 30 + 玻璃本体 backdrop-filter（split.css:723-760，
+        sapphire.css:264-267 的 --cv-head-* 几何档）；
+     ② 让位 = **滚动容器自身的 padding-top**（md 面 52px，split.css:4052-4054）：
+        padding 是滚动内容的一部分 ⇒ 初态首内容起笔在胶囊下缘之下，滚动后 padding
+        随内容滚走 ⇒ 内容从胶囊底下真穿过；
+     ③ **不是遮罩**：桌面 canvas 的裙边渐隐已退役（scrollUnderGlass.css:76-78
+        display:none，作者 2026-10-22 裁定「不允许任何渐变蒙层盖在内容上」），
+        穿过读作 = z 序 + 玻璃本体本身；排他是布局性的（行占位 + 下方起算），
+        非 z-index 遮掩（split.css:713-720）。
+
+   token 单源纪律：几何只有一份（sapphire.css 的 --cv-* 声明），本块只给面板族
+   语义别名 —— 禁各面板另抄一套魔数（值 = band 46px / clear 56px）。
+   ─────────────────────────────────────────────────────────────────── */
+:root {
+  --panel-head-top: var(--cv-head-top);
+  --panel-head-h: var(--cv-head-h);
+  --panel-head-band: var(--cv-head-band);
+  --panel-head-clear: var(--cv-head-clear);
+  /* 呼吸缝（= --cv-head-clear 扣掉行带的那 10px，不另立数值）+ 双行让位：
+     面板自带返回条排在 canvas 标题胶囊那一行**之下**（胶囊 10..46 / 自带条
+     56..92），故双行面（有自带返回条的面板）的让位 = 胶囊行 + 呼吸缝 + 自带条高
+     = 56 + 36 + 10 = 102（首内容起笔读数）。 */
+  --panel-head-seam: calc(var(--panel-head-clear) - var(--panel-head-band));
+  --panel-head-2row: calc(var(--panel-head-clear) + var(--panel-head-h) + var(--panel-head-seam));
+}
+
+/* ① 项目列表面板（.team-scroll = 卡片列表滚动体）
+   旧实现（2026-10-22 顶行让位带）把整个滚动体下移 `top: 56px` —— 首卡确实离开了
+   胶囊命中区，代价是滚动体顶缘钉死 56：46..56 成一条死带、56 处一条硬切线，「穿过」
+   态不成立（件4 改前实测 B1 裁剪感知可见顶 73 ≥ 胶囊底 63、B2 带内命中 pane 底）。
+   本批改回 canvas 机制：滚动体顶缘留在 pane 顶（top 0，绝对定位锚 padding box ⇒
+   pane padding 对它无效，故让位必须写在滚动体自身），让位交给它自己的 padding-top
+   ⇒ 首卡仍起笔 56（胶囊底 46 + 10 呼吸缝，读数不变），滚动后首卡从胶囊底下穿过
+   （首卡滚动到 pane 顶缘，内容真正经过胶囊背后）。
+   桌面限定：手机层项目页是页面壳（大标题 + 悬浮返回钮自有让位），见 mobileLayer.css
+   「项目面旧胶囊让位带收编」块。 */
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] {
+  padding-top: 0;
+}
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .team-scroll {
+  top: 0;
+  padding-top: var(--panel-head-clear);
+}
+
+/* ② Flow-Map 族就地视图（项目全景 / 委托链视图）：返回条升为**浮层玻璃胶囊**。
+   与 canvas 标题胶囊同高（--panel-head-h 36）/ 同材质（--glass-bg + blur 24 +
+   saturate 1.15 + 玻璃描边、底缘描边透明化 = 内容从条底下穿过时不衬横线）/
+   同圆角（pill），实测材质逐项 = 胶囊档。
+   🔴 行序（本块第一版踩过的坑，留档防复发）：返回条**不得**占 canvas 标题胶囊
+   那一行（top: --panel-head-top）——两件都是 z 30 浮层，会正面叠印、把页签胶囊盖掉
+   （=「元素为了腾地方而消失」，作者铁律①）。故返回条排第二行 = top: --panel-head-clear
+   （胶囊行下缘 46 + 10 呼吸缝 = 56），视图体让位 = 双行档 --panel-head-2row（102）。
+   视图体（.delegate-chain-view-body）自带 padding-top 让位 ⇒ 初态首内容在条下，
+   滚动后从条底下穿过（滚动体顶缘留在 pane 顶 = 真穿过，不是被裁在条下）。
+   pane 型页（委托链 per-task = pan/zoom 地图面，无纵向滚动轴）同一套几何：
+   只要求「初态不压」（穿过腿对 pan 面无意义，见 spec B1 N/A 注）。 */
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar {
+  position: absolute;
+  top: var(--panel-head-clear);
+  left: 14px;
+  right: 14px;
+  z-index: 30;
+  box-sizing: border-box;
+  height: var(--panel-head-h);
+  padding: 0 var(--ds-space-3);
+  border: var(--ds-border-width, 1px) solid var(--ds-border-glass);
+  border-bottom-color: transparent;
+  border-radius: var(--ds-radius-pill);
+  background: var(--glass-bg);
+}
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .delegate-chain-view-body {
+  padding-top: var(--panel-head-2row);
+}
+/* ②-c 地图面（per-task）同款浮层：地图无纵向滚动轴 ⇒ 只要求「初态不压」，不要求
+   穿过（pan 面不是滚动面）；视图体仍吃 padding-top 让位，地图满幅从条下起笔。 */
+
+/* 弹层专属布局（材质/玻璃/零暗化全部继承 `.wsp-*` 与共享玻璃卡组，此处只补
+   `.wsp-*` 族没有的 textarea 槽位与计数行——材质仍取 `.modal-input`，零新造）。 */
+.proj-create-panel { width: 520px; }
+.proj-create-label {
+  display: block;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text-dim);
+  margin-bottom: var(--ds-space-1h);
+}
+.proj-create-desc {
+  font-family: inherit;
+  line-height: 1.5;
+  min-height: 96px;
+}
+.proj-create-meter {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-1h);
+  min-height: 16px;
+}
+/* 错误行占满左侧，计数器固定右侧。ui-status-redesign（盘点 #35，S9 同族）：
+   错误句转中性字，红由行首 circle-alert 图标（projectTab.js 注入）承载。 */
+.proj-create-error {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
+  color: var(--status-word);
+}
+.proj-create-error .st-ic { width: 12px; height: 12px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
+.proj-create-count {
+  flex: 0 0 auto;
+  font-size: var(--ds-fs-hint);
+  font-variant-numeric: tabular-nums;
+  color: var(--color-frame-text-muted);
+}
+/* 超 500 时染色（ui-status-redesign 盘点 #50）：11.5px 红数字退役 → 数字转
+   中性、行首 triangle-alert 琥珀图标（projectTab.js 注入，非阻断超量=警示档）。 */
+.proj-create-count.is-over { color: var(--status-word); }
+.proj-create-count.is-over .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
+.proj-create-hint { flex: 1; min-width: 0; }
+
+/* ── D4 path slot (author ruling 2026-09-24: "use a path picker to choose, rather
+   than relying on the user typing a path") ──
+   Two pieces: the picker entry button + the chosen-path echo.
+   🔴 Zero new material: the button reuses `.glass-control` (sapphire.css:147 base,
+   light/dark tokens); the echo is a text-only display face (no input box => no
+   "takes input but does nothing" fake control).
+   🔴 The echo uses `min-width:0` + `text-overflow:ellipsis` so a long absolute path
+   cannot push the panel into horizontal overflow (the T6 criterion "the dialog
+   subtree itself has no horizontal overflow" would surface any inner overflow). */
+.proj-create-path-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-inline-gap);
+  margin-bottom: 14px;
+}
+.proj-create-pick {
+  flex: 0 0 auto;
+  font: 500 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text);
+  padding: var(--ds-space-2) 14px;
+  border-radius: var(--ds-radius-button);
+  cursor: pointer;
+}
+.proj-create-pick:hover { background: var(--glass-control-bg-hover); }
+.proj-create-path {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Chosen state: the path is a real value, so it is lifted to body text colour
+   (distinguishing it from the "no path selected" placeholder state). */
+.proj-create-path[data-picked="1"] { color: var(--color-text); }
+
+/* ── ui-device-faces 批（2026-10-10）面A：创建弹层「存放设备」行 ──────────────
+   设计稿 §1（A1 按钮/菜单两态、A2 菜单=self+peers、A3 离线禁选、A4 远端选中形）。
+   🔴 零新色值：全走既有 token（--color-frame-hover / --color-primary /
+   --status-warn-icon / --sapphire rgb-triplet 族 / 既有 rgba 字面量族）；材质 =
+   .header-dropdown-menu 同款玻璃（base.css:301）。 */
+.dev-row {
+  position: relative; /* .dev-menu 的锚（absolute 下拉） */
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  margin-bottom: 14px;
+}
+.dev-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  border: none;
+  border-radius: var(--ds-radius-button);
+  background: var(--color-frame-hover);
+  color: var(--color-text);
+  font: 500 var(--ds-fs-btn) -apple-system, BlinkMacSystemFont, sans-serif;
+  cursor: pointer;
+  transition: background 0.12s;
+}
+@media (hover: hover) {
+  .dev-btn:hover { background: var(--glass-control-bg-hover); }
+}
+
+.dev-btn .dev-ic { display: inline-flex; width: 14px; height: 14px; color: var(--color-frame-text-muted); }
+.dev-btn .dev-ic svg { width: 100%; height: 100%; }
+.dev-btn.is-remote .dev-ic { color: rgb(var(--sapphire)); } /* 远端腿着色（设计稿 A1 远端形） */
+.dev-btn .chev { width: 12px; height: 12px; color: var(--color-frame-text-muted); flex: 0 0 auto; }
+.dev-btn[aria-expanded="true"] .chev { transform: rotate(180deg); }
+.dev-note {
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 设备下拉菜单：材质复刻 .header-dropdown-menu（glass bg + blur + 折射线 + 阴影），
+   锚定在按钮下方。列表项语言自绘（圆点行 .dot + 名 .nm + 通道 .sub + 勾 .ck /
+   离线 tag）——不复用 button::before 伪元素（离线行要点位变灰、tag 要占位）。 */
+.dev-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 300;
+  min-width: 300px;
+  padding: var(--ds-space-1);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-half);
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-button);
+  box-shadow:
+    inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
+    0px 2px 8px rgba(0, 0, 0, 0.04),
+    0px 8px 24px rgba(0, 0, 0, 0.06);
+}
+/* hidden 属性守卫（与 :205 .project-empty-tag[hidden] 同款，本仓惯例）：author
+   `display:flex` 会压过 UA 的 `[hidden]{display:none}`——缺这条时关态菜单仍渲染
+   （min-width:300px 的空玻璃细条 + backdrop blur，盖在设备按钮下方内容区，
+   点测/几何双受害；projcreate-fab T6 窄档 subtree 溢出实测读数 sw300>cw285）。
+   开关仍由 projectTab.js devMenu.hidden 单缝驱动，语义不变。 */
+.dev-menu[hidden] { display: none; }
+@media (prefers-color-scheme: dark) {
+  .dev-menu {
+    box-shadow:
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.04),
+      0px 2px 8px rgba(0, 0, 0, 0.20),
+      0px 8px 24px rgba(0, 0, 0, 0.35);
+  }
+}
+.dev-menu::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 10%;
+  right: 10%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%);
+  pointer-events: none;
+}
+.dev-item {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-inline-x);
+  border: none;
+  border-radius: var(--ds-radius-chip);
+  background: transparent;
+  color: var(--color-frame-text);
+  font-size: var(--ds-fs-hint);
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s;
+}
+.dev-item:hover { background: var(--color-surface); }
+.dev-item.active { color: var(--color-primary); font-weight: 500; }
+.dev-item .dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; background: var(--color-primary); }
+.dev-item .dot.off { background: var(--color-frame-text-muted); opacity: 0.55; }
+.dev-item .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dev-item .sub {
+  flex: 0 0 auto;
+  font: 500 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+  opacity: 0.8;
+}
+.dev-item .ck { width: 14px; height: 14px; margin-left: auto; flex: 0 0 auto; color: var(--color-primary); }
+.dev-item .off-tag {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: var(--ds-space-half) var(--ds-space-1h);
+  border-radius: var(--ds-radius-chip);
+  background: var(--color-frame-hover);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-frame-text-muted);
+}
+/* 离线行禁选（设计稿 A3）：减淡 + 不可点 + cursor 默认——不给「点了必失败」的按钮。 */
+.dev-item.disabled { opacity: 0.5; cursor: default; }
+.dev-item.disabled:hover { background: transparent; }
+.dev-menu-foot {
+  padding: var(--ds-space-1h) var(--ds-space-inline-x) var(--ds-space-1);
+  border-top: 1px solid var(--glass-border);
+  margin-top: var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
+  line-height: 1.45;
+  color: var(--color-frame-text-muted);
+}
+/* 远端选中语义提示行（设计稿 A4）：info 图标（--sapphire）+ 一句执行绑定语义。
+   canvas-hint-text 批：page 形态 ⇒ H 档 12/400/1.45/muted（修前裸 `line-height:
+   1.5` + `--ds-fs-hint`，行高不在三档内）。 */
+.dev-hintline {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-1h);
+  margin: -4px 0 14px;
+  font-size: var(--cv-hint-fs-h);
+  font-weight: var(--cv-hint-fw);
+  line-height: var(--cv-hint-lh-h);
+  color: var(--cv-hint-color);
+}
+.dev-hintline svg { width: 12px; height: 12px; margin-top: var(--ds-space-half); flex: 0 0 auto; color: rgb(var(--sapphire)); }
+/* 远端回显 chip（创建弹层路径行 + 选择器面包屑共用一件）：hard-drive 图形 + 设备名，
+   sapphire 着色（与 .dev-btn.is-remote 同族）。 */
+.path-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-half) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
+  background: rgb(var(--sapphire) / 0.12);
+  color: rgb(var(--sapphire));
+  font: 600 var(--ds-fs-meta)/1.6 -apple-system, BlinkMacSystemFont, sans-serif;
+  vertical-align: -3px;
+}
+.path-chip svg { width: 11px; height: 11px; flex: 0 0 auto; }
+/* 远端失败错误行升级（设计稿 §1.3）：码尾注（mono 弱化）+ 行内动作链接。 */
+.proj-create-error .err-code {
+  font: 600 var(--ds-fs-meta)/1.4 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+}
+.proj-create-error .err-acts { display: inline-flex; gap: var(--ds-space-inline-gap); margin-left: var(--ds-space-2); }
+.proj-create-error .err-act {
+  border: none;
+  background: transparent;
+  padding: 0;
+  font: 500 var(--ds-fs-hint) -apple-system, BlinkMacSystemFont, sans-serif;
+  color: rgb(var(--sapphire));
+  cursor: pointer;
+}
+.proj-create-error .err-act:hover { text-decoration: underline; }
+/* 创建中四步说明（设计稿 §1.2）：spinner + 四枚静态 chips + 步间分隔点。 */
+.creating-row { display: inline-flex; align-items: center; gap: var(--ds-space-1h); flex-wrap: wrap; }
+.creating-row .spin {
+  width: 12px; height: 12px; flex: 0 0 auto;
+  color: rgb(var(--sapphire));
+  animation: proj-create-spin 0.9s linear infinite;
+}
+@keyframes proj-create-spin { to { transform: rotate(360deg); } }
+.creating-row .step { display: inline-flex; align-items: center; gap: var(--ds-space-1); }
+.creating-row .step-n {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px;
+  border-radius: var(--ds-radius-badge);
+  background: var(--color-frame-hover);
+  font: 600 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text-muted);
+}
+.creating-row .step-t { font-size: var(--ds-fs-meta); color: var(--color-frame-text-dim); }
+.creating-row .step-sep { color: var(--color-frame-text-muted); opacity: 0.55; }
+
+/* ── ui-device-faces 批（2026-10-10）面C：项目卡设备徽标 ─────────────────────
+   title 旁只读元数据 chip（本机项目零徽标 = 存量零变化）；离线 = 琥珀点
+   （--status-warn-icon，base.css 亮 #b45309 / 暗 #ffa83c 两档既有 token）。 */
+.dev-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-half) var(--ds-space-2);
+  border-radius: var(--ds-radius-input);
+  background: rgb(var(--sapphire) / 0.12);
+  color: rgb(var(--sapphire));
+  font: 600 var(--ds-fs-meta)/1.5 -apple-system, BlinkMacSystemFont, sans-serif;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+.dev-badge svg { width: 10px; height: 10px; flex: 0 0 auto; }
+.dev-badge .dev-badge-nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+.dev-badge .warn-dot {
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: var(--status-warn-icon);
+  flex: 0 0 auto;
+}
+.dev-badge.is-offline { background: transparent; border: 1px solid var(--glass-border); color: var(--color-frame-text-muted); }
+
+/* ── 台账 #920（2026-10-27）面：描述行恒渲染 + 就地编辑 ─────────────────────
+   描述行恒渲染（空 = 占位文案，编辑钮是唯一入口——无描述项目的可发现性）；
+   编辑态 = 值槽隐藏 + 行后插编辑器（textarea + 保存/取消）。材质零新造：
+   textarea 走 `.modal-input` 基（创建弹层同款），保存钮走 `.glass-control`
+   （sapphire.css 基类），取消 = 纯文本 ghost。🔴 零新色值（全走既有 token）。 */
+.project-desc-row .project-field-value.desc { flex: 1 1 auto; min-width: 0; }
+.project-desc-row .project-field-value.desc.is-empty { color: var(--color-frame-text-dim); font-style: italic; }
+.project-desc-edit-btn {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 1px solid transparent;
+  border-radius: var(--ds-radius-chip);
+  background: transparent;
+  color: var(--color-text-muted);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  padding: 0;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.project-desc-edit-btn svg { width: 13px; height: 13px; }
+@media (hover: hover) {
+  .project-desc-edit-btn:hover {
+    color: rgb(var(--sapphire) / 1);
+    border-color: rgb(var(--sapphire) / 0.45);
+    background: rgb(var(--sapphire) / 0.08);
+  }
+}
+
+.project-desc-edit-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset); }
+.project-desc-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  margin-top: var(--ds-space-half);
+}
+.project-desc-input {
+  width: 100%;
+  font: 400 var(--ds-fs-hint)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  resize: vertical;
+  min-height: 54px;
+}
+.project-desc-acts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--ds-space-2);
+}
+.project-desc-save { font-size: var(--ds-fs-hint); padding: var(--ds-space-1h) 14px; }
+.project-desc-cancel {
+  border: none;
+  background: transparent;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  font: 500 var(--ds-fs-hint)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+.project-desc-cancel:hover { color: var(--color-text); }
+.project-desc-cancel:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); border-radius: var(--ds-radius-chip); }
+
+/* ── 减动效降级（🔴 本文件首个 `prefers-reduced-motion` 块；取证 §E 实测本文件此前无覆盖）──
+   降级后语义仍完整（§F-3）：
+     「哪张新」= 静态强调环保持 ~2s（JS 置时）+ 屏幕阅读器「新」标记 + 状态行播报；
+     「哪张没了」= 同步 remove() + 既有 toast（project.archiveDone）+ 状态行播报；
+     骨架 = `animation: none` + `opacity: .5`（friends.css:1037 同款）；
+     邻卡 FLIP = 关闭（JS 侧 prefersReducedMotion 直接落位）。
+   可断言：animation-name: none ∧ animation-duration ≤ 0.01s。 */
+@media (prefers-reduced-motion: reduce) {
+  .project-card.is-entering,
+  .project-card.is-exiting {
+    animation: none;
+  }
+  .project-summary-skeleton {
+    animation: none;
+    opacity: 0.5;
+  }
+  /* projcreate 批：弹层入场动画（modalIn 0.2s）与「+」钮过渡在减动效下关闭
+     （断言 animation-duration ≤ 0.01s）。 */
+  .proj-create-panel { animation-duration: 0.01s; }
+  .proj-create-fab { transition-duration: 0.01s; }
+  @media (hover: hover) {
+    .proj-create-fab:hover { transform: none; }
+  }
+  /* ui-device-faces 批：创建中 spinner 停转（语义仍在——四步 chips 静态可读）。 */
+  .creating-row .spin { animation: none; }
+  .dev-btn, .dev-item { transition-duration: 0.01s; }
+}
+
+/* ── delegate-chain 就地视图（S10 per-task 链视图 ＋ S11 结构总视图，
+   #1228 换源接线批 · delegateChainView.js）。骨架复用上方 .flowmap-nav-bar；
+   此处只承担视图体/泳道/卡片列表布局——零新色值（--color-* 与 sapphire token）。 */
+.delegate-chain-view-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* S10 fail-soft 态（§16 键 7）：整块可点重试（行保留在任务面板，视图体只呈现
+   重试面——FSM loaderr 终态）。muted 克制文案 + 虚线框，读作「暂不可达」非报错。 */
+.delegate-chain-failsoft {
+  align-self: stretch;
+  padding: 26px var(--ds-space-4);
+  border: 1px dashed var(--color-border);
+  border-radius: var(--ds-radius-xl);
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 400 var(--ds-fs-body)/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  cursor: pointer;
+  transition: color 150ms ease, border-color 150ms ease, background 150ms ease;
+}
+.delegate-chain-failsoft:hover {
+  color: rgb(var(--sapphire) / 1);
+  border-color: rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.06);
+}
+
+.delegate-chain-mono {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 var(--ds-fs-meta)/1.5 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+}
+
+/* 卡片列表：fm-node 卡（fmNodeCard 单源渲染件）流式布局——plain 卡无绝对定位，
+   宽度对齐主图卡（124px，FLOW_CSS .solar-node 既有口径），横排可换行。 */
+.delegate-chain-list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--ds-space-3);
+}
+.delegate-chain-card { flex: 0 0 auto; }
+/* 卡片流内定位钉（delegate-ui 批 2026-10-08 · R3 聚合分组时实测暴露；两层架构批
+   2026-10-09 扩 L1 任务视图）：FLOW_CSS `.solar-node` 的 position:absolute（主图
+   画布口径）使 plain 卡全部压在 flex 容器 static position 上彼此叠盖（abspos flex
+   子项 = 「唯一 flex item」静位口径）——链视图卡列表（L2 平铺）改流内定位
+   （relative），分组头/多卡横排才成立；主图画布（无本组祖先）零触碰。 */
+.delegate-chain-list .solar-node.fm-node { position: relative; }
+
+/* 候定集/未知帧透传行（只透传不解读：kind + 时刻原文，弱化等宽显示）。 */
+.delegate-chain-frames {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-half);
+  padding-top: var(--ds-space-2);
+  border-top: 1px dashed var(--color-border);
+}
+.delegate-chain-frame {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 500 var(--ds-fs-meta)/1.6 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+  opacity: 0.75;
+}
+
+/* ── S11 结构总视图 ─────────────────────────────────────────────── */
+.delegate-structure-head {
+  font: 600 var(--ds-fs-title)/1.4 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: var(--color-text);
+  padding-bottom: var(--ds-space-half);
+}
+.delegate-structure-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-block-y) var(--ds-space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--ds-radius-xl);
+  background: var(--color-surface);
+}
+.delegate-structure-label {
+  font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+}
+.delegate-structure-seat,
+.delegate-structure-lane-item {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+}
+.delegate-seat-executor { flex: 0 0 auto; display: inline-flex; }
+.delegate-structure-lane-item.is-head .delegate-lane-pos {
+  background: rgb(var(--sapphire) / 0.14);
+  color: rgb(var(--sapphire) / 1);
+}
+.delegate-lane-pos {
+  flex: 0 0 auto;
+  min-width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-chip);
+  background: var(--color-frame-hover);
+  font: 600 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-text-muted);
+}
+
+/* 卡内执行器徽标（fm-node head 行首占位；图标本体 = executorIcons 既有件）。 */
+.delegate-card-executor {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+}
+
+/* ── delegate-ui 修订批（用户九点②③④⑧ · 2026-10-09）────────────────────────
+   ③ 链摘要行：链小点 + 「链 N 步」同一行（多节点链；单节点链不渲染）。
+   ④ 待合并链卡名次 chip（引擎位次透传；FIFO 泳道已撤——零连线零明细行）。
+   ⑧ 结构视图右上角归档 FAB（.delegate-archive-fab 样式随 delegateChainView.js
+   自注入块——此处只放链摘要行/名次 chip 两个静态件）。 */
+.delegate-chain-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  min-width: 0;
+  flex-wrap: wrap;
+}
+.delegate-chain-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-text-muted, #888);
+  opacity: 0.55;
+}
+.delegate-chain-dot.st-running { background: var(--color-primary, #07c160); opacity: 1; }
+.delegate-chain-dot.st-completed { background: var(--color-success, #4caf50); opacity: 1; }
+.delegate-chain-dot.st-failed { background: var(--status-error-icon, #f44336); opacity: 1; }
+.delegate-chain-dot.st-cancelled { background: var(--color-warning, #ff9800); }
+.delegate-chain-dot.st-blocked { background: rgb(var(--amber)); opacity: 1; }
+.delegate-chain-dot.st-pending { background: var(--color-text-muted, #888); }
+.delegate-chain-steps {
+  flex: 0 0 auto;
+  margin-left: var(--ds-space-1);
+  font: 600 var(--ds-fs-meta)/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--color-text-muted);
+}
+.delegate-card-rank {
+  flex: 0 0 auto;
+  min-width: 16px;
+  height: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-chip);
+  background: rgb(var(--sapphire) / 0.14);
+  font: 600 var(--ds-fs-meta)/1 ui-monospace, SFMono-Regular, monospace;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--sapphire));
+}
+
+/* Read-only legacy ledger rows (the managed-workspace mechanism is retired). */
+.project-workspaces {
+  padding: var(--ds-space-3);
+  border-top: var(--ds-border-width) solid var(--ds-border-hairline);
+  color: var(--ds-text);
+  font-size: var(--ds-fs-hint);
+  overflow-wrap: anywhere;
+}
+.project-workspaces > summary { cursor: pointer; }
+.project-workspaces-list { list-style: none; padding: 0; margin: 0; }
+.project-workspaces-row { padding-block: var(--ds-space-2); border-bottom: var(--ds-border-width) solid var(--ds-border-hairline); }
+.project-workspaces-row > label { display: flex; align-items: center; gap: var(--ds-space-2); }
+.project-workspaces-meta { color: var(--ds-text-muted); margin-block: var(--ds-space-2); }
+.project-workspaces [hidden] { display: none; }

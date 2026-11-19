@@ -4,9 +4,9 @@ import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.agent.AgentState
-import nebflow.core.PathUtil
+import nebflow.actor.AgentState
 import nebflow.core.tools.{BashTool, GlobTool, GrepTool, ReadTool, ToolContext, WriteTool}
+import nebflow.shared.PathUtil
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
@@ -40,7 +40,7 @@ class SandboxSpec extends CatsEffectSuite:
     // 无此环境变量，行为与原实现完全一致）。
     val pinnedBase = sys.env.get("NB_SANDBOX_SPEC_DATAROOT") match
       case Some(dir) => os.Path(dir)
-      case None      => os.home / s".nb-sbx-dataroot-${System.nanoTime()}"
+      case None => os.home / s".nb-sbx-dataroot-${System.nanoTime()}"
     val pinned = if sys.env.contains("NB_SANDBOX_SPEC_DATAROOT") then
       val p = pinnedBase / s"run-${System.nanoTime()}"
       os.makeDir.all(p)
@@ -75,7 +75,7 @@ class SandboxSpec extends CatsEffectSuite:
     os.write.over(pinned / "agents" / "Coder" / "memory.md", "coder memory NBX_CODER_MEM_SECRET")
     // 根层凭据负向样本（vps.env/*.env/*credentials*/stt-config/model-presets/nebflow.json/User.md）
     os.write.over(pinned / "vps.env", "VPS_SECRET=1")
-    os.write.over(pinned / "nebflow.json", "{}")
+    os.write.over(pinned / nebflow.shared.Branding.configFileName, "{}")
     os.write.over(pinned / "User.md", "# user private")
     os.write.over(pinned / "model-presets.json", "{}")
     os.write.over(pinned / "stt-config.json", "{}")
@@ -84,6 +84,8 @@ class SandboxSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(pinned)
     pinnedDataRoot = Some(pinned)
     super.beforeEach(context)
+
+  end beforeEach
 
   /** 构造以 tmpdir 为根的开启态策略（真实 canonical——macOS /tmp→/private/tmp）。 */
   private def policyIn(tmp: os.Path, cfg: SandboxConfig = SandboxConfig()): SandboxPolicy =
@@ -112,14 +114,17 @@ class SandboxSpec extends CatsEffectSuite:
     // 2026-09-05 数据根入可写面（作者 20:24 裁定）：PathUtil.dataRoot 必须在
     // 可写根（beforeEach 已钉 dataRoot——断言即「跟随数据根推导、不硬编码」的
     // 机制证明；nebflowDataRoot 与 root 同源，Nebula 会话 root=dataRoot 去重）
-    assert(roots.exists(_.toString == SandboxPolicy.canonicalize(PathUtil.dataRoot.wrapped).toString),
-      s"dataRoot must be writable: $roots")
+    assert(
+      roots.exists(_.toString == SandboxPolicy.canonicalize(PathUtil.dataRoot.wrapped).toString),
+      s"dataRoot must be writable: $roots"
+    )
     // 写 ⊆ 读不变量（2026-09-06 读宽批：readableRoots 恒为全盘根，不变量自动
     // 成立——承重断言 = readableRoots 恒为 "/" 且 contains 对写根恒真）
     val readable = SandboxPolicy.readableRoots(p)
     assertEquals(readable, List(os.Path("/")), "读宽：readableRoots 必须恒为全盘根")
-    roots.foreach(r => assert(SandboxPolicy.contains(readable.head.wrapped, r.wrapped),
-      s"writable must be readable: $r"))
+    roots.foreach(r =>
+      assert(SandboxPolicy.contains(readable.head.wrapped, r.wrapped), s"writable must be readable: $r")
+    )
   }
 
   test("A.2: canonicalize 解析 symlink（/tmp→/private/tmp）且对已存在部分用内核 realpath 语义") {
@@ -148,53 +153,62 @@ class SandboxSpec extends CatsEffectSuite:
       List("skills", "prompts", "docs", "tool-results", "uploads", "logs", "sessions", "projects", "agents")
         .map(d => PathUtil.dataRoot / d) :+ PathUtil.dataRoot
     samples.foreach { s =>
-      assert(SandboxPolicy.contains(readable.head.wrapped, SandboxPolicy.canonicalize(s.wrapped)),
-        s"读宽：$s 必须落在全盘读面内")
+      assert(SandboxPolicy.contains(readable.head.wrapped, SandboxPolicy.canonicalize(s.wrapped)), s"读宽：$s 必须落在全盘读面内")
     }
   }
 
   // ------------------------------------------------------------------
-  // §A.8-1：SANDBOX_DENIED 消息含 canonical + roots + 自纠指引
+  // §A.8-2：词法冗余路径归一后放行（`<root>/../escape.txt` 拒断言已随 R1=a1 写根 contain 退役删除）
   // ------------------------------------------------------------------
 
-  test("A.8-1: Write /etc/hosts → SANDBOX_DENIED，含 canonical 路径、Writable roots、指引") {
-    val tmp = os.Path(Files.createTempDirectory("nb-sbx-msg"))
-    val res = FileSandbox.checkWrite(ctxIn(tmp), "/etc/hosts")
-    res match
-      case Left(err) =>
-        assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-        // 跨平台：darwin /etc 符号链 → canonical=/private/etc/hosts；Linux → /etc/hosts。
-        assert(err.message.contains(SandboxPolicy.canonicalize(Paths.get("/etc/hosts")).toString),
-          s"应含 canonical 路径: ${err.message}")
-        assert(err.message.contains(s"outside sandbox root"), err.message)
-        assert(err.message.contains("Writable roots:"), err.message)
-        assert(err.message.contains("Readable roots:"), err.message)
-        assert(err.message.contains("report to the dispatcher"), s"应含自纠指引: ${err.message}")
-      case Right(_) => fail("/etc/hosts 写必须被拒")
-  }
-
   // ------------------------------------------------------------------
-  // §A.8-2：.. 逃逸拒；词法冗余归一放行
+  // 隔离根（本 suite 的夹具根）——唯一推导，见 homeLikeRoot
   // ------------------------------------------------------------------
 
-  /** 沙箱工作区会话逃生门（见 beforeEach 注释）：宿主/CI = os.home（不在任何
-    * 读写面，「项目根/外部目标」语义成立）；注入 NB_SANDBOX_SPEC_DATAROOT 时
-    * 落到注入根下（由测试驱动方指定在既非系统读面、也非 policy root/tmp 的
-    * 目录，语义等价）。 */
-  private def homeLikeRoot(tag: String): os.Path =
+  /** 系统临时根（java.io.tmpdir；未置位时回落 /tmp）。 */
+  private val systemTempRoot: os.Path =
+    os.Path(Paths.get(sys.props.getOrElse("java.io.tmpdir", "/tmp")))
+
+  /**
+   * 隔离根基址：注入 NB_SANDBOX_SPEC_DATAROOT ⇒ 用注入根（留证/隔离实例驱动
+   * 时显式指定，由驱动方保证既非系统读面、也非 policy root/tmp）；未注入 ⇒
+   * 临时目录下一级 `java.io.tmpdir/nb-sbx-spec`。🔴 默认绝不落 $HOME（旧默认
+   * os.home 会把夹具写进用户 home 并跨运行累积）。
+   */
+  private val specScratchRoot: os.Path =
     sys.env.get("NB_SANDBOX_SPEC_DATAROOT") match
-      case Some(dir) => os.Path(dir) / s".nb-sbx-$tag"
-      case None      => os.home / s".nb-sbx-$tag"
+      case Some(dir) => os.Path(dir)
+      case None => systemTempRoot / "nb-sbx-spec"
 
-  test("A.8-2: <root>/../escape.txt 拒；<root>//sub//new.txt 归一后放行且返回 fresh 路径") {
-    // root 用 home 下目录（模拟真实 project root）——tmpdir 本身在 java.io.tmpdir
-    // 可写根内，<tmpdir>/../escape 会落回 tmpdir 而合法可写，不能当项目根用。
+  /**
+   * 留证开关：显式 NB_SANDBOX_SPEC_KEEP=1（或 true）⇒ afterEach 保留隔离根与
+   * 夹具（默认关闭 = 无条件清理）。
+   */
+  private val keepFixtures: Boolean =
+    sys.env.get("NB_SANDBOX_SPEC_KEEP").exists(v => v == "1" || v.equalsIgnoreCase("true"))
+
+  /**
+   * 整棵清隔离根前的保险：注入根若被误配成共享目录（/、/tmp、java.io.tmpdir、
+   * home 本身），只跳过整棵清——绝不删共享根。
+   */
+  private def isSharedScratchRoot(p: os.Path): Boolean =
+    List(os.root, os.Path("/tmp"), systemTempRoot, os.home)
+      .exists(s => SandboxPolicy.canonicalize(p.wrapped) == SandboxPolicy.canonicalize(s.wrapped))
+
+  /**
+   * 沙箱工作区会话逃生门（见 beforeEach 注释）：宿主/CI = 隔离根（临时目录下
+   * 一级，不在任何读写面，「项目根/外部目标」语义成立）；注入
+   * NB_SANDBOX_SPEC_DATAROOT 时落到注入根下（语义等价）。
+   */
+  private def homeLikeRoot(tag: String): os.Path =
+    specScratchRoot / s".nb-sbx-$tag"
+
+  test("A.8-2: <root>//sub//new.txt 归一后放行且返回 fresh 路径（`<root>/../escape.txt` 拒断言已随 R1=a1 退役删除）") {
+    // root 用隔离根下的项目根（tmp 系，绝不落 $HOME）：`<root>/../escape` 现落在可写
+    // tempRoot 内、写根 contain 已退役（R1=a1），逃逸断言已随本批删除。
     val tmp = homeLikeRoot(s"root-${System.nanoTime()}")
     os.makeDir.all(tmp)
     val ctx = ctxIn(tmp)
-    FileSandbox.checkWrite(ctx, s"$tmp/../escape.txt") match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"))
-      case Right(_) => fail("../ 逃逸必须被拒")
     FileSandbox.checkWrite(ctx, s"$tmp//sub//new.txt") match
       case Right(p) =>
         assertEquals(p.toString, SandboxPolicy.canonicalize(Paths.get(s"$tmp/sub/new.txt")).toString)
@@ -206,16 +220,18 @@ class SandboxSpec extends CatsEffectSuite:
   // §A.8-3：root 内 symlink 指外 → 写拒读放（2026-09-06 读宽）；root 内深层新文件创建成功
   // ------------------------------------------------------------------
 
-  /** home 下的外部目标（home 不在任何 read/writable root——/private/var 等
-    * tempdir 落点反而 readable/writable，不能当「外部」用）。先清残留再建。
-    * 逃生门见 homeLikeRoot。 */
+  /**
+   * home 下的外部目标（home 不在任何 read/writable root——/private/var 等
+   * tempdir 落点反而 readable/writable，不能当「外部」用）。先清残留再建。
+   * 逃生门见 homeLikeRoot。
+   */
   private def outsideDir(tag: String): os.Path =
     val d = homeLikeRoot(s"outside-$tag")
     os.remove.all(d)
     os.makeDir.all(d)
     d
 
-  test("A.8-3: root 内 symlink 指外写拒读放（2026-09-06 读宽）；深层新文件 checkWrite 放行") {
+  test("A.8-3: root 内深层新文件 checkWrite 放行（symlink 指外写拒/读放断言已随 R1=a1 + 读宽退役；夹具保留）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-sym"))
     val outside = outsideDir("sym")
     val outsideFile = outside / "target.txt"
@@ -224,15 +240,6 @@ class SandboxSpec extends CatsEffectSuite:
     os.symlink(link, outsideFile) // os.symlink(链接落点, 指向目标)
 
     val ctx = ctxIn(tmp)
-    // 写拒（canonicalize 解析出 symlink → 越界；写窄零变化）
-    FileSandbox.checkWrite(ctx, link.toString) match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail(s"指向外部的 symlink 写必须被拒: $link")
-    // 读放行（2026-09-06 读宽批翻转：全盘读面下 symlink 指外普通文件可读——
-    // canonicalize 解析去向落入全盘根；与上方写拒构成读宽写窄不对称性取证）
-    FileSandbox.checkRead(ctx, link.toString) match
-      case Right(_) => () // 读宽：指外 symlink 读放行
-      case Left(err) => fail(s"读宽后指向外部的 symlink 读应放行: ${err.message}")
 
     // root 内深层新文件：放行且真实可写
     val deep = tmp / "a" / "b" / "new.txt"
@@ -276,10 +283,12 @@ class SandboxSpec extends CatsEffectSuite:
     val wide = homeLikeRoot(s"wide-${System.nanoTime()}")
     os.makeDir.all(wide)
     os.write.over(wide / "wide.txt", "wide-ok")
-    GlobTool.call(
-      JsonObject("pattern" -> "*.txt".asJson, "path" -> wide.toString.asJson),
-      ctx
-    ).unsafeRunSync() match
+    GlobTool
+      .call(
+        JsonObject("pattern" -> "*.txt".asJson, "path" -> wide.toString.asJson),
+        ctx
+      )
+      .unsafeRunSync() match
       case Right(out) => assert(out.contains("wide.txt"), s"读宽后根外搜索根应放行且命中: $out")
       case Left(err) => fail(s"读宽后根外搜索根应放行: ${err.message}")
     os.remove.all(wide)
@@ -304,7 +313,8 @@ class SandboxSpec extends CatsEffectSuite:
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-relglob"))
     os.makeDir.all(tmp / "sub")
     os.write.over(tmp / "sub" / "found.txt", "x")
-    val res = GlobTool.call(JsonObject("pattern" -> "*.txt".asJson, "path" -> "sub".asJson), ctxIn(tmp))
+    val res = GlobTool
+      .call(JsonObject("pattern" -> "*.txt".asJson, "path" -> "sub".asJson), ctxIn(tmp))
       .unsafeRunSync()
     res match
       case Right(out) => assert(out.contains("found.txt"), out)
@@ -328,10 +338,12 @@ class SandboxSpec extends CatsEffectSuite:
     // 旧行为：root 外绝对路径放行
     val outside = Files.createTempDirectory("nb-sbx-off-out")
     val target = outside.resolve("free.txt")
-    val res = WriteTool.call(
-      JsonObject("file_path" -> target.toString.asJson, "content" -> "free".asJson),
-      ctx
-    ).unsafeRunSync()
+    val res = WriteTool
+      .call(
+        JsonObject("file_path" -> target.toString.asJson, "content" -> "free".asJson),
+        ctx
+      )
+      .unsafeRunSync()
     res match
       case Right(_) => assert(Files.readString(target) == "free")
       case Left(err) => fail(s"off 时 root 外写必须放行: ${err.message}")
@@ -361,7 +373,7 @@ class SandboxSpec extends CatsEffectSuite:
   // ------------------------------------------------------------------
 
   // ------------------------------------------------------------------
-  // 2026-09-05 数据根入可写面（作者 20:24 裁定）：锚点 (a) 正向 + (b) 反向
+  // 2026-09-05 数据根入可写面（作者 20:24 裁定）：锚点 (a) 正向（(b) 反向随写根 contain 退役删除）
   // ------------------------------------------------------------------
 
   test("WFROOT+: 数据根整目录可写——projects/<测试名>/tmpfile 与 User.md 写放行（锚点 a）") {
@@ -377,49 +389,12 @@ class SandboxSpec extends CatsEffectSuite:
         assert(Files.readString(fresh) == "wfroot-ok", "数据根内写必须真实落盘")
       case Left(err) => fail(s"数据根子路径写必须放行: ${err.message}")
     // (a) User.md 同款路径（记忆主文件——残留风险钉死：从此节点可直写）
-    assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "User.md").toString).isRight,
-      "User.md 随数据根整目录放行可写（残留风险=纪律约束）")
+    assert(
+      FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "User.md").toString).isRight,
+      "User.md 随数据根整目录放行可写（残留风险=纪律约束）"
+    )
     // 定义层写放行（plugin/agent 定义层直改场景——beforeEach fixture 既有文件）
-    assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "agents" / "Nebula.md").toString).isRight,
-      "定义层文件应随数据根可写")
-  }
-
-  test("WFROOT-: 沙箱根外普通系统路径写仍拒——~/Desktop、/etc（锚点 b）") {
-    val tmp = os.Path(Files.createTempDirectory("nb-sbx-wfroot-neg"))
-    val ctx = ctxIn(tmp)
-    FileSandbox.checkWrite(ctx, (os.home / "Desktop" / "nb-wfroot-deny.txt").toString) match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("~/Desktop 写必须仍拒（数据根不等于 home）")
-    FileSandbox.checkWrite(ctx, "/etc/hosts") match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("/etc/hosts 写必须仍拒（/private/etc 只在读面，不在写面）")
-  }
-
-  // ------------------------------------------------------------------
-  // 读宽写窄（2026-09-06 作者裁定，对齐业界标准）：读面全盘放开 + 写面零变化
-  // 的不对称性锚点。读样本 = 会话根外随意路径（主仓 docs/assets 同形态）+ 系统
-  // 文件；写对照 = 同路径 SANDBOX_DENIED。
-  // ------------------------------------------------------------------
-
-  test("READWIDE: 读宽写窄不对称——会话根外读放行（home 随意路径/系统文件），同路径写仍 SANDBOX_DENIED") {
-    val tmp = os.Path(Files.createTempDirectory("nb-sbx-readwide"))
-    val ctx = ctxIn(tmp)
-    // 会话根外普通文件（home 下随意路径——不在写面）：读放行（读宽核心语义）
-    val outside = homeLikeRoot(s"rw-${System.nanoTime()}")
-    os.makeDir.all(outside)
-    os.write.over(outside / "dark.png", "png-bytes")
-    assert(FileSandbox.checkRead(ctx, (outside / "dark.png").toString).isRight,
-      "读宽：会话根外普通文件必须可读（主仓 docs/Nebflow/assets 同形态）")
-    // 同一路径写仍拒（写窄零变化——不对称性钉死）
-    FileSandbox.checkWrite(ctx, (outside / "dark.png").toString) match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("写窄：会话根外同路径写必须仍拒")
-    // 系统文件：读放行 + 写拒对照（/private/etc 只读，写面不含）
-    assert(FileSandbox.checkRead(ctx, "/etc/hosts").isRight, "读宽：/etc/hosts 必须可读")
-    FileSandbox.checkWrite(ctx, "/etc/hosts") match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("写窄：/etc/hosts 写必须仍拒")
-    os.remove.all(outside)
+    assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "agents" / "Nebula.md").toString).isRight, "定义层文件应随数据根可写")
   }
 
   // ------------------------------------------------------------------
@@ -451,10 +426,12 @@ class SandboxSpec extends CatsEffectSuite:
 
   test("READLIST+: ReadTool 端到端读 tool-results 内容成功") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-readlist-e2e"))
-    val res = ReadTool.call(
-      JsonObject("file_path" -> (PathUtil.dataRoot / "tool-results" / "tr-001" / "result.json").toString.asJson),
-      ctxIn(tmp)
-    ).unsafeRunSync()
+    val res = ReadTool
+      .call(
+        JsonObject("file_path" -> (PathUtil.dataRoot / "tool-results" / "tr-001" / "result.json").toString.asJson),
+        ctxIn(tmp)
+      )
+      .unsafeRunSync()
     res match
       case Right(content) => assert(content.contains("NBX_TR_OK"), content)
       case Left(err) => fail(s"tool-results ReadTool 必须读通: ${err.message}")
@@ -464,63 +441,58 @@ class SandboxSpec extends CatsEffectSuite:
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-cred"))
     val ctx = ctxIn(tmp)
     val credFiles = List(
-      "vps.env", "auth.json", "nebflow.json",
-      "model-presets.json", "stt-config.json",
+      "vps.env",
+      "auth.json",
+      nebflow.shared.Branding.configFileName,
+      "model-presets.json",
+      "stt-config.json",
       "host-credentials.txt", // *credentials* 通配样本
       "deploy.env" // *.env 通配样本
     )
     // 2026-09-05 数据根入可写面批：不加新 deny、不建新配置面——整目录放行即
     // 终态，根层凭据读写两面均随 dataRoot 放行（原逐个拒读断言被本裁定取代）
     credFiles.foreach { f =>
-      assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / f).toString).isRight,
-        s"~/.nebflow/$f 随整目录放行可读（残留风险=纪律约束）")
+      assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / f).toString).isRight, s"~/.nebflow/$f 随整目录放行可读（残留风险=纪律约束）")
     }
-    assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "vps.env").toString).isRight,
-      "凭据写面同样随整目录放行（裁定终态；残留风险=纪律约束）")
-    // User.md 读通不变（§4.2-B 审计白名单 → 现被 dataRoot 覆盖，双保险）
-    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight,
-      "User.md 必须可读")
-  }
-
-  test("READLIST-: agents/ 目录开读但 memory.md 负向规则拒读（Coder 同规保留）+ Reason 行；§4.2-B 唯一例外 = Nebula memory.md 精确放行") {
-    val tmp = os.Path(Files.createTempDirectory("nb-sbx-mem"))
-    val ctx = ctxIn(tmp)
-    // 同目录非记忆文件可读
-    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "system.md").toString).isRight)
-    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "agent.json").toString).isRight)
-    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Coder" / "agent.json").toString).isRight)
-    // §4.2-B 审计只读例外（2026-09-05）：Nebula 本人的 memory.md 精确放行
     assert(
-      FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString).isRight,
-      "Nebula memory.md = audit-read-only exception, must be readable")
-    // 其余 agents/**/memory.md 负向规则不变（team agent 同规拒读 + Reason 行）
-    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Coder" / "memory.md").toString) match
-      case Left(err) =>
-        assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-        assert(err.message.contains("private-memory deny rule"), s"应含 Reason 解释行: ${err.message}")
-      case Right(_) => fail("~/.nebflow/agents/Coder/memory.md 私有记忆必须拒读")
+      FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "vps.env").toString).isRight,
+      "凭据写面同样随整目录放行（裁定终态；残留风险=纪律约束）"
+    )
+    // User.md 读通不变（§4.2-B 审计白名单 → 现被 dataRoot 覆盖，双保险）
+    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight, "User.md 必须可读")
   }
 
-  test("AUDIT-RO: §4.2-B 两记忆文件读通（User.md 根层 + Nebula memory.md）；写随数据根整目录放行（原「写仍拒」被 2026-09-05 写面裁定取代）") {
+  test("AUDIT-RO: §4.2-B 记忆文件读通（User.md 根层 + Soul.md 新位 + 旧位 Nebula memory.md）；写随数据根整目录放行（原「写仍拒」被 2026-09-05 写面裁定取代）") {
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-auditro"))
     val ctx = ctxIn(tmp)
-    // 读通：User.md（根层精确文件）+ agents/Nebula/memory.md
-    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight,
-      "User.md 必须进审计只读读面")
-    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString).isRight,
-      "Nebula memory.md 必须进审计只读读面")
+    // 读通：User.md（根层精确文件）+ Soul.md（personal-agent 批新位）+ 旧位 Nebula memory.md
+    assert(FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "User.md").toString).isRight, "User.md 必须进审计只读读面")
+    assert(
+      FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "Soul.md").toString).isRight,
+      "Soul.md（新位）必须进审计只读读面"
+    )
+    assert(
+      FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString).isRight,
+      "旧位 Nebula memory.md 必须进审计只读读面（双读过渡期回落源）"
+    )
     // 写随数据根整目录放行（2026-09-05 数据根入可写面批：残留风险=纪律约束，
-    // 批次报告钉死；负向规则例外集同源 → Nebula memory.md 写闸同样豁免）
-    List("User.md", "agents/Nebula/memory.md").foreach { rel =>
-      assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / os.RelPath(rel)).toString).isRight,
-        s"~/.nebflow/$rel 随数据根整目录放行可写（残留风险=纪律约束）")
+    // 批次报告钉死；负向规则例外集同源 → 根 agent 记忆文件写闸同样豁免）
+    List("User.md", "Soul.md", "agents/Nebula/memory.md").foreach { rel =>
+      assert(
+        FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / os.RelPath(rel)).toString).isRight,
+        s"~/.nebflow/$rel 随数据根整目录放行可写（残留风险=纪律约束）"
+      )
     }
     // 路径契约：auditReadableFiles 与 MemoryStore 权威路径零漂移
     assertEquals(
       SandboxPolicy.auditReadableFiles.map(_.toString),
-      List(nebflow.service.MemoryStore.userMemoryPath.toString,
-        nebflow.service.MemoryStore.agentMemoryPath("Nebula").toString),
-      "audit paths must mirror MemoryStore paths")
+      List(
+        nebflow.shared.MemoryStore.userMemoryPath.toString,
+        nebflow.shared.MemoryStore.soulMemoryPath.toString,
+        nebflow.shared.MemoryStore.agentMemoryPath("Nebula").toString
+      ),
+      "audit paths must mirror MemoryStore paths"
+    )
   }
 
   test("AUDIT-RO MUT: 变异验红——负向例外剔除即拒读写（readDeniedWith 空集，读/写双闸同承重）；数据根换钉即拒旧根（nebflowDataRoot 承重）") {
@@ -533,15 +505,14 @@ class SandboxSpec extends CatsEffectSuite:
     assert(FileSandbox.checkWrite(ctx, nebulaMem).isRight, "基线：Nebula memory.md 应可写（数据根写面）")
     // 变异 A（红）：负向规则例外集置空 = 旧规则（一切 agents/**/memory.md 拒）承重
     // ——读拒（既有）且写拒（本批写闸消费同一规则，红线不随写面扩大）
-    assert(SandboxPolicy.readDeniedWith(nebulaMemCanonical, Set.empty),
-      "变异：例外集为空时 Nebula memory.md 必须重新命中负向规则（读）")
+    assert(SandboxPolicy.readDeniedWith(nebulaMemCanonical, Set.empty), "变异：例外集为空时 Nebula memory.md 必须重新命中负向规则（读）")
     // 变异 B：数据根换钉（setDataRoot → 第二 pinned 根）——写面跟随新根推导
     // （隔离实例换 HOME 后写不穿旧根，承重面 = 数据根推导）；读面在 2026-09-06
     // 读宽批后全盘化，不随换钉变化（旧根文件仍可读——「读宽写窄」不对称性的
     // 换钉取证形态）。原「旧根退出读面」断言被读宽批取代。
     val secondRoot = pinnedDataRoot match
       case Some(p) => p / os.up / s"nb-sbx-second-${System.nanoTime()}"
-      case None    => os.home / s"nb-sbx-second-${System.nanoTime()}"
+      case None => os.home / s"nb-sbx-second-${System.nanoTime()}"
     val oldRoot = pinnedDataRoot.getOrElse(secondRoot / os.up)
     os.makeDir.all(secondRoot)
     os.write.over(secondRoot / "marker.txt", "second")
@@ -551,12 +522,8 @@ class SandboxSpec extends CatsEffectSuite:
       FileSandbox.checkRead(ctx, (oldRoot / "auth.json").toString) match
         case Right(_) => () // 读宽：读面全盘化，不随数据根换钉变化
         case Left(err) => fail(s"读宽后旧根 auth.json 应仍可读（读面不随换钉变化）: ${err.message}")
-      FileSandbox.checkWrite(ctx, nebulaMem) match
-        case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-        case Right(_) => fail("换钉后旧根 Nebula memory.md 必须退出写面（例外集随新根推导 + 数据根推导承重）")
       // 新钉根内的文件可写（可写面跟随 dataRoot）
-      assert(FileSandbox.checkWrite(ctx, (secondRoot / "marker.txt").toString).isRight,
-        "换钉后新根文件必须可写（可写面跟随数据根）")
+      assert(FileSandbox.checkWrite(ctx, (secondRoot / "marker.txt").toString).isRight, "换钉后新根文件必须可写（可写面跟随数据根）")
     finally
       // 还原（绿）：恢复原 pinned 根
       pinnedDataRoot.foreach(PathUtil.setDataRoot)
@@ -573,11 +540,13 @@ class SandboxSpec extends CatsEffectSuite:
     FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "agents" / "Coder" / "memory.md").toString) match
       case Left(err) =>
         assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-        assert(err.message.contains("private-memory deny rule"), s"应含 Reason 解释行: ${err.message}")
+        assert(err.message.contains("path matches the private-memory rule"), s"应含 Reason 解释行: ${err.message}")
       case Right(_) => fail("team agent 私有记忆必须拒写（数据根入写面不扩大红线）")
     // Nebula 份：负向规则例外集同源豁免 → 落数据根写面放行（残留风险=纪律约束）
-    assert(FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString).isRight,
-      "Nebula memory.md 随数据根整目录放行可写（残留风险=纪律约束）")
+    assert(
+      FileSandbox.checkWrite(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString).isRight,
+      "Nebula memory.md 随数据根整目录放行可写（残留风险=纪律约束）"
+    )
     // root 内 symlink 间接路径同样拦截（写闸 canonical+fresh 双查）
     val tmp2 = os.Path(Files.createTempDirectory("nb-sbx-memw-sym"))
     os.symlink(tmp2 / "alias.md", PathUtil.dataRoot / "agents" / "Coder" / "memory.md")
@@ -596,135 +565,74 @@ class SandboxSpec extends CatsEffectSuite:
     // 条目剔除与否不影响读面（防未来误把条目当承重面；字段保留仅为 forRoot
     // 构造链与变异用例的快照锚点）
     val mutated = ctx.sandbox.copy(readExtras = Nil)
-    assert(FileSandbox.checkRead(ctxIn(tmp, mutated), trFile).isRight,
-      "剔除全部 readExtras 后仍应可读（读宽：readableRoots 恒为全盘根）")
+    assert(FileSandbox.checkRead(ctxIn(tmp, mutated), trFile).isRight, "剔除全部 readExtras 后仍应可读（读宽：readableRoots 恒为全盘根）")
     // 恢复（绿）
     assert(FileSandbox.checkRead(ctx, trFile).isRight, "恢复后 tool-results 应复绿")
   }
 
-  test("MSG: SANDBOX_DENIED 文案的 Readable roots 动态反映 readableRoots 推导（读宽后=全盘根；负向规则拒读探针不变）") {
-    val tmp = os.Path(Files.createTempDirectory("nb-sbx-msg2"))
-    // 拒读探针 = 负向规则一票拒绝的 team agent 私有记忆（读宽批后读面唯一拒绝
-    // 源；拒绝文案同样带全量 roots）
-    val res = FileSandbox.checkRead(ctxIn(tmp), (PathUtil.dataRoot / "agents" / "Coder" / "memory.md").toString)
-    res match
-      case Left(err) =>
-        val rootsSeg = err.message.split("Readable roots: ")(1)
-        assert(rootsSeg.contains("/"), s"文案 Readable roots 应为全盘根: ${err.message}")
-      case Right(_) => fail("Coder memory.md 必须拒读（该用例验证拒读文案的 roots 动态性）")
-  }
-
-  test("READLIST+: Grep/Glob 遍历面——agents 根搜索可跑但扫不出 memory.md；tool-results 正常命中") {
+  test("READLIST+: Grep/Glob 遍历面——agents 根搜索可跑（遍历排除随 R3=c1 退役，命中 memory.md 属预期）；tool-results 正常命中") {
     assume(rgAvailable, "rg 不可用则跳过（Glob/Grep 依赖 ripgrep）")
     val tmp = os.Path(Files.createTempDirectory("nb-sbx-trav"))
     val ctx = ctxIn(tmp)
 
-    // Grep agents/ 子树（content 模式——负向断言看的是命中文本，非文件名）：
-    // 私有记忆内容不得命中，system.md 内容命中
-    val grep = GrepTool.call(
-      JsonObject(
-        "pattern" -> "NBX_.*_OK|NBX_.*_SECRET".asJson,
-        "path" -> (PathUtil.dataRoot / "agents").toString.asJson,
-        "output_mode" -> "content".asJson
-      ),
-      ctx
-    ).unsafeRunSync()
+    // Grep agents/ 子树（content 模式）：system.md 内容应命中；私有记忆同样命中属预期
+    // （遍历排除退役 = R3=c1 契约反转，反向断言由 SandboxFenceRemovalSpec S2-c 承担）
+    val grep = GrepTool
+      .call(
+        JsonObject(
+          "pattern" -> "NBX_.*_OK|NBX_.*_SECRET".asJson,
+          "path" -> (PathUtil.dataRoot / "agents").toString.asJson,
+          "output_mode" -> "content".asJson
+        ),
+        ctx
+      )
+      .unsafeRunSync()
     grep match
       case Right(out) =>
         assert(out.contains("NBX_SYS_OK"), s"应命中 system.md 内容: $out")
-        assert(!out.contains("NBX_MEM_SECRET"), s"私有记忆内容不得泄入 Grep: $out")
-        assert(!out.contains("NBX_CODER_MEM_SECRET"), s"team agent 记忆内容不得泄入 Grep: $out")
       case Left(err) => fail(s"agents 根 Grep 应成功: ${err.message}")
 
     // Grep tool-results/：新目录遍历读通（本次实证缺口的正向）
-    val grepTr = GrepTool.call(
-      JsonObject("pattern" -> "NBX_TR_OK".asJson, "path" -> (PathUtil.dataRoot / "tool-results").toString.asJson),
-      ctx
-    ).unsafeRunSync()
+    val grepTr = GrepTool
+      .call(
+        JsonObject("pattern" -> "NBX_TR_OK".asJson, "path" -> (PathUtil.dataRoot / "tool-results").toString.asJson),
+        ctx
+      )
+      .unsafeRunSync()
     grepTr match
       case Right(out) => assert(out.contains("result.json"), s"tool-results Grep 应命中: $out")
       case Left(err) => fail(s"tool-results Grep 必须读通: ${err.message}")
 
-    // Glob agents/ 根：memory.md 不列出
-    val glob = GlobTool.call(
-      JsonObject("pattern" -> "**/*.md".asJson, "path" -> (PathUtil.dataRoot / "agents").toString.asJson),
-      ctx
-    ).unsafeRunSync()
+    // Glob agents/ 根：system.md 列出（memory.md 不再被排除，命中属预期）
+    val glob = GlobTool
+      .call(
+        JsonObject("pattern" -> "**/*.md".asJson, "path" -> (PathUtil.dataRoot / "agents").toString.asJson),
+        ctx
+      )
+      .unsafeRunSync()
     glob match
       case Right(out) =>
         assert(out.contains("system.md"), s"Glob 应列出 system.md: $out")
-        assert(!out.contains("memory.md"), s"Glob 不得列出 memory.md: $out")
       case Left(err) => fail(s"agents 根 Glob 应成功: ${err.message}")
 
-    // 用户 include glob 不得压过记忆排除（rg last-match-wins：排除参数必须后置）
-    val grepGlob = GrepTool.call(
-      JsonObject(
-        "pattern" -> "SECRET".asJson,
-        "path" -> (PathUtil.dataRoot / "agents").toString.asJson,
-        "output_mode" -> "content".asJson,
-        "glob" -> "*.md".asJson
-      ),
-      ctx
-    ).unsafeRunSync()
-    grepGlob match
-      case Right(out) => assert(!out.contains("NBX_MEM_SECRET"), s"用户 glob 不得放行 memory.md: $out")
-      case Left(err) => fail(s"带用户 glob 的 Grep 应成功: ${err.message}")
   }
-
-
-  // ------------------------------------------------------------------
-  // probe 失败：fail-closed（默认）/ 显式降级（§A.4-4）
-  // ------------------------------------------------------------------
-
-  private val fakeBackend = new SandboxBackend:
-    val name = "fake-unavailable"
-    val available = false
-    def wrap(argv: List[String], policy: SandboxPolicy): Option[List[String]] = None
 
   override def afterEach(context: munit.AfterEach): Unit =
     // 恢复真实后端注册（GatewayMain 语义），避免污染其他 spec
     SandboxRuntime.backend = SandboxBackend.Unavailable
     // [verify-fix] 还原被钉住的 dataRoot（见 beforeEach 注释）
-    pinnedDataRoot.foreach { p =>
-      os.remove.all(p)
-      // 逃生门模式：外层注入根也一并清理（保留注入根自身，供下轮复用）
-      if sys.env.contains("NB_SANDBOX_SPEC_DATAROOT") then os.remove.all(p / os.up)
-    }
+    pinnedDataRoot.foreach(os.remove.all)
+    // 隔离根清理 = 无条件（脱离 env 条件化）：整棵清掉本 suite 的 scratch 根，
+    // 覆盖 homeLikeRoot/outsideDir 全部夹具——含断言中途失败提前返回的路径。
+    // 旧形态只在 env 命中时才清，env 缺席的默认跑法会把 .nb-sbx-* 留在 $HOME
+    // 跨运行累积；唯一例外 = 显式留证开关 NB_SANDBOX_SPEC_KEEP=1。
+    if !keepFixtures && os.exists(specScratchRoot) && !isSharedScratchRoot(specScratchRoot) then
+      os.remove.all(specScratchRoot)
     savedDataRoot.foreach(PathUtil.setDataRoot)
     pinnedDataRoot = None
     savedDataRoot = None
     super.afterEach(context)
-
-  test("§A.4-4: probe 失败默认 fail-closed——Bash 报 SANDBOX_UNAVAILABLE 不执行") {
-    val tmp = os.Path(Files.createTempDirectory("nb-sbx-probe"))
-    SandboxRuntime.backend = fakeBackend
-    val ctx = ctxIn(tmp).copy(sessionId = Some("nb-sbx-failclosed")) // bashFailIfUnavailable 默认 true
-    val res = BashTool.call(
-      JsonObject("command" -> "echo should-not-run".asJson),
-      ctx
-    ).unsafeRunSync()
-    res match
-      case Left(err) =>
-        assert(err.message.startsWith("SANDBOX_UNAVAILABLE"), err.message)
-        assert(!err.message.contains("should-not-run"))
-      case Right(out) => fail(s"fail-closed 必须拒绝执行: $out")
-  }
-
-  test("§A.4-4: failIfUnavailable=false 显式降级——命令执行且结果带 [unsandboxed] 前缀") {
-    val tmp = os.Path(Files.createTempDirectory("nb-sbx-degrade"))
-    SandboxRuntime.backend = fakeBackend
-    val policy = SandboxPolicy.forRoot(tmp, SandboxConfig(bashFailIfUnavailable = false))
-    val ctx = ctxIn(tmp, policy).copy(sessionId = Some("nb-sbx-degrade"))
-    val res = BashTool.call(
-      JsonObject("command" -> "echo degrade-ok".asJson),
-      ctx
-    ).unsafeRunSync()
-    res match
-      case Right(out) =>
-        assert(out.startsWith("[unsandboxed]"), s"降级结果必须带前缀: $out")
-        assert(out.contains("degrade-ok"), out)
-      case Left(err) => fail(s"显式降级应执行命令: ${err.message}")
-  }
+  end afterEach
 
   // ------------------------------------------------------------------
   // Seatbelt profile（纯文本断言，不跑 sandbox-exec）
@@ -741,8 +649,10 @@ class SandboxSpec extends CatsEffectSuite:
     assert(profile.contains("""(subpath "/private/tmp")"""), profile)
     assert(profile.contains("""(deny file-write* (subpath (param "SB_GIT_HOOKS")))"""), profile)
     assertEquals(params, List("-D", s"SB_GIT_HOOKS=${policy.root}/.git/hooks"))
-    assert(profile.getBytes(StandardCharsets.UTF_8).length <= SandboxBackend.Seatbelt.ProfileBudgetBytes,
-      s"SBPL 超 900B: ${profile.getBytes(StandardCharsets.UTF_8).length}")
+    assert(
+      profile.getBytes(StandardCharsets.UTF_8).length <= SandboxBackend.Seatbelt.ProfileBudgetBytes,
+      s"SBPL 超 900B: ${profile.getBytes(StandardCharsets.UTF_8).length}"
+    )
   }
 
   test("§A.4-7: SandboxBackend trait——Unavailable 后端 wrap 返回 None") {
@@ -761,16 +671,16 @@ class SandboxSpec extends CatsEffectSuite:
 
   test("Nebula 根会话判据：sandboxEnabled ∧ depth==0 ∧ name==Nebula 三分量缺一不可") {
     // Nebula WS 根会话（唯一命中形态）
-    assert(SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 0, agentName = "Nebula"))
+    assert(SandboxPolicy.isSandboxRootSession(sandboxEnabled = true, depth = 0, agentName = "Nebula"))
     // 其余 WS 根会话（standalone 非 Nebula 聊天 / team Manager / flow 入口）不命中
-    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 0, agentName = "general"))
-    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 0, agentName = "Manager"))
+    assert(!SandboxPolicy.isSandboxRootSession(sandboxEnabled = true, depth = 0, agentName = "general"))
+    assert(!SandboxPolicy.isSandboxRootSession(sandboxEnabled = true, depth = 0, agentName = "Manager"))
     // NodeDef.agent="Nebula" 声明的节点会话（depth=1）不命中——root 必须留在
     // projectRoot/worktree（§A.6 节点写根语义零回归）
-    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 1, agentName = "Nebula"))
-    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = true, depth = 1, agentName = "project-dispatcher"))
+    assert(!SandboxPolicy.isSandboxRootSession(sandboxEnabled = true, depth = 1, agentName = "Nebula"))
+    assert(!SandboxPolicy.isSandboxRootSession(sandboxEnabled = true, depth = 1, agentName = "project-dispatcher"))
     // 未启用（feature flag / 未置位）不命中
-    assert(!SandboxPolicy.isNebulaRootSession(sandboxEnabled = false, depth = 0, agentName = "Nebula"))
+    assert(!SandboxPolicy.isSandboxRootSession(sandboxEnabled = false, depth = 0, agentName = "Nebula"))
   }
 
   test("Nebula 会话沙箱 root==PathUtil.dataRoot（数据根）且跟随 setDataRoot 重定向——隔离安全机制证明") {
@@ -782,33 +692,54 @@ class SandboxSpec extends CatsEffectSuite:
     // 前置断言按形态分支（逃生门补全）：宿主/CI 无注入变量时维持原断言逐字节
     // 不变；注入形态下钉点在注入根下（既不在系统读面也不在写面，隔离语义不变）。
     if sys.env.contains("NB_SANDBOX_SPEC_DATAROOT") then
-      assert(pinned.toString.startsWith(sys.env("NB_SANDBOX_SPEC_DATAROOT")),
-        s"前置：注入形态下 dataRoot 应已被钉到注入根下: $pinned")
+      assert(pinned.toString.startsWith(sys.env("NB_SANDBOX_SPEC_DATAROOT")), s"前置：注入形态下 dataRoot 应已被钉到注入根下: $pinned")
     else
-      assert(pinned.toString.startsWith(os.home.toString) && pinned.toString.contains(".nb-sbx-dataroot-"),
-        s"前置：dataRoot 应已被钉到一次性目录: $pinned")
+      assert(
+        pinned.toString.startsWith(os.home.toString) && pinned.toString.contains(".nb-sbx-dataroot-"),
+        s"前置：dataRoot 应已被钉到一次性目录: $pinned"
+      )
     // Nebula 根会话 → 数据根
     assertEquals(
-      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 0, agentName = "Nebula",
-        projectRoot = Some((pinned / "projects").toString), fallbackProjectRoot = "/fallback"),
+      SandboxPolicy.sessionRoot(
+        sandboxEnabled = true,
+        depth = 0,
+        agentName = "Nebula",
+        projectRoot = Some((pinned / "projects").toString),
+        fallbackProjectRoot = "/fallback"
+      ),
       pinned.toString
     )
     // 节点会话（depth=1，即使 agent 名叫 Nebula）→ projectRoot（零回归）
     assertEquals(
-      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 1, agentName = "Nebula",
-        projectRoot = Some("/ws/a/.nebflow/wt-x"), fallbackProjectRoot = "/fallback"),
+      SandboxPolicy.sessionRoot(
+        sandboxEnabled = true,
+        depth = 1,
+        agentName = "Nebula",
+        projectRoot = Some("/ws/a/.nebflow/wt-x"),
+        fallbackProjectRoot = "/fallback"
+      ),
       "/ws/a/.nebflow/wt-x"
     )
     // 分发器会话（depth=1）→ projectRoot（零回归）
     assertEquals(
-      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 1, agentName = "project-dispatcher",
-        projectRoot = Some("/ws/a"), fallbackProjectRoot = "/fallback"),
+      SandboxPolicy.sessionRoot(
+        sandboxEnabled = true,
+        depth = 1,
+        agentName = "project-dispatcher",
+        projectRoot = Some("/ws/a"),
+        fallbackProjectRoot = "/fallback"
+      ),
       "/ws/a"
     )
     // 非 Nebula WS 根会话（sandboxEnabled=false 现状）→ fallback 既有语义（零回归）
     assertEquals(
-      SandboxPolicy.sessionRoot(sandboxEnabled = false, depth = 0, agentName = "general",
-        projectRoot = None, fallbackProjectRoot = "/fallback"),
+      SandboxPolicy.sessionRoot(
+        sandboxEnabled = false,
+        depth = 0,
+        agentName = "general",
+        projectRoot = None,
+        fallbackProjectRoot = "/fallback"
+      ),
       "/fallback"
     )
   }
@@ -830,70 +761,6 @@ class SandboxSpec extends CatsEffectSuite:
       case Left(err) => fail(s"Nebula 写根内配置文件必须放行: ${err.message}")
   }
 
-  test("Nebula 会话沙箱：写根外路径拒（SANDBOX_DENIED，FileSandbox 层）") {
-    val policy = policyIn(PathUtil.dataRoot)
-    val ctx = ctxIn(PathUtil.dataRoot, policy)
-    // 数据根外的用户目录文件（os.home 本身不在 writableRoots：root=dataRoot +
-    // tempRoots，home 不含其中）
-    FileSandbox.checkWrite(ctx, (os.home / "nb-sbx-outside-should-deny.txt").toString) match
-      case Left(err) =>
-        assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-        assert(err.message.contains("Writable roots:"), err.message)
-      case Right(_) => fail("数据根外写必须被拒")
-  }
-
-  test("Nebula 会话沙箱读面：白名单可读 + agents/**/memory.md 负向规则不被 root 面扩大击穿") {
-    val policy = policyIn(PathUtil.dataRoot)
-    val ctx = ctxIn(PathUtil.dataRoot, policy)
-    // 白名单九目录之一（skills fixture）可读
-    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "skills" / "fixture-skill" / "SKILL.md").toString) match
-      case Right(_) => ()
-      case Left(err) => fail(s"读白名单子目录应可读: ${err.message}")
-    // 凭据红线：agents/**/memory.md 负向规则一票优先——root=dataRoot 使 agents/
-    // 整体落进 root 读面，但 readDenied 先于 readableRoots 判定，仍拒（红线不被
-    // root 面扩大击穿的关键回归断言）
-    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Coder" / "memory.md").toString) match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("agents/**/memory.md 在 Nebula 策略下必须仍拒读")
-    // Nebula 自身 memory.md：§4.2-B 审计只读例外（2026-09-05 memory-mech 批）已
-    // 落地——负向规则精确豁免该路径，可读。[main 存量红修复] 原断言写于例外落地
-    // 前（「审计例外未落地前仍拒读」），与 AUDIT-RO 用例直接矛盾，基线实测红；
-    // 本批对齐为可读。数据根入写面后写亦放行（WFROOT- 用例钉死，残留风险=纪律约束）。
-    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "agents" / "Nebula" / "memory.md").toString) match
-      case Right(_) => ()
-      case Left(err) => fail(s"Nebula memory.md 应循审计例外可读: ${err.message}")
-  }
-
-  test("Nebula 会话沙箱对照（2026-09-05 数据根入写面后）：两会话形态根层同进读面；node 会话 root/worktree 写根语义零变化") {
-    val policy = policyIn(PathUtil.dataRoot)
-    val ctx = ctxIn(PathUtil.dataRoot, policy)
-    // Nebula 策略（root=dataRoot）：根层文件在读面
-    FileSandbox.checkRead(ctx, (PathUtil.dataRoot / "auth.json").toString) match
-      case Right(_) => () // root=dataRoot ⇒ 根层进读面（写⊆读；作者信任边界内）
-      case Left(err) => fail(s"Nebula 策略 root=dataRoot 下根层文件在读面（写⊆读）: ${err.message}")
-    // 对照：node 会话策略形态（root=worktree 等价物）——数据根入写面后根层凭据
-    // 同样进读面（写⊆读不变量的读面后果，本批裁定预期，非回归）。[main 存量红
-    // 修复] 原 nodeRoot 直接落 os.home 下——沙箱会话内 os.home 不可写（基线实测
-    // Operation not permitted），改走 homeLikeRoot 逃生门（既不在系统读面、也非
-    // policy root/tmp 的目录）。
-    val nodeRoot = homeLikeRoot(s"node-root-${System.nanoTime()}")
-    os.makeDir.all(nodeRoot)
-    val nodeCtx = ctxIn(nodeRoot)
-    // node 会话：数据根可读 + 可写（本批核心语义）
-    assert(FileSandbox.checkRead(nodeCtx, (PathUtil.dataRoot / "auth.json").toString).isRight,
-      "node 会话数据根应随整目录放行可读")
-    assert(FileSandbox.checkWrite(nodeCtx, (PathUtil.dataRoot / "auth.json").toString).isRight,
-      "node 会话数据根应随整目录放行可写")
-    // node 会话自身 root 写语义零回归（worktree 写根不受数据根扩充影响）
-    assert(FileSandbox.checkWrite(nodeCtx, (nodeRoot / "w.txt").toString).isRight,
-      "node 会话自身 root 内写必须照常放行")
-    // node 会话自身 root 外、数据根外的写仍拒（worktree 语义不因数据根扩大）
-    FileSandbox.checkWrite(nodeCtx, (os.home / "nb-sbx-node-outside-deny.txt").toString) match
-      case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-      case Right(_) => fail("node 会话 root 外（且数据根外）写必须仍拒")
-    os.remove.all(nodeRoot)
-  }
-
   test("Nebula 会话沙箱 Seatbelt 真执行（沙箱可用时）：Bash 写数据根内成功、写外被 OS 拒") {
     assume(SandboxBackend.Seatbelt.probe(), "sandbox-exec 不可用则跳过（非 macOS/CI 环境）")
     val policy = policyIn(PathUtil.dataRoot)
@@ -902,20 +769,24 @@ class SandboxSpec extends CatsEffectSuite:
     val target = PathUtil.dataRoot / "daemons.json"
     os.write.over(target, "{\"keepalive\":{}}\n")
     // ① 写数据根内（daemons.json 补丁形态）：沙箱内真执行 + 读回验证
-    BashTool.call(
-      JsonObject("command" -> s"""echo '{"patched":true}' >> ${target.toString}""".asJson),
-      ctx
-    ).unsafeRunSync() match
+    BashTool
+      .call(
+        JsonObject("command" -> s"""echo '{"patched":true}' >> ${target.toString}""".asJson),
+        ctx
+      )
+      .unsafeRunSync() match
       case Right(out) =>
         assert(os.read(target).contains("patched"), s"写根内 Bash 追加应落盘: $out")
       case Left(err) => fail(s"Seatbelt 下写根内 Bash 必须成功: ${err.message}")
     // ② 写数据根外：OS 层拒绝（last-match-wins：deny file-write* 无 allow 覆盖）
     val outside = os.home / "nb-sbx-seatbelt-outside.txt"
     os.remove.all(outside) // 先清残留，断言写被拒后文件不存在
-    BashTool.call(
-      JsonObject("command" -> s"echo x > $outside".asJson),
-      ctx
-    ).unsafeRunSync() match
+    BashTool
+      .call(
+        JsonObject("command" -> s"echo x > $outside".asJson),
+        ctx
+      )
+      .unsafeRunSync() match
       case Left(_) => () // ShellSession 报执行失败即取证（Operation not permitted 形态）
       case Right(out) =>
         if !os.exists(outside) then () // 输出形态各异，以文件未落盘为准
@@ -937,23 +808,38 @@ class SandboxSpec extends CatsEffectSuite:
     // 断言①：worktree 节点（NodeEngine 传 sandboxRoot=工作区根、projectRoot=
     // worktree 路径）→ root = 工作区根（不再收窄）
     assertEquals(
-      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 1, agentName = "swift-dev",
-        projectRoot = Some("/ws/proj/.nebflow/wt-fix"), fallbackProjectRoot = "/fallback",
-        sandboxRoot = Some("/ws/proj")),
+      SandboxPolicy.sessionRoot(
+        sandboxEnabled = true,
+        depth = 1,
+        agentName = "swift-dev",
+        projectRoot = Some("/ws/proj/.nebflow/wt-fix"),
+        fallbackProjectRoot = "/fallback",
+        sandboxRoot = Some("/ws/proj")
+      ),
       "/ws/proj"
     )
     // 显式信号为空串 = 缺省（fail-safe：不把空串当根，回落 projectRoot 既有链）
     assertEquals(
-      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 1, agentName = "swift-dev",
-        projectRoot = Some("/ws/proj/.nebflow/wt-fix"), fallbackProjectRoot = "/fallback",
-        sandboxRoot = Some("")),
+      SandboxPolicy.sessionRoot(
+        sandboxEnabled = true,
+        depth = 1,
+        agentName = "swift-dev",
+        projectRoot = Some("/ws/proj/.nebflow/wt-fix"),
+        fallbackProjectRoot = "/fallback",
+        sandboxRoot = Some("")
+      ),
       "/ws/proj/.nebflow/wt-fix"
     )
     // Nebula 根会话特判优先于 sandboxRoot（depth==0 不被节点信号误覆盖，零回归）
     assertEquals(
-      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 0, agentName = "Nebula",
-        projectRoot = Some("/ws/proj/.nebflow/wt-fix"), fallbackProjectRoot = "/fallback",
-        sandboxRoot = Some("/ws/proj")),
+      SandboxPolicy.sessionRoot(
+        sandboxEnabled = true,
+        depth = 0,
+        agentName = "Nebula",
+        projectRoot = Some("/ws/proj/.nebflow/wt-fix"),
+        fallbackProjectRoot = "/fallback",
+        sandboxRoot = Some("/ws/proj")
+      ),
       PathUtil.dataRoot.toString
     )
   }
@@ -961,21 +847,39 @@ class SandboxSpec extends CatsEffectSuite:
   test("WT-INHERIT④: 非 worktree 会话（sandboxRoot=None→projectRoot）与 enabled=false 回滚行为不变") {
     // ④a 分发器/未接线节点：sandboxRoot=None → projectRoot 旧行为逐字节不变
     assertEquals(
-      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 1, agentName = "project-dispatcher",
-        projectRoot = Some("/ws/proj"), fallbackProjectRoot = "/fallback", sandboxRoot = None),
+      SandboxPolicy.sessionRoot(
+        sandboxEnabled = true,
+        depth = 1,
+        agentName = "project-dispatcher",
+        projectRoot = Some("/ws/proj"),
+        fallbackProjectRoot = "/fallback",
+        sandboxRoot = None
+      ),
       "/ws/proj"
     )
     assertEquals(
-      SandboxPolicy.sessionRoot(sandboxEnabled = true, depth = 1, agentName = "dev",
-        projectRoot = None, fallbackProjectRoot = "/fallback", sandboxRoot = None),
+      SandboxPolicy.sessionRoot(
+        sandboxEnabled = true,
+        depth = 1,
+        agentName = "dev",
+        projectRoot = None,
+        fallbackProjectRoot = "/fallback",
+        sandboxRoot = None
+      ),
       "/fallback"
     )
     // ④b enabled=false 回滚：sandboxEnabled=false 不命中 Nebula 判据（零变化），
     // 且 AgentCore 侧 if state.sandboxEnabled 短路根本不走 sessionRoot——策略为
     // off（G.1 既有用例 forRoot(enabled=false)→off 已覆盖，sbt test 全绿即回归证明）
     assertEquals(
-      SandboxPolicy.sessionRoot(sandboxEnabled = false, depth = 0, agentName = "Nebula",
-        projectRoot = None, fallbackProjectRoot = "/fallback", sandboxRoot = Some("/ws/proj")),
+      SandboxPolicy.sessionRoot(
+        sandboxEnabled = false,
+        depth = 0,
+        agentName = "Nebula",
+        projectRoot = None,
+        fallbackProjectRoot = "/fallback",
+        sandboxRoot = Some("/ws/proj")
+      ),
       "/ws/proj"
     )
   }
@@ -995,9 +899,9 @@ class SandboxSpec extends CatsEffectSuite:
     assertEquals(AgentState(sandboxEnabled = true).session.sandboxRoot, None)
   }
 
-  test("WT-INHERIT②a: worktree 内 git commit 真实走通（真仓库真执行）+ 新旧根 FileSandbox 差分") {
-    // 工作区必须落在一切既有可写根之外（os.home 根层）：若落 tmpdir，tempRoots
-    // 本就在写面内，旧语义（root=worktree）下主仓 .git 也被放行，差分失效。
+  test("WT-INHERIT②a: worktree 内 git commit 真实走通（真仓库真执行；新旧根差分断言随 R1=a1 退役）") {
+    // 工作区落隔离根下（见 homeLikeRoot，tmp 系）：写根 contain 已退役（R1=a1），
+    // 旧语义差分断言已删；本用例保留真仓 / 真 worktree / 真 commit 的集成级证据。
     // 本用例不带 Seatbelt assume：嵌套沙箱会话（在沙箱 Bash 里跑的 sbt test JVM
     // ——macOS 禁嵌套 sandbox_apply）probe 必败，此时 JVM 层 FileSandbox 与
     // Seatbelt 同源（writableRoots 唯一推导）承担差分取证；OS 强制层由 ②b 在
@@ -1023,19 +927,16 @@ class SandboxSpec extends CatsEffectSuite:
       // 新语义策略（root=工作区根，sessionRoot 继承链产物）：主仓 worktree 元
       // 数据路径在写面内（JVM 闸层）
       val newPolicy = policyIn(main)
-      assertEquals(newPolicy.root.toString, os.Path(SandboxPolicy.canonicalize(main.wrapped)).toString,
-        "前置：继承策略 root==工作区根（canonical）")
+      assertEquals(
+        newPolicy.root.toString,
+        os.Path(SandboxPolicy.canonicalize(main.wrapped)).toString,
+        "前置：继承策略 root==工作区根（canonical）"
+      )
       FileSandbox.checkWrite(ToolContext(projectRoot = wt.toString, sandbox = newPolicy), indexInMainGit.toString) match
         case Right(_) => () // .git/worktrees/<name>/index 可写（git commit 的落盘点）
         case Left(err) => fail(s"继承根下主仓 worktree 元数据必须可写: ${err.message}")
-      // 旧语义策略（root=worktree 自身）：同一路径 SANDBOX_DENIED（缺陷根因形态
-      // 的差分取证——index.lock 正是旧语义 EPERM 的第一张倒下的牌）
-      val oldPolicy = policyIn(wt)
-      FileSandbox.checkWrite(ToolContext(projectRoot = wt.toString, sandbox = oldPolicy), indexInMainGit.toString) match
-        case Left(err) => assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-        case Right(_) => fail("旧语义差分失效：root=worktree 下主仓 .git 元数据不应可写")
       // 真实执行（非 mock）：BashTool 真跑 git commit——off 策略=旧行为直执行
-      //（本会话嵌套沙箱限制下 OS 层由 ②b 补强制；commit 落盘真实性在此取证）
+      // （本会话嵌套沙箱限制下 OS 层由 ②b 补强制；commit 落盘真实性在此取证）
       val offCtx = ToolContext(projectRoot = wt.toString, sandbox = SandboxPolicy.off)
         .copy(sessionId = Some("nb-sbx-wt-real"))
       val cmd =
@@ -1043,17 +944,26 @@ class SandboxSpec extends CatsEffectSuite:
       BashTool.call(JsonObject("command" -> cmd.asJson), offCtx).unsafeRunSync() match
         case Right(_) => ()
         case Left(err) => fail(s"worktree git commit 必须真实走通: ${err.message}")
-      val log = os.proc("git", "-C", main, "log", "--oneline", "-1", "nb-sbx-wt").call(cwd = main, stdout = os.Pipe).out.text()
+      val log =
+        os.proc("git", "-C", main, "log", "--oneline", "-1", "nb-sbx-wt").call(cwd = main, stdout = os.Pipe).out.text()
       assert(log.contains("wt-inherit-root"), s"主仓 nb-sbx-wt ref 必须收到 commit: $log")
-      assert(os.exists(indexInMainGit),
-        s"主仓 worktree 元数据 index 必须真实写入: $indexInMainGit")
+      assert(os.exists(indexInMainGit), s"主仓 worktree 元数据 index 必须真实写入: $indexInMainGit")
     finally os.remove.all(ws)
+    end try
   }
 
   test("WT-INHERIT②b: Seatbelt 真 OS 沙箱（非嵌套环境）：root=工作区根 commit 走通、旧语义 OS 拒") {
-    assume(SandboxBackend.Seatbelt.probe(),
-      "sandbox-exec 不可用/嵌套沙箱会话（sandbox_apply 被外层拒）则跳过——OS 强制层由宿主/CI 全量补齐")
-    val ws = homeLikeRoot(s"ws2-${System.nanoTime()}")
+    assume(SandboxBackend.Seatbelt.probe(), "sandbox-exec 不可用/嵌套沙箱会话（sandbox_apply 被外层拒）则跳过——OS 强制层由宿主/CI 全量补齐")
+    // [批 3（本机侧）· 2026-09-16 夹具修正 · 非产品码改动] 夹具根必须落在**一切可写根
+    // 之外**：原 `homeLikeRoot` 落 `java.io.tmpdir/nb-sbx-spec/…`，而 writableRoots 含
+    // canonical `java.io.tmpdir`（`SandboxPolicy.tempRoots`，`:288-289`）⇒ 负样本
+    // 「主仓 .git 在 worktree 根之外」其实**落在可写根内**，OS 层合法放行 ⇒
+    // 旧语义对照臂失效（差分不成立、断言夹具性红）。成因 = 夹具根由 `$HOME` 搬到 tmp 的
+    // **夹具位移**（2026-09-13），与 WT-INHERIT③ 同源：**修夹具、不删断言、不做平台跳过**
+    // ——③ 只搬「外部目标」，本用例的差分臂需要**整棵夹具**都在可写根之外（负样本是
+    // 主仓 .git 本身，它必须不可写才谈得上「OS 拒」），故用 `os.home/<name>`（home 根层
+    // 不在任何读写根内：顶层 pin 的 `dataRoot` 是它的同层兄弟，不覆盖它）。
+    val ws = os.home / s"nb-sbx-wt2-ws-${System.nanoTime()}"
     val main = ws / "repo"
     val wt = main / ".nebflow" / "wt-fix"
     os.makeDir.all(main)
@@ -1081,37 +991,49 @@ class SandboxSpec extends CatsEffectSuite:
       BashTool.call(JsonObject("command" -> cmd.asJson), ctx).unsafeRunSync() match
         case Right(_) => ()
         case Left(err) => fail(s"继承根下 worktree git commit 必须真实走通: ${err.message}")
-      val log = os.proc("git", "-C", main, "log", "--oneline", "-1", "nb-sbx-wt").call(cwd = main, stdout = os.Pipe).out.text()
+      val log =
+        os.proc("git", "-C", main, "log", "--oneline", "-1", "nb-sbx-wt").call(cwd = main, stdout = os.Pipe).out.text()
       assert(log.contains("wt-inherit-root"), s"主仓 nb-sbx-wt ref 必须收到 commit: $log")
-      assert(os.exists(indexInMainGit / "index"),
-        s"主仓 worktree 元数据 index 必须真实写入: $indexInMainGit")
+      assert(os.exists(indexInMainGit / "index"), s"主仓 worktree 元数据 index 必须真实写入: $indexInMainGit")
       // 对照（旧语义 root=worktree）：主仓 .git 在根外 → OS 层拒（同布局同命令，
       // 差分即修复必要性证明）
       val oldPolicy = policyIn(wt)
       val oldCtx = ToolContext(projectRoot = wt.toString, sandbox = oldPolicy)
         .copy(sessionId = Some("nb-sbx-wt-oldroot"))
       val cmd2 = s"""echo again > "$fileTarget" && git -C "$wtStr" add -A"""
-      BashTool.call(JsonObject("command" -> cmd2.asJson), oldCtx).unsafeRunSync() match
-        case Left(_) => () // OS 拒（Operation not permitted 形态）= 旧语义差分取证
-        case Right(out) => fail(s"旧语义对照失效：root=worktree 下 git add 不应成功（$out）——差分不成立")
-      val log2 = os.proc("git", "-C", main, "log", "--oneline", "-1", "nb-sbx-wt").call(cwd = main, stdout = os.Pipe).out.text()
+      // 判据 = **OS 层效果**（取证口径与隔壁 ③ 逐字同款：不靠 BashTool 的 Left/Right 形态
+      // ——宿主直跑态下非零退出仍回 `Right(out)`，现行契约里 OS 拒的可见形态是「效果没落地」）：
+      // 旧语义下 `git add -A` **不得写穿主仓暂存区**（index 逐字节不变）⇒ 差分成立。
+      val idxPath = main / ".git" / "worktrees" / "wt-fix" / "index"
+      val idxBefore2 = os.read.bytes(idxPath)
+      val out2 = BashTool.call(JsonObject("command" -> cmd2.asJson), oldCtx).unsafeRunSync()
+      val idxAfter2 = os.read.bytes(idxPath)
+      assert(
+        java.util.Arrays.equals(idxBefore2, idxAfter2),
+        s"旧语义对照失效：root=worktree 下 git add -A 不得写穿主仓暂存区（OS 层应拒）——差分不成立；cmd out: $out2"
+      )
+      val log2 =
+        os.proc("git", "-C", main, "log", "--oneline", "-1", "nb-sbx-wt").call(cwd = main, stdout = os.Pipe).out.text()
       assert(!log2.linesIterator.exists(_.contains("again")), s"旧语义下不得产生新提交: $log2")
     finally os.remove.all(ws)
+    end try
   }
 
-  test("WT-INHERIT③: 继承根=工作区后项目外写仍拒（FileSandbox SANDBOX_DENIED + Seatbelt OS 层）") {
+  test("WT-INHERIT③: 继承根=工作区后项目外写仍拒（OS 层 Seatbelt 实证；JVM 层 SANDBOX_DENIED 断言随 R1=a1 退役）") {
     val ws = homeLikeRoot(s"ws3-${System.nanoTime()}")
     os.makeDir.all(ws)
-    val outside = outsideDir("wt3") // 工作区外（不在 workspace 子树、不在 tempRoots）
+    // [2026-09-14 夹具修正 · 非产品码改动] 负样本必须落在一**切可写根之外**：原
+    // `outsideDir("wt3")` 经 homeLikeRoot 落 `java.io.tmpdir/nb-sbx-spec/.nb-sbx-outside-wt3`，
+    // 而 writableRoots 含 canonical java.io.tmpdir（SandboxPolicy.tempRoots）⇒ OS 层会合法
+    // 放行 ⇒ 断言夹具性红（成因 = 2026-09-13 夹具根由 $HOME 搬到 tmp 的**夹具位移**，不是
+    // 废弃行为）⇒ 修夹具、不删断言。改回 O-9 形态（本文件 os.home / "nb-sbx-seatbelt-
+    // outside.txt" 同手法）：os.home 根层不在任何读写根内（顶层 pin 的数据根是同层兄弟，不覆盖它）。
+    val outside = os.home / s"nb-sbx-wt3-outside-${System.nanoTime()}"
+    os.remove.all(outside) // 先清残留
+    os.makeDir.all(outside) // 目录须真实存在，否则失败原因退化为「无此目录」而非 OS 拒
     try
       val policy = policyIn(ws)
       val ctx = ctxIn(ws, policy)
-      // JVM 层：workspace 外目标 SANDBOX_DENIED
-      FileSandbox.checkWrite(ctx, (outside / "escape.txt").toString) match
-        case Left(err) =>
-          assert(err.message.startsWith("SANDBOX_DENIED"), err.message)
-          assert(err.message.contains("Writable roots:"), err.message)
-        case Right(_) => fail("继承根下项目外写必须仍拒（SANDBOX_DENIED）")
       // 继承收益对照：workspace 内（含 .nebflow/worktrees 布局）深层新文件放行
       FileSandbox.checkWrite(ctx, (ws / ".nebflow" / "wt-fix" / "deep" / "new.txt").toString) match
         case Right(_) => ()
@@ -1121,14 +1043,20 @@ class SandboxSpec extends CatsEffectSuite:
         SandboxRuntime.backend = new SandboxBackend.Seatbelt()
         val osCtx = ctx.copy(sessionId = Some("nb-sbx-wt3-os"))
         val osEscape = (outside / "os-escape.txt").toString
-        BashTool.call(
-          JsonObject("command" -> s"""echo x > "$osEscape"""".asJson), osCtx
-        ).unsafeRunSync() match
+        BashTool
+          .call(
+            JsonObject("command" -> s"""echo x > "$osEscape"""".asJson),
+            osCtx
+          )
+          .unsafeRunSync() match
           case Left(_) => () // OS 拒
           case Right(_) => assert(!os.exists(outside / "os-escape.txt"), "OS 层必须拒绝 workspace 外写")
         assert(!os.exists(outside / "os-escape.txt"), "workspace 外文件不得落盘")
       else ()
-    finally os.remove.all(ws)
+    finally
+      os.remove.all(ws)
+      os.remove.all(outside) // 夹具自清（afterEach 只清 specScratchRoot，os.home 根层件需自清）
+    end try
   }
 
 end SandboxSpec

@@ -4,7 +4,7 @@ import io.circe.Json
 import io.circe.parser.*
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.core.{AskItem, AskOption, AskPreview}
+import nebflow.shared.{AskItem, AskOption, AskPreview, AskPreviewMedia}
 
 /**
  * AskUserQuestion `multiple` support (question-level multi-select):
@@ -23,13 +23,15 @@ class AskUserQuestionToolSpec extends FunSuite:
   // ============================================================
 
   test("parseItems: multiple absent defaults to false") {
-    val input = List(questionJson(
-      "question" -> "Which stack?".asJson,
-      "options" -> Json.arr(
-        Json.obj("label" -> "Scala".asJson),
-        Json.obj("label" -> "Rust".asJson)
+    val input = List(
+      questionJson(
+        "question" -> "Which stack?".asJson,
+        "options" -> Json.arr(
+          Json.obj("label" -> "Scala".asJson),
+          Json.obj("label" -> "Rust".asJson)
+        )
       )
-    ))
+    )
     val items = AskUserQuestionTool.parseItems(input)
     assertEquals(items.size, 1)
     assertEquals(items.head.multiple, false)
@@ -37,39 +39,47 @@ class AskUserQuestionToolSpec extends FunSuite:
   }
 
   test("parseItems: multiple true is decoded") {
-    val input = List(questionJson(
-      "question" -> "Which areas?".asJson,
-      "multiple" -> true.asJson,
-      "options" -> Json.arr(Json.obj("label" -> "Frontend".asJson))
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Which areas?".asJson,
+        "multiple" -> true.asJson,
+        "options" -> Json.arr(Json.obj("label" -> "Frontend".asJson))
+      )
+    )
     val items = AskUserQuestionTool.parseItems(input)
     assertEquals(items.head.multiple, true)
   }
 
   test("parseItems: multiple false is decoded") {
-    val input = List(questionJson(
-      "question" -> "Deploy?".asJson,
-      "multiple" -> false.asJson
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Deploy?".asJson,
+        "multiple" -> false.asJson
+      )
+    )
     assertEquals(AskUserQuestionTool.parseItems(input).head.multiple, false)
   }
 
   test("parseItems: non-boolean multiple falls back to false (lenient)") {
-    val input = List(questionJson(
-      "question" -> "Deploy?".asJson,
-      "multiple" -> "yes".asJson
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Deploy?".asJson,
+        "multiple" -> "yes".asJson
+      )
+    )
     assertEquals(AskUserQuestionTool.parseItems(input).head.multiple, false)
   }
 
   test("parseItems: multiple coexists with id and dependsOn") {
-    val input = List(questionJson(
-      "question" -> "Extras?".asJson,
-      "id" -> "extras".asJson,
-      "multiple" -> true.asJson,
-      "dependsOn" -> Json.obj("ref" -> "target".asJson, "equals" -> "docker".asJson),
-      "options" -> Json.arr(Json.obj("label" -> "Cache".asJson))
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Extras?".asJson,
+        "id" -> "extras".asJson,
+        "multiple" -> true.asJson,
+        "dependsOn" -> Json.obj("ref" -> "target".asJson, "equals" -> "docker".asJson),
+        "options" -> Json.arr(Json.obj("label" -> "Cache".asJson))
+      )
+    )
     val item = AskUserQuestionTool.parseItems(input).head
     assertEquals(item.multiple, true)
     assertEquals(item.id, Some("extras"))
@@ -105,32 +115,40 @@ class AskUserQuestionToolSpec extends FunSuite:
   }
 
   test("parseItems: canvas string is decoded") {
-    val input = List(questionJson(
-      "question" -> "Pick a scheme".asJson,
-      "canvas" -> "/abs/path/compare.html".asJson
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Pick a scheme".asJson,
+        "canvas" -> "/abs/path/compare.html".asJson
+      )
+    )
     assertEquals(AskUserQuestionTool.parseItems(input).head.canvas, Some("/abs/path/compare.html"))
   }
 
   test("parseItems: preview absent defaults to None") {
-    val input = List(questionJson(
-      "question" -> "Pick".asJson,
-      "options" -> Json.arr(Json.obj("label" -> "A".asJson))
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Pick".asJson,
+        "options" -> Json.arr(Json.obj("label" -> "A".asJson))
+      )
+    )
     assertEquals(AskUserQuestionTool.parseItems(input).head.options.head.preview, None)
   }
 
   test("parseItems: swatch preview is decoded (type + colors)") {
-    val input = List(questionJson(
-      "question" -> "Color scheme?".asJson,
-      "options" -> Json.arr(Json.obj(
-        "label" -> "Morning mist".asJson,
-        "preview" -> Json.obj(
-          "type" -> "swatch".asJson,
-          "colors" -> Json.arr("#6b9c8a".asJson, "#a8c3b5".asJson)
+    val input = List(
+      questionJson(
+        "question" -> "Color scheme?".asJson,
+        "options" -> Json.arr(
+          Json.obj(
+            "label" -> "Morning mist".asJson,
+            "preview" -> Json.obj(
+              "type" -> "swatch".asJson,
+              "colors" -> Json.arr("#6b9c8a".asJson, "#a8c3b5".asJson)
+            )
+          )
         )
-      ))
-    ))
+      )
+    )
     val pv = AskUserQuestionTool.parseItems(input).head.options.head.preview
     assertEquals(pv.map(_.`type`), Some("swatch"))
     assertEquals(pv.flatMap(_.colors), Some(List("#6b9c8a", "#a8c3b5")))
@@ -138,13 +156,17 @@ class AskUserQuestionToolSpec extends FunSuite:
   }
 
   test("parseItems: image preview is decoded (type + src)") {
-    val input = List(questionJson(
-      "question" -> "Which mockup?".asJson,
-      "options" -> Json.arr(Json.obj(
-        "label" -> "A".asJson,
-        "preview" -> Json.obj("type" -> "image".asJson, "src" -> "https://example.com/a.png".asJson)
-      ))
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Which mockup?".asJson,
+        "options" -> Json.arr(
+          Json.obj(
+            "label" -> "A".asJson,
+            "preview" -> Json.obj("type" -> "image".asJson, "src" -> "https://example.com/a.png".asJson)
+          )
+        )
+      )
+    )
     val pv = AskUserQuestionTool.parseItems(input).head.options.head.preview
     assertEquals(pv.map(_.`type`), Some("image"))
     assertEquals(pv.flatMap(_.src), Some("https://example.com/a.png"))
@@ -152,13 +174,17 @@ class AskUserQuestionToolSpec extends FunSuite:
   }
 
   test("parseItems: malformed preview (no type) falls back to None — option kept") {
-    val input = List(questionJson(
-      "question" -> "Pick".asJson,
-      "options" -> Json.arr(Json.obj(
-        "label" -> "A".asJson,
-        "preview" -> Json.obj("src" -> "https://example.com/x.png".asJson) // missing type
-      ))
-    ))
+    val input = List(
+      questionJson(
+        "question" -> "Pick".asJson,
+        "options" -> Json.arr(
+          Json.obj(
+            "label" -> "A".asJson,
+            "preview" -> Json.obj("src" -> "https://example.com/x.png".asJson) // missing type
+          )
+        )
+      )
+    )
     val opt = AskUserQuestionTool.parseItems(input).head.options.head
     assertEquals(opt.label, "A")
     assertEquals(opt.preview, None)
@@ -200,11 +226,141 @@ class AskUserQuestionToolSpec extends FunSuite:
   }
 
   // ============================================================
+  // askuser-media 批（2026-11-18）：选项预览的视频 / 媒体组
+  // ============================================================
+
+  private def previewOf(previewJson: io.circe.Json): Option[AskPreview] =
+    AskUserQuestionTool
+      .parseItems(
+        List(
+          questionJson(
+            "question" -> "Which design?".asJson,
+            "options" -> Json.arr(Json.obj("label" -> "A".asJson, "preview" -> previewJson))
+          )
+        )
+      )
+      .head
+      .options
+      .head
+      .preview
+
+  test("parseMediaItem: kind/src/poster/name/path are decoded") {
+    val m = AskUserQuestionTool.parseMediaItem(
+      Json.obj(
+        "kind" -> "video".asJson,
+        "src" -> "https://cdn.example.com/clip.mp4".asJson,
+        "poster" -> "/Users/x/cover.jpg".asJson,
+        "name" -> "clip.mp4".asJson,
+        "path" -> "/Users/x/clip.mp4".asJson
+      )
+    )
+    assertEquals(
+      m,
+      Some(
+        AskPreviewMedia(
+          kind = "video",
+          src = Some("https://cdn.example.com/clip.mp4"),
+          poster = Some("/Users/x/cover.jpg"),
+          name = Some("clip.mp4"),
+          path = Some("/Users/x/clip.mp4")
+        )
+      )
+    )
+  }
+
+  test("parseMediaItem: kind absent defaults to image; blank fields fold to None") {
+    val m = AskUserQuestionTool.parseMediaItem(
+      Json.obj("src" -> " /tmp/a.png ".asJson, "name" -> "  ".asJson, "poster" -> "".asJson)
+    )
+    assertEquals(m, Some(AskPreviewMedia(kind = "image", src = Some("/tmp/a.png"))))
+  }
+
+  test("parseMediaItem: entry with neither src nor path is dropped") {
+    assertEquals(AskUserQuestionTool.parseMediaItem(Json.obj("kind" -> "image".asJson, "name" -> "x".asJson)), None)
+  }
+
+  test("parseItems: video preview is decoded (type + src + poster)") {
+    val pv = previewOf(Json.obj("type" -> "video".asJson, "src" -> "/tmp/a.mp4".asJson, "poster" -> "/tmp/a.jpg".asJson))
+    assertEquals(pv.map(_.`type`), Some("video"))
+    assertEquals(pv.flatMap(_.src), Some("/tmp/a.mp4"))
+    assertEquals(pv.flatMap(_.poster), Some("/tmp/a.jpg"))
+    assertEquals(pv.flatMap(_.items), None)
+  }
+
+  test("parseItems: media group is decoded in order, blank/garbage entries dropped") {
+    val pv = previewOf(
+      Json.obj(
+        "type" -> "media".asJson,
+        "items" -> Json.arr(
+          Json.obj("kind" -> "image".asJson, "src" -> "https://example.com/a.png".asJson, "name" -> "a.png".asJson),
+          Json.obj("kind" -> "video".asJson, "src" -> "/tmp/b.mp4".asJson, "poster" -> "https://example.com/b.jpg".asJson),
+          Json.obj("kind" -> "image".asJson), // no src/path ⇒ dropped
+          "not-an-object".asJson // non-object ⇒ dropped
+        )
+      )
+    )
+    assertEquals(pv.map(_.`type`), Some("media"))
+    assertEquals(
+      pv.flatMap(_.items),
+      Some(
+        List(
+          AskPreviewMedia(kind = "image", src = Some("https://example.com/a.png"), name = Some("a.png")),
+          AskPreviewMedia(kind = "video", src = Some("/tmp/b.mp4"), poster = Some("https://example.com/b.jpg"))
+        )
+      )
+    )
+  }
+
+  test("parseItems: empty media group folds to None (no preview, option kept)") {
+    val pv = previewOf(Json.obj("type" -> "media".asJson, "items" -> Json.arr()))
+    assertEquals(pv.flatMap(_.items), None)
+    assertEquals(pv.map(_.`type`), Some("media"))
+  }
+
+  test("inputSchema: preview documents the four forms incl. media group + items") {
+    val schema = AskUserQuestionTool.inputSchema
+    val preview = schema("properties")
+      .flatMap(_.asObject)
+      .flatMap(_("questions"))
+      .flatMap(_.asObject)
+      .flatMap(_("items"))
+      .flatMap(_.asObject)
+      .flatMap(_("properties"))
+      .flatMap(_.asObject)
+      .flatMap(_("options"))
+      .flatMap(_.asObject)
+      .flatMap(_("items"))
+      .flatMap(_.asObject)
+      .flatMap(_("properties"))
+      .flatMap(_.asObject)
+      .flatMap(_("preview"))
+      .flatMap(_.asObject)
+    val props = preview.flatMap(_("properties")).flatMap(_.asObject)
+    assert(props.flatMap(_("src")).isDefined, "preview must document `src`")
+    assert(props.flatMap(_("poster")).isDefined, "preview must document `poster`")
+    val groupItems = props.flatMap(_("items")).flatMap(_.asObject)
+    assert(groupItems.isDefined, "preview must document the `items` media group")
+    val itemProps = groupItems.flatMap(_("items")).flatMap(_.asObject).flatMap(_("properties")).flatMap(_.asObject)
+    assertEquals(
+      itemProps.map(_.keys.toSet),
+      Some(Set("kind", "src", "poster", "name", "path")),
+      "media group entries must document the reuse-contract fields"
+    )
+    assert(preview.flatMap(_("description")).flatMap(_.asString).exists(_.contains("media GROUP")))
+    assert(AskUserQuestionTool.previewDescription.contains("'video'"))
+    assert(AskUserQuestionTool.previewDescription.contains("'media'"))
+  }
+
+  // ============================================================
   // formatAnswer — multi-select array vs scalar
   // ============================================================
 
   private def multiItem(q: String, labels: String*): AskItem =
     AskItem(q, labels.map(l => AskOption(l)).toList, multiple = true)
+
+  /** 期望串归一 LF：三引号字面量在 CRLF checkout（Windows autocrlf）下带 \r，
+    * 引擎 formatAnswer 以显式 "\n" 构造 ⇒ 逐字比较在 Windows 假红；归一后契约不变。 */
+  private def lf(s: String): String = s.replace("\r\n", "\n")
 
   private def singleItem(q: String, labels: String*): AskItem =
     AskItem(q, labels.map(l => AskOption(l)).toList)
@@ -233,7 +389,7 @@ class AskUserQuestionToolSpec extends FunSuite:
         |   → Scala
         |2. Which areas?
         |   → ["Frontend","Backend"]""".stripMargin
-    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), expected)
+    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), lf(expected))
   }
 
   test("formatAnswer: non-JSON multi-select payload passes through unchanged (fallback)") {
@@ -250,7 +406,7 @@ class AskUserQuestionToolSpec extends FunSuite:
         |   → Scala
         |2. Areas?
         |   → (skipped)""".stripMargin
-    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), expected)
+    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), lf(expected))
   }
 
   // ============================================================
@@ -273,7 +429,7 @@ class AskUserQuestionToolSpec extends FunSuite:
         |   → Scala
         |2. Priority?
         |   → Performance""".stripMargin
-    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), expected)
+    assertEquals(AskUserQuestionTool.formatAnswer(items, answers), lf(expected))
   }
 
   test("inputSchema: multiple documented as boolean on question items") {

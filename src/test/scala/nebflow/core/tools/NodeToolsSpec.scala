@@ -18,8 +18,18 @@ class NodeToolsSpec extends FunSuite:
     assertEquals(NodeTools.parseOut(Some(Json.fromString("n-abc12345"))), Right(List(OutEdge("n-abc12345"))))
   }
 
-  test("parseOut: Nebula accepted（缺省双通报门 {pass,failed}——旧拓扑零漂移）") {
-    assertEquals(NodeTools.parseOut(Some(Json.fromString("Nebula"))), Right(List(OutEdge.nebula)))
+  test("parseOut: bare \"Nebula\" → EXIT MARKER ({pass}/signal; 2026-09-12 A1)") {
+    // 2026-09-12 批 A1：bare 字面收敛为**纯出口标记**（零根投递）；显式门集才是通知声明。
+    // 与存量读路径（`fromLegacyString` / `OutEdge.root` = {pass,failed}/result）分叉点见
+    // `ProjectTypes.RootDefaultOn` 常量注释。
+    assertEquals(
+      NodeTools.parseOut(Some(Json.fromString("Nebula"))),
+      Right(List(OutEdge(OutEdge.RootTarget, Set(OutEdge.Pass), OutEdge.Signal)))
+    )
+  }
+
+  test("parseOut: explicit-gate \"(pass,failed)Nebula\" keeps the notify form ({pass,failed}/result)") {
+    assertEquals(NodeTools.parseOut(Some(Json.fromString("(pass,failed)Nebula"))), Right(List(OutEdge.root)))
   }
 
   test("parseOut: null → disconnect (Right(Nil))") {
@@ -41,30 +51,32 @@ class NodeToolsSpec extends FunSuite:
   test("parseOut: 扇出 '(pass)B, (failed)C' → 两边（pass 缺省 + failed 声明）") {
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("(pass)n-b, (failed)n-c"))),
-      Right(List(OutEdge("n-b", Set("pass")), OutEdge("n-c", Set("failed")))))
+      Right(List(OutEdge("n-b", Set("pass")), OutEdge("n-c", Set("failed"))))
+    )
   }
 
   test("parseOut: 失败纯信号边 '(failed)C:signal' → failed 门 + signal 模式") {
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("(failed)n-c:signal"))),
-      Right(List(OutEdge("n-c", Set("failed"), "signal"))))
+      Right(List(OutEdge("n-c", Set("failed"), "signal")))
+    )
   }
 
   test("parseOut: 多门组 '(pass,failed)B' 合并门集；canonical 合并同 (to,mode)") {
     // 同 (to, mode=result) 两段 → canonical 合并为单边 on 取并集（compat #1：一次终态至多投一次）
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("(pass,failed)n-b, (failed)n-b"))),
-      Right(List(OutEdge("n-b", Set("pass", "failed")))))
+      Right(List(OutEdge("n-b", Set("pass", "failed"))))
+    )
     // 同 to 异 mode 不合并（result 与 signal 是不同投递语义的两条边）
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("(pass,failed)n-b, (failed)n-b:signal"))),
-      Right(List(OutEdge("n-b", Set("pass", "failed"), "result"), OutEdge("n-b", Set("failed"), "signal"))))
+      Right(List(OutEdge("n-b", Set("pass", "failed"), "result"), OutEdge("n-b", Set("failed"), "signal")))
+    )
   }
 
   test("parseOut: 显式 '(pass)Nebula' 收窄 Nebula 缺省双通报门") {
-    assertEquals(
-      NodeTools.parseOut(Some(Json.fromString("(pass)Nebula"))),
-      Right(List(OutEdge("Nebula", Set("pass")))))
+    assertEquals(NodeTools.parseOut(Some(Json.fromString("(pass)Nebula"))), Right(List(OutEdge("Nebula", Set("pass")))))
   }
 
   test("parseOut: 非法门/非法 mode/未闭合门组 → 可行动错误") {
@@ -77,7 +89,8 @@ class NodeToolsSpec extends FunSuite:
   test("parseOut: 大小写/空白宽容（'(FAILED) n-c : SIGNAL'）") {
     assertEquals(
       NodeTools.parseOut(Some(Json.fromString("(FAILED) n-c : SIGNAL"))),
-      Right(List(OutEdge("n-c", Set("failed"), "signal"))))
+      Right(List(OutEdge("n-c", Set("failed"), "signal")))
+    )
   }
 
   // ── parseIn 宽容解析（修复次因 B，回归⑦）────────────────
@@ -85,19 +98,16 @@ class NodeToolsSpec extends FunSuite:
   test("parseIn: native JSON array accepted") {
     assertEquals(
       NodeTools.parseIn(Some(Json.arr(Json.fromString("n-a"), Json.fromString("n-b")))),
-      Right(List("n-a", "n-b")))
+      Right(List("n-a", "n-b"))
+    )
   }
 
   test("parseIn: JSON-array-as-string accepted (LLM 把数组整体字符串化的实证形态)") {
-    assertEquals(
-      NodeTools.parseIn(Some(Json.fromString("[\"n-a\",\"n-b\"]"))),
-      Right(List("n-a", "n-b")))
+    assertEquals(NodeTools.parseIn(Some(Json.fromString("[\"n-a\",\"n-b\"]"))), Right(List("n-a", "n-b")))
   }
 
   test("parseIn: comma-separated string accepted") {
-    assertEquals(
-      NodeTools.parseIn(Some(Json.fromString("n-a, n-b ,n-c"))),
-      Right(List("n-a", "n-b", "n-c")))
+    assertEquals(NodeTools.parseIn(Some(Json.fromString("n-a, n-b ,n-c"))), Right(List("n-a", "n-b", "n-c")))
   }
 
   test("parseIn: single plain id stays single") {
@@ -108,7 +118,8 @@ class NodeToolsSpec extends FunSuite:
     assertEquals(NodeTools.parseIn(Some(Json.fromString("n-a,, ,n-b,"))), Right(List("n-a", "n-b")))
     assertEquals(
       NodeTools.parseIn(Some(Json.arr(Json.fromString("n-a"), Json.fromString(""), Json.fromString(" ")))),
-      Right(List("n-a")))
+      Right(List("n-a"))
+    )
     assertEquals(NodeTools.parseIn(Some(Json.fromString(""))), Right(Nil))
     assertEquals(NodeTools.parseIn(Some(Json.fromString("   "))), Right(Nil))
   }
@@ -134,32 +145,40 @@ class NodeToolsSpec extends FunSuite:
     assert(NodeTools.parseOut(Some(Json.fromString(""))).isLeft)
   }
 
-  test("NodeLifecycle: Terminal = completed/failed/cancelled/blocked, excludes running/pending/wiring") {
+  test(
+    "NodeLifecycle: Terminal = completed/failed/cancelled, excludes running/pending/wiring and the retired blocked token"
+  ) {
+    // blocked 终态退役（no-blocked-semantics 一期）：Terminal 集不含 blocked——
+    // 该 token 仅为 legacy 存量行迁移保留，不是终态
     assertEquals(
       NodeLifecycle.Terminal,
-      Set(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled, NodeLifecycle.Blocked)
+      Set(NodeLifecycle.Completed, NodeLifecycle.Failed, NodeLifecycle.Cancelled)
     )
     assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Running))
     assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Pending))
     assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Wiring))
+    assert(!NodeLifecycle.Terminal.contains(NodeLifecycle.Blocked))
+    assert(!NodeLifecycle.All.contains(NodeLifecycle.Blocked), "retired token is not a legal lifecycle value")
+    assert(!NodeLifecycle.ChainCancelScope.contains(NodeLifecycle.Blocked), "legacy blocked rows are dispatcher-owned")
   }
 
   // ── resolveProject 报错（mountError 纯函数，项目名不匹配附可用项目列表）────
-  // 实证锚点：NodeList(Nebflow) 报 "Project 'Nebflow' is not mounted. Use ProjectCreate first."——
+  // 实证锚点：NodeList(Nebflow) 报 "Project 'Nebflow' is not mounted. Use Project first."
+  // （N2 project-tool 批更名，原句为 Use ProjectCreate first）——
   // 不匹配应列出实际已挂载项目名（提示大小写/名称，不裸报 not mounted）。
 
   test("mountError: not-mounted error lists available projects (case-insensitive hint)") {
     val e = NodeTools.mountError("Nebflow", List("nebflow"))
     assert(e.contains("Nebflow"), s"must name the requested project, got: $e")
     assert(e.contains("Available projects: nebflow"), s"must list available project(s), got: $e")
-    assert(e.contains("Use ProjectCreate first"), s"must point to ProjectCreate, got: $e")
+    assert(e.contains("Use Project first"), s"must point to Project, got: $e")
   }
 
   test("mountError: empty available list → dedicated no-projects hint (still actionable)") {
     val e = NodeTools.mountError("nonexistent", Nil)
     assert(e.contains("nonexistent"), s"must name the requested project, got: $e")
     assert(e.contains("No projects are currently mounted"), s"empty registry needs its own hint, got: $e")
-    assert(e.contains("Use ProjectCreate first"), s"must point to ProjectCreate, got: $e")
+    assert(e.contains("Use Project first"), s"must point to Project, got: $e")
   }
 
   // ── 四工具 schema：project 参数可选化（缺省=分发器当前项目，不再 required）────
@@ -169,17 +188,52 @@ class NodeToolsSpec extends FunSuite:
 
   test("four node tools: 'project' removed from required (dispatcher defaults to current project)") {
     // NodeEdit: nodename 仍必填
-    assert(!requiredOf(NodeEditTool).contains("project") && requiredOf(NodeEditTool).contains("nodename"),
-      s"NodeEdit required should drop project, keep nodename; got ${requiredOf(NodeEditTool)}")
+    assert(
+      !requiredOf(NodeEditTool).contains("project") && requiredOf(NodeEditTool).contains("nodename"),
+      s"NodeEdit required should drop project, keep nodename; got ${requiredOf(NodeEditTool)}"
+    )
     // NodeList: 唯一必填原本就是 project → 现在无必填
-    assertEquals(requiredOf(NodeListTool), Nil, "NodeList has no other required param — project optional leaves required empty")
-    // NodeCancel: node-id 仍必填
-    assert(!requiredOf(NodeCancelTool).contains("project") && requiredOf(NodeCancelTool).contains("node-id"),
-      s"NodeCancel required should drop project, keep node-id; got ${requiredOf(NodeCancelTool)}")
-    // NodeMessage: nodeId + message 仍必填
-    val msgReq = requiredOf(NodeMessageTool)
-    assert(!msgReq.contains("project") && msgReq.contains("nodeId") && msgReq.contains("message"),
-      s"NodeMessage required should drop project, keep nodeId+message; got $msgReq")
+    assertEquals(
+      requiredOf(NodeListTool),
+      Nil,
+      "NodeList has no other required param — project optional leaves required empty"
+    )
+    // NodeCancel: N1 刀2 链级形态（chain XOR node-id，schema required 置空——互斥
+    // 闸在运行期：两者皆缺/皆在均有可行动报错，node-id 不再能 required）。
+    assertEquals(
+      requiredOf(NodeCancelTool),
+      Nil,
+      "NodeCancel required must be empty (node-id XOR chain, enforced at runtime); " +
+        s"got ${requiredOf(NodeCancelTool)}"
+    )
+    assert(
+      NodeCancelTool.inputSchema("properties").exists(_.asObject.exists(_("chain").isDefined)),
+      "NodeCancel schema must carry the chain-level form parameter"
+    )
+    // NodeMessage 工具已删净退役（R2 2026-09-12）⇒ 其必填面断言同批删除；语义并入
+    // `Mail(address="node:<id>", message=...)`。
+    // device-mail 批（2026-09-15）：Mail 的目标面从「address 必填」扩成
+    // **`address` XOR `device`**（两者各自可空、由运行期互斥闸判，见 MailTool 的
+    // MAIL_TARGET_EXCLUSIVE / _MISSING）⇒ required 只剩 message。
+    // mailmodel batch (2026-09-25, ruling (e)): the whole `device` leg is retired =>
+    // the target face returns to the **single `address` target** (the required face is
+    // unchanged, still message only; the address key must stay present and `device`
+    // must NOT come back).
+    val mailReq = requiredOf(MailTool)
+    assertEquals(
+      mailReq,
+      List("message"),
+      s"Mail required should be message only (the target face is address-only); got $mailReq"
+    )
+    assert(
+      !mailReq.contains("nodeId") && !mailReq.contains("project"),
+      s"Mail must not carry the retired NodeMessage params; got $mailReq"
+    )
+    val mailProps = MailTool.inputSchema("properties").flatMap(_.asObject).map(_.keys.toSet).getOrElse(Set.empty)
+    assert(
+      mailProps.contains("address") && !mailProps.contains("device"),
+      s"Mail must declare `address` and must NOT carry the retired `device` key; got ${mailProps.toList.sorted}"
+    )
   }
 
 end NodeToolsSpec

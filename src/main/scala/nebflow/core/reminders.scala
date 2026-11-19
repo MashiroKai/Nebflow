@@ -2,88 +2,76 @@ package nebflow.core
 
 import cats.effect.IO
 import cats.syntax.all.*
-import nebflow.core.NebflowLogger
 import nebflow.core.scheduler.{ScheduledTask, ScheduledTaskStore}
-import nebflow.shared.{Message, MessageRole}
+import nebflow.shared.*
 
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
-case class SystemReminder(category: String, content: String):
-  def render: String = s"<system-reminder>\n$content\n</system-reminder>"
-
-object SystemReminder:
-
-  def renderAll(reminders: List[SystemReminder]): String =
-    if reminders.isEmpty then ""
-    else if reminders.length == 1 then reminders.head.render
-    else
-      val body = reminders.map(_.content).mkString("\n\n")
-      s"<system-reminder>\n$body\n</system-reminder>"
+/**
+ * Plugin-surface change payload: the rendered
+ * `# Plugin Catalog` section as it was last visible to the session (`previous`,
+ * = the spawn-time first-message snapshot / the last announced value) versus the
+ * current render (`current`). Produced by AgentCore's change detection and
+ * consumed by [[SystemReminders.pluginSurfaceReminder]].
+ */
+case class PluginSurfaceChange(previous: String, current: String)
 
 object SystemReminders:
 
-  /**
-   * Current time with timezone offset, JVM default zone, minute granularity.
-   * e.g. "2026-08-11 17:00 +08:00"
-   */
-  private def currentTime(): SystemReminder =
-    val now = ZonedDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm XXX"))
-    SystemReminder("time", s"Current time: $now")
-
   private val logger = NebflowLogger.forName("nebflow.reminders")
 
-  /**
-   * Collect per-turn system reminders.
-   *
-   * The time reminder is PERSISTED as a real User message in the session
-   * history (injected into state.messages by AgentCore.pipeLlmCall) so it
-   * survives restarts and compaction. Other reminder types (save-memory,
-   * compact prompts, branch-change) stay non-persistent — injected per-turn,
-   * never saved to profile.
-   */
-  def collectAll(isUserTurn: Boolean = true): List[SystemReminder] =
-    val reminders = scala.collection.mutable.ListBuffer.empty[SystemReminder]
-
-    // Current time — only on user input turns
-    if isUserTurn then reminders += currentTime()
-
-    reminders.toList
-  end collectAll
+  /** Clock injection is retired here: only real input → Message conversion attaches it. */
+  def collectAll(isUserTurn: Boolean = true): List[SystemReminder] = Nil
 
   /**
    * Collect per-turn reminders including a summary of pending scheduled
    * tasks for this session. IO because it queries the scheduled-task store.
    *
-   * Cache-optimization v2 (2026-08-11): dynamic values that were moved OUT of
-   * the per-turn system prompt are injected here instead — request-level
-   * reminders (never persisted). The time reminder keeps its persisted
-   * semantics (任务 O).
+ * Cache-optimization v2: dynamic values moved OUT of the per-turn system
+ * prompt are injected here instead — request-level reminders (never persisted).
+ * Clock injection is not a reminder: only real-user input conversion attaches it.
    *
-   * Reminder refactor (2026-08-20, user ruling — audit
-   * docs/Nebflow/20260820_system-reminder-audit.md, 44K token/半天 waste):
-   *  - time: injected on real-user turns always; on system-event turns
-   *    (mail/external/skill injections) at most once per hour — the caller
-   *    passes `injectTime` after checking the gap.
+   * Reminder refactor (audit
+   * finding: system reminders wasted a large token share per half-day):
+ *  - time: 不属于 reminder collection；时钟只在真实用户输入转消息时附加。
+ *    Mail / 节点消息 / 定时事件 / 外部事件 / 工具往返与空转轮均不产生时钟。
    *  - tasks: team sessions only, real-user turns only (task redesign
-   *    2026-08-30 — moved from Nebula to team members); the caller supplies
+   *    — moved from Nebula to team members); the caller supplies
    *    pre-rendered full/delta/unchanged text (change detection lives in
-   *    AgentCore, gated on TeamSessionRegistry.teamOfSession).
+   *    AgentCore, gated on the retired team-session lookup).
    *  - schedule: Nebula (root) only.
-   *  - sessions & environment reminder types REMOVED (user ruling: sessions
+   *  - sessions & environment reminder types REMOVED (rationale: sessions
    *    outdated; environment change notifications cut — only stable fields
    *    remain in systemStable, jittery chatWidth dropped from the template).
    *  - devices: caller supplies a pre-computed delta (+/- lines).
-   *  - projects: Nebula only (progressive disclosure 2026-09-07) — caller
+   *  - projects: Nebula only (progressive disclosure) — caller
    *    supplies a pre-computed +/- delta of mounted projects; empty when no
    *    change. systemStable carries the full list at lifecycle nodes, mid-session
    *    mount/unmount/create is reported here instead of invalidating the cache.
+   *  - plugin-surface: dispatcher sessions only —
+   *    caller supplies the previous/current rendered Plugin Catalog section; the
+   *    reminder is emitted on a real change and is PERSISTED (see
+   *    SystemReminders.isPluginSurfaceReminderMessage) so a closed plugin's
+   *    capability stays retracted for every later turn of the same session.
    *
-   * Reminder audit (2026-08-19): time-context (peak/off-peak + next idle
-   * window) removed entirely — user flagged "Off-peak hours." as noise
-   * (00:00 实测). `tasks` is gated to root agents: subagent workers receive
+   * Reminder audit: time-context (peak/off-peak + next idle
+   * window) removed entirely — user flagged "Off-peak hours." as noise.
+   * `tasks` is gated to root agents: subagent workers receive
    * their work from the parent's Delegate/SubTask instructions, not the task
    * store.
+   *
+   * F-2：
+   *  - `suppressContextReminders` **抑制位**：compact/ask 轮在注入闸
+   *    （AgentCore `contextMsg`）处为空 ⇒ 这些**请求级**提醒根本到不了模型。
+   *    「没交付就不记数」：该轮**不产生提醒对象** ⇒ 既不注入也不打计数行
+   *    （改前 `logAndReturn` 在闸之前 ⇒ 打了行但没注入 ⇒ 基线不推进 ⇒ 下个真用户轮
+   *    再打一遍 = M2）。传 true 时抑制的正是 `contextMsg` 会丢掉的那一族
+   *    （devices / tasks / language / projects / schedule）；`time` 与
+   *    plugin-surface 的采集与降采样次序**不变**（前者持久化、后者持久化，各有自己的闸）。
+   *    🔴 未播报的真变化仍保持 pending（基线不动）⇒ 下个真用户轮照常提示。
+   *  - `deviceMemberKey` = device 通道的**计数键**（成员集合）——渲染文本变化
+   *    （画像 / ⚠stale）不构成新键 ⇒ 不产生计数增量（M3）。
    */
   def collectAllIO(
     isUserTurn: Boolean,
@@ -93,32 +81,109 @@ object SystemReminders:
     taskListText: String = "",
     language: Option[String] = None,
     isRootAgent: Boolean = false,
-    injectTime: Boolean = true,
-    mountedProjectsDelta: String = ""
+    mountedProjectsDelta: String = "",
+    pluginSurfaceChange: Option[PluginSurfaceChange] = None,
+    /**
+     * identity-sync 批（2026-10-23）：展示身份（名字/头像）变更的预渲染差量文本
+     * （renderIdentityChange 产物）；空 = 无变化 = 零注入。
+     */
+    identityDelta: String = "",
+    /** F-2：true = 本轮的请求级提醒注定不被注入（compact / ask）⇒ 不产生对象、不计数。 */
+    suppressContextReminders: Boolean = false,
+    /** F-2：device 变化的计数键（成员集合，deviceId 面）；空 = 不参与去重（旧行为）。 */
+    deviceMemberKey: String = ""
   ): IO[List[SystemReminder]] =
     if !isUserTurn then IO.pure(Nil)
     else
       for
         pending <- sessionId.fold(IO.pure(Nil: List[ScheduledTask]))(taskStore.loadTasks)
-        reminders = (if injectTime then collectAll(isUserTurn = true) else Nil) ++
-          (if isRootAgent then pendingScheduleReminder(pending) else None) ++
-          devicesReminder(deviceDelta) ++
-          // Task redesign (2026-08-30): task reminder targets team sessions, not
-          // Nebula. The caller (AgentCore) only renders taskListText when the
-          // session is team-registered, so the gate lives upstream — include the
-          // reminder whenever text is non-empty (schedule stays Nebula-only).
-          tasksReminder(taskListText) ++
-          languageReminder(language) ++
-          projectsReminder(mountedProjectsDelta)
+        contextReminders =
+          // F-2 抑制位：不会注入的轮 ⇒ 零提醒对象（含 devices 计数行）。顺序与改前逐字相同。
+          if suppressContextReminders then Nil
+          else
+            List(
+              if isRootAgent then pendingScheduleReminder(pending) else None,
+              devicesReminder(deviceDelta, deviceMemberKey),
+              // Task redesign: task reminder targets team sessions, not
+              // Nebula. The caller (AgentCore) only renders taskListText when the
+              // session is team-registered, so the gate lives upstream — include the
+              // reminder whenever text is non-empty (schedule stays Nebula-only).
+              tasksReminder(taskListText),
+              languageReminder(language),
+              projectsReminder(mountedProjectsDelta),
+              identityReminder(identityDelta)
+            ).flatten
+        reminders = contextReminders ++ pluginSurfaceReminder(pluginSurfaceChange)
       yield reminders
 
-  /** Devices changed since systemStable was built (cache v2; delta lines 2026-08-20). */
-  private def devicesReminder(deviceDelta: String): Option[SystemReminder] =
+  /**
+   * Devices changed since systemStable was built (cache v2 delta lines).
+   *
+   * F-2：`memberKey` 是变化的**身份**（成员集合），
+   * 作为 [[SystemReminder.countKey]] 交给 [[logAndReturn]] 去重计数；空键 ⇒ `None`
+   * （不参与去重 = 旧行为）。注入内容与字面**逐字不变**（`+/-` 条目形态保持原样 ——
+   * 条目字面属提示词面，零改动）。
+   */
+  private def devicesReminder(deviceDelta: String, memberKey: String = ""): Option[SystemReminder] =
     if deviceDelta.isEmpty then None
-    else Some(SystemReminder("devices", s"Devices changed:\n$deviceDelta"))
+    else
+      Some(
+        SystemReminder(
+          "devices",
+          s"Devices changed:\n$deviceDelta",
+          countKey = Option(memberKey).map(_.trim).filter(_.nonEmpty)
+        )
+      )
 
-  /** Current task list — team-session user-turn reminder, never part of systemStable.
-    * The caller (AgentCore) supplies full / delta / unchanged text. */
+  /**
+   * F-2 计数键：设备的**成员集合**（deviceId 面；排序 + 去重 ⇒ 顺序抖动不换键）。
+   *
+   * 🔴 不得用渲染文本当计数键：条目文本会随画像轴 / `⚠stale` 标记变化（M3），
+   * 用文本当键会把「同一批设备的重渲染」计成新变化。
+   */
+  def deviceMemberKey(deviceIds: Iterable[String]): String =
+    deviceIds.iterator.map(_.trim).filter(_.nonEmpty).toList.distinct.sorted.mkString("\u0001")
+
+  /**
+   * F-2 M1 计数账本：device 变化的**跨会话去重**。
+   *
+   * WHY 进程内账本：`stableSnapshot.devices` 是**每 session 各自一套**基线
+   * （`AgentCore` 的进程内 state），所以同一次 roster 变化会被「被真用户轮告知的
+   * session 数」各计一遍（跨设备/多设备同源场景下「同一变化在极短间隔内被两条 session 各记一次」的最可能解释）。计数键是
+   * **成员集合**（跨会话同源）⇒ 「同一变化只计一次」在进程维度可判。
+   * 语义 = 与**上一次**已计键比较（不是永久 seen 集）：设备离开后**再次回来**
+   * （成员集合回到旧值、但中间经过了别的集合）仍会各计一次。
+   */
+  object DeviceChangeCount:
+
+    private val lastCountedKey = new java.util.concurrent.atomic.AtomicReference[String]("")
+    private val counted = new java.util.concurrent.atomic.AtomicLong(0L)
+
+    /**
+     * true = 该键与上一次已计键不同 ⇒ **计一次**（调用方据此打计数行）；
+     * false = 同一变化已计过 ⇒ 零增量（不重复打行，注入不受影响）。
+     */
+    def claim(key: String): Boolean =
+      val previous = lastCountedKey.getAndSet(key)
+      if previous == key then false
+      else
+        counted.incrementAndGet()
+        true
+
+    /** 计数读数（诊断 / 测试）。 */
+    def total: Long = counted.get()
+
+    /** 复位账本（测试用；生产无调用方）。 */
+    private[nebflow] def reset(): Unit =
+      lastCountedKey.set("")
+      counted.set(0L)
+
+  end DeviceChangeCount
+
+  /**
+   * Current task list — team-session user-turn reminder, never part of systemStable.
+   * The caller (AgentCore) supplies full / delta / unchanged text.
+   */
   private def tasksReminder(taskListText: String): Option[SystemReminder] =
     if taskListText.isEmpty then None
     else Some(SystemReminder("tasks", taskListText))
@@ -127,33 +192,200 @@ object SystemReminders:
   private def languageReminder(language: Option[String]): Option[SystemReminder] =
     language.map(lang => SystemReminder("language", s"Language changed: respond in $lang"))
 
-  /** Mounted projects changed since systemStable was built (cache v2,
-    * progressive disclosure 2026-09-07). Nebula sees incremental +/-
-    * entries when a project is mounted/unmounted/created — the root-aware
-    * gate lives upstream (AgentCore only renders delta for the root agent). */
+  /**
+   * Display identity (name / avatar) changed since systemStable was built
+   * (identity-sync 批 2026-10-23，作者令「对名称的修改要落实到智能体的记忆里，
+   * 让他知道自己的头像和名字」). Caller supplies the pre-rendered delta text
+   * (current values authoritative + what they replace) — empty = no change ⇒
+   * no injection. Same shape as the devices/projects delta channels: the
+   * stable prefix picks the new values up at the next lifecycle rebuild; this
+   * reminder is the mid-session channel.
+   */
+  private def identityReminder(deltaText: String): Option[SystemReminder] =
+    if deltaText.isEmpty then None
+    else Some(SystemReminder("identity", deltaText))
+
+  /**
+   * Render the authoritative identity-change reminder body (pure — spec-testable;
+   * public — the caller is AgentSessionExecution, nebflow.agent).
+   * `current` lines are the freshly re-read `## Self` body; `previous` is what
+   * the session last saw ("" = the session had no identity section before).
+   */
+  def renderIdentityChange(previous: String, current: String): String =
+    val sb = scala.collection.mutable.ListBuffer.empty[String]
+    sb += "Your display identity changed — these are the authoritative values now:"
+    if current.nonEmpty then current.linesIterator.foreach(l => if l.nonEmpty then sb += l.replaceFirst("^- ", "- "))
+    else sb += "- (no display name / no custom avatar — default identity)"
+    sb += s"(Previous: ${if previous.nonEmpty then previous.replace("\n", "; ") else "default identity"})"
+    sb += "Earlier mentions of your name or avatar in this conversation are superseded."
+    sb.mkString("\n")
+  end renderIdentityChange
+
+  /**
+   * Mounted projects changed since systemStable was built (cache v2,
+   * progressive disclosure). Nebula sees incremental +/-
+   * entries when a project is mounted/unmounted/created — the root-aware
+   * gate lives upstream (AgentCore only renders delta for the root agent).
+   */
   private def projectsReminder(mountedProjectsDelta: String): Option[SystemReminder] =
     if mountedProjectsDelta.isEmpty then None
     else Some(SystemReminder("projects", s"Mounted projects changed:\n$mountedProjectsDelta"))
 
-  /** Summary of this session's pending (untriggered) scheduled tasks. */
-  private def pendingScheduleReminder(pending: List[ScheduledTask]): Option[SystemReminder] =
-    if pending.isEmpty then None
+  // ------------------------------------------------------------------
+  // Plugin surface
+  // ------------------------------------------------------------------
+
+  /**
+   * Reminder category for the plugin-surface delta (AgentCore splits it out of
+   * `collectAllIO`'s result and PERSISTS it — see [[isPluginSurfaceReminderMessage]]).
+   */
+  val PluginSurfaceCategory: String = "plugin-surface"
+
+  /**
+   * First line of every plugin-surface reminder body — the persisted-message
+   * marker ([[isPluginSurfaceReminderMessage]]) and the human/grep anchor.
+   */
+  val PluginSurfaceMarker: String = "Plugin surface changed"
+
+  /**
+   * Plugin trust/`plugins.enabled` changed for a session that carries a Plugin
+   * Catalog in context (dispatcher sessions — `ProjectActor.pluginCatalogText`
+   * renders it into the FIRST message only). Without this channel an already-open
+   * dispatcher session keeps seeing the spawn-time catalog forever: revoking a
+   * plugin does not refresh it, so the session still plans nodes against a
+   * capability that is no longer allocatable (observed in practice).
+   *
+   * Semantics (same shape as the devices/projects delta channels): the caller
+   * (AgentCore) compares the catalog **as last announced to this session** with
+   * the current render and calls here only on a real change — no change ⇒ `None`
+   * ⇒ zero injection.
+   *
+   * Content rules:
+   *  - closed plugins are named ONLY (no description) under an explicit VOID
+   *    clause — their capability description must not be re-advertised;
+   *  - the current catalog is carried verbatim as the authoritative value, with an
+   *    explicit supersede clause covering the first message's catalog section
+   *    (the original context is never rewritten);
+   *  - re-opened plugins get their catalog line back.
+   */
+  def pluginSurfaceReminder(change: Option[PluginSurfaceChange]): Option[SystemReminder] =
+    change
+      .filter(c => c.previous != c.current)
+      .map(c => SystemReminder(PluginSurfaceCategory, renderPluginSurfaceChange(c)))
+
+  /** Render the authoritative plugin-surface reminder body (pure — unit-testable). */
+  private[core] def renderPluginSurfaceChange(c: PluginSurfaceChange): String =
+    val previous = catalogEntries(c.previous)
+    val current = catalogEntries(c.current)
+    val removed = (previous.keySet -- current.keySet).toList.sorted
+    val added = (current.keySet -- previous.keySet).toList.sorted
+    val sb = scala.collection.mutable.ListBuffer.empty[String]
+    sb += s"""$PluginSurfaceMarker — authoritative。本提醒是本会话**当前插件面**的权威值："""
+    sb += "取代本会话首条消息里的 `# Plugin Catalog` 段以及更早的 Plugin surface 提醒；前文目录段中已关闭插件的能力条目一律作废。"
+    if removed.nonEmpty then
+      sb += ""
+      sb += "已关闭 / 不再可用（其能力描述作废——不得据此选配 plugins，也不得建依赖该能力的节点）："
+      removed.foreach(n => sb += s"- $n")
+    if added.nonEmpty then
+      sb += ""
+      sb += "已批准 / 重新可用（可正常选配）："
+      added.foreach(n => sb += s"- ${current.getOrElse(n, n)}")
+    sb += ""
+    sb += "当前插件面（权威目录）："
+    val body = c.current.trim
+    if body.isEmpty then sb += "- （当前无可分配插件）" else sb += body
+    sb.mkString("\n")
+
+  end renderPluginSurfaceChange
+
+  /**
+   * `- name: rest` line map of a rendered catalog section (header and the
+   * absence note are not `- ` lines and are skipped). Values are the line body
+   * WITHOUT the list prefix (callers add `- ` themselves).
+   */
+  private def catalogEntries(catalog: String): Map[String, String] =
+    catalog.linesIterator
+      .filter(_.startsWith("- "))
+      .map(_.drop(2))
+      .flatMap { entry =>
+        val i = entry.indexOf(':')
+        val name = if i > 0 then entry.take(i).trim else entry.trim
+        Option.when(name.nonEmpty)(name -> entry)
+      }
+      .toMap
+
+  /** True when a persisted User message is a plugin-surface reminder. */
+  def isPluginSurfaceReminderMessage(msg: Message): Boolean =
+    msg.role == MessageRole.User && (msg.content match
+      case Left(text) => text.contains(PluginSurfaceMarker)
+      case Right(_) => false)
+
+  /**
+   * Keep only the newest [[MaxPersistedPluginSurfaceReminders]] plugin-surface
+   * reminders in session history. Each reminder is authoritative and carries the
+   * full current catalog, so an older one is fully subsumed by the newer one —
+   * dropping it loses nothing and bounds history growth (mirrors
+   * [[pruneTimeReminders]]). Called at injection time.
+   */
+  def prunePluginSurfaceReminders(messages: List[Message]): List[Message] =
+    val idx = messages.zipWithIndex.collect { case (m, i) if isPluginSurfaceReminderMessage(m) => i }
+    if idx.size <= MaxPersistedPluginSurfaceReminders then messages
     else
-      val now = System.currentTimeMillis()
-      val effective = pending.filter(t => t.enabled && !t.triggered && t.triggerAt > now)
-      val lines = effective
-        .sortBy(_.triggerAt)
-        .take(5)
-        .map { t =>
-          val when = formatScheduleTime(t.triggerAt, now)
-          val repeat = t.repeat.fold("")(r => s" ($r)")
-          // id + name（2026-09-06 升级）：给 Nebula 直接的 cancel/upsert 句柄——
-          // 重启后无需先 list 就能辨认既有例行任务（防 re-arm 双份的事故盲区）。
-          val nm = t.name.fold("")(n => s" name: $n")
-          s"- [$when] ${t.content.take(60)}$repeat [id: ${t.id}$nm]"
-        }
-      if lines.isEmpty then None
-      else Some(SystemReminder("schedule", s"Pending schedules (${effective.size}):\n${lines.mkString("\n")}"))
+      val dropSet = idx.take(idx.size - MaxPersistedPluginSurfaceReminders).toSet
+      messages.zipWithIndex.collect { case (m, i) if !dropSet.contains(i) => m }
+
+  /**
+   * Max persisted plugin-surface reminders kept in session history (the newest
+   * one already supersedes every older one).
+   */
+  val MaxPersistedPluginSurfaceReminders: Int = 1
+
+  /**
+   * Summary of this session's pending (untriggered) scheduled tasks + todos
+   * (双面化 2026-10-24：待办同栏呈现，id 即 done/cancel 句柄——与定时任务
+   * 的防 re-arm 盲区同款纪律)。只含本会话的条目（loadTasks 按 session 取）。
+   */
+  private def pendingScheduleReminder(pending: List[ScheduledTask]): Option[SystemReminder] =
+    val now = System.currentTimeMillis()
+    val sched = pending.filter(t => !t.isTodo && t.enabled && !t.triggered && t.triggerAt > now)
+    // Personal todos remain available to the user-facing inbox/tool on demand, but
+    // must never be copied into ordinary agent context reminders.
+    val todos: List[ScheduledTask] = Nil
+    val schedPart =
+      if sched.isEmpty then None
+      else
+        val lines = sched
+          .sortBy(_.triggerAt)
+          .take(5)
+          .map { t =>
+            val when = formatScheduleTime(t.triggerAt, now)
+            val repeat = t.repeat.fold("")(r => s" ($r)")
+            // id + name：给 Nebula 直接的 cancel/upsert 句柄——
+            // 重启后无需先 list 就能辨认既有例行任务（防 re-arm 双份的事故盲区）。
+            val nm = t.name.fold("")(n => s" name: $n")
+            s"- [$when] ${t.content.take(60)}$repeat [id: ${t.id}$nm]"
+          }
+        Some(s"Pending schedules (${sched.size}):\n${lines.mkString("\n")}")
+    val todoPart =
+      if todos.isEmpty then None
+      else
+        val lines = todos
+          .sortBy(t => (t.triggerAt, t.createdAt))
+          .take(5)
+          .map { t =>
+            val nm = t.name.fold("")(n => s" name: $n")
+            s"- ${t.content.take(60)} [id: ${t.id}$nm]"
+          }
+        Some(
+          s"Pending todos (${todos.size}) — 无固定时间，引擎侧持久（压缩/重启不丢），每日浮出直至处理 " +
+            s"(完成 {action:\"done\"} 销账 / 放弃 {action:\"cancel\"}):\n${lines.mkString("\n")}"
+        )
+    (schedPart, todoPart) match
+      case (None, None) => None
+      case (a, b) =>
+        val body = (a.toList ++ b.toList).mkString("\n")
+        Some(SystemReminder("schedule", body))
+  end pendingScheduleReminder
 
   private def formatScheduleTime(epochMs: Long, nowMs: Long): String =
     val zdt = ZonedDateTime.ofInstant(java.time.Instant.ofEpochMilli(epochMs), java.time.ZoneId.systemDefault())
@@ -167,17 +399,26 @@ object SystemReminders:
       else zdt.format(DateTimeFormatter.ofPattern("MM-dd"))
     s"${zdt.format(fmt)} $day"
 
-  /** Log reminders and return them wrapped in IO.
-    *
-    * Reminder refactor (2026-08-20): the `time` category fires on nearly every
-    * user turn (~2.3K log lines/half-day) — downsampled to at most one log
-    * line per [[TimeLogSampleMs]]. The injection itself is unaffected. */
+  /**
+   * Log reminders and return them wrapped in IO.
+   *
+   * Reminder refactor: the `time` category fires on nearly every
+   * user turn (~2.3K log lines/half-day) — downsampled to at most one log
+   * line per [[TimeLogSampleMs]]. The injection itself is unaffected.
+   *
+   * F-2：带 [[SystemReminder.countKey]] 的提醒（device
+   * 通道）**按变化身份计数** —— 同一变化（成员集合键相同）已经在别的会话计过 ⇒
+   * **零增量**（不打第二行）。计数面 = 这一行日志本身（「同一变化对应多条日志行」的源头即此处）。
+   * 🔴 注入不受影响（每会话仍各自收到它自己的差量）；`time` 的降采样次序不变
+   * （`countKey = None` ⇒ 无条件过闸）。
+   */
   def logAndReturn(reminders: List[SystemReminder]): IO[List[SystemReminder]] =
     reminders
       .traverse_ { r =>
         val now = System.currentTimeMillis()
-        val shouldLog = r.category != "time" || now - lastTimeLogMs >= TimeLogSampleMs
-        if !shouldLog then IO.unit
+        val sampled = r.category != "time" || now - lastTimeLogMs >= TimeLogSampleMs
+        val counted = r.countKey.forall(DeviceChangeCount.claim)
+        if !sampled || !counted then IO.unit
         else
           if r.category == "time" then lastTimeLogMs = now
           logger.info(s"[${r.category}] ${r.content.take(100)}")
@@ -201,6 +442,32 @@ object SystemReminders:
     msg.role == MessageRole.User && (msg.content match
       case Left(text) => text.startsWith("<system-reminder>\nCurrent time:")
       case Right(_) => false)
+
+  /**
+   * Insert the turn's time anchor **immediately BEFORE the message that triggered
+   * the turn** (时间感知修复批 2026-11-05).
+   *
+   * WHY 不是追加在尾部：锚是「这一轮输入发生在什么时刻」，语义上先时刻后输入；更
+   * 重要的是——全仓有多处读「最后一条 user 消息 = 本轮输入」（注入源归因
+   * `lastUserSource`、注入气泡判定、队列直通语义）。锚（`source = None`）若追加在
+   * 尾部就会顶掉那条不变量，把「谁叫醒的这一轮」读成「无源」。本批实测：追加形态
+   * 直接打挂 `QueueDirectPassSourceSpec` ②③ 两条既有用例。
+   *
+   * 保守判据：只有「最后一条是 User 且不是工具结果」时才插在其前（否则追加在尾）——
+   * 末尾是 Assistant 时插到它前面会造成 user/assistant 交替错位，故降级追加。
+   * `anchors` 为空 ⇒ 原样返回（零注入零改动）。
+   */
+  def insertAnchor(messages: List[Message], anchors: List[Message]): List[Message] =
+    if anchors.isEmpty then messages
+    else
+      messages.reverse match
+        case last :: rest if last.role == MessageRole.User && !isToolResultMessage(last) =>
+          rest.reverse ++ anchors ++ List(last)
+        case _ => messages ++ anchors
+
+  /** True when a User message carries tool results (mid-turn LLM round, not an input). */
+  private def isToolResultMessage(msg: Message): Boolean =
+    msg.content.toOption.exists(_.exists(_.isInstanceOf[ContentBlock.ToolResult]))
 
   /**
    * Prune older time-reminder messages, keeping only the most recent

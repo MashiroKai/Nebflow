@@ -1,0 +1,494 @@
+// delegateChainProvider.js — delegate 链真 provider（N1 刀3 · #1228 setSource 换源）。
+//
+// 职责（v3 设计 §9「换的只是 provider」逐字落位）：把 delegateChainStub 的 read port
+// （listDelegateRows / getChainByTask——接口形状零改动）换挂 **FlowMap 衍生投影**：
+//   - REST 快照：GET /api/chains（行投影：DelegateRegistry 记录 × live 活性提示 ×
+//     terminal-verdict 判词行）＋ GET /api/chains/:key（per-task：ChainStore 三行族
+//     record + delegate 作用域 FlowMap 节点投影）——端点 = N1 刀3 A8 新读面
+//     （PresenceRoutes `/api/chains*`，投影/fail-soft 语义在引擎侧 ChainsReadFace）。
+//   - WS 增量镜像：nodeCreated/nodeUpdated/nodeCompleted/nodeRemoved（delegate 作用
+//     域链经既有 node* 帧族广播——零新协议帧）到达 = 「有变化」信号 → 防抖刷一次
+//     快照（🔴 帧只当触发器，不当数据源——链/行状态权威恒在 REST，前端零派生第二
+//     权威）；断线重连（onReconnect）补一次对账刷新。
+//   - 适配层：rowFromRegistry / chainFromStoreRecord **原样复用**（stub 既有纯函数，
+//     形状不动吸收字段差异——v3 §9 逐字）；本件只加两处薄拼装：
+//     ① 行状态：verdict=ready-to-merge 时覆写（v3 §9「ready-to-merge 由 terminal-
+//        verdict 判词行供给」——rowFromRegistry 的 reportStatus/live 推导保持原样）；
+//     ② 链节点：REST `chain.nodes` 在场（作用域图存在）→ 整组替换 adapter 的单
+//        delegate 回退节点（后端已按 ChainNode 形投影，前端零字段映射）；缺席 →
+//        adapter 回退形（三行族降级投影，与 stub 期一致）。
+//
+// 纪律：本件零用户可见文案（无 locale 触碰）；读取口异常一律 fail-soft（镜像保旧值
+// /返回 null，绝不崩渲染面）；mirror 首刷前 = 空行集（与 stub 默认空态同观感）。
+
+import { onMessage, onReconnect, setDurableTaskFrameObserver } from './ws.js';
+import state from './state.js';
+import { observeTaskRevision, taskRevision } from './subagentRevision.js';
+import { EVENTS } from './events.js';
+import { authHeaders } from './flowHelpers.js';
+import {
+  setSource,
+  setChildrenSource,
+  rowFromRegistry,
+  chainFromStoreRecord,
+} from './delegateChainStub.js';
+import { DELEGATE_API } from './delegateApi.js';
+
+/** 端点表（与 PresenceRoutes 挂载路径逐字对齐；Router("/api") 前缀）。 */
+export const CHAINS_API = {
+  // 行面（delegate 视图重设计实施批 2026-10-21 换源）：/api/delegates 列表读面 =
+  // /api/chains 行投影同源加宽臂（同 rowsJson 单点：live/verdict/taskStatus 含 G1
+  // `merging` 覆写/mergeQueue/mergeQueuePos）+ 行内 `topology` 子过程拓扑载荷。
+  // 旧端点 /api/chains 保留（归档窗与既有消费面不动），行集权威自此单缝走本端点。
+  rows: () => '/api/delegates',
+  chain: (key) => `/api/chains/${encodeURIComponent(String(key || ''))}`,
+};
+
+/** 行键（taskNo ‖ delegateId——ChainStore.keyFor 同口径，与 taskList.delegateRowKey 一致）。 */
+function rowKey(r) {
+  return String((r && (r.taskNo || r.delegateId)) || '');
+}
+
+/** @type {{rows: any[], chains: Map<string, any>, seq: number}} 本地镜像（同步读）。 */
+const mirror = { rows: [], chains: new Map(), seq: 0 };
+// These are projections and observed durable watermarks, not another task registry.
+const scopedTasks = new Map();
+const observedTasks = new Map();
+const taskRequests = new Map();
+const taskListeners = new Set();
+let taskAuthEpoch = 0;
+
+export function listScopedTasks(rootSessionId) {
+  return Array.from((scopedTasks.get(String(rootSessionId || '')) || new Map()).values());
+}
+
+export function onDurableTasksChanged(listener) {
+  taskListeners.add(listener);
+  return () => taskListeners.delete(listener);
+}
+
+function notifyTasks(rows) {
+  for (const listener of taskListeners) listener(rows);
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
+  }
+}
+
+/** A current authenticated request is the only authority for this root's rows. */
+export async function refreshScopedTasks(rootSessionId = state.activeSessionId) {
+  const root = String(rootSessionId || '');
+  if (!root) return;
+  if (taskRequests.has(root)) return taskRequests.get(root);
+  const epoch = taskAuthEpoch;
+  const request = (async () => {
+    try {
+      const response = await fetch(`/api/subagent-tasks/${encodeURIComponent(root)}`, {
+        // 滚动面重验证批（2026-11-18）：改前本腿显式关掉浏览器 HTTP 缓存 ⇒ 每
+        // 5s 一拍都全量收整个行集。服务端此腿已发内容 ETag + `private, no-cache`
+        // （PresenceRoutes `/subagent-tasks/:id` 走 HttpCache），前端只需允许缓存
+        // 参与：`'no-cache'` = **存、但每次先重验证**（有验证器就发 If-None-Match）
+        // ——未变 ⇒ 304 零体、`fetch` 自动复用已存体，JS 侧拿到的仍是同一份 JSON；
+        // 服务端缺席验证器（旧引擎）⇒ 照旧整取，**零陈旧风险**（绝不引入启发式
+        // 新鲜度）。
+        headers: authHeaders(), credentials: 'same-origin', cache: 'no-cache',
+        signal: AbortSignal.timeout(10000),
+      });
+      if (response.status === 401 || response.status === 403) {
+        taskAuthEpoch++;
+        scopedTasks.clear();
+        observedTasks.clear();
+        notifyTasks([]);
+        return;
+      }
+      if (!response.ok || epoch !== taskAuthEpoch) return;
+      const body = await response.json();
+      if (epoch !== taskAuthEpoch || body.rootSessionId !== root || !Array.isArray(body.tasks)) return;
+      const previous = scopedTasks.get(root) || new Map();
+      const next = new Map();
+      const changed = [];
+      for (const raw of body.tasks) {
+        if (!raw?.taskId) continue;
+        const row = projectChild(raw);
+        const old = previous.get(row.taskId);
+        const observed = observedTasks.get(row.taskId);
+        if (!observeTaskRevision(observed || old, row, true).accept) {
+          if (old) next.set(row.taskId, old);
+          continue;
+        }
+        // Compare projected fields, not only revisions: legacy rows have no cursor,
+        // and a complete snapshot can fill fields absent from a live invalidation.
+        if (old && Object.keys(row).every(key => old[key] === row[key])) {
+          next.set(row.taskId, old);
+          continue;
+        }
+        next.set(row.taskId, row);
+        observedTasks.set(row.taskId, row);
+        changed.push(row);
+      }
+      // Empty changes alone do not mean no change: an authoritative snapshot can
+      // remove rows. Keep those invalidations while silencing unchanged polls.
+      if (!changed.length && next.size === previous.size) return;
+      scopedTasks.set(root, next);
+      notifyTasks(changed);
+    } catch (_) { /* Keep the last good projection on transient failure. */ }
+  })();
+  taskRequests.set(root, request);
+  try { await request; } finally { taskRequests.delete(root); }
+}
+
+setDurableTaskFrameObserver((msg) => {
+  if (!msg?.taskId || !msg.runId || taskRevision(msg) === null) return false;
+  const previous = observedTasks.get(msg.taskId);
+  const decision = observeTaskRevision(previous, msg);
+  if (decision.accept) {
+    observedTasks.set(msg.taskId, msg);
+    notifyTasks([{ ...msg, historyInvalidated: true }]);
+  }
+  // Even duplicate frames can announce a task that is not in the latest snapshot.
+  refreshScopedTasks(msg.rootSessionId || state.activeSessionId);
+  // Only task transcript/lifecycle events switch to committed history rendering.
+  return /^(agent|text|thinking|tool|roundComplete|done)/.test(String(msg.type || ''));
+});
+
+/** 已请求过、确认查无链的键（防 miss 键反复打点；行集刷新时清空重探）。 */
+const emptyKeys = new Set();
+/** 星型子代理镜像（G3；delegateId → children[]）。refresh 臂随行集刷新逐父拉取；
+ *  fail-soft：单父失败保留旧值（与链镜像同纪律），首刷前 = 空集。 */
+const childrenMirror = new Map();
+/** 子镜像取回时刻（节点子智能体可见性批 2026-11-07：ensureChildren 的 60s TTL 判据）。 */
+const childrenFetchedAt = new Map();
+/** 在飞父（防同一父并发打点；同 refreshChildren 的单飞闸门）。 */
+const childrenInflight = new Set();
+
+// Each chain URL has its own rate-limit state; no request is queued or delayed.
+const chainBackoff = new Map();
+const CHAIN_RATE_LIMITED = Symbol('chain-rate-limited');
+async function fetchJson(url) {
+  const isChain = url === '/api/chains' || url.startsWith('/api/chains/');
+  const previous = isChain ? chainBackoff.get(url) : null;
+  if (previous && Date.now() < previous.until) return CHAIN_RATE_LIMITED;
+  const r = await fetch(url, { headers: authHeaders() });
+  if (isChain && r.status === 429) {
+    const current = chainBackoff.get(url);
+    const attempts = (current?.attempts || 0) + 1;
+    const value = r.headers.get('Retry-After');
+    const seconds = value === null ? NaN : Number(value);
+    const serverDelay = Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : 0;
+    const delay = Math.max(serverDelay, Math.min(60000, 1000 * 2 ** Math.min(attempts - 1, 6)));
+    chainBackoff.set(url, { attempts, until: Math.max(current?.until || 0, Date.now() + delay) });
+    return CHAIN_RATE_LIMITED;
+  }
+  if (isChain && r.ok && (!previous || chainBackoff.get(url) === previous)) chainBackoff.delete(url);
+  if (!r.ok) return null; // 404/5xx 都不是崩面——调用方按「无读数」降级
+  return await r.json();
+}
+
+/** 行投影：record×live×verdict → rowFromRegistry（原样）→ ready-to-merge 覆写单点
+ *  → 全景载荷加宽（delegate 视图重设计实施批 2026-10-21）：全景视图需要的原始键
+ *  原样随行透传（schema 加宽、缺键容忍零臆造——stub 契约「只加宽」纪律）：
+ *    `taskStatus`（含 G1 `merging` 一等态——行 status 语义不折叠：任务列表继续按
+ *    active 渲染，全景视图按 mergePhase 分泳道）、`branch`/`baseBranch`/`worktree`/
+ *    `projectWorkspace`（泳道 chip 与汇点 base 分支）、`reportStatus`/`reportDetail`
+ *    （报告条）、`verdict`（判词行原文：{verdict,reason,source,at}）、`topology`
+ *    （子过程拓扑：{mode,children[],steps[]}；single 行缺键）。
+ *  🔴 前端零派生：merging 判据 = 引擎 taskStatus 原值，本地不复算 holder。 */
+function projectRow(entry) {
+  const src = entry && typeof entry === 'object' ? entry : {};
+  const row = rowFromRegistry(src, src.live);
+  const v = src.verdict;
+  const out = {
+    ...row,
+    settled: src.settled === true,
+    taskStatus: String(src.taskStatus || ''),
+    // Ownership edge (Record.parentSessionId — spawn-persisted, survives
+    // restarts): carried as-is so hierarchy faces can resolve a registered
+    // parent without live frames. Absent key → '' (never guessed).
+    parentSessionId: String(src.parentSessionId || ''),
+    branch: String(src.branch || ''),
+    baseBranch: String(src.baseBranch || ''),
+    worktreePath: String(src.worktree || ''),
+    projectWorkspace: String(src.projectWorkspace || ''),
+    reportStatus: String(src.reportStatus || ''),
+    reportDetail: String(src.reportDetail || ''),
+    topology: normalizeTopology(src.topology),
+    // 重启对账批 2026-10-22：打断旗 + 接续指针透传（缺键容忍，零臆造）。
+    restartInterruptedAt: typeof src.restartInterruptedAt === 'number' && src.restartInterruptedAt > 0
+      ? src.restartInterruptedAt
+      : null,
+    continuedBy: String(src.continuedBy || ''),
+  };
+  if (v && typeof v === 'object' && String(v.verdict || '') === 'ready-to-merge') {
+    out.status = 'ready-to-merge';
+  }
+  (/** @type {{verdict?: unknown}} */ (out)).verdict =
+    v && typeof v === 'object'
+      ? {
+          verdict: String(v.verdict || ''),
+          reason: String(v.reason || ''),
+          source: String(v.source || ''),
+          at: typeof v.at === 'number' ? v.at : 0,
+        }
+      : null;
+  return out;
+}
+
+/** 子过程拓扑归一（缺键/坏形 = null——全景按「无子过程」渲染，零臆造）。 */
+function normalizeTopology(t) {
+  if (!t || typeof t !== 'object' || Array.isArray(t)) return null;
+  const kids = Array.isArray(t.children) ? t.children : [];
+  const steps = Array.isArray(t.steps) ? t.steps : [];
+  return {
+    mode: String(t.mode || ''),
+    children: kids.map((c) => ({
+      taskId: String((c && c.taskId) || ''),
+      agentName: String((c && c.agentName) || ''),
+      description: String((c && c.description) || ''),
+      status: String((c && c.status) || ''),
+      spawnedAt: c && typeof c.spawnedAt === 'number' ? c.spawnedAt : 0,
+      completedAt: c && typeof c.completedAt === 'number' ? c.completedAt : null,
+    })),
+    steps: steps.map((s) => ({
+      id: String((s && s.id) || ''),
+      label: String((s && s.label) || ''),
+      status: String((s && s.status) || ''),
+      deps: s && Array.isArray(s.deps) ? s.deps.map((d) => String(d || '')) : [],
+    })),
+  };
+}
+
+/** 链视图投影：三行族经 chainFromStoreRecord（原样）+ 作用域 FlowMap 节点整组替换。 */
+function projectChain(body) {
+  const b = body && typeof body === 'object' ? body : {};
+  const view = chainFromStoreRecord(b.record);
+  const chain = b.chain && typeof b.chain === 'object' ? b.chain : null;
+  const nodes = Array.isArray(chain && chain.nodes) ? chain.nodes.filter((n) => n && n.id) : [];
+  if (nodes.length) return { ...view, nodes };
+  return view;
+}
+
+/** 拉某键链视图入镜像（fail-soft：任何失败不动现值）。 */
+async function refreshChain(key) {
+  const body = await fetchJson(CHAINS_API.chain(key));
+  if (body === CHAIN_RATE_LIMITED) return;
+  if (!body) {
+    // 404 = 查无记录：镜像置 null（视图走 fail-soft 重试态），记空键防打点。
+    mirror.chains.set(key, null);
+    emptyKeys.add(key);
+    return;
+  }
+  emptyKeys.delete(key);
+  mirror.chains.set(key, projectChain(body));
+}
+
+/** 星型子代理条目归一（G3 children[]；缺键容忍，零臆造——形状源 = SubAgentTask）。 */
+function projectChild(c) {
+  const src = c && typeof c === 'object' ? c : {};
+  return {
+    taskId: String(src.taskId || ''),
+    parentSessionId: String(src.parentSessionId || ''),
+    agentName: String(src.agentName || ''),
+    prompt: String(src.prompt || ''),
+    description: String(src.description || ''),
+    status: String(src.status || ''),
+    retryCount: typeof src.retryCount === 'number' ? src.retryCount : 0,
+    spawnedAt: typeof src.spawnedAt === 'number' ? src.spawnedAt : 0,
+    completedAt: typeof src.completedAt === 'number' ? src.completedAt : null,
+    lastError: String(src.lastError || ''),
+    source: String(src.source || ''),
+    rootSessionId: String(src.rootSessionId || ''),
+    committedRevision: taskRevision(src),
+    runId: String(src.runId || ''),
+    executor: String(src.executor || ''),
+    executionStatus: String(src.executionStatus || ''),
+    activityAt: typeof src.activityAt === 'number' ? src.activityAt : 0,
+    activityKind: String(src.activityKind || ''),
+    activityLabel: String(src.activityLabel || ''),
+    resultRef: String(src.resultRef || ''),
+    incomplete: src.incomplete === true,
+    terminalReason: String(src.terminalReason || ''),
+  };
+}
+
+/** 拉某父的星型子代理入镜像（fail-soft：任何失败保留旧值；404 = 父无记录 → 清空）。 */
+async function refreshChildren(delegateId) {
+  const url = /^(node-|dispatcher-)/.test(delegateId)
+    ? `/api/session-children/${encodeURIComponent(delegateId)}`
+    : DELEGATE_API.children(delegateId);
+  const body = await fetchJson(url);
+  if (!body) {
+    if (!childrenMirror.has(delegateId)) childrenMirror.set(delegateId, []);
+    childrenFetchedAt.set(delegateId, Date.now());
+    return;
+  }
+  const kids = Array.isArray(body.children) ? body.children.map(projectChild) : [];
+  childrenMirror.set(delegateId, kids);
+  childrenFetchedAt.set(delegateId, Date.now());
+}
+
+/**
+ * 按需补拉某父的星型子代理（节点子智能体可见性批 2026-11-07 · 作者报障「node 的子
+ * 智能体没显示」）：refresh 臂只逐 **delegate 行** 拉子集，而子代理的父也可以是
+ * Project 的 node-/dispatcher- 会话（引擎侧 SubAgentTaskStore 按父会话 id 分区，见
+ * <dataRoot>/subagent-tasks/node-*.json）⇒ 这些父此前永远不进镜像，终态子智能体在
+ * 面板上零读数。本函数是**唯一补拉口**（渲染面仍只读 listDelegateChildren 那一个读口）：
+ *   · TTL 闸门：同一父 ttlMs 内不重复请求（默认 60s；空集也记时刻——「确实没有子」
+ *     不该每帧打点）；
+ *   · 在飞闸门：同父并发请求只发一次；
+ *   · 到达即广播 delegate-chain-mirror-updated（帧只当触发器，与 refresh 同园口径）。
+ * fail-soft：任何失败都不抛（渲染面下一帧再试，不影响行集）。
+ * @param {string} id 父会话 id（delegate / subtask / subagent / node / dispatcher 皆可）
+ * @param {number} [ttlMs] @returns {Promise<void>}
+ */
+export function ensureChildren(id, ttlMs = 60000) {
+  const key = String(id == null ? '' : id).replace(/^team-/, '');
+  if (!key) return Promise.resolve();
+  const at = childrenFetchedAt.get(key) || 0;
+  if (at && (Date.now() - at) < ttlMs) return Promise.resolve();
+  if (childrenInflight.has(key)) return Promise.resolve();
+  childrenInflight.add(key);
+  return refreshChildren(key)
+    .catch(() => { childrenFetchedAt.set(key, Date.now()); })
+    .then(() => {
+      childrenInflight.delete(key);
+      if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
+      }
+    });
+}
+
+/** 全量刷新：行投影 + 各行键链视图（并发逐键、单键失败不连累）＋ G3 星型子代理
+ *  逐父刷新（仅内部行——外部执行器零平台工具，children 恒空集，免打点）。
+ *  刷新完成即广播 delegate-chain-mirror-updated（#56 残项 · 换源即切 UI 承接位，
+ *  晨裁② 2026-10-07）：面板渲染层监听此事件重渲——数据权威恒在本镜像（REST），
+ *  事件零载荷、零帧解读（「帧只当触发器」纪律不变）。 */
+async function refresh() {
+  const seq = ++mirror.seq;
+  let body = await fetchJson(CHAINS_API.rows());
+  // 形状判据：行面载荷必须带 rows 数组——404/空壳 200（旧引擎无 /api/delegates 路由，
+  // 或同前缀异面响应）一律回落 /api/chains（行投影同源；缺 topology/merging 两键，
+  // 全景子过程面走镜像组合臂，零崩面）。两臂都无形状 = 空刷新（fail-soft 保旧值）。
+  if (!body || !Array.isArray(body.rows)) {
+    body = await fetchJson('/api/chains');
+  }
+  if (!body || !Array.isArray(body.rows) || seq !== mirror.seq) return; // 已有更新刷新在途，丢弃旧结果
+  const rows = (Array.isArray(body.rows) ? body.rows : []).map(projectRow);
+  // 两层架构批（§D 自动归档到达侦测）：记录面零删除（归档只加 archivedAt 旗），
+  // 在册窗消失的行 = 已归档（引擎终态单点写旗）。差集行细节随 delegate-archived
+  // 事件下发（L2 徽章脉冲 + toast 5s 撤销——消费方 delegateChainView；本件零 UI）。
+  if (mirror.rows.length && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    const nextKeys = new Set(rows.map(rowKey).filter(Boolean));
+    for (const prev of mirror.rows) {
+      const k = rowKey(prev);
+      if (k && !nextKeys.has(k)) {
+        window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_ARCHIVED, { detail: {
+          delegateId: String(prev.delegateId || ''),
+          taskNo: String(prev.taskNo || ''),
+          title: String(prev.title || ''),
+          status: String(prev.status || ''),
+        } }));
+      }
+    }
+  }
+  mirror.rows = rows;
+  emptyKeys.clear();
+  const keys = Array.from(new Set(rows.map(rowKey).filter(Boolean)));
+  const childIds = Array.from(new Set(
+    rows.filter((r) => !r.external && r.delegateId).map((r) => r.delegateId),
+  ));
+  await Promise.all([
+    ...keys.map((k) => refreshChain(k).catch(() => {})),
+    ...childIds.map((id) => refreshChildren(id).catch(() => {})),
+  ]);
+  if (seq !== mirror.seq) return; // 刷新期间又有更新在途——广播交给最新一轮
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
+  }
+}
+
+/** 归档动作后的镜像即时对账（bgAgentPopup 归档入口回调；fire-and-forget fail-soft
+ *  ——归档行移历史窗，在册窗重刷后行自然退场）。 */
+export function refreshMirror() {
+  refresh().catch(() => {});
+}
+
+/** 按需补拉（getChainByTask 未命中键；fire-and-forget，读口本调用仍返回 null）。 */
+function fetchChainLazy(key) {
+  if (!key || emptyKeys.has(key)) return;
+  refreshChain(key).catch(() => {});
+}
+
+// ── read port（setSource 契约形；夹具缝在 stub 读取口——夹具在场时本源不被读）────
+
+const liveSource = {
+  listDelegateRows() {
+    return mirror.rows.slice();
+  },
+  getChainByTask(taskNo) {
+    const key = String(taskNo == null ? '' : taskNo);
+    if (mirror.chains.has(key)) return mirror.chains.get(key);
+    fetchChainLazy(key); // 未命中：后台补拉（下次渲染/重试可见），本次 fail-soft null
+    return null;
+  },
+};
+
+setSource(liveSource);
+
+// G3 星型子代理读口挂接（delegate-ui 批）：渲染面（main.js 面板两级分组 /
+// bgAgentPopup 星型区 / taskList S1 标注）经 stub listDelegateChildren 读取本镜像。
+setChildrenSource({
+  listDelegateChildren(delegateId) {
+    return childrenMirror.get(String(delegateId == null ? '' : delegateId)) || [];
+  },
+});
+
+// ── 镜像驱动：boot 首刷 ＋ WS 触发防抖刷 ＋ 重连对账 ─────────────────────────
+
+refresh().catch(() => {}); // boot 首刷（fail-soft：失败 = 空镜像，下轮 WS/重连再试）
+
+const DEBOUNCE_MS = 500;
+let debounceTimer = null;
+function scheduleRefresh() {
+  if (debounceTimer) return;
+  debounceTimer = setTimeout(() => {
+    debounceTimer = null;
+    refresh().catch(() => {});
+  }, DEBOUNCE_MS);
+}
+
+// WS 增量 = 刷新触发器（非数据源）：delegate 作用域链的 node* 帧族经既有广播到达。
+for (const evt of ['nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved']) {
+  onMessage(evt, scheduleRefresh);
+}
+
+// delegate 生命周期触发（e2e 断点①修 · 2026-10-07）：裸 delegate spawn/续聊/终态
+// 不经作用域图——node* 帧族在「无 AgentFlow 链活动」的整段在飞期为零（实测：
+// rig :8245 /api/chains 22s 即有行，页面不刷新则任务列表恒空直到 reload）。本组
+// 触发器把 delegate/external 会话自身的 turn 边界帧（nodeSessionId 前缀判据）
+// 也接进同一防抖刷——帧仍只当触发器，数据权威恒在 REST /api/chains；tool 级
+// 帧（agentToolStart/End）不接（每工具一帧太频，行状态变更已由 turn 边界覆盖：
+// spawn=agentStart、终态状态槽=turn 内写盘 + 该 turn 的 agentDone 兜底）。
+const DELEGATE_TRIGGER_RE = /^(delegate|external)-/;
+function onDelegateLifecycle(msg) {
+  const nsid = String((msg && (msg.nodeSessionId || msg.agentId)) || '');
+  if (DELEGATE_TRIGGER_RE.test(nsid)) scheduleRefresh();
+  const parent = String((msg && msg.parentSessionId) || '').replace(/^team-/, '');
+  if (/^(node-|dispatcher-)/.test(parent)) {
+    childrenFetchedAt.delete(parent);
+    ensureChildren(parent);
+  }
+}
+for (const evt of ['agentStart', 'agentDone', 'agentEnd']) {
+  onMessage(evt, onDelegateLifecycle);
+}
+onReconnect(() => {
+  refresh().catch(() => {});
+  refreshScopedTasks();
+});
+if (typeof window !== 'undefined') {
+  window.addEventListener(EVENTS.SESSION_CHANGE, () => refreshScopedTasks());
+  // Bounded polling discovers accepted work even when no start event arrives.
+  const timer = setInterval(() => {
+    if (document.visibilityState !== 'hidden') refreshScopedTasks();
+  }, 5000);
+  window.addEventListener('pagehide', () => clearInterval(timer), { once: true });
+}

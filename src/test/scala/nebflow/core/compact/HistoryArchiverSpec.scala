@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.parser.parse
 import io.circe.{Decoder, Json}
 import munit.CatsEffectSuite
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import nebflow.shared.{Message, MessageRole}
 
 class HistoryArchiverSpec extends CatsEffectSuite:
 
@@ -18,7 +18,7 @@ class HistoryArchiverSpec extends CatsEffectSuite:
       Message(MessageRole.Assistant, Left("world"))
     )
 
-  test("archiveCompaction returns Right with report + json paths") {
+  test("archiveCompaction returns Right with json paths") {
     val root = os.temp.dir()
     val archiver = makeArchiver(root)
     val io = archiver.archiveCompaction(
@@ -37,14 +37,39 @@ class HistoryArchiverSpec extends CatsEffectSuite:
             archive.sessionDir.contains("/test-session-abc123/compaction"),
             s"sessionDir should be <sessionsRoot>/<sessionId>/compaction: ${archive.sessionDir}"
           )
-          assert(!archive.sessionDir.contains("/archives/"), s"legacy archives/ path must not appear: ${archive.sessionDir}")
-          assert(archive.reportPath.endsWith("-report.md"), s"report should end with -report.md: ${archive.reportPath}")
+          assert(
+            !archive.sessionDir.contains("/archives/"),
+            s"legacy archives/ path must not appear: ${archive.sessionDir}"
+          )
           assert(archive.beforeJsonPath.endsWith("-before.json"))
           assert(archive.afterJsonPath.endsWith("-after.json"))
           // All files should exist
-          assert(os.exists(os.Path(archive.reportPath)))
           assert(os.exists(os.Path(archive.beforeJsonPath)))
           assert(os.exists(os.Path(archive.afterJsonPath)))
+        }
+      case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
+    }
+  }
+
+  // 作者令 2026-09-15（逐字）：「把上下文压缩写成 report 的功能删掉，并且删掉
+  // 以往记录的 report。」—— 本用例是该令的机读判据：触发一次归档后，归档目录
+  // 内不得出现任何 `*-report.md`（README 式人读报告已废弃；before/after 原始
+  // JSON 转储是另一件事，不在该令范围内，故仍断言其存在）。
+  test("author order 2026-09-15: archiveCompaction must NOT write any -report.md") {
+    val root = os.temp.dir()
+    val archiver = makeArchiver(root)
+    archiver.archiveCompaction("noreport-session", None, "Nebula", sampleMessages, sampleMessages, "full").flatMap {
+      case Right(archive) =>
+        IO.blocking {
+          val dir = os.Path(archive.sessionDir)
+          val entries = os.list(dir).map(_.last).sorted
+          val reports = entries.filter(_.endsWith("-report.md"))
+          assert(
+            reports.isEmpty,
+            s"compaction must not write a report file (author order 2026-09-15), found: ${reports.mkString(", ")}"
+          )
+          assert(entries.exists(_.endsWith("-before.json")), s"before.json should still be written: $entries")
+          assert(entries.exists(_.endsWith("-after.json")), s"after.json should still be written: $entries")
         }
       case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
     }
@@ -72,69 +97,18 @@ class HistoryArchiverSpec extends CatsEffectSuite:
     }
   }
 
-  test("archiveCompaction report contains metadata table") {
-    val root = os.temp.dir()
-    val archiver = makeArchiver(root)
-    archiver
-      .archiveCompaction(
-        "report-session",
-        Some("Session X"),
-        "Nebula",
-        sampleMessages,
-        List(Message(MessageRole.User, Left("s"))),
-        "micro",
-        extra = Map("preservedRounds" -> "3")
-      )
-      .flatMap {
-        case Right(archive) =>
-          IO.blocking {
-            val report = os.read(os.Path(archive.reportPath))
-            assert(report.contains("# Context Compaction Report"))
-            assert(report.contains("Session X"))
-            assert(report.contains("Nebula"))
-            assert(report.contains("micro"))
-            assert(report.contains("Preserved rounds"))
-            assert(report.contains("## Before"))
-            assert(report.contains("## After"))
-          }
-        case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
-      }
-  }
-
-  test("archiveCompaction report contains message stats") {
-    val root = os.temp.dir()
-    val archiver = makeArchiver(root)
-    val before = List(
-      Message(MessageRole.User, Left("user msg")),
-      Message(
-        MessageRole.Assistant,
-        Right(
-          List(
-            ContentBlock
-              .ToolUse("t1", "Read", io.circe.JsonObject.singleton("file_path", io.circe.Json.fromString("a.ts")))
-          )
-        )
-      ),
-      Message(MessageRole.User, Right(List(ContentBlock.ToolResult("t1", "result content", None)))),
-      Message(MessageRole.System, Left("system note"))
-    )
-    val after = List(Message(MessageRole.User, Left("summary")))
-    archiver.archiveCompaction("stats-session", None, "Agent", before, after, "full").flatMap {
-      case Right(archive) =>
-        IO.blocking {
-          val report = os.read(os.Path(archive.reportPath))
-          // Stats table should list counts
-          assert(report.contains("User msgs"))
-          assert(report.contains("Assistant msgs"))
-          assert(report.contains("System msgs"))
-          assert(report.contains("Tool results"))
-          assert(report.contains("Tool uses"))
-        }
-      case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
-    }
-  }
+  // 2026-09-15 作者令：两份断言 report 正文的用例（metadata 表 / message stats 表）
+  // 随 report 生成链一并删除 —— 它们断言的产物已不存在。
 
   test("archiveCompaction returns Left on unwritable directory without throwing") {
+    // 只读目录夹具走 POSIX 权限位：Windows 无 posix 视图 ⇒ 跳过该腿。
+    assume(
+      java.nio.file.Files.getFileAttributeView(
+        java.nio.file.Paths.get(System.getProperty("java.io.tmpdir")),
+        classOf[java.nio.file.attribute.PosixFileAttributeView]
+      ) != null,
+      "unwritable-dir fixture requires POSIX permission bits"
+    )
     val root = os.temp.dir()
     val sessionDir = root / "archives" / "bad-sess"
     os.makeDir.all(sessionDir)
@@ -148,7 +122,7 @@ class HistoryArchiverSpec extends CatsEffectSuite:
     }
   }
 
-  test("archiveCompaction with empty messages writes empty JSON arrays and valid report") {
+  test("archiveCompaction with empty messages writes empty JSON arrays") {
     val root = os.temp.dir()
     val archiver = makeArchiver(root)
     archiver.archiveCompaction("empty-session", None, "A", Nil, Nil, "full").flatMap {
@@ -183,21 +157,23 @@ class HistoryArchiverSpec extends CatsEffectSuite:
 
   test("production wiring: sessions root from PathUtil.dataRoot lands under <dataRoot>/sessions/<sid>/compaction") {
     val tmpHome = os.temp.dir()
-    val prevRoot = nebflow.core.PathUtil.dataRoot
-    nebflow.core.PathUtil.setDataRoot(tmpHome)
+    val prevRoot = nebflow.shared.PathUtil.dataRoot
+    nebflow.shared.PathUtil.setDataRoot(tmpHome)
     // Mirror GatewayMain.scala's wiring expression exactly.
-    val archiver = makeArchiver(nebflow.core.PathUtil.dataRoot / "sessions")
+    val archiver = makeArchiver(nebflow.shared.PathUtil.dataRoot / "sessions")
     archiver
       .archiveCompaction("wiring-session-01", None, "Nebula", sampleMessages, sampleMessages, "full")
       .flatMap {
         case Right(archive) =>
           IO {
             val expected = (tmpHome / "sessions" / "wiring-session-01" / "compaction").toString
-            assert(archive.sessionDir.startsWith(expected), s"sessionDir under dataRoot sessions: ${archive.sessionDir}")
-            assert(os.exists(os.Path(archive.reportPath)))
+            assert(
+              archive.sessionDir.startsWith(expected),
+              s"sessionDir under dataRoot sessions: ${archive.sessionDir}"
+            )
           }
         case Left(err) => IO(fail(s"archiveCompaction failed: $err"))
       }
-      .guarantee(IO(nebflow.core.PathUtil.setDataRoot(prevRoot)))
+      .guarantee(IO(nebflow.shared.PathUtil.setDataRoot(prevRoot)))
   }
 end HistoryArchiverSpec

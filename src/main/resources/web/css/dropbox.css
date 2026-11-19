@@ -3,6 +3,11 @@
 .dropbox-modal {
   width: 520px;
   max-width: 92vw;
+  /* 设备会话统一批 MVP-1（卡 §6.3 D2）：尺寸根因是「只给 max-height、不给 height」
+     + 消息区 `max-height:320px`（下方 .dropbox-messages）⇒ 窗高由被顶死的内容决定，
+     作者报的「窗口有点小」即此。现在对齐好友窗 `.fm-modal`（friends.css:600-608）：
+     `height:70vh` + `max-height:80vh`。 */
+  height: 70vh;
   max-height: 80vh;
   display: flex;
   flex-direction: column;
@@ -17,9 +22,9 @@
 
 .dropbox-close {
   cursor: pointer;
-  font-size: 18px;
+  font-size: var(--ds-fs-display);
   line-height: 1;
-  padding: 0 4px;
+  padding: 0 var(--ds-space-1);
   opacity: 0.5;
   transition: opacity 0.15s;
 }
@@ -29,21 +34,21 @@
 .dropbox-device-info {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 16px;
-  font-size: 12px;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-4);
+  font-size: var(--ds-fs-hint);
 }
 
 /* Tabs */
 .dropbox-tabs {
   display: flex;
-  gap: 2px;
-  padding: 0 16px;
+  gap: var(--ds-space-half);
+  padding: 0 var(--ds-space-4);
   border-bottom: 1px solid var(--glass-border, var(--color-border));
 }
 .dropbox-tab {
-  padding: 6px 14px;
-  font-size: 12px;
+  padding: var(--ds-space-1h) 14px;
+  font-size: var(--ds-fs-hint);
   border: none;
   background: none;
   color: var(--color-text-muted);
@@ -70,30 +75,23 @@
 
 /* Description editor (large textarea) */
 .dropbox-desc-editor-large {
-  padding: 16px;
+  padding: var(--ds-space-4);
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--ds-space-inline-gap);
   flex: 1;
 }
 .dropbox-desc-textarea {
   flex: 1;
   min-height: 240px;
   resize: vertical;
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   line-height: 1.5;
   font-family: inherit;
-  padding: 10px;
-  border-radius: 8px;
-  border: 1px solid var(--color-border);
-  background: var(--color-bg);
+  padding: var(--ds-space-inset);
   color: var(--color-text);
-  outline: none;
-  transition: border-color 0.2s;
 }
-.dropbox-desc-textarea:focus {
-  border-color: var(--color-primary);
-}
+/* 造型 + 焦点态：归 css/inputSurface.css（输入面唯一标准批 2026-11-06）。 */
 .dropbox-desc-actions {
   display: flex;
   justify-content: flex-end;
@@ -102,22 +100,22 @@
 .dropbox-info-badge {
   display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
-  border-radius: 9999px;
+  padding: var(--ds-space-half) var(--ds-space-2);
+  border-radius: var(--ds-radius-pill);
   background: var(--glass-etched-bg, rgba(128, 128, 128, 0.08));
   border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.15));
   color: var(--color-frame-text-muted, #888);
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
 }
 
 .dropbox-info-badge.dot {
   color: #34c759;
-  padding: 2px 4px;
+  padding: var(--ds-space-half) var(--ds-space-1);
 }
 
 .dropbox-info-desc {
   color: var(--color-frame-text-muted, #888);
-  font-size: 12px;
+  font-size: var(--ds-fs-hint);
   margin-left: auto;
 }
 
@@ -125,102 +123,86 @@
 .dropbox-messages {
   flex: 1;
   min-height: 200px;
-  max-height: 320px;
+  /* 设备会话统一批 MVP-1（卡 §6.3 D2 + §9 P8）：**删掉 `max-height:320px`** ——
+     这条上限把消息区恒钉在 ≤320px（改前不可满足「高度 ≥ 60vh」的读数来源）。
+     窗高改由 `.dropbox-modal{height:70vh}` 决定，消息区随 flex 撑满（对齐
+     `.fm-flow{flex:1}` friends.css:710-718）。min-height 保留（空态不塌）。 */
   overflow-y: auto;
-  padding: 12px 16px;
+  padding: var(--ds-space-3) var(--ds-space-4);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--ds-space-1h);
 }
 
-/* Individual message wrapper */
-.dropbox-msg {
-  display: flex;
-  flex-direction: column;
-  max-width: 75%;
-}
-.dropbox-msg.out { align-self: flex-end; align-items: flex-end; }
-.dropbox-msg.in  { align-self: flex-start; align-items: flex-start; }
-
-/* Text bubble */
-.dropbox-msg-bubble {
-  padding: 6px 12px;
-  border-radius: 12px;
-  font-size: 13px;
-  line-height: 1.4;
-  word-break: break-word;
-}
-.dropbox-msg.out .dropbox-msg-bubble {
-  background: rgba(91, 127, 191, 0.15);
-  color: var(--color-frame-text, #333);
-}
-.dropbox-msg.in .dropbox-msg-bubble {
-  background: var(--glass-etched-bg, rgba(128, 128, 128, 0.06));
-  border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.12));
-  color: var(--color-frame-text, #333);
+/* ⑩ 消息区状态行（作者 2026-09-14 17:21 令「不要空白」）：消息区**永不为空** ——
+   无本地缓存且 `dropbox-get-history` 在飞 ⇒ 「正在加载消息…」；无缓存且无在飞请求
+   ⇒ 「暂无消息」。取色只用既有主题 token（亮/暗两主题同源，无新字面量色值）。 */
+.dropbox-flow-status {
+  margin: auto;
+  padding: var(--ds-space-1h) var(--ds-space-inline-x);
+  font-size: var(--ds-fs-hint);
+  line-height: 1.5;
+  text-align: center;
+  color: var(--color-frame-text-muted, var(--color-text-muted, #888));
+  background: var(--glass-etched-bg);
+  border-radius: var(--ds-radius-pill);
 }
 
-/* Message meta row (timestamp + copy) */
-.dropbox-msg-meta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 2px;
-  padding: 0 4px;
-}
+/* Individual message wrapper / text bubble / meta / time
+   ── 已在 sapphire.css 的 "Shared message surface" 段与好友面同源（2026-09-12 波2）：
+   结构与形态（wrapper 的 flex 列 + 方向对齐、气泡 padding 8px 12px / r14 / 13px /
+   行高 1.5 / 出向无描边 + 方向尾角 4px、元信息 pill、时间 10px 等宽 tabular-nums）+
+   max-width token（--msg-bubble-max-w = 78%，与好友面同 token）。
+   本文件只留 dropbox 面专有声明：文件卡子层、复制键、拖拽态轮廓（dropzone 提示条
+   已随引导语删除，见下方注释）。 */
 
-/* Message timestamp */
-.dropbox-msg-time {
-  font-size: 10px;
-  color: var(--color-frame-text-muted, #aaa);
-}
-
-/* Inline copy button */
+/* Inline copy button —— 三窗口 footer 统一（2026-09-14 作者七答 · 方向 A）：
+   S08/S09/S10 收敛到主对话口径（chat.css:783-789）= 13×13 盒 / padding 1px / svg 11px
+   / r4 / `--color-text` / **常驻** opacity .35；hover 仅透明度 .6（去色变）。
+   R2 顺带：设备面原「平时隐藏（opacity:0）、悬停才显」⇒ 改常驻半透明，同时消除
+   「Tab 可聚焦但屏幕零可见」的可达性缺陷；揭示规则
+   `.dropbox-msg:hover .dropbox-msg-copy{opacity:1}` 已随之删除（常显档下无意义）。 */
 .dropbox-msg-copy {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 13px;
+  height: 13px;
   border: none;
   background: transparent;
   cursor: pointer;
-  opacity: 0;
-  color: var(--color-frame-text-muted, #aaa);
-  padding: 2px;
-  border-radius: 4px;
+  opacity: 0.35;
+  color: var(--color-text);
+  padding: var(--ds-space-hair);
+  border-radius: var(--ds-radius-badge);
   transition: opacity 0.15s;
 }
-.dropbox-msg-copy:hover { color: var(--color-frame-text, #666); }
+.dropbox-msg-copy svg { width: 11px; height: 11px; }
+.dropbox-msg-copy:hover { opacity: 0.6; }
 .dropbox-msg-copy.copied { color: #34c759; opacity: 1; }
-.dropbox-msg:hover .dropbox-msg-copy { opacity: 1; }
 
-/* File card */
-.dropbox-file-card {
-  padding: 8px 12px;
-  border-radius: 12px;
-  background: var(--glass-etched-bg, rgba(128, 128, 128, 0.06));
-  border: 1px solid var(--glass-etched-border, rgba(128, 128, 128, 0.12));
-  min-width: 180px;
-}
-.dropbox-msg.out .dropbox-file-card {
-  background: rgba(91, 127, 191, 0.10);
-  border-color: rgba(91, 127, 191, 0.15);
+/* S13 触摸端兜底（好友面同款声明在 friends.css）：常显档下天然可见，本规则为零成本
+   显式声明，防将来回退到揭示式显隐时触摸端不可达。 */
+@media (hover: none) {
+  .dropbox-msg-copy { opacity: 1; }
 }
 
-/* File card layout */
+/* File card — 卡片本体是共享类 .msg-file-card（sapphire.css，③A5 单一类名），
+   本处只留 dropbox 面的子层排版。 */
 .dropbox-file-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
 }
 .dropbox-file-meta {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--ds-space-hair);
   flex: 1;
   min-width: 0;
 }
 .dropbox-file-name {
-  font-size: 13px;
+  font-size: var(--ds-fs-body);
   font-weight: 500;
   color: var(--color-frame-text, #333);
   white-space: nowrap;
@@ -228,60 +210,89 @@
   text-overflow: ellipsis;
 }
 .dropbox-file-info-line {
-  font-size: 11px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted, #888);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .dropbox-file-badge {
-  font-size: 14px;
+  font-size: var(--ds-fs-subtitle);
   flex-shrink: 0;
   width: 20px;
   text-align: center;
 }
 .dropbox-file-badge.completed { color: #34c759; }
 .dropbox-file-badge.transferring { color: var(--color-frame-text-muted, #888); animation: pulse 1.2s ease-in-out infinite; }
-.dropbox-file-badge.failed { color: #e44; }
+/* ui-status-redesign（S5 / 盘点 #41）：badge = 图标载体（✕ → circle-x 真图标），
+   色值 #e44 → --status-error-icon token（亮 3.8:1✗ → 4.4:1✓）。 */
+.dropbox-file-badge.failed { color: var(--status-error-icon); }
 
 .dropbox-file-status-text {
-  margin-top: 4px;
-  font-size: 11px;
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-meta);
 }
 .dropbox-file-status-text.completed { color: #34c759; }
 .dropbox-file-status-text.transferring { color: var(--color-frame-text-muted, #888); }
-.dropbox-file-status-text.failed { color: #e44; }
+/* 状态词转中性字，语义红由词前 wifi-off/circle-x 图标（dropbox.js 注入）承载。 */
+.dropbox-file-status-text.failed { color: var(--status-word); }
+.dropbox-file-status-text.failed .st-ic { width: 11px; height: 11px; margin-right: var(--ds-space-1); vertical-align: -1px; }
+
+/* ===== 附件腿批（2026-09-12）：块级进度条 + 闸位拒绝提示条 ===== */
+/* 复用既有配色（completed 绿 / failed 红 / muted 灰），不新造设计语言。 */
+.dropbox-file-progress {
+  margin-top: var(--ds-space-1h);
+  height: 3px;
+  width: 100%;
+  border-radius: var(--ds-radius-thin);
+  background: var(--color-frame-border, rgba(128, 128, 128, 0.25));
+  overflow: hidden;
+}
+.dropbox-file-progress-bar {
+  height: 100%;
+  background: #34c759;
+  transition: width 0.2s ease-out;
+}
+/* 闸位拒绝提示条（ui-status-redesign / 盘点 #41 通知行）：12px 红字 → 中性
+   正文 + 行首 triangle-alert 琥珀图标（dropbox.js 注入）。 */
+.dropbox-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-1h);
+  color: var(--status-word);
+  font-size: var(--ds-fs-hint);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.dropbox-notice .st-ic { width: 13px; height: 13px; margin-top: var(--ds-space-hair); flex-shrink: 0; }
 
 @keyframes pulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 1; }
 }
 
-/* Drop zone */
-.dropbox-dropzone {
-  margin: 6px 16px;
-  padding: 10px;
-  border: 1.5px dashed var(--glass-etched-border, rgba(128, 128, 128, 0.3));
-  border-radius: 10px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--color-frame-text-muted, #888);
-  cursor: pointer;
-  transition: border-color 0.2s, background 0.2s;
+/* 拖拽目标 = 整个对话框（③-F/③A6）。outline（不是 border）承载拖拽态：不参与
+   布局、不推动任何内容；dashed 与提示条同族。 */
+.dropbox-modal.drag-over {
+  outline: 1.5px dashed rgba(91, 127, 191, 0.6);
+  outline-offset: -6px;
 }
-.dropbox-dropzone:hover {
-  border-color: rgba(91, 127, 191, 0.4);
-}
-.dropbox-dropzone.drag-over {
-  border-color: rgba(91, 127, 191, 0.6);
-  background: rgba(91, 127, 191, 0.05);
-}
+/* 注：原「拖拽提示条」样式（drop zone 提示文案条）已随作者 2026-09-14 09:14 删引导句
+   一并删除 —— 元素不存在、类名零引用 ⇒ 死 CSS 不留。拖拽目标仍是整个对话框
+   （上面的 .dropbox-modal.drag-over），交互形态零变化。 */
+
+/* 输入条纸夹键（第二入口）：复用 `.icon-btn` 玻璃表达。
+   四会话统一批 2026-11-05：原「尺寸收到输入条尺度」= 32×32 / 图标 18 的**自有档**
+   撤出 —— 同一枚纸夹在主会话是 `.icon-btn` 的 36×36 / 图标 20（手机层 48/--micon），
+   两个档差让「附件键比主会话小一圈」。本类现在只作标识（dropbox / 好友 / 群 / 设备
+   四条输入条共用同一个 `.icon-btn` 底档，与主会话同源）；几何全部回到 `.icon-btn`。 */
+.dropbox-attach-btn { flex-shrink: 0; }
 
 /* Input bar */
 .dropbox-input-bar {
   display: flex;
-  gap: 8px;
-  padding: 0 16px 14px;
+  gap: var(--ds-space-2);
+  padding: 0 var(--ds-space-4) 14px;
 }
 .dropbox-input-bar .cfg-input {
   flex: 1;
@@ -290,11 +301,6 @@
   flex-shrink: 0;
 }
 
-/* Clickable device name in settings */
-.neblink-peer-name.dropbox-clickable {
-  cursor: pointer;
-  transition: color 0.15s;
-}
-.neblink-peer-name.dropbox-clickable:hover {
-  color: rgba(91, 127, 191, 0.8);
-}
+/* 「设置里的设备名 → 旧设备窗」的可点样式已随 ①④ 删除（作者 2026-09-15：
+   设备入口从设置搬去联系人面板；旧设备窗 `openDropbox` 一并无入口）。
+   设备行的hover/指针态现由 neblink.css 的 .neblink-peer* 家族承担（零新增规则）。 */

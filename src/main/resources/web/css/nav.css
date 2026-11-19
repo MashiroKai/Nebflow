@@ -4,7 +4,7 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 8px 0;
+  padding: var(--ds-space-2) 0;
   flex-shrink: 0;
   overflow: hidden;
   min-height: 0;
@@ -28,44 +28,41 @@
   width: 24px;
   height: 1px;
   background: var(--glass-border-dark);
-  margin: 4px 0;
+  margin: var(--ds-space-1) 0;
   flex-shrink: 0;
 }
 
 /* Agent icon in nav bar */
 .nav-agent {
   width: 44px;
-  padding: 4px 0;
-  border-radius: 12px;
+  padding: var(--ds-space-1) 0;
+  border-radius: var(--ds-radius-xl);
   border: 1px solid transparent; /* reserves edge space for glass hover */
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  margin-bottom: 2px;
+  margin-bottom: var(--ds-space-half);
   background: transparent;
   transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
   position: relative;
-  gap: 2px;
+  gap: var(--ds-space-half);
 }
 .nav-agent:hover {
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
     inset 0 -1px 0 var(--glass-control-underedge);
 }
-.nav-agent:focus { outline: none; }
 .nav-agent { -webkit-tap-highlight-color: transparent; }
 .nav-agent.active {
   background: var(--color-frame-active);
   box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .nav-agent-icon {
-  font-size: 18px;
+  font-size: var(--ds-fs-display);
   line-height: 1;
   color: var(--color-frame-text-muted, #888);
 }
@@ -84,13 +81,13 @@
   width: 20px;
   height: 20px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 10px;
+  font-size: var(--ds-fs-meta);
   font-weight: 400;
   line-height: 1;
   letter-spacing: 0;
 }
 .nav-agent-label {
-  font-size: 9px;
+  font-size: var(--ds-fs-meta);
   color: var(--color-frame-text-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -121,7 +118,7 @@
 .nav-item {
   width: 40px;
   height: 40px;
-  border-radius: 12px;
+  border-radius: var(--ds-radius-xl);
   border: 1px solid transparent; /* reserves edge space for glass hover */
   background: transparent;
   display: flex;
@@ -129,7 +126,7 @@
   justify-content: center;
   cursor: pointer;
   color: var(--color-frame-text-muted);
-  margin-bottom: 4px;
+  margin-bottom: var(--ds-space-1);
   position: relative;
   flex-shrink: 0;
   transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s;
@@ -137,8 +134,6 @@
 .nav-item:hover {
   color: var(--color-frame-text);
   background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
   border-color: var(--glass-control-border);
   box-shadow:
     inset 0 1px 0 var(--glass-control-highlight),
@@ -158,17 +153,15 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: var(--ds-space-2);
   width: 48px;
   flex-shrink: 0;
-  margin: 16px 4px 10px;
+  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-stack-gap);
   max-height: calc(100vh - 26px);
-  border-radius: 20px;
+  border-radius: var(--ds-radius-shell);
   overflow: hidden;
-  padding: 10px 0;
+  padding: var(--ds-space-block-y) 0;
   background: var(--glass-bg);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.15);
   border: 1px solid var(--glass-border);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
@@ -182,16 +175,12 @@
       0px 2px 8px rgba(0, 0, 0, 0.20),
       0px 8px 24px rgba(0, 0, 0, 0.35);
   }
-  .nav-agent.active,
-  .activity-btn.active {
-    box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.25), 0 0 0 1px rgba(255, 255, 255, 0.06);
-  }
 }
 /* Keep the activity bar visible even when the sidebar is collapsed. */
 body.sidebar-collapsed #activity-bar {
   width: 48px;
   opacity: 1;
-  margin: 16px 4px 10px;
+  margin: var(--ds-space-4) var(--ds-space-1) var(--ds-space-stack-gap);
 }
 /* prefers-reduced-motion: squash the Side Bar collapse animation
    (transition itself lives in base.css with the --panel-* tokens). */
@@ -223,10 +212,10 @@ body.sidebar-collapsed #activity-bar {
   width: 24px;
   height: 24px;
   object-fit: contain;
-  /* Pixel-art logo v4 (224x224 source = 8 grid units, art block = 2 units).
-     24px keeps every art block a whole 6px, so pixelated stays even —
-     22px would split blocks into 5.5px and render ragged stems. */
-  image-rendering: pixelated;
+  /* stand-symbol vector mark (avatar-sharp batch 2026-10-19): the slot source
+     is SVG, rasterized at layout size × dsf — no image-rendering hint wanted.
+     (The retired pixel-art logo needed `pixelated`; on smooth art it forced
+     nearest-neighbor downscaling and rendered staircase edges.) */
   pointer-events: none;
 }
 /* Account avatar photo (shown after login, when an avatarUrl is available). */
@@ -238,7 +227,7 @@ body.sidebar-collapsed #activity-bar {
   pointer-events: none;
 }
 .activity-avatar-letter {
-  font: 600 14px -apple-system, BlinkMacSystemFont, sans-serif;
+  font: 600 var(--ds-fs-subtitle) -apple-system, BlinkMacSystemFont, sans-serif;
   line-height: 1;
   user-select: none;
 }
@@ -265,7 +254,7 @@ body.sidebar-collapsed #activity-bar {
 .activity-btn {
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: var(--ds-radius-button);
   border: 1px solid transparent; /* reserves edge space for glass hover */
   background: transparent;
   color: var(--color-frame-text-muted);
@@ -275,33 +264,36 @@ body.sidebar-collapsed #activity-bar {
   justify-content: center;
   position: relative;
   flex-shrink: 0;
-  transition: color 0.15s, background 0.15s, border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s, transform 0.1s;
   padding: 0;
 }
-.activity-btn:hover {
-  color: var(--color-frame-text-bright);
-  background: var(--glass-control-bg-hover);
-  -webkit-backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  backdrop-filter: blur(var(--glass-control-blur)) saturate(1.2);
-  border-color: var(--glass-control-border);
-  box-shadow:
-    inset 0 1px 0 var(--glass-control-highlight),
-    inset 0 -1px 0 var(--glass-control-underedge);
+@media (hover: hover) {
+  .activity-btn:hover {
+    color: var(--color-frame-text-bright);
+    background: var(--glass-control-bg-hover);
+    border-color: var(--glass-control-border);
+  }
 }
-.activity-btn:focus { outline: none; }
-/* Visible keyboard focus ring (outline is suppressed above). */
-.activity-btn:focus-visible { box-shadow: 0 0 0 2px var(--glass-control-border); }
+
+/* Visible keyboard focus ring (outline is suppressed above).
+   扁平化批 2026-11-05：环从 `box-shadow: 0 0 0 2px` 改为 outline 描边环 ——
+   环是「线」不是「影」，且 outline 不占盒、不改几何。 */
+.activity-btn:focus-visible {
+  outline: var(--btn-ring-w) solid var(--btn-ring);
+  outline-offset: var(--btn-ring-offset);
+}
 .activity-btn:active { transform: scale(0.97); }
 .activity-btn { -webkit-tap-highlight-color: transparent; }
-/* C1: active state is background + inset shadow only — no left-edge bar of
-   any kind. The base 1px border is a transparent reservation for the glass
-   hover; drop its left edge in the active state (box-sizing: border-box
-   keeps the 36px size; flex centering keeps the icon stable). */
+/* C1: active state is **background only** — no left-edge bar of any kind and
+   no inset shadow (扁平化批 2026-11-05 摘掉最后那层 inset 浮雕：选中感已由
+   --color-frame-active 底色承担，浮雕只是厚度道具)。The base 1px border is a
+   transparent reservation for the glass hover; drop its left edge in the
+   active state (box-sizing: border-box keeps the 36px size; flex centering
+   keeps the icon stable). */
 .activity-btn.active { border-left-width: 0; }
 .activity-btn.active {
   color: var(--color-frame-text-bright);
   background: var(--color-frame-active);
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 .activity-btn svg {
   width: 19px;
@@ -312,39 +304,16 @@ body.sidebar-collapsed #activity-bar {
 /* Spacer pushes settings to the bottom of the bar. */
 .activity-spacer { flex: 1; }
 
-/* Update-available dot on the settings button (updateCheck.js silent auto
-   checks). Success token only — no hand-mixed colors (视觉评审先例). The
-   halo ring keeps it legible on hover/active backgrounds in both themes. */
-.settings-update-dot {
-  position: absolute;
-  top: 5px;
-  right: 5px;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--color-success);
-  box-shadow: 0 0 0 2px var(--color-nav-bg);
-  pointer-events: none;
-}
+/* Update-available dot on the settings button 已随 auth-trim 批（2026-10-20 作者令）
+   删除：updateCheck.js 绿点链退役，未来由官网统一检测更新取代。 */
 
 /* 2026-09-05 旧 UI 退役：legacy-pop/legacy-item（旧面板二级入口 popover）
    样式段已随 #legacy-btn/#legacy-pop DOM 删除。 */
 
 /* ── NebLink logged-out hint (Settings panel) ── */
-/* 2026-09-06 区块统一：未登录态只剩 logo（头像入口渲染）+ 这一句说明，
-   原 .neblink-logged-out 容器/独立 logo/加粗标题行一并退役。 */
-.neblink-logged-out-hint {
-  font-size: 12px; color: var(--color-text-muted);
-  text-align: center;
-}
+/* `.neblink-logged-out-hint`（2026-09-06「未登录态只剩 logo + 一句说明」的最后一件）
+   随「登录账号」账户卡整件退役（作者令 2026-11-18）：其唯一发射点 = neblink.js 的
+   账户卡未登录分支，现零发射点 ⇒ 样式删除。 */
 
-/* ── NebLink logout button (Settings panel, logged-in state) ── */
-.neblink-logout-btn {
-  width: 100%; margin-top: 12px; padding: 8px;
-  border: 1px solid rgba(244,67,54,0.3);
-  background: rgba(244,67,54,0.1);
-  color: #ef9a9a; border-radius: 8px; cursor: pointer;
-  font-size: 13px; transition: background 0.15s;
-}
-.neblink-logout-btn:hover { background: rgba(244,67,54,0.2); }
-.neblink-logout-btn:disabled { opacity: 0.5; cursor: default; }
+/* ── NebLink logout button 样式段已随 auth-trim 批（2026-10-20 作者令）删除：
+   设置页「退出登录」键退役 ⇒ 红玻璃配方（--btn-danger-* token 版）零残留。 */

@@ -1,0 +1,223 @@
+// delegateApi.js — delegate 行外部面 REST 绑定（#1228 换源接线批 · S16 粗粒度行）。
+//
+// 两端点均为 #1225 已落库面（引擎侧 `PresenceRoutes.scala`，本批**零引擎触碰**，
+// 只做前端绑定）：
+//   GET  /api/delegates/:id/output?offset=N — 外部 delegate 进度输出面
+//     （ExternalOutputStore 缓冲；响应与 bg-tasks 输出面同构 + 外部扩展字段
+//     cliSessionId/mailboxDepth/startedAtMs；404 = 无缓冲——记录面仍在
+//     DelegateRegistry，不是错误态）。
+//   POST /api/delegates/:id/open-native — 「打开原软件」：宿主上打开原 CLI 原生
+//     终端并 resume（fire-and-forget，响应 {opened,command} 回显；404 = 非外部记录；
+//     400 = 记录损坏或启动失败）。
+//
+// delegate-ui 批（2026-10-08 · 定稿蓝本 §3 三值归属「本批引擎位补齐」消费面）加宽
+// 三端点（引擎侧 PresenceRoutes 已落，本件只做前端绑定）：
+//   GET  /api/delegates/:id           — G4 聚合单查（record+live+verdict+task 全文+
+//                                      childrenCount+output?；视图④详情首绘单缝）
+//   GET  /api/delegates/:id/children  — G3 星型子代理查询（{delegateId,count,children[]}；
+//                                      查无文件 = count 0 非 404；flow 子结构不走本面）
+//
+// delegate-lifecycle-reform 阶段②（2026-11-17）：**手动归档/反归档端点整体退役**
+// （`POST /api/delegates/:id/archive` 与 `/unarchive` 连同 `DelegateRegistry.archive` /
+// `unarchive` 写点一并删除，存储式归档被状态派生可见性取代）。替代面 = 非破坏性表态
+// 端点 `POST /api/delegates/:id/disposition`（body {value: acknowledged|ignored|""}）。
+//
+// 定位：与 nodeData.js 同族的叶子取数件——但 nodeData 是 project/node/flowmap 域
+// （#1228 停用清单已注定其 fetchFlowMap/controlChain 随 per-project 面退役），delegate
+// 域端点独立落本件，退役面互不牵连。行源/链源**不在本件**（read port 单缝 =
+// delegateChainStub.setSource，候 N1 定稿挂真 provider）。
+
+import { authHeaders } from './flowHelpers.js';
+
+/** 端点表（与 PresenceRoutes 挂载路径逐字对齐；Router("/api") 前缀）。 */
+export const DELEGATE_API = {
+  output: (id, offset) =>
+    `/api/delegates/${encodeURIComponent(String(id || ''))}/output?offset=${Number(offset) || 0}`,
+  openNative: (id) => `/api/delegates/${encodeURIComponent(String(id || ''))}/open-native`,
+  detail: (id) => `/api/delegates/${encodeURIComponent(String(id || ''))}`,
+  children: (id) => `/api/delegates/${encodeURIComponent(String(id || ''))}/children`,
+  // 非破坏性表态（阶段② · 归档/反归档两端点的替代面）：acknowledged / ignored / ""（清除）。
+  disposition: (id) => `/api/delegates/${encodeURIComponent(String(id || ''))}/disposition`,
+  // 历史窗清单源（阶段② 起 = **状态派生可见性**：收口 ∧（表态 ∨ 存量归档旗）；
+  // 与 /api/chains 活动窗互补零重叠——两窗同源派生）。
+  archived: () => '/api/chains?archived=1',
+  // 手动恢复（重启手动恢复批，作者令 2026-11-06 20:36「由用户手动恢复，粒度可以
+  // 是逐个点击，也可以是子agent面板一键全部恢复」）：
+  //   POST /api/delegates/restore       — body {taskId}；逐个恢复（同 id 续原转录）
+  //   POST /api/delegates/restore-all   — 一键全部恢复（pending-recovery/frozen/重启
+  //                                       丢失行 → 资格过滤 → 批量复活）
+  // 零向上通知——结果只在本响应；面板行状态随引擎翻新（delegate-chain-mirror-updated）。
+  restore: () => '/api/delegates/restore',
+  restoreAll: () => '/api/delegates/restore-all',
+  // delegates 列表读面（delegate 视图重设计实施批 2026-10-21 · 引擎 UI 最小集）：
+  // /api/chains 行投影同源（含 G1 taskStatus=merging 覆写 + mergeQueue/mergeQueuePos）
+  // + `?project=` 过滤参数 + 行内 `topology` 子过程拓扑载荷（children=星扇全集 /
+  // steps=agentflow 链节点）。全景视图的数据面单缝（provider 全量拉取；过滤参数
+  // 供单项目收窄拉取）。
+  list: (project) =>
+    '/api/delegates' + (project ? `?project=${encodeURIComponent(String(project))}` : ''),
+};
+
+/** 该 id 是否为星型区/归档入口的适用形态（delegate 域会话；外部 delegate 同域——
+ *  引擎 G6 对外部记录同样有效，children 恒空集）。 */
+export function isDelegateDomainId(id) {
+  const s = String(id || '');
+  return s.startsWith('delegate-') || s.startsWith('external-');
+}
+
+/**
+ * 外部 delegate 进度输出（S16 粗粒度行进度腿；offset 增量读——调用方持守
+ * `nextOffset`，只拉增量，不重复拉全量缓冲）。fail-soft：任何失败（网络/HTTP/
+ * 解析）→ null，调用方保留上次读数（行绝不因单次拉取失败崩/清空）。
+ * @param {string} id delegate id
+ * @param {number} [offset] 增量偏移（首拉 0）
+ * @returns {Promise<Object|null>} ExternalOutputStore.read 响应 JSON（含
+ *   output/nextOffset/status/totalLines/exitCode 等键）或 null
+ */
+export async function fetchDelegateOutput(id, offset = 0) {
+  try {
+    const r = await fetch(DELEGATE_API.output(id, offset), { headers: authHeaders() });
+    if (!r.ok) return null; // 404 无缓冲 / 5xx —— 都不是行崩溃面
+    return await r.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * 「打开原软件」（S16 出口腿；钮 title/aria = §16 键 6）。返回可判别结果对象
+ * （controlChain 同形）：ok 200 {opened,command}；http 非 2xx（404 非外部记录 /
+ * 400 记录损坏或启动失败）；network fetch 拒绝。不抛异常（行腿不因单次出口失败中断）。
+ * @param {string} id delegate id
+ * @returns {Promise<{state:'ok', data:any}|{state:'http', status:number, data:any}|{state:'network'}>}
+ */
+export async function openDelegateNative(id) {
+  try {
+    const r = await fetch(DELEGATE_API.openNative(id), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * G4 delegate 聚合单查（视图④详情首绘单缝）。fail-soft：任何失败（网络/HTTP/解析）
+ * → null，调用方优雅缺席（弹窗不因单次拉取失败崩/清空）。
+ * @param {string} id delegate id
+ * @returns {Promise<Object|null>} {record,live,verdict,task,childrenCount,output?} 或 null
+ */
+export async function fetchDelegateDetail(id) {
+  try {
+    const r = await fetch(DELEGATE_API.detail(id), { headers: authHeaders() });
+    if (!r.ok) return null; // 404 查无记录 / 400 非法 id / 5xx —— 都不是崩面
+    return await r.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * G3 星型子代理查询（视图②④星型区数据缝）。fail-soft 同上；404（父无记录）与
+ * 网络失败同归 null（消费端按「无读数」降级为空区），查无文件 = {count:0,children:[]}。
+ * @param {string} id delegate id
+ * @returns {Promise<Object|null>} {delegateId,count,children[]} 或 null
+ */
+export async function fetchDelegateChildren(id) {
+  try {
+    const r = await fetch(DELEGATE_API.children(id), { headers: authHeaders() });
+    if (!r.ok) return null;
+    return await r.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * 归档 delegate 历史窗清单（九点⑧ S11 归档 FAB 清单源；只读）。fail-soft：任何失败
+ * （网络/HTTP/解析/形状漂移）→ null（调用方空态兜底）；成功 = DelegateRow 形数组
+ * （在册窗同投影 rowFromRegistry——本件不 import stub，归一归消费端既有链路）。
+ * @returns {Promise<Array<Object>|null>}
+ */
+export async function fetchArchivedDelegates() {
+  try {
+    const r = await fetch(DELEGATE_API.archived(), { headers: authHeaders() });
+    if (!r.ok) return null;
+    const body = await r.json();
+    const rows = Array.isArray(body && body.rows) ? body.rows : null;
+    return rows && rows.every((x) => x && typeof x === 'object') ? rows : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+/**
+ * 非破坏性表态（阶段② · 手动归档/反归档两端点的**替代面**）。返回可判别结果对象
+ * （openDelegateNative 同形）：ok 200 {id,disposition,dispositionAt,visibility}；
+ * http 非 2xx（404 查无记录 / 400 非法 id 或非法 value / 坏 body）；network fetch 拒绝。
+ * **零删除**：只写表态双槽，记录/子代理记账/转录/worktree/历史行原样。
+ * `value` 空串 = 清除表态（行按状态派生可见性回活动窗）。
+ * @param {string} id delegate id
+ * @param {''|'acknowledged'|'ignored'} value
+ * @returns {Promise<{state:'ok', data:any}|{state:'http', status:number, data:any}|{state:'network'}>}
+ */
+export async function setDelegateDisposition(id, value) {
+  try {
+    const r = await fetch(DELEGATE_API.disposition(id), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: String(value || '') }),
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/**
+ * 模型粒度批（作者令 2026-11-06 20:36）：重启/崩溃后**手动恢复**两档的引擎缝。
+ * 后端零通知 + 不自动恢复（`SubAgentStartupRecovery` 标 pending-recovery，由用户
+ * 在子 agent 面板里手动恢复），本件只做 REST 绑定：
+ *   restoreDelegate(id)      — POST /api/delegates/restore   body {taskId}（逐个点击）
+ *   restoreAllDelegates()    — POST /api/delegates/restore-all（面板一键全部）
+ * 返回可判别结果对象（archiveDelegate 同形；不抛异常）。501/500 = 恢复宿主缺席
+ * （网关未装配 ManualRevivalHost）。
+ */
+export async function restoreDelegate(taskId) {
+  try {
+    const r = await fetch(DELEGATE_API.restore(), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ taskId: String(taskId || '') }),
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+export async function restoreAllDelegates() {
+  try {
+    const r = await fetch(DELEGATE_API.restoreAll(), {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+    });
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}

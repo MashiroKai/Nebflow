@@ -5,39 +5,45 @@ import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Ref}
 import cats.syntax.all.*
 import fs2.Stream
+import io.circe.{Json, JsonObject}
 import munit.FunSuite
 import nebflow.actor.{ActorSystem, Behaviors}
+import nebflow.actor.{AgentCommand, messages, rootSessionId}
 import nebflow.agent.*
+import nebflow.actor.{
+  AgentCommand,
+  AgentDef,
+  AgentKind,
+  AgentRecord
+} // W1 shim: main exported these from nebflow.agent (protocol/AgentState); the merge moved them to actor
 import nebflow.core.FileChangeTracker
-import nebflow.core.PathUtil
 import nebflow.core.compact.HistoryArchiver
-import nebflow.core.flow.TeamSessionRegistry
 import nebflow.core.task.FileTaskStore
-import nebflow.gateway.{RateLimiter, SessionStore}
-import nebflow.llm.{ModelCandidate, ProviderHealthMonitor, ThinkingConfig}
-import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk}
+import nebflow.core.{RateLimiter, SessionStore}
+import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
+import nebflow.shared.{LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig}
 
 import scala.concurrent.duration.*
 
 /**
-  * Lifecycle spec for Mail-activated team agents — the two deep follow-ups
-  * of the 2026-08-17 Teams ghost investigation:
-  *
-  * #2 respawn amnesia: MailTool.activateAgent used to spawn the actor with
-  * initialMessages = Nil even when the session had hundreds of persisted
-  * messages — every respawn was an amnesiac (turn counts reset, prior
-  * context lost; live evidence: 19:16 respawn msgs=0 while disk held 230+,
-  * 19:24 turn-complete msgs=62 all-fresh). The fix loads the persisted
-  * messages through the same pattern as activateAgent's fresh spawn /
-  * ensureRootAgent.
-  *
-  * #1 silent death + busy leak: Mail-spawned team agents lived outside
-  * FlowTreeActor's watch system, so their death left actorMap holding a
-  * dead ref (later Mails vanished), agentRegistry holding the record, and
-  * busyMap holding the last turn's busy flag — getActiveAgents then
-  * reported a running ghost. The fix spawns a death watcher that
-  * unregisters + clears busy + logs.
-  */
+ * Lifecycle spec for Mail-activated team agents — the two deep follow-ups
+ * of the 2026-08-17 Teams ghost investigation:
+ *
+ * #2 respawn amnesia: MailTool.activateAgent used to spawn the actor with
+ * initialMessages = Nil even when the session had hundreds of persisted
+ * messages — every respawn was an amnesiac (turn counts reset, prior
+ * context lost; live evidence: 19:16 respawn msgs=0 while disk held 230+,
+ * 19:24 turn-complete msgs=62 all-fresh). The fix loads the persisted
+ * messages through the same pattern as activateAgent's fresh spawn /
+ * ensureRootAgent.
+ *
+ * #1 silent death + busy leak: Mail-spawned team agents lived outside
+ * FlowTreeActor's watch system, so their death left actorMap holding a
+ * dead ref (later Mails vanished), agentRegistry holding the record, and
+ * busyMap holding the last turn's busy flag — getActiveAgents then
+ * reported a running ghost. The fix spawns a death watcher that
+ * unregisters + clears busy + logs.
+ */
 class MailActivateLifecycleSpec extends FunSuite:
 
   private val originalRoot = PathUtil.dataRoot
@@ -52,20 +58,22 @@ class MailActivateLifecycleSpec extends FunSuite:
 
   private class RecordingLlm extends LlmHandle[IO]:
     val requests: Ref[IO, List[LlmRequest]] = Ref.unsafe(Nil)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected in this test"))
+
     def sendStream(
-        req: LlmRequest,
-        onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+      req: LlmRequest,
+      onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
     ): Stream[IO, StreamChunk] =
       Stream.eval(requests.update(req :: _)) >>
         Stream(StreamChunk.TextDelta("ok"), StreamChunk.Done(None, None))
 
   private def mkResources(
-      system: ActorSystem,
-      tmp: os.Path,
-      llm: LlmHandle[IO],
-      sessionStore: SessionStore
+    system: ActorSystem,
+    tmp: os.Path,
+    llm: LlmHandle[IO],
+    sessionStore: SessionStore
   ): IO[SharedResources] =
     for
       dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
@@ -97,11 +105,11 @@ class MailActivateLifecycleSpec extends FunSuite:
     )
 
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 50.millis)(
-      cond: IO[Boolean]
+    cond: IO[Boolean]
   ): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
           if System.currentTimeMillis() >= deadline then
             IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
@@ -170,7 +178,7 @@ class MailActivateLifecycleSpec extends FunSuite:
     assertEquals(refOpt.isDefined, true)
   }
 
-  test("#1 death watch clears actorMap, agentRegistry and busy on victim death") {
+  test("#1 death watch drops the agentRegistry record on victim death") {
     val system = ActorSystem(s"mail-dw-${java.util.UUID.randomUUID().toString.take(6)}")
     val tmp = os.temp.dir(prefix = "mail-deathwatch")
     val llm = new RecordingLlm
@@ -184,66 +192,75 @@ class MailActivateLifecycleSpec extends FunSuite:
         Behaviors.receiveMessage[AgentCommand](_ => IO.pure(Behaviors.stopped[AgentCommand])),
         s"victim-$sid"
       )
-      _ <- TeamSessionRegistry.registerActor(sid, victim, resources, rootSessionId = sid)
-      _ <- TeamSessionRegistry.markBusy(sid)
+      // 团队功能删除批阶段 3：夹具从已退役的登记表 actorMap 换成统一 agentRegistry
+      // （本看护现在只负责这一份权威记录的卫生：死则删记录）。
+      _ <- resources.agentRegistry.update(
+        _ + (sid -> AgentRecord(sessionId = sid, ref = victim, kind = AgentKind.Team, rootSessionId = sid))
+      )
       _ <- system.spawn(
         MailTool.teamAgentDeathWatch(sid, "victim", victim, resources),
         s"watcher-$sid"
       )
       _ <- victim ! AgentCommand.Interrupt()
-      _ <- waitUntil(10.seconds)(TeamSessionRegistry.getRunningActor(sid).map(_.isEmpty))
-      busy <- TeamSessionRegistry.isBusy(sid)
+      _ <- waitUntil(10.seconds)(resources.agentRegistry.get.map(_.get(sid).isEmpty))
       registryEntry <- resources.agentRegistry.get.map(_.get(sid))
-    yield (busy, registryEntry)
+    yield registryEntry
 
-    val (busy, registryEntry) = io.unsafeRunSync()
-    assert(!busy, "busy flag leaked past actor death")
+    val registryEntry = io.unsafeRunSync()
     assert(registryEntry.isEmpty, "agentRegistry entry leaked past actor death")
   }
 
   // ---- Block 0 registration chain (supervision trio §B2) ----
 
-  test("Block 0: member activation stamps parentSessionId=Manager sid + rootSessionId=mount root") {
-    val system = ActorSystem(s"mail-rc-${java.util.UUID.randomUUID().toString.take(6)}")
-    val tmp = os.temp.dir(prefix = "mail-regchain")
+  // Block 0 registration chain —— 团队功能删除批（team-feature-deletion-20261104）
+  // 阶段 3 删除。原用例断言 Mail 冷激活要在统一注册表里盖「parentSessionId=Manager
+  // sid + rootSessionId=挂载根」两戳，其状态源正是团队会话登记表的 managerMap /
+  // parentSessionMap（mount 时写入）。登记表本体已删 ⇒ 这两个戳的语义源不存在：
+  // 激活记录的 root 锚点改为**调用方会话的 root 桶**（`ctx.rootSessionId`），
+  // parent 收敛为「激活方会话」。
+  // 删因：**团队注册链（Manager / parentSession 映射）已退役**（不是「跑不过」）。
+
+  // ---- R2 腿③（2026-09-12）：分发器身份发 root 不触发激活路径 ----
+
+  test("M-3 R2：分发器身份发 root 走显式 root 解析 —— 解析不到即报错，且不触发任何激活路径") {
+    val system = ActorSystem(s"mail-lc-r2-${java.util.UUID.randomUUID().toString.take(6)}")
+    val tmp = os.temp.dir(prefix = "mail-r2-root")
     fixtureTeam(tmp)
     val llm = new RecordingLlm
 
     val io = for
       sessionStore <- IO.pure(SessionStore(tmp / "sessions", tmp / "tasks"))
-      meta <- sessionStore.createSession(
-        "lifecyc/member",
-        agentName = Some("member"),
-        flowName = Some("lifecyc")
-      )
-      // Registry state as the mount would leave it: instance=lifecyc has a
-      // Manager (mgr-1) and was mounted from root-1.
-      _ <- TeamSessionRegistry.clear
-      _ <- TeamSessionRegistry.registerSession("lifecyc", "member", meta.id)
-      _ <- TeamSessionRegistry.registerSession("lifecyc", "Manager", "mgr-1")
-      _ <- TeamSessionRegistry.registerManager("lifecyc", "mgr-1")
-      _ <- TeamSessionRegistry.registerParentSession("lifecyc", "root-1")
       resources <- mkResources(system, tmp, llm, sessionStore)
-      _ <- MailTool.activateAgent(meta.id, resources, system, ToolContext(projectRoot = os.pwd.toString))
-      memberRec <- resources.agentRegistry.get.map(_.get(meta.id))
-      // registerActor 4-arg (resumeInterruptedAgent path): the MANAGER branch
-      // of parentForRecord — parent = mounting root.
-      probeRef <- system.spawn(
-        Behaviors.receiveMessage[nebflow.agent.AgentCommand](_ => IO.pure(Behaviors.stopped)),
-        s"mgr-probe-${meta.id.take(6)}"
+      registryBefore <- resources.agentRegistry.get
+      // 未注册任何 Root 会话（无 Nebula 窗口）⇒ 档①/档② 双双落空
+      res <- MailTool.call(
+        JsonObject(
+          "address" -> Json.fromString("Nebula"),
+          "message" -> Json.fromString("批级回传"),
+          "chainId" -> Json.fromString("chain-n-m3")
+        ),
+        ToolContext(
+          projectRoot = os.pwd.toString,
+          sessionId = Some("disp-sid-m3"),
+          isDispatcher = true,
+          projectName = Some("p-m3"),
+          sharedResources = Some(resources),
+          actorSystem = Some(system)
+        )
       )
-      _ <- TeamSessionRegistry.registerActor("mgr-1", probeRef, resources, "root-1")
-      mgrRec <- resources.agentRegistry.get.map(_.get("mgr-1"))
-      _ <- TeamSessionRegistry.clear
-    yield (memberRec, mgrRec)
+      registryAfter <- resources.agentRegistry.get
+      requests <- llm.requests.get
+    yield (res, registryBefore, registryAfter, requests)
 
-    val (memberRec, mgrRec) = io.unsafeRunSync()
-    assert(memberRec.isDefined, "member was not registered in agentRegistry")
-    assertEquals(memberRec.get.parentSessionId, "mgr-1")
-    assertEquals(memberRec.get.rootSessionId, "root-1")
-    assert(mgrRec.isDefined, "registerActor 4-arg did not write the AgentRecord")
-    assertEquals(mgrRec.get.parentSessionId, "root-1")
-    assertEquals(mgrRec.get.rootSessionId, "root-1")
+    val (res, registryBefore, registryAfter, requests) = io.unsafeRunSync()
+    res match
+      case Left(err) =>
+        assert(clue(err.message).contains("NEBULA_ROOT_UNRESOLVED"), "解析不到必须显式报错（硬禁静默成功）")
+        assert(clue(err.message).contains("legal address face"), "错误须指明合法地址面")
+        assert(clue(err.message).contains("Nebula"), "错误须点名 Nebula（期待形态说明）")
+      case Right(v) => fail(s"无 root 会话时不得报成功（硬禁三种静默），got: $v")
+    assertEquals(registryAfter, registryBefore, "解析失败路径不得新增/改写 AgentRecord（激活路径未触发）")
+    assert(clue(requests).isEmpty, "解析失败路径不得 spawn 任何 agent 会话（零 LLM 请求 = 激活路径未触发）")
   }
 
 end MailActivateLifecycleSpec

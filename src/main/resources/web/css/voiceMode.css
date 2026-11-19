@@ -1,0 +1,240 @@
+/* ── Full-duplex voice mode (voice-mode batch) ────────────────────────────
+   Entry = dragging the composer's voice bubble right (input.js gesture);
+   there is no click button. The overlay is body-level (#voice-mode-overlay)
+   so no ancestor can clip it; the input bar collapse is driven by
+   body.voice-mode-active and animates through the opacity/transform pair
+   added to #input-bar's base transition in input.css. */
+
+/* Input-bar collapse: scale down + sink + fade while the overlay's centered
+   orb scales up — reads as the bubble lifting out of the composer. */
+/* The bar keeps its box (the voice box IS the composer box now); only its
+   own children fade out under the voice overlay — the expand/collapse read. */
+body.voice-mode-active #input-wrap,
+body.voice-mode-active #input-bar .skip-freeze-btn,
+body.voice-mode-active #input-bar .icon-btn,
+body.voice-mode-active #input-bar #send-btn,
+body.voice-mode-active #input-bar #stop-btn {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+body.voice-mode-active #queue-bar {
+  display: none;
+}
+
+/* ── Overlay ─────────────────────────────────────────────────────────── */
+
+/* Compact in-composer form (author redesign: voice mode lives in the input
+   bar's own box — original size, original position; no fullscreen takeover).
+   voiceMode.js moves the body-level overlay into #input-area on entry, so
+   `position:absolute; inset:0` is exactly the composer's box (safe-area
+   padding included). Enter/exit = the box scaling between 0.88 and 1 while
+   the bar's own children fade — the expand/collapse pair. */
+#voice-mode-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 260;
+  border-radius: var(--ds-radius-shell);
+  overflow: hidden;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  visibility: hidden;
+  pointer-events: none;
+  transform: scale(0.88);
+  opacity: 0;
+  transition: visibility 0s linear 0.32s,
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.24s ease;
+}
+#voice-mode-overlay.on {
+  visibility: visible;
+  pointer-events: auto;
+  transform: scale(1);
+  opacity: 1;
+  transition: visibility 0s,
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    opacity 0.24s ease;
+}
+/* voiceseal 批（批 #508）封存面 A 的 companion 规则：idle 态本就
+   visibility:hidden 不可见，但封存要求「不渲染」——显式重申 `hidden` 的
+   display:none（本文件内没有 display 声明与 UA 规则竞争，此条为防御性
+   对位；social-section-remote / flowMap.css 同款先例）。摘掉 `hidden`
+   （js/voiceSeal.js flag latch）即原样恢复。 */
+#voice-mode-overlay[hidden] { display: none; }
+
+.vmo-scrim {
+  display: none; /* the compact form has no viewport scrim */
+}
+
+.vmo-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--ds-space-1h);
+  text-align: center;
+  padding: 22px 14px var(--ds-space-2);
+  pointer-events: none;
+  transform: scale(0.8);
+  opacity: 0;
+  transition: transform 0.32s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.26s ease;
+}
+#voice-mode-overlay.on .vmo-center {
+  transform: scale(1);
+  opacity: 1;
+}
+
+/* Centered bubble — same wrap/bubble anatomy as the input-bar orb, larger.
+   State classes land on .vmo-orb-wrap from micOrb.js (mirror registration). */
+.vmo-orb-wrap {
+  --orb-base: radial-gradient(120% 120% at 32% 28%, #b6cff5 0%, #8C7DD6 45%, #2f3d78 100%);
+}
+.vmo-bubble {
+  width: 72px;
+  height: 72px;
+}
+.vmo-bubble .orb-canvas,
+.vmo-bubble .css-orb {
+  width: 72px;
+  height: 72px;
+  display: block;
+  border-radius: 50%;
+}
+
+/* Soft halo while the agent speaks (caption carries the words; this carries
+   "sound is coming out" at a glance). Decorative only. */
+.vmo-bubble.speaking::after {
+  content: '';
+  position: absolute;
+  inset: -14px;
+  border-radius: 50%;
+  border: 2px solid var(--orb-dot, #78A0DC);
+  opacity: 0;
+  animation: vmo-speak-ring 1.6s ease-out infinite;
+  pointer-events: none;
+}
+@keyframes vmo-speak-ring {
+  0%   { transform: scale(0.92); opacity: 0.55; }
+  70%  { transform: scale(1.18); opacity: 0; }
+  100% { transform: scale(1.18); opacity: 0; }
+}
+
+.vmo-caption {
+  max-width: 100%;
+  color: var(--color-text, #e8ecf4);
+  font-size: var(--ds-fs-body);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.vmo-transcript {
+  max-width: 100%;
+  color: var(--color-text-muted, rgba(232, 236, 244, 0.65));
+  font-size: var(--ds-fs-hint);
+  line-height: 1.4;
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* The explicit -webkit-box display above would defeat the `hidden` attribute
+   (voiceMode.js toggles it) — re-assert the attribute's display:none. */
+.vmo-caption[hidden],
+.vmo-transcript[hidden] {
+  display: none;
+}
+.vmo-hint {
+  color: var(--color-text-muted, rgba(232, 236, 244, 0.45));
+  font-size: var(--ds-fs-hint);
+}
+
+.vmo-exit {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--glass-border, rgba(255, 255, 255, 0.12));
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--color-text, #e8ecf4);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s;
+  pointer-events: auto;
+}
+.vmo-exit:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.vmo-exit svg {
+  width: 13px;
+  height: 13px;
+}
+
+/* Reduced motion: state changes land instantly (same policy as the orb's
+   reduced-motion mode — no lerp, no ring). */
+@media (prefers-reduced-motion: reduce) {
+  body.voice-mode-active #input-bar,
+  .vmo-scrim,
+  .vmo-center {
+    transition: none;
+  }
+  .vmo-bubble.speaking::after {
+    animation: none;
+    display: none;
+  }
+}
+
+
+/* ── Voice drag-in hint: three gradient chevrons sweeping right, floating
+   just above the composer's voice bubble. Drag is the only way into
+   full-duplex voice mode, so the chevrons surface at the moment of contact:
+   on hover (pointer devices) and while the bubble is being dragged
+   (.dragging lands with pointerdown in input.js). The hint is absolutely
+   positioned inside .mic-orb-wrap, so it rides along as the bubble tracks
+   the pointer during the drag. */
+.voice-drag-hint {
+  display: none;
+  position: absolute;
+  left: 50%;
+  top: -16px;
+  transform: translateX(-50%);
+  gap: var(--ds-space-half);
+  pointer-events: none;
+  z-index: 5;
+}
+.mic-orb-wrap:hover .voice-drag-hint,
+.mic-orb-wrap.dragging .voice-drag-hint { display: flex; }
+/* 🟡 voiceseal 纠正批（批 #513，作者澄清逐字：「怎么语音气泡直接没了，我要
+   去掉的是hover拖动这些功能。」）—— #508 连带藏气泡 = 理解过宽；纠正为
+   摘 hover 交互面：气泡回归静态姿态（`.voice-static` 由 index.html 静态
+   携带、JS 从不摘除），本覆盖规则以同特异性 + 靠后源序压过上面两条
+   `:hover`/`.dragging` 显示规则 ⇒ 悬停放大/箭头等 hover 反馈恒不出现。
+   规则零删除（上面两条原样保留）：features.voice:true 解封全双工时拖动手势
+   可用，但 chevrons 仍不回归 —— 姿态类承载的是产品决策（拖拽 affordance
+   随手势面退役），非 flag 态。 */
+.mic-orb-wrap.voice-static .voice-drag-hint { display: none; }
+.voice-drag-hint span {
+  width: 0;
+  height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 7px solid var(--orb-dot, #78A0DC);
+  opacity: 0.2;
+  animation: vdh-arrow 1.5s ease-out infinite;
+}
+.voice-drag-hint span:nth-child(2) { animation-delay: 0.18s; }
+.voice-drag-hint span:nth-child(3) { animation-delay: 0.36s; }
+@keyframes vdh-arrow {
+  0%   { opacity: 0.12; transform: translateX(-4px); }
+  45%  { opacity: 0.9; }
+  100% { opacity: 0.08; transform: translateX(6px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .voice-drag-hint span { animation: none; opacity: 0.45; }
+}

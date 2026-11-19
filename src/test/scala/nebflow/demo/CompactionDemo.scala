@@ -4,6 +4,7 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.JsonObject
 import nebflow.core.compact.*
+import nebflow.shared.CompactThreshold
 import nebflow.shared.{ContentBlock, Message, MessageRole}
 
 /**
@@ -99,7 +100,7 @@ class CompactionDemo extends munit.FunSuite:
         println(s"  BEFORE: ${messages.size} messages")
         println(s"  AFTER:  ${compacted.size} messages (tool results replaced with placeholders)")
         val toolResults = compacted.flatMap {
-          case Message(_, Right(blocks), _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
+          case Message(_, Right(blocks), _, _, _, _) => blocks.collect { case tr: ContentBlock.ToolResult => tr }
           case _ => Nil
         }
         val replaced = toolResults.count(_.content == "[Output removed to free context space]")
@@ -187,7 +188,7 @@ class CompactionDemo extends munit.FunSuite:
     )
     archiveIO.unsafeRunSync() match
       case Right(archive) =>
-        println(s"  Report written to: ${archive.reportPath}")
+        // 2026-09-15 作者令：compaction report 已删除 —— 归档只落 before/after JSON。
         println(s"  Before JSON: ${archive.beforeJsonPath}")
         println(s"  After JSON:  ${archive.afterJsonPath}")
       case Left(err) =>

@@ -2,7 +2,7 @@ package nebflow.core.plugin
 
 import cats.effect.IO
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.*
 
@@ -28,7 +28,7 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "plugins")
-  os.write.over(tempRoot / "nebflow.json", "{}")
+  os.write.over(tempRoot / nebflow.shared.Branding.configFileName, "{}")
 
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
@@ -39,17 +39,23 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
   private def mkPlugin(name: String, mcpJson: String, skills: Boolean = true): Unit =
     val d = tempRoot / "plugins" / name
     os.makeDir.all(d)
-    os.write.over(d / "plugin.json",
-      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0","description":"$name"}""")
+    os.write.over(
+      d / "plugin.json",
+      s"""{"$$schema":"${PluginRegistry.CanonicalSchema}","name":"$name","version":"1.0.0","description":"$name"}"""
+    )
     if skills then
       os.makeDir.all(d / "skills" / "s")
-      os.write.over(d / "skills" / "s" / "SKILL.md",
+      os.write.over(
+        d / "skills" / "s" / "SKILL.md",
         """---
           |name: s
           |description: fixture
           |---
-          |body""".stripMargin)
+          |body""".stripMargin
+      )
     os.write.over(d / "mcp.json", mcpJson)
+
+  end mkPlugin
 
   /** servers 段拼装。schema="" → 不写 $schema（测缺失形态）。 */
   private def mcp(servers: String, schema: String = PluginRegistry.CanonicalMcpSchema, extraTop: String = ""): String =
@@ -63,7 +69,7 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
   private def warningsOf(name: String): IO[String] =
     loaded(name).map {
       case Some(p) => p.warnings.mkString("; ")
-      case None    => fail(s"$name not loaded")
+      case None => fail(s"$name not loaded")
     }
 
   // ── §7.2.1 组件级 ─────────────────────────────────────
@@ -79,8 +85,10 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
   }
 
   test("§7.2.1: mcp.json 非 canonical $schema → 组件 invalid；未知顶层字段 → 告警+忽略（继续）") {
-    mkPlugin("mcp-wrongschema", mcp("\"a\":{\"type\":\"stdio\",\"command\":\"python3\"}",
-      schema = "https://example.com/mcp.schema.json"))
+    mkPlugin(
+      "mcp-wrongschema",
+      mcp("\"a\":{\"type\":\"stdio\",\"command\":\"python3\"}", schema = "https://example.com/mcp.schema.json")
+    )
     mkPlugin("mcp-extra", mcp("\"a\":{\"type\":\"stdio\",\"command\":\"python3\"}", extraTop = "\"notes\":\"hi\""))
     for w1 <- warningsOf("mcp-wrongschema"); w2 <- warningsOf("mcp-extra")
     yield
@@ -91,10 +99,14 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
   // ── §7.2.2 entry 级（隔离边界）───────────────────────────
 
   test("§7.2.2: 未知 type / 缺 type → 仅该 entry 跳过；同文件好 entry 照常装载") {
-    mkPlugin("entry-isolation", mcp(
-      "\"bad\":{\"type\":\"carrier-pigeon\",\"command\":\"x\"}," +
-        "\"notype\":{\"command\":\"x\"}," +
-        "\"good\":{\"type\":\"stdio\",\"command\":\"python3\"}"))
+    mkPlugin(
+      "entry-isolation",
+      mcp(
+        "\"bad\":{\"type\":\"carrier-pigeon\",\"command\":\"x\"}," +
+          "\"notype\":{\"command\":\"x\"}," +
+          "\"good\":{\"type\":\"stdio\",\"command\":\"python3\"}"
+      )
+    )
     loaded("entry-isolation").map {
       case Some(p) =>
         assertEquals(p.mcpServers.keySet, Set("good"), "invalid entries skipped, valid entry loads (§7.2.2)")
@@ -106,14 +118,23 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
   }
 
   test("§7.2.2-4: transport 'sse'（客户端未实现，OPTIONAL）→ skip + 报告，不静默") {
-    mkPlugin("sse-skip", mcp(
-      "\"legacy\":{\"type\":\"sse\",\"url\":\"https://x.io/mcp\"}," +
-        "\"good\":{\"type\":\"stdio\",\"command\":\"python3\"}"))
+    mkPlugin(
+      "sse-skip",
+      mcp(
+        "\"legacy\":{\"type\":\"sse\",\"url\":\"https://x.io/mcp\"}," +
+          "\"good\":{\"type\":\"stdio\",\"command\":\"python3\"}"
+      )
+    )
     loaded("sse-skip").map {
       case Some(p) =>
         assertEquals(p.mcpServers.keySet, Set("good"), "sse entry must be skipped")
-        assert(p.warnings.exists(w => w.contains("sse") && w.contains("not supported")),
-          s"sse skip must be reported, got: ${p.warnings}")
+        assert(
+          // 措辞对齐（安全批 2026-10-29 ④d）：生产侧 sse 告警由「not supported by this
+          // client」改为「declared-valid but not available in this client」——本 spec 该批
+          // 漏更（合并收尾 2026-10-30 补齐）；断言强度不变：仍要求 sse skip 必须被报告。
+          p.warnings.exists(w => w.contains("sse") && w.contains("not available")),
+          s"sse skip must be reported, got: ${p.warnings}"
+        )
       case None => fail("plugin must load")
     }
   }
@@ -122,23 +143,34 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
     val d = tempRoot / "plugins" / "cmd-space"
     os.makeDir.all(d / "bin")
     os.write.over(d / "bin" / "srv", "#!/bin/sh\nexit 0\n")
-    mkPlugin("cmd-space", mcp(
-      "\"bad\":{\"type\":\"stdio\",\"command\":\"python3 -c print(1)\"}," +
-        "\"good\":{\"type\":\"stdio\",\"command\":\"./bin/srv\"}"))
+    mkPlugin(
+      "cmd-space",
+      mcp(
+        "\"bad\":{\"type\":\"stdio\",\"command\":\"python3 -c print(1)\"}," +
+          "\"good\":{\"type\":\"stdio\",\"command\":\"./bin/srv\"}"
+      )
+    )
     loaded("cmd-space").map {
       case Some(p) =>
         assertEquals(p.mcpServers.keySet, Set("good"), "whitespace command must be invalid (single-token rule)")
         val cmd = p.mcpServers("good").command.getOrElse(fail("command missing"))
-        assert(cmd.startsWith(d.toString) && cmd.endsWith("/bin/srv"),
-          s"./bin/srv must resolve to plugin-root-absolute, got: $cmd")
+        assert(
+          // 分隔符无关：Windows 原生反斜杠形态同判（bin/srv 段不变）。
+          cmd.startsWith(d.toString) && cmd.replace('\\', '/').endsWith("/bin/srv"),
+          s"./bin/srv must resolve to plugin-root-absolute, got: $cmd"
+        )
       case None => fail("plugin must load")
     }
   }
 
   test("§9.1: env 声明 PLUGIN_ROOT/PLUGIN_DATA → entry invalid（占位变量为客户端专属）") {
-    mkPlugin("env-placeholder", mcp(
-      "\"bad\":{\"type\":\"stdio\",\"command\":\"python3\",\"env\":{\"PLUGIN_ROOT\":\"/x\"}}," +
-        "\"good\":{\"type\":\"stdio\",\"command\":\"python3\"}"))
+    mkPlugin(
+      "env-placeholder",
+      mcp(
+        "\"bad\":{\"type\":\"stdio\",\"command\":\"python3\",\"env\":{\"PLUGIN_ROOT\":\"/x\"}}," +
+          "\"good\":{\"type\":\"stdio\",\"command\":\"python3\"}"
+      )
+    )
     loaded("env-placeholder").map {
       case Some(p) =>
         assertEquals(p.mcpServers.keySet, Set("good"))
@@ -148,12 +180,16 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
   }
 
   test("§7.2.2: cwd 合法形态归一装载；裸相对路径/越界 → invalid") {
-    mkPlugin("cwd-forms", mcp(
-      "\"dot\":{\"type\":\"stdio\",\"command\":\"python3\",\"cwd\":\"./data\"}," +
-        "\"root\":{\"type\":\"stdio\",\"command\":\"python3\",\"cwd\":\"" + PR + "/d\"}," +
-        "\"data\":{\"type\":\"stdio\",\"command\":\"python3\",\"cwd\":\"" + PD + "/w\"}," +
-        "\"bare\":{\"type\":\"stdio\",\"command\":\"python3\",\"cwd\":\"data\"}," +
-        "\"escape\":{\"type\":\"stdio\",\"command\":\"python3\",\"cwd\":\"../out\"}"))
+    mkPlugin(
+      "cwd-forms",
+      mcp(
+        "\"dot\":{\"type\":\"stdio\",\"command\":\"python3\",\"cwd\":\"./data\"}," +
+          "\"root\":{\"type\":\"stdio\",\"command\":\"python3\",\"cwd\":\"" + PR + "/d\"}," +
+          "\"data\":{\"type\":\"stdio\",\"command\":\"python3\",\"cwd\":\"" + PD + "/w\"}," +
+          "\"bare\":{\"type\":\"stdio\",\"command\":\"python3\",\"cwd\":\"data\"}," +
+          "\"escape\":{\"type\":\"stdio\",\"command\":\"python3\",\"cwd\":\"../out\"}"
+      )
+    )
     loaded("cwd-forms").map {
       case Some(p) =>
         val w = p.warnings.mkString("; ")
@@ -166,18 +202,24 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
   }
 
   test("§7.2.2: url 语义——http 非 loopback 拒；userinfo/fragment 拒；https 合法载入") {
-    mkPlugin("url-forms", mcp(
-      "\"plain-http\":{\"type\":\"streamable-http\",\"url\":\"http://api.example.com/mcp\"}," +
-        "\"with-user\":{\"type\":\"streamable-http\",\"url\":\"http://u:p@x.io/mcp\"}," +
-        "\"with-frag\":{\"type\":\"streamable-http\",\"url\":\"https://x.io/mcp#frag\"}," +
-        "\"ok-https\":{\"type\":\"streamable-http\",\"url\":\"https://x.io/mcp\"}," +
-        "\"ok-loop\":{\"type\":\"streamable-http\",\"url\":\"http://localhost:9999/mcp\"}"))
+    mkPlugin(
+      "url-forms",
+      mcp(
+        "\"plain-http\":{\"type\":\"streamable-http\",\"url\":\"http://api.example.com/mcp\"}," +
+          "\"with-user\":{\"type\":\"streamable-http\",\"url\":\"http://u:p@x.io/mcp\"}," +
+          "\"with-frag\":{\"type\":\"streamable-http\",\"url\":\"https://x.io/mcp#frag\"}," +
+          "\"ok-https\":{\"type\":\"streamable-http\",\"url\":\"https://x.io/mcp\"}," +
+          "\"ok-loop\":{\"type\":\"streamable-http\",\"url\":\"http://localhost:9999/mcp\"}"
+      )
+    )
     loaded("url-forms").map {
       case Some(p) =>
         val w = p.warnings.mkString("; ")
         assertEquals(p.mcpServers.keySet, Set("ok-https", "ok-loop"), s"got: ${p.mcpServers.keySet} / $w")
-        assert(w.contains("plain-http") && w.contains("with-user") && w.contains("with-frag"),
-          s"invalid urls must be reported: $w")
+        assert(
+          w.contains("plain-http") && w.contains("with-user") && w.contains("with-frag"),
+          s"invalid urls must be reported: $w"
+        )
       case None => fail("plugin must load")
     }
   }
@@ -189,6 +231,46 @@ class PluginMcpProtocolSpec extends CatsEffectSuite:
         assertEquals(p.mcpServers.keySet, Set("a"), "unknown entry field must not invalidate the entry")
         assert(p.warnings.exists(_.contains("turbo")), s"got: ${p.warnings}")
       case None => fail("plugin must load")
+    }
+  }
+
+  // ── 缺陷②（2026-11-02）：timeoutMs 透传 ────────────────────────────────
+
+  test("缺陷②: entry 的 timeoutMs 解析并透传到 McpServerConfig（不再告警 ignored）") {
+    mkPlugin(
+      "mcp-timeout",
+      mcp("\"a\":{\"type\":\"stdio\",\"command\":\"python3\",\"timeoutMs\":600000}")
+    )
+    loaded("mcp-timeout").map { p =>
+      val plugin = p.getOrElse(fail("plugin must load"))
+      val cfg = plugin.mcpServers.getOrElse("a", fail("server 'a' must be loaded"))
+      assertEquals(cfg.timeoutMs, Some(600000L), "timeoutMs must reach McpServerConfig (R3 tool-call ceiling)")
+      assert(
+        !plugin.warnings.exists(_.contains("timeoutMs")),
+        s"timeoutMs must not be reported as unknown any more: ${plugin.warnings}"
+      )
+    }
+  }
+
+  test("缺陷②: timeoutMs 非正数 / 非整数 → entry invalid（0 会让每次 tools/call 立刻超时）") {
+    mkPlugin("mcp-timeout-zero", mcp("\"a\":{\"type\":\"stdio\",\"command\":\"python3\",\"timeoutMs\":0}"))
+    mkPlugin("mcp-timeout-str", mcp("\"a\":{\"type\":\"stdio\",\"command\":\"python3\",\"timeoutMs\":\"60s\"}"))
+    for
+      zero <- warningsOf("mcp-timeout-zero")
+      str <- warningsOf("mcp-timeout-str")
+    yield
+      assert(zero.contains("timeoutMs") && zero.contains("positive"), s"got: $zero")
+      assert(str.contains("timeoutMs") && str.contains("integer"), s"got: $str")
+  }
+
+  test("缺陷②: http 传输同样透传 timeoutMs") {
+    mkPlugin(
+      "mcp-timeout-http",
+      mcp("\"a\":{\"type\":\"streamable-http\",\"url\":\"https://example.com/mcp\",\"timeoutMs\":1234}")
+    )
+    loaded("mcp-timeout-http").map { p =>
+      val cfg = p.getOrElse(fail("plugin must load")).mcpServers.getOrElse("a", fail("server 'a' must be loaded"))
+      assertEquals(cfg.timeoutMs, Some(1234L))
     }
   }
 

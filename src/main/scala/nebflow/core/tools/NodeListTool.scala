@@ -1,0 +1,141 @@
+/* 从 NodeTools.scala 迁出(行为保持重构)。 */
+package nebflow.core.tools
+
+import cats.effect.IO
+import cats.syntax.all.*
+import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
+import nebflow.core.project.*
+
+object NodeListTool extends Tool:
+  val name = "NodeList"
+
+  val description =
+    """List a project's Flow Map snapshot — the task dispatcher's opening move (read the graph before deciding).
+## When to Use
+- The dispatcher reads the current topology at session start (and before ending) — nodes with status/description/hasWorktree drive merge-node decisions.
+- Frontend panel data source (REST mirrors this shape).
+
+## Scope & addressing (delegate sessions)
+- On a delegate session this tool is the delegate-scope face: it reads the delegate's OWN scope flow map (one delegate, one map). A `project` parameter naming anything else is refused (DELEGATE_SCOPE_FOREIGN); project dispatchers keep the per-project face unchanged.
+- Dual addressing: `detail` accepts the node id OR the node name (exact id match wins; a name matching several nodes is an explicit error listing the candidates — CHAIN_ADDR_AMBIGUOUS; no hit = CHAIN_NODE_NOT_FOUND).
+- Chain read: `chains[]` carries each chain's id/title/entries/ends/memberIds plus the control state (`status`: active|paused|cancelled, `pausedAt`, `cancelledAt`) — the delegate's in-flight chain view. Check it before reporting your own status, and pick up results of chains whose completion notice was missed (NodeList detail=<memberId>).
+
+## Parameters
+- **project** (optional; defaults to current project): project name.
+- **status** (optional): filter the map to specific lifecycle state(s) — single value, comma-separated list, or array. Valid: wiring, pending, running, completed, failed, cancelled. Example: "running,pending" to see only active work. Omitted = ALL nodes (use this for the full picture; filter only when the map is large and you know which slice you need). Applies to the map listing only, not to detail=.
+- **detail** (optional): a node id — returns that ONE node's full record instead of the whole map: metadata + task + result FULL TEXT (+ historical blockedFeedback when present). Payloads carry no result text; this is the on-demand read channel, same source as the REST result endpoint.
+
+## Returns
+Default: {nodes: [{id, name, agent, description, status, in, out, hasWorktree, worktree, blockCount, createdAt, completedAt, ttlLeftSec, + conditional: hasResult, taskPreview (no-description fallback), deps, plugins, merge, loop, blockedFeedback (blocked only), skill/mcp/preset (stored display-only values only), liveness (running only), chainId (multi-member chain only))}], chains: [{id, title, entries, ends, memberIds}] (topological task chains derived backend-side; a node's chainId joins its entry here; members may include archived nodes — filter by your node cache for on-graph rendering), worktrees: [...], meta: {project, updatedAt, archived}} — metadata only, NO result text (Flow Map slim-payload contract: results live in per-node files, read on demand).
+With detail=<nodeId>: the same node shape + task + result (full text)."""
+
+  val inputSchema = JsonObject.fromIterable(
+    List(
+      "type" -> "object".asJson,
+      "properties" -> Json.obj(
+        "project" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Project name (optional; defaults to the dispatcher's current project)".asJson
+        ),
+        "status" -> Json.obj(
+          "oneOf" -> Json
+            .arr(
+              Json.obj("type" -> "string".asJson),
+              Json.obj("type" -> "array".asJson, "items" -> Json.obj("type" -> "string".asJson))
+            )
+            .asJson,
+          "description" -> "Optional lifecycle filter: wiring|pending|running|completed|failed|cancelled — single, comma-separated, or array. Omitted = all nodes".asJson
+        ),
+        "detail" -> Json.obj(
+          "type" -> "string".asJson,
+          "description" -> "Node reference — node id OR node name (dual addressing: exact id wins, an ambiguous name is an explicit error); return that node's full record (metadata + task + result FULL TEXT) instead of the whole map".asJson
+        )
+      ),
+      "required" -> Json.arr()
+    )
+  )
+
+  def summarize(input: JsonObject): String =
+    val p = input("project").flatMap(_.asString).getOrElse("?")
+    s"NodeList($p)"
+
+  def summarizeResult(input: JsonObject, result: String): String =
+    if result.length > 300 then result.take(297) + "..." else result
+
+  def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
+    // N1 刀2 A4：解析单点换 `resolveRuntime`（delegate 会话 = 自己作用域图；其余身份
+    // per-project 路径逐字节不变——作用域闸详见 NodeTools.resolveRuntime 注）。
+    NodeTools.resolveRuntime(input("project").flatMap(_.asString), ctx).flatMap {
+      case Left(err) => IO.pure(Left(ToolError(err)))
+      case Right(rt) =>
+        // detail 通道（载荷收敛配套）：指定节点引用 → 单节点全记录
+        // （元数据 + task + 结果全文）。数据源与 REST result 端点同源
+        // （resolveNodeRefIO 双寻址（刀2 A5：id 命中/name 命中/歧义列候选/未找到）
+        // → findNode 活动区优先归档兜底；内存 result/task = 加载时从 per-node
+        // 文件 results/<id>.md / tasks/<id>.md 水合的全文——落盘 JSON 只存摘要
+        // +指针，detail 聚合即「per-node 文件内容」，单源等价（存储瘦身）。payload 键集 = NodeList 同构字段 + task + result。
+        input("detail").flatMap(_.asString).map(_.trim).filter(_.nonEmpty) match
+          case Some(nodeRef) =>
+            NodeTools.resolveNodeRefIO(rt, nodeRef).flatMap {
+              case Left(err) => IO.pure(Left(ToolError(err)))
+              case Right(n) =>
+                // chainId 条件键（链级抽象 P0）：detail
+                // 单节点记录与快照/WS 同构——判据单点 FlowMapStore.chainAttrsOf
+                // （双区可达，归档节点同样带链归属）。
+                rt.store.chainAttrsOf(n.id).map { attrs =>
+                  val now = System.currentTimeMillis()
+                  val base = NodePayload.buildNodeJson(
+                    n,
+                    now,
+                    attrs.chainId
+                  )
+                  // 历史参照补挂：默认载荷仅 blocked 态
+                  // 携带 blockedFeedback——detail 按需通道对非 blocked 节点补挂存储值
+                  // （blocked 节点 base 已含，deepMerge 同值幂等）。
+                  val histFeedback = n.blockedFeedback.toList.map(bf => "blockedFeedback" -> bf.asJson)
+                  // 语义⑤c 双层化：descriptionLong 仅 detail 通道（不进默认载荷）——
+                  // 条件键，存量节点无长文 → 缺键（消费方回退短文 description）。
+                  val descLong = n.descriptionLong.toList.map(d => "descriptionLong" -> d.asJson)
+                  val full = base
+                    .deepMerge(
+                      Json.obj(
+                        "task" -> n.task.asJson,
+                        "result" -> n.result.asJson
+                      )
+                    )
+                    .deepMerge(Json.obj((histFeedback ++ descLong)*))
+                  Right(full.noSpaces)
+                }
+            }
+          case None =>
+            // status 过滤（语义⑤a）：解析三形态宽容（string/array/逗号串），
+            // 逐值枚举校验；缺省 None = 全量（字节级现状）。
+            parseStatusFilter(input("status")) match
+              case Left(err) => IO.pure(Left(ToolError(err)))
+              case Right(statusFilter) =>
+                NodeTools.buildNodeListPayload(rt, statusFilter).map(payload => Right(payload.noSpaces))
+    }
+
+  /**
+   * status 过滤参数解析（语义⑤a）：三形态宽容（单值 string / array / 逗号串，
+   * 复用 parseIn 语义），逐值对生命周期枚举校验——非法值给可行动错误（列出全部
+   * 合法值）。缺省（未传/null）→ None = 全量。
+   */
+  private def parseStatusFilter(v: Option[Json]): Either[String, Option[Set[String]]] =
+    v match
+      case None | Some(Json.Null) => Right(None)
+      case Some(json) =>
+        NodeTools.parseIn(Some(json)).left.map(err => err.replace("'in'", "'status'")).flatMap { values =>
+          val trimmed = values.map(_.trim).filter(_.nonEmpty)
+          if trimmed.isEmpty then Right(None)
+          else
+            trimmed.find(!NodeLifecycle.All.contains(_)) match
+              case Some(bad) =>
+                Left(
+                  s"Unknown status '$bad' — valid: ${NodeLifecycle.All.mkString(", ")} (single value, comma-separated list, or array)"
+                )
+              case None => Right(Some(trimmed.toSet))
+        }
+
+end NodeListTool

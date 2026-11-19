@@ -1,11 +1,13 @@
 package nebflow.service
 
+import nebflow.neblink.core.*
+
 import cats.effect.unsafe.implicits.global
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.Json
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import scala.compiletime.uninitialized
 
@@ -76,7 +78,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":["glm/m1"]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     // Seed agent.json files across all three layers, referencing Zai
     val agentDirs = List(
@@ -110,7 +112,7 @@ class ConfigServiceSpec extends FunSuite:
 
     // ── Config file: provider removed; llm.model 死字段原样保留（#339：scrub
     // 已删，boot 迁移整体剥离）──
-    val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val saved = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     val llmHc = saved.hcursor.downField("llm")
     assert(llmHc.downField("providers").downField("Zai").focus.isEmpty, "Zai provider must be deleted")
     assertEquals(llmHc.downField("model").downField("default").as[String], Right("Zai/m1"))
@@ -169,18 +171,18 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     val incoming = """{"llm":{"providers":{"Zai":null}}}"""
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
 
-    val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val saved = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     val modelHc = saved.hcursor.downField("llm").downField("model")
     // 死字段原样保留（不在 updateConfig 的清理职责内）
     assertEquals(modelHc.downField("default").as[String], Right("Zai/m1"))
     // 整个配置仍可解码（llm.model → Option，Some 容忍）
-    assert(nebflow.llm.Config.loadServiceConfig().llm.model.map(_.default).contains("Zai/m1"))
+    assert(nebflow.shared.Config.loadServiceConfig().llm.model.map(_.default).contains("Zai/m1"))
   }
 
   // ── B2: provider rename → reference rewrite ─────────────
@@ -195,7 +197,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":["Zai/m2","glm/m1"]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     val coderDir = tmpRoot / "agents" / "Coder"
     os.makeDir.all(coderDir)
@@ -210,7 +212,7 @@ class ConfigServiceSpec extends FunSuite:
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
 
-    val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val saved = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     val llmHc = saved.hcursor.downField("llm")
     assert(llmHc.downField("providers").downField("Zai").focus.isEmpty, "old name must be gone")
     // masked "***" must not overwrite the stored secret during merge
@@ -234,15 +236,16 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     // #339：llm.model 校验/改写均已删——incoming 带旧名 refs 直接接受（无
     // 校验可触发拒绝），死字段按 merge 原样保留。
-    val incoming = s"""{"llm":{"providers":{"Zai":null,"zai-new":$zaiMasked},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
+    val incoming =
+      s"""{"llm":{"providers":{"Zai":null,"zai-new":$zaiMasked},"model":{"default":"Zai/m1","fallbacks":[]}}}"""
     val result = ConfigService.updateConfig(incoming).unsafeRunSync()
     assertEquals(result, Right(()))
 
-    val saved = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val saved = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     assertEquals(
       saved.hcursor.downField("llm").downField("model").downField("default").as[String],
       Right("Zai/m1")
@@ -254,7 +257,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
     val presetsFile = PathUtil.dataRoot / "model-presets.json"
     if os.exists(presetsFile) then os.remove(presetsFile)
 
@@ -270,7 +273,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     val presets =
       """{"defaultPreset":"general","presets":{
@@ -303,7 +306,7 @@ class ConfigServiceSpec extends FunSuite:
       s"""{"llm":{"providers":{"Zai":${validProvider("Zai").noSpaces},"glm":${validProvider(
           "glm"
         ).noSpaces}},"model":{"default":"glm/m1","fallbacks":[]}}}"""
-    os.write.over(PathUtil.dataRoot / "nebflow.json", seed)
+    os.write.over(PathUtil.dataRoot / nebflow.shared.Branding.configFileName, seed)
 
     val presets =
       """{"defaultPreset":"general","presets":{
@@ -324,29 +327,36 @@ class ConfigServiceSpec extends FunSuite:
     assertEquals(coding.downField("description").as[String], Right("d"))
   }
 
-
   // ── runtime-authoritative overrides（冻结修复 2026-08-27）：陈旧快照不得回滚 ──
 
-  /** Seed nebflow.json with a frozen schedule + provider, mirroring the on-disk
-    * state after the user has configured a freeze schedule. */
+  /**
+   * Seed nebflow.json with a frozen schedule + provider, mirroring the on-disk
+   * state after the user has configured a freeze schedule.
+   */
   private def seedConfigWithSchedule(enabled: Boolean, segs: String): Unit =
     os.write.over(
-      PathUtil.dataRoot / "nebflow.json",
-      s"""{"workSchedule":{"enabled":$enabled,"segments":$segs},"llm":{"providers":{"glm":${validProvider("glm").noSpaces}}}}""",
+      PathUtil.dataRoot / nebflow.shared.Branding.configFileName,
+      s"""{"workSchedule":{"enabled":$enabled,"segments":$segs},"llm":{"providers":{"glm":${validProvider(
+          "glm"
+        ).noSpaces}}}}""",
       createFolders = true
     )
 
   private def readWorkSchedule(): Option[Json] =
-    parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("workSchedule").as[Json].toOption
+    parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get.hcursor.downField("workSchedule").as[Json].toOption
 
-  test("updateConfig: stale incoming workSchedule is overridden by runtime-authoritative value (roll-back regression)") {
+  test(
+    "updateConfig: stale incoming workSchedule is overridden by runtime-authoritative value (roll-back regression)"
+  ) {
     seedConfigWithSchedule(enabled = true, segs = """[{"start":"09:00","end":"12:00"}]""")
     // The authoritative in-memory ref says: disabled BUT segments preserved (08-25 ruling).
     val authoritative = parse("""{"enabled":false,"segments":[{"start":"09:00","end":"12:00"}]}""").toOption.get
     // A stale full-config snapshot captured BEFORE the user toggled off — it still
     // carries enabled=true. Any provider save flushes this back; without the
     // override the disk rolls back and freeze resurrects after restart.
-    val staleIncoming = s"""{"workSchedule":{"enabled":true,"segments":[]},"llm":{"providers":{"newp":${validProvider("newp").noSpaces}}}}"""
+    val staleIncoming = s"""{"workSchedule":{"enabled":true,"segments":[]},"llm":{"providers":{"newp":${validProvider(
+        "newp"
+      ).noSpaces}}}}"""
     val result = ConfigService.updateConfig(staleIncoming, Map("workSchedule" -> authoritative)).unsafeRunSync()
     assertEquals(result, Right(()))
     val ws = readWorkSchedule().get
@@ -358,7 +368,8 @@ class ConfigServiceSpec extends FunSuite:
       """{"enabled":false,"segments":[{"start":"09:00","end":"12:00"}]}"""
     )
     // The non-runtime part of the update still landed (deep merge unchanged).
-    val providers = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get.hcursor.downField("llm").downField("providers")
+    val providers =
+      parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get.hcursor.downField("llm").downField("providers")
     assertEquals(providers.downField("newp").as[Json].isRight, true)
   }
 
@@ -377,11 +388,74 @@ class ConfigServiceSpec extends FunSuite:
     val real = s"""{"llm":{"providers":{"z2":${validProvider("z2").noSpaces}}}}"""
     val result = ConfigService.updateConfig(real, Map("thinkingConfig" -> thOverride)).unsafeRunSync()
     assertEquals(result, Right(()))
-    val cfg = parse(os.read(PathUtil.dataRoot / "nebflow.json")).toOption.get
+    val cfg = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     val tfFocus = cfg.hcursor.downField("thinkingConfig").focus
     assertEquals(cfg.hcursor.downField("thinkingConfig").downField("budgetTokens").as[Int], Right(1234))
     assertEquals(cfg.hcursor.downField("workSchedule").as[Json].isRight, true)
     assertEquals(cfg.hcursor.downField("llm").downField("providers").downField("z2").as[Json].isRight, true)
+  }
+
+  // ── providerTypes 投影（provider-add-tabs 批 2026-11-06）─────────────────
+  // 类型枚举唯一出生地在后端：投影的 domains 必须与 ProviderDomains.All 一一
+  // 对应（前端只消费，不拼写——静态闸 check-provider-panel.mjs P5 同钉）。
+
+  test("providerTypes: domains mirror ProviderDomains.All one-to-one, in order") {
+    val json    = ConfigService.providerTypes.unsafeRunSync()
+    val domains = json.hcursor.downField("domains")
+    val ids = domains.values
+      .map(_.toList.map(d => d.hcursor.downField("id").as[String].getOrElse("<unreadable>")))
+      .getOrElse(fail("domains[] missing"))
+    assertEquals(ids, nebflow.shared.ProviderDomains.All)
+    // 每个 domain 都声明 enabledSwitch 布尔（imagegen = true，llm = false）。
+    val switches = domains.values.map(_.toList.map { d =>
+      val id = d.hcursor.downField("id").as[String].getOrElse("<unreadable>")
+      id -> d.hcursor
+        .downField("enabledSwitch")
+        .as[Boolean]
+        .getOrElse(!nebflow.shared.ProviderDomains.hasEnabledSwitch(id))
+    })
+    assertEquals(
+      switches,
+      Some(nebflow.shared.ProviderDomains.All.map(d => d -> nebflow.shared.ProviderDomains.hasEnabledSwitch(d)))
+    )
+  }
+
+  test("providerTypes: adapters come from the engine enums, zero literal duplication") {
+    val json     = ConfigService.providerTypes.unsafeRunSync()
+    val adapters = json.hcursor.downField("adapters")
+    def strs(key: String): List[String] =
+      adapters.downField(key).values.map(_.toList.flatMap(_.as[String].toOption)).getOrElse(fail(s"adapters.$key missing"))
+    val llm      = strs("llm")
+    val imagegen = strs("imagegen")
+    // LLM 协议 = LlmProtocol 枚举（anthropic/openai）。
+    assertEquals(llm.sortBy(identity), List("anthropic", "openai").sortBy(identity))
+    // 生图适配器 = ImageGenAdapters.All 的 type 投影（单源比对）。
+    assertEquals(imagegen.sortBy(identity), nebflow.llm.imagegen.ImageGenAdapters.All.map(_.`type`).sortBy(identity))
+    // 🔴 jev-retire 批（2026-11-16）：jev 域连同 adapters.jev 退役——投影**不得**
+    // 再出现 jev 键（residual-reference 回归锚）。
+    val rendered = json.noSpaces
+    assert(!rendered.contains("jev"), s"the retired jev domain must not leak into providerTypes: $rendered")
+    // 载荷零配置值、零密钥——只有枚举与布尔。
+    assert(!rendered.contains("apiKey"), s"payload must not carry apiKey: $rendered")
+    assert(!rendered.contains("baseUrl"), s"payload must not carry config values: $rendered")
+  }
+
+  // ── 🔴 配置缺 jev 启动红绿（jev-retire 批 2026-11-16 ④）──────────────────
+  test("boot without jev config: the engine read path stays clean — zero jev residue") {
+    val cfg = s"""{"llm":{"providers":{"z3":${validProvider("z3").noSpaces}}}}"""
+    assertEquals(ConfigService.updateConfig(cfg, Map.empty).unsafeRunSync(), Right(()))
+    val written = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
+    assert(written.hcursor.downField("jev").focus.isEmpty, "a jev-free config must stay jev-free on write-back")
+    assert(!ConfigService.providerTypes.unsafeRunSync().noSpaces.contains("jev"))
+  }
+
+  test("legacy config with a residual jev block still boots (zero-migration decode compatibility)") {
+    val legacy = tmpRoot / "legacy-jev-config.json"
+    os.write.over(legacy,
+      s"""{"llm":{"providers":{"z4":${validProvider("z4").noSpaces}}},
+         |"jev":{"enabled":true,"provider":"typesafe-jev","endpoint":"https://api.typesafe.ai/v1/systemone","keyRef":"typesafe-api-key"}}""".stripMargin)
+    val loaded = nebflow.shared.Config.loadServiceConfig(Some(legacy.toString))
+    assert(loaded.llm.providers.contains("z4"), "the llm providers decode normally alongside the dead jev block")
   }
 
 end ConfigServiceSpec

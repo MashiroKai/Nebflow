@@ -1,0 +1,249 @@
+/* inputSurface.css — 输入面造型的**唯一标准**（input-surface-unify 批 2026-11-06）
+   ═══════════════════════════════════════════════════════════════════════════
+   作者裁定（逐字）：
+     「这个蓝色输入框怎么到处在显示 我不是说去掉吗 就采用我们主对话窗口这种
+       灰色圆角阴影」
+     「输入框的这个样式也要成为统一标准 不可以出现第二种」
+
+   所以本文件是**标准的落点**，不是「修一处蓝框」的补丁。三件事同时发生：
+     ① 形态只有一种：灰调玻璃底 + 中性灰细边 + 12px 圆角 + 三档柔影
+        （参照物 = 主会话输入框 `#input-bar`，逐项对齐关系见 stand-tokens.css
+         输入面段头注与规范 §1）；
+     ② 焦点只有一种：指针态 = 同一根灰线压深一档（**零蓝、零外环、零位移**）；
+        键盘可见焦点 = 内缩 2px 描边环，色为压灰的蓝族混色（唯一保留蓝的位置，
+        且不是「整块蓝框」）。无障碍不因「去蓝」而丢 —— Tab 到永远看得见；
+     ③ 第二套没有活路：任何别的文件在输入面上写背景/边框/圆角/阴影/描边
+        ⇒ `scripts/check-input-surface.mjs` 判红（I2）；造型数值只能取
+        `--nf-field-*`（I1/I3）；蓝族令牌不许进输入面（I4）。
+
+   ── 三个变体（不是第二套，是同一标准的三种用法）──────────────────────────
+     `.nf-field`          盒式档 —— 独立输入件（设置项 / 表单 / 弹窗输入），
+                          自己就有完整的底 + 边 + 圆角 + 阴影。
+     `.nf-field--bare`    裸件档 —— 嵌在**已成形的容器**里的输入（主会话输入条、
+                          记事本、搜索胶囊、行内改名）：外壳已给材质，内件只留
+                          字与 caret，再画一层边就是「框里套框」。
+     `.nf-field--select`  下拉档 —— 原生 `<select>`：盒式档 + 原生箭头（箭头
+                          只由 currentColor 组成，不引入第二色）。
+   元素级兜底（下面第一条 `:where(...)`）让**新加的输入件天然被收编**：
+   新增一个 `<textarea>` 不需要谁记得加类，它出生就是标准形态。
+
+   ── 旧实现去哪儿了（本批整体摘除，git 可查）──────────────────────────────
+     · `css/inputFocus.css` 整文件退役（焦点态唯一来源并入本文件）；
+     · 24 处组件自写的输入件焦点规则（上一批已收编）继续由本文件承担；
+     · 46 处组件自写的输入面造型声明（背景/边框/圆角/阴影/描边）逐条摘除，
+       只保留各面的**几何**（宽高/内距/flex/字族）与状态语义。
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 少一个属性名，就少一个人写第二套 ─────────────────────────────────────
+   下面两条选择器清单必须**逐字一致**（盒式档 / 元素级兜底 / 焦点态共用）：
+   任何新的输入类型想进标准，改这三处（并同步规范 §2 的清单表）。 */
+:where(
+  input:not([type]),
+  input[type="text"], input[type="search"], input[type="password"],
+  input[type="email"], input[type="number"], input[type="url"],
+  input[type="tel"], input[type="date"], input[type="time"],
+  input[type="datetime-local"], input[type="month"], input[type="week"],
+  textarea,
+  select
+),
+.nf-field {
+  /* 底：与 #input-bar 同一个玻璃底（--nf-glass-bg 单源，逐值同） */
+  background: var(--nf-field-bg);
+  /* 边：中性灰细边（正文色 14% 混色，两主题自适应，**永不是品牌蓝**） */
+  border: var(--nf-field-border);
+  /* 圆角：条状容器档 12px（--ds-radius-xl） */
+  border-radius: var(--nf-field-radius);
+  /* 影：与 #input-bar 同一条三档栈（顶缘内高光 + 两档外投影） */
+  box-shadow: var(--nf-field-shadow);
+  /* 内距/字号：与 #input-bar 逐值同（6/12 / 13.5px） */
+  padding: var(--nf-field-pad-y) var(--nf-field-pad-x);
+  font-size: var(--nf-field-fs);
+  line-height: var(--nf-field-line);
+  /* 组件自己的 outline 一律让位给本文件的焦点态（不再各写各的） */
+  outline: none;
+  box-sizing: border-box;
+}
+
+/* ── 裸件档：外壳已给材质，内件只留字 ────────────────────────────────────
+   `.nf-field--bare` 是显式类；下面这串选择器是**已登记的成员**（都是嵌在
+   成形容器里的输入：主会话输入条 / ask 输入条 / 记事本 / 画布查找条 /
+   wiki 搜索胶囊 / 邮件收件人与主题行 / 提醒行内输入 / todo 行标题 / 移动端
+   搜索框 / delegate 弹窗头部模型下拉）。成员只拿「裸」，几何仍归各自文件。
+   提醒行内**描述**（`.reminder-inline-desc`）同属「提醒行内」这一面：它和同行
+   的 name 输入件在同一个成形容器里，故并入本成员表。
+   待办回复框内芯（`.tfl-hit-reply`，ui-unify-panels E 批 2026-11-17）：行壳
+   `.tfl-hit-replyrow` = nf-glass 输入条外壳（复刻 ask 卡片输入），内芯按裸件
+   收编。 */
+.nf-field--bare,
+#input,
+.ask-input textarea,
+.note-body textarea,
+.nf-findbar-input,
+.wg-search-input,
+.mh-search-input,
+.sf-field-input,
+.fm-search-input,
+.to-input,
+.subject-input,
+.reminder-inline-input,
+.reminder-inline-desc,
+.reminder-inline-project input,
+.tfl-row-title-input,
+.tfl-hit-reply,
+/* 待办详情页回复输入框内芯（todo-mobile 批 2026-11-18）：与 `.tfl-hit-reply`
+   同族 —— 外壳 `.ta-reply-input` = nf-glass 输入条（复刻 ask 输入条），内芯按
+   裸件收编（同一个 js/input/secondaryComposer.js 模板产出）。 */
+.ta-reply-input textarea,
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-newlist-input,
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input,
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes,
+.bgagent-model-switch {
+  background: var(--nf-field-bare-bg);
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  /* 刻意**不写** outline: none —— 裸件同样要被键盘看见。焦点态归下面两条
+     焦点规则（指针压回中性 / 键盘给内缩环），此处写 none 会把它们一起盖掉。 */
+}
+
+/* ── 下拉档：盒式 + 原生箭头 ─────────────────────────────────────────────
+   箭头 = 两条 currentColor 渐变（4px 角），不新增色相；取消原生外观后
+   才由本文件画箭头（`appearance:none` 只能在这里写）。
+   成员表：`.nf-field--select` 显式类 + 四个既有的原生下拉（都是 `<select>`，
+   造型与别的输入件没有任何理由不同）。
+   `.bgagent-model-switch`（下拉收编批 2026-11-07，作者报障「选择模式的下拉有bug，
+   不美观」）：delegate 会话弹窗头部的会话级模型切换。它此前自己画了一套脸
+   （透明底 + bare hairline 边框 + 8px 圆角 + 零字族 + 零内距 ⇒ 16px 高、原生
+   箭头与自画边框并存），因为类名末段是 `switch`，既没进本文件的元素级兜底补不
+   上的类名成员表、也没进裸件表 —— 典型的「换个类名再画一套」。现按**裸件 + 下拉**
+   双登记收编：无底无边（外壳 = 弹窗头已给材质），只留字与标准箭头。 */
+.nf-field--select,
+.ud-select,
+.wg-switch-select,
+.cfg-select,
+.mp-add-select,
+.bgagent-model-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  padding-right: var(--ds-space-6, 24px);
+  background-image: var(--nf-field-caret);
+  background-position: var(--nf-field-caret-pos);
+  background-size: var(--nf-field-caret-size);
+  background-repeat: no-repeat;
+}
+
+/* ── 指针/常态焦点：中性，零环 ─────────────────────────────────────────────
+   鼠标点进输入框只发生一件事：那根灰线压深一档（14% → 26% 正文色混色），
+   阴影/圆角/尺寸逐值不动。走 `:focus`（不是 :focus-visible）——文本件在
+   浏览器口径里恒匹配 :focus-visible，用它做「指针态」会变成永远有环。 */
+:where(
+  input:not([type]),
+  input[type="text"], input[type="search"], input[type="password"],
+  input[type="email"], input[type="number"], input[type="url"],
+  input[type="tel"], input[type="date"], input[type="time"],
+  input[type="datetime-local"], input[type="month"], input[type="week"],
+  textarea,
+  select
+):focus,
+.nf-field:focus {
+  border-color: var(--nf-field-border-focus);
+}
+
+/* ── 键盘可见焦点：内缩描边环（唯一允许出现蓝的地方）──────────────────────
+   键盘 Tab 到必须看得见（`:focus-visible` 是浏览器给的键盘语义，不靠猜）。
+   环 = 2px、内缩 1px（压在框体自己的边上，读作「边框加粗」，不占盒、不外溢、
+   不留缝），色 = 品牌蓝 45% + 正文色的混色（压灰的蓝，与中性形态同族，
+   不是整块品牌蓝框）。
+   JS 未加载时鼠标点击也会命中这条（浏览器对文本件一律置 :focus-visible）——
+   环本身是压灰混色，那一档不刺眼；`data-nf-modality="pointer"`（js/
+   focusModality.js 在 pointerdown 时挂上）把指针态压回中性，于是「点」没有环、
+   「Tab」有环，两个通道各归各位。 */
+:where(
+  input:not([type]),
+  input[type="text"], input[type="search"], input[type="password"],
+  input[type="email"], input[type="number"], input[type="url"],
+  input[type="tel"], input[type="date"], input[type="time"],
+  input[type="datetime-local"], input[type="month"], input[type="week"],
+  textarea,
+  select
+):focus-visible,
+.nf-field:focus-visible {
+  outline: var(--nf-field-ring-w) solid var(--nf-field-ring);
+  outline-offset: var(--nf-field-ring-offset);
+}
+
+/* 指针来的焦点：环压回中性（上面的 :focus 灰线加深仍生效） */
+html[data-nf-modality="pointer"] :where(
+  input:not([type]),
+  input[type="text"], input[type="search"], input[type="password"],
+  input[type="email"], input[type="number"], input[type="url"],
+  input[type="tel"], input[type="date"], input[type="time"],
+  input[type="datetime-local"], input[type="month"], input[type="week"],
+  textarea,
+  select
+):focus-visible,
+html[data-nf-modality="pointer"] .nf-field:focus-visible {
+  outline: none;
+}
+
+/* ── 输入条外壳成员（composer shell）─────────────────────────────────────
+   `.ask-input` 是画布 ask 窗的输入条外壳：它不在本文件的「输入件」清单里
+   （它是外壳，材质由 `.nf-glass` 供），只有圆角这一项曾在本文件之前散在
+   ask.css —— 收到这里，与 `#input-bar` 的 `--ds-radius-shell` 同族。
+   `.tfl-hit-replyrow`（ui-unify-panels E 批 2026-11-17）：待办互动框的回复
+   输入条外壳，复刻 ask 卡片输入（材质同样由 JS 挂 `.nf-glass` 供）。 */
+.ask-input,
+.tfl-hit-replyrow,
+/* 待办详情页「回复这个待办」（todo-mobile 批 2026-11-18）：与 `.ask-input` 同一个
+   装配点 —— js/input/secondaryComposer.js 的「次级 LLM 输入框」模板（材质同样由
+   JS 挂 `.nf-glass` 供），故取同一条外壳圆角。 */
+.ta-reply-input {
+  border-radius: var(--nf-field-shell-radius, var(--ds-radius-xl));
+}
+
+/* ── 状态档（同一种形态的状态，不是第二套形态）────────────────────────────
+   disabled：只掉不透明度，不改底/边/影；
+   invalid：边换错误色（令牌 --nf-field-border-invalid，非品牌蓝）。 */
+:where(input, textarea, select):disabled,
+.nf-field:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+:where(input, textarea, select)[aria-invalid="true"],
+.nf-field[aria-invalid="true"],
+.nf-field--invalid {
+  border-color: var(--nf-field-border-invalid);
+}
+
+/* ── 例外：主会话输入框内层 #input ───────────────────────────────────────
+   作者令 2026-11-03 10:11 ④「输入区键盘态不再加高亮」——主会话输入条的焦点
+   由 `body[data-nf-mode]` 承载（零视觉痕迹），内层 textarea 不加任何环。
+   这是**唯一**一条具名例外（规范 §4 例外清单第 1 行），因为它不是「另一种
+   造型」，是「不造型」。 */
+#input:focus,
+#input:focus-visible,
+.fm-input:focus,
+.fm-input:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+/* ── 系统强制配色（Windows 高对比度等）───────────────────────────────────
+   该模式下浏览器会强制改写 border / box-shadow，灰线可能被抹平 ⇒ 退回系统
+   色 Highlight 描边（系统色不是产品蓝，不与「去蓝框」冲突）。 */
+@media (forced-colors: active) {
+  :where(
+    input:not([type]),
+    input[type="text"], input[type="search"], input[type="password"],
+    input[type="email"], input[type="number"], input[type="url"],
+    input[type="tel"], input[type="date"], input[type="time"],
+    input[type="datetime-local"], input[type="month"], input[type="week"],
+    textarea,
+    select
+  ):focus-visible,
+  .nf-field:focus-visible {
+    outline: 2px solid Highlight;
+    outline-offset: -1px;
+  }
+}

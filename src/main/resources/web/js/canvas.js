@@ -14,18 +14,190 @@
 // JS sets a CSS custom property (--canvas-width) and toggles body.canvas-open;
 // CSS handles all transitions via flex-basis.
 
+import { EVENTS } from './events.js';
 import { key } from './branding.js';
 import { t } from './i18n.js';
 import { makeReference } from './reference.js';
+import { initCanvasDrop } from './canvasDrop.js';
 import { authHeaders } from './flowHelpers.js'; // Bearer token for REST withAuth (/api/canvas-tabs)
+import { deviceClientId } from './deviceIdentity.js';
+import { setSideBarCollapsed, isMobileViewport } from './activityBar.js';
+// 胶囊标签截断（作者令 2026-11-05 12:10 第④条「可辨识前缀 + 关键尾部」）：
+// 切法单源在 capsuleLabel.js（桌面/触屏腿与手机层腿共用一份），本模块只消费。
+import { splitCapsuleLabel, createTextMeasurer, capsuleTextAvail, CAPSULE_ELLIPSIS } from './capsuleLabel.js';
+// keyboard-first 三期：叠卡/胶囊环/卡窗的键位搬进规则表（keyRules.js），本模块
+// 提供三件事——① 状态 → 上下文键（派生，无推送）② 动作函数（deckKeyAction 等）
+// ③ 不再持有任何 document 级 keydown 监听。
+import { provideContextKey, KEYS } from './keyContext.js';
+// 独立窗口本机加速批：直连开窗计划 + 导航腿 + PM origin 记账（零环：本模块
+// 只消费，cardwinDirect 不回import canvas/ws）。
+import {
+  cardwinDirectPlan,
+  navigateCardWindowDirect,
+  rememberCardwinPmOrigin,
+  readCardwinPmOrigin,
+  forgetCardwinPmOrigin,
+} from './cardwinDirect.js';
 
 const MIN_CANVAS_WIDTH = 320;
 const MAX_CANVAS_WIDTH = 1200;
+// Minimum usable width for the CHAT column while the panel is open. Same
+// number as colResizer.js MIN_WIDTHS.main (the column minimum enforced while
+// dragging a resizer): both answer the question "when is a side-by-side split
+// still possible?", so the threshold below and the drag clamp agree.
+const MIN_CHAT_WIDTH = 320;
 const LS_KEY = key('col_widths');
 const LS_TABS_KEY = key('canvas_tabs');
 // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端作为权威标签存档，localStorage 仅作降级缓存。
 // 根治 Safari 无痕/多窗口清空 localStorage 导致的标签重启丢失。
 const TABS_API = '/api/canvas-tabs';
+
+function createCanvasWriterClient(transport) {
+  let role = 'reader';
+  let epoch = null;
+  let generation = 0;
+  let pendingWrite = Promise.resolve();
+  return {
+    role: () => role,
+    async refresh() {
+      const current = generation;
+      const result = await transport.query();
+      if (generation !== current || !result) return;
+      role = result.role === 'writer' && Number.isSafeInteger(result.epoch) ? 'writer' : 'reader';
+      epoch = role === 'writer' ? result.epoch : null;
+      transport.changed?.(role);
+    },
+    credentials: () => role === 'writer' ? { epoch } : null,
+    lost() { generation++; role = 'reader'; epoch = null; transport.changed?.(role, true); },
+    async claim() {
+      generation++;
+      const result = await transport.claim();
+      if (result?.role === 'writer' && Number.isSafeInteger(result.epoch)) {
+        role = 'writer'; epoch = result.epoch; transport.changed?.(role);
+      }
+    },
+    // 单实例即位（2026-11-18 作者令：只检测多开，不加第二种提示）。写路径到达时
+    // 若尚未即位，先静默申请一次：后端「无写者」才授予（真多开的第二个窗口拿
+    // 不到，保持只读）；拒授 ⇒ 走 transport.failed 的真实「保存失败」文案。
+    async put(payload) {
+      const run = async () => {
+        if (role !== 'writer') {
+          await this.claim();
+          if (role !== 'writer') { transport.failed?.(); return false; }
+        }
+        const capturedEpoch = epoch;
+        if (role !== 'writer') return false;
+        const result = await transport.put(payload, capturedEpoch);
+        if (role !== 'writer' || epoch !== capturedEpoch) return false;
+        if (!result) { this.lost(); transport.failed?.(); }
+        return result;
+      };
+      const result = pendingWrite.then(run, run);
+      pendingWrite = result.catch(() => false);
+      return result;
+    },
+    // 页面卸载让位（刷新/关窗/换页）：先把写权还回空位，否则下一个窗口
+    // 会因「已有写者」永久落只读。尽力而为（keepalive）。
+    async release() {
+      if (role !== 'writer') return;
+      const capturedEpoch = epoch;
+      generation++; role = 'reader'; epoch = null; transport.changed?.(role);
+      await transport.release?.(capturedEpoch);
+    },
+  };
+}
+// END CANVAS WRITER CLIENT
+
+const canvasTabInstanceId = globalThis.crypto?.randomUUID?.() || `tab-${Date.now()}-${Math.random()}`;
+const canvasIdentity = () => ({ clientId: deviceClientId(), tabInstanceId: canvasTabInstanceId });
+let localUnsynced = false;
+function writerChanged(role, lost = false) {
+  // A writer transition is not proof of another console. Preserve local data
+  // without presenting the console conflict dialog.
+  if (lost) localUnsynced = true;
+  if (role !== 'writer') {
+    if (serverPersistTimer) clearTimeout(serverPersistTimer);
+    serverPersistTimer = null;
+    pendingPersistPayload = null;
+    persistDirty = false;
+  }
+}
+const writerRejectionNotices = new Set();
+// 「保存失败」通知同因只报一次（2026-11-18 P0 作者报障「现在怎么老是出现 canvas
+// 保存失败的通知 好烦」）。页内 Set 只挡同一页里的重复；刷新页面时模块重建、
+// Set 清空 —— 而写者席位被别的控制台窗口占住（或占位者已消失、席位无人回收）时
+// 失败是**持久的**，于是每次加载都重弹一遍。去重账落到 sessionStorage（同一浏览器
+// 页签内跨刷新存活）：同因每会话只报一次；换页签/换窗口是新会话，各自的首次真实
+// 失败照报。去重只压缩重复，绝不吞掉首次失败。
+const NOTICE_SEEN_KEY = key('canvas_notice_seen');
+function noticeSeenBefore(reason) {
+  if (writerRejectionNotices.has(reason)) return true;
+  try {
+    const seen = JSON.parse(sessionStorage.getItem(NOTICE_SEEN_KEY) || '{}');
+    return !!seen[reason];
+  } catch { return false; } // storage 不可用 ⇒ 退化回页内 Set
+}
+function markNoticeSeen(reason) {
+  writerRejectionNotices.add(reason);
+  try {
+    const seen = JSON.parse(sessionStorage.getItem(NOTICE_SEEN_KEY) || '{}');
+    seen[reason] = Date.now();
+    sessionStorage.setItem(NOTICE_SEEN_KEY, JSON.stringify(seen));
+  } catch { /* 页内 Set 已覆盖本次会话 */ }
+}
+// 真失败要给**可执行的下一步**，而不是一句「保存失败」：席位是单写者、非抢占的，
+// 唯一可执行的恢复 = 让占位窗口让位。正文保持作者裁定的原句（字符串逐字不动），
+// 下一步进 toast 的 hint 次级行；通知带亲手关闭钮。
+const SAVE_FAIL_HINT = '若已打开多个控制台窗口，请关闭其他窗口后重试；仍失败请稍后重新加载页面。';
+function writerNotice(message, reason) {
+  if (!reason || noticeSeenBefore(reason)) return;
+  markNoticeSeen(reason);
+  window.__showToast?.(message, 'info', { closable: true, hint: SAVE_FAIL_HINT });
+}
+const canvasWriter = createCanvasWriterClient({
+  changed: writerChanged,
+  failed: () => { localUnsynced = true; writerChanged('reader'); writerNotice('Canvas 保存失败，本地变更已保留。', 'save-failed'); },
+  async query() {
+    try {
+      const query = new URLSearchParams(canvasIdentity());
+      const response = await fetch(`/api/canvas-writer?${query}`, { headers: { ...authHeaders() } });
+      return response.ok ? await response.json() : null;
+    } catch { return null; }
+  },
+  async claim() {
+    try {
+      const response = await fetch('/api/canvas-writer/claim', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify(canvasIdentity()),
+      });
+      // 拒授是常态（真多开 ⇒ 已有写者），不是错误：静默返回 null，文案由写路径
+      // 的 failed() 统一点出（真实「保存失败」，不用「取得控制权」措辞）。
+      if (!response.ok) return null;
+      return await response.json();
+    } catch { return null; }
+  },
+  async put(payload, epoch) {
+    try {
+      const response = await fetch(TABS_API, {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ ...payload, ...canvasIdentity(), epoch }),
+      });
+      if (response.ok) return true;
+      return false;
+    } catch { return false; }
+  },
+  async release(epoch) {
+    try {
+      await fetch('/api/canvas-writer/release', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ ...canvasIdentity(), epoch }), keepalive: true,
+      });
+    } catch { /* 卸载路径：让位尽力而为，失败交给服务端陈旧清扫 */ }
+  },
+});
+function allowCanvasMutation() {
+  return applyingLiveTabsFrame || (canvasWriter.role() === 'writer' && !localUnsynced);
+}
 // F1: 服务端 PUT 防抖计时器——openTab/closeTab/setActiveTab/pinTab 都调 persistTabs，
 // 防抖合并连续操作成一次 PUT。
 let serverPersistTimer = null;
@@ -40,7 +212,16 @@ let closeTimeout = null;
 // ── Tab state ──────────────────────────────────────────────
 // Map of tabId -> { id, title, type, paneEl, tabEl, closable }
 const tabs = new Map();
+// Reader-only browsing must not become a shared edit after a later claim.
+const readerLocalTabs = new Set();
 let activeTabId = null;
+// Legacy PUTs have no operation id: tie an acknowledgement to the exact local
+// activation generation captured by the submitted snapshot, never just its id.
+let pendingLocalActivation = null;
+let activationGeneration = 0;
+let applyingLiveTabsFrame = false;
+let lastCanvasVersion = 0;
+const persistActivationGeneration = new WeakMap();
 // Preview (temporary) tabs, one per preview group — VS Code behavior, but
 // scoped: tabs only replace a preview tab within their own group. File tabs
 // (with absPath) share the 'file' group so opening a .md still replaces a
@@ -53,6 +234,13 @@ const previewKeyOf = (type, absPath) => absPath ? 'file' : (type || 'generic');
 // ref click opens with empty content (readFile round trip) and the response
 // item carries no anchor — stash it here and consume at render time.
 const pendingRefAnchors = new Map();
+// 词条引用批 batch 2 (F5 返回原文档): reference-jump source tab ids, same
+// lifecycle as pendingRefAnchors — the jump intent dies at the first
+// workspace-open-item dispatch (the readFile response re-dispatch from
+// explorer.js carries no refSourceTab), so the source is stashed by absPath
+// and consumed when the entry materializes. Single-layer (v1, 裁定 §9-10):
+// every jump overwrites; no history stack.
+const pendingRefSources = new Map();
 
 // ── #303 global-reference: build a Reference from a tab's current state ──
 // Best-effort anchor extraction per viewer type (PDF page range, Monaco text
@@ -140,15 +328,21 @@ function refForTab(tab) {
 }
 
 // ── Canvas tab context menu (「引用当前页/选区」) ──
+// canvas-stack：叠卡右键菜单在同一张玻璃菜单里追加「关闭 / 关闭其他」（v5 菜单语义，
+// 样张 ctx-menu 三项），经 actions 回调接线到叠卡引擎；标签条旧入口不传 actions，
+// 行为逐字不变。
+// 2026-10-22 作者令（胶囊交互重做）菜单契约扩容：多开（铺开叠卡）、关闭、
+// 在独立窗口打开（联动 #717 卡窗链 popoutCardWindow/toggleCardWindow）——
+// 引用项保留在挂（CC4 契约 + 移动层长按同通路）；文案随态（独立中=合并回主窗）。
 let _canvasCtxMenu = null;
 let _ctxMenuBound = false;
 function hideCanvasRefMenu() {
   if (_canvasCtxMenu) { _canvasCtxMenu.remove(); _canvasCtxMenu = null; }
 }
-function showCanvasRefMenu(x, y, entry) {
+function showCanvasRefMenu(x, y, entry, actions = null) {
   hideCanvasRefMenu();
   const ref = refForTab(entry);
-  if (!ref) {
+  if (!ref && !actions) {
     window.__showToast?.(t('canvas.noRef'), 'info');
     return;
   }
@@ -156,16 +350,63 @@ function showCanvasRefMenu(x, y, entry) {
   menu.className = 'canvas-tab-context-menu';
   menu.style.left = x + 'px';
   menu.style.top = y + 'px';
-  const btn = document.createElement('button');
-  btn.textContent = t('canvas.referenceCurrent');
-  btn.addEventListener('click', () => {
+  // 样张菜单语义：引用项恒在（面板页签点了 toast noRef）；叠卡模式追加关闭两项
+  const refBtn = document.createElement('button');
+  refBtn.textContent = t('canvas.referenceCurrent');
+  refBtn.addEventListener('click', () => {
     hideCanvasRefMenu();
+    if (!ref) { window.__showToast?.(t('canvas.noRef'), 'info'); return; }
     // Dynamic import to avoid a static edge back into input.js (which would
     // close the modal→taskList→canvas→input cycle — historically via
     // taskArchive.js, removed in the 2026-08-30 task redesign).
     import('./input.js').then(({ appendRefToActiveView }) => appendRefToActiveView(ref));
   });
-  menu.appendChild(btn);
+  menu.appendChild(refBtn);
+  if (actions) {
+    const hr = document.createElement('hr');
+    menu.appendChild(hr);
+    // 多开（作者令 2026-10-22）：铺开叠卡环（deck 关闭态）/ 收起（deck 开着，
+    // 文案随态 —— 同一枚菜单项覆盖往返）
+    if (actions.onMultiOpen) {
+      const multiBtn = document.createElement('button');
+      multiBtn.textContent = actions.multiOpenLabel || '多开';
+      multiBtn.addEventListener('click', () => { hideCanvasRefMenu(); actions.onMultiOpen(); });
+      menu.appendChild(multiBtn);
+    }
+    if (actions.onClose) {
+      const closeBtn = document.createElement('button');
+      closeBtn.textContent = '关闭';
+      closeBtn.addEventListener('click', () => { hideCanvasRefMenu(); actions.onClose(); });
+      menu.appendChild(closeBtn);
+    }
+    if (actions.onCloseOthers) {
+      const closeOthersBtn = document.createElement('button');
+      closeOthersBtn.textContent = '关闭其他';
+      closeOthersBtn.className = 'danger';
+      closeOthersBtn.addEventListener('click', () => { hideCanvasRefMenu(); actions.onCloseOthers(); });
+      menu.appendChild(closeOthersBtn);
+    }
+    // 在独立窗口打开（作者令 2026-10-22）：文件卡才可独立（独立窗经 absPath
+    // readFile 重读真容，cardCanPop 门）；独立中 = 合并回主窗（toggle 同位换形，
+    // 与卡头 pop 钮同语义）。内容物收口批：非内容物页签 = 禁用态项 + 提示
+    // （title + 点击 toast），边界可见不静默。
+    if (actions.onPopout) {
+      const popBtn = document.createElement('button');
+      popBtn.textContent = actions.popoutLabel || '在独立窗口打开';
+      if (actions.popoutDisabledHint) {
+        popBtn.classList.add('disabled');
+        popBtn.setAttribute('aria-disabled', 'true');
+        popBtn.title = actions.popoutDisabledHint;
+        popBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.__showToast?.(actions.popoutDisabledHint, 'info');
+        });
+      } else {
+        popBtn.addEventListener('click', () => { hideCanvasRefMenu(); actions.onPopout(); });
+      }
+      menu.appendChild(popBtn);
+    }
+  }
   document.body.appendChild(menu);
   _canvasCtxMenu = menu;
   // Adjust if off-screen
@@ -174,14 +415,41 @@ function showCanvasRefMenu(x, y, entry) {
   if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
 }
 
+/** 胶囊右键 actions 组装（标题头与胶囊环共用一份菜单语义——作者令 2026-10-22：
+ *  多开 / 关闭 / 在独立窗口打开，引用项保留）。@param {Object} entry */
+function capsuleMenuActions(entry) {
+  const deckOpen = deck.open && !deckBusy();
+  // 内容物收口批（2026-10-22 作者令）：独立窗只承载内容物（文档/文件/图片）。
+  // 非内容物页签（面板：任务列表/图谱/设置/会话列表等）不再静默省略菜单项，
+  // 渲染「禁用态 + 提示」项 —— 边界可见；点击由弹出链内容物门终拒（同文案）。
+  const canPop = cardCanPop(entry.id);
+  return {
+    allowNoRef: true,
+    onMultiOpen: () => deckFabToggle(),
+    multiOpenLabel: deck.open ? '收起叠卡' : '多开',
+    onClose: () => (deckOpen ? deckRequestClose(entry.id) : closeTab(entry.id)),
+    onCloseOthers: deckOpen ? () => deckCloseOthers(entry.id) : null,
+    onPopout: () => toggleCardWindow(entry.id),
+    popoutLabel: isCardIndependent(entry.id) ? '合并回主窗' : '在独立窗口打开',
+    popoutDisabledHint: canPop ? null : t('canvas.cardwinContentOnly'),
+  };
+}
+
 // ── Drag-to-reorder ────────────────────────────────────────
 let draggedTabId = null;
 
 function attachDragHandlers(tabEl, id) {
   tabEl.addEventListener('dragstart', (e) => {
-    draggedTabId = id;
+    draggedTabId = tabEl.dataset.tabId || id;
     tabEl.classList.add('dragging');
-    e.dataTransfer.effectAllowed = 'move';
+    // canvasdnd: must be 'copyMove', NOT 'move'. initGlobalFileDrop (input.js)
+    // rewrites dropEffect to 'copy' on every document-level dragover of an
+    // application/x-nebflow-ref drag, and per the HTML spec's "current drag
+    // operation" table 'move' × 'copy' resolves to "none" ⇒ the drag operation
+    // fails and Chromium (Edge/Chrome) never delivers a single `drop`, killing
+    // both the reference drop and tab reorder. Same declaration as the explorer
+    // file rows (explorer.js: "copy → input bar, move → tree").
+    e.dataTransfer.effectAllowed = 'copyMove';
     e.dataTransfer.setData('text/plain', id);
     // #303 B6b: a canvas tab dragged to an input bar carries a Reference
     // payload (current page/selection anchor). Dragging onto another tab for
@@ -237,6 +505,7 @@ function attachDragHandlers(tabEl, id) {
  *  @param {string} targetId  — The tab it's dropped on.
  *  @param {boolean} after    — true = place after target, false = before. */
 function moveTab(dragId, targetId, after) {
+  if (!allowCanvasMutation()) return;
   const dragEntry = tabs.get(dragId);
   const targetEntry = tabs.get(targetId);
   if (!dragEntry || !targetEntry) return;
@@ -254,16 +523,43 @@ function moveTab(dragId, targetId, after) {
   // Sync Map order to match DOM
   const newOrder = [];
   tabBar.querySelectorAll('.canvas-tab').forEach(el => {
-    const tid = el.dataset.tabId;
+    const tid = /** @type {HTMLElement} */ (el).dataset.tabId;
     if (tabs.has(tid)) newOrder.push([tid, tabs.get(tid)]);
   });
   tabs.clear();
   newOrder.forEach(([k, v]) => tabs.set(k, v));
+  // canvas-tab-sync 批（2026-11-17）：排序是同步面之一——落一次存档让顺序
+  // 经权威存档广播到他端（此前顺序只在下一次无关操作时才顺带写穿）。
+  persistTabs();
+}
+
+/** Is the window too narrow for a side-by-side chat + canvas split?
+ *
+ *  The split needs, in the flex row: activity bar + sidebar + #main + panel +
+ *  margins. Below that budget no side-by-side arrangement exists — the panel
+ *  switches to its overlay form (body.canvas-overlay, see split.css) and
+ *  #main keeps its full width.
+ *  @returns {boolean} */
+function isNarrowSplit() {
+  const sidebar = document.getElementById('sidebar');
+  const activityBar = document.getElementById('activity-bar');
+  const sidebarW = sidebar ? sidebar.getBoundingClientRect().width : 0;
+  const activityW = activityBar ? activityBar.getBoundingClientRect().width + 8 : 0;
+  const edgeBarW = 3;
+  // Both panels have margin:0 10px = 20px each = 40px total margins
+  const totalMargins = 40;
+  const available = window.innerWidth - sidebarW - activityW - edgeBarW - totalMargins;
+  return available < MIN_CANVAS_WIDTH + MIN_CHAT_WIDTH;
 }
 
 /** Compute the target open width so Canvas matches Chat panel width.
  *  Both panels share the remaining space 50/50 after fixed elements
- *  (sidebar, activity bar) and margins are accounted for. */
+ *  (sidebar, activity bar) and margins are accounted for.
+ *
+ *  In the narrow range (see isNarrowSplit) the split cannot hold both columns,
+ *  so the side-by-side width is no longer meaningful — return the smallest
+ *  legal side-by-side width and let CSS drive the overlay form instead of
+ *  letting this value claim space the row does not have. */
 function computeOpenWidth() {
   const sidebar = document.getElementById('sidebar');
   const activityBar = document.getElementById('activity-bar');
@@ -275,6 +571,46 @@ function computeOpenWidth() {
   const available = window.innerWidth - sidebarW - activityW - edgeBarW - totalMargins;
   const half = Math.floor(available / 2);
   return Math.max(MIN_CANVAS_WIDTH, Math.min(MAX_CANVAS_WIDTH, half));
+}
+
+/** Apply the current window's layout mode to the body class list.
+ *
+ *  Layout mode is a single decision point: 「panel open」 has two forms —
+ *  side-by-side (wide window) and overlay (window too narrow to hold both
+ *  columns at their minimum widths). Both are the SAME panel state: tabs,
+ *  persistence and the close path are untouched — only the box model differs.
+ *
+ *  The overlay form floats over #main, and #main's top band (the glass header
+ *  plus #top-overlays) carries the panel's OWN header toggle — covering it
+ *  would turn the primary toggle into a dead control exactly where the user
+ *  needs it. So the drawer's top edge is taken from the measured band bottom
+ *  and published as a CSS variable; split.css consumes it and never guesses.
+ *  @returns {boolean} true when the overlay form is active. */
+function applyCanvasLayoutMode() {
+  const overlay = isNarrowSplit();
+  document.body.classList.toggle('canvas-overlay', overlay);
+  if (overlay) {
+    const header = document.getElementById('header');
+    const overlays = document.getElementById('top-overlays');
+    const bottom = Math.max(
+      header ? header.getBoundingClientRect().bottom : 0,
+      overlays ? overlays.getBoundingClientRect().bottom : 0,
+    );
+    if (bottom > 0) document.documentElement.style.setProperty('--canvas-overlay-top', Math.ceil(bottom) + 'px');
+  }
+  return overlay;
+}
+
+/** Re-evaluate the layout mode for the current window width.
+ *  Called from the panel's own resize / resize-adjacent signals: the mode
+ *  depends on the Side Bar's rendered width, which changes on window resize,
+ *  on the sidebar collapse toggle (a body-class change) and on a resizer drag
+ *  (an inline flex change that dispatches `nebflow-col-resize`) — all three
+ *  must be able to flip the panel back to side-by-side on the same beat.
+ *  No-op while the panel is closed: the open path evaluates the mode again. */
+function refreshCanvasLayoutMode() {
+  if (!isCanvasOpen()) return;
+  applyCanvasLayoutMode();
 }
 
 /** Open the canvas panel.
@@ -294,8 +630,24 @@ export function openCanvas(title = '') {
   const canvasTarget = computeOpenWidth();
   document.documentElement.style.setProperty('--canvas-width', canvasTarget + 'px');
   document.body.classList.add('canvas-open');
+  applyCanvasLayoutMode();
   syncCanvasPanelButtons();
+  // 左移批兜底：见 initDeck transitionend 注 —— 无过渡/reduced-motion 路径
+  // 不冒 transitionend，超时尾补一次浮钮盒重同步（0.32s 过渡 + 余量）。
+  setTimeout(syncDeckBox, 380);
+  // Mobile drawer exclusivity (≤768px, css/mobile.css): both drawers are full
+  // overlays, so an opening canvas drawer collapses the Side Bar drawer —
+  // whoever expands second wins (the Side Bar announces its own expansion via
+  // the nf:mobile-drawer-expanded event, handled below).
+  if (isMobileViewport()) setSideBarCollapsed(true);
 }
+
+// The other half of the exclusivity pair: on a phone viewport the Side Bar
+// drawer expanding closes the canvas drawer, so the file explorer (and every
+// other Side Bar face) is never hidden under the canvas drawer.
+document.addEventListener('nf:mobile-drawer-expanded', () => {
+  if (document.body.classList.contains('canvas-open')) closeCanvas();
+});
 
 /** Close the canvas panel (hide visually — tabs are preserved).
  *
@@ -304,6 +656,9 @@ export function openCanvas(title = '') {
 export function closeCanvas() {
   const panel = document.getElementById('canvas-panel');
   if (!panel) return;
+
+  // canvas-stack：面板收起前先静默收掉叠卡层（层是 body 级固定元素，不随面板消失）。
+  if (deck.open) deckShutdown();
 
   // Persist the current width so a later reopen returns to the same size.
   const w = document.documentElement.style.getPropertyValue('--canvas-width');
@@ -320,6 +675,9 @@ export function closeCanvas() {
 
   // Remove body class — CSS animates flex-basis + opacity back to 0.
   document.body.classList.remove('canvas-open');
+  // The overlay form is a property of the OPEN panel only; drop it with the
+  // panel so a closed panel carries no layout mode into the next open.
+  document.body.classList.remove('canvas-overlay');
   syncCanvasPanelButtons();
 
   // Tabs are preserved — closing Canvas just hides the panel visually.
@@ -341,29 +699,52 @@ export function isCanvasOpen() {
 //   2. tab open + Canvas open + currently displayed -> closeTab (toggle off;
 //      closing the last tab keeps the existing auto-close-Canvas semantics)
 //   3. tab open + Canvas open + another tab shown   -> setActiveTab
+//      (+ panelTabRefresh: 切回即补一次该页签自己的刷新入口; 见下)
 //   4. tab open + Canvas closed -> openCanvas + setActiveTab
 // Pressed state (.active / aria-pressed) strictly mirrors "this tab IS the
 // visible Canvas content": Canvas closed or another tab displayed -> never
 // pressed, even when the tab still exists.
-/** @type {Map<string, {buttonId: string}>} */
+/** @type {Map<string, {buttonId: string, openFn: () => void}>} */
 const panelButtons = new Map();
-/** @type {Set<string>} buttonIds whose click handler is already bound. */
-const boundPanelButtons = new Set();
+/** Whether the delegated click listener is already on the activity bar. */
+let panelBarClickBound = false;
+
+// 点击接线 = #activity-bar 事件委托（回挂接线修复批 2026-10-30）：监听只挂
+// 容器一次、注册只写映射表，按钮元素在场与否不再影响接线。教训（封存批
+// 82c273a2a）：per-element 绑定在 main.js 动态 import 回调里注册时
+// #wiki-btn 已被 detachWikiGraphEntry() 摘下 DOM ⇒ getElementById = null ⇒
+// 监听从未挂上（enableWikiGraphEntry() 回挂只救可见性、救不了从未建立的
+// 接线）。委托让「元素重插即自然复活」对点击接线同样成立；未注册按钮
+// （files/settings/usage/…）不命中映射表、零行为变化。
+function bindPanelBarClickDelegation() {
+  if (panelBarClickBound) return;
+  const bar = document.getElementById('activity-bar');
+  if (!bar) return;
+  panelBarClickBound = true;
+  bar.addEventListener('click', (e) => {
+    const btn = e.target instanceof Element ? e.target.closest('button') : null;
+    if (!btn) return;
+    for (const [tabId, def] of panelButtons) {
+      if (def.buttonId === btn.id) {
+        onCanvasPanelButtonClick(tabId, def.openFn);
+        return;
+      }
+    }
+  });
+}
 
 /**
  * Register an Activity Bar button as a Canvas panel toggle.
+ * Idempotent: the click path is a single delegated container listener (bound
+ * once), so re-registration only updates the map entry (last one wins).
  * @param {string} tabId    — the Canvas tab id this button controls
  * @param {string} buttonId — the Activity Bar button element id
  * @param {() => void} openFn — opens the panel (state 1 entry point)
  */
 export function registerCanvasPanelButton(tabId, buttonId, openFn) {
   if (!tabId || !buttonId || typeof openFn !== 'function') return;
-  panelButtons.set(tabId, { buttonId });
-  const btn = document.getElementById(buttonId);
-  if (btn && !boundPanelButtons.has(buttonId)) {
-    boundPanelButtons.add(buttonId);
-    btn.addEventListener('click', () => onCanvasPanelButtonClick(tabId, openFn));
-  }
+  panelButtons.set(tabId, { buttonId, openFn });
+  bindPanelBarClickDelegation();
   syncCanvasPanelButtons();
 }
 
@@ -373,6 +754,41 @@ function onCanvasPanelButtonClick(tabId, openFn) {
   if (!isCanvasOpen()) { openCanvas(); setActiveTab(tabId); return; } // state 4
   if (activeTabId === tabId) { closeTab(tabId); return; }           // state 2 (toggle off)
   setActiveTab(tabId);                                              // state 3
+  refreshPanelTabOnActivate(tabId);                                 // state 3 + 补拉（D 项）
+}
+
+// ── state 3 补拉注册表（D 项 fast-follow）────────────────────────────────────
+// 背景（取证报告 §C-4「第二成因」+ 表行 D）：4 态机的 state 3 原先只做
+// `setActiveTab`——从别的页签切回 `projects` 时面板**不取数**，用户看到的是上次渲染的
+// 陈旧列表（唯一的手动刷新 = 关掉页签再开；见 `projectTab.js` 头注 (c) 段）。
+// 契约（三件，均由本文件内的注册表集中表达）：
+//   ① 值 = 该页签**既有**刷新入口的取用（🔴 本文件不新造取数实现：不出现任何
+//      fetch / REST 路径 / 第二套渲染）；
+//   ② 只在 state 3 触发——state 1 的 openFn 自带首取、state 2 = 收起、state 4（Canvas
+//      折叠态重开）不在本批范围（报告「未做」项有据）；
+//   ③ 未注册的页签零行为变化（`projects` 之外的面不受影响）。
+// 为什么动态 import 而非静态 import：`projectTab.js:27` 静态 import 本文件 ⇒ 反向的静态边
+// 会构成 2 节点 SCC（`scripts/check-circular.mjs` 判 FAIL）；动态边是该门禁明文许可的破环路径
+// （同 `:167` `:405` 既有用法）。
+// 为什么不是直接调 openFn：`openProjectsTab()` 会把 pane 从「就地 Flow Map 视图」重置回列表
+// 并重建全部卡片（重放入场动画 + 「新」标记）——超出「补一次取数」的范围；量化对照见批报告
+// §偏离申报（harness `alt` 变体）。
+/** @type {Map<string, () => unknown>} tabId -> 该页签既有刷新入口 */
+const panelTabRefresh = new Map([
+  ['projects', () => import('./projectTab.js').then((m) => m.rerenderProjectsTab())],
+  ['wiki-graph', () => import('./wikiGraph.js').then((m) => m.rerenderWikiGraph())],
+]);
+
+/** state 3 补拉（D 项）：切回已在册页签时补一次该页签自己的刷新入口。
+ *  幂等 / 不叠加：入口自身为防抖合并（`projectTab.js` `rerenderProjectsTab` 200ms 窗）⇒
+ *  高频重复切回只落一次取数；未注册页签静默返回（不打断页签切换本身），入口抛错只留一条
+ *  `console.warn`（不冒泡成页面错误）。 */
+function refreshPanelTabOnActivate(tabId) {
+  const refresh = panelTabRefresh.get(tabId);
+  if (typeof refresh !== 'function') return;
+  Promise.resolve()
+    .then(refresh)
+    .catch((e) => console.warn('[canvas] panel tab refresh failed:', e));
 }
 
 /** Mirror "tab is the visible Canvas content" onto the registered buttons. */
@@ -396,6 +812,28 @@ function syncCanvasPanelButtons() {
  *  (markdown source toggle) have no mounted handle; their cached model is
  *  released by path instead. Safe for panes that never had an editor. */
 function disposeTabEditor(entry) {
+  // Viewer-protocol teardown (阅读/编辑体验优化批 2026-11-01): a viewer that
+  // declares dispose(pane) records it on the pane (fileViewers.js renderFile);
+  // 关闭页签的全部路径都汇到这里 —— closeTab / 预览顶替 / 叠卡关闭 / 迟到墓碑
+  // 清扫 —— 所以一个调用点覆盖全部分支。属性读取不引 import 边（canvas.js 对
+  // 文件查看器的既有纪律是动态 import）。
+  const paneSlot = /** @type {any} */ (entry.paneEl);
+  const viewerDispose = paneSlot ? paneSlot._nfViewerDispose : null;
+  if (typeof viewerDispose === 'function') {
+    paneSlot._nfViewerDispose = null;
+    try {
+      viewerDispose();
+    } catch (err) {
+      console.warn('Viewer dispose error:', err);
+    }
+  }
+  // Text-stream tabs hold a live client (windows / index / server-side scan):
+  // closing the tab releases the server side too (卡 §三.5 textCancel).
+  const streamView = entry.paneEl?._streamClient;
+  if (streamView) {
+    if (typeof streamView.destroy === 'function') streamView.destroy();
+    entry.paneEl._streamClient = null;
+  }
   const handle = entry.paneEl?._editorHandle;
   if (handle) {
     handle.dispose({ disposeModel: true });
@@ -413,7 +851,7 @@ function disposeTabEditor(entry) {
  *  @param {object} opts  — { type: 'flow'|'markdown'|'code'|'html'|'generic', closable: bool }
  *  @returns {object|null} — The tab entry, or null on failure. */
 export function openTab(id, title, opts = {}) {
-  const { type = 'generic', closable = true, pinned = false } = opts;
+  const { type = 'generic', closable = true, pinned = false, noRevive = false } = opts;
 
   // Open the panel if it's not already visible.
   if (!isCanvasOpen()) openCanvas();
@@ -426,6 +864,15 @@ export function openTab(id, title, opts = {}) {
     return tabs.get(id);
   }
 
+  // #910 追补（2026-10-27 作者报障「关掉的页签还是老是会加载」）：恢复/投影
+  // 路径（restoreTabs 本地缓存腿 / 服务端 reconcile 腿 / readFile 恢复管线，
+  // 经 noRevive 进入）不是重开意图 —— 命中生效墓碑直接拒开，且绝不落
+  // reopened 账：服务端 merge 以 reopenedAt>closedAt 翻惰性墓碑，恢复腿落账
+  // =这次复活变永久复活（2026-10-27 11:19 33 个已关页签被自动重开并永久
+  // 固化的根因链）。显式打开（用户点开）不走此闸，重开账照落（见下方
+  // journal 块），墓碑按时间戳让位 —— 「显式重开才恢复」原语义不变。
+  if (noRevive && tombstoneGateActive(id)) return null;
+
   // VS Code preview behavior: opening a new preview tab replaces the
   // existing preview tab in the same group (if any). Pinned tabs are not
   // affected. Groups: all file tabs share 'file'; panel tabs are per-type.
@@ -434,12 +881,14 @@ export function openTab(id, title, opts = {}) {
     const oldPreviewId = previewTabs.get(previewKey);
     if (oldPreviewId && oldPreviewId !== id) {
       const oldEntry = tabs.get(oldPreviewId);
-      if (oldEntry) {
+      if (oldEntry && (canvasWriter.role() === 'writer' || readerLocalTabs.has(oldPreviewId))) {
         disposeTabEditor(oldEntry);
         document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
         oldEntry.paneEl.remove();
         oldEntry.tabEl.remove();
         tabs.delete(oldPreviewId);
+        const wasReaderLocal = readerLocalTabs.delete(oldPreviewId);
+        if (!wasReaderLocal && canvasWriter.role() === 'writer' && !localUnsynced) recordTombstone(oldPreviewId);
         previewTabs.delete(previewKey);
         persistTabs();
       }
@@ -462,8 +911,12 @@ export function openTab(id, title, opts = {}) {
   tab.className = 'canvas-tab' + (pinned ? '' : ' preview');
   tab.dataset.tabId = id;
   tab.draggable = true;
+  /* UI 批⑧：独立/合并 toggle 不放标签条 —— 桌面标签行已退役（canvas-stack v5，
+     split.css 隐藏）、移动层也藏（mobileLayer.css），可见卡头 = 居中标题头
+     （批②三件套：✕/标题/堆叠视角钮，syncHeaderActions）+ 环卡卡头
+     （.deck-card-pop）。 */
   const closeHtml = closable
-    ? `<button class="canvas-tab-close" title="Close"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`
+    ? `<button class="canvas-tab-close canvas-button" title="${t('canvas.closeTab')}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>`
     : '';
   tab.innerHTML = `<span class="canvas-tab-label">${title}</span>${closeHtml}`;
 
@@ -475,8 +928,35 @@ export function openTab(id, title, opts = {}) {
   // Auto-scroll the tab bar to show the newly added tab.
   tabBar.scrollTo({ left: tabBar.scrollWidth, behavior: 'smooth' });
 
-  const entry = { id, title, type, paneEl: pane, tabEl: tab, closable, pinned, absPath: opts.absPath || null };
+  const entry = { id, title, type, paneEl: pane, tabEl: tab, closable, pinned,
+                  absPath: opts.absPath || null,
+                  // canvasdrop: the write root + request path the pane was
+                  // opened with. The drop handler reuses them verbatim so its
+                  // writeFile lands under the same containment root as the
+                  // editor's own save (no root broadening).
+                  rootPath: opts.rootPath || null,
+                  filePath: opts.filePath || null };
   tabs.set(id, entry);
+  if (!noRevive && !applyingLiveTabsFrame && canvasWriter.role() !== 'writer') readerLocalTabs.add(id);
+  // #910: 新建成功即视为显式重开落账（作者语义「显式重开才恢复」——点开
+  // 这个文件/面板就是重开意图）。服务端对无墓碑的 id 忽略该账（不凭空造
+  // 记录）；restoreTabs 批量恢复走这里也安全：能从服务端回来的 id 必无生效
+  // 墓碑，重开账是空转。
+  // #910 追补（2026-10-27）：上一段「restoreTabs 走这里也安全」的论断被证伪
+  // ——本地缓存腿/readFile 恢复管线能把带生效墓碑的 id 送到这里（旧缓存不
+  // 带墓碑、缓存会被陈旧窗口回写）。恢复腿（noRevive）不落账；显式腿落账并
+  // 同步镜像本会话墓碑的 reopenedAt（服务端同款时间戳裁决，localStorage 里
+  // 的墓碑账随之保持有效态，跨会话恢复过滤才有正确判据）。
+  if (!noRevive && canvasWriter.role() === 'writer' && !localUnsynced) {
+    const reopenedAt = Date.now();
+    sessionReopens.set(id, { id, reopenedAt });
+    const st = sessionTombstones.get(id);
+    if (st && reopenedAt > st.closedAt) sessionTombstones.set(id, { ...st, reopenedAt });
+    knownActiveTombstones.delete(id);
+  }
+  if (sessionReopens.size > SESSION_LEDGER_CAP) {
+    sessionReopens.delete(sessionReopens.keys().next().value); // 最旧
+  }
 
   // Track preview tab — will be replaced when a new tab in the same
   // preview group is opened
@@ -487,51 +967,97 @@ export function openTab(id, title, opts = {}) {
   setActiveTab(id);
   persistTabs();
 
+  // canvas-tab-sync 批（2026-11-17）：远端帧点名的激活页签尚未落地（文件签
+  // readFile 在途）时，恢复腿（noRevive）晚到开签不得顶掉它——否则本端把
+  // 被顶掉的激活随下次 PUT 写穿，反向抢走发起端的视图。显式打开（用户动作）
+  // 不受限：noRevive=false 直通。标记 8s 过期（帧已陈旧/落地无望就放行）。
+  if (noRevive && lateSyncActive && lateSyncActive.id !== id) {
+    if (lateSyncActive.id && Date.now() - lateSyncActive.at < 8000 && tabs.has(lateSyncActive.id)) {
+      setActiveTab(lateSyncActive.id);
+    } else {
+      lateSyncActive = null;
+    }
+  }
+
+  return entry;
+}
+
+/** Shared teardown core for BOTH close paths (hidden tab-strip × and the deck
+ *  stack's swipe/context close, canvas-stack batch): dispose the tab's editor,
+ *  fire canvas-tab-closed, delete the entry + preview registration, persist.
+ *  Returns the removed entry (or null when the id was already gone).
+ *  opts.silent（#910 追补）：迟到墓碑清扫腿（suppressTombstonedTabs）专用 ——
+ *  只摘 UI 不落新墓碑（服务端已有生效墓碑，重复落账会把 closedAt 刷晚）。 */
+function teardownTab(id, opts = {}) {
+  const entry = tabs.get(id);
+  if (!entry) return null;
+  clearTimeout(entry._autoRefreshTimer);  // 迟滞引擎布防中的定时器随页签退场
+  disposeTabEditor(entry);
+  document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id } }));
+  entry.paneEl.remove();
+  entry.tabEl.remove();
+  tabs.delete(id);
+  const wasReaderLocal = readerLocalTabs.delete(id);
+  if (!opts.silent && !wasReaderLocal && canvasWriter.role() === 'writer') recordTombstone(id);
+  for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
+  persistTabs();
+  deckNotifyRemoved(id);
+  // F5 返回原文档：来源页签被关时，仍停在原地的目标页签上的返回钮即时隐去
+  // （无页签切换发生 ⇒ renderCanvasHeader 不会被调，此处兜住）。
+  syncRefBackButton();
   return entry;
 }
 
 /** Close a single tab and switch to an adjacent one.
  *  If the closed tab was the last one, closes the entire panel.
  *  Dispatches 'canvas-tab-closed' so external code (e.g. flowCanvas) can clean up.
- *  @param {string} id — Tab identifier. */
-export function closeTab(id) {
+ *  @param {string} id — Tab identifier.
+ *  @param {{discardDirty?: boolean}} [opts] 关闭确认之后的内部腿专用
+ *    （用户已经点过「关闭并丢弃」），外部调用一律不传。 */
+export function closeTab(id, opts = {}) {
   const entry = tabs.get(id);
   if (!entry) return;
 
-  // Dispose Monaco editor if present
-  disposeTabEditor(entry);
+  // B7-1（文档后续批，2026-11-01）：脏页签关闭要一次确认。
+  // 改造前这条路径**直接丢编辑**：`beforeunload` 只管整页卸载，页签关闭不走它
+  // （实测命中 0），而叠卡 Delete / 卡头 ✕ / cmd-W 三条入口全部汇聚到这里。
+  // 确认框复用既有 `__showConfirm`：modal.js 早就 `pushLayer(overlay,{name:'modal'})`
+  // —— 走 B4 层栈，不新造第二个栈外模态（计划 §B7 风险条）。
+  // 取消 / Esc ⇒ 什么都不做：页签与编辑原样留着。
+  if (!opts.discardDirty && isTabDirty(entry) && typeof window.__showConfirm === 'function') {
+    window.__showConfirm(
+      t('canvas.closeDirtyTitle'),
+      t('canvas.closeDirtyMsg', { name: entry.title || entry.id }),
+      () => closeTab(id, { discardDirty: true }),
+      { tone: 'danger', confirmLabel: t('canvas.closeDirtyConfirm') },
+    );
+    return;
+  }
 
-  document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id } }));
+  // UI 批⑧：独立中的卡先静默收窗（merge 等价腿，无动画）再走关闭 —— 主窗卡
+  // 关闭时独立窗绝不残留（cmd-W 卡窗自己会 bye，这里管主窗主动关的顺序）。
+  if (independentWins.has(id)) {
+    const rec = independentWins.get(id);
+    independentWins.delete(id);
+    const iv = cardWinWatch.get(id);
+    if (iv) { clearInterval(iv); cardWinWatch.delete(id); }
+    if (rec && rec.win && !rec.win.closed) cardBcPost({ kind: 'merge', tabId: id });
+  }
 
   // Find the next tab to activate.
   const ids = [...tabs.keys()];
   const idx = ids.indexOf(id);
   const nextId = ids[idx + 1] || ids[idx - 1] || null;
 
-  // Exit animation: fade + shrink via transform (GPU-accelerated, no reflow),
-  // then remove from DOM. Remaining tabs reflow via their existing flex transition.
-  const tabEl = entry.tabEl;
-  tabEl.style.transition = 'opacity 0.15s ease, transform 0.15s cubic-bezier(0.4,0,0.2,1)';
-  tabEl.style.opacity = '0';
-  tabEl.style.transform = 'scale(0.7)';
-  // Collapse the pane immediately
-  if (entry.paneEl && entry.paneEl.parentNode) {
-    entry.paneEl.style.opacity = '0';
-    entry.paneEl.style.transition = 'opacity 0.12s ease';
-  }
-
+  // Commit the close before returning: subsequent input must target the next
+  // card, not an outgoing card waiting for its animation or timeout.
   const finalize = () => {
-    disposeTabEditor(entry);
-    entry.paneEl.remove();
-    entry.tabEl.remove();
-    tabs.delete(id);
-    for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
+    teardownTab(id);
     // F2 (2026-08-30 作者裁定 + 方案 §8.4 F2): 关闭最后一个标签不再清空共享存档。
     // localStorage 是全浏览器共享的，多窗口下本窗口关最后一个标签即清空全局存档，
     // 其他仍开着的窗口重载后全部标签丢失（多窗口竞态）。语义改为「本窗口会话级清空」——
     // 共享存档保留，重启后从服务端/本地存档恢复。persistTabs 在 tabs.size===0 时早退，
     // 也不会向服务端写清空。
-    persistTabs();
 
     if (activeTabId === id) {
       activeTabId = null;
@@ -544,11 +1070,7 @@ export function closeTab(id) {
     syncCanvasPanelButtons();
   };
 
-  // Use transitionend if supported, fallback to timeout
-  let done = false;
-  const onEnd = () => { if (done) return; done = true; finalize(); };
-  tabEl.addEventListener('transitionend', onEnd, { once: true });
-  setTimeout(onEnd, 200);
+  finalize();
 }
 
 /** Promote a preview (temporary) tab to pinned (permanent).
@@ -556,11 +1078,13 @@ export function closeTab(id) {
  *  pinning makes the tab persistent. No-op if already pinned.
  *  @param {string} id — Tab identifier. */
 export function pinTab(id) {
+  if (!allowCanvasMutation()) return;
   const entry = tabs.get(id);
   if (!entry || entry.pinned) return;
   entry.pinned = true;
   entry.tabEl.classList.remove('preview');
   for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
+  persistTabs();
 }
 
 /** Check whether a tab has unsaved edits — refresh must never clobber them.
@@ -611,17 +1135,296 @@ function scheduleFileRefresh(entry) {
   }, FILE_REFRESH_DEBOUNCE);
 }
 
+/** canvas-ask-restricted-edit ③（diff 卡 Accept 后的画布重载腿）：按 absPath 找
+ *  文件 tab 走同一套 scheduleFileRefresh 守卫（脏编辑/源码模式/在途/冷却——ask 侧
+ *  提案写盘后由 askDock 的 askEditResolved 帧调用，守卫语义与自动刷新完全一致：
+ *  有未存编辑或编辑器在挂时宁可不动 tab，等用户自己处理）。找不到 tab（文件未开）
+ *  = 静默返回——写盘已发生，tab 下次打开自然读到新内容。 */
+export function refreshFileTabByPath(absPath) {
+  if (!absPath) return;
+  for (const entry of tabs.values()) {
+    if (entry.absPath === absPath) { scheduleFileRefresh(entry); return; }
+  }
+}
+
+/** Re-read for a file tab (canvas 文件刷新批, 作者令 2026-10-25；canvas-auto-refresh
+ *  批 2026-11-17 起无手动钮，调用面 = 迟滞引擎到点腿 / 脏态「有更新」提示点击 /
+ *  冲突条「重载」/ 阅读菜单 canvas-request-refresh). Rides the SAME readFile round
+ *  trip as scheduleFileRefresh (pop.readFile → fileContent → workspace-open-item →
+ *  openWorkspaceItem) but bypasses the activation cooldown, never clobbers unsaved
+ *  edits (visible toast, same isTabDirty discipline as every other refresh path)
+ *  and drops the nf-file blob-ledger entry first — a ledger hit renders cached
+ *  bytes with zero fetch, which would silently lie for image/pdf tabs. */
+function refreshFileTab(entry, opts = {}) {
+  if (!entry || !entry.absPath) return;
+  const pane = entry.paneEl;
+  if (!pane || !pane.isConnected) return;
+  if (pane.dataset.sourceMode === '1') return;  // source editor mounted — a re-render would destroy it
+  if (isTabDirty(entry) && !opts.force) {
+    window.__showToast?.(t('canvas.refreshDirty'), 'info');
+    return;
+  }
+  if (entry._refreshing) return;
+  entry._refreshing = true;
+  entry._forceRefreshDirtySnapshot = opts.force && isTabDirty(entry) ? pane._nfSourceDirtyFor : undefined;
+  // Safety: un-busy even if the response never arrives (mirrors the
+  // _refreshing safety window in scheduleFileRefresh).
+  setTimeout(() => { if (entry._refreshing) settleFileRefresh(entry); }, 10000);
+  Promise.all([
+    import('./ws.js'),
+    import('./state.js'),
+    import('./nfFileCache.js').then(({ nfCacheInvalidatePath }) => nfCacheInvalidatePath(entry.absPath)).catch(() => {}),
+  ]).then(([{ sendWs }, { default: stateMod }]) => {
+    if (!tabs.has(entry.id) || entry.paneEl !== pane) { settleFileRefresh(entry); return; }
+    if (!sendWs) { settleFileRefresh(entry); return; }
+    // refresh:true ⇒ the response must not steal activation; manual:true ⇒
+    // openWorkspaceItem re-renders even without inline content (binary legs).
+    window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
+      detail: { path: entry.absPath, pinned: entry.pinned !== false, refresh: true, manual: true },
+    }));
+    sendWs({ type: 'pop.readFile', path: entry.absPath, sessionId: stateMod?.activeSessionId });
+  }).catch(() => { settleFileRefresh(entry); });
+}
+
+/** Clear one file tab's refresh-in-flight state (_refreshing + 脏态「有更新」提示——
+ *  应答已到 = 盘上内容已是刚核过的，提示过期即撤). */
+function settleFileRefresh(entry) {
+  entry._refreshing = false;
+  hideUpdateHint(entry);
+}
+
+// ── 自动检查变更刷新 · 迟滞引擎（canvas-auto-refresh 批，作者令 2026-11-17 逐字
+// 「我们现在 canvas 有个刷新按钮 去掉 改为带迟滞的自动检查变更刷新 时间窗60s」）──
+// 右下「从磁盘重新读取」手动钮整面退役（DOM/挂载同步/i18n/CSS 同批清），换成本
+// 引擎。变更探测**只复用既有通道，不新造面**（无新 WS 操作、无新轮询循环）：
+//   · nf-file-external-change —— 引擎写路径广播（Write/Edit 工具、编辑器保存…），
+//     main.js 的 nf-cache-invalidate 处理器转派；
+//   · explorer-focus-refresh —— explorer 的 fsChanged（引擎侧真实文件 watch 推
+//     送）/ 窗口聚焦 / 慢对账定时器三腿汇流事件（explorer-rt 批）。
+// 两条都只做「记变更时刻 + 布防定时器」，无变更 ⇒ 永不布防 ⇒ 零定时器、零取数、
+// 零 DOM（「无变更 = 零视觉噪音」由构造保证，不靠事后清理）。
+
+/** 静默窗：从**最后一次**探测到变更起算，需连续静默满 60s 才执行一次刷新——
+ *  连续被改 ⇒ 每次信号都重置定时器，一直推迟（不许每 60s 追一次刷不停）。 */
+const AUTO_REFRESH_QUIET_MS = 60_000;
+/** 最小间隔：两次自动刷新之间至少 60s。 */
+const AUTO_REFRESH_MIN_INTERVAL_MS = 60_000;
+
+/** 下一次允许自动刷新的时刻（迟滞判定，纯函数）：
+ *  max(末次变更 + 静默窗, 上次自动刷新 + 最小间隔)。 */
+function autoRefreshDeadline(entry) {
+  return Math.max(
+    (entry._autoChangeAt || 0) + AUTO_REFRESH_QUIET_MS,
+    (entry._lastAutoRefreshAt || 0) + AUTO_REFRESH_MIN_INTERVAL_MS,
+  );
+}
+
+/** 变更信号入口（两通道共用）：记时刻 + （重）布防。每次新信号 clearTimeout 后
+ *  重排 ⇒ 静默窗永远从最后一次变更起算。 */
+function noteAutoFileChange(entry) {
+  if (!entry || !entry.absPath) return;
+  entry._autoChangeAt = Date.now();
+  clearTimeout(entry._autoRefreshTimer);
+  const checkDeadline = () => {
+    const remaining = autoRefreshDeadline(entry) - Date.now();
+    if (remaining > 0) {
+      entry._autoRefreshTimer = setTimeout(checkDeadline, remaining);
+      return;
+    }
+    entry._autoRefreshTimer = null;
+    fireAutoRefresh(entry);
+  };
+  entry._autoRefreshTimer = setTimeout(checkDeadline, Math.max(autoRefreshDeadline(entry) - Date.now(), 0));
+}
+
+/** 到点腿：静默窗（与最小间隔）已满。页签已关/在途 ⇒ 丢弃（后续信号会再布防）；
+ *  脏态或源码态（正在编辑）⇒ 不执行刷新，改挂轻量「有更新」提示（点击立即刷新，
+ *  时机归用户）；干净 ⇒ 走 refreshFileTab 重读（应答未变 ⇒ openWorkspaceItem 不重
+ *  挂 = 零视觉噪音）。消费后清 _autoChangeAt：后台再次收到信号才会重新布防。 */
+function fireAutoRefresh(entry) {
+  if (!tabs.has(entry.id) || tabs.get(entry.id) !== entry) return;
+  if (entry._refreshing) return;
+  entry._autoChangeAt = 0;
+  if (isTabDirty(entry) || entry.paneEl?.dataset.sourceMode === '1') { showUpdateHint(entry); return; }
+  entry._lastAutoRefreshAt = Date.now();
+  refreshFileTab(entry);
+}
+
+// ── 脏态「有更新」提示（canvas-auto-refresh 批）────────────────────────────
+// 「有更新但用户在编辑」的轻量告知面：**不是常驻按钮**——只在迟滞到点且页签
+// 脏/源码态时挂上，任一刷新应答落地（settleFileRefresh）即撤。样式与 B7-2 冲突条
+// 同族（内联样式、零 CSS 依赖、role=status、不进层栈不抢焦点）。点击「立即刷新」
+// 仍走 refreshFileTab 的脏守卫：未保存 ⇒ toast canvas.refreshDirty（既有语义，
+// 决不覆盖本地编辑），保存后点即刷。与冲突条互斥：冲突条在场（引擎写路径已在
+// 信号时刻给过更强提示 + 自带「重载磁盘版本」一键）则跳过；冲突条后到则顶掉
+// 本提示（同一信息不双报）。
+const UPDATE_HINT_CLASS = 'canvas-update-hint';
+
+/** 挂（或保持）某页签的「有更新」提示。幂等；冲突条在场时让位。 */
+function showUpdateHint(entry) {
+  const pane = entry && entry.paneEl;
+  if (!pane || !pane.isConnected) return;
+  if (pane.querySelector('.' + CONFLICT_BAR_CLASS)) return;
+  if (pane.querySelector('.' + UPDATE_HINT_CLASS)) return;
+  const chip = document.createElement('div');
+  chip.className = UPDATE_HINT_CLASS;
+  chip.setAttribute('role', 'status');
+  chip.dataset.path = entry.absPath || '';
+  chip.setAttribute('style', [
+    // md 族查看器的滚动面是 pane 内 absolute inset:0（split.css .canvas-md-scroll），
+    // 会盖住 pane 静态流子元素的指针层——relative+z:5 把提示抬到滚动面之上、
+    // 圆钮簇（z:10）之下（与下方冲突条同修，见彼处注释）。
+    'position:relative', 'z-index:5',
+    'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
+    'margin:var(--cv-safe-top, 56px) var(--ds-space-indent-x) var(--ds-space-2)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
+    'border-radius:var(--ds-radius-button)',
+    'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
+    'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
+    'border:1px solid rgba(255,255,255,0.12)',
+    'box-shadow:0 4px 14px rgba(0,0,0,0.22)',
+  ].join(';'));
+  const text = document.createElement('span');
+  text.className = 'canvas-update-hint-text';
+  text.textContent = t('canvas.updateHint');
+  text.setAttribute('style', 'flex:1 1 auto;');
+  const now = document.createElement('button');
+  now.className = 'canvas-update-hint-refresh';
+  now.type = 'button';
+  now.textContent = t('canvas.updateNow');
+  now.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  now.onclick = () => { refreshFileTab(entry); };
+  chip.append(text, now);
+  pane.prepend(chip);
+}
+
+/** 撤某页签的「有更新」提示（幂等；页签不在 = 无事可做）。 */
+function hideUpdateHint(entry) {
+  entry?.paneEl?.querySelector('.' + UPDATE_HINT_CLASS)?.remove();
+}
+
+// 迟滞判定的只读测试面（spec 断言常数 = 60s 与 t=59/t=60 边界用；零行为能力，
+// 参照 window.__cardBeatTimer 一类既有调试句柄先例）。
+/** @type {any} */ (window).__canvasAutoRefreshDebug = {
+  QUIET_MS: AUTO_REFRESH_QUIET_MS,
+  MIN_INTERVAL_MS: AUTO_REFRESH_MIN_INTERVAL_MS,
+  deadline: autoRefreshDeadline,
+};
+
+// ── B7-2 外部改动冲突条（文档后续批，2026-11-01）─────────────────────────
+// 病灶（计划 §B7-2）：`nf-cache-invalidate` 只喂 nf-file 账本，从不触达编辑器；
+// 而 `scheduleFileRefresh` 在脏页签上**静默 return** —— 合计效果是「文件被改过」
+// 这件事对正在编辑的人完全不可见，用户接着保存就把别人的改动覆盖掉。
+//
+// 现在的语义（冲突条二选一，两条各自改状态；canvas-auto-refresh 批后干净腿入迟滞）：
+//   干净页签 → noteAutoFileChange 入迟滞引擎（静默窗满 60s 读回新内容，不打扰人）；
+//   脏页签   → 出一条冲突条：**保留**（继续编辑，什么都不做）/ **重载**（丢弃本地
+//              编辑，强制重读）。条子内联样式、零 CSS 依赖 —— 与 staleTabHint.js
+//              （2026-10-28 作者令④）同一先例，`app-*.css` 哈希不动。
+// 不进层栈：它不是模态，不加遮罩、不抢焦点、不拦 Tab（壳契约逐字保留）。
+const CONFLICT_BAR_CLASS = 'nf-file-conflict';
+
+/** 渲染（或刷新）某页签上的外部改动冲突条。幂等。 */
+function showExternalConflict(entry) {
+  const pane = entry && entry.paneEl;
+  if (!pane || !pane.isConnected) return;
+  hideUpdateHint(entry);  // 冲突条是更强提示（自带重载一键），顶掉弱一档的「有更新」
+  const old = pane.querySelector('.' + CONFLICT_BAR_CLASS);
+  if (old) old.remove();
+  const bar = document.createElement('div');
+  bar.className = CONFLICT_BAR_CLASS;
+  bar.setAttribute('role', 'status');
+  bar.dataset.path = entry.absPath || '';
+  bar.setAttribute('style', [
+    // canvas-auto-refresh 批顺手修（E4b 验收暴露）：md 族查看器的滚动面是 pane 内
+    // absolute inset:0（split.css .canvas-md-scroll），盖住本条的指针层 ⇒ md 页签
+    // 上「保留/重载」两键看得见点不着（B7-2 落地即如此，未被抓到——彼时验收走
+    // 的是代码页签）。relative+z:5 抬到滚动面之上、圆钮簇（z:10）之下。
+    'position:relative', 'z-index:5',
+    'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
+    'margin:var(--cv-safe-top, 56px) var(--ds-space-indent-x) var(--ds-space-2)', 'padding:var(--ds-space-2) var(--ds-space-inline-x) var(--ds-space-2) var(--ds-space-3)',
+    'border-radius:var(--ds-radius-button)',
+    'background:rgba(28,30,38,0.92)', 'color:#f4f5f7',
+    'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
+    'border:1px solid rgba(255,255,255,0.12)',
+    'box-shadow:0 4px 14px rgba(0,0,0,0.22)',
+  ].join(';'));
+  const text = document.createElement('span');
+  text.className = 'nf-file-conflict-text';
+  text.textContent = t('canvas.conflictDirty');
+  text.setAttribute('style', 'flex:1 1 auto;');
+  const keep = document.createElement('button');
+  keep.className = 'nf-file-conflict-keep';
+  keep.textContent = t('canvas.conflictKeep');
+  keep.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:transparent;color:inherit;font:inherit;');
+  keep.onclick = () => { entry._externalConflict = null; bar.remove(); };
+  const reload = document.createElement('button');
+  reload.className = 'nf-file-conflict-reload';
+  reload.textContent = t('canvas.conflictReload');
+  reload.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid rgba(255,255,255,0.22);background:rgba(255,255,255,0.14);color:inherit;font:inherit;');
+  reload.onclick = () => { entry._externalConflict = null; bar.remove(); refreshFileTab(entry, { force: true }); };
+  bar.append(text, keep, reload);
+  pane.prepend(bar);
+}
+
+/** Which live file tab owns this absolute path (null when none is open). */
+function tabForPath(absPath) {
+  if (!absPath) return null;
+  for (const entry of tabs.values()) if (entry.absPath === absPath) return entry;
+  return null;
+}
+
+// 外部改动广播（main.js 的 nf-cache-invalidate 处理器转派，见 main.js 同批注释）。
+// 挂在 **window** 上：转派方就是 `window.dispatchEvent`，而事件不向下传播到
+// document —— 挂 document 收不到（首版就是这么静默丢的，实测 bar 恒 false）。
+window.addEventListener('nf-file-external-change', (e) => {
+  const path = /** @type {any} */ (e).detail?.path;
+  const entry = tabForPath(path);
+  if (!entry) return;                      // 没开这个文件 ⇒ 无事可做（账本已由 main.js 淘汰）
+  entry._externalConflict = Date.now();
+  if (isTabDirty(entry)) showExternalConflict(entry);
+  // canvas-auto-refresh 批：干净页签不再即刷（原 scheduleFileRefresh 300ms 防抖腿
+  // 退役），改入迟滞引擎——静默窗满 60s 才执行，连续写盘只推迟不追刷。
+  noteAutoFileChange(entry);
+});
+
+// ── 阅读菜单刷新腿（canvas-auto-refresh 批：壳层刷新钮退役后的兜底接线）──────
+// readerChrome.js 的阅读菜单「刷新」原走「有壳层钮就点钮，无钮退化发事件」；钮
+// 整面退役后此事件成为唯一路径——由 pane 反查页签，同一套 refreshFileTab 守卫
+// （脏态 toast、源码态让路），零新机制。
+document.addEventListener('canvas-request-refresh', (e) => {
+  const pane = /** @type {any} */ (e.target);
+  if (!(pane instanceof HTMLElement)) return;
+  for (const entry of tabs.values()) {
+    if (entry.paneEl === pane) { refreshFileTab(entry); return; }
+  }
+});
+
 /** Switch the active tab — shows its pane, hides all others.
  *  Also notifies Monaco editors when they become active (for Ctrl+S focus).
  *  @param {string} id — Tab identifier. */
 export function setActiveTab(id) {
   if (!tabs.has(id)) return;
+  if (!applyingLiveTabsFrame && activeTabId !== id) {
+    pendingLocalActivation = { id, at: Date.now(), generation: ++activationGeneration };
+    lateSyncActive = null;
+  }
   activeTabId = id;
   tabs.forEach(t => {
     t.paneEl.classList.toggle('active', t.id === id);
     t.tabEl.classList.toggle('active', t.id === id);
-    // Notify editor in the activated pane
-    if (t.id === id && t.paneEl._editorHandle) {
+    // Notify editor in the activated pane — and markdown viewers: the
+    // term-citation batch (F5 返回原文档) records each md pane's reading
+    // position (_mdScrollPos, viewers/markdown.js) and restores it here,
+    // because Chromium does NOT preserve the scroll box across a display
+    // flip (measured 178 → 0 in the harness).
+    // 阅读/编辑体验优化批 2026-11-01: 同一条判据再收两个记账者 ——
+    // `.txt` 阅读面（viewers/textReader.js `_nfTxtScrollPos`）与 epub/mobi 阅读
+    // 器（viewers/readerChrome.js `_nfReaderScrollPos`）。判据是「该 pane 有人
+    // 声明了滚动记账」，不是某种格式的白名单。
+    if (t.id === id && (t.paneEl._editorHandle
+        || t.paneEl._mdScrollPos !== undefined
+        || (/** @type {any} */ (t.paneEl))._nfTxtScrollPos !== undefined
+        || (/** @type {any} */ (t.paneEl))._nfReaderScrollPos !== undefined)) {
       t.paneEl.dispatchEvent(new CustomEvent('canvas-tab-activated'));
     }
   });
@@ -635,9 +1438,16 @@ export function setActiveTab(id) {
   persistTabs();
   syncCanvasPanelButtons();
 
-  // Live-refresh file tabs on activation (debounced, dirty-safe).
+  // 自动刷新（迟滞引擎）：后台布防的变更若静默窗（含最小间隔）已满，切到前台
+  // 即刻结算（作者口径「后台 pane 只做标记、切到前台或静默窗满足时才刷」的前
+  // 半腿）；未满则由定时器到点自理，激活本身不再触发整文件重读。
   const entry = tabs.get(id);
-  if (entry) scheduleFileRefresh(entry);
+  if (entry && entry._autoChangeAt && Date.now() >= autoRefreshDeadline(entry)) fireAutoRefresh(entry);
+
+  // canvas-stack：居中标题头随激活易主；叠卡开着时环重置到新 active 的前景位
+  // （外部换签——agent 开文件 / 换入编排——都收敛到「新 canvas 在前景位」）。
+  renderCanvasHeader();
+  if (deck.open && !deck.finalizing && deck.ringActiveId !== id) deckRemountForActive();
 }
 
 /** Retarget open file tabs after an explorer drag-to-move: update absPaths,
@@ -647,6 +1457,7 @@ export function setActiveTab(id) {
  *  @param {string} newRel — new explorer-relative path prefix
  *  @param {string} rootPath — explorer root (absolute, '' = default root) */
 export function retargetFileTabs(oldRel, newRel, rootPath) {
+  if (!allowCanvasMutation()) return;
   const root = (rootPath || '').replace(/\/+$/, '');
   const absOld = root ? root + '/' + oldRel : null;
   const absNew = root ? root + '/' + newRel : null;
@@ -706,6 +1517,30 @@ export function hasTab(id) {
   return tabs.has(id);
 }
 
+/** The active tab's content pane — the Ctrl/Cmd+F file-search routing face
+ *  (fileSearch.js): whether a file tab is displayed decides whether the
+ *  keystroke searches file content or falls back to the chat history search.
+ *  @returns {HTMLElement|null} */
+export function activeCanvasPane() {
+  const entry = activeTabId ? tabs.get(activeTabId) : null;
+  return entry ? entry.paneEl : null;
+}
+
+/** Tab entry accessor (canvas ask mode 批 2026-10-28：ask dock 以 absPath 建
+ *  每文件独立 session 的只读面；外部模块禁直读 tabs Map）。
+ *  @param {string} id
+ *  @returns {{id: string, title: string, absPath: string|null, filePath: string|null}|null} */
+export function canvasTabEntry(id) {
+  const e = tabs.get(id);
+  if (!e) return null;
+  return { id: e.id, title: e.title, absPath: e.absPath || null, filePath: e.filePath || null };
+}
+
+/** Active tab entry accessor（同上，切卡即切该文件会话的读数单点）。 */
+export function activeCanvasEntry() {
+  return activeTabId ? canvasTabEntry(activeTabId) : null;
+}
+
 // ── File viewers ───────────────────────────────────────────
 
 /** Render a web URL into a tab pane: slim toolbar (hostname + "open in new
@@ -721,7 +1556,7 @@ function renderUrlPane(pane, url) {
   // (javascript:, data:, file:) so the sandbox stays meaningful.
   if (!/^https?:\/\//i.test(url)) {
     const err = document.createElement('div');
-    err.style.cssText = 'padding:24px;font-size:13px;color:var(--color-text-muted)';
+    err.style.cssText = 'padding:var(--ds-space-6);font-size:var(--ds-fs-body);color:var(--color-text-muted)';
     err.textContent = '无法显示该链接：仅支持 http/https 网页。';
     pane.appendChild(err);
     return;
@@ -729,10 +1564,10 @@ function renderUrlPane(pane, url) {
 
   // ── Top toolbar: hostname + "open in new window" fallback ──
   const bar = document.createElement('div');
-  bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:12px;' +
-    'height:32px;padding:0 12px;min-width:0;' +
+  bar.style.cssText = 'flex:none;display:flex;align-items:center;gap:var(--ds-space-3);' +
+    'height:32px;padding:0 var(--ds-space-3);min-width:0;' +
     'border-bottom:1px solid var(--color-border);' +
-    'font-size:12px;color:var(--color-text-muted);user-select:none';
+    'font-size:var(--ds-fs-hint);color:var(--color-text-muted);user-select:none';
 
   const host = document.createElement('span');
   let hostText = url;
@@ -761,8 +1596,8 @@ function renderUrlPane(pane, url) {
 
   // ── Bottom hint strip — always visible (embedding refusal is undetectable) ──
   const hint = document.createElement('div');
-  hint.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;gap:6px;' +
-    'padding:4px 12px;font-size:11px;color:var(--color-text-muted);opacity:.7;user-select:none';
+  hint.style.cssText = 'flex:none;display:flex;align-items:center;justify-content:center;gap:var(--ds-space-1h);' +
+    'padding:var(--ds-space-1) var(--ds-space-3);font-size:var(--ds-fs-meta);color:var(--color-text-muted);opacity:.7;user-select:none';
   const hintText = document.createElement('span');
   hintText.textContent = '如果页面没有显示，可能是该网站不允许嵌入';
   const hintLink = document.createElement('a');
@@ -814,24 +1649,69 @@ function renderFilePlaceholder(paneEl, errorMsg, absPath) {
   wrap.style.cssText = [
     'display:flex',
     'flex-direction:column',
-    'gap:8px',
+    'gap:var(--ds-space-2)',
     'align-items:flex-start',
     'justify-content:center',
     'height:100%',
-    'padding:24px',
+    'padding:var(--ds-space-6)',
     'color:var(--color-text-muted)',
-    'font-size:14px',
+    'font-size:var(--ds-fs-subtitle)',
   ].join(';');
   const iconRow = document.createElement('div');
   iconRow.textContent = t('canvas.unreadableTitle');
-  iconRow.style.cssText = 'font-weight:600;color:var(--color-text);font-size:15px;';
+  iconRow.style.cssText = 'font-weight:600;color:var(--color-text);font-size:var(--ds-fs-title);';
   const path = document.createElement('div');
   path.textContent = absPath || '';
-  path.style.cssText = 'font-family:var(--font-mono,monospace);font-size:12px;word-break:break-all;';
+  path.style.cssText = 'font-family:var(--font-mono,monospace);font-size:var(--ds-fs-hint);word-break:break-all;';
   const hint = document.createElement('div');
   hint.textContent = `${readErrorHint(errorMsg)}${errorMsg ? ' ' + errorMsg : ''}`;
   wrap.append(iconRow, path, hint);
   paneEl.appendChild(wrap);
+}
+
+/** 乐观打开腿的取数超时（pop-optimistic-canvas 批）：到期即 abort + 「超时」可读
+ *  原因 + 重试键（占位不再永远转圈）。 */
+const OPTIMISTIC_FILE_TIMEOUT_MS = 30000;
+
+/** Pop 文件卡的**乐观打开**单点（pop-optimistic-canvas 批 2026-11-18 · 作者令逐字
+ *  「先乐观打开在canvas占位防丢失 然后在canvas用一个环来显示加载进度」）。
+ *
+ *  形态 = 复用 attachmentPreview.previewWithProgress 这一既有单点 —— 它已实现
+ *  「openTab **同步**先出占位 + 进度环 → 取数 → 渲染 / 失败可见 + 重试」，并且进度环
+ *  的 DOM/样式单源是 progressPane.js + css/split.css `.nf-progress-*`（本批不许新起
+ *  第二套环体系 ⇒ 这里是**引用**不是复制）。动态 import 是防静态环的既有先例
+ *  （attachmentPreview.js 静态 import 本模块）。
+ *
+ *  字节腿 = 既有 nf-file 逐路径票据路（`ticketUrl` ⇒ `/api/nf-file?path&ticket`），
+ *  `fetchBlobWithProgress` 流式读并回进度（Content-Length 可得 ⇒ 确定性环，否则
+ *  不定环）；`nfFileCache` 账本命中 ⇒ 零取数直渲染（二次打开即显）。
+ *  `signal` 由 previewWithProgress 下发：关页签 / 超时即**真 abort** 在飞 fetch。
+ * @param {{ id: string, title: string, absPath: string, pinned: boolean }} p
+ * @returns {Promise<'ok'|'unsupported'|'failed'|'aborted'>}
+ */
+async function openOptimisticFile({ id, title, absPath, pinned }) {
+  const { previewWithProgress } = await import('./attachmentPreview.js');
+  return previewWithProgress({
+    id,
+    title,
+    fileName: title,
+    absPath,
+    pinned,
+    cacheKey: 'nf:' + absPath,
+    // Pop 交付件常是 HTML 动画：html 在附件预览腿被排除（不受信远端内容），
+    // 但 Pop 文件是用户自己的本机交付件（explorer 双击同一文件即走同一 html
+    // viewer，信任域一致）⇒ 本腿显式放开排除面。
+    allowExcluded: true,
+    timeoutMs: OPTIMISTIC_FILE_TIMEOUT_MS,
+    load: async ({ onProgress, signal }) => {
+      const [{ ticketUrl }, { fetchBlobWithProgress }] = await Promise.all([
+        import('./nfTicket.js'),
+        import('./nfFileCache.js'),
+      ]);
+      const res = await fetchBlobWithProgress(await ticketUrl(absPath), onProgress, { signal });
+      return { blob: res.blob, version: res.version };
+    },
+  });
 }
 
 /** Open a file or workspace item in a Canvas tab.
@@ -843,8 +1723,15 @@ export async function openWorkspaceItem(item) {
   // id is let (not const): the absPath dedupe below may rewrite it to the
   // existing tab's id for the same file.
   let { id } = item;
-  const { itemType, title, content, absPath, size, pinned, anchor } = item;
+  const { itemType, title, content, absPath, size, pinned, anchor, warnings, stream, mtimeMs, readOnly, manual, refSourceTab } = item;
   if (!id) return;
+
+  // #910 追补（2026-10-27）：readFile 恢复管线（sendFileRestoreRequests）的
+  // 应答在此认领「恢复来历」——发请求前登记进 requestedFilePaths，这里一次性
+  // 消费。恢复腿 ⇒ noRevive：命中生效墓碑拒开、不落重开账。explorer 双击 /
+  // Pop 卡 / 引用跳转等显式打开无标记，语义不变。骨架错误腿（下方 error
+  // 分支）同受此闸：恢复一个「文件不可读」骨架也是复活。
+  const viaRestore = requestedFilePaths.delete(absPath) || requestedFilePaths.delete(item.path);
 
   // URL type — render the page in a sandboxed iframe. Handled before all
   // file logic: URL tabs have no absPath (scheduleFileRefresh skips them)
@@ -869,11 +1756,15 @@ export async function openWorkspaceItem(item) {
   if (item.error) {
     // 已有该路径标签（后台刷新失败）→ 保留原内容，不覆盖成错误提示。
     if (tabs.has(id)) {
+      // 手动刷新收到错误应答（文件此刻不可读）：原内容照旧保留（F3 纪律），
+      // 但点击不能无声蒸发——给可见失败反馈。后台刷新照旧静默。
+      if (manual) window.__showToast?.(t('canvas.refreshFailed', { error: item.error }), 'error');
       if (!item.background) setActiveTab(id);
+      settleFileRefresh(tabs.get(id));
       return;
     }
     const placeholderTitle = title || (absPath ? absPath.split('/').pop() : id);
-    const entry = openTab(id, placeholderTitle, { type: 'code', pinned: !!pinned, absPath: absPath || id });
+    const entry = openTab(id, placeholderTitle, { type: 'code', pinned: !!pinned, absPath: absPath || id, noRevive: viaRestore });
     if (!entry) return;
     renderFilePlaceholder(entry.paneEl, item.error, absPath || id);
     entry._lastRefreshAt = Date.now();
@@ -902,15 +1793,81 @@ export async function openWorkspaceItem(item) {
   // Never re-render over unsaved edits or a mounted source-mode editor.
   if (tabs.has(id)) {
     if (pinned) pinTab(id);
+    // D 项（2026-10-08 主人报「Pop 出的 SVG 媒体卡点击无反应」）：落在**既有
+    // 页签**上的打开必须可见。本分支早退（不走 openTab ⇒ 无 openCanvas），原先
+    // 只 setActiveTab —— 面板折叠时等于把激活写进隐藏面板，用户看到的是
+    // 「点了没反应」；刷新后 restore 经 openTab 重开面板，才显得「刷新就好了」。
+    // 补齐 state 4 语义（同文件 onCanvasPanelButtonClick :455 既有先例：
+    // tab open + Canvas closed ⇒ openCanvas + setActiveTab）。background 刷新
+    // 仍不抢激活（同下方 :1067 口径），面板开着的路径零变化。
+    if (!item.background && !isCanvasOpen()) openCanvas();
     const entry = tabs.get(id);
-    entry._refreshing = false;  // response arrived (or user-initiated open)
+    const forceSnapshot = item.background && manual ? entry._forceRefreshDirtySnapshot : undefined;
+    entry._forceRefreshDirtySnapshot = undefined;
+    const forceDiscard = forceSnapshot != null && forceSnapshot === entry.paneEl._nfSourceDirtyFor && entry.paneEl.dataset.sourceMode !== '1';
+    settleFileRefresh(entry);  // response arrived (or user-initiated open) — un-busy the refresh button
     // A response arrived = the file was freshly checked. Update unconditionally
     // — binary viewers (image/pdf/...) receive no content and never re-render,
     // so without this their _lastRefreshAt stays stale, the cooldown never
     // engages, and refresh→setActiveTab loops forever (each cycle stealing
     // activation back to the binary tab — "can't switch away from an image").
     entry._lastRefreshAt = Date.now();
-    if (content && !isTabDirty(entry) && entry.paneEl.dataset.sourceMode !== '1') {
+    // canvas-auto-refresh 批：记 (size:mtimeMs) 版本读数——自动重读对二进制页签
+    // （应答无 content）用同一把尺判重，未变不再整面重挂/重取字节（流式大文本的
+    // acceptMeta 判重同式先例，见下方 stream 分支）。先留旧读数：判重比的是上一
+    // 次应答，不是本次刚记的这份。
+    const prevFileVer = entry._fileVer;
+    entry._fileVer = `${size || 0}:${mtimeMs || 0}`;
+    // Streamed large-text tab (卡 §三.3 后台刷新行): the response carries NO content,
+    // so the re-render branch below never fires. Compare mtimeMs/size instead —
+    // changed ⇒ the view voids its loaded windows + index and re-fetches (never a
+    // silent mix of two revisions). Unchanged ⇒ nothing to do.
+    if (stream) {
+      const view = /** @type {any} */ (entry.paneEl)._streamClient;
+      if (view && typeof view.acceptMeta === 'function') view.acceptMeta({ mtimeMs, size });
+    }
+    // wiki-graph batch: consume a stashed jump anchor here — a reference
+    // click into an ALREADY-OPEN document rides the same readFile round trip
+    // as a first open, and the anchor must survive into the re-render
+    // (markdown.js consumes ctx.anchor). The stash is deleted unconditionally:
+    // a jump into a source-mode tab does not fire later as a stale jump.
+    const stash = absPath ? pendingRefAnchors.get(absPath) : undefined;
+    if (absPath) pendingRefAnchors.delete(absPath);
+    // F5 返回原文档：引用跳转落入既有页签时同样记账/消费来源（单层，覆写）。
+    // 后台刷新不带 refSourceTab 且永不记账（不偷来源）。来源顺带升格 pinned
+    // （vs code preview 语义：file 组预览页签会被下一次打开顶替——来源被顶替
+    // = 返回钮永远无从谈起；引用跳转是明确的导航意图，来源必须保活）。
+    const stashSrc = absPath ? pendingRefSources.get(absPath) : undefined;
+    if (absPath) pendingRefSources.delete(absPath);
+    const srcWanted = refSourceTab || stashSrc;
+    if (srcWanted && srcWanted !== id && !item.background) {
+      entry._refSource = srcWanted;
+      if (tabs.has(srcWanted)) pinTab(srcWanted);
+    }
+    // Jump into a tab that is ALREADY open: this branch switched to it without
+    // any re-render, so the anchor must be applied to the LIVE viewer here —
+    // the markdown viewer keeps its analysis on the pane (nf-jump-anchor).
+    const jumpIntent = anchor || stash;
+    if (jumpIntent && !item.background) {
+      if (entry.type === 'markdown' && entry.paneEl.dataset.sourceMode !== '1') {
+        entry.paneEl.dispatchEvent(new CustomEvent('nf-jump-anchor', { detail: jumpIntent }));
+      }
+      const pgExisting = jumpIntent.pageStart;
+      if (Number.isFinite(pgExisting)) /** @type {any} */ (entry.paneEl)._scrollToPage?.(pgExisting);
+    }
+    // 手动刷新（manual，canvas 文件刷新批）：二进制腿的 readFile 应答不带
+    // content——没有 manual 旗标时该分支对图片/PDF 永不触发，自动刷新就会
+    // 无声空过。流式大文本除外：其变更面走上方 acceptMeta（保滚动位），
+    // 整面重挂反而把读者扔回文件头。
+    // canvas-auto-refresh 批：二进制腿加 (size:mtimeMs) 判重——版本读数未变
+    // 的重读（聚焦/慢对账布防的自动腿常态）不再重挂/重取字节。
+    const binUnchanged = !content && !stream && prevFileVer !== undefined && prevFileVer === entry._fileVer;
+    if ((content || manual) && !binUnchanged && !stream && (!isTabDirty(entry) || forceDiscard) && entry.paneEl.dataset.sourceMode !== '1') {
+      if (forceDiscard) {
+        entry.paneEl._dirty = false;
+        entry.paneEl._nfSourceDirtyFor = null;
+        entry.paneEl.dispatchEvent(new CustomEvent(EVENTS.EDITOR_DIRTY_CHANGE, { detail: { dirty: false } }));
+      }
       // Skip the re-render when the live editor already shows this content —
       // remounting Monaco on every refresh would steal the cursor/scroll for
       // zero visible change (matters for focus-triggered refreshes).
@@ -921,7 +1878,8 @@ export async function openWorkspaceItem(item) {
           entry.paneEl._editorHandle = null;
         }
         const { renderFile } = await import('./fileViewers.js');
-        await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath });
+        await renderFile(entry.paneEl, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: anchor || stash, warnings });
+        notifyCardUpdate(id);   // UI 批⑧：独立窗内容同步（卡窗重读文件）
       }
     }
     // Background refresh responses must not steal activation — the user may
@@ -939,21 +1897,62 @@ export async function openWorkspaceItem(item) {
   // showing a blank tab. The fileContent handler will dispatch a new
   // workspace-open-item with full content and correct itemType.
   if (content === '' && itemType === '' && absPath) {
+    // 手机端自动弹页修复（作者报障 2026-10-30 12:30「点了不自动弹 canvas」）：
+    // 原先把「开面板」完全押在 pop.readFile → fileContent 应答之后的 openTab
+    // 里——应答一慢（手机网络）或时序一丢，点击零反馈，用户手动开面板后才看到
+    // 内容。更隐蔽的根因：boot 恢复腿（restoreTabs）在手机端把 canvas-open 永久
+    // 置真（移动层离开 canvas 页从不摘 body 类），「canvas-open 上升沿」这个
+    // 自动弹页触发源对已恢复会话**永不复现**——只剩应答驱动的 tab-switched
+    // 一根独腿。故点击瞬间同步：①开面板（桌面即时反馈 + 闭合时造上升沿）；
+    // ②发显式用户意图事件 nf:canvas-open-intent（移动层直收、绕过启动抑制闸
+    // ——它天生是用户点击，不是 boot 恢复）；③记旗补「点击早于层挂载」竞态。
+    // background 腿仍不抢面板。
+    if (!item.background) {
+      if (!isCanvasOpen()) openCanvas();
+      try {
+        (/** @type {any} */ (window)).__nfPendingCanvasOpen = Date.now();
+        document.dispatchEvent(new CustomEvent('nf:canvas-open-intent'));
+      } catch { /* ignore */ }
+    }
+    // ── Pop 文件卡乐观打开（pop-optimistic-canvas 批 2026-11-18）──────────────
+    // 唯一发射点 = popArtifacts/chat.popArtifact 的 openPopArtifact（detail 上的
+    // `optimisticOpen`）。走**单点** openOptimisticFile：占位标签 + 进度环在任何
+    // 请求**之前**出现（改前形态把「开标签」押在 pop.readFile 应答之后 ⇒ 手机端/
+    // 慢网络/票过期/判定拒绝时点击零反馈 = 本批要修的缺陷本体）。取数失败/超时/取消
+    // 全在占位里可读可见 + 重试键，**绝不**静默回落到下面那条老腿（禁「取不到就
+    // 悄悄什么都不做」）。其余调用方（引用跳转 anchor / previewLocalPath / 恢复腿）
+    // 不置该旗标 ⇒ 逐字走下方既有 pop.readFile 老路，零回归。
+    if (item.optimisticOpen) {
+      const fileName = title || absPath.split('/').pop() || absPath;
+      await openOptimisticFile({ id, title: fileName, absPath, pinned: !!pinned });
+      return;
+    }
     // #303 C3: a document-reference jump carries a page anchor — stash it so
     // it survives the readFile round trip (the response item has no anchor)
-    // and is consumed at render time below.
+    // and is consumed at render time below. The wiki-graph batch widened the
+    // stash from PDF pageStart to the full anchor payload (block/heading/line).
     const pgStash = anchor && anchor.pageStart;
-    if (Number.isFinite(pgStash)) pendingRefAnchors.set(absPath, { pageStart: pgStash });
+    if (anchor && (Number.isFinite(pgStash) || anchor.kind)) {
+      pendingRefAnchors.set(absPath, anchor);
+    }
+    // F5 返回原文档：来源页签 id 与锚同法熬过 readFile 往返（fileContent 应答
+    // 再派发的 item 不带 refSourceTab——explorer.js 载荷里没有这个字段）。
+    if (refSourceTab && refSourceTab !== id) pendingRefSources.set(absPath, refSourceTab);
     Promise.all([
       import('./ws.js'),
       import('./state.js')
     ]).then(([{ sendWs }, { default: state }]) => {
-      const sid = state?.activeSessionId;
-      if (sendWs && sid) {
+      // D 项（2026-10-08）：🔴 摘掉旧 `if (sendWs && sid)` 的 `&& sid` 静默吞——
+      // pop.readFile 的后端派发（WsFileOpsHandlers.scala:44 → handlePopReadFile）
+      // 只读 path、不读 sessionId，旧闸在 activeSessionId 为空时把整次打开静默
+      // 蒸发（点击零反馈零日志）。对齐同文件另两个发送点（scheduleFileRefresh /
+      // sendFileRestoreRequests 均不发会话闸）：sessionId 仅透传（无会话 ⇒
+      // undefined）；WS 未连时 sendWs 自带有界排队、重连补发（ws.js sendWs）。
+      if (sendWs) {
         window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
           detail: { path: absPath, pinned: !!pinned }
         }));
-        sendWs({ type: 'pop.readFile', path: absPath, sessionId: sid });
+        sendWs({ type: 'pop.readFile', path: absPath, sessionId: state?.activeSessionId });
       }
     });
     return;
@@ -965,27 +1964,47 @@ export async function openWorkspaceItem(item) {
   // Use instant removal (no exit animation) so the new tab appears in the right
   // position immediately — animating the old tab's removal would leave the new
   // tab in the wrong position until the animation finishes.
+  // F5 返回原文档：来源升格 pinned 必须发生在下方两处预览顶替逻辑之前（此块 +
+  // openTab 内）——来源若还是 preview 形态，会在这一步被顶替掉（返回钮永远
+  // 无从谈起）。引用跳转是明确的导航意图，来源必须保活。
+  const newStashSrc = absPath ? pendingRefSources.get(absPath) : undefined;
+  if (absPath) pendingRefSources.delete(absPath);
+  const newSrcWanted = refSourceTab || newStashSrc;
+  if (newSrcWanted && newSrcWanted !== id && tabs.has(newSrcWanted)) pinTab(newSrcWanted);
   const itemPreviewKey = previewKeyOf(itemType, absPath);
   const oldPreviewId = previewTabs.get(itemPreviewKey);
   if (!pinned && oldPreviewId && oldPreviewId !== id) {
     const oldEntry = tabs.get(oldPreviewId);
-    if (oldEntry) {
+    if (oldEntry && (canvasWriter.role() === 'writer' || readerLocalTabs.has(oldPreviewId))) {
       disposeTabEditor(oldEntry);
       document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id: oldPreviewId } }));
       oldEntry.paneEl.remove();
       oldEntry.tabEl.remove();
       tabs.delete(oldPreviewId);
+      const wasReaderLocal = readerLocalTabs.delete(oldPreviewId);
+      if (!wasReaderLocal && canvasWriter.role() === 'writer' && !localUnsynced) recordTombstone(oldPreviewId);
       previewTabs.delete(itemPreviewKey);
       persistTabs();
     }
   }
 
-  const entry = openTab(id, title || id, { type: itemType, pinned: !!pinned, absPath: absPath });
+  const entry = openTab(id, title || id, {
+    type: itemType, pinned: !!pinned, absPath: absPath,
+    rootPath: item.rootPath || null, filePath: item.path || null,
+    noRevive: viaRestore, // #910 追补：readFile 恢复管线应答不是重开意图
+  });
   if (!entry) return;
+  // F5 返回原文档（词条引用批 batch 2）：仅「经引用跳转打开」的页签记账来源；
+  // 手动打开的页签无来源 ⇒ 按钮不出现（§5.5 触发条件）。openTab 内部的
+  // setActiveTab 跑在本记账之前，这里补一次 sync 让首开即见钮。
+  if (newSrcWanted && newSrcWanted !== id) {
+    entry._refSource = newSrcWanted;
+    syncRefBackButton();
+  }
   const pane = entry.paneEl;
 
   // Listen for dirty state changes from Monaco editor
-  pane.addEventListener('editor-dirty-change', (e) => {
+  pane.addEventListener(EVENTS.EDITOR_DIRTY_CHANGE, (e) => {
     const tabEl = entry.tabEl;
     const labelEl = tabEl.querySelector('.canvas-tab-label');
     if (labelEl) {
@@ -997,6 +2016,9 @@ export async function openWorkspaceItem(item) {
         labelEl.classList.remove('dirty');
       }
     }
+    // canvas-stack：脏标记同源投射——居中标题头绿点 + 该页签的环卡名称条绿点。
+    renderCanvasHeader();
+    deckRefreshDirty(id);
   });
 
   const { renderFile } = await import('./fileViewers.js');
@@ -1005,14 +2027,2968 @@ export async function openWorkspaceItem(item) {
   const stashAnchor = absPath ? pendingRefAnchors.get(absPath) : undefined;
   if (absPath) pendingRefAnchors.delete(absPath);
   const renderAnchor = anchor || stashAnchor;
-  await renderFile(pane, { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor });
+  // `objectUrl` is the blob-URL byte leg imgfix added to the render context
+  // (consumed by viewers/{image,pdf,docx,xlsx,pptx,epub}.js as `objectUrl ||
+  // await ticketUrl(absPath)`). It is a real runtime field but is not declared on
+  // the shared ViewerContext typedef (utils.js), so the context is widened here
+  // locally — typed only, the object passed to renderFile is unchanged.
+  // `stream`/`mtimeMs` are the text-stream descriptor fields (卡 §三.4): also
+  // widened here for the same reason — the viewer reads them, nothing else changes.
+  /** @type {import('./utils.js').ViewerContext & {objectUrl?: string, stream?: any, mtimeMs?: number, readOnly?: boolean}} */
+  const renderCtx = { itemType, content, absPath, fileName: title, size, path: item.path, rootPath: item.rootPath, anchor: renderAnchor, warnings, objectUrl: item.objectUrl, stream: item.stream || null, mtimeMs: item.mtimeMs || 0, readOnly: readOnly === true };
+  await renderFile(pane, renderCtx);
   entry._lastRefreshAt = Date.now();  // just rendered — don't immediately re-fetch
+  notifyCardUpdate(id);               // UI 批⑧：独立窗首渲/重渲同步（卡窗自读文件）
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+// canvas-stack（v5 定稿落地）——标签行 → 叠卡引擎
+//
+// 样张 = reports/20261020_081631_canvas-card-stack-mockup-v5（作者批「就是这个效果」），
+// 模型裁定照 v5 设计报告 §二全量移植：
+//   · 整区缩放（v4①②）：.stacked 落 #canvas-panel，translateY(8px) scale(0.85)；
+//   · 前景轮换（v5①）：环含全部页签（ring[0]=active=前景位），滚轮连续擦洗
+//     （1/240 增益 + rAF 指数趋近），卡片循环穿过前景位，canvas 本尊经交接窗
+//     与面板交叉淡换（d₀ 驱动位姿/alpha，no-trans 逐帧直写）；
+//   · 浮钮固定（v5②）：fab 是 body 级固定元素（panel.contains(fab)===false），
+//     JS 逐帧同步面板盒（top 10 / right 12 / 40px；移位批 2026-10-22 曾迁右下
+//     bottom16，回退批同日回访裁定迁回顶右原位），z-250 恒在卡组与面板之上；
+//   · 换入（v4④）：点前景卡放大回满幅 → setActiveTab 落位 → 旧 canvas ghost 缩回；
+//   · 划走（v2⑥/v4⑥/v5①）：作用于前景面（canvas 前景=拖面板，环卡前景=拖该卡），
+//     6px 点击界分 / 20% 区宽或 0.55px/ms 速度阈 / 13° 侧旋甩出 / spring 弹回；
+//   · 关闭接管同 closeTab 语义（teardownTab 共核）；非前景卡关 = 环流就地收敛保相位；
+//   · 本批三精修：①趋近 10/7→12/9、翻落曲线收幅（30/40/6/30→26/32/5/24）、
+//     morph 时长统一 0.28s 档；②投影 token 浅一档（split.css --card-shadow）；
+//     ③× 退役 → 竖排浅色滑动提示（.card-swipe-hint / .deck-swipe-hint）。
+//
+// uifix 批（作者令 2026-10-20 四件，重写叠卡视角）——推翻/升级：
+//   · ③a 层叠阴影重做：投影按环深**渐次减弱**（JS 每帧给卡打 data-dim 层级，
+//     CSS 四档 token），露边间距**拉开**（deckPeekStep 三版档位，body.deck-look-v1
+//     收敛 / v2 均衡(默认) / v3 拉开——作者挑版，setLook 即热切换）；
+//   · ③b 卡片快照：开 deck 时对每张卡截取**真实内容克隆**（markdown=渲染面克隆/
+//     image=img 复源/pdf=首页像素拷贝），Monaco/iframe 类不可克隆面回落类型 mock；
+//     快照 Map 仅存到 deck 关闭（无常驻重渲染，擦洗仍是纯 transform）；
+//   · ③c 滚轮重做（触控板/鼠标分流）：wheel 只在叠卡面内捕获（页面其余区域原生
+//     滚动不被劫持——「双指不与页面滚动打架」）；触控板连续小 delta 直通 scrub，
+//     事件流停 110ms 后速度 EMA 滑行衰减补动量；鼠标格（|dy|≥40）按档位增益
+//     ≈一格近一卡；
+//   · ③d 竖排「滑动关闭」提示文字整体退场（作者令）；
+//   · ③e 卡右上角 × 钮回归（作者最新口径推翻精修③）：pointerdown 阻断防拖划误触，
+//     click 走 deckRequestClose 同右键菜单一条腿（划走手势保留）。
+//
+// 作者补充令（竖拖换卡）：上下拖动手势同可换卡（不只鼠标滚轮）——
+//   · Pointer Events 纵向拖动驱动（pointerdown+move 的 dy 增量喂给同一环形 scrub
+//     引擎：target += Δdy × 增益，跟手连续）；松手带少量惯性（EMA 速度 × 冲程、
+//     钳 ±半卡）后 Math.round 贴靠最近卡（拖动手势不停半卡交叉态；滚轮保持连续
+//     不贴靠）；触屏/触控板/鼠标拖动统一走 Pointer Events 一条通路；
+//   · 与「滑动关闭」按主导轴分工：|dx|>|dy| 横向主导 = 划走关闭（原逻辑逐字保持），
+//     否则纵向主导 = scrub 换卡（对角等幅平局从轻取纵——scrub 非破坏性）；
+//   · 8px 死区内不锁轴（此前 <6px 视为点击的语义升格为「未锁轴=点击」）；单卡
+//     （M<2）纵锁降级死轴静默（不做破坏性降级去触发关闭）；
+//   · 既有让路规则原样保持：拖划起点落在可交互子树（Monaco/按钮/画布等）不启动，
+//     与滚轮/键盘同一套让路面。
+//
+// UI 批（作者令 2026-10-21 五件，堆叠视图）——推翻/新增：
+//   · ①堆叠态顶部两行帮助条（操作提示行 + 前景计数行）整行退役：deck-foot 元素
+//     整体移除，面板上一个字不留（交互自学，收进 ？ 帮由后续批定）；
+//   · ②堆叠按钮连点稳定：三类失效成因修复——(a) 重入锁泄漏（closeDeck 收场不清
+//     deck.drag/deck.cardDrag，残留 flag 让 fab 守卫永久吞点击）→ 收场统一清场；
+//     (b) 指针捕获丢失（环卡在拖划中途被移除——外部换签重挂环/摘卡收敛——
+//     pointerup 永不达卡）→ deckFrame 逐帧失扫 + 收场清场；(c) FX 窗口吞点击
+//     （selFly/ghostFx/faceFx/exitCardFx/finalizing 期间 fab 点击被静默丢弃）→
+//     改为登记排队，FX 收场即补发一次 toggle——快速连点每次都计数；
+//   · ③每卡真实快照升级：md/图/pdf 克隆腿之外补 Monaco（.view-lines 渲染层克隆，
+//     令牌色走全局注入样式）与 html 页签（srcdoc 同源 iframe 内容文档重挂）；
+//     快照活性窗 |d|≤2.5——近卡挂活性同步（源滚动 → 缩略 translateY 镜像 +
+//     源 DOM 变更防抖重截），深处卡降级静态快照（真实内容、不再骨架灰条）；
+//   · ④动效层重做：deckPoseOf 加缩放坡道（近卡放大/远卡缩小）+ 视差 translateZ
+//     （透视深度）+ 翻落支缩幅；d=0 两侧连续（前景 scale=1/z=0 基姿不变，交接
+//     窗换手无跳变）；滚轮/竖拖换卡机制原样（动效是纯位姿层重写）；
+//   · ⑤边缘阴影柔化：卡描边退役（1px 硬边 → 无边框，层次靠明暗差），投影 token
+//     全族放大模糊半径、降低不透明度（羽化融边），card-shade 改纵向渐变
+//     （近卡顶缘与背景的过渡带），split.css 同步。
+//
+// 与样张的落地差异（deviations，均为真实 app 约束所需）：
+//   · deck-layer / fab 为 body 层 fixed 元素逐帧同步面板盒（真实 app 的
+//     面板挂 body flex 行，样张的 #canvas-area 包裹层不存在；deck-foot 已于
+//     UI 批 ① 退役）；
+//   · 卡面缩略为类型族 CSS mock（样张同款），面板页签副标「面板」= 无 absPath 页签；
+//   · 面板拖划起点落在可交互子树（按钮/编辑器/画布等）时不启动（保护真实查看器交互）；
+//   · 键盘/滚轮在可编辑焦点（输入框/Monaco）让路；Ctrl+滚轮（页面缩放语义）不拦截；
+//   · 触摸可达性（竖拖补充令）：.deck-card 补 touch-action:none（卡面纯 chrome 无
+//     滚动内容）；面板面触点常落在 pane 滚动容器内部 —— Chromium 取 touch-action
+//     以滚动容器为界，.stacked 的 touch-action:none 够不着触点链，故 deck 态面板
+//     touchstart 在非交互子树 preventDefault（原生滚动不启动、pointercancel 不打断
+//     竖拖；交互子树照旧让路）—— 触屏/触控板/鼠标拖动统一走 Pointer Events 一条通路。
+// ═════════════════════════════════════════════════════════════════════════
+
+const DECK_SCALE = 0.85;
+const DECK_SHIFT = 8;
+// 精修①：擦洗/展开 rAF 指数趋近系数（样张 10 / 7 → 12 / 9，「跟手不拖沓」）
+const DECK_SCRUB_APPROACH = 12;
+const DECK_SPREAD_APPROACH = 9;
+// 精修①：翻落支曲线收幅（样张 30/40 + 6/30 → 26/32 + 5/24，d=0 两侧连续不变）
+const DECK_FALL_DROP = 26;
+const DECK_FALL_ARC = 32;
+const DECK_FALL_TILT = 5;
+const DECK_FALL_TILT_ARC = 24;
+// 精修①：FX/morph 时长统一 0.28s 档（样张 0.32/0.3/0.24/0.26 → 0.30/0.28/0.22/0.24）
+const DECK_FLY_DUR = 0.30;
+const DECK_GHOST_DUR = 0.28;
+const DECK_SPRING_DUR = 0.22;
+const DECK_FLING_DUR = 0.24;
+const DECK_SHRINK_DUR = 0.26;
+const DECK_WHEEL_GAIN = 1 / 240;
+// 竖拖补充令：纵向拖动增益（1px 指纹 = 1/160 卡，比滚轮灵敏一档——滚轮有档位
+// 棘感、指纹行程更长）；松手惯性 = EMA 速度(px/ms) × 90px 冲程，钳 ±80px（≤半卡，
+// 快甩不越格不可控）；主导轴判定阈值（累计位移超 8px 才锁轴，锁后不换轴）。
+const DECK_DRAG_GAIN = 1 / 160;
+const DECK_DRAG_INERTIA = 90;
+const DECK_DRAG_INERTIA_MAX = 80;
+const DECK_AXIS_LOCK_PX = 8;
+
+// ── uifix 批（作者令 2026-10-20 四件）新增 ─────────────────────────────
+// ③a 层叠阴影三版参数（作者挑版，body.deck-look-* 切换；默认 v2 均衡）：
+//   露边阶梯（间距拉开档位）由 deckPeekStep() 同源取值 —— CSS 只管阴影 token，
+//   几何档位在这里（deckPoseOf 每帧读取，切版即重排）。
+const DECK_LOOK_DEFAULT = 'v2';
+const DECK_LOOKS = {
+  v1: { peek1: 22, peek2: 6,  wheelNotch: 1.8 },   // 收敛：贴近 v5 原值，阴影最轻
+  v2: { peek1: 27, peek2: 9,  wheelNotch: 2.2 },   // 均衡（默认）：间距+50%，阴影中档
+  v3: { peek1: 34, peek2: 14, wheelNotch: 2.2 },   // 拉开：间距翻倍，层级感最强
+};
+/** 当前 look 档位参数（body.deck-look-* 单一来源，CSS/JS 同读一类名）。 */
+function deckLook() {
+  const body = document.body;
+  for (const k of Object.keys(DECK_LOOKS)) if (body.classList.contains('deck-look-' + k)) return k;
+  return DECK_LOOK_DEFAULT;
+}
+function deckPeekStep() { return DECK_LOOKS[deckLook()] || DECK_LOOKS[DECK_LOOK_DEFAULT]; }
+// ③c 滚轮动量（触控板自然滚动）：末窗速度（px/ms）→ 事件流静默后滑行衰减。
+//   触控板 macOS 原生动量事件本身持续喂 delta，滑行只补「动量被吞」的浏览器；
+//   鼠标格（单事件 |dy|≥40px）按档位增益（DECK_LOOKS.wheelNotch 倍率）≈一格近一卡。
+const DECK_WHEEL_GLIDE_DELAY = 110;   // 事件流静默 ≥110ms 判定结束
+const DECK_WHEEL_GLIDE_DECAY = 4.6;   // 滑行指数衰减（/s）
+const DECK_WHEEL_GLIDE_VMAX = 3.2;    // 滑行初速钳（px/ms，≤ ~1.1 卡冲程）
+const DECK_NOTCH_PX = 40;             // 单事件 |dy|≥40 判为鼠标格（触控板指纹 1~20px）
+
+// ── UI 批（作者令 2026-10-21 五件）新增 ─────────────────────────────
+// ④ 动效层：近卡放大/远卡缩小 + 视差深度（d=0 两侧连续：前景 scale=1/z=0 基姿
+//   不变，与 .stacked 整区缩放基姿严丝合缝，交接窗换手无跳变）。
+const DECK_DEPTH_SCALE_NEAR = 0.055;  // d∈[0,1] 缩小档（前景 1 → 次卡 ≈0.945）
+const DECK_DEPTH_SCALE_FAR = 0.018;   // d>1 续缩档（最深处 ≈0.86）
+const DECK_DEPTH_Z = 26;              // 视差 translateZ（透视 1150，深处后撤）
+const DECK_FALL_SHRINK = 0.10;        // 翻落支缩幅（d<0 向下翻落时缩小）
+// ④② 透视 y 补偿（deckProjectYComp）：与 split.css #deck-layer 的 perspective /
+//   perspective-origin: 50% 10% 同源——改 CSS 透视必须同步这里（A21-0 钉）。
+const DECK_PERSPECTIVE = 1150;        // #deck-layer perspective（px）
+const DECK_ORIGIN_YK = 0.10;          // perspective-origin 纵向系数（10%）
+// ③ 快照活性窗：|d| ≤ 2.5 的卡挂活性同步（源滚动 → 缩略 translateY 镜像 +
+//   源 DOM 变更防抖重截）；深处卡保留静态快照（真实内容，无活性开销）。
+const DECK_LIVE_DEPTH = 2.5;
+const DECK_LIVE_RECLONE_DEBOUNCE = 300;
+
+const deckRm = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+
+const DECK_ICONS = {
+  markdown: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="14" rx="3"/><path d="M6 15v-6l3 3.4L12 9v6"/><path d="M18 9v6m0 0-2.2-2.3M18 15l2.2-2.3"/></svg>',
+  code: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m8.5 8-4 4 4 4"/><path d="m15.5 8 4 4-4 4"/></svg>',
+  sheet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="M3.5 9.5h17M3.5 15h17M9.5 4v16M15.5 4v16"/></svg>',
+  image: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><circle cx="9" cy="9.5" r="1.6"/><path d="m4 18 5.2-5.2a1.5 1.5 0 0 1 2.1 0L20 20"/></svg>',
+  doc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 16.5h4"/></svg>',
+  flow: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2.8" width="6" height="5" rx="1.4"/><rect x="3" y="16" width="6" height="5" rx="1.4"/><rect x="15" y="16" width="6" height="5" rx="1.4"/><path d="M12 7.8v3.4M6 16v-2.2a1.6 1.6 0 0 1 1.6-1.6h8.8A1.6 1.6 0 0 1 18 13.8V16"/></svg>',
+  tasks: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4" width="17" height="16" rx="2.5"/><path d="m7 9.5 1.6 1.6L11.5 8"/><path d="M14 10h3.5M7 15.5h3M13.5 15.5h4"/></svg>',
+  web: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17"/><path d="M12 3.5c2.6 2.3 4 5.2 4 8.5s-1.4 6.2-4 8.5c-2.6-2.3-4-5.2-4-8.5s1.4-6.2 4-8.5Z"/></svg>',
+  generic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z"/><path d="M14 3v5h5"/></svg>',
+  deck: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2.5 8.5 4.8L12 12 3.5 7.3 12 2.5Z"/><path d="m3.5 12.2 8.5 4.8 8.5-4.8"/><path d="m3.5 17.1 8.5 4.8 8.5-4.8"/></svg>',
+};
+
+/** 卡面类型族（图标 + 缩略 mock 共用）。真实 itemType 值域宽（查看器注册表），
+ *  先按 type 精确映射、再按文件名扩展兜底，其余落 generic。 */
+function deckTypeFamily(entry) {
+  const type = (entry?.type || '').toLowerCase();
+  const name = entry?.title || '';
+  if (type === 'markdown') return 'markdown';
+  if (type === 'code' || type === 'json') return 'code';
+  if (type === 'html' || type === 'url') return 'web';
+  if (type === 'image') return 'image';
+  if (type === 'pdf' || type === 'epub' || type === 'docx' || type === 'pptx') return 'doc';
+  if (type === 'sheet' || type === 'xlsx' || type === 'xls' || type === 'csv') return 'sheet';
+  if (type === 'flow' || type === 'flow-run' || type === 'wiki-graph') return 'flow';
+  if (type === 'projects' || type === 'tasks' || type === 'teams' || type === 'agents') return 'tasks';
+  if (/\.(md|markdown)$/i.test(name)) return 'markdown';
+  if (/\.(png|jpe?g|gif|webp|svg|avif)$/i.test(name)) return 'image';
+  if (/\.pdf$/i.test(name)) return 'doc';
+  if (/\.(xlsx|xls|csv)$/i.test(name)) return 'sheet';
+  if (/\.(js|mjs|cjs|ts|tsx|scala|java|py|go|rs|rb|c|cpp|h|css|scss|json|ya?ml|sh|toml|sql)$/i.test(name)) return 'code';
+  if (/^https?:\/\//i.test(name)) return 'web';
+  return 'generic';
+}
+function deckIconOf(family) { return DECK_ICONS[family] || DECK_ICONS.generic; }
+
+/** 卡面缩略 mock（样张 thumb 族原样；文本/代码=行条，sheet=网格，image=渐变山形，
+ *  doc=页，flow=拓扑，web/默认=浏览器块）。 */
+function deckThumbMock(family) {
+  switch (family) {
+    case 'markdown':
+      return '<div class="thumb-pad"><div class="ln strong w40"></div><div class="ln w100"></div><div class="ln w85"></div><div class="ln w55"></div><div class="ln w70"></div><div class="ln w30"></div><div class="ln w100"></div></div>';
+    case 'code':
+      return '<div class="thumb-pad"><div class="ln w40"></div><div class="ln w70"></div><div class="ln w55"></div><div class="ln w85"></div><div class="ln w30"></div><div class="ln w70"></div><div class="ln w55"></div></div>';
+    case 'sheet':
+      return '<div class="thumb-grid"><div class="ghead"></div></div>';
+    case 'image':
+      return '<div class="thumb-img"><svg viewBox="0 0 120 60" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 52 40 22l22 20 18-14 32 24"/></svg></div>';
+    case 'doc':
+      return '<div class="thumb-page"><div class="ln strong w40"></div><div class="ln w100"></div><div class="ln w85"></div><div class="ln w100"></div><div class="ln w55"></div></div>';
+    case 'flow':
+      return '<div class="thumb-flow"><svg viewBox="0 0 120 70" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><rect x="45" y="4" width="30" height="14" rx="4"/><rect x="8" y="50" width="30" height="14" rx="4"/><rect x="82" y="50" width="30" height="14" rx="4"/><path d="M60 18v14M60 32H23v18M60 32h34v18"/></svg></div>';
+    case 'tasks':
+      return '<div class="thumb-pad"><div class="ln w55"></div><div class="ln w70"></div><div class="ln w40"></div><div class="ln w85"></div></div>';
+    default:
+      return '<div class="thumb-browser"><div class="bar"><i></i><i></i><i></i></div><div class="blk"></div><div class="blk b2"></div><div class="blk"></div></div>';
+  }
+}
+
+/** 卡面语言单源（手机端堆叠卡翻页批 2026-11-02 作者令 §四「让手机端 canvas
+ *  标签页也像电脑端一样变成一张张卡片上下翻动」）：手机 deck 卡面的类型族
+ *  / 图标 / 缩略 mock 全部取自桌面环卡同一份数据（DECK_ICONS / deckTypeFamily
+ *  / deckThumbMock），手机层零复制 —— 桌面换图标/mock 即手机同步。
+ *  @param {{id: string, title?: string}} entry
+ *  @returns {{family: string, icon: string, thumb: string}} */
+export function deckFaceOf(entry) {
+  const family = deckTypeFamily(entry);
+  return { family, icon: deckIconOf(family), thumb: deckThumbMock(family) };
+}
+
+// ── 上下文键（keyboard-first 三期）──────────────────────────────────────────
+// 三条**派生**键：值现场从本模块的状态读，不推送、不重复赋值。
+// 为什么不用「改了状态就 setContextKey」：`deck.open = false` 在本文件出现三处
+// （收场/换入/兜底），漏一处就会让键盘层拿旧状态做判决 —— 派生键把这类 bug 从
+// 「靠自觉」变成「结构上不可能」。
+provideContextKey(KEYS.deckOpen, () => deck.open === true);
+provideContextKey(KEYS.canvasRingOpen, () => !!ringState);
+provideContextKey(KEYS.cardWindow, () => cardWindowMode === true);
+
+// ── 引擎状态 ──
+const deck = {
+  open: false,
+  finalizing: false,
+  ring: [],            // 环流（含 active，ring[0]=active=前景位初始 occupant）
+  M: 0,                // 环流卡数
+  ringActiveId: null,  // 建环时的 active id（外部换签检测 → 环重置）
+  pos: 0, target: 0,   // 环形浮点位置：d = wrapDelta(r − pos, M)，d=0 = 前景位
+  d0s: 0,              // 面板驱动平滑 d₀（=wrapDelta(−pos, M)），防环绕翻折跳变
+  spread: 0, spreadT: 0,
+  selFly: null,        // { el, entry, k } 换入飞行
+  ghostFx: null,       // { el, k } 旧 canvas 缩回卡组
+  faceFx: null,        // { mode, k, dx0, dir, endX } 面板 FX（划走/收拢）
+  cardDrag: null,      // 前景环卡拖划
+  drag: null,          // 缩放态面板拖划
+  exitCardFx: null,    // 环卡 FX（甩出/弹回/收拢）
+  suppressCardClick: 0,
+  selfCardEl: null,    // active 页签的环卡（交接窗与面板交叉淡换）
+  driveSuspend: false,
+  panelFront: true,    // 面板是否处于前景位（|d₀|<0.5，驱动 is-front 提示类）
+  sizeK: 1, cardW: 0, cardH: 0,
+  raf: 0, lastT: 0,
+};
+
+let deckLayer = null;
+let deckFab = null;
+let deckTitleEl = null;
+let deckTitleIconEl = null;
+let deckTitleNameEl = null;
+
+const deckMod = (x, n) => ((x % n) + n) % n;
+function deckWrapDelta(x, n) { x = deckMod(x, n); return x > n / 2 ? x - n : x; }
+const deckEaseOut = (k) => 1 - Math.pow(1 - Math.min(1, Math.max(0, k)), 3);
+const deckClamp01 = (x) => Math.min(1, Math.max(0, x));
+const deckSmooth = (t) => { t = deckClamp01(t); return t * t * (3 - 2 * t); };
+function deckBusy() { return deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx; }
+function cssEscapeV(s) { return (window.CSS && CSS.escape) ? CSS.escape(s) : String(s).replace(/["\\]/g, '\\$&'); }
+
+/** 拖划/键盘在可交互子树让路（真实查看器的按钮/编辑器/画布交互优先于叠卡手势）。 */
+function deckInteractiveTarget(t) {
+  return !!(t instanceof Element && t.closest(
+    'button, a, input, textarea, select, [contenteditable="true"], .monaco-editor, .cm-editor, ' +
+    '.canvas-zoom-bar, .canvas-find-toggle, .canvas-ref-select, .canvas-source-toggle, ' +
+    'canvas, video, iframe, .pdf-pages',
+  ));
+}
+
+// ── 拖划手势公共腿（竖拖补充令）：面板面（deck.drag）与环卡面（deck.cardDrag）
+//    共用同一套状态机 —— 死区→主导轴锁→分轴驱动，速度 EMA 横纵对称。 ──
+/** 主导轴判定：|dx|>|dy| → 横（划走关闭，原逻辑）；否则纵（scrub 换卡）。对角等幅
+ *  平局取纵 —— scrub 非破坏性，划走关闭销毁页签，疑则从轻。 */
+function deckDominantAxis(dx, dy) { return Math.abs(dx) > Math.abs(dy) ? 'x' : 'y'; }
+/** 竖拖 scrub 喂给（跟手连续）：与滚轮同引擎同钳位（pos±M），单卡（M<2）无环不转。 */
+function deckScrubFeed(dy) {
+  if (deck.M < 2) return;
+  deck.target += dy * DECK_DRAG_GAIN;
+  deck.target = Math.max(deck.pos - deck.M, Math.min(deck.pos + deck.M, deck.target));
+  deckStartLoop();
+}
+/** 竖拖收尾：少量惯性（钳 ±80px 冲程 = ±半卡）+ Math.round 贴靠最近卡。只由拖动
+ *  松手调用；滚轮不贴靠（连续擦洗语义不变），两条输入各自收尾。注意单位：vy 为
+ *  px/ms、冲程为 px，target 为「卡」——并入前必须乘 DECK_DRAG_GAIN 换算。 */
+function deckScrubRelease(vy) {
+  if (deck.M < 2) return;
+  const flingPx = Math.max(-DECK_DRAG_INERTIA_MAX, Math.min(DECK_DRAG_INERTIA_MAX, vy * DECK_DRAG_INERTIA));
+  deck.target += flingPx * DECK_DRAG_GAIN;
+  deck.target = Math.round(deck.target);
+  deck.target = Math.max(deck.pos - deck.M, Math.min(deck.pos + deck.M, deck.target));
+  deckStartLoop();
+}
+/** 拖划状态工厂：dx/dy 之外补 dy 侧对称的 EMA 速度 + 主导轴锁（null=未锁=点击界内），
+ *  feedDy = 纵轴已喂给引擎的累计位移（增量喂给防回滚段倒灌）。 */
+function deckDragState(e) {
+  return {
+    id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, feedDy: 0,
+    vx: 0, vy: 0, lastX: e.clientX, lastY: e.clientY, lastT: e.timeStamp,
+    axis: null, wasDragged: false,
+  };
+}
+/** move 公共腿：死区（≤8px 不锁轴）→ 主导轴一次锁定（M<2 时纵降级死轴 'n'：
+ *  单卡无环可转，静默结束而非破坏性降级触发关闭）→ 横纵速度 EMA。返回当前轴。 */
+function deckDragTrack(d, e) {
+  const dx = e.clientX - d.x0, dy = e.clientY - d.y0;
+  if (!d.axis && Math.max(Math.abs(dx), Math.abs(dy)) > DECK_AXIS_LOCK_PX) {
+    d.axis = deckDominantAxis(dx, dy);
+    d.wasDragged = true;
+    if (d.axis === 'y' && deck.M < 2) d.axis = 'n';
+  }
+  const dtms = Math.max(1, e.timeStamp - d.lastT);
+  d.vx = 0.8 * d.vx + 0.2 * ((e.clientX - d.lastX) / dtms);
+  d.vy = 0.8 * d.vy + 0.2 * ((e.clientY - d.lastY) / dtms);
+  d.lastX = e.clientX; d.lastY = e.clientY; d.lastT = e.timeStamp;
+  return d.axis;
+}
+/** 纵轴增量喂给：本次事件累计 dy − 已喂部分 = 增量（锁轴那一刻的死区段一并补喂）。 */
+function deckDragFeedVertical(d, e) {
+  const total = e.clientY - d.y0;
+  const step = total - d.feedDy;
+  d.feedDy = total; d.dy = total;
+  deckScrubFeed(step);
+}
+
+// ── DOM 装配（body 层固定两件：deck-layer（面板之前）+ fab（面板之后））──
+// UI 批 ①：堆叠态顶部两行帮助条（deck-foot：操作提示 + 前景计数）整体退役——
+// 元素不再装配，面板上一个字不留。
+function initDeck() {
+  const panel = document.getElementById('canvas-panel');
+  if (!panel || deckLayer) return;
+
+  deckLayer = document.createElement('div');
+  deckLayer.id = 'deck-layer';
+  deckFab = document.createElement('button');
+  deckFab.id = 'deck-fab';
+  deckFab.className = 'deck-fab g2-fab canvas-button';   // 批②：材质升 v2 液体玻璃（liquid-glass.css 共享类）
+  deckFab.setAttribute('aria-pressed', 'false');
+  deckFab.setAttribute('title', t('canvas.stackToggle'));
+  deckFab.setAttribute('aria-label', '叠卡切换');
+  deckFab.innerHTML = DECK_ICONS.deck;
+
+  // 层序（dock 态全 z-auto，按 DOM 序）：deck-layer < #canvas-panel < fab；
+  // .over 抬 deck-layer z-60（overlay 形态 245）盖过面板（split.css）。
+  // 堆叠视角钮维持 body 层浮动（批②曾试迁胶囊右座，实证被 deck-layer 环卡
+  // 吞命中——环开着时面板顶带被卡组拦截，退出叠卡必须有恒可点的浮钮）。
+  document.body.insertBefore(deckLayer, panel);
+  panel.after(deckFab);
+
+  // 整区缩放基姿常量单一来源（样张 v4②）：CSS .stacked / 飞行落点 / ghost 起点 / 面板驱动位姿同源
+  // 尺寸统一批（2026-10-23 六项⑤）：--stack-scale-inv = 1/0.85 反量随同注入 ——
+  // .stacked 态胶囊（.canvas-header = 前卡名称条）按反量回乘，视觉尺寸与常态
+  // 主胶囊同基准（134.9×36.0 档；面板整区 0.85 不动，只抵胶囊自身的缩）。
+  panel.style.setProperty('--stack-scale', String(DECK_SCALE));
+  panel.style.setProperty('--stack-shift', DECK_SHIFT + 'px');
+  panel.style.setProperty('--stack-scale-inv', String(Number((1 / DECK_SCALE).toFixed(5))));
+
+  // uifix ③a：默认层叠 look 档位（作者挑版后可经 __canvasDeck.setLook 热切换）
+  if (![...document.body.classList].some((c) => c.indexOf('deck-look-') === 0)) {
+    document.body.classList.add('deck-look-' + DECK_LOOK_DEFAULT);
+  }
+
+  // UI 批 ②：连点稳定入口（见 deckFabToggle 注释）
+  deckFab.addEventListener('click', deckFabToggle);
+  deckLayer.addEventListener('click', (e) => {
+    if (e.target === deckLayer && !deck.finalizing) closeDeck();   // 点空白（区外露缘）收回
+  });
+  deckLayer.addEventListener('contextmenu', (e) => { if (e.target === deckLayer) e.preventDefault(); });
+
+  /* B2-1 → 三期：环卡键盘语义（Enter/Space = 复用 `.deck-card` 的既有 click
+     语义；Delete = deckRequestClose）**搬进规则表**（keyRules.js 的 deck.card.*），
+     条件 = `deckOpen && deckCardFocus`。改造前这里挂的是层内 keydown 委托，并且
+     必须 `e.stopPropagation()` 才能压住本文档级那条 Enter —— 现在两条动作由同一张
+     表按 when 互斥（卡内 vs 环级），不再靠冒泡顺序博弈。 */
+
+  bindDeckInput();
+  // 左移批收口：面板 flex-basis 开合过渡（0.32s，左缘从右缘向左展开）期间
+  // offset 盒逐帧漂移 —— 浮钮盒必须在过渡尾重同步。右锚 #deck-fab 被「面板右缘
+  // 过渡全程不动」掩盖此 latent 缺陷（boot 缓存盒 = 收拢残宽盒，fab 右锚/顶锚
+  // 恰好等价全幅值）；左锚关签钮（面板左 +12）随左移批显性化。transitionend
+  // 主腿 + openCanvas 超时兜底（reduced-motion/无过渡路径）双保险。
+  panel.addEventListener('transitionend', (e) => {
+    if (e.propertyName === 'flex-basis') syncDeckBox();
+  });
+  syncDeckBox();
+  renderCanvasHeader();
+}
+
+// ── UI 批 ②：堆叠按钮连点稳定 ──────────────────────────────────────
+// 三类失效成因与修复：
+//   (a) 重入锁泄漏：closeDeck 收场曾不清 deck.drag/deck.cardDrag（划走/竖拖进行中
+//       按 ESC 等路径），残留 flag 让 fab 守卫永久吞点击 → 收场统一清场；
+//   (b) 指针捕获丢失：环卡在拖划中途被移除（外部换签重挂环 / 摘卡收敛）→ pointerup
+//       永不达卡 → deck.cardDrag 卡死 → deckFrame 逐帧失扫（el 断链即取消收场）；
+//   (c) FX 窗口吞点击：selFly/ghostFx/faceFx/exitCardFx/finalizing 期间 fab 点击被
+//       静默丢弃 → 改为登记排队（deckFabQueued），FX 收场即补发一次 toggle——
+//       快速连点每次都计数，最终态确定不粘（spec A20 钉）。
+let deckFabQueued = false;
+function deckFabToggle() {
+  if (deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx || deck.exitCardFx) {
+    deckFabQueued = true;            // 动画窗口不吞点击：登记，收场即补
+    return;
+  }
+  deckFabQueued = false;
+  deck.open ? closeDeck() : openDeck();
+}
+/** FX/收场各落点回调：补发连点期间被排队的 toggle（一次）。 */
+function deckFlushQueuedToggle() {
+  if (!deckFabQueued) return;
+  deckFabQueued = false;
+  deckFabToggle();
+}
+
+// ── 居中标题头（v2①：常态头只留居中标题；deck 态兼作前卡卡顶名称条）──
+function renderCanvasHeader() {
+  if (!deckTitleEl) {
+    deckTitleEl = document.getElementById('canvas-title');
+    deckTitleIconEl = document.getElementById('canvas-title-icon');
+    deckTitleNameEl = document.getElementById('canvas-title-name');
+  }
+  if (!deckTitleEl) return;
+  const entry = activeTabId ? tabs.get(activeTabId) : null;
+  const family = deckTypeFamily(entry);
+  if (deckTitleIconEl) deckTitleIconEl.innerHTML = entry ? deckIconOf(family) : '';
+  if (deckTitleNameEl) deckTitleNameEl.textContent = entry ? (entry.title || entry.id) : '看板';
+  deckTitleEl.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
+  syncHeaderActions();
+  syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
+  // 触屏常驻横向档同步（作者令 2026-11-05 12:10）：本函数是「页签集 / 激活签 /
+  // 脏标记」三处变化的公共出口 ⇒ 横排胶囊环在这里对齐新状态（桌面腿 no-op）。
+  if (ringSyncFn) ringSyncFn();
+}
+
+/* ── Canvas 改造批②⑤（2026-10-31 作者令「顶栏换代：左叉号右堆叠视角钮」；
+ *  左移批（同日 21:37 作者令「关签钮左移，与堆叠钮左右对称」）追改：✕ 不再
+ *  坐胶囊左座，升格 body 层左缘浮钮 —— 顶同堆叠钮（面板顶 +10）、左 = 面板左
+ *  +12（镜像 #deck-fab 右 = 面板右 −12），材质/尺寸同 .g2-fab（40px 液体玻璃
+ *  圆钮）= 手机工具条（.mf-cv-close ↔ .mf-cv-stack）同款语义桌面化。堆叠视角钮
+ *  本体维持 body 层 #deck-fab（顶右浮动 = 批②「右堆叠视角钮」桌面落点；曾试
+ *  迁胶囊右座，实证被 deck-layer 环卡吞命中，退出叠卡必须恒可点）——材质随
+ *  本批升 v2 液体玻璃（.g2-fab 共享类）。原「独立窗口」chip（#canvas-pop-btn）
+ *  随批⑤退役（独立窗出口 = 卡头右键菜单「在独立窗口打开」+ 环卡卡头
+ *  .deck-card-pop，零能力损失）。卡窗态（cardWindowMode）✕ 全隐（卡窗自有窗关）。
+ *  **件1 回归批（作者令 2026-11-05）**：作者逐字「我们的canvas优化之后，独立窗口
+ *  打开的按钮现在没了。只在手机端隐藏这个按钮。电脑端要放在胶囊的右侧。」——
+ *  独立窗钮以 `.canvas-pop-btn` 类名回到标题胶囊**右座**（见下方 syncHeaderActions
+ *  内件1 块；类名必须沿用，环 hover 覆层右内缝 syncCenterInset 只认这个类名），
+ *  手机层 display:none。批⑤「内容物收口」判据（非内容物 = 禁用态 + 提示）保留。 */
+/* 环卡卡头独立/合并 toggle 图标（批⑤后唯一消费面 = .deck-card-pop；原
+   标题头 #canvas-pop-btn 同批退役，SVG 常量随调用面留此单点）。 */
+const CARD_POP_SVG =
+  '<svg class="pop-ic-pop" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>' +
+  '<svg class="pop-ic-merge" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><path d="M14 10 21 3"/><path d="M3 21l7-7"/></svg>';
+const HEAD_CLOSE_SVG =
+  '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+/* 件1：卡头独立窗钮的图标用 **namespace SVG 构建**（createElementNS，零裸 innerHTML
+   —— component-contract R5；字形与 CARD_POP_SVG 逐形同源：独立 ⧉ / 合并 ⇲ 两形
+   共挂一键，靠 .pop-ic-pop / .pop-ic-merge 类切换显隐，CSS 单源在 split.css）。 */
+const SVG_NS = 'http://www.w3.org/2000/svg';
+/** @param {string} cls @param {Array<[string, Object<string,string>]>} kids */
+function cardPopIcon(cls, kids) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  for (const [k, v] of Object.entries({ class: cls, width: '13', height: '13', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': '2', 'stroke-linecap': 'round', 'stroke-linejoin': 'round' })) svg.setAttribute(k, v);
+  for (const [tag, attrs] of kids) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const k of Object.keys(attrs)) el.setAttribute(k, attrs[k]);
+    svg.appendChild(el);
+  }
+  return svg;
+}
+function syncHeaderActions() {
+  const hdr = document.querySelector('#canvas-panel .canvas-header');
+  if (!hdr) return;
+  syncIndependentChip();   // 「独立中」角标壳层同步（件二）
+
+  let closeBtn = document.getElementById('canvas-head-close');
+  if (!closeBtn) {
+    closeBtn = document.createElement('button');
+    closeBtn.id = 'canvas-head-close';
+    closeBtn.className = 'g2-fab canvas-button';   // 左移批：材质/尺寸与堆叠钮同款（左右对称判据）
+    /** @type {HTMLButtonElement} */ (closeBtn).type = 'button';
+    closeBtn.innerHTML = HEAD_CLOSE_SVG;
+    closeBtn.setAttribute('title', t('canvas.closeTab'));
+    closeBtn.setAttribute('aria-label', t('canvas.closeTab'));
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (activeTabId) closeTab(activeTabId);
+    });
+    // 左移批：body 层左缘浮钮（几何/显隐 = split.css #deck-fab 对称块）；落位
+    // 走 syncDeckBox 既有驱动腿（与 fab 同块同帧落笔，不另起调用——首开序中
+    // 面板盒尚在动画/收拢态时强行同步会把缓存盒写脏，fab 同款瞬态由 CSS 缺省
+    // 值（top 10/left 12）兜到首帧真同步，零可见跳变）。
+    document.body.appendChild(closeBtn);
+  }
+
+  if (deckFab) deckFab.disabled = tabs.size === 0;
+  if (closeBtn) /** @type {HTMLButtonElement} */ (closeBtn).disabled = tabs.size === 0;
+
+  /* ── 件1 回归批（作者令 2026-11-05 逐字「我们的canvas优化之后，独立窗口打开的
+   *  按钮现在没了。只在手机端隐藏这个按钮。电脑端要放在胶囊的右侧。」）：
+   *  批⑤退役的卡头独立窗钮**回位**到标题胶囊右座。实现要点四条：
+   *   ① 类名必须是 `.canvas-pop-btn` —— 环 hover 中心覆层的右内缝 syncCenterInset()
+   *      只认这个类名（--cr-popw = 26 钮 + 6 缝 = 32px），换名即断 #926「hover 不改
+   *      文字布局」契约（中心覆层文字盒与被替换的 .t-name 盒逐像素等宽）。
+   *   ② DOM 座位 = `.canvas-title` 的直接后继（右座单件；布局由 split.css
+   *      §件1 块 + 既有 justify-content:space-between / title flex:1 承担，零手工落位）。
+   *   ③ 行为入口单源 = toggleCardWindow(activeTabId)（与环卡 .deck-card-pop / 右键菜单
+   *      同一条腿）；图标复用 CARD_POP_SVG（.pop-ic-pop ↔ .pop-ic-merge 换形）。
+   *   ④ 内容物收口判定不动（判据单源 cardCanPop）：非内容物页签（无 absPath）⇒
+   *      胶囊右座入口**离场**（hidden，不占标题座位）；「哪些内容允许独立窗」的
+   *      可见边界收在右键菜单禁用项 + 既有键 canvas.cardwinContentOnly 提示
+   *      （capsuleMenuActions 同款语义，点击零开窗）。 */
+  let popBtn = /** @type {HTMLButtonElement|null} */ (hdr.querySelector('.canvas-pop-btn'));
+  if (!popBtn) {
+    popBtn = document.createElement('button');
+    popBtn.type = 'button';
+    popBtn.className = 'canvas-pop-btn canvas-button';
+    // id 沿用批⑤前旧 id（既有 spec/验收脚本以 #canvas-pop-btn 命中；类名才是契约面）
+    popBtn.id = 'canvas-pop-btn';
+    popBtn.appendChild(cardPopIcon('pop-ic-pop', [
+      ['path', { d: 'M15 3h6v6' }],
+      ['path', { d: 'M10 14 21 3' }],
+      ['path', { d: 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6' }],
+    ]));
+    popBtn.appendChild(cardPopIcon('pop-ic-merge', [
+      ['polyline', { points: '4 14 10 14 10 20' }],
+      ['polyline', { points: '20 10 14 10 14 4' }],
+      ['path', { d: 'M14 10 21 3' }],
+      ['path', { d: 'M3 21l7-7' }],
+    ]));
+    // 手势链：胶囊按住/竖滑换卡/横滑关卡不得被钮吞 —— pointerdown 阻断、click 自带语义
+    popBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    popBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (popBtn.disabled || !activeTabId) return;
+      toggleCardWindow(activeTabId);
+    });
+    if (deckTitleEl && deckTitleEl.parentElement === hdr) hdr.insertBefore(popBtn, deckTitleEl.nextSibling);
+    else hdr.appendChild(popBtn);
+  }
+  {
+    const act = activeTabId ? tabs.get(activeTabId) : null;
+    const canPop = !!act && cardCanPop(activeTabId);
+    const indep = !!act && isCardIndependent(activeTabId);
+    const popLabel = indep ? '合并回主窗' : '独立窗口打开';
+    // 无活动页签或不可独立的内容物外卡片 ⇒ 入口离场，不占标题座位；手机端
+    // 由 split.css 全局隐藏（本端没有独立窗口能力）。独立中卡片仍显示合并入口。
+    popBtn.hidden = !act || (!canPop && !indep);
+    popBtn.disabled = !canPop && !indep;
+    popBtn.classList.toggle('is-independent', indep);
+    popBtn.title = canPop ? popLabel : t('canvas.cardwinContentOnly');
+    popBtn.setAttribute('aria-label', canPop ? popLabel : t('canvas.cardwinContentOnly'));
+  }
+
+  // 批⑤：堆叠态顶部标签数（前景序/总数；常态与单卡态隐藏——数从哪来
+  // 标签条/chip 条已有，不重复显示）。
+  let cnt = document.getElementById('canvas-title-count');
+  if (!cnt && deckTitleEl) {
+    cnt = document.createElement('span');
+    cnt.id = 'canvas-title-count';
+    cnt.className = 't-count';
+    deckTitleEl.appendChild(cnt);
+  }
+  if (cnt) {
+    const keys = [...tabs.keys()];
+    const idx = keys.indexOf(activeTabId);
+    cnt.textContent = (deck.open && keys.length > 1 && idx >= 0) ? (idx + 1) + '/' + keys.length : '';
+  }
+}
+
+/** 「独立中」角标壳层同步（件二排他批 2026-10-28）：角标渲染点从 pane ::after
+ *  迁 #canvas-slide ::after（split.css §独立中）—— pane 可能自身是滚动容器
+ *  （docx/xlsx 族 .scrollable），absolute 角标随内容滚走漂出 header 行；slide
+ *  不滚，角标恒钉 header 行（堆叠钮左侧让位位）。数据源零新增 = 活动页签的
+ *  independent 状态（independentWins）；pane 的 data-independent 属性保留
+ *  （CW 链数据面仍消费）。调用点 = syncHeaderActions（活动切换/toggle 两路
+ *  都汇于此）。 */
+function syncIndependentChip() {
+  const slide = document.getElementById('canvas-slide');
+  if (!slide) return;
+  const on = !!(activeTabId && independentWins.has(activeTabId));
+  if (on) slide.setAttribute('data-independent', '1');
+  else slide.removeAttribute('data-independent');
+}
+
+/** 脏标记同源投射到环卡名称条（editor-dirty-change 的叠卡腿）。 */
+function deckRefreshDirty(id) {
+  if (!deck.open || !deckLayer) return;
+  const el = deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(id) + '"]');
+  if (!el) return;
+  const entry = tabs.get(id);
+  el.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
+}
+
+// ── 返回原文档按钮（词条引用批 batch 2, F5；作者令 2026-10-29 11:49「返回
+//    按钮放左上角」，调研稿 §9-2 改判记录）───────────────────────────
+// 触发条件 = 页签经引用跳转打开（entry._refSource 由 openWorkspaceItem 从
+// workspace-open-item 的 refSourceTab 记账；手动打开无来源 ⇒ 不渲染）。
+// 落点 = #canvas-slide 左上角（与居中标题头同排的玻璃胶囊）。
+// 行为 = 单击 setActiveTab(来源页签)——pane 切换不销毁 DOM，来源页的阅读位
+// （scrollTop）原样保留，「回原页面原位置」零额外状态（§5.5 v1 口径）。
+// 来源页签已关 ⇒ 按钮隐藏（teardownTab 钩子 + 每次激活重sync 双保险）。
+// v1 单层来源（_refSource 每次跳转覆写），多级栈 = §9-10 不做。
+//
+// 挂载点（canvas-overlap-fix 批 2026-11-05）：**按层选宿主**——桌面 = #canvas-slide
+// （面板内 absolute，与顶行浮钮同一坐标系）；手机 = .mf-canvas-page（手机层
+// #canvas-panel 恒 display:none，pane 被 re-parent 进 canvas 页 ⇒ 挂在 slide 上的
+// 钮在手机面**根本不渲染**，实测 0×0；本批随重叠修复一并接回手机宿主）。
+/** 当前层下「返回原文档」钮的挂载宿主（桌面 = 面板壳；手机 = canvas 页）。 */
+function refBackHost() {
+  if (document.body.classList.contains('mobile-layer')) {
+    return document.querySelector('.mobile-page[data-page="canvas"] .mf-canvas-page')
+      || document.querySelector('.mf-canvas-page');
+  }
+  return document.getElementById('canvas-slide');
+}
+function syncRefBackButton() {
+  const slide = document.getElementById('canvas-slide');
+  if (!slide) return;
+  const entry = activeTabId ? tabs.get(activeTabId) : null;
+  const srcId = entry && entry._refSource && entry._refSource !== entry.id && tabs.has(entry._refSource)
+    ? entry._refSource : null;
+  let btn = document.getElementById('canvas-refback-btn');
+  if (!srcId) {
+    if (btn) btn.remove();
+    document.body.classList.remove('has-refback');   // 第二行档让位随之撤销（无钮即无垫）
+    return;
+  }
+  document.body.classList.add('has-refback');   // 第二行档让位开关（无钮即无垫）
+  const btnEl = /** @type {HTMLButtonElement} */ (btn);
+  if (!btnEl) {
+    const fresh = document.createElement('button');
+    fresh.id = 'canvas-refback-btn';
+    fresh.className = 'canvas-refback-btn canvas-button';
+    fresh.type = 'button';
+    fresh.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const cur = activeTabId ? tabs.get(activeTabId) : null;
+      const src = cur && cur._refSource ? cur._refSource : null;
+      if (src && tabs.has(src)) setActiveTab(src);
+    });
+    (refBackHost() || slide).appendChild(fresh);
+  }
+  const live = /** @type {HTMLButtonElement} */ (document.getElementById('canvas-refback-btn'));
+  if (!live) return;
+  // 层切换/手机页重建后宿主会变 —— 每次 sync 校一次挂载点（幂等，不在就搬）。
+  const host = refBackHost();
+  if (host && live.parentElement !== host) host.appendChild(live);
+  const srcEntry = tabs.get(srcId);
+  const label = t('wiki.backToSource');
+  live.textContent = '← ' + label;
+  live.title = label + (srcEntry ? ' · ' + (srcEntry.title || srcEntry.id) : '');
+  live.setAttribute('aria-label', live.title);
+  live.dataset.refSourceTab = srcId;
+}
+
+// ── 几何 ──
+/** canvas 区基准盒 = 面板的布局盒（offset* 与 transform 无关）。叠卡态面板被
+ *  scale(0.85)，getBoundingClientRect 会把缩放后的投影盒读回来——层/卡组几何
+ *  若以它为基准就形成反馈回路（盒缩水 → 卡组随缩 → 露边带被裁）。布局盒恒定，
+ *  且 app 根无滚动（100vh overflow hidden），视口坐标与布局坐标一致。 */
+function deckPanelRect() {
+  const panel = document.getElementById('canvas-panel');
+  if (!panel) return null;
+  return {
+    left: panel.offsetLeft,
+    top: panel.offsetTop,
+    width: panel.offsetWidth,
+    height: panel.offsetHeight,
+    right: panel.offsetLeft + panel.offsetWidth,
+    bottom: panel.offsetTop + panel.offsetHeight,
+  };
+}
+function layoutDeck() {
+  const r = deckPanelRect();
+  if (!r || !r.width || !r.height || !deckLayer) return;
+  deck.cardW = r.width * DECK_SCALE;
+  deck.cardH = r.height * DECK_SCALE;
+  deck.sizeK = Math.min(1, deck.cardH / 300);
+  deckLayer.style.setProperty('--card-w', deck.cardW.toFixed(0) + 'px');
+  deckLayer.style.setProperty('--card-h', deck.cardH.toFixed(0) + 'px');
+  document.body.classList.toggle('canvas-deck-narrow', r.width < 400);
+}
+/** body 层两件的盒同步（逐帧驱动；面板盒 = canvas 区）。
+ *  滑删顺滑批（2026-10-23 六项⑥b）：盒未变零写 —— 逐帧直写 left/top/width/
+ *  height 是布局属性，每帧写脏布局、下一帧 offset 读数强制重排（拖划期间
+ *  读-写-读抖动 = 卡顿主源之一）。缓存上帧盒，四元全等即整段跳过（写不发生，
+ *  读保持干净，帧内不再有强制重排）；盒真变（开合/拖拽分栏/缩放）才落笔。 */
+let deckBoxLast = /** @type {{l: number, t: number, w: number, h: number}|null} */ (null);
+function syncDeckBox() {
+  const r = deckPanelRect();
+  if (!r || !r.width) return;
+  deck.areaH = r.height;               // ④②：透视 y 补偿的层高基准（deckProjectYComp）
+  // 顶行浮钮列第二档（canvas-overlap-fix 批 2026-11-05）：面板窄到顶行左侧净档
+  // 装不下一枚可读的「返回原文档」胶囊时，整枚钮落第二行（split.css
+  // `#canvas-panel.is-head-tight .canvas-refback-btn`）。判据只依赖面板实宽，
+  // 故与盒缓存无关、每帧无代价（classList.toggle 同值即空操作，零重排）。
+  // 540 的来处：净档 = (面板宽 − 胶囊实宽)/2 − 60 − 8；胶囊在 588 以下取 220
+  // 地板档 ⇒ 540 处净档 92px、520 处 82px（< 一枚可读胶囊约 100px）。
+  const panelEl = document.getElementById('canvas-panel');
+  if (panelEl) panelEl.classList.toggle('is-head-tight', r.width < 540);
+  const same = deckBoxLast && deckBoxLast.l === r.left && deckBoxLast.t === r.top &&
+    deckBoxLast.w === r.width && deckBoxLast.h === r.height;
+  if (!same) {
+    deckBoxLast = { l: r.left, t: r.top, w: r.width, h: r.height };
+    if (deckLayer) {
+      deckLayer.style.left = r.left + 'px';
+      deckLayer.style.top = r.top + 'px';
+      deckLayer.style.width = r.width + 'px';
+      deckLayer.style.height = r.height + 'px';
+    }
+    if (deckFab) {
+      deckFab.style.top = (r.top + 10) + 'px';
+      deckFab.style.right = (window.innerWidth - r.right + 12) + 'px';
+    }
+    // 左移批：左缘关签钮与 fab 同帧落笔（顶同 = 面板顶 +10；左 = 面板左 +12，
+    // 镜像 fab 右 = 视口宽 − 面板右 +12）——左右对称关系随面板盒逐帧守恒。
+    const hc = document.getElementById('canvas-head-close');
+    if (hc) {
+      hc.style.top = (r.top + 10) + 'px';
+      hc.style.left = (r.left + 12) + 'px';
+    }
+  }
+}
+
+// ── 环流（v5①：含全部页签，ring[0]=active）──
+function deckBuildRing() {
+  const keys = [...tabs.keys()];
+  const ai = Math.max(0, keys.indexOf(activeTabId));
+  const r = [];
+  for (let k = 0; k < keys.length; k++) {
+    const entry = tabs.get(keys[(ai + k) % keys.length]);
+    if (entry) r.push(entry);
+  }
+  return r;
+}
+function deckMakeCardEl(entry, r, cls) {
+  const family = deckTypeFamily(entry);
+  const card = document.createElement('div');
+  card.className = 'deck-card' + (isTabDirty(entry) ? ' is-dirty' : '') + (cls ? ' ' + cls : '');
+  card.dataset.r = String(r);
+  card.dataset.tab = entry.id;
+  /* B2-1（keyboard-first 二期）：卡壳成为**键盘可及件**。改造前这里是裸 div ——
+     role / tabIndex 命中 0，只有卡内的 `.deck-card-x` 能被 Tab 到，于是
+     「键盘切不了文档页签」。三个属性分工：
+       · role="tab" + aria-selected —— 卡在语义上就是页签，与 #canvas-tabs 同族；
+       · data-focus-key="deck:<tabId>" —— 保焦协议的第二个生产者（B3-2 的输入）；
+       · tabindex 由 deckSyncCardA11y() 统一分配（恰好一张 = 0）。 */
+  if (cls !== 'ghost') {
+    card.setAttribute('role', 'tab');
+    card.setAttribute('aria-selected', 'false');
+    card.dataset.focusKey = `deck:${entry.id}`;
+    card.tabIndex = -1;
+  }
+  card.innerHTML =
+    '<div class="card-top">' +
+      '<span class="n-icon">' + deckIconOf(family) + '</span>' +
+      '<span class="n-dot"></span>' +
+      '<span class="n-text">' + escapeDeckText(entry.title || entry.id) + '</span>' +
+      '<span class="n-sub">' + (entry.absPath ? '' : '面板') + '</span>' +
+    '</div>' +
+    '<div class="card-thumb" data-snap="pending">' + deckThumbMock(family) + '</div>' +
+    /* uifix ③e：卡右上角 × 关闭钮（作者最新口径，推翻精修③竖排提示方案） */
+    '<button class="deck-card-x canvas-button" type="button" title="关闭" aria-label="关闭 ' + escapeDeckText(entry.title || entry.id) + '">' +
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>' +
+    '</button>' +
+    '<div class="card-shade"></div>';
+  /* UI 批⑧：环卡卡头独立/合并 toggle（文件卡；× 左侧同族小钮）。 */
+  if (entry.absPath) {
+    const pop = document.createElement('button');
+    pop.type = 'button';
+    pop.className = 'deck-card-pop canvas-button';
+    pop.title = '独立窗口打开';
+    pop.setAttribute('aria-label', '独立窗口打开');
+    pop.innerHTML = CARD_POP_SVG;
+    pop.addEventListener('pointerdown', (e) => e.stopPropagation());
+    pop.addEventListener('click', (e) => {
+      e.stopPropagation();
+      toggleCardWindow(entry.id);
+    });
+    card.insertBefore(pop, card.querySelector('.deck-card-x'));
+    const indep0 = independentWins.has(entry.id);
+    if (indep0) {
+      card.setAttribute('data-independent', '1');
+      pop.classList.add('is-independent');
+      pop.title = '合并回主窗';
+      pop.setAttribute('aria-label', '合并回主窗');
+    }
+  }
+  // uifix ③b + UI 批 ③：可视窗内的卡随建随挂快照（开卡组首帧即可见真容）；
+  // 深处卡留 pending（mock 先顶住），由 deckAttachSnapshots 分帧补齐——
+  // 防一次建满环克隆把开卡动画顶掉帧。
+  const rNum = typeof r === 'number' ? r : NaN;
+  if (cls === 'ghost' ||
+      (Number.isFinite(rNum) && deck.M && Math.abs(deckWrapDelta(rNum - deck.pos, deck.M)) <= DECK_LIVE_DEPTH)) {
+    deckMountSnapshot(card, entry.id);
+  }
+  /* 卡面 × 关闭（作者令）：pointerdown 阻断（不进拖划/点击语义），click 走
+     deckRequestClose 同右键菜单一条腿——前景卡=面板收拢淡出，深处卡=就地收敛保相位 */
+  const xBtn = card.querySelector('.deck-card-x');
+  xBtn.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
+  xBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx || deck.exitCardFx) return;
+    if (performance.now() < deck.suppressCardClick) return;
+    deckRequestClose(entry.id);
+  });
+  /* 点击：前景卡（|d|<0.5）= 放大回满幅换入；深处卡 = 翻到该卡（不换签） */
+  card.addEventListener('click', () => {
+    if (!deck.open || deckBusy() || deck.exitCardFx) return;
+    if (performance.now() < deck.suppressCardClick) return;
+    const rr = +card.dataset.r;
+    const d = deck.M ? deckWrapDelta(rr - deck.pos, deck.M) : 1;
+    if (Math.abs(d) < 0.5) deckSelectCard(rr);
+    else { deck.target = deck.pos + d; deckStartLoop(); }
+  });
+  card.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (deck.finalizing || deck.selFly || deck.ghostFx) return;
+    const live = tabs.get(entry.id);
+    if (live) {
+      showCanvasRefMenu(e.clientX, e.clientY, live, {
+        allowNoRef: true,
+        onClose: () => deckRequestClose(live.id),
+        onCloseOthers: () => deckCloseOthers(live.id),
+      });
+    }
+  });
+  /* 前景环卡拖划（v2⑥ 回归 + 竖拖补充令）：主导轴分工 —— 横向主导 = 跟手划走 →
+     越阈甩出关闭该文件 / 不足弹回；纵向主导 = scrub 换卡（dy 增量喂引擎，松手惯性+贴靠） */
+  card.addEventListener('pointerdown', (e) => {
+    if (!deck.open || deckBusy() || deck.exitCardFx || deck.cardDrag || deck.drag) return;
+    if (e.button !== 0) return;
+    wheelGlideV = 0;                                               // 拖划接管：截停滚轮滑行
+    if (card === deck.selfCardEl) return;                          // canvas 本尊的环卡不参与拖划
+    const rr = +card.dataset.r;
+    if (deck.M && Math.abs(deckWrapDelta(rr - deck.pos, deck.M)) >= 0.5) return;  // 只拖前景卡
+    deck.cardDrag = { ...deckDragState(e), el: card, tabId: entry.id };
+    card.setPointerCapture(e.pointerId);
+  });
+  card.addEventListener('pointermove', (e) => {
+    if (!deck.cardDrag || e.pointerId !== deck.cardDrag.id || deck.cardDrag.el !== card) return;
+    const d = deck.cardDrag;
+    const axis = deckDragTrack(d, e);
+    if (axis === 'x') d.dx = e.clientX - d.x0;                     // 跟手位移由 frame() 直写
+    else if (axis === 'y') deckDragFeedVertical(d, e);             // 纵向主导：换卡（不关闭）
+  });
+  const endCardDrag = (e, cancelled) => {
+    if (!deck.cardDrag || e.pointerId !== deck.cardDrag.id || deck.cardDrag.el !== card) return;
+    deckEndCardDrag(deck.cardDrag, cancelled);
+  };
+  card.addEventListener('pointerup', (e) => endCardDrag(e, false));
+  card.addEventListener('pointercancel', (e) => endCardDrag(e, true));
+  return card;
+}
+
+/** 拖划收尾（卡面公共腿）：正常 pointerup/cancel 与失扫兜底共用同一实现。
+ *  UI 批 ②成因 (a)/(b)：此函数是 deck.cardDrag 的唯一清场口——收场路径
+ *  （closeDeck/deckShutdown）直接置 null，跳过手势语义（收场优先）。 */
+function deckEndCardDrag(d, cancelled) {
+  if (deck.cardDrag !== d) return;
+  deck.cardDrag = null;
+  if (cancelled || !d.wasDragged) return;                        // 未锁轴（≤8px 死区）= 点击，交给 click
+  deck.suppressCardClick = performance.now() + 350;
+  if (d.axis === 'y') { deckScrubRelease(d.vy); return; }        // 纵向：惯性+贴靠换卡，永不触发关闭
+  if (d.axis !== 'x') return;                                    // 死轴（单卡纵拖）：静默结束
+  const rect = deckPanelRect();
+  const far = Math.abs(d.dx) > rect.width * 0.20 || Math.abs(d.vx) > 0.55;
+  deck.exitCardFx = far
+    ? { el: d.el, tabId: d.tabId, k: 0, mode: 'fling', dx0: d.dx, dir: d.dx >= 0 ? 1 : -1, endX: 0 }
+    : { el: d.el, tabId: d.tabId, k: 0, mode: 'spring', dx0: d.dx, dir: 0, endX: 0 };
+  deckStartLoop();
+}
+function escapeDeckText(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// ── ③b 卡片快照（作者令「堆叠视角要能看到卡片快照」+ UI 批 ③ 真实快照升级）──
+// 方案 = **开 deck 时截取缓存 + 可视窗活性同步**：快照源按查看器类型分派 ——
+//   markdown/docx/epub/xlsx/pptx = 渲染面 .canvas-md-viewer 克隆（去 id 防全局
+//   重复）/ code/json = Monaco .view-lines 渲染层克隆（令牌色走全局注入样式，
+//   连 host 字体/底色一起拷）/ html 页签 = srcdoc 同源 iframe 内容文档重挂
+//   （真实渲染面；跨域 url 页签不可读 → 回落类型 mock）/ image = img 同源克隆
+//   （零重解码，走缓存位图）/ pdf = 首页 canvas 像素 drawImage 拷贝。
+// 活性窗（UI 批 ③「同屏只精渲染可视卡 ±2」）：|d| ≤ DECK_LIVE_DEPTH 的卡挂
+//   活性同步——源滚动 → 缩略 translateY 镜像（滚动中同步更新）+ 源 DOM 变更
+//   防抖重截（实时映射）；深处卡降级静态快照（真实内容、无活性开销）。
+// 纪律：快照 Map 只活到 deck 收场（closeDeck/deckShutdown/deckFinishSwap 清），
+// 每次开卡组重截 —— 无陈旧快照、无常驻重渲染；擦洗期间卡片仍是纯 transform。
+const deckSnapshots = new Map();      // tabId → { node, srcW, kind, scroller }
+const DECK_SNAP_BATCH = 2;            // 每帧最多建 2 张（防一帧长任务）
+/** 快照源解析：可克隆面 → { el, kind, scroller? }；不可克隆 → null（mock 回落）。 */
+function deckSnapshotSource(entry) {
+  const pane = getTabPane(entry.id);
+  if (!pane) return null;
+  const family = deckTypeFamily(entry);
+  const cloneFace = pane.querySelector('.canvas-md-viewer, .canvas-xlsx-viewer, .epub-reader');
+  if (cloneFace && entry.paneEl.dataset.sourceMode !== '1') {
+    return { el: cloneFace, kind: 'clone', scroller: cloneFace.closest('.canvas-md-scroll') || cloneFace.closest('.canvas-tab-pane') };
+  }
+  if (family === 'code' || entry.paneEl.dataset.sourceMode === '1') {
+    // Monaco 渲染层（.view-lines = 纯内容行，令牌色类走全局注入样式，克隆保真）；
+    // 编辑器未挂载（页签从未激活）→ 落 md/mock 腿。
+    const editor = pane.querySelector('.monaco-editor');
+    const lines = pane.querySelector('.monaco-editor .view-lines');
+    if (editor && lines) return { el: lines, kind: 'monaco', host: editor };
+  }
+  if (family === 'web') {
+    // html 页签 = srcdoc 同源 iframe（allow-same-origin）→ 内容文档序列化重挂
+    // 真实渲染面；跨域（url 页签）contentDocument 不可读（抛错/null）→ mock。
+    const frame = /** @type {HTMLIFrameElement|null} */ (pane.querySelector('iframe[data-nf-canvas-html]'));
+    if (frame) {
+      try {
+        const doc = frame.contentDocument;
+        const html = doc && doc.documentElement ? doc.documentElement.outerHTML : '';
+        if (html && html.length > 32) return { el: frame, kind: 'iframe', html };
+      } catch { /* 跨域 → mock */ }
+    }
+  }
+  if (family === 'image') {
+    const img = /** @type {HTMLImageElement|null} */ (pane.querySelector('.canvas-image-viewport img'));
+    if (img && (img.complete || !img.src)) return { el: img, kind: 'img' };
+  }
+  if (family === 'doc') {
+    const page = /** @type {HTMLCanvasElement|null} */ (pane.querySelector('.pdf-pages canvas'));
+    if (page && page.width && page.height) return { el: page, kind: 'canvas' };
+  }
+  return null;
+}
+/** 建一张快照节点（已缓存直接返回；不可克隆回落 null）。 */
+function deckBuildSnapshot(entry) {
+  if (deckSnapshots.has(entry.id)) return deckSnapshots.get(entry.id);
+  const area = deckPanelRect();
+  const srcW = (area && area.width) || 900;   // 渲染面宽 = canvas 区宽（display:none 面读不到 offsetWidth）
+  const node = deckSnapshotNode(entry, srcW);
+  if (!node) return null;
+  // checkJs：`__nfSnapKind` / `__nfSnapScroller` 是快照宿主的传输期 expando（见
+  // deckSnapshotNode 的写法），断言面只做类型放行，运行期仍是同一个节点对象。
+  const snapNode = /** @type {any} */ (node);
+  const snap = { node, srcW, kind: snapNode.__nfSnapKind || 'clone', scroller: snapNode.__nfSnapScroller || null };
+  delete snapNode.__nfSnapKind;
+  delete snapNode.__nfSnapScroller;
+  deckSnapshots.set(entry.id, snap);
+  return snap;
+}
+
+/**
+ * 快照节点构建（桌面环卡 + 手机堆叠视角共核，**同一套源解析/克隆腿**——
+ * 手机端不另造第二套截图方案，作者铁律「复用现有组件」）。
+ * 手机端堆叠视角批（作者令 2026-11-02 21:47 §三）把它从私有函数提为导出：
+ * 手机层需要自己的缓存生命周期（卡在、快照在；内容变才重截），桌面侧仍走
+ * 上面的 deckSnapshots 单会话缓存，行为零变化。
+ * @param {string} tabId canvas 页签 id
+ * @param {number} srcW 渲染面宽（快照缩放基准，CSS px）
+ * @returns {{node: Element, srcW: number, kind: string, scroller: Element|null}|null}
+ */
+export function canvasSnapshotFor(tabId, srcW) {
+  const entry = tabs.get(tabId);
+  if (!entry) return null;
+  const w = Number(srcW) > 0 ? Number(srcW) : 900;
+  const node = deckSnapshotNode(entry, w);
+  if (!node) return null;
+  const snapNode = /** @type {any} */ (node);   // 同上：expando 类型放行，运行期同一对象
+  const kind = snapNode.__nfSnapKind || 'clone';
+  const scroller = snapNode.__nfSnapScroller || null;
+  delete snapNode.__nfSnapKind;
+  delete snapNode.__nfSnapScroller;
+  return { node, srcW: w, kind, scroller };
+}
+
+/**
+ * 快照内容指纹（手机堆叠视角缓存命中判据，作者令「同一张卡不重复截图，
+ * 内容变了再重截」）：类型族 + 标题 + 源渲染面文本长度/滚动高度。
+ * 极轻（不克隆、不布局），只在开面/切卡时算一次。
+ * @param {string} tabId
+ * @returns {string} 指纹（无源面 = 空串 ⇒ 调用方落 mock）
+ */
+export function canvasSnapshotStamp(tabId) {
+  const entry = tabs.get(tabId);
+  if (!entry) return '';
+  const src = deckSnapshotSource(entry);
+  if (!src) return '';
+  const el = /** @type {HTMLElement} */ (src.el);
+  const text = (el.textContent || '').length;
+  const h = el.scrollHeight || el.offsetHeight || 0;
+  const img = src.kind === 'img' ? (/** @type {HTMLImageElement} */ (el).currentSrc || el.getAttribute('src') || '') : '';
+  return [deckTypeFamily(entry), src.kind, text, h, img.length].join('|');
+}
+
+/** 快照节点构建内核（无缓存；kind/scroller 以临时属性回传，调用方消费后删除）。 */
+function deckSnapshotNode(entry, srcW) {
+  const src = deckSnapshotSource(entry);
+  if (!src) return null;
+  let node = null;
+  try {
+    if (src.kind === 'canvas') {
+      // pdf 首页像素拷贝：按卡宽定高，一次 drawImage（零常驻成本）
+      const srcCanvas = /** @type {HTMLCanvasElement} */ (src.el);
+      const c = document.createElement('canvas');
+      c.width = Math.round(Math.min(760, srcW));
+      c.height = Math.round(c.width * (srcCanvas.height / srcCanvas.width));
+      c.getContext('2d').drawImage(srcCanvas, 0, 0, c.width, c.height);
+      node = c;
+    } else if (src.kind === 'iframe') {
+      // html 页签：新建只读 iframe 重挂同源 srcdoc（真实浏览器级渲染面）。
+      const f = document.createElement('iframe');
+      f.setAttribute('sandbox', 'allow-same-origin');    // 快照只读展示：不带回脚本
+      f.setAttribute('scrolling', 'no');
+      f.setAttribute('tabindex', '-1');
+      f.setAttribute('aria-hidden', 'true');
+      f.style.cssText = 'width:100%;height:100%;border:none;background:transparent;pointer-events:none;';
+      f.srcdoc = src.html;
+      node = f;
+    } else if (src.kind === 'monaco') {
+      // Monaco 渲染层克隆：剥掉滚动条/光标/悬浮件，宿主字体/底色/前景色一起拷，
+      // 令牌色（.mtk* 类）由全局注入样式命中克隆子树。
+      const host = /** @type {HTMLElement} */ (src.host);
+      const hcs = getComputedStyle(host);
+      const linesClone = /** @type {Element} */ (src.el.cloneNode(true));
+      linesClone.querySelectorAll('.scrollbar, .cursors-layer, .scroll-decoration, .overflowingContentWidgets, .find-widget')
+        .forEach((n) => n.remove());
+      linesClone.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));
+      const shell = document.createElement('div');
+      shell.style.cssText = 'background:' + hcs.backgroundColor + ';color:' + hcs.color +
+        ';font-family:' + hcs.fontFamily + ';font-size:' + hcs.fontSize +
+        ';font-weight:' + hcs.fontWeight + ';line-height:' + hcs.lineHeight +
+        ';font-variant-ligatures:' + hcs.fontVariantLigatures + ';overflow:hidden;';
+      shell.appendChild(linesClone);
+      node = shell;
+    } else {
+      node = /** @type {Element} */ (src.el.cloneNode(true));
+      node.querySelectorAll('[id]').forEach((n) => n.removeAttribute('id'));   // 克隆去 id：防全局 getElementById 撞车
+      node.querySelectorAll('button, input, textarea, select').forEach((n) => n.setAttribute('tabindex', '-1'));
+    }
+  } catch { return null; }
+  // kind / scroller 经 node 上的临时属性回传（本内核只造节点，缓存策略归调用方：
+  // 桌面 = deckSnapshots 单会话缓存，手机堆叠视角 = 内容指纹缓存）。
+  const host = /** @type {any} */ (node);
+  host.__nfSnapKind = src.kind;
+  host.__nfSnapScroller = src.scroller || null;
+  return node;
+}
+/** 把快照挂进卡的 thumb 槽（替换 mock；等比缩放 + 只读）。缩放比取布局常量
+ *  （卡宽 = 面板盒 85%，thumb 内宽 = 卡宽 − 12×2 margin − 2 border）——建环瞬间
+ *  卡未布局，clientWidth 读数不可靠。 */
+function deckMountSnapshot(card, tabId) {
+  const slot = card.querySelector('.card-thumb');
+  if (!slot || slot.dataset.snap !== 'pending') return;
+  const entry = tabs.get(tabId);
+  if (!entry) return;
+  const snap = deckBuildSnapshot(entry);
+  if (!snap) { slot.dataset.snap = 'mock'; return; }
+  slot.dataset.snap = 'live';
+  slot.classList.add('has-snap');
+  const area = deckPanelRect();
+  const thumbW = area && area.width ? area.width * DECK_SCALE - 26 : 0;
+  const k = thumbW && snap.srcW ? thumbW / snap.srcW : 0.85;
+  const wrap = document.createElement('div');
+  wrap.className = 'card-snap';
+  const inner = document.createElement('div');
+  inner.className = 'card-snap-inner';
+  inner.style.width = snap.srcW + 'px';
+  inner.dataset.k = k.toFixed(4);
+  inner.style.transform = 'scale(' + k.toFixed(4) + ')';
+  if (snap.kind === 'img') {
+    const img = /** @type {HTMLElement} */ (snap.node);
+    img.className = 'card-snap-img';
+    inner.style.transform = '';
+    inner.style.width = '100%';
+    inner.appendChild(img);
+  } else {
+    inner.appendChild(snap.node);
+  }
+  wrap.appendChild(inner);
+  slot.replaceChildren(wrap);
+}
+/** 开卡组时批量补快照：可视窗先挂，其余分帧建（防一帧长任务拖开卡动画）。 */
+function deckAttachSnapshots() {
+  if (!deck.open || !deckLayer) return;
+  const cards = [...deckLayer.querySelectorAll('.deck-card[data-r]')]
+    .sort((a, b) => {
+      const da = Math.abs(deckWrapDelta((+a.dataset.r) - deck.pos, deck.M));
+      const db = Math.abs(deckWrapDelta((+b.dataset.r) - deck.pos, deck.M));
+      return da - db;                            // 近卡先建（前景先见真容）
+    });
+  const pending = cards.filter((c) => { const s = c.querySelector('.card-thumb'); return s && s.dataset.snap === 'pending'; });
+  let i = 0;
+  const step = () => {
+    if (!deck.open) return;                       // 收场即弃（Map 已清）
+    for (let n = 0; n < DECK_SNAP_BATCH && i < pending.length; n++, i++) {
+      deckMountSnapshot(pending[i], pending[i].dataset.tab);
+    }
+    if (i < pending.length) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+// ── UI 批 ③：快照活性同步（可视卡 ±2 精渲染；深处静态快照）────────────
+//   · 源滚动镜像：capture 段 scroll 监听 → 活性窗内卡把源 scroller 的 scrollTop
+//     换算成缩略 translateY（滚动中同步更新，擦洗到哪跟到哪）；
+//   · 源变更重截：MutationObserver 盯全部页签 pane（子树/文本），防抖后只重截
+//     活性窗内的卡（深处卡不花这笔钱）。
+const deckLive = { mo: null, onScroll: null, near: new Set(), timer: 0 };
+function deckLiveSync() {
+  if (!deck.open || !deckLayer) return;
+  for (const id of [...deckLive.near]) {
+    const el = deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(id) + '"]');
+    if (!el) { deckLive.near.delete(id); continue; }
+    const slot = el.querySelector('.card-thumb');
+    if (!slot) continue;
+    slot.dataset.snap = 'pending';                // 重建（保留 mock 兜底可见）
+    slot.classList.remove('has-snap');
+    slot.innerHTML = deckThumbMock(deckTypeFamily(tabs.get(id)));
+    deckSnapshots.delete(id);
+    deckMountSnapshot(el, id);
+  }
+}
+function deckLiveSchedule() {
+  if (deckLive.timer) clearTimeout(deckLive.timer);
+  deckLive.timer = setTimeout(() => { deckLive.timer = 0; deckLiveSync(); }, DECK_LIVE_RECLONE_DEBOUNCE);
+}
+function deckLiveBind() {
+  if (deckLive.mo || !deckLayer) return;
+  deckLive.mo = new MutationObserver(() => { if (deckLive.near.size) deckLiveSchedule(); });
+  deckLiveObserveAll();
+  deckLive.onScroll = (e) => {
+    if (!deckLive.near.size || !deckLayer) return;
+    const scroller = e.target;
+    if (!(scroller instanceof Element)) return;
+    for (const id of deckLive.near) {
+      const snap = deckSnapshots.get(id);
+      if (!snap || !snap.scroller || snap.scroller !== scroller) continue;
+      const inner = deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(id) + '"] .card-snap-inner');
+      if (!inner) continue;
+      const k = parseFloat(inner.dataset.k || '0.85');
+      const top = scroller instanceof Element && 'scrollTop' in scroller ? /** @type {HTMLElement} */ (scroller).scrollTop : 0;
+      inner.style.transform = 'translateY(' + (-k * top).toFixed(1) + 'px) scale(' + k.toFixed(4) + ')';
+    }
+  };
+  document.addEventListener('scroll', deckLive.onScroll, true);
+}
+/** 把当前全部页签 pane 挂进活性监听（叠卡开着时外部新开的页签由重挂环路径补挂；
+ *  对已监听目标重复 observe 同参数是幂等操作，不会重放回调）。 */
+function deckLiveObserveAll() {
+  if (!deckLive.mo) return;
+  for (const [, entry] of tabs) {
+    if (entry.paneEl) deckLive.mo.observe(entry.paneEl, { subtree: true, childList: true, characterData: true });
+  }
+}
+function deckLiveUnbind() {
+  if (deckLive.mo) { deckLive.mo.disconnect(); deckLive.mo = null; }
+  if (deckLive.onScroll) { document.removeEventListener('scroll', deckLive.onScroll, true); deckLive.onScroll = null; }
+  if (deckLive.timer) { clearTimeout(deckLive.timer); deckLive.timer = 0; }
+  deckLive.near.clear();
+}
+/** 性能批⑤（2026-10-31 堆叠卡顿批）：环卡列表缓存。修前 deckFrame /
+ *  deckLiveTick 每帧各一趟 querySelectorAll('.deck-card[data-r]:not(.ghost)')
+ *  （O(N) 树扫 + 选择器解析，擦洗/跟手全程每帧两趟）。卡 DOM 只经四处增删
+ *  —— deckMountRing 全量重建 / deckDoSwap 摘 selfCard / deckFinishSwap·closeDeck·
+ *  deckShutdown 收场清场 —— 各点置脏（deckCardsDirty），帧首脏才重查一次。 */
+let deckCardsCache = /** @type {HTMLElement[]|null} */ (null);
+function deckCardsDirty() { deckCardsCache = null; }
+function deckCards() {
+  if (!deckCardsCache && deckLayer) {
+    deckCardsCache = [...deckLayer.querySelectorAll('.deck-card[data-r]:not(.ghost)')];
+  }
+  return deckCardsCache || [];
+}
+
+/** 每帧维护活性窗集合（deckFrame 调）：进出窗沿 = 挂/摘（摘 = 留静态快照）。 */
+function deckLiveTick() {
+  if (!deck.open || !deckLayer || !deck.M) return;
+  for (const el of deckCards()) {
+    const id = el.dataset.tab;
+    if (!id) continue;
+    const d = Math.abs(deckWrapDelta((+el.dataset.r) - deck.pos, deck.M));
+    const inWindow = d <= DECK_LIVE_DEPTH;
+    const was = deckLive.near.has(id);
+    if (inWindow && !was) {
+      deckLive.near.add(id);
+      const snap = deckSnapshots.get(id);
+      if (!snap) deckMountSnapshot(el, id);       // 深处卡首次进窗：现补真容
+    } else if (!inWindow && was) {
+      deckLive.near.delete(id);                   // 出窗：静态快照保留，停止同步
+    }
+  }
+}
+/** 快照缓存清场（deck 收场三口：closeDeck / deckShutdown / deckFinishSwap）。
+ *  只清 Map——卡 DOM 由收场自行移除，退场淡出期间快照留在卡上不闪帧。 */
+function deckClearSnapshots() {
+  deckSnapshots.clear();
+  deckLiveUnbind();
+}
+
+function deckMountRing() {
+  if (!deckLayer) return;
+  deckLayer.querySelectorAll('.deck-card').forEach((el) => el.remove());
+  deck.ring = deckBuildRing();
+  deck.M = deck.ring.length;
+  deck.ring.forEach((entry, r) => deckLayer.appendChild(deckMakeCardEl(entry, r)));
+  deck.ringActiveId = activeTabId;
+  deckSyncCardA11y();
+  deck.selfCardEl = deck.M
+    ? deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(activeTabId || '') + '"]')
+    : null;
+  deckCardsDirty();                      // 性能批⑤：全量重建 = 卡列表置脏
+}
+/**
+ * B2-1：卡壳 roving tabindex + aria-selected 的**唯一分配点**。
+ * 不变量与文件树一致：同一时刻恰好一张卡 `tabindex=0`（= 当前活动页签的卡；
+ * 活动页签不在环里时取环首）。卡 DOM 在每次重挂环时整批换血，所以必须是
+ * "挂完再算"，而不是建卡时各算一次（各算各的 = 多张 0 或零张 0）。
+ * @returns {void}
+ */
+function deckSyncCardA11y() {
+  if (!deckLayer) return;
+  const cards = [...deckLayer.querySelectorAll('.deck-card:not(.ghost)')].filter((el) => el instanceof HTMLElement);
+  if (!cards.length) return;
+  const wanted = deck.ringActiveId || activeTabId || '';
+  const target = cards.find((el) => el.dataset.tab === wanted) || cards[0];
+  for (const el of cards) {
+    const on = el === target;
+    el.tabIndex = on ? 0 : -1;
+    el.setAttribute('aria-selected', on ? 'true' : 'false');
+  }
+}
+
+/** 外部换签收敛：环重置到新 active 的前景位（pos=0）。 */
+function deckRemountForActive() {
+  deck.cardDrag = null;                  // UI 批 ②：重挂环 = 全卡换血，在途拖划随旧卡失效
+  deckMountRing();
+  deckLiveObserveAll();                  // ③：外部新开的页签 pane 补挂活性监听
+  deck.pos = deck.target = 0;
+  deck.d0s = 0;
+  deck.panelFront = true;
+  if (deckLayer) deckLayer.classList.remove('over');
+  deckStartLoop();
+}
+
+// ── 位姿（v4③ 露边阶梯 + v5① 翻落支 + UI 批 ④ 动效层：缩放坡道/视差深度）──
+function deckPoseOf(d) {
+  if (d < 0) {
+    /* 翻落支（精修①收幅；y 从前景基姿 DECK_SHIFT 起落，保证 d=0 两侧连续）。
+       UI 批 ④：翻落时缩小 + 后撤（视差），落地→渐隐收进卡组。 */
+    const a = Math.min(-d, 2.2);
+    const arc = -d < 1 ? Math.sin(Math.PI * -d) : 0;
+    const y = DECK_SHIFT + (DECK_FALL_DROP * a + DECK_FALL_ARC * arc) * deck.sizeK;
+    const tilt = (DECK_FALL_TILT * a + DECK_FALL_TILT_ARC * arc) * deck.sizeK;
+    const op = Math.min(1, Math.max(0, 1 - (a - 0.12) * 0.42));
+    return { y, z: -DECK_DEPTH_Z * a * deck.sizeK, tilt, scale: 1 - DECK_FALL_SHRINK * a,
+             op, shade: Math.min(0.30, a * 0.12) };
+  }
+  /* uifix ③a：间距拉开档位（v1 收敛 / v2 均衡 / v3 拉开，deckPeekStep 同源）。
+     UI 批 ④：近卡放大/远卡缩小（缩放坡道两段）+ 视差 translateZ（透视后撤）；
+     d=0 → scale 1 / z 0（前景基姿与 .stacked 严丝合缝）。
+     snapfix 批（作者令 2026-10-22 ③「堆叠快照不可见」）：透明度坡道重修——
+     修前 `1 − (dd−1.2)×0.30` 无底：d=3 → 0.54、d=4 → 0.16、深处趋 0，暗色
+     背景下深处卡直接沉底成「一片暗影」（作者截图：图谱面板后两层只余黑影）。
+     现改带底坡道：d≤1 恒 1，此后每层 −0.12、0.62 封底 ⇒ 1 → 0.88(d2) →
+     0.76(d3) → 0.64(d4+)，≥3 层逐层递暗有梯度、层层面容可辨（暗但不糊，
+     9.19 无边语言：层次仍靠明暗差 + shade 渐变，不靠消失）。 */
+  const step = deckPeekStep();
+  const dd = Math.max(0, d);
+  const a1 = Math.min(dd, 1);
+  const a2 = Math.max(0, Math.min(dd, 4.5) - 1);
+  const y = DECK_SHIFT - (step.peek1 * a1 + step.peek2 * a2) * deck.sizeK;
+  const tilt = -1.6 * Math.min(dd, 4) * deck.sizeK;
+  const op = dd <= 1 ? 1 : Math.max(0.62, 1 - (dd - 1) * 0.12);
+  return { y, z: -DECK_DEPTH_Z * Math.min(dd, 4.5) * deck.sizeK,
+           tilt, scale: 1 - DECK_DEPTH_SCALE_NEAR * a1 - DECK_DEPTH_SCALE_FAR * a2,
+           op, shade: Math.min(0.30, 0.11 * dd) };
+}
+/** 面板 alpha（前景位交接窗，v5① 原窗口）：d₀≥0 环卡回归→面板渐入；d₀<0 面板翻落→环卡接管 */
+function deckPanelAlphaOf(d0) {
+  return d0 >= 0 ? deckSmooth((0.50 - d0) / 0.40) : deckSmooth(1 - (-d0 - 0.08) / 0.32);
+}
+
+/* ④② 透视 y 补偿（deckProjectYComp）─────────────────────────────────────
+   #deck-layer 的 perspective(1150)/origin(50% 10%) 会把 translate3d 的 z≠0 卡
+   拉向透视原点：设计露边阶梯（27/9px）投影后被压扁（d=1 实测 ~4px、d≥2 <1px，
+   深处卡右键命中带消失 —— A9 首轮红）。反解投影方程：要「投影顶 = 设计顶」，
+   translate y 应为
+     y' = oy − H/2 + (topD − oy)/pf + (cardH/2)·s ，  pf = P/(P − z)
+   其中 topD = H/2 + y − cardH/2（未投影设计顶）、oy = H·DECK_ORIGIN_YK。
+   z=0 且 s=1（前景基姿）时代数恒等 → 无损；spread 开合期随 z 收敛连续。
+   仅用于环卡绘制路径（deckPaintCard 消费方）；面板驱动路径盒几何不同（整区
+   scale(0.85) 外置、无深度缩放），其投影顶本就 ≈ 设计值（实测偏差 <0.5px），
+   勿复用本补偿。ghost/selFly 常量位姿 z=0 或渐隐中，不需要补偿。 */
+function deckProjectYComp(y, z, s) {
+  const H = deck.areaH || 0;
+  if (!H || !z) return y;
+  const pf = DECK_PERSPECTIVE / (DECK_PERSPECTIVE - z);
+  const oy = H * DECK_ORIGIN_YK;
+  const topD = H / 2 + y - deck.cardH / 2;
+  return oy - H / 2 + (topD - oy) / pf + (deck.cardH / 2) * s;
+}
+
+/** @param {{y:number,z:number,tilt:number,scale:number,op:number,shade:number}} a
+ *  @param {{y:number,z:number,tilt:number,scale:number,op:number,shade:number}} b */
+function deckLerpPose(a, b, e) {
+  return {
+    y: a.y + (b.y - a.y) * e, z: a.z + (b.z - a.z) * e,
+    tilt: a.tilt + (b.tilt - a.tilt) * e, scale: a.scale + (b.scale - a.scale) * e,
+    op: a.op + (b.op - a.op) * e,
+    shade: (a.shade || 0) + ((b.shade || 0) - (a.shade || 0)) * e,
+  };
+}
+/* 落点/起点位姿（卡坐标系：卡基尺寸 = 面板盒 85% = 缩放态 canvas 尺寸） */
+const DECK_FLY_LAND = { y: 0, z: 0, tilt: 0, scale: 1 / DECK_SCALE, op: 1, shade: 0 };
+const DECK_GHOST_FROM = { y: DECK_SHIFT, z: 0, tilt: 0, scale: 1, op: 1, shade: 0 };
+const DECK_GHOST_TO = { y: -34, z: -110, tilt: -8, scale: 0.94, op: 0, shade: 0 };
+
+function deckPaintCard(el, p, zi) {
+  el.style.zIndex = zi;
+  el.style.opacity = p.op.toFixed(3);
+  el.style.transform = 'translate(-50%,-50%)' +
+    ' translate3d(0,' + p.y.toFixed(2) + 'px,' + p.z.toFixed(2) + 'px)' +
+    ' rotateX(' + p.tilt.toFixed(2) + 'deg)' +
+    (p.scale && p.scale !== 1 ? ' scale(' + p.scale.toFixed(4) + ')' : '');
+  const shade = el.querySelector('.card-shade');
+  if (shade) shade.style.opacity = (p.shade != null ? p.shade : 0).toFixed(3);
+}
+function deckSetRootFxStyle(panel, x, rot, op, scaleK) {
+  panel.style.opacity = op.toFixed(3);
+  panel.style.transform = 'translateY(' + DECK_SHIFT + 'px) scale(' + DECK_SCALE + ')' +
+    ' translate3d(' + x.toFixed(1) + 'px,0,0) rotateZ(' + rot.toFixed(2) + 'deg)' +
+    (scaleK && scaleK !== 1 ? ' scale(' + scaleK.toFixed(4) + ')' : '');
+}
+
+function deckFrame(t) {
+  const panel = document.getElementById('canvas-panel');
+  if (!panel || !deckLayer) { deckStopLoop(); return; }
+  const dt = Math.min(0.05, (t - deck.lastT) / 1000 || 0.016);
+  deck.lastT = t;
+  syncDeckBox();
+
+  /* UI 批 ② 成因 (b) 失扫：拖划中的环卡若已被移出文档（外部换签重挂环 / 摘卡
+     收敛 / 收场清卡），浏览器不再向已拔除元素派发 pointerup —— deck.cardDrag
+     会永久卡死、fab 永久失灵。逐帧断链检测即取消收场（跳过手势语义）。 */
+  if (deck.cardDrag && !deck.cardDrag.el.isConnected) deckEndCardDrag(deck.cardDrag, true);
+
+  // 移动层接管（视口切换/模式翻转）：叠卡静默退场
+  if (document.body.classList.contains('mobile-layer') && deck.open && !deck.finalizing) {
+    deckShutdown();
+    return;
+  }
+
+  const k = deckRm.matches ? 1 : 1 - Math.exp(-dt * DECK_SCRUB_APPROACH);
+  /* uifix ③c：滚轮滑行段 —— 事件流静默后的 EMA 初速指数衰减并进 target；
+     新输入四路口（wheel/拖划/键盘/收场）已各自截停。 */
+  if (wheelGlideV) {
+    deck.target += wheelGlideV * dt * 1000 * DECK_WHEEL_GAIN;
+    deck.target = Math.max(deck.pos - deck.M, Math.min(deck.pos + deck.M, deck.target));
+    wheelGlideV *= Math.exp(-dt * DECK_WHEEL_GLIDE_DECAY);
+    if (Math.abs(wheelGlideV) < 0.02) wheelGlideV = 0;
+  }
+  deck.pos += (deck.target - deck.pos) * k;
+  if (Math.abs(deck.target - deck.pos) < 0.0008) deck.pos = deck.target;
+  const ks = deckRm.matches ? 1 : 1 - Math.exp(-dt * DECK_SPREAD_APPROACH);
+  deck.spread += (deck.spreadT - deck.spread) * ks;
+  if (Math.abs(deck.spreadT - deck.spread) < 0.004) deck.spread = deck.spreadT;
+
+  /* 面板驱动（v5①）：位姿/透明度随 d₀ 走，与前景环卡在交接窗交叉淡换。
+     驱动期间 no-trans（逐帧直写不吃 CSS 过渡）；回前景位清 inline 交还 .stacked。
+     alpha→0 时 pointer-events 关断（隐没的面板不得拦截卡组点击）；
+     deck-layer.over 随 alpha 自动抬/落。 */
+  let panelA = 1;
+  if (deck.open && !deck.finalizing && !deck.driveSuspend && deck.M) {
+    const d0raw = deckWrapDelta(-deck.pos, deck.M);
+    if (Math.abs(d0raw - deck.d0s) > deck.M / 2) deck.d0s = d0raw;
+    else deck.d0s += (d0raw - deck.d0s) * k;
+    if (Math.abs(d0raw - deck.d0s) < 0.001) deck.d0s = d0raw;
+    if (Math.abs(deck.d0s) > 0.0005) {
+      panelA = deckPanelAlphaOf(deck.d0s);
+      const p0 = deckPoseOf(deck.d0s);
+      panel.classList.add('no-trans');
+      panel.style.transform = 'translateY(' + DECK_SHIFT + 'px) scale(' + DECK_SCALE + ')' +
+        ' translate3d(0,' + (p0.y - DECK_SHIFT).toFixed(2) + 'px,' + p0.z.toFixed(2) + 'px)' +
+        ' rotateX(' + p0.tilt.toFixed(2) + 'deg)';
+      panel.style.opacity = panelA.toFixed(3);
+    } else {
+      deck.d0s = 0; panelA = 1;
+      panel.classList.remove('no-trans');
+      if (panel.style.transform) panel.style.transform = '';
+      if (panel.style.opacity && panel.style.opacity !== '1') panel.style.opacity = '';
+    }
+    panel.style.pointerEvents = panelA < 0.02 ? 'none' : '';
+    deckLayer.classList.toggle('over', panelA < 0.995);
+  }
+  const frontNow = Math.abs(deck.d0s) < 0.5;
+  if (frontNow !== deck.panelFront) {
+    deck.panelFront = frontNow;
+    panel.classList.toggle('is-front', frontNow && deck.open);
+  }
+
+  /* 环流卡（前景位轮换） */
+  deckLiveTick();
+  const cards = deckCards();
+  for (const el of cards) {
+    const r = +el.dataset.r;
+    const d = deck.M ? deckWrapDelta(r - deck.pos, deck.M) : 1;
+    /* uifix ③a：阴影渐次减弱 —— 环深档位打给 CSS（0=前景…3=深处） */
+    const dimTier = Math.min(3, Math.floor(Math.abs(d)));
+    if (el.dataset.dim !== String(dimTier)) el.dataset.dim = String(dimTier);
+    const p0 = deckPoseOf(d);
+    /* UI 批 ④：位姿含缩放坡道 + 视差 z（spread 开合期向基姿收敛，两侧连续）
+       ④②：y 过透视补偿 —— 投影顶钉回设计露边阶梯（27/9px 命中带真实存在） */
+    let p = { y: DECK_SHIFT + (p0.y - DECK_SHIFT) * deck.spread, z: p0.z * deck.spread, tilt: p0.tilt * deck.spread,
+              scale: 1 + (p0.scale - 1) * deck.spread, op: p0.op * deck.spread, shade: p0.shade };
+    p.y = deckProjectYComp(p.y, p.z, p.scale);
+    /* canvas 本尊的环卡：交接窗内与面板互补淡换（两表面位姿恒等，只有 face 交叉） */
+    if (el === deck.selfCardEl) p.op *= (1 - panelA);
+    if (deck.selFly && el === deck.selFly.el) {
+      deck.selFly.k = Math.min(1, deck.selFly.k + dt / (deckRm.matches ? 0.05 : DECK_FLY_DUR));
+      p = deckLerpPose(p, DECK_FLY_LAND, deckEaseOut(deck.selFly.k));
+      deckPaintCard(el, p, '600');
+      if (deck.selFly.k >= 1) { const done = deck.selFly; deck.selFly = null; deckDoSwap(done.entry); }
+      continue;
+    }
+    let extra = '';
+    if (deck.cardDrag && deck.cardDrag.el === el && deck.cardDrag.wasDragged && deck.cardDrag.axis === 'x') {
+      extra = ' translate3d(' + deck.cardDrag.dx.toFixed(1) + 'px,0,0) rotateZ(' + (deck.cardDrag.dx * 0.028).toFixed(2) + 'deg)';
+    }
+    if (deck.exitCardFx && deck.exitCardFx.el === el) {
+      const dur = deck.exitCardFx.mode === 'spring' ? DECK_SPRING_DUR : DECK_FLING_DUR;
+      deck.exitCardFx.k = Math.min(1, deck.exitCardFx.k + dt / (deckRm.matches ? 0.05 : dur));
+      const e = deckEaseOut(deck.exitCardFx.k);
+      if (deck.exitCardFx.mode === 'fling') {
+        const rect = deckPanelRect();
+        const dist = rect.width * 0.6 + 240;
+        extra += ' translate3d(' + (deck.exitCardFx.dx0 + deck.exitCardFx.dir * dist * e).toFixed(1) + 'px,0,0) rotateZ(' + (deck.exitCardFx.dir * 13 * e).toFixed(2) + 'deg)';
+        p = { ...p, op: Math.max(0, p.op * (1 - e * 1.25)) };
+        if (deck.exitCardFx.dir) deck.exitCardFx.endX = deck.exitCardFx.dir * dist;
+      } else if (deck.exitCardFx.mode === 'spring') {
+        const x = deck.exitCardFx.dx0 * (1 - e);
+        extra += ' translate3d(' + x.toFixed(1) + 'px,0,0) rotateZ(' + (x * 0.028).toFixed(2) + 'deg)';
+      } else { /* shrink（右键收拢） */
+        p = { ...p, op: Math.max(0, p.op * (1 - e * 1.2)) };
+        extra += ' scale(' + (1 - 0.12 * e).toFixed(4) + ')';
+      }
+      if (deck.exitCardFx.k >= 1) {
+        const done = deck.exitCardFx; deck.exitCardFx = null;
+        if (done.mode !== 'spring') deckSettleClose(done.tabId, done.mode === 'fling' ? done : null);
+      }
+    }
+    /* 滑删顺滑批（2026-10-23 六项⑥b）：位姿签名去重 —— 拼一次完整串
+     *  （z/opacity/transform 含拖划 extra/shade），与上帧全等即零写。横划
+     *  跟手段 deck.pos 不动 ⇒ 非拖卡位姿恒定：修前每帧 4 写/卡（z-index 每
+     *  帧重写还会触发叠层重算），修后只有拖卡自己写 —— 合成层内插值，
+     *  主线程只剩一次字符串比较（滑删跟手不掉帧的主修）。 */
+    const zi = String(100 - Math.round(Math.abs(d) * 10));
+    const tf = 'translate(-50%,-50%)' +
+      ' translate3d(0,' + p.y.toFixed(2) + 'px,' + p.z.toFixed(2) + 'px)' +
+      ' rotateX(' + p.tilt.toFixed(2) + 'deg)' +
+      (p.scale && p.scale !== 1 ? ' scale(' + p.scale.toFixed(4) + ')' : '') + extra;
+    const opS = p.op.toFixed(3);
+    const anyEl = /** @type {any} */ (el);
+    /* 性能批⑤：shade 元素引用随卡缓存（.card-shade = 卡模板静态子节点，
+     * 快照只换 .card-thumb 槽内容，shade 永不被替换 —— 每帧每卡 querySelector
+     * 降为建卡后一次）。front 位与 pointer-events 一并纳入位姿签名：修前在
+     * 签名去重块之外每帧每卡无条件 classList.toggle + style 写（2 写/卡/帧），
+     * 修后位姿不变时全零写。 */
+    let shadeEl = /** @type {HTMLElement|null|undefined} */ (anyEl._deckShade);
+    if (shadeEl === undefined) {
+      shadeEl = el.querySelector('.card-shade');
+      anyEl._deckShade = shadeEl;
+    }
+    const shadeS = (p.shade != null ? p.shade : 0).toFixed(3);
+    const frontBit = Math.abs(d) < 0.5 ? 'F' : '';
+    const peBit = (p.op > 0.05 && !deck.selFly && !deck.finalizing) ? 'P' : '';
+    const sig = zi + '|' + opS + '|' + tf + '|' + shadeS + '|' + frontBit + peBit;
+    if (anyEl._deckSig !== sig) {
+      anyEl._deckSig = sig;
+      el.style.zIndex = zi;
+      el.style.opacity = opS;
+      el.style.transform = tf;
+      if (shadeEl) shadeEl.style.opacity = shadeS;
+      el.classList.toggle('front', !!frontBit);
+      el.style.pointerEvents = peBit ? 'auto' : 'none';
+    }
+  }
+
+  /* ghost 旧内容卡：从满幅位缩回堆叠深处（v4④） */
+  if (deck.ghostFx) {
+    deck.ghostFx.k = Math.min(1, deck.ghostFx.k + dt / (deckRm.matches ? 0.05 : DECK_GHOST_DUR));
+    const e = deckEaseOut(deck.ghostFx.k);
+    const p = deckLerpPose(DECK_GHOST_FROM, DECK_GHOST_TO, e);
+    deckPaintCard(deck.ghostFx.el, { ...p, shade: 0.1 * (1 - e) }, '600');
+    if (deck.ghostFx.k >= 1) { const g = deck.ghostFx; deck.ghostFx = null; g.el.remove(); deckFinishSwap(); }
+  }
+
+  /* 面板 FX：甩出 / 弹回 / 收拢（v4⑥；精修①时长 0.22/0.24/0.26） */
+  if (deck.faceFx) {
+    const dur = deck.faceFx.mode === 'spring' ? DECK_SPRING_DUR
+      : deck.faceFx.mode === 'fling' ? DECK_FLING_DUR : DECK_SHRINK_DUR;
+    deck.faceFx.k = Math.min(1, deck.faceFx.k + dt / (deckRm.matches ? 0.05 : dur));
+    const e = deckEaseOut(deck.faceFx.k);
+    if (deck.faceFx.mode === 'fling') {
+      const rect = deckPanelRect();
+      const dist = rect.width * 0.6 + 240;
+      deckSetRootFxStyle(panel, deck.faceFx.dx0 + deck.faceFx.dir * dist * e, deck.faceFx.dir * 13 * e, Math.max(0, 1 - e * 1.25));
+      if (deck.faceFx.dir) deck.faceFx.endX = deck.faceFx.dir * dist;
+    } else if (deck.faceFx.mode === 'spring') {
+      deckSetRootFxStyle(panel, deck.faceFx.dx0 * (1 - e), deck.faceFx.dx0 * (1 - e) * 0.028, 1);
+    } else { /* shrink */
+      deckSetRootFxStyle(panel, 0, 0, Math.max(0, 1 - e * 1.2), 1 - 0.14 * e);
+    }
+    if (deck.faceFx.k >= 1) {
+      const done = deck.faceFx; deck.faceFx = null;
+      panel.classList.add('no-trans');
+      if (done.mode !== 'spring') deckSettleClose(activeTabId, done);
+      else { panel.style.opacity = ''; panel.style.transform = ''; panel.classList.remove('no-trans'); }
+    }
+  }
+
+  const settled = deck.pos === deck.target && deck.spread === deck.spreadT &&
+    !deck.drag && !deck.cardDrag && !deck.faceFx && !deck.selFly && !deck.ghostFx && !deck.exitCardFx;
+  if (settled && (!deck.open || deck.finalizing)) { deckStopLoop(); return; }
+  deck.raf = requestAnimationFrame(deckFrame);
+}
+function deckStartLoop() {
+  if (!deck.raf) { deck.lastT = performance.now(); deck.raf = requestAnimationFrame(deckFrame); }
+}
+function deckStopLoop() {
+  if (deck.raf) { cancelAnimationFrame(deck.raf); deck.raf = 0; }
+}
+
+// ── 进入 / 收回 ──
+function openDeck() {
+  const panel = document.getElementById('canvas-panel');
+  if (!panel || deck.open || deck.finalizing || tabs.size === 0) return;
+  if (!isCanvasOpen()) return;
+  if (document.body.classList.contains('mobile-layer') || isMobileViewport()) return;
+  deck.open = true;
+  deckFabQueued = false;
+  deck.selFly = null; deck.ghostFx = null; deck.faceFx = null; deck.exitCardFx = null;
+  deck.drag = null; deck.cardDrag = null; deck.suppressCardClick = 0;
+  deckWheelReset();
+  deckMountRing();
+  deck.pos = deck.target = 0;          // 前景位 = 环首 = 当前 canvas
+  deck.d0s = 0; deck.driveSuspend = false; deck.panelFront = true;
+  deck.spread = 0; deck.spreadT = 1;
+  panel.classList.add('stacked', 'is-front');
+  panel.style.opacity = ''; panel.style.pointerEvents = '';
+  deckLayer.classList.add('live');
+  layoutDeck();
+  syncDeckBox();
+  deckFab.setAttribute('aria-pressed', 'true');
+  renderCanvasHeader();                  // 批⑤：叠卡态顶部标签数落位（.t-count）
+  deckLiveBind();                        // ③：活性窗监听（滚动镜像 + 变更重截）
+  deckAttachSnapshots();                 // ③b：开卡组时批量截快照（近卡先挂，分帧补）
+  deckStartLoop();
+}
+/** 收回（v4⑤ + v5① 轮换态衔接）：面板位姿瞬时归位 + 卡组 .collapse 淡出交叉。 */
+function closeDeck() {
+  const panel = document.getElementById('canvas-panel');
+  if (!panel || !deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+  deck.finalizing = true;
+  deck.spreadT = 0;
+  /* UI 批 ② 成因 (a)：收场即清手势重入锁——残留 deck.drag/deck.cardDrag 曾让
+     fab 守卫永久吞点击（划走/竖拖进行中 ESC/收场等路径的真 bug）；置 null 后
+     迟到的 pointerup 走 no-op（endPanelDrag/endCardDrag 判空返回）。 */
+  deck.drag = null;
+  deck.cardDrag = null;
+  panel.classList.add('no-trans');
+  panel.style.transform = '';          // 擦洗中途位姿瞬时归位（前景位基姿）
+  panel.style.pointerEvents = '';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    panel.classList.remove('no-trans');        // 恢复过渡：解除缩放 + alpha 交叉
+    panel.style.opacity = '1';
+    deckLayer.classList.add('collapse');
+    panel.classList.remove('stacked', 'is-front');
+    deckFab.setAttribute('aria-pressed', 'false');
+  }));
+  setTimeout(() => {
+    deckLayer.querySelectorAll('.deck-card').forEach((el) => el.remove());
+    deckCardsDirty();                  // 性能批⑤：收场清场 = 卡列表置脏
+    deck.ring = []; deck.M = 0; deck.selfCardEl = null; deck.ringActiveId = null;
+    deckLayer.classList.remove('collapse');
+    deckLayer.classList.remove('over');
+    deckLayer.classList.remove('live');
+    panel.style.opacity = '';
+    deck.open = false; deck.finalizing = false;
+    deck.exitCardFx = null;
+    deckClearSnapshots();
+    deckWheelReset();
+    deckStopLoop();
+    renderCanvasHeader();                // 批⑤：收起后标签数退场
+    deckFlushQueuedToggle();             // ②：收场补发连点排队
+  }, deckRm.matches ? 30 : 300);
+}
+/** 静默折层（面板收起 / 移动层接管）：跳过动画直接清场。 */
+function deckShutdown() {
+  if (!deck.open) return;
+  const panel = document.getElementById('canvas-panel');
+  deckLayer.querySelectorAll('.deck-card').forEach((el) => el.remove());
+  deckCardsDirty();                    // 性能批⑤：静默清场 = 卡列表置脏
+  deck.ring = []; deck.M = 0; deck.selfCardEl = null; deck.ringActiveId = null;
+  deck.selFly = null; deck.ghostFx = null; deck.faceFx = null; deck.exitCardFx = null;
+  deck.drag = null; deck.cardDrag = null;
+  deckLayer.classList.remove('collapse', 'over', 'live');
+  if (panel) {
+    panel.classList.remove('stacked', 'is-front', 'receiving', 'no-trans', 'restore');
+    panel.style.opacity = ''; panel.style.transform = ''; panel.style.pointerEvents = '';
+  }
+  deckFab.setAttribute('aria-pressed', 'false');
+  deck.open = false; deck.finalizing = false; deck.driveSuspend = false;
+  deckClearSnapshots();
+  deckWheelReset();
+  deckStopLoop();
+  deckFlushQueuedToggle();
+}
+
+// ── 换入（v4④：点前景卡 = 放大回满幅；深处卡走滚轮翻到该卡，不换入）──
+function deckSelectCard(r) {
+  if (deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+  const entry = deck.ring[r];
+  if (!entry) return;
+  if (entry.id === activeTabId) {
+    if (!deck.M || Math.abs(deckWrapDelta(0 - deck.pos, deck.M)) < 0.5) closeDeck();
+    return;
+  }
+  const el = deckLayer.querySelector('.deck-card[data-r="' + r + '"]');
+  if (!el) return;
+  deck.finalizing = true;
+  el.classList.add('fly');
+  deck.selFly = { el, entry, k: 0 };
+  deckLayer.classList.add('over');     // 飞行卡瞬时盖过面板根
+  document.getElementById('canvas-panel').classList.add('receiving');
+  deck.spreadT = 0;                    // 其余卡同步收回面板背后
+  deckStartLoop();
+}
+function deckDoSwap(entry) {
+  const panel = document.getElementById('canvas-panel');
+  const oldId = activeTabId;
+  if (deck.selFly && deck.selFly.el) deck.selFly.el.remove();
+  deck.selFly = null;
+  /* 旧 canvas 的环卡让位给 ghost（同一页签不双渲染） */
+  if (deck.selfCardEl && deck.selfCardEl.dataset.tab === oldId) { deck.selfCardEl.remove(); deck.selfCardEl = null; deckCardsDirty(); }
+  /* 标题交叉淡入 + 面板瞬时回满幅（被落位飞行卡严丝合缝盖住），内容随之切换 */
+  if (deckTitleEl) deckTitleEl.classList.add('swap');
+  setActiveTab(entry.id);
+  panel.classList.add('no-trans');
+  panel.classList.remove('stacked', 'receiving', 'is-front');
+  panel.style.transform = ''; panel.style.opacity = ''; panel.style.pointerEvents = '';
+  deckFab.setAttribute('aria-pressed', 'false');
+  setTimeout(() => { if (deckTitleEl) deckTitleEl.classList.remove('swap'); }, deckRm.matches ? 0 : 140);
+  void panel.offsetWidth;              // 强制应用 no-trans 后的满幅态
+  panel.classList.remove('no-trans');
+  /* 原 canvas（旧当前卡）缩回堆叠（ghost） */
+  const oldEntry = tabs.get(oldId);
+  if (oldEntry) {
+    const g = deckMakeCardEl(oldEntry, '', 'ghost');
+    deckLayer.appendChild(g);
+    deck.ghostFx = { el: g, k: 0 };
+  }
+}
+function deckFinishSwap() {
+  deckLayer.classList.remove('over');
+  deckLayer.querySelectorAll('.deck-card').forEach((el) => el.remove());
+  deckCardsDirty();                    // 性能批⑤：换入清环 = 卡列表置脏
+  deck.ring = []; deck.M = 0; deck.selfCardEl = null; deck.ringActiveId = null;
+  deck.pos = deck.target = 0; deck.d0s = 0; deck.spread = 0; deck.spreadT = 0;
+  deckLayer.classList.remove('live');
+  deck.open = false; deck.finalizing = false; deck.driveSuspend = false;
+  deckClearSnapshots();
+  deckWheelReset();
+  deckStopLoop();
+  deckFlushQueuedToggle();             // UI 批 ②：收场补发连点排队
+}
+
+// ── 关卡收尾：teardownTab 共核 + 邻位接管（右邻优先，同 closeTab）。
+// canvas（前卡）被关 = 整环重置：新 canvas 顶上（pos=0）；非前景卡 = 就地收敛保相位。 */
+function deckSettleClose(id, panelFx) {
+  const entry = tabs.get(id);
+  if (!entry) { deck.finalizing = false; return; }
+  const ids = [...tabs.keys()];
+  const idx = ids.indexOf(id);
+  const nextId = ids[idx + 1] || ids[idx - 1] || null;
+  const wasActive = activeTabId === id;
+  const fx = panelFx || deck.faceFx;
+  deck.faceFx = null;
+  deck.finalizing = false;             // teardownTab→notify 与 setActiveTab→hook 都要在活态跑
+  teardownTab(id);
+  if (!tabs.size) {
+    deckShutdown();
+    closeCanvas();                     // 全关收面板（重开走既有入口）
+    return;
+  }
+  if (wasActive) {
+    activeTabId = null;
+    if (nextId) setActiveTab(nextId);  // hook: deckRemountForActive（环重置 pos=0）
+    else { closeCanvas(); return; }
+    const panel = document.getElementById('canvas-panel');
+    if (panel && fx && fx.mode !== 'spring') deckRestorePanel(panel, fx);
+  } else {
+    syncCanvasPanelButtons();
+    renderCanvasHeader();
+  }
+  deckStartLoop();
+  deckFlushQueuedToggle();             // UI 批 ②：FX 收场补发连点排队
+}
+/** 环流就地收敛（v5①）：摘卡 → 环形旋转把 active 转回环首（pos 同步补偿，每张卡的
+ *  d 不变 = 零重排跳动）→ 重挂 data-r。M 变化引起的环绕重分布只影响深处淡出区。 */
+function deckSettleRingRemove(id) {
+  if (deck.cardDrag && deck.cardDrag.tabId === id) deck.cardDrag = null;   // UI 批 ②：被摘卡即在途拖划卡
+  const r = deck.ring.findIndex((t) => t.id === id);
+  if (r < 0) { deckRemountForActive(); return; }
+  const el = deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(id) + '"]');
+  if (el) el.remove();
+  deck.ring.splice(r, 1);
+  deck.M = deck.ring.length;
+  const s = deck.ring.findIndex((t) => t.id === activeTabId);
+  if (s > 0) {
+    deck.ring = deck.ring.slice(s).concat(deck.ring.slice(0, s));
+    deck.pos -= s; deck.target -= s;
+  }
+  deck.ring.forEach((t, i) => {
+    const e = deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(t.id) + '"]');
+    if (e) e.dataset.r = String(i);
+  });
+  deck.selfCardEl = deck.M
+    ? deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(activeTabId || '') + '"]')
+    : null;
+  deck.d0s = deck.M ? deckWrapDelta(-deck.pos, deck.M) : 0;
+  deckStartLoop();
+}
+/** teardownTab 挂钩：叠卡开着时的非 active 摘卡就地收敛（active 摘卡由
+ *  setActiveTab 钩子整环重置）。 */
+function deckNotifyRemoved(id) {
+  if (!deck || !deck.open || deck.finalizing) return;
+  if (id === activeTabId) return;
+  deckSettleRingRemove(id);
+}
+/** 面板回弹复位（v4⑥）：从甩出位姿弹性回到整区缩放基姿（期间驱动挂起）。 */
+function deckRestorePanel(panel, fx) {
+  deck.driveSuspend = true;
+  panel.classList.add('no-trans');
+  panel.style.opacity = '0';
+  const rect = deckPanelRect();
+  panel.style.transform = 'translateY(' + DECK_SHIFT + 'px) scale(' + DECK_SCALE + ')' +
+    ' translate3d(' + ((fx.endX || (fx.dir || 1) * (rect.width * 0.6 + 240))).toFixed(1) + 'px,0,0) rotateZ(' + ((fx.dir || 1) * 13).toFixed(2) + 'deg)';
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    panel.classList.remove('no-trans');
+    panel.classList.add('restore');
+    panel.style.opacity = '';
+    panel.style.transform = '';
+    setTimeout(() => { panel.classList.remove('restore'); deck.driveSuspend = false; }, deckRm.matches ? 20 : 340);
+  }));
+}
+
+// ── 关闭请求（右键菜单 + uifix ③e 卡面 × 钮同一条腿；划走关闭经 exitCardFx/faceFx）──
+function deckRequestClose(id) {
+  if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+  const panel = document.getElementById('canvas-panel');
+  if (id === activeTabId) {
+    // 关当前页签 = 面板收拢淡出（v4⑥ shrink 通路）
+    deck.finalizing = true;
+    panel.classList.add('no-trans');
+    deck.faceFx = { mode: 'shrink', k: 0, dx0: 0, dir: 0, endX: 0 };
+  } else {
+    const el = deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(id) + '"]');
+    if (!el) return;
+    deck.exitCardFx = { el, tabId: id, k: 0, mode: 'shrink', dx0: 0, dir: 0, endX: 0 };
+  }
+  deckStartLoop();
+}
+/**
+ * 收环动作的模块级句柄：真正的 `closeRing` 是画布头部装配函数里的局部 const
+ * （canvas.js 环形滚轮段），模块作用域够不着 —— 用一个登记位把它接到规则表。
+ * @type {(() => void)|null}
+ */
+let ringCloseFn = null;
+
+/**
+ * 触屏常驻横向档的同步句柄（作者令 2026-11-05 12:10）：`syncCoarseRow` 同样活在
+ * initCapsuleRing 的闭包里，而「页签集/激活签变了」这件事的公共出口是
+ * `renderCanvasHeader()`（openTab / setActiveTab / closeTab / deck 四处都过它）
+ * —— 用登记位接过去，比在每处调点撒一遍稳。桌面腿恒 no-op。
+ * @type {(() => void)|null}
+ */
+let ringSyncFn = null;
+
+/**
+ * 叠卡/环的键位动作（三期：**唯一的键盘入口**，由 keyRules.js 的 deck.* /
+ * canvas.* 规则按 when 条件转发进来）。
+ *
+ * 为什么动作留在本模块而不是搬进规则表：动作要读 `deck.pos`/`ringState` 这些
+ * 就地状态，搬走只会制造第二份真相。规则表拥有的是「键位 + 条件」这层横切关注点，
+ * 本函数拥有的是「点下去发生什么」。
+ * @param {'next'|'prev'|'close'|'select'|'activateCard'|'closeCard'|'closeRing'|'mergeSelf'} action
+ * @param {KeyboardEvent} [e]
+ * @returns {void}
+ */
+export function deckKeyAction(action, e) {
+  switch (action) {
+    case 'next':
+      if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+      if (deck.M > 1) { wheelGlideV = 0; deck.target += 1; deckStartLoop(); }
+      return;
+    case 'prev':
+      if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+      if (deck.M > 1) { wheelGlideV = 0; deck.target -= 1; deckStartLoop(); }
+      return;
+    case 'close':
+      closeDeck();
+      return;
+    case 'select':
+      if (!deck.open || !deck.M) return;
+      deckSelectCard(deckMod(Math.round(deck.pos), deck.M));
+      return;
+    case 'activateCard': {
+      // 复用 `.deck-card` 的既有 click 语义（前景卡放大换入 / 深处卡翻到该卡），
+      // 不另写一份换签逻辑。
+      const card = e && e.target instanceof Element ? e.target.closest('.deck-card') : null;
+      if (card instanceof HTMLElement) card.click();
+      return;
+    }
+    case 'closeCard': {
+      const card = e && e.target instanceof Element ? e.target.closest('.deck-card') : null;
+      const id = card instanceof HTMLElement ? card.dataset.tab : '';
+      if (id) deckRequestClose(id);
+      return;
+    }
+    case 'closeRing':
+      if (ringState && ringCloseFn) ringCloseFn();
+      return;
+    case 'mergeSelf':
+      requestMergeSelf();
+      return;
+    default:
+  }
+}
+
+function deckCloseOthers(keepId) {
+  if (!allowCanvasMutation()) return;
+  if (!deck.open || deck.finalizing) return;
+  for (const [id, entry] of [...tabs]) {
+    if (id === keepId) continue;
+    disposeTabEditor(entry);
+    document.dispatchEvent(new CustomEvent('canvas-tab-closed', { detail: { id } }));
+    entry.paneEl.remove();
+    entry.tabEl.remove();
+    tabs.delete(id);
+    recordTombstone(id); // #910: 关闭其他=每张被关卡都是显式关闭意图
+    for (const [k, v] of previewTabs) { if (v === id) previewTabs.delete(k); }
+  }
+  activeTabId = keepId;
+  persistTabs();
+  deck.cardDrag = null;                // UI 批 ②：重挂环 = 全卡换血
+  deckMountRing();                     // 环重置：canvas 前景（v5①）
+  deck.pos = deck.target = 0; deck.d0s = 0; deck.panelFront = true;
+  syncCanvasPanelButtons();
+  renderCanvasHeader();
+  window.__showToast?.('已关闭其他页签', 'info');
+  deckStartLoop();
+}
+
+// ── ③c 滚轮输入（触控板/鼠标分流 + 事件流滑行）─────────────────────────
+// 触控板：macOS 连续小 delta（1~20px/事件，125Hz+）直通 scrub——**末窗速度**
+// （最近 120ms 累计 dy / 窗时长，比全程 EMA 更贴近离手瞬间速度）记录动量；
+// 原生动量事件持续喂 delta 自然延伸，事件流停 110ms 后由末窗速度起一段指数
+// 衰减滑行（补动量被吞的浏览器）。鼠标格：单事件 |dy|≥40 走档位增益
+// （≈一格近一卡），无动量语义。所有动量在「新 wheel / 拖划 / 键盘 / 收场」
+// 四路口截停。
+const DECK_WHEEL_V_WINDOW = 120;      // 末窗速度窗口（ms）
+const DECK_WHEEL_INST_FLOOR = 0.3;    // 滑行武装的瞬时速度地板（px/ms——离手已停不起滑）
+let wheelLastT = 0;        // 最近 wheel 事件时戳
+let wheelV = 0;            // 末窗速度（px/ms）
+let wheelInstV = 0;        // 最近事件瞬时速度（滑行武装第二判据）
+let wheelTimer = 0;        // 事件流静默计时
+let wheelGlideV = 0;       // 滑行速度（≠0 = 滑行中，deckFrame 消耗）
+function deckWheelReset() {
+  wheelLastT = 0; wheelV = 0; wheelInstV = 0; wheelGlideV = 0;
+  if (wheelTimer) { clearTimeout(wheelTimer); wheelTimer = 0; }
+}
+
+// ── 输入绑定（滚轮 / 键盘 / 面板拖划〔主导轴：横=划走关闭 · 纵=scrub 换卡〕；
+//    deck 层与卡片的监听在卡片工厂里，共用同一套拖划公共腿）──
+function bindDeckInput() {
+  const panel = document.getElementById('canvas-panel');
+  if (!panel) return;
+
+  // 滚轮 = 连续擦洗 + 前景轮换（v5①）+ uifix ③c 分流改造：
+  //   · 捕获域收窄到叠卡面（deck 层 / 缩放态面板 / fab / foot）——页面其余区域
+  //     （聊天列等）的双指滚动不被劫持（「不与页面滚动打架」）；
+  //   · 触控板小 delta 直通 scrub + 事件流滑行补动量；鼠标格档位增益；
+  //   · 可编辑焦点让路；Ctrl+滚轮（页面缩放语义）不拦截不擦洗。
+  document.addEventListener('wheel', (e) => {
+    if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+    if (e.ctrlKey) return;
+    const tgt = e.target;
+    if (!(tgt instanceof Element)) return;
+    if (tgt.closest('input, textarea, [contenteditable="true"], .monaco-editor, .cm-editor')) return;
+    const inDeck = (deckLayer && deckLayer.contains(tgt)) ||
+      panel.contains(tgt) || !!tgt.closest('#deck-fab') || !!tgt.closest('#canvas-head-close');
+    if (!inDeck) return;               // 叠卡面之外：原生滚动（不 preventDefault）
+    e.preventDefault();
+    if (deck.M < 2) return;            // 单卡无环可转
+    const dy = e.deltaY * (e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 100 : 1);
+    wheelGlideV = 0;                   // 新输入立即截停旧滑行
+    const notch = Math.abs(dy) >= DECK_NOTCH_PX;   // 鼠标格：无动量语义，只步进
+    if (!notch) {
+      // 末窗速度（W=120ms 滑窗逼近）：窗内旧速度按剩余窗权衰减、新 dy 全计；
+      // 事件间隔超窗 = 整窗重来。快滚收敛到即时速度，慢滚/尾流自然归零。
+      const dtms = Math.max(1, e.timeStamp - (wheelLastT || e.timeStamp - 16));
+      wheelInstV = dy / dtms;
+      if (dtms > DECK_WHEEL_V_WINDOW) wheelV = dy / dtms;
+      else wheelV = (wheelV * (DECK_WHEEL_V_WINDOW - dtms) + dy) / DECK_WHEEL_V_WINDOW;
+      wheelLastT = e.timeStamp;
+    }
+    const gain = DECK_WHEEL_GAIN * (notch ? deckPeekStep().wheelNotch : 1);
+    deck.target += dy * gain;
+    deck.target = Math.max(deck.pos - deck.M, Math.min(deck.pos + deck.M, deck.target));
+    if (!notch) {
+      if (wheelTimer) clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => {  // 事件流静默 → 末窗速度起滑行（瞬时速度过地板才武装）
+        wheelTimer = 0;
+        if (!deck.open || deck.M < 2) { wheelV = 0; return; }
+        const armed = Math.abs(wheelV) >= 0.08 && Math.abs(wheelInstV) >= DECK_WHEEL_INST_FLOOR;
+        wheelGlideV = armed
+          ? Math.max(-DECK_WHEEL_GLIDE_VMAX, Math.min(DECK_WHEEL_GLIDE_VMAX, wheelV))
+          : 0;
+        wheelV = 0;
+        if (Math.abs(wheelGlideV) >= 0.08) deckStartLoop();
+      }, DECK_WHEEL_GLIDE_DELAY);
+    } else if (wheelTimer) { clearTimeout(wheelTimer); wheelTimer = 0; wheelV = 0; }
+    deckStartLoop();
+  }, { passive: false });
+
+  // 键盘（三期：搬进规则表 —— 见 deckKeyAction / keyRules.js 的 deck.* 组）。
+  // 改造前是文档级 keydown + 手写 `closest('input, textarea, …')` 早退：
+  // 那条早退只覆盖「焦点在输入类元素里」，读不出「叠卡开没开 / 是否在卡上」，
+  // 而这正是 when 上下文要表达的东西（`deckOpen && !textInputFocus && !deckCardFocus`）。
+
+  // 缩放态面板拖划（v4⑥ + 竖拖补充令）：主导轴分工 —— 横向主导 = 跟手划走，越阈
+  // 甩出关闭 / 不足弹回；纵向主导 = dy 增量喂 scrub 引擎换卡（跟手连续，松手惯性+
+  // 贴靠最近卡）；位移 ≤8px 未锁轴视为点击（= 收回）。该面只在 canvas 前景位可触
+  // （环卡前景时面板 pointer-events 关断、被前景卡覆盖）；起点落在可交互子树
+  // （查看器按钮/编辑器/画布）时不启动——真实内容交互优先（让路规则竖拖同享）。
+  panel.addEventListener('pointerdown', (e) => {
+    if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx || deck.drag || deck.cardDrag || deck.exitCardFx) return;
+    if (e.button !== 0) return;
+    wheelGlideV = 0;                                               // 拖划接管：截停滚轮滑行
+    if (deckInteractiveTarget(e.target)) return;
+    deck.drag = deckDragState(e);
+    panel.setPointerCapture(e.pointerId);
+    panel.classList.add('no-trans');
+  });
+  panel.addEventListener('pointermove', (e) => {
+    if (!deck.drag || e.pointerId !== deck.drag.id) return;
+    const d = deck.drag;
+    const axis = deckDragTrack(d, e);
+    if (axis === 'x') {                                            // 横向主导 = 划走关闭（原 v4⑥ 逻辑）
+      d.dx = e.clientX - d.x0;
+      deckSetRootFxStyle(panel, d.dx, d.dx * 0.028, 1);
+      deckStartLoop();
+    } else if (axis === 'y') {                                     // 纵向主导 = scrub 换卡（跟手连续）
+      deckDragFeedVertical(d, e);
+    }
+  });
+  const endPanelDrag = (e, cancelled) => {
+    if (!deck.drag || (e && e.pointerId !== deck.drag.id)) return;
+    const d = deck.drag; deck.drag = null;
+    const rect = deckPanelRect();
+    if (cancelled || !d.wasDragged || d.axis === 'n') {
+      panel.classList.remove('no-trans');
+      panel.style.transform = ''; panel.style.opacity = '';
+      if (!cancelled && !d.wasDragged) closeDeck();   // 未锁轴 = 点击 canvas = 收回卡组（原界不变）
+      return;                                          // 死轴（单卡纵拖）：复位静默，不关闭不擦洗
+    }
+    if (d.axis === 'y') {                              // 纵向主导：惯性 + 贴靠换卡，永不触发关闭
+      deckScrubRelease(d.vy);
+      return;
+    }
+    const far = Math.abs(d.dx) > rect.width * 0.20 || Math.abs(d.vx) > 0.55;
+    if (far) deck.faceFx = { mode: 'fling', k: 0, dx0: d.dx, dir: d.dx >= 0 ? 1 : -1, endX: 0 };
+    else deck.faceFx = { mode: 'spring', k: 0, dx0: d.dx, dir: 0, endX: 0 };
+    deckStartLoop();
+  };
+  panel.addEventListener('pointerup', (e) => endPanelDrag(e, false));
+  panel.addEventListener('pointercancel', (e) => endPanelDrag(e, true));
+
+  // 触屏通路（竖拖补充令）：deck 态面板面 touchstart 在非交互子树内 preventDefault
+  // —— 否掉原生滚动手势的启动，pointercancel 不再中途打断竖拖 scrub。只拦面板面
+  // （触点常落在 pane 滚动容器内部，Chromium 取 touch-action 以滚动容器为界，
+  // .stacked 的 touch-action:none 够不着触点链）；可交互子树（Monaco/查看器/按钮）
+  // 照旧让路，原生滚动保留（让路规则 ③ 的触屏层）。touchstart preventDefault 不影响
+  // Pointer Events 流（只拦截兼容鼠标事件合成与原生手势），tap 收回仍走 pointerup 通路。
+  panel.addEventListener('touchstart', (e) => {
+    if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx || deck.faceFx) return;
+    if (deckInteractiveTarget(e.target)) return;
+    e.preventDefault();
+  }, { passive: false });
+
+  // 右键菜单（deck 态面板 = 当前页签的菜单；含「关闭/关闭其他」，精修③后无 × 依赖）
+  panel.addEventListener('contextmenu', (e) => {
+    if (!deck.open || deck.finalizing || deck.selFly || deck.ghostFx) return;
+    const entry = activeTabId ? tabs.get(activeTabId) : null;
+    if (!entry) return;
+    e.preventDefault();
+    showCanvasRefMenu(e.clientX, e.clientY, entry, {
+      allowNoRef: true,
+      onClose: () => deckRequestClose(entry.id),
+      onCloseOthers: () => deckCloseOthers(entry.id),
+    });
+  });
+
+  // resize / 列宽拖拽 / overlay 形态翻转：重排 + 盒同步。UI 批 ②：deck 关着也要
+  // 同步 fab 盒——否则窗口/列宽变化后浮钮钉区漂移（看起来「点了没反应」）。
+  window.addEventListener('resize', () => {
+    syncDeckBox();
+    if (!deck.open) return;
+    layoutDeck();
+    deckStartLoop();
+  });
+  window.addEventListener('nebflow-col-resize', () => {
+    syncDeckBox();
+    if (!deck.open) return;
+    layoutDeck();
+    deckStartLoop();
+  });
+}
+
+// ── 自动化/调试钩子（spec 断言通道，同 v5 样张 __demo.state() 口径）──
+/** @type {any} */ (window).__canvasDeck = {
+  open: () => openDeck(),
+  close: () => closeDeck(),
+  /* uifix 批：作者挑版热切换（body.deck-look-* 单一来源；返回生效档位） */
+  setLook: (v) => {
+    if (!DECK_LOOKS[v]) return deckLook();
+    document.body.classList.remove(...Object.keys(DECK_LOOKS).map((k) => 'deck-look-' + k));
+    document.body.classList.add('deck-look-' + v);
+    if (deck.open) { deckStartLoop(); }        // 间距档位变化 → 重排
+    return v;
+  },
+  state: () => {
+    const panel = document.getElementById('canvas-panel');
+    const rect = deckPanelRect() || { width: 0, height: 0, top: 0, right: 0 };
+    const n = tabs.size;
+    const frontIdx = deck.M ? deckMod(Math.round(deck.pos), deck.M) : -1;
+    const frontEntry = deck.M ? deck.ring[frontIdx] : null;
+    return {
+      open: deck.open, pos: deck.pos, target: deck.target, spread: deck.spread, spreadT: deck.spreadT,
+      M: deck.M, activeId: activeTabId, cardW: deck.cardW, cardH: deck.cardH, sizeK: deck.sizeK,
+      areaW: rect.width, areaH: rect.height,
+      stackScale: DECK_SCALE, stackShift: DECK_SHIFT,
+      faceFx: deck.faceFx ? deck.faceFx.mode : null, selFly: !!deck.selFly, ghost: !!deck.ghostFx,
+      deckIsPanelChild: panel ? panel.contains(deckLayer) : null,
+      fabIsPanelChild: panel ? panel.contains(deckFab) : null,
+      frontIdx,
+      frontName: frontEntry ? frontEntry.title : null,
+      d0: deck.d0s,
+      panelAlpha: !panel || panel.style.opacity === '' ? 1 : parseFloat(panel.style.opacity),
+      deckOver: deckLayer ? deckLayer.classList.contains('over') : false,
+      selfCardHidden: !deck.selfCardEl || parseFloat(deck.selfCardEl.style.opacity || '1') < 0.02,
+      deckLayerClass: deckLayer ? deckLayer.className : '',
+      panelClass: panel ? panel.className : '',
+      rootTransform: panel ? getComputedStyle(panel).transform : 'none',
+      ring: deck.ring.map((t) => t.title),
+      tabs: [...tabs.values()].map((t) => t.title),
+      tabCount: n,
+      /* 竖拖补充令断言通道：活动拖划手势（面板面/环卡面 + 主导轴） */
+      gesture: deck.drag
+        ? { face: 'panel', axis: deck.drag.axis, dx: deck.drag.dx, dy: deck.drag.dy }
+        : deck.cardDrag
+          ? { face: 'card', axis: deck.cardDrag.axis, dx: deck.cardDrag.dx, dy: deck.cardDrag.dy }
+          : null,
+      /* 精修①/② + 竖拖补充令断言通道：常量单一来源 + token 现值 */
+      consts: {
+        scrubApproach: DECK_SCRUB_APPROACH, spreadApproach: DECK_SPREAD_APPROACH,
+        fallDrop: DECK_FALL_DROP, fallArc: DECK_FALL_ARC, fallTilt: DECK_FALL_TILT, fallTiltArc: DECK_FALL_TILT_ARC,
+        flyDur: DECK_FLY_DUR, ghostDur: DECK_GHOST_DUR, springDur: DECK_SPRING_DUR, flingDur: DECK_FLING_DUR,
+        wheelGain: DECK_WHEEL_GAIN,
+        dragGain: DECK_DRAG_GAIN, dragInertia: DECK_DRAG_INERTIA, dragInertiaMax: DECK_DRAG_INERTIA_MAX,
+        axisLockPx: DECK_AXIS_LOCK_PX,
+        /* UI 批 ④：动效层坡道常量单一来源 */
+        depthScaleNear: DECK_DEPTH_SCALE_NEAR, depthScaleFar: DECK_DEPTH_SCALE_FAR,
+        depthZ: DECK_DEPTH_Z, fallShrink: DECK_FALL_SHRINK,
+        /* UI 批 ④②：透视补偿常量（与 split.css #deck-layer perspective 同源） */
+        perspective: DECK_PERSPECTIVE, originYK: DECK_ORIGIN_YK,
+      },
+      cardShadow: getComputedStyle(document.documentElement).getPropertyValue('--card-shadow').trim(),
+      /* uifix 批断言通道：look 档位 / 快照挂载 / × 钮 / 竖排提示退场 */
+      look: deckLook(),
+      lookPeek: deckPeekStep(),
+      snapshots: {
+        cached: deckSnapshots.size,
+        live: deckLayer ? deckLayer.querySelectorAll('.card-thumb.has-snap').length : 0,
+        pending: deckLayer ? deckLayer.querySelectorAll('.card-thumb[data-snap="pending"]').length : 0,
+        mock: deckLayer ? deckLayer.querySelectorAll('.card-thumb[data-snap="mock"]').length : 0,
+        /* UI 批 ③：活性窗（可视卡 ±2）同步中的卡数 */
+        liveWindow: deckLive.near.size,
+      },
+      cardXButtons: deckLayer ? deckLayer.querySelectorAll('.deck-card .deck-card-x').length : 0,
+      swipeHints: {
+        panel: document.querySelectorAll('.deck-swipe-hint').length,
+        card: deckLayer ? deckLayer.querySelectorAll('.card-swipe-hint').length : 0,
+      },
+      /* UI 批 ①：帮助条退役断言通道（deck-foot 元素零命中） */
+      helpRetired: !document.getElementById('deck-foot'),
+      /* UI 批⑧：单卡独立窗口断言通道（模式 + 独立中页签清单） */
+      cardWindowMode,
+      independent: [...independentWins.keys()],
+      /* UI 批 ②：连点排队断言通道 */
+      fabQueued: deckFabQueued,
+      wheelGlide: wheelGlideV,
+    };
+  },
+};
+
+
 
 // ── Initialization ─────────────────────────────────────────
 
+// ═════════════════════════════════════════════════════════════════════════
+// UI 批⑨（作者令 2026-10-21）卡头毛玻璃胶囊 · 桌面手势集
+//
+// 形态（split.css §⑨）：.canvas-header 浮层胶囊（absolute top 10 居中 + 玻璃
+// backdrop + .scroll-under-glass 裙边），#canvas-content 顶满全高 —— 文字从
+// 胶囊底下穿过渐隐。胶囊手势面 touch-action:none，与内容区滚动天然分区
+// （手势只绑在胶囊元素上；内容滚动发生在 pane 内部滚动器，互不劫持，CC7）。
+//
+// 四链路（B）：
+//   按住 = 按压触感（.is-pressed → scale .97 + brightness，CSS）；
+//   按住上滑/下滑 = 换卡 —— 与堆叠视图换卡同语义：同环（deckBuildRing，
+//     ring[0]=active）、同向（下滑 dy>0 = 下一张，deck 竖拖/滚轮同规）、
+//     同阈（轴锁 8px 同 DECK_AXIS_LOCK_PX 档；释放 |dy|>48 换一张）；
+//   左右滑 = 关闭卡片 —— 与 deck 划走关闭同语义（closeTab 共核），释放
+//     |dx|>64 关活动页签；滑删动画批（2026-10-23 六项⑥a）：跟手 1:1（净空内
+//     不出面板）+ rotateZ 微倾（deck 同斜率 0.028），释放过阈 = 甩出 fling
+//     （0.6×面板宽+240 与出板行程取小、13deg、快淡出）→ 过渡完 closeTab ——
+//     仿堆叠视角左右滑动删卡的动效；不足阈松手照旧回弹；
+//   右键 = 引用 —— 复用既有 canvas-tab-context-menu 形态（showCanvasRefMenu）；
+//     deck 开着时与面板菜单同款 actions（关闭/关闭其他），stopPropagation 防
+//     面板级菜单重复弹。
+// 跟手反馈：--head-dx/--head-dy/--head-rot 变量（CSS transform 消费），拖动中
+// is-dragging 关过渡 1:1 跟手，松手回弹 + 评估阈值；甩出走 .is-swipe-out
+// （过渡重挂）。钮群（pop/close/merge/fab）closest 直通，永不吞点击。
+// ═════════════════════════════════════════════════════════════════════════
+
+/** 胶囊手势阈值（轴锁与 deck 同档；换卡/关卡阈给手势释放档）。 */
+const CARDHEAD_AXIS_LOCK_PX = 8;
+const CARDHEAD_SWITCH_PX = 48;
+const CARDHEAD_CLOSE_PX = 64;
+/** 划删跟手/甩出档（滑删动画批 2026-10-23 六项⑥a，仿 deck 环卡划走）：
+ *  跟手 1:1 但不出面板（按可用净空钳制，防 panel overflow 硬裁切线）；
+ *  甩出行程 = deck fling 档（0.6×面板宽 + 240）与「净空 + 半宽 + 80」取小
+ *  —— 甩过面板缘即没，快淡出先于行程走完；rotateZ 斜率与 deck 同源
+ *  （dx×0.028deg，甩出定值 13deg）。 */
+const CARDHEAD_FOLLOW_CAP_PX = 140;
+const CARDHEAD_SWIPE_ROT_K = 0.028;
+const CARDHEAD_SWIPE_ROT_CAP = 6;
+const CARDHEAD_FLING_MS = 240;
+
+/** 换卡邻位：deck 同环同序（ring[0]=active）——下滑(+1)=下一张、上滑(-1)=上一张
+ *  （环绕）。单页签（环长 1）不换。 */
+function cardHeadRingNeighbor(delta) {
+  const ring = deckBuildRing();
+  if (ring.length < 2) return null;
+  return delta > 0 ? ring[1] : ring[ring.length - 1];
+}
+
+/** 桌面胶囊手势装配（initCanvas 一次；卡窗态同挂 —— 卡头=卡窗「合并」钮行）。
+ *  手机层（body.mobile-layer）整腿让位：卡头手势归 navController 卡头胶囊
+ *  （直滑换卡/关卡 + 长按引用钮），双绑会互相覆盖激活页签（首轮实测）。 */
+function initCardHeadGestures() {
+  const hdr = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-panel .canvas-header'));
+  if (!hdr) return;
+  const flags = /** @type {any} */ (hdr);
+  if (flags._cardheadGestures) return;
+  flags._cardheadGestures = true;
+  const isMobileLayer = () => document.body.classList.contains('mobile-layer');
+  /** @type {{id: number, x0: number, y0: number, dx: number, dy: number, axis: string|null, moved: boolean, roomL: number, roomR: number}|null} */
+  let g = null;
+  /** 甩出动画在途旗（滑删动画批）：在途封锁新手势，收场统一清。 */
+  let swipeFx = false;
+  const reset = () => {
+    hdr.classList.remove('is-pressed', 'is-dragging');
+    hdr.style.setProperty('--head-dx', '0px');
+    hdr.style.setProperty('--head-dy', '0px');
+    hdr.style.setProperty('--head-rot', '0deg');
+  };
+  /** 跟手净空（滑删动画批）：拖动起点时量一次左右可用行程（面板缘 − 胶囊缘
+   *  − 8px 缝），跟手钳制不出面板 —— 不给 overflow:hidden 留硬裁切面。 */
+  const measureRoom = () => {
+    const panel = document.getElementById('canvas-panel');
+    const hr = hdr.getBoundingClientRect();
+    const pr = panel ? panel.getBoundingClientRect() : hr;
+    g.roomL = Math.max(0, hr.left - pr.left - 8);
+    g.roomR = Math.max(0, pr.right - hr.right - 8);
+  };
+  hdr.addEventListener('pointerdown', (e) => {
+    if (isMobileLayer() || swipeFx) return;
+    if (e.button !== 0) return;
+    if (/** @type {Element} */ (e.target).closest('button')) return;   // 钮群直通
+    g = { id: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, dy: 0, axis: null, moved: false, roomL: 0, roomR: 0 };
+    measureRoom();
+    try { hdr.setPointerCapture(e.pointerId); } catch { /* 已释放 */ }
+    hdr.classList.add('is-pressed');                                   // 按压触感（按住即有）
+  });
+  hdr.addEventListener('pointermove', (e) => {
+    if (isMobileLayer() || !g || e.pointerId !== g.id) return;
+    g.dx = e.clientX - g.x0;
+    g.dy = e.clientY - g.y0;
+    if (!g.axis && (Math.abs(g.dx) > CARDHEAD_AXIS_LOCK_PX || Math.abs(g.dy) > CARDHEAD_AXIS_LOCK_PX)) {
+      // 主导轴锁（deck 同规：|dx|>|dy| 取横，平局取纵 —— 纵=非破坏换卡）
+      g.axis = Math.abs(g.dx) > Math.abs(g.dy) ? 'x' : 'y';
+      g.moved = true;
+      hdr.classList.remove('is-pressed');   // 拖动态松开按压形（跟手位移接管）
+      hdr.classList.add('is-dragging');
+    }
+    if (g.axis === 'x') {
+      // 滑删动画批：跟手 1:1（净空内）+ 轻微 rotateZ 倾斜（deck 同斜率）
+      const room = g.dx < 0 ? g.roomL : g.roomR;
+      const dx = Math.max(-room, Math.min(room, g.dx));
+      hdr.style.setProperty('--head-dx', dx.toFixed(1) + 'px');
+      hdr.style.setProperty('--head-rot',
+        (Math.max(-CARDHEAD_SWIPE_ROT_CAP, Math.min(CARDHEAD_SWIPE_ROT_CAP, g.dx * CARDHEAD_SWIPE_ROT_K))).toFixed(2) + 'deg');
+    } else if (g.axis === 'y') hdr.style.setProperty('--head-dy', Math.max(-12, Math.min(12, g.dy)) + 'px');
+  });
+  /** 横滑甩出（滑删动画批六项⑥a，仿 deck 环卡划走 fling）：行程朝拖向甩过
+   *  面板缘 + 13deg 旋转 + 快淡出（透明度先行，过渡完再关页签 —— 名称换装
+   *  藏在不可见段）；0.24s 与 deck DECK_FLING_DUR 同档。reduce-motion 直关。 */
+  const swipeOutFly = (dir, room) => {
+    swipeFx = true;
+    const panel = document.getElementById('canvas-panel');
+    const pw = panel ? panel.getBoundingClientRect().width : 700;
+    const dist = Math.min(pw * 0.6 + 240, room + hdr.offsetWidth / 2 + 80);
+    hdr.classList.remove('is-dragging');
+    hdr.classList.add('is-swipe-out');
+    hdr.style.setProperty('--head-dx', (dir * dist).toFixed(1) + 'px');
+    hdr.style.setProperty('--head-rot', (dir * 13).toFixed(2) + 'deg');
+    hdr.style.opacity = '0';
+    const entry = activeTabId ? tabs.get(activeTabId) : null;
+    setTimeout(() => {
+      reset();
+      hdr.classList.remove('is-swipe-out');
+      hdr.style.opacity = '';
+      swipeFx = false;
+      if (entry) closeTab(entry.id);
+    }, deckRm.matches ? 0 : CARDHEAD_FLING_MS);
+  };
+  const finish = (e) => {
+    if (isMobileLayer() || !g || e.pointerId !== g.id) return;
+    const { dx, dy, axis, moved } = g;
+    const room = g ? (dx < 0 ? g.roomL : g.roomR) : 0;
+    g = null;
+    reset();
+    if (!moved) { ringClickCenter(); return;          // 点击界内：环游标胶囊即切换（游标=激活时零动作）
+    }
+    const entry = activeTabId ? tabs.get(activeTabId) : null;
+    if (!entry) return;
+    if (axis === 'y' && Math.abs(dy) > CARDHEAD_SWITCH_PX) {
+      const nb = cardHeadRingNeighbor(dy > 0 ? 1 : -1);   // 下滑=下一张（deck 同语义）
+      if (nb && nb.id !== entry.id) setActiveTab(nb.id);
+    } else if (axis === 'x' && Math.abs(dx) > CARDHEAD_CLOSE_PX) {
+      swipeOutFly(dx >= 0 ? 1 : -1, room);                // 划走关闭：先甩出动画再 closeTab（共核不变）
+    }
+  };
+  hdr.addEventListener('pointerup', finish);
+  hdr.addEventListener('pointercancel', finish);
+  // 右键 = 引用 + 胶囊菜单契约（2026-10-22 作者令：多开/关闭/在独立窗口打开；
+  // 引用保留。actions 与胶囊环共用 capsuleMenuActions 一份语义）
+  hdr.addEventListener('contextmenu', (e) => {
+    if (isMobileLayer()) return;   // 手机长按引用钮 = navController 腿（Android 长按会派发 contextmenu）
+    const entry = activeTabId ? tabs.get(activeTabId) : null;
+    if (!entry) return;
+    e.preventDefault();
+    e.stopPropagation();   // 面板级 contextmenu（deck 态）不再重复弹
+    showCanvasRefMenu(e.clientX, e.clientY, entry, capsuleMenuActions(entry));
+  });
+}
+
+// ── 胶囊环（2026-10-22 作者令追加：hover 态圆环排布 · 滚轮换选 · 点击切换）──
+// 作者令：平时态 = 单胶囊（缩小）；hover 态 = 各页签胶囊沿**竖向**圆环排布、
+// 最多同时可见 3 个；滚轮换选（hover 交互改向令 2026-10-22：「现在…hover 之后
+// 左右滑动…改为上下的，这样才方便 Windows 这样的电脑用鼠标进行操作」——鼠标
+// 滚轮 = 纵向 deltaY，横滑触控板用户无此输入）：**纵滚（deltaY）主导**，触控板
+// 横滑（deltaX）保留为同环副手势，按主导轴取用；点击即切换；上下缘位沿曲率
+// rotateX 透视 + 模糊扭曲（竖向 cover-flow），材质 = 全站统一 frosted token；
+// 右键菜单 = 多开/关闭/在独立窗口打开（capsuleMenuActions 共用一份语义）。
+// 修复批（作者令 2026-10-23「hover 要在上下显示…上下对称；胶囊大小固定；相对
+// canvas 居中」）：胶囊常态回 canvas 顶带横轴居中（split.css 居中批，v2①
+// 「居中标题头」原位 —— 不在画布中央挡内容命中：wiki 图谱/流程图中心区节点
+// 点击实证）。顶部修正批（作者令 2026-10-23 逐字「canvas的hover要保持在顶部
+// 居中，而不是整个canvas居中，顶部有些超出是正常且允许的。但是不要太多。」）：
+// 对称批的「hover 沉降 canvas 垂直中点」（.ring-open + --ring-dy）撤销 —— 环锚
+// 常驻顶带，横轴中线居中不变；缘位仍上下对称（上一签上展 −edgeY、下一签下垂
+// +edgeY，|y| 严格相等；rotateX 反号等幅），上缘位允许**略微越出面板顶缘**
+// （负向超出正常且允许 —— 真越出批六项②：环层挂 body，探出段真实渲染在
+// canvas 顶缘外，不再被面板 overflow:hidden 裁切；越出量克制 = 胶囊自身高度的
+// 一小部分（RING_TOP_OUT），绝不沉向 canvas 中部）。
+// 胶囊本体任何状态尺寸恒定（零缩放零呼吸）。
+// 收环判定 = **hover 区联合盒**（环开点 ∪ 胶囊本体 ∪ 上下缘位胶囊，各外扩
+// 14px）：竖环几何下「中心→缘位」有 ~edgeY 间隙，pointerleave 单源会立即误收
+// （甚至开→收振荡）—— 环开期间 document pointermove 跟踪指针，离区才调度
+// 140ms 宽限收环。（对称批的「环开点→沉底胶囊顶走廊 ±90px」随沉降撤销一并
+// 退役 —— 环锚回顶带，胶囊不再离位，走廊无事可桥。）
+// 滚轮 = 环开期间 document 捕获（capture），**hover 区内消费为换选、区外零响
+// 应**（触控板手感批 2026-10-25 收窄：旧「面板矩形内一律消费」会抢面板内容
+// 滚动 —— 光标在胶囊/环胶囊/环开点走廊之外时页面滚动照旧，不 preventDefault
+// 不换选）；面板外（侧栏/聊天）滚轮不消费零感知照旧。#716 捏合缩放分区：环开
+// = 环优先（区内），画布区缩放/平移与 pane 滚动在环开期间 Escape/离区即还。
+// 按住=按钮语义（作者令③）：胶囊本体 <button> + 全头 user-select:none（CSS）
+// + dragstart preventDefault（拦从胶囊发起的原生拖拽；OS 文件拖入 drop 不受影响）。
+// 实现形态：纯前端组件（真越出批六项②：#canvas-capsule-ring 挂 body 层，
+// position:fixed 0×0 锚在标题头中心视口点 = 胶囊中心 —— 面板裁剪盒够不到，
+// 上缘位真实越出顶缘渲染；环锚常驻顶带 —— 顶部修正批撤销沉降；胶囊 absolute
+// 沿弧 transform），与左栏控制面零共享。手机层/卡窗态整腿让位（各有自己的
+// 卡头形态）；deck 叠卡态不开环（叠卡有自己的环卡滚轮语义，双环互搏）。
+// 触控板手感批（作者报障 2026-10-25 13:07「使用 mac 的触控板进行滑动的时候，
+// 不够灵敏和丝滑」）：旧「单事件过恒定阈值即切」在两类输入下两难 —— 触控板
+// 滑动是高频小增量 + 惯性末段，鼠标滚轮是离散大步进（|dy|≈±100）；阈高触控板
+// 要用力甩（不灵敏）、阈低惯性一冲连跳三格（不丝滑）。改**设备分档 + 累积器
+// + 冷却**三件：
+//   · 设备分档（deck DECK_NOTCH_PX 同口径）：单事件 |d|（deltaMode 归一 px）
+//     ≥ RING_MOUSE_DELTA = 鼠标离散格（一格意图）→ 低阈 RING_WHEEL_STEP_MOUSE
+//     即切；否则触控板高频小增量 → 按方向累积过 RING_WHEEL_STEP_TRACKPAD 才切
+//     （微漂不移游标）。
+//   · 冷却：切换后 RING_WHEEL_COOLDOWN_MS 内事件只消费不累积 —— 轻扫一挥恰切
+//     一格、惯性末段不连跳（冷却后重新累积）。
+//   · 反向归零：累积中途反向 = 清账重积（反转跟手，不吃旧账死区）。
+//   · 步进动画：steady 态游标步进 0.18s 快跟手档（split.css §ring）—— 0.36s
+//     每步重定相位拖泥带水；收放 morph 档保持不变。
+const RING_WHEEL_STEP_TRACKPAD = 48; // 触控板档阈值（X/Y 同档 ≈ 一挥轻扫的累积量）
+const RING_WHEEL_STEP_MOUSE = 32;    // 鼠标离散格档阈值（一格意图明确，单事件即切）
+const RING_MOUSE_DELTA = 40;         // 单事件 |d|≥40 判鼠标格（触控板指纹 1~20px）
+const RING_WHEEL_COOLDOWN_MS = 200;  // 切换冷却（惯性末段防连跳；150-250ms 档取中）
+const RING_CLOSE_GRACE_MS = 140; // 离环收起宽限（快速掠过不闪收）
+const RING_ZONE_PAD_PX = 14;  // hover 区外扩（缘位胶囊 hit 盒外缘，穿越不闪收）
+const RING_STEADY_MS = 370;   // 真越出批：展开过渡（0.36s）后缘位才接 pointer 的稳态门
+/** 环开上缘位越出面板顶缘的量（顶部修正批 2026-10-23 作者令「顶部有些超出是
+ *  正常且允许的。但是不要太多」）：**布局空间**系数 × 胶囊高（clamp 8–24px）。
+ *  缘位胶囊带 rotateX(34°)+translateZ(-110)（perspective 640）投影把角点向
+ *  锚收回 —— 视觉越出 ≈ 布局越出的 0.4 倍（实测 1440×900：布局 19.2px →
+ *  视觉 ~8px ≈ 胶囊高 1/3，即「自身高度的一小部分量级」）。真越出批
+ *  （2026-10-23 六项②）：环层挂 body 后探出段**真实渲染**在 canvas 顶缘外
+ *  （修前面板 overflow:hidden 硬裁切线退役），越出量保持本克制档不变。
+ *  下缘位 |y| 对称下垂（上下对称裁定保持）。 */
+const RING_TOP_OUT = 0.8;
+
+/** 环开态单例（{ ids: string[], cursor: number, lastDir: number }；null = 环闭）。
+ *  lastDir = 最近一次滚轮换选方向（±1）——双卡环（n=2）的方向感知布局档消费：
+ *  非游标胶囊驻「来向侧」，滑动永远读作「来一张/走一张」的滚动而不是弹回。
+ *  hdr 重建时随 initCanvas 重挂，状态本体放模块级 —— 手势 finish() 的
+ *  ringClickCenter 同读。 */
+let ringState = /** @type {{ids: string[], cursor: number, lastDir: number}|null} */ (null);
+
+/* 真越出批（作者令 2026-10-23 六项②）：环层挂 body（#canvas-capsule-ring
+ *  position:fixed，z-246 —— overlay 面板 240 之上、fab 250 之下、模态 300+ 之下），
+ *  不再是面板子树 —— 面板 overflow:hidden 裁不到它，上缘位探出段**真实渲染**在
+ *  canvas 顶缘外（硬裁切线消灭；越出量仍走 RING_TOP_OUT 克制档不变）。锚定与
+ *  几何随之改视口坐标：anchor() 直写视口点，layout() 的 edgeY 反解改
+ *  「锚视口 y − 面板视口顶 − h/2 + out」（与旧 offsetTop 链同义，对 offsetParent
+ *  链免疫）。中心位胶囊 pointer-events:none（split.css）—— 环层如今在标题头
+ *  之上，放行事件才能照旧落到标题头手势链（按压/竖滑/横滑/右键契约不变）。 */
+
+/** 中心位（环游标）胶囊的「点击即切换」——标题头手势 finish() 的 !moved 臂
+ *  消费（中心位 pointer 事件被标题头 capture 重定向，click 不达胶囊）。
+ *  游标 = 激活页签时零动作（CC1「点击界内零动作」契约保留）。@returns {boolean} */
+function ringClickCenter() {
+  const id = ringCursorId();
+  if (!id) return true;                              // 环闭：界内零动作（legacy）
+  if (id === activeTabId) return true;               // 界内零动作（态不变）
+  setActiveTab(id);                                  // canvas-tab-switched 收环
+  return true;
+}
+/** 环游标当前指的页签 id（环闭 = null）。@returns {string|null} */
+function ringCursorId() { return ringState ? ringState.ids[ringState.cursor] || null : null; }
+
+function initCapsuleRing() {
+  const hdr = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-panel .canvas-header'));
+  if (!hdr) return;
+  const flags = /** @type {any} */ (hdr);
+  if (flags._capsuleRing) return;
+  flags._capsuleRing = true;
+  if (cardWindowMode) return;                      // 卡窗 = 单卡查看器，无环
+  const isMobileLayer = () => document.body.classList.contains('mobile-layer');
+  const panelEl = /** @type {HTMLElement} */ (hdr.closest('#canvas-panel'));
+
+  /* ── 触屏常驻横向档（作者令 2026-11-05 12:10）─────────────────────────────
+   * 作者逐字：「参考电脑端的样式来做手机端的canvas顶部胶囊的样式，总体思路就是
+   * 把上下展开的改为横向展开。并且是直接展开，不需要hover。」
+   *
+   * 病根（改前实证，见批文档 §①）：手机**横屏**（视口宽 > 768px）落不进手机交互
+   * 层（mobile/bootstrap.js MOBILE_MQ = max-width:768px），走的是桌面腿 ⇒ 手机
+   * 上看到的是 `.canvas-header` + `#canvas-capsule-ring` 那套**hover 才展开的竖
+   * 向胶囊环**：触屏没有 hover，邻签要么永远看不见、要么在按下瞬间「上下展开」
+   * 然后立刻收掉 —— 作者截图 (`20261103_215300_ca...` + 上下两条邻居名) 正是
+   * 这个态。同一视口下手机层（≤768）的 `.mf-strip` 早已是横向常驻展开，所以
+   * 漂的是「触屏 + 桌面腿」这一段，不是两套组件各错一半。
+   *
+   * 修法 = **同一套实现 + 能力断点**（不新起第二套）：胶囊环仍是 #canvas-capsule-
+   * ring 这一份 DOM/CSS/JS，只按输入能力换位姿：
+   *   · 细指针（鼠标/触控板）= 旧腿逐字节不变（hover 开环 + 上下对称弧 + 滚轮换选）；
+   *   · 粗指针（触屏/@media (pointer: coarse)）= 本档：**常驻展开**（不进 hover 竞态、
+   *     不需要任何前置手势）+ **横向排布**（--cr-x / --cr-ry 位姿，中心签居中、
+   *     左右邻签各一枚）。
+   * 位姿变量同名不同轴：JS 两档都写，CSS 按 `@media (pointer: coarse)` 取用
+   * —— 断点只存在于 CSS 一处，桌面上这些规则一条都不命中（零回归）。
+   * 「不遮挡」（作者第⑤条）：竖环档上缘位**必须**越过面板顶缘（RING_TOP_OUT 那
+   * 套克制越出），读作「胶囊压住了上面的文件名行」；横向档整排与标题头同高带，
+   * 零上越 —— 遮挡根因随位姿换轴消失，不需要额外让位几何。
+   */
+  /* 判据 = (pointer: coarse) **且** (hover: none)：纯触屏（手机/平板）才换档。
+     只写 coarse 会把「带触摸屏的笔记本」（主指针仍是触控板/鼠标、只是能摸）也
+     卷进来 —— 那类机器 hover 语义完好，桌面竖环腿照旧才对。 */
+  const COARSE_MQ = window.matchMedia('(pointer: coarse) and (hover: none)');
+  const coarsePointer = () => COARSE_MQ.matches;
+
+  let acc = 0;                                     // 横滑游标累加器（deltaX 刻度）
+  let accY = 0;                                    // 纵滚游标累加器（deltaY 刻度，整数步进零浮点）
+  let wheelLockUntil = 0;                          // 滚轮切换冷却截止（performance.now() ms，触控板手感批）
+  let leaveTimer = 0;
+  let steadyTimer = 0;                             // 真越出批：稳态门定时（展开过渡后缘位才可点）
+
+  const root = document.createElement('div');
+  root.className = 'capsule-ring';
+  root.id = 'canvas-capsule-ring';
+  root.hidden = true;
+  // 真越出批：环层挂 body（fixed + z-246）—— 面板 overflow:hidden 裁不到，
+  // 上缘位探出段真实渲染在 canvas 顶缘外（split.css §ring 注详）。
+  document.body.appendChild(root);
+
+  /** 环序 = 页签插序（tabs Map 序 —— 与标签条/deckBuildRing 源序同源）。 */
+  const build = () => {
+    root.textContent = '';
+    ringState.ids = [...tabs.keys()];
+    for (const id of ringState.ids) {
+      const entry = tabs.get(id);
+      if (!entry) continue;
+      // div[role=button] 而非 <button>：标题头手势按 closest('button') 直通钮群
+      // —— 环胶囊若是 button，环开着时按压/竖滑换卡/横滑关卡全被钮群守卫吞掉
+      // （CC1/CC2/CC3 契约）。中心位事件照旧穿透标题头走手势链（按住=按钮语义），
+      // 缘位 = 纯点击钮（stopPropagation）。切换语义：缘位 click / 中心位
+      // ringClickCenter()（finish !moved 臂）。
+      const b = document.createElement('div');
+      b.className = 'cr-capsule' + (isTabDirty(entry) ? ' is-dirty' : '');
+      b.setAttribute('role', 'button');
+      b.dataset.tabId = id;
+      const title = entry.title || entry.id;
+      b.innerHTML = '<span class="cr-icon">' + deckIconOf(deckTypeFamily(entry)) + '</span>' +
+        '<span class="cr-dot"></span><span class="cr-name"></span>';
+      /* 标签文字：细指针腿与改前逐字一致（纯文本 + CSS ellipsis 尾切，桌面零变化）；
+         粗指针腿留空，由 layout() 末尾 fillCapsuleNames() 按**实时可用宽**切成
+         「可辨识前缀 … 关键尾部」（作者令 2026-11-05 第④条，切法单源 =
+         capsuleLabel.js）。textContent 赋值天然转义，等价于旧 escapeDeckText。 */
+      const nameEl = /** @type {HTMLElement|null} */ (b.querySelector('.cr-name'));
+      if (nameEl && !coarsePointer()) nameEl.textContent = title;
+      // 中心位让 pointer 事件穿透标题头（按压触感/竖滑换卡/横滑关卡手势照旧，
+      // 作者令③「按住=交互按钮」）；缘位胶囊 = 纯按钮（不进手势链）。
+      b.addEventListener('pointerdown', (e) => { if (ringState && ringState.ids[ringState.cursor] !== id) e.stopPropagation(); });
+      // 缘位点击即切换（中心位被标题头 pointer capture 重定向 —— 走
+      // ringClickCenter()，见 initCardHeadGestures finish() 的 !moved 臂）。
+      b.addEventListener('click', () => {
+        if (!ringState || ringState.ids[ringState.cursor] === id) return;
+        setActiveTab(id);                          // canvas-tab-switched 收环
+      });
+      b.addEventListener('contextmenu', (e) => {
+        if (isMobileLayer()) return;
+        const entry2 = tabs.get(id);
+        if (!entry2) return;
+        e.preventDefault();
+        e.stopPropagation();                        // 不与标题头/面板级菜单双弹
+        showCanvasRefMenu(e.clientX, e.clientY, entry2, capsuleMenuActions(entry2));
+      });
+      root.appendChild(b);
+    }
+  };
+
+  /** 位姿（2026-10-23 作者令「hover 要在上下显示，这样才有滚动的感觉」——上下
+   *  对称；顶部修正批：环锚常驻顶带，不沉降）：rel = 到游标的最短环距（wrap）；
+   *  0 = 中心清晰（与常态胶囊同位同尺寸，尺寸恒定）；±1 = 缘位 cover-flow：
+   *  上一签（rel<0）上展 −edgeY、下一签（rel>0）下垂 +edgeY，**|y| 严格相等**
+   *  （上下对称断言的几何来源）；rotateX 反号等幅（上缘位 +34° 顶边后仰 /
+   *  下缘位 −34° 底边后仰 —— 竖圆柱同侧曲率）；透视由 .capsule-ring 自身
+   *  perspective 提供（原点 = 环锚 = 胶囊中心）；模糊扭曲（CSS is-edge）。
+   *  |rel|≥2 = 弧外不可见（±2× 对称轨迹保留，收放有连续感）。
+   *  间距 = 环锚面板几何反解（顶部修正批 + 真越出批六项②视口版）：edgeY 令
+   *  上缘位顶越过面板顶缘 RING_TOP_OUT×h（胶囊高的一小部分 —— 作者令「顶部
+   *  有些超出…不要太多」，探出段真实渲染在顶缘外 —— 环层挂 body 裁切盒失效），
+   *  下缘位对称下垂；h + 2 下限兜底防退化叠置。本体尺寸恒定 ⇒ 间距恒定。 */
+  /** #926 件1（作者令 2026-10-26「hover 的时候不要改变文字的布局」）：中心覆层
+   *  的右内缝随 pop 钮实占宽同步（--cr-popw = 26 钮 + 6 gap，隐藏/缺席 = 0）——
+   *  pop 可见时覆层文字盒收窄到与被替换的常态 .t-name 盒逐像素等宽（106px 档），
+   *  隐藏时回宽档（138px）：hover 换层前后 ellipsis 截断点不变，文字行零换排。
+   *  layout() 每次调（openRing / 滚轮换选 / 开环换签）都同步 —— CR4 开环换签时
+   *  pop 可见性可能随新活动页签翻转，落在这条路径上刷新。 */
+  const syncCenterInset = () => {
+    const pop = hdr.querySelector('.canvas-pop-btn');
+    const on = !!pop && getComputedStyle(pop).display !== 'none';
+    root.style.setProperty('--cr-popw', on ? '32px' : '0px');
+  };
+
+  const layout = () => {
+    if (!ringState) return;
+    anchor();                                        // 真越出批：先回锚（环开中窗口尺寸变化随动）
+    syncCenterInset();                               // #926 件1：中心覆层右内缝随 pop 钮实占同步
+    const { ids, cursor } = ringState;
+    const n = ids.length;
+    const kids = /** @type {HTMLElement[]} */ ([...root.children]);
+    const centerKid = cursor >= 0 && cursor < n ? kids[cursor] : null;
+    const h = centerKid ? centerKid.offsetHeight : 28;
+    const out = Math.max(8, Math.min(24, h * RING_TOP_OUT));
+    // 环锚面板纵深（真越出批视口版）= 锚视口 y − 面板视口顶（getBoundingClientRect，
+    // 对 offsetParent 链免疫，语义与旧 hdr.offsetTop + root.offsetTop 同一）；
+    // edgeY 反解自「上缘位顶 = 锚 − edgeY − h/2 = 面板顶 − out」。
+    const pr = panelEl.getBoundingClientRect();
+    const ay = parseFloat(root.style.top) || 0;
+    const edgeY = Math.max(h + 2, ay - pr.top - h / 2 + out);
+    for (let i = 0; i < kids.length; i++) {
+      let rel = (i - cursor + n) % n;
+      if (rel > n / 2) rel -= n;
+      /* 双卡方向感知档（作者令 2026-10-26「卡片数 <3 也要能正常滚动/切换」）：
+       * n=2 时环距取模恒落 +1（下方）——两卡来回换选的位姿集合不变，视觉读作
+       * 「弹回自己」。改：非游标胶囊驻 lastDir 侧（滚上来 = 它从上方来，滚下去
+       * = 从下方来），单步动画 = 真「滚一格」；≥3 卡模运算本就覆盖上下两侧，不
+       * 走本档（动画按实际卡数退化，不强求三卡）。 */
+      if (n === 2 && rel !== 0) rel = ringState.lastDir === -1 ? -1 : 1;
+      const ar = Math.abs(rel);
+      const k = kids[i];
+      k.classList.toggle('is-center', rel === 0);
+      k.classList.toggle('is-edge', ar === 1);
+      k.classList.toggle('is-far', ar > 1);
+      const side = rel < 0 ? -1 : 1;
+      /* ── 位姿两档（作者令 2026-11-05 12:10：上下展开 → 横向展开）────────────
+       * 细指针 = 竖环（旧腿逐字不变）：--cr-y / --cr-rx / 弧深 edgeY。
+       * 粗指针 = 横排（触屏腿）：--cr-x / --cr-ry，纵向恒 0 —— 整排与标题头
+       *   同一条水平带（与手机层 `.mf-strip` 的「全组纸签严格同一水平线」同规），
+       *   相邻签的中心距 = stepX（= 胶囊宽 + 件缝，受视口宽钳制：极窄横屏
+       *   （768 宽）时 stepX 收到 120，保证 3 枚 180 胶囊不出视口）。
+       * rotateY 反号等幅 = 横圆柱同侧曲率（左邻右缘退后、右邻对称），与竖环的
+       * rotateX 反号同构；透视仍由 .capsule-ring 自身 perspective 提供。
+       * --cr-z 横排档只留 −40/−90（竖环的 −110/−230 配 rotateX 34° 的深度语言，
+       * 横排放大后会把邻签压得过小，字读不清 —— 与手机层「邻签有效字号 ≥13px」
+       * 的同一条可读性下限对齐）。 */
+      if (coarsePointer()) {
+        /* 横排档的**行宽预算**（按面板实宽，不是视口宽 —— 面板常与聊天列分屏，
+           844 横屏下实测只剩 ~315px）。三级降级（作者第④条「宽度不够时的降级
+           策略写明」，与标签截断降级同向）：
+             ① 理想档：中心签 180（= 桌面胶囊原寸）+ 邻签 0.72 × 中心 = 130；
+             ② 面板不够 ⇒ 先压**邻签**（下限 56 = 够放图标 + 2 字），中心签不动
+                —— 中心签是辨识主体（与手机层「中签大、邻签小」同比例语义）；
+             ③ 仍不够 ⇒ 再压中心签（下限 120），保证整排落在面板内。
+           落到面板缘外的邻签段由 CSS 横排档的**方向渐隐**（cr-side-l/r）化开，
+           读作「环还在往两边排」而不是被硬裁 —— 与手机层 `.mf-strip` 邻签
+           「朝外一侧连续化开」的既有语言同源（作者令 2026-11-02 21:47）。
+           中心签永不越出面板，故「当前文档名」这一枚在任何宽度下都完整可点。 */
+        const panelW = panelEl.clientWidth || window.innerWidth;
+        const GAP = 8;                                        // 胶囊件缝
+        const ICON_CHIP = 40;                                 // 图标档邻签宽（14 图标 + 内衬）
+        const TEXT_EDGE = 72;                                 // 文字档邻签下限（够放图标 + 3 字）
+        /* 行宽只吃「面板左右浮钮带之间」的净空（✕ / 堆叠钮各 40 + 边距 12 + 呼吸 6
+           = 单侧 58）：横排档与桌面浮钮同处一条顶带，压上去就是作者第⑤条说的那种
+           「叠在一起」。 */
+        const band = Math.max(96, Math.min(panelW - 2 * 58, panelW - 24));
+        let centerW = 180;
+        let edgeW = 0;
+        let iconOnly = false;
+        if (band >= 180 + 2 * TEXT_EDGE + 2 * GAP) {
+          // ① 理想档：中心签 = 桌面原寸 180，邻签文字档（收在剩余净空内）
+          edgeW = Math.min(Math.round(centerW * 0.72), Math.round((band - centerW) / 2 - GAP));
+        } else {
+          // ② 图标档：净空只够塞两枚图标签 ⇒ 邻签转图标，中心签吃满余量（≥96）
+          iconOnly = true;
+          edgeW = ICON_CHIP;
+          centerW = Math.max(96, Math.min(180, Math.round(band - 2 * edgeW - 2 * GAP)));
+          // ③ 兜底档：净空连「中心签 96 + 两枚图标签」都不够 ⇒ 只留中心签
+          if (band < 96 + 2 * ICON_CHIP + 2 * GAP) { edgeW = 0; centerW = Math.min(180, band); }
+        }
+        const stepX = centerW / 2 + edgeW / 2 + GAP;
+        const w = ar === 0 ? centerW : edgeW;
+        k.style.setProperty('--cr-w', w + 'px');
+        k.classList.toggle('cr-icon-only', ar === 1 && (iconOnly || edgeW < TEXT_EDGE));
+        k.classList.toggle('cr-side-l', ar === 1 && side < 0);
+        k.classList.toggle('cr-side-r', ar === 1 && side > 0);
+        const x = rel === 0 ? 0 : side * (ar === 1 ? stepX : stepX * 2);
+        k.style.setProperty('--cr-x', x.toFixed(1) + 'px');
+        k.style.setProperty('--cr-y', '0px');
+        k.style.setProperty('--cr-rx', '0deg');
+        k.style.setProperty('--cr-ry', String(rel === 0 ? 0 : -side * (ar === 1 ? 24 : 38)) + 'deg');
+        k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -40 : -90) + 'px');
+      } else {
+        k.style.removeProperty('--cr-w');
+        k.classList.remove('cr-side-l', 'cr-side-r', 'cr-icon-only');
+        const y = rel === 0 ? 0 : side * (ar === 1 ? edgeY : edgeY * 2);
+        k.style.setProperty('--cr-x', '0px');
+        k.style.setProperty('--cr-y', y.toFixed(1) + 'px');
+        k.style.setProperty('--cr-z', (ar === 0 ? 0 : ar === 1 ? -110 : -230) + 'px');
+        /* rotateX(+θ) = 顶边远离视者（CSS y 轴向下 ⇒ 顶部 y<0 ⇒ z' = y·sinθ < 0）：
+           上缘位（侧 −1）取 +34°（顶边后仰 = 竖圆柱外侧曲率），下缘位取 −34°
+           （底边后仰）—— 反号等幅，双缘同读作「圆柱外侧」。 */
+        k.style.setProperty('--cr-rx', String(rel === 0 ? 0 : -side * (ar === 1 ? 34 : 44)) + 'deg');
+        k.style.setProperty('--cr-ry', '0deg');
+      }
+    }
+    fillCapsuleNames();
+  };
+
+  /** 粗指针腿的标签填充：按**实时可用宽**切「头 … 尾」（切法单源 = capsuleLabel.js）。
+   *  幂等 + 零抖动：同一 (可用宽, 全名) 只写一次（dataset.sig 比对），换签/旋转屏
+   *  才会重切。DOM 上保留 `title` 与 role=button 的可读全名（读屏/长按提示不降级），
+   *  截断只压**绘制文本**。 */
+  const fillCapsuleNames = () => {
+    if (!coarsePointer()) return;
+    for (const k of root.children) {
+      const el = /** @type {HTMLElement} */ (k);
+      const nameEl = /** @type {HTMLElement|null} */ (el.querySelector('.cr-name'));
+      const entry = tabs.get(el.dataset.tabId || '');
+      if (!nameEl || !entry || !el.clientWidth) continue;
+      const full = entry.title || entry.id;
+      const avail = capsuleTextAvail(el);
+      const sig = avail.toFixed(1) + '|' + full;
+      if (nameEl.dataset.sig === sig) continue;
+      const measure = createTextMeasurer(nameEl);
+      const cut = splitCapsuleLabel(full, avail, measure);
+      measure.dispose?.();
+      nameEl.textContent = '';
+      if (!cut.ellipsis) {
+        nameEl.textContent = cut.head;
+      } else {
+        const head = document.createElement('span');
+        head.className = 'cr-name-head';
+        head.textContent = cut.head;
+        const mid = document.createElement('span');
+        mid.className = 'cr-name-mid';
+        mid.textContent = CAPSULE_ELLIPSIS;
+        nameEl.append(head, mid);
+        if (cut.tail) {
+          const tail = document.createElement('span');
+          tail.className = 'cr-name-tail';
+          tail.textContent = cut.tail;
+          nameEl.append(tail);
+        }
+      }
+      nameEl.dataset.sig = sig;
+      el.setAttribute('title', full);      // 全名兜底（与手机层 chip.title 同规）
+    }
+  };
+
+  /** 环锚 = 标题头胶囊盒（.canvas-header）中心（环收放与常态胶囊同位无缝 morph）。
+   *  #926 件1（作者 2026-10-26 报障「hover 的时候不要改变文字的布局」）：旧锚取
+   *  #canvas-title 中心 —— pop 钮（独立窗口入口 26px+gap6）可见时标题 fit-content
+   *  盒整体偏左（title 中心 ≠ 胶囊中心，1440 面实测偏 ~13.5px），hover 中心覆层
+   *  随之左移 = 文字行平移换位 + 前导图标顶穿胶囊左圆角（长名 ellipsis 态尤甚）。
+   *  改锚胶囊盒本体中心：覆层与胶囊同轴，文字行零平移。
+   *  真越出批：环层已挂 body（position:fixed），锚点直写**视口坐标**。 */
+  const anchor = () => {
+    const r = hdr.getBoundingClientRect();
+    root.style.left = (r.left + r.width / 2) + 'px';
+    root.style.top = (r.top + r.height / 2) + 'px';
+  };
+
+  /* ── hover 区（环开态收环判定）──：环开点（顶带胶囊处）∪ 胶囊本体 ∪ 非弧外
+   *  环胶囊，各外扩 RING_ZONE_PAD_PX。竖环几何下中心→缘位有 ~edgeY 间隙，
+   *  pointerleave 单源会立即误收（甚至开→收振荡）；环开期间 document
+   *  pointermove 持续跟踪，离区才调度 140ms 宽限。（对称批「环开点→沉底胶囊
+   *  顶走廊 ±90px」随沉降撤销退役 —— 环锚回顶带，胶囊不再离位，走廊无事可桥。） */
+  let openPt = /** @type {{x: number, y: number}|null} */ (null);
+  let lastPtr = /** @type {{x: number, y: number}|null} */ (null);
+  const inHoverZone = (x, y) => {
+    if (openPt) {
+      if (Math.hypot(x - openPt.x, y - openPt.y) <= 56) return true;
+    }
+    const r = hdr.getBoundingClientRect();
+    if (x >= r.left - RING_ZONE_PAD_PX && x <= r.right + RING_ZONE_PAD_PX
+      && y >= r.top - RING_ZONE_PAD_PX && y <= r.bottom + RING_ZONE_PAD_PX) return true;
+    for (const k of root.children) {
+      if (k.classList.contains('is-far')) continue;
+      const kr = /** @type {HTMLElement} */ (k).getBoundingClientRect();
+      if (x >= kr.left - RING_ZONE_PAD_PX && x <= kr.right + RING_ZONE_PAD_PX
+        && y >= kr.top - RING_ZONE_PAD_PX && y <= kr.bottom + RING_ZONE_PAD_PX) return true;
+    }
+    return false;
+  };
+  const evaluateLeave = () => {
+    if (!ringState) return;
+    if (coarsePointer()) return;   // 触屏常驻档：无 hover 语义，永不走收环腿
+    if (!lastPtr || inHoverZone(lastPtr.x, lastPtr.y)) {
+      if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
+    } else if (!leaveTimer) {
+      leaveTimer = setTimeout(closeRing, RING_CLOSE_GRACE_MS);
+    }
+  };
+  const onDocPointerMove = (e) => { lastPtr = { x: e.clientX, y: e.clientY }; evaluateLeave(); };
+  /** 环开期间 document 捕获滚轮（capture + hover 区内消费）：触控板手感批 ——
+   *  ④光标在 hover 区（openPt ∪ 标题头 ∪ 非弧外胶囊，与收环判定同一几何）外 =
+   *  零响应（不 preventDefault 不换选，页面滚动照旧 —— 不再抢面板内容滚动）；
+   *  ①区内设备分档累积（鼠标格低阈即切 / 触控板小增量累积过阈），切换后进
+   *  RING_WHEEL_COOLDOWN_MS 冷却：期内事件只消费不累积 —— 轻扫一挥恰切一格、
+   *  惯性末段不连跳，冷却后重新累积。 */
+  const onDocWheel = (e) => {
+    if (!ringState || isMobileLayer()) return;
+    if (coarsePointer()) return;              // 触屏常驻档：滚轮不在本档语义内（不消费）
+    if (deck.open) { closeRing(); return; }   // deck 态不开环（叠卡有自己的滚轮语义；开环态下 deck 开启即让位）
+    if (!inHoverZone(e.clientX, e.clientY)) return;   // ④区外零响应：不消费，页面滚动照旧
+    e.preventDefault();
+    e.stopPropagation();
+    const now = performance.now();
+    if (now < wheelLockUntil) return;         // 冷却期内：只消费不累积（惯性不叠加切换）
+    /* deltaMode 归一 px（1=线 ×40 / 2=页 ×100 —— deck 滚轮重做同一口径）。 */
+    const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 100 : 1;
+    const dx = e.deltaX * k;
+    const dy = e.deltaY * k;
+    if (!dx && !dy) return;
+    /* ②设备分档阈值：主导轴本事件 ≥ RING_MOUSE_DELTA = 鼠标离散格（一格意图）
+     *  → 低阈即切；触控板小增量走累积档（48px ≈ 一挥轻扫）。 */
+    const thr = Math.max(Math.abs(dx), Math.abs(dy)) >= RING_MOUSE_DELTA
+      ? RING_WHEEL_STEP_MOUSE : RING_WHEEL_STEP_TRACKPAD;
+    const n = ringState.ids.length;
+    let dir = 0;
+    if (Math.abs(dx) > Math.abs(dy)) {
+      if (acc !== 0 && (dx > 0) !== (acc > 0)) acc = 0;   // 反向：清账重积
+      acc += dx;
+      if (acc >= thr) dir = 1; else if (acc <= -thr) dir = -1;
+      if (dir) acc = 0;
+    } else {
+      if (accY !== 0 && (dy > 0) !== (accY > 0)) accY = 0;
+      accY += dy;
+      if (accY >= thr) dir = 1; else if (accY <= -thr) dir = -1;
+      if (dir) accY = 0;
+    }
+    if (dir) {                                // 单次过阈恰切一格（余量清零 —— 事件不跨账）
+      ringState.cursor = (ringState.cursor + dir + n) % n;
+      ringState.lastDir = dir;                // 双卡方向感知档：非游标胶囊驻来向侧（layout 消费）
+      wheelLockUntil = now + RING_WHEEL_COOLDOWN_MS;
+      layout();
+    }
+  };
+  const onDocPointerLeft = (e) => { if (ringState && !e.relatedTarget) closeRing(); }; // 离窗即收
+
+  const openRing = (pt) => {
+    if (ringState || isMobileLayer() || cardWindowMode) return;
+    if (deck.open) return;                         // deck 态：叠卡有自己的环卡滚轮语义，不开环
+    if (tabs.size < 2) return;                     // 单胶囊：平时态即全部，无环可展
+    const all = [...tabs.keys()];
+    ringState = { ids: all, cursor: Math.max(0, all.indexOf(activeTabId)), lastDir: 1 };
+    acc = 0;
+    accY = 0;
+    wheelLockUntil = 0;                            // 新环新账：开环清冷却（上次环的余威不作废新环第一挥）
+    openPt = pt ? { x: pt.x, y: pt.y } : null;
+    lastPtr = null;
+    build();
+    hdr.classList.add('ring-open');
+    // hover 零布局批（作者报障 2026-11-03 21:35「hover canvas 胶囊会带着图片
+    // 一起动」）：旧腿在此给 #canvas-content 挂 .capsule-ring-open，让
+    // split.css 把 .canvas-viewer-safe-top 的 padding-top 16 → 52（配 240ms
+    // 过渡）——padding 是布局属性，定高 flex 列里 viewport 随之 −36px，图片
+    // ResizeObserver 重 fit ⇒ 图片跟着动。环是真浮层（#canvas-capsule-ring 挂
+    // body / z-246 / 真实越出面板顶缘），浮 chrome 不占位不透传布局 ⇒ 壳类整条
+    // 退役（CSS 侧 padding 联动同步删），顶垫只由静态档位决定。
+    // 真越出批：显隐随环层本位；可点性 = 稳态门（0.36s 展开过渡后缘位才接
+    // pointer —— 展开中胶囊从指针位掠过会抢标题头按压/拖划，见 split.css 注）。
+    root.classList.add('open');
+    root.classList.remove('steady');
+    if (steadyTimer) clearTimeout(steadyTimer);
+    steadyTimer = setTimeout(() => { root.classList.add('steady'); steadyTimer = 0; }, RING_STEADY_MS);
+    root.hidden = false;
+    anchor();
+    layout();
+    /* 触屏常驻档不挂 hover 收环链（pointermove/wheel/pointerleave 三监听是
+       "指针离区即收"的载体 —— 触屏腿没有这个概念，挂着反而会被文档滚动/滑动手势
+       误判收环）。细指针腿逐字不变。 */
+    if (coarsePointer()) {
+      root.classList.add('steady');   // 常驻档无「展开中指针掠过」竞态 ⇒ 缘位立即可点
+      if (steadyTimer) { clearTimeout(steadyTimer); steadyTimer = 0; }
+      return;
+    }
+    document.addEventListener('pointermove', onDocPointerMove);
+    document.addEventListener('wheel', onDocWheel, { capture: true, passive: false });
+    document.addEventListener('pointerleave', onDocPointerLeft);
+  };
+  const closeRing = () => {
+    if (!ringState) return;
+    ringState = null;
+    hdr.classList.remove('ring-open');
+    root.classList.remove('open');
+    root.classList.remove('steady');
+    if (steadyTimer) { clearTimeout(steadyTimer); steadyTimer = 0; }
+    root.hidden = true;
+    root.textContent = '';
+    acc = 0;
+    accY = 0;
+    wheelLockUntil = 0;
+    openPt = null;
+    lastPtr = null;
+    document.removeEventListener('pointermove', onDocPointerMove);
+    document.removeEventListener('wheel', onDocWheel, { capture: true });
+    document.removeEventListener('pointerleave', onDocPointerLeft);
+    if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
+  };
+  // 三期：登记给规则表（canvas.ring.close → deckKeyAction('closeRing')）。
+  // 触屏常驻档下 Esc 收环不收（常驻展开 = 本档的**形态**，不是一次交互）——
+  // 收了也没有 hover 能把它再打开，等于把多签入口锁死。
+  ringCloseFn = () => { if (coarsePointer()) return; closeRing(); };
+
+  /** 触屏常驻横向档同步（作者令 2026-11-05 12:10：「直接展开，不需要 hover」）：
+   *  进入条件全部满足才驻留 —— 粗指针 ∧ 非手机层 ∧ 非卡窗 ∧ 面板开着 ∧
+   *  非叠卡态 ∧ ≥2 页签。任一条件破了就收环（例如关到只剩 1 签、开堆叠视图）。
+   *  每次同步都重算「当前签居中 + 左右邻签」位姿；页签集合变了才重建 DOM。
+   *  ⚠ 本函数是**竖环档的旁观者**：细指针下它必须整体 no-op（连 closeRing 都不许
+   *  调）—— 它挂在 renderCanvasHeader() 出口上，hover 环开着时换签/重绘会走到这里，
+   *  若在此收环就把「换签不断链」契约（CR4/CR4b）打断了。故用 coarseRowOn 记账：
+   *  只收自己开的那一轮。 */
+  let coarseRowOn = false;
+  const syncCoarseRow = () => {
+    const want = coarsePointer() && !isMobileLayer() && !cardWindowMode
+      && !deck.open && tabs.size >= 2 && isCanvasOpen();
+    if (!want) {
+      if (coarseRowOn && ringState) closeRing();
+      coarseRowOn = false;
+      return;
+    }
+    coarseRowOn = true;
+    if (!ringState) {
+      openRing(null);
+      if (!ringState) return;
+    }
+    const ids = [...tabs.keys()];
+    if (ringState.ids.join('|') !== ids.join('|')) {
+      build();
+    } else {
+      ringState.ids = ids;
+    }
+    ringState.cursor = Math.max(0, ids.indexOf(activeTabId));
+    root.classList.add('steady');
+    anchor();
+    layout();
+  };
+  // 供 renderCanvasHeader（页签集/激活签/脏标记三处共用出口）回调 —— 桌面腿
+  // 恒为 no-op（coarsePointer false），零回归。
+  ringSyncFn = syncCoarseRow;
+
+  hdr.addEventListener('pointerenter', (e) => {
+    if (isMobileLayer() || e.pointerType === 'touch') return;
+    if (leaveTimer) { clearTimeout(leaveTimer); leaveTimer = 0; }
+    openRing({ x: e.clientX, y: e.clientY });
+  });
+  hdr.addEventListener('pointerleave', () => {
+    if (!ringState) return;
+    evaluateLeave();
+  });
+  // 作者令③：从胶囊发起的原生拖拽一律拦下（文字/链接拖拽；OS 文件拖入 =
+  // drop 落区不受影响）。文字多选已被全头 user-select:none 封死（CSS）。
+  hdr.addEventListener('dragstart', (e) => e.preventDefault());
+  // 三期：Esc 收环搬进规则表（`canvas.ring.close`，when = canvasRingOpen）。
+  // 生命周期：换签不再无条件收环（作者报障 2026-10-25「hover 滚动连续性丧失」：
+  // 「如果滚动，切换了其他卡片，那么就无法再次滚动，需要重新hover触发」）——
+  // 旧腿 canvas-tab-switched → closeRing() 无条件收环，滚轮监听随环拆走，而
+  // pointerenter 在指针未离头时不会再触发 ⇒ 换签后滚动链死断，必须移出再
+  // hover。修法：换签时指针仍在 hover 区（openPt ∪ 标题头 ∪ 非弧外胶囊联合
+  // 盒，与 evaluateLeave 同一判定）= 环保持开、游标跳到新激活页签（acc/accY
+  // 清零、回锚重排），滚动零断链；指针已离区（他处换签）= 照旧收环。deck 态
+  // / 单页签态不开环照旧（deck 叠卡有自己的滚轮语义，双环互搏防回归）。
+  document.addEventListener('canvas-tab-switched', () => {
+    if (coarsePointer()) { syncCoarseRow(); return; }   // 触屏常驻档：换签 = 游标跳新签（不收环）
+    if (!ringState) return;
+    const pt = lastPtr || openPt;
+    if (pt && !deck.open && tabs.size >= 2 && inHoverZone(pt.x, pt.y)) {
+      ringState.ids = [...tabs.keys()];
+      ringState.cursor = Math.max(0, ringState.ids.indexOf(activeTabId));
+      acc = 0;
+      accY = 0;
+      wheelLockUntil = 0;      // 点击/手势换签 = 明确意图：清冷却，滚轮即时可再换选
+      layout();                // layout() 内部先回锚（真越出批视口版）
+      return;
+    }
+    closeRing();
+  });
+  document.addEventListener('canvas-tab-closed', () => {
+    if (coarsePointer()) { setTimeout(syncCoarseRow, 0); return; }   // 触屏常驻档：延一拍读删后状态
+    if (!ringState) return;
+    /* teardownTab 在 tabs.delete 之前派发本事件（事件序先于删除）——同步重建
+     * 会读到删除前状态：ids 含已关页签（死胶囊残留）、且 tabs.size 永远 ≥2
+     * 「收环腿」永不触发（悬着的环卡死不收）。延一拍读删后状态。 */
+    setTimeout(() => {
+      if (!ringState) return;
+      if (tabs.size < 2) { closeRing(); return; }
+      ringState.cursor = Math.min(ringState.cursor, tabs.size - 1);
+      build();
+      anchor();
+      layout();
+      // 重建环 = 胶囊重新展开过渡：稳态门重走一遍（新胶囊从中心位掠出，同 race）
+      root.classList.remove('steady');
+      if (steadyTimer) clearTimeout(steadyTimer);
+      steadyTimer = setTimeout(() => { root.classList.add('steady'); steadyTimer = 0; }, RING_STEADY_MS);
+    }, 0);
+  });
+
+  /* 触屏常驻横向档的三类触发（作者令 2026-11-05 12:10）：
+     ① 首屏 / 页签集变化 —— renderCanvasHeader 出口回调（ringSyncFn）；
+     ② 视口变化（旋转屏、拉窗、外接键鼠）—— resize / orientationchange / 能力
+        断点自身变化（pointer:coarse ⇄ fine 切换要立刻换档，否则会停在错的位姿）；
+     ③ 叠卡态进出 —— 面板 `.stacked` 类（deck 开启时环必须让位，双环互搏的
+        既有裁定照旧）。三处都走同一个 syncCoarseRow，桌面腿恒 no-op。 */
+  const onViewportChange = () => syncCoarseRow();
+  window.addEventListener('resize', onViewportChange);
+  window.addEventListener('orientationchange', onViewportChange);
+  if (typeof COARSE_MQ.addEventListener === 'function') COARSE_MQ.addEventListener('change', onViewportChange);
+  else if (typeof COARSE_MQ.addListener === 'function') COARSE_MQ.addListener(onViewportChange);
+  if (typeof MutationObserver === 'function') {
+    const mo = new MutationObserver(() => syncCoarseRow());
+    mo.observe(panelEl, { attributes: true, attributeFilter: ['class'] });
+  }
+  // 首屏一次：页签若已恢复则立即驻留；否则等 canvas-tab-switched / renderCanvasHeader。
+  syncCoarseRow();
+}
+
+/** 手机长按引用通路（navController 卡头长按钮消费）：引用当前活动卡片进聊天，
+ *  与桌面右键菜单「引用当前页」同一 appendRefToActiveView 通路（动态 import
+ *  防 input.js 静态回边）。无文件可引（面板页签等）toast 与菜单同文案。
+ *
+ *  canvas-tab-reference 批（2026-11-18）：改前「没有可用 composer」那一腿是
+ *  **静默**的 —— `appendRefToActiveView` 的 view 空臂返回 false，调用方不读返回值
+ *  ⇒ 点了引用钮什么也看不到。本批把该腿补成**明确提示**：复用既有 toast 单源
+ *  （`window.__showToast`，modal.js 挂的站内唯一提示面 —— 零第四种通知形态）。
+ *  返回值随之升为 `Promise<boolean>`（false = 没进框，且屏上已有提示）；两个调用点
+ *  （手机看板页展开档引用钮 / 卡头长按）都不读返回值，行为不回退。
+ *  @returns {Promise<boolean>} */
+export function quoteActiveCardRef() {
+  const entry = activeTabId ? tabs.get(activeTabId) : null;
+  if (!entry) return Promise.resolve(false);
+  const ref = refForTab(entry);
+  if (!ref) { window.__showToast?.(t('canvas.noRef'), 'info'); return Promise.resolve(false); }
+  return import('./input.js').then(({ appendRefToActiveView }) => {
+    const ok = appendRefToActiveView(ref);
+    // 无可用 composer（对话输入框未在场）：明确提示，绝不静默什么都不做。
+    if (!ok) window.__showToast?.(t('canvas.refNoComposer'), 'info');
+    return ok;
+  });
+}
+
 /** Initialize canvas event listeners. Call on DOM ready. */
 export function initCanvas() {
+  writerChanged('reader');
+  canvasWriter.refresh();
+  // UI 批⑧：独立卡窗模式引导（?card-window=1）—— 必须先于 restoreTabs（main.js
+  // boot 序）置位，否则卡窗会把主窗整组标签恢复进来。
+  initCardWindowMode();
+  // 主窗重载后必须尽早加入卡窗通道，接收卡窗重试的 hello 并重新收养。
+  if (!cardWindowMode) ensureCardChannel();
+
   const closeBtn = document.getElementById('canvas-close-btn');
   if (closeBtn) {
     closeBtn.addEventListener('click', closeCanvas);
@@ -1023,16 +4999,18 @@ export function initCanvas() {
   // rebuilt during restore/reorder). One delegated listener on the stable
   // #canvas-tab-bar container covers all tabs, present and future.
   const tabBar = document.getElementById('canvas-tab-bar');
-  if (tabBar && !tabBar._delegated) {
-    tabBar._delegated = true;
+  const tabBarEl = /** @type {HTMLElement|null} */ (tabBar);
+  const tabBarFlags = /** @type {any} */ (tabBarEl);
+  if (tabBarEl && !tabBarFlags._delegated) {
+    tabBarFlags._delegated = true;
 
     // Click: close button → close tab; anywhere else on a tab → activate it.
-    tabBar.addEventListener('click', (e) => {
-      const tabEl = e.target.closest('.canvas-tab');
-      if (!tabEl || !tabBar.contains(tabEl)) return;
-      const id = tabEl.dataset.tabId;
+    tabBarEl.addEventListener('click', (e) => {
+      const tabEl = /** @type {Element} */ (e.target).closest('.canvas-tab');
+      if (!tabEl || !tabBarEl.contains(tabEl)) return;
+      const id = /** @type {HTMLElement} */ (tabEl).dataset.tabId;
       if (!id) return;
-      if (e.target.closest('.canvas-tab-close')) {
+      if (/** @type {Element} */ (e.target).closest('.canvas-tab-close')) {
         e.stopPropagation();
         closeTab(id);
       } else {
@@ -1041,10 +5019,10 @@ export function initCanvas() {
     });
 
     // Double-click tab → promote to pinned (VS Code behavior).
-    tabBar.addEventListener('dblclick', (e) => {
-      const tabEl = e.target.closest('.canvas-tab');
-      if (!tabEl || !tabBar.contains(tabEl)) return;
-      const id = tabEl.dataset.tabId;
+    tabBarEl.addEventListener('dblclick', (e) => {
+      const tabEl = /** @type {Element} */ (e.target).closest('.canvas-tab');
+      if (!tabEl || !tabBarEl.contains(tabEl)) return;
+      const id = /** @type {HTMLElement} */ (tabEl).dataset.tabId;
       if (!id) return;
       e.stopPropagation();
       pinTab(id);
@@ -1064,9 +5042,33 @@ export function initCanvas() {
     });
   }
 
+  // canvasdrop: OS file dropped onto a pane → copy into `<fileDir>/assets/`
+  // and insert a relative reference at the cursor; clipboard paste (⌘V /
+  // screenshot) rides the same pipeline; an OS file dropped on the tab strip
+  // (R6 ④) opens as a new tab. The resolver hands the drop handler the tab's own
+  // absPath / write root / itemType; panel tabs (no file behind them) resolve to
+  // null and get a visible "not editable here" notice.
+  // canvas-stack：标签条在桌面退役后，替代落区 = 头部整条（居中标题条，
+  // v1 备忘「标签条退役后需把 header 整条注册为替代落区」）。
+  const canvasContent = document.getElementById('canvas-content');
+  const canvasHeaderEl = /** @type {HTMLElement|null} */ (document.querySelector('#canvas-panel .canvas-header'));
+  if (canvasContent) {
+    initCanvasDrop(canvasContent, (pane) => {
+      const tabId = pane.dataset.tabId;
+      const entry = tabId ? tabs.get(tabId) : null;
+      if (!entry) return null;
+      return {
+        absPath: entry.absPath || undefined,
+        rootPath: entry.rootPath || null,
+        itemType: entry.type,
+      };
+    }, canvasHeaderEl || tabBarEl);
+  }
+
   // Listen for workspace-open-item events (dispatched on window by explorer.js).
   window.addEventListener('workspace-open-item', (e) => {
-    if (e.detail) openWorkspaceItem(e.detail);
+    const detail = /** @type {CustomEvent} */ (e).detail;
+    if (detail) openWorkspaceItem(detail);
   });
 
   // Close the canvas tab context menu on any outside interaction (capture).
@@ -1078,12 +5080,23 @@ export function initCanvas() {
     document.addEventListener('contextmenu', () => hideCanvasRefMenu(), true);
   }
 
-  // Window-focus refresh (dispatched by explorer.js after reloading the tree):
-  // re-check the active file tab for external edits. Dirty-guarded, debounced,
-  // and unchanged content never re-renders (see openWorkspaceItem).
-  window.addEventListener('explorer-focus-refresh', () => {
+  // canvas-stack（v5 定稿落地）：居中标题头首渲 + 叠卡引擎引导（层/浮钮/ foot 均
+  // body 级固定元素，见 initDeck）。移动层有自己的卡片形态，引擎在其下不激活。
+  renderCanvasHeader();
+  initDeck();
+  // UI 批⑨：卡头胶囊手势（桌面腿：按压触感/竖滑换卡/横滑关卡/右键引用）。
+  initCardHeadGestures();
+  // 2026-10-22 作者令：胶囊环（hover 展开 · 横滑换选 · 点击切换 · 右键菜单扩容）。
+  initCapsuleRing();
+
+  // 变更信号通道②（explorer-rt 批的 fsChanged/聚焦/慢对账三腿汇流事件，由
+  // explorer.js 派发）：canvas-auto-refresh 批起不再即读活动页签，改入迟滞引擎
+  // ——静默窗满 60s 才执行一次（最小间隔 60s）；无变更事件 ⇒ 零布防零取数。
+  window.addEventListener('explorer-focus-refresh', (event) => {
     const entry = activeTabId ? tabs.get(activeTabId) : null;
-    if (entry) scheduleFileRefresh(entry);
+    // A periodic reconcile is a probe, not evidence of another write. Do not
+    // let it postpone a pending real change indefinitely.
+    if (entry && !(/** @type {CustomEvent} */ (event).detail?.reconcile && entry._autoRefreshTimer)) noteAutoFileChange(entry);
   });
 
   // Listen for Pop tool WS messages — agent opens a file in Canvas.
@@ -1093,15 +5106,50 @@ export function initCanvas() {
     });
   });
 
-  // Responsive: maintain equal panel widths on resize.
+  // Responsive: maintain equal panel widths on resize, and re-decide the
+  // layout form (side-by-side vs. overlay) — a resize can cross the threshold
+  // in either direction, so the mode is evaluated BEFORE the width early-return
+  // (a user-pinned width must not freeze the mode).
   window.addEventListener('resize', () => {
     if (!isCanvasOpen()) return;
+    refreshCanvasLayoutMode();
     // Skip if user has manually pinned a specific width via col-resizer
     const panel = document.getElementById('canvas-panel');
     if (panel && panel.style.flex) return; // inline flex = user resized
     const target = computeOpenWidth();
     document.documentElement.style.setProperty('--canvas-width', target + 'px');
   });
+
+  // The layout form also depends on the Side Bar's own width: collapsing it
+  // frees exactly the room the side-by-side split needs, so the panel must be
+  // able to flip back without a window resize. body class changes are the one
+  // signal the sidebar toggle and the ⌘B shortcut funnel through, and a
+  // resizer drag on the sidebar|main handle announces itself with
+  // `nebflow-col-resize` (colResizer.js).
+  // classList.toggle(name, force) only mutates on an actual state change, so
+  // this observer cannot loop on its own write.
+  const moLayout = new MutationObserver(() => {
+    if (!isCanvasOpen()) return;
+    if (document.body.classList.contains('canvas-overlay') !== isNarrowSplit()) {
+      refreshCanvasLayoutMode();
+    }
+  });
+  moLayout.observe(document.body, { attributes: true, attributeFilter: ['class'] });
+  window.addEventListener('nebflow-col-resize', refreshCanvasLayoutMode);
+
+  // The overlay form's top edge is derived from the top band's measured height,
+  // and that band grows on its own (a task list with cards, a notification
+  // banner, the pending-ask bar). Re-derive when the band resizes so the
+  // published variable never goes stale against it.
+  if (window.ResizeObserver) {
+    const header = document.getElementById('header');
+    const overlays = document.getElementById('top-overlays');
+    const roBand = new ResizeObserver(() => {
+      if (document.body.classList.contains('canvas-overlay')) applyCanvasLayoutMode();
+    });
+    if (header) roBand.observe(header);
+    if (overlays) roBand.observe(overlays);
+  }
 }
 
 // ── Tab persistence ─────────────────────────────────────────
@@ -1110,16 +5158,594 @@ export function initCanvas() {
  *  Stores: id, title, type, absPath (nullable), pinned, closable.
  *  Tabs without absPath (Teams/Flows panels) are restored synchronously
  *  and re-render from live state; file tabs re-fetch content on restore. */
-function persistTabs() {
-  // Don't overwrite saved tabs with an empty list — transient states can
-  // empty the in-memory Map, but saved data should survive for restoration.
-  if (tabs.size === 0) {
-    console.log('[persistTabs] tabs empty — skipping save to preserve existing data');
+// ═════════════════════════════════════════════════════════════════════════
+// UI 批⑧（作者令 2026-10-21）canvas 单卡独立窗口
+//
+// 主窗（权威）——卡片可以弹出为同源独立浏览器窗口（window.open
+// `?card-window=1&path=…`），卡头 toggle 同位换形：未独立态「独立」⧉ / 已独立态
+// 「合并」⇲。独立窗 = 最小查看器路由：同一 app 实例经既有 readFile →
+// fileContent → workspace-open-item → renderFile 通路渲染真容（md/monaco/html/
+// img/pdf 全家桶零新渲染代码）；卡窗只读镜像（编辑回主窗，避免双写者）。
+// 同步 = BroadcastChannel('nebflow-canvas-cards')：update（主→卡，内容变了重读
+// 文件）/ merge（主→卡，收窗）/ bye（卡→主，卡窗 ×/ESC/卸载 = 合并等价腿）/
+// hello·welcome（主窗刷新后再收养）/ main-here 心跳（卡窗 8s 静默自守卫关闭）；
+// 主窗另持 WindowProxy 轮询 win.closed 作崩溃兜底 —— 卡窗任何方式消失都收敛到
+// 同一条 mergeCardWindow 路径（关窗等价 + 幂等：重入按 Map 判重直返）。
+// 主窗独立中标记：页签 is-independent（toggle 同位换形）+ 卡面 data-independent
+// 「独立中」轻态浮标（CSS ::after，占位不消失）；环卡同标记。
+// 动画双向：独立 = 主窗卡面 pop 脉冲 + 卡窗根 nf-card-win-in 放大淡入；
+// 合并 = 卡窗 nf-card-win-out 收缩淡出 + 主窗卡面 nf-card-restore 回弹展开；
+// prefers-reduced-motion 直切（类不加、窗即关）。
+// 手机端（mobile-layer / 窄视口）：window.open 不带 features = 新标签页姿态、
+// 直切无动画（报告注记：同窗全屏路由会卸载主窗状态，新标签与桌面共用同一协议）。
+// ═════════════════════════════════════════════════════════════════════════
+
+/** 本实例 = 独立卡窗（URL ?card-window=1）；主窗恒 false。 */
+let cardWindowMode = false;
+/** tabId → { win: WindowProxy|null, winId }。win=null = 主窗刷新后由 hello 再收养
+ *  （WindowProxy 已丢，关窗检测交给卡窗 bye/心跳看门狗）。 */
+const independentWins = new Map();
+/** popout 在途判重（window.open 同步返回，防双击双窗）。 */
+const cardPopInFlight = new Set();
+/** tabId → win.closed 轮询 interval。 */
+const cardWinWatch = new Map();
+/** 跨窗同步通道（主/卡共用；懒建）。 */
+let cardBC = null;
+/** 卡窗侧最近一次收到主窗心跳的时刻（8s 静默自守卫）。 */
+let cardLastMainBeat = 0;
+/** 卡窗启动/主窗重载时重发 hello，直到主窗恢复并确认收养。 */
+let cardHelloTimer = null;
+/** hello 到达时标签恢复尚未完成的卡窗，待 restoreTabs 完成后再收养。 */
+const pendingCardHellos = new Map();
+
+/** @param {any} m */
+function cardBcPost(m) {
+  try { if (cardBC) cardBC.postMessage(m); } catch { /* 通道已废：静默 */ }
+  // postMessage 桥（独立窗口本机加速批）：BroadcastChannel 同源限定 —— 主窗
+  // （官网入口 origin）与直连卡窗（本机网关 origin）互相听不见，桥补这一腿。
+  // 同源弹窗两侧照旧走 BC（PM 腿空转零害）；对端 origin 双向钉定（发信按
+  // 开窗时记录的 origin、收信校验 e.origin 等值），跨源伪造帧进不了分发。
+  try {
+    if (cardWindowMode) {
+      if (cardPeerOrigin && window.opener) window.opener.postMessage(m, cardPeerOrigin);
+    } else {
+      for (const rec of independentWins.values()) {
+        if (rec.pmOrigin && rec.win && !rec.win.closed) rec.win.postMessage(m, rec.pmOrigin);
+      }
+    }
+  } catch { /* PM 腿失败静默（BC 腿已试） */ }
+}
+
+/** 卡窗通道消息分派（BroadcastChannel 与 postMessage 桥共用的唯一入口；
+ *  形态 = 既有 cardBC.onmessage 体逐字迁入，语义零变化）。 */
+function cardChannelDispatch(m) {
+  m = m || {};
+    if (cardWindowMode) {
+      /* 卡窗侧：控制消息只作用于其目标卡窗。BroadcastChannel 是同源广播，
+       * 多个卡窗都会收到；不校验 tabId 会让合并/刷新一张卡误伤其它卡窗。 */
+      if (m.kind === 'main-here') cardLastMainBeat = Date.now();
+      else if (m.kind === 'welcome' && m.tabId === currentCardTabId()) {
+        if (cardHelloTimer) { clearInterval(cardHelloTimer); cardHelloTimer = null; }
+      } else if (m.tabId && m.tabId === currentCardTabId()) {
+        if (m.kind === 'merge') requestMergeSelf();
+        else if (m.kind === 'update') cardWindowReread();
+        else if (m.kind === 'close-self') window.close();
+      }
+      return;
+    }
+  /* 主窗侧 */
+  if (m.kind === 'bye' && m.tabId) mergeCardWindow(m.tabId, { fromCard: true });
+  else if (m.kind === 'hello' && m.tabId) {
+    if (!tabs.has(m.tabId) && !cardWindowMode) {
+      pendingCardHellos.set(m.tabId, { winId: String(m.winId || '') });
+      return;
+    }
+    if (tabs.has(m.tabId)) {
+      if (!independentWins.has(m.tabId)) {
+        // 主窗刷新后由卡窗 hello 再收养（WindowProxy 不可得，看门狗交卡窗侧）。
+        // 直连卡窗的 opener origin 从记账读回（PM 桥再收养腿）。
+        const winId = String(m.winId || '');
+        let adoptedWin = null;
+        // 主窗 reload 后尝试按命名窗口重新取得 WindowProxy；若浏览器不允许，
+        // 仍以 hello/welcome + BroadcastChannel 维持状态收养。
+        if (winId) { try { adoptedWin = window.open('', winId); } catch { /* BC 仍可用 */ } }
+        independentWins.set(m.tabId, {
+          win: adoptedWin, winId, pmOrigin: readCardwinPmOrigin(m.tabId),
+        });
+        markIndependentUI(m.tabId, true, { animate: false });
+      }
+      cardBcPost({ kind: 'welcome', tabId: m.tabId });
+    } else {
+      cardBcPost({ kind: 'close-self', tabId: m.tabId });   // 主窗已无此卡 → 卡窗自关
+    }
+  }
+}
+
+/** 卡窗 PM 桥对端 origin（卡窗侧；cwpo URL 参数先行，首条来帧 e.origin 钉定）。 */
+let cardPeerOrigin = '';
+
+/** window message 监听：PM 桥收信腿（两侧同一监听，按模式分派）。
+ *  主窗：只认自己弹出的直连卡窗回声（source===rec.win ∧ origin===rec.pmOrigin 双钉）；
+ *  卡窗：只认 opener（source 钉）+ origin 钉定（cwpo 参数/首帧二取一，钉后不认他源）。 */
+function acceptCardPeerMessage(e) {
+  if (cardWindowMode) {
+    if (e.source !== window.opener) return;
+    const want = cardPeerOrigin || (new URLSearchParams(location.search).get('cwpo') || '');
+    if (want) { if (e.origin !== want) return; }
+    else if (e.origin === 'null' || !e.origin) return;   // 不钉定不透明的 null origin
+    cardPeerOrigin = e.origin;
+    cardChannelDispatch(e.data);
     return;
   }
+  for (const rec of independentWins.values()) {
+    if (rec.win && rec.win === e.source && rec.pmOrigin && e.origin === rec.pmOrigin) {
+      cardChannelDispatch(e.data);
+      return;
+    }
+  }
+}
+
+// PM 桥安装旗标（checkJs 批从函数属性 ensureCardChannel._pmInstalled 收编为
+// 模块级 let —— 行为逐字等价，tsc 可推类型；词条引用批 batch 2 顺带清偿）。
+let cardPmInstalled = false;
+function ensureCardChannel() {
+  // PM 桥收信腿先行安装（不依赖 BroadcastChannel 在场 —— 直连卡窗的通道生命线
+  // 是 postMessage；BC 缺席的老浏览器至少保住跨源直连形态的通道）。
+  if (!cardPmInstalled) {
+    cardPmInstalled = true;
+    window.addEventListener('message', acceptCardPeerMessage);
+  }
+  if (cardBC || typeof BroadcastChannel === 'undefined') return;
+  cardBC = new BroadcastChannel('nebflow-canvas-cards');
+  cardBC.onmessage = (e) => cardChannelDispatch(e.data);
+  if (!cardWindowMode) {
+    // 主窗心跳：卡窗 8s 静默自守卫的喂食腿（首弹卡时起搏，见 popoutCardWindow）。
+    if (!cardLastMainBeat) cardLastMainBeat = Date.now();
+    if (!/** @type {any} */ (window).__cardBeatTimer) {
+      /** @type {any} */ (window).__cardBeatTimer = setInterval(() => cardBcPost({ kind: 'main-here' }), 3000);
+    }
+  }
+}
+
+/** 卡头 toggle 标记（页签 + 卡面 + 环卡三面同源投射）。
+ *  @param {string} id @param {boolean} on @param {{animate?:boolean}} [o] */
+function markIndependentUI(id, on, o = {}) {
+  const entry = tabs.get(id);
+  if (entry) {
+    entry.tabEl.classList.toggle('is-independent', on);
+    const pane = entry.paneEl;
+    if (pane) {
+      if (on) pane.setAttribute('data-independent', '1');
+      else pane.removeAttribute('data-independent');
+      if (o.animate && !cardWindowRm()) {
+        const cls = on ? 'card-pop-anim' : 'card-merge-anim';
+        pane.classList.remove('card-pop-anim', 'card-merge-anim');
+        // 强制 reflow 重启动画
+        void pane.offsetWidth;
+        pane.classList.add(cls);
+        pane.addEventListener('animationend', () => pane.classList.remove(cls), { once: true });
+      }
+    }
+  }
+  // 环卡（若在挂）：属性驱动 CSS ::after「独立中」chip，零 DOM 插拔
+  const deckCard = deckLayer && deckLayer.querySelector('.deck-card[data-tab="' + cssEscapeV(id) + '"]');
+  if (deckCard) {
+    if (on) deckCard.setAttribute('data-independent', '1');
+    else deckCard.removeAttribute('data-independent');
+    const deckBtn = deckCard.querySelector('.deck-card-pop');
+    if (deckBtn) {
+      deckBtn.classList.toggle('is-independent', on);
+      const t = on ? '合并回主窗' : '独立窗口打开';
+      deckBtn.title = t;
+      deckBtn.setAttribute('aria-label', t);
+    }
+  }
+  syncHeaderActions();                 // 活动卡头钮形跟随（批②三件套 + 角标）
+  // 手机卡片头钮形跟随（navController 消费；跨模块薄通知，零轮询）
+  document.dispatchEvent(new CustomEvent('canvas-independent-changed', { detail: { id, on } }));
+}
+function cardWindowRm() {
+  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** 弹出单卡独立窗（幂等：已在独立 / 在途 / 无 absPath / 弹窗被拦 ⇒ 零状态变化）。
+ *  内容物收口批（2026-10-22 作者令）：独立窗只承载内容物 —— 文档（md/canvas
+ *  文档）、文件、图片等工件视图；功能性面板（任务列表/图谱/设置/会话列表等
+ *  全功能 UI）一律不可独立窗口化。absPath 是内容物的判定单点（面板/url/flow-run
+ *  页签皆无 absPath），本函数是全部入口（卡头胶囊钮/环卡钮/右键菜单/手机卡头）
+ *  的最终弹出腿：门在此收口，无视入口形态，拒绝腿带禁用态提示 toast。
+ *  @param {string} id */
+function popoutCardWindow(id) {
+  const entry = tabs.get(id);
+  if (!entry || !entry.absPath) {
+    window.__showToast?.(t('canvas.cardwinContentOnly'), 'info');
+    return false;
+  }
+  if (independentWins.has(id) || cardPopInFlight.has(id)) return false;
+  cardPopInFlight.add(id);
+  // 卡窗白屏修复批（2026-10-22）：入口必须是 `/` —— 网关静态路由只把 `/`
+  // 派给 index（WebSocketRoutes `GET -> Root`），`/index.html` 落根文件白名单
+  // （sw.js/favicon 族）之外 ⇒ 404 空 Content-Length 体，独立窗整页空白
+  // （作者实测 link.mystand.space 白窗根因；旧批 spec 静态服 `/`→index 掩盖了
+  // 网关路由差异）。同源开窗自带 cookie 会话，无凭据注入面；死会话形态由
+  // WS 层自愈链收口（ws.js onclose → remint/登录引导）。
+  const url = '/?card-window=1&path=' + encodeURIComponent(entry.absPath) +
+    '&title=' + encodeURIComponent(entry.title || '');
+  const winId = 'nf-card-' + id.replace(/[^a-zA-Z0-9_-]/g, '_');
+  const mobile = isMobileViewport() || document.body.classList.contains('mobile-layer');
+  // 独立窗口本机加速批（2026-10-29）：origin 解析规则钉（本机→网关直连；
+  // 远端→入口 origin）。官网入口腿 + 近路面已验证本机网关基址 ⇒ 预约式直连：
+  // 手势栈内**同步**预留空白窗（popup-blocker 只认同步 window.open），基址
+  // 再验证 + 经 relay 铸一次性 console ticket 后导航到本机网关 —— 弹窗页面/
+  // WS/文件零隧道（拥塞管道上的「有点慢/空白窗」根因在此断根）；票兑换出的
+  // 会话 accountSub 跟住父会话、origin=relay-mint ⇒「经官网」标记不丢。
+  // 直连腿仅钉 opener PM 桥 origin（BroadcastChannel 同源限定，跨源卡窗通道
+  // 由 PM 桥承接）。任一环失败 ⇒ 预约窗回落相对 URL = 改动前行为逐字。
+  const direct = cardwinDirectPlan();
+  let win;
+  if (direct) {
+    win = mobile
+      ? window.open('', winId)                                     // 手机：新标签页姿态
+      : window.open('', winId, 'popup=yes,width=780,height=680');
+    if (win) {
+      // 异步腿不阻塞手势返回：导航/回落都在已预留窗内完成。
+      void navigateCardWindowDirect(win, direct, url, id);
+    }
+  } else {
+    win = mobile
+      ? window.open(url, winId)                                    // 手机：新标签页姿态
+      : window.open(url, winId, 'popup=yes,width=780,height=680');
+  }
+  cardPopInFlight.delete(id);
+  if (!win) return false;                                        // 弹窗被拦：不动状态
+  ensureCardChannel();
+  independentWins.set(id, {
+    win,
+    winId,
+    // 直连会话的 PM 桥对端 origin（本机网关 origin）；同源相对开窗恒空 = 零桥。
+    pmOrigin: direct ? (() => { try { return new URL(direct.base).origin; } catch { return ''; } })() : '',
+  });
+  if (direct) rememberCardwinPmOrigin(id, independentWins.get(id).pmOrigin);
+  markIndependentUI(id, true, { animate: !mobile });
+  // 崩溃兜底：卡窗以任何方式消失（× 之外的 Cmd-W / 崩溃）都收敛到合并路径
+  const iv = setInterval(() => {
+    const rec = independentWins.get(id);
+    if (!rec) { clearInterval(iv); cardWinWatch.delete(id); return; }
+    if (rec.win && rec.win.closed) {
+      clearInterval(iv); cardWinWatch.delete(id);
+      mergeCardWindow(id, { fromCard: true, instant: true });
+    }
+  }, 600);
+  cardWinWatch.set(id, iv);
+  return true;
+}
+
+/** 合并（收回主窗原位）。幂等门 = Map 判重：未独立/已合并重入直返 false。
+ *  @param {string} id @param {{fromCard?:boolean, instant?:boolean}} [opts] */
+function mergeCardWindow(id, opts = {}) {
+  const rec = independentWins.get(id);
+  if (!rec) return false;
+  independentWins.delete(id);
+  forgetCardwinPmOrigin(id);   // 直连会话 opener origin 记账随合并清账
+  const iv = cardWinWatch.get(id);
+  if (iv) { clearInterval(iv); cardWinWatch.delete(id); }
+  if (!opts.fromCard && rec.win && !rec.win.closed) cardBcPost({ kind: 'merge', tabId: id });
+  markIndependentUI(id, false, { animate: !opts.instant });
+  return true;
+}
+/** 卡头 toggle 总入口：未独立 → 弹出；已独立 → 合并。 */
+function toggleCardWindow(id) {
+  if (independentWins.has(id)) mergeCardWindow(id);
+  else popoutCardWindow(id);
+}
+/* UI 批⑧ 手机卡头腿（navController 消费）：新标签页姿态直切，协议同桌面。 */
+/** @param {string} id */
+export function mobileCardToggle(id) { toggleCardWindow(id); }
+/** @param {string} id */
+export function isCardIndependent(id) { return independentWins.has(id); }
+/** 该卡可独立（文件卡才可 —— 独立窗经 absPath readFile 重读真容）。 */
+export function cardCanPop(id) { const e = tabs.get(id); return !!(e && e.absPath); }
+/** 主窗内容变更 → 通知卡窗重读（absPath 卡走自身 readFile，真容同源）。 */
+function notifyCardUpdate(id) {
+  if (independentWins.has(id)) cardBcPost({ kind: 'update', tabId: id });
+}
+
+/* ── 卡窗侧 ─────────────────────────────────────────────────────────── */
+// ── 卡窗引导态面（卡窗白屏修复批 2026-10-22）──
+// 开窗即见「正在打开…」占位（面板真容挂载前的不空白承诺）；首张页签 pane
+// 挂出子节点（renderFile 真容 / F3 不可读骨架，二者皆非白）即撤。超时或
+// WS 握手被拒（nebflow-ws-rejected 事件，ws.js onclose 同步派发）⇒ 错误态
+// 卡片：WS 从未连上 ⇒ 提示登录过期 + [重试]（reload 重走 ws.js remint /
+// 登录引导既有链）；其余 ⇒ 加载失败 + [重试]。未认证/加载失败态永不白屏。
+const CARDWIN_BOOT_POLL_MS = 400;
+const CARDWIN_BOOT_TIMEOUT_MS = 12000;
+const CARDWIN_REJECT_GRACE_MS = 2000;
+/** @type {number|null} 引导面轮询句柄（撤面/换态后清零）。 */
+let cardWinBootPoll = null;
+
+/** 撤除引导面（成功或关窗后；幂等）。 */
+function cardWindowBootFaceDismiss() {
+  if (cardWinBootPoll) { clearInterval(cardWinBootPoll); cardWinBootPoll = null; }
+  document.getElementById('nf-cardwin-boot')?.remove();
+}
+
+/** 卡窗引导态面：loading 占位 → 真容即撤 / 失败态卡片（内联样式零依赖面，
+ *  同 sessionGate 横幅纪律）。仅 cardWindowMode 调用（initCardWindowMode）。
+ *  返回面句柄（内容物收口批）：无 path 深链的即刻失败腿用它直换失败态，
+ *  不等 12s 轮询超时。
+ *  @param {string} fileName */
+function cardWindowBootFace(fileName) {
+  const panel = document.getElementById('canvas-panel');
+  if (!panel) return;
+  const el = document.createElement('div');
+  el.id = 'nf-cardwin-boot';
+  el.setAttribute('data-state', 'loading');
+  el.style.cssText =
+    'position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:5;' +
+    'display:flex;flex-direction:column;align-items:center;gap:var(--ds-space-inline-gap);padding:22px 30px;' +
+    'border:1px solid var(--glass-border,#e0e1e4);border-radius:var(--ds-radius-card-md);' +
+    'background:var(--glass-bg,#fff);color:var(--color-text,#1b1e26);' +
+    "font:var(--ds-fs-body)/1.6 -apple-system,'Segoe UI',sans-serif;text-align:center;max-width:78vw;";
+  const dot = document.createElement('div');
+  dot.className = 'nf-cw-dot';
+  dot.style.cssText =
+    'width:22px;height:22px;border-radius:50%;flex:none;' +
+    'border:2.5px solid var(--color-frame-border,#e0e1e4);border-top-color:rgb(var(--sapphire,80,120,255));' +
+    'animation:nf-cardwin-spin 0.9s linear infinite;';
+  const title = document.createElement('div');
+  title.className = 'nf-cw-title';
+  title.style.cssText = 'font-weight:600;font-size:var(--ds-fs-body);max-width:52vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+  title.textContent = fileName || t('canvas.loadingFile');
+  const hint = document.createElement('div');
+  hint.className = 'nf-cw-hint';
+  hint.style.cssText = 'font-size:var(--ds-fs-hint);color:var(--color-text-muted,#8b8e96);display:none;';
+  const retry = document.createElement('button');
+  retry.className = 'nf-cw-retry';
+  retry.textContent = t('canvas.retry');
+  retry.style.cssText =
+    'display:none;margin-top:var(--ds-space-half);padding:var(--ds-space-1h) var(--ds-space-4);border-radius:var(--ds-radius-input);cursor:pointer;' +
+    'border:1px solid var(--glass-control-border,#d8d9dd);background:var(--glass-control-bg,transparent);' +
+    'color:inherit;font-size:var(--ds-fs-hint);';
+  retry.addEventListener('click', () => { try { location.reload(); } catch { /* 无历环境 */ } });
+  el.append(dot, title, hint, retry);
+  const style = document.createElement('style');
+  style.textContent = '@keyframes nf-cardwin-spin{to{transform:rotate(360deg)}}';
+  el.appendChild(style);
+  panel.appendChild(el);
+
+  let wsRejectedAt = 0;
+  const onRejected = () => { wsRejectedAt = wsRejectedAt || Date.now(); };
+  document.addEventListener('nebflow-ws-rejected', onRejected, { once: true });
+  window.addEventListener('pagehide', cardWindowBootFaceDismiss, { once: true });
+
+  const started = Date.now();
+  cardWinBootPoll = setInterval(() => {
+    // 真容已挂（renderFile 内容或 F3 骨架任一子节点）⇒ 引导使命完成。
+    const pane = panel.querySelector('#canvas-content .canvas-tab-pane');
+    if (pane && pane.childElementCount > 0) { cardWindowBootFaceDismiss(); return; }
+    const waited = Date.now() - started;
+    // WS 握手被拒：宽限 2s（让 ws.js remint/登录导航先走 —— 若页面将被
+    // 引去登录腿，这里不必闪错误卡），仍在 ⇒ 失败态（登录形态文案）。
+    if (wsRejectedAt && Date.now() - wsRejectedAt >= CARDWIN_REJECT_GRACE_MS) {
+      cardWindowBootFail(el, dot, hint, retry, true);
+      return;
+    }
+    if (waited < CARDWIN_BOOT_TIMEOUT_MS) return;
+    import('./state.js').then(({ default: state }) => {
+      cardWindowBootFail(el, dot, hint, retry, !state.connected);
+    }).catch(() => cardWindowBootFail(el, dot, hint, retry, false));
+  }, CARDWIN_BOOT_POLL_MS);
+  // 面句柄（内容物收口批）：无 path 深链的即刻失败腿消费。
+  return { el, dot, hint, retry };
+}
+
+/** 引导面换失败态：撤动画、换文案（登录形态 / 一般失败）、亮 [重试]。 */
+function cardWindowBootFail(el, dot, hint, retry, authLike) {
+  if (el.getAttribute('data-state') === 'failed') return;
+  el.setAttribute('data-state', 'failed');
+  dot.style.animation = 'none';
+  dot.style.borderTopColor = 'var(--status-error-icon,#d64545)';
+  hint.style.display = 'block';
+  hint.textContent = authLike ? t('canvas.cardwinAuthHint') : t('canvas.cardwinFailHint');
+  retry.style.display = 'inline-flex';
+}
+
+/** 卡窗「合并」自请求：out 动画 → bye → close（主窗 closed 轮询/bye 双腿等价）。 */
+function requestMergeSelf(o = {}) {
+  if (!cardWindowMode) return;
+  const rm = cardWindowRm();
+  if (!o.silent && !rm) {
+    const panel = document.getElementById('canvas-panel');
+    if (panel) {
+      panel.classList.add('card-win-merging');
+      setTimeout(finish, 180);
+      return;
+    }
+  }
+  finish();
+  function finish() {
+    cardBcPost({ kind: 'bye', tabId: currentCardTabId() });
+    try { window.close(); } catch { /* 弹窗灰被脚本关：留窗（主窗心跳看门狗会收） */ }
+  }
+}
+/** 卡窗当前卡 tabId（= 本窗唯一页签；file:<path>）。 */
+function currentCardTabId() {
+  return activeTabId || ([...tabs.keys()][0] ?? '');
+}
+/** 卡窗收到 update：走专用刷新通道重读真容（readFile → fileContent →
+ *  openWorkspaceItem 既有 tab 内重渲腿）。update = 主窗权威变更信号，清
+ *  冷却门直通（卡窗只读镜像，无脏态；防抖 300ms 保留）。 */
+function cardWindowReread() {
+  const entry = tabs.get(currentCardTabId());
+  if (!entry || !entry.absPath) return;
+  entry._lastRefreshAt = 0;
+  scheduleFileRefresh(entry);
+}
+/** 卡窗模式引导（initCanvas 最早步调用）：壳隐藏交给 CSS（body.card-window），
+ *  阻断标签恢复/持久化（卡窗零存档副作用），追加「合并」钮，开单卡走 readFile。 */
+function initCardWindowMode() {
+  let qs;
+  try { qs = new URLSearchParams(location.search); } catch { return false; }
+  if (qs.get('card-window') !== '1') return false;
+  cardWindowMode = true;
+  document.body.classList.add('card-window');
+  // 引导面句柄存全局（无 path 深链的即刻失败腿消费；内容物收口批）
+  /** @type {any} */ (window).__nfCardwinBootFace =
+    cardWindowBootFace(qs.get('title') || (qs.get('path') || '').split('/').pop() || '');
+  ensureCardChannel();
+  cardLastMainBeat = Date.now();
+  // 主窗刷新会丢失 WindowProxy 与内存 Map；卡窗重复 hello 直到新主窗
+  // welcome 确认收养，避免重载期间一次性 hello 先于新主窗通道而丢失。
+  const announceCard = () => {
+    const tabId = currentCardTabId();
+    if (tabId) cardBcPost({ kind: 'hello', tabId, winId: window.name || '' });
+  };
+  cardHelloTimer = setInterval(announceCard, 1000);
+  announceCard();
+  // 主窗心跳看门狗：20s 静默（主窗已关/崩/挂起）→ 自闭，绝无僵尸镜像。
+  // 阈值取心跳 3s 的 6 倍余 —— 后台窗计时器节流下也不误杀。
+  setInterval(() => {
+    if (Date.now() - cardLastMainBeat > 20000) requestMergeSelf({ silent: true });
+  }, 2000);
+  window.addEventListener('pagehide', () => cardBcPost({ kind: 'bye', tabId: currentCardTabId() }));
+  // 三期：卡窗 Esc 合并搬进规则表（`canvas.mergeSelf`，when = cardWindow）。
+  // 卡头「合并」钮（.canvas-header 内，panel 关闭钮在卡窗态 CSS 隐藏）
+  const hdr = document.querySelector('#canvas-panel .canvas-header');
+  if (hdr && !hdr.querySelector('.canvas-merge-btn')) {
+    const b = document.createElement('button');
+    b.className = 'canvas-merge-btn canvas-button';
+    b.id = 'canvas-merge-btn';
+    b.title = '合并回主窗';
+    b.setAttribute('aria-label', '合并回主窗');
+    b.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"/><polyline points="20 10 14 10 14 4"/><path d="M14 10 21 3"/><path d="M3 21l7-7"/></svg>';
+    b.addEventListener('click', () => requestMergeSelf());
+    hdr.appendChild(b);
+  }
+  // 单卡开卡：空 content + absPath ⇒ 既有 readFile WS 取读腿（fileContent →
+  // workspace-open-item 重派 → renderFile 真容）。freshest 内容，零载荷传递。
+  // setTimeout 推后一拍：initCanvas 的 workspace-open-item 监听在本函数之后
+  // 同步注册，同步派发会先于监听蒸发（首轮 CW1-3 红：卡窗 tabs=[] 实证）。
+  // 内容物收口批：无 path 的卡窗深链 = 非内容物目标（功能性面板不可独立窗口
+  // 化）——即刻失败卡收口（壳保持隐藏，绝不落全功能 UI），不等 12s 超时轮询。
+  const path = qs.get('path') || '';
+  if (path) {
+    setTimeout(() => {
+      window.dispatchEvent(new CustomEvent('workspace-open-item', {
+        detail: { id: 'file:' + path, itemType: '', title: qs.get('title') || '', content: '', absPath: path, pinned: true },
+      }));
+    }, 0);
+  } else {
+    const face = /** @type {any} */ (/** @type {any} */ (window).__nfCardwinBootFace || null);
+    if (face) {
+      // 失败即停轮（终态卡在挂，后续轮询腿/超时腿全部失效）
+      if (cardWinBootPoll) { clearInterval(cardWinBootPoll); cardWinBootPoll = null; }
+      cardWindowBootFail(face.el, face.dot, face.hint, face.retry, false);
+      face.hint.textContent = t('canvas.cardwinNoPath');
+    }
+  }
+  return true;
+}
+
+// ── #910 墓碑语义（作者裁定 2026-10-26 飞书逐字「找少的那个认吧」）────────
+// 关闭意图优先：任一窗口/设备显式关闭的标签，权威存档保持关闭；只有显式
+// 重开才恢复。前端职责=把「本会话关闭/重开意图账」随每次 PUT 上交，合并
+// 裁决在服务端（CanvasTabs.merge，时间戳幂等，账目可重放、不清不剪——超
+// 上限只淘汰最旧，保 PUT 永不因账目超限 400）。
+const sessionTombstones = new Map(); // id -> { id, closedAt, dev, reopenedAt? }
+const sessionReopens = new Map();    // id -> { id, reopenedAt }
+const SESSION_LEDGER_CAP = 2000;     // 与服务端 MaxTombstoneInput 一致
+
+// #910 追补（2026-10-27 报障）：服务端 GET 带回的生效墓碑集合（权威）。播种后
+// 参与本会话的恢复闸（tombstoneGateActive）与迟到清扫（suppressTombstonedTabs）
+// ——修「先恢复、后到墓碑压不掉」的时序洞。
+const knownActiveTombstones = new Set();
+
+/** 生效墓碑闸：id 是否带着「本端已知的生效关闭意图」。三源：
+ *  ① 服务端 GET 播种的 knownActiveTombstones（权威）；
+ *  ② 本会话关闭账 sessionTombstones（未被本会话更晚重开压掉）；
+ *  ③ 由调用方把 localStorage/服务端存档自带墓碑并入（activeTombstoneIds）。 */
+function tombstoneGateActive(id) {
+  if (knownActiveTombstones.has(id)) return true;
+  const st = sessionTombstones.get(id);
+  if (!st) return false;
+  const r = sessionReopens.get(id);
+  return !r || r.reopenedAt <= st.closedAt;
+}
+
+/** 从一份存档（localStorage 记录 / 服务端 GET）提取生效墓碑 id 集：条目
+ *  closedAt > reopenedAt（缺省视为无重开）⇒ 生效；惰性条目从集合中剔除
+ *  （另一会话的显式重开已让墓碑让位，不能压掉重开态）。 */
+function activeTombstoneIdsFrom(data) {
+  const ids = new Set(knownActiveTombstones);
+  for (const [id, st] of sessionTombstones) {
+    const r = sessionReopens.get(id);
+    if (!r || r.reopenedAt <= st.closedAt) ids.add(id);
+  }
+  const recs = Array.isArray(data?.tombstones) ? data.tombstones : [];
+  for (const t of recs) {
+    if (!t || typeof t.id !== 'string' || !t.id) continue;
+    const closedAt = typeof t.closedAt === 'number' ? t.closedAt : 0;
+    const reopenedAt = typeof t.reopenedAt === 'number' ? t.reopenedAt : -Infinity;
+    if (closedAt > reopenedAt) ids.add(t.id);
+    else ids.delete(t.id);
+  }
+  return ids;
+}
+
+/** 服务端 GET 到达后播种生效墓碑集合（权威覆盖）。 */
+function seedKnownTombstones(data) {
+  const recs = Array.isArray(data?.tombstones) ? data.tombstones : [];
+  for (const t of recs) {
+    if (!t || typeof t.id !== 'string' || !t.id) continue;
+    const closedAt = typeof t.closedAt === 'number' ? t.closedAt : 0;
+    const reopenedAt = typeof t.reopenedAt === 'number' ? t.reopenedAt : -Infinity;
+    if (closedAt > reopenedAt) knownActiveTombstones.add(t.id);
+    else knownActiveTombstones.delete(t.id);
+  }
+}
+
+/** 迟到墓碑清扫：服务端 GET 到达时，把「先恢复进来、但服务端带生效墓碑」的
+ *  页签摘掉（静默——不落新墓碑）。堵恢复时序洞：本地缓存陈旧/老缓存不带墓碑
+ *  时，页签会先经恢复腿打开，墓碑这时才到。本会话显式重开过的 id 跳过（其
+  *  重开账在途，服务端墓碑即将让位）。 */
+function suppressTombstonedTabs() {
+  let removed = 0;
+  for (const id of [...tabs.keys()]) {
+    if (!tombstoneGateActive(id)) continue;
+    if (sessionReopens.has(id)) continue;
+    teardownTab(id, { silent: true });
+    removed++;
+  }
+  return removed;
+}
+
+// 所有显式关闭路径的记账点（× 按钮 / deck 侧滑 / 关闭其他 / 预览替换——
+// 各站点在 tabs.delete 后、persistTabs 前调用）。拖拽排序与文件改名不是
+// 关闭（tabs 重建/换 id），不记账。
+function recordTombstone(id) {
+  if (!id) return;
+  sessionTombstones.set(id, { id, closedAt: Date.now(), dev: navigator.platform || 'unknown' });
+  knownActiveTombstones.add(id); // 本会话关闭意图即刻参与恢复闸
+  if (sessionTombstones.size > SESSION_LEDGER_CAP) {
+    sessionTombstones.delete(sessionTombstones.keys().next().value); // 最旧
+  }
+}
+
+function persistTabs() {
+  // Adopting a remote snapshot is not a new local intent; never echo it back.
+  if (applyingLiveTabsFrame) return;
+  // UI 批⑧：独立卡窗零存档副作用 —— 卡窗自己的单卡标签绝不能写穿服务端权威
+  // 存档/本地缓存（否则会把主窗整组标签覆盖成一张卡）。
+  if (cardWindowMode) return;
+  // P1 (2026-09-10, 定案 §7): 不再对空表早退。关闭（含关闭最后一个）必须把当前
+  // 集合写入双源——可以是空集 { v:2, tabs: [] }。旧 F2 早退让「关掉最后一个标签」
+  // 一份都不写，服务端与 localStorage 都留旧记录，重启后被并集恢复整批重开
+  // （定案 A6 缺口 A）。空存档语义 = 不恢复：restoreFromData / restoreTabs
+  // 均有 tabs.length > 0 守卫，故写空集不会造成「关不掉的标签」。
   try {
     const serializable = [];
     for (const [, t] of tabs) {
+      if (readerLocalTabs.has(t.id)) continue;
       // Skip runtime flow-run tabs — their instanceId is invalid after a
       // restart, so restoring them would leave dead tabs.
       if (t.type === 'flow-run') continue;
@@ -1132,6 +5758,10 @@ function persistTabs() {
       // Teams/Flows panels no longer exist client-side — persisting them
       // would re-open dead panes on every reload.
       if (t.type === 'teams' || t.type === 'flows') continue;
+      // Skip delegate-diff tabs (2026-10-10 裁定): their payload lives in the
+      // chat card (click re-opens the view); a restored pane would be empty —
+      // canvas-tab-restore has no renderer that can refetch a batch payload.
+      if (t.type === 'filechanges') continue;
       serializable.push({
         id: t.id,
         title: t.title,
@@ -1141,14 +5771,23 @@ function persistTabs() {
         closable: t.closable !== false,  // default true
       });
     }
+    // canvas-tab-sync 批（2026-11-17）：activeTabId 随载荷上服务端（schema 早支持，
+    // 服务端 merge 命中生效墓碑即丢弃）——激活页签是跨设备同步面的一部分，
+    // 此前只进 localStorage 缓存，他端无从跟随。null 序列化为缺省（服务端沿用
+    // prev，与旧载荷逐字兼容）。
     const payload = { v: 2, tabs: serializable };
+    if (activeTabId && !readerLocalTabs.has(activeTabId)) payload.activeTabId = activeTabId;
+    // #910: 附带本会话关闭/重开意图账（服务端墓碑合并；账幂等可重放）。
+    if (sessionTombstones.size > 0) payload.tombstones = [...sessionTombstones.values()];
+    if (sessionReopens.size > 0) payload.reopened = [...sessionReopens.values()];
     // localStorage 仅作降级缓存（Safari 无痕/清空后仍可从服务端恢复）。
-    localStorage.setItem(LS_TABS_KEY, JSON.stringify({
-      v: 2,  // schema version — v1 (pre-unified-persistence) lacked closable
-             // and skipped no-absPath tabs; restoreTabs discards non-v2 data
-      tabs: serializable,
-      activeTabId: activeTabId,
-    }));
+    // #910 追补（2026-10-27）：缓存必须自带墓碑账 —— 缓存写入不受服务端
+    // 墓碑过滤（陈旧窗口会把已关页签写回缓存），不带账的话下次加载本地恢复
+    // 腿无从识别关闭意图，页签每次加载复活一次（本次报障链）。重开镜像进
+    // tombstones 条目（openTab 显式腿已并入），跨会话重开态判据正确。
+    const lsRecord = { v: 2, tabs: serializable, activeTabId: readerLocalTabs.has(activeTabId) ? null : activeTabId };
+    if (sessionTombstones.size > 0) lsRecord.tombstones = [...sessionTombstones.values()];
+    localStorage.setItem(LS_TABS_KEY, JSON.stringify(lsRecord));
     console.log('[persistTabs] saved', serializable.length, 'tabs', serializable.map(t => t.id));
     // F1 (2026-08-30 作者裁定 + 方案 §8.4 F1): 服务端权威存档，防抖 PUT。
     scheduleServerPersist(payload);
@@ -1156,21 +5795,116 @@ function persistTabs() {
 }
 
 // F1: 防抖合并连续操作成一次服务端 PUT。500ms 窗口内多次 persistTabs 只发一次。
+// P2 (2026-09-10, 定案 §7): 防抖窗不再丢单——待发载荷留一份在 pendingPersistPayload，
+// 页面离开/切后台时立即 flush（闭合 500ms 窗口）；PUT 失败记 persistDirty，连接
+// 恢复时重放「当前集合」（闭合「服务端重启期间关闭」）。定案 A6 缺口 B。
+let pendingPersistPayload = null;
+let persistDirty = false;
+
 function scheduleServerPersist(payload) {
+  if (pendingLocalActivation && payload.activeTabId === pendingLocalActivation.id) {
+    persistActivationGeneration.set(payload, pendingLocalActivation.generation);
+  }
+  pendingPersistPayload = payload;
   if (serverPersistTimer) clearTimeout(serverPersistTimer);
   serverPersistTimer = setTimeout(() => {
     serverPersistTimer = null;
-    fetch(TABS_API, {
-      method: 'PUT',
-      // withAuth (RestApiRoutes) only accepts Bearer/query token — NOT cookie.
-      // Without the header the PUT 403s and the service archive never persists.
-      headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify(payload),
-    })
-      .then((r) => { if (!r.ok) console.warn('[canvas-tabs] server persist failed:', r.status); })
-      .catch((e) => console.warn('[canvas-tabs] server persist error:', e));
+    const p = pendingPersistPayload;
+    pendingPersistPayload = null;
+    sendServerPersist(p);
   }, 500);
 }
+
+// P2: 发送一份存档载荷（防抖到期 / pagehide·visibilitychange flush 共用）。
+// keepalive 供页面卸载路径——请求可在文档销毁后完成。不用 sendBeacon：它无法带
+// Bearer 头，而 /api/canvas-tabs 走 withAuth（无 token 会 403）。
+function sendServerPersist(payload, keepalive) {
+  if (!payload) return;
+  canvasWriter.put(payload)
+    .then((ok) => {
+      if (ok) {
+        persistDirty = false;
+        if (pendingLocalActivation &&
+            persistActivationGeneration.get(payload) === pendingLocalActivation.generation) {
+          pendingLocalActivation = null;
+        }
+        return;
+      }
+      persistDirty = false;
+    })
+    .catch((e) => {
+      persistDirty = true;
+      console.warn('[canvas-tabs] server persist error:', e);
+    });
+}
+
+// P2: 把防抖窗内待发的 PUT 立即发掉（页面卸载 / 切到后台）。
+function flushPendingPersist() {
+  if (serverPersistTimer) {
+    clearTimeout(serverPersistTimer);
+    serverPersistTimer = null;
+  }
+  const payload = pendingPersistPayload;
+  pendingPersistPayload = null;
+  sendServerPersist(payload, true);
+}
+
+// P2: 监听器与重放钩子只注册一次——模块顶层语句，ES module 单次求值即幂等保证。
+// ws.js 必须动态 import：静态 import 会与 canvas.js 成环（仓内既定出口，
+// 见 scripts/check-circular.mjs 注释），同 sendFileRestoreRequests 的做法。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') flushPendingPersist();
+});
+window.addEventListener('pagehide', () => { flushPendingPersist(); canvasWriter.release(); });
+
+let persistReconnectBound = false;
+/** canvas-tab-sync 批：远端帧点名的激活页签尚未落地（文件签 readFile 在途）
+ *  时的晚到标记。{ id, at } | null；8s 过期，openTab(noRevive) 腿消费。 */
+let lateSyncActive = null;
+/** canvas-tab-sync 批：canvasTabsChanged 订阅只绑一次（幂等闸）。 */
+let liveTabsWsBound = false;
+function bindPersistReconnect() {
+  if (persistReconnectBound) return;
+  persistReconnectBound = true;
+  import('./ws.js')
+    .then(({ onReconnect, onMessage }) => {
+      // canvas-tab-sync 批：重连 = 补对账——离线期间错过的广播帧无从重放，
+      // 经权威存档 GET 一次收敛（先对账后重放脏写：反过来会把离线旧视图
+      // 盖回权威存档）。404/网络失败 = 无可收敛，本地态照旧。
+      const convergeFromServer = () => fetch(TABS_API, { headers: { ...authHeaders() } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((serverData) => {
+          const parsed = parseTabsData(serverData);
+          if (parsed && !localUnsynced) applyLiveTabsFrame(parsed);
+        })
+        .catch(() => { /* 离线：待下次重连 */ });
+      onReconnect(() => {
+        convergeFromServer().finally(() => {
+          if (!persistDirty) return;
+          // 重放「当前集合」而非旧载荷：persistTabs 重建载荷后走防抖 PUT。
+          // 只在连接恢复时触发，不逐帧重试，无自旋/日志风暴。
+          persistTabs();
+        });
+      });
+      if (liveTabsWsBound) return;
+      liveTabsWsBound = true;
+      // 服务端写穿广播（他端开/关/切/排序 → PUT 落盘成功外推）：就地收敛。
+      // 自己 PUT 的回声同样进这里——收敛幂等（集合/顺序已一致即零动作）。
+      onMessage('canvasWriterChanged', (msg) => {
+        const current = canvasWriter.credentials();
+        if (current && Number.isSafeInteger(msg.epoch) && msg.epoch > current.epoch) {
+          if (pendingPersistPayload || persistDirty) localUnsynced = true;
+          canvasWriter.lost();
+        }
+      });
+      onMessage('canvasTabsChanged', (msg) => {
+        const parsed = parseTabsData(msg);
+        if (parsed && !localUnsynced) applyLiveTabsFrame(parsed);
+      });
+    })
+    .catch(() => { /* ws.js 不可用 → 无重放/收敛通道，保持 dirty */ });
+}
+bindPersistReconnect();
 
 // F1: 解析并校验 v2 标签存档（兼容 localStorage JSON 字符串与服务端对象）。
 // 不合法 → null（交由服务端/回退路径处理，不清空本地缓存）。
@@ -1191,6 +5925,7 @@ function openPanelTab(tab) {
     type: tab.type || 'generic',
     closable: true,
     pinned: true,
+    noRevive: true, // #910 追补：批量恢复/服务端 reconcile 不是重开意图
   });
   if (!entry) return null;
   if (tab.pinned === false) {
@@ -1210,8 +5945,12 @@ function openPanelTab(tab) {
 function sendFileRestoreRequests(fileTabs) {
   if (fileTabs.length === 0) return;
   // 只发送「未派发过」且「标签尚未打开」的文件，避免本地/服务端双通道重复请求。
+  // #910 追补：命中生效墓碑的文件连 readFile 都不发 —— 请求本身就会让内容
+  // 自动加载（作者报障「老是会加载我已经关闭的」），拒开闸在下游兜底，
+  // 这里把浪费的取数与瞬时加载一起掐掉。
   const fresh = fileTabs.filter((t) => (
-    !requestedFilePaths.has(t.absPath) && !tabs.has(`file:${t.absPath}`)
+    !requestedFilePaths.has(t.absPath) && !tabs.has(`file:${t.absPath}`) &&
+    !tombstoneGateActive(`file:${t.absPath}`)
   ));
   if (fresh.length === 0) return;
   fresh.forEach((t) => requestedFilePaths.add(t.absPath));
@@ -1249,11 +5988,18 @@ function sendFileRestoreRequests(fileTabs) {
 // 返回「是否恢复了任何内容」（有面板/文件标签即 true）。
 function restoreFromData(data) {
   if (!data || !data.tabs || data.tabs.length === 0) return false;
+  // #910 追补（2026-10-27 报障）：本地缓存腿先按「缓存自带墓碑 ∪ 本会话
+  // 墓碑 ∪ 服务端已播种生效墓碑」过滤 —— 旧版 persistTabs 写的缓存不带墓碑，
+  // 且缓存写入不受服务端过滤（陈旧窗口回写会把已关页签写回缓存）。不过滤
+  // 就是每次加载复活一次。全被压掉时如实返回 false（交 main.js 兜底）。
+  const activeIds = activeTombstoneIdsFrom(data);
+  const alive = data.tabs.filter((t) => t && t.id && !activeIds.has(t.id));
+  if (alive.length === 0) return false;
   // Retired panel types (legacy Teams/Flows, 2026-09-05) never re-open —
   // old server/localStorage archives may still carry them; drop silently.
-  const panelTabs = data.tabs.filter(t => !t.absPath && t.type !== 'flow-run' &&
+  const panelTabs = alive.filter(t => !t.absPath && t.type !== 'flow-run' &&
     t.type !== 'teams' && t.type !== 'flows');
-  const fileTabs = data.tabs.filter(t => t.absPath);
+  const fileTabs = alive.filter(t => t.absPath);
   console.log('[restoreTabs] restoring', panelTabs.length, 'panel tabs,', fileTabs.length, 'file tabs');
 
   // Phase 1 — panel tabs, synchronous.
@@ -1288,7 +6034,10 @@ function reconcileFromServer(serverData) {
     // Retired legacy panel tabs (Teams/Flows) — server archive may still
     // carry them; never re-open (2026-09-05 旧 UI 退役).
     if (tab.type === 'teams' || tab.type === 'flows') continue;
-    if (present.has(tab.id)) continue;  // 已开（本地恢复成功）→ 跳过
+    // #910 追补：命中生效墓碑一律不开（服务端已过滤，此为纵深防御——
+    // 播种集合与响应不一致的窗口期也不复活）。
+    if (tombstoneGateActive(tab.id)) continue;
+    if (present.has(tab.id)) { readerLocalTabs.delete(tab.id); continue; }
     if (tab.absPath) fileToOpen.push(tab);
     else panelToOpen.push(tab);
   }
@@ -1301,11 +6050,16 @@ function reconcileFromServer(serverData) {
     sendFileRestoreRequests(fileToOpen);
     openedAny = true;
   }
-  // 刷新本地缓存（服务端权威）。
+  // 刷新本地缓存（服务端权威）。#910 追补：墓碑账随写 —— 服务端存档若带
+  // tombstones 用服务端的（权威），否则沿用缓存里已有的（陈旧窗口回写后
+  // 账不丢，本地恢复腿才有判据）。
   try {
-    localStorage.setItem(LS_TABS_KEY, JSON.stringify({
-      v: 2, tabs: serverData.tabs, activeTabId,
-    }));
+    const lsRecord = { v: 2, tabs: serverData.tabs, activeTabId };
+    const lsTombs = Array.isArray(serverData.tombstones)
+      ? serverData.tombstones
+      : (() => { try { return parseTabsData(localStorage.getItem(LS_TABS_KEY))?.tombstones || undefined; } catch { return undefined; } })();
+    if (lsTombs) lsRecord.tombstones = lsTombs;
+    localStorage.setItem(LS_TABS_KEY, JSON.stringify(lsRecord));
   } catch (e) { /* storage full — non-critical */ }
   return openedAny;
 }
@@ -1323,6 +6077,9 @@ function reconcileFromServer(serverData) {
  *  should fall back to opening the Teams panel. */
 export function restoreTabs() {
   return new Promise((resolve) => {
+    // UI 批⑧：独立卡窗不恢复主窗标签组（只承载 ?path= 单卡）；返回 true 让
+    // main.js 跳过「恢复失败 → 开 Teams 面板」兜底。
+    if (cardWindowMode) { resolve(true); return; }
     let didLocal = false;
     try {
       const raw = localStorage.getItem(LS_TABS_KEY);
@@ -1338,6 +6095,13 @@ export function restoreTabs() {
       .then((r) => (r.ok ? r.json() : null))
       .then((serverData) => {
         const parsed = parseTabsData(serverData);
+        if (parsed) {
+          // #910 追补：服务端权威墓碑先播种，再把「先恢复进来、但带生效
+          // 墓碑」的页签压掉（本地缓存陈旧/老缓存不带墓碑的恢复时序洞），
+          // 然后才 reconcile。
+          seedKnownTombstones(parsed);
+          suppressTombstonedTabs();
+        }
         if (parsed && parsed.tabs.length > 0) {
           const didServer = reconcileFromServer(parsed);
           resolve(didLocal || didServer);
@@ -1345,7 +6109,94 @@ export function restoreTabs() {
           // 无服务端存档（404/空）或网络失败 → 回退本地结果。
           resolve(didLocal);
         }
+        for (const [tabId, hello] of pendingCardHellos) {
+          pendingCardHellos.delete(tabId);
+          cardChannelDispatch({ kind: 'hello', tabId, winId: hello.winId });
+        }
       })
       .catch(() => resolve(didLocal));
   });
+}
+
+// ── 跨设备实时收敛（canvas-tab-sync 批 2026-11-17）──────────────────────
+// 作者报障「各端 canvas 页签不同步——搞单实例就是想从各端打开状态都是同步的」。
+// 根因是设计缺口：存档（F1/#910）只在页面加载时被 GET（restoreTabs），运行中
+// 任一端的开/关/切/排序都不外推，他端不刷新永远看不到。本批补最小实现：服务端
+// PUT 落盘后广播 `canvasTabsChanged`（合并后权威存档），本函数是全部接收端
+// （广播帧 / 重连对账共用）的唯一收敛点，语义与 #910 加载腿同源：
+//   ① 墓碑播种 → 生效墓碑摘除（他端关闭 → 本端跟随消失，静默 teardown）；
+//   ② reconcile 补开缺失（他端打开 → 本端出现；面板同步、文件走 readFile）；
+//   ③ 顺序跟随权威存档（本地独有页签保持在尾部，避免未写穿的新签被重排丢位）；
+//   ④ 激活页签跟随（帧 activeTabId 已落地即切；未落地记晚到标记，openTab 的
+//      noRevive 腿落地时不被顶掉）；
+//   ⑤ 摘到末签 → 收面板（对齐 closeTab 的末签语义）。
+// 冲突裁定：服务端存档是唯一真源，后写赢（PUT 到达序）；收敛只摘带生效墓碑的
+// 页签，绝不清除本地新开（本地独有签随下一次 persistTabs 写穿回去）——两端
+// 同时操作最终并集收敛，不出现各显示一套且都不收敛。
+// @param {any} data 已过 parseTabsData 的合法 v2 存档
+function applyLiveTabsFrame(data) {
+  if (cardWindowMode) return; // 卡窗不管理主窗标签组（批⑧ 纪律）
+  const version = Number(data.writeVersion);
+  if (Number.isSafeInteger(version) && version <= lastCanvasVersion) return;
+  if (Number.isSafeInteger(version)) lastCanvasVersion = version;
+  const localIntent = pendingLocalActivation;
+  applyingLiveTabsFrame = true;
+  try {
+  seedKnownTombstones(data);
+  const removed = suppressTombstonedTabs();
+  // 被摘的可能正是激活签 → 邻位接管 / 末签收面板（closeTab 同语义的静默版）。
+  if (removed > 0 && activeTabId && !tabs.has(activeTabId)) {
+    const ids = [...tabs.keys()];
+    if (ids.length > 0) setActiveTab(ids[0]);
+    else if (isCanvasOpen()) closeCanvas();
+  }
+  reconcileFromServer(data);       // 空集合法（全部远端关闭）：reconcile 早退，摘除腿已收口
+  reorderTabsToArchive(data);
+  const want = localIntent && tabs.has(localIntent.id)
+    ? localIntent.id
+    : (typeof data.activeTabId === 'string' ? data.activeTabId : null);
+  if (want) {
+    if (tabs.has(want)) {
+      if (activeTabId !== want) setActiveTab(want);
+    } else if (!tombstoneGateActive(want)) {
+      lateSyncActive = { id: want, at: Date.now() }; // 文件签在途：落地时守卫接管
+    }
+  }
+  } finally {
+    applyingLiveTabsFrame = false;
+  }
+}
+
+/** 顺序收敛：把本地页签（Map + DOM）排到权威存档顺序；本地独有 id 保持原相对
+ *  顺序缀尾（它们尚未写穿，缀尾 = 下次 PUT 把并集顺序发布回去）。幂等：顺序
+ *  已一致时零 DOM 动作。 */
+function reorderTabsToArchive(data) {
+  const serverOrder = (Array.isArray(data?.tabs) ? data.tabs : [])
+    .map((t) => (t && typeof t.id === 'string') ? t.id : null)
+    .filter((id) => id && tabs.has(id));
+  const extra = [...tabs.keys()].filter((id) => !serverOrder.includes(id));
+  const finalOrder = [...serverOrder, ...extra];
+  // extras 在场时不得早退——并集必须写穿（见函数尾）；顺序已一致 + 无 extras
+  // （绝大多数帧：自己操作的回声）才零动作直返。
+  let same = extra.length === 0 && finalOrder.length === tabs.size;
+  if (same) {
+    let i = 0;
+    for (const id of tabs.keys()) { if (id !== finalOrder[i++]) { same = false; break; } }
+  }
+  if (same) return;
+  const tabBar = document.getElementById('canvas-tab-bar');
+  if (!tabBar) return;
+  const entries = new Map(finalOrder.map((id) => [id, tabs.get(id)]));
+  for (const id of finalOrder) {
+    const el = entries.get(id)?.tabEl;
+    if (el) tabBar.appendChild(el); // appendChild 移动既有节点 = 按 finalOrder 重排
+  }
+  tabs.clear();
+  for (const id of finalOrder) tabs.set(id, entries.get(id));
+  renderCanvasHeader(); // 叠卡头/环面随 Map 序重渲（openTab/closeTab 同款通知面）
+  // 并发开签收敛（两端同时各开一签：对方帧先到 ⇒ 本端新签成「本地独有」）：
+  // 立即写穿并集，让他端也收敛到同一集合——否则本端独有签滞留在本地，直到
+  // 下一次无关操作才顺带发布（期间两端各显示一套）。写穿触发一次广播，对端
+  // 收敛后 extras 为空 ⇒ 链路有界，不成环。
+  if (extra.length > 0) persistTabs();
 }

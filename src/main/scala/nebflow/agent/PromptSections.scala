@@ -1,7 +1,10 @@
 package nebflow.agent
 
+import nebflow.neblink.core.*
+
 import io.circe.{Json, parser}
-import nebflow.core.PathUtil
+import nebflow.actor.*
+import nebflow.shared.PathUtil
 
 /**
  * Conditional system prompt sections.
@@ -23,6 +26,21 @@ import nebflow.core.PathUtil
  * == Order ranges ==
  *
  *   100-199  — fixed foundational sections (env info)
+ *   350      — 文档溯源规范（唯一权威面，always）
+ *   370      — 根代理路由纪律（Nebula 根会话 only，条件 isRootAgent）
+ *   375      — output 块纪律（Nebula 根会话 only，条件 isRootAgent；同源单点
+ *              文本 = [[nebflow.shared.Defaults.OutputBlockRule]]）
+ *   375      — output 块纪律（Nebula 根会话 only，条件 isRootAgent；同源单点
+ *              文本 = [[nebflow.shared.Defaults.OutputBlockRule]]）
+ *   376      — SendMessage/Pop 边界（Nebula 根会话 only，条件 isRootAgent；同源
+ *              单点文本 = [[nebflow.shared.Defaults.SendMessageScopeRule]]）
+ *   377      — 密钥教义（所有 agent 会话，always；同源单点文本 =
+ *              [[nebflow.shared.Defaults.SecretsRule]]）
+ *   378      — 引牌教义（所有 agent 会话，always；同源单点文本 =
+ *              [[nebflow.shared.Defaults.MsgQuoteRule]]）
+ *   379      — 时间纪律（所有 agent 会话，always；同源单点文本 =
+ *              [[nebflow.shared.Defaults.TimeDisciplineRule]]）——**纪律**在 stable，
+ *              **锚**（「现在」的值）在请求级 systemDynamic，永不进 stable
  *   400-499  — tool-dependent sections（阶段 2d §D.2：条件工具指南段已全部
  *              下迁进工具 description——AskUserQuestion/Read/Pop/TeamTask 三件，
  *              提示词层不再按「是否有该工具」注入用法段落）
@@ -72,8 +90,10 @@ object PromptSections:
     taskListText: String = "",
     /** Inherited project rules text (from folder chain). */
     rulesMd: Option[String] = None,
-    /** Workspace-root AGENTS.md (§E.2; project dispatcher + node sessions only,
-      * resolved per turn in ContextRefresher.resolveAgentsMd). */
+    /**
+     * Workspace-root AGENTS.md (§E.2; project dispatcher + node sessions only,
+     * resolved per turn in ContextRefresher.resolveAgentsMd).
+     */
     agentsMd: Option[String] = None,
     /** True when this agent is a SubTask worker (leaf execution pipeline). */
     isSubTaskWorker: Boolean = false,
@@ -85,13 +105,33 @@ object PromptSections:
     userFacingNode: Boolean = false,
     /** Whether this session's agent is the team lead (Manager). */
     isTeamLead: Boolean = false,
-    /** Whether this agent is the root Nebula agent (Progressive disclosure:
-      * mounted-project list is Nebula-only — dispatcher/node sessions must not
-      * see it, they already carry AGENTS.md / project memory). */
+    /**
+     * Whether this agent is the root Nebula agent (Progressive disclosure:
+     * mounted-project list is Nebula-only — dispatcher/node sessions must not
+     * see it, they already carry AGENTS.md / project memory).
+     */
     isRootAgent: Boolean = false,
-    /** Pre-rendered mounted-project list body (sorted bullet lines, or the
-      * "当前无挂载项目" placeholder). From AgentCore via ProjectRuntimeRegistry. */
-    mountedProjectsText: String = ""
+    /**
+     * Pre-rendered mounted-project list body (sorted bullet lines, or the
+     * "当前无挂载项目" placeholder). From AgentCore via ProjectRuntimeRegistry.
+     */
+    mountedProjectsText: String = "",
+    /**
+     * Pre-rendered available-executors list body (external-executors 批 #1225,
+     * S14 运行时半)：主 agent 可用集段——数据源 = GET /api/executors 检测面
+     * （ExecutorRegistry.availableLine，adapterReady ＋ detected）。仅根代理
+     * 渲染；非根会话空串 = 段不注入。
+     */
+    executorsText: String = "",
+    /**
+     * Pre-rendered `## Self` section body (identity-sync 批 2026-10-23): the
+     * agent's display name / avatar self-knowledge — rendered by
+     * AgentIdentityStore.selfSectionText from the CURRENT display face. Empty
+     * when the agent carries no non-default identity (no name, no custom
+     * avatar) ⇒ section not injected ⇒ byte-identical prompt for everyone
+     * else (zero prefix-cache impact until identity actually exists).
+     */
+    identitySelfText: String = ""
   )
 
   object PromptContext:
@@ -168,83 +208,238 @@ object PromptSections:
   // 轨道二 #5 identity clauses（设计基线 20260827_dedicated-agents-taxonomy-design.md §B2/§B3）。
   // 注入条件由 order-395 动态 section 控制；文本固定一段，避免每份定义手写漂移。
 
+  /** Shared clause for both T1 variants (extracted single point — no duplication). */
+  private val flowWorkerCommonClause: String =
+    """- Write every intermediate artifact to disk and give absolute paths in the FlowReport;
+      |  "write a file for downstream" always beats "render it for a human".""".stripMargin
+
   /** T1 flow worker 条款。userFacing=false：受众=编排器与下游节点（严格版）。 */
   def flowWorkerIdentityBlock(userFacing: Boolean): String =
-    if userFacing then
-      """## 身份与受众（不可协商）
-        |
-        |- 你是流水线节点（用户终审环节）。你的产出两头都要喂：编排器与下游
-        |  节点通过 $x.output 与 slots 字段机器消费；终端用户只阅读你标为交付的部分。
-        |- 中间产物一律 Write 落盘并在 FlowReport 给出绝对路径；「写文件给下游」
-        |  永远优于「渲染给人看」。
-        |- 需求歧义时不要等待提问：在 outputs 中标注 assumption 字段并继续，
-        |  由编排器路由裁决。
-        |- 最终轮输出 ≤ 800 tokens：结论与交付说明为主，不堆背景叙述。
-        |""".stripMargin
-    else
-      """## 身份与受众（不可协商）
-        |
-        |- 你是流水线节点。你的受众是编排器与下游节点——它们通过 $x.output 与
-        |  slots 字段机器消费你的产出；终端用户不直接阅读你的任何文本。
-        |- 禁止面向用户的展示类动作：不调用 Pop，不制作「给人看」的可视化包装页、
-        |  汇总美化稿。证据用截图落盘文件 + 路径引用代替。
-        |- 中间产物一律 Write 落盘并在 FlowReport 给出绝对路径；「写文件给下游」
-        |  永远优于「渲染给人看」。
-        |- 需求歧义时不要等待提问：你没有对话对象——在 outputs 中标注 assumption
-        |  字段并继续，由编排器路由裁决。
-        |- 最终轮输出 ≤ 500 tokens：只写结论、状态与下游模板需要的字段，
-        |  不写背景叙述、不写给用户看的总结语。
-        |""".stripMargin
+    if userFacing then s"""## Identity and audience (non-negotiable)
+         |
+         |- You are a pipeline node (user-facing step). Both sides consume you: the orchestrator and
+         |  downstream nodes read $$x.output and slot fields mechanically; the end user reads only what
+         |  you mark as delivered.
+         |$flowWorkerCommonClause
+         |- On ambiguous requirements do not wait for a question: mark an `assumption` field in outputs and
+         |  continue — the orchestrator routes the ruling.
+         |- Final-turn output ≤ 800 tokens: conclusions and delivery notes, no background narration.
+         |""".stripMargin
+    else s"""## Identity and audience (non-negotiable)
+         |
+         |- You are a pipeline node. Your audience is the orchestrator and downstream nodes — they consume
+         |  $$x.output and slot fields mechanically; the end user never reads your text.
+         |- User-facing presentation is forbidden: no Pop, no "for humans" visualization or polish pages —
+         |  use screenshots on disk + path references instead.
+         |$flowWorkerCommonClause
+         |- On ambiguous requirements do not wait for a question — you have no interlocutor: mark an
+         |  `assumption` field in outputs and continue; the orchestrator routes the ruling.
+         |- Final-turn output ≤ 500 tokens: conclusions, status and the fields downstream templates need —
+         |  no background narration, no user-facing summary.
+         |""".stripMargin
 
   /** T2 team member 条款变体：通道 Mail、[RESULT] 收口、[ASSUMPTION] 行。 */
   val teamMemberIdentityBlock: String =
-    """## 身份与受众（不可协商）
+    """## Identity and audience (non-negotiable)
       |
-      |- 你是团队成员。你的受众是 Team Lead——它汇总你的 [RESULT] 后才会传递
-      |  给终端用户；终端用户不直接阅读你的任何文本。你不与用户对话，
-      |  用户通过 Lead 与你交互。
-      |- 默认禁用面向用户的展示类动作：证据用截图落盘文件 + 路径引用代替；
-      |  仅当成员定义里显式声明并注明触发条件时才允许 Pop 类工具。
-      |- 交付以文件为准：中间产物一律 Write 落盘，Mail 报告给出绝对路径。
-      |- 需求歧义时在 Mail 里写显式 [ASSUMPTION] 行并继续，由 Lead 裁决或升级。
-      |- Mail 回 Lead 的 [RESULT] ≤ 300 tokens：只写状态、关键产物路径与下一步建议。
+      |- You are a team member. Your audience is the Team Lead — it aggregates your [RESULT] before
+      |  anything reaches the end user, who never reads your text directly and reaches you only via the Lead.
+      |- User-facing display actions are off by default: evidence = screenshots on disk + path references.
+      |  Pop-class tools only where your definition declares them and names the trigger condition.
+      |- Deliverables are files: write every intermediate artifact to disk and give absolute paths in your Mail report.
+      |- On ambiguous requirements write an explicit [ASSUMPTION] line in the Mail and continue — the Lead rules or escalates.
+      |- Your [RESULT] Mail back to the Lead ≤ 300 tokens: status, key artifact paths, next-step advice only.
       |""".stripMargin
 
   /** Injected after the agent prompt when voice output is enabled. */
   val voiceSection: String =
     """## Voice Output
       |
-      |Think of yourself as a teacher giving a lecture. Your markdown, code, and cards are the **blackboard** — they show structure, details, and reference material. Your voice is the **narration** — it explains what's on the board, why it matters, and how the pieces connect.
+      |Your markdown, code and cards are the **blackboard**; your voice is the **narration** that explains what is on it and why it matters. Wrap spoken text in `<voice></voice>` — it is played as audio, stripped from the display, and shown as a clickable replay link.
       |
-      |Wrap spoken text in `<voice></voice>` tags. The content will be played as audio, stripped from the visual display, and shown as a clickable replay link.
+      |**Use voice proactively — it is your primary channel, not an afterthought:** presenting results or analysis; explaining a concept, reasoning or trade-off; introducing what the user is about to see; summarizing findings; walking through a decision; greetings and check-ins; warnings or asking for a decision.
       |
-      |**Use voice proactively — it is your primary communication channel, not an afterthought:**
-      |- When presenting results, conclusions, or analysis after completing work
-      |- When explaining a concept, reasoning, or trade-off
-      |- When introducing what the user is about to see — set the stage before showing details
-      |- When summarizing findings from investigation or research
-      |- When walking through a decision or recommendation
-      |- Greetings, check-ins, and task completion overviews
-      |- Warnings about problems, or asking for the user's decision
+      |**Voice and board complement each other — never duplicate:** the board holds details (code, tables, diagrams, lists); voice holds the narrative (what this means, why it matters, what to focus on). Do NOT read your markdown aloud.
       |
-      |**Voice and board are complementary — never duplicate:**
-      |- The board holds the details: code, tables, diagrams, step-by-step lists.
-      |- Voice holds the narrative: what this means, why it matters, what to focus on.
-      |- Do NOT read your markdown aloud. Say something different and complementary.
+      |**Rules:** several sentences up to a full paragraph — match the depth of your explanation. Never put code, paths, tool outputs or identifiers in voice tags. Multiple `<voice>` blocks per response are encouraged — narrate section by section.
       |
-      |**Rules:**
-      |- Voice can be several sentences to a full paragraph. Match the depth of what you're explaining.
-      |- Never include code, file paths, tool outputs, or technical identifiers in voice tags — those belong on the board.
-      |- Multiple `<voice>` blocks in one response are encouraged — narrate section by section, placing voice before and after key content blocks.
-      |- Only your visible output is spoken; your internal thinking is not affected.
+      |**Tone:** conversational, warm and clear, like a knowledgeable teacher walking a student through the material.""".stripMargin
+
+  // ============================================================
+  // 文档溯源规范（order 350，always）
+  //
+  // 作者 2026-09-11 裁定：「直接加到系统提示词里。作为规范。记住要简要，
+  // 保证提示词精简」；落地方案见 #165。系统提示词是唯一权威面——运行时
+  // （~/.nebflow/**）的本地重述由并行节点删除，存量文档
+  // （~/.nebflow/docs/CONVENTIONS.md）按作者裁定冻结不改。
+  // 文本独立成常量，便于 spec 引用与后续修订。
+  // ============================================================
+
+  val traceSection: String =
+    """## Document provenance
       |
-      |**Tone:** Conversational, warm, and clear — like a knowledgeable teacher talking through the material with a student. You care about the user beyond tasks: check in on their wellbeing, notice when they seem stressed, and be genuinely supportive.""".stripMargin
+      |- Provenance goes only into the filename tail: stage doc `<topic>__<YYYYMMDD>_<HHMMSS>[__<chainId>].md` (topic first, time after; no suffix when unattributed); the body carries zero metadata header.""".stripMargin
+
+  // ============================================================
+  // 根代理路由纪律（冷启动路由批 2026-09-17；order 370，条件 isRootAgent）
+  //
+  // 存在理由：Nebula 的提示词字面量（现 = nebflow.core.entity.BuiltinAgents，
+  // 史实 = AgentLibrary.Seeds.Nebula）里作者六句
+  // spec 的 ④⑤⑥ 零落地 —— 没有一句规定「第一个动作是路由」、没有一句定义
+  // Read 的用途是读回项目返回结果、也没有一句禁止根侧自行探文件系统或由
+  // 设备名/主机名推断主机路径。冷启动实例因此以 10×Read 开场（探测 passwd
+  // 文件、按主机名猜出的用户名目录、Desktop/Downloads、数据根下的 tasks.json
+  // 等），0 次 Mail —— 见诊断件 .nebflow/reports/20260917_coldroute-diag.md。
+  //
+  // 落点理由：（史实）AgentLibrary.seedDefaults() 对 agents/Nebula/system.md 是
+  // add-only（只在文件不存在时补写），既有 home 重启不刷新 ⇒ 改字面量对作者
+  // 现有实例无效（诊断件已用隔离实例实测：加标记后重启，标记存活）。本段由
+  // **引擎编译**注入、与盘面无关（先例 order 350 / order 360），重启同一 home
+  // 即生效。
+  //
+  // 文本纪律：纯静态、零用户数据、零绝对路径、零 hostname。本段进每次根会话
+  // LLM 调用，且**不得**把任何本机标识写回请求面（「设备名被当作用户名」正是
+  // 被修的缺陷，写进来等于复制引诱源）。反模式按**类别**指名（system account
+  // files / shell rc files / Desktop / Downloads），不写具体绝对路径 —— 示例
+  // 路径本身会变成新的猜测锚点。
+  // ============================================================
+
+  val rootRoutingDisciplineSection: String =
+    """## Routing discipline (root agent)
+      |
+      |Applies to every task that reaches you, before anything else:
+      |
+      |1. **Route first.** Your first tool call routes the task: `Delegate(task=<self-contained brief>, project=<name>)` when a matching project already exists, or `Project` and then that Delegate when none does. No filesystem tool may run before this first routing call.
+      |2. **`Read` reads back results only** — a result a project or node returned to you. It is not a reconnaissance tool: the "Recon: Read only" line elsewhere in your prompt is not a licence to read in order to look around, and this section governs over that reading.
+      |3. **No filesystem exploration.** Never use Read / Glob / Grep / Bash to hunt for a path, a username, a home directory or a workspace.
+      |4. **No path inference from identity.** Device names, hostnames and `# Devices` entries are never evidence of a host path: never derive a username or home directory from them, and never go looking through system account files, shell rc files, or the user's Desktop / Downloads folders.
+      |5. **Workspace paths are never guessed.** If a path is genuinely required, omit `workspace` and let auto-creation or the user's picker resolve it — never invent one.
+      |6. **Missing information goes to the project, not to your own shell.** Put it in the dispatch text as an open item for the project to perceive (the project can see its own filesystem), or ask the user through `AskUserQuestion`.""".stripMargin
 
   // ============================================================
   // Dynamic section registry
   // ============================================================
 
   private val dynamicSections: List[PromptSection] = List(
+    // --- 文档溯源规范（#165，作者 2026-09-11 裁定）：always 注入、无动态
+    // 字段、静态体，故落在稳定前缀（systemStable）内——env(100) 之后、
+    // 首个 dynamic 段 395 之前。运行时 9 处本地重述删除由并行节点负责。
+    PromptSection(
+      350,
+      condition = _ => true,
+      body = traceSection
+    ),
+
+    // --- 根代理路由纪律（冷启动路由批 2026-09-17）：条件 isRootAgent ⇒ 唯一
+    // 注入面 = 根 Nebula 会话；项目分发器 / 节点会话（isRootAgent=false）收不到
+    // 本段，正合其义（分发器自己就是被路由到的落点，不需要「先路由」纪律）。
+    // 段序 370 = 落在 stable 段之后、order-395 identity 段之前；本段
+    // 必须排在 system.md 之后（所有条件段的共同前提），故不追求更早槽位——与
+    // 字面量里 "Recon: Read only" 的冲突靠**文本内显式声明优先**消解（判据②），
+    // 不靠段序。
+    // （order-360 节点终态申报段已随申报工具整体退役删除——终态协议的引擎文本
+    // 单点 = 输入面脚注 `NodeEngine.ProtocolFootnote`，纯文本锚定。）
+    PromptSection(
+      370,
+      condition = ctx => ctx.isRootAgent,
+      body = rootRoutingDisciplineSection
+    ),
+
+    // --- output 块纪律（output 块注入链核验批 2026-10-31，作者 21:44「怎么没看到
+    // 变化」追批）：条件 isRootAgent ⇒ 唯一注入面 = 根 Nebula 会话。段体**逐字引用**
+    // [[nebflow.shared.Defaults.OutputBlockRule]]（同源单点，勿复制改写）。
+    //
+    // 为什么单独立段而不是只靠 NebulaPromptTemplate `## Voice` 节里的一行 bullet：
+    // 注入链核验批实证——① 线上 jar（17:57 构建）已含 Voice bullet；② builtin 名
+    // 从代码解析（AgentLibrary.get 不走磁盘）；③ AgentState 不持久化、重启即
+    // lifecycle 重建（AgentSessionExecution `isLifecycleRebuild`）——三条链都通，
+    // 规则其实自 17:58 重启起就在根会话上下文里；④ 但根会话 17:59 之后的全部回复
+    // 实测零 `<output>` 包裹（sessions/<root>.json 逐条核验），且根自己给出的理由
+    // 是「我是重启前的老会话、规则没进我的上下文」——证明**单条 bullet 的显著性
+    // 不足以让模型感知并遵从**。本段把同一条规则提升为 systemStable 内的独立
+    // 段（紧跟根路由纪律段后，段序 375），存在性由引擎编译注入保证（与 order-360
+    // 节点申报段同款 belt 语义），不再依赖模型在 Voice 节里注意到那一行。
+    //
+    // 生效面：段随 systemStable 装配——新会话首 turn 即携带；既有会话在生命周期
+    // 节点（重启 / 压缩）重建时携带（AgentState 不持久化 ⇒ 重启即重建，「重启
+    // 恢复路径」与首装同缝，无单独恢复缝可断）；轮间复用缓存的 stable 串，中期
+    // 不逐 turn 重注（与全部 stable 段同语义，不为此段开逐 turn 提醒特例——
+    // 部署本修复必走引擎重启，重启即生命周期节点，老会话零等待）。
+    // 与 `## Voice` 节 bullet 的并存是刻意的：Voice 节管风格（类微信、画像驱动），
+    // 本段管行为契约（必须包裹）；同文本两处出现不构成冲突（与 order-370 路由
+    // 纪律段和 system.md 内「Recon: Read only」的显式优先级并存先例同形）。
+    // 分发器 / 节点会话（isRootAgent=false）收不到本段——它们的面已由
+    // DelegateTool brief / ProtocolFootnote / BlockingSubagent 首条消息承载。
+    //
+    // output 块总闸·提示词面（prompt-face 补批 2026-11-01，同一作者令「把
+    // output 块相关的内容先关闭」）：条件加闸 `nebflow.shared.OutputBlockGate
+    // .enabled()`——闸关 = 本段整段不进组装（`&&` 短路，非根会话连读数都不发生，
+    // 其余段零波及）。组装期求值：段条件在 buildConditionalBlocks（会话
+    // lifecycle 组装点）求值，翻闸后新装配即翻面；已在飞的旧上下文不回改
+    // （下个生命周期节点自然刷新）。与 Voice 节 bullet、brief、脚注、subagent
+    // 包装四处共闸（同一键同一读数）。
+    PromptSection(
+      375,
+      condition = ctx => ctx.isRootAgent && nebflow.shared.OutputBlockGate.enabled(),
+      body = nebflow.shared.Defaults.OutputBlockRule
+    ),
+
+    // --- SendMessage/Pop 边界（渠道文件出站+工具说明批 2026-10-31，作者 22:10
+    // 令 + 22:30 追加令「不能只进画像记忆，要改在提示词源」）：条件 isRootAgent ⇒
+    // 唯一注入面 = 根 Nebula 会话（SendMessage 的机制固定携带者 = Root 静态集，
+    // 正是会误用 SendMessage 给用户发渠道消息/文件的那张面）。段体逐字引用
+    // [[nebflow.shared.Defaults.SendMessageScopeRule]]（order-375 同源单点同款
+    // 机制）；与 FriendMessageTool description 的 Scope 节、NebulaPromptTemplate
+    // Tool surface 行同口径并存（工具面 = 调用边界，本段 = 存在性保证）。
+    // 段序 376 = 紧跟 order-375 后；stable 段，生命周期节点重建时携带。
+    PromptSection(
+      376,
+      condition = ctx => ctx.isRootAgent,
+      body = nebflow.shared.Defaults.SendMessageScopeRule
+    ),
+
+    // --- 密钥教义（密钥能力三件套批 B 件，作者令 2026-11-01「agent/分发器提示词
+    // 加一节『密钥的使用与创建』」）：条件 **always** —— 与 order-375/376 的
+    // root-only 刻意不同：凭证经任务文本与指针回执流进**每张面**（分发器把它
+    // 写进 brief、节点在 Bash 里消费它），纪律只护根会话等于没护。段体逐字引用
+    // [[nebflow.shared.Defaults.SecretsRule]]（同源单点，勿复制改写）；机制细节
+    // 的单一权威 = AskUserQuestion 工具 description（引牌不引文）。段序 377 =
+    // 紧跟 order-376 后，静态体落在 systemStable（生命周期节点重建时携带，
+    // 前缀缓存友好——与 order-350 溯源段同读数）。
+    PromptSection(
+      377,
+      condition = _ => true,
+      body = nebflow.shared.Defaults.SecretsRule
+    ),
+
+    // --- 引牌教义·带短名引用（msgchip 批，作者令 2026-11-01「消息身份牌系统升级」
+    // 第 4 条）：回复作者消息用「牌+短名」引用要点、不整段复述原文。条件 always——
+    // 与 order-377 同判据：牌经 Mail / brief / node 消息流进每张面，任何面上都可能
+    // 引用上游消息。段体逐字引用 [[nebflow.shared.Defaults.MsgQuoteRule]]（同源单点，
+    // 勿复制改写）；语法机制的单一权威 = MsgTokenRegistry（TokenRegex + msgtoken
+    // reminder）。段序 378 = 紧跟 order-377 后；静态体落在 systemStable（生命周期
+    // 节点重建时携带）——随下个生命周期生效，在飞旧上下文不回改。
+    PromptSection(
+      378,
+      condition = _ => true,
+      body = nebflow.shared.Defaults.MsgQuoteRule
+    ),
+
+    // --- 时间纪律（时间感知修复批，作者指令 2026-11-05 18:48「修复你的时间感知
+    // 问题」）：条件 **always** —— 相对时间误判不分角色（root / 分发器 / delegate /
+    // 节点 / team / 子代理都会输出「刚才 / 昨天 / 上次」）。段体逐字引用
+    // [[nebflow.shared.Defaults.TimeDisciplineRule]]（同源单点，勿复制改写）。
+    // 段序 379 = 紧跟 order-378 后；静态体落 systemStable（生命周期节点重建时携带）——
+    // 🔴 **纪律**（静态文本）进 stable 是对的，**锚**（「现在」的值）绝不能进：
+    // 值一旦固化进 systemStable，长会话就停在装配那一刻（本批修的正是这种冻结）。
+    // 锚的两条腿 = 请求级 `LlmRequest.systemDynamic`（每请求现取）+ 起始轮持久化
+    // reminder（`SystemReminders`），同源 [[nebflow.shared.TimeAnchor]]。
+    PromptSection(
+      379,
+      condition = _ => true,
+      body = nebflow.shared.Defaults.TimeDisciplineRule
+    ),
+
     // --- 轨道二 #5 identity clauses (before tool guides — who reads your
     // output comes first). Only when dedicatedAgents guardrails are enabled:
     // T1 flow nodes get the strict machine-consumer clause (or its
@@ -258,6 +453,18 @@ object PromptSections:
         if ctx.isFlowNode then flowWorkerIdentityBlock(ctx.userFacingNode)
         else if !ctx.isTeamLead && ctx.agentCategory == "team" then teamMemberIdentityBlock
         else ""
+    ),
+
+    // --- identity-sync 批（2026-10-23）：智能体自我认知段（作者令「让他知道
+    // 自己的头像和名字」）。数据 = 展示面现读（AgentIdentityStore：displayName
+    // + 头像文件 sha）；**只在非默认身份时产出**——无名无头像的 agent 返回空串
+    // = 段不注入 = 既有会话字节零变化（前缀缓存零失效）。段体随 systemStable
+    // 在生命周期节点重建；中期改名/换头像由 order-396 同族的 identity 变更提醒
+    // （SystemReminders）即时报，不在此处使缓存失效。
+    PromptSection.dynamic(
+      396,
+      condition = _.identitySelfText.nonEmpty,
+      renderer = ctx => s"## Self\n\n${ctx.identitySelfText}"
     ),
 
     // --- 阶段 2d（§D.1-14/§D.2）：原 order 400/410/415 条件工具指南段已删除
@@ -298,6 +505,23 @@ object PromptSections:
       630,
       condition = ctx => ctx.isRootAgent && ctx.mountedProjectsText.nonEmpty,
       renderer = ctx => s"# Mounted Projects\n\n${ctx.mountedProjectsText}"
+    ),
+    // --- 可用执行器段 ────────────────────────────────────────────────────
+    // 主 agent 的选择输入：可用集 = GET /api/executors 检测面（快照语义）。
+    // 仅根代理注入（isRootAgent，同 Mounted Projects 判据；分发器/节点会话
+    // 零面）。注入时机 = 会话装配快照（systemStable 生命周期重建时刷新；
+    // 中期变化靠 Delegate 失败面的显式可用集自纠错——fail-closed，零静默回落）。
+    PromptSection.dynamic(
+      640,
+      condition = ctx => ctx.isRootAgent && ctx.executorsText.nonEmpty,
+      renderer = ctx =>
+        s"""# Available executors (Delegate)
+
+`Delegate(task, project?, executor?)` runs a background worker. Pick `executor` per task; omit it for the configured default executor (`executor.default`); when unset or unusable, the built-in internal executor is used. Available now:
+
+${ctx.executorsText}
+
+External executors receive the task text only — no platform tools or plugins are injected."""
     ),
     // --- 阶段 2d（§D.1-14/§D.2）：原 order 630 Task List Protocol 段已删除
     // ——内容下迁进 TeamTask 三件 description（双轨期语义，阶段 3 随 team
@@ -506,21 +730,37 @@ object PromptSections:
    * Falls back to the raw template if the script fails or output is invalid JSON.
    */
   private def renderWithScript(template: String, script: os.Path, ctx: PromptContext): String =
+    // 品牌围栏（引擎会话治理专项 · 缺陷五，2026-11-03）：端口**不再只以跨品牌名
+    // `NEBFLOW_GATEWAY_PORT` 出现在提示词渲染面**——本品牌专属名（stand 构建 =
+    // `STAND_GATEWAY_PORT`）是主名；遗留名保留给既有 data.sh（`${NEBFLOW_GATEWAY_PORT:-…}`）
+    // 的**脚本读取**（只活在这个渲染子进程里，绝不进会话环境——会话环境的围栏在
+    // [[nebflow.core.tools.ShellEnvCordon]]）。两个名字同源同值。
+    val brandPortVar = nebflow.core.tools.ShellEnvCordon.brandPortVar(nebflow.shared.Branding.envPrefix)
+    val portValue =
+      sys.props.getOrElse("nebflow.gateway.port", nebflow.shared.Defaults.brandDefaultPort.toString)
     val envVars = Map(
       "CHAT_WIDTH" -> ctx.chatWidth.toString,
       "NEBFLOW_VERSION" -> nebflow.Version.string,
       "NEBFLOW_PID" -> sys.props.getOrElse("nebflow.gateway.pid", java.lang.ProcessHandle.current().pid().toString),
-      "NEBFLOW_GATEWAY_PORT" -> sys.props.getOrElse("nebflow.gateway.port", "8080")
+      brandPortVar -> portValue,
+      "NEBFLOW_GATEWAY_PORT" -> portValue,
+      // 数据根供给（home 硬编码 → 运行时动态化批 2026-09-11；P3）：data.sh 的
+      // JSON 由它派生 `data_root` 字段。命名避 NEBFLOW_HOME（env/sysprop 既名，
+      // 语义不同：这里是**本实例**数据根的绝对路径）。
+      "NEBFLOW_DATA_ROOT" -> nebflow.shared.PathUtil.dataRoot.toString
     )
+    // 无 return 的早退(DisableSyntax.noReturns):脚本异常 ⇒ None ⇒ 与解析失败同样回落 template
     val result =
       try
-        os.proc("bash", script.toString)
-          .call(cwd = os.pwd, env = envVars, check = false)
-          .out
-          .text()
-          .trim
-      catch case _: Exception => return template
-    parser.parse(result).toOption match
+        Some(
+          os.proc("bash", script.toString)
+            .call(cwd = os.pwd, env = envVars, check = false)
+            .out
+            .text()
+            .trim
+        )
+      catch case _: Exception => None
+    result.flatMap(parser.parse(_).toOption) match
       case Some(json) =>
         json.asObject
           .map(_.toMap)
@@ -580,20 +820,21 @@ object PromptSections:
       .filter(_.nonEmpty)
       .mkString("\n\n")
 
-  /**
-   * Assemble the final system prompt: the agent system.md FIRST, then
-   * conditional blocks.
-   *
-   * The leading stable segment is the provider prefix-cache anchor — the
-   * shared system.md base (identical across sessions of the same template)
-   * must stay at the very front or the common prefix is lost and every
-   * session's prompt cache is invalidated. Phase-2 batch A (2026-09) retired
-   * the shared system-prefix layer; the stable system.md base now serves
-   * that role. Pinned by PromptSectionsSpec.
-   */
+  /** Packaged prefix: updates require a new build, not a data-root file. */
+  private lazy val systemPrefix: String =
+    val stream = Option(getClass.getResourceAsStream("/seed/prompt-prefix.md"))
+      .getOrElse(throw new IllegalStateException("Missing classpath resource seed/prompt-prefix.md"))
+    val source = scala.io.Source.fromInputStream(stream, "UTF-8")
+    try source.mkString.trim
+    finally source.close()
+
   def assembleSystemPrompt(agentPrompt: String, conditionalBlocks: String): String =
-    val separator = if conditionalBlocks.nonEmpty then "\n\n" else ""
-    s"$agentPrompt$separator$conditionalBlocks"
+    val sections = Seq(
+      Some(s"--- SYSTEM PREFIX ---\n$systemPrefix"),
+      Some(agentPrompt),
+      Option.when(conditionalBlocks.nonEmpty)(conditionalBlocks)
+    ).flatten
+    sections.mkString("\n\n")
 
   /**
    * Remove a `## Section` block from a prompt string.
@@ -609,6 +850,26 @@ object PromptSections:
   def stripAllMigrated(prompt: String): String =
     stripSection(prompt, "Voice Output")
 
+  /**
+   * Strip comment-only single lines (a trimmed line that starts with `<!--` and
+   * ends with `-->`) — the mechanical guarantee behind the seed batch-source
+   * annotations (govmemory batch, plan §1.2 step 1: 标注放 HTML 注释，避免进入
+   * 模型上下文). Conservative by design: only whole-line comments are removed;
+   * inline comments inside a content line, multi-line comments and every other
+   * byte are passed through unchanged (byte-identical for comment-free input —
+   * the trailing newline survives via the split("\n", -1) empty tail element).
+   * (W1 provisional shim: ported verbatim from main — the PR blob predates the
+   * govmemory batch.)
+   */
+  def stripCommentOnlyLines(prompt: String): String =
+    prompt
+      .split("\n", -1)
+      .filterNot { l =>
+        val t = l.trim
+        t.startsWith("<!--") && t.endsWith("-->")
+      }
+      .mkString("\n")
+
 end PromptSections
 
 /**
@@ -619,12 +880,16 @@ end PromptSections
  */
 object MountedProjectList:
 
-  /** Placeholder rendered when the registry holds no mounted projects — the
-    * root Nebula session always sees an explicit state, empty included. */
+  /**
+   * Placeholder rendered when the registry holds no mounted projects — the
+   * root Nebula session always sees an explicit state, empty included.
+   */
   val EmptyText = "当前无挂载项目"
 
-  /** Render registry entries as (name, description) into sorted bullet lines.
-    * Empty list → [[EmptyText]]; description is omitted when empty/None. */
+  /**
+   * Render registry entries as (name, description) into sorted bullet lines.
+   * Empty list → [[EmptyText]]; description is omitted when empty/None.
+   */
   def renderLines(projects: List[(String, Option[String])]): String =
     if projects.isEmpty then EmptyText
     else
@@ -633,16 +898,37 @@ object MountedProjectList:
         .map { case (name, desc) =>
           desc.filter(_.nonEmpty) match
             case Some(d) => s"- $name: $d"
-            case None    => s"- $name"
+            case None => s"- $name"
         }
         .mkString("\n")
 
-  /** Line-level +/- delta between the snapshot text and the current text
-    * (same semantics as AgentCore.devicesDeltaLines). Each bullet entry is
-    * stripped of its leading "- " so the +/− marker reads cleanly ("+ name:
-    * desc" / "- name: desc") instead of the colliding "+- name". Returns ""
-    * when the entry sets are identical (only ordering/whitespace changed —
-    * no real change). */
+  /**
+   * Device-annotated form（台账 #913 ②，2026-10-26）：entries = (name, deviceDisplay,
+   * description)。`deviceDisplay` 非空（跨设备项目）⇒ 行形 `- name (on device X): desc`；
+   * 空（本机项目）⇒ 与 [[renderLines]] 同形（零噪声）。排序与占位语义同源。
+   * 显示名由调用面经名册现查后传入（本件不做 IO——纯函数 spec 直测）。
+   */
+  def renderLinesWithDevice(projects: List[(String, String, Option[String])]): String =
+    if projects.isEmpty then EmptyText
+    else
+      projects
+        .sortBy(_._1)
+        .map { case (name, device, desc) =>
+          val devTag = if device.trim.isEmpty then "" else s" (on device ${device.trim})"
+          desc.filter(_.nonEmpty) match
+            case Some(d) => s"- $name$devTag: $d"
+            case None => s"- $name$devTag"
+        }
+        .mkString("\n")
+
+  /**
+   * Line-level +/- delta between the snapshot text and the current text
+   * (same semantics as AgentCore.devicesDeltaLines). Each bullet entry is
+   * stripped of its leading "- " so the +/− marker reads cleanly ("+ name:
+   * desc" / "- name: desc") instead of the colliding "+- name". Returns ""
+   * when the entry sets are identical (only ordering/whitespace changed —
+   * no real change).
+   */
   def delta(old: String, current: String): String =
     def entries(s: String): Vector[String] =
       s.split("\n").map(_.trim).filter(_.nonEmpty).toVector

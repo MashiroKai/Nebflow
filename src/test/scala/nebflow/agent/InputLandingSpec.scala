@@ -1,0 +1,176 @@
+package nebflow.agent
+
+import cats.effect.IO
+import cats.syntax.all.*
+import munit.CatsEffectSuite
+import nebflow.actor.AgentCommand
+import nebflow.core.mail.InputMailbox
+import nebflow.shared.PathUtil
+
+/**
+ * P3 节点 3（主腿最小闭环）验收 —— `InputLanding` 门的三条承重断言。
+ *
+ * 作者 2026-11-05 10:46 裁定的最小集，逐条对应：
+ *   - 正常路径：落盘 → 取走（taken 驻留）→ turn 成功后 consume ⇒ taken 清空 + 墓碑；
+ *   - 同 cid 重发同一帧 ⇒ **不得产生第二次执行**（Duplicate 短路）；
+ *   - 顺序：同会话连续 N 条不乱。
+ *
+ * 「crash 在 turn 中途」= 只 land 不 consume（条目驻留 taken-input）⇒ 重放面可见；
+ * 真实进程级崩溃注入（Runtime.halt）属节点 4 的隔离夹具，本 spec 只验存储面语义。
+ */
+class InputLandingSpec extends CatsEffectSuite:
+
+  private val originalRoot = PathUtil.dataRoot
+  private var tmp: os.Path = null
+
+  override def beforeEach(context: munit.BeforeEach): Unit =
+    tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-input-landing"))
+    PathUtil.setDataRoot(tmp)
+
+  override def afterEach(context: munit.AfterEach): Unit =
+    PathUtil.setDataRoot(originalRoot)
+    if tmp != null && os.exists(tmp) then os.remove.all(tmp)
+
+  private val sid = Some("sess-landing")
+
+  private def imm(text: String, cid: Option[String]): AgentCommand.ImmediateInput =
+    AgentCommand.ImmediateInput(text = text, fromUser = true, clientMessageId = cid)
+
+  test("正常路径：land 后条目驻留 taken-input，consume 后清空并落墓碑") {
+    (for
+      landed <- InputLanding.landImmediate(sid, imm("hello", Some("cid-1")))
+      during <- InputMailbox.scanTaken(sid.get)
+      _ <- InputLanding.consume(sid, landed)
+      after <- InputMailbox.scanTaken(sid.get)
+      delivered <- InputMailbox.deliveredContains(sid.get, Set("cid-1"))
+    yield (landed, during.map(_.identity), after.map(_.identity), delivered)).map {
+      case (landed, during, after, delivered) =>
+        assertEquals(landed, InputLanding.LandOutcome.Landed("cid-1"))
+        assertEquals(during, List("cid-1"), "turn 执行期间条目必须仍在盘上（D3 前提）")
+        assertEquals(after, Nil, "turn 成功后 taken-input 清空")
+        assertEquals(delivered, Set("cid-1"), "墓碑记录已执行身份")
+    }
+  }
+
+  test("同 cid 重发 ⇒ 第二次为 Duplicate（执行计数恒 = 1）") {
+    (for
+      first <- InputLanding.landImmediate(sid, imm("hello", Some("cid-2")))
+      // turn 在飞（未 consume）时客户端重发同一帧
+      second <- InputLanding.landImmediate(sid, imm("hello", Some("cid-2")))
+      taken <- InputMailbox.scanTaken(sid.get)
+      // turn 完成后再重发
+      _ <- InputLanding.consume(sid, first)
+      third <- InputLanding.landImmediate(sid, imm("hello", Some("cid-2")))
+    yield (first, second, taken.size, third)).map { case (first, second, takenCount, third) =>
+      assertEquals(first, InputLanding.LandOutcome.Landed("cid-2"))
+      assertEquals(second, InputLanding.LandOutcome.Duplicate, "turn 在飞时重发必须被挡（不得造第二份）")
+      assertEquals(takenCount, 1, "盘上只有一份副本 —— 执行计数语义 = 1")
+      assertEquals(third, InputLanding.LandOutcome.Duplicate, "已执行后重发也必须被墓碑挡住")
+    }
+  }
+
+  test("无 cid 的注入件走 K3 铸造键：不误判重复（每件独立执行）") {
+    (for
+      a <- InputLanding.landImmediate(sid, imm("sys-1", None))
+      b <- InputLanding.landImmediate(sid, imm("sys-1", None))
+      taken <- InputMailbox.scanTaken(sid.get)
+    yield (a, b, taken.size)).map { case (a, b, takenCount) =>
+      assert(a.isInstanceOf[InputLanding.LandOutcome.Landed])
+      assert(b.isInstanceOf[InputLanding.LandOutcome.Landed], "同类内容两条合法注入不得被吞")
+      assertEquals(takenCount, 2)
+    }
+  }
+
+  test("顺序：同会话连续 5 条 land 保序（taken-input 名字序 = 入队序）") {
+    val texts = List("m1", "m2", "m3", "m4", "m5")
+    (for
+      _ <- texts.traverse(t => InputLanding.landImmediate(sid, imm(t, Some(s"ord-$t"))))
+      taken <- InputMailbox.scanTaken(sid.get)
+    yield taken.map(_.payload.text)).map(ids => assertEquals(ids, texts))
+  }
+
+  test("无 sid ⇒ Passthrough（不阻断 turn，不写盘）") {
+    (for
+      out <- InputLanding.landImmediate(None, imm("x", Some("cid-x")))
+      depth <- InputMailbox.depth("sess-landing")
+    yield (out, depth)).map { case (out, d) =>
+      assertEquals(out, InputLanding.LandOutcome.Passthrough("no-session-id"))
+      assertEquals(d, 0)
+    }
+  }
+
+  test("producer-persisted notification is accepted once after immediate-to-user conversion") {
+    val message = AgentCommand.ImmediateInput("node completed", source = Some("node"), fromUser = false)
+    val identity = nebflow.core.mail.ProducerInput.identity("scope", "node", "round-1")
+    for
+      prepared <- nebflow.core.mail.ProducerInput.persist(sid.get, message, identity)
+      user = AgentCommand.UserInput(prepared.text, clientMessageId = prepared.clientMessageId,
+        source = prepared.source, fromUser = false)
+      landed <- InputLanding.landUser(sid, user)
+      duplicate <- InputLanding.landUser(sid, user)
+      _ <- InputLanding.consume(sid, landed)
+      _ <- nebflow.core.mail.ProducerInput.persist(sid.get, message, identity)
+      afterConsumption <- InputLanding.landUser(sid, user)
+    yield
+      assertEquals(landed, InputLanding.LandOutcome.Landed(identity))
+      assertEquals(duplicate, InputLanding.LandOutcome.Duplicate)
+      assertEquals(afterConsumption, InputLanding.LandOutcome.Duplicate)
+  }
+
+  test("crash residue replays the same producer identity and complete batch payload") {
+    val message = AgentCommand.ImmediateInput("batch", source = Some("node"),
+      windowItems = Some(List(AgentCommand.WindowItem("result", "worker", "completed", "project/worker"))))
+    val identity = nebflow.core.mail.ProducerInput.identity("scope", "batch", "round-1")
+    for
+      prepared <- nebflow.core.mail.ProducerInput.persist(sid.get, message, identity)
+      landed <- InputLanding.landImmediate(sid, prepared)
+      replay <- InputMailbox.replayProducerInputs(sid.get)
+      resumed <- InputLanding.landImmediate(sid, prepared)
+      _ <- InputLanding.consume(sid, resumed)
+      after <- InputMailbox.replayProducerInputs(sid.get)
+    yield
+      assertEquals(landed, InputLanding.LandOutcome.Landed(identity))
+      assertEquals(replay.map(_.payload.windowItems), List(message.windowItems))
+      assertEquals(resumed, InputLanding.LandOutcome.Landed(identity))
+      assertEquals(after, Nil)
+  }
+
+  test("producer persistence fails visibly instead of accepting an unwritten notification") {
+    val blocked = tmp / "sessions" / sid.get
+    os.makeDir.all(blocked / os.up)
+    os.write(blocked, "not a directory")
+    nebflow.core.mail.ProducerInput.persist(sid.get, imm("result", None), "stable-id").attempt.map(r => assert(r.isLeft))
+  }
+
+  // ── 修复批 2026-11-18：Duplicate 不再无痕 ─────────────────────────────────
+  test("Duplicate 不再无痕：诊断区分 taken-input 残件 / 墓碑（同一 key，两个阶段）") {
+    val key = "cid-diag"
+    (for
+      landed <- InputLanding.landImmediate(sid, imm("first", Some(key)))
+      // turn 在飞未 consume ⇒ 盘上是 taken-input 残件 ⇒ 第二次为 Duplicate 且诊断为「残件」
+      dup <- InputLanding.landImmediate(sid, imm("first", Some(key)))
+      whyResidue <- InputLanding.duplicateReason(sid, key)
+      // 正常提交后重发 ⇒ 仍 Duplicate，但诊断转为「墓碑」
+      _ <- InputLanding.consume(sid, landed)
+      dup2 <- InputLanding.landImmediate(sid, imm("first", Some(key)))
+      whyTomb <- InputLanding.duplicateReason(sid, key)
+    yield (landed, dup, whyResidue, dup2, whyTomb)).map {
+      case (landed, dup, whyResidue, dup2, whyTomb) =>
+        assertEquals(landed, InputLanding.LandOutcome.Landed(key))
+        assertEquals(dup, InputLanding.LandOutcome.Duplicate)
+        assertEquals(dup2, InputLanding.LandOutcome.Duplicate)
+        assert(whyResidue.contains("taken-input/ residue"), s"taken-input residue must be named: $whyResidue")
+        assert(whyResidue.contains(key), s"diagnostic must carry the identity: $whyResidue")
+        assert(whyTomb.contains("delivered-inputs tombstone"), s"tombstone case must be named: $whyTomb")
+    }
+  }
+
+  test("duplicateNotice 纯函数：三类来源各有可读原因（无痕 = 红）") {
+    val residue = InputLanding.duplicateNotice("k-1", Some(7L), delivered = false)
+    val tomb = InputLanding.duplicateNotice("k-2", None, delivered = true)
+    val race = InputLanding.duplicateNotice("k-3", None, delivered = false)
+    assert(residue.contains("taken-input/ residue") && residue.contains("k-1"), residue)
+    assert(tomb.contains("tombstone") && tomb.contains("k-2"), tomb)
+    assert(race.contains("no pending/taken copy") && race.contains("k-3"), race)
+    assert(InputLanding.DuplicateEvent == "input-duplicate-suppressed")
+  }

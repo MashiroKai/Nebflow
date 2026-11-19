@@ -1,0 +1,3 @@
+# Design
+
+Remove the global project FAB and per-project title panorama routes without selecting a replacement two-level design or routing empty names to the global view. Keep the list, card content, project creation and task-specific entry points. Disconnect only the periodic done-board scan; leave delivery receipts and orphan scans connected and do not delete artifacts or worktrees. The mapped Node tests are source-level guards only; they do not prove actual consumer interaction or the watcher at runtime. Empty/populated mobile/desktop consumer scenarios and an isolated watcher test remain necessary.

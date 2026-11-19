@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "change": "credential-reference-auto",
+  "mappings": [
+    {
+      "requirement": "CRA-REQ-001",
+      "scenario": "CRA-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/core/secrets/SecretsStore.scala",
+        "src/main/scala/nebflow/core/secrets/ConfigCredentialStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/secrets/SecretsStoreSpec.scala",
+          "name": "W1 · create: new target is 0600 from its first byte and holds the plaintext"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/secrets/SecretsStoreSpec.scala",
+          "name": "R1 · channel face: a stored `_ref` path string claims its channel id"
+        }
+      ]
+    },
+    {
+      "requirement": "CRA-REQ-001",
+      "scenario": "CRA-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/core/secrets/SecretsCatalog.scala",
+        "src/main/scala/nebflow/core/secrets/SecretsStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/secrets/SecretsStoreSpec.scala",
+          "name": "V2 · list: metadata only — entries carry name/size/mtime/mode/refs, no value shape"
+        }
+      ]
+    }
+  ]
+}

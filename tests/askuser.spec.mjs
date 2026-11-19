@@ -18,6 +18,7 @@
 import { test, expect } from '@playwright/test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { establishSession } from './helpers/session-rail.mjs';
 
 const BASE_URL = process.env.BASE_URL ?? 'http://localhost:8094';
 const NEBFLOW_HOME = process.env.NEBFLOW_HOME ?? '/tmp/nb-askuser-smoke';
@@ -39,7 +40,9 @@ const SID = 'e2e-askuser-session';
  * every outgoing askUserAnswer payload is captured window.__captured.
  */
 async function setupCard(page, items) {
-  await page.goto(`${BASE_URL}/?token=${TOKEN}`);
+  // Stage D: the URL token rail is retired — establish the session through
+  // the one-time console ticket chain (helpers/session-rail.mjs).
+  await establishSession(BASE_URL, TOKEN, page);
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(600);
 

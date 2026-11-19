@@ -130,10 +130,10 @@ SPECIAL|window-global|src/main/resources/web/js/main.js
 #     parser fixtures whose brand strings are DATA (write/read pairs that
 #     must stay self-consistent), and escaped literals (\"Nebflow\") need
 #     backslash-quoted patterns.
-SED|src/test/scala/@LOWER@/core/BrandingSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/Branding\.productName, "Nebflow"/Branding.productName, "@PRODUCT@"/; s/Branding\.lowerName, "nebflow"/Branding.lowerName, "@LOWER@"/; s/Branding\.fullName, "Nebflow"/Branding.fullName, "@FULL@"/; s/neblink\.example/@DOMAIN@/g; s/Branding\.githubOrg, "MashiroKai"/Branding.githubOrg, "@ORG@"/; s/Branding\.githubRepo, "Nebflow"/Branding.githubRepo, "@REPO@"/; s/Branding\.homeDirName, "\.nebflow"/Branding.homeDirName, ".@LOWER@"/; s/Branding\.envPrefix, "NEBFLOW"/Branding.envPrefix, "@ENV@"/; s/Branding\.cosBucket, "nebflow-releases-1411212853"/Branding.cosBucket, "@COS@"/; s|https://neblink\.@HOST@|@SERVER@|g; s|Nebflow/academic-search|@PRODUCT@/academic-search|; s/"@@CFG@@"/"nebflow.json"/g
+SED|src/test/scala/@LOWER@/core/BrandingSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/Branding\.productName, "Nebflow"/Branding.productName, "@PRODUCT@"/; s/Branding\.lowerName, "nebflow"/Branding.lowerName, "@LOWER@"/; s/Branding\.fullName, "Nebflow"/Branding.fullName, "@FULL@"/; s/neblink\.example/@DOMAIN@/g; s/Branding\.githubOrg, "MashiroKai"/Branding.githubOrg, "@ORG@"/; s/Branding\.githubRepo, "Nebflow"/Branding.githubRepo, "@REPO@"/; s/Branding\.homeDirName, "\.nebflow"/Branding.homeDirName, ".@LOWER@"/; s/Branding\.envPrefix, "NEBFLOW"/Branding.envPrefix, "@ENV@"/; s/Branding\.cosBucket, "nebflow-releases"/Branding.cosBucket, "@COS@"/; s|https://neblink\.@HOST@|@SERVER@|g; s|Nebflow/academic-search|@PRODUCT@/academic-search|; s/"@@CFG@@"/"nebflow.json"/g
 SED|src/test/scala/@LOWER@/core/RebrandCompatSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/"@@CFG@@"/"nebflow.json"/g
-SED|src/test/scala/@LOWER@/gateway/BrandInjectionSpec.scala|s/"Nebflow"/"@PRODUCT@"/g; s/"nebflow"/"@LOWER@"/g; s/"\.nebflow"/".@LOWER@"/g; s/neblink\.example/@DOMAIN@/g
-SED|src/test/scala/@LOWER@/gateway/IndexWithBrandServeSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/\\"Nebflow\\"/\\"@PRODUCT@\\"/g; s/neblink\.example/@DOMAIN@/g; s/"@@CFG@@"/"nebflow.json"/g
+SED|src/test/scala/@LOWER@/gateway/static/BrandInjectionSpec.scala|s/"Nebflow"/"@PRODUCT@"/g; s/"nebflow"/"@LOWER@"/g; s/"\.nebflow"/".@LOWER@"/g; s/neblink\.example/@DOMAIN@/g
+SED|src/test/scala/@LOWER@/gateway/static/IndexWithBrandServeSpec.scala|s/"nebflow\.json"/"@@CFG@@"/g; s/\\"Nebflow\\"/\\"@PRODUCT@\\"/g; s/neblink\.example/@DOMAIN@/g; s/"@@CFG@@"/"nebflow.json"/g
 # 5. Docs: brand words + command examples
 SED|README.md|s/nebflow/@LOWER@/g
 SED|README.md|s/Nebflow/@PRODUCT@/g
@@ -259,7 +259,47 @@ SMOKE_DIR="$(mktemp -d /tmp/rebrand-smoke.XXXXXX)"
 trap 'rm -rf "$SMOKE_DIR"' EXIT
 if [[ $SKIP_SMOKE -eq 0 ]]; then
   PORT=8199
-  JAR="$(ls "$ROOT"/target/scala-*/${LOWER_NAME}-assembly-*.jar 2>/dev/null | head -1 || true)"
+# >>> WINSORT-BEGIN v1 (version-order jar pick) >>>
+# Name order != version order: the date scheme deliberately strips leading zeros
+# (Windows version fields reject them), so as plain strings "2026.10.5" sorts
+# BEFORE "2026.9.19". Rank the candidates by the parsed numeric tuple and take
+# the max. Version core = the SAME contract as packaging/app-version.sh:21
+#   ([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(-beta\.[0-9]+)?
+# The -beta.N tail is the same-day sequence (O-3), i.e. the tuple's 4th field.
+# Legacy semver shapes (1.4.1-beta.56) are ranked by the same 4-field tuple, so
+# the order is total and deterministic. A name that parses as neither is
+# EXCLUDED - deliberately NO silent fall back to name order: the caller's
+# existing "jar not found" error path then fires.
+_winsort_jar_key() { # <jar path> -> fixed-width numeric key (year,month,day,seq); rc=1 if unparseable
+  local _base="${1:-}" _re
+  _base="${_base##*/}"
+  _re='-assembly-([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})(-beta\.([0-9]+))?\.jar$'
+  if [[ $_base =~ $_re ]]; then
+    printf '%04d%03d%03d%06d' "$((10#${BASH_REMATCH[1]}))" "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))" "$((10#${BASH_REMATCH[5]:-0}))"
+    return 0
+  fi
+  _re='-assembly-([0-9]+)\.([0-9]+)\.([0-9]+)(-beta\.([0-9]+))?\.jar$'
+  if [[ $_base =~ $_re ]]; then
+    printf '%04d%03d%03d%06d' "$((10#${BASH_REMATCH[1]}))" "$((10#${BASH_REMATCH[2]}))" "$((10#${BASH_REMATCH[3]}))" "$((10#${BASH_REMATCH[5]:-0}))"
+    return 0
+  fi
+  return 1
+}
+_winsort_pick_newest() { # stdin: one candidate path per line -> prints the newest one
+  local _cand _key _best='' _best_key=''
+  while IFS= read -r _cand; do
+    [ -n "$_cand" ] || continue
+    _key=$(_winsort_jar_key "$_cand") || continue
+    if [ -z "$_best_key" ] || [ "$_key" \> "$_best_key" ]; then
+      _best="$_cand"; _best_key="$_key"
+    fi
+  done
+  [ -n "$_best" ] && printf '%s\n' "$_best"
+  return 0
+}
+# <<< WINSORT-END v1 <<<
+
+  JAR="$(ls "$ROOT"/target/scala-*/${LOWER_NAME}-assembly-*.jar 2>/dev/null | _winsort_pick_newest || true)"
   [[ -n "$JAR" ]] || die "assembly jar not found for smoke"
   HOME_DIR_FX="$SMOKE_DIR/fixture-home"
   mkdir -p "$HOME_DIR_FX/$LEGACY_LOWER/sessions"
@@ -317,7 +357,7 @@ cat > "$CHECKLIST" <<EOF2
 # Rebrand human checklist — generated by scripts/rebrand.sh
 
 Product: $LEGACY_PASCAL -> $PRODUCT_NAME (lower: $LEGACY_LOWER -> $LOWER_NAME)
-Domain: $DOMAIN — GitHub: $GH_ORG/$GH_REPO — COS bucket: $COS_BUCKET
+Domain: $DOMAIN — GitHub: $GH_ORG/$GH_REPO — OSS bucket: $COS_BUCKET
 
 ## DNS / network
 [ ] Aliyun DNS: nebflow.space 301 -> $DOMAIN; A/CNAME records for $DOMAIN (+ device subdomain)
@@ -327,9 +367,9 @@ Domain: $DOMAIN — GitHub: $GH_ORG/$GH_REPO — COS bucket: $COS_BUCKET
 [ ] Create org $GH_ORG; Settings -> Transfer repository (old URL auto-redirects)
 [ ] OAuth App (Ov23liu3nC6jzBmNIQNB): new/updated callback URLs; Client Secret refreshed into the VPS .env
 
-## COS (release mirror)
+## OSS (release mirror)
 [ ] New bucket $COS_BUCKET provisioned; CI dual-write switch on
-[ ] Old bucket (nebflow-releases-1411212853) retained >= 12 months; push a last-version file that points users at the new bucket
+[ ] Old bucket (nebflow-releases) retained >= 12 months; push a last-version file that points users at the new bucket
 
 ## Website + device server
 [ ] Website deploy with new config; NEBLINK_SERVER_URL env injected

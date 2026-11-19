@@ -21,7 +21,7 @@ import scala.concurrent.duration.*
  *   B. doGetOrCreate 命中死会话时替换重建——防御自愈（任何路径留下的死会话）。
  *
  * 注意：ShellSession 注册表是 object 单例——每个测试用唯一 sessionId，防跨
- * 测试污染（TeamSessionRegistry 同族教训）。
+ * 测试污染。
  */
 class ShellSessionRestartSpec extends FunSuite:
 
@@ -95,3 +95,4 @@ class ShellSessionRestartSpec extends FunSuite:
     val (s1, s2, dead) = program.unsafeRunSync()
     assert(s1 ne s2, "post-destroy forSession must rebuild")
     assert(!dead, "rebuilt session must be alive")
+end ShellSessionRestartSpec

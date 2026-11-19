@@ -3,7 +3,7 @@ package nebflow.cli
 import cats.effect.IO
 import io.circe.Json
 import io.circe.syntax.*
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 object AgentCommand extends CliCommand:
   def name = "agent"
@@ -11,8 +11,8 @@ object AgentCommand extends CliCommand:
   def subcommands = List(AgentList, AgentShow, AgentEdit)
 
   def examples = List(
-    "nebflow agent list",
-    "nebflow agent show Nebula"
+    "stand agent list",
+    "stand agent show Nebula"
   )
 
   private object AgentList extends CliSubcommand:

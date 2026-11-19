@@ -59,7 +59,7 @@ class AtomicJsonSpec extends CatsEffectSuite:
       os.write.over(blocker, "i am a file")
       val f = blocker / "sub" / "state.json" // 父目录是文件 → tmp 写不进去 → 必败
       IO(AtomicJson.writeSync(f, "{}")).attempt.flatMap {
-        case Left(_)  => IO(assert(true, "failure is raised, not swallowed"))
+        case Left(_) => IO(assert(true, "failure is raised, not swallowed"))
         case Right(_) => IO(fail("expected the write to fail"))
       } *> IO {
         assertEquals(os.read(blocker), "i am a file", "blocker file untouched")

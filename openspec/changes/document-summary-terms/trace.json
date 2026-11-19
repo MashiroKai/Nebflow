@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "change": "document-summary-terms",
+  "mappings": [
+    {
+      "requirement": "DST-REQ-001",
+      "scenario": "DST-SCN-001",
+      "implementation": [
+        "tools/stand-terms"
+      ],
+      "tests": [
+        {
+          "path": "tests/test_document_summary_terms.py",
+          "name": "test_extract_boundaries"
+        }
+      ]
+    },
+    {
+      "requirement": "DST-REQ-002",
+      "scenario": "DST-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/documentTermCard.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/document-reference-card.cjs",
+          "name": ".document-term-summary"
+        }
+      ]
+    }
+  ]
+}

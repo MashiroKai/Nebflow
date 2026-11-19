@@ -3,7 +3,6 @@ package nebflow.shared
 import cats.effect.IO
 import com.microsoft.playwright.*
 import com.microsoft.playwright.options.*
-import nebflow.core.NebflowLogger
 
 import java.nio.file.{Files, Paths}
 import java.util.concurrent.Executors

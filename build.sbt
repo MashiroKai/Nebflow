@@ -8,8 +8,9 @@ lazy val root = (project in file("."))
   .settings(
     // L2 rebrand: name/organization (hence the assembly jar name) derive
     // from repo-root brand.conf via project/Branding.scala — the only edit
-    // point for a rename. Current values are byte-identical to the previous
-    // literals ("nebflow"): zero build behavior change.
+    // point for a rename. With brand.conf lowerName = stand the artifact is
+    // stand-assembly-<VERSION>.jar (legacy nebflow-assembly-*.jar files from
+    // older checkouts are NOT cleaned by the build — installers dual-glob).
     name := BrandingBuild.lowerName,
     version := IO.read(file("VERSION")).trim,
     organization := BrandingBuild.lowerName,
@@ -19,6 +20,46 @@ lazy val root = (project in file("."))
     // package it into the JAR so runtime Branding reads it from the classpath.
     // No second copy under src/main/resources — single source, no drift.
     Compile / unmanagedResources += baseDirectory.value / "brand.conf",
+    // 统一更新系统 M3（2026-10-20）：构建身份 BUILD_SHA —— 构建期 git short sha
+    // 生成进 managed resources，`nebflow.Version.build` 从 classpath 读取（心跳
+    // `build` 字段自报；DESIGN §5 `build` 字段 / 现状缺口 #4 的机器可读化）。
+    // git 不可用（tarball 构建）⇒ 写 "dev"，Version 侧回退链兜底。内容不变不重写，
+    // 避免无谓的 rejar。
+    Compile / resourceGenerators += Def.task {
+      val out = (Compile / resourceManaged).value / "BUILD_SHA"
+      val sha =
+        try {
+          import scala.sys.process.*
+          Seq("git", "rev-parse", "--short", "HEAD").!!.trim
+        } catch { case _: Exception => "dev" }
+      if (!out.exists() || IO.read(out).trim != sha) IO.write(out, sha)
+      Seq(out)
+    }.taskValue,
+    // imagegen 双层批（2026-10-24）+ 功能开放批（作者令 2026-10-30 18:22 逐字：
+    // 「生图功能以及 消息 联系功能怎么还没开放出来？直接开放出来。」——正式开放，
+    // 本令取代 2026-10-24「标记调试状态、发版自动剔除」的缺省姿态）：编译期 seal
+    // 缺省翻转为**编入**——`STAND_IMAGEGEN=0|false`（env 或 -Dstand.imagegen=0）
+    // 的构建把生图能力从产物剔除（应急封存开关，机制保留）；不带该变量的构建
+    // ⇒ ImageGenSeal.CompiledIn = true ⇒ 全部交付点（工具注册表、Nebula 固定面、
+    // REST 路由）在场。DebugLabel 随正式开放退役为空串（状态投影线框保留该字段，
+    // 任何面不得再渲染「调试中」文案；三处渲染点已在同一批撤除）。验证锚 =
+    // ImageGenSpec 的 seal 断言组（CompiledIn 镜像断言两形态自洽）。
+    Compile / sourceGenerators += Def.task {
+      val raw = sys.env.get("STAND_IMAGEGEN").orElse(sys.props.get("stand.imagegen"))
+      val enabled = raw.forall(v => v != "0" && !v.equalsIgnoreCase("false"))
+      val out = (Compile / sourceManaged).value / "nebflow" / "core" / "ImageGenSeal.scala"
+      val content =
+        s"""package nebflow.core
+           |
+           |/** 编译期生成——本文件由 build.sbt sourceGenerators 产出，禁手改。 */
+           |object ImageGenSeal {
+           |  final val CompiledIn: Boolean = $enabled
+           |  final val DebugLabel: String = ""
+           |}
+           |""".stripMargin
+      IO.write(out, content)
+      Seq(out)
+    }.taskValue,
     // P1 web bundle: mount build/ (containing web-dist/) as a resource dir ONLY
     // when explicitly requested via -D<lowerName>.webdist=1 (CI: sbt
     // -D${LOWER_NAME}.webdist=1 assembly). The legacy hardcoded -Dnebflow.webdist
@@ -50,6 +91,8 @@ lazy val root = (project in file("."))
       fs2Core,
       // Effect
       catsEffect,
+      catsCore,
+      pekkoActorTyped,
       // JSON
       circeCore,
       circeParser,
@@ -60,10 +103,15 @@ lazy val root = (project in file("."))
       // Logging
       logbackClassic,
       logbackCore,
+      // Feishu (Lark) official SDK + slf4j arbitration (see Dependencies.scala)
+      feishuOapiSdk,
+      slf4jApi,
       // Browser automation (optional — not bundled in distribution, detected at runtime)
       playwright % "provided",
-      // Diff
-      diffUtils,
+    // Diff
+    diffUtils,
+    // Search data layer (datalayer-spec 批)：SQLite FTS5 分片索引（设计稿 §4.1）
+    sqliteJdbc,
       // Testing
       munit,
       munitCatsEffect,
@@ -72,6 +120,37 @@ lazy val root = (project in file("."))
 
     // Compiler options
     scalacOptions ++= Seq(
+      // ── 两个常量，不是一个数（2026-09-10 收尾补正）─────────────────────
+      // 运行时门槛 = 21（README / CONTRIBUTING / Dockerfile / 两份安装器 /
+      // doctor / GatewayMain 启动闸 —— 全部由 scripts/check-jdk-baseline.sh 钉）。
+      // 编译期字节码目标 = 17（就是下面这一行）。两者刻意**不相等**，且目标
+      // 必须严格低于门槛（门禁 A-7a 钉死这个不等式）。
+      //
+      // 为什么目标要低一档：
+      //   · 产物必须在门槛以下那一档 JVM 上**能加载**。否则
+      //     src/main/scala/nebflow/core/JvmRequirement.scala 的人话报错
+      //     （"requires Java 21 or newer" + 平台升级指引 + Jar:/Java: 诊断）
+      //     根本跑不到：17 容器里连 nebflow.Main 都加载不了，JVM 直接抛
+      //     UnsupportedClassVersionError（实测 class file version 65 > 61）。
+      //   · `nebflow update | doctor | version` 是自修入口，必须在"待升级的
+      //     那台机器"上可运行（立项约束：闸放 GatewayMain.run 首行，不放
+      //     Main.run）。字节码 65 会把它们一起焊死 —— 用户只剩卸载重装。
+      //
+      // 为什么这不是"把 API 面放开"：
+      //   · `-release` 同时钉 API 面与字节码目标；17 的 API 面是 21 的**子集**，
+      //     API 漂移从机制上更不可能，不是更可能。
+      //   · Scala 3.5.2 无法把"API 面 21"与"输出字节码 17"拆开：-release 与
+      //     -java-output-version 是同一个设置，同时给会直接
+      //     "Flag -java-output-version set repeatedly"；单独给
+      //     -java-output-version:17 同样把 API 面降到 17（两者均实测）。
+      //   · 运行时门槛 21 由启动闸 + doctor + 安装器 + Dockerfile + 本门禁
+      //     共同承担，**不靠字节码目标承担**。
+      //
+      // 因此 A-5 断言的是字节码目标 == 17（不是 21），A-7a 断言 17 < 21，
+      // A-7b 断言 jar 内 Main.class major == 61。把这里改回 "-release:21"
+      // 会让 17 侧的人话报错重新不可达 —— 那是回退，不是修复。
+      // 详见 CONTRIBUTING.md「Prerequisites」与 scripts/check-jdk-baseline.sh 文件头。
+      "-release:17",
       "-encoding", "utf8",
       "-deprecation",
       "-feature",
@@ -88,31 +167,62 @@ lazy val root = (project in file("."))
     // Tests share PathUtil global state — sequential execution prevents interference
     Test / parallelExecution := false,
 
-    // 阶段 2c（MemoryEditToolSpec 引入）：MemoryStore 的 MtimeCache val 在首次
-    // 触碰时把当时的 dataRoot 路径钉进缓存对象——串行化挡不住「先跑的 suite 已
-    // 在默认 dataRoot 下初始化 MemoryStore」的跨 suite 污染。MemoryEditToolSpec
-    // 全程依赖 dataRoot 重定向 → 独占 forked JVM（组内唯一 suite，初始化顺序
-    // 可控）；其余 suite 维持原 in-process 单组不变。
+    // 阶段 2c（MemoryNoteToolSpec 引入）的 `Test / testGrouping` 特例已随该 spec
+    // 退役一并删除（memory-family-retirement 批 2026-09-29）：当时引入独占 forked
+    // JVM 的唯一理由 = 「MemoryNoteToolSpec 全程依赖 dataRoot 重定向，需把
+    // MemoryStore MtimeCache 的首触钉定与其余 suite 隔开」。该 spec 本体已删净 ⇒
+    // 分组无成员 ⇒ 整块移除。**其余 suite 的执行形态零变化**：原 `rest` 组本就是
+    // 「除该 spec 外的全部 suite + InProcess」，使 in-process 组的成员集合与顺序
+    // 在删除前后逐一相同。
+    // db 接线二阶 B4（OS 级 kill -9 chaos 批）恢复同一先例形态：DbKill9ChaosSpec
+    // 需要真实子 JVM（`java -cp <java.class.path>` 直启 DbChaosChild），而 in-process
+    // sbt 分层 classloader 的 java.class.path 不含测试依赖 jar——forked 测试 JVM 才
+    // 携带完整 classpath ⇒ 该 spec 独占 SubProcess 组；其余 suite 维持 InProcess 单
+    // 组，成员集合与顺序零变化（空组无成员时 sbt 自然跳过）。
     Test / testGrouping := {
       val tests = (Test / definedTests).value
-      val isolated = tests.filter(_.name == "nebflow.core.tools.MemoryEditToolSpec")
-      val rest = tests.filterNot(_.name == "nebflow.core.tools.MemoryEditToolSpec")
+      val chaos = tests.filter(_.name == "nebflow.db.chaos.DbKill9ChaosSpec")
+      val reminderProcesses = tests.filter(_.name == "nebflow.agent.TaskLedgerPassiveReminderSpec")
+      val rest = tests.filterNot(t => t.name == "nebflow.db.chaos.DbKill9ChaosSpec" || t.name == "nebflow.agent.TaskLedgerPassiveReminderSpec")
       Seq(
         Tests.Group("in-process-suites", rest, Tests.InProcess),
-        Tests.Group("memoryedit-isolated", isolated, Tests.SubProcess(ForkOptions()))
+        Tests.Group("db-kill9-chaos-isolated", chaos, Tests.SubProcess(ForkOptions())),
+        Tests.Group("task-ledger-process-isolated", reminderProcesses, Tests.SubProcess(ForkOptions()))
       )
     },
 
-    // Java options
-    javaOptions ++= Seq(
-      "--add-opens", "java.base/java.lang=ALL-UNNAMED",
-      "-XX:+UseZGC",
-      "-XX:+ZGenerational",
-      "-Xms512m",
-      "-Xmx2g",
-      "-XX:+UseStringDeduplication",
-      "-XX:+AlwaysPreTouch",
-    ),
+    // Java options —— 本工程 JVM 选项的唯一来源（🔴 禁在第二处散落同名选项）。
+    // JVM 不会自建 -Xlog:gc:file / -XX:HeapDumpPath 的父目录，而 fork 的 JVM 是在
+    // javaOptions 求值之后才 spawn ⇒ 目录前置创建只能放在本单点、且先于 JVM 启动。
+    // 两条路径均为仓内相对形态（.nebflow/ 由根 .gitignore 整体覆盖；禁用户绝对路径）。
+    javaOptions ++= {
+      IO.createDirectory(baseDirectory.value / ".nebflow" / "logs" / "jvm")
+      Seq(
+        "--add-opens", "java.base/java.lang=ALL-UNNAMED",
+        "-XX:+UseZGC",
+        "-XX:+ZGenerational",
+        "-Xms512m",
+        // 堆上限按机器比例（12.5%：本机 16GB ⇒ 2GB，与旧 -Xmx2g 等价、零行为变化，
+        // 换机自适应）。作者已显式拒绝「升 3GB」⇒ 🔴 不得取 25%（本机即 4GB）；
+        // 日后加大配额 = 只改这一个数（须新裁）。🔴 不得与任何 -Xmx 并存（会被覆盖成死码）。
+        "-XX:MaxRAMPercentage=12.5",
+        "-XX:+UseStringDeduplication",
+        "-XX:+AlwaysPreTouch",
+        // OOM 即硬退出（失败语义 = 硬退出 → 看门狗拉起 → 约几分钟不可用；作者已知并接受）。
+        "-XX:+ExitOnOutOfMemoryError",
+        // OOM 时转储；单发磁盘代价 ≈ 堆大小（本机 ≈ 2GB）。路径为相对形态。
+        "-XX:+HeapDumpOnOutOfMemoryError",
+        "-XX:HeapDumpPath=.nebflow/logs/jvm/",
+        // GC 日志自带上限轮转（5 个文件 × 10M），同样落相对运行时路径。
+        "-Xlog:gc*:file=.nebflow/logs/jvm/gc.log:time,uptime:filecount=5,filesize=10M",
+        // phase 2 daemon 批（§1.5 前台豁免）：sbt fork 出的 nebflow.Main 标记为
+        // 前台形态 —— dev/sbt 链保持今日逐字节的前台行为（quit stdin 链 / Ctrl+C /
+        // 进程树形态零变化），产品面（assembly jar）不设此属性 ⇒ 走 daemon 分支。
+        // 刻意加在本裸块 Seq 末尾（同一机制同一路径，零新 scope —— 新开
+        // `(Compile, run) / javaOptions` scope 有委托链断链风险）。
+        "-Dnebflow.start.foreground=true",
+      )
+    },
 
     // Assembly settings (fat JAR fallback)
     assembly / assemblyMergeStrategy := {
@@ -125,6 +235,11 @@ lazy val root = (project in file("."))
       // diverging the jar-seeded digest from the repo seed. seed/ has exactly
       // one source jar, so `first` is the faithful pass-through.
       case x if x.startsWith("seed/") => MergeStrategy.first
+      // web/ is likewise single-source (the project's own resources); the
+      // default rename-on-collision suffixed vendor doc files (LICENSE /
+      // README.md) with the assembly jar name, making them unreachable at
+      // their served paths and tripping verify-web-assets.
+      case x if x.startsWith("web/") => MergeStrategy.first
       case x =>
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)

@@ -2,6 +2,7 @@ package nebflow.core.compact
 
 import cats.effect.IO
 import io.circe.syntax.*
+import nebflow.db.{DbHandle, DbHost, ReadResult}
 import nebflow.shared.*
 import nebflow.shared.given
 
@@ -11,7 +12,6 @@ import java.time.{Instant, ZoneId}
 /** Result of archiving a compaction — paths to generated files. */
 case class CompactionArchive(
   sessionDir: String,
-  reportPath: String,
   beforeJsonPath: String,
   afterJsonPath: String
 )
@@ -20,9 +20,15 @@ trait HistoryArchiver:
 
   /**
    * Archive a compaction run. Writes:
-   *   - report.md   : human-readable debug report
    *   - before.json : raw messages before compaction
    *   - after.json  : raw messages after compaction
+   *
+   * 2026-09-15 作者令（逐字）：「把上下文压缩写成 report 的功能删掉，并且删掉以往
+   * 记录的 report。」—— 此前在本方法内额外落一份人读 markdown
+   * （`<ts>-report.md`，首行 `# Context Compaction Report`）的整条生成链已删除：
+   * report 文件写入点、`buildReport` 构造器，以及只服务于它的消息统计/渲染辅助
+   * （`messageStats` / `messagesToText` / `messageToText`）与 `CompactionArchive.reportPath`。
+   * before/after 原始 JSON 转储是**另一件事**，不在该令范围内，保持原样。
    *
    * Landing spot: `<sessionsRoot>/<sessionId>/compaction/<ts>-*` — grouped by
    * session under the data-root `sessions/` directory (2026-09-02 迁移：此前写
@@ -45,9 +51,27 @@ end HistoryArchiver
 
 object HistoryArchiver:
 
-  /** @param sessionsRoot the data-root `sessions/` directory (e.g.
-   *        `PathUtil.dataRoot / "sessions"` — see GatewayMain wiring). */
-  def fileSystem(sessionsRoot: os.Path): HistoryArchiver = new:
+  private val logger = NebflowLogger.forName("nebflow.compaction.archiver")
+
+  /** 生产默认落盘根（GatewayMain:673 装配点同值；默认根判别自开的基准）。
+   *  def 而非 val：PathUtil.dataRoot 是测试换根缝，须每次求值。 */
+  def defaultSessionsRoot: os.Path = PathUtil.dataRoot / "sessions"
+
+  /**
+   * @param sessionsRoot the data-root `sessions/` directory (e.g.
+   *        `PathUtil.dataRoot / "sessions"` — see GatewayMain wiring).
+   * @param db db 接线第一阶 C7（快照面落库）：显式注入缝（测试传临时根句柄）。
+   *        缺省 + 默认 sessionsRoot 构造（= 生产装配，GatewayMain 无参调用）⇒
+   *        自开共享句柄（DbHost best-effort——失败 ⇒ 纯旧档行为，零波及）。
+   */
+  def fileSystem(sessionsRoot: os.Path, db: Option[DbHandle] = None): HistoryArchiver = new:
+
+    /** db 影子面句柄（None = 未接线/自开失败 ⇒ db 腿全部 no-op）。 */
+    private val dbHandle: Option[DbHandle] = db.orElse(
+      Option.when(sessionsRoot == defaultSessionsRoot)(
+        DbHost.openBestEffort(PathUtil.dataRoot.toNIO)
+      ).flatten
+    )
 
     def archiveCompaction(
       sessionId: String,
@@ -65,207 +89,75 @@ object HistoryArchiver:
         os.makeDir.all(dir)
 
         val prefix = s"$ts"
-        val reportFile = dir / s"$prefix-report.md"
         val beforeFile = dir / s"$prefix-before.json"
         val afterFile = dir / s"$prefix-after.json"
 
-        // --- 1. Raw JSON dumps ---
+        // --- Raw JSON dumps (the only artifacts this archiver writes) ---
         os.write.over(beforeFile, before.asJson.spaces2)
         os.write.over(afterFile, after.asJson.spaces2)
-
-        // --- 2. Human-readable report ---
-        val report = buildReport(
-          sessionId,
-          sessionName,
-          agentName,
-          now,
-          mode,
-          before,
-          after,
-          extra
-        )
-        os.write.over(reportFile, report)
 
         Right(
           CompactionArchive(
             sessionDir = dir.toString,
-            reportPath = reportFile.toString,
             beforeJsonPath = beforeFile.toString,
             afterJsonPath = afterFile.toString
           )
         )
       catch case e: Throwable => Left(e.getMessage)
+    }.flatMap { res =>
+      // db 影子腿（C7）：旧档写成功后补写快照 + 压缩点位 + 读回校验；任何 db
+      // 故障 ⇒ WARN、返回值语义不变（旧档仍是主读面，best-effort 铁律 0.1）。
+      // 元信息（sessionName/agentName/mode/extra）留旧档侧——第一阶边界。
+      res match
+        case Right(_) => shadowToDb(sessionId, before, after).as(res)
+        case Left(_)  => IO.pure(res)
     }
 
-  // ------------------------------------------------------------------
-  // Report builder
-  // ------------------------------------------------------------------
+    /** 单份快照落 db + 读回校验（不符/失败 ⇒ WARN，返回 db 内引用位或 None）。 */
+    private def putSnapshot(h: DbHandle, sessionId: String, label: String, content: String): IO[Option[String]] =
+      h.writeSnapshot(sessionId, content).attempt.flatMap {
+        case Left(e) =>
+          logger.warn(s"db snapshot($label) failed for $sessionId: ${e.getMessage}") *> IO.pure(None)
+        case Right(n) =>
+          val ref = s"snapshots/$n.json"
+          h.readSnapshot(sessionId, n).attempt.flatMap {
+            case Right(ReadResult.Present(c)) if c == content => IO.pure(Some(ref))
+            case Right(other) =>
+              logger.warn(s"db snapshot($label) readback mismatch for $sessionId ($ref): $other") *>
+                IO.pure(Some(ref))
+            case Left(e) =>
+              logger.warn(s"db snapshot($label) readback failed for $sessionId ($ref): ${e.getMessage}") *>
+                IO.pure(Some(ref))
+          }
+      }
 
-  private val ReportTimeFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss z").withZone(ZoneId.systemDefault())
+    /**
+     * before/after 双快照（会话 `snapshots/<n>.json` 位，设计 §3.4(e)）+
+     * compactPoint 点位行（refs = db 快照位；旧档路径仍由返回值给宿主）。
+     */
+    private def shadowToDb(
+      sessionId: String,
+      before: List[Message],
+      after: List[Message]
+    ): IO[Unit] = dbHandle match
+      case None => IO.unit
+      case Some(h) =>
+        putSnapshot(h, sessionId, "before", before.asJson.spaces2).flatMap { bRef =>
+          putSnapshot(h, sessionId, "after", after.asJson.spaces2).flatMap { aRef =>
+            (bRef, aRef) match
+              case (Some(b), Some(a)) =>
+                h.appendCompactPoint(sessionId, b, a,
+                  tokens = (before.size + after.size).toLong).attempt.flatMap {
+                  case Left(e) =>
+                    logger.warn(s"db compactPoint append failed for $sessionId: ${e.getMessage}")
+                  case Right(_) => IO.unit
+                }
+              case _ => IO.unit // 快照腿任一失败 ⇒ 点位不落（无引用可指）
+          }
+        }
+
   private val FileTimeFmt = DateTimeFormatter.ofPattern("yyyyMMdd-HHmmss").withZone(ZoneId.systemDefault())
 
   private def formatTimestamp(i: Instant): String = FileTimeFmt.format(i)
-  private def formatReportTime(i: Instant): String = ReportTimeFmt.format(i)
-
-  private def buildReport(
-    sessionId: String,
-    sessionName: Option[String],
-    agentName: String,
-    time: Instant,
-    mode: String,
-    before: List[Message],
-    after: List[Message],
-    extra: Map[String, String]
-  ): String =
-    val shortSid = sessionId.take(8)
-    val sname = sessionName.getOrElse("-")
-
-    val beforeStats = messageStats(before)
-    val afterStats = messageStats(after)
-
-    val preserved = extra.get("preservedRounds").map(v => s"**Preserved rounds:** $v\n").getOrElse("")
-    val extraLines = extra.filter(_._1 != "preservedRounds").map { (k, v) => s"- **$k:** $v" }.mkString("\n")
-
-    s"""# Context Compaction Report
-       |
-       |## Metadata
-       |
-       || Field | Value |
-       ||-------|-------|
-       || Session | $sname (`$shortSid`) |
-       || Agent | $agentName |
-       || Time | ${formatReportTime(time)} |
-       || Mode | $mode |
-       || Before messages | ${before.size} |
-       || After messages | ${after.size} |
-       || Delta | ${before.size - after.size} (${
-        if before.size > 0 then ((before.size - after.size) * 100 / before.size) else 0
-      }%) |
-       |
-       |$preserved${if extraLines.nonEmpty then extraLines + "\n" else ""}
-       |## Stats
-       |
-       || Metric | Before | After |
-       ||--------|--------|-------|
-       || User msgs | ${beforeStats.userCount} | ${afterStats.userCount} |
-       || Assistant msgs | ${beforeStats.assistantCount} | ${afterStats.assistantCount} |
-       || System msgs | ${beforeStats.systemCount} | ${afterStats.systemCount} |
-       || Tool results | ${beforeStats.toolResultCount} | ${afterStats.toolResultCount} |
-       || Tool uses | ${beforeStats.toolUseCount} | ${afterStats.toolUseCount} |
-       || Total chars | ${beforeStats.totalChars} | ${afterStats.totalChars} |
-       |
-       |---
-       |
-       |## Before (${before.size} messages)
-       |
-       |```
-       |${messagesToText(before)}
-       |```
-       |
-       |---
-       |
-       |## After (${after.size} messages)
-       |
-       |```
-       |${messagesToText(after)}
-       |```
-       |""".stripMargin
-  end buildReport
-
-  // ------------------------------------------------------------------
-  // Message statistics
-  // ------------------------------------------------------------------
-
-  private case class MsgStats(
-    userCount: Int,
-    assistantCount: Int,
-    systemCount: Int,
-    toolResultCount: Int,
-    toolUseCount: Int,
-    totalChars: Int
-  )
-
-  private def messageStats(messages: List[Message]): MsgStats =
-    var userCount = 0
-    var assistantCount = 0
-    var systemCount = 0
-    var toolResultCount = 0
-    var toolUseCount = 0
-    var totalChars = 0
-
-    for msg <- messages do
-      msg.role match
-        case MessageRole.User => userCount += 1
-        case MessageRole.Assistant => assistantCount += 1
-        case MessageRole.System => systemCount += 1
-
-      msg.content match
-        case Left(text) => totalChars += text.length
-        case Right(blocks) =>
-          for block <- blocks do
-            block match
-              case ContentBlock.Text(t) => totalChars += t.length
-              case ContentBlock.ToolResult(_, content, _) =>
-                toolResultCount += 1
-                totalChars += content.length
-              case ContentBlock.ToolUse(_, _, input) =>
-                toolUseCount += 1
-                totalChars += input.asJson.noSpaces.length
-              case ContentBlock.Thinking(t, _) => totalChars += t.length
-              case ContentBlock.Image(_, _) => totalChars += 100
-    end for
-
-    MsgStats(userCount, assistantCount, systemCount, toolResultCount, toolUseCount, totalChars)
-  end messageStats
-
-  // ------------------------------------------------------------------
-  // Human-readable message rendering
-  // ------------------------------------------------------------------
-
-  private val ToolResultMaxChars = 500
-
-  private def messagesToText(messages: List[Message]): String =
-    val sb = new StringBuilder()
-    for (msg, i) <- messages.zipWithIndex do
-      val roleLabel = msg.role match
-        case MessageRole.User => "User"
-        case MessageRole.Assistant => "Assistant"
-        case MessageRole.System => "System"
-      sb.append(s"\n[$i] --- $roleLabel ---\n")
-      sb.append(messageToText(msg))
-      sb.append("\n")
-    end for
-    sb.toString
-  end messagesToText
-
-  private def messageToText(msg: Message): String =
-    msg.content match
-      case Left(text) => text
-      case Right(blocks) =>
-        val sb = new StringBuilder()
-        for block <- blocks do
-          block match
-            case ContentBlock.Text(text) =>
-              sb.append(text).append("\n")
-            case ContentBlock.Image(_, mediaType) =>
-              sb.append(s"[image: $mediaType]\n")
-            case ContentBlock.ToolUse(id, name, input) =>
-              val inputJson = input.asJson.noSpaces
-              val display =
-                if inputJson.length > 300 then inputJson.take(300) + s" ... [${inputJson.length - 300} more chars]"
-                else inputJson
-              sb.append(s"[ToolUse: $name id=$id] $display\n")
-            case ContentBlock.ToolResult(toolUseId, content, isError) =>
-              val prefix = if isError.contains(true) then "[ToolResult ERROR" else "[ToolResult"
-              val display =
-                if content.length > ToolResultMaxChars then
-                  content.take(ToolResultMaxChars) + s"\n... [${content.length - ToolResultMaxChars} more chars]"
-                else content
-              sb.append(s"$prefix id=$toolUseId]\n$display\n")
-            case ContentBlock.Thinking(thinking, _) =>
-              sb.append(s"[Thinking]\n$thinking\n")
-        end for
-        sb.toString
-  end messageToText
 
 end HistoryArchiver

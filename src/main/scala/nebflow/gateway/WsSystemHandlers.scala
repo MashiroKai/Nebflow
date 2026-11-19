@@ -1,0 +1,754 @@
+/* 从 WebSocketRoutes 迁出(行为保持重构,2026-09-24)。 */
+package nebflow.gateway
+
+import nebflow.neblink.core.*
+
+import cats.effect.std.{Dispatcher, Queue}
+import cats.effect.{Deferred, IO, Ref}
+import cats.syntax.all.*
+import fs2.{Pipe, Stream}
+import io.circe.parser.parse
+import io.circe.syntax.*
+import io.circe.{Json, JsonObject}
+import nebflow.actor.{ActorSystem as RootActorSystem, AgentCommand, status}
+import nebflow.agent.*
+import nebflow.core.*
+import nebflow.core.entity.EntityLoader
+import nebflow.core.mcp.McpManager
+import nebflow.core.project.{CancelSource as ChainCancelSource, *}
+import nebflow.core.schedule.FreezeSchedule.given
+import nebflow.core.skill.SkillService
+import nebflow.core.tools.{ToolContext, ToolRegistry}
+import nebflow.gateway.NfFilePolicy.*
+import nebflow.gateway.WsDispatch.{inboundEnvelope, parsedJson}
+import nebflow.llm.*
+import nebflow.service.*
+import nebflow.shared.*
+import org.http4s.*
+import org.http4s.circe.CirceEntityCodec.*
+import org.http4s.dsl.io.*
+import org.http4s.headers.`Content-Type`
+import org.http4s.server.websocket.WebSocketBuilder2
+import org.http4s.websocket.WebSocketFrame
+
+import scala.concurrent.duration.*
+import scala.io.Source
+
+/** 系统域(system):ping/转写/热重启/更新/自启/后台任务/智能体提示词等。 */
+private[gateway] object WsSystemHandlers:
+
+  private[gateway] val handlers: Map[String, WsDispatch.WsHandler] = Map(
+    "restart" -> handleRestart,
+    "transcribe" -> handleTranscribe,
+    "ping" -> handlePing,
+    "getActiveBgTasks" -> handleGetActiveBgTasks,
+    "cancelBackgroundJob" -> handleCancelBackgroundJob,
+    "cancelFlow" -> handleCancelFlow,
+    "getAgentSystemPrompt" -> handleGetAgentSystemPrompt,
+    "updateAgentSystemPrompt" -> handleUpdateAgentSystemPrompt,
+    "updateAgentTools" -> handleUpdateAgentTools,
+    "checkUpdate" -> handleCheckUpdate,
+    "doUpdate" -> handleDoUpdate,
+    "remoteUpdate" -> handleRemoteUpdate,
+    "fleetUpdateStart" -> handleFleetUpdateStart,
+    "fleetUpdateCancel" -> handleFleetUpdateCancel,
+    "fleetUpdateRetry" -> handleFleetUpdateRetry,
+    "fleetUpdateSnapshot" -> handleFleetUpdateSnapshot,
+    "autostartStatus" -> handleAutostartStatus,
+    "autostartSet" -> handleAutostartSet
+  )
+
+  private def handleRestart(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // ── 热重启触发面（P1，hot-restart 批设计 §3.2）：Web UI 按钮的 WS 命令。
+    // confirm=true 必带（前端确认对话框「将等待当前工作完成后重启」的引擎侧
+    // 强制位）；waitIdle 默认 true（§7 拍板项 2 建议：UI 默认排队可取消语义
+    // 的后端形态——等待期工作照常准入）。进度经 restartStatus 帧 wsHub 广播
+    // （quiesce/draining/spawning/handing-over/completed/failed）。编排器与
+    // 触发源解耦——桌面菜单/REST API（P2）后续接同一 HotRestart.requestRestart。
+    val rc = parsedJson(text).hcursor
+    val confirmed = rc.downField("confirm").as[Boolean].getOrElse(false)
+    val waitIdle = rc.downField("waitIdle").as[Boolean].getOrElse(true)
+    val waitTimeoutMs = rc.downField("waitTimeoutMs").as[Long].getOrElse(600000L)
+    def restartReply(ok: Boolean, extra: (String, Json)*): IO[Unit] =
+      wsSend(
+        io.circe.Json.obj(
+          Seq(("type", "restartResult".asJson), ("ok", ok.asJson)) ++ extra*
+        )
+      )
+    if !confirmed then
+      restartReply(
+        ok = false,
+        "error" -> "restart requires confirm=true — the gateway restarts in place once current work finishes".asJson
+      )
+    else
+      sharedResources.hotRestart match
+        case None =>
+          restartReply(ok = false, "error" -> "hot restart is not available in this instance".asJson)
+        case Some(hr) =>
+          val mode =
+            if waitIdle then nebflow.core.hotrestart.RestartMode.WaitIdle(waitTimeoutMs)
+            else nebflow.core.hotrestart.RestartMode.RejectIfBusy
+          hr.requestRestart(source = "web-ui", mode = mode).flatMap {
+            case Right(()) =>
+              restartReply(
+                ok = true,
+                "message" -> "hot restart underway — the UI will reconnect automatically when the new instance is up".asJson
+              )
+            case Left(err) => restartReply(ok = false, "error" -> err.asJson)
+          }
+    end if
+  end handleRestart
+
+  private def handleTranscribe(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val hc = json.hcursor
+    val audioB64 = hc.downField("audio").as[String].getOrElse("")
+    val language = hc.downField("language").as[String].toOption.filter(_.nonEmpty)
+    if audioB64.nonEmpty then
+      sttServiceRef.get.flatMap { sttService =>
+        sttService match
+          case None =>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "transcription".asJson,
+                "error" -> "STT not configured — set it up in Settings".asJson
+              )
+            )
+          case Some(svc) =>
+            IO.blocking {
+              java.util.Base64.getDecoder.decode(audioB64)
+            }.flatMap { wavBytes =>
+              svc.transcribe(wavBytes, language).flatMap {
+                case Right(text) =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "transcription".asJson,
+                      "text" -> text.asJson
+                    )
+                  )
+                case Left(err) =>
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "transcription".asJson,
+                      "error" -> err.asJson
+                    )
+                  )
+              }
+            }.handleErrorWith { e =>
+              logger.warn(s"Transcribe failed: ${e.getMessage}")
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "transcription".asJson,
+                  "error" -> e.getMessage.asJson
+                )
+              )
+            }
+      }
+    else IO.unit
+    end if
+  end handleTranscribe
+
+  private def handlePing(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    wsSend(io.circe.Json.obj("type" -> "pong".asJson))
+
+  private def handleGetActiveBgTasks(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    nebflow.core.tools.BgTaskRegistry.activeTasksJson.flatMap { tasksJson =>
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "activeBgTasks".asJson,
+          "tasks" -> tasksJson
+        )
+      )
+    }
+  end handleGetActiveBgTasks
+
+  private def handleCancelBackgroundJob(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val cancelSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+    val jobId = json.hcursor.downField("jobId").as[String].getOrElse("")
+    if cancelSessionId.nonEmpty && jobId.nonEmpty then
+      // P2 单任务取消泛化（设计稿 §4.1-a）：面板帧不再只认本地腿——先在册查行，
+      // kind=remote（deviceName 非空）走设备通道 bg-cancel（RemoteExecutor
+      // 精确打断本侧等待 + 对端按 bgJobId 杀进程树，1/N）；其余行落既有本地腿
+      // （下方逐字不变）。前端帧形状不变（仍 {type, sessionId, jobId}）。
+      nebflow.core.tools.BgTaskRegistry.find(jobId).flatMap {
+        case Some(row) if row.deviceName.nonEmpty =>
+          ctx.sharedResources.agentRegistry.get.flatMap { reg =>
+            nebflow.core.tools.BgTaskCancel
+              .cancelOne(
+                jobId,
+                by = "the user panel",
+                wsSend = Some(wsSend),
+                agentRef = reg.get(row.sessionId).map(_.ref)
+              )
+              .flatMap {
+                case Right(detail) =>
+                  logger.info(detail, "sessionId" -> row.sessionId, "jobId" -> jobId)
+                case Left(err) =>
+                  logger.warn(s"remote cancelBackgroundJob failed for session=${row.sessionId} job=$jobId: $err") *>
+                    wsSend(
+                      io.circe.Json.obj(
+                        "type" -> "backgroundTaskUpdate".asJson,
+                        "sessionId" -> cancelSessionId.asJson,
+                        "rootSessionId" -> cancelSessionId.asJson,
+                        "taskId" -> jobId.asJson,
+                        "description" -> "".asJson,
+                        "status" -> "failed".asJson
+                      )
+                    ).handleErrorWith(_ => IO.unit)
+              }
+          }
+        case _ =>
+          nebflow.core.tools.ShellSession
+            .forSession(cancelSessionId)
+            .flatMap { shell =>
+          shell.cancelBackgroundJob(jobId).flatMap { cancelled =>
+            val logMsg =
+              if cancelled then s"Cancelled background job $jobId"
+              else s"Background job $jobId not found or already completed"
+            logger.info(logMsg, "sessionId" -> cancelSessionId, "jobId" -> jobId) *>
+              // 输出查看批（2026-09-09）：显式取消也是终态——输出留存区
+              // 翻转为 cancelled，详情卡回看「取消时刻为止」的全部输出。
+              // 幂等：若完成回调已先 finalize（竞态），此处 no-op。
+              // #1193 收口腿：**同步取走 registry 行**——原实现只出会话任务图
+              // 不取行，行残留 → death-watch 下拍以「owner lost: not owned by
+              // session」二次收割，账本/通知留下「引擎埋任务」假证。
+              // first-terminal-wins：竞态已取走 ⇒ no-op 幂等。
+              (if cancelled then
+                 nebflow.core.tools.BgTaskRegistry.unregisterReturning(jobId).void *>
+                 nebflow.core.tools.BgTaskOutputStore
+                   .finalizeTask(jobId, "cancelled", None, Some("Cancelled by user"))
+                   .handleErrorWith(e =>
+                     logger.warn(s"bg-output finalize (cancel) failed for job $jobId: ${e.getMessage}")
+                   )
+               else IO.unit) *>
+              // Notify agent so it can process cancellation.
+              // 通知详情批（2026-10-24）：取消通知补原因段（旧形态只有 jobId 一行，
+              // 作者无法从通知判断为什么没了）。
+              ensureAgent(cancelSessionId) { ref =>
+                ref ! AgentCommand.ExternalEvent(
+                  source = "background-task",
+                  eventType = "cancelled",
+                  payload = s"[Background task cancelled] Job ID: $jobId (Cancelled by user)",
+                  metadata = io.circe.JsonObject(
+                    "jobId" -> jobId.asJson
+                  ),
+                  correlationId = Some(jobId)
+                )
+              } *>
+              // Send completion update to frontend so the task is removed from the dropdown
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "backgroundTaskUpdate".asJson,
+                  "sessionId" -> cancelSessionId.asJson,
+                  // 权威分键（2026-09-05）：前端按 rootSessionId 分桶，回显
+                  // 取消请求携带的会话（即前端桶键），保证移除帧落同一桶。
+                  "rootSessionId" -> cancelSessionId.asJson,
+                  "taskId" -> jobId.asJson,
+                  "description" -> "".asJson,
+                  "status" -> "completed".asJson
+                )
+              )
+          }
+        }
+        .handleErrorWith { e =>
+          logger.warn(s"cancelBackgroundJob failed for session=$cancelSessionId job=$jobId: ${e.getMessage}")
+          // Send a completion update even on error, so the frontend removes the task
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "backgroundTaskUpdate".asJson,
+              "sessionId" -> cancelSessionId.asJson,
+              "rootSessionId" -> cancelSessionId.asJson,
+              "taskId" -> jobId.asJson,
+              "description" -> "".asJson,
+              "status" -> "failed".asJson
+            )
+          ).handleErrorWith(_ => IO.unit)
+        }
+      }
+    else IO.unit
+    end if
+  end handleCancelBackgroundJob
+
+  private def handleCancelFlow(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val flowName = json.hcursor.downField("name").as[String].getOrElse("")
+    val cfSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
+    val instanceId = json.hcursor.downField("instanceId").as[String].getOrElse("")
+    if instanceId.nonEmpty then
+      // Cancel a DAG flow instance directly
+      nebflow.core.flow.RunningFlowRegistry.cancel(instanceId) *>
+        logger.info(s"Cancel DAG flow '$instanceId' requested by user via WS")
+    else if flowName.nonEmpty && cfSessionId.nonEmpty then
+      // 团队功能删除批（team-feature-deletion-20261104）阶段 2：此处原有「按会话找
+      // 团队树 actor 并发 CancelPipeline(flowName)」的团队 pipeline
+      // 取消腿，已随团队挂载面一并删除（详见
+      // reports-evidence/team-feature-deletion/stage2/README.md §D）。
+      // **帧本身保留**：上面的 instanceId 分支服务 flow-map/DAG 实例取消
+      // （RunningFlowRegistry），与本批无关，仍是活语义。
+      // 走到这里 = 调用方只给了 name+sessionId（团队形状）⇒ 明确拒绝而非静默吞掉。
+      logger.warn(
+        s"Cannot cancel flow '$flowName': team-pipeline cancellation was retired (session $cfSessionId) — no pipeline of that shape exists any more"
+      )
+    else IO.unit
+  end handleCancelFlow
+
+  private def handleGetAgentSystemPrompt(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val agentName = parse(text).flatMap(_.hcursor.downField("name").as[String]).getOrElse("")
+    if agentName.nonEmpty then
+      agentService.getSystemPrompt(agentName).flatMap { mdOpt =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "agentSystemPrompt".asJson,
+            "name" -> agentName.asJson,
+            "systemMd" -> mdOpt.getOrElse("").asJson
+          )
+        )
+      }
+    else IO.unit
+  end handleGetAgentSystemPrompt
+
+  private def handleUpdateAgentSystemPrompt(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val json = parsedJson(text)
+    val agentName = json.hcursor.downField("name").as[String].getOrElse("")
+    val systemMd = json.hcursor.downField("systemMd").as[String].getOrElse("")
+    if agentName.nonEmpty then
+      // builtin-def 批（2026-10-03 作者令①「唯一标准源就是代码，插件面板只能
+      // 做只读查看」）：builtin 名的 prompt 写通道显式拒绝（loud，禁静默成功——
+      // 客户端拿到 error 信封而不是 saved 回执）。
+      if nebflow.core.entity.BuiltinAgents.isBuiltin(agentName) then
+        logger.warn(
+          s"Rejected updateAgentSystemPrompt for '$agentName' — built-in agents are code-defined and read-only"
+        )
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "error".asJson,
+            "message" -> s"'$agentName' is a built-in agent: its system prompt is defined in code (BuiltinAgents) and is read-only.".asJson
+          )
+        )
+      else
+        agentService.updateSystemPrompt(agentName, systemMd) *>
+          wsSend(io.circe.Json.obj("type" -> "agentSystemPromptSaved".asJson, "name" -> agentName.asJson))
+    else IO.unit
+
+    end if
+
+  end handleUpdateAgentSystemPrompt
+
+  private def handleUpdateAgentTools(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // Retired 2026-09-06 (tool-face batch): agent.json tools write-back
+    // is closed. Loud rejection (no silent no-op) so any stale client
+    // sees the retirement instead of assuming the edit landed.
+    // 未走信封助手:字段级 Option 链(parse 后即取 name,回退空串),非裸 parse-or-Null 同形,保持原样(2026-09-24)
+    val agentName = parse(text).toOption
+      .flatMap(_.hcursor.downField("name").as[String].toOption)
+      .getOrElse("")
+    logger.warn(
+      s"Rejected updateAgentTools for '$agentName' — per-agent tools are mechanism/plugin-managed"
+    )
+    wsSend(
+      io.circe.Json.obj(
+        "type" -> "error".asJson,
+        "message" -> s"updateAgentTools is not supported: per-agent tools are mechanism/plugin-managed; agent.json is not written from the panel".asJson
+      )
+    )
+  end handleUpdateAgentTools
+
+  private def handleCheckUpdate(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val currentVer = nebflow.Version.string
+    // #29: 仓库 private 后 GH API 未认证不可用——版本检查读发布镜像。
+    // 统一更新系统 M3 ②：读源换官网 manifest（stand-website M1 批发布的权威源），
+    // manifest 不可达回落 OSS 裸 txt（只检不装，双读过渡期）；读序收在 VersionCheck
+    // 单一实现内，本分支与其余检查入口同源，禁第二套比对。帧形状逐字段不变
+    // （releaseName：manifest 时代 = manifest version；txt 时代 = 裸 tag 原文）。
+    val result = nebflow.core.hotupdate.VersionCheck
+      .fetchLatestVersion()
+      .flatMap {
+        case Some(latestVer) =>
+          val hasUpdate = nebflow.core.hotupdate.VersionCheck.hasUpdate(currentVer, latestVer)
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "updateCheckResult".asJson,
+              "currentVersion" -> currentVer.asJson,
+              "latestVersion" -> latestVer.asJson,
+              "hasUpdate" -> hasUpdate.asJson,
+              "releaseName" -> latestVer.asJson
+            )
+          )
+        case None =>
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "updateCheckResult".asJson,
+              "currentVersion" -> currentVer.asJson,
+              "error" -> "Failed to check for updates".asJson
+            )
+          )
+      }
+    result
+  end handleCheckUpdate
+
+  private def handleDoUpdate(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // ── 一键更新（设置页）：接统一更新编排器（hotupdate 批 1 · D3 · 闭 G1）。
+    // 本批前：本段**只装不重启**（内联 curl|sh，整段零重启调用）⇒ 点完仍是旧版在跑。
+    // 本批后：发**更新请求**给编排器 ⇒ 检查 → 准备 → 冻结 → 更新（安装动作本体
+    // #26）→ 重启（**委托既有热重启编排器**）→ 恢复（后继进程自己走既有开机链）。
+    // 向后兼容：既有 updateStarted / updateCompleted 两帧保留不删（安装相位回执经
+    // onInstallOutcome 发出，形状与字段语义不变）；相位进度走统一 updateProgress 帧。
+    // 确认位：沿用既有 restart 命令的强制位语义——缺 confirm 直接拒绝 + 可行动错误。
+    val rc = parsedJson(text).hcursor
+    val beta = rc.downField("beta").as[Boolean].getOrElse(false)
+    val confirmed = rc.downField("confirm").as[Boolean].getOrElse(false)
+    val idemKey = rc.downField("idempotencyKey").as[String].toOption
+    sharedResources.updateOrchestrator match
+      case None =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "updateCompleted".asJson,
+            "success" -> false.asJson,
+            "error" -> "update orchestrator is not available in this instance".asJson
+          )
+        )
+      case Some(orchestrator) =>
+        val updateReq = nebflow.core.hotupdate.UpdateRequest(
+          source = nebflow.core.hotupdate.UpdateSource.Settings,
+          confirm = confirmed,
+          channel =
+            if beta then nebflow.core.hotupdate.UpdateChannel.Beta
+            else nebflow.core.hotupdate.UpdateChannel.Stable,
+          // 裁定 7：更新场景等待上限独立值 300s（界面重启命令那一处的 600s
+          // 默认本批零改动——两值互不影响，见 UpdateDefaults 注释）。
+          mode = nebflow.core.hotrestart.RestartMode.WaitIdle(nebflow.core.hotupdate.UpdateDefaults.awaitIdleMs),
+          idempotencyKey = idemKey
+        )
+        // 安装相位回执 → 既有完成帧（向后兼容；失败分支的文案来自安装动作本体 #26）
+        val onInstallOutcome: Either[String, String] => IO[Unit] =
+          case Right(_) =>
+            wsSend(io.circe.Json.obj("type" -> "updateCompleted".asJson, "success" -> true.asJson))
+          case Left(err) =>
+            wsSend(
+              io.circe.Json.obj(
+                "type" -> "updateCompleted".asJson,
+                "success" -> false.asJson,
+                "error" -> err.asJson
+              )
+            )
+        orchestrator.request(updateReq, onInstallOutcome).flatMap { admission =>
+          nebflow.core.hotupdate.UpdateOrchestrator.admissionFrame(admission) match
+            case None =>
+              // 受理 → 既有开始帧（向后兼容）
+              wsSend(io.circe.Json.obj("type" -> "updateStarted".asJson))
+            case Some(frame) =>
+              // 已在途 / 更新中 / 拒绝 —— 立即回报（更新是排他动作、不排队）
+              wsSend(frame)
+        }
+    end match
+  end handleDoUpdate
+
+  private def handleRemoteUpdate(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // hotupdate 批 3 · G8：请求可带**可选**幂等键 `clientRequestId`（界面设备行
+    // 的触发点生成，见 resources/web/js/contacts.js）。语义（逐条）：
+    //   · 缺席 / 空串 ⇒ 本分支的载荷与回帧与改前**逐字节相同**（老端路径不变）；
+    //   · 带键 ⇒ 只在既有帧与既有 P2P 载荷上**加**一个字段（不新造消息类型、
+    //     不改既有字段语义、不删既有字段——设计 §9:173 逐字），并在每条
+    //     `remoteUpdateResult` 里**回显**该键，使界面能把结果对回它那一次点击。
+    //   · 中继腿的隧道参数面保持 `{beta}`：动作 `RemoteUpdate` 的参数集由跨仓
+    //     契约钉死（契约 §B.1.3），本批零越仓。
+    // 未走信封助手:此处产出 HCursor(失败回退 Json.Null.hcursor),非 Json 回退同形,保持原样(2026-09-24)
+    val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+    val targetDevice = hc.downField("device").as[String].getOrElse("")
+    val beta = hc.downField("beta").as[Boolean].getOrElse(false)
+    val clientRequestId = hc
+      .downField("clientRequestId")
+      .as[String]
+      .toOption
+      .map(_.trim)
+      .filter(_.nonEmpty)
+
+    /**
+     * `remoteUpdateResult` 的唯一构造点（本分支内单点）：既有字段原样 +
+     * 带键时追加 `clientRequestId`（缺席时不追加 ⇒ 老端回帧形状不变）。
+     */
+    def resultFrame(fields: (String, io.circe.Json)*): io.circe.Json =
+      val all: Seq[(String, io.circe.Json)] =
+        Seq("type" -> io.circe.Json.fromString("remoteUpdateResult")) ++ fields ++
+          clientRequestId.map(id => "clientRequestId" -> io.circe.Json.fromString(id))
+      io.circe.Json.obj(all*)
+
+    def tryRelayUpdate(
+      ns: nebflow.neblink.core.NeblinkService,
+      peer: nebflow.shared.PeerInfo,
+      beta: Boolean,
+      p2pError: String
+    ): IO[Unit] =
+      ns.relayClientOpt match
+        case Some(client) =>
+          logger.info(s"P2P update failed ($p2pError), trying relay to ${peer.deviceName}") *>
+            client.relayUpdate(peer.deviceId, beta).flatMap {
+              case Right(msg) =>
+                wsSend(
+                  resultFrame(
+                    "success" -> true.asJson,
+                    "device" -> peer.deviceName.asJson,
+                    "message" -> msg.asJson
+                  )
+                )
+              case Left(err) =>
+                wsSend(
+                  resultFrame(
+                    "success" -> false.asJson,
+                    "error" -> s"P2P: $p2pError; Relay: $err".asJson
+                  )
+                )
+            }
+        case None =>
+          wsSend(
+            resultFrame(
+              "success" -> false.asJson,
+              "error" -> p2pError.asJson
+            )
+          )
+
+    if targetDevice.isEmpty then
+      wsSend(
+        resultFrame(
+          "success" -> false.asJson,
+          "error" -> "Missing device name".asJson
+        )
+      )
+    else
+      sharedResources.neblinkService match
+        case None =>
+          wsSend(
+            resultFrame(
+              "success" -> false.asJson,
+              "error" -> "NebLink not enabled".asJson
+            )
+          )
+        case Some(neblinkService) =>
+          // fleet 批（2026-11-01）收口：P2P → 中继的派发**唯一实现**在
+          // [[nebflow.neblink.relay.RemoteUpdateDispatch]]（批量推送与单点点击同一腿）；
+          // 本分支只把 `Either` 翻译成既有 `remoteUpdateResult` 帧（字段与改前逐字
+          // 相同，含 `clientRequestId` 回显；`device` 用**对端自报名**，与改前同口径）。
+          nebflow.neblink.relay.RemoteUpdateDispatch
+            .dispatchByNameResolved(neblinkService, targetDevice, beta, clientRequestId)
+            .flatMap {
+              case Right((deviceName, msg)) =>
+                wsSend(
+                  resultFrame(
+                    "success" -> true.asJson,
+                    "device" -> deviceName.asJson,
+                    "message" -> msg.asJson
+                  )
+                )
+              case Left(err) =>
+                wsSend(
+                  resultFrame(
+                    "success" -> false.asJson,
+                    "error" -> err.asJson
+                  )
+                )
+            }
+    end if
+  end handleRemoteUpdate
+
+  // ── 全设备统一更新（fleet 批 2026-11-01）WS 命令面 ─────────────────────
+  //
+  // 四个命令都是**既有 REST 面的镜像**（同一协调器实例、同一语义），供控制台
+  // 状态卡免走 HTTP 轮询：发起 / 中断 / 重试 / 取快照。纪律：
+  //   · 发起**必带** `confirm:true`（协调器侧强制，缺位即拒——不静默默认）；
+  //   · 审计由协调器单点写（本层不加第二处）；
+  //   · 回帧类型 `fleetUpdateResult`（命令回执）+ 进度一律由协调器经 wsHub 广播的
+  //     `fleetUpdate` 帧承载（前端只解析一套载荷形状）。
+
+  private def fleetFrame(ok: Boolean, action: String, extra: (String, io.circe.Json)*): io.circe.Json =
+    io.circe.Json.obj(
+      (Seq(
+        "type" -> io.circe.Json.fromString("fleetUpdateResult"),
+        "ok" -> io.circe.Json.fromBoolean(ok),
+        "action" -> io.circe.Json.fromString(action)
+      ) ++ extra)*
+    )
+
+  private def handleFleetUpdateStart(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val hc = parse(text).toOption.map(_.hcursor).getOrElse(io.circe.Json.Null.hcursor)
+    val confirm = hc.downField("confirm").as[Boolean].getOrElse(false)
+    val beta = hc.downField("beta").as[Boolean].getOrElse(false)
+    val source = hc.downField("source").as[String].toOption.filter(_.trim.nonEmpty).getOrElse("console")
+    sharedResources.fleetUpdate match
+      case None => wsSend(fleetFrame(false, "start", "error" -> "fleet update is not wired".asJson))
+      case Some(fleet) =>
+        fleet.start(confirm, source, beta).flatMap {
+          case Right(job) =>
+            wsSend(fleetFrame(true, "start", "jobId" -> job.id.asJson, "job" -> job.summaryJson))
+          case Left(err) => wsSend(fleetFrame(false, "start", "error" -> err.asJson))
+        }
+
+  private def handleFleetUpdateCancel(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    sharedResources.fleetUpdate match
+      case None => wsSend(fleetFrame(false, "cancel", "error" -> "fleet update is not wired".asJson))
+      case Some(fleet) =>
+        fleet.cancel().flatMap {
+          case Right(snap) => wsSend(fleetFrame(true, "cancel", "snapshot" -> snap))
+          case Left(err) => wsSend(fleetFrame(false, "cancel", "error" -> err.asJson))
+        }
+
+  private def handleFleetUpdateRetry(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    sharedResources.fleetUpdate match
+      case None => wsSend(fleetFrame(false, "retry", "error" -> "fleet update is not wired".asJson))
+      case Some(fleet) =>
+        fleet.retryFailed().flatMap {
+          case Right(snap) => wsSend(fleetFrame(true, "retry", "snapshot" -> snap))
+          case Left(err) => wsSend(fleetFrame(false, "retry", "error" -> err.asJson))
+        }
+
+  private def handleFleetUpdateSnapshot(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    sharedResources.fleetUpdate match
+      case None => wsSend(fleetFrame(false, "snapshot", "error" -> "fleet update is not wired".asJson))
+      case Some(fleet) =>
+        fleet.snapshot.flatMap(snap => wsSend(fleetFrame(true, "snapshot", "snapshot" -> snap)))
+
+  private def handleAutostartStatus(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    // Settings panel "start on login" toggle (F2) — shared logic with
+    // the `nebflow autostart` CLI via AutoStartService.
+    nebflow.core.AutoStartService.status().flatMap { st =>
+      wsSend(
+        io.circe.Json.obj(
+          "type" -> "autostartStatusResult".asJson,
+          "enabled" -> st.enabled.asJson,
+          "supported" -> st.supported.asJson,
+          "reason" -> st.reason.asJson
+        )
+      )
+    }
+  end handleAutostartStatus
+
+  private def handleAutostartSet(
+    ctx: WsDispatchCtx,
+    text: String,
+    wsSend: io.circe.Json => IO[Unit],
+    watchSession: ExplorerWatchSession
+  ): IO[Unit] =
+    import ctx.*
+    val asJson = parsedJson(text)
+    val enable = asJson.hcursor.downField("enabled").as[Boolean].getOrElse(false)
+    val op = if enable then nebflow.core.AutoStartService.enable() else nebflow.core.AutoStartService.disable()
+    op.flatMap { res =>
+      // Always answer with the authoritative post-op status; attach
+      // the op message on failure so the UI can toast + revert the toggle.
+      nebflow.core.AutoStartService.status().flatMap { st =>
+        wsSend(
+          io.circe.Json.obj(
+            "type" -> "autostartStatusResult".asJson,
+            "enabled" -> st.enabled.asJson,
+            "supported" -> st.supported.asJson,
+            "reason" -> st.reason.asJson,
+            "error" -> (if res.ok then None else Some(res.message)).asJson
+          )
+        )
+      }
+    }
+  end handleAutostartSet
+
+end WsSystemHandlers

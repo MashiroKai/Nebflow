@@ -5,9 +5,8 @@ import cats.effect.unsafe.implicits.global
 import io.circe.parser.decode
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.core.PathUtil
 import nebflow.core.flow.MailQueueStore
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import nebflow.shared.{ContentBlock, MailQueueItem, Message, MessageRole, PathUtil}
 
 import java.nio.file.{Files, Paths}
 import java.util.Base64
@@ -25,15 +24,75 @@ class ImageAttachSpec extends CatsEffectSuite:
 
   // Minimal valid 1x1 red PNG (same fixture as ReadImageSpec)
   private val pngBytes: Array[Byte] = Array[Byte](
-    0x89.toByte, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
-    0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
-    0x08, 0x02, 0x00, 0x00, 0x00, 0x90.toByte, 0x77, 0x53, 0xde.toByte,
-    0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41, 0x54,
-    0x08, 0xd7.toByte, 0x63, 0xf8.toByte, 0xcf.toByte, 0xc0.toByte, 0x00, 0x00,
-    0x00, 0x03, 0x00, 0x01, 0x50, 0x74, 0x1c.toByte, 0xae.toByte,
-    0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44,
-    0xae.toByte, 0x42, 0x60, 0x82.toByte
+    0x89.toByte,
+    0x50,
+    0x4e,
+    0x47,
+    0x0d,
+    0x0a,
+    0x1a,
+    0x0a,
+    0x00,
+    0x00,
+    0x00,
+    0x0d,
+    0x49,
+    0x48,
+    0x44,
+    0x52,
+    0x00,
+    0x00,
+    0x00,
+    0x01,
+    0x00,
+    0x00,
+    0x00,
+    0x01,
+    0x08,
+    0x02,
+    0x00,
+    0x00,
+    0x00,
+    0x90.toByte,
+    0x77,
+    0x53,
+    0xde.toByte,
+    0x00,
+    0x00,
+    0x00,
+    0x0c,
+    0x49,
+    0x44,
+    0x41,
+    0x54,
+    0x08,
+    0xd7.toByte,
+    0x63,
+    0xf8.toByte,
+    0xcf.toByte,
+    0xc0.toByte,
+    0x00,
+    0x00,
+    0x00,
+    0x03,
+    0x00,
+    0x01,
+    0x50,
+    0x74,
+    0x1c.toByte,
+    0xae.toByte,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x49,
+    0x45,
+    0x4e,
+    0x44,
+    0xae.toByte,
+    0x42,
+    0x60,
+    0x82.toByte
   )
 
   private def writePng(name: String): String =
@@ -63,15 +122,15 @@ class ImageAttachSpec extends CatsEffectSuite:
     val six = io.circe.Json.arr((1 to 6).map(i => s"/tmp/x$i.png".asJson)*)
     ImageInject.parseImagesParam(mailInput("images" -> six)) match
       case Left(err) => assert(err.message.contains("Too many image attachments: 6"))
-      case Right(_)  => fail("expected max-attachments error")
+      case Right(_) => fail("expected max-attachments error")
     // non-string entry
     ImageInject.parseImagesParam(mailInput("images" -> io.circe.Json.arr(42.asJson))) match
       case Left(err) => assert(err.message.contains("array of file path strings"))
-      case Right(_)  => fail("expected type error")
+      case Right(_) => fail("expected type error")
     // images not an array
     ImageInject.parseImagesParam(mailInput("images" -> "/a.png".asJson)) match
       case Left(err) => assert(err.message.contains("array of file path strings"))
-      case Right(_)  => fail("expected type error")
+      case Right(_) => fail("expected type error")
 
   // ============================================================
   // resolveImages — success (dual-channel blocks)
@@ -84,7 +143,7 @@ class ImageAttachSpec extends CatsEffectSuite:
         assertEquals(blocks.length, 2)
         blocks.head match
           case ContentBlock.Text(t) => assertEquals(t, s"[Mail 附件图片: $path]")
-          case other                => fail(s"expected label Text first, got $other")
+          case other => fail(s"expected label Text first, got $other")
         blocks(1) match
           case ContentBlock.Image(data, mime) =>
             assertEquals(mime, "image/png")
@@ -116,27 +175,29 @@ class ImageAttachSpec extends CatsEffectSuite:
       case Right(_) => fail("expected absolute-path error")
     }
 
-  test("resolveImages: remote device path (Windows drive) rejected with TransferFile hint"):
+  test("resolveImages: remote device path (Windows drive) rejected with SendMessage device-target hint"):
     ImageInject.resolveImages(List("""C:\Users\Kai\shot.png""")).map {
       case Left(err) =>
         // PathUtil.isAbsolute accepts drive letters, so the error surfaces at
-        // the existence check — enriched with D2's remote guidance.
+        // the existence check — enriched with D2's remote guidance. U-7（#145
+        // 2026-09-14）：指路文案从退役的 TransferFile 改为 SendMessage 设备附件腿。
         assert(err.message.contains("does not exist"))
         assert(err.message.contains("remote device paths are not supported"))
-        assert(err.message.contains("TransferFile"))
+        assert(err.message.contains("SendMessage"))
+        assert(!err.message.contains("TransferFile"))
       case Right(_) => fail("expected remote-path error")
     }
 
   test("resolveImages: nonexistent file rejected"):
     ImageInject.resolveImages(List("/nonexistent/g3/shot.png")).map {
-      case Left(err)  => assert(err.message.contains("does not exist"))
-      case Right(_)   => fail("expected nonexistent error")
+      case Left(err) => assert(err.message.contains("does not exist"))
+      case Right(_) => fail("expected nonexistent error")
     }
 
   test("resolveImages: directory rejected"):
     ImageInject.resolveImages(List(testDir.toString)).map {
-      case Left(err)  => assert(err.message.contains("directory"))
-      case Right(_)   => fail("expected directory error")
+      case Left(err) => assert(err.message.contains("directory"))
+      case Right(_) => fail("expected directory error")
     }
 
   test("resolveImages: non-image extension rejected with path-text guidance"):
@@ -153,8 +214,8 @@ class ImageAttachSpec extends CatsEffectSuite:
     val big = testDir.resolve("big.png")
     Files.write(big, new Array[Byte](10 * 1024 * 1024 + 1))
     ImageInject.resolveImages(List(big.toString)).map {
-      case Left(err)  => assert(err.message.contains("too large"))
-      case Right(_)   => fail("expected too-large error")
+      case Left(err) => assert(err.message.contains("too large"))
+      case Right(_) => fail("expected too-large error")
     }
 
   test("resolveImages: empty list → Right(Nil)"):
@@ -170,7 +231,7 @@ class ImageAttachSpec extends CatsEffectSuite:
       assertEquals(blocks.length, 2)
       blocks.head match
         case ContentBlock.Text(t) => assertEquals(t, s"[Mail 附件图片: $path]")
-        case other                => fail(s"expected label, got $other")
+        case other => fail(s"expected label, got $other")
     }
 
   test("drainImagePaths: lost file degrades to [attachment lost: path], never fails"):
@@ -198,24 +259,26 @@ class ImageAttachSpec extends CatsEffectSuite:
   private def ctx = ToolContext(projectRoot = testDir.toString)
 
   test("MailTool regression: no images param, missing address → unchanged error"):
+    // device-mail 批（2026-09-15）re-pin：目标面 = `address` XOR `device`，故「两个都没填」
+    // 的报错从旧文案抬成显式词表项（MAIL_TARGET_MISSING）。断言仍逐字钉文本，未放宽。
     MailTool.call(mailInput("message" -> "hi".asJson), ctx).map {
-      case Left(err)  => assertEquals(err.message, "Missing required parameter: address")
-      case Right(r)   => fail(s"expected error, got $r")
+      case Left(err) => assertEquals(err.message, MailTool.targetMissingMessage)
+      case Right(r) => fail(s"expected error, got $r")
     }
 
   test("MailTool regression: no images param, no actor system → unchanged error"):
     val input = mailInput("address" -> "backend".asJson, "message" -> "hi".asJson)
     MailTool.call(input, ctx).map {
-      case Left(err)  => assertEquals(err.message, "No actor system available")
-      case Right(r)   => fail(s"expected error, got $r")
+      case Left(err) => assertEquals(err.message, "No actor system available")
+      case Right(r) => fail(s"expected error, got $r")
     }
 
   test("MailTool: >5 images rejected before any resolution"):
     val six = io.circe.Json.arr((1 to 6).map(i => s"/tmp/s$i.png".asJson)*)
     val input = mailInput("address" -> "backend".asJson, "message" -> "hi".asJson, "images" -> six)
     MailTool.call(input, ctx).map {
-      case Left(err)  => assert(err.message.contains("Too many image attachments"))
-      case Right(r)   => fail(s"expected error, got $r")
+      case Left(err) => assert(err.message.contains("Too many image attachments"))
+      case Right(r) => fail(s"expected error, got $r")
     }
 
   test("MailTool: invalid attachment fails fast even without actor system"):
@@ -226,8 +289,8 @@ class ImageAttachSpec extends CatsEffectSuite:
     )
     MailTool.call(input, ctx).map {
       // attachment error surfaces BEFORE the "no actor system" check
-      case Left(err)  => assert(err.message.contains("must be absolute"))
-      case Right(r)   => fail(s"expected error, got $r")
+      case Left(err) => assert(err.message.contains("must be absolute"))
+      case Right(r) => fail(s"expected error, got $r")
     }
 
   test("MailTool: valid attachment resolves, then fails on missing actor system"):
@@ -238,8 +301,8 @@ class ImageAttachSpec extends CatsEffectSuite:
       "images" -> io.circe.Json.arr(path.asJson)
     )
     MailTool.call(input, ctx).map {
-      case Left(err)  => assertEquals(err.message, "No actor system available")
-      case Right(r)   => fail(s"expected error, got $r")
+      case Left(err) => assertEquals(err.message, "No actor system available")
+      case Right(r) => fail(s"expected error, got $r")
     }
 
   // ============================================================
@@ -253,12 +316,11 @@ class ImageAttachSpec extends CatsEffectSuite:
   override def afterAll(): Unit =
     // Restore default (~/.nebflow) for subsequent specs sharing the JVM
     PathUtil.setDataRoot(os.home / ".nebflow")
-    try
-      Files.walk(testDir).sorted(java.util.Comparator.reverseOrder()).forEach(p => Files.deleteIfExists(p))
+    try Files.walk(testDir).sorted(java.util.Comparator.reverseOrder()).forEach(p => Files.deleteIfExists(p))
     catch case _: Exception => ()
 
   test("MailQueueItem: codec round-trip preserves imagePaths"):
-    val item = MailQueueStore.MailQueueItem(
+    val item = MailQueueItem(
       id = "mail-q-abc",
       from = "Manager",
       fromSession = "s1",
@@ -267,14 +329,14 @@ class ImageAttachSpec extends CatsEffectSuite:
       timestamp = 12345L,
       imagePaths = List("/tmp/a.png", "/tmp/b.jpg")
     )
-    decode[MailQueueStore.MailQueueItem](item.asJson.noSpaces) match
+    decode[MailQueueItem](item.asJson.noSpaces) match
       case Right(back) => assertEquals(back.imagePaths, List("/tmp/a.png", "/tmp/b.jpg"))
-      case Left(err)   => fail(s"round-trip failed: $err")
+      case Left(err) => fail(s"round-trip failed: $err")
 
   test("MailQueueItem: old-format JSON (no imagePaths) decodes to Nil"):
     val old =
       """[{"id":"mail-q-x","from":"Manager","fromSession":"s1","message":"m","type":"INFO","timestamp":1}]"""
-    decode[List[MailQueueStore.MailQueueItem]](old) match
+    decode[List[MailQueueItem]](old) match
       case Right(items) =>
         assertEquals(items.length, 1)
         assertEquals(items.head.imagePaths, Nil)
@@ -283,7 +345,7 @@ class ImageAttachSpec extends CatsEffectSuite:
 
   test("MailQueueStore: append + load round-trip persists imagePaths to disk"):
     val sid = "g3-queue-test"
-    val item = MailQueueStore.MailQueueItem(
+    val item = MailQueueItem(
       id = "mail-q-disk",
       from = "Manager",
       fromSession = "s1",

@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<!-- diff-review-ui/harness.html — 审阅动作区 / 模式闸门 / canvas 适配 / 多文件适配
+     的验收基准页（作者令 2026-11-19「diff 的逐块接受和全部接受的 UI 要设计一下
+     然后 diff 要展示 canvas 适配以及多文件 diff 适配 只有 ask 是有逐块接受 正常只
+     查看 diff」）。
+
+     四页，均**直接挂真实前端源码树里的共享组件**（js/diffView，同源零公网）：
+       #page-read    read 面（delegate 阅读面）—— 纯只读，动作控件必须零存在
+       #page-review  review 面（ask 审阅面）—— 逐块 + 全部，状态可见
+       #page-multi   review 面 · 两文件分节 —— 逐块归属到正确文件
+       #page-canvas  Canvas 面板真实容器（.fcv-view / .fcv-dvhost）—— 尺寸可注入
+
+     规格侧只读本页暴露的读数；组件内部结构一律不假设。
+-->
+<html lang="zh-CN" data-baseline="diff-review-ui">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>diff-review-ui</title>
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/stand-tokens.css">
+  <link rel="stylesheet" href="/css/design-system.css">
+  <link rel="stylesheet" href="/css/diffView.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg); color: var(--color-text); }
+    #app { position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    .page[hidden] { display: none; }
+    /* delegate / ask 两面的让位带壳（与产品接线同一 token）。 */
+    #page-read { padding-top: var(--nf-dv-top-band); }
+    #page-review { padding-top: var(--nf-dv-top-band); }
+    /* Canvas 面：真实容器链 .canvas-tab-pane > .fcv-view > .fcv-dvhost > 组件 */
+    #page-canvas { align-items: stretch; }
+    .canvas-tab-pane[data-type="filechanges"] { display: flex; flex-direction: column; min-height: 0; overflow: hidden; flex: 1 1 auto; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="page" id="page-read"></div>
+    <div class="page" id="page-review" hidden></div>
+    <div class="page" id="page-multi" hidden></div>
+    <div class="page" id="page-canvas" hidden>
+      <div class="canvas-tab-pane" data-type="filechanges"></div>
+    </div>
+  </div>
+  <script type="module">
+    import { mountDiff } from '/js/diffView/index.js';
+
+    const state = { chunkActions: [], apis: {} };
+
+    // ── read 面：统一差异文本（含 VCS 元信息 + 长行 + 长未变段）──
+    const LONG_LINE = '+' + 'export const LONG = ' + 'x'.repeat(760) + ';';
+    const ctxRun = Array.from({ length: 30 }, (_, i) => ' context line ' + i);
+    const READ_DIFF = [
+      'diff --git a/src/app/main.ts b/src/app/main.ts',
+      'index 1a2b3c4..5d6e7f8 100644',
+      '--- a/src/app/main.ts',
+      '+++ b/src/app/main.ts',
+      '@@ -1,34 +1,36 @@',
+      ' const keep0 = 1;',
+      '-const removed = 2;',
+      '+const added = 2;',
+      ...ctxRun,
+      LONG_LINE,
+      '+const tail = 9;',
+      ' const keepEnd = 3;',
+    ].join('\n');
+
+    // ── review 面：单文件两块（首行改写 + 尾部追加）──
+    const REV_BASE = ['alpha', 'beta', 'gamma', ...Array.from({ length: 30 }, (_, i) => 'gap' + i), 'omega'].join('\n') + '\n';
+    const REV_CURRENT = REV_BASE.replace('alpha', 'ALPHA').replace('omega', 'omega\nOMEGA-NEW\n');
+    const REV_HUNKS = [
+      { id: 'h0', oldStart: 0, oldCount: 1, newStart: 0, newCount: 1, added: 1, removed: 1 },
+      { id: 'h1', oldStart: 33, oldCount: 1, newStart: 33, newCount: 2, added: 2, removed: 1 },
+    ];
+
+    // ── 多文件 review 面：两文件各自一块 ──
+    const MULTI_FILES = [
+      {
+        path: 'src/alpha.ts', changeType: 'modified', added: 1, removed: 1,
+        original: 'alpha\nbeta\ngamma\n', current: 'ALPHA\nbeta\ngamma\n',
+        hunks: [{ id: 'a0', oldStart: 0, oldCount: 1, newStart: 0, newCount: 1, added: 1, removed: 1 }],
+      },
+      {
+        path: 'src/beta.ts', changeType: 'modified', added: 1, removed: 1,
+        original: 'one\ntwo\nthree\n', current: 'one\nTWO\nthree\n',
+        hunks: [{ id: 'b0', oldStart: 1, oldCount: 1, newStart: 1, newCount: 1, added: 1, removed: 1 }],
+      },
+    ];
+
+    const record = (hunkId, action) => state.chunkActions.push({ hunkId: hunkId == null ? null : hunkId, action });
+
+    async function mountAll() {
+      state.apis.read = await mountDiff(document.getElementById('page-read'), { diffText: READ_DIFF, mode: 'read' });
+      state.apis.review = await mountDiff(document.getElementById('page-review'), {
+        original: REV_BASE, current: REV_CURRENT, mode: 'review', hunks: REV_HUNKS, onChunkAction: record,
+      });
+      state.apis.multi = await mountDiff(document.getElementById('page-multi'), {
+        mode: 'review', files: MULTI_FILES, onChunkAction: record,
+      });
+      // Canvas 面：真实容器链（.canvas-tab-pane > .fcv-view > .fcv-dvhost）。
+      const pane = document.querySelector('#page-canvas .canvas-tab-pane');
+      pane.innerHTML = '';
+      const view = document.createElement('div');
+      view.className = 'fcv-view';
+      const head = document.createElement('div');
+      head.className = 'fcv-filehead';
+      const pill = document.createElement('div');
+      pill.className = 'fcv-headpill';
+      const p = document.createElement('span');
+      p.className = 'nf-fc-path';
+      p.textContent = 'src/app/main.ts';
+      const c = document.createElement('span');
+      c.className = 'nf-fc-counts';
+      c.textContent = '+3 −1';
+      pill.append(p, c);
+      head.append(pill);
+      const host = document.createElement('div');
+      host.className = 'fcv-dvhost';
+      view.append(head, host);
+      pane.append(view);
+      state.apis.canvas = await mountDiff(host, { diffText: READ_DIFF, mode: 'read' });
+    }
+
+    window.__showPage = (name) => {
+      for (const n of ['read', 'review', 'multi', 'canvas']) {
+        document.getElementById('page-' + n).hidden = n !== name;
+      }
+    };
+    /** Canvas 面在真实面板尺寸下的读数注入点（宽度可变）。 */
+    window.__setPanelWidth = (px) => {
+      const app = document.getElementById('app');
+      app.style.width = px + 'px';
+      return app.getBoundingClientRect().width;
+    };
+    window.__chunkActions = () => state.chunkActions;
+    window.__resetChunkActions = () => { state.chunkActions = []; };
+    window.__api = (which) => state.apis[which] || null;
+
+    await mountAll();
+    window.__ready = true;
+  </script>
+</body>
+</html>

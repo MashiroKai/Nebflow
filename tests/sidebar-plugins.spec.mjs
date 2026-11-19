@@ -1,18 +1,31 @@
 // sidebar-plugins.spec.mjs — 插件页 shell 级 spec（隔离静态服务器 + 页内
 // mock，真实 UI 代码全量执行）。2026-09-04 件 A 部分原样保留（Team/Flow
-// 入口封存）；件 B 部分按「插件面板重设计——统一插件系统 + 每插件一开关」
-// 重写：
+// 入口封存）；件 B 部分**2026-09-14 按「插件面板收敛」批（作者三裁之批一）再重写**
+// （上一版 = 2026-09-13「无审批」批）：
 //   B1 统一插件卡片：每插件一卡 = 名称/版本/作者 + 描述摘要 + 内容构成
 //      标注（N 个技能·可展开 / MCP server+transport / 内建工具 +N）+
-//      trust 语义化状态 pill + 启停开关（页面唯一操作件）。拒载插件出
-//      信息卡（无开关）。智能体区块 = 摘要行（名称/描述/preset·model
-//      现状）。独立 skills/MCP 板块、订阅 chips、平铺 config row 不复存在；
-//      插件页不再请求 /api/skills 与 /api/mcp（独立 MCP 管理入口在设置页）。
+//      **状态药丸（绑 blocked / contentChanged，🔴 不绑 trusted；2026-09-15
+//      作者令：默认态**不出文字**——「已启用」小字删除，药丸本体/状态样式保留）** +
+//      **派发开关（2026-09-14 改口径：卡片**右上**、与状态药丸**同排**）
+//      = 卡片唯一控件**；🔴 **2026-09-15 作者令：开关旁的可见 label 小字
+//      「任务分发器可见性」/ Dispatcher visibility 整体删除**（toggle 本体自明），
+//      该 key 只作 aria-label 保留（可访问性面）。
+//      拒载插件出信息卡（无任何控件）。智能体区块 = 摘要行。独立 skills/MCP
+//      板块、订阅 chips、平铺 config row 不复存在；插件页不再请求 /api/skills
+//      与 /api/mcp（独立 MCP 管理入口在设置页）。
+//      🔴 **退场件零残留（页面级计数断言）**：内容审批开关 `[data-plugin-switch]`
+//      （2026-09-13 退场）+ 「更多」菜单三钩子 `[data-plugin-more]` /
+//      `[data-plugin-menu]` / `[data-plugin-block]`（2026-09-14 退场）。
 //   B2 旧入口不存在：#agents-btn 标题「插件」/Plugins、图标 puzzle；摘要行
 //      深链打开 agent:<name> 详情页（openAgentDetail 复用不变）。
-//   B3 开关写回契约：点击 on → POST /api/plugins/:name/approve；点击 off →
-//      POST /api/plugins/:name/revoke；渲染以 GET /api/plugins 重同步
-//      （registry 为单一事实源）。订阅 PUT /api/agents {skills} 调用清零。
+//   B3 封禁 UI 退场契约（2026-09-14 重写；原「更多 → 封禁 ⇒ POST /revoke」
+//      断言随该 UI 退场而作废）：面板上**不存在**任何触发 `POST /api/plugins/*/revoke`
+//      或 `/unblock` 的入口（wire 断言：整轮交互只出现 enable/disable 两种 POST）；
+//      封禁态由**引擎侧**（API / CLI，本 spec 以夹具态翻转模拟）产生 ⇒ 面板必须把
+//      该状态**收敛出来**（药丸「已封禁」+ 派发开关锁死 + 可行动提示指向 API / CLI），
+//      且**不得**因此长回任何封禁入口。渲染以 GET /api/plugins 重同步（registry 为
+//      单一事实源）。订阅 PUT /api/agents {skills} 调用清零；**UI 主线不再调用
+//      /approve**（wire 断言）。
 //
 // Self-contained: static server on 127.0.0.1:8179 (8100+ per task discipline,
 // never the host 8080); WS/API mocked in-page; server closed at end.
@@ -61,10 +74,12 @@ const MOCK_AGENTS = {
 };
 const MOCK_MODEL = { preferred: 'gpt/test-model', current: 'gpt/test-model', preset: 'preset-one' };
 
-/** Manifest fixture with a mutable trust state (drives B1/B3). */
-const pluginState = { approved: false, contentChanged: false };
+/** Manifest fixture with the mutable C6 status (drives B1/B3).
+ *  🔴 `trust` 是**契约保留但已不决定装载**的 legacy 块：本 spec 刻意把它写成
+ *  untrusted（旧语义下的「未审批」），用来证明**药丸不读 trust**——
+ *  一处改错（药丸重新绑回 trust）B1 立刻红。 */
+const pluginState = { blocked: false, contentChanged: false, dispatchEnabled: true };
 function fixtureManifest(st) {
-  const trusted = st.approved && !st.contentChanged;
   return {
     name: 'e2e-hello',
     version: '1.0.0',
@@ -72,14 +87,16 @@ function fixtureManifest(st) {
     author: 'spec',
     digest: 'deadbeefcafe'.repeat(6),
     fileCount: 3,
-    trust: trusted
-      ? { status: 'trusted', approvedAt: 1757000000, digest: 'deadbeefcafe'.repeat(6) }
-      : {
-          status: 'untrusted',
-          reason: st.contentChanged
-            ? 'directory digest changed since approval (approved=aaa111, current=bbb222) — re-approval required (upgrade = re-review)'
-            : 'never approved (default-deny)',
-        },
+    // C6（2026-09-13 无审批批）：trusted / blocked（新）/ contentChanged（新）
+    trusted: true,
+    blocked: st.blocked,
+    contentChanged: st.contentChanged,
+    // 令 1 派发面：面板唯一控件所写的字段（mock 侧可变 ⇒ 开关收敛可被断言）
+    dispatch: { authorEnabled: st.dispatchEnabled, transitionActive: false },
+    trust: {
+      status: 'untrusted',
+      reason: 'legacy gate record — retained in the payload, no longer decides loading',
+    },
     skills: [
       { id: 'e2e-hello/hello', description: 'Say hello', preview: '---\nname: hello\n---\nHello body line' },
       { id: 'e2e-hello/wave', description: 'Wave goodbye', preview: '' },
@@ -92,13 +109,16 @@ function fixtureManifest(st) {
   };
 }
 const MOCK_REJECTED = [{ name: 'broken-plugin', reason: 'missing plugin.json manifest' }];
+/** /approve 调用记录——UI 主线不得再调用它（审批语义退场，C5）。 */
+const approveCalls = [];
 
 test.beforeAll(async () => { server = await startServer(); });
 test.afterAll(async () => { server.close(); });
 
 test.beforeEach(async ({ page }) => {
-  pluginState.approved = false;
+  pluginState.blocked = false;
   pluginState.contentChanged = false;
+  pluginState.dispatchEnabled = true;
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.addInitScript(() => {
     localStorage.setItem('nebflow_token', 't');
@@ -107,12 +127,30 @@ test.beforeEach(async ({ page }) => {
   // API mocks. Playwright route matching is LIFO — the catch-all must be
   // registered FIRST so the specific patterns registered after it win.
   await page.route('**/api/**', r => r.fulfill({ json: {} }));
+  // 🔴 UI 主线**不再**调用 /approve（审批语义退场）——本路由只用来记录
+  // 「有没有人误调它」（B3 的 wire 断言）。
+  approveCalls.length = 0;
   await page.route('**/api/plugins/e2e-hello/approve', r => {
-    if (r.request().method() === 'POST') { pluginState.approved = true; r.fulfill({ json: { ok: true, message: 'approved' } }); }
+    approveCalls.push(r.request().method());
+    r.fulfill({ json: { ok: true, message: 'legacy approve (UI must not call this)' } });
+  });
+  // revoke = 封禁（保留路径名 + 语义翻转，C5）
+  await page.route('**/api/plugins/e2e-hello/revoke', r => {
+    if (r.request().method() === 'POST') { pluginState.blocked = true; r.fulfill({ json: { ok: true, message: 'blocked' } }); }
     else r.fulfill({ json: {} });
   });
-  await page.route('**/api/plugins/e2e-hello/revoke', r => {
-    if (r.request().method() === 'POST') { pluginState.approved = false; r.fulfill({ json: { ok: true, message: 'revoked' } }); }
+  // unblock = 解封（C5 新增）
+  await page.route('**/api/plugins/e2e-hello/unblock', r => {
+    if (r.request().method() === 'POST') { pluginState.blocked = false; r.fulfill({ json: { ok: true, message: 'unblocked' } }); }
+    else r.fulfill({ json: {} });
+  });
+  // 派发开关（面板唯一控件）：enable/disable 只写 dispatch.authorEnabled（令 1 派发面）
+  await page.route('**/api/plugins/e2e-hello/disable', r => {
+    if (r.request().method() === 'POST') { pluginState.dispatchEnabled = false; r.fulfill({ json: { ok: true, message: 'disabled' } }); }
+    else r.fulfill({ json: {} });
+  });
+  await page.route('**/api/plugins/e2e-hello/enable', r => {
+    if (r.request().method() === 'POST') { pluginState.dispatchEnabled = true; r.fulfill({ json: { ok: true, message: 'enabled' } }); }
     else r.fulfill({ json: {} });
   });
   await page.route('**/api/plugins', r => r.fulfill({ json: { plugins: [fixtureManifest(pluginState)], rejected: MOCK_REJECTED } }));
@@ -218,10 +256,8 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
 
     // Boot fallback: fresh session auto-opens the plugins page.
     await page.waitForSelector('#plugins-content .plugins-card[data-plugin="e2e-hello"]', { timeout: 10000 });
-    // Agent summary rows fill model/preset pills asynchronously.
-    await page.waitForFunction(() =>
-      document.querySelector('.plugins-agent-row[data-detail-agent="Coder"] .plugins-agent-meta-pill')?.textContent.trim() === 'preset-one',
-      { timeout: 5000 });
+    // （agent 行异步药丸等待已随 2026-10-21 作者令① agent 区块退役删除——纯插件
+    //  视角下面板只等插件卡片。）
 
     const dump = await page.evaluate(() => {
       const q = (s) => document.querySelector(s);
@@ -230,19 +266,65 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
       return {
         tabId: q('#canvas-tab-bar .canvas-tab[data-tab-id="plugins"]') ? 'plugins' : null,
         tabLabel: txt(q('#canvas-tab-bar .canvas-tab[data-tab-id="plugins"] .canvas-tab-label')),
-        // unified card
+        // unified card (2026-10-07 条目式批：条目行 + 展开详情区)
         card: !!q('.plugins-card[data-plugin="e2e-hello"]'),
         cardName: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-card-name')),
         cardMeta: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-card-meta')),
+        rowSummary: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-item-summary')),
+        rowRole: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('role'),
+        rowAriaExpanded: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('aria-expanded'),
+        detailHiddenBefore: q('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
+        // 单 toggle 定版（2026-10-29）：条目行零控件；唯一开关 = 详情区 -dispatch 钩子；
+        // -row 钩子退场（页面级零残留）
+        rowHasDispatch: !!q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item] [data-plugin-dispatch]'),
+        rowHasDispatchRow: !!q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item] [data-plugin-dispatch-row]'),
         cardDesc: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-card-desc')),
         comps: qa('.plugins-card[data-plugin="e2e-hello"] .plugins-comp').map(txt),
         statePill: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')),
-        switchOff: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]')?.getAttribute('aria-checked'),
-        // expandable skill previews
-        expandHiddenBefore: q('[data-expand-for="skills-e2e-hello"]')?.hidden,
-        // rejected card
+        pillClass: q('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.className,
+        statePillElCount: qa('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill').length,
+        // C7 主控件退场：页面级零残留（内容审批开关）
+        contentSwitchCount: qa('#plugins-content [data-plugin-switch]').length,
+        // 2026-09-14 面板收敛批：退场件（更多菜单三钩子）页面级零残留
+        moreCount: qa('#plugins-content [data-plugin-more]').length,
+        menuCount: qa('#plugins-content [data-plugin-menu]').length,
+        blockCount: qa('#plugins-content [data-plugin-block]').length,
+        // 单 toggle 定版（2026-10-29）：唯一钩子 = -dispatch（详情区）；-row 零残留
+        dispatchCount: qa('#plugins-content [data-plugin-dispatch]').length,
+        rowDispatchCount: qa('#plugins-content [data-plugin-dispatch-row]').length,
+        dispatchRole: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('role'),
+        dispatchDisabled: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.disabled,
+        dispatchAriaLabel: q('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.getAttribute('aria-label'),
+        dispatchVisibleLabel: txt(q('.plugins-card[data-plugin="e2e-hello"] .plugins-dispatch-label')) ?? null,
+        dispatchGeom: (() => {
+          const card = q('.plugins-card[data-plugin="e2e-hello"]');
+          const head = card?.querySelector('.plugins-card-head');
+          const detail = card?.querySelector('.plugins-item-detail');
+          const state = card?.querySelector('.plugins-card-state');
+          const pill = card?.querySelector('.plugins-state-pill');
+          const dsw = card?.querySelector('[data-plugin-dispatch]');
+          if (!card || !head || !detail || !dsw) return null;
+          return {
+            // 2026-10-07 条目式批：唯一开关在详情区 actions 行内（单 toggle 定版
+            // 2026-10-29 后仍是唯一位置）；条目行零控件
+            inDetail: detail.contains(dsw), inHead: head.contains(dsw),
+            inActions: !!dsw.closest('.plugins-item-actions'),
+            rowControls: head.querySelectorAll('button, [role="switch"]').length,
+            // 2026-09-15「删掉空框」：默认态药丸元素缺席；单 toggle 定版后状态区 =
+            // chevron 单子元素（行尾开关随批退场）
+            pillAbsent: !pill,
+            stateChildren: state ? state.children.length : null,
+            stateChevronOnly: !!state && state.children.length === 1
+              && !state.querySelector('[data-plugin-dispatch], [data-plugin-dispatch-row]')
+              && !!state.querySelector('.plugins-item-chevron'),
+          };
+        })(),
+        // rejected card：信息卡，任何控件（含派发开关及其状态注记）都不得出现
         rejectedPill: txt(q('.plugins-card[data-plugin="broken-plugin"] .plugins-rejected-pill')),
-        rejectedNoSwitch: !q('.plugins-card[data-plugin="broken-plugin"] [data-plugin-switch]'),
+        rejectedNoControls: !q('.plugins-card[data-plugin="broken-plugin"] [data-plugin-dispatch]')
+          && !q('.plugins-card[data-plugin="broken-plugin"] .plugins-dispatch-note:not([hidden])')
+          && !q('.plugins-card[data-plugin="broken-plugin"] [data-plugin-block]')
+          && !q('.plugins-card[data-plugin="broken-plugin"] [data-plugin-more]'),
         // old forms must be gone
         noSubChecks: qa('.plugins-sub-check').length,
         noPresetSelects: qa('.plugins-preset-select').length,
@@ -263,50 +345,100 @@ test('B1: unified plugin cards + agent summary rows; no subscription/config bloc
 
     expect(dump.tabId, `[${locale}] plugins tab opened at boot`).toBe('plugins');
     expect(dump.tabLabel, `[${locale}] tab label localized`).toBe(locale === 'zh-CN' ? '插件' : 'Plugins');
+    // 2026-10-07 条目式批：条目行形态钉（role=button + aria-expanded=false + 详情默认收起）
+    expect(dump.rowRole, `[${locale}] item row carries role=button`).toBe('button');
+    expect(dump.rowAriaExpanded, `[${locale}] item row starts collapsed (aria-expanded=false)`).toBe('false');
+    expect(dump.detailHiddenBefore, `[${locale}] detail area collapsed initially`).toBe(true);
+    expect(dump.rowHasDispatch, `[${locale}] 既有钩子不在条目行上（唯一开关在详情区）`).toBe(false);
+    expect(dump.rowHasDispatchRow, `[${locale}] 行尾开关零元素（单 toggle 定版 -row 钩子退场）`).toBe(false);
     expect(dump.card, `[${locale}] unified plugin card rendered`).toBe(true);
     expect(dump.cardName, `[${locale}] card shows plugin name`).toBe('e2e-hello');
     expect(dump.cardMeta, `[${locale}] card meta = version + author`).toBe(locale === 'zh-CN' ? 'v1.0.0 · 作者 spec' : 'v1.0.0 · by spec');
-    expect(dump.cardDesc, `[${locale}] description summary`).toBe('E2E fixture plugin for the plugins page');
+    // 条目行一行摘要 = description 既有字段现读（零新造文案）
+    expect(dump.rowSummary, `[${locale}] row one-line summary = description`).toBe('E2E fixture plugin for the plugins page');
+    expect(dump.cardDesc, `[${locale}] description summary (detail area, same field)`).toBe('E2E fixture plugin for the plugins page');
     expect(dump.comps.length, `[${locale}] composition annotations: skills + mcp + tools`).toBe(3);
     expect(dump.comps[0], `[${locale}] skills annotation with count`).toBe(locale === 'zh-CN' ? '2 个技能' : '2 skill(s)');
     expect(dump.comps[1], `[${locale}] mcp annotation with server + transport`).toBe(locale === 'zh-CN' ? 'MCP：fs-server (stdio)' : 'MCP: fs-server (stdio)');
     expect(dump.comps[2], `[${locale}] tools annotation with count`).toBe(locale === 'zh-CN' ? '内建工具 +2' : 'builtin tools +2');
-    expect(dump.statePill, `[${locale}] state pill = off for untrusted`).toBe(locale === 'zh-CN' ? '未启用' : 'Off');
-    expect(dump.switchOff, `[${locale}] switch aria-checked=false when untrusted`).toBe('false');
-    expect(dump.expandHiddenBefore, `[${locale}] skill previews collapsed initially`).toBe(true);
+    // 2026-09-15 作者令：默认态药丸**不出文字**（「已启用」小字整体删除——在位即
+    // 信任下它恒显，是冗余说明）；后裁「**删掉空框**」⇒ 文字为空时**元素不生成**，
+    // 判据 = `.plugins-state-pill` count = 0（🔴 非「元素在、CSS 藏起来」）。
+    expect(dump.statePillElCount, `[${locale}] 默认态药丸零元素（「删掉空框」：空文案 ⇒ 不渲染 pill 元素）`).toBe(0);
+    expect(dump.statePill, `[${locale}] 默认态药丸无元素 ⇒ 文本读数 undefined（txt() 对缺席元素返回 undefined）`).toBe(undefined);
+    expect(dump.pillClass, `[${locale}] 默认态无类可挂（旧「on 类保留」口径已退场）`).toBe(undefined);
+    // C7 主控件退场 + 2026-09-14 面板收敛批：封禁 UI 三钩子零残留 + 唯一控件在右上
+    expect(dump.contentSwitchCount, `[${locale}] content approval switch retired — zero on the page`).toBe(0);
+    expect(dump.moreCount, `[${locale}] 「更多」菜单入口 retired — zero on the page`).toBe(0);
+    expect(dump.menuCount, `[${locale}] 次级动作行 retired — zero on the page`).toBe(0);
+    expect(dump.blockCount, `[${locale}] 封禁/解封入口 retired — zero on the page`).toBe(0);
+    expect(dump.dispatchCount, `[${locale}] 既有钩子（详情区视图）每卡恰一`).toBe(1);
+    expect(dump.dispatchRole, `[${locale}] dispatch switch still on the card (role=switch)`).toBe('switch');
+    expect(dump.dispatchDisabled, `[${locale}] dispatch switch NOT blocked when the plugin is not blocked`).toBe(false);
+    // 2026-09-15 作者令：开关旁的**可见** label 小字整体删除（toggle 本体自明）；
+    // 可访问性面保留 ⇒ aria-label 仍 = locale `plugins.dispatchLabel`（🔴 非空）。
+    expect(dump.dispatchVisibleLabel, `[${locale}] 开关旁无可见 label 小字（「任务分发器可见性」已删）`).toBe(null);
+    expect(dump.dispatchAriaLabel, `[${locale}] 开关 aria-label 仍 = locale plugins.dispatchLabel（可访问性面保留）`)
+      .toBe(locale === 'zh-CN' ? '任务分发器可见性' : 'Dispatcher visibility');
+    // 2026-10-07 条目式批几何钉（单 toggle 定版 2026-10-29 收口）：唯一开关收进展开
+    // 详情区（actions 行内）；条目行零控件；-row 钩子页面级零残留
+    expect(dump.dispatchGeom?.inDetail, `[${locale}] 开关落在展开详情区`).toBe(true);
+    expect(dump.dispatchGeom?.inActions, `[${locale}] 开关在详情区 actions 行`).toBe(true);
+    expect(dump.dispatchGeom?.inHead, `[${locale}] 唯一开关不在条目行上（在详情区）`).toBe(false);
+    expect(dump.dispatchGeom?.rowControls, `[${locale}] 条目行零控件（单 toggle 定版）`).toBe(0);
+    expect(dump.dispatchGeom?.pillAbsent, `[${locale}] 条目行状态区无药丸元素（空框不占位）`).toBe(true);
+    expect(dump.dispatchGeom?.stateChevronOnly, `[${locale}] 状态区 = chevron 单子元素（行尾开关退场）`).toBe(true);
+    expect(dump.rowDispatchCount, `[${locale}] -row 钩子页面级零残留（单 toggle 定版）`).toBe(0);
+    expect(dump.detailHiddenBefore, `[${locale}] 详情区默认收起`).toBe(true);
     expect(dump.rejectedPill, `[${locale}] rejected card carries the pill`).toBe(locale === 'zh-CN' ? '拒载' : 'Rejected');
-    expect(dump.rejectedNoSwitch, `[${locale}] rejected card has no switch`).toBe(true);
+    expect(dump.rejectedNoControls, `[${locale}] rejected card carries no control at all`).toBe(true);
     expect(dump.noSubChecks, `[${locale}] subscription chips removed`).toBe(0);
     expect(dump.noPresetSelects, `[${locale}] preset selects removed`).toBe(0);
     expect(dump.noModelTags, `[${locale}] legacy model tags removed`).toBe(0);
     expect(dump.noSkillCards, `[${locale}] standalone skills section removed`).toBe(0);
     expect(dump.noMcpCards, `[${locale}] standalone MCP section removed`).toBe(0);
-    expect(dump.agentRows, `[${locale}] one summary row per agent`).toBe(2);
-    expect(dump.coderName, `[${locale}] agent row name`).toBe('Coder');
-    expect(dump.coderDesc, `[${locale}] agent row description`).toBe('coder agent');
-    expect(dump.coderMeta, `[${locale}] agent row preset + model pills`).toEqual(['preset-one', 'test-model']);
+    // 2026-10-21 作者令①「只看纯插件」：agent 区块整段退役（行/深链钩子/标题零在场）。
+    expect(dump.agentRows, `[${locale}] agent rows retired — zero on the page (pure-plugins view)`).toBe(0);
+    expect(dump.coderName, `[${locale}] agent row name absent`).toBe(undefined);
+    expect(dump.coderDesc, `[${locale}] agent row description absent`).toBe(undefined);
+    expect(dump.coderMeta, `[${locale}] agent row meta pills absent`).toEqual([]);
     expect(dump.titles.plugins, `[${locale}] plugins section title zh/en paired`)
       .toBe(locale === 'zh-CN' ? '插件' : 'Plugins');
-    expect(dump.titles.agents, `[${locale}] agents section title zh/en paired`)
-      .toBe(locale === 'zh-CN' ? '智能体' : 'Agents');
+    expect(dump.titles.agents, `[${locale}] agents section retired — no title`).toBe(undefined);
 
-    // Expand path: click the skills annotation → previews show.
-    await page.click('.plugins-card[data-plugin="e2e-hello"] .plugins-comp-toggle');
+    // Expand path: click the item row → detail area opens with the per-skill
+    // capsule list（2026-10-21 作者令⑥：skill 改胶囊；data-skill-id 钩子为深链输入）。
+    await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
     const expanded = await page.evaluate(() => ({
-      visible: !document.querySelector('[data-expand-for="skills-e2e-hello"]')?.hidden,
-      ids: [...document.querySelectorAll('[data-expand-for="skills-e2e-hello"] .plugins-skill-item-id')].map(el => el.textContent.trim()),
+      visible: !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
+      ariaExpanded: document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('aria-expanded'),
+      expandedClass: document.querySelector('.plugins-card[data-plugin="e2e-hello"]')?.classList.contains('expanded'),
+      skillIds: [...document.querySelectorAll('.plugins-card[data-plugin="e2e-hello"] .plugins-item-skills .plugins-skill-capsule')].map(el => el.getAttribute('data-skill-id')),
+      capsules: document.querySelectorAll('.plugins-card[data-plugin="e2e-hello"] .plugins-skill-capsule').length,
     }));
-    expect(expanded.visible, `[${locale}] skill expand opens`).toBe(true);
-    expect(expanded.ids, `[${locale}] expanded skill ids`).toEqual(['e2e-hello/hello', 'e2e-hello/wave']);
+    expect(expanded.visible, `[${locale}] item row click opens the detail area`).toBe(true);
+    expect(expanded.ariaExpanded, `[${locale}] aria-expanded flips to true`).toBe('true');
+    expect(expanded.expandedClass, `[${locale}] card carries the expanded class`).toBe(true);
+    expect(expanded.skillIds, `[${locale}] capsule skill ids`).toEqual(['e2e-hello/hello', 'e2e-hello/wave']);
+    expect(expanded.capsules, `[${locale}] capsule count = skills`).toBe(2);
+
+    // Collapse path: click again → 收回（accordion 语义自洽）。
+    await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
+    const collapsed = await page.evaluate(() => ({
+      hidden: document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden,
+      ariaExpanded: document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]')?.getAttribute('aria-expanded'),
+    }));
+    expect(collapsed.hidden, `[${locale}] second click collapses the detail area`).toBe(true);
+    expect(collapsed.ariaExpanded, `[${locale}] aria-expanded flips back to false`).toBe('false');
   }
 
   expect(apiRequests, 'plugins page must not call /api/skills or /api/mcp (unified plugin system)').toEqual([]);
 });
 
-test('B2: entry drives the plugins page; agent summary row deep-links to detail editor', async ({ page }) => {
+test('B2: entry drives the plugins page; agent 区块退役后零深链残留（openAgentDetail 保留为独立面板函数）', async ({ page }) => {
   for (const locale of ['zh-CN', 'en']) {
     await loadShell(page, locale);
-    await page.waitForSelector('#plugins-content .plugins-agent-row', { timeout: 10000 });
+    await page.waitForSelector('#plugins-content .plugins-card[data-plugin="e2e-hello"]', { timeout: 10000 });
     const dump = await page.evaluate(async () => {
       const btn = document.getElementById('agents-btn');
       const holder = btn?.querySelector('[data-lucide]');
@@ -314,16 +446,14 @@ test('B2: entry drives the plugins page; agent summary row deep-links to detail 
       const iconName = holder?.getAttribute('data-lucide')
         || [...(svg?.getAttribute('class') || '').split(' ')].find(c => c.startsWith('lucide-'))?.slice('lucide-'.length)
         || null;
-      // Deep-link: the agent summary row opens the per-agent detail tab.
+      // 2026-10-21 作者令①：agent 深链钩子整段退役——行不存在、点击面不存在。
       const am = await import('/js/agentManager.js');
-      const row = document.querySelector('#plugins-section-agents .plugins-agent-row[data-detail-agent="Coder"]');
-      row?.click();
-      await new Promise(r => setTimeout(r, 500));
       return {
         btnTitle: btn?.title,
         iconName,
+        agentRows: document.querySelectorAll('#plugins-section-agents .plugins-agent-row').length,
+        detailAgentHooks: document.querySelectorAll('[data-detail-agent]').length,
         agentsTabCreated: !!document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="agents"]'),
-        detailTabCreated: !!document.querySelector('#canvas-tab-bar .canvas-tab[data-tab-id="agent:Coder"]'),
         openAgentsType: typeof am.openAgents,
         openAgentDetailType: typeof am.openAgentDetail,
       };
@@ -331,55 +461,133 @@ test('B2: entry drives the plugins page; agent summary row deep-links to detail 
     expect(dump.btnTitle, `[${locale}] entry title is Plugins (not Agents)`)
       .toBe(locale === 'zh-CN' ? '插件' : 'Plugins');
     expect(dump.iconName, `[${locale}] icon is puzzle (not bot)`).toBe('puzzle');
+    expect(dump.agentRows, `[${locale}] agent rows retired (pure-plugins view)`).toBe(0);
+    expect(dump.detailAgentHooks, `[${locale}] agent deep-link hooks retired`).toBe(0);
     expect(dump.agentsTabCreated, `[${locale}] no standalone agents tab may appear`).toBe(false);
-    expect(dump.detailTabCreated, `[${locale}] summary row deep-links to the agent detail tab`).toBe(true);
     expect(dump.openAgentsType, 'openAgents preserved (hidden entry ≠ deleted function)').toBe('function');
-    expect(dump.openAgentDetailType, 'openAgentDetail exported for the summary-row deep-link').toBe('function');
+    expect(dump.openAgentDetailType, 'openAgentDetail preserved (agentManager 面自有入口仍用)').toBe('function');
   }
 });
 
-test('B3: switch fires the trust contract — approve/revoke POSTs, registry resync, PUT skills zero', async ({ page }) => {
+/** 卡片形态读数（B3 用）：药丸 / 唯一控件（派发开关）/ 提示行 / 退场件计数。 */
+async function cardDump(page) {
+  return page.evaluate(() => {
+    const qa = (s) => [...document.querySelectorAll(s)];
+    const card = document.querySelector('.plugins-card[data-plugin="e2e-hello"]');
+    const dw = card?.querySelector('[data-plugin-dispatch]');
+    return {
+      pill: card?.querySelector('.plugins-state-pill')?.textContent.trim() ?? null,
+      pillClass: card?.querySelector('.plugins-state-pill')?.className ?? null,
+      pillElCount: card ? card.querySelectorAll('.plugins-state-pill').length : null,
+      dispatchLabel: card?.querySelector('.plugins-dispatch-label')?.textContent.trim() ?? null,
+      dispatchDisabled: dw ? dw.disabled : null,
+      dispatchBlockedAttr: dw?.getAttribute('data-dispatch-blocked') ?? null,
+      dispatchNote: card?.querySelector('.plugins-dispatch-note')?.hidden
+        ? null : card?.querySelector('.plugins-dispatch-note')?.textContent.trim() ?? null,
+      blockedHint: card?.querySelector('.plugins-card-hint.blocked')?.textContent.trim() ?? null,
+      changedHint: card?.querySelector('.plugins-card-hint.changed')?.textContent.trim() ?? null,
+      // 退场件零残留（封禁态下**也不得**长回来）
+      moreCount: qa('#plugins-content [data-plugin-more]').length,
+      menuCount: qa('#plugins-content [data-plugin-menu]').length,
+      blockCount: qa('#plugins-content [data-plugin-block]').length,
+      dispatchCount: qa('#plugins-content [data-plugin-dispatch]').length,
+    };
+  });
+}
+
+test('B3: 封禁 UI 退场契约 — 面板零 revoke/unblock wire；引擎侧封禁 ⇒ 卡片收敛「已封禁」+ 开关锁死', async ({ page }) => {
   const puts = [];
+  const posts = [];
   page.on('request', (req) => {
     if (req.method() === 'PUT' && new URL(req.url()).pathname.startsWith('/api/agents')) puts.push(req.url());
+    if (req.method() === 'POST' && new URL(req.url()).pathname.startsWith('/api/plugins/')) posts.push(new URL(req.url()).pathname);
   });
 
   await loadShell(page, 'zh-CN');
   await page.waitForSelector('#plugins-content .plugins-card[data-plugin="e2e-hello"]', { timeout: 10000 });
 
-  // off → on: POST approve, then the page re-fetches the registry (mock flips
-  // state) and the card re-renders on.
-  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]');
-  await page.waitForFunction(() =>
-    document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]')?.classList.contains('on'),
-    { timeout: 5000 });
-  const onState = await page.evaluate(() => ({
-    ariaChecked: document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]')?.getAttribute('aria-checked'),
-    pill: document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.textContent.trim(),
-  }));
-  expect(onState.ariaChecked, 'switch aria-checked=true after approve').toBe('true');
-  expect(onState.pill, 'state pill flips to 已启用').toBe('已启用');
+  // 起点：未封禁 ⇒ 默认态药丸**零元素**（「删掉空框」）+ 唯一控件（派发开关）可用 + 封禁 UI 零残留。
+  const before = await cardDump(page);
+  expect(before.pillElCount, 'start: 默认态药丸零元素（空文案 ⇒ 不渲染 pill 元素，「删掉空框」）').toBe(0);
+  expect(before.pill, 'start: 默认态pill 无元素 ⇒ 文本读数 null').toBe(null);
+  expect(before.pillClass, 'start: 默认态无类可挂（旧「on 类保留」口径已退场）').toBe(null);
+  expect(before.dispatchDisabled, 'start: dispatch switch usable').toBe(false);
+  expect(before.dispatchLabel, 'start: 开关旁无可见 label 小字（「任务分发器可见性」已删）').toBe(null);
+  expect([before.moreCount, before.menuCount, before.blockCount], 'start: 封禁 UI 三钩子零残留').toEqual([0, 0, 0]);
+  expect(before.dispatchCount, 'start: 页面唯一控件 = 派发开关').toBe(1);
 
-  // on → off: POST revoke, card re-renders off.
-  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]');
+  // 面板上仅存的动作：派发开关（乐观翻转 → 收敛；2026-10-07 条目式批收在展开
+  // 详情区内 ⇒ 先展开条目行）。wire 只应出现 enable/disable。
+  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-item]');
   await page.waitForFunction(() =>
-    !document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]')?.classList.contains('on'),
-    { timeout: 5000 });
+    !document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-item-detail')?.hidden);
+  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]');
+  await page.waitForFunction(() =>
+    !document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.classList.contains('on'),
+    { timeout: 8000 });
+  await page.click('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]');
+  await page.waitForFunction(() =>
+    document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-dispatch]')?.classList.contains('on'),
+    { timeout: 8000 });
+  expect(posts, 'wire: 面板只打 enable/disable，**零** revoke/unblock').toEqual([
+    '/api/plugins/e2e-hello/disable', '/api/plugins/e2e-hello/enable',
+  ]);
 
-  // Content-changed path: trust flips back to untrusted with the digest-changed
-  // reason → card renders off + the 内容已变更 hint. (The manual refresh
-  // button was removed 2026-09-05 — the same render pipeline is triggered
-  // directly here; the live poller drives the equivalent refresh in prod.)
-  pluginState.contentChanged = true;
-  pluginState.approved = true;
+  // 引擎侧封禁（作者选定的在飞止损路径 = API / CLI；本 spec 以夹具态翻转 + 面板
+  // 重同步模拟该路径的**结果**）⇒ 面板必须把状态收敛出来，且不长回封禁入口。
+  pluginState.blocked = true;
   await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
-  await page.waitForSelector('.plugins-card[data-plugin="e2e-hello"].changed', { timeout: 5000 });
-  const changed = await page.evaluate(() => ({
-    on: document.querySelector('.plugins-card[data-plugin="e2e-hello"] [data-plugin-switch]')?.classList.contains('on'),
-    hint: document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-card-hint')?.textContent.trim(),
-  }));
-  expect(changed.on, 'changed digest renders the switch off').toBe(false);
-  expect(changed.hint, 'changed digest shows the re-approval hint').toBe('内容已变更，重新启用将按新内容审批');
+  await page.waitForFunction(() =>
+    document.querySelector('.plugins-card[data-plugin="e2e-hello"] .plugins-state-pill')?.classList.contains('blocked'),
+    { timeout: 8000 });
+  const blocked = await cardDump(page);
+  expect(blocked.pillClass, 'blocked pill class').toContain('blocked');
+  // 例外态仍出文字（可行动信号；删的只是默认态的冗余小字）。
+  expect(blocked.pill, 'blocked pill 仍出文字 = 已封禁').toBe('已封禁');
+  expect(blocked.dispatchDisabled, 'blocked ⇒ dispatch switch disabled（写 authorEnabled 不会生效）').toBe(true);
+  expect(blocked.dispatchBlockedAttr, 'blocked reason exposed on the element').toBe('blocked');
+  expect(blocked.blockedHint, 'blocked hint is actionable and non-empty').toBeTruthy();
+  expect(blocked.blockedHint, 'blocked hint 指向 API / CLI（面板已无入口）').toContain('API / CLI');
+  expect(blocked.dispatchNote, 'blocked note 指向 API / CLI').toContain('API / CLI');
+  expect([blocked.moreCount, blocked.menuCount, blocked.blockCount],
+    'blocked 态下封禁 UI 仍零残留（不得长回入口）').toEqual([0, 0, 0]);
 
-  expect(puts, 'PUT /api/agents {skills} subscription writes must be zero (per-plugin switch replaces per-agent config)').toEqual([]);
+  // 解封（同样引擎侧）⇒ 回默认态（药丸**零元素**）+ 开关恢复可用。
+  pluginState.blocked = false;
+  await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
+  // 等重渲完成（卡片 class 回 on + loading 占位消失）：旧口径「pill 回 on 类」已随
+  // 空框退场，改等卡片级完成信号，避免与 innerHTML 重写竞态。
+  await page.waitForFunction(() => {
+    const c = document.querySelector('.plugins-card[data-plugin="e2e-hello"]');
+    return !!c && c.classList.contains('on') && !document.querySelector('#plugins-content .plugins-loading');
+  }, undefined, { timeout: 8000 });
+  const after = await cardDump(page);
+  expect(after.pillElCount, 'pill 回默认态 = 零元素（不是「回到无文字的 on 药丸」）').toBe(0);
+  expect(after.pill, 'pill 回默认态：无元素 ⇒ 读数 null').toBe(null);
+  expect(after.dispatchDisabled, 'dispatch switch usable again').toBe(false);
+  expect(after.dispatchBlockedAttr, 'blocked attribute cleared').toBe(null);
+  expect(after.blockedHint, 'blocked hint removed').toBe(null);
+  expect(posts, 'wire 全程无 revoke/unblock（面板不再提供该入口；端点本身零改动）').toEqual([
+    '/api/plugins/e2e-hello/disable', '/api/plugins/e2e-hello/enable',
+  ]);
+
+  // 内容已变更 = **不再有任何面板提示**（2026-10-21 作者令④「不再提示变更」：
+  // 药丸 changed 档 / `.plugins-card-hint.changed` / 卡片 changed 类整面退役；
+  // contentChanged 契约字段仍在 payload，本页零消费——派发开关照常可用）。
+  pluginState.contentChanged = true;
+  await page.evaluate(async () => { const m = await import('/js/plugins.js'); m.renderPlugins(); });
+  await page.waitForFunction(() => {
+    const c = document.querySelector('.plugins-card[data-plugin="e2e-hello"]');
+    return !!c && c.classList.contains('on') && !document.querySelector('#plugins-content .plugins-loading');
+  }, undefined, { timeout: 8000 });
+  const changed = await cardDump(page);
+  expect(changed.pillElCount, 'contentChanged ⇒ 零状态药丸（变更档退役后默认态无药丸）').toBe(0);
+  expect(changed.pill, 'contentChanged ⇒ 药丸文本 null（零元素）').toBe(null);
+  expect(changed.changedHint, 'contentChanged ⇒ 零变更提示条（不再提示变更）').toBe(null);
+  expect(changed.blockedHint, 'contentChanged 不是封禁——无封禁提示').toBe(null);
+  expect(changed.dispatchDisabled, 'contentChanged does NOT disable dispatch (≠ 封禁)').toBe(false);
+  expect(changed.dispatchBlockedAttr, '无 data-dispatch-blocked').toBe(null);
+
+  expect(approveCalls, 'UI 主线绝不调用 /approve（审批语义已退场，C5）').toEqual([]);
+  expect(puts, 'PUT /api/agents {skills} subscription writes must be zero (per-plugin controls replace per-agent config)').toEqual([]);
 });

@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<!-- held-capsule-identity 夹具（ask-badge 批 2026-10-28）：顶栏双胶囊同框——
+     #pending-asks-indicator（待答，琥珀）与 #held-receipts-indicator（回执待投递）
+     的**身份可分辨**判据面。加载真实 base.css + chat.css（index.html 同序 token
+     源），复刻 index.html:266-283 的胶囊 DOM 结构（.pa-dot/.pa-count 材质同族）。 -->
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>held-capsule-identity harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    /* 最小宿主面：只搭 #header 的排版语境（真实 header.css 面不参与判定）。 */
+    body { margin: 0; background: #fff; }
+    #header {
+      display: flex; align-items: center; justify-content: flex-end;
+      gap: 8px; padding: 8px 16px;
+    }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <div id="bgagent-indicator" class="hidden" title="Sub-agents running">
+      <span class="bgagent-dot"></span>
+      <span class="bgagent-count">0</span>
+    </div>
+    <div id="pending-asks-indicator" class="hidden" role="button" tabindex="0" aria-live="polite">
+      <span class="pa-dot"></span>
+      <span class="pa-count">0</span>
+    </div>
+    <div id="held-receipts-indicator" class="hidden" role="button" tabindex="0" title="Held delivery receipts">
+      <span class="pa-dot"></span>
+      <span class="pa-count">0</span>
+    </div>
+  </div>
+  <script>
+    window.__ready = true;
+  </script>
+</body>
+</html>

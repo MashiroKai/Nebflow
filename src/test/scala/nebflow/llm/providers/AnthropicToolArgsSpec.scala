@@ -22,17 +22,26 @@ class AnthropicToolArgsSpec extends FunSuite:
     val toolState = Ref.unsafe[IO, Map[Int, (String, String, StringBuilder)]](Map.empty)
     val tokenRef = Ref.unsafe[IO, adapter.Tokens](adapter.Tokens(0, None, None))
     events
-      .map((et, data) => adapter.processAnthropicEvent(et, data, toolState, tokenRef, SendMessageParams(Nil, "GLM-5.3")))
+      .map((et, data) =>
+        adapter.processAnthropicEvent(et, data, toolState, tokenRef, SendMessageParams(Nil, "GLM-5.3"))
+      )
       .sequence
       .unsafeRunSync()
       .flatten
 
   private def blockStart(idx: Int, id: String, name: String): (String, String) =
-    ("content_block_start", s"""{"type":"content_block_start","index":$idx,"content_block":{"type":"tool_use","id":"$id","name":"$name","input":{}}}""")
+    (
+      "content_block_start",
+      s"""{"type":"content_block_start","index":$idx,"content_block":{"type":"tool_use","id":"$id","name":"$name","input":{}}}"""
+    )
 
   private def argDelta(idx: Int, partial: String): (String, String) =
-    ("content_block_delta",
-      s"""{"type":"content_block_delta","index":$idx,"delta":{"type":"input_json_delta","partial_json":${encodeJsonString(partial)}}}""")
+    (
+      "content_block_delta",
+      s"""{"type":"content_block_delta","index":$idx,"delta":{"type":"input_json_delta","partial_json":${encodeJsonString(
+          partial
+        )}}}"""
+    )
 
   private def blockStop(idx: Int): (String, String) =
     ("content_block_stop", s"""{"type":"content_block_stop","index":$idx}""")
@@ -41,10 +50,10 @@ class AnthropicToolArgsSpec extends FunSuite:
   private def encodeJsonString(s: String): String =
     val out = new java.lang.StringBuilder("\"")
     s.foreach {
-      case '"'  => out.append("\\\"")
+      case '"' => out.append("\\\"")
       case '\\' => out.append("\\\\")
       case '\n' => out.append("\\n")
-      case c    => out.append(c)
+      case c => out.append(c)
     }
     out.append("\"").toString
 

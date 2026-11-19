@@ -1,7 +1,7 @@
 package nebflow.agent
 
 import munit.FunSuite
-import nebflow.core.PathUtil
+import nebflow.shared.PathUtil
 
 import java.nio.file.{Files, Paths}
 import java.nio.file.attribute.FileTime
@@ -20,8 +20,8 @@ import java.nio.file.attribute.FileTime
  *   1. 环境文本含 `| PID | <值> |` 行且值 == ProcessHandle.current().pid()（运行时真值，
  *      非硬编码——变异验红：注释 renderWithScript 的 NEBFLOW_PID 行 → data.sh 回退
  *      `$$`（bash 自身 pid）→ 值≠运行时 pid → 红；恢复 → 绿）
- *   2. `| Gateway port | <值> |` 行 == 注入的 prop 值（用非默认端口 8099 证明端口来自
- *      config 注入而非 8080 硬编码回退）
+  *   2. `| Gateway port | <值> |` 行 == 注入的 prop 值（用非默认端口 8099 证明端口来自
+  *      config 注入而非 6138 硬编码回退——现行默认口 6138，对应实例 data.sh 的回退值）
  */
 class PromptSectionsEnvInjectionSpec extends FunSuite:
 
@@ -52,7 +52,7 @@ class PromptSectionsEnvInjectionSpec extends FunSuite:
           |cat << JSON
           |{
           |  "pid": "${NEBFLOW_PID:-$$}",
-          |  "gateway_port": "${NEBFLOW_GATEWAY_PORT:-8080}"
+          |  "gateway_port": "${NEBFLOW_GATEWAY_PORT:-6138}"
           |}
           |JSON
           |""".stripMargin
@@ -65,7 +65,7 @@ class PromptSectionsEnvInjectionSpec extends FunSuite:
 
       val runtimePid = java.lang.ProcessHandle.current().pid().toString
       System.setProperty("nebflow.gateway.pid", runtimePid)
-      // 非默认端口：命中即证明端口来自 config 注入而非 8080 硬编码回退
+      // 非默认端口：命中即证明端口来自 config 注入而非 6138 硬编码回退
       System.setProperty("nebflow.gateway.port", "8099")
 
       PathUtil.setDataRoot(tempRoot)
@@ -86,11 +86,13 @@ class PromptSectionsEnvInjectionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       prevPid match
         case Some(v) => System.setProperty("nebflow.gateway.pid", v)
-        case None    => System.clearProperty("nebflow.gateway.pid")
+        case None => System.clearProperty("nebflow.gateway.pid")
       prevPort match
         case Some(v) => System.setProperty("nebflow.gateway.port", v)
-        case None    => System.clearProperty("nebflow.gateway.port")
+        case None => System.clearProperty("nebflow.gateway.port")
       os.remove.all(tempRoot)
+
+    end try
 
   test("scala-level fallback: prop absent → PID row still equals the runtime pid (never a hardcoded value)"):
     // 反向契约钉死：renderWithScript 对 NEBFLOW_PID 有双保险——system prop 缺失时
@@ -131,7 +133,8 @@ class PromptSectionsEnvInjectionSpec extends FunSuite:
       PathUtil.setDataRoot(prevRoot)
       prevPid match
         case Some(v) => System.setProperty("nebflow.gateway.pid", v)
-        case None    => System.clearProperty("nebflow.gateway.pid")
+        case None => System.clearProperty("nebflow.gateway.pid")
       os.remove.all(tempRoot)
+    end try
 
 end PromptSectionsEnvInjectionSpec

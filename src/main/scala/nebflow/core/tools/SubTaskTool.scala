@@ -4,12 +4,12 @@ import cats.effect.IO
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.actor.*
-import nebflow.agent.*
-import nebflow.core.NebflowLogger
+import nebflow.core.AgentRuntimePort
 import nebflow.core.node.NodeRunner
 import nebflow.core.presets.PresetStore
-import nebflow.shared.{ContentBlock, Message, MessageRole}
+import nebflow.shared.*
 
+// 定位器参数窄化,SubAgentTask 已下沉 shared
 /**
  * SubTaskTool — team-agent task delegation (Delegate split, 方案 A).
  *
@@ -22,17 +22,20 @@ import nebflow.shared.{ContentBlock, Message, MessageRole}
  *   - **Not for the root agent**: rejected when the caller is Nebula (#28) —
  *     the root orchestrator exists exactly once and must never be
  *     self-cloned, even if a custom agent.json lists the tool.
- *   - **No Mail identity**: never registered in TeamSessionRegistry / sessionMap.
+ *   - **No Mail identity**: never registered in the (retired) team session registry / its sessionMap.
  *     The worker is a leaf: Mail/SubTask/Delegate are stripped from its tool
  *     set (see AgentCore.buildAllowedToolSet), and the Worker Identity Block
  *     appended to its system prompt declares it has no team.
  *   - **Ephemeral only**: the adapter deletes the worker's session store entry
- *     on completion — no `subtask-*` residue.
+ *     on completion for the **worker** sessions it owns; historical `subtask-*`
+ *     residue from earlier batches is reaped by the tracked-cleanup sweep,
+ *     not by this adapter alone.
  *   - Result is delivered to the parent via ExternalEvent(source="subtask")
  *     exactly like Delegate's background mode.
  *
- * Depth limit: when depth >= MaxDepth, the tool is filtered out by
- * buildToolList in AgentCore, preventing infinite recursion.
+ * Depth limit: `call` rejects at depth >= MaxDepth (`AgentCore.MaxDepth`); the
+ * worker face is then a leaf (Mail/SubTask/Delegate stripped), so recursion
+ * cannot continue past that point.
  */
 object SubTaskTool extends Tool:
   private val logger = NebflowLogger(getClass)
@@ -59,14 +62,14 @@ A task with 2+ independent parts — different file domains, or different nature
 - Steps depend on each other (Step B needs Step A's output) — do serially
 - Trivial — faster to just do it yourself
 - Subtasks touch the same files — conflict risk
-- You need to target a specific agent or trigger a flow — those are Nebula's Delegate / Mail semantics
+- You need a one-shot executor outside any project, or a flow trigger — those are Nebula-side: `Delegate` (minimal kernel sub-agent) / Mail(→flow) semantics
 
 **Rules:**
 - The prompt MUST be self-contained — the worker has no history, no memory, no team context. It must include: (1) background & goal, (2) all inputs (file paths, data, references), (3) constraints (files to touch/avoid, style, commit policy), (4) definition of done, (5) the exact report format for the worker's final message.
 - State what "done" looks like (e.g. "Report findings — do not modify files").
 - Do NOT duplicate the worker's work — work on non-overlapping files or topics.
 - Images: optional `images` parameter attaches up to 5 absolute local image paths to the prompt — the worker sees them directly. For other files, reference paths in the prompt text.
-- **Safety**: NEVER send signals to or kill any sbt/java/nebflow process — you run inside a Nebflow instance; killing it kills you and the user's session. Process inspection with `ps` (read-only) is fine; any write operation (signals, kills) is strictly forbidden."""
+- **Safety**: Never directly signal or kill sbt/java/nebflow processes; read-only `ps` is fine. Only with explicit user authorization, higher-priority runtime/tool permission, verified instance/port/data root and trusted script, a guarded restart may use `~/.stand/bin/stand-restart.sh --canary` with compile, isolated canary, idle/observation and final idle checks intact. Check in-flight work; idle checks are not a guarantee. Never use `--hot`, `--force`, `--no-compile` or bypass safeguards. Otherwise stop and ask the user to run it manually; existing session instructions remain binding until replaced."""
 
   /**
    * Dynamic preset parameter doc — same live-catalog rendering as
@@ -123,14 +126,16 @@ A task with 2+ independent parts — different file domains, or different nature
     if prompt.trim.isEmpty then IO.pure(Left(ToolError("Missing required parameter: prompt")))
     else if ctx.depth >= MaxDepth then
       IO.pure(Left(ToolError(s"Maximum sub-task depth ($MaxDepth) reached. Cannot delegate further.")))
-    else if ctx.agentDef.exists(_.name == "Nebula") then
-      // #28 (2026-08-20): Nebula's toolset has no SubTask, but guard
+    else if ctx.agentDef.exists(_.name == RootAgentIdentity.Name) then
+      // Nebula's toolset has no SubTask, but guard
       // structurally — the root orchestrator exists exactly once and must not
       // spawn copies of itself, even if a custom agent.json lists the tool.
       IO.pure(
-        Left(ToolError(
-          "SubTask is not available to the root agent — the root orchestrator (Nebula) exists exactly once and must never be self-cloned (issue #28). Use Delegate with an explicit standalone target instead."
-        ))
+        Left(
+          ToolError(
+            "SubTask is not available to the root agent — the root orchestrator (Nebula) exists exactly once and must never be self-cloned (issue #28). For a one-shot executor outside any project use Delegate instead (it targets the built-in kernel sub-agent)."
+          )
+        )
       )
     else
       // G3: resolve optional image attachments before spawning — fail fast on
@@ -150,25 +155,31 @@ A task with 2+ independent parts — different file domains, or different nature
                   // preset/model — resolve before spawning so the worker's LLM
                   // requests run on the requested provider chain. Missing
                   // preset → self-describing error with the available list.
+                  // preset→chain 迁移批（2026-10-30）：PresetStore 默认路径读面
+                  // 已切 ModelChainRegistry——本参数解析到迁移后的 model 链，
+                  // 旧 preset 名逐字兼容（名随迁移带走，无别名表）。
                   PresetResolver.applyPreset(PresetStore(), agentDef, presetName) match
                     case Left(err) => IO.pure(Left(ToolError(err)))
                     case Right(effectiveDef) =>
                       (ctx.actorSystem, ctx.sharedResources) match
                         case (Some(system), Some(resources)) =>
-                          // Query parent session's safety mode so the worker inherits it
-                          val safetyModeIO = (ctx.sessionStore, ctx.sessionId) match
-                            case (Some(store), Some(sid)) => store.getSafetyMode(sid)
-                            case _ => IO.pure("confirm-edits")
-                          // P2: resolve the caller's permission-policy bucket (root session)
-                          // so the worker inherits the same policy — interactions (askUser /
+                          // permshield：worker 继承的档位 = 应用级全局
+                          // 持久值（唯一入口），不再读 `store.getSafetyMode` 的盘上遗留值
+                          // （同 DelegateTool）。
+                          // P2: resolve the caller's root session so interactions (askUser /
                           // permission) render in the parent's window.
                           val callerRootIO = (ctx.sharedResources, ctx.sessionId) match
                             case (Some(res), Some(sid)) =>
-                              res.agentRegistry.get.map(_.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid))
+                              res.agentRegistry.get.map(
+                                _.get(sid).map(_.rootSessionId).filter(_.nonEmpty).getOrElse(sid)
+                              )
                             case _ => IO.pure(ctx.sessionId.getOrElse(""))
                           for
-                            safetyMode <- safetyModeIO
                             rootSid <- callerRootIO
+                            // permshield：档位 = 应用级全局持久值
+                            // （唯一入口；不再读 `store.getSafetyMode` 的盘上遗留值，
+                            // 同 DelegateTool）。
+                            safetyMode <- resources.effectiveSafetyMode.map(nebflow.core.SafetyMode.toString)
                             result <- spawnWorker(
                               agentDef = effectiveDef,
                               prompt = prompt,
@@ -213,7 +224,13 @@ A task with 2+ independent parts — different file domains, or different nature
         json =>
           json.asObject match
             case Some(obj) =>
-              val builder = obj.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
+              // 面板树批（2026-10-29 ①）：agentStart 注入 parentSessionId（前端
+              // 派生树认领键；仅入口帧注入——载荷纪律同 DelegateTool.routeWsSend）。
+              val isStart = obj("type").exists(_.asString.contains("agentStart"))
+              val withParent =
+                if !isStart || obj.contains("parentSessionId") then obj
+                else obj.add("parentSessionId", sid.asJson)
+              val builder = withParent.add("rootSessionId", sid.asJson).add("sessionId", sid.asJson)
               // Preserve an existing nodeSessionId (nested sub-agents); otherwise
               // stamp the worker's own nodeSessionId for popup routing.
               val finalObj =
@@ -237,7 +254,7 @@ A task with 2+ independent parts — different file domains, or different nature
     attachments: List[ContentBlock],
     description: String,
     system: ActorSystem,
-    resources: SharedResources,
+    resources: AgentRuntimePort,
     parentDepth: Int,
     parentRef: Option[ActorRef[AgentCommand]],
     wsSend: Option[io.circe.Json => IO[Unit]],
@@ -263,70 +280,100 @@ A task with 2+ independent parts — different file domains, or different nature
       rootSessionId = resolvedRoot,
       isSubTaskWorker = true
     )
-    for
-      workerRef <- NodeRunner.spawnAgentActor(system, params)
-      // P2: BackoffSupervisor is the subtask adapter — auto-restarts on crash,
-      // handles AgentEvent.Cancelled (AgentControl cancel path)
-      adapterRef <- NodeRunner.spawnSupervisedAdapter(
-        system = system,
-        params = params,
-        childRef = workerRef,
-        childName = subtaskId,
-        description = description,
-        agentName = agentDef.name,
-        subagentId = subtaskId,
-        parentSessionId = parentSessionId.getOrElse(""),
-        initialPrompt = prompt,
-        source = "subtask",
-        extraMetadata = JsonObject("kind" -> "SubTask".asJson),
-        wsSend = Some(childWsSend)
-      )
-      _ = logger.info(s"Spawned supervised sub-task worker: $subtaskId (depth=$childDepth, agent=${agentDef.name})")
-      // Registered in agentRegistry (active snapshot + kind) but NOT in
-      // TeamSessionRegistry/sessionMap — the worker has no Mail identity.
-      _ <- NodeRunner.registerAgent(
-        resources,
-        id = subtaskId,
-        ref = workerRef,
-        kind = AgentKind.SubTask,
-        rootSessionId = resolvedRoot,
-        parentRef = parentRef,
-        // AgentControl：list/up/idle 列 + cancel/restart 直达 supervisor。
-        startedAt = System.currentTimeMillis(),
-        lastActivityMs = System.currentTimeMillis(),
-        supervisorRef = Some(adapterRef),
-        parentSessionId = parentSessionId.getOrElse("")
-      )
-      // P3.1: persist task metadata for crash recovery
-      _ <- resources.subAgentTaskStore
-        .recordTask(
-          SubAgentTask(
-            taskId = subtaskId,
-            parentSessionId = parentSessionId.getOrElse(""),
-            agentName = agentDef.name,
-            prompt = prompt,
-            description = description,
-            status = "running",
-            retryCount = 0,
-            spawnedAt = System.currentTimeMillis(),
-            completedAt = None,
-            lastError = None,
-            source = "subtask"
+    val runId = java.util.UUID.randomUUID().toString
+    cats.effect.Ref.of[IO, IO[Unit]](IO.unit).flatMap { cleanup =>
+      val attempt = for
+        _ <- resources.subAgentTaskStore
+          .beginRun(
+            SubAgentTask(
+              taskId = subtaskId,
+              parentSessionId = parentSessionId.getOrElse(""),
+              agentName = agentDef.name,
+              prompt = prompt,
+              description = description,
+              status = "running",
+              retryCount = 0,
+              spawnedAt = System.currentTimeMillis(),
+              completedAt = None,
+              lastError = None,
+              source = "subtask"
+            ),
+            runId,
+            resolvedRoot,
+            "nebflow"
           )
+          .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+        workerRef <- NodeRunner.spawnAgentActor(system, params)
+        _ <- cleanup.update(previous => system.stop(workerRef).attempt.void *> previous)
+        // P2: BackoffSupervisor is the subtask adapter — auto-restarts on crash,
+        // handles AgentEvent.Cancelled (AgentControl cancel path)
+        adapterRef <- NodeRunner.spawnSupervisedAdapter(
+          system = system,
+          params = params,
+          childRef = workerRef,
+          childName = subtaskId,
+          description = description,
+          agentName = agentDef.name,
+          subagentId = subtaskId,
+          parentSessionId = parentSessionId.getOrElse(""),
+          initialPrompt = prompt,
+          source = "subtask",
+          extraMetadata = JsonObject("kind" -> "SubTask".asJson),
+          wsSend = Some(childWsSend)
         )
-        .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))
-      // G3: blocks carry attachments with the prompt text as the first Text
-      // block (UserInput drops `text` when blocks are present).
-      _ <- workerRef ! AgentCommand.UserInput(
-        prompt,
-        Some(adapterRef),
-        blocks = ImageInject.messageBlocks(prompt, attachments)
-      )
-    yield Right(
-      s"""Sub-task worker started for: $description.
+        _ <- cleanup.update(previous => system.stop(adapterRef).attempt.void *> previous)
+        _ = logger.info(s"Spawned supervised sub-task worker: $subtaskId (depth=$childDepth, agent=${agentDef.name})")
+        // Registered in agentRegistry (active snapshot + kind) but NOT in
+        // the (retired) team session registry / its sessionMap — the worker has no Mail identity.
+        _ <- NodeRunner.registerAgent(
+          resources,
+          id = subtaskId,
+          ref = workerRef,
+          kind = AgentKind.SubTask,
+          rootSessionId = resolvedRoot,
+          parentRef = parentRef,
+          // AgentControl：list/up/idle 列 + cancel/restart 直达 supervisor。
+          startedAt = System.currentTimeMillis(),
+          lastActivityMs = System.currentTimeMillis(),
+          supervisorRef = Some(adapterRef),
+          parentSessionId = parentSessionId.getOrElse("")
+        )
+        _ <- resources.subAgentTaskStore
+          .updateRun(parentSessionId.getOrElse(""), subtaskId, runId, executionStatus = Some("running"))
+          .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+        // G3: blocks carry attachments with the prompt text as the first Text
+        // block (UserInput drops `text` when blocks are present).
+        _ <- workerRef ! AgentCommand.UserInput(
+          prompt,
+          Some(adapterRef),
+          blocks = ImageInject.messageBlocks(prompt, attachments)
+        )
+      yield Right(
+        s"""Sub-task worker started for: $description.
 You will be notified when it completes via a system message.
 Do NOT duplicate this worker's work — avoid working with the same files or topics it is using. Work on non-overlapping tasks, or briefly tell the user what you launched and end your response."""
-    )
+      )
+
+      def failed(reason: String): IO[Unit] =
+        resources.subAgentTaskStore
+          .completeRun(
+            parentSessionId.getOrElse(""),
+            subtaskId,
+            runId,
+            "failed",
+            reason = Some(reason),
+            incomplete = true,
+            notifyParent = false
+          )
+          .attempt
+          .void *>
+          cleanup.get.flatten *> resources.agentRegistry.update(_ - subtaskId)
+      attempt
+        .onError { case error => failed(s"Spawn failed: ${error.getMessage}") }
+        .onCancel(failed("Spawn admission cancelled"))
+    }
+
+  end spawnWorker
 
   private def extractLastAssistantText(messages: List[Message]): String =
     messages.reverse

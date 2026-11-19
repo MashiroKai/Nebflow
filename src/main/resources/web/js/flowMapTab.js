@@ -13,34 +13,71 @@
 // 收到事件即更新，不切换标签页。fetch 全量快照降级为对账兜底：增量应用后仍安排一次
 // 防抖拉取，diff 渲染保证对账只在真实漂移时碰 DOM（对账无跳变）。
 //
-// 整链归档 v3（规格 20260903_flowmap-archive-panel-spec.md，作者 2026-09-03 20:26）：
-// 主图可见集 = 活动节点 + 链未齐的终态保留卡（visibleFmView 派生视图，链判定在
-// flowMapArchive.refreshChains）；链齐瞬间整链成员卡同帧 fm-exit 集体淡出（350ms
-// 一条整体动画）→ 存活卡平滑补位 → 面板条目置顶闪烁 + 徽章 +1。终态节点不再走
-// TTL 倒计时驻留（tickTtl/fm-ttl 徽标随 v3 语义移除，条目 TTL 归 flowMapArchive）。
+// 归档单源收口（链级抽象 P0，设计 20260910_flowmap-chain-abstraction-spec.md
+// §4.2/§7-B）：主图可见集 = 后端活动区快照本身——归档资格判定唯一存在于后端
+// （FlowMapStore sweep，拓扑链口径），sweep 出库逐成员广播 nodeRemoved → 增量
+// diff 单卡 fm-exit 淡出（复用既有机制），600ms 对账兜底收敛；前端零链派生零
+// 判据（旧 refreshChains/chainEligible 时间批镜像已删除）。
+// 归档面板反馈 = flowMapArchive refetch 出现新链 id 时徽章脉冲 + 条目闪烁 + toast。
 
 import { openTab, getTabPane } from './canvas.js';
 import { ensureFlowCss } from './flowCss.js';
 import { esc } from './flowHelpers.js';
 import { t } from './i18n.js';
 import { fetchFlowMap, NODE_STATUS_CLS } from './nodeData.js';
+// 排队视图共享解析（queuepos 批 2026-09-15）：卡与详情面板同源一份解析，落叶子模块
+// （flowMapTab → flowMapArchive 单向依赖，共享件不可放 flowMapArchive；见模块头注）。
+// fm-node 卡渲染件（#1228 换源接线批拆出单源）：卡面 HTML（节点卡/链摘要卡）与卡面
+// 几何常量改从 fmNodeCard.js 单源引取——本文件只剩布局/增量 diff/交互管线，卡面
+// 渲染零本地副本（S10 per-task 链视图与主图共用同一渲染件，禁复制双权威）。
+// nodeFlagKeys 等 fixture 验证导出面**逐字保留**（再导出，消费方零漂移）。
 import {
-  isTerminalStatus, refreshChains, purgeExpired,
-  isVisibleNode, recordNodeRemoved, dropStore, getStore,
+  NODE_W, NODE_H, PAD, cardTopOf,
+  nodeHtml, nodeFlagKeys, FM_CHAIN_BUCKETS,
+} from './fmNodeCard.js';
+export { nodeFlagKeys, flagBadgesHtml } from './fmNodeCard.js';
+import {
+  isTerminalStatus, purgeExpired,
+  ingestNodes, recordNodeRemoved, dropStore,
   syncArchiveUi, openDetailFor,
-  notifyChainRetained, notifyChainArchived,
+  chainMembersOf, chainHighlightIds,
 } from './flowMapArchive.js';
 import { toggleHTML, bindToggle, setToggleState } from './toggle.js';
+// 簇落位（FE组件化批次六 2026-09-28）：折叠态 localStorage 持久化助手 →
+// ./flowMap/collapse.js（裁定注释与文件级态 collapsedCache 整态随迁，主体只经
+// 函数面读写）。以下转发保持本文件公共导出面字节稳定，外部 import 方零改动。
+// 🔴 徽章/文案小函数族（nodeFlagKeys/flagBadgesHtml）
+// 原落 ./flowMap/badges.js；合流取 A 侧 #1228 卡面单源钉（本文件已改引 fmNodeCard.js，
+// 见上 :37-:41）——重复的 import/转发两行按「同名单源」删除（两处实现逐字相同）。
+import { collapsedChainIdsOf, persistCollapsed } from './flowMap/collapse.js';
+export { collapsedChainIdsOf };
 
 // 布局常量（紧凑化：作者 2026-09-04 裁定「层级从上到下、连线竖直/曲线、压缩冗余空白」）
-// NODE_W 对齐真实卡宽（FLOW_CSS .solar-node width:124px）——旧值 150 让布局数学
-// 虚胖 26px/卡（水平净距虚增）；V_SPACING 150：典型卡高 88-105px 时层间净距 45-62px，
-// 最厚卡（result+等待脚注 ~134px）仍 +16px 不重叠；H_SPACING 168 → 水平净距 44px。
-const NODE_W = 124;
-const NODE_H = 108;
+// 卡面几何（NODE_W/NODE_H/PAD/cardTopOf）已随卡迁 fmNodeCard.js（#1228 拆出单源），
+// 本文件只留层距/水平距等**布局侧**常量（卡宽/标称卡高从 fmNodeCard 单源引取）。
 const V_SPACING = 150;
 const H_SPACING = 168;
-const PAD = 48;
+
+// 实测高驱动层距（作者 2026-09-14 裁定①「画布根治」，批二）：
+// 卡是 height:auto——徽标行换行 / barrier 提示 / 等待脚注 / desc 行让实卡高远超标称 108px
+// （实测高卡 203.5px），按常量 150 平铺必然压叠下一层（实测交集 2140px²）。根治 = 挂载后
+// 逐层取实测 getBoundingClientRect 高（层内最高卡）重算层心 y，再用既有 400ms 位移动画
+// 把节点与边端点一起挪到位。
+// 🔴 常量一字不改（禁上调 V_SPACING 充当修法，与 09-04「压空白」裁定相悖）：LAYER_GAP 只是
+// V_SPACING 与 NODE_H 的差（标称卡下的层间净距，42px），实测高 ≤ NODE_H 时层心距恒等
+// V_SPACING（逐像素回归），仅当实卡更高时才把层距顶开。
+const LAYER_GAP = V_SPACING - NODE_H;
+/** 标称卡高下限（层高与层心定位共用）：实卡 ≤ 标称时不改变既有几何。 */
+const effNodeH = (h) => (h > NODE_H ? h : NODE_H);
+
+/** project → (nodeId → 实测卡高 px)：measureNodeHeights 写、layoutNodes 读。
+ *  按项目隔离（同 id 跨项目不复用读数）；未实测节点回落标称 NODE_H。 */
+const measuredHByProject = new Map();
+function heightsFor(project) {
+  let m = measuredHByProject.get(project);
+  if (!m) { m = new Map(); measuredHByProject.set(project, m); }
+  return m;
+}
 
 // 增量动画节奏：节点位移走 CSS left/top 过渡、边端点跟随走 rAF 插值，两者同曲线
 // （easeInOutCubic ≙ cubic-bezier(0.645,0.045,0.355,1)）同时长，视觉上同步滑动。
@@ -65,9 +102,16 @@ const genByProject = new Map();
 const renderedFmByContainer = new WeakMap();
 /** @type {Map<string, number>} project → 对账拉取定时器 id */
 const reconcileTimers = new Map();
-/** @type {Set<string>} 整链退场动画进行中的项目：期间 WS/对账渲染挂起，
- *  退场结束的统一渲染兜底（防止中途 diff 把正在退场的卡提前拆掉）。 */
-const exitAnimating = new Set();
+
+/** Extra pane resolvers for non-legacy map hosts (registration seam). The
+ *  delegate-chain L1 map lives in the projects pane — outside the legacy
+ *  flow-map tab registry — so its driver registers a resolver here; the fold /
+ *  view-filter re-render path consults these entries ({project, container}).
+ *  WS/reconcile paths never see these scope keys (no frames carry them). */
+const extraPaneResolvers = [];
+export function registerFlowMapPaneResolver(fn) {
+  if (typeof fn === 'function' && !extraPaneResolvers.includes(fn)) extraPaneResolvers.push(fn);
+}
 
 // ── 视图过滤（P3 占位治理最小组合前端腿，报告 20260908_flowmap-占位调查与显示优化
 //   提案 P3；作者定案收缩为二态「全部/进行中」）──────────────────────────
@@ -90,6 +134,87 @@ function passesViewFilter(node) {
   if (!viewFilterActiveOnly()) return true;
   const st = String(node?.status || '');
   return !isTerminalStatus(st) && st !== 'blocked';
+}
+
+// ── 链折叠（链级抽象 P1 · 设计 spec §3.3「真折叠」方案 b）────────────────
+// 链数据单源 = 后端快照 `chains` 旁挂（topologicalChains 派生：id/title/entries/ends/
+// memberIds，后端下发、前端零派生——spec §6.1 纪律，前端 chainEligible 漂移教训）。
+// 折叠 = **纯渲染层变换**（对齐聊天域 turnGroup 折叠范式，2026-09-06 作者裁定
+// 「无动画直落直剥」）：折叠态下成员卡从布局剔除、链摘要卡 `.fm-chain-card` 作为伪
+// 节点继承成员的跨链边参与深度分层与层内均布，链内边不画（成员已不在场）。
+
+/** 设置某链折叠态（幂等；spec §3.3：全视图重渲，复用视图过滤 toggle 既有路径；
+ *  不做动画——重渲在 noAnim 窗口内，位移/出入场过渡一并抑制）。 */
+function setChainCollapsed(project, chainId, collapsed) {
+  const cur = new Set(collapsedChainIdsOf(project));
+  if (collapsed === cur.has(chainId)) return;
+  if (collapsed) cur.add(chainId);
+  else cur.delete(chainId);
+  persistCollapsed(project, cur);
+  withNoAnim(() => rerenderFlowMap(project));
+}
+
+/** 折叠/展开切换（链卡本体与 chevron 共用入口）。 */
+function toggleChainCollapsed(project, chainId) {
+  setChainCollapsed(project, chainId, !collapsedChainIdsOf(project).has(chainId));
+}
+
+// 折叠/展开不做动画（spec §3.3 对齐 turnGroup 2026-09-06「动画全摘」裁定）：一次重渲
+// 内抑制入场/退场/位移/边生长——直接落/剥（避免几十张卡同时淡出淡入的视觉噪声）。
+// 三层抑制同判据（animOff 单点）：
+//   ① JS 侧 rAF/CSS 类动画（animateNodeEnter 等）提前 return；
+//   ② CSS 侧 left/top/width/height 过渡由 .fm-noanim 类压掉（渲染后 ~700ms 自动摘）；
+//   ③ 相机 fit 跟随走 camApply(vp, canvas, cam, false)（本就即时路径，零改动）。
+let noAnimUntil = 0;
+
+/** 动画抑制判据单点（系统的 reduced-motion 偏好 + 折叠重渲窗口）。 */
+function animOff() {
+  return prefersReducedMotion() || Date.now() < noAnimUntil;
+}
+
+function withNoAnim(fn) {
+  const prev = noAnimUntil;
+  noAnimUntil = Date.now() + 600;
+  try { fn(); } finally { noAnimUntil = prev; }
+}
+
+/** .fm-noanim 持有时长（ms）：须长过「加类 → 重渲 → 浏览器样式重算」一帧窗口。 */
+const NO_ANIM_HOLD_MS = 700;
+/** @type {WeakMap<HTMLElement, number>} card → 摘类定时器 */
+const noAnimTimers = new WeakMap();
+
+/** 折叠重渲期间按住 CSS 过渡（spec §3.3「直落直剥」；渲染后自动摘）。 */
+function holdNoAnim(card) {
+  card.classList.add('fm-noanim');
+  const prev = noAnimTimers.get(card);
+  if (prev) clearTimeout(prev);
+  noAnimTimers.set(card, setTimeout(() => {
+    noAnimTimers.delete(card);
+    card.classList.remove('fm-noanim');
+  }, NO_ANIM_HOLD_MS));
+}
+
+/** 以缓存快照重渲打开视图（折叠切换与视图过滤共用；缺 project = 全部项目）。 */
+function rerenderFlowMap(project) {
+  const extra = [];
+  for (const fn of extraPaneResolvers) {
+    try { for (const e of fn() || []) if (e && e.project && e.container) extra.push(e); } catch (_) { /* resolver failure must not break the legacy path */ }
+  }
+  for (const e of extra) {
+    if (project && e.project !== project) continue;
+    const fm = fmByProject.get(e.project);
+    if (fm) renderFlowMap(e.container, visibleFmView(e.project, fm), e.project);
+  }
+  for (const { project: p, pane } of openFlowMapPanes()) {
+    if (project && p !== project) continue;
+    const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
+    // legacy 独立标签页：容器由 ensureScroll 惰性创建——缺失（尚未渲染过）时回落
+    // 标签页渲染入口（其内部建容器），不留「点了折叠毫无反应」的死路。
+    if (!scroll) { if ((pane.dataset.tabId || '').startsWith('flow-map-')) renderFlowMapTab(p); continue; }
+    const fm = fmByProject.get(p);
+    if (fm) renderFlowMap(scroll, visibleFmView(p, fm), p);
+    else renderFlowMapInto(scroll, p);
+  }
 }
 
 function bumpGen(project) {
@@ -248,6 +373,36 @@ function camFocusNode(vp, canvas, el) {
   camRemember(vp, canvas, cam);
 }
 
+/** 相机 fit 一组卡（链定位入口，spec §7-B「fit 该链」）：世界 bbox 收进视口
+ *  （边距 64px，与 camFit 同式），上限 CAM_MAX_S、下限 fitScale×CAM_MIN_FACTOR。
+ *  bbox 取元素的 style.left/top（画布局部坐标 = 世界坐标）与 offsetWidth/Height。 */
+function camFitEls(els) {
+  if (!els.length) return;
+  const vp = els[0].closest('.fm-viewport');
+  const canvas = els[0].closest('.solar-canvas');
+  if (!vp || !canvas || vp.clientWidth <= 0) return;
+  const cam = camByViewport.get(vp);
+  if (!cam) return;
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+  for (const el of els) {
+    const l = parseFloat(el.style.left) || 0;
+    const t = parseFloat(el.style.top) || 0;
+    x1 = Math.min(x1, l); y1 = Math.min(y1, t);
+    x2 = Math.max(x2, l + el.offsetWidth); y2 = Math.max(y2, t + el.offsetHeight);
+  }
+  const w = Math.max(1, x2 - x1), h = Math.max(1, y2 - y1);
+  const s2 = clampNum(Math.min((vp.clientWidth - 64) / w, (vp.clientHeight - 64) / h, CAM_MAX_S),
+    cam.fitS * CAM_MIN_FACTOR, CAM_MAX_S);
+  const wc = camWorldCenter(vp, canvas, cam);
+  const c = camCanvasHalf(canvas);
+  cam.s = s2;
+  cam.autoFit = false;
+  cam.tx = vp.clientWidth / 2 - wc.x - s2 * ((x1 + x2) / 2 - c.x);
+  cam.ty = vp.clientHeight / 2 - wc.y - s2 * ((y1 + y2) / 2 - c.y);
+  camApply(vp, canvas, cam, true);
+  camRemember(vp, canvas, cam);
+}
+
 /** 相机聚焦节点（元素入口：点击选中 / 跳转高亮共用）。 */
 function camFocusNodeEl(el) {
   const vp = el.closest('.fm-viewport');
@@ -336,6 +491,21 @@ function rebuildAdjacency(canvas, fm, edgesMap) {
   adjByCanvas.set(canvas, { nbrs, ends });
 }
 
+/** canvas → 项目名（U1 链高亮：hover/click 需读该项目的链上下文；渲染入口注入）。 */
+const chainCtxByCanvas = new WeakMap();
+
+/** hover 的链高亮集合（U1 批 · 作者裁定④）：hover 链上的任意节点（普通节点或合并
+ *  节点）⇒ 高亮**整条链** = 该链全量成员 id 集，**含链上全部合并节点**（不得漏掉）。
+ *  这里刻意不消费 `chainHighlightIds` 的多链退化（那只属点击语义③）——否则 hover
+ *  多链合并节点会把自己所在整链 dim 掉。链不可知（孤立节点/旧后端）→ 集合退化为
+ *  仅自身（等于既有无邻居行为，零 crash）。
+ *  @param {HTMLElement} canvas @param {string} nodeId @returns {Set<string>} */
+function hoverChainSet(canvas, nodeId) {
+  const project = chainCtxByCanvas.get(canvas);
+  if (!project) return new Set([nodeId]);
+  return new Set(chainMembersOf(project, nodeId));
+}
+
 /** 清 hover 强调类（节点 + 边一起清，L0 还原唯一出口）。修复（20260905 作者报告
  *  「连线 hover 变淡看不清」主因）：原实现还原路径只清节点类、提前 return 跳过
  *  边类——节点 hover 结束后全部非邻接边永久卡在 .fm-edge-dim（opacity .06），
@@ -347,24 +517,56 @@ function clearHoverClasses(canvas) {
     .forEach((el) => el.classList.remove('fm-edge-hi', 'fm-edge-dim'));
 }
 
-/** 应用节点 hover 强调态（hoverId=null 还原 L0）。自身 .fm-hi（1.12）、邻居 .fm-nb
- *  （1.06）、其余 .fm-dim；边按端点分 .fm-edge-hi / .fm-edge-dim（N1 参数）。 */
+// ── 点击链高亮（U1 批 · 作者 2026-09-11 裁定③）──────────────────────
+// 语义：点**多链合并节点**（除自身主链外的成员链数 ≥2，判据单点 = chainHighlightIds）
+// ⇒ 只高亮该节点本身（不得牵动/高亮任何其他链节点）；点**单链合并节点 / 普通节点**
+// ⇒ 整条链一起高亮（含链上全部节点）。视觉载体 = 既有 `.fm-adj` 类（flowMap.css 既有
+// 规则，本批零 CSS 改动）；`.fm-chain-pick` 仅是无样式的选择标记（供清除时精确定位，
+// 不影响外观）。清空时机 = 点击空白处 / 点击另一节点 / 画布重渲染。
+const CHAIN_PICK_CLASS = 'fm-chain-pick';
+
+/** 清点击链高亮（只清本批标记的卡；归档面板 hover 的 .fm-adj-by-entry 不受影响）。 */
+function clearChainPick(canvas) {
+  canvas.querySelectorAll(`.fm-node.${CHAIN_PICK_CLASS}`).forEach((el) => {
+    el.classList.remove('fm-adj', CHAIN_PICK_CLASS);
+  });
+}
+
+/** 应用点击链高亮（U1 裁定③）：集合 = chainHighlightIds（多链合并 ⟶ 仅自身）。 */
+function applyChainPick(canvas, nodeId) {
+  clearChainPick(canvas);
+  if (!canvas || !nodeId) return;
+  const project = chainCtxByCanvas.get(canvas);
+  if (!project) return;
+  const { ids } = chainHighlightIds(project, nodeId);
+  const set = new Set(ids);
+  canvas.querySelectorAll('.fm-node').forEach((el) => {
+    if (!set.has(el.getAttribute('data-node-id'))) return;
+    el.classList.add('fm-adj', CHAIN_PICK_CLASS);
+  });
+}
+
+/** 应用节点 hover 强调态（hoverId=null 还原 L0）。**U1 批改轴：链口径取代邻接口径**
+ *  （作者 2026-09-11 裁定④）——自身 .fm-hi（1.12）、同链其余成员 .fm-nb（1.06，
+ *  **含链上合并节点**）、链外 .fm-dim；边按「两端是否都在链内」分 .fm-edge-hi /
+ *  .fm-edge-dim。边的构造规则（哪些边存在、状态档位/颜色）零改动——本函数只切
+ *  hover 瞬态类。 */
 function applyHover(canvas, hoverId) {
-  const adj = adjByCanvas.get(canvas);
-  if (!adj) return;
   clearHoverClasses(canvas);
   if (!hoverId) return;
-  const set = adj.nbrs.get(hoverId);
+  const set = hoverChainSet(canvas, hoverId);
   for (const n of canvas.querySelectorAll('.fm-node')) {
     if (n.classList.contains('fm-exit')) continue;
     const id = n.getAttribute('data-node-id');
     if (id === hoverId) n.classList.add('fm-hi');
-    else if (set && set.has(id)) n.classList.add('fm-nb');
+    else if (set.has(id)) n.classList.add('fm-nb');
     else n.classList.add('fm-dim');
   }
+  const adj = adjByCanvas.get(canvas);
   for (const p of canvas.querySelectorAll('[data-edge-id]')) {
-    const e = adj.ends.get(p.getAttribute('data-edge-id'));
-    if (e && e.has(hoverId)) p.classList.add('fm-edge-hi');
+    const e = adj && adj.ends.get(p.getAttribute('data-edge-id'));
+    const inChain = e && Array.from(e).every((x) => x === hoverId || set.has(x));
+    if (inChain) p.classList.add('fm-edge-hi');
     else p.classList.add('fm-edge-dim');
   }
 }
@@ -395,8 +597,10 @@ function applyEdgeHover(canvas, edgeId) {
  *  节点与连线两入口：pointerover 目标命中 .fm-node 走节点邻域语义（N1），
  *  命中 [data-edge-id]（边路径/箭头，pointer-events 已在 flowMap.css 开启）
  *  走连线加亮语义；两者互斥切换，80ms 宽限跨缝隙不闪烁。 */
-function bindHover(canvas) {
+function bindHover(canvas, projectName) {
   if (canvas.dataset.fmHoverBound === '1') return;
+  // U1 链高亮上下文（作者裁定④）：hover 需读项目链上下文（链成员集），随绑定注入。
+  if (projectName) chainCtxByCanvas.set(canvas, projectName);
   canvas.dataset.fmHoverBound = '1';
   let hovered = null; // 节点 hover：data-node-id
   let hoverEdge = null; // 连线 hover：data-edge-id
@@ -456,20 +660,38 @@ function openFlowMapPanes() {
 // ── 布局：按 out 边 + deps 边 + in 边算深度层 ──────────────
 // v3（规格 §3.1）：主图含链未齐终态保留卡，barrier 上游在图——in 边并入层级
 // 推导（childrenMap），否则保留卡全部塌到 depth 0 平排（原型实测）。
-function layoutNodes(fm) {
+// 层心 y（裁定①）：逐层按**层内最高实卡**（实测高，下限标称 108）累加——
+//   y_k = y_{k-1} + h_{k-1}/2 + h_k/2 + LAYER_GAP
+// 标称高时恒等旧值 k * V_SPACING（回归零位移）；高卡层距被顶开，不再压叠。
+// heights（可选）= 逐节点实测读数（measureNodeHeights 写）；缺读数 = 标称高。
+function layoutNodes(fm, heights) {
   const nodes = fm?.nodes || [];
   const nodeIds = new Set(nodes.map((n) => n.id));
+  const byName = nodeNameIndex(nodes);
   const childrenMap = new Map();
   const addChild = (from, to) => {
     if (!childrenMap.has(from)) childrenMap.set(from, []);
     childrenMap.get(from).push(to);
   };
   nodes.forEach((n) => {
-    if (n.out && n.out !== 'Nebula' && nodeIds.has(n.out)) addChild(n.id, n.out);
-    // deps 边（下游单侧持有，deps 设计 §1.4）：并入流向图（上游 → 下游），
-    // 否则纯 deps 下游被当根放第 0 层、边画成逆向
-    (n.deps || []).forEach((d) => { if (nodeIds.has(d)) addChild(d, n.id); });
-    // in 边（barrier 输入）：v3 起参与层级推导（终态保留卡使上游在图）
+    // Upstream edges that feed the layer derivation. Three sources, same direction
+    // (upstream → downstream):
+    //   out   — resolved through outEdgesOf so the `[{to,on,mode}]` payload shape is
+    //           read as edges (loop control edges stay out: they run backwards by
+    //           design and are not part of the forward layering).
+    //   deps  — the scheduling gate ("this node waits for that one / that chain to
+    //           finish"); `chain:` refs resolve to the target chain's sinks.
+    //   in    — barrier inputs (v3: kept-pending cards put their upstream in the
+    //           graph, so in-edges must count, otherwise every such card collapses
+    //           to depth 0 — measured on the prototype).
+    for (const e of outEdgesOf(n)) {
+      if (e.mode === 'loop' || e.to === 'Nebula') continue;
+      const tid = resolveTargetId(nodeIds, byName, e.to);
+      if (tid) addChild(n.id, tid);
+    }
+    (n.deps || []).forEach((d) => {
+      for (const up of depTargetsOf(fm, d)) addChild(up, n.id);
+    });
     (n.in || []).forEach((x) => { if (nodeIds.has(x)) addChild(x, n.id); });
   });
   const depth = {};
@@ -483,7 +705,7 @@ function layoutNodes(fm) {
   }
   nodes.forEach((n) => {
     const hasUpstream = (n.in || []).some((x) => nodeIds.has(x))
-      || (n.deps || []).some((x) => nodeIds.has(x));
+      || (n.deps || []).some((x) => depTargetsOf(fm, x).length > 0);
     if (!hasUpstream) visit(n.id, 0);
   });
   nodes.forEach((n) => visit(n.id, depth[n.id] || 0));
@@ -494,159 +716,43 @@ function layoutNodes(fm) {
   });
   const positions = {};
   const maxAt = Object.values(atDepth).reduce((m, ids) => Math.max(m, ids.length), 0);
-  Object.entries(atDepth).forEach(([d, ids]) => {
-    const y = Number(d) * V_SPACING;
+  const hOf = (id) => effNodeH(heights && heights.get(id));
+  const depths = Object.keys(atDepth).map(Number).sort((a, b) => a - b);
+  let y = 0;
+  let prevD = 0;
+  let prevH = NODE_H;
+  depths.forEach((d, layerIdx) => {
+    const ids = atDepth[d];
+    const layerH = ids.reduce((m, id) => Math.max(m, hOf(id)), NODE_H);
+    if (layerIdx > 0) {
+      // 层距 = 上层最高卡半高 + 本层最高卡半高 + 净距 LAYER_GAP（标称高时 = V_SPACING）；
+      // 缺层（拓扑空档）按旧式每层补一个 V_SPACING
+      y += (d - prevD - 1) * V_SPACING + prevH / 2 + layerH / 2 + LAYER_GAP;
+    }
     const total = (ids.length - 1) * H_SPACING;
-    ids.forEach((id, i) => { positions[id] = { x: i * H_SPACING - total / 2, y }; });
+    ids.forEach((id, i) => { positions[id] = { x: i * H_SPACING - total / 2, y, h: hOf(id) }; });
+    prevD = d;
+    prevH = layerH;
   });
-  const maxDepth = Math.max(0, ...Object.keys(atDepth).map(Number));
   const width = Math.max((maxAt - 1) * H_SPACING + NODE_W + PAD * 2, 360);
-  const height = maxDepth * V_SPACING + PAD * 2;
+  // 高 = 末层层心 + 末层最高卡半高 + 底部余量（PAD*2 - NODE_H/2 = 42：标称层高下与旧式
+  // maxDepth * V_SPACING + PAD * 2 逐像素一致）。空图恒 PAD*2（旧式同值）。
+  const height = depths.length ? y + prevH / 2 + (PAD * 2 - NODE_H / 2) : PAD * 2;
   return { positions, width, height };
 }
 
 /** 上游 id → 显示名解析器（deps 设计 §1.4「wiring 节点等待谁」脚注）：
- *  图内可见 → `名(id)`；已随整链归档/到期出库 → `名（已归档）`（诚实降级，规格
- *  §3.3/§8.4；原字符标记 ✦ 按裁定①节点域禁符号字符换 i18n 纯文字）；
- *  不在快照 → `裸id（已归档）`（断链诊断教训的低成本可见性）。 */
+ *  图内可见 → `名(id)`；不在活动区快照（已随后端 sweep 归档出库，或悬空引用）
+ *  → `名/裸id（已归档）`（诚实降级，规格 §3.3/§8.4）。可见性 = 后端活动区快照
+ *  单源（P0），不再查前端派生集。 */
 function nameResolverOf(project) {
   const fm = fmByProject.get(project);
   const byId = new Map((fm?.nodes || []).map((n) => [n.id, n]));
-  const store = getStore(project);
   const archTag = t('flowmap.archivedTag');
   return (id) => {
     const n = byId.get(id);
-    if (!n) return `${id}${archTag}`;
-    if (store && (store.archivedIds.has(id) || store.expiredIds.has(id))) return `${n.name}${archTag}`;
-    return `${n.name}(${id})`;
+    return n ? `${n.name}(${id})` : `${id}${archTag}`;
   };
-}
-
-// ── 内联 SVG 图标（裁定①：节点域禁 emoji/符号字符，状态图标用 SVG 描边绘制）──
-// 描边风格统一：viewBox 12×12、stroke currentColor（随 .ok/.err/.warn 色板取色）、
-// 圆头圆角；cancelled 减号线沿用原「—」语义。
-const FM_STATUS_SVG = {
-  ok: '<path d="M2.5 6.5 5 9l4.5-5.5"/>',
-  err: '<path d="M3 3l6 6M9 3l-6 6"/>',
-  warn: '<path d="M3.5 1.5v9M3.5 2.5H9L7.5 4.75 9 7H3.5"/>',
-  cancelled: '<path d="M3 6h6"/>',
-};
-/** 终态卡状态词 i18n 键（2026-09-07 状态保真批）：glyph 单看不可读（cancelled 减号
- *  线视觉即「-」）——终态卡 head 行 glyph 旁恒带状态文本，死亡现场一眼可辨。 */
-const FM_NODE_ST_KEY = {
-  completed: 'flowmap.done',
-  failed: 'flowmap.fail',
-  cancelled: 'flowmap.st.cancelled',
-};
-const fmSvgIcon = (cls, inner, sw) =>
-  `<span class="solar-node-status ${cls}"><svg viewBox="0 0 12 12" fill="none" stroke="currentColor"`
-  + ` stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${inner}</svg></span>`;
-// 等待脚注图标：沙漏（替代 ⏳，描边风格与状态图标一致）
-const FM_WAIT_ICON =
-  '<svg class="fm-wait-note-icon" viewBox="0 0 12 12" fill="none" stroke="currentColor"'
-  + ' stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-  + '<path d="M3 1.5h6M3 10.5h6M3.8 2.6h4.4L6 6 3.8 2.6ZM3.8 9.4h4.4L6 6 3.8 9.4Z"/></svg>';
-
-// ── 特殊节点标识（badge 批 2026-09-05）：解析与渲染分离（便于 fixture 验证）──
-// 三类标识彼此可辨（文字 + 配色双通道，裁定①禁 emoji 故纯文字胶囊）：
-//   merge   结构属性——数据契约 `"merge": true`，缺省/缺失 = 非 merge；
-//   loop    结构属性——前瞻防御，机制侧可能暂不产出该字段，缺字段不 crash；
-//   pending 状态徽标——既有 status=pending（待作者确认/派发）。
-// 判定严格 `=== true`：payload 缺字段/类型漂移一律静默降级为无徽标，零 console 噪音。
-/** @returns {string[]} 命中的标识键，顺序 merge → loop → pending（结构先于状态）。 */
-export function nodeFlagKeys(n) {
-  if (!n || typeof n !== 'object') return [];
-  const keys = [];
-  if (n.merge === true) keys.push('merge');
-  // loop 判定双形态（语义演进）：新建 loop 节点 payload 是配置对象
-  // {maxRounds, verify, enabled}；早前前瞻防御批曾约定布尔 true。两种都算 loop。
-  if (n.loop === true || (n.loop && typeof n.loop === 'object' && !Array.isArray(n.loop))) keys.push('loop');
-  if ((n.status || 'pending') === 'pending') keys.push('pending');
-  return keys;
-}
-const FM_FLAG_CLS = { merge: 'fm-flag-merge', loop: 'fm-flag-loop', pending: 'fm-flag-pending' };
-/** 徽标 HTML：head 行胶囊，与 .fm-worktree-badge 同语言（文案 i18n flowmap.flag.*）。
- *  loop 徽标带轮次（LoopNode 批 2026-09-06）：loop 节点运行态显示「loop N/K」—
- *  复用现有 .fm-flag-loop 胶囊配色，不改卡内纵行（88px 卡纵向不可加行）。
- *  loopRound>0 才带轮次（pending/终态回退纯「循环」文案）。 */
-export function flagBadgesHtml(n) {
-  return nodeFlagKeys(n).map((k) => {
-    let label = esc(t(`flowmap.flag.${k}`));
-    if (k === 'loop') {
-      const round = n.loopRound || 0;
-      const maxRounds = (n.loop && typeof n.loop === 'object') ? n.loop.maxRounds : undefined;
-      if (round > 0 && maxRounds) label = esc(`loop ${round}/${maxRounds}`);
-    }
-    return `<span class="fm-flag-badge ${FM_FLAG_CLS[k]}" title="${label}">${label}</span>`;
-  }).join('');
-}
-
-// ── 节点卡片（复用 solar 视觉）────────────────────────────
-function nodeHtml(n, pos, originX, nameOf) {
-  const st = n.status || 'pending';
-  const cls = NODE_STATUS_CLS[st] || 'pending';
-  const term = isTerminalStatus(st); // v3 链未齐终态保留卡（规格 §3.2 终态色卡）
-  const left = pos.x - NODE_W / 2 + originX;
-  const top = pos.y - NODE_H / 2 + PAD;
-  const statusIcon = st === 'completed' ? fmSvgIcon('ok', FM_STATUS_SVG.ok, 1.5)
-    : st === 'failed' ? fmSvgIcon('err', FM_STATUS_SVG.err, 1.5)
-    : st === 'blocked' ? fmSvgIcon('warn', FM_STATUS_SVG.warn, 1.4)
-    : st === 'cancelled' ? fmSvgIcon('cancelled', FM_STATUS_SVG.cancelled, 1.5) : '';
-  // 终态状态词（2026-09-07 状态保真批）：终态卡 glyph 旁恒带文本（已完成/失败/
-  // 已取消）——真实终态可见，不再是孤零零的「-」减号线。
-  const statusWord = term && FM_NODE_ST_KEY[st]
-    ? `<span class="fm-st-word ${esc(cls)}">${esc(t(FM_NODE_ST_KEY[st]))}</span>` : '';
-  const worktreeBadge = n.hasWorktree || n.worktree
-    ? `<span class="fm-worktree-badge" title="${esc(n.worktree || '')}">wt</span>` : '';
-  // 特殊节点标识（badge 批）：merge/loop/pending 徽标进 head 行（wt 徽标同区，
-  // 复用该行既有 flex+gap；不新增卡内纵行——88px 卡纵向不可加行，同 node-flowmap-slim 口径）
-  const flags = flagBadgesHtml(n);
-  // 载荷收敛（2026-09-05）：卡片不再显示 result 摘要（默认载荷无 result）——
-  // 改显示 description（创建必写的一行描述）；存量节点无 description → 回退
-  // taskPreview（载荷条件字段，task 首行 ≤80 截断）。结果全文经详情窗按需拉取。
-  const descText = n.description || n.taskPreview || '';
-  // LoopNode 运行态（2026-09-06）：running 的 loop 节点 desc 行显相位（worker/verify），
-  // 与 head 行「loop N/K」徽标互补（徽标上轮次、desc 行当前角色）——复用既有 .fm-desc
-  // 行，不新增卡内纵行（88px 卡纵向不可加行）。
-  const loopPhase = (st === 'running' && n.loopPhase && n.loop && typeof n.loop === 'object')
-    ? esc(t(`flowmap.loopPhase.${n.loopPhase === 'verify' ? 'verify' : 'worker'}`)) : '';
-  const desc = descText
-    ? `<div class="fm-desc" title="${esc(descText)}">${esc(descText.slice(0, 46))}${descText.length > 46 ? '…' : ''}</div>`
-    : (st === 'running'
-        ? `<div class="fm-desc running">${loopPhase || esc(t('flowmap.cardRunning'))}</div>`
-        : '');
-  // 等待脚注（deps 设计 §1.4）：pending/wiring 且持有 in/deps → 列出全部等待对象
-  //（in = 等结果投递，deps = 等完成信号；上游已归档 → i18n 纯文字诚实降级，
-  //  原 ⏳ 图标按裁定①换内联 SVG 沙漏，文字单独 ellipsis 截断）
-  const waitParts = (st === 'pending' || st === 'wiring')
-    ? [...(n.in || []), ...(n.deps || [])].map((id) => nameOf ? nameOf(id) : id)
-    : [];
-  const waitNote = waitParts.length
-    ? `<div class="fm-wait-note" title="${esc(`${t('flowmap.waitingFor')}: ${waitParts.join(' · ')}`)}">`
-      + `${FM_WAIT_ICON}<span class="fm-wait-note-text">${esc(t('flowmap.waitingFor'))}: ${esc(waitParts.join(' · '))}</span></div>`
-    : '';
-  // Agent 退役（node-flowmap-slim：节点恒 general，卡上无信息量）——副行改显节点
-  // 元数据：preset 常显（未配置 → 克制空态「默认预设」），plugins 有则以
-  // `preset · p1, p2` 同行合显、无则零空态段。单行口径与归档成员行/详情窗 meta
-  // 一致；88px 固定卡纵向不可加行（独占行实测溢出加剧），复用 .solar-node-sub。
-  const presetText = n.preset || t('flowmap.presetDefault');
-  const pluginsText = (n.plugins || []).join(', ');
-  const subTitle = pluginsText ? `${presetText} · ${pluginsText}` : presetText;
-  return `
-    <div class="solar-node fm-node ${cls}${term ? ' terminal' : ''}" data-node-id="${esc(n.id)}"
-         data-status="${esc(st)}" tabindex="0" title="${esc(n.name)} · ${esc(subTitle)}${term && FM_NODE_ST_KEY[st] ? `（${esc(t(FM_NODE_ST_KEY[st]))}）` : ''}" style="left:${left.toFixed(1)}px;top:${top.toFixed(1)}px">
-      <div class="solar-orbit">
-        <div class="solar-ring ring-1"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
-        <div class="solar-ring ring-2"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
-        <div class="solar-ring ring-3"><div class="solar-dot-wrap"><div class="solar-dot"></div></div></div>
-      </div>
-      <div class="fm-node-head">${worktreeBadge}${flags}${statusIcon}${statusWord}</div>
-      <div class="solar-node-label" title="${esc(n.name)}">${esc(n.name)}</div>
-      <div class="solar-node-sub">${esc(subTitle)}</div>
-      ${st === 'pending' && (n.in || []).length > 1 ? `<div class="fm-barrier-hint">barrier ×${(n.in || []).length}</div>` : ''}
-      ${waitNote}
-      ${desc}
-    </div>`;
 }
 
 // ── 边（SVG，复用 .flow-edge）─────────────────────────────
@@ -670,15 +776,38 @@ function collectEdges(fm, positions) {
   const vis = visibleNodes(fm);
   const ids = new Set(vis.map((n) => n.id));
   const byId = new Map(vis.map((n) => [n.id, n]));
-  const edges = new Map();
+  // Name index: the **second target-string shape**. Consumed by the out-edge pass,
+  // the loop back-edge pass and the deps resolution (`chainGateTargets`), so every
+  // target-bearing site resolves id-then-name in the same order. Duplicate names:
+  // first hit in `vis` order, matching the engine's "first match" Map semantics.
+  const byName = new Map();
   for (const n of vis) {
-    if (!n.out || n.out === 'Nebula' || !ids.has(n.out)) continue;
-    const from = positions[n.id];
-    const to = positions[n.out];
-    if (!from || !to) continue;
-    edges.set(`${n.id}=>${n.out}`, {
-      x1: from.x, y1: from.y, x2: to.x, y2: to.y, state: edgeStateOf(n),
-    });
+    const nm = String(n?.name ?? '');
+    if (nm && !byName.has(nm)) byName.set(nm, n.id);
+  }
+  const edges = new Map();
+  // Out edges (forward delivery). Read through `outEdgesOf` so the `[{to,on,mode}]`
+  // payload shape is understood (the old `ids.has(n.out)` read a bare string — and
+  // `Set.has(<array>)` is false for every node, so this branch drew zero edges on
+  // any snapshot since the array shape landed: the flattening bug this batch fixes).
+  // Two target classes stay out, both already covered elsewhere:
+  //   loop — drawn by the dedicated back-edge pass below (skipping it here keeps
+  //          each loop edge on exactly one key, i.e. never a double draw);
+  //   Nebula — the completion sink, not a graph node (no card, nothing to point at).
+  // No de-dup of its own: the in-edge pass below only fills gaps (`edges.has`), so
+  // the out edge wins the shared `${up}=>${down}` key, which is the existing order.
+  for (const n of vis) {
+    for (const e of outEdgesOf(n)) {
+      if (e.mode === 'loop' || e.to === 'Nebula') continue;
+      const tid = resolveTargetId(ids, byName, e.to);
+      if (!tid) continue; // dangling target (neither id nor name form) — same skip as in/deps
+      const from = positions[n.id];
+      const to = positions[tid];
+      if (!from || !to) continue;
+      edges.set(`${n.id}=>${tid}`, {
+        x1: from.x, y1: from.y, x2: to.x, y2: to.y, state: edgeStateOf(n),
+      });
+    }
   }
   for (const n of vis) {
     for (const up of (n.in || [])) {
@@ -694,16 +823,62 @@ function collectEdges(fm, positions) {
       });
     }
   }
+  // deps edges (scheduling gates, upstream → downstream arrow, `~>` key). Targets go
+  // through `depTargetsOf`, the single resolution point shared with the layout pass:
+  // a plain node id resolves when visible, a `chain:<chainId>` ref resolves to that
+  // chain's sink set (`ends` ∩ visible, else its visible in-chain sinks, else []).
+  // An unresolvable ref degrades gracefully — no edge, no throw, no fabricated node.
   for (const n of vis) {
     for (const d of n.deps || []) {
-      if (!ids.has(d)) continue;
-      const from = positions[d];
-      const to = positions[n.id];
+      for (const t of depTargetsOf(fm, d)) {
+        const from = positions[t];
+        const to = positions[n.id];
+        if (!from || !to) continue;
+        edges.set(`${t}~>${n.id}`, {
+          x1: from.x, y1: from.y, x2: to.x, y2: to.y,
+          state: depsEdgeStateOf(byId.get(t)),
+          kind: 'deps',
+        });
+      }
+    }
+  }
+  // ── 反馈回路边（`:loop` 控制边 = verifier → worker 的 (fail) 回边）──────────────
+  // 独立一遍、**只接 `mode === 'loop'` 的 out 边**，插在最后 ⇒ 既有两个 forward 分支
+  // （out / in 代理）都不产出 loop 键，本遍只**新增**回边条目。
+  // Key shape `${from}=>loop=>${to}` never collides with the forward `=>` key, and the
+  // out pass above skips `mode === 'loop'` — the two filters are exact duals, so a loop
+  // edge is drawn on exactly one key (no double draw) and no forward edge is lost.
+  // 为什么必须走 out：loop 边**不进 `in` 镜像**（NodeTools.appendEdgeTo 的
+  // `!OutEdge.isLoopEdge(e)` 豁免 = round-1 防死锁红线①）⇒ 上面的 in 代理兜不住它，
+  // 这里是 loop 边进入边集的唯一入口。过滤口径 = 排除 Nebula + **目标串双形态解析**
+  // （vchip r3 更正：r2 版此处直接 `ids.has(e.to)` ⇒ 只认 id 形态，现网名形态回边被
+  // 静默丢弃。目标串形态二元性是**引擎既有规约**，不是本批新引入的口径——
+  // `ProjectTypes.scala:251 OutEdge.resolveTargetId` 逐字：「目标串历史上有两种形态——
+  // 节点 id（引擎镜像 appendEdgeTo 写入）与节点名（LLM/分发器按 name 接线的自然写法，
+  // 原样落库）」，解析顺序「id 命中 → 名字命中 → None」；`NodeEngine.scala:4083` 的
+  // 回边驱动方反查亦注明「目标串支持 id/名字两形态（与 resolveTargetId 同源）」。
+  // ⇒ 回边可见性必须与引擎同序解析，否则「引擎认这条回边、图上却无此边」。
+  // The flattening fix moved the out pass onto the same `outEdgesOf` + `resolveTargetId`
+  // pair, so both passes now resolve targets identically (previously the out pass read a
+  // bare string and silently dropped every array-shaped payload).
+  for (const n of vis) {
+    for (const e of outEdgesOf(n)) {
+      if (e.mode !== 'loop' || e.to === 'Nebula') continue;
+      // 双形态解析（与 OutEdge.resolveTargetId 同序：id 命中 → 名字命中 → 悬空跳过）。
+      const tid = resolveTargetId(ids, byName, e.to);
+      if (!tid) continue; // 悬空目标（两种形态都不命中）⇒ 与既有 in/deps 分支同款跳过
+      if (tid === n.id) continue; // 自回边（引擎侧 NODE_LOOP_EDGE_ROLE 已拒；防御性跳过）
+      const from = positions[n.id];
+      const to = positions[tid];
       if (!from || !to) continue;
-      edges.set(`${d}~>${n.id}`, {
-        x1: from.x, y1: from.y, x2: to.x, y2: to.y,
-        state: depsEdgeStateOf(byId.get(d)),
-        kind: 'deps',
+      edges.set(`${n.id}=>loop=>${tid}`, {
+        kind: 'loop',
+        // 门标签**取载荷 on 集原文**（禁臆造）：canonical 后 loop 边恒 on={fail}
+        // ⇒ 标签即 `(fail)`；门集若漂移则标签随原文漂移（不猜、不补）。
+        gate: `(${e.on.join(',')})`,
+        x1: from.x, y1: from.y,
+        x2: to.x, y2: to.y,
+        state: edgeStateOf(n),
       });
     }
   }
@@ -722,8 +897,16 @@ function depsEdgeStateOf(up) {
   return 'deps-unmet';
 }
 
-/** 边 DOM class（含 deps 类型区分，applyEdgeDiff 与全量渲染共用同一拼接）。 */
+/** 边 DOM class（含 deps 类型区分，applyEdgeDiff 与全量渲染共用同一拼接）。
+ *  vchip 批加 `fm-edge-loop` 类型档（第三类边：控制回边），三段特异度压过
+ *  `.flow-edge.fm-edge` 三态规则，与 fm-edge-deps 同法。 */
 function edgeClassOf(e) {
+  if (e.kind === 'loop') {
+    return {
+      path: `flow-edge fm-edge fm-edge-loop ${e.state}`,
+      arrow: `flow-edge-arrow fm-edge-arrow fm-edge-loop-arrow ${e.state}`,
+    };
+  }
   return e.kind === 'deps'
     ? { path: `flow-edge fm-edge fm-edge-deps ${e.state}`, arrow: `flow-edge-arrow fm-edge-arrow fm-edge-deps-arrow ${e.state}` }
     : { path: `flow-edge fm-edge ${e.state}`, arrow: `flow-edge-arrow fm-edge-arrow ${e.state}` };
@@ -735,14 +918,76 @@ function edgePathD(p) {
   return `M ${p.x1.toFixed(1)} ${p.y1.toFixed(1)} C ${p.x1.toFixed(1)} ${midY.toFixed(1)} ${p.x2.toFixed(1)} ${midY.toFixed(1)} ${p.x2.toFixed(1)} ${p.y2.toFixed(1)}`;
 }
 
+// ── 回边几何（vchip 批 2026-09-15）：`:loop` 控制边的**返回式回拐弧** ──────────
+// 与普通 out 边的纵向 S 曲线（edgePathD：两端点同 x、控制点走中间高度）形态正交：
+// 回边走**卡外右侧**——自 verifier 右缘**水平**出、沿右侧竖直外拐上行、**水平**
+// 回到 worker 右缘。两点区别（视觉可分辨的判据）：① 锚点 = 卡右缘中点（普通边 =
+// 卡中心）；② 控制点 = 两侧同一外拐 x（普通边 = 两端同一中间 y）。
+/** 回边横向外拐量：弧顶实际外扩 ≈ 0.75×44 = 33px。上界依据 = layoutNodes 的
+ *  `width = (maxAt-1)*H_SPACING + NODE_W + PAD*2` ⇒ 最右卡右缘距画布右缘恒 = PAD(48)
+ *  ⇒ 33 < 48，弧线恒在画布内（不被 `.flowmap-card .solar-canvas` 的 overflow 裁掉），
+ *  且**不改 layoutNodes 的 width/height**（弧线是纯渲染层量，不参与布局）。 */
+const LOOP_BOW = 44;
+
+/** 回边三锚点（g 局部坐标）：两端点均取卡**右缘中点**，控制点同在 `bx`。 */
+function loopAnchors(p) {
+  const x1 = p.x1 + NODE_W / 2;
+  const x2 = p.x2 + NODE_W / 2;
+  const bx = Math.max(x1, x2) + LOOP_BOW;
+  return { x1, y1: p.y1, x2, y2: p.y2, bx };
+}
+
+/** 回边路径 d。 */
+function loopPathD(p) {
+  const a = loopAnchors(p);
+  return `M ${a.x1.toFixed(1)} ${a.y1.toFixed(1)} C ${a.bx.toFixed(1)} ${a.y1.toFixed(1)} ${a.bx.toFixed(1)} ${a.y2.toFixed(1)} ${a.x2.toFixed(1)} ${a.y2.toFixed(1)}`;
+}
+
+/** 回边弧顶（贝塞尔 t=0.5 解析点：P(½) = (P₀+3P₁+3P₂+P₃)/8）——门标签落点。 */
+function loopApex(p) {
+  const a = loopAnchors(p);
+  return {
+    x: (a.x1 + 3 * a.bx + 3 * a.bx + a.x2) / 8,
+    y: (a.y1 + 3 * a.y1 + 3 * a.y2 + a.y2) / 8,
+  };
+}
+
+/** 边路径 d 单点分派（全量渲染与增量 diff 共用）：kind 决定形状函数。 */
+function edgeD(e) {
+  return e && e.kind === 'loop' ? loopPathD(e) : edgePathD(e);
+}
+
+/** 回边端点圆（箭头）落点 = 两锚点中的**终点**（worker 右缘）——普通边的
+ *  `e.x2/e.y2` 是卡中心，回边须用锚点，否则箭头画到卡里。 */
+function loopArrowAnchor(p) {
+  const a = loopAnchors(p);
+  return { x: a.x2, y: a.y2 };
+}
+
+/** 回边门标签层（全量渲染与增量 diff 共用）：一个 `<g class="fm-edge-loop-labels">`
+ *  容器，内为每条回边一枚 `<text class="fm-edge-loop-gate">`（文案 = 载荷 on 集原文，
+ *  如 `(fail)`）。容器**整体重算**（回边数量级 O(1)，整层重建比逐枚 diff 稳且绝无
+ *  陈旧/缺件），故增量路径无需为它另开一套 diff 分支。 */
+function loopLabelsHtml(edges) {
+  const items = [];
+  for (const [id, e] of edges) {
+    if (e.kind !== 'loop') continue;
+    const a = loopApex(e);
+    items.push(`<text class="fm-edge-loop-gate" data-edge-id="${esc(id)}" x="${a.x.toFixed(1)}" y="${a.y.toFixed(1)}">${esc(e.gate || '')}</text>`);
+  }
+  return items.join('');
+}
+
 function edgesSvg(fm, positions, width, height) {
-  const paths = Array.from(collectEdges(fm, positions)).map(([id, e]) => {
+  const edges = collectEdges(fm, positions);
+  const paths = Array.from(edges).map(([id, e]) => {
     const cls = edgeClassOf(e);
+    const an = e.kind === 'loop' ? loopArrowAnchor(e) : { x: e.x2, y: e.y2 };
     return `
-      <path class="${cls.path}" data-edge-id="${esc(id)}" d="${edgePathD(e)}"/>
-      <circle class="${cls.arrow}" data-edge-id="${esc(id)}" cx="${e.x2.toFixed(1)}" cy="${e.y2.toFixed(1)}" r="3"/>`;
+      <path class="${cls.path}" data-edge-id="${esc(id)}" d="${edgeD(e)}"/>
+      <circle class="${cls.arrow}" data-edge-id="${esc(id)}" cx="${an.x.toFixed(1)}" cy="${an.y.toFixed(1)}" r="3"/>`;
   }).join('');
-  return `<svg class="solar-edges" width="${width}" height="${height}"><g transform="translate(${(width / 2).toFixed(1)},${PAD})">${paths}</g></svg>`;
+  return `<svg class="solar-edges" width="${width}" height="${height}"><g transform="translate(${(width / 2).toFixed(1)},${PAD})">${paths}<g class="fm-edge-loop-labels">${loopLabelsHtml(edges)}</g></g></svg>`;
 }
 
 // ── 图例（deps 设计 §1.4 六档 + v3 终态保留卡）：i18n 键 flowmap.legend.* ──
@@ -761,23 +1006,301 @@ function legendHtml() {
     </div>`;
 }
 
-// ── 可见集（v3 整链语义，规格 §3.1）──────────────────────
+// ── 可见集（P0 单源收口）──────────────────────────────
 // fmByProject 缓存的是后端权威全量快照；渲染管线只吃「可见派生视图」：
-//   可见 = 活动节点（wiring/pending/running/blocked）+ 链未齐链的终态成员
-//   （completed/failed/cancelled，终态色卡保留主图）；已归档链成员与 TTL 到期
-//   清理链成员（flowMapArchive.expiredIds）不可见。旧版「ttlLeftSec 到期前端隐藏」
-//   随链语义移除（§1.3 裁定基线变更 / §7.6 死代码清理）。
-// P3 视图过滤（2026-09-08）：归档可见性判定之后再叠加 passesViewFilter——
-//   「进行中」态额外隐藏终态/blocked 卡。纯派生，不回写缓存、不改归档语义。
+//   可见 = 快照成员本身（归档资格判定唯一在后端——sweep 出库即 nodeRemoved 广播，
+//   增量管线逐卡淡出；前端不再持有任何已归档/到期排除集）。
+// P3 视图过滤（2026-09-08）：可见性之上叠加 passesViewFilter——「进行中」态额外
+//   隐藏终态/blocked 卡。纯派生，不回写缓存、不改归档语义。
+// P1 链折叠（链级抽象 spec §3.3）：过滤之后再叠加 foldView——折叠链的成员卡替换为
+//   链摘要卡。同一纯派生纪律（不回写缓存；本地 API 快照仍持有全量 nodes/chains）。
 function visibleFmView(project, fm) {
   if (!fm) return fm;
-  const nodes = (fm.nodes || []).filter((n) => isVisibleNode(project, n) && passesViewFilter(n));
-  return nodes.length === (fm.nodes || []).length ? fm : { ...fm, nodes };
+  const nodes = (fm.nodes || []).filter((n) => passesViewFilter(n));
+  const base = nodes.length === (fm.nodes || []).length ? fm : { ...fm, nodes };
+  return foldView(project, base);
 }
 
 /** 渲染管线输入的 fm 已是可见视图（visibleFmView 单点过滤），此处恒等。 */
 function visibleNodes(fm) {
   return fm?.nodes || [];
+}
+
+// ── 折叠派生（P1 · spec §3.3 方案 b「真折叠」）────────────────────────
+// 纯渲染层变换：折叠链的成员卡从 nodes 剔除、每链追加一张链摘要卡伪节点（id=chainId）
+// 继承成员的跨链边资源（in/deps/out 重映射到链卡），参与既有布局/边/增量 diff 管线。
+// 数据源全部后端下发（fm.chains 旁挂的 memberIds/title + 成员节点自身字段）——前端
+// 零链派生（spec §6.1 纪律）。原快照零回写（派生视图是新对象；折叠记忆按 project
+// 分桶存 localStorage）。
+// 折叠门槛 = **可见成员 ≥2**：单成员链折叠无收益且会造出与单体卡重复的卡；成员
+// 被视图过滤/已归档出库时可见成员自然减少 ⇒ 优雅降级为不折叠（无判据、无状态）。
+
+/** 节点出边目标集（载荷形态双读：P1 起 out 为 `[{to,on,mode}]` 数组，存量/夹具
+ *  仍可能是裸字符串——与 flowMapArchive 的 outTargets 同款双读）。 */
+function outTargetsOf(n) {
+  const out = n?.out;
+  if (Array.isArray(out)) {
+    return out.map((e) => (e && typeof e === 'object' ? String(e.to ?? '') : String(e ?? ''))).filter((x) => !!x);
+  }
+  return out ? [String(out)] : [];
+}
+
+/** 出边**对象集**（vchip 批 2026-09-15；与 outTargetsOf 同源双读、同缺省口径）：
+ *  数组形态读载荷 `{to,on,mode}`（P1 起 NodePayload.outFields = OutEdge.canonical）——
+ *  `on` 缺键/非数组按 OutEdge.DefaultOn={pass}、`mode` 缺键按 OutEdge.Result='result'
+ *  防御（`ConfiguredCodec.derived` 的 withDefaults 口径，前端按缺省读不推导）；裸字符串
+ *  按存量单边 `{to, on:['pass'], mode:'result'}`（fromLegacyString 语义，仅回边判据
+ *  不受影响——存量串形态不可能携带 mode=loop）。
+ *  **`mode === 'loop'` 即 verifier→worker 的 (fail) 回边（OutEdge.Loop 控制边）**——
+ *  它是「out 里可声明、图里不连」（设计 §3.5 R5(a)）的那条边，本函数是它在图上的
+ *  唯一取数口。 */
+function outEdgesOf(n) {
+  const out = n?.out;
+  if (Array.isArray(out)) {
+    return out.map((e) => (e && typeof e === 'object'
+      ? {
+        to: String(e.to ?? ''),
+        on: Array.isArray(e.on) ? e.on.map(String) : ['pass'],
+        mode: String(e.mode ?? 'result'),
+      }
+      : { to: String(e ?? ''), on: ['pass'], mode: 'result' }))
+      .filter((e) => !!e.to);
+  }
+  return out ? [{ to: String(out), on: ['pass'], mode: 'result' }] : [];
+}
+
+/** Resolve a `chain:<chainId>` deps reference to its **gate targets** — the ids the
+ *  depending node actually waits for. The wait is on *chain completion* (author's
+ *  wording: "the gate fires when the chain finishes"), so the target set is the
+ *  chain's sink/terminal members, not every member.
+ *
+ *  Source = the snapshot's own `fm.chains[]` side-car (backend
+ *  `FlowMapStore.payloadChains`; entries carry id/entries/ends/memberIds). Zero
+ *  front-end chain derivation (spec §6.1) — this only *reads* what the backend
+ *  shipped, and only over nodes that are visible in the current view.
+ *
+ *  Target set, in order: `ends` ∩ visible; when `ends` is empty, degrade to the
+ *  visible members that have no out-edge into another member of the same chain
+ *  (i.e. the in-chain sinks computed from visible data alone); still empty ⇒ [].
+ *
+ *  Returns [] for a chain that is unreachable in `fm.chains[]` (archived/compacted
+ *  chains are not side-carred) or whose members are all outside the visible set.
+ *  Callers treat [] as "no edge, no exception, no fabricated node" (graceful
+ *  degradation). */
+function chainGateTargets(fm, chainId) {
+  const chains = Array.isArray(fm?.chains) ? fm.chains : [];
+  const cid = String(chainId ?? '');
+  if (!cid) return [];
+  let chain = null;
+  for (const c of chains) if (c && String(c.id) === cid) { chain = c; break; }
+  if (!chain) return [];
+  const vis = visibleNodes(fm);
+  const ids = new Set(vis.map((n) => String(n.id)));
+  const ends = (Array.isArray(chain.ends) ? chain.ends : []).map(String).filter((x) => ids.has(x));
+  if (ends.length) return ends;
+  const memberIds = (Array.isArray(chain.memberIds) ? chain.memberIds : []).map(String);
+  const inChain = new Set(memberIds);
+  const byName = new Map();
+  for (const n of vis) {
+    const nm = String(n?.name ?? '');
+    if (nm && !byName.has(nm)) byName.set(nm, String(n.id));
+  }
+  const sinks = [];
+  for (const m of memberIds) {
+    if (!ids.has(m)) continue;
+    const node = vis.find((n) => String(n.id) === m);
+    if (!node) continue;
+    const intoChain = outEdgesOf(node).some((e) => {
+      if (e.mode === 'loop' || e.to === 'Nebula') return false;
+      const tid = ids.has(e.to) ? e.to : byName.get(e.to);
+      return !!tid && inChain.has(tid);
+    });
+    if (!intoChain) sinks.push(m);
+  }
+  return sinks;
+}
+
+/** deps reference → upstream node ids this node waits for (single resolution point;
+ *  the three deps consumers below all go through here, so `chain:` refs cannot be
+ *  observed differently by the edge pass and the layout pass).
+ *
+ *  `d` is either a plain node id (legacy form) or `chain:<chainId>` (cross-chain
+ *  reference introduced by 2026-09-19 `bedf4222d`). The `chain:` form resolves via
+ *  {@link chainGateTargets}; a plain id resolves only when it names a visible node
+ *  (dangling references are skipped, same as the in/out branches). */
+function depTargetsOf(fm, d) {
+  const ref = String(d ?? '');
+  if (!ref) return [];
+  if (ref.startsWith('chain:')) return chainGateTargets(fm, ref.slice('chain:'.length));
+  const vis = visibleNodes(fm);
+  return vis.some((n) => String(n.id) === ref) ? [ref] : [];
+}
+
+/** Name index built from the given visible-node list. Edge target strings come in
+ *  two historical shapes — node id (written by the engine's mirror) and node name
+ *  (how the LLM/dispatcher naturally wires by name, stored verbatim) — so every
+ *  target-resolution site needs the id-then-name lookup (`OutEdge.resolveTargetId`
+ *  order). First hit in list order wins for duplicate names, matching the engine's
+ *  "first match" Map semantics. */
+function nodeNameIndex(vis) {
+  const byName = new Map();
+  for (const n of vis) {
+    const nm = String(n?.name ?? '');
+    if (nm && !byName.has(nm)) byName.set(nm, n.id);
+  }
+  return byName;
+}
+
+/** Resolve an edge target string against the visible set: id hit → name hit →
+ *  dangling (null). Single shared form of the `ids.has(to) ? to : byName.get(to)`
+ *  idiom so no second target-resolution dialect creeps in. */
+function resolveTargetId(ids, byName, to) {
+  const t = String(to ?? '');
+  if (!t) return null;
+  return ids.has(t) ? t : (byName.get(t) ?? null);
+}
+
+/** chainId → 快照 chains 旁挂条目（{id,title,memberIds…}；未知 → null）。
+ *  只读后端下发数据，零派生（spec §6.1）；供链定位跳转（highlightFlowMapChain）。 */
+function chainViewById(project, chainId) {
+  const fm = fmByProject.get(project);
+  const chains = Array.isArray(fm?.chains) ? fm.chains : [];
+  for (const c of chains) if (c && String(c.id) === String(chainId)) return c;
+  return null;
+}
+
+/** nodeId → 所属链 id（快照 chains 旁挂 memberIds 反查；无链/键缺失 → ''）。
+ *  只读后端下发数据，零派生（spec §6.1）；供折叠态定位跳转（highlightFlowMapNode）。 */
+function chainIdOfNode(project, nodeId) {
+  const fm = fmByProject.get(project);
+  const chains = Array.isArray(fm?.chains) ? fm.chains : [];
+  for (const c of chains) {
+    const ids = Array.isArray(c && c.memberIds) ? c.memberIds : [];
+    if (ids.some((x) => String(x) === nodeId)) return String((c && c.id) || '');
+  }
+  return '';
+}
+
+/** 链卡伪节点（渲染层合成，非 NodePayload）：id=chainId 参与既有 .fm-node 管线；
+ *  counts 供计数行、status 供卡面状态词与出边档位（edgeStateOf 语义复用）。
+ *  control === false（无 ChainLedger 面的作用域链，如 delegate 链）⇒ 链卡省
+ *  略取消钮（fmNodeCard 消费；缺省 undefined = 既有行为逐字节不变）。 */
+function chainCardNode(cid, title, members, control) {
+  /** @type {Record<string, number>} */
+  const counts = {};
+  for (const k of FM_CHAIN_BUCKETS) counts[k] = 0;
+  for (const m of members) {
+    const st = String(m.status || 'pending');
+    const k = st === 'wiring' ? 'pending' : st;
+    if (k in counts) counts[k] += 1;
+  }
+  const st = counts.failed ? 'failed'
+    : counts.cancelled ? 'cancelled'
+    : counts.running ? 'running'
+    : counts.blocked ? 'blocked'
+    : counts.completed === members.length ? 'completed'
+    : 'pending';
+  const sig = `${members.length}|${members.map((m) => String(m.status || 'pending')).sort().join(',')}`;
+  return {
+    id: cid, name: title || cid, status: st, chainCard: true, chainId: cid,
+    memberCount: members.length, counts, sig,
+    chainControl: control === false ? false : undefined,
+  };
+}
+
+/** 链入口（head）成员：**可见成员**中取后端声明的 `entries` 首个命中；entries 全不在场
+ *  （已出图/非拓扑首）→ memberIds 顺序首个可见成员。只读后端下发字段，零派生。
+ *  折叠控件挂在 head 卡上（spec §3.3：控件属链不属成员——≥2 可见成员才有），
+ *  「入口」即该链在主图的代表卡。 */
+function chainHeadOf(chain, members) {
+  const ids = new Set(members.map((m) => String(m.id)));
+  const entries = Array.isArray(chain && chain.entries) ? chain.entries : [];
+  for (const e of entries) if (ids.has(String(e))) return String(e);
+  return String(members[0].id);
+}
+
+/** 折叠态派生视图（零折叠 + 零链 → 原引用零拷贝；否则浅派生一层）。
+ *  两件事（都由后端 chains 旁挂驱动）：
+ *  ① 展开链：给链入口成员卡挂 `chainHead`（渲染折叠 chevron——≥2 可见成员才有控件）；
+ *  ② 折叠链：成员卡出图、链摘要卡入场、跨链引用重映射到链卡。 */
+function foldView(project, fm) {
+  if (!fm) return fm;
+  const chains = Array.isArray(fm.chains) ? fm.chains : [];
+  if (!chains.length) return fm;
+  const collapsed = collapsedChainIdsOf(project);
+  const vis = visibleNodes(fm);
+  /** @type {Map<string, any>} 可见节点 id → 节点 */
+  const byId = new Map(vis.map((n) => [String(n.id), n]));
+  /** @type {Map<string, { title: string, members: any[], control: any }>} chainId → 折叠内容 */
+  const folded = new Map();
+  /** @type {Map<string, { id: string, title: string, n: number, control: any }>} 入口成员 id → 链控件 */
+  const heads = new Map();
+  for (const c of chains) {
+    const cid = String((c && c.id) || '');
+    if (!cid) continue;
+    const ids = Array.isArray(c && c.memberIds) ? c.memberIds : [];
+    const members = ids.map((id) => byId.get(String(id))).filter((m) => !!m);
+    if (members.length < 2) continue; // ≤1 可见成员：无折叠收益，恒不渲染控件
+    const title = String((c && c.title) || cid);
+    // control 透传（缺省 undefined = 既有面）：无 ChainLedger 面的作用域链（delegate
+    // 链 control:false）折叠卡/入口卡省略取消钮（fmNodeCard 消费）。
+    const control = c && c.control === false ? false : undefined;
+    if (collapsed.has(cid)) folded.set(cid, { title, members, control });
+    else heads.set(chainHeadOf(c, members), { id: cid, title, n: members.length, control });
+  }
+  if (!folded.size && !heads.size) return fm;
+  /** @type {Map<string, string>} 被折叠成员 id → 链卡 id */
+  const hidden = new Map();
+  for (const [cid, f] of folded) for (const m of f.members) hidden.set(String(m.id), cid);
+  /** @param {any} x @returns {string} */
+  const remapId = (x) => {
+    const hit = hidden.get(String(x));
+    return hit || String(x);
+  };
+  /** @param {any} xs @returns {any} */
+  const remapIds = (xs) => (Array.isArray(xs) ? xs.map((x) => remapId(x)) : xs);
+  /** out 双形态重映射（数组＝保留边对象只改 to；裸字符串＝改值）。 */
+  const remapOut = (out) => {
+    if (Array.isArray(out)) {
+      return out.map((e) => (e && typeof e === 'object' && typeof e.to === 'string' ? { ...e, to: remapId(e.to) } : e));
+    }
+    return typeof out === 'string' ? remapId(out) : out;
+  };
+  const nodes = [];
+  for (const n of vis) {
+    if (hidden.has(String(n.id))) continue; // 折叠成员出列（链卡代其在场）
+    const head = heads.get(String(n.id));
+    if (!head && !hidden.size) { nodes.push(n); continue; } // 零改动节点复用原对象
+    /** @type {any} */
+    const next = { ...n, in: remapIds(n.in), deps: remapIds(n.deps), out: remapOut(n.out) };
+    if (head) next.chainHead = head;
+    nodes.push(next);
+  }
+  for (const [cid, f] of folded) {
+    const card = chainCardNode(cid, f.title, f.members, f.control);
+    // 链卡资源继承：跨链边（成员 in/deps/out 指向链外可见节点）聚合到卡片上——
+    // 布局分层（in/deps 决定上游）与边锚定（in 代理边）均据此成立。
+    /** @type {Set<string>} */
+    const ups = new Set();
+    /** @type {Set<string>} */
+    const deps = new Set();
+    /** @type {Set<string>} */
+    const outs = new Set();
+    for (const m of f.members) {
+      for (const x of (Array.isArray(m.in) ? m.in : [])) if (byId.has(String(x)) && !hidden.has(String(x))) ups.add(String(x));
+      for (const x of (Array.isArray(m.deps) ? m.deps : [])) if (byId.has(String(x)) && !hidden.has(String(x))) deps.add(String(x));
+      for (const t of outTargetsOf(m)) if (t !== 'Nebula' && byId.has(t) && !hidden.has(t)) outs.add(t);
+    }
+    card.in = Array.from(ups);
+    card.deps = Array.from(deps);
+    // out 以载荷形态（边对象数组）表达 = 成员跨链出边并集（`mode:'result'`）。该字段
+    // 自 flattening fix 起**不再是惰性**：`collectEdges` 的 out 分支现经 `outEdgesOf`
+    // 读载荷，链卡的跨链出边因此成图（与 out 分支此前的裸字符串失配一并修掉）。
+    // 与 in 代理边共用 `${up}=>${down}` 键、out 先成键 ⇒ 同向边不双画（顺序即既有行为）。
+    card.out = Array.from(outs).map((to) => ({ to, on: ['pass'], mode: 'result' }));
+    nodes.push(card);
+  }
+  return { ...fm, nodes };
 }
 
 // ── 视图过滤控件（P3）：共享开关 .nb-toggle（toggle.js / sidebar.css，玻璃材质
@@ -803,13 +1326,7 @@ function viewFilterControlHtml() {
 function onViewFilterChange(_el, on) {
   try { localStorage.setItem(VIEW_FILTER_KEY, on ? '1' : '0'); } catch (e) { /* 隐私模式等：会话态兜底 */ }
   document.querySelectorAll('.flowmap-view-filter .nb-toggle').forEach((el) => setToggleState(el, on));
-  for (const { project, pane } of openFlowMapPanes()) {
-    const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
-    if (!scroll) continue;
-    const fm = fmByProject.get(project);
-    if (fm) renderFlowMap(scroll, visibleFmView(project, fm), project);
-    else renderFlowMapInto(scroll, project);
-  }
+  rerenderFlowMap();
 }
 
 /** 就地视图：把控件挂进 nav-bar（幂等；pane 重建后下次渲染自动补挂并收敛状态）。 */
@@ -872,7 +1389,15 @@ function lerpPts(a, b, k) {
     y1: a.y1 + (b.y1 - a.y1) * k,
     x2: a.x2 + (b.x2 - a.x2) * k,
     y2: a.y2 + (b.y2 - a.y2) * k,
+    // kind 参与插值结果的形状分派（回边走 loopPathD）——两臂同一条边，kind 恒定，
+    // 取值以「去向」b 为准（与 x/y 同源）。
+    kind: b.kind,
   };
+}
+
+/** 插值点上的端点圆落点（回边 = 锚点，普通边 = 卡中心；与 applyEdgeDiff.markerOf 同式）。 */
+function lerpMarker(p) {
+  return p.kind === 'loop' ? loopArrowAnchor(p) : { x: p.x2, y: p.y2 };
 }
 
 function edgeFlightNow(f, now) {
@@ -887,10 +1412,11 @@ function pumpFlights(now) {
     if (!f.path.isConnected) { edgeFlights.delete(id); continue; }
     const t = Math.min(1, (now - f.start) / MOVE_MS);
     const p = lerpPts(f.from, f.to, easeInOutCubic(t));
-    f.path.setAttribute('d', edgePathD(p));
+    f.path.setAttribute('d', edgeD(p));
     if (f.circle) {
-      f.circle.setAttribute('cx', p.x2.toFixed(1));
-      f.circle.setAttribute('cy', p.y2.toFixed(1));
+      const m = lerpMarker(p);
+      f.circle.setAttribute('cx', m.x.toFixed(1));
+      f.circle.setAttribute('cy', m.y.toFixed(1));
     }
     if (t >= 1) edgeFlights.delete(id); else live = true;
   }
@@ -911,12 +1437,13 @@ function ensureFlightPump() {
 }
 
 function startEdgeFlights(list) {
-  if (prefersReducedMotion()) {
+  if (animOff()) {
     for (const it of list) {
-      it.path.setAttribute('d', edgePathD(it.to));
+      it.path.setAttribute('d', edgeD(it.to));
       if (it.circle) {
-        it.circle.setAttribute('cx', it.to.x2.toFixed(1));
-        it.circle.setAttribute('cy', it.to.y2.toFixed(1));
+        const m = lerpMarker(it.to);
+        it.circle.setAttribute('cx', m.x.toFixed(1));
+        it.circle.setAttribute('cy', m.y.toFixed(1));
       }
     }
     return;
@@ -932,7 +1459,7 @@ function startEdgeFlights(list) {
 
 function animateGTranslate(g, fromTx, toTx) {
   const setFinal = () => g.setAttribute('transform', `translate(${toTx.toFixed(1)},${PAD})`);
-  if (prefersReducedMotion() || Math.abs(fromTx - toTx) < 0.5) { setFinal(); return; }
+  if (animOff() || Math.abs(fromTx - toTx) < 0.5) { setFinal(); return; }
   const now = performance.now();
   const prev = Array.from(gFlights).find((f) => f.g === g);
   let from = fromTx;
@@ -948,7 +1475,7 @@ function animateGTranslate(g, fromTx, toTx) {
 /** 新边生长动画：dashoffset 从路径长度过渡到 0（画线生长），结束后清掉内联
  *  dash/animation 让状态档位（inflight 行军蚁等）的类样式接管。 */
 function animateEdgeEnter(path, circle) {
-  if (prefersReducedMotion()) return;
+  if (animOff()) return;
   let len = 0;
   try { len = path.getTotalLength(); } catch (_) { /* 未渲染（隐藏 pane）时量不到 */ }
   if (!Number.isFinite(len) || len <= 0) return;
@@ -974,7 +1501,7 @@ function animateEdgeEnter(path, circle) {
 
 function animateEdgeExit(path, circle) {
   path.classList.add('fm-edge-exit'); // 标记：后续 diff 不再把它当作可复用元素
-  if (prefersReducedMotion()) {
+  if (animOff()) {
     path.remove();
     if (circle) circle.remove();
     return;
@@ -992,14 +1519,14 @@ function animateEdgeExit(path, circle) {
 }
 
 function animateNodeEnter(el) {
-  if (prefersReducedMotion()) return;
+  if (animOff()) return;
   el.classList.add('fm-enter');
   el.getBoundingClientRect(); // 强制布局，确保过渡从入场态起步
   requestAnimationFrame(() => el.classList.remove('fm-enter'));
 }
 
 function animateNodeExit(el) {
-  if (prefersReducedMotion()) { el.remove(); return; }
+  if (animOff()) { el.remove(); return; }
   el.classList.add('fm-exit');
   setTimeout(() => el.remove(), 380);
 }
@@ -1013,15 +1540,26 @@ function animateNodeExit(el) {
  *  展示字段），不再含 result（载荷无 result）。Agent 退役（node-flowmap-slim）：
  *  agent 不再上卡，签名改带 preset/plugins（副行展示字段，变更即重渲）。badge 批
  *  （2026-09-05）：merge/loop 徽标字段入签名——WS 载荷带上该字段时增量路径即重渲；
- *  pending 徽标随 st（已在签名）变化。 */
+ *  pending 徽标随 st（已在签名）变化。vchip 批（2026-09-15）：**role 入签名**——
+ *  它是 verifier chip 的唯一判据（nodeFlagKeys 的第三态），不入签名则该徽标在增量
+ *  路径上是**陈旧 DOM**（复用旧卡不重建）。role 虽 create-only（生产上不会中途变），
+ *  但签名口径 = 「参与渲染的字段全入」（与 merge/loop 同纪律），漏项即是未来的
+ *  静默漂移面（实测反例：本批探针 ctrl-role-task 臂未改签名时 chip 不消失）。 */
 function nodeContentKey(n) {
   if (!n) return '∅';
+  // 折叠链卡（P1）：内容 = 链名 + 聚合状态 + 成员状态签名——任一成员状态变化
+  // （即使聚合态未变，如 2 完成 → 1 完成 1 失败但都归 failed 桶）都触发卡内容重渲。
+  if (n.chainCard) return `chain|${n.id}|${n.name || ''}|${n.status || ''}|${n.sig || ''}`;
   const st = n.status || 'pending';
   return [
     st,
     n.name || '',
+    n.role || '',
     n.preset || '',
     (n.plugins || []).join(','),
+    // #523 补齐批：delegate 链视图 root 卡副行的分配模式词入签名（参与渲染的字段
+    // 全入——否则重 spawn 换臂/换模式时增量路径复用旧卡，副行陈旧）。
+    n.allocation || '',
     n.hasWorktree || n.worktree ? 1 : 0,
     n.worktree || '',
     n.merge === true ? 1 : 0,
@@ -1035,12 +1573,13 @@ function nodeContentKey(n) {
   ].join('|');
 }
 
-/** 就地更新节点卡片内容，但保留 .solar-orbit——轨道旋转由 flowAnim.js 的 rAF
- *  以 inline transform 逐帧驱动（状态按 pane|nodeId 键控续接）。移植 orbit 以外
- *  子节点使 .solar-dot-wrap 元素及其 inline transform 原地保留：rAF 的键控状态
- *  st.el === el 继续成立，增量更新零打断、零重挂载（全量重建路径由 flowAnim 的
- *  keyed re-attach 兜底续角度）。根 class/状态属性同步替换，rAF reconcile 据此
- *  感知 running→终态并执行滑行淡出。 */
+/** 就地更新节点卡片内容，但保留 .solar-orbit——轨道旋转由 CSS keyframes 驱动
+ *  （flowCss.js 的相位层/动画层），flowAnim.js 只做一次性相位续接与收尾补丁。
+ *  移植 orbit 以外子节点使 .solar-dot-wrap/.solar-dot-spin 元素及其 inline
+ *  animation-delay（相位续接种子）原地保留：旋转动画不重启动、点不瞬移，增量更新
+ *  零打断、零重挂载（全量重建路径由 flowAnim 的 fresh-element 种子兜底续角度）。
+ *  根 class/状态属性同步替换，flowAnim reconcile 据此感知 running→终态并执行
+ *  滑行收尾（一次性 animation 改写）+ 淡出。 */
 function transplantNodeContent(el, n, pos, originX, nameOf) {
   const holder = document.createElement('div');
   holder.innerHTML = nodeHtml(n, pos, originX, nameOf);
@@ -1070,9 +1609,9 @@ function applyNodeDiff(canvas, prevFm, fm, positions, width, projectName) {
   const seen = new Set();
   for (const n of vis) {
     seen.add(n.id);
-    const pos = positions[n.id] || { x: 0, y: 0 };
+    const pos = positions[n.id] || { x: 0, y: 0, h: NODE_H };
     const left = `${(pos.x - NODE_W / 2 + originX).toFixed(1)}px`;
-    const top = `${(pos.y - NODE_H / 2 + PAD).toFixed(1)}px`;
+    const top = `${cardTopOf(pos).toFixed(1)}px`;
     let el = existing.get(n.id);
     if (el && el.classList.contains('fm-exit')) {
       el.remove(); // 快速删后又重建：不复用正在退场的元素（退场定时器随后空移除）
@@ -1083,11 +1622,15 @@ function applyNodeDiff(canvas, prevFm, fm, positions, width, projectName) {
       holder.innerHTML = nodeHtml(n, pos, originX, nameOf);
       el = holder.firstElementChild;
       if (!el) continue;
-      el.addEventListener('click', (e) => {
-        e.stopPropagation(); // §5.10：点节点 = 选择（开详情），不触发空白收起
-        camFocusNodeEl(el); // N3/C6：选中即相机聚焦（居中 + ≥1.6 倍）
-        openNodeDetail(projectName, n.id);
-      });
+      if (!n.chainCard) {
+        el.addEventListener('click', (e) => {
+          e.stopPropagation(); // §5.10：点节点 = 选择（开详情），不触发空白收起
+          camFocusNodeEl(el); // N3/C6：选中即相机聚焦（居中 + ≥1.6 倍）
+          openNodeDetail(projectName, n.id);
+        });
+      }
+      // 折叠链卡：无详情入口（chainId 不是节点 id）——点击 = 展开，由容器级捕获
+      // 委托单点分派（bindFlowMapClicks），此处不挂监听（捕获相位已 stopPropagation）。
       canvas.appendChild(el);
       animateNodeEnter(el);
       continue;
@@ -1115,6 +1658,8 @@ function applyEdgeDiff(g, prevEdges, edges) {
     if (!c.classList.contains('fm-edge-exit')) circles.set(c.getAttribute('data-edge-id'), c);
   });
   const flights = [];
+  /** 端点圆落点（回边用锚点、普通边用卡中心；两处共用同一定点） */
+  const markerOf = (e) => (e.kind === 'loop' ? loopArrowAnchor(e) : { x: e.x2, y: e.y2 });
   for (const [id, e] of edges) {
     let p = paths.get(id);
     let c = circles.get(id) || null;
@@ -1123,14 +1668,15 @@ function applyEdgeDiff(g, prevEdges, edges) {
       p = document.createElementNS(SVG_NS, 'path');
       p.setAttribute('class', cls.path);
       p.setAttribute('data-edge-id', id);
-      p.setAttribute('d', edgePathD(e));
+      p.setAttribute('d', edgeD(e));
       g.appendChild(p);
       if (!c) {
+        const an = markerOf(e);
         c = document.createElementNS(SVG_NS, 'circle');
         c.setAttribute('class', cls.arrow);
         c.setAttribute('data-edge-id', id);
-        c.setAttribute('cx', e.x2.toFixed(1));
-        c.setAttribute('cy', e.y2.toFixed(1));
+        c.setAttribute('cx', an.x.toFixed(1));
+        c.setAttribute('cy', an.y.toFixed(1));
         c.setAttribute('r', '3');
         g.appendChild(c);
       }
@@ -1140,7 +1686,7 @@ function applyEdgeDiff(g, prevEdges, edges) {
     const prevE = prevEdges.get(id);
     if (prevE && prevE.state !== e.state) {
       // 状态档位变化：颜色/线型交由 CSS transition 平滑（flowMap.css .fm-edge 过渡）；
-      // deps 类型 class 同步保留（edgeClassOf 单点拼接）
+      // deps / loop 类型 class 同步保留（edgeClassOf 单点拼接）
       const cls = edgeClassOf(e);
       p.setAttribute('class', cls.path);
       if (c) c.setAttribute('class', cls.arrow);
@@ -1151,17 +1697,36 @@ function applyEdgeDiff(g, prevEdges, edges) {
     if (prevE) {
       flights.push({ id, path: p, circle: c, from: prevE, to: e });
     } else {
-      p.setAttribute('d', edgePathD(e));
+      p.setAttribute('d', edgeD(e));
       if (c) {
-        c.setAttribute('cx', e.x2.toFixed(1));
-        c.setAttribute('cy', e.y2.toFixed(1));
+        const an = markerOf(e);
+        c.setAttribute('cx', an.x.toFixed(1));
+        c.setAttribute('cy', an.y.toFixed(1));
       }
     }
   }
   for (const [id, p] of paths) {
     if (!edges.has(id)) animateEdgeExit(p, circles.get(id) || null);
   }
+  syncLoopLabels(g, edges);
   if (flights.length) startEdgeFlights(flights);
+}
+
+/** 回边门标签层落位（增量路径）：容器缺失则建、随后**整体重算**内容（见
+ *  loopLabelsHtml 注）。容器恒在 diff 期间存活（不受 path/circle 的 exit 动画影响），
+ *  故增量与全量两条路径的标签层 DOM 同构。 */
+function syncLoopLabels(g, edges) {
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  let box = g.querySelector('g.fm-edge-loop-labels');
+  if (!box) {
+    box = document.createElementNS(SVG_NS, 'g');
+    box.setAttribute('class', 'fm-edge-loop-labels');
+    g.appendChild(box);
+  }
+  const html = loopLabelsHtml(edges);
+  if (box.innerHTML !== html) box.innerHTML = html;
+  if (box.parentNode !== g) g.appendChild(box); // 新建 path 的 appendChild 不会移位它，
+  // 但显式兜底一次，保证标签层恒在最后（= 压在边之上，不被后续 path 覆盖）
 }
 
 /** 增量更新已渲染的图（不做 innerHTML 替换）。baseline 是上一帧的快照——通常取
@@ -1174,8 +1739,8 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
   const g = svg ? svg.querySelector('g') : null;
   if (!svg || !g) return false;
   if (visibleNodes(fm).length === 0 || visibleNodes(baseline).length === 0) return false; // 图⇄空态走全量
-  const prevLayout = layoutNodes(baseline);
-  const { positions, width, height } = layoutNodes(fm);
+  const prevLayout = layoutNodes(baseline, heightsFor(projectName));
+  const { positions, width, height } = layoutNodes(fm, heightsFor(projectName));
 
   // 画布尺寸：节点增删导致重排时宽度连续过渡（.flowmap-card .solar-canvas transition），
   // 居中 margin-auto 的偏移随之连续，配合节点 left 过渡整图不跳。
@@ -1187,6 +1752,9 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
 
   applyNodeDiff(canvas, baseline, fm, positions, width, projectName);
   applyEdgeDiff(g, collectEdges(baseline, prevLayout.positions), collectEdges(fm, positions));
+  geomByCanvas.set(canvas, { positions, width, height });
+  // 实测高重算（裁定①）：新卡/内容变化的卡量到新读数后即时重排（读数未变 ⇒ 空转）
+  scheduleMeasuredLayout(container, fm, projectName);
 
   // 摘要增量（2026-09-06 顶栏合并批）：就地视图摘要已迁入 nav-bar（view-body 之外），
   // 查找提升到 pane 口径；legacy 独立标签页摘要仍在 container 内 card-header——
@@ -1212,9 +1780,122 @@ function renderFlowMapDiff(container, baseline, fm, projectName) {
   return true;
 }
 
+/** 画布 → 最近一次落地的几何 {positions,width,height}：实测高重算的比较基准
+ *  （与 renderedFmByContainer 同式：DOM 即真相的旁挂缓存）。 */
+const geomByCanvas = new WeakMap();
+
+/** 卡内说明行的「溢出打点」（edge-render-fix 批 2026-11-05 · 作者令「说明不许静默
+ *  省略」）：`.fm-desc` 视觉两行封顶（CSS -webkit-line-clamp），装不下时给**同一元素**
+ *  打 `.fm-desc--clipped`，兄弟位的 `.fm-desc-more`「全文」入口随之显形（点卡开详情窗
+ *  = 完整获取路径）。判据 = **实测内容高 vs 封顶后高**（怎么量见函数体：clamp 下
+ *  scrollHeight 不可用），零启发式估长。
+ *  这趟跑在 [[measureNodeHeights]] 的**最前**：入口显形会改变卡高，先打点再量高 ⇒
+ *  本帧读数已含入口行高，不会产生「量完才长高」的二次位移。 */
+function syncDescClipMarkers(container) {
+  for (const el of container.querySelectorAll('.fm-node .fm-desc')) {
+    // 🔴 判据不能读 scrollHeight：`-webkit-line-clamp` 的裁切由 clamp 承担而不是 height，
+    // Chromium 下 scrollHeight ≡ clientHeight（实测：70 字说明被两行裁掉，scrollHeight
+    // 仍等于 clientHeight ⇒ 用 scrollHeight 判「溢出」恒为假，入口永不显形）。
+    // 做法 = 临时摘掉 clamp 量真实内容高，**量完立刻原样还原**（不进 style 残留），
+    // 再与 clamp 后的 clientHeight 比 —— 实测驱动，零启发式估长。
+    const clampedH = el.clientHeight;
+    el.style.setProperty('display', 'block');
+    el.style.setProperty('-webkit-line-clamp', 'unset');
+    const fullH = el.scrollHeight;
+    el.style.removeProperty('display');
+    el.style.removeProperty('-webkit-line-clamp');
+    el.classList.toggle('fm-desc--clipped', fullH > clampedH + 1);
+  }
+}
+
+/** 逐卡实测高，按项目写读数表。
+ *  · 退场卡（fm-exit）不量；隐藏 pane（高 0）不写读数（保留旧读数/标称高）；
+ *  · 一律取 `offsetHeight`（**未变换的布局高**）：入场动画的 scale(0.85) 与**画布相机
+ *    的 transform: scale(z)** 都会进 getBoundingClientRect —— 相机缩放那一路此前只在
+ *    入场动画的注释里被点名，实际漏判：autoFit 缩到 ~0.5 时 rect 高只有世界高的一半，
+ *    读数跌破标称 NODE_H(108) ⇒ 层距退回常量、高卡压叠下一层（edge-render-fix 批
+ *    2026-11-05 实测：缩放下 14 对卡重叠，最大 392px²；改 offsetHeight 后 0 对）。
+ *    「缩放任意档下都不畸变」这条判据就落在这一行上。
+ *  @returns {{changed:boolean, measured:number, visible:number}} */
+function measureNodeHeights(container, fm, projectName) {
+  syncDescClipMarkers(container); // 说明行溢出入口先打点（改变卡高 ⇒ 下面量的是终态高）
+  const byId = new Map(visibleNodes(fm).map((n) => [n.id, n]));
+  const heights = heightsFor(projectName);
+  let changed = false;
+  let measured = 0;
+  for (const el of container.querySelectorAll('.fm-node')) {
+    if (el.classList.contains('fm-exit')) continue;
+    const id = el.getAttribute('data-node-id');
+    if (!id || !byId.has(id)) continue;
+    const h = el.offsetHeight;
+    if (!(h > 0)) continue;
+    measured += 1;
+    const prev = heights.get(id);
+    if (prev === undefined || Math.abs(prev - h) > 0.5) changed = true;
+    heights.set(id, h);
+  }
+  return { changed, measured, visible: byId.size };
+}
+
+/** 按新读数重算层距并就地挪位：画布尺寸（CSS 0.4s 过渡）/ g 平移 / 节点 left-top
+ *  （CSS 0.4s 过渡）/ 边端点（rAF 跟随）/ 邻接表 / autoFit —— 与 renderFlowMapDiff 同一口径，
+ *  几何落地函数复用同一条路径（不新造第二套动画）。读数未变 ⇒ 零 DOM 写、无动画。
+ *  @returns {boolean} 是否真的挪了位。 */
+function applyMeasuredLayout(container, fm, projectName) {
+  const canvas = container.querySelector('.solar-canvas');
+  const svg = canvas ? canvas.querySelector('svg.solar-edges') : null;
+  const g = svg ? svg.querySelector('g') : null;
+  if (!canvas || !svg || !g) return false;
+  const prev = geomByCanvas.get(canvas) || layoutNodes(fm);
+  const next = layoutNodes(fm, heightsFor(projectName));
+  const same = prev.width === next.width && prev.height === next.height
+    && Object.keys(next.positions).every((id) => {
+      const a = prev.positions[id];
+      const b = next.positions[id];
+      return !!a && a.x === b.x && a.y === b.y;
+    })
+    && Object.keys(prev.positions).length === Object.keys(next.positions).length;
+  if (same) return false;
+  canvas.style.width = `${next.width}px`;
+  canvas.style.height = `${next.height}px`;
+  svg.setAttribute('width', String(next.width));
+  svg.setAttribute('height', String(next.height));
+  animateGTranslate(g, prev.width / 2, next.width / 2);
+  applyNodeDiff(canvas, fm, fm, next.positions, next.width, projectName);
+  applyEdgeDiff(g, collectEdges(fm, prev.positions), collectEdges(fm, next.positions));
+  geomByCanvas.set(canvas, next);
+  rebuildAdjacency(canvas, fm, collectEdges(fm, next.positions));
+  const vp = canvas.parentElement;
+  if (vp && vp.classList.contains('fm-viewport')) {
+    const cam = camByViewport.get(vp);
+    if (cam && cam.autoFit) {
+      const fit = camFit(vp, canvas, cam);
+      if (fit) { camByViewport.set(vp, fit); camApply(vp, canvas, fit, true); }
+    }
+  }
+  return true;
+}
+
+/** 挂载后实测重算（rAF：等首帧布局与入场类落定）。量到全部可见卡后即止；隐藏 pane /
+ *  尚未布局（量不到）⇒ 有限次重试（最多 3 次、间隔递增），耗尽即停（打开标签页时
+ *  渲染路径会重新挂一次，不自旋）。 */
+function scheduleMeasuredLayout(container, fm, projectName) {
+  let tries = 0;
+  const tick = () => {
+    if (!container.isConnected) return;
+    const m = measureNodeHeights(container, fm, projectName);
+    if (m.changed) { applyMeasuredLayout(container, fm, projectName); return; }
+    if (m.measured < m.visible && tries < 3) {
+      tries += 1;
+      setTimeout(tick, 250 * tries);
+    }
+  };
+  requestAnimationFrame(tick);
+}
+
 /** 全量渲染后让整图「长出来」（图⇄空态切换走全量路径时的入场动画）。 */
 function animateAllIn(container) {
-  if (prefersReducedMotion()) return;
+  if (animOff()) return;
   container.querySelectorAll('.fm-node').forEach((el) => animateNodeEnter(el));
   container.querySelectorAll('path[data-edge-id]').forEach((p) => {
     const next = p.nextElementSibling;
@@ -1233,19 +1914,30 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   const rawNodes = fmByProject.get(projectName)?.nodes || [];
   const total = rawNodes.length;
   const nodes = visibleNodes(fm);
+  // ⑫B chain-detail-diff 修：delegate 链作用域的详情 diff 段按链的真实 root
+  // project 名拉（delegateFlowMap 投影经 fm.meta.diffProject 透传；此处读原始
+  // fm store——派生视图的 meta 仅按 spread 惯例保留，不依赖）。经典项目作用域
+  // 无此键 ⇒ undefined ⇒ syncArchiveUi 不触碰 ctx（行为逐字节不变）。
+  const diffProject = fmByProject.get(projectName)?.meta?.diffProject;
   // P3 视图过滤控件：diff/全量两路径都保证 nav-bar 开关已挂载且状态收敛
   // （pane 重建/恢复后首帧即补挂）。
   ensureViewFilterControl(container.closest('.canvas-tab-pane'));
+  // P1 折叠重渲（spec §3.3「直落直剥」）：noAnim 窗口内按住 CSS 过渡——节点 left/top
+  // 位移与画布尺寸变化的过渡同帧关闭（JS 侧动画已由 animOff 单点抑制），渲染后自动摘。
+  if (animOff()) {
+    const card = container.querySelector('.flowmap-card');
+    if (card) holdNoAnim(card);
+  }
   const prev = renderedFmByContainer.get(container);
   if (prev && nodes.length > 0 && visibleNodes(prev).length > 0
       && renderFlowMapDiff(container, prev, fm, projectName)) {
     renderedFmByContainer.set(container, fm);
-    syncArchiveUi(container, projectName);
+    syncArchiveUi(container, projectName, { diffProject });
     return;
   }
-  const { positions, width, height } = layoutNodes(fm);
+  const { positions, width, height } = layoutNodes(fm, heightsFor(projectName));
   const nameOf = nameResolverOf(projectName);
-  const nodesHtml = nodes.map((n) => nodeHtml(n, positions[n.id] || { x: 0, y: 0 }, width / 2, nameOf)).join('');
+  const nodesHtml = nodes.map((n) => nodeHtml(n, positions[n.id] || { x: 0, y: 0, h: NODE_H }, width / 2, nameOf)).join('');
   // 空态三分（旧版一律"暂无节点，项目空闲"，把「未挂载」「已归档」两种
   // 有数据的情况说成没数据 —— qa 取证「后端有 3 节点、视图显示暂无节点」即此）。
   // v3（§7.3）：图空但有已归档链 → 「全部节点已完成，结果收入右上角归档」，
@@ -1253,7 +1945,7 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   // P3 补第四态：「进行中」过滤把未归档终态卡全部隐藏时，不说「已全部归档」
   // （死链终态并未归档）——显式告知是视图过滤所致。
   const hiddenByFilter = viewFilterActiveOnly()
-    && rawNodes.some((n) => isVisibleNode(projectName, n) && !passesViewFilter(n));
+    && rawNodes.some((n) => !passesViewFilter(n));
   const emptyMsg = fm?.notMounted ? t('flowmap.notMounted')
     : total > 0 ? (hiddenByFilter ? t('flowmap.viewFilter.noneActive') : t('flowmap.archive.allArchived'))
     : t('flowmap.empty');
@@ -1289,24 +1981,122 @@ export function renderFlowMap(container, fm, projectName, opts = {}) {
   const canvas = container.querySelector('.solar-canvas');
   if (vp && canvas) {
     bindCamera(vp, canvas);
-    bindHover(canvas);
+    bindHover(canvas, projectName);
     rebuildAdjacency(canvas, fm, collectEdges(fm, positions));
+    geomByCanvas.set(canvas, { positions, width, height });
   }
   bindFlowMapClicks(container, projectName);
   if (!navSummary) bindToggle(container, onViewFilterChange); // legacy card-header 内嵌开关
   if (opts.animateAll) animateAllIn(container);
-  syncArchiveUi(container, projectName);
+  syncArchiveUi(container, projectName, { diffProject });
   import('./utils.js').then(({ createIconsIn }) => createIconsIn(container));
+  // 实测高驱动层距（裁定①）：挂载后下一帧量实卡高，需要时按实测重算层心并挪位
+  scheduleMeasuredLayout(container, fm, projectName);
+}
+
+// ── 链级取消确认（R2，chaincancel 批 2026-09-17 · 交互面留本文件）──────────────
+// 取消**按钮**已随卡面迁 fmNodeCard（chainCancelButtonHtml 单源件）；确认卡与
+// 发帧腿属容器交互管线，留在本文件（#1228 拆件边界：渲染件出、交互留）。
+/** 取消集状态桶（与后端 `NodeLifecycle.ChainCancelScope` 同序；确认卡逐状态计数用）。
+ *  仅 **显示** 用途——不代表任何判定口径（判定恒在后端）。blocked 终态已退役
+ *  （no-blocked-semantics 一期）：不在取消桶；legacy 存量 blocked 行归零触碰桶
+ *  （引擎不自动处置存量行，与后端 preserve 口径一致）。 */
+const FM_CHAIN_CANCEL_BUCKETS = ['running', 'pending', 'wiring', 'interrupted'];
+/** 零触碰桶（确认卡第 ④ 要素的计数面；blocked = legacy 存量行展示位）。 */
+const FM_CHAIN_KEEP_BUCKETS = ['completed', 'failed', 'cancelled', 'blocked'];
+
+/** 不可逆确认卡（作者三答 2 + 工程面自决「四要素 + 放弃可恢复中断数提示」）：
+ *  ① 链名 + chainId；② 将被取消的节点数与**逐状态计数**；③ 不可逆声明；④ 零触碰声明；
+ *  **加**「放弃 N 个可恢复中断（interrupted）」提示。确认组件复用既有
+ *  `window.__showConfirm`（danger tone 默认）+ i18n，不引入新交互语言、不做「输入链名」
+ *  式二次确认（与产品克制基调冲突）。
+ *  安全口径：`__showConfirm` 缺席 ⇒ **什么都不做**（绝不无确认直发不可逆帧）。 */
+function confirmChainCancel(projectName, chainId) {
+  const cid = String(chainId || '');
+  if (!cid) return;
+  if (typeof window.__showConfirm !== 'function') {
+    console.warn('[flowmap] chain cancel needs the confirm dialog (window.__showConfirm) — refused');
+    return;
+  }
+  const view = chainViewById(projectName, cid);
+  const fm = fmByProject.get(projectName);
+  const byId = new Map((Array.isArray(fm?.nodes) ? fm.nodes : []).map((n) => [String(n.id), n]));
+  const members = Array.isArray(view?.memberIds) ? view.memberIds.map(String) : [];
+  const counts = {};
+  for (const k of [...FM_CHAIN_CANCEL_BUCKETS, ...FM_CHAIN_KEEP_BUCKETS]) counts[k] = 0;
+  for (const id of members) {
+    const st = String(byId.get(id)?.status || 'pending');
+    counts[st] = (counts[st] || 0) + 1;
+  }
+  const doomed = FM_CHAIN_CANCEL_BUCKETS.reduce((s, k) => s + counts[k], 0);
+  const kept = FM_CHAIN_KEEP_BUCKETS.reduce((s, k) => s + counts[k], 0);
+  const breakdown = FM_CHAIN_CANCEL_BUCKETS
+    .map((k) => `${t(`flowmap.chain.cancel.st.${k}`)} ${counts[k]}`).join(' · ');
+  const msg = [
+    t('flowmap.chain.cancel.chain', { chain: String(view?.title || cid), id: cid }),
+    t('flowmap.chain.cancel.counts', { n: String(doomed), breakdown }),
+    t('flowmap.chain.cancel.irreversible'),
+    t('flowmap.chain.cancel.untouched', { n: String(kept) }),
+    t('flowmap.chain.cancel.interrupted', { n: String(counts.interrupted) }),
+  ].join(' · ');
+  window.__showConfirm(t('flowmap.chain.cancel.title'), msg, () => {
+    sendWs({ type: 'chainCancel', chainId: cid });
+  });
 }
 
 function bindFlowMapClicks(container, projectName) {
   container.querySelectorAll('.fm-node').forEach((el) => {
+    if (el.classList.contains('fm-chain-card')) return; // 折叠链卡：展开入口见下（无详情）
     el.addEventListener('click', (e) => {
       e.stopPropagation(); // §5.10：点节点 = 选择（开详情），不触发空白收起
       camFocusNodeEl(el); // N3/C6：选中即相机聚焦（居中 + ≥1.6 倍）
       openNodeDetail(projectName, el.getAttribute('data-node-id') || '', container);
     });
   });
+  // U1 点击链高亮（作者裁定③）：捕获相位挂容器级委托——节点自身的 click 监听会
+  // stopPropagation，冒泡相位收不到；捕获相位先于节点监听执行，语义稳定。
+  // P1 链折叠（spec §3.3）：折叠链卡的点击（本体或 chevron）在本委托单点分派——
+  // stopPropagation 拦住链卡/卡内按钮的后续派发，展开不做详情入口，也不触发
+  // 「点空白清链高亮」（同一事件只归一义）。
+  const canvas = container.querySelector('.solar-canvas');
+  if (canvas && canvas.dataset.fmChainPickBound !== '1') {
+    canvas.dataset.fmChainPickBound = '1';
+    container.addEventListener('click', (e) => {
+      if (!canvas.isConnected) return;
+      const tgt = /** @type {HTMLElement} */ (e.target);
+      // 链级取消（chaincancel 批，R2）：**必须排在折叠分支之前**——折叠态下该按钮位于
+      // `.fm-chain-card` 之内，若先命中卡片分支会被折叠语义吃掉。动作 = 确认卡
+      // （四要素 + 放弃中断数），确认后才发 `{type:'chainCancel', chainId}`；前端零判定。
+      const cancelEl = tgt.closest?.('.fm-chain-cancel');
+      if (cancelEl) {
+        e.stopPropagation();
+        const ccid = cancelEl.getAttribute('data-chain-id') || '';
+        if (ccid) confirmChainCancel(projectName, ccid);
+        return;
+      }
+      // 折叠控件（两形态同判据）：① 展开态 = 链入口成员卡 head 行的 chevron；
+      // ② 折叠态 = 链摘要卡本体（含卡内 chevron）。二者都吃掉事件——不触发节点详情、
+      // 不触发「点空白清链高亮」（同一事件只归一义）。
+      const chev = tgt.closest?.('.fm-chain-chev');
+      if (chev) {
+        e.stopPropagation();
+        const cid = chev.getAttribute('data-chain-id') || '';
+        if (cid) toggleChainCollapsed(projectName, cid);
+        return;
+      }
+      const cEl = tgt.closest?.('.fm-chain-card');
+      if (cEl) {
+        e.stopPropagation();
+        const cid = cEl.getAttribute('data-chain-id') || '';
+        if (cid) toggleChainCollapsed(projectName, cid);
+        return;
+      }
+      const nEl = tgt.closest?.('.fm-node');
+      const id = nEl ? nEl.getAttribute('data-node-id') || '' : '';
+      if (id) applyChainPick(canvas, id);
+      else clearChainPick(canvas); // 点空白 = 取消选择（与既有「空白点收起面板」同拍）
+    }, true);
+  }
 }
 
 // 节点结果详情（§5.8）：v3 起走右侧详情面板（flowMapArchive，z 70 浮前 +
@@ -1341,11 +2131,20 @@ export function openFlowMapTab(projectName) {
  *  双代防陈旧：seq 管 fetch 对 fetch 的先后；gen 管「fetch 在途时 WS 增量已写入缓存」
  *  ——此时这份响应相对缓存是旧的，丢弃并重新对账，否则旧快照会回滚增量状态。
  *  opts.highlightNodeId：渲染完成后滚动定位并闪烁高亮该节点（任务列表节点条目
- *  点击跳转入口，2026-09-02）。
- *  v3 播种（§7.2）：快照全量节点入缓存 → 链派生（refreshChains）→ TTL 清理
- *  （purgeExpired，快照导入触发一次）→ 可见派生视图渲染。 */
+ *  点击跳转入口，2026-09-02）；opts.highlightChainId：渲染完成后相机 fit 该链并
+ *  闪烁其全部在场成员（任务面板链徽标点击入口，链级抽象 P1 §7-B）。二者互斥，
+ *  链优先（同时传时以链口径为准——链定位是更强的收敛）。
+ *  P0 播种：快照入缓存 → ingestNodes（活动节点 + chains 旁挂导入详情/链上下文
+ *  数据源，零派生）→ TTL 面板兜底清理 → 可见派生视图渲染。 */
 export function renderFlowMapInto(container, projectName, opts = {}) {
   if (!container) return;
+  // 🧩 样式自持（edge-render-fix 批 2026-11-05）：FLOW_CSS 此前只由**已退役**的
+  // renderFlowMapTab 调 ensureFlowCss 注入，delegate 链视图（delegateChainView:160
+  // 自行调一次）之外的任何消费者都得靠调用顺序巧合 —— 一旦漏调，`.solar-node` 的
+  // `position:absolute/width:124px` 与整套轨道/卡面语言全部缺席（实测退化成 360px
+  // 静态竖排）。emitter 自持自己的样式表：入口处单点 ensure（幂等，重复调用零成本），
+  // 与「谁吐 DOM 谁负责这套规则」同一口径（本批连线 CSS 回归同源）。
+  ensureFlowCss();
   const seq = (seqByProject.get(projectName) || 0) + 1;
   seqByProject.set(projectName, seq);
   const genAtStart = genByProject.get(projectName) || 0;
@@ -1356,7 +2155,11 @@ export function renderFlowMapInto(container, projectName, opts = {}) {
     container.dataset.fmState = 'loading';
     container.innerHTML = `<div class="flowmap-loading">${esc(t('flowmap.loading'))}</div>`;
   }
-  fetchFlowMap(projectName).then((fm) => {
+  // Data seam (delegate-plane re-drive): opts.fetchView overrides the default
+  // per-project REST fetch with an arbitrary view producer (same fm shape:
+  // {nodes, chains, meta}). The seq/gen staleness guards apply unchanged.
+  const fetcher = typeof opts.fetchView === 'function' ? opts.fetchView : fetchFlowMap;
+  fetcher(projectName).then((fm) => {
     if (seqByProject.get(projectName) !== seq || !container.isConnected) return; // 过期响应丢弃
     if ((genByProject.get(projectName) || 0) !== genAtStart) {
       scheduleReconcile(projectName); // 在途期间有增量落进缓存 → 这份旧了，重拉收敛
@@ -1364,11 +2167,12 @@ export function renderFlowMapInto(container, projectName, opts = {}) {
     }
     bumpGen(projectName);
     fmByProject.set(projectName, fm);
-    refreshChains(projectName, fm.nodes);
+    ingestNodes(projectName, fm.nodes, fm.chains);
     purgeExpired(projectName);
-    if (exitAnimating.has(projectName)) return; // 整链退场进行中：退场结束统一渲染兜底
     renderFlowMap(container, visibleFmView(projectName, fm), projectName);
-    if (opts.highlightNodeId) highlightFlowMapNode(container, projectName, opts.highlightNodeId);
+    // 高亮入口（渲染完成后才可定位）：节点定位 / 链定位（链级抽象 P1 §7-B）二选一。
+    if (opts.highlightChainId) highlightFlowMapChain(container, projectName, opts.highlightChainId);
+    else if (opts.highlightNodeId) highlightFlowMapNode(container, projectName, opts.highlightNodeId);
   }).catch(() => {
     if (seqByProject.get(projectName) !== seq || !container.isConnected) return;
     container.dataset.fmState = 'error';
@@ -1381,11 +2185,45 @@ export function renderFlowMapInto(container, projectName, opts = {}) {
  *  相机 focusNode（v1 交互壳规格 §10⑦）。节点不存在（已归档/视图空态）时静默。 */
 export function highlightFlowMapNode(container, projectName, nodeId) {
   if (!container || !nodeId) return;
-  const el = container.querySelector(`.fm-node[data-node-id="${CSS.escape(String(nodeId))}"]`);
+  const sel = `.fm-node[data-node-id="${CSS.escape(String(nodeId))}"]`;
+  let el = container.querySelector(sel);
+  if (!el) {
+    // P1 折叠态：目标节点被折叠进链卡（卡不在场）→ 先展开其所属链再定位。否则任务
+    // 列表/气泡的「跳主图定位」在折叠时静默失效（死路）；展开后仍无卡 = 真不可见
+    // （已归档出库/被视图过滤）→ 静默，保持既有降级语义。
+    const cid = chainIdOfNode(projectName, String(nodeId));
+    if (cid && collapsedChainIdsOf(projectName).has(cid)) {
+      setChainCollapsed(projectName, cid, false);
+      el = container.querySelector(sel);
+    }
+  }
   if (!el) return;
   camFocusNodeEl(el);
+  flashNodeEl(el);
+}
+
+/** 主图链定位（链级抽象 P1 · spec §7-B ⭐ 任务面板链徽标点击入口）：把该链的全部
+ *  在场成员卡收进视口（相机 bbox fit）+ 成员卡逐张闪一轮（复用节点定位高亮动画，
+ *  零新动画语言）。折叠态下先展开该链（否则卡不在场）；链不可见（成员已归档出库
+ *  或全部被视图过滤）→ 静默降级（与 highlightFlowMapNode 同语义）。 */
+export function highlightFlowMapChain(container, projectName, chainId) {
+  if (!container || !chainId) return;
+  const cid = String(chainId);
+  const view = chainViewById(projectName, cid);
+  if (!view) return;
+  if (collapsedChainIdsOf(projectName).has(cid)) setChainCollapsed(projectName, cid, false);
+  const els = view.memberIds
+    .map((id) => container.querySelector(`.fm-node[data-node-id="${CSS.escape(String(id))}"]`))
+    .filter((el) => !!el);
+  if (!els.length) return;
+  camFitEls(els);
+  for (const el of els) flashNodeEl(el);
+}
+
+/** 卡片定位闪烁（两轮色环；连续触发可重启——清类 + 强制 reflow）。 */
+function flashNodeEl(el) {
   el.classList.remove('fm-node-flash');
-  void el.offsetWidth; // 强制 reflow：连续点击也能重启动画
+  void el.offsetWidth;
   el.classList.add('fm-node-flash');
   clearTimeout(el.__fmFlashTimer);
   el.__fmFlashTimer = setTimeout(() => el.classList.remove('fm-node-flash'), 2100);
@@ -1412,6 +2250,18 @@ function ensureScroll(pane, id) {
 }
 
 // 标签页关闭时清理该项目的状态（不影响项目数据，数据在服务端 flow-map.json）。
+/** Drop all engine-side caches of one scope (tab-close cleanup body, exported for
+ *  non-tab scopes — the delegate-chain map's scope keys never ride flow-map-*
+ *  tab ids, so their lifecycle is owned by the delegate view layer). */
+export function dropFlowMapScope(project) {
+  fmByProject.delete(project);
+  seqByProject.delete(project);
+  genByProject.delete(project);
+  dropStore(project); // 归档 store 随视图生命周期（详情/链上下文数据源）
+  const timer = reconcileTimers.get(project);
+  if (timer) { clearTimeout(timer); reconcileTimers.delete(project); }
+}
+
 document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) => {
   const id = e.detail?.id || '';
   if (typeof id === 'string' && id.startsWith('flow-map-')) {
@@ -1419,7 +2269,7 @@ document.addEventListener('canvas-tab-closed', (/** @type {CustomEvent} */ e) =>
     fmByProject.delete(project);
     seqByProject.delete(project);
     genByProject.delete(project);
-    dropStore(project); // v3：链派生 store 随视图生命周期
+    dropStore(project); // 归档 store 随视图生命周期（详情/面板数据源）
     const timer = reconcileTimers.get(project);
     if (timer) { clearTimeout(timer); reconcileTimers.delete(project); }
   }
@@ -1489,11 +2339,15 @@ function renderFlowMapTabIfNeeded(project) {
   }
 }
 
-/** 节点 WS 事件（{type, project, nodeId, node}）处理：
- *  1) 缓存可用（有快照、已挂载、payload 带节点身份）→ 并入快照 → 链重判
- *     （refreshChains）→ 链齐 → 整链同帧退场动画（§3.4/§6.1b）；链未齐 → 终态卡
- *     原地转终态色卡保留主图 + toast（§6.3）→ 增量 diff 渲染 → 对账兜底；
- *  2) 否则（无缓存 / 未挂载刚激活 / 视图处于非图状态 / 旧帧缺字段）→ 全量拉快照。 */
+/** 节点 WS 事件（{type, project, nodeId, node}）处理（P0 sweep 事实驱动）：
+ *  1) 缓存可用（有快照、已挂载、payload 带节点身份）→ 并入快照 → ingestNodes
+ *     （详情/链上下文数据源，零派生）→ 增量 diff 渲染（出库节点单卡 fm-exit
+ *     淡出）→ 归档面板同步 → nodeRemoved 触发 /archive 防抖 refetch（面板条目
+ *     到达反馈 = refetch 新链 id diff，见 flowMapArchive.fetchRemoteChains）
+ *     → 600ms 对账兜底；
+ *  2) 否则（无缓存 / 未挂载刚激活 / 视图处于非图状态 / 旧帧缺字段）→ 全量拉快照。
+ *  归档资格/时机判定唯一在后端 sweep：前端不再判「链齐」（旧 refreshChains +
+ *  整链同帧退场 animateChainExit 已删），退场 = 出库事实的增量消化。 */
 function handleNodeWsEvent(msg) {
   const type = String(msg?.type || '');
   const project = msg?.project;
@@ -1510,32 +2364,11 @@ function handleNodeWsEvent(msg) {
     const next = { ...fm, nodes, meta: { ...(fm.meta || {}), updatedAt: Date.now() } };
     bumpGen(project);
     fmByProject.set(project, next);
-    // 链重判：返回新完成（含「迟到成员并入已归档链」的重建）链 → 整链退场；
-    // refreshChains 对成员集不变的链幂等跳过（冻结条目保留）。
-    const completedChains = refreshChains(project, next.nodes);
-    const becameTerminal = type !== 'nodeRemoved' && isTerminalStatus(node.status);
-    const nodeArchived = completedChains.some((c) => c.members.some((m) => m.id === node.id));
-    if (completedChains.length > 0 && !prefersReducedMotion() && !viewFilterActiveOnly()) {
-      // P3：「进行中」态终态卡本就不在主图，整链退场动画无对象可播 → 直渲。
-      animateChainExit(project, panes, completedChains, next);
-    } else {
-      renderFlowMapPanes(project, panes, next);
-    }
+    ingestNodes(project, next.nodes, next.chains);
+    renderFlowMapPanes(project, panes, next);
     for (const { pane } of panes) {
       const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
-      if (scroll) syncArchiveUi(scroll, project, {
-        pulse: completedChains.length > 0,
-        flashChainIds: completedChains.map((c) => c.id),
-      });
-    }
-    if (completedChains.length > 0) {
-      const mainScroll = panes.map((p) => p.pane.querySelector('.team-scroll') || p.pane.querySelector('.flowmap-view-body')).find(Boolean);
-      if (mainScroll) notifyChainArchived(project, completedChains, mainScroll);
-    } else if (becameTerminal && !nodeArchived && !prefersReducedMotion()) {
-      // 链未齐：终态卡保留主图说明 toast（§14-8 拍板 A）
-      const chain = (getStore(project).chainOf.get(node.id)) || null;
-      const mainScroll = panes.map((p) => p.pane.querySelector('.team-scroll') || p.pane.querySelector('.flowmap-view-body')).find(Boolean);
-      if (chain && mainScroll) notifyChainRetained(project, chain, mainScroll);
+      if (scroll) syncArchiveUi(scroll, project);
     }
     scheduleReconcile(project);
     return;
@@ -1554,41 +2387,26 @@ function renderFlowMapPanes(project, panes, fm) {
   }
 }
 
-/** 整链同帧退场（规格 §3.4/§6.1b）：① 先渲染一帧「状态已更新、成员仍在图」的
- *  中间态（终态色卡 + 边转 delivered）；② 全部成员卡同一帧加 fm-exit（一条整体
- *  动画 350ms，非逐节点滴入）；③ 退场结束后统一渲染（整链移除 + 存活卡补位
- *  400ms 既有曲线 + 条目置顶闪烁 + 徽章脉冲）。期间该项目渲染挂起，防止中途
- *  diff 把正在退场的卡提前拆掉。 */
-function animateChainExit(project, panes, chains, fm) {
-  const memberIds = new Set(chains.flatMap((c) => c.members.map((m) => m.id)));
-  exitAnimating.add(project);
-  for (const { pane } of panes) {
-    const scroll = pane.querySelector('.team-scroll') || pane.querySelector('.flowmap-view-body');
-    if (!scroll) continue;
-    const preView = {
-      ...fm,
-      nodes: (fm.nodes || []).filter((n) => (isVisibleNode(project, n) || memberIds.has(n.id)) && passesViewFilter(n)),
-    };
-    renderFlowMap(scroll, preView, project,
-      { animateAll: !scroll.querySelector('.solar-canvas') });
-    for (const id of memberIds) {
-      const el = scroll.querySelector(`.fm-node[data-node-id="${CSS.escape(id)}"]`);
-      if (el) el.classList.add('fm-exit');
-    }
-  }
-  setTimeout(() => {
-    exitAnimating.delete(project);
-    // 350ms 窗口内可能又并入新事件：读最新缓存渲染（退场链成员已不在可见集）
-    renderFlowMapPanes(project, panes, fmByProject.get(project) || fm);
-  }, 350);
-}
-
 // WS 事件驱动（契约 §2）：四类节点事件全部走增量管线。之前是「任何事件 → 全量
 // 重拉 + innerHTML 整页替换」：没有动画、轨道旋转被打断、与其他渲染方互相覆盖。
-import { onMessage, onReconnect } from './ws.js';
+import { onMessage, onReconnect, sendWs } from './ws.js';
 for (const evt of ['nodeCreated', 'nodeUpdated', 'nodeCompleted', 'nodeRemoved']) {
   onMessage(evt, handleNodeWsEvent);
 }
+// 链级取消回帧（chaincancel 批 2026-09-17，R2）：{ok, chainId, cancelled[], preserved[],
+// skipped[], injected, notified, error?}——成功/失败都落 toast（失败带**可行动**错误码：
+// CHAIN_NOT_FOUND / CHAIN_SINGLE_MEMBER / AMBIGUOUS_CHAIN_ID）。权威状态刷新由上方
+// nodeUpdated 增量管线自动承担（取消写点逐节点补发帧）⇒ 本处理器**不做**全量重拉。
+onMessage('chainCancelResult', (msg) => {
+  const ok = msg && msg.ok === true;
+  const canceled = Array.isArray(msg?.cancelled) ? msg.cancelled.length : 0;
+  if (ok) {
+    window.__showToast?.(t('flowmap.chain.cancel.done', { n: String(canceled) }), 'info');
+  } else {
+    window.__showToast?.(
+      t('flowmap.chain.cancel.error', { error: String(msg?.error || 'unknown error') }), 'error');
+  }
+});
 // 断线期间的事件有缺口：重连后对所有打开的 Flow Map 视图拉权威快照（diff 保证
 // 与现渲染一致时零 DOM 变更）。
 onReconnect(() => refreshFlowMapViews());

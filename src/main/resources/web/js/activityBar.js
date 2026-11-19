@@ -3,8 +3,10 @@
 // Layout (top → bottom):
 //   • Avatar — the NebLink login entry. Tap when logged out → opens the
 //     NebLink login modal (Logto OIDC, Authorization Code + PKCE; legacy
-//     device flow as fallback). Tap when logged in →
-//     opens the account profile page (brand.getProfileUrl) in a new tab.
+//     device flow as fallback). Tap when logged in → opens the account menu
+//     (「个人资料」/「退出登录」, 2026-11 sign-out-entry fix batch; the profile
+//     item now opens the in-app face, 2026-11-02 batch 四 — sign-out still
+//     needs a second, explicit click).
 //   • Side Bar panel switch buttons (Files; future panels register the same way).
 //   • (spacer)
 //   • Projects / Plugins (Canvas tabs) and Settings.
@@ -19,15 +21,57 @@
 // stays visible when the sidebar is collapsed.
 
 import { openSettingsPanel, closeSettingsPanel, isSettingsPanelActive } from './sidebar.js';
-import { fetchNeblinkStatus, getNeblinkState, startDeviceFlow, pollDeviceFlow, cancelDeviceFlow, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure } from './neblink.js';
-import { setUpdateDot } from './updateCheck.js';
-import { createIconsIn, escapeHtml } from './utils.js';
-import { getProfileUrl } from './brand.js';
+import { fetchNeblinkStatus, getNeblinkState, startPkceLogin, pollPkceState, cancelPkceFlow, avatarViewState, noteAvatarFailure, paintAvatarSlot, LOCAL_FILE_CODES, openEndSessionHandoff, classifyLoginFailureCode, loginFailureText } from './neblink.js';
+// setUpdateDot（settings-btn 更新绿点，updateCheck.js）已随 auth-trim 批删除 ——
+// 绿点与静默自动检查整链退役（2026-10-20 作者令，未来由官网统一检测更新取代）。
+import { createIconsIn, escapeHtml, statusIcon } from './utils.js';
+import { standLockupSvg, brand } from './brand.js';
+// Agent face of the avatar (a conversation is shown in the main area): the Agent's own avatar.
+import { agentAvatarDataUrl, onAgentAvatarChange } from './agentProfile.js';
+// 件四（作者令 2026-11-02）：设置页身份卡的头像引擎（换头像流程触发）+ App 内个人资料面。
+// 无环：该模块是叶子（只依 neblink/friendsApi/utils/i18n/brand/mobile-popSheet）。
+import { openSettingsAvatarPicker, openProfileFace } from './settingsIdentity.js';
 import { t } from './i18n.js';
 import { key } from './branding.js';
+// 已登录态账号菜单壳（2026-11「退出登录没有入口」修复批）：复用既有右键/长按
+// 菜单组件（玻璃面板 + 手机层全屏动作表），零新弹层形态。
+import { showPopupMenu } from './contextMenu.js';
+// 弹窗退场批（作者令 2026-10-31②）：手机层登录卡铺满屏 + 左上返回（= close，桌面零变化）。
+import { mobileSheetBack } from './mobile/popSheet.js';
 
 let initialized = false;
 let statusPollTimer = null;
+
+// ── 状态 beacon 拍（perf-481 A5：10s → 30s 节流）─────────────────────────
+// 本拍是页面唯一的「活着」节拍（订阅者复用它做降级回补，见下方 onStatusTick）。
+// 原值 10s 是稳态后台网络负载的**主贡献者**（130s 观测窗内 /api/neblink/status
+// 占全部 /api/ 请求的 77%，≈6 次/分钟）。状态面（登录/配对态）在 30s 粒度上
+// 语义等价 —— 该状态由 WS 事件推送驱动，本拍只是「事件面漏掉时」的兜底收敛，
+// 不存在 30s 内可见的状态漂移。⇒ 节流到 30s：≈6 → ≈2 次/分钟。
+//
+// 🔴 与既有门控正交：可见性守卫（`document.hidden` 即 return）逐字保留 —— 页面
+// 不在前台仍是 n=0。拍频只决定「可见时的频率」，不改变「不可见时不跑」这条。
+const STATUS_POLL_MS = 30_000;
+
+// ── 状态 beacon 订阅点（①opt-A3 载体）─────────────────────
+// 既有状态轮询是页面唯一的「活着」节拍（只看可见性、不新增定时器；拍频见
+// STATUS_POLL_MS）。订阅者复用这一拍做降级动作（好友消息面：relay 不可用时的
+// REST 增量回补），因此**不引入第二个定时器**、频率与可见性守卫与 beacon 完全
+// 同源。返回注销函数（当前唯一订阅者 messages.js 整页生命周期只装一次，保留
+// 注销能力是为了不把「只能加不能减」的隐含约束写进接口语义）。
+/** @type {Set<() => void>} */
+const statusTickListeners = new Set();
+
+/**
+ * 订阅状态 beacon 的每一拍（仅页面可见时触发）。
+ * @param {() => void} cb
+ * @returns {() => void} unsubscribe
+ */
+export function onStatusTick(cb) {
+  if (typeof cb !== 'function') return () => {};
+  statusTickListeners.add(cb);
+  return () => { statusTickListeners.delete(cb); };
+}
 
 export function initActivityBar() {
   if (initialized) return;
@@ -36,11 +80,21 @@ export function initActivityBar() {
   initSidePanels();
   bindSettingsButton();
   bindAvatar();
+  bindSettingsAccountEntry();
+  initMobileDrawer();
 
   // Refresh NebLink state now and periodically (only while the page is visible)
   // so the avatar reflects logged-in / pairing state.
   refresh();
-  statusPollTimer = setInterval(() => { if (!document.hidden) refresh(); }, 10000);
+  statusPollTimer = setInterval(() => {
+    if (document.hidden) return;
+    refresh();
+    // ①opt-A3：beacon 的同一拍上跑订阅者（好友消息面降级回补）。订阅者自身
+    // 负责「健康路径零请求」的判据与节流 —— 这里不做任何策略判断。
+    for (const cb of [...statusTickListeners]) {
+      try { cb(); } catch { /* 订阅者异常不得打断状态轮询 */ }
+    }
+  }, STATUS_POLL_MS);
 
   observeSettingsModal();
 
@@ -92,6 +146,51 @@ export function setSideBarCollapsed(collapsed) {
     localStorage.setItem(LS_PANEL, activePanelId);
   }
   syncPanelDom();
+  syncMobileScrim();
+  // Mobile drawer exclusivity (≤768px): the Side Bar drawer and the canvas
+  // drawer are both full overlays — the canvas drawer (z 240) would sit on
+  // top of the Side Bar drawer and hide it entirely, which reads as
+  // "the file browser shows nothing". Whoever expands second wins, so an
+  // expansion on a phone viewport is announced; canvas.js closes the canvas
+  // drawer on it (canvas.js owns that close path).
+  if (!collapsed && isMobileViewport()) {
+    document.dispatchEvent(new CustomEvent('nf:mobile-drawer-expanded'));
+  }
+}
+
+// ── Mobile drawer scrim (≤768px, css/mobile.css) ──────────────────────────
+// On phone-width viewports the open Side Bar is an overlay drawer; the scrim
+// is its tap-outside-to-close affordance. Driven by the SAME collapsed API
+// as every other toggle — no second state source. The element exists only
+// after initActivityBar; the sync is a no-op before that (and on desktop the
+// media query keeps the scrim permanently inert).
+const MOBILE_MQ = '(max-width: 768px)';
+
+export function isMobileViewport() {
+  return window.matchMedia(MOBILE_MQ).matches;
+}
+
+function syncMobileScrim() {
+  const scrim = document.getElementById('mobile-scrim');
+  if (!scrim) return;
+  scrim.classList.toggle('show', !isSideBarCollapsed() && isMobileViewport());
+}
+
+function initMobileDrawer() {
+  if (document.getElementById('mobile-scrim')) return;
+  const scrim = document.createElement('div');
+  scrim.id = 'mobile-scrim';
+  scrim.addEventListener('click', () => setSideBarCollapsed(true));
+  document.body.appendChild(scrim);
+  syncMobileScrim();
+
+  // Crossing into the phone layout collapses the drawer (the pre-paint
+  // script in index.html already handles the load-time case; this covers a
+  // live window resize / rotation without a reload).
+  const mq = window.matchMedia(MOBILE_MQ);
+  const onChange = (e) => { if (e.matches) setSideBarCollapsed(true); };
+  if (typeof mq.addEventListener === 'function') mq.addEventListener('change', onChange);
+  else if (typeof mq.addListener === 'function') mq.addListener(onChange);
 }
 
 /** ⌘B / header #sidebar-toggle entry point. */
@@ -150,10 +249,18 @@ function initSidePanels() {
     panelId: 'panel-sessions',
     i18nKey: 'activity.files',
   });
-  // Friends release gating (2026-09-08, see featureFlags.js): default-off
-  // posture — detach the Messages/Contacts entries now; main.js calls
-  // enableFriendPanels() once the first configData proves the flag on.
+  // 待办分家批（2026-10-30 作者令）的 todo 侧边栏槽随改版批（2026-10-31）退役：
+  // 待办不占单独侧边栏空间——入口 = 消息列表顶部「待办事项」行，内页 =
+  // #todo-page（scheduled-task.js 渲染核）。
+  // Friends gating — single decision point: js/featureFlags.js friendsEnabled()
+  // (release marker vs. dev config chain). Detach the Messages/Contacts entries
+  // now; main.js calls enableFriendPanels() once the first configData latches
+  // the flag on. Default is ON / unsealed (author ruling 2026-09-14).
   detachFriendEntries();
+  // Wiki-graph entry seal (graphseal batch, author note ① 2026-10-29): the
+  // graph entry is hidden by default; see detachWikiGraphEntry/enableWikiGraphEntry
+  // below for the posture (friendseal-pattern DOM detach, config-only restore).
+  detachWikiGraphEntry();
   // Restore the persisted panel; unregistered ids fall back to files.
   const stored = localStorage.getItem(LS_PANEL);
   activePanelId = stored && sidePanels.has(stored) ? stored : 'files';
@@ -202,7 +309,17 @@ function bridgeExplorerTitle() {
 /** @type {{msgsBtn: HTMLElement, contactsBtn: HTMLElement, msgsPanel: HTMLElement, contactsPanel: HTMLElement} | null} */
 let friendEntryNodes = null;
 
-/** Detach the gated friend entries from the DOM (default-off boot posture). */
+/** Detach the gated friend entries from the DOM (default-off boot posture).
+ *
+ *  friendseal batch (2026-09-25, author ruling ④): the social-cards entry is
+ *  a social-channel CONFIG panel ("Phone access") — it is NOT part of the
+ *  friends feature and is NOT sealed with it (the plan card's co-detach
+ *  recommendation was voided). The button stays mounted in its static
+ *  index.html slot (directly below the contacts entry, before the spacer)
+ *  and stays functional in every flag state; socialPanel.js keeps zero diff.
+ *  enableFriendPanels() re-attaches the friend entries BEFORE the social
+ *  button when it exists, so the W1 order (contacts stays the social entry's
+ *  previous sibling) holds in both states. */
 function detachFriendEntries() {
   const msgsBtn = document.getElementById('messages-btn');
   const contactsBtn = document.getElementById('contacts-btn');
@@ -210,7 +327,7 @@ function detachFriendEntries() {
   const contactsPanel = document.getElementById('panel-contacts');
   if (!msgsBtn || !contactsBtn || !msgsPanel || !contactsPanel) return;
   friendEntryNodes = { msgsBtn, contactsBtn, msgsPanel, contactsPanel };
-  for (const el of Object.values(friendEntryNodes)) el.remove();
+  for (const el of [msgsBtn, contactsBtn, msgsPanel, contactsPanel]) el.remove();
 }
 
 /**
@@ -221,7 +338,14 @@ export function enableFriendPanels() {
   if (!friendEntryNodes) return;
   const { msgsBtn, contactsBtn, msgsPanel, contactsPanel } = friendEntryNodes;
   friendEntryNodes = null;
-  document.querySelector('#activity-bar .activity-spacer')?.before(msgsBtn, contactsBtn);
+  // Re-attach in the static order: messages → contacts → social, before the
+  // spacer (W1: the social entry's previous sibling stays the contacts entry).
+  // friendseal (2026-09-25 ④): the social button is no longer detached with
+  // the friend gate — it is already in the DOM, so anchor on it when present
+  // (inserting before the spacer alone would land the friend entries AFTER
+  // the social entry and silently reorder the bar).
+  const socialBtn = document.getElementById('social-btn');
+  (socialBtn ?? document.querySelector('#activity-bar .activity-spacer'))?.before(msgsBtn, contactsBtn);
   document.getElementById('sidebar-panel')?.append(msgsPanel, contactsPanel);
   registerSidePanel({
     id: 'messages',
@@ -245,6 +369,50 @@ export function enableFriendPanels() {
   const stored = localStorage.getItem(LS_PANEL);
   if (stored && sidePanels.has(stored)) activePanelId = stored;
   syncPanelDom();
+}
+
+// ── Wiki-graph entry seal（graphseal 批，作者手写想法① 2026-10-29）─────────
+// 「词典边栏的图谱入口暂时隐藏……但是保留词条有关的各种关联、引用的功能」
+// （featureFlags.js wikiGraphEnabled：nebflow.json "features": {"wikiGraph":
+// true} 缺席 = 封存 = 默认 OFF；恢复 = 配置加一行，零改码）。姿态沿用好友
+// 封存（DOM 摘挂，非 CSS 藏）：boot 摘 `#wiki-btn`（静态槽在 Projects 与
+// Plugins 之间），flag ON 的 configData latch（main.js）调 enableWikiGraphEntry()
+// 回挂原槽。词条/文档关联引用链路（[[wikilink]] 解析、反链、引用跳转等）
+// 零触碰；main.js 的 canvas 点击接线绑在按钮**元素**上，元素重插即自然复活。
+/** @type {HTMLElement | null} */
+let wikiGraphEntryNode = null;
+
+/** Detach the gated wiki-graph entry from the DOM (default-off boot posture). */
+function detachWikiGraphEntry() {
+  const btn = document.getElementById('wiki-btn');
+  if (!btn) return;
+  wikiGraphEntryNode = btn;
+  btn.remove();
+}
+
+/**
+ * Re-attach the gated wiki-graph entry to its static slot (flag confirmed on).
+ * Idempotent — a no-op once the entry is back in the DOM.
+ */
+export function enableWikiGraphEntry() {
+  if (!wikiGraphEntryNode) return;
+  const btn = wikiGraphEntryNode;
+  wikiGraphEntryNode = null;
+  // Static slot order (index.html): files → projects → wiki → agents(Plugins)
+  // → usage → settings. Anchor on the next sibling; fall down the tail of the
+  // bar if the static markup ever changes (W1-equivalent: keep Projects as the
+  // entry's previous sibling whenever both are present).
+  const anchor = document.getElementById('agents-btn')
+    ?? document.getElementById('usage-btn')
+    ?? document.getElementById('settings-btn');
+  if (anchor) {
+    anchor.before(btn);
+  } else {
+    document.getElementById('activity-bar')?.append(btn);
+  }
+  // The locale apply pass may have run while the entry was detached — re-apply
+  // its title (i18n.js attr map: 'wiki-btn' → wiki.tabTitle).
+  btn.title = t('wiki.tabTitle');
 }
 
 /**
@@ -274,9 +442,8 @@ function bindSettingsButton() {
     if (isSettingsPanelActive()) {
       closeSettingsPanel();
     } else {
-      // Opening settings is the green-dot clear point (updateCheck.js lights
-      // it on a silent auto check; the user has now seen the About section).
-      setUpdateDot(false);
+      // Opening settings used to be the update green-dot clear point — the dot
+      // and its updateCheck.js chain are retired (auth-trim batch, 2026-10-20).
       openSettingsPanel();
     }
   });
@@ -298,28 +465,230 @@ function observeSettingsModal() {
 // from agentManager.js) — the 4-state toggle machine shared with Teams/Flows.
 
 // ── Avatar / login ───────────────────────────────────────
+/**
+ * The account entry — ONE function, so every entry point (Activity Bar avatar,
+ * settings avatar entry, friends/messages logged-out empty states) behaves
+ * identically and can never drift.
+ *
+ * 🔴 MUST run synchronously inside a real user-gesture click handler: the
+ * logged-out branch reserves the login popup inside the caller's gesture stack.
+ * A synthesized `el.click()` carries no transient user activation, so a real
+ * browser popup-blocks the tab it opens (that is why the settings entry no
+ * longer forwards a synthetic click — see bindSettingsAccountEntry).
+ *
+ * Logged out → the single click starts the PKCE flow (no second confirmation
+ * step); logged in → open the account menu (in-app profile + sign out).
+ *
+ * 2026-11「退出登录没有入口」修复批（作者裁「只修退不出」）：已登录态原先一点
+ * 就**直接打开**官网个人页。当批改为一个两选一菜单，退出登录是菜单里的
+ * **第二枚键**（需明确点击两次：点头像 → 点「退出登录」）⇒ 不会误触。
+ *
+ * 2026-11-02 件四·身份卡本地化（作者令：「现在的设计是跳转到官网，但是我是要在这里
+ * 直接修改」）—— 菜单里那条「打开个人页」从 `window.open(getProfileUrl())`
+ * 改为打开 **App 内个人资料面**（settingsIdentity.js `openProfileFace`）；
+ * 个人资料入口现在由应用内面板提供。
+ * @param {Element|null} [anchorEl] 菜单锚点（调用者传入自己那个入口元素；
+ *   缺省回退到活动条头像）。
+ */
+export function activateAccountEntry(anchorEl) {
+  const st = getNeblinkState();
+  if (st.pairing) return; // pairing in progress — ignore
+  if (st.loggedIn) {
+    // 设置页身份卡的头像点击 = 「直接换头像」（作者令 2026-11-02：「点击头像就是
+    // 直接换头像进去就是自己的 profile 设置页」—— 头像本体走换头像流程，胶囊才是 profile 面）。
+    // 只对**设置页那枚入口**生效：活动条头像仍是账号菜单（那里没有身份卡语境，且菜单里
+    // 的「个人资料」已是 App 内面）。换头像函数返回 false = 该入口不在场⇒ 回退菜单。
+    if (anchorEl instanceof Element && anchorEl.id === 'settings-avatar-entry' && openSettingsAvatarPicker()) {
+      return;
+    }
+    openAccountMenu(anchorEl || null);
+    return;
+  }
+  // Not logged in → start the NebLink login (PKCE hosted page).
+  // showLoginModal reserves the popup synchronously in THIS gesture.
+  showLoginModal();
+}
+
+/**
+ * Logged-in account menu (2026-11 sign-out-entry fix batch).
+ *
+ * 两枚键，都走既有实现，零新增链路：
+ *   · 打开个人资料 → `openProfileFace()`（settingsIdentity.js 的 **App 内** 资料面；
+ *     2026-11-02 件四前这里是 `window.open(getProfileUrl(), 'noopener')`，作者令「不再跳官网」
+ *     后改为就地面；`brand.getProfileUrl()` 函数保留，只是本条链路不再调它）；
+ *   · 退出登录 → `openEndSessionHandoff(false)`（neblink.js；本地八步拆除 +
+ *     provider end-session + /auth/logged-out 落地页，与「清理并重登」同一链路，
+ *     仅入参 false = 不做强制登录）。
+ * 壳 = contextMenu.js `showPopupMenu`（玻璃面板；手机层自动转全屏动作表）。
+ * @param {Element|null} anchorEl */
+function openAccountMenu(anchorEl) {
+  const anchor = anchorEl instanceof Element ? anchorEl : document.getElementById('activity-avatar');
+  const r = anchor ? anchor.getBoundingClientRect() : null;
+  // 活动条在左缘 ⇒ 菜单向右展开、与锚点顶对齐；无锚点（异常面）则屏幕居中。
+  const x = r ? Math.round(r.right + 8) : Math.round(window.innerWidth / 2);
+  const y = r ? Math.round(r.top) : Math.round(window.innerHeight / 2);
+  showPopupMenu(x, y, [
+    {
+      // App 内个人资料面（件四：零外链）。点中即关菜单并就地开面。
+      label: t('activity.profile'),
+      onClick: () => openProfileFace(),
+    },
+    {
+      // 退出登录 = 明确第二次点击；危险档位不套 red（退出不是破坏性操作）。
+      label: t('neblink.logout'),
+      onClick: () => openEndSessionHandoff(false),
+    },
+  ]);
+}
+
 function bindAvatar() {
   const avatar = document.getElementById('activity-avatar');
   if (!avatar) return;
+  // While the avatar shows the Agent face a click returns to the Agent instead of opening the account entry.
   avatar.addEventListener('click', () => {
-    const st = getNeblinkState();
-    if (st.pairing) return; // pairing in progress — ignore
-    if (st.loggedIn) {
-      // Logged in → open the account profile page. The URL comes from the
-      // brand contract (injected profileUrl, fallback in brand.js) — building
-      // it from brand.domain shipped a dead https://neblink.example/profile
-      // link, since domain is a display-only placeholder.
-      // 'noopener': the profile page must not get a window.opener handle back
-      // into the app window.
-      window.open(getProfileUrl(), '_blank', 'noopener');
-    } else {
-      // Not logged in → open the NebLink login modal (PKCE, device-flow fallback)
-      showLoginModal();
-    }
+    if (agentFaceReturn) agentFaceReturn();
+    else activateAccountEntry(avatar);
   });
 }
 
-// ── Login modal (PKCE primary, device-flow fallback) ─────
+// ── Agent face ─────────────────────────────────────────────────────────────
+// While a friend, group or device conversation is shown in the main chat area (messages/mainHost.js), the avatar flips
+// from the account face to the Agent face; clicking it returns to the Agent. The face is a data attribute on the same
+// button, so the account renderer above keeps working untouched.
+
+/** @type {(() => void)|null} */
+let agentFaceReturn = null;
+/** @type {(() => void)|null} */
+let unsubscribeAgentAvatar = null;
+let flipTimer = 0;
+let flipEndTimer = 0;
+/** @type {((e: AnimationEvent) => void)|null} */
+let flipEndHandler = null;
+/** One card flip lasts this long (the CSS animation `nf-avatar-flip` runs for the same time); the face changes at half. */
+const FLIP_MS = 280;
+
+/** Stop the flip class: the animation is over, or a new face was asked for before it was. */
+function endFlip(button) {
+  window.clearTimeout(flipEndTimer);
+  if (flipEndHandler) button.removeEventListener('animationend', flipEndHandler);
+  flipEndHandler = null;
+  button.classList.remove('is-flipping');
+}
+/** Title and label of the account face, put back when the avatar flips back. While the Agent face is shown the status
+ *  refresh keeps `title` current here instead of writing the button. */
+let accountFace = { title: '', label: /** @type {string|null} */ (null) };
+
+/** Paint the Agent face: the Agent's own avatar, or the brand mark when it has none. */
+function paintAgentFace(button) {
+  let face = button.querySelector('.activity-avatar-agent');
+  if (!face) {
+    face = document.createElement('span');
+    face.className = 'activity-avatar-agent';
+    face.setAttribute('aria-hidden', 'true');
+    button.appendChild(face);
+  }
+  const dataUrl = agentAvatarDataUrl();
+  if (dataUrl) {
+    const image = document.createElement('img');
+    image.className = 'activity-avatar-agent-photo';
+    image.alt = '';
+    image.draggable = false;
+    image.src = dataUrl;
+    face.replaceChildren(image);
+    return;
+  }
+  const picture = document.createElement('picture');
+  const dark = document.createElement('source');
+  dark.media = '(prefers-color-scheme: dark)';
+  dark.srcset = brand.logoDarkUrl;
+  const logo = document.createElement('img');
+  logo.className = 'activity-avatar-agent-logo';
+  logo.alt = '';
+  logo.src = brand.logoUrl;
+  picture.append(dark, logo);
+  face.replaceChildren(picture);
+}
+
+/** @param {'account'|'agent'} face */
+function setAvatarFace(face) {
+  const button = document.getElementById('activity-avatar');
+  if (!button) return;
+  window.clearTimeout(flipTimer);
+  const showing = button.dataset.face === 'agent' ? 'agent' : 'account';
+  // The account's title and label are read now, before the flip replaces them half way through it.
+  if (face === 'agent' && showing === 'account') accountFace = { title: button.title, label: button.getAttribute('aria-label') };
+  const apply = () => {
+    if (face === 'agent') {
+      paintAgentFace(button);
+      button.dataset.face = 'agent';
+      button.setAttribute('aria-label', t('messages.backToAgent'));
+      button.title = t('messages.backToAgent');
+    } else {
+      delete button.dataset.face;
+      if (accountFace.label === null) button.removeAttribute('aria-label');
+      else button.setAttribute('aria-label', accountFace.label);
+      button.title = accountFace.title;
+    }
+  };
+  endFlip(button);
+  // Already showing that face: nothing to change (a flip that was on its way elsewhere is cancelled above).
+  if (showing === face) return;
+  const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced) { apply(); return; }
+  // A short card flip: the face changes at its half-way point and the flip runs on to its end.
+  button.classList.add('is-flipping');
+  flipTimer = window.setTimeout(apply, FLIP_MS / 2);
+  // The class goes when the animation has run to its end; the timer is only the way out if no animation ever runs.
+  flipEndHandler = (e) => { if (e.target === button) endFlip(button); };
+  button.addEventListener('animationend', flipEndHandler);
+  flipEndTimer = window.setTimeout(() => endFlip(button), FLIP_MS + 200);
+}
+
+/**
+ * Flip the avatar to the Agent face; a click runs `onReturn` instead of the account entry.
+ * @param {() => void} onReturn
+ */
+export function flipAvatarToAgent(onReturn) {
+  agentFaceReturn = onReturn;
+  if (unsubscribeAgentAvatar) unsubscribeAgentAvatar();
+  unsubscribeAgentAvatar = onAgentAvatarChange(() => {
+    const button = document.getElementById('activity-avatar');
+    if (button && button.dataset.face === 'agent') paintAgentFace(button);
+  });
+  setAvatarFace('agent');
+}
+
+/** Put the account face (and its click) back. */
+export function restoreAvatarAccountFace() {
+  agentFaceReturn = null;
+  if (unsubscribeAgentAvatar) unsubscribeAgentAvatar();
+  unsubscribeAgentAvatar = null;
+  setAvatarFace('account');
+}
+
+/**
+ * The settings page's avatar entry (second entry point, same behaviour).
+ *
+ * WHY delegation instead of a direct binding: sidebar.js renders
+ * #settings-avatar-entry lazily (renderSettings), so the element does not exist
+ * when this module initialises; and sidebar.js may not statically import this
+ * module — `scripts/check-circular.mjs` fails any static sidebar <-> activityBar
+ * cycle. The sanctioned escape hatch (dynamic import()) is unusable here: it
+ * would move the popup reservation out of the gesture stack.
+ * A document-level delegated listener keeps the popup reservation synchronous
+ * inside the user's own click and follows re-renders for free.
+ */
+function bindSettingsAccountEntry() {
+  document.addEventListener('click', (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    // 锚点 = 设置里那个头像入口本身。未登录 ⇒ 登录卡（与活动条头像同一肿）；
+    // 已登录 ⇒ 「直接换头像」（件四，只对本入口生效；见 activateAccountEntry）。
+    const entry = target ? target.closest('#settings-avatar-entry') : null;
+    if (entry) activateAccountEntry(entry);
+  });
+}
+
+// ── Login modal (PKCE hosted page) ─────
 // Styles are injected once here (rather than a CSS file) so the modal stays
 // self-contained in this module; all values come from the Sapphire Glass
 // design variables so it themes with the rest of the UI.
@@ -332,11 +701,9 @@ function injectLoginModalStyles() {
 .nebflow-login-modal {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
   width: 320px; z-index: 1000; overflow: hidden;
-  background: var(--glass-bg, rgba(24, 28, 38, 0.68));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
-  backdrop-filter: blur(var(--glass-blur, 24px)) saturate(1.15);
+  background: var(--nf-glass-bg);
   border: 1px solid var(--glass-border, rgba(255,255,255,0.1));
-  border-radius: 16px;
+  border-radius: var(--ds-radius-card-lg);
   box-shadow:
     inset 0 1px 0 0 rgba(255, 255, 255, 0.25),
     0px 2px 8px rgba(0, 0, 0, 0.04),
@@ -361,55 +728,135 @@ function injectLoginModalStyles() {
   from { opacity: 0; transform: translate(-50%, -50%) scale(0.96) translateY(8px); }
   to   { opacity: 1; transform: translate(-50%, -50%) scale(1) translateY(0); }
 }
+/* Panel hierarchy (2026-09-16 login-entry batch) — three levels, in order:
+     ① title  .login-modal-header h3
+     ② hint   .login-hint / .login-code-caption  (what this step needs)
+     ③ keys   .login-actions (primary + secondary; geometry/material are the
+              login-key family's single source in sapphire.css — NOT here)
+   followed by the .login-waiting status line. This block therefore declares
+   LAYOUT/TYPOGRAPHY ONLY: the key form itself is cross-surface (activity bar
+   entry + panel CTAs + friends empty state) and lives in the family block, so
+   it can never drift between surfaces. */
 .login-modal-header {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 12px 16px; border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
+  padding: var(--ds-space-3) var(--ds-space-4); border-bottom: 1px solid var(--glass-border, rgba(255,255,255,0.05));
 }
-.login-modal-header h3 { font-size: 14px; margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
+.login-modal-header h3 { font-size: var(--ds-fs-title); margin: 0; color: var(--color-text); font-weight: 600; letter-spacing: -0.01em; }
 .login-modal-close {
   background: none; border: none; color: var(--color-text-muted);
-  font-size: 18px; cursor: pointer; padding: 0 4px; line-height: 1;
+  font-size: var(--ds-fs-display); cursor: pointer; padding: 0 var(--ds-space-1); line-height: 1;
   opacity: 0.5; transition: opacity 0.15s;
 }
 .login-modal-close:hover { opacity: 1; }
-.login-modal-body { padding: 16px; text-align: center; }
-.login-hint { font-size: 13px; color: var(--color-text-muted); margin-bottom: 12px; line-height: 1.5; }
+.login-modal-body { padding: var(--ds-space-4); text-align: center; }
+.login-hint { font-size: var(--ds-fs-body); color: var(--color-text-muted); margin-bottom: 14px; line-height: 1.55; }
 .login-user-code {
   font-family: 'SF Mono', 'Fira Code', monospace;
-  font-size: 26px; font-weight: 600; letter-spacing: 2px;
-  color: var(--color-primary); margin-bottom: 4px;
+  font-size: var(--ds-fs-title-lg); font-weight: 600; letter-spacing: 2px;
+  color: var(--color-primary); margin-bottom: var(--ds-space-1);
   font-variant-numeric: tabular-nums;
 }
-.login-code-caption { font-size: 12px; color: var(--color-text-muted); margin-bottom: 14px; }
-.login-modal-btn {
-  display: inline-block; padding: 8px 20px; border-radius: 10px;
-  font-size: 13px; font-weight: 500; color: var(--color-text);
-  cursor: pointer; transition: filter 0.15s;
+.login-code-caption { font-size: var(--ds-fs-hint); color: var(--color-text-muted); margin-bottom: 14px; }
+/* Key stack. The two tiers are ONE family (sapphire.css 登录键族块):
+   primary = green solid (cfg-btn-primary carries the white ink),
+   secondary = same geometry, glass material. Geometry itself lives in the
+   family block (single source) — this block only stacks the keys. */
+.login-actions { display: flex; flex-direction: column; gap: var(--ds-space-2); }
+.login-waiting { margin-top: var(--ds-space-3); font-size: var(--ds-fs-hint); color: var(--color-text-muted); }
+.login-success { font-size: var(--ds-fs-subtitle); color: var(--color-primary); padding: var(--ds-space-3) 0; }
+/* ui-status-redesign（S11 / 盘点 G3）：全盘点对比度最差件（#e57373 白底 2.8:1 ✗）
+   → 中性正文（回到 ~10:1 级）＋行首 octagon-alert 红图标（activityBar.js 注入）。 */
+.login-error-msg { font-size: var(--ds-fs-body); color: var(--status-word); margin-bottom: 14px; line-height: 1.5; display: flex; align-items: flex-start; gap: var(--ds-space-2); }
+.login-error-msg .st-ic { width: 15px; height: 15px; margin-top: var(--ds-space-half); flex-shrink: 0; }
+/* Social one-click keys (2026-10-15 login-card batch) — LAYOUT/TYPOGRAPHY
+   ONLY: the keys carry the .login-modal-btn family classes (sapphire.css
+   登录键族块 owns geometry/material — primary green solid tier, the
+   "显眼位" ask), this block only stands the inline brand mark next to the
+   label. Same one-family discipline as the keys above. */
+.login-social-btn { display: flex; align-items: center; justify-content: center; gap: var(--ds-space-1h); }
+.login-social-btn svg { width: 16px; height: 16px; flex-shrink: 0; }
+/* v3 登录卡（mobile-mockup-375 v3④）：单键制 + 官方横排 lockup。idle 面无头栏
+   （lockup 即卡头；关闭 = Esc / 点外，既有链）；面板材质沿用上方 .nebflow-login-modal
+   玻璃族（blur24 与 glass-control 同族色值域，键族 token 在 sapphire.css 登录键族块）。 */
+.nebflow-login-modal.login-idle { width: 300px; }
+.nebflow-login-modal.login-idle .login-modal-header { display: none; }
+.nebflow-login-modal.login-idle .login-modal-body { padding: var(--ds-space-6) 22px var(--ds-space-5); display: flex; flex-direction: column; align-items: center; gap: var(--ds-space-inline-gap); }
+.login-lockup { color: var(--color-text); display: block; margin-bottom: var(--ds-space-half); }
+.login-lockup .stand-lockup { width: 136px; height: 25px; display: block; }
+.login-card-title { font-size: var(--ds-fs-title); font-weight: 600; color: var(--color-text); margin: 0; letter-spacing: -0.01em; }
+.login-sub2 { font-size: var(--ds-fs-meta); color: var(--color-text-muted); line-height: 1.55; }
+.login-idle .login-hint b { color: var(--color-text); font-weight: 500; }
+/* 主键 = 官网登录卡同款（mystand.space/login 的 .auth 主键，作者补充令）：
+   单色反白实色、无图标、全宽居中、rounded-lg、14px/500、hover 提阶、disabled .6。
+   字面值 = 官网 auth 键族变量（:root #111827/#fff、hover #374151；
+   html[data-theme=dark] = 前景/背景互换、hover #fff）→ 控制台主题以
+   prefers-color-scheme + --color-text/--color-bg token 对位。 */
+.nebflow-login-modal .login-primary-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--ds-radius-input);
+  padding: var(--ds-space-block-y) var(--ds-space-4);
+  font-size: var(--ds-fs-subtitle);
+  font-weight: 500;
+  background: #111827;
+  color: #fff;
+  /* sapphire 登录键族块（:is(.fm-login-btn,.login-modal-btn)）的玻璃投影随
+     绿实色一并退役 —— 官网主键是平面单色键。 */
+  box-shadow: none;
+  cursor: pointer;
+  transition: background 0.18s ease, opacity 0.15s ease;
 }
-.login-modal-btn:hover { filter: brightness(1.06); }
-.login-modal-btn:active { filter: brightness(0.96); }
-.login-waiting { margin-top: 12px; font-size: 12px; color: var(--color-text-muted); }
-/* Switch-account secondary entry (RP-logout fix, 2026-09-06) — quiet text
-   link under the primary button; muted color, no new tokens. */
-.login-switch-link {
-  display: inline-block; margin-top: 10px; padding: 2px 6px;
-  background: none; border: none; cursor: pointer;
-  font-size: 12px; color: var(--color-text-muted);
-  text-decoration: none; border-radius: 6px; transition: color 0.15s;
+.nebflow-login-modal .login-primary-btn:hover { background: #374151; }
+.nebflow-login-modal .login-primary-btn:focus-visible { outline: 2px solid rgba(17, 24, 39, 0.35); outline-offset: 2px; }
+.nebflow-login-modal .login-primary-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.nebflow-login-modal .login-primary-btn span { pointer-events: none; }
+@media (prefers-color-scheme: dark) {
+  .nebflow-login-modal .login-primary-btn { background: var(--color-text, #e8eaed); color: var(--color-bg, #13161c); }
+  .nebflow-login-modal .login-primary-btn:hover { background: #fff; }
+  .nebflow-login-modal .login-primary-btn:focus-visible { outline-color: rgba(255, 255, 255, 0.4); }
 }
-.login-switch-link:hover { color: var(--color-text); }
-.login-success { font-size: 14px; color: var(--color-primary); padding: 12px 0; }
-.login-error-msg { font-size: 13px; color: #e57373; margin-bottom: 14px; line-height: 1.5; }
 `;
   document.head.appendChild(style);
 }
 
+// ── Social provider marks — RETIRED (mobile-mockup-375 v3④) ──────────────
+// The idle face's GitHub/Google one-click keys retired with the v3 single-key
+// card (「登录 stand 账号」→ the EXISTING unified PKCE chain; quick social
+// login lives inside the hosted auth page). The inline brand marks left with
+// them — no other consumer existed (grep-clean 2026-10-20).
+
 /**
  * Public entry for the NebLink login modal (used by the
  * friends/messages panels' logged-out empty states).
+ *
+ * `opts.auto === true` marks a caller that is NOT a user gesture — today
+ * exactly the two `fm-auth-required` handlers (`contacts.js` / `messages.js`),
+ * an event `friendsApi.js` dispatches on EVERY friendship 401/403. Such
+ * callers are rate-limited by the repeat guard in `showLoginModal` instead of
+ * being allowed to open an OAuth window per failed request. Plain calls stay
+ * unguarded: they are either click handlers or the switch-account fallbacks,
+ * i.e. real user intent.
+ *
+ * Two more opt-in flags (one-window switch batch, 2026-09-16), both used ONLY
+ * by the switch-account fallback in `neblink.js`:
+ *  - `opts.forceLogin === true` → the initial flow starts with
+ *    `prompt="login consent"` (forced fresh login) instead of the plain
+ *    `consent`. Without it the switch fallback would silently downgrade to a
+ *    plain login and could re-enter the OLD account through a still-live SSO
+ *    session — the exact defect the switch-account flow exists to prevent.
+ *  - `opts.deferPopup === true` → do NOT reserve a popup at all. Used when the
+ *    caller has no user gesture (a watchdog, not a click): a reservation there
+ *    is either popup-blocked (real browsers) or, with the blocker off, opens a
+ *    window the flow must not open. The panel's own 「重新打开登录页面」 button
+ *    (a real gesture) then opens the window through the existing
+ *    `.authorizeUrl` path. Neither flag touches the guard: `deferPopup` still
+ *    arms `loginFlowGuardUntil` like every other open.
  */
-export function openLoginModal() {
-  showLoginModal();
+export function openLoginModal(opts = {}) {
+  showLoginModal(opts);
 }
 
 // ── Popup-blocker resilience ─────────────────────────────
@@ -422,6 +869,25 @@ export function openLoginModal() {
 
 /** @type {Window|null} */
 let reservedPopup = null;
+
+/** Repeat guard for the AUTO-started login flow (2026-09-15 OIDC fix).
+ *
+ * Defect it closes: `friendsApi.js` dispatches `fm-auth-required` on every
+ * friendship 401/403 (two call sites) and both handlers call
+ * `openLoginModal()`. Every one of those used to reserve a popup and start a
+ * FULL PKCE flow, so an auth-failure burst opened one OAuth window after
+ * another, each landing on the loopback callback page — the "switch account
+ * keeps reopening http://127.0.0.1:<port>/auth/callback?code=…" symptom.
+ * The modal's own success path closes itself 1.5s later, which re-armed the
+ * DOM guard in `showLoginModal` and let the next event start yet another flow
+ * (2026-09-15 author-machine reading: 5 complete logins in 19s, no click).
+ *
+ * Semantics: at most one AUTO flow per guard window; a repeat leaves the
+ * panels' 登录失效卡 + 重登按钮 as the visible manual retry surface, so the
+ * failure is still surfaced (never a silent no-op). User gestures are not
+ * rate-limited — only `openLoginModal({auto:true})` callers consult this. */
+const LOGIN_FLOW_GUARD_MS = 15000;
+let loginFlowGuardUntil = 0;
 
 /** Reserve a blank popup. Must be called synchronously in the gesture stack. */
 function reservePopup() {
@@ -468,13 +934,24 @@ function popupBlockedFallback(url) {
 
 /**
  * Centered glass modal driving the NebLink login.
- * States: starting → waiting (PKCE browser login) → success | error, with a
- * waiting-device state (user code + polling) when the gateway reports
- * logto-not-configured and the legacy device flow takes over.
+ * States: starting → waiting (PKCE browser login) → success | error.
+ * A logto-not-configured answer is an ERROR face (台账 #924: the legacy
+ * device-flow fallback was retired with the flow itself, 2026-10-26).
  * Closing the modal cancels polling.
+ *
+ * 导出（顶栏批 2026-10-31）：手机层工作台头像的未登录点击腿与 Activity Bar /
+ * 设置头像同一登录面（禁第二份登录实现）。🔴 调用必须在真实用户手势栈内
+ * （PKCE 弹窗预留依赖同步手势，见 activateAccountEntry 注记）。
  */
-function showLoginModal() {
+export function showLoginModal(opts = {}) {
   if (document.getElementById('nebflow-login-modal')) return;
+  // Non-gesture repeat guard (2026-09-15 OIDC fix) — see LOGIN_FLOW_GUARD_MS.
+  // Checked BEFORE the modal is built, so a suppressed repeat leaves no empty
+  // panel behind; the status refresh keeps the visible surfaces current.
+  if (opts.auto && Date.now() < loginFlowGuardUntil) {
+    refresh();
+    return;
+  }
   injectLoginModalStyles();
 
   const modal = document.createElement('div');
@@ -491,20 +968,26 @@ function showLoginModal() {
   const close = () => {
     if (!finished) {
       cancelPkceFlow();
-      cancelDeviceFlow();
       setPairing(false);
     }
     document.removeEventListener('keydown', onKey);
     modal.remove();
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
+  mobileSheetBack(modal, close);
   document.addEventListener('keydown', onKey);
+  // The recovery key's authorize-URL opener (2026-09-16 login-entry batch).
+  // Behaviour is the pre-existing one, verbatim: open whatever the gateway
+  // handed us.
+  const openAuthPage = () => {
+    if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
+  };
   // Click outside to close (deferred so the opening click doesn't close it).
   setTimeout(() => {
     document.addEventListener('click', function outside(e) {
       if (!document.body.contains(modal)) {
         document.removeEventListener('click', outside);
-      } else if (!modal.contains(e.target)) {
+      } else if (!modal.contains(/** @type {Node} */ (e.target))) {
         close();
         document.removeEventListener('click', outside);
       }
@@ -513,45 +996,91 @@ function showLoginModal() {
 
   const render = (state, data = {}) => {
     let body = '';
-    if (state === 'starting') {
-      body = `<div class="login-waiting" style="margin-top:0;padding:12px 0">正在启动登录…</div>`;
+    if (state === 'idle') {
+      // v3 登录卡（mobile-mockup-375 v3④，作者已批「单键制 + 官方横排 lockup」，
+      // 20261020_211500 v2⑤ 同裁）：单键制 —— 三键社交选择面退役，一键进入既有
+      // 认证流（PKCE 主路径，GitHub / Google 快捷登录在认证页内）。lockup =
+      // 仓内集中源 stand-horizontal-compact svg 内联（brand.js standLockupSvg，
+      // fill=currentColor 随主题）。单键点击 = 原 #login-unified 链原样（reserve
+      // + startFlow）。
+      // 主键规格（作者补充令 2026-10-19：微信绿实色键退役，对齐官网登录卡）：
+      // mystand.space/login 主键 = 单色反白实色键（无图标、全宽、rounded-lg 8px、
+      // 14px/500、hover 提阶、disabled .6）—— class login-primary-btn，规格见
+      // 下方注入样式的 .login-primary-btn 块（字面值取自官网 auth 键族 CSS 变量）。
+      body = `
+        <div class="login-lockup">${standLockupSvg()}</div>
+        <h3 class="login-card-title">${t('login.connectTitle')}</h3>
+        <div class="login-hint"><b>${t('login.connectHint')}</b></div>
+        <div class="login-actions">
+          <button class="login-modal-btn login-primary-btn" id="login-unified"><span>${t('login.unifiedPrimary')}</span></button>
+        </div>
+        <div class="login-sub2">${t('login.authNote')}</div>`;
+    } else if (state === 'starting') {
+      body = `<div class="login-waiting" style="margin-top:0;padding:var(--ds-space-3) 0">${t('login.starting')}</div>`;
     } else if (state === 'waiting') {
       // PKCE primary path: nothing to copy - the browser tab does the whole
       // hosted login and redirects back to the local gateway.
+      // One-click entry (2026-09-15 session-handoff 案 3 ①): when THIS click
+      // already opened the hosted login page there is no second step left to
+      // perform, so the modal stops asking for one — no "重新打开登录页面"
+      // button, just the wait state. The button is rendered only when the popup
+      // reservation was refused (data.popupOpened === false), i.e. when
+      // clicking it IS the recovery; the blocked toast (popupBlockedFallback)
+      // accompanies it.
       // "使用其他账号登录" (RP-logout fix, 2026-09-06): restarts the flow
       // with prompt="login consent" so the hosted page shows the account
-      // form even when this browser still holds a Logto SSO session.
+      // form even when this browser still holds a Logto SSO session. Kept in
+      // BOTH branches — it also resets the flow on a failed attempt.
+      // (Absent data.popupOpened = not popup-blocked: no nag.)
+      //
+      // 2026-09-16 login-entry batch — the panel's keys all go through the ONE
+      // login-key family (sapphire.css 登录键族块): the recovery key
+      // (`login-open-auth`) is the primary tier (green solid) and 「使用其他账号
+      // 登录」 is the secondary tier (same geometry, glass). No key is added or
+      // removed here: the one-click entry (no second step to perform) is
+      // unchanged.
+      const popupOpened = data.popupOpened !== false;
       body = `
-        <div class="login-hint">在浏览器中登录 nebflow 账号以连接此设备</div>
-        <button class="login-modal-btn glass-control" id="login-open-auth">重新打开登录页面</button>
-        <button class="login-switch-link" id="login-switch-account">使用其他账号登录</button>
-        <div class="login-waiting">等待登录完成…</div>`;
-    } else if (state === 'waiting-device') {
-      // Legacy device-flow fallback (gateway reports logto-not-configured).
-      body = `
-        <div class="login-hint">在浏览器中完成授权以连接此设备</div>
-        <div class="login-user-code">${escapeHtml(data.userCode || '')}</div>
-        <div class="login-code-caption">授权码</div>
-        <button class="login-modal-btn glass-control" id="login-open-auth">打开授权页面</button>
-        <div class="login-waiting">等待授权完成…</div>`;
+        <div class="login-hint">${t('login.hintBrowser')}</div>
+        <div class="login-actions">
+          ${popupOpened ? '' : `<button class="login-modal-btn glass-control cfg-btn-primary" id="login-open-auth">${t('login.reopenAuthPage')}</button>`}
+          <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>
+        </div>
+        <div class="login-waiting">${popupOpened ? t('login.waitingPopupOpened') : t('login.waiting')}</div>`;
     } else if (state === 'success') {
-      body = `<div class="login-success">✓ 连接成功，设备已加入网络</div>`;
+      body = `<div class="login-success">${t('login.success')}</div>`;
     } else if (state === 'error') {
+      // Error state carries BOTH tiers on purpose: 重试 (primary, green) and
+      // 使用其他账号登录 (secondary, glass) — the tier difference is what the
+      // author's "主键 vs 次键档位要分明" reading can be checked against.
+      //
+      // 缺陷 A（上游 §8.2 第 7 项）：文案 = **三段式**（原因 + 下一步动作 + 诊断码），
+      // 由 `neblink.js` 的 `loginFailureText` 单点组装（i18n 优先，后端分类串兜底）；
+      // 本文件**不**再原样打印后端串。两键档位与主/次键视觉**逐字保留**（§13 禁造新轮子），
+      // 仅在**本地凭据文件类**分类下加一枚「清理并重登」键（门控判据同设置面板）。
+      const failureCode = data.code || '';
+      const cleanupKey = LOCAL_FILE_CODES.includes(failureCode)
+        ? `<button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-cleanup">${t('neblink.cleanupRelogin')}</button>`
+        : '';
       body = `
-        <div class="login-error-msg">${escapeHtml(data.message || '登录失败')}</div>
-        <button class="login-modal-btn glass-control" id="login-retry">重试</button>`;
+        <div class="login-error-msg" data-code="${escapeHtml(failureCode)}">${statusIcon('octagon-alert', 15, 'st-err')}<span>${escapeHtml(data.message || t('login.failed'))}</span></div>
+        <div class="login-actions">
+          <button class="login-modal-btn glass-control cfg-btn-primary" id="login-retry">${t('login.retry')}</button>
+          <button class="login-modal-btn glass-control login-modal-btn-secondary" id="login-switch-account">${t('login.switchAccount')}</button>
+          ${cleanupKey}
+        </div>`;
     }
+    // v3④：idle（单键卡）面无头栏 —— lockup 即卡头（关 = Esc / 点外，既有链）；
+    // 其余状态（等待/错误/成功）保留头栏标题 + 关闭钮。
+    modal.classList.toggle('login-idle', state === 'idle');
     modal.innerHTML = `
       <div class="login-modal-header">
-        <h3>登录 nebflow 账号</h3>
+        <h3>${t('login.title')}</h3>
         <button class="login-modal-close">&times;</button>
       </div>
       <div class="login-modal-body">${body}</div>`;
-    modal.querySelector('.login-modal-close').onclick = close;
-    modal.querySelector('#login-open-auth')?.addEventListener('click', () => {
-      if (flowInfo?.authorizeUrl) window.open(flowInfo.authorizeUrl, '_blank');
-      else if (flowInfo?.verificationUri) window.open(flowInfo.verificationUri, '_blank');
-    });
+    (/** @type {HTMLElement} */ (modal.querySelector('.login-modal-close'))).onclick = close;
+    modal.querySelector('#login-open-auth')?.addEventListener('click', openAuthPage);
     // Switch account (RP-logout fix, 2026-09-06): reserve the popup inside
     // THIS click gesture (same contract as the retry button below), then
     // restart the flow — startPkceLogin(true) sends prompt="login consent"
@@ -565,9 +1094,41 @@ function showLoginModal() {
       reservePopup(); // synchronous gesture reservation for the retry
       startFlow();
     });
+    // 「清理并重登」（缺陷 A / 上游 §8.2 第 6+7 项）：只在**本地凭据文件类**分类下渲染，
+    // 点击 = 复用既有 RP end-session 链（本地拆除 + 续登同一窗），零新增链路。跳转必须在
+    // 手势栈里同步发生（popup-blocker），故直接调 `openEndSessionHandoff(true)`。
+    modal.querySelector('#login-cleanup')?.addEventListener('click', () => {
+      close();
+      openEndSessionHandoff(true);
+    });
+    // Social one-click keys (idle face): popup reserved inside THIS gesture,
+    // then the same startFlow — provider rides direct_sign_in; forceLogin=true
+    // is the guardrail pairing (see the idle branch above). Social and mail
+    // converge on the SAME callback → code exchange → register → persist
+    // chain; only the authorize URL differs.
+    modal.querySelector('#login-social-github')?.addEventListener('click', () => {
+      reservePopup(); // synchronous gesture reservation
+      startFlow(true, false, 'github');
+    });
+    modal.querySelector('#login-social-google')?.addEventListener('click', () => {
+      reservePopup(); // synchronous gesture reservation
+      startFlow(true, false, 'google');
+    });
+    // Unified login (idle face, the「mail 次选」key): the pre-existing chain
+    // verbatim — same reserve + startFlow the switch key below uses; a
+    // caller-passed forceLogin (switch fallback) is honoured here too.
+    modal.querySelector('#login-unified')?.addEventListener('click', () => {
+      reservePopup(); // synchronous gesture reservation
+      startFlow(!!opts.forceLogin);
+    });
   };
 
-  const startFlow = async (forceLogin = false) => {
+  // `provider` (social one-click leg, 2026-10-15 login-card batch): "github" |
+  // "google" → forwarded to startPkceLogin (direct_sign_in on the authorize
+  // URL). Downstream states are provider-blind on purpose: waiting / success /
+  // error render identically for social and mail because BOTH converge on the
+  // same /auth/callback exchange (fix-plan §5 chain diagram).
+  const startFlow = async (forceLogin = false, deferPopup = false, provider = '') => {
     setPairing(true);
     finished = false;
     render('starting');
@@ -575,57 +1136,89 @@ function showLoginModal() {
       finished = true;
       setPairing(false);
       render('success');
+      // Keep the auto-flow guard armed past the self-close below (2026-09-15
+      // OIDC fix): an auth-failure event arriving right after a success must
+      // not start another flow now that the DOM guard is about to disarm.
+      loginFlowGuardUntil = Date.now() + LOGIN_FLOW_GUARD_MS;
       setTimeout(() => { close(); refresh(); }, 1500);
     };
-    const onError = (errMsg) => {
+    const onError = (errMsg, payload = null) => {
       finished = true;
       setPairing(false);
-      render('error', { message: errMsg });
+      // 缺陷 A：把分类码一路带到 error 渲染面（「清理并重登」键的门控判据 +
+      // `data-code` 二值断言契约）。coldstart DX 批②：码缺失时按护栏签名判别
+      // （与 `errMsg` 的组装同判据），保证文与码不劈叉。
+      render('error', { message: errMsg, code: classifyLoginFailureCode(payload || {}) });
     };
     try {
       // Primary path: Authorization Code + PKCE via the hosted Logto page.
-      // forceLogin → prompt="login consent" (switch-account entry).
-      const pkce = await startPkceLogin(forceLogin);
+      // forceLogin → prompt="login consent" (switch-account entry, and the
+      // social keys' guardrail pairing). provider → direct_sign_in (social
+      // one-click); empty = the byte-identical legacy mail shape.
+      const pkce = await startPkceLogin(forceLogin, provider);
       if (pkce) {
         flowInfo = pkce;
         st.flowState = 'waiting';
-        render('waiting');
-        // Navigate the popup reserved in the click gesture; the in-modal
-        // button stays as a second fallback if both were blocked.
-        if (!navigateReserved(pkce.authorizeUrl)) popupBlockedFallback(pkce.authorizeUrl);
+        // Navigate the popup reserved in the click gesture, and let the result
+        // decide the modal body: an opened hosted login page = this single
+        // click already did everything (one-click entry); a refused popup =
+        // the modal keeps the manual re-open button as the recovery.
+        // `deferPopup` (no gesture at all): nothing was reserved, so nothing is
+        // navigated and no "popup blocked" nag is shown — the panel's manual
+        // button stays the gesture that opens the window.
+        const popupOpened = deferPopup ? false : navigateReserved(pkce.authorizeUrl);
+        render('waiting', { popupOpened });
+        if (!deferPopup && !popupOpened) popupBlockedFallback(pkce.authorizeUrl);
         pollPkceState(onSuccess, onError);
         return;
       }
-      // Fallback: gateway answered logto-not-configured - legacy device flow.
-      flowInfo = await startDeviceFlow();
-      // Mirror the codes into neblinkState (same as the Settings flow) so the
-      // Settings panel shows the waiting UI if it's open.
-      st.deviceCode = flowInfo.deviceCode;
-      st.userCode = flowInfo.userCode;
-      st.flowState = 'waiting';
-      render('waiting-device', { userCode: flowInfo.userCode });
-      if (flowInfo.verificationUri && !navigateReserved(flowInfo.verificationUri)) {
-        popupBlockedFallback(flowInfo.verificationUri);
-      }
-      pollDeviceFlow(
-        flowInfo.deviceCode,
-        flowInfo.interval || 3,
-        flowInfo.expiresIn || 900,
-        onSuccess,
-        onError
-      );
+      // null = gateway answered logto-not-configured. 台账 #924 (2026-10-26):
+      // this is an ERROR face now — the legacy device-flow fallback it used to
+      // trigger was retired with the flow itself. Same three-part copy the
+      // generic failure face renders (reason + action + diagnostic code, the
+      // locale keys already exist for logto-not-configured).
+      const ncCode = 'logto-not-configured';
+      render('error', {
+        message: loginFailureText({ code: ncCode, error: t('login.reason.' + ncCode) }),
+        code: ncCode
+      });
     } catch (e) {
       finished = true;
       setPairing(false);
       navigateReserved(null); // release the reserved popup on failure
-      render('error', { message: e.message || '启动登录失败' });
+      // coldstart DX 批②（2026-10-14）：启动腿的失败原文先过护栏签名判别 —— 命中
+      // `enroll-refused-isolated-home` ⇒ 渲染既有 i18n 分类分支（原因 + 两出路
+      // `--net staging` / `NEBFLOW_ALLOW_PROD_ENROLL=1` + 诊断码），替换裸串（22:20
+      // 截图的「裸报」面）；未命中 ⇒ 与修前逐字同款（原文直出，不猜）。
+      const failMsg = e.message || t('login.startFailed');
+      const failCode = classifyLoginFailureCode({ error: failMsg });
+      render('error', {
+        message: loginFailureText({ code: failCode, error: failMsg }),
+        code: failCode
+      });
     }
   };
 
-  // Reserve the popup synchronously inside the click gesture stack — the
-  // async startFlow below cannot open one without being blocked.
-  reservePopup();
-  startFlow();
+  // Arm the auto-flow guard on every open (2026-09-15 OIDC fix), then the
+  // entry fork (social-first choice face, 2026-10-15 login-card batch):
+  //  - EXPLICIT-intent callers keep today's verbatim auto-start: the
+  //    switch-account fallback (opts.forceLogin — the forced fresh login
+  //    that must never downgrade) and the fm-auth-required auto handlers
+  //    (opts.auto — burst-guarded). Reserve (unless deferPopup) + startFlow.
+  //  - PLAIN user entries (login card / avatar / settings / empty states /
+  //    relogin keys) render the CHOICE face instead: GitHub/Google one-click
+  //    keys prominent, unified login secondary. Nothing starts and no popup
+  //    is reserved until the user picks — every key on that face reserves
+  //    inside its OWN gesture (same contract as the switch key above).
+  // `opts.deferPopup` (switch-account watchdog, no gesture): skip the
+  // reservation entirely — see openLoginModal's doc.
+  loginFlowGuardUntil = Date.now() + LOGIN_FLOW_GUARD_MS;
+  if (opts.forceLogin || opts.auto) {
+    if (!opts.deferPopup) reservePopup();
+    startFlow(!!opts.forceLogin, opts.deferPopup === true);
+  } else {
+    render('idle');
+  }
 }
 
 // ── State refresh → avatar styling ───────────────────────
@@ -644,25 +1237,44 @@ function renderAvatar() {
   const st = getNeblinkState();
   const { url: validAvatarUrl, showPhoto } = avatarViewState();
   const logoEl = avatar.querySelector('.activity-avatar-logo');
-  const photoEl = avatar.querySelector('.activity-avatar-photo');
-  const letterEl = avatar.querySelector('.activity-avatar-letter');
+  const photoEl = /** @type {HTMLElement|null} */ (avatar.querySelector('.activity-avatar-photo'));
+  const letterEl = /** @type {HTMLElement|null} */ (avatar.querySelector('.activity-avatar-letter'));
 
   if (photoEl) {
-    photoEl.hidden = !showPhoto;
-    photoEl.onerror = () => {
+    // Slot paint is shared with the settings account area and gated on the
+    // photo being paintable (neblink.js paintAvatarSlot, 2026-09-15 flicker fix).
+    paintAvatarSlot(photoEl, logoEl, validAvatarUrl, showPhoto, () => {
       noteAvatarFailure(validAvatarUrl); // latch: stop re-showing the broken image
       photoEl.hidden = true;
-      if (logoEl) logoEl.hidden = false;
-    };
-    if (showPhoto && photoEl.src !== validAvatarUrl) photoEl.src = validAvatarUrl;
+      if (logoEl) (/** @type {HTMLElement} */ (logoEl)).hidden = false;
+    });
+  } else if (logoEl) {
+    (/** @type {HTMLElement} */ (logoEl)).hidden = showPhoto;
   }
-  if (logoEl) logoEl.hidden = showPhoto;
   if (letterEl) letterEl.hidden = true; // account avatar replaces the letter
 
-  // State styling: paired (logged in) / pairing / logged out.
+  // ── Logged-out slot form = the pre-existing dimmed logo (2026-09-16 回退) ──
+  // 作者 2026-09-16 11:55 方向纠正（逐字）：「这个大绿色按钮是什么意思，我要让优化
+  // 的是那个登陆的按钮，这个绿色的位置回到以前的logo。」
+  // ⇒ 本槽位不再套主键皮（`logged-out` / `cfg-btn-primary` 两处 class 与
+  //   `ensureLoginGlyph` 字形同批摘除，`sapphire.css` 侧的 `#activity-avatar
+  //   .logged-out` 块与 `.login-glyph` 规则一并删除）。
+  // ⇒ 未登录态 = `nav.css` 的既有基线（36px 圆 + 24px 灰化 logo，零本文件声明）；
+  //   登录键族的真正交付面 = `.fm-login-btn`（消息 / 联系人未登录空态 + 两处重新
+  //   登录键），由 `sapphire.css` 登录键族块承接。
+  // 🔴 本槽位零改面：结构（photo / logo / letter 三节点 + paintAvatarSlot 门控）
+  //   与 `paired` / `pairing` / `title` 全部保持原样。
+
+  // State styling: paired (logged in) / pairing.
   avatar.classList.toggle('paired', !!st.loggedIn);
   avatar.classList.toggle('pairing', !!st.pairing);
-  avatar.title = st.pairing
-    ? 'Pairing…'
-    : (st.loggedIn ? '个人主页' : '登录');
+
+  // Tooltip via i18n (this used to write Chinese literals, clobbering the
+  // `activity-avatar → activity.login` mapping in i18n.js on every 10s refresh).
+  const accountTitle = st.pairing
+    ? t('activity.pairing')
+    : (st.loggedIn ? t('activity.profile') : t('activity.login'));
+  // While the Agent face is shown the tooltip says where a click goes; the account's own waits for the way back.
+  if (avatar.dataset.face === 'agent') accountFace.title = accountTitle;
+  else avatar.title = accountTitle;
 }

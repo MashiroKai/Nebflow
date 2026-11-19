@@ -1,17 +1,18 @@
 package nebflow.core
 
 import cats.effect.IO
-import nebflow.core.tools.RgHelper
-import nebflow.core.tools.ShellSession
+import nebflow.core.tools.{RgHelper, ShellSession}
+import nebflow.shared.NebflowLogger
 
-/** Boot-time dependency probe (Team #11 item ④): say out loud, at startup,
-  * which Windows toolchain pieces (Git Bash / ripgrep) resolved and which
-  * are missing — instead of failing later inside a tool call with a
-  * one-line ToolError the user never sees.
-  *
-  * The msi bundles both (packaging/build-msi.sh stages MinGit + rg.exe);
-  * zip/jar installs get them from release/install.ps1. Non-Windows: no-op.
-  */
+/**
+ * Boot-time dependency probe (Team #11 item ④): say out loud, at startup,
+ * which Windows toolchain pieces (Git Bash / ripgrep) resolved and which
+ * are missing — instead of failing later inside a tool call with a
+ * one-line ToolError the user never sees.
+ *
+ * The msi bundles both (packaging/build-msi.sh stages MinGit + rg.exe);
+ * zip/jar installs get them from release/install.ps1. Non-Windows: no-op.
+ */
 object WindowsDepProbe:
 
   private val logger = NebflowLogger.forName("nebflow.core.deps")
@@ -38,5 +39,7 @@ object WindowsDepProbe:
                   "Reinstall this app or install rg: https://github.com/BurntSushi/ripgrep"
               )
         yield ()
+        end for
       else IO.unit
     }.flatten
+end WindowsDepProbe

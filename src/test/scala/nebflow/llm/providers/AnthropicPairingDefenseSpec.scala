@@ -29,16 +29,18 @@ class AnthropicPairingDefenseSpec extends FunSuite:
     adapter.toAnthropicMessages(msgs)
 
   private def allText(jsons: List[Json]): String =
-    jsons.flatMap(_.hcursor.downField("content").as[List[Json]].getOrElse(Nil))
+    jsons
+      .flatMap(_.hcursor.downField("content").as[List[Json]].getOrElse(Nil))
       .flatMap(_.hcursor.downField("text").as[String].toOption)
       .mkString(" ")
 
   private def toolResultIds(jsons: List[Json]): List[String] =
-    jsons.flatMap(_.hcursor.downField("content").as[List[Json]].getOrElse(Nil))
+    jsons
+      .flatMap(_.hcursor.downField("content").as[List[Json]].getOrElse(Nil))
       .flatMap { block =>
         block.hcursor.downField("type").as[String].toOption match
           case Some("tool_result") => block.hcursor.downField("tool_use_id").as[String].toOption
-          case _                   => None
+          case _ => None
       }
 
   test("orphaned head tool_result (no preceding tool_use) is replaced, not sent") {
@@ -67,7 +69,8 @@ class AnthropicPairingDefenseSpec extends FunSuite:
     val out = messages(history)
     val ids = toolResultIds(out)
     assertEquals(
-      clue(ids), List("call_valid_1"),
+      clue(ids),
+      List("call_valid_1"),
       s"only paired tool_result must survive; orphan call_orphan_1 leaked: $out"
     )
     // The orphan is replaced by an explanatory text, not silently deleted —

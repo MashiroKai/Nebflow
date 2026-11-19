@@ -1,102 +1,170 @@
 package nebflow.gateway
 
+import cats.effect.*
 import cats.effect.unsafe.implicits.global
-import cats.effect.{ExitCode, IO, IOApp, Ref}
 import cats.syntax.all.*
 import io.circe.Json
 import io.circe.syntax.*
+import nebflow.actor.{AgentCommand, RootAgentIdentity, contextWindow}
 import nebflow.agent.*
 import nebflow.bridge.*
 import nebflow.core.*
+import nebflow.core.boot.ProcessSeal
 import nebflow.core.daemon.{DaemonService, DaemonStore}
 import nebflow.core.hooks.*
 import nebflow.core.mcp.*
+import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
+import nebflow.core.root.{OwnerGuard, RootLadder, RootLayer}
 import nebflow.core.scheduler.{ScheduledTaskService, ScheduledTaskStore}
 import nebflow.core.seed.SeedService
 import nebflow.core.skill.SkillService
 import nebflow.core.task.FileTaskStore
-import nebflow.core.project.{ProjectRuntimeRegistry, ProjectStore}
-import nebflow.core.tools.{FriendMessageTool, RemoteExecutor, ToolLoader, ToolRegistry}
+import nebflow.core.tools.*
 import nebflow.llm.*
-import nebflow.neblink.*
+import nebflow.neblink.core.*
+import nebflow.neblink.identity.*
+import nebflow.neblink.logto.*
+import nebflow.neblink.portal.*
+import nebflow.neblink.relay.*
+import nebflow.neblink.social.*
+import nebflow.neblink.sync.*
 import nebflow.service.{ConfigSnapshot, *}
-import nebflow.shared.*
+import nebflow.shared.{NebflowLogger, *}
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.server.Router
+
+import java.security.Security
 
 import scala.concurrent.duration.*
 
 object GatewayMain extends IOApp:
   private val logger = NebflowLogger.forName("nebflow.gateway")
 
-  private def pidFilePath = java.nio.file.Paths.get(PathUtil.dataRoot.toString, "nebflow.pid")
+  private[gateway] def configureDnsCacheTtl(): Unit =
+    Security.setProperty("networkaddress.cache.ttl", "30")
+    Security.setProperty("networkaddress.cache.negative.ttl", "5")
+
+  // Phase 2 daemon plan §2.1: the legacy legacy-named pid file is retired —
+  // the single pid authority is `<dataRoot>/.pid` (cli/ProcessManager), written
+  // by Main.bootGateway for normal boots and by succeedPortGate for hot-
+  // restart successors. The guard logic below is unchanged.
 
   /**
-   * Kill stale Nebflow processes before starting — but ONLY verified Nebflow
+   * Kill stale Stand processes before starting — but ONLY verified Stand
    * processes (P0 2026-09-06 host-kill hardening). Port-based detection
-   * (lsof) plus a per-pid identity check (JDK ProcessHandle command line,
-   * ps fallback): every listener's command line must carry a Nebflow marker
-   * before it may be destroyed (see [[StaleProcessGuard]] — restart flows
-   * still clear their stale instance).
+   * plus a per-pid identity check (JDK ProcessHandle command line, Windows
+   * PowerShell CIM fallback, ps fallback): every listener's command line
+   * must carry a Stand marker before it may be destroyed (see
+   * [[StaleProcessGuard]] — restart flows still clear their stale instance).
    * A foreign occupant refuses startup loudly; it is NEVER killed.
-   * Falls back to PID file only on Windows.
+   *
+   * 新设备首用批 2026-10-22: the mac/linux-only gate is retired — Windows
+   * now has both legs (netstat-based portListenerPids +
+   * PowerShell-CIM command lines, [[WindowsProcs]]), so a stale instance
+   * there is cleared and a foreign occupant refused, same semantics as
+   * POSIX. Before this批 the Windows face did nothing, letting a stale
+   * instance block the port until a manual kill.
    */
   private def ensureSingleInstance(port: Int): IO[Unit] =
     IO.blocking {
-      val os = sys.props.getOrElse("os.name", "").toLowerCase
-      if os.contains("mac") || os.contains("linux") then
-        StaleProcessGuard.classify(
-          StaleProcessGuard.portListenerPids(port),
-          ProcessHandle.current.pid
-        ) match
-          case Right(stalePids) =>
-            if stalePids.nonEmpty then
-              logger
-                .warn(
-                  s"[startup] killing verified stale nebflow processes on port $port: " +
-                    s"${stalePids.mkString(", ")}"
-                )
-                .unsafeRunSync()
-              for pid <- stalePids do
-                try ProcessHandle.of(pid).ifPresent(_.destroyForcibly())
-                catch case _: Exception => ()
-              Thread.sleep(1000)
-            writePidFile()
-          case Left(foreign) =>
-            // P0 2026-09-06 (09:07 incident class): a NON-nebflow process
-            // holds the port. NEVER destroy it — refuse startup loudly; the
-            // boot dies here instead of killing someone else's process.
-            val detail =
-              s"[startup] REFUSING to start: port $port is held by a non-nebflow " +
-                s"process (${foreign.detail}) — stop it or pick another port " +
-                "(--port / NEBFLOW_GATEWAY_PORT)"
-            logger.error(detail).unsafeRunSync()
-            throw new IllegalStateException(detail)
-          end match
-      else writePidFile()
+      // 双实例并存批 2026-10-30：`stand`（~/.stand）与 legacy `nebflow`（~/.nebflow）
+      // 同机并存，两者命令行都带 `*-assembly-*.jar` —— 旧判据会把对家实例判成
+      // 「可安全 kill 的陈旧本家进程」并 destroyForcibly（跨实例误杀）。故先按**路径
+      // 归属**分一层：任一 listener 的 cmdline 落在另一个品牌根下 ⇒ 拒启、零信号。
+      val otherInstance = StaleProcessGuard
+        .portListenerPids(port)
+        .filterNot(_ == ProcessHandle.current.pid)
+        .iterator
+        .flatMap(pid =>
+          StaleProcessGuard
+            .readCommandLine(pid)
+            .flatMap(cmd =>
+              StaleProcessGuard.otherInstanceRoot(cmd, PathUtil.dataRoot.toString).map(root => (pid, cmd, root))
+            )
+        )
+        .toList
+        .headOption
+      otherInstance match
+        case Some((pid, cmd, root)) =>
+          val detail =
+            s"[startup] REFUSING to start: port $port is held by the OTHER instance (pid $pid, rooted at a " +
+              s"foreign brand home '…/$root/…'; this instance roots at ${PathUtil.dataRoot}) — " +
+              s"command: ${StaleProcessGuard.truncate(cmd)}; stop that instance or pick another port"
+          logger.error(detail).unsafeRunSync()
+          throw new IllegalStateException(detail)
+        case None => ()
+      // ── home 归属证明门（隔离实例误伤批 2026-11-04 §1，最小局部增量）─────────
+      // 事故形状：作者用 `sbt run` 起生产实例 —— 命令行里**没有任何 home 片段**
+      // （没有 `--home` / `-Duser.home`），但带 `GatewayMain` / `/target/` 标记 ⇒
+      // `isNebflowCommandLine`=true ⇒ [[StaleProcessGuard.classify]] 判 verified
+      // stale ⇒ destroyForcibly。即「按品牌词认家、认不出就当自家旧实例杀」在
+      // sbt-run 生产实例上等于直接放行杀掉。本门把它反过来：**有 home 归属证明
+      // 才可动；无证明 ⇒ 拒启 + 零信号**（绝不走到下面的 destroyForcibly）。
+      // 归属证明腿与 `stop` 面同一实现：[[InstanceScope.proveHome]]（命令行
+      // `--home`/`-Duser.home`、命令行含本根路径、本根 `.pid` 记账）。
+      val unowned = StaleProcessGuard
+        .portListenerPids(port)
+        .filterNot(_ == ProcessHandle.current.pid)
+        .iterator
+        .flatMap { pid =>
+          val cmd = StaleProcessGuard.readCommandLine(pid)
+          InstanceScope.proveHome(cmd, pid, PathUtil.dataRoot.toString, nebflow.cli.ProcessManager.readPid()) match
+            case InstanceScope.HomeProof.Same(_, _) => None
+            case InstanceScope.HomeProof.Other(home, via) => Some((pid, cmd, s"its home is $home ($via)"))
+            case InstanceScope.HomeProof.Unknown(_, detail) => Some((pid, cmd, s"its home cannot be proven ($detail)"))
+        }
+        .toList
+        .headOption
+      unowned match
+        case Some((pid, cmd, why)) =>
+          val detail =
+            s"[startup] REFUSING to start: port $port is held by pid $pid and $why — this instance roots at " +
+              s"${PathUtil.dataRoot}; different data roots are different instances, so it is NEVER killed " +
+              s"here (fail-closed, zero signal). Command: ${StaleProcessGuard.truncate(cmd.getOrElse("<unreadable>"))}. " +
+              "Stop it from its own home, pass --takeover to take over explicitly, or pick another port."
+          logger.error(detail).unsafeRunSync()
+          throw new IllegalStateException(detail)
+        case None => ()
+      StaleProcessGuard.classify(
+        StaleProcessGuard.portListenerPids(port),
+        ProcessHandle.current.pid
+      ) match
+        case Right(stalePids) =>
+          if stalePids.nonEmpty then
+            logger
+              .warn(
+                s"[startup] killing verified stale ${Branding.productName} processes on port $port: " +
+                  s"${stalePids.mkString(", ")}"
+              )
+              .unsafeRunSync()
+            for pid <- stalePids do
+              try ProcessHandle.of(pid).ifPresent(_.destroyForcibly())
+              catch case _: Exception => ()
+            Thread.sleep(1000)
+        case Left(foreign) =>
+          // P0 2026-09-06 (09:07 incident class): a NON-nebflow process
+          // holds the port. NEVER destroy it — refuse startup loudly; the
+          // boot dies here instead of killing someone else's process.
+          val detail =
+            s"[startup] REFUSING to start: port $port is held by a non-${Branding.productName} " +
+              s"process (${foreign.detail}) — stop it or pick another port " +
+              "(--port / NEBFLOW_GATEWAY_PORT)"
+          logger.error(detail).unsafeRunSync()
+          throw new IllegalStateException(detail)
+      end match
     }
-
-  /** Write the current PID file (unchanged behavior of the pre-hardening tail
-    * of ensureSingleInstance; reached only when startup is NOT refused). */
-  private def writePidFile(): Unit =
-    val pf = pidFilePath
-    java.nio.file.Files.createDirectories(pf.getParent)
-    java.nio.file.Files.write(
-      pf,
-      ProcessHandle.current.pid.toString.getBytes("UTF-8"),
-      java.nio.file.StandardOpenOption.CREATE,
-      java.nio.file.StandardOpenOption.TRUNCATE_EXISTING
-    )
 
   // ===== 热重启引导闸（hot-restart 批设计 §3.3）=====
 
-  /** Boot entry gate dispatch: normal boot = stale-intent hygiene + the standard
-    * single-instance hardening; succeed boot (hot-restart successor) = [s1]
-    * intent validation only — the port is STILL HELD by the old instance at this
-    * point, so ensureSingleInstance must NOT run here (its verified-stale
-    * classification would kill the very instance this successor is replacing:
-    * 禁裸 kill 红线零弱化). The successor takes the port via succeedPortGate
-    * below, after the old pid is confirmed dead. */
+  /**
+   * Boot entry gate dispatch: normal boot = stale-intent hygiene + the standard
+   * single-instance hardening; succeed boot (hot-restart successor) = [s1]
+   * intent validation only — the port is STILL HELD by the old instance at this
+   * point, so ensureSingleInstance must NOT run here (its verified-stale
+   * classification would kill the very instance this successor is replacing:
+   * 禁裸 kill 红线零弱化). The successor takes the port via succeedPortGate
+   * below, after the old pid is confirmed dead.
+   */
   private def entryGate(cfg: GatewayConfig): IO[Unit] =
     nebflow.core.hotrestart.SuccessorContext.get match
       case None =>
@@ -114,25 +182,34 @@ object GatewayMain extends IOApp:
             err =>
               logger
                 .error(s"[hot-restart] successor intent validation failed: $err — refusing to boot")
-                .flatMap(_ =>
-                  IO.raiseError(new IllegalStateException(s"hot-restart successor refused: $err"))),
+                .flatMap(_ => IO.raiseError(new IllegalStateException(s"hot-restart successor refused: $err"))),
             _ =>
               logger.info(
                 s"[hot-restart] successor intent validated (old pid ${ctx.oldPid}, port ${ctx.port}, generation ${ctx.generation})"
-              ))
-      end match
+              )
+          )
+    end match
   end entryGate
 
-  /** 热重启 succeed 门（[s3]+[s4]，插桩位：projectTtlScanner 与 Ember build 之间，
-    * 设计 §3.3 文件级触点）：Zone A 引导完成的回执（intent phase=readyToBind 原子
-    * 回写）+ 端口让渡等待——等旧 pid 死亡（≤90s，对「旧实例走完优雅链」的确认，
-    * 非赌博 sleep）∧ connect 探测无活监听（TW socket 拒绝 connect = 可进场，Ember
-    * 的 bind + 既有 65s fail-open 语义归下游）。旧 pid 死后端口仍有活监听 = 外来
-    * 抢占者进场窗 → 回落 ensureSingleInstance 既有语义（verified stale 清除 /
-    * foreign 大声拒绝——单实例红线零弱化）。等待总超时 → failure 记录 + 弃进场退出
-    * （旧实例继续服务 / watchdog 人工兜底）。通过后本进程才写 pid 文件（旧实例的
-    * removePid hook 已随其死亡跑完，无竞删窗口）。普通启动恒为 no-op。 */
-  private def succeedPortGate(cfg: GatewayConfig): IO[Unit] =
+  /**
+   * 热重启 succeed 门（[s3]+[s4]，插桩位：projectTtlScanner 与 Ember build 之间，
+   * 设计 §3.3 文件级触点）：Zone A 引导完成的回执（intent phase=readyToBind 原子
+   * 回写）+ 端口让渡等待——等旧 pid 死亡（≤90s，对「旧实例走完优雅链」的确认，
+   * 非赌博 sleep）∧ connect 探测无活监听（TW socket 拒绝 connect = 可进场，Ember
+   * 的 bind + 既有 65s fail-open 语义归下游）。旧 pid 死后端口仍有活监听 = 外来
+   * 抢占者进场窗 → 回落 ensureSingleInstance 既有语义（verified stale 清除 /
+   * foreign 大声拒绝——单实例红线零弱化）。等待总超时 → failure 记录 + 弃进场退出
+   * （旧实例继续服务 / watchdog 人工兜底）。通过后本进程才写 pid 文件（旧实例的
+   * removePid hook 已随其死亡跑完，无竞删窗口）。普通启动恒为 no-op。
+   *
+   * **批 2 G3 追加（门口探针端点的生产者侧）**：在写 readyToBind 回执**之前**起一个
+   * loopback 临时端点（[[nebflow.core.hotrestart.ProbeEndpoint]]，与既有健康端点同载荷），
+   * 把端口号写进回执的 `probePort`——使**旧实例**能在交接前**独立**观察「新版本能不能
+   * 服务」（该窗口内共享端口仍属旧实例，直接探它等于探自己；见 `ProbeEndpoint` 的次序
+   * 论证）。端点随交接结束即停（`use` 作用域）；**fail-open**：起不来只记 WARN + 不带
+   * `probePort`（旧实例把第三/四档报 `unverified`），既有交接链零改变。
+   */
+  private def succeedPortGate(cfg: GatewayConfig, healthMonitor: nebflow.llm.ProviderHealthMonitor): IO[Unit] =
     nebflow.core.hotrestart.SuccessorContext.get match
       case None => IO.unit
       case Some(ctx) =>
@@ -142,36 +219,86 @@ object GatewayMain extends IOApp:
             s"[hot-restart] successor zone A done (pid $pid) — marking readyToBind, waiting for old pid ${ctx.oldPid} to hand over port ${cfg.port.value}"
           )
           .flatMap(_ =>
-            nebflow.core.hotrestart.SuccessorGate.markPhase(ctx.intentPath, "readyToBind")) *>
-          nebflow.core.hotrestart.SuccessorGate.awaitHandover(
-            ctx.oldPid,
-            cfg.port.value,
-            pidAlive = p => IO.blocking(ProcessHandle.of(p).map(_.isAlive).orElse(false)),
-            liveListener = p => IO.blocking(nebflow.cli.SingleInstanceGuard.connectProbeAccepted(p))
-          ).flatMap {
-            case Right(()) => IO.unit
-            case Left(err) if err == nebflow.core.hotrestart.SuccessorGate.ForeignOccupantSignal =>
-              logger
-                .warn(
-                  s"[hot-restart] old pid ${ctx.oldPid} dead but port ${cfg.port.value} still served — foreign-preemption window; standard single-instance gate applies")
-                .flatMap(_ => ensureSingleInstance(cfg.port.value))
-            case Left(err) =>
-              nebflow.core.hotrestart.SuccessorGate.markFailed(ctx.intentPath, err).attempt.void *>
-                logger.error(s"[hot-restart] port handover failed: $err — successor exiting (old instance unaffected)") *>
-                IO.raiseError(new IllegalStateException(s"hot-restart port handover failed: $err"))
+            // 门口探针端点（fail-open，交接结束即停）
+            nebflow.core.hotrestart.ProbeEndpoint.start(healthMonitor).flatMap { probe =>
+              val announce = probe.toOption.map(_.port)
+              val announceWarn = probe.fold(
+                err =>
+                  logger.warn(
+                    s"[hot-restart] door probe endpoint unavailable (health gate tiers 3/4 will report unverified): $err"
+                  ),
+                _ => IO.unit
+              )
+              announceWarn *>
+                nebflow.core.hotrestart.SuccessorGate
+                  .markPhase(ctx.intentPath, "readyToBind", probePort = announce)
+                  .flatMap(_ =>
+                    nebflow.core.hotrestart.SuccessorGate
+                      .awaitHandover(
+                        ctx.oldPid,
+                        cfg.port.value,
+                        pidAlive = p => IO.blocking(ProcessHandle.of(p).map(_.isAlive).orElse(false)),
+                        liveListener = p => IO.blocking(nebflow.cli.SingleInstanceGuard.connectProbeAccepted(p))
+                      )
+                      .flatMap {
+                        case Right(()) => IO.unit
+                        case Left(err) if err == nebflow.core.hotrestart.SuccessorGate.ForeignOccupantSignal =>
+                          logger
+                            .warn(
+                              s"[hot-restart] old pid ${ctx.oldPid} dead but port ${cfg.port.value} still served — foreign-preemption window; standard single-instance gate applies"
+                            )
+                            .flatMap(_ => ensureSingleInstance(cfg.port.value))
+                        case Left(err) =>
+                          nebflow.core.hotrestart.SuccessorGate.markFailed(ctx.intentPath, err).attempt.void *>
+                            logger.error(
+                              s"[hot-restart] port handover failed: $err — successor exiting (old instance unaffected)"
+                            ) *>
+                            IO.raiseError(new IllegalStateException(s"hot-restart port handover failed: $err"))
+                      }
+                  )
+                  .guarantee(probe.toOption.map(_.stop).getOrElse(IO.unit))
+                  .void
+            }
+          ) *>
+          IO.blocking {
+            // Phase 2 daemon plan §2.2 (F-2): the successor now writes the
+            // unified `.pid` (plus its ownership meta) instead of the retired
+            // legacy-named pid file — same timing as before (old pid confirmed dead,
+            // its removePid hook has completed, no race-delete window), which
+            // also fixes the long-standing "stop/status misreport the
+            // successor as not running" gap: the successor finally HAS a
+            // `.pid` for the stop/status faces to read.
+            nebflow.cli.ProcessManager.writePid(pid)
+            nebflow.cli.PidMeta.writeFresh(
+              nebflow.cli.PidMeta.StartedByLauncher,
+              nebflow.cli.PidMeta.ModeForeground
+            )
           } *>
-          IO.blocking(writePidFile()) *>
           logger.info(s"[hot-restart] port handover confirmed — successor (pid $pid) owns pid file, binding now")
     end match
   end succeedPortGate
 
-  private def openBrowser(url: String): IO[Unit] = IO.blocking {
+  // 冷启动开门「载体」注入（2026-10-18 冷启动官网开门批）：STAND_OPEN_BROWSER /
+  // NEBFLOW_OPEN_BROWSER（Branding.env 双前缀读取）指到一个可执行件路径（coldstart
+  // 脚本生成的 wrapper，内部自带 --user-data-dir 等参数）时，boot 开门 exec
+  // [该件, url] —— 单 token、零 shell、零分词，路径带空格安全；文件缺席/不可执行
+  // 落既有 catch 静默，由脚本回落腿兜底。
+  // 边界：本 env 只换开门【载体】（浏览器件），开门【目标】仍由 PortalUrl 单点
+  // 解析（env > config > brand 缺省；NEBFLOW_OPEN_UI=local 回落本地）——不另造
+  // 入口目标开关。未注入 = 既有 open / rundll32 / xdg-open 行为逐字保留。
+  // 2026-10-18 #512 门审计批抽出 browserLauncher：boot 开门日志需点名载体，
+  // 不复制选择梯（openBrowser 行为逐字不变）。
+  private def browserLauncher: Seq[String] =
     val os = sys.props.getOrElse("os.name", "").toLowerCase
-    val cmd =
-      if os.contains("mac") then Seq("open", url)
-      else if os.contains("win") then Seq("rundll32", "url.dll,FileProtocolHandler", url)
-      else Seq("xdg-open", url)
-    try Runtime.getRuntime.exec(cmd.toArray)
+    Branding.env("OPEN_BROWSER").map(_.trim).filter(_.nonEmpty) match
+      case Some(path) => Seq(path)
+      case None =>
+        if os.contains("mac") then Seq("open")
+        else if os.contains("win") then Seq("rundll32", "url.dll,FileProtocolHandler")
+        else Seq("xdg-open")
+
+  private def openBrowser(url: String): IO[Unit] = IO.blocking {
+    try Runtime.getRuntime.exec((browserLauncher :+ url).toArray)
     catch case _: Exception => ()
   }
 
@@ -225,7 +352,8 @@ object GatewayMain extends IOApp:
   ): IO[Unit] =
     val fromConfig = config.mcpServers.getOrElse(Map.empty)
     for
-      _ <- agentLibrary.seedDefaults()
+      // seedDefaults() retired (builtin-def batch 2026-10-03): the four
+      // converged agents are code-defined (BuiltinAgents) — nothing to seed.
       _ <- agentLibrary.loadAll()
       _ <- logger.info("Initializing global MCP servers...")
       _ <- manager.startAll(fromConfig)
@@ -271,7 +399,7 @@ object GatewayMain extends IOApp:
    * Returns the fiber so the caller can cancel/restart it.
    */
   private def startHeartbeatLoop(
-    discovery: nebflow.neblink.NeblinkDiscovery
+    discovery: nebflow.neblink.relay.NeblinkDiscovery
   ): IO[cats.effect.Fiber[IO, Throwable, Unit]] =
     def loop: IO[Unit] =
       for
@@ -290,17 +418,28 @@ object GatewayMain extends IOApp:
     )
   )
 
-  /** P0 2026-09-06 (09:07 host-kill incident): GatewayMain never parsed argv —
-    * `java nebflow.gateway.GatewayMain --port 8097` silently DROPPED the flag,
-    * the port fell back to the default 8080, and the startup port-clear then
-    * hit the live host instance. Any argument now fails fast and loud;
-    * GatewayMain is not the user entry point. Main.bootGateway boots the real
-    * gateway via run(Nil).
-    */
+  /**
+   * P0 2026-09-06 (09:07 host-kill incident): GatewayMain never parsed argv —
+   * `java nebflow.gateway.GatewayMain --port 8097` silently DROPPED the flag,
+   * the port fell back to the default 8080, and the startup port-clear then
+   * hit the live host instance. Any argument now fails fast and loud;
+   * GatewayMain is not the user entry point. Main.bootGateway boots the real
+   * gateway via run(Nil).
+   */
   def run(args: List[String]): IO[ExitCode] =
+    configureDnsCacheTtl()
     args match
       case Nil =>
-        runGateway.as(ExitCode.Success)
+        // JDK baseline gate (2026-09-10, JDK-21 batch, B track): boot needs Java 21+.
+        // Deliberately HERE, not in `Main.run`: the self-repair path
+        // (`nebflow update|uninstall|doctor|version`) goes Main.run → CliRouter →
+        // GatewayClient (plain HTTP) / the install script, and never boots the
+        // gateway in-process — gating Main.run would brick the very command a
+        // user on an old JVM needs to run. Main.bootGateway and
+        // Main.succeedGateway both funnel through this Nil branch, so every real
+        // gateway boot is still covered.
+        if JvmRequirement.isSatisfied then runGateway.as(ExitCode.Success)
+        else IO.println(JvmRequirement.errorText).as(ExitCode.Error)
       case _ =>
         IO.println(
           "ERROR: nebflow.gateway.GatewayMain does not accept arguments " +
@@ -311,413 +450,1387 @@ object GatewayMain extends IOApp:
               "Use: nebflow.Main --home <dir> --port <port> start"
           ) *>
           IO.pure(ExitCode.Error)
+    end match
   end run
 
+  /**
+   * == owner 双点名校验闸（三层数据根批 · b1-guards；设计 §8.1(c)「owner 锁定面」行 / T2）==
+   *
+   * 挂载点：[[runGateway]] 第一句 —— Main.run 已定根（`setMachineRoot` + 阶梯定档，同一 JVM：
+   * 全部启动臂经 `bootGateway ⇒ GatewayMain.run(Nil)` 汇聚到这里，Main.scala:533），而
+   * Ember 的 server 在 runGateway 尾部才 build ⇒ 拒绝发生在任何 HTTP 面出现之前
+   * （拒启 = raise 浮出 ⇒ IOApp 退出码 ≠ 0）。CLI 面（CliRoute 分发）**不挂本闸**：
+   * `stand logout` / `stand login` 正是 owner-mismatch 的救济路径。
+   *
+   * 判据：本引擎服务的账号（有效根 = 账号档时取 `RootLayer.Account.accountSub`）vs 凭据里的
+   * owner（`OwnerIdentity.localAnchor` —— 与 /api/neblink/status 同一族取数：凭据文件里
+   * TLS 信任链落盘的 Logto id_token 的 `sub` 声明）。两者不等 ⇒ **拒启**并双点名 +
+   * 给 `stand logout` 行动建议（`OwnerGuard.check` 逐字模板，稳定码 owner-account-mismatch）。
+   * 判定逻辑只在 core/root/Guards.scala（守卫单点铁律），本 def 是调用点胶水：
+   * 取层 + 取锚 + 按层路由（层与锚走参数 = spec 注入面，OwnerGateBootSpec 直驱）。
+   *
+   * 为什么绝不静默降级：账号 A 的凭据跑在账号 B 的账号根上 = 数据面串号（B 的项目/secret/
+   * 会话用的是 A 的服务器身份）。宁可起不来并说清楚，也不许起得来但说错话。
+   * 无锚（读不到凭据 / 旧凭据无 id_token）⇒ fail-open；平铺档 / 未登录层没有「本引擎
+   * 服务的账号」可对 ⇒ 跳过不拒（不新增拒绝面 —— 与 `OwnerGuard` 的
+   * `credentialSub = None ⇒ Right` 同一条纪律）。
+   */
+  private[gateway] def ownerGate(layer: RootLayer, credentialAnchor: IO[Option[OwnerAnchor]]): IO[Unit] =
+    layer match
+      case RootLayer.Account(_, servedSub, accountRoot) =>
+        credentialAnchor.flatMap { anchor =>
+          OwnerGuard.check(servedSub, anchor.map(_.sub)) match
+            case Right(_) =>
+              logger.info(
+                s"[root] owner check passed for account '$servedSub' (root $accountRoot, " +
+                  s"credential ${anchor.map(a => s"owner '${a.sub}'").getOrElse("no anchor — fail-open")})"
+              )
+            case Left(refusal) =>
+              logger.error(s"[root] REFUSING to start: ${refusal.message}") *>
+                IO.raiseError(new IllegalStateException(refusal.message))
+        }
+      case other =>
+        // 平铺档 / 未登录层：没有「本引擎服务的账号」可对，不新增拒绝面
+        logger.info(s"[root] owner check skipped (root layer=${other.name})")
+
   private def runGateway: IO[Unit] =
-    // Team #11 ④: log which Windows toolchain pieces (Git Bash / rg)
-    // resolved at boot — missing pieces must be loud up front, not discovered
-    // later inside a failing tool call. No-op off Windows.
-    nebflow.core.WindowsDepProbe.warnIfMissing *>
+    // 三层数据根批（b1-guards）：owner 闸先于一切 HTTP 面（T2 拒启 —— 占位注释
+    // Main.scala:189-193 的落地，真实 boot 面就是这里）。
+    ownerGate(RootLadder.current, OwnerIdentity.localAnchor) *>
+      IO.blocking(nebflow.shared.EvidenceTemp.sweep()).flatMap { removed =>
+        if removed > 0 then logger.info(s"[evidence-temp] swept $removed expired evidence batches") else IO.unit
+      } *>
+      // Periodic re-arm of the same sweep: without it a long-lived gateway only
+      // enforces the evidence-temp TTL at boot, so expired inactive batches pile
+      // up until the next restart.
+      nebflow.shared.EvidenceTempSweep.launch(24.hours).start.void *>
+      // Team #11 ④: log which Windows toolchain pieces (Git Bash / rg)
+      // resolved at boot — missing pieces must be loud up front, not discovered
+      // later inside a failing tool call. No-op off Windows.
+      nebflow.core.WindowsDepProbe.warnIfMissing *>
       // Read port from config first, then run the boot entry gate on that port
       GatewayConfig.load.flatMap { cfg =>
         entryGate(cfg) *> GatewayConfig.load.flatMap { cfg =>
-        // Expose resolved gateway port and PID to agent via system properties
-        System.setProperty("nebflow.gateway.port", cfg.port.value.toString)
-        System.setProperty("nebflow.gateway.pid", ProcessHandle.current.pid.toString)
-        // Safe config load — never crash on bad config; auto-restore from snapshot on corruption
-        val configRef: Ref[IO, NebflowServiceConfig] = Ref.unsafe {
-          try
-            val cfg = Config.loadServiceConfig()
-            // Save snapshot on successful load (fire-and-forget)
-            ConfigSnapshot.save().unsafeRunSync()
-            cfg
-          catch
-            case e: Exception =>
-              logger.warn(s"Config load failed: ${e.getMessage}")
-              // Try restoring from latest snapshot
-              ConfigSnapshot.restoreLatest().unsafeRunSync() match
-                case true =>
-                  logger.info("Restored config from latest snapshot")
-                  try Config.loadServiceConfig()
-                  catch
-                    case _: Exception =>
-                      logger.warn("Restored snapshot also invalid — starting with defaults")
-                      defaultConfig
-                case false =>
-                  logger.warn("No snapshot available — starting with defaults")
-                  defaultConfig
-        }
-        configRef.get.flatMap { config =>
-          // #311 (2026-08-19): enforce the preset invariant at boot — a usable
-          // default preset must always exist once any model is configured.
-          // Creates/seeds model-presets.json when absent (from llm.model, i.e.
-          // the user's first provider model) and repairs a dangling/chain-less
-          // default. Idempotent; healthy files are untouched.
-          try nebflow.core.presets.PresetStore().ensureDefaultPreset()
-          catch case e: Exception => logger.warn(s"Default preset seeding failed: ${e.getMessage}")
-          // #339 D-b：llm.model 一次性迁移（先播种验证后剥离，原子写；失败
-          // 幂等重试）。种子源此时仍优先读 llm.model（迁移优先），剥离后新
-          // 安装的种子源走 providers 推导。
-          try nebflow.core.presets.PresetStore.migrateGlobalModelChain()
-          catch case e: Exception => logger.warn(s"llm.model migration failed: ${e.getMessage}")
-          Auth.loadOrCreateToken.flatMap { token =>
-            // Global session state shared across all connections
-            val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
-            val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
-            sessionStore.load
-              .flatMap { _ =>
-                // Single-session architecture: guarantee the primary agent Nebula
-                // has exactly one session and that it is the active session shown in
-                // the Main window, before any WS client connects. Adopts legacy
-                // agentless sessions (preserving history) and activates as needed.
-                sessionStore.ensureActiveAgentSession("Nebula").void
+          // Expose resolved gateway port and PID to agent via system properties
+          System.setProperty("nebflow.gateway.port", cfg.port.value.toString)
+          System.setProperty("nebflow.gateway.pid", ProcessHandle.current.pid.toString)
+          // Safe config load — never crash on bad config; auto-restore from snapshot on corruption
+          val configRef: Ref[IO, NebflowServiceConfig] = Ref.unsafe {
+            try
+              val cfg = Config.loadServiceConfig()
+              // Save snapshot on successful load (fire-and-forget)
+              ConfigSnapshot.save().unsafeRunSync()
+              cfg
+            catch
+              case e: Exception =>
+                logger.warn(s"Config load failed: ${e.getMessage}")
+                // Try restoring from latest snapshot
+                ConfigSnapshot.restoreLatest().unsafeRunSync() match
+                  case true =>
+                    logger.info("Restored config from latest snapshot")
+                    try Config.loadServiceConfig()
+                    catch
+                      case _: Exception =>
+                        logger.warn("Restored snapshot also invalid — starting with defaults")
+                        defaultConfig
+                  case false =>
+                    logger.warn("No snapshot available — starting with defaults")
+                    defaultConfig
+          }
+          configRef.get.flatMap { config =>
+            // #311 (2026-08-19): enforce the preset invariant at boot — a usable
+            // default preset must always exist once any model is configured.
+            // Creates/seeds model-presets.json when absent (from llm.model, i.e.
+            // the user's first provider model) and repairs a dangling/chain-less
+            // default. Idempotent; healthy files are untouched.
+            try nebflow.core.presets.PresetStore().ensureDefaultPreset()
+            catch case e: Exception => logger.warn(s"Default preset seeding failed: ${e.getMessage}")
+              // #339 D-b：llm.model 一次性迁移（先播种验证后剥离，原子写；失败
+              // 幂等重试）。种子源此时仍优先读 llm.model（迁移优先），剥离后新
+              // 安装的种子源走 providers 推导。
+            try nebflow.core.presets.PresetStore.migrateGlobalModelChain()
+            catch case e: Exception => logger.warn(s"llm.model migration failed: ${e.getMessage}")
+              // preset→chain 迁移批（2026-10-30，作者令 08:29「做」）：接上启动腿。
+              // 前置 seed/llm.model 迁移已跑（:422/:427）；本腿把 model-presets.json
+              // 的 preset 定义 write-ahead 迁进 ModelChainRegistry（model-chains.json，
+              // 既有条目恒胜 ⇒ 幂等），原目录文件随后加戳封存（迁移完成戳）。
+              // PresetStore 默认路径读面已切注册表、旧 preset 名逐字兼容 ⇒ 封存不再
+              // 拆 preset 面（SubTask preset 参数/工具文档/错误面单源）。二次启动
+              // 目录文件缺席 ⇒ 全腿 no-op。失败不阻断启动（与上两行迁移同款纪律）。
+            try nebflow.core.ModelChainMigration.migrateLegacyPresetRefs()
+            catch case e: Exception => logger.warn(s"preset→chain migration failed: ${e.getMessage}")
+              // config-single-source batch — boot face:
+              //  · legacy-name compat: PathUtil.configJsonPath prefers `stand.json`
+              //    and falls back to reading a legacy `nebflow.json` in place (one
+              //    info line, once per process; the legacy file is never touched);
+              //  · `llm.fallback` is seeded from the CURRENT effective chain the first
+              //    time, so the chain is visible/editable in the file (one truth);
+              //  · unresolvable refs in that section are reported as WARNINGS (never a
+              //    silent skip) and the effective candidate plan is logged once — the
+              //    observability the author asked for. Failures never block boot.
+            try nebflow.service.ConfigService.ensureConfigConvergence().unsafeRunSync()
+            catch
+              case e: Exception =>
+                logger.warn(s"config convergence (llm.fallback / unavailable windows) failed: ${e.getMessage}")
+            try
+              val checked = Config.loadServiceConfig()
+              nebflow.shared.FallbackChain.logValidation(checked)
+              val refs = nebflow.shared.FallbackChain.refs(checked.llm.fallback)
+              logger.info(
+                s"[fallback-chain] llm.fallback = ${if refs.isEmpty then "<absent>" else refs.mkString(" → ")} " +
+                  s"(source: ${if refs.nonEmpty then nebflow.shared.FallbackChain.SectionKey else "nebula-chain/seed"})"
+              )
+            catch case e: Exception => logger.warn(s"llm.fallback boot validation failed: ${e.getMessage}")
+              // personal-agent 批（2026-10-04）：Soul.md 启动一次性迁移腿
+              // （agents/Nebula/memory.md → ~/.nebflow/Soul.md）。幂等：
+              // Soul.md 已存在即跳过、再跑零副作用；写前经 MemorySnapshot 快照，
+              // 原文件保留只读备份（回滚路径见 SoulMigration 头注）。失败不阻断
+              // 启动（与上两行迁移同款纪律）。
+            nebflow.core.SoulMigration.runAtBoot()
+            // LLM 日志记录（2026-09-13「默认关」批 + D-A 持久化）：启动时以
+            // nebflow.json 顶层 `llmLog.enabled` 落盘值为准；**无落盘值 ⇒ 保持
+            // 默认关**（`LlmLogWriter` 初值 = false）。显式改动过的值由此跨重启
+            // 保持（旧缺陷：内存开关不落盘，宿主重启静默回落 true）。
+            // fail-safe：节缺失 / 非法 ⇒ None ⇒ 默认关（loadEnabled 纯解析）。
+            // 生效读数落一行启动日志（infoSync：本块为语句序列，非 IO 组合）——
+            // 供「重启后只读复验」直接 grep，无需触碰运行实例。
+            locally {
+              val persistedLlmLog = nebflow.core.LlmLogWriter.loadEnabled(config.llmLog)
+              persistedLlmLog.foreach(nebflow.core.LlmLogWriter.setEnabled)
+              // 回收腿武装（2026-09-13 回收解耦批）：保留窗执行**不再挂写入开关**
+              // （关态下也必须淘汰出窗文件），改为绑「本实例已启动」——武装后
+              // `logResponse` 的回收 tick 才会真正跑。默认**不武装**：非实例调用者
+              // （spec / e2e 脚本在真实 dataRoot 上跑完整轮次）绝不能触发破坏性回收
+              // （事故取证见 llmlogprune 批（内部留档））。
+              nebflow.core.LlmLogWriter.armRetention()
+              logger.infoSync(
+                s"LLM log recording: ${if nebflow.core.LlmLogWriter.isEnabled then "enabled" else "disabled"} " +
+                  s"(persisted=${persistedLlmLog.map(_.toString).getOrElse("none → default off")}) " +
+                  s"| retention=armed (3-day window, independent of the write switch)"
+              )
+            }
+            Auth.loadOrCreateToken.flatMap { token =>
+              // Phase 3b (plan §6.1): the token becomes a LIVE Ref, not a boot
+              // snapshot — `token rotate` rewrites auth.json AND swaps this Ref,
+              // so the old value dies on the running gateway immediately
+              // (criterion 7). The five injection points below all read it live.
+              val tokenRef: Ref[IO, String] = Ref.unsafe(token)
+              // Phase 3b: the console session store behind the HttpOnly session
+              // cookie (plan §2). Persistence（portal 会话短命根修批 2026-10-31，
+              // #908 修法②）：快照落 `<dataRoot>/gateway-sessions.json`——引擎重启
+              // 不再杀 portal 会话（修前：内存 store 每次重启清空，隧道里 relay 会话
+              // 还活着而 host 会话已死 ⇒ 每个转发调用 401 ⇒ 控制台「登录已失效」，
+              // 只能靠手动重进）。结构变更写穿、滑动触摸 60s 守护落盘；置
+              // NEBFLOW_GATEWAY_SESSION_PERSIST=0 即回到纯内存旧行为（应急闸）。
+              val sessionSnapshotFile =
+                if sys.env
+                    .get("NEBFLOW_GATEWAY_SESSION_PERSIST")
+                    .exists(v => v == "0" || v.equalsIgnoreCase("off") || v.equalsIgnoreCase("false"))
+                then None
+                else Some(PathUtil.dataRoot / "gateway-sessions.json")
+              // Authoritative session → accountSub mapping, independent from the
+              // optional session snapshot toggle. Missing/legacy owner rows remain unknown.
+              val gatewayOwnerStore = OwnerStore.forDataRoot(PathUtil.dataRoot.toNIO)
+              val gatewaySessions = GatewaySessionStore.unsafeCreate(
+                persistenceFile = sessionSnapshotFile,
+                ownerStore = Some(gatewayOwnerStore)
+              )
+              // Global session state shared across all connections
+              val sessionStore = new SessionStore(PathUtil.dataRoot / "sessions", PathUtil.dataRoot / "tasks")
+              val sessionModelOverrides: Ref[IO, Map[String, ModelCandidate]] = Ref.unsafe(Map.empty)
+              // Phase 5 解耦接线:core 工具面(FileRefs)经窄端口 FilePolicyPort 读端点
+              // 判据(判据本体仍在 NfFilePolicy,实现不搬)。生产唯一装配点,早于一切
+              // 工具执行;未接线的消费方按既有语义 fail-closed。
+              FilePolicyPort.install(NfFilePolicy)
+              // datalayer-spec 批 2026-10-30（C1）：数据层检索骨架的聊天面注册——
+              // 索引文件落 `<dataRoot>/search-index/chat.db`（memory-db 目录先例
+              // 同款；只读 sessions 真源，绝不回写）。写路径钩子 = 既有
+              // sessionChangedHook 单缝（不新增写面）；冷建/对账走 boot 后台
+              // fiber（下方），不阻塞启动，建库期间查询降级旧全扫（§4.6 R1/R4）。
+              val chatSearchAdapter = new nebflow.core.search.chat.ChatSearchAdapter(PathUtil.dataRoot / "sessions")
+              nebflow.core.search.SearchIndexService.register(chatSearchAdapter, PathUtil.dataRoot).unsafeRunSync()
+              sessionStore.setSessionChangedHook { sid =>
+                IO(nebflow.core.search.SearchIndexService.markSessionChanged(sid))
               }
-              .flatMap { _ =>
-                // Flow-node supervision P3: llm.streamTimeouts watchdog overrides
-                // (boot-time; config changes take effect on restart).
-                configRef.get.flatMap { bootCfg =>
-                  val st = bootCfg.llm.streamTimeouts.getOrElse(nebflow.llm.StreamTimeoutsConfig())
-                  IO(LlmInterface.applyStreamTimeouts(st.firstTokenSec, st.inactivitySec, st.noProgressSec))
-                } *> LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
-                  case (handle, registry, healthMonitor, releaseBackend) =>
-                    // Clear per-session model overrides on restart so all sessions
-                    // follow the global fallback order from config.
-                    sessionStore.clearAllSessionModels() *> McpManager.create.flatMap { mcpManager =>
-                      // --- Fast path: only essential init before server start ---
-                      val chatRoutes = new ChatRoutes(handle, token)
-                      val isConfigured = config.llm.providers.nonEmpty
-                      // #339 D-c：contextWindow 改读默认 preset 链首个能解析到
-                      // provider 模型表的 ref（preferred 优先逐个试 fallbacks；
-                      // 全失败回 Defaults.ContextWindow + warn）。横幅同时暴露
-                      // preset 名 + 实际 ref，与设置页 preset 卡片逐字可对上。
-                      val (contextWindow, presetLabel): (Int, Option[(String, String)]) =
-                        if !isConfigured then (Defaults.ContextWindow, None)
-                        else
-                          try
-                            val pFile = nebflow.core.presets.PresetStore().load()
-                            val dp = pFile.presets
-                              .getOrElse(pFile.defaultPreset, nebflow.core.presets.ModelPreset(pFile.defaultPreset))
-                            val chain = dp.preferred.toList ++ dp.fallbacks
-                            val resolved = chain.flatMap { ref =>
-                              try
-                                val (providerId, modelId) = Config.parseModelRef(ref)
-                                config.llm.providers
-                                  .get(providerId)
-                                  .flatMap(_.models.find(_.id == modelId))
-                                  .map(m => (m.contextWindow, ref))
-                              catch case _: Exception => None
-                            }
-                            resolved.headOption match
-                              case Some((cw, ref)) => (cw, Some((pFile.defaultPreset, ref)))
-                              case None =>
-                                logger.warn(
-                                  s"Default preset '${pFile.defaultPreset}' resolves to no provider model; " +
-                                    s"contextWindow falls back to ${Defaults.ContextWindow}"
-                                )
-                                (Defaults.ContextWindow, Some((pFile.defaultPreset, dp.preferred.getOrElse(""))))
-                          catch case _: Exception => (Defaults.ContextWindow, None)
-                      val baseUrl = s"http://localhost:${cfg.port}"
-                      val url = s"$baseUrl?token=$token"
-                      sys.props.update("nebflow.url", baseUrl)
+              sessionStore.setSessionDeletedHook { sid =>
+                nebflow.core.search.SearchIndexService.removeSession("chat", sid)
+              }
+              sessionStore.load
+                .flatMap { _ =>
+                  // datalayer-spec 批（C1 冷建）：全量对账后台 fiber——逐会话
+                  // 指纹比对，缺失/陈旧者重建；不阻塞 boot（§4.3）；零超时红线：
+                  // 不设 wall-clock 超时，完成读数走日志（`search-index rebuild:`）。
+                  (sessionStore.listSessionsIncludeUnindexed
+                    .flatMap { sessions =>
+                      nebflow.core.search.SearchIndexService.fullRebuild("chat", sessions.map(_.id))
+                    }
+                    .start)
+                    .void
+                }
+                .flatMap { _ =>
+                  // Single-session architecture: guarantee the primary agent Nebula
+                  // has exactly one session and that it is the active session shown in
+                  // the Main window, before any WS client connects. Adopts legacy
+                  // agentless sessions (preserving history) and activates as needed.
+                  // freshinstall-rootsessionid 批 M1：返回值**不再丢弃**——它就是
+                  // 「开机补建」的产物，是启动挂载根的唯一真源（此前 startupMount
+                  // 另起一次 listSessionsByAgent 现查 + `getOrElse("")`）。
+                  sessionStore.ensureActiveAgentSession(RootAgentIdentity.Name)
+                }
+                .flatMap { bootRoot =>
+                  // Flow-node supervision P3: llm.streamTimeouts watchdog overrides
+                  // (boot-time; config changes take effect on restart).
+                  configRef.get.flatMap { bootCfg =>
+                    val st = bootCfg.llm.streamTimeouts.getOrElse(nebflow.shared.StreamTimeoutsConfig())
+                    IO(LlmInterface.applyStreamTimeouts(st.firstTokenSec, st.inactivitySec, st.noProgressSec))
+                  } *> LlmInterface.createLlm(sessionModelOverrides, configRef = Some(configRef)).flatMap {
+                    case (handle, registry, healthMonitor, releaseBackend) =>
+                      // Clear per-session model overrides on restart so all sessions
+                      // follow the global fallback order from config.
+                      sessionStore.clearAllSessionModels() *> McpManager.create.flatMap { mcpManager =>
+                        // --- Fast path: only essential init before server start ---
+                        val chatRoutes = new ChatRoutes(handle, tokenRef, gatewaySessions)
+                        val isConfigured = config.llm.providers.nonEmpty
+                        // model-chain anchor 批（2026-10-29）：contextWindow 改读 /model
+                        // 主链（Nebula own chain → seed），首个能解析到 provider 模型表的
+                        // ref 为准（preferred 优先逐个试 fallbacks；全失败回
+                        // Defaults.ContextWindow + warn）。旧实现读默认 preset 目录
+                        // （model-presets.json），而该文件已在 model-chain 迁移中被封存
+                        // ⇒ 迁移后的 home 上预算恒按种子链算，与 /model 设置脱节。
+                        val (contextWindow, chainLabel): (Int, Option[(String, String)]) =
+                          if !isConfigured then (Defaults.ContextWindow, None)
+                          else
+                            try
+                              val policy = nebflow.core.SchemePolicy
+                              val (primary, source) = policy.resolveModel(policy.NebulaName, policy.nebulaChain())
+                              val chain = primary.preferred.toList ++ primary.fallbacks
+                              val resolved = chain.flatMap { ref =>
+                                try
+                                  val (providerId, modelId) = Config.parseModelRef(ref)
+                                  config.llm.providers
+                                    .get(providerId)
+                                    .flatMap(_.models.find(_.id == modelId))
+                                    .map(m => (m.contextWindow, ref))
+                                catch case _: Exception => None
+                              }
+                              resolved.headOption match
+                                case Some((cw, ref)) => (cw, Some((source, ref)))
+                                case None =>
+                                  logger.warn(
+                                    s"Model chain ($source) resolves to no provider model; " +
+                                      s"contextWindow falls back to ${Defaults.ContextWindow}"
+                                  )
+                                  (Defaults.ContextWindow, Some((source, primary.preferred.getOrElse(""))))
+                            catch case _: Exception => (Defaults.ContextWindow, None)
+                        val baseUrl = s"http://localhost:${cfg.port}"
+                        // Phase 3b (plan §6.5, stage B): the startup URL no longer
+                        // carries `?token=` — a portal-open lands on the portal, and
+                        // the local fallback opens the UNAUTHENTICATED page where the
+                        // session-cookie rail (or the break-glass ticket leg)
+                        // authenticates. baseUrl / sys.props below are unchanged
+                        // (consumed elsewhere as the local fallback value).
+                        val url = baseUrl
+                        sys.props.update("nebflow.url", baseUrl)
 
-                          // Initialize thinking config from nebflow.json (default enabled=true)
-                          val initialThinking = config.thinkingConfig.getOrElse(nebflow.llm.ThinkingConfig())
-                          val thinkingConfigRef: Ref[IO, nebflow.llm.ThinkingConfig] = Ref.unsafe(initialThinking)
-                          // 冻结调度（freeze-schedule，#337 黑名单语义）：从 nebflow.json
-                          // workSchedule 节（JSON 键名保留，语义=冻结时段）fail-safe 加载
-                          // （非法配置视为关闭——恒不冻结，功能旁路）。
-                          val initialFreezeSchedule =
-                            nebflow.core.schedule.FreezeSchedule.load(config.workSchedule)
-                          val freezeScheduleRef: Ref[IO, nebflow.core.schedule.FreezeScheduleConfig] =
-                            Ref.unsafe(initialFreezeSchedule)
-                          // 工具结果 TTL 清理（#341）：fail-safe 加载（非法配置
-                          // 视为关闭——默认关，request-only 清理）。Ref 化（镜像
-                          // freezeScheduleRef）——setToolResultTtl WS 热更。
-                          val toolResultTtlCfg =
-                            nebflow.core.compact.ToolResultTtlConfig.load(config.toolResultTtl)
-                          val toolResultTtlRef: Ref[IO, nebflow.core.compact.ToolResultTtlConfig] =
-                            Ref.unsafe(toolResultTtlCfg)
-                          // 阶段 2a 沙箱（§G.1）：fail-safe 加载 + 启动 probe 一次缓存
-                          // （§A.4-4）。probe 阻塞 <1s；失败默认 fail-closed。
-                          val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
-                          nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
-                      logger.info(s"nebflow v${nebflow.Version.string}") *>
-                        (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
-                         else presetLabel match
-                           case Some((name, ref)) =>
-                             logger.info(s"Context window: $contextWindow tokens (default preset \"$name\": $ref)")
-                           case None =>
-                             logger.info(s"Context window: $contextWindow tokens")) *>
-                        RateLimiter.create().flatMap { rateLimiter =>
-                          FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
-                            // Create Dispatcher for the multi-agent runtime, then start server
-                            cats.effect.std.Dispatcher.parallel[IO].use { dispatcher =>
-                              val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
-                              nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
-                                val hooksConfig = HooksConfigLoader.load(os.pwd)
-                                val hookEngine = HookEngine(hooksConfig)
-                                val actorSystem = nebflow.actor.ActorSystem("local")
-                                val voiceMutedRef: Ref[IO, Boolean] = Ref.unsafe(false)
-                                val sharedResources = SharedResources(
-                                  llm = handle,
-                                  dispatcher = dispatcher,
-                                  sessionStore = sessionStore,
-                                  projectRoot = os.pwd,
-                                  thinkingConfigRef = thinkingConfigRef,
-                                  rateLimiter = rateLimiter,
-                                  fileChangeTracker = fileTracker,
-                                  contextWindow = contextWindow,
-                                  agentLibrary = agentLibrary,
-                                  taskStore = FileTaskStore,
-                                  // 压缩报告落盘（2026-09-02 迁移）：sessions/<sessionId>/compaction/
-                                  // （按会话归组，对齐 CompactionQueueStore 规范）——不再写项目目录 archives/
-                                  historyArchiver =
-                                    nebflow.core.compact.HistoryArchiver.fileSystem(PathUtil.dataRoot / "sessions"),
-                                  fileLockManager = fileLockMgr,
-                                  sessionModelOverrides = sessionModelOverrides,
-                                  providerRegistry = registry,
-                                  healthMonitor = healthMonitor,
-                                  actorSystem = actorSystem,
-                                  hookEngine = hookEngine,
-                                  voiceMutedRef = voiceMutedRef,
-                                  freezeScheduleRef = freezeScheduleRef,
-                                  toolResultTtlRef = toolResultTtlRef,
-                                  bashResilience = nebflow.shared.BashResilienceConfig(
-                                    hardTimeoutMs = config.bashBackgroundHardTimeoutMs
-                                      .getOrElse(nebflow.shared.Defaults.BashBackgroundHardTimeoutMs),
-                                    stuckWindowSec =
-                                      config.bashStuckWindowSec.getOrElse(nebflow.shared.Defaults.BashStuckWindowSec),
-                                    healthCheckIntervalSec = config.bashHealthCheckIntervalSec
-                                      .getOrElse(nebflow.shared.Defaults.BgHealthCheckIntervalSec)
-                                  ),
-                                  sandboxConfig = sandboxCfg
-                                )
-                                // P2: spawn the global InteractionHub and publish its ref.
-                                // Every agent's permission/AskUser requests and every frontend
-                                // interaction answer route through this single actor.
-                                val hubSetup: IO[Unit] =
-                                  actorSystem.spawn(nebflow.agent.InteractionHub(), "interaction-hub").flatMap {
-                                    hubRef =>
-                                      sharedResources.interactionHubRef.set(Some(hubRef))
-                                  }
-                                // 任务 TTL 启动扫描（任务工具重做 2026-08-30）：扫
-                                // tasks/ 全目录（session+team）物理删除过期任务——
-                                // 判据=磁盘持久化的 createdAt/completedAt，重启后
-                                // 仍生效。Best-effort，永不阻塞启动。
-                                val taskTtlSweep: IO[Unit] =
-                                  FileTaskStore.purgeAllExpired().attempt.flatMap {
-                                    case Right(_) => IO.unit
-                                    case Left(e) =>
-                                      logger.warn(s"Task TTL sweep failed: ${e.getMessage}").void
-                                  }
-                                // V2 (2026-09-03) 孤儿 delegate 启动收殓：崩溃时在飞的
-                                // SubTask/Delegate 任务——部分结果抢救 + 父会话 F2 队列
-                                // 通知（correlationId 幂等）+ 任务记录终态化。挂在启动
-                                // 装配点（任何会话 actor spawn 之前 → 队列文件单写者），
-                                // 多次重启幂等（终态化后 findRunningTasks 不再命中）。
-                                // Best-effort：永不阻塞启动。
-                                val subagentCrashSweep: IO[Unit] =
-                                  nebflow.agent.SubAgentStartupRecovery
-                                    .recoverOrphans(sharedResources.subAgentTaskStore, sessionStore)
-                                    .attempt.flatMap {
-                                      case Right(ids) if ids.nonEmpty =>
-                                        logger.info(s"Subagent crash sweep: ${ids.size} orphan task(s) recovered").void
-                                      case _ => IO.unit
-                                    }
-                                // wsHub 提前到 startupMount 之前创建：启动挂载的项目
-                                // engine 需要持有一个真实广播 wsSend（节点/分发器 agent
-                                // 事件 + nodeUpdated/nodeCompleted 等 Flow Map 事件）。
-                                // 此前 wsHub 在挂载后才构造 → mountAll 传 None → engine
-                                // wsSendFn 为 no-op，节点/分发器事件永远到不了前端
-                                // （#28 可观测缺口根因之一）。wsHub 本身无依赖，提前
-                                // 构造零副作用（无连接时 broadcast 空转）。
-                                val wsHub = new WsHub()
-                                // #37 启动自动挂载（0b 契约「阶段 1 补自动挂载」）：磁盘已有
-                                // 项目 → 幂等挂载（rootSessionId = 顶层 Nebula 主会话 id，
-                                // 启动期无会话上下文直接传顶层根）。免重启后人工重挂——
-                                // 与 ProjectCreate 幂等挂载（运行时主动路径）互补。
-                                // crash-recovery 批（2026-09-07）：恢复开启时启动挂载跳过
-                                // 挂载期僵尸收殓（cancelled）——崩溃残留 running 节点留给
-                                // 紧随其后的 projectCrashSweep 认领（rehydrate/failed）；
-                                // 恢复关闭时保持既有收殓行为（回滚语义=回到现状）。
-                                val startupMount: IO[Unit] =
-                                  for
-                                    rootSid <- sessionStore
-                                      .listSessionsByAgent("Nebula")
-                                      .map(_.headOption.map(_.id).getOrElse(""))
-                                    projects <- ProjectStore.list()
-                                    mounted <- ProjectRuntimeRegistry.mountAll(
-                                      projects,
-                                      rootSid,
-                                      actorSystem,
-                                      sharedResources,
-                                      // #28 可观测接线：启动挂载传入真实广播 wsSend——
-                                      // engine 的节点/分发器事件经 wsHub 到达前端 subagent
-                                      // 面板（此前 None → no-op，事件静默丢失）。
-                                      Some((json: io.circe.Json) => wsHub.broadcast(json)),
-                                      skipStaleReap = nebflow.shared.Defaults.CrashRecoveryEnabled
-                                    )
-                                    _ <- if mounted > 0 then
-                                      logger.info(
-                                        s"Startup mount: $mounted project(s) mounted (rootSessionId=$rootSid)"
+                        // Initialize thinking config from nebflow.json (default enabled=true)
+                        val initialThinking = config.thinkingConfig.getOrElse(nebflow.shared.ThinkingConfig())
+                        val thinkingConfigRef: Ref[IO, nebflow.shared.ThinkingConfig] = Ref.unsafe(initialThinking)
+                        // 冻结调度（freeze-schedule，#337 黑名单语义）：从 nebflow.json
+                        // workSchedule 节（JSON 键名保留，语义=冻结时段）fail-safe 加载
+                        // （非法配置视为关闭——恒不冻结，功能旁路）。
+                        val initialFreezeSchedule =
+                          nebflow.core.schedule.FreezeSchedule.load(config.workSchedule)
+                        val freezeScheduleRef: Ref[IO, nebflow.core.schedule.FreezeScheduleConfig] =
+                          Ref.unsafe(initialFreezeSchedule)
+                        // 工具结果 TTL 清理（#341）：fail-safe 加载（非法配置
+                        // 视为关闭——默认关，request-only 清理）。Ref 化（镜像
+                        // freezeScheduleRef）——setToolResultTtl WS 热更。
+                        val toolResultTtlCfg =
+                          nebflow.core.compact.ToolResultTtlConfig.load(config.toolResultTtl)
+                        val toolResultTtlRef: Ref[IO, nebflow.core.compact.ToolResultTtlConfig] =
+                          Ref.unsafe(toolResultTtlCfg)
+                        // C2-6（/api/nf-file 断凭据腿批）：按 path 短时票据存储。
+                        // TTL = nebflow.json 的 nfFile.ticketTtlSeconds（R3，默认
+                        // 1800s）；issue 路径按 mtime 节流重读，改配置无需重启。
+                        // 策略对象（凭据命名空间 + R2 启动 inode 快照）一并在此
+                        // 构造并注入，使读端点与签发端点共用同一份权威判据。
+                        val nfTicketStore: NfTicketStore =
+                          NfTicketStore.unsafeCreate(NfTicketStore.loadTtlSeconds())
+                        val nfPathPolicy: NfFilePolicy.NfPathPolicy =
+                          NfFilePolicy.NfPathPolicy.standard()
+                        // 执行环境 provider（拆围栏批 S3 / design §4.2）：fail-safe
+                        // 加载 + 按 provider 装配执行面一次缓存（provider=host 缺省
+                        // = 宿主直跑不 probe；local-process 才 probe，阻塞 <1s；取值
+                        // 非法或 container/auto 未实现 ⇒ 显式失败，不静默回落宿主）。
+                        val sandboxCfg = nebflow.core.sandbox.SandboxConfig.load(config.sandbox)
+                        nebflow.core.sandbox.SandboxRuntime.init(sandboxCfg)
+                        logger.info(s"${Branding.productName} ${nebflow.Version.string}") *>
+                          // 台账 #916 detached-apply boot 对账：上一个 OS 托管 apply 若死在
+                          // 中途（registered/stopped/starting…），这里只记证据 + 改写
+                          // interrupted 相，绝不据 state 自启/自停——选取面只认 pointer/winsort。
+                          nebflow.cli.DetachedApply
+                            .reconcileOnBoot(nebflow.shared.PathUtil.dataRoot)
+                            .flatMap(wl => wl.map(l => logger.warn(l)).getOrElse(IO.unit)) *>
+                          (if !isConfigured then logger.info("No LLM provider configured — open the web UI to set up")
+                           else
+                             chainLabel match
+                               case Some((name, ref)) =>
+                                 logger.info(s"Context window: $contextWindow tokens (model chain $name: $ref)")
+                               case None =>
+                                 logger.info(s"Context window: $contextWindow tokens")) *>
+                          RateLimiter.create().flatMap { rateLimiter =>
+                            FileChangeTracker.create(System.getProperty("user.dir")).flatMap { fileTracker =>
+                              // Release local actors before the native runtime and business Dispatcher.
+                              val protectedTaskStore = new nebflow.agent.SubAgentTaskStore(PathUtil.dataRoot / "subagent-tasks")
+                              val actorRuntime = nebflow.agent.ExecutionCommitStore
+                                .resource(sessionStore.executionAuthorityRoot)
+                                .flatMap { executionAuthority =>
+                                  cats.effect.Resource.make(IO(sessionStore.installExecutionAuthority(executionAuthority)))(
+                                    _ => IO(sessionStore.releaseExecutionAuthority(executionAuthority))
+                                  ) *> cats.effect.Resource.make(IO(protectedTaskStore.installExecutionAuthority(executionAuthority)))(
+                                    _ => IO(protectedTaskStore.releaseExecutionAuthority(executionAuthority))
+                                  ) *> cats.effect.std.Dispatcher.parallel[IO].flatMap { dispatcher =>
+                                    nebflow.actor.ActorSystem
+                                      .resource(
+                                        "local",
+                                        nebflow.actor.WatchStore.file(PathUtil.dataRoot / "actor-watches.json")
                                       )
-                                    else IO.unit
-                                  yield ()
-                                // boot-time 崩溃断点恢复（crash-recovery 批 2026-09-07）：
-                                // 挂载后、TtlTick 首拍前同步跑快段（分类+认领，秒级——被认领
-                                // 节点翻 Pending 即刻脱离 watchdog 判死口径，竞速由挂载顺序
-                                // 结构性关闭），慢段（rehydrate 续跑，分钟级）在 sweep 内
-                                // fork 不阻塞 listen。恢复关闭（crashRecovery.enabled=false）
-                                // = 本步空转 + 上面 mountAll 已走既有僵尸收殓——完全回到
-                                // 本批前现状。sweep 内部逐项目/逐节点 handleError，异常不
-                                // 阻塞 boot（残余 Running 由 watchdog +30s 兜底收敛 failed）。
-                                val projectCrashSweep: IO[Unit] =
-                                  if nebflow.shared.Defaults.CrashRecoveryEnabled then
-                                    nebflow.core.project.ProjectCrashRecovery.recoverAll().flatMap { projects =>
-                                      if projects > 0 then
-                                        logger.info(s"Boot crash-recovery sweep: $projects project(s) had crashed nodes claimed (rehydrate/failed)")
-                                      else IO.unit
+                                      .map(actorSystem => (executionAuthority, dispatcher, actorSystem))
+                                  }
+                                }
+                              actorRuntime.use { case (executionAuthority, dispatcher, actorSystem) =>
+                                val agentLibrary = new AgentLibrary(AgentLibrary.defaultDir, Some(config))
+                                nebflow.core.tools.FileLockManager.create.flatMap { fileLockMgr =>
+                                  val hooksConfig = HooksConfigLoader.load(os.pwd)
+                                  val hookEngine = HookEngine(hooksConfig)
+                                  val voiceMutedRef: Ref[IO, Boolean] = Ref.unsafe(false)
+                                  val sharedResources = SharedResources(
+                                    llm = handle,
+                                    dispatcher = dispatcher,
+                                    sessionStore = sessionStore,
+                                    projectRoot = os.pwd,
+                                    thinkingConfigRef = thinkingConfigRef,
+                                    rateLimiter = rateLimiter,
+                                    fileChangeTracker = fileTracker,
+                                    contextWindow = contextWindow,
+                                    agentLibrary = agentLibrary,
+                                    taskStore = FileTaskStore,
+                                    // 压缩报告落盘（2026-09-02 迁移）：sessions/<sessionId>/compaction/
+                                    // （按会话归组，对齐 CompactionQueueStore 规范）——不再写项目目录 archives/
+                                    historyArchiver =
+                                      nebflow.core.compact.HistoryArchiver.fileSystem(PathUtil.dataRoot / "sessions"),
+                                    fileLockManager = fileLockMgr,
+                                    sessionModelOverrides = sessionModelOverrides,
+                                    providerRegistry = registry,
+                                    healthMonitor = healthMonitor,
+                                    actorSystem = actorSystem,
+                                    hookEngine = hookEngine,
+                                    voiceMutedRef = voiceMutedRef,
+                                    freezeScheduleRef = freezeScheduleRef,
+                                    toolResultTtlRef = toolResultTtlRef,
+                                    bashResilience = nebflow.shared.BashResilienceConfig(
+                                      hardTimeoutMs = config.bashBackgroundHardTimeoutMs
+                                        .getOrElse(nebflow.shared.Defaults.BashBackgroundHardTimeoutMs),
+                                      stuckWindowSec =
+                                        config.bashStuckWindowSec.getOrElse(nebflow.shared.Defaults.BashStuckWindowSec),
+                                      healthCheckIntervalSec = config.bashHealthCheckIntervalSec
+                                        .getOrElse(nebflow.shared.Defaults.BgHealthCheckIntervalSec),
+                                      // main-agent-nonblocking（2026-10-21 作者裁定）：前台等待预算
+                                      // （默认 300s，作者可调）——超预算自动转后台，不杀。
+                                      foregroundWaitBudgetMs = config.bashForegroundWaitBudgetMs
+                                        .getOrElse(nebflow.shared.Defaults.ForegroundWaitBudgetMs)
+                                    ),
+                                    sandboxConfig = sandboxCfg,
+                                    executionCommitPort = executionAuthority,
+                                    subAgentTaskStore = protectedTaskStore
+                                  )
+                                  // ── provider 并发占坑装配（provider-concurrency 批，2026-11-06）──
+                                  // ① 终态释放钩子：actor 退出的唯一收尸点 = actorLoop.guarantee
+                                  //   （正常自停 / 外部 stop / 崩溃 / TTL / cancel 全走它）；钩子
+                                  //   默认 no-op，生产在此赋值。② boot reconcile：计数表投影为
+                                  //   「原表 ∩ 活 actor 集」（活集 = agentRegistry 键集——agent
+                                  //   记录唯一权威），清跨进程幽灵占坑；排在收殓 sweep（
+                                  //   subagentCrashSweep/mailboxBootSweep）之后、startupMount
+                                  //   （任何会话 actor spawn）之前，与既有 boot sweep 同款
+                                  //   「失败只 WARN 绝不阻塞启动」纪律。
+                                  actorSystem.asInstanceOf[nebflow.actor.LocalActorSystem].providerSlotRelease = name =>
+                                    nebflow.llm.ProviderConcurrency.release(sharedResources.providerConcurrency, name)
+                                  val providerSlotReconcile: IO[Unit] =
+                                    sharedResources.agentRegistry.get
+                                      .flatMap(live =>
+                                        nebflow.llm.ProviderConcurrency
+                                          .reconcile(sharedResources.providerConcurrency, live.keySet)
+                                      )
+                                      .attempt
+                                      .flatMap {
+                                        case Right(_) => IO.unit
+                                        case Left(e) =>
+                                          logger.warn(s"provider-slot boot reconcile failed: ${e.getMessage}").void
+                                      }
+                                  // P2: spawn the global InteractionHub and publish its ref.
+                                  // Every agent's permission/AskUser requests and every frontend
+                                  // interaction answer route through this single actor.
+                                  // answer-landing 批（2026-10-21）：接线 askerAlive 读时投影探针
+                                  // （开放问题 #3 推荐默认采纳）——pending-ask 快照帧按
+                                  // sourceSession 现查统一注册表落 `askerAlive`，「发起会话已
+                                  // 结束、答复将走重入面」在健康面可见（僵尸 pending 标注，
+                                  // 只读不杀）。
+                                  // wsHub 提前到 startupMount 之前创建：启动挂载的项目
+                                  // engine 需要持有一个真实广播 wsSend（节点/分发器 agent
+                                  // 事件 + nodeUpdated/nodeCompleted 等 Flow Map 事件）。
+                                  // 此前 wsHub 在挂载后才构造 → mountAll 传 None → engine
+                                  // wsSendFn 为 no-op，节点/分发器事件永远到不了前端
+                                  // （#28 可观测缺口根因之一）。wsHub 本身无依赖，提前
+                                  // 构造零副作用（无连接时 broadcast 空转）。
+                                  // 监督链自动恢复批（2026-10-22）：再提前到
+                                  // subagentCrashSweep 之前——复活腿（DelegateRevival）
+                                  // 的子会话 WS 事件面同源接入（routeWsSendFor 注
+                                  // rootSessionId/sessionId 后走 broadcast）。
+                                  // 待办分家批（2026-10-30）：再提前到 interaction-hub
+                                  // 装配之前——hub 的 Ask→待办镜像桥构造点需要 wsHub.broadcast
+                                  // （前向引用禁令：同块内 val 不得后引，故 wsHub 必须
+                                  // 先于 hubSetup 出现；wsHub 无依赖，再三提前仍零副作用）。
+                                  val wsHub = new WsHub()
+                                  // 进程级 ProcessRecorder（process-recorder 批 2026-11-01 F1，设计稿
+                                  // docs/design/20261101_192000_process-recorder-design）：录制从
+                                  // 「腿的行李」升格为「进程的基础设施」——挂 wsHub.registerListener
+                                  // （全部腿的帧唯一汇聚点），按帧内 nodeSessionId 懒建缓冲落
+                                  // .ui.json。agent* 四分支已从 makeRecordingWsSend 整体移交至此
+                                  // （单写者，禁共存）；注册点 = 下方 recorderSetup（boot 链先于
+                                  // startupMount ⇒ 腿④ startupMount / 腿⑤ boot 重挂 / 腿⑥ 设备腿
+                                  // 的帧从恢复第一帧起即有录制）。进程生命周期，永不注销。
+                                  val processRecorder = new ProcessRecorder(sharedResources.sessionStore)
+                                  // 重启孤儿对账批（2026-10-22「Header 待答徽标僵尸态」批）：
+                                  // 接线 PendingAskLedger —— 槽位创建/四条收口路径随行记账，
+                                  // boot 清点过期关闭（见下方 pendingAskBootSweep）。
+                                  val pendingAskLedger = new nebflow.agent.PendingAskLedger()
+                                  // 待办分家批（2026-10-30 作者令「待办接 AskUserQuestion」）：
+                                  // Ask→待办镜像桥——hub 内 AskUser 挂起 ⇒ root 会话待办
+                                  // 收件箱镜像 kind=todo 条目；任意终态 ⇒ 幂等销账。广播
+                                  // 走 wsHub（面板/徽标即时收敛）。全部 best-effort。
+                                  val askTodoBridge = new nebflow.core.scheduler.AskTodoBridge(
+                                    sharedResources.scheduledTaskStore,
+                                    sharedResources.scheduledTaskService,
+                                    (json: io.circe.Json) => wsHub.broadcast(json)
+                                  )
+                                  val hubSetup: IO[Unit] =
+                                    actorSystem
+                                      .spawn(
+                                        nebflow.agent.InteractionHub(
+                                          Some((sid: String) => sharedResources.agentRegistry.get.map(_.contains(sid))),
+                                          Some(pendingAskLedger),
+                                          Some(askTodoBridge)
+                                        ),
+                                        "interaction-hub"
+                                      )
+                                      .flatMap { hubRef =>
+                                        sharedResources.interactionHubRef.set(Some(hubRef))
+                                      }
+                                  // recorderSetup（process-recorder 批 F1）：recorder 上 hub 监听者位
+                                  // ＋ 孤儿缓冲扫描纤维起跑（24h idle 冲刷+清除，设计稿 §2.2；TTL 值
+                                  // 采纳设计稿建议，开放项 #3 留作者调）。🔴 链序契约（P2）：必须
+                                  // **先于 startupMount**——腿④ startupMount / 腿⑤ boot 重挂的帧
+                                  // 从恢复第一帧起即有录制；注册于进程生命周期，永不注销。
+                                  val recorderSetup: IO[Unit] =
+                                    wsHub.registerListener(json => processRecorder.apply(json)) *>
+                                      processRecorder.launchOrphanSweep(1.hour, 24.hours).start.void
+                                  // 任务 TTL 启动扫描（任务工具重做 2026-08-30）：扫
+                                  // tasks/ 全目录（session+team）物理删除过期任务——
+                                  // 判据=磁盘持久化的 createdAt/completedAt，重启后
+                                  // 仍生效。Best-effort，永不阻塞启动。
+                                  val taskTtlSweep: IO[Unit] =
+                                    FileTaskStore.purgeAllExpired().attempt.flatMap {
+                                      case Right(_) => IO.unit
+                                      case Left(e) =>
+                                        logger.warn(s"Task TTL sweep failed: ${e.getMessage}").void
                                     }
-                                  else IO.unit
-                                // #28 阶段 0：Project Flow Map **completed** 节点 TTL 扫描
-                                // （24h 显示消失 → 移归档 + WS nodeRemoved；failed/cancelled
-                                // 无 TTL 不过期——2026-09-07 裁定，死亡现场保留待上层裁决；
-                                // Node 运行本身不设超时）。周期给所有已挂载 ProjectActor
-                                // 发 TtlTick；无项目时空转。
-                                val projectTtlScanner: IO[Unit] =
-                                  nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
-                                // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
-                                // 在 startupMount 前就绪默认最小集（project-dispatcher /
-                                // general agents + 3 系统插件 + projects/general）——通用项目
-                                // 需于挂载前存在，启动即自动挂载、Task(project=general) 直达
-                                // 分发器。幂等 + fail-soft（见 SeedService 注释），失败仅
-                                // 告警不阻塞启动（与 seedDefaults/startupMount 同构）。
-                                val seedMinimalSet: IO[Unit] = SeedService.ensureSeeded()
-                                // 热重启编排器（hot-restart 批）：触发器无关——WS restart
-                                // 命令（P1）经 sharedResources.hotRestart 触发；REST/桌面菜单
-                                // 后续批次接同一入口。broadcast 接 wsHub（restartStatus 帧）。
-                                val hotRestart = new nebflow.core.hotrestart.HotRestart(
-                                  sharedResources,
-                                  cfg.port.value,
-                                  cfg.host.toString,
-                                  wsHub.broadcast
-                                )
-                                val sharedResourcesWithRestart =
-                                  sharedResources.copy(hotRestart = Some(hotRestart))
-                                hubSetup *> taskTtlSweep *> subagentCrashSweep *> seedMinimalSet *> startupMount *> projectCrashSweep *> projectTtlScanner *> succeedPortGate(cfg) *> {
-                                  val sharedResourcesLive = sharedResourcesWithRestart
-                                  val sessionService = new SessionService(sessionStore)
-                                  val agentService = new AgentService(agentLibrary)
-                                  val configService = ConfigService
-
-                                  // --- Bridge Manager (plugins: telegram, etc.) ---
-                                  val bridgeInjectRef: Ref[IO, Option[(String, String, Option[String]) => IO[Unit]]] =
-                                    Ref.unsafe(None)
-
-                                  // Holder for wsRoutes so we can wire bridge refs after safe construction
-                                  var wsRoutesHolder: Option[WebSocketRoutes] = None
-
-                                  val bridgeCtx = new BridgeContext:
-                                    def injectMessage(sessionId: String, content: String, senderId: Option[String])
-                                      : IO[Unit] =
-                                      bridgeInjectRef.get.flatMap(_.fold(IO.unit)(_(sessionId, content, senderId)))
-                                    def interruptAgent(sessionId: String): IO[Unit] =
-                                      wsRoutesHolder match
-                                        case Some(routes) =>
-                                          routes.handleBridgeAgentCommand(sessionId, AgentCommand.Interrupt())
-                                        case None => IO.unit
-                                    def sessionMeta(sessionId: String): IO[Option[SessionMeta]] =
-                                      sessionStore.getSessionMeta(sessionId)
-                                    def listSessions: IO[List[SessionMeta]] =
-                                      sessionStore.listSessions
-                                    def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json])
-                                      : IO[Unit] =
-                                      sessionStore.updateSessionBridge(sessionId, platform, config)
-
-                                  val bridgeSetup: IO[BridgeManager] =
-                                    BridgeManager.create(bridgeCtx)
-
-                                  // Create neblink service (device discovery only, no file sync)
-                                  val neblinkServiceF: IO[NeblinkService] =
-                                    NeblinkService.create(cfg.port.value, dispatcher)
-
-                                  bridgeSetup.flatMap { bridgeManager =>
-                                    neblinkServiceF.flatMap { neblinkService =>
-                                      // Presence WS service — maintains real-time online/offline via persistent WebSocket connections
-                                      val presenceService =
-                                        new nebflow.neblink.NeblinkPresenceService(neblinkService, cfg.port.value)(
-                                          dispatcher
+                                  // 启动补扫（task-rag 批 #1227 / §Batch 7）：检索索引
+                                  // 增量维护——embedding 面关 = 快速 no-op；面开 =
+                                  // 只重嵌 hash 变化条目（增量）。后台 fiber 起跑，
+                                  // 永不阻塞启动；失败在 upkeep 内部记 WARN 吞掉。
+                                  val taskIndexBackfill: IO[Unit] =
+                                    nebflow.core.index.TaskSearchIndex.upkeep().start.void
+                                  // wsHub 已上移至 interaction-hub 装配之前（待办分家批
+                                  // 2026-10-30，Ask→待办桥构造点需要 broadcast；其「提前到
+                                  // startupMount / subagentCrashSweep 之前」的既有理由
+                                  // 原注释随移动保留，见上方定义处）。
+                                  // V2 (2026-09-03) 孤儿 delegate 启动收殓：崩溃时在飞的
+                                  // SubTask/Delegate 任务——部分结果抢救 + 父会话 F2 队列
+                                  // 通知（correlationId 幂等）+ 任务记录终态化。挂在启动
+                                  // 装配点（任何会话 actor spawn 之前 → 队列文件单写者），
+                                  // 多次重启幂等（终态化后 findRunningTasks 不再命中）。
+                                  // Best-effort：永不阻塞启动。
+                                  // 监督链自动恢复批（2026-10-22）：收殓升级为「先判复活
+                                  // 资格，不合格才收殓」——合格孤儿（内置执行器 delegate，
+                                  // 记录/座位/转录/预算俱在）由 DelegateRevival 同 id 从
+                                  // transcript checkpoint 续跑，父会话最终收续作结果；
+                                  // 复活慢段 fork（并发护栏），收殓同步段不变。
+                                  val subagentCrashSweep: IO[Unit] =
+                                    // 手动恢复批（2026-11-06 20:36 作者令「不自动恢复…由用户手动恢复」）：
+                                    // manual = true（缺省）⇒ 在飞孤儿标 pending-recovery、零复活零收殓零
+                                    // 通知；恢复入口 = /api/delegates/restore{,-all}（ManualRevivalHost）。
+                                    // 恢复依赖在此安装（ActorSystem 已建成；REST 臂现读）。
+                                    IO(
+                                      nebflow.gateway.ManualRevivalHost.install(
+                                        nebflow.agent.DelegateRevival.Deps(
+                                          resources = sharedResources,
+                                          system = actorSystem,
+                                          wsSend = Some(json => wsHub.broadcast(json))
                                         )
-                                      // Late-bound discovery holder for the silent re-login hook: the
-                                      // startup client is created BEFORE NeblinkDiscovery (below) —
-                                      // the hook resolves the hot-swap target at call time.
-                                      val neblinkDiscoveryHolder =
-                                        new java.util.concurrent.atomic.AtomicReference[Option[nebflow.neblink.NeblinkDiscovery]](None)
-                                      // Check if NebLink Server is configured; if so, create client for NebLink-based discovery
-                                      val neblinkClient: Option[nebflow.neblink.NeblinkClient] =
-                                        neblinkService.neblinkConfig.unsafeRunSync() match
-                                          case nc if nc.neblinkServer.isDefined =>
-                                            Some(
-                                              new nebflow.neblink.NeblinkClient(
-                                                nc.neblinkServer.get,
-                                                cfg.port.value,
-                                                onDeviceTokenRejected = Some(
-                                                  nebflow.neblink.LogtoSilentRelogin.make(
-                                                    neblinkService,
-                                                    IO(neblinkDiscoveryHolder.get),
-                                                    cfg.port.value,
-                                                    IO.pure(neblinkService.neblinkConfig.unsafeRunSync().neblinkServer.map(_.url).getOrElse(Branding.serverUrl))
-                                                  )
+                                      )
+                                    ).flatMap { _ =>
+                                      nebflow.agent.SubAgentStartupRecovery
+                                        .sweep(
+                                          sharedResources.subAgentTaskStore,
+                                          sessionStore,
+                                          Some(
+                                            nebflow.agent.SubAgentStartupRecovery.RevivalDeps(
+                                              resources = sharedResources,
+                                              system = actorSystem,
+                                              wsSend = Some(json => wsHub.broadcast(json))
+                                            )
+                                          ),
+                                          manual = nebflow.shared.Defaults.RestartRecoveryManual
+                                        )
+                                        .attempt
+                                        .flatMap {
+                                          case Right(report)
+                                              if report.terminalized.nonEmpty || report.revived.nonEmpty || report.pended.nonEmpty =>
+                                            logger
+                                              .info(
+                                                s"Subagent crash sweep: ${report.summary} — terminalized: ${report.terminalized.mkString(",")}"
+                                              )
+                                              .void
+                                          case _ => IO.unit
+                                        }
+                                    }
+                                  // ═══ 死 delegate TTL 清理（终态 7 天 TTL 批 2026-11-06）═══
+                                  // 到期死条目（终态/保存态 ≥ 7 天）的登记移除 + 任务行剪行
+                                  // + worktree 联动回收；在飞守卫在 sweep 内（活体/合并队列
+                                  // 零触碰）。链位在 subagentCrashSweep **之前**——先把名单外
+                                  // 的远古尸体清走，收殓/标记/对账腿对已清条目天然零视野
+                                  // （通知源永久沉默）；候重启窗生效（boot 恰一次）。失败只 WARN。
+                                  // 手动恢复批（2026-11-06 20:36）：sweep 只标 pending-recovery、
+                                  // 不清名单——TTL 清理的在飞守卫因此仍能看到待恢复行（活体/合并
+                                  // 队列零触碰语义不变）。
+                                  val delegateTtlSweep: IO[Unit] =
+                                    nebflow.agent.DelegateTtlSweep
+                                      .run(sharedResources)
+                                      .attempt
+                                      .flatMap {
+                                        case Right(r) if r.hasWork =>
+                                          logger.info(s"Delegate TTL sweep: ${r.summary}").void
+                                        case _ => IO.unit
+                                      }
+                                  // ═══ 邮箱 boot 对账（终态通知 actor 邮箱化批 P1/P2）═══
+                                  // tmp 残片清理 + 账面合成缺失条目（mailbox-reconcile
+                                  // 纪元窗内的「账已终、信没到」delegate 终态行）+ 积压
+                                  // 可见性。排在 subagentCrashSweep 之后（收殓先行落账，
+                                  // 对账读到的行集才完整）、startupMount 之前（任何会话
+                                  // actor spawn 之前 = 单写者窗口）。失败只 WARN。
+                                  val mailboxBootSweep: IO[Unit] =
+                                    nebflow.agent.MailboxBootSweep
+                                      .run(sharedResources.subAgentTaskStore, sessionStore)
+                                      .attempt
+                                      .flatMap {
+                                        case Right(r) =>
+                                          if r.tmpSwept > 0 || r.synthesized.nonEmpty || r.boxesNonEmpty > 0 then
+                                            logger.info(s"Mailbox boot reconcile: ${r.summary}").void
+                                          else IO.unit
+                                        case Left(e) =>
+                                          logger.warn(s"Mailbox boot reconcile failed: ${e.getMessage}").void
+                                      }
+                                  // M2 缓存一致性（v1 §6.1）：注册引擎侧失效广播面
+                                  // （core 写路径工具 / WS 文件操作经 NfCacheInvalidator
+                                  // 发射，此处注入 wsHub.broadcast——窄端口倒置先例同款）。
+                                  // 未注册 = no-op，故 spec/CLI 场景零副作用。
+                                  val nfCacheInvalidatorSetup: IO[Unit] =
+                                    IO(nebflow.core.tools.NfCacheInvalidator.register(json => wsHub.broadcast(json)))
+                                  // 重启孤儿对账 boot sweep（2026-10-22「Header 待答徽标僵尸态」批
+                                  // 修复①）：清点 PendingAskLedger 里跨重启残留的挂起提问——
+                                  // 重启后每条的等待方（deferred/发起会话 actor）都已随旧进程
+                                  // 消亡 ⇒ 全部过期关闭：广播 askUserClosed{reason:"expired-orphan"}
+                                  // ＋ root 会话历史追加过期回执行（历史重载的 pending 判据结构性
+                                  // 失效，僵尸卡不再以可作答形态复活）＋审计 event=ask-expired，
+                                  // 随后清账。链位在 startupMount / projectBootWake 之前——boot
+                                  // 触发链可能唤醒会话产生新提问，旧账清点必须先行。失败只 WARN
+                                  // 绝不阻塞启动；零残留 = 零动作（仅一行汇总）。
+                                  val pendingAskBootSweep: IO[Unit] =
+                                    pendingAskLedger
+                                      .bootReconcile(
+                                        broadcast = json => wsHub.broadcast(json),
+                                        appendReceipt =
+                                          (rootSid, msg) => sessionStore.appendUiMessages(rootSid, List(msg)),
+                                        retireAskTodo = (rid: String) => askTodoBridge.retire(rid)
+                                      )
+                                      .attempt
+                                      .flatMap {
+                                        case Right(r) =>
+                                          logger.info(s"Pending-ask boot reconcile: ${r.summary}").void
+                                        case Left(e) =>
+                                          logger.warn(s"Pending-ask boot reconcile failed: ${e.getMessage}").void
+                                      }
+                                  // #37 启动自动挂载（0b 契约「阶段 1 补自动挂载」）：磁盘已有
+                                  // 项目 → 幂等挂载（rootSessionId = 顶层 Nebula 主会话 id，
+                                  // 启动期无会话上下文直接传顶层根）。免重启后人工重挂——
+                                  // 与 ProjectCreate 幂等挂载（运行时主动路径）互补。
+                                  // crash-recovery 批（2026-09-07）：恢复开启时启动挂载跳过
+                                  // 挂载期僵尸收殓（cancelled）——崩溃残留 running 节点留给
+                                  // 紧随其后的 projectCrashSweep 认领（rehydrate/failed）；
+                                  // 恢复关闭时保持既有收殓行为（回滚语义=回到现状）。
+                                  // freshinstall-rootsessionid 批 M1-b（作者 09-14 裁定 (b)：
+                                  // **跳过挂载、继续启动**）：挂载根 = 上一步「开机补建」的
+                                  // 产物 `bootRoot`（唯一真源），不再现查索引 + `getOrElse("")`。
+                                  // 空 ⇒ 跳过本次 mountAll + ERROR + 事件（命名根因 = **开机
+                                  // 补建未产出会话**），🔴 绝不把空串当 rootSessionId 挂载。
+                                  // Local projects keep their early boot order. Device projects must
+                                  // wait for both the executor and the network resource wiring.
+                                  def mountStartupProjects(resources: SharedResources, remote: Boolean): IO[Unit] =
+                                    if bootRoot.id.isEmpty then
+                                      logger.error(
+                                        "Startup mount SKIPPED: 开机补建未产出会话 " +
+                                          "(boot backfill ensureActiveAgentSession(\"Nebula\") returned an EMPTY " +
+                                          "session id) — no rootSessionId is available to attribute startup-mounted " +
+                                          "projects; refusing to mount with an empty rootSessionId (projects stay " +
+                                          "unmounted until a restart whose boot backfill yields a real session)"
+                                      ) *> wsHub.broadcast(
+                                        io.circe.Json.obj(
+                                          "type" -> "startupMountSkipped".asJson,
+                                          "reason" -> "boot-backfill-produced-no-session".asJson,
+                                          "detail" -> ("startup mount skipped: 开机补建未产出会话" +
+                                            "（ensureActiveAgentSession(\"Nebula\") 的返回 id 为空）；" +
+                                            "已跳过挂载——禁以空串 rootSessionId 挂载").asJson
+                                        )
+                                      )
+                                    else
+                                      for
+                                        projects <- ProjectStore.list()
+                                        mounted <- ProjectRuntimeRegistry.mountAll(
+                                          projects.filter(pd => ProjectStore.deviceOrigin(pd).isDefined == remote),
+                                          bootRoot.id,
+                                          actorSystem,
+                                          resources,
+                                          // #28 可观测接线：启动挂载传入真实广播 wsSend——
+                                          // engine 的节点/分发器事件经 wsHub 到达前端 subagent
+                                          // 面板（此前 None → no-op，事件静默丢失）。
+                                          Some((json: io.circe.Json) => wsHub.broadcast(json)),
+                                          skipStaleReap = nebflow.shared.Defaults.CrashRecoveryEnabled
+                                        )
+                                        _ <-
+                                          if mounted > 0 then
+                                            logger.info(
+                                              s"Startup mount: $mounted project(s) mounted (rootSessionId=${bootRoot.id})"
+                                            )
+                                          else IO.unit
+                                      yield ()
+                                  val startupMount: IO[Unit] = mountStartupProjects(sharedResources, remote = false)
+                                  // boot-time 崩溃断点恢复（crash-recovery 批 2026-09-07）：
+                                  // 挂载后、TtlTick 首拍前同步跑快段（分类+认领，秒级——被认领
+                                  // 节点翻 Pending 即刻脱离 watchdog 判死口径，竞速由挂载顺序
+                                  // 结构性关闭），慢段（rehydrate 续跑，分钟级）在 sweep 内
+                                  // fork 不阻塞 listen。恢复关闭（crashRecovery.enabled=false）
+                                  // = 本步空转 + 上面 mountAll 已走既有僵尸收殓——完全回到
+                                  // 本批前现状。sweep 内部逐项目/逐节点 handleError，异常不
+                                  // 阻塞 boot（残余 Running 由 watchdog +30s 兜底收敛 failed）。
+                                  val projectCrashSweep: IO[Unit] =
+                                    if nebflow.shared.Defaults.CrashRecoveryEnabled then
+                                      nebflow.core.project.ProjectCrashRecovery
+                                        .recoverAll(manual = nebflow.shared.Defaults.RestartRecoveryManual)
+                                        .flatMap { projects =>
+                                          if projects > 0 then
+                                            logger.info(
+                                              s"Boot crash-recovery sweep: $projects project(s) had crashed nodes claimed (rehydrate/failed)"
+                                            )
+                                          else IO.unit
+                                        }
+                                    else IO.unit
+                                  // N1 刀1（v3 §6/A2）：delegate 作用域 boot sweep——flow-maps/
+                                  // 目录族扫描（已挂载项目 workspace ∪ general），有
+                                  // Running/Interrupted 残留的作用域重挂宿主→同判据认领→慢段
+                                  // rehydrate。与项目 sweep 同受 CrashRecoveryEnabled 闸（回滚 =
+                                  // 两腿同关回现状）；零汇总通知（⑷不旁路，事件面留痕）。存量
+                                  // per-project flow-map 归档不迁移（v3-⑧：本 sweep 只读
+                                  // flow-maps/ 作用域族，旧路径族零触碰）。
+                                  //
+                                  // wsSend 桥接批（2026-11-01，续聊面板空白批的同类点②）：
+                                  // 本腿要**重挂** delegate 作用域宿主，而宿主 wsSend 决定两件事
+                                  // ——engine.wsSendFn（node-* 会话流帧）与 emitScopeEvent（作用域
+                                  // flow-map 事件）。改前此处零传参 ⇒ 两者都是 no-op ⇒ 恢复窗口
+                                  // 里重挂作用域的节点会话帧在发射处被吞（无 live 广播、也到不了
+                                  // 录制层）、Flow Map 面板零事件。传 `wsHub.broadcast` 与
+                                  // startupMount（上方 mountAll 的 #28 接线）**同源同契约**：boot
+                                  // 期无控制台连接可桥（无 ctx.wsSend），进程级广播就是这条腿
+                                  // 的正确出口。录制面（process-recorder 批 2026-11-01 F1 收口，
+                                  // P4 注记）：wsHub 上挂进程级 ProcessRecorder（`recorderSetup`，
+                                  // boot 链先于 startupMount）——本腿重挂会话的 node-* 帧经广播
+                                  // 到 hub 即按 nodeSessionId 落 `.ui.json`，自恢复第一帧起就有
+                                  // 录制；「广播≠录制」缺口关闭，广播（live）与录制（落盘）自此
+                                  // 同源，不再依赖任何腿自带录制 send。
+                                  val delegateScopeCrashSweep: IO[Unit] =
+                                    if nebflow.shared.Defaults.CrashRecoveryEnabled then
+                                      nebflow.core.project.ProjectCrashRecovery
+                                        .recoverDelegateScopes(
+                                          wsSend = Some((json: io.circe.Json) => wsHub.broadcast(json)),
+                                          manual = nebflow.shared.Defaults.RestartRecoveryManual
+                                        )
+                                        .flatMap(report => logger.info(report.summary))
+                                    else IO.unit
+                                  // Boot-latency: the delegate-scope sweep re-mounts EVERY
+                                  // scope host on disk (886 scopes on a busy home) purely as
+                                  // crash bookkeeping for delegates that died with the
+                                  // previous process — none of it gates serviceability. It
+                                  // now starts as a background fiber at its original chain
+                                  // position instead of blocking the listen path. The sweep
+                                  // must run EXACTLY ONCE per boot: the sweep program has a
+                                  // single execution site (the start below) and publishes
+                                  // its completion on the shared gate the scanner waits on.
+                                  // Never route the sweep through an IO[Fiber] alias that a
+                                  // second site runs too — every run of such an alias spawns
+                                  // a fresh fiber and executes the whole sweep again
+                                  // (duplicated orphan-chain events and root notifies; a
+                                  // lagging second pass also unmounts freshly claimed scope
+                                  // hosts whose rehydrate is still in flight). The gate is
+                                  // completed by guarantee on success AND failure, so the
+                                  // scanner still launches if the sweep errors. Revival
+                                  // traffic reaching a still-sweeping scope is serialized
+                                  // against the sweep by DelegateFlowHosts.mount's own gate.
+                                  val delegateScopeSweepDone: Deferred[IO, Unit] = Deferred.unsafe[IO, Unit]
+                                  val delegateScopeBootSweep: IO[Unit] =
+                                    delegateScopeCrashSweep
+                                      .guarantee(delegateScopeSweepDone.complete(()).void)
+                                      .start
+                                      .void
+                                  // 宿主启动自动重入（boot-wake 批 2026-09-13，方案件 A 档 A1；
+                                  // 作者 09-13 裁定「重启后唤醒源 = 直接上 A」）：**独立于
+                                  // crash-recovery** 的第二条 boot 扫描腿——crash-recovery 只认
+                                  // `status == Running` 残留，故「零 running 但有未完成工作」的项目
+                                  // 重启后没有任何东西叫醒控制面（分发器不是节点、不在任何扫描面），
+                                  // 停摆窗无上界（实测 89.34s / 150.93s，且靠一封无关 Mail 偶然结束）。
+                                  // 本腿对每个在册项目读**落盘事实**（flow-map.json + tasks/ +
+                                  // results/ + transcript 存在性）派生需重入清单，非空则经**既有通道**
+                                  // DispatchNotify.defaultTrigger 发一条 TriggerDispatcher（文本 =
+                                  // 清单正文）。零新调度器（boot 单次执行）、零节点写（不重激活
+                                  // blocked / 不自动清 pendingSuccession / 不重投任何边）、零重试
+                                  // （单次尝试，失败只记录）。触发面 = 仅本 boot 链（每进程恰一次、
+                                  // 早于 server listen）；普通会话启动/工具调用/TtlTick 扫描腿均无
+                                  // 本入口。开关 nebflow.boot.dispatcherWake（默认 true）——false 时
+                                  // 本步空转，完全回到本批前现状。
+                                  def startupProjectWake(remote: Boolean): IO[Unit] =
+                                    if nebflow.shared.Defaults.BootDispatcherWakeEnabled then
+                                      ProjectStore.list().flatMap { projects =>
+                                        nebflow.core.project.BootDispatcherWake
+                                          .wakeAll(projects = Some(projects.filter(pd => ProjectStore.deviceOrigin(pd).isDefined == remote)))
+                                          .flatMap(r => logger.info(s"Boot dispatcher wake: ${r.summary}"))
+                                      }
+                                    else IO.unit
+                                  val projectBootWake: IO[Unit] = startupProjectWake(remote = false)
+                                  // The early sweep has already handled local runtimes. Recover only
+                                  // newly mounted device runtimes, preserving the same exclusion and
+                                  // fail-soft boundaries as recoverAll before their first boot wake.
+                                  val startupRemoteRecovery: IO[Unit] =
+                                    if nebflow.shared.Defaults.CrashRecoveryEnabled then
+                                      ProjectRuntimeRegistry.all.flatMap { runtimes =>
+                                        val excluded = nebflow.shared.Defaults.SweepExcludeProjects
+                                        runtimes.filter(rt => ProjectStore.deviceOrigin(rt.project).isDefined).traverse_ { rt =>
+                                          if excluded.contains(rt.project.name) then
+                                            logger.info(s"[boot-recovery] project '${rt.project.name}' skipped: excluded-by-config")
+                                          else
+                                            nebflow.core.project.ProjectCrashRecovery
+                                              .recoverProject(rt, manual = nebflow.shared.Defaults.RestartRecoveryManual)
+                                              .void
+                                              .handleErrorWith(e =>
+                                                logger.error(s"[boot-recovery] project '${rt.project.name}' sweep failed: ${Option(e.getMessage).getOrElse(e.toString)} — residual running nodes left to the dead-session watchdog")
+                                              )
+                                        }
+                                      }
+                                    else IO.unit
+                                  // 台账 #896（交通引导员制 2026-10-26）：合并队列
+                                  // 重启对账 boot sweep——账本落盘持久，重启不清零；
+                                  // 开放成员逐条对账（已并 → 关账 merged + 现场回收 +
+                                  // 报父 completed；无可并物 → 关账 merged 诚实注记；
+                                  // 可并但属主失联 → owner-gone + 报父 blocked）。
+                                  // **不再重挂、不再复活任何合并回合**（旧 P2-5 重挂腿
+                                  // 随交通引导员制退役——互踩与重复合并轮的根因）。
+                                  // 排在 startupMount/projectBootWake 之后；无开放成员 =
+                                  // 零动作；失败只 WARN 绝不阻塞启动。
+                                  // 消息身份牌（msgtokens 批 2026-10-31）：启动对账——扫描
+                                  // sessions/*/msg-tokens.jsonl 全量载入内存索引（重启后铸牌
+                                  // 序号续走、派发引牌即解，无需等首次铸牌触发的惰性装载），
+                                  // 已删会话的映射文件清除（孤儿不收容）。boot 对账邻位；
+                                  // 无映射文件 = 零动作；失败只 WARN 绝不阻塞启动。
+                                  val msgTokensBootReconcile: IO[Unit] =
+                                    nebflow.core.msgtokens.MsgTokenRegistry.global.reconcileAll().attempt.flatMap {
+                                      case Right(r) => logger.info(s"Msg-token boot reconcile: ${r.summary}").void
+                                      case Left(e) =>
+                                        logger.warn(s"Msg-token boot reconcile failed: ${e.getMessage}").void
+                                    }
+                                  // #28 阶段 0：Project Flow Map **completed** 节点 TTL 扫描
+                                  // （24h 显示消失 → 移归档 + WS nodeRemoved；failed/cancelled
+                                  // 无 TTL 不过期——2026-09-07 裁定，死亡现场保留待上层裁决；
+                                  // Node 运行本身不设超时）。周期给所有已挂载 ProjectActor
+                                  // 发 TtlTick；无项目时空转。
+                                  val projectTtlScanner: IO[Unit] =
+                                    nebflow.core.project.ProjectActor.ttlScanner(30.seconds).start.void
+                                  // N1 刀1：delegate 作用域宿主扫描器（projectTtlScanner 邻位同款
+                                  // sleep 循环）——在册宿主的引擎腿周期驱动（TtlTick 引擎侧子集）
+                                  // ＋孤儿收割（delegate 会话不在 ∧ 图内无非终态 ⇒ 宿主实例灭，
+                                  // 盘面状态存）。无宿主 = 空转零成本。
+                                  // Boot-latency order: the scanner waits on the sweep
+                                  // completion gate above before its first tick, so its
+                                  // settle/reap legs can never race an in-flight boot sweep
+                                  // (not a "the sweep should beat the first 30s tick" timing
+                                  // assumption). The gate fires on sweep success AND
+                                  // failure, so the scanner launches unconditionally, exactly
+                                  // as before the sweep was deferred; the scanner must never
+                                  // start or join a sweep program of its own. The whole
+                                  // wait-then-launch expression runs INSIDE the spawned
+                                  // fiber — running the gate wait on the boot chain itself
+                                  // would block listen behind the sweep and undo the
+                                  // boot-latency cut.
+                                  val delegateScopeScanner: IO[Unit] =
+                                    (delegateScopeSweepDone.get *>
+                                      nebflow.core.project.DelegateFlowHosts.launchScanner(30.seconds)).start.void
+                                  // 宿主睡眠/唤醒感知（hostresume 批 2026-09-22，设计卡 §4 #3；
+                                  // D-2 默认 true + kill-switch：`nebflow.wake.sense.enabled=false`
+                                  // ⇒ launch 即 IO.unit，不挂载 = 逐字节现状）。15s 双钟断流纤维
+                                  // （ttlScanner 同款形态）——判出的睡眠窗进 PowerStateTracker 窗集
+                                  // （TaskStuckWatcher 两轴与整流 no-progress 守卫的时间基修正消费，
+                                  // D-6 首批仅此两处）+ boot-wake.json 台账 append（kind=sleep/wake，
+                                  // 恒 blocking=false）+ host-wake 审计事件（D-7：仅审计，不揽分发
+                                  // 器）。server listen 前就绪；零新调度器、零子进程（A1 纯 JVM）。
+                                  val hostWakeSensor: IO[Unit] = nebflow.core.project.WakeSensor.launch
+                                  // 记忆检索库自动入库（memory-recall 批 2026-10-22）：作者令
+                                  // 「这个进库 应该要是我们使用stand自动的能力」——驻留守护按节流窗
+                                  // （默认 ≥5 分钟）对 sessions/ 做脏探测，有增量即调
+                                  // tools/stand-recall --update --source auto（幂等 upsert，实测
+                                  // ~3s/10140 条库），主会话消息落盘后无需人工触发即进
+                                  // <dataRoot>/memory-db/。kill-switch
+                                  // nebflow.memoryRecall.enabled=false ⇒ 零纤维零子进程（完全回到
+                                  // 人工 --update 现状）；失败静默（首败 WARN 连败降 debug，下窗
+                                  // 自愈重试）；排除面（外部执行器/team 子代理不入库）由
+                                  // stand-recall 既有分类规则单点承载，持久化路径零改动。
+                                  val memoryRecallDaemon: IO[Unit] = nebflow.core.MemoryRecallDaemon.launch()
+                                  // Read-only listing of the retired managed-workspace
+                                  // ledger: in-flight merge requests the old mechanism
+                                  // left behind are logged one line each (panel/log
+                                  // visibility), never resumed or executed — disposition
+                                  // stays manual with the author. Fail-soft at startup.
+                                  val legacyLedgerReport: IO[Unit] =
+                                    IO.blocking(
+                                      nebflow.core.delegate.WorkspaceLedger.listInFlightRequests(
+                                        nebflow.core.delegate.WorkspaceLedger.default.snapshot
+                                      )
+                                    ).flatMap { lines =>
+                                      lines.traverse_(line => logger.info(s"[legacy-workspace-ledger] $line"))
+                                    }.handleErrorWith(e =>
+                                      logger.warn(s"legacy workspace ledger listing failed: ${e.getMessage}")
+                                    )
+                                  // 冷启动播种（cold-start seed 批 2026-09-07）：fresh home
+                                  // 在 startupMount 前就绪默认最小集（project-dispatcher /
+                                  // general agents + 4 系统插件 +
+                                  // projects/general）——通用项目需于挂载前存在，干净 home
+                                  // 启动即自动挂载（史注：曾以 Mail(address="project:general")
+                                  // 直达分发器——该触发腿已随 project-trigger 拆除批
+                                  // 2026-10-18 退役，触发经 Delegate）
+                                  // （作者 2026-09-17 裁定①：撤销 09-16「移除内置 general
+                                  // 项目」令；裁定②：既有 home 亦 add-only 补种——缺目录才建、绝不改既有内容）。
+                                  // 幂等 + fail-soft（见 SeedService
+                                  // 注释），失败仅告警不阻塞启动（与 seedDefaults/startupMount 同构）。
+                                  val seedMinimalSet: IO[Unit] = SeedService.ensureSeeded()
+                                  // 源化插件自愈（作者令 2026-11-01 22:55「stand-dev 不进 seed，
+                                  // 运行时插件要能热更新」）：seed 只分发「随引擎发布」的出厂集；
+                                  // 自研插件（来源在我们自己的仓）由 PluginSourceCatalog 的指针
+                                  // 声明 + 本行按声明拉取装回——**只在本地缺失时动作**（在位零触碰，
+                                  // 不覆盖用户态），远端不可达 ⇒ 该包保持缺失 + 点名 WARN，绝不阻断
+                                  // 启动、绝不影响其他包。幂等：装回后下次 boot 走 "already present"。
+                                  // 用户显式卸载（plugins.removed 标记）优先，不自愈装回。
+                                  val sourcePluginHeal: IO[Unit] =
+                                    nebflow.core.plugin.PluginSourceSync
+                                      .selfHeal()
+                                      .void
+                                      .handleErrorWith(e =>
+                                        IO(
+                                          nebflow.shared.NebflowLogger
+                                            .forName("nebflow.plugin.sync")
+                                            .warnSync(s"source plugin self-heal skipped: ${e.getMessage}")
+                                        )
+                                      )
+                                  // 热重启编排器（hot-restart 批）：触发器无关——WS restart
+                                  // 命令（P1）经 sharedResources.hotRestart 触发；REST/桌面菜单
+                                  // 后续批次接同一入口。broadcast 接 wsHub（restartStatus 帧）。
+                                  val hotRestart = new nebflow.core.hotrestart.HotRestart(
+                                    // Phase 5 D 步窄能力接线:sharedResources 已混入 core 窄端口
+                                    // (AgentRegistryPort/SubAgentTaskPort);sessionStore/gatewayShutdown
+                                    // 以底层值直传——core 侧不再引 agent 定位器类型。
+                                    sharedResources,
+                                    sharedResources,
+                                    sharedResources.sessionStore,
+                                    sharedResources.gatewayShutdown,
+                                    cfg.port.value,
+                                    cfg.host.toString,
+                                    wsHub.broadcast,
+                                    // 端口探测能力：复用既有 `SingleInstanceGuard.connectProbeAccepted`
+                                    // （既有调用点即本文件的 succeedPortGate）。core 层不得反向
+                                    // 依赖 cli ⇒ 在**构造点**注入（hotupdate 批 2 G3 第三档）。
+                                    connectProbe =
+                                      Some(p => IO.blocking(nebflow.cli.SingleInstanceGuard.connectProbeAccepted(p))),
+                                    // 安装目录（版本留存 + 指针）：生产装配显式注入（spec 传临时
+                                    // 目录 ⇒ 指针动作旁路，绝不动真实安装）
+                                    installDir = Some(nebflow.core.hotrestart.InstallPointer.defaultInstallDir())
+                                  )
+                                  // 全设备统一更新（fleet 批 2026-11-01，作者令「一键把所有设备更新到
+                                  // 同一版本」）：协调器必须**后**造（它要用编排器），而编排器的相位
+                                  // 观察钩子**先**要碰协调器 ⇒ 一个 late-bind 引用打破这个先后死结。
+                                  // 钩子只读旁路：协调器未就绪 / 未装配 ⇒ 空操作，更新链零影响。
+                                  val fleetUpdateRef =
+                                    new java.util.concurrent.atomic.AtomicReference[Option[
+                                      nebflow.core.hotupdate.FleetUpdateCoordinator
+                                    ]](None)
+                                  // 统一更新编排器（hotupdate 批 1，设计 §4 设计 A）：全部入口
+                                  // 只发「更新请求」，由它独占执行；重启相位**一律委托**上面的
+                                  // 热重启编排器（排空/翻态/派生/握手零复制）；统一进度帧经**同一
+                                  // 广播通道** wsHub.broadcast（复用点 #11，构造点即本处）。
+                                  val updateOrchestrator = new nebflow.core.hotupdate.UpdateOrchestrator(
+                                    Some(hotRestart),
+                                    wsHub.broadcast,
+                                    // fleet 批：本机进度行读既有七相位（唯一权威仍是编排器 step；
+                                    // 钩子只翻译相位，不改变更新走向）。
+                                    onPhase = (phase, progress, detail) =>
+                                      fleetUpdateRef.get() match
+                                        case Some(f) => f.onLocalPhase(phase, progress, detail)
+                                        case None => IO.unit
+                                  )
+                                  // 统一更新收敛闭环（M3 ③，DESIGN §7.2）：心跳响应领账
+                                  // → 采纳闸（跨通道拒采/前向-only）→ 全复用上面的编排器
+                                  // 七相位执行链（执行链零改动）。零定时器：只在心跳腿被
+                                  // 调用；状态经 updateState 帧 + serverConfig 快照 +
+                                  // /api/health `update` 键可见。
+                                  val updateConvergence =
+                                    new nebflow.neblink.core.NeblinkUpdateConvergence(
+                                      Some(updateOrchestrator),
+                                      wsHub.broadcast
+                                    )
+                                  val sharedResourcesWithRestart =
+                                    sharedResources.copy(
+                                      hotRestart = Some(hotRestart),
+                                      updateOrchestrator = Some(updateOrchestrator),
+                                      updateConvergence = Some(updateConvergence)
+                                    )
+                                  // 感知守护进程（统一 daemon 批 2026-10-29，作者裁定
+                                  // 「独立daemon吧 正好和我们心跳进程合并 那就是管daemon的」）：
+                                  // 五循环 + 判定逻辑自引擎进程抽出为独立 JVM
+                                  // （PerceptionDaemonMain），经 DaemonService 声明托管——
+                                  // dock 腿（upsert 托管条目 + /health 握手）移至下方
+                                  // daemonService autoStart 块（构造序：dock 依赖
+                                  // DaemonService 实例）。失败只 WARN 绝不阻塞启动的
+                                  // 契约由 dock 腿逐字保持。
+                                  actorSystem.replayWatches *> hubSetup *> recorderSetup *> nfCacheInvalidatorSetup *> pendingAskBootSweep *> taskTtlSweep *> delegateTtlSweep *> subagentCrashSweep *> mailboxBootSweep *> providerSlotReconcile *> taskIndexBackfill *> seedMinimalSet *> sourcePluginHeal *> startupMount *> projectCrashSweep *> delegateScopeBootSweep *> projectBootWake *> msgTokensBootReconcile *> delegateScopeScanner *> hostWakeSensor *> memoryRecallDaemon *> legacyLedgerReport *> succeedPortGate(
+                                    cfg,
+                                    sharedResources.healthMonitor
+                                  ) *> {
+                                    val sharedResourcesLive = sharedResourcesWithRestart
+                                    // 2026-09-13（permshield S1）：`SessionService` 不再需要
+                                    // "档位覆盖快照"入参——档位只有应用级全局持久一源
+                                    // （`GlobalSafety.defaultMode`），两个列表出口
+                                    // （`sessionList` / `agentSessionList`）天然同源，
+                                    // 2026-09-12 修复轮 D1 的"漏注入 ⇒ 同连接两个读数"
+                                    // 失败类在类型上已不可能（无投入可漏）。
+                                    val sessionService = new SessionService(sessionStore)
+                                    val agentService = new AgentService(agentLibrary)
+                                    val configService = ConfigService
+
+                                    // --- Bridge Manager (plugins: telegram, etc.) ---
+                                    val bridgeInjectRef: Ref[IO, Option[
+                                      (
+                                        String,
+                                        String,
+                                        Option[String],
+                                        Option[nebflow.bridge.BridgeOrigin],
+                                        List[nebflow.bridge.BridgeAttachment]
+                                      ) => IO[Unit]
+                                    ]] =
+                                      Ref.unsafe(None)
+
+                                    // Holder for wsRoutes so we can wire bridge refs after safe construction
+                                    var wsRoutesHolder: Option[WebSocketRoutes] = None
+
+                                    val bridgeCtx = new BridgeContext:
+                                      def injectMessage(
+                                        sessionId: String,
+                                        content: String,
+                                        senderId: Option[String],
+                                        origin: Option[nebflow.bridge.BridgeOrigin] = None
+                                      ): IO[Unit] =
+                                        bridgeInjectRef.get.flatMap(
+                                          _.fold(IO.unit)(_(sessionId, content, senderId, origin, Nil))
+                                        )
+                                      // 社交通道入站媒体统一适配批（2026-10-20）：媒体指针
+                                      // 注入的生产装配——同一注入点（handleBridgeMessage）
+                                      // 的媒体面；缺省实现（降级纯文本）在此被覆盖。
+                                      override def injectMessageWithMedia(
+                                        sessionId: String,
+                                        content: String,
+                                        senderId: Option[String],
+                                        origin: Option[nebflow.bridge.BridgeOrigin] = None,
+                                        attachments: List[nebflow.bridge.BridgeAttachment] = Nil
+                                      ): IO[Unit] =
+                                        bridgeInjectRef.get.flatMap(
+                                          _.fold(IO.unit)(_(sessionId, content, senderId, origin, attachments))
+                                        )
+                                      def interruptAgent(sessionId: String): IO[Unit] =
+                                        wsRoutesHolder match
+                                          case Some(routes) =>
+                                            routes.handleBridgeAgentCommand(sessionId, AgentCommand.Interrupt())
+                                          case None => IO.unit
+                                      def sessionMeta(sessionId: String): IO[Option[SessionMeta]] =
+                                        sessionStore.getSessionMeta(sessionId)
+                                      def listSessions: IO[List[SessionMeta]] =
+                                        sessionStore.listSessions
+                                      def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json])
+                                        : IO[Unit] =
+                                        sessionStore.updateSessionBridge(sessionId, platform, config)
+
+                                      // ── askuser-remote P1 (2026-10-07): the interaction face ──
+                                      // The hub is the single ask authority and the single answer
+                                      // convergence; the bridges get exactly these three faces and
+                                      // never a second ledger. `wsRoutesHolder` late-binds exactly
+                                      // like the interrupt leg above.
+                                      override def listPendingAsks: IO[List[Json]] =
+                                        sharedResources.interactionHubRef.get.flatMap {
+                                          case Some(hub) =>
+                                            // ask-pattern (one-shot reply ref) — the read-only
+                                            // global snapshot, oldest first. A hub hiccup raises to
+                                            // the caller (the bridge answers its clicker with the
+                                            // contained empty response), never a silent empty that
+                                            // would read as "no ask open".
+                                            hub.?[List[Json]](reply =>
+                                              nebflow.actor.InteractionHubCommand.ListAllPendingAsks(reply)
+                                            )
+                                          case None => IO.pure(Nil)
+                                        }
+                                      override def forwardInteractionAnswer(
+                                        requestId: String,
+                                        rootSessionId: String,
+                                        payload: Json
+                                      ): IO[Unit] =
+                                        wsRoutesHolder match
+                                          case Some(routes) =>
+                                            routes.forwardBridgeInteractionAnswer(requestId, rootSessionId, payload)
+                                          case None => IO.unit
+                                      override def decidePermission(
+                                        requestId: String,
+                                        rootSessionId: String,
+                                        kind: nebflow.actor.InteractionKind,
+                                        approved: Boolean
+                                      ): IO[Boolean] =
+                                        sharedResources.interactionHubRef.get.flatMap {
+                                          case Some(hub) => hub.?[Boolean](reply =>
+                                            nebflow.actor.InteractionHubCommand.DecideBridgePermission(
+                                              requestId, rootSessionId, kind, approved, reply
+                                            )
+                                          )
+                                          case None => IO.pure(false)
+                                        }
+                                      override def closeInteractionRequest(requestId: String): IO[Unit] =
+                                        sharedResources.interactionHubRef.get.flatMap {
+                                          case Some(hub) =>
+                                            (hub ! nebflow.actor.InteractionHubCommand.CloseRequest(requestId)).void
+                                          case None => IO.unit
+                                        }
+                                      // askucancel 批（2026-10-08）：用户发起的取消（渠道关键字腿）
+                                      // —— 与上一条（B-3 机器回收）不同闸：走共享执行器（hub
+                                      // CancelRequest：kind 闸 + 发起方终结通知 + 裁决 + 取消落盘行）。
+                                      override def cancelInteractionRequest(
+                                        requestId: String,
+                                        reason: String,
+                                        by: String
+                                      ): IO[Unit] =
+                                        AskUserCancelRoutes
+                                          .cancelOnce(sharedResources, sessionStore, requestId, reason, by)
+                                          .void
+
+                                    val bridgeSetup: IO[BridgeManager] =
+                                      BridgeManager.create(bridgeCtx)
+
+                                    // Create neblink service (device discovery only, no file sync)
+                                    val neblinkServiceF: IO[NeblinkService] =
+                                      NeblinkService.create(cfg.port.value, dispatcher)
+
+                                    bridgeSetup.flatMap { bridgeManager =>
+                                      neblinkServiceF.flatMap { neblinkService =>
+                                        // Presence WS service — maintains real-time online/offline via persistent WebSocket connections
+                                        //
+                                        // presence-dial-overhaul 批（2026-11-04 P3）：`reachLedger` **必须**显式接
+                                        // 共用可达性真源（`P2pReachability.current`，与文件腿同一份负缓存/TTL）。
+                                        // 缺省是 `None`（排程类 spec 的隔离用），生产漏传 ⇒ 探测税与拨号税又会各付一遍。
+                                        // 源码护栏：`NeblinkPresenceDialConcurrencySpec` 扫描本文件断言这行仍在。
+                                        // 三档选路批（2026-11-04 作者裁定 16:51）：装真机 Tailscale 探测器
+                                        // （缓存 + 负证据退避 + single-flight，见 DirectRoute）。
+                                        // 🔴 必须在 presence client / RemoteExecutor 之前装好：两边都是在
+                                        // **每次选路时现读** 这个进程级指针（`DirectRoute.probe`），
+                                        // 晚装只会让启动初段的几次选路走 fail-open（无害但少一次门控）。
+                                        nebflow.core.tools.DirectRoute.installSystemProbe()
+                                        val presenceService =
+                                          new nebflow.neblink.relay.NeblinkPresenceService(
+                                            neblinkService,
+                                            cfg.port.value,
+                                            reachLedger = Some(nebflow.core.tools.P2pReachability.current)
+                                          )(
+                                            dispatcher
+                                          )
+                                        // Late-bound discovery holder for the silent re-login hook: the
+                                        // startup client is created BEFORE NeblinkDiscovery (below) —
+                                        // the hook resolves the hot-swap target at call time.
+                                        val neblinkDiscoveryHolder =
+                                          new java.util.concurrent.atomic.AtomicReference[Option[
+                                            nebflow.neblink.relay.NeblinkDiscovery
+                                          ]](None)
+                                        // Check if NebLink Server is configured; if so, create client for NebLink-based discovery
+                                        val neblinkConfigAtBoot = neblinkService.neblinkConfig.unsafeRunSync()
+                                        // 隔离护栏（2026-09-11 作者裁定，见 EnrollGuard）：非默认 home
+                                        // 的实例（--home / <PREFIX>_HOME）默认**不**自动向生产网注册。
+                                        // 2026-09-14 订正（踢旧批 ③，**纯注释，零行为改动**）：原文写
+                                        // 「同账号重复登录会踢掉作者主客户端」与实现不符——自
+                                        // 2026-09-11 起 deviceId = UUIDv5(机器码|scope)，非默认 home 的
+                                        // scope 随 dataRoot 派生（2026-10-14 熵修复起为 `home|<摘要>`，
+                                        // 见 NeblinkModel.scala 的 deviceIdScope / isolatedHomeScope）
+                                        // ⇒ 派生**不同** id，而服务端踢旧维度是
+                                        // (device_id, network_id) ⇒ 隔离实例登录**不会**踢主客户端
+                                        // （该表述是随机 deviceId 时代的残留，取证见
+                                        // .nebflow/reports/20260914_170224_kickold-forensics__chain-n-07d47ec4.md
+                                        // §2.5 不一致②）。
+                                        // 闸的真实理由 = 别让一次性实例在生产设备表里**新增**设备行
+                                        // （2026-09-11 /tmp/nebflow-coldstart 污染即此类）。
+                                        // NEBFLOW_ALLOW_PROD_ENROLL=1 显式放行；默认 home 零行为变化；
+                                        // 本地/自定义 host 不受影响。显式用户登录的放行面见
+                                        // EnrollGuard 的 explicitUserAction（案 C）。
+                                        val bootEnrollRefusal: Option[String] =
+                                          neblinkConfigAtBoot.neblinkServer
+                                            .flatMap(s => nebflow.neblink.identity.EnrollGuard.enrollRefusal(s.url))
+                                        val neblinkClient: Option[nebflow.neblink.core.NeblinkClient] =
+                                          neblinkConfigAtBoot match
+                                            case nc if nc.neblinkServer.isDefined && bootEnrollRefusal.isEmpty =>
+                                              Some(
+                                                new nebflow.neblink.core.NeblinkClient(
+                                                  nc.neblinkServer.get,
+                                                  cfg.port.value,
+                                                  onDeviceTokenRejected = Some(
+                                                    nebflow.neblink.logto.LogtoSilentRelogin.make(
+                                                      neblinkService,
+                                                      IO(neblinkDiscoveryHolder.get),
+                                                      cfg.port.value,
+                                                      // 2026-09-11（复核 N1）：原为 IO.pure(...unsafeRunSync()...) ——
+                                                      // IO.pure 的实参严格求值 ⇒ 该 unsafeRunSync 在 boot 执行，
+                                                      // 启动客户端的 silent-relogin server URL 被冻结在 boot 值。
+                                                      // 改为 live 读（同 RestApiRoutes.neblinkServerUrl 先例）。
+                                                      //
+                                                      // 案 b①（2026-09-20）：末级回落经**同一判据**
+                                                      // （EnrollGuard.prodDefaultTarget —— 单点，禁第二实现）：
+                                                      // 隔离数据根 + 无显式开关 ⇒ 无目标 ⇒ 本接缝降级为
+                                                      // login-required（不注册），与两侧入口同语。
+                                                      neblinkService.neblinkConfig.map(
+                                                        _.neblinkServer
+                                                          .map(_.url)
+                                                          .orElse(
+                                                            nebflow.neblink.identity.EnrollGuard.prodDefaultTarget
+                                                          )
+                                                      )
+                                                    )
+                                                  ),
+                                                  // F2 (2026-09-10 friend-search batch): identity source
+                                                  // for the API-level 401/403 session self-heal.
+                                                  identity = Some(neblinkService.identity),
+                                                  // 2026-09-14（踢旧批 r2）：自动登录的停摆门
+                                                  // （真值源 = NeblinkService.kickParked，写侧 =
+                                                  // 隧道的 `disconnect` 帧，清侧 = 显式用户登录）。
+                                                  autoLoginParked = IO(neblinkService.kickParked),
+                                                  // 🔴 relay-honest 批（2026-10-20）A 修：凭据腿收口钩。
+                                                  // boot / 心跳恢复 / API 自愈走 `/api/device/session`
+                                                  // 成功 = 一次会话铸造 ⇒ 无条件发 ensure 信号（单飞 +
+                                                  // 幂等，信号本身无代价）。修前缺口：登出 stop() 掉
+                                                  // 隧道后只有 enrollment / silent-relogin 腿会重启
+                                                  // 隧道，凭据腿只恢复 device session ⇒ 隧道无任何
+                                                  // 重启触发器 ⇒ 门户永久判 relay 不可达。
+                                                  onSessionMinted = Some(neblinkService.ensureRelayTunnel)
                                                 )
                                               )
-                                            )
-                                          case _ => None
-                                      // Wire relay client + presence service into NeblinkService so
-                                      // TransferFileTool / DropboxService / status endpoint can use them.
-                                      neblinkService.setRelayClient(neblinkClient)
-                                      neblinkService.setPresenceService(presenceService)
-                                      // Register remote executor for cross-device tool dispatch (P2P + relay fallback)
-                                      RemoteExecutor.initialize(neblinkService, dispatcher, neblinkClient)
-                                      // Start relay tunnel if NebLink Server is configured — maintains a
-                                      // persistent WS to the server so cross-network relay-exec requests
-                                      // can reach this device.
-                                      // A2A 一期：FriendService 基于 NeblinkClient（好友/消息 REST +
-                                      // 事件去重/限速/未读 cursor）。WS 事件回调广播 friendEvent 给前端
-                                      // （messages.js 监听）；agentMessaging 配置来自 neblinkConfig。
-                                      val clientWithFriends: Option[(nebflow.neblink.NeblinkClient, nebflow.neblink.FriendService)] =
-                                        neblinkClient.map { client =>
-                                          val amConfig = neblinkService.neblinkConfig.unsafeRunSync().agentMessaging
-                                          val friendService = new nebflow.neblink.FriendService(
-                                            client,
-                                            amConfig,
-                                            onFriendEvent = Some { ev =>
-                                              // Frontend contract (messages.js onMessage('friend_event')):
-                                              // frame type is "friend_event"; event type in msg.event;
-                                              // payload fields (conversationId/messageId/body/...) flattened
-                                              // onto the frame. Strip the payload's inner "type" so it
-                                              // cannot clobber the frame envelope.
-                                              val payloadFields =
-                                                ev.payload.asObject.getOrElse(io.circe.JsonObject.empty).remove("type")
-                                              val frame = io.circe.Json
-                                                .obj("type" -> "friend_event".asJson, "event" -> ev.eventType.asJson)
-                                                .deepMerge(io.circe.Json.fromJsonObject(payloadFields))
-                                              wsHub.broadcast(frame)
-                                            }
-                                          )
-                                          // A2A 一期（#290 域 A）：SendFriendMessage 工具接线——
-                                          // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），
-                                          // 服务依赖走 RemoteExecutor.initialize 同款单例模式。
-                                          FriendMessageTool.initialize(friendService)
-                                          (client, friendService)
-                                        }
-                                      clientWithFriends.foreach { (client, friendService) =>
-                                        val serverUrl =
-                                          neblinkService.neblinkConfig.unsafeRunSync().neblinkServer.get.url
-                                        val relayTunnel = new nebflow.neblink.NeblinkRelayTunnel(
+                                            case nc if nc.neblinkServer.isDefined =>
+                                              // 命中隔离护栏：不建 boot 客户端 ⇒ 不自动登录/入网。
+                                              // 不做静默降级——拒绝理由在下方 IO 链上打 WARN。
+                                              None
+                                            case _ => None
+                                        // Wire relay client + presence service into NeblinkService so
+                                        // DropboxService / RemoteExecutor / status endpoint can use them.
+                                        neblinkService.setRelayClient(neblinkClient)
+                                        neblinkService.setPresenceService(presenceService)
+                                        // Register remote executor for cross-device tool dispatch (P2P + relay fallback)
+                                        RemoteExecutor.initialize(neblinkService, dispatcher, neblinkClient)
+                                        // F1 (2026-09-10 friend-search incident): discovery is the
+                                        // AUTHORITATIVE live-client holder (clientRef, swapped by
+                                        // enrollment hot-swap) — construct it BEFORE every consumer and
+                                        // hand out reads of it, so all components share one client
+                                        // instance. Previously FriendService + relay tunnel captured the
+                                        // constructor-time client: after a UI re-login/账号切换 the
+                                        // server's one-live-session policy kicked that client's session
+                                        // and FriendService 403'd until process restart (search → 502).
+                                        val tsDiscovery = new nebflow.neblink.relay.NeblinkDiscovery(
                                           neblinkService,
-                                          serverUrl,
-                                          () => client.currentSessionToken,
-                                          friendService = Some(friendService)
+                                          cfg.port.value,
+                                          presenceService,
+                                          neblinkClient,
+                                          // 统一更新收敛闭环（M3 ③）：心跳响应带 update.target
+                                          // ⇒ 交收敛组件领账（采纳闸在其内；失败自吞，绝不
+                                          // 打断名册同步）。收敛组件在编排器装配点已建
+                                          // （sharedResourcesWithRestart 更新于其前）。
+                                          onUpdateTarget = sharedResourcesWithRestart.updateConvergence.map(c =>
+                                            (t: nebflow.neblink.core.NeblinkUpdateTarget) => c.onHeartbeatTarget(t)
+                                          )
+                                        )
+                                        neblinkDiscoveryHolder.set(Some(tsDiscovery))
+                                        // A2A 一期：FriendService 基于 NeblinkClient（好友/消息 REST +
+                                        // 事件去重/限速/未读 cursor）。WS 事件回调广播 friendEvent 给前端
+                                        // （messages.js 监听）；agentMessaging 配置来自 neblinkConfig。
+                                        // F1: FriendService 每次调用读 discovery.currentClient（权威
+                                        // live client），hot-swap 后自动跟随新实例。
+                                        // 2026-09-11 boot 快照修复（A 案）：好友域的**存在性**不再由
+                                        // boot 期的 client 快照决定（此前整段落在
+                                        // `neblinkClient.map { … }` 内 ⇒ 全新 home 恒 None ⇒ 16 个
+                                        // /api/friends* 站点 404 到进程重启；判决书定论 ③）。用户走
+                                        // device-flow/AC+PKCE 登录只 hot-swap client
+                                        // （NeblinkEnrollment.persist），故装配必须无条件；「未登录」
+                                        // 由 FriendService.withClient → Left("Not logged in") 表达，
+                                        // 不靠「服务不存在」表达。
+                                        val amConfig = neblinkService.neblinkConfig.unsafeRunSync().agentMessaging
+                                        // ⑦（2026-09-12）：本地好友备注（<dataRoot>/friend-remarks.json）
+                                        // 启动读一次 → SharedResources 里那个 friendService 的内存 Ref。
+                                        // 与 PeerDescriptionStore 同族：先例 NeblinkService.createInternal
+                                        // 的 `PeerDescriptionStore.load → Ref.of`；此处调用点同 amConfig
+                                        // 字节相邻的 boot 读形态（都在 IO 链的装配段内）。
+                                        // 读失败（文件损坏 / 权限 / 半写）⇒ 折成空 map + WARN：
+                                        // 备注是**可丢弃的本地态**（最坏情况 = 用户重设一次），绝不
+                                        // 允许它把整条 boot 装配链掀翻（GatewayMain 这段是 val 求值，
+                                        // 未捕获的 IO 失败 = 启动崩）。
+                                        val friendRemarks =
+                                          nebflow.neblink.core.FriendRemarkStore.load
+                                            .handleErrorWith { e =>
+                                              logger.warn(
+                                                s"friend-remarks load failed (falling back to empty): ${e.getMessage}"
+                                              ) *> IO.pure(Map.empty[String, String])
+                                            }
+                                            .unsafeRunSync()
+                                        // 件一（2026-11-02）：双描述本地态（好友 bio 缓存 /
+                                        // 群备注 / 群介绍缓存 / selfBio）的 boot 读——与
+                                        // `friendRemarks` 逐行同形（同一 IO 链装配段、同样的
+                                        // 「读失败折空 + WARN」口径：描述是**可丢弃的本地态**，
+                                        // 最坏情况 = 用户重写一次，绝不允许掀翻 boot 装配链）。
+                                        val profileDescriptions =
+                                          nebflow.neblink.social.ProfileDescriptionStore.load
+                                            .handleErrorWith { e =>
+                                              logger.warn(
+                                                s"profile-descriptions load failed (falling back to empty): ${e.getMessage}"
+                                              ) *> IO.pure(nebflow.neblink.social.ProfileDescriptions.empty)
+                                            }
+                                            .unsafeRunSync()
+                                        val friendService = nebflow.neblink.core.NeblinkWiring.friendService(
+                                          tsDiscovery.currentClient,
+                                          amConfig,
+                                          // #147 接线段（2026-09-12）：ask 档确认链的装配缝接线。
+                                          // 此前该参数不存在 ⇒ FriendService.askConfirm 恒 None
+                                          // ⇒ ask 档一调即失败（作者 2026-09-11 裁定 U-5 的事实锚）。
+                                          // 接的值就是**生产运行时真正执行的那个实现**
+                                          // （nebflow.agent.SendConfirm.production）——不是桩、
+                                          // 没有「接了但走不到」的第二条实现：它发 AskUser 确认请求、
+                                          // 收确认/拒绝、据此决定投递与否。
+                                          // 会话靶（谁在问）不由此处决定：本缝在 boot 期、不知道任何
+                                          // 会话，而确认卡必须渲染在提问会话的窗口（前端 askUser 帧按
+                                          // sessionId 找 view、无 session 即丢弃）。靶由唯一持
+                                          // ToolContext 的调用侧（SendMessage 工具）按次经
+                                          // SendConfirm.locally 挂进 fiber-local；无靶（REST 直调 /
+                                          // harness）⇒ production 显式 fail-closed（不发送、不静默批准）。
+                                          // 理由与代码锚见 nebflow.agent.SendConfirm 文件头。
+                                          askConfirm = Some(nebflow.agent.SendConfirm.production),
+                                          onFriendEvent = Some { ev =>
+                                            // Frontend contract (messages.js onMessage('friend_event')):
+                                            // frame type is "friend_event"; event type in msg.event;
+                                            // payload fields (conversationId/messageId/body/...) flattened
+                                            // onto the frame.
+                                            // 波3 ①opt-A2：展平逻辑收归 `FriendEvent.frontendFrame`
+                                            // （唯一实现）——修前直接展平 ev.payload，而它比注释假设
+                                            // 的「字段袋」高一层（真值在 ev.payload.payload），
+                                            // 前端因此恒读不到 conversationId（L3）。纯函数实现
+                                            // 使帧形状可单测；此处只做广播。
+                                            wsHub.broadcast(nebflow.neblink.social.FriendEvent.frontendFrame(ev))
+                                          },
+                                          remarks = friendRemarks,
+                                          // D-B（2026-09-13）：送达确证（ack）生产者接线。
+                                          // 隧道对象在本行**之后**才创建（且 logout/ensure 会
+                                          // 反复重连），故此处按**每次调用 live 读**解析
+                                          // （`neblinkService.relayTunnelOpt`），不捕获快照
+                                          // —— 与 `setRelayTunnelStarter` / `ensureRelayTunnel`
+                                          // 的既有 live 读口径一致。
+                                          //
+                                          // 🔴 F4（2026-09-18 回执诚实性批，作者裁示「回执诚实性
+                                          // 修、单列小批」）：修前这里是
+                                          // `case None => IO.unit` —— 把「隧道对象压根不在册」
+                                          // **吞成成功**（与 `sendAck` 的「无 socket 即成功」
+                                          // 同款假陈述，两条腿合起来使调用方无从判别）。现在
+                                          // 统一走 `NeblinkRelayTunnel.sendAckLive`（**唯一**
+                                          // 实现点，设备邮件腿同址复用），结局 = 可判别的
+                                          // `AckOutcome`（`NoLiveSocket` 如实上报、绝不读成
+                                          // 已发出）。帧编码与语义边界见
+                                          // `NeblinkRelayTunnel.sendAck` 与
+                                          // `FriendService.ackProcessed`。
+                                          ackSender = Some { eventId =>
+                                            nebflow.neblink.relay.NeblinkRelayTunnel.sendAckLive(
+                                              neblinkService.relayTunnelOpt,
+                                              eventId
+                                            )
+                                          },
+                                          // 件一（2026-11-02）：双描述本地态（boot 读出的一份）。
+                                          descriptions = profileDescriptions
+                                        )
+                                        // A2A 一期（#290 域 A）：SendMessage 工具接线——
+                                        // 授权仅 Nebula agent.json 声明（作者特批 2026-08-28），
+                                        // 服务依赖走 RemoteExecutor.initialize 同款单例模式。
+                                        // 2026-09-11：无条件 initialize（未登录由 sendAsAgent →
+                                        // Left("Not logged in") 表达；工具侧 `service match None`
+                                        // 兜底保留）。
+                                        FriendMessageTool.initialize(friendService)
+                                        // relay tunnel 装配（2026-09-11 常驻）：不再由 boot 期
+                                        // 的 neblinkClient 快照门住 —— 全新 home 也要有隧道
+                                        // 对象，否则用户登录后 relay/事件推送永远不出现。
+                                        // serverUrl 由连接期 live 解析（构造参已移除）；
+                                        // stop()（logout）后由 ensureRelayTunnel（enrollment）
+                                        // 复活 —— 装配 owner 始终是这里。
+                                        //
+                                        // Phase 3a（portal 隧道）：faces 持有网关端口 + 两个
+                                        // 晚绑定面（提升 HTTP 切片 / conn-guard 隧道端口）——
+                                        // 它们在本方法更深处 withHttpWebSocketApp 装配完成时
+                                        // bind（见「Phase 3a lifted slice」注释）；隧道先建、
+                                        // faces 后填，与 wsRoutesHolder 同款晚绑定形态。
+                                        val portalHostFaces = new nebflow.neblink.portal.PortalHostFaces(cfg.port.value)
+                                        val relayTunnel = new nebflow.neblink.relay.NeblinkRelayTunnel(
+                                          neblinkService,
+                                          // F1: read the authoritative client live on each reconnect —
+                                          // a constructor-time closure kept returning a kicked session.
+                                          () => tsDiscovery.currentClient.map(_.flatMap(_.currentSessionToken)),
+                                          friendService = Some(friendService),
+                                          portalHost = Some(portalHostFaces),
+                                          // Phase 3b (plan §3.1/§5): the revocation ports reach the
+                                          // tunnel constructor, which binds them onto the faces BEFORE
+                                          // connect() fires below — no window in which a binding-dead
+                                          // signal sees an unbound face. Same store instances the
+                                          // gateway face holds (never a second one).
+                                          sessionRevocation = Some(gatewaySessions.revokeRelayMinted()),
+                                          nfTicketRevocation = Some(nfTicketStore.revokeAll()),
+                                          // 台账 #944（跨设备回报丢件腿）：重连即补投设备
+                                          // 待发区（进程重启 / 隧道断连窗口里攒下的完成件）。
+                                          // 只读盘面 + 发送，不碰任何会话状态。
+                                          outboxDrain = Some(
+                                            nebflow.core.delegate.DeviceDelegate
+                                              .drainOutbox(sharedResources)
+                                              .void
+                                          )
                                         )(dispatcher)
                                         neblinkService.setRelayTunnel(relayTunnel)
                                         dispatcher.unsafeRunAndForget(relayTunnel.connect())
@@ -725,320 +1838,1020 @@ object GatewayMain extends IOApp:
                                         // per-conversation keyset pull + friends. Silently no-ops when
                                         // not logged in yet (FriendService catches upstream errors);
                                         // later friend_event pushes keep state fresh.
-                                        dispatcher.unsafeRunAndForget(friendService.refreshAll())
-                                      }
-                                      // Discovery service — uses NebLink Server for discovery
-                                      val tsDiscovery = new nebflow.neblink.NeblinkDiscovery(
-                                        neblinkService,
-                                        cfg.port.value,
-                                        presenceService,
-                                        neblinkClient
-                                      )
-                                      neblinkDiscoveryHolder.set(Some(tsDiscovery))
-                                      neblinkService.setDiscoveryHook(
-                                        tsDiscovery.discoverCycle
-                                          .handleErrorWith(e =>
-                                            logger.debug(s"Discovery error: ${e.getMessage}").void
-                                          )
-                                      ) *> neblinkService.setDiagnostic(tsDiscovery.diagnosticScan) *>
-                                        neblinkService.addPeerChangeCallback(
-                                          wsHub.broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
-                                        ) *>
-                                        // Wire the WS data channel send function so other services
-                                        // (e.g. DropboxService) can send P2P messages via presenceService.
-                                        neblinkService.setSendDataFn((deviceId, channel, payload) =>
-                                          presenceService.sendData(deviceId, channel, payload)
-                                        ) *>
-                                        // Trigger an immediate discovery cycle now that the hook is wired.
-                                        neblinkService.sendSync(nebflow.neblink.SyncCommand.PeerDiscovered) *>
-                                        // Start NebLink Server heartbeat loop (if configured) — maintains
-                                        // session liveness and updates peer list every 30 seconds.
-                                        // The fiber is stored so it can be cancelled/restarted on hot-swap.
-                                        startHeartbeatLoop(tsDiscovery).void *>
-                                        // Create Dropbox service (cross-device messaging & file transfer)
-                                        nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
-                                          dropboxService =>
-                                            val sharedResourcesWithBridge =
-                                              sharedResourcesLive.copy(
-                                                bridgeManager = Some(bridgeManager),
-                                                neblinkService = Some(neblinkService),
-                                                friendService = clientWithFriends.map(_._2),
-                                                dropboxService = Some(dropboxService)
+                                        // 仍保留 boot 条件触发：无 client 时这一拉只会刷 warn 噪声
+                                        // （登录后由面板 REST / friend_event 兜底）。
+                                        if neblinkClient.isDefined then
+                                          dispatcher.unsafeRunAndForget(friendService.refreshAll())
+                                        // enrollment 只发「确保在跑」信号（单飞 + 幂等）；
+                                        // 登记必须落在 IO 链上（setRelayTunnelStarter 返回 IO，
+                                        // 写成裸语句会静默不执行）。
+                                        bootEnrollRefusal
+                                          .fold(IO.unit)(r => logger.warn(s"[neblink] $r — boot client not created")) *>
+                                          neblinkService.setRelayTunnelStarter(relayTunnel.ensure()) *>
+                                          // Discovery service — uses NebLink Server for discovery
+                                          neblinkService.setDiscoveryHook(
+                                            tsDiscovery.discoverCycle
+                                              .handleErrorWith(e =>
+                                                logger.debug(s"Discovery error: ${e.getMessage}").void
                                               )
-
-                                            // --- Create Scheduled Task Service before wsRoutes ---
-                                            // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
-                                            val scheduledTaskService = new ScheduledTaskService(
-                                              sharedResourcesWithBridge.dispatcher,
-                                              sharedResourcesWithBridge.scheduledTaskStore,
-                                              (sid, event) =>
-                                                wsRoutesHolder match
-                                                  case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
-                                                  case None => IO.unit,
-                                              wsHub.broadcast,
-                                              sessionStore
-                                            )
-                                            dispatcher.unsafeRunAndForget(scheduledTaskService.start())
-                                            val sharedResourcesFinal = sharedResourcesWithBridge.copy(
-                                              scheduledTaskService = Some(scheduledTaskService)
-                                            )
-
-                                            // --- Daemon Service (external process lifecycle) ---
-                                            val daemonService = new DaemonService(dispatcher)
-                                            val sharedResourcesWithDaemon = sharedResourcesFinal.copy(
-                                              daemonService = Some(daemonService)
-                                            )
-                                            // JVM shutdown hook: daemons must die with Nebflow even when the JVM
-                                            // is killed by SIGINT/SIGTERM (Ctrl+C) — cats-effect `.guarantee`
-                                            // finalizers are not guaranteed to run on abrupt termination. The
-                                            // shutdown hook always runs on JVM exit. Idempotent: stopAll on an
-                                            // already-stopped set is a no-op, so it is safe alongside the
-                                            // graceful path in `.guarantee` below.
-                                            //
-                                            // releaseBackend runs FIRST: on Ctrl+C the graceful path never
-                                            // executes, so without this the in-flight LLM HTTP requests (FS2/
-                                            // sttp via the JDK HttpClient) would keep running and the provider
-                                            // would keep generating (and billing) their responses. shutdownNow
-                                            // aborts them at the TCP level; close + dispatcher release tear down
-                                            // the pool. Release is idempotent (once-guarded in createLlm), so
-                                            // hook + graceful `.guarantee` cannot double-release.
-                                            Runtime.getRuntime.addShutdownHook(
-                                              new Thread(() =>
-                                                try releaseBackend.unsafeRunSync()
-                                                catch case _: Throwable => ()
-                                                try daemonService.stopAll().unsafeRunSync()
-                                                catch case _: Throwable => ()
-                                              )
-                                            )
-                                            // Auto-start daemons configured with autoStart=true
-                                            dispatcher.unsafeRunAndForget(
-                                              IO.sleep(2.seconds) *> daemonService
-                                                .autoStart(DaemonStore())
+                                          ) *> neblinkService.setDiagnostic(tsDiscovery.diagnosticScan) *>
+                                          neblinkService.addPeerChangeCallback(
+                                            // 既有事件帧 + fleet 哨兵（fleet 批 2026-11-01）：
+                                            // 「离线设备上线时自动补推」的唯一触发腿 = 既有 peer 变更
+                                            // 回调（零新增定时器）。协调器晚绑定（ref 现读）；哨兵内部
+                                            // 自会判「有没有待推送行」，无在飞任务时近乎零开销，异常
+                                            // 一律吞在协调器里，绝不打断名册腿。
+                                            // 🔴 两条腿**互不牵连**（fleet e2e ⑦ 的可诊断性修法）：修前是
+                                            // `broadcast *> 哨兵`，任一腿抛错都会把另一腿整条吞掉
+                                            // （`notifyPeersChanged` 的 handleErrorWith 是**整个回调**级的）
+                                            // ⇒ 广播失败就会让「上线补推」永久静默。现在各自 handleErrorWith，
+                                            // 哨兵腿的失败降级为 WARN，绝不影响既有 peerListChanged 帧。
+                                            wsHub
+                                              .broadcast(io.circe.Json.obj("type" -> "peerListChanged".asJson))
+                                              .handleErrorWith(e =>
+                                                logger
+                                                  .warn(s"[fleet] peerListChanged broadcast failed: ${e.getMessage}")
+                                              ) *>
+                                              // 🔴 晚绑定必须**每次事件现读**：`.get()` 是纯 Option 读，
+                                              // 写在回调构造处会被**求值一次**（此处协调器还没建：fleetUpdateRef
+                                              // 在下方 Dropbox 段之后才 set ⇒ fold 恒走 IO.unit ⇒ 哨兵腿注册即死）。
+                                              // e2e ⑦ 三轮实测坐实：回调触发、名册在线，却零 `sentinel consulted`。
+                                              // 现在把「读 ref」放进 IO 里（`IO(...).flatMap`），语义与注释一致。
+                                              IO(fleetUpdateRef.get())
+                                                .flatMap {
+                                                  case None =>
+                                                    logger.info(
+                                                      "[fleet] peer-change event seen but no fleet coordinator yet — sentinel skipped"
+                                                    )
+                                                  case Some(f) =>
+                                                    neblinkService.peers
+                                                      .flatMap { ps =>
+                                                        // 留痕（fleet e2e ⑦ 抓到的可诊断性缺口：修前哨兵不动作时
+                                                        // 日志里**一行痕迹都没有**，只能靠读源码猜是「回调没触发」
+                                                        // 还是「触发了但名册/在线态判掉」。这是 peer 变更事件
+                                                        // （非周期）上的一行，不是定时器噪声。
+                                                        logger.info(
+                                                          s"[fleet] peer-change sentinel sweep: peers=" +
+                                                            ps.map(p => s"${p.deviceId}(online=${p.lastSeen > 0})")
+                                                              .mkString(",")
+                                                        ) *> ps.traverse_(p => f.onPeerOnline(p.deviceId))
+                                                      }
+                                                }
                                                 .handleErrorWith(e =>
-                                                  logger.warn(s"Daemon auto-start failed: ${e.getMessage}")
+                                                  logger.warn(s"[fleet] sentinel callback failed: ${e.getMessage}")
                                                 )
-                                            )
-
-                                            TtsService.create().flatMap { ttsService =>
-                                              SttService.create().flatMap { sttService =>
-                                                EmberServerBuilder
-                                                  .default[IO]
-                                                  .withHost(cfg.host)
-                                                  .withPort(cfg.port)
-                                                  .withIdleTimeout(1.hour)
-                                                  .withHttpWebSocketApp { wsb =>
-                                                    val wsRoutes = new WebSocketRoutes(
-                                                      wsb,
-                                                      sessionService,
-                                                      agentService,
-                                                      configService,
-                                                      configRef,
-                                                      rateLimiter,
-                                                      token,
-                                                      fileTracker,
-                                                      sessionStore,
-                                                      wsHub,
-                                                      contextWindow,
-                                                      sharedResourcesWithDaemon,
-                                                      mcpManager,
-                                                      sttService = sttService
-                                                    )
-                                                    wsRoutesHolder = Some(wsRoutes)
-
-                                                    // REST API routes for CLI consumption
-                                                    val restApiRoutes = new RestApiRoutes(
-                                                      token,
-                                                      configRef,
-                                                      sharedResourcesWithDaemon,
-                                                      sessionStore,
-                                                      wsRoutes,
-                                                      neblinkService = Some(neblinkService),
-                                                      ttsService = ttsService,
-                                                      neblinkDiscovery = Some(tsDiscovery),
-                                                      gatewayPort = cfg.port.value,
-                                                      wsHub = wsHub
-                                                    )
-
-                                                    Router(
-                                                      "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
-                                                        .presenceWsRoutes(wsb)),
-                                                      // Logto AC+PKCE loopback callback (RFC 8252) —
-                                                      // root-level, outside /api: the provider's browser
-                                                      // redirect carries no gateway token.
-                                                      "/auth" -> restApiRoutes.authCallbackRoutes,
-                                                      // Static tree only — gzip must never wrap the
-                                                      // "/api" tree (SSE stream, presence WS).
-                                                      "/" -> GzipMiddleware(wsRoutes.routes)
-                                                    ).orNotFound
-                                                  }
-                                                  .build
-                                                  .use { _ =>
-                                                    // Wire bridge inject ref
-                                                    val wireBridge = wsRoutesHolder match
-                                                      case Some(wsRoutes) =>
-                                                        bridgeInjectRef.set(Some(wsRoutes.handleBridgeMessage))
-                                                      case None => IO.unit
-                                                    wireBridge *> (for
-                                                      _ <- logger.info(
-                                                        s"gateway listening on ${cfg.host}:${cfg.port}"
+                                          ) *>
+                                          // Wire the WS data channel send function so other services
+                                          // (e.g. DropboxService) can send P2P messages via presenceService.
+                                          neblinkService.setSendDataFn((deviceId, channel, payload) =>
+                                            presenceService.sendData(deviceId, channel, payload)
+                                          ) *>
+                                          // Trigger an immediate discovery cycle now that the hook is wired.
+                                          neblinkService.sendSync(nebflow.neblink.core.SyncCommand.PeerDiscovered) *>
+                                          // Start NebLink Server heartbeat loop (if configured) — maintains
+                                          // session liveness and updates peer list every 30 seconds.
+                                          // 2026-09-11 注释校正（复核 R2-d）：这里 `.void` 丢弃了 fiber，
+                                          // 并没有「存起来以便 hot-swap 时取消/重启」；实际语义是每拍经
+                                          // discovery.currentClient 读 live client（NeblinkDiscovery:78-82）
+                                          // ⇒ 无需重启，loop 本就跟随 hot-swap。
+                                          startHeartbeatLoop(tsDiscovery).void *>
+                                          // Create Dropbox service (cross-device messaging & file transfer)
+                                          nebflow.dropbox.DropboxService.create(neblinkService, wsHub).flatMap {
+                                            dropboxService =>
+                                              // 全设备统一更新（fleet 批 2026-11-01）：协调器装配。
+                                              // 三腿注入面（禁双实现）：
+                                              //   · listDevices —— 本机固定一行 + presence 名册（滤掉
+                                              //     本机自条目），在线态用**既有**新鲜度判据
+                                              //     `NeblinkService.isPeerOnline`（本件不重算窗口）；
+                                              //   · probe —— 既有 `/api/health`（版本 + `fleet` 自报）；
+                                              //   · pushRemote —— [[RemoteUpdateDispatch]]（P2P→中继的
+                                              //     唯一派发实现，与单台入口共用同一腿）。
+                                              val fleetUpdate: nebflow.core.hotupdate.FleetUpdateCoordinator =
+                                                new nebflow.core.hotupdate.FleetUpdateCoordinator(
+                                                  orchestrator = Some(updateOrchestrator),
+                                                  broadcast = wsHub.broadcast,
+                                                  listDevices = () =>
+                                                    for
+                                                      id <- neblinkService.identity
+                                                      peers <- neblinkService.peers
+                                                      cfgNb <- neblinkService.neblinkConfig
+                                                      now = System.currentTimeMillis()
+                                                    yield nebflow.core.hotupdate.FleetUpdateCoordinator
+                                                      .roster(
+                                                        localId = id.deviceId,
+                                                        localName = id.deviceName,
+                                                        localPlatform = id.platform,
+                                                        localVersion = Some(nebflow.Version.string),
+                                                        peers = peers,
+                                                        online = p =>
+                                                          nebflow.neblink.core.NeblinkService.isPeerOnline(
+                                                            p,
+                                                            now,
+                                                            cfgNb.syncIntervalSec
+                                                          )
+                                                      ),
+                                                  pushRemote = (peer, beta, clientRequestId) =>
+                                                    nebflow.neblink.relay.RemoteUpdateDispatch
+                                                      .dispatchToPeer(
+                                                        neblinkService,
+                                                        nebflow.shared.PeerInfo(
+                                                          deviceId = peer.deviceId,
+                                                          deviceName = peer.deviceName,
+                                                          platform = peer.platform,
+                                                          address = peer.address
+                                                        ),
+                                                        beta,
+                                                        Some(clientRequestId)
                                                       )
-                                                      _ <- logger.info(
-                                                        s"access URL: $baseUrl (token in ~/.nebflow/auth.json)"
-                                                      )
-                                                      // ── 热重启握手终态（[s7]，hot-restart 批设计 §3.3）──
-                                                      // successor.json（握手完成锚点）+ intent 归档
-                                                      // last-restart.json + 冷却窗锚点置位（R7）+
-                                                      // completed 帧（此刻重连尚未发生，帧为 best-
-                                                      // effort；验收 1 以 last-restart.json 存在为准）。
-                                                      // 普通启动（无 SuccessorContext）恒为 no-op。
-                                                      _ <- nebflow.core.hotrestart.SuccessorContext.get.traverse_ { ctx =>
-                                                        val newPid = ProcessHandle.current.pid
-                                                        nebflow.core.hotrestart.SuccessorGate
-                                                          .writeSuccessor(PathUtil.dataRoot, ctx.generation, newPid) *>
-                                                          nebflow.core.hotrestart.SuccessorGate
-                                                            .archiveIntent(PathUtil.dataRoot) *>
-                                                          nebflow.core.hotrestart.HotRestart.noteRestartCompleted() *>
-                                                          wsHub.broadcast(
-                                                            io.circe.Json.obj(
-                                                              "type" -> "restartStatus".asJson,
-                                                              "phase" -> "completed".asJson,
-                                                              "detail" -> s"successor pid $newPid serving (generation ${ctx.generation})".asJson
+                                                )
+                                              fleetUpdateRef.set(Some(fleetUpdate))
+                                              // 引擎重启后从上一次落盘任务恢复（在飞行标「失联」，
+                                              // 绝不假装还在跑）；幂等，HTTP/WS 首次读也会再碰一次。
+                                              dispatcher.unsafeRunAndForget(
+                                                fleetUpdate
+                                                  .restore()
+                                                  .handleErrorWith(e =>
+                                                    logger.warn(s"[fleet] restore failed at boot: ${e.getMessage}")
+                                                  )
+                                              )
+                                              val sharedResourcesWithBridge =
+                                                sharedResourcesLive.copy(
+                                                  bridgeManager = Some(bridgeManager),
+                                                  neblinkService = Some(neblinkService),
+                                                  fleetUpdate = Some(fleetUpdate),
+                                                  // 2026-09-11 boot 快照修复：slot 恒 Some（装配缝里
+                                                  // 明确记录「boot 快照不再参与存在性判据」）。
+                                                  friendService = nebflow.neblink.core.NeblinkWiring
+                                                    .sharedResourcesSlot(neblinkClient, friendService),
+                                                  dropboxService = Some(dropboxService)
+                                                )
+
+                                              // --- Create Scheduled Task Service before wsRoutes ---
+                                              // routeToAgent needs wsRoutesHolder, which is set below (same pattern as bridge)
+                                              // 认知二期产品批④：周报生成器——工作区 = 第一个本机非归档项目
+                                              // （ProjectStore.list 已滤归档/卸载；deviceOrigin 在场 = 本体在对端
+                                              // 盘，本机不写；实存探一下防悬空路径）。None = 跳过+日志，不静默写别处。
+                                              val weeklyReportWorkspace: IO[Option[os.Path]] =
+                                                nebflow.core.project.ProjectStore
+                                                  .list()
+                                                  .map(
+                                                    _.filter(pd =>
+                                                      nebflow.core.project.ProjectStore.deviceOrigin(pd).isEmpty
+                                                    )
+                                                  )
+                                                  .map(_.sortBy(_.name).headOption)
+                                                  .map(_.map(pd => os.Path(pd.workspace)))
+                                                  .map(_.filter(p => os.exists(p)))
+                                              // 附件落位（作者令 2026-11-03 20:02：文档库 = 项目注册
+                                              // 目录 `.stand/docs`）：热力图 SVG 落 ledger vault 的
+                                              // attachments/ 而非 workspace docs/。None（无本机项目）⇒
+                                              // 生成器回落 workspace docs/attachments，行为零变化。
+                                              val weeklyReportAttachments: IO[Option[os.Path]] =
+                                                nebflow.core.project.ProjectStore
+                                                  .list()
+                                                  .map(
+                                                    _.filter(pd =>
+                                                      nebflow.core.project.ProjectStore.deviceOrigin(pd).isEmpty
+                                                    )
+                                                  )
+                                                  .map(_.sortBy(_.name).headOption)
+                                                  .map(
+                                                    _.map(pd =>
+                                                      nebflow.core.project.ProjectStore.ledgerDocsAttachments(pd.name)
+                                                    )
+                                                  )
+                                              val weeklyReport = new nebflow.core.scheduler.WeeklyReportGenerator(
+                                                sharedResourcesWithBridge.scheduledTaskStore,
+                                                sharedResourcesWithBridge.doneRecordStore,
+                                                weeklyReportWorkspace,
+                                                wsHub.broadcast,
+                                                (PathUtil.dataRoot / "weekly-report" / "state.json").toNIO,
+                                                // §6.4 回填：周报 Ready 收件箱入账到当前活跃会话
+                                                // （待办面会话归属与既有待办同语义；无活跃会话 ⇒
+                                                // 生成器记日志跳过入账，报告与广播不受影响）。
+                                                sessionStore.getActiveId,
+                                                weeklyReportAttachments
+                                              )
+                                              val scheduledTaskService = new ScheduledTaskService(
+                                                sharedResourcesWithBridge.dispatcher,
+                                                sharedResourcesWithBridge.scheduledTaskStore,
+                                                (sid, event) =>
+                                                  wsRoutesHolder match
+                                                    case Some(routes) => routes.handleBridgeAgentCommand(sid, event)
+                                                    case None => IO.unit,
+                                                wsHub.broadcast,
+                                                sessionStore,
+                                                weeklyReport = Some(weeklyReport)
+                                              )
+                                              dispatcher.unsafeRunAndForget(scheduledTaskService.start())
+                                              val sharedResourcesFinal = sharedResourcesWithBridge.copy(
+                                                scheduledTaskService = Some(scheduledTaskService)
+                                              )
+                                              // device-mail 批（2026-09-15）：跨设备 Nebula
+                                              // 邮件的收件腿装配——注入本机 Nebula 会话需要
+                                              // SharedResources（root 会话解析单点）与前端广播口。
+                                              // 与 FriendMessageTool/RemoteExecutor 同款单例缝；
+                                              // 未接线 ⇒ 注入路径显式失败（不静默）。
+                                              nebflow.neblink.social.DeviceMailInbox.initialize(
+                                                sharedResourcesFinal,
+                                                sharedResourcesFinal.neblinkService,
+                                                (json: io.circe.Json) => wsHub.broadcast(json),
+                                                // 收件回执出口（契约 v2 ④）：与好友消息 ack
+                                                // **同一缝、同一实现点**（`sendAckLive` 的
+                                                // live 读隧道，见上面的 friendService ackSender）。
+                                                // 🔴 F4（2026-09-18 回执诚实性批）：修前的
+                                                // `case None => IO.unit` 把「隧道对象不在册」
+                                                // 吞成成功 ⇒ `DeviceMailInbox` 照打
+                                                // `ack sent to the server`（假陈述，缺陷 B 的
+                                                // 放大因）。现在如实返回 `AckOutcome`
+                                                // （F5 据此分支记账）。
+                                                Some { eventId =>
+                                                  nebflow.neblink.relay.NeblinkRelayTunnel.sendAckLive(
+                                                    neblinkService.relayTunnelOpt,
+                                                    eventId
+                                                  )
+                                                }
+                                              )
+
+                                              // v2.1 阶段 1（2026-10-09 实施批）：设备腿 delegate
+                                              // 通道收件面装配——spawn（本设备作为执行设备）与
+                                              // result/accept（本设备作为编排权威）的 presence 数据
+                                              // 通道 handler。与 DeviceMailInbox 同缝同序（先例）；
+                                              // 未接线（NebLink 未配置）⇒ initialize 内显式 WARN +
+                                              // 跳过（DeviceDelegate.initialize 自带 fail-soft 门）。
+                                              // F2 接线（process-recorder 批 2026-11-01）：第二参传
+                                              // **进程级广播函数值**（`wsHub.broadcast`，窄端口——禁传
+                                              // WsHub 本体，core 禁 import gateway 门禁）⇒ 设备腿
+                                              // （腿⑥）spawn 的本地会话帧经 routeWsSend 盖
+                                              // nodeSessionId 后进 hub：live 广播 + ProcessRecorder
+                                              // 落盘同源，设备侧会话面板正文不再空白。
+                                              nebflow.core.delegate.DeviceDelegate.initialize(
+                                                sharedResourcesFinal,
+                                                Some((json: io.circe.Json) => wsHub.broadcast(json))
+                                              )
+
+                                              // identity-sync 批（2026-10-23）：智能体名称/头像
+                                              // 跨引擎收敛通道的收件面装配——数据通道 handler +
+                                              // peer 变化对账推。与 DeviceDelegate 同缝同序；
+                                              // 未接线（NebLink 未配置）⇒ initialize 内显式
+                                              // WARN + 跳过（单机形态零行为）。
+                                              nebflow.neblink.sync.AgentIdentitySync.initialize(
+                                                Some(neblinkService),
+                                                (json: io.circe.Json) => wsHub.broadcast(json)
+                                              )
+
+                                              // 台账 #929（后台子智能体跨设备透明 · 2026-10-26）：
+                                              // 远端 delegate 会话摘要投影通道的收发面装配——
+                                              // 数据通道 handler + SubAgentTaskStore 写后外推钩 +
+                                              // peer 变化对账推/在线角标重播。与 AgentIdentitySync
+                                              // 同缝同序；未接线（NebLink 未配置）⇒ initialize 内
+                                              // 显式 WARN + 跳过（单机形态零行为，写钩不装）。
+                                              nebflow.neblink.sync.AgentSessionSync.initialize(
+                                                Some(neblinkService),
+                                                sharedResourcesFinal.subAgentTaskStore,
+                                                (json: io.circe.Json) => wsHub.broadcast(json)
+                                              )
+
+                                              // profile-sync 批（2026-11-06，作者令「描述信息需要
+                                              // 支持云同步」）：四条描述（好友 bio 缓存 / 我的群备注 /
+                                              // 群介绍缓存 / selfBio）的跨设备收敛通道——数据通道
+                                              // handler + peer 变化对账推。与 AgentIdentitySync /
+                                              // AgentSessionSync 同缝同序；Ref 由 FriendService 构造
+                                              // 体内自注册（`ProfileSync.attachDescriptions`），本行只
+                                              // 接收发面。未接线（NebLink 未配置）⇒ initialize 内显式
+                                              // WARN + 跳过（状态出口全报 local-only）。
+                                              nebflow.neblink.social.ProfileSync.initialize(
+                                                Some(neblinkService),
+                                                (json: io.circe.Json) => wsHub.broadcast(json)
+                                              )
+
+                                              // --- Daemon Service (external process lifecycle) ---
+                                              val daemonService = new DaemonService(dispatcher)
+                                              val sharedResourcesWithDaemon = sharedResourcesFinal.copy(
+                                                daemonService = Some(daemonService)
+                                              )
+                                              // JVM shutdown hook: daemons must die with Stand even when the JVM
+                                              // is killed by SIGINT/SIGTERM (Ctrl+C) — cats-effect `.guarantee`
+                                              // finalizers are not guaranteed to run on abrupt termination. The
+                                              // shutdown hook always runs on JVM exit. Idempotent: stopAll on an
+                                              // already-stopped set is a no-op, so it is safe alongside the
+                                              // graceful path in `.guarantee` below.
+                                              //
+                                              // releaseBackend runs FIRST: on Ctrl+C the graceful path never
+                                              // executes, so without this the in-flight LLM HTTP requests (FS2/
+                                              // sttp via the JDK HttpClient) would keep running and the provider
+                                              // would keep generating (and billing) their responses. shutdownNow
+                                              // aborts them at the TCP level; close + dispatcher release tear down
+                                              // the pool. Release is idempotent (once-guarded in createLlm), so
+                                              // hook + graceful `.guarantee` cannot double-release.
+                                              Runtime.getRuntime.addShutdownHook(
+                                                new Thread(() =>
+                                                  try releaseBackend.unsafeRunSync()
+                                                  catch case _: Throwable => ()
+                                                  try daemonService.stopAll().unsafeRunSync()
+                                                  catch case _: Throwable => ()
+                                                )
+                                              )
+                                              // Auto-start daemons configured with autoStart=true
+                                              // 统一 daemon 批 2026-10-29：感知 dock 两半腿——prepare
+                                              // （upsert「感知守护进程」托管条目，autoStart=true）前置于
+                                              // 既有 autoStart（家族语义把它与用户 daemon 一起拉起）；
+                                              // handshake（/health 轮询，10s 有界）随后——失败只 WARN
+                                              // 绝不阻塞启动（原 perceptionBoot 失败契约逐字）。
+                                              // restartOnExit/端口健康探针/pid marker/stopAll 全部为
+                                              // 既有心跳语义。
+                                              //
+                                              // seal 批（2026-11-03，作者令「邮件和心跳进程功能，进入封存，
+                                              // 发布剔除，本地sbt run 可用。」）：本扇出被**两族开关分别**包住——
+                                              //   · Mail 关 ⇒ `perception-daemon` 的 prepare/upsert 不跑（不写
+                                              //     boot token、不登记托管条目；`prepare` 自身也读同一开关，双保险）；
+                                              //   · Heartbeat 关 ⇒ daemon 家族 `autoStart` 不跑（零 spawn、零
+                                              //     reader/monitor/health/low-rate-takeover/auto-restart 纤维），
+                                              //     随之 handshake 也不跑（没有可握手的进程）。
+                                              // 关态各留一行 `[seal]` 说明日志；复活 = `-D…=true`（见 Defaults）。
+                                              dispatcher.unsafeRunAndForget(
+                                                IO.sleep(2.seconds) *>
+                                                  // 收尸腿（两族封存与否都跑，一次性、零常驻）：上一实例被
+                                                  // SIGKILL 时遗留的子进程（含 perception-daemon）继续跑会让
+                                                  // 「封存」名不副实；只 kill marker + startTime 对得上的
+                                                  // 本引擎子进程（用户手起的服务永不触碰）。心跳开启时
+                                                  // autoStart 内部会再收一次（marker 已清 ⇒ no-op）。
+                                                  daemonService
+                                                    .reclaimStaleOrphans()
+                                                    .handleErrorWith(e =>
+                                                      logger.warn(s"daemon stale reclaim failed: ${e.getMessage}")
+                                                    ) *>
+                                                  ProcessSeal
+                                                    .whenEnabledOr(
+                                                      ProcessSeal.Realm.Mail,
+                                                      "perception-daemon（dock prepare/upsert）"
+                                                    )(Option.empty[PerceptionDaemonDock.Upserted])(
+                                                      PerceptionDaemonDock
+                                                        .prepare(DaemonStore(), cfg.port.value)
+                                                        .handleErrorWith(e =>
+                                                          logger
+                                                            .warn(
+                                                              s"perception daemon dock prepare failed: ${e.getMessage}"
                                                             )
-                                                          ) *>
-                                                          logger.info(
-                                                            s"[hot-restart] handover complete — successor pid $newPid serving, intent archived (generation ${ctx.generation}, old pid ${ctx.oldPid})"
+                                                            .as(None)
+                                                        )
+                                                        .flatMap(up =>
+                                                          ProcessSeal
+                                                            .whenEnabledOr(
+                                                              ProcessSeal.Realm.Heartbeat,
+                                                              "DaemonService.autoStart（daemon 家族 boot 扇出）"
+                                                            )(false)(
+                                                              daemonService
+                                                                .autoStart(DaemonStore())
+                                                                .handleErrorWith(e =>
+                                                                  logger
+                                                                    .warn(s"Daemon auto-start failed: ${e.getMessage}")
+                                                                )
+                                                                .as(true)
+                                                            )
+                                                            .flatMap(launched =>
+                                                              if launched then
+                                                                up.traverse_(PerceptionDaemonDock.handshake)
+                                                                  .handleErrorWith(e =>
+                                                                    logger.warn(
+                                                                      s"perception daemon handshake failed: ${e.getMessage}"
+                                                                    )
+                                                                  )
+                                                              else IO.unit
+                                                            )
+                                                        )
+                                                    )
+                                              )
+
+                                              // Device mounts retain preflight/path checks and run once,
+                                              // with the same wired resources used by live device tools.
+                                              val startupRemoteMount =
+                                                mountStartupProjects(sharedResourcesWithBridge, remote = true) *>
+                                                  startupRemoteRecovery *> startupProjectWake(remote = true)
+                                              // Start the periodic scanner only after both mount/recovery
+                                              // phases, so it cannot settle remote crash residues first.
+                                              startupRemoteMount *> projectTtlScanner *> TtsService.create().flatMap { ttsService =>
+                                                SttService.create().flatMap { sttService =>
+                                                  // R-1b conn-guard（2026-09-22）：per-IP WS 看护 + 摄取超时
+                                                  // 显式化 + 连接面快照/预警 + /health/conn（设计件 §C④，
+                                                  // 20260917_gateway-connection-hardening.md）。引用点：下方
+                                                  // builder 钩子 / WS·REST 构造 / 快照循环 / requestTap。
+                                                  val connGuardLogger = NebflowLogger.forName("nebflow.conn-guard")
+                                                  // 控制台单实例批（2026-10-27）：接管注册表——
+                                                  // 推送面 = wsHub.sendTo（同一条 WS 出站面），总闸
+                                                  // env CONSOLE_SINGLE_INSTANCE（off ⇒ 全 no-op 零漂移，
+                                                  // 缺省启用）。不重启引擎不生效，随下一波上线。
+                                                  val consoleTakeover = ConsoleTakeover(
+                                                    wsHub.sendTo,
+                                                    NebflowLogger.forName("nebflow.console-takeover")
+                                                  )
+                                                  logger.info(
+                                                    s"console-takeover: single-instance gate " +
+                                                      (if ConsoleTakeover.defaultEnabled then "on"
+                                                       else "OFF (zero-drift)")
+                                                  )
+                                                  ConnGuard.create(connGuardLogger).flatMap { connGuard =>
+                                                    EmberServerBuilder
+                                                      .default[IO]
+                                                      .withHost(cfg.host)
+                                                      .withPort(cfg.port)
+                                                      // 2026-09-22 watchdog repair: 默认 maxConnections=1024
+                                                      // 被某个对端的 presence 拨号风暴（~1 条/秒、请求永
+                                                      // 不被读取也永不关闭）耗尽 → parJoin(1024) 饿死连接
+                                                      // 摄取 → 整个 HTTP 面失聪（健康检查 HTTP=000）。
+                                                      // 4096 = 4 倍余量；idleTimeout 1h→5min 加速回收僵
+                                                      // 死连接（presence WS 心跳 5s/10s，不受影响）。
+                                                      // R-1b 返工：值改单源引用（ConnGuardConfig.
+                                                      // EmberMaxConnections），供 conn-guard 的「连接代理
+                                                      // 预警腿」按同一上限对齐口径（判词项 (c)）。
+                                                      .withMaxConnections(ConnGuardConfig.EmberMaxConnections)
+                                                      // R-1a 落定的 idle 值改单源引用（值不变，零行为变更）。
+                                                      .withIdleTimeout(ConnGuardConfig.IdleTimeout)
+                                                      // R-1b：摄取层超时显式化——库默认 javap 钉死（header 5s /
+                                                      // shutdown 30s：http4s-server_3-0.23.30 package$defaults$ 与
+                                                      // ember Defaults$）。零行为变更；防上游默认漂移 + 摄取面可
+                                                      // 检索（设计件 §E.3「留给实施批钉」项）。
+                                                      .withRequestHeaderReceiveTimeout(
+                                                        ConnGuardConfig.HeaderReceiveTimeout
+                                                      )
+                                                      .withShutdownTimeout(ConnGuardConfig.ShutdownTimeout)
+                                                      // 连接级异常钩子（0.23.30 仅有的官方连接级缝，设计件 §B.4/§C④-3）：
+                                                      // ReadTimeout = 闲置回收（5min idle 的常规动作）；RequestHeaders
+                                                      // Timeout = 头部摄取超时（慢速摄取/风暴形状信号）；写失败 = 对端
+                                                      // 断开。逐条落 stand.log——把「静默失联」变可留痕。未匹配异常
+                                                      // 走 ember 默认处理，行为零改动。（注：RequestHeadersTimeout 类
+                                                      // 本体 private[ember] ⇒ 以类名守卫判别，不用类型模式。）
+                                                      .withConnectionErrorHandler {
+                                                        case e
+                                                            if e.getClass.getSimpleName.contains(
+                                                              "RequestHeadersTimeout"
+                                                            ) =>
+                                                          connGuardLogger.warn(
+                                                            s"conn-guard: ember request-headers-timeout (slow ingestion, ${ConnGuardConfig.HeaderReceiveTimeout}): ${String.valueOf(e.getMessage)}"
+                                                          )
+                                                        case e: org.http4s.ember.core.EmberException.ReadTimeout =>
+                                                          connGuardLogger.debug(
+                                                            s"conn-guard: ember read-timeout (idle reap, ${ConnGuardConfig.IdleTimeout}): ${String.valueOf(e.getMessage)}"
                                                           )
                                                       }
-                                                      // Register bridge as WsHub listener for agent events
-                                                      _ <- wsHub.register(json =>
-                                                        val sessionId =
-                                                          json.hcursor.downField("sessionId").as[String].getOrElse("")
-                                                        if sessionId.nonEmpty then
-                                                          bridgeManager.dispatchAgentEvent(sessionId, json)
-                                                        else IO.unit
-                                                      )
-                                                      _ <- bridgeManager.startAll.start // start in background
-                                                      // --- Background: LLM provider health monitoring ---
-                                                      _ <- healthMonitor.start().void.start
-                                                      // --- Background: TaskStuckWatcher (P0 阶段 3) ---
-                                                      // 卡死识别与恢复：周期扫 agentRegistry，Processing 态且 turn 活动
-                                                      // 超阈值（默认 10min，可配 stuckThresholdMs）→ 子 agent 发 Stop 走
-                                                      // BackoffSupervisor 退避重启；根 agent 广播 taskStuck 事件由用户决定。
-                                                      _ <- nebflow.core.processor.TaskStuckWatcher
-                                                        .run(
-                                                          sharedResourcesWithDaemon,
+                                                      .withOnWriteFailure { (reqOpt, _resp, t) =>
+                                                        connGuardLogger.debug(
+                                                          s"conn-guard: ember write-failure to ${reqOpt
+                                                              .fold("?")(r => ConnGuard.normalizeIp(r.remoteAddr))}: ${t.toString}"
+                                                        )
+                                                      }
+                                                      .withHttpWebSocketApp { wsb =>
+                                                        val wsRoutes = new WebSocketRoutes(
+                                                          wsb,
+                                                          sessionService,
+                                                          agentService,
+                                                          configService,
+                                                          configRef,
+                                                          rateLimiter,
+                                                          tokenRef,
+                                                          gatewaySessions,
+                                                          fileTracker,
+                                                          sessionStore,
                                                           wsHub,
-                                                          interval = nebflow.shared.Defaults.StuckWatcherIntervalSec.seconds,
-                                                          thresholdMs =
-                                                            config.stuckThresholdMs.getOrElse(nebflow.shared.Defaults.StuckThresholdMs)
-                                                        )
-                                                        .start
-                                                      // --- Background: FreezeScheduler (freeze-schedule) ---
-                                                      // 冻结恢复扫描：周期向 Frozen 态 agent 发 CheckFreezeGate，
-                                                      // 出冻结段则恢复挂起的 dispatch（仿 TaskStuckWatcher 模式：
-                                                      // 错误自愈 + `>>` 递归栈安全）。Frozen 态 TaskStuckWatcher
-                                                      // 天然豁免（只扫 Processing）。
-                                                      _ <- nebflow.core.processor.FreezeScheduler
-                                                        .run(
+                                                          contextWindow,
                                                           sharedResourcesWithDaemon,
-                                                          interval = nebflow.shared.Defaults.FreezeCheckIntervalSec.seconds
+                                                          mcpManager,
+                                                          sttService = sttService,
+                                                          nfTicketStore = nfTicketStore,
+                                                          nfPathPolicy = nfPathPolicy,
+                                                          connGuard = connGuard,
+                                                          takeover = consoleTakeover
                                                         )
-                                                        .start
-                                                      // --- P0（2026-08-30）：skip 持久化恢复 ---
-                                                      // 重启前「跳过本次」若未到期（skipUntil > now），恢复进内存
-                                                      // ref——WS/REST 的 freezeState.skipped 随即可见，输入栏不再
-                                                      // 重新冻结；已过期则清理盘上残留（跳过非永久，下一段照常）。
-                                                      _ <- nebflow.core.schedule.FreezeSchedule
-                                                        .loadSkipUntil(nebflow.core.PathUtil.dataRoot)
-                                                        .flatMap {
-                                                          case Some(t) if t > System.currentTimeMillis() =>
-                                                            sharedResourcesWithDaemon.freezeSkipUntilRef.set(Some(t)) *>
-                                                              logger.info(
-                                                                s"Freeze skip restored from disk (skipUntil=$t)"
-                                                              )
-                                                          case Some(_) =>
-                                                            nebflow.core.schedule.FreezeSchedule
-                                                              .persistSkip(nebflow.core.PathUtil.dataRoot, None)
-                                                              .handleErrorWith(e =>
-                                                                logger.warn(
-                                                                  s"Failed to clean expired freeze skip: ${e.getMessage}"
-                                                                )
-                                                              )
+                                                        wsRoutesHolder = Some(wsRoutes)
+
+                                                        // Canvas ask mode（2026-10-28 实施批）：
+                                                        // ① 装配层服务（注册表 + 活体三路检索源），
+                                                        // ② AskHandoffPort 投递面（ensureAgent 私有，
+                                                        //    唯一装配点在 wsRoutes）。spec 构造面不装，
+                                                        //    端口保持 fail-closed。
+                                                        nebflow.core.ask.AskGatewayServices.install(
+                                                          nebflow.core.ask.AskServices(
+                                                            registry = new nebflow.core.ask.AskSessionRegistry(
+                                                              nebflow.shared.PathUtil.dataRoot
+                                                            ),
+                                                            sources = nebflow.core.ask.AskLiveSources.make(
+                                                              sharedResourcesWithDaemon.neblinkService,
+                                                              nebflow.shared.PathUtil.dataRoot
+                                                            ),
+                                                            prompts = new nebflow.core.ask.AskPromptCache()
+                                                          )
+                                                        )
+                                                        wsRoutes.installAskHandoffFace()
+
+                                                        // REST API routes for CLI consumption
+                                                        val restApiRoutes = new RestApiRoutes(
+                                                          tokenRef = tokenRef,
+                                                          sessions = gatewaySessions,
+                                                          faces = portalHostFaces,
+                                                          configRef = configRef,
+                                                          sharedResources = sharedResourcesWithDaemon,
+                                                          sessionStore = sessionStore,
+                                                          wsRoutes = wsRoutes,
+                                                          neblinkService = Some(neblinkService),
+                                                          ttsService = ttsService,
+                                                          neblinkDiscovery = Some(tsDiscovery),
+                                                          gatewayPort = cfg.port.value,
+                                                          wsHub = wsHub,
+                                                          connGuard = connGuard,
+                                                          canvasTakeover = consoleTakeover
+                                                        )
+
+                                                        // Phase 3a lifted slice：`Router(...).orNotFound`
+                                                        // 提出为 val —— 桥接层（portal tunnel 的
+                                                        // http_request 面）与服务器共用**同一切片**：
+                                                        //   · 含 GzipMiddleware 的 "/" 静态树压缩（行为
+                                                        //     与直连面完全一致）；
+                                                        //   · 🔴 不含外层 ConnGuard.requestTap —— requestTap
+                                                        //     只计数不拦截，若切片里保留它，隧道请求会被
+                                                        //     requestTap 与桥接层 observeTunnelRequest
+                                                        //     双重计数（污染观测面）；隧道请求由桥接层
+                                                        //     单点计数（信封 IP 键）。
+                                                        val gatewayApp: org.http4s.HttpApp[IO] = Router(
+                                                          "/api" -> (chatRoutes.routes <+> restApiRoutes.routes <+> restApiRoutes
+                                                            .presenceWsRoutes(wsb) <+> StaticRoutes
+                                                            .pluginAssetsRoutes(
+                                                              tokenRef,
+                                                              gatewaySessions,
+                                                              // canvas-media Wave1 (OD-2=V-C): the
+                                                              // Trusted-only resolver feeding the
+                                                              // tokenized plugin-asset route.
+                                                              name =>
+                                                                nebflow.core.plugin.PluginRegistry
+                                                                  .scan()
+                                                                  .map(
+                                                                    _.find(p => p.name == name && p.trust.trusted)
+                                                                      .map(p => os.Path(p.dir))
+                                                                  )
+                                                            )),
+                                                          // Logto AC+PKCE loopback callback (RFC 8252) —
+                                                          // root-level, outside /api: the provider's browser
+                                                          // redirect carries no gateway token.
+                                                          "/auth" -> restApiRoutes.authCallbackRoutes,
+                                                          // Static tree only — gzip must never wrap the
+                                                          // "/api" tree (SSE stream, presence WS).
+                                                          // Phase 3b: the `/?ticket=` redemption face is
+                                                          // composed AHEAD of the gzipped static tree —
+                                                          // its match predicate ("query carries a non-empty
+                                                          // ticket") leaves every plain `GET /` falling
+                                                          // through to the unchanged static tree.
+                                                          "/" -> (ConsoleTicketRoutes.ticketRoutes(
+                                                            gatewaySessions,
+                                                            portalHostFaces,
+                                                            // live network-id read for the session's
+                                                            // boundNetworkId snapshot ("" when not enrolled)
+                                                            neblinkService.neblinkConfig.map(
+                                                              _.neblinkServer.map(_.networkId).getOrElse("")
+                                                            ),
+                                                            logger
+                                                          ) <+> GzipMiddleware(wsRoutes.routes))
+                                                        ).orNotFound
+                                                        portalHostFaces.bindHttpApp(gatewayApp)
+                                                        portalHostFaces.bindTunnelGuard(
+                                                          nebflow.neblink.portal.PortalHostFaces.TunnelGuard(
+                                                            (ip, path) => connGuard.observeTunnelRequest(ip, path),
+                                                            (ip, path) => connGuard.checkTunnel(ip, path),
+                                                            connGuard.config.tunnelWindowSec
+                                                          )
+                                                        )
+                                                        // R-1b：请求级 per-IP 观测 tap（§C④-2，只计数不拦截——
+                                                        // WS 升级面的准入由各受理点 connGuard.checkWs 把门）。
+                                                        ConnGuard.requestTap(connGuard)(gatewayApp)
+                                                      }
+                                                      .build
+                                                      .use { _ =>
+                                                        // Wire bridge inject ref
+                                                        val wireBridge = wsRoutesHolder match
+                                                          case Some(wsRoutes) =>
+                                                            bridgeInjectRef.set(
+                                                              Some(wsRoutes.handleBridgeMessage(_, _, _, _, _))
+                                                            )
                                                           case None => IO.unit
-                                                        }
-                                                      _ <-
-                                                        if GatewayConfig.noBrowser ||
-                                                          nebflow.core.HeadlessMode.enabled
-                                                        then IO.unit
-                                                        else openBrowser(url)
-                                                      // --- Background init: skills dir, MCP servers ---
-                                                      _ <- SkillService
-                                                        .ensureDefaults()
-                                                        .handleErrorWith(e =>
-                                                          logger.warn(s"Skills init failed: ${e.getMessage}")
-                                                        )
-                                                        .start
-                                                      // --- Background init: MCP servers ---
-                                                      _ <- startMcpServers(config, mcpManager, agentLibrary)
-                                                        .flatMap { _ =>
-                                                          // Broadcast updated MCP server list to all connected clients
-                                                          mcpManager.listServers
-                                                            .map(_.map { case (id, enabled) =>
-                                                              io.circe.Json
-                                                                .obj("id" -> id.asJson, "enabled" -> enabled.asJson)
-                                                            })
-                                                            .flatMap { mcpJson =>
-                                                              wsHub.broadcast(
-                                                                io.circe.Json.obj(
-                                                                  "type" -> "mcpServersUpdate".asJson,
-                                                                  "mcpServers" -> mcpJson.asJson
+                                                        wireBridge *> (for
+                                                          _ <- logger.info(
+                                                            s"gateway listening on ${cfg.host}:${cfg.port}"
+                                                          )
+                                                          // W1 (mobile-quickwins 2026-10-20): announce
+                                                          // which static tree the "/" face resolves to —
+                                                          // bundled jar dist / fresh disk dist / dev tree.
+                                                          _ <- logger.info(StaticRoutes.staticSourceDescription)
+                                                          _ <- logger.info(
+                                                            s"access URL: $baseUrl (token in ~/.nebflow/auth.json)"
+                                                          )
+                                                          // R-1b conn-guard：60s 连接面快照 + warnPct 预警
+                                                          // （§C④-1/5）。不经 HTTP 面——连接层被灌死时这条
+                                                          // 观察者路仍照常输出，正是失联取证需要的独立观察者。
+                                                          _ <- connGuard.snapshotLoop.start
+                                                          // ── 插件装载健康摘要（P1 静默缩容可见性，2026-09-10）──
+                                                          // 启动完成即聚合输出一次：总包数/载入数/目录可见数 +
+                                                          // 拒载清单 + 未批准清单 + digest 漂移清单（一行一条）。
+                                                          // 干净场景零输出（healthSummary 返回 None）；同状态去重，
+                                                          // 重扫 tick 不重复刷屏（PluginRegistry.logHealthSummary）。
+                                                          // best-effort：摘要失败只 WARN，不影响启动。
+                                                          _ <- nebflow.core.plugin.PluginRegistry
+                                                            .logHealthSummary("startup")
+                                                            .handleErrorWith(e =>
+                                                              logger
+                                                                .warn(s"plugin health summary failed: ${e.getMessage}")
+                                                            )
+                                                          // ── 默认集种子↔实例漂移摘要（漂移可见面，2026-10-29 安全批 ④c）──
+                                                          // 「种子 ≠ 实例且无信任记录/有漂移」的默认集包一行一名——
+                                                          // 无基准漂移从不可见变可决策。挂接点与上一条相同；干净
+                                                          // 场景零输出；同状态去重（SeedService.logDefaultSetDriftSummary）。
+                                                          _ <- nebflow.core.seed.SeedService
+                                                            .logDefaultSetDriftSummary("startup")
+                                                            .handleErrorWith(e =>
+                                                              logger.warn(s"seed drift summary failed: ${e.getMessage}")
+                                                            )
+                                                          // ── 热重启握手终态（[s7]，hot-restart 批设计 §3.3）──
+                                                          // successor.json（握手完成锚点）+ intent 归档
+                                                          // last-restart.json + 冷却窗锚点置位（R7）+
+                                                          // completed 帧（此刻重连尚未发生，帧为 best-
+                                                          // effort；验收 1 以 last-restart.json 存在为准）。
+                                                          // 普通启动（无 SuccessorContext）恒为 no-op。
+                                                          //
+                                                          // **批 2 G3 追加：绑定后健康自检（交接后短窗口内的判据）**
+                                                          // 真端口已在手 ⇒ 第三/四档对**真端口**取证（真 socket +
+                                                          // 真 HTTP + 真载荷），不需要探针端点。判据通过 ⇒ 下面既有的
+                                                          // 终态链原样执行；判据失败 ⇒ **不写「已完成」**，改为：
+                                                          // ① 指针化回滚（切回上一版 + 复起上一版，走既有后继协议）
+                                                          // ② 落盘 rollback.json（诊断面）+ restartStatus 的 rolled-back 帧
+                                                          // ③ 本进程退出，把端口让给上一版（既有 let-handover-machinery）
+                                                          // fail-open：自检自身异常/无期望版本 ⇒ `unverified`（大声记名，
+                                                          // 不当失败）——既有启动链零回归；见 `HealthCheck`。
+                                                          _ <- nebflow.core.hotrestart.SuccessorContext.get.traverse_ {
+                                                            ctx =>
+                                                              val newPid = ProcessHandle.current.pid
+                                                              val complete = nebflow.core.hotrestart.SuccessorGate
+                                                                .writeSuccessor(
+                                                                  PathUtil.dataRoot,
+                                                                  ctx.generation,
+                                                                  newPid
+                                                                ) *>
+                                                                nebflow.core.hotrestart.SuccessorGate
+                                                                  .archiveIntent(PathUtil.dataRoot) *>
+                                                                nebflow.core.hotrestart.HotRestart
+                                                                  .noteRestartCompleted() *>
+                                                                wsHub.broadcast(
+                                                                  io.circe.Json.obj(
+                                                                    "type" -> "restartStatus".asJson,
+                                                                    "phase" -> "completed".asJson,
+                                                                    "detail" -> s"successor pid $newPid serving (generation ${ctx.generation})".asJson
+                                                                  )
+                                                                ) *>
+                                                                logger.info(
+                                                                  s"[hot-restart] handover complete — successor pid $newPid serving, intent archived (generation ${ctx.generation}, old pid ${ctx.oldPid})"
+                                                                )
+                                                              val installDir = nebflow.core.hotrestart.InstallPointer
+                                                                .defaultInstallDir()
+                                                              nebflow.core.hotrestart.InstallPointer
+                                                                .expectedVersion(installDir)
+                                                                .flatMap { expected =>
+                                                                  nebflow.core.hotrestart.HealthCheck
+                                                                    .afterBind(
+                                                                      cfg.port.value,
+                                                                      sharedResources.healthMonitor,
+                                                                      expected,
+                                                                      nebflow.core.hotrestart.HealthCheck.Timeouts.T3PortServingMs,
+                                                                      nebflow.core.hotrestart.HealthCheck.Timeouts.T4VersionMatchMs,
+                                                                      nebflow.core.hotrestart.HealthCheck.Timeouts.PollMs
+                                                                    )
+                                                                    .handleErrorWith(e =>
+                                                                      logger
+                                                                        .warn(
+                                                                          s"[hotupd] post-bind health self-check raised (treated as unverified, boot continues): ${e.getMessage}"
+                                                                        )
+                                                                        .as(nebflow.core.hotrestart.HealthReport(Nil))
+                                                                    )
+                                                                    .flatMap { report =>
+                                                                      if report.isHealthy then
+                                                                        report.unverified.traverse_(u =>
+                                                                          logger.warn(
+                                                                            s"[hotupd] post-bind health tier UNVERIFIED (${u.tier.wire}): ${u.detail} — recorded, never reported as pass"
+                                                                          )
+                                                                        ) *> complete
+                                                                      else
+                                                                        val reason =
+                                                                          s"post-bind health self-check failed: ${report.failed.map(_.detail).getOrElse("unknown")} [${report.detail}]"
+                                                                        val rollback =
+                                                                          new nebflow.core.hotupdate.Rollback(
+                                                                            installDir = installDir,
+                                                                            dataRoot = PathUtil.dataRoot,
+                                                                            host = ctx.host,
+                                                                            port = ctx.port
+                                                                          )
+                                                                        logger.error(
+                                                                          s"[hotupd] $reason — rolling back to the retained previous version (pointer-authoritative)"
+                                                                        ) *>
+                                                                          rollback.run(reason).flatMap { outcome =>
+                                                                            wsHub.broadcast(
+                                                                              io.circe.Json.obj(
+                                                                                "type" -> "restartStatus".asJson,
+                                                                                "phase" -> "rolled-back".asJson,
+                                                                                "detail" -> outcome
+                                                                                  .fold(
+                                                                                    err =>
+                                                                                      s"rollback incomplete: $err — pointers and diagnostics are on disk; see the safe-boot path",
+                                                                                    o =>
+                                                                                      s"new version ${o.fromVersion} failed its health self-check — rolled back to ${o.toVersion} (jar ${o.jar}); previous version relaunching"
+                                                                                  )
+                                                                                  .asJson
+                                                                              )
+                                                                            ) *>
+                                                                              logger.error(
+                                                                                s"[hotupd] ROLLBACK outcome: ${outcome.fold(x => x, o => s"${o.fromVersion} -> ${o.toVersion}")} — this process exits so the previous version can take the port"
+                                                                              ) *>
+                                                                              IO.raiseError(
+                                                                                new IllegalStateException(
+                                                                                  s"new version failed the post-bind health self-check: $reason — rolled back to the retained previous version"
+                                                                                )
+                                                                              )
+                                                                          }
+                                                                    }
+                                                                }
+                                                          }
+                                                          // feishubridge: boot-time resync of the closed loop —
+                                                          // config enabled ∧ verified ⇒ the feishu adapter is
+                                                          // registered (and started) before startAll fans out;
+                                                          // start is idempotent at plugin level, so the startAll
+                                                          // pass below is a no-op for it. Otherwise this is an
+                                                          // unregister no-op and boot behaves exactly as before.
+                                                          _ <- nebflow.social.FeishuBridgePlugin.sync(
+                                                            bridgeManager,
+                                                            PathUtil.dataRoot
+                                                          )
+                                                          // wechat iLink batch: boot-time resync for the
+                                                          // weixin-ilink side-car seam — same closed loop
+                                                          // (enabled ∧ verified ⇒ registered and started),
+                                                          // same shape as the feishu line above. The seam
+                                                          // holds no socket, so this never blocks boot and
+                                                          // an unconfigured install is an unregister no-op.
+                                                          _ <- nebflow.social.WeixinIlinkBridgePlugin.sync(
+                                                            bridgeManager,
+                                                            PathUtil.dataRoot
+                                                          )
+                                                          // Register bridge as WsHub listener for agent events
+                                                          // perf-481 A1: this is a hub LISTENER (it reads
+                                                          // the event fields), not a connection — the two
+                                                          // registries are separate faces on purpose.
+                                                          _ <- wsHub.registerListener(json =>
+                                                            val sessionId =
+                                                              json.hcursor
+                                                                .downField("sessionId")
+                                                                .as[String]
+                                                                .getOrElse("")
+                                                            if sessionId.nonEmpty then
+                                                              bridgeManager.dispatchAgentEvent(sessionId, json)
+                                                            else IO.unit
+                                                          )
+                                                          _ <- bridgeManager.startAll.start // start in background
+                                                          // --- Background: LLM provider health monitoring ---
+                                                          _ <- healthMonitor.start().void.start
+                                                          // --- Background: TaskStuckWatcher (P0 阶段 3) ---
+                                                          // 卡死识别与恢复：周期扫 agentRegistry，Processing 态且 turn 活动
+                                                          // 超阈值（默认 10min，可配 stuckThresholdMs）→ 子 agent 发 Stop 走
+                                                          // BackoffSupervisor 退避重启；根 agent 广播 taskStuck 事件由用户决定。
+                                                          _ <- nebflow.core.processor.TaskStuckWatcher
+                                                            .run(
+                                                              sharedResourcesWithDaemon,
+                                                              wsHub,
+                                                              interval =
+                                                                nebflow.shared.Defaults.StuckWatcherIntervalSec.seconds,
+                                                              thresholdMs = config.stuckThresholdMs
+                                                                .getOrElse(nebflow.shared.Defaults.StuckThresholdMs)
+                                                            )
+                                                            .start
+                                                          // --- Background: FreezeScheduler (freeze-schedule) ---
+                                                          // 冻结恢复扫描：周期向 Frozen 态 agent 发 CheckFreezeGate，
+                                                          // 出冻结段则恢复挂起的 dispatch（仿 TaskStuckWatcher 模式：
+                                                          // 错误自愈 + `>>` 递归栈安全）。Frozen 态 TaskStuckWatcher
+                                                          // 天然豁免（只扫 Processing）。
+                                                          _ <- nebflow.core.processor.FreezeScheduler
+                                                            .run(
+                                                              sharedResourcesWithDaemon,
+                                                              interval =
+                                                                nebflow.shared.Defaults.FreezeCheckIntervalSec.seconds,
+                                                              // 错误冻结批（2026-11-01）：长期无人唤醒的冻结
+                                                              // delegate 兜底面（dormant 提醒帧 / 保留期归档）
+                                                              // 挂在本既有拍上，零新增定时器。
+                                                              wsSend = Some(json => wsHub.broadcast(json)),
+                                                              // 冻结通知策略批（2026-11-05）：同一拍的尾部三腿
+                                                              // ——面板静默统计 / provider 恢复后的引擎自动续跑 /
+                                                              // 需人时的**一条**聚合告警。core 层只收 IO 钩子
+                                                              // （分层门禁：core 不 import agent）。
+                                                              tailSweep = Some(
+                                                                nebflow.agent.FreezeAlertSweep.run(
+                                                                  sharedResourcesWithDaemon,
+                                                                  Some(json => wsHub.broadcast(json))
                                                                 )
                                                               )
+                                                            )
+                                                            .start
+                                                          // --- Background: RestartingWatchdog (#692 修批 2026-10-21) ---
+                                                          // 重启屏障僵死兜底闸：周期扫任务库，在飞行（running/
+                                                          // restarting）∧ registry 无活体 ∧ 状态超龄（默认 10min）
+                                                          // ⇒ 强制诚实终态化 + F2 队列通知父（父可 re-delegate）。
+                                                          // 10-21 实测「retryCount=1 卡 restarting 7.5h」不再可能。
+                                                          _ <- nebflow.core.tools.AskHostLedger.recoverPending(
+                                                            sharedResourcesWithDaemon
+                                                          )
+                                                          _ <- nebflow.agent.SubAgentStartupRecovery
+                                                            .run(
+                                                              sharedResourcesWithDaemon,
+                                                              interval = 60.seconds,
+                                                              stallMs =
+                                                                nebflow.shared.Defaults.RestartingStallWatchdogMs
+                                                            )
+                                                            .start
+                                                          // --- Background: HeldDeliveryWatchdog (平台修复批 2026-10-21) ---
+                                                          // held 回执投递可靠性自检：周期扫 idle 会话的 held-receipts
+                                                          // 台账，到期未注入的回执催注（DrainHeldReceipts，指数退避）、
+                                                          // 穷尽置 exhausted 终态 + unread 徽标广播。只催注回执投递、
+                                                          // 绝不杀会话——「无超时」哲学不动（投递自检 ≠ 任务超时）。
+                                                          // seal 批（2026-11-03）：本拍是**邮件后台腿**（held 回执催注），
+                                                          // 经 ProcessSeal 引导——封存下零注册、只留一行 `[seal]` 说明；
+                                                          // 同拍搭车的 DelegateDeliveryReceipts 等邻居
+                                                          // 不属邮件/心跳，不动（见 TaskStuckWatcher 注）。
+                                                          _ <- ProcessSeal.launch(
+                                                            ProcessSeal.Realm.Mail,
+                                                            "HeldDeliveryWatchdog"
+                                                          )(
+                                                            nebflow.core.processor.HeldDeliveryWatchdog
+                                                              .run(
+                                                                sharedResourcesWithDaemon,
+                                                                wsHub,
+                                                                interval =
+                                                                  nebflow.shared.Defaults.HeldDeliveryScanIntervalSec.seconds
+                                                              )
+                                                          )
+                                                          // --- Background: BgLifecycleReconciler (后台任务生命周期 P1 批 2026-10-30) ---
+                                                          // 健康轨 reconcile 控制器（设计稿 20261030 §3）：每拍比对全表任务观测态
+                                                          // （输出行/活动戳），suspect 黄徽+退避提醒、escalated 红徽+编排者通知+
+                                                          // 账本审计；进展即时降回 healthy（重排不判死）。零 Kill——正确性由
+                                                          // 提醒/徽标/通知表达（ScanAction 封闭类型编译守门）。429 风暴期经
+                                                          // providerRegistry.throttleStormActive 抑制 Nudge、徽标照刷。
+                                                          // P2：death-watch 收割器的全站广播口同点装配（reap 的终态帧出口——
+                                                          // 面板行即时摘除；未装配时收割语义不受影响，只欠一帧）。
+                                                          _ = nebflow.core.tools.BgTaskReaper.installSink(wsHub)
+                                                          _ <- nebflow.core.processor.BgLifecycleReconciler
+                                                            .run(
+                                                              sharedResourcesWithDaemon,
+                                                              wsHub,
+                                                              interval =
+                                                                nebflow.shared.Defaults.BgLifecycleScanIntervalSec.seconds,
+                                                              stormActive = Some(
+                                                                sharedResourcesWithDaemon.providerRegistry.throttleStormActive
+                                                              )
+                                                            )
+                                                            .start
+                                                          // --- P0（2026-08-30）：skip 持久化恢复 ---
+                                                          // 重启前「跳过本次」若未到期（skipUntil > now），恢复进内存
+                                                          // ref——WS/REST 的 freezeState.skipped 随即可见，输入栏不再
+                                                          // 重新冻结；已过期则清理盘上残留（跳过非永久，下一段照常）。
+                                                          _ <- nebflow.core.schedule.FreezeSchedule
+                                                            .loadSkipUntil(nebflow.shared.PathUtil.dataRoot)
+                                                            .flatMap {
+                                                              case Some(t) if t > System.currentTimeMillis() =>
+                                                                sharedResourcesWithDaemon.freezeSkipUntilRef.set(
+                                                                  Some(t)
+                                                                ) *>
+                                                                  logger.info(
+                                                                    s"Freeze skip restored from disk (skipUntil=$t)"
+                                                                  )
+                                                              case Some(_) =>
+                                                                nebflow.core.schedule.FreezeSchedule
+                                                                  .persistSkip(nebflow.shared.PathUtil.dataRoot, None)
+                                                                  .handleErrorWith(e =>
+                                                                    logger.warn(
+                                                                      s"Failed to clean expired freeze skip: ${e.getMessage}"
+                                                                    )
+                                                                  )
+                                                              case None => IO.unit
                                                             }
-                                                        }
-                                                        .handleErrorWith { e =>
-                                                          logger.warn(s"Background init failed: ${e.getMessage}")
-                                                        }
-                                                        .start
-                                                      // --- NebLink: sync is event-driven (actor), no background loops needed ---
-                                                      _ <- logger.info(
-                                                        "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
-                                                      ) *>
-                                                        // 热重启优雅让渡闸（hot-restart 批 §3.3）：race 任一
-                                                        // 完成即收敛 use 块 → Ember 优雅 stop → .guarantee
-                                                        // 链 → JVM 自然退出（替代 System.exit(0)）。R4 零
-                                                        // 回归：quit/Ctrl+C 走 Left；Deferred 仅由 HotRestart
-                                                        // 编排器 complete——三既有退出路径行为不变。
-                                                        IO.race(waitForQuit, sharedResourcesWithDaemon.gatewayShutdown.get).void
-                                                    yield ())
-                                                  }
-                                                  .guarantee(
-                                                    logger.info("shutting down...") *>
-                                                      daemonService.stopAll() *>
-                                                      // P0 (2026-08-19): abort in-flight LLM requests BEFORE the
-                                                      // sttp backend/dispatcher close — Ctrl+C previously let
-                                                      // FS2 streams keep burning tokens during JVM drain.
-                                                      nebflow.llm.LlmInterface.cancelAllInflight() *>
-                                                      neblinkClient.traverse_(_.logout) *>
-                                                      mcpManager.stopAll() *>
-                                                      releaseBackend
-                                                  )
-                                              } // end sttService
-                                            } // end ttsService
-                                        } // end neblinkService setup block
-                                    } // end neblinkService
-                                  } // end bridgeManager
-                                } // end main setup scope
-                              } // end fileLockMgr
-                            } // end dispatcher.use
-                          } // end fileTracker
-                        } // end rateLimiter
-                    } // end mcpManager
+                                                          _ <-
+                                                            if GatewayConfig.noBrowser ||
+                                                              nebflow.core.HeadlessMode.enabled
+                                                            then IO.unit
+                                                            else
+                                                              // 门户开门（neblink portal MVP, 2026-10-10）：
+                                                              // 目标经 PortalUrl 单点解析（env > config >
+                                                              // 生产缺省；NEBFLOW_OPEN_UI=local / config
+                                                              // portalUrl="" 回落 localhost 现状）。:503-505 的
+                                                              // baseUrl/sys.props nebflow.url 原样保留——那是他处
+                                                              // 消费的 sys prop 与本地回落值。deviceId 读失败降级
+                                                              // 为不带参数开门（失败不该把用户拦在本地）。
+                                                              PortalUrl
+                                                                .startupUrl(
+                                                                  deviceId = neblinkService.identity.attempt.map(
+                                                                    _.toOption.map(_.deviceId)
+                                                                  ),
+                                                                  localUrl = url
+                                                                )
+                                                                .flatMap { target =>
+                                                                  // #512 门审计批：开门目标与载体落日志——
+                                                                  // 「重启后开的是哪条门」从终端日志即可对账
+                                                                  // （此前 openBrowser 静默 exec，验收只能靠肉眼）。
+                                                                  //
+                                                                  // 工作过程中开新标签页批（2026-11-05 · 作者令）：boot 门是**自动**
+                                                                  // 开门，作者可能正在用控制台（重启后控制台页自己会重连，不需要谁
+                                                                  // 替他开窗）⇒ 开门前先问 ConsoleActivity（控制台在用标记件）。判据
+                                                                  // 机械：窗口内（默认 900s）有过控制台证据 ⇒ 抑制开门，事件只落日志。
+                                                                  ConsoleActivity.verdict.flatMap {
+                                                                    case ConsoleActivity.Verdict(true, why) =>
+                                                                      logger.info(
+                                                                        s"[door] boot 开门: 载体=${browserLauncher.mkString(" ")} 目标=$target（解析=PortalUrl env>config>brand；NEBFLOW_OPEN_UI=local ⇒ 本地自铸票；判据=$why）"
+                                                                      ) *> openBrowser(target)
+                                                                    case ConsoleActivity.Verdict(false, why) =>
+                                                                      logger.info(
+                                                                        s"[door] boot 开门 suppressed: $why —— 控制台在用，不给作者开新标签页（事件只在日志里体现；NEBFLOW_DOOR_INUSE_POLICY=open ⇒ 恢复旧行为）"
+                                                                      )
+                                                                  }
+                                                                }
+                                                          // --- Background init: skills dir, MCP servers ---
+                                                          _ <- SkillService
+                                                            .ensureDefaults()
+                                                            .handleErrorWith(e =>
+                                                              logger.warn(s"Skills init failed: ${e.getMessage}")
+                                                            )
+                                                            .start
+                                                          // --- Background init: MCP servers ---
+                                                          _ <- startMcpServers(config, mcpManager, agentLibrary)
+                                                            .flatMap { _ =>
+                                                              // Broadcast updated MCP server list to all connected clients
+                                                              mcpManager.listServers
+                                                                .map(_.map { case (id, enabled) =>
+                                                                  io.circe.Json
+                                                                    .obj("id" -> id.asJson, "enabled" -> enabled.asJson)
+                                                                })
+                                                                .flatMap { mcpJson =>
+                                                                  wsHub.broadcast(
+                                                                    io.circe.Json.obj(
+                                                                      "type" -> "mcpServersUpdate".asJson,
+                                                                      "mcpServers" -> mcpJson.asJson
+                                                                    )
+                                                                  )
+                                                                }
+                                                            }
+                                                            .handleErrorWith { e =>
+                                                              logger.warn(s"Background init failed: ${e.getMessage}")
+                                                            }
+                                                            .start
+                                                          // --- NebLink: sync is event-driven (actor), no background loops needed ---
+                                                          _ <- logger.info(
+                                                            "Type 'quit', 'exit', or 'q' (or press Ctrl+C) to stop"
+                                                          ) *>
+                                                            // 热重启优雅让渡闸（hot-restart 批 §3.3）：race 任一
+                                                            // 完成即收敛 use 块 → Ember 优雅 stop → .guarantee
+                                                            // 链 → JVM 自然退出（替代 System.exit(0)）。R4 零
+                                                            // 回归：quit/Ctrl+C 走 Left；Deferred 仅由 HotRestart
+                                                            // 编排器 complete——三既有退出路径行为不变。
+                                                            IO.race(
+                                                              waitForQuit,
+                                                              sharedResourcesWithDaemon.gatewayShutdown.get
+                                                            ).void
+                                                        yield ())
+                                                      }
+                                                      .guarantee(
+                                                        logger.info("shutting down...") *>
+                                                          // death-watch 误报修复批 ③：关停抑制旗在关停链**最前**置位
+                                                          // （quit / Ctrl+C / 热重启 handover / SIGTERM 全收敛到本 guarantee）——
+                                                          // 旗起期间 BgTaskReaper 不判死只告警，消灭「关机窗内被杀任务记
+                                                          // owner-lost」误报（实证 639c9d15）。
+                                                          IO(nebflow.core.tools.BgTaskReaper.markEngineShutdown()) *>
+                                                          daemonService.stopAll() *>
+                                                          // P0 (2026-08-19): abort in-flight LLM requests BEFORE the
+                                                          // sttp backend/dispatcher close — Ctrl+C previously let
+                                                          // FS2 streams keep burning tokens during JVM drain.
+                                                          nebflow.llm.LlmInterface.cancelAllInflight() *>
+                                                          // 2026-09-11：原为 boot 快照 neblinkClient.traverse_ ——
+                                                          // cold-start ⇒ None（退出不通知 server）、hot-swap 后通知的
+                                                          // 是旧（已被踢）client。改读权威 live client（同
+                                                          // performLocalLogout 的既有先例；Ref.get 不抛）。
+                                                          tsDiscovery.currentClient.flatMap(_.traverse_(_.logout)) *>
+                                                          mcpManager.stopAll() *>
+                                                          releaseBackend
+                                                      )
+                                                  } // end connGuard (R-1b)
+                                                } // end sttService
+                                              } // end ttsService
+                                          } // end neblinkService setup block
+                                      } // end neblinkService
+                                    } // end bridgeManager
+                                  } // end main setup scope
+                                } // end fileLockMgr
+                              } // end dispatcher.use
+                            } // end fileTracker
+                          } // end rateLimiter
+                      } // end mcpManager
+                  }
                 }
-              }
-          } // end config flatMap
+            } // end config flatMap
+          }
         }
       }
-    }
 
 end GatewayMain

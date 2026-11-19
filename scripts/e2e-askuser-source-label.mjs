@@ -21,16 +21,18 @@
 //   F1③ 刷新后 replayed 帧携带 project/nodeName（WS 帧嗅探 + DOM 重建断言）
 //   F1④ 两节点并发两卡 badge 各自正确（同 F1① 并发形态）
 //   F2① 两卡并发时常驻条两行 + header badge=2（DOM 断言）
-//   F2② 回答（卡片确认）/取消（卡片取消）/直答（chat-input）三路条目摘除
-//       各验一；来源死亡路 = 已知边界（引擎 askUserClosed 触发归批 E2，
+//   F2② 回答（卡片确认）/取消（卡片取消）两路条目摘除各验一 + 输入框文本路
+//       （直通退役后：文本不消费卡片 ⇒ 常驻条保留、零 askUserAnswered 帧）
+//       来源死亡路 = 已知边界（引擎 askUserClosed 触发归批 E2，
 //       前端处理已就位——本脚本以帧嗅探证明前端 handler 注册存在即可）
 //   F2③ 刷新重连后 ListPendingAsks 对账：常驻条/badge 重建正确
 //   F2④ console 零错误
 //   引擎留痕：workspace .nebflow/flow-map-events.jsonl 含 node-ask 事件×2
 //
 // Run（worktree 根，jar 已构建）：node scripts/e2e-askuser-source-label.mjs
-// Env：KEEP=1 保留 fixture home；GATEWAY_PORT=8098 MOCK_PORT=18998；
-//   JAR 默认 target/scala-3.5.2/nebflow-assembly-*.jar（取最新）。
+// Env：fixture home 默认**不删**（要清理设 CLEAN=1 / NB_CLEAN=1；NB_DRY_RUN=1 只跑删除守卫断言）；
+//   GATEWAY_PORT=8098 MOCK_PORT=18998；
+//   JAR 默认 target/scala-3.5.2/stand-assembly-*.jar（取最新）。
 
 import { spawn, execSync } from 'node:child_process';
 import http from 'node:http';
@@ -40,6 +42,8 @@ import { fileURLToPath } from 'node:url';
 import { homedir, tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from '/opt/homebrew/lib/node_modules/playwright/index.mjs';
+import { guardFixtureHome, safeRm, assertCleanable } from './lib/delguard.mjs';
+import { guardWrites } from './lib/writeguard.mjs';
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const GATEWAY_PORT = Number(process.env.GATEWAY_PORT || 8098);
@@ -50,7 +54,16 @@ const PROJECT = 'qa-f1f2';
 const WS_DIR = join(HOME, `ws-${PROJECT}`);
 const DISPATCHER_AGENT_SRC = process.env.DISPATCHER_AGENT_SRC || join(homedir(), '.nebflow', 'agents', 'project-dispatcher');
 const GENERAL_AGENT_SRC = join(REPO, 'src/main/resources/seed/agents/general');
-const SHOTS = process.env.QA_SHOTS || join(homedir(), '.nebflow/docs/Nebflow/assets/20260908_f1f2-askuser');
+// 截图输出目录 = **受控参数**（`QA_SHOTS`）；默认 = 本 checkout 的 `.nebflow/evidence/20260915_e2eask/`。
+// 🔴 2026-09-15 e2efix 批：原默认值 `join(homedir(), '.nebflow/docs/Nebflow/assets/20260908_f1f2-askuser')`
+//    是**硬编码绝对路径**，一次实跑覆写了该目录下 4 个 tracked 人类资产 ⇒ 已删，改走白名单根。
+const SHOTS = process.env.QA_SHOTS || join(REPO, '.nebflow', 'evidence', '20260915_e2eask', `f1-shots-${MOCK_PORT}`);
+// W1 写根断言（先于 guardFixtureHome 与任何 spawn）：全部写入面必须落白名单根
+// （本 checkout 之下 / 主区 `.nebflow/evidence/<批>/` 之下 / tmp 根之下一级 `qa-*`），越界 → exit 3。
+guardWrites([HOME, WS_DIR, SHOTS], { repoRoot: REPO, label: 'e2e-askuser-source-label' });
+// R4 删除守卫：解析后的真实绝对路径必须落 tmpdir 之下（≠ tmpdir 自身）——早期 fail-fast，先于任何 spawn。
+// NB_DRY_RUN=1：只跑断言、不删除、不 spawn（下游负控入口）。
+guardFixtureHome(HOME, { label: 'e2e-askuser-source-label' });
 
 const QA = '方案抉择甲：选用晨雾配色还是暮蓝配色？'; // node A question（<40 字符，不截断对照）
 const QB = '方案抉择乙：是否启用实验性渲染开关，并同步更新相关文档、测试用例、发布说明与官网特性矩阵？'; // node B question（>40 字符 → 截断验证）
@@ -100,12 +113,12 @@ const H8080_BEFORE = execSync('lsof -nP -iTCP:8080 -sTCP:LISTEN -t 2>/dev/null |
 // ── stub LLM（OpenAI 兼容流式；脚本化工具调用）──
 const captured = [];
 let nodeEditCount = 0;
-// Fire the Nebula→Task dispatch exactly once. Without this guard the stub
+// Fire the Nebula→project dispatch (Mail) exactly once. Without this guard the stub
 // loops forever: the dispatcher's completion delivery back to Nebula contains
 // the task text ("[Dispatcher 'qa-f1f2' · task: F1F2 dispatch probe…]"), which
-// re-matches the 'F1F2 dispatch' branch and re-triggers Task → dispatcher →
+// re-matches the 'F1F2 dispatch' branch and re-triggers Mail → dispatcher →
 // delivery → … (observed R2 run 21:26: the loop kept Nebula perpetually busy,
-// starving the later selfask injection and the chat-input passthrough probe).
+// starving the later selfask injection and the text-path bar probe).
 let taskFired = false;
 function msgText(m) {
   const c = m?.content;
@@ -138,6 +151,9 @@ function askCall(id, question, marker) {
 function classify(body) {
   const msgs = body.messages || [];
   const s = JSON.stringify(msgs);
+  // 分发器提示词现为英文（ProjectActor.scala:592
+  // `You are the task dispatcher for project "<name>"`）——2026-09-15 scriptfix 批修复。
+  if (s.includes('You are the task dispatcher for project')) return 'dispatcher';
   if (s.includes('你是项目') && s.includes('任务分发器')) return 'dispatcher';
   if (s.includes('F1F2-PROBE-A')) return 'node-A';
   if (s.includes('F1F2-PROBE-B')) return 'node-B';
@@ -193,14 +209,16 @@ function streamFor(body) {
     ]);
   }
   if (turn.includes('F1F2 dispatch')) {
-    // Nebula 面 Mail 已退役（2026-09-06 工具面裁撤批）——项目触发走 Task 工具
-    // （TaskTool.scala: TriggerDispatcher 同内核）。一次性（taskFired 闸，
-    // 防分发器投递回环再触发）。
+    // 项目触发入口唯一 = `Mail(address="project:<name>")`：`Task` 工具**已删净退役**
+    // （2026-09-12「一个 Mail 统一」批，B3-a + B5-c；registry.scala:94-98）
+    // ⇒ 2026-09-15 scriptfix 批由 `Task` 改用 `Mail`（原 `Task` 调用会得
+    // AgentCore 的 `Tool not available: Task`，场景链首步即塌）。
+    // 一次性（taskFired 闸，防分发器投递回环再触发）。
     if (taskFired) return finalOk();
     taskFired = true;
     return done([
       chunk({ role: 'assistant', content: '' }),
-      chunk(toolCall('call_stub_task', 'Task', { project: PROJECT, task: 'F1F2 dispatch probe：建两个 probe 节点（NodeEdit 剧本驱动）。' })),
+      chunk(toolCall('call_stub_mail', 'Mail', { address: `project:${PROJECT}`, message: 'F1F2 dispatch probe：建两个 probe 节点（NodeEdit 剧本驱动）。' })),
       chunk({}, 'tool_calls'),
     ]);
   }
@@ -229,6 +247,8 @@ function startMock() {
 
 // ── fixture home ──
 function buildFixture() {
+  // R4：删除点二次断言（本处是 fixture 重建的幂等重置，非数据清理 → 不受 CLEAN 开关约束，但仍须过断言）
+  assertCleanable(HOME, { label: 'e2e-askuser-source-label/buildFixture' });
   rmSync(HOME, { recursive: true, force: true });
   mkdirSync(HOME, { recursive: true });
   cpSync(DISPATCHER_AGENT_SRC, join(HOME, 'agents', 'project-dispatcher'), { recursive: true });
@@ -249,17 +269,30 @@ function buildFixture() {
 // ── 隔离实例（assembly jar 配方；NEBFLOW_GATEWAY_PORT env 为主保险）──
 function findJar() {
   const dir = join(REPO, 'target/scala-3.5.2');
-  const jars = readdirSync(dir).filter((f) => f.startsWith('nebflow-assembly-') && f.endsWith('.jar'));
+  const jars = readdirSync(dir).filter((f) => f.startsWith('stand-assembly-') && f.endsWith('.jar'));
   if (!jars.length) throw new Error('assembly jar not found — run sbt assembly first');
   return join(dir, jars.sort().pop());
 }
-function startGateway() {
+// classpath 覆盖口（受控参数 `NB_E2E_CP`，冒号分隔，可含目录）：
+//   装配面权威口径 = 宿主**实载工件**（`20260915_hostcp-*` 三件：现取快照 + 硬断言 + 装配模板）
+//   + 本支 web 树前置 ⇒ 由调用方跑器算好并把整串传进来；本脚本只负责 `-cp` 取值。
+//   未设时回落 = 本 checkout 的 assembly jar（历史口径，单 jar）。
+function instanceClasspath() {
+  const cp = process.env.NB_E2E_CP;
+  if (cp) {
+    console.log(`[phase] classpath (NB_E2E_CP, 宿主实载工件+web 前置): entries=${cp.split(':').length}`);
+    return cp;
+  }
   const jar = findJar();
   console.log(`[phase] jar: ${jar}`);
+  return jar;
+}
+function startGateway() {
+  const jar = instanceClasspath();
   const child = spawn('java', [
     '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
     '-cp', jar, 'nebflow.Main',
-    '--home', HOME, '--port', String(GATEWAY_PORT), '--no-browser', 'start',
+    '--home', HOME, '--port', String(GATEWAY_PORT), '--no-browser', '--foreground', 'start',
   ], {
     detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, NEBFLOW_GATEWAY_PORT: String(GATEWAY_PORT) },
@@ -320,13 +353,13 @@ const nebulaSessions = (sessList.json?.sessions || sessList.json || []).filter((
 const sid = nebulaSessions[0]?.id;
 check('root Nebula session found (boot-created)', sessList.status === 200 && !!sid, JSON.stringify(nebulaSessions[0] || sessList.json).slice(0, 140));
 
-// dispatch turn：Task→qa-f1f2（同步等回合完成——Task 立即返回）
+// dispatch turn：Mail(address="project:qa-f1f2")→qa-f1f2（同步等回合完成——投递立即返回）
 {
   const t = await api(`/sessions/${sid}/turn`, 'POST', {
-    content: 'F1F2 dispatch：立即调用 Task 工具，project=qa-f1f2，task 任意。除此之外什么都不要做。',
+    content: 'F1F2 dispatch：立即调用 Mail 工具（address="project:qa-f1f2"），message 任意。除此之外什么都不要做。',
     timeoutSec: 120,
   });
-  check('Nebula dispatch turn completes (Task fired)', t.status === 200, `status=${t.status}`);
+  check('Nebula dispatch turn completes (Mail fired)', t.status === 200, `status=${t.status}`);
 }
 
 // 等两节点 AskUserQuestion 请求到 stub（节点提问后轮次挂起，无后续请求）
@@ -392,17 +425,24 @@ async function openApp(colorScheme) {
 
 const light = await openApp('light');
 const { page } = light;
-// F2④ console-error 断言的基线噪音白名单（2026-09-08 R2 实跑确认，两者均由
-// 既有设计在 fresh fixture home 下必然触发，与本批改动面零交集——本批不动
-// ws.js 探针/canvas 持久化/任何路由）：
-//   ① GET /api/nf-file 400 —— ws.js:307 probeCookieAuth 故意裸探（无 path
-//      参数）：400 = "cookie auth works" 的设定期望（ws.js:300-305 注释原文）。
+// F2④ console-error 断言的基线噪音白名单（两者均由既有设计在 fresh fixture
+// home 下必然触发）：
+//   ① GET /api/nf-authcheck — ws.js probeCookieAuth 的当前靶点
+//      （2026-09-11 C 批 R9 = O-A 迁移）。旧条目是「裸 GET 本地文件端点的
+//      400 = cookie auth works」：票据腿批把那个端点改为票据-only 后，无票
+//      请求恒 401，那条 400 语义已不存在，故白名单条目随靶点一起改写。
+//      两种形态都要放行：403 **响应**（cookie 被禁 ⇒ 无凭据可随请求，是
+//      设计信号——stage D 删除令牌回退轨后，该形态的设计落点 = 贴票入口卡）
+//      与 **请求被 abort**（probeCookieAuth 自带
+//      `AbortSignal.timeout(3000)`，页面导航/超时即 ERR_ABORTED，同样 by
+//      design；本轮实跑抓到的就是后者）。
 //   ② GET /api/canvas-tabs 404 —— 契约形态：无存档 → NotFound by design
 //      （RestApiRoutes.scala:251-254「GET → 200 或 404（无存档）」）。
-// 白名单只放这两个精确模式；任何其他 console 错误照旧判 FAIL。
+// 白名单只放这两个靶点的精确模式；任何其他 console 错误照旧判 FAIL。
 const BASELINE_NOISE = [
-  /http 400: .*\/api\/nf-file/,
-  /console\.error: .*\/api\/nf-file/,
+  /http 403: .*\/api\/nf-authcheck/,
+  /console\.error: .*\/api\/nf-authcheck/,
+  /requestfailed: .*\/api\/nf-authcheck/,
   /http 404: .*\/api\/canvas-tabs/,
   /console\.error: .*\/api\/canvas-tabs/,
 ];
@@ -603,26 +643,34 @@ const ridOf = async (node) => page.evaluate((n) => {
   }
 }
 
-// F2②-c 直答路：chat-input 文本被 hub 消费为最老 pending（probe-b）的回答
+// F2②-c 输入框文本路（**直通退役后对齐**，uiclean 批 2026-09-15）
+// 旧断言（已删行为）：文本被 hub 消费为最老 pending（probe-b）的回答 ⇒
+//   askUserAnswered{via:'chat-input'} 广播 + 常驻条清空。
+// 新断言（目标态）：文本**不消费任何卡** ⇒ 观察窗内零 askUserAnswered 帧 ∧
+//   常驻条**保留** probe-b 行 ∧ probe-b 卡仍 pending（须在卡上作答）。
+// 新行为的逐视口覆盖见 tests/askinput-off-pending-text.spec.mjs（0cb416b0）；
+// 本块保留其唯一维度：F1 源标签 fixture（qa-f1f2 · probe-a/probe-b）下的常驻条对账。
 {
-  await page.fill('#input', 'F1F2 chat-input 直答：经输入框回答乙。');
+  const FRAME_T0 = Date.now();
+  await page.fill('#input', 'F1F2 直通退役：经输入框发普通文本，不消费卡片。');
   await page.press('#input', 'Enter');
-  const t0 = Date.now();
-  let answeredFrame = null;
-  while (Date.now() - t0 < 30000) {
-    answeredFrame = await page.evaluate(() => window.__askFrames.find((f) => f.type === 'askUserAnswered' && f.via === 'chat-input'));
-    if (answeredFrame) break;
+  let strayFrame = null;
+  while (Date.now() - FRAME_T0 < 12000) {
+    strayFrame = await page.evaluate(() => window.__askFrames.find((f) => f.type === 'askUserAnswered'));
+    if (strayFrame) break;
     await sleep(800);
   }
-  check('F2② chat-input direct answer: askUserAnswered(via=chat-input) broadcast', !!answeredFrame);
+  check('F2② text path: zero askUserAnswered frames (直通退役后引擎无生产者)', !strayFrame, strayFrame ? JSON.stringify(strayFrame).slice(0, 160) : '');
   await page.waitForTimeout(1000);
+  // 常驻条仍须保留 probe-b 行（文本不得摘行）
   const st = await barState(page);
-  check('F2② direct-answer path: bar empty + badge hidden', st.rows.length === 0 && st.badgeHidden === true, `rows=${st.rows.length} hidden=${st.badgeHidden}`);
-  await page.screenshot({ path: join(SHOTS, 'f2-bar-empty-light.png') });
+  check('F2② text path: bar keeps the pending row (文本不消费卡片)', st.rows.length === 1 && st.rows[0] && st.rows[0].source.includes('probe-b'), `rows=${st.rows.length} src=${st.rows.map((r) => r.source).join()}`);
+  await page.screenshot({ path: join(SHOTS, 'f2-bar-text-not-consumed-light.png') });
 }
 
 // 点击定位+高亮（F2 锚点跳转）：再造一张卡太重——用既有逻辑单元素验证：
-// 直答后无 pending，跳转无从验证；改为在双卡阶段已截图证明条存在。此处验
+// 输入框文本路退役后卡片仍 pending（见上块：文本不消费卡片），故跳转仍无从在本段
+// 验证；改为在双卡阶段已截图证明条存在。此处验
 // askUserClosed 前端处理就位（来源死亡路已知边界——引擎触发归批 E2）：
 // 直接在页面上下文派发一帧进 handler 链不可行（模块作用域），改为断言
 // ws.js 已注册该类型（TERMINAL_MSG_TYPES 路由表含 askUserClosed → 帧能到达
@@ -660,7 +708,7 @@ await light.browser.close();
 }
 
 await cleanup();
-if (!process.env.KEEP) { try { rmSync(HOME, { recursive: true, force: true }); } catch { /* best effort */ } }
-else console.log(`KEEP=1 — fixture home retained: ${HOME}`);
+// 删除点二次断言；默认不删（要清理设 CLEAN=1）——非 tmp 隔离 home 在此处也会被拒
+safeRm(HOME, { label: 'e2e-askuser-source-label' });
 console.log(failed === 0 ? '\nALL PASS' : `\n${failed} CHECK(S) FAILED`);
 process.exit(failed === 0 ? 0 : 1);
