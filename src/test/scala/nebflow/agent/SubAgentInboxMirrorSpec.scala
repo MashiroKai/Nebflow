@@ -56,6 +56,7 @@ class SubAgentInboxMirrorSpec extends FunSuite:
   // 迁至 AgentProcessing.scala，聚合再扩该文件（合计仍 12 = 11 处调用 + 1 处
   // def，调用点文本逐字未动）。
   private lazy val agentProcessing: String = read("src/main/scala/nebflow/agent/AgentProcessing.scala")
+  private lazy val mailboxDrain: String = read("src/main/scala/nebflow/agent/MailboxDrain.scala")
   private lazy val mirrorSrc: String = read("src/main/scala/nebflow/agent/InjectedInboxMirror.scala")
   /** 注入帧/落盘/广播单点（外部注入统一通道批 2026-11-05；pin 随单点迁移）。 */
   private lazy val injectionChannel: String = read("src/main/scala/nebflow/core/InjectionChannel.scala")
@@ -409,13 +410,20 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     // AgentProcessing 5 = 16（16 = 15 调用 + 1 def）。本批**零调用点增删**
     // （只加了一个缺省参数 `dedup`，不改 `emitInjectedUserEvent(` 的出现面）
     // ⇒ 改前改后同为 16，纯基线重钉非放宽。
-    // Pin each baseline call surface separately so additions and removals cannot cancel out.
+    // Merged mirror-fix baseline: 16 calls plus the AgentActor definition, 17 matches.
+    // Call-site inventory (line numbers at this pin):
+    // AgentActor: 460, 507, 769, 789 (definition at 838)
+    // AgentFinishTurn: 787, 875; AgentFrozen: 520
+    // AgentIdle: 256, 414, 614, 1152
+    // AgentProcessing: 345, 807, 875, 1562; MailboxDrain: 221
+    // Pin each file separately so additions and removals cannot cancel out.
     val expectedOccurrences = List(
-      ("AgentActor", agentActor, 3),
+      ("AgentActor", agentActor, 5),
       ("AgentFinishTurn", agentFinishTurn, 2),
       ("AgentFrozen", agentFrozen, 1),
       ("AgentIdle", agentIdle, 4),
-      ("AgentProcessing", agentProcessing, 4)
+      ("AgentProcessing", agentProcessing, 4),
+      ("MailboxDrain", mailboxDrain, 1)
     )
     expectedOccurrences.foreach { case (name, source, expected) =>
       assertEquals(
@@ -433,8 +441,12 @@ class SubAgentInboxMirrorSpec extends FunSuite:
       "镜像腿未挂在唯一发射点内 —— 11 处调用点的镜像扩展落点漂移"
     )
     assert(
-      emitBody.indexOf("InjectionChannel.deliver(") < emitBody.indexOf("*> inboxMirror"),
-      "镜像腿必须在投递（落盘+广播，InjectionChannel.deliver）之后（live 帧时序逐字不变）"
+      emitBody.indexOf("InjectionChannel.deliver(") >= 0 &&
+        emitBody.contains("deliver.flatMap {") &&
+        emitBody.contains("case InjectionChannel.Outcome.Collapsed => IO.unit") &&
+        emitBody.contains("case InjectionChannel.Outcome.Failed(true, _) => IO.unit") &&
+        emitBody.contains("case _ => inboxMirror"),
+      "镜像腿必须在投递结果之后，并跳过折叠及根落盘失败"
     )
     assert(
       emitBody.contains("reg.iterator.map((s, rec) => (s, rec.rootSessionId))"),
