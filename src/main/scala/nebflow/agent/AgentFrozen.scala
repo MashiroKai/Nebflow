@@ -741,7 +741,7 @@ private[agent] object AgentFrozen:
           end for
         end if
 
-      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, _) =>
+      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, blocks) =>
         // 排队 pendingEvents（不唤醒）：出冻结段/唤醒后的下一个 turn 边界
         // （ToolsComplete → drainBarrier）统一注入。barrier 计数语义镜像 idle
         // ExternalEvent——subagent result 到达即递减 outstanding，否则批次在
@@ -754,7 +754,7 @@ private[agent] object AgentFrozen:
           "freeze-queue-event",
           s"source=$source type=$eventType"
         )
-        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
+        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, blocks)
         val isSubagentResult = TurnBoundaryDrains.isSubagentResult(event)
         val outstanding = state.execution.outstandingSubagentResults
         val newOutstanding = if isSubagentResult then math.max(0, outstanding - 1) else outstanding
