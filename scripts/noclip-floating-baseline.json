@@ -53,6 +53,26 @@
       "owner": "noclip-unified-fix (作者排期)"
     },
     {
+      "key": "src/main/resources/web/css/ask.css::text-truncation::.ask-handoff-body",
+      "file": "src/main/resources/web/css/ask.css",
+      "line": 479,
+      "rule": "text-truncation",
+      "selector": ".ask-handoff-body",
+      "severity": "P2",
+      "reason": "具名白名单（作者裁定 2026-11-19）：Ask「已转交主会话」状态行的转交内容摘要——dock 内不进气泡列的一行事实，摘要全文已作为转交载荷进入主会话（机器可读）；单行省略正确（折行会顶动输入条），省略只压缩这一行预览、不丢信息。",
+      "owner": "noclip-floating 具名白名单 (作者裁定 2026-11-19)"
+    },
+    {
+      "key": "src/main/resources/web/css/ask.css::text-truncation::.ask-state-diag",
+      "file": "src/main/resources/web/css/ask.css",
+      "line": 527,
+      "rule": "text-truncation",
+      "selector": ".ask-state-diag",
+      "severity": "P2",
+      "reason": "具名白名单（作者裁定 2026-11-19）：可复制的诊断摘要（状态码 + 脱敏错误摘要 + 耗时 + sid）——它是一枚 inline 文字钮、点按即复制全文（README 复现线索）；行内省略只压缩显示、信息不丢。",
+      "owner": "noclip-floating 具名白名单 (作者裁定 2026-11-19)"
+    },
+    {
       "key": "src/main/resources/web/css/base.css::cap-without-scroll::.header-dropdown-menu::before",
       "file": "src/main/resources/web/css/base.css",
       "line": 394,
@@ -668,16 +688,6 @@
       "line": 2053,
       "rule": "text-truncation",
       "selector": ".compact-card-label",
-      "severity": "P2",
-      "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
-      "owner": "noclip-unified-fix (作者排期)"
-    },
-    {
-      "key": "src/main/resources/web/css/chat.css::text-truncation::.error-escalation-title-text",
-      "file": "src/main/resources/web/css/chat.css",
-      "line": 4085,
-      "rule": "text-truncation",
-      "selector": ".error-escalation-title-text",
       "severity": "P2",
       "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
       "owner": "noclip-unified-fix (作者排期)"
@@ -2963,6 +2973,16 @@
       "owner": "noclip-unified-fix (作者排期)"
     },
     {
+      "key": "src/main/resources/web/css/searchField.css::text-truncation::#panel-messages .mh-sr-snippet",
+      "file": "src/main/resources/web/css/searchField.css",
+      "line": 217,
+      "rule": "text-truncation",
+      "selector": "#panel-messages .mh-sr-snippet",
+      "severity": "P2",
+      "reason": "具名白名单（作者裁定 2026-11-19）：消息搜索结果的消息正文预览片段（-webkit-line-clamp:2）——搜索结果必须是可扫读的预览，全文就在被命中的消息里（点开即达）；两行截断正确。",
+      "owner": "noclip-floating 具名白名单 (作者裁定 2026-11-19)"
+    },
+    {
       "key": "src/main/resources/web/css/secrets.css::clip-no-scroll::#secrets-modal",
       "file": "src/main/resources/web/css/secrets.css",
       "line": 80,
@@ -2991,6 +3011,26 @@
       "severity": "P2",
       "reason": "文本截断（text-overflow:ellipsis / line-clamp）：应换行增高或容器可滚（铁律 9·②）",
       "owner": "noclip-unified-fix (作者排期)"
+    },
+    {
+      "key": "src/main/resources/web/css/secrets.css::text-truncation::.secrets-row-desc",
+      "file": "src/main/resources/web/css/secrets.css",
+      "line": 551,
+      "rule": "text-truncation",
+      "selector": ".secrets-row-desc",
+      "severity": "P2",
+      "reason": "具名白名单（作者裁定 2026-11-19）：凭据行第二行「说明」——单行省略正确：全文字面量同时存在于该行 title 提示与展开详情的元数据输入框（本文件注释已写明），列表行必须单行以保等行高。",
+      "owner": "noclip-floating 具名白名单 (作者裁定 2026-11-19)"
+    },
+    {
+      "key": "src/main/resources/web/css/secrets.css::text-truncation::.secrets-row-sub .secrets-row-facts .m",
+      "file": "src/main/resources/web/css/secrets.css",
+      "line": 579,
+      "rule": "text-truncation",
+      "selector": ".secrets-row-sub .secrets-row-facts .m",
+      "severity": "P2",
+      "reason": "具名白名单（作者裁定 2026-11-19）：凭据行的元数据 chip（路径 / 消费方等单值）——flex chip 族的一员，值本身在展开详情中完整可见，chip 省略只保列宽、信息不丢。",
+      "owner": "noclip-floating 具名白名单 (作者裁定 2026-11-19)"
     },
     {
       "key": "src/main/resources/web/css/settingsRows.css::cap-without-scroll::.set-nav + .set-nav::before, .set-nav + .set-row::before, .set-row + .set-nav::before, .set-row + .set-row::before",

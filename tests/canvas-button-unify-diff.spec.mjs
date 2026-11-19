@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // tests/canvas-button-unify-diff.spec.mjs — canvas-button-unify 第三轮补充：
-// ① **改前/改后计算值对照**（base 12eef94b1^ ↔ 当前树，同一装置、同一视口）
+// ① **改前/改后计算值对照**（base `BASE_REV` ↔ 当前树，同一装置、同一视口）
 // ② **两族组计算值对齐**（手机待办右上角组 ↔ 桌面 Canvas 组）
 //
 // 作者令逐字：「比较真实计算样式与包围盒……给出数值前后表；任何**有意外观**的变化
@@ -8,7 +8,7 @@
 //
 // 装置：scripts/lib/visual-harness.mjs（零端口零进程：page.route 从磁盘服务 web/，
 // MockWS 走真实 ws.js 分发）⇒ 结构上不可能碰到宿主 6138。**同一进程**内两趟扫描：
-// 第一趟把静态根切到 `--base-web <dir>`（12eef94b1^ 的 web 树，只读），第二趟切回
+// 第一趟把静态根切到 `--base-web <dir>`（`BASE_REV` 的 web 树，只读），第二趟切回
 // 当前树 —— 同一浏览器、同一视口、同一探针，所以两侧读数可直接相减。
 //
 // 计算值取法：CDP `CSS.forcePseudoState` 强制 :hover/:active（不是 CSS 里手写 class），
@@ -41,7 +41,13 @@ const HERE = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = join(HERE, '..');
 const argv = process.argv.slice(2);
 const baseFlag = argv.indexOf('--base-web');
-const BASE_REV = '12eef94b1^';
+// 基线重设（作者令 2026-11-19「重设基线，不动产品」）：原 BASE_REV `12eef94b1^`
+// （canvas-button-unify 批的改前态）已过时——`12eef94b1^` 早于 `bbd72b34c`
+// 「Restore themed tint to shared glass surfaces」把共享玻璃底 `--nf-glass-input-bg`
+// 由 rgba(128,128,128,0.16) 改为 rgba(255,255,255,0.16)，两族组容器因此各多出一条
+// 与本批无关的 `bg` 差（mobile-A / desktop-A 假红）。整合线上不存在「新玻璃 + 旧对齐」
+// 的提交 ⇒ 重锚到整合线 tip `5b99db0b9`（= 本支基点 = 已验收现态），红消失且仍作漂移棘轮。
+const BASE_REV = '5b99db0b9';
 // 对照树自供（CI 可跑）：显式 --base-web 优先；否则从 git 取 BASE_REV 的 web 子树
 // 到临时目录（`git archive` = 只读取对象库，不动工作树、不动 .git 元数据）。
 function provisionBase() {
