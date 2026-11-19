@@ -710,37 +710,42 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
   }
 
   test("T3 计数存活跨名册缺席：名册缺席一拍不得清账（改前：账本被抹 ⇒ 回册后从零重累）") {
-    assume(
-      !windowsBlackholeUnsupported,
-      "Windows 环回全段回 ECONNREFUSED ⇒ 黑洞夹具轴漂移，timeout 轴组无法在此平台成立——skip（KAI 单跑按 ignored 记账）"
-    )
     val port = closedPort()
     val epA = blackholeEndpoint(port, 2)
     val epB = blackholeEndpoint(port, 3)
-    withStack(port) { (ms, ps) =>
+    val entered = new java.util.concurrent.LinkedBlockingQueue[String]()
+    val permits = new java.util.concurrent.Semaphore(0)
+    val hook: (String, Int, Long) => Unit = (host, _, _) =>
+      entered.put(host)
+      if !permits.tryAcquire(8, java.util.concurrent.TimeUnit.SECONDS) then
+        throw new IllegalStateException("T3 gate timed out")
+      throw new java.util.concurrent.TimeoutException("fixture timeout")
+    withStack(port, dialHook = hook) { (ms, ps) =>
       val p = peer("survive", List(epA, epB))
-      for
+      def releaseLegs(n: Int): IO[Unit] = IO.blocking {
+        val seen = (1 to n).map(_ => entered.poll(5, java.util.concurrent.TimeUnit.SECONDS)).toList
+        assert(seen.forall(_ != null), s"expected $n started legs, got $seen")
+        permits.release(n)
+      }
+      def round(n: Int): IO[Unit] =
+        for
+          fiber <- ps.connect(p).start
+          _ <- releaseLegs(n)
+          _ <- fiber.joinWithNever
+        yield ()
+      (for
         _ <- ms.upsertPeer(p)
-        _ <- ps.connect(p)
-        _ <- ps.connect(p)
-        _ <- ps.connect(p)
-        _ <- ps.connect(p)
-        _ <- ps.connect(p) // 第 5 拍末：两候选同时置窗（5 连击）
+        _ <- round(2) *> round(2) *> round(2) *> round(2) *> round(2)
         windowed <- IO(roundOf(ps, "survive"))
-        _ <- ps.syncPeers(Nil) // 名册缺席一拍 = 成员资格事件
+        _ <- ps.syncPeers(Nil)
         during <- ms.peers
-        _ <- IO.sleep(600.millis) // 等过 grace(300ms)
+        _ <- IO.sleep(600.millis)
         evicted <- ms.peers
-        tSync <- IO.realTime // 与 PresenceDialRound.atMs（epoch millis）同时钟；monotonic 异钟 ⇒ 判据恒真、读到缺席前的旧轮
-        _ <- ps.syncPeers(List(p)) // 回册
-        _ <- awaitRoundWhere(ps, "survive", _.atMs > tSync.toMillis)
-        t0 <- IO.monotonic
-        _ <- ps.connect(p)
-        elapsed <- IO.monotonic.map(d => (d - t0).toMillis)
-        after <- IO(roundOf(ps, "survive"))
-      yield (windowed, during, evicted, after, elapsed)
-      end for
-    }.map { case (windowed, during, evicted, after, elapsed) =>
+        _ <- ps.syncPeers(List(p))
+        _ <- releaseLegs(1)
+        after <- awaitRoundWhere(ps, "survive", _.skippedSuppressed == List(epB))
+      yield (windowed, during, evicted, after)).guarantee(IO(permits.release(20)))
+    }.map { case (windowed, during, evicted, after) =>
       assertEquals(windowed.skippedSuppressed, Nil, "第 5 拍末才置窗 ⇒ 该轮仍全拨")
       assert(during.exists(_.deviceId == "survive"), "名册缺席后 grace 窗内仍在册（pending removal 已登记）")
       assertEquals(evicted.exists(_.deviceId == "survive"), false, "成员资格面照旧离册（两态解耦，不是把两态粘回去）")
@@ -750,10 +755,7 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
         "🔴 回册后账本必须存活（改前此处读到 Nil：名册缺席一拍把账本/指纹/轮记录一次同清 ⇒ 计数从零重累）"
       )
       assertEquals(after.attempted, List(epA), "回册后只半开探测最优候选（改前 = [epA, epB] 全拨）")
-      assert(
-        elapsed <= 2_400L,
-        s"每拍成本 1×budget(1500ms) 的半开探测，实测 ${elapsed}ms（改前 ≈3000ms = 两候选全拨）"
-      )
+      assertEquals(after.failures.map(_._2), List(DialFailureClass.Timeout))
     }
   }
 
