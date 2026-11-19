@@ -36,7 +36,7 @@ python3 scripts/merge-sink.py --selftest
 | `--branch B` | （必需，`--selftest` 除外） | 待合并的特性分支 |
 | `--into` | `main` | 合并目标分支（只读用，`--into` 的 tip 会前后复核） |
 | `--repo` | `git rev-parse --show-toplevel`（当前目录） | 主仓路径（合并节点沙箱 = 主仓工作区） |
-| `--worktree` | `<repo>/.nebflow/worktrees/<branch>`（存在才清） | 该分支的 worktree，清理用 |
+| `--worktree` | `<repo>/.stand/worktrees/<name>`（存在才清） | 该分支的 worktree，清理用 |
 | `--specs` | 空 = 只跑 `compile`（头部打 `NOTE:`） | 空格分隔的 suite 全名 |
 | `--specs-file` | 无 | 每行一个 suite（批自己的清单放批内文件，别写进脚本） |
 | `--merge-msg` | `merge(<branch>) into <into>` | 合并提交信息 |
@@ -214,7 +214,7 @@ def main() -> int:
     ap.add_argument("--branch", help="待合并的特性分支")
     ap.add_argument("--into", default="main", help="合并目标分支（缺省 main）")
     ap.add_argument("--repo", help="主仓路径（缺省 = git rev-parse --show-toplevel）")
-    ap.add_argument("--worktree", help="该分支的 worktree 路径（缺省 .nebflow/worktrees/<branch>）")
+    ap.add_argument("--worktree", help="该分支的 worktree 路径（缺省 .stand/worktrees/<name>，name=branch 的 / 换 -）")
     ap.add_argument("--specs", default="", help="空格分隔的门禁 suite 全名（缺省只跑 compile）")
     ap.add_argument("--specs-file", help="每行一个 suite 的文件（与 --specs 合并）")
     ap.add_argument("--merge-msg", help="合并提交信息")
@@ -238,7 +238,9 @@ def main() -> int:
         print("BLOCKED: 无法定位仓根（--repo 指错或不在 git 仓内）")
         return 9
     B, INTO = a.branch, a.into
-    WT = a.worktree or os.path.join(repo, ".nebflow", "worktrees", B)
+    # 统一树路径（作者令 2026-11-19 20:33「统一路径」）：工作树一律 <repo>/.stand/worktrees/<name>，
+    # name = 分支名把 `/` 换成 `-`（与 scripts/stand-wt.py 的建树口径一致；旧缺省 .nebflow/worktrees 已废止）。
+    WT = a.worktree or os.path.join(repo, ".stand", "worktrees", B.replace("/", "-"))
     LOCKP = a.lock or os.path.join(repo, ".nebflow", "tmp", "merge-gate.lock")
     LOGDIR = a.dir or os.path.join(repo, ".nebflow", "tmp")
     os.makedirs(LOGDIR, exist_ok=True)
