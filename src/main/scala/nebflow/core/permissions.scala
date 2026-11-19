@@ -170,24 +170,57 @@ object ToolReversibility:
   // Bash is special — same tool can be safe or dangerous depending on command
   private val SafeHttpMethods = Set("GET", "HEAD", "OPTIONS")
 
-  def isReversible(toolName: String, input: JsonObject, mode: SafetyMode): Boolean =
+  /**
+   * 出卡理由 = **闸名 + 规则 id + 人话标签**（报障批 2026-11-19：审批卡此前只有
+   * 「允许 Bash？」一行，用户无从知道为什么被拦 ⇒ 盲批）。本对象是「为什么出卡」
+   * 的唯一后端来源；审批卡逐字照抄，前端零猜测。
+   */
+  final case class AskReason(gate: String, ruleId: String, label: String)
+
+  /**
+   * 单一判定点：Some(reason) = 本条调用需要人工确认（并说明理由），None = 放行。
+   * `isReversible` 由本函数**派生**（`isEmpty`），故判定与理由永不漂移。
+   */
+  def askReason(toolName: String, input: JsonObject, mode: SafetyMode): Option[AskReason] =
     mode match
       case SafetyMode.AutoAll =>
-        true
+        None
 
       case SafetyMode.AutoEdits =>
         // Write/Edit auto-approved, Bash still checked
-        if EditTools.contains(toolName) then true
-        else if toolName == "Bash" then checkBash(input)
-        else if toolName == "Curl" then checkCurl(input)
-        else true // all other tools (Read, Grep, MCP, ScriptTool, etc.) auto-approved
+        if EditTools.contains(toolName) then None
+        else if toolName == "Bash" then bashReason(input)
+        else if toolName == "Curl" then curlReason(input)
+        else None // all other tools (Read, Grep, MCP, ScriptTool, etc.) auto-approved
 
       case SafetyMode.ConfirmEdits =>
         // Write/Edit need confirmation, Bash checked, others auto-approved
-        if EditTools.contains(toolName) then false
-        else if toolName == "Bash" then checkBash(input)
-        else if toolName == "Curl" then checkCurl(input)
-        else true // all other tools auto-approved
+        if EditTools.contains(toolName) then
+          Some(AskReason("ToolReversibility.edit-tools", "tool.write-needs-confirm", "写类工具：逐次确认档下需人工放行"))
+        else if toolName == "Bash" then bashReason(input)
+        else if toolName == "Curl" then curlReason(input)
+        else None // all other tools auto-approved
+
+  def isReversible(toolName: String, input: JsonObject, mode: SafetyMode): Boolean =
+    askReason(toolName, input, mode).isEmpty
+
+  private def bashReason(input: JsonObject): Option[AskReason] =
+    input("command").flatMap(_.asString) match
+      case None => None // 无 command（后台任务轮询等）⇒ 与改前 forall 语义一致：可逆
+      case Some(cmd) =>
+        BashTool
+          .dangerGateRule(cmd)
+          .map(r => AskReason("ToolReversibility.checkBash", r.id, r.label))
+          .orElse(
+            BashTool.injectionGateRule(cmd).map(r => AskReason("ToolReversibility.checkBash", r.id, r.label))
+          )
+
+  private def curlReason(input: JsonObject): Option[AskReason] =
+    input("method").flatMap(_.asString).flatMap { m =>
+      val verb = m.toUpperCase
+      if SafeHttpMethods.contains(verb) then None
+      else Some(AskReason("ToolReversibility.checkCurl", "curl.non-safe-method", s"网络写操作（$verb 非只读方法）"))
+    }
 
   private def checkBash(input: JsonObject): Boolean =
     input("command").flatMap(_.asString).forall { cmd =>

@@ -1,0 +1,65 @@
+{
+  "note": "真机取证摘出（tests/evidence-perm-card-detail.mjs）：真实 delegate 会话的 askPermission 帧，未做任何手工修补",
+  "capturedAt": "2026-11-19T11:20:33.875Z",
+  "isolatePort": 8291,
+  "frames": [
+    {
+      "name": "Bash",
+      "toolName": "Bash",
+      "input": {
+        "command": "set -e\ncd /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe\n# 清理三份历史快照（本行以下都是真删除，取证时会被拒绝）\nrm -rf /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe/keep-a\nrm -rf /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe/keep-b\nrm -rf /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe/keep-c\nrm -rf ./cache-*\nrm -rf ./tmp-*\nls -la",
+        "description": "清理历史快照（取证用）"
+      },
+      "permDetail": {
+        "tool": "Bash",
+        "command": "set -e\ncd /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe\n# 清理三份历史快照（本行以下都是真删除，取证时会被拒绝）\nrm -rf /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe/keep-a\nrm -rf /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe/keep-b\nrm -rf /var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe/keep-c\nrm -rf ./cache-*\nrm -rf ./tmp-*\nls -la",
+        "reason": {
+          "gate": "ToolReversibility.checkBash",
+          "ruleId": "bash.gate.rm-rf",
+          "label": "递归删除（rm -rf）",
+          "level": 2,
+          "levelRuleId": "bash.level2.rm-rf",
+          "levelLabel": "递归删除",
+          "safetyMode": "confirm-edits"
+        },
+        "scope": {
+          "device": "Mashiros-MacBook-Pro-iso-1ebb7483",
+          "cwd": "/Users/kaiyu/Claude code/Stand/.stand/worktrees/perm-card-detail",
+          "target": "",
+          "remoteExec": false
+        }
+      },
+      "sourceAgent": "nebflow",
+      "sourceSession": "delegate-nebflow-95008a46"
+    },
+    {
+      "name": "Write",
+      "toolName": "Write",
+      "input": {
+        "file_path": "/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe/delegate-note.txt",
+        "content": "perm-card-detail evidence\n"
+      },
+      "permDetail": {
+        "tool": "Write",
+        "command": "/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe/delegate-note.txt\n{\n  \"file_path\" : \"/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe/delegate-note.txt\",\n  \"content\" : \"perm-card-detail evidence\\n\"\n}",
+        "reason": {
+          "gate": "ToolReversibility.edit-tools",
+          "ruleId": "tool.write-needs-confirm",
+          "label": "写类工具：逐次确认档下需人工放行",
+          "level": 1,
+          "levelRuleId": "",
+          "levelLabel": "",
+          "safetyMode": "confirm-edits"
+        },
+        "scope": {
+          "device": "Mashiros-MacBook-Pro-iso-1ebb7483",
+          "cwd": "/Users/kaiyu/Claude code/Stand/.stand/worktrees/perm-card-detail",
+          "target": "/var/folders/ym/rfvzq57x4rgdq7cqcy9z68vc0000gn/T/nb-permcard-1795087195700/danger-probe/delegate-note.txt",
+          "remoteExec": false
+        }
+      },
+      "sourceAgent": "nebflow",
+      "sourceSession": "delegate-nebflow-95008a46"
+    }
+  ]
+}

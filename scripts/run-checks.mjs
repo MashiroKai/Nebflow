@@ -78,6 +78,11 @@ export const CHECKS = [
     ['perm-presentation', 'check-perm-presentation'],
     ['permission-gate', 'check-permission-gate'],
   ].map(([name, script]) => nodeCheck(name, script, ['static'])),
+  // 审批卡三要素闸（报障批 2026-11-19，作者实拍「这个危险操作给的信息太少了」）：
+  // 真渲染器 + 真样式表下断言「命令正文 + 为什么危险 + 作用域」三块齐全、6 行折叠可读；
+  // `--negative-control` 中和本次修复必须变红（闸有效的自证）。前端面（要起浏览器）。
+  { name: 'perm-card-detail', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/perm-card-detail.spec.mjs'] },
   { name: 'tooling-lint', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, 'node_modules/eslint/bin/eslint.js', 'eslint.config.mjs',
       'scripts/check-js-types.mjs', 'scripts/run-checks.mjs', 'scripts/check-sdd.mjs', 'scripts/check-openspec.mjs', 'scripts/tests/'] },

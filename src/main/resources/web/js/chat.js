@@ -84,6 +84,9 @@ import { bindCollapsibleToggle } from './chat/collapsible.js';
 // 统一状态机（主会话 setBusy/clearBusy 与 canvas ask 共用同一实现）。
 import { applyTurnChrome } from './input/composer.js';
 import { withFocusKey } from './focusTrap.js';
+// 审批卡三要素（命令正文 / 为什么危险 / 作用域）单点 —— 报障批 2026-11-19。
+// live 渲染与两条历史重放腿共用同一个 builder，卡面形态不得分叉。
+import { permDetailFrom, renderPermDetail } from './permDetail.js';
 export { formatDuration, formatLiveDuration, pickThinkingPhrase, createMsgFooterBadge, createDurationBadgeElement, renderDurationBadge } from './chat/durationBadges.js';
 // Pop 族合流（A 侧 pop-upgrade 批单源化）：`popArtifactFromInput` / `openPopArtifact`
 // 的再导出改由下方 A 侧 `./popArtifacts.js` 单源承担（chatSearch.js 既有 import 面
@@ -3687,7 +3690,7 @@ function formatHistoryAnswer(answerText) {
 }
 
 // ---------- Permission prompt ----------
-export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession, sourceTeam, requestId, safetyMode, retargetedFrom) {
+export function renderPermissionPrompt(toolName, summary, inputJson, permSessionId, dangerLevel, sourceAgent, sourceSession, sourceTeam, requestId, safetyMode, retargetedFrom, permDetail) {
   const chat = activeView.dom.chat;
   const row = document.createElement('div');
   row.className = 'row ai';
@@ -3699,16 +3702,13 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   // Danger level decorations
   const level = dangerLevel || 0;
 
-  // Parse input to extract detail and check danger
-  let detail = '';
-  let isDangerous = level >= 2;
-  try {
-    const input = JSON.parse(inputJson || '{}');
-    if (input.command) {
-      detail = input.command;
-    } else if (input.file_path) detail = input.file_path;
-    else if (input.url) detail = input.url;
-  } catch (e) {}
+  // 三要素（报障批 2026-11-19）：命令正文 / 为什么危险 / 作用域。
+  // ⚠ 改前这里对 `inputJson` 调 JSON.parse —— live 帧里 input 是**对象**，
+  // JSON.parse(对象) 恒抛 ⇒ detail 恒为空 ⇒ 卡上「危险操作：」后面空着。
+  // 现统一走 permDetail.js 的归一化（对象/字符串/双编码三种形态），
+  // 且正文/理由/作用域以帧里的 `permDetail`（后端判定投影）为准。
+  const detailInfo = permDetailFrom({ toolName, input: inputJson, permDetail });
+  const isDangerous = level >= 2;
 
   // Danger icons (shared SVG shapes, no text — text comes from i18n).
   // ui-status-redesign（S14 / 盘点 #51）：图标 = 语义档唯一载体（currentColor，
@@ -3728,8 +3728,11 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     bubble.classList.add(dangerConf.cls);
     const banner = document.createElement('div');
     banner.className = 'perm-danger-banner';
-    // i18n label with {detail} placeholder for dangerous/critical levels
-    const bannerText = t(dangerConf.i18nKey, { detail: detail || '' });
+    // 横幅只说**命中的规则**（后端判定给的人话标签），命令正文走下方正文块
+    // —— 改前这里塞的是整条命令（且因解析失败恒为空），既不全也不该在这行。
+    const riskLabel = (detailInfo.reason && detailInfo.reason.label)
+      || (detailInfo.reason && detailInfo.reason.levelLabel) || '';
+    const bannerText = t(dangerConf.i18nKey, { detail: riskLabel });
     banner.innerHTML = dangerConf.icon + '<span>' + escapeHtml(bannerText) + '</span>';
     bubble.appendChild(banner);
   }
@@ -3739,12 +3742,16 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   if (sourceAgent) {
     const sourceBadge = document.createElement('div');
     sourceBadge.className = 'perm-source-badge';
-    const shortSession = sourceSession ? sourceSession.substring(0, 12) : '';
+    // 来源标识**完整**（报障批 2026-11-19）：改前 `substring(0, 12)` 把
+    // `delegate-stand-ab12cd34` 切成 `delegate-sta`——同名 delegate 之间无法区分，
+    // 用户也没法核实「到底是谁在请求」。现给完整 id（CSS 允许折行/悬停看全）。
+    const fullSession = sourceSession ? String(sourceSession) : '';
     // Nebula 退役批（作者令 2026-11-01）：来源 badge 的 agent 段走单一显示名读点
     // （根会话 = 用户起的名字 / 未命名 = 通用称呼；后台 agent = 自身身份）。
     const agentLabel = sourceTeam ? `${sourceTeam}/${sourceAgent}` : agentDisplayName(sourceAgent);
     sourceBadge.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M7 17l9.2-9.2M17 17V7H7"/></svg>' +
-      '<span>' + escapeHtml(t('chat.permSource', { agent: agentLabel, session: shortSession })) + '</span>';
+      '<span>' + escapeHtml(t('chat.permSource', { agent: agentLabel, session: fullSession })) + '</span>';
+    sourceBadge.title = t('chat.permSource', { agent: agentLabel, session: fullSession });
     bubble.appendChild(sourceBadge);
   }
 
@@ -3774,6 +3781,10 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
     bubble.appendChild(retargetBadge);
   }
 
+  // 三要素块（命令正文 / 为什么危险 / 作用域）：徽标之后、问句之前。
+  // 单一渲染点 = permDetail.js（历史重放腿同款，见 persistence.js / historyReplay.js）。
+  renderPermDetail(bubble, detailInfo, t);
+
   row.appendChild(bubble);
   appendChatRow(chat, row);
 
@@ -3788,11 +3799,8 @@ export function renderPermissionPrompt(toolName, summary, inputJson, permSession
   // was approve a card silently. Every permission answer on the frontend now
   // originates from a user click on a rendered option.
 
-  // Build the question text
-  let questionText = t('chat.allowTool', { tool: toolName });
-  if (detail) {
-    questionText = t('chat.allowTool', { tool: toolName }) + '  <code class="perm-detail-code">' + escapeHtml(detail) + '</code>';
-  }
+  // Build the question text（命令正文已在三要素块里完整给出 ⇒ 问句只问「允许谁？」）
+  const questionText = t('chat.allowTool', { tool: toolName });
 
   const allowLabel = t('chat.allow');
   const denyLabel = t('chat.deny');

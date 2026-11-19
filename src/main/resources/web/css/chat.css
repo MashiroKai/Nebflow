@@ -4023,9 +4023,130 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   font-size: var(--ds-fs-meta);
   font-weight: 500;
   margin-bottom: var(--ds-space-stack-gap);
+  /* 来源标识完整（报障批 2026-11-19）：改前 JS 把 session id 截成 12 字
+     （`delegate-stand-ab12cd34` → `delegate-sta`）。现给全长 id，badge 允许
+     折行而不是把字吃掉——同一 agent 的多个 delegate 必须可区分。 */
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: left;
 }
 .perm-source-badge svg {
   flex-shrink: 0;
+}
+.perm-source-badge span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* ===== Approval-card three elements (defect batch 2026-11-19) =====
+   命令正文 / 为什么危险 / 作用域。三块都在气泡内、都在问句之前 ——
+   用户先看清「要做什么、为什么拦、在哪做」，再决定允许还是拒绝。
+   折叠纪律：命令默认 6 行（`--perm-cmd-lines` 单点），全文在 DOM 里，
+   展开后不设上限（不静默截断）。 */
+.perm-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  margin-bottom: var(--ds-space-2);
+  min-width: 0;
+}
+.perm-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  min-width: 0;
+}
+.perm-detail-label {
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.perm-cmd {
+  --perm-cmd-lines: 6;
+  margin: 0;
+  padding: var(--ds-space-1h) var(--ds-space-2);
+  border-radius: var(--ds-radius-badge);
+  background: var(--glass-etched-bg);
+  border: 1px solid var(--sapphire-edge);
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: var(--ds-fs-hint);
+  line-height: 1.6;
+  color: var(--color-frame-text);
+  /* 换行逐字保留；长行横向滚动而不是折成一团（命令的可读性优先） */
+  white-space: pre;
+  overflow: auto;
+  max-height: calc(var(--perm-cmd-lines) * 1.6em);
+  max-width: 100%;
+  overscroll-behavior: contain;
+}
+.perm-cmd.expanded {
+  max-height: none;
+}
+.perm-cmd:focus-visible {
+  outline: 2px solid var(--sapphire-edge);
+  outline-offset: 1px;
+}
+.perm-cmd-toggle {
+  align-self: flex-start;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-link-term, var(--sapphire-edge));
+  cursor: pointer;
+  text-decoration: underline;
+}
+.perm-cmd-toggle[hidden] {
+  display: none;
+}
+.perm-reason {
+  font-size: var(--ds-fs-hint);
+  color: var(--color-frame-text);
+  overflow-wrap: anywhere;
+}
+.perm-reason-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--ds-space-1h);
+  font-size: var(--ds-fs-meta);
+  color: var(--ds-text-muted);
+}
+.perm-risk-badge {
+  padding: 0 var(--ds-space-1);
+  border-radius: var(--ds-radius-chip);
+  border: 1px solid currentColor;
+}
+.perm-risk-badge.lv-1 { color: var(--color-warning); }
+.perm-risk-badge.lv-2,
+.perm-risk-badge.lv-3 { color: var(--status-error-icon); }
+.perm-reason-gate,
+.perm-reason-rule {
+  overflow-wrap: anywhere;
+}
+.perm-scope-row {
+  display: flex;
+  gap: var(--ds-space-1h);
+  font-size: var(--ds-fs-hint);
+  min-width: 0;
+}
+.perm-scope-key {
+  flex-shrink: 0;
+  color: var(--ds-text-muted);
+}
+.perm-scope-val {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  color: var(--color-frame-text);
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+/* 窄屏（手机 375）：正文与作用域不撑破卡面，命令靠横向滚动而不是压扁 */
+@media (max-width: 520px) {
+  .perm-cmd { font-size: var(--ds-fs-meta); }
+  .perm-scope-row { flex-direction: column; gap: 0; }
 }
 
 /* Inline code for showing command/file detail in permission prompt */

@@ -3104,10 +3104,13 @@ class WebSocketRoutes(
         val toolName = hc.downField("toolName").as[String].getOrElse("")
         val summary = hc.downField("summary").as[String].getOrElse("")
         val permInput = hc.downField("input").as[io.circe.Json].getOrElse(io.circe.Json.Null).noSpaces
+        // 三要素载荷（报障批 2026-11-19）：随卡落盘 ⇒ 重开/刷新后卡上的
+        // 「命令正文 + 为什么危险 + 作用域」仍在（缺席 ⇒ None ⇒ 旧行形态不变）。
+        val permDetail = hc.downField("permDetail").as[Option[io.circe.Json]].toOption.flatten
         if toolName.nonEmpty then
           sharedResources.sessionStore.appendUiMessages(
             sessionId,
-            List(UiMessage.AskPermission(toolName, summary, permInput))
+            List(UiMessage.AskPermission(toolName, summary, permInput, permDetail = permDetail))
           )
         else IO.unit
 

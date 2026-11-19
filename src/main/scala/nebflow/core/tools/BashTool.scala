@@ -118,57 +118,86 @@ Git safety:
     )
   )
 
+  /**
+   * 判定规则 = **id + 人话标签 + 正则** 一条不可分（审批卡「为什么危险」的单一来源，
+   * 报障批 2026-11-19）。改前规则只有正则：命中之后**没有任何东西**知道命中的是
+   * 「递归删除」还是「强推」，卡面只能干瞪眼 ⇒ 用户盲批。id 稳定、label 面向用户。
+   */
+  final case class DangerRule(id: String, label: String, pattern: scala.util.matching.Regex)
+
+  /**
+   * 档位判定结果：`level` 0/1/2/3（0 = 未命中任何风险档），同时带回命中的
+   * 规则 id 与标签（未命中时两者为空串）。
+   */
+  final case class DangerVerdict(level: Int, ruleId: String, label: String)
+  object DangerVerdict:
+    val Safe: DangerVerdict = DangerVerdict(0, "", "")
+
   // Security rules: patterns that require user approval
-  private val FixedDangerousPatterns = List(
-    """rm\s+-rf\s+""".r,
-    """rm\s+-fr\s+""".r,
-    """git\s+push\s+.*--force""".r,
-    """git\s+push\s+.*-f\b""".r,
-    """git\s+reset\s+--hard""".r,
-    """git\s+clean\s+-f""".r,
-    """git\s+checkout\s+--\s*\.""".r,
-    """git\s+branch\s+-D\s+(main|master)""".r,
-    """>\s*~/.ssh/""".r,
-    """rm\s+.*\.env""".r,
-    """>\s*~/.gnupg/""".r,
-    """>\s*~/.aws/""".r,
+  private val FixedDangerousRules = List(
+    DangerRule("bash.gate.rm-rf", "递归删除（rm -rf）", """rm\s+-rf\s+""".r),
+    DangerRule("bash.gate.rm-fr", "递归删除（rm -fr）", """rm\s+-fr\s+""".r),
+    DangerRule("bash.gate.git-push-force", "强推（force push）", """git\s+push\s+.*--force""".r),
+    DangerRule("bash.gate.git-push-f", "强推（force push）", """git\s+push\s+.*-f\b""".r),
+    DangerRule("bash.gate.git-reset-hard", "丢弃未提交改动（reset --hard）", """git\s+reset\s+--hard""".r),
+    DangerRule("bash.gate.git-clean-f", "删除未跟踪文件（git clean -f）", """git\s+clean\s+-f""".r),
+    DangerRule("bash.gate.git-checkout-dot", "覆盖工作树（checkout -- .）", """git\s+checkout\s+--\s*\.""".r),
+    DangerRule("bash.gate.git-branch-delete-main", "删除主分支", """git\s+branch\s+-D\s+(main|master)""".r),
+    DangerRule("bash.gate.ssh-dir-write", "改写凭据（~/.ssh 私钥目录）", """>\s*~/.ssh/""".r),
+    DangerRule("bash.gate.env-file-delete", "删除凭据文件（.env）", """rm\s+.*\.env""".r),
+    DangerRule("bash.gate.gnupg-dir-write", "改写凭据（~/.gnupg 密钥目录）", """>\s*~/.gnupg/""".r),
+    DangerRule("bash.gate.aws-dir-write", "改写凭据（~/.aws 凭据目录）", """>\s*~/.aws/""".r),
     // Database destructive operations
-    """(?i)\bDROP\s+(TABLE|DATABASE|SCHEMA)""".r,
-    """(?i)\bTRUNCATE\s+TABLE?\b""".r,
+    DangerRule("bash.gate.sql-drop", "数据库破坏（DROP）", """(?i)\bDROP\s+(TABLE|DATABASE|SCHEMA)""".r),
+    DangerRule("bash.gate.sql-truncate", "数据库破坏（TRUNCATE）", """(?i)\bTRUNCATE\s+TABLE?\b""".r),
     // Infrastructure destructive operations
-    """(?i)\bkubectl\s+delete\s+(namespace|cluster|deployment|statefulset|pv|pvc)""".r,
-    """(?i)\bterraform\s+(destroy|apply).*(-destroy)""".r,
-    """(?i)\bdocker\s+(system|volume)\s+prune""".r,
+    DangerRule(
+      "bash.gate.kubectl-delete",
+      "集群删资源（kubectl delete）",
+      """(?i)\bkubectl\s+delete\s+(namespace|cluster|deployment|statefulset|pv|pvc)""".r
+    ),
+    DangerRule("bash.gate.terraform-destroy", "基建销毁（terraform destroy）", """(?i)\bterraform\s+(destroy|apply).*(-destroy)""".r),
+    DangerRule("bash.gate.docker-prune", "批量删容器/卷（docker prune）", """(?i)\bdocker\s+(system|volume)\s+prune""".r),
     // Package publishing
-    """(?i)\bnpm\s+publish""".r,
-    """(?i)\bpypi\s+upload""".r,
-    """(?i)\btwine\s+upload""".r,
-    """(?i)\bmvn\s+deploy""".r,
-    """(?i)\bsbt\s+publish""".r,
+    DangerRule("bash.gate.publish-npm", "发布包（不可撤回）", """(?i)\bnpm\s+publish""".r),
+    DangerRule("bash.gate.publish-pypi", "发布包（不可撤回）", """(?i)\bpypi\s+upload""".r),
+    DangerRule("bash.gate.publish-twine", "发布包（不可撤回）", """(?i)\btwine\s+upload""".r),
+    DangerRule("bash.gate.publish-mvn", "发布构件（不可撤回）", """(?i)\bmvn\s+deploy""".r),
+    DangerRule("bash.gate.publish-sbt", "发布构件（不可撤回）", """(?i)\bsbt\s+publish""".r),
     // Process killing — prevents agent from killing nebflow or other critical processes
-    """\bpkill\b""".r,
-    """\bkillall\b""".r,
-    """(?i)\bkill\s+(-[0-9]+)?\s*\d+""".r,
-    """(?i)\bsystemctl\s+(stop|kill|restart)\b""".r,
-    """(?i)\blaunchctl\s+(stop|kill)\b""".r,
+    DangerRule("bash.gate.pkill", "杀进程（pkill）", """\bpkill\b""".r),
+    DangerRule("bash.gate.killall", "杀进程（killall）", """\bkillall\b""".r),
+    DangerRule("bash.gate.kill-pid", "杀进程（kill PID）", """(?i)\bkill\s+(-[0-9]+)?\s*\d+""".r),
+    DangerRule("bash.gate.systemctl", "停/重启系统服务（systemctl）", """(?i)\bsystemctl\s+(stop|kill|restart)\b""".r),
+    DangerRule("bash.gate.launchctl", "停/卸载系统服务（launchctl）", """(?i)\blaunchctl\s+(stop|kill)\b""".r),
     // Git branch switching — can lose uncommitted changes
-    """git\s+checkout\s+(?!-b\b)(?!--\s)(?!\*\.)""".r,
-    """git\s+switch\b""".r,
-    """git\s+stash\s+(drop|clear)\b""".r,
-    """git\s+rebase\b""".r,
-    """git\s+merge\b""".r,
+    DangerRule("bash.gate.git-checkout", "切换分支（可能丢未提交改动）", """git\s+checkout\s+(?!-b\b)(?!--\s)(?!\*\.)""".r),
+    DangerRule("bash.gate.git-switch", "切换分支（可能丢未提交改动）", """git\s+switch\b""".r),
+    DangerRule("bash.gate.git-stash-drop", "丢弃 stash", """git\s+stash\s+(drop|clear)\b""".r),
+    DangerRule("bash.gate.git-rebase", "改写提交历史（rebase）", """git\s+rebase\b""".r),
+    DangerRule("bash.gate.git-merge", "合并分支（merge）", """git\s+merge\b""".r),
     // Fork bomb
-    """:\(\)\{\s*:\|:&\s*\}""".r,
-    """fork\s+bomb""".r,
+    DangerRule("bash.gate.fork-bomb", "fork 炸弹", """:\(\)\{\s*:\|:&\s*\}""".r),
+    DangerRule("bash.gate.fork-bomb-word", "fork 炸弹", """fork\s+bomb""".r),
     // Obfuscation: encoded payload piped to shell interpreter
-    """(?i)(base64|base32|xxd|openssl\s+enc).*\|\s*(sh|bash|/bin/sh|/bin/bash|zsh)\b""".r,
+    DangerRule(
+      "bash.gate.obfuscated-shell",
+      "混淆载荷交给 shell 执行",
+      """(?i)(base64|base32|xxd|openssl\s+enc).*\|\s*(sh|bash|/bin/sh|/bin/bash|zsh)\b""".r
+    ),
     // Obfuscation: interpreter relay with system/exec/eval calls
-    """(?i)(python[23]?|perl|ruby|node)\s+-[ec]\b.*((os\.)?system|exec|eval|subprocess|popen)""".r,
+    DangerRule(
+      "bash.gate.obfuscated-exec",
+      "脚本内执行系统调用（混淆）",
+      """(?i)(python[23]?|perl|ruby|node)\s+-[ec]\b.*((os\.)?system|exec|eval|subprocess|popen)""".r
+    ),
     // Obfuscation: variable assignment then immediate $ reference to execute
-    """(?i)\b\w+\s*=\s*['"]?[rm]m?['"]?\s*;?\s*\$""".r,
+    DangerRule("bash.gate.obfuscated-var", "变量拼接执行（混淆）", """(?i)\b\w+\s*=\s*['"]?[rm]m?['"]?\s*;?\s*\$""".r),
     // Obfuscation: env/env -i used to inject commands bypassing direct detection
-    """(?i)\benv\s+(-i\s+)?\w+=.*\$\w+""".r
+    DangerRule("bash.gate.env-inject", "env 注入命令（混淆）", """(?i)\benv\s+(-i\s+)?\w+=.*\$\w+""".r)
   )
+
+  private val FixedDangerousPatterns: List[scala.util.matching.Regex] = FixedDangerousRules.map(_.pattern)
 
   /**
    * `rm` against the data root — derived at call time from PathUtil.dataRoot
@@ -183,13 +212,17 @@ Git safety:
    *   - dataRoot 绝对路径（隔离实例 / 显式 --home / STAND_HOME 实例的真实写根）。
    * `def` on purpose：dataRoot 可在对象初始化后被换根 —— 正则必须现算。
    */
-  private def dataRootWipePatterns: List[scala.util.matching.Regex] =
+  private def dataRootWipeRules: List[DangerRule] =
     List(
       "~/" + nebflow.shared.Branding.homeDirName,
       "~/" + nebflow.shared.PathUtil.LegacyHomeDirName,
       nebflow.shared.PathUtil.dataRoot.toString
     ).distinct
-      .map(root => ("""rm\s+.*""" + scala.util.matching.Regex.quote(root)).r)
+      .map(root => DangerRule("bash.gate.data-root-wipe", "删除数据根（本实例 home）", ("""rm\s+.*""" + scala.util.matching.Regex.quote(root)).r))
+
+  private def dataRootWipePatterns: List[scala.util.matching.Regex] = dataRootWipeRules.map(_.pattern)
+
+  private def allDangerousRules: List[DangerRule] = FixedDangerousRules ++ dataRootWipeRules
 
   private def allDangerousPatterns: List[scala.util.matching.Regex] =
     FixedDangerousPatterns ++ dataRootWipePatterns
@@ -248,74 +281,123 @@ Git safety:
   )
 
   // Injection patterns: gated by ToolReversibility — requires user confirmation
-  private val InjectionPatterns = List(
-    ("""\$\(\s*.*?\brm\b""".r, "Command substitution containing rm detected"),
-    ("""`\s*.*?\brm\b""".r, "Backtick substitution containing rm detected"),
-    ("""IFS\s*=""".r, "IFS manipulation detected"),
-    ("""\\x00""".r, "Null byte injection detected")
+  // （id/label 与 message 同列：id 供审批卡的理由面，message 仍是喂给模型的原文）
+  private val InjectionRules = List(
+    (
+      "bash.gate.injection-rm-substitution",
+      "命令替换里含 rm",
+      """\$\(\s*.*?\brm\b""".r,
+      "Command substitution containing rm detected"
+    ),
+    (
+      "bash.gate.injection-rm-backtick",
+      "反引号替换里含 rm",
+      """`\s*.*?\brm\b""".r,
+      "Backtick substitution containing rm detected"
+    ),
+    ("bash.gate.injection-ifs", "IFS 变量篡改", """IFS\s*=""".r, "IFS manipulation detected"),
+    ("bash.gate.injection-null-byte", "空字节注入", """\\x00""".r, "Null byte injection detected")
   )
+
+  private val InjectionPatterns = InjectionRules.map { case (_, _, p, m) => (p, m) }
 
   def isDangerous(command: String): Boolean =
     allDangerousPatterns.exists(_.findFirstIn(command).isDefined)
 
-  /** Returns a danger level: 0 = safe, 1 = warning (git ops / network egress), 2 = dangerous (deletion/kill), 3 = critical (system destruction). */
-  def dangerLevel(command: String): Int =
-    val criticalPatterns = List(
-      """rm\s+-rf\s+/\s*$""".r,
-      """rm\s+-rf\s+/\*\s*""".r,
-      // R11: 递归删除打到盘根（Windows 形态的 `rm -rf /`）——整盘/整卷级
-      // 两个前瞻：① 含 -Recurse ② 目标恰为盘根（`C:\` / `C:/` / `C:`，其后是空白或行尾）；
-      // 顺序无关（-Recurse 在路径前/后均可），但不把 `C:\Users\x` 之类子路径误判为盘根。
-      """(?i)\bRemove-Item\b(?=[\s\S]*-Recurse)(?=[\s\S]*['"]?[A-Za-z]:[\\/]{0,2}['"]?(?=\s|$))""".r,
-      """(?i)\b(rd|rmdir)\s+/s\b[\s\S]*['"]?[A-Za-z]:[\\/]{0,2}['"]?(?=\s|$)""".r,
-      """(?i)\b(shutil\.rmtree|rmSync|rmdirSync)\s*\(\s*['"]/['"]""".r,
-      """pkill\s+(-f\s+)?.*nebflow""".r,
-      """killall\s+.*java""".r,
-      """(?i)format\s+/""".r,
-      """mkfs\b""".r,
-      """dd\s+if=.*of=/dev/""".r
-    )
-    val dangerousPatterns = List(
-      """rm\s+-rf\s+""".r,
-      """rm\s+-fr\s+""".r,
-      // R11: Windows 递归删除（两条肇事形态此前判 0/safe）
-      """(?i)\bRemove-Item\b[\s\S]*-Recurse""".r,
-      """(?i)\b(rd|rmdir)\s+/s\b""".r,
-      """(?i)\bdel\s+(?:/[a-z]+\s+)*/s\b""".r,
-      // R11: 脚本语言递归删除（本机 .mjs/.py 的删除点全走这两条路径）
-      """(?i)\bshutil\.rmtree\b""".r,
-      """(?i)\brm(?:Sync|dirSync)?\s*\([\s\S]*\brecursive\s*:\s*true""".r,
-      """(?i)\bfind\b[\s\S]*\s-delete\b""".r,
-      """\bpkill\b""".r,
-      """\bkillall\b""".r,
-      """(?i)\bkill\s+(-[0-9]+)?\s*\d+""".r,
-      """docker\s+(system|volume)\s+prune""".r,
-      """(?i)\bkubectl\s+delete\b""".r,
-      """git\s+reset\s+--hard""".r,
-      """git\s+clean\s+-f""".r
-    )
-    val warningPatterns = List(
-      // T4（网络档）：出网命令统一 **1 档**——只做可见性分级，
-      // 不与 delguard 的删除形态分级（2/3）打架。规格点名 6 条形态；PowerShell
-      // 的 `powershell -c "Invoke-WebRequest …"` 由「引号前置」分支接住。
-      // 前置 = 行首 / 空白 / shell 分隔符（; & | (）/ 引号，后置 = 空白 / 行尾，
-      // 故 `curling`、`ssh-keygen` 之类子串不误判。**别名（sftp/nc/telnet/iwr/irm）不纳入**。注意：auto-all 下 dangerLevel 不参与闸门决策，可见性由
-      // relay 执行审计行（RelayExecAudit）承担。
-      """(?i)(?:^|[\s;&|("'`])(?:ssh|scp|curl|wget|ncat|Invoke-WebRequest)(?=\s|$)""".r,
-      """git\s+checkout\s+(?!-b\b)(?!--\s)(?!\*\.)""".r,
-      """git\s+switch\b""".r,
-      """git\s+stash\s+(drop|clear)\b""".r,
-      """git\s+rebase\b""".r,
-      """git\s+merge\b""".r,
-      """git\s+branch\s+-D""".r,
-      """git\s+push\s+.*--force""".r
-    )
-    if criticalPatterns.exists(_.findFirstIn(command).isDefined) then 3
-    else if dangerousPatterns.exists(_.findFirstIn(command).isDefined) then 2
-    else if warningPatterns.exists(_.findFirstIn(command).isDefined) then 1
-    else 0
+  /**
+   * 触发出卡（gate 面）的**首个**命中规则：`isDangerous` 与 data-root 守护两条
+   * 名单合流后的第一条命中。None = 本条命令不在固定危险名单内。
+   */
+  def dangerGateRule(command: String): Option[DangerRule] =
+    allDangerousRules.find(_.pattern.findFirstIn(command).isDefined)
 
-  end dangerLevel
+  /** 注入类命中规则（gate 面第二源，`checkInjection` 的结构化兄弟）。 */
+  def injectionGateRule(command: String): Option[DangerRule] =
+    InjectionRules.collectFirst {
+      case (id, label, pattern, _) if pattern.findFirstIn(command).isDefined => DangerRule(id, label, pattern)
+    }
+
+  private val CriticalRules = List(
+    DangerRule("bash.level3.rm-root", "递归删除根目录", """rm\s+-rf\s+/\s*$""".r),
+    DangerRule("bash.level3.rm-root-glob", "递归删除根目录", """rm\s+-rf\s+/\*\s*""".r),
+    // R11: 递归删除打到盘根（Windows 形态的 `rm -rf /`）——整盘/整卷级
+    // 两个前瞻：① 含 -Recurse ② 目标恰为盘根（`C:\` / `C:/` / `C:`，其后是空白或行尾）；
+    // 顺序无关（-Recurse 在路径前/后均可），但不把 `C:\Users\x` 之类子路径误判为盘根。
+    DangerRule(
+      "bash.level3.windows-drive-root-remove-item",
+      "Windows 递归删除盘根",
+      """(?i)\bRemove-Item\b(?=[\s\S]*-Recurse)(?=[\s\S]*['"]?[A-Za-z]:[\\/]{0,2}['"]?(?=\s|$))""".r
+    ),
+    DangerRule(
+      "bash.level3.windows-drive-root-rd",
+      "Windows 递归删除盘根",
+      """(?i)\b(rd|rmdir)\s+/s\b[\s\S]*['"]?[A-Za-z]:[\\/]{0,2}['"]?(?=\s|$)""".r
+    ),
+    DangerRule(
+      "bash.level3.script-rmtree-root",
+      "递归删除根目录",
+      """(?i)\b(shutil\.rmtree|rmSync|rmdirSync)\s*\(\s*['"]/['"]""".r
+    ),
+    DangerRule("bash.level3.pkill-engine", "杀引擎进程", """pkill\s+(-f\s+)?.*nebflow""".r),
+    DangerRule("bash.level3.killall-java", "杀 Java 进程", """killall\s+.*java""".r),
+    DangerRule("bash.level3.format-drive", "格式化磁盘", """(?i)format\s+/""".r),
+    DangerRule("bash.level3.mkfs", "格式化磁盘（mkfs）", """mkfs\b""".r),
+    DangerRule("bash.level3.dd-device", "写裸设备（dd of=/dev/…）", """dd\s+if=.*of=/dev/""".r)
+  )
+  private val DangerousRules = List(
+    DangerRule("bash.level2.rm-rf", "递归删除", """rm\s+-rf\s+""".r),
+    DangerRule("bash.level2.rm-fr", "递归删除", """rm\s+-fr\s+""".r),
+    // R11: Windows 递归删除（两条肇事形态此前判 0/safe）
+    DangerRule("bash.level2.windows-remove-item-recurse", "递归删除", """(?i)\bRemove-Item\b[\s\S]*-Recurse""".r),
+    DangerRule("bash.level2.windows-rd-s", "递归删除", """(?i)\b(rd|rmdir)\s+/s\b""".r),
+    DangerRule("bash.level2.windows-del-s", "递归删除", """(?i)\bdel\s+(?:/[a-z]+\s+)*/s\b""".r),
+    // R11: 脚本语言递归删除（本机 .mjs/.py 的删除点全走这两条路径）
+    DangerRule("bash.level2.script-rmtree", "递归删除", """(?i)\bshutil\.rmtree\b""".r),
+    DangerRule("bash.level2.script-rm-recursive", "递归删除", """(?i)\brm(?:Sync|dirSync)?\s*\([\s\S]*\brecursive\s*:\s*true""".r),
+    DangerRule("bash.level2.find-delete", "批量删除（find -delete）", """(?i)\bfind\b[\s\S]*\s-delete\b""".r),
+    DangerRule("bash.level2.pkill", "杀进程", """\bpkill\b""".r),
+    DangerRule("bash.level2.killall", "杀进程", """\bkillall\b""".r),
+    DangerRule("bash.level2.kill-pid", "杀进程", """(?i)\bkill\s+(-[0-9]+)?\s*\d+""".r),
+    DangerRule("bash.level2.docker-prune", "批量删容器/卷", """docker\s+(system|volume)\s+prune""".r),
+    DangerRule("bash.level2.kubectl-delete", "集群删资源", """(?i)\bkubectl\s+delete\b""".r),
+    DangerRule("bash.level2.git-reset-hard", "丢弃未提交改动", """git\s+reset\s+--hard""".r),
+    DangerRule("bash.level2.git-clean-f", "删除未跟踪文件", """git\s+clean\s+-f""".r)
+  )
+  private val WarningRules = List(
+    // T4（网络档）：出网命令统一 **1 档**——只做可见性分级，
+    // 不与 delguard 的删除形态分级（2/3）打架。规格点名 6 条形态；PowerShell
+    // 的 `powershell -c "Invoke-WebRequest …"` 由「引号前置」分支接住。
+    // 前置 = 行首 / 空白 / shell 分隔符（; & | (）/ 引号，后置 = 空白 / 行尾，
+    // 故 `curling`、`ssh-keygen` 之类子串不误判。**别名（sftp/nc/telnet/iwr/irm）不纳入**。注意：auto-all 下 dangerLevel 不参与闸门决策，可见性由
+    // relay 执行审计行（RelayExecAudit）承担。
+    DangerRule(
+      "bash.level1.network-egress",
+      "出网（网络出口）",
+      """(?i)(?:^|[\s;&|("'`])(?:ssh|scp|curl|wget|ncat|Invoke-WebRequest)(?=\s|$)""".r
+    ),
+    DangerRule("bash.level1.git-checkout", "切换分支", """git\s+checkout\s+(?!-b\b)(?!--\s)(?!\*\.)""".r),
+    DangerRule("bash.level1.git-switch", "切换分支", """git\s+switch\b""".r),
+    DangerRule("bash.level1.git-stash-drop", "丢弃 stash", """git\s+stash\s+(drop|clear)\b""".r),
+    DangerRule("bash.level1.git-rebase", "改写提交历史", """git\s+rebase\b""".r),
+    DangerRule("bash.level1.git-merge", "合并分支", """git\s+merge\b""".r),
+    DangerRule("bash.level1.git-branch-delete", "删除分支", """git\s+branch\s+-D""".r),
+    DangerRule("bash.level1.git-push-force", "强推（force push）", """git\s+push\s+.*--force""".r)
+  )
+
+  /**
+   * 档位 + 命中规则（`dangerLevel` 的结构化形态，语义逐字等价：critical → 3，
+   * dangerous → 2，warning → 1，其余 0；首个命中规则即代表规则）。
+   */
+  def dangerVerdict(command: String): DangerVerdict =
+    def hit(level: Int, rules: List[DangerRule]): Option[DangerVerdict] =
+      rules.find(_.pattern.findFirstIn(command).isDefined).map(r => DangerVerdict(level, r.id, r.label))
+    hit(3, CriticalRules)
+      .orElse(hit(2, DangerousRules))
+      .orElse(hit(1, WarningRules))
+      .getOrElse(DangerVerdict.Safe)
+
+  /** Returns a danger level: 0 = safe, 1 = warning (git ops / network egress), 2 = dangerous (deletion/kill), 3 = critical (system destruction). */
+  def dangerLevel(command: String): Int = dangerVerdict(command).level
 
   def checkInjection(command: String): Option[String] =
     InjectionPatterns.collectFirst {
