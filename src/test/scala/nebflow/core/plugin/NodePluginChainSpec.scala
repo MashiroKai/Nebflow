@@ -6,8 +6,8 @@ import fs2.Stream
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.{ActorSystem, Behavior}
-import nebflow.agent.{AgentLibrary, SharedResources}
+import nebflow.actor.{ActorSystem, AgentDef, Behavior}
+import nebflow.agent.{AgentLibrary, PluginExecutionGateProbe, SharedResources}
 import nebflow.core.entity.EntityLoader
 import nebflow.core.project.{
   FlowMapStore,
@@ -392,6 +392,8 @@ class NodePluginChainSpec extends CatsEffectSuite:
         // startServer 后 refs.update）——等 refcount==1 落定再快照
         _ <- waitUntil(30.seconds)(res.pluginMcp.runningServers.map(_.get("plugin_echo-mcp_srv").contains(1)))
         sessionRunning <- res.pluginMcp.runningServers
+        grantedNames <- IO.blocking(PluginExecutionGateProbe.allowed(AgentDef(name = "general", description = "", tools = Nil).copy(pluginMcpServers = List("plugin_echo-mcp_srv"))))
+        revokedNames <- IO.blocking(PluginExecutionGateProbe.allowed(AgentDef(name = "general", description = "", tools = Nil)))
         _ <- waitUntil(30.seconds)(
           rt.store.snapshot.map(_.nodes.values.exists(n => n.name == "mcpped" && n.status == NodeLifecycle.Completed))
         )
@@ -408,8 +410,8 @@ class NodePluginChainSpec extends CatsEffectSuite:
         runningAfter <- res.pluginMcp.runningServers
         reqOpt = capture.values.headOption
         _ <- system.stopAll.handleErrorWith(_ => IO.unit)
-      yield (reqOpt, sessionRunning, toolsAfter, runningAfter)
-    program.map { case (reqOpt, sessionRunning, toolsAfter, runningAfter) =>
+      yield (reqOpt, sessionRunning, toolsAfter, runningAfter, grantedNames, revokedNames)
+    program.map { case (reqOpt, sessionRunning, toolsAfter, runningAfter, grantedNames, revokedNames) =>
       assertEquals(
         sessionRunning.get("plugin_echo-mcp_srv"),
         Some(1),
@@ -417,10 +419,13 @@ class NodePluginChainSpec extends CatsEffectSuite:
       )
       val req = reqOpt.getOrElse(fail("no LLM request captured"))
       val toolNames = req.tools.getOrElse(Nil).map(_.name)
-      assert(
-        toolNames.exists(_.startsWith("mcp__plugin_echo-mcp_srv__")),
-        s"plugin MCP tool must be in the session tool list (allowedSet §B.4-③), got: ${toolNames.mkString(",")}"
-      )
+      val prefix = "mcp__plugin_echo-mcp_srv__"
+      val granted = grantedNames.filter(_.startsWith(prefix))
+      assert(granted.nonEmpty, "execution gate must authorize the registered plugin tool")
+      assert(!revokedNames.exists(_.startsWith(prefix)), "execution gate must reject the tool without the plugin grant")
+      assert(!toolNames.exists(_.startsWith(prefix)), "ExecutionGate dynamic tools must not enter wire tools")
+      val tail = req.requestOnlyContext.map(_.textContent).mkString("\n")
+      assert(granted.exists(tail.contains), s"request-only tail must advertise the authorized plugin tool: $tail")
       assert(
         !toolsAfter.exists(_.startsWith("mcp__plugin_echo-mcp_srv__")),
         "plugin tools must be unregistered after node terminal state (recycle)"

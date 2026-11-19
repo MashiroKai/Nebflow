@@ -340,6 +340,26 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     program.guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
   }
 
+  test("node bridge truncated names collide and overwrite actor resolution") {
+    val system = ActorSystem("bridge-collision-probe")
+    val sid1 = "node-abc11111"
+    val sid2 = "node-abc22222"
+    def bridgeName(sid: String): String = s"nodebridge-${sid.take(8)}"
+    (for
+      first <- system.spawn(Behaviors.ignore[String], bridgeName(sid1))
+      second <- system.spawn(Behaviors.ignore[String], bridgeName(sid2))
+      _ <- (for
+        resolved <- system.resolve[String](first.path.toString)
+        _ = assertEquals(bridgeName(sid1), bridgeName(sid2))
+        _ = assert(first ne second)
+        _ = assert(resolved eq second, "second bridge replaces first in registry")
+        _ <- system.stop(first)
+        stillResolved <- system.resolve[String](second.path.toString)
+        _ = assert(stillResolved eq second)
+      yield ()).guarantee(system.stop(first) *> system.stop(second))
+    yield ()).guarantee(system.stopAll).timeout(10.seconds)
+  }
+
   test("C1: crashed running node with transcript rehydrates from checkpoint, completes, delivers exactly once") {
     val ws = tempRoot / "ws-c1"
     os.makeDir.all(ws)
