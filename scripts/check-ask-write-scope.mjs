@@ -17,7 +17,8 @@
 //   C 工具面无直写      ask 授权面不得含 Write/Edit；Bash 必须走只读执行器
 //                       （AskBashFace → AskBashGuard.validate），不是裸 shell
 //   D 转交结构化        工具 schema 必填 task 且声明 paths/reason/expected；
-//                       提示词含两条硬约束；工具清单**派生**（不得手抄第二份）
+//                       提示词含两条硬约束 + 能力边界（简单四条判据 / 默认转交 /
+//                       自包含四件 / 作者当场明令例外）；工具清单**派生**（不得手抄第二份）
 //
 // 自证检测力（作者验收条目 4）：把越权放行注入回去（例如把判决换回 `normalized !=
 // target` 或去掉 AskPathBoundary 调用）⇒ 本闸必红。README 同目录的验收证据给了
@@ -215,6 +216,25 @@ export function auditHandoff({ askTools, assembler }) {
     }
     if (!/复杂任务转交主会话/.test(code)) {
       problems.push(`${F.assembler}: the prompt must state constraint 2 (hand complex tasks to the main session)`);
+    }
+    // 能力边界批（ask-prompt-scope 2026-11-19，作者令「它除了问答，简单的修改文档/文件，
+    // 复杂的任务要默认交给主会话」）：硬约束 2 展开为可对照的**能力边界**——「简单」
+    // 四条判据 + 超出即默认转交 + 转交自包含四件 + 作者当场明令的例外。删掉任一要件即红
+    // （负控见 scripts/tests/check-ask-write-scope.test.mjs）。
+    if (!/能力边界/.test(code)) {
+      problems.push(`${F.assembler}: the prompt must state the capability-boundary section`);
+    }
+    if (!/四条同时成立/.test(code)) {
+      problems.push(`${F.assembler}: the boundary must give the decidable "simple edit" test (四条同时成立)`);
+    }
+    if (!/无跨模块影响/.test(code)) {
+      problems.push(`${F.assembler}: the simple-edit test must include the no-cross-module condition`);
+    }
+    if (!/自包含/.test(code) || !/已掌握的事实/.test(code)) {
+      problems.push(`${F.assembler}: the handoff must be self-contained — goal/constraints/acceptance/facts must be named`);
+    }
+    if (!/当场明确要求/.test(code)) {
+      problems.push(`${F.assembler}: the boundary must state the author's on-the-spot explicit-request exception`);
     }
   }
   return problems;
