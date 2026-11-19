@@ -191,6 +191,15 @@ export const CHECKS = [
     argv: [process.execPath, '--test', ...scriptTests] },
   { name: 'worktree-manifest', profiles: ['static'], timeoutMs: 120_000,
     argv: ['python3', '-B', 'scripts/check-delivery.py', '--manifest-only'] },
+  // 合并即清树兜底闸（作者裁定 2026-11-19 20:31「合并就清树」；规范面 branch-governance
+  // BG-REQ-003 / CONTRIBUTING「Landing rules」）。判据＝已并入整合线（main / feat/base）的
+  // 分支仍挂着一棵工作树 ⇒ 红。**为什么单列 `worktree` 档而不是并入 static**：这条判的是
+  // 本机工作树存量（2026-11-19 读数：181 棵链接工作树，其中 41 棵已并入却仍挂着），
+  // 存量回收前它在本机恒红；放进 static 会让任何开发机的静态档长红，把真正的代码红淹掉。
+  // CI/托管主检出没有链接工作树 ⇒ 无对象可判 ⇒ PASS（见脚本头注释的退出码策略）。
+  // 存量清完可提级并入 static —— 那是一行改动，由作者决定。
+  { name: 'worktree-cleanup', profiles: ['worktree'], timeoutMs: 120_000,
+    argv: [process.execPath, 'scripts/check-worktree-cleanup.mjs'] },
   { name: 'cli-logo', profiles: ['static'], timeoutMs: 150_000,
     argv: ['python3', '-B', 'scripts/check-logo-matrix.py'] },
   { name: 'cli-logo-tests', profiles: ['static'], timeoutMs: 120_000,
@@ -216,7 +225,9 @@ export const CHECKS = [
 ];
 
 export function selectChecks(profile, base, manifestTmp) {
-  if (!['static', 'frontend', 'sdd-changed'].includes(profile)) throw new Error(`Unknown profile: ${profile}`);
+  // `worktree` 是本机工作树生命周期档（worktree-cleanup）：显式 --profile worktree 才跑，
+  // 不进 static/frontend —— 它的红是本机存量事实，不是代码缺陷（见该闸上的注释）。
+  if (!['static', 'frontend', 'sdd-changed', 'worktree'].includes(profile)) throw new Error(`Unknown profile: ${profile}`);
   if (profile === 'sdd-changed' && !base) throw new Error('sdd-changed requires an explicit --base');
   if (profile !== 'sdd-changed' && base) throw new Error('--base is only valid with sdd-changed');
   if (manifestTmp && (profile !== 'static' || !isAbsolute(manifestTmp))) throw new Error('--manifest-tmp requires an absolute path and the static profile');

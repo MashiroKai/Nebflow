@@ -170,6 +170,41 @@ to hold up integration work:
 4. **Pushing `main` or `release/*`, and creating release tags, happen only inside the release
    action**, and only on the author's explicit word.
 
+#### Worktree lifecycle (工作树生命周期 — author rulings 2026-11-19 20:31 / 20:33)
+
+Two rulings close the two ends of a worktree's life, and they are one pair: **create in one place,
+reclaim in one step**.
+
+1. **Create only through the unified entry (建树统一).** A development worktree is created by
+   `python3 scripts/stand-wt.py new <wtname> [--branch <branch>] [--base feat/base]` run in the
+   primary checkout. That entry is what puts the tree at `<project>/.stand/worktrees/<wtname>/`,
+   validates the branch name and the merge-base against `feat/base`, and creates the matching
+   `.stand/tmp/<wtname>/{delivery,evidence}/` artifact roots. A dispatch brief or a batch must
+   **never** hand-write `git worktree add <self-chosen path>`: hand-rolled trees scatter over
+   `/private/tmp`, `~/stand-wt` and ad-hoc paths, and a tree outside `.stand/worktrees/` is invisible
+   to `stand-wt.py list`, to the artifact manifest and to the reclamation below.
+2. **Reclaim the tree as soon as the branch lands (合并就清树).** When a branch has landed on the
+   integration line (`feat/base` or `main` — the branch tip is now an ancestor of it), its worktree is
+   reclaimed immediately as part of that landing action:
+   - the action is `git worktree remove <path>`, **never with `--force`**;
+   - three preconditions, any one of which **skips and names** the tree instead of deleting it:
+     `git status --porcelain` in that tree is empty, no process holds it (`lsof +D <path>` returns
+     nothing), and the tree carries no in-flight operation (`MERGE_HEAD`, `rebase-*`,
+     `CHERRY_PICK_HEAD`);
+   - **the branch is always kept** — `git branch -d` is a separate retirement decision and is not part
+     of this rule;
+   - the landing report records which trees were removed, how much was reclaimed, and which trees were
+     skipped with the reason.
+
+The guard behind rule 2 is `scripts/check-worktree-cleanup.mjs`, run through
+`node scripts/run-checks.mjs --profile worktree` (an opt-in profile: a machine carrying the leftover
+backlog is red here until it is reclaimed, and that backlog red must not be mixed into the `static`
+profile). It judges every linked worktree of `git worktree list --porcelain` against `main` and
+`feat/base` and reports each merged-but-hanging tree as `path / branch / merge criterion`; it exits
+`1` only when that state exists in a checkout that has judgeable worktrees, and a CI or hosted
+primary checkout with no linked worktree passes while explicitly reporting that there was nothing to
+judge.
+
 #### Current-state anchors (现状锚点 — 2026-11-19)
 
 | Item | Ref | Note |
