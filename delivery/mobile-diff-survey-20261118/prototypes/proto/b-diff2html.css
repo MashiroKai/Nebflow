@@ -1,0 +1,19 @@
+/* Dark-theme overrides for diff2html (the vendor CSS ships light only). */
+html[data-theme="dark"] .d2h-wrapper { background: transparent; color: #e6e6e6; }
+html[data-theme="dark"] .d2h-file-header { background: #1e222a; border-color: #2a2f3a; }
+html[data-theme="dark"] .d2h-file-name { color: #e6e6e6; }
+html[data-theme="dark"] .d2h-code-line, html[data-theme="dark"] .d2h-code-side-line { color: #e6e6e6; }
+html[data-theme="dark"] .d2h-code-line-ctn { color: #e6e6e6; }
+html[data-theme="dark"] .d2h-code-linenumber, html[data-theme="dark"] .d2h-code-side-linenumber {
+  background: #1e222a; color: #7b7e88; border-color: #2a2f3a;
+}
+html[data-theme="dark"] .d2h-del { background: rgba(248,81,73,0.15); }
+html[data-theme="dark"] .d2h-ins { background: rgba(63,185,80,0.15); }
+html[data-theme="dark"] .d2h-info { background: #1b2430; color: #8ab4f8; }
+html[data-theme="dark"] .d2h-emptyplaceholder { background: #1e222a; }
+
+/* keep the mock phone honest: no wrapping, real horizontal scroll */
+.d2h-file-wrapper { border: 0 !important; margin: 0 !important; }
+.d2h-file-header { display: none; }
+.d2h-diff-table { font-size: 11px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.d2h-code-line-ctn { white-space: pre; }
