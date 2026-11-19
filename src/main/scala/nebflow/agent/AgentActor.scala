@@ -997,7 +997,11 @@ object AgentActor extends AgentCore with AgentSession:
             .handleErrorWith(e => logger.warn(s"injected inbox mirror failed: ${e.getMessage}"))
             .void
         else IO.unit
-      ctx.forkTurn(deliver *> inboxMirror)
+      ctx.forkTurn(deliver.flatMap {
+        case InjectionChannel.Outcome.Collapsed => IO.unit
+        case InjectionChannel.Outcome.Failed(true, _) => IO.unit
+        case _ => inboxMirror
+      })
     }
 
   def apply(
