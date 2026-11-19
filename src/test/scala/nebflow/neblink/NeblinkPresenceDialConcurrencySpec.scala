@@ -361,12 +361,14 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     val starts = new java.util.concurrent.LinkedBlockingQueue[String]()
     val releases = Map("127.0.0.2" -> new java.util.concurrent.Semaphore(0), "127.0.0.3" -> new java.util.concurrent.Semaphore(0))
     val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val completed = new java.util.concurrent.LinkedBlockingQueue[String]()
     val hook: (String, Int, Long) => Unit = (host, _, _) =>
       events.add(s"start:$host")
       starts.put(host)
       if !releases(host).tryAcquire(8, java.util.concurrent.TimeUnit.SECONDS) then
         throw new IllegalStateException("C3 gate timed out")
-      events.add(s"result:$host")
+      events.add(s"complete:$host")
+      completed.put(host)
       throw new java.util.concurrent.TimeoutException("fixture timeout")
     withStack(port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialHook = hook) { (_, ps) =>
       val p = peer("c3-fake", List(epA, epB))
@@ -374,14 +376,16 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
         (for
           fiber <- ps.connect(p).start
           _ <- IO.blocking {
-            val seen = Set(starts.poll(5, java.util.concurrent.TimeUnit.SECONDS), starts.poll(5, java.util.concurrent.TimeUnit.SECONDS))
-            assertEquals(seen, Set("127.0.0.2", "127.0.0.3"), s"round $i starts both")
-            val first = if i % 2 == 0 then "127.0.0.2" else "127.0.0.3"
-            val second = if i % 2 == 0 then "127.0.0.3" else "127.0.0.2"
-            events.add(s"release:$first")
-            releases(first).release()
-            events.add(s"release:$second")
-            releases(second).release()
+            val firstStart = starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+            val secondStart = starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals(Set(firstStart, secondStart), Set("127.0.0.2", "127.0.0.3"), s"round $i starts both")
+            // Whichever leg starts first is A: force B to complete before A.
+            events.add(s"release:$secondStart")
+            releases(secondStart).release()
+            assertEquals(completed.poll(5, java.util.concurrent.TimeUnit.SECONDS), secondStart, s"round $i B completed")
+            events.add(s"release:$firstStart")
+            releases(firstStart).release()
+            assertEquals(completed.poll(5, java.util.concurrent.TimeUnit.SECONDS), firstStart, s"round $i A completed")
           }
           _ <- fiber.joinWithNever
           _ <- IO {
@@ -389,15 +393,15 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
             assertEquals(round.attempted, List(epA, epB))
             assertEquals(round.failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Timeout, nebflow.neblink.relay.DialFailureClass.Timeout))
             assertEquals(ps.dialStatus("c3-fake").map(_.endpoint), Some(epB))
+            import scala.jdk.CollectionConverters.*
+            val all = events.iterator().asScala.toList.drop((i - 1) * 6)
+            assertEquals(all.size, 6, s"round $i event count")
+            val a = all.head.stripPrefix("start:")
+            val b = all(1).stripPrefix("start:")
+            assertEquals(all, List(s"start:$a", s"start:$b", s"release:$b", s"complete:$b", s"release:$a", s"complete:$a"))
           }
         yield ())
-      }.guarantee(IO { releases.values.foreach(_.release()) }) *> IO {
-        import scala.jdk.CollectionConverters.*
-        val all = events.iterator().asScala.toList
-        assertEquals(all.count(_.startsWith("start:")), 10)
-        assertEquals(all.count(_.startsWith("release:")), 10)
-        assertEquals(all.count(_.startsWith("result:")), 10)
-      }
+      }.guarantee(IO { releases.values.foreach(_.release()) })
     }
   }
 
