@@ -1,0 +1,341 @@
+/* gitViz.css — 项目面板次级面板「Git 可视化」样式（MVP 2026-11-19）。
+   视觉纪律：一切颜色/间距/字号走既有 token（stand-tokens / design-system /
+   sapphire / base），本文件**零新色值、零品牌照抄**（参考图为 Gitto，只借结构）。
+
+   三区（作者 2026-11-19 14:06 逐字）：顶部热力图 / 左侧可视化树 / 右侧操控面板。
+   加载路径：ensureGitVizCss() 动态挂 <link>（同 mathRender.js 的既有做法），
+   不改 index.html 的样式表清单顺序。 */
+
+.gitviz {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: var(--ds-space-2);
+  padding: var(--ds-space-2) var(--ds-space-2) 0;
+  font-size: var(--ds-fs-body);
+  color: var(--color-text);
+}
+
+/* 桌面：projects 页签里的返回条是**浮层玻璃胶囊**（projectPanel.css:501-514，
+   top = --panel-head-clear、高 = --panel-head-h），视图体必须自带双行让位
+   （同 projectPanel.css:515-517 对 .delegate-chain-view-body 的做法）——
+   初态首内容在条下、滚动后从条底下穿过为真。手机层是页面壳，此条不适用。 */
+body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body {
+  padding-top: var(--panel-head-2row);
+  box-sizing: border-box;
+}
+
+/* 进入态（翻转后落地）：240ms 淡入 + 轻微上浮；翻转本体在卡片侧（.project-card.is-gitviz-out） */
+.gitviz.is-entering { animation: gitviz-in 240ms cubic-bezier(0.16, 1, 0.3, 1); }
+@keyframes gitviz-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .gitviz.is-entering { animation: none; }
+}
+
+/* ══ 入口钮：项目卡卡头「Git 可视化」═════════════════════════════════════
+   位置 = 卡头摘要与「取消加载」钮之间（projectTab.js projectCardHtml）；尺寸/圆角
+   与既有卡头小钮同档，配色取结构色 sapphire（零新色值）。 */
+.project-gitviz-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  flex: 0 0 auto;
+  border: 1px solid rgb(var(--sapphire) / 0.5);
+  border-radius: var(--ds-radius-chip);
+  background: rgb(var(--sapphire) / 0.12);
+  color: var(--color-text);
+  cursor: pointer;
+}
+@media (hover: hover) {
+  .project-gitviz-btn:hover { background: rgb(var(--sapphire) / 0.24); }
+}
+.project-gitviz-btn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.7); outline-offset: 1px; }
+.project-gitviz-btn svg { width: 14px; height: 14px; display: block; }
+@media (prefers-reduced-motion: reduce) {
+  .project-gitviz-btn { transition: none; }
+}
+
+/* ══ ① 顶部：贡献热力图 ══════════════════════════════════════════════ */
+.gitviz-heat {
+  flex: 0 0 auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--card-bg, var(--color-surface));
+  padding: var(--ds-space-1h) var(--ds-space-2) var(--ds-space-2);
+  /* 窄面板装不下 53 周列时横向滚动（不裁列、不缩格） */
+  overflow-x: auto;
+  scrollbar-color: var(--color-frame-border, var(--color-border)) transparent;
+}
+.gitviz-heat-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--ds-space-1h);
+  flex-wrap: wrap;
+  margin-bottom: var(--ds-space-1h);
+}
+.gitviz-heat-title { font-weight: 600; }
+.gitviz-heat-sub { color: var(--color-text-muted); font-size: var(--ds-fs-meta); }
+/* 区间档切换（近 12 周 ⇄ 近 12 月）：分段控件语言，零新色值 */
+.gitviz-heat-seg {
+  margin-left: auto;
+  display: inline-flex;
+  border: 1px solid var(--color-border);
+  border-radius: var(--ds-radius-pill, 999px);
+  overflow: hidden;
+}
+.gitviz-seg-btn {
+  border: none;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: 500 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.gitviz-seg-btn + .gitviz-seg-btn { border-left: 1px solid var(--color-border); }
+.gitviz-seg-btn.is-on { background: rgb(var(--sapphire) / 0.2); color: var(--color-text); }
+.gitviz-heat-svg { display: block; }
+.gitviz-heat-cell { rx: 2.5; stroke: var(--color-border); stroke-width: 0.5; }
+.gitviz-heat-legend {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-half);
+  margin-top: var(--ds-space-1);
+  color: var(--color-text-muted);
+  font-size: var(--ds-fs-meta);
+}
+.gitviz-heat-legend i {
+  width: 10px; height: 10px; border-radius: var(--ds-radius-badge);
+  border: 1px solid var(--color-border);
+  display: inline-block;
+}
+
+/* ══ ②③ 主体：左树 + 右面板 ═════════════════════════════════════════ */
+.gitviz-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: var(--ds-space-2);
+  padding-bottom: var(--ds-space-2);
+}
+
+/* ── 左：只读 swimlane 树（自绘 SVG，零 D3）── */
+.gitviz-tree {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--card-bg, var(--color-surface));
+  scrollbar-color: var(--color-frame-border, var(--color-border)) transparent;
+  outline: none;
+}
+.gitviz-canvas {
+  /* 泳道带与行清单 = 同一 flex 行的两个流内子件（不是浮层）：
+     🔴 用 absolute 叠层会被 check-floating-discovery 判为「新定位选择器待人工复核」，
+     且叠层本身无必要——两者本来就同顶对齐、同高、随同一父滚动。宽度由 JS 写
+     --gitviz-lane-w（泳道带），行清单吃其余宽。 */
+  display: flex;
+  align-items: flex-start;
+  --gitviz-lane-w: 84px;
+  --gitviz-row: 22px;
+}
+.gitviz-svg {
+  flex: 0 0 auto;
+  width: var(--gitviz-lane-w);
+  display: block;
+  pointer-events: none;
+}
+.gitviz-edge { fill: none; stroke-width: 1.6; stroke-linecap: round; opacity: 0.85; }
+.gitviz-edge.is-dim { opacity: 0.28; }
+.gitviz-edge.is-hot { stroke-width: 2.6; opacity: 1; }
+.gitviz-node { stroke: var(--color-surface); stroke-width: 1.2; }
+.gitviz-node.is-head { stroke: rgb(var(--sapphire) / 1); stroke-width: 1.8; }
+
+.gitviz-rows { list-style: none; margin: 0; padding: 0; flex: 1 1 auto; min-width: 0; }
+.gitviz-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  height: var(--gitviz-row);
+  padding: 0 var(--ds-space-1h);
+  cursor: pointer;
+  border-radius: var(--ds-radius-chip, 6px);
+}
+.gitviz-row:hover { background: rgb(var(--sapphire) / 0.07); }
+.gitviz-row.is-selected { background: rgb(var(--sapphire) / 0.14); }
+.gitviz-row.is-hot { background: rgb(var(--sapphire) / 0.1); }
+.gitviz-row:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.7); outline-offset: -2px; }
+.gitviz-row > input[type='checkbox'] { flex: 0 0 auto; margin: 0; accent-color: rgb(var(--sapphire) / 1); }
+.gitviz-subject {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gitviz-meta {
+  flex: 0 0 auto;
+  color: var(--color-text-muted);
+  font-size: var(--ds-fs-meta);
+  font-variant-numeric: tabular-nums;
+}
+.gitviz-ref-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 6px;
+  height: 16px;
+  border-radius: var(--ds-radius-input);
+  border: 1px solid rgb(var(--sapphire) / 0.45);
+  background: rgb(var(--sapphire) / 0.12);
+  color: var(--color-text);
+  font-size: var(--ds-fs-meta);
+  cursor: pointer;
+  max-width: 190px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gitviz-ref-chip.is-head { border-color: rgb(var(--sapphire) / 1); background: rgb(var(--sapphire) / 0.24); font-weight: 600; }
+
+/* ── 右：操控面板 ── */
+.gitviz-ctl {
+  flex: 0 0 344px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  overflow: auto;
+  padding: var(--ds-space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--card-bg, var(--color-surface));
+  scrollbar-color: var(--color-frame-border, var(--color-border)) transparent;
+}
+.gitviz-sec-title {
+  font-size: var(--ds-fs-meta);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+}
+.gitviz-detail-empty { color: var(--color-text-dim); font-size: var(--ds-fs-meta); }
+.gitviz-kv { display: grid; grid-template-columns: 68px 1fr; gap: 2px var(--ds-space-1h); font-size: var(--ds-fs-meta); }
+.gitviz-kv dt { color: var(--color-text-muted); }
+.gitviz-kv dd { margin: 0; overflow-wrap: anywhere; }
+.gitviz-kv dd.mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+.gitviz-ref-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-half) 0;
+  border-bottom: 1px dashed var(--color-border);
+}
+.gitviz-ref-row:last-child { border-bottom: none; }
+.gitviz-ref-row > input[type='checkbox'] { flex: 0 0 auto; margin: 0; accent-color: rgb(var(--sapphire) / 1); }
+.gitviz-ref-name {
+  flex: 1 1 auto; min-width: 0;
+  font-size: var(--ds-fs-meta);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  cursor: pointer;
+}
+.gitviz-ref-ab { flex: 0 0 auto; color: var(--color-text-muted); font-size: var(--ds-fs-meta); font-variant-numeric: tabular-nums; }
+
+.gitviz-note-row { display: flex; flex-direction: column; gap: 2px; margin-bottom: var(--ds-space-1); }
+.gitviz-note-row > span { font-size: var(--ds-fs-meta); color: var(--color-text-muted); overflow-wrap: anywhere; }
+.gitviz-note {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 34px;
+  padding: var(--ds-space-half) var(--ds-space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--ds-radius-chip, 6px);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: var(--ds-fs-meta);
+}
+.gitviz-note:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.6); outline-offset: -1px; }
+
+.gitviz-forward {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding-top: var(--ds-space-1);
+  border-top: 1px solid var(--color-border);
+}
+.gitviz-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-half);
+  min-height: 28px;
+  padding: 0 var(--ds-space-2);
+  border: 1px solid rgb(var(--sapphire) / 0.55);
+  border-radius: var(--ds-radius-input);
+  background: rgb(var(--sapphire) / 0.14);
+  color: var(--color-text);
+  font: 500 var(--ds-fs-btn, 13px)/1 -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  cursor: pointer;
+}
+.gitviz-btn:hover:not(:disabled) { background: rgb(var(--sapphire) / 0.24); }
+.gitviz-btn:disabled { opacity: 0.45; cursor: default; }
+.gitviz-forward-hint { color: var(--color-text-muted); font-size: var(--ds-fs-meta); }
+.gitviz-note-io {
+  color: var(--color-text-muted);
+  font-size: var(--ds-fs-meta);
+  padding: var(--ds-space-half) 0;
+  overflow-wrap: anywhere;
+}
+
+/* 只读闸提示（MVP 硬约束：只收集与展示，绝不写仓库） */
+.gitviz-ro {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-half);
+  color: var(--color-text-muted);
+  font-size: var(--ds-fs-meta);
+}
+
+.gitviz-state {
+  padding: var(--ds-space-4);
+  color: var(--color-text-muted);
+  text-align: center;
+}
+
+/* 骨架（loading） */
+.gitviz-skel { display: block; border-radius: var(--ds-radius-badge); background: rgb(var(--sapphire) / 0.12); }
+
+/* 卡片翻转（列表 → 次级面板）：与 gitviz-in 成对，220ms 同一缓动 */
+.project-card.is-gitviz-out {
+  transition: transform 220ms cubic-bezier(0.16, 1, 0.3, 1), opacity 200ms linear;
+  transform: perspective(1100px) rotateY(-88deg) scale(0.965);
+  opacity: 0;
+  transform-origin: 50% 50%;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .project-card.is-gitviz-out { transition: none; transform: none; opacity: 1; }
+}
+
+/* ── 手机（≤ 640px）：单列全屏页 —— 热力图缩档、树可横滑、控制面板落到下方 ── */
+@media (max-width: 640px) {
+  .gitviz { padding: var(--ds-space-1h) var(--ds-space-1h) 0; gap: var(--ds-space-1h); }
+  .gitviz-main { flex-direction: column; gap: var(--ds-space-1h); overflow: auto; }
+  .gitviz-tree { flex: 1 1 auto; min-height: 220px; }
+  .gitviz-ctl { flex: 0 0 auto; max-height: none; overflow: visible; }
+  /* 375 宽下把「分支标签」从行内撤掉：行只留 [勾选 · 标题 · 短 sha]，
+     分支清单由右栏（下方）承担 —— 否则标题被标签挤出视口。 */
+  .gitviz-row .gitviz-ref-chip { display: none; }
+}

@@ -86,6 +86,8 @@ export default {
   'project.unmountedAnnounce': '「{name}」已卸载——在飞任务已停，文件全部保留',
   // unmount-console 面板批 2026-11-02：取消加载/重新加载 + 已卸载分组。
   'project.unmountBtn': '取消加载',
+  // gitviz-mvp 批 2026-11-19：卡头「Git 可视化」入口钮（次级面板：热力图/泳道树/操控面板，只读）
+  'project.gitVizOpen': 'Git 可视化（只读）',
   'project.unmountTitle': '取消加载「{name}」？',
   'project.unmountInflight': '当前在飞工作：{chains} 条链、{nodes} 个节点、{sessions} 个会话——取消加载会先把它们全部停止。',
   'project.unmountConfirm': '确认后：「{name}」将从项目列表与 Agent 上下文中消失，不能再派活；本地文件全部保留（零删除）。',

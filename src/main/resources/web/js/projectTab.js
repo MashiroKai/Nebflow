@@ -171,7 +171,7 @@ function attachProjectsCreateFab(pane) {
   // 视图守卫（作者已裁⑦：「+」仅列表视图）。delegate-chain 视图（S10/S11，#1228
   // 换源接线批；per-project Flow Map 视图已停用退役）同为非列表视图：摘钮早退
   // （链视图无创建面，亦无同锚浮钮冲突）。
-  if (pane.dataset.projectsView === 'delegate-chain') {
+  if (inPlaceView(pane)) {
     pane.querySelector(`.${PROJECTS_CREATE_FAB}`)?.remove();
     return;
   }
@@ -941,6 +941,13 @@ function renderEmptyState(scroll) {
  * 换成语义正确的 **unplug**（插头自插座拔出：插脚 + 插座缺口，lucide 同名
  * 图标同形），对应「取消加载 = 项目从上下文里拔出来，本地文件全部保留」的
  * 真实语义。 */
+/** 「Git 可视化」卡头钮图标（gitviz-mvp 批）：与 web/js/gitVizView.js、dev harness
+ *  同一枚分支图符（三节点两线）——单源自绘，不引图标库新档。 */
+const GITVIZ_BTN_SVG =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="9" r="2.4"/>' +
+  '<path d="M6 8.4v7.2M18 11.4c0 3-2.4 4.3-6 4.6"/></svg>';
+
 const UNMOUNT_BTN_SVG =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
   '<path d="m19 5 3-3"/><path d="m2 22 3-3"/>' +
@@ -1081,6 +1088,9 @@ function projectCardHtml(p) {
              不再挂「打开 Flow Map」提示（点击改指行为保留——delegate-chain 链视图，#1228 两裁②）。 -->
         <div class="team-card-title"><span class="project-card-name">${esc(contentText('project', name, 'name', name))}</span>${badge}<span class="project-empty-tag" data-cv-hint="empty" hidden>${esc(t('project.noNodes'))}</span></div>
         <div class="team-card-summary is-pending"><span class="dot"></span><span class="project-summary-skeleton" aria-hidden="true"></span></div>
+        <!-- Git 可视化入口（gitviz-mvp 批 2026-11-19）：卡头第二入口钮 ⇒ 卡片翻转
+             到次级面板（作者 2026-11-19 14:06 逐字）。只读面：它只读 git，不写仓库。 -->
+        <button class="project-gitviz-btn" data-gitviz-project="${esc(name)}" type="button" title="${esc(t('project.gitVizOpen'))}" aria-label="${esc(t('project.gitVizOpen'))} ${esc(name)}">${GITVIZ_BTN_SVG}</button>
         <button class="project-unmount-btn" data-unmount-project="${esc(name)}" title="${esc(t('project.unmountBtn'))}" aria-label="${esc(t('project.unmountBtn'))} ${esc(name)}" aria-haspopup="dialog">${UNMOUNT_BTN_SVG}</button>
       </div>
       <div class="project-fields">
@@ -1303,6 +1313,25 @@ function bindProjectCard(card) {
     e.stopPropagation();
     startDescriptionEdit(card);
   });
+  // gitviz-mvp 批（作者 2026-11-19 14:06）：卡头「Git 可视化」钮 ⇒ 卡片翻转进次级面板。
+  // 复用既有就地视图机制（pane.dataset.projectsView），不新造第二套壳；返回钮回列表。
+  // 懒加载 gitVizView.js（与 delegateChainView 同范式：视图不进首屏包）。
+  card.querySelector('[data-gitviz-project]')?.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const pane = /** @type {HTMLElement | null} */ (card.closest('.canvas-tab-pane'));
+    const name = card.dataset.project || '';
+    if (!pane || !name) return;
+    import('./gitVizView.js')
+      .then(({ openGitViz }) => openGitViz(pane, name, {
+        fromCard: card,
+        onBack: () => {
+          pane.dataset.projectsView = 'list';
+          delete pane.dataset.gitVizProject;
+          renderProjectsInto(ensureScroll(pane));
+        },
+      }))
+      .catch(() => {});
+  });
   // unmount-console 面板批 2026-11-02：「取消加载」钮 —— 确认卡（含在飞计数）→
   // 确认才 POST /api/projects/<name>/unmount（引擎单点 = ProjectUnmount，与编排侧
   // Project 工具同一通路；先停飞→摘面→零工作区删除）。卸载回声 = projectUnmounted 帧。
@@ -1478,6 +1507,13 @@ export function rerenderProjectsTab() {
         .catch(() => {});
       return;
     }
+    // git-viz 就地视图（gitviz-mvp 批）：按 pane 记忆的项目名重渲三区，不闪回列表。
+    if (pane.dataset.projectsView === 'git-viz') {
+      import('./gitVizView.js')
+        .then(({ rerenderGitVizPane }) => rerenderGitVizPane(pane))
+        .catch(() => {});
+      return;
+    }
     renderProjectsInto(ensureScroll(pane));
   }, 200);
 }
@@ -1493,12 +1529,21 @@ window.addEventListener('canvas-tab-restore', (/** @type {CustomEvent} */ e) => 
 // 不动列表 DOM（其数据面 = stub 读取口，刷新走 rerenderProjectsTab 的视图分流）。
 // 本批起这里的「重拉」不再全量替换 DOM：`renderProjectsInto` 只做名单差集 + 定点增删
 // （同名单 = 零 DOM 变更，仅摘要槽定点刷新），故事件驱动的刷新不会吃掉任何动画。
+/** 就地视图判定（gitviz-mvp 批 2026-11-19）：`projectsView` 非 `list` = 就地视图。
+ *  既有两种：`delegate-chain`（委托链，delegateChainView.js）与本批新增 `git-viz`
+ *  （Git 可视化，gitVizView.js）。两者对列表面的语义完全一致——列表 DOM 不归它们管、
+ *  列表 FAB 不驻留、节点事件不触发列表重拉 ⇒ 判据统一收口到本函数，避免逐点列举漂移
+ *  （原四处 `=== 'delegate-chain'` 判据由本函数承接，语义不变、面变宽）。 */
+function inPlaceView(pane) {
+  return !!pane && pane.dataset.projectsView !== 'list' && !!pane.dataset.projectsView;
+}
+
 import { onMessage, onReconnect, sendWs } from './ws.js';
 function rerenderProjectsListView() {
   const pane = getTabPane('projects');
   if (!pane) return;
-  // 非列表视图（delegate-chain 链视图）不动列表 DOM。
-  if (pane.dataset.projectsView === 'delegate-chain') return;
+  // 非列表视图（delegate-chain 链视图 / git-viz 可视化视图）不动列表 DOM。
+  if (inPlaceView(pane)) return;
   rerenderProjectsTab();
 }
 onMessage('nodeCreated', () => rerenderProjectsListView());
@@ -1520,7 +1565,7 @@ onMessage('nodeRemoved', () => rerenderProjectsListView());
 function projectsListScroll() {
   const pane = getTabPane('projects');
   if (!pane) return null;
-  if (pane.dataset.projectsView === 'delegate-chain') return null;
+  if (inPlaceView(pane)) return null;
   const scroll = /** @type {HTMLElement | null} */ (pane.querySelector('.team-scroll'));
   return scroll && scroll.isConnected ? scroll : null;
 }
@@ -1683,8 +1728,8 @@ window.addEventListener('locale-changed', () => {
 onReconnect(() => {
   const pane = getTabPane('projects');
   if (!pane) return;
-  // 视图分流同上面的节点事件面（delegate-chain 链视图无列表重拉面）。
-  if (pane.dataset.projectsView === 'delegate-chain') return;
+  // 视图分流同上面的节点事件面（链视图 / 可视化视图均无列表重拉面）。
+  if (inPlaceView(pane)) return;
   const scroll = /** @type {HTMLElement | null} */ (pane.querySelector('.team-scroll'));
   if (!scroll || !scroll.isConnected) return;
   if (scroll.dataset.projectsState === 'ready') return;
