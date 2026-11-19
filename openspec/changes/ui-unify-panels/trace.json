@@ -9,7 +9,12 @@
         "scripts/check-panel-uniform.mjs",
         "src/main/resources/web/js/profileFace.js",
         "src/main/resources/web/js/sidebar.js",
-        "src/main/resources/web/css/design-system.css"
+        "src/main/resources/web/css/design-system.css",
+        "openspec/changes/ui-unify-panels/proposal.md",
+        "openspec/changes/ui-unify-panels/design.md",
+        "openspec/changes/ui-unify-panels/tasks.md",
+        "openspec/changes/ui-unify-panels/specs/ui-unify-panels/spec.md",
+        "openspec/changes/ui-unify-panels/trace.json"
       ],
       "tests": [
         {

@@ -28,7 +28,9 @@
       "requirement": "CAE-REQ-001",
       "scenario": "CAE-SCN-002",
       "implementation": [
-        "src/main/scala/nebflow/core/ask/AskEditReviews.scala"
+        "src/main/scala/nebflow/core/ask/AskEditReviews.scala",
+        "openspec/changes/canvas-ask-restricted-edit/design.md",
+        "openspec/changes/canvas-ask-restricted-edit/trace.json"
       ],
       "tests": [
         {
