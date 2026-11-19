@@ -1308,6 +1308,13 @@ status: open
   resolved" at a glance when a listing shows them. (The graph used to draw a ✓
   ring on them; the field is unchanged and still worth filling — it is the only
   machine-readable progress signal a document carries.)
+- `summary` carries the reader's abstract (**读者提要, R21 ruling 2026-11-19
+  11:30**) — 40–100 counted units, where each Han character counts as one and
+  each run of letters/digits counts as one; punctuation and whitespace count as
+  nothing. **New documents write it in frontmatter `summary:` — that is the
+  only new location.** The body marker `<!-- reader-summary -->` is kept for
+  historical compatibility and still read exactly as before; do not add new
+  ones. The validator accepts either location and its R21 check is unchanged.
 
 ## Scenario packs
 
