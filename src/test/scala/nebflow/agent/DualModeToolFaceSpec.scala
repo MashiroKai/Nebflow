@@ -37,6 +37,10 @@ class DualModeToolFaceSpec extends FunSuite:
       Set(
         "message_record_search",
         "send_message_to_main_chat",
+        "ask_edit",
+        "ask_write",
+        "PdfPage",
+        "Card",
         "Read",
         "Glob",
         "Grep",

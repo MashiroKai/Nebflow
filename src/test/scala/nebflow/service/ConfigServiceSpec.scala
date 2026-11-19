@@ -215,10 +215,15 @@ class ConfigServiceSpec extends FunSuite:
     val saved = parse(os.read(PathUtil.dataRoot / nebflow.shared.Branding.configFileName)).toOption.get
     val llmHc = saved.hcursor.downField("llm")
     assert(llmHc.downField("providers").downField("Zai").focus.isEmpty, "old name must be gone")
-    // masked "***" must not overwrite the stored secret during merge
-    assertEquals(
-      llmHc.downField("providers").downField("zai-new").downField("apiKey").as[String],
-      Right("sk-test")
+    // Masked updates retain the synthetic credential, stored as a managed reference.
+    val savedKey = llmHc.downField("providers").downField("zai-new").downField("apiKey").as[String]
+      .getOrElse(fail("renamed provider apiKey missing"))
+    assert(savedKey.matches("secret:config-[a-f0-9]{32}"), "expected managed credential reference")
+    assert(
+      nebflow.core.secrets.ConfigCredentialStore.resolve(
+        PathUtil.dataRoot, savedKey, "config-service-spec", (_, _) => ()
+      ) == "sk-test",
+      "renamed provider retains its synthetic credential"
     )
     // llm.model 死字段不再改写（旧名留存，boot 迁移剥离）
     assertEquals(llmHc.downField("model").downField("default").as[String], Right("Zai/m1"))
