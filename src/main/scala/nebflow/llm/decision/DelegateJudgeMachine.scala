@@ -5,13 +5,19 @@ import cats.syntax.all.*
 import io.circe.Json
 import nebflow.core.delegate.DelegateJudge
 import nebflow.core.delegate.DelegateJudge.{DelegateJudgePort, TerminalInput, Verdict}
-import nebflow.llm.{ProviderRegistry, SendMessageParams}
+import nebflow.llm.kernel.{KernelCallSites, LlmKernel}
+import nebflow.llm.{CacheBreakpoints, ModelCandidate, ProviderRegistry}
 import nebflow.shared.{Config, Defaults, Message, MessageRole, NebflowLogger}
 
 import scala.concurrent.duration.*
 
 /** Terminal judgment using the existing utility-model candidate chain.
  * An unavailable judgment returns None so the caller can use its self-report fallback.
+ *
+ * kernel-spec 批（2026-11-19）：本腿不再自建 `SendMessageParams`、不再自写候选链遍历
+ * ——调用描述 = [[LlmKernel.KernelCall]]，装配/遍历/计量全在统一内核（K1/K5/K6）；
+ * **B2（V1 修）**：常量判令模板提为 `systemStable`（文本逐字不变，只换 wire 位置），
+ * delegate 状态留在 user 消息。
  */
 object DelegateJudgeMachine:
 
@@ -62,29 +68,8 @@ object DelegateJudgeMachine:
    *  - ref 已配不可解 → 全链（WARN 留痕，原回落语义保留）；
    *  - ref 未配 → 全链（原语义，从「头一个」升为「整条」）。
    */
-  private[decision] def utilityCandidates(registry: ProviderRegistry): IO[List[nebflow.llm.ModelCandidate]] =
-    registry.currentConfig.flatMap { currentConfig =>
-      val explicitRoute = currentConfig.llm.decisionRoutes.flatMap(_.get("delegate-judge")).flatMap(_.preferred)
-        .orElse(currentConfig.judge.flatMap(_.utilityModel))
-      def mainRoute = registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
-      val explicit = explicitRoute
-      explicit match {
-        case Some(ref) =>
-          registry.scheduleRestrictionFor(ref).flatMap {
-            case Some(_) => mainRoute
-            case None =>
-              registry.getCandidateForRef(ref).flatMap {
-                case Some(c) =>
-                  registry.getCandidates().map { chain =>
-                    val rest = chain.filterNot(r => r.providerId == c.providerId && r.model == c.model).distinctBy(r => (r.providerId, r.model))
-                    c :: rest
-                  }
-                case None => mainRoute
-              }
-          }
-        case None => mainRoute
-      }
-    }
+  private[decision] def utilityCandidates(registry: ProviderRegistry): IO[List[ModelCandidate]] =
+    LlmKernel.candidates(registry, LlmKernel.CandidateSource.DecisionRoute("delegate-judge"))
 
   private def judgeTimeoutMs: Long =
     scala.util
@@ -104,26 +89,22 @@ object DelegateJudgeMachine:
           )
         ) *> IO.pure(None)
       case cands =>
-        val params = SendMessageParams(
-          messages = List(
-            Message(
-              MessageRole.User,
-              Left(
-                s"""${terminalState(input)}
-               |
-               |${terminalInstructions(input)}
-               |
-               |Answer with ONLY a JSON object: {"verdict": "completed"|"blocked"|"ready-to-merge", "reason": "<one line>"} — ready-to-merge requires a working branch with unmerged deliverable commits (never for pure-read delegates); completed for a pure-read delegate means done with nothing to merge.""".stripMargin
-              )
-            )
-          ),
-          model = cands.head.model, // 占位：chainCall 逐候选 copy(model) 覆写
+        // kernel-spec 批（2026-11-19）：调用描述 = KernelCall；装配/遍历/计量全在统一
+        // 内核。B2（V1 修）：常量判令模板走 systemStable，delegate 状态留 user 消息。
+        // 辅面钉 ProbeMaxTokens（钳制批 2026-10-21）——零行为变化，128000 主面值不上此线。
+        val kernelCall = LlmKernel.KernelCall(
+          site = KernelCallSites.DelegateJudge,
+          systemPrefix = LlmKernel.SystemPrefix.Stable(DelegateJudgeMachine.JudgeSystemTemplate),
+          messages = List(Message(MessageRole.User, Left(terminalState(input)))),
+          source = LlmKernel.CandidateSource.DecisionRoute("delegate-judge"),
           sessionId = Some(JudgeSessionId),
           agentId = Some(JudgeSessionId),
-          // 同上（钳制批 2026-10-21）：辅面钉 ProbeMaxTokens。
-          maxTokensOverride = Some(Defaults.ProbeMaxTokens)
+          maxTokensOverride = Some(Defaults.ProbeMaxTokens),
+          cacheBreakpoints = DelegateJudgeMachine.JudgeBreakpoints,
+          // 🔴 判定族预算不随分配链零超时化消失（单调用有界如旧）。
+          timeout = Some(judgeTimeoutMs.millis)
         )
-        chainCall(registry, cands)(params).flatMap {
+        chainCall(registry, cands)(kernelCall).flatMap {
           // 链耗尽 = 可恢复调用层失败（归因词与主分配腿 LlmError 口径一致），绝不
           // 与结构性 fail-open 混记；逐候选真因已由缝内 WARN 落线。
           case None =>
@@ -134,11 +115,11 @@ object DelegateJudgeMachine:
             ) *> IO.pure(None)
           // 四修③：parseVerdict 失败不再静默——回文在案（原文头部 160 字符，
           // WARN 可查「判没判成、为何没判成」；None = 回落腿接手，非误判）。
-          case Some(raw) =>
-            parseVerdict(raw) match
+          case Some(reply) =>
+            parseVerdict(reply.reply) match
               case Some(v) => IO.pure(Some(v))
               case None =>
-                val excerpt = raw.trim.take(160).replaceAll("\\s+", " ")
+                val excerpt = reply.reply.trim.take(160).replaceAll("\\s+", " ")
                 IO(
                   logger.warnSync(
                     s"delegate-judge: small-judge verdict parse FAILED (raw head: $excerpt) — leg yields None, fallback/self-report takes over"
@@ -165,46 +146,9 @@ object DelegateJudgeMachine:
    */
   private[decision] def chainCall(
     registry: ProviderRegistry,
-    candidates: List[nebflow.llm.ModelCandidate]
-  ): SendMessageParams => IO[Option[String]] =
-    (params: SendMessageParams) =>
-      candidates.foldLeft[IO[Option[String]]](IO.pure(None)) { (acc, cand) =>
-        acc.flatMap {
-          case Some(reply) => IO.pure(Some(reply))
-          case None =>
-            registry.getAdapter(cand.providerId).attempt.flatMap {
-              case Left(e) =>
-                IO(
-                  logger.warnSync(
-                    s"delegate-judge: small-judge candidate ${cand.providerId}/${cand.model} adapter unavailable (${e.getClass.getSimpleName}) — trying next candidate"
-                  )
-                ).as(None)
-              case Right(adapter) =>
-                adapter
-                  .sendMessage(params.copy(model = cand.model))
-                  .timeout(judgeTimeoutMs.millis)
-                  .attempt
-                  .flatMap {
-                    // 空回文（HTTP 200 但 body 空）= provider 侧故障，与传输错同侧
-                    // 处理：试下一候选，不落 parse-fail（parse-fail 只收「有回文但
-                    // 不可用」的模型行为面）。
-                    case Right(resp) if resp.reply.trim.isEmpty =>
-                      IO(
-                        logger.warnSync(
-                          s"delegate-judge: small-judge candidate ${cand.providerId}/${cand.model} replied empty — trying next candidate"
-                        )
-                      ).as(None)
-                    case Right(resp) => IO.pure(Some(resp.reply))
-                    case Left(e) =>
-                      IO(
-                        logger.warnSync(
-                          s"delegate-judge: small-judge candidate ${cand.providerId}/${cand.model} errored (${e.getClass.getSimpleName}) — trying next candidate"
-                        )
-                      ).as(None)
-                  }
-            }
-        }
-      }
+    candidates: List[ModelCandidate]
+  ): LlmKernel.KernelCall => IO[Option[LlmKernel.KernelReply]] =
+    (call: LlmKernel.KernelCall) => LlmKernel.chainCall(registry, candidates, call)
 
   // ── 状态拼装与解析（纯函数——spec 判红锚） ───────────────────────────
 
@@ -239,8 +183,25 @@ inFlightChains: ${input.inFlightChains}"""
 
   end terminalState
 
-  private def terminalInstructions(input: TerminalInput): String =
-    "Judge the delegate's state: completed (the task is done — pure read, or the work is complete with its deliverable commits on the working branch; unmerged commits do not create a merge obligation), or blocked (could not complete — the reason is in the result/git digest; recorded as a completed verdict with a note, NOT a separate state)."
+  /**
+   * 判令模板（常量，**本批起走 `systemStable`**）：判词规则 ＋ JSON 答令格式。
+   * 文本逐字取自批前的 user 正文后两段（kernel-spec 批 B2：只换 wire 位置，不改字）。
+   */
+  private[decision] val JudgeSystemTemplate: String =
+    s"""Judge the delegate's state: completed (the task is done — pure read, or the work is complete with its deliverable commits on the working branch; unmerged commits do not create a merge obligation), or blocked (could not complete — the reason is in the result/git digest; recorded as a completed verdict with a note, NOT a separate state).
+       |
+       |Answer with ONLY a JSON object: {"verdict": "completed"|"blocked"|"ready-to-merge", "reason": "<one line>"} — ready-to-merge requires a working branch with unmerged deliverable commits (never for pure-read delegates); completed for a pure-read delegate means done with nothing to merge.""".stripMargin
+
+  /**
+   * 本腿断点预算（K3）：**None_** ——判令模板 ＋ delegate 状态合起来仍在供应商最小
+   * 可缓存长度之下，钉断点即空转写（实测 `probe_legs_v2.out` §5：本形态
+   * `creation=0 / read=0`，与批前 §4 逐值相同）。
+   *
+   * 这是 K3 第二句「前缀 < 供应商最小可缓存长度时须不打断点（避免空转写）」的
+   * 直接落点：**不许把「其实没缓存」伪装成「已配置缓存」**。前缀长到阈值以上时
+   * 只需把本常量改成 [[CacheBreakpoints.StablePrefix]]（模板已在 system 位）。
+   */
+  private[decision] val JudgeBreakpoints: CacheBreakpoints = CacheBreakpoints.None_
 
   private def cap(s: String): String = if s.length > 12000 then s.take(12000) else s
 

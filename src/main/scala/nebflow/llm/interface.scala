@@ -5,6 +5,7 @@ import cats.effect.kernel.{Deferred, Ref}
 import cats.effect.std.Dispatcher
 import cats.syntax.all.*
 import nebflow.core.{LlmRuntime, LlmRuntimePort}
+import nebflow.llm.kernel.{KernelCallSites, LlmKernel}
 import nebflow.shared.{NebflowLogger, *}
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.StreamBackend
@@ -768,31 +769,30 @@ object LlmInterface extends LlmRuntime:
                       // visionfix (甲): no pre-send rewriting. Images are sent
                       // verbatim on every candidate — whether the endpoint accepts
                       // them is decided by the provider, not by a local heuristic.
+                      //
+                      // kernel-spec 批（2026-11-19）：wire 参数不再就地构造——
+                      // 统一内核的 `LlmKernel.assemble` 是**全仓唯一**的
+                      // `SendMessageParams` 构造点（K1）；断点策略显式声明 =
+                      // `Conversation`（稳定 system + 末工具 + 持久历史尾，C1–C4
+                      // 逐字原状）。
+                      val kernelCall = LlmKernel.KernelCall(
+                        site = KernelCallSites.MainAgent,
+                        systemPrefix = LlmKernel.declaredPrefix(req.systemStable),
+                        messages = req.messages,
+                        source = LlmKernel.CandidateSource.Slot(req.agentModel),
+                        requestOnlyContext = req.requestOnlyContext,
+                        systemDynamic = req.systemDynamic,
+                        tools = req.tools,
+                        thinking = cappedThinking,
+                        thinkingResolved = resolvedThinking,
+                        providerSearch = searchInjectionFor(req, candidate),
+                        contextWindow = Some(candidate.contextWindow),
+                        sessionId = Some(req.sessionId),
+                        agentId = Some(req.agentId)
+                      )
                       for
                         adapter <- registry.getAdapter(candidate.providerId)
-                        resp <- adapter.sendMessage(
-                          SendMessageParams(
-                            req.messages,
-                            candidate.model,
-                            req.tools,
-                            cappedThinking,
-                            req.systemStable,
-                            req.systemDynamic,
-                            Some(req.sessionId),
-                            Some(req.agentId),
-                            searchInjectionFor(req, candidate),
-                            // 输出上限钳制批（2026-10-21）：候选生效窗口随行，适配器
-                            // 据此给 max_tokens 留输入余量（128000 不再原样上线路）。
-                            contextWindow = Some(candidate.contextWindow),
-                            // thinking-config 批（2026-10-28）：按候选解析思考语义
-                            // （model > provider > 全局逐字段就近 + 能力类显式优先），
-                            // adapter 据此走 wire 翻译表。
-                            thinkingResolved = resolvedThinking,
-                            // cache-warmup 批（2026-11-06）：REQUEST-ONLY 提醒段随行，
-                            // 适配器排在持久历史断点之后（CachePrefixAssemblySpec 契约）。
-                            requestOnlyContext = req.requestOnlyContext
-                          )
-                        )
+                        resp <- adapter.sendMessage(LlmKernel.assemble(kernelCall, candidate))
                       yield resp
                       end for
                     ,
@@ -1218,31 +1218,29 @@ object LlmInterface extends LlmRuntime:
                                             )
                                             adapter <- registry.getAdapter(candidate.providerId)
                                             transportOpt <- makeAttemptTransport(key, req.sessionId, abortedRef)
-                                          yield adapter
-                                            .sendMessageStream(
-                                              SendMessageParams(
-                                                req.messages,
-                                                candidate.model,
-                                                req.tools,
-                                                cappedThinking,
-                                                req.systemStable,
-                                                req.systemDynamic,
-                                                Some(req.sessionId),
-                                                Some(req.agentId),
-                                                searchInjectionFor(req, candidate),
-                                                // 输出上限钳制批（2026-10-21）：同非流面——
-                                                // 窗口随行，适配器钳 max_tokens 留输入余量。
-                                                contextWindow = Some(candidate.contextWindow),
-                                                // thinking-config 批（2026-10-28）：同非流面——
-                                                // 按候选解析思考语义（wire 翻译表单点消费）。
-                                                thinkingResolved = resolvedThinking,
-                                                // cache-warmup 批（2026-11-06）：同非流面——
-                                                // REQUEST-ONLY 提醒段随行（持久历史断点之后上线）。
-                                                requestOnlyContext = req.requestOnlyContext,
-                                                attemptBackend = transportOpt.map(_.backend)
-                                              )
+                                          yield
+                                            // kernel-spec 批（2026-11-19）：同非流面——
+                                            // wire 参数唯一构造点 = `LlmKernel.assemble`（K1），
+                                            // 断点策略显式声明 = `Conversation`（C1–C4 原状）。
+                                            val kernelCall = LlmKernel.KernelCall(
+                                              site = KernelCallSites.MainAgent,
+                                              systemPrefix = LlmKernel.declaredPrefix(req.systemStable),
+                                              messages = req.messages,
+                                              source = LlmKernel.CandidateSource.Slot(req.agentModel),
+                                              requestOnlyContext = req.requestOnlyContext,
+                                              systemDynamic = req.systemDynamic,
+                                              tools = req.tools,
+                                              thinking = cappedThinking,
+                                              thinkingResolved = resolvedThinking,
+                                              providerSearch = searchInjectionFor(req, candidate),
+                                              contextWindow = Some(candidate.contextWindow),
+                                              sessionId = Some(req.sessionId),
+                                              agentId = Some(req.agentId),
+                                              attemptBackend = transportOpt.map(_.backend)
                                             )
-                                            .onFinalize(transportOpt.fold(IO.unit)(_.release)))
+                                            adapter
+                                              .sendMessageStream(LlmKernel.assemble(kernelCall, candidate))
+                                              .onFinalize(transportOpt.fold(IO.unit)(_.release)))
                                         )
                                         .handleErrorWith { err =>
                                           fs2.Stream.eval(abortedRef.get).flatMap { aborted =>

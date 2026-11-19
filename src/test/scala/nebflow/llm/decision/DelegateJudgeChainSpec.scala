@@ -108,10 +108,14 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
 
   end StubRegistry
 
-  private val paramsFor: SendMessageParams =
-    SendMessageParams(
+  // kernel-spec 批（2026-11-19）：整链遍历缝的入参是 KernelCall（K2/K7 必填声明）；
+  // 逐候选 `assemble` 以候选覆写 model，本处 model 不参与断言。
+  private val paramsFor: nebflow.llm.kernel.LlmKernel.KernelCall =
+    nebflow.llm.kernel.LlmKernel.KernelCall(
+      site = nebflow.llm.kernel.KernelCallSites.DelegateJudge,
+      systemPrefix = nebflow.llm.kernel.LlmKernel.SystemPrefix.Stable(DelegateJudgeMachine.JudgeSystemTemplate),
       messages = List(Message(MessageRole.User, Left("judge"))),
-      model = "m-head" // 占位：chainCall 逐候选 copy(model) 覆写，本值不参与断言
+      source = nebflow.llm.kernel.LlmKernel.CandidateSource.DecisionRoute("delegate-judge")
     )
 
   private def judgeInput(id: String): TerminalInput =
@@ -136,7 +140,7 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
       )
     )
     val call = DelegateJudgeMachine.chainCall(registry, List(cand("bad", "m-bad"), cand("good", "m-good")))
-    withWarnAppender(call(paramsFor)).map { case (reply, warns) =>
+    withWarnAppender(call(paramsFor).map(_.map(_.reply))).map { case (reply, warns) =>
       assertEquals(reply, Some(VerdictJson), "the chain answered via the second candidate")
       assertEquals(attempts.keySet, Set("m-bad", "m-good"), "both candidates attempted in order")
       val headWarn = warns.find(_.contains("candidate bad/m-bad errored"))
@@ -158,11 +162,13 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
       )
     )
     val call = DelegateJudgeMachine.chainCall(registry, List(cand("a", "m-a"), cand("b", "m-b")))
-    withWarnAppender(call(paramsFor)).map { case (reply, warns) =>
+    withWarnAppender(call(paramsFor).map(_.map(_.reply))).map { case (reply, warns) =>
       assertEquals(reply, None, "exhausted chain = None (the leg classifies it as a recoverable call failure)")
       assertEquals(attempts.keySet, Set("m-a", "m-b"), "every candidate got its attempt (per-candidate WARNs)")
-      assert(warns.exists(_.contains("candidate a/m-a errored (RuntimeException)")), s"a/m-a WARN missing: $warns")
-      assert(warns.exists(_.contains("candidate b/m-b errored (RuntimeException)")), s"b/m-b WARN missing: $warns")
+      // kernel-spec 批：遍历模板移到内核，真因描述从「异常类名」升级为
+      // `describe(e)` = `RuntimeException: <message>`（至少不掉信息）⇒ 判据按新措辞。
+      assert(warns.exists(_.contains("candidate a/m-a errored (RuntimeException:")), s"a/m-a WARN missing: $warns")
+      assert(warns.exists(_.contains("candidate b/m-b errored (RuntimeException:")), s"b/m-b WARN missing: $warns")
     }
   }
 
@@ -175,7 +181,7 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
       )
     )
     val call = DelegateJudgeMachine.chainCall(registry, List(cand("mute", "m-mute"), cand("good", "m-good")))
-    call(paramsFor).map { reply =>
+    call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, Some(VerdictJson), "the empty reply did not become the final answer")
       assertEquals(attempts.keySet, Set("m-mute", "m-good"), "the traversal continued past the mute candidate")
     }
