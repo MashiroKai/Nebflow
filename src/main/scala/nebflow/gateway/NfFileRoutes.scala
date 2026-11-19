@@ -397,7 +397,8 @@ object NfFileRoutes:
   def nfObjRoutes(
     tokenRef: cats.effect.Ref[IO, String],
     objects: NfObjStore,
-    sessions: GatewaySessionStore
+    sessions: GatewaySessionStore,
+    thumbCacheDir: os.Path = NfThumb.defaultCacheDir
   ): HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ GET -> Root / "api" / "nf-obj" / cid / name =>
     if !cid.matches(NfObjStore.CidPattern) then IO.pure(Response[IO](Status.NotFound))
     else
@@ -410,24 +411,110 @@ object NfFileRoutes:
           case Some(_) =>
             objects.lookup(cid).flatMap {
               case None => IO.pure(Response[IO](Status.NotFound))
-              case Some(entry) => serveObj(req, entry, name)
+              case Some(entry) => serveObj(req, entry, name, thumbCacheDir)
             }
         }
   }
 
-  /** 正答腿：强 ETag = cid + immutable 缓存 + 条件 304。 */
-  private def serveObj(req: Request[IO], entry: NfObjEntry, name: String): IO[Response[IO]] =
+  /**
+   * 缩略腿的宽度参数（作者裁定 2026-11-19 D5-A）：`?w=<px>`，1..[[NfThumb.MaxWidth]]。
+   * 缺席 / 非法 / 越界 ⇒ 原样服务**原图**（不是 400：老客户端与「点开取原图」腿
+   * 都不带 `w`，任何解析意外都必须退化成原图，绝不硬失败）。
+   */
+  private def requestedThumbWidth(req: Request[IO]): Option[Int] =
+    req.params
+      .get("w")
+      .flatMap(_.toIntOption)
+      .filter(w => w >= 1 && w <= NfThumb.MaxWidth)
+
+  /** 取字节出口的入口：带合法 `?w=` 先试缩略腿，不可缩（SVG/非位图/已够小）回原图。 */
+  private def serveObj(req: Request[IO], entry: NfObjEntry, name: String, thumbCacheDir: os.Path): IO[Response[IO]] =
+    requestedThumbWidth(req) match
+      case Some(w) =>
+        serveThumb(req, entry, name, w, thumbCacheDir).flatMap {
+          case Some(resp) => IO.pure(resp)
+          case None       => serveFull(req, entry, name)
+        }
+      case None => serveFull(req, entry, name)
+
+  /** 缩略腿的判据头集：强 ETag = `"<thumbCid>"`（内容身份）+ immutable + Last-Modified。 */
+  private def thumbValidators(thumbCidValue: String, entry: NfObjEntry): List[Header.ToRaw] =
+    List(
+      Header.Raw(org.typelevel.ci.CIString("ETag"), "\"" + thumbCidValue + "\""),
+      Header.Raw(org.typelevel.ci.CIString("Cache-Control"), NfObjCacheControl),
+      Header.Raw(
+        org.typelevel.ci.CIString("Last-Modified"),
+        HttpDateFormat.format(java.time.Instant.ofEpochMilli(entry.mtimeMs))
+      )
+    )
+
+  /** `If-None-Match` 是否命中给定 ETag（`*` 也算）。 */
+  private def etagMatches(req: Request[IO], etag: String): Boolean =
+    req.headers
+      .get(org.typelevel.ci.CIString("If-None-Match"))
+      .map(_.head.value)
+      .exists { raw =>
+        val tags = raw.split(",").map(_.trim)
+        tags.contains("*") || tags.contains(etag) || tags.contains("W/" + etag)
+      }
+
+  /** 缩略图 Content-Type：按产物的扩展名（jpg → image/jpeg，png → image/png）。 */
+  private def thumbContentType(ext: String): `Content-Type` =
+    if ext == "png" then `Content-Type`(MediaType.image.png) else `Content-Type`(MediaType.image.jpeg)
+
+  /**
+   * 缩略腿：`(cid, w)` 内容寻址 —— 命中 `<cacheDir>/<thumbCid>.<ext>` 直发；未命中
+   * 用 JDK ImageIO 现缩 + 落盘（见 [[NfThumb]]）。`None` = 该源不可缩 ⇒ 原图腿。
+   */
+  private def serveThumb(
+    req: Request[IO],
+    entry: NfObjEntry,
+    name: String,
+    w: Int,
+    cacheDir: os.Path
+  ): IO[Option[Response[IO]]] =
+    val tc = NfThumb.thumbCid(entry.cid, w)
+    val etag = "\"" + tc + "\""
+    if etagMatches(req, etag) then IO.pure(Some(Response[IO](Status.NotModified).putHeaders(thumbValidators(tc, entry)*)))
+    else
+      NfThumb.cached(cacheDir, tc) match
+        case Some((file, ext)) =>
+          val size = try os.size(file) catch case _: Throwable => 0L
+          IO.pure(
+            Some(
+              Response[IO](Status.Ok)
+                .putHeaders(thumbValidators(tc, entry)*)
+                .putHeaders(Header.Raw(org.typelevel.ci.CIString("Content-Length"), size.toString))
+                .putHeaders(thumbContentType(ext))
+                .withBodyStream(
+                  fs2.io.file.Files[IO].readAll(fs2.io.file.Path(file.toString), 64 * 1024, fs2.io.file.Flags.Read)
+                )
+            )
+          )
+        case None =>
+          NfThumb.render(java.nio.file.Paths.get(entry.realPath), w).flatMap {
+            case None => IO.pure(None)
+            case Some((bytes, ext)) =>
+              IO.blocking(NfThumb.store(cacheDir, tc, bytes, ext)).as(
+                Some(
+                  Response[IO](Status.Ok)
+                    .putHeaders(thumbValidators(tc, entry)*)
+                    .putHeaders(Header.Raw(org.typelevel.ci.CIString("Content-Length"), bytes.length.toString))
+                    .putHeaders(thumbContentType(ext))
+                    .withBodyStream(fs2.Stream.chunk(fs2.Chunk.array(bytes)).covary[IO])
+                )
+              )
+          }
+
+  /** 原答腿（无 `?w=` 的逐字既有行为）：强 ETag = cid + immutable 缓存 + 条件 304。 */
+  private def serveFull(req: Request[IO], entry: NfObjEntry, name: String): IO[Response[IO]] =
     val etag = "\"" + entry.cid + "\""
     val validators: List[Header.ToRaw] = List(
       Header.Raw(org.typelevel.ci.CIString("ETag"), etag),
       Header.Raw(org.typelevel.ci.CIString("Cache-Control"), NfObjCacheControl),
       Header.Raw(org.typelevel.ci.CIString("Last-Modified"), HttpDateFormat.format(java.time.Instant.ofEpochMilli(entry.mtimeMs)))
     )
-    val inm = req.headers.get(org.typelevel.ci.CIString("If-None-Match")).map(_.head.value)
-    val notModified = inm.exists { raw =>
-      val tags = raw.split(",").map(_.trim)
-      tags.contains("*") || tags.contains(etag) || tags.contains("W/" + etag)
-    }
+    val notModified = etagMatches(req, etag)
     val real = fs2.io.file.Path(entry.realPath)
     if notModified then IO.pure(Response[IO](Status.NotModified).putHeaders(validators*))
     else

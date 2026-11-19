@@ -17,7 +17,7 @@ import { showDocumentTermCard } from '../documentTermCard.js';
 //  仅电子书格式生效（epub/mobi/azw3 等）」——md 退出统一阅读 chrome，正文
 //  滚回 .canvas-md-scroll 原生滚动面；阅读位记账（pane._mdScrollPos +
 //  canvas-tab-activated 恢复）是 pane 级机制、不依赖 chrome，逐字保留。）
-import { mintTickets, stripCredentialParams, decodePathParam, ticketRejects } from '../nfTicket.js';
+import { mintTickets, stripCredentialParams, decodePathParam, ticketRejects, reMint } from '../nfTicket.js';
 // 二次加载清剿批（2026-10-24 · #816 同法）：文档图片字节改经 **nfFileCache 账本
 // 单点**——`nfViewerUrl` 命中零抓取 / 未命中取数即入账；blob 解码失败自愈逐出
 // （`nfCacheDrop`，见下方 __nfMdImgFail）。
@@ -1302,6 +1302,51 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
         if (p) void nfCacheDrop('nf:' + p).catch(() => {});
         img.src = fallback;
         return;
+      }
+      // ①′ 票据自愈（B1，票据自愈批 2026-11-19 · 作者令「文档里的图片，重启/票过期后
+      // 必须自愈恢复，不许长期停在错误态」）：<img>/<video> 元素腿此前只有「①账本坏字节
+      // 逐出 + 回落那枚**可能已过期**的候选 URL」与「②候选级联」两条腿 —— 网关重启
+      // 清空票仓、或票 TTL 过期后，回落的那枚旧票 URL 同样 401/403，于是（② 的候选全都
+      // 骑同一批失效票）直落 ③ 终局占位（作者实拍「无权读取，票据被拒（HTTP 401）」停住）。
+      // 这里补一条腿：**重铸新票**并重试。覆盖面 = 401 与 403 的**全部** reason
+      // （invalid-ticket / expired / path-mismatch / credential-* —— 只按**状态类**判，
+      // 不筛服务端 reason，因为元素腿拿不到 reason 时要照旧自愈）。
+      //   · 闸① **只对票的失败动手**：onerror 不带状态，所以用既有 `probeMdImageUrl`
+      //     探一次；探到 401/403 才重铸。404/400/415 等非票因 ⇒ 逐字交回既有 ② 候选
+      //     级联（否则会把「文件不存在」误当票据问题去重铸，并对不存在路径打转 ——
+      //     本轮自测抓到过该回归：vault 根候选 404 被重铸腿截住，② 的 attachments
+      //     候选永远轮不到）。
+      //   · 闸② **每次失败至多重铸 3 次**（nfMdRerolls 计数）：任何情形都不成环。
+      //   · 探到的状态回填 nfMdErr ⇒ ③ 不必再白探一次。
+      // 服务端票仓语义与校验强度**一个字不动**：这只是把客户端已有的「重铸 + 重试」
+      // 自愈腿补齐到元素腿。
+      const rerolls = Number(ds.nfMdRerolls || 0);
+      const carryingBlob = (img.getAttribute('src') || '').startsWith('blob:');
+      if (rerolls < 3 && !carryingBlob) {
+        const p = ds.nfMdPath || '';
+        const known = Number(ds.nfMdErr || 0);
+        if (p && (known === 0 || known === 401 || known === 403)) {
+          ds.nfMdRerolls = String(rerolls + 1);
+          const failing = img.getAttribute('src') || '';
+          const decide = known ? Promise.resolve(known) : probeMdImageUrl(failing).catch(() => 0);
+          decide.then((s) => {
+            if (!img.isConnected) return;
+            const st = Number(s) || 0;
+            if (st === 401 || st === 403) {
+              return reMint(p)
+                .then((url) => {
+                  if (!img.isConnected) return;
+                  const next = String(url || '');
+                  if (next && next !== img.getAttribute('src')) img.src = next; // 新票 ⇒ 再试
+                  else if (window.__nfMdImgFail) window.__nfMdImgFail(img);      // 拿不到新票 ⇒ 走 ②/③
+                })
+                .catch(() => { if (window.__nfMdImgFail) window.__nfMdImgFail(img); });
+            }
+            if (st) ds.nfMdErr = String(st);            // 回填（③ 不再白探）
+            if (window.__nfMdImgFail) window.__nfMdImgFail(img);   // 非票因 ⇒ 交回 ②/③
+          });
+          return;
+        }
       }
       // ② 候选级联：vault 根腿（或反过来的文档目录腿）再试恰一次/候选。
       const alts = readAltUrls(ds);

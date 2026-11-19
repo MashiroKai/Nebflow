@@ -193,6 +193,20 @@ import { fileIconStyle, extOf } from './fileIcon.js';
 
 const FWD_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.2 5.1c0-.86 1.02-1.3 1.65-.73l7.06 6.4c.44.4.44 1.08 0 1.48l-7.06 6.4c-.63.57-1.65.13-1.65-.73v-2.9c-4.3.14-7.02 1.42-9.06 4.06-.5.65-1.55.2-1.4-.6.9-4.7 3.9-8.5 10.46-8.9V5.1z"/></svg>';
 
+/** 媒体**脸**的预览目标宽（媒体加载慢批 2026-11-19 · 作者裁定 D5-A）。
+ *
+ *  首屏只取预览、点开才取原图：脸按「视口宽 × DPR」取缩略（服务端
+ *  `/api/nf-obj/<cid>/<name>?w=<px>`），灯箱 / 查看器**不带** width ⇒ 仍取原件。
+ *  封顶 1600（控制台消息列不会更宽），下限 240 防 0 / 异常值。
+ *
+ *  不改 Pop 语义：脸渲染的仍是同一张图（只是取回的字节按显示尺寸），点开仍是原图。 */
+function previewWidth() {
+  const vw = Number(window.innerWidth) || 0;
+  const dpr = Number(window.devicePixelRatio) || 1;
+  const px = Math.round(vw * dpr);
+  return Math.min(Math.max(px, 240), 1600);
+}
+
 /** Error handlers installed by the last `hydrateMedia` run per element (see the retry note inside). */
 const hydrationHandlers = new WeakMap();
 
@@ -301,7 +315,7 @@ export function hydrateMedia(el, item, onFail) {
     // 复用同一 hydrateMedia ⇒ 同样零追加抓取。铸票/取数失败（nfViewerUrl 拒绝）
     // ⇒ 原样回落 legacyTicketFace，失败面与改前逐字一致。视频/音频不进账本
     // （Range/流式播放语义，非本批症状面）。
-    nfViewerUrl({ absPath: path, objectUrl: null, pane: el })
+    nfViewerUrl({ absPath: path, objectUrl: null, pane: el, width: previewWidth() })
       .then(url => { if (el.isConnected && !el.dataset.nfReminted) el.src = url; })
       .catch(() => { if (!el.dataset.nfReminted) legacyTicketFace(); });
 
