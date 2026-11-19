@@ -48,6 +48,23 @@ import scala.concurrent.duration.*
  */
 class BootCrashRecoverySpec extends CatsEffectSuite:
 
+  test("node bridges with matching session prefixes resolve independently") {
+    val system = ActorSystem("bridge-collision-probe")
+    val sid1 = "node-abc11111"
+    val sid2 = "node-abc22222"
+    (for
+      first <- system.spawn(Behaviors.ignore[String], NodeStarter.bridgeName(sid1))
+      second <- system.spawn(Behaviors.ignore[String], NodeStarter.bridgeName(sid2))
+      resolvedFirst <- system.resolve[String](first.path.toString)
+      resolvedSecond <- system.resolve[String](second.path.toString)
+      _ = assert(resolvedFirst eq first, "first bridge must retain its registry entry")
+      _ = assert(resolvedSecond eq second, "second bridge must retain its registry entry")
+      _ <- system.stop(first)
+      stillResolved <- system.resolve[String](second.path.toString)
+      _ = assert(stillResolved eq second)
+    yield ()).guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
+  }
+
   override def munitIOTimeout: FiniteDuration = 120.seconds
 
   private val tempRoot: os.Path = os.pwd / "target" / "test-boot-crash-recovery"
