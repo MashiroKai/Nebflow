@@ -405,6 +405,29 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     }
   }
 
+  test("fake leg: budget expires without release and is recorded as timeout") {
+    val port = closedPort()
+    val ep = s"http://127.0.0.2:$port"
+    val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val gate = new java.util.concurrent.CountDownLatch(1)
+    val hook: (String, Int, Long) => Unit = (_, _, budgetMs) =>
+      events.add(s"start:$budgetMs")
+      if gate.await(budgetMs, java.util.concurrent.TimeUnit.MILLISECONDS) then
+        throw new IllegalStateException("gate unexpectedly released")
+      events.add("budget-expired")
+      throw new java.util.concurrent.TimeoutException("fixture budget expired")
+    withStack(port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialHook = hook) { (_, ps) =>
+      (ps.connect(peer("budget-expiry", List(ep))) *> IO {
+        import scala.jdk.CollectionConverters.*
+        val round = roundOf(ps, "budget-expiry")
+        assertEquals(events.iterator().asScala.toList, List("start:1500", "budget-expired"))
+        assertEquals(round.attempted, List(ep))
+        assertEquals(round.failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Timeout))
+        assertEquals(ps.dialStatus("budget-expiry").flatMap(_.error), Some("timeout after 1500ms"))
+      }).guarantee(IO(gate.countDown()))
+    }
+  }
+
   test("P2 实拨：生产口径拨号体落在 presence-dial-*；改前口径落在 io-compute-*（红证据）") {
     val port = closedPort()
     val ep = s"http://127.0.0.1:$port"
