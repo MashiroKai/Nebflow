@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<!-- diff-canvas-native/compare.html — 「diff 面接入 canvas 特质」**两形态对照页**
+     （作者令 2026-11-19：默认落推荐形态，同时给一个备选形态；对照页可点/可看）。
+
+     两页，均**直接挂真实前端源码树里的共享组件**（js/diffView，同源零公网），
+     375×812 真全屏页（禁弹窗/内嵌面板）：
+       #page-recommended  推荐形态 = 顶部标题 + **流内**右对齐玻璃控制带（零定位层）
+       #page-alternate    备选形态 = 同一 DOM/同一几何族，摆成 canvas 右下角悬浮控件族
+       #page-canvas       推荐形态落在**真实 canvas 容器链**（.fcv-view > .fcv-dvhost）
+
+     两形态共用**同一个** mountDiff 调用，唯一差别 = `chrome: 'flow' | 'floating'`
+     接缝（组件只落 `data-chrome`，生产样式表零新增定位选择器）—— 备选形态的定位
+     样式只存在于本页本地 <style>（生产 CSS 不动，定位棘轮台账零放宽）。
+
+     比较器芯片（#cmp）是取证脚手架：截图前 `window.__hideCmp(true)` 可隐藏，
+     使静帧为**纯净真全屏页**。
+-->
+<html lang="zh-CN" data-baseline="diff-canvas-native">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>diff-canvas-native · 形态对照</title>
+  <link rel="stylesheet" href="/css/base.css">
+  <link rel="stylesheet" href="/css/stand-tokens.css">
+  <link rel="stylesheet" href="/css/design-system.css">
+  <link rel="stylesheet" href="/css/sapphire.css">
+  <link rel="stylesheet" href="/css/glass.css">
+  <link rel="stylesheet" href="/css/diffView.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg); color: var(--color-text); }
+    #app { position: fixed; inset: 0; display: flex; flex-direction: column; overflow: hidden; }
+    .page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+    .page[hidden] { display: none; }
+    #page-recommended, #page-alternate { padding-top: var(--nf-dv-top-band); }
+    /* Canvas 面：真实容器链 .canvas-tab-pane > .fcv-view > .fcv-dvhost > 组件 */
+    #page-canvas { align-items: stretch; }
+    .canvas-tab-pane[data-type="filechanges"] { display: flex; flex-direction: column; min-height: 0; overflow: hidden; flex: 1 1 auto; }
+
+    /* ── 比较器芯片（取证脚手架；非产品面）───────────────────────────────── */
+    #cmp { position: fixed; top: calc(env(safe-area-inset-top, 0px) + var(--ds-space-2)); left: 50%; transform: translateX(-50%);
+           display: flex; gap: var(--ds-space-1); padding: var(--ds-space-1); z-index: 40;
+           border-radius: var(--ds-radius-pill); border: 1px solid var(--glass-border); background: var(--glass-bg);
+           backdrop-filter: blur(var(--glass-blur, 12px)) saturate(1.4); box-shadow: var(--frost-shadow); }
+    #cmp[hidden] { display: none; }
+    #cmp button { min-height: calc(var(--nf-dv-ctl-size) - 12px); padding: 0 var(--ds-space-2); border: 0; cursor: pointer;
+                  border-radius: var(--ds-radius-pill); background: transparent; color: var(--color-text-muted);
+                  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif; }
+    #cmp button[data-on='1'] { background: rgb(var(--sapphire) / 0.2); color: var(--color-text); }
+
+    /* ── 备选形态（只在对照页生效）：同一 .nf-dv-allbar/.nf-dv-allgroup/.nf-dv-allbtn
+       节点，改摆成 canvas 右下角悬浮控件族（.ask-fab / .canvas-source-toggle 同族：
+       48px 圆钮 / 竖列 / 玻璃胶囊组）。**错列避让**：底距抬到手机底部控件行
+       （mobileLayer.css 的 --mf-row-bottom 带）之上，与既有右下角入口钮（.ask-fab /
+       .note-fab，两个 diff 面都吃门闸不出现）兄弟位不重叠。定位样式仅本页本地，
+       生产 css/diffView.css 不动。 */
+    .nf-dv[data-chrome="floating"] { position: relative; }
+    .nf-dv[data-chrome="floating"] > .nf-dv-allbar {
+      position: absolute; right: var(--ds-space-3); bottom: calc(var(--ds-space-6) + 56px);
+      padding: 0; z-index: 5;
+    }
+    .nf-dv[data-chrome="floating"] .nf-dv-allgroup {
+      flex-direction: column; height: auto; width: auto;
+      padding: var(--ds-space-1); gap: var(--ds-space-1);
+    }
+    .nf-dv[data-chrome="floating"] .nf-dv-allbtn {
+      width: var(--nf-dv-ctl-size); min-width: var(--nf-dv-ctl-size); height: var(--nf-dv-ctl-size);
+      padding: 0; border-radius: 50%;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="page" id="page-recommended"></div>
+    <div class="page" id="page-alternate" hidden></div>
+    <div class="page" id="page-canvas" hidden>
+      <div class="canvas-tab-pane" data-type="filechanges"></div>
+    </div>
+  </div>
+  <div id="cmp">
+    <button type="button" data-form="recommended" data-on="1">推荐形态</button>
+    <button type="button" data-form="alternate" data-on="0">备选形态</button>
+  </div>
+  <script type="module">
+    import { mountDiff } from '/js/diffView/index.js';
+
+    const REV_BASE = ['alpha', 'beta', 'gamma', ...Array.from({ length: 30 }, (_, i) => 'gap' + i), 'omega'].join('\n') + '\n';
+    const REV_CURRENT = REV_BASE.replace('alpha', 'ALPHA').replace('omega', 'omega\nOMEGA-NEW\n');
+    const REV_HUNKS = [
+      { id: 'h0', oldStart: 0, oldCount: 1, newStart: 0, newCount: 1, added: 1, removed: 1 },
+      { id: 'h1', oldStart: 33, oldCount: 1, newStart: 33, newCount: 2, added: 2, removed: 1 },
+    ];
+    const TITLE = { file: 'src/app/main.ts', path: 'src/app/main.ts', counts: '+3 −2', status: '2 块待审' };
+
+    const state = { chunkActions: [], apis: {} };
+    const record = (hunkId, action) => state.chunkActions.push({ hunkId: hunkId == null ? null : hunkId, action });
+
+    async function mountAll() {
+      state.apis.recommended = await mountDiff(document.getElementById('page-recommended'), {
+        original: REV_BASE, current: REV_CURRENT, mode: 'review', hunks: REV_HUNKS, onChunkAction: record, title: TITLE,
+      });
+      state.apis.alternate = await mountDiff(document.getElementById('page-alternate'), {
+        original: REV_BASE, current: REV_CURRENT, mode: 'review', hunks: REV_HUNKS, onChunkAction: record, title: TITLE,
+        chrome: 'floating',
+      });
+      const pane = document.querySelector('#page-canvas .canvas-tab-pane');
+      pane.innerHTML = '';
+      const view = document.createElement('div');
+      view.className = 'fcv-view';
+      const head = document.createElement('div');
+      head.className = 'fcv-filehead';
+      const pill = document.createElement('div');
+      pill.className = 'fcv-headpill';
+      const p = document.createElement('span'); p.className = 'nf-fc-path'; p.textContent = 'src/app/main.ts';
+      const c = document.createElement('span'); c.className = 'nf-fc-counts'; c.textContent = '+3 −1';
+      pill.append(p, c); head.append(pill);
+      const host = document.createElement('div'); host.className = 'fcv-dvhost';
+      view.append(head, host); pane.append(view);
+      state.apis.canvas = await mountDiff(host, {
+        original: REV_BASE, current: REV_CURRENT, mode: 'review', hunks: REV_HUNKS, onChunkAction: record, title: TITLE,
+      });
+    }
+
+    window.__showPage = (name) => {
+      for (const n of ['recommended', 'alternate', 'canvas']) document.getElementById('page-' + n).hidden = n !== name;
+      document.querySelectorAll('#cmp button').forEach((b) => b.setAttribute('data-on', b.dataset.form === name ? '1' : '0'));
+    };
+    window.__hideCmp = (v) => { document.getElementById('cmp').hidden = !!v; };
+    window.__chunkActions = () => state.chunkActions;
+    window.__resetChunkActions = () => { state.chunkActions = []; };
+    window.__api = (which) => state.apis[which] || null;
+    /** 两形态的几何读数（对照取证）：动作带矩形 + 容器矩形 + 标题矩形。 */
+    window.__formGeom = (name) => {
+      const root = document.querySelector('#page-' + name + ' .nf-dv');
+      if (!root) return null;
+      const r = (el) => { if (!el) return null; const b = el.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) }; };
+      const band = root.querySelector('.nf-dv-allbar');
+      const grp = root.querySelector('.nf-dv-allgroup');
+      const ttl = root.querySelector('.nf-dv-title');
+      const btn = root.querySelector('.nf-dv-allbtn');
+      const cs = band ? getComputedStyle(band) : null;
+      return {
+        root: r(root), band: r(band), group: r(grp), title: r(ttl), btn: r(btn),
+        bandPosition: cs ? cs.position : null,
+        btnRadius: btn ? getComputedStyle(btn).borderRadius : null,
+        btnSize: btn ? getComputedStyle(btn).minHeight : null,
+      };
+    };
+
+    document.getElementById('cmp').addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-form]');
+      if (b) window.__showPage(b.dataset.form);
+    });
+
+    await mountAll();
+    window.__ready = true;
+  </script>
+</body>
+</html>
