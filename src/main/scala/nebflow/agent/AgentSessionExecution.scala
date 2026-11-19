@@ -677,6 +677,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             flowNodeSession = stateForLlm.flowNodeId.isDefined,
             isDispatcher = stateForLlm.isDispatcher,
             delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId),
+            askGitViz = nebflow.core.ask.AskSessions.isGitVizSession(stateForLlm.sessionId),
             delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(stateForLlm.sessionId)
           )
           // #16 observability: one log line per LLM call when MCP tools are

@@ -43,6 +43,7 @@ const HEAT_GAP = 3;
 const HEAT_DAYS_DEFAULT = 371;   // 默认「近 12 个月」（作者口径：近 12 周或 12 月）
 const HEAT_DAYS_WEEK = 84;       // 「近 12 周」档
 const LANE_MIN_MOBILE = 14;      // 手机缩略图泳道最小间距（一泳道一列 ⇒ 8 条可辨）
+const MOBILE_LANE_LABEL_W = 96;  // 手机泳道标签带宽（= gitViz.css 的 calc(--ds-space-12 * 2)，两侧同源）
 
 /** 手机档判据（与 gitViz.css 的 `@media (max-width: 640px)` 同一阈值）。 */
 const MOBILE_MQ = '(max-width: 640px)';
@@ -97,13 +98,17 @@ const ICONS = {
 
 /** 热力图色阶：零新色值 —— 全部是既有结构色 `--sapphire` 的透明度档（5 档，越深越多）。 */
 const HEAT_ALPHA = [0.06, 0.22, 0.42, 0.64, 0.9];
-function heatAlpha(count, max) {
-  if (!count) return HEAT_ALPHA[0];
+/** 强度 → 档位 0..4。**只在 CSS 里上色**（`.gitviz-heat-cell.is-lv{n}`）：
+ *  SVG 的 `fill` 是 presentation attribute，`var()` 在里面不生效 —— 上一轮把浓度写成
+ *  `fill="rgb(var(--sapphire) / a)"`，浏览器整条丢弃 ⇒ 热力图全黑（375 真机截图即证据）。
+ *  档位数值单源留在本表，颜色单源留在 gitViz.css。 */
+function heatLevel(count, max) {
+  if (!count) return 0;
   const r = max > 0 ? count / max : 0;
-  if (r <= 0.12) return HEAT_ALPHA[1];
-  if (r <= 0.32) return HEAT_ALPHA[2];
-  if (r <= 0.62) return HEAT_ALPHA[3];
-  return HEAT_ALPHA[4];
+  if (r <= 0.12) return 1;
+  if (r <= 0.32) return 2;
+  if (r <= 0.62) return 3;
+  return 4;
 }
 
 // ── 渲染：热力图 ────────────────────────────────────────────────────────────
@@ -123,8 +128,15 @@ function heatAlpha(count, max) {
 function renderHeatmap(host, heat, opts = {}) {
   host.textContent = '';
   const mobile = opts.mobile ?? isMobile();
+  // 注意：`heat.days.length` ≠ 请求区间 —— 365 天的窗为了凑整周会回 371 天（含对齐的
+  // 首尾补齐），所以「近 12 月」判据必须用**请求区间** opts.days；拿数组长度比
+  // HEAT_DAYS_DEFAULT 永远不成立 ⇒ 手机档会退回桌面 53 周（宽 886px 塞进 363px 的盒子，
+  // 正是要修的「只显 3.5 个月」）。无 opts.days 时用「天数明显超过 12 周」判。
   const range = Number(opts.days || heat.days.length);
-  const monthly = mobile && range === HEAT_DAYS_DEFAULT;
+  const monthly = mobile && (opts.days ? Number(opts.days) === HEAT_DAYS_DEFAULT : heat.days.length > HEAT_DAYS_WEEK + 7);
+  // 数据窗可能比请求区间宽（接口按 heatDays 回窗，但初始取数用的是默认窗）。渲染一律以
+  // **请求区间**为准：多出来的日子切片丢掉，否则「近 12 周」会画出 53 列 886px 的桌面格。
+  const heatDays = heat.days.length > range ? heat.days.slice(heat.days.length - range) : heat.days;
 
   const head = el('div', 'gitviz-heat-head');
   const sub = monthly
@@ -157,7 +169,7 @@ function renderHeatmap(host, heat, opts = {}) {
   if (monthly) {
     // 按月聚合：列 = 月份（末 12 个月），行 = 0（单行）
     const months = new Map();
-    for (const d of heat.days) {
+    for (const d of heatDays) {
       const k = d.date.slice(0, 7);
       months.set(k, (months.get(k) || 0) + d.count);
     }
@@ -168,12 +180,12 @@ function renderHeatmap(host, heat, opts = {}) {
       ? { count: list[c][1], label: `${Number(list[c][0].slice(5, 7))}月 · ${list[c][1]} 次提交`, short: `${Number(list[c][0].slice(5, 7))}月` }
       : null);
   } else {
-    const first = new Date(`${heat.days[0].date}T00:00:00`);
+    const first = new Date(`${heatDays[0].date}T00:00:00`);
     const lead = (first.getDay() + 6) % 7;           // 周一 = 0
-    cols = Math.ceil((heat.days.length + lead) / 7);
+    cols = Math.ceil((heatDays.length + lead) / 7);
     valueOf = (c, row) => {
       const idx = c * 7 + row - lead;
-      const d = heat.days[idx];
+      const d = heatDays[idx];
       return d ? { count: d.count, label: `${d.date} · ${d.count} 次提交`, short: '' } : null;
     };
   }
@@ -182,7 +194,7 @@ function renderHeatmap(host, heat, opts = {}) {
   const w = left + cols * pitch;
   const h = top + rows * pitch;
   const s = svg('svg', { class: 'gitviz-heat-svg', width: w, height: h, viewBox: `0 0 ${w} ${h}`, role: 'img' });
-  s.setAttribute('aria-label', monthly ? '近 12 个月按月聚合的提交数热力图' : `近 ${heat.days.length} 天每日提交数热力图`);
+  s.setAttribute('aria-label', monthly ? '近 12 个月按月聚合的提交数热力图' : `近 ${heatDays.length} 天每日提交数热力图`);
 
   if (!monthly) {
     const dayLabel = ['一', '三', '五'];
@@ -206,13 +218,12 @@ function renderHeatmap(host, heat, opts = {}) {
         s.appendChild(label);
       }
       const rect = svg('rect', {
-        class: 'gitviz-heat-cell',
+        class: `gitviz-heat-cell is-lv${heatLevel(v.count, maxAll)}`,
         x: left + c * pitch,
         y: top + r * pitch,
         width: cell,
         height: cell,
         rx: 2.5,
-        fill: `rgb(var(--sapphire) / ${heatAlpha(v.count, maxAll)})`,
       });
       const title = svg('title');
       title.textContent = v.label;
@@ -367,7 +378,13 @@ function renderTreeMobile(host, g, state) {
   host.textContent = '';
   const rows = g.commits;
   const laneCount = Math.max(1, g.lanes);
-  const pitch = Math.max(LANE_MIN_MOBILE, Math.round(300 / laneCount));
+  // 列距按**实测可用宽**算，不写死 300：缩略图左边有一列 96px 的泳道标签带
+  // （.gitviz-lane-labels，sticky），把 375 视口吃掉一点；留死 300 会让 8 泳道
+  // 画到 324+96=420 宽，右边两个泳道直接被裁掉（375 截图即证据）。
+  // 下限 LANE_MIN_MOBILE：太窄时宁可整棵树横向滚动，也不把泳道压成一列。
+  const labelW = MOBILE_LANE_LABEL_W;
+  const avail = Math.max(LANE_MIN_MOBILE * laneCount, (host.clientWidth || 363) - labelW - 12);
+  const pitch = Math.max(LANE_MIN_MOBILE, Math.floor(avail / laneCount));
   const laneW = Math.max(96, LANE_PAD + laneCount * pitch);
   const rowPitch = 14;
   const h = Math.max(rowPitch, rows.length * rowPitch);
@@ -383,14 +400,25 @@ function renderTreeMobile(host, g, state) {
 
   const labels = el('div', 'gitviz-lane-labels');
   labels.setAttribute('aria-label', '泳道分支标签');
+  // 标签贴「该泳道首个提交」的高度；本窗没有提交的泳道（长标签带里常见）不能全堆在
+  // 顶部——那样 6 个标签互相压住等于只显示 1 个。用**单调递增**兜底：空泳道排在上一
+  // 个标签之后一行，8 条泳道 8 个可读标签，顺序仍是泳道序。
+  let prevOwn = null;      // 上一枚标签占的行（flex 列排：marginTop 写的是**增量**）
+  let cursor = -1;         // 已经用到的最小行（空泳道从它之后接）
   for (let lane = 0; lane < laneCount; lane += 1) {
     const name = laneName(g, lane);
     const isHead = g.refs.some((r) => r.lane === lane && r.isHead);
     const tag = el('button', `gitviz-lane-tag${isHead ? ' is-head' : ''}`);
     tag.type = 'button';
     tag.title = `${name}（泳道 ${lane}，点按折叠该泳道组）`;
-    tag.append(el('i'), el('span', null, name));
-    tag.style.marginTop = `${Math.max(0, (laneY.get(lane) ?? 0) * rowPitch)}px`;
+    const span = el('span', null, name);
+    span.title = name;
+    tag.append(el('i'), span);
+    const ownRow = laneY.has(lane) ? laneY.get(lane) : cursor + 1;
+    cursor = Math.max(cursor, ownRow);
+    const delta = prevOwn == null ? ownRow : Math.max(0, ownRow - prevOwn);
+    prevOwn = ownRow;
+    tag.style.marginTop = `${delta * rowPitch}px`;
     tag.addEventListener('click', () => {
       state.collapsed.set(lane, !(state.collapsed.get(lane) ?? false));
       state.repaint();
@@ -1058,7 +1086,9 @@ function stateBlock(host, text) {
 
 async function loadGraph(projectName, view) {
   try {
-    const g = await fetchGitGraph(projectName, { heatDays: HEAT_DAYS_DEFAULT });
+    // 初始窗 = 本档默认档位（手机 12 周 / 桌面 12 月）——取数窗与渲染档位同源，
+    // 否则会出现「数据 371 天 / 画 12 周」的错配。
+    const g = await fetchGitGraph(projectName, { heatDays: isMobile() ? HEAT_DAYS_WEEK : HEAT_DAYS_DEFAULT });
     if (!g || g.state !== 'ok') {
       if (view) stateBlock(view, `无法读取 git 图：${g?.message || '未知原因'}`);
       return null;

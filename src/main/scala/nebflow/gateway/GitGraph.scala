@@ -13,8 +13,7 @@
  *     = root，经既有合并通道）。
  *   · 无缓存、无落盘：每次请求现读现算，进程内不保留任何仓库快照。
  *
- * 泳道算法（与前端同契约；参考实现见工作树的 tools/gitviz-dev/git-graph.mjs）：
- *   ① 每支按泳道序认领：0 = HEAD 所在支先认领它能到达的**全部**提交（基线因此是一条
+ * 泳道算法（与前端同契约；参考实现见工作树的 tools/gitviz-dev/git-graph.mjs）： *   ① 每支按泳道序认领：0 = HEAD 所在支先认领它能到达的**全部**提交（基线因此是一条
  *      连续泳道，含与其余支共用的祖先），其余支再认领各自独有的段 ⇒ 图上读到的是
  *      「一条基线 + 若干分叉」，而不是「谁先遍历到谁当主线」；
  *   ② 只在本窗内认领（窗 = 一次 `git log --date-order -n <limit>` 的结果）；
@@ -30,7 +29,11 @@ import java.security.MessageDigest
 import java.time.{ Instant, ZoneId }
 import java.util.concurrent.TimeUnit
 
-private[gateway] object GitGraph:
+/** 可见性 = `private[nebflow]`（第二轮 2026-11-19 放宽，原 `private[gateway]`）：
+ *  分支管理问答的只读取数件 `core/tools/GitVizGraphTool` 必须走**同一个** `build`
+ *  （作者令「数据面沿用只读子命令白名单」——白名单在下面一张表里，绝不能出现第二份
+ *  实现）。放宽到 `nebflow` 包内 = core 可见、包外仍不可见；本文件仍是唯一取数口。 */
+private[nebflow] object GitGraph:
 
   /** 允许调用的 git 子命令（唯一取用口 = [[git]]；不在表内一律拒绝）。 */
   private val ReadOnlySubcommands =

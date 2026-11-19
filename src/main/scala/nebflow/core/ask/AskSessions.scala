@@ -49,7 +49,7 @@ object AskSessions:
     // buildAllowedToolSet 尾段的 `-- AskExclusiveTools` 从其余一切身份剥净；
     // 工具内侧另有 isGitVizSession 身份闸（双保险，PdfPage 同款）。
     Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write", "PdfPage", "Card",
-      "gitviz_graph")
+      "gitviz_graph", "gitviz_handoff")
 
   /** Closed Ask face, independent of Subagent and returned before any other role grants. */
   val AllowedTools: Set[String] =
@@ -185,7 +185,7 @@ object AskSessions:
    *     子命令白名单 rev-parse/for-each-ref/log/rev-list/merge-base，越界即拒）。
    */
   val GitVizAllowedTools: Set[String] =
-    Set("Read", "Glob", "Grep", "gitviz_graph")
+    Set("Read", "Glob", "Grep", "gitviz_graph", "gitviz_handoff")
 
 end AskSessions
 

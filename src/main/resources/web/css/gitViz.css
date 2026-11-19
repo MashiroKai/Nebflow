@@ -127,7 +127,15 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 .gitviz-seg-btn + .gitviz-seg-btn { border-left: 1px solid var(--color-border); }
 .gitviz-seg-btn.is-on { background: rgb(var(--sapphire) / 0.2); color: var(--color-text); }
 .gitviz-heat-svg { display: block; }
-.gitviz-heat-cell { stroke: var(--color-border); stroke-width: 0.5; }
+/* 热力强度 0..4 的**唯一颜色源**（档位判定在 gitVizView.js heatLevel：数值一侧单源）。
+   不能用 SVG presentation attribute 写 `fill="rgb(var(--sapphire)/a)"` —— var() 在属性里
+   不生效，整条 fill 被丢弃（曾经导致整张热力图全黑）。 */
+.gitviz-heat-cell { fill: rgb(var(--sapphire) / 0.06); stroke: var(--color-border); stroke-width: 0.5; }
+.gitviz-heat-cell.is-lv0 { fill: rgb(var(--sapphire) / 0.06); }
+.gitviz-heat-cell.is-lv1 { fill: rgb(var(--sapphire) / 0.22); }
+.gitviz-heat-cell.is-lv2 { fill: rgb(var(--sapphire) / 0.42); }
+.gitviz-heat-cell.is-lv3 { fill: rgb(var(--sapphire) / 0.64); }
+.gitviz-heat-cell.is-lv4 { fill: rgb(var(--sapphire) / 0.9); }
 /* SVG 字档走 CSS 类（presentation attribute 不吃 var()；字号仍来自令牌档） */
 .gitviz-heat-label { font-size: var(--ds-fs-glyph); fill: var(--color-text-muted); }
 
@@ -439,23 +447,47 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 .gitviz-corner:active { transform: scale(var(--cv-active-scale, 0.96)); }
 .gitviz-corner[aria-pressed='true'] { color: var(--color-primary); border-color: rgb(var(--sapphire) / 0.55); }
 .gitviz-corner svg { width: var(--cv-icon, 18px); height: var(--cv-icon, 18px); pointer-events: none; }
-.gitviz-corner--tl { top: var(--panel-head-clear, var(--ds-space-4)); left: var(--ds-space-4); }
-.gitviz-corner--tr { top: var(--panel-head-clear, var(--ds-space-4)); right: var(--ask-fab-gap); }
-.gitviz-corner--bl { bottom: var(--ds-space-4); left: var(--ds-space-4); }
-.gitviz-corner--br { bottom: var(--ds-space-4); right: var(--ask-fab-gap); }
-/* 窗内小钮（问答窗关闭键）：同一材质档，落位回到流内 */
+/* 落位：每条规则都把**对边**显式置 auto —— 角钮同时挂 `.g2-fab`（glass.css 基准类，
+   手机层对它有落位档），若只写单边，另一条继承来的 `left/right` 会让盒子落错角
+   （实测：只写 right 的右上钮被 left:0 拉回左上，压住左上钮）。显式 auto 是这条
+   四角约定的组成部分，不是防御性冗余。 */
+.gitviz-corner--tl { top: var(--panel-head-clear, var(--ds-space-4)); left: var(--ds-space-4); right: auto; bottom: auto; }
+.gitviz-corner--tr { top: var(--panel-head-clear, var(--ds-space-4)); right: var(--ask-fab-gap, var(--ds-space-4)); left: auto; bottom: auto; }
+.gitviz-corner--bl { bottom: var(--ds-space-4); left: var(--ds-space-4); right: auto; top: auto; }
+.gitviz-corner--br { bottom: var(--ds-space-4); right: var(--ask-fab-gap, var(--ds-space-4)); left: auto; top: auto; }
+/* 窗内小钮（问答窗关闭键）：落位回到流内。它**不挂** `.g2-fab`（那是一颗独立圆钮的
+   材质档，窗内小钮要的是无底噪的图标键）⇒ 底色/描边也必须显式清掉，否则继承全局
+   `button` 底色 = 一块白方（375 截图曾出现）。尺寸吃触控行档，手机点得中。 */
 .gitviz-corner--inline {
   position: static;
   flex: 0 0 auto;
-  width: var(--ds-space-6);
-  height: var(--ds-space-6);
+  width: var(--ds-hit-row, var(--ds-space-8));
+  height: var(--ds-hit-row, var(--ds-space-8));
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--ds-space-2);
+  color: var(--color-text-muted);
 }
+.gitviz-corner--inline:hover { color: var(--color-text); background: var(--ds-wash-18); }
 
 /* ── 手机档（≤ 640px，且手机层页面壳内）：四角改吃手机那把尺 ── */
 @media (max-width: 640px) {
   body.mobile-layer .gitviz-corner {
-    width: var(--mtap-lg, var(--cv-size-circle, 40px));
-    height: var(--mtap-lg, var(--cv-size-circle, 40px));
+    /* 手机触控档：48 = --mtap-lg（= --ds-hit-tap-lg，g2-fab 基准档；两枚令牌都缺时
+       最差也落 44 = --ds-hit-row，仍满足 44pt 触控底线）。 */
+    width: var(--mtap-lg, var(--ds-hit-tap-lg, var(--ds-hit-row, 44px)));
+    height: var(--mtap-lg, var(--ds-hit-tap-lg, var(--ds-hit-row, 44px)));
+  }
+  /* 四角**占位**：角钮是 absolute（相对 padding box，不吃本层 padding）⇒ 给页面壳留出
+     一条与钮同高、同安全间距的空白带，内容整条下移，角钮不再压在「贡献热力图」标题上；
+     滚动内容尾部再留一条，滚到底时列表最后几行不被左下/右下钮盖住。
+     不留这条的后果有 375 截图：左上钮正压「贡献热力图」四字、右下钮压住末行分支名。 */
+  body.mobile-layer .gitviz {
+    padding-top: calc(var(--mtap-lg, var(--ds-hit-tap-lg, 44px)) + var(--ds-space-4));
+  }
+  body.mobile-layer .gitviz-main {
+    padding-bottom: calc(var(--mtap-lg, var(--ds-hit-tap-lg, 44px)) + var(--ds-space-4));
   }
   body.mobile-layer .gitviz-corner--tl,
   body.mobile-layer .gitviz-corner--tr {
@@ -489,12 +521,24 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
   .gitviz-corners { display: block; }
   /* 行内分支标签在 375 下让位给标题（分支名由泳道标签列 + 分组头承担） */
   .gitviz-row .gitviz-ref-chip { display: none; }
-  .gitviz-lane-labels { max-width: 40%; }
+  /* 标签带宽 96 = calc(--ds-space-12 * 2)，与 gitVizView.js 的 MOBILE_LANE_LABEL_W 同值同源；
+     不设死宽时长分支名（feat/gitviz-mvp-20261119）会把整列撑到 40% 视口，把右侧泳道挤出去。 */
+  .gitviz-lane-labels { max-width: calc(var(--ds-space-12) * 2); }
+  .gitviz-lane-tag span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
-/* 桌面：四角钮不出现（桌面用返回条 + 右栏，不需要角钮） */
+/* 桌面：四角里的**三个**不出现（桌面已有面板头返回条 + 右栏的视图/筛选/缩放），
+   但右上「分支管理问答」没有等价入口 ⇒ 保留 `--br` 一颗，否则桌面用户打不开问答面
+   （取证时曾发现桌面只剩「强制 display」一条路，等于功能不可达）。 */
 @media (min-width: 641px) {
-  .gitviz-corners { display: none; }
+  .gitviz-corners { display: block; }
+  .gitviz-corner--tl,
+  .gitviz-corner--tr,
+  .gitviz-corner--bl { display: none; }
 }
 
 /* ── 泳道分组（手机列表形态）── */
@@ -543,8 +587,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
    时长/缓动全走 --ds-dur-layer / --ds-ease-enter。 */
 .gitviz-ask-dock {
   position: absolute;
-  right: var(--ask-fab-gap);
-  bottom: calc(var(--ask-fab-bottom) + var(--ask-fab-size) + var(--ds-space-2));
+  right: var(--ask-fab-gap, var(--ds-space-4));
+  bottom: calc(var(--ask-fab-bottom, var(--ds-space-6)) + var(--ask-fab-size, var(--ds-hit-row, 44px)) + var(--ds-space-2));
   z-index: calc(var(--z-ask-dock, 24) - 1);
   width: var(--ask-dock-w, 372px);
   max-width: calc(100% - var(--ds-space-4));
@@ -637,7 +681,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 @media (max-width: 640px) {
   .gitviz-ask-dock {
     right: var(--ds-space-3);
-    bottom: calc(var(--mf-row-bottom, var(--ask-fab-bottom)) + var(--mtap-lg, var(--ask-fab-size)) + var(--ds-space-2));
+    bottom: calc(var(--mf-row-bottom, var(--ask-fab-bottom, var(--ds-space-6))) + var(--mtap-lg, var(--ask-fab-size, var(--ds-hit-row, 44px))) + var(--ds-space-2));
     width: auto;
     left: var(--ds-space-3);
     max-width: none;
@@ -652,8 +696,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 /* ══ 分页/热力图底片（左下角钮开出的薄面板）══════════════════════════════ */
 .gitviz-sheet {
   position: absolute;
-  left: var(--ask-fab-gap);
-  bottom: calc(var(--ask-fab-bottom) + var(--ask-fab-size) + var(--ds-space-2));
+  left: var(--ask-fab-gap, var(--ds-space-4));
+  bottom: calc(var(--ask-fab-bottom, var(--ds-space-6)) + var(--ask-fab-size, var(--ds-hit-row, 44px)) + var(--ds-space-2));
   z-index: calc(var(--z-ask-dock, 24) - 1);
   display: flex;
   flex-direction: column;

@@ -31,7 +31,9 @@ if __name__ == '__main__':
     res = []
     r1 = build('.frames-flip-*.png', 'gif-01-flip-to-secondary-panel.gif', 720, 110)
     r2 = build('.frames-multi-*.png', 'gif-02-multiselect-forward.gif', 720, 700)
-    for r in (r1, r2):
+    # 第二轮：手机四角 → 问答 → 交办回执 → 面板多选合并（375 宽，GIF 保留原宽以便读字）
+    r3 = build('.frames-gv6-*.png', 'gif-03-mobile-corners-ask-handoff.gif', 375, 900)
+    for r in (r1, r2, r3):
         if r:
             res.append(r)
     print('GIF_JSON=' + repr(res))

@@ -77,8 +77,51 @@ private[gateway] object WsAskHandlers:
         raw.hcursor.downField("name").as[String].getOrElse("file")
       )
     val mainSessionId = raw.hcursor.downField("mainSessionId").as[String].getOrElse("")
+    // ── 分支管理问答批（gitviz，2026-11-19 第二轮）──────────────────────────
+    // 同一个 askOpen 帧承载第二域：`kind="gitviz"` 时作用域 = **项目仓库根**（服务端
+    // 由 ProjectStore 解析，不吃客户端报的路径 —— 与 git-graph 端点同一个解析面），
+    // 不走文件类型白名单（它本来就不是文件），也不做文件上下文组装（提示词由
+    // AskGatewayServices.agentDefFor 的 gitviz 分支给）。会话 id 仍落 `ask-` 族：
+    // 前端给确定性 id、后端只校验形状（防任意键进 index.json），形状不合法则后端派生。
+    val kindReq = raw.hcursor.downField("kind").as[String].getOrElse("").trim
+    val projectReq = raw.hcursor.downField("project").as[String].getOrElse("").trim
 
-    if absPath.trim.isEmpty then askError(wsSend, "", "askOpen: file.absPath is required")
+    if kindReq == "gitviz" then
+      val clientSid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
+      val sid0 =
+        if AskSessions.isGitVizSessionIdShape(clientSid) then clientSid
+        else AskSessions.gitVizSessionIdFor(projectReq)
+      if projectReq.isEmpty then askError(wsSend, sid0, "askOpen(gitviz): project is required")
+      else
+        AskGatewayServices.instance match
+          case None => askError(wsSend, sid0, "ask mode unavailable on this instance")
+          case Some(svc) =>
+            nebflow.core.project.ProjectStore.load(projectReq).flatMap {
+              case None => askError(wsSend, sid0, s"askOpen(gitviz): project '$projectReq' not found")
+              case Some(pd) =>
+                val root = nebflow.core.project.ProjectStore.brainWorkspace(pd)
+                for
+                  binding <- svc.registry.bind(root, projectReq, explicitId = sid0, kind = nebflow.core.ask.AskBinding.KindGitViz)
+                  sid = binding.id
+                  _ <- if mainSessionId.nonEmpty then svc.registry.refreshMainSession(sid, mainSessionId) else IO.unit
+                  msgs <- sessionStore.getUiMessages(sid, 0, 200).map(_._1)
+                  _ <- send(
+                    wsSend,
+                    Json.obj(
+                      "type" -> "askState".asJson,
+                      "sessionId" -> sid.asJson,
+                      "kind" -> "gitviz".asJson,
+                      "project" -> projectReq.asJson,
+                      "file" -> binding.file.asJson,
+                      "fileName" -> binding.fileName.asJson,
+                      "mailAddress" -> (nebflow.core.delegate.MailAddress.AskPrefix + sid).asJson,
+                      "messages" -> encodeTranscript(msgs).asJson
+                    )
+                  )
+                yield ()
+                end for
+            }
+    else if absPath.trim.isEmpty then askError(wsSend, "", "askOpen: file.absPath is required")
     else
       AskGatewayServices.instance match
         case None => askError(wsSend, "", "ask mode unavailable on this instance")
@@ -253,6 +296,22 @@ private[gateway] object WsAskHandlers:
     val paths = raw.hcursor.downField("paths").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
     val reason = raw.hcursor.downField("reason").as[String].toOption.getOrElse("")
     val expected = raw.hcursor.downField("expected").as[String].toOption.getOrElse("")
+    // gitviz 批（2026-11-19 第二轮）· 结构化 git 件：面板「多选 + 合并」钮与问答
+    // agent 的对话交办**产出同一份字段**（作者令「两个入口收敛到同一个出口」）。
+    // 它是**请求**不是执行凭据：本处理器只把四件投进主会话，零 git 操作。
+    val gitReq = raw.hcursor.downField("git").focus.flatMap { j =>
+      val c = j.hcursor
+      c.downField("branches").as[List[String]].toOption.filter(_.nonEmpty).map { branches =>
+        AskHandoffPort.GitRequest(
+          project = c.downField("project").as[String].toOption.getOrElse(""),
+          branches = branches.map(_.trim).filter(_.nonEmpty),
+          target = c.downField("target").as[String].toOption.getOrElse("").trim,
+          intent = c.downField("intent").as[String].toOption.map(_.trim).filter(_.nonEmpty).getOrElse("merge"),
+          notes = c.downField("notes").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty),
+          source = c.downField("source").as[String].toOption.getOrElse("panel").trim
+        )
+      }
+    }
 
     if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askHandoff: sessionId must be an ask- session")
     else if task.isEmpty then askError(wsSend, sid, "askHandoff: empty task")
@@ -273,7 +332,8 @@ private[gateway] object WsAskHandlers:
                 task = task,
                 paths = paths,
                 reason = reason,
-                expected = expected
+                expected = expected,
+                git = gitReq
               )
               AskHandoffPort.deliver(req).flatMap {
                 case Right(_) =>
