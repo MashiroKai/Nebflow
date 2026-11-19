@@ -534,26 +534,32 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
     val port = closedPort()
     val epA = s"http://127.0.0.2:$port"
     val epB = s"http://127.0.0.3:$port"
-    withStack(port) { (_, ps) =>
+    val starts = new java.util.concurrent.LinkedBlockingQueue[String]()
+    val gate = new java.util.concurrent.CountDownLatch(1)
+    val hook: (String, Int, Long) => Unit = (host, _, budget) =>
+      starts.put(s"$host:$budget")
+      if !gate.await(8, java.util.concurrent.TimeUnit.SECONDS) then throw new IllegalStateException("sync gate timed out")
+      throw new java.util.concurrent.TimeoutException("fixture timeout")
+    withStack(port, dialHook = hook) { (_, ps) =>
       val p = peer("beat", List(epA, epB))
-      for
-        t0 <- IO.monotonic
-        _ <- ps.syncPeers(List(p)) // 真实同步拍入口（拨号在 fork 的腿里）
-        beatMs <- IO.monotonic.map(d => (d - t0).toMillis)
-        t1 <- IO.monotonic
+      (for
+        _ <- ps.syncPeers(List(p)).timeout(5.seconds)
+        _ <- IO.blocking {
+          val seen = Set(starts.poll(5, java.util.concurrent.TimeUnit.SECONDS), starts.poll(5, java.util.concurrent.TimeUnit.SECONDS))
+          assertEquals(seen, Set("127.0.0.2:1500", "127.0.0.3:1500"))
+          assertEquals(ps.lastDialRound("beat"), None, "blocked legs cannot have finished the round")
+          gate.countDown()
+        }
         round <- awaitRoundWhere(ps, "beat", _.attempted.size == 2)
-        dialMs <- IO.monotonic.map(d => (d - t1).toMillis)
-      yield (beatMs, dialMs, round)
-    }.map { case (beatMs, dialMs, round) =>
+      yield round).guarantee(IO(gate.countDown()))
+    }.map { round =>
       assertEquals(round.attempted, List(epA, epB))
-      assert(beatMs < 500L, s"syncPeers 本体必须立刻返回（拨号 fork 出去）: ${beatMs}ms")
+      assertEquals(round.failures.map(_._2), List(DialFailureClass.Timeout, DialFailureClass.Timeout))
       // presence-dial-overhaul 批（2026-11-04 P1）：拨号腿由**串行 Σ 预算**改为
       // **并发 max 预算** ⇒ 上界读数从 3000ms(=2×1500ms) 变成 1500ms(=max)。
       // 判据④（不跨拍）不但仍成立，且余量从 15× 拉到 30×。
       val bound = PresenceDialSchedule.Production.roundUpperBoundMs(List(epA, epB), DialBudget.Default)
       assertEquals(bound, 1_500L, "并发口径单轮上界 = max(单候选预算)，不是 Σ")
-      assert(dialMs >= 1_200L, s"拨号腿实测 $dialMs ms ≈ 1×1500ms（并发 max，改前是 ≈3000ms）")
-      assert(dialMs <= bound + 1_600L, s"拨号腿实测 $dialMs ms 必须落在单轮上界 ${bound}ms 附近")
       assert(bound < NeblinkPresenceService.SyncBeatFloorMs, "单轮上界 < 45s 拍 ⇒ 一个 peer 的拨号腿不会跨到下一拍")
     }
   }
@@ -562,20 +568,40 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
     val port = closedPort()
     val epA = s"http://127.0.0.2:$port"
     val epB = s"http://127.0.0.3:$port"
-    assume(!windowsBlackholeUnsupported, "Windows 环回无黑洞语义（127/8 全段 ECONNREFUSED）⇒ 对照臂跳过")
-    withStack(port, schedule = PresenceDialSchedule.LegacySerial) { (_, ps) =>
+    val starts = new java.util.concurrent.LinkedBlockingQueue[String]()
+    val releaseA = new java.util.concurrent.CountDownLatch(1)
+    val releaseB = new java.util.concurrent.CountDownLatch(1)
+    val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val hook: (String, Int, Long) => Unit = (host, _, budget) =>
+      events.add(s"start:$host:$budget")
+      starts.put(host)
+      if !(if host.endsWith(".2") then releaseA else releaseB).await(8, java.util.concurrent.TimeUnit.SECONDS) then
+        throw new IllegalStateException("serial gate timed out")
+      events.add(s"timeout:$host")
+      throw new java.util.concurrent.TimeoutException("fixture timeout")
+    withStack(port, schedule = PresenceDialSchedule.LegacySerial, dialHook = hook) { (_, ps) =>
       val p = peer("beatLegacy", List(epA, epB))
-      for
-        t1 <- IO.monotonic
-        _ <- ps.connect(p)
-        dialMs <- IO.monotonic.map(d => (d - t1).toMillis)
+      (for
+        fiber <- ps.connect(p).start
+        _ <- IO.blocking {
+          assertEquals(starts.poll(5, java.util.concurrent.TimeUnit.SECONDS), "127.0.0.2")
+          assert(starts.isEmpty, "second serial leg must not start before first is released")
+          events.add("release:a")
+          releaseA.countDown()
+          assertEquals(starts.poll(5, java.util.concurrent.TimeUnit.SECONDS), "127.0.0.3")
+          events.add("release:b")
+          releaseB.countDown()
+        }
+        _ <- fiber.joinWithNever
         round <- IO(roundOf(ps, "beatLegacy"))
-      yield (dialMs, round)
-    }.map { case (dialMs, round) =>
+      yield round).guarantee(IO { releaseA.countDown(); releaseB.countDown() })
+    }.map { round =>
+      import scala.jdk.CollectionConverters.*
+      assertEquals(events.iterator().asScala.toList, List("start:127.0.0.2:1500", "release:a", "timeout:127.0.0.2", "start:127.0.0.3:1500", "release:b", "timeout:127.0.0.3"))
       assertEquals(round.attempted, List(epA, epB), "串行口径：两个候选都拨过（首胜才短路）")
       val serialBound = DialBudget.Default.roundUpperBoundMs(List(epA, epB))
       assertEquals(serialBound, 3_000L, "串行口径单轮上界 = Σ(单候选预算)")
-      assert(dialMs >= 2_500L, s"改前口径实测 $dialMs ms ≈ 2×1500ms（Σ，本批要砍掉的成本）")
+      assertEquals(round.failures.map(_._2), List(DialFailureClass.Timeout, DialFailureClass.Timeout))
     }
   }
 
