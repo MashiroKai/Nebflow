@@ -32,7 +32,7 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("apply")
     val file = os.Path(binding.file)
     AskEditReviews
-      .applyChange(binding.id, binding, binding.file, s => Right(s.replace("beta", "BETA")))
+      .applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("beta", "BETA")))
       .map {
         case Right(review) =>
           assertEquals(os.read(file), "alpha\nBETA\ngamma\n", "apply must write the disk immediately (Cursor-style)")
@@ -50,8 +50,8 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("chain")
     val file = os.Path(binding.file)
     val run = for
-      one <- AskEditReviews.applyChange(binding.id, binding, binding.file, s => Right(s.replace("beta", "BETA")))
-      two <- AskEditReviews.applyChange(binding.id, binding, binding.file, s => Right(s.replace("gamma", "GAMMA")))
+      one <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("beta", "BETA")))
+      two <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("gamma", "GAMMA")))
     yield (one, two)
     run.map { case (one, two) =>
       assert(one.isRight, one.toString)
@@ -82,7 +82,7 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("accept-all")
     val file = os.Path(binding.file)
     val run = for
-      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, s => Right(s.replace("gamma", "GAMMA")))
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("gamma", "GAMMA")))
       accepted <- AskEditReviews.accept(binding.id, None)
     yield (applied, accepted)
     run.map { case (applied, accepted) =>
@@ -103,6 +103,7 @@ final class AskEditReviewSpec extends CatsEffectSuite:
         binding.id,
         binding,
         binding.file,
+        "ask_write",
         s => Right(s.replace("alpha", "ALPHA") + "delta\n")
       )
       rejected <- AskEditReviews.reject(binding.id, None)
@@ -126,7 +127,7 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("accept-hunk", twoBlockOld)
     val file = os.Path(binding.file)
     val run = for
-      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, _ => Right(twoBlockNew))
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", _ => Right(twoBlockNew))
       accepted <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.accept(binding.id, Some("h0")))
     yield (applied, accepted)
     run.map { case (applied, accepted) =>
@@ -148,7 +149,7 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("reject-hunk", twoBlockOld)
     val file = os.Path(binding.file)
     val run = for
-      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, _ => Right(twoBlockNew))
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", _ => Right(twoBlockNew))
       rejected <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.reject(binding.id, Some("h0")))
     yield (applied, rejected)
     run.map { case (applied, rejected) =>
@@ -169,7 +170,7 @@ final class AskEditReviewSpec extends CatsEffectSuite:
   test("accepting the last pending hunk clears the review") {
     val (_, _, _, binding) = setup("last-hunk")
     val run = for
-      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, s => Right(s + "delta\n"))
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s + "delta\n"))
       accepted <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.accept(binding.id, Some("h0")))
     yield accepted
     run.map { accepted =>
@@ -184,7 +185,7 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("stale")
     val file = os.Path(binding.file)
     val run = for
-      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, s => Right(s.replace("alpha", "ALPHA")))
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("alpha", "ALPHA")))
       _ <- IO.blocking(os.write.over(file, "externally changed\n")) // 审阅期间外部改动
       staleAccept <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.accept(binding.id, None))
       staleReject <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.reject(binding.id, None))
@@ -209,9 +210,9 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     val (_, _, _, binding) = setup("rebase")
     val file = os.Path(binding.file)
     val run = for
-      one <- AskEditReviews.applyChange(binding.id, binding, binding.file, s => Right(s.replace("beta", "BETA")))
+      one <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("beta", "BETA")))
       _ <- IO.blocking(os.write.over(file, "externally changed\n"))
-      two <- AskEditReviews.applyChange(binding.id, binding, binding.file, s => Right(s.replace("changed", "CHANGED")))
+      two <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("changed", "CHANGED")))
     yield (one, two)
     run.map { case (one, two) =>
       assert(one.isRight, one.toString)
@@ -226,9 +227,9 @@ final class AskEditReviewSpec extends CatsEffectSuite:
   test("unknown hunks, empty reviews and identical content are refused") {
     val (_, _, _, binding) = setup("edges")
     val run = for
-      same <- AskEditReviews.applyChange(binding.id, binding, binding.file, s => Right(s))
+      same <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s))
       ghostReview <- AskEditReviews.accept(binding.id, None)
-      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, s => Right(s.replace("beta", "BETA")))
+      applied <- AskEditReviews.applyChange(binding.id, binding, binding.file, "ask_write", s => Right(s.replace("beta", "BETA")))
       ghostHunk <- applied.fold(_ => IO.pure(Left("?")), _ => AskEditReviews.accept(binding.id, Some("h9")))
     yield (same, ghostReview, ghostHunk)
     run.map { case (same, ghostReview, ghostHunk) =>
@@ -238,35 +239,52 @@ final class AskEditReviewSpec extends CatsEffectSuite:
     }
   }
 
-  // ── 路径纪律（承接 CAE-SCN-002，判据不变）─────────────────────────────────
-  test("capture refuses other paths, relative paths, traversal and foreign sessions") {
+  // ── 路径纪律（ask-scope 批 2026-11-18 改判于「身份归一」，见 AskPathBoundary）──
+  // 旧判据「逐字相等 + 一律拒 `..` + 一律拒软链」换成：归一后**同一份文档**放行，
+  // 其余全拒。本 spec 断言消费点（AskEditReviews）上的行为；穷举矩阵在
+  // AskWriteScopeSpec。
+  test("capture refuses other documents and foreign sessions, and normalises `..` / relative spellings") {
     val (root, dir, _, binding) = setup("paths")
     val other = root / "documents" / "other.md"
     os.write(other, "other\n")
     val foreignSid = AskSessions.sessionIdFor(other.toString)
     val cases = List(
-      (binding.id, other.toString, "only the bound file"),
-      (binding.id, "documents/notes.md", "must be absolute"),
-      (binding.id, s"$dir/../${binding.fileName}", "traversal"),
-      (binding.id, "", "path is required"),
+      (binding.id, other.toString, "different document than the bound one"),
+      (binding.id, "", "`path` is required"),
       (foreignSid, binding.file, "does not own")
     )
-    cases.foldLeft(IO.unit) { case (acc, (sid, path, marker)) =>
-      acc *> AskEditReviews.applyChange(sid, binding, path, s => Right(s + "x")).map { res =>
+    val refusals = cases.foldLeft(IO.unit) { case (acc, (sid, path, marker)) =>
+      acc *> AskEditReviews.applyChange(sid, binding, path, "ask_write", s => Right(s + "x")).map { res =>
         assert(res.left.exists(_.contains(marker)), s"[$marker] ${res.toString}")
+        assert(
+          res.left.exists(_.contains(AskPathBoundary.HandoffHint)),
+          s"[$marker] refusal must carry the handoff suggestion: ${res.toString}"
+        )
       }
-    } *> IO {
+    }
+    // 归一后同一份文档的拼写 ⇒ 放行（`..` 往返 / 相对拼写；旧判据在此必红）
+    val allowed = for
+      a <- AskEditReviews.capture(binding.id, binding, s"$dir/../documents/${binding.fileName}", "ask_write")
+      b <- AskEditReviews.capture(binding.id, binding, binding.fileName, "ask_write")
+    yield (a, b)
+    (refusals *> allowed).map { case (a, b) =>
+      assert(a.isRight, s"`..` round-trip normalises to the bound document: $a")
+      assert(b.isRight, s"the relative spelling resolves against the bound directory: $b")
       assertEquals(AskEditReviews.reviewFor(binding.id), None, "refused captures must not record a review")
       assertEquals(os.read(other), "other\n", "other files must be untouched")
     }
   }
 
-  test("capture refuses symlinks, binary content and missing files") {
+  test("capture follows identity through symlinks: same document passes, another target is refused") {
     val (root, _, registry, _) = setup("refusals")
     val real = root / "documents" / "real.md"
     os.write(real, "real\n")
     val link = root / "documents" / "link.md"
     os.symlink(link, real)
+    val elsewhere = root / "documents" / "elsewhere.md"
+    os.write(elsewhere, "elsewhere\n")
+    val linkElsewhere = root / "documents" / "link-elsewhere.md"
+    os.symlink(linkElsewhere, elsewhere)
     val binary = root / "documents" / "binary.md"
     os.write(binary, Array[Byte](0x61, 0x00, 0x62)) // NUL 字节
     val missing = root / "documents" / "missing.md"
@@ -274,15 +292,20 @@ final class AskEditReviewSpec extends CatsEffectSuite:
       linkBinding <- registry.bind(link.toString, link.last)
       binBinding <- registry.bind(binary.toString, binary.last)
       missBinding <- registry.bind(missing.toString, missing.last)
-      l <- AskEditReviews.applyChange(linkBinding.id, linkBinding, link.toString, s => Right(s + "x"))
-      b <- AskEditReviews.applyChange(binBinding.id, binBinding, binary.toString, s => Right(s + "x"))
-      m <- AskEditReviews.applyChange(missBinding.id, missBinding, missing.toString, s => Right(s + "x"))
-    yield (l, b, m)
-    run.map { case (l, b, m) =>
-      assert(l.left.exists(_.contains("symbolic links")), l.toString)
+      // 软链指向**同一份文档** ⇒ 归一后同一身份 ⇒ 放行（直接落盘）
+      l <- AskEditReviews.applyChange(linkBinding.id, linkBinding, link.toString, "ask_write", s => Right(s + "x"))
+      // 软链指向**别处** ⇒ 拒，且目标文件一个字节不动
+      le <- AskEditReviews.applyChange(binBinding.id, binBinding, linkElsewhere.toString, "ask_write", s => Right("HACK\n"))
+      b <- AskEditReviews.applyChange(binBinding.id, binBinding, binary.toString, "ask_write", s => Right(s + "x"))
+      m <- AskEditReviews.applyChange(missBinding.id, missBinding, missing.toString, "ask_write", s => Right(s + "x"))
+    yield (l, le, b, m)
+    run.map { case (l, le, b, m) =>
+      assert(l.isRight, s"a symlink to the bound document is the same document: $l")
+      assert(le.left.exists(_.contains("different document than the bound one")), le.toString)
+      assert(le.left.exists(_.contains(AskPathBoundary.HandoffHint)), le.toString)
       assert(b.left.exists(_.contains("binary")), b.toString)
-      assert(m.left.exists(_.contains("no longer exists")), m.toString)
-      assertEquals(os.read(real), "real\n", "symlink target must be untouched")
+      assert(m.left.exists(_.contains("does not exist")), m.toString)
+      assertEquals(os.read(elsewhere), "elsewhere\n", "the symlink's foreign target must be untouched")
     }
   }
 

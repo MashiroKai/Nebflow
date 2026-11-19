@@ -38,6 +38,8 @@ import { TRUST_SEALED } from './featureFlags.js';
 // `key()` 品牌命名空间；存量值经 branding.js 的 LEGACY_IRREGULAR 启动即迁移。
 import { key } from './branding.js';
 import { bindImeGuard, isImeComposing } from './imeGuard.js';
+// 搜索字段壳（desktop-search-field 批）：与手机常驻条/桌面消息面板同一构建器。
+import { buildFieldShell } from './socialSearchCore.js';
 // 头像渲染单点（sessperf Phase B · 2026-09-20）：本文件此前的第二份 `avatarEl`
 // 已收敛到 `avatarRender.avatarNodeFor`（判据：两份实现必然漂移）。
 import { avatarNodeFor } from './avatarRender.js';
@@ -756,17 +758,22 @@ export async function submitSearch(rawQ, opts = {}) {
 
 // ── Search (submit-style, 1s min interval) ───────────────
 // 0906 布局修复（作者反馈「结果在同一行，把其他内容挤到一边」）：搜索块
-// .fm-search-block 为列布局——输入行 .fm-search 只承载 input+按钮，结果区
+// .fm-search-block 为列布局——输入行 .fm-search 只承载 输入壳+按钮，结果区
 // （命中卡/未找到/加载/失败）作为其下方的独立整宽块，永不做行内 flex 子项。
+// desktop-search-field 批（2026-11-17）：输入行壳收编 socialSearchCore.buildFieldShell
+// （与手机常驻条/桌面消息面板搜索框**同一构建器**：lucide search 图标 + 清空键 +
+// .sf-field.nf-glass 玻璃壳，几何令牌单源 css/searchField.css）——提交语义零改动
+// （提交键/Enter/1s 最小间隔/六态结果卡全保），只添清空键与 Esc 清场（走既有
+// 空串清场腿 submitSearch('')，与手机常驻条同一语义面）。
 function buildSearch() {
   const block = el('div', 'fm-search-block');
   const row = el('div', 'fm-search');
   const input = document.createElement('input');
   input.className = 'fm-search-input';
   input.type = 'text';
-  input.placeholder = t('contacts.searchPlaceholder');
   input.autocomplete = 'off';
   input.value = searchQ; // preserved across panel re-renders
+  const { shell, clear } = buildFieldShell(input, { placeholder: t('contacts.searchPlaceholder') });
   input.addEventListener('input', () => { searchQ = input.value; });
   const btn = el('button', 'glass-control fm-search-btn', t('contacts.search'));
   btn.addEventListener('click', () => { submitSearch(input.value.trim()); });
@@ -775,7 +782,18 @@ function buildSearch() {
   input.addEventListener('keydown', (e) => {
     if (isImeComposing(e, input)) return;
     if (e.key === 'Enter') { e.preventDefault(); submitSearch(input.value.trim()); }
+    else if (e.key === 'Escape') {
+      // Esc = 清空回列表（与手机常驻条同语义；空串腿 = 既有清场流水）。
+      e.preventDefault();
+      if (!input.value) return;
+      input.value = '';
+      searchQ = '';
+      shell.classList.remove('has-text');
+      submitSearch('');
+    }
   });
+  // 清空键：清输入 + 空串提交（微信式「清空即回列表」，leg = submitSearch 空串）。
+  clear.addEventListener('click', () => { searchQ = input.value; submitSearch(input.value.trim()); });
   if (searching) {
     // ④-P5：加载态**不换文案**（label 保持「搜索/Search」），只走禁用材质 +
     // 区域三点脉冲 + aria-busy/aria-label 无障碍语义。旧实现切「搜索中…」会把
@@ -785,7 +803,7 @@ function buildSearch() {
     btn.setAttribute('aria-label', t('contacts.searching'));
   }
   block.appendChild(row);
-  row.appendChild(input);
+  row.appendChild(shell);
   row.appendChild(btn);
   if (searching) {
     block.appendChild(buildSearching());

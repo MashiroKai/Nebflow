@@ -20,18 +20,37 @@ object EvidenceTemp:
 
   private def validSegment(value: String): Boolean = value != "." && value != ".." && SafeSegment.matches(value)
   private def tempRoot: Path = Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath.normalize()
-  private def namespacePath: Path = tempRoot.resolve(Namespace)
+  private val owner = UUID.randomUUID().toString
+  private val ownedRoots = scala.collection.mutable.Map.empty[Path, (Path, AnyRef)]
+
+  private def ownedRoot(create: Boolean): Option[Path] = synchronized {
+    val tmp = tempRoot
+    ownedRoots.get(tmp) match
+      case Some((root, key)) =>
+        val attrs = scala.util.Try(Files.readAttributes(root, classOf[java.nio.file.attribute.BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)).toOption
+        attrs.filter(a => a.isDirectory && a.fileKey() != null && a.fileKey() == key).map(_ => root)
+      case None if create =>
+        Files.createDirectories(tmp)
+        val root = Files.createTempDirectory(tmp, s"$Namespace-process-").toRealPath()
+        val key = Files.readAttributes(root, classOf[java.nio.file.attribute.BasicFileAttributes], LinkOption.NOFOLLOW_LINKS).fileKey()
+        require(key != null, "evidence root identity unavailable")
+        ownedRoots.put(tmp, (root, key))
+        Some(root)
+      case None => None
+  }
+
+  private def namespacePath: Path = ownedRoot(false).getOrElse(throw new IllegalArgumentException("no owned evidence root"))
 
   /** Create a unique batch under the process platform temp directory. */
   def createBatch(project: String, task: String): Path =
     require(validSegment(project), "invalid evidence project segment")
     require(validSegment(task), "invalid evidence task segment")
     Files.createDirectories(tempRoot)
-    val namespace = namespacePath
-    Files.createDirectories(namespace)
+    val namespace = ownedRoot(true).getOrElse(throw new IllegalStateException("evidence root unavailable"))
     val namespaceReal = namespace.toRealPath()
     val projectRoot = namespaceReal.resolve(project)
     Files.createDirectories(projectRoot)
+    require(Files.isDirectory(projectRoot, LinkOption.NOFOLLOW_LINKS), "evidence project must not be a symlink")
     val projectReal = projectRoot.toRealPath()
     require(projectReal.getParent == namespaceReal, "evidence project escaped namespace")
     val batch = s"$task-${UUID.randomUUID()}"
@@ -39,7 +58,7 @@ object EvidenceTemp:
     Files.createDirectories(day)
     val dayReal = day.toRealPath()
     require(dayReal.startsWith(projectReal) && dayReal != projectReal, "evidence batch escaped namespace")
-    val manifest = Json.obj("createdAt" -> Instant.now().toString.asJson, "project" -> project.asJson, "batch" -> batch.asJson)
+    val manifest = Json.obj("createdAt" -> Instant.now().toString.asJson, "project" -> project.asJson, "batch" -> batch.asJson, "owner" -> owner.asJson)
     Files.writeString(dayReal.resolve("manifest.json"), manifest.noSpaces + "\n", StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
     Files.writeString(dayReal.resolve(".active"), "active\n", StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
     dayReal
@@ -74,7 +93,14 @@ object EvidenceTemp:
     val base = batchDir.toAbsolutePath.normalize().toRealPath()
     val root = namespacePath.toRealPath()
     require(base.startsWith(root) && base != root, "batch outside evidence namespace")
-    require(Files.isRegularFile(base.resolve("manifest.json"), LinkOption.NOFOLLOW_LINKS), "batch manifest missing")
+    val manifest = base.resolve("manifest.json")
+    require(Files.isRegularFile(manifest, LinkOption.NOFOLLOW_LINKS), "batch manifest missing")
+    val cursor = parse(Files.readString(manifest)).toOption.map(_.hcursor)
+    require(base.getNameCount == root.getNameCount + 3 && cursor.exists(c =>
+      c.get[String]("project").toOption.contains(base.getParent.getParent.getFileName.toString) &&
+      c.get[String]("batch").toOption.contains(base.getParent.getFileName.toString) &&
+      c.get[String]("owner").toOption.contains(owner)
+    ), "batch ownership mismatch")
     base
 
   private def checkedFile(batchDir: Path, relativeName: String): Path =
@@ -89,10 +115,10 @@ object EvidenceTemp:
 
   /** Best-effort, fail-closed cleanup of old, inactive batches with valid manifests. */
   def sweep(nowMillis: Long = System.currentTimeMillis()): Int =
-    val namespace = namespacePath
-    if !Files.isDirectory(namespace, LinkOption.NOFOLLOW_LINKS) then 0
+    val namespace = ownedRoot(false)
+    if namespace.isEmpty then 0
     else
-      val root = namespace.toRealPath()
+      val root = namespace.get
       val stream = Files.list(root)
       try stream.iterator().asScala.filter(p => Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)).map { project =>
         try
@@ -116,8 +142,14 @@ object EvidenceTemp:
                           val manifest = dateReal.resolve("manifest.json")
                           if dateReal.getParent != batchReal || !Files.isRegularFile(manifest, LinkOption.NOFOLLOW_LINKS) then 0
                           else
-                            val created = parse(Files.readString(manifest)).toOption.flatMap(_.hcursor.get[String]("createdAt").toOption).flatMap(s => scala.util.Try(Instant.parse(s).toEpochMilli).toOption)
-                            created.filter(t => t <= nowMillis - TtlMillis && t <= nowMillis).map { _ => deleteTree(dateReal); 1 }.getOrElse(0)
+                            val json = parse(Files.readString(manifest)).toOption.map(_.hcursor)
+                            val belongs = json.exists(c =>
+                              c.get[String]("project").toOption.contains(projectReal.getFileName.toString) &&
+                              c.get[String]("batch").toOption.contains(batchReal.getFileName.toString) &&
+                              c.get[String]("owner").toOption.contains(owner)
+                            )
+                            val created = json.flatMap(_.get[String]("createdAt").toOption).flatMap(s => scala.util.Try(Instant.parse(s).toEpochMilli).toOption)
+                            created.filter(t => belongs && t <= nowMillis - TtlMillis && t <= nowMillis).map { _ => deleteTree(dateReal); 1 }.getOrElse(0)
                       catch case NonFatal(_) => 0
                     }.sum
                     finally dates.close()

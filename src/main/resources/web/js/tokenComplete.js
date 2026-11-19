@@ -395,6 +395,41 @@ function activeSpec(input) {
 }
 
 /**
+ * 在 composer 里插入一段文本（**插入单点**）。
+ *
+ * 补全弹层的 `pickToken` 与外部插入腿（消息流待办卡片点击 → `#` 引用，
+ * todo-card-click-left 批 2026-11-18 作者令）共用本函数：光标落位、自动伸高、
+ * `input` 重派这三件事一旦各写一份必然漂移（伸高公式正是既有先例
+ * projectTab.js:813 那一行）。
+ *
+ * @param {HTMLTextAreaElement} input 目标输入框
+ * @param {string} text 插入文本（尾随空格由调用方决定）
+ * @param {{start: number, end: number}} [range] 置换区间（缺省 = 当前选区/光标）
+ * @returns {boolean} 是否真的插入（无输入框 / 空文本 ⇒ false，不抛）
+ */
+export function insertIntoComposer(input, text, range) {
+  if (!input || typeof input.value !== 'string' || !text) return false;
+  const len = input.value.length;
+  const clamp = (n) => Math.max(0, Math.min(Number.isFinite(n) ? n : len, len));
+  const start = range ? clamp(range.start) : clamp(input.selectionStart ?? len);
+  const end = range ? clamp(range.end) : clamp(input.selectionEnd ?? start);
+  const from = Math.min(start, end);
+  const to = Math.max(start, end);
+  input.value = input.value.slice(0, from) + text + input.value.slice(to);
+  const pos = from + text.length;
+  try {
+    input.focus();
+    input.setSelectionRange(pos, pos);
+  } catch { /* 非文本控件：值已落，光标语义交给宿主 */ }
+  // 镜像 composer 自己的自动伸高（前置先例：projectTab.js:813），让 input.js
+  // 既有监听重新同步（只读引用门、slash 下拉、滚动高度）。
+  input.style.height = 'auto';
+  input.style.height = Math.min(input.scrollHeight, 200) + 'px';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  return true;
+}
+
+/**
  * 把第 index 个候选插入 token 区间，光标落在尾随空格之后。
  * @param {number} index
  * @returns {void}
@@ -410,17 +445,8 @@ function pickToken(index) {
     return;
   }
   const caret = input.selectionStart ?? input.value.length;
-  // 全名逐字插入（含空格 / 中文名），零引号零转义。
-  const insert = spec.insertText(item) + ' ';
-  input.value = input.value.slice(0, token.start) + insert + input.value.slice(caret);
-  const pos = token.start + insert.length;
-  input.focus();
-  input.setSelectionRange(pos, pos);
-  // 镜像 composer 自己的自动伸高，再重派 input（前置先例：projectTab.js:813）
-  // 让 input.js 既有监听重新同步（只读引用门、slash 下拉、滚动高度）。
-  input.style.height = 'auto';
-  input.style.height = Math.min(input.scrollHeight, 200) + 'px';
-  input.dispatchEvent(new Event('input', { bubbles: true }));
+  // 全名逐字插入（含空格 / 中文名），零引号零转义；置换区间 = token 到光标。
+  insertIntoComposer(input, spec.insertText(item) + ' ', { start: token.start, end: caret });
   if (typeof spec.onPick === 'function') {
     try { spec.onPick(item); } catch (_) { /* provider 附加动作失败不影响插入 */ }
   }

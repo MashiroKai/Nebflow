@@ -79,12 +79,16 @@ for (const mobile of [false, true]) {
     expect(await file.element().getAttribute('accept')).toBe('image/*');
     await expect(page.locator('#settings-profile-overlay')).toHaveCount(0);
   });
-  test(`${mobile ? 'mobile' : 'desktop'} settings account and six ordered groups`, async ({ page }) => {
+  test(`${mobile ? 'mobile' : 'desktop'} settings five ordered groups and no account column`, async ({ page }) => {
     await boot(page, mobile);
     const groups = page.locator('#settings-content > [data-panel-group]');
-    await expect(groups).toHaveCount(6);
-    expect(await groups.evaluateAll(nodes => nodes.map(n => n.dataset.panelGroup))).toEqual(['account', 'general', 'models', 'runtime', 'advanced', 'about']);
-    await expect(page.locator('[data-panel-group="account"] #account-card')).toBeVisible();
+    await expect(groups).toHaveCount(5);
+    expect(await groups.evaluateAll(nodes => nodes.map(n => n.dataset.panelGroup))).toEqual(['general', 'models', 'runtime', 'advanced', 'about']);
+    // 账户栏整件退役（作者令 2026-11-18 16:36/16:45）：账号分组、账号卡、只读
+    // 「登录账号」读数行一律不存在（不是隐藏——DOM 为零命中）。
+    await expect(page.locator('#settings-content [data-panel-group="account"]')).toHaveCount(0);
+    await expect(page.locator('#account-card')).toHaveCount(0);
+    await expect(page.locator('#settings-content .neblink-account-ro, #settings-content .neblink-logged-in, #settings-content .neblink-login-section')).toHaveCount(0);
     await expect(page.locator('#cfg-language')).toHaveCount(1);
     await expect(page.locator('#settings-identity-card')).toHaveCount(0);
   });

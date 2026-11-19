@@ -1,0 +1,291 @@
+{
+  "_comment": "check-copy-budget.mjs 存量基线（ui-design-requirements 批 2026-11-18）：每条 = 一条**判定留存**的超预算解释性文字（轴 2 存量；轴 1 的判定在 self-explaining-baseline.json）。按 explanatory-copy-spec.md §5，只许降不许升；加条目 = 声称「这句虽超预算但必须这么长」，必须在批报告里点名理由。重锚：node scripts/check-copy-budget.mjs --update-baseline",
+  "generatedAt": "2026-11-18T09:10:07.174Z",
+  "budget": [
+    {
+      "seg": "notice",
+      "tier": "L2 折叠帮助",
+      "zhCap": 60,
+      "enCap": 240
+    },
+    {
+      "seg": "tip",
+      "tier": "L2 折叠帮助",
+      "zhCap": 60,
+      "enCap": 240
+    },
+    {
+      "seg": "note",
+      "tier": "L2 折叠帮助",
+      "zhCap": 60,
+      "enCap": 240
+    },
+    {
+      "seg": "hint",
+      "tier": "L1 就地 hint",
+      "zhCap": 40,
+      "enCap": 160
+    },
+    {
+      "seg": "desc",
+      "tier": "L1 就地 hint",
+      "zhCap": 40,
+      "enCap": 160
+    },
+    {
+      "seg": "explain",
+      "tier": "L3 独立页",
+      "zhCap": 200,
+      "enCap": 800
+    },
+    {
+      "seg": "help",
+      "tier": "L3 独立页",
+      "zhCap": 200,
+      "enCap": 800
+    }
+  ],
+  "total": 24,
+  "allow": [
+    {
+      "key": "src/main/resources/web/js/locales/en.js::settings.workScheduleOnHint::en",
+      "file": "src/main/resources/web/js/locales/en.js",
+      "localeKey": "settings.workScheduleOnHint",
+      "lang": "en",
+      "tier": "L1 就地 hint",
+      "measured": 195,
+      "cap": 160,
+      "text": "During a freeze window the agent parks after each tool round — no LLM calls (zero token cost) — and resumes automatically when the window ends. The input bar and mic are disabled during a freeze."
+    },
+    {
+      "key": "src/main/resources/web/js/locales/en.js::subagents.freezeRecoveringTip::en",
+      "file": "src/main/resources/web/js/locales/en.js",
+      "localeKey": "subagents.freezeRecoveringTip",
+      "lang": "en",
+      "tier": "L2 折叠帮助",
+      "measured": 276,
+      "cap": 240,
+      "text": "The provider is temporarily unavailable (not a task failure, and nothing for you to do): the engine keeps retrying with backoff and switches to a usable provider, then resumes in the same session — fi"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/en.js::subagents.frozenInfraTip::en",
+      "file": "src/main/resources/web/js/locales/en.js",
+      "localeKey": "subagents.frozenInfraTip",
+      "lang": "en",
+      "tier": "L2 折叠帮助",
+      "measured": 324,
+      "cap": 240,
+      "text": "Provider fault (NOT a task failure): the engine probes for recovery and resumes the SAME session by itself once a provider is serving again (from the checkpoint, finished work is not redone, capped at"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/en.js::subagents.frozenTip::en",
+      "file": "src/main/resources/web/js/locales/en.js",
+      "localeKey": "subagents.frozenTip",
+      "lang": "en",
+      "tier": "L2 折叠帮助",
+      "measured": 271,
+      "cap": 240,
+      "text": "Frozen: an engine/upstream fault stopped it in place — this is NOT a failure verdict. The session history, workspace with uncommitted changes and task-ledger row are all kept; press Wake (or mail its "
+    },
+    {
+      "key": "src/main/resources/web/js/locales/en.js::settings.sttEnabledHint::en",
+      "file": "src/main/resources/web/js/locales/en.js",
+      "localeKey": "settings.sttEnabledHint",
+      "lang": "en",
+      "tier": "L1 就地 hint",
+      "measured": 168,
+      "cap": 160,
+      "text": "Off = STT fully disabled: the mic entry and all dictation entries are collected, and the engine transcription leg refuses too. Default on (existing behavior unchanged)."
+    },
+    {
+      "key": "src/main/resources/web/js/locales/en.js::settings.imagegenNotCompiledHint::en",
+      "file": "src/main/resources/web/js/locales/en.js",
+      "localeKey": "settings.imagegenNotCompiledHint",
+      "lang": "en",
+      "tier": "L1 就地 hint",
+      "measured": 172,
+      "cap": 160,
+      "text": "This build was made without STAND_IMAGEGEN, so the image generation face is entirely absent; this slot is status-only. Start a dev build with STAND_IMAGEGEN=1 to enable it."
+    },
+    {
+      "key": "src/main/resources/web/js/locales/en.js::plugins.listHint::en",
+      "file": "src/main/resources/web/js/locales/en.js",
+      "localeKey": "plugins.listHint",
+      "lang": "en",
+      "tier": "L1 就地 hint",
+      "measured": 285,
+      "cap": 160,
+      "text": "Unified plugin system: skills and MCP enable per plugin. Installed plugins are ready to use. This switch only affects what the dispatcher sees for FUTURE dispatches (nodes already running keep their g"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/en.js::plugins.migratedHint::en",
+      "file": "src/main/resources/web/js/locales/en.js",
+      "localeKey": "plugins.migratedHint",
+      "lang": "en",
+      "tier": "L1 就地 hint",
+      "measured": 164,
+      "cap": 160,
+      "text": "This package name has been migrated: \"{name}\" is now installed as \"{newName}\". Delete the old directory (~/.stand/plugins/{name}/) and reinstall under the new name."
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::settings.workScheduleOnHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "settings.workScheduleOnHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 62,
+      "cap": 40,
+      "text": "冻结时段内 agent 在工具执行完成后暂停，不调用 LLM（零 token 消耗），到点自动恢复。期间输入栏与麦克风禁用。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::settings.ttlEnabledHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "settings.ttlEnabledHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 46,
+      "cap": 40,
+      "text": "超过保存时限且符合清理条件的旧工具结果将替换为占位符，不再占据模型上下文（历史记录保持不变）"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::subagents.freezeRecoveringTip::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "subagents.freezeRecoveringTip",
+      "lang": "zh",
+      "tier": "L2 折叠帮助",
+      "measured": 79,
+      "cap": 60,
+      "text": "供应商暂时不可用（不是任务失败，也不需要你做什么）：引擎正在退避重试 / 换可用的供应商，恢复后在原会话上接着跑——已完成的不重做。不向上汇报，也不需要唤醒。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::subagents.frozenInfraTip::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "subagents.frozenInfraTip",
+      "lang": "zh",
+      "tier": "L2 折叠帮助",
+      "measured": 95,
+      "cap": 60,
+      "text": "供应商故障（不是任务失败）：引擎自己探测恢复，恢复后自动续跑同一会话（续在检查点、已完成的不重做，有次数上限与递增间隔）；也可以现在点「唤醒」立即续跑。不向上级汇报——本面板就是它的状态面。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::subagents.frozenTip::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "subagents.frozenTip",
+      "lang": "zh",
+      "tier": "L2 折叠帮助",
+      "measured": 86,
+      "cap": 60,
+      "text": "已冻结：引擎/上游故障导致就地停住，这不是失败判词。会话历史、工作区与未提交改动、台账行全部保留；点「唤醒」或 Mail 它的地址即在原会话上下文上继续（已完成的不重做）。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::settings.sttEnabledHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "settings.sttEnabledHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 55,
+      "cap": 40,
+      "text": "关闭后 STT 整体停用：输入栏麦克风入口与各听写入口全部收起，引擎转写腿同步拒绝。缺省开启（存量行为不变）。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::settings.imagegenNotCompiledHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "settings.imagegenNotCompiledHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 68,
+      "cap": 40,
+      "text": "本构建未开启 STAND_IMAGEGEN，生图能力面整体未编入，此处仅显示状态位；开发构建以 STAND_IMAGEGEN=1 启用。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::executors.hint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "executors.hint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 69,
+      "cap": 40,
+      "text": "Delegate 任务由下方默认执行器执行。检测扫描 PATH 与常用安装前缀；外部 CLI 以 headless 模式在项目目录内运行。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::settings.modelChainHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "settings.modelChainHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 72,
+      "cap": 40,
+      "text": "在输入框输入 /model 命令，按会话类别（主agent/kernel/dispatcher/node/subagent）配置各自的单个模型。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::askUser.secretHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "askUser.secretHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 42,
+      "cap": 40,
+      "text": "该值将加密存入本机 secrets（仅所有者可读）；代理只收到存储指针，看不到明文。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::daemons.emptyHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "daemons.emptyHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 52,
+      "cap": 40,
+      "text": "心跳进程由 Agent 在执行任务时创建（例如让 Agent 启动开发服务器），用于需要长期在线的服务。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::plugins.listHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "plugins.listHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 89,
+      "cap": 40,
+      "text": "统一插件系统：技能与 MCP 以插件为单位。装好即可用。本开关只影响任务分发器对未来节点的派发（已在跑的节点保持其许可）；停用某个插件走 API / CLI（面板不提供封禁入口）"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::plugins.blockedHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "plugins.blockedHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 45,
+      "cap": 40,
+      "text": "已封禁——该插件不进分发器目录、不会被派发；解封走 API / CLI（面板不提供入口）。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::plugins.migratedHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "plugins.migratedHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 73,
+      "cap": 40,
+      "text": "该包名已迁移：「{name}」现以「{newName}」安装。删除旧目录（~/.stand/plugins/{name}/）后用新名重装即可恢复。"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::flowList.createHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "flowList.createHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 51,
+      "cap": 40,
+      "text": "创建 ~/{dir}/flows/&lt;name&gt;/flow.json 以定义 DAG 工作流"
+    },
+    {
+      "key": "src/main/resources/web/js/locales/zh-CN.js::secrets.overwriteHint::zh",
+      "file": "src/main/resources/web/js/locales/zh-CN.js",
+      "localeKey": "secrets.overwriteHint",
+      "lang": "zh",
+      "tier": "L1 就地 hint",
+      "measured": 44,
+      "cap": 40,
+      "text": "直接输入即覆盖当前值：Enter 或「保存」提交；点行外保存并收起；Esc 放弃并收起。"
+    }
+  ]
+}

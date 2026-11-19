@@ -52,6 +52,10 @@ import state from './state.js';
 import { key } from './branding.js';
 import { sendWs, onMessage, onReconnect } from './ws.js';
 import { projectTodoText } from './todoText.js';
+// 溢出转待办批（2026-11-18 作者令·第二轮）：问句条目（引擎 Ask 镜像行，
+// name = `ask-<requestId>`）**进这一张收件箱表**，可见性判据单点在
+// askPending.askPlacement（本模块只消费，禁再判一遍）。
+import { askPlacement, onAskPlacementChange } from './askPending.js';
 
 /** 标签色板（ReminderIsland ReminderConfig.calendarColorPresets 十色逐值）。
  *  真源无 tag 颜色字段 ⇒ 只用于本地展示（按分组名确定性取色）。 */
@@ -92,10 +96,29 @@ const FRAME = {
   remove: 'deleteScheduledTask',
 };
 
-/** 后端 ask/permission 镜像行（`name` = ask-<id> / perm-<id>）不属人待办面：
- *  它们的销账归 ask/permission 流（后端 completeTodo 会把镜像行算进周报），
- *  收件箱只认人建待办（与本仓 `js/scheduled-task.js` 的镜像行零圆钮同义）。 */
-const MIRROR_NAME_RE = /^(ask|perm)-/;
+/** 待批准镜像行（`name` = perm-<id>）不属人待办面：它的销账归 permission 流
+ *  （后端 completeTodo 会把镜像行算进周报），收件箱只认人建待办 / 问句条目。
+ *  ⚠️ `ask-` 前缀**不再**在这里整类隐藏（溢出转待办批 2026-11-18 作者新令：
+ *  「转待办是转为具体的待办条目」）——问句条目走下方 `askSideVisible` 判据。 */
+const MIRROR_NAME_RE = /^perm-/;
+
+/** 引擎 Ask 镜像条目的稳定名前缀（与后端 `AskTodoBridge.NamePrefix` 逐字同值）。 */
+const ASK_NAME_PREFIX = 'ask-';
+
+/** `ask-<requestId>` → requestId（非该前缀 ⇒ null）。 */
+function askRequestIdOf(name) {
+  const n = String(name || '');
+  return n.startsWith(ASK_NAME_PREFIX) && n.length > ASK_NAME_PREFIX.length
+    ? n.slice(ASK_NAME_PREFIX.length) : null;
+}
+
+/** 问句条目在待办面是否**可见**：判据单点 = askPending.askPlacement。
+ *  转入待办的问句 ⇒ 条目在列表里（承载面 = 条目自身）；仍在对话题分页内的问句
+ *  ⇒ 载体是那张活卡，本条目不显形（**不留两套承载**）。已收口的问句 ⇒ placement
+ *  为 null ⇒ 不再可见（两侧同步收口的前端半面；引擎另发 scheduledTaskDeleted）。 */
+function askSideVisible(row) {
+  return !!row && row.source === 'ask' && askPlacement(row.requestId) === 'todo';
+}
 
 /** 写帧去抖刷新间隔（跨会话广播被 ws.js 会话过滤器丢弃时的收敛兜底）。 */
 const REFRESH_DEBOUNCE_MS = 400;
@@ -303,7 +326,9 @@ function overlayRememberOrder(orderIds) {
 
 // ── 真源读：行映射 ────────────────────────────────────────────────────────
 
-/** 后端行（listTaskJson 形状）是否进人待办收件箱面。 */
+/** 后端行（listTaskJson 形状）是否**入表**（进镜像摊）。
+ *  入表 ≠ 可见：问句条目入表后仍按 `askSideVisible` 在读取口过滤（转入才显形）。
+ *  这样「归属一变」（翻页 / 会话切换 / 作答收口）无需重拉真源即可即时收敛。 */
 function isTodoRow(row) {
   if (!row || typeof row.id !== 'string' || !row.id) return false;
   const kind = row.kind == null ? null : String(row.kind);
@@ -319,12 +344,18 @@ function mapRow(row) {
   // 两段投影单点（todoText.projectTodoText）：新行直接用后端的 name/detail，
   // 旧行（无 detail 键）按「首句作 name、其余留 detail」无损投影。
   const parts = projectTodoText(row);
+  // 问句条目身份（溢出转待办批 2026-11-18）：`ask-<requestId>` 前缀 = 唯一来源标记
+  // （对账用）。题面本体**不在行里**——按 requestId 现读 askPending 的待答镜像，
+  // 不存第二份（防两面漂移）。
+  const askRid = askRequestIdOf(row.name);
   return makeRow({
     id: String(row.id),
     tagId: project ? groupId(project) : null,
     project,
     name: parts.name,
     detail: parts.detail,
+    source: askRid ? 'ask' : null,
+    requestId: askRid,
     decision: row.decision && typeof row.decision === 'object' ? row.decision : null,
     // due ↔ triggerAt：引擎算出的下次浮出时刻（只读真源）。
     due: Number.isFinite(row.triggerAt) ? row.triggerAt : null,
@@ -532,6 +563,9 @@ function wire() {
   onMessage('error', errorHandler);
   // 重连后重拉（断线期间的写操作/浮出全部补齐）。
   onReconnect(() => { if (!fixtureMode) requestInbox(); });
+  // 溢出转待办批（2026-11-18）：归属（对话分页内 / 已转入待办）一变，问句条目的
+  // 可见性即变 ⇒ 重发一次渲染事件（判据单点 = askPending；本处只是转发）。
+  onAskPlacementChange(() => emit());
 }
 wire();
 
@@ -571,10 +605,17 @@ function sortFixture(list, allView) {
   });
 }
 
+/** 可见性过滤单点：人建/agent 行恒可见；问句条目按 `askSideVisible`（转入才显形）。
+ *  过滤放在**读取口**而不是入表口 —— 归属变化（翻页 / 会话切换 / 作答收口）无需
+ *  重拉真源即可即时收敛，两态之间不存在「表里有、面上没有且不更新」的悬空。 */
+function surfaced(list) {
+  return list.filter((it) => it.source !== 'ask' || askSideVisible(it));
+}
+
 /** 可见条目（过滤 + 排序；真源面顺序 = 后端字段复算）。 */
 function visibleItems() {
   maybePull();
-  const base = items.filter((it) => !it.completed)
+  const base = surfaced(items).filter((it) => !it.completed)
     .filter((it) => activeTagId == null || it.tagId === activeTagId)
     .filter((it) => selectedPriorities.size === 0 || selectedPriorities.has(it.priority));
   return fixtureMode ? sortFixture(base, activeTagId == null) : sortByBackendFields(base);
@@ -592,18 +633,24 @@ function orderedTags() {
  */
 function openItems() {
   maybePull();
-  return items.filter((it) => !it.completed);
+  return surfaced(items).filter((it) => !it.completed);
+}
+
+/** 读取口用同一可见性过滤（问句条目转入后才计入；收口即消失）。 */
+function surfacedItems() {
+  maybePull();
+  return surfaced(items);
 }
 
 function openCount() {
   maybePull();
-  return items.filter((it) => !it.completed).length;
+  return surfaced(items).filter((it) => !it.completed).length;
 }
 
 function overdueCount() {
   maybePull();
   const now = Date.now();
-  return items.filter((it) => !it.completed && it.due != null && it.due < now).length;
+  return surfaced(items).filter((it) => !it.completed && it.due != null && it.due < now).length;
 }
 
 /** Due today (open items whose due falls inside the local calendar day: today 00:00 <= due < tomorrow 00:00). */
@@ -613,7 +660,7 @@ function dueTodayCount() {
   start.setHours(0, 0, 0, 0);
   const from = start.getTime();
   const to = from + 24 * 3600_000;
-  return items.filter((it) => !it.completed && it.due != null && it.due >= from && it.due < to).length;
+  return surfaced(items).filter((it) => !it.completed && it.due != null && it.due >= from && it.due < to).length;
 }
 
 function completedCount() {
@@ -624,7 +671,7 @@ function completedCount() {
 /** Open item count under one tag (the count shown on the list card rows). */
 function openCountOf(tagId) {
   maybePull();
-  return items.filter((it) => !it.completed && it.tagId === tagId).length;
+  return surfaced(items).filter((it) => !it.completed && it.tagId === tagId).length;
 }
 
 /** All items including completed ones (read-only copy; used by the completed matrix and smoke probes). */
@@ -1000,6 +1047,21 @@ function seed({ tagList, itemList, order } = {}) {
   emit();
 }
 
+/** 测试缝：按**真源行形状**灌入镜像摊（走 isTodoRow / mapRow 同一映射单点，
+ *  不经 ws 分发）——供零 socket 试验台复现「引擎镜像条目到达」这一拍。
+ *  可见性仍由读取口的 `askSideVisible` 判（问句条目 = 转入才显形）。 */
+function hydrate(rows) {
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!isTodoRow(row)) continue;
+    const mapped = mapRow(row);
+    const i = items.findIndex((x) => x.id === mapped.id);
+    if (i >= 0) items[i] = mapped;
+    else items.push(mapped);
+  }
+  syncGroupRegistry();
+  emit();
+}
+
 /** 退出夹具模式并重拉真源（本批 spec / 面板节点用）。 */
 function goLive() {
   fixtureMode = false;
@@ -1028,6 +1090,8 @@ export const todoStore = {
   get dataSource() { return fixtureMode ? 'fixture' : 'backend'; },
   get serverSeq() { return serverSeq; },
   visibleItems, openCount, overdueCount, dueTodayCount, completedCount, openCountOf, allItems,
+  /** 可见行（含问句条目；归属变化后即时收敛）——渲染层用这个取未完成全量。 */
+  surfacedItems,
   /** 全部未完成行（不带分组/重要度筛选；`#` 引用补全的候选面）。 */
   openItems,
   /** 归档面（已完成行；按完成时刻降序）。需先 refresh({includeCompleted:true}) 才完整。 */
@@ -1044,6 +1108,8 @@ export const todoStore = {
   subscribe,
   /** 测试缝：确定性夹具（shots 几何 spec 用；__ 前缀 = 非产品路径）。 */
   __seed: seed,
+  /** 测试缝：真源行形状灌入（走 isTodoRow/mapRow 同一映射单点）。 */
+  __hydrate: hydrate,
   /** 测试缝：退出夹具模式回真源。 */
   __live: goLive,
 };

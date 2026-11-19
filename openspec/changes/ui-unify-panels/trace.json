@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "change": "ui-unify-panels",
+  "mappings": [
+    {
+      "requirement": "UUP-REQ-001",
+      "scenario": "UUP-SCN-001",
+      "implementation": [
+        "scripts/check-panel-uniform.mjs",
+        "src/main/resources/web/js/profileFace.js",
+        "src/main/resources/web/js/sidebar.js",
+        "src/main/resources/web/css/design-system.css",
+        "openspec/changes/ui-unify-panels/proposal.md",
+        "openspec/changes/ui-unify-panels/design.md",
+        "openspec/changes/ui-unify-panels/tasks.md",
+        "openspec/changes/ui-unify-panels/specs/ui-unify-panels/spec.md",
+        "openspec/changes/ui-unify-panels/trace.json"
+      ],
+      "tests": [
+        {
+          "path": "scripts/check-panel-uniform.mjs",
+          "name": "PASS panel-uniform: registered identity, contact controls, five settings groups (no account bar) and shared model cards"
+        }
+      ]
+    },
+    {
+      "requirement": "UUP-REQ-001",
+      "scenario": "UUP-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/mobile/meFace.js"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The pending-change-only visibility of the contact save/cancel actions is asserted by the static source marker gate, which the change itself documents as insufficient for actual rendered position and occlusion; there is no named rendered test.",
+        "steps": "Open the contact panel with no pending change, then edit one field, and read whether the save and cancel actions are present.",
+        "expected": "Both actions are absent while no field is edited and appear as soon as a field changes, while per-field persistence and failure recovery keep working."
+      }
+    }
+  ]
+}

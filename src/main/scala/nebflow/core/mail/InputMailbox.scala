@@ -277,23 +277,12 @@ object InputMailbox:
       // 🔴 文件名里的身份是 `safeId(identity)`（`:`/`/` 等一律转 `_`），**不是**原始
       // identity。故比对必须同样走 safeId，否则含 `:` 的键（如 `flow-notify:sid`）
       // 会永远匹配不上、条目永不清除（本批自查修）。墓碑仍写**原始** identity。
-      val safes = clean.map(safeId)
       lock.synchronized {
-        scanDirRaw(takenDir(sid)).foreach { (safeToken, path) =>
-          if safes.contains(safeToken) && os.exists(path) then os.remove(path)
-        }
         markDeliveredSync(sid, clean.toList)
-      }
-
-  /** 只读目录里的 (identity, path)，不解析载荷（清理面用，避免坏形件阻断）。 */
-  private def scanDirRaw(dir: os.Path): List[(String, os.Path)] =
-    if !os.exists(dir) then Nil
-    else
-      os.list(dir).toList.filter(_.ext == "json").map { p =>
-        val n = p.last
-        val idx = n.indexOf('-')
-        val idPart = if idx >= 0 && n.endsWith(".json") then n.substring(idx + 1, n.length - 5) else ""
-        (idPart, p)
+        scanDir(takenDir(sid)).filter(e => clean.contains(e.identity)).foreach { e =>
+          val path = takenFileOf(sid, e)
+          if os.exists(path) then os.remove(path)
+        }
       }
 
   // ── 消费墓碑（I-IDEM：与 event 墓碑分文件）───────────────────────────

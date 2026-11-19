@@ -2,10 +2,11 @@
    mobile-todo-apple.css — Mobile todo pages laid out in the Apple Reminders
    information architecture.
 
-   Scope: every rule is anchored on `body.mobile-layer` plus one of the three
+   Scope: every rule is anchored on `body.mobile-layer` plus one of the four
    exact page selectors ([data-page="tasks" | "todo-apple-list" |
-   "todo-apple-item"]) — zero effect on desktop and on other mobile pages, so
-   existing `tests/mobile-*` assertion surfaces are untouched by this file.
+   "todo-apple-item" | "todo-quick-decision"]) — zero effect on desktop and on
+   other mobile pages, so existing `tests/mobile-*` assertion surfaces are
+   untouched by this file.
 
    Color discipline (the four card families stay on tokens; dark theme must
    keep the cards distinguishable):
@@ -29,7 +30,8 @@
    from here) ───────────────────────────────────────────────────────────── */
 body.mobile-layer .mobile-page[data-page="tasks"],
 body.mobile-layer .mobile-page[data-page="todo-apple-list"],
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
+body.mobile-layer .mobile-page[data-page="todo-apple-item"],
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] {
   /* Four card families (token-derived, pressed darker for white-text contrast) */
   --ta-c-today: color-mix(in srgb, rgb(var(--sapphire)) 84%, #0a0c10);
   --ta-c-overdue: color-mix(in srgb, var(--color-error) 78%, #140505);
@@ -42,7 +44,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
 @media (prefers-color-scheme: dark) {
   body.mobile-layer .mobile-page[data-page="tasks"],
   body.mobile-layer .mobile-page[data-page="todo-apple-list"],
-  body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
+  body.mobile-layer .mobile-page[data-page="todo-apple-item"],
+  body.mobile-layer .mobile-page[data-page="todo-quick-decision"] {
     /* Dark theme: pressed darker still, but the two grey cards must stay
        clearly separated ("All" takes dark grey at --color-text-dim 34%,
        "Completed" mid grey at --color-text-muted 70%; measured background
@@ -73,14 +76,16 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
    C1). */
 body.mobile-layer .mobile-page[data-page="tasks"] .mobile-page-body,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .mobile-page-body,
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .mobile-page-body {
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .mobile-page-body,
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .mobile-page-body {
   padding-top: calc(var(--mchrome-clear) + env(safe-area-inset-top, 0px));
 }
 
 /* ── Page body root (shared skeleton of the three pages) ────────────────── */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-root,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-root,
-body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root,
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-root {
   flex: 1 0 auto;
   min-height: 0;
   display: flex;
@@ -88,19 +93,36 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
   width: 100%;
   /* H 批（ui-unify-panels 2026-11-17）：末尾让位不再用裸 28px —— 每页按自己的
      底带垫整条钮带（tasks/list = 右下 FAB --mpage-fab-clearance；item = 底部
-     键盘工具胶囊 .ta-tool 的整条带），滚动到头时末行底缘恒在底带上缘之上。 */
-  padding-bottom: calc(var(--mobile-dock-clearance) + var(--mpage-fab-clearance));
+     键盘工具胶囊 .ta-tool 的整条带），滚动到头时末行底缘恒在底带上缘之上。
+     滚域末端净空单源批（2026-11-18）：值收敛到 --mobile-scroll-end（本页有
+     .ta-fab ⇒ 自动含钮带层 = 原 calc(dock + fab) 同值），页体侧底垫归零
+     ⇒ 净空单点落在这里（内容级），值零字面量。 */
+  padding-bottom: var(--mobile-scroll-end);
   box-sizing: border-box;
 }
-/* item 页覆写：底带不是 FAB 而是 .ta-tool（贴键盘/贴 dock 的胶囊带）。 */
+/* item 页覆写：底带不是 FAB 而是 .ta-tool（贴键盘/贴 dock 的胶囊带）+ 其上的
+   回复带（.ta-reply，流内页脚）。两条带的位置都读**同一个**底部栈变量
+   （见 §C 的声明）；`.ta-root` 让位整条工具带，回复带作为最后一个 flex 孩子
+   落在让位线之上（缝 = 栈里的第二条呼吸缝 = --ds-space-2 = 8px）。
+   `flex: 1 1 auto`（不再是共享骨架的 `1 0 auto`）：本页的正文区 `.ta-edit`
+   自己滚（见 §C），所以根件高度必须被**钳**在页高内，长正文不再把页体顶长。
+   ⚠️ 让位量是「栈 − 页体自己那条净空」：`.ta-root` 的底缘**不是视口底缘** ——
+   `.mobile-page-body`（mobileLayer.css §页体）自己已经有
+   `padding-bottom: var(--mobile-dock-clearance)`（375×812 = 72px）。不减这一条
+   就把 dock 净空叠两次，实测贴底缝变 80px 而不是 8px。B1 逐值量这条缝，
+   页体底距一改闸立刻红。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-root {
-  padding-bottom: max(
-    28px,
-    calc(
-      max(var(--ta-kb, 0px), var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px))
-      + 8px + var(--bottom-band-d, 48px) + 8px
-    )
-  );
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 落队注（移植口径 · 与作者线唯一实质差异）：本树已落「滚域末端净空单源批」
+     （mobileLayer.css L6398）——`.mobile-page-body:has(> .ta-root)` 的**页体底垫
+     归零**，净空内收进真滚域。作者线那条 `calc(--ta-band-stack - --mobile-dock-clearance)`
+     的减法前提（「页体自己已有一条 dock 净空」）在本树已不成立 ⇒ 减法会把预留
+     少算一条 dock 净空，实测回复带压住工具带 64px（= 72 − 8）。⇒ 取**本支更早
+     那一版**（`max(28px, var(--ta-band-stack))`，见 8b2eb1da3）：整条底部栈由
+     内容级一次预留，与页体归零同代。实测（tests/todo-mobile-reply-bottom.spec.mjs）
+     B1/B2/B6 缝 = 8px、回复带底缘在工具带之上、且不被 dock 截断。 */
+  padding-bottom: max(28px, var(--ta-band-stack));
 }
 
 /* ═══ A · Lists home page ═══════════════════════════════════════════════ */
@@ -124,7 +146,10 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-card {
   font-family: inherit;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
-  transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* 动效收敛批（2026-11-18）：按下位移走站内动效 token（--dur-1 微变换档 /
+     --ease-std 唯一几何曲线），改前是本文件私设的 0.18s + 回弹曲线
+     cubic-bezier(0.34,1.56,0.64,1)（站内第二条曲线，已退役）。 */
+  transition: transform var(--dur-1) var(--ease-std);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card:active { transform: scale(0.97); }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-card-today { background: var(--ta-c-today); }
@@ -371,6 +396,8 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn {
   color: var(--color-frame-text-bright, var(--color-frame-text));
   cursor: pointer;
   touch-action: manipulation;
+  /* 动效收敛批（2026-11-18）：选中态（.on）此前是硬切，补 token 过渡。 */
+  transition: background-color var(--dur-2) var(--ease-std), color var(--dur-2) var(--ease-std);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn svg,
 body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn svg,
@@ -402,6 +429,8 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu {
   box-sizing: border-box;
   border-radius: 14px;
   z-index: 7;
+  /* 动效收敛批（2026-11-18）：展开面入场 = 站内唯一 modalIn 档（改前硬切）。 */
+  animation: modalIn var(--ds-dur-layer) var(--ds-ease-enter);
 }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu[hidden] { display: none; }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-row {
@@ -431,26 +460,35 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu-n {
   font-variant-numeric: tabular-nums;
 }
 
-/* Bottom-right blue circular FAB (+) — built on the `.g2-fab` base class the
-   spec pins (material / 48 geometry / spring, all single-sourced) at the
-   `--mtap-lg` size step. **Placement shell = .ta-fab-wrap**: the C1 probe
-   (tests/mobile-chrome-clearance.spec.mjs) counts visible .g2-fab elements
-   that carry position:absolute|fixed into ctrlBottom (the top button band
-   bottom edge). If the bottom FAB itself carried either positioning property
-   into that roster, the first body element of the home page (the four cards)
-   could never satisfy "body top >= ctrlBottom". Fix = move the positioning
-   properties onto an unclassed wrapper (the wrapper is not in the scan
-   roster) while the button itself keeps g2-fab's material/geometry/press
-   single source. #deck-fab / .ask-fab sit out of the scan roster for the same
-   reason. */
+/* Bottom button band — two round keys on one line: quick decision (left) +
+   new todo (right, the blue FAB). **Placement shell = .ta-fab-wrap**: the C1
+   probe (tests/mobile-chrome-clearance.spec.mjs) counts visible .g2-fab
+   elements that carry position:absolute|fixed into ctrlBottom (the top button
+   band bottom edge). If a bottom FAB itself carried either positioning
+   property into that roster, the first body element of the home page (the four
+   cards) could never satisfy "body top >= ctrlBottom". Fix = move the
+   positioning properties onto an unclassed wrapper (the wrapper is not in the
+   scan roster) while the buttons themselves keep g2-fab's material/geometry/
+   press single source. #deck-fab / .ask-fab sit out of the scan roster for the
+   same reason.
+   quick-decision batch (2026-11-18): the shell is now the **band** for both
+   keys — left/right insets are the same --mpad-x, so the pair reads as one
+   group on the same bottom line with symmetric spacing and zero overlap. The
+   band is pointer-transparent (it is a positioning host, not a hit target):
+   the list behind it stays tappable, only the keys themselves take pointers. */
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab-wrap {
   position: absolute;
+  left: var(--mpad-x);
   right: var(--mpad-x);
   bottom: calc(var(--mobile-dock-clearance) + var(--ds-space-2));
-  width: var(--band-d, 48px);
   height: var(--band-d, 48px);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  pointer-events: none;
   z-index: 7;
 }
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab-wrap > .g2-fab { pointer-events: auto; }
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab {
   width: var(--band-d, 48px);
   height: var(--band-d, 48px);
@@ -466,6 +504,60 @@ body.mobile-layer .mobile-page[data-page="tasks"] .ta-fab svg {
   width: var(--band-icon, 24px);
   height: var(--band-icon, 24px);
   display: block;
+}
+/* Quick-decision key (left end of the band): same base (.g2-fab), same
+   --band-d geometry / bottom edge / hit box as the + key, so the pair still
+   reads as one group on one line. Two changes vs the entry batch (author order
+   2026-11-18 22:04「换一个图标 + 有颜色和右边的对应 + 右上角计数」):
+     · Icon = lucide `gallery-vertical` (one stacked deck; `layers` read as
+       「图层」 and stole the canvas-layer meaning) — still the ONE glyph source,
+       carried by .ta-quick-fab svg (vendor/lucide.min.js via createIconsIn).
+     · Colour = the sapphire family, one rung BELOW the right + key: tint fill +
+       sapphire ink + sapphire semantic edge. The two keys are 同色族, while the
+       solid blue + stays this page's ONLY primary action (the entry batch's
+       stated intent). Every value is an existing token — zero colour literals in
+       this file, so the colour-semantics invariants (不放大 / 色相可指认 /
+       亮度权重带 / 单源零字面量) hold by construction; measured composite
+       readings live in the batch report (probe-readings.json + color-math). */
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab {
+  position: relative;
+  width: var(--band-d, 48px);
+  height: var(--band-d, 48px);
+  background: var(--sapphire-tint-15);
+  border-color: var(--sapphire-edge-strong);
+  color: rgb(var(--term-link-ink));
+}
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab svg {
+  width: var(--band-icon, 24px);
+  height: var(--band-icon, 24px);
+  display: block;
+}
+/* 叠卡张数徽标：形态整件归既有数字角标（body.mobile-layer .dock-badge.is-count，
+   mobileLayer.css 单源 —— 胶囊几何 / --ds-ink-inverse 字 / 描边 / --mfs-min 字级 /
+   暗档描边 --ds-badge-ring-dark 全不在此重写）；本文件只补这枚钮**顶右角**的落位
+   + **计数语义的蓝色底**两件。
+
+   底色改蓝（作者令 2026-11-18「叠卡数字角标用蓝色」）——为什么是**受作用域限定**的
+   变体、不是改单源：`.dock-badge.is-count` 有两个消费面、语义不同 ——
+     (a) dock 消息键 = **未读通知计数**（作者令 2026-10-30 08:29「就像微信一样」，
+         红=通知惯例，单源按 --color-danger 保留；见 mobileLayer.css 该块注释）；
+     (b) 本叠卡钮 = **牌堆张数的纯信息计数**（非告警）。
+   改单源会把作者点名的未读通知键一并染蓝（越界改动），故只在本作用域内换底色，通知
+   面保持 --color-danger 不动。变体仍复用 .dock-badge.is-count 形态（几何/字级/落位/
+   白字全继承单源），不是第四种通知形态。
+
+   蓝取 **sapphire 族加深档 --accent-agent-light**（sapphire.css 单源；该 token 的出生
+   注释逐字 = 「deepens the sapphire badge in the light theme」，stand-tokens.css §词条
+   引用蓝 亦记「站内早已存在的加深 sapphire」，与 --term-link-ink 亮档同值）—— 它是
+   全站唯一能承载白字达 AA 的既有蓝族**实底**：--sapphire（91 127 191）对白仅 4.01:1
+   未达、--sapphire-glow（120 160 220）2.67:1 更弱；--accent-agent-light（70 99 156）
+   亮/暗两档对白皆 5.957:1。零颜色字面量（rgb(var(--…)) 是令牌组合，design-tokens 闸
+   不计）·零新色。 */
+body.mobile-layer .mobile-page[data-page="tasks"] .ta-quick-fab .dock-badge.is-count {
+  top: -4px;
+  right: -4px;
+  left: auto;
+  background: rgb(var(--accent-agent-light));
 }
 
 /* ═══ B · List detail page ══════════════════════════════════════════════ */
@@ -526,7 +618,9 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-check-circle {
   box-sizing: border-box;
   border: 2px solid var(--color-text-muted);
   border-radius: 50%;
-  transition: background-color 0.16s ease, border-color 0.16s ease;
+  /* 动效收敛批（2026-11-18）：勾选态换色走 token（--dur-2 hover/色彩档 +
+     --ease-std），改前是私设的 0.16s ease。 */
+  transition: background-color var(--dur-2) var(--ease-std), border-color var(--dur-2) var(--ease-std);
 }
 /* Completed: fill + geometric check mark (zero glyph dependency; strikethrough
    and dimming below) */
@@ -622,13 +716,54 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-empty[hidden] { 
 
 /* ═══ C · Create / edit state ═══════════════════════════════════════════ */
 
+/* ── 详情页底部栈单源（作者令 2026-11-18「回复对话框必须挨着底部，像主会话输入框
+   那样；底部 dock / 安全区净空复用单源 --mobile-dock-clearance，不要自算像素」）
+   ───────────────────────────────────────────────────────────────────────
+   `--ta-band-bottom` = 底部两件（`.ta-tool` 工具胶囊带 + 其上 `.ta-reply` 回复带）
+   共同的锚点：键盘弹起时让给键盘（`--ta-kb`，由 visualViewport 腿写字），
+   否则让给 dock —— dock 腿**不手算像素**，直接取站内净空单源
+   `--mobile-dock-clearance`（mobileLayer.css：实测 dock 高 + --dock-gap +
+   --dock-inset-b + safe-area）。改前这里自己拼了
+   `--dock-h + --dock-inset-b + env(safe-area-inset-bottom)` ——既漏了
+   `--dock-gap`（少让 10px）又是第二套算法，本批收编到本变量一个落点。
+   `--ta-band-h` = 工具带带高，**只有一个来源** `--bottom-band-d`（mobileLayer.css
+   的底部带直径档）——`.ta-tool` 的 height 与本页的让位/贴底计算都读它，
+   本文件不再出现 48px/44px 这类裸数字。
+   `--ta-band-stack` = 整条工具带的占位高度（锚点 + 呼吸缝 + 带高 + 呼吸缝）。
+   `.ta-root` 的让位读它**减去页体自己那条净空**（见 §骨架的 item 覆写），
+   `.ta-tool` 的 bottom 读它的前两者 ⇒ 本页零第二处底部像素。
+   ⚠️ 这一族必须声明在**页元素**（`[data-page="todo-apple-item"]`）上：
+   `.ta-tool` 挂在 `.mobile-page-body` 下、与 `.ta-root` 是**兄弟**，写在
+   `.ta-root` 里它继承不到。（不变量由 scripts/check-mobile-floating-inventory.mjs
+   的 'todo editor tool' 行钉着。） */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] {
+  --ta-band-bottom: max(var(--ta-kb, 0px), var(--mobile-dock-clearance));
+  --ta-band-h: var(--bottom-band-d, 44px);
+  --ta-band-stack: calc(
+    var(--ta-band-bottom) + var(--ds-space-2) + var(--ta-band-h) + var(--ds-space-2)
+  );
+}
+
+/* 正文区 = **本页自己的滚动面**（与主会话 `.fm-flow` 同一个角色）：高度被钳在
+   页高内、内部滚动 ⇒ 长正文不会把 `.ta-root` 顶长，回复带（它的下一个兄弟）
+   就永远在最底、正文从它上方划过（不是从它下面）。滚动条按手机层既有口径隐藏
+   （同 `.mobile-page-body`）。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-edit {
   flex: 1 1 auto;
   min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
   display: flex;
   flex-direction: column;
   padding: 0 var(--mpad-x);
 }
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-edit::-webkit-scrollbar { display: none; }
+/* 正文件（标题行 / 正文域 / 元信息行）**不许被挤扁**：回复条自增高时正文区变矮，
+   这时要的是「正文原样、区域滚」，不是把 textarea 压成一条缝（默认
+   `flex-shrink: 1` 会把它压扁）。配合上面的 overflow-y:auto，超出的正文由
+   正文区滚出去，末行仍在回复条之上（B5 逐值量）。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-edit > * { flex-shrink: 0; }
 /* New row: caret + grey placeholder + (i) info button on the right */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-newrow {
   display: flex;
@@ -637,15 +772,19 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-newrow {
   min-height: 48px;
 }
 /* D 批（ui-unify-panels D 批 2026-11-17 作者令「待办内容不要截断，展示与编辑都多行」）：名编辑域 = textarea
-   （js/mobile/todoAppleFace.js 同批换元素），44 = 单行起步厚度，内容长随长。 */
+   （js/mobile/todoAppleFace.js 同批换元素），44 = 单行起步厚度，内容长随长。
+   作者报障批（2026-11-18「详情页应该标题正文要能完整显示」）：改前这里压着
+   `max-height:132px + overflow:auto` —— 长标题被截成一个内部滚动框（实测
+   scrollHeight 远超 clientHeight）。改后：高度上限交给 JS 的内容自适应
+   （autosizeField auto → scrollHeight），容器自身不再截断、不再出滚动条。 */
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-title-input {
   box-sizing: border-box;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 44px;
-  max-height: 132px;
-  overflow: auto;
-  resize: vertical;
+  max-height: none;
+  overflow: hidden;
+  resize: none;
   color: var(--color-text);
   font-size: var(--mfs-body);
   font-family: inherit;
@@ -683,6 +822,10 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes {
   line-height: 1.4;
   resize: none;
   outline: none;
+  /* 作者报障批（2026-11-18「正文要能完整显示」）：正文高度由 JS 内容自适应
+     写死（autosizeField），容器自身不截断、不出内部滚动条（改前是固定 3 行高
+     + 浏览器默认裁切）。 */
+  overflow: hidden;
 }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes[hidden] { display: none; }
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-notes::placeholder { color: var(--color-text-muted); }
@@ -714,6 +857,57 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-chip .ta-prio {
   width: 4px;
   height: 12px;
   border-radius: var(--ds-radius-thin);
+}
+
+/* ── 回复/恢复这个待办 = 次级 LLM 输入框（唯一模板 js/input/secondaryComposer.js）
+   材质（玻璃底/描边/内高光）= 站内玻璃单源 glass.css 的 `.nf-glass`；
+   外壳圆角 + 内件裸件造型 = 站内输入面单源 css/inputSurface.css 的
+   「输入条外壳成员 / 裸件成员」表（本批把 `.ta-reply-input` 与
+   `.ta-reply-input textarea` 登记进去）；
+   发送圆钮几何 = 组件类 `.ds-turn-btn`（design-system.css §①b 单源）。
+   ⇒ 本文件**只写这一面的几何**，零第二套造型声明（check-input-surface.mjs I2）。 */
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply {
+  /* ── 贴底锚定（作者令 2026-11-18「详情页的回复对话框必须挨着底部，像主会话输入框
+     那样，并根据内容长度变化」）────────────────────────────────────────────
+     本件是 `.ta-root` 弹性列里的**最后一个孩子**（DOM 上是 `.ta-edit` 的兄弟，
+     见 js/mobile/todoAppleFace.js 的 buildItem）：
+       · `flex: 0 0 auto` = 永不伸缩，恒占自己的高度（自增高时向上长，不挤压正文）；
+       · 底缘 = `.ta-root` 内容盒底缘 = 让位线（padding-bottom: --ta-band-stack）
+         之上 —— 缝就是栈尾那条呼吸缝（--ds-space-2 = 8px），与 `.ta-tool` 顶缘对齐；
+       · 正文长时由 `.ta-edit` 自己滚（它是本页的滚动面），所以正文**永远在回复条
+         上方**，不需要 sticky/底色/z-index 去盖住任何东西。
+     ⇒ 零定位声明、零自算像素：贴底完全由「让位 + 兄弟顺序 + flex」给出，
+     机制与主会话「滚动面 + 常驻底条」逐条同构。 */
+  flex: 0 0 auto;
+  margin-top: auto;
+  padding: var(--ds-space-2) var(--mpad-x) 0;
+  box-sizing: border-box;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-input {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-2) var(--ds-space-2) var(--ds-space-2) var(--ds-space-1);
+  box-sizing: border-box;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-input textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  /* 高度由 JS 的内容自适应写（secondaryComposer 的 autosize，封顶 = 主会话同一
+     口径 SECONDARY_COMPOSER_MAX_H）；**不在这里写第三个 max-height**。
+     超过封顶后：高度停在封顶值，正文改为**卡内滚**（overflow-y:auto）而不是被
+     裁掉、也不是继续把上方内容顶走（改前这里是 max-height:132px + overflow:hidden
+     ⇒ 超出即静默截断，正是作者要的「不截断」的反面）。
+     落队注：#18 的 `max-height:132px`（配对 `overflow-y:auto` 的那一版）本支收编为
+     JS 单源（200px 档），可滚轴不变。 */
+  overflow-y: auto;
+}
+body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-reply-error {
+  min-height: 18px;
+  padding-top: 4px;
+  font-size: var(--mfs-min);
+  color: var(--color-error);
 }
 /* Save = rightmost blue circular check in the top bar (g2-fab base: 48 +
    sapphire fill + always-white ink) */
@@ -748,11 +942,12 @@ body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool {
   position: fixed;
   left: var(--mpad-x);
   right: var(--mpad-x);
-  bottom: calc(
-    max(var(--ta-kb, 0px), calc(var(--dock-h, 54px) + var(--dock-inset-b, 0px) + env(safe-area-inset-bottom, 0px)))
-    + 8px
-  );
-  height: var(--bottom-band-d, 48px);
+  /* 底部栈单源（本页 §C 的 --ta-band-bottom）：键盘弹起让给键盘，否则让给
+     dock —— dock 腿取净空单源 --mobile-dock-clearance，不再自算像素。
+     落队注：本条替代 2026-11-17 的 `--bottom-band-d` 那版自算式（同一规则的后一
+     迭代，作者线上更晚）。 */
+  bottom: calc(var(--ta-band-bottom) + var(--ds-space-2));
+  height: var(--ta-band-h);
   display: flex;
   align-items: center;
   justify-content: space-around;
@@ -798,6 +993,17 @@ body.mobile-layer .mobile-page:is([data-page="tasks"], [data-page="todo-apple-li
   display: flex;
   align-items: flex-end;
   background: transparent;
+  /* 作者报障批（2026-11-18 图3「新建待办弹窗底部被 dock 压住/截断」）——
+     实测定性：**dock 遮挡**，不是浮层自身高度算出界。几何链：`.mobile-page`
+     铺满整个视口（mobileLayer.css:815 `top:0; bottom:0`），页面末端的让位历来
+     由**滚动面**自己承担；而本浮层是 `inset:0` + `align-items:flex-end` 的
+     贴底浮层，最后一段（dock 高 54 + --dock-inset-b 8 + safe ≈ 62px）恰好落在
+     body 级 fixed 浮件 `#mobile-dock`（z 200）之下，而 `#mobile-pages` 是
+     z 156 的兄弟层 ⇒ dock 恒画在浮层之上。修法 = 同一条 `--mobile-dock-clearance`
+     （与待办页滚动末端、详情页底部工具胶囊同一把尺），浮层底缘恒在 dock 上缘
+     之上；浮层自身 `max-height` 的百分比口径落在缩小后的内容盒上，长表单自动
+     改走内部滚动，不再被裁切。 */
+  padding-bottom: var(--mobile-dock-clearance);
 }
 body.mobile-layer .ta-create-sheet {
   width: 100%;
@@ -806,6 +1012,10 @@ body.mobile-layer .ta-create-sheet {
   box-sizing: border-box;
   padding: 12px var(--mpad-x) max(16px, env(safe-area-inset-bottom, 0px));
   border-radius: var(--ds-radius-xl) var(--ds-radius-xl) 0 0;
+  /* 动效收敛批（2026-11-18）：浮层入场 = 站内唯一入场键帧 modalIn + 动效 token
+     （--ds-dur-layer / --ds-ease-enter，与 secrets/social/design-system 的 .ds-layer
+     同一个「层」档），改前是硬切。 */
+  animation: modalIn var(--ds-dur-layer) var(--ds-ease-enter);
 }
 body.mobile-layer .ta-create-actions,
 body.mobile-layer .ta-create-options {
@@ -838,3 +1048,270 @@ body.mobile-layer .ta-create-notes { min-height: 76px; margin-top: 8px; resize: 
 body.mobile-layer .ta-create-options { flex-wrap: wrap; }
 
 /* No-backdrop fallback is provided by the shared glass component. */
+
+/* ═══ D · Quick decision page (todo-quick-decision) ══════════════════════
+   One card in the middle of the page; left/right swipe switches todos (the
+   author's 2026-11-18 card view). Page structure = a counter line + a stage
+   that the card fills.
+
+   Pose single source = `--qd-dx` (the finger-follow offset the module writes);
+   the transform lives here — the same split as the canvas deck's `--dtx`.
+   The two settle legs take the motion tokens: exit = --ds-dur-hover /
+   --ds-ease-std, enter = --ds-dur-surface / --ds-ease-enter (the module's
+   timers mirror those token values; the batch gate pins both against the
+   tokens, so there is no second duration ladder).
+
+   Height policy: the card fills the stage (elastic flex box) and its content
+   scrolls inside .ta-qd-scroll — a long content / question / option list
+   scrolls instead of being clipped. Each option's .ta-qd-opt-body is the
+   column-flow slot the per-option media group will be inserted into (media
+   above the label); the scroller carries whatever height it adds. */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  padding: 0 var(--mpad-x);
+  box-sizing: border-box;
+}
+/* Height chain: the page body is the shell's flex column (definite height), so
+   the card must be able to SHRINK to it (flex-shrink 1 + min-height 0) —
+   otherwise the card grows to its content and the whole PAGE scrolls instead of
+   the card's own scroller. This page carries no FAB, so the root's FAB-band
+   padding is replaced by the dock band + one gap step (the sheet behind the
+   card ends just above the dock). */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-root {
+  flex: 1 1 auto;
+  padding-bottom: calc(var(--mobile-dock-clearance) + var(--ds-space-3));
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--ds-space-6);
+  color: var(--color-text-muted);
+  font-size: var(--mfs-min);
+  font-variant-numeric: tabular-nums;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--ds-radius-2xl);
+  transform: translate3d(var(--qd-dx, 0px), 0, 0);
+  /* Vertical panning stays with the browser (the inner scroller); the
+     horizontal axis is never claimed natively, so the finger-follow leg keeps
+     receiving pointer events. */
+  touch-action: pan-y;
+  will-change: transform;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card[data-qd-settle="exit"] {
+  transition: transform var(--ds-dur-hover) var(--ds-ease-std);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card[data-qd-settle="enter"] {
+  transition: transform var(--ds-dur-surface) var(--ds-ease-enter);
+}
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card { transition: none; }
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-card[hidden],
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-head[hidden],
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-empty[hidden] { display: none; }
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  /* The scroller is the nearest scroll container of every card element, so the
+     EFFECTIVE touch-action of a touch inside the card is decided here (the
+     chain stops at the nearest scrollport). Without this the scroller's own
+     automatic 2-D panning lets the compositor claim a horizontal drag and cut
+     the pointer stream with pointercancel (measured: pointercancel arrived on
+     the 2nd touchmove). pan-y keeps vertical panning native and leaves the
+     horizontal axis to the card gesture. */
+  touch-action: pan-y;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-3);
+  padding: var(--ds-space-5) var(--ds-space-4) var(--ds-space-6);
+  box-sizing: border-box;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-1);
+  min-height: var(--ds-space-6);
+  padding: 0 var(--ds-space-2);
+  border-radius: var(--ds-radius-chip);
+  background: color-mix(in srgb, var(--color-text) 8%, transparent);
+  color: var(--color-text-muted);
+  font-size: var(--mfs-min);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-dot {
+  flex: none;
+  width: var(--ds-space-2);
+  height: var(--ds-space-2);
+  border-radius: 50%;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-title {
+  margin: 0;
+  font-size: var(--mfs-body);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-content {
+  margin: 0;
+  font-size: var(--mfs-sub);
+  line-height: 1.5;
+  color: var(--color-text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-q {
+  font-size: var(--mfs-callout);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-3);
+  min-height: var(--mtap);
+  padding: var(--ds-space-2) var(--ds-space-3);
+  box-sizing: border-box;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--ds-radius-input);
+  background: var(--nf-glass-input-bg);
+  cursor: pointer;
+}
+/* Selected option = the shared sapphire selection step (same family as the
+   station's pressed/selected档); state comes from the native control, so the
+   row needs no class bookkeeping in JS. */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt:has(.ta-qd-opt-input:checked) {
+  border-color: rgb(var(--sapphire) / 0.35);
+  background: color-mix(in srgb, rgb(var(--sapphire)) 14%, transparent);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-input {
+  flex: none;
+  width: var(--ds-space-5);
+  height: var(--ds-space-5);
+  accent-color: rgb(var(--sapphire));
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-opt-label {
+  font-size: var(--mfs-sub);
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+/* ── ③ 输入区（回答框）: the card's third band (author 2026-11-18: 决策卡视角
+   must carry the question AND an answer field). It is `flex: none` at the card's
+   bottom, so the scroller above it keeps every drop of remaining height and the
+   field is on screen the moment the card opens — a long content never pushes it
+   away and nothing is truncated.
+   Field recipe (font/line/caret/placeholder + the autosize cap) is the existing
+   shared `body.mobile-layer .tfl-hit-reply` rule — the cap has ONE source, in
+   mobileLayer.css; this block owns the BAND's layout only (no second ladder).
+   Field SURFACE (background / border / radius / shadow) is likewise not written
+   here: a bare `textarea` already matches css/inputSurface.css's single field
+   rule (`:where(textarea, .nf-field)`, all values from `--nf-field-*`), which is
+   why check-input-surface.mjs I2 stays green (2026-11-18 fix).
+   Send key reuses the existing text-button recipe `.ta-create-save`.
+   Bottom clearance: the card's bottom edge already sits inside `.ta-root`
+   (`padding-bottom: calc(var(--mobile-dock-clearance) + --ds-space-3)`), and
+   `--mobile-dock-clearance` (mobileLayer.css) is the dock-clearance single
+   source — this band adds no clearance constant of its own. Width comes from
+   `--mpad-x` / `--ds-space-4` — the page's existing horizontal insets —
+   so a card-width change stays a one-place edit (see the batch report). */
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-1);
+  padding: var(--ds-space-2) var(--ds-space-4) var(--ds-space-3);
+  border-top: 1px solid var(--glass-border);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--ds-space-2);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-input {
+  /* 造型（玻璃底/中性边/圆角/影）**不在这里写** —— 裸 `textarea` 元素本身就落在
+     css/inputSurface.css 的站内唯一输入面造型规则里（`:where(textarea, .nf-field)`，
+     背景/边框/圆角/影全部走 `--nf-field-*` 单源）。本规则只写这一面的几何
+     （内距 / 触控下限 / 盒模型），check-input-surface.mjs I2 因此为绿。 */
+  box-sizing: border-box;
+  min-height: var(--mtap);
+  padding: var(--ds-space-2) var(--ds-space-3);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-send {
+  flex: none;
+  min-height: var(--mtap);
+  padding: 0 var(--ds-space-3);
+  border: none;
+  background: transparent;
+  font-size: var(--mfs-body);
+  cursor: pointer;
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-error {
+  min-height: var(--ds-space-5);
+  color: var(--color-error);
+  font-size: var(--mfs-min);
+}
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-answer-error:empty { display: none; }
+body.mobile-layer .mobile-page[data-page="todo-quick-decision"] .ta-qd-empty {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: var(--mfs-sub);
+}
+/* ── 减动效（与 design-system.css 的全局守卫同律）─────────────────────────
+   本文件入册的入场键帧（modalIn 档）与 token 过渡在 prefers-reduced-motion 下
+   压近零 —— 与「动效 token 单源」同一凭据，消费面不各写一份 reduce 块。 */
+@media (prefers-reduced-motion: reduce) {
+  body.mobile-layer .ta-create-sheet,
+  body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu {
+    animation-duration: 0.01ms;
+  }
+  body.mobile-layer .mobile-page[data-page="tasks"] .ta-card,
+  body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-check-circle,
+  body.mobile-layer .mobile-page[data-page="tasks"] .ta-pill-btn,
+  body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill-btn,
+  body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill-btn {
+    transition-duration: 0.01ms;
+  }
+}

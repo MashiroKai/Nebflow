@@ -295,6 +295,9 @@ object DelegateFlowHosts:
         .handleErrorWith(e => warn("root redeliver")(e).void)
         .void *>
       h.engine.settleRunnableSweep().handleErrorWith(e => warn("settle sweep")(e)) *>
+      // dispatcher-hang 修复批（2026-11-18）：分发器唤醒看门狗（delegate 作用域专属腿
+      // ——dispatcher 模式的链挂在本宿主；判据/预算/可读结论见 NodeEngine.dispatcherWakeWatchdog 头注）。
+      h.engine.dispatcherWakeWatchdog().handleErrorWith(e => warn("dispatcher wake watchdog")(e)) *>
       h.engine.settleStaleRunningNodes().handleErrorWith(e => warn("dead-session settle")(e)) *>
       h.engine.sweepDestroyWindows().handleErrorWith(e => warn("destroy-window sweep")(e)) *>
       h.engine.sweepLoopBudgets().handleErrorWith(e => warn("loop budget sweep")(e)) *>

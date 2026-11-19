@@ -68,6 +68,10 @@ import { routeMediaClick, mediaKind } from './mediaOpenRoute.js';
 // state/branding，本边不成环。nfViewerSource = 取字节单点（手机端长按退役批的
 // footer 下载键同腿复用，零新增取字节路）。
 import { nfViewerUrl, nfCacheDrop, nfViewerSource } from './nfFileCache.js';
+// mobile-download 批（2026-11-18 作者令）：下载落点单点——手机层的媒体/文件下载键
+// 统一经此选路（图片/视频→系统分享→相册；其它→分享「存储到文件」；能力不支持→原下载
+// + 落点提示）；桌面层逐字保留原行为。
+import { saveFileBlob, notifyLanding } from './downloadSave.js';
 // quote-message 一期（2026-10-09）：用户媒体/文件卡行挂消息 id + 右键「引用」。
 // 摘要 = [图片]/[文件] 文件名（spec §2.5 表）。挂点在本 builder ⇒ live 发送、
 // 历史恢复（persistence.buildUserAttachmentRows）、attachmentsSaved 原位重渲
@@ -75,7 +79,8 @@ import { nfViewerUrl, nfCacheDrop, nfViewerSource } from './nfFileCache.js';
 import { attachQuoteMenu, nextChatMsgId, createMsgQuoteButton } from './msgQuote.js';
 // footer 信息条族（手机端长按退役批 2026-10-31 作者令）：媒体行 footer 与文本
 // 消息底部信息条同族徽章（时间 + 常用操作），durationBadges 是唯一 builder。
-import { createMsgFooterBadge } from './chat/durationBadges.js';
+// 消息条目统一批 2026-11-18：叠卡 footer 分态与附件区容器的基座单点（chatItem.js）。
+import { attachmentArea, stackCardFooter, stackGroupFooter } from './chatItem.js';
 // Pop 交付卡 footer 批（作者令 2026-11-01 16:19）：行引用描述符的 senderName
 // 与 AI 文本行同源（rootName.js 叶子模块，零环风险）。
 import { rootDisplayName } from './rootName.js';
@@ -132,7 +137,14 @@ export function openPopArtifact(filePath, title) {
       itemType: '',
       content: '',
       absPath: filePath,
-      pinned: true
+      pinned: true,
+      // Pop 文件卡乐观打开（pop-optimistic-canvas 批 2026-11-18 · 作者令逐字
+      // 「先乐观打开在canvas占位防丢失 然后在canvas用一个环来显示加载进度」）：
+      // 这一个旗标把 openWorkspaceItem 的空内容腿切到 tab-first + 进度环单点
+      // （canvas.js::openOptimisticFile），而不是「等 pop.readFile 应答才开标签」。
+      // 手机端/其它端文件尚未取到、票过期、凭据判定拒绝时，用户看到的是**占位 +
+      // 可读原因 + 重试**，不再是「点了毫无反应」（动作丢失）。
+      optimisticOpen: true
     }
   }));
 }
@@ -422,6 +434,12 @@ function mediaFace(item, interactive, natural) {
     video.preload = 'metadata';
     video.playsInline = true;
     video.dataset.nfName = item.name || item.path || '';
+    // askuser-media 批（2026-11-18）：`item.poster` = 调用方自带的**静帧封面**
+    // （远端 URL 或本地路径）。它是 video 元素的原生 poster 属性——只在「尚未解出
+    // 任何一帧」时显示，故与既有「内容封面」抓帧（videoCover.js，解出帧后覆盖层
+    // 淡出让位）天然分工：poster 先行、抓帧随后、两者都缺 ⇒ 现状黑底 + 播放键。
+    // 单点在此 ⇒ 叠卡面 / 展开面 / 单件 flat 面三个宿主同时获得该支持。
+    if (typeof item.poster === 'string' && item.poster.trim()) video.poster = item.poster.trim();
     // Expanded face: native controls from the start. Stack face: the ring is
     // the affordance while paused; controls appear while playing.
     video.controls = expandedFace;
@@ -650,6 +668,12 @@ function buildMediaStack(items, opts) {
   // 文本/文件行同族（composer footer 动作行）。**只用动作位，不长相位置键**
   // （与 onOpen/cornerFor 同一纪律，见头注「展开 N 钮位置不是 API 参数位」）。
   const quoteDescFor = (opts && typeof opts.quoteDescFor === 'function') ? opts.quoteDescFor : null;
+  // 展开态每卡独立 footer 的供给位（消息条目统一批 2026-11-18）：基座 =
+  // chatItem.stackCardFooter；本组件只负责「何时存在」+ 状态标记。**合起态整组
+  // footer** 由消费方按 stackGroupFooter 装配并挂在本组件派发的 NF_POP_EXPANDED
+  // 事件上（唯一态机 = 本组件；不把 footer 塞进 `.pop-stack-area` 的横排行里，
+  // 免得改动折叠卡几何与「展开 N」钮位）。
+  const cardFooterFor = (opts && typeof opts.cardFooterFor === 'function') ? opts.cardFooterFor : null;
   // 自定义载荷（expando）面：lib.dom 无这些属性 —— 同一处声明类型，两个消费者
   // （popFaces 字节填充 / popQuoteState 引用接驳点）读同一份形状。
   const area = /** @type {HTMLDivElement & {
@@ -735,20 +759,15 @@ function buildMediaStack(items, opts) {
     const card = document.createElement('div');
     card.className = 'pop-expanded-card';
     card.appendChild(layer);
-    if (itemQuote) {
-      const footer = document.createElement('div');
-      footer.className = 'duration-badge pop-item-footer';
-      const download = createMediaDownloadButton(item);
-      if (download) {
-        footer.appendChild(download);
-        if (download.disabled) {
-          const reason = document.createElement('span');
-          reason.className = 'pop-download-reason';
-          reason.textContent = download.title;
-          footer.appendChild(reason);
-        }
-      }
-      footer.appendChild(createMsgQuoteButton(itemQuote));
+    // 展开态每卡独立 footer（消息条目统一批 2026-11-18）：基座 = chatItem
+    // .stackCardFooter；下载键优先取调用方的 cardFooterFor（fm 面 = 鉴权下载键），
+    // 否则回落主会话媒体下载键。字段/排列变体，基座一处。
+    const cardDl = cardFooterFor ? cardFooterFor(item, i) : null;
+    if (itemQuote || cardDl) {
+      const footer = stackCardFooter({
+        download: cardDl || createMediaDownloadButton(item),
+        quote: itemQuote ? createMsgQuoteButton(itemQuote) : null,
+      });
       card.appendChild(footer);
     }
     expandView.appendChild(card);
@@ -943,8 +962,10 @@ function buildMediaStack(items, opts) {
     stack.suppressClick = true;
     view.classList.add('is-switching');
     const from = layer.style.transform || 'translate3d(0,0,0) rotate(0deg) scale(1)';
-    const duration = parseFloat(getComputedStyle(view).getPropertyValue('--ds-dur-layer')) * 1000 || 200;
-    const options = { duration, easing: 'ease-in-out' };
+    const motionStyle = getComputedStyle(view);
+    const duration = parseFloat(motionStyle.getPropertyValue('--ds-dur-stack-switch')) * 1000;
+    const easing = motionStyle.getPropertyValue('--ds-ease-stack-switch').trim();
+    const options = { duration, easing };
     // Establish final slot geometry before starting, then animate every visible
     // final slot from behind the incoming face to its actual fan transform.
     const oldFront = front;
@@ -1309,16 +1330,17 @@ export function buildUserMediaRow(attachments, opts) {
       senderRole: 'user', senderName: t('chat.quoteSenderMe'), ts: ts || Date.now(),
     });
   }
-  const group = document.createElement('div');
-  group.className = 'pop-group';
+  const group = attachmentArea('pop-group');
   row.appendChild(group);
+  let stackArea = null;
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));
   else if (media.length > 1) {
     // 单张引用入口（2026-11-02 11:00 作者令移入 footer）：叠卡每张各自的描述符
     // —— 张数 = media 组（拖动/横滑翻页的同一序）；footer 入口按当前 front 取。
-    group.appendChild(buildMediaStack(media, {
+    stackArea = buildMediaStack(media, {
       quoteDescFor: (it, i) => stackItemQuoteDesc(it, i, media.length),
-    }));
+    });
+    group.appendChild(stackArea);
   }
   files.forEach(f => group.appendChild(buildFileCard(f, {
     quoteRef: { kind: 'file', fileName: f.name || (f.path || '').split('/').pop(), path: f.path || '', attachments: [{ type: 'file', name: f.name || '', path: f.path || '' }] },
@@ -1329,7 +1351,18 @@ export function buildUserMediaRow(attachments, opts) {
   // 装配单点 = buildMediaRowFooterBadge（Pop 交付卡 footer 批 2026-11-01 起，
   // 用户媒体行与 LLM Pop 行同一装配器——零第二套装配）。
   const badge = buildMediaRowFooterBadge(items, ts);
-  if (badge) row.appendChild(badge);
+  if (badge) {
+    row.appendChild(badge);
+    // 叠卡 footer 分态（消息条目统一批 2026-11-18）：合起态 footer 属**整组**在场；
+    // 展开态退场（每卡自己的 footer 承担）。态机唯一 = 叠卡组件派发的
+    // NF_POP_EXPANDED 事件，本处只听不另判（禁第二套 expand 判断）。
+    if (stackArea) {
+      stackArea.addEventListener(EVENTS.NF_POP_EXPANDED, (e) => {
+        const d = /** @type {CustomEvent} */ (e).detail;
+        badge.style.display = d && d.expanded ? 'none' : '';
+      });
+    }
+  }
   return row;
 }
 
@@ -1342,22 +1375,13 @@ export function buildUserMediaRow(attachments, opts) {
  * （多件行 footer 仍带时间档）。字节两腿（path / 内联 data:）皆缺 ⇒ 不挂键
  * （零假按钮；attachmentsSaved 补丁腿重渲后 path 到位即补挂）。 */
 function buildMediaRowFooterBadge(items, ts) {
-  const badge = createMsgFooterBadge(ts, '');
-  const dlBtn = items && items.length > 1 ? createGroupDownloadButton(items) : createMediaDownloadButton(items && items[0]);
-  if (dlBtn) {
-    if (badge.childElementCount > 0) {
-      const div = document.createElement('span');
-      div.className = 'duration-badge-divider';
-      badge.appendChild(div);
-    }
-    badge.appendChild(dlBtn);
-    if (dlBtn.disabled) {
-      const reason = document.createElement('span');
-      reason.className = 'pop-download-reason';
-      reason.textContent = dlBtn.title;
-      badge.appendChild(reason);
-    }
-  }
+  // 装配单点 = chatItem.stackGroupFooter（消息条目统一批 2026-11-18）：合起态
+  // 整组 footer 基座；本处只给字段（时间档 + 整组下载键）。
+  const badge = stackGroupFooter({
+    items,
+    ts,
+    downloadFor: (its) => (its && its.length > 1 ? createGroupDownloadButton(its) : createMediaDownloadButton(its && its[0])),
+  });
   return badge.childElementCount > 0 ? badge : null;
 }
 
@@ -1441,11 +1465,12 @@ function createGroupDownloadButton(items) {
       const end = new Uint8Array(22), eocd = new DataView(end.buffer);
       eocd.setUint32(0, 0x06054b50, true); eocd.setUint16(8, entries.length, true); eocd.setUint16(10, entries.length, true);
       eocd.setUint32(12, centralSize, true); eocd.setUint32(16, offset, true);
-      const archive = URL.createObjectURL(new Blob([...parts, ...central, end], { type: 'application/zip' }));
-      const a = document.createElement('a'); a.href = archive; a.download = 'attachments.zip';
-      document.body.appendChild(a); a.click(); a.remove();
-      setTimeout(() => URL.revokeObjectURL(archive), 60_000);
-      btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 1500);
+      const archive = new Blob([...parts, ...central, end], { type: 'application/zip' });
+      // mobile-download 批（2026-11-18）：整组 zip 是一枚**普通文件** ⇒ 手机层经落点
+      // 单点走分享「存储到文件」（可指定位置）/ 能力不支持时原 `<a download>` + 落点提示。
+      const landed = await saveFileBlob(archive, 'attachments.zip');
+      if (landed.route !== 'cancelled') { btn.classList.add('copied'); setTimeout(() => btn.classList.remove('copied'), 1500); }
+      notifyLanding(landed);
     } catch (err) {
       console.warn('[popArtifacts] group download failed', err);
       btn.classList.add('copy-failed'); setTimeout(() => btn.classList.remove('copy-failed'), 2000);
@@ -1491,16 +1516,17 @@ function createMediaDownloadButton(item) {
       } else {
         url = URL.createObjectURL(await (await fetch(item.src)).blob());
       }
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = item.name || String(item.path || '').split('/').pop() || 'file';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      const name = item.name || String(item.path || '').split('/').pop() || 'file';
+      const blob = await (await fetch(url)).blob();
+      // mobile-download 批（2026-11-18）：落点收归单点——手机层图片/视频走系统分享
+      // （可入相册）/ 其它文件分享到「存储到文件」（可指定位置）；能力不支持 ⇒ 原
+      // `<a download>` + 落点提示。桌面层逐字保留原行为。
+      const landed = await saveFileBlob(blob, name);
+      if (landed.route !== 'cancelled') flash('copied', DL_CHECK_SVG, 1500);
+      notifyLanding(landed);
       // blob URL 由下载侧消费；延迟回收（nfViewerSource 腿的 URL 挂 document.body
       // 不会被 canvas-tab-closed 回收，这里就是它的清理点）。
       setTimeout(() => { try { URL.revokeObjectURL(url); } catch { /* already dead */ } }, 60_000);
-      flash('copied', DL_CHECK_SVG, 1500);
     } catch (err) {
       console.warn('[popArtifacts] media download failed', err);
       flash('copy-failed', DOWNLOAD_SVG, 2000);
@@ -1631,8 +1657,7 @@ export function buildPopArtifactRow(payload, opts) {
       senderRole: 'ai', senderName: rootDisplayName(), ts: ts || Date.now(),
     });
   }
-  const group = document.createElement('div');
-  group.className = 'pop-group';
+  const group = attachmentArea('pop-group');
   row.appendChild(group);
 
   if (media.length === 1) group.appendChild(buildMediaFlat(media[0]));

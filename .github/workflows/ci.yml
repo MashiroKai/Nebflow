@@ -51,6 +51,14 @@ jobs:
           cache: npm
       - name: Install locked tooling
         run: npm ci
+      # 2026-11-19 ci-static-reds 批：check:static 里的 border-weight(B1/B2) 与
+      # canvas-buttons 走 visual-harness，需要 playwright；本仓不把它列入
+      # devDependencies（由运行环境自带），此前只在别的 job 装过 ⇒ 这两道闸在
+      # static 上恒以「playwright not resolvable」硬红。装法与仓内既有四处逐字一致。
+      - name: Install Playwright (visual-baseline gates)
+        run: |
+          npm install --no-save --no-package-lock @playwright/test@1.62.0
+          npx playwright install --with-deps chromium
       - name: Checkout-only static registry
         run: npm run check:static
       - name: Official OpenSpec validation
@@ -661,6 +669,22 @@ jobs:
       # 覆盖（孤窗静默即位、被拒写只出真实保存失败文案、无任何接管面）。
       - name: Canvas writer ownership (real gateway)
         run: sbt "testOnly nebflow.gateway.CanvasWriterLegacyPutSpec"
+
+  row-center-lint:
+    name: Rendered row-center lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Playwright
+        run: |
+          npm install --no-save --no-package-lock @playwright/test@1.62.0
+          npx playwright install --with-deps chromium
+      - name: Check rendered rows
+        run: PW_SELFCONTAINED_ONLY=1 npx playwright test tests/ask-mail-channel.spec.mjs -g 'row-center' --reporter=line
 
   frontend-specs:
     name: Frontend Specs (self-contained suite, Playwright)

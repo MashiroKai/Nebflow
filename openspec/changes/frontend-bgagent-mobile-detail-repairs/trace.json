@@ -6,13 +6,23 @@
       "requirement": "FRB-REQ-001",
       "scenario": "FRB-SCN-001",
       "implementation": ["src/main/resources/web/js/bgAgentMobileChrome.js", "openspec/changes/frontend-bgagent-mobile-detail-repairs/proposal.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/design.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/tasks.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/specs/bgagent-mobile-detail/spec.md", "openspec/changes/frontend-bgagent-mobile-detail-repairs/trace.json"],
-      "tests": [{"path":"tests/bgagent-mobile-detail-retirement.test.mjs","name":"FRB-SCN-001 worktree and plugin omitted"}]
+      "tests": [],
+      "manual": {
+        "reason": "The only automated probe for this scenario was tests/bgagent-mobile-detail-retirement.test.mjs, deleted with the mobile background-detail retirement in commit 9bc33ca789499e7bdcd2246cb6363d687868cae3 (2026-11-19 test-collection batch); that probe declared itself NOT RUN and needed the repository visual harness plus an isolated, supervised browser, so no automated test can stand in for this confirmation.",
+        "steps": "Run the repository visual harness (scripts/lib/visual-harness.mjs) against an isolated instance: launch a browser session at 375x812 and stub the single-delegate aggregate GET /api/delegates/delegate-residual-fixture (NOT the list route /api/delegates, whose current shape is a rows array) with the aggregate shape {record:{...}, live, verdict, task, childrenCount}, where record carries id, createdAt, worktree '/fixture/retired-worktree' and plugins ['fixture-plugin']; boot the session, open that delegate's mobile background-agent detail, scroll the detail, then dismiss it.",
+        "expected": "Neither the worktree nor the plugin field is presented, source, creation time and task details stay readable, and dismissing the detail works without a console error."
+      }
     },
     {
       "requirement": "FRB-REQ-001",
       "scenario": "FRB-SCN-002",
       "implementation": ["src/main/resources/web/js/bgAgentMobileChrome.js"],
-      "tests": [{"path":"tests/bgagent-mobile-detail-retirement.test.mjs","name":"FRB-SCN-002 desktop close retained"}]
+      "tests": [],
+      "manual": {
+        "reason": "The desktop leg lost its only automated probe when tests/bgagent-mobile-detail-retirement.test.mjs was deleted with the mobile background-detail retirement in commit 9bc33ca789499e7bdcd2246cb6363d687868cae3 (2026-11-19 test-collection batch); that probe declared itself NOT RUN and needed the repository visual harness plus an isolated, supervised browser.",
+        "steps": "Run the repository visual harness (scripts/lib/visual-harness.mjs) against an isolated instance: launch a browser session at 1440x900 with the same single-delegate aggregate stub as FRB-SCN-001 (GET /api/delegates/delegate-residual-fixture; record id, createdAt, worktree '/fixture/retired-worktree', plugins ['fixture-plugin']), boot the session, open that delegate's background-agent detail on desktop, then close it.",
+        "expected": "The existing desktop detail and its controls stay available, no mobile detail shell is installed, and closing the detail behaves as before."
+      }
     }
   ]
 }

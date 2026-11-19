@@ -499,7 +499,7 @@
 }
 
 /* ---------- Settings Modal (centered popup, replaces the sidebar panel) --
-   设计语言批 2026-10-21：宽度 560 = 弹窗 md 档（账本 design-language §7）；
+   设计语言批 2026-10-21：宽度 560 = 弹窗 md 档（账本在 stand-dev 插件包 tokens 章 §7）；
    头部内距归栅格 12/16/20（与 #secrets-modal / #search-modal 同值——弹窗头
    全站一档），标题 15px/600 = 面板标题档。 */
 #settings-modal {
@@ -1066,8 +1066,8 @@
    token's own media definitions), so no dark-mode override block is needed. */
 .nebflow-toast {
   position: fixed;
-  bottom: 20px;
-  right: 20px;
+  bottom: var(--ds-space-5);    /* 右下角座位内距（20px 档 = --ds-space-5） */
+  right: var(--ds-space-5);
   z-index: var(--ds-z-toast);   /* 弹层堆叠带（design-system.css ⑭：通知 10000） */
   max-width: 400px;
   padding: var(--ds-space-3) var(--ds-space-4);
@@ -1091,6 +1091,19 @@
   opacity: 1;
   transform: translateY(0);
 }
+
+/* 通知让位底缘（2026-11-19）：canvas 打开时，通知不压 canvas 底部控件带
+   （.canvas-zoom-bar / 文档圆钮族 + 手机 dock 之上的控件行）—— 实测带高单源 =
+   `--canvas-bottom-clearance`（viewers/shared.js syncBottomClearance 量出的
+   「浮钮带顶 → 面板底缘 + 12 呼吸」，split.css「底部浮钮让位」块同一处），
+   该实测值同时发布到 documentElement，body 级浮层（本通知）才读得到。
+   守卫 = `body.canvas-open`：canvas 关上后该实测值不再刷新，守卫保证陈旧值零消费
+   （通知退回右下角 20px 座位）。位置只有一个来源（本族两条规则共用同一条带），
+   不新造第二套定位。 */
+body.canvas-open .nebflow-toast {
+  bottom: calc(var(--ds-space-5) + var(--canvas-bottom-clearance, 0px));
+}
+
 /* Type semantics: leading glyph, colored per type (no color strip).
    ui-status-redesign（盘点 #26 / D 组，S7 全站归一）：字形 → lucide 真图标
    （modal.js 注入），色档保留 = 图标载体；error 档色值归 --status-error-icon
@@ -1117,6 +1130,57 @@
   text-decoration: none;
   cursor: pointer;
 }
+
+/* Rich toast（canvas 保存失败批 2026-11-18 起；notice-unify 批 2026-11-18 把形状
+   开关扩到 closable / hint / action 三态）：图标 + 正文列 + 关闭钮三栏。正文列内
+   msg 一行、hint 一行（次级色 = 可执行的下一步）、可选动作钮（如「撤销」）。只有传了
+   opts.closable / opts.hint / opts.action 时才是这个结构，普通 toast 的 DOM/样式零改动。 */
+.nebflow-toast-rich {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--ds-space-2);
+}
+/* rich 走 flex gap，别再叠图标自带的右边距（否则间距翻倍）。 */
+.nebflow-toast-rich .nebflow-toast-icon { margin-right: 0; }
+.nebflow-toast-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+}
+.nebflow-toast-hint {
+  margin-top: var(--ds-space-1);
+  font-size: var(--ds-fs-hint);
+  line-height: 1.35;
+  color: var(--color-frame-text-dim);
+}
+.nebflow-toast-action {
+  margin-top: var(--ds-space-1h);
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--ds-fs-hint);
+  color: var(--color-primary);
+  cursor: pointer;
+  text-decoration: underline;
+}
+.nebflow-toast-action:disabled { opacity: 0.5; cursor: default; }
+.nebflow-toast-close {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  min-height: 24px;
+  margin: -4px -6px -4px 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--color-frame-text-muted);
+  cursor: pointer;
+}
+.nebflow-toast-close:hover { color: var(--color-text); }
 
 
 /* ── Onboarding wizard (first-run) ─────────────────────────────────────── */

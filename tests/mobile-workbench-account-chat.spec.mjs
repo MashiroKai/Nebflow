@@ -41,7 +41,9 @@ try {
   await page.waitForSelector('[data-page="settings"].live #settings-content');
   await settle(page);
   await shot('settings');
-  check(await page.locator('[data-page="settings"] #neblink-logout').count() === 0, 'account/logout removed from settings');
+  // 账户栏整件退役（作者令 2026-11-18 16:36/16:45）：设置页不再有账号分组 / 账号卡 /
+  // 「登录账号」读数行 —— 不是隐藏，DOM 零命中。
+  check(await page.locator('[data-page="settings"] [data-panel-group="account"], [data-page="settings"] #account-card, [data-page="settings"] .neblink-account-ro').count() === 0, 'settings account column removed');
   const skirt = await page.locator('#settings-modal').evaluate(el => getComputedStyle(el, '::after').content);
   check(skirt === 'none', 'settings has no bottom skirt');
   await page.locator('#settings-content').evaluate(el => el.scrollTo({ top: el.scrollHeight, behavior: 'instant' }));
@@ -53,11 +55,12 @@ try {
   await page.waitForSelector('[data-page="me"].live');
   await settle(page);
   await shot('account');
-  check(await page.locator('[data-page="me"] #neblink-logout').count() === 1, 'avatar opens account with existing logout');
+  check(await page.locator('[data-page="me"] [data-device-signout]').count() >= 1, 'avatar opens account with per-device logout');
+  check(await page.locator('[data-page="me"] .mf-account-card, [data-page="me"] .neblink-account-ro').count() === 0, 'me page bottom duplicate account bar removed');
   // Observe the existing logout transport without touching any real account.
   let logoutRequests = 0;
   await page.route('**/api/neblink/auth/end-session', route => { logoutRequests++; return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":"fixture-no-side-effects"}' }); });
-  const logout = page.locator('[data-page="me"] #neblink-logout');
+  const logout = page.locator('[data-page="me"] [data-device-signout]').first();
   if (await logout.count()) {
     await page.evaluate(() => { window.open = () => null; });
     const request = page.waitForRequest(req => req.url().includes('/api/neblink/auth/end-session'), { timeout: 5000 });
@@ -106,32 +109,32 @@ try {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.waitForFunction(() => !document.body.classList.contains('mobile-layer'));
   await page.evaluate(async () => (await import('/js/sidebar.js')).openSettingsPanel());
-  await page.waitForSelector('#settings-content #neblink-logout');
+  await page.waitForSelector('#settings-content #cfg-language');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForSelector('body.mobile-layer');
   await page.evaluate(async () => (await import('/js/mobile/navController.js')).dockTo('workbench'));
   await page.locator('[data-me-entry]').click();
-  await page.waitForSelector('[data-page="me"].live #neblink-logout');
+  await page.waitForSelector('[data-page="me"].live [data-device-signout]');
   const beforeLogout = logoutRequests;
   const transitionRequest = page.waitForRequest(req => req.url().includes('/api/neblink/auth/end-session'));
-  await page.locator('[data-page="me"].live #neblink-logout').click();
+  await page.locator('[data-page="me"].live [data-device-signout]').first().click();
   await transitionRequest;
   check(logoutRequests === beforeLogout + 1, 'desktop to mobile account binds visible logout exactly once');
-  // Mobile-rendered settings must regain its desktop account card on restoration.
+  // 账户栏整件退役：手机/桌面两档设置页恒无账号卡（不是隐藏 ⇒ 移动层也不复述）。
   await page.evaluate(async () => {
     const nav = await import('/js/mobile/navController.js');
     nav.dockTo('workbench'); nav.pushPage('settings');
   });
   await page.waitForSelector('[data-page="settings"].live #settings-content');
-  check(await page.locator('#settings-content #neblink-logout').count() === 0, 'mobile settings omits retained desktop account');
+  check(await page.locator('#settings-content [data-panel-group="account"], #settings-content #account-card').count() === 0, 'mobile settings has no account column');
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.waitForFunction(() => !document.body.classList.contains('mobile-layer'));
-  await page.waitForSelector('#settings-content #neblink-logout');
-  check(await page.locator('#settings-content #account-card').count() === 1, 'mobile to desktop restores full account card');
+  await page.waitForSelector('#settings-content #cfg-language');
+  check(await page.locator('#settings-content [data-panel-group="account"], #settings-content #account-card, #settings-content .neblink-account-ro').count() === 0, 'desktop settings has no account column');
   await page.route('**/api/neblink/status', route => route.fulfill({ json: { loggedIn: false, peers: [] } }));
   await page.evaluate(async () => (await import('/js/neblink.js')).refreshNeblink());
-  await page.waitForFunction(() => !document.querySelector('#settings-content #neblink-logout'));
-  check(await page.locator('#settings-content .neblink-login-section').count() === 1, 'desktop account refresh survives mobile owner teardown');
+  await settle(page);
+  check(await page.locator('#settings-content [data-panel-group="account"], #settings-content #account-card, #settings-content .neblink-login-section').count() === 0, 'settings re-render keeps account column retired');
   check(session.errors.length === 0, 'no JS errors after desktop return');
   writeFileSync(join(out, `${engine}-page-readings.json`), JSON.stringify({ hero, head, empty, filled, errors: session.errors, network: session.netErrors, checks, failures, captures }, null, 2));
   await context.close();

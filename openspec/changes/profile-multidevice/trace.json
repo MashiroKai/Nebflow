@@ -12,9 +12,10 @@
         "src/main/scala/nebflow/gateway/NeblinkRoutes.scala"
       ],
       "tests": [
-        "tests/profile-multidevice.spec.mjs",
-        "tests/profile-devices-geometry.spec.mjs",
-        "tests/profile-multidevice-video.mjs"
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": ": per-device independent sign-out is scoped and isolated"
+        }
       ]
     },
     {
@@ -25,8 +26,10 @@
         "src/main/scala/nebflow/gateway/NeblinkRoutes.scala"
       ],
       "tests": [
-        "tests/profile-multidevice.spec.mjs",
-        "tests/profile-multidevice-video.mjs"
+        {
+          "path": "tests/profile-devices-geometry.spec.mjs",
+          "name": "device"
+        }
       ]
     },
     {
@@ -36,7 +39,10 @@
         "src/main/resources/web/js/profileDevices.js"
       ],
       "tests": [
-        "tests/profile-multidevice.spec.mjs"
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": "mobile: one status tick repaints every live device list, not just the first"
+        }
       ]
     },
     {
@@ -49,8 +55,10 @@
         "src/main/resources/web/js/mobile/meFace.js"
       ],
       "tests": [
-        "scripts/check-component-contract.mjs",
-        "tests/profile-multidevice.spec.mjs"
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": ": device list shows name / platform / recent activity / status / current device"
+        }
       ]
     },
     {
@@ -60,8 +68,10 @@
         "src/main/resources/web/js/profileDevices.js"
       ],
       "tests": [
-        "tests/profile-multidevice.spec.mjs",
-        "tests/profile-devices-geometry.spec.mjs"
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": ": device list shows name / platform / recent activity / status / current device"
+        }
       ]
     },
     {
@@ -73,9 +83,14 @@
         "src/main/resources/web/js/settingsIdentity.js"
       ],
       "tests": [
-        "tests/mobile-topbar.spec.mjs",
-        "tests/profile-multidevice.spec.mjs",
-        "tests/settings-identity-card.spec.mjs"
+        {
+          "path": "tests/profile-multidevice.spec.mjs",
+          "name": ": profile is a single page — no edit action, no subpages"
+        },
+        {
+          "path": "tests/settings-identity-card.spec.mjs",
+          "name": "identity"
+        }
       ]
     },
     {
@@ -83,13 +98,13 @@
       "scenario": "DIS-SCN-007",
       "implementation": [
         "openspec/changes/profile-multidevice/design.md",
-        "js/profileDevices.js",
+        "src/main/resources/web/js/profileDevices.js",
         "src/main/scala/nebflow/gateway/NeblinkRoutes.scala"
       ],
       "tests": [],
       "manual": {
-        "reason": "The claim is a written scope statement (which domain a change touches, with source locations), not an executable behaviour. Console sessions carry no device id in GatewaySessionStore.SessionRecord, so no test can assert the boundary; the source reading is the evidence.",
-        "steps": "Read openspec/changes/profile-multidevice/design.md and compare it with js/profileDevices.js (device identity readout and sign-out scoping), src/main/scala/nebflow/gateway/NeblinkRoutes.scala:546-590 (device-scoped route) and the SessionRecord definition (no device id field).",
+        "reason": "The claim is a written scope statement (which domain a change touches, with source locations), not an executable behaviour. Console sessions carry no device id in the gateway session record, so no test can assert the boundary; the source reading is the evidence.",
+        "steps": "Read openspec/changes/profile-multidevice/design.md and compare it with src/main/resources/web/js/profileDevices.js (device identity readout and sign-out scoping), src/main/scala/nebflow/gateway/NeblinkRoutes.scala (device-scoped route) and the session-record definition (no device id field).",
         "expected": "The writing names the device identity source and the sign-out scope with file:line, and states console-session transparency as the boundary of the change instead of leaving it implicit."
       }
     }

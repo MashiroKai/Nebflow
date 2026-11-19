@@ -199,6 +199,33 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
       rootCtx(resources, system, parentSid)
     )
 
+  test("nonexistent external delegate mail returns a clear not-found error"):
+    val system = ActorSystem("external-mail-not-found")
+    for
+      resources <- mkResources(system, hang = true)
+      result <- continuationMail(resources, system, "not-found-parent", "external-codex-doesnotexist")
+      _ <- system.stopAll
+    yield
+      assert(result.isLeft, result.toString)
+      val error = result.swap.toOption.get.message
+      assert(error.contains("DELEGATE_NOT_FOUND"), error)
+      assert(!error.contains("null"), error)
+
+  test("external registry entry without actor ref returns an explicit error, not a null dereference"):
+    val id = "external-mail-null-ref-regression"
+    val parent = "external-mail-parent"
+    val system = ActorSystem("external-mail-null-ref")
+    for
+      resources <- mkResources(system, hang = true)
+      _ <- seedDeadDelegate(resources, id, parent)
+      _ <- IO.blocking(DelegateRegistry.put(DelegateRegistry.find(id).get.copy(executor = "unknown-external-adapter")))
+      _ <- resources.agentRegistry.update(_ + (id -> nebflow.actor.ExternalAgentRecord.build(id, parent, parent, 0L)))
+      result <- continuationMail(resources, system, parent, id)
+      _ <- system.stopAll
+    yield
+      assert(result.isLeft, result.toString)
+      assert(result.swap.toOption.get.message.contains("EXTERNAL_ADAPTER_MISSING"), result.toString)
+
   // ── (1) wiring：原位续后同一 id 复活，监督者锚定原父会话的活引用 ─────────
 
   test(

@@ -183,7 +183,31 @@ function emitChainChange() {
 let chainSectionSeq = 0;
 
 let panelEl = null; // the overlay element while the panel is open
-let panelMode = 'unified'; // 'unified' | 'separate'
+// ── 模式：unified（全部跟随主会话）/ separate（分开配置）────────────────────
+// 模型配置两模式批（2026-11-18 作者逐字：「然后就是模型配置 也应该像/model一样
+//   有两种模式 要么全部跟随主会话 然后才是分开配置」）。
+// 单一真相：本模块的 panelMode —— /model 面板的 mp-modes 与设置页「模型（按会话
+// 类别）」节的两模式控件**读写同一份**（两面任一切换，另一面即时同态）；持久化
+// 走 localStorage（key('model_mode')），默认 'unified'（= 作者要的默认档，也与
+// 修前 /model 的初值逐字相同 ⇒ 面板侧零行为改变）。
+// 与数据的关系（回答「谁为准」）：模式只是**视图选择**，不是配置值 —— 真正的
+// 配置（每个会话类别的模型链）仍以服务端 GET/PUT /api/agents/:role/model 为准，
+// 两面共用同一份 roleState + putChain 保存通道；本批不改任何保存语义。
+const MODE_KEY = key('model_mode');
+/** @returns {'unified'|'separate'} */
+function readStoredMode() {
+  try { return localStorage.getItem(MODE_KEY) === 'separate' ? 'separate' : 'unified'; }
+  catch { return 'unified'; } // 隐私模式 / 无存储：退回默认档
+}
+let panelMode = readStoredMode(); // 'unified' | 'separate'
+/** @type {Set<() => void>} */
+const modeListeners = new Set();
+/** 订阅模式变化（设置页节的同步腿；/model 面板自带 mp-modes 就地重绘）。 */
+export function onModelModeChange(fn) { modeListeners.add(fn); return () => modeListeners.delete(fn); }
+function emitModeChange() {
+  for (const fn of [...modeListeners]) { try { fn(); } catch { /* 单监听异常不阻断其余 */ } }
+}
+export function modelMode() { return panelMode; }
 // 弹窗退场批③：手机层角色下钻态（点角色头进该角色全屏配置；返回回列表）。
 let drilledRole = null;
 let panelVisibility = null; // the banner + followers conditional-display pair
@@ -604,7 +628,12 @@ function settingsModelCard(title, id, status) {
 }
 
 function renderSettingsRoleSelector(container, refreshTarget = container) {
-  for (const role of ROLES) {
+  // 两模式（2026-11-18）：unified = 只画**一个**控件（主会话模型，覆盖全部会话
+  // 类别）；separate = 逐个类别画（修前行为）。ROLES[0] = 'Nebula'（主会话），
+  // 其余跟随类别的状态在下方 note 行里逐字列出——不是「少画了几个控件」，是
+  // 「跟随」这件事本来就不需要控件（/model 面板同口径：separate 才铺 per-role 块）。
+  const list = panelMode === 'unified' ? ROLES.slice(0, 1) : ROLES;
+  for (const role of list) {
     const st = roleState.get(role);
     const row = settingsModelCard(roleLabel(role), `model-role-select-${role}`);
     row.dataset.role = role;
@@ -701,8 +730,69 @@ function renderChainSectionDivergedNote(container) {
   note.textContent = t('model.divergedBar', { roles });
 }
 
+/**
+ * 设置页「模型（按会话类别）」节的两模式控件（模型配置两模式批 2026-11-18）。
+ * 复用 /model 面板的同一对类（.mp-modes / .mp-mode-btn，= 全站唯一两模式控件形态）
+ * + 设置页本地的落位类（.set-modes，见 settingsRows.css）——零第二套控件。
+ * 状态单点 = 本模块 panelMode（/model 面板与本节读写同一份，任一切换两面同态）。
+ * @param {HTMLElement} container #model-chain-section-body
+ */
+function renderSessionModeControl(container) {
+  let box = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-modes'));
+  if (!box) {
+    box = document.createElement('div');
+    box.id = 'model-chain-modes';
+    box.className = 'mp-modes set-modes';
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-label', t('settings.modelChainDisclosureTitle'));
+    for (const mode of ['unified', 'separate']) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'mp-mode-btn';
+      btn.dataset.mode = mode;
+      btn.textContent = mode === 'unified' ? t('model.modeUnified') : t('model.modeSeparate');
+      btn.addEventListener('click', () => setMode(mode));
+      box.appendChild(btn);
+    }
+    container.insertBefore(box, container.firstChild);
+  }
+  for (const btn of box.querySelectorAll('.mp-mode-btn')) {
+    const on = btn.getAttribute('data-mode') === panelMode;
+    btn.classList.toggle('on', on);
+    btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+  }
+}
+
+/**
+ * unified 档的「谁在跟随」读数行（**诚实面**）：只列**真的在跟随**的类别
+ * （= 服务端链为空的 follower），几类就写几类；没有一类在跟随时整行撤除。
+ * 🔴 修前本行把四类 follower **一律**写成「跟随主会话」，与同节上方的分叉注记
+ * （renderChainSectionDivergedNote：「任务分发器 · node · subagent 已独立配置，
+ * 不受主链影响」）**同屏自相矛盾** —— 同一类别被同时断言「已独立配置」与
+ * 「跟随主会话」。两行都读同一份 roleState（`chain` 字段），故一行是真相、一行
+ * 是假话。读数未就绪（四类里任一没有 data）时不发言，避免加载期误报。
+ */
+function renderFollowSummary(container) {
+  let note = /** @type {HTMLElement|null} */ (container.querySelector('#model-chain-follow-note'));
+  const loaded = FOLLOWER_ROLES.every((r) => roleState.get(r)?.data);
+  if (panelMode !== 'unified' || !loaded) { note?.remove(); return; }
+  const forked = new Set(forkedRoles());
+  const names = FOLLOWER_ROLES.filter((r) => !forked.has(r)).map(roleLabel).join(' · ');
+  if (!names) { note?.remove(); return; }
+  if (!note) {
+    note = document.createElement('div');
+    note.id = 'model-chain-follow-note';
+    note.className = 'mp-note mp-settings-follow-note';
+    const anchor = container.querySelector('#model-chain-diverged-note');
+    container.insertBefore(note, anchor ? anchor.nextSibling : container.firstChild);
+  }
+  note.textContent = t('settings.modelModeUnifiedNote', { roles: names });
+}
+
 function renderChainSectionBody(container) {
+  renderSessionModeControl(container);
   renderChainSectionDivergedNote(container);
+  renderFollowSummary(container);
   const draft = document.createElement('div');
   renderSettingsRoleSelector(draft, container);
   const small = roleState.get(SMALL_LLM);
@@ -734,13 +824,28 @@ function renderChainSectionBody(container) {
       row.appendChild(retry);
     }
   }
-  draft.appendChild(row);
+  // 小模型槽只在 separate 档铺出：它不是「会话类别」（不进 ROLES / SETTABLE_ROLES），
+  // 但在 unified 档显示一个可写控件就等于「全部跟随主会话」这句话不成立。
+  // 注意必须**不进 draft**：下方的增量同步循环会把 draft 里缺席的既有行当成
+  // 「新行」补进容器（改前那段是「container 找不到就 append」语义）。
+  if (panelMode !== 'unified') draft.appendChild(row);
+  // Image generation remains a separate provider selector, not a conversation role.
+  let list = container.querySelector('.mp-group-list');
+  if (!list) {
+    list = document.createElement('div');
+    list.className = 'mp-group-list';
+    container.appendChild(list);
+  }
   // Keep unchanged rows and controls mounted so saves do not steal focus or scroll.
+  // 新行插在生图分组之前（改前 `container.appendChild` 在重渲后会把新行丢到生图
+  // 分组**之后**；两模式来回切会反复增生行，那条老毛病就成了可见错位）。
+  const wanted = new Set();
   for (const fresh of [...draft.children]) {
     const role = fresh.getAttribute('data-role');
-    const key = role ? `[data-role="${role}"]` : '#small-llm-settings-row';
-    const current = container.querySelector(key);
-    if (!current) container.appendChild(fresh);
+    const sel = role ? `[data-role="${role}"]` : '#small-llm-settings-row';
+    wanted.add(sel);
+    const current = container.querySelector(sel);
+    if (!current) container.insertBefore(fresh, list);
     else if (current.outerHTML !== fresh.outerHTML) {
       const active = current.contains(document.activeElement) ? document.activeElement : null;
       const activeId = active?.id;
@@ -751,12 +856,16 @@ function renderChainSectionBody(container) {
       else if (activeSelect) current.querySelector('select')?.focus({ preventScroll: true });
     }
   }
-  // Image generation remains a separate provider selector, not a conversation role.
-  let list = container.querySelector('.mp-group-list');
-  if (!list) {
-    list = document.createElement('div');
-    list.className = 'mp-group-list';
-    container.appendChild(list);
+  // 本档不该铺的行收掉（separate → unified 时四个跟随类别行 + 小模型行在场）。
+  for (const stale of [...container.querySelectorAll('.mp-settings-role-panel, #small-llm-settings-row')]) {
+    const role = /** @type {HTMLElement} */ (stale).getAttribute('data-role');
+    const sel = role ? `[data-role="${role}"]` : '#small-llm-settings-row';
+    if (!wanted.has(sel)) /** @type {HTMLElement} */ (stale).remove();
+  }
+  // 节内头三件的固定次序：模式控件 → 分歧注记 → 跟随说明（倒序搬到队首即目标序）。
+  for (const sel of ['#model-chain-follow-note', '#model-chain-diverged-note', '#model-chain-modes']) {
+    const el = container.querySelector(sel);
+    if (el) container.insertBefore(el, container.firstChild);
   }
   renderSwitchGroups(list, { settings: true });
 }
@@ -784,7 +893,12 @@ export function mountModelChainSection(container) {
   const off = onModelChainChange(() => {
     if (alive && container.isConnected) void refreshChainSection(container);
   });
-  return () => { alive = false; off(); };
+  // 两模式同步腿（模型配置两模式批）：/model 面板里切模式 ⇒ 本节即时同态
+  // （本来就是同一份 panelMode，这里只需重画；反向已由 setMode 的 emit 覆盖）。
+  const offMode = onModelModeChange(() => {
+    if (alive && container.isConnected) renderChainSectionBody(container);
+  });
+  return () => { alive = false; off(); offMode(); };
 }
 
 // ── 生图 切换分组（jev-imagegen-align-llm 批 2026-11-02，作者令第 4 条；
@@ -1166,13 +1280,17 @@ async function refreshPanel() {
 }
 
 function setMode(mode) {
-  panelMode = mode;
+  panelMode = mode === 'separate' ? 'separate' : 'unified';
+  try { localStorage.setItem(MODE_KEY, panelMode); } catch { /* 隐私模式：本次会话仍生效 */ }
+  // 就地重绘 /model 面板的两个模式钮（面板未开 ⇒ 零命中，改由订阅面自绘）。
   panelEl?.querySelectorAll('.mp-mode-btn').forEach(btn => {
-    const on = btn.dataset.mode === mode;
+    const on = btn.dataset.mode === panelMode;
     btn.classList.toggle('on', on);
     btn.setAttribute('aria-pressed', on ? 'true' : 'false');
   });
   renderPanel();
+  // 设置页「模型（按会话类别）」节的同步腿（模型配置两模式批）：两面同态。
+  emitModeChange();
 }
 
 function buildPanel() {
@@ -1184,8 +1302,8 @@ function buildPanel() {
       <div class="mp-header">
         <span class="mp-title">${esc(t('model.title'))}</span>
         <div class="mp-modes" role="group" aria-label="${esc(t('model.title'))}">
-          <button type="button" class="mp-mode-btn on" data-mode="unified" aria-pressed="true">${esc(t('model.modeUnified'))}</button>
-          <button type="button" class="mp-mode-btn" data-mode="separate" aria-pressed="false">${esc(t('model.modeSeparate'))}</button>
+          <button type="button" class="mp-mode-btn${panelMode === 'unified' ? ' on' : ''}" data-mode="unified" aria-pressed="${panelMode === 'unified' ? 'true' : 'false'}">${esc(t('model.modeUnified'))}</button>
+          <button type="button" class="mp-mode-btn${panelMode === 'separate' ? ' on' : ''}" data-mode="separate" aria-pressed="${panelMode === 'separate' ? 'true' : 'false'}">${esc(t('model.modeSeparate'))}</button>
         </div>
         <button type="button" class="mp-close panel-btn" title="×"><svg viewBox="0 0 12 12" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6"/></svg></button>
       </div>

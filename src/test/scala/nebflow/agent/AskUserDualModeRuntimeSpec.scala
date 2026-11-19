@@ -467,14 +467,24 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
         sharedResources = Some(resources),
         toolCallId = "askhost-call-1"
       )
+      groupedContext = context.copy(projectName = Some("project"), flowChainId = Some("chain"))
       fiber <- AskHostTool.call(
-        JsonObject("question" -> "Choose a safe option".asJson), context
+        JsonObject("question" -> "Choose a safe option".asJson), groupedContext
       ).start
+      _ <- waitForMailbox("askhost-root-session")
+      second <- AskHostTool.call(
+        JsonObject("question" -> "Choose a safe option".asJson),
+        groupedContext.copy(sessionId = Some("askhost-worker-2"))
+      ).start
+      _ <- IO.sleep(500.millis)
+      groupedRows <- AskHostLedger.recover
+      _ = assertEquals(groupedRows.size, 1, "同链同项目同问题必须只有一条待答")
       pending <- waitForMailbox("askhost-root-session")
       (injected, held) <- MailboxDrain.drainBarrierFace("askhost-root-session", outstanding = 1)
       _ = assertEquals(held, 0)
       _ = assertEquals(injected.map(_.source), List("askhost"))
       _ = assert(MailboxDrain.mailboxMessage(injected).toString.contains("Choose a safe option"))
+      _ = assertEquals(pending.size, 1, "合并请求不可重复投递")
       entry = pending.head
       event = entry.event
       _ = assertEquals(event.source, "askhost")
@@ -492,12 +502,14 @@ class AskUserDualModeRuntimeSpec extends CatsEffectSuite:
       replyInput = JsonObject("correlationId" -> correlationId.asJson, "decision" -> "Use option A".asJson)
       firstReply <- AskHostReplyTool.call(replyInput, rootContext)
       result <- fiber.joinWithNever
+      result2 <- second.joinWithNever
       _ <- AskHostLedger.markDelivered(correlationId)
       duplicateReply <- AskHostReplyTool.call(replyInput, rootContext)
       conflictReply <- AskHostReplyTool.call(JsonObject("correlationId" -> correlationId.asJson, "decision" -> "different".asJson), rootContext)
       _ = assert(firstReply.isRight && duplicateReply.isRight, s"duplicate reply failed: $duplicateReply")
       _ = assert(conflictReply.isLeft, "conflicting decisions must not be silently accepted")
       _ = assertEquals(result, Right("Use option A"), s"correlated AskHost reply did not complete the worker call (correlation=$correlationId)")
+      _ = assertEquals(result2, Right("Use option A"))
     yield ()
     check.guarantee(IO {
       nebflow.core.LlmLogWriter.setEnabled(previousLlmLog)

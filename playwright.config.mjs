@@ -63,7 +63,23 @@ const instanceBacked = [
   'queuepos-detail.spec.mjs',
   // session-rail / clientconn-wake / askuser-lockline-history / askinput-off-pending-text
   // 是独立脚本（②），本就不在收集面；其 CI 编排见 ci.yml frontend-smoke。
+  // attachment-persistence：P0「已发送的文件过一会失效」回归批（2026-11-18）——
+  // 断言面横跨服务端落盘授权（/uploads/<sid>/<file> 200）与前端历史恢复腿，
+  // 自足 mock 表达不了（需真 WS 发件 + 真 owner 台账 + 真 403/200）。
+  'attachment-persistence.spec.mjs',
 ];
+
+// ③ `tests/*.test.mjs` = node:test / 独立 runner 单测（不是 Playwright 套件），
+// 被收集器 import 时顶层即执行：`delegate-chain-throttle.test.mjs` 顶层
+// `new vm.SourceTextModule` 直接 TypeError ⇒ 整轮收集 exit 1 + `Error: No tests found`。
+// 它有闸门归属：scripts/run-checks.mjs 点名（须带 --experimental-vm-modules）。
+// （另一个同类 `bgagent-mobile-detail-retirement.test.mjs` 已于 2026-11-19 普查收编批
+// 判定弃用并 `git rm` —— 自述 NOT RUN、需真浏览器 harness；其 testIgnore 条目一并删除，
+// 配置不留死条目。）
+// 2026-11-19 普查收编批的前后收集证据见 /Users/kaiyu/stand-evidence/gate-collection-20261119/。
+standaloneScripts.push(
+  'delegate-chain-throttle.test.mjs',
+);
 
 const testIgnore = [...standaloneScripts];
 if (process.env.PW_SELFCONTAINED_ONLY === '1') testIgnore.push(...instanceBacked);

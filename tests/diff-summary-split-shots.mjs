@@ -195,8 +195,17 @@ for (const scheme of ['dark', 'light']) {
   ok(`[${scheme}] ④ 旧 master-detail 不在 DOM（.fcv/.fcv-nav = 0）`, navGone === 0 && fcvGone === 0);
   const headTxt = await page.locator('.canvas-tab-pane[data-type="filechanges"] .fcv-filehead').innerText();
   ok(`[${scheme}] ③ canvas 焦点 = 首文件`, /main\.js/.test(headTxt), headTxt.replace(/\s+/g, ' '));
-  const diffRows = await page.locator('.canvas-tab-pane[data-type="filechanges"] .nf-diff-row').count();
-  ok(`[${scheme}] ③ diff 行在场（≥20）`, diffRows >= 20, `rows=${diffRows}`);
+  // 迁移批 2026-11-19：阅读面渲染权移交共享组件（js/diffView）⇒ 判据从「.nf-diff-row
+  // DOM 行数」改为「**文档**行数 ≥20 + 视口虚拟化实证」（D9；旧读数在虚拟化底座下
+  // 无意义，非放水——文档行数仍为精确下限断言）。
+  const diffState = await page.evaluate(() => {
+    const host = document.querySelector('.canvas-tab-pane[data-type="filechanges"] .fcv-dvhost .nf-dv-editor');
+    const api = host && host.__nfDiffApi;
+    return api ? { docLines: api.view.state.doc.lines, mounted: document.querySelectorAll('.canvas-tab-pane[data-type="filechanges"] .cm-line').length } : null;
+  });
+  ok(`[${scheme}] ③ diff 文档全量（≥20 行）+ 渲染在场`,
+    !!diffState && diffState.docLines >= 20 && diffState.mounted > 0,
+    JSON.stringify(diffState));
   await page.screenshot({ path: join(OUT, `2-panel-canvas-${scheme}.png`) });
   await page.locator('#canvas-panel').screenshot({ path: join(OUT, `3-canvas-${scheme}.png`) });
 

@@ -197,7 +197,14 @@ final case class SecretSlotSpec(
   idx: Int,
   secretName: Option[String] = None,
   ephemeral: Boolean = false,
-  ttlSec: Option[Int] = None
+  ttlSec: Option[Int] = None,
+  /**
+   * 可查询批（2026-11-18）：本题落库时可带的说明与关键词标签。零值字段——
+   * 描述的是「这个凭据干什么用」；值只在 `askUserAnswer` 帧的 `secretSlots`
+   * 键里，本类型仍只是「哪几题、按什么名字落」。
+   */
+  description: Option[String] = None,
+  tags: List[String] = Nil
 )
 
 /** askucancel 批（2026-10-08）：`CancelRequest` 的裁决载荷（经 `reply` 回调用方）。 */

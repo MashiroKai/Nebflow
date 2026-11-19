@@ -714,6 +714,41 @@ object Defaults:
     sys.props.getOrElse("nebflow.dispatcher.idleWindowMs", (4 * 60 * 60 * 1000L).toString).toLong
 
   /**
+   * 分发器**唤醒看门狗**静默阈值（`nebflow.dispatcher.wakeWatchdogMs`，默认 **2 分钟**；
+   * dispatcher-hang 修复批 2026-11-18）。
+   *
+   * 语义：delegate 作用域引擎（dispatcher 模式的链都挂在这里）每 ~30s tick 检查一次
+   * 「作用域图上有节点（终态或非终态）∧ 根会话（= dispatcher 本人）registry 状态
+   * Idle ∧ 距**锚点**（图上任何节点时间戳 / 根会话 agent 侧活动 / 上次看门狗唤醒，
+   * 三者取最大）已静默 ≥ 本阈值」⇒ 注入一条 fallback 唤醒（`ImmediateInput`，与
+   * 节点终态通知同通道族），驱动 dispatcher 继续推进或收口汇报。
+   *
+   * 默认 2 分钟的依据：正常链推进的最慢合法节拍 = 30s 引擎 tick + 5s 通知打包窗 +
+   * 秒级 turn 往返，三者之和 ≪ 1 分钟；2 分钟 = 「长期无人推进」的可辨下界
+   * （事故形态实测静默 2h+），且与 [[DispatcherIdleWindowMs]]（4h 保活拆除）量级
+   * 解耦——本看门狗管「该动不动」，保活窗管「该拆不拆」，互不越界。
+   *
+   * 唤醒次数**有界**（见 [[DispatcherWakeWatchdogMaxWakes]]，默认 3 次）：每次链面
+   * 出现新进展（图上时间戳前进）预算重置；耗尽后落一条**可读结论**事件
+   * （`dispatcher-wake-watchdog` outcome=exhausted）并停止注入——绝不无限骚扰、
+   * 也绝不静默挂死。**`≤ 0` = 关闭看门狗**（回滚开关，与 `DispatcherIdleWindowMs`
+   * 的「`≤0` = 关闭保活」同款措辞）。每次调用现读（spec/运维可即时翻转）。
+   */
+  def DispatcherWakeWatchdogMs: Long =
+    sys.props.getOrElse("nebflow.dispatcher.wakeWatchdogMs", (2 * 60 * 1000L).toString).toLong
+
+  /**
+   * 分发器唤醒看门狗**单静默期预算**（`nebflow.dispatcher.wakeWatchdogMaxWakes`，
+   * 默认 **3**；dispatcher-hang 修复批 2026-11-18）：同一个静默期内最多注入的
+   * fallback 唤醒条数。3 = 「两次自然恢复机会 + 一次最后确认」——链真死时第 1~3
+   * 次唤醒分别覆盖「通知被吞 / turn 中途死亡 / 派发遗漏」三类单点丢失，仍无进展即
+   * 判「非唤醒可解」，落 exhausted 结论交人工/上层注意，而不是无限重试。
+   * `< 1` 归一为 1（防 0 把结论腿也关掉）。每次调用现读。
+   */
+  def DispatcherWakeWatchdogMaxWakes: Int =
+    math.max(1, sys.props.getOrElse("nebflow.dispatcher.wakeWatchdogMaxWakes", "3").trim.toInt)
+
+  /**
    * Dispatcher session lifetime **anchor** (taskunify merge batch 2026-09-24, ruling d①
    * "pure task-terminal anchor").
    *
@@ -1942,6 +1977,19 @@ object Defaults:
    */
   def LlmConnectTimeoutSec: Int =
     sys.props.getOrElse("nebflow.hardRecovery.connectTimeoutSec", "30").toInt
+
+  /**
+   * LLM 直连绕过本机代理（direct-connect 批，作者令 2026-11-19 16:06
+   * 「可以加进去。把我配置的llm 都改直连吧」）：默认 **true**——引擎 JVM 从
+   * macOS 系统代理继承 `http(s).proxyHost=127.0.0.1:7890`，每个新连接白付
+   * ~1.0s（同端点直连 p50 0.396s vs 代理 1.313s，N=15/臂实测）。true 时
+   * `llm.providers.*.baseUrl` 的 host 全部走直连（NO_PROXY），其余 host 仍
+   * 回落系统代理；false = **完全回到本批前现状**（两处 HttpClient 均不设
+   * `.proxy`，沿用默认选择器）——回滚开关，**重启后生效**。见
+   * [[nebflow.llm.LlmProxyRouting]]。
+   */
+  def LlmDirectConnect: Boolean =
+    sys.props.getOrElse("nebflow.llm.directConnect", "true").toBoolean
 
   // ---- 记忆检索库自动入库（memory-recall 批 2026-10-22）----
   //

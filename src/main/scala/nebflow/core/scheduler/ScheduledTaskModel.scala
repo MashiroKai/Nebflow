@@ -6,19 +6,9 @@ import io.circe.derivation.{Configuration, ConfiguredCodec}
 import java.time.{Instant, ZoneId, ZonedDateTime}
 import java.util.UUID
 
-/** Structured decision metadata attached to a todo. Secret values must never be stored here. */
-case class TodoDecision(
-  question: String,
-  options: List[String] = Nil,
-  multiSelect: Boolean = false,
-  allowOther: Boolean = false,
-  secret: Boolean = false,
-  expiresAt: Option[Long] = None
-)
-
-object TodoDecision:
-  given Configuration = Configuration.default.withDefaults
-  given Codec[TodoDecision] = ConfiguredCodec.derived
+// `TodoDecision` / `DecisionOption` / `DecisionMedia` 已迁至本包
+// [[TodoDecisionModel]]（待办数据模型与命名规范批 2026-11-18）：决策/选项/媒体
+// 是同一份线格式，模型与校验（[[TodoTaxonomy]]）同处一地，避免「两张表两处改」。
 
 /** A scheduled task attached to a session — fires once or on a recurring schedule. */
 case class ScheduledTask(
@@ -137,7 +127,12 @@ case class ScheduledTask(
   source: Option[String] = None,
   /** Store-owned monotonic version; legacy rows start at zero. Never ordered by trigger time. */
   revision: Long = 0L,
-  /** Optional decision metadata; absent on legacy and ordinary todos. */
+  /**
+   * 结构化决策（选项集）——**待办面的必备形态**（待办数据模型批 2026-11-18，作者令
+   * 「每个待办必须有选项」；模型见 [[TodoDecisionModel]]，强制点见
+   * [[TodoTaxonomy.validateCreate]]）。None = 无决策（存量行 / 提醒面 / 定时任务面
+   * 一律 None，缺键零迁移）。
+   */
   decision: Option[TodoDecision] = None
 ):
   /** true = 待办面（周期浮出直至销账），false = 定时任务面（现状）。 */
@@ -207,7 +202,11 @@ object ScheduledTask:
      *  查看细节」）：待办面 = detail（2026-11-05 起），定时任务面 = description。
      *  **缺键/空白 ⇒ None**（旧调用方不传 = 逐字节现状，零迁移）。
      *  末位默认参数 ⇒ 全部既有位置/命名调用零改动。 */
-    detail: Option[String] = None
+    detail: Option[String] = None,
+    /** 决策选项集（待办数据模型批 2026-11-18）：**写侧强制**非空（待办面）——
+     *  本工厂只做归一化，判定归 [[TodoTaxonomy.validateCreate]]（调用方在 create
+     *  之前调用它）。末位默认参数 ⇒ 全部既有位置/命名调用零改动。 */
+    decision: Option[TodoDecision] = None
   ): ScheduledTask =
     val normalizedKind = kind.map(_.trim.toLowerCase).filter(_.nonEmpty)
     val isTodo = normalizedKind.contains(KindTodo)
@@ -227,7 +226,12 @@ object ScheduledTask:
       kind = normalizedKind.filter(_ == KindTodo), // 非 "todo" 值一律归定时任务面
       condition = condition.map(_.trim).filter(_.nonEmpty),
       project = project.map(_.trim).filter(_.nonEmpty),
-      priority = clampPriority(priority)
+      priority = clampPriority(priority),
+      // 决策选项集：归一化（补空白 id、去空白选项）后落库；「待办必须有选项」的
+      // 判定**不在这里**（工厂是纯构造器，拒绝面归 TodoTaxonomy.validateCreate），
+      // 这里只保证库内形态干净：空白 title 的选项直接丢弃（不可能由写侧产生——
+      // 写侧先拒；防的是手改文件）。
+      decision = decision.map(TodoTaxonomy.normalizeDecision).filter(d => d.options.nonEmpty)
     )
 
   end create

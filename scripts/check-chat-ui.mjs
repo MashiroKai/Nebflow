@@ -168,11 +168,20 @@ if (process.argv.includes('--dump')) {
 }
 
 // ── 消费方要求（chat-ui-unify 批既有项 + chat-ui-package 批①②③新形态）──────
+// ⚠ 选区 Ask 抽取批（2026-11-18，作者令④「复用既有组件/链路不另造第二套」）：
+// ask 输入条/气泡两个节点的**建造点**从 js/askDock.js 迁到共用件 js/askDialog.js
+// （选区 Ask = 同一对话框内核的第二消费者）。判据口径不变（造 ask 面的节点必须
+// 走 chatUi.js 工厂），被检文件跟着建造点走 —— 钉在旧文件上会让这条要求检查一个
+// 已不再建造该节点的配置方（假绿）。
 const requirements = [
-  ['js/chat/durationBadges.js', /chatFooter\(\)/, /chatFooterDivider\(\)/, /chatFooterTime\(\)/],
-  ['js/messages.js', /chatFooter\('fm-msg-meta'\)/, /chatFooterDivider\('fm-msg-divider'\)/, /chatFooterTime\('fm-msg-time'/, /bubbleClass\(/, /fmBubbleRowClass\(/],
+  // 消息条目统一批 2026-11-18：footer 基座（chatFooter* 原语）只在 js/chatItem.js
+  // 装配；两面（durationBadges / messages.js）改为消费 chatItem.messageFooter，
+  // 只给字段/排列变体（extraClass / timeClass / dividerClass / badges / actions）。
+  ['js/chatItem.js', /chatFooter\(/, /chatFooterDivider\(/, /chatFooterTime\(/],
+  ['js/chat/durationBadges.js', /messageFooter\(/, /from '\.\.\/chatItem\.js'/],
+  ['js/messages.js', /messageFooter\(/, /extraClass: 'fm-msg-meta'/, /dividerClass: 'fm-msg-divider'/, /timeClass: 'fm-msg-time'/, /bubbleClass\(/, /fmBubbleRowClass\(/],
   ['js/messages/fmComposer.js', /composer\(\{\s*variant: 'compact'/],
-  ['js/askDock.js', /chatComposerClass\('ask'\)/, /askBubbleClass\(m\.role\)/],
+  ['js/askDialog.js', /chatComposerClass\('ask'\)/, /askBubbleClass\(m\.role\)/],
   ['js/main.js', /from '\.\/chatSearch\.js'/, /^import '\.\/chatMount\.js';$/m],
   ['js/chatMount.js', /composer\(\{ variant: 'main', mount: composerMount \}\)/, /searchShell\(\{ mount: searchMount \}\)/, /data-chatui-mount/],
   ['js/chat.js', /mainBubbleClass\('user'/, /mainBubbleClass\('ai'\)/],
@@ -186,7 +195,7 @@ for (const [path, ...patterns] of requirements) {
 for (const [path, pattern] of [
   ['js/chat/durationBadges.js', /className\s*=\s*['"]duration-badge(?:-time|-divider)?['"]/],
   ['js/messages/fmComposer.js', /['"]fm-input-bar nf-glass['"]|className\s*=\s*['"]cfg-input fm-input/],
-  ['js/askDock.js', /class:\s*['"](?:ask-input nf-glass|ask-bub nf-glass)/],
+  ['js/askDialog.js', /class:\s*['"](?:ask-input nf-glass|ask-bub nf-glass)/],
   ['js/messages.js', /`fm-msg-bubble \$\{/],
 ]) if (pattern.test(read(path))) errors.push(`${path}: duplicated migrated primitive`);
 

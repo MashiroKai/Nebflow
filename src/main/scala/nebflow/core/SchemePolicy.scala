@@ -128,11 +128,7 @@ object SchemePolicy:
    *      auto-populated).
    */
   def readSeedChain(): List[String] =
-    val fromFallback = readFallbackSection()
-    if fromFallback.nonEmpty then fromFallback
-    else
-      val fromLlmModel = readGlobalChainDefault()
-      if fromLlmModel.nonEmpty then fromLlmModel else readFromProviders()
+    readFallbackSection()
 
   /**
    * `llm.fallback` of the config file (empty when absent / malformed). Hot-read.
@@ -163,17 +159,32 @@ object SchemePolicy:
    * chain or an unconfigured install all degrade to the seed chain.
    */
   def resolveModel(name: String, ownModel: Option[AgentModelConfig]): (AgentModelConfig, String) =
-    val own = ownModel.filter(hasChain)
-    if own.isDefined && isSettable(name) then (own.get, OwnChainSource)
-    else if name == NebulaName then seedChain() // Nebula has no one to follow
-    else
-      nebulaChain().filter(hasChain) match
-        case Some(primary) => (primary, NebulaChainSource)
-        case None => seedChain()
+    resolveFromInputs(
+      name,
+      ownModel,
+      nebulaChain(),
+      readFallbackSection().headOption.map(r => AgentModelConfig(Some(r), Nil))
+    )
 
-  private def seedChain(): (AgentModelConfig, String) =
-    val chain = readSeedChain()
-    (AgentModelConfig(chain.headOption, chain.drop(1)), SeedSource)
+  /** Shared selection policy: only an explicit preferred ref authorizes a request. */
+  def resolveFromInputs(
+    name: String,
+    ownModel: Option[AgentModelConfig],
+    mainModel: Option[AgentModelConfig],
+    globalModel: Option[AgentModelConfig]
+  ): (AgentModelConfig, String) =
+    def explicit(c: AgentModelConfig): Boolean = c.preferred.exists(_.trim.nonEmpty)
+    ownModel
+      .filter(explicit)
+      .filter(_ => isSettable(name))
+      .map(_ -> OwnChainSource)
+      .orElse(mainModel.filter(explicit).map(_ -> NebulaChainSource))
+      .orElse(globalModel.filter(explicit).map(_ -> SeedSource))
+      .getOrElse(AgentModelConfig.empty -> SeedSource)
+
+  /** Historical guess, for diagnostics only; never used to authorize a request. */
+  def legacySeedCandidate(): Option[String] =
+    readGlobalChainDefault().headOption.orElse(readFromProviders().headOption)
 
   /** Global model chain from nebflow.json (`llm.model.default` + `fallbacks`). */
   private def readGlobalChainDefault(): List[String] =

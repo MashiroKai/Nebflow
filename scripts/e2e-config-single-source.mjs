@@ -22,7 +22,7 @@
 
 import { chromium } from 'playwright';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
@@ -32,8 +32,8 @@ const REPO = fileURLToPath(new URL('..', import.meta.url));
 const GATEWAY_PORT = Number(process.env.NF_CFG_PORT || 8799);
 const BASE = `http://127.0.0.1:${GATEWAY_PORT}`;
 const HOME = process.env.NF_CFG_HOME || join(tmpdir(), `nf-cfg-single-source-${Date.now()}`);
-// Evidence = an EvidenceTemp batch (manifest.json + no .active ⇒ the engine's
-// 7-day TTL sweep can reclaim it); a fully green run deletes the batch outright.
+// Script batches live in the legacy shared namespace and are retained; the
+// engine only sweeps its own process-private evidence root.
 const EVID = process.env.NF_CFG_EVIDENCE || evidenceBatch('stand', 'config-single-source');
 const JAR = (() => {
   const dir = join(REPO, 'target');
@@ -336,12 +336,8 @@ async function main() {
 
   await stopGateway(HOME);
   log(`\n[e2e] ${failures === 0 ? 'ALL PASS' : `${failures} FAIL`} — evidence: ${EVID}`);
-  // Success: retire-then-delete the evidence batch (green runs leave nothing
-  // behind). Failure keeps it for diagnosis; the batch is non-active with a
-  // manifest, so the TTL sweep still bounds its life to 7 days.
-  if (failures === 0) {
-    try { rmSync(EVID, { recursive: true, force: true }); } catch { /* best effort */ }
-  }
+  // Keep evidence even on success: overrides and shared legacy batches are not
+  // exclusively owned by this process and must never be recursively deleted.
   process.exit(failures === 0 ? 0 : 1);
 }
 

@@ -200,7 +200,7 @@ export function bgAgentKindFromSession(sessionId) {
  *  Defensive fallback for envelopes lacking rootSessionId (old backend /
  *  REST-invoked tools): key on msg.sessionId as-is. */
 
-/** Row state machine (spec §3): done > stuck > waiting > frozen > error > idle > active.
+/** 行状态机（spec §3）：done > stuck > waiting > frozen > error > idle > active。
  *  `waiting`（held-receipt 投递可靠性批 2026-10-21 fix 4）：delegate ready-to-merge
  *  显式停靠态（引擎 Waiting 状态 / delegateWaiting 帧）——「等合并轮提醒」的显式
  *  等待，不再貌似 Idle 完成。
@@ -214,7 +214,46 @@ export function bgAgentKindFromSession(sessionId) {
  *  时钟（now − spawnedAt，实测 690h45m ≈ 29 天——不是单位/时区错，是这条**本已不在跑**
  *  的 29 天龄记录被当成在飞行）。同一份 store 数据的另一条呈现链 [[bgStoreChildState]]
  *  早已有这一档（模型粒度批 2026-11-06 20:36）——两条链判据打架正是病根；本条把主行径
- *  补齐到同一判据（词表复用既有 `delegate.pendingRecovery`，不新增第三套提示体系）。 */
+ *  补齐到同一判据（词表复用既有 `delegate.pendingRecovery`，不新增第三套提示体系）。
+ */
+/** 时长合理性上界（陈旧后台代理面板批 2026-11-08 · 作者报障「面板挂着 690h」）：
+ *  7 天。引擎侧同值同理由（`WebSocketRoutes.MaxPlausibleDurationMs`）。超过即视为
+ *  不可信读数（时钟漂移 / 时间戳错配 / 陈旧滞留行）⇒ **不渲染时长**，绝不显示一个
+ *  荒谬值（690h = 28.75 天正是这条尺子要拦下的形态）。 */
+export const BG_DURATION_MAX_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * 面板行运行时长显示判定（单点纯函数——行渲染与 15s ticker 共用，禁第二套判据）。
+ *
+ * 三态：
+ *   · `ended`（引擎下发终态硬事实：底层任务记录已终态）⇒ **冻结的真实时长**
+ *     （`durationMs` 引擎侧单点推导；非法/越界 = 无可信读数 ⇒ `ms=null` 不渲染），
+ *     且不再走表（`live=false`）。
+ *   · 在飞（未 ended、起点已知）⇒ `now - startedAt`；但超过 `BG_DURATION_MAX_MS`
+ *     ⇒ 拒收（`ms=null`）——无上界的「运行中」挂在面板上就是本批要根除的形态
+ *     （旧后端 / 无任务记录的 Flow 行没有 ended 事实可依，本尺子是它们唯一的防线）。
+ *   · 起点未知（startedAt 非正数）⇒ 无可算，`ms=null`（旧行为：不渲染时长）。
+ *
+ * @param {any} info 面板行（`startedAt` / `ended` / `durationMs` 三字段）
+ * @param {number} now 当前时刻（epoch ms；显式入参 = 可测）
+ * @returns {{ms: (number|null), live: boolean, ended: boolean}} 显示时长与是否走表
+ */
+export function bgUptimeDisplay(info, now) {
+  const ended = !!(info && info.ended === true);
+  const started = Number(info && info.startedAt) || 0;
+  if (ended) {
+    const dur = Number(info && info.durationMs);
+    if (info && info.durationMs != null && Number.isFinite(dur) && dur >= 0 && dur <= BG_DURATION_MAX_MS) {
+      return { ms: dur, live: false, ended: true };
+    }
+    return { ms: null, live: false, ended: true };
+  }
+  if (started <= 0) return { ms: null, live: false, ended: false };
+  const ms = Math.max(0, Number(now) - started);
+  if (ms > BG_DURATION_MAX_MS) return { ms: null, live: false, ended: false };
+  return { ms, live: true, ended: false };
+}
+
 function bgRowState(info) {
   const execution = taskExecutionPresentation(info);
   if (execution) return execution.state;
@@ -235,6 +274,13 @@ function bgRowState(info) {
   if (isFailedSnapshotStatus(info.status)) return 'error';
   const st = info.status || '';
   if (st === 'Idle' || st === 'WaitingForUser' || st === 'idle') return 'idle';
+  // 面板行活性位批（2026-11-18 · 方案 A）：**引擎权威活性位在场时它说了算**——快照行每行
+  // 随帧带 `active`（后端 WebSocketRoutes.panelRowActivity 单点：注册表在册 ∧
+  // status==Processing ∧ 未停靠/未冻结/未重启中断）。位为假 ⇒ 本行不是在跑（末档
+  // 'active' 从此**只**留给引擎说在跑的行：幽灵行不再靠本地状态词猜）；位为真 ⇒ 其 status
+  // 必为 Processing，本就走末档 'active'，行为与今天逐字相同。位**缺席**（旧后端 / durable
+  // store 行不带此键）⇒ 同样逐字与今天一致——不许把「未提供」当 false 一棍打死。
+  if (info.engineActive === false) return 'idle';
   return 'active';
 }
 
@@ -339,7 +385,12 @@ export function armBgUptimeTick(view) {
     if (dd && !dd.classList.contains('hidden')) {
       dd.querySelectorAll('.bg-task-uptime[data-started-at]').forEach(el => {
         const started = Number(el.getAttribute('data-started-at'));
-        if (started > 0) el.textContent = fmtUptime(Date.now() - started);
+        // 陈旧后台代理面板批（2026-11-08）：ticker 与行渲染共用同一把上界尺子
+        // （bgUptimeDisplay）——越界读数不再改写成荒谬时长，就地转「无时长」读数。
+        // 已结束（冻结）行不带 data-started-at，天然不进本选择器。
+        const up = bgUptimeDisplay({ startedAt: started, ended: false }, Date.now());
+        if (up.ms != null) el.textContent = fmtUptime(up.ms);
+        else el.textContent = '—';
       });
       // bg-panel-ghost-resync 批（2026-10-28）：面板在开 ⇒ 每第 2 拍（30s，与
       // BG_SNAPSHOT_STALE_MS 对齐）回填一次 activeAgents 快照。幽灵行清道夫
@@ -936,11 +987,35 @@ function bgDelegateGroups(entries, bucketSid) {
   // 整组让位（全量结构走链视图下钻），桶空时结构投影照旧（既有形态零回归）。
   for (const g of groups) {
     const present = new Set(g.children.map((c) => c.sid));
-    for (const c of listDelegateChildren(g.sid)) {
-      const cid = String((c && c.taskId) || '');
-      if (cid && !present.has(cid)) {
-        g.children.push({ type: 'store', child: c, sid: cid });
-        present.add(cid);
+    // Recursively project persisted descendants as well as direct children. A
+    // nested delegate is a live child row in this group; its own SubTask/node
+    // records must remain under that row instead of disappearing when the
+    // nested delegate is no longer a top-level group. Identity and ownership
+    // come from taskId/parentSessionId, never display titles.
+    const pendingOwners = [g.sid];
+    const visitedOwners = new Set();
+    while (pendingOwners.length) {
+      const ownerSid = String(pendingOwners.shift() || '').replace(/^team-/, '');
+      if (!ownerSid || visitedOwners.has(ownerSid)) continue;
+      visitedOwners.add(ownerSid);
+      ensureChildren(ownerSid, BG_SCOPE_CHILD_TTL_MS);
+      for (const c of listDelegateChildren(ownerSid)) {
+        const cid = String((c && c.taskId) || '').replace(/^team-/, '');
+        if (!cid) continue;
+        // A live projection may already represent this child; still walk its
+        // persisted children, but never add a duplicate row.
+        if (!present.has(cid)) {
+          g.children.push({ type: 'store', child: c, sid: cid });
+          present.add(cid);
+        }
+        pendingOwners.push(cid);
+      }
+      // Live child rows can be nested delegates with their own persisted store
+      // descendants even if no parent store row exists for them.
+      for (const live of g.children) {
+        if (live.type === 'live' && String(live.info?.parentSessionId || '').replace(/^team-/, '') === ownerSid) {
+          pendingOwners.push(live.sid);
+        }
       }
     }
     for (const c of bgDelegateScopeChainRows(g.sid)) {
@@ -2154,16 +2229,36 @@ export function bgTaskRowHtml(id, info, opts = {}) {
   // 被读成自相矛盾（7h04m vs 415分钟）⇒ 长空闲态（stale 注记在场）时 uptime
   // 槽让位：注记自带时长，行尾不再挂第二个时钟。短空闲/waitingBg 注记不触发
   // （无并列时长，形态不变）。
-  const idleDetail = (rowState === 'idle' || rowState === 'waiting') ? bgIdleDetail(info) : null;
+  // 陈旧后台代理面板批（2026-11-08）：时长判定先于空闲细分——已结束行不适用
+  // 「空闲 N 分钟」注记（它不空闲，它结束了），且「已结束 + 真实时长」必须能上屏
+  // （旧序里长空闲注记会让位时长槽，恰恰把本批要显示的真实时长挤掉）。
+  const up = bgUptimeDisplay(info, Date.now());
+  const idleDetail = (!up.ended && (rowState === 'idle' || rowState === 'waiting')) ? bgIdleDetail(info) : null;
   const longIdle = !!(idleDetail && idleDetail.stale);
   // Uptime (spec §2.2): relative duration while non-terminal; hidden once done.
-  // 陈旧面板行批（2026-11-18）：口径加一条一一**不在跑的行不挂运行时钟**。待恢复行
+  // 陈旧面板行批（2026-11-18）：口径加一条——**不在跑的行不挂运行时钟**。待恢复行
   // （执行已停、等人工恢复）不是「已运行 N」——29 天龄的记录会渲染出 690h45m 这种荒谬
   // 读数（本批要根除的形态）。时长算术本身不改（now − startedAt，epoch ms 差，与时区
   // 无关）；在飞行照旧走表，空闲/等待行照旧走表。
-  const notRunning = terminal || rowState === 'pending-recovery';
-  const uptimePart = (!notRunning && info.startedAt && !longIdle)
-    ? '<span class="bg-task-uptime" data-started-at="' + info.startedAt + '">' + escapeHtml(fmtUptime(Date.now() - info.startedAt)) + '</span>'
+  // 面板行活性位批（2026-11-18 · 方案 A）：**引擎权威活性位为假 ⇒ 不挂运行时钟**（与
+  // bgRowState 同一判据、同一保守侧）——停靠/冻结/重启中断行不是「已运行 N」；位缺席
+  // （旧后端 / durable store 行）⇒ 判据逐字与今天一致（不许把「未提供」当 false）。
+  // 陈旧后台代理面板批（2026-11-08）：时长显示走 bgUptimeDisplay 单点——已结束行
+  // 出**冻结的真实时长**（显式「已结束」标 + 引擎推导的 durationMs，荒谬值拒收），
+  // 在飞行照旧走表（越上界同样拒收）；冻结行**不带 data-started-at** ⇒ 15s ticker
+  // 不会再把它改写成走表读数（面板生命周期 e2e 仍按 data-started-at 寻址在飞行）。
+  // 两批合流（落队 2026-11-19）：**在飞分支再叠 notRunning** —— 活性位为假（待恢复 /
+  // 引擎说不在跑）时不许走表；已结束行的冻结时长不受 notRunning 影响（`ended` 是更硬的
+  // 终态事实，且该行 live=false、无 data-started-at ⇒ 本就不会走表）。
+  const notRunning = terminal || rowState === 'pending-recovery' || info.engineActive === false;
+  const endedPart = up.ended
+    ? '<span class="bg-task-ended" title="' + escapeHtml(t('subagents.endedTip')) + '">'
+      + escapeHtml(t('subagents.ended')) + '</span>'
+    : '';
+  const uptimePart = (!longIdle && up.ms != null && (up.ended || (up.live && !notRunning)))
+    ? '<span class="bg-task-uptime' + (up.ended ? ' bg-task-uptime-frozen' : '') + '"'
+      + (up.live ? ' data-started-at="' + info.startedAt + '"' : ' data-ended="1"')
+      + '>' + escapeHtml(fmtUptime(up.ms)) + '</span>'
     : '';
   // 待恢复行的**逐行恢复入口**（与 store 子条目行同款单点：同一徽标类、同一 REST 缝
   // [[delegateApi.restoreDelegate]]、接线在 renderBgAgentDropdown 的 [data-bg-restore]
@@ -2400,6 +2495,7 @@ export function bgTaskRowHtml(id, info, opts = {}) {
         namePart +
         bgStatusHtml(statusState, { label: statusLabel, title: execution?.reason || chainTip, tone: statusTone }) +
         pendingRecoveryChip +
+        endedPart +
         uptimePart +
       '</div>' +
       '<div class="bg-task-line bg-task-row-line2 bg-task-badges">' +

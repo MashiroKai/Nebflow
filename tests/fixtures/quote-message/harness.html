@@ -70,8 +70,12 @@
     setActiveView(chatViews.primary);
     chatViews.primary.setSession('quote-harness');
     state.activeSessionId = 'quote-harness';
-    state.ws = { readyState: 1, send: () => {} };
+    // 出口帧记账：会话 socket 默认**记录**每一次 send（选区 Ask 批 2026-11-18：探针要
+    // 读 `{type:'ask'}` 真心跳帧）；需要自定义 socket 的用例仍可 __setSelectionSocket。
+    window.__sentFrames = [];
     window.__setSelectionSocket = socket => { state.ws = socket; };
+    state.ws = { readyState: 1, send: data => { try { window.__sentFrames.push(JSON.parse(data)); } catch { /* 非 JSON 帧不入账 */ } } };
+    window.__lastFrameOfType = type => window.__sentFrames.filter(f => f.type === type).slice(-1)[0] || null;
 
     const chatMod = await import(`${WEB}/chat.js`);
     const popMod = await import(`${WEB}/popArtifacts.js`);
@@ -239,6 +243,92 @@
       await new Promise(r => setTimeout(r, 20));
       return ok;
     };
+
+    /* ── 选区 Ask（2026-11-18 选区收敛批）探针 ─────────────────────────────
+     * 选区面 = 气泡**同侧**那枚 `.selection-ask-btn`（真实模块 selectionAsk.js）；
+     * 点击 ⇒ 共用件 Ask 对话框（askDialog.js 的第二份实例，类 `.ask-dock.selection-dock`）。
+     * 探针只造真 Selection（Range）并按真实事件名派发（selectionchange/mouseup）。 */
+    const selMod = await import(`${WEB}/selectionAsk.js`);
+    selMod.initSelectionAsk();
+
+    /** 在 rowId 的气泡文本里选 [start, start+len) 并触发与真实选区同一组事件。 */
+    window.__selectTextInRow = (rowId, start = 0, len = 6) => {
+      const row = window.__rowById(rowId);
+      if (!row) return { ok: false, why: 'no row' };
+      const bubble = row.querySelector('.bubble');
+      if (!bubble) return { ok: false, why: 'no bubble' };
+      const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node && !node.textContent.trim()) node = walker.nextNode();
+      if (!node) return { ok: false, why: 'no text' };
+      const range = document.createRange();
+      range.setStart(node, Math.min(start, node.textContent.length));
+      range.setEnd(node, Math.min(node.textContent.length, start + len));
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+      document.dispatchEvent(new Event('selectionchange'));
+      document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+      return { ok: true, text: range.toString() };
+    };
+
+    window.__selBubbleOf = () => {
+      const sel = window.getSelection();
+      if (!sel || !sel.rangeCount) return null;
+      const c = sel.getRangeAt(0).startContainer;
+      const el = c.nodeType === 1 ? c : c.parentElement;
+      return el ? el.closest('.bubble') : null;
+    };
+
+    /** 选区面读数：按钮在场/侧别/几何 + 选区菜单是否出场（② 收敛判据 + ③ 同侧判据）。 */
+    window.__selAskProbe = () => {
+      const btn = document.querySelector('.selection-ask-btn');
+      const shown = !!btn && !btn.hidden;
+      const bubble = window.__selBubbleOf();
+      const r = shown ? btn.getBoundingClientRect() : null;
+      const br = bubble ? bubble.getBoundingClientRect() : null;
+      const chatEl = document.getElementById('chat');
+      const cr = chatEl ? chatEl.getBoundingClientRect() : null;
+      const menu = document.querySelector('.fm-context-menu');
+      return {
+        btnPresent: shown,
+        btnSide: shown ? btn.dataset.askSide : null,
+        bubbleSide: shown ? btn.dataset.bubbleSide : null,
+        btnRect: r ? { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top) } : null,
+        bubbleRect: br ? { left: Math.round(br.left), right: Math.round(br.right), width: Math.round(br.width), mid: Math.round(br.left + br.width / 2) } : null,
+        chatMid: cr ? Math.round(cr.left + cr.width / 2) : null,
+        gapRight: r && br ? Math.round(r.left - br.right) : null,
+        gapLeft: r && br ? Math.round(br.left - r.right) : null,
+        menuCount: document.querySelectorAll('.fm-context-menu').length,
+        menuLabels: menu ? Array.from(menu.querySelectorAll('button')).map(b => b.textContent) : [],
+        dlgCount: document.querySelectorAll('.ask-dock.selection-dock').length,
+        dlgOpen: !!document.querySelector('.ask-dock.selection-dock') && !document.querySelector('.ask-dock.selection-dock').classList.contains('closed'),
+        selected: window.getSelection() ? window.getSelection().toString() : '',
+      };
+    };
+
+    /** 点按钮 ⇒ 共用件对话框打开；返回面板类名/答案文本。 */
+    window.__selAskClick = async () => {
+      const btn = document.querySelector('.selection-ask-btn');
+      if (!btn) return { ok: false, why: 'no btn' };
+      btn.click();
+      await new Promise(r => setTimeout(r, 40));
+      const panel = document.querySelector('.ask-dock.selection-dock');
+      return {
+        ok: !!panel,
+        className: panel ? panel.className : null,
+        open: !!panel && !panel.classList.contains('closed'),
+        answer: panel ? (panel.querySelector('.ask-col') || {}).textContent || '' : '',
+        input: panel ? (panel.querySelector('textarea') || {}).value || '' : '',
+        frame: window.__lastFrameOfType('ask'),
+      };
+    };
+
+    /** 帧回包注入（同 main.js 的普通 ask 路由：selectionAskFrame 在标准渲染之前消费）。 */
+    window.__selAskFrame = (type, msg) => selMod.selectionAskFrame(type, msg);
+    window.__selectionAskOpen = () => selMod.isSelectionAskOpen();
+    window.__selectionAskClose = () => selMod.closeSelectionAsk();
+    window.__selectionAskSnapshot = () => (window.getSelection() ? window.getSelection().toString() : '');
 
     /* ── 纯引用帧闸（空引用不发）读数：input.js 懒加载（其静态依赖链只挂监听，
      *    无导入期媒体/WS 副作用 —— 2026-10-09 批核对）；视图 dom 补 sendBtn /

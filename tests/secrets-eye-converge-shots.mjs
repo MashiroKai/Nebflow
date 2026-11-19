@@ -15,7 +15,7 @@
 //      不同（lucide→feather 眼形统一，本批唯一预期视觉变化）。
 //
 // 运行：TAG=before SHOTS_DIR=… node tests/secrets-eye-converge-shots.mjs
-// （静态服务 + WS/REST mock 模式照搬 tests/design-language-shots.mjs 先例）
+// （静态服务 + WS/REST mock 模式照搬 tests/panel-design-shots.mjs 先例）
 
 import { chromium } from 'playwright';
 import { readFileSync, mkdirSync } from 'node:fs';
@@ -33,7 +33,7 @@ const SHOTS_DIR = join(process.env.SHOTS_DIR || resolve(HERE, '../evidence/20261
 mkdirSync(SHOTS_DIR, { recursive: true });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ── 静态服务（真实 web/ 树，同 design-language-shots.mjs）──────────────
+// ── 静态服务（真实 web/ 树，同 panel-design-shots.mjs）──────────────
 const MIME = {
   '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
   '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
@@ -53,7 +53,7 @@ const server = createServer((req, res) => {
 });
 await new Promise((r) => server.listen(PORT, '127.0.0.1', r));
 
-// ── Mock（metadata-only 密钥契约，同 design-language-shots.mjs）────────
+// ── Mock（metadata-only 密钥契约，同 panel-design-shots.mjs）────────
 const SECRETS = [
   { name: 'GITHUB_TOKEN', size: 40, mtime: Date.now() - 86400e3, mode: '0600', refs: ['nebflow-website'] },
   { name: 'OPENAI_API_KEY', size: 51, mtime: Date.now() - 3600e3, mode: '0644', refs: [] },
@@ -140,7 +140,7 @@ for (const scheme of ['light', 'dark']) {
   await sleep(900);
 
   // ⓪ 打开设置页一次再关：#btn-open-secrets 由 renderSettings 挂载
-  // （design-language-shots.mjs 同款序列；直达点击会被 ?. 静默吞掉）
+  // （panel-design-shots.mjs 同款序列；直达点击会被 ?. 静默吞掉）
   await page.click('#settings-btn');
   await page.waitForSelector('#settings-overlay.on #settings-modal', { timeout: 8000 });
   await sleep(500);

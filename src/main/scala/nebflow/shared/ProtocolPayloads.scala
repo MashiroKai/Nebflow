@@ -161,3 +161,79 @@ object McpPermissionAnswer:
         upgradeMode = payload.hcursor.downField("upgradeMode").as[String].toOption
       )
     }
+
+/**
+ * Unified "model unavailable" card — the manual action the user picked on the
+ * ONE card every slot renders (model-fallback-card batch, author ruling
+ * 2026-11-18 14:37「统一的卡片进行汇报 由用户手动切换 并且切换卡片 也要有测试
+ * llm 功能」).
+ *
+ * Exactly three actions, for every slot (`small-llm` / `kernel` / `node` /
+ * `dispatcher` / `subagent`):
+ *   - `Test`    — run ONE minimal real call against `modelRef` (success/failure +
+ *                 latency + failure class) without leaving the card;
+ *   - `Switch`  — write `modelRef` into that slot's `model.preferred` in place
+ *                 (the same write the settings panel / `PUT /api/agents/:name/model`
+ *                 performs) and let the ORIGINAL request continue;
+ *   - `Dismiss` — leave the slot as-is (fail-closed upstream stands).
+ */
+enum ModelUnavailableAction:
+  case Test, Switch, Dismiss
+
+object ModelUnavailableAction:
+
+  /** Lenient wire parse (frontend sends lowercase ids; unknown => None: card retained). */
+  def parse(s: String): Option[ModelUnavailableAction] =
+    Option(s).map(_.trim.toLowerCase).collect {
+      case "test"    => Test
+      case "switch"  => Switch
+      case "dismiss" => Dismiss
+    }
+
+  /** Wire id (single spelling shared by card payload + answer frame). */
+  def wire(a: ModelUnavailableAction): String = a match
+    case Test    => "test"
+    case Switch  => "switch"
+    case Dismiss => "dismiss"
+
+/**
+ * Answer payload for the unified model-unavailable card.
+ *
+ * @param action        which of the three actions the user picked
+ * @param modelRef      `provider/model` target — the model to test (Test) or
+ *                      the model to switch the slot to (Switch); None = none chosen
+ * @param testOk        Test only: real-call verdict (None on the switch/dismiss legs)
+ * @param testLatencyMs Test only: measured latency of that minimal real call
+ * @param testFailure   Test only: failure classification + raw cause (None when ok)
+ */
+final case class ModelUnavailableAnswer(
+  action: ModelUnavailableAction,
+  modelRef: Option[String],
+  testOk: Option[Boolean] = None,
+  testLatencyMs: Option[Long] = None,
+  testFailure: Option[String] = None
+)
+
+object ModelUnavailableAnswer:
+
+  /** Shape check for `InteractionHub.answerCompletes` — a non-empty `action` is required. */
+  def decode(payload: Json): Option[ModelUnavailableAnswer] =
+    payload.hcursor.downField("action").as[String].toOption.flatMap(ModelUnavailableAction.parse).map { action =>
+      ModelUnavailableAnswer(
+        action = action,
+        modelRef = payload.hcursor.downField("modelRef").as[String].toOption.filter(_.trim.nonEmpty),
+        testOk = payload.hcursor.downField("testOk").as[Boolean].toOption,
+        testLatencyMs = payload.hcursor.downField("testLatencyMs").as[Long].toOption,
+        testFailure = payload.hcursor.downField("testFailure").as[String].toOption
+      )
+    }
+
+  def encode(a: ModelUnavailableAnswer): Json =
+    Json
+      .obj(
+        "action" -> Json.fromString(ModelUnavailableAction.wire(a.action))
+      )
+      .deepMerge(a.modelRef.fold(Json.obj())(r => Json.obj("modelRef" -> Json.fromString(r))))
+      .deepMerge(a.testOk.fold(Json.obj())(v => Json.obj("testOk" -> Json.fromBoolean(v))))
+      .deepMerge(a.testLatencyMs.fold(Json.obj())(v => Json.obj("testLatencyMs" -> Json.fromLong(v))))
+      .deepMerge(a.testFailure.fold(Json.obj())(v => Json.obj("testFailure" -> Json.fromString(v))))

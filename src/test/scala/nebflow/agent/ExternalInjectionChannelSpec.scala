@@ -141,6 +141,13 @@ class ExternalInjectionChannelSpec extends FunSuite:
       try os.remove.all(root)
       catch case _: Throwable => ()
 
+  test("failed broadcast is not reported as emitted"):
+    withStore { (store, _) =>
+      val result = InjectionChannel.deliver(store, _ => IO.raiseError(new RuntimeException("fixture")), Sid,
+        row("failure fixture", "delegate")).unsafeRunSync()
+      assertNotEquals(result, InjectionChannel.Outcome.Emitted, "failed broadcast must be observable")
+    }
+
   // ── 不许刷屏：去重/折叠 ────────────────────────────────────────────────
 
   test("⑥ 同来源同状态重复投递 ⇒ 折叠（零落盘零广播）；状态变化 ⇒ 追加"):

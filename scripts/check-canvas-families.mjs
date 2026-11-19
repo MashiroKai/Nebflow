@@ -31,7 +31,14 @@
 //   连 companion 登记都没有                       → `uncovered` ⇒ 红（声明与实测皆无来源）
 //
 // 另外给出**改前/改后数值对照**（radius 与 hover 声明）：
-//   --base <rev>  对照基线，缺省 `12eef94b1^`（canvas-button-unify 收编之前）。
+//   --base <rev>  对照基线，缺省 `6dfbbb574^`（canvas-button-unify 收编之前）。
+//   2026-11-19 ci-static-reds 批：缺省基线原为 `12eef94b1^`，而 `12eef94b1` 只存在于
+//   分支 `fix/canvas-button-unify`、**不是 main 的祖先**，托管 runner 的 checkout 只取被测
+//   ref 的历史 ⇒ 基线树取不到 ⇒ 恒以退出码 2 硬红。`6dfbbb574` 是同一笔收编在主线上的
+//   落点（提交信息逐字相同「Consolidate Canvas button chrome onto the shared button face」，
+//   `git merge-base --is-ancestor 6dfbbb574 main` = 0），故 `6dfbbb574^` 即「main 上的
+//   收编前状态」。两基线在本闸读取面上只影响下方对照表的数字（此表不参与归宿判定），
+//   已实测两者判定一致、均 exit 0。
 //   逐族扫 CSS 源树（改前树用 `git show <rev>:<path>` 取，不起服务、不碰运行实例），
 //   解析该族名下所有 `border-radius` 与 `:hover` 声明，令牌值沿 var() 链解析成
 //   最终字面量。数字是**源码声明值**，不是浏览器计算值（计算值口径见
@@ -47,7 +54,7 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const CSS_DIR = 'src/main/resources/web/css';
 const baseFlag = process.argv.indexOf('--base');
-const BASE = baseFlag > -1 ? process.argv[baseFlag + 1] : '12eef94b1^';
+const BASE = baseFlag > -1 ? process.argv[baseFlag + 1] : '6dfbbb574^';
 const outFlag = process.argv.indexOf('--out');
 const OUT = outFlag > -1 ? process.argv[outFlag + 1] : join(ROOT, 'evidence', 'canvas-button-unify-supplement', 'families');
 

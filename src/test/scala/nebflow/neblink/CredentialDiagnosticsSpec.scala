@@ -400,6 +400,21 @@ class CredentialDiagnosticsSpec extends FunSuite:
       "src/main/resources/web/js/locales/zh-CN.js",
       "src/main/resources/web/js/locales/en.js"
     ).map(f => f -> repoFile(f))
+    // 期望值同步到真实形态（2026-11-19 作者裁「同裁定①同一修法」，**产品零改动**）：
+    // 「登录账号」账户卡整件退役（作者支 `dcd0945e2`，我树落点 `957af85ba`）时，随卡片
+    // 一起从 zh/en **对称删除**的 6 个键在代码面已零引用。⇒ 本 spec 原先「`neblink.statusDegraded`
+    // 必须在场」的期望已陈旧（它断言的是**已被合法删掉的键**），改为同一边的**禁死键**断言：
+    // 这 6 键两份 locale 都不许再有。断言强度只增不减 —— 原 1 条陈旧 presence 断言 ⇒ 现
+    // 「6 键 × 2 文件」12 条带键名的 absence 断言；`'neblink.cleanupRelogin'` 仍需在场
+    // （activityBar 登录失败面仍在用）。
+    val retiredAccountCardKeys = List(
+      "neblink.loggedOutHint",
+      "neblink.statusDegraded",
+      "neblink.signedOutElsewhere",
+      "neblink.signedOutElsewhereHint",
+      "neblink.loggedInAs",
+      "settings.account"
+    )
     locales.foreach { (file, body) =>
       CD.all.foreach { f =>
         assert(body.contains(s"'login.reason.${f.code}':"), s"$file 缺 login.reason.${f.code}")
@@ -408,7 +423,9 @@ class CredentialDiagnosticsSpec extends FunSuite:
       assert(body.contains("'login.failureLine':"), s"$file 缺三段式模板键")
       assert(body.contains("'login.diagnosticCode':"), s"$file 缺诊断码行键")
       assert(body.contains("'neblink.cleanupRelogin':"), s"$file 缺清理并重登键")
-      assert(body.contains("'neblink.statusDegraded':"), s"$file 缺状态降级键")
+      retiredAccountCardKeys.foreach { k =>
+        assert(!body.contains(s"'$k':"), s"$file 遗留死键（账户卡已整件退役，代码面零引用）：$k")
+      }
     }
   }
 

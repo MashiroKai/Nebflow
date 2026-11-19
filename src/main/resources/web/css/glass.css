@@ -46,7 +46,7 @@
  *   ① 值       = css/stand-tokens.css 的 `--nf-glass-*` 段（设计令牌单一源）
  *   ② 类/配方  = 本文件 `.nf-glass` + 下方「成员登记表」（前端唯一工具类）
  *   ③ 机检     = scripts/check-glass-unify.mjs（门禁成员）
- *   ④ 词条     = design-language 插件 flat-button-spec 同族的 glass-spec.md
+ *   ④ 词条     = stand-dev 插件包内 flat-button-spec 同族的 glass-spec.md
  *                （插件侧术语条目，新人只看文档也能找到同一份标准）
  *
  * 唯一形态 = **近实底，但反映背景内容颜色**（参照物 = 主会话输入框，逐值同档）：
@@ -73,7 +73,15 @@
  * ═══════════════════════════════════════════════════════════════════════════ */
 .nf-glass,
 .glass,
-.glass-control {
+.glass-control,
+#input-bar {
+  /* 🔴 composer 统一批（2026-11-18）：主会话输入条外壳 `#input-bar` 的材质声明
+     并进**这一条**共享块（此前 `#queue-bar.visible` 之后另起一条 id 级 `#input-bar`
+     块 —— 同一套值写了两遍，正是「同一个壳换个选择器再画一遍材质」的分叉）。
+     并存口径：主输入条进本表（选择器特异性与旧 id 块逐值相同 = 计算值零漂移）；
+     消息三面 `.fm-input-bar` 由工厂挂 `.nf-glass` 类走同一块（js/chatUi.js
+     chatComposerClass('messages')）。第二处独立材质声明 =
+     scripts/check-glass-unify.mjs 的 G9 红。 */
   background: var(--nf-glass-input-bg);
   -webkit-backdrop-filter: var(--nf-glass-input-filter);
   backdrop-filter: var(--nf-glass-input-filter);
@@ -126,6 +134,9 @@
 .dvp-nd,
 .ds-edge-fade,
 .fcv-headpill,
+/* canvas 特质批（2026-11-19）：共享差异组件的顶部标题胶囊 —— 与 `.fcv-headpill` /
+   `.canvas-header` 同族（配方在本表，玻璃底/描边/折射细线在 css/diffView.css）。 */
+.nf-dv-title,
 .fm-fab,
 .fm-archive-panel,
 .fm-detail,
@@ -136,6 +147,12 @@
 body.mobile-layer #mobile-dock,
 /* Mobile canvas: only the active capsule owns glass, never the full band. */
 body.mobile-layer .mf-strip-chip.on::after,
+/* canvas-tab-reference 批（2026-11-18）：展开签内的「引用」钮**不带可见面** —— 作者令
+   同日飞书逐字「canvas引用按钮不要边框」；该面原为 `.mf-strip-quote::after` 内侧胶囊
+   （底取唯一材质 + 发丝边），实测其底色与它正下方签主胶囊面逐值相同（暗 `rgba(24,28,38,
+   0.16)` / 亮 `rgba(255,255,255,0.16)`）⇒ 去边框后它零贡献。故该面在 mobileLayer.css
+   整块退役，成员行随之删除（成员不许空转：没有面就没有第二份 blur 供给）。钮只剩图标 +
+   44px 命中盒；去边框前后的读数与特写见 evidence 的 compare/bordered-* 与 noborder-*。 */
 body.mobile-layer .mf-dots,
 body.mobile-layer .mf-swipe-ring,
 body.mobile-layer .mf-stack-view,
@@ -164,14 +181,21 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .flowmap-nav-bar,
 .delete-drop-zone,
 .session-ctx-menu,
 .cfg-modal,
-.cfg-toast,
 .plugins-card,
 .nb-toggle,
 #social-modal,
 .explorer-context-menu, .canvas-tab-context-menu, .fm-context-menu,
 .explorer-selection-bar,
 .explorer-pickup-bar,
-#canvas-panel,
+/* 桌面画布壳的材质层 = **壳的伪元素**，不是壳本体（glass-desktop-header 批
+   2026-11-18）。理由见 glass-spec.md §9「材质层重排律」：本面挂 backdrop-filter
+   ⇒ 本面成为 **backdrop root** ⇒ 其**后代**的 backdrop-filter 只能采到 root 自己
+   绘制的像素、采不到 root 的同级子件 ⇒ 面板里那枚 `.canvas-header` 的模糊整条
+   失效（实测 blur(0px) ≡ blur(24px) ≡ blur(60px)，正文原文从胶囊里穿出）。
+   把材质挪到 `#canvas-panel::before`（伪元素**不是**任何后代的祖先）后，表头恢复
+   真采样；面板自身的观感不变（壳底色 + 伪元素模糊，见 split.css 该伪元素的几何）。
+   几何/落位仍留在 split.css —— 本表只给配方。 */
+#canvas-panel::before,
 .canvas-header,
 .canvas-tab.active,
 .cr-capsule,
@@ -225,7 +249,11 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill,
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool,
-.canvas-zoom-bar {
+.canvas-zoom-bar,
+/* canvas 特质批（2026-11-19）：共享差异组件的审阅动作组（全部接受/全部拒绝 =
+   canvas 右下角控件）以**成员身份**并入这一条 —— 材质一份实现，几何留
+   css/diffView.css（口径同「材质归包、几何留面」）。 */
+.nf-dv-allgroup {
   background: var(--nf-glass-bg);
   -webkit-backdrop-filter: var(--nf-glass-input-filter);
   backdrop-filter: var(--nf-glass-input-filter);
@@ -399,7 +427,7 @@ html[data-theme="light"] {
      · 消费者 ①  `#header`          主会话顶栏（参照物）——几何/内部件留 css/chat.css
      · 消费者 ②  `.fm-modal-header` 好友/群/设备会话窗顶栏——几何/内部件留 css/friends.css
      · 令牌  = css/stand-tokens.css 的 `--nf-head-*` 段（高度/内距/圆角/玻璃底单源）
-     · 规范  = design-language 插件 glass-spec.md §7.2 登记面 T1 / T22（原稿 T21
+     · 规范  = stand-dev 插件包 glass-spec.md §7.2 登记面 T1 / T22（原稿 T21
        号位在 rebase 时被手机 canvas 玻璃带占用，两边并列保留、本面顺延 T22）
    收编文件清单（改这四面之一都要回到本块对账）：css/chat.css、css/friends.css、
    css/stand-tokens.css、css/glass.css（本块）。
@@ -425,18 +453,14 @@ html[data-theme="light"] {
    2026-11-06 20:12 作者令「主会话输入框的样式也变了，之前的就很好了」⇒ 基准件
    回归 recalibrate 前原配方（--nf-glass-input-*，stand-tokens.css 单源）；全局
    玻璃档（--nf-glass-* 一族与 --glass-bg）不动 —— 基准件是参照物本身，不随全局档走。
-   🔴 措辞钉（ask 面三修② 2026-11-11 实测修复）：本块注释正文里禁把「星号紧跟
+   🔴 composer 统一批（2026-11-18）：材质声明块已并进本文件顶部 `.nf-glass` 共享块
+   （`#input-bar` 进同一选择器表），本处只留 ::before 折射线 —— 材质与消息面同一条
+   声明（G8 把「第二处独立声明」判红）。
+   🔴 措辞钉（ask 面三修② 2026-11-11 实测修复）：注释里禁把「星号紧跟
    斜杠」的字面序列写进任何形如 `--x-*` 的 token 名后（旧稿在 `--nf-glass-*` 后
    直书该序列，注释在其后提前闭合，残文被当选择器垃圾 ⇒ 浏览器把整条 #input-bar
    规则连声明一起丢弃 = CSSOM 缺失、border/浮影消失）。防复活钉：tests/ask-glass-drag
    G1e。 */
-#input-bar {
-  background: var(--nf-glass-input-bg);
-  -webkit-backdrop-filter: var(--nf-glass-input-filter);
-  backdrop-filter: var(--nf-glass-input-filter);
-  border: 1px solid var(--glass-border);
-  box-shadow: var(--cv-shadow);
-}
 #input-bar::before,
 .fm-input-bar::before {
   content: '';
@@ -1005,7 +1029,53 @@ body.mobile-layer #g2-edge-fade {
   body.mobile-layer .mh-idhead-name,  body.mobile-layer #mobile-dock {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
-    background: var(--glass-bg);
+    /* ── 降级回落实底**一律不透明**（glass-runtime 批 2026-11-18，P0 作者报障）──
+       旧档本条写 `background: var(--glass-bg)`（= 唯一玻璃底，α .16）。α .16 是
+       **给模糊配的**：在没有 backdrop 采样的引擎里它只剩「有底色、没模糊、正文
+       原文穿出来」= 玻璃纸 —— 正是作者实拍「有些就是正常的不透字的毛玻璃效果，
+       而有些就是像这样透明的」里**透**的那一半。同屏「正常」的那一半是 `.nf-glass`
+       面（上面那条落不透明 `--color-surface`）；而 `--glass-bg` 的消费方恰好是
+       **圆钮族 `.g2-fab` / dock / 名字胶囊** —— 作者点名的那两枚 canvas 圆钮
+       就在这个名单里。故本条与 `.nf-glass` 档合并成同一条判据：降级 = 一律不透明。
+       正常引擎（支持 backdrop）零命中：本块是 `@supports not(...)`。 */
+    background: var(--color-surface);
+  }
+  /* 主输入条 / 队列条 = 基准件：降级同样落不透明实底（旧档只摘 blur、保留 α .16
+     底 = 同一种玻璃纸）。`:root` 前缀只为一个目的：压过后文非降级的 `#input-bar`
+     规则（同 id、声明序在后）—— 两条降级路径必须给出同一个答案。 */
+  :root #input-bar,
+  :root #queue-bar.visible {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--color-surface);
+  }
+  /* ── 成员登记表降级收口（glass-runtime 批 2026-11-18，P0 作者报障的系统面）──
+     上面两条只覆盖「作者可见族」（圆钮/dock/输入条/名字胶囊）。清点实测发现成员
+     表里还有若干面在降级档仍留 α .16 底 = 无模糊引擎里的玻璃纸
+     （check-glass-runtime.mjs R3 点出：手机胶囊 ::after / 页码点 / toast / 桌面四条
+     结构件）。此处按同一判据（降级 = 落不透明面 --color-surface）逐面收口；正常
+     引擎零命中（本块是 @supports not(...)）。用 `:root` 前缀只为压过后文/主题档
+     里同名的非降级声明（令牌值本身逐字不动 —— check-glass-unify G3/G7b 读的是
+     配方，不读降级档）。 */
+  :root body.mobile-layer .mf-strip-chip.on::after,
+  :root body.mobile-layer .mf-dots,
+  :root .nebflow-toast,
+  :root #activity-bar,
+  :root #sidebar,
+  :root #header,
+  :root #todo-island.tfl-card,
+  :root #canvas-panel,
+  :root .canvas-header {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--color-surface);
+  }
+  /* 材质层重排（glass-desktop-header 批 2026-11-18）：桌面画布壳的模糊已挪到
+     `::before`（见成员登记表该条）。降级档同摘 —— 壳本体落不透明 `--color-surface`
+     已在上一组；伪元素自身零底，只需摘模糊（缺此条 = 降级引擎里白跑一次 blur）。 */
+  :root #canvas-panel::before {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
   }
   /* 渐隐带降级档随 doc-ask-fade 批收编到 design-system.css `.ds-edge-fade`
      （@supports / html.no-backdrop 两处），此处不再单列 —— 防双源漂移。 */
@@ -1049,14 +1119,38 @@ html.no-backdrop .g2-pill:not(.g2-pill-primary),
 html.no-backdrop body.mobile-layer .mh-idhead-name,html.no-backdrop body.mobile-layer #mobile-dock {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
-  background: var(--glass-bg);
+  /* 见上一条 @supports 块同注（glass-runtime 批 2026-11-18）：降级回落实底一律
+     不透明 —— α .16 底在无模糊引擎里是「玻璃纸」（正文原文穿出）。 */
+  background: var(--color-surface);
 }
-/* The composer is the glass reference face; degraded engines lose blur but retain
-   its original near-opaque base instead of reverting it to the translucent global
-   overlay token. */
+/* The composer is the glass reference face; degraded engines lose blur, so the
+   fallback must be an OPAQUE surface — the translucent base (α .16) only reads as
+   glass while a backdrop blur is sampling it. */
 html.no-backdrop #input-bar,
 html.no-backdrop #queue-bar.visible {
-  background: var(--nf-glass-input-bg);
+  background: var(--color-surface);
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+/* 降级收口（glass-runtime 批 2026-11-18）：见上一条 @supports 块同注 —— 逐面收口成员
+   登记表里**漏点的面**（手机胶囊 ::after / 页码点 / toast / 桌面四条结构件），不给任何
+   面留「有底色、没模糊、原文穿出」的玻璃纸。 */
+html.no-backdrop body.mobile-layer .mf-strip-chip.on::after,
+html.no-backdrop body.mobile-layer .mf-dots,
+html.no-backdrop .nebflow-toast,
+html.no-backdrop #activity-bar,
+html.no-backdrop #sidebar,
+html.no-backdrop #header,
+html.no-backdrop #todo-island.tfl-card,
+html.no-backdrop #canvas-panel,
+html.no-backdrop .canvas-header {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background: var(--color-surface);
+}
+/* 材质层重排（glass-desktop-header 批 2026-11-18）：同上一组同注 —— 壳的模糊在
+   `::before` 上，降级档一并摘掉。 */
+html.no-backdrop #canvas-panel::before {
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
 }

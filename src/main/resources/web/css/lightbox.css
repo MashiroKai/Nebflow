@@ -201,6 +201,7 @@ img.nf-zoom-img { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   .nf-lightbox-canvas { transition: none; }
   .nf-lightbox-ctl { transition: none; }
+  .nf-lightbox-av { transition: none; }
 }
 
 /* ── 画廊模式（mobile-image-lightbox 批 2026-11-17）─────────────────────
@@ -220,7 +221,18 @@ body.mobile-layer.nf-lightbox-open .mobile-page-body { overflow: hidden; }
 
 /* 跟手拖动期间浏览器不得接管手势（滚动/边缘滑）：浮层内没有别的可滚内容。 */
 .nf-lightbox[data-nf-lb-gallery="on"] { touch-action: none; overflow: hidden; background: var(--ds-media-letterbox); }
-.nf-lightbox-av { max-width: var(--nf-lb-fit-w); max-height: var(--nf-lb-fit-h); }
+/* 视频/音频件（画廊腿）：与 img 同一套 contain 盒；缩放/平移由 js/lightbox.js 写
+   transform（媒体查看器缩放批 2026-11-18）。transform-origin 保持 CSS 默认 center
+   —— 那正是该模块的坐标约定（元素由浮层 flex 居中 ⇒ 元素中心 = 视口中心，缩放锚点
+   与边界公式都以此原点成立）。回弹/双击还原复用既有 200ms 过渡档，不另造动画引擎。 */
+.nf-lightbox-av {
+  max-width: var(--nf-lb-fit-w);
+  max-height: var(--nf-lb-fit-h);
+  transform-origin: center;
+  transition: transform 200ms ease, opacity 200ms ease;
+  will-change: transform;
+  -webkit-user-drag: none;
+}
 body.mobile-layer .nf-lightbox .nf-lightbox-close { display: flex; }
 
 /* 滑动切图的进场档：无过渡瞬移到对侧 44px，摘类后由既有 200ms 过渡滑回中位

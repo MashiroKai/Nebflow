@@ -83,15 +83,23 @@
       return true;
     };
 
-    /** Canvas 阅读器读数：首帧面（文件头/装载态）+ 已挂行数。 */
+    /** Canvas 阅读器读数：首帧面（文件头/装载态）+ 文档行数 vs 已挂 DOM 行数。
+     *  迁移批 2026-11-19（共享组件 js/diffView）：渲染权交 CodeMirror —— 「全量
+     *  必达」判据从「DOM 行数 = 总行数」改判为「**文档**行数 = 总行数 且 DOM 行数
+     *  远小于文档行数」（视口虚拟化，D9）。旧 `.nf-diff-row` 计量随之退役——
+     *  判据变更留痕：旧判据测的是自研分块渲染器的送达，新底座下该量已无意义，
+     *  非放水（文档行数仍是精确相等断言）。 */
     window.__readerState = () => {
       const pane = document.querySelector('#canvas-content .canvas-tab-pane[data-tab-id^="filechanges:"]');
       if (!pane) return { hasTab: false };
-      const view = pane.querySelector('.fcv-view');
+      const editor = pane.querySelector('.fcv-dvhost .nf-dv-editor');
+      const api = editor && editor.__nfDiffApi;
       return {
         hasTab: true,
         hasHead: !!pane.querySelector('.fcv-filehead'),
         loading: !!pane.querySelector('.nf-diff-loading'),
+        docLines: api ? api.view.state.doc.lines : 0,
+        mountedLines: pane.querySelectorAll('.cm-line').length,
         rows: pane.querySelectorAll('.nf-diff-row').length,
       };
     };
@@ -101,6 +109,27 @@
       const t0 = performance.now();
       requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - t0)));
     });
+
+    /** 首帧响应面观察器：点击前布下，记录「装载态是否曾出现过」——组件装载快时
+     *  一拍的采样会错过装载态，观察器不会（首帧必有响应面的强判据）。 */
+    window.__armLoadingWatch = () => {
+      window.__sawLoading = !!document.querySelector('#canvas-content .nf-diff-loading');
+      const host = document.getElementById('canvas-content');
+      const obs = new MutationObserver(() => {
+        if (document.querySelector('#canvas-content .nf-diff-loading')) window.__sawLoading = true;
+      });
+      obs.observe(host, { childList: true, subtree: true });
+      window.__loadingObs = obs;
+    };
+    window.__sawLoadingNow = () => !!window.__sawLoading
+      || !!document.querySelector('#canvas-content .nf-diff-loading');
+
+    /** 期望的「现文文档」行数：与共享组件的统一差异转换同式（ctx + add 行进现文）。 */
+    window.__expectedDocLines = (n) => {
+      let cur = 0;
+      for (let i = 0; i < n; i++) { const k = i % 3; if (k === 2 || k === 0) cur += 1; }
+      return cur;
+    };
 
     /** 面板 meta 槽读数（失败可见反馈断言面）。 */
     window.__metaState = () => {

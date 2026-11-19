@@ -568,6 +568,12 @@ export default {
   'messages.attachUploading': '上传中，暂不可下载',
   'messages.attachUnreadable': '附件状态不可判读，暂不可下载',
   'messages.attachUnnamed': '未命名附件',
+  // 手机端下载落点提示（mobile-download 批 2026-11-18 · 作者令「手机端的下载我不知道
+  // 存哪去了」）。复用既有通知栈（window.__showToast）呈现，零新提示样式。
+  'download.sharedToAlbum': '已打开系统分享面板 · 选「存储到照片」即入相册',
+  'download.sharedToFolder': '已打开系统分享面板 · 选「存储到文件」可指定保存位置',
+  'download.landedIosFiles': '已下载 · iPhone 上存于「文件」App ›「下载」',
+  'download.landedBrowserDir': '已下载到浏览器下载目录',
   // 附件预览（作者令 2026-09-15）：卡片可点面的无障碍名 + 两条**可见**降级文案。
   'messages.attachPreview': '预览',
   'messages.attachPreviewUnsupported': '暂不支持预览该类型：{name}',
@@ -783,6 +789,8 @@ export default {
   'todoComplete.title': '待办',
   'todoComplete.noMatch': '无匹配待办',
   'todoComplete.detailUnavailable': '这条待办不在当前列表里',
+  // 卡片点击腿（todo-card-click-left 批，2026-11-18）：输入框被拆除时不许静默。
+  'todoComplete.composerMissing': '找不到可输入的对话框，引用没插入',
   'slash.title': '斜杠命令',
   'modal.newSession': '新建会话',
   'modal.sessionName': '会话名称',
@@ -905,6 +913,10 @@ export default {
   'subagents.waitingBg': '等后台任务 ×{count}：{desc}（{dur}）',
   'subagents.waitingReceipts': '等子代理回执 ×{count}',
   'subagents.longIdle': '空闲 {mins} 分钟，无在飞工作',
+  // 陈旧后台代理面板批（2026-11-08）：底层任务记录已终态而注册表行滞留 ⇒ 行显式标
+  // 「已结束」，运行时长冻结为真实时长（荒谬值拒收、零渲染）。
+  'subagents.ended': '已结束',
+  'subagents.endedTip': '该会话已结束（任务记录已终态）——时长为真实运行时长，不再走表',
   'subagents.status.stuck': '卡死',
   'subagents.status.error': '失败',
   'subagents.status.frozen': '已冻结',
@@ -1349,10 +1361,14 @@ export default {
   'settings.modelChainTitle': '模型（按会话类别）',
   'settings.modelChainDisclosureTitle': '模型（按会话类别）',
   'settings.modelChainSectionHint': '各会话类别的模型与 /model 同步。',
+  // 模型配置两模式批（2026-11-18 作者逐字：「要么全部跟随主会话 然后才是分开配置」）：
+  // unified 档的诚实读数行——只列**真的在跟随**的类别（服务端链为空的 follower），
+  // 与同节上方「已独立配置，不受主链影响」的分叉注记读同一份状态，两行不自相矛盾。
+  'settings.modelModeUnifiedNote': '{roles} 跟随主会话。',
   'settings.modelRoleTabs': '选择会话类别',
   // /model 面板文案（modelcfg Phase 1）
   'model.title': '模型配置',
-  'model.modeUnified': '统一配置',
+  'model.modeUnified': '全部跟随主会话',
   'model.modeSeparate': '分开配置',
   'model.mainChain': '{agent} 主链',
   'model.mainChainDesc': '所有角色默认跟随此链',
@@ -1380,7 +1396,7 @@ export default {
   'model.saved': '已保存',
   'model.divergedBar': '{roles} 已独立配置，不受主链影响',
   'model.divergedView': '查看',
-  'model.seedNote': '未配置，将使用首个可用模型',
+  'model.seedNote': '未配置，请明确选择模型后再发起请求',
   'model.singleModelNote': '单模型：模型失效时会话进入失效态、静默等待恢复；可在子代理面板或具体对话框里切换模型',
   'model.loadFailed': '加载失败',
   'model.rateLimited': '请求过于频繁，{n} 秒后重试',
@@ -1414,7 +1430,6 @@ export default {
   'settings.advanced': '高级',
   'settings.editRawJson': '编辑原始 JSON',
   'settings.reload': '重新加载',
-  'settings.account': '账号',
   'settings.general': '通用',
   'settings.modelsAndServices': '模型与服务',
   'profile.cancelEdit': '取消修改',
@@ -1656,6 +1671,8 @@ export default {
   'chat.popMediaFailed': '媒体加载失败',
   // 递进链（作者边界一「保留递进链路」）：升级落点已由 permshield F1 改为**全局持久
   // 档位**（同盾牌一条路）⇒ 文案去掉「本次」语义，并显式说明全局 + 重启后仍生效。
+  'chat.permShowFull': '展开完整内容',
+  'chat.permRequestNotDiff': '请求载荷，非文件实际 diff',
   'chat.permUpgradeAutoEdits': '允许并切换到编辑放行',
   'chat.permUpgradeAutoEditsDesc': '全局档位改为编辑放行：所有会话生效，重启后仍生效',
   'chat.permUpgradeAutoAll': '允许并切换到全部放行',
@@ -1769,6 +1786,14 @@ export default {
   'askUser.rejectUnknown': '答复对应的提问已失效，卡片仍保留，请重新作答',
   'askUser.rejectNoMatch': '找不到对应的待答提问，请重新作答',
   'askUser.rejectGeneric': '答复未被接受，请重新作答',
+  // 溢出转待办批（2026-11-18 作者令·第二轮）：超出对话分页的待答问题 ⇒ 转为
+  // **具体待办条目**（承载面 = 条目自身），条目内的问题卡可就地作答；两处作答
+  // 同一份状态、同一收口，原卡片同步收口。
+  'askUser.todoBadge': '待答',
+  'askUser.todoSubmit': '提交回答',
+  'askUser.todoCancel': '取消',
+  'askUser.todoManual': '该题需在原卡片上作答（含敏感值 / 目录选择）',
+  'askUser.cancelledElsewhere': '该提问已取消',
   // askuser-secret 批（2026-10-08）：密码题面（showOptions secret 分支）+ 明文回流
   // 拒收 toast（hub reason="secret-slot-mismatch"，规格 §5.1）。
   'askUser.secretPlaceholder': '输入密钥 / 验证码（不显示明文）',
@@ -2134,12 +2159,23 @@ export default {
   'canvas.closeTab': '关闭标签页',
   'canvas.stackToggle': '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）',
   'canvas.noRef': '该标签页暂不支持引用',
+  // canvas-tab-reference 批（2026-11-18）：引用落不进 composer 时的明确提示
+  // （改前该腿静默 —— 点了引用钮什么也看不到）。
+  'canvas.refNoComposer': '引用没送进输入框（对话输入框还没就绪）。打开对话后再点一次引用。',
   'canvas.unreadableTitle': '文件不可读',
   'canvas.unreadableHint': '文件不存在或被清理，无法读取。',
   'canvas.unreadablePathHint': '路径非法，无法读取。',
   'canvas.loadingFile': '正在打开…',
   'canvas.loadFailed': '打开失败',
   'canvas.retry': '重试',
+  // Pop 文件卡乐观打开批（2026-11-18）：占位里的失败原因必须**可读且分型**——
+  // 离线 / 取不到 / 凭据判定拒绝 / 类型不支持 / 超时不再同貌，也不再有空白页。
+  'canvas.loadOffline': '网络不可用（离线），无法取到文件。',
+  'canvas.loadDenied': '无权读取该文件（凭据判定拒绝）。',
+  'canvas.loadNotFound': '文件不存在或已被清理。',
+  'canvas.loadTimeout': '取数超时，请重试。',
+  'canvas.loadCancelled': '已取消。',
+  'canvas.loadBusy': '服务繁忙，请稍后重试。',
   // canvas 文件刷新批（2026-10-25 作者令）：页签右下「重新读盘」钮。canvas-auto-
   // refresh 批（2026-11-17 作者令「去掉 改为带迟滞的自动检查变更刷新 时间窗60s」）
   // 起手动钮与 canvas.refresh 键退役；refreshDirty 保留（自动路径脏守卫复用）。
@@ -2353,29 +2389,22 @@ export default {
   'neblink.reachDirect': 'P2P 直连已建立',
   'neblink.reachRelay': '可经服务器中继',
   'neblink.reachServerOnly': '在线——暂无直连通道',
-  // 自解释批（2026-11-04 铁律 8）：删尾句「登录后自动入网」= 行为教学/能力说明；
-  // 「未登录」+「点击上方头像登录」= 空态状态 + 下一步动作（细则 b 空态，保留）。
-  'neblink.loggedOutHint': '未登录 —— 点击上方头像登录 {lowerBrand} 账号',
-  // 缺陷 A（2026-09-18）：未登录面板的两条读数 —— ①「清理并重登」入口（只在
-  // 本地凭据文件类分类下渲染）；②状态面降级（`/status` 非 2xx 的可见读数，修前静默）。
+  // 「清理并重登」入口（缺陷 A，2026-09-18）：**保留** —— activityBar 登录失败面仍用
+  // （`#login-cleanup` → `openEndSessionHandoff(true)`）。
   'neblink.cleanupRelogin': '清理并重登',
-  'neblink.statusDegraded': '状态读取失败（HTTP {status}），下面显示的可能不是最新状态',
-  // 配对码卡（门户 MVP E7, 2026-10-10）：6 位码 → POST /api/neblink/enroll。
-  // 被踢下线被动提示（踢旧批案 B，2026-09-14）：**状态行级**——无横幅、无声音
-  // （一期口径见 User.md 第 36 行；代码锚 messages.js「无横幅无提示音」）。
-  'neblink.signedOutElsewhere': '已在别处登录',
-  'neblink.signedOutElsewhereHint': '本机会话已被另一台设备接管，自动重连已暂停——重新登录即可恢复',
+  // 账户卡的 `neblink.loggedOutHint` / `neblink.statusDegraded` /
+  // `neblink.signedOutElsewhere(提示)` / `neblink.pairing` / `neblink.loggedInAs` /
+  // `settings.account` 七键随「登录账号」账户卡整件退役（2026-11-18 作者令）：卡片没了，
+  // 全仓零引用（grep 实证 ⇒ zh/en 对称删除）。
   'neblink.deviceDescHint': '此描述对 Agent 可见，Agent 会根据你的描述自动选择合适的设备执行任务',
   'neblink.save': '保存',
-  'neblink.update': '更新',
   'neblink.stable': '稳定版',
   'neblink.beta': '测试版',
   'neblink.cancel': '取消',
   // 远端更新的三态文案（`neblink.updating` / `neblink.restarting` / `neblink.updateTimeout`）
-  // 随件五（2026-11-02「联系人里的设备更新去掉，现在统一由官网进行统一更新」）删除：
-  // 三键的唯一消费者是联系人设备行的行内回显，该面退役后全仓零引用（grep 实证）。
-  // `neblink.update` **保留**——设置页设备区每行仍用（`messages.js` 的
-  // `[data-settings-device-update]`，fleet 批 2026-11-01）。
+  // 随件五（2026-11-02「联系人里的设备更新去掉，现在统一由官网进行统一更新」）删除。
+  // `neblink.update` 亦已删除：其唯一消费者 = 设置页设备区每行（fleet 批 2026-11-01），
+  // 该区随「登录账号」账户卡整件退役（2026-11-18 作者令）⇒ 全仓零引用。
 
   // ── 全设备统一更新（fleet 批 2026-11-01，作者令「一键把所有设备更新到同一版本，
   //    并全程有状态卡片引导」）──────────────────────────────────────────────
@@ -2396,7 +2425,6 @@ export default {
   'fleet.cancel': '中断',
   'fleet.retry': '重试失败项',
   'fleet.startConfirm': '开始全部更新',
-  'fleet.startAction': '全部更新',
   'fleet.updateThisDevice': '更新此设备',
   'fleet.thisDevice': '本机',
   'fleet.online': '在线',
@@ -2461,10 +2489,10 @@ export default {
   'fleet.branch.manual': '需手动',
   'fleet.branch.queued': '待上线补推',
 
-  // 登录态只读展示（auth-trim 批 2026-10-20 作者令）：谁登录着，无动作入口。
-  // 原「切换账号 / 退出登录」键组（switchAccount/logout/loggingOut/useOtherAccount/
-  // currentTag）已随两键退役删除 —— 登出/切号只在官网门户操作。
-  'neblink.loggedInAs': '登录账号：{name}',
+  // 登录态只读展示的 `neblink.loggedInAs`（「登录账号：{name}」）已随「登录账号」账户卡
+  // 整件退役（2026-11-18 作者令）删除；auth-trim 批（2026-10-20 作者令）的
+  // 「切换账号 / 退出登录」键组（switchAccount/logout/loggingOut/useOtherAccount/currentTag）
+  // 早随两键删除 —— 登出/切号只在官网门户操作。
   // 退出登录键（2026-11「退出登录没有入口」修复批，作者裁「只修退不出」——本批
   // 豁免 auth-trim 批「控制台不承担认证态管理」那条裁定的范围，仅限退出）：设置
   // 账号段的次级键 + 头像菜单项共用同一条文案。切号仍只在官网门户操作。
@@ -2513,6 +2541,10 @@ export default {
   'mhsearch.noResultsHint': '试试更换关键词或切换范围',
   'mhsearch.error': '搜索失败，请稍后重试',
   'mhsearch.capNote': '每段最多 1000 条消息',
+  'mhsearch.scanScope': '已扫描 {pages} 页',
+  'mhsearch.scanPartial': '结果不完整：命中或达到扫描上限即停止',
+  'mhsearch.scanFailed': '部分搜索失败或超时，请重试',
+  'mhsearch.fullScan': '完整扫描消息（可能较慢）',
   'mhsearch.loadMore': '加载更多（本会话）',
   'mhsearch.me': '我',
   'mhsearch.jumpFail': '未能定位到该消息',
@@ -3165,6 +3197,17 @@ export default {
   // 「权限过宽/仅所有者可读写」两态徽标键已随徽标概念退役（层级收进批，
   // 作者令 2026-11-01：红标整概念退役，en/zh 同批同删，键集两边一致）。
   'secrets.referencedBy': '被引用：{refs}',
+  // 可查询批（作者令 2026-11-18 21:31）：说明 + 关键词标签 + 查询面文案。
+  'secrets.searchPlaceholder': '搜索名称、说明、标签或消费方…',
+  'secrets.description': '说明',
+  'secrets.descriptionPlaceholder': '这个凭据是干什么用的？（可查询，值无关）',
+  'secrets.tags': '标签',
+  'secrets.tagsPlaceholder': '关键词标签，逗号分隔，例如 cloud, deploy',
+  'secrets.path': '存放路径',
+  'secrets.count': '共 {n} 个密钥',
+  'secrets.countFiltered': '筛出 {n} / {total} 个密钥',
+  'secrets.clearFilters': '清除筛选 ✕',
+  'secrets.noMatch': '没有匹配的密钥。换个关键词或点「清除筛选」看全部。',
   'secrets.deleteTitle': '删除密钥',
   'secrets.deleteConfirm': '删除后不可恢复，确定删除「{name}」？',
   'secrets.deleteConfirmRefs': '「{name}」正被引用：{refs}。删除会导致它们失联，删除后不可恢复。',
@@ -3265,6 +3308,11 @@ export default {
   'todoapple.noDue': '无日期',
   'todoapple.none': '无',
   'todoapple.dueTomorrow': '明天',
+  // 快速决策视角（todo-quick-decision 批 2026-11-18）：入口钮名 + 卡位读数 +
+  // 回答未接线的事实行（与列表页既有「决策 · 回答未接线」同一事实，措辞收敛为
+  // 一处键；禁教学句，只写事实）。
+  'todoapple.quickDecision': '快速决策',
+  'todoapple.quickCount': '第 {n} / {m} 条',
   'todoface.tagSave': '保存',
   'todoface.tagErrEmpty': '名称不能为空',
   'todoface.tagErrDup': '已有同名标签',
@@ -3393,6 +3441,8 @@ export default {
   'schedCard.keep': '保留',
   'schedCard.noChange': '没有改动',
   'schedCard.readFailed': '引擎状态未读回',
+  // 卡片点击腿（todo-card-click-left 批，2026-11-18）：整卡可点 ⇒ 补 `#` 待办引用。
+  'schedCard.refHint': '点卡片补 # 待办引用',
   'schedCard.errOffline': '未连接引擎，改动未提交',
   'schedCard.errTimeout': '引擎未回执，改动未确认',
   'schedCard.errGone': '条目已不存在，改动未保存',
@@ -3415,6 +3465,10 @@ export default {
   'profile.deviceSignOutFailed': '退出请求未送达，该设备登录态未改变。',
   'profile.deviceSignOutRemoteUnsupported': '该设备的凭据在其本机保存，本机无法代为退出；请到那台设备上退出登录。',
   'profile.editOnWebsite': '身份资料为只读读数；修改请前往官网账号页 {where}。',
+  // profile-complete 批（作者令 2026-11-18「信息很多都没获取全…不许留未知而不解释」）：
+  // 绑定读数的缺口说明，逐字段出句（zh/en 同键对称）。
+  'profile.githubUnavailable': '账号服务未返回 GitHub 绑定用户名（该读数来自登录时下发的 GitHub 账号）。',
+  'profile.googleUnavailable': 'Google 绑定只在官网账号页维护，本机账号服务与登录凭据都不含该读数。',
   'profile.signedIn': '已登录',
 };
 

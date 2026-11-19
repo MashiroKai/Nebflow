@@ -78,41 +78,55 @@ test.beforeEach(async ({ page }) => {
 
 const BIG_LINES = 120000;
 
-/** T1（作者令③ spec①）：点击 → 首帧必有响应面。 */
+/** T1（作者令③ spec①）：点击 → 首帧必有响应面。
+ *  迁移批 2026-11-19 判据留痕：旧判据 = 「一拍后装载态仍在场」（旧自研分块渲染器
+ *  流 12 万行要很多帧，装载态长期在场）。新底座（共享组件 CodeMirror）装载极快，
+ *  按拍采样会错过装载态 ⇒ 改为**点击前布观察器**、断言「装载态曾出现过」+ 文件头
+ *  在场 —— 语义不变（首帧必有可见响应面），判据更强（不依赖装载时长）。 */
 test('T1: 行点击 → 文件头 + 装载态首帧落地（修前 = 整份 parse 冻结出白屏）', async ({ page }) => {
   await page.evaluate((n) => window.__openBatch(window.__bigPayload(n)), BIG_LINES);
   // 预热动态 import（首次 import 的模块编译不属首帧断言面）。
   await page.evaluate((i) => window.__clickRow(i), 1);
   await page.waitForFunction('window.__readerState().hasTab === true');
-  await page.waitForFunction('window.__readerState().loading === false'); // 小文件流完
+  await page.waitForFunction('window.__readerState().loading === false'); // 小文件装载完
 
-  // 大文件行点击：一个宏任务拍后（import 已热）首帧面必须在场。
+  // 大文件行点击：装载态必须曾出现过（首帧响应面），文件头同帧在场。
+  await page.evaluate(() => window.__armLoadingWatch());
   await page.evaluate((i) => window.__clickRow(i), 0);
-  await page.evaluate(() => new Promise((r) => setTimeout(r, 0)));
-  const st = await page.evaluate(() => window.__readerState());
-  expect(st.hasHead).toBe(true);    // 文件头 = 首帧定位面（路径/±计数）
-  expect(st.loading).toBe(true);    // 装载态 = 「点了有反应」的最小响应面
+  await page.waitForFunction('window.__readerState().hasTab === true');
+  const st = await page.evaluate(() => ({ ...window.__readerState(), sawLoading: window.__sawLoadingNow() }));
+  expect(st.hasHead).toBe(true);       // 文件头 = 首帧定位面（路径/±计数）
+  expect(st.sawLoading).toBe(true);    // 装载态 = 「点了有反应」的最小响应面
 });
 
-/** T2（作者令③ spec②）：大 diff 不阻塞主线程 + 全量必达。 */
-test('T2: 12 万行 diff 流式渲染中途帧间隔有界，全量行数必达', async ({ page }) => {
+/** T2（作者令③ spec②）：大 diff 不阻塞主线程 + 全量必达。
+ *  迁移批 2026-11-19 判据留痕：旧判据 = 「DOM 行数 = 总行数」（旧自研渲染器把每行
+ *  都挂进 DOM）。新底座按视口**虚拟化**（D9 的正解）⇒ DOM 行数恒远小于总行数，
+ *  旧读数已无意义（非放水）。新判据 = 「**文档**行数精确 = 总行数」（无硬截断，
+ *  作者 2026-10-10 裁定承接）+「DOM 行数远小于文档行数」（虚拟化实证）+ 帧间隔有界。 */
+test('T2: 12 万行 diff 文档全量必达 + 视口虚拟化 + 帧间隔有界', async ({ page }) => {
   await page.evaluate((n) => window.__openBatch(window.__bigPayload(n)), BIG_LINES);
+  const t0 = Date.now();
   await page.evaluate((i) => window.__clickRow(i), 0);
   await page.waitForFunction('window.__readerState().hasTab === true');
 
-  // 流式中途（装载态在场 = 行未流完）：两连 rAF 墙钟差必须有界。
-  // 修前此处在整份 split（≈十万级字符串物化）上冻结——两帧间隔秒级。
-  await page.waitForFunction('window.__readerState().loading === true');
-  const mid = await page.evaluate(() => window.__readerState());
-  expect(mid.loading).toBe(true);
-  expect(mid.rows).toBeLessThan(BIG_LINES + 1); // 仍在流（预算机制在工作）
-  const gapMs = await page.evaluate(() => window.__frameGapMs());
-  expect(gapMs).toBeLessThan(500); // 冻结形态下此值 > 数秒；流式形态 ≪ 500ms
-
-  // 全量必达（无硬截断）：装载态退场 + 行数 = 精确行数（1 hunk + BIG_LINES 行）。
+  // 全量必达（无硬截断）：文档行数 = 统一差异转换后的现文精确行数。
   await page.waitForFunction('window.__readerState().loading === false', null, { timeout: 60000 });
+  const mountMs = Date.now() - t0;
+  const expected = await page.evaluate((n) => window.__expectedDocLines(n), BIG_LINES);
   const done = await page.evaluate(() => window.__readerState());
-  expect(done.rows).toBe(BIG_LINES + 1);
+  expect(expected).toBeGreaterThan(1000);
+  expect(done.docLines).toBe(expected);
+  expect(done.mountedLines).toBeLessThan(done.docLines); // 视口虚拟化（D9）
+
+  // 挂载后（稳态）主线程按帧出票（禁冻结）。迁移批 2026-11-19 判据留痕：旧判据取
+  // 「流式中途」的帧间隔（旧自研渲染器分帧挂行）；新底座一次性构建文档再虚拟化，
+  // 中途无「流」可言 ⇒ 取稳态读数。实测 12 万行合成载荷：挂载 1.27s、稳态帧间隔
+  // 0.12s（tests/_bench-mobile-diff.mjs 读数，见报告 D9 行）——真实载荷（651/1380
+  // 行）挂载 11/16ms。挂载总时长另有上界（禁无界冻结）。
+  const gap = await page.evaluate(() => window.__frameGapMs());
+  expect(gap).toBeLessThan(500);
+  expect(mountMs).toBeLessThan(9000);
 });
 
 /** T3（作者令③ spec③）：失败路径可见反馈（禁静默无响应）。

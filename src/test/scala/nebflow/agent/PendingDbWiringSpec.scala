@@ -105,7 +105,7 @@ class PendingDbWiringSpec extends CatsEffectSuite:
           appendReceipt = (sid, msg) => receipts.update(_ :+ (sid -> msg)),
           retireAskTodo = _ => IO.unit
         )
-        _ = assertEquals(report.dbReinstalled, 1, s"permission 单应重装 1 张（report=${report.summary}）")
+        _ = assertEquals(report.dbReinstalled, 0, "重启后原等待方已消失，不得重装可批准的孤儿权限卡")
         _ = assertEquals(report.dbAskExpired, 1, "ask 单应过期关闭 1 张")
         // ask：db 终态行（expired-by-restart）+ 广播帧 + V6 不变式。
         askRow <- db.foldState(PendingStream.Ask, "r-ask-1")

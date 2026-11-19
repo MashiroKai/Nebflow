@@ -30,13 +30,27 @@
   pointer-events: none;
 }
 
-#input-bar {
+/* 输入条外壳**单一定义**（composer 统一批 2026-11-18 · 作者令「主会话与消息联系人
+   composer 真正统一为同一组件：dimensions / padding / rounded corners / glass
+   tokens 一套」）。主会话 `#input-bar` 与消息面 `.fm-input-bar` 共用这一条外壳几何：
+     · rounded corners = `--ds-radius-shell`（20px，唯一档）
+     · padding = `--ds-space-1h` / `--ds-space-2`（6 / 8）
+     · 排布 = flex row + center + `--ds-space-1` gap + flex-shrink:0
+   两面的**唯一差异是落位**（容器给 margin / 定位：`.fm-input-bar` 由 friends.css
+   的 margin 供，`#input-area` 由本文件的 absolute 底缘供）—— 几何值不再各写一份。
+   改前 `.fm-input-bar` 在 friends.css 另写 6/12 padding + 8px gap + 自己的 radius，
+   与主条差 4px 两处，正是作者点名的「不是同一个组件」。 */
+#input-bar,
+.fm-input-bar {
   position: relative;
   pointer-events: auto;
   border-radius: var(--ds-radius-shell);
-  /* 瘦身批：垂直内 padding 8px → 6px（横向 12px 不动；mic-orb 64px/图标钮 36px
-     为静息态高度驱动件，本项在输入态（textarea 驱动行高）再省 4px）。 */
-  padding: var(--ds-space-1h) var(--ds-space-2);
+  /* 瘦身批：垂直内 padding 8px → 6px（横向不动；mic-orb 64px/图标钮 36px
+     为静息态高度驱动件，本项在输入态（textarea 驱动行高）再省 4px）。
+     内距收紧批（2026-11-18 作者令「两边留白边距差不多 + 文字离两边近一点、
+     可用空间大一点」）：横向 8px → 6px（= 纵向同一档 --ds-space-1h ⇒ 外壳
+     自身四向内距同值）。实测两侧各让 2px（读数见 tests/composer-input-inset-metrics.spec.mjs）。 */
+  padding: var(--ds-space-1h) var(--ds-space-1h);
   display: flex;
   align-items: center;
   gap: var(--ds-space-1);
@@ -742,10 +756,19 @@
 /* 输入面唯一标准批（2026-11-06）：`#input` 是 `#input-bar` 玻璃壳里的**裸件**，
    无底/无边/无圆角/无环四条归 css/inputSurface.css 的裸件成员表（作者令
    2026-11-03 ④「输入区键盘态不再加高亮」在那里以具名例外落地）。本文件只留几何。 */
-#input {
+/* 输入件**单一定义**（composer 统一批 2026-11-18）：主会话 `#input` 与消息面
+   `.fm-input` 是同一个件 —— `<textarea rows="1">`、同裸件档、同字阶/行高/内距、
+   同 `max-height: 200px` 自适应上限（js/input/composer.js growComposerInput 同档）。
+   `.fm-input` 额外由 friends.css 补 `flex:1; min-width:0`（横排占位——那是**容器**
+   差异，不是件差异）。 */
+#input,
+.fm-input {
   /* 瘦身批：垂直内 padding 8px → 6px（横向 14px 不动；多行增长逻辑读
-     scrollHeight，与本 padding 无耦合）。 */
-  padding: var(--ds-space-1h) 14px;
+     scrollHeight，与本 padding 无耦合）。
+     内距收紧批（2026-11-18）：横向 14px 字面量 → 裸件族单源 token
+     `--nf-field-pad-x`（= --ds-space-3 = 12px，stand-tokens.css 声明「= #input-bar」
+     的那一枚）；一处动作同时完成**去面内字面量**与**再收紧 2px/侧**，两面同值。 */
+  padding: var(--ds-space-1h) var(--nf-field-pad-x);
   font-size: var(--ds-fs-bubble);
   width: 100%;
   line-height: 1.4;
@@ -756,7 +779,8 @@
   box-sizing: border-box;
   color: var(--color-text);
 }
-#input::placeholder {
+#input::placeholder,
+.fm-input::placeholder {
   color: var(--color-text-muted);
 }
 /* Voice dictation uses the global green caret — no override needed */

@@ -10,15 +10,17 @@
 //      源码保留 flag + settings.rerunOnboarding 键不变。
 //   T3 ③ NL 号入口移除 — neblink-nlid* 全选择器零命中；neblink 设备区仍在；
 //      neblink.nlId* 键组双语已删；friendsApi 两个 NL API 包装已删。
-//      （auth-trim 批 2026-10-20 改写：设置页「切换账号/退出登录」两键退役，
-//      登录态 = 只读身份行 .neblink-account-ro；键组 switchAccount/logout 族已删。）
+//      （auth-trim 批 2026-10-20 改写：设置页「切换账号/退出登录」两键退役。）
+//      （账户栏整件退役批 2026-11-18：账号分组/账号卡/只读身份行/设备槽全族零命中，
+//       `neblink.loggedInAs` 键随之删除。）
 //   T4 ④ 设置页头像双态 — 未登录 → logo 可见/photo 隐藏，点击弹登录 modal；
 //      mock 登录+avatarUrl → photo 可见/logo 隐藏。（件四·2026-11-02 翻新：已登录态
 //      点头像 = **换头像流程**（file chooser），不再弹账号菜单、不再 window.open 官网；
 //      账号菜单里的「个人资料」改为开 **App 内**面）。
-//   T4c 已登录态登出入口 — 账号段渲染 #neblink-logout，点击走既有
-//      openEndSessionHandoff(false)（POST /api/neblink/auth/end-session，不带
-//      scenario=switch），点击瞬间按钮 disabled。
+//   T4c 已登录态登出入口 — ⚠️ 2026-11-18 账户栏整件退役批已**删除该用例**（其载体
+//      = 设置页账号卡的 `#neblink-logout`，随卡退役）。登出权威面 = 个人主页设备清单
+//      逐设备退出（profileDevices.js `[data-device-signout]` → 同一条
+//      `openEndSessionHandoff(false)` 链）。
 //   🔴 2026-11-01 作者豁免：T3 的 `neblink.logout` 键黑名单与 T4b 的「一点即跳」
 //      断言都是 2026-10-20 auth-trim 口径，作者已豁免 ⇒ 改为「键该在」+「两击才跳」。
 //   T5 ⑤ 更新功能退役（auth-trim 批 2026-10-20 作者令）— 设置页无 检查更新/立即更新/
@@ -90,7 +92,8 @@ async function bootPage(page, opts = {}) {
       loggedIn,
       device: loggedIn
         ? { id: 'd1', name: '本机', platform: 'macos', userDescription: '', avatarUrl: avatarUrl || '',
-            // auth-trim 批：只读登录态行（.neblink-account-ro）取数 = email/displayName。
+            // （账号栏整件退役 2026-11-18：原只读登录态行 .neblink-account-ro 的取数已删，
+            //  此处保留 status 夹具的 email/displayName 供头像与身份读数消费。）
             email: 'me@example.com', displayName: '测试用户' }
         : null,
       peers: [],
@@ -141,7 +144,9 @@ for (const [locale, mcpTitle] of [['zh-CN', 'MCP 服务器'], ['en', 'MCP Server
         emptyMcp: [...content.querySelectorAll('.cfg-empty')].some(e => /MCP/.test(e.textContent)),
         // 2026-09-06 合并钉（设备区入账号区）：账号区 = 头像入口 + neblink 区内嵌。
         avatarEntry: !!content.querySelector('#settings-avatar-entry'),
-        neblinkArea: !!content.querySelector('.neblink-login-section, .neblink-logged-in'),
+        // 账户栏整件退役（作者令 2026-11-18 16:36/16:45）：账号区不再有 neblink 内嵌块
+        // （账号卡 / 只读登录账号行 / 未登录提示行全族）。
+        neblinkArea: !!content.querySelector('.neblink-login-section, .neblink-logged-in, .neblink-account-ro, #account-card'),
       };
     });
     expect(dump.titles, `[${locale}] MCP section title must be gone`).not.toContain(mcpTitle);
@@ -154,21 +159,23 @@ for (const [locale, mcpTitle] of [['zh-CN', 'MCP 服务器'], ['en', 'MCP Server
     // merged away and the account section must carry the avatar entry + the
     // neblink (device) area.
     if (locale === 'zh-CN') {
-      // 2026-10-20 校准：模型方案节已随早前批次并入 LLM 服务商（当前实况 = 账号/
-      // 运行时/LLM 服务商/密钥/高级/关于）。
-      for (const t of ['账号', '运行时', 'LLM 服务商', '密钥', '高级', '关于']) {
+      // 2026-10-20 校准：模型方案节已随早前批次并入 LLM 服务商。
+      // 2026-11-18（本批）：账号栏整件退役 ⇒ 「账号」组题不再在场（判据反转）。
+      for (const t of ['运行时', 'LLM 服务商', '密钥', '高级', '关于']) {
         expect(dump.titles, `section ${t} must remain`).toContain(t);
       }
+      expect(dump.titles, 'account column heading must be retired (2026-11-18 作者令)').not.toContain('账号');
       expect(dump.titles, 'standalone Device Link section must stay merged away').not.toContain('设备互联');
     }
     if (locale === 'en') {
-      for (const t of ['Account', 'Runtime', 'LLM Providers', 'Secrets', 'Advanced', 'About']) {
+      for (const t of ['Runtime', 'LLM Providers', 'Secrets', 'Advanced', 'About']) {
         expect(dump.titles, `section ${t} must remain`).toContain(t);
       }
+      expect(dump.titles, 'account column heading must be retired (2026-11-18 作者令)').not.toContain('Account');
       expect(dump.titles, 'standalone Device Link section must stay merged away').not.toContain('Device Link');
     }
     expect(dump.avatarEntry, 'unified account block must keep the avatar entry').toBe(true);
-    expect(dump.neblinkArea, 'device (neblink) area must remain inside the account block').toBe(true);
+    expect(dump.neblinkArea, 'account column (neblink embed) must be retired — zero-hit, not hidden').toBe(false);
   });
 }
 
@@ -204,7 +211,7 @@ test('T2 rerun-onboarding entry rendered (unsealed by 2026-10-30 skip batch), co
 test('T3 NL-ID entry gone (logged-in view), auth buttons removed with read-only identity, keys + API wrappers deleted', async ({ page }) => {
   await bootPage(page, { locale: 'zh-CN', loggedIn: true });
   await openSettings(page);
-  await page.waitForSelector('.neblink-logged-in', { timeout: 8000 });
+  await page.waitForSelector('#settings-content [data-panel-group="general"]', { timeout: 8000 });
   const dump = await page.evaluate(() => {
     const content = document.getElementById('settings-content');
     const sels = ['#neblink-nlid-edit', '.neblink-nlid', '.neblink-nlid-editing', '.neblink-nlid-input',
@@ -213,10 +220,9 @@ test('T3 NL-ID entry gone (logged-in view), auth buttons removed with read-only 
       leaked: sels.filter(s => content.querySelector(s)),
       // ①④（作者 2026-09-15）：旧内联设备列表已移出设置 ⇒ 账号段无 .neblink-peers-list。
       peersList: !!content.querySelector('.neblink-peers-list'),
-      // friendseal ①-A（2026-09-25）设置页设备区经许可槽位回归（#settings-devices-slot，
-      // unifyfix R1b 同口径）：只钉「槽位外零设备行」。手机顶栏批（2026-10-31 ③）
-      // 手机层整槽不渲染 —— 该断言跑桌面视口，槽位缺席由 mobile-topbar T2 钉。
-      deviceRows: [...content.querySelectorAll('.neblink-peer')].filter(el => !el.closest('#settings-devices-slot')).length,
+      // friendseal ①-A（2026-09-25）设置页曾加受许可设备展开区（#settings-devices-slot）；
+      // 账户栏整件退役批（2026-11-18）已把该槽连账号卡一并删除 ⇒ 裸计数即判据。
+      deviceRows: content.querySelectorAll('.neblink-peer').length,
       oldWindowEntry: content.querySelectorAll('.dropbox-clickable').length,
       // auth-trim（2026-10-20）：两键零残留 + 只读身份行在位。
       switchBtn: !!content.querySelector('#neblink-switch-btn'),
@@ -224,6 +230,9 @@ test('T3 NL-ID entry gone (logged-in view), auth buttons removed with read-only 
       // 旧 id `#neblink-logout-btn`（10-20 退役的那枚）不得复活；2026-11 补回的登出
       // 入口是**另一个 id** `#neblink-logout`（见 T4c），两者不是一回事。
       logout: !!content.querySelector('#neblink-logout-btn'),
+      // 账户栏整件退役（作者令 2026-11-18）：账号分组 / 账号卡 / 只读身份行全族零命中。
+      accountGroup: !!content.querySelector('[data-panel-group="account"]'),
+      accountCard: !!content.querySelector('#account-card'),
       accountBlock: !!content.querySelector('.neblink-logged-in'),
       roLine: content.querySelector('.neblink-account-ro')?.textContent || '',
     };
@@ -235,8 +244,10 @@ test('T3 NL-ID entry gone (logged-in view), auth buttons removed with read-only 
   expect(dump.switchBtn, 'auth-trim: switch-account button must be GONE from the console').toBe(false);
   expect(dump.logout, 'auth-trim: logout button must be GONE from the console').toBe(false);
   expect(dump.switchModal, 'auth-trim: the switch-account modal must never render').toBe(false);
-  expect(dump.accountBlock, 'settings account block must still render').toBe(true);
-  expect(dump.roLine, 'read-only signed-in line must show the account identity (displayName 优先)').toContain('测试用户');
+  expect(dump.accountGroup, 'settings account group must be retired (2026-11-18 作者令)').toBe(false);
+  expect(dump.accountCard, 'settings account card must be retired').toBe(false);
+  expect(dump.accountBlock, 'settings account block must be retired').toBe(false);
+  expect(dump.roLine, 'read-only signed-in line must be retired').toBe('');
 
   // i18n key group deleted in BOTH locales; friendsApi NL wrappers deleted.
   // （p547b 2026-09-15 误报修复：探针剥掉注释再匹配——注释里的退役墓碑不算代码。）
@@ -263,8 +274,8 @@ test('T3 NL-ID entry gone (logged-in view), auth buttons removed with read-only 
   expect(code.enNl, 'en neblink.nlId* keys must be gone').toEqual([]);
   expect(code.zhAuth, 'zh auth-trim key group must be gone').toEqual([]);
   expect(code.enAuth, 'en auth-trim key group must be gone').toEqual([]);
-  expect(code.zhRo, 'zh read-only identity key must exist').toBeTruthy();
-  expect(code.enRo, 'en read-only identity key must exist').toBeTruthy();
+  expect(code.zhRo, 'zh read-only identity key must be gone (account card retired 2026-11-18)').toBe('');
+  expect(code.enRo, 'en read-only identity key must be gone (account card retired 2026-11-18)').toBe('');
   expect(code.apiSetNeblinkId, 'friendsApi.setNeblinkId must be deleted').toBe(false);
   expect(code.apiAvailable, 'friendsApi.neblinkIdAvailable must be deleted').toBe(false);
 });
@@ -362,51 +373,15 @@ test('T4b settings avatar logged-in → photo + click starts avatar-change flow 
   expect(menuStage.menuGone, 'the menu closes after the item click').toBe(true);
 });
 
-// ══ T4c · 已登录态登出入口（2026-11-01「退出登录没有入口」修复批）═════════════
-// 10-20 auth-trim 把「切换账号/退出登录」两键整体退役后，已登录态零登出入口；
-// 本批补回的正是那枚入口 = #neblink-logout（账号段次级键），点击复用既有
-// openEndSessionHandoff(false)。e2e 层能钉到的事实：① 按钮存在且文案 = neblink.logout；
-// ② 点击瞬间 disabled；③ 点击真的发出 POST /api/neblink/auth/end-session，且 body
-// 不带 scenario=switch（带那条 = 「清理并重登」的 continueToLogin=true，语义不同）。
-test('T4c settings account block (logged in) carries the sign-out entry → openEndSessionHandoff(false)', async ({ page }) => {
-  await bootPage(page, { locale: 'zh-CN', loggedIn: true, avatarUrl: AVATAR_URL });
-  // 具体路由注册在 bootPage 的 catch-all '**/api/**' 之后 ⇒ 优先命中（Playwright
-  // 后注册者先匹配），用它证伪「按钮只置了 disabled、没走链路」。
-  const endSession = [];
-  await page.route('**/api/neblink/auth/end-session', async (r) => {
-    endSession.push({ method: r.request().method(), body: r.request().postData() || '' });
-    await r.fulfill({ json: {} });
-  });
-  await openSettings(page);
-  await page.waitForSelector('.neblink-logged-in', { timeout: 8000 });
-  const dump = await page.evaluate(() => {
-    const content = document.getElementById('settings-content');
-    const btn = content.querySelector('#neblink-logout');
-    return {
-      exists: !!btn,
-      text: btn?.textContent?.trim() || '',
-      disabledBefore: btn?.disabled === true,
-      // 旧 id 不得复活（与新 id 是两件事，见 js/neblink.js 该按钮处的命名注）。
-      retiredId: !!content.querySelector('#neblink-logout-btn'),
-    };
-  });
-  expect(dump.exists, 'logged in → #neblink-logout must render in the settings account block').toBe(true);
-  expect(dump.text, 'sign-out key text must be neblink.logout (退出登录)').toBe('退出登录');
-  expect(dump.disabledBefore, 'the sign-out button starts enabled').toBe(false);
-  expect(dump.retiredId, 'the retired #neblink-logout-btn id must stay zero-hit').toBe(false);
-
-  // 打桩 window.open：end-session 的预约窗（about:blank）在静态 harness 里没意义，
-  // 返回 null ⇒ 只走「popup 被拦」的可见提示支，不开真页。
-  await page.evaluate(() => { window.open = () => null; });
-  await page.click('#neblink-logout');
-  // 失败支 5s 后解锁 ⇒ 必须在 5s 内取样。
-  expect(await page.evaluate(() => document.getElementById('neblink-logout')?.disabled === true),
-    'click must flip the button to disabled while the handoff is in flight').toBe(true);
-  await page.waitForTimeout(400);
-  expect(endSession.length, 'click must POST /api/neblink/auth/end-session (the existing openEndSessionHandoff chain)').toBe(1);
-  expect(endSession[0].method, 'end-session is a POST').toBe('POST');
-  expect(endSession[0].body, 'sign-out must not carry scenario=switch (continueToLogin=false)').not.toContain('scenario');
-});
+// ══ T4c · 已登录态登出入口 —— 已随账户栏整件退役（2026-11-18 作者令）═════════
+// 原文（2026-11-01「退出登录没有入口」修复批）：设置页账号段渲染 `#neblink-logout`，
+// 点击走既有 `openEndSessionHandoff(false)`。
+// 🔴 账户栏整件退役（16:36「设置里的账户这一栏完全移除」+ 16:45「底部的账户栏 功能
+// 重复 信息重复…不要有重复的功能和信息」）⇒ 该入口的载体（账号卡）不存在 ⇒ 用例删除。
+// 登出动作的权威面 = 个人主页设备清单的**逐设备退出**（`profileDevices.js`，
+// `[data-device-signout]` → 本机行走同一条 `openEndSessionHandoff(false)` 链）；
+// 设置页零复述。该链本体（neblink.js `openEndSessionHandoff`）保留。
+// 现行受检点见 T3（账号栏零命中）。
 
 // ══ T5 · ⑤ 更新功能退役（auth-trim 批 2026-10-20 作者令）═══════════════════
 // 设置页「更新」整链退役（未来由官网统一检测更新取代）：入口 DOM 零残留、不发
@@ -527,9 +502,10 @@ async function shots(colorScheme, tag) {
     await page.waitForTimeout(500);
     await page.screenshot({ path: `${SHOTS}/settings-clean-${tag}.png`, fullPage: false });
 
-    // 2) 账号块特写（只读身份行 + 无两键）
+    // 2) 首屏特写（账户栏已整件退役 2026-11-18 ⇒ 原「账号块特写」改为设置页首组特写，
+    //    用于肉眼复核「账号栏零命中、首组 = 通用」）
     const account = await page.evaluate(() => {
-      const el = document.querySelector('.neblink-logged-in, .neblink-login-section');
+      const el = document.querySelector('#settings-content [data-panel-group="general"]');
       const r = (el || document.body).getBoundingClientRect();
       return { x: Math.max(0, r.x - 24), y: Math.max(0, r.y - 40), width: r.width + 48, height: r.height + 64 };
     });

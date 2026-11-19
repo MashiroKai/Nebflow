@@ -47,28 +47,105 @@ import java.util.UUID
  * Both artefacts are written `0600` through the shared
  * [[CredentialFileAcl]] and swapped in atomically (temp sibling +
  * `ATOMIC_MOVE`), so a reader never sees a half-written catalogue.
+ *
+ * 可查询批 · 关键词标签（secrets-query batch，作者令 2026-11-18 21:31
+ * 「secret 要加上说明和关键词 tag，方便被查询使用」）：the sidecar gains a
+ * THIRD non-value field, `tags` — a small, normalized keyword list that the
+ * CLI (`stand secrets list --tag … --keyword …`), the REST list face
+ * (`GET /api/secrets?tag=…&q=…`) and the panel's chip filter all query
+ * through ONE matcher ([[SecretsQuery]]). Schema goes `version: 1` →
+ * `version: 2`; the file stays a superset — a `version: 1` sidecar (no
+ * `tags` key) loads as "no tags", and a v2 file read by pre-batch code
+ * loses only the tags. Backward AND forward compatible by construction.
+ * 🔴 The tag field never carries a value fragment — tags are authored
+ * labels (like the description), and the normalization below folds anything
+ * that is not a keyword character.
  */
 object SecretsCatalog:
+
+  /** Sidecar schema version written by this build. */
+  val SidecarVersion: Int = 2
 
   /**
    * The metadata sidecar's per-secret entry. `variableName` is `None` for
    * every secret that has never had one set — the derived name is then used.
-   * `description` is the empty string for the same case.
+   * `description` is the empty string, and `tags` is empty, for the same
+   * case. `tags` defaults to `Nil` so every pre-batch construction site (and
+   * a `version: 1` sidecar) reads as "no tags" without a migration.
    */
-  final case class Meta(variableName: Option[String], description: String)
+  final case class Meta(variableName: Option[String], description: String, tags: List[String] = Nil)
 
   /**
    * One catalogue row: a secret NAME (an identifier, not a value — the panel
-   * already shows it), its variable name, its description, and the mtime of
-   * the file that holds its value.
+   * already shows it), its variable name, its description, its keyword tags
+   * and the mtime of the file that holds its value.
    */
-  final case class Row(name: String, variableName: String, description: String, updatedAt: Long)
+  final case class Row(
+    name: String,
+    variableName: String,
+    description: String,
+    updatedAt: Long,
+    tags: List[String] = Nil
+  )
 
   /** Variable-name contract, shared with the routes' validation. */
   val VariableNamePattern: java.util.regex.Pattern =
     java.util.regex.Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$")
 
   def isVariableName(s: String): Boolean = VariableNamePattern.matcher(s).matches()
+
+  // ── Keyword tags（可查询批 2026-11-18）──────────────────────────────────
+
+  /** Tag contract: lowercase start, `[a-z0-9._-]`, 1-32 chars — the same
+    * charset shape as a secret NAME, one size down. */
+  val TagPattern: java.util.regex.Pattern =
+    java.util.regex.Pattern.compile("^[a-z0-9][a-z0-9._-]{0,31}$")
+
+  /** Hard cap on how many tags one secret may carry (a query facet, not a
+    *  free-form label bag). */
+  val MaxTags: Int = 16
+
+  private val MaxTagLen: Int = 32
+
+  def isTag(s: String): Boolean = TagPattern.matcher(s).matches()
+
+  /**
+   * Fold one raw token into a legal tag: lowercase, every character outside
+   * the tag charset becomes `-`, leading/trailing `-` trimmed, capped at 32.
+   * The fold is TOTAL — a caller's typo yields a usable keyword rather than a
+   * rejected metadata write (the same "correct at the boundary" shape as
+   * `AskUserSecretSink.sanitizeFragment`). An input with no legal character
+   * left folds to the empty string and is dropped by [[normalizeTags]].
+   */
+  def normalizeTag(raw: String): String =
+    val folded = raw.trim.toLowerCase.map(c => if (c.isLetterOrDigit && c < 128) || c == '-' || c == '.' || c == '_' then c else '-')
+    folded.take(MaxTagLen).dropWhile(_ == '-').reverse.dropWhile(_ == '-').reverse
+
+  /**
+   * Normalize a raw tag list: fold each token ([[normalizeTag]]), drop the
+   * empty foldings, de-duplicate preserving first-seen order, and cap the
+   * result at [[MaxTags]]. Pure and total — the single normalizing step for
+   * every write entry (CLI / REST PATCH / AskUser sink).
+   */
+  def normalizeTags(raw: Iterable[String]): List[String] =
+    val seen = scala.collection.mutable.LinkedHashSet.empty[String]
+    raw.iterator.foreach { t =>
+      val n = normalizeTag(t)
+      if n.nonEmpty && seen.size < MaxTags then seen += n
+    }
+    seen.toList
+
+  /**
+   * Parse a comma/whitespace separated tag expression (`"cloud, deploy"` →
+   * `List("cloud", "deploy")`), normalized. This is what the CLI's `--tag`
+   * and the panel's tag input speak.
+   */
+  def parseTags(raw: String): List[String] =
+    normalizeTags(raw.split("[,\\s]+").toList.filter(_.nonEmpty))
+
+  /** The tags of `name` — `Nil` when none were ever set. */
+  def tagsOf(name: String, meta: Map[String, Meta]): List[String] =
+    meta.get(name).map(_.tags).getOrElse(Nil)
 
   /**
    * The metadata sidecar for `dataRoot` — next to the `secrets/` directory it
@@ -113,6 +190,12 @@ object SecretsCatalog:
    * migration default — every secret keeps its derived variable name and an
    * empty description. A malformed sidecar must not make the secrets
    * unlistable.
+   *
+   * Schema tolerance（可查询批）: a `version: 1` file simply has no `tags`
+   * key — the read defaults it to `Nil`, so the batch needs no migration and
+   * an old sidecar keeps listing. The `version` field itself is advisory
+   * (read for diagnostics, never branched on): the reader is a superset of
+   * every version it has ever written.
    */
   def load(dataRoot: os.Path): Map[String, Meta] =
     val p = metaPath(dataRoot)
@@ -126,9 +209,16 @@ object SecretsCatalog:
                 obj.toMap.flatMap { case (name, entry) =>
                   val vn = entry.hcursor.downField("variableName").as[String].toOption.filter(_.nonEmpty)
                   val desc = entry.hcursor.downField("description").as[String].getOrElse("")
-                  // An entry carrying neither field is not metadata — drop it
-                  // rather than materialise a meaningless row.
-                  if vn.isEmpty && desc.isEmpty then None else Some(name -> Meta(vn, desc))
+                  // Stored tags are folded through the same normalizer the
+                  // write path uses, so a hand-edited sidecar can never put a
+                  // non-keyword string into the query facet.
+                  val tags = normalizeTags(
+                    entry.hcursor.downField("tags").as[List[String]].getOrElse(Nil)
+                  )
+                  // An entry carrying no field at all is not metadata — drop
+                  // it rather than materialise a meaningless row.
+                  if vn.isEmpty && desc.isEmpty && tags.isEmpty then None
+                  else Some(name -> Meta(vn, desc, tags))
                 }
               case None => Map.empty
           case Left(_) => Map.empty
@@ -140,21 +230,23 @@ object SecretsCatalog:
 
   /**
    * Write the sidecar atomically, `0600`, through the shared credential ACL.
-   * Entries that carry neither field are dropped: the sidecar holds metadata,
-   * and "no metadata" is the absence of an entry, not an empty one.
+   * Entries that carry no field are dropped: the sidecar holds metadata, and
+   * "no metadata" is the absence of an entry, not an empty one.
    */
   def save(dataRoot: os.Path, meta: Map[String, Meta]): Unit =
     val obj = JsonObject.fromIterable(
       meta.toList.collect {
-        case (name, Meta(vn, desc)) if vn.exists(_.nonEmpty) || desc.nonEmpty =>
+        case (name, Meta(vn, desc, tags)) if vn.exists(_.nonEmpty) || desc.nonEmpty || tags.nonEmpty =>
           val fields = List(
             vn.filter(_.nonEmpty).map(v => "variableName" -> Json.fromString(v)),
-            if desc.nonEmpty then Some("description" -> Json.fromString(desc)) else None
+            if desc.nonEmpty then Some("description" -> Json.fromString(desc)) else None,
+            if tags.nonEmpty then Some("tags" -> Json.fromValues(tags.map(Json.fromString))) else None
           ).flatten
           name -> Json.fromJsonObject(JsonObject.fromIterable(fields))
       }
     )
-    val payload = Json.obj("version" -> Json.fromInt(1), "secrets" -> Json.fromJsonObject(obj))
+    val payload =
+      Json.obj("version" -> Json.fromInt(SidecarVersion), "secrets" -> Json.fromJsonObject(obj))
     writeAtomically(metaPath(dataRoot), payload.spaces2 + "\n")
 
   // ── Catalogue rendering ────────────────────────────────────────────────
@@ -185,10 +277,13 @@ object SecretsCatalog:
   def render(rows: List[Row]): String =
     val sb = new StringBuilder
     sb.append("# Secrets catalog\n\n")
-    sb.append("| Variable | Secret | Description | Updated |\n")
-    sb.append("| --- | --- | --- | --- |\n")
+    sb.append("| Variable | Secret | Description | Tags | Updated |\n")
+    sb.append("| --- | --- | --- | --- | --- |\n")
     rows.foreach { r =>
-      sb.append(s"| `${cell(r.variableName)}` | `${cell(r.name)}` | ${cell(r.description)} | ${stamp(r.updatedAt)} |\n")
+      val tags = cell(r.tags.map(tg => s"`#$tg`").mkString(" "))
+      sb.append(
+        s"| `${cell(r.variableName)}` | `${cell(r.name)}` | ${cell(r.description)} | $tags | ${stamp(r.updatedAt)} |\n"
+      )
     }
     sb.toString
 
@@ -215,7 +310,7 @@ object SecretsCatalog:
           val mtime =
             try Files.getLastModifiedTime((secretsDir / n).toNIO).toMillis
             catch case _: Throwable => 0L
-          Row(n, variableNameOf(n, meta), descriptionOf(n, meta), mtime)
+          Row(n, variableNameOf(n, meta), descriptionOf(n, meta), mtime, tagsOf(n, meta))
         }
 
   /**

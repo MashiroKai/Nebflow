@@ -104,7 +104,7 @@ class AssetVersioningSpec extends FunSuite:
   test("dev-tree index response: every css/vendor/js reference carries a fingerprint") {
     // devIndexWithBrand = the DevTree leg of indexResponse, called directly so
     // the spec is independent of staticSource's disk-dist freshness race.
-    val resp = StaticRoutes.devIndexWithBrand.unsafeRunSync()
+    val resp = StaticRoutes.devIndexWithBrand().unsafeRunSync()
     assertEquals(resp.status, org.http4s.Status.Ok)
     val body = resp.body.through(fs2.text.utf8.decode).compile.string.unsafeRunSync()
     // 正则尾容许可选 ?v=<hex>：完全版本化（=本批目标形态）的 body 也必须能

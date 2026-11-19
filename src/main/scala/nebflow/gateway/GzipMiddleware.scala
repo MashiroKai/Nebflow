@@ -27,12 +27,15 @@ import org.typelevel.ci.CIString
  * byte-wise from the identity representation, so a strong ETag must not be
  * shared between them. Verified against http4s 0.23.30 source:
  * StaticFile.etagMatch compares FULL EntityTags including the weakness flag,
- * so weakening to W/"..." would make every revalidation a miss. Stripping the
- * ETag instead makes clients fall back to Last-Modified revalidation
- * (StaticFile's If-Modified-Since path is independent of ETag), so 304
- * revalidation keeps working — pinned by the integration tests. Every
- * compressible response (compressed or not, 200 or 304) carries
- * `Vary: Accept-Encoding` so caches never mix the two representations.
+ * so weakening to W/"..." would make every revalidation a miss. STRONG tags
+ * are therefore stripped (clients fall back to Last-Modified revalidation —
+ * StaticFile's If-Modified-Since path is independent of ETag — so 304
+ * revalidation keeps working for every static file; pinned by the integration
+ * tests). A WEAK tag, by contrast, is content-coding agnostic by definition
+ * (RFC 9110 §8.8.3) and is KEPT, so the index route's own conditional handling
+ * survives the coding switch (静态面重验证批 2026-11-18). Every compressible
+ * response (compressed or not, 200 or 304) carries `Vary: Accept-Encoding` so
+ * caches never mix the two representations.
  *
  * HEAD requests are passed through untouched: ember's HEAD handling expects
  * the origin body untouched, and browsers revalidate with GET anyway.
@@ -77,16 +80,27 @@ object GzipMiddleware:
   private def compress(resp: Response[IO]): Response[IO] =
     // Byte length changes under compression: drop Content-Length so the
     // response switches to chunked framing instead of being truncated.
-    // Also strip ETag: the gzipped representation must not reuse the identity
-    // representation's strong validator. (Weakening to W/"..." is NOT viable:
-    // http4s StaticFile.etagMatch compares EntityTags including the weakness
-    // flag, so a weak ETag would never revalidate — clients fall back to
-    // Last-Modified/If-Modified-Since instead, which StaticFile supports.)
-    val stripped =
-      resp.removeHeader[`Content-Length`].removeHeader[ETag]
-    stripped
+    //
+    // Validator handling (静态面重验证批 2026-11-18): the gzipped representation
+    // differs byte-wise from the identity one, so a STRONG ETag must not be
+    // shared between them — it is stripped, and the StaticFile family keeps
+    // revalidating through Last-Modified/If-Modified-Since (StaticFile's
+    // etagMatch compares EntityTags including the weakness flag, so weakening
+    // those would make every revalidation a miss). A WEAK validator is
+    // explicitly content-coding agnostic (RFC 9110 §8.8.3: the weak comparison
+    // ignores the coding), so one is KEPT — that is what carries the index
+    // route's `no-cache` + ETag 304 across the compressed face without ever
+    // re-sending the body.
+    val base =
+      if weakEtagPresent(resp) then resp else resp.removeHeader[ETag]
+    base
+      .removeHeader[`Content-Length`]
       .putHeaders(`Content-Encoding`(ContentCoding.gzip), VaryAcceptEncoding)
       .withBodyStream(resp.body.through(Compression.forSync[IO].gzip()))
   end compress
+
+  /** A weak (`W/"…"`) validator is safe to keep on the compressed face. */
+  private def weakEtagPresent(resp: Response[IO]): Boolean =
+    resp.headers.get(CIString("ETag")).exists(_.head.value.startsWith("W/"))
 
 end GzipMiddleware

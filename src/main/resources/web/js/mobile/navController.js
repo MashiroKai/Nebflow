@@ -75,6 +75,10 @@ import { brand } from '../brand.js';
 import { wikiGraphEnabled } from '../featureFlags.js';
 import { agentAvatarDataUrl, onAgentAvatarChange } from '../agentProfile.js';
 import { avatarImgNode } from '../avatarRender.js';
+// 手机看板页「引用」钮字样（canvas-tab-reference 批 2026-11-18）：**单源引用入口字形**
+// —— 与 composer footer 引用键 / 气泡引用牌同一枚（quoteLogo.js 是叶子方向：只 import
+// i18n.js / fileIcon.js，对本模块零回边 ⇒ scripts/check-circular.mjs 不新增环）。
+import { quoteEntryIconNode } from '../quoteLogo.js';
 
 /**
  * 底 dock 五栏（作者 2026-10-29 令逐字顺序；顺序钉死 = spec 断言面）。
@@ -129,6 +133,12 @@ export const PAGES = [
   // aria-label.
   { id: 'todo-apple-list', tabId: null, icon: 'list-todo',      zh: '待办列表', en: 'To-Do List' },
   { id: 'todo-apple-item', tabId: null, icon: 'square-pen',     zh: '待办详情', en: 'To-Do' },
+  // 快速决策视角（todo-quick-decision 批 2026-11-18，作者令「首页右下角左侧加
+  // 一枚叠卡图标钮，点进去进入 dating app 视角左右滑切换待办」）：详情页（无
+  // tabId ⇒ 非 dock 根页），内容面 = todoAppleFace.js 的 buildQuick（同一支
+  // 待办面的第四页，不新起模块）。图标 = 站内既有叠卡图（lucide layers，与
+  // 看板堆叠卡视图同一枚）。返回路径 = 页壳左上返回钮 + 右滑边缘手势（既有）。
+  { id: 'todo-quick-decision', tabId: null, icon: 'layers',     zh: '快速决策', en: 'Quick decision' },
   // 搜索页标题（三点入口批 2026-11-05 页名胶囊定为唯一标题；2026-11-06 作者令
   // 「不要有省略 那就用搜索两个字吧」——「搜索聊天记录」整族写法退役，页名胶囊
   // 随 search.title 同批改「搜索」）；面内部那枚重复的 `.search-modal-header`
@@ -634,6 +644,7 @@ async function ensurePanelContent(pageId) {
     case 'tasks':   // Apple todo face home (entry: top-left round button)
     case 'todo-apple-list':
     case 'todo-apple-item':
+    case 'todo-quick-decision':
       // The face rebuilds the whole page body idempotently; nav is injected so
       // the face never imports this module.
       mountTodoAppleInto(pageId, bodyOf(pageId), { push: pushPage, pop: popPage });
@@ -1103,6 +1114,21 @@ function syncCanvasPage() {
   if (!canvasUI) return;
   const docs = docTabs();
   const activeId = activeDocId();
+  /* 内容区非空不变量（审阅收口空白面修复批 2026-11-19，作者令「切过去必须是
+     可见内容，不许空白」）。真机实证的失效链：审阅页签收口时 `closeTab` 把**邻位
+     签**激活，而邻位可能是**面板签**（`plugins` / `projects` / `wiki-graph` 这类
+     PANEL_TAB_IDS）⇒ `activeDocId()` 为 null ⇒ `adoptActiveDoc()` 无 pane 可收编
+     （`.mf-cv-host` 子节点 0），而 `.mf-cv-empty` 又因 `docTabs().length > 0` 保持
+     hidden ⇒ canvas 页只剩空背景（实测：`#canvas-panel[display:none]` +
+     `.mf-cv-host` 零子节点 + 活动签 = 面板签）。**不是**任何加载/品牌态 —— 页面里
+     没有 splash 元素，等超时也不会自愈，故按「内容就绪」腿修，不引入计时器。
+     自愈 = 本站于 canvas 页时切回最近的文档签（面板签不在环带/收编面上，本就不该
+     占据手机页的活动槽）；不在 canvas 页时不动 ⇒ 桌面类语义零改。 */
+  if (docs.length && !activeId && stack[stack.length - 1] === 'canvas') {
+    logEvent('canvas-page-selfheal', { why: 'panel-tab-active', to: docs[0].id });
+    setActiveTab(docs[0].id);
+    return;
+  }
   const sig = docs.map((d) => d.id).join('|');
   if (canvasUI.strip.dataset.sig !== sig) {
     canvasUI.strip.dataset.sig = sig;
@@ -1117,26 +1143,60 @@ function syncCanvasPage() {
       label.className = 'mf-strip-label';
       label.textContent = d.label;
       chip.appendChild(label);
+      // ── 引用钮（canvas-tab-reference 批 2026-11-18）────────────────────────
+      // 作者令逐字：「手机端我现在无法引用 canvas 标签页 我需要点击标签页顶部
+      // 展开之后 我可以有一个引用按钮 现在是一个箭头 没什么意义」。
+      //
+      // 改前实测（本批报告 §①）：「箭头」= 本 span 的 `↗` 字形 —— 线是通的
+      // （合成 el.click() 确实把引用送进 #attachment-preview），但它是**静态流内**
+      // 元素，命中序上被签的 ::before 热区伪元素整片压住 ⇒ 真手指点不到（9/9 采样点
+      // elementFromPoint 顶层恒为签本体）= 作者读到的「没什么意义」。
+      // 故本批两件：① 命中层修复（css/mobileLayer.css `.mf-strip-quote` 升定位 +
+      // z-index）；② 可见内容换成**同名控件的图标** —— 单源引用入口字形，**无文字**
+      // （作者令 2026-11-18 22:10「引用只需要一个小图标就行了 不需要文字」）。
+      // 箭头 `↗` 整条退役，不留装饰符、不加 tooltip 糊过去。
+      //
+      // 引用通路 = **单源复用**（零第三套引用体系）：本钮 →`quoteActiveCardRef()`
+      // →（canvas.js）`refForTab` → `appendRefToActiveView` —— 与桌面右键「引用当前页」
+      // 同一条通路、同一枚 chip 组件（composer 附件条 `.att-ref`）。另一支
+      // feat/todo-card-click-left 的「点待办卡片补 # 引用」走的是同一条
+      // appendRefToActiveView；本批不改通路、只改入口的外观与命中层。
       const quote = document.createElement('span');
       quote.className = 'mf-strip-quote';
       quote.setAttribute('role', 'button');
       quote.setAttribute('tabindex', '0');
       quote.setAttribute('aria-label', tt('引用此看板', 'Quote this Canvas'));
       quote.title = tt('引用此看板', 'Quote this Canvas');
-      quote.textContent = '↗';
-      quote.addEventListener('click', (event) => {
-        event.stopPropagation();
+      // 钮面 = **一枚小图标**（作者令 · 2026-11-18 22:10 逐字「引用只需要一个小图标就行
+      // 了 不需要文字」；同日早些的「保留可见文字」裁定以此为准，本钮**不留可见文字、
+      // 不留文本子节点**）。字形 = 单源引用入口 `QUOTE_ENTRY_ICON`（js/quoteLogo.js，
+      // 与 composer footer 引用键 / 气泡引用牌同一枚）。
+      // 语义与可达性不靠可见字面承担，由 aria-label（唯一名字源）+ role=button +
+      // tabindex=0 承担；命中盒仍 ≥44px（视觉面小、热区不缩：css 里 `--mhit` 撑盒，
+      // `::after` 只画 28px 面）。箭头 `↗` 仍整条退役（换的是图标，不是回退装饰符）。
+      // 落 DOM 走**既有安全构建路径**：`quoteEntryIconNode()`（quoteLogo.js 把同一份
+      // 单源字形转成节点）→ `replaceChildren`，本处零裸 HTML 串赋值
+      // （component-contract R5；本批判据见 scripts/check-component-contract.mjs）。
+      const quoteIcon = quoteEntryIconNode();
+      if (quoteIcon) quote.replaceChildren(quoteIcon);
+      /** 引用动作（唯一引用通路）。setActiveTab 先行 = 引用对象是**刚点的那一签**的
+       *  身份（不是「碰巧的活动签」）；goHome() 把会话页（composer）带到前台，落框
+       *  聚焦由通路自己完成（appendRefToActiveView → view.dom.input.focus）。
+       *  送不进去时 canvas.js 出口在屏上给明确提示（既有 toast 单源，绝不静默）。 */
+      const doQuote = () => {
         setActiveTab(d.id);
         goHome();
         quoteActiveCardRef();
+      };
+      quote.addEventListener('click', (event) => {
+        event.stopPropagation();
+        doQuote();
       });
       quote.addEventListener('keydown', (event) => {
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault();
           event.stopPropagation();
-          setActiveTab(d.id);
-          goHome();
-          quoteActiveCardRef();
+          doQuote();
         }
       });
       chip.appendChild(quote);

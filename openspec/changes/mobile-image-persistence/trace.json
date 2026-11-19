@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "change": "mobile-image-persistence",
+  "mappings": [
+    {
+      "requirement": "MIP-REQ-001",
+      "scenario": "MIP-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/dropbox/DropboxService.scala",
+        "src/main/scala/nebflow/shared/DropboxModels.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/dropbox/SenderOutPathLedgerSpec.scala",
+          "name": "browser image remains available from the sender ledger after transfer"
+        }
+      ]
+    },
+    {
+      "requirement": "MIP-REQ-001",
+      "scenario": "MIP-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/dropbox/DropboxService.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/dropbox/SenderOutPathLedgerSpec.scala",
+          "name": "image storage warning threshold includes the boundary"
+        }
+      ]
+    }
+  ]
+}

@@ -567,6 +567,12 @@ export default {
   'messages.attachUploading': 'Uploading — not downloadable yet',
   'messages.attachUnreadable': 'Attachment state unreadable — not downloadable',
   'messages.attachUnnamed': 'Unnamed attachment',
+  // Mobile download landing notice (mobile-download batch 2026-11-18). Rendered
+  // through the existing notification stack (window.__showToast) — no new style.
+  'download.sharedToAlbum': 'Share sheet opened · choose “Save Image/Video” to add it to Photos',
+  'download.sharedToFolder': 'Share sheet opened · choose “Save to Files” to pick a location',
+  'download.landedIosFiles': 'Downloaded · stored in Files app › Downloads on iPhone',
+  'download.landedBrowserDir': 'Downloaded to the browser download folder',
   // Attachment preview (author ruling 2026-09-15): accessible name for the
   // clickable card + the two *visible* degradation messages.
   'messages.attachPreview': 'Preview',
@@ -828,6 +834,8 @@ export default {
   'todoComplete.title': 'Todos',
   'todoComplete.noMatch': 'No matching todos',
   'todoComplete.detailUnavailable': 'This todo is not in the current list',
+  // Card-click leg (todo-card-click-left, 2026-11-18): never fail silently.
+  'todoComplete.composerMissing': 'No input box to insert the reference into',
   'modal.newSession': 'New Session',
   'modal.sessionName': 'Session name',
   'modal.cancel': 'Cancel',
@@ -953,6 +961,11 @@ export default {
   'subagents.waitingBg': 'waiting on {count} bg task(s): {desc} ({dur})',
   'subagents.waitingReceipts': 'waiting on {count} sub-agent receipt(s)',
   'subagents.longIdle': 'idle {mins} min, nothing in flight',
+  // Stale background-agent panel batch (2026-11-08): the underlying task record went
+  // terminal while the registry row lingered ⇒ the row says "Ended" explicitly and the
+  // clock freezes at the real duration (implausible durations are rejected, not shown).
+  'subagents.ended': 'Ended',
+  'subagents.endedTip': 'This session has ended (its task record is terminal) — the duration is the real one and no longer ticks',
   'subagents.status.stuck': 'Stuck',
   'subagents.status.error': 'Failed',
   'subagents.status.frozen': 'Frozen',
@@ -1394,10 +1407,11 @@ export default {
   'settings.modelChainTitle': 'Model (per session class)',
   'settings.modelChainDisclosureTitle': 'Model (per session class)',
   'settings.modelChainSectionHint': 'Session class models sync with /model.',
+  'settings.modelModeUnifiedNote': '{roles} follow the main session.',
   'settings.modelRoleTabs': 'Choose a conversation category',
   // /model panel (modelcfg Phase 1)
   'model.title': 'Model Configuration',
-  'model.modeUnified': 'Unified',
+  'model.modeUnified': 'All follow main',
   'model.modeSeparate': 'Per-role',
   'model.mainChain': '{agent} primary chain',
   'model.mainChainDesc': 'Every role follows this chain by default',
@@ -1425,7 +1439,7 @@ export default {
   'model.saved': 'Saved',
   'model.divergedBar': '{roles} configured independently; unaffected by the primary chain',
   'model.divergedView': 'View',
-  'model.seedNote': 'Not configured — the first available model will be used',
+  'model.seedNote': 'Not configured — select an explicit model to enable requests',
   'model.singleModelNote': 'Single model: on failure the session is marked invalid and waits silently — switch it from the sub-agent panel or the dialog',
   'model.loadFailed': 'Failed to load',
   'model.rateLimited': 'Too many requests. Retrying in {n} seconds.',
@@ -1461,7 +1475,6 @@ export default {
   'settings.advanced': 'Advanced',
   'settings.editRawJson': 'Edit Raw JSON',
   'settings.reload': 'Reload',
-  'settings.account': 'Account',
   'settings.general': 'General',
   'settings.modelsAndServices': 'Models & services',
   'profile.cancelEdit': 'Cancel changes',
@@ -1718,6 +1731,8 @@ export default {
   // Escalation chain (author boundary ① "keep the escalation chain"): permshield
   // F1 retargeted the upgrade to the **global persisted** mode (same path as the
   // shield) ⇒ no "this time only" semantics; state global + survives a restart.
+  'chat.permShowFull': 'Show full content',
+  'chat.permRequestNotDiff': 'Requested changes, not an actual file diff',
   'chat.permUpgradeAutoEdits': 'Allow and switch to auto-edits',
   'chat.permUpgradeAutoEditsDesc': 'Global mode becomes auto-edits: applies to every session and persists across restarts',
   'chat.permUpgradeAutoAll': 'Allow and switch to auto-all',
@@ -1836,6 +1851,15 @@ export default {
   'askUser.rejectUnknown': 'That question is no longer active — the card is still open, please answer again',
   'askUser.rejectNoMatch': 'No matching pending question — please answer again',
   'askUser.rejectGeneric': 'Answer not accepted — please answer again',
+  // Overflow → todo batch (author order 2026-11-18, round 2): a pending question
+  // past the loaded conversation page becomes a CONCRETE todo entry (the entry
+  // itself is the carrier); the question card lives inside that row and answers
+  // there. Both answer sites share one state and one resolution point.
+  'askUser.todoBadge': 'Answer',
+  'askUser.todoSubmit': 'Submit answer',
+  'askUser.todoCancel': 'Cancel',
+  'askUser.todoManual': 'Answer this one on its original card (secret value / directory picker)',
+  'askUser.cancelledElsewhere': 'This question was cancelled',
   // askuser-secret batch (2026-10-08): secret-question face (showOptions secret
   // branch) + the plain-text-reflux rejection toast (hub reason
   // "secret-slot-mismatch", spec §5.1).
@@ -2211,12 +2235,24 @@ export default {
   'canvas.closeTab': 'Close tab',
   'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
   'canvas.noRef': 'This tab cannot be referenced',
+  // canvas-tab-reference (2026-11-18): explicit notice when the reference cannot
+  // reach a composer (this leg used to fail silently).
+  'canvas.refNoComposer': 'The reference did not reach the input box (the chat composer is not ready yet). Open the chat and tap Quote again.',
   'canvas.unreadableTitle': 'File unreadable',
   'canvas.unreadableHint': 'The file does not exist or was cleaned up; it cannot be read.',
   'canvas.unreadablePathHint': 'The path is invalid; it cannot be read.',
   'canvas.loadingFile': 'Opening…',
   'canvas.loadFailed': 'Failed to open',
   'canvas.retry': 'Retry',
+  // Pop file-card optimistic-open batch (2026-11-18): the placeholder's failure
+  // reason must be readable AND typed — offline / not found / credential-denied /
+  // unsupported / timeout are no longer the same sentence, and never a blank page.
+  'canvas.loadOffline': 'Network unavailable (offline) — cannot fetch the file.',
+  'canvas.loadDenied': 'Not allowed to read this file (credential denied).',
+  'canvas.loadNotFound': 'File not found or already removed.',
+  'canvas.loadTimeout': 'Loading timed out — retry.',
+  'canvas.loadCancelled': 'Cancelled.',
+  'canvas.loadBusy': 'Server busy — try again shortly.',
   // canvas file-refresh batch (2026-10-25 author order): pane corner re-read button.
   // Retired by canvas-auto-refresh (2026-11-17 author order — hysteresis auto refresh,
   // 60s window); canvas.refresh key removed with the button, refreshDirty stays
@@ -2436,22 +2472,14 @@ export default {
   'neblink.reachDirect': 'Direct P2P connection established',
   'neblink.reachRelay': 'Reachable via server relay',
   'neblink.reachServerOnly': 'Online — no direct data path',
-  // Self-explaining batch (2026-11-04, rule 8): dropped the trailing "signing in joins
-  // the network automatically" (behaviour teaching). State + next step stay.
-  'neblink.loggedOutHint': 'Not signed in — click the avatar above to sign in with your {lowerBrand} account',
-  // Defect A (2026-09-18): two readings of the signed-out panel — (1) the
-  // "clean up and sign in again" entry (local credential-file class only);
-  // (2) the status-face degradation line (a non-2xx `/status` used to be silent).
+  // "Clean up and sign in again" (defect A, 2026-09-18): KEPT — activityBar's login
+  // failure face still uses it (#login-cleanup → openEndSessionHandoff(true)).
   'neblink.cleanupRelogin': 'Clean up and sign in again',
-  'neblink.statusDegraded': 'Status read failed (HTTP {status}) — what you see below may be stale',
-  // Pairing-code card (portal MVP E7, 2026-10-10): 6-digit code → POST /api/neblink/enroll.
-  // Kicked-offline passive notice (kickold batch, case B, 2026-09-14): STATUS-LINE
-  // level only — no banner, no sound (一期口径, User.md:36).
-  'neblink.signedOutElsewhere': 'Signed in elsewhere',
-  'neblink.signedOutElsewhereHint': 'Another device took over this session; automatic reconnect is paused — sign in again to resume.',
+  // Account-card keys (neblink.loggedOutHint / statusDegraded / signedOutElsewhere
+  // (+Hint) / pairing / loggedInAs / settings.account) were removed with the account
+  // card (2026-11-18 author ruling): zero references repo-wide (grep-verified).
   'neblink.deviceDescHint': 'Visible to agents — they use this description to automatically pick the right device for a task',
   'neblink.save': 'Save',
-  'neblink.update': 'Update',
   'neblink.stable': 'Stable',
   'neblink.beta': 'Beta',
   'neblink.cancel': 'Cancel',
@@ -2460,8 +2488,8 @@ export default {
   // update inside contacts — updates are unified on the website now"): their only
   // consumer was the contacts device row's inline echo, and after that face retired
   // they had zero references repo-wide (grep-verified).
-  // `neblink.update` STAYS — the settings device area still uses it per row
-  // (`messages.js` `[data-settings-device-update]`, fleet batch 2026-11-01).
+  // `neblink.update` is also gone: its only consumer was the settings device area
+  // per row (fleet batch 2026-11-01), retired with the account card (2026-11-18).
 
   // ── Fleet-wide unified update (fleet batch 2026-11-01: "one click brings every
   //    device to the same version, with a status card guiding the whole way") ──
@@ -2483,7 +2511,6 @@ export default {
   'fleet.cancel': 'Stop',
   'fleet.retry': 'Retry failed',
   'fleet.startConfirm': 'Update everything',
-  'fleet.startAction': 'Update all',
   'fleet.updateThisDevice': 'Update this device',
   'fleet.thisDevice': 'this device',
   'fleet.online': 'online',
@@ -2541,11 +2568,10 @@ export default {
   'fleet.branch.manual': 'manual',
   'fleet.branch.queued': 'push when online',
 
-  // Read-only signed-in display (auth-trim batch 2026-10-20 author ruling): who is
-  // signed in, no action entry. The former switch/logout key group (switchAccount/
-  // logout/loggingOut/useOtherAccount/currentTag) is removed with the two buttons —
-  // sign-out and account switching live on the website portal only.
-  'neblink.loggedInAs': 'Signed in as: {name}',
+  // Read-only signed-in display key `neblink.loggedInAs` ("Signed in as: {name}") was
+  // removed with the account card (2026-11-18 author ruling). The former switch/logout
+  // key group (switchAccount/logout/loggingOut/useOtherAccount/currentTag) is removed
+  // with the two buttons — sign-out and account switching live on the website portal.
   // Sign-out key (2026-11 "no way out" fix batch, author ruling "fix only the
   // sign-out"): shared by the settings account secondary key and the avatar
   // menu item. Account switching still lives on the website portal only.
@@ -2595,6 +2621,10 @@ export default {
   'mhsearch.noResultsHint': 'Try a different keyword or scope',
   'mhsearch.error': 'Search failed, try again later',
   'mhsearch.capNote': 'Up to 1000 messages per segment',
+  'mhsearch.scanScope': 'Scanned {pages} pages',
+  'mhsearch.scanPartial': 'Partial results: stopped on a match or scan limit',
+  'mhsearch.scanFailed': 'Search partly failed or timed out; retry',
+  'mhsearch.fullScan': 'Search all messages (may be slow)',
   'mhsearch.loadMore': 'Load more (this conversation)',
   'mhsearch.me': 'Me',
   'mhsearch.jumpFail': "Couldn't locate that message",
@@ -3257,6 +3287,18 @@ export default {
   // (层级收进批, author ruling 2026-11-01: the badge concept is gone; en/zh
   // drop the same keys in the same batch).
   'secrets.referencedBy': 'Referenced by {refs}',
+  // 可查询批 (author ruling 2026-11-18 21:31): description + keyword tags +
+  // the query-face copy. Same key set as zh-CN, same batch.
+  'secrets.searchPlaceholder': 'Search name, description, tags or consumers…',
+  'secrets.description': 'Description',
+  'secrets.descriptionPlaceholder': 'What is this credential for? (queryable; not a value)',
+  'secrets.tags': 'Tags',
+  'secrets.tagsPlaceholder': 'Keyword tags, comma separated, e.g. cloud, deploy',
+  'secrets.path': 'Path',
+  'secrets.count': '{n} secret(s)',
+  'secrets.countFiltered': '{n} of {total} secret(s)',
+  'secrets.clearFilters': 'Clear filters ✕',
+  'secrets.noMatch': 'No secrets match. Try another keyword, or clear the filters to see all.',
   'secrets.deleteTitle': 'Delete secret',
   'secrets.deleteConfirm': 'This cannot be undone. Delete "{name}"?',
   'secrets.deleteConfirmRefs': '"{name}" is referenced by: {refs}. Deleting breaks them. This cannot be undone.',
@@ -3362,6 +3404,11 @@ export default {
   'todoapple.noDue': 'No date',
   'todoapple.none': 'None',
   'todoapple.dueTomorrow': 'Tomorrow',
+  // Quick-decision face (todo-quick-decision, 2026-11-18): entry label, card
+  // reading, and the "answering is not wired" fact line (same fact as the list
+  // page's decision rows).
+  'todoapple.quickDecision': 'Quick decision',
+  'todoapple.quickCount': '{n} of {m}',
   'todoface.tagSave': 'Save',
   'todoface.tagErrEmpty': 'Name cannot be empty',
   'todoface.tagErrDup': 'A tag with this name already exists',
@@ -3488,6 +3535,8 @@ export default {
   'schedCard.keep': 'Keep',
   'schedCard.noChange': 'Nothing changed',
   'schedCard.readFailed': 'Engine state not read back',
+  // Card-click leg (todo-card-click-left, 2026-11-18): the whole card appends a `#` reference.
+  'schedCard.refHint': 'Click the card to reference this todo as #',
   'schedCard.errOffline': 'Not connected to the engine — change not submitted',
   'schedCard.errTimeout': 'No engine receipt — change unconfirmed',
   'schedCard.errGone': 'Entry no longer exists — change not saved',
@@ -3510,6 +3559,8 @@ export default {
   'profile.deviceSignOutFailed': 'The sign-out request was not delivered; that device session is unchanged.',
   'profile.deviceSignOutRemoteUnsupported': 'That device keeps its own credential locally, so this device cannot sign it out - sign out on that device itself.',
   'profile.editOnWebsite': 'Identity fields are read-only readings; to edit them go to the website account page {where}.',
+  'profile.githubUnavailable': 'The account service returned no GitHub username (that reading comes from the GitHub account sent at sign-in).',
+  'profile.googleUnavailable': 'The Google binding is maintained on the website account page only; neither the local account service nor the sign-in credential carries it.',
   'profile.signedIn': 'Signed in',
 };
 

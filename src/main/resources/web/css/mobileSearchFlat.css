@@ -149,10 +149,13 @@ body.mobile-layer .mh-search-dock:not(.has-query) .mh-search-results {
    任何一条材质声明 —— 第二套玻璃味不允许在这里长回来（check-glass-unify G7 判红）。 */
 body.mobile-layer .mh-search-dock:not(.mh-search-collapsed) .mh-search-bar {
   width: calc(100% - var(--ds-space-4) * 2);
-  height: 44px;
+  /* desktop-search-field 批（2026-11-17）：高度/内距/圆角改引 --sfs-* 单源令牌
+     （css/searchField.css :root 出生，桌面 .sf-field 消费同一组）——计算值与
+     本批改前逐值相同（44 / 16 / 12），仅数值出生地上收。 */
+  height: var(--sfs-height);
   margin: 0 var(--ds-space-4);
-  padding: 0 var(--ds-space-4);
-  border-radius: var(--ds-radius-xl);
+  padding: 0 var(--sfs-pad-x);
+  border-radius: var(--sfs-radius);
 }
 
 /* ── ③ 形变编排：宽度 / 高 / 位移 / 圆角 / 底色 / 描边 / 浮影一整段 ──────

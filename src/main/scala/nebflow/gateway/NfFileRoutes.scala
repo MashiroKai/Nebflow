@@ -323,6 +323,129 @@ object NfFileRoutes:
     ) // corsWrap(…) — 全出向补 CORS/PNA 头（LAN 直传腿）
   }
 
+  // ── 内容寻址取字节出口（按对象复用批 2026-11-18 · 第 1 件）──────────────
+  //
+  // 作者令逐字：「我们这些网络数据传输 能不能也是按对象传输这样 文件存储复用 也是
+  // 按对象来 这样 加载过的内容 不会重复加载」。
+  //
+  // 病根（前序批已实证）：`/api/nf-file?path=…&ticket=…` 的 URL 带一次性票据、
+  // 票据会重铸（`nfTicket.js:355` / `:372 reMintAll`，消费点 `cardRegistry.js:441`）
+  // ⇒ **URL 不是内容身份**：同一件对象的每条取字节腿（Card/iframe 裸票据 URL 由
+  // 浏览器自取一条、账本/叠卡/灯箱/查看器一条）各造一个 URL，桥只有浏览器 HTTP
+  // 缓存 ⇒ 跨腿必然重下。
+  //
+  // 本出口把 URL 变成**内容**的函数：`/api/nf-obj/<cid>/<name>`（cid = 整件 sha256
+  // 前 32 hex，见 [[NfObjStore.CidHexChars]]）。应答带**强 ETag = `"<cid>"`** +
+  // `Cache-Control: private, max-age=31536000, immutable` ⇒ 同 cid 的第二条腿在
+  // 浏览器缓存里命中，**零字节、零请求**（服务端读数为 0）。内容变 ⇒ cid 变 ⇒
+  // URL 变 ⇒ 永不陈旧（immutable 因此是安全的，不是乐观的）。
+  //
+  // 鉴权**绝不进 URL**：cookie / `Authorization` 头（与铸票面同一判据
+  // [[GatewayAuth.Rails.WsAuth]]——会话 cookie 优先、file-token Bearer 兜底）。
+  // 本批**不**给本路由发票据，也不接受 `?ticket=`：URL 里没有任何凭据，因此它比
+  // 票据 URL 更严（票据 URL 把凭据摊在 query 里）。逗留期旧票据路由
+  // （`/api/nf-file`）行为逐字节不变——双读腿见下方 [[nfFileRoutes]] 零改动。
+  //
+  // Range 刻意不实现（申报）：本出口只服务账本/灯箱/查看器的**整件**取数腿；
+  // 视频 seek 的 Range 语义留在 `/api/nf-file`（本批「不做：视频账本 Range 腿」），
+  // 一个带 Range 的请求按 RFC 9110 §14.2 忽略并回 200 整体。
+  //
+  // 尺寸上限（[[NfObjStore.MaxCidBytes]] 64 MiB）：超过则铸票面不给 cid，前端原样
+  // 走票据 URL —— 大件不做内容寻址（哈希代价 + 视频语义），诚实降级。
+
+  /** 内容寻址应答的缓存策略：immutable + 一年（cid 即内容身份 ⇒ 永不需要再验证）。 */
+  private val NfObjCacheControl: String = "private, max-age=31536000, immutable"
+
+  /** HTTP-date（Last-Modified 用；RFC 9110 §10.2.1 形状，两位日期 + GMT）。 */
+  private val HttpDateFormat: java.time.format.DateTimeFormatter =
+    java.time.format.DateTimeFormatter
+      .ofPattern("EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US)
+      .withZone(java.time.ZoneOffset.UTC)
+
+  /** 请求面上**是否出示了**任何凭据（区分「未授权 401」与「凭据被拒 403」）。 */
+  private def credentialPresented(req: Request[IO]): Boolean =
+    req.cookies.exists(_.name == GatewaySessionStore.CookieName) ||
+      req.headers.get(org.typelevel.ci.CIString("Authorization")).isDefined
+
+  /** 未出示任何凭据 → 401（`nf-file` 缺票 401 的同族语义）。 */
+  private def nfObjAuthMissing: Response[IO] =
+    nfText(Status.Unauthorized, "authentication required")
+      .putHeaders(org.http4s.Header.Raw(org.typelevel.ci.CIString("X-Nf-Reason"), "credential-required"))
+      .putHeaders(cacheHeader("no-store"))
+
+  /** 出示了凭据但无效/过期 → 403（与铸票面 [[authDenied]] 逐字同头）。 */
+  private def nfObjAuthDenied: Response[IO] =
+    authDenied.putHeaders(cacheHeader("no-store"))
+
+  /** 内容寻址出口的判据拒日志（与 `nf-file denied:` 同族、可 grep、凭据不落日志）。 */
+  private def nfObjDenyLog(status: Int, reason: String, cid: String, req: Request[IO]): IO[Unit] =
+    logger.warn(
+      s"nf-obj denied: status=$status reason=$reason cid=$cid remote=" +
+        req.remoteAddr.map(_.toString).getOrElse("unknown")
+    )
+
+  /**
+   * `GET /api/nf-obj/<cid>/<name>` — 内容寻址取字节出口（见上方块注释）。
+   *
+   * 拒绝路径（实测状态码见 NfObjRoutesSpec）：
+   *   · cid 形态不合法（非 32 位小写 hex）        → 404（统一，不做存在性 oracle）
+   *   · 未出示任何凭据                            → 401 `X-Nf-Reason: credential-required`
+   *   · 出示但无效/过期的会话或 Bearer            → 403 `X-Nf-Reason: credential-required`
+   *   · cid 未知 / 注册已过期 / 文件已变（size+mtime 不符）→ 404
+   *   · 正答                                       → 200（或 `If-None-Match` 命中 ⇒ 304）
+   */
+  def nfObjRoutes(
+    tokenRef: cats.effect.Ref[IO, String],
+    objects: NfObjStore,
+    sessions: GatewaySessionStore
+  ): HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ GET -> Root / "api" / "nf-obj" / cid / name =>
+    if !cid.matches(NfObjStore.CidPattern) then IO.pure(Response[IO](Status.NotFound))
+    else
+      tokenRef.get
+        .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
+        .flatMap {
+          case None =>
+            val resp = if credentialPresented(req) then nfObjAuthDenied else nfObjAuthMissing
+            nfObjDenyLog(resp.status.code, "credential-required", cid, req).as(resp)
+          case Some(_) =>
+            objects.lookup(cid).flatMap {
+              case None => IO.pure(Response[IO](Status.NotFound))
+              case Some(entry) => serveObj(req, entry, name)
+            }
+        }
+  }
+
+  /** 正答腿：强 ETag = cid + immutable 缓存 + 条件 304。 */
+  private def serveObj(req: Request[IO], entry: NfObjEntry, name: String): IO[Response[IO]] =
+    val etag = "\"" + entry.cid + "\""
+    val validators: List[Header.ToRaw] = List(
+      Header.Raw(org.typelevel.ci.CIString("ETag"), etag),
+      Header.Raw(org.typelevel.ci.CIString("Cache-Control"), NfObjCacheControl),
+      Header.Raw(org.typelevel.ci.CIString("Last-Modified"), HttpDateFormat.format(java.time.Instant.ofEpochMilli(entry.mtimeMs)))
+    )
+    val inm = req.headers.get(org.typelevel.ci.CIString("If-None-Match")).map(_.head.value)
+    val notModified = inm.exists { raw =>
+      val tags = raw.split(",").map(_.trim)
+      tags.contains("*") || tags.contains(etag) || tags.contains("W/" + etag)
+    }
+    val real = fs2.io.file.Path(entry.realPath)
+    if notModified then IO.pure(Response[IO](Status.NotModified).putHeaders(validators*))
+    else
+      IO.pure(
+        Response[IO](Status.Ok)
+          .putHeaders(validators*)
+          .putHeaders(Header.Raw(org.typelevel.ci.CIString("Content-Length"), entry.size.toString))
+          .withBodyStream(fs2.io.file.Files[IO].readAll(real, 64 * 1024, fs2.io.file.Flags.Read))
+      ).map { base =>
+        // Content-Type by the URL's name segment (the decorative name; the bytes
+        // come from the cid-resolved file). Same MimeDB as nf-file's leg.
+        val dotted = fs2.io.file.Path(entry.realPath)
+        val byName =
+          val dot = name.lastIndexOf('.')
+          if dot < 0 then None else MediaType.forExtension(name.substring(dot + 1).toLowerCase).map(mt => `Content-Type`(mt))
+        byName.orElse(contentTypeFor(dotted)).fold(base)(base.putHeaders(_))
+      }
+
   /**
    * LAN 直传腿的 CORS/PNA 头集（console-fastpath 批 2026-10-23·腿③）：
    * ACAO `*`（凭据 = URL 内 ticket，与 nf-reach 同族纪律）+ PNA 放行 +
@@ -357,7 +480,8 @@ object NfFileRoutes:
     store: NfTicketStore,
     policy: NfPathPolicy = NfPathPolicy.memoized(),
     sessions: GatewaySessionStore,
-    home: java.nio.file.Path = NfFilePolicy.processHome
+    home: java.nio.file.Path = NfFilePolicy.processHome,
+    objects: NfObjStore = NfObjStore.memoized
   ): HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ POST -> Root / "api" / "nf-ticket" =>
     val authorized =
       tokenRef.get.flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
@@ -386,20 +510,32 @@ object NfFileRoutes:
                       // 拿它做 LAN 直传阈值判定（≥4MiB 且近路在册 ⇒ 直连取）。
                       // verdict 与 stat 之间文件可能消失/变化——stat 失败回 0
                       // （= 未知尺寸，前端按不直传处理，诚实降级）。
-                      IO.blocking(java.nio.file.Files.size(real)).attempt.map(_.getOrElse(0L)).flatMap {
-                        size =>
-                          store.issue(sessionId, real.toString).map { issued =>
-                            Right(
-                              p,
-                              Json.obj(
-                                "t" -> issued.token.asJson,
-                                "exp" -> issued.expiresAt.asJson,
-                                "uses" -> issued.remaining.asJson,
-                                "size" -> size.asJson
+                      // cid 并键（按对象复用批 2026-11-18·第 1 件）：同一次 stat
+                      // 顺带把内容 cid 注册进 [[NfObjStore]]（服务端自算 sha256，
+                      // 不信客户端）并随票回给前端 ⇒ 账本与 Card 腿能构造**同一个**
+                      // 内容寻址 URL。超过 MaxCidBytes / 不可读 ⇒ cid = null（前端
+                      // 回落票据 URL，诚实降级）。
+                      IO.blocking {
+                        val pj = real
+                        (java.nio.file.Files.size(pj), java.nio.file.Files.getLastModifiedTime(pj).toMillis)
+                      }.attempt
+                        .map(_.toOption.getOrElse((0L, 0L)))
+                        .flatMap { case (size, mtime) =>
+                          objects.register(real.toString, size, mtime).flatMap { cidOpt =>
+                            store.issue(sessionId, real.toString).map { issued =>
+                              Right(
+                                p,
+                                Json.obj(
+                                  "t" -> issued.token.asJson,
+                                  "exp" -> issued.expiresAt.asJson,
+                                  "uses" -> issued.remaining.asJson,
+                                  "size" -> size.asJson,
+                                  "cid" -> cidOpt.asJson
+                                )
                               )
-                            )
+                            }
                           }
-                      }
+                        }
                     case denied: NfVerdict.Denied =>
                       IO.pure(Left(p, Json.obj("path" -> p.asJson, "reason" -> denied.reason.asJson)))
                   }

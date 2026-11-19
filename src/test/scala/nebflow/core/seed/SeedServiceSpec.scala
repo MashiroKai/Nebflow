@@ -79,15 +79,15 @@ class SeedServiceSpec extends FunSuite:
       assert(PluginRegistry.resolve(name).unsafeRunSync().isRight, s"plugin '$name' trusted")
     // 负向守卫（新口径，2026-09-12）：播种的唯一驱动源是 manifest.items（SeedService.runSeed
     // 逐条遍历），而默认预装集与种子树可手动装全集已解耦（K9 断言见 SeedManifestCoverageSpec）⇒
-    // ① 名字既不在 manifest 也不在种子树者绝不落 home；② **在种子树但不在默认集**的 5 包
-    // 也绝不落 home（默认集收缩不删种子文件，但也不预装——既有 home 面积不扩张到 8 条）。
+    // ① 名字既不在 manifest 也不在种子树者绝不落 home；② **在种子树但不在默认集**的包
+    // 也绝不落 home（默认集收缩不删种子文件，但也不预装——既有 home 面积不扩张）。
     for name <- List("no-such-plugin-in-manifest", "design-cards")
     do
       assert(
         !os.exists(home / "plugins" / name),
         s"plugin '$name' NOT seeded (absent from manifest + seed/plugins tree)"
       )
-    for name <- List("design-language", "design-cards", "engineering-methods", "explorer-toolkit", "design-spec")
+    for name <- List("design-cards", "engineering-methods", "explorer-toolkit", "design-spec")
     do
       assert(
         !os.exists(home / "plugins" / name),

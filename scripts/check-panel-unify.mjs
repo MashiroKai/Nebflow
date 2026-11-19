@@ -29,8 +29,9 @@
 //  P4 令牌在场：登记表引用的每一个 --* 令牌必须在某个 css 文件里声明（§⑲ 槽
 //     或既有刻度槽）——规范引用了不存在的令牌 = 规范本身失效。
 //
-// 判据与术语的**规范侧**（人读条文、登记表、例外登记）在
-//   src/main/resources/seed/plugins/design-language/skills/design-language/references/panel-spec.md
+// 判据与术语的**规范侧**（人读条文、登记表、例外登记）在 stand-dev 插件包内
+//   <包根>/references/frontend/panel-spec.md
+// （包根定位见 scripts/lib/design-spec-source.mjs；本仓不再保留第二份拷贝）。
 // 本脚本只做它机械可判的那部分；改判据要先改规范。
 //
 // 用法：
@@ -43,6 +44,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.mjs';
 
 const ROOT_OVERRIDE = (process.argv.slice(2).find((a) => a.startsWith('--root=')) || '').slice(7);
 const ROOT = ROOT_OVERRIDE
@@ -51,10 +53,8 @@ const ROOT = ROOT_OVERRIDE
 const WEB = join(ROOT, 'src', 'main', 'resources', 'web');
 const CSS_DIR = join(WEB, 'css');
 const JS_DIR = join(WEB, 'js');
-const SPEC = join(
-  ROOT, 'src', 'main', 'resources', 'seed', 'plugins', 'design-language',
-  'skills', 'design-language', 'references', 'panel-spec.md',
-);
+/** 规范正文（单源，在 stand-dev 插件包内；本仓无第二份拷贝）。 */
+const SPEC = resolveDesignSpec('references/frontend/panel-spec.md');
 const MOBILE_LAYER = join(CSS_DIR, 'mobileLayer.css');
 
 const rel = (p) => relative(ROOT, p).replaceAll('\\', '/');
@@ -158,8 +158,8 @@ const violations = [];
 const add = (v) => violations.push(v);
 const inventory = { p1: [], p2: [], exceptions: [], unsanctioned: [] };
 
-if (!existsSync(SPEC)) {
-  console.error(`✗ panel-unify gate FAILED — 规范文件缺失：${rel(SPEC)}`);
+if (!SPEC) {
+  console.error(`✗ panel-unify gate 不可跑 —— ${specMissingMessage('references/frontend/panel-spec.md')}`);
   process.exit(2);
 }
 const specSrc = readFileSync(SPEC, 'utf8');
@@ -172,8 +172,8 @@ const p2Table = tables.find((t) => t.header.some((h) => /关闭键锚/.test(h)) 
 // 例外表：表头含「选择器」+「理由」
 const excTable = tables.find((t) => t.header.some((h) => /^理由$/.test(h)) && t.header.some((h) => /选择器/.test(h)));
 
-if (!p1Table) add({ rule: 'P1', file: rel(SPEC), line: 0, selector: '-', detail: '缺少「面板标题登记表」表', why: '没有登记表 = 面板标题无约束；先改规范再加面' });
-if (!p2Table) add({ rule: 'P2', file: rel(SPEC), line: 0, selector: '-', detail: '缺少「按钮去重登记表」表', why: '没有登记表 = 返回键/X 去重无约束；先改规范再加面' });
+if (!p1Table) add({ rule: 'P1', file: SPEC, line: 0, selector: '-', detail: '缺少「面板标题登记表」表', why: '没有登记表 = 面板标题无约束；先改规范再加面' });
+if (!p2Table) add({ rule: 'P2', file: SPEC, line: 0, selector: '-', detail: '缺少「按钮去重登记表」表', why: '没有登记表 = 返回键/X 去重无约束；先改规范再加面' });
 
 // ── 样式语料（CSS 走规则块；JS 内嵌 POPUP_CSS 走选择器切片）────────────────
 const cssFiles = readdirSync(CSS_DIR).filter((x) => x.endsWith('.css')).sort()
@@ -253,7 +253,7 @@ if (p1Table) {
     }
     inventory.p1.push(entry);
     if (!entry.ok) {
-      add({ rule: 'P1', file: rel(SPEC), line: 0, selector: sel, detail: entry.detail, why: `面板标题登记槽 ${slot} 漂移：同类面板标题只能取规定令牌（裸字面量即红）` });
+      add({ rule: 'P1', file: SPEC, line: 0, selector: sel, detail: entry.detail, why: `面板标题登记槽 ${slot} 漂移：同类面板标题只能取规定令牌（裸字面量即红）` });
     }
   }
 }
@@ -304,7 +304,7 @@ if (p2Table) {
     }
     inventory.p2.push(entry);
     if (!entry.ok) {
-      add({ rule: 'P2', file: rel(SPEC), line: 0, selector: anchorCell, detail: entry.detail, why: `按钮去重登记面「${face}」漂移：有返回键的面不许同时有 X 键（3(d) 机械判据）` });
+      add({ rule: 'P2', file: SPEC, line: 0, selector: anchorCell, detail: entry.detail, why: `按钮去重登记面「${face}」漂移：有返回键的面不许同时有 X 键（3(d) 机械判据）` });
     }
   }
 }
@@ -328,11 +328,11 @@ if (excTable) {
     }
     inventory.exceptions.push(entry);
     if (!entry.ok) {
-      add({ rule: 'P3', file: rel(SPEC), line: 0, selector: sel, detail: entry.detail, why: '例外必须有具名登记处与理由（空理由 / 陈旧例外 = 红，豁免不许空转）' });
+      add({ rule: 'P3', file: SPEC, line: 0, selector: sel, detail: entry.detail, why: '例外必须有具名登记处与理由（空理由 / 陈旧例外 = 红，豁免不许空转）' });
     }
   }
 } else {
-  add({ rule: 'P3', file: rel(SPEC), line: 0, selector: '-', detail: '缺少「例外清单」表', why: '例外必须有具名登记处；没有表 = 豁免无账本' });
+  add({ rule: 'P3', file: SPEC, line: 0, selector: '-', detail: '缺少「例外清单」表', why: '例外必须有具名登记处；没有表 = 豁免无账本' });
 }
 
 // ── 未收编清查（盘点面，不判红）：调 mobileSheetBack 且建 close 键、既无守卫也未登记 ──
@@ -358,7 +358,7 @@ const argv = new Set(process.argv.slice(2).filter((a) => !a.startsWith('--root='
 if (argv.has('--json')) {
   console.log(JSON.stringify({
     ok: violations.length === 0,
-    spec: rel(SPEC),
+    spec: SPEC,
     p1: inventory.p1,
     p2: inventory.p2,
     exceptions: inventory.exceptions,
@@ -369,7 +369,7 @@ if (argv.has('--json')) {
 }
 
 if (argv.has('--inventory')) {
-  console.log(`规范 = ${rel(SPEC)}`);
+  console.log(`规范 = ${SPEC}`);
   console.log(`\n── P1 面板标题登记（${inventory.p1.length} 行，红 ${inventory.p1.filter((r) => !r.ok).length}）──`);
   for (const r of inventory.p1) {
     console.log(`  ${r.ok ? '✓' : '✗'} ${r.slot} ${r.selector}${r.ok ? '' : `  ← ${r.detail}`}`);
@@ -396,7 +396,7 @@ if (violations.length) {
     console.error(`      ${v.why}`);
   }
   console.error('\n处置：改规范先 —— 面板标题登记表（§1.1）/ 按钮去重登记表（§7.1）/ 例外清单（§8）');
-  console.error(`        都在 ${rel(SPEC)}；登记令牌 = design-system.css §⑲ --ds-panel-*；`);
+  console.error(`        都在 ${SPEC}；登记令牌 = design-system.css §⑲ --ds-panel-*；`);
   console.error('        守卫单源 = js/mobile/popSheet.js isMobileLayer()。');
   process.exit(1);
 }

@@ -111,118 +111,6 @@ async function newPage(browser) {
 /* ═══════════ B1 — 右键菜单（文本行 = 复制+引用；工具行 = 仅引用）═══════════ */
 
 test.describe('B1 — 右键菜单项', () => {
-  test('selected text is quoted instead of the entire message', async ({ browser }) => {
-    const { context, page } = await newPage(browser);
-    const id = await page.evaluate(() => window.__renderUserRow('before selected after'));
-    const result = await page.evaluate(async id => {
-      const row = window.__rowById(id);
-      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode()) && !node.textContent.includes('before selected after')) {}
-      const range = document.createRange();
-      range.setStart(node, 7);
-      range.setEnd(node, 15);
-      const selection = window.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
-      await window.__startQuoteOn(id);
-      return window.__quoteStripState();
-    }, id);
-    expect(result.chipText).toContain('selected');
-    expect(result.chipText).not.toContain('before');
-    await context.close();
-  });
-  test('selected Ask sends bounded context and quotes the returned explanation', async ({ browser }) => {
-    const { context, page } = await newPage(browser);
-    const id = await page.evaluate(() => window.__renderUserRow('before selected after'));
-    await page.evaluate(id => {
-      const socket = new EventTarget();
-      socket.readyState = WebSocket.OPEN;
-      socket.send = data => { window.__selectionFrame = JSON.parse(data); };
-      window.__setSelectionSocket(socket);
-      const row = window.__rowById(id);
-      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode()) && !node.textContent.includes('before selected after')) {}
-      const range = document.createRange();
-      range.setStart(node, 7); range.setEnd(node, 15);
-      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
-      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
-      Array.from(document.querySelectorAll('.fm-context-menu button')).find(button => button.textContent === 'Ask').click();
-    }, id);
-    await expect(page.locator('.selection-ask-panel')).toBeVisible();
-    const frame = await page.evaluate(() => window.__selectionFrame);
-    expect(frame.type).toBe('ask');
-    expect(frame.question).toContain('<before>\nbefore ');
-    expect(frame.question).toContain('<selection>\nselected\n</selection>');
-    expect(frame.question).toContain(' after\n</after>');
-    await page.evaluate(async () => {
-      const ask = await import('/src/main/resources/web/js/selectionAsk.js');
-      ask.selectionAskFrame('askTextDelta', { sessionId: 'quote-harness', delta: 'Synthetic explanation.' });
-      ask.selectionAskFrame('askDone', { sessionId: 'quote-harness' });
-    });
-    await expect(page.locator('.selection-ask-answer')).toHaveText('Synthetic explanation.');
-    await page.locator('.selection-ask-panel button').last().click();
-    await expect(page.locator('#attachment-preview')).toContainText('Synthetic explanation.');
-    await context.close();
-  });
-
-  test('touch hold opens selection actions; moving cancels', async ({ browser }) => {
-    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-    const page = await context.newPage();
-    await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
-    await page.waitForFunction(() => window.__ready === true);
-    const id = await page.evaluate(() => window.__renderUserRow('before selected after'));
-    await page.evaluate(id => {
-      document.body.classList.add('mobile-layer');
-      const row = window.__rowById(id);
-      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode()) && !node.textContent.includes('before selected after')) {}
-      const range = document.createRange();
-      range.setStart(node, 7); range.setEnd(node, 15);
-      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
-    }, id);
-    const row = page.locator(`.row[data-msg-id="${id}"]`).first();
-    const box = await row.boundingBox();
-    const x = Math.round(box.x + box.width / 2), y = Math.round(box.y + box.height / 2);
-    const cdp = await context.newCDPSession(page);
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] });
-    await expect(page.locator('.fm-context-menu')).toBeVisible({ timeout: 3000 });
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await expect(page.locator('.fm-context-menu')).toContainText('Ask');
-    await page.keyboard.press('Escape');
-    await expect(page.locator('.fm-context-menu')).toHaveCount(0);
-    // Start the cancellation leg on a fresh page to avoid native selection handles.
-    const context2 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
-    const page2 = await context2.newPage();
-    await page2.goto(`http://127.0.0.1:${port}${HARNESS_PATH}?move-case=1`);
-    await page2.waitForFunction(() => window.__ready === true);
-    const cdp2 = await context2.newCDPSession(page2);
-    const id2 = await page2.evaluate(() => { document.body.classList.add('mobile-layer'); return window.__renderUserRow('before selected after'); });
-    await page2.evaluate(id => {
-      const row = window.__rowById(id);
-      const walker = document.createTreeWalker(row, NodeFilter.SHOW_TEXT);
-      let node;
-      while ((node = walker.nextNode()) && !node.textContent.includes('before selected after')) {}
-      const range = document.createRange(); range.setStart(node, 7); range.setEnd(node, 15);
-      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
-    }, id2);
-    await page2.evaluate(() => { window.__touchMoves = []; document.addEventListener('touchmove', e => window.__touchMoves.push(e.touches[0]?.clientX), { capture: true }); });
-    const box2 = await page2.locator(`.row[data-msg-id="${id2}"] .bubble`).boundingBox();
-    const x2 = Math.round(box2.x + box2.width / 2), y2 = Math.round(box2.y + box2.height / 2);
-    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x2, y: y2, id: 1 }] });
-    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x2 + 5, y: y2, id: 1 }] });
-    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x2 + 25, y: y2, id: 1 }] });
-    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x2 + 50, y: y2, id: 1 }] });
-    await page2.waitForTimeout(750);
-    expect(await page2.evaluate(start => window.__touchMoves.some(px => Math.abs(px - start) > 10), x2), 'touchmove delivered beyond threshold').toBe(true);
-    await expect(page2.locator('.fm-context-menu')).toHaveCount(0);
-    await cdp2.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
-    await context2.close();
-    await context.close();
-  });
-
   test('用户文本行菜单 = 复制 + 引用；工具卡行 = 仅引用', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     const userId = await page.evaluate(() => window.__renderUserRow('用户的一条消息'));
@@ -238,6 +126,129 @@ test.describe('B1 — 右键菜单项', () => {
     expect(await page.evaluate(id => window.__menuLabelsOn(id), injId)).toEqual(['复制', '引用']);
 
     expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+});
+
+/* ═══ B16 — 选区面收敛（作者令 2026-11-18：选区「复制/引用去掉，只留 Ask」）═══
+ * 逐字：「现在选中ask 不可用 然后选中的复制和引用去掉 就只保留ask 然后是选中就在
+ * 气泡的旁边 你发的是右边 我发的是左边 出现一个ask按钮 点击就可以出现canvas Ask
+ * 那样的对话框提问」。断言面 = ①有选区 ⇒ **零菜单**（`.fm-context-menu` 数与
+ * 「复制/引用」两项都不存在，且旧 `.selection-ask-panel` 卡片整族退役）
+ * ②按钮**与气泡同侧**（左右各一次，逐条 rect 读数）③点击开**共用件**对话框
+ * （`.ask-dock.selection-dock`，与 canvas 档同一实现）+ 选区正文进提问 + 帧回包落地。 */
+
+test.describe('B16 — 选区面收敛（只留 Ask）', () => {
+  test('有选区 ⇒ 零菜单；按钮与气泡同侧（左右各一次）；点击开共用件对话框', async ({ browser }) => {
+    const { context, page, pageErrors } = await newPage(browser);
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    const userId = await page.evaluate(() => window.__renderUserRow('before selected after'));
+    await page.evaluate(() => window.__renderHistory([{ type: 'ai', text: 'before selected after' }]));
+    await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    const aiId = await page.evaluate(() => {
+      const row = Array.from(document.querySelectorAll('#chat .row')).find(r => r.querySelector('.bubble.ai'));
+      return row ? row.dataset.msgId : null;
+    });
+    expect(userId, '我方 user 行在场').toBeTruthy();
+    expect(aiId, '对方 ai 行在场').toBeTruthy();
+
+    const sides = [];
+    for (const [role, rowId, expectSide] of [['user', userId, 'right'], ['ai', aiId, 'left']]) {
+      // 真 Selection（Range）⇒ 选区面事件
+      const sel = await page.evaluate(id => window.__selectTextInRow(id, 0, 6), rowId);
+      expect(sel.ok, `${role} 选区成功`).toBe(true);
+      expect(sel.text).toBe('before');
+
+      // ① 有选区 ⇒ 零菜单：旧「复制/引用」永不进选区面
+      const withSel = await page.evaluate(id => window.__menuLabelsOn(id), rowId);
+      expect(withSel, `${role}：有选区 ⇒ 菜单零出场（复制/引用退役）`).toEqual([]);
+      expect(withSel).not.toContain('复制');
+      expect(withSel).not.toContain('引用');
+      expect(withSel).not.toContain('Ask');
+      await expect(page.locator('.selection-ask-panel')).toHaveCount(0); // 旧卡片整族退役
+
+      // ③ 按钮出场且与气泡同侧（几何读数）
+      await expect(page.locator('.selection-ask-btn')).toBeVisible();
+      const p = await page.evaluate(() => window.__selAskProbe());
+      // ③ 现场读数（rect 证据面）：按钮 / 气泡 / 会话列中点 + 菜单计数
+      console.log(`[B16/${role}] ${JSON.stringify(p)}`);
+      expect(p.btnSide, `${role}：按钮侧别`).toBe(expectSide);
+      expect(p.bubbleSide, `${role}：按钮记录的侧别 = 气泡侧别`).toBe(expectSide);
+      expect(p.menuCount, `${role}：选区面零菜单`).toBe(0);
+      if (expectSide === 'right') expect(p.gapRight, `${role}：按钮在气泡右侧外面`).toBeGreaterThanOrEqual(0);
+      else expect(p.gapLeft, `${role}：按钮在气泡左侧外面`).toBeGreaterThanOrEqual(0);
+      const bubbleMid = p.bubbleRect.mid, chatMid = p.chatMid;
+      if (expectSide === 'right') expect(bubbleMid, `${role}：气泡中点与会话列中点同侧（右）`).toBeGreaterThan(chatMid);
+      else expect(bubbleMid, `${role}：气泡中点与会话列中点同侧（左）`).toBeLessThan(chatMid);
+      sides.push({ role, ...p });
+
+      // ④ 点击 ⇒ 共用件对话框 + 选区正文进提问 + 帧回包落地
+      const opened = await page.evaluate(() => window.__selAskClick());
+      expect(opened.ok, `${role}：对话框打开`).toBe(true);
+      expect(opened.className, `${role}：面板 = 共用件 .ask-dock 的第二份实例`).toContain('ask-dock');
+      expect(opened.className).toContain('selection-dock');
+      expect(opened.open, `${role}：对话框处于打开态`).toBe(true);
+      expect(opened.frame, `${role}：真心跳帧（主会话 /ask 腿）`).toBeTruthy();
+      expect(opened.frame.type).toBe('ask');
+      expect(opened.frame.question, `${role}：选区正文带进提问`).toContain('<selection>\nbefore\n</selection>');
+      expect(opened.frame.question).toContain('<before>\n');
+      await page.evaluate(() => {
+        window.__selAskFrame('askTextDelta', { sessionId: 'quote-harness', delta: '合成解释文本' });
+        window.__selAskFrame('askDone', { sessionId: 'quote-harness' });
+      });
+      await expect(page.locator('.ask-dock.selection-dock .ask-bub').last()).toContainText('合成解释文本');
+      await page.evaluate(() => window.__selectionAskClose());
+      // 关窗后按当前选区重锚：选区还在 ⇒ 按钮回来（可再问一次）；选区散 ⇒ 收起。
+      await expect(page.locator('.selection-ask-btn')).toBeVisible();
+      await page.evaluate(() => window.getSelection().removeAllRanges());
+      await page.evaluate(() => document.dispatchEvent(new Event('selectionchange')));
+      await expect(page.locator('.selection-ask-btn')).toBeHidden();
+    }
+    // 左右两测的真实读数（证据面）：两条 rect 差
+    expect(sides.length).toBe(2);
+    expect(sides[0].gapRight).toBeGreaterThanOrEqual(0);
+    expect(sides[1].gapLeft).toBeGreaterThanOrEqual(0);
+    expect(pageErrors).toEqual([]);
+    await context.close();
+  });
+
+  test('触屏档（390×844）：有选区 ⇒ 长按零菜单 + Ask 按钮同侧；无选区 ⇒ 既有行为不变', async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const page = await context.newPage();
+    await page.goto(`http://127.0.0.1:${port}${HARNESS_PATH}`);
+    await page.waitForFunction(() => window.__ready === true);
+    const id = await page.evaluate(() => { document.body.classList.add('mobile-layer'); return window.__renderUserRow('before selected after'); });
+    const cdp = await context.newCDPSession(page);
+    const center = async () => {
+      const box = await page.locator(`.row[data-msg-id="${id}"] .bubble`).boundingBox();
+      return { x: Math.round(box.x + box.width / 2), y: Math.round(box.y + box.height / 2) };
+    };
+    // A. 无选区：长按 800ms ⇒ 不出菜单（attachQuoteMenu 既有纪律「只对已有选区动作」
+    //    逐字不变；触屏长按退役批 2026-10-31 之后的现状照旧，本批零改动这条）。
+    let c = await center();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: c.x, y: c.y }] });
+    await page.waitForTimeout(800);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    expect(await page.locator('.fm-context-menu').count(), '无选区 ⇒ 不出菜单（既有行为不变）').toBe(0);
+    // B. 有选区：长按 ⇒ 零菜单（② 收敛：复制/引用永不进选区面）+ Ask 按钮出场（③ 同侧）
+    await page.evaluate(id => window.__selectTextInRow(id, 0, 6), id);
+    c = await center();
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: c.x, y: c.y }] });
+    await page.waitForTimeout(800);
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    expect(await page.locator('.fm-context-menu').count(), '有选区 ⇒ 长按也不出菜单').toBe(0);
+    await expect(page.locator('.selection-ask-btn')).toBeVisible();
+    const p = await page.evaluate(() => window.__selAskProbe());
+    expect(p.menuCount, '选区面零菜单').toBe(0);
+    expect(p.menuLabels, '复制/引用不在选区面').toEqual([]);
+    expect(p.btnSide, '移动端按钮侧别 = 气泡侧别（本方气泡 ⇒ 右）').toBe('right');
+    expect(p.gapRight, '移动端按钮在气泡右侧外面').toBeGreaterThanOrEqual(0);
+    // C. 触屏点按 ⇒ 同一个共用件对话框
+    const opened = await page.evaluate(() => window.__selAskClick());
+    expect(opened.ok, '移动端点击也开共用件对话框').toBe(true);
+    expect(opened.className).toContain('selection-dock');
+    expect(opened.frame?.type, '移动端同一条 /ask 腿').toBe('ask');
+    await page.evaluate(() => window.__selectionAskClose());
     await context.close();
   });
 });

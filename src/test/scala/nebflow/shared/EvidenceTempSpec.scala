@@ -6,12 +6,67 @@ import scala.jdk.CollectionConverters.*
 import munit.FunSuite
 
 class EvidenceTempSpec extends FunSuite:
+  private var originalTemp: String = ""
+  private var isolatedTemp: Path = Path.of(".")
+
+  override def beforeEach(context: BeforeEach): Unit =
+    originalTemp = System.getProperty("java.io.tmpdir")
+    isolatedTemp = Files.createTempDirectory("evidence-isolated-test-")
+    System.setProperty("java.io.tmpdir", isolatedTemp.toString)
+
+  override def afterEach(context: AfterEach): Unit =
+    System.setProperty("java.io.tmpdir", originalTemp)
+    removeTree(isolatedTemp)
+
+  test("shared legacy namespace is never swept") {
+    val foreign = isolatedTemp.resolve("stand-evidence").resolve("foreign").resolve("batch").resolve("20200101")
+    Files.createDirectories(foreign)
+    Files.writeString(foreign.resolve("manifest.json"),
+      s"""{"createdAt":"${Instant.EPOCH}","project":"foreign","batch":"batch"}""")
+    Files.writeString(foreign.resolve("payload"), "other process")
+    val observed = List("imagegen-probe", "office-preview", "orbit-anim", "plugin-install", "turn-terminal-replay", "unit-sweep")
+    observed.foreach { name =>
+      val other = isolatedTemp.resolve("stand-evidence").resolve(name).resolve("batch").resolve("20200101")
+      Files.createDirectories(other)
+      Files.writeString(other.resolve("manifest.json"), s"""{"createdAt":"${Instant.EPOCH}","project":"$name","batch":"batch"}""")
+      Files.writeString(other.resolve("payload"), name)
+    }
+    assertEquals(EvidenceTemp.sweep(System.currentTimeMillis()), 0)
+    assertEquals(Files.readString(foreign.resolve("payload")), "other process")
+    observed.foreach { name =>
+      val other = isolatedTemp.resolve("stand-evidence").resolve(name).resolve("batch").resolve("20200101")
+      assertEquals(Files.readString(other.resolve("payload")), name)
+    }
+  }
+
+  test("sweep refuses manifest belonging to another project or process") {
+    val a = EvidenceTemp.createBatch("owner", "wrong-project")
+    val b = EvidenceTemp.createBatch("owner", "wrong-process")
+    EvidenceTemp.finishBatch(a)
+    EvidenceTemp.finishBatch(b)
+    val manifestA = io.circe.parser.parse(Files.readString(a.resolve("manifest.json"))).toOption.get
+    val manifestB = io.circe.parser.parse(Files.readString(b.resolve("manifest.json"))).toOption.get
+    Files.writeString(a.resolve("manifest.json"), manifestA.mapObject(_.add("project", io.circe.Json.fromString("other"))).noSpaces)
+    Files.writeString(b.resolve("manifest.json"), manifestB.mapObject(_.add("owner", io.circe.Json.fromString("other"))).noSpaces)
+    assertEquals(EvidenceTemp.sweep(System.currentTimeMillis() + 8L * 24 * 60 * 60 * 1000), 0)
+    assert(Files.exists(a) && Files.exists(b))
+  }
 
   private def removeTree(path: Path): Unit =
     if Files.exists(path) then
       val walk = Files.walk(path)
       try walk.iterator().asScala.toList.sortBy(_.getNameCount).reverse.foreach(Files.deleteIfExists(_))
       finally walk.close()
+
+  test("sweep removes a symlink without traversing its external target") {
+    val batch = EvidenceTemp.createBatch("symlink-test", "sweep")
+    val outside = Files.createTempDirectory(isolatedTemp, "outside-")
+    Files.writeString(outside.resolve("keep"), "safe")
+    Files.createSymbolicLink(batch.resolve("link"), outside)
+    EvidenceTemp.finishBatch(batch)
+    assertEquals(EvidenceTemp.sweep(System.currentTimeMillis() + 8L * 24 * 60 * 60 * 1000), 1)
+    assertEquals(Files.readString(outside.resolve("keep")), "safe")
+  }
 
   test("create batch and explicitly promote with provenance and checksum metadata") {
     val batch = EvidenceTemp.createBatch("unit-test", "promote")
@@ -42,25 +97,16 @@ class EvidenceTempSpec extends FunSuite:
   }
 
   test("sweep is fail-closed: an expired, inactive batch WITHOUT a manifest is never reclaimed") {
-    // Pins the cross-language producer contract: writing into the stand-evidence
-    // namespace without a manifest.json means the sweep can never date (let alone
-    // delete) the batch — fail-closed retention, not reclamation. This is exactly
-    // why the script-side helper (scripts/lib/evidence-batch.mjs) writes a
-    // manifest, and why a namespace writer without one is a defect.
-    val tmp = Path.of(sys.props.getOrElse("java.io.tmpdir", "/tmp")).toAbsolutePath.normalize()
-    val day =
-      java.time.LocalDate.now(java.time.ZoneOffset.UTC).format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE)
-    val project = tmp.resolve("stand-evidence").resolve(s"unit-failclosed-${java.util.UUID.randomUUID()}")
-    val orphan = project.resolve("no-manifest").resolve(day)
-    val reclaimable = project.resolve("with-manifest").resolve(day)
+    // A missing manifest is never eligible even inside the owned root.
+    val name = s"unit-failclosed-${java.util.UUID.randomUUID()}"
+    val orphan = EvidenceTemp.createBatch(name, "no-manifest")
+    val reclaimable = EvidenceTemp.createBatch(name, "with-manifest")
+    val project = orphan.getParent.getParent
     try
-      Files.createDirectories(orphan)
+      EvidenceTemp.finishBatch(orphan)
+      EvidenceTemp.finishBatch(reclaimable)
+      Files.delete(orphan.resolve("manifest.json"))
       Files.writeString(orphan.resolve("payload.txt"), "orphan")
-      Files.createDirectories(reclaimable)
-      Files.writeString(
-        reclaimable.resolve("manifest.json"),
-        s"""{"createdAt":"${Instant.now().toString}","project":"unit-failclosed","batch":"with-manifest"}"""
-      )
       Files.writeString(reclaimable.resolve("payload.txt"), "reclaimable")
       EvidenceTemp.sweep(System.currentTimeMillis() + 8L * 24 * 60 * 60 * 1000)
       assert(

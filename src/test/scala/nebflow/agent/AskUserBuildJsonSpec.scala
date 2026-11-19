@@ -3,7 +3,7 @@ package nebflow.agent
 import io.circe.Json
 import io.circe.syntax.*
 import munit.FunSuite
-import nebflow.shared.{AskItem, AskOption, AskPreview}
+import nebflow.shared.{AskItem, AskOption, AskPreview, AskPreviewMedia}
 
 /**
  * #380 backend passthrough contract (V11): buildAskUserJson emits the optional
@@ -81,6 +81,88 @@ class AskUserBuildJsonSpec extends FunSuite:
     assertEquals(
       opts.head.hcursor.downField("preview").downField("colors").as[List[String]],
       Right(List("#111"))
+    )
+  }
+
+  // ---- askuser-media 批（2026-11-18）：视频 / 媒体组的载荷契约 ----
+
+  test("V11d: video preview emits type + src + poster (only when present)") {
+    val items = List(
+      AskItem(
+        "Pick a take",
+        List(
+          AskOption("Take 1", preview = Some(AskPreview("video", src = Some("/tmp/a.mp4"), poster = Some("/tmp/a.jpg")))),
+          AskOption("Take 2", preview = Some(AskPreview("video", src = Some("https://cdn.example.com/b.mp4"))))
+        )
+      )
+    )
+    val opts = frame(items).hcursor.downField("items").as[List[Json]].toOption.get.head.hcursor
+      .downField("options").as[List[Json]].toOption.get
+    assertEquals(opts(0).hcursor.downField("preview").downField("type").as[String], Right("video"))
+    assertEquals(opts(0).hcursor.downField("preview").downField("src").as[String], Right("/tmp/a.mp4"))
+    assertEquals(opts(0).hcursor.downField("preview").downField("poster").as[String], Right("/tmp/a.jpg"))
+    assertEquals(opts(0).hcursor.downField("preview").downField("items").focus, None)
+    // poster absent ⇒ key absent (only-present emission, the V11 contract)
+    assertEquals(opts(1).hcursor.downField("preview").downField("poster").focus, None)
+  }
+
+  test("V11e: media group emits items[] with kind/src/poster/name/path (only when present)") {
+    val items = List(
+      AskItem(
+        "Which design?",
+        List(
+          AskOption(
+            "Design A",
+            description = Some("warm"),
+            preview = Some(
+              AskPreview(
+                "media",
+                items = Some(
+                  List(
+                    AskPreviewMedia(kind = "image", src = Some("https://example.com/a.png"), name = Some("a.png")),
+                    AskPreviewMedia(
+                      kind = "video",
+                      src = Some("/tmp/b.mp4"),
+                      poster = Some("/tmp/b.jpg"),
+                      path = Some("/tmp/b.mp4")
+                    )
+                  )
+                )
+              )
+            )
+          )
+        )
+      )
+    )
+    val preview = frame(items).hcursor.downField("items").as[List[Json]].toOption.get.head.hcursor
+      .downField("options").as[List[Json]].toOption.get.head.hcursor
+      .downField("preview").focus.get
+    assertEquals(preview.hcursor.downField("type").as[String], Right("media"))
+    val group = preview.hcursor.downField("items").as[List[Json]].toOption.get
+    assertEquals(group.size, 2)
+    assertEquals(group(0).hcursor.downField("kind").as[String], Right("image"))
+    assertEquals(group(0).hcursor.downField("path").focus, None)
+    assertEquals(group(1).hcursor.downField("kind").as[String], Right("video"))
+    assertEquals(group(1).hcursor.downField("poster").as[String], Right("/tmp/b.jpg"))
+    assertEquals(group(1).hcursor.downField("name").focus, None)
+  }
+
+  test("V11f: swatch / image previews gain no new keys (byte-identical wire format)") {
+    val items = List(
+      AskItem(
+        "Pick",
+        List(
+          AskOption("S", preview = Some(AskPreview("swatch", colors = Some(List("#111"))))),
+          AskOption("I", preview = Some(AskPreview("image", src = Some("https://example.com/a.png"))))
+        )
+      )
+    )
+    val opts = frame(items).hcursor.downField("items").as[List[Json]].toOption.get.head.hcursor
+      .downField("options").as[List[Json]].toOption.get
+    assertEquals(opts(0).hcursor.downField("preview").focus.get.noSpaces, """{"type":"swatch","colors":["#111"]}""")
+    assertEquals(
+      opts(1).hcursor.downField("preview").focus.get.noSpaces,
+      """{"type":"image","src":"https://example.com/a.png"}"""
     )
   }
 

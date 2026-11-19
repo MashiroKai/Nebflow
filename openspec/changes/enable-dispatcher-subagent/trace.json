@@ -145,7 +145,7 @@
       "tests": [
         {
           "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
-          "name": "F1 Ask has exactly eight tools"
+          "name": "F1 Ask has exactly twelve tools (the registry-derived face)"
         },
         {
           "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
@@ -171,7 +171,7 @@
       "tests": [
         {
           "path": "src/test/scala/nebflow/core/ask/AskBashExecutionSpec.scala",
-          "name": "Ask executes foreground Bash in the registered file directory and returns its output"
+          "name": "Ask executes query-only Bash in the registered file directory and returns its output"
         },
         {
           "path": "src/test/scala/nebflow/core/ask/AskBashExecutionSpec.scala",
@@ -198,7 +198,7 @@
       "tests": [
         {
           "path": "src/test/scala/nebflow/core/ask/AskToolFaceSpec.scala",
-          "name": "F5 Ask prompt advertises normal Bash without read-only execution guarantees"
+          "name": "F5 Ask prompt derives the tool list from the registry and states both hard constraints"
         }
       ]
     }

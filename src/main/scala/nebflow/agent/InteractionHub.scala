@@ -134,6 +134,9 @@ object InteractionHub:
                       )
                     case InteractionKind.Permission | InteractionKind.McpPermission =>
                       b.attachPermission(r.rootSessionId, r.requestId, r.payload, r.sourceAgent)
+                    // model-fallback-card 批（2026-11-18）：模型不可用卡不是审批/提问，
+                    // 不进待办收件箱（零 attach）——它的动作面在卡片内自足。
+                    case InteractionKind.ModelUnavailable => IO.unit
                 )
               // permission-landing 批 P0（2026-11-18）：落点解析前置。目标 root 不可达
               //（项目节点的挂载根常无本进程客户端：rootWsSend 只登记经 WS spawn 的
@@ -159,7 +162,15 @@ object InteractionHub:
               for
                 seq <- nextFifoSeq.modify(n => (n + 1L, n))
                 (landing, retargetedFrom) <- resolveLanding
-                _ <- registerPending(pending, landing, seq)
+                // model-fallback-card 批（2026-11-18）：`reportOnly` 帧（超时回报卡）无人在等
+                // ⇒ 不登记待答槽位（否则会永久滞留一张无人可答的卡在待办镜像/重放快照里）。
+                // 注册本就是分支处理同步完成（见 registerPending 注），故此处按 payload 判。
+                _ <-
+                  if landing.payload.hcursor.downField("reportOnly").as[Boolean].toOption.contains(true) then
+                    logger.info(
+                      s"InteractionRequest kind=${landing.kind} reportOnly — rendered without registering a pending slot"
+                    ).void
+                  else registerPending(pending, landing, seq)
                 _ <- ctx.forkTurn(
                   handleRequest(rootWsSend, landing, retargetedFrom) *>
                     ledgerRecord(landing) *> todoAttach(landing)
@@ -270,6 +281,9 @@ object InteractionHub:
       // P0-1 / P-M1（spec §2.4）：第三种 kind 的分支。与 askPermission / askUser
       // 同款「加 kind 分支」形态，零渲染层重构（payload 走自由 Json 先例）。
       case InteractionKind.McpPermission => renderMcpPermission(req)
+      // model-fallback-card 批（2026-11-18）：统一「模型不可用」卡（`type=modelUnavailable`）
+      // ——第四种 kind 的渲染分支，与既有三种同款「加 kind 分支」形态。
+      case InteractionKind.ModelUnavailable => renderModelUnavailable(req)
     // permission-landing 批 P0：重定锚帧带原因标——前端在可达落点的对话流内渲染
     // 卡片时据此注明「原目标会话 X 不可达，已转入本会话呈现」（badge 行，弹窗禁令
     // 下不弹任何原生形态）。直投帧逐字节不变（None ⇒ 恒等）。
@@ -293,6 +307,8 @@ object InteractionHub:
         )
         .handleErrorWith(_ => IO.unit)
       // 槽位已由分支处理同步注册（registerPending）——此处只渲染帧。
+      // model-fallback-card 批（2026-11-18）：`reportOnly` 帧（超时回报卡）的「不注册」
+      // 判定同样已挪到分支处理（同步、按 payload 判），见 InteractionHubCommand.Request 注。
       send <- rootWsSend.get
       _ <- send.get(req.rootSessionId) match
         case Some(ws) =>
@@ -391,6 +407,27 @@ object InteractionHub:
   private def renderMcpPermission(req: InteractionRequest): Json =
     val base = req.payload.asObject.getOrElse(JsonObject.empty)
     val withType = if base.contains("type") then base else base.add("type", "mcpPermission".asJson)
+    Json.fromJsonObject(
+      withType
+        .add("sessionId", req.rootSessionId.asJson)
+        .add("requestId", req.requestId.asJson)
+        .add("sourceAgent", req.sourceAgent.asJson)
+        .add("sourceSession", req.sourceSession.asJson)
+    )
+
+  /**
+   * Build the unified model-unavailable card JSON (model-fallback-card batch,
+   * author ruling 2026-11-18 14:37), rendered at sessionId=rootSessionId.
+   *
+   * payload 由 `ModelUnavailableCard.cardPayload` 产出（**唯一拼帧点**：slot /
+   * providerId / model / failureClass / failureCode / detail / actions）——任何槽
+   * （small-llm / kernel / node / dispatcher / subagent）都经同一实现，本处只补
+   * 三个既有归属字段（与 `renderPermission` / `renderAskUser` / `renderMcpPermission`
+   * 逐字同款）。`type` 由载荷自带（`modelUnavailable`），此处不再改写。
+   */
+  private def renderModelUnavailable(req: InteractionRequest): Json =
+    val base = req.payload.asObject.getOrElse(JsonObject.empty)
+    val withType = if base.contains("type") then base else base.add("type", "modelUnavailable".asJson)
     Json.fromJsonObject(
       withType
         .add("sessionId", req.rootSessionId.asJson)
@@ -524,6 +561,9 @@ object InteractionHub:
     p.kind match
       case InteractionKind.AskUser => renderAskUser(req)
       case InteractionKind.McpPermission => renderMcpPermission(req)
+      // model-fallback-card 批（2026-11-18）：统一「模型不可用」卡（`type=modelUnavailable`）
+      // ——第四种 kind 的渲染分支，与既有三种同款「加 kind 分支」形态。
+      case InteractionKind.ModelUnavailable => renderModelUnavailable(req)
       case InteractionKind.Permission => renderPermission(req)
 
   // ============================================================
@@ -574,7 +614,16 @@ object InteractionHub:
                 idx = i,
                 secretName = item.hcursor.downField("secretName").as[String].toOption.map(_.trim).filter(_.nonEmpty),
                 ephemeral = item.hcursor.downField("ephemeral").as[Boolean].toOption.getOrElse(false),
-                ttlSec = item.hcursor.downField("ttlSec").as[Int].toOption.filter(_ > 0)
+                ttlSec = item.hcursor.downField("ttlSec").as[Int].toOption.filter(_ > 0),
+                // 可查询批（2026-11-18）：随题卡下发的说明与标签，落库时写进
+                // 元数据侧车。两者都是元数据字段，闸门仍是「值只在 secretSlots」。
+                description = item.hcursor.downField("secretDescription").as[String].toOption.map(_.trim).filter(_.nonEmpty),
+                tags =
+                  if item.hcursor.downField("secret").as[Boolean].toOption.getOrElse(false) then
+                    nebflow.core.secrets.SecretsCatalog.normalizeTags(
+                      item.hcursor.downField("secretTags").as[List[String]].getOrElse(Nil)
+                    )
+                  else Nil
               )
           }
         }
@@ -830,6 +879,10 @@ object InteractionHub:
         ans.payload.hcursor.downField("answers").as[List[String]].toOption match
           case None => false
           case Some(answers) => !secretValueInPlainAnswers(p, answers)
+      // model-fallback-card 批：统一模型不可用卡的答复形状 = 非空 `action`
+      // （test/switch/dismiss）。形状不符 ⇒ 不消费卡（与 #12 语义同构）。
+      case InteractionReply.ModelUnavailableReply(_) =>
+        nebflow.shared.ModelUnavailableAnswer.decode(ans.payload).isDefined
 
   /**
    * 秘密槽明文回流判据（守卫单一实现）：secret 题 answers 槽非空 = 旧前端/非法
@@ -1254,6 +1307,13 @@ object InteractionHub:
             (r ! (answersForDelivery ++
               nebflow.shared.AskUserAnswerAttachments.manifestSlot(answerAttachments)))
           )
+        // model-fallback-card 批（2026-11-18）：统一模型不可用卡的答复完成——
+        // 解码 test/switch/dismiss 后完成等待方的 deferred（问答等待方是
+        // `ModelUnavailableCard.raiseAndAwait`，超时/切换/重试全在那一侧单点）。
+        case InteractionReply.ModelUnavailableReply(deferred) =>
+          nebflow.shared.ModelUnavailableAnswer
+            .decode(ans.payload)
+            .fold(IO.unit)(a => deferred.complete(a).void.handleErrorWith(_ => IO.unit))
       // 修复批 2026-10-25「Header 待答徽章常显」：作答收口随行广播关卡帧。
       //
       // WHY（缺口）：此前 complete 是唯一**不广播**的终态路（answered / cleanup /

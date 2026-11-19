@@ -169,9 +169,17 @@
   flex: 1;
   min-height: 0;
   min-width: 0;
-  overflow: auto;
-  padding: 56px 0 var(--ds-space-3);
+  /* 迁移批 2026-11-19：滚动权移交共享组件底座（CodeMirror .cm-scroller）——
+     组件要自持滚动才启得动视口虚拟化（D9）。本容器改为绑定高弹性列，
+     文件头（D4 的 56px 让位带）与手机文件条为不滚动的定宽头段。
+     `overflow:auto` 退役 ⇒ position:sticky 在此不滚动容器内退化为静态头
+     （几何 = 恒在顶部，不再有「钉住/静止两态」——判据变更见本批 spec 留痕）。 */
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--nf-dv-top-band) 0 0;
 }
+.fcv-dvhost { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
 /* ── 粘顶文件头标题胶囊（2026-10-22 作者三令批）────────────────────────────
    作者令①居中 ②全量 frosted token ③动画节奏放慢（慢一点/自然一点/流畅一点，
    参考 0.3-0.45s + 温和缓动）。旧全宽实条（border-bottom 分隔线 + color-bg 底
@@ -623,16 +631,7 @@ span.nf-rcpt-note { cursor: default; }
 }
 .nf-ar-added { color: var(--color-success, var(--nf-review-success-fallback)); }
 .nf-ar-removed { color: var(--color-danger, var(--nf-review-danger-fallback)); }
-.nf-ar-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--ds-space-1h);
-}
-.nf-ar-waiting {
-  font-size: var(--ds-fs-meta);
-  color: var(--color-text-muted, var(--nf-review-muted-fallback));
-}
-/* 通用钮：紧凑 24px 命中档（页签内次级动作面）。 */
+/* 通用钮：紧凑 24px 命中档（页签内次级动作面 = 冲突条的重试/保留现状两颗）。 */
 .nf-ar-btn {
   min-height: 24px;
   padding: 0 var(--ds-space-2);
@@ -646,14 +645,8 @@ span.nf-rcpt-note { cursor: default; }
               border-color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
               opacity var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
 }
-.nf-ar-btn-danger {
-  color: var(--color-danger, var(--nf-review-danger-fallback));
-  background: rgba(248, 81, 73, 0.10);
-  border-color: rgba(248, 81, 73, 0.30);
-}
 @media (hover: hover) {
   .nf-ar-btn:hover { background: rgb(var(--sapphire) / 0.22); }
-  .nf-ar-btn-danger:hover { background: rgba(248, 81, 73, 0.18); }
 }
 .nf-ar-btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
 .nf-ar-btn[disabled] { opacity: 0.5; cursor: not-allowed; }
@@ -750,3 +743,311 @@ span.nf-rcpt-note { cursor: default; }
 }
 .nf-ar-hunkbar .nf-ar-btn { margin-left: auto; }
 .nf-ar-hunkbar .nf-ar-btn + .nf-ar-btn { margin-left: 0; }
+
+/* ══ 共享差异组件（js/diffView/，2026-11-19 迁移批）═════════════════════════
+   作者裁定 2026-11-18「手机diff 按推荐」：两个差异面（delegate diff =
+   diffCanvas.js、canvas ask diff = askEditReview.js）共用**同一组件**（单源，
+   硬不变式①）；组件底座 = CodeMirror 6 + @codemirror/merge（随包分发台账见
+   package.json.vendorAssets）。
+
+   本节与 css/stand-tokens.css 的 `--nf-dv-*` 族一起，是报告 D1–D9 的样式落点：
+   · 几何/触控走 token（D6 44px / D7 13px·1.55 / D4 56px 让位带）；
+   · 色值零字面量（全部引用既有 `--nf-dv-*` 与 `--ds-*` / `--color-*` token 族）；
+   · 覆盖 @codemirror/merge 自带逐块按钮的绝对定位于铺排（改壳为行内 44px 带，
+     D4/D6 的「可点面被浮钮压住 / 目标 <44px」就在这一处消掉）。 */
+.nf-dv {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  height: auto;
+  min-height: 0;
+  min-width: 0;
+  background: var(--nf-dv-bg);
+}
+.nf-dv-editor { flex: 1 1 auto; min-height: 0; min-width: 0; }
+.nf-dv .cm-editor { height: 100%; }
+/* 折行开关（D1）：两个面共用的同一颗开关，触控档 44px。 */
+.nf-dv-toolbar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  row-gap: var(--ds-space-1);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border-bottom: var(--ds-border-width) solid var(--nf-dv-border);
+}
+/* 工具区（折行开关）居右：动作区随 canvas 特质批（2026-11-19）迁到 canvas 右下角
+   控件带（见下方 .nf-dv-allbar 段），本工具条只剩折行钮 ⇒ `flex-end` 单子即右缘，
+   与迁移批几何逐值一致（零回归）。 */
+.nf-dv-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+}
+.nf-dv-wrapbtn {
+  min-height: var(--nf-dv-hit);
+  padding: 0 var(--ds-space-3);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  color: var(--color-primary);
+  background: rgb(var(--sapphire) / 0.13);
+  border: var(--ds-border-width) solid rgb(var(--sapphire) / 0.25);
+  border-radius: var(--ds-radius-chip);
+  cursor: pointer;
+}
+.nf-dv-wrapbtn[aria-pressed='true'] { background: rgb(var(--sapphire) / 0.22); }
+.nf-dv-wrapbtn:focus-visible { outline: 2px solid var(--btn-focus-ring, var(--color-primary)); outline-offset: 2px; }
+
+/* 逐块接受/拒绝（D6 核心）：merge 默认把按钮绝对定位在行尾、高约 17px；改壳为
+   **行内动作带**（position: static）＋每颗 ≥44px，绝不被顶部浮钮/卡头压住。
+   canvas 特质批 2026-11-19（作者令「逐块接受的样式也要参考 canvas 的控件风格」）：
+   几何/状态档与②（右下角控件带成员）同族同档 —— 尺寸 `--nf-dv-ctl-size`(48) /
+   胶囊圆角 `--nf-dv-band-radius`(999) / hover 1.05・active 0.96・disabled .35・
+   focus `2px rgb(var(--sapphire)/0.5)` / 动效 0.18s 标准缓动（= glass.css §③
+   圆钮级浮件档与 `.canvas-zoom-btn` 的同一档）。底色保留语义 tint（`.canvas-*`
+   的选中档本就是「胶囊底 + 语义字」）。 */
+.nf-dv .cm-deletedChunk { padding-left: 0; }
+.nf-dv .cm-deletedChunk .cm-chunkButtons {
+  position: static;
+  inset-inline-end: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-1h);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  background: none;
+}
+.nf-dv .cm-deletedChunk .cm-chunkButtons button,
+.nf-dv .nf-dv-chunkbtn {
+  min-height: var(--nf-dv-ctl-size);
+  min-width: 72px;
+  margin: 0;
+  padding: 0 var(--ds-space-3);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  border-radius: var(--nf-dv-band-radius);
+  border: var(--ds-border-width) solid var(--nf-dv-accept-border);
+  color: var(--nf-dv-accept-fg);
+  background: var(--nf-dv-accept-bg);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+}
+.nf-dv .nf-dv-chunkbtn-reject {
+  color: var(--nf-dv-reject-fg);
+  background: var(--nf-dv-reject-bg);
+  border-color: var(--nf-dv-reject-border);
+}
+@media (hover: hover) {
+  .nf-dv .cm-deletedChunk .cm-chunkButtons button:hover,
+  .nf-dv .nf-dv-chunkbtn:hover { transform: scale(var(--nf-dv-ctl-hover-scale)); }
+}
+.nf-dv .cm-deletedChunk .cm-chunkButtons button:active,
+.nf-dv .nf-dv-chunkbtn:active { transform: scale(var(--nf-dv-ctl-active-scale)); }
+.nf-dv .cm-deletedChunk .cm-chunkButtons button:focus-visible,
+.nf-dv .nf-dv-chunkbtn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.5); outline-offset: 2px; }
+.nf-dv .cm-deletedChunk .cm-chunkButtons button[disabled],
+.nf-dv .nf-dv-chunkbtn[disabled] {
+  opacity: var(--nf-dv-ctl-disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* ask 面让位带（D4）：审阅页签顶部留出卡头浮钮带，与 delegate 面同一条 56px 常量。 */
+.nf-ar-shell { padding-top: var(--nf-dv-top-band); }
+
+/* ask 审阅面容器（迁移批 2026-11-19）：.nf-ar-shell 承载 56px 让位带 + 标题条
+   （不滚动头段）+ 共享组件编辑面（自持滚动）。 */
+.nf-ar-shell {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+.nf-ar-editor { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; }
+/* waiting 面（防双发）：动作钮整组禁用（逐块 + 全量；折行/文件切换不动 —— 等待期
+   仍可观察另一文件）。 */
+.nf-dv[data-waiting='1'] .nf-dv-chunkbtn,
+.nf-dv[data-waiting='1'] .nf-dv-actionbtn { opacity: 0.5; pointer-events: none; }
+
+/* ══ canvas 特质批（作者令 2026-11-19）─────────────────────────────────────────
+   盘点依据（逐项 file:line 见批报告 §一；不许新造第三套控件风格）：
+     · 顶部标题 / 头部 chrome = `.canvas-header`（css/split.css:764）+ 已在本文件的
+       同族 `.fcv-headpill`（本文件 §文件头胶囊批）：居中玻璃胶囊 / `--ds-radius-pill`
+       / `--glass-border` + 顶缘 `--sapphire-refraction` 细线 / `--glass-bg` /
+       `--frost-shadow` / 字号 `--ds-fs-hint` / 0.36s cubic-bezier(0.22,0.61,0.36,1)。
+     · 底部控件组（＝右下角控件族）= `.canvas-zoom-bar`（css/split.css:3228：容器玻璃
+       胶囊 999 / 高 48 = `--ds-hit-tap-lg` / 投影 `--cv-shadow`）+ `.canvas-zoom-btn`
+       （split.css:3271：成员 48×48 / 圆角 999 / 零边零底 / `--color-frame-text-bright`）；
+       单钮族 `.canvas-source-toggle`（split.css:2066：圆 50% / hover 1.05 / active 0.96 /
+       disabled .35 / focus `2px rgb(var(--sapphire)/0.5)`）——状态档单源 = css/glass.css §③。
+     · 材质一份实现：动作组 `.nf-dv-allgroup` 以**成员身份**并进 glass.css 那条共享
+       声明（与 `.canvas-zoom-bar` / `.ta-pill` 同一条），几何留本文件（材质归包、几何留面）。
+
+   三条改造：①顶部标题 `.nf-dv-head > .nf-dv-title`；②全部接受/全部拒绝 = 右下角控件带
+   `.nf-dv-allbar > .nf-dv-allgroup > .nf-dv-allbtn`；③逐块接受/拒绝 `.nf-dv-chunkbtn`
+   与②同族同档（尺寸 / 圆角 / 状态档 / 动效节拍）。色值全走既有 token（零字面量）。
+   read 模式组件根本不建这些节点 ⇒ DOM 零残留（模式闸门）。「全部接受」= 逐块动作的
+   批量化，走既有回调同一语义（hunkId=null ⇒ 消费面发 askEditAccept 不带 hunkId）。 */
+
+/* ① 顶部标题：与 canvas 卡头胶囊同一 chrome。 */
+.nf-dv-head {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: center;
+  padding: var(--ds-space-1h) var(--ds-space-3) var(--ds-space-1);
+  min-width: 0;
+}
+.nf-dv-title {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  width: fit-content;
+  max-width: 100%;
+  min-width: 0;
+  padding: var(--nf-dv-title-pad);
+  border-radius: var(--ds-radius-pill);
+  border: var(--ds-border-width) solid var(--glass-border);
+  background:
+    linear-gradient(90deg, transparent 10%, var(--sapphire-refraction) 50%, transparent 90%) center top / 80% 1px no-repeat,
+    var(--glass-bg);
+  box-shadow: var(--nf-dv-title-shadow);
+  color: var(--color-text-muted, var(--nf-review-muted-fallback));
+  font-size: var(--nf-dv-title-fs);
+  animation: fcv-head-in 0.36s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+/* 铁律 9：标题文字换行增高，不截断（`.fcv-headpill` 的 ellipsis 档不复用）。 */
+.nf-dv-title-file {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--color-text);
+  font-weight: 500; /* visual-style 铁律 3：标题档 500 封顶 */
+}
+.nf-dv-title-counts {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--ds-fs-meta);
+}
+.nf-dv-title-status {
+  flex: 0 0 auto;
+  color: var(--color-text-muted, var(--nf-review-muted-fallback));
+}
+
+/* ② canvas 右下角控件带：**流内**右对齐控制带（占自己的布局行 ⇒ 与任何 canvas
+   悬浮控件零交叠，谁都不用让位）；带内是 canvas 底部控件组的同族玻璃胶囊。 */
+.nf-dv-allbar {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--nf-dv-band-gap);
+  padding: var(--nf-dv-band-pad);
+  min-width: 0;
+}
+.nf-dv-allgroup {
+  display: flex;
+  align-items: center;
+  gap: normal;
+  padding: 0;
+  height: var(--nf-dv-ctl-size);
+  box-sizing: border-box;
+  border-radius: var(--nf-dv-band-radius);
+  box-shadow: var(--nf-dv-band-shadow);
+  /* 材质（background / backdrop-filter / border）不在这里 —— 与 `.canvas-zoom-bar` /
+     `.ta-pill` 同处 css/glass.css 那条共享声明（一份实现、多个成员）。 */
+}
+/* 成员钮：`.canvas-zoom-btn` 同档几何 + canvas 状态档（hover 1.05 / active 0.96 /
+   disabled .35 / focus 2px sapphire）；语义色（接受绿 / 拒绝红）保留 —— canvas
+   选中档本来就是「胶囊底 + 语义字」的读法。 */
+.nf-dv-allbtn {
+  min-height: var(--nf-dv-ctl-size);
+  min-width: var(--nf-dv-ctl-size);
+  margin: 0;
+  padding: 0 var(--ds-space-3);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  border-radius: var(--nf-dv-band-radius);
+  border: var(--ds-border-width) solid transparent;
+  background: transparent;
+  color: var(--nf-dv-accept-fg);
+  cursor: pointer;
+  transition: background var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              transform var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease),
+              color var(--ds-dur-hover, 0.18s) var(--ds-ease-std, ease);
+}
+.nf-dv-allbtn.nf-dv-reject-all { color: var(--nf-dv-reject-fg); }
+@media (hover: hover) {
+  .nf-dv-allbtn:hover {
+    background: var(--nf-dv-accept-bg-strong);
+    transform: scale(var(--nf-dv-ctl-hover-scale));
+  }
+  .nf-dv-allbtn.nf-dv-reject-all:hover { background: var(--nf-dv-reject-bg-strong); }
+  .nf-dv-allbtn[disabled]:hover { transform: none; background: transparent; }
+}
+.nf-dv-allbtn:active { transform: scale(var(--nf-dv-ctl-active-scale)); }
+.nf-dv-allbtn:focus-visible { outline: 2px solid rgb(var(--sapphire) / 0.5); outline-offset: 2px; }
+.nf-dv-allbtn[disabled] {
+  opacity: var(--nf-dv-ctl-disabled-opacity);
+  cursor: not-allowed;
+}
+
+/* 状态可见（已接受/已拒绝后的呈现要能看出）：动作发出即就地落 data-chunk-state，
+   动作带底 tint + 行内状态标签（前景 = 正文 token，双主题对比度由 --nf-dv-fg 保证）。 */
+.nf-dv .cm-deletedChunk[data-chunk-state='accepted'] .cm-chunkButtons { background: var(--nf-dv-state-ok-bg); }
+.nf-dv .cm-deletedChunk[data-chunk-state='rejected'] .cm-chunkButtons { background: var(--nf-dv-state-no-bg); }
+.nf-dv .cm-deletedChunk[data-chunk-state] .cm-chunkButtons button { opacity: 0.55; }
+.nf-dv-chunkstate {
+  flex: 0 0 auto;
+  align-self: center;
+  padding: 0 var(--ds-space-2);
+  font: 600 var(--ds-fs-meta)/1 -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
+  color: var(--nf-dv-fg);
+  white-space: nowrap;
+}
+
+/* ══ 多文件（作者令 2026-11-19「多文件 diff 适配」）════════════════════════════
+   设计取舍：一段差异文本含多文件段时按**文件分节**；分节列表常驻在编辑面之上，
+   单文件折叠 = 只展开被选中的那一节（同一编辑面按节重载文档 + 合并扩展）。为什么不
+   把 N 个文件同时挂成 N 个编辑面：手机上一屏多滚轴会互相打架、且每节各自虚拟化会
+   把视口预算切碎；单选装载让「行号空间 / 折叠状态 / 滚动位置」都只属于当前文件
+   （行号不跨文件错位）。计数（+增/−删）逐节落在列表行上。
+   铁律 9：路径不截断（换行增长，无 ellipsis）；列表高度上限必配 overflow-y:auto。 */
+.nf-dv-files {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  max-height: var(--nf-dv-filelist-max);
+  overflow-y: auto;
+  border-bottom: var(--ds-border-width) solid var(--nf-dv-border);
+}
+.nf-dv-file {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-height: var(--nf-dv-hit);
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--nf-dv-fg);
+}
+.nf-dv-file + .nf-dv-file { border-top: var(--ds-border-width) solid var(--nf-dv-border); }
+.nf-dv-file[data-active='1'] { background: var(--nf-dv-accept-bg); }
+@media (hover: hover) { .nf-dv-file:hover { background: var(--nf-dv-accept-bg); } }
+.nf-dv-file:focus-visible { outline: 2px solid var(--btn-focus-ring, var(--color-primary)); outline-offset: -2px; }
+.nf-dv-filepath {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--nf-dv-gutter-fs);
+}
+.nf-dv-filecounts {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--nf-dv-gutter-fs);
+  white-space: nowrap;
+}
+.nf-dv-fileadd { color: var(--nf-dv-accept-fg); }
+.nf-dv-filedel { color: var(--nf-dv-reject-fg); }

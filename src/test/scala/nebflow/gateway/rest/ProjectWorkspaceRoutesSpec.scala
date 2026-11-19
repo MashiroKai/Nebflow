@@ -5,6 +5,7 @@ import nebflow.llm.ModelCandidate
 import io.circe.Json
 import munit.CatsEffectSuite
 import nebflow.agent.SharedResources
+import nebflow.core.project.ProjectStore
 import nebflow.shared.{NebflowServiceConfig, PathUtil, ServiceLlmConfig}
 import org.http4s.*
 import org.http4s.circe.CirceEntityCodec.*
@@ -60,6 +61,8 @@ class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
     wsRoutes = null
   ).routes
 
+  private def mountedRoutes = org.http4s.server.Router("/api" -> routes)
+
   private def requestOpt(
     method: Method,
     path: String,
@@ -70,22 +73,39 @@ class ProjectWorkspaceRoutesSpec extends CatsEffectSuite:
     val authenticated =
       if auth then req.putHeaders(Header.Raw(org.typelevel.ci.CIString("Authorization"), "Bearer workspace-test"))
       else req
-    routes(authenticated).value
+    mountedRoutes(authenticated).value
 
-  test("the managed-workspace faces are gone from the route table end to end (view, cleanup, merge requests, baseline)") {
-    // 3007e48da（2026-11-13 退役托管工作区机制）：托管工作区/merger/清理/基线整族
-    // 机制 end to end 摘除（提交语「Remove the managed-workspace mechanism end to
-    // end」），路由**壳**也随之消失。改前本 spec 钉的是「视图渲染台账 + 变更面
-    // 404」——两者的世界都已退役：现行「gone」正钉 = 路由表 fall-through（None），
-    // 读视图腿随其世界删除（removed-mechanism spec 同删纪律）。
+  test("the workspace read route is mounted and requires authentication") {
     for
-      view <- requestOpt(Method.GET, "/api/projects/example/workspaces")
+      anonymous <- requestOpt(Method.GET, "/api/projects/example/workspaces", auth = false)
+      missing <- requestOpt(Method.GET, "/api/projects/example/workspaces")
+    yield
+      assertEquals(anonymous.map(_.status), Some(Status.Forbidden))
+      assertEquals(missing.map(_.status), Some(Status.NotFound))
+  }
+
+  test("the read-only workspace view remains available for a registered project") {
+    val ws = root / "workspace"
+    for
+      _ <- IO {
+        os.makeDir.all(ws)
+        os.proc("git", "init", "-q").call(cwd = ws)
+      }
+      _ <- ProjectStore.create("example", ws.toString, None, "# example\n")
+      response <- requestOpt(Method.GET, "/api/projects/example/workspaces")
+      body <- response.getOrElse(fail("workspace route must match")).as[Json]
+    yield
+      assertEquals(response.map(_.status), Some(Status.Ok))
+      assert(body.hcursor.downField("workspaces").focus.exists(_.isArray))
+  }
+
+  test("the managed-workspace mutation faces are gone from the route table") {
+    for
       cleanup <- requestOpt(Method.GET, "/api/projects/example/workspaces/task/cleanup")
       submit <- requestOpt(Method.POST, "/api/projects/example/workspaces/merge-requests")
       cancel <- requestOpt(Method.POST, "/api/projects/example/workspaces/merge-requests/req-1/cancel")
       baseline <- requestOpt(Method.PUT, "/api/projects/example/workspaces/baseline")
     yield
-      assertEquals(view, None)
       assertEquals(cleanup, None)
       assertEquals(submit, None)
       assertEquals(cancel, None)

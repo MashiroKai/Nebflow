@@ -276,9 +276,27 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     await expect(page.locator('.canvas-tab-pane .fcv-head')).toHaveCount(0);
     await expect(page.locator('.canvas-tab-pane .fcv-nav')).toHaveCount(0);
 
-    // T5 — 超大 diff 全量渲染：行数精确 + 最后一行在场（无任何截断）。
-    await expect(pane.locator('.nf-diff-row')).toHaveCount(BIG_LINES + 1, { timeout: 15000 });
-    await expect(pane.locator('.nf-diff-body')).toContainText(LAST_BIG_LINE);
+    // T5 — 超大 diff 全量必达 + 视口虚拟化 + 末行在场（无任何截断）。
+    // 迁移批 2026-11-19 判据留痕：旧判据 = 「.nf-diff-row DOM 行数 = 总行数」（旧
+    // 自研渲染器每行入 DOM）。新底座按视口虚拟化（D9）⇒ 改判「**文档**行数精确 =
+    // 总行数」+「DOM 行数远小于文档行数」；行首 +/- 前缀由组件在统一差异转换期
+    // 剥离（改以增删底色/词级强调呈现，D8 同源），故末行断言改为主文（去前缀）。
+    const bigState = await page.evaluate(() => {
+      const host = document.querySelector('.canvas-tab-pane[data-type="filechanges"] .fcv-dvhost .nf-dv-editor');
+      const api = host && host.__nfDiffApi;
+      if (!api) return null;
+      const doc = api.view.state.doc;
+      return {
+        docLines: doc.lines,
+        lastText: doc.line(doc.lines).text,
+        mounted: document.querySelectorAll('.canvas-tab-pane[data-type="filechanges"] .cm-line').length,
+      };
+    });
+    expect(bigState).not.toBeNull();
+    expect(bigState.docLines).toBe(BIG_LINES);
+    expect(bigState.mounted).toBeLessThan(bigState.docLines);
+    // 末行在场（无截断）——虚拟化下不依赖 DOM 可见性，直读文档末行（精确）。
+    expect(bigState.lastText).toContain('line-' + BIG_LINES + '-of-' + BIG_LINES);
   });
 
   test('T6+T7 降级原因行保留、退役字符串零出现；面板行切换即卸载上一 diff', async ({ page }) => {
@@ -297,12 +315,13 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     await expect(pane.locator('.fcv-view')).toContainText('binary-file');
     await expect(panel.locator('.nfp-list .nf-fc').nth(2)).toHaveClass(/active/);
 
-    // T7 — 点第二行 → 视图切换；上一个 460k 大 diff 从 DOM 卸载（切换即卸载）。
+    // T7 — 点第二行 → 视图切换；上一个 460k 大 diff 从组件文档/ DOM 卸载（切换即卸载）。
     await panel.locator('.nfp-list .nf-fc').nth(1).click();
     await expect(pane.locator('.fcv-filehead')).toContainText('small.txt');
-    await expect(pane.locator('.nf-diff-body')).toContainText('+new');
-    await expect(pane.locator('.nf-diff-body')).not.toContainText('line-1-of-20000');
-    await expect(pane.locator('.nf-diff-row')).toHaveCount(3); // hunk + -old + +new（无尾换行 ⇒ 3 行）
+    await expect(pane.locator('.cm-content')).toContainText('new');
+    await expect(pane.locator('.cm-content')).not.toContainText('line-1-of-20000');
+    const smallLines = await page.evaluate(() => document.querySelectorAll('.canvas-tab-pane[data-type="filechanges"] .cm-line').length);
+    expect(smallLines).toBeLessThanOrEqual(4); // 现文 1 行（'+new' 前缀剥离）
   });
 
   test('T8 多委托切换：面板换批、Canvas 换焦点、小注激活态随批走、面板数恒 1', async ({ page }) => {
@@ -327,7 +346,7 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     const pane = page.locator('.canvas-tab-pane[data-type="filechanges"]');
     await expect(pane).toHaveCount(1);
     await expect(pane.locator('.fcv-filehead')).toContainText('docs/b.md');
-    await expect(pane.locator('.nf-diff-body')).toContainText('+c');
+    await expect(pane.locator('.cm-content')).toContainText('c');
     await expect(note(page, 0)).toHaveAttribute('aria-pressed', 'false');
     await expect(note(page, 1)).toHaveAttribute('aria-pressed', 'true');
   });
@@ -410,12 +429,13 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     });
     expect(Math.abs(center.gapL - center.gapR)).toBeLessThanOrEqual(1);
 
-    // 静止零重叠 + 钉住偏移恒等（作者令①后半 + 追加零重叠令）：胶囊 in-flow，
-    // 静止态不压 diff 首行；滚动 500px 钉住后偏移与静止恒等（= 56px 有意让位带
-    // + 6px 定心层顶 padding，与滚程/容器水平 padding 无关）。
+    // 静止零重叠 + 钉住偏移恒等（作者令①后半 + 追加零重叠令）。迁移批 2026-11-19：
+    // 滚动权移交组件底座（.cm-scroller），.fcv-view 改为不滚动的弹性列 ⇒ 文件头
+    // 为恒在顶部的静态头段（不再有 sticky 两态）。判据改为：静止态不压首行 +
+    // 组件滚动 500px 后头部偏移**恒等**（静态头段与滚程无关 = 零漂移的正面形态）。
     const rest = await pill.evaluate((el) => {
       const v = el.closest('.fcv-view');
-      const first = v.querySelector('.nf-diff-row');
+      const first = v.querySelector('.cm-line');
       return {
         offset: el.getBoundingClientRect().top - v.getBoundingClientRect().top,
         overlap: first
@@ -426,12 +446,12 @@ test.describe('委托 diff 摘要上移 + 左右分体（2026-10-22 裁定）', 
     expect(rest.offset).toBeGreaterThan(50); // 56 带 + 6 定心层内缩（≥56 判段）
     expect(rest.offset).toBeLessThan(80); // 非 112px 漂移量级
     expect(rest.overlap).toBe(false);
-    await view.evaluate((el) => { el.scrollTop = 500; });
+    await pane.locator('.cm-scroller').evaluate((el) => { el.scrollTop = 500; });
     await page.waitForTimeout(80);
     const stuckOffset = await pill.evaluate((el) =>
       el.getBoundingClientRect().top - el.closest('.fcv-view').getBoundingClientRect().top);
     expect(Math.abs(stuckOffset - rest.offset)).toBeLessThanOrEqual(1.5);
-    await view.evaluate((el) => { el.scrollTop = 0; });
+    await pane.locator('.cm-scroller').evaluate((el) => { el.scrollTop = 0; });
 
     // 动画节奏（作者令③）：出现 = 0.36s 温和缓出；吸顶 = scroll() 时间线阴影
     // 爬坡档（@supports 档，Playwright Chromium 支持）；过渡 0.4s ≥ 0.3s 慢档。

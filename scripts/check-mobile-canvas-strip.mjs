@@ -35,7 +35,7 @@
 //
 // 判据的**规范侧**（为什么这么定、方案 C 原稿、偏离说明）在
 //   <dataRoot>/projects/stand/.stand/docs/mobile-canvas-tabs-c__<stamp>.md
-// 人读口径（玻璃标准本体）在 seed/plugins/design-language/.../glass-spec.md §7。
+// 人读口径（玻璃标准本体）在 stand-dev 插件包 `<包根>/references/frontend/glass-spec.md` §7。
 //
 // 用法：
 //   node scripts/check-mobile-canvas-strip.mjs              # 门禁（红/绿）
@@ -184,6 +184,14 @@ for (const f of order) {
 
 // ── 有效声明表（后声明者胜；降级档 @supports not … 不算「加材质」）───────────
 const isDegrade = (r) => r.atStack.some((a) => /^@supports\s+not\b/i.test(a));
+/** 类名降级路径（`html.no-backdrop …`）= 本仓第二条降级档，与 `@supports not(…)` 同义
+ *  （浮层三件批起并存：一条服务「引擎不支持 backdrop」，一条服务「作者/诊断关掉 backdrop」）。
+ *  闸只认第一条，第二条的 `backdrop-filter: none` 会被当成「该面撤了材质」⇒ 误判为
+ *  「半透明 + 零模糊」的假红（glass-runtime 批 2026-11-18 补降级覆盖时暴露，作者裁定 (b)）。
+ *  补全口径是**上下文级、非面级豁免**：只在该 compound 内把 `backdrop-filter: none` 视作
+ *  降级声明跳过；该 compound 的其它声明（background 等）照旧计入，该面在成员表里的
+ *  模糊义务也一字不动（成员表 blur 缺失仍红）。 */
+const isNoBackdropCx = (cx) => /^html\.no-backdrop\b/.test(cx.trim());
 const faceDecls = new Map();   // key -> { bg, bgFile, bgLine, bgs:[], blur, blurFile, blurLine, mask:[], radius, border, shadow }
 let seq = 0;
 for (const f of order) {
@@ -193,6 +201,7 @@ for (const f of order) {
     for (const cx of splitTop(r.selector, /,/)) {
       const key = keyOf(cx);
       if (!key || !isFaceKey(key)) continue;
+      const noBackdropCx = isNoBackdropCx(cx);
       const cur = faceDecls.get(key) || {
         key, bg: null, bgFile: null, bgLine: 0, blur: false, blurFile: null, blurLine: 0,
         masks: [], radius: null, borders: [], shadows: [],
@@ -202,6 +211,8 @@ for (const f of order) {
           cur.bg = d.value; cur.bgFile = f; cur.bgLine = r.line;
         } else if (/^(-webkit-)?backdrop-filter$/.test(d.prop)) {
           const v = d.value.replace(/\s*!important\s*$/i, '').trim();
+          // 类名降级档里的「撤材质」不算改材质（见 isNoBackdropCx 注）—— 只跳过这一条声明。
+          if (noBackdropCx && /^none$/i.test(v)) continue;
           cur.blur = !/^none$/i.test(v);
           if (cur.blur) { cur.blurFile = f; cur.blurLine = r.line; }
         } else if (/^(-webkit-)?mask-image$/.test(d.prop) || d.prop === 'mask' || d.prop === '-webkit-mask') {

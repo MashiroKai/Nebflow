@@ -311,12 +311,9 @@ body.sidebar-collapsed #activity-bar {
    样式段已随 #legacy-btn/#legacy-pop DOM 删除。 */
 
 /* ── NebLink logged-out hint (Settings panel) ── */
-/* 2026-09-06 区块统一：未登录态只剩 logo（头像入口渲染）+ 这一句说明，
-   原 .neblink-logged-out 容器/独立 logo/加粗标题行一并退役。 */
-.neblink-logged-out-hint {
-  font-size: var(--ds-fs-hint); color: var(--color-text-muted);
-  text-align: center;
-}
+/* `.neblink-logged-out-hint`（2026-09-06「未登录态只剩 logo + 一句说明」的最后一件）
+   随「登录账号」账户卡整件退役（作者令 2026-11-18）：其唯一发射点 = neblink.js 的
+   账户卡未登录分支，现零发射点 ⇒ 样式删除。 */
 
 /* ── NebLink logout button 样式段已随 auth-trim 批（2026-10-20 作者令）删除：
    设置页「退出登录」键退役 ⇒ 红玻璃配方（--btn-danger-* token 版）零残留。 */

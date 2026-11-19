@@ -826,9 +826,16 @@ private[gateway] object PresenceRoutes:
             case nebflow.shared.ExecutionProtection.Protected(List(run)) =>
               sharedResources.executionCommitPort.observeChain(id, run).flatMap {
                 case nebflow.shared.ExecutionChainObservation.Verified(state) =>
-                  Ok(Json.obj("sessionId" -> id.asJson, "runId" -> run.asJson,
-                    "revision" -> state.ref.revision.asJson, "recordHash" -> state.ref.recordHash.asJson,
-                    "phase" -> state.phase.asJson, "runnerStopped" -> state.runnerStopped.asJson))
+                  Ok(
+                    Json.obj(
+                      "sessionId" -> id.asJson,
+                      "runId" -> run.asJson,
+                      "revision" -> state.ref.revision.asJson,
+                      "recordHash" -> state.ref.recordHash.asJson,
+                      "phase" -> state.phase.asJson,
+                      "runnerStopped" -> state.runnerStopped.asJson
+                    )
+                  )
                 case nebflow.shared.ExecutionChainObservation.ReviewRequired(_, reason) =>
                   Conflict(Json.obj("error" -> "review-required".asJson, "reason" -> reason.asJson))
               }
@@ -843,8 +850,13 @@ private[gateway] object PresenceRoutes:
       case req @ POST -> Root / "delegates" / id / "recovery" / "resume" =>
         withRecoveryPrincipal(req) { principal =>
           val observedHash =
-            req.headers.get(CIString("If-Match")).map(_.head.value.trim).getOrElse("")
-              .stripPrefix("W/").stripPrefix("\"").stripSuffix("\"")
+            req.headers
+              .get(CIString("If-Match"))
+              .map(_.head.value.trim)
+              .getOrElse("")
+              .stripPrefix("W/")
+              .stripPrefix("\"")
+              .stripSuffix("\"")
           val requestId = req.headers.get(CIString("Idempotency-Key")).map(_.head.value.trim).getOrElse("")
           if !nebflow.core.delegate.DelegateRegistry.validId(id) then
             BadRequest(Json.obj("error" -> "invalid delegate id".asJson))
@@ -867,30 +879,44 @@ private[gateway] object PresenceRoutes:
                       case nebflow.shared.ExecutionProtection.Protected(List(run)) =>
                         sharedResources.executionCommitPort.observeChain(id, run).flatMap {
                           case nebflow.shared.ExecutionChainObservation.Verified(state) =>
-                            sharedResources.resumeProtectedExecution(
-                              nebflow.shared.ProtectedRecoveryRequest(id, run,
-                                nebflow.shared.ExecutionCommitRef(state.ref.revision, observedHash),
-                                requestId, principal, input)
-                            ).flatMap {
-                              case Right(result) =>
-                                Ok(Json.obj(
-                                  "sessionId" -> result.sessionId.asJson, "runId" -> result.executionId.asJson,
-                                  "attemptId" -> result.attemptId.asJson,
-                                  "incarnationId" -> result.incarnationId.asJson,
-                                  "revision" -> result.ref.revision.asJson,
-                                  "recordHash" -> result.ref.recordHash.asJson,
-                                  "duplicate" -> result.duplicate.asJson
-                                ))
-                              case Left("stale-observed-ref") =>
-                                PreconditionFailed(Json.obj("error" -> "stale-observed-ref".asJson))
-                              case Left("unresolved-operation-review-required") =>
-                                Conflict(Json.obj("error" -> "review-required".asJson,
-                                  "reason" -> "unresolved-operation-review-required".asJson))
-                              case Left(reason) if reason.startsWith("review-required") =>
-                                Conflict(Json.obj("error" -> "review-required".asJson, "reason" -> reason.asJson))
-                              case Left(reason) =>
-                                Conflict(Json.obj("error" -> "recovery-rejected".asJson, "reason" -> reason.asJson))
-                            }
+                            sharedResources
+                              .resumeProtectedExecution(
+                                nebflow.shared.ProtectedRecoveryRequest(
+                                  id,
+                                  run,
+                                  nebflow.shared.ExecutionCommitRef(state.ref.revision, observedHash),
+                                  requestId,
+                                  principal,
+                                  input
+                                )
+                              )
+                              .flatMap {
+                                case Right(result) =>
+                                  Ok(
+                                    Json.obj(
+                                      "sessionId" -> result.sessionId.asJson,
+                                      "runId" -> result.executionId.asJson,
+                                      "attemptId" -> result.attemptId.asJson,
+                                      "incarnationId" -> result.incarnationId.asJson,
+                                      "revision" -> result.ref.revision.asJson,
+                                      "recordHash" -> result.ref.recordHash.asJson,
+                                      "duplicate" -> result.duplicate.asJson
+                                    )
+                                  )
+                                case Left("stale-observed-ref") =>
+                                  PreconditionFailed(Json.obj("error" -> "stale-observed-ref".asJson))
+                                case Left("unresolved-operation-review-required") =>
+                                  Conflict(
+                                    Json.obj(
+                                      "error" -> "review-required".asJson,
+                                      "reason" -> "unresolved-operation-review-required".asJson
+                                    )
+                                  )
+                                case Left(reason) if reason.startsWith("review-required") =>
+                                  Conflict(Json.obj("error" -> "review-required".asJson, "reason" -> reason.asJson))
+                                case Left(reason) =>
+                                  Conflict(Json.obj("error" -> "recovery-rejected".asJson, "reason" -> reason.asJson))
+                              }
                           case nebflow.shared.ExecutionChainObservation.ReviewRequired(_, reason) =>
                             Conflict(Json.obj("error" -> "review-required".asJson, "reason" -> reason.asJson))
                         }
@@ -899,7 +925,10 @@ private[gateway] object PresenceRoutes:
                       case nebflow.shared.ExecutionProtection.Unprotected => NotFound()
                       case _ => Conflict(Json.obj("error" -> "recovery-classification-unavailable".asJson))
                     }
+                  end if
+              end match
             }
+          end if
         }
 
       // POST /delegates/restore — 手动恢复单个子代理会话（重启手动恢复批，作者令
@@ -1044,6 +1073,15 @@ private[gateway] object PresenceRoutes:
         }
 
       // Authenticated console scope, with no private content broadcast through WsHub.
+      //
+      // 滚动面重验证批（2026-11-18，作者令「尽量节省资源」）：本端点是控制台
+      // **最高频**的读面——`delegateChainProvider.js` 每 5s 一拍拉当前 root 的
+      // 作用域任务行（每天约 17 280 次/开着的控制台），此前既无 ETag 也无
+      // Cache-Control，前端恒 `cache:'no-store'` ⇒ **每拍都全量重发整个行集**。
+      // 现在走 HttpCache 条件协商（同一实现面，与 /api/chains、/api/delegates
+      // 同族）：载荷内容 ETag + `private, no-cache`，未变 ⇒ 304 零体。载荷字节
+      // 与 200 腿逐字不变（投影/字段零改动），客户端拿到 304 时 `fetch` 自动
+      // 复用已存体——语义等价，只省字节。
       case req @ GET -> Root / "subagent-tasks" / rootSessionId =>
         withAuth(req) {
           if !nebflow.core.delegate.DelegateRegistry.validId(rootSessionId) then
@@ -1052,12 +1090,11 @@ private[gateway] object PresenceRoutes:
             sharedResources.agentRegistry.get.flatMap { registry =>
               sharedResources.subAgentTaskStore.findAllTasks().flatMap { tasks =>
                 val rows = ChainsReadFace.scopedTaskRows(rootSessionId, tasks, registry)
-                Ok(
-                  Json.obj(
-                    "rootSessionId" -> rootSessionId.asJson,
-                    "tasks" -> rows.map(ChainsReadFace.taskVisibilityJson).asJson
-                  )
+                val body = Json.obj(
+                  "rootSessionId" -> rootSessionId.asJson,
+                  "tasks" -> rows.map(ChainsReadFace.taskVisibilityJson).asJson
                 )
+                HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
               }
             }
         }
@@ -1256,9 +1293,10 @@ private[gateway] object PresenceRoutes:
                 else
                   val policy = nebflow.core.SchemePolicy
                   val own = policy.ownChainOf(slotName).filter(policy.hasChain)
-                  val (effective, resolvedFrom) = policy.resolveModel(slotName, own)
                   val mode = if own.isDefined then "explicit" else "follow"
                   (for
+                    resolved <- sharedResources.providerRegistry.resolveDisplayedModel(slotName, own)
+                    (effective, resolvedFrom) = resolved
                     candidates <- sharedResources.providerRegistry.getCandidatesForAgent(Some(effective))
                     (healthy, _) <- sharedResources.healthMonitor.filterCandidates(candidates)
                     current = healthy.headOption.map(c => s"${c.providerId}/${c.model}")
@@ -1400,7 +1438,10 @@ private[gateway] object PresenceRoutes:
                                       .setFallbackChain(own.map(c => c.copy(fallbacks = Nil)))
                                       .attempt
                                       .flatMap {
-                                        case Right(_) => IO.unit
+                                        case Right(_) =>
+                                          sharedResources.providerRegistry.setGlobalModel(
+                                            own.map(_.copy(fallbacks = Nil))
+                                          )
                                         case Left(e) =>
                                           IO.delay(
                                             nebflow.shared.NebflowLogger
@@ -1640,16 +1681,27 @@ private[gateway] object PresenceRoutes:
           import nebflow.core.plugin.PluginInstallLink
           req.params.get("link").toRight("link is required").flatMap(PluginInstallLink.parse) match
             case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
-            case Right(link) => PluginInstallLink.resolveAcrossConfigured(link).flatMap {
-              case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
-              case Right(m) =>
-                val p = m.resolved.pkg
-                val v = m.resolved.v
-                Ok(Json.obj("ok" -> true.asJson, "id" -> p.id.asJson, "version" -> v.version.asJson,
-                  "sha256" -> v.sha256.asJson, "size" -> v.size.asJson, "publisherKeyId" -> p.publisherKeyId.asJson,
-                  "publisherClass" -> p.publisherClass.map(_.label).asJson, "catalogSource" -> m.catalog.sourceId.asJson,
-                  "yanked" -> v.yanked.asJson))
-            }
+            case Right(link) =>
+              PluginInstallLink.resolveAcrossConfigured(link).flatMap {
+                case Left(err) => Ok(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+                case Right(m) =>
+                  val p = m.resolved.pkg
+                  val v = m.resolved.v
+                  Ok(
+                    Json.obj(
+                      "ok" -> true.asJson,
+                      "id" -> p.id.asJson,
+                      "version" -> v.version.asJson,
+                      "sha256" -> v.sha256.asJson,
+                      "size" -> v.size.asJson,
+                      "publisherKeyId" -> p.publisherKeyId.asJson,
+                      "publisherClass" -> p.publisherClass.map(_.label).asJson,
+                      "catalogSource" -> m.catalog.sourceId.asJson,
+                      "yanked" -> v.yanked.asJson
+                    )
+                  )
+              }
+          end match
         }
 
       case req @ POST -> Root / "plugins" / "install-link" =>
@@ -1657,10 +1709,11 @@ private[gateway] object PresenceRoutes:
           req.as[Json].attempt.flatMap { body =>
             body.toOption.flatMap(_.hcursor.get[String]("link").toOption) match
               case None => BadRequest(Json.obj("ok" -> false.asJson, "error" -> "link is required".asJson))
-              case Some(link) => nebflow.core.plugin.PluginSourceInstall.installFromLink(link).flatMap {
-                case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
-                case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
-              }
+              case Some(link) =>
+                nebflow.core.plugin.PluginSourceInstall.installFromLink(link).flatMap {
+                  case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+                  case Right(msg) => Ok(Json.obj("ok" -> true.asJson, "message" -> msg.asJson))
+                }
           }
         }
 
@@ -1701,9 +1754,8 @@ private[gateway] object PresenceRoutes:
                       .add("origin", e.distribution.origin.label.asJson)
                       .add("trustLevel", e.distribution.trustLevel.label.asJson)
                       .add("distributionOwner", e.distribution.distributionOwner.label.asJson)
-                    val distWithPublisher = e.distribution.publisherClass.fold(distribution)(p =>
-                      distribution.add("publisherClass", p.label.asJson)
-                    )
+                    val distWithPublisher = e.distribution.publisherClass
+                      .fold(distribution)(p => distribution.add("publisherClass", p.label.asJson))
                     val withDist = base
                       .add("distribution", Json.fromJsonObject(distWithPublisher))
                       .add("updatePolicy", e.updatePolicy.label.asJson)
@@ -1711,7 +1763,8 @@ private[gateway] object PresenceRoutes:
                       .add(
                         "officialBadge",
                         nebflow.core.plugin.PluginDistributionTrust
-                          .officialBadge(signedByOfficialRootKey = false, e.distribution.publisherClass).asJson
+                          .officialBadge(signedByOfficialRootKey = false, e.distribution.publisherClass)
+                          .asJson
                       )
                     val withUrl = e.url.fold(withDist)(u => withDist.add("url", u.asJson))
                     val withPin = e.pin.fold(withUrl)(pin => withUrl.add("pin", pin.toJson))

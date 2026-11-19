@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const WEB = join(HERE, '..', 'src', 'main', 'resources', 'web');
-const DOCS = join(HERE, '..', 'docs', 'design-language', 'design-system-token-batch');
+const DOCS = join(HERE, '..', 'docs', 'design-system', 'design-system-token-batch');
 const MODE = process.env.MODE || 'settings';
 const SHOTS_DIR = process.env.SHOTS_DIR || join(HERE, '..', 'evidence', '20261102_design-system', MODE);
 mkdirSync(SHOTS_DIR, { recursive: true });

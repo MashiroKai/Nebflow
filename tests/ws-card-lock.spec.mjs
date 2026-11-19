@@ -116,6 +116,26 @@ async function newPage(browser, colorScheme = 'dark') {
   return page;
 }
 
+test('permission payload is reviewable for object input', async ({ browser }) => {
+  const page = await newPage(browser);
+  await page.evaluate(() => window.__renderPermInput('Edit', { file_path: '/tmp/sample.txt', old_string: 'before', new_string: 'after' }));
+  await page.screenshot({ path: path.join(SHOT_DIR, 'permission-edit.png'), fullPage: true });
+  await expect(page.locator('#chat')).toContainText('/tmp/sample.txt');
+  await expect(page.locator('#chat')).toContainText('请求载荷，非文件实际 diff');
+  await expect(page.locator('#chat')).toContainText('-before');
+  await expect(page.locator('#chat')).toContainText('+after');
+  await page.evaluate(() => window.__renderPermInput('Bash', JSON.stringify({ command: 'printf "complete command"' })));
+  await expect(page.locator('#chat')).toContainText('printf "complete command"');
+  await page.evaluate(() => window.__renderPermInput('Write', { file_path: '/tmp/out', content: '第一行\n' + 'x'.repeat(1500) }));
+  await expect(page.locator('#chat')).toContainText('/tmp/out');
+  await expect(page.locator('#chat')).toContainText('1510 bytes');
+  await page.locator('.permission-payload summary').click();
+  await expect(page.locator('.permission-payload details')).toHaveAttribute('open', '');
+  await page.evaluate(() => window.__renderPermFallback('Bash', { command: 'printf fallback' }));
+  await expect(page.locator('.global-perm-toast')).toContainText('printf fallback');
+  await page.context().close();
+});
+
 const TARGET = '.option-box .ws-pick-target';
 const BLANK = '.option-box .option-q';   // 非控件区（卡片空白区入口的代理点）
 

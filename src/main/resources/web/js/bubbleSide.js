@@ -22,6 +22,10 @@
 //
 // 门禁：scripts/check-bubble-side.mjs（R1–R5）静态钉死；
 //       tests/bubble-side-color.spec.mjs 逐条 dump `sender → 归属方 → 计算背景色`。
+//
+// 追加面（todo-card-click-left 批，2026-11-18）：**行角色类**（左/右对齐的角色词
+// `'user'` / `'ai'`）的换算也收在本文件（`rowRoleOf`）——「谁发出的 → 落哪一侧」
+// 与「谁发出的 → 什么底色」是同一张角色表的两个投影，不许各自散落一份映射。
 
 /** 我方（绿）。 */
 export const SIDE_OURS = 'ours';
@@ -49,6 +53,25 @@ export function bubbleSideOfRole(role) {
 /** 出向（out=true）⇒ 我方；入向 ⇒ 对方。会话窗唯一的方向→归属方换算。 */
 export function bubbleSideOfOutgoing(out) {
   return out === true ? SIDE_OURS : SIDE_THEIRS;
+}
+
+/**
+ * 发出者 → 消息行**角色类**（`'user'` 作者本人 / `'ai'` 我方 Agent）。
+ *
+ * 与底色不同：行/气泡的**左右对齐**由 css/chat.css 的
+ * `.row.user { justify-content: flex-end }` / `.row.ai { justify-content: flex-start }`
+ * 单点决定，JS 只负责把「谁发出的」翻成这两个既有角色词（零第三档、零内联几何）。
+ * 缺省 = `'ai'`（我方 Agent 侧）——与 `bubbleSideOfRole` 的「未登记角色一律我方」
+ * 同向：一个没带发出者标记的卡片，宁可落在 Agent 侧，也不许伪装成作者自己发出的。
+ *
+ * 出处：todo-card-click-left 批（2026-11-18 作者令「待办卡片应该靠左 这是你发出的」）——
+ * 消息流里的待办卡片此前把 `row user` 硬编码在 builder 里（一切卡片都落作者侧）。
+ *
+ * @param {string|null|undefined} emitter 'user' = 作者本人；其余（'agent'/缺省）= 我方 Agent
+ * @returns {'user'|'ai'}
+ */
+export function rowRoleOf(emitter) {
+  return emitter === 'user' ? 'user' : 'ai';
 }
 
 /**

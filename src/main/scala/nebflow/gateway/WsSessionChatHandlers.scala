@@ -339,7 +339,11 @@ private[gateway] object WsSessionChatHandlers:
                 value = value,
                 nameHint = spec.secretName,
                 ephemeral = spec.ephemeral,
-                ttlSec = spec.ttlSec
+                ttlSec = spec.ttlSec,
+                // 可查询批（2026-11-18）：题卡随行的说明/标签随值一起落到元数据
+                // 侧车——从诞生起就可被 `stand secrets show` / `--tag` 查到。
+                description = spec.description,
+                tags = spec.tags
               )
             )
             .map {
@@ -1419,7 +1423,16 @@ private[gateway] object WsSessionChatHandlers:
                                 // frozenReason）在这一处合流，面板与唤醒闸此后读同一份读数。
                                 freezeTruth = Some(
                                   nebflow.actor.FreezeTruth.of(Some(rec), frozenReason, frozenSince)
-                                )
+                                ),
+                                // 面板行活性位批（2026-11-18 · 方案 A）：重启中断标记随行入活性位
+                                // ——SubAgentTask.status（`pending-recovery` = 执行已停、等人工恢复）
+                                // 在落盘侧已经知道，快照行必须照抄这一事实（旧调用方缺省 None =
+                                // 逐字节兼容）。只加位，不筛行、不动恢复入口。
+                                // 陈旧后台代理面板批（2026-11-08）：**同一份** taskOpt 同时出终态
+                                // 硬事实（status + completedAt）——本拍已读一次，零额外 IO ⇒ 面板
+                                // 行能「显式结束 + 真实时长」，不再让滞留行的运行时长无上界走表。
+                                taskStatus = taskOpt.map(_.status),
+                                taskEndedAt = taskOpt.flatMap(_.completedAt)
                               )
                             }
                           }

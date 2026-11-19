@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
 import nebflow.core.AskHandoffPort
-import nebflow.core.ask.{AskGatewayServices, AskSessions}
+import nebflow.core.ask.{AskGatewayServices, AskHandoffWire, AskSessions}
 import nebflow.shared.PathUtil
 
 import scala.concurrent.duration.DurationLong
@@ -52,7 +52,30 @@ object AskHandoffRateLimit:
   def reset(): Unit = lastAt.clear()
 end AskHandoffRateLimit
 
-/** 单向信使（机制稿 §7：`send_message_to_main_chat`）。 */
+/** ask 面公共件（ask-scope 批 2026-11-18）：转交状态帧下发单点。 */
+object AskTools:
+
+  /**
+   * 面板转交状态帧（`askHandoffAck`）下发：**工具腿与 dock 腿同帧**（前端一处消费）。
+   * wsSend 缺席 = 无前端通道（转交本身已成立，帧静默丢弃，幂等）。
+   */
+  def pushHandoffFrame(
+    sid: String,
+    req: nebflow.core.AskHandoffPort.Request,
+    ctx: ToolContext,
+    ok: Boolean,
+    error: String
+  ): IO[Unit] =
+    ctx.wsSend match
+      case Some(send) =>
+        send(AskHandoffWire.ackFrame(sid, ok, error, AskHandoffWire.of(req))).handleError(_ => ())
+      case None => IO.unit
+
+end AskTools
+
+/** 单向信使（机制稿 §7：`send_message_to_main_chat`；ask-scope 批 2026-11-18 改为
+  * **结构化转交请求**——作者令「复杂任务转交主会话：做什么、涉及哪些路径、为什么
+  * 需要主会话、期望产出」）。 */
 object SendMessageToMainChatTool extends Tool:
 
   val Name: String = "send_message_to_main_chat"
@@ -60,33 +83,56 @@ object SendMessageToMainChatTool extends Tool:
   override def name: String = Name
 
   override def description: String =
-    """Send a handoff request to the MAIN session (the ask session's message channel to the main session). Use it ONLY when the user explicitly asks to have the main session handle/follow up/execute something. After sending, tell the user it was sent and that the main session can ask back — then stay in this window and keep serving. Payload becomes an injected message in the main session tagged with this file's ask source."""
+    """Hand a task to the MAIN session — the ask session's only outbound channel. Use it whenever the request is bigger than this one document: several files, several steps, a command/build/install, a repo-wide change or anything needing tools this session does not hold. Send a STRUCTURED handoff request: `task` (what must be done), `paths` (which files/paths are involved), `reason` (why the main session is needed — e.g. it spans files or needs the shell), `expected` (what output the user wants back). After sending, tell the user it was sent and that the main session can ask back — then stay in this window and keep serving this document. Never try to reach another file by another route (write tools, shell, path tricks): the engine refuses those and this is the sanctioned path. Payload becomes an injected message in the main session tagged with this file's ask source."""
 
   override def inputSchema: JsonObject = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj(
-      "question" -> Json.obj(
+      "task" -> Json.obj(
         "type" -> "string".asJson,
-        "description" -> "The request/question to hand to the main session. Required.".asJson
+        "description" -> "What the main session must do (the handoff request in one or two sentences). Required.".asJson
+      ),
+      "paths" -> Json.obj(
+        "type" -> "array".asJson,
+        "description" -> "The files/paths the task involves (absolute paths when known). Empty when the task is not file-scoped.".asJson,
+        "items" -> Json.obj("type" -> "string".asJson)
+      ),
+      "reason" -> Json.obj(
+        "type" -> "string".asJson,
+        "description" -> "Why the main session is needed: it spans several files, several steps, or needs the shell / tools this ask session does not hold.".asJson
+      ),
+      "expected" -> Json.obj(
+        "type" -> "string".asJson,
+        "description" -> "The output the user expects back (e.g. an edited file list, a report, a build result).".asJson
       ),
       "context_refs" -> Json.obj(
         "type" -> "array".asJson,
         "description" -> "Optional citation refs supporting the handoff ({source, loc} objects) — passed through to the main session verbatim.".asJson,
         "items" -> Json.obj("type" -> "object".asJson)
+      ),
+      "question" -> Json.obj(
+        "type" -> "string".asJson,
+        "description" -> "Deprecated free-text form; use `task` instead. Accepted as a fallback when `task` is absent.".asJson
       )
     ),
-    "required" -> Json.arr("question".asJson)
+    "required" -> Json.arr("task".asJson)
   )
 
   override def summarize(input: JsonObject): String =
-    val q = input("question").flatMap(_.asString).getOrElse("").take(60)
+    val q = input("task").flatMap(_.asString).orElse(input("question").flatMap(_.asString)).getOrElse("").take(60)
     s"send_message_to_main_chat($q)"
 
   override def summarizeResult(input: JsonObject, result: String): String =
     if result.length > 160 then result.take(157) + "..." else result
 
   override def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val question = input("question").flatMap(_.asString).map(_.trim).getOrElse("")
+    val task = input("task").flatMap(_.asString).map(_.trim)
+      .filter(_.nonEmpty)
+      .orElse(input("question").flatMap(_.asString).map(_.trim).filter(_.nonEmpty))
+      .getOrElse("")
+    val paths = input("paths").flatMap(_.asArray).getOrElse(Vector.empty).toList.flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val reason = input("reason").flatMap(_.asString).map(_.trim).getOrElse("")
+    val expected = input("expected").flatMap(_.asString).map(_.trim).getOrElse("")
     val refs = input("context_refs").flatMap(_.asArray).getOrElse(Vector.empty).toList
     val sid = ctx.sessionId.getOrElse("")
 
@@ -99,8 +145,8 @@ object SendMessageToMainChatTool extends Tool:
           )
         )
       )
-    else if question.isEmpty then
-      IO.pure(Left(ToolError("send_message_to_main_chat: `question` must be a non-empty string.")))
+    else if task.isEmpty then
+      IO.pure(Left(ToolError("send_message_to_main_chat: `task` must be a non-empty string.")))
     else if ctx.agentDef.isEmpty then
       IO.pure(
         Left(ToolError("send_message_to_main_chat: no agent context — handoff unavailable. (ASK_HANDOFF_FORBIDDEN)"))
@@ -135,18 +181,30 @@ object SendMessageToMainChatTool extends Tool:
               if !AskHandoffRateLimit.tryAcquire(sid, now) then
                 IO.pure(Left(ToolError("稍后再转：转交频控为每文件每分钟 1 条（ASK_HANDOFF_RATE_LIMITED）。")))
               else
+                val req = AskHandoffPort.Request(
+                  askSessionId = sid,
+                  file = binding.file,
+                  fileName = binding.fileName,
+                  question = AskHandoffPort.handoffSummary(task, paths, reason, expected),
+                  leg = "ask-tool",
+                  contextRefs = refs,
+                  task = task,
+                  paths = paths,
+                  reason = reason,
+                  expected = expected
+                )
                 AskHandoffPort
-                  .deliver(
-                    AskHandoffPort.Request(
-                      askSessionId = sid,
-                      file = binding.file,
-                      fileName = binding.fileName,
-                      question = question,
-                      leg = "ask-tool",
-                      contextRefs = refs
-                    )
-                  )
-                  .map(_.map(_ => s"已发送到主会话：${question.take(80)}（它可回问，你仍在本窗继续服务）"))
+                  .deliver(req)
+                  .flatMap {
+                    case right @ Right(_) =>
+                      // ask-scope 批：工具腿同样发 askHandoffAck——面板转交状态可见
+                      // 面（作者令「转交必须机器可读 + UI 可见」）；前端缺席 = 无前端
+                      // 通道，转交本身已成立（幂等静默）。
+                      AskTools.pushHandoffFrame(sid, req, ctx, ok = true, error = "") *> IO.pure(right)
+                    case left @ Left(err) =>
+                      AskTools.pushHandoffFrame(sid, req, ctx, ok = false, error = err.message) *> IO.pure(left)
+                  }
+                  .map(_.map(_ => s"已转交主会话（结构化请求）：${task.take(80)}${if paths.isEmpty then "" else s"（涉及 ${paths.length} 个路径）"}（它可回问，你仍在本窗继续服务）"))
               end if
         yield result
       flow.handleErrorWith(e => IO.pure(Left(ToolError(s"send_message_to_main_chat failed: ${e.getMessage}"))))

@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "change": "canvas-button-unify",
+  "mappings": [
+    {
+      "requirement": "CBU-REQ-001",
+      "scenario": "CBU-SCN-001",
+      "implementation": [
+        "scripts/check-canvas-families.mjs",
+        "src/main/resources/web/css/glass.css"
+      ],
+      "tests": [
+        {
+          "path": "tests/canvas-button-unify-geom.spec.mjs",
+          "name": "手机待办组实测可见且是真组（≥2 键）"
+        }
+      ]
+    },
+    {
+      "requirement": "CBU-REQ-001",
+      "scenario": "CBU-SCN-002",
+      "implementation": [
+        "src/main/resources/web/css/glass.css",
+        "src/main/resources/web/css/split.css"
+      ],
+      "tests": [
+        {
+          "path": "tests/canvas-button-unify-diff.spec.mjs",
+          "name": "两族组成员圆钮：尺寸 / 圆角 / color 逐值相等"
+        }
+      ]
+    }
+  ]
+}

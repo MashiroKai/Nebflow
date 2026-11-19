@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "change": "stack-switch-damping",
+  "mappings": [
+    {
+      "requirement": "SSD-REQ-001",
+      "scenario": "SSD-SCN-001",
+      "implementation": [
+        "src/main/resources/web/css/design-system.css",
+        "src/main/resources/web/js/popArtifacts.js",
+        "openspec/changes/stack-switch-damping/proposal.md",
+        "openspec/changes/stack-switch-damping/design.md",
+        "openspec/changes/stack-switch-damping/tasks.md",
+        "openspec/changes/stack-switch-damping/specs/media-stack-switch/spec.md",
+        "openspec/changes/stack-switch-damping/trace.json"
+      ],
+      "tests": [
+        {
+          "path": "tests/stack-continuity.spec.mjs",
+          "name": "jump window ${variant} [${phase}]"
+        },
+        {
+          "path": "tests/stack-continuity.spec.mjs",
+          "name": "reveal curve [${phase}]"
+        }
+      ]
+    },
+    {
+      "requirement": "SSD-REQ-001",
+      "scenario": "SSD-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/popArtifacts.js"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "Reduced motion is a media-query branch inside the switch; no named browser test drives prefers-reduced-motion for the stack switch, so a reasoned manual exception replaces a test literal.",
+        "steps": "Open the media stack on the desktop viewport and on the mobile viewport, emulate prefers-reduced-motion: reduce, then switch one card forward and one card backward.",
+        "expected": "Each switch lands instantly in the final slot geometry (same fan transforms the animated path settles on) with no transitional frames, and the buried-layer handoff still leaves exactly one buried layer."
+      }
+    },
+    {
+      "requirement": "SSD-REQ-001",
+      "scenario": "SSD-SCN-003",
+      "implementation": [
+        "src/main/resources/web/js/popArtifacts.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/stack-continuity.spec.mjs",
+          "name": "handoff ${variant} [${phase}]"
+        },
+        {
+          "path": "tests/stack-continuity.spec.mjs",
+          "name": "buried handoff [${phase}]"
+        },
+        {
+          "path": "tests/stack-continuity.spec.mjs",
+          "name": "two-card handoff [${phase}]"
+        },
+        {
+          "path": "tests/stack-continuity.spec.mjs",
+          "name": "settled parity [${phase}]"
+        }
+      ]
+    }
+  ]
+}

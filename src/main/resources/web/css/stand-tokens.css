@@ -405,6 +405,78 @@ html[data-theme="dark"] {
      11-11「毛玻璃一律不透底」；本批把全站唯一材质定回基准件配方，旧档名
      （--nf-glass-bg/-hover/-filter/-blur/-saturate）全部降为指向本组的别名
      ——存量消费链（sapphire.css --glass-* / --cv-*）不改名即换材质。 */
+  /* ── 发丝边（hairline）强度族 —— 全站透明色描边的**唯一档位来源** ───────────
+     dark-border-weight 批 2026-11-18（作者令逐字：「现在的边框 在暗色模式下
+     太明显了 需要优化一下」）
+
+     为什么必须分主题给 α（而不是一个值走天下）：半透明描边的**可见强度**不是
+     α 本身，而是 α 与底色的合成结果。同一条白光细边 α .35：
+       · 亮档落在 #f5f6f8 上 ⇒ 对比度 1.028、ΔE00 0.89（几乎不可见 —— 这正是
+         「whisper edge, feels like real glass」的设计意图）；
+       · 暗档落在 #13161c 上 ⇒ 对比度 3.241、ΔE00 27.11（一条亮线，放大 30 倍）。
+     实测（scripts/audit-border-weight.mjs，2026-11-18 清点，8 场景 × 暗亮两档 ×
+     真 Chromium）：暗档 415 条边框读数里，白光细边占 90 个面 / 358 条边 ——
+     其中 α .35 的 342 条**全部** ΔE00 > 10（最大 3.241 / 27.11）；作者看到的
+     「边框太明显」主体就是它。根因 = 暗档这一格被写成与亮档同一个字面量
+     （da9f834df 起），而它自己的注释写的是 rgba(255,255,255,.06)。
+
+     档位怎么定的（不是手感）：站内既有暗档中性发丝档实测落在
+     对比度 1.16–1.48 / ΔE00 3.8–9.0 —— --color-border #2a2d35 对 #13161c =
+     1.316/7.33；--color-frame-border #282b33 对 #15181f = 1.255/6.00；
+     --nf-field-border-color（正文色 14%）对 #1c1f27 = 1.475/8.99。
+     本族暗档取 α .06 ⇒ 1.165 / 4.38，落在该带的**下缘**：最淡，但仍在
+     「可感知的发丝」区间（ΔE00 > JND 2.3），且与文件自有的参照物记载
+     （暗档细边 .06）逐值一致。
+
+     纪律：α **只在这里给**；--nf-glass-border-color 只做引用，其它任何面不许
+     再写白/黑发丝边的 α 字面量（机检：scripts/check-border-weight.mjs）。 */
+  --nf-hairline-ink: 255 255 255;   /* 发丝边通道基色（白光；暗档同一枚，靠 α 分档） */
+  --nf-hairline-a: 0.35;            /* 亮档 α：浅底上的发丝边（⇒ #f5f6f8 上 1.028 / ΔE00 0.89） */
+  --nf-hairline-a-dark: 0.06;       /* 暗档 α：深底上的**同感知权重**发丝边（⇒ #13161c 上 1.165 / ΔE00 4.38） */
+
+  /* ── 语义彩边族（彩色发丝边）—— dark-border-color 批 2026-11-18 ────────────
+     作者裁定（2026-11-18）：「只收敛第一项」= 三枚彩色 α .35 指示环一并收敛；
+     第二项（亮档 `.bubble.ai hr` 那条，已收敛为 --color-border）保持现状不动。
+     本族只服务第一项，第二项逐字节不动。
+
+     为什么彩色面必须单列（而不是并入中性发丝边族）：中性族的档位是**纯亮度权重**
+     （白光 α 只推 L*），彩边还要同时承担**色相载荷**，两条读数的增长速率不同——
+     品牌绿 (7 193 96) 落在 #14171e 上 α .10 时 ΔE00 已 12.96 而对比度只 1.16；
+     同底白光 α .10 则是 1.60 / ΔE00 19.0。故彩边暗档 α 由**不变式**定，不由手感定。
+
+     暗档 α 的定法（不变式；机检 scripts/check-border-weight.mjs 的 C1/C2/C3）：
+       C1 不放大   ：暗档 ΔE00 ≤ 亮档同面 ΔE00（继承 B2 语义）
+       C2 色相可指认：合成 Lab 色相距**色相族轴** ≤ 10°（绿 180° / 蓝 270°），
+                     且合成 chroma ≥ 相邻底色 chroma × 1.5
+       C3 亮度权重 ：暗档对比度 ∈ 1.16–1.48（与站内既有暗档中性发丝档同带）
+     实测（dropdown 场景 · 真 Chromium · 参照面 = 元素外侧底色 bgOuter，与改前
+     读数同一装置同一参照）：
+       绿环 α .105 ⇒ 合成 #132925、上比 1.171、ΔE00 13.670、h* 180.6°（距轴 0.6°）、
+                     C* 10.0（底 5.42 的 1.85×）—— C1/C2/C3 全过
+       蓝环 α .13  ⇒ 合成 #1d2533、上比 1.165、ΔE00 5.639、h* −85.4°（距轴 4.6°）、
+                     C* 10.3（底 5.42 的 1.90×）—— C1/C2/C3 全过
+       改前 α .35  ⇒ 绿 1.972 / ΔE00 28.831（C1/C2/C3 全红）、蓝 1.598 / 14.166（C3 红）
+
+     为什么绿环暗档 α 不是 .06（≠ 中性族暗档档位）：绿要在偏蓝的深底 #14171e
+     （Lab h* −82.9°）上**合成后仍读成绿**，需 g > b ⇒ α·(193−96) > 7 ⇒ α ≳ 0.11；
+     α .06 的合成是 #132122（h* 205°，已落到青蓝一侧），色相不可指认。同色相通道
+     只是 (7 193 96) 的标量倍数，α·k 需 ≈ 0.124，ΔE00 恒 ≈ 14 ⇒ 同色相下无解
+     （α ∈ [0.01,0.35] 穷举 0 解），故取「色相优先」一支，把 ΔE00 落在带外并在
+     报告里分别陈述「数值进带」与「语义仍成立」。
+
+     纪律：通道与 α **只在这里给一次**；四个解析块（:root / html[data-theme=dark] /
+     @media dark / html[data-theme=light]）只写
+     `rgb(var(--nf-hairline-<hue>-ink[-dark]) / var(--nf-hairline-<hue>-a[-dark]))`
+     形态的引用，消费面（chat.css 三面）只写 var(--nf-hairline-tint-*)，零字面量
+     （机检 B3 单一源 / C4 消费面零字面量）。 */
+  --nf-hairline-green-ink: 7 193 96;   /* 后台任务指示环通道基色（与 --color-primary 同色相的品牌绿） */
+  --nf-hairline-green-a: 0.35;         /* 亮档 α：沿用改前值，本批不动（零回归） */
+  --nf-hairline-green-a-dark: 0.105;   /* 暗档 α：色相优先 + 亮度权重进带（实测 1.171 / ΔE00 13.670） */
+  --nf-hairline-sapphire-ink: var(--accent-agent-light);   /* 亮档通道 = 既有加深 sapphire（sapphire.css 单一源） */
+  --nf-hairline-sapphire-ink-dark: var(--sapphire);        /* 暗档通道 = 蓝族母色（sapphire.css 单一源） */
+  --nf-hairline-sapphire-a: 0.35;      /* 亮档 α：沿用改前值，本批不动（零回归） */
+  --nf-hairline-sapphire-a-dark: 0.13; /* 暗档 α：C1/C2/C3 全过（实测 1.165 / ΔE00 5.639） */
+
   --nf-glass-input-bg: rgba(255, 255, 255, 0.16);            /* 亮档沿用原白色色相，保留玻璃透明度 */
   --nf-glass-input-filter: blur(24px) saturate(1.15); /* 唯一模糊配方 */
   /* Canvas 三点基准：暂作为具名引用，不改变全局旧玻璃消费方；全局迁移须
@@ -427,7 +499,10 @@ html[data-theme="dark"] {
   --nf-glass-saturate: 1.15;                         /* 唯一饱和度 = 基准件原值 */
   /* 唯一模糊配方别名：glass.css 内全部 backdrop-filter 只准消费 input-filter */
   --nf-glass-filter: var(--nf-glass-input-filter);
-  --nf-glass-border-color: #ffffff59;      /* 细边 = 参照物白光细边 rgba(255,255,255,.35) */
+  --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a));   /* 细边 = 发丝边族（唯一档位来源，见上） */
+  /* 语义彩边（三枚指示环）的亮档解析：四个解析块里只写引用、零字面量（机检 B3/C4） */
+  --nf-hairline-tint-green: rgb(var(--nf-hairline-green-ink) / var(--nf-hairline-green-a));
+  --nf-hairline-tint-sapphire: rgb(var(--nf-hairline-sapphire-ink) / var(--nf-hairline-sapphire-a));
   --nf-glass-border: 1px solid var(--nf-glass-border-color);
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
   /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」
@@ -446,7 +521,13 @@ html[data-theme="dark"] {
   --nf-glass-bg: var(--nf-glass-input-bg);   /* 别名：唯一底 */
   /* hover 升一档：α .941 → .980（Δ = 10/255 ≥ 8/255；亮档同款层级语义） */
   --nf-glass-bg-hover: #181c26fa;
-  --nf-glass-border-color: #ffffff59;      /* 参照物暗档细边 rgba(255,255,255,.06) */
+  /* 暗档细边：**不再复用亮档 α**。α .35 的白边落在深底上会被放大到
+     3.241 / ΔE00 27.11（= 作者报障的「太明显」）；改引发丝边族暗档档位
+     ⇒ 1.165 / ΔE00 4.38，与站内既有暗档中性发丝档同带。 */
+  --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a-dark));
+  /* 语义彩边暗档解析：绿环走 -green-a-dark、蓝环走 -sapphire-ink-dark + -sapphire-a-dark */
+  --nf-hairline-tint-green: rgb(var(--nf-hairline-green-ink) / var(--nf-hairline-green-a-dark));
+  --nf-hairline-tint-sapphire: rgb(var(--nf-hairline-sapphire-ink-dark) / var(--nf-hairline-sapphire-a-dark));
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
   --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
 }
@@ -455,7 +536,9 @@ html[data-theme="dark"] {
     --nf-glass-input-bg: rgba(24, 28, 38, 0.16);
     --nf-glass-bg: var(--nf-glass-input-bg);
     --nf-glass-bg-hover: #181c26fa;
-    --nf-glass-border-color: #ffffff59;
+    --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a-dark));
+    --nf-hairline-tint-green: rgb(var(--nf-hairline-green-ink) / var(--nf-hairline-green-a-dark));
+    --nf-hairline-tint-sapphire: rgb(var(--nf-hairline-sapphire-ink-dark) / var(--nf-hairline-sapphire-a-dark));
     --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #5b7fbf59 50%, transparent 90%);
     --nf-glass-shadow: inset 0 1px 0 0 #ffffff0a, 0 2px 8px #00000033, 0 8px 24px #00000059;
   }
@@ -464,7 +547,9 @@ html[data-theme="light"] {
   --nf-glass-input-bg: rgba(255, 255, 255, 0.16);
   --nf-glass-bg: var(--nf-glass-input-bg);
   --nf-glass-bg-hover: #ffffff;
-  --nf-glass-border-color: #ffffff59;
+  --nf-glass-border-color: rgb(var(--nf-hairline-ink) / var(--nf-hairline-a));
+  --nf-hairline-tint-green: rgb(var(--nf-hairline-green-ink) / var(--nf-hairline-green-a));
+  --nf-hairline-tint-sapphire: rgb(var(--nf-hairline-sapphire-ink) / var(--nf-hairline-sapphire-a));
   --nf-glass-refraction: linear-gradient(90deg, transparent 10%, #ffffff73 50%, transparent 90%);
   /* 单行书写是**枚举判据的要求**：check-design-tokens 的「令牌出生行不算消费」
      只跳过以 `--x:` 起头的行，多行值里的续行会被当成裸色值计数（本批实测：写成
@@ -538,8 +623,8 @@ html[data-theme="light"] {
  *      声明过的变体 + 元素级兜底；**全站唯一**允许写输入面造型的文件）
  *   ③ 机检 = `scripts/check-input-surface.mjs`（I1 令牌单源 / I2 造型单源 /
  *      I3 数值单源 / I4 蓝不进输入面 / I5 JS 注入面 / I6 豁免清单在规范里）
- * 规范正文 = `seed/plugins/design-language/skills/design-language/references/
- *   input-surface-spec.md`（与 flat-button-spec / glass-spec 同族）。
+ * 规范正文 = stand-dev 插件包 `<包根>/references/frontend/
+ *   input-surface-spec.md`（与 flat-button-spec / glass-spec 同族；本仓无第二份拷贝）。
  * ══════════════════════════════════════════════════════════════════════════ */
 :root {
   --nf-field-bg: var(--nf-glass-bg);                  /* = #input-bar 玻璃底 */
@@ -705,5 +790,96 @@ html[data-theme="dark"] {
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]):not([data-theme="dark"]) {
     --nf-toggle-knob-bg: var(--st-text);
+  }
+}
+
+/* ── 共享差异组件 token 族（diffView/diffViewCm 批，2026-11-19；作者裁定
+   「手机diff 按推荐」）─────────────────────────────────────────────────────
+   选型报告 §三 主推 = CodeMirror 6 + @codemirror/merge，两个差异面（delegate
+   diff、canvas ask diff）共用同一组件。本节是该组件**唯一**的色值/几何落脚点：
+   组件 JS（js/diffView/theme.js）只写 `var(--nf-dv-*)` 引用，零字面量 ——
+   硬不变式②「新增视觉元素走既有设计语言单源」。
+
+   对比度（D5 判据 ≥4.5:1，正文档）：前景一律 `--color-text`（亮 #1b1e26 / 暗
+   #e8eaed），底色为低透明度语义 tint。实测值见报告 D1–D9 对照表（浏览器
+   getComputedStyle 复合读数，非声明值推算）。行号/折叠带专用前景 `--nf-dv-
+   gutter-fg` 取灰族实值（`--color-text-muted` 亮档 3.1:1 不达标，不能直接用）。
+
+   几何（D6/D7）：--nf-dv-hit = 44px 触控下限（HIG / WCAG 2.5.5）；正文
+   --nf-dv-fs 13px / 行高 1.55（现状 11px/16.5px 是 D7）。--nf-dv-top-band
+   = 56px 卡头让位带（D4：ask 面沿用 delegate 面既有常量，两面对齐）。 */
+:root {
+  --nf-dv-bg: var(--color-surface);
+  --nf-dv-fg: var(--color-text);
+  --nf-dv-gutter-bg: var(--color-bg);
+  --nf-dv-gutter-fg: #5b616b;
+  --nf-dv-border: var(--color-border);
+  --nf-dv-add-bg: rgba(63, 185, 80, 0.14);
+  --nf-dv-del-bg: rgba(248, 81, 73, 0.12);
+  --nf-dv-add-word: rgba(63, 185, 80, 0.34);
+  --nf-dv-del-word: rgba(248, 81, 73, 0.30);
+  --nf-dv-fold-bg: var(--color-bg);
+  --nf-dv-fold-fg: #5b616b;
+  --nf-dv-selection: rgba(88, 166, 255, 0.22);
+  --nf-dv-fs: 13px;
+  --nf-dv-lh: 1.55;
+  --nf-dv-gutter-fs: 11px;
+  --nf-dv-hit: 44px;
+  --nf-dv-top-band: 56px;
+  /* 审阅动作区 token（作者令 2026-11-19「逐块接受和全部接受的 UI 要设计一下」）：
+     动作钮/状态标签的唯一色值落点 —— 消费点（css/diffView.css）只写 var()，零字面量。
+     前景取既有语义文字档（`--status-success-icon` 亮 5.1:1 / `--color-danger` 亮 5.9:1，
+     双主题 ≥4.5:1，动作标签按**文字档**判达标）；底色为同色相低透明度 tint（亮暗同值，
+     由 alpha 复合随主题自动翻转）。 */
+  --nf-dv-ok-rgb: 63 185 80;
+  --nf-dv-no-rgb: 248 81 73;
+  --nf-dv-accept-fg: var(--status-success-icon);
+  --nf-dv-accept-bg: color-mix(in srgb, rgb(var(--nf-dv-ok-rgb)) 12%, var(--nf-dv-bg));
+  --nf-dv-accept-bg-strong: color-mix(in srgb, rgb(var(--nf-dv-ok-rgb)) 22%, var(--nf-dv-bg));
+  --nf-dv-accept-border: color-mix(in srgb, rgb(var(--nf-dv-ok-rgb)) 34%, var(--nf-dv-bg));
+  --nf-dv-reject-fg: var(--color-danger);
+  --nf-dv-reject-bg: color-mix(in srgb, rgb(var(--nf-dv-no-rgb)) 12%, var(--nf-dv-bg));
+  --nf-dv-reject-bg-strong: color-mix(in srgb, rgb(var(--nf-dv-no-rgb)) 22%, var(--nf-dv-bg));
+  --nf-dv-reject-border: color-mix(in srgb, rgb(var(--nf-dv-no-rgb)) 38%, var(--nf-dv-bg));
+  --nf-dv-state-ok-bg: rgb(var(--nf-dv-ok-rgb) / 0.16);
+  --nf-dv-state-no-bg: rgb(var(--nf-dv-no-rgb) / 0.16);
+  /* 多文件分节列表的高度上限（必配 overflow-y:auto —— 铁律 9「上限必有可滚轴」）。 */
+  --nf-dv-filelist-max: 30vh;
+
+  /* ── canvas 特质批（作者令 2026-11-19「这 diff 肯定也是在 canvas 进行操作，但是
+     怎么没看见 canvas 相关的特质？顶部的标题呢？…全部接受或者拒绝可以做成 canvas
+     右下角的控件…逐块接受的样式也要参考 canvas 的控件风格」）───────────────
+     本组只登记**几何/落位**：材质与配色一律复用既有单源（标题/动作带 = canvas
+     头部胶囊与底部控件组的同一族 `--glass-*` / `--nf-glass-*` / `--cv-*`），
+     故本批颜色字面量零新增。
+     · 控件尺寸 = `--ds-hit-tap-lg`（48px = canvas 悬浮控件唯一档，≥ HIG 44）；
+     · 动作带内距/圆角/投影逐值取自 canvas 底部控件组（`.canvas-zoom-bar`）与
+       手机待办胶囊（`.ta-pill`）那条共享实现； */
+  --nf-dv-ctl-size: var(--ds-hit-tap-lg, 48px);
+  --nf-dv-band-pad: var(--ds-space-1h) var(--ds-space-3) var(--ds-space-2);
+  --nf-dv-band-radius: var(--cv-radius-pill, 999px);
+  --nf-dv-band-shadow: var(--cv-shadow);
+  --nf-dv-band-gap: var(--ds-space-1h);
+  --nf-dv-title-pad: var(--ds-space-1) var(--ds-space-3);
+  --nf-dv-title-shadow: var(--frost-shadow);
+  --nf-dv-title-fs: var(--ds-fs-hint);
+  --nf-dv-ctl-hover-scale: var(--cv-hover-scale, 1.05);
+  --nf-dv-ctl-active-scale: var(--cv-active-scale, 0.96);
+  --nf-dv-ctl-disabled-opacity: 0.35;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --nf-dv-bg: var(--color-surface);
+    --nf-dv-fg: var(--color-text);
+    --nf-dv-gutter-bg: var(--color-bg);
+    --nf-dv-gutter-fg: #9aa2ae;
+    --nf-dv-border: var(--color-border);
+    --nf-dv-add-bg: rgba(63, 185, 80, 0.16);
+    --nf-dv-del-bg: rgba(248, 81, 73, 0.14);
+    --nf-dv-add-word: rgba(63, 185, 80, 0.34);
+    --nf-dv-del-word: rgba(248, 81, 73, 0.32);
+    --nf-dv-fold-bg: var(--color-bg);
+    --nf-dv-fold-fg: #9aa2ae;
+    --nf-dv-selection: rgba(88, 166, 255, 0.28);
   }
 }

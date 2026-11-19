@@ -1,15 +1,7 @@
 /* NebLink — embedded in settings panel */
 
-/* Login section (pairing status / logged-out one-liner). Sits directly under
-   the avatar inside the unified account block (2026-09-06), so the old
-   standalone-section padding is collapsed to a small top gap. */
-.neblink-login-section {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: var(--ds-space-1h) var(--ds-space-2) 0;
-  gap: var(--ds-space-2);
-}
+/* 账户卡「登录段」`.neblink-login-section`（配对中 / 未登录一行说明）随「登录账号」
+   账户卡整件退役（作者令 2026-11-18）——DOM 零发射点。 */
 .neblink-login-hint {
   font-size: var(--ds-fs-body);
   color: var(--color-text-muted);
@@ -34,20 +26,8 @@
   .neblink-login-btn:hover { opacity: 0.9; }
 }
 
-.neblink-pairing-status {
-  text-align: center;
-  font-size: var(--ds-fs-subtitle);
-  color: var(--color-text-muted);
-  padding: var(--ds-space-4) 0;
-}
-
-/* Inline error/info messages */
-.neblink-error {
-  font-size: var(--ds-fs-hint);
-  color: var(--color-error);
-  margin-bottom: var(--ds-space-2);
-  word-break: break-word;
-}
+/* `.neblink-pairing-status` / `.neblink-error` 随「登录账号」账户卡整件退役
+   （作者令 2026-11-18）——两者当年只服务账户卡的配对中/未登录失败读数，现零发射点。 */
 
 /* 配对码卡（门户 MVP E7, 2026-10-10）：未登录态的 6 位码入网入口。
    颜色/圆角全部走 base.css 既有主题感知变量（同 kicked-notice 的零新变量轴纪律）。 */
@@ -80,40 +60,9 @@
 }
 .neblink-paircode-btn:disabled { opacity: 0.6; cursor: default; }
 
-/* 被踢下线被动提示（踢旧批案 B，2026-09-14）——**状态行级**：
-   与设备行同族的一行，无横幅/无浮层/无动画（一期口径：无横幅无提示音）。
-   颜色全部走 base.css 既有的**主题感知**变量（亮/暗两套都由主题供给），
-   不引入新变量轴：--color-warning 只作左侧 3px 语义条 + 圆点。 */
-.neblink-kicked-notice {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--ds-space-1h);
-  margin-top: var(--ds-space-2);
-  padding: var(--ds-space-1h) var(--ds-space-2);
-  border-radius: var(--ds-radius-chip);
-  border: 1px solid var(--color-frame-border);
-  border-left: 3px solid var(--color-warning);
-  background: var(--color-frame-input-bg);
-  color: var(--color-frame-text-muted);
-  font-size: var(--ds-fs-hint);
-  line-height: 1.45;
-}
-.neblink-kicked-dot {
-  flex: 0 0 auto;
-  width: 6px;
-  height: 6px;
-  margin-top: var(--ds-space-1h);
-  border-radius: 50%;
-  background: var(--color-warning);
-}
-.neblink-kicked-text { word-break: break-word; }
-.neblink-kicked-text strong { color: var(--color-frame-text-bright); font-weight: 600; }
-
-/* Logged-in device list — sits directly under the avatar in the unified
-   account block (2026-09-06); the old inner section label is retired. */
-.neblink-logged-in {
-  margin-top: var(--ds-space-stack-gap);
-}
+/* 被踢下线被动提示 `.neblink-kicked-notice` / `-dot` / `-text`（踢旧批案 B，
+   2026-09-14）与登录态容器 `.neblink-logged-in` 随「登录账号」账户卡整件退役
+   （作者令 2026-11-18）——零发射点。 */
 
 /* Peers list */
 .neblink-peers-list {
@@ -185,24 +134,11 @@
   font-weight: 500;
 }
 
-/* Peer update button */
-.neblink-peer-update-btn {
-  font-size: var(--ds-fs-meta);
-  padding: var(--ds-space-half) var(--ds-space-2);
-  border: 1px solid var(--color-border);
-  border-radius: var(--ds-radius-badge);
-  background: none;
-  color: var(--color-text-muted);
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: all 0.15s;
-}
-@media (hover: hover) {
-  .neblink-peer-update-btn:hover {
-    color: var(--color-primary);
-    border-color: var(--color-primary);
-  }
-}
+/* `Peer update button` `.neblink-peer-update-btn` 随「登录账号」账户卡的设置页设备区
+   整件退役（2026-11-18 作者令）——其唯一发射点（`messages.js` settingsDeviceRowHTML）
+   随账户卡一并删除，现全仓零发射点。（同级 `.neblink-ch-btn` / `.neblink-update-inline`
+   / `.neblink-ch-cancel` / `.neblink-update-status` / `.neblink-peers-list` 在改动前即
+   零发射点，属更早的「设备更新入口退役」批既有欠账，本批不触碰。） */
 
 
 /* Inline channel selection */
@@ -285,42 +221,9 @@
 /* （NL 号（[U3]）自定义 UI 样式已随 2026-09-05 10:54 裁定的入口移除一并删除
    —— 客户端不提供修改入口，Username 经官网账号中心设置。） */
 
-/* 设置账号段：只读登录态及未登录失败时的清理并重登操作。 */
-.neblink-account-actions {
-  display: flex;
-  gap: var(--ds-space-2);
-  margin-top: var(--ds-space-3);
-}
-.neblink-switch-btn {
-  flex: 1;
-  padding: var(--ds-space-2);
-  border-radius: var(--ds-radius-input);
-  border: 1px solid rgba(7, 193, 96, 0.14);
-  background: rgba(7, 193, 96, 0.14);
-  color: #07c160;
-  font-size: var(--ds-fs-body);
-  font-weight: 500;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s;
-}
-@media (hover: hover) {
-  .neblink-switch-btn:hover {
-    background: rgba(7, 193, 96, 0.22);
-    border-color: rgba(7, 193, 96, 0.28);
-  }
-}
-
-.neblink-switch-btn:active { background: rgba(7, 193, 96, 0.28); }
-.neblink-switch-btn:disabled { opacity: 0.5; cursor: default; }
-
-/* 只读登录态行（谁登录着，无动作入口）。 */
-.neblink-account-ro {
-  margin-top: var(--ds-space-3);
-  font-size: var(--ds-fs-hint);
-  color: var(--color-text-muted);
-  text-align: center;
-  word-break: break-all;
-}
+/* 设置账号段（`.neblink-account-actions` 清理并重登操作 / `.neblink-switch-btn`
+   其按钮 / `.neblink-account-ro` 只读「登录账号」行）随「登录账号」账户卡整件退役
+   （作者令 2026-11-18）——零发射点。 */
 
 /* ── Switch-account modal 样式段已随 auth-trim 批（2026-10-20 作者令）整体删除：
    弹窗 DOM（openSwitchAccountModal）已退役 ⇒ 样式零残留（.neblink-switch-modal /

@@ -68,11 +68,11 @@ CI 以新构建的 JAR 跑 smoke 套件，因此前端改动的门槛 = 本地�
 
 - 分支模型、作者专属操作、守卫用法及 USTC 保护清单以 [Contributing](CONTRIBUTING.md#branches-and-commits) 为准。批次从 `main` 拉 `feat/*` 或 `bug/*`；既有 `fix/*` 不追溯改名。不得直接推 USTC。
 - 按文件显式暂存（`git add <file>`）；避免 `git add -A`。
-- 实际提交风格：主题行可选 `type(scope):` 前缀——类型如 `fix` / `feat` / `test` / `docs` / `refactor`，scope 如 `web` / `tools` / `engine` / `project` / `gateway`。主题行必须使用英文，应写清原因或意图，而非仅陈述表象。合入 `main` 由作者在上游核验后以 fast-forward 方式执行。
+- 实际提交风格：主题行可选 `type(scope):` 前缀——类型如 `fix` / `feat` / `test` / `docs` / `refactor`，scope 如 `web` / `tools` / `engine` / `project` / `gateway`。主题行必须使用英文，应写清原因或意图，而非仅陈述表象。合入 `main` 由作者在上游核验后以**合并提交**（promotion merge commit）方式执行，`main` 历史里可见晋级记录（2026-11-19 裁）。
 
 ### 发布流转
 
-作者批准并合入经核验的变更至 `main` 后，作者手动将 `main` 合入 `release/beta`，由管线发布 beta 版。beta 验证通过后，作者将 `release/beta` 合入 `release/stable`，由管线发布稳定版。发布线只向下游流转，永不合并或回写 `main`；发布问题从 `main` 修复，再按同一路径推进。
+作者批准并晋级经核验的变更至 `main` 后：检出 `main`，在 `main` 上跑完门禁与发布前全量 E2E，全绿后**以快进（fast-forward）方式推送**到 release 线（`release/beta`；`release/stable` 同法），由管线发布对应通道。**所有 release 支都只从 `main` 派生**（`release/beta`、`release/stable` 各自从 `main` 拉出）。发布线只向下游流转，永不合并或回写 `main`；发布问题从 `main` 修复，再按同一路径推进。发布流程的权威正文在 stand-dev 插件包规范面，措辞冲突以规范面为准。
 
 USTC 保护与旧分支清理由作者按[保护清单](CONTRIBUTING.md#ustc-server-protection-checklist-author-only)执行：先归档为 `achieve/beta-20261116`、`achieve/release-20261116`，核对归档指向原分支尖端后再删除旧分支。
 

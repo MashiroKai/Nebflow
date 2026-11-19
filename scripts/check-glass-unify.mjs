@@ -36,7 +36,12 @@
 //     其它文件出现 `--nf-glass-*: <字面量>` ⇒ 红（引用 `var(--nf-glass-*)` 不限）。
 //  G5 绕过工具类：canvas ask 的气泡与输入条必须挂 `.nf-glass`
 //     （作者令 2026-11-05 16:50「这三处全部吃唯一毛玻璃标准，不许为 ask 气泡
-//      另造一套等效样式」）⇒ js/askDock.js 里造这两个节点时缺类即红。
+//      另造一套等效样式」）⇒ **造这两个节点的文件**缺类即红。
+//     ⚠ 选区 Ask 抽取批（2026-11-18，作者令「复用既有组件/链路不另造第二套」）：
+//     这两个节点（ask-bub / ask-input）的**建造点**从 js/askDock.js 迁到共用件
+//     js/askDialog.js（选区 Ask 是同一对话框内核的第二消费者）——判据的口径不变，
+//     只把被检文件跟着建造点走：askDock.js 现在是**配置方**，它不再亲手建这两个
+//     节点，留在旧文件上检查会让「谁在造节点」与「检查谁」错位（红线会假绿）。
 //  G6 配方被降档（单一质感批 2026-11-15 重写）：唯一模糊配方
 //     `--nf-glass-input-filter` 必须**逐值**等于 `blur(24px) saturate(1.15)`
 //     （= 主输入框配方，参照物逐值）。理由 = 唯一材质的定义本身就是这组值：
@@ -67,9 +72,9 @@
 //         在 CSS 里根本不存在（陈旧例外）⇒ 红（防「豁免一条、然后面没了也没人删」）。
 //     例外清单**不在本脚本里**（与 flat-buttons 同规）：豁免 = 改规范，脚本只执行。
 //
-// 判据与术语的**规范侧**（人读条文、例外登记）在
-//   src/main/resources/seed/plugins/design-language/skills/design-language/
-//   references/glass-spec.md
+// 判据与术语的**规范侧**（人读条文、例外登记）在 stand-dev 插件包内
+//   <包根>/references/frontend/glass-spec.md
+// （包根定位见 scripts/lib/design-spec-source.mjs；本仓不再保留第二份拷贝）。
 // 本脚本只做它机械可判的那部分；改判据要先改规范。
 //
 // 用法：
@@ -81,6 +86,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { resolveDesignSpec, specMissingMessage } from './lib/design-spec-source.mjs';
 
 // `--root=<dir>` 允许把判据跑在**另一个检出**上（改前/改后对照实证用：
 //   git archive <main-tip> | tar -x -C /tmp/before
@@ -95,14 +101,17 @@ const CSS_DIR = join(WEB, 'css');
 const JS_DIR = join(WEB, 'js');
 const TOKENS = join(CSS_DIR, 'stand-tokens.css');
 const SINGLE_SOURCE = join(CSS_DIR, 'glass.css');
-const ASK_DOCK = join(JS_DIR, 'askDock.js');
+// 建造点（选区 Ask 抽取批 2026-11-18 随节点迁址；见文件头 G5 注释）。
+const ASK_DIALOG = join(JS_DIR, 'askDialog.js');
 const SOCIAL_SEARCH = join(JS_DIR, 'mobile', 'socialSearch.js');
 const INDEX_HTML = join(WEB, 'index.html');
-/** 规范正文（G7 的登记面清单与例外清单都在这里，脚本只读不写）。 */
-const SPEC = join(
-  ROOT, 'src', 'main', 'resources', 'seed', 'plugins', 'design-language',
-  'skills', 'design-language', 'references', 'glass-spec.md',
-);
+/** 规范正文（G7 的登记面清单与例外清单都在这里，脚本只读不写）。
+ *  单源在 stand-dev 插件包内；本仓无第二份拷贝。 */
+const SPEC = resolveDesignSpec('references/frontend/glass-spec.md');
+if (!SPEC) {
+  console.error(`✗ glass-unify gate 不可跑 —— ${specMissingMessage('references/frontend/glass-spec.md')}`);
+  process.exit(2);
+}
 
 /** 唯一合法配方值（G2 白名单）：全站只有主输入框一种毛玻璃质感；
  *  幕布（scrim）不是毛玻璃面，借自己的 8px 单源 token。 */
@@ -491,17 +500,17 @@ for (const f of readdirSync(CSS_DIR).filter((x) => x.endsWith('.css')).sort()) {
 }
 
 // G5 —— canvas ask 的气泡/输入条 + 手机常驻搜索条必须走 .nf-glass
-if (!existsSync(ASK_DOCK)) {
+if (!existsSync(ASK_DIALOG)) {
   add({
     rule: 'G5',
-    file: rel(ASK_DOCK),
+    file: rel(ASK_DIALOG),
     line: 0,
     selector: '-',
-    detail: 'js/askDock.js 不存在',
+    detail: 'js/askDialog.js 不存在',
     why: '环境异常：ask 面无法核对',
   });
 } else {
-  const askSrc = readFileSync(ASK_DOCK, 'utf8');
+  const askSrc = readFileSync(ASK_DIALOG, 'utf8');
   const checks = [
     { re: /class:\s*askBubbleClass\(m\.role\)/, label: 'ask 气泡（ask-bub）', hint: 'chatUi.js askBubbleClass' },
     { re: /class:\s*chatComposerClass\('ask'\)/, label: 'ask 输入条（ask-input）', hint: 'chatUi.js chatComposerClass' },
@@ -510,7 +519,7 @@ if (!existsSync(ASK_DOCK)) {
     if (!c.re.test(askSrc)) {
       add({
         rule: 'G5',
-        file: rel(ASK_DOCK),
+        file: rel(ASK_DIALOG),
         line: 0,
         selector: c.label,
         detail: `缺少 .nf-glass（应形如 ${c.hint}）`,
@@ -521,22 +530,38 @@ if (!existsSync(ASK_DOCK)) {
   // 手机搜索条（glass-top-overlays 批 2026-11-06）：作者点名面 —— 消息/联系人
   // 两页的搜索框浮在滚动列表之上，必须挂唯一工具类（本条管「DOM 真的挂上了」，
   // CSS 侧管「挂了以后没人把它冲掉」= G7b 的登记面）。
-  if (!existsSync(SOCIAL_SEARCH)) {
+  // desktop-search-field 批（2026-11-17）起输入行壳的建节点上抽到
+  // socialSearchCore.buildFieldShell（两端同一构建器）⇒ 判据分两半：
+  // ① 壳建点（core）必须挂 .nf-glass；② 手机条（socialSearch）必须经
+  // buildFieldShell 建壳（不允许绕开共用构建器自造一行 DOM）。
+  const SOCIAL_SEARCH_CORE = join(JS_DIR, 'socialSearchCore.js');
+  if (!existsSync(SOCIAL_SEARCH) || !existsSync(SOCIAL_SEARCH_CORE)) {
     add({
       rule: 'G5', file: rel(SOCIAL_SEARCH), line: 0, selector: '-',
-      detail: 'js/mobile/socialSearch.js 不存在',
+      detail: 'js/mobile/socialSearch.js 或 js/socialSearchCore.js 不存在',
       why: '环境异常：手机搜索条无法核对',
     });
   } else {
     const src = readFileSync(SOCIAL_SEARCH, 'utf8');
-    if (!/row\.className\s*=\s*'mh-search-bar nf-glass'/.test(src)) {
+    const coreSrc = readFileSync(SOCIAL_SEARCH_CORE, 'utf8');
+    if (!/shell\.className\s*=\s*'sf-field nf-glass'/.test(coreSrc)) {
+      add({
+        rule: 'G5',
+        file: rel(SOCIAL_SEARCH_CORE),
+        line: 0,
+        selector: '搜索字段壳（.sf-field）',
+        detail: "建节点处缺少 .nf-glass（应为 shell.className = 'sf-field nf-glass'）",
+        why: '顶部悬浮可透出面绕过唯一毛玻璃工具类（作者点名面）',
+      });
+    }
+    if (!/buildFieldShell\(/.test(src)) {
       add({
         rule: 'G5',
         file: rel(SOCIAL_SEARCH),
         line: 0,
         selector: '手机搜索条（.mh-search-bar）',
-        detail: "建节点处缺少 .nf-glass（应为 row.className = 'mh-search-bar nf-glass'）",
-        why: '顶部悬浮可透出面绕过唯一毛玻璃工具类（作者点名面）',
+        detail: '未经 socialSearchCore.buildFieldShell 建壳（绕开共用构建器）',
+        why: '搜索条 DOM 必须走唯一壳构建器，禁止第二处自造',
       });
     }
   }
@@ -749,7 +774,7 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   g7.surfaces = eff.size;
 
   // ④ 规范里的两张表（登记面清单 / 例外清单）
-  const specSrc = existsSync(SPEC) ? readFileSync(SPEC, 'utf8') : '';
+  const specSrc = readFileSync(SPEC, 'utf8');
   const tables = [];
   if (specSrc) {
     let cur = null;
@@ -771,12 +796,12 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   for (const row of pendingTable?.rows || []) {
     const [sel, reason, evidence] = row.map(clean);
     if (!sel || !reason || !evidence || pending.has(sel) || !allowedPending.has(sel)) {
-      add({ rule: 'G7b', file: rel(SPEC), line: 0, selector: sel || '-', detail: '待解析名单缺字段或重复', why: '豁免须逐项列出理由与证据缺口' });
+      add({ rule: 'G7b', file: SPEC, line: 0, selector: sel || '-', detail: '待解析名单缺字段或重复', why: '豁免须逐项列出理由与证据缺口' });
     } else pending.set(sel, { reason, evidence });
   }
 
   if (!regTable) {
-    add({ rule: 'G7b', file: rel(SPEC), line: 0, selector: '-', detail: '缺少「顶部悬浮面清单」表', why: '没有登记面清单 = 顶部悬浮面无约束；先改规范再加面' });
+    add({ rule: 'G7b', file: SPEC, line: 0, selector: '-', detail: '缺少「顶部悬浮面清单」表', why: '没有登记面清单 = 顶部悬浮面无约束；先改规范再加面' });
   } else {
     for (const row of regTable.rows) {
       const [id, face, selector, material] = row;
@@ -830,7 +855,7 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
       }
       g7.registry.push(entry);
       if (!entry.ok) {
-        add({ rule: 'G7b', file: rel(SPEC), line: 0, selector: sel, detail: entry.detail, why: `登记面材质漂移：顶部悬浮面清单 ${entry.id}` });
+        add({ rule: 'G7b', file: SPEC, line: 0, selector: sel, detail: entry.detail, why: `登记面材质漂移：顶部悬浮面清单 ${entry.id}` });
       }
     }
   }
@@ -838,7 +863,7 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
   // ⑤ 例外清单（判据号 + 理由；空理由 / 陈旧例外 ⇒ 红）
   const exemptSelectors = new Set();
   if (!excTable) {
-    add({ rule: 'G7c', file: rel(SPEC), line: 0, selector: '-', detail: '缺少「例外清单」表', why: '例外必须有具名登记处；没有表 = 豁免无账本' });
+    add({ rule: 'G7c', file: SPEC, line: 0, selector: '-', detail: '缺少「例外清单」表', why: '例外必须有具名登记处；没有表 = 豁免无账本' });
   } else {
     for (const row of excTable.rows) {
       const sel = clean(row[0]);
@@ -847,13 +872,13 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
       if (!sel) continue;
       g7.exemptRows.push({ sel, rule: ruleId, reason });
       if (!reason || reason.length < 8) {
-        add({ rule: 'G7c', file: rel(SPEC), line: 0, selector: sel, detail: '例外理由为空/过短', why: '例外必须写明理由（空理由 = 无效例外）' });
+        add({ rule: 'G7c', file: SPEC, line: 0, selector: sel, detail: '例外理由为空/过短', why: '例外必须写明理由（空理由 = 无效例外）' });
       }
       const base = baseOf(sel);
       const realExists = eff.has(base) || eff.has(sel) || glassBases.has(base)
         || [...eff.keys()].some((k) => k.startsWith(base));
       if (!realExists) {
-        add({ rule: 'G7c', file: rel(SPEC), line: 0, selector: sel, detail: '陈旧例外：CSS 里找不到这个元素', why: '例外指向的面已不存在 ⇒ 删掉这行（豁免不许空转）' });
+        add({ rule: 'G7c', file: SPEC, line: 0, selector: sel, detail: '陈旧例外：CSS 里找不到这个元素', why: '例外指向的面已不存在 ⇒ 删掉这行（豁免不许空转）' });
       }
       exemptSelectors.add(base);
       exemptSelectors.add(sel);
@@ -887,6 +912,104 @@ const g7 = { sticky: 0, bands: 0, surfaces: 0, hits: [], exemptHits: [], registr
       detail: `α=${a.toFixed(3)} 无模糊（${e.bg}）· ${rec.where}${rec.optedOut ? ' · 显式 backdrop-filter:none' : ''}`,
       why: '顶部悬浮可透出面必须吃唯一毛玻璃标准（挂 .nf-glass 或加进 glass.css 成员表）；半透明 + 无模糊 = 底下的内容直接穿上来',
     });
+  }
+}
+
+// ── G9 composer 外壳材质单定义（composer 统一批 2026-11-18 新增；编号避开既有
+//      G8 = ask 用户气泡禁止重写标准玻璃底）────────────────────────────────────
+// 判据 = 「同一个壳的材质只许有一条声明」：主会话 `#input-bar` 与消息三面
+// `.fm-input-bar` 的材质（background / backdrop-filter / box-shadow / border）
+// 必须出自 **`.nf-glass` 那一条共享块**（`#input-bar` 进同一选择器表；`.fm-input-bar`
+// 由工厂挂 `.nf-glass` 类）。任一**第二处独立声明**（名 `#input-bar` 或
+// `.fm-input-bar` 的自有规则块，自己写材质属性）⇒ 红。
+// Why: G1 管「配方值不许在 glass.css 外」，G2 管「值必须是唯一 token」，两者都
+// 拦不住「同一个壳在 glass.css 内部再画一遍」—— 统一批前 `#input-bar` 正是这样
+// 与 `.nf-glass` 逐字重复了五个声明（2026-11-18 收纳）。
+const SHARED_GLASS_SELECTOR = '.nf-glass';
+const COMPOSER_SHELL_SELECTORS = new Set(['#input-bar', '.fm-input-bar']);
+const MATERIAL_PROPS = new Set([
+  'background', 'background-color', 'background-image',
+  'backdrop-filter', '-webkit-backdrop-filter',
+  'box-shadow', 'border', 'border-color', 'border-width', 'border-style',
+]);
+const g9 = { sharedBlocks: [], soloBlocks: [], degradeBlocks: [], sharedHasShell: false };
+{
+  const src = readFileSync(SINGLE_SOURCE, 'utf8');
+  for (const rule of walkRules(src)) {
+    const sels = rule.selector.split(',').map((s) => s.trim());
+    const isShared = sels.includes(SHARED_GLASS_SELECTOR);
+    const mat = rule.decls.filter((d) => MATERIAL_PROPS.has(d.prop));
+    if (!mat.length) continue;
+    const shellSels = sels.filter((s) => COMPOSER_SHELL_SELECTORS.has(s) || s.endsWith(' #input-bar') || s.endsWith(' .fm-input-bar'));
+    if (isShared) {
+      g9.sharedBlocks.push(rule);
+      if (sels.some((s) => COMPOSER_SHELL_SELECTORS.has(s))) g9.sharedHasShell = true;
+      continue;
+    }
+    if (!shellSels.length) continue;
+    // 降级档不算「第二套材质」：`@supports not (...)` / `html.no-backdrop` 上下文里的
+    // 块只写 backdrop-filter:none（= 摘除毛玻璃）+ 实底回落，性质与材质声明相反
+    // ——与 G1/G2 对 `none` 的既有放行口径一致。
+    const inDegradeCtx = rule.atStack.some((a) => /^@supports\s+not/i.test(a))
+      || sels.some((s) => s.includes('no-backdrop'));
+    const onlyNone = mat.every((d) => /^none\s*(!important)?$/i.test(d.value));
+    if (inDegradeCtx || onlyNone) { g9.degradeBlocks.push({ rule, shellSels }); continue; }
+    g9.soloBlocks.push({ rule, shellSels });
+  }
+  if (g9.sharedBlocks.length !== 1) {
+    add({
+      file: rel(SINGLE_SOURCE),
+      line: g9.sharedBlocks[0] ? g9.sharedBlocks[0].line : 1,
+      rule: 'G9a',
+      selector: SHARED_GLASS_SELECTOR,
+      detail: `共享材质块出现 ${g9.sharedBlocks.length} 处（应 1 处：${SHARED_GLASS_SELECTOR} 那一条）`,
+      why: '唯一的玻璃材质声明块只能有一条；两条 = 同一配方写了两遍',
+    });
+  }
+  if (!g9.sharedHasShell) {
+    add({
+      file: rel(SINGLE_SOURCE),
+      line: g9.sharedBlocks[0] ? g9.sharedBlocks[0].line : 1,
+      rule: 'G9b',
+      selector: '#input-bar / .fm-input-bar',
+      detail: 'composer 外壳未与 .nf-glass 共用同一条材质块（#input-bar 不在共享块选择器表里）',
+      why: '主输入条与消息三面输入条必须是同一条材质声明；分叉 = 两个壳两套值',
+    });
+  }
+  // 唯一具名例外 = **级联复述块**（cascade re-assertion）：glass.css 尾部的
+  // `#input-bar, #queue-bar.visible` 块不是第二套材质，而是把主输入条的参照材质
+  // 「放到降级组之后」再述一遍（同值同特异度，只为压过 @supports not 的实底回落）。
+  // 判据 = 至多一块 + 材质值与共享块逐值相同；多一块、或值不同 ⇒ 红（原 `#input-bar`
+  // 独立块正是这样被收掉的：它与共享块同值但**不是**末尾复述位）。
+  const sharedValues = new Map();
+  if (g9.sharedBlocks.length === 1) {
+    for (const d of g9.sharedBlocks[0].decls) if (MATERIAL_PROPS.has(d.prop)) sharedValues.set(d.prop, d.value);
+  }
+  if (g9.soloBlocks.length > 1) {
+    for (const { rule, shellSels } of g9.soloBlocks) {
+      add({
+        file: rel(SINGLE_SOURCE),
+        line: rule.line,
+        rule: 'G9c',
+        selector: shellSels.join(', '),
+        detail: 'composer 外壳独立材质声明块多于一块（只许共享块 + 末尾同值复述块）',
+        why: '第二处独立声明 = 同一个壳换个选择器又画一遍材质（composer 统一批要收掉的分叉）',
+      });
+    }
+  } else if (g9.soloBlocks.length === 1) {
+    const { rule, shellSels } = g9.soloBlocks[0];
+    const divergent = rule.decls.filter((d) => MATERIAL_PROPS.has(d.prop)
+      && sharedValues.has(d.prop) && d.value !== sharedValues.get(d.prop));
+    if (divergent.length) {
+      add({
+        file: rel(SINGLE_SOURCE),
+        line: rule.line,
+        rule: 'G9c',
+        selector: shellSels.join(', '),
+        detail: `独立材质块的值与共享块不同（${divergent.map((d) => `${d.prop}:${d.value}`).join(' · ')}）`,
+        why: '复述块只准复述共享块的同一组值；值不同 = 第二套材质',
+      });
+    }
   }
 }
 
@@ -968,7 +1091,7 @@ if (violations.length) {
   console.error(`        唯一模糊配方逐值 = ${PINNED_INPUT_FILTER}（幕布类允许 var(--nf-glass-scrim-blur)）。`);
   console.error('        顶部悬浮可透出面（G7）：不是挂 .nf-glass / 进成员表，就是进规范的');
   console.error('        例外清单写明理由 —— 不许半透明洗色底 + 零模糊悄悄留着。');
-  console.error('        规范条文与例外登记：design-language/references/glass-spec.md');
+  console.error('        规范条文与例外登记：stand-dev 插件 <包根>/references/frontend/glass-spec.md');
   process.exit(1);
 }
 

@@ -18,7 +18,7 @@
 
 import { key } from './branding.js';
 
-/** @typedef {{ t: string, exp: number, size?: number }} CachedTicket */
+/** @typedef {{ t: string, exp: number, size?: number, cid?: string }} CachedTicket */
 
 const MINT_URL = '/api/nf-ticket';
 const MINT_TIMEOUT_MS = 8000;
@@ -159,16 +159,43 @@ export function nfFilePathsIn(html) {
   return [...out];
 }
 
-/** Append the per-path ticket to every `/api/nf-file` URL in a chunk of HTML.
- *  URLs that already carry a ticket are left alone (idempotent). */
+/**
+ * Append the per-path ticket to every `/api/nf-file` URL in a chunk of HTML —
+ * and, when the mint应答把内容 cid 带回来了（按对象复用批 2026-11-18·第 1 件），
+ * rewrite the `<img>` byte URLs to the **content-addressed** exit
+ * `/api/nf-obj/<cid>/<name>` instead. That is what makes the Card/iframe leg
+ * and the ledger/叠卡/灯箱/查看器 leg fetch the SAME URL for the same object,
+ * so the second leg is a browser-cache hit with zero byte transit.
+ *
+ * Scope discipline (why only `<img>`): the content-addressed route has no
+ * Range leg — `<video>`/`<audio>` keep their ticket URL so seek/streaming
+ * semantics are untouched (「不做：视频账本 Range 腿」). URLs that already
+ * carry a ticket are only upgraded in place, never double-stamped.
+ * @param {string} html @param {Map<string,string>} tickets
+ */
 export function injectTickets(html, tickets) {
-  if (!tickets || tickets.size === 0) return html;
-  return String(html).replace(nfFileUrlRe(), (url) => {
-    if (/[?&]ticket=/.test(url)) return url;
+  const src = String(html == null ? '' : html);
+  if (!src) return src;
+  // `<img …>` tag spans (byte URLs inside them may be content-addressed).
+  /** @type {Array<[number, number]>} */
+  const spans = [];
+  const tagRe = /<img\b[^>]*>/gi;
+  let m;
+  while ((m = tagRe.exec(src)) !== null) spans.push([m.index, m.index + m[0].length]);
+  const inImg = (offset) => spans.some(([a, b]) => offset >= a && offset < b);
+  const has = !!(tickets && typeof tickets.get === 'function' && tickets.size > 0);
+  return src.replace(nfFileUrlRe(), (url, offset) => {
     const q = /[?&]path=([^&]*)/.exec(url);
     if (!q) return url;
     const p = decodePathParam(q[1]);
     if (p === null) return url;
+    // 内容寻址优先（仅 img + 非流式 + cid 在场）：URL 变成内容的函数。
+    if (inImg(offset)) {
+      const cid = cidOf(p);
+      if (cid && !isStreamingPath(p)) return objUrl(p, cid);
+    }
+    if (/[?&]ticket=/.test(url)) return url;
+    if (!has) return url;
     const t = tickets.get(p);
     return t ? url + '&ticket=' + encodeURIComponent(t) : url;
   });
@@ -278,10 +305,14 @@ async function mintRound(paths) {
       const t = v && typeof v === 'object' ? v.t : null;
       const exp = v && typeof v === 'object' ? v.exp : null;
       const size = v && typeof v === 'object' && Number.isFinite(v.size) ? v.size : 0;
+      // cid 并键（按对象复用批 2026-11-18·第 1 件）：**服务端自算**的整件 sha256
+      // 前 32 hex。在场 ⇒ 前端可构造 `/api/nf-obj/<cid>/<name>`（内容寻址 URL）。
+      // 缺席（旧 mock / 大件 / 不可读）⇒ 逐字回落既有票据 URL，零行为差异。
+      const cid = v && typeof v === 'object' && typeof v.cid === 'string' ? v.cid : '';
       if (typeof t === 'string' && t) {
         // size 并键（铸票面顺带 stat，2026-10-23 console-fastpath 批·腿③）：
         // 大文件 LAN 直传阈值判定用；缺席/0 = 未知尺寸（不直传，诚实降级）。
-        cache.set(p, { t, exp: typeof exp === 'number' ? exp : Date.now() + 1800000, size });
+        cache.set(p, { t, exp: typeof exp === 'number' ? exp : Date.now() + 1800000, size, cid });
         rejectCache.delete(p);   // 有票 ⇒ 上一轮的拒绝判决作废
       }
     }
@@ -414,6 +445,62 @@ export function cachedTicket(path) {
 export function urlWithTicket(path, ticket) {
   const base = '/api/nf-file?path=' + encodeURIComponent(path);
   return ticket ? base + '&ticket=' + encodeURIComponent(ticket) : base;
+}
+
+// ── 内容寻址 URL（按对象复用批 2026-11-18 · 第 1 件）────────────────────────
+// 铸票应答带回内容 cid（**服务端自算**的整件 sha256 前 32 hex）⇒ 前端可构造
+// `/api/nf-obj/<cid>/<name>`。URL 于是变成**内容**的函数：跨腿、跨挂载、跨会话
+// 恒同 ⇒ 服务端 `private, max-age=31536000, immutable` 让第二条腿在浏览器缓存里
+// 命中（零字节、零请求）。凭据**不在 URL 里**（cookie / Authorization 头）——
+// 本 URL 比票据 URL 更严：票据 URL 把凭据摊在 query 里。
+//
+// 三条纪律：
+//   ① cid 缺席（旧 mock / 大件 / 不可读）⇒ **逐字**回落既有票据 URL；
+//   ② 视频/音频不走内容寻址（Range/流式 seek 语义留在 /api/nf-file）；
+//   ③ 服务端不给 cid 的超大件同样自动回落（两条腿各自诚实降级）。
+
+/** 必须保留 Range 流式腿的扩展名（视频/音频）⇒ 不内容寻址。 */
+const STREAMING_EXT_RE = /\.(mp4|webm|mov|m4v|ogv|mp3|wav|ogg|m4a|aac|flac|opus)$/i;
+
+/** 该路径是否属流式件（视频/音频）。@param {string} path @returns {boolean} */
+export function isStreamingPath(path) {
+  return STREAMING_EXT_RE.test(String(path || '').split(/[?#]/)[0]);
+}
+
+/** 已铸票路径的内容 cid（无票/应答无 cid ⇒ ''）。@param {string} path @returns {string} */
+export function cidOf(path) {
+  const hit = cache.get(path);
+  return hit && typeof hit.cid === 'string' ? hit.cid : '';
+}
+
+/** 内容寻址 URL 的末段名（只决定 Content-Type；字节由 cid 定）。 */
+export function objNameOf(path) {
+  const seg = String(path || '').split(/[\\/]/).pop() || '';
+  return seg.split(/[?#]/)[0] || 'object';
+}
+
+/** `/api/nf-obj/<cid>/<name>`（凭据走 cookie/Authorization 头，绝不进 URL）。
+ *  模板字面量形态是**有意的**：`check-api-routes.mjs` 只对模板插值做段归一
+ *  （整段插值 ⇒ `:` 通配段），拼接式写法会被抽成缺段的路径而与该闸
+ *  「前端调用必有后端承接」判据失配。 */
+export function objUrl(path, cid) {
+  return `/api/nf-obj/${encodeURIComponent(cid)}/${encodeURIComponent(objNameOf(path))}`;
+}
+
+/**
+ * 取字节 URL 的**内容寻址优先**形态（账本/查看器腿单点）。
+ *
+ * 合帧铸票后：cid 在场且非流式件 ⇒ `/api/nf-obj/<cid>/<name>`；否则逐字回落
+ * `urlWithTicket`（= `queuedTicketUrl` 的 URL 形状）。绝不 reject（与
+ * `queuedTicketUrl` 同失败契约）。
+ * @param {string} path @returns {Promise<string>}
+ */
+export async function contentAddressedUrl(path) {
+  const map = await mintTicketsQueued([path]);
+  const ticket = map.get(path) || '';
+  const cid = cidOf(path);
+  if (cid && !isStreamingPath(path)) return objUrl(path, cid);
+  return urlWithTicket(path, ticket);
 }
 
 // ── 大文件 LAN 直传（console-fastpath 批 2026-10-23·作者令腿③）────────────────

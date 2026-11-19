@@ -37,12 +37,18 @@ object AskSessions:
   val AskExclusiveTools: Set[String] =
     // PDF note/ask 批（2026-11-18）：PdfPage = 绑定 PDF 的按需取页件（只读缓存
     // 条目，不整篇载入；答案引用页码的取数面）。ask 专属同 ask_edit。
-    Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write", "PdfPage",
-      // gitviz 分支管理问答批（2026-11-19 第二轮）：gitviz_graph = 分支图只读取数件
-      // （实现在 core/tools/GitVizGraphTool.scala；数据面 = 既有 GitGraph.build）。
-      // 进本集即同时得到两件事：① 授权面由 GitVizAllowedTools 带上；② 由
-      // buildAllowedToolSet 尾段的 `-- AskExclusiveTools` 从其余一切身份剥净；
-      // 工具内侧另有 isGitVizSession 身份闸（双保险，PdfPage 同款）。
+    // card-tool-revive 批（2026-11-18，作者令「找到我们 git 历史中的 card 工具 让
+    // canvas ask 可以使用 card 工具」）：Card = 在对话流里渲一张沙箱 iframe 卡片
+    // （HTML 源，本地文件引用走 FileRefs 共享策略）。**本集是它唯一的授权单点**：
+    // 既由 [[AllowedTools]] 带上 ask 面，又由 `buildAllowedToolSet` 尾段的
+    // `-- AskExclusiveTools` 从其余一切身份剥净；工具内侧另有
+    // `isAskSession` 身份闸兜底（ask_edit/ask_write/PdfPage 同款双保险）。
+    // gitviz 分支管理问答批（2026-11-19 第二轮）：gitviz_graph = 分支图只读取数件
+    // （实现在 core/tools/GitVizGraphTool.scala；数据面 = 既有 GitGraph.build）。
+    // 进本集即同时得到两件事：① 授权面由 GitVizAllowedTools 带上；② 由
+    // buildAllowedToolSet 尾段的 `-- AskExclusiveTools` 从其余一切身份剥净；
+    // 工具内侧另有 isGitVizSession 身份闸（双保险，PdfPage 同款）。
+    Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write", "PdfPage", "Card",
       "gitviz_graph")
 
   /** Closed Ask face, independent of Subagent and returned before any other role grants. */

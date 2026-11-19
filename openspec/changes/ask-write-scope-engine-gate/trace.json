@@ -1,0 +1,160 @@
+{
+  "version": 1,
+  "change": "ask-write-scope-engine-gate",
+  "mappings": [
+    {
+      "requirement": "CAE-REQ-101",
+      "scenario": "CAE-SCN-101",
+      "implementation": [
+        "openspec/changes/ask-write-scope-engine-gate/proposal.md",
+        "openspec/changes/ask-write-scope-engine-gate/design.md",
+        "openspec/changes/ask-write-scope-engine-gate/tasks.md",
+        "openspec/changes/ask-write-scope-engine-gate/trace.json",
+        "openspec/changes/ask-write-scope-engine-gate/specs/canvas-ask-edit/spec.md",
+        "src/main/scala/nebflow/core/ask/AskPathBoundary.scala",
+        "src/main/scala/nebflow/core/ask/AskEditReviews.scala",
+        "src/main/scala/nebflow/core/tools/AskEditTools.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskWriteScopeSpec.scala",
+          "name": "M-allow: every spelling that normalises to the bound document is allowed"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskEditReviewSpec.scala",
+          "name": "capture follows identity through symlinks: same document passes, another target is refused"
+        }
+      ]
+    },
+    {
+      "requirement": "CAE-REQ-101",
+      "scenario": "CAE-SCN-102",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskPathBoundary.scala",
+        "src/main/scala/nebflow/core/ask/AskEditReviews.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskWriteScopeSpec.scala",
+          "name": "M-deny: every spelling that normalises to another target is refused, readably"
+        }
+      ]
+    },
+    {
+      "requirement": "CAE-REQ-102",
+      "scenario": "CAE-SCN-103",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskWriteAudit.scala",
+        "src/main/scala/nebflow/core/ask/AskEditReviews.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskWriteScopeSpec.scala",
+          "name": "C: ask_write/ask_edit apply exactly to the bound document and never to another file"
+        }
+      ]
+    },
+    {
+      "requirement": "CAE-REQ-102",
+      "scenario": "CAE-SCN-104",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskBashGuard.scala",
+        "src/main/scala/nebflow/core/ask/AskWriteAudit.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskWriteScopeSpec.scala",
+          "name": "E: a shell write attempt is refused and audited (Bash is not a second write channel)"
+        }
+      ]
+    },
+    {
+      "requirement": "CAE-REQ-103",
+      "scenario": "CAE-SCN-105",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskHandoffWire.scala",
+        "src/main/scala/nebflow/gateway/WsAskHandlers.scala",
+        "src/main/scala/nebflow/gateway/WebSocketRoutes.scala",
+        "src/main/resources/web/js/askDock.js",
+        "src/main/resources/web/css/ask.css"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskWriteScopeSpec.scala",
+          "name": "G: the handoff request is structured, machine-readable and surfaces as a panel frame"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskHandoffChainSpec.scala",
+          "name": "H1: a cross-file request produces a structured handoff the main session receives, and the panel frame is visible"
+        },
+        {
+          "path": "tests/ask-scope-handoff-shots.mjs",
+          "name": "已转交主会话"
+        }
+      ]
+    },
+    {
+      "requirement": "CAE-REQ-103",
+      "scenario": "CAE-SCN-106",
+      "implementation": [
+        "src/main/scala/nebflow/core/tools/AskTools.scala",
+        "src/main/scala/nebflow/core/AgentRuntimePort.scala",
+        "src/main/scala/nebflow/gateway/WsAskHandlers.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskHandoffChainSpec.scala",
+          "name": "H2: out-of-scope or unavailable handoffs refuse explicitly — never hang, never silence"
+        }
+      ]
+    },
+    {
+      "requirement": "CAE-REQ-104",
+      "scenario": "CAE-SCN-107",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskSessions.scala",
+        "src/main/scala/nebflow/agent/AgentSessionExecution.scala",
+        "src/test/scala/nebflow/agent/ToolFaceReadings.scala",
+        "scripts/check-ask-write-scope.mjs"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/ToolFaceReadingsSpec.scala",
+          "name": "print per-identity tool-face readings"
+        },
+        {
+          "path": "scripts/tests/check-ask-write-scope.test.mjs",
+          "name": "the ask face must not carry a direct write tool"
+        },
+        {
+          "path": "scripts/tests/check-ask-write-scope.test.mjs",
+          "name": "the shell leg must pass through the query-only validator"
+        }
+      ]
+    },
+    {
+      "requirement": "CAE-REQ-104",
+      "scenario": "CAE-SCN-108",
+      "implementation": [
+        "src/main/scala/nebflow/core/ask/AskContextAssembler.scala",
+        "scripts/check-ask-write-scope.mjs",
+        "scripts/run-checks.mjs",
+        "scripts/tests/check-ask-write-scope.test.mjs"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/ask/AskWriteScopeSpec.scala",
+          "name": "F: the ask prompt derives the tool list from the registry and states both hard constraints"
+        },
+        {
+          "path": "scripts/tests/check-ask-write-scope.test.mjs",
+          "name": "the prompt must derive its tool list and state both hard constraints"
+        },
+        {
+          "path": "scripts/tests/check-ask-write-scope.test.mjs",
+          "name": "injection: restoring the string-equality verdict turns the gate red"
+        }
+      ]
+    }
+  ]
+}
