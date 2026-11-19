@@ -5,7 +5,7 @@ import cats.syntax.all.*
 import io.circe.{Json, JsonObject}
 import io.circe.syntax.*
 import nebflow.actor.{AgentCommand, RootAgentIdentity}
-import nebflow.shared.PathUtil
+import nebflow.shared.{NebflowLogger, PathUtil}
 
 import java.util.UUID
 import scala.collection.concurrent.TrieMap
@@ -21,6 +21,23 @@ object AskHostLedger:
   private val waiters = TrieMap.empty[String, Deferred[IO, String]]
   private val answered = TrieMap.empty[String, String]
   private val journalLock = new Object
+
+  /** Neutral outcome recorded when a wait window elapses without a decision
+    * (author ruling 2026-11-19: "超时释放写入中性 outcome").
+    * The release must never push a substantive default option onto the worker — only
+    * the fact that no decision was made, so the worker can continue on its brief.
+    */
+  val TimeoutOutcome: String = "TIMEOUT/NO-DECISION"
+  /** Journal status for a wait released by its window elapsing (distinct from
+    * [[cancel]]'s `unavailable`, which means the request was never answerable).
+    * A timed-out request keeps its identity so a late root answer can still be
+    * delivered ([[AskHostReplyTool]] late-reply leg).
+    */
+  val StatusTimeout: String = "timeout"
+  /** Journal status for a root answer injected AFTER its wait window was released. */
+  val StatusLateReply: String = "late-reply"
+  /** Journal status for a late answer that conflicts with one already delivered. */
+  val StatusLateReplyConflict: String = "late-reply-conflict"
 
   final case class Pending(correlationId: String, workerSession: String, rootSession: String, sourceAgent: String, toolCallId: String = "")
   final case class Recovered(pending: Pending, question: String, answer: Option[String] = None)
@@ -40,33 +57,11 @@ object AskHostLedger:
             case "pending" =>
               requests.update(id, Recovered(Pending(id, str("workerSession"), str("rootSession"), str("sourceAgent"), str("toolCallId")), str("question")))
             case "answered" => requests.get(id).foreach(r => requests.update(id, r.copy(answer = Some(str("decision")))))
-            case "delivered" | "unavailable" => requests.remove(id)
+            case "delivered" | "unavailable" | "timeout" => requests.remove(id)
             case _ => ()
         }
       }
       requests.values.toList
-
-  /** Verify an exact duplicate against durable history, including delivered rows. */
-  def isAcceptedDuplicate(id: String, root: String, decision: String): IO[Boolean] = IO.blocking {
-    journalLock.synchronized {
-      if !os.exists(file) then false
-      else
-        var owner = ""
-        var accepted: Option[String] = None
-        var invalid = false
-        os.read.lines(file).foreach { line =>
-          io.circe.parser.parse(line).toOption.flatMap(_.asObject).foreach { row =>
-            def str(key: String) = row(key).flatMap(_.asString).getOrElse("")
-            if str("correlationId") == id then str("status") match
-              case "pending" => owner = str("rootSession")
-              case "answered" => accepted = Some(str("decision"))
-              case "unavailable" => invalid = true
-              case _ => ()
-          }
-        }
-        !invalid && owner == root && accepted.contains(decision)
-    }
-  }
 
   /** Recreate in-process waiters and satisfy any request whose decision was journaled before a crash. */
   def restoreWaiter(id: String): IO[Deferred[IO, String]] =
@@ -79,6 +74,70 @@ object AskHostLedger:
     }
 
   def clearForTests(): Unit = { waiters.clear(); answered.clear() }
+
+  /** Terminal classification of one AskHost correlation (three-state distinction,
+    * author ruling 2026-11-19): the reply leg must be able to tell "unknown id",
+    * "released by timeout (neutral outcome, late reply still deliverable)" and
+    * "explicitly answered with a decision" apart.
+    */
+  enum Terminal:
+    /** Released when the wait window elapsed — neutral outcome, no decision made. */
+    case TimedOut(outcome: String, reason: String)
+    /** Never answerable (delivery failed / worker cancelled / legacy): nothing to answer. */
+    case Unavailable(reason: String)
+    /** Explicitly answered by the root. */
+    case Answered(decision: String)
+    /** Answered and its tool result already committed to the worker transcript. */
+    case Delivered(decision: Option[String])
+
+  /** Full durable lifecycle reading for one correlation id (raw journal scan — unlike
+    * [[recover]] this keeps timed-out rows so their worker binding stays resolvable).
+    */
+  final case class RequestState(
+    pending: Pending,
+    question: String,
+    terminal: Option[Terminal],
+    /** Decisions already delivered as late replies (idempotency + conflict detection). */
+    lateReplies: List[String]
+  )
+
+  def requestState(id: String): IO[Option[RequestState]] = IO.blocking {
+    journalLock.synchronized(requestStateSync(id))
+  }
+
+  private def requestStateSync(id: String): Option[RequestState] =
+    if !os.exists(file) then None
+    else
+      var pending: Option[Pending] = None
+      var question = ""
+      var decision: Option[String] = None
+      var timeout: Option[(String, String)] = None
+      var unavailable: Option[String] = None
+      var delivered = false
+      val late = scala.collection.mutable.ListBuffer.empty[String]
+      os.read.lines(file).foreach { line =>
+        io.circe.parser.parse(line).toOption.flatMap(_.asObject).foreach { row =>
+          def str(key: String): String = row(key).flatMap(_.asString).getOrElse("")
+          if str("correlationId") == id then str("status") match
+            case "pending" =>
+              pending = Some(Pending(id, str("workerSession"), str("rootSession"), str("sourceAgent"), str("toolCallId")))
+              question = str("question")
+            case "answered" => decision = Some(str("decision"))
+            case "timeout" => timeout = Some((str("outcome"), str("reason")))
+            case "unavailable" => unavailable = Some(str("reason"))
+            case "delivered" => delivered = true
+            case "late-reply" => late += str("decision")
+            case _ => ()
+        }
+      }
+      pending.map { p =>
+        val terminal =
+          if timeout.isDefined then Some(Terminal.TimedOut(timeout.get._1, timeout.get._2))
+          else if unavailable.isDefined then Some(Terminal.Unavailable(unavailable.get))
+          else if delivered then Some(Terminal.Delivered(decision))
+          else decision.map(Terminal.Answered.apply)
+        RequestState(p, question, terminal, late.toList)
+      }
 
   def begin(workerSession: String, rootSession: String, sourceAgent: String, question: String): IO[(Pending, Deferred[IO, String])] =
     for
@@ -128,6 +187,44 @@ object AskHostLedger:
   }
 
   def markUnavailable(id: String, reason: String): IO[Unit] = cancel(id, reason).void
+
+  /** Release a still-unanswered wait because its window elapsed. Writes the NEUTRAL
+    * [[TimeoutOutcome]] (never a substantive default) under the same journal lock that
+    * [[answer]] uses — so an answer that lands concurrently still wins, and this returns
+    * `false` in that case (the caller re-reads the answer).
+    *
+    * The request identity and worker binding are preserved in the journal, so a late
+    * root answer can still be routed to the worker ([[AskHostReplyTool]] late-reply leg).
+    * This is deliberately NOT [[cancel]] (`unavailable`): a timed-out request was
+    * answerable, just late.
+    */
+  def releaseOnTimeout(id: String, reason: String): IO[Boolean] = IO.blocking {
+    journalLock.synchronized {
+      recoverSync().find(_.pending.correlationId == id) match
+        case Some(row) if row.answer.isEmpty =>
+          appendSync(Json.obj("correlationId" -> id.asJson, "status" -> StatusTimeout.asJson,
+            "outcome" -> TimeoutOutcome.asJson, "reason" -> reason.asJson,
+            "at" -> System.currentTimeMillis().asJson))
+          waiters.remove(id)
+          answered.remove(id)
+          true
+        case _ => false
+    }
+  }
+
+  /** Reject a late root answer that conflicts with one already delivered, and record the
+    * conflict so it stays auditable (author ruling 2026-11-19: "真冲突必须留痕可查").
+    */
+  def recordLateReplyConflict(id: String, existing: String, attempted: String): IO[Unit] =
+    append(Json.obj("correlationId" -> id.asJson, "status" -> StatusLateReplyConflict.asJson,
+      "existingDecision" -> existing.asJson, "attemptedDecision" -> attempted.asJson,
+      "at" -> System.currentTimeMillis().asJson))
+
+  /** Audit a late root answer actually delivered to the worker (injected / continuation). */
+  def recordLateReply(id: String, decision: String, delivery: String): IO[Unit] =
+    append(Json.obj("correlationId" -> id.asJson, "status" -> StatusLateReply.asJson,
+      "decision" -> decision.asJson, "delivery" -> delivery.asJson,
+      "at" -> System.currentTimeMillis().asJson))
 
   def cancelWorker(worker: String, reason: String): IO[Unit] =
     recover.flatMap(_.filter(_.pending.workerSession == worker).traverse_(r => cancel(r.pending.correlationId, reason).void))
@@ -206,6 +303,29 @@ end AskHostLedger
 object AskHostTool extends Tool:
   val name = "AskHost"
   val description = "Ask the trusted Nebula root for a decision. The root can answer or reject; use AskUserQuestion there if clarification is needed. This blocks until its correlated reply arrives."
+
+  /** Wait window before the blocking hold is released neutrally (author ruling 2026-11-19 ②).
+    *
+    * Recommended 30 min: a root turn is a full reasoning+tool round and can legitimately
+    * exceed the old 10-minute value (forensics 2026-11-19: two real requests timed out at
+    * 600s while the root's answers arrived 10-26 min later). This is an upper bound, never
+    * an infinite wait — the release is neutral ([[AskHostLedger.TimeoutOutcome]]) and a late
+    * answer is still delivered ([[AskHostReplyTool]] late-reply leg).
+    *
+    * Configurable via `-D nebflow.askhost.waitWindowMs=<ms>` (>0; non-numeric/<=0 falls back
+    * to the default), same `sys.props` precedent as `SessionMailbox.maxPending`.
+    */
+  val DefaultWaitWindowMs: Long = 30L * 60L * 1000L
+  def waitWindowMs: Long =
+    sys.props.get("nebflow.askhost.waitWindowMs").map(_.trim).flatMap(_.toLongOption)
+      .filter(_ > 0).getOrElse(DefaultWaitWindowMs)
+  def waitWindow: FiniteDuration = waitWindowMs.millis
+
+  /** Neutral, actionable notice returned when the window elapses with no decision. */
+  private[nebflow] def timeoutReleaseNotice(id: String): String =
+    s"""AskHost request $id got NO decision within the wait window; the blocking hold was released neutrally (outcome ${AskHostLedger.TimeoutOutcome}).
+       |No option was chosen on your behalf. Continue per your brief's stated default and label it truthfully in your result (e.g. "no decision received from the root; proceeding by the brief's default"), or escalate explicitly if the brief names no default.
+       |If the root answers after this point, it will arrive as an injected message tagged [ASKHOST-LATE-REPLY] and is authoritative then.""".stripMargin
   val inputSchema = JsonObject(
     "type" -> "object".asJson,
     "properties" -> Json.obj("question" -> Json.obj("type" -> "string".asJson)),
@@ -227,8 +347,11 @@ object AskHostTool extends Tool:
 
   private[nebflow] def awaitReply(id: String, waiter: Deferred[IO, String], timeout: FiniteDuration): IO[Either[ToolError, String]] =
     waiter.get.map(Right(_)).timeoutTo(timeout,
-      AskHostLedger.cancel(id, "root reply timed out").flatMap {
-        case true => IO.pure(Left(ToolError(s"AskHost request $id timed out waiting for root; retry or escalate")))
+      AskHostLedger.releaseOnTimeout(id, "root reply timed out").flatMap {
+        // Released by timeout: unblock the worker with the NEUTRAL outcome (no substantive
+        // default) — the request identity survives so a late answer can still be delivered.
+        case true => IO.pure(Right(timeoutReleaseNotice(id)))
+        // The answer won the race against the release — return it as the tool result.
         case false => AskHostLedger.recover.map(_.find(_.pending.correlationId == id).flatMap(_.answer) match
           case Some(answer) => Right(answer)
           case None => Left(ToolError(s"AskHost request $id is no longer available")))
@@ -267,7 +390,7 @@ object AskHostTool extends Tool:
               durable.flatMap {
                 case nebflow.core.mail.SessionMailbox.MailResult.Enqueued(_) | nebflow.core.mail.SessionMailbox.MailResult.AlreadyPresent =>
                   (rootRecord.ref ! AgentCommand.MailboxArrived) *> AskHostLedger.restoreWaiter(request.correlationId).flatMap { waiter =>
-                    awaitReply(request.correlationId, waiter, 10.minutes)
+                    awaitReply(request.correlationId, waiter, waitWindow)
                   }
                 case other => AskHostLedger.markUnavailable(request.correlationId, s"delivery failed: $other") *>
                   IO.pure(Left(ToolError(s"AskHost root delivery failed for request ${request.correlationId}: $other")))
@@ -305,13 +428,148 @@ end AskHostClarifyTool
 
 object AskHostReplyTool extends Tool:
   val name = "AskHostReply"
-  val description = "Answer or reject an AskHost request by its correlationId. Root session only."
+  val description = "Answer or reject an AskHost request by its correlationId. Root session only. If the request already timed out, the answer is still delivered to the worker as a late reply tagged [ASKHOST-LATE-REPLY]."
   val inputSchema = JsonObject("type" -> "object".asJson,
     "properties" -> Json.obj("correlationId" -> Json.obj("type" -> "string".asJson),
       "decision" -> Json.obj("type" -> "string".asJson)),
     "required" -> Json.arr("correlationId".asJson, "decision".asJson))
   def summarize(input: JsonObject): String = "AskHostReply"
   def summarizeResult(input: JsonObject, result: String): String = result
+
+  /** Explicit-conflict refusal (the ONLY case that legitimately rejects a reply). */
+  private def conflict(id: String, existing: String, attempted: String): ToolError =
+    ToolError(
+      s"AskHostReply: request $id was ALREADY answered with a DIFFERENT decision — refusing to overwrite (ASKHOST_REPLY_CONFLICT). " +
+        s"Existing: \"${existing.take(200)}\"; attempted: \"${attempted.take(200)}\". The existing decision stands; the conflict is audited.")
+
+  private def lateReplyPayload(p: AskHostLedger.Pending, id: String, outcome: String, decision: String): String =
+    s"""[ASKHOST-LATE-REPLY] AskHost request $id (from ${p.sourceAgent} / ${p.workerSession}) was released when its wait window elapsed; the outcome recorded at release was the neutral $outcome — no option had been chosen for you.
+       |The trusted root has now answered AFTER the window. This decision is authoritative: apply it now and label the result truthfully (late reply; the earlier neutral release is superseded).""".stripMargin +
+      s"\n\n$decision"
+
+  /**
+   * Late-reply delivery (author ruling 2026-11-19 ②): a root answer for a request whose
+   * wait window already elapsed is not rejected — it is injected into the worker with the
+   * SAME Mail semantics as the rest of Stand:
+   *
+   *   - live worker ⇒ durable mailbox enqueue + doorbell (injected at its next turn boundary);
+   *   - finished delegate worker ⇒ in-place continuation (same session id, new round) —
+   *     the Mail "finished ⇒ new round" rule, reusing the single point
+   *     [[nebflow.core.delegate.SessionResumption.resumeInPlace]];
+   *   - manual-gated / external / no-record worker ⇒ durable mailbox enqueue (never lost;
+   *     read when the session next runs a round).
+   *
+   * Idempotent: the mailbox identity is stable (`askhost-late-reply-<id>`), so a repeated
+   * send cannot duplicate the injection ([[nebflow.core.mail.SessionMailbox]] dedup).
+   */
+  private def deliverLateReply(
+    resources: nebflow.core.AgentRuntimePort,
+    ctx: ToolContext,
+    p: AskHostLedger.Pending,
+    id: String,
+    outcome: String,
+    decision: String
+  ): IO[Either[ToolError, String]] =
+    val worker = p.workerSession
+    val payload = lateReplyPayload(p, id, outcome, decision)
+    val identity = s"askhost-late-reply-$id"
+    val metadata = JsonObject(
+      "correlationId" -> id.asJson,
+      "workerSession" -> worker.asJson,
+      "rootSession" -> p.rootSession.asJson,
+      "sourceAgent" -> p.sourceAgent.asJson,
+      "originalOutcome" -> outcome.asJson,
+      "lateReply" -> true.asJson,
+      "engineOwned" -> true.asJson
+    )
+    val event = AgentCommand.ExternalEvent("askhost", "late-reply", payload, metadata, Some(id))
+    def enqueue: IO[nebflow.core.mail.SessionMailbox.MailResult] =
+      nebflow.core.mail.SessionMailbox.mailOnce(worker, event, "askhost-late-reply", identity,
+        coalesce = false, producer = "askhost-late-reply", deduplicateReceipts = true)
+    resources.agentRegistry.get.flatMap { registry =>
+      val live = registry.get(worker)
+      val doorbell: IO[Unit] = live.traverse_(rec => (rec.ref ! AgentCommand.MailboxArrived))
+      def persist(text: String, delivery: String): IO[Either[ToolError, String]] =
+        enqueue.flatMap {
+          case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) =>
+            IO.pure(Left(ToolError(
+              s"AskHost late reply for $id could NOT be persisted ($cause) — nothing was delivered; retry. (ASKHOST_LATE_REPLY_NOT_PERSISTED)")))
+          case _ => AskHostLedger.recordLateReply(id, decision, delivery) *> doorbell.as(Right(text))
+        }
+      live match
+        case Some(_) =>
+          persist(
+            s"[ASKHOST-LATE-REPLY] Late reply for $id queued in the worker mailbox ($worker, live) and the session woken; it is injected at its next turn boundary.",
+            "mailbox-live")
+        case None =>
+          IO.blocking(nebflow.core.delegate.DelegateRegistry.find(worker)).flatMap {
+            case Some(record) if record.executor == nebflow.core.executor.ExecutorRegistry.DefaultId =>
+              resources.subAgentTaskStore.findByTaskId(worker).flatMap { task =>
+                if nebflow.core.delegate.SessionResumption.requiresManual(Some(record), task, None) then
+                  persist(
+                    s"[ASKHOST-LATE-REPLY] Late reply for $id queued in the worker mailbox; execution of '$worker' is held behind a manual recovery gate (MANUAL_RECOVERY_REQUIRED) — it is read when execution resumes.",
+                    "mailbox-held")
+                else
+                  nebflow.core.delegate.SessionResumption
+                    .resumeInPlace(
+                      nebflow.core.delegate.SessionResumption.Deps(resources, resources.actorSystem, ctx.wsSend),
+                      record,
+                      payload)
+                    .flatMap {
+                      case Right(_) =>
+                        AskHostLedger.recordLateReply(id, decision, "continuation").as(Right(
+                          s"[ASKHOST-LATE-REPLY] Late reply for $id delivered by resuming the finished worker '$worker' in place (same session id, new round)."))
+                      case Left(err) =>
+                        persist(
+                          s"[ASKHOST-LATE-REPLY] Late reply for $id queued in the worker mailbox (in-place continuation declined: $err) — it is read when '$worker' next runs a round.",
+                          "mailbox-continuation-declined")
+                    }
+              }
+            case _ =>
+              persist(
+                s"[ASKHOST-LATE-REPLY] Late reply for $id queued in the worker mailbox ($worker); the session is not live, so it is read when '$worker' next runs a round.",
+                "mailbox-queued")
+          }
+    }
+
+  /** Classify a known request and act: answer while pending, distinguish the terminal
+    * cases (neutral timeout release vs explicit decision conflict). */
+  private def classify(
+    resources: nebflow.core.AgentRuntimePort,
+    ctx: ToolContext,
+    id: String,
+    decision: String,
+    state: AskHostLedger.RequestState
+  ): IO[Either[ToolError, String]] =
+    state.terminal match
+      case None =>
+        AskHostLedger.answer(id, decision).flatMap {
+          case true => IO.pure(Right(s"AskHost reply durably recorded for $id"))
+          case false =>
+            // Raced with a concurrent terminal transition: re-read and classify once more.
+            AskHostLedger.requestState(id).flatMap {
+              case Some(next) if next.terminal.isDefined => classify(resources, ctx, id, decision, next)
+              case _ => IO.pure(Left(ToolError(
+                s"AskHostReply: request $id could not be answered and is no longer pending — retry to re-read its state (ASKHOST_REPLY_RACED)")))
+            }
+        }
+      case Some(AskHostLedger.Terminal.Answered(existing)) =>
+        if existing == decision then IO.pure(Right(s"AskHost reply already accepted for $id"))
+        else IO.pure(Left(conflict(id, existing, decision)))
+      case Some(AskHostLedger.Terminal.Delivered(existing)) =>
+        if existing.contains(decision) then IO.pure(Right(s"AskHost reply already accepted and delivered for $id"))
+        else IO.pure(Left(conflict(id, existing.getOrElse("(unknown)"), decision)))
+      case Some(AskHostLedger.Terminal.TimedOut(outcome, _)) =>
+        if state.lateReplies.contains(decision) then
+          IO.pure(Right(s"[ASKHOST-LATE-REPLY] Late reply for $id was already delivered (idempotent re-send); nothing changed."))
+        else if state.lateReplies.nonEmpty then
+          AskHostLedger.recordLateReplyConflict(id, state.lateReplies.last, decision) *>
+            IO.pure(Left(conflict(id, state.lateReplies.last, decision)))
+        else deliverLateReply(resources, ctx, state.pending, id, outcome, decision)
+      case Some(AskHostLedger.Terminal.Unavailable(reason)) =>
+        IO.pure(Left(ToolError(
+          s"AskHostReply: request $id was released WITHOUT ever holding an answer (${reason}); the worker did not wait for a decision, so there is nothing to answer. (ASKHOST_REPLY_RELEASED_UNANSWERABLE)")))
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val id = input("correlationId").flatMap(_.asString).getOrElse("").trim
     val decision = input("decision").flatMap(_.asString).getOrElse("").trim
@@ -321,19 +579,13 @@ object AskHostReplyTool extends Tool:
       case None => IO.pure(Left(ToolError("AskHostReply: runtime resources unavailable")))
       case Some(resources) =>
         val root = ctx.sessionId.getOrElse("")
-        def alreadyAccepted: IO[Either[ToolError, String]] =
-          AskHostLedger.isAcceptedDuplicate(id, root, decision).map {
-            case true => Right(s"AskHost reply already accepted for $id")
-            case false => Left(ToolError(s"AskHost request unavailable or already answered with a different decision: $id"))
-          }
-        AskHostLedger.recover.flatMap(_.find(_.pending.correlationId == id) match
-          case None => alreadyAccepted
-          case Some(row) if row.pending.rootSession != root =>
+        AskHostLedger.requestState(id).flatMap {
+          case None =>
+            IO.pure(Left(ToolError(
+              s"AskHostReply: unknown correlationId '$id' — no AskHost request with this id exists (never created, or mistyped). Nothing was recorded. (ASKHOST_REPLY_UNKNOWN_ID)")))
+          case Some(state) if state.pending.rootSession != root =>
             IO.pure(Left(ToolError("AskHostReply: request belongs to another root session")))
-          case Some(row) =>
-            AskHostLedger.answer(id, decision).flatMap {
-              case true => IO.pure(Right(s"AskHost reply durably recorded for $id"))
-              case false => alreadyAccepted
-            }
-        )
+          case Some(state) =>
+            classify(resources, ctx, id, decision, state)
+        }
 end AskHostReplyTool

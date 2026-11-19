@@ -1,11 +1,14 @@
 package nebflow.core.tools
 
-import cats.effect.{Deferred, IO}
+import cats.effect.{Deferred, IO, Ref}
 import cats.syntax.all.*
 import io.circe.JsonObject
+import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.AgentDef
-import nebflow.shared.PathUtil
+import nebflow.actor.{AgentDef, AgentKind, AgentRecord}
+import nebflow.agent.SharedResources
+import nebflow.llm.ModelCandidate
+import nebflow.shared.{PathUtil, ThinkingConfig}
 
 class AskHostToolsSpec extends CatsEffectSuite:
   test("AskHost ledger persists pending source/question and accepts one correlated decision") {
@@ -236,4 +239,170 @@ class AskHostToolsSpec extends CatsEffectSuite:
     assertEquals(required.flatMap(_.asString), Vector("question"))
     assert(!AskHostTool.inputSchema("properties").flatMap(_.hcursor.downField("correlationId").success).isDefined)
   }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // AskHost late reply after timeout (defect 2026-11-19; author ruling 13:49)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  private val lateReplySystem = nebflow.actor.ActorSystem("askhost-late-reply-spec")
+
+  private def liveRef(): nebflow.actor.ActorRef[nebflow.actor.AgentCommand] =
+    lateReplySystem
+      .spawn(
+        nebflow.actor.Behaviors
+          .receiveMessage[nebflow.actor.AgentCommand](_ => IO.pure(nebflow.actor.Behaviors.stopped)),
+        s"ar-${java.util.UUID.randomUUID().toString.take(8)}"
+      )
+      .unsafeRunSync()
+
+  private def resourcesWith(registry: Map[String, AgentRecord]): SharedResources =
+    new SharedResources(
+      llm = null,
+      dispatcher = null,
+      sessionStore = null,
+      projectRoot = os.pwd,
+      thinkingConfigRef = Ref.unsafe[IO, ThinkingConfig](ThinkingConfig()),
+      rateLimiter = null,
+      fileChangeTracker = null,
+      contextWindow = 100_000,
+      agentLibrary = null,
+      taskStore = null,
+      historyArchiver = null,
+      fileLockManager = null,
+      sessionModelOverrides = Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
+      providerRegistry = null,
+      healthMonitor = null,
+      actorSystem = lateReplySystem,
+      agentRegistry = Ref.unsafe[IO, Map[String, AgentRecord]](registry),
+      voiceMutedRef = Ref.unsafe[IO, Boolean](false)
+    )
+
+  private def rootCtx(resources: SharedResources): ToolContext =
+    ToolContext(
+      projectRoot = os.pwd.toString,
+      sessionId = Some("sid-root"),
+      agentDef = Some(AgentDef(name = "Nebula", description = "spec fixture")),
+      sharedResources = Some(resources)
+    )
+
+  private def replyInput(id: String, decision: String): JsonObject =
+    JsonObject("correlationId" -> id.asJson, "decision" -> decision.asJson)
+
+  test("timeout release is a distinct neutral state, never conflated with an unknown id") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (req, _) <- AskHostLedger.beginForCall("worker-x", "sid-root", "agent", "q", "call-x")
+      unknown <- AskHostLedger.requestState("no-such-id")
+      pending <- AskHostLedger.requestState(req.correlationId)
+      released <- AskHostLedger.releaseOnTimeout(req.correlationId, "root reply timed out")
+      after <- AskHostLedger.requestState(req.correlationId)
+      recovered <- AskHostLedger.recover
+      _ = assertEquals(unknown, None)
+      _ = assertEquals(pending.map(_.terminal), Some(None))
+      _ = assert(released)
+      _ = assertEquals(
+        after.map(_.terminal),
+        Some(Some(AskHostLedger.Terminal.TimedOut(AskHostLedger.TimeoutOutcome, "root reply timed out"))),
+        "a timeout release must record the NEUTRAL outcome, not a substantive default"
+      )
+      _ = assert(after.exists(_.pending.workerSession == "worker-x"),
+        "the timed-out row must keep its worker binding so a late reply stays routable")
+      _ = assert(recovered.isEmpty, "a released wait must not be replayed as pending at boot")
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("awaitReply releases on timeout with a neutral notice (no decision, no substantive default)") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (req, waiter) <- AskHostLedger.beginForCall("worker-y", "sid-root", "agent", "q", "call-y")
+      out <- AskHostTool.awaitReply(req.correlationId, waiter, scala.concurrent.duration.DurationInt(150).millis)
+      text = out.toOption.getOrElse("")
+      state <- AskHostLedger.requestState(req.correlationId)
+      _ = assert(out.isRight, s"a timeout release must not be an error that pushes retry/escalate: $out")
+      _ = assert(text.contains("TIMEOUT/NO-DECISION"), s"neutral outcome missing: $text")
+      _ = assert(text.contains("No option was chosen on your behalf"), s"neutral wording missing: $text")
+      _ = assert(text.contains("[ASKHOST-LATE-REPLY]"), s"late-reply contract missing: $text")
+      _ = assertEquals(
+        state.flatMap(_.terminal),
+        Some(AskHostLedger.Terminal.TimedOut(AskHostLedger.TimeoutOutcome, "root reply timed out"))
+      )
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("late reply after timeout is injected into the worker mailbox (injection leg observable; idempotent)") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    import nebflow.core.mail.SessionMailbox
+    val worker = "delegate-nebflow-workerlive"
+    val resources = resourcesWith(Map(worker ->
+      AgentRecord(sessionId = worker, ref = liveRef(), kind = AgentKind.Delegate, rootSessionId = worker)))
+    val ctx = rootCtx(resources)
+    (for
+      (req, _) <- AskHostLedger.beginForCall(worker, "sid-root", "agent", "q", "call-late")
+      _ <- AskHostLedger.releaseOnTimeout(req.correlationId, "root reply timed out")
+      cmd = replyInput(req.correlationId, "use option A")
+      res <- AskHostReplyTool.call(cmd, ctx)
+      entries <- SessionMailbox.scanPending(worker)
+      state <- AskHostLedger.requestState(req.correlationId)
+      _ = assert(res.isRight, s"a late reply must not be rejected after a timeout release: $res")
+      _ = assert(res.toOption.exists(_.contains("ASKHOST-LATE-REPLY")), s"late-reply marker missing: $res")
+      _ = assertEquals(entries.size, 1, "exactly one injected late reply")
+      _ = assert(entries.head.event.payload.contains("[ASKHOST-LATE-REPLY]"))
+      _ = assert(entries.head.event.payload.contains("use option A"))
+      _ = assert(entries.head.event.payload.contains(AskHostLedger.TimeoutOutcome),
+        "the injected reply must state the neutral outcome it supersedes")
+      _ = assert(entries.head.identity.startsWith("askhost-late-reply-"))
+      _ = assert(entries.head.event.metadata("lateReply").flatMap(_.asBoolean).contains(true))
+      _ = assertEquals(state.map(_.lateReplies), Some(List("use option A")))
+      res2 <- AskHostReplyTool.call(cmd, ctx)
+      entries2 <- SessionMailbox.scanPending(worker)
+      _ = assert(res2.toOption.exists(_.contains("already delivered")), s"re-send must be idempotent: $res2")
+      _ = assertEquals(entries2.size, 1, "idempotent re-send must not duplicate the injection")
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("late reply to a non-live worker is queued durably (never silently dropped)") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    import nebflow.core.mail.SessionMailbox
+    val worker = "delegate-nebflow-gone"
+    val ctx = rootCtx(resourcesWith(Map.empty))
+    (for
+      (req, _) <- AskHostLedger.beginForCall(worker, "sid-root", "agent", "q", "call-gone")
+      _ <- AskHostLedger.releaseOnTimeout(req.correlationId, "root reply timed out")
+      res <- AskHostReplyTool.call(replyInput(req.correlationId, "go"), ctx)
+      entries <- SessionMailbox.scanPending(worker)
+      _ = assert(res.isRight, s"queuing a late reply must not error: $res")
+      _ = assertEquals(entries.size, 1, "the late reply must be durably queued in the worker mailbox")
+      _ = assert(entries.head.event.payload.contains("[ASKHOST-LATE-REPLY]"))
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("conflict and unknown id are refused with distinct, readable errors") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val ctx = rootCtx(resourcesWith(Map.empty))
+    (for
+      (req, _) <- AskHostLedger.beginForCall("worker-z", "sid-root", "agent", "q", "call-z")
+      _ <- AskHostLedger.answer(req.correlationId, "Option A")
+      conflict <- AskHostReplyTool.call(replyInput(req.correlationId, "Option B"), ctx)
+      same <- AskHostReplyTool.call(replyInput(req.correlationId, "Option A"), ctx)
+      unknown <- AskHostReplyTool.call(replyInput("no-such-id", "x"), ctx)
+      _ = assert(conflict.isLeft && conflict.swap.toOption.get.message.contains("ASKHOST_REPLY_CONFLICT"),
+        s"an explicit different decision must be a distinct conflict refusal: $conflict")
+      _ = assert(same.toOption.exists(_.contains("already accepted")))
+      _ = assert(unknown.isLeft && unknown.swap.toOption.get.message.contains("ASKHOST_REPLY_UNKNOWN_ID"),
+        s"an unknown id must be an explicit error: $unknown")
+      _ = assert(!unknown.swap.toOption.get.message.contains("unavailable or already answered"),
+        "the three states must never share one indistinguishable message")
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
 end AskHostToolsSpec
