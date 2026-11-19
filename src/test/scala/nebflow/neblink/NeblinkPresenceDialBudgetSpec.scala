@@ -383,29 +383,47 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
     val epA = s"http://127.0.0.2:$port"
     val epB = s"http://127.0.0.3:$port"
     val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val starts = new java.util.concurrent.LinkedBlockingQueue[String]()
+    val gate = new java.util.concurrent.Semaphore(0)
     val hook: (String, Int, Long) => Unit = (host, _, budget) =>
       events.add(s"start:$host:$budget")
+      starts.put(host)
+      if !gate.tryAcquire(8, java.util.concurrent.TimeUnit.SECONDS) then
+        throw new IllegalStateException("F-D fixture gate timed out")
       events.add(s"timeout:$host")
       throw new java.util.concurrent.TimeoutException("fixture timeout")
     withStack(port, dialHook = hook) { (ms, ps) =>
       val p = peer("blackhole", List(epA, epB))
-      for
-        // 先入册：判据「peer 仍在名册里」要有意义，前提是它本来就在册（connect 只在成功时
-        // upsert，只拨不通不足以入册——首轮实测这条断言红在「压根没入册」而不是「被剔除」）。
+      def gatedRound: IO[PresenceDialRound] =
+        for
+          fiber <- ps.connect(p).start
+          _ <- IO.blocking {
+            val first = starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+            val second = starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals(Set(first, second), Set("127.0.0.2", "127.0.0.3"))
+            events.add("release")
+            gate.release(2)
+          }
+          _ <- fiber.joinWithNever
+          round <- IO(roundOf(ps, "blackhole"))
+        yield round
+      (for
         _ <- ms.upsertPeer(p)
-        _ <- ps.connect(p)
-        r1 <- IO(roundOf(ps, "blackhole"))
-        _ <- ps.connect(p)
-        r2 <- IO(roundOf(ps, "blackhole"))
+        r1 <- gatedRound
+        r2 <- gatedRound
         st <- IO(ps.dialStatus("blackhole"))
         listed <- ms.peers
         connected <- IO(ps.isConnected("blackhole"))
-      yield (r1, r2, st, listed, connected)
+      yield (r1, r2, st, listed, connected)).guarantee(IO(gate.release(4)))
     }.map { case (r1, r2, st, listed, connected) =>
       import scala.jdk.CollectionConverters.*
       val recorded = events.iterator().asScala.toList
-      assertEquals(recorded.count(_.startsWith("start:")), 4)
-      assertEquals(recorded.count(_.startsWith("timeout:")), 4)
+      assertEquals(recorded.size, 10)
+      recorded.grouped(5).foreach { round =>
+        assert(round.take(2).forall(_.startsWith("start:")))
+        assertEquals(round(2), "release")
+        assert(round.drop(3).forall(_.startsWith("timeout:")))
+      }
       assertEquals(r1.failures.map(_._2), List(DialFailureClass.Timeout, DialFailureClass.Timeout))
       assertEquals(r2.failures.map(_._2), List(DialFailureClass.Timeout, DialFailureClass.Timeout))
       assertEquals(r1.attempted, List(epA, epB), "双候选全超时：两个都拨了")
