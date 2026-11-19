@@ -19,6 +19,32 @@ class RgHelperSpec extends FunSuite:
 
   private val utf8 = StandardCharsets.UTF_8
 
+  /** Subprocess tests use only the bundled deterministic shim; host rg is reserved for host-smoke. */
+  private def runFixtureRg(
+    args: List[String],
+    workDir: String,
+    processCwd: Option[String] = None,
+    truncateOnOverflow: Boolean = false
+  ): Either[ToolError, (String, String, Int, Boolean)] =
+    val dir = java.nio.file.Files.createTempDirectory("rg-process-shim")
+    try
+      val windows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
+      val script = dir.resolve("rg-shim.py")
+      val stream = getClass.getResourceAsStream("/rg-shim.py")
+      require(stream != null, "missing rg shim resource")
+      try java.nio.file.Files.copy(stream, script)
+      finally stream.close()
+      val wrapper = dir.resolve(if windows then "rg.cmd" else "rg")
+      val content =
+        if windows then "@python \"%~dp0rg-shim.py\" %*\r\n"
+        else "#!/bin/sh\nexec /usr/bin/python3 \"$(dirname \"$0\")/rg-shim.py\" \"$@\"\n"
+      java.nio.file.Files.writeString(wrapper, content)
+      wrapper.toFile.setExecutable(true)
+      val argv = if windows then List("/d", "/c", wrapper.toString) ++ args else args
+      val executable = if windows then Option(System.getenv("ComSpec")) else Some(wrapper.toString)
+      RgHelper.runRgWithPath(argv, workDir, processCwd, truncateOnOverflow, executable)
+    finally os.remove.all(os.Path(dir))
+
   /** launchd 最小 PATH（2026-09-21 事发读数，.nebflow/evidence/20260921_env-rg-restore/）。 */
   private val launchdMinimalPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -181,7 +207,7 @@ class RgHelperSpec extends FunSuite:
       assume(false, "create-process semantics differ on this platform")
     val missing = new java.io.File("Z:" + java.io.File.separator + "nebflow-missing-cwd-267")
     assert(!missing.isDirectory)
-    RgHelper.runRg(List("--version"), missing.getPath) match
+    runFixtureRg(List("--version"), missing.getPath) match
       case Right(_) => () // 修复后：cwd 落父进程，rg 照跑
       case Left(err) => fail(s"a non-directory workDir must not break rg: ${err.message}")
   }
@@ -191,7 +217,7 @@ class RgHelperSpec extends FunSuite:
     try
       os.write(tmp / "one.txt", "1", createFolders = true)
       os.write(tmp / "sub" / "two.txt", "2", createFolders = true)
-      val r = RgHelper.runRg(
+      val r = runFixtureRg(
         List("--files", "--no-ignore", "--no-messages", "."),
         os.pwd.toString,
         processCwd = Some(tmp.toString)
@@ -211,7 +237,7 @@ class RgHelperSpec extends FunSuite:
   test("runRg truncateOnOverflow=false keeps the hard 500KB ToolError (Grep behavior)") {
     val tmp = bigFixture("nb-rghelper-big")
     try
-      val r = RgHelper.runRg(
+      val r = runFixtureRg(
         List("--files", "--glob", "/**", "--sort=modified", "--color=never", "--no-ignore", "--no-messages", "."),
         os.pwd.toString,
         processCwd = Some(tmp.toString),
@@ -225,7 +251,7 @@ class RgHelperSpec extends FunSuite:
   test("runRg truncateOnOverflow=true returns truncated stdout with the flag (Glob behavior)") {
     val tmp = bigFixture("nb-rghelper-trunc")
     try
-      val r = RgHelper.runRg(
+      val r = runFixtureRg(
         List("--files", "--glob", "/**", "--sort=modified", "--color=never", "--no-ignore", "--no-messages", "."),
         os.pwd.toString,
         processCwd = Some(tmp.toString),
