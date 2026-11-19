@@ -662,32 +662,38 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
   }
 
   test("T2 门槛轴可分：timeout 轴第 4 拍不得置窗、第 5 拍末置窗、第 6 拍半开探测（refused 轴第 4 拍早已置窗）") {
-    assume(
-      !windowsBlackholeUnsupported,
-      "Windows 环回全段回 ECONNREFUSED ⇒ 黑洞夹具轴漂移，timeout 轴组无法在此平台成立——skip（KAI 单跑按 ignored 记账）"
-    )
     val port = closedPort()
     val epA = blackholeEndpoint(port, 2)
     val epB = blackholeEndpoint(port, 3)
-    withStack(port) { (_, ps) =>
+    val starts = new java.util.concurrent.LinkedBlockingQueue[String]()
+    val permits = new java.util.concurrent.Semaphore(0)
+    val hook: (String, Int, Long) => Unit = (host, _, budget) =>
+      starts.put(s"$host:$budget")
+      if !permits.tryAcquire(8, java.util.concurrent.TimeUnit.SECONDS) then
+        throw new IllegalStateException("T2 gate timed out")
+      throw new java.util.concurrent.TimeoutException("fixture timeout")
+    withStack(port, dialHook = hook) { (_, ps) =>
       val p = peer("axes", List(epA, epB))
-      for
-        _ <- ps.connect(p)
-        r1 <- IO(roundOf(ps, "axes"))
-        _ <- ps.connect(p)
-        r2 <- IO(roundOf(ps, "axes"))
-        _ <- ps.connect(p) // 第 3 拍（凑满 refused 轴门槛 3 ⇒ 若轴被降级，此拍末即置窗）
-        _ <- ps.connect(p)
-        r4 <- IO(roundOf(ps, "axes"))
-        _ <- ps.connect(p)
-        r5 <- IO(roundOf(ps, "axes"))
-        t0 <- IO.monotonic
-        _ <- ps.connect(p) // 第 6 拍：全部候选在窗内 ⇒ 半开探测
-        elapsed <- IO.monotonic.map(d => (d - t0).toMillis)
-        r6 <- IO(roundOf(ps, "axes"))
-      yield (r1, r2, r4, r5, r6, elapsed)
-      end for
-    }.map { case (r1, r2, r4, r5, r6, elapsed) =>
+      def runRound(n: Int): IO[PresenceDialRound] =
+        for
+          fiber <- ps.connect(p).start
+          _ <- IO.blocking {
+            val seen = (1 to n).map(_ => starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)).toList
+            assert(seen.forall(s => s != null && s.endsWith(":1500")), s"expected $n LAN legs: $seen")
+            permits.release(n)
+          }
+          _ <- fiber.joinWithNever
+          result <- IO(roundOf(ps, "axes"))
+        yield result
+      (for
+        r1 <- runRound(2)
+        r2 <- runRound(2)
+        _ <- runRound(2)
+        r4 <- runRound(2)
+        r5 <- runRound(2)
+        r6 <- runRound(1)
+      yield (r1, r2, r4, r5, r6)).guarantee(IO(permits.release(20)))
+    }.map { case (r1, r2, r4, r5, r6) =>
       assertEquals(EvictionPolicy.Default.refusalStrikes, 3, "refused 轴门槛 = 3 连击")
       assertEquals(EvictionPolicy.Default.timeoutStrikes, 5, "timeout 轴门槛 = 5 连击（歧义信号给足机会）")
       assertEquals(r1.skippedSuppressed, Nil, "第 1 拍：未达门槛")
@@ -702,10 +708,7 @@ class NeblinkPresenceDialBudgetSpec extends CatsEffectSuite:
       assertEquals(r5.skippedSuppressed, Nil, "第 5 拍置窗前不得跳过")
       assertEquals(r6.skippedSuppressed, List(epB), "第 6 拍：全部候选在窗内 ⇒ 只跳次优（半开探测）")
       assertEquals(r6.attempted, List(epA), "第 6 拍只拨最优候选")
-      assert(
-        elapsed >= 1_300L && elapsed <= 2_400L,
-        s"半开探测每拍成本必须 ≈1×budget(1500ms)，实测 ${elapsed}ms（两候选全拨会是 ≈3000ms）"
-      )
+      assertEquals(r6.failures.map(_._2), List(DialFailureClass.Timeout), "half-open result remains timeout")
     }
   }
 
