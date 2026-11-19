@@ -48,9 +48,49 @@ class NodeCompletionReplayIntegrationSpec extends CatsEffectSuite:
     }
   }
 
+  private def manifestNodeFixture(valid: Boolean): IO[(String, String)] = IO.blocking {
+    import scala.sys.process.*
+    val primary = os.temp.dir(prefix = "node-manifest-")
+    def git(args: String*): Unit = assertEquals(Process("git" +: args, primary.toIO).!, 0)
+    git("init", "-q")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "fixture")
+    val wt = primary / ".nebflow" / "worktrees" / "fixture"
+    os.makeDir.all(wt / os.up)
+    git("worktree", "add", "-q", "-b", "fixture", wt.toString)
+    os.makeDir.all(wt / "scripts")
+    os.copy(os.pwd / "scripts" / "check-delivery.py", wt / "scripts" / "check-delivery.py")
+    val tmp = primary / ".stand" / "tmp" / "fixture"
+    os.makeDir.all(tmp / "delivery")
+    os.makeDir.all(tmp / "evidence")
+    if valid then os.write(tmp / "MANIFEST.md", "# Artifact manifest\n\n| Relative path | Bytes | mtime | Status |\n| --- | ---: | --- | --- |\n")
+    (primary.toString, wt.toString)
+  }
+
+  for valid <- List(false, true) do
+    test(if valid then "manifest-node-valid" else "manifest-node-missing") {
+      val system = ActorSystem("manifest-node")
+      Resource.make(IO.pure(system))(_.stopAll).use { _ =>
+        for
+          paths <- manifestNodeFixture(valid)
+          (workspace, _) = paths
+          res <- SpecResources.mkResources(system, root, new LlmHandle[IO]:
+            def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unused"))
+            def sendStream(req: LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] = Stream.empty
+          )
+          store <- FlowMapStore.open("manifest-node", workspace)
+          engine = new NodeEngine(store, system, res, (_: Json) => IO.unit, workspace, "root", "manifest-node", (_, _, _) => IO.unit)
+          _ <- store.mutate(s => s.copy(nodes = Map("n" -> NodeDef(id = "n", name = "n", agent = "general", createdAt = 0L, status = NodeLifecycle.Running, worktree = Some("fixture")))))
+          _ <- engine.completeNodeR("n", "commit-ready report")
+          node <- store.getNode("n")
+          _ = if !valid then println("MANIFEST_NODE_ACTUAL=" + node.flatMap(_.result).getOrElse(""))
+          _ = assertEquals(node.map(_.status), Some(if valid then NodeLifecycle.Completed else NodeLifecycle.Failed))
+          _ = if !valid then assert(node.flatMap(_.result).exists(_.contains("missing")))
+        yield ()
+      }
+    }
+
   test("E01: concurrent upstreams deliver once and replay preserves downstream artifact") {
-    val ws = root / java.util.UUID.randomUUID().toString
-    os.makeDir.all(ws)
+    val ws = os.temp.dir(prefix = "completion-replay-e01-")
     val system = ActorSystem("completion-replay-e01")
     Resource.make(IO.pure(system))(_.stopAll).use { _ =>
       for

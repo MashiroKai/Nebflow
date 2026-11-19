@@ -162,6 +162,38 @@ class ProtectedRecoverySpec extends CatsEffectSuite:
     }
   }
 
+  test("manifest-protected-authoritative-failed") {
+    fixture(finish = true).use { f =>
+      for
+        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(nebflow.core.delegate.DelegateRegistry.Record(
+          id = f.admission.sessionId, executor = "worker", cwd = "/missing-protected-workspace", project = None,
+          taskId = None, parentSessionId = "parent", title = "manifest", createdAt = 0L)))
+        result <- f.resources.resumeProtectedExecution(f.request)
+        _ = assert(result.isRight, result.toString)
+        _ <- f.modelRequest.get.timeout(5.seconds)
+        terminal <- {
+          def awaitTerminal: IO[Json] = f.store.committedTerminal(f.admission.sessionId, "run").flatMap {
+            case Right(value) => IO.pure(value)
+            case Left(_) => IO.sleep(20.millis) *> awaitTerminal
+          }
+          awaitTerminal.timeout(15.seconds)
+        }
+        row <- {
+          def awaitRow: IO[SubAgentTask] = f.resources.subAgentTaskStore.findByTaskId(f.admission.sessionId).flatMap {
+            case Some(value) if value.executionStatus.exists(Set("failed", "finished").contains) => IO.pure(value)
+            case _ => IO.sleep(20.millis) *> awaitRow
+          }
+          awaitRow.timeout(15.seconds)
+        }
+        _ = println(s"MANIFEST_PROTECTED_TERMINAL=${terminal.noSpaces} STATUS=${row.status} REASON=${row.lastError}")
+        _ = assertEquals(terminal.hcursor.get[String]("eventType"), Right("failed"))
+        _ = assert(terminal.hcursor.get[String]("payload").exists(_.contains("manifest-missing")))
+        _ = assertEquals(row.status, "failed")
+        _ = assert(row.lastError.exists(_.contains("manifest-missing")))
+      yield ()
+    }
+  }
+
   test("recovered completion reaches the durable parent mailbox exactly once") {
     fixture(finish = true).use { f =>
       for
