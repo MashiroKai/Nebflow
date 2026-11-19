@@ -2157,6 +2157,14 @@ export default {
   'canvas.closeTab': '关闭标签页',
   'canvas.stackToggle': '叠卡切换（滚轮 / 上下拖动换卡 · 前景轮换 · 点击前景卡换入 · 横向划走关闭）',
   'canvas.noRef': '该标签页暂不支持引用',
+  // canvas-reveal-in-finder 批（2026-11-19，作者令「在访达/文件浏览器打开」）：
+  // 文案随平台（引擎侧 target 选键，前端不猜平台）+ 文件不存在时的置灰原因。
+  'canvas.revealInFinder': '在访达中显示',
+  'canvas.revealInExplorer': '在资源管理器中显示',
+  'canvas.revealInFileManager': '在文件管理器中打开',
+  'canvas.revealMissing': '文件已不存在',
+  'canvas.revealRefused': '这个位置不允许在文件管理器中打开',
+  'canvas.revealFailed': '打开文件管理器失败',
   // canvas-tab-reference 批（2026-11-18）：引用落不进 composer 时的明确提示
   // （改前该腿静默 —— 点了引用钮什么也看不到）。
   'canvas.refNoComposer': '引用没送进输入框（对话输入框还没就绪）。打开对话后再点一次引用。',
