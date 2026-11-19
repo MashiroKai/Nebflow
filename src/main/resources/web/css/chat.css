@@ -2700,6 +2700,21 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
 .option-preview-media--single .pop-media-flat { max-width: 100%; }
 .option-preview-media .option-media-stack { max-width: 100%; }
 
+/* 媒体块**桌面档居中**（作者令 2026-11-19；本件裁定 D —— 只在能零代价做到的一档做）。
+   桌面提问卡宿主泡吃消息列宽 80%（--ds-ask-card-max-w 缺省 = --ds-bubble-max-w），
+   选项行内容盒比「展开钮 + 缝 + 卡脸」宽得多 ⇒ 媒体块原本贴着 radio/标题左轴、右侧
+   留大片空档（1440×900 实测左 0 / 右 135.5px）。`align-self: center` 让 fit-content 的
+   宿主在选项行内容盒里居中：零新字面量、零新协议、零第二套几何（.option-media-body
+   的 align-items:stretch 被这一条按件覆盖）。
+   手机档**不适用**（选择器排他，非 media query 分支）：那一档的横向预算
+   （--ds-ask-card-max-w: 100%）已被「展开钮 81.3 + 缝 16 + 卡脸 168 + 扇形露边 32.4」
+   占满——375×812 实测可用宽 297px，实心块居中还需 +18.1px；硬居中会把扇形末层推出
+   .option-scroll 的 overflow-x:hidden 裁剪盒 8.5px（正是 #2569 修的「叠卡显示不完整」），
+   故手机档保持现状（该档含露边的媒体块本就居中：实测左右 8 / 7.3px，偏差 0.35px）。 */
+body:not(.mobile-layer) .option-preview-media {
+  align-self: center;
+}
+
 /* 媒体选项被选中：绿描边套在媒体面上（与既有 `.option-btn.picked.has-preview
    .option-preview` 的选中环同语言、同 width/offset）。 */
 .option-opts .option-btn.has-media.picked .option-preview-media,

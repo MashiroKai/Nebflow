@@ -756,6 +756,95 @@ test.describe('C9 桌面零回归：提问卡宿主宽度仍与消息泡同档',
   });
 });
 
+/* ── C10 媒体块居中闸（作者令 2026-11-19 10:22「好的」；本件裁定 D）────────────
+   桌面提问卡宿主泡吃消息列宽 80%（--ds-ask-card-max-w 缺省 = --ds-bubble-max-w），选项
+   行内容盒比「展开钮 + 缝 + 卡脸」宽得多 ⇒ 媒体块原本贴着 radio/标题左轴、右侧留一大片
+   空档（1440×900 实测 左 0 / 右 135.5px）。件二把宿主在选项行内容盒里**居中**
+   （`align-self: center`，桌面档专属规则）。
+   手机档被选择器排他（`body:not(.mobile-layer)`），理由 = 那一档的横向预算
+   （--ds-ask-card-max-w: 100%）已被「展开钮 + 缝 + 卡脸 + 扇形露边」占满：375×812
+   实测可用宽 297px、实心块 265.3px、扇形末层右探 32.4px ⇒ 硬居中会把露边推出
+   .option-scroll 的裁剪盒 8.5px，正是 #2569 修掉的「叠卡显示不完整」。故 **C8 判据不动**，
+   本闸把两档各自钉住：
+     ① 桌面 1440×900：宿主 alignSelf = center 且左右空档相等（±1px），已绘制像素仍在盒内；
+     ② 手机 375×812 真全屏页：宿主**不在**居中档（alignSelf ≠ center）且仍贴选项行左轴。 */
+test.describe('C10 媒体块居中：桌面居中、手机保持左轴（裁定 D）', () => {
+  test('1440 桌面居中（左右空档相等）· 375 手机不居中且贴左轴', async ({ browser }) => {
+    const probe = async (page) => page.evaluate(() => {
+      const box = document.querySelector('#chat .option-box');
+      const scroll = box.querySelector('.option-scroll');
+      const scs = getComputedStyle(scroll);
+      const host = box.querySelector('.option-preview-media');
+      const btn = host.closest('.option-btn');
+      const bcs = getComputedStyle(btn);
+      const btnB = btn.getBoundingClientRect();
+      const rowL = btnB.left + parseFloat(bcs.paddingLeft);
+      const rowR = btnB.right - parseFloat(bcs.paddingRight);
+      const hostB = host.getBoundingClientRect();
+      const clipRight = scroll.getBoundingClientRect().right - (parseFloat(scs.borderRightWidth) || 0);
+      const clipLeft = scroll.getBoundingClientRect().left + (parseFloat(scs.borderLeftWidth) || 0);
+      let worstR = -Infinity;
+      scroll.querySelectorAll('*').forEach((el) => {
+        const b = el.getBoundingClientRect();
+        if (b.width <= 0 || b.height <= 0) return;
+        if (b.right > worstR) worstR = b.right;
+      });
+      const layers = [...host.querySelectorAll('.pop-stack-view .media-layer')];
+      const view = host.querySelector('.pop-stack-view');
+      return {
+        mobileLayer: document.body.classList.contains('mobile-layer'),
+        alignSelf: getComputedStyle(host).alignSelf,
+        gapLeft: +(hostB.left - rowL).toFixed(1),
+        gapRight: +(rowR - hostB.right).toFixed(1),
+        hostW: +hostB.width.toFixed(1),
+        rowContentW: +(rowR - rowL).toFixed(1),
+        fanRight: layers.length ? +layers[layers.length - 1].getBoundingClientRect().right.toFixed(1) : null,
+        viewRight: view ? +view.getBoundingClientRect().right.toFixed(1) : null,
+        clipLeft: +clipLeft.toFixed(1), clipRight: +clipRight.toFixed(1),
+        worstPaintedRight: +worstR.toFixed(1),
+        docScrollW: document.documentElement.scrollWidth, viewportW: window.innerWidth,
+      };
+    });
+
+    // ① 桌面：居中 + 零裁切（居中位移不得把扇形露边推出裁剪盒）
+    const dctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, colorScheme: 'light' });
+    const dpage = await dctx.newPage();
+    await bootWithAsk(dpage, { items: LONG_MEDIA_ITEMS, requestId: 'rid-c10-desktop' });
+    const d = await probe(dpage);
+    expect(d.mobileLayer, '桌面不该进手机层').toBe(false);
+    expect(d.alignSelf, '桌面媒体宿主 = 居中档（本件唯一改动）').toBe('center');
+    expect(Math.abs(d.gapLeft - d.gapRight), `左右空档必须相等（左 ${d.gapLeft} / 右 ${d.gapRight}）`)
+      .toBeLessThanOrEqual(1);
+    expect(d.gapLeft, '居中后左侧有实际空档（不再贴左轴）').toBeGreaterThan(20);
+    expect(d.worstPaintedRight, '居中后一切已绘制像素仍在裁剪盒内（不动 C8 的零裁切口径）')
+      .toBeLessThanOrEqual(d.clipRight + 0.5);
+    expect(d.docScrollW, '页面零横向滚动').toBeLessThanOrEqual(d.viewportW + 1);
+    await shot(dpage, 'c10-desktop-centered');
+    await dctx.close();
+
+    // ② 手机：不居中（选择器排他）+ 仍贴选项行左轴（零改动）
+    const mctx = await browser.newContext({
+      viewport: { width: 375, height: 812 },
+      isMobile: true, hasTouch: true, deviceScaleFactor: 2, colorScheme: 'light',
+    });
+    const mpage = await mctx.newPage();
+    await bootWithAsk(mpage, { items: LONG_MEDIA_ITEMS, requestId: 'rid-c10-mobile' });
+    await mpage.waitForFunction(() => document.body.classList.contains('mobile-layer'), null, { timeout: 20000 });
+    await mpage.waitForTimeout(400);
+    const m = await probe(mpage);
+    expect(m.mobileLayer).toBe(true);
+    expect(m.alignSelf, '手机档不得进居中档（硬居中会把扇形末层推出裁剪盒 8.5px）').not.toBe('center');
+    expect(m.gapLeft, '手机档媒体块仍贴选项行左轴（零改动）').toBeLessThanOrEqual(0.5);
+    expect(m.worstPaintedRight, '手机档零裁切（C8 口径保持）').toBeLessThanOrEqual(m.clipRight + 0.5);
+    // 手机档为何不能居中：可用宽 < 实心块 + 2×露边 − 15 ⇒ 居中必溢出（读数随附）。
+    const needed = m.hostW + 2 * (m.fanRight - m.viewRight) - 15;
+    expect(needed, `手机档居中所需可用宽 ${needed.toFixed(1)} > 实际 ${m.rowContentW}（故裁定 D 只落桌面）`)
+      .toBeGreaterThan(m.rowContentW);
+    await shot(mpage, 'c10-mobile-left-axis');
+    await mctx.close();
+  });
+});
+
 /* ── 自检：夹具与被测树可打印（红腿靠 CHATFACE_WEB_ROOT 换树）───────────── */
 
 test('harness self-check: 被测 web 树与夹具在场', async () => {
