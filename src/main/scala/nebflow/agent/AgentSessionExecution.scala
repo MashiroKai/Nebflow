@@ -1011,25 +1011,37 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
               List(MaintenanceService.buildReminder(stateWithReminder.delegateCount))
             else Nil
-          freshTools =
-            if isCompactTurn then Some(Nil)
+          toolPlan =
+            if isCompactTurn then None
             else
-              buildToolList(
-                freshDef,
-                depth,
-                stateForLlm.isSubTaskWorker,
-                stateForLlm.isFlowNode,
-                isTeamLead,
-                userFacingNode = stateForLlm.userFacingNode,
-                guardrailsOn = guardrailsOn,
-                projectBoardSession = stateForLlm.isDispatcher || stateForLlm.flowNodeId.isDefined,
-                flowNodeSession = stateForLlm.flowNodeId.isDefined,
-                flowNodeRole = stateForLlm.session.flowNodeRole,
-                isDispatcher = stateForLlm.isDispatcher,
-                delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId),
-                askSession = nebflow.core.ask.AskSessions.isAskSession(stateForLlm.sessionId),
-                delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(stateForLlm.sessionId)
+              Some(
+                buildToolPlan(
+                  freshDef,
+                  depth,
+                  stateForLlm.isSubTaskWorker,
+                  stateForLlm.isFlowNode,
+                  isTeamLead,
+                  userFacingNode = stateForLlm.userFacingNode,
+                  guardrailsOn = guardrailsOn,
+                  projectBoardSession = stateForLlm.isDispatcher || stateForLlm.flowNodeId.isDefined,
+                  flowNodeSession = stateForLlm.flowNodeId.isDefined,
+                  flowNodeRole = stateForLlm.session.flowNodeRole,
+                  isDispatcher = stateForLlm.isDispatcher,
+                  delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId),
+                  askSession = nebflow.core.ask.AskSessions.isAskSession(stateForLlm.sessionId),
+                  delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(stateForLlm.sessionId)
+                )
               )
+          freshTools = if isCompactTurn then Some(Nil) else toolPlan.map(_.wireTools)
+          // ExecutionGate 腿的尾部通告（dynload 批 2026-11-19）：动态装载、未上 wire
+          // 的工具在**请求尾部**（持久历史断点之后）通告——追加在尾部不会使更早的
+          // 前缀失配（探针 S5/S6：cached_tokens 稳定 7040）；模型据此按名调用，执行门
+          // （buildAllowedToolSet 重评面）裁决授权。
+          dynAdvertMsg =
+            toolPlan.map(_.advertisedTools).getOrElse(Nil) match
+              case Nil => Nil
+              case tools =>
+                List(Message(MessageRole.User, Left(nebflow.llm.DynamicToolLoad.advertisementText(tools))))
           // 冷启动路由已删除（2026-08-19 用户裁决：「这是错误的，按 preset」）：
           // 它把闲置唤醒/重启后的第一发改道到 LowCost preset，偏离用户设置的
           // preset 链。模型选择现在严格 = freshDef.model（preset 解析结果）。
@@ -1108,7 +1120,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             // 会让尾断点落在 R 上 ⇒ 缓存写到 H+R ⇒ 下一轮（H+assistant）必 miss
             // （CachePrefixAssemblySpec 判据①②的红）。
             messages = ttlCleanedMessages.getOrElse(stateWithReminder.messages),
-            requestOnlyContext = contextMsg ++ branchMsg ++ maintenanceMsg,
+            requestOnlyContext = contextMsg ++ branchMsg ++ maintenanceMsg ++ dynAdvertMsg,
             sessionId = stateForLlm.sessionId.getOrElse(ctx.self.path.name),
             agentId = freshDef.name,
             tools = freshTools,
@@ -2946,6 +2958,56 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定）。 */
     delegateMode: Option[String] = None
   ): Option[List[ToolDefinition]] =
+    Some(
+      buildToolPlan(
+        agentDef,
+        depth,
+        isSubTaskWorker,
+        isFlowNode,
+        isTeamLead,
+        userFacingNode,
+        guardrailsOn,
+        projectBoardSession,
+        flowNodeSession,
+        flowNodeRole,
+        isDispatcher,
+        delegateSession,
+        askSession,
+        delegateMode
+      ).wireTools
+    )
+
+  /**
+   * 动态工具装载的**单一装配点**（dynload 批 2026-11-19）：把「新工具进入可见面」
+   * 与 wire 前缀解耦——所有上 wire 的工具集都经 [[nebflow.llm.DynamicToolLoad.plan]]，
+   * **禁止第二套装载路径**（追加点漂移会让前缀字节再次被编辑）。
+   *
+   * - Deferred 腿（原生 deferred / tool_search）：动态工具以 `defer_loading` 追加，
+   *   可缓存前缀字节不动；
+   * - ExecutionGate 腿（无原生支持）：动态工具移出 wire，改由**请求尾部通告**
+   *   （`plan.advertisedTools` → request-only 尾巴）+ **执行门授权**
+   *   （[[buildAllowedToolSet]] 在 `executeTool` 前的重评面按名放行）。
+   *
+   * 动态面 = 本会话插件授予的工具（plugin MCP 前缀 / plugin builtin 白名单），与
+   * [[buildAllowedToolSet]] 的 `pluginAppended`/`pluginGranted` 同源（同两个 agentDef 字段）。
+   */
+  protected def buildToolPlan(
+    agentDef: AgentDef,
+    depth: Int = 0,
+    isSubTaskWorker: Boolean = false,
+    isFlowNode: Boolean = false,
+    isTeamLead: Boolean = false,
+    userFacingNode: Boolean = false,
+    guardrailsOn: Boolean = false,
+    projectBoardSession: Boolean = false,
+    flowNodeSession: Boolean = false,
+    flowNodeRole: Option[String] = None,
+    isDispatcher: Boolean = false,
+    delegateSession: Boolean = false,
+    askSession: Boolean = false,
+    /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定）。 */
+    delegateMode: Option[String] = None
+  ): nebflow.llm.DynamicToolLoad.Plan =
     val allowedSet = buildAllowedToolSet(
       agentDef,
       depth,
@@ -2969,12 +3031,33 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // `NodeRoles`；禁在此内联第二份表达式），默认分支恒基础变体（fail-closed）。
     // 成员资格逐位不变，只有目标工具那一段 `description` 因身份不同。
     val identity = AgentCore.toolFaceIdentity(agentDef, depth, flowNodeRole, isDispatcher)
-    Some(ToolRegistry.ALL_TOOLS.flatMap { td =>
+    val allDefs = ToolRegistry.ALL_TOOLS.flatMap { td =>
       if !allowedSet.contains(td.name) then None
       else Some(AgentCore.schemaVariantFor(td, identity))
-    })
+    }
+    // 动态装载面 = 本会话插件授予的工具（plugin MCP 前缀 `mcp__plugin_<p>_<s>__*`
+    // / plugin builtin 白名单名），与 buildAllowedToolSet 的 pluginAppended /
+    // pluginGranted 同源（同两个 agentDef 字段：pluginMcpServers / pluginTools）。
+    val pluginMcpPrefixes = agentDef.pluginMcpServers.map(sid => s"mcp__${sid}__")
+    def isPluginLoaded(n: String): Boolean =
+      pluginMcpPrefixes.exists(n.startsWith) || agentDef.pluginTools.contains(n)
+    val (dynamicDefs, baseDefs) = allDefs.partition(td => isPluginLoaded(td.name))
+    val mode = nebflow.llm.ToolLoadMode.forModel(agentDef.model.flatMap(_.preferred))
+    val plan = nebflow.llm.DynamicToolLoad.plan(agentDef.name, mode, baseDefs, dynamicDefs)
+    if dynamicDefs.nonEmpty then
+      // 装载点可观测事件（前缀呼吸可见）：档位 / 新装载工具 / wire 工具数前后 / 前缀指纹。
+      NebflowLogger
+        .forName("nebflow.agent.toolload")
+        .infoSync(
+          s"dynamic tool load (${plan.event.mode}) agent=${agentDef.name} " +
+            s"added=[${plan.event.addedTools.mkString(",")}] " +
+            s"wireTools=${plan.event.wireToolsBefore}->${plan.event.wireToolsAfter} " +
+            s"prefixFp=${plan.event.wireToolsFingerprintAfter} " +
+            s"advertised=${plan.advertisedTools.size}"
+        )
+    plan
 
-  end buildToolList
+  end buildToolPlan
 
   /**
    * 工具执行期心跳（审计 20260903 子项①，RemoteExecutor 活动心跳先例的 WS
