@@ -67,3 +67,11 @@ export function isAskableFile(path) {
     || ASKABLE_EBOOK_EXTENSIONS.includes(extOf(path))
     || ASKABLE_PDF_EXTENSIONS.includes(extOf(path));
 }
+
+/** PDF 判据门面（与后端 `AskSessions.isPdf` 逐字对齐）：内容模型分派点唯一
+ *  ——canvas note/ask 在 PDF 态切「页锚备注」模型（其余格式走每文件纯文本草稿），
+ *  分派判据只此一处。 */
+export function isPdfFile(path) {
+  if (!path || typeof path !== 'string') return false;
+  return ASKABLE_PDF_EXTENSIONS.includes(extOf(path));
+}

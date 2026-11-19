@@ -48,6 +48,10 @@
        由 js/mathRender.js 插入 <link data-nf-katex>，23KB 不进开屏关键路径。 -->
   <link rel="stylesheet" href="vendor/highlight-github.min.css" media="(prefers-color-scheme: light)">
   <link rel="stylesheet" href="vendor/highlight-github-dark.min.css" media="(prefers-color-scheme: dark)">
+  <!-- PDF 文本层批（2026-11-19）：pdf.js 官方 text_layer_builder.css（vendored 库资产，
+       与 vendor/pdfjs/pdf.min.js 同版本 3.11.174）。app 侧只留 css/split.css 的
+       `.pdf-page-wrap` 收缩盒；官方 .textLayer 浮动形态随库交付、不落 app CSS 判区。 -->
+  <link rel="stylesheet" href="vendor/pdfjs/text_layer_builder.css">
   <link rel="stylesheet" href="css/base.css">
   <link rel="stylesheet" href="css/nav.css">
   <link rel="stylesheet" href="css/sidebar.css">
@@ -75,7 +79,6 @@
        token = 样张 v2 + token 规格页 E 表（品牌蓝/紫/几何材质档）；玻璃基底
        引用 sapphire.css 单源（sapphire 仍最后加载，同特异性胜出）。 -->
   <link rel="stylesheet" href="css/ask.css">
-  <link rel="stylesheet" href="css/pdfPanel.css">
   <link rel="stylesheet" href="css/voice.css">
   <link rel="stylesheet" href="css/mermaid.css">
   <!-- ```human filter fence（人面子批 2026-10-30）：框内卡片 + 框外细节抽屉，
@@ -679,9 +682,6 @@
          unrelated to the friends feature) — the button stays mounted and
          functional in every friends-flag state. -->
     <button id="social-btn" class="activity-btn" data-panel-btn="social" title="Phone access" aria-pressed="false"><i data-lucide="smartphone"></i></button>
-    <!-- PDF note/ask 批（2026-11-18）：PDF 页锚备注 + 提问侧栏入口（打开/备注/
-         提问三腿全走本面板；打开与备注永不触发解析——解析唯一触发器 = 提问）。 -->
-    <button id="pdf-btn" class="activity-btn" data-panel-btn="pdf" title="PDF Notes & Ask" aria-pressed="false"><i data-lucide="file-text"></i></button>
     <div class="activity-spacer"></div>
     <!-- 2026-09-05 旧 UI 退役：v5 §3.5 二级入口（#legacy-btn/#legacy-pop 与
          teams-btn/flows-btn）已整体删除（作者裁定「直接删除，不是封存」）；
@@ -750,12 +750,6 @@
       <div id="panel-contacts" class="panel" data-panel-id="contacts">
         <div class="panel-header"><span class="panel-title" data-i18n="panel.contacts">Contacts</span></div>
         <div id="fm-contacts-body"></div>
-      </div>
-      <!-- PDF note/ask 批（2026-11-18）：页锚备注 + 提问面板（pdfPanel.js 渲染；
-           打开/备注腿不解析——懒解析的判据与 /api/pdf 域一致）。 -->
-      <div id="panel-pdf" class="panel" data-panel-id="pdf">
-        <div class="panel-header"><span class="panel-title">PDF Notes &amp; Ask</span></div>
-        <div id="pdf-panel-body"></div>
       </div>
     </div>
   </div>

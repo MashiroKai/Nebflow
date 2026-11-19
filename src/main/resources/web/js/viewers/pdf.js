@@ -56,6 +56,15 @@ async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
   pane.classList.remove('scrollable'); // .pdf-pages is the scroll region
   const wrap = document.createElement('div');
   wrap.className = 'canvas-pdf-viewer';
+  // 文本层批（2026-11-19）：PDF 视口 = **内容手势面**。手机层切卡手势
+  // （mobile/navController.js::bindDocSwipe）在 pointerdown 时就
+  // `host.setPointerCapture()`——若不起手让路，指针随后整体被 host 捕获，
+  // 文本层里的原生拖选永远延伸不出第一个锚点（真机/仿真实测：同一段拖动打在
+  // 普通段落上可选全行，打在 PDF 文本层上只得空/一个字符）。此处挂上该模块既有
+  // 的认领口 `[data-nf-content-gesture]`（与 `.canvas-image-viewport` /
+  // `.wiki-canvas` / `.fm-viewport` 同一族），使「页面上起手 = 内容操作」（选中），
+  // 与图片视口/图谱/流图同待遇。
+  wrap.setAttribute('data-nf-content-gesture', '');
   const pages = document.createElement('div');
   pages.className = 'pdf-pages';
   const loading = document.createElement('div');
@@ -66,8 +75,11 @@ async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
   pane.appendChild(wrap);
 
   let doc;
+  // 文本层批：pdfjsLib 提到 try 外（renderTextLayerFor 也要用它调官方
+  // renderTextLayer；原作用域只在 try 块内）。
+  let pdfjsLib;
   try {
-    const pdfjsLib = await loadPdfJs();
+    pdfjsLib = await loadPdfJs();
     // One ticket covers the whole document: pdf.js issues a Range request per
     // chunk/page, and R4 keeps tickets valid for unlimited reads inside the
     // TTL — a one-shot ticket would break page 2 onwards (and every seek).
@@ -84,14 +96,30 @@ async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
 
   // Canvas per page (1-based address via data-page). 占位只持 style 尺寸
   // （页尺寸预占）；位图 = width/height 内容属性，离屏即撤（护栏①）。
+  // 文本层批（2026-11-19 作者令「让 canvas 的 note 和 ask 支持 pdf 的阅读」）：
+  // pdf.js 官方 textLayer 与位图同盒叠合（.pdf-page-wrap 定位盒 = canvas 的
+  // CSS 盒 ⇒ textLayer `inset:0` 逐像素重合），使 PDF 正文**可选中**——选中
+  // 即走 canvas 既有的 note/ask 入口（无第二套选中菜单；见 js/askDock.js 的
+  // 「选中承载」段）。文本层与位图同生命周期（renderPage 共建 / releasePage
+  // 同清），故既有四条懒渲染护栏（并发≤2 / 常驻≤6 / 离屏即撤 / 代际防僵尸）
+  // 与 A7 判据（带 width 的 canvas 数）逐条不变。
   const numPages = doc.numPages;
   const canvases = [];
+  const textLayers = [];
   for (let i = 1; i <= numPages; i++) {
+    const wrap = document.createElement('div');
+    wrap.className = 'pdf-page-wrap';
     const c = document.createElement('canvas');
     c.className = 'pdf-page';
     c.dataset.page = String(i);
-    pages.appendChild(c);
+    const tl = document.createElement('div');
+    tl.className = 'textLayer';
+    tl.dataset.page = String(i);
+    wrap.appendChild(c);
+    wrap.appendChild(tl);
+    pages.appendChild(wrap);
     canvases.push(c);
+    textLayers.push(tl);
   }
 
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -168,6 +196,10 @@ async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
       const c = canvases[i];
       c.style.width = Math.floor(d.w * scale) + 'px';
       c.style.height = Math.floor(d.h * scale) + 'px';
+      // 文本层同拍：`--scale-factor` 必须恒等于当前 viewport.scale（pdf.js
+      // v3.11 renderTextLayer 的硬前提，span 位置/字号都按它算）——与本函数
+      // 同一写点，位图与文本层因此永远同 scale。
+      textLayers[i].style.setProperty('--scale-factor', String(scale));
     }
   }
   applyLayout();
@@ -213,6 +245,10 @@ async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
    *  旧渲染回来时认识自己已失去 canvas 所有权（它自会回滚，见 renderPage）。 */
   function releasePage(n) {
     const c = canvases[n - 1];
+    const tl = textLayers[n - 1];
+    // 文本层与位图同生命周期（离屏即撤）：空掉 div 的子树 = 无 span 可命中；
+    // 选中面因此只覆盖「当前带位图的页」，与护栏①「常驻 ≤6」同一条边界。
+    if (tl && tl.firstChild) tl.textContent = '';
     if (c.dataset.renderedScale === undefined) return;
     canvasGen[n - 1]++;
     c.width = 0;
@@ -221,6 +257,31 @@ async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
     c.removeAttribute('height');
     delete c.dataset.renderedScale;
     doc.getPage(n).then((p) => p.cleanup()).catch(() => {});
+  }
+
+  /** 文本层渲染（pdf.js v3.11 官方 renderTextLayer；代际/令牌双判与位图同律
+   *  ——缩放或让位后旧任务的一切写操作失去合法性，且必须先清空容器再落新
+   *  span，否则双份 span 叠加会命中重复文本）。 */
+  async function renderTextLayerFor(n, token, gen) {
+    const tl = textLayers[n - 1];
+    const page = await doc.getPage(n);
+    if (token !== renderToken || gen !== canvasGen[n - 1] || !pane.isConnected) return;
+    const textContent = await page.getTextContent();
+    if (token !== renderToken || gen !== canvasGen[n - 1] || !pane.isConnected) return;
+    tl.textContent = '';
+    tl.style.setProperty('--scale-factor', String(scale));
+    const task = pdfjsLib.renderTextLayer({
+      textContentSource: textContent,
+      container: tl,
+      viewport: page.getViewport({ scale }),
+      textDivs: [],
+    });
+    await task.promise;
+    if (token !== renderToken || gen !== canvasGen[n - 1] || !pane.isConnected) {
+      tl.textContent = '';
+      return;
+    }
+    tl.dataset.textLayerScale = String(scale);
   }
 
   async function renderPage(n, token, gen) {
@@ -270,6 +331,8 @@ async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
       return;
     }
     c.dataset.renderedScale = String(scale);
+    // 文本层与位图同准入（同一代际/令牌）：位图落地即让正文可选中。
+    renderTextLayerFor(n, token, gen).catch(() => { /* 文本层失败不阻断阅读（位图仍可读） */ });
   }
 
   /** 护栏①：常驻位图 > N 页时，释放离视口最远的已渲染页（永不释放视口内页）。 */
@@ -409,12 +472,46 @@ async function viewPdf(pane, { absPath, fileName, anchor, objectUrl }) {
   // IntersectionObserver（观察全部页 canvas）、缩放 120ms debounce 定时器、
   // 以及带 document 级 keydown 的缩放引擎。pane._nfPdfTeardown 由 viewer 的
   // dispose(pane) 调用（fileViewers.disposeViewer ← canvas.js disposeTabEditor）。
+  // ── 选中面（文本层批）：PDF 正文的「当前页」与「选区」读数 ───────────────
+  // canvas 的 note/ask 只认「当前文件 + 选中文本」这一对通用事实（见
+  // js/askDock.js），PDF 的具体读法收在本 viewer 一处（单源：页锚与选区几何）。
+  /** 当前页 = 视口内最靠上的页（页锚 = 笔记的 identity 后半）。 */
+  function currentPage() {
+    const prect = pages.getBoundingClientRect();
+    for (const c of canvases) {
+      if (c.getBoundingClientRect().bottom > prect.top + 8) return Number(c.dataset.page);
+    }
+    return numPages;
+  }
+
+  /** 落在**本 viewer 文本层**内的选区：{page, text}；否则 null（跨页/层外
+   *  一律不收，页锚必须唯一）。 */
+  function pdfSelection() {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    const text = range.toString();
+    if (!text.trim()) return null;
+    const nodeEl = (nd) => (nd && nd.nodeType === 1 ? /** @type {Element} */ (nd) : (nd && nd.parentElement) || null);
+    const startTl = nodeEl(range.startContainer)?.closest('.textLayer');
+    const endTl = nodeEl(range.endContainer)?.closest('.textLayer');
+    if (!startTl || startTl !== endTl || !pane.contains(startTl)) return null;
+    const c = startTl.closest('.pdf-page-wrap')?.querySelector('canvas.pdf-page');
+    if (!c) return null;
+    return { page: Number(c.dataset.page), text };
+  }
+
+  /** @type {any} */ (pane)._nfPdfPage = currentPage;
+  /** @type {any} */ (pane)._nfPdfSelection = pdfSelection;
+
   /** @type {any} */ (pane)._nfPdfTeardown = () => {
     try { io.disconnect(); } catch { /* 已断开 */ }
     clearTimeout(debounce);
     try { zoomApi.destroy(); } catch { /* 引擎已卸 */ }
     try { if (doc && typeof doc.destroy === 'function') doc.destroy(); } catch { /* worker 已走 */ }
     /** @type {any} */ (pane)._scrollToPage = null;
+    /** @type {any} */ (pane)._nfPdfPage = null;
+    /** @type {any} */ (pane)._nfPdfSelection = null;
   };
 }
 
