@@ -177,6 +177,37 @@ class FreezeGateSpec extends CatsEffectSuite:
   private def hasEvent(events: cats.effect.Ref[IO, List[Json]], tpe: String): IO[Boolean] =
     events.get.map(_.exists(_.hcursor.downField("type").as[String].contains(tpe)))
 
+  test("ExternalEvent blocks survive idle intake into model input") {
+    val system = ActorSystem("blocks-idle")
+    val tmp = os.temp.dir()
+    val prevRoot = PathUtil.dataRoot
+    val prevLlmLog = nebflow.core.LlmLogWriter.isEnabled
+    nebflow.core.LlmLogWriter.setEnabled(false)
+    PathUtil.setDataRoot(tmp / "data")
+    try
+      val program = for
+        counter <- IO.ref(0)
+        requests <- IO.ref(List.empty[LlmRequest])
+        schedRef <- IO.ref(openConfig)
+        resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
+        sid = "blocks-idle-agent"
+        ref <- system.spawn(AgentActor(agentDef = rootDef(), resources = resources,
+          wsSend = _ => IO.unit, depth = 0, sessionId = Some(sid), sessionName = Some(sid)), sid)
+        _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
+        image = ContentBlock.Image("QUJD", "image/png")
+        _ <- ref ! AgentCommand.ExternalEvent("bridge", "user-message", "idle image", blocks = Some(List(image)))
+        _ <- waitUntil(System.currentTimeMillis() + 30000)(requests.get.map(_.nonEmpty))
+        reqs <- requests.get
+        _ = assert(reqs.exists(_.messages.exists(_.content.fold(_ => false, _.contains(image)))), "idle image missing from model input")
+      yield ()
+      program.unsafeRunSync()
+    finally
+      nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)
+      PathUtil.setDataRoot(prevRoot)
+      system.stopAll.attempt.void.unsafeRunSync()
+      os.remove.all(tmp)
+  }
+
   // ── B3/B4: gate 拦截，零 LLM 调用 ──────────────────────────
 
   test("B3: freeze segment blocks system-initiated dispatch — zero LLM calls, Frozen status + event") {
@@ -465,18 +496,25 @@ class FreezeGateSpec extends CatsEffectSuite:
         // 全量 2564 测试），停顿结束后本测试的 deadline 判定先于 actor 恢复 → 假红。
         // 放宽到 30s 容忍基础设施级停顿；真回归（唤醒不 dispatch）仍 30s 内清晰红。
         _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 1))
+        processingImage = ContentBlock.Image("UFJPQw==", "image/png")
+        frozenImage = ContentBlock.Image("RlJPWg==", "image/png")
+        _ <- ref ! AgentCommand.ExternalEvent("bridge", "user-message", "processing image", blocks = Some(List(processingImage)))
         _ <- schedRef.set(frozenConfig())
         // 关窗已落定 → 放行 Done（工具结果冻结在 gate 前，唤醒语义有据可依）
         _ <- doneGate.complete(()).attempt.void
         _ <- waitUntil(System.currentTimeMillis() + 30000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
         )
+        _ <- ref ! AgentCommand.ExternalEvent("bridge", "user-message", "frozen image", blocks = Some(List(frozenImage)))
         // 冻结中：用户消息唤醒（clientMessageId=Some）→ 工具结果 + 用户新指令同轮
+        _ <- schedRef.set(openConfig)
         _ <- ref ! AgentCommand.UserInput("WAKE_UP_NOW continue with this", None, Some("b5-wake"))
-        _ <- waitUntil(System.currentTimeMillis() + 30000)(counter.get.map(_ >= 2))
+        _ <- waitUntil(System.currentTimeMillis() + 30000)(counter.get.map(_ >= 3))
         _ <- IO.sleep(300.millis)
         reqs <- requests.get
         wakeReq = reqs.last
+        _ = assert(wakeReq.messages.exists(_.content.fold(_ => false, _.contains(processingImage))), "processing image missing from model input")
+        _ = assert(reqs.exists(_.messages.exists(_.content.fold(_ => false, _.contains(frozenImage)))), "frozen image missing from model input")
         // 注：turn 管线会在末条用户消息后追加 task-list/env-change reminder（缓存
         // 优化既有行为），故断言「wake 消息存在且位于冻结工具结果之后」而非严格末条。
         wakeIdx = wakeReq.messages.lastIndexWhere(_.textContent.contains("WAKE_UP_NOW"))

@@ -1469,8 +1469,8 @@ private[agent] object AgentProcessing:
         forwardBackgroundTaskNotification(n)(IO.pure(processing(agentDef, resources, depth, parentRef, state, pending)))
 
       // --- External event while processing ---
-      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, _) =>
-        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
+      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, blocks) =>
+        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, blocks)
         // 不过时批 intake 闸（投递可靠性批 2026-10-29 · 作者令「消息按 (sessionId,
         // kind, 幂等键) 去重」；cancel 回执必须单发）：身份（raw correlationId ∪
         // delegate 终态回执归位 id）已投递（DeliveredReceiptLedger）或已在
