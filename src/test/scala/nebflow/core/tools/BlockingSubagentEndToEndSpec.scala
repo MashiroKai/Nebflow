@@ -32,8 +32,10 @@ import scala.concurrent.duration.*
  *    逐级完成；b 的 prompt 带 a 的 `=== Node a ===` 结果块）——非阻塞 ACK 即返；
  *    并钉住 `orchestrationMode` 升级写点（登记的 ACK 路径上把调用 delegate 升到
  *    `agentflow`，迁移前该写点在已删的 已删的 AgentFlow 工具 里）。
- *  - 生产者排他钉：`grep '"finalText"' src/main/scala` 恰两个命中
- *    （`AgentEvent.scala` 生产者 + `BlockingSubagent.scala` 读取点）。
+ *  - 生产者排他钉：`grep '"finalText"' src/main/scala/nebflow` 恰两个命中、且只落两个文件
+ *    （`actor/AgentEvent.scala` 生产者 + `core/tools/SubagentPrimitives.scala` 读取点——
+ *    dispatcher 重设计 P0「抽件」把完成桥自 `BlockingSubagent.scala` 搬进原语单点，
+ *    此 pin 同步**升级**为全量面钉，见文件末）。
  */
 class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
 
@@ -443,21 +445,37 @@ class BlockingSubagentEndToEndSpec extends CatsEffectSuite:
       .guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
 
   // ── 生产者排他钉（机器可查验收点 3）──────────────────────────
+  // 断言升级（dispatcher 重设计 P0「抽件」，2026-11-19）：此处原先是**路径钉**——只查
+  // `actor/AgentEvent.scala` + `core/tools/BlockingSubagent.scala` 两个具名文件。P0 把完成桥
+  // spy 自 `BlockingSubagent.scala` 搬进新的可复用原语单点 `core/tools/SubagentPrimitives.scala`
+  // （**语义零变化、判据逐字保持**），路径钉因此升级为**全量面钉**：扫 `src/main/scala/nebflow`
+  // 全量，断言含 `"finalText"` 字面量的**文件集合恰好** = {生产者 `actor/AgentEvent.scala`,
+  // 读者 `core/tools/SubagentPrimitives.scala`}。命中数仍为 2、意图逐字不变（生产者 + 唯一读者），
+  // 但任何第三份副本或再一次挪动都会被抓到——强度只升不降。
 
-  test("P0-2 producer pin: `grep '\"finalText\"' src/main/scala` = producer + reader (exactly 2)"):
-    val src = List(
-      os.read(repoRoot / "src" / "main" / "scala" / "nebflow" / "actor" / "AgentEvent.scala"),
-      os.read(repoRoot / "src" / "main" / "scala" / "nebflow" / "core" / "tools" / "BlockingSubagent.scala")
-    )
-    val hits = src.map(_.linesIterator.count(_.contains("\"finalText\""))).sum
+  test(
+    "P0-2 producer pin: `grep '\"finalText\"' src/main/scala/nebflow` = producer + reader (exactly 2, only these two files)"
+  ):
+    val mainRoot = repoRoot / "src" / "main" / "scala" / "nebflow"
+    val hitsByFile = os
+      .walk(mainRoot)
+      .filter(p => os.isFile(p) && p.last.endsWith(".scala"))
+      .map(p => p.relativeTo(mainRoot).toString -> os.read(p).linesIterator.count(_.contains("\"finalText\"")))
+      .filter { case (_, count) => count > 0 }
+    val total = hitsByFile.map { case (_, count) => count }.sum
+    val carrierFiles = hitsByFile.map { case (file, _) => file }.toList.sorted
     assertEquals(
-      hits,
+      total,
       2,
-      s"the producer (AgentEvent) + the reader (BlockingSubagent) must be the ONLY two `\"finalText\"` hits in main, got $hits"
+      s"the producer (actor/AgentEvent.scala) + the reader (core/tools/SubagentPrimitives.scala) must be the ONLY two `\"finalText\"` hits in main, got $total"
+    )
+    assertEquals(
+      carrierFiles,
+      List("actor/AgentEvent.scala", "core/tools/SubagentPrimitives.scala"),
+      s"exactly the producer file and the unique reader file may carry the `\"finalText\"` literal, got $carrierFiles"
     )
     assert(
-      os.read(repoRoot / "src" / "main" / "scala" / "nebflow" / "actor" / "AgentEvent.scala")
-        .contains("\"finalText\" -> ft.asJson"),
+      os.read(mainRoot / "actor" / "AgentEvent.scala").contains("\"finalText\" -> ft.asJson"),
       "the producer (AgentEvent.toJson) must be present"
     )
 
