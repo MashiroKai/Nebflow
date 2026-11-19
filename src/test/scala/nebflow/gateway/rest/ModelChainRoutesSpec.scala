@@ -559,8 +559,7 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
               assertEquals(json.hcursor.downField("mode").as[String], Right("explicit"))
             }
           }
-        }
-      }.map { _ =>
+        }.map { _ =>
         val sessions = List(
           "main" -> List("main-session-a", "main-session-b"),
           // 生产 id 形状（逐条锚见 ModelRoles 头注「分类判据」）：kernel 实例 = delegate-kernel-<8hex>。
@@ -601,6 +600,7 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
               )
             }
         }
+      }
     }
 
   test(
