@@ -389,6 +389,15 @@ Read / Glob / Grep / WebSearch / WebFetch / Bash. Bash uses the normal shell exe
       """── SendMessage scope ──
       |SendMessage reaches NebLink friends, NebLink groups, and your own devices ONLY — it is not a channel to the user. A message or file FOR THE USER over a social channel (WeChat / Feishu and the other channel legs) never goes through SendMessage: text rides a normal reply, and files are delivered with Pop — the channel legs carry Popped files/images out to the user's WeChat/Feishu automatically. Using SendMessage to reach the user is a boundary violation (author ruling 2026-10-31).""".stripMargin
 
+    /**
+     * 交付落点纪律（作者 2026-11-16 15:31 令，2026-11-19 追问「提示词和机制都要落实」）：
+     * worktree 与过程产物的落点单点。注入面 = **派发 brief**（`DelegateTool.assembleBrief`
+     * 与节点 `NodeEngineContract.protocolFootnoteFor` 前缀同缝）——两处都引本常量，
+     * 文字面零散落。措辞不含任何机器路径/仓内脚本名（跨项目成立）。
+     */
+    val DeliveryLandingLine: String =
+      "[artifacts] Worktree delivery artifacts land by rule, never inside the checkout: linked worktrees go in `<project>/.stand/worktrees/<wt>/`, and their delivery + evidence go OUTSIDE the checkout in `<project>/.stand/tmp/<wt>/{delivery,evidence}/` — a seven-day TTL whose MANIFEST records each file's admission time. Never place process artifacts or evidence inside the worktree itself, inside the repository, or in a self-invented directory: the old sibling-of-checkout worktree directory and the home-level evidence-batch directory are superseded. `<project>` means the primary checkout."
+
     val KgLandingDiscipline: String =
       """Knowledge-graph landing discipline (KG audit ①, 2026-10-28; location ruling 2026-11-03): knowledge documents (designs, audits, research, conclusions) MUST land in the project's REGISTRATION dir vault `<dataRoot>/projects/<project>/.stand/docs/` — next to `project.json`, NOT in the project workspace repo's `docs/` — Obsidian format: YAML frontmatter (`type:` / `status:`) plus at least one `[[wikilink]]`; `reports/` takes pure process files (batch / terminal reports) only. Validate the vault before closing: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <project>` (exit 0 = compliant)."""
 

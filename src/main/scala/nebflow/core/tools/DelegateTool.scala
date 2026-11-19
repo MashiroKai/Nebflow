@@ -169,7 +169,8 @@ object DelegateTool extends Tool:
   /**
    * delegate brief 装配单点（sleep-poll 禁令批 C 段抽纯函数——spec 判红锚）。
    * 布局：工作座行（+ 绑定行）→ reset 警示行（D12-b）→ 终态语义行
-   * （[[BriefReportLine]]）→ 等待纪律铁律（[[Defaults.NoSleepPollRule]]）→
+   * （[[BriefReportLine]]）→ 交付落点纪律行（[[Defaults.DeliveryLandingLine]]，
+   * worktree/tmp 落点批 2026-11-19）→ 等待纪律铁律（[[Defaults.NoSleepPollRule]]）→
    * 插件能力查询行（[[Defaults.PluginDiscoveryLine]]，stand-plugins 批）→
    * output 块纪律行（[[Defaults.OutputBlockRule]]，作者令 2026-10-31）→
    * 空行 → 任务全文（→ 插件注入块）。
@@ -206,6 +207,8 @@ object DelegateTool extends Tool:
 ${ResetHazardLine}
 
 ${reportLine}
+
+${Defaults.DeliveryLandingLine}
 
 ${Defaults.NoSleepPollRule}
 
