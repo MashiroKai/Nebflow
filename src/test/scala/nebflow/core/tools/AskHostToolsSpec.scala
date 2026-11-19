@@ -425,4 +425,53 @@ class AskHostToolsSpec extends CatsEffectSuite:
     }
   }
 
+  test("AskHostClarify admits a timed-out request with the late-reply contract (same defect class as AskHostReply)") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    (for
+      (req, _) <- AskHostLedger.beginForCall("worker-c", "sid-root", "agent", "q", "call-c")
+      pending <- AskHostLedger.requestState(req.correlationId)
+      _ <- AskHostLedger.releaseOnTimeout(req.correlationId, "root reply timed out")
+      released <- AskHostLedger.requestState(req.correlationId)
+      releasedAdmission = released.map(AskHostClarifyTool.admission)
+      note = releasedAdmission.flatMap(_.toOption).flatten.getOrElse("")
+      _ = assert(pending.exists(s => AskHostClarifyTool.admission(s) == Right(None)),
+        "a still-pending request clarifies plainly (behaviour unchanged)")
+      _ = assert(releasedAdmission.exists(_.isRight),
+        s"a timed-out request must stay clarifiable, got: $releasedAdmission")
+      _ = assert(note.contains("[ASKHOST-LATE-REPLY]"), s"late-reply contract missing: $note")
+      _ = assert(note.contains(AskHostLedger.TimeoutOutcome), s"neutral outcome missing: $note")
+      _ = assert(!releasedAdmission.exists(_.swap.toOption.exists(_.message.contains("pending correlation unavailable"))),
+        "the old recover-based refusal must be gone")
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
+  test("AskHostClarify refuses answered / never-answerable requests distinctly; an unknown id is explicit") {
+    val tmp = os.temp.dir()
+    val previous = PathUtil.dataRoot
+    PathUtil.setDataRoot(tmp)
+    val ctx = rootCtx(resourcesWith(Map.empty))
+    (for
+      (req, _) <- AskHostLedger.beginForCall("worker-c2", "sid-root", "agent", "q", "call-c2")
+      _ <- AskHostLedger.answer(req.correlationId, "Option A")
+      answered <- AskHostLedger.requestState(req.correlationId)
+      (gone, _) <- AskHostLedger.beginForCall("worker-c3", "sid-root", "agent", "q", "call-c3")
+      _ <- AskHostLedger.markUnavailable(gone.correlationId, "delivery failed: Failed(mailbox-full)")
+      released <- AskHostLedger.requestState(gone.correlationId)
+      answeredAdmission = answered.map(AskHostClarifyTool.admission)
+      releasedAdmission = released.map(AskHostClarifyTool.admission)
+      unknown <- AskHostClarifyTool.call(
+        JsonObject("correlationId" -> "no-such-id".asJson, "questions" -> io.circe.Json.arr()), ctx)
+      _ = assert(answeredAdmission.exists(_.swap.toOption.exists(_.message.contains("ASKHOST_CLARIFY_ALREADY_ANSWERED"))),
+        s"an answered request must be refused distinctly: $answeredAdmission")
+      _ = assert(releasedAdmission.exists(_.swap.toOption.exists(_.message.contains("ASKHOST_CLARIFY_RELEASED_UNANSWERABLE"))),
+        s"a never-answerable request must be refused distinctly: $releasedAdmission")
+      _ = assert(unknown.swap.toOption.exists(_.message.contains("ASKHOST_CLARIFY_UNKNOWN_ID")),
+        s"an unknown id must be explicit: $unknown")
+      _ = assert(!unknown.swap.toOption.exists(_.message.contains("pending correlation unavailable")),
+        "the old conflated refusal must be gone")
+    yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
+  }
+
 end AskHostToolsSpec

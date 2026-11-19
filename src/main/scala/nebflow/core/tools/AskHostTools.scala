@@ -409,20 +409,49 @@ end AskHostTool
   */
 object AskHostClarifyTool extends Tool:
   val name = "AskHostClarify"
-  val description = "Ask the user a blocking clarification for a pending AskHost correlation. The answer returns as a normal user message to this root session; then call AskHostReply with the same correlationId. This never sends the user card to the worker."
+  val description = "Ask the user a blocking clarification for a pending AskHost correlation. The answer returns as a normal user message to this root session; then call AskHostReply with the same correlationId. This never sends the user card to the worker. A correlation that already timed out is still clarifiable — its answer becomes a late reply."
   val inputSchema = JsonObject("type" -> "object".asJson,
     "properties" -> Json.obj("correlationId" -> Json.obj("type" -> "string".asJson),
       "questions" -> AskUserQuestionTool.inputSchema("properties").flatMap(_.hcursor.downField("questions").focus).getOrElse(Json.arr())),
     "required" -> Json.arr("correlationId".asJson, "questions".asJson))
   def summarize(input: JsonObject): String = "AskHostClarify"
   def summarizeResult(input: JsonObject, result: String): String = result
+
+  /** Admission judgement (single point, pure — same [[AskHostLedger.requestState]] evidence
+    * as [[AskHostReplyTool]]). Returns an optional late-reply note to append to the ack.
+    *
+    * The defect (2026-11-19): the old judgement keyed off [[AskHostLedger.recover]], which
+    * drops timed-out rows — so the root could no longer clarify exactly the requests it most
+    * needed to (one that had just been neutrally released). A released request is still
+    * answerable, so it stays clarifiable, with the late-reply contract spelled out.
+    */
+  private[nebflow] def admission(state: AskHostLedger.RequestState): Either[ToolError, Option[String]] =
+    state.terminal match
+      case None => Right(None)
+      case Some(AskHostLedger.Terminal.TimedOut(outcome, _)) =>
+        Right(Some(
+          s"[ASKHOST-LATE-REPLY] AskHost request ${state.pending.correlationId} was already released when its wait window elapsed (neutral outcome $outcome) — the worker is no longer blocked and chose nothing on your behalf. Your clarification still reaches it: answer with AskHostReply on this same correlationId and it is delivered as a late reply."))
+      case Some(AskHostLedger.Terminal.Answered(_)) | Some(AskHostLedger.Terminal.Delivered(_)) =>
+        Left(ToolError(
+          s"AskHostClarify: request ${state.pending.correlationId} was already answered — no clarification is needed. (ASKHOST_CLARIFY_ALREADY_ANSWERED)"))
+      case Some(AskHostLedger.Terminal.Unavailable(reason)) =>
+        Left(ToolError(
+          s"AskHostClarify: request ${state.pending.correlationId} was released WITHOUT ever holding an answer ($reason) — there is nothing to clarify. (ASKHOST_CLARIFY_RELEASED_UNANSWERABLE)"))
+
   def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
     val id = input("correlationId").flatMap(_.asString).getOrElse("").trim
     if !ctx.isRootAgent then IO.pure(Left(ToolError("AskHostClarify: root identity required")))
     else if id.isEmpty then IO.pure(Left(ToolError("AskHostClarify: correlationId is required")))
-    else AskHostLedger.recover.map(_.exists(_.pending.correlationId == id)).flatMap {
-      case false => IO.pure(Left(ToolError(s"AskHostClarify: pending correlation unavailable: $id")))
-      case true => AskUserQuestionTool.call(JsonObject.fromIterable(input.toList.filterNot(_._1 == "correlationId")), ctx)
+    else AskHostLedger.requestState(id).flatMap {
+      case None =>
+        IO.pure(Left(ToolError(
+          s"AskHostClarify: unknown correlationId '$id' — no AskHost request with this id exists. (ASKHOST_CLARIFY_UNKNOWN_ID)")))
+      case Some(state) =>
+        admission(state) match
+          case Left(err) => IO.pure(Left(err))
+          case Right(note) =>
+            AskUserQuestionTool.call(JsonObject.fromIterable(input.toList.filterNot(_._1 == "correlationId")), ctx)
+              .map(_.map(text => note.fold(text)(n => s"$text\n\n$n")))
     }
 end AskHostClarifyTool
 
