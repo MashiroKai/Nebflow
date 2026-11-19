@@ -455,7 +455,15 @@ class FreezeGateSpec extends CatsEffectSuite:
 
   // ── B5: 唤醒语义 ──────────────────────────────────────────
 
-  test("B5: user wake injects user message after tool results and dispatches once") {
+  test("B5: processing ExternalEvent blocks survive into model input") {
+    checkWakeEventBlocks(frozen = false)
+  }
+
+  test("B5: frozen ExternalEvent blocks survive into model input") {
+    checkWakeEventBlocks(frozen = true)
+  }
+
+  private def checkWakeEventBlocks(frozen: Boolean): Unit =
     val system = ActorSystem("freeze-b5-wake")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot
@@ -513,8 +521,10 @@ class FreezeGateSpec extends CatsEffectSuite:
         _ <- IO.sleep(300.millis)
         reqs <- requests.get
         wakeReq = reqs.last
-        _ = assert(wakeReq.messages.exists(_.content.fold(_ => false, _.contains(processingImage))), "processing image missing from model input")
-        _ = assert(reqs.exists(_.messages.exists(_.content.fold(_ => false, _.contains(frozenImage)))), "frozen image missing from model input")
+        _ = if frozen then
+          assert(reqs.exists(_.messages.exists(_.content.fold(_ => false, _.contains(frozenImage)))), "frozen image missing from model input")
+        else
+          assert(wakeReq.messages.exists(_.content.fold(_ => false, _.contains(processingImage))), "processing image missing from model input")
         // 注：turn 管线会在末条用户消息后追加 task-list/env-change reminder（缓存
         // 优化既有行为），故断言「wake 消息存在且位于冻结工具结果之后」而非严格末条。
         wakeIdx = wakeReq.messages.lastIndexWhere(_.textContent.contains("WAKE_UP_NOW"))
@@ -537,7 +547,6 @@ class FreezeGateSpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
     end try
-  }
 
   test("B5: system input while frozen is queued, not dispatched; drained after resume") {
     val system = ActorSystem("freeze-b5-sys")
