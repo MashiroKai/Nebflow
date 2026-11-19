@@ -564,7 +564,18 @@ async function viewHtml(pane, { content, absPath, fileName, warnings }) {
   iframe.style.height = '100%';
   iframe.style.border = 'none';
   iframe.style.transformOrigin = '0 0';  // zoom math assumes top-left origin (default 50% 50% would offset by (1−s)·center)
-  iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
+  // external-open 批（2026-11-19）·远程主动内容的 sandbox 红线：
+  // 本项目 HTML 一直挂 `allow-same-origin`（工程内文档要能摸自己的 DOM/字体/
+  // 同源资产）。但**公网拉来的 HTML** 走的是同一个 viewer —— 同源 + scripts
+  // 等于让一个远程页在 console 的 origin 里执行脚本（读 DOM / localStorage /
+  // 带 cookie 的同源 fetch）。判据 = 落盘根目录段 `external-fetch/`
+  // （`ExternalOpenPolicy.StorageDirName`，服务端唯一写入点）：这类文档**去掉**
+  // allow-same-origin ⇒ opaque origin：脚本照跑、表单/popup 照用、postMessage
+  // 照回（targetOrigin '*' 的两向通道不受影响），但碰不到宿主。
+  const externalDoc = /(^|[\/\\])external-fetch[\/\\]/.test(String(absPath || ''));
+  iframe.setAttribute('sandbox', externalDoc
+    ? 'allow-scripts allow-forms allow-popups'
+    : 'allow-scripts allow-same-origin allow-forms allow-popups');
   iframe.setAttribute('scrolling', 'auto');
   iframe.dataset.nfCanvasHtml = '1';
   // Reparenting a live iframe can reload srcdoc; apply the current layer then too.

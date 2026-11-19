@@ -1058,7 +1058,8 @@ class WebSocketRoutes(
       .nfAuthcheckRoutes(
         tokenRef,
         sessions
-      ) <+> NfOfficeRoutes.officeRoutes(nfTicketStore, nfPathPolicy) <+> NfFileRoutes.nfReachRoutes <+> HttpRoutes
+      ) <+> ExternalOpenRoutes.externalOpenRoutes(tokenRef, sessions, nfPathPolicy) <+> NfOfficeRoutes
+      .officeRoutes(nfTicketStore, nfPathPolicy) <+> NfFileRoutes.nfReachRoutes <+> HttpRoutes
       .of[IO] {
         case req @ GET -> Root / "ws" =>
           // Phase 3b: the unified GatewayAuth criterion under WsAuth — session
