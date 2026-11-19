@@ -573,7 +573,10 @@ class ExternalResultReliabilitySpec extends CatsEffectSuite:
           assertEquals(messages.map(_.role), List(MessageRole.User))
           assertEquals(messages.head.runId, row.runId)
           assertEquals(pending, Nil)
-          assertEquals(output.map(_.totalLines), Some(0L))
+          val snapshot = output.getOrElse(fail("accepted run must expose its output buffer"))
+          assertEquals(snapshot.status, "running")
+          assert(!snapshot.output.contains("Released fixture report."), "gated child has not emitted its report")
+          assert(!snapshot.output.contains(codexEnd), "gated child has not emitted its terminal event")
           assert(frames.exists(_.hcursor.get[String]("type").toOption.contains("agentStart")))
           assert(!frames.exists(_.hcursor.get[String]("type").toOption.contains("agentDone")))
         }
