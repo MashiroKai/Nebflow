@@ -325,7 +325,7 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
                   messages = List(nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("hi"))),
                   sessionId = "delegate-fixture",
                   agentId = "test",
-                  agentModel = nebflow.core.ModelRoles.slotChainOf(Some("delegate-fixture"))
+                  agentModel = nebflow.core.ModelRoles.slotChainOf(Some("delegate-fixture"), Some("subagent"))
                 )
                 _ <- handle.send(req)
                 _ <- handle.sendStream(req).compile.drain
