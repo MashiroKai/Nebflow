@@ -135,6 +135,22 @@ function render(sid) {
   // 面同一条 56px 常量 --nf-dv-top-band，两个面共用同一层壳）。
   const shell = h('div', { class: 'nf-ar-shell' });
 
+  // 顶栏：文件 + 计数。（全量动作钮 + 等待面**不在这里** —— 作者令 2026-11-19
+  // 把审阅动作区收进共享组件 js/diffView 的 review 模式（单源）；头部重复的那两颗
+  // 已删净，避免同屏出现两处「全部接受」。）
+  const head = h('div', { class: 'nf-ar-head' }, [
+    h('div', { class: 'nf-ar-headpill' }, [
+      h('span', { class: 'nf-ar-file', title: st.path }, st.fileName || st.path),
+      h('span', { class: 'nf-ar-counts' }, [
+        h('span', { class: 'nf-ar-added' }, `+${added}`),
+        ' ',
+        h('span', { class: 'nf-ar-removed' }, `−${removed}`),
+        ` · ${tt(`${st.hunks.length} 块待审`, `${st.hunks.length} block${st.hunks.length === 1 ? '' : 's'} to review`)}`,
+      ]),
+    ]),
+  ]);
+  shell.appendChild(head);
+
   // 冲突条（显式提示，绝不静默覆盖）：重试 + 保留盘上现状关闭。
   if (st.error) {
     const retry = st.waiting || null;
@@ -157,10 +173,7 @@ function render(sid) {
     ]));
   }
 
-  // 文档体：共享组件（canvas 顶部标题 + 原文档全文 + 就地增删 + 逐块动作；
-  // 折叠/虚拟化内置）。**标题与动作区构建权都在组件**（单源）：本面只把文本
-  // （文件名 / 增删计数 / 审阅状态）经 title 选项交出去 —— 同屏只有一处标题、
-  // 一处「全部接受」（本面自绘的旧 `.nf-ar-head` 头随之退役）。
+  // 文档体：共享组件（原文档全文 + 就地增删 + 逐块动作；折叠/虚拟化内置）。
   const editor = h('div', { class: 'nf-ar-editor' });
   shell.appendChild(editor);
   pane.appendChild(shell);
@@ -174,12 +187,6 @@ function render(sid) {
     mode: 'review',
     hunks,
     waiting,
-    title: {
-      file: st.fileName || st.path,
-      path: st.path,
-      counts: `+${added} −${removed}`,
-      status: tt(`${st.hunks.length} 块待审`, `${st.hunks.length} block${st.hunks.length === 1 ? '' : 's'} to review`),
-    },
     onChunkAction: (hunkId, action) => send(action, sid, hunkId),
   }).then((api) => {
     liveApi.set(sid, api);
@@ -215,20 +222,13 @@ export function consumeResolved(msg) {
     return;
   }
   st.error = '';
-  // 接受/拒绝类动作**落地即重载**文件页签（作者令 2026-11-19：内容必来自盘上最新
-  // 文本，冷却/防抖不许挡内容刷新）。走 force 腿 ⇒ 干净页签立刻重读一次、脏页签
-  // 只挂「有更新」提示（不夺编辑）；剩余块分支同样要刷 —— 每块接受/拒绝都真写了盘。
-  const reloadReviewedFile = () => {
-    const cur = reviews.get(sid) || st;
-    if (cur && cur.path) refreshFileTabByPath(cur.path, { force: true });
-  };
   if (msg.review && typeof msg.review === 'object' && Array.isArray(msg.review.hunks) && msg.review.hunks.length) {
     upsertFromWire(sid, msg.review);
     render(sid);
-    reloadReviewedFile();
   } else {
-    // 了结：文件页签按最新盘上文本重载（force 腿），审阅页签收起。
-    reloadReviewedFile();
+    // 了结：文件页签按路径重载（refreshFileTabByPath 同守卫：脏编辑让路），
+    // 审阅页签收起。
+    refreshFileTabByPath(st.path);
     reviews.delete(sid);
     liveApi.delete(sid);
     closeTab(tabIdOf(sid));

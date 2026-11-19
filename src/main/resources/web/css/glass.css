@@ -134,9 +134,6 @@
 .dvp-nd,
 .ds-edge-fade,
 .fcv-headpill,
-/* canvas 特质批（2026-11-19）：共享差异组件的顶部标题胶囊 —— 与 `.fcv-headpill` /
-   `.canvas-header` 同族（配方在本表，玻璃底/描边/折射细线在 css/diffView.css）。 */
-.nf-dv-title,
 .fm-fab,
 .fm-archive-panel,
 .fm-detail,
@@ -249,11 +246,7 @@ body.mobile-layer .mobile-page[data-page="todo-apple-list"] .ta-pill,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-pill,
 body.mobile-layer .mobile-page[data-page="tasks"] .ta-menu,
 body.mobile-layer .mobile-page[data-page="todo-apple-item"] .ta-tool,
-.canvas-zoom-bar,
-/* canvas 特质批（2026-11-19）：共享差异组件的审阅动作组（全部接受/全部拒绝 =
-   canvas 右下角控件）以**成员身份**并入这一条 —— 材质一份实现，几何留
-   css/diffView.css（口径同「材质归包、几何留面」）。 */
-.nf-dv-allgroup {
+.canvas-zoom-bar {
   background: var(--nf-glass-bg);
   -webkit-backdrop-filter: var(--nf-glass-input-filter);
   backdrop-filter: var(--nf-glass-input-filter);

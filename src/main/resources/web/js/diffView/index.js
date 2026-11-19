@@ -67,25 +67,6 @@ function setWrapPref(v) {
 /** pane → mount generation; a newer mount invalidates an in-flight async load. */
 const mountGen = new WeakMap();
 
-/** 顶部标题数据（canvas 头部 chrome 的**文本面**；本批 2026-11-19）——
- *  只有调用面显式给 `title` 才构建标题段：delegate 阅读面自带 `.fcv-headpill`
- *  （同一条 canvas chrome，见 diffView.css §文件头胶囊批），此处再出一颗就是
- *  同屏两处标题。取文口径 = 文件名（单文件；与 canvas 页签名同源 baseName 读法）
- *  /「N 个文件」（多文件）+ 增删计数 + 审阅状态（review 面「N 块待审」）。 */
-function normalizeTitle(t) {
-  if (t == null) return null;
-  if (typeof t === 'string') return t ? { file: t, counts: '', status: '', path: '' } : null;
-  if (typeof t !== 'object') return null;
-  const out = {
-    file: String(t.file ?? t.name ?? ''),
-    counts: String(t.counts ?? ''),
-    status: String(t.status ?? ''),
-    path: String(t.path ?? ''),
-  };
-  if (!out.file && !out.counts && !out.status) return null;
-  return out;
-}
-
 function tt(zh, en) {
   let lang = '';
   try { lang = localStorage.getItem('nebflow_locale') || localStorage.getItem('neblink_locale') || ''; } catch { /* ignore */ }
@@ -187,41 +168,7 @@ export async function mountDiff(host, opts = {}) {
   const root = document.createElement('div');
   root.className = 'nf-dv';
   root.setAttribute('data-mode', mode);
-  // 动作带形态（作者令 2026-11-19 两形态对照）：'flow'（缺省/推荐）= 流内右对齐玻璃
-  // 控制带（零 position，与悬浮控件零交叠，谁都不让位）；'floating'（备选）= 同一
-  // DOM/同一几何族，改由**对照页本地样式**把它摆成 canvas 右下角悬浮控件族 —— 组件
-  // 只落 `data-chrome` 接缝，生产样式表零新增定位选择器（不动定位棘轮台账）。
-  root.setAttribute('data-chrome', opts.chrome === 'floating' ? 'floating' : 'flow');
   if (multi) root.setAttribute('data-multifile', '1');
-  // ── 顶部标题（canvas 特质批 2026-11-19）：与 canvas 卡头胶囊同一 chrome
-  //    （居中玻璃胶囊 / 同一 --ds-* 间距与 --glass-* 配色 token）。
-  const titleInfo = normalizeTitle(opts.title);
-  if (titleInfo) {
-    const head = document.createElement('div');
-    head.className = 'nf-dv-head';
-    const pill = document.createElement('div');
-    pill.className = 'nf-dv-title';
-    const fileEl = document.createElement('span');
-    fileEl.className = 'nf-dv-title-file';
-    fileEl.textContent = titleInfo.file;
-    if (titleInfo.path) fileEl.title = titleInfo.path;
-    pill.append(fileEl);
-    if (titleInfo.counts) {
-      const countsEl = document.createElement('span');
-      countsEl.className = 'nf-dv-title-counts';
-      countsEl.textContent = titleInfo.counts;
-      pill.append(countsEl);
-    }
-    if (titleInfo.status) {
-      const statusEl = document.createElement('span');
-      statusEl.className = 'nf-dv-title-status';
-      statusEl.textContent = titleInfo.status;
-      pill.append(statusEl);
-    }
-    head.append(pill);
-    root.append(head);
-  }
-
   const toolbar = document.createElement('div');
   toolbar.className = 'nf-dv-toolbar';
   const wrapBtn = document.createElement('button');
@@ -232,16 +179,24 @@ export async function mountDiff(host, opts = {}) {
   const mkAction = (kind, label, aria) => {
     const b = document.createElement('button');
     b.type = 'button';
-    b.className = 'nf-dv-allbtn nf-dv-actionbtn nf-dv-' + kind;
+    b.className = 'nf-dv-actionbtn nf-dv-' + kind;
     b.setAttribute('data-chunk-action', kind === 'accept-all' ? 'accept' : 'reject');
     b.setAttribute('data-scope', 'all');
     b.setAttribute('aria-label', aria);
     b.textContent = label;
     return b;
   };
-  // 工具区（折行开关）留在顶部工具条；**动作区已迁 canvas 右下角控件带**
-  // （review 专用，DOM 末尾建 —— 见下方 allbar 段）。read 模式只有工具区 ⇒
-  // 折行钮仍在右缘，与迁移批几何逐值一致（零回归）。
+  // 顺序：动作区（review）在左、工具区在右；read 模式只有工具区 ⇒ 折行钮仍在右缘，
+  // 与迁移批几何逐值一致（零回归）。
+  if (mode === 'review') {
+    const actions = document.createElement('div');
+    actions.className = 'nf-dv-actions';
+    actions.append(
+      mkAction('accept-all', tt('全部接受', 'Accept all'), tt('全部接受（保留全部改动）', 'Accept all (keep every change)')),
+      mkAction('reject-all', tt('全部拒绝', 'Reject all'), tt('全部拒绝（回退全部改动）', 'Reject all (revert every change)')),
+    );
+    toolbar.append(actions);
+  }
   const tools = document.createElement('div');
   tools.className = 'nf-dv-tools';
   tools.append(wrapBtn);
@@ -260,27 +215,6 @@ export async function mountDiff(host, opts = {}) {
     root.append(filesEl);
   }
   root.append(editorHost);
-
-  // ── 审阅动作区（作者令 2026-11-19：「一次全部接受或者拒绝」= canvas 右下角控件）──
-  //    复用 canvas 底部控件组惯例：玻璃胶囊组容器 + 成员钮（材质单源 = css/glass.css
-  //    的「按钮组：一份实现、两个消费族」共享声明；几何/落位留本组件样式表）。
-  //    read 模式根本不建这些节点 ⇒ DOM 零残留（模式闸门）。
-  //    与既有 canvas 右下角控件（.ask-fab / .note-fab）的共存规则：本带是组件内
-  //    **流内控制带**（零 position），占自己的布局行 ⇒ 与任何 canvas 悬浮控件零
-  //    交叠（谁也不用让位）；且两个 diff 面都是无 absPath 的面板页签，
-  //    ask/note 入口钮本就吃 .gate-off 可见性闸 ⇒ 同屏不会出现两颗「右下角钮」。
-  if (mode === 'review') {
-    const actions = document.createElement('div');
-    actions.className = 'nf-dv-allbar';
-    const group = document.createElement('div');
-    group.className = 'nf-dv-allgroup';
-    group.append(
-      mkAction('accept-all', tt('全部接受', 'Accept all'), tt('全部接受（保留全部改动）', 'Accept all (keep every change)')),
-      mkAction('reject-all', tt('全部拒绝', 'Reject all'), tt('全部拒绝（回退全部改动）', 'Reject all (revert every change)')),
-    );
-    actions.append(group);
-    root.append(actions);
-  }
   host.append(root);
 
   const wrapComp = new Compartment();
@@ -437,7 +371,7 @@ export async function mountDiff(host, opts = {}) {
     paintAll(action);
     if (onChunkAction) onChunkAction(null, action);
   };
-  root.addEventListener('click', onAllClick);
+  toolbar.addEventListener('click', onAllClick);
 
   // 等待面（防双发）：整组动作钮禁用；不动折行开关与文件切换（可继续观察）。
   const setWaiting = (w) => {
@@ -451,7 +385,7 @@ export async function mountDiff(host, opts = {}) {
 
   const destroy = () => {
     editorHost.removeEventListener('mousedown', onMouseDown, true);
-    root.removeEventListener('click', onAllClick);
+    toolbar.removeEventListener('click', onAllClick);
     if (mountGen.get(host) === gen) { try { view.destroy(); } catch { /* noop */ } }
     host.textContent = '';
   };

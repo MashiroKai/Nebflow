@@ -20,11 +20,6 @@
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/stand-tokens.css">
   <link rel="stylesheet" href="/css/design-system.css">
-  <!-- canvas 特质批（2026-11-19）：顶部标题/动作带的玻璃材质单源在 sapphire/glass
-       （生产 index.html 同一条装载链）—— 本页补这两张，否则「同一 chrome」只能断
-       声明不能断计算值（backdrop-filter 实测 none 会假绿）。 -->
-  <link rel="stylesheet" href="/css/sapphire.css">
-  <link rel="stylesheet" href="/css/glass.css">
   <link rel="stylesheet" href="/css/diffView.css">
   <style>
     html, body { margin: 0; height: 100%; background: var(--color-bg); color: var(--color-text); }
@@ -99,13 +94,9 @@
       state.apis.read = await mountDiff(document.getElementById('page-read'), { diffText: READ_DIFF, mode: 'read' });
       state.apis.review = await mountDiff(document.getElementById('page-review'), {
         original: REV_BASE, current: REV_CURRENT, mode: 'review', hunks: REV_HUNKS, onChunkAction: record,
-        // canvas 特质批（2026-11-19）：审阅面的顶部标题文本（组件按 canvas 头部
-        // chrome 渲染）。取文口径 = 文件名 + 增删计数 + 审阅状态。
-        title: { file: 'src/app/main.ts', path: 'src/app/main.ts', counts: '+3 −2', status: '2 块待审' },
       });
       state.apis.multi = await mountDiff(document.getElementById('page-multi'), {
         mode: 'review', files: MULTI_FILES, onChunkAction: record,
-        title: { file: '2 个文件', counts: '+2 −2', status: '2 块待审' },
       });
       // Canvas 面：真实容器链（.canvas-tab-pane > .fcv-view > .fcv-dvhost）。
       const pane = document.querySelector('#page-canvas .canvas-tab-pane');

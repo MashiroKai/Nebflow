@@ -5100,42 +5100,6 @@ body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-togg
      （作者报障 2026-11-18）。 */
   bottom: var(--mf-row-bottom);
 }
-
-/* ── 手机层 canvas **底部控件带**的族清单与进带判据（2026-11-19 补漏批）───────
-   作者 2026-11-19 复用 11-18 报障口径要求：**先把「哪些控件族应在带内」定清楚
-   再改**，免得下次又只补一个 selector。
-
-   进带判据（三条同时成立才算带内件）：
-     ① 作用域 = 手机层 canvas 面内（`body.mobile-layer #mobile-pages
-        .mf-cv-host > .canvas-tab-pane` 的后代）；
-     ② 它是**交互件**（button / [role=button] / 挂 click 的可点节点），不是随正文
-        滚动的**内容件**（内容件允许从浮件下穿过，见 .canvas-md-scroll 那段）；
-     ③ 它的默认落点由**视口底锚**决定（写死 bottom:16 / 末件贴宿主底）⇒ 会落进
-        `#mobile-dock`（fixed/z200 实体浮层）的带区。命中即 = 看不见 + 点不到。
-
-   族清单（截至本批）：
-     · ① 左下工具对 `.canvas-find-toggle` / `.canvas-ref-select` —— 上方既有档已入带
-     · ② 中页点条 `.mf-dots`（含长按 grip）—— 上方既有档已入带（+ 同中线配平）
-     · ③ 右气泡钮 `.ask-fab` —— ask.css 同一把尺，一直无恙（本批不动）
-     · ④ 审阅全量动作带 `.nf-dv-allbar`（canvas 特质批 2026-11-19 新增）—— **本批补入**
-   不入带：
-     · `.canvas-source-toggle` / `.canvas-zoom-bar` —— 手机层 `display:none` 退役
-     · `.nf-dv-chunkbtn`（逐块接受/拒绝）—— 内容件，随正文流滚动，不是页底件
-   闸面（枪测口径）：`tests/canvas-band-hittability.spec.mjs` —— 上面这份族清单在闸里
-   编成同名表 `BAND_FAMILY`（族新增不入表 ⇒ 覆盖率那条红）：逐钮 `elementFromPoint(钮心)`
-   命中自身 + 与 dock 矩形零交叠 + 在视口内；另带**负控**（中和本批修复 ⇒ 同一判据必红，
-   否则判据对该缺陷不敏感）。既有 `canvas-controls-dock-clearance.spec.mjs` 继续管文档
-   画布页那三族（两条闸同装置、不互相顶替）。 */
-
-body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .nf-dv-allbar {
-  /* 流内带（`position:static`，设计口径「占自己的布局行 ⇒ 与悬浮控件零交叠」）保留 ——
-     只把带的下缘抬到 dock 之上：带是 `.nf-dv`（flex column）的末件，其底 = 宿主底
-     = 页底 = **视口底**，于是整条 62px 落进 dock 带区（实测 375×812：带 y750..812，
-     dock y750..804 ⇒ 62px 重叠，枪测落在 `#mobile-dock` 的 svg 上 = 不可点）。
-     留出 `--mf-row-bottom`（= dock-h 54 + --dock-inset-b 8 + safe + 16）后带缘落在
-     dock 上缘之上 16px，与同排 ① ② ③ 三条共用同一把尺（同一表达式，禁各写一份）。 */
-  margin-bottom: var(--mf-row-bottom, 0px);
-}
 body.mobile-layer #mobile-pages .mf-cv-host > .canvas-tab-pane .canvas-find-toggle {
   left: var(--ds-space-4);
 }
