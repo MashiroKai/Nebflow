@@ -405,4 +405,24 @@ class AskHostToolsSpec extends CatsEffectSuite:
     yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
 
+  test("wait window is configurable via -D and never falls back to an infinite wait") {
+    val key = "nebflow.askhost.waitWindowMs"
+    val previous = sys.props.get(key)
+    IO {
+      try
+        assertEquals(AskHostTool.waitWindowMs, AskHostTool.DefaultWaitWindowMs)
+        assertEquals(AskHostTool.DefaultWaitWindowMs, 30L * 60L * 1000L)
+        sys.props.update(key, "1200000")
+        assertEquals(AskHostTool.waitWindowMs, 1200000L)
+        sys.props.update(key, "0")
+        assertEquals(AskHostTool.waitWindowMs, AskHostTool.DefaultWaitWindowMs, "<= 0 must fall back, never an infinite wait")
+        sys.props.update(key, "nonsense")
+        assertEquals(AskHostTool.waitWindowMs, AskHostTool.DefaultWaitWindowMs)
+      finally
+        previous match
+          case Some(v) => sys.props.update(key, v)
+          case None => sys.props.remove(key)
+    }
+  }
+
 end AskHostToolsSpec
