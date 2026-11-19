@@ -1111,7 +1111,7 @@ private[project] trait NodeStarter:
               bridge
             }
         },
-        s"nodebridge-${sessionId.take(8)}"
+        NodeStarter.bridgeName(sessionId)
       )
       // 属主边读点（面板代际层级批 2026-11-06 · design 裁定 A②）：在册分发器会话
       // id 即本节点 parentSessionId（depth 2）；无在册分发器（纯引擎流 root 直启 /
@@ -1320,6 +1320,8 @@ private[project] trait NodeStarter:
 end NodeStarter
 
 private[project] object NodeStarter:
+  private[project] def bridgeName(sessionId: String): String = s"nodebridge-${sessionId.take(8)}"
+
 
   /** Bounded grace for a deferred-cancelled session to stop itself (see [[NodeStarter.settleDeferredCancel]]). */
   val DeferredStopGraceMs: Long = 60_000L

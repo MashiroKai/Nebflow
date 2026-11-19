@@ -340,19 +340,18 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     program.guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
   }
 
-  test("node bridge truncated names collide and overwrite actor resolution") {
+  test("node bridges with matching session prefixes resolve independently") {
     val system = ActorSystem("bridge-collision-probe")
     val sid1 = "node-abc11111"
     val sid2 = "node-abc22222"
-    def bridgeName(sid: String): String = s"nodebridge-${sid.take(8)}"
     (for
-      first <- system.spawn(Behaviors.ignore[String], bridgeName(sid1))
-      second <- system.spawn(Behaviors.ignore[String], bridgeName(sid2))
+      first <- system.spawn(Behaviors.ignore[String], NodeStarter.bridgeName(sid1))
+      second <- system.spawn(Behaviors.ignore[String], NodeStarter.bridgeName(sid2))
       _ <- (for
-        resolved <- system.resolve[String](first.path.toString)
-        _ = assertEquals(bridgeName(sid1), bridgeName(sid2))
-        _ = assert(first ne second)
-        _ = assert(resolved eq second, "second bridge replaces first in registry")
+        resolvedFirst <- system.resolve[String](first.path.toString)
+        resolvedSecond <- system.resolve[String](second.path.toString)
+        _ = assert(resolvedFirst eq first, "first bridge must retain its registry entry")
+        _ = assert(resolvedSecond eq second, "second bridge must retain its registry entry")
         _ <- system.stop(first)
         stillResolved <- system.resolve[String](second.path.toString)
         _ = assert(stillResolved eq second)
