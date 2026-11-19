@@ -185,10 +185,12 @@ lazy val root = (project in file("."))
       val reminderProcesses = tests.filter(_.name == "nebflow.agent.TaskLedgerPassiveReminderSpec")
       // Picker temporarily changes JVM user.home; isolate it from in-process background fibers.
       val picker = tests.filter(_.name == "nebflow.gateway.ws.PickerBrowseFrameSpec")
-      val rest = tests.filterNot(t => t.name == "nebflow.db.chaos.DbKill9ChaosSpec" || t.name == "nebflow.agent.TaskLedgerPassiveReminderSpec" || t.name == "nebflow.gateway.ws.PickerBrowseFrameSpec")
+      val nfPathProbe = tests.filter(_.name == "nebflow.gateway.nf.NfPathEncodingProbeSpec")
+      val rest = tests.filterNot(t => t.name == "nebflow.db.chaos.DbKill9ChaosSpec" || t.name == "nebflow.agent.TaskLedgerPassiveReminderSpec" || t.name == "nebflow.gateway.ws.PickerBrowseFrameSpec" || t.name == "nebflow.gateway.nf.NfPathEncodingProbeSpec")
       Seq(
         Tests.Group("in-process-suites", rest, Tests.InProcess),
         Tests.Group("picker-home-isolated", picker, Tests.SubProcess(ForkOptions())),
+        Tests.Group("nf-path-home-isolated", nfPathProbe, Tests.SubProcess(ForkOptions())),
         Tests.Group("db-kill9-chaos-isolated", chaos, Tests.SubProcess(ForkOptions())),
         Tests.Group("task-ledger-process-isolated", reminderProcesses, Tests.SubProcess(ForkOptions()))
       )
