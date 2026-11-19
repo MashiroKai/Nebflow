@@ -9,7 +9,7 @@ import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{NebflowLogger, ThinkingConfig}
+import nebflow.shared.{NebflowLogger, ThinkingConfig, UiMessage}
 import munit.FunSuite
 import scala.concurrent.duration.FiniteDuration
 
@@ -40,7 +40,13 @@ class InboxMirrorDeliveryRiskSpec extends FunSuite:
         thinking <- IO.ref(ThinkingConfig())
         overrides <- IO.ref(Map.empty[String, ModelCandidate])
         muted <- IO.ref(false)
-        store = SessionStore(tmp / "sessions", tmp / "tasks")
+        store = new SessionStore(tmp / "sessions", tmp / "tasks"):
+          override def appendUiMessages(sid: String, rows: List[UiMessage]): IO[Unit] =
+            if sid == "root-1" && rows.exists {
+              case u: UiMessage.User => u.text == "root failure probe"
+              case _ => false
+            } then IO.raiseError(new RuntimeException("root append failed"))
+            else super.appendUiMessages(sid, rows)
         resources = SharedResources(
           llm = null, dispatcher = dispatcher, sessionStore = store, projectRoot = os.pwd,
           thinkingConfigRef = thinking, rateLimiter = rate, fileChangeTracker = tracker,
@@ -58,11 +64,15 @@ class InboxMirrorDeliveryRiskSpec extends FunSuite:
         _ <- AgentActor.emitInjectedUserEvent(resources, _ => IO.unit, Some("root-1"), "dedup probe", "mail", dedup = true)(using ctx)
         root <- store.getUiMessages("root-1", 0, 0)
         mirror <- store.getUiMessages("delegate-A", 0, 0)
-        _ <- IO { assertEquals(root._1.size, 1); assertEquals(mirror._1.size, 2) }
+        _ <- IO { assertEquals(root._1.size, 1); assertEquals(mirror._1.size, 1) }
         _ <- AgentActor.emitInjectedUserEvent(resources, _ => IO.raiseError(new RuntimeException("send failed")), Some("root-1"), "failure probe", "mail")(using ctx)
         root2 <- store.getUiMessages("root-1", 0, 0)
         mirror2 <- store.getUiMessages("delegate-A", 0, 0)
-        _ <- IO { assertEquals(root2._1.size, 2); assertEquals(mirror2._1.size, 3) }
+        _ <- IO { assertEquals(root2._1.size, 2); assertEquals(mirror2._1.size, 2) }
+        _ <- AgentActor.emitInjectedUserEvent(resources, _ => IO.raiseError(new RuntimeException("send failed")), Some("root-1"), "root failure probe", "mail")(using ctx)
+        root3 <- store.getUiMessages("root-1", 0, 0)
+        mirror3 <- store.getUiMessages("delegate-A", 0, 0)
+        _ <- IO { assertEquals(root3._1.size, 2); assertEquals(mirror3._1.size, 2) }
       yield ()
     }.guarantee(system.stopAll)
     try program.unsafeRunSync()
