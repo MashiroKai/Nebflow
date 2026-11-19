@@ -19,8 +19,11 @@ function row(...classes) {
   return { classList: { contains: c => classes.includes(c) }, querySelector: () => null };
 }
 function askCount(arrived) {
-  const sandbox = { el: {}, colUnseen: 0, colFollows: () => false, askPillSync: () => {}, requestAnimationFrame: () => {} };
-  vm.runInNewContext(extract(askSource, 'function settleCol(', '\n}\n') + '\n}\nsettleCol(' + arrived + ');', sandbox);
+  const sharedPath = path.join(web, 'unreadCount.js');
+  const shared = fs.existsSync(sharedPath) ? fs.readFileSync(sharedPath, 'utf8').replace('export function countUnread', 'function countUnread') : '';
+  const sandbox = { el: {}, colUnseen: 0, colFollows: () => false, askPillSync: () => {}, requestAnimationFrame: () => {}, messages: [{role: 'sys'}] };
+  const argument = shared ? 'messages' : String(arrived);
+  vm.runInNewContext(shared + '\n' + extract(askSource, 'function settleCol(', '\n}\n') + '\n}\nsettleCol(' + argument + ');', sandbox);
   return sandbox.colUnseen;
 }
 test('local user row must not count', () => {

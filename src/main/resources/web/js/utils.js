@@ -14,6 +14,7 @@ import { outputBlockEnabled } from './featureFlags.js';
 // 搜索聊天记录跳转使用同一套」）：↓N / 回到底部 / 搜索回跳 = 同一工厂、同一类名
 // `.scroll-new-pill`、同一形态声明（css/chat.css）。
 import { createScrollPill } from './scrollPill.js';
+import { countUnread } from './unreadCount.js';
 
 // ── Exported protocol typedefs (P2-3 core contracts) ──────────────────────
 
@@ -2182,11 +2183,11 @@ export function refreshScrollPill(view) {
 // (thinking + 5 tool calls + final reply) read as 9.
 //
 // COUNTED — what the author actually receives as a message:
-//   .row.user (real user message)            W1
+//   .row.user is excluded: it was sent by this session.
 //   .row.ai   (assistant visible reply)      W1
 //   .row.card-content (card deliverable)     D4
 //   .row.error (failed-turn terminal)        D5
-//   .row.user + .bubble.injected (Mail / flow / Team bubbles)  D2
+//   .row.user + .bubble.injected is excluded under the user-role policy.
 //
 // NOT COUNTED — process noise / system traffic:
 //   .thinking-row  思考过程                   W2
@@ -2214,6 +2215,7 @@ export function refreshScrollPill(view) {
 // sets in sync if the tuck set ever changes.
 export function countsAsRealMessage(row) {
   if (!row || !row.classList || !row.classList.contains('row')) return false;
+  if (row.classList.contains('user')) return false;
   if (row.classList.contains('thinking-row')) return false;
   if (row.classList.contains('tool')) return false;
   if (row.classList.contains('system')) return false;
@@ -2274,7 +2276,7 @@ export function initScrollFollow(view, opts = {}) {
   _viewChats.set(view, chat);
   rec.atBottom = isNearBottom(chat);
   rec.obs = new MutationObserver((mutations) => {
-    let addedRows = 0;
+    const arrived = [];
     const viewportH = chat.clientHeight || 0;
     for (const m of mutations) {
       // Only rows appended at the END are new messages. `previousSibling` is
@@ -2293,14 +2295,14 @@ export function initScrollFollow(view, opts = {}) {
         // streamed content reaches that size) — it never counts as "a message
         // you have not seen".
         if (viewportH > 0 && n.getBoundingClientRect().height >= viewportH) continue;
-        addedRows++;
+        if (n.isConnected) arrived.push({ role: 'ai' });
       }
     }
     // Rows that arrive while the user is away from the bottom are the only
     // ones that count ("since leaving the bottom"). `rec.atBottom` is the
     // pre-append snapshot: scroll events and the post-append rAF below keep
     // it current, so a big card appended *while pinned* is not counted.
-    if (addedRows > 0 && rec.atBottom === false) rec.count += addedRows;
+    rec.count = countUnread(rec.count, arrived, rec.atBottom);
     syncScrollPill(view);
     // After this frame's own auto-scroll (scheduled at the append site) has
     // run, re-read the geometry: a landing at the bottom clears the count.

@@ -39,6 +39,11 @@ import { createTurnToggle, requestTurnInterrupt } from './input/composer.js';
 import { createSecondaryComposer } from './input/secondaryComposer.js';
 import { handleSlash } from './input/slashCommands.js';
 import { createScrollPill, bottomDistance, AT_BOTTOM_PX } from './scrollPill.js';
+// 未读计数单源（fix/unread-count-unify 批 · 落队 2026-11-19 手移植）：离底期间的**真实
+// 新消息**计数策略全站一份（主会话侧 utils.js 同源：本机发问 / 用户注入问 / 重复终态帧
+// 都不计未读）。抽取批后本内核是 canvas 档唯一的落列/计数写点，故该腿落在这里（作者线
+// 该腿写在旧 askDock.js 的 settleCol，那一段已被抽取批搬空 ⇒ 按其语义在本处重建）。
+import { countUnread } from './unreadCount.js';
 // card-tool-revive 批（2026-11-18 作者裁定②）：ask 会话里 Card 工具返回的 HTML 卡
 // 由对话列显形——渲染**复用唯一单源** cardRegistry.renderWithRegistry（哨兵解析 +
 // 沙箱 iframe + 主题注入那一套语义原样借用），零第二套渲染、零裸 HTML 内联、零自造
@@ -282,14 +287,18 @@ export function createAskDialog(cfg) {
       if (!askPill) return;
       askPill.sync(atBottom === true ? { count: 0, atBottom: true } : { count });
     },
-    settleCol(arrived) {
+    /**
+     * 落列后调用的唯一跟随决定：跟随钉底 / 计数进胶囊。
+     * @param {Array<{role:string}>} arrived Newly arrived transcript messages.
+     */
+    settleCol(arrived = []) {
       if (dlg.colFollows()) {
         colSnapped = true;
         colUnseen = 0;
         requestAnimationFrame(() => { col.scrollTop = col.scrollHeight; });
         dlg.askPillSync(0, true);
       } else {
-        if (arrived > 0) colUnseen += arrived;
+        colUnseen = countUnread(colUnseen, arrived);
         dlg.askPillSync(colUnseen);
       }
     },
@@ -353,7 +362,7 @@ export function createAskDialog(cfg) {
       s.msgs.push({ role: 'user', text: v });
       cfg.onPersist?.(s);
       dlg.render();
-      dlg.settleCol(1);
+      dlg.settleCol([{ role: 'user', self: true }]); // Local sends are not unseen.
       dlg.appendTyping();
       dlg.armTurn(s);
       if (!s.stateSent) cfg.ensureBound(s);
@@ -391,7 +400,7 @@ export function createAskDialog(cfg) {
       s.msgs.push({ role: 'ai', text });
       dlg.removeTyping();
       dlg.render();
-      dlg.settleCol(1);
+      dlg.settleCol([{ role: 'ai' }]); // 提示行 = 一条助手族消息（离底才计未读）
     },
 
     /** 按会话的 busy 位重落发送/中断钮（切会话、宿主迁移后的补一拍；幂等）。 */
@@ -451,7 +460,7 @@ export function createAskDialog(cfg) {
               entry.unread = false;
               dlg.removeTyping();
               dlg.render();
-              dlg.settleCol(Math.max(0, entry.msgs.length - prevLen));
+              dlg.settleCol(entry.msgs.slice(prevLen)); // Only newly appended visible messages count.
             }
             cfg.onUnread?.(entry);
           }
@@ -474,23 +483,25 @@ export function createAskDialog(cfg) {
           return consumed();
         }
         case 'done': {
+          const wasBusy = entry.busy;
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
           dlg.settleTurn(entry);
           const last = entry.msgs[entry.msgs.length - 1];
           if (last && last.role === 'ai' && !last.text && msg.finalText) last.text = msg.finalText;
           cfg.onPersist?.(entry);
           if (entry === cfg.activeSession()) {
-            if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol(1); }
+            if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol(wasBusy && last && last.role === 'ai' ? [last] : []); } // Ignore repeated terminal frames.
             cfg.onUnread?.(entry);
           }
           return consumed();
         }
         case 'interrupted': {
+          const wasBusy = entry.busy;
           if (!(entry === cfg.activeSession() && dlg.isOpen())) entry.unread = true;
           dlg.settleTurn(entry);
           cfg.onPersist?.(entry);
           if (entry === cfg.activeSession()) {
-            if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol(1); }
+            if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); const last = entry.msgs[entry.msgs.length - 1]; dlg.settleCol(wasBusy && last && last.role === 'ai' ? [last] : []); } // Partial answer, once.
             cfg.onUnread?.(entry);
           }
           return consumed();
@@ -505,7 +516,7 @@ export function createAskDialog(cfg) {
           else entry.msgs.push({ role: 'ai', text: errText });
           cfg.onPersist?.(entry);
           if (entry === cfg.activeSession()) {
-            if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol(1); }
+            if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol([{ role: 'ai' }]); } // Error bubble.
             cfg.onUnread?.(entry);
           }
           return consumed();
@@ -517,7 +528,7 @@ export function createAskDialog(cfg) {
             entry.msgs.push({ role: 'user', text: msg.text || '' });
             cfg.onPersist?.(entry);
             if (entry === cfg.activeSession()) {
-              if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol(1); }
+              if (dlg.isOpen()) { dlg.removeTyping(); dlg.render(); dlg.settleCol([{ role: 'user' }]); } // User-role injection is excluded.
               cfg.onUnread?.(entry);
             }
           }

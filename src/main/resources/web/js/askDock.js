@@ -2037,7 +2037,7 @@ function consumeFrame(msg) {
       // 容量闸与「行小」律，见 persistSession），卡是重开局面的过程件——重载后由
       // 新一轮工具调用再现，不占持久容量。
       if (entry === activeSession()) {
-        if (isOpen()) { dlg.render(); dlg.settleCol(0); } // 卡 = 过程件，不进未读「真实新消息」计数
+        if (isOpen()) { dlg.render(); dlg.settleCol([]); } // 卡 = 过程件，不进未读「真实新消息」计数（空数组 = 零条新消息；计数策略改数组入参后同一语义）
         syncUnreadDot();
       }
       return;
