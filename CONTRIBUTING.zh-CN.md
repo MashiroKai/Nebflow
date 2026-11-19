@@ -68,7 +68,7 @@ CI 以新构建的 JAR 跑 smoke 套件，因此前端改动的门槛 = 本地�
 
 - 分支模型、作者专属操作、守卫用法及 USTC 保护清单以 [Contributing](CONTRIBUTING.md#branches-and-commits) 为准。批次从 `main` 拉 `feat/*` 或 `bug/*`；既有 `fix/*` 不追溯改名。不得直接推 USTC。
 - 按文件显式暂存（`git add <file>`）；避免 `git add -A`。
-- 实际提交风格：主题行可选 `type(scope):` 前缀——类型如 `fix` / `feat` / `test` / `docs` / `refactor`，scope 如 `web` / `tools` / `engine` / `project` / `gateway`。主题行必须使用英文，应写清原因或意图，而非仅陈述表象。合入 `main` 由作者在上游核验后以 fast-forward 方式执行。
+- 实际提交风格：主题行可选 `type(scope):` 前缀——类型如 `fix` / `feat` / `test` / `docs` / `refactor`，scope 如 `web` / `tools` / `engine` / `project` / `gateway`。主题行必须使用英文，应写清原因或意图，而非仅陈述表象。合入 `main` 由作者在上游核验后以**合并提交**（promotion merge commit）方式执行，`main` 历史里可见晋级记录（2026-11-19 裁）。
 
 ### 发布流转
 
