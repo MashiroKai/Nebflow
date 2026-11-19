@@ -21,6 +21,15 @@ import scala.concurrent.duration.*
  * 新行为闸 `SubagentPrimitiveSpec`（本条原语的四腿：帧匹配 / 预算耗尽 / 超时 /
  * `reap`）钉在本单点上。
  *
+ * ==可见性（dispatcher 重设计 P1「放开原语可见性」）==
+ * P0 的抽件把复用面收在 `nebflow.core.tools` 里（五个成员声明为 `private[tools]`），
+ * 而 P1 的引擎侧读者落在 `nebflow.core.project` / `nebflow.core.delegate`——跨不出
+ * `core.tools`（核稿 §6.1「抽件 = 放宽可见性或搬移」的另一半）。本件把那五个成员
+ * （[[startBudget]] / [[awaitResult]] / [[reap]] / [[startSpy]] / [[spy]]）放宽为
+ * `private[core]`：`core` 是同时覆盖这两个目标读者包的最小授予域，比 `nebflow` 或
+ * 全公开更窄；[[Timeout]] / [[NeverStartedToken]] 保持公开不动。**纯可见性扩大，
+ * 零运行时行为差异**；静态外壳闸 `scripts/check-subagent-primitive-visibility.mjs`。
+ *
  * ==完成桥（wsSend 间谍）==
  * 子会话的流事件本来就要经 `wsSend` 上行（面板渲染面）——本点在路由包装外再包
  * 一层间谍：见到 `agentDone` / `agentEnd` 且归属本子会话（nodeSessionId 或
@@ -57,7 +66,7 @@ object SubagentPrimitives:
   val NeverStartedToken: String = "subagent-never-started"
 
   /** 活性判定窗（缺口①）——[[Defaults.SubagentStartBudgetMs]] 的投影（测试注入缝）。 */
-  private[tools] def startBudget: FiniteDuration =
+  private[core] def startBudget: FiniteDuration =
     nebflow.shared.Defaults.SubagentStartBudgetMs.millis
 
   /**
@@ -69,7 +78,7 @@ object SubagentPrimitives:
    *   - 段二（完成）：活性到场后与改造前逐字——15min 硬顶 + 完成桥读取
    *     finalText + 超时补帧腿。
    */
-  private[tools] def awaitResult(
+  private[core] def awaitResult(
     started: Deferred[IO, Unit],
     done: Deferred[IO, Option[String]],
     childId: String,
@@ -128,7 +137,7 @@ object SubagentPrimitives:
    *      cancelTurn + 杀 shell + 生命周期钩子 + stopped）。
    * 全程 fail-soft：任何一腿失败只落日志，绝不改写工具结果。
    */
-  private[tools] def reap(
+  private[core] def reap(
     resources: nebflow.core.AgentRuntimePort,
     parentSessionId: String,
     childId: String,
@@ -160,13 +169,13 @@ object SubagentPrimitives:
    * 领衔，完成帧天然蕴含已活性）即落活性标记，然后原样交完成桥。零新协议——
    * 与完成桥同一间谍链，只是多读一个「有帧」事实。
    */
-  private[tools] def startSpy(
+  private[core] def startSpy(
     started: Deferred[IO, Unit],
     base: io.circe.Json => IO[Unit]
   ): io.circe.Json => IO[Unit] = json => started.complete(()).attempt.void *> base(json)
 
   /** wsSend 间谍：agentDone/agentEnd 且 nodeSessionId 命中 ⇒ 完成桥。 */
-  private[tools] def spy(
+  private[core] def spy(
     done: Deferred[IO, Option[String]],
     childId: String,
     base: io.circe.Json => IO[Unit]
