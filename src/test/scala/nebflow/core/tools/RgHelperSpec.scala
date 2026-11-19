@@ -39,7 +39,7 @@ class RgHelperSpec extends FunSuite:
       val probeDir = tmp / "opt-homebrew-bin"
       val seeded = fakeRg(probeDir)
       val r = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath, // dirs exist but carry no rg
+        pathEnv = (tmp / "empty-path").toString, // controlled absent directory, independent of host PATH
         probeDirs = List(probeDir.toString),
         localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString), // nonexistent
         winInstall = Nil
@@ -73,7 +73,7 @@ class RgHelperSpec extends FunSuite:
       val localDir = tmp / "local-bin"
       val local = fakeRg(localDir)
       val r = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = (tmp / "empty-path").toString,
         probeDirs = List(probeDir.toString),
         localPaths = List(local),
         winInstall = Nil
@@ -91,21 +91,21 @@ class RgHelperSpec extends FunSuite:
       val newRg = fakeRg(newBin)
       val legacyRg = fakeRg(legacyBin)
       val both = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = (tmp / "empty-path").toString,
         probeDirs = Nil,
         localPaths = List(newRg, legacyRg),
         winInstall = Nil
       )
       assertEquals(both, Some(newRg), "new default bin position must be probed before the legacy one")
       val legacyOnly = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = (tmp / "empty-path").toString,
         probeDirs = Nil,
         localPaths = List(legacyRg),
         winInstall = Nil
       )
       assertEquals(legacyOnly, Some(legacyRg), "old installs (legacy bin only) must keep resolving rg")
       val none = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = (tmp / "empty-path").toString,
         probeDirs = Nil,
         localPaths = List(newRg, legacyRg).map(p => p + ".missing"),
         winInstall = Nil
@@ -119,7 +119,7 @@ class RgHelperSpec extends FunSuite:
     val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rg-none"))
     try
       val r = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = (tmp / "empty-path").toString,
         probeDirs = Nil, // pre-fix shape: the leg did not exist
         localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString),
         winInstall = Nil
