@@ -25,6 +25,27 @@
       "scenario": "BG-SCN-004",
       "implementation": [".gitlab-ci.yml", ".github/workflows/auto-release.yml"],
       "tests": [{"path": "tests/release-branch-routing.test.py", "name": "no main writeback"}]
+    },
+    {
+      "requirement": "BG-REQ-003",
+      "scenario": "BG-SCN-005",
+      "implementation": ["scripts/stand-wt.py", "CONTRIBUTING.md", "CONTRIBUTING.zh-CN.md", "openspec/changes/branch-governance/design.md"],
+      "tests": [{"path": "scripts/tests/test_stand_wt.py", "name": "test_lifecycle_and_delivery"}]
+    },
+    {
+      "requirement": "BG-REQ-003",
+      "scenario": "BG-SCN-006",
+      "implementation": ["scripts/merge-sink.py", "CONTRIBUTING.md", "CONTRIBUTING.zh-CN.md"],
+      "tests": [{"path": "scripts/tests/check-worktree-cleanup.test.mjs", "name": "merge-sink reclaims the tree without --force, checks three preconditions and keeps the branch"}]
+    },
+    {
+      "requirement": "BG-REQ-003",
+      "scenario": "BG-SCN-007",
+      "implementation": ["scripts/check-worktree-cleanup.mjs", "scripts/run-checks.mjs", "scripts/tests/check-worktree-cleanup.test.mjs", "CONTRIBUTING.md", "CONTRIBUTING.zh-CN.md"],
+      "tests": [
+        {"path": "scripts/tests/check-worktree-cleanup.test.mjs", "name": "gate exits 0 while the branch is unmerged, 1 once it is merged, 0 again after reclaim"},
+        {"path": "scripts/tests/check-worktree-cleanup.test.mjs", "name": "gate exits 0 with an explicit nothing-to-judge note on a checkout with no linked worktree"}
+      ]
     }
   ]
 }

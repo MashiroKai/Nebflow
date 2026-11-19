@@ -70,6 +70,30 @@ CI 以新构建的 JAR 跑 smoke 套件，因此前端改动的门槛 = 本地�
 - 按文件显式暂存（`git add <file>`）；避免 `git add -A`。
 - 实际提交风格：主题行可选 `type(scope):` 前缀——类型如 `fix` / `feat` / `test` / `docs` / `refactor`，scope 如 `web` / `tools` / `engine` / `project` / `gateway`。主题行必须使用英文，应写清原因或意图，而非仅陈述表象。合入 `main` 由作者在上游核验后以**合并提交**（promotion merge commit）方式执行，`main` 历史里可见晋级记录（2026-11-19 裁）。
 
+### 工作树生命周期（建树统一 / 清树统一 — 作者裁定 2026-11-19 20:31、20:33）
+
+两条裁定收住一棵工作树的两端，是一对：**建树统一、清树统一**。
+
+1. **建工作树只走统一入口（建树统一）。** 开发用工作树一律由主 checkout 里的
+   `python3 scripts/stand-wt.py new <wtname> [--branch <branch>] [--base feat/base]` 创建。该入口把树放在
+   `<project>/.stand/worktrees/<wtname>/`，校验分支名与对 `feat/base` 的 merge-base，并建出配套的
+   `.stand/tmp/<wtname>/{delivery,evidence}/` 产物根。派发简报或批次**禁止**手写
+   `git worktree add <自选路径>`：手写的树会散落到 `/private/tmp`、`~/stand-wt` 及各种临时路径，而
+   `.stand/worktrees/` 之外的树对 `stand-wt.py list`、对产物清单、对下面的回收全部不可见。
+2. **一支并入即回收该树（合并就清树）。** 分支一旦并入整合线（`feat/base` 或 `main`——分支 tip 已是它的
+   祖先），该支的工作树随这次落支动作立即回收：
+   - 回收动作 = `git worktree remove <path>`，**不加 `--force`**；
+   - 三个前置条件，缺一即**跳过并点名**（不许硬删）：该树 `git status --porcelain` 为空、无进程占用
+     （`lsof +D <path>` 无结果）、无未完成操作（`MERGE_HEAD`、`rebase-*`、`CHERRY_PICK_HEAD`）；
+   - **分支一律保留**——`git branch -d` 属分支退役的另行决定，不属于本规则；
+   - 落支报告里记录：删了哪棵树、回收多少、跳过了哪棵及原因。
+
+第 2 条的闸是 `scripts/check-worktree-cleanup.mjs`，经 `node scripts/run-checks.mjs --profile worktree`
+运行（单列的可选档：留着存量工作树的机器在这条上恒红，这种存量红不许混进 `static` 档）。它把
+`git worktree list --porcelain` 里的每棵链接工作树对 `main` 与 `feat/base` 判定，逐条给出
+`路径 / 分支 / 并入判据`；只有「本机存在可判对象且确有已并入却仍挂着」才 exit `1`；CI 或托管主检出没有
+链接工作树 ⇒ PASS，并明写「无对象可判」。
+
 ### 发布流转
 
 作者批准并晋级经核验的变更至 `main` 后：检出 `main`，在 `main` 上跑完门禁与发布前全量 E2E，全绿后**以快进（fast-forward）方式推送**到 release 线（`release/beta`；`release/stable` 同法），由管线发布对应通道。**所有 release 支都只从 `main` 派生**（`release/beta`、`release/stable` 各自从 `main` 拉出）。发布线只向下游流转，永不合并或回写 `main`；发布问题从 `main` 修复，再按同一路径推进。发布流程的权威正文在 stand-dev 插件包规范面，措辞冲突以规范面为准。
