@@ -348,7 +348,18 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     val llm = ScriptLlm(_ => "RECOVERED-DONE")
     for
       res <- mkResources(system, llm.handle)
-      recorded <- registerRecorder(res, system, "nebula-root")
+      recorded <- Ref.of[IO, List[AgentCommand]](Nil)
+      delivered <- cats.effect.Deferred[IO, Unit]
+      recorder <- system.spawn({
+        lazy val behavior: nebflow.actor.Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand] { msg =>
+          recorded.update(_ :+ msg) *> (msg match
+            case m: AgentCommand.ImmediateInput if m.text.contains("[Node 'rec-a' completed]") => delivered.complete(()).void
+            case _ => IO.unit
+          ).as(behavior)
+        }
+        behavior
+      }, s"rec-c1-${scala.util.Random.nextInt(1000000)}")
+      _ <- res.agentRegistry.update(_ + ("nebula-root" -> AgentRecord("nebula-root", recorder, AgentKind.Root, "nebula-root")))
       rt <- mountProject("bcr-c1", ws, system, res)
       _ = seedTranscript(
         sid,
@@ -358,6 +369,8 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       (trig, trigger) <- triggerRecorder
       actions <- ProjectCrashRecovery.recoverProject(rt, trigger = trigger)
       _ <- waitUntil(20.seconds)(byName(rt, "rec-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      _ <- delivered.get.timeout(20.seconds)
+      _ <- waitUntil(20.seconds)(byName(rt, "rec-a").map(_.nebulaDeliveredAt.isDefined))
       a <- byName(rt, "rec-a")
       reqs <- llm.fullReqs.get
       turns <- llm.lastTurns.get
