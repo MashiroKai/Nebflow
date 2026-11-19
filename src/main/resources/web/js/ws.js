@@ -98,6 +98,20 @@ export function setDurableTaskFrameObserver(fn) { durableTaskFrameObserver = fn;
 let askFrameSink = null;
 export function setAskFrameSink(fn) { askFrameSink = fn; }
 
+// 第二消费者注册面（gitviz 分支管理问答，2026-11-19）：`ask-` 拦截面此前是**单点**
+// 槽位（askDock 独占 setAskFrameSink）。分支管理问答是同一族 `ask-` 会话的第二个
+// 独立消费者（它只吃 `ask-gv-` 前缀的帧），把槽位改成单点会被后注册者顶掉 ——
+// 因此并列一条**多播**注册面：setAskFrameSink 仍是主消费者（canvas ask dock，行为
+// 逐字不变），addAskFrameSink 追加旁听者，返回注销器。两者都跑完才 return，所以
+// 旁听者不能吃掉主消费者的帧。
+const askFrameSinks = new Set();
+/** @param {(msg:any)=>void} fn @returns {() => void} 注销器 */
+export function addAskFrameSink(fn) {
+  if (typeof fn !== 'function') return () => {};
+  askFrameSinks.add(fn);
+  return () => { askFrameSinks.delete(fn); };
+}
+
 // ── Hidden-view render gating ─────────────────────────────────────────────
 // Popup ChatViews (flow / bg-agent / team) have visible === false while their
 // popup is closed. Streaming events for hidden views are dispatched with
@@ -1547,8 +1561,12 @@ export function connect() {
       // (ask-* sessionIds are never the active main session; handled BEFORE
       // the session filter so the dock lane never touches the main view.)
       if (msg.sessionId && typeof msg.sessionId === 'string' && msg.sessionId.startsWith('ask-')
-          && askFrameSink) {
-        try { askFrameSink(msg); } catch (e) { console.error('[ws] ask handler error for', msg.type, ':', e.message); }
+          && (askFrameSink || askFrameSinks.size)) {
+        try { askFrameSink?.(msg); } catch (e) { console.error('[ws] ask handler error for', msg.type, ':', e.message); }
+        // 旁听者（gitviz 分支管理问答）：各自只吃自己前缀的会话，异常不得影响主消费者。
+        for (const fn of askFrameSinks) {
+          try { fn(msg); } catch (e) { console.error('[ws] ask旁听 error for', msg.type, ':', e.message); }
+        }
         setActiveView(savedView);
         return;
       }
