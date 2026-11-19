@@ -13,7 +13,7 @@
 // 对该形态**结构性不可达**（上限只在握手失败 `!opened` 那条腿才吃得到）。
 // 于是重连频率与故障持续时间无关，恒定为每 2–3s 一次 —— 正是「一直弹」。
 //
-// 本件把「何时清零」抽成纯函数，好让 tests/ws-backoff.test.mjs 直接用
+// 本件把「何时清零」抽成纯函数，好让 scripts/tests/ws-backoff.test.mjs 直接用
 // node:test 打真值（ws.js 本身带 DOM 副作用，测试无法直接 import）。
 //
 // 语义（与 ws.js 的接线一一对应）：

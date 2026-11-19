@@ -22,7 +22,7 @@ import { probeNearPath } from './nearpath.js';
 import { refreshAutoBinding, deviceClientId } from './deviceIdentity.js';
 // 断连风暴修复批（2026-11-04 作者报障「一直弹 连接断开 正在重连」）：退避的
 // 「何时归零」抽成纯件——flap（握手成功但几秒必死）不得再清零退避。纯逻辑、
-// 零依赖叶子（零环），机制级判据见 tests/ws-backoff.test.mjs。
+// 零依赖叶子（零环），机制级判据见 scripts/tests/ws-backoff.test.mjs。
 import {
   backoffDelayMs,
   attemptsAfterClose,
@@ -33,7 +33,7 @@ import {
 // 弹窗回跳批（2026-11-05 作者报障「老是有弹窗然后重新进控制台」）：整页重座
 // 导航目标解析——卡窗契约（`card-window=1&path&title`）在重座全程守恒，独立
 // 卡窗不被重座升级成整控制台。纯逻辑、零依赖叶子（零环），判据见
-// tests/reseat-target.test.mjs。
+// scripts/tests/reseat-target.test.mjs。
 import { readReseatContext, resolveReseatTarget } from './reseatTarget.js';
 
 // Long-lived token cookie name follows the brand namespace. This is one of

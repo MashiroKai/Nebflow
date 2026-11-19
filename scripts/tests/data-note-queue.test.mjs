@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
 function rig() {
-  const src = readFileSync(new URL('../src/main/resources/web/js/askDock.js', import.meta.url), 'utf8');
+  const src = readFileSync(new URL('../../src/main/resources/web/js/askDock.js', import.meta.url), 'utf8');
   const section = src.slice(src.indexOf("const NOTE_DRAFT_PREFIX ="), src.indexOf('function isNoteOpen()'));
   const timers = new Map(), sent = [], statuses = [], storage = new Map(), requested = [];
   let next = 0;

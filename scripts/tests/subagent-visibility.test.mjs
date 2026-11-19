@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-const web = new URL('../src/main/resources/web/js/', import.meta.url);
+const web = new URL('../../src/main/resources/web/js/', import.meta.url);
 const source = name => readFileSync(new URL(name, web), 'utf8');
 const revisionSource = source('subagentRevision.js').replace(/export /g, '');
 

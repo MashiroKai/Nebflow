@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import {
   ATTACHMENT_ENTRY_CAP, REF_INLINE_CAP, alignLedger, attachmentFromMeta, attachmentMeta, entriesOverCap, payloadOf, signatureOf,
   unreferencedKeys,
-} from '../src/main/resources/web/js/input/historyLedger.js';
+} from '../../src/main/resources/web/js/input/historyLedger.js';
 
 const slot = (text, extra = {}) => ({ s: signatureOf(text), ...extra });
 

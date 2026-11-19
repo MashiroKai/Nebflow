@@ -6,13 +6,13 @@
       "requirement": "FRB-REQ-002",
       "scenario": "FRB-SCN-003",
       "implementation": ["src/main/resources/web/js/projectTab.js", "openspec/changes/frontend-project-panorama-retirement/proposal.md", "openspec/changes/frontend-project-panorama-retirement/design.md", "openspec/changes/frontend-project-panorama-retirement/tasks.md", "openspec/changes/frontend-project-panorama-retirement/specs/project-panorama-retirement/spec.md", "openspec/changes/frontend-project-panorama-retirement/trace.json"],
-      "tests": [{"path": "tests/project-agents-md.spec.mjs", "name": "FRB-SCN-003 project title and FAB cannot open retired panorama"}, {"path": "tests/project-retirement.test.mjs", "name": "FRB-SCN-003 project list does not expose panorama"}]
+      "tests": [{"path": "tests/project-agents-md.spec.mjs", "name": "FRB-SCN-003 project title and FAB cannot open retired panorama"}, {"path": "scripts/tests/project-retirement.test.mjs", "name": "FRB-SCN-003 project list does not expose panorama"}]
     },
     {
       "requirement": "FRB-REQ-003",
       "scenario": "FRB-SCN-004",
       "implementation": ["src/main/scala/nebflow/core/processor/TaskStuckWatcher.scala"],
-      "tests": [{"path": "tests/project-retirement.test.mjs", "name": "FRB-SCN-004 watcher retains other scans but not done-board"}]
+      "tests": [{"path": "scripts/tests/project-retirement.test.mjs", "name": "FRB-SCN-004 watcher retains other scans but not done-board"}]
     }
   ]
 }

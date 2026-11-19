@@ -22,23 +22,23 @@
           "name": "FCC-SCN-001 recall survives a reload: the payload comes back from the browser store"
         },
         {
-          "path": "tests/chat-composer-repair.test.mjs",
+          "path": "scripts/tests/chat-composer-repair.test.mjs",
           "name": "FCC-SCN-001 attachment metadata drops the payload and keeps what is needed to send the attachment again"
         },
         {
-          "path": "tests/chat-composer-repair.test.mjs",
+          "path": "scripts/tests/chat-composer-repair.test.mjs",
           "name": "FCC-SCN-001 attachments are rebuilt in the shape the composer and the send path use"
         },
         {
-          "path": "tests/chat-composer-repair.test.mjs",
+          "path": "scripts/tests/chat-composer-repair.test.mjs",
           "name": "FCC-SCN-001 only the newest entries keep attachments once a cap is crossed"
         },
         {
-          "path": "tests/chat-composer-repair.test.mjs",
+          "path": "scripts/tests/chat-composer-repair.test.mjs",
           "name": "FCC-SCN-001 a reference with a long text keeps the text with the payloads and a short one keeps it in the ledger"
         },
         {
-          "path": "tests/chat-composer-repair.test.mjs",
+          "path": "scripts/tests/chat-composer-repair.test.mjs",
           "name": "FCC-SCN-001 the sweep keeps the payloads of an entry that was recorded while the key listing was in flight"
         }
       ]
@@ -59,23 +59,23 @@
           "name": "FCC-SCN-002 legacy text-only history and lost payloads are reported and never sent hollow"
         },
         {
-          "path": "tests/chat-composer-repair.test.mjs",
+          "path": "scripts/tests/chat-composer-repair.test.mjs",
           "name": "FCC-SCN-002 a ledger that matches the text list from the tail keeps its attachments"
         },
         {
-          "path": "tests/chat-composer-repair.test.mjs",
+          "path": "scripts/tests/chat-composer-repair.test.mjs",
           "name": "FCC-SCN-002 a text appended by an older build breaks the match: older entries come back text-only, never mispaired"
         },
         {
-          "path": "tests/chat-composer-repair.test.mjs",
+          "path": "scripts/tests/chat-composer-repair.test.mjs",
           "name": "FCC-SCN-002 legacy history without any ledger yields one text-only slot per entry"
         },
         {
-          "path": "tests/chat-composer-repair.test.mjs",
+          "path": "scripts/tests/chat-composer-repair.test.mjs",
           "name": "FCC-SCN-002 text signatures separate different texts and are stable"
         },
         {
-          "path": "tests/chat-composer-repair.test.mjs",
+          "path": "scripts/tests/chat-composer-repair.test.mjs",
           "name": "FCC-SCN-002 trimming the text list from the front keeps the newest entries paired"
         }
       ]
