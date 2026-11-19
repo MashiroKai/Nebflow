@@ -73,6 +73,9 @@ export const CHECKS = [
     ['local-coupling', 'check-local-coupling'], ['tag-format', 'check-tag-format'],
     ['evidence-manifests', 'check-evidence-manifests'], ['scala-layers', 'check-scala-layers'],
     ['dispatcher-seal', 'check-dispatcher-seal'],
+    // dispatcher 重设计 P0「抽件」外壳闸（2026-11-19）：只断言子会话原语的
+    // 抽取面 + 单源（行为断言在 Scala 行为闸 SubagentPrimitiveSpec.scala）。
+    ['subagent-primitives', 'check-subagent-primitives'],
     ['node-stuck-notify', 'check-node-stuck-notify'],
     ['delegate-mode-slot', 'check-delegate-mode-slot'],
     ['perm-presentation', 'check-perm-presentation'],
