@@ -504,6 +504,12 @@ object GatewayMain extends IOApp:
       // enforces the evidence-temp TTL at boot, so expired inactive batches pile
       // up until the next restart.
       nebflow.shared.EvidenceTempSweep.launch(24.hours).start.void *>
+      // 交付产物的 7 天 TTL 自动触发（作者 2026-11-16 令，2026-11-19 追问接线）：
+      // 启动腿 + 周期腿驱动 `scripts/stand-wt.py clean --apply --ttl-days 7`
+      // （清扫语义单源在该脚本；本腿只决定何时跑，与 EvidenceTempSweep 同形）。
+      // 启动腿 `.start`（fire-and-forget）：子进程绝不允许拖住 boot。
+      nebflow.shared.WorkspaceTmpSweep.sweepOnce().start.void *>
+      nebflow.shared.WorkspaceTmpSweep.launch(24.hours).start.void *>
       // Team #11 ④: log which Windows toolchain pieces (Git Bash / rg)
       // resolved at boot — missing pieces must be loud up front, not discovered
       // later inside a failing tool call. No-op off Windows.

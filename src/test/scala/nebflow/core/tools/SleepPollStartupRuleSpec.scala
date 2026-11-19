@@ -174,8 +174,10 @@ class SleepPollStartupRuleSpec extends FunSuite:
     val plain = NodeEngine.protocolFootnoteFor(None, includeOutputRule = false)
     assert(!plain.contains(Defaults.OutputBlockRule) && !plain.contains("<output>"), s"no output rule may remain: $plain")
     assert(
-      plain.contains(s"${Defaults.PluginDiscoveryLine}\n\n${NodeEngine.ProtocolFootnote.take(20)}"),
-      "discovery line keeps exactly one blank line before the baseline footnote"
+      plain.contains(
+        s"${Defaults.PluginDiscoveryLine}\n\n${Defaults.DeliveryLandingLine}\n\n${NodeEngine.ProtocolFootnote.take(20)}"
+      ),
+      "discovery line → artifact-landing line → baseline footnote, each separated by exactly one blank line"
     )
     assert(plain.endsWith(NodeEngine.ProtocolFootnote), "identity pin intact (NodeChainAttributionSpec anchor)")
     // verifier 附录腿两态同构

@@ -135,6 +135,15 @@ object Defaults:
   val PluginDiscoveryLine: String = PromptCatalog.Shared.PluginDiscoveryLine
 
   /**
+   * 交付落点纪律行（worktree 与过程产物落点单点；作者 2026-11-16 令 + 2026-11-19
+   * 追问「提示词和机制都要落实」）。注入面（同源单点，勿散落复制）：delegate brief
+   * （`DelegateTool.assembleBrief`）与节点 ProtocolFootnote 前缀
+   * （`NodeEngineContract.protocolFootnoteFor`）——两个**会产生过程产物的启动面**。
+   * 单行形态与 [[PluginDiscoveryLine]] 同族（`[artifacts]` 前缀戳，模型扫读即识别）。
+   */
+  val DeliveryLandingLine: String = PromptCatalog.Shared.DeliveryLandingLine
+
+  /**
    * output 块语法批（作者令 2026-10-31 16:13，16:16 修订标签式）：用户可见输出
    * 铁律单点。只有 `<output>...</output>` 成对标签包裹的内容会呈现给用户——
    * 框外（推理、工具叙述、机器面细节）默认一概摘除不显示，用户点开角标才见
