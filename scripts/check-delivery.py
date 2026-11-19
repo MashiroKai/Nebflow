@@ -63,7 +63,18 @@ def main():
             if not manifest.is_file():
                 raise ValueError(f'missing {manifest}; create artifact directories and run stand-wt.py audit {directory.name}')
             rows = manifest.read_text(encoding='utf-8').splitlines()
-            if directory.is_symlink() or any(not (directory / part).is_dir() or (directory / part).is_symlink() for part in ('delivery', 'evidence')):
+            # A batch legitimately uses only one of the two faces: a pure-audit batch
+            # has evidence/ and no delivery/ (nothing is shipped), a shipping batch may
+            # have delivery/ alone. So at least ONE of them must exist as a real
+            # directory — and any entry that DOES exist must be a real directory too
+            # (a symlink or a plain file of that name is still refused, exactly as
+            # before; the rglob guard below refuses links anywhere in the tree).
+            # Everything else here is unchanged: MANIFEST.md must exist and match the
+            # inventory byte for byte, un-admitted artifacts past seven days stay red.
+            targets = [directory / part for part in ('delivery', 'evidence')]
+            if directory.is_symlink() \
+                    or not any(p.is_dir() and not p.is_symlink() for p in targets) \
+                    or any(p.is_symlink() or (p.exists() and not p.is_dir()) for p in targets):
                 raise ValueError('missing or unsafe artifact directory')
             entries = list(directory.rglob('*'))
             if any(p.is_symlink() for p in entries):
