@@ -662,6 +662,14 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
       assertEquals(proxied > 0, get == 200, s"$name: tool-side green and fetch-leg green must agree")
     }
 
+  test("credential host smoke: isolated seed has credential-file shape".tag(munit.Tag("host-smoke"))):
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for filesystem smoke")
+    IO {
+      assert(Files.isRegularFile(credentialSeed))
+      assert(NfFilePolicy.NfPathPolicy.inodeKey(credentialSeed).nonEmpty)
+      assertEquals(credentialSeed.getParent.getFileName.toString, "secrets")
+    }
+
   test("G. equivalence (refusal leg): a HARD LINK to a credential inode — tool gate and endpoint agree"):
     val policy = NfFilePolicy.NfPathPolicy.current()
     val target = credentialSeed
