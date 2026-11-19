@@ -39,6 +39,13 @@ block.
 is exactly the failure mode that produced the incident — the bypass surface is closed by
 identity, never by a wider word list.
 
+*Spec delta note:* `CAE-REQ-101` revises the target-gate wording of `CAE-REQ-001` — the criterion
+is document identity, not a spelling blacklist. This note lives here rather than in the
+requirement body because the OpenSpec validator caps a requirement text at 500 characters and
+this sentence is a cross-reference, not a criterion; the normalisation and identity definitions
+it used to carry in parentheses moved into `CAE-SCN-101`'s WHEN line, where the spellings are
+already enumerated.
+
 *Residual risk:* this is an application-level identity check, not an OS sandbox; the window
 between verdict and write is covered by the existing snapshot/stale discipline, not by this
 change.
