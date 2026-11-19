@@ -16,7 +16,7 @@ New development branches SHALL use feat/* or bug/* and derive from feat/base, ex
 
 ### Requirement: [BG-REQ-002] Downstream release flow
 
-The author SHALL promote verified main changes to release/beta and, after beta verification, to release/stable. Release automation SHALL select the corresponding channel on those branches and SHALL NOT write changes back to main.
+The author SHALL derive every release branch — release/beta, release/stable, and any future release/* — from the promoted main only; no release branch SHALL be derived from another release branch. Release automation SHALL select the corresponding channel on those branches and SHALL NOT write changes back to main.
 
 #### Scenario: [BG-SCN-003] Release branch routing
 
