@@ -18,6 +18,11 @@
 //       归属该文件的 hunkId，且**不产生第 1 文件的任何动作**
 //   G7  canvas 适配（req3）：真实容器链（.canvas-tab-pane>.fcv-view>.fcv-dvhost）在
 //       多档面板宽度下 —— 无横滚死路、纵向可滚（非静默裁切）、四边不越界、几何可复算
+//   G8  canvas 特质（2026-11-19 作者令「diff 怎么没看见 canvas 相关的特质？顶部的
+//       标题呢？…全部接受或者拒绝可以做成 canvas 右下角的控件…逐块接受的样式也要
+//       参考 canvas 的控件风格」）：顶部标题 = canvas 头部 chrome；全部钮 = 右下角玻璃
+//       胶囊组且与编辑面零交叠；控件带为流内（零第二定位层 = 与悬浮控件的共存规则）；
+//       逐块钮与带成员同档；canvas 阅读面标题 chrome 同族在场
 //
 // 运行：node tests/diff-review-ui.spec.mjs
 // 可选 env：WEB_DIR（红面 = 指向基线树）、PORT（默认 8331）、SHOTS_DIR。
@@ -389,6 +394,76 @@ try {
   const stable = canvasReads.every((r) => Math.abs(r.dvWidth - r.hostWidth) < 0.75);
   ok('G7f canvas 面：面板宽度变化下几何稳定（组件宽逐值 === 宿主宽）', stable,
     JSON.stringify(canvasReads.map((r) => ({ dv: +r.dvWidth.toFixed(2), host: +r.hostWidth.toFixed(2) }))));
+
+  // ══ G8 canvas 特质（作者令 2026-11-19「这 diff 肯定也是在 canvas 进行操作，但是
+  //    怎么没看见 canvas 相关的特质？顶部的标题呢？…一次全部接受或者拒绝，可以做成
+  //    canvas 右下角的控件。然后逐块接受的样式也要参考 canvas 的控件风格」）══════
+  await page.evaluate(() => window.__showPage('review'));
+  await page.waitForTimeout(150);
+  const chrome = await page.evaluate(() => {
+    const root = document.getElementById('page-review');
+    const dv = root.querySelector('.nf-dv');
+    const pill = root.querySelector('.nf-dv-title');
+    const bar = root.querySelector('.nf-dv-allbar');
+    const group = root.querySelector('.nf-dv-allgroup');
+    const editor = root.querySelector('.nf-dv-editor');
+    const chunk = root.querySelector('.nf-dv-chunkbtn-accept');
+    const all = root.querySelector('.nf-dv-accept-all');
+    const cs = (el) => (el ? getComputedStyle(el) : null);
+    const r = (el) => (el ? el.getBoundingClientRect() : null);
+    const glass = (s) => (s ? (s.backdropFilter && s.backdropFilter !== 'none' ? s.backdropFilter : (s.webkitBackdropFilter || 'none')) : 'none');
+    const dvr = r(dv), pr = r(pill), br = r(bar), er = r(editor);
+    const pcs = cs(pill), bcs = cs(bar), gcs = cs(group), ccs = cs(chunk), acs = cs(all);
+    return {
+      headPresent: !!root.querySelector('.nf-dv-head .nf-dv-title'),
+      titleText: pill ? pill.textContent : '',
+      headCenter: pr && dvr ? +(((pr.left + pr.right) / 2) - ((dvr.left + dvr.right) / 2)).toFixed(2) : null,
+      pillGlass: glass(pcs), pillRadius: pcs ? pcs.borderRadius : '',
+      barPresent: !!bar, groupPresent: !!group,
+      barPosition: bcs ? bcs.position : '', groupPosition: gcs ? gcs.position : '',
+      groupGlass: glass(gcs), groupRadius: gcs ? gcs.borderRadius : '',
+      bandBtns: root.querySelectorAll('.nf-dv-allbar .nf-dv-allbtn').length,
+      bandRightGap: br && dvr ? +(dvr.right - br.right).toFixed(2) : null,
+      bandBottomGap: br && dvr ? +(dvr.bottom - br.bottom).toFixed(2) : null,
+      bandOverlapsEditor: !!(br && er) ? !(br.right <= er.left || br.left >= er.right || br.bottom <= er.top || br.top >= er.bottom) : null,
+      chunkH: ccs ? ccs.minHeight : '', allH: acs ? acs.minHeight : '',
+      chunkRadius: ccs ? ccs.borderRadius : '', allRadius: acs ? acs.borderRadius : '',
+      chunkHoverScale: ccs ? ccs.getPropertyValue('--nf-dv-ctl-hover-scale').trim() : '',
+      allHoverScale: acs ? acs.getPropertyValue('--nf-dv-ctl-hover-scale').trim() : '',
+      // canvas 阅读面（req3）的标题 chrome：真实容器链里的 .fcv-headpill（同一 chrome）。
+      canvasPillGlass: glass(cs(document.querySelector('#page-canvas .fcv-headpill'))),
+      canvasPillRadius: (document.querySelector('#page-canvas .fcv-headpill') && getComputedStyle(document.querySelector('#page-canvas .fcv-headpill')).borderRadius) || '',
+    };
+  });
+  ok('G8a review 面补 canvas 顶部标题：居中玻璃胶囊 + 文件名/计数/状态文本在场',
+    chrome.headPresent && chrome.titleText.includes('src/app/main.ts') && chrome.titleText.includes('+3 −2')
+      && chrome.titleText.includes('2 块待审') && chrome.pillGlass !== 'none' && Math.abs(chrome.headCenter) <= 1,
+    JSON.stringify({ head: chrome.headPresent, text: chrome.titleText, glass: chrome.pillGlass, center: chrome.headCenter }));
+
+  ok('G8b 全部接受/全部拒绝落 canvas 右下角控件带（玻璃胶囊组 + 组内恰 2 钮）',
+    chrome.barPresent && chrome.groupPresent && chrome.bandBtns === 2
+      && chrome.groupGlass !== 'none' && chrome.groupRadius === '999px',
+    JSON.stringify({ bar: chrome.barPresent, group: chrome.groupPresent, btns: chrome.bandBtns, glass: chrome.groupGlass, radius: chrome.groupRadius }));
+
+  ok('G8c 控件带落位 = 容器右下角（右缘/底缘贴齐）且与编辑面零交叠',
+    chrome.bandRightGap !== null && Math.abs(chrome.bandRightGap) <= 1
+      && chrome.bandBottomGap !== null && Math.abs(chrome.bandBottomGap) <= 1
+      && chrome.bandOverlapsEditor === false,
+    JSON.stringify({ rightGap: chrome.bandRightGap, bottomGap: chrome.bandBottomGap, overlaps: chrome.bandOverlapsEditor }));
+
+  ok('G8d 与既有 canvas 右下角控件的共存规则：本带为流内控制带（零 position 第二定位层）',
+    chrome.barPosition === 'static' && chrome.groupPosition === 'static',
+    JSON.stringify({ bar: chrome.barPosition, group: chrome.groupPosition }));
+
+  ok('G8e 逐块接受/拒绝与控件带成员同档（尺寸/圆角/动效节拍逐值相等）',
+    chrome.chunkH !== '' && chrome.chunkH === chrome.allH
+      && chrome.chunkRadius !== '' && chrome.chunkRadius === chrome.allRadius
+      && chrome.chunkHoverScale !== '' && chrome.chunkHoverScale === chrome.allHoverScale,
+    JSON.stringify({ chunkH: chrome.chunkH, allH: chrome.allH, chunkR: chrome.chunkRadius, allR: chrome.allRadius, scale: chrome.chunkHoverScale }));
+
+  ok('G8f canvas 阅读面标题 chrome（.fcv-headpill）同族玻璃胶囊在场',
+    chrome.canvasPillGlass !== 'none' && chrome.canvasPillRadius === '999px',
+    JSON.stringify({ glass: chrome.canvasPillGlass, radius: chrome.canvasPillRadius }));
 
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.waitForTimeout(150);

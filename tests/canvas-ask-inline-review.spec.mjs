@@ -177,8 +177,14 @@ const reviewOf = (page, sid) => page.evaluate((tabId) => {
   const dv = pane.querySelector('.nf-dv');
   return {
     open: true,
-    head: (pane.querySelector('.nf-ar-file') || {}).textContent || '',
-    counts: (pane.querySelector('.nf-ar-counts') || {}).textContent || '',
+    // canvas 特质批（2026-11-19 作者令「diff 怎么没看见 canvas 相关的特质？顶部的
+    // 标题呢？」）：审阅面的顶部标题由共享组件按 canvas 头部 chrome 渲染（单源）
+    // ⇒ 同义重锚 `.nf-ar-file` / `.nf-ar-counts` → `.nf-dv-title-file` /
+    // `.nf-dv-title-counts` / `.nf-dv-title-status`（断言条数不减、语义不变，
+    // 并补上旧名里承诺过但旧读数未覆盖的「N 块待审」状态段）。
+    head: (pane.querySelector('.nf-dv-title-file') || {}).textContent || '',
+    counts: (pane.querySelector('.nf-dv-title-counts') || {}).textContent || '',
+    status: (pane.querySelector('.nf-dv-title-status') || {}).textContent || '',
     hasEditor: !!pane.querySelector('.cm-editor'),
     ctx: txt('.cm-line:not(.cm-changedLine)'),
     dels: txt('.cm-deletedLine'),
@@ -249,9 +255,10 @@ try {
   await page.waitForSelector(`.canvas-tab-pane[data-tab-id="askreview:${sid}"]`, { timeout: 5000 });
   await sleep(200);
   let rv = await reviewOf(page, sid);
-  ok('R1a 审阅页签开：文件标签 notes.md + 全量计数 +2 −1 · 1 块待审',
-    rv.open && rv.head.includes('notes.md') && rv.counts.includes('+2') && rv.counts.includes('−1'),
-    JSON.stringify({ head: rv.head, counts: rv.counts }));
+  ok('R1a 审阅页签开：canvas 头部标题（文件名 notes.md + 全量计数 +2 −1 + 审阅状态 1 块待审）',
+    rv.open && rv.head.includes('notes.md') && rv.counts.includes('+2') && rv.counts.includes('−1')
+      && rv.status.includes('1 块待审'),
+    JSON.stringify({ head: rv.head, counts: rv.counts, status: rv.status }));
   ok('R1b 原文档全文在场（ctx = alpha/gamma 基线行）',
     rv.open && rv.ctx.includes('alpha') && rv.ctx.includes('gamma'), JSON.stringify(rv.ctx));
   ok('R1c 就地增删：del 1（− beta）、add 2（+ BETA / + DELTA）',
