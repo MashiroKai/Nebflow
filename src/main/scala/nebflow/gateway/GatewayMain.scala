@@ -844,6 +844,15 @@ object GatewayMain extends IOApp:
                                     executionCommitPort = executionAuthority,
                                     subAgentTaskStore = protectedTaskStore
                                   )
+                                  // kernel-spec 批（2026-11-19，K6）：统一内核的 usage
+                                  // 落账点接上真实 store —— 辅助腿（插件分配 / 决策卡判官）
+                                  // 的用量自此进 `usage-records.jsonl`（审计 V2 的可观测性
+                                  // 缺口：批前辅腿在 usage-records 与 cache-attribution
+                                  // 两处均 0 条）。未接（测试夹具 / 降级装配）= 只落进程内
+                                  // 两账，零回归兜底（同 `LlmRuntimePort` 先例）。
+                                  nebflow.llm.kernel.LlmKernel.UsageSink.install(
+                                    sharedResources.usageRecordStore.record
+                                  )
                                   // ── provider 并发占坑装配（provider-concurrency 批，2026-11-06）──
                                   // ① 终态释放钩子：actor 退出的唯一收尸点 = actorLoop.guarantee
                                   //   （正常自停 / 外部 stop / 崩溃 / TTL / cancel 全走它）；钩子

@@ -4,7 +4,8 @@ import cats.effect.IO
 import cats.effect.unsafe.implicits.global
 import io.circe.{Json, JsonObject}
 import munit.FunSuite
-import nebflow.llm.SendMessageParams
+import nebflow.llm.kernel.{KernelCallSites, LlmKernel}
+import nebflow.llm.{CacheBreakpoints, ModelCandidate, SendMessageParams}
 import nebflow.shared.*
 
 import scala.collection.mutable
@@ -324,5 +325,151 @@ class CachePrefixAssemblySpec extends FunSuite:
           s"actual wire must carry the reminder AFTER the breakpoint (streaming=$streaming)"
         )
       finally server.stop(0)
+
+  // ── ⑦ K3（kernel-spec 批 2026-11-19）：单发腿断点三态 ──────────────────
+  //
+  // 单发腿（插件分配 / 决策卡判官 / 健康探针）的正文**逐发变化**，所以断点只能钉在
+  // 可复用的稳定前缀上；前缀低于供应商最小可缓存长度时**一个断点都不许钉**
+  // （K3：「断点必须落在最后一条可复用块上；前缀 < 供应商最小可缓存长度时不打断点
+  // ——避免空转写」）。三态由 `SendMessageParams.cacheBreakpoints` 声明；缺省
+  // `Conversation` = 本批前逐字行为（C1–C4 那一组判据钉的就是它）。
+
+  test("⑦ K3: single-shot legs — StablePrefix marks only the stable prefix, None_ marks nothing, Conversation is untouched"):
+    val base =
+      SendMessageParams(
+        messages = List(userText("varying task brief v1")),
+        model = "glm-5.3-flash",
+        tools = Some(List(ToolDefinition("Read", "read a file", JsonObject.empty))),
+        systemStable = Some("STABLE-SYSTEM-PROMPT")
+      )
+
+    val conversationBody = anthropic.bodyOf(base, streaming = false)
+    val conversation     = blocksOf(conversationBody)
+    assertEquals(
+      countMarkersDeep(conversationBody),
+      3,
+      "Conversation = stable system + last tool + persisted history tail (C1–C4 原状)"
+    )
+    assertEquals(markedIndex(conversation), conversation.length - 1)
+
+    val stableBody = anthropic.bodyOf(base.copy(cacheBreakpoints = CacheBreakpoints.StablePrefix), streaming = false)
+    assertEquals(countMarkersDeep(stableBody), 2, "StablePrefix = stable system + last tool only")
+    assertEquals(markedIndex(blocksOf(stableBody)), -1, "the varying body must never be marked (K3 可复用块判据)")
+
+    val noneBody = anthropic.bodyOf(base.copy(cacheBreakpoints = CacheBreakpoints.None_), streaming = false)
+    assertEquals(
+      countMarkersDeep(noneBody),
+      0,
+      "below the vendor minimum the wire carries no cache_control at all (no idle write)"
+    )
+    // 非缺省形态只差 marker 元数据：剥 marker 后消息块与缺省形态逐字节同形
+    assertEquals(stripMarkers(blocksOf(noneBody)), stripMarkers(conversation))
+
+  // ── ⑧ K3/B2（2026-11-19）：辅腿新形态 —— 常量前导在 system、正文在 user ──
+
+  test("⑧ K3/B2: the auxiliary allocator leg's new shape puts the constant preamble in `system` and keeps it out of `messages`"):
+    val preamble =
+      "You are auditing task dispatch in an agent-orchestration platform. Below are (1) one dispatched node task brief."
+    val body = "=== TASK BRIEF ===\nTASK-1: deliver the batch\n=== INSTALLED PLUGIN CAPABILITY CATALOG ===\n### pkg"
+    val call = LlmKernel.KernelCall(
+      site = nebflow.llm.kernel.KernelCallSites.PluginAlloc,
+      systemPrefix = LlmKernel.SystemPrefix.Stable(preamble),
+      messages = List(userText(body)),
+      source = LlmKernel.CandidateSource.SmallLlmModel,
+      cacheBreakpoints = CacheBreakpoints.None_
+    )
+    val candidate = ModelCandidate(
+      providerId = "p",
+      provider = ProviderConfig("https://x", "k", LlmProtocol.Anthropic),
+      model = "m"
+    )
+    val params  = LlmKernel.assemble(call, candidate)
+    val wire    = anthropic.bodyOf(params, streaming = false)
+    val system  = wire.hcursor.downField("system").focus.map(_.asArray.getOrElse(Vector.empty)).getOrElse(Vector.empty)
+    val sysText = system.flatMap(_.hcursor.get[String]("text").toOption).mkString("\n")
+    assert(sysText.contains(preamble), "the constant preamble must ride in the `system` field")
+    assert(
+      !blocksOf(wire).exists(_.hcursor.get[String]("text").toOption.exists(_.contains(preamble.take(60)))),
+      "the constant preamble must NOT also ride in the user body (one copy only)"
+    )
+
+  // ── ⑨ K4（kernel-spec 批 2026-11-19）：装配单点下「只临时段变化」的跨发持久块不变 ──
+  // 契约 spec（`nebflow.llm.kernel.LlmKernelContractSpec` K4）只断言到 params 层
+  // （临时段永不进 messages）；wire 级判据（断点落在**最后一条持久块**、跨发逐块
+  // 不变、临时尾长稳定）需要 `AnthropicAdapter.bodyOf` 的包内访问权 ⇒ 落本 spec。
+
+  test("⑨ K4: two kernel-assembled calls differing only in the ephemeral tail keep the persisted boundary byte-identical"):
+    val candidate = ModelCandidate(
+      providerId = "p",
+      provider = ProviderConfig("https://x", "k", LlmProtocol.Anthropic),
+      model = "m"
+    )
+    def body(turn: Int): Json =
+      val call = LlmKernel.KernelCall(
+        site = KernelCallSites.PluginAlloc,
+        systemPrefix = LlmKernel.SystemPrefix.Stable("STABLE-SYSTEM"),
+        messages = List(userText("persistent body")),
+        source = LlmKernel.CandidateSource.SmallLlmModel,
+        requestOnlyContext = List(contextReminder(s"reminder turn $turn")),
+        systemDynamic = Some(s"epoch_ms ${1793970000000L + turn}")
+      )
+      anthropic.bodyOf(LlmKernel.assemble(call, candidate), streaming = false)
+
+    val b1     = blocksOf(body(1))
+    val b2     = blocksOf(body(2))
+    val marked = markedIndex(b1)
+    assert(marked >= 0, "the persisted tail must carry the breakpoint")
+    assertEquals(
+      marked,
+      b1.length - 3,
+      "breakpoint sits on the LAST PERSISTED block: reminder + clock ride after it"
+    )
+    // 跨发：上一发持久块在本发逐块不变（临时段两处都变了，前段不动；marker 元数据剥离）
+    b1.take(marked + 1).zipWithIndex.foreach { case (blk, i) =>
+      assertEquals(
+        stripMarker(blk),
+        stripMarker(b2(i)),
+        s"block $i changed although only the ephemeral tail differed (K4 红)"
+      )
+    }
+    assertEquals(b1.length, b2.length, "ephemeral tail length must be stable across turns")
+    assertEquals(b1.drop(marked + 1).size, 2, "the ephemeral tail is reminder-block + clock")
+
+  // ── ⑩ K3 反向解除（作者裁定 2026-11-19 17:22）：分配腿稳定段在 system、正文不钉 ──
+  // 只在**整段**越过供应商最小可缓存长度时才钉断点；其余各腿不变。wire 判据：
+  // 唯一断点落在 system 稳定块（本腿无工具面），消息块一个都不带。
+
+  test("⑩ K3: the allocator leg's StablePrefix shape marks exactly the system stable block and nothing in the body"):
+    val candidate = ModelCandidate(
+      providerId = "p",
+      provider = ProviderConfig("https://x", "k", LlmProtocol.Anthropic),
+      model = "m"
+    )
+    val call = LlmKernel.KernelCall(
+      site = KernelCallSites.PluginAlloc,
+      systemPrefix = LlmKernel.SystemPrefix.Stable("STABLE-SEGMENT"),
+      messages = List(userText("varying brief v1")),
+      source = LlmKernel.CandidateSource.SmallLlmModel,
+      cacheBreakpoints = CacheBreakpoints.StablePrefix
+    )
+    val body = anthropic.bodyOf(LlmKernel.assemble(call, candidate), streaming = false)
+    assertEquals(
+      countMarkersDeep(body),
+      1,
+      "exactly one breakpoint: the system stable block (this leg carries no tools and no dynamic system)"
+    )
+    val system = body.hcursor.downField("system").focus.map(_.asArray.getOrElse(Vector.empty)).getOrElse(Vector.empty)
+    assert(system.nonEmpty, "the stable segment must ride in `system`")
+    val markedSys = system.filter(_.hcursor.downField("cache_control").focus.isDefined)
+    assertEquals(markedSys.size, 1, "exactly one marked system block — the reusable segment")
+    assertEquals(
+      markedSys.head.hcursor.get[String]("text").toOption,
+      Some("STABLE-SEGMENT"),
+      "the breakpoint sits on the stable segment itself, not on the per-request route banner that follows it"
+    )
+    assert(
+      blocksOf(body).forall(_.hcursor.downField("cache_control").focus.isEmpty),
+      "no message block may be marked: the body varies every send, so marking it is an idle write (K3)"
+    )
 
 end CachePrefixAssemblySpec

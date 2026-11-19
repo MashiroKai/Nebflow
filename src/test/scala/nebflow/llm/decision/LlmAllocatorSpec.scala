@@ -5,6 +5,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import munit.CatsEffectSuite
 import nebflow.core.jev.{CatalogEntry, JevAllocation, JevFallbackKind, PluginAllocator}
+import nebflow.llm.kernel.{KernelCallSites, LlmKernel}
 import nebflow.llm.{ModelCandidate, SendMessageParams}
 import nebflow.shared.{LlmProtocol, PathUtil, ProviderConfig}
 
@@ -28,6 +29,14 @@ class LlmAllocatorSpec extends CatsEffectSuite:
 
   override val munitIOTimeout = 120.seconds
 
+  /** 仓根（跨包源码扫描用）：从测试 cwd 逐级上溯到含 `src/main/scala/nebflow` 的那一层。 */
+  private val repoRootPath: os.Path =
+    Iterator
+      .iterate(os.pwd)(_ / os.up)
+      .takeWhile(p => p != p / os.up)
+      .find(p => os.exists(p / "src" / "main" / "scala" / "nebflow"))
+      .getOrElse(throw new AssertionError(s"cannot locate repo root from ${os.pwd}"))
+
   private val catalog = List(
     CatalogEntry("backend-dev", "Scala backend development"),
     CatalogEntry("visual-report", "human-facing reports and decks")
@@ -43,7 +52,13 @@ class LlmAllocatorSpec extends CatsEffectSuite:
 
   private def llm(reply: Option[String], calls: TrieMap[String, String] = TrieMap.empty): LlmAllocator =
     new LlmAllocator(
-      params => IO { calls.update(params.model, params.messages.headOption.map(_.textContent).getOrElse("")); reply },
+      call =>
+        IO {
+          // kernel-spec 批（2026-11-19）：缝的入参自 SendMessageParams 收敛为 KernelCall
+          // ——本腿不再自建 wire 参数、不再自选模型（内核装配 + 内核遍历）。
+          calls.update(call.purpose, call.messages.headOption.map(_.textContent).getOrElse(""))
+          reply.map(r => LlmKernel.KernelReply(r, None, "p", "util-1"))
+        },
       candidate = IO.pure(
         Some(
           ModelCandidate(
@@ -316,17 +331,78 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     }
   }
 
-  test("the llm prompt carries the catalog and the membership rule (state template single source)") {
-    val calls = TrieMap.empty[String, String]
+  test("the llm prompt splits into a constant system block (preamble+headers+catalog) and a varying user body") {
+    val seen = TrieMap.empty[String, LlmKernel.KernelCall]
     withTempDataRoot { _ =>
-      llm(Some("""{"plugins":[]}"""), calls).allocateFor("s", "a visual task", catalog).map { _ =>
-        val prompt = calls("util-1")
-        assert(prompt.contains(LlmAllocator.CatalogHeader), s"catalog header present:\n$prompt")
-        assert(prompt.contains("### visual-report"), "catalog entries rendered")
-        assert(prompt.contains(""""reason": "<brief rationale>""""), "the JSON answer requests a rationale")
+      val leg = new LlmAllocator(
+        call => IO { seen.update(call.purpose, call); Some(LlmKernel.KernelReply("""{"plugins":[]}""", None, "p", "u")) },
+        candidate = IO.pure(Some(cand("p", "u")))
+      )
+      leg.allocateFor("s", "a visual task", catalog).map { _ =>
+        val call = seen("plugin-alloc")
+        val sys  = call.systemPrefix.wireText.getOrElse("")
+        val body = call.messages.head.textContent
+        // 常量段（可复用前缀）在 system：前导 + 两个表头 + 目录
+        assert(sys.startsWith(LlmAllocator.StatePreamble), "the constant preamble opens the stable block")
+        assert(sys.contains(LlmAllocator.BriefHeader), "the brief header rides in the stable block")
+        assert(sys.contains(LlmAllocator.CatalogHeader), s"catalog header in the stable block:\n$sys")
+        assert(sys.contains("### visual-report"), "catalog entries rendered in the stable block")
+        // user 侧只留每次变化的部分 + 规则/答令：不含任何可复用常量
+        assert(body.startsWith("a visual task"), s"the user body opens with the varying brief:\n$body")
+        assert(!body.contains(LlmAllocator.CatalogHeader), "the catalog must not be duplicated inside the user body")
+        assert(!body.contains("### visual-report"), "catalog entries must not be duplicated inside the user body")
+        assert(!body.contains(LlmAllocator.StatePreamble), "the preamble must not be duplicated inside the user body")
+        assert(body.contains("""{"plugins": ["<package-name>", ...]"""), "the JSON answer instruction stays with the brief")
       }
     }
   }
+
+  // ── kernel-spec 批（2026-11-19）：调用描述声明（K2/K7）＋ 常量段整体入 system ──
+
+  test("kernel-spec B2/K2/K7: the leg declares a KernelCall — registered site, Stable(stableBlock), SmallLlmModel source") {
+    val seen = TrieMap.empty[String, LlmKernel.KernelCall]
+    withTempDataRoot { _ =>
+      val leg = new LlmAllocator(
+        call => IO { seen.update(call.purpose, call); Some(LlmKernel.KernelReply("""{"plugins":[]}""", None, "p", "u")) },
+        candidate = IO.pure(Some(cand("p", "u")))
+      )
+      leg.allocateFor("s", "a visual task", catalog).map { _ =>
+        val call = seen("plugin-alloc")
+        assertEquals(call.site, KernelCallSites.PluginAlloc, "K2: the site is registered, not declared ad hoc")
+        assertEquals(
+          call.systemPrefix,
+          LlmKernel.SystemPrefix.Stable(LlmAllocator.stableBlock(catalog)),
+          "B2 (author ruling 2026-11-19 17:22): the whole constant segment is the declared stable prefix"
+        )
+        assertEquals(call.source, LlmKernel.CandidateSource.SmallLlmModel, "K7: the candidate source is explicit")
+      }
+    }
+  }
+
+  test("kernel-spec K3: only the allocator leg un-mutes its breakpoint budget (constant segment crosses the vendor minimum)"):
+    assertEquals(
+      LlmAllocator.AllocBreakpoints,
+      nebflow.llm.CacheBreakpoints.StablePrefix,
+      "the constant segment is above the vendor minimum ⇒ mark the stable prefix (K3 reverse application)"
+    )
+    // 其余各腿**不得**因这次改动被判定为「已配置缓存」：判官腿仍 None_
+    assertEquals(
+      DelegateJudgeMachine.JudgeBreakpoints,
+      nebflow.llm.CacheBreakpoints.None_,
+      "the judge leg's prefix is below the vendor minimum ⇒ no marker (K3 unchanged)"
+    )
+    // 健康探针腿在 llm 包（跨包不可见）⇒ 以源码扫描钉住它仍是 None_
+    val monitor = os.read(
+      repoRootPath / "src" / "main" / "scala" / os.RelPath("nebflow/llm/HealthMonitor.scala")
+    )
+    assert(
+      monitor.contains("cacheBreakpoints = CacheBreakpoints.None_"),
+      "the health-probe leg must stay None_ (its 44-token body is far below the vendor minimum)"
+    )
+    assert(
+      !monitor.contains("cacheBreakpoints = CacheBreakpoints.StablePrefix"),
+      "no other leg may be re-classified as 'cache configured' by this change"
+    )
 
   // ── chainCall：整链遍历调用缝（fail-open 根因修复批 2026-10-29）─────────────
   //
@@ -334,10 +410,15 @@ class LlmAllocatorSpec extends CatsEffectSuite:
   // 恰好挂掉时「主 agent 正常用 llm、兜底腿仍 fail-open」（jev-allocation.jsonl
   // 实证 27 例）。新缝语义：逐候选试，坏候选 WARN 留真因，**全链败才 None**。
 
-  private val paramsFor: SendMessageParams =
-    SendMessageParams(
+  private val paramsFor: LlmKernel.KernelCall =
+    LlmKernel.KernelCall(
+      site = KernelCallSites.PluginAlloc,
+      systemPrefix = LlmKernel.SystemPrefix.Stable(LlmAllocator.StatePreamble),
       messages = List(nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("allocate"))),
-      model = "m-head" // 占位：chainCall 逐候选 copy(model) 覆写，本值不参与断言
+      source = LlmKernel.CandidateSource.SmallLlmModel,
+      maxTokensOverride = Some(nebflow.shared.Defaults.ProbeMaxTokens),
+      retrySameCandidateOnTransportError = true,
+      cacheBreakpoints = LlmAllocator.AllocBreakpoints
     )
 
   private class PerProviderRegistry(adapters: Map[String, nebflow.llm.ProviderAdapter[IO]])
@@ -354,7 +435,7 @@ class LlmAllocatorSpec extends CatsEffectSuite:
       "good" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", attempts)
     ))
     val call = LlmAllocator.chainCall(registry, List(cand("bad", "m-bad"), cand("good", "m-good")))
-    call(paramsFor).map { reply =>
+    call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, Some("""{"plugins":["backend-dev"]}"""), "the chain answered via the second candidate")
       assertEquals(attempts.keySet, Set("m-bad", "m-good"), "both candidates were attempted in order")
     }
@@ -367,7 +448,7 @@ class LlmAllocatorSpec extends CatsEffectSuite:
       "b" -> ScriptedAdapter(Set("m-b"), "", attempts)
     ))
     val call = LlmAllocator.chainCall(registry, List(cand("a", "m-a"), cand("b", "m-b")))
-    call(paramsFor).map { reply =>
+    call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, None, "exhausted chain = None (the caller classifies it as llm-error)")
       assertEquals(attempts.keySet, Set("m-a", "m-b"), "every candidate got its attempt (per-candidate WARNs)")
     }
@@ -379,7 +460,7 @@ class LlmAllocatorSpec extends CatsEffectSuite:
       "good" -> ScriptedAdapter(Set.empty, """{"plugins":[]}""", attempts)
     ))
     val call = LlmAllocator.chainCall(registry, List(cand("ghost", "m-ghost"), cand("good", "m-good")))
-    call(paramsFor).map { reply =>
+    call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, Some("""{"plugins":[]}"""), "the resolvable candidate still answers")
       assertEquals(attempts.keySet, Set("m-good"), "the ghost candidate was skipped, not fatal")
     }
@@ -392,7 +473,7 @@ class LlmAllocatorSpec extends CatsEffectSuite:
       "good" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", attempts)
     ))
     val call = LlmAllocator.chainCall(registry, List(cand("mute", "m-mute"), cand("good", "m-good")))
-    call(paramsFor).map { reply =>
+    call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, Some("""{"plugins":["backend-dev"]}"""), "the empty reply did not become the final answer")
       assertEquals(attempts.keySet, Set("m-mute", "m-good"), "the traversal continued past the mute candidate")
     }
@@ -413,7 +494,7 @@ class LlmAllocatorSpec extends CatsEffectSuite:
         fs2.Stream.raiseError[IO](new RuntimeException("stream face not expected in this spec"))
     val registry = new PerProviderRegistry(Map("slow" -> flaky))
     val call = LlmAllocator.chainCall(registry, List(cand("slow", "m-slow")))
-    call(paramsFor).map { reply =>
+    call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, Some("""{"plugins":["stand-dev"]}"""), "the retry answered")
       assertEquals(calls, 2, "exactly one retry on the same candidate")
     }
@@ -435,7 +516,7 @@ class LlmAllocatorSpec extends CatsEffectSuite:
       "good" -> ScriptedAdapter(Set.empty, """{"plugins":["qa"]}""", attempts)
     ))
     val call = LlmAllocator.chainCall(registry, List(cand("slow", "m-slow"), cand("good", "m-good")))
-    call(paramsFor).map { reply =>
+    call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, Some("""{"plugins":["qa"]}"""), "the healthy candidate still answers")
       assertEquals(calls, 2, "the failing candidate was tried exactly twice (one retry, then move on)")
     }

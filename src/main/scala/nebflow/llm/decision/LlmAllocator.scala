@@ -4,17 +4,24 @@ import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
 import nebflow.core.jev.{CatalogEntry, JevAllocation, JevFallback, JevFallbackKind}
-import nebflow.llm.{ModelCandidate, ProviderRegistry, SendMessageParams}
+import nebflow.llm.kernel.{KernelCallSites, LlmKernel}
+import nebflow.llm.{CacheBreakpoints, ModelCandidate, ProviderRegistry}
 import nebflow.shared.{Defaults, Message, MessageRole, NebflowLogger}
 
 /**
  * LlmAllocator —— **小模型分配腿**（jev-retire 批：JeV 腿退役后唯一分配执行体）.
  *
  * == 机制 ==
- * 单次 LLM 调用（HealthMonitor.SendMessageParams 模式；模型 = 候选链整链遍历
- * ——2026-10-29 fail-open 根因修复，见 companion `candidatesFrom`/`chainCall`；
- * 候选源 = `SchemePolicy.smallLlmModel()`，未配置回退主模型+WARN）。执行次序由
- * [[PluginAllocatorMachine]] 编排；本件只做「task + 目录 → 集合」的一条腿。
+ * 单次 LLM 调用；模型 = 候选链整链遍历（候选源 = `SchemePolicy.smallLlmModel()`，
+ * 未配置回退主模型+WARN）。执行次序由 [[PluginAllocatorMachine]] 编排；本件只做
+ * 「task + 目录 → 集合」的一条腿。
+ *
+ * == kernel-spec 批（2026-11-19）==
+ * 本腿不再自建 `SendMessageParams`、不再自写候选链遍历：调用描述 = [[LlmKernel.KernelCall]]，
+ * 装配 = `LlmKernel.assemble`（唯一生产构造点），遍历 = `LlmKernel.chainCall`，
+ * 计量 = `LlmKernel.chainCall` 内的单点（K1/K5/K6）。
+ * **B2（V1 修）**：常量前导 [[StatePreamble]] 提为 `systemStable`（文本逐字不变，
+ * 只换 wire 位置），任务正文留在 user 消息 —— 前缀自此**位置可复用**。
  *
  * == state 模板（单源本件）==
  * preamble ＋ brief ＋ 目录块——常量与 `catalogText` 自 JevAllocator 原文迁入
@@ -31,8 +38,8 @@ import nebflow.shared.{Defaults, Message, MessageRole, NebflowLogger}
  * 🔴 提示词为**模型可见文案**——逐字报审（jev-retire 批随件呈作者）。
  */
 final class LlmAllocator(
-  /** 单次调用缝（生产 = registry.getAdapter(...).sendMessage；spec 注 canned 回文）。 */
-  singleCall: SendMessageParams => IO[Option[String]],
+  /** 单次调用缝（生产 = 统一内核 `LlmKernel.run`；spec 注 canned 回文）。 */
+  kernelCall: LlmKernel.KernelCall => IO[Option[LlmKernel.KernelReply]],
   /** 模型候选（None = 无可用模型——腿不可用，Failure fail-open）。 */
   candidate: IO[Option[ModelCandidate]]
 ):
@@ -58,22 +65,31 @@ final class LlmAllocator(
       candidate.flatMap {
         case None =>
           JevFallback.record(JevFallbackKind.Failure, subject, "llm allocator: no model candidate available")
-        case Some(c) =>
-          val params = SendMessageParams(
-            messages = List(Message(MessageRole.User, Left(prompt(taskText, catalog)))),
-            model = c.model,
+        case Some(_) =>
+          // kernel-spec 批（2026-11-19）：调用描述 = KernelCall（K2/K7 必填声明），
+          // 装配/遍历/计量三者全在统一内核。辅面钉旧值（钳制批 2026-10-21）：
+          // ProbeMaxTokens（16384）零行为变化，128000 主面值不上此线。
+          val call = LlmKernel.KernelCall(
+            site = KernelCallSites.PluginAlloc,
+            // 🔴 作者裁定 2026-11-19 17:22：常量段（前导＋表头＋目录）**整体**入
+            // `systemStable`，与主腿同形态；user 侧只留每次变化的部分。
+            systemPrefix = LlmKernel.SystemPrefix.Stable(LlmAllocator.stableBlock(catalog)),
+            messages = List(Message(MessageRole.User, Left(body(taskText)))),
+            source = LlmKernel.CandidateSource.SmallLlmModel,
             sessionId = Some(AllocSessionId),
             agentId = Some(AllocSessionId),
-            // 辅面钉旧值（钳制批 2026-10-21）：同 HealthMonitor/小判官——
-            // ProbeMaxTokens（16384）零行为变化，128000 主面值不上此线。
-            maxTokensOverride = Some(Defaults.ProbeMaxTokens)
+            maxTokensOverride = Some(Defaults.ProbeMaxTokens),
+            // 🔴 缺陷①（2026-11-02）：超时/传输类失败先在同候选重试一次（单候选部署下
+            // 「换下一候选」等于没有重试）——语义随调用描述声明，遍历模板在核心里。
+            retrySameCandidateOnTransportError = true,
+            cacheBreakpoints = LlmAllocator.AllocBreakpoints
           )
-          singleCall(params).attempt
+          kernelCall(call).attempt
             .flatMap {
               case Right(Some(reply)) =>
-                parsePlugins(reply, catalog) match
+                parsePlugins(reply.reply, catalog) match
                   case Right(names) =>
-                    val reason = DelegateJudgeMachine.extractJsonObject(reply)
+                    val reason = DelegateJudgeMachine.extractJsonObject(reply.reply)
                       .flatMap(_.hcursor.get[String]("reason").toOption)
                       .map(_.replaceAll("[\\r\\n]+", " ").take(240))
                       .getOrElse("model supplied no rationale")
@@ -102,19 +118,17 @@ final class LlmAllocator(
       }
 
   /**
-   * 模型可见 prompt：state 模板（本件单源）＋成员资格规则＋JSON 答令。
-   * 🔴 除 state 模板（既有单源）外的文案 = 下两段，逐字报审。
+   * 模型可见 user 正文（**只含每次变化的部分**）：任务正文 ＋ 成员资格规则 ＋ JSON 答令。
+   *
+   * 🔴 常量段（前导 ＋ 表头 ＋ 目录）已整体搬入 `KernelCall.systemPrefix`（作者裁定
+   * 2026-11-19 17:22，见 [[LlmAllocator.stableBlock]]）——本正文自此不含任何可复用
+   * 常量，逐发变化的只有任务正文。措辞逐字沿用批前文案（只换 wire 位置）。
    */
-  private def prompt(taskText: String, catalog: List[CatalogEntry]): String =
+  private def body(taskText: String): String =
     val brief =
       if taskText.length > LlmAllocator.DefaultStateCapChars then taskText.take(LlmAllocator.DefaultStateCapChars)
       else taskText
-    s"""${LlmAllocator.StatePreamble}
-
-${LlmAllocator.BriefHeader}
-$brief
-${LlmAllocator.CatalogHeader}
-${LlmAllocator.catalogText(catalog)}
+    s"""$brief
 
 Choose the capability packages this task NEEDS, applying exactly the membership rule stated above: count a package as needed only when the task's primary purpose cannot be properly executed without the capability that package provides. Multiple packages may be needed; judge each package independently. If no package is needed, return an empty list.
 
@@ -156,8 +170,53 @@ object LlmAllocator:
   /**
    * state 前导（原 JevAllocator.StatePreamble 原文迁入）——终源在
    * `PromptCatalog.Classifiers.AllocationStatePreamble`（单行拼接字面量，不得改行）。
+   *
+   * kernel-spec 批（2026-11-19，B2）：本常量**不再进 user 正文**；作者裁定 17:22 起
+   * 它与两个表头、目录一起组成 [[stableBlock]] 整体走 `KernelCall.systemPrefix`
+   * （`systemStable`）——文本逐字不变，只换 wire 位置。
    */
   private[decision] val StatePreamble: String = nebflow.prompts.PromptCatalog.Classifiers.AllocationStatePreamble
+
+  /**
+   * **常量段（本腿唯一的可复用前缀）**：前导 ＋ 两个表头 ＋ 目录。
+   *
+   * 作者裁定 2026-11-19 17:22：整段搬入 `KernelCall.systemPrefix`（`systemStable`），
+   * 与主腿同形态；user 侧只留每次变化的部分（[[body]]）。这是本批唯一一处**反向**
+   * 解除 K3「前缀低于供应商最小可缓存长度就不钉断点」的腿——理由只有一条：
+   * **整段越过阈值**（实测第二发 `read≈5288`）。其余各腿的前缀都在阈值之下，
+   * 仍一律不钉断点（见 [[DelegateJudgeMachine.JudgeBreakpoints]] 与探针腿）。
+   *
+   * 🔴 **失效条件（写死在注释里，改目录前先读）**：本段是**一个**缓存前缀。
+   * 目录里任何一条新增 / 改名 / 改描述，或前导、表头改一个字，都会让整段前缀
+   * 一次性失效——下一次调用要把整段重新写一遍（写一次的钱），之后各发才重新命中。
+   * 所以目录变动应当成批进行；逐条微调会让每一发都变成「写满整段」。
+   */
+  private[decision] def stableBlock(catalog: List[CatalogEntry]): String =
+    s"""$StatePreamble
+
+$BriefHeader
+$CatalogHeader
+${catalogText(catalog)}"""
+
+  /**
+   * 本腿断点预算（K3 的**唯一反向解除**）：**StablePrefix** —— 只钉稳定段
+   * （system 稳定块；有工具面时加末工具），不钉逐发变化的正文尾。
+   *
+   * 依据（2026-11-19 实测，每臂独立 nonce 的干净读数：
+   * `.stand/tmp/kernel-spec-20261119/evidence/probe_legs_v4.out`）：
+   *   - 批前形态（尾断点钉在**逐发变化**的整段正文上）：`creation=5452 / read=0`，
+   *     两发逐值相同 —— 与审计 §5 E2 的 `897/0` 同型（量级差只因目录更大）；
+   *   - 只把 [[StatePreamble]]（616 字符 ≈200 tokens）提为 system：**逐值相同** ——
+   *     低于供应商最小可缓存长度，钉了也不写；
+   *   - 常量段**整体**提为 system（[[stableBlock]]，≈5288 tokens）：第二发
+   *     `creation=164 / read=5288` —— **命中**；这是本腿钉断点的唯一依据；
+   *   - 阈值区间：400 tokens 两发 `0/0`（不缓存）⇒ 最小可缓存长度落在 (400, 5288]。
+   *
+   * 🔴 判据是「整段越过阈值」，不是「本腿特殊」：常量段一旦缩回阈值之下
+   * （例如目录被裁到几十条以内），本常量必须改回 [[CacheBreakpoints.None_]]，
+   * 否则就是空转写——把「其实没缓存」伪装成「已配置缓存」。
+   */
+  private[decision] val AllocBreakpoints: CacheBreakpoints = CacheBreakpoints.StablePrefix
 
   /** brief 段头（原 JevAllocator 同名常量原文迁入）。 */
   private[decision] val BriefHeader: String = "=== TASK BRIEF ==="
@@ -180,169 +239,62 @@ object LlmAllocator:
       .mkString("\n\n")
 
   /**
-   * 超时/传输类异常判定（缺陷① 重试闸，2026-11-02）：只有「这次调用根本没拿到
-   * 回文，且原因在传输层」才值得原样重试一次；解析类/鉴权类失败重试无益。
-   * 沿 cause 链查（sttp 常把 `HttpTimeoutException` 包在 `IOException` 里）。
+   * 超时/传输类异常判定（缺陷① 重试闸，2026-11-02）：实现已迁 [[LlmKernel.isTimeoutOrTransport]]
+   * ——内核整链遍历单点是它的唯一消费方（K5），本别名只为既读面/判读锚保留入口。
    */
-  private[decision] def isTimeoutOrTransport(e: Throwable): Boolean =
-    def chain(t: Throwable, depth: Int): List[Throwable] =
-      if t == null || depth > 8 then Nil
-      else t :: Option(t.getCause).map(c => chain(c, depth + 1)).getOrElse(Nil)
-    chain(e, 0).exists { t =>
-      val cls = t.getClass.getName.toLowerCase
-      val msg = Option(t.getMessage).getOrElse("").toLowerCase
-      cls.contains("timeout") ||
-      msg.contains("timed out") || msg.contains("timeout") ||
-      t.isInstanceOf[java.io.IOException] ||
-      t.isInstanceOf[java.net.SocketException] ||
-      t.isInstanceOf[java.util.concurrent.TimeoutException]
-    }
+  private[decision] def isTimeoutOrTransport(e: Throwable): Boolean = LlmKernel.isTimeoutOrTransport(e)
 
-  /** 异常的一行可归因描述（类名 + 截断的 message）——WARN 行要能被 grep 到真因。 */
-  private[decision] def describe(e: Throwable): String =
-    val msg = Option(e.getMessage).getOrElse("")
-    val head = if msg.length > 180 then msg.take(180) + "…" else msg
-    if head.isEmpty then e.getClass.getSimpleName else s"${e.getClass.getSimpleName}: $head"
+  /** 异常的一行可归因描述（K5 单点：[[LlmKernel.describe]]）。 */
+  private[decision] def describe(e: Throwable): String = LlmKernel.describe(e)
 
   /**
-   * 生产装配：模型候选解析（`judge.utilityModel` ref → 候选；缺省 = 全局候选链——
-   * 判定机 utilityCandidates 同口径，fail-open 根因修复批 2026-10-29 起两腿同一
-   * 整链遍历模板）＋ **整链遍历调用缝**（fail-open 根因修复批 2026-10-29）。
-   * None = 无可用候选（腿不可用）。
+   * 生产装配：候选解析（`SchemePolicy.smallLlmModel()` 候选链，未配置回退主模型）
+   * ＋ **统一内核调用缝**（kernel-spec 批 2026-11-19：遍历/装配/计量全在
+   * [[LlmKernel]]，本腿不再自建 `SendMessageParams`、不再自写候选链遍历——
+   * K1/K5/K6）。None = 无可用候选（腿不可用）。
    *
    * 🔴 零超时（2026-10-19 作者拍板，「stand 设计不要有任何超时控制——通过监测的
-   * 手段」）：本腿**不带分配调用预算**（原 `timeoutMs` 参数与 15s `.timeout()`
-   * 定时器杀已拆，不留配置位）；调用完成与否由探活面与分配审计表达。
+   * 手段」）：本腿**不带分配调用预算**（`KernelCall.timeout = None`）；调用完成与否
+   * 由探活面与分配审计表达。
    */
   def fromRegistry(registry: ProviderRegistry): IO[Option[LlmAllocator]] =
     if registry == null then IO.pure(None) // registry-absent（降级装配/测试夹具）⇒ 无兜底腿 = 既有行为（SharedResources.assignFallbackChain 同款守卫）
     else candidatesFrom(registry).map { cands =>
       if cands.isEmpty then None
-      else Some(new LlmAllocator(chainCall(registry, cands), IO.pure(cands.headOption)))
+      else
+        Some(
+          new LlmAllocator(
+            call => LlmKernel.run(registry, call),
+            IO.pure(cands.headOption)
+          )
+        )
     }
 
   /**
-   * 候选解析（fail-open 根因修复批 2026-10-29）：返回**整条候选链**而非链头一个。
+   * 候选解析（fail-open 根因修复批 2026-10-29）：返回**整条候选链**而非链头一个
+   * （实现单点 = [[LlmKernel.candidates]] 的 [[LlmKernel.CandidateSource.SmallLlmModel]]，
+   * K7）。
    *
-   * 根因（jev-allocation.jsonl 实证，2026-10-29）：旧 `candidateFrom` 只取
-   * `getCandidates().headOption` ——单候选、单发、败即弃；主 agent 的请求路径走的是
-   * 整链遍历（preferred→fallbacks→储备层，`getCandidatesForAgent`），于是链头候选
-   * 恰好坏掉时「主 agent 正常用 LLM、兜底腿仍 fail-open」。新读法：
-   *  - `judge.utilityModel` ref 已配且处于**不可用时段** → WARN + 落全局链
-   *    （model-schedule-unavailable 批时段闸，与本批合并融合：闸语义 = 受限 ref
-   *    不进兜底链；回落形状随本批从「链头一个」升为「整条链」——`getCandidates()`
-   *    构建出口已 filterNot 受限模型，回落链不含受限候选）；
-   *  - ref 已配且可解 → 该候选**钉首位**，其后接全局链去重
-   *    （钉住的模型挂掉时链上后备照答——同一句「主 agent 能用 ⇒ 兜底能用」）；
-   *  - ref 已配不可解 → 全链（WARN 留痕，原回落语义保留）；
-   *  - ref 未配 → 全链（原语义，从「头一个」升为「整条」）。
+   * 根因（jev-allocation.jsonl 实证，2026-10-29）：旧读法只取链头一个 ——单候选、
+   * 单发、败即弃；主 agent 的请求路径走整链（preferred→fallbacks→储备层），于是
+   * 链头候选恰好坏掉时「主 agent 正常用 LLM、兜底腿仍 fail-open」。
    */
   private[decision] def candidatesFrom(registry: ProviderRegistry): IO[List[ModelCandidate]] =
-    IO(nebflow.core.SchemePolicy.smallLlmModel()).flatMap(model => registry.getCandidatesForAgent(Some(model)))
-
-  private[decision] def candidateChain(registry: ProviderRegistry, explicit: Option[String]): IO[List[ModelCandidate]] =
-    def mainRoute = registry.getCandidatesForAgent(nebflow.core.SchemePolicy.nebulaChain())
-    explicit match {
-      case Some(ref) =>
-        // 时段闸（model-schedule-unavailable 批）：utility ref 当前处于不可用
-        // 时段 ⇒ WARN + 落到全局链（链出口已滤，不会选到受限模型）。
-        registry.scheduleRestrictionFor(ref).flatMap {
-          case Some(w) =>
-            NebflowLogger
-              .forName("nebflow.llm.plugin-alloc")
-              .warnSync(
-                s"plugin-alloc: judge.utilityModel '$ref' schedule-restricted ($w) — falling back to the full candidate chain"
-              )
-            mainRoute
-          case None =>
-            registry.getCandidateForRef(ref).flatMap {
-              case Some(c) =>
-                registry.getCandidates().map { chain =>
-                  val rest = chain.filterNot(r => r.providerId == c.providerId && r.model == c.model)
-                  c :: rest
-                }
-              case None =>
-                NebflowLogger
-                  .forName("nebflow.llm.plugin-alloc")
-                  .warnSync(s"plugin-alloc: judge.utilityModel '$ref' unresolved — falling back to the full candidate chain")
-                mainRoute
-            }
-        }
-      case None => mainRoute
-    }
+    LlmKernel.candidates(registry, LlmKernel.CandidateSource.SmallLlmModel)
 
   /**
-   * 整链遍历调用缝（fail-open 根因修复批 2026-10-29）：逐候选 `sendMessage`——
-   * 某候选传输/适配层失败 ⇒ WARN 落真因＋试下一候选；**全链败才 None**（None 的
-   * 语义自此 = 「候选链耗尽」，不再是「链头一个挂了」）。与主 agent 请求路径同一
-   * 遍历哲学：「主 agent 都在正常使用 llm ⇒ 兜底腿必有候选能答」（作者 2026-10-29
-   * 追问的机制面回答）。
+   * 整链遍历调用缝（fail-open 根因修复批 2026-10-29；**kernel-spec 批 2026-11-19
+   * 收敛为内核单模板的薄委托**——本腿不再自写遍历，K5）。逐候选 `sendMessage`：
+   * 某候选传输/适配层失败 ⇒ WARN 落真因（providerId/model/异常类）＋试下一候选；
+   * **全链败才 None**（None 语义 = 「候选链耗尽」）。超时/传输类失败先在同候选重试
+   * 一次（缺陷① 2026-11-02）。
    *
-   * 🔴 每候选失败必留 WARN（providerId/model/异常类）——审计可归因，真错不再被
-   * `case Left(_) => None` 吞成「no reply」。
+   * 🔴 每候选失败必留 WARN——真错不再被 `case Left(_) => None` 吞成「no reply」。
    */
   private[decision] def chainCall(
     registry: ProviderRegistry,
     candidates: List[ModelCandidate]
-  ): SendMessageParams => IO[Option[String]] =
-    val log = NebflowLogger.forName("nebflow.llm.plugin-alloc")
-    (params: SendMessageParams) =>
-      candidates.foldLeft[IO[Option[String]]](IO.pure(None)) { (acc, cand) =>
-        acc.flatMap {
-          case Some(reply) => IO.pure(Some(reply))
-          case None =>
-            registry.getAdapter(cand.providerId).attempt.flatMap {
-              case Left(e) =>
-                IO(
-                  log.warnSync(
-                    s"llm allocator: candidate ${cand.providerId}/${cand.model} adapter unavailable (${e.getClass.getSimpleName}) — trying next candidate"
-                  )
-                ).as(None)
-              case Right(adapter) =>
-                val oneShot: IO[Either[Throwable, String]] =
-                  adapter
-                    .sendMessage(params.copy(model = cand.model))
-                    .attempt
-                    .map {
-                      // 空回文（HTTP 200 但 body 空）= provider 侧故障，与传输错同侧
-                      // 处理：试下一候选，不落 parse-fail（parse-fail 只收「有回文但
-                      // 不可用」的模型行为面）。
-                      case Right(resp) if resp.reply.trim.isEmpty =>
-                        Left(new RuntimeException("empty reply (HTTP 200, empty body)"))
-                      case Right(resp) => Right(resp.reply)
-                      case Left(e) => Left(e)
-                    }
-                oneShot.flatMap {
-                  case Right(reply) => IO.pure(Some(reply))
-                  case Left(e) if LlmAllocator.isTimeoutOrTransport(e) =>
-                    // 🔴 缺陷① 第二半（2026-11-02）：超时/传输类失败**先重试一次同一
-                    // 候选**，不直接降到下一候选（候选链可能只有一个）；重试仍败才
-                    // 落 LlmError，由 PluginInjection 显式失败（不再静默成 plugins=[]）。
-                    IO(
-                      log.warnSync(
-                        s"llm allocator: candidate ${cand.providerId}/${cand.model} failed on a " +
-                          s"timeout/transport error (${LlmAllocator.describe(e)}) — retrying the same candidate once"
-                      )
-                    ) *> oneShot.flatMap {
-                      case Right(reply) => IO.pure(Some(reply))
-                      case Left(e2) =>
-                        IO(
-                          log.warnSync(
-                            s"llm allocator: candidate ${cand.providerId}/${cand.model} failed again after retry " +
-                              s"(${LlmAllocator.describe(e2)}) — trying next candidate"
-                          )
-                        ).as(None)
-                    }
-                  case Left(e) =>
-                    IO(
-                      log.warnSync(
-                        s"llm allocator: candidate ${cand.providerId}/${cand.model} errored " +
-                          s"(${LlmAllocator.describe(e)}) — trying next candidate"
-                      )
-                    ).as(None)
-                }
-            }
-        }
-      }
+  ): LlmKernel.KernelCall => IO[Option[LlmKernel.KernelReply]] =
+    (call: LlmKernel.KernelCall) => LlmKernel.chainCall(registry, candidates, call)
 
 end LlmAllocator

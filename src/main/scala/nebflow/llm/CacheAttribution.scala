@@ -357,10 +357,15 @@ object CacheAttribution:
 
   /** Account only after normal stream completion. Match AgentStreamPipelines' selection:
     * first positive-input usage, otherwise the first Done's usage. Done frames pass through unchanged.
+    *
+    * kernel-spec 批（2026-11-19）：`kind` 参数化（缺省 "business" 与批前逐字一致）——
+    * 统一内核（`LlmKernel.stream`）的探针腿走 "warmup"（探针是恢复机制的微量探测，
+    * 不进业务 miss 归因），主腿不变。
     */
   private[llm] def accountStream(
     source: fs2.Stream[cats.effect.IO, StreamChunk],
-    sessionId: String, providerId: String, model: String, requestId: Option[String]
+    sessionId: String, providerId: String, model: String, requestId: Option[String],
+    kind: String = "business"
   ): fs2.Stream[cats.effect.IO, StreamChunk] =
     fs2.Stream.eval(cats.effect.IO.ref((false, Option.empty[TokenUsage], Option.empty[TokenUsage]))).flatMap { state =>
       source.evalTap {
@@ -374,7 +379,7 @@ object CacheAttribution:
           if seen then
             val usage = positive.orElse(first)
             CacheStats.record(providerId, model, usage)
-            observeUsage(sessionId, providerId, model, usage, requestId = requestId)
+            observeUsage(sessionId, providerId, model, usage, kind = kind, requestId = requestId)
         }.void
       }).drain
     }

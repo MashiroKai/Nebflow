@@ -5,6 +5,25 @@ import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
 import sttp.client4.StreamBackend
 
+/**
+ * 断点预算策略（kernel-spec 批 2026-11-19，K3「单发腿」判据）——断点只能落在
+ * **可复用**块上；不可复用的易变正文不许钉断点（每发重写整段可变前缀 = 纯浪费写）。
+ *
+ * 三态与装配点（Anthropic 面）：
+ *   - [[CacheBreakpoints.Conversation]]（缺省）：稳定 system + 末工具 + **持久历史尾**
+ *     ——主腿形态（C1–C4 逐字原状，本字段引入前后 wire 字节不变）；
+ *   - [[CacheBreakpoints.StablePrefix]]：只钉稳定前缀（system 稳定块 + 末工具），
+ *     **不钉**易变正文尾——单发腿（分配/判定）适用；
+ *   - [[CacheBreakpoints.None]]：一个断点都不钉——可复用前缀低于供应商最小可缓存
+ *     长度时适用（空转写：钉了也不写，只会把「其实没缓存」伪装成「已配置缓存」）。
+ *
+ * 缺省值 = 既有全部调用点零改动；非缺省只由 `llm.kernel.LlmKernel` 按腿声明。
+ */
+enum CacheBreakpoints:
+  case Conversation
+  case StablePrefix
+  case None_
+
 case class SendMessageParams(
   messages: List[Message],
   model: String,
@@ -69,7 +88,12 @@ case class SendMessageParams(
    * 与 [[systemDynamic]] 同一「临时尾段」区。缺省 Nil = 辅助面与既有构造点
    * 逐字零改动。
    */
-  requestOnlyContext: List[Message] = Nil
+  requestOnlyContext: List[Message] = Nil,
+  /**
+   * 断点预算策略（kernel-spec 批 2026-11-19，K3）——见 [[CacheBreakpoints]]。
+   * 缺省 [[CacheBreakpoints.Conversation]] = 本字段引入前逐字行为。
+   */
+  cacheBreakpoints: CacheBreakpoints = CacheBreakpoints.Conversation
 )
 
 /**

@@ -7,6 +7,7 @@ import cats.syntax.all.*
 import nebflow.core.ProviderHealthPort
 import nebflow.db.format.GuardDocs
 import nebflow.db.{DbHandle, DbHost}
+import nebflow.llm.kernel.{KernelCallSites, LlmKernel}
 import nebflow.shared.*
 
 import scala.concurrent.duration.*
@@ -701,26 +702,40 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
    * event, so the small cap has nothing left to break.
    */
   private[llm] def probe(candidate: ModelCandidate): IO[Unit] =
-    val params = SendMessageParams(
+    // kernel-spec 批（2026-11-19）：探针腿不再自建 `SendMessageParams`、不再直连
+    // `getAdapterRaw`——调用描述 = KernelCall，装配/流入口全在统一内核。
+    //   · `Gating.Ungated`（K6 解耦）：探测是恢复机制，1 次/2min 微量请求——排在
+    //     饱和闸后会拖慢恢复判定（探测超时计入排队等待 ⇒ 假阴性 DOWN 延长）；
+    //     其余调用方一律走 `getAdapter`（过闸视图）；
+    //   · `MeterKind.Probe`：通道与业务腿**同一条**（K6），归因记 warmup 分列
+    //     （探针不进业务 miss 归因——否则每 2 分钟一轮会把归因面刷成噪音）；
+    //   · `CacheBreakpoints.None_`（K3）：探针体 32 tokens，远低于供应商最小可
+    //     缓存长度，钉断点纯空转写（实测 `probe_legs_v2.out` §6/§7：两形态皆
+    //     `creation=0 / read=0`）；
+    //   · `SystemPrefix.Absent`：字节冻结的单 token 探测体没有跨调用可复用的
+    //     system 前缀（理由 = 登记表白名单，K2）。
+    val kernelCall = LlmKernel.KernelCall(
+      site = KernelCallSites.HealthProbe,
+      systemPrefix = LlmKernel.SystemPrefix.Absent(KernelCallSites.HealthProbeAbsence),
       messages = List(Message(MessageRole.User, Left("hi"))),
-      model = candidate.model,
+      source = LlmKernel.CandidateSource.Explicit(List(candidate)),
       sessionId = Some("health-check"),
       agentId = Some("health-check"),
-      maxTokensOverride = Some(Defaults.ProbeMaxTokens)
+      maxTokensOverride = Some(Defaults.ProbeMaxTokens),
+      gating = LlmKernel.Gating.Ungated,
+      meterKind = LlmKernel.MeterKind.Probe,
+      cacheBreakpoints = CacheBreakpoints.None_
     )
     def serving(c: StreamChunk): Boolean = c match
       case _: StreamChunk.TextDelta | _: StreamChunk.ThinkingDelta | _: StreamChunk.ToolCallChunk => true
       case _ => false
-    registry
-      // getAdapterRaw（不过闸裸视图，429 反应式并发闸批）：探测是恢复机制，
-      // 1 次/2min 微量请求——排在饱和闸后会拖慢恢复判定（探测超时计入排队等待
-      // ⇒ 假阴性 DOWN 延长）。其余调用方一律走 getAdapter（过闸视图）。
-      .getAdapterRaw(candidate.providerId)
+    LlmKernel
+      .stream(registry, kernelCall)
       // `find` terminates the stream right after the first serving chunk (the
       // upstream request is cancelled by the compile scope); a stream that
       // ends without one — including a transport error raised before it —
       // surfaces as Left and keeps the candidate Down.
-      .flatMap(_.sendMessageStream(params).find(serving).compile.lastOrError.void)
+      .flatMap(_.find(serving).compile.lastOrError.void)
       .timeout(ProviderHealthMonitor.ProbeTimeoutSec.seconds)
       .attempt
       .flatMap {
@@ -741,6 +756,10 @@ final class ProviderHealthMonitor(registry: ProviderRegistry, db: Option[DbHandl
                 .*>(failRefreshReason(candidate.providerId, candidate.model, detail))
           }
       }
+      // K6：探针响应（成功/失败/取消三态）都过一次统一计量落账点。usage 由构造决定
+      // 缺席（流在首个服务事件即被取消，拿不到 Done 的 usage）——这是诚实读数，
+      // 不是漏记：探针形态没有可计费 usage。
+      .guarantee(LlmKernel.meter(kernelCall, None, Some((candidate.providerId, candidate.model))))
 
   end probe
 

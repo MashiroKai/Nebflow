@@ -7,7 +7,7 @@ import fs2.Stream
 import io.circe.parser.parse
 import io.circe.syntax.*
 import io.circe.{Json, JsonObject}
-import nebflow.llm.{AdapterResponse, CacheAttribution, ProviderAdapter, ResolvedThinking, SendMessageParams}
+import nebflow.llm.{AdapterResponse, CacheAttribution, CacheBreakpoints, ProviderAdapter, ResolvedThinking, SendMessageParams}
 import nebflow.core.compact.TokenEstimator
 import nebflow.shared.*
 import sttp.capabilities.fs2.Fs2Streams
@@ -199,7 +199,7 @@ class AnthropicAdapter(
         Right(blocks :+ ContentBlock.Text(text))
     Message(a.role, mergedContent, math.max(a.timestamp, b.timestamp))
 
-  private def toAnthropicTools(tools: List[ToolDefinition]): Json =
+  private def toAnthropicTools(tools: List[ToolDefinition], mark: Boolean): Json =
     val toolJsons = tools.map { t =>
       Json.obj(
         "name" -> t.name.asJson,
@@ -209,6 +209,7 @@ class AnthropicAdapter(
     }
     // Add cache_control to the last tool definition to extend the cache prefix through tools
     if toolJsons.isEmpty then Json.fromValues(Nil)
+    else if !mark then Json.fromValues(toolJsons)
     else
       val (init, last) = (toolJsons.init, toolJsons.last)
       val lastWithCache = last.deepMerge(Json.obj("cache_control" -> Json.obj("type" -> "ephemeral".asJson)))
@@ -226,14 +227,17 @@ class AnthropicAdapter(
     val stable = stableOpt.orElse(fallbackSystem)
     if stable.isEmpty && dynamicOpt.isEmpty then Json.Null
     else
+      val markStable = params.cacheBreakpoints != CacheBreakpoints.None_
       val blocks = scala.collection.mutable.ListBuffer.empty[Json]
       stable.foreach { text =>
         // Stable part gets cache_control — this is the cache breakpoint shared across sessions
-        blocks += Json.obj(
-          "type" -> "text".asJson,
-          "text" -> text.asJson,
-          "cache_control" -> Json.obj("type" -> "ephemeral".asJson)
-        )
+        blocks += (if markStable then
+                     Json.obj(
+                       "type" -> "text".asJson,
+                       "text" -> text.asJson,
+                       "cache_control" -> Json.obj("type" -> "ephemeral".asJson)
+                     )
+                   else Json.obj("type" -> "text".asJson, "text" -> text.asJson))
       }
       dynamicOpt.foreach { text =>
         // Route identity is stable for consecutive requests in the same cache domain
@@ -621,7 +625,15 @@ class AnthropicAdapter(
     // cache-warmup 批（2026-11-06）：持久/临时分界显式化——断点只钉**持久历史**
     // 尾块；REQUEST-ONLY 提醒段与 systemDynamic 作为临时尾段排在断点之后（顺序 =
     // contextMsg → branchMsg → maintenanceMsg → systemDynamic，与旧拼接序一致）。
-    val persisted = withTailCacheBreakpoint(toAnthropicMessages(params.messages))
+    // kernel-spec 批（2026-11-19，K3）：断点落位由 [[CacheBreakpoints]] 声明——
+    // Conversation（缺省）= 上面这条原状；StablePrefix = 单发腿，只钉稳定前缀，
+    // 不钉易变正文（每发重写可变前缀 = 纯浪费写）；None_ = 不钉任何断点。
+    val persisted =
+      params.cacheBreakpoints match
+        case CacheBreakpoints.Conversation | CacheBreakpoints.None_ =>
+          val msgs = toAnthropicMessages(params.messages)
+          if params.cacheBreakpoints == CacheBreakpoints.Conversation then withTailCacheBreakpoint(msgs) else msgs
+        case CacheBreakpoints.StablePrefix => toAnthropicMessages(params.messages)
     val ephemeralTexts = params.requestOnlyContext.map(_.textContent) ++ params.systemDynamic.toList
     val ephemeralWire =
       ephemeralTexts.filter(_.nonEmpty) match
@@ -645,7 +657,10 @@ class AnthropicAdapter(
       if systemBlocks != Json.Null then withStream.deepMerge(Json.obj("system" -> systemBlocks))
       else withStream
     val withTools = params.tools.filter(_.nonEmpty) match
-      case Some(tools) => withSystem.deepMerge(Json.obj("tools" -> toAnthropicTools(tools)))
+      case Some(tools) =>
+        withSystem.deepMerge(
+          Json.obj("tools" -> toAnthropicTools(tools, mark = params.cacheBreakpoints != CacheBreakpoints.None_))
+        )
       case None => withSystem
     // thinking-config 批（2026-10-28）+ protocol-compat 批（2026-11-01）：
     // wire 翻译单点——按能力类发参数/省略键/显式关态（[[wireThinkingFragment]]）。
