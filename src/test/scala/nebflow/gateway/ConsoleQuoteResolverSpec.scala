@@ -46,7 +46,7 @@ class ConsoleQuoteResolverSpec extends CatsEffectSuite:
     def ref(text: String, complete: Boolean) = Json.obj(
       "source" -> Json.obj("messageId" -> "row-1".asJson, "senderName" -> "author".asJson),
       "content" -> Json.obj("fullText" -> text.asJson, "fullTextComplete" -> complete.asJson,
-        "attachments" -> Json.arr(Json.obj("type" -> "image".asJson, "name" -> "a.png".asJson, "path" -> "/tmp/a.png".asJson)),
+        "attachments" -> Json.arr(Json.obj("type" -> "image".asJson, "name" -> "a.png".asJson, "path" -> (root / "missing" / "a.png").toString.asJson)),
         "itemIndex" -> 1.asJson, "itemTotal" -> 3.asJson)
     )
     val short = ("abc" * 800) + "\tEND"

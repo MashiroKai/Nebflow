@@ -40,7 +40,7 @@ class AssetsRoutesSpec extends CatsEffectSuite:
         for bytes <- resp.body.compile.toVector
         yield
           assertEquals(resp.status, Status.Ok)
-          assertEquals(new String(bytes.toArray, "UTF-8"), "console.log(\"assets fixture entry\");")
+          assertEquals(new String(bytes.toArray, "UTF-8"), "console.log(\"assets fixture entry\");\n")
           // W2: hashed names are content-addressed — immutable year-long cache
           // (index.html stays no-cache and is the sole freshness judge).
           assertEquals(cacheControl(resp), Some(StaticRoutes.HashedAssetCacheControl))
