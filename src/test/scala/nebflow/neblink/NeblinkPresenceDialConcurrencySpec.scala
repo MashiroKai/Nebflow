@@ -88,12 +88,13 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     budget: DialBudget = DialBudget.Default,
     schedule: PresenceDialSchedule = PresenceDialSchedule.Production,
     reachLedger: Option[P2pReachability] = None,
-    dialHook: (String, Int, Long) => Unit = (_, _, _) => ()
+    dialHook: (String, Int, Long) => Unit = (_, _, _) => (),
+    dialResultOverride: Option[(String, Long) => Either[nebflow.neblink.relay.DialFailure, Unit]] = None
   )(use: (NeblinkService, NeblinkPresenceService) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(serverPort, dispatcher, 300.millis)
-        ps = new NeblinkPresenceService(ms, serverPort, budget, EvictionPolicy.Default, schedule, reachLedger, dialHook)(
+        ps = new NeblinkPresenceService(ms, serverPort, budget, EvictionPolicy.Default, schedule, reachLedger, dialHook, dialResultOverride)(
           dispatcher
         )
         _ = ms.setPresenceService(ps)
@@ -326,6 +327,41 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
       assertEquals(chosen, Some(srv.endpoint), "C1 择优 = 拨通的那个（不是队首）")
       assert(connected, "连接已建立")
       assert(ms < 2_900L, s"首胜一轮实测 ${ms}ms —— 拨通即返回，不等黑洞候选付满预算（Σ 口径 ≈1900ms+）")
+    }
+  }
+
+  test("gated fake success closes round on selected endpoint without publishing a socket") {
+    val port = closedPort()
+    val ep = s"http://127.0.0.2:$port"
+    val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val started = new java.util.concurrent.CountDownLatch(1)
+    val gate = new java.util.concurrent.CountDownLatch(1)
+    val fake: (String, Long) => Either[nebflow.neblink.relay.DialFailure, Unit] = (endpoint, budget) =>
+      events.add(s"start:$endpoint:$budget")
+      started.countDown()
+      if !gate.await(budget, java.util.concurrent.TimeUnit.MILLISECONDS) then
+        throw new IllegalStateException("fake success gate was not released within budget")
+      events.add("success")
+      Right(())
+    withStack(port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialResultOverride = Some(fake)) { (_, ps) =>
+      (for
+        fiber <- ps.connect(peer("fake-win", List(ep))).start
+        _ <- IO.blocking {
+          assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+          events.add("release")
+          gate.countDown()
+        }
+        _ <- fiber.joinWithNever
+        _ <- IO {
+          import scala.jdk.CollectionConverters.*
+          assertEquals(events.iterator().asScala.toList, List(s"start:$ep:1500", "release", "success"))
+          val round = roundOf(ps, "fake-win")
+          assertEquals(round.attempted, List(ep))
+          assertEquals(round.failures, Nil)
+          assertEquals(ps.chosenEndpoint("fake-win"), Some(ep))
+          assert(!ps.isConnected("fake-win"), "fake result does not publish a socket")
+        }
+      yield ()).guarantee(IO(gate.countDown()))
     }
   }
 

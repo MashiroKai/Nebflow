@@ -292,7 +292,9 @@ final class NeblinkPresenceService(
    * 变成难以复现的「第 N 拍莫名不拨」。生产装配面收敛在 `GatewayMain` 一处 + 源码护栏钉住。
    */
   reachLedger: Option[P2pReachability] = None,
-  dialHook: (String, Int, Long) => Unit = (_, _, _) => ()
+  dialHook: (String, Int, Long) => Unit = (_, _, _) => (),
+  /** Tests may replace the dial leg result; they must not infer a published connection from a fake win. */
+  dialResultOverride: Option[(String, Long) => Either[DialFailure, Unit]] = None
 )(dispatcher: Dispatcher[IO])
     extends PresenceServicePort: // 严格DAG第⑥步第二批裁定(2026-09-27,R3):原地混入 core 窄视图(isConnected,RemoteExecutor probe budget 读数)
   private val logger = NebflowLogger.forName("nebflow.neblink.presence")
@@ -890,7 +892,9 @@ final class NeblinkPresenceService(
       case Some((host, port)) =>
         val budgetMs = dialBudget.budgetMsFor(endpoint)
         dialBlocking(s"${peer.deviceName}@$endpoint") {
-          openConnection(peer, host, port, id, budgetMs, publishGate)
+          dialResultOverride match
+            case Some(fake) => fake(endpoint, budgetMs)
+            case None => openConnection(peer, host, port, id, budgetMs, publishGate)
         }.flatMap {
           case Right(_) =>
             noteEndpointSuccess(peer, endpoint) *>
