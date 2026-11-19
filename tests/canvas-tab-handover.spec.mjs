@@ -133,6 +133,69 @@ const CLOSE_ACTIVE = `(async () => {
   return true;
 })()`;
 
+// ── H5：接受类动作落地后，文件页签必须按**盘上最新文本**重载 ──────────────────
+// 位形照抄真机实测的两处断点：①审阅态里的 path 来自引擎 realpath（`/private/tmp/…`），
+// 而页签的 absPath 是开签时那一方给的（`/tmp/…`）——严格相等会静默不刷；
+// ②干净页签必须**立刻**重读（不等 300ms 防抖、不看 2s 冷却）。
+const RELOAD_ABS = '/tmp/handover-r.md';
+const RELOAD_SEED = `const BASE = 'alpha\\nbeta\\ngamma\\n' + 'gap\\n'.repeat(20) + 'omega\\n';`;
+const RELOAD_NEW = `alpha\nbeta\ngamma\n${'gap\n'.repeat(20)}omega\nIOTA-REVIEWED\n`;
+
+const OPEN_RELOAD_SCENE = `(async () => {
+  ${RELOAD_SEED}
+  window.dispatchEvent(new CustomEvent('workspace-open-item', { detail: {
+    id: 'file:${RELOAD_ABS}', itemType: 'markdown', title: 'handover-r.md', content: BASE,
+    absPath: '${RELOAD_ABS}', pinned: true, size: BASE.length } }));
+  const nav = await import('/js/mobile/navController.js');
+  nav.dockTo('canvas');
+  const ar = await import('/js/askEditReview.js');
+  try { ar.initAskEditReview(); } catch { /* 已 init 幂等 */ }
+  // 审阅态 path 故意带 /private 前缀（= 引擎 realpath 写法，与页签 absPath 不同名）
+  ar.consumeApplied({ sessionId: 'ask-reload', path: '/private${RELOAD_ABS}', fileName: 'handover-r.md',
+    baseText: BASE, currentText: BASE.replace('omega', 'omega\\nIOTA-REVIEWED'), count: 1,
+    hunks: [{ id: 'h0', oldStart: 20, oldCount: 1, newStart: 20, newCount: 2, added: 2, removed: 1 }] });
+  window.__wsSent.length = 0;   // 只看收口这一击之后的请求
+  return { tabs: [...document.querySelectorAll('.canvas-tab-pane')].map((p) => p.dataset.tabId) };
+})()`;
+
+const RELOAD_PROBE = `(async () => {
+  const m = await import('/js/canvas.js');
+  const pane = [...document.querySelectorAll('.canvas-tab-pane')].find((p) => String(p.dataset.tabId || '').startsWith('file:'));
+  const txt = pane ? (pane.textContent || '').replace(/\\s+/g, ' ').trim() : '';
+  return {
+    tabs: [...document.querySelectorAll('.canvas-tab-pane')].map((p) => p.dataset.tabId),
+    active: ((m.activeCanvasEntry && m.activeCanvasEntry()) || {}).id || null,
+    paneText: txt.slice(0, 220), textLen: txt.length,
+    hasMarker: /IOTA-REVIEWED/.test(txt),
+    updateHint: !!document.querySelector('.canvas-update-hint'),
+    sent: (window.__wsSent || []).map((f) => ({ type: f.type, path: f.path })),
+  };
+})()`;
+
+/** 收口一击（真 askEditResolved 帧消费）→ 等重载请求 → 回一帧 fileContent → 读页签文本。 */
+async function runReloadFlow(page, session) {
+  const res = await page.evaluate(async () => {
+    const ar = await import('/js/askEditReview.js');
+    ar.consumeResolved({ sessionId: 'ask-reload', outcome: 'done' });
+    return true;
+  });
+  void res;
+  await settle(page, 500);
+  const afterResolve = await page.evaluate(RELOAD_PROBE);
+  // 装置扮演引擎：**只有真被问到才回答**（引擎不会给没发出去的请求回帧）。
+  // 这一条是负控成立的前提——否则手工注入的帧会自己把页签渲新，掩盖「没发请求」。
+  const asked = afterResolve.sent.some((f) => f.type === 'pop.readFile' && f.path === RELOAD_ABS);
+  if (asked) {
+    await session.frame({
+      type: 'fileContent', path: RELOAD_ABS, absPath: RELOAD_ABS, itemType: 'markdown',
+      content: RELOAD_NEW, size: RELOAD_NEW.length, fileName: 'handover-r.md', mtimeMs: Date.now(),
+    });
+    await settle(page, 600);
+  }
+  const afterContent = await page.evaluate(RELOAD_PROBE);
+  return { asked, afterResolve, afterContent };
+}
+
 /** 轮询内容区读数（作者判据：切过去后 N 秒内内容区必须非空）。 */
 async function waitContent(page, ms = 4000) {
   const end = Date.now() + ms;
@@ -162,6 +225,18 @@ async function boot(browser, opts = {}) {
       // 锚缺席 = 源码里本就没有自愈闸（「真删源码直跑」那一轮）⇒ 原样投送（已是中和态）。
       const body = src.includes(FIX_ANCHOR) ? src.replace(FIX_ANCHOR, 'if (false) {') : src;
       route.fulfill({ status: 200, contentType: 'text/javascript', body });
+    });
+  }
+  if (opts.canvasKnockout) {
+    // 负控装置（canvas.js 腿）：逐条把**本修复的锚**换成等价「撤掉」写法，其余字节不动。
+    const f = join(webRoot(), 'js', 'canvas.js');
+    await page.route('**/js/canvas.js', (route) => {
+      let src = readFileSync(f, 'utf8');
+      for (const k of opts.canvasKnockout) {
+        // 锚缺席 = 源码里本就没有该腿（「真删源码直跑」那一轮）⇒ 原样投送（已是中和态）。
+        if (src.includes(k.anchor)) src = src.replace(k.anchor, k.replacement);
+      }
+      route.fulfill({ status: 200, contentType: 'text/javascript', body: src });
     });
   }
   await session.boot();
@@ -260,6 +335,44 @@ async function main() {
       readings.H4 = { beforeClose, offPage, onPage };
       record('H4a', '零回归：不在 canvas 页时不静默换签', offPage.selfHealEvents === beforeClose.selfHealEvents && offPage.activeTabId === 'projects', `activeTabId=${offPage.activeTabId} selfHeal=${beforeClose.selfHealEvents}→${offPage.selfHealEvents}`);
       record('H4b', '进 canvas 页即自愈（内容区非空）', !onPage.blank && onPage.visiblePanes > 0 && onPage.textLen > 0 && onPage.selfHealEvents >= 1, `blank=${onPage.blank} visiblePanes=${onPage.visiblePanes} selfHealEvents=${onPage.selfHealEvents} activeTabId=${onPage.activeTabId}`);
+      await ctx.close();
+    }
+
+    // ── H5 正腿：接受类动作落地 ⇒ 文件页签按盘上最新文本重载 ────────────────
+    {
+      const { ctx, page, session } = await boot(browser);
+      await page.evaluate(OPEN_RELOAD_SCENE);
+      await settle(page, 400);
+      const before = await page.evaluate(RELOAD_PROBE);
+      const r = await runReloadFlow(page, session);
+      readings.H5 = { before, ...r };
+      record('H5a', '收口一击后重载腿真发了 readFile（path 不同源也认领得到）',
+        r.afterResolve.sent.some((f) => f.type === 'pop.readFile' && f.path === RELOAD_ABS),
+        `sent=${JSON.stringify(r.afterResolve.sent)}`);
+      record('H5b', '回帧后文件页签文本含盘上最新标记 IOTA-REVIEWED', r.afterContent.hasMarker === true,
+        `hasMarker=${r.afterContent.hasMarker} paneText=${JSON.stringify(r.afterContent.paneText)}`);
+      record('H5c', '文件页签是活动签且内容非空', r.afterContent.textLen > 0 && r.afterContent.active === `file:${RELOAD_ABS}`,
+        `textLen=${r.afterContent.textLen} active=${r.afterContent.active} textLenBefore=${before.textLen}`);
+      record('H5d', '审阅页签已收口', !r.afterContent.tabs.some((t) => String(t).startsWith('askreview:')), JSON.stringify(r.afterContent.tabs));
+      await page.screenshot({ path: join(OUT, 'handover-h5-reloaded-375x812.png') });
+      await ctx.close();
+    }
+
+    // ── H5 负控：两种中和各自都要复现「不重载 / 仍是被接受前快照」────────────
+    for (const [tag, knockout] of [
+      ['strict-path', { anchor: '  const entry = findFileTab(absPath);',
+        replacement: '  let entry = null; for (const e of tabs.values()) if (e.absPath === absPath) entry = e;' }],
+      ['force-off', { anchor: '  if (opts.force === true) forceRereadFileTab(entry);',
+        replacement: '  if (false) forceRereadFileTab(entry);' }],
+    ]) {
+      const { ctx, page, session } = await boot(browser, { canvasKnockout: [knockout] });
+      await page.evaluate(OPEN_RELOAD_SCENE);
+      await settle(page, 400);
+      const r = await runReloadFlow(page, session);
+      readings[`H5neg-${tag}`] = r;
+      const red = !r.afterResolve.sent.some((f) => f.type === 'pop.readFile') && r.afterContent.hasMarker === false;
+      record(`H5-neg:${tag}`, `负控（${tag}）：撤掉该腿 ⇒ 不重载、页签仍是被接受前快照（必红）`, red,
+        `sent=${JSON.stringify(r.afterResolve.sent)} hasMarker=${r.afterContent.hasMarker} paneText=${JSON.stringify(String(r.afterContent.paneText).slice(0, 60))}`);
       await ctx.close();
     }
   } finally {

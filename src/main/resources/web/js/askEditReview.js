@@ -215,13 +215,20 @@ export function consumeResolved(msg) {
     return;
   }
   st.error = '';
+  // 接受/拒绝类动作**落地即重载**文件页签（作者令 2026-11-19：内容必来自盘上最新
+  // 文本，冷却/防抖不许挡内容刷新）。走 force 腿 ⇒ 干净页签立刻重读一次、脏页签
+  // 只挂「有更新」提示（不夺编辑）；剩余块分支同样要刷 —— 每块接受/拒绝都真写了盘。
+  const reloadReviewedFile = () => {
+    const cur = reviews.get(sid) || st;
+    if (cur && cur.path) refreshFileTabByPath(cur.path, { force: true });
+  };
   if (msg.review && typeof msg.review === 'object' && Array.isArray(msg.review.hunks) && msg.review.hunks.length) {
     upsertFromWire(sid, msg.review);
     render(sid);
+    reloadReviewedFile();
   } else {
-    // 了结：文件页签按路径重载（refreshFileTabByPath 同守卫：脏编辑让路），
-    // 审阅页签收起。
-    refreshFileTabByPath(st.path);
+    // 了结：文件页签按最新盘上文本重载（force 腿），审阅页签收起。
+    reloadReviewedFile();
     reviews.delete(sid);
     liveApi.delete(sid);
     closeTab(tabIdOf(sid));

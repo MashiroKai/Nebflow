@@ -1135,16 +1135,74 @@ function scheduleFileRefresh(entry) {
   }, FILE_REFRESH_DEBOUNCE);
 }
 
+/** 按 absPath 找文件页签。
+ *  路径来源可能不同源：页签的 `absPath` 是**开签时**那一方给的字符串，而 ask 侧
+ *  （askEditApplied / askEditResolved 的 `path`）是引擎的 **realpath** —— macOS 上
+ *  `/tmp`、`/var/folders` 都是符号链接，同一文件会出现 `/private/var/...` 与
+ *  `/var/...` 两种写法。严格相等匹配不上就**静默不刷**（2026-11-19 实测即此腿），
+ *  故退一步按「互为路径后缀」认领（边界天然落在 `/` 上）；候选不唯一则放弃 —— 宁可不刷
+ *  也不猜错文件。
+ *  @param {string} absPath
+ *  @returns {any} 命中页签 entry 或 null */
+function findFileTab(absPath) {
+  if (!absPath) return null;
+  for (const entry of tabs.values()) if (entry.absPath === absPath) return entry;
+  const cands = [];
+  for (const entry of tabs.values()) {
+    const p = entry.absPath;
+    if (p && (absPath.endsWith(p) || p.endsWith(absPath))) cands.push(entry);
+  }
+  return cands.length === 1 ? cands[0] : null;
+}
+
+/** 立刻发一次 readFile 重读（refresh 腿：应答不抢激活，但带内容 ⇒ 既有页签重渲）。 */
+function rereadFileTab(entry) {
+  if (!entry || !entry.absPath) return;
+  entry._refreshing = true;
+  // 安全窗：应答永不到达时也要解锁（镜像 scheduleFileRefresh 同款）
+  setTimeout(() => { if (entry._refreshing) settleFileRefresh(entry); }, 10000);
+  import('./ws.js').then(({ sendWs }) => {
+    if (!tabs.has(entry.id)) { settleFileRefresh(entry); return; }
+    if (!sendWs) { settleFileRefresh(entry); return; }
+    window.dispatchEvent(new CustomEvent('explorer-preload-pinned', {
+      detail: { path: entry.absPath, pinned: entry.pinned !== false, refresh: true }
+    }));
+    sendWs({ type: 'pop.readFile', path: entry.absPath, sessionId: undefined });
+  }).catch(() => settleFileRefresh(entry));
+}
+
+/** **内容语义的强制重读**（接受/拒绝类动作落地后的唯一腿；作者令 2026-11-19：
+ *  「接受类动作落地后必须重载一次；冷却/防抖只许作用于滚动/选区/光标这类非内容
+ *  语义，不许挡内容刷新」）。
+ *  - 干净页签 ⇒ **立刻**重读一次：不等 300ms 防抖、不看 2s 冷却、不看在途位。
+ *  - 用户正在编辑（脏）或源码编辑器在挂 ⇒ **不夺内容**，改挂「有更新」提示
+ *    （= 挂脏标；用户点提示即刷，时机归用户）—— 与既有刷新纪律一致。 */
+function forceRereadFileTab(entry) {
+  if (!entry || !entry.absPath) return;
+  const pane = entry.paneEl;
+  if (!pane || !pane.isConnected) return;
+  if (isTabDirty(entry) || pane.dataset.sourceMode === '1') { showUpdateHint(entry); return; }
+  clearTimeout(entry._refreshTimer);
+  entry._refreshTimer = null;
+  rereadFileTab(entry);
+}
+
 /** canvas-ask-restricted-edit ③（diff 卡 Accept 后的画布重载腿）：按 absPath 找
  *  文件 tab 走同一套 scheduleFileRefresh 守卫（脏编辑/源码模式/在途/冷却——ask 侧
  *  提案写盘后由 askDock 的 askEditResolved 帧调用，守卫语义与自动刷新完全一致：
  *  有未存编辑或编辑器在挂时宁可不动 tab，等用户自己处理）。找不到 tab（文件未开）
- *  = 静默返回——写盘已发生，tab 下次打开自然读到新内容。 */
-export function refreshFileTabByPath(absPath) {
+ *  = 静默返回——写盘已发生，tab 下次打开自然读到新内容。
+ *
+ *  `opts.force`（accept 族，2026-11-19）：见 `forceRereadFileTab` —— 内容语义的
+ *  强制重读，冷却/防抖/在途位一律不挡；脏态挂脏标。自动腿不走这个开关。
+ *  @param {string} absPath
+ *  @param {{force?: boolean}} [opts] */
+export function refreshFileTabByPath(absPath, opts = {}) {
   if (!absPath) return;
-  for (const entry of tabs.values()) {
-    if (entry.absPath === absPath) { scheduleFileRefresh(entry); return; }
-  }
+  const entry = findFileTab(absPath);
+  if (!entry) return;
+  if (opts.force === true) forceRereadFileTab(entry);
+  else scheduleFileRefresh(entry);
 }
 
 /** Re-read for a file tab (canvas 文件刷新批, 作者令 2026-10-25；canvas-auto-refresh

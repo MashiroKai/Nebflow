@@ -553,6 +553,21 @@ async function main() {
     await showCanvasPage();
     await switchTo(`askreview:${sid}`); await sleep(400); await grab(); await sleep(300); await grab();
     await page.waitForSelector(`${reviewSel} .nf-dv-allbtn.nf-dv-accept-all`, { state: 'visible', timeout: 10000 }).catch((e) => log('accept-all visible wait err', String(e).slice(0, 140)));
+    // 收口这一击的**帧流水**从零开始记：诊断「重载腿断在哪一环」只看这里。
+    // 先留两组「路径是否同名」的真读数：审阅态里的 path（askEditApplied 帧）vs
+    // 文件页签 entry.absPath —— 重载腿按 absPath 严格相等找页签，名字不同就静默不刷。
+    const pathCheck = await page.evaluate(async (abs) => {
+      const canvas = await import('/js/canvas.js');
+      const ap = (window.__nfFrames.in || []).filter((f) => f && f.type === 'askEditApplied').pop();
+      const fileIds = [...document.querySelectorAll('.canvas-tab-pane')].map((p) => p.dataset.tabId).filter((id) => String(id).startsWith('file:'));
+      return {
+        appliedFrame: ap ? { msgPath: ap.path, reviewPath: ap.review && ap.review.path, fileName: ap.fileName } : null,
+        harnessAbs: abs,
+        fileTabs: fileIds.map((id) => ({ id, absPath: (canvas.canvasTabEntry(id) || {}).absPath })),
+      };
+    }, notesAbs);
+    log('[path-check]', JSON.stringify(pathCheck));
+    await page.evaluate(() => { window.__nfFrames.in.length = 0; window.__nfFrames.out.length = 0; });
     await page.locator(`${reviewSel} .nf-dv-allbtn.nf-dv-accept-all`).first().click({ timeout: 6000 }).catch((e) => log('accept-all click err', String(e).slice(0, 140)));
     // 收口后渲染面读数（真读数，不靠目视）：body/html 类、手机层是否还在、前台页签、
     // 每个 pane 的父容器与几何 —— 「切页签后内容区空白」的机制诊断就靠这一串。
@@ -599,6 +614,29 @@ async function main() {
       log('[resolved-diag +' + afterMs + 'ms]', JSON.stringify(d));
     }
     await grab();
+    // ── 重载链诊断：收口这一击之后，重载腿到底有没有发 `pop.readFile`？回帧有没有
+    //    带内容？页签文本是不是盘上最新？三条一起读 = 「重载断在哪一环」的真答案。──
+    const reloadChain = await page.evaluate(() => {
+      const out = (window.__nfFrames.out || []).map((f) => ({ type: f.type, path: f.path, pinned: f.pinned, refresh: f.refresh, manual: f.manual }));
+      const inn = (window.__nfFrames.in || []).map((f) => ({ type: f.type, path: f.path, contentLen: typeof f.content === 'string' ? f.content.length : null }));
+      const p = [...document.querySelectorAll('.canvas-tab-pane')].find((e) => String(e.dataset.tabId || '').startsWith('file:'));
+      const txt = p ? (p.textContent || '').replace(/\s+/g, ' ').trim() : '';
+      const lbl = document.querySelector('.canvas-tab-label.dirty');
+      return { out, inFrames: inn, paneText: txt.slice(0, 200),
+        paneHasIOTA: /IOTA-REVIEWED/.test(txt), paneHasPI: /PI-REVIEWED/.test(txt),
+        paneDirtyFlag: !!(p && p._dirty), dirtyLabel: !!lbl,
+        paneSourceMode: p ? (p.dataset.sourceMode || null) : null };
+    });
+    log('[reload-chain]', JSON.stringify(reloadChain));
+    // 分离「路径不同名」与「守卫让路」：手工用**已知 absPath** 再调一次重载腿，
+    // 看是否立刻出现 pop.readFile（出现 ⇒ 守卫不挡、断在入口的参数上）。
+    await page.evaluate(async (abs) => { const c = await import('/js/canvas.js'); c.refreshFileTabByPath(abs); }, notesAbs);
+    await sleep(1200);
+    const manualReload = await page.evaluate(() => ({
+      out: (window.__nfFrames.out || []).map((f) => f.type + (f.path ? ':' + f.path.split('/').pop() : '')),
+      inFrames: (window.__nfFrames.in || []).map((f) => f.type),
+    }));
+    log('[manual-reload-probe]', JSON.stringify(manualReload));
     const resolvedTabs = await tabList();
     const fileAfterAcceptAll = readFileSync(notesAbs, 'utf8');
     log('tabs after real accept-all', JSON.stringify(resolvedTabs), 'file=', JSON.stringify(fileAfterAcceptAll));
