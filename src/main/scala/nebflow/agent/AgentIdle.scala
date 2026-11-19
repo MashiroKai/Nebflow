@@ -559,8 +559,8 @@ private[agent] object AgentIdle:
       case n: AgentCommand.BackgroundTaskNotification =>
         forwardBackgroundTaskNotification(n)(IO.pure(idle(agentDef, resources, depth, parentRef, state)))
 
-      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, blocks) =>
-        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, blocks)
+      case AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, _) =>
+        val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
         // 不过时批 intake 闸（投递可靠性批 2026-10-29 · 作者令「消息按 (sessionId,
         // kind, 幂等键) 去重」）——idle 直投面的单飞判重：事件身份（raw
         // correlationId ∪ delegate 终态回执归位 id）已投递（DeliveredReceiptLedger）
@@ -575,7 +575,7 @@ private[agent] object AgentIdle:
             "external-event",
             s"source=$source type=$eventType"
           )
-          val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId, blocks)
+          val event = AgentCommand.ExternalEvent(source, eventType, payload, metadata, correlationId)
           val sessionBusyIO =
             if depth == 0 then state.sessionId.fold(IO.unit)(sid => emitSessionBusy(state.wsSend, sid, busy = true))
             else IO.unit
