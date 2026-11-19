@@ -2,7 +2,7 @@
 
 The console reaches several devices but used to present itself as one. Device-scoped things (credentials, sign-out) and console-scoped things (a browser session) must be named as what they are, on the surface that owns them: the personal profile. This capability fixes the vocabulary and the invariants for any Stand surface that lists devices.
 
-## Requirements
+## ADDED Requirements
 
 ### Requirement: [DIS-REQ-001] A multi-device surface names the device it acts on
 

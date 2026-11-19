@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "change": "open-project-in-app",
+  "mappings": [
+    {
+      "requirement": "OPA-REQ-001",
+      "scenario": "OPA-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/projectTab.js",
+        "src/main/scala/nebflow/gateway/ProjectsRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "tests/project-open-contract.test.mjs",
+          "name": "computed menu styles"
+        }
+      ]
+    },
+    {
+      "requirement": "OPA-REQ-001",
+      "scenario": "OPA-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/ProjectsRoutes.scala"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The path-validation leg of POST /api/projects/<name>/open-in-app has no named automated test; the browser contract test stubs that endpoint and therefore cannot assert the refusal.",
+        "steps": "Call POST /api/projects/<name>/open-in-app with a destination path outside the registered workspace (and with a traversal path) and read the response.",
+        "expected": "The endpoint refuses with an explicit error and no application is launched."
+      }
+    }
+  ]
+}

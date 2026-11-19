@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "change": "external-executor-model",
+  "mappings": [
+    {
+      "requirement": "EEM-REQ-001",
+      "scenario": "EEM-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/core/executor/ExternalExecutor.scala",
+        "src/main/scala/nebflow/core/executor/ExternalSessionRunner.scala",
+        "src/main/scala/nebflow/core/executor/ExecutorRegistry.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/executor/ExternalExecutorSpec.scala",
+          "name": "executor models are hot read and independently updated"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/executor/ExternalExecutorSpec.scala",
+          "name": "external model selection round trips through delegate records"
+        },
+        {
+          "path": "src/test/scala/nebflow/core/executor/ExternalExecutorSpec.scala",
+          "name": "external model arguments support fresh and resumed sessions without affecting unsupported CLI"
+        }
+      ]
+    },
+    {
+      "requirement": "EEM-REQ-001",
+      "scenario": "EEM-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/core/executor/ExternalExecutor.scala",
+        "src/main/resources/web/js/bgAgentPopup.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/external-executor-model.spec.mjs",
+          "name": "external executor model popup save and unsupported state"
+        }
+      ]
+    }
+  ]
+}

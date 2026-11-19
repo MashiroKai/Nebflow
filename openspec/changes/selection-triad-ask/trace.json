@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "change": "selection-triad-ask",
+  "mappings": [
+    {
+      "requirement": "STA-REQ-001",
+      "scenario": "STA-SCN-001",
+      "implementation": [
+        "src/main/resources/web/js/selectionAsk.js",
+        "src/main/resources/web/js/contextMenu.js"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The selection Ask panel is experimental and its only browser exercise (tests/selection-ask-live.mjs) drives a locally built jar against synthetic server frames, so it is not a reproducible named test; it is NOT counted as evidence.",
+        "steps": "Select text in main chat, invoke copy, quote and explain; repeat with a long selection and with no selection.",
+        "expected": "Exactly the selected text is copied or quoted, the explanation opens in a closable panel, and with no selection the previous whole-message actions are unchanged."
+      }
+    },
+    {
+      "requirement": "STA-REQ-001",
+      "scenario": "STA-SCN-002",
+      "implementation": [
+        "src/main/resources/web/js/contextMenu.js"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The no-selection path is guarded by the existing whole-message action tests, which are owned by the message-action changes rather than by this change, so no test here is named for it.",
+        "steps": "Open a message context menu without selecting any text.",
+        "expected": "The whole-message copy/quote/Ask actions behave exactly as they did before this change."
+      }
+    }
+  ]
+}

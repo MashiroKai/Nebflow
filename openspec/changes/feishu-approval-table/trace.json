@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "change": "feishu-approval-table",
+  "mappings": [
+    {
+      "requirement": "FAT-REQ-001",
+      "scenario": "FAT-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/social/FeishuTableText.scala",
+        "src/main/scala/nebflow/social/FeishuOutboundAdapter.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/social/FeishuOutboundSpec.scala",
+          "name": "Feishu tables become labeled rows without changing ambiguous or fenced tables"
+        }
+      ]
+    },
+    {
+      "requirement": "FAT-REQ-002",
+      "scenario": "FAT-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/social/FeishuPermissionCard.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/social/FeishuAskWireSpec.scala",
+          "name": "permission callbacks bind approver, chat and message and only flip after hub acknowledgement"
+        },
+        {
+          "path": "src/test/scala/nebflow/social/FeishuAskWireSpec.scala",
+          "name": "FA-C1 allowlist gate: a click from a non-member is refused, nothing forwarded"
+        }
+      ]
+    }
+  ]
+}

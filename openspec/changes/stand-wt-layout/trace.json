@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "change": "stand-wt-layout",
+  "mappings": [
+    {
+      "requirement": "SWL-REQ-001",
+      "scenario": "SWL-SCN-001",
+      "implementation": [
+        "scripts/check-delivery.py"
+      ],
+      "tests": [
+        {
+          "path": "scripts/tests/test-delivery.py",
+          "name": "test_frontend_missing_and_complete"
+        },
+        {
+          "path": "scripts/tests/test-delivery.py",
+          "name": "test_backend_and_invalid_base"
+        }
+      ]
+    },
+    {
+      "requirement": "SWL-REQ-002",
+      "scenario": "SWL-SCN-002",
+      "implementation": [
+        "scripts/check-delivery.py"
+      ],
+      "tests": [
+        {
+          "path": "scripts/tests/test-delivery.py",
+          "name": "test_frontend_missing_and_complete"
+        }
+      ]
+    },
+    {
+      "requirement": "SWL-REQ-002",
+      "scenario": "SWL-SCN-003",
+      "implementation": [
+        "scripts/check-delivery.py"
+      ],
+      "tests": [
+        {
+          "path": "scripts/tests/test-delivery.py",
+          "name": "test_backend_and_invalid_base"
+        }
+      ]
+    },
+    {
+      "requirement": "SWL-REQ-002",
+      "scenario": "SWL-SCN-004",
+      "implementation": [
+        "scripts/check-delivery.py"
+      ],
+      "tests": [],
+      "manual": {
+        "reason": "The retention/audit-record leg of the delivery checker has no named automated test in scripts/tests/test-delivery.py, which covers the manifest and base validation legs.",
+        "steps": "Run the delivery checker cleanup against a temporary directory holding expired evidence entries and read the recorded candidate list afterwards.",
+        "expected": "The cleanup defaults to preview, retains uncommitted files unless forced, and records the candidate list under .stand/tmp/worktree-audit/<timestamp>/ before deleting anything."
+      }
+    }
+  ]
+}
