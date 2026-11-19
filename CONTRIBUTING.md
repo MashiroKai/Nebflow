@@ -111,7 +111,7 @@ flowchart LR
   M --> B[bug/* release hotfix]
   B -->|author approval| M
   M -->|author chooses| RB[release/beta]
-  RB -->|author after beta verification| RS[release/stable]
+  M -->|author chooses| RS[release/stable]
   M -. archival .-> A[achieve/*]
 ```
 
@@ -120,9 +120,57 @@ For a release problem, branch `bug/*` from `main`, fix and verify it, then the a
 - Stage files explicitly (`git add <file>`); avoid `git add -A`.
 - Commit subjects use an optional `type(scope):` prefix; write an English subject describing the intent.
 
+### Landing rules (落支规则 — author ruling 2026-11-19)
+
+The author fixed four landing rules on 2026-11-19, after a red release-line gate had been allowed
+to hold up integration work:
+
+1. **Everything in flight lands on the integration line `feat/base`.** Ordinary and in-flight
+   batches go to `feat/base` only. A gate that is red on the release line — today the blocking
+   `check:static` profile, whose single remaining failure is `sdd` — is **not** a precondition for
+   admitting work to the integration line: **release must never block integration**.
+2. **Promotion (晋级) precedes a release and is author-triggered.** `main` is advanced by
+   *merging* the integration line — or a dedicated landing line `integrate/land-<YYYYMMDD>` — into
+   it, as a **merge commit** in the established style (`merge: promote <line> to main`), **not** as
+   a fast-forward-only update. *(Existing `AGENTS.md` wording is aligned — 既有 `AGENTS.md` 口径已
+   同步，2026-11-19 裁.)*
+3. **All release branches derive from `main` only** — `release/beta`, `release/stable`, and any
+   future `release/*`, on both the GitHub leg and the USTC leg. Every release branch is cut from
+   the promoted `main`; none is cut from another release branch. A release line is **not** a merge
+   surface — it receives no merges and is never merged back.
+4. **Pushing `main` or `release/*`, and creating release tags, happen only inside the release
+   action**, and only on the author's explicit word.
+
+#### Current-state anchors (现状锚点 — 2026-11-19)
+
+| Item | Ref | Note |
+| --- | --- | --- |
+| `main` | `68856bff4` | promotion baseline; tip created by `merge: promote integrate/land-20261118 to main` |
+| integration line | `feat/base` @ `41420bed8` | the repository's only long-lived feature integration baseline |
+| landing line | `integrate/land-20261119` @ `68d2013ee` | `main` + two red-fix cherry-picks + a version-only commit |
+
+Two release legs hang off `release/beta`; both are currently dormant — neither has published since
+2026-10-21 — and neither is a precondition for the integration line:
+
+| Leg | Trigger | Gate |
+| --- | --- | --- |
+| USTC (GitLab) | branch pipeline on `release/beta` / `release/stable` — `.gitlab-ci.yml:650-651` | `static` job `.gitlab-ci.yml:177` (`allow_failure: false` at `.gitlab-ci.yml:182`, runs on every branch, MR and tag at `.gitlab-ci.yml:185-188`, invoking `npm run check:static` at `.gitlab-ci.yml:226`); the `release` job needs `assembly` (`.gitlab-ci.yml:648`) |
+| GitHub | push to `release/beta` — `.github/workflows/release.yml:22`; push to `release/stable` — `.github/workflows/auto-release.yml:17` | stable leg only: `static` job `.github/workflows/auto-release.yml:37`, invoking `npm run check:static` at `.github/workflows/auto-release.yml:52` |
+
+The USTC `static` gate is the red one (its single failure is `sdd`); under rule 1 that is a
+release-line concern, never an integration-line admission requirement.
+
 ### Release flow
 
-After the integrated feat base is approved and merged into `main`, the author alone controls promotion to release. The author may merge `main` into `release/beta`; its pipeline publishes the beta channel. After verifying the beta, the author may merge `release/beta` into `release/stable`; its pipeline publishes the stable channel. Release lines are downstream only: never merge or write them back to `main`. Ordinary fixes start from and return to the feat base before promotion; approved release hotfixes follow the `main` procedure above.
+The authoritative text of the release procedure lives on the **externalized spec surface** — the Stand Dev package's spec set, the same surface the eight `SKIP` checks of `check:static` resolve through `scripts/lib/design-spec-source.mjs`. A dedicated release spec is being added there and wired to a gate. **Where wording conflicts, that spec surface wins**: this section is only an operation summary and holds no definition authority.
+
+Operation summary (author, 2026-11-19) — after the integration line is approved and promoted to `main` (rule 2 above), the author alone controls the release:
+
+1. Check out `main`, so the release candidate is the promoted `main` content.
+2. Run the full release gate set **on `main`** — the blocking static profile plus the pre-release full E2E gate.
+3. Only when everything is green, **push (fast-forward)** to the derived release line (`release/beta`; `release/stable` the same way) to trigger its release legs.
+
+Release lines are downstream only: never merge or write them back to `main`. `release/stable` is cut from the same promoted `main` and released the same way once the beta is verified. Ordinary fixes start from and return to the integration line before promotion; approved release hotfixes follow the `main` procedure above.
 
 ### Local guard
 
@@ -133,7 +181,7 @@ After the integrated feat base is approved and merged into `main`, the author al
 1. In the project, inspect **Settings → Repository → Protected branches** (or the equivalent for the installed GitLab version); record existing rules and overlapping wildcard effects before changing them.
 2. Protect `main`, `feat/base`, `release/beta`, and `release/stable`. Set push/merge permissions to the named author only where the installed edition supports per-user rules; otherwise use the narrowest role available and restrict membership accordingly. Disable force pushes and deletion for these branches. Configure required review and successful pipelines where supported. Verify the effective permissions, including broader wildcard rules and administrative bypasses.
 3. Restrict USTC write access so non-authors cannot push directly. Ordinary development MRs target `feat/base`; promotion to `main` is the single feat:base merge. The author must approve every `bug/*` hotfix MR targeting `main` and alone push the chosen release line. GitLab branch protection by itself may not enforce source-name restrictions or distinguish one user from others with the same role; use an instance-supported server-side push/MR rule or author-controlled permissions, and document any edition limitation rather than claiming enforcement.
-4. Set the project merge method to **Fast-forward merge** if available. Test with a non-author account and disposable branches: forbidden direct pushes and unauthorized merges must fail; allowed author workflow and source-name checks must behave as intended. Do not force-update protected refs during testing.
+4. Permit **merge commits** on promotion: do not force a fast-forward-only merge method — a promotion merge commit must stay visible in `main`'s history. Test with a non-author account and disposable branches: forbidden direct pushes and unauthorized merges must fail; allowed author workflow and source-name checks must behave as intended. Do not force-update protected refs during testing.
 5. On USTC, archive the legacy branches as `achieve/beta-20261116` and `achieve/release-20261116`, verify the archive refs point to the original tips, then delete the legacy branches. Adjust protection only as necessary under author control; do not delete before verification. Confirm the new release-line protections and pipelines before publication.
 
 ## Delivery artifacts and pull requests
