@@ -695,17 +695,15 @@ object LlmInterface extends LlmRuntime:
              */
             def seededSkipLedger(
               req: LlmRequest,
+              candidates: List[ModelCandidate],
               droppedKnown: List[(String, CandidateSkipCause)],
               schedSkips: List[(String, CandidateSkipCause)]
             ): IO[List[(String, CandidateSkipCause)]] =
               for
                 configSkips <- registry.configLevelExclusions()
-                requestConfig <- registry.currentConfig
-                // fallback 废除批（作者令 2026-11-06 20:36「不再支持模型fallback」）：
-                // 链成员 = preferred 一根——`fallbacks` 是死数据，声明它们的授权/审计面
-                // 只会产生噪音（model-eligibility 批的 not-in-selected-chain 记账同理）。
-                chainRefs = requestConfig.llm.fallback.toList.flatMap(c => c.preferred.toList)
-                globalAllowlistSkips <- registry.allowlistExclusionsFor(chainRefs, req.agentModel)
+                // Use the pre-gate effective chain: a session override replaces the role chain.
+                chainRefs = candidates.map(c => s"${c.providerId}/${c.model}")
+                globalAllowlistSkips <- registry.allowlistExclusionsFor(chainRefs, None)
               yield droppedKnown ++ schedSkips ++ configSkips ++ globalAllowlistSkips ++ req.pinSkips
 
             def send(req: LlmRequest): IO[LlmResponse] =
@@ -731,7 +729,7 @@ object LlmInterface extends LlmRuntime:
                 // 请求入口账本 seeded 层 = 流面/非流面**单一实现**（[[seededSkipLedger]]）：
                 // 配置级剔除 + 「不在本请求生效链上」(`not in selected chain`) +
                 // 派发钉链剔除，逐条带原因。
-                seededSkips <- seededSkipLedger(req, droppedKnown, schedSkips)
+                seededSkips <- seededSkipLedger(req, candidates, droppedKnown, schedSkips)
                 // 审计基准 = 配置可见全集（model-eligibility 批）：未授权 ref 由
                 // seededSkipLedger 逐条带原因进账本，因此「配置里有、本请求没试」
                 // 不再沉默——不需要把基准收窄成已解析候选集（收窄反而看不见真丢件）。
@@ -749,7 +747,7 @@ object LlmInterface extends LlmRuntime:
                   if candidates.isEmpty then
                     logger.error(
                       s"MODEL-CHAIN-EMPTY session=${req.sessionId} agent=${req.agentId} " +
-                        s"layer=${nebflow.core.ModelRoles.slotOfSessionId(Some(req.sessionId)).getOrElse(req.agentId)}: " +
+                        s"layer=${nebflow.core.ModelRoles.slotOfSessionId(Some(req.sessionId), nebflow.core.delegate.DelegateRegistry.rawModeOf(Some(req.sessionId))).getOrElse(req.agentId)}: " +
                         s"no explicit model; old behavior would select ${nebflow.core.SchemePolicy.legacySeedCandidate().getOrElse("none")}; " +
                         "dispatch rejected; configure a model explicitly"
                     )
@@ -937,7 +935,7 @@ object LlmInterface extends LlmRuntime:
                         // SILENT-EXCLUSION ERROR 假报，链穷尽时终局处置表还对作者谎称
                         // 「SILENTLY EXCLUDED … this is a bug」（说的却是从未进过路由的
                         // 配置模型）。改由单点出账，两面结构上不可再分叉。
-                        seededSkips <- seededSkipLedger(req, droppedKnown, schedSkips)
+                        seededSkips <- seededSkipLedger(req, candidates, droppedKnown, schedSkips)
                         // 审计基准同非流面 = 配置可见全集（model-eligibility 批；
                         // fallback 废除批不改该基准——未授权/未配置 ref 各有带原因记账）。
                         expected <- registry.expectedCandidateRefs()
@@ -951,7 +949,7 @@ object LlmInterface extends LlmRuntime:
                           if candidates.isEmpty then
                             logger.error(
                               s"MODEL-CHAIN-EMPTY session=${req.sessionId} agent=${req.agentId} " +
-                                s"layer=${nebflow.core.ModelRoles.slotOfSessionId(Some(req.sessionId)).getOrElse(req.agentId)}: " +
+                                s"layer=${nebflow.core.ModelRoles.slotOfSessionId(Some(req.sessionId), nebflow.core.delegate.DelegateRegistry.rawModeOf(Some(req.sessionId))).getOrElse(req.agentId)}: " +
                                 s"no explicit model; old behavior would select ${nebflow.core.SchemePolicy.legacySeedCandidate().getOrElse("none")}; " +
                                 "dispatch rejected; configure a model explicitly"
                             )
