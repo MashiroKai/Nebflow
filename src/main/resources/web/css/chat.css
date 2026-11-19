@@ -5082,10 +5082,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    right, assistant bottom-left). */
 .bubble.user { transform-origin: 100% 100%; }
 .bubble.ai { transform-origin: 0% 100%; }
-/* An assistant bubble stays invisible until its single whole-message paint —
-   the streaming path creates the row/bubble up front but paints only in
-   finishAi() (appendAiText accumulates off-DOM). */
+/* An assistant bubble stays invisible only until it has CONTENT: the row/bubble
+   is created up front, and it is filled either by the first streamed frame
+   (stream-latency 批 2026-11-19 — 正文「边流边显」, appendAiText 每帧排一次增量
+   渲染) or by finishAi()'s single whole-message paint (关腿负控 / 段短到 rAF 还没跑
+   就收口). The rule therefore covers only the „built, first frame not painted yet“
+   window. */
 .bubble.ai:empty { display: none; }
+/* 入场动画 = 「**整条一次性画出**」的标记（stream-latency 批 2026-11-19 有意契约
+   变更：正文已逐帧长出时 chat.js/finishAi 不再补这一类，见 `_nfStreamed` 判据；
+   关腿负控与单帧收口两条路径照旧入场）。 */
 .bubble.nf-pop { animation: nf-pop-in 0.4s cubic-bezier(0.2, 1.1, 0.35, 1) both; }
 @keyframes nf-pop-in {
   0% { opacity: 0; transform: translateY(16px) scale(0.82); }

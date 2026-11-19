@@ -560,10 +560,13 @@ export function worklineToolDetail(view, text) {
  *  this frame — cargo-culting `scrollWidth` here would be a second read per
  *  delta.
  *
- *  Cadence stays the CSS caret, never a per-token DOM rebuild (A3/A7). Later
+ *  Cadence stays the CSS caret, never a per-token DOM rebuild. Later
  *  calls only replace/extend the string — the prefix test below appends just
  *  the new tail, and the write is unconditional because a freshly built
- *  `.nf-wl-think` is never already at the right edge. */
+ *  `.nf-wl-think` is never already at the right edge.
+ *  （原引「A3/A7」已退役：stream-latency 批 2026-11-19 把 A3/A7 从「气泡零 DOM」
+ *  就地重锚到**正文气泡**的新契约，本条约束是**工作线**自身的追加不变量，判据在
+ *  stream-ux.spec.mjs A6「I1 append-only」——不再借 A3/A7 的名义引用。） */
 export function thinkingWorklineItem(view, text) {
   const wl = ensureRow(view);
   if (!wl) return;

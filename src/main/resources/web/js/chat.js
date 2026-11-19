@@ -736,6 +736,38 @@ function sameSegment(prev, next) {
   return pr === nr && nb > pb;
 }
 
+// ---------- 主窗正文「边流边显」腿（stream-latency 批 · 2026-11-19）----------
+// 作者令 + 四腿诊断（`stream-latency-four-leg-diagnosis__20261119_145015.md` 候选②）：
+// 主窗助手正文原来**只累积、段末整段弹出**（唯一渲染点在 finishAi），一条长纯文本
+// 回复「等到结尾才出现」——正是被读成「流式输出慢」的可见性缺口。本腿把它接进
+// **既有**增量渲染器（renderStreamMarkdown：已闭合块缓存 + 只重解析未闭合尾块 +
+// <img> 跨帧存活）与**既有** rAF 合批调度（scheduleStreamRender，键 'ai'），
+// **不新增第二套渲染路径**。
+//
+// 与思考流 / 子 agent / ask 三条既有流式腿同构：每帧至多一次渲染（rAF 合批 ⇒
+// 帧预算有界，不重犯逐字全量重解析的 O(n²) 自旋）；终态仍由 finishAi 做**唯一一次
+// 全量收口渲染**，其结果与「一次性全量重渲」逐字节等价（断言在
+// tests/main-stream-render.spec.mjs + tests/stream-ux.spec.mjs A3/A7）。
+//
+// 负控开关（判据 ≤1 条）：关 ⇒ appendAiText 回到改前行为（只累积 + 段末整段弹出），
+// 闸据此证明本腿承重。生产代码从不关它。
+let _aiBodyStream = true;
+/** 负控出口：关掉「边流边显」腿（= 改前行为：气泡流式期保持空，finishAi 一次画出）。 */
+export function setAiBodyStreamRender(on) { _aiBodyStream = on !== false; }
+/** 读数出口：当前「边流边显」腿是否开着（负控用）。 */
+export function aiBodyStreamRenderEnabled() { return _aiBodyStream; }
+
+// ── 帧预算读数（先例：flowAnim.js 的 stats，注释同样写明「exposed for the specs」）
+// 每帧流式渲染的**主线程实测耗时**（renderStreamMarkdown = 尾块解析 + DOM 换尾），
+// 闸据此证明单帧成本不随累积文本失控（O(n²) 判据读数）。未开启时每帧只多一次
+// `null` 判断，零计时开销。
+let _aiStreamStats = null;
+/** 开启并复位帧预算计数器（返回同一对象，闸读 frames/totalMs/maxMs/lastMs/chars/msSamples）。 */
+export function enableAiStreamStats() {
+  _aiStreamStats = { frames: 0, totalMs: 0, maxMs: 0, lastMs: 0, chars: 0, msSamples: [] };
+  return _aiStreamStats;
+}
+
 // ---------- AI text streaming ----------
 export function appendAiText(text, mark) {
   const view = activeView;
@@ -780,13 +812,12 @@ export function appendAiText(text, mark) {
   // streaming so innerHTML replacement can't destroy its event listeners.
   const askBox = view.stream.currentAiBubble.querySelector('.option-box');
   if (askBox) { askBox.remove(); view.stream.aiStreamAskBox = askBox; }
-  // stream-ux §二.1.2 / A3 / A7 — the assistant bubble does NOT stream text.
-  // Deltas only ACCUMULATE here (view.stream.aiText + the node's _nfText, which
-  // bgAgentPopup's reopen-adopt reads); the single markdown render happens once
-  // in finishAi(), which is when the bubble pops in as a whole. This removes the
-  // per-frame markdown re-parse/re-layout that made long sessions stutter.
-  // The scroll pin stays: the row is taller than the empty bubble, so keep the
-  // viewport following while the turn is live.
+  // stream-latency 批（2026-11-19，**有意契约变更**）：正文**边流边显**。旧契约
+  // 「the assistant bubble does NOT stream text」（stream-ux §二.1.2 / A3 / A7，
+  // 2026-10-02）按作者令 + 四腿诊断候选②退役——判据已就地重锚到新契约（见
+  // tests/stream-ux.spec.mjs A3/A7 的「有意契约变更」头注与 tests/main-stream-render.spec.mjs）。
+  // Deltas 仍旧累积进 view.stream.aiText + 节点 _nfText（bgAgentPopup 的 reopen-adopt
+  // 读它），增量渲染只是**多了一条逐帧腿**，终态收口渲染点仍唯一在 finishAi()。
   const bubble = view.stream.currentAiBubble;
   bubble._nfText = view.stream.aiText || '';
   // B2 consumption ②: the bubble carries the identity of the frame that last
@@ -796,15 +827,46 @@ export function appendAiText(text, mark) {
     bubble._nfSeg = seg;
     bubble._nfRound = mark.round;
   }
-  if (view.stream.scrollSnapped === true || isNearBottom(chat)) {
+  if (_aiBodyStream) {
+    // rAF 合批 ⇒ 每帧至多一次渲染（多帧 delta 合并成一帧），尾块增量 ⇒ 单帧成本
+    // 与「未闭合尾块长度」同阶而非与累积全文同阶。跟随钉底收进 rAF 同拍（与
+    // agent/ask 两腿同构）——因此这里不再同步读一次 scrollHeight（把该几何读留给
+    // 帧内那一拍，避免每 delta 两次强制布局）。
+    scheduleStreamRender(view, 'ai',
+      { bubble, chat, snapped: view.stream.scrollSnapped, mark: mark || null },
+      (target) => {
+        if (!target.bubble.isConnected) return;
+        const stats = _aiStreamStats;
+        const t0 = stats ? performance.now() : 0;
+        renderStreamMarkdown(target.bubble, target.bubble._nfText || '', true,
+          imgKeepFor(target.bubble), false, target.mark || null);
+        // 流式光标：与思考 / agent / ask 三条腿同源；终态收口渲染整棵换掉它
+        // （finalizeStreamingFaces 另有 ·cursor 扫尾兜底）。
+        target.bubble.insertAdjacentHTML('beforeend', '<span class="cursor"></span>');
+        // 入场动画的归属判据（finishAi 读它）：本气泡已经逐帧长出来过。
+        target.bubble._nfStreamed = true;
+        if (stats) {
+          const dt = performance.now() - t0;
+          stats.frames += 1;
+          stats.totalMs += dt;
+          stats.lastMs = dt;
+          if (dt > stats.maxMs) stats.maxMs = dt;
+          // 有界样本序列（闸读分布用；上限 1200 条 ⇒ 长流也不会无界增长）。
+          if (stats.msSamples.length < 1200) stats.msSamples.push(dt);
+          stats.chars = (target.bubble._nfText || '').length;
+        }
+        rafScrollChat(target);
+      });
+  } else if (view.stream.scrollSnapped === true || isNearBottom(chat)) {
+    // 负控腿（关掉「边流边显」）：改前的同步跟随钉底，逐字保留。
     chat.scrollTop = chat.scrollHeight;
   }
 }
 
 export function finishAi(durationMs, model) {
   // Cancel any pending throttled render — this final render supersedes it.
-  // (No rAF slot is scheduled any more; kept for a stream that was opened by an
-  // older code path in the same page session.)
+  // stream-latency 批（2026-11-19）：本腿现在是**主窗正文**的常规在飞渲染槽
+  // （appendAiText 每帧排一次），这一撤是终态唯一渲染点的前置条件。
   cancelStreamRender(activeView, 'ai');
   if (activeView.stream.currentAiBubble) {
     if (!activeView.stream.aiText || !activeView.stream.aiText.trim()) {
@@ -828,14 +890,20 @@ export function finishAi(durationMs, model) {
     bubble._nfRendered = true;
     if (askBox) bubble.appendChild(askBox);
     activeView.stream.aiStreamAskBox = null;
-    // stream-ux §二.1.2: the whole reply enters ONCE (scale + elastic). Only on
-    // the first final render — a second finishAi on the same bubble (round
+    // stream-ux §二.1.2 旧契约（整条一次性出现 = scale + elastic 入场）**有意变更**
+    // （stream-latency 批 2026-11-19）：入场动画标记的正是「**整条一次画出**」这件事。
+    // 正文已走「边流边显」腿（气泡先逐帧长出来，节点上留 `_nfStreamed`）时不再补这一下
+    // ——否则 `nf-pop` 的 0% 档（opacity:0 / translateY(16px) scale(.82)，fill `both`
+    // 加类即生效）会把已经看得见的整条回复闪没再弹回来，恰好是本批要消除的「段末整段
+    // 弹出」观感。两条**照旧入场**的路径：单帧内 appendAiText→finishAi（rAF 尚未跑、
+    // 气泡仍空）+ 关腿负控（气泡流式期保持空）——两者都仍是「整条一次画出」。
+    // Only on the first final render — a second finishAi on the same bubble (round
     // boundary) must not replay the entrance.
     // UI-G: `nf-pop` is CSS animation, so the class is only applied in the
     // main window; the popup views carry `.nf-static` anyway (chatView.js) and
     // this keeps the class off their DOM entirely, so a static window owns no
     // animation class even if the CSS rule were ever narrowed.
-    if (firstPaint && activeView.motionEnabled()) bubble.classList.add('nf-pop');
+    if (firstPaint && !bubble._nfStreamed && activeView.motionEnabled()) bubble.classList.add('nf-pop');
     const ts = Date.now();
     // quote-message 一期（spec §2.1/§2.5）：助手文本行挂 id + 右键（复制 + 引用）。
     // 挂点在终态收口（finishAi）——流式期行是中间面，id 与菜单在这里一次成形。
@@ -4585,7 +4653,8 @@ export function appendThinkingDelta(delta, mark) {
   // stream-ux §二.1.1: 思考 = 单行流式揭示 — the work-line reveals the same
   // accumulated thinking text on ONE line. Each delta only writes the target
   // width (a CSS step transition does the cadence) — the row is never rebuilt
-  // per token (A2/A3/A7).
+  // per token（判据 = stream-ux.spec.mjs A2/A6「I1 append-only」；原并引的 A3/A7
+  // 已于 stream-latency 批 2026-11-19 重锚到正文气泡契约，不再代表本条）。
   // （c）面：弹窗裸行 —— 单行揭示属 turn-line 剧场，弹窗不落行；思考流本体
   // 走上方可见气泡（9.19 形态）。
   if (!bareProcessRows(activeView)) thinkingWorklineItem(activeView, activeView.stream.thinkingText);
