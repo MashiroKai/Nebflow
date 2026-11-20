@@ -256,6 +256,8 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
         event = AgentCommand.ExternalEvent("subtask", "completed", "finished",
           JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
         _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        receipt <- SessionMailbox.deliveredContains(parent.id, Set(s"${task.taskId}#run-1"))
+        _ = assertEquals(receipt, Set.empty[String])
         _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
         row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
       yield
