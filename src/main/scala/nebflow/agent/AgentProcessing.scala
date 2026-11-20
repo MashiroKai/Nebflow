@@ -711,7 +711,7 @@ private[agent] object AgentProcessing:
         val resultBlocks = tc.results.map { (call, r) =>
           ContentBlock.ToolResult(call.id, r.content, Some(r.isError))
         }
-        val resultMsg = Message(MessageRole.User, Right(resultBlocks))
+        val resultMsg = Message(MessageRole.User, Right(resultBlocks), source = Some("tool-boundary"))
         // Collect image blocks from tool results and inject as a separate user message.
         // For Anthropic: mergeConsecutive merges this with resultMsg → single user message
         //   with tool_result + image blocks (valid Anthropic format).
@@ -2177,7 +2177,7 @@ private[agent] object AgentProcessing:
     tc.compactedMessages.getOrElse(current) ++
       List(
         Message(MessageRole.Assistant, Right(assistantBlocks.toList)),
-        Message(MessageRole.User, Right(resultBlocks))
+        Message(MessageRole.User, Right(resultBlocks), source = Some("tool-boundary"))
       ) ++
       imageMsgs
   end batchMessages

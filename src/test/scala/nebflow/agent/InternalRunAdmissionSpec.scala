@@ -214,7 +214,8 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
         _ <- resources.subAgentTaskStore.recordTask(task)
         _ <- resources.subAgentTaskStore.recordTask(other)
         _ <- resources.sessionStore.saveMessagesForSession(parent.id,
-          List(Message(MessageRole.User, Right(List(nebflow.shared.ContentBlock.ToolResult("call-1", "result", Some(false)))))))
+          List(Message(MessageRole.User, Right(List(nebflow.shared.ContentBlock.ToolResult("call-1", "result", Some(false)))), source = Some("tool-boundary")),
+            Message(MessageRole.User, Right(List(nebflow.shared.ContentBlock.ToolResult("call-2", "synthetic", Some(true)))), source = Some("future-synthetic"))))
         _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
         rows <- resources.subAgentTaskStore.loadTasks(parent.id)
       yield

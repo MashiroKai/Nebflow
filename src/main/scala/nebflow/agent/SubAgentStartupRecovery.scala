@@ -459,7 +459,7 @@ object SubAgentStartupRecovery:
     ).traverse_ { task =>
       sessionStore.loadMessagesForSession(task.parentSessionId).flatMap { messages =>
         val delivered = messages.exists {
-          case Message(MessageRole.User, Right(blocks), _, source, _, _) if !source.contains("crash-recovery") =>
+          case Message(MessageRole.User, Right(blocks), _, source, _, _) if source.contains("tool-boundary") =>
             blocks.exists {
               case ContentBlock.ToolResult(id, _, _) => task.toolCallId.contains(id)
               case _ => false
