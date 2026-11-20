@@ -98,7 +98,7 @@ object CompletionDebtStore:
       val p = managedFile(task, run)
       if !os.exists(p) then None
       else decode[ManagedDebt](os.read(p)).toOption.filter(d =>
-        d.parent == parent && d.task == task && d.run == run && d.source == source && Set("subtask", "subagent").contains(source))
+        d.parent == parent && d.task == task && d.run == run && d.source == source)
     }
   }
 

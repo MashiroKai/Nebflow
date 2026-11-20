@@ -361,6 +361,60 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("consistent debt and envelope terminalize the managed row") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("consistent-evidence-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-consistent", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        messages = List(Message(MessageRole.Assistant, Left("same answer")))
+        _ <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1", messages)
+        event = AgentCommand.ExternalEvent("subtask", "completed", "same answer",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson,
+            "completionMessages" -> messages.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), None)
+    }
+  }
+
+  test("subagent debt whose source disagrees with the row is refused") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("subagent-mismatch-parent", agentName = Some("worker"))
+        task = SubAgentTask("subagent-debt-mismatch", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subagent")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        messages = List(Message(MessageRole.Assistant, Left("answer")))
+        _ <- IO.blocking(assert(nebflow.core.mail.CompletionDebtStore.recordManagedSync(
+          nebflow.core.mail.CompletionDebtStore.ManagedDebt(parent.id, task.taskId, "run-1", "subtask", messages))))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("starting"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
+    }
+  }
+
+  test("managed subagent row recovers from its own run-bound debt") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("subagent-debt-parent", agentName = Some("worker"))
+        task = SubAgentTask("subagent-debt-ok", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subagent")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1",
+          List(Message(MessageRole.Assistant, Left("answer"))))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+    }
+  }
+
   test("conflicting completion debt and envelope require manual review") {
     fixture.use { case (resources, _, _, _) =>
       for
