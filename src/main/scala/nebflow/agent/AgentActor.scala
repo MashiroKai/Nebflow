@@ -207,8 +207,7 @@ object AgentActor extends AgentCore with AgentSession:
       val clock = s"<system-reminder>${TimeAnchor.userLine()}</system-reminder>"
       message.copy(content = message.content match
         case Left(text) => Left(s"$clock\n$text")
-        case Right(blocks) => Right(ContentBlock.Text(clock) :: blocks)
-      )
+        case Right(blocks) => Right(ContentBlock.Text(clock) :: blocks))
 
   /**
    * issue #31 Fix D (2026-08-20)：把自身 barrier 状态快照进 agentRegistry，
@@ -490,12 +489,22 @@ object AgentActor extends AgentCore with AgentSession:
     ) *>
       plan.events.traverse_ { event =>
         visibleExternalEventSource(event.source, event.eventType).fold(IO.unit) { source =>
-          val sender = event.metadata("agentName").flatMap(_.asString)
-            .orElse(event.metadata("taskId").flatMap(_.asString)).orElse(event.correlationId)
+          val sender = event
+            .metadata("agentName")
+            .flatMap(_.asString)
+            .orElse(event.metadata("taskId").flatMap(_.asString))
+            .orElse(event.correlationId)
           emitInjectedUserEvent(
-            resources, plan.state.wsSend, plan.state.sessionId, event.payload, source,
-            Some(event.eventType), sender, sessionProject = plan.state.projectName,
-            fileChanges = event.metadata("fileChanges"), dedup = true,
+            resources,
+            plan.state.wsSend,
+            plan.state.sessionId,
+            event.payload,
+            source,
+            Some(event.eventType),
+            sender,
+            sessionProject = plan.state.projectName,
+            fileChanges = event.metadata("fileChanges"),
+            dedup = true,
             askAddress = event.metadata("askMailAddress").flatMap(_.asString)
           )
         }
@@ -540,8 +549,14 @@ object AgentActor extends AgentCore with AgentSession:
     plan.entries.traverse_ { entry =>
       val text = s"Background task ${entry.jobId}: ${entry.description}\n${entry.payload.take(2000)}"
       emitInjectedUserEvent(
-        resources, state.wsSend, state.sessionId, text, "background", Some(entry.eventType),
-        Some(entry.jobId), sessionProject = state.projectName
+        resources,
+        state.wsSend,
+        state.sessionId,
+        text,
+        "background",
+        Some(entry.eventType),
+        Some(entry.jobId),
+        sessionProject = state.projectName
       )
     }
 
@@ -935,114 +950,115 @@ object AgentActor extends AgentCore with AgentSession:
     // 两行 `.ui.json`，且第二行是把模型面 payload（含来源块 marker）当正文渲染。
     // 注意：本门**只**削呈现面——模型面的 ExternalEvent 注入与 `Message.source` 不受影响。
     if SelfDisplayingInboundSources.contains(source) then IO.unit
-    else sessionId.fold(IO.unit) { sid =>
-      // 气泡四段式统一批（2026-09-15，作者 12:33 令）：**唯一格式化调用点**——
-      // `NotificationHeader.header` 是全仓唯一的 header 组装实现（引擎单一来源），
-      // 覆盖 `BackendNamedSources` 全部源（含 CHAIN/NODE/MAIL）。产出的 header 同时
-      // 进 WS 帧（前端逐字渲染，禁二次拼接）与落盘（.ui.json 历史行同源 ⇒ live 与
-      // 历史恢复逐字节一致）。
-      //   PROJECT 段落回链：① `project`（构造点 = 发送方所属项目）→ ②
-      //   `sessionProject`（接收会话所属项目）→ ③ `NotificationHeader.RootProject`
-      //   （跨 root 直投 / 根域）。三级都取不到的场合不存在（③ 恒有值）。
-      //   词表外的 source（在飞批新增源，如 device-mail 批的 deviceMail）⇒ None ⇒
-      //   **帧不带 header 键**，前端回落既有 `injectedSourceLabel`（逐字节不变）。
-      val headerOpt =
-        NotificationHeader.header(
-          source,
-          intake,
-          project.orElse(sessionProject).orElse(Some(NotificationHeader.RootProject)),
-          sender,
-          senderTeam,
-          eventType
+    else
+      sessionId.fold(IO.unit) { sid =>
+        // 气泡四段式统一批（2026-09-15，作者 12:33 令）：**唯一格式化调用点**——
+        // `NotificationHeader.header` 是全仓唯一的 header 组装实现（引擎单一来源），
+        // 覆盖 `BackendNamedSources` 全部源（含 CHAIN/NODE/MAIL）。产出的 header 同时
+        // 进 WS 帧（前端逐字渲染，禁二次拼接）与落盘（.ui.json 历史行同源 ⇒ live 与
+        // 历史恢复逐字节一致）。
+        //   PROJECT 段落回链：① `project`（构造点 = 发送方所属项目）→ ②
+        //   `sessionProject`（接收会话所属项目）→ ③ `NotificationHeader.RootProject`
+        //   （跨 root 直投 / 根域）。三级都取不到的场合不存在（③ 恒有值）。
+        //   词表外的 source（在飞批新增源，如 device-mail 批的 deviceMail）⇒ None ⇒
+        //   **帧不带 header 键**，前端回落既有 `injectedSourceLabel`（逐字节不变）。
+        val headerOpt =
+          NotificationHeader.header(
+            source,
+            intake,
+            project.orElse(sessionProject).orElse(Some(NotificationHeader.RootProject)),
+            sender,
+            senderTeam,
+            eventType
+          )
+        // 外部注入统一通道批（2026-11-05）：帧组装本身也**不再是本点的事**——
+        // `InjectionChannel.frame` 逐 keys 复刻本点改前的帧形态（type/text/injected/
+        // source/sessionId + 可选段），本点只保留**本腿特有的**一枚可选键
+        // `waitingForBatch`（issue #31 Fix C，UiMessage.User 无此字段）作为 extra 透传。
+        val extra = if waitingForBatch then JsonObject("waitingForBatch" -> true.asJson) else JsonObject.empty
+        // bluebubble 批（2026-09-12）：注入行的落盘**在唯一发射点收口**。
+        // 本方法是全仓唯一的 injected user 帧发射点（grep `"injected" -> true` 单命中），
+        // 故它也是这条 .ui.json 记录的唯一写者——此前落盘依赖 WS 录制层
+        // （`WebSocketRoutes#makeRecordingWsSend` 的 `user` 分支按帧内 nodeSessionId 嗅探），
+        // 而**启动挂载**的项目 engine.wsSendFn = 裸 `wsHub.broadcast`（非录制 send，
+        // GatewayMain.startupMount）⇒ 分发器/节点会话的注入气泡只在 live 广播里存在、
+        // 永不落盘 ⇒ 会话抽屉/行内视图「看不到蓝气泡」（作者 2026-09-12 19:42 现象）。
+        // 此处 `sid` 恒 = 发射者自身会话（= 帧内 `sessionId`，与既有 WS 路由目标
+        // 一致：routeWsSend/routeSubagentWsSend 只在缺省时改写 sessionId，而本帧
+        // 必带自身 sid；二者重合使落盘目标与前端 live 路由目标严格同源）。
+        // 落盘判据与旧录制层逐字保持（`text.nonEmpty && injected` ⇒ 空文本注入
+        // 只广播不落盘），写入顺序也保持「先落盘、后广播」单链（同一条 forkTurn
+        // 内串行，避免两条 fiber 竞争导致 .ui.json 行序与旧读法不一致）。
+        // bluebubble 批的这条 UI 行现在**一次构造、两处使用**（本会话落盘 + 子代理收件
+        // 镜像）：两处必须是**同一实例**——「同一事件在 root 与子代理窗口逐字节同形」
+        // 是子代理收件批的判据（禁二次构造，防两处字段漂移）。
+        val injectedUiRow = UiMessage.User(
+          text,
+          Nil,
+          injected = true,
+          timestamp = System.currentTimeMillis(),
+          source = Some(source),
+          eventType = eventType,
+          sender = sender,
+          senderTeam = senderTeam,
+          delivery = delivery,
+          // 与帧同源（同一批名字）：历史恢复路径靠这条落盘字段重建标签。
+          intake = intake,
+          // 气泡四段式统一批（2026-09-15）：**已渲染 header 随行落盘**——
+          // 历史恢复路径逐字渲染同一串（引擎单一来源；前端不再二次拼接）。
+          // 词表外 source ⇒ None ⇒ 不落键（旧读法逐字不变，前端走旧回落）。
+          header = headerOpt,
+          // file-diff → 委托结果行（bug #58 修）：与 WS 帧**同一实例**同源落盘
+          // （live 与历史恢复逐字同构；缺席 ⇒ 不落键，旧行逐字不变）。
+          fileChanges = fileChanges,
+          // ask-mail 批（2026-11-16）：ask 会话的 Mail 续聊地址同源落盘
+          // （缺席 ⇒ 不落键，非 ask 行逐字不变）。
+          askAddress = askAddress
         )
-      // 外部注入统一通道批（2026-11-05）：帧组装本身也**不再是本点的事**——
-      // `InjectionChannel.frame` 逐 keys 复刻本点改前的帧形态（type/text/injected/
-      // source/sessionId + 可选段），本点只保留**本腿特有的**一枚可选键
-      // `waitingForBatch`（issue #31 Fix C，UiMessage.User 无此字段）作为 extra 透传。
-      val extra = if waitingForBatch then JsonObject("waitingForBatch" -> true.asJson) else JsonObject.empty
-      // bluebubble 批（2026-09-12）：注入行的落盘**在唯一发射点收口**。
-      // 本方法是全仓唯一的 injected user 帧发射点（grep `"injected" -> true` 单命中），
-      // 故它也是这条 .ui.json 记录的唯一写者——此前落盘依赖 WS 录制层
-      // （`WebSocketRoutes#makeRecordingWsSend` 的 `user` 分支按帧内 nodeSessionId 嗅探），
-      // 而**启动挂载**的项目 engine.wsSendFn = 裸 `wsHub.broadcast`（非录制 send，
-      // GatewayMain.startupMount）⇒ 分发器/节点会话的注入气泡只在 live 广播里存在、
-      // 永不落盘 ⇒ 会话抽屉/行内视图「看不到蓝气泡」（作者 2026-09-12 19:42 现象）。
-      // 此处 `sid` 恒 = 发射者自身会话（= 帧内 `sessionId`，与既有 WS 路由目标
-      // 一致：routeWsSend/routeSubagentWsSend 只在缺省时改写 sessionId，而本帧
-      // 必带自身 sid；二者重合使落盘目标与前端 live 路由目标严格同源）。
-      // 落盘判据与旧录制层逐字保持（`text.nonEmpty && injected` ⇒ 空文本注入
-      // 只广播不落盘），写入顺序也保持「先落盘、后广播」单链（同一条 forkTurn
-      // 内串行，避免两条 fiber 竞争导致 .ui.json 行序与旧读法不一致）。
-      // bluebubble 批的这条 UI 行现在**一次构造、两处使用**（本会话落盘 + 子代理收件
-      // 镜像）：两处必须是**同一实例**——「同一事件在 root 与子代理窗口逐字节同形」
-      // 是子代理收件批的判据（禁二次构造，防两处字段漂移）。
-      val injectedUiRow = UiMessage.User(
-        text,
-        Nil,
-        injected = true,
-        timestamp = System.currentTimeMillis(),
-        source = Some(source),
-        eventType = eventType,
-        sender = sender,
-        senderTeam = senderTeam,
-        delivery = delivery,
-        // 与帧同源（同一批名字）：历史恢复路径靠这条落盘字段重建标签。
-        intake = intake,
-        // 气泡四段式统一批（2026-09-15）：**已渲染 header 随行落盘**——
-        // 历史恢复路径逐字渲染同一串（引擎单一来源；前端不再二次拼接）。
-        // 词表外 source ⇒ None ⇒ 不落键（旧读法逐字不变，前端走旧回落）。
-        header = headerOpt,
-        // file-diff → 委托结果行（bug #58 修）：与 WS 帧**同一实例**同源落盘
-        // （live 与历史恢复逐字同构；缺席 ⇒ 不落键，旧行逐字不变）。
-        fileChanges = fileChanges,
-        // ask-mail 批（2026-11-16）：ask 会话的 Mail 续聊地址同源落盘
-        // （缺席 ⇒ 不落键，非 ask 行逐字不变）。
-        askAddress = askAddress
-      )
-      // 外部注入统一通道批（2026-11-05）：落盘 + 广播两腿改走**唯一投递入口**
-      // [[InjectionChannel.deliver]]（去重闸 → 落盘 → 广播）。改前本点自带一份手写
-      // 落盘 + 一份手拼帧，调度器另有第三份（ScheduledTaskActor 两条腿）⇒ 三份实现
-      // 各自漂移就是作者报障「外部注入看不到」的结构性来源。生效去重 = 由调用点
-      // 显式表态的 `dedup` 参数（外部事件可见化四站点置 true；Mail/skill 等族保持
-      // 改前逐字行为）。
-      val deliver =
-        InjectionChannel.deliver(
-          resources.sessionStore,
-          wsSend,
-          sid,
-          injectedUiRow,
-          extra = extra,
-          dedup = dedup
-        )
-      // 子代理收件（卡08 裁点 2，作者 2026-09-20 07:33 批「建」）：**投递侧增量**。
-      // 本点是全仓唯一的 injected user 行写者（上方 bluebubble 批注释）⇒ 11 处
-      // `emitInjectedUserEvent` 调用点的镜像扩展**在此单点收口**（逐处复制 11 份
-      // 同款镜像腿会造出 11 份会漂移的副本，违反本仓「单一来源」纪律）：11 处调用点
-      // 的全部差异只在**传入字段**，镜像判据只吃 `sid`/`source`/行本身，故单点等价覆盖。
-      // 路由与边界（白名单族 / parent 链 / 前缀族 / 开关 / 只落流不投 agent / 零 WS 帧）
-      // 全在 [[InjectedInboxMirror]] 内（唯一来源）。空文本与落盘腿同判据（只广播不落盘
-      // ⇒ 零镜像行）。位置刻意在 `wsSend` **之后**：live 帧时序与改前逐字一致。
-      val inboxMirror =
-        if text.nonEmpty then
-          resources.agentRegistry.get
-            .flatMap(reg =>
-              InjectedInboxMirror.mirror(
-                reg.iterator.map((s, rec) => (s, rec.rootSessionId)).toList,
-                sid,
-                source,
-                injectedUiRow,
-                (target, row) => resources.sessionStore.appendUiMessages(target, List(row))
+        // 外部注入统一通道批（2026-11-05）：落盘 + 广播两腿改走**唯一投递入口**
+        // [[InjectionChannel.deliver]]（去重闸 → 落盘 → 广播）。改前本点自带一份手写
+        // 落盘 + 一份手拼帧，调度器另有第三份（ScheduledTaskActor 两条腿）⇒ 三份实现
+        // 各自漂移就是作者报障「外部注入看不到」的结构性来源。生效去重 = 由调用点
+        // 显式表态的 `dedup` 参数（外部事件可见化四站点置 true；Mail/skill 等族保持
+        // 改前逐字行为）。
+        val deliver =
+          InjectionChannel.deliver(
+            resources.sessionStore,
+            wsSend,
+            sid,
+            injectedUiRow,
+            extra = extra,
+            dedup = dedup
+          )
+        // 子代理收件（卡08 裁点 2，作者 2026-09-20 07:33 批「建」）：**投递侧增量**。
+        // 本点是全仓唯一的 injected user 行写者（上方 bluebubble 批注释）⇒ 11 处
+        // `emitInjectedUserEvent` 调用点的镜像扩展**在此单点收口**（逐处复制 11 份
+        // 同款镜像腿会造出 11 份会漂移的副本，违反本仓「单一来源」纪律）：11 处调用点
+        // 的全部差异只在**传入字段**，镜像判据只吃 `sid`/`source`/行本身，故单点等价覆盖。
+        // 路由与边界（白名单族 / parent 链 / 前缀族 / 开关 / 只落流不投 agent / 零 WS 帧）
+        // 全在 [[InjectedInboxMirror]] 内（唯一来源）。空文本与落盘腿同判据（只广播不落盘
+        // ⇒ 零镜像行）。位置刻意在 `wsSend` **之后**：live 帧时序与改前逐字一致。
+        val inboxMirror =
+          if text.nonEmpty then
+            resources.agentRegistry.get
+              .flatMap(reg =>
+                InjectedInboxMirror.mirror(
+                  reg.iterator.map((s, rec) => (s, rec.rootSessionId)).toList,
+                  sid,
+                  source,
+                  injectedUiRow,
+                  (target, row) => resources.sessionStore.appendUiMessages(target, List(row))
+                )
               )
-            )
-            .handleErrorWith(e => logger.warn(s"injected inbox mirror failed: ${e.getMessage}"))
-            .void
-        else IO.unit
-      ctx.forkTurn(deliver.flatMap {
-        case InjectionChannel.Outcome.Collapsed => IO.unit
-        case InjectionChannel.Outcome.Failed(true, _) => IO.unit
-        case _ => inboxMirror
-      })
-    }
+              .handleErrorWith(e => logger.warn(s"injected inbox mirror failed: ${e.getMessage}"))
+              .void
+          else IO.unit
+        ctx.forkTurn(deliver.flatMap {
+          case InjectionChannel.Outcome.Collapsed => IO.unit
+          case InjectionChannel.Outcome.Failed(true, _) => IO.unit
+          case _ => inboxMirror
+        })
+      }
 
   def apply(
     agentDef: AgentDef,
@@ -1194,8 +1210,7 @@ object AgentActor extends AgentCore with AgentSession:
             agentDef,
             resources,
             depth,
-            parentRef,
-            {
+            parentRef, {
               val base = AgentState(
                 messages = initialMessages,
                 status = AgentStatus.Idle,

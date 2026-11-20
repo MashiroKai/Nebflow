@@ -50,7 +50,8 @@ object Quarantine:
     else
       val s = Files.list(dir)
       try
-        s.iterator().asScala
+        s.iterator()
+          .asScala
           .filter(p => Files.isRegularFile(p) && isQuarantinedName(p.getFileName.toString))
           .toList
       finally s.close()

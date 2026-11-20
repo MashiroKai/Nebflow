@@ -34,13 +34,13 @@ import nebflow.shared.*
 class DynamicToolLoadSpec extends FunSuite:
 
   private def anthropic: AnthropicAdapter = new AnthropicAdapter("http://localhost:0", "k", null)
-  private def openai: OpenAiAdapter       = new OpenAiAdapter("http://localhost:0", "k", null)
+  private def openai: OpenAiAdapter = new OpenAiAdapter("http://localhost:0", "k", null)
 
   private def td(name: String, deferred: Boolean = false): ToolDefinition =
     ToolDefinition(name, s"description of $name", JsonObject.empty, deferLoading = deferred)
 
   private val baseTools = List(td("Read"), td("Bash"))
-  private val newTool   = td("plugin_echo")
+  private val newTool = td("plugin_echo")
 
   private def params(tools: List[ToolDefinition], model: String): SendMessageParams =
     SendMessageParams(
@@ -121,8 +121,10 @@ class DynamicToolLoadSpec extends FunSuite:
     )
     // 机制为真：wire 上确实带 defer_loading，且缓存断点在最后一个非 deferred 工具上
     val tools = anthropicBody(plan.wireTools).hcursor.downField("tools").focus.get.asArray.get
-    assert(tools.exists(_.hcursor.downField("defer_loading").as[Boolean].getOrElse(false)),
-      "wire 必须真的带 defer_loading（不是指纹侧的假设）")
+    assert(
+      tools.exists(_.hcursor.downField("defer_loading").as[Boolean].getOrElse(false)),
+      "wire 必须真的带 defer_loading（不是指纹侧的假设）"
+    )
     val marked = tools.count(_.hcursor.downField("cache_control").focus.isDefined)
     assertEquals(marked, 1, "断点唯一")
     val echo = tools.find(_.hcursor.get[String]("name").toOption.contains("plugin_echo")).get
@@ -139,7 +141,7 @@ class DynamicToolLoadSpec extends FunSuite:
   // ── 保真：无新装载时逐字节零变化（既有行为不回归）──────────────────
 
   test("零变化: 无新装载时 wire body 与不带装载函数逐字节相同（既有行为不回归）"):
-    for (tools <- List[List[ToolDefinition]](Nil, baseTools)) do
+    for tools <- List[List[ToolDefinition]](Nil, baseTools) do
       val plan = DynamicToolLoad.plan("s", ToolLoadMode.forModel(Some("deepseek/deepseek-v4-flash")), tools, Nil)
       assertEquals(plan.wireTools, tools)
       assertEquals(plan.advertisedTools, Nil)

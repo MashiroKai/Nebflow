@@ -6,6 +6,7 @@ import java.security.MessageDigest
 
 /** A recovery principal is derived only from an authenticated credential. */
 private[gateway] object RecoveryPrincipal:
+
   def fromCredential(credential: Credential): Option[String] = credential match
     case Credential.ViaBearer(true) => Some("local-file-token")
     case Credential.ViaBearer(false) => None
@@ -24,3 +25,4 @@ private[gateway] object RecoveryPrincipal:
           digest.update(bytes)
         }
         Some("session-" + digest.digest().map(b => f"${b & 0xff}%02x").mkString)
+end RecoveryPrincipal

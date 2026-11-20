@@ -13,15 +13,24 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.Files
 
 class ExecutionCommitStoreSpec extends CatsEffectSuite:
+
   private val admission = ExecutionAdmission(
-    "session", "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-    Json.obj("message" -> Json.fromString("hello")), "initial-input"
+    "session",
+    "run",
+    "commit",
+    "request",
+    "attempt",
+    "incarnation",
+    "owner",
+    "business",
+    "audit",
+    Json.obj("message" -> Json.fromString("hello")),
+    "initial-input"
   )
 
   private def isolated[A](f: java.nio.file.Path => IO[A]): IO[A] =
-    IO.blocking(os.temp.dir(prefix = "execution-admission-")).bracket(dir => f(dir.toNIO.toRealPath()))(
-      dir => IO.blocking(os.remove.all(dir))
-    )
+    IO.blocking(os.temp.dir(prefix = "execution-admission-"))
+      .bracket(dir => f(dir.toNIO.toRealPath()))(dir => IO.blocking(os.remove.all(dir)))
 
   test("parent admission closure serializes with admission and persists after reopen") {
     isolated { root =>
@@ -31,11 +40,15 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           for
             entered <- Deferred[IO, Unit]
             release <- Deferred[IO, Unit]
-            closure <- store.withClosedParentAdmission("parent")(entered.complete(()).void *> release.get.timeout(2.seconds)).start
+            closure <- store
+              .withClosedParentAdmission("parent")(entered.complete(()).void *> release.get.timeout(2.seconds))
+              .start
             _ <- entered.get.timeout(2.seconds)
             finished <- Deferred[IO, Unit]
             attempted <- Deferred[IO, Unit]
-            pending <- (attempted.complete(()).void *> store.admit(child).flatTap(_ => finished.complete(()).void)).start
+            pending <- (attempted
+              .complete(())
+              .void *> store.admit(child).flatTap(_ => finished.complete(()).void)).start
             _ <- attempted.get.timeout(2.seconds)
             _ <- IO.sleep(50.millis)
             before <- finished.tryGet
@@ -44,129 +57,205 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
             _ <- closure.joinWithNever.timeout(2.seconds)
             rejected <- pending.joinWithNever.timeout(2.seconds)
             _ = assertEquals(rejected, ExecutionCommitResult.Rejected("parent-admission-closed"))
-            unrelated <- store.admit(child.copy(sessionId = "other-child", executionId = "other-run",
-              commitId = "other-commit", requestId = "other-request", ownerBinding = "other-parent"))
+            unrelated <- store.admit(
+              child.copy(
+                sessionId = "other-child",
+                executionId = "other-run",
+                commitId = "other-commit",
+                requestId = "other-request",
+                ownerBinding = "other-parent"
+              )
+            )
             _ = assert(unrelated.isInstanceOf[ExecutionCommitResult.Committed])
           yield ()
         }
         _ <- ExecutionCommitStore.resource(root).use { store =>
-          store.admit(child).map(result => assertEquals(result, ExecutionCommitResult.Rejected("parent-admission-closed")))
+          store
+            .admit(child)
+            .map(result => assertEquals(result, ExecutionCommitResult.Rejected("parent-admission-closed")))
         }
       yield ()
+      end for
     }
   }
 
   test("ambiguous retry charge blocks the live model decision") {
     isolated { root =>
       val fault = new java.util.concurrent.atomic.AtomicBoolean(false)
-      ExecutionCommitStore.resourceWithFault(root, point =>
-        if point == "before-acknowledgement" && fault.compareAndSet(true, false) then
-          throw new java.io.IOException("lost retry acknowledgement")
-      ).use { store =>
-        def command(ref: ExecutionCommitRef, id: String, event: ExecutionEvent) =
-          ExecutionTransition("session", "run", id, id, ref, "attempt", "incarnation", event)
-        for
-          admitted <- store.admit(admission)
-          start <- store.transition(command(admitted.asInstanceOf[ExecutionCommitResult.Committed].ref,
-            "attempt-start", ExecutionEvent.AttemptStarted))
-          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use { registered =>
-            val runner = registered.toOption.get
-            for
-              release <- Deferred[IO, Unit]
-              model <- runner.startModel(command(start.asInstanceOf[ExecutionCommitResult.Committed].ref,
-                "model", ExecutionEvent.ModelRequested(Json.Null, 1)))(release.get)
-              (requested, receipt) = model.toOption.get
-              input <- store.acceptInput(command(requested, "input-busy", ExecutionEvent.InputAccepted("busy", Json.fromString("queued"))))
-              _ = assert(input.isInstanceOf[ExecutionCommitResult.Committed])
-              _ <- IO(fault.set(true))
-              charge <- runner.chargeModelRetry(command(requested, "charge", ExecutionEvent.ModelRetryCharged("classified-transient-provider")))
-              _ = assert(charge.isInstanceOf[ExecutionCommitResult.CommitUnknown])
-              _ <- release.complete(())
-              decision <- runner.modelDecision(command(requested, "decision", ExecutionEvent.ModelDecided(
-                ExecutionModelDecision(Json.Null, Nil))), receipt)
-              _ = assertEquals(decision, ExecutionCommitResult.Rejected("commit-unknown"))
-            yield ()
-          }
-        yield ()
-      }
+      ExecutionCommitStore
+        .resourceWithFault(
+          root,
+          point =>
+            if point == "before-acknowledgement" && fault.compareAndSet(true, false) then
+              throw new java.io.IOException("lost retry acknowledgement")
+        )
+        .use { store =>
+          def command(ref: ExecutionCommitRef, id: String, event: ExecutionEvent) =
+            ExecutionTransition("session", "run", id, id, ref, "attempt", "incarnation", event)
+          for
+            admitted <- store.admit(admission)
+            start <- store.transition(
+              command(
+                admitted.asInstanceOf[ExecutionCommitResult.Committed].ref,
+                "attempt-start",
+                ExecutionEvent.AttemptStarted
+              )
+            )
+            _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use {
+              registered =>
+                val runner = registered.toOption.get
+                for
+                  release <- Deferred[IO, Unit]
+                  model <- runner.startModel(
+                    command(
+                      start.asInstanceOf[ExecutionCommitResult.Committed].ref,
+                      "model",
+                      ExecutionEvent.ModelRequested(Json.Null, 1)
+                    )
+                  )(release.get)
+                  (requested, receipt) = model.toOption.get
+                  input <- store.acceptInput(
+                    command(requested, "input-busy", ExecutionEvent.InputAccepted("busy", Json.fromString("queued")))
+                  )
+                  _ = assert(input.isInstanceOf[ExecutionCommitResult.Committed])
+                  _ <- IO(fault.set(true))
+                  charge <- runner.chargeModelRetry(
+                    command(requested, "charge", ExecutionEvent.ModelRetryCharged("classified-transient-provider"))
+                  )
+                  _ = assert(charge.isInstanceOf[ExecutionCommitResult.CommitUnknown])
+                  _ <- release.complete(())
+                  decision <- runner.modelDecision(
+                    command(requested, "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, Nil))),
+                    receipt
+                  )
+                  _ = assertEquals(decision, ExecutionCommitResult.Rejected("commit-unknown"))
+                yield ()
+                end for
+            }
+          yield ()
+          end for
+        }
     }
   }
 
   test("terminal force failure and lost acknowledgement reconcile the same envelope and reject stale writers") {
     isolated { root =>
       val fail = new java.util.concurrent.atomic.AtomicReference[String]("")
-      val fault: String => Unit = point =>
-        if fail.get() == point && fail.getAndSet("") == point then throw new java.io.IOException(point)
+      val fault: String => Unit =
+        point => if fail.get() == point && fail.getAndSet("") == point then throw new java.io.IOException(point)
       ExecutionCommitStore.resourceWithFault(root, fault).use { store =>
         def command(ref: ExecutionCommitRef, id: String, event: ExecutionEvent) =
           ExecutionTransition("session", "run", id, id, ref, "attempt", "incarnation", event)
-        val envelope = Json.obj("source" -> Json.fromString("delegate"), "eventType" -> Json.fromString("completed"),
-          "payload" -> Json.fromString("done"), "metadata" -> Json.obj(), "correlationId" -> Json.fromString("session"),
-          "blocks" -> Json.Null)
+        val envelope = Json.obj(
+          "source" -> Json.fromString("delegate"),
+          "eventType" -> Json.fromString("completed"),
+          "payload" -> Json.fromString("done"),
+          "metadata" -> Json.obj(),
+          "correlationId" -> Json.fromString("session"),
+          "blocks" -> Json.Null
+        )
         val tasks = new SubAgentTaskStore(os.Path(root) / "tasks")
-        val row = SubAgentTask("session", "owner", "agent", "initial", "task", "running", 0,
-          System.currentTimeMillis(), None, None, "delegate")
+        val row = SubAgentTask(
+          "session",
+          "owner",
+          "agent",
+          "initial",
+          "task",
+          "running",
+          0,
+          System.currentTimeMillis(),
+          None,
+          None,
+          "delegate"
+        )
         for
           _ <- tasks.beginRun(row, "run", "owner", "nebflow")
           _ <- IO(tasks.installExecutionAuthority(store))
           admitted <- nebflow.core.ExecutionCommitPort.admitHandle(store, admission)
           handle = admitted.toOption.get
           started <- store.transition(command(handle.ref, "start", ExecutionEvent.AttemptStarted))
-          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use { registered =>
-            val runner = registered.toOption.get
-            for
-              model <- runner.startModel(command(started.asInstanceOf[ExecutionCommitResult.Committed].ref,
-                "model", ExecutionEvent.ModelRequested(Json.Null, 0)))(IO.unit)
-              (modelRef, receipt) = model.toOption.get
-              decision <- runner.modelDecision(command(modelRef, "decision",
-                ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, Nil))), receipt)
-              round <- store.commitRound(command(decision.asInstanceOf[ExecutionCommitResult.Committed].ref,
-                "round", ExecutionEvent.RoundCommitted(List("initial-input"), Json.obj())))
-              terminal = command(round.asInstanceOf[ExecutionCommitResult.Committed].ref, "terminal-attempt",
-                ExecutionEvent.TerminalInstallPrepared("", envelope))
-              stale <- runner.installTerminal(terminal.copy(attemptId = "old"), envelope)
-              _ = assertEquals(stale, ExecutionCommitResult.Rejected("runner-authority-required"))
-              _ <- IO(fail.set("before-terminal-confirm"))
-              failed <- ProtectedAgentExecution.installTerminal(handle, runner, envelope).attempt
-              _ = assert(failed.isLeft)
-              unpublished <- store.committedTerminal("session", "run")
-              _ = assert(unpublished.isLeft)
-              afterFailure <- store.observeChain("session", "run")
-              _ = assertEquals(afterFailure.asInstanceOf[ExecutionChainObservation.Verified].state.phase, "terminal-prepared")
-              path = root.resolve("session").resolve("terminal-cnVu.json")
-              _ <- IO.blocking(Files.writeString(path, envelope.deepMerge(Json.obj("payload" -> Json.fromString("other"))).noSpaces))
-              conflict <- runner.installTerminal(terminal, envelope)
-              _ = assertEquals(conflict, ExecutionCommitResult.Rejected("terminal-envelope-conflict"))
-              _ <- IO.blocking(Files.writeString(path, envelope.noSpaces))
-              _ <- IO(fail.set("after-terminal-confirm"))
-              lost <- runner.installTerminal(terminal, envelope)
-              _ = assert(lost.isInstanceOf[ExecutionCommitResult.CommitUnknown])
-              _ <- IO(fail.set("before-terminal-acknowledgement"))
-              lostAck <- runner.installTerminal(terminal, envelope)
-              _ = assert(lostAck.isInstanceOf[ExecutionCommitResult.CommitUnknown])
-              confirmed <- ProtectedAgentExecution.installTerminal(handle, runner, envelope)
-              _ = assertEquals(confirmed, path.toString)
-              state <- store.observeChain("session", "run")
-              _ = assertEquals(state.asInstanceOf[ExecutionChainObservation.Verified].state.phase, "terminal")
-              loaded <- nebflow.core.SessionStore(os.Path(root), os.Path(root)).loadTerminalEnvelope("session", "run")
-              _ = assertEquals(loaded.map(_.payload), Some("done"))
-              rejected <- tasks.completeRun("owner", "session", "run", "failed").attempt
-              _ = assert(rejected.isLeft)
-              other = new SubAgentTaskStore(os.Path(root) / "tasks")
-              rejectedOther <- other.completeRun("owner", "session", "run", "failed").attempt
-              _ = assert(rejectedOther.isLeft)
-            yield ()
+          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use {
+            registered =>
+              val runner = registered.toOption.get
+              for
+                model <- runner.startModel(
+                  command(
+                    started.asInstanceOf[ExecutionCommitResult.Committed].ref,
+                    "model",
+                    ExecutionEvent.ModelRequested(Json.Null, 0)
+                  )
+                )(IO.unit)
+                (modelRef, receipt) = model.toOption.get
+                decision <- runner.modelDecision(
+                  command(modelRef, "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, Nil))),
+                  receipt
+                )
+                round <- store.commitRound(
+                  command(
+                    decision.asInstanceOf[ExecutionCommitResult.Committed].ref,
+                    "round",
+                    ExecutionEvent.RoundCommitted(List("initial-input"), Json.obj())
+                  )
+                )
+                terminal = command(
+                  round.asInstanceOf[ExecutionCommitResult.Committed].ref,
+                  "terminal-attempt",
+                  ExecutionEvent.TerminalInstallPrepared("", envelope)
+                )
+                stale <- runner.installTerminal(terminal.copy(attemptId = "old"), envelope)
+                _ = assertEquals(stale, ExecutionCommitResult.Rejected("runner-authority-required"))
+                _ <- IO(fail.set("before-terminal-confirm"))
+                failed <- ProtectedAgentExecution.installTerminal(handle, runner, envelope).attempt
+                _ = assert(failed.isLeft)
+                unpublished <- store.committedTerminal("session", "run")
+                _ = assert(unpublished.isLeft)
+                afterFailure <- store.observeChain("session", "run")
+                _ = assertEquals(
+                  afterFailure.asInstanceOf[ExecutionChainObservation.Verified].state.phase,
+                  "terminal-prepared"
+                )
+                path = root.resolve("session").resolve("terminal-cnVu.json")
+                _ <- IO.blocking(
+                  Files.writeString(path, envelope.deepMerge(Json.obj("payload" -> Json.fromString("other"))).noSpaces)
+                )
+                conflict <- runner.installTerminal(terminal, envelope)
+                _ = assertEquals(conflict, ExecutionCommitResult.Rejected("terminal-envelope-conflict"))
+                _ <- IO.blocking(Files.writeString(path, envelope.noSpaces))
+                _ <- IO(fail.set("after-terminal-confirm"))
+                lost <- runner.installTerminal(terminal, envelope)
+                _ = assert(lost.isInstanceOf[ExecutionCommitResult.CommitUnknown])
+                _ <- IO(fail.set("before-terminal-acknowledgement"))
+                lostAck <- runner.installTerminal(terminal, envelope)
+                _ = assert(lostAck.isInstanceOf[ExecutionCommitResult.CommitUnknown])
+                confirmed <- ProtectedAgentExecution.installTerminal(handle, runner, envelope)
+                _ = assertEquals(confirmed, path.toString)
+                state <- store.observeChain("session", "run")
+                _ = assertEquals(state.asInstanceOf[ExecutionChainObservation.Verified].state.phase, "terminal")
+                loaded <- nebflow.core.SessionStore(os.Path(root), os.Path(root)).loadTerminalEnvelope("session", "run")
+                _ = assertEquals(loaded.map(_.payload), Some("done"))
+                rejected <- tasks.completeRun("owner", "session", "run", "failed").attempt
+                _ = assert(rejected.isLeft)
+                other = new SubAgentTaskStore(os.Path(root) / "tasks")
+                rejectedOther <- other.completeRun("owner", "session", "run", "failed").attempt
+                _ = assert(rejectedOther.isLeft)
+              yield ()
+              end for
           }
           repaired <- store.repairTerminalProjection("session", "run", tasks)
-          _ = assertEquals(repaired.toOption.flatMap(_.resultRef), Some(root.resolve("session").resolve("terminal-cnVu.json").toString))
+          _ = assertEquals(
+            repaired.toOption.flatMap(_.resultRef),
+            Some(root.resolve("session").resolve("terminal-cnVu.json").toString)
+          )
           duplicate <- store.repairTerminalProjection("session", "run", tasks)
           _ = assertEquals(duplicate, repaired)
           _ <- IO(tasks.releaseExecutionAuthority(store))
         yield ()
+        end for
       } *> ExecutionCommitStore.resource(root).use { reopened =>
         val reopenedTasks = new SubAgentTaskStore(os.Path(root) / "tasks")
-        reopened.repairTerminalProjection("session", "run", reopenedTasks).map(result =>
-          assertEquals(result.toOption.flatMap(_.executionStatus), Some("finished")))
+        reopened
+          .repairTerminalProjection("session", "run", reopenedTasks)
+          .map(result => assertEquals(result.toOption.flatMap(_.executionStatus), Some("finished")))
       }
     }
   }
@@ -181,33 +270,47 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           initial = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
           started <- store.transition(command(initial, "attempt-start", ExecutionEvent.AttemptStarted))
           active = started.asInstanceOf[ExecutionCommitResult.Committed].ref
-          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use { registered =>
-            val runner = registered.toOption.get
-            for
-              entered <- Deferred[IO, Unit]
-              release <- Deferred[IO, Unit]
-              request <- runner.startModel(command(active, "model-request", ExecutionEvent.ModelRequested(Json.Null, 1)))(
-                entered.complete(()).void *> release.get
-              )
-              (ref, receipt) = request.toOption.get
-              _ <- entered.get.timeout(5.seconds)
-              decision = command(ref, "model-decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, Nil)))
-              waiting <- runner.modelDecision(decision, receipt).start
-              before <- store.observeChain("session", "run")
-              _ = assertEquals(before.asInstanceOf[ExecutionChainObservation.Verified].state.phase, "model")
-              queued <- store.acceptInput(command(ref, "busy-input", ExecutionEvent.InputAccepted("busy", Json.fromString("queued"))))
-              _ = assert(queued.isInstanceOf[ExecutionCommitResult.Committed])
-              _ <- release.complete(())
-              committed <- waiting.joinWithNever.timeout(5.seconds)
-              _ = assert(committed.isInstanceOf[ExecutionCommitResult.Committed])
-              after <- store.observeChain("session", "run")
-              _ = assertEquals(after.asInstanceOf[ExecutionChainObservation.Verified].state.pendingInputs, List("initial-input", "busy"))
-              _ <- runner.revoke
-              late <- runner.modelDecision(decision, receipt)
-              _ = assertEquals(late, ExecutionCommitResult.Rejected("runner-revoked"))
-            yield ()
+          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use {
+            registered =>
+              val runner = registered.toOption.get
+              for
+                entered <- Deferred[IO, Unit]
+                release <- Deferred[IO, Unit]
+                request <- runner.startModel(
+                  command(active, "model-request", ExecutionEvent.ModelRequested(Json.Null, 1))
+                )(
+                  entered.complete(()).void *> release.get
+                )
+                (ref, receipt) = request.toOption.get
+                _ <- entered.get.timeout(5.seconds)
+                decision = command(
+                  ref,
+                  "model-decision",
+                  ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, Nil))
+                )
+                waiting <- runner.modelDecision(decision, receipt).start
+                before <- store.observeChain("session", "run")
+                _ = assertEquals(before.asInstanceOf[ExecutionChainObservation.Verified].state.phase, "model")
+                queued <- store.acceptInput(
+                  command(ref, "busy-input", ExecutionEvent.InputAccepted("busy", Json.fromString("queued")))
+                )
+                _ = assert(queued.isInstanceOf[ExecutionCommitResult.Committed])
+                _ <- release.complete(())
+                committed <- waiting.joinWithNever.timeout(5.seconds)
+                _ = assert(committed.isInstanceOf[ExecutionCommitResult.Committed])
+                after <- store.observeChain("session", "run")
+                _ = assertEquals(
+                  after.asInstanceOf[ExecutionChainObservation.Verified].state.pendingInputs,
+                  List("initial-input", "busy")
+                )
+                _ <- runner.revoke
+                late <- runner.modelDecision(decision, receipt)
+                _ = assertEquals(late, ExecutionCommitResult.Rejected("runner-revoked"))
+              yield ()
+              end for
           }
         yield ()
+        end for
       }
     }
   }
@@ -218,15 +321,30 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         for
           bound <- nebflow.core.ExecutionCommitPort.admitHandle(store, admission)
           handle = bound.toOption.get
-          first <- InputLanding.protectedUser(handle, nebflow.actor.AgentCommand.UserInput(
-            text = "queued", replyTo = None, clientMessageId = Some("queued-id")
-          ))
-          duplicate <- InputLanding.protectedUser(handle, nebflow.actor.AgentCommand.UserInput(
-            text = "queued", replyTo = None, clientMessageId = Some("queued-id")
-          ))
-          conflict <- InputLanding.protectedUser(handle, nebflow.actor.AgentCommand.UserInput(
-            text = "different", replyTo = None, clientMessageId = Some("queued-id")
-          ))
+          first <- InputLanding.protectedUser(
+            handle,
+            nebflow.actor.AgentCommand.UserInput(
+              text = "queued",
+              replyTo = None,
+              clientMessageId = Some("queued-id")
+            )
+          )
+          duplicate <- InputLanding.protectedUser(
+            handle,
+            nebflow.actor.AgentCommand.UserInput(
+              text = "queued",
+              replyTo = None,
+              clientMessageId = Some("queued-id")
+            )
+          )
+          conflict <- InputLanding.protectedUser(
+            handle,
+            nebflow.actor.AgentCommand.UserInput(
+              text = "different",
+              replyTo = None,
+              clientMessageId = Some("queued-id")
+            )
+          )
           observed <- store.observeChain("session", "run")
         yield
           assertEquals(first, Right(true))
@@ -245,9 +363,14 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           bound <- nebflow.core.ExecutionCommitPort.admitHandle(store, admission)
           handle = bound.toOption.get
           results <- List("input-a", "input-b").parTraverse { id =>
-            InputLanding.protectedUser(handle, nebflow.actor.AgentCommand.UserInput(
-              text = id, replyTo = None, clientMessageId = Some(id)
-            ))
+            InputLanding.protectedUser(
+              handle,
+              nebflow.actor.AgentCommand.UserInput(
+                text = id,
+                replyTo = None,
+                clientMessageId = Some(id)
+              )
+            )
           }
           observation <- store.observeChain("session", "run")
         yield
@@ -264,13 +387,28 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         for
           admitted <- store.admit(admission)
           ref = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
-          firstCommand = ExecutionTransition("session", "run", "input-commit", "input-request", ref,
-            "attempt", "incarnation", ExecutionEvent.InputAccepted("first", Json.fromString("one")))
+          firstCommand = ExecutionTransition(
+            "session",
+            "run",
+            "input-commit",
+            "input-request",
+            ref,
+            "attempt",
+            "incarnation",
+            ExecutionEvent.InputAccepted("first", Json.fromString("one"))
+          )
           first <- store.acceptInput(firstCommand)
-          second <- store.acceptInput(firstCommand.copy(commitId = "second-commit", requestId = "second-request",
-            event = ExecutionEvent.InputAccepted("second", Json.fromString("two"))))
+          second <- store.acceptInput(
+            firstCommand.copy(
+              commitId = "second-commit",
+              requestId = "second-request",
+              event = ExecutionEvent.InputAccepted("second", Json.fromString("two"))
+            )
+          )
           retry <- store.acceptInput(firstCommand)
-          conflict <- store.acceptInput(firstCommand.copy(event = ExecutionEvent.InputAccepted("first", Json.fromString("changed"))))
+          conflict <- store.acceptInput(
+            firstCommand.copy(event = ExecutionEvent.InputAccepted("first", Json.fromString("changed")))
+          )
         yield
           assert(second.isInstanceOf[ExecutionCommitResult.Committed])
           assertEquals(retry, ExecutionCommitResult.Duplicate(first.asInstanceOf[ExecutionCommitResult.Committed].ref))
@@ -311,16 +449,15 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         assert(observed match
           case ExecutionAdmissionObservation.Verified(record, input) =>
             record.sessionId == "session" && record.executionId == "run" &&
-              input == Json.obj("inputId" -> admission.initialInputId.asJson, "content" -> admission.initialInput)
-          case _ => false
-        )
+            input == Json.obj("inputId" -> admission.initialInputId.asJson, "content" -> admission.initialInput)
+          case _ => false)
     }
   }
 
   test("lost acknowledgement locks the live owner and reopened duplicate is reconfirmed") {
     isolated { root =>
-      val fault: String => Unit = phase =>
-        if phase == "before-acknowledgement" then throw new java.io.IOException("injected")
+      val fault: String => Unit =
+        phase => if phase == "before-acknowledgement" then throw new java.io.IOException("injected")
       for
         first <- ExecutionCommitStore.resourceWithFault(root, fault).use { store =>
           for
@@ -338,8 +475,8 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
 
   test("same owner reconciles only exact installed admission after acknowledgement loss") {
     isolated { root =>
-      val fault: String => Unit = phase =>
-        if phase == "before-acknowledgement" then throw new java.io.IOException("injected")
+      val fault: String => Unit =
+        phase => if phase == "before-acknowledgement" then throw new java.io.IOException("injected")
       ExecutionCommitStore.resourceWithFault(root, fault).use { store =>
         for
           unknown <- store.admit(admission)
@@ -357,8 +494,7 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
 
   test("missing installed record remains unknown during reconciliation") {
     isolated { root =>
-      val fault: String => Unit = phase =>
-        if phase == "after-file-force" then throw new java.io.IOException("injected")
+      val fault: String => Unit = phase => if phase == "after-file-force" then throw new java.io.IOException("injected")
       ExecutionCommitStore.resourceWithFault(root, fault).use { store =>
         for
           unknown <- store.admit(admission)
@@ -444,10 +580,16 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
             def sorted(value: Json): Json = value.arrayOrObject(
               value,
               values => Json.fromValues(values.map(sorted)),
-              obj => Json.fromJsonObject(JsonObject.fromIterable(obj.toList.sortBy(_._1).map { case (k, v) => k -> sorted(v) }))
+              obj =>
+                Json.fromJsonObject(JsonObject.fromIterable(obj.toList.sortBy(_._1).map { case (k, v) =>
+                  k -> sorted(v)
+                }))
             )
-            val digest = java.security.MessageDigest.getInstance("SHA-256")
-              .digest(sorted(unsigned).noSpaces.getBytes(UTF_8)).map(b => f"${b & 0xff}%02x").mkString
+            val digest = java.security.MessageDigest
+              .getInstance("SHA-256")
+              .digest(sorted(unsigned).noSpaces.getBytes(UTF_8))
+              .map(b => f"${b & 0xff}%02x")
+              .mkString
             val malformed = unsigned.mapObject(_.add("recordHash", digest.asJson))
             Files.writeString(file, sorted(malformed).noSpaces)
           }
@@ -472,22 +614,53 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           for
             admitted <- store.admit(admission)
             ref = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
-            started <- store.transition(ExecutionTransition("session", "run", "c2", "r2", ref,
-              "attempt", "incarnation", ExecutionEvent.AttemptStarted))
+            started <- store.transition(
+              ExecutionTransition(
+                "session",
+                "run",
+                "c2",
+                "r2",
+                ref,
+                "attempt",
+                "incarnation",
+                ExecutionEvent.AttemptStarted
+              )
+            )
             ref2 = started.asInstanceOf[ExecutionCommitResult.Committed].ref
-            input <- store.transition(ExecutionTransition("session", "run", "c3", "r3", ref2,
-              "attempt", "incarnation", ExecutionEvent.InputAccepted("input", Json.fromString("hello"))))
+            input <- store.transition(
+              ExecutionTransition(
+                "session",
+                "run",
+                "c3",
+                "r3",
+                ref2,
+                "attempt",
+                "incarnation",
+                ExecutionEvent.InputAccepted("input", Json.fromString("hello"))
+              )
+            )
           yield input
         }
         observed <- ExecutionCommitStore.resource(root).use(_.observeChain("session", "run"))
         stale <- ExecutionCommitStore.resource(root).use { store =>
           val ref = first.asInstanceOf[ExecutionCommitResult.Committed].ref
-          store.transition(ExecutionTransition("session", "run", "c4", "r4", ref,
-            "old", "incarnation", ExecutionEvent.ModelRequested(Json.Null, 0)))
+          store.transition(
+            ExecutionTransition(
+              "session",
+              "run",
+              "c4",
+              "r4",
+              ref,
+              "old",
+              "incarnation",
+              ExecutionEvent.ModelRequested(Json.Null, 0)
+            )
+          )
         }
       yield
         assert(observed match
-          case ExecutionChainObservation.Verified(state) => state.pendingInputs == List("initial-input", "input") && state.phase == "active"
+          case ExecutionChainObservation.Verified(state) =>
+            state.pendingInputs == List("initial-input", "input") && state.phase == "active"
           case _ => false)
         assertEquals(stale, ExecutionCommitResult.Rejected("stale-attempt"))
         assert(!Files.exists(root.resolve("session/executions/cnVu/commits/00000000000000000004.json")))
@@ -511,14 +684,34 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         for
           admitted <- store.admit(admission)
           initial = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
-          started <- store.transition(ExecutionTransition("session", "run", "c2", "r2", initial,
-            "attempt", "incarnation", ExecutionEvent.AttemptStarted))
+          started <- store.transition(
+            ExecutionTransition(
+              "session",
+              "run",
+              "c2",
+              "r2",
+              initial,
+              "attempt",
+              "incarnation",
+              ExecutionEvent.AttemptStarted
+            )
+          )
           before <- IO.blocking {
             val dir = root.resolve("session/executions/cnVu")
             List("intents", "payloads", "commits").map(name => files(dir.resolve(name)))
           }
-          stale <- store.transition(ExecutionTransition("session", "run", "c3", "r3", initial,
-            "attempt", "incarnation", ExecutionEvent.ModelRequested(Json.fromString("stale-payload"), 0)))
+          stale <- store.transition(
+            ExecutionTransition(
+              "session",
+              "run",
+              "c3",
+              "r3",
+              initial,
+              "attempt",
+              "incarnation",
+              ExecutionEvent.ModelRequested(Json.fromString("stale-payload"), 0)
+            )
+          )
           after <- IO.blocking {
             val dir = root.resolve("session/executions/cnVu")
             List("intents", "payloads", "commits").map(name => files(dir.resolve(name)))
@@ -529,8 +722,10 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           assertEquals(stale, ExecutionCommitResult.Rejected("stale-revision"))
           assertEquals(after, before)
           assert(observed match
-            case ExecutionChainObservation.Verified(state) => state.ref == started.asInstanceOf[ExecutionCommitResult.Committed].ref
+            case ExecutionChainObservation.Verified(state) =>
+              state.ref == started.asInstanceOf[ExecutionCommitResult.Committed].ref
             case _ => false)
+        end for
       }
     }
   }
@@ -540,10 +735,22 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
       for
         admitted <- ExecutionCommitStore.resource(root).use(_.admit(admission))
         ref = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
-        command = ExecutionTransition("session", "run", "c2", "r2", ref, "attempt", "incarnation", ExecutionEvent.AttemptStarted)
-        unknown <- ExecutionCommitStore.resourceWithFault(root, phase =>
-          if phase == "before-acknowledgement" then throw new java.io.IOException("injected")
-        ).use(_.transition(command))
+        command = ExecutionTransition(
+          "session",
+          "run",
+          "c2",
+          "r2",
+          ref,
+          "attempt",
+          "incarnation",
+          ExecutionEvent.AttemptStarted
+        )
+        unknown <- ExecutionCommitStore
+          .resourceWithFault(
+            root,
+            phase => if phase == "before-acknowledgement" then throw new java.io.IOException("injected")
+          )
+          .use(_.transition(command))
         resolved <- ExecutionCommitStore.resource(root).use(_.reconcileTransition(command))
         observed <- ExecutionCommitStore.resource(root).use(_.observeChain("session", "run"))
       yield
@@ -558,10 +765,19 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
       for
         admitted <- ExecutionCommitStore.resource(root).use(_.admit(admission))
         ref = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
-        command = ExecutionTransition("session", "run", "c2", "r2", ref, "attempt", "incarnation", ExecutionEvent.AttemptStarted)
-        unknown <- ExecutionCommitStore.resourceWithFault(root, phase =>
-          if phase == "after-install" then throw new java.io.IOException("injected")
-        ).use(_.transition(command))
+        command = ExecutionTransition(
+          "session",
+          "run",
+          "c2",
+          "r2",
+          ref,
+          "attempt",
+          "incarnation",
+          ExecutionEvent.AttemptStarted
+        )
+        unknown <- ExecutionCommitStore
+          .resourceWithFault(root, phase => if phase == "after-install" then throw new java.io.IOException("injected"))
+          .use(_.transition(command))
         observed <- ExecutionCommitStore.resource(root).use(_.observeChain("session", "run"))
         resolved <- ExecutionCommitStore.resource(root).use(_.reconcileTransition(command))
       yield
@@ -576,25 +792,50 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
       for
         admitted <- ExecutionCommitStore.resource(root).use(_.admit(admission))
         ref = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
-        command = ExecutionTransition("session", "run", "c2", "r2", ref, "attempt", "incarnation", ExecutionEvent.AttemptStarted)
-        unknown <- ExecutionCommitStore.resourceWithFault(root, phase =>
-          if phase == "before-acknowledgement" then throw new java.io.IOException("lost acknowledgement")
-        ).use(_.transition(command))
+        command = ExecutionTransition(
+          "session",
+          "run",
+          "c2",
+          "r2",
+          ref,
+          "attempt",
+          "incarnation",
+          ExecutionEvent.AttemptStarted
+        )
+        unknown <- ExecutionCommitStore
+          .resourceWithFault(
+            root,
+            phase => if phase == "before-acknowledgement" then throw new java.io.IOException("lost acknowledgement")
+          )
+          .use(_.transition(command))
         nextRef = unknown match
           case ExecutionCommitResult.CommitUnknown(_, _) => ()
           case _ => fail("expected unknown commit")
-        blocked <- ExecutionCommitStore.resourceWithFault(root, phase =>
-          if phase == "before-chain-reconfirmation" then throw new java.io.IOException("force unavailable")
-        ).use { store =>
-          for
-            observed <- store.observeChain("session", "run")
-            result <- observed match
-              case ExecutionChainObservation.ReviewRequired(Some(state), _) =>
-                store.transition(ExecutionTransition("session", "run", "c3", "r3", state.ref,
-                  "attempt", "incarnation", ExecutionEvent.ModelRequested(Json.Null, 0)))
-              case _ => IO.raiseError(new IllegalStateException("expected verified prefix"))
-          yield (observed, result)
-        }
+        blocked <- ExecutionCommitStore
+          .resourceWithFault(
+            root,
+            phase => if phase == "before-chain-reconfirmation" then throw new java.io.IOException("force unavailable")
+          )
+          .use { store =>
+            for
+              observed <- store.observeChain("session", "run")
+              result <- observed match
+                case ExecutionChainObservation.ReviewRequired(Some(state), _) =>
+                  store.transition(
+                    ExecutionTransition(
+                      "session",
+                      "run",
+                      "c3",
+                      "r3",
+                      state.ref,
+                      "attempt",
+                      "incarnation",
+                      ExecutionEvent.ModelRequested(Json.Null, 0)
+                    )
+                  )
+                case _ => IO.raiseError(new IllegalStateException("expected verified prefix"))
+            yield (observed, result)
+          }
         confirmed <- ExecutionCommitStore.resource(root).use(_.observeChain("session", "run"))
       yield
         assertEquals(nextRef, ())
@@ -608,8 +849,9 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
     isolated { root =>
       ExecutionCommitStore.resource(root).use { store =>
         def send(ref: ExecutionCommitRef, commit: String, event: ExecutionEvent): IO[ExecutionCommitResult] =
-          store.transition(ExecutionTransition("session", "run", commit, s"request-$commit", ref,
-            "attempt", "incarnation", event))
+          store.transition(
+            ExecutionTransition("session", "run", commit, s"request-$commit", ref, "attempt", "incarnation", event)
+          )
         for
           admitted <- store.admit(admission)
           ref1 = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
@@ -620,50 +862,74 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           retry <- send(ref3, "c4", ExecutionEvent.ModelRetryCharged("unclassified"))
           intent = ExecutionToolIntent("op", "call", "Read", Json.obj())
           second = ExecutionToolIntent("op2", "call2", "Read", Json.obj())
-          decided <- send(ref3, "c5", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent, second))))
+          decided <- send(
+            ref3,
+            "c5",
+            ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent, second)))
+          )
           ref5 = decided.asInstanceOf[ExecutionCommitResult.Committed].ref
           premature <- send(ref5, "c6", ExecutionEvent.RoundCommitted(Nil, Json.Null))
           mismatch <- send(ref5, "c6b", ExecutionEvent.ToolPrepared("op", Json.Null))
           prepared <- send(ref5, "c7", ExecutionEvent.ToolPrepared("op", intent.asJson))
           ref7 = prepared.asInstanceOf[ExecutionCommitResult.Committed].ref
-          result <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use { registration =>
-            val runner = registration.toOption.get
-            def command(ref: ExecutionCommitRef, id: String, event: ExecutionEvent) =
-              ExecutionTransition("session", "run", id, s"request-$id", ref, "attempt", "incarnation", event)
-            for
-              early <- runner.dispatch(command(ref7, "early", ExecutionEvent.ToolStarted("op")), intent)(IO.unit)
-              prepared2 <- send(ref7, "c7b", ExecutionEvent.ToolPrepared("op2", second.asJson))
-              ref7b = prepared2.asInstanceOf[ExecutionCommitResult.Committed].ref
-              wrongIntent <- runner.dispatch(command(ref7b, "wrong", ExecutionEvent.ToolStarted("op")),
-                intent.copy(arguments = Json.fromString("changed")))(IO.raiseError(new IllegalStateException("must not run")))
-              _ = assertEquals(wrongIntent.left.toOption, Some(ExecutionCommitResult.Rejected("intent-mismatch-or-unverified")))
-              running <- runner.dispatch(command(ref7b, "c8", ExecutionEvent.ToolStarted("op")), intent)(IO.unit)
-              (ref8, receipt) = running.toOption.get
-              unknown <- send(ref8, "c9", ExecutionEvent.RoundCommitted(Nil, Json.Null))
-              outcome <- runner.outcome(command(ref8, "c10", ExecutionEvent.ToolOutcome("op", Json.fromString("result"))), receipt)
-              ref10 = outcome.asInstanceOf[ExecutionCommitResult.Committed].ref
-              running2 <- runner.dispatch(command(ref10, "c11", ExecutionEvent.ToolStarted("op2")), second)(IO.unit)
-              (ref11, receipt2) = running2.toOption.get
-              outcome2 <- runner.outcome(command(ref11, "c12", ExecutionEvent.ToolOutcome("op2", Json.fromString("result2"))), receipt2)
-              ref12 = outcome2.asInstanceOf[ExecutionCommitResult.Committed].ref
-              beforeRound <- store.observeChain("session", "run")
-              checkpoint = Json.obj("transcript" -> Json.fromString("round"))
-              committed <- send(ref12, "c13", ExecutionEvent.RoundCommitted(Nil, checkpoint))
-              afterRound <- store.observeChain("session", "run")
-            yield
-              val decisionState = beforeRound.asInstanceOf[ExecutionChainObservation.Verified].state
-              assertEquals(decisionState.decision, Some(ExecutionModelDecision(Json.Null, List(intent, second))))
-              assertEquals(decisionState.outcomes, Map("op" -> Json.fromString("result"), "op2" -> Json.fromString("result2")))
-              assertEquals(afterRound.asInstanceOf[ExecutionChainObservation.Verified].state.checkpoint, Some(checkpoint))
-              assert(early.isLeft)
-              assert(unknown.isInstanceOf[ExecutionCommitResult.Rejected])
-              assert(committed.isInstanceOf[ExecutionCommitResult.Committed])
+          result <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use {
+            registration =>
+              val runner = registration.toOption.get
+              def command(ref: ExecutionCommitRef, id: String, event: ExecutionEvent) =
+                ExecutionTransition("session", "run", id, s"request-$id", ref, "attempt", "incarnation", event)
+              for
+                early <- runner.dispatch(command(ref7, "early", ExecutionEvent.ToolStarted("op")), intent)(IO.unit)
+                prepared2 <- send(ref7, "c7b", ExecutionEvent.ToolPrepared("op2", second.asJson))
+                ref7b = prepared2.asInstanceOf[ExecutionCommitResult.Committed].ref
+                wrongIntent <- runner.dispatch(
+                  command(ref7b, "wrong", ExecutionEvent.ToolStarted("op")),
+                  intent.copy(arguments = Json.fromString("changed"))
+                )(IO.raiseError(new IllegalStateException("must not run")))
+                _ = assertEquals(
+                  wrongIntent.left.toOption,
+                  Some(ExecutionCommitResult.Rejected("intent-mismatch-or-unverified"))
+                )
+                running <- runner.dispatch(command(ref7b, "c8", ExecutionEvent.ToolStarted("op")), intent)(IO.unit)
+                (ref8, receipt) = running.toOption.get
+                unknown <- send(ref8, "c9", ExecutionEvent.RoundCommitted(Nil, Json.Null))
+                outcome <- runner.outcome(
+                  command(ref8, "c10", ExecutionEvent.ToolOutcome("op", Json.fromString("result"))),
+                  receipt
+                )
+                ref10 = outcome.asInstanceOf[ExecutionCommitResult.Committed].ref
+                running2 <- runner.dispatch(command(ref10, "c11", ExecutionEvent.ToolStarted("op2")), second)(IO.unit)
+                (ref11, receipt2) = running2.toOption.get
+                outcome2 <- runner.outcome(
+                  command(ref11, "c12", ExecutionEvent.ToolOutcome("op2", Json.fromString("result2"))),
+                  receipt2
+                )
+                ref12 = outcome2.asInstanceOf[ExecutionCommitResult.Committed].ref
+                beforeRound <- store.observeChain("session", "run")
+                checkpoint = Json.obj("transcript" -> Json.fromString("round"))
+                committed <- send(ref12, "c13", ExecutionEvent.RoundCommitted(Nil, checkpoint))
+                afterRound <- store.observeChain("session", "run")
+              yield
+                val decisionState = beforeRound.asInstanceOf[ExecutionChainObservation.Verified].state
+                assertEquals(decisionState.decision, Some(ExecutionModelDecision(Json.Null, List(intent, second))))
+                assertEquals(
+                  decisionState.outcomes,
+                  Map("op" -> Json.fromString("result"), "op2" -> Json.fromString("result2"))
+                )
+                assertEquals(
+                  afterRound.asInstanceOf[ExecutionChainObservation.Verified].state.checkpoint,
+                  Some(checkpoint)
+                )
+                assert(early.isLeft)
+                assert(unknown.isInstanceOf[ExecutionCommitResult.Rejected])
+                assert(committed.isInstanceOf[ExecutionCommitResult.Committed])
+              end for
           }
         yield
           assertEquals(retry, ExecutionCommitResult.Rejected("retry-classification-or-budget-invalid"))
           assert(premature.isInstanceOf[ExecutionCommitResult.Rejected])
           assert(mismatch.isInstanceOf[ExecutionCommitResult.Rejected])
           result
+        end for
       }
     }
   }
@@ -674,14 +940,21 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
       for
         _ <- ExecutionCommitStore.resource(root).use { store =>
           def send(ref: ExecutionCommitRef, id: String, event: ExecutionEvent): IO[ExecutionCommitRef] =
-            store.transition(ExecutionTransition("session", "run", id, s"request-$id", ref,
-              "attempt", "incarnation", event)).map(_.asInstanceOf[ExecutionCommitResult.Committed].ref)
+            store
+              .transition(
+                ExecutionTransition("session", "run", id, s"request-$id", ref, "attempt", "incarnation", event)
+              )
+              .map(_.asInstanceOf[ExecutionCommitResult.Committed].ref)
           for
             admitted <- store.admit(admission)
             ref1 = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
             ref2 <- send(ref1, "start", ExecutionEvent.AttemptStarted)
             ref3 <- send(ref2, "request", ExecutionEvent.ModelRequested(Json.Null, 0))
-            ref4 <- send(ref3, "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.fromString("answer"), Nil)))
+            ref4 <- send(
+              ref3,
+              "decision",
+              ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.fromString("answer"), Nil))
+            )
             _ <- send(ref4, "round", ExecutionEvent.RoundCommitted(List("initial-input"), checkpoint))
           yield ()
         }
@@ -690,6 +963,7 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         val state = reopened.asInstanceOf[ExecutionChainObservation.Verified].state
         assertEquals(state.checkpoint, Some(checkpoint))
         assertEquals(state.pendingInputs, Nil)
+      end for
     }
   }
 
@@ -699,11 +973,31 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         for
           admitted <- store.admit(admission)
           ref = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
-          input <- store.transition(ExecutionTransition("session", "run", "c2", "r2", ref,
-            "attempt", "incarnation", ExecutionEvent.InputAccepted("input", Json.fromString("content"))))
+          input <- store.transition(
+            ExecutionTransition(
+              "session",
+              "run",
+              "c2",
+              "r2",
+              ref,
+              "attempt",
+              "incarnation",
+              ExecutionEvent.InputAccepted("input", Json.fromString("content"))
+            )
+          )
           ref2 = input.asInstanceOf[ExecutionCommitResult.Committed].ref
-          conflict <- store.transition(ExecutionTransition("session", "run", "c3", "r2", ref2,
-            "attempt", "incarnation", ExecutionEvent.InputAccepted("input", Json.fromString("content"))))
+          conflict <- store.transition(
+            ExecutionTransition(
+              "session",
+              "run",
+              "c3",
+              "r2",
+              ref2,
+              "attempt",
+              "incarnation",
+              ExecutionEvent.InputAccepted("input", Json.fromString("content"))
+            )
+          )
         yield assertEquals(conflict, ExecutionCommitResult.Rejected("request-id-conflict"))
       }
     }
@@ -711,24 +1005,59 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
 
   test("input identity conflicts remain fenced across runs after authority reopen") {
     isolated { root =>
-      val otherAdmission = admission.copy(executionId = "run2", commitId = "admission2", requestId = "request2", initialInputId = "initial-input2")
+      val otherAdmission = admission.copy(
+        executionId = "run2",
+        commitId = "admission2",
+        requestId = "request2",
+        initialInputId = "initial-input2"
+      )
       for
         original <- ExecutionCommitStore.resource(root).use { store =>
           for
             admitted <- store.admit(admission)
             ref = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
-            accepted <- store.transition(ExecutionTransition("session", "run", "c2", "r2", ref,
-              "attempt", "incarnation", ExecutionEvent.InputAccepted("stable-input", Json.fromString("original"))))
+            accepted <- store.transition(
+              ExecutionTransition(
+                "session",
+                "run",
+                "c2",
+                "r2",
+                ref,
+                "attempt",
+                "incarnation",
+                ExecutionEvent.InputAccepted("stable-input", Json.fromString("original"))
+              )
+            )
           yield accepted
         }
         result <- ExecutionCommitStore.resource(root).use { store =>
           for
             admitted <- store.admit(otherAdmission)
             ref = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
-            conflict <- store.transition(ExecutionTransition("session", "run2", "other-c2", "other-r2", ref,
-              "attempt", "incarnation", ExecutionEvent.InputAccepted("stable-input", Json.fromString("changed"))))
-            duplicate <- store.transition(ExecutionTransition("session", "run2", "other-c3", "other-r3", ref,
-              "attempt", "incarnation", ExecutionEvent.InputAccepted("stable-input", Json.fromString("original"))))
+            conflict <- store.transition(
+              ExecutionTransition(
+                "session",
+                "run2",
+                "other-c2",
+                "other-r2",
+                ref,
+                "attempt",
+                "incarnation",
+                ExecutionEvent.InputAccepted("stable-input", Json.fromString("changed"))
+              )
+            )
+            duplicate <- store.transition(
+              ExecutionTransition(
+                "session",
+                "run2",
+                "other-c3",
+                "other-r3",
+                ref,
+                "attempt",
+                "incarnation",
+                ExecutionEvent.InputAccepted("stable-input", Json.fromString("original"))
+              )
+            )
             originalState <- store.observeChain("session", "run")
             otherState <- store.observeChain("session", "run2")
           yield (conflict, originalState, otherState, duplicate)
@@ -743,34 +1072,65 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         assert(result._2 match
           case ExecutionChainObservation.Verified(state) =>
             state.inputs.get("stable-input").contains(Json.fromString("original")) &&
-              state.pendingInputs == List("initial-input", "stable-input")
+            state.pendingInputs == List("initial-input", "stable-input")
           case _ => false)
         assert(result._3 match
           case ExecutionChainObservation.Verified(state) =>
-            !state.inputs.contains("stable-input") && state.pendingInputs == List("initial-input2") && state.ref.revision == 1L
+            !state.inputs.contains("stable-input") && state.pendingInputs == List(
+              "initial-input2"
+            ) && state.ref.revision == 1L
           case _ => false)
+      end for
     }
   }
 
   test("initial input identity remains visible to another run after reopen") {
     isolated { root =>
-      val other = admission.copy(executionId = "run2", commitId = "admission2", requestId = "request2",
-        initialInputId = "other-input")
+      val other = admission.copy(
+        executionId = "run2",
+        commitId = "admission2",
+        requestId = "request2",
+        initialInputId = "other-input"
+      )
       for
         first <- ExecutionCommitStore.resource(root).use(_.admit(admission))
         result <- ExecutionCommitStore.resource(root).use { store =>
           for
             second <- store.admit(other)
             ref = second.asInstanceOf[ExecutionCommitResult.Committed].ref
-            duplicate <- store.transition(ExecutionTransition("session", "run2", "c2", "r2", ref,
-              "attempt", "incarnation", ExecutionEvent.InputAccepted(admission.initialInputId, admission.initialInput)))
-            conflict <- store.transition(ExecutionTransition("session", "run2", "c3", "r3", ref,
-              "attempt", "incarnation", ExecutionEvent.InputAccepted(admission.initialInputId, Json.Null)))
+            duplicate <- store.transition(
+              ExecutionTransition(
+                "session",
+                "run2",
+                "c2",
+                "r2",
+                ref,
+                "attempt",
+                "incarnation",
+                ExecutionEvent.InputAccepted(admission.initialInputId, admission.initialInput)
+              )
+            )
+            conflict <- store.transition(
+              ExecutionTransition(
+                "session",
+                "run2",
+                "c3",
+                "r3",
+                ref,
+                "attempt",
+                "incarnation",
+                ExecutionEvent.InputAccepted(admission.initialInputId, Json.Null)
+              )
+            )
           yield (duplicate, conflict)
         }
       yield
-        assertEquals(result._1, ExecutionCommitResult.DuplicateInput("run", first.asInstanceOf[ExecutionCommitResult.Committed].ref))
+        assertEquals(
+          result._1,
+          ExecutionCommitResult.DuplicateInput("run", first.asInstanceOf[ExecutionCommitResult.Committed].ref)
+        )
         assertEquals(result._2, ExecutionCommitResult.Rejected("session-input-conflict"))
+      end for
     }
   }
 
@@ -783,34 +1143,45 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         for
           admitted <- store.admit(admission)
           started <- store.transition(command(ref(admitted), "start", ExecutionEvent.AttemptStarted))
-          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use { registered =>
-            val runner = registered.toOption.get
-            for
-              entered <- Deferred[IO, Unit]
-              finalizing <- Deferred[IO, Unit]
-              release <- Deferred[IO, Unit]
-              _ <- (for
-                running <- runner.startModel(command(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))(
-                  (entered.complete(()).void *> IO.never[Unit]).guarantee(finalizing.complete(()).void *> release.get)
-                )
-                (modelRef, receipt) = running.toOption.get
-                _ <- entered.get.timeout(1.second)
-                _ <- runner.revoke
-                _ <- finalizing.get.timeout(1.second)
-                suspended <- store.transition(command(modelRef, "suspend", ExecutionEvent.Suspended("interrupted")))
-                before <- runner.confirmStopped(command(ref(suspended), "stop-before", ExecutionEvent.RunnerStopped), 50.millis)
-                _ = assertEquals(before, ExecutionCommitResult.Rejected("runner-stop-unconfirmed"))
-                _ <- release.complete(())
-                _ <- receipt.await.timeout(1.second)
-                stopped <- runner.confirmStopped(command(ref(suspended), "stop-after", ExecutionEvent.RunnerStopped), 1.second)
-                chain <- store.observeChain("session", "run")
-              yield
-                assert(stopped.isInstanceOf[ExecutionCommitResult.Committed])
-                assert(chain.asInstanceOf[ExecutionChainObservation.Verified].state.runnerStopped)
-              ).guarantee(release.complete(()).void)
-            yield ()
+          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use {
+            registered =>
+              val runner = registered.toOption.get
+              for
+                entered <- Deferred[IO, Unit]
+                finalizing <- Deferred[IO, Unit]
+                release <- Deferred[IO, Unit]
+                _ <- (for
+                  running <- runner.startModel(
+                    command(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0))
+                  )(
+                    (entered.complete(()).void *> IO.never[Unit]).guarantee(finalizing.complete(()).void *> release.get)
+                  )
+                  (modelRef, receipt) = running.toOption.get
+                  _ <- entered.get.timeout(1.second)
+                  _ <- runner.revoke
+                  _ <- finalizing.get.timeout(1.second)
+                  suspended <- store.transition(command(modelRef, "suspend", ExecutionEvent.Suspended("interrupted")))
+                  before <- runner.confirmStopped(
+                    command(ref(suspended), "stop-before", ExecutionEvent.RunnerStopped),
+                    50.millis
+                  )
+                  _ = assertEquals(before, ExecutionCommitResult.Rejected("runner-stop-unconfirmed"))
+                  _ <- release.complete(())
+                  _ <- receipt.await.timeout(1.second)
+                  stopped <- runner.confirmStopped(
+                    command(ref(suspended), "stop-after", ExecutionEvent.RunnerStopped),
+                    1.second
+                  )
+                  chain <- store.observeChain("session", "run")
+                yield
+                  assert(stopped.isInstanceOf[ExecutionCommitResult.Committed])
+                  assert(chain.asInstanceOf[ExecutionChainObservation.Verified].state.runnerStopped)
+                ).guarantee(release.complete(()).void)
+              yield ()
+              end for
           }
         yield ()
+        end for
       }
     }
   }
@@ -827,15 +1198,26 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use { owned =>
             val runner = owned.toOption.get
             for
-              model <- runner.startModel(cmd(ref(started), "resume-model", ExecutionEvent.ModelRequested(Json.Null, 0)))(IO.unit)
+              model <- runner.startModel(
+                cmd(ref(started), "resume-model", ExecutionEvent.ModelRequested(Json.Null, 0))
+              )(IO.unit)
               (modelRef, receipt) = model.toOption.get
-              decision <- runner.modelDecision(cmd(modelRef, "resume-decision", ExecutionEvent.ModelDecided(
-                ExecutionModelDecision(Json.Null, Nil))), receipt)
+              decision <- runner.modelDecision(
+                cmd(modelRef, "resume-decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, Nil))),
+                receipt
+              )
               checkpoint = ProtectedAgentExecution.checkpoint(nebflow.actor.AgentState()).toOption.get
-              round <- store.commitRound(cmd(ref(decision), "resume-round", ExecutionEvent.RoundCommitted(List("initial-input"), checkpoint)))
+              round <- store.commitRound(
+                cmd(ref(decision), "resume-round", ExecutionEvent.RoundCommitted(List("initial-input"), checkpoint))
+              )
               _ <- runner.revoke
-              suspended <- store.transition(cmd(ref(round), "resume-suspended", ExecutionEvent.Suspended("interrupted")))
-              stopped <- runner.confirmStopped(cmd(ref(suspended), "resume-stopped", ExecutionEvent.RunnerStopped), 1.second)
+              suspended <- store.transition(
+                cmd(ref(round), "resume-suspended", ExecutionEvent.Suspended("interrupted"))
+              )
+              stopped <- runner.confirmStopped(
+                cmd(ref(suspended), "resume-stopped", ExecutionEvent.RunnerStopped),
+                1.second
+              )
               event = ExecutionEvent.ResumeAuthorized("attempt2", "incarnation2", "operator")
               request = cmd(ref(stopped), "resume-request", event)
               stale <- runner.authorizeResume(request.copy(expected = ref(suspended)), "audit", 1.second)
@@ -851,14 +1233,27 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
               _ = assertEquals(state.attemptId, "attempt2")
               _ = assertEquals(state.incarnationId, "incarnation2")
               _ = assertEquals(state.checkpoint, Some(checkpoint))
-              restarted <- store.transition(ExecutionTransition("session", "run", "attempt2-start", "attempt2-start",
-                state.ref, "attempt2", "incarnation2", ExecutionEvent.AttemptStarted))
+              restarted <- store.transition(
+                ExecutionTransition(
+                  "session",
+                  "run",
+                  "attempt2-start",
+                  "attempt2-start",
+                  state.ref,
+                  "attempt2",
+                  "incarnation2",
+                  ExecutionEvent.AttemptStarted
+                )
+              )
               _ = assert(restarted.isInstanceOf[ExecutionCommitResult.Committed])
-              _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt2", "incarnation2"))
+              _ <- store
+                .registerRunner(ExecutionRunner.Attempt("session", "run", "attempt2", "incarnation2"))
                 .use(next => IO(assert(next.isRight)))
             yield ()
+            end for
           }
         yield ()
+        end for
       }
     }
   }
@@ -869,16 +1264,56 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         for
           admitted <- store.admit(admission)
           ref = admitted.asInstanceOf[ExecutionCommitResult.Committed].ref
-          started <- store.transition(ExecutionTransition("session", "run", "c2", "r2", ref,
-            "attempt", "incarnation", ExecutionEvent.AttemptStarted))
+          started <- store.transition(
+            ExecutionTransition(
+              "session",
+              "run",
+              "c2",
+              "r2",
+              ref,
+              "attempt",
+              "incarnation",
+              ExecutionEvent.AttemptStarted
+            )
+          )
           ref2 = started.asInstanceOf[ExecutionCommitResult.Committed].ref
-          suspended <- store.transition(ExecutionTransition("session", "run", "c3", "r3", ref2,
-            "attempt", "incarnation", ExecutionEvent.Suspended("interrupted")))
+          suspended <- store.transition(
+            ExecutionTransition(
+              "session",
+              "run",
+              "c3",
+              "r3",
+              ref2,
+              "attempt",
+              "incarnation",
+              ExecutionEvent.Suspended("interrupted")
+            )
+          )
           ref3 = suspended.asInstanceOf[ExecutionCommitResult.Committed].ref
-          stopped <- store.transition(ExecutionTransition("session", "run", "c4", "r4", ref3,
-            "attempt", "incarnation", ExecutionEvent.RunnerStopped))
-          resume <- store.transition(ExecutionTransition("session", "run", "c5", "r5", ref3,
-            "attempt", "incarnation", ExecutionEvent.ResumeAuthorized("attempt2", "incarnation2", "operator")))
+          stopped <- store.transition(
+            ExecutionTransition(
+              "session",
+              "run",
+              "c4",
+              "r4",
+              ref3,
+              "attempt",
+              "incarnation",
+              ExecutionEvent.RunnerStopped
+            )
+          )
+          resume <- store.transition(
+            ExecutionTransition(
+              "session",
+              "run",
+              "c5",
+              "r5",
+              ref3,
+              "attempt",
+              "incarnation",
+              ExecutionEvent.ResumeAuthorized("attempt2", "incarnation2", "operator")
+            )
+          )
         yield
           assertEquals(stopped, ExecutionCommitResult.Rejected("runner-authority-required"))
           assertEquals(resume, ExecutionCommitResult.Rejected("runner-authority-required"))
@@ -898,8 +1333,16 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           admitted <- store.admit(admission)
           started <- store.transition(command(ref(admitted), "start", ExecutionEvent.AttemptStarted))
           requested <- store.transition(command(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))
-          decided <- store.transition(command(ref(requested), "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))))
-          prepared <- store.transition(command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson)))
+          decided <- store.transition(
+            command(
+              ref(requested),
+              "decision",
+              ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))
+            )
+          )
+          prepared <- store.transition(
+            command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson))
+          )
           cancelled <- store.transition(command(ref(prepared), "cancel", ExecutionEvent.CancelRequested("operator")))
           denied <- store.transition(command(ref(cancelled), "dispatch", ExecutionEvent.ToolStarted("op")))
           observed <- store.observeChain("session", "run")
@@ -907,6 +1350,7 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           assertEquals(denied, ExecutionCommitResult.Rejected("runner-authority-required"))
           assertEquals(observed.asInstanceOf[ExecutionChainObservation.Verified].state.phase, "cancelled")
           assert(!Files.exists(root.resolve("session/executions/cnVu/commits/00000000000000000007.json")))
+        end for
       }
     }
   }
@@ -921,11 +1365,25 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         for
           admissionResult <- store.admit(admission)
           started <- store.transition(command(committed(admissionResult), "start", ExecutionEvent.AttemptStarted))
-          requested <- store.transition(command(committed(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))
-          decided <- store.transition(command(committed(requested), "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, Nil))))
+          requested <- store.transition(
+            command(committed(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0))
+          )
+          decided <- store.transition(
+            command(
+              committed(requested),
+              "decision",
+              ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, Nil))
+            )
+          )
           selected = committed(decided)
-          queued <- store.acceptInput(command(selected, "queued", ExecutionEvent.InputAccepted("later", Json.fromString("queued"))))
-          round = command(selected, "round", ExecutionEvent.RoundCommitted(List("initial-input"), Json.fromString("checkpoint")))
+          queued <- store.acceptInput(
+            command(selected, "queued", ExecutionEvent.InputAccepted("later", Json.fromString("queued")))
+          )
+          round = command(
+            selected,
+            "round",
+            ExecutionEvent.RoundCommitted(List("initial-input"), Json.fromString("checkpoint"))
+          )
           installed <- store.commitRound(round)
           duplicate <- store.commitRound(round)
           stale <- store.commitRound(command(selected, "other-round", ExecutionEvent.RoundCommitted(Nil, Json.Null)))
@@ -936,6 +1394,7 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           assertEquals(duplicate, ExecutionCommitResult.Duplicate(committed(installed)))
           assertEquals(stale, ExecutionCommitResult.Rejected("stale-revision"))
           assertEquals(state.asInstanceOf[ExecutionChainObservation.Verified].state.pendingInputs, List("later"))
+        end for
       }
     }
   }
@@ -945,7 +1404,10 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
       for
         _ <- ExecutionCommitStore.resource(root).use(_.admit(admission))
         candidates <- ExecutionCommitStore.resource(root).use(_.candidates)
-      yield assertEquals(candidates, Right(List(ExecutionCandidate("session", ExecutionProtection.Protected(List("run"))))))
+      yield assertEquals(
+        candidates,
+        Right(List(ExecutionCandidate("session", ExecutionProtection.Protected(List("run")))))
+      )
     }
   }
 
@@ -961,18 +1423,23 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
             admitted <- store.admit(admission)
             started <- store.transition(command(ref(admitted), "start", ExecutionEvent.AttemptStarted))
             requested <- store.transition(command(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 1)))
-            charged <- store.transition(command(ref(requested), "charge", ExecutionEvent.ModelRetryCharged("classified-transient-provider")))
+            charged <- store.transition(
+              command(ref(requested), "charge", ExecutionEvent.ModelRetryCharged("classified-transient-provider"))
+            )
           yield ref(charged)
         }
         result <- ExecutionCommitStore.resource(root).use { store =>
           for
             observed <- store.observeChain("session", "run")
-            rejected <- store.transition(command(charged, "extra-charge", ExecutionEvent.ModelRetryCharged("classified-transient-provider")))
+            rejected <- store.transition(
+              command(charged, "extra-charge", ExecutionEvent.ModelRetryCharged("classified-transient-provider"))
+            )
           yield (observed, rejected)
         }
       yield
         assertEquals(result._1.asInstanceOf[ExecutionChainObservation.Verified].state.retryCharges, 1L)
         assertEquals(result._2, ExecutionCommitResult.Rejected("retry-classification-or-budget-invalid"))
+      end for
     }
   }
 
@@ -996,7 +1463,9 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
       for
         _ <- ExecutionCommitStore.resource(root).use(_.admit(admission))
         found <- ExecutionCommitStore.resource(root).use(_.protection("session"))
-        _ <- IO.blocking(Files.writeString(root.resolve("session/executions/cnVu/commits/00000000000000000001.json"), "corrupt"))
+        _ <- IO.blocking(
+          Files.writeString(root.resolve("session/executions/cnVu/commits/00000000000000000001.json"), "corrupt")
+        )
         corrupt <- ExecutionCommitStore.resource(root).use(_.protection("session"))
         absent <- ExecutionCommitStore.resource(root).use(_.protection("other"))
       yield
@@ -1017,20 +1486,32 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           admitted <- store.admit(admission)
           started <- store.transition(command(ref(admitted), "start", ExecutionEvent.AttemptStarted))
           requested <- store.transition(command(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))
-          decided <- store.transition(command(ref(requested), "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))))
-          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use { registered =>
-            for
-              _ <- registered.toOption.get.revoke
-              before <- store.observeChain("session", "run")
-              prepared <- store.transition(command(ref(decided), "late-prepare", ExecutionEvent.ToolPrepared("op", intent.asJson)))
-              round <- store.commitRound(command(ref(decided), "late-round", ExecutionEvent.RoundCommitted(Nil, Json.Null)))
-              after <- store.observeChain("session", "run")
-            yield
-              assertEquals(prepared, ExecutionCommitResult.Rejected("runner-revoked"))
-              assertEquals(round, ExecutionCommitResult.Rejected("runner-revoked"))
-              assertEquals(after, before)
+          decided <- store.transition(
+            command(
+              ref(requested),
+              "decision",
+              ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))
+            )
+          )
+          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use {
+            registered =>
+              for
+                _ <- registered.toOption.get.revoke
+                before <- store.observeChain("session", "run")
+                prepared <- store.transition(
+                  command(ref(decided), "late-prepare", ExecutionEvent.ToolPrepared("op", intent.asJson))
+                )
+                round <- store.commitRound(
+                  command(ref(decided), "late-round", ExecutionEvent.RoundCommitted(Nil, Json.Null))
+                )
+                after <- store.observeChain("session", "run")
+              yield
+                assertEquals(prepared, ExecutionCommitResult.Rejected("runner-revoked"))
+                assertEquals(round, ExecutionCommitResult.Rejected("runner-revoked"))
+                assertEquals(after, before)
           }
         yield ()
+        end for
       }
     }
   }
@@ -1047,46 +1528,75 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
             admitted <- store.admit(admission)
             started <- store.transition(command(ref(admitted), "start", ExecutionEvent.AttemptStarted))
             requested <- store.transition(command(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))
-            decided <- store.transition(command(ref(requested), "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))))
-            prepared <- store.transition(command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson)))
-            _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use { registered =>
-              val runner = registered.toOption.get
-              for
-                entered <- Deferred[IO, Unit]
-                finalizing <- Deferred[IO, Unit]
-                release <- Deferred[IO, Unit]
-                _ <- if permitFirst then
-                  for
-                    dispatch <- runner.dispatch(command(ref(prepared), "dispatch", ExecutionEvent.ToolStarted("op")), intent)(
-                      (entered.complete(()).void *> IO.never[Unit]).guarantee(finalizing.complete(()).void *> release.get)
-                    )
-                    (startedRef, receipt) = dispatch.toOption.get
-                    _ <- entered.get
-                    cancelled <- runner.cancel(command(startedRef, "cancel", ExecutionEvent.CancelRequested("operator")))
-                    _ = assert(cancelled.isInstanceOf[ExecutionCommitResult.Committed])
-                    _ <- finalizing.get.timeout(1.second)
-                    stopped <- runner.awaitStopped(50.millis)
-                    _ = assert(!stopped)
-                    _ <- release.complete(())
-                    _ <- receipt.await.timeout(1.second)
-                    stale <- runner.outcome(command(ref(cancelled), "outcome", ExecutionEvent.ToolOutcome("op", Json.Null)), receipt)
-                    _ = assert(stale.isInstanceOf[ExecutionCommitResult.Rejected])
-                    confirmed <- runner.awaitStopped(1.second)
-                    _ = assert(confirmed)
-                    observed <- store.observeChain("session", "run")
-                    _ = assertEquals(observed.asInstanceOf[ExecutionChainObservation.Verified].state.operations.get("op"), Some("started"))
-                  yield ()
-                else
-                  for
-                    cancelled <- runner.cancel(command(ref(prepared), "cancel", ExecutionEvent.CancelRequested("operator")))
-                    dispatch <- runner.dispatch(command(ref(cancelled), "dispatch", ExecutionEvent.ToolStarted("op")), intent)(entered.complete(()).void)
-                    _ = assertEquals(dispatch.left.toOption, Some(ExecutionCommitResult.Rejected("runner-revoked")))
-                    untouched <- entered.tryGet
-                    _ = assertEquals(untouched, None)
-                  yield ()
-              yield ()
+            decided <- store.transition(
+              command(
+                ref(requested),
+                "decision",
+                ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))
+              )
+            )
+            prepared <- store.transition(
+              command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson))
+            )
+            _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use {
+              registered =>
+                val runner = registered.toOption.get
+                for
+                  entered <- Deferred[IO, Unit]
+                  finalizing <- Deferred[IO, Unit]
+                  release <- Deferred[IO, Unit]
+                  _ <-
+                    if permitFirst then
+                      for
+                        dispatch <- runner.dispatch(
+                          command(ref(prepared), "dispatch", ExecutionEvent.ToolStarted("op")),
+                          intent
+                        )(
+                          (entered.complete(()).void *> IO.never[Unit])
+                            .guarantee(finalizing.complete(()).void *> release.get)
+                        )
+                        (startedRef, receipt) = dispatch.toOption.get
+                        _ <- entered.get
+                        cancelled <- runner.cancel(
+                          command(startedRef, "cancel", ExecutionEvent.CancelRequested("operator"))
+                        )
+                        _ = assert(cancelled.isInstanceOf[ExecutionCommitResult.Committed])
+                        _ <- finalizing.get.timeout(1.second)
+                        stopped <- runner.awaitStopped(50.millis)
+                        _ = assert(!stopped)
+                        _ <- release.complete(())
+                        _ <- receipt.await.timeout(1.second)
+                        stale <- runner.outcome(
+                          command(ref(cancelled), "outcome", ExecutionEvent.ToolOutcome("op", Json.Null)),
+                          receipt
+                        )
+                        _ = assert(stale.isInstanceOf[ExecutionCommitResult.Rejected])
+                        confirmed <- runner.awaitStopped(1.second)
+                        _ = assert(confirmed)
+                        observed <- store.observeChain("session", "run")
+                        _ = assertEquals(
+                          observed.asInstanceOf[ExecutionChainObservation.Verified].state.operations.get("op"),
+                          Some("started")
+                        )
+                      yield ()
+                    else
+                      for
+                        cancelled <- runner.cancel(
+                          command(ref(prepared), "cancel", ExecutionEvent.CancelRequested("operator"))
+                        )
+                        dispatch <- runner.dispatch(
+                          command(ref(cancelled), "dispatch", ExecutionEvent.ToolStarted("op")),
+                          intent
+                        )(entered.complete(()).void)
+                        _ = assertEquals(dispatch.left.toOption, Some(ExecutionCommitResult.Rejected("runner-revoked")))
+                        untouched <- entered.tryGet
+                        _ = assertEquals(untouched, None)
+                      yield ()
+                yield ()
+                end for
             }
           yield ()
+          end for
         }
       }
     }
@@ -1103,30 +1613,57 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           admitted <- store.admit(admission)
           started <- store.transition(command(ref(admitted), "start", ExecutionEvent.AttemptStarted))
           requested <- store.transition(command(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))
-          decided <- store.transition(command(ref(requested), "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))))
-          prepared <- store.transition(command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson)))
-          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use { registered =>
-            val runner = registered.toOption.get
-            for
-              count <- cats.effect.Ref.of[IO, Int](0)
-              accepted <- store.acceptInput(command(ref(prepared), "input-one", ExecutionEvent.InputAccepted("one", Json.fromString("one"))))
-              _ = assert(accepted.isInstanceOf[ExecutionCommitResult.Committed])
-              dispatched <- runner.dispatch(command(ref(prepared), "dispatch", ExecutionEvent.ToolStarted("op")), intent)(count.update(_ + 1))
-              (startedRef, receipt) = dispatched.toOption.get
-              _ <- receipt.await
-              acceptedTwo <- store.acceptInput(command(startedRef, "input-two", ExecutionEvent.InputAccepted("two", Json.fromString("two"))))
-              _ = assert(acceptedTwo.isInstanceOf[ExecutionCommitResult.Committed])
-              result <- runner.outcome(command(startedRef, "outcome", ExecutionEvent.ToolOutcome("op", Json.fromString("done"))), receipt)
-              duplicate <- runner.dispatch(command(ref(result), "duplicate", ExecutionEvent.ToolStarted("op")), intent)(count.update(_ + 1))
-              calls <- count.get
-              chain <- store.observeChain("session", "run")
-            yield
-              assert(result.isInstanceOf[ExecutionCommitResult.Committed])
-              assert(duplicate.isLeft)
-              assertEquals(calls, 1)
-              assertEquals(chain.asInstanceOf[ExecutionChainObservation.Verified].state.pendingInputs, List("initial-input", "one", "two"))
+          decided <- store.transition(
+            command(
+              ref(requested),
+              "decision",
+              ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))
+            )
+          )
+          prepared <- store.transition(
+            command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson))
+          )
+          _ <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use {
+            registered =>
+              val runner = registered.toOption.get
+              for
+                count <- cats.effect.Ref.of[IO, Int](0)
+                accepted <- store.acceptInput(
+                  command(ref(prepared), "input-one", ExecutionEvent.InputAccepted("one", Json.fromString("one")))
+                )
+                _ = assert(accepted.isInstanceOf[ExecutionCommitResult.Committed])
+                dispatched <- runner.dispatch(
+                  command(ref(prepared), "dispatch", ExecutionEvent.ToolStarted("op")),
+                  intent
+                )(count.update(_ + 1))
+                (startedRef, receipt) = dispatched.toOption.get
+                _ <- receipt.await
+                acceptedTwo <- store.acceptInput(
+                  command(startedRef, "input-two", ExecutionEvent.InputAccepted("two", Json.fromString("two")))
+                )
+                _ = assert(acceptedTwo.isInstanceOf[ExecutionCommitResult.Committed])
+                result <- runner.outcome(
+                  command(startedRef, "outcome", ExecutionEvent.ToolOutcome("op", Json.fromString("done"))),
+                  receipt
+                )
+                duplicate <- runner.dispatch(
+                  command(ref(result), "duplicate", ExecutionEvent.ToolStarted("op")),
+                  intent
+                )(count.update(_ + 1))
+                calls <- count.get
+                chain <- store.observeChain("session", "run")
+              yield
+                assert(result.isInstanceOf[ExecutionCommitResult.Committed])
+                assert(duplicate.isLeft)
+                assertEquals(calls, 1)
+                assertEquals(
+                  chain.asInstanceOf[ExecutionChainObservation.Verified].state.pendingInputs,
+                  List("initial-input", "one", "two")
+                )
+              end for
           }
         yield ()
+        end for
       }
     }
   }
@@ -1144,18 +1681,35 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
             admitted <- store.admit(admission)
             started <- store.transition(command(ref(admitted), "start", ExecutionEvent.AttemptStarted))
             requested <- store.transition(command(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))
-            decided <- store.transition(command(ref(requested), "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))))
-            prepared <- store.transition(command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson)))
-            result <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use { registered =>
-              val runner = registered.toOption.get
-              for
-                dispatched <- runner.dispatch(command(ref(prepared), "dispatch", ExecutionEvent.ToolStarted("op")), intent)(
-                  IO.blocking(Files.writeString(effect, "effect")) *> IO.raiseError[Unit](new RuntimeException("lost result"))
-                )
-                (dispatchRef, receipt) = dispatched.toOption.get
-                outcome <- runner.outcome(command(dispatchRef, "outcome", ExecutionEvent.ToolOutcome("op", Json.fromString("success"))), receipt)
-                _ = assertEquals(outcome, ExecutionCommitResult.Rejected("operation-unconfirmed-review-required"))
-              yield dispatchRef
+            decided <- store.transition(
+              command(
+                ref(requested),
+                "decision",
+                ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))
+              )
+            )
+            prepared <- store.transition(
+              command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson))
+            )
+            result <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).use {
+              registered =>
+                val runner = registered.toOption.get
+                for
+                  dispatched <- runner.dispatch(
+                    command(ref(prepared), "dispatch", ExecutionEvent.ToolStarted("op")),
+                    intent
+                  )(
+                    IO.blocking(Files.writeString(effect, "effect")) *> IO
+                      .raiseError[Unit](new RuntimeException("lost result"))
+                  )
+                  (dispatchRef, receipt) = dispatched.toOption.get
+                  outcome <- runner.outcome(
+                    command(dispatchRef, "outcome", ExecutionEvent.ToolOutcome("op", Json.fromString("success"))),
+                    receipt
+                  )
+                  _ = assertEquals(outcome, ExecutionCommitResult.Rejected("operation-unconfirmed-review-required"))
+                yield dispatchRef
+                end for
             }
           yield result
         }
@@ -1167,11 +1721,15 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
             contents <- IO.blocking(Files.readString(effect))
           yield
             assertEquals(contents, "effect")
-            assertEquals(before.asInstanceOf[ExecutionChainObservation.Verified].state.operations.get("op"), Some("started"))
+            assertEquals(
+              before.asInstanceOf[ExecutionChainObservation.Verified].state.operations.get("op"),
+              Some("started")
+            )
             assert(next.isInstanceOf[ExecutionCommitResult.Rejected])
             assertEquals(after, before)
         }
       yield ()
+      end for
     }
   }
 
@@ -1187,23 +1745,42 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           admitted <- store.admit(admission)
           started <- store.transition(command(ref(admitted), "start", ExecutionEvent.AttemptStarted))
           requested <- store.transition(command(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))
-          decided <- store.transition(command(ref(requested), "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))))
-          prepared <- store.transition(command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson)))
+          decided <- store.transition(
+            command(
+              ref(requested),
+              "decision",
+              ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))
+            )
+          )
+          prepared <- store.transition(
+            command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson))
+          )
           allocated <- store.registerRunner(attempt).allocated
           (registered, releaseResource) = allocated
           runner = registered.toOption.get
-          dispatch <- runner.dispatch(command(ref(prepared), "dispatch", ExecutionEvent.ToolStarted("op")), intent)(IO.unit)
+          dispatch <- runner.dispatch(command(ref(prepared), "dispatch", ExecutionEvent.ToolStarted("op")), intent)(
+            IO.unit
+          )
           (dispatchRef, receipt) = dispatch.toOption.get
           _ <- receipt.await
           before <- IO.blocking {
             val execution = os.Path(root) / "session" / "executions" / "cnVu"
-            os.walk(execution).filter(os.isFile).map(path => path.relativeTo(execution).toString -> os.read.bytes(path).toList).toMap
+            os.walk(execution)
+              .filter(os.isFile)
+              .map(path => path.relativeTo(execution).toString -> os.read.bytes(path).toList)
+              .toMap
           }
-          stale <- runner.outcome(command(dispatchRef, "stale", ExecutionEvent.ToolOutcome("op", Json.Null)).copy(attemptId = "old"), receipt)
+          stale <- runner.outcome(
+            command(dispatchRef, "stale", ExecutionEvent.ToolOutcome("op", Json.Null)).copy(attemptId = "old"),
+            receipt
+          )
           _ = assertEquals(stale, ExecutionCommitResult.Rejected("invalid-runner-command"))
           afterStale <- IO.blocking {
             val execution = os.Path(root) / "session" / "executions" / "cnVu"
-            os.walk(execution).filter(os.isFile).map(path => path.relativeTo(execution).toString -> os.read.bytes(path).toList).toMap
+            os.walk(execution)
+              .filter(os.isFile)
+              .map(path => path.relativeTo(execution).toString -> os.read.bytes(path).toList)
+              .toMap
           }
           _ = assertEquals(afterStale, before)
           _ <- releaseResource
@@ -1213,16 +1790,26 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           _ = assertEquals(again.left.toOption, Some("runner-already-owned"))
           beforeRevoked <- IO.blocking {
             val execution = os.Path(root) / "session" / "executions" / "cnVu"
-            os.walk(execution).filter(os.isFile).map(path => path.relativeTo(execution).toString -> os.read.bytes(path).toList).toMap
+            os.walk(execution)
+              .filter(os.isFile)
+              .map(path => path.relativeTo(execution).toString -> os.read.bytes(path).toList)
+              .toMap
           }
-          after <- runner.outcome(command(dispatchRef, "after-release", ExecutionEvent.ToolOutcome("op", Json.Null)), receipt)
+          after <- runner.outcome(
+            command(dispatchRef, "after-release", ExecutionEvent.ToolOutcome("op", Json.Null)),
+            receipt
+          )
           _ = assertEquals(after, ExecutionCommitResult.Rejected("runner-revoked"))
           afterRevoked <- IO.blocking {
             val execution = os.Path(root) / "session" / "executions" / "cnVu"
-            os.walk(execution).filter(os.isFile).map(path => path.relativeTo(execution).toString -> os.read.bytes(path).toList).toMap
+            os.walk(execution)
+              .filter(os.isFile)
+              .map(path => path.relativeTo(execution).toString -> os.read.bytes(path).toList)
+              .toMap
           }
           _ = assertEquals(afterRevoked, beforeRevoked)
         yield ()
+        end for
       }
     }
   }
@@ -1242,7 +1829,13 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         admitted <- store.admit(admission)
         started <- store.transition(command(ref(admitted), "start", ExecutionEvent.AttemptStarted))
         requested <- store.transition(command(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))
-        decided <- store.transition(command(ref(requested), "decision", ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))))
+        decided <- store.transition(
+          command(
+            ref(requested),
+            "decision",
+            ExecutionEvent.ModelDecided(ExecutionModelDecision(Json.Null, List(intent)))
+          )
+        )
         prepared <- store.transition(command(ref(decided), "prepare", ExecutionEvent.ToolPrepared("op", intent.asJson)))
         owned <- store.registerRunner(ExecutionRunner.Attempt("session", "run", "attempt", "incarnation")).allocated
         (registration, releaseRunner) = owned
@@ -1257,8 +1850,13 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           _ <- finalizing.get.timeout(2.seconds)
           observed <- store.observeChain("session", "run")
           current = observed.asInstanceOf[ExecutionChainObservation.Verified].state.ref
-          resume <- store.transition(command(current, "resume-held-finalizer",
-            ExecutionEvent.ResumeAuthorized("attempt2", "incarnation2", "operator")))
+          resume <- store.transition(
+            command(
+              current,
+              "resume-held-finalizer",
+              ExecutionEvent.ResumeAuthorized("attempt2", "incarnation2", "operator")
+            )
+          )
           _ = assert(resume.isInstanceOf[ExecutionCommitResult.Rejected])
           afterResume <- store.observeChain("session", "run")
           _ = assertEquals(afterResume, observed)
@@ -1266,15 +1864,15 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           blocked <- ExecutionCommitStore.resource(root).use(_ => IO.unit).attempt
           _ = assert(blocked.isLeft)
           _ <- finish.complete(())
-          _ <- {
+          _ <-
             def reopen: IO[Unit] = ExecutionCommitStore.resource(root).use(_ => IO.unit).attempt.flatMap {
               case Right(_) => IO.unit
               case Left(_) => IO.sleep(20.millis) *> reopen
             }
             reopen.timeout(3.seconds)
-          }
         yield ()).guarantee(finish.complete(()).void *> releaseRunner *> releaseStore)
       yield ()
+      end for
     }
   }
 
@@ -1287,8 +1885,13 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           _ <- IO(store.installExecutionAuthority(authority))
           admitted <- authority.admit(admission)
           deleted <- store.deleteSession(admission.sessionId).attempt
-          written <- store.saveTerminalEnvelope(admission.sessionId, admission.executionId,
-            nebflow.actor.AgentCommand.ExternalEvent("delegate", "completed", "result")).attempt
+          written <- store
+            .saveTerminalEnvelope(
+              admission.sessionId,
+              admission.executionId,
+              nebflow.actor.AgentCommand.ExternalEvent("delegate", "completed", "result")
+            )
+            .attempt
           msg = nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("late"))
           append <- store.appendDurableMessage(admission.sessionId, msg).attempt
           swap <- store.durableSwapMessages(admission.sessionId, List(msg)).attempt
@@ -1335,15 +1938,26 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
           IO(store.installExecutionAuthority(authority)) *> authority.admit(admission).void *>
             IO(store.releaseExecutionAuthority(authority))
         }
-        protectedWrite <- store.saveTerminalEnvelope(admission.sessionId, admission.executionId,
-          nebflow.actor.AgentCommand.ExternalEvent("delegate", "completed", "result")).attempt
-        unknownWrite <- store.saveTerminalEnvelope("another-session", "run",
-          nebflow.actor.AgentCommand.ExternalEvent("delegate", "completed", "result")).attempt
+        protectedWrite <- store
+          .saveTerminalEnvelope(
+            admission.sessionId,
+            admission.executionId,
+            nebflow.actor.AgentCommand.ExternalEvent("delegate", "completed", "result")
+          )
+          .attempt
+        unknownWrite <- store
+          .saveTerminalEnvelope(
+            "another-session",
+            "run",
+            nebflow.actor.AgentCommand.ExternalEvent("delegate", "completed", "result")
+          )
+          .attempt
         reopened <- ExecutionCommitStore.resource(root).use(_.protection(admission.sessionId))
       yield
         assert(protectedWrite.isLeft)
         assert(unknownWrite.isLeft)
         assert(reopened.isInstanceOf[ExecutionProtection.Protected])
+      end for
     }
   }
 
@@ -1353,7 +1967,9 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
         for
           entered <- Deferred[IO, Unit]
           release <- Deferred[IO, Unit]
-          guarded <- authority.withUnprotectedSession(admission.sessionId)(entered.complete(()).void *> release.get).start
+          guarded <- authority
+            .withUnprotectedSession(admission.sessionId)(entered.complete(()).void *> release.get)
+            .start
           _ <- entered.get
           admissionFiber <- authority.admit(admission).start
           before <- authority.observe(admission.sessionId, admission.executionId)
@@ -1380,3 +1996,4 @@ class ExecutionCommitStoreSpec extends CatsEffectSuite:
       }
     }
   }
+end ExecutionCommitStoreSpec

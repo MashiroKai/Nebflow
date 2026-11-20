@@ -54,7 +54,13 @@ class UiMessageFileChangesSpec extends CatsEffectSuite:
     assert(!keys.contains("fileChanges"), "缺席载荷绝不落键（旧 .ui.json 行字节形态逐字不变）")
 
   test("User row with fileChanges round-trips encode → decode with the same payload"):
-    val row = UiMessage.User("delegate result", injected = true, timestamp = 200L, source = Some("delegate"), fileChanges = Some(diffPayload))
+    val row = UiMessage.User(
+      "delegate result",
+      injected = true,
+      timestamp = 200L,
+      source = Some("delegate"),
+      fileChanges = Some(diffPayload)
+    )
     val decoded = (row: UiMessage).asJson.as[UiMessage].toOption.get
     val u = decoded.asInstanceOf[UiMessage.User]
     assertEquals(u.fileChanges, Some(diffPayload))
@@ -63,7 +69,8 @@ class UiMessageFileChangesSpec extends CatsEffectSuite:
 
   test("fileChanges carries the raw payload verbatim (engine does not interpret inner fields)"):
     val exotic = Json.obj("files" -> List(Json.obj("custom" -> Json.arr("a".asJson, 1.asJson))).asJson)
-    val decoded = (UiMessage.User("t", fileChanges = Some(exotic)): UiMessage).asJson.as[UiMessage].toOption.get.asInstanceOf[UiMessage.User]
+    val decoded = (UiMessage
+      .User("t", fileChanges = Some(exotic)): UiMessage).asJson.as[UiMessage].toOption.get.asInstanceOf[UiMessage.User]
     assertEquals(decoded.fileChanges, Some(exotic))
 
   test("legacy .ui.json row without a fileChanges key decodes with fileChanges=None"):
@@ -96,8 +103,14 @@ class UiMessageFileChangesSpec extends CatsEffectSuite:
   test("fileChanges survives appendUiMessages → getHistoryPage verbatim"):
     withStore { store =>
       val sid = "filechanges-roundtrip-1"
-      val row = UiMessage.User("结果报告", injected = true, timestamp = 300L, source = Some("delegate"),
-        eventType = Some("completed"), fileChanges = Some(diffPayload))
+      val row = UiMessage.User(
+        "结果报告",
+        injected = true,
+        timestamp = 300L,
+        source = Some("delegate"),
+        eventType = Some("completed"),
+        fileChanges = Some(diffPayload)
+      )
       for
         _ <- store.createSession("filechanges rt")
         _ <- store.appendUiMessages(sid, List(row))

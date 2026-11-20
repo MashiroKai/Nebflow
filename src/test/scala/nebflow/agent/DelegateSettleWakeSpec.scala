@@ -39,7 +39,7 @@ class DelegateSettleWakeSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 120.seconds
 
-  private val tempRoot: os.Path     = os.pwd / "target" / "test-delegate-settle-wake"
+  private val tempRoot: os.Path = os.pwd / "target" / "test-delegate-settle-wake"
   private val originalRoot: os.Path = PathUtil.dataRoot
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
@@ -50,7 +50,7 @@ class DelegateSettleWakeSpec extends CatsEffectSuite:
       def path: nebflow.actor.ActorPath = nebflow.actor.ActorPath("settle-probe", Nil)
       def !(msg: AgentEvent): IO[Unit] = msg match
         case _: AgentEvent.Completed => counter.update(_ + 1)
-        case _                       => IO.unit
+        case _ => IO.unit
       def ?[Reply](makeMsg: ActorRef[Reply] => AgentEvent, timeout: Option[FiniteDuration]): IO[Reply] =
         IO.raiseError(new UnsupportedOperationException("probe ref cannot ask"))
 
@@ -58,6 +58,7 @@ class DelegateSettleWakeSpec extends CatsEffectSuite:
   private class ScriptedLlm(streams: Ref[IO, List[Stream[IO, StreamChunk]]]) extends LlmHandle[IO]:
     val calls = Ref.unsafe[IO, Int](0)
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -130,23 +131,23 @@ class DelegateSettleWakeSpec extends CatsEffectSuite:
         sid
       )
       _ <- resources.agentRegistry.update(
-             _ + (sid -> AgentRecord(
-               sessionId = sid,
-               ref = agent,
-               kind = if supervisor.isDefined then AgentKind.Delegate else AgentKind.Root,
-               rootSessionId = sid,
-               supervisorRef = supervisor
-             ))
-           )
+        _ + (sid -> AgentRecord(
+          sessionId = sid,
+          ref = agent,
+          kind = if supervisor.isDefined then AgentKind.Delegate else AgentKind.Root,
+          rootSessionId = sid,
+          supervisorRef = supervisor
+        ))
+      )
       // 夹具自检：注册表里这一行的 supervisorRef 必须在我们投放后仍可读（否则 W1 的
       // 断言测的就不是被测代码，而是夹具没装上）。
       _ <- resources.agentRegistry.get.map { m =>
-             assertEquals(
-               m.get(sid).flatMap(_.supervisorRef).isDefined,
-               supervisor.isDefined,
-               s"夹具自检失败：注册表行 supervisorRef 与投放不一致（keys=${m.keys.toList}）"
-             )
-           }
+        assertEquals(
+          m.get(sid).flatMap(_.supervisorRef).isDefined,
+          supervisor.isDefined,
+          s"夹具自检失败：注册表行 supervisorRef 与投放不一致（keys=${m.keys.toList}）"
+        )
+      }
       completions <- Ref.of[IO, Int](0)
       probe = probeRef(completions)
       // turn 1：带 replyTo 的唤醒（= supervisor 派发腿的形态）⇒ 必有完成信号
@@ -208,3 +209,4 @@ class DelegateSettleWakeSpec extends CatsEffectSuite:
       yield assertEquals(n, 1, s"根会话的完成信号面逐字不变（只有 turn 1 那一次）：$n")
     }
   }
+end DelegateSettleWakeSpec

@@ -32,11 +32,11 @@ class WikiServiceSpec extends CatsEffectSuite:
   private val betaWs = tempRoot / "beta-ws"
 
   os.makeDir.all(alphaWs / "docs" / "sub" / "docs")
-  os.write.over(alphaWs / "docs" / "a.md",
-    "# A\n\nSee [[b]] and [[sub/docs/child.md]] and [[GCR]] and [[DCL]].\n")
-  os.write.over(alphaWs / "docs" / "b.md",
-    "# B\n\nBack to [[a]].\n\nDCL — DOMContentLoaded 事件，本档词条样例。 ^term-dcl\n")
-  os.write.over(alphaWs / "docs" / "glossary.md",
+  os.write.over(alphaWs / "docs" / "a.md", "# A\n\nSee [[b]] and [[sub/docs/child.md]] and [[GCR]] and [[DCL]].\n")
+  os.write.over(alphaWs / "docs" / "b.md", "# B\n\nBack to [[a]].\n\nDCL — DOMContentLoaded 事件，本档词条样例。 ^term-dcl\n")
+
+  os.write.over(
+    alphaWs / "docs" / "glossary.md",
     """---
       |type: glossary
       |status: current
@@ -47,7 +47,8 @@ class WikiServiceSpec extends CatsEffectSuite:
       |GCR（银河宇宙线） — 来自银河系的高能粒子流，词条样例。 ^gcr
       |
       |重试风暴 — 失败触发重试、重试放大失败的反馈循环。 ^retry-storm
-      |""".stripMargin)
+      |""".stripMargin
+  )
   os.write.over(alphaWs / "docs" / "sub" / "docs" / "child.md", "# Child\n\nParent [[a.md]].\n")
   os.makeDir.all(betaWs)
 
@@ -82,8 +83,10 @@ class WikiServiceSpec extends CatsEffectSuite:
       assertEquals(beta.hcursor.get[Boolean]("stub").toOption, Some(true))
       // sub-vault isolation: child.md is NOT a real node of the merged graph
       val nodes = g.hcursor.downField("nodes").as[List[io.circe.Json]].getOrElse(Nil)
-      val realRels = nodes.filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
-        .flatMap(n => str(n, "rel")).sorted
+      val realRels = nodes
+        .filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
+        .flatMap(n => str(n, "rel"))
+        .sorted
       assertEquals(realRels, List("a.md", "b.md", "glossary.md"))
     }
   }
@@ -95,8 +98,10 @@ class WikiServiceSpec extends CatsEffectSuite:
       assertEquals(crumbs.map(c => str(c, "name")), List(Some("alpha")))
 
       val nodes = g.hcursor.downField("nodes").as[List[io.circe.Json]].getOrElse(Nil)
-      val realRels = nodes.filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
-        .flatMap(n => str(n, "rel")).sorted
+      val realRels = nodes
+        .filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
+        .flatMap(n => str(n, "rel"))
+        .sorted
       assertEquals(realRels, List("a.md", "b.md", "glossary.md")) // child.md isolated
 
       val children = g.hcursor.downField("childVaults").as[List[io.circe.Json]].getOrElse(Nil)
@@ -113,11 +118,19 @@ class WikiServiceSpec extends CatsEffectSuite:
       assertEquals(stats.downField("unresolved").as[Long].toOption, Some(0L))
       // 词条引用批: each doc node embeds its declared terms[]; the [[GCR]] edge
       // resolves to the glossary term's doc+anchor (no phantom gcr.md node)
-      val glossTerms = nodes.find(n => str(n, "rel").contains("glossary.md")).get
-        .hcursor.downField("terms").as[List[io.circe.Json]].toOption.getOrElse(Nil)
-      assertEquals(glossTerms.map(_.hcursor.downField("name").as[String].toOption.get),
-        List("GCR（银河宇宙线）", "重试风暴"))
-      val gcrEdge = g.hcursor.downField("edges").as[List[io.circe.Json]].getOrElse(Nil)
+      val glossTerms = nodes
+        .find(n => str(n, "rel").contains("glossary.md"))
+        .get
+        .hcursor
+        .downField("terms")
+        .as[List[io.circe.Json]]
+        .toOption
+        .getOrElse(Nil)
+      assertEquals(glossTerms.map(_.hcursor.downField("name").as[String].toOption.get), List("GCR（银河宇宙线）", "重试风暴"))
+      val gcrEdge = g.hcursor
+        .downField("edges")
+        .as[List[io.circe.Json]]
+        .getOrElse(Nil)
         .find(e => str(e, "from").exists(_.endsWith(":a.md")) && str(e, "to").exists(_.endsWith(":glossary.md")))
       assertEquals(gcrEdge.flatMap(e => str(e, "anchor")), Some("#^gcr"))
       // the external placeholder rides the nodes with external=true
@@ -130,12 +143,16 @@ class WikiServiceSpec extends CatsEffectSuite:
     svc.graph(Some("alpha"), Some("sub/docs")).map { g =>
       assertEquals(g.hcursor.downField("view").downField("vault").as[String].toOption, Some("sub/docs"))
       val crumbs = g.hcursor.downField("view").downField("breadcrumb").as[List[io.circe.Json]].getOrElse(Nil)
-      assertEquals(crumbs.map(c => (str(c, "name"), str(c, "vault"))),
-        List((Some("alpha"), Some("docs")), (Some("sub"), Some("sub/docs"))))
+      assertEquals(
+        crumbs.map(c => (str(c, "name"), str(c, "vault"))),
+        List((Some("alpha"), Some("docs")), (Some("sub"), Some("sub/docs")))
+      )
 
       val nodes = g.hcursor.downField("nodes").as[List[io.circe.Json]].getOrElse(Nil)
-      val realRels = nodes.filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
-        .flatMap(n => str(n, "rel")).sorted
+      val realRels = nodes
+        .filterNot(n => n.hcursor.get[Boolean]("stub").toOption.contains(true))
+        .flatMap(n => str(n, "rel"))
+        .sorted
       assertEquals(realRels, List("child.md"))
       val ext = nodes.filter(n => n.hcursor.get[Boolean]("external").toOption.contains(true))
       assertEquals(ext.flatMap(n => str(n, "rel")), List("a.md"))
@@ -152,12 +169,12 @@ class WikiServiceSpec extends CatsEffectSuite:
     svc.graph(Some("nope")).map { g =>
       assertEquals(str(g, "error"), Some("project 'nope' not found"))
     } *>
-    svc.graph(Some("alpha"), Some("../escape")).map { g =>
-      assertEquals(str(g, "error"), Some("invalid vault path '../escape'"))
-    } *>
-    svc.graph(Some("beta")).map { g =>
-      assert(str(g, "error").exists(_.contains("not found")))
-    }
+      svc.graph(Some("alpha"), Some("../escape")).map { g =>
+        assertEquals(str(g, "error"), Some("invalid vault path '../escape'"))
+      } *>
+      svc.graph(Some("beta")).map { g =>
+        assert(str(g, "error").exists(_.contains("not found")))
+      }
   }
 
   test("WS-5 __user__ is the reserved C-batch placeholder (empty view, no error)") {
@@ -188,38 +205,38 @@ class WikiServiceSpec extends CatsEffectSuite:
     // blank name → Left (the route answers 400 before this, the service keeps its own guard)
     svc.term("", None).map {
       case Left(_) => ()
-      case other   => fail(s"expected Left, got $other")
+      case other => fail(s"expected Left, got $other")
     } *>
-    // glossary term resolves with definition + location anchor
-    svc.term("GCR", None).map {
-      case Right(json) =>
-        assertEquals(json.hcursor.get[Boolean]("resolved").toOption, Some(true))
-        val t = termOf(json)
-        assertEquals(str(t, "source"), Some("glossary"))
-        assertEquals(str(t, "rel"), Some("glossary.md"))
-        assertEquals(str(t, "anchor"), Some("#^gcr"))
-        assert(str(t, "definition").exists(_.startsWith("GCR（银河宇宙线）")))
-      case other => fail(s"expected Right, got $other")
-    } *>
-    // paren-inner alias key hits, scoped to the project
-    svc.term("银河宇宙线", Some("alpha")).map {
-      case Right(json) => assertEquals(str(termOf(json), "anchor"), Some("#^gcr"))
-      case other       => fail(s"expected Right, got $other")
-    } *>
-    // doc-intro term, case-insensitive name
-    svc.term("dcl", Some("alpha")).map {
-      case Right(json) =>
-        val t = termOf(json)
-        assertEquals(str(t, "source"), Some("doc"))
-        assertEquals(str(t, "rel"), Some("b.md"))
-        assertEquals(str(t, "anchor"), Some("#^term-dcl"))
-      case other => fail(s"expected Right, got $other")
-    } *>
-    // unregistered name → Left (route answers 404)
-    svc.term("不存在的词", Some("alpha")).map {
-      case Left(err) => assert(err.contains("not registered"))
-      case other     => fail(s"expected Left, got $other")
-    }
+      // glossary term resolves with definition + location anchor
+      svc.term("GCR", None).map {
+        case Right(json) =>
+          assertEquals(json.hcursor.get[Boolean]("resolved").toOption, Some(true))
+          val t = termOf(json)
+          assertEquals(str(t, "source"), Some("glossary"))
+          assertEquals(str(t, "rel"), Some("glossary.md"))
+          assertEquals(str(t, "anchor"), Some("#^gcr"))
+          assert(str(t, "definition").exists(_.startsWith("GCR（银河宇宙线）")))
+        case other => fail(s"expected Right, got $other")
+      } *>
+      // paren-inner alias key hits, scoped to the project
+      svc.term("银河宇宙线", Some("alpha")).map {
+        case Right(json) => assertEquals(str(termOf(json), "anchor"), Some("#^gcr"))
+        case other => fail(s"expected Right, got $other")
+      } *>
+      // doc-intro term, case-insensitive name
+      svc.term("dcl", Some("alpha")).map {
+        case Right(json) =>
+          val t = termOf(json)
+          assertEquals(str(t, "source"), Some("doc"))
+          assertEquals(str(t, "rel"), Some("b.md"))
+          assertEquals(str(t, "anchor"), Some("#^term-dcl"))
+        case other => fail(s"expected Right, got $other")
+      } *>
+      // unregistered name → Left (route answers 404)
+      svc.term("不存在的词", Some("alpha")).map {
+        case Left(err) => assert(err.contains("not registered"))
+        case other => fail(s"expected Left, got $other")
+      }
   }
 
   test("WS-9 term 同闸（第三批）：非 md/html 宿主文档不做词条消解，md/html 照常（零回归）") {
@@ -233,21 +250,21 @@ class WikiServiceSpec extends CatsEffectSuite:
       // .pdf / 无扩展名同样被拒。
       svc.term("GCR", Some("alpha"), Some("/vault/paper.pdf")).map {
         case Left(err) => assert(err.contains("ext=.pdf"), clue(err))
-        case other     => fail(s"expected Left, got $other")
+        case other => fail(s"expected Left, got $other")
       } *>
       svc.term("GCR", Some("alpha"), Some("/vault/noext")).map {
         case Left(err) => assert(err.contains("ext=<none>"), clue(err))
-        case other     => fail(s"expected Left, got $other")
+        case other => fail(s"expected Left, got $other")
       } *>
       // 大小写 + query/锚点归一后照常消解（与 ask 侧同一单点）。
       svc.term("GCR", Some("alpha"), Some("/vault/a.MD?tab=1#^gcr")).map {
         case Right(json) => assertEquals(str(termOf(json), "anchor"), Some("#^gcr"))
-        case other       => fail(s"expected Right, got $other")
+        case other => fail(s"expected Right, got $other")
       } *>
       // 不带 doc（纯注册表查询）不受闸影响——既有 wiki-graph 面零回归。
       svc.term("GCR", None).map {
         case Right(json) => assertEquals(str(termOf(json), "source"), Some("glossary"))
-        case other       => fail(s"expected Right, got $other")
+        case other => fail(s"expected Right, got $other")
       }
   }
 
@@ -263,6 +280,7 @@ class WikiServiceSpec extends CatsEffectSuite:
       case other => fail(s"expected Right, got $other")
     }
   }
+
   test("WS-9 落位单源（作者令 2026-11-03）：注册目录 .stand/docs 有文档即为该项目的 vault") {
     // beta 原本无 vault（legacy stub 面）——本测试把它的 vault 建在**注册目录**，
     // 断言图谱读的是新落位而非 workspace（alpha 仍留在 workspace docs/ = 未迁移回落面，

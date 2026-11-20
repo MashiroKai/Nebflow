@@ -54,7 +54,6 @@ class RemoteableDeviceParamSpec extends FunSuite:
       s"device 面必须仍是 BaseTools 的子集（T1 起 BaseTools={} 七件），got: ${AgentCore.BaseTools.toList.sorted}"
     )
 
-
   test("正控：六件**逐件**带 device —— augmentSchema 直调面"):
     RemoteExecutor.remoteableTools.toList.sorted.foreach { name =>
       val tool = ToolRegistry.TOOL_MAP.getOrElse(name, fail(s"tool '$name' is not registered"))

@@ -15,9 +15,13 @@ class NodeCompletionReplayIntegrationSpec extends CatsEffectSuite:
   override def munitIOTimeout: FiniteDuration = 90.seconds
   private val originalRoot = PathUtil.dataRoot
   private val root = os.pwd / "target" / "test-replay-integration"
+
   override def beforeAll(): Unit =
     os.makeDir.all(root / "agents" / "general")
-    os.write.over(root / "agents" / "general" / "agent.json", """{"name":"general","description":"fixture","tools":[],"category":"standalone"}""")
+    os.write.over(
+      root / "agents" / "general" / "agent.json",
+      """{"name":"general","description":"fixture","tools":[],"category":"standalone"}"""
+    )
     os.write.over(root / "agents" / "general" / "system.md", "fixture")
     PathUtil.setDataRoot(root)
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
@@ -29,13 +33,30 @@ class NodeCompletionReplayIntegrationSpec extends CatsEffectSuite:
         event <- Deferred[IO, Unit]
         release <- Deferred[IO, Unit]
         finalized <- Deferred[IO, Unit]
-        res <- SpecResources.mkResources(system, root, new LlmHandle[IO]:
-          def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unused"))
-          def sendStream(req: LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] = Stream.empty
+        res <- SpecResources.mkResources(
+          system,
+          root,
+          new LlmHandle[IO]:
+            def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unused"))
+            def sendStream(
+              req: LlmRequest,
+              onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+            ): Stream[IO, StreamChunk] = Stream.empty
         )
         store <- FlowMapStore.open("detached-barrier", root.toString)
-        engine = new NodeEngine(store, system, res, (_: Json) => IO.unit, root.toString, "root", "barrier", (_, _, _) => IO.unit)
-        _ <- engine.forkStart("held finalizer")((event.complete(()).void *> IO.unit).guarantee(release.get *> finalized.complete(()).void))
+        engine = new NodeEngine(
+          store,
+          system,
+          res,
+          (_: Json) => IO.unit,
+          root.toString,
+          "root",
+          "barrier",
+          (_, _, _) => IO.unit
+        )
+        _ <- engine.forkStart("held finalizer")(
+          (event.complete(()).void *> IO.unit).guarantee(release.get *> finalized.complete(()).void)
+        )
         _ <- event.get
         waitFiber <- engine.awaitDetachedStarts.start
         before <- finalized.tryGet
@@ -61,25 +82,72 @@ class NodeCompletionReplayIntegrationSpec extends CatsEffectSuite:
         inputs <- Ref.of[IO, Vector[String]](Vector.empty)
         llm = new LlmHandle[IO]:
           def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new Exception("unexpected send"))
-          def sendStream(req: LlmRequest, onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
+          def sendStream(
+            req: LlmRequest,
+            onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
+          ): Stream[IO, StreamChunk] =
             val input = req.messages.map(_.textContent).mkString("\n")
             val parent = input.contains("FIXTURE-PARENT")
-            val admission = inputs.update(_ :+ input) *> (if parent then IO.unit else
-              entered.modify { ids => val next = ids + req.sessionId; (next, next.size == 2) }
-                .flatMap(full => if full then both.complete(()).void else IO.unit) *> both.get)
-            val output = if parent then "A-MARKER B-MARKER" else if input.linesIterator.exists(_ == "FIXTURE-A") then "A-MARKER" else "B-MARKER"
+            val admission = inputs.update(_ :+ input) *> (if parent then IO.unit
+                                                          else
+                                                            entered
+                                                              .modify { ids =>
+                                                                val next = ids + req.sessionId; (next, next.size == 2)
+                                                              }
+                                                              .flatMap(full =>
+                                                                if full then both.complete(()).void else IO.unit
+                                                              ) *> both.get)
+            val output =
+              if parent then "A-MARKER B-MARKER"
+              else if input.linesIterator.exists(_ == "FIXTURE-A") then "A-MARKER"
+              else "B-MARKER"
             Stream.eval(admission).drain ++ Stream(StreamChunk.TextDelta(output), StreamChunk.Done(None, None))
+          end sendStream
         res <- SpecResources.mkResources(system, root, llm)
         store <- FlowMapStore.open("e01", ws.toString)
-        engine = new NodeEngine(store, system, res, (_: Json) => IO.unit, ws.toString, "root", "e01",
-          (kind, id, _) => events.update(_ :+ (kind -> id)) *>
-            (if kind == "nodeCompleted" && id == "parent" then completed.complete(()).void else IO.unit),
-          reportGateHold = Some(false))
-        _ <- store.mutate(s => s.copy(nodes = Map(
-          "a" -> NodeDef(id = "a", name = "a", agent = "general", createdAt = 0L, task = Some("FIXTURE-A"), out = List(OutEdge("parent"))),
-          "b" -> NodeDef(id = "b", name = "b", agent = "general", createdAt = 0L, task = Some("FIXTURE-B"), out = List(OutEdge("parent"))),
-          "parent" -> NodeDef(id = "parent", name = "parent", agent = "general", createdAt = 0L, task = Some("FIXTURE-PARENT"), in = List("a", "b"))
-        )))
+        engine = new NodeEngine(
+          store,
+          system,
+          res,
+          (_: Json) => IO.unit,
+          ws.toString,
+          "root",
+          "e01",
+          (kind, id, _) =>
+            events.update(_ :+ (kind -> id)) *>
+              (if kind == "nodeCompleted" && id == "parent" then completed.complete(()).void else IO.unit),
+          reportGateHold = Some(false)
+        )
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            Map(
+              "a" -> NodeDef(
+                id = "a",
+                name = "a",
+                agent = "general",
+                createdAt = 0L,
+                task = Some("FIXTURE-A"),
+                out = List(OutEdge("parent"))
+              ),
+              "b" -> NodeDef(
+                id = "b",
+                name = "b",
+                agent = "general",
+                createdAt = 0L,
+                task = Some("FIXTURE-B"),
+                out = List(OutEdge("parent"))
+              ),
+              "parent" -> NodeDef(
+                id = "parent",
+                name = "parent",
+                agent = "general",
+                createdAt = 0L,
+                task = Some("FIXTURE-PARENT"),
+                in = List("a", "b")
+              )
+            )
+          )
+        )
         _ <- (engine.startNode("a"), engine.startNode("b")).parTupled.timeout(30.seconds)
         _ <- completed.get.timeout(30.seconds)
         _ <- engine.awaitDetachedStarts.timeout(30.seconds)
@@ -101,3 +169,4 @@ class NodeCompletionReplayIntegrationSpec extends CatsEffectSuite:
       yield ()
     }
   }
+end NodeCompletionReplayIntegrationSpec

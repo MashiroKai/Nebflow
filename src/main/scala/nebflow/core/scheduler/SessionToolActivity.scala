@@ -32,8 +32,10 @@ object SessionToolActivity:
   def recordAt(sessionId: String, tsMs: Long): IO[Unit] =
     lastActivity.update(_.updated(sessionId, tsMs))
 
-  /** 会话自 sinceMs 以来是否空转（三态判据，见类注）：Some(true)=空转 /
-    * Some(false)=有活动 / None=无证据（不定罪）。 */
+  /**
+   * 会话自 sinceMs 以来是否空转（三态判据，见类注）：Some(true)=空转 /
+   * Some(false)=有活动 / None=无证据（不定罪）。
+   */
   def idleSince(sessionId: String, sinceMs: Long): IO[Option[Boolean]] =
     lastActivity.get.map {
       _.get(sessionId) match

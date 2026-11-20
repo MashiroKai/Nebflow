@@ -106,8 +106,16 @@ class LlmAllocatorSpec extends CatsEffectSuite:
         override def getCandidatesForAgent(model: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
           IO { chosen = model.flatMap(_.preferred); Nil }
       IO {
-        os.write.over(tmp / "agents" / "Nebula" / "agent.json", """{"model":{"preferred":"p/main"}}""", createFolders = true)
-        os.write.over(tmp / "agents" / "small-llm" / "agent.json", """{"model":{"preferred":"p/small"}}""", createFolders = true)
+        os.write.over(
+          tmp / "agents" / "Nebula" / "agent.json",
+          """{"model":{"preferred":"p/main"}}""",
+          createFolders = true
+        )
+        os.write.over(
+          tmp / "agents" / "small-llm" / "agent.json",
+          """{"model":{"preferred":"p/small"}}""",
+          createFolders = true
+        )
       } *> LlmAllocator.candidatesFrom(registry) *> IO(assertEquals(chosen, Some("p/small"))) *>
         IO(os.remove(tmp / "agents" / "small-llm" / "agent.json")) *>
         LlmAllocator.candidatesFrom(registry) *> IO(assertEquals(chosen, Some("p/main")))
@@ -122,12 +130,14 @@ class LlmAllocatorSpec extends CatsEffectSuite:
   /** 按 providerId 记账的脚本化 adapter：模型名命中 failOn 即抛，否则按脚本回文。 */
   private class ScriptedAdapter(failOn: Set[String], answer: String, attempts: TrieMap[String, String])
       extends nebflow.llm.ProviderAdapter[IO]:
+
     def sendMessage(params: SendMessageParams): IO[nebflow.llm.AdapterResponse] =
       IO {
         attempts.update(params.model, "hit")
         if failOn.contains(params.model) then throw new RuntimeException(s"transport down for ${params.model}")
         nebflow.llm.AdapterResponse(reply = answer, toolCalls = Nil)
       }
+
     def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, nebflow.shared.StreamChunk] =
       fs2.Stream.raiseError[IO](new RuntimeException("stream face not expected in this spec"))
 
@@ -136,10 +146,12 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     adapters: Map[String, nebflow.llm.ProviderAdapter[IO]],
     candidates: List[ModelCandidate]
   ) extends nebflow.llm.ProviderRegistry(null, null):
+
     override def getAdapter(providerId: String): IO[nebflow.llm.ProviderAdapter[IO]] =
       adapters.get(providerId) match
         case Some(a) => IO.pure(a)
-        case None    => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
+        case None => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
+
     override def getCandidatesForAgent(model: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
       IO.pure(candidates)
 
@@ -147,7 +159,12 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     val attempts = TrieMap.empty[String, String]
     withTempDataRoot { _ =>
       PluginAllocatorMachine
-        .face(new FaceRegistry(Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"],"reason":"Scala work"}""", attempts)), List(cand("p", "util-1"))))
+        .face(
+          new FaceRegistry(
+            Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"],"reason":"Scala work"}""", attempts)),
+            List(cand("p", "util-1"))
+          )
+        )
         .allocatePlugins("delegate-x", "task", catalog)
         .map { r =>
           assertEquals(r.via, Some(PluginAllocator.AllocationVia.LlmFallback))
@@ -200,7 +217,12 @@ class LlmAllocatorSpec extends CatsEffectSuite:
   test("face ④ unusable reply → ParseFail (model-behaviour failure), not a fabricated success") {
     withTempDataRoot { _ =>
       PluginAllocatorMachine
-        .face(new FaceRegistry(Map("p" -> ScriptedAdapter(Set.empty, "no json here", TrieMap.empty)), List(cand("p", "util-1"))))
+        .face(
+          new FaceRegistry(
+            Map("p" -> ScriptedAdapter(Set.empty, "no json here", TrieMap.empty)),
+            List(cand("p", "util-1"))
+          )
+        )
         .allocatePlugins("delegate-x", "task", catalog)
         .map { r =>
           assertEquals(r.via, None)
@@ -216,7 +238,12 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     val attempts = TrieMap.empty[String, String]
     withTempDataRoot { _ =>
       PluginAllocatorMachine
-        .face(new FaceRegistry(Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", attempts)), List(cand("p", "util-1"))))
+        .face(
+          new FaceRegistry(
+            Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", attempts)),
+            List(cand("p", "util-1"))
+          )
+        )
         .allocatePlugins("delegate-x", "task", Nil)
         .map { r =>
           assertEquals(r.allocation, JevAllocation.Allocated(Nil))
@@ -230,7 +257,13 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     withTempDataRoot { _ =>
       val up = DecisionHealthMonitor.create.flatMap { m =>
         PluginAllocatorMachine
-          .face(new FaceRegistry(Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", TrieMap.empty)), List(cand("p", "util-1"))), Some(m))
+          .face(
+            new FaceRegistry(
+              Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", TrieMap.empty)),
+              List(cand("p", "util-1"))
+            ),
+            Some(m)
+          )
           .allocatePlugins("d", "t", catalog) *> m.getDecisionHealth
       }
       val down = DecisionHealthMonitor.create.flatMap { m =>
@@ -250,8 +283,11 @@ class LlmAllocatorSpec extends CatsEffectSuite:
 
   // ── 🔴 每次分配恰好一行 allocation decision 日志（jev-retire 批四路断言）────
 
-  private def withAllocLogger[A](f: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent] => IO[A]): IO[A] =
-    val logger = org.slf4j.LoggerFactory.getLogger("nebflow.llm.plugin-alloc")
+  private def withAllocLogger[A](
+    f: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent] => IO[A]
+  ): IO[A] =
+    val logger = org.slf4j.LoggerFactory
+      .getLogger("nebflow.llm.plugin-alloc")
       .asInstanceOf[ch.qos.logback.classic.Logger]
     val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
     import scala.jdk.CollectionConverters.*
@@ -259,7 +295,9 @@ class LlmAllocatorSpec extends CatsEffectSuite:
       f(appender)
     }(_ => IO(logger.detachAppender(appender)).void)
 
-  private def allocationDecisionLines(appender: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]): List[String] =
+  private def allocationDecisionLines(
+    appender: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
+  ): List[String] =
     import scala.jdk.CollectionConverters.*
     appender.list.asScala.toList.map(_.getFormattedMessage).filter(_.contains("allocation decision"))
 
@@ -267,7 +305,18 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     withAllocLogger { appender =>
       withTempDataRoot { _ =>
         PluginAllocatorMachine
-          .face(new FaceRegistry(Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"],"reason":"Scala work"}""", TrieMap.empty)), List(cand("p", "util-1"))))
+          .face(
+            new FaceRegistry(
+              Map(
+                "p" -> ScriptedAdapter(
+                  Set.empty,
+                  """{"plugins":["backend-dev"],"reason":"Scala work"}""",
+                  TrieMap.empty
+                )
+              ),
+              List(cand("p", "util-1"))
+            )
+          )
           .allocatePlugins("delegate-x", "task", catalog)
           .map { _ =>
             val lines = allocationDecisionLines(appender)
@@ -283,7 +332,12 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     withAllocLogger { appender =>
       withTempDataRoot { _ =>
         PluginAllocatorMachine
-          .face(new FaceRegistry(Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", TrieMap.empty)), List(cand("p", "util-1"))))
+          .face(
+            new FaceRegistry(
+              Map("p" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", TrieMap.empty)),
+              List(cand("p", "util-1"))
+            )
+          )
           .allocatePlugins("delegate-x", "task", Nil)
           .map { _ =>
             val lines = allocationDecisionLines(appender)
@@ -298,7 +352,12 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     withAllocLogger { appender =>
       withTempDataRoot { _ =>
         PluginAllocatorMachine
-          .face(new FaceRegistry(Map("p" -> ScriptedAdapter(Set.empty, "no json here", TrieMap.empty)), List(cand("p", "util-1"))))
+          .face(
+            new FaceRegistry(
+              Map("p" -> ScriptedAdapter(Set.empty, "no json here", TrieMap.empty)),
+              List(cand("p", "util-1"))
+            )
+          )
           .allocatePlugins("delegate-x", "task", catalog)
           .map { _ =>
             val lines = allocationDecisionLines(appender)
@@ -313,20 +372,28 @@ class LlmAllocatorSpec extends CatsEffectSuite:
   test("log ④ candidate resolution exception: exactly ONE allocation decision line naming the exception") {
     withAllocLogger { appender =>
       withTempDataRoot { tmp =>
-        IO(os.write.over(tmp / "agents" / "small-llm" / "agent.json", """{"model":{"preferred":"p/small"}}""", createFolders = true)) *>
+        IO(
+          os.write.over(
+            tmp / "agents" / "small-llm" / "agent.json",
+            """{"model":{"preferred":"p/small"}}""",
+            createFolders = true
+          )
+        ) *>
           IO {
             val registry = new nebflow.llm.ProviderRegistry(null, null):
-              override def getCandidatesForAgent(model: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
+              override def getCandidatesForAgent(
+                model: Option[nebflow.shared.AgentModelConfig]
+              ): IO[List[ModelCandidate]] =
                 IO.raiseError(new java.util.concurrent.TimeoutException("mock timeout"))
             registry
           }
             .flatMap(registry => PluginAllocatorMachine.face(registry).allocatePlugins("subject", "task", catalog))
-          .map { result =>
-            assert(result.allocation.isInstanceOf[JevAllocation.FellBack])
-            val lines = allocationDecisionLines(appender)
-            assertEquals(lines.size, 1, s"exactly one decision line — got: $lines")
-            assert(lines.head.contains("TimeoutException"))
-          }
+            .map { result =>
+              assert(result.allocation.isInstanceOf[JevAllocation.FellBack])
+              val lines = allocationDecisionLines(appender)
+              assertEquals(lines.size, 1, s"exactly one decision line — got: $lines")
+              assert(lines.head.contains("TimeoutException"))
+            }
       }
     }
   }
@@ -335,12 +402,13 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     val seen = TrieMap.empty[String, LlmKernel.KernelCall]
     withTempDataRoot { _ =>
       val leg = new LlmAllocator(
-        call => IO { seen.update(call.purpose, call); Some(LlmKernel.KernelReply("""{"plugins":[]}""", None, "p", "u")) },
+        call =>
+          IO { seen.update(call.purpose, call); Some(LlmKernel.KernelReply("""{"plugins":[]}""", None, "p", "u")) },
         candidate = IO.pure(Some(cand("p", "u")))
       )
       leg.allocateFor("s", "a visual task", catalog).map { _ =>
         val call = seen("plugin-alloc")
-        val sys  = call.systemPrefix.wireText.getOrElse("")
+        val sys = call.systemPrefix.wireText.getOrElse("")
         val body = call.messages.head.textContent
         // 常量段（可复用前缀）在 system：前导 + 两个表头 + 目录
         assert(sys.startsWith(LlmAllocator.StatePreamble), "the constant preamble opens the stable block")
@@ -352,18 +420,24 @@ class LlmAllocatorSpec extends CatsEffectSuite:
         assert(!body.contains(LlmAllocator.CatalogHeader), "the catalog must not be duplicated inside the user body")
         assert(!body.contains("### visual-report"), "catalog entries must not be duplicated inside the user body")
         assert(!body.contains(LlmAllocator.StatePreamble), "the preamble must not be duplicated inside the user body")
-        assert(body.contains("""{"plugins": ["<package-name>", ...]"""), "the JSON answer instruction stays with the brief")
+        assert(
+          body.contains("""{"plugins": ["<package-name>", ...]"""),
+          "the JSON answer instruction stays with the brief"
+        )
       }
     }
   }
 
   // ── kernel-spec 批（2026-11-19）：调用描述声明（K2/K7）＋ 常量段整体入 system ──
 
-  test("kernel-spec B2/K2/K7: the leg declares a KernelCall — registered site, Stable(stableBlock), SmallLlmModel source") {
+  test(
+    "kernel-spec B2/K2/K7: the leg declares a KernelCall — registered site, Stable(stableBlock), SmallLlmModel source"
+  ) {
     val seen = TrieMap.empty[String, LlmKernel.KernelCall]
     withTempDataRoot { _ =>
       val leg = new LlmAllocator(
-        call => IO { seen.update(call.purpose, call); Some(LlmKernel.KernelReply("""{"plugins":[]}""", None, "p", "u")) },
+        call =>
+          IO { seen.update(call.purpose, call); Some(LlmKernel.KernelReply("""{"plugins":[]}""", None, "p", "u")) },
         candidate = IO.pure(Some(cand("p", "u")))
       )
       leg.allocateFor("s", "a visual task", catalog).map { _ =>
@@ -379,7 +453,9 @@ class LlmAllocatorSpec extends CatsEffectSuite:
     }
   }
 
-  test("kernel-spec K3: only the allocator leg un-mutes its breakpoint budget (constant segment crosses the vendor minimum)"):
+  test(
+    "kernel-spec K3: only the allocator leg un-mutes its breakpoint budget (constant segment crosses the vendor minimum)"
+  ):
     assertEquals(
       LlmAllocator.AllocBreakpoints,
       nebflow.llm.CacheBreakpoints.StablePrefix,
@@ -423,17 +499,20 @@ class LlmAllocatorSpec extends CatsEffectSuite:
 
   private class PerProviderRegistry(adapters: Map[String, nebflow.llm.ProviderAdapter[IO]])
       extends nebflow.llm.ProviderRegistry(null, null):
+
     override def getAdapter(providerId: String): IO[nebflow.llm.ProviderAdapter[IO]] =
       adapters.get(providerId) match
         case Some(a) => IO.pure(a)
-        case None    => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
+        case None => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
 
   test("chainCall: 头候选传输错 ⇒ WARN 试下一候选，第二候选答出（主 agent 能用 ⇒ 兜底能用）") {
     val attempts = TrieMap.empty[String, String]
-    val registry = new PerProviderRegistry(Map(
-      "bad" -> ScriptedAdapter(Set("m-bad"), "", attempts),
-      "good" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", attempts)
-    ))
+    val registry = new PerProviderRegistry(
+      Map(
+        "bad" -> ScriptedAdapter(Set("m-bad"), "", attempts),
+        "good" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", attempts)
+      )
+    )
     val call = LlmAllocator.chainCall(registry, List(cand("bad", "m-bad"), cand("good", "m-good")))
     call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, Some("""{"plugins":["backend-dev"]}"""), "the chain answered via the second candidate")
@@ -443,10 +522,12 @@ class LlmAllocatorSpec extends CatsEffectSuite:
 
   test("chainCall: 全链败 ⇒ None（链耗尽语义），每个失败候选都留有尝试痕迹") {
     val attempts = TrieMap.empty[String, String]
-    val registry = new PerProviderRegistry(Map(
-      "a" -> ScriptedAdapter(Set("m-a"), "", attempts),
-      "b" -> ScriptedAdapter(Set("m-b"), "", attempts)
-    ))
+    val registry = new PerProviderRegistry(
+      Map(
+        "a" -> ScriptedAdapter(Set("m-a"), "", attempts),
+        "b" -> ScriptedAdapter(Set("m-b"), "", attempts)
+      )
+    )
     val call = LlmAllocator.chainCall(registry, List(cand("a", "m-a"), cand("b", "m-b")))
     call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, None, "exhausted chain = None (the caller classifies it as llm-error)")
@@ -456,9 +537,11 @@ class LlmAllocatorSpec extends CatsEffectSuite:
 
   test("chainCall: 未知 provider 的候选被跳过（adapter 解析失败不炸整缝）") {
     val attempts = TrieMap.empty[String, String]
-    val registry = new PerProviderRegistry(Map(
-      "good" -> ScriptedAdapter(Set.empty, """{"plugins":[]}""", attempts)
-    ))
+    val registry = new PerProviderRegistry(
+      Map(
+        "good" -> ScriptedAdapter(Set.empty, """{"plugins":[]}""", attempts)
+      )
+    )
     val call = LlmAllocator.chainCall(registry, List(cand("ghost", "m-ghost"), cand("good", "m-good")))
     call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, Some("""{"plugins":[]}"""), "the resolvable candidate still answers")
@@ -468,10 +551,12 @@ class LlmAllocatorSpec extends CatsEffectSuite:
 
   test("chainCall: 空回文候选不截链（provider 侧故障同侧处理，下一候选照答）") {
     val attempts = TrieMap.empty[String, String]
-    val registry = new PerProviderRegistry(Map(
-      "mute" -> ScriptedAdapter(Set.empty, "   ", attempts),
-      "good" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", attempts)
-    ))
+    val registry = new PerProviderRegistry(
+      Map(
+        "mute" -> ScriptedAdapter(Set.empty, "   ", attempts),
+        "good" -> ScriptedAdapter(Set.empty, """{"plugins":["backend-dev"]}""", attempts)
+      )
+    )
     val call = LlmAllocator.chainCall(registry, List(cand("mute", "m-mute"), cand("good", "m-good")))
     call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, Some("""{"plugins":["backend-dev"]}"""), "the empty reply did not become the final answer")
@@ -511,10 +596,12 @@ class LlmAllocatorSpec extends CatsEffectSuite:
         }
       def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, nebflow.shared.StreamChunk] =
         fs2.Stream.raiseError[IO](new RuntimeException("stream face not expected in this spec"))
-    val registry = new PerProviderRegistry(Map(
-      "slow" -> alwaysSlow,
-      "good" -> ScriptedAdapter(Set.empty, """{"plugins":["qa"]}""", attempts)
-    ))
+    val registry = new PerProviderRegistry(
+      Map(
+        "slow" -> alwaysSlow,
+        "good" -> ScriptedAdapter(Set.empty, """{"plugins":["qa"]}""", attempts)
+      )
+    )
     val call = LlmAllocator.chainCall(registry, List(cand("slow", "m-slow"), cand("good", "m-good")))
     call(paramsFor).map(_.map(_.reply)).map { reply =>
       assertEquals(reply, Some("""{"plugins":["qa"]}"""), "the healthy candidate still answers")

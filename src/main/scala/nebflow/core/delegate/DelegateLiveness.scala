@@ -7,6 +7,7 @@ import nebflow.actor.{ActorRef, ActorSystem, AgentRecord, AgentStatus}
 
 /** Instance-local ownership is an incarnation identity, not a retained reference or activity timestamp. */
 object DelegateLiveness:
+
   final case class Verdict(running: Boolean):
     def json: Json = Json.obj("status" -> (if running then "running" else "interrupted").asJson)
 
@@ -14,8 +15,10 @@ object DelegateLiveness:
   def adopted(system: ActorSystem, agents: Map[String, AgentRecord]): IO[Set[String]] =
     system.ownedActors.map { owned =>
       agents.iterator.collect {
-        case (id, agent) if agent.ref != null &&
-          owned.get(agent.ref.path.toString).exists(_ eq agent.ref) => id
+        case (id, agent)
+            if agent.ref != null &&
+              owned.get(agent.ref.path.toString).exists(_ eq agent.ref) =>
+          id
       }.toSet
     }
 

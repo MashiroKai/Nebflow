@@ -45,6 +45,7 @@ class HistoryPageLimitClampSpec extends CatsEffectSuite:
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"history clamp spec agent","tools":[],"category":"standalone"}"""
@@ -150,7 +151,9 @@ class HistoryPageLimitClampSpec extends CatsEffectSuite:
 
   // ── H1：荒谬 limit ⇒ 夹到 MaxHistoryPage ───────────────────────────────
 
-  test("H1: limit=100000 through the REAL WS getHistory handler returns exactly MaxHistoryPage messages (the newest ones, nothing dropped)") {
+  test(
+    "H1: limit=100000 through the REAL WS getHistory handler returns exactly MaxHistoryPage messages (the newest ones, nothing dropped)"
+  ) {
     withStore { res =>
       for
         sid <- seed600(res, "clamp-h1")
@@ -160,7 +163,11 @@ class HistoryPageLimitClampSpec extends CatsEffectSuite:
         frames <- wsGetHistory(res, sid, ""","limit":100000""")
       yield
         val (rawSize, rawTotal, rawOffset, _) = (raw._1.size, raw._2, raw._3, raw._4)
-        assertEquals(clue(rawSize), 600, "baseline: the store itself is unclamped — 100000 would carry the whole history")
+        assertEquals(
+          clue(rawSize),
+          600,
+          "baseline: the store itself is unclamped — 100000 would carry the whole history"
+        )
         assertEquals(rawTotal, 600)
         assertEquals(rawOffset, 0, "baseline offset is 0, not the clamped page's offset")
         val (size, total, offset, hasMore) = pageOf(frames)
@@ -170,7 +177,11 @@ class HistoryPageLimitClampSpec extends CatsEffectSuite:
           s"the frame must never carry more than MaxHistoryPage messages, got $size"
         )
         assertEquals(total, 600L, "the total count is untouched — clamping is about frame payload, not history")
-        assertEquals(offset, 600L - WsSessionChatHandlers.MaxHistoryPage, "the page is the NEWEST 500 (no hole, no drop)")
+        assertEquals(
+          offset,
+          600L - WsSessionChatHandlers.MaxHistoryPage,
+          "the page is the NEWEST 500 (no hole, no drop)"
+        )
         assert(hasMore, "older messages are still reachable by paging (hasMore=true)")
     }
   }
@@ -193,14 +204,20 @@ class HistoryPageLimitClampSpec extends CatsEffectSuite:
 
   // ── H3：坏值（0）⇒ 回落默认，不是空页 ────────────────────────────────
 
-  test("H3: limit=0 falls back to the default page size (a bad client value neither empties the page nor enlarges it)") {
+  test(
+    "H3: limit=0 falls back to the default page size (a bad client value neither empties the page nor enlarges it)"
+  ) {
     withStore { res =>
       for
         sid <- seed600(res, "clamp-h3")
         frames <- wsGetHistory(res, sid, ""","limit":0""")
       yield
         val (size, _, _, _) = pageOf(frames)
-        assertEquals(size, WsSessionChatHandlers.DefaultHistoryPage, "≤0 must fall back to the default, never to an empty page")
+        assertEquals(
+          size,
+          WsSessionChatHandlers.DefaultHistoryPage,
+          "≤0 must fall back to the default, never to an empty page"
+        )
     }
   }
 

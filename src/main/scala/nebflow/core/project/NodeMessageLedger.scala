@@ -68,13 +68,13 @@ object NodeMessageLedger:
   val RouteUndelivered = "undelivered"
 
   private def rank(event: String): Int = event match
-    case Queued   => 0
+    case Queued => 0
     case Injected => 1
     case Appended => 1
     case Replayed => 2
     case Consumed => 3
-    case Dead     => 3
-    case _        => 0
+    case Dead => 3
+    case _ => 0
 
   /** 台账行（append-only，一行一次状态迁移）。 */
   final case class Row(
@@ -202,6 +202,7 @@ object NodeMessageLedger:
         }
       }
     }
+  end fold
 
   /** 全账（已 fold）。 */
   def entries(workspace: String): IO[List[Entry]] = load(workspace).map(fold)

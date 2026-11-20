@@ -352,7 +352,11 @@ class NodeStuckNotifySpec extends CatsEffectSuite:
         parentSessionId = "dispatcher-1"
       )
       registry =
-        Map(toolCase.sessionId -> toolCase, idleCase.sessionId -> idleCase, "dispatcher-1" -> rootRow("dispatcher-1", dispatcherRef))
+        Map(
+          toolCase.sessionId -> toolCase,
+          idleCase.sessionId -> idleCase,
+          "dispatcher-1" -> rootRow("dispatcher-1", dispatcherRef)
+        )
       _ <- resources.agentRegistry.set(registry)
       outcomes <- NodeStuckNotify.sweep(
         resources,

@@ -28,13 +28,16 @@ object Splash:
           val info = new org.jline.nativ.Kernel32.CONSOLE_SCREEN_BUFFER_INFO()
           val console = org.jline.nativ.Kernel32.GetConsoleScreenBufferInfo(handle, info) != 0
           (console, if console then info.windowWidth() else 80)
-        else
-          (org.jline.nativ.CLibrary.isatty(1) == 1, org.jline.nativ.CLibrary.getTerminalWidth(1).toInt)
-      catch
-        case _: LinkageError | _: SecurityException => (ConfigCommand.hasInteractiveTerminal, 80)
-    val columns = env.get("COLUMNS").flatMap(_.toIntOption).filter(_ > 0)
+        else (org.jline.nativ.CLibrary.isatty(1) == 1, org.jline.nativ.CLibrary.getTerminalWidth(1).toInt)
+      catch case _: LinkageError | _: SecurityException => (ConfigCommand.hasInteractiveTerminal, 80)
+    val columns = env
+      .get("COLUMNS")
+      .flatMap(_.toIntOption)
+      .filter(_ > 0)
       .getOrElse(if width > 0 then width else 80)
     TerminalFacts(env, interactive, columns)
+
+  end currentFacts
 
   def printBanner(): Unit =
     val output = render(currentFacts)
@@ -74,11 +77,12 @@ object Splash:
       case _ =>
         val level =
           if plain then 0
-          else setting(env, "UI_LEVEL").flatMap(_.toIntOption).filter(n => n >= 0 && n <= 3).getOrElse {
-            if env.get("COLORTERM").exists(Set("truecolor", "24bit")) then 3
-            else if term.contains("256color") then 2
-            else 1
-          }
+          else
+            setting(env, "UI_LEVEL").flatMap(_.toIntOption).filter(n => n >= 0 && n <= 3).getOrElse {
+              if env.get("COLORTERM").exists(Set("truecolor", "24bit")) then 3
+              else if term.contains("256color") then 2
+              else 1
+            }
         val ink = payload(s"ink_$theme")
         val foreground = level match
           case 3 => s"\u001b[38;2;${ink}m"
@@ -88,17 +92,24 @@ object Splash:
         val reset = if level > 0 then "\u001b[0m" else ""
         val token = "([0-9]+)([.un#])".r
         val rows = payload("art").split(';').map { row =>
-          val text = token.findAllMatchIn(row).map { m =>
-            val cell = m.group(2).head
-            val glyph =
-              if cell == '.' then " "
-              else if level == 0 then "#"
-              else cell match
-                case 'u' => "\u2580"
-                case 'n' => "\u2584"
-                case _ => "\u2588"
-            glyph * m.group(1).toInt
-          }.mkString
+          val text = token
+            .findAllMatchIn(row)
+            .map { m =>
+              val cell = m.group(2).head
+              val glyph =
+                if cell == '.' then " "
+                else if level == 0 then "#"
+                else
+                  cell match
+                    case 'u' => "\u2580"
+                    case 'n' => "\u2584"
+                    case _ => "\u2588"
+              glyph * m.group(1).toInt
+            }
+            .mkString
           s"  $foreground$text$reset"
         }
         rows.mkString("\n", "\n", "\n\n")
+    end match
+  end render
+end Splash

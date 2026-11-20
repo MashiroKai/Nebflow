@@ -49,6 +49,7 @@ object SecretsCommand extends CliCommand:
   def name = "secrets"
   def description = "Secrets store: name, description, tags, updated — values are NEVER displayed"
   def subcommands = List(SecretsUsage, SecretsList, SecretsShow, SecretsMeta)
+
   def examples = List(
     "stand secrets",
     "stand secrets list",
@@ -60,6 +61,8 @@ object SecretsCommand extends CliCommand:
   // Bare `stand secrets` = usage (author ruling: 无参输出用法提示 — it must
   // NOT silently run the list; the usage face is the default subcommand).
   override def defaultSubcommand = Some("usage")
+
+end SecretsCommand
 
 /** `secrets usage` — the bare-command face: what this command can do, zero reads. */
 private[cli] object SecretsUsage extends CliSubcommand:
@@ -113,23 +116,31 @@ private[cli] object SecretsUsage extends CliSubcommand:
         )
       )
 
+    end if
+
+  end run
+
+end SecretsUsage
+
 /** Shared read/write plumbing for the metadata subcommands. */
 private[cli] object SecretsCli:
   import nebflow.core.secrets.{SecretsCatalog, SecretsStore}
 
-  /** THIS data root's store — the same construction the gateway's per-request
-    *  face uses (`SecretsRoutes.secretsStore`), so the CLI inventory and the
-    *  panel list can never disagree about what exists. */
+  /**
+   * THIS data root's store — the same construction the gateway's per-request
+   *  face uses (`SecretsRoutes.secretsStore`), so the CLI inventory and the
+   *  panel list can never disagree about what exists.
+   */
   def store: SecretsStore = new SecretsStore(PathUtil.dataRoot / "secrets")
 
   /** Failure → one-line diagnostic (name/code family only — never a value). */
   def describe(err: SecretsStore.Failure): String =
     import SecretsStore.Failure
     err match
-      case Failure.Io(reason)       => s"io: $reason"
+      case Failure.Io(reason) => s"io: $reason"
       case Failure.SecretMode(n, r) => s"secret_mode: $n ($r)"
       case Failure.UnknownSecret(n) => s"unknown_secret: $n"
-      case other                    => s"${other.getClass.getSimpleName.toLowerCase}"
+      case other => s"${other.getClass.getSimpleName.toLowerCase}"
 
   /** Local-time stamp, same face as the rendered catalogue (yyyy-MM-dd HH:mm). */
   def stamp(millis: Long): String =
@@ -168,12 +179,15 @@ private[cli] object SecretsCli:
       "stored" -> e.stored.asJson
     )
 
+end SecretsCli
+
 /** `secrets list` — the queryable metadata inventory. */
 private[cli] object SecretsList extends CliSubcommand:
   import nebflow.core.secrets.{SecretsQuery, SecretsStore}
 
   def name = "list"
   def description = "List secrets: name, tags, updated, description — metadata only, never a value"
+
   def params = List(
     CliParam(
       name = "keyword",
@@ -229,7 +243,8 @@ private[cli] object SecretsList extends CliSubcommand:
           "List everything with `stand secrets list` (no filters)."
         )
     else
-      val cells = entries.map(e => (e, SecretsCli.tagsCell(e.tags), SecretsCli.stamp(e.mtime), SecretsCli.cell(e.description)))
+      val cells =
+        entries.map(e => (e, SecretsCli.tagsCell(e.tags), SecretsCli.stamp(e.mtime), SecretsCli.cell(e.description)))
       val nameW = cells.foldLeft(4)((w, c) => math.max(w, c._1.name.length))
       val tagW = cells.foldLeft(4)((w, c) => math.max(w, c._2.length))
       val header =
@@ -247,6 +262,7 @@ private[cli] object SecretsList extends CliSubcommand:
         "Values are never displayed — one owner-only (0600) file per name; consume via \"$(cat <path>)\" or an allowlisted $VARIABLE."
       )
       header :: body ::: footer
+    end if
 
   end inventoryText
 
@@ -256,6 +272,7 @@ end SecretsList
 private[cli] object SecretsShow extends CliSubcommand:
   def name = "show"
   def description = "Show one secret's metadata (description, tags, updated, path, consumers) — never a value"
+
   def params = List(
     CliParam(name = "name", description = "Secret name", required = true)
   )
@@ -285,12 +302,19 @@ private[cli] object SecretsShow extends CliSubcommand:
             )
       }
 
+    end if
+
+  end run
+
+end SecretsShow
+
 /** `secrets meta <name>` — the CLI write entry for the non-value fields. */
 private[cli] object SecretsMeta extends CliSubcommand:
   import nebflow.core.secrets.SecretsCatalog
 
   def name = "meta"
   def description = "Edit a secret's description/tags/variable name (metadata only — never its value)"
+
   def params = List(
     CliParam(name = "name", description = "Secret name", required = true),
     CliParam(name = "description", description = "What this credential is for (replaces the description)"),
@@ -326,5 +350,7 @@ private[cli] object SecretsMeta extends CliSubcommand:
               )
             )
       }
+    end if
+  end run
 
 end SecretsMeta

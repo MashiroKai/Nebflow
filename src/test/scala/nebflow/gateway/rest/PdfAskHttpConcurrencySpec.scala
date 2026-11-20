@@ -39,7 +39,9 @@ class PdfAskHttpConcurrencySpec extends CatsEffectSuite:
 
   private def parserReady: Boolean =
     os.exists(fixtureScript) &&
-      scala.util.Try(os.proc(python, "-c", "import pdfplumber, pypdf").call(check = false).exitCode == 0).getOrElse(false)
+      scala.util
+        .Try(os.proc(python, "-c", "import pdfplumber, pypdf").call(check = false).exitCode == 0)
+        .getOrElse(false)
 
   override def beforeEach(context: BeforeEach): Unit =
     temp = os.temp.dir(prefix = "pdf-http-")
@@ -111,3 +113,4 @@ class PdfAskHttpConcurrencySpec extends CatsEffectSuite:
       _ = assertEquals(entry, 1, "one document ⇒ one cache entry, however many asks arrived together")
     yield ()
   }
+end PdfAskHttpConcurrencySpec

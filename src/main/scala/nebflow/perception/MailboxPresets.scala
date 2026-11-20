@@ -38,8 +38,22 @@ object MailboxPresets:
     preset("vip.163.com", "网易 163", "imap.163.com", "smtp.163.com"),
     preset("gmail.com", "Gmail", "imap.gmail.com", "smtp.gmail.com"),
     preset("googlemail.com", "Gmail", "imap.gmail.com", "smtp.gmail.com"),
-    preset("outlook.com", "Outlook", "outlook.office365.com", "smtp.office365.com", smtpPort = 587, implicitTls = false),
-    preset("hotmail.com", "Outlook", "outlook.office365.com", "smtp.office365.com", smtpPort = 587, implicitTls = false),
+    preset(
+      "outlook.com",
+      "Outlook",
+      "outlook.office365.com",
+      "smtp.office365.com",
+      smtpPort = 587,
+      implicitTls = false
+    ),
+    preset(
+      "hotmail.com",
+      "Outlook",
+      "outlook.office365.com",
+      "smtp.office365.com",
+      smtpPort = 587,
+      implicitTls = false
+    ),
     preset("live.com", "Outlook", "outlook.office365.com", "smtp.office365.com", smtpPort = 587, implicitTls = false),
     preset("icloud.com", "iCloud", "imap.mail.me.com", "smtp.mail.me.com", smtpPort = 587, implicitTls = false),
     preset("me.com", "iCloud", "imap.mail.me.com", "smtp.mail.me.com", smtpPort = 587, implicitTls = false),
@@ -50,13 +64,13 @@ object MailboxPresets:
   ).map(p => p.domain -> p).toMap
 
   private def preset(
-      domain: String,
-      provider: String,
-      imap: String,
-      smtp: String,
-      imapPort: Int = 993,
-      smtpPort: Int = 465,
-      implicitTls: Boolean = true
+    domain: String,
+    provider: String,
+    imap: String,
+    smtp: String,
+    imapPort: Int = 993,
+    smtpPort: Int = 465,
+    implicitTls: Boolean = true
   ): MailboxPreset =
     MailboxPreset(domain, provider, imap, imapPort, smtp, smtpPort, implicitTls, authCodeHint = true)
 
@@ -64,10 +78,11 @@ object MailboxPresets:
   def domainOf(address: String): String =
     address.trim.toLowerCase.indexOf('@') match
       case -1 => ""
-      case i  => address.trim.toLowerCase.substring(i + 1)
+      case i => address.trim.toLowerCase.substring(i + 1)
 
   /** Preset lookup by email address. Unknown domain → None (needs the advanced fold). */
   def forAddress(address: String): Option[MailboxPreset] = byDomain.get(domainOf(address))
 
   /** Test/DI seam: full preset table. */
   def all: List[MailboxPreset] = byDomain.values.toList.sortBy(_.domain)
+end MailboxPresets

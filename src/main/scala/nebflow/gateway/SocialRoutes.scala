@@ -529,7 +529,6 @@ private[gateway] object SocialRoutes:
               }
         }
 
-
         withAuth(req) {
           sharedResources.friendService match
             case None => NotFound(Json.obj("error" -> "NebLink not enabled".asJson))
@@ -546,17 +545,26 @@ private[gateway] object SocialRoutes:
               req.as[Json].flatMap { body =>
                 val q = body.hcursor.get[String]("query").getOrElse("").trim
                 val ids = body.hcursor.get[List[String]]("conversations").getOrElse(Nil)
-                if q.isEmpty || q.length > 256 || ids.size > 256 then BadRequest(Json.obj("error" -> "invalid query".asJson))
-                else fs.searchSocial(q, ids).flatMap {
-                  case Left(err) => friendErr(err)
-                  case Right(result) =>
-                    Ok(Json.obj(
-                      "hits" -> result.hits.map(h => Json.obj("conversationId" -> h.conversationId.asJson, "message" -> h.message.asJson)).asJson,
-                      "pages" -> result.pages.asJson,
-                      "truncated" -> result.truncated.asJson,
-                      "failed" -> result.failed.asJson
-                    ))
-                }
+                if q.isEmpty || q.length > 256 || ids.size > 256 then
+                  BadRequest(Json.obj("error" -> "invalid query".asJson))
+                else
+                  fs.searchSocial(q, ids).flatMap {
+                    case Left(err) => friendErr(err)
+                    case Right(result) =>
+                      Ok(
+                        Json.obj(
+                          "hits" -> result.hits
+                            .map(h =>
+                              Json.obj("conversationId" -> h.conversationId.asJson, "message" -> h.message.asJson)
+                            )
+                            .asJson,
+                          "pages" -> result.pages.asJson,
+                          "truncated" -> result.truncated.asJson,
+                          "failed" -> result.failed.asJson
+                        )
+                      )
+                  }
+                end if
               }
         }
 

@@ -65,7 +65,7 @@ class BgDeathWatchFalsePositiveFixSpec extends CatsEffectSuite:
     withDataRoot {
       val sid = newSid("done")
       (for
-        s1  <- ShellSession.forSession(sid)
+        s1 <- ShellSession.forSession(sid)
         job <- s1.executeBackground("exit 3", description = Some("dw-①-instant-crash"))
         // 等 deferred 落地（进程早已死）——正是旧代码会判 Dead("process dead") 的状态：
         _ <- pollUntil(
@@ -214,14 +214,16 @@ class BgDeathWatchFalsePositiveFixSpec extends CatsEffectSuite:
   test("④ 任务图注册/移除结构化日志：实例 id + 原因落盘（logback ListAppender 实证）") {
     withDataRoot {
       val sid = newSid("graphlog")
-      val lcLogger = org.slf4j.LoggerFactory.getLogger("nebflow.shell").asInstanceOf[
-        ch.qos.logback.classic.Logger
-      ]
+      val lcLogger = org.slf4j.LoggerFactory
+        .getLogger("nebflow.shell")
+        .asInstanceOf[
+          ch.qos.logback.classic.Logger
+        ]
       val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
       appender.start()
       lcLogger.addAppender(appender)
       (for
-        s1  <- ShellSession.forSession(sid)
+        s1 <- ShellSession.forSession(sid)
         job <- s1.executeBackground("echo dw-④", description = Some("dw-④-log-probe"))
         _ <- pollUntil(s1.getBackgroundResult(job).map(_.isDefined), timeoutMs = 15000L)
         events = appender.list.toArray.toList.map(_.asInstanceOf[ch.qos.logback.classic.spi.ILoggingEvent])

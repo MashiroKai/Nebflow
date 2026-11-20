@@ -65,6 +65,8 @@ final case class ConnGuardConfig(
   /** 环回恒在信任名单：本机 web UI / CLI / 健康探针的管理通道不能被限死。 */
   val trustedIps: Set[String] = ConnGuardConfig.DefaultTrustedIps ++ extraTrustedIps
 
+end ConnGuardConfig
+
 object ConnGuardConfig:
 
   // A console cold load includes modules, editor preload, assets and API reads.
@@ -133,9 +135,14 @@ object ConnGuardConfig:
       tunnelPerIpCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_PER_IP_CAP", DefaultTunnelPerIpCap, 1),
       tunnelTotalCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP", DefaultTunnelTotalCap, 1),
       tunnelWindowSec = intEnv("GATEWAY_CONN_GUARD_TUNNEL_WINDOW_SEC", 60, 1),
-      tunnelChainsPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_CHAINS_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1).orElse(Some(DefaultTunnelChainsPerIpCap)),
-      tunnelFilesPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_FILES_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1),
-      tunnelOtherPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_OTHER_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1)
+      tunnelChainsPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_CHAINS_PER_IP_CAP")
+        .flatMap(_.trim.toIntOption)
+        .map(_ max 1)
+        .orElse(Some(DefaultTunnelChainsPerIpCap)),
+      tunnelFilesPerIpCap =
+        lookup("GATEWAY_CONN_GUARD_TUNNEL_FILES_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1),
+      tunnelOtherPerIpCap =
+        lookup("GATEWAY_CONN_GUARD_TUNNEL_OTHER_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1)
     )
   end fromEnv
 
@@ -245,9 +252,7 @@ object ConnGuard:
           // 重启重连风暴修复批（2026-11-21）：tunnel 面的上限此前**从不打印**（作者
           // 排障时只能从 healthJson 反推），这里补齐：通用桶 + 三个按类桶 + 窗口长。
           s"tunnelPerIpCap=${cfg.tunnelPerIpCap} tunnelTotalCap=${cfg.tunnelTotalCap} " +
-          s"tunnelWindowSec=${cfg.tunnelWindowSec} tunnelChainsPerIpCap=${
-            cfg.tunnelChainsPerIpCap.getOrElse(cfg.tunnelPerIpCap)
-          } tunnelFilesPerIpCap=${cfg.tunnelFilesPerIpCap.getOrElse(cfg.tunnelPerIpCap)} " +
+          s"tunnelWindowSec=${cfg.tunnelWindowSec} tunnelChainsPerIpCap=${cfg.tunnelChainsPerIpCap.getOrElse(cfg.tunnelPerIpCap)} tunnelFilesPerIpCap=${cfg.tunnelFilesPerIpCap.getOrElse(cfg.tunnelPerIpCap)} " +
           s"tunnelOtherPerIpCap=${cfg.tunnelOtherPerIpCap.getOrElse(cfg.tunnelPerIpCap)}"
       )
     }
@@ -525,8 +530,7 @@ class ConnGuard private (
         val windowMs = config.tunnelWindowSec * 1000L
         stateRef.update { st =>
           val st1 =
-            if now - st.tunnelWindowStartMs >= windowMs then
-              st.copy(tunnelWindowStartMs = now, tunnelTotalReq = 0L)
+            if now - st.tunnelWindowStartMs >= windowMs then st.copy(tunnelWindowStartMs = now, tunnelTotalReq = 0L)
             else st
           ensureSlot(st1, ip, now) match
             case Some(st2) =>
@@ -547,6 +551,7 @@ class ConnGuard private (
             case None =>
               // Table full with no evictable slot: count globally only.
               st1.copy(tunnelTotalReq = st1.tunnelTotalReq + 1L)
+          end match
         }
       }
 
@@ -577,14 +582,15 @@ class ConnGuard private (
       stateRef.get.flatMap { st =>
         val reject =
           if st.tunnelTotalReq > config.tunnelTotalCap then Some("tunnel-total-cap")
-          else if st.perIp.get(ip).exists(_.tunnelRouteCounts.getOrElse(route, 0L) > cap) then
-            Some("tunnel-per-ip-cap")
+          else if st.perIp.get(ip).exists(_.tunnelRouteCounts.getOrElse(route, 0L) > cap) then Some("tunnel-per-ip-cap")
           else None
         reject match
           case Some(reason) =>
             stateRef.update(s => s.copy(tunnelRejectedTotal = s.tunnelRejectedTotal + 1)).as(Some(reason))
           case None => IO.pure(None)
       }
+
+  end checkTunnel
 
   def snapshot: IO[Snapshot] =
     stateRef.get.map { st =>

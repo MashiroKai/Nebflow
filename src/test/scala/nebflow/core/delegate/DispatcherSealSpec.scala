@@ -61,8 +61,10 @@ class DispatcherSealSpec extends FunSuite:
   }
 
   test("S1d 与词表拒的可辨性：封存拒 ≠ 非法词拒（错误码不同族）") {
-    val sealedErr = DispatcherSeal.resolveForDispatch(Some("dispatcher"), DispatcherSeal.Sealed).swap.getOrElse(fail(""))
-    val invalidErr = DispatcherSeal.resolveForDispatch(Some("nosuchmode"), DispatcherSeal.Sealed).swap.getOrElse(fail(""))
+    val sealedErr =
+      DispatcherSeal.resolveForDispatch(Some("dispatcher"), DispatcherSeal.Sealed).swap.getOrElse(fail(""))
+    val invalidErr =
+      DispatcherSeal.resolveForDispatch(Some("nosuchmode"), DispatcherSeal.Sealed).swap.getOrElse(fail(""))
     assert(sealedErr.contains("DELEGATE_DISPATCHER_SEALED"), "seal rejection carries its own code")
     assert(invalidErr.contains("DELEGATE_MODE_INVALID"), "vocabulary rejection keeps the ModeParam code")
     assert(!invalidErr.contains("DELEGATE_DISPATCHER_SEALED"), "a bad word is a bad word, not a seal")
@@ -80,19 +82,25 @@ class DispatcherSealSpec extends FunSuite:
 
   test("S2b 配置节解析：{\"dispatcherMode\":\"enabled\"} ⇒ enabled；缺节/缺键/非法词 ⇒ sealed（fail-closed）") {
     def node(json: String): Option[io.circe.Json] = io.circe.parser.parse(json).toOption
-    assertEquals(node("{}").flatMap(_.asObject).map(_.isEmpty), Some(true)) // probe: the helper parses, not wraps a string literal
+    assertEquals(
+      node("{}").flatMap(_.asObject).map(_.isEmpty),
+      Some(true)
+    ) // probe: the helper parses, not wraps a string literal
     assertEquals(
       DispatcherSeal.modeFromConfigNode(node("""{"dispatcherMode":"enabled"}""")),
       DispatcherSeal.Enabled
     )
-    assertEquals(DispatcherSeal.modeFromConfigNode(node("""{"dispatcherMode":"  ENABLED  "}""")),
-      DispatcherSeal.Enabled, "case/whitespace tolerance matches ModeParam")
+    assertEquals(
+      DispatcherSeal.modeFromConfigNode(node("""{"dispatcherMode":"  ENABLED  "}""")),
+      DispatcherSeal.Enabled,
+      "case/whitespace tolerance matches ModeParam"
+    )
     assertEquals(DispatcherSeal.modeFromConfigNode(None), DispatcherSeal.Sealed, "absent node = sealed default")
-    assertEquals(DispatcherSeal.modeFromConfigNode(node("{}")),
-      DispatcherSeal.Sealed, "absent key = sealed default")
+    assertEquals(DispatcherSeal.modeFromConfigNode(node("{}")), DispatcherSeal.Sealed, "absent key = sealed default")
     assertEquals(
       DispatcherSeal.modeFromConfigNode(node("""{"dispatcherMode":"yes"}""")),
-      DispatcherSeal.Sealed, "unintelligible value must NOT unseal (fail-closed)"
+      DispatcherSeal.Sealed,
+      "unintelligible value must NOT unseal (fail-closed)"
     )
   }
 
@@ -137,7 +145,17 @@ class DispatcherSealSpec extends FunSuite:
   }
 
   test("S3c 既有词表拒（auto/merger）在封存态下仍按 ModeParam 原文案拒（先词表后封存闸）") {
-    assert(DispatcherSeal.resolveForDispatch(Some("auto"), DispatcherSeal.Sealed).swap.exists(_.contains("DELEGATE_MODE_AUTO_REMOVED")))
-    assert(DispatcherSeal.resolveForDispatch(Some("merger"), DispatcherSeal.Sealed).swap.exists(_.contains("DELEGATE_MODE_MERGER_RETIRED")))
+    assert(
+      DispatcherSeal
+        .resolveForDispatch(Some("auto"), DispatcherSeal.Sealed)
+        .swap
+        .exists(_.contains("DELEGATE_MODE_AUTO_REMOVED"))
+    )
+    assert(
+      DispatcherSeal
+        .resolveForDispatch(Some("merger"), DispatcherSeal.Sealed)
+        .swap
+        .exists(_.contains("DELEGATE_MODE_MERGER_RETIRED"))
+    )
   }
 end DispatcherSealSpec

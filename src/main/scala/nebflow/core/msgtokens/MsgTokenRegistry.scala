@@ -263,12 +263,13 @@ final class MsgTokenRegistry(
   /** Console input may fold long quotes; agent-to-agent delivery keeps its full-text contract. */
   def resolveForConsole(text: String): IO[String] =
     if text.isEmpty || !text.contains("{{") then IO.pure(text)
-    else IO.blocking {
-      if !enabledHot() then
-        logger.warn("CONSOLE-QUOTE-DISABLED message-token resolution disabled")
-        "[引用未能解析：消息牌机制已关闭] " + text
-      else resolveSync(text, foldLong = true)
-    }
+    else
+      IO.blocking {
+        if !enabledHot() then
+          logger.warn("CONSOLE-QUOTE-DISABLED message-token resolution disabled")
+          "[引用未能解析：消息牌机制已关闭] " + text
+        else resolveSync(text, foldLong = true)
+      }
 
   private def resolveSync(text: String, foldLong: Boolean = false): String =
     MsgTokenRegistry.BraceSpan.replaceAllIn(
@@ -293,7 +294,13 @@ final class MsgTokenRegistry(
     )
 
   /** 严格牌面：查映射（带名形态与裸形态同键）。命中 ⇒ 原文块；缺失 ⇒ 显式标记。 */
-  private def expandExact(sid8: String, seq: String, shortName: Option[String], written: String, foldLong: Boolean): String =
+  private def expandExact(
+    sid8: String,
+    seq: String,
+    shortName: Option[String],
+    written: String,
+    foldLong: Boolean
+  ): String =
     val token = s"{{msg:$sid8-$seq}}"
     val mappingOpt = sessionStateFor(sid8) match
       case Some((sid, st)) =>

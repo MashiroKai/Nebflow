@@ -66,7 +66,10 @@ class SleepPollStartupRuleSpec extends FunSuite:
     val ruleAt = brief.indexOf("Waiting discipline")
     val plugAt = brief.indexOf("[plugin discovery]")
     val taskAt = brief.indexOf("Do the thing.")
-    assert(ruleAt >= 0 && plugAt > ruleAt && plugAt < taskAt, s"discovery line sits after the rule, before the task: $brief")
+    assert(
+      ruleAt >= 0 && plugAt > ruleAt && plugAt < taskAt,
+      s"discovery line sits after the rule, before the task: $brief"
+    )
   }
 
   test("插件能力查询行：节点脚注同源注入（endsWith 身份断言零波及）") {
@@ -79,19 +82,31 @@ class SleepPollStartupRuleSpec extends FunSuite:
     assert(plain.endsWith(NodeEngine.ProtocolFootnote), "identity pin intact (NodeChainAttributionSpec anchor)")
     val verifier = NodeEngine.protocolFootnoteFor(Some("verifier"))
     assert(verifier.contains(Defaults.PluginDiscoveryLine), "verifier footnote carries it too")
-    assert(verifier.endsWith(NodeEngine.ProtocolFootnote + "\n" + NodeEngine.VerifierVerdictFootnote), "verifier appendix unchanged")
+    assert(
+      verifier.endsWith(NodeEngine.ProtocolFootnote + "\n" + NodeEngine.VerifierVerdictFootnote),
+      "verifier appendix unchanged"
+    )
   }
 
   test("节点脚注（protocolFootnoteFor）：铁律前缀注入，endsWith(ProtocolFootnote) 身份保持") {
     val plain = NodeEngine.protocolFootnoteFor(None)
     assert(plain.contains(rule), "node footnote must carry the iron rule")
-    assert(plain.endsWith(NodeEngine.ProtocolFootnote), "identity pin: footnote still ends with ProtocolFootnote (NodeChainAttributionSpec anchor)")
+    assert(
+      plain.endsWith(NodeEngine.ProtocolFootnote),
+      "identity pin: footnote still ends with ProtocolFootnote (NodeChainAttributionSpec anchor)"
+    )
 
     val verifier = NodeEngine.protocolFootnoteFor(Some("verifier"))
     assert(verifier.contains(rule), "verifier footnote carries the rule too")
-    assert(verifier.endsWith(NodeEngine.ProtocolFootnote + "\n" + NodeEngine.VerifierVerdictFootnote), "verifier appendix unchanged")
+    assert(
+      verifier.endsWith(NodeEngine.ProtocolFootnote + "\n" + NodeEngine.VerifierVerdictFootnote),
+      "verifier appendix unchanged"
+    )
     // 末行措辞钉不受影响（TaskBoardInjectionSpec 锚）
-    assertEquals(NodeEngine.ProtocolFootnote.linesIterator.toList.last, "TaskBoard work order ⇒ close = done, blocked = stuck.")
+    assertEquals(
+      NodeEngine.ProtocolFootnote.linesIterator.toList.last,
+      "TaskBoard work order ⇒ close = done, blocked = stuck."
+    )
   }
 
   test("subagent/workflow 步包装（BlockingSubagent.promptWithRule）：铁律前缀 + 原文保全") {
@@ -128,9 +143,12 @@ class SleepPollStartupRuleSpec extends FunSuite:
       injectedBlock = ""
     )
     val plugAt = brief.indexOf("[plugin discovery]")
-    val outAt  = brief.indexOf("Report discipline")
+    val outAt = brief.indexOf("Report discipline")
     val taskAt = brief.indexOf("Do the thing.")
-    assert(plugAt >= 0 && outAt > plugAt && outAt < taskAt, s"report rule sits after the discovery line, before the task: $brief")
+    assert(
+      plugAt >= 0 && outAt > plugAt && outAt < taskAt,
+      s"report rule sits after the discovery line, before the task: $brief"
+    )
   }
 
   test("report 块纪律行：退役的闸键写在配置里也压不住 brief（无全文泄漏回退面）") {
@@ -158,7 +176,10 @@ class SleepPollStartupRuleSpec extends FunSuite:
     // verifier 附录腿同构（纪律行与附录并存）
     val verifier = NodeEngine.protocolFootnoteFor(Some("verifier"))
     assert(verifier.contains(Defaults.OutputBlockRule), "verifier footnote carries it too")
-    assert(verifier.endsWith(NodeEngine.ProtocolFootnote + "\n" + NodeEngine.VerifierVerdictFootnote), "verifier appendix unchanged")
+    assert(
+      verifier.endsWith(NodeEngine.ProtocolFootnote + "\n" + NodeEngine.VerifierVerdictFootnote),
+      "verifier appendix unchanged"
+    )
   }
 
   test("report 块纪律行：subagent/workflow 步包装同源注入（铁律之后、原文之前）") {
@@ -172,7 +193,10 @@ class SleepPollStartupRuleSpec extends FunSuite:
     val prompt = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
     assert(prompt.contains("<report>") && prompt.contains("</report>"), "root prompt carries the paired-tag rule")
     assert(prompt.contains("User.md"), "root prompt names the profile surface")
-    assert(!prompt.contains("<output>"), s"no retired tag may remain: ${prompt.linesIterator.filter(_.contains("output")).mkString("\n")}")
+    assert(
+      !prompt.contains("<output>"),
+      s"no retired tag may remain: ${prompt.linesIterator.filter(_.contains("output")).mkString("\n")}"
+    )
     assert(prompt.contains("## Voice"), "Voice section stays")
     assert(prompt.contains("Sound like a real human chatting on WeChat"), "neighboring bullet (style) intact")
     assert(prompt.contains("Terse does not mean robotic"), "neighboring bullet (terse) intact")

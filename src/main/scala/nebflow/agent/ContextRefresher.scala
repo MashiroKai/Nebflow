@@ -566,8 +566,7 @@ object ContextRefresher:
       // ModelCandidate.contextWindow → spawn/update 写入状态；🔴 既有单点链，
       // 不另立旁路，本处只**消费**）。
       memoryBlock =
-        if shouldInjectMemory(globalDef.name) then
-          buildMemoryBlock(globalDef.name, teamNameOpt, state.contextWindow)
+        if shouldInjectMemory(globalDef.name) then buildMemoryBlock(globalDef.name, teamNameOpt, state.contextWindow)
         else ""
     yield TurnContext(
       globalDef,

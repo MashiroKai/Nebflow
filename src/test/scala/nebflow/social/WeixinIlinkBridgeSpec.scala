@@ -928,6 +928,8 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] =
       config.fold(IO.unit)(c => bound.update(_ :+ ((sessionId, platform, c))))
 
+  end VarCtx
+
   /** The escalated-drop setup: an unresolvable sender served by the default session. */
   private def servedDropFixture(root: os.Path, calls: Ref[IO, List[(String, String)]]): IO[WeixinIlinkBridgePlugin] =
     for
@@ -952,7 +954,10 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>the answer</report>".asJson))
+      _ <- p.onAgentEvent(
+        "s_default",
+        Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>the answer</report>".asJson)
+      )
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       got <- calls.get
       _ = assertEquals(got, Nil, "no route, no send — the drop stands")
@@ -1001,7 +1006,10 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>the answer</report>".asJson))
+      _ <- p.onAgentEvent(
+        "s_default",
+        Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>the answer</report>".asJson)
+      )
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       before <- calls.get
       _ = assertEquals(before, Nil)
@@ -1026,17 +1034,24 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>lost</report>".asJson))
+      _ <- p.onAgentEvent(
+        "s_default",
+        Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>lost</report>".asJson)
+      )
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       _ = assertEquals(strikesOf(root).size, 1, "precondition: the strike is on")
       // the return address appears (a manual binding face) and the next flush lands
       _ <- p.routesRef.update(_.updated("wx_carol", "s_default"))
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>found</report>".asJson))
+      _ <- p.onAgentEvent(
+        "s_default",
+        Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>found</report>".asJson)
+      )
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       got <- calls.get
       _ = assertEquals(got, List(("wx_carol", "found")), "the reply goes out")
       _ = assertEquals(strikesOf(root), Nil, "the strike cleared on the successful send")
     yield ()
+    end for
   }
 
   test("WI-NR5 an expired dead letter is dropped, not redelivered") {
@@ -1092,10 +1107,16 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>first</report>".asJson))
+      _ <- p.onAgentEvent(
+        "s_default",
+        Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>first</report>".asJson)
+      )
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       first :: Nil = strikesOf(root): @unchecked
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>second</report>".asJson))
+      _ <- p.onAgentEvent(
+        "s_default",
+        Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>second</report>".asJson)
+      )
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       second :: Nil = strikesOf(root): @unchecked
       _ = assertEquals(second.hcursor.downField("count").as[Long].toOption, Some(2L), "the count accumulates")
@@ -1574,7 +1595,9 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     )
   }
 
-  test("WI-BD2 five consecutive ret=-2 replies escalate to a WARN log + channel strike ONLY (the main session is NEVER notified), and recovery re-arms") {
+  test(
+    "WI-BD2 five consecutive ret=-2 replies escalate to a WARN log + channel strike ONLY (the main session is NEVER notified), and recovery re-arms"
+  ) {
     val root = tmpRoot()
     val c = new RecordingCtx(List(meta("s1", Some("wx_alice"))))
     val fail =
@@ -1635,12 +1658,20 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
         .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
         .map(_.getFormattedMessage)
         .filter(_.contains("bridge session DEAD"))
-      assertEquals(escalated.length, 2, s"one WARN escalation per streak — the 6-10 success window re-arms, got $escalated")
+      assertEquals(
+        escalated.length,
+        2,
+        s"one WARN escalation per streak — the 6-10 success window re-arms, got $escalated"
+      )
       assert(escalated.forall(_.contains("5 consecutive")), escalated)
       // 🔴 THE RULING: no session notification on ANY path — not on the
       // transient flap, not on the sustained death. The bound session hears
       // nothing; the channel card strike is the only author-facing surface.
-      assertEquals(injected, List.empty[(String, String, Option[String])], s"the main session must NOT be notified, got $injected")
+      assertEquals(
+        injected,
+        List.empty[(String, String, Option[String])],
+        s"the main session must NOT be notified, got $injected"
+      )
       assert(
         !fired.exists(_.contains("疑似失效")),
         "the ⚠️ re-bind notice text is retired — it must not reach any log or session"

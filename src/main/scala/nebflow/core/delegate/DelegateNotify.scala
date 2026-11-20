@@ -71,10 +71,14 @@ object DelegateNotify:
           // 「通知说发了、其实没发」的第二形态）。`*>` 串接即真实投递，返回语义
           // 不变（true = 注册表有行，与改前契约一致）。
           val input = AgentCommand.ImmediateInput(
-            text = text, source = Some(Source), eventType = Some("flow-notify"), fromUser = false
+            text = text,
+            source = Some(Source),
+            eventType = Some("flow-notify"),
+            fromUser = false
           )
           val key = identity.getOrElse(nebflow.core.mail.ProducerInput.identity(targetSessionId, text))
-          nebflow.core.mail.ProducerInput.persist(targetSessionId, input, key)
+          nebflow.core.mail.ProducerInput
+            .persist(targetSessionId, input, key)
             .flatMap(prepared => (ref ! prepared).as(true))
     }
 

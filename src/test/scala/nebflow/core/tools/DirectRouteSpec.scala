@@ -55,6 +55,7 @@ class DirectRouteSpec extends CatsEffectSuite:
        |    }
        |  }
        |}""".stripMargin
+  end runningJson
 
   private val needsLoginJson: String = """{"BackendState": "NeedsLogin", "TailscaleIPs": null}"""
 
@@ -282,12 +283,14 @@ class DirectRouteSpec extends CatsEffectSuite:
       case other => fail(s"expected Ready, got $other")
     Parse.parse(runningJson(false)) match
       case TailnetVerdict.Ready(_, peers, _) => assertEquals(peers, Set.empty[String], "Online=false 不算可达")
-      case other                             => fail(s"expected Ready, got $other")
+      case other => fail(s"expected Ready, got $other")
   }
 
   test("Parse：非 JSON（tailscaled 没跑）⇒ tailscale-stopped；空输出 ⇒ probe-error") {
     assertEquals(
-      TailnetVerdict.reasonOf(Parse.parse("", "failed to connect to local tailscaled; it doesn't appear to be running", 1)),
+      TailnetVerdict.reasonOf(
+        Parse.parse("", "failed to connect to local tailscaled; it doesn't appear to be running", 1)
+      ),
       Some(RouteReason.TailscaleStopped)
     )
     assertEquals(TailnetVerdict.reasonOf(Parse.parse("", "", 0)), Some(RouteReason.ProbeError))
@@ -327,3 +330,4 @@ class DirectRouteSpec extends CatsEffectSuite:
     assert(r.verdict != null)
     assert(ms < 5_000L, s"探测必须有界（实测 ${ms}ms，预算 ${TailnetProbe.ProcessBudgetMs}ms）")
   }
+end DirectRouteSpec

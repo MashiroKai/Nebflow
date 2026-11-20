@@ -57,6 +57,7 @@ class SubAgentInboxMirrorSpec extends FunSuite:
   // def，调用点文本逐字未动）。
   private lazy val agentProcessing: String = read("src/main/scala/nebflow/agent/AgentProcessing.scala")
   private lazy val mirrorSrc: String = read("src/main/scala/nebflow/agent/InjectedInboxMirror.scala")
+
   /** 注入帧/落盘/广播单点（外部注入统一通道批 2026-11-05；pin 随单点迁移）。 */
   private lazy val injectionChannel: String = read("src/main/scala/nebflow/core/InjectionChannel.scala")
   private lazy val utilsJs: String = read("src/main/resources/web/js/utils.js")
@@ -214,11 +215,17 @@ class SubAgentInboxMirrorSpec extends FunSuite:
 
   test("mirror append failure is not reported completed") {
     val row = UiMessage.User("failure probe", injected = true, timestamp = 1L, source = Some("mail"))
-    val append: InjectedInboxMirror.Append = (target, _) =>
-      if target == "delegate-A" then IO.raiseError(new RuntimeException("disk unavailable")) else IO.unit
-    val result = InjectedInboxMirror.mirror(
-      List("delegate-A" -> "root-1", "node-B" -> "root-1"), "root-1", "mail", row, append
-    ).unsafeRunSync()
+    val append: InjectedInboxMirror.Append =
+      (target, _) => if target == "delegate-A" then IO.raiseError(new RuntimeException("disk unavailable")) else IO.unit
+    val result = InjectedInboxMirror
+      .mirror(
+        List("delegate-A" -> "root-1", "node-B" -> "root-1"),
+        "root-1",
+        "mail",
+        row,
+        append
+      )
+      .unsafeRunSync()
     assertEquals(result.completed, List("node-B"))
     assertEquals(result.failed, List(InjectedInboxMirror.Failure("delegate-A", "disk unavailable")))
   }

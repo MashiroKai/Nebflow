@@ -12,7 +12,7 @@ class KernelEventSpec extends CatsEffectSuite:
     occurredAt = 1762224000001L,
     sessionId = "s-1",
     seqInSession = 1L,
-    payload = Json.obj("summary" -> "sample-1".asJson, "chainId" -> Json.Null),
+    payload = Json.obj("summary" -> "sample-1".asJson, "chainId" -> Json.Null)
   )
 
   test("envelope 编解码 round-trip"):
@@ -22,7 +22,7 @@ class KernelEventSpec extends CatsEffectSuite:
     val obj = sample.asJson.asObject.get
     assertEquals(
       obj.keys.toVector,
-      Vector("type", "occurredAt", "sessionId", "seqInSession", "payload"),
+      Vector("type", "occurredAt", "sessionId", "seqInSession", "payload")
     )
     assertEquals(sample.asJson, parser.parse(KernelEvent.dbSampleWire).toOption.get)
 
@@ -30,3 +30,4 @@ class KernelEventSpec extends CatsEffectSuite:
     val dbLine =
       """{"type":"node-failed","occurredAt":1762224000001,"sessionId":"s-1","seqInSession":1,"payload":{"summary":"sample-1","chainId":null},"subject":"node-3f2a"}"""
     assertEquals(parser.decode[KernelEvent](dbLine), Right(sample))
+end KernelEventSpec

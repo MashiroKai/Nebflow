@@ -6,6 +6,7 @@ import munit.CatsEffectSuite
 import scala.concurrent.duration.*
 
 class ActorTimersSpec extends CatsEffectSuite:
+
   test("a timer does not deliver before its deadline") {
     ActorTimers.resource.use { timers =>
       for
@@ -53,7 +54,10 @@ class ActorTimersSpec extends CatsEffectSuite:
       cancelled <- Deferred[IO, Unit]
       timers <- ActorTimers.resource.use { timers =>
         timers.scheduleOnce(500.millis, late.complete(()).void) *>
-          timers.scheduleOnce(Duration.Zero, (entered.complete(()).void *> IO.never).onCancel(cancelled.complete(()).void)) *>
+          timers.scheduleOnce(
+            Duration.Zero,
+            (entered.complete(()).void *> IO.never).onCancel(cancelled.complete(()).void)
+          ) *>
           entered.get.timeout(5.seconds).as(timers)
       }
       _ <- cancelled.get.timeout(5.seconds)
@@ -90,3 +94,4 @@ class ActorTimersSpec extends CatsEffectSuite:
         assertEquals(deadLetters, 0L)
     }
   }
+end ActorTimersSpec

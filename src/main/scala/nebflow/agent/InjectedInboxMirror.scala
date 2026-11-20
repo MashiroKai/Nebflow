@@ -153,15 +153,20 @@ object InjectedInboxMirror:
     append: Append
   ): IO[Result] =
     val tgts = targets(emitterSid, source, candidates)
-    tgts.traverse { t =>
-      IO.defer(append(t, ui)).attempt.flatMap {
-        case Right(_) => IO.pure(Right(t))
-        case Left(e) =>
-          val reason = Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
-          logger.warn(s"injected inbox mirror failed: target=${t.take(32)} err=$reason")
-            .attempt.as(Left(Failure(t, reason)))
+    tgts
+      .traverse { t =>
+        IO.defer(append(t, ui)).attempt.flatMap {
+          case Right(_) => IO.pure(Right(t))
+          case Left(e) =>
+            val reason = Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
+            logger
+              .warn(s"injected inbox mirror failed: target=${t.take(32)} err=$reason")
+              .attempt
+              .as(Left(Failure(t, reason)))
+        }
       }
-    }.map { outcomes =>
-      Result(outcomes.collect { case Right(t) => t }, outcomes.collect { case Left(f) => f })
-    }
+      .map { outcomes =>
+        Result(outcomes.collect { case Right(t) => t }, outcomes.collect { case Left(f) => f })
+      }
+  end mirror
 end InjectedInboxMirror

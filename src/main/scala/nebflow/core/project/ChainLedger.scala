@@ -719,8 +719,7 @@ object ChainLedger:
       label = "节点报告 / 结果正文引用链号",
       wired = true,
       owner = "batch3+",
-      writePoint =
-        "(历史申报通道已退役——本计数器当前无生产写点，保留作历史审计口径占位)",
+      writePoint = "(历史申报通道已退役——本计数器当前无生产写点，保留作历史审计口径占位)",
       incWhen = "（退役口径）申报登记成功后，detail/suggestion 正文引用该链号",
       decWhen = "（正文为历史事实，只计不减；容量退役交轴 c 硬上限）"
     )

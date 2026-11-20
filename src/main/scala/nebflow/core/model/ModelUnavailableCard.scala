@@ -8,13 +8,7 @@ import org.apache.pekko.actor.typed.ActorRef
 
 import nebflow.actor.{InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
 import nebflow.core.{AtomicJson, ModelRoles, SchemePolicy}
-import nebflow.shared.{
-  AgentModelConfig,
-  ModelUnavailableAction,
-  ModelUnavailableAnswer,
-  NebflowLogger,
-  PathUtil
-}
+import nebflow.shared.{AgentModelConfig, ModelUnavailableAction, ModelUnavailableAnswer, NebflowLogger, PathUtil}
 
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.duration.*
@@ -95,27 +89,27 @@ object ModelUnavailableCard:
 
     /** 卡片字段值（前端/审计同一拼写）。 */
     def wire(fc: FailureClass): String = fc match
-      case HttpStatus(_)    => "http-status"
-      case ProviderCode(_)  => "provider-code"
-      case Timeout          => "timeout"
-      case Transport        => "transport"
-      case EmptyReply       => "empty-reply"
-      case Unknown          => "unknown"
+      case HttpStatus(_) => "http-status"
+      case ProviderCode(_) => "provider-code"
+      case Timeout => "timeout"
+      case Transport => "transport"
+      case EmptyReply => "empty-reply"
+      case Unknown => "unknown"
 
     /** 分类里的「码」（HTTP 状态码 / 供应商错误码）；无码 = None。 */
     def code(fc: FailureClass): Option[String] = fc match
-      case HttpStatus(c)   => Some(c.toString)
+      case HttpStatus(c) => Some(c.toString)
       case ProviderCode(c) => Some(c)
-      case _               => None
+      case _ => None
 
     /** 人类可读一句。 */
     def label(fc: FailureClass): String = fc match
-      case HttpStatus(c)   => s"HTTP $c"
+      case HttpStatus(c) => s"HTTP $c"
       case ProviderCode(c) => s"provider error code $c"
-      case Timeout         => "timeout"
-      case Transport       => "transport/connection error"
-      case EmptyReply      => "empty reply (HTTP 200, empty body)"
-      case Unknown         => "unknown failure"
+      case Timeout => "timeout"
+      case Transport => "transport/connection error"
+      case EmptyReply => "empty reply (HTTP 200, empty body)"
+      case Unknown => "unknown failure"
 
     private val HttpRe = """(?i)\bHTTP\s+(\d{3})\b""".r
     private val CodeRe = """\[(\d{2,5})\]""".r
@@ -139,16 +133,21 @@ object ModelUnavailableCard:
           else
             HttpRe.findFirstMatchIn(d).map(m => HttpStatus(m.group(1).toInt)) match
               case Some(hs) => hs
-              case None     => if d.trim.isEmpty then Unknown else Transport
+              case None => if d.trim.isEmpty then Unknown else Transport
 
-    /** 异常 → (分类, 一行详情)。沿 cause 链查传输/超时类（sttp 常把
+    end fromDetail
+
+    /**
+     * 异常 → (分类, 一行详情)。沿 cause 链查传输/超时类（sttp 常把
      * `HttpTimeoutException` 包在 `IOException` 里——与 `LlmAllocator.isTimeoutOrTransport`
-     * 同口径）。 */
+     * 同口径）。
+     */
     def classify(e: Throwable): (FailureClass, String) =
       def chain(t: Throwable, depth: Int): List[Throwable] =
         if t == null || depth > 8 then Nil
         else t :: Option(t.getCause).map(c => chain(c, depth + 1)).getOrElse(Nil)
-      val detail = Option(e).map(x => s"${x.getClass.getSimpleName}: ${Option(x.getMessage).getOrElse("")}").getOrElse("")
+      val detail =
+        Option(e).map(x => s"${x.getClass.getSimpleName}: ${Option(x.getMessage).getOrElse("")}").getOrElse("")
       val hit = chain(e, 0).find { t =>
         val cls = t.getClass.getName.toLowerCase
         val msg = Option(t.getMessage).getOrElse("").toLowerCase
@@ -157,8 +156,10 @@ object ModelUnavailableCard:
       val fc =
         hit match
           case Some(_) => Timeout
-          case None    => fromDetail(detail)
+          case None => fromDetail(detail)
       (fc, detail)
+    end classify
+  end FailureClass
 
   // ── 汇报体 + 卡片载荷 ─────────────────────────────────────────────────────
 
@@ -190,6 +191,7 @@ object ModelUnavailableCard:
     case Failed(failure: FailureClass, detail: String, latencyMs: Long)
 
   object TestResult:
+
     def wire(r: TestResult): Json = r match
       case Ok(latencyMs, preview) =>
         Json.obj(
@@ -206,9 +208,12 @@ object ModelUnavailableCard:
           "failureLabel" -> FailureClass.label(fc).asJson,
           "detail" -> detail.asJson
         )
+  end TestResult
 
-  /** 最小真实调用缝（生产 = 既有 `ProviderModelProbe` 的 1-token 探活；
-   * spec = canned）。 */
+  /**
+   * 最小真实调用缝（生产 = 既有 `ProviderModelProbe` 的 1-token 探活；
+   * spec = canned）。
+   */
   type Probe = (String, String) => IO[TestResult]
 
   /** 未接线探针（装配缺席 ⇒ 测试动作如实报「未接线」，绝不假装成功）。 */
@@ -263,6 +268,7 @@ object ModelUnavailableCard:
       )
       .deepMerge(test.fold(Json.obj())(t => Json.obj("test" -> TestResult.wire(t))))
       .deepMerge(note.fold(Json.obj())(n => Json.obj("note" -> n.asJson)))
+  end cardPayload
 
   // ── 装配面（单一注册点；未注册 = 既有行为） ──────────────────────────────────
 
@@ -292,10 +298,13 @@ object ModelUnavailableCard:
   enum Outcome:
     /** 用户选定了模型并已写回该槽 ⇒ 调用侧重试原请求（原请求继续完成）。 */
     case Switched(modelRef: String)
+
     /** 用户选择保持现状。 */
     case Dismissed
+
     /** 300s 内无人作答 ⇒ 已回报根会话。 */
     case TimedOut
+
     /** 卡片链路未装配（无 hub / 无 root / 未注册 runtime）⇒ 未弹卡。 */
     case Unwired
 
@@ -327,7 +336,10 @@ object ModelUnavailableCard:
                 InteractionRequest(
                   requestId = rid,
                   kind = InteractionKind.ModelUnavailable,
-                  payload = payload.asObject.map(o => o.add("requestId", rid.asJson)).map(Json.fromJsonObject).getOrElse(payload),
+                  payload = payload.asObject
+                    .map(o => o.add("requestId", rid.asJson))
+                    .map(Json.fromJsonObject)
+                    .getOrElse(payload),
                   reply = InteractionReply.ModelUnavailableReply(d),
                   rootSessionId = rootSessionId,
                   sourceAgent = sourceAgent,
@@ -363,6 +375,7 @@ object ModelUnavailableCard:
           ) *> logger.warn(
             s"model-unavailable card TIMED OUT after ${timeoutSec}s slot=${report.slot} ref=${report.providerRef} — reported to root session $rootSessionId (no silent loss)"
           )
+        end reportTimeout
 
         def await(d: Deferred[IO, ModelUnavailableAnswer], sentPayload: Json): IO[Outcome] =
           IO.race(d.get, IO.sleep(timeoutSec.seconds)).flatMap {
@@ -373,12 +386,12 @@ object ModelUnavailableCard:
                 case ModelUnavailableAction.Switch =>
                   ans.modelRef match
                     case Some(ref) => IO.pure(Outcome.Switched(ref))
-                    case None      => IO.pure(Outcome.Dismissed)
+                    case None => IO.pure(Outcome.Dismissed)
                 case ModelUnavailableAction.Test =>
                   val target = ans.modelRef.getOrElse(report.providerRef)
                   val (tp, tm) = target.split("/").toList match
                     case p :: rest if rest.nonEmpty => (p, rest.mkString("/"))
-                    case _                          => (report.providerId, report.model)
+                    case _ => (report.providerId, report.model)
                   probe(tp, tm)
                     .handleError(e => TestResult.Failed(FailureClass.classify(e)._1, FailureClass.classify(e)._2, 0L))
                     .flatMap { tr =>
@@ -413,8 +426,7 @@ object ModelUnavailableCard:
           val dir = PathUtil.dataRoot / "agents" / slotName
           os.makeDir.all(dir)
           val jsonPath = dir / "agent.json"
-          if !os.exists(jsonPath) then
-            AtomicJson.writeSync(jsonPath, Json.obj("name" -> slotName.asJson).noSpaces)
+          if !os.exists(jsonPath) then AtomicJson.writeSync(jsonPath, Json.obj("name" -> slotName.asJson).noSpaces)
           io.circe.parser.parse(os.read(jsonPath)) match
             case Left(e) => Left(s"agent.json unparseable: ${e.message}")
             case Right(parsedJson) =>
@@ -424,6 +436,8 @@ object ModelUnavailableCard:
               val chain = AgentModelConfig(Some(ref), Nil)
               AtomicJson.writeSync(jsonPath, stripped.deepMerge(Json.obj("model" -> chain.asJson)).noSpaces)
               Right(())
+        end if
+      end if
     }
 
   // ── 单点组合子：任何槽的失败路径都过这里 ────────────────────────────────────
@@ -474,7 +488,9 @@ object ModelUnavailableCard:
                           s"model-unavailable card: switched slot=${report.slot} to $ref — retrying the original request"
                         ) *> attempt
                       case Left(err) =>
-                        logger.warn(s"model-unavailable card: switch write failed ($err) — original failure stands") *> IO.pure(a)
+                        logger.warn(
+                          s"model-unavailable card: switch write failed ($err) — original failure stands"
+                        ) *> IO.pure(a)
                     }
                   case _ => IO.pure(a)
               yield result

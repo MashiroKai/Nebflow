@@ -170,12 +170,20 @@ object LoopGuard:
             c.get[Boolean]("requireWarnBeforeTerminate").toOption.getOrElse(d.requireWarnBeforeTerminate),
           transientAware = c.get[Boolean]("transientAware").toOption.getOrElse(d.transientAware),
           transientFactor = math.max(1, c.get[Int]("transientFactor").toOption.getOrElse(d.transientFactor)),
-          transientPatterns =
-            c.get[List[String]]("transientPatterns").toOption.map(_.toSet).filter(_.nonEmpty).getOrElse(d.transientPatterns),
+          transientPatterns = c
+            .get[List[String]]("transientPatterns")
+            .toOption
+            .map(_.toSet)
+            .filter(_.nonEmpty)
+            .getOrElse(d.transientPatterns),
           exemptTools = c.get[List[String]]("exemptTools").toOption.map(_.toSet).getOrElse(d.exemptTools),
           queryWarnAfter = c.get[Int]("queryWarnAfter").toOption.getOrElse(d.queryWarnAfter)
         )
       )
+
+    end if
+
+  end parseConfig
 
   /** 一轮工具批的单个观测事件（挂载点从 guardedBatch 构造）。 */
   final case class RoundEvent(
@@ -223,9 +231,7 @@ object LoopGuard:
     /** 有界等待原语：`Bash(background_job_id, timeout)`（自带 deadline；重复调用等价于阻塞等待）。 */
     case object Wait extends CallKind
 
-    /**
-     * Classify a Bash wait/cancel request as non-work; normal command execution remains Work.
-     */
+    /** Classify a Bash wait/cancel request as non-work; normal command execution remains Work. */
     def classify(toolName: String, args: Json): CallKind =
       if toolName == "Bash" && nonEmpty(args, "background_job_id") then
         if nonEmpty(args, "cancel_background_job") then CallKind.Work else CallKind.Wait
@@ -254,6 +260,7 @@ object LoopGuard:
     /** L2：冻结会话待人工（enterFrozen("loop") + 广播 + 父通知）。 */
     final case class Freeze(msg: String) extends Verdict
     case object Pass extends Verdict
+  end Verdict
 
   // ── 指纹 ──────────────────────────────────────────────────
 
@@ -382,8 +389,7 @@ object LoopGuard:
         // 非 Work 连续计数：同 fp 推进、不同 fp 刷新；被 Work 调用打断即归零
         // （「连续」语义与 R-call 一致）；权限拒绝/豁免调用不推进也不清零
         val (nwfp, nwcnt) =
-          if e.permissionDenied || cfg.exemptTools.contains(e.toolName) then
-            (acc.lastNonWorkFp, acc.lastNonWorkCount)
+          if e.permissionDenied || cfg.exemptTools.contains(e.toolName) then (acc.lastNonWorkFp, acc.lastNonWorkCount)
           else if kind == CallKind.Work then ("", 0)
           else if acc.lastNonWorkFp == fp then (fp, acc.lastNonWorkCount + 1)
           else (fp, 1)
@@ -461,6 +467,7 @@ object LoopGuard:
       // 无论它从哪条轴被警告过，模型都已被明确提示过这个组合在循环）。
       def warned(key: String): Boolean = withText.warnedKeys.contains(key)
       def graceUsed(key: String): Boolean = cfg.requireWarnBeforeTerminate && warned(key)
+
       /** 是否可以动手（终止/冻结）：关掉阶梯即无条件动手；否则必须先警告过。 */
       def mustAct(key: String): Boolean = !cfg.requireWarnBeforeTerminate || warned(key)
 

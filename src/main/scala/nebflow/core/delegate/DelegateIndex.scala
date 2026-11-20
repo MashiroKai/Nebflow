@@ -141,7 +141,10 @@ object DelegateIndex:
   def close(): Unit =
     gate.acquire()
     try
-      handleOpt.foreach(h => try h.conn.close() catch case _: Throwable => ())
+      handleOpt.foreach(h =>
+        try h.conn.close()
+        catch case _: Throwable => ()
+      )
       handleOpt = None
     finally gate.release()
 
@@ -162,7 +165,8 @@ object DelegateIndex:
     handleOpt match
       case Some(h) if h.root == root => h.conn
       case Some(h) =>
-        try h.conn.close() catch case _: Throwable => ()
+        try h.conn.close()
+        catch case _: Throwable => ()
         handleOpt = None
         openHandle(root)
       case None => openHandle(root)
@@ -178,7 +182,8 @@ object DelegateIndex:
         case e: Throwable =>
           disabledFor = Some(root)
           logger.warnSync(
-            s"[delegate-index] disabled for $root (${e.getClass.getSimpleName}: ${e.getMessage}) — reads fall back to the source scan")
+            s"[delegate-index] disabled for $root (${e.getClass.getSimpleName}: ${e.getMessage}) — reads fall back to the source scan"
+          )
           None
       finally gate.release()
 
@@ -189,8 +194,7 @@ object DelegateIndex:
   private def initSchema(conn: Connection): Unit =
     val st = conn.createStatement()
     try
-      st.execute(
-        """CREATE TABLE IF NOT EXISTS delegates(
+      st.execute("""CREATE TABLE IF NOT EXISTS delegates(
           |  id TEXT PRIMARY KEY,
           |  json TEXT NOT NULL,
           |  created_at INTEGER NOT NULL DEFAULT 0,
@@ -206,22 +210,19 @@ object DelegateIndex:
           |  indexed_at INTEGER NOT NULL DEFAULT 0
           |)""".stripMargin)
       st.execute("CREATE INDEX IF NOT EXISTS idx_delegates_created ON delegates(created_at)")
-      st.execute(
-        """CREATE TABLE IF NOT EXISTS round_sources(
+      st.execute("""CREATE TABLE IF NOT EXISTS round_sources(
           |  id TEXT PRIMARY KEY,
           |  src_mtime INTEGER NOT NULL DEFAULT 0,
           |  src_size INTEGER NOT NULL DEFAULT 0
           |)""".stripMargin)
-      st.execute(
-        """CREATE TABLE IF NOT EXISTS round_lines(
+      st.execute("""CREATE TABLE IF NOT EXISTS round_lines(
           |  id TEXT NOT NULL,
           |  line_ord INTEGER NOT NULL,
           |  line_no INTEGER NOT NULL DEFAULT 0,
           |  json TEXT NOT NULL,
           |  PRIMARY KEY(id, line_ord)
           |)""".stripMargin)
-      st.execute(
-        """CREATE TABLE IF NOT EXISTS round_current(
+      st.execute("""CREATE TABLE IF NOT EXISTS round_current(
           |  id TEXT NOT NULL,
           |  round_no INTEGER NOT NULL,
           |  kind TEXT NOT NULL DEFAULT 'round',
@@ -236,6 +237,8 @@ object DelegateIndex:
       st.execute(s"INSERT OR REPLACE INTO meta VALUES('schema_version','$SchemaVersion')")
       conn.commit()
     finally st.close()
+    end try
+  end initSchema
 
   // ── 读面：启动全量加载 ──────────────────────────────────────────────────
 
@@ -275,6 +278,8 @@ object DelegateIndex:
         Some(recs)
     }
 
+  end listRecords
+
   private def loadRecords(conn: Connection): List[Record] =
     query(conn, "SELECT json FROM delegates ORDER BY created_at DESC, id")(rs => rs.getString(1))
       .flatMap(decodeRecord)
@@ -288,7 +293,8 @@ object DelegateIndex:
   private def reconcile(conn: Connection, root: os.Path, dir: os.Path): Long =
     val files = os.list(dir).filter(p => p.ext == "json" && p.last != ".legacy-settled.json")
     val known = query(conn, "SELECT id, src_mtime, src_size FROM delegates")(rs =>
-      (rs.getString(1), rs.getLong(2), rs.getLong(3))).map { case (id, m, s) => id -> (m, s) }.toMap
+      (rs.getString(1), rs.getLong(2), rs.getLong(3))
+    ).map { case (id, m, s) => id -> (m, s) }.toMap
     val seen = scala.collection.mutable.Set.empty[String]
     files.foreach { p =>
       val id = p.last.stripSuffix(".json")
@@ -303,11 +309,13 @@ object DelegateIndex:
               case Some(rec) if rec.id == id => upsert(conn, id, readText(p).getOrElse(""), rec, mtime, size)
               case Some(rec) =>
                 logger.warnSync(
-                  s"[delegate-index] identity key mismatch: file '$id.json' declares id='${rec.id}' — row not indexed")
+                  s"[delegate-index] identity key mismatch: file '$id.json' declares id='${rec.id}' — row not indexed"
+                )
                 deleteRecordRow(conn, id)
               case None =>
                 logger.warnSync(s"[delegate-index] '$id.json' is not a decodable record — row dropped (scan parity)")
                 deleteRecordRow(conn, id)
+      end if
     }
     known.keySet.diff(seen).foreach { gone =>
       deleteRecordRow(conn, gone)
@@ -317,6 +325,8 @@ object DelegateIndex:
     seen.foreach { id => if syncLedger(conn, root, id) then ledgers += 1L }
     conn.commit()
     ledgers
+
+  end reconcile
 
   /** 文件水位 `(mtime, size)`；读不到 ⇒ `(0, -1)`（永不等于既有水位 ⇒ 必重解析）。 */
   private def watermark(p: os.Path): (Long, Long) =
@@ -337,7 +347,8 @@ object DelegateIndex:
         |  archived_at=excluded.archived_at, project=excluded.project,
         |  parent_session_id=excluded.parent_session_id, task_id=excluded.task_id,
         |  round_no=excluded.round_no, disposition=excluded.disposition, pinned=excluded.pinned,
-        |  src_mtime=excluded.src_mtime, src_size=excluded.src_size, indexed_at=excluded.indexed_at""".stripMargin)
+        |  src_mtime=excluded.src_mtime, src_size=excluded.src_size, indexed_at=excluded.indexed_at""".stripMargin
+    )
     try
       ps.setString(1, id)
       ps.setString(2, text)
@@ -354,6 +365,10 @@ object DelegateIndex:
       ps.setLong(13, System.currentTimeMillis())
       ps.executeUpdate()
     finally ps.close()
+
+    end try
+
+  end upsert
 
   private def setOptLong(ps: java.sql.PreparedStatement, i: Int, v: Option[Long]): Unit =
     v match
@@ -373,7 +388,11 @@ object DelegateIndex:
     finally ps.close()
 
   private def deleteLedgerRows(conn: Connection, id: String): Unit =
-    List("DELETE FROM round_lines WHERE id=?", "DELETE FROM round_current WHERE id=?", "DELETE FROM round_sources WHERE id=?")
+    List(
+      "DELETE FROM round_lines WHERE id=?",
+      "DELETE FROM round_current WHERE id=?",
+      "DELETE FROM round_sources WHERE id=?"
+    )
       .foreach { sql =>
         val ps = conn.prepareStatement(sql)
         try
@@ -409,13 +428,17 @@ object DelegateIndex:
       false
     else
       val (mtime, size) = watermark(p)
-      val known = boundQuery(conn, "SELECT src_mtime, src_size FROM round_sources WHERE id=?")(ps => ps.setString(1, id))(
-        rs => (rs.getLong(1), rs.getLong(2))).headOption
+      val known =
+        boundQuery(conn, "SELECT src_mtime, src_size FROM round_sources WHERE id=?")(ps => ps.setString(1, id))(rs =>
+          (rs.getLong(1), rs.getLong(2))
+        ).headOption
       known match
         case Some((m, s)) if m == mtime && s == size => false
         case _ =>
           sourceParses.incrementAndGet()
-          val lines = try os.read.lines(p).toList catch case _: Throwable => Nil
+          val lines =
+            try os.read.lines(p).toList
+            catch case _: Throwable => Nil
           deleteLedgerRows(conn, id)
           insertLines(conn, id, lines)
           materializeCurrent(conn, id, lines)
@@ -427,6 +450,12 @@ object DelegateIndex:
             ins.executeUpdate()
           finally ins.close()
           true
+
+      end match
+
+    end if
+
+  end syncLedger
 
   private def insertLines(conn: Connection, id: String, lines: List[String]): Unit =
     if lines.nonEmpty then
@@ -446,13 +475,16 @@ object DelegateIndex:
   private def materializeCurrent(conn: Connection, id: String, lines: List[String]): Unit =
     val latest = scala.collection.mutable.LinkedHashMap.empty[Int, DelegateRoundLedger.RoundRow]
     lines.foreach { line =>
-      io.circe.parser.decode[DelegateRoundLedger.RoundRow](line.trim).toOption
+      io.circe.parser
+        .decode[DelegateRoundLedger.RoundRow](line.trim)
+        .toOption
         .filter(_.kind == DelegateRoundLedger.KindRound)
         .foreach(r => latest.put(r.roundNo, r))
     }
     val ps = conn.prepareStatement(
       """INSERT OR REPLACE INTO round_current(id,round_no,kind,round_id,started_at,settled_at,verdict,json)
-        |VALUES(?,?,?,?,?,?,?,?)""".stripMargin)
+        |VALUES(?,?,?,?,?,?,?,?)""".stripMargin
+    )
     try
       latest.values.toList.sortBy(_.roundNo).foreach { r =>
         ps.setString(1, id)
@@ -466,6 +498,8 @@ object DelegateIndex:
         ps.executeUpdate()
       }
     finally ps.close()
+
+  end materializeCurrent
 
   /**
    * 轮次去重读面（索引路径）：`None` = 回退文件读。只在**身份与台账源文件都在场**时
@@ -485,8 +519,9 @@ object DelegateIndex:
     }
 
   private def currentRoundsInIndex(conn: Connection, id: String): List[DelegateRoundLedger.RoundRow] =
-    boundQuery(conn, "SELECT json FROM round_current WHERE id=? ORDER BY round_no")(ps => ps.setString(1, id))(
-      rs => rs.getString(1))
+    boundQuery(conn, "SELECT json FROM round_current WHERE id=? ORDER BY round_no")(ps => ps.setString(1, id))(rs =>
+      rs.getString(1)
+    )
       .flatMap(s => io.circe.parser.decode[DelegateRoundLedger.RoundRow](s).toOption)
 
   // ── 写路径钩子（既有写点单缝追加，零新增写面）───────────────────────────
@@ -579,15 +614,18 @@ object DelegateIndex:
     partitionOk: Boolean,
     countsMatch: Boolean
   ):
+
     def ok: Boolean =
       countsMatch && partitionOk && recordMismatches.isEmpty && roundMismatches.isEmpty && extraRows.isEmpty
+  end VerifyReport
 
   final case class RollbackReport(root: String, dbFile: String, backup: Option[String], dropped: Boolean)
 
   /** 源目录里的身份文件清单。 */
   private def identityFiles(root: os.Path): List[os.Path] =
     val dir = sourceDirOf(root)
-    if !os.exists(dir) then Nil else os.list(dir).filter(p => p.ext == "json" && p.last != ".legacy-settled.json").toList.sortBy(_.last)
+    if !os.exists(dir) then Nil
+    else os.list(dir).filter(p => p.ext == "json" && p.last != ".legacy-settled.json").toList.sortBy(_.last)
 
   /** 源目录里的台账文件清单。 */
   private def ledgerFiles(root: os.Path): List[os.Path] =
@@ -626,7 +664,9 @@ object DelegateIndex:
     ledgers.foreach { p =>
       val id = p.last.stripSuffix(".rounds.jsonl")
       ledgerIds += id
-      val rows = try os.read.lines(p).toList catch case _: Throwable => Nil
+      val rows =
+        try os.read.lines(p).toList
+        catch case _: Throwable => Nil
       lines += rows.size
       val parsed = rows.flatMap(l => io.circe.parser.decode[DelegateRoundLedger.RoundRow](l.trim).toOption)
       val rounds = parsed.filter(_.kind == DelegateRoundLedger.KindRound)
@@ -660,6 +700,8 @@ object DelegateIndex:
       )
     )
 
+  end validateDedup
+
   /**
    * 可逆迁移：源文件（身份 JSON + 台账 JSONL）→ 索引。**源零改写**（只读）；先跑
    * [[validateDedup]]，硬违规 ⇒ 拒绝迁移（不落半份数据）。迁移后必须 [[verify]] 逐记录 +
@@ -674,7 +716,8 @@ object DelegateIndex:
     if !dedup.ok then
       Left(
         s"two-zone dedup validation failed (idFieldMismatches=${dedup.idFieldMismatches.size}, " +
-          s"duplicateIds=${dedup.duplicateIds.size}, undecodable=${dedup.undecodableIdentities.size}) — migration refused")
+          s"duplicateIds=${dedup.duplicateIds.size}, undecodable=${dedup.undecodableIdentities.size}) — migration refused"
+      )
     else
       attempt(root) { conn =>
         val files = identityFiles(root)
@@ -726,6 +769,10 @@ object DelegateIndex:
         )
       }.toRight(s"index unavailable at ${dbPathOf(root)}")
 
+    end if
+
+  end migrate
+
   /**
    * 对账（迁移/回滚/基准的验收面）：**逐记录**（身份区字节 + 解码等价；台账区去重读数
    * 对文件读面）+ **计数**（文件数 = 行数、原始行数 = 行数），另加**两窗分区**完整性
@@ -754,7 +801,12 @@ object DelegateIndex:
       val srcLedgerIds = ledgers.map(_.last.stripSuffix(".rounds.jsonl")).toSet[String]
       val indexLedgerIds = query(conn, "SELECT id FROM round_sources")(rs => rs.getString(1)).toSet[String]
       val indexLines = count(conn, "SELECT COUNT(*) FROM round_lines")
-      val srcLines = ledgers.map(p => try os.read.lines(p).size catch case _: Throwable => 0).sum
+      val srcLines = ledgers
+        .map(p =>
+          try os.read.lines(p).size
+          catch case _: Throwable => 0
+        )
+        .sum
       val roundMismatches = scala.collection.mutable.ListBuffer.empty[Mismatch]
       srcLedgerIds.intersect(srcIds).toList.sorted.foreach { id =>
         val fromFile = DelegateRoundLedger.currentRoundsFromFile(id)
@@ -763,11 +815,13 @@ object DelegateIndex:
           roundMismatches += Mismatch(
             id,
             LedgerZone,
-            s"deduped rounds differ (file=${fromFile.size}, index=${fromIndex.size})")
+            s"deduped rounds differ (file=${fromFile.size}, index=${fromIndex.size})"
+          )
       }
       val readings = indexRows.toList.map { case (id, json) =>
         decodeRecord(json).map(r =>
-          DelegateVisibility.read(Some(r), currentRoundsInIndex(conn, id), DelegateVisibility.liveChildrenOf(id)))
+          DelegateVisibility.read(Some(r), currentRoundsInIndex(conn, id), DelegateVisibility.liveChildrenOf(id))
+        )
       }
       val history = readings.count(_.exists(_.historyWindow))
       val total = readings.size
@@ -811,6 +865,7 @@ object DelegateIndex:
             os.remove(db)
             RollbackReport(root.toString, db.toString, None, dropped = true)
           catch case _: Throwable => RollbackReport(root.toString, db.toString, None, dropped = false)
+  end rollback
 
   // ── 对照面：基线全扫（基准用；与阶段③ 前的生产读面逐行同义）──────────────
 
@@ -838,9 +893,7 @@ object DelegateIndex:
           .sortBy(-_.createdAt)
     catch case _: Throwable => Nil
 
-  /**
-   * 基线全扫的**计时读数**（基准用）：[[scanRecords]] + 墙钟/解析计数快照。
-   */
+  /** 基线全扫的**计时读数**（基准用）：[[scanRecords]] + 墙钟/解析计数快照。 */
   def benchSourceScan(root: os.Path): LoadStats =
     val p0 = sourceParses.get()
     val s0 = sourceStats.get()
@@ -857,6 +910,7 @@ object DelegateIndex:
     )
     lastLoad = stats
     stats
+  end benchSourceScan
 
   // ── JDBC 小工具（单点，零第三方封装）────────────────────────────────────
 

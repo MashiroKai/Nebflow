@@ -232,10 +232,12 @@ object FileChangeTracker:
   def create(projectRoot: String): IO[FileChangeTracker] =
     val root = Paths.get(projectRoot).toAbsolutePath.normalize
     if isUnscannableRoot(root) then
-      NebflowLogger.forName("nebflow.core.FileChangeTracker").warn(
-        s"FileChangeTracker: refusing to walk '$projectRoot' (user home / filesystem root) — " +
-          "external-change reminders stay disabled for this launch; start the engine from a project directory to enable them."
-      ) *>
+      NebflowLogger
+        .forName("nebflow.core.FileChangeTracker")
+        .warn(
+          s"FileChangeTracker: refusing to walk '$projectRoot' (user home / filesystem root) — " +
+            "external-change reminders stay disabled for this launch; start the engine from a project directory to enable them."
+        ) *>
         Ref.of[IO, Map[String, Long]](Map.empty).flatMap { snapshotRef =>
           Ref.of[IO, Set[(String, Long)]](Set.empty).flatMap { agentRef =>
             Ref.of[IO, Long](0L).map { lastCheckRef =>
@@ -250,4 +252,6 @@ object FileChangeTracker:
         agentRef <- Ref.of[IO, Set[(String, Long)]](Set.empty)
         lastCheckRef <- Ref.of[IO, Long](0L)
       yield new FileChangeTracker(projectRoot, snapshotRef, agentRef, lastCheckRef)
+    end if
+  end create
 end FileChangeTracker

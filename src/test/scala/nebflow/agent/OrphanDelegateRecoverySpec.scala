@@ -103,9 +103,11 @@ class OrphanDelegateRecoverySpec extends FunSuite:
         recovered <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore)
         running <- store.findRunningTasks
         events <- CompactionQueueStore.load(parent.id)
-        partialSalvaged <- sessionStore.loadMessagesForSession(childA).map(
-          _.exists(_.textContent.contains("V2_PARTIAL_RESULT_TEXT"))
-        )
+        partialSalvaged <- sessionStore
+          .loadMessagesForSession(childA)
+          .map(
+            _.exists(_.textContent.contains("V2_PARTIAL_RESULT_TEXT"))
+          )
       yield (parent.id, recovered, running, events, childA, childB, partialSalvaged)
 
       val (parentSid, recovered, running, events, childA, childB, partialSalvaged) = io.unsafeRunSync()
@@ -117,7 +119,9 @@ class OrphanDelegateRecoverySpec extends FunSuite:
       // Terminalized with the restart-loss fingerprint + the zero-notify honesty line.
       val tasks = store.loadTasks(parentSid).unsafeRunSync()
       assert(
-        tasks.forall(t => t.status == "failed" && t.lastError.exists(_.contains("process restart during in-flight task"))),
+        tasks.forall(t =>
+          t.status == "failed" && t.lastError.exists(_.contains("process restart during in-flight task"))
+        ),
         clue(tasks).toString
       )
       assert(
@@ -131,8 +135,17 @@ class OrphanDelegateRecoverySpec extends FunSuite:
     withFixture("protected-startup") { (store, sessionStore, tmp) =>
       val child = "delegate-protected"
       val admission = nebflow.shared.ExecutionAdmission(
-        child, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        _root_.io.circe.Json.fromString("initial"), "input"
+        child,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        _root_.io.circe.Json.fromString("initial"),
+        "input"
       )
       val io = for
         _ <- IO.blocking(os.makeDir.all(tmp / "sessions"))
@@ -313,7 +326,8 @@ class OrphanDelegateRecoverySpec extends FunSuite:
         tasks <- store.loadTasks(parent.id)
         rec <- nebflow.core.delegate.DelegateRegistry.find(child) match
           case Some(r) => IO.pure(r)
-          case None    => IO.raiseError[nebflow.core.delegate.DelegateRegistry.Record](new AssertionError("registry row missing"))
+          case None =>
+            IO.raiseError[nebflow.core.delegate.DelegateRegistry.Record](new AssertionError("registry row missing"))
       yield (running, tasks, rec)
 
       val (running, tasks, rec) = io.unsafeRunSync()
@@ -344,16 +358,26 @@ class OrphanDelegateRecoverySpec extends FunSuite:
       val io = for
         _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord("delegate-explorer-h8", createdAt = 1L))) // 重启丢失
         _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord("delegate-explorer-i9", createdAt = 2L))) // 常规失败
-        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord("delegate-explorer-j10", createdAt = 3L).copy(reportStatus = Some("finish"))))
-        _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord("delegate-explorer-k11", createdAt = 4L).copy(archivedAt = Some(5L))))
-        flagged0 <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-h8").flatMap(_.restartInterruptedAt))
+        _ <- IO(
+          nebflow.core.delegate.DelegateRegistry
+            .put(mkRecord("delegate-explorer-j10", createdAt = 3L).copy(reportStatus = Some("finish")))
+        )
+        _ <- IO(
+          nebflow.core.delegate.DelegateRegistry
+            .put(mkRecord("delegate-explorer-k11", createdAt = 4L).copy(archivedAt = Some(5L)))
+        )
+        flagged0 <- IO(
+          nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-h8").flatMap(_.restartInterruptedAt)
+        )
         _ <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore) // 无 running 孤儿——只跑标记回溯腿
         h8 <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-h8").flatMap(_.restartInterruptedAt))
         i9 <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-i9").flatMap(_.restartInterruptedAt))
         j10 <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-j10").flatMap(_.restartInterruptedAt))
         k11 <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-k11").flatMap(_.restartInterruptedAt))
         _ <- SubAgentStartupRecovery.recoverOrphans(store, sessionStore) // "second boot" 幂等
-        h8again <- IO(nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-h8").flatMap(_.restartInterruptedAt))
+        h8again <- IO(
+          nebflow.core.delegate.DelegateRegistry.find("delegate-explorer-h8").flatMap(_.restartInterruptedAt)
+        )
       yield (flagged0, h8, h8again, i9, j10, k11)
 
       val (flagged0, h8, h8again, i9, j10, k11) = io.unsafeRunSync()

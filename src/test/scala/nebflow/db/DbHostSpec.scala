@@ -33,8 +33,7 @@ class DbHostSpec extends FunSuite:
       assert(!DbHost.isOpen(root), "release must deregister")
       val h2 = DbHost.openBestEffort(root)
       assert(h2.isDefined)
-      assert(h2.get.instanceLockGeneration > gen1,
-        "re-open after release must see an advanced generation (世代感知)")
+      assert(h2.get.instanceLockGeneration > gen1, "re-open after release must see an advanced generation (世代感知)")
     finally DbHost.release(root)
 
   test("C1: best-effort — a root that is a regular file fails open without memoizing"):

@@ -33,7 +33,7 @@ class GeneralChainFallbackSpec extends CatsEffectSuite:
   override val munitIOTimeout = 120.seconds
 
   private val PortHeadQuota = 18621
-  private val PortBackupOk  = 18623
+  private val PortBackupOk = 18623
 
   private val Zhipu429Quota1308Body =
     """{"type":"error","error":{"type":"rate_limit_error","code":"1308","message":"[1308][已达到 5 小时的使用上限。您的限额将在当前 5 小时窗口结束后重置。]"},"request_id":"mock1308"}"""
@@ -95,20 +95,24 @@ class GeneralChainFallbackSpec extends CatsEffectSuite:
     )
 
   private def mkConfig: NebflowServiceConfig =
-    NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map(
-      "zhipu" -> ProviderConfig(
-        baseUrl = s"http://127.0.0.1:$PortHeadQuota",
-        apiKey = "test",
-        protocol = LlmProtocol.Anthropic,
-        models = List(ModelConfig("glm-5.3-flash"))
-      ),
-      "kimi" -> ProviderConfig(
-        baseUrl = s"http://127.0.0.1:$PortBackupOk",
-        apiKey = "test",
-        protocol = LlmProtocol.Anthropic,
-        models = List(ModelConfig("kimi-for-coding"), ModelConfig("kimi-for-coding-highspeed"))
+    NebflowServiceConfig(llm =
+      ServiceLlmConfig(providers =
+        Map(
+          "zhipu" -> ProviderConfig(
+            baseUrl = s"http://127.0.0.1:$PortHeadQuota",
+            apiKey = "test",
+            protocol = LlmProtocol.Anthropic,
+            models = List(ModelConfig("glm-5.3-flash"))
+          ),
+          "kimi" -> ProviderConfig(
+            baseUrl = s"http://127.0.0.1:$PortBackupOk",
+            apiKey = "test",
+            protocol = LlmProtocol.Anthropic,
+            models = List(ModelConfig("kimi-for-coding"), ModelConfig("kimi-for-coding-highspeed"))
+          )
+        )
       )
-    )))
+    )
 
   private def textOf(chunks: List[StreamChunk]): String =
     chunks.collect { case StreamChunk.TextDelta(d) => d }.mkString
@@ -146,7 +150,11 @@ class GeneralChainFallbackSpec extends CatsEffectSuite:
           )
           // fallback 废除批申报：单候选配额死 ⇒ 静默等待恢复（作者令「否则就是静默
           // 等待」）——本测试给 8s 有界上界取终局，不无限等。
-          res <- handle.sendStream(req).compile.toList.attempt
+          res <- handle
+            .sendStream(req)
+            .compile
+            .toList
+            .attempt
             .timeoutTo(
               8.seconds,
               // 哨兵以 Left 捕获（raiseError 会让 IO 失败、下方断言面走不到）
@@ -180,7 +188,8 @@ class GeneralChainFallbackSpec extends CatsEffectSuite:
 
   test("T2(重写) 候选序：general 链解析为单根 [zhipu 头]——后备/储备层不再进链（fallback 废除）") {
     val ref = Ref.unsafe[IO, NebflowServiceConfig](mkConfig)
-    val registry = new ProviderRegistry(ref, null.asInstanceOf[sttp.client4.StreamBackend[IO, sttp.capabilities.fs2.Fs2Streams[IO]]])
+    val registry =
+      new ProviderRegistry(ref, null.asInstanceOf[sttp.client4.StreamBackend[IO, sttp.capabilities.fs2.Fs2Streams[IO]]])
     registry.getCandidatesForAgent(Some(generalChain)).map { cs =>
       val refs = cs.map(c => s"${c.providerId}/${c.model}")
       assertEquals(

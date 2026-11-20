@@ -164,7 +164,11 @@ class FallbackChainCandidateSpec extends CatsEffectSuite:
         stale.hcursor.downField("warnings").as[List[String]].toOption.exists(_.exists(_.contains("ghost"))),
         "可观测面必须带上链校验告警"
       )
-      assertEquals(live.hcursor.downField("chain").as[List[String]].toOption, Some(List("a/m1")), "chain 面只列 preferred（fallbacks 死数据）")
+      assertEquals(
+        live.hcursor.downField("chain").as[List[String]].toOption,
+        Some(List("a/m1")),
+        "chain 面只列 preferred（fallbacks 死数据）"
+      )
       assertEquals(live.hcursor.downField("candidates").as[List[String]].toOption, Some(List("a/m1")))
       assertEquals(live.hcursor.downField("skipped").as[List[String]].toOption, Some(Nil))
       assertEquals(live.hcursor.downField("excluded").as[List[String]].toOption, Some(List("b/m2")))
@@ -172,6 +176,7 @@ class FallbackChainCandidateSpec extends CatsEffectSuite:
         live.hcursor.downField("exclusionReasons").downField("b/m2").as[String].toOption,
         Some("not in selected chain (provider config is not authorization)")
       )
+    end for
   }
 
   // （原 C-7 储备层确定序断言整条删除——储备层本身就是 fallback，随 fallback 废除

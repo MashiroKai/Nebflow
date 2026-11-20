@@ -45,11 +45,13 @@ enum JevFallbackKind:
   case ParseFail
 
   def wire: String = this match
-    case Off       => "off"
-    case Timeout   => "timeout"
-    case Failure   => "failure"
-    case LlmError  => "llm-error"
+    case Off => "off"
+    case Timeout => "timeout"
+    case Failure => "failure"
+    case LlmError => "llm-error"
     case ParseFail => "parse-fail"
+
+end JevFallbackKind
 
 /**
  * Fail-open fallback mechanics (Face C / P2).
@@ -96,8 +98,7 @@ object JevFallback:
             s"jev allocation not applied for '$subject' ($reason) — dispatcher default mount used"
           )
         ).as(JevAllocation.FellBack(kind, reason))
-      case JevFallbackKind.Timeout | JevFallbackKind.Failure | JevFallbackKind.LlmError |
-          JevFallbackKind.ParseFail =>
+      case JevFallbackKind.Timeout | JevFallbackKind.Failure | JevFallbackKind.LlmError | JevFallbackKind.ParseFail =>
         val warn =
           IO(
             logger.warnSync(

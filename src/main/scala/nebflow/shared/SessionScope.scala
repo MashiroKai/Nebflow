@@ -41,9 +41,7 @@ package nebflow.shared
  */
 object SessionScope:
 
-  /**
-   * 后台 agent 会话 id 前缀（判据见本文件头注；顺序固定，供契约门逐值对账）。
-   */
+  /** 后台 agent 会话 id 前缀（判据见本文件头注；顺序固定，供契约门逐值对账）。 */
   val BackgroundAgentPrefixes: List[String] = List(
     "delegate-",
     "subtask-",

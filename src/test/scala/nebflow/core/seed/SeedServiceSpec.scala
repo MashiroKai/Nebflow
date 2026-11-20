@@ -379,12 +379,16 @@ class SeedServiceSpec extends FunSuite:
     os.write.over(f, "user modified")
     PluginRegistry.invalidateCache()
 
-  test("approve guard: default-set package with runtime≠seed must trip the gate; seed-identical and non-default must not"):
+  test(
+    "approve guard: default-set package with runtime≠seed must trip the gate; seed-identical and non-default must not"
+  ):
     ensure() // 默认集六包就位（digest 与种子一致）
     // ① 默认集 + runtime == seed ⇒ 闸不开（approve 是干净的基准记录）
     val target = "visual-report"
-    val seedDigest = SeedService.seedPluginDigest(target).getOrElse(fail("seed digest must resolve for default-set plugin"))
-    val runtimeDigest = PluginRegistry.computeDigest(home / "plugins" / target).toOption.map(_._1).getOrElse(fail("runtime digest"))
+    val seedDigest =
+      SeedService.seedPluginDigest(target).getOrElse(fail("seed digest must resolve for default-set plugin"))
+    val runtimeDigest =
+      PluginRegistry.computeDigest(home / "plugins" / target).toOption.map(_._1).getOrElse(fail("runtime digest"))
     assertEquals(runtimeDigest, seedDigest, "前置：刚播种的默认集包与种子逐字一致")
     assert(
       !SeedService.approveWouldRewriteDefaultBaseline(target, runtimeDigest),
@@ -392,7 +396,8 @@ class SeedServiceSpec extends FunSuite:
     )
     // ② 默认集 + runtime ≠ seed ⇒ 闸开（拒绝手动 approve 脏基准）
     driftTarget(target)
-    val drifted = PluginRegistry.computeDigest(home / "plugins" / target).toOption.map(_._1).getOrElse(fail("drift digest"))
+    val drifted =
+      PluginRegistry.computeDigest(home / "plugins" / target).toOption.map(_._1).getOrElse(fail("drift digest"))
     assert(drifted != seedDigest, "前置：漂移后 digest 变化")
     assert(
       SeedService.approveWouldRewriteDefaultBaseline(target, drifted),
@@ -416,8 +421,10 @@ class SeedServiceSpec extends FunSuite:
     // 「runtime 漂移出 trust 记录」腿：刚播种即有 approve 记录，drift 后 = 漂移腿）
     driftTarget("slideblocks")
     val lines = SeedService.defaultSetDriftLines()
-    assert(lines.exists(l => l.startsWith("[seed-drift] slideblocks:") && l.contains("seed ") && l.contains("vs runtime ")),
-      s"漂移包被点名一行：$lines")
+    assert(
+      lines.exists(l => l.startsWith("[seed-drift] slideblocks:") && l.contains("seed ") && l.contains("vs runtime ")),
+      s"漂移包被点名一行：$lines"
+    )
     // 其余六包不在行内（低噪声：一行一名）
     assertEquals(lines.size, 1, "只点名漂移的那一个包")
     // 卸载（墓碑在位）⇒ 不出行（决策过的状态不是漂移）

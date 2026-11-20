@@ -147,9 +147,11 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       Behaviors.receiveMessage[AgentCommand](msg => recorded.update(_ :+ msg).as(b))
     b
 
-  /** cb18b8ec6 孤儿链暂停腿（2026-11-03）：sweep 先查 DelegateRegistry——查无记录
-    * 即判孤儿链（暂停推进、零认领零续跑）。本 spec 的作用域是有主链，夹具须在册
-    * （cwd=基工作区，parentSessionId 仅为孤儿通知语义备用）。 */
+  /**
+   * cb18b8ec6 孤儿链暂停腿（2026-11-03）：sweep 先查 DelegateRegistry——查无记录
+   * 即判孤儿链（暂停推进、零认领零续跑）。本 spec 的作用域是有主链，夹具须在册
+   * （cwd=基工作区，parentSessionId 仅为孤儿通知语义备用）。
+   */
   private def seedDelegateRecord(id: String, ws: os.Path): IO[Unit] =
     IO.blocking(
       DelegateRegistry.put(
@@ -285,7 +287,7 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       _ <- waitUntil(10.seconds)(
         recorded.get.map(_.exists {
           case m: AgentCommand.ImmediateInput => m.text.contains("[Node 'node-n-r1' completed]")
-          case _                              => false
+          case _ => false
         })
       )
       a <- hostNode(h, "n-r1")
@@ -388,7 +390,9 @@ class DelegateNotifyRedirectSpec extends CatsEffectSuite:
       // 互翻的 flake 根源）。creator 此刻恒死（revived 在断言后才注册），腿迟到
       // 也只会补 parked 行 ⇒ 等待是确定性的。
       _ <- waitUntil(10.seconds)(
-        readEvents(ws).map(_.exists(l => l.contains(NodeEngine.NotifyRedirectedEventType) && l.contains("outcome=parked")))
+        readEvents(ws).map(
+          _.exists(l => l.contains(NodeEngine.NotifyRedirectedEventType) && l.contains("outcome=parked"))
+        )
       )
       events <- readEvents(ws)
       parkedAudit = events.filter(l => l.contains(NodeEngine.NotifyRedirectedEventType) && l.contains("outcome=parked"))

@@ -47,7 +47,7 @@ class AnthropicCompatSpec extends CatsEffectSuite:
       IO.delay {
         request.body match
           case sttp.client4.StringBody(s, _, _) => bodies.add(s)
-          case other                         => bodies.add(other.toString.take(64))
+          case other => bodies.add(other.toString.take(64))
         headers.add(request.headers.map(h => h.name -> h.value).toList)
         Option(queue.poll()) match
           case Some(Left((code, b))) =>
@@ -67,6 +67,7 @@ class AnthropicCompatSpec extends CatsEffectSuite:
     def monad: sttp.monad.MonadError[IO] =
       new sttp.client4.impl.cats.CatsMonadError[IO](using IO.asyncForIO)
     def close(): IO[Unit] = IO.unit
+  end ScriptedBackend
 
   private def nonStream(): ScriptedBackend = new ScriptedBackend(streams = false)
   private def streaming(): ScriptedBackend = new ScriptedBackend(streams = true)
@@ -125,7 +126,10 @@ class AnthropicCompatSpec extends CatsEffectSuite:
     val be = nonStream()
     be.enqueueJson(200, okJson)
     mk(be).sendMessage(params(historyWithoutThinking)).unsafeRunSync()
-    assert(bodyOf(be).hcursor.downField("thinking").focus.isDefined, s"thinking key must be present: ${bodyOf(be).noSpaces}")
+    assert(
+      bodyOf(be).hcursor.downField("thinking").focus.isDefined,
+      s"thinking key must be present: ${bodyOf(be).noSpaces}"
+    )
   }
 
   test("A3: history WITH thinking blocks keeps thinking:enabled and replays the block") {
@@ -291,3 +295,4 @@ class AnthropicCompatSpec extends CatsEffectSuite:
     assertEquals(chunks.collect { case StreamChunk.ThinkingDelta(t) => t }.mkString(""), "pondering")
     assertEquals(chunks.collect { case StreamChunk.TextDelta(t) => t }.mkString(""), "answer")
   }
+end AnthropicCompatSpec

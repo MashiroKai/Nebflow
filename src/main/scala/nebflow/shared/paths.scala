@@ -278,7 +278,8 @@ object PathUtil:
   private[nebflow] def resolvedLayer: nebflow.core.root.RootLayer =
     _layerCache match
       case Some(layer) => layer // 快照命中：无锁（热路径）
-      case None => synchronized {
+      case None =>
+        synchronized {
           _layerCache match
             case Some(layer) => layer
             case None =>

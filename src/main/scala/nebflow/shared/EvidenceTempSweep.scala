@@ -21,8 +21,7 @@ object EvidenceTempSweep:
       IO.sleep(interval) *>
         IO.blocking(EvidenceTemp.sweep())
           .flatMap(removed =>
-            if removed > 0 then
-              logger.info(s"[evidence-temp] periodic sweep removed $removed expired evidence batches")
+            if removed > 0 then logger.info(s"[evidence-temp] periodic sweep removed $removed expired evidence batches")
             else IO.unit
           )
           .handleErrorWith(e => logger.warn(s"[evidence-temp] periodic sweep failed: ${e.getMessage}")) *>

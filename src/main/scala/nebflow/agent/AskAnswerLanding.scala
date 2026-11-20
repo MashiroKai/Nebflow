@@ -77,11 +77,14 @@ private[agent] object AskAnswerLanding:
    * @param delegateHostAlive  委托作用域宿主在册且委托会话存活（臂2 前提）
    */
   sealed trait Landing
+
   object Landing:
     /** 臂1：项目链引擎重入（ProjectActor.AskAnswerReentry）。 */
     case object ProjectReentry extends Landing
+
     /** 臂2：委托链注入委托会话（作用域根的 ImmediateInput）。 */
     case object DelegateInjection extends Landing
+
     /** 臂3：失败出口（显式回执 + 审计 + toast，绝不静默）。 */
     final case class Fail(reason: String) extends Landing
 
@@ -119,7 +122,12 @@ private[agent] object AskAnswerLanding:
     attribution match
       case None =>
         failWith(
-          decide(hasAttribution = false, nodeInProjectGraph = false, projectActorPresent = false, delegateHostAlive = false) match
+          decide(
+            hasAttribution = false,
+            nodeInProjectGraph = false,
+            projectActorPresent = false,
+            delegateHostAlive = false
+          ) match
             case Landing.Fail(r) => r
             case _ => "归因缺席"
           ,
@@ -133,9 +141,15 @@ private[agent] object AskAnswerLanding:
             case Some(rt) =>
               rt.store.getNode(nodeId).flatMap {
                 case Some(node) =>
-                  decide(hasAttribution = true, nodeInProjectGraph = true, projectActorPresent = rt.actorRef.isDefined, delegateHostAlive = false) match
+                  decide(
+                    hasAttribution = true,
+                    nodeInProjectGraph = true,
+                    projectActorPresent = rt.actorRef.isDefined,
+                    delegateHostAlive = false
+                  ) match
                     case Landing.ProjectReentry => reenterProject(requestId, node, answerText, rt, ctx)
-                    case Landing.Fail(reason)   => failWith(reason, Some(rt.project.workspace), Some(project), Some(nodeId))
+                    case Landing.Fail(reason) =>
+                      failWith(reason, Some(rt.project.workspace), Some(project), Some(nodeId))
                     case Landing.DelegateInjection =>
                       failWith("宿主不在：项目图无重入指令面", Some(rt.project.workspace), Some(project), Some(nodeId))
                 case None =>
@@ -143,7 +157,12 @@ private[agent] object AskAnswerLanding:
                   // 挂载项目名 / general 座位名）——扫委托宿主定臂。
                   delegateHost(ctx).flatMap {
                     case Some((host, ref)) =>
-                      decide(hasAttribution = true, nodeInProjectGraph = false, projectActorPresent = false, delegateHostAlive = ref.isDefined) match
+                      decide(
+                        hasAttribution = true,
+                        nodeInProjectGraph = false,
+                        projectActorPresent = false,
+                        delegateHostAlive = ref.isDefined
+                      ) match
                         case Landing.DelegateInjection => injectDelegate(requestId, host, ref.get, answerText, ctx)
                         case Landing.Fail(reason) =>
                           failWith(reason, Some(host.baseWorkspace), Some(project), Some(nodeId))
@@ -162,9 +181,14 @@ private[agent] object AskAnswerLanding:
               // 归因项目未挂载：仍可能属委托作用域（general 座位名等）——同序扫描。
               delegateHost(ctx).flatMap {
                 case Some((host, ref)) =>
-                  decide(hasAttribution = true, nodeInProjectGraph = false, projectActorPresent = false, delegateHostAlive = ref.isDefined) match
+                  decide(
+                    hasAttribution = true,
+                    nodeInProjectGraph = false,
+                    projectActorPresent = false,
+                    delegateHostAlive = ref.isDefined
+                  ) match
                     case Landing.DelegateInjection => injectDelegate(requestId, host, ref.get, answerText, ctx)
-                    case Landing.Fail(reason)      => failWith(reason, Some(host.baseWorkspace), Some(project), Some(nodeId))
+                    case Landing.Fail(reason) => failWith(reason, Some(host.baseWorkspace), Some(project), Some(nodeId))
                     case Landing.ProjectReentry =>
                       failWith("宿主不在：委托图无分发器指令面", Some(host.baseWorkspace), Some(project), Some(nodeId))
                 case None =>
@@ -176,6 +200,10 @@ private[agent] object AskAnswerLanding:
                   )
               }
         }
+
+    end match
+
+  end land
 
   /** 臂1：项目链引擎重入——审计 + AskAnswerReentry 指令 + 渠道回执。 */
   private def reenterProject(
@@ -195,7 +223,9 @@ private[agent] object AskAnswerLanding:
         AuditEventType,
         s"social answer re-entry: requestId=$requestId answer delivered to dispatcher for task-folding (node=${node.name})"
       )
-      .handleErrorWith(e => logger.warn(s"ask-answer landing: audit append failed ($project/${node.id}): ${e.getMessage}")) *>
+      .handleErrorWith(e =>
+        logger.warn(s"ask-answer landing: audit append failed ($project/${node.id}): ${e.getMessage}")
+      ) *>
       rt.actorRef.traverse_(ref =>
         ref ! nebflow.core.project.ProjectActor.ProjectCommand.AskAnswerReentry(
           nodeId = node.id,
@@ -209,11 +239,14 @@ private[agent] object AskAnswerLanding:
       ) *>
       AskAnswerReceipt.take(requestId).flatMap {
         case Some(e) =>
-          e.send(reentryReceiptLine(node.name)).handleErrorWith(err =>
-            logger.warn(s"ask-answer receipt: reentry confirmation send failed (${err.getMessage})")
-          )
+          e.send(reentryReceiptLine(node.name))
+            .handleErrorWith(err =>
+              logger.warn(s"ask-answer receipt: reentry confirmation send failed (${err.getMessage})")
+            )
         case None => IO.unit
       }
+
+  end reenterProject
 
   /**
    * 委托作用域宿主探测：归因根会话（= 作用域键 = 引擎根）即委托会话 id——
@@ -269,11 +302,14 @@ private[agent] object AskAnswerLanding:
       ) *>
       AskAnswerReceipt.take(requestId).flatMap {
         case Some(e) =>
-          e.send(reentryReceiptLine(project)).handleErrorWith(err =>
-            logger.warn(s"ask-answer receipt: delegate confirmation send failed (${err.getMessage})")
-          )
+          e.send(reentryReceiptLine(project))
+            .handleErrorWith(err =>
+              logger.warn(s"ask-answer receipt: delegate confirmation send failed (${err.getMessage})")
+            )
         case None => IO.unit
       }
+
+  end injectDelegate
 
   /** 委托注入文本：答案 = 对该问题的直接回答 + 折进节点任务的指令（5b 语义）。 */
   private def delegateInjectionText(answerText: String, flowNodeId: Option[String]): String =
@@ -310,6 +346,8 @@ private[agent] object AskAnswerLanding:
     val toast = desktopToast(requestId, reason, ctx)
     val receipt = AskAnswerReceipt.sendLine(requestId, failureReceiptLine(reason))
     warn *> audit *> toast *> receipt.void
+
+  end fail
 
   /**
    * 桌面 toast（`interactionAnswerRejected` 既有帧族——前端 `main.js` 既有消费点

@@ -130,8 +130,7 @@ private[gateway] object WsFileOpsHandlers:
       case None => IO.pure(Left("NebLink is not enabled on this host (no device network)"))
       case Some(ns) =>
         ns.identity.flatMap { id =>
-          if device.equalsIgnoreCase(id.deviceId) || device.equalsIgnoreCase(id.deviceName) then
-            IO.pure(Right(None))
+          if device.equalsIgnoreCase(id.deviceId) || device.equalsIgnoreCase(id.deviceName) then IO.pure(Right(None))
           else
             ns.peers.flatMap { peers =>
               nebflow.core.tools.RemoteExecutor.resolvePeer(device, peers) match
@@ -144,6 +143,10 @@ private[gateway] object WsFileOpsHandlers:
                   }
             }
         }
+
+    end match
+
+  end resolveBrowseTarget
 
   /**
    * `listDir` 对端腿（v2.1 阶段 1 §C.1-3 无感面②）：scope=browse 元数据列举，
@@ -158,52 +161,58 @@ private[gateway] object WsFileOpsHandlers:
     wsSend: io.circe.Json => IO[Unit]
   ): IO[Unit] =
     import ctx.*
-    resolveBrowseTarget(device)(using ctx).flatMap {
-      case Left(err) =>
-        wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> err.asJson, "device" -> device.asJson))
-      case Right(None) =>
-        // 防御分支（正常不可达：self 目标在 handleListDir 已走本地腿）。
-        wsSend(
-          io.circe.Json.obj(
-            "type" -> "dirListing".asJson,
-            "error" -> s"'$device' resolved to this device — re-send without the device key".asJson,
-            "device" -> device.asJson
-          )
-        )
-      case Right(Some(peer)) =>
-        nebflow.core.tools.RemoteExecutor.current match
-          case None =>
-            wsSend(
-              io.circe.Json.obj(
-                "type" -> "dirListing".asJson,
-                "error" -> "remote executor not initialized (NebLink disabled?)".asJson,
-                "device" -> device.asJson
-              )
+    resolveBrowseTarget(device)(using ctx)
+      .flatMap {
+        case Left(err) =>
+          wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> err.asJson, "device" -> device.asJson))
+        case Right(None) =>
+          // 防御分支（正常不可达：self 目标在 handleListDir 已走本地腿）。
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "dirListing".asJson,
+              "error" -> s"'$device' resolved to this device — re-send without the device key".asJson,
+              "device" -> device.asJson
             )
-          case Some(re) =>
-            re.transferListScoped(peer, remoteDir).flatMap {
-              case Right(json) =>
-                val entries = json.hcursor.downField("entries").as[Vector[io.circe.Json]].getOrElse(Vector.empty)
-                val resolved = json.hcursor.downField("path").as[String].getOrElse(remoteDir)
-                wsSend(
-                  io.circe.Json.obj(
-                    "type" -> "dirListing".asJson,
-                    "path" -> remoteDir.asJson,
-                    "resolvedPath" -> resolved.asJson,
-                    "entries" -> io.circe.Json.fromValues(entries),
-                    "device" -> device.asJson
+          )
+        case Right(Some(peer)) =>
+          nebflow.core.tools.RemoteExecutor.current match
+            case None =>
+              wsSend(
+                io.circe.Json.obj(
+                  "type" -> "dirListing".asJson,
+                  "error" -> "remote executor not initialized (NebLink disabled?)".asJson,
+                  "device" -> device.asJson
+                )
+              )
+            case Some(re) =>
+              re.transferListScoped(peer, remoteDir).flatMap {
+                case Right(json) =>
+                  val entries = json.hcursor.downField("entries").as[Vector[io.circe.Json]].getOrElse(Vector.empty)
+                  val resolved = json.hcursor.downField("path").as[String].getOrElse(remoteDir)
+                  wsSend(
+                    io.circe.Json.obj(
+                      "type" -> "dirListing".asJson,
+                      "path" -> remoteDir.asJson,
+                      "resolvedPath" -> resolved.asJson,
+                      "entries" -> io.circe.Json.fromValues(entries),
+                      "device" -> device.asJson
+                    )
                   )
-                )
-              case Left(err) =>
-                logger.warn(s"remote listDir failed for ${peer.deviceName}: $err")
-                wsSend(
-                  io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> err.asJson, "device" -> device.asJson)
-                )
-            }
-    }.handleErrorWith { e =>
-      logger.warn(s"remote listDir failed: ${e.getMessage}")
-      wsSend(io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> e.getMessage.asJson, "device" -> device.asJson))
-    }
+                case Left(err) =>
+                  logger.warn(s"remote listDir failed for ${peer.deviceName}: $err")
+                  wsSend(
+                    io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> err.asJson, "device" -> device.asJson)
+                  )
+              }
+      }
+      .handleErrorWith { e =>
+        logger.warn(s"remote listDir failed: ${e.getMessage}")
+        wsSend(
+          io.circe.Json.obj("type" -> "dirListing".asJson, "error" -> e.getMessage.asJson, "device" -> device.asJson)
+        )
+      }
+
+  end listRemoteDir
 
   private def handleWatchSubscribe(
     ctx: WsDispatchCtx,
@@ -329,11 +338,12 @@ private[gateway] object WsFileOpsHandlers:
             IO.blocking(
               os.read(basePath, offset = 0, count = 2 * 1024 * 1024) + "\n\n[... file truncated at 2MB]"
             )
-          else IO.blocking {
-            val r = nebflow.core.tools.FileOpenCache
-              .readWholeThrough(basePath, nebflow.core.tools.FileOpenCache.Fingerprint(fileSize, readMtimeMs))
-            r.content
-          }
+          else
+            IO.blocking {
+              val r = nebflow.core.tools.FileOpenCache
+                .readWholeThrough(basePath, nebflow.core.tools.FileOpenCache.Fingerprint(fileSize, readMtimeMs))
+              r.content
+            }
       yield (content, basePath.toString, fileSize, readMtimeMs, readIsStream))
         .flatMap { case (content, absPath, fileSize, mtimeMs, isStream) =>
           val ext = filePath.split('.').lastOption.getOrElse("").toLowerCase
@@ -435,11 +445,11 @@ private[gateway] object WsFileOpsHandlers:
     // 台账 #902 收口批 F（三级缓存 ③）：统一帧形（与分块拉取腿逐键同构；命中腿
     // additive `cached:true` 读数键——既有前端消费者零感知，spec 据此断言免拉取）。
     def contentFrame(
-        bytes: Array[Byte],
-        absPath: os.Path,
-        mtimeMs: Long,
-        wholeSha: String,
-        cached: Boolean
+      bytes: Array[Byte],
+      absPath: os.Path,
+      mtimeMs: Long,
+      wholeSha: String,
+      cached: Boolean
     ): io.circe.Json =
       val ext = remotePath.split('.').lastOption.getOrElse("").toLowerCase
       val entry = nebflow.core.workspace.FileTypeRegistry.detect(ext)
@@ -520,84 +530,99 @@ private[gateway] object WsFileOpsHandlers:
               val bytes = os.read.bytes(res.path)
               // 对端取件 → 本机持久层入账（下次同件探测指纹命中即免拉）。
               fpOpt.foreach(fp =>
-                nebflow.core.tools.FileOpenCache.putRemote(peer.deviceId, remotePath, fp, bytes, res.wholeSha256))
+                nebflow.core.tools.FileOpenCache.putRemote(peer.deviceId, remotePath, fp, bytes, res.wholeSha256)
+              )
               (res.path, bytes, res.wholeSha256)
             }.flatMap { case (pickup, bytes, sha) =>
               val mtimeMs = scala.util.Try(os.mtime(pickup)).getOrElse(0L)
               val totalMs = (System.nanoTime() - openT0) / 1000000L
               logger.info(
-                timingLine(peer.deviceName, "pull", res.size, probeMs, res.elapsedMs, totalMs, res.chunks, res.chunkSize, res.window)
+                timingLine(
+                  peer.deviceName,
+                  "pull",
+                  res.size,
+                  probeMs,
+                  res.elapsedMs,
+                  totalMs,
+                  res.chunks,
+                  res.chunkSize,
+                  res.window
+                )
               ) *> wsSend(contentFrame(bytes, pickup, mtimeMs, sha, cached = false))
             }
         }
 
     val openT0 = System.nanoTime()
-    resolveBrowseTarget(device)(using ctx).flatMap {
-      case Left(err) => wsSend(errorFrame(err))
-      case Right(None) =>
-        // 防御分支（正常不可达：self 目标在 handleReadFile 已走本地腿）。
-        wsSend(errorFrame(s"'$device' resolved to this device — re-send without the device key"))
-      case Right(Some(peer)) =>
-        nebflow.core.tools.RemoteExecutor.current match
-          case None => wsSend(errorFrame("remote executor not initialized (NebLink disabled?)"))
-          case Some(re) =>
-            // 三级缓存 ③ 探测腿：父目录元数据列举拿 {size,mtime}（零字节流动）→
-            // 指纹未变 + 本机缓存命中 = 跳过全量分块拉取（近端优先）；探测失败/
-            // 指纹变/无缓存 = 原分块拉取腿逐字节（缓存永不挡路，绝不显示陈旧内容）。
-            val probe = remotePath.replaceAll("""[/\\]+""", "/")
-            val slash = probe.lastIndexOf('/')
-            val probeFp: IO[Option[nebflow.core.tools.FileOpenCache.Fingerprint]] =
-              if slash <= 0 then IO.pure(None)
-              else
-                re.transferListScoped(peer, probe.substring(0, slash)).flatMap {
-                  case Left(err) =>
-                    logger.info(s"[file-open-cache] probe ${peer.deviceName}:$remotePath bypass: $err")
-                    IO.pure(None)
-                  case Right(js) =>
-                    IO.pure(nebflow.core.tools.FileOpenCache.fingerprintFromListing(js, probe.substring(slash + 1)))
-                }
-            val probeT0 = System.nanoTime()
-            probeFp.flatMap { fpOpt =>
-              val probeMs = (System.nanoTime() - probeT0) / 1000000L
-              fpOpt match {
-                case None => pullAndStore(re, peer, None, probeMs, openT0)
-                case Some(fp) =>
-                  IO.blocking(nebflow.core.tools.FileOpenCache.lookupRemote(peer.deviceId, remotePath, fp))
-                    .flatMap {
-                      case None => pullAndStore(re, peer, Some(fp), probeMs, openT0)
-                      case Some(hit) =>
-                        IO.blocking {
-                          val pickup =
-                            nebflow.core.tools.FileOpenCache.ensurePickup(peer.deviceId, remotePath, hit.bytes)
-                          (pickup, scala.util.Try(os.mtime(pickup)).getOrElse(0L))
-                        }.flatMap { case (pickup, mtimeMs) =>
-                          // 🔴 顺序纪律（2026-11-04 e2e 实测抓到的坑）：`NebflowLogger.info`
-                          // 返回 IO[Unit]，裸写在同一块里会被**丢弃不执行**（本批首版即如此，
-                          // 引擎重启后跑真机 e2e 一行都没打出来）——这里必须 `*>` 串起来。
-                          logger.info(
-                            s"[file-open-cache] remote hit ${peer.deviceName}:$remotePath (${hit.bytes.length}B) — pull skipped"
-                          ) *> logger.info(
-                            timingLine(
-                              peer.deviceName,
-                              "cache-hit",
-                              hit.bytes.length.toLong,
-                              probeMs,
-                              (System.nanoTime() - openT0) / 1000000L - probeMs,
-                              (System.nanoTime() - openT0) / 1000000L,
-                              0L,
-                              0,
-                              0
-                            )
-                          ) *> IO(nebflow.core.tools.FileOpenCache.noteRemotePullSkip())
-                            *> wsSend(contentFrame(hit.bytes, pickup, mtimeMs, hit.sha16, cached = true))
-                        }
-                    }
+    resolveBrowseTarget(device)(using ctx)
+      .flatMap {
+        case Left(err) => wsSend(errorFrame(err))
+        case Right(None) =>
+          // 防御分支（正常不可达：self 目标在 handleReadFile 已走本地腿）。
+          wsSend(errorFrame(s"'$device' resolved to this device — re-send without the device key"))
+        case Right(Some(peer)) =>
+          nebflow.core.tools.RemoteExecutor.current match
+            case None => wsSend(errorFrame("remote executor not initialized (NebLink disabled?)"))
+            case Some(re) =>
+              // 三级缓存 ③ 探测腿：父目录元数据列举拿 {size,mtime}（零字节流动）→
+              // 指纹未变 + 本机缓存命中 = 跳过全量分块拉取（近端优先）；探测失败/
+              // 指纹变/无缓存 = 原分块拉取腿逐字节（缓存永不挡路，绝不显示陈旧内容）。
+              val probe = remotePath.replaceAll("""[/\\]+""", "/")
+              val slash = probe.lastIndexOf('/')
+              val probeFp: IO[Option[nebflow.core.tools.FileOpenCache.Fingerprint]] =
+                if slash <= 0 then IO.pure(None)
+                else
+                  re.transferListScoped(peer, probe.substring(0, slash)).flatMap {
+                    case Left(err) =>
+                      logger.info(s"[file-open-cache] probe ${peer.deviceName}:$remotePath bypass: $err")
+                      IO.pure(None)
+                    case Right(js) =>
+                      IO.pure(nebflow.core.tools.FileOpenCache.fingerprintFromListing(js, probe.substring(slash + 1)))
+                  }
+              val probeT0 = System.nanoTime()
+              probeFp.flatMap { fpOpt =>
+                val probeMs = (System.nanoTime() - probeT0) / 1000000L
+                fpOpt match
+                  case None => pullAndStore(re, peer, None, probeMs, openT0)
+                  case Some(fp) =>
+                    IO.blocking(nebflow.core.tools.FileOpenCache.lookupRemote(peer.deviceId, remotePath, fp))
+                      .flatMap {
+                        case None => pullAndStore(re, peer, Some(fp), probeMs, openT0)
+                        case Some(hit) =>
+                          IO.blocking {
+                            val pickup =
+                              nebflow.core.tools.FileOpenCache.ensurePickup(peer.deviceId, remotePath, hit.bytes)
+                            (pickup, scala.util.Try(os.mtime(pickup)).getOrElse(0L))
+                          }.flatMap { case (pickup, mtimeMs) =>
+                            // 🔴 顺序纪律（2026-11-04 e2e 实测抓到的坑）：`NebflowLogger.info`
+                            // 返回 IO[Unit]，裸写在同一块里会被**丢弃不执行**（本批首版即如此，
+                            // 引擎重启后跑真机 e2e 一行都没打出来）——这里必须 `*>` 串起来。
+                            logger.info(
+                              s"[file-open-cache] remote hit ${peer.deviceName}:$remotePath (${hit.bytes.length}B) — pull skipped"
+                            ) *> logger.info(
+                              timingLine(
+                                peer.deviceName,
+                                "cache-hit",
+                                hit.bytes.length.toLong,
+                                probeMs,
+                                (System.nanoTime() - openT0) / 1000000L - probeMs,
+                                (System.nanoTime() - openT0) / 1000000L,
+                                0L,
+                                0,
+                                0
+                              )
+                            ) *> IO(nebflow.core.tools.FileOpenCache.noteRemotePullSkip())
+                              *> wsSend(contentFrame(hit.bytes, pickup, mtimeMs, hit.sha16, cached = true))
+                          }
+                      }
+                end match
               }
-            }
-    }.handleErrorWith { e =>
-      logger.warn(s"remote readFile failed: ${e.getMessage}")
-      wsSend(errorFrame(e.getMessage))
-    }
+      }
+      .handleErrorWith { e =>
+        logger.warn(s"remote readFile failed: ${e.getMessage}")
+        wsSend(errorFrame(e.getMessage))
+      }
+
+  end readRemoteFile
 
   /**
    * `fileTransferCancel`（M2 · 设计 v1 §4.4 取消契约 + Q2 推荐默认）：浏览器侧取消
@@ -692,11 +717,12 @@ private[gateway] object WsFileOpsHandlers:
         // 的全量读；入账上限 96MiB 由 FileOpenCache 自己夹）——同 readFile 整件腿语义。
         content <-
           if popIsBinary || popIsStream then IO.pure("")
-          else IO.blocking {
-            nebflow.core.tools.FileOpenCache
-              .readWholeThrough(basePath, nebflow.core.tools.FileOpenCache.Fingerprint(fileSize, popMtimeMs))
-              .content
-          }
+          else
+            IO.blocking {
+              nebflow.core.tools.FileOpenCache
+                .readWholeThrough(basePath, nebflow.core.tools.FileOpenCache.Fingerprint(fileSize, popMtimeMs))
+                .content
+            }
       yield (content, basePath.toString, fileSize, popFilePath, popMtimeMs, popIsStream))
         .flatMap { case (content, absPath, fileSize, origPath, mtimeMs, isStream) =>
           val ext = popFilePath.split('.').lastOption.getOrElse("").toLowerCase
@@ -1017,7 +1043,9 @@ private[gateway] object WsFileOpsHandlers:
         .flatMap { p =>
           // M2 缓存一致性（v1 §6.1）：UI 通道的文件事实变更也广播失效（与 Write 工具
           // 同一面；新建空文件对「内容缓存」无实义，但覆盖写场景 `writeFile` 在下）。
-          NfCacheInvalidator.invalidated(p) *> wsSend(io.circe.Json.obj("type" -> "fileCreated".asJson, "path" -> p.asJson))
+          NfCacheInvalidator.invalidated(p) *> wsSend(
+            io.circe.Json.obj("type" -> "fileCreated".asJson, "path" -> p.asJson)
+          )
         }
         .handleErrorWith { e =>
           logger.warn(s"createFile failed: ${e.getMessage}")
@@ -1123,7 +1151,9 @@ private[gateway] object WsFileOpsHandlers:
       yield dpPath)
         .flatMap { p =>
           // M2 缓存一致性：删除 ⇒ 广播失效（账本残留条目指向已删件，立即淘汰）。
-          NfCacheInvalidator.invalidated(p) *> wsSend(io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson))
+          NfCacheInvalidator.invalidated(p) *> wsSend(
+            io.circe.Json.obj("type" -> "pathDeleted".asJson, "path" -> p.asJson)
+          )
         }
         .handleErrorWith { e =>
           logger.warn(s"deletePath failed: ${e.getMessage}")
@@ -1303,14 +1333,16 @@ private[gateway] object WsFileOpsHandlers:
     end if
   end handleWriteFile
 
-  /** 阅读器标注库 load/save（reader P3 批，设计稿 §4.2 存储面——载体 = 随工作区
+  /**
+   * 阅读器标注库 load/save（reader P3 批，设计稿 §4.2 存储面——载体 = 随工作区
    *  落库的 json 件，[[ReaderAnnoStore]] 为纯核）。落点 = 服务端构建的
    *  `<projectRoot>/.nebflow/reader-annotations.json`（客户端只送 action/content，
    *  零路径操控）；项目根解析与 [[handleWriteFile]] 同族（sessionId → folderId →
    *  resolveProjectRoot），containment 由「路径服务端自建」天然成立，仍过同一
    *  canonical 检查与 writeFile 同口径。load 缺件 = 空库（ok:true content:null）；
    *  save 超 [[ReaderAnnoStore.MaxBytes]] 拒写；JSON 不解析（字节透传，容错在前端）。
-   *  保存成功按 writeFile 同纪律广播 M2 缓存失效（本件被别的查看面打开时防陈旧）。 */
+   *  保存成功按 writeFile 同纪律广播 M2 缓存失效（本件被别的查看面打开时防陈旧）。
+   */
   private def handleReaderAnno(
     ctx: WsDispatchCtx,
     text: String,
@@ -1336,8 +1368,7 @@ private[gateway] object WsFileOpsHandlers:
         frame <-
           if action == "load" then
             IO.blocking {
-              if os.exists(target) && os.isFile(target) then
-                ReaderAnnoStore.loadedFrame(reqId, Some(os.read(target)))
+              if os.exists(target) && os.isFile(target) then ReaderAnnoStore.loadedFrame(reqId, Some(os.read(target)))
               else ReaderAnnoStore.loadedFrame(reqId, None)
             }
           else
@@ -1348,7 +1379,8 @@ private[gateway] object WsFileOpsHandlers:
                 IO.blocking {
                   if !os.exists(target / os.up) then os.makeDir.all(target / os.up)
                   os.write.over(target, content)
-                } *> NfCacheInvalidator.invalidated(target.toString)
+                } *> NfCacheInvalidator
+                  .invalidated(target.toString)
                   .as(ReaderAnnoStore.savedFrame(reqId))
       yield frame)
         .flatMap(wsSend)

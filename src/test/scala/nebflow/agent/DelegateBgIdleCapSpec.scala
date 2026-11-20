@@ -14,7 +14,17 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskRegistry, FileLockManager, ShellSession}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, StreamChunk, ThinkingConfig, SubAgentTask}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  StreamChunk,
+  ThinkingConfig,
+  SubAgentTask
+}
 
 import scala.concurrent.duration.*
 
@@ -189,7 +199,7 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
         )
       )
       nebflow.core.delegate.DelegateRegistry.updateReport(childSid, "finish", "turn done; the job never ends", "") match
-        case Left(e)  => throw new RuntimeException(s"seed declared report failed: $e")
+        case Left(e) => throw new RuntimeException(s"seed declared report failed: $e")
         case Right(_) => ()
     }
 
@@ -261,9 +271,21 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
       _ <- cleanupWaitingTask(childSid, jobId)
       _ <- system.stopAll
     yield
-      assertEquals(mails.size, 0, s"OLD behavior: nothing is delivered after ${held}ms (the turn is held by the idle job)")
-      assert(!childCmds.exists(_.isInstanceOf[AgentCommand.Stop]), "the child is never stopped (session parked forever)")
-      assertEquals(tasks.find(_.taskId == childSid).map(_.status), Some("running"), "the task row stays running — the parent waits for a wake that never comes")
+      assertEquals(
+        mails.size,
+        0,
+        s"OLD behavior: nothing is delivered after ${held}ms (the turn is held by the idle job)"
+      )
+      assert(
+        !childCmds.exists(_.isInstanceOf[AgentCommand.Stop]),
+        "the child is never stopped (session parked forever)"
+      )
+      assertEquals(
+        tasks.find(_.taskId == childSid).map(_.status),
+        Some("running"),
+        "the task row stays running — the parent waits for a wake that never comes"
+      )
+    end for
   }
 
   test("R5-绿：idle 上限到点 ⇒ 放行回合收尾，父会话收到带 IDLE cap 诚实注记的终态") {
@@ -306,7 +328,9 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
       _ <- waitUntil(20.seconds)(terminalMail(parentSid).map(_.nonEmpty))
       released <- IO(System.currentTimeMillis() - started)
       _ <- waitUntil(20.seconds)(
-        resources.subAgentTaskStore.loadTasks(parentSid).map(_.exists(t => t.taskId == childSid && t.status == "completed"))
+        resources.subAgentTaskStore
+          .loadTasks(parentSid)
+          .map(_.exists(t => t.taskId == childSid && t.status == "completed"))
       )
       mails <- terminalMail(parentSid)
       childCmds <- childEvents.get
@@ -324,6 +348,7 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
       assert(released < 20_000L, s"release happened on the idle cap, not the 60s wall clock (took ${released}ms)")
       assert(childCmds.exists(_.isInstanceOf[AgentCommand.Stop]), "the child is stopped at the forced terminal")
       assertEquals(tasks.find(_.taskId == childSid).map(_.status), Some("completed"))
+    end for
   }
 
   test("R5-回归：等待集清空 ⇒ 干净放行（无 IDLE/墙钟注记，既有唤醒语义零漂移）") {
@@ -375,5 +400,6 @@ class DelegateBgIdleCapSpec extends CatsEffectSuite:
       assert(!payload.contains("IDLE cap"), s"a clean wake must not carry the forced-delivery note: $payload")
       assert(!payload.contains("[delegate-background-wait]"), s"nor the wall-clock cap note: $payload")
       assert(payload.contains("final report"), s"the release payload is the real report: $payload")
+    end for
   }
 end DelegateBgIdleCapSpec

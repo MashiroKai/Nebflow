@@ -3,7 +3,7 @@ package nebflow.llm.providers
 import cats.effect.IO
 import ch.qos.logback.classic.Level
 import ch.qos.logback.classic.spi.ILoggingEvent
-import ch.qos.logback.classic.{Logger as JbLogger}
+import ch.qos.logback.classic.Logger as JbLogger
 import ch.qos.logback.core.read.ListAppender
 import io.circe.Json
 import io.circe.JsonObject
@@ -17,7 +17,8 @@ import sttp.client4.StreamBackend
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
-/** Reusable history must remain a stable prefix across changing request clocks.
+/**
+ * Reusable history must remain a stable prefix across changing request clocks.
  * History-tail cache markers precede ephemeral context; the total marker budget is at most four.
  */
 class CacheBreakpointSpec extends FunSuite:
@@ -33,10 +34,12 @@ class CacheBreakpointSpec extends FunSuite:
 
   // ── fixtures ──────────────────────────────────────────────────────────
 
-  private def userText(t: String): Message  = Message(MessageRole.User, Left(t))
-  private def asstText(t: String): Message  = Message(MessageRole.Assistant, Left(t))
+  private def userText(t: String): Message = Message(MessageRole.User, Left(t))
+  private def asstText(t: String): Message = Message(MessageRole.Assistant, Left(t))
+
   private def toolUse(id: String): Message =
     Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse(id, "Read", JsonObject.empty))))
+
   private def toolResult(id: String, t: String): Message =
     Message(MessageRole.User, Right(List(ContentBlock.ToolResult(id, t, Some(false)))))
 
@@ -86,7 +89,7 @@ class CacheBreakpointSpec extends FunSuite:
     assertEquals(earlier.count(_.hcursor.downField("cache_control").focus.isDefined), 0, "no marker before the tail")
     // 尾断点在最后一条消息的尾块上，且值 = ephemeral
     val lastBlocks = marked.last.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
-    val tailBlock  = lastBlocks.last
+    val tailBlock = lastBlocks.last
     assertEquals(tailBlock.hcursor.get[String]("type").toOption, Some("text"))
     assertEquals(tailBlock.hcursor.downField("cache_control").get[String]("type").toOption, Some("ephemeral"))
     // 全消息列表恰 1 个断点（system+tools 的另 2 个在 bodyOf 层钉，见判据④）
@@ -95,7 +98,7 @@ class CacheBreakpointSpec extends FunSuite:
 
   test("① tail breakpoint lands on tool_result when the agent loop ends with a tool result") {
     val loopTail = conversation.take(3) // …assistant(tool_use) → user(tool_result)
-    val marked   = adapter.withTailCacheBreakpoint(adapter.toAnthropicMessages(loopTail))
+    val marked = adapter.withTailCacheBreakpoint(adapter.toAnthropicMessages(loopTail))
     val lastBlocks = marked.last.hcursor.downField("content").as[List[Json]].getOrElse(Nil)
     assertEquals(lastBlocks.last.hcursor.get[String]("type").toOption, Some("tool_result"))
     assertEquals(lastBlocks.last.hcursor.downField("cache_control").get[String]("type").toOption, Some("ephemeral"))
@@ -136,7 +139,7 @@ class CacheBreakpointSpec extends FunSuite:
 
   test("② appending one message leaves every earlier message byte-identical (modulo the moved marker)") {
     val before = adapter.withTailCacheBreakpoint(adapter.toAnthropicMessages(conversation))
-    val after  = adapter.withTailCacheBreakpoint(adapter.toAnthropicMessages(conversation :+ userText("next turn")))
+    val after = adapter.withTailCacheBreakpoint(adapter.toAnthropicMessages(conversation :+ userText("next turn")))
     assertEquals(after.length, before.length + 1)
     // 前 3 条：连 marker 都不曾在场，必须逐字节相等
     before.take(3).zip(after.take(3)).zipWithIndex.foreach { case ((b, a), i) =>
@@ -156,7 +159,7 @@ class CacheBreakpointSpec extends FunSuite:
 
   test("② full body of consecutive same-session requests differs only inside the last message") {
     val bodyBefore = adapter.bodyOf(params(conversation), streaming = false)
-    val bodyAfter  = adapter.bodyOf(params(conversation :+ userText("next turn")), streaming = false)
+    val bodyAfter = adapter.bodyOf(params(conversation :+ userText("next turn")), streaming = false)
     // system + tools 跨轮逐字节稳定（稳定段本就不带挪动 marker）
     assertEquals(
       stripMarkers(bodyAfter.hcursor.downField("system").as[Json].getOrElse(Json.Null)).noSpaces,
@@ -169,7 +172,7 @@ class CacheBreakpointSpec extends FunSuite:
       "tools wire changed across turns"
     )
     val msgsBefore = bodyBefore.hcursor.downField("messages").as[List[Json]].getOrElse(Nil)
-    val msgsAfter  = bodyAfter.hcursor.downField("messages").as[List[Json]].getOrElse(Nil)
+    val msgsAfter = bodyAfter.hcursor.downField("messages").as[List[Json]].getOrElse(Nil)
     msgsBefore.zip(msgsAfter.take(msgsBefore.length)).zipWithIndex.foreach { case ((b, a), i) =>
       assertEquals(stripMarkers(a).noSpaces, stripMarkers(b).noSpaces, s"body messages[$i] changed across turns")
     }
@@ -216,7 +219,7 @@ class CacheBreakpointSpec extends FunSuite:
 
   test("④ full body carries at most 4 cache_control markers (system 1 + tools 1 + tail 1)") {
     val body = adapter.bodyOf(params(conversation), streaming = false)
-    val n    = countMarkersDeep(body)
+    val n = countMarkersDeep(body)
     assertEquals(n, 3, s"budget: system stable + last tool + message tail = 3, got $n")
     // 断点落位：system 稳定块、末尾 tool、消息尾块
     val sys = body.hcursor.downField("system").as[List[Json]].getOrElse(Nil)
@@ -226,21 +229,33 @@ class CacheBreakpointSpec extends FunSuite:
   }
 
   private def countMarkers(msgs: List[Json]): Int = msgs.count { m =>
-    m.hcursor.downField("content").focus.flatMap(_.asArray).exists(
-      _.exists(_.hcursor.downField("cache_control").focus.isDefined)
-    )
+    m.hcursor
+      .downField("content")
+      .focus
+      .flatMap(_.asArray)
+      .exists(
+        _.exists(_.hcursor.downField("cache_control").focus.isDefined)
+      )
   }
 
   private def countMarkersDeep(json: Json): Int =
-    json.fold(0, _ => 0, _ => 0, _ => 0, arr => arr.foldLeft(0)((acc, j) => acc + countMarkersDeep(j)), obj =>
-      val self = if obj("cache_control").isDefined then 1 else 0
-      obj.values.foldLeft(self)((acc, j) => acc + countMarkersDeep(j))
+    json.fold(
+      0,
+      _ => 0,
+      _ => 0,
+      _ => 0,
+      arr => arr.foldLeft(0)((acc, j) => acc + countMarkersDeep(j)),
+      obj =>
+        val self = if obj("cache_control").isDefined then 1 else 0
+        obj.values.foldLeft(self)((acc, j) => acc + countMarkersDeep(j))
     )
+
+end CacheBreakpointSpec
 
 /** CacheStats：命中率聚合读数（日志聚合即可）的机械判据 + 面板口径对照。 */
 class CacheStatsSpec extends FunSuite:
 
-  private val zaiRead  = TokenUsage(inputTokens = 1000, outputTokens = 10, cacheReadTokens = Some(100))
+  private val zaiRead = TokenUsage(inputTokens = 1000, outputTokens = 10, cacheReadTokens = Some(100))
   private val dsNoRead = TokenUsage(inputTokens = 500, outputTokens = 5, cacheReadTokens = None)
 
   override def beforeEach(context: BeforeEach): Unit = CacheStats.resetForTest()
@@ -300,8 +315,8 @@ class CacheStatsSpec extends FunSuite:
 
   /** 在 cache-stats logger 上抓 logback INFO 行（临时调级，抓完复原；同 TransportLogSpec 手法）。 */
   private def captureStats(body: => Unit): List[String] =
-    val jb        = LoggerFactory.getLogger("nebflow.llm.cache-stats").asInstanceOf[JbLogger]
-    val appender  = new ListAppender[ILoggingEvent]()
+    val jb = LoggerFactory.getLogger("nebflow.llm.cache-stats").asInstanceOf[JbLogger]
+    val appender = new ListAppender[ILoggingEvent]()
     appender.start()
     val prevLevel = jb.getLevel
     jb.addAppender(appender)
@@ -315,7 +330,7 @@ class CacheStatsSpec extends FunSuite:
       appender.stop()
 
   test("①冷启动 <200 单 + 距首单 ≥15min ⇒ 恰发射一条聚合行（时钟注入模拟）") {
-    val t0    = 1_700_000_000_000L
+    val t0 = 1_700_000_000_000L
     val saved = CacheStats.clockMs
     try
       CacheStats.clockMs = () => t0
@@ -333,7 +348,7 @@ class CacheStatsSpec extends FunSuite:
   }
 
   test("②冷启动 <200 单 + 距首单 <15min ⇒ 零发射（闸不许提前开）") {
-    val t0    = 1_700_000_000_000L
+    val t0 = 1_700_000_000_000L
     val saved = CacheStats.clockMs
     try
       CacheStats.clockMs = () => t0
@@ -347,3 +362,4 @@ class CacheStatsSpec extends FunSuite:
       assertEquals(rows.size, 0, s"<15min 且 <200 单必须零行: $rows")
     finally CacheStats.clockMs = saved
   }
+end CacheStatsSpec

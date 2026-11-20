@@ -130,6 +130,7 @@ Git safety:
    * 规则 id 与标签（未命中时两者为空串）。
    */
   final case class DangerVerdict(level: Int, ruleId: String, label: String)
+
   object DangerVerdict:
     val Safe: DangerVerdict = DangerVerdict(0, "", "")
 
@@ -156,7 +157,11 @@ Git safety:
       "集群删资源（kubectl delete）",
       """(?i)\bkubectl\s+delete\s+(namespace|cluster|deployment|statefulset|pv|pvc)""".r
     ),
-    DangerRule("bash.gate.terraform-destroy", "基建销毁（terraform destroy）", """(?i)\bterraform\s+(destroy|apply).*(-destroy)""".r),
+    DangerRule(
+      "bash.gate.terraform-destroy",
+      "基建销毁（terraform destroy）",
+      """(?i)\bterraform\s+(destroy|apply).*(-destroy)""".r
+    ),
     DangerRule("bash.gate.docker-prune", "批量删容器/卷（docker prune）", """(?i)\bdocker\s+(system|volume)\s+prune""".r),
     // Package publishing
     DangerRule("bash.gate.publish-npm", "发布包（不可撤回）", """(?i)\bnpm\s+publish""".r),
@@ -218,7 +223,13 @@ Git safety:
       "~/" + nebflow.shared.PathUtil.LegacyHomeDirName,
       nebflow.shared.PathUtil.dataRoot.toString
     ).distinct
-      .map(root => DangerRule("bash.gate.data-root-wipe", "删除数据根（本实例 home）", ("""rm\s+.*""" + scala.util.matching.Regex.quote(root)).r))
+      .map(root =>
+        DangerRule(
+          "bash.gate.data-root-wipe",
+          "删除数据根（本实例 home）",
+          ("""rm\s+.*""" + scala.util.matching.Regex.quote(root)).r
+        )
+      )
 
   private def dataRootWipePatterns: List[scala.util.matching.Regex] = dataRootWipeRules.map(_.pattern)
 
@@ -344,6 +355,7 @@ Git safety:
     DangerRule("bash.level3.mkfs", "格式化磁盘（mkfs）", """mkfs\b""".r),
     DangerRule("bash.level3.dd-device", "写裸设备（dd of=/dev/…）", """dd\s+if=.*of=/dev/""".r)
   )
+
   private val DangerousRules = List(
     DangerRule("bash.level2.rm-rf", "递归删除", """rm\s+-rf\s+""".r),
     DangerRule("bash.level2.rm-fr", "递归删除", """rm\s+-fr\s+""".r),
@@ -353,7 +365,11 @@ Git safety:
     DangerRule("bash.level2.windows-del-s", "递归删除", """(?i)\bdel\s+(?:/[a-z]+\s+)*/s\b""".r),
     // R11: 脚本语言递归删除（本机 .mjs/.py 的删除点全走这两条路径）
     DangerRule("bash.level2.script-rmtree", "递归删除", """(?i)\bshutil\.rmtree\b""".r),
-    DangerRule("bash.level2.script-rm-recursive", "递归删除", """(?i)\brm(?:Sync|dirSync)?\s*\([\s\S]*\brecursive\s*:\s*true""".r),
+    DangerRule(
+      "bash.level2.script-rm-recursive",
+      "递归删除",
+      """(?i)\brm(?:Sync|dirSync)?\s*\([\s\S]*\brecursive\s*:\s*true""".r
+    ),
     DangerRule("bash.level2.find-delete", "批量删除（find -delete）", """(?i)\bfind\b[\s\S]*\s-delete\b""".r),
     DangerRule("bash.level2.pkill", "杀进程", """\bpkill\b""".r),
     DangerRule("bash.level2.killall", "杀进程", """\bkillall\b""".r),
@@ -363,6 +379,7 @@ Git safety:
     DangerRule("bash.level2.git-reset-hard", "丢弃未提交改动", """git\s+reset\s+--hard""".r),
     DangerRule("bash.level2.git-clean-f", "删除未跟踪文件", """git\s+clean\s+-f""".r)
   )
+
   private val WarningRules = List(
     // T4（网络档）：出网命令统一 **1 档**——只做可见性分级，
     // 不与 delguard 的删除形态分级（2/3）打架。规格点名 6 条形态；PowerShell

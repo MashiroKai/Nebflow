@@ -89,7 +89,7 @@ class BridgeInboundSingleBubbleSpec extends CatsEffectSuite:
       .map(_.content)
       .flatMap {
         case Right(blocks) => blocks.collect { case ContentBlock.Text(t) => t }
-        case Left(t)       => List(t)
+        case Left(t) => List(t)
       }
       .mkString("\n")
 
@@ -99,9 +99,9 @@ class BridgeInboundSingleBubbleSpec extends CatsEffectSuite:
   private def waitUntil(timeout: FiniteDuration, every: FiniteDuration = 25.millis)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Boolean] =
       cond.flatMap {
-        case true                                        => IO.pure(true)
+        case true => IO.pure(true)
         case _ if System.currentTimeMillis() >= deadline => IO.pure(false)
-        case false                                       => IO.sleep(every) >> go(deadline)
+        case false => IO.sleep(every) >> go(deadline)
       }
     go(System.currentTimeMillis() + timeout.toMillis).void
 
@@ -132,8 +132,10 @@ class BridgeInboundSingleBubbleSpec extends CatsEffectSuite:
   /** 真会话夹具读数：预置行的行数 / 喂 bridge 件之后的全部会话行 / 模型面请求正文。 */
   private final case class Readings(before: Int, afterRows: List[UiMessage], modelBody: String)
 
-  /** 真 AgentActor + 脚本化 LLM：预置 `handleBridgeMessage` 的显示面裸行 → 喂 bridge 件
-   *  → 回读会话流与模型请求。零 spawn 零端口零 :8080 接触。 */
+  /**
+   * 真 AgentActor + 脚本化 LLM：预置 `handleBridgeMessage` 的显示面裸行 → 喂 bridge 件
+   *  → 回读会话流与模型请求。零 spawn 零端口零 :8080 接触。
+   */
   private def probeBridgeInbound(runName: String): IO[Readings] =
     val sid = s"bridge-single-bubble-$runName"
     val ws = tempRoot / runName
@@ -198,6 +200,8 @@ class BridgeInboundSingleBubbleSpec extends CatsEffectSuite:
         IO(nebflow.core.LlmLogWriter.setEnabled(prevLlmLog)) *>
         IO(PathUtil.setDataRoot(originalRoot))
     )
+
+  end probeBridgeInbound
 
   test("④ 真会话 · 闸①「注入泡」：bridge 入站只留一行（改前 2 → 改后 1）"):
     probeBridgeInbound("rows").map { r =>

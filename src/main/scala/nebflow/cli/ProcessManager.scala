@@ -48,8 +48,8 @@ object ProcessManager:
     listenerAlive: Int => Boolean = port => SingleInstanceGuard.connectProbeAccepted(port),
     destroy: Long => Unit = pid => ProcessHandle.of(pid).ifPresent(_.destroy()),
     isRunning: Long => Boolean = ProcessManager.isRunning,
-      graceTimeoutMs: Long = 5_000L,
-      drainTimeoutMs: Long = SingleInstanceGuard.MaxDrainWaitMs,
+    graceTimeoutMs: Long = 5_000L,
+    drainTimeoutMs: Long = SingleInstanceGuard.MaxDrainWaitMs,
     pollMs: Long = 100L,
     metaRead: () => Option[PidMeta.Meta] = () => PidMeta.read(),
     startInstantMs: Long => Option[Long] = ProcessManager.processStartInstantMs,
@@ -395,8 +395,7 @@ object ProcessManager:
         // and fail closed if it does not exit within the grace window.
         targets.foreach(deps.destroy)
         val gracefulDied = waitUntil(deps, pid, deps.graceTimeoutMs)
-        if !gracefulDied then
-          return StopOutcome.Failed(s"process $pid did not exit after graceful stop; left running")
+        if !gracefulDied then return StopOutcome.Failed(s"process $pid did not exit after graceful stop; left running")
 
         // Piece 3: port-release confirmation from the TARGET pid's own
         // listener set. Empty after death (or lsof unavailable) = released /

@@ -8,17 +8,21 @@ import munit.CatsEffectSuite
 import nebflow.shared.SubAgentTask
 
 class SubAgentRunLifecycleSpec extends CatsEffectSuite:
-  private def task = SubAgentTask("task", "parent", "worker", "work", "description", "running", 0, 1L, None, None, "subtask")
+
+  private def task =
+    SubAgentTask("task", "parent", "worker", "work", "description", "running", 0, 1L, None, None, "subtask")
 
   private def isolated[A](f: (SubAgentTaskStore, os.Path) => IO[A]): IO[A] =
-    IO.blocking(os.temp.dir(prefix = "task-lifecycle-")).bracket(dir => f(new SubAgentTaskStore(dir), dir))(
-      dir => IO.blocking(os.remove.all(dir)))
+    IO.blocking(os.temp.dir(prefix = "task-lifecycle-"))
+      .bracket(dir => f(new SubAgentTaskStore(dir), dir))(dir => IO.blocking(os.remove.all(dir)))
 
   test("two store instances for the same directory share the write lock") {
     isolated { (store, dir) =>
       IO {
         val other = new SubAgentTaskStore(dir)
-        val field = classOf[SubAgentTaskStore].getDeclaredFields.find(_.getType == classOf[java.util.concurrent.locks.ReentrantLock]).get
+        val field = classOf[SubAgentTaskStore].getDeclaredFields
+          .find(_.getType == classOf[java.util.concurrent.locks.ReentrantLock])
+          .get
         field.setAccessible(true)
         assert(field.get(store) eq field.get(other), "same directory must serialize read-modify-write across stores")
       }
@@ -29,8 +33,10 @@ class SubAgentRunLifecycleSpec extends CatsEffectSuite:
     isolated { (store, dir) =>
       val other = new SubAgentTaskStore(dir)
       for
-        results <- List(store.beginRun(task.copy(taskId = "one"), "r1", "root", "nebflow"),
-          other.beginRun(task.copy(taskId = "two"), "r2", "root", "nebflow")).parSequence
+        results <- List(
+          store.beginRun(task.copy(taskId = "one"), "r1", "root", "nebflow"),
+          other.beginRun(task.copy(taskId = "two"), "r2", "root", "nebflow")
+        ).parSequence
         one <- store.findByTaskId("one")
         two <- other.findByTaskId("two")
       yield
@@ -42,9 +48,23 @@ class SubAgentRunLifecycleSpec extends CatsEffectSuite:
 
   test("legacy records decode without execution fields and remain writable") {
     isolated { (store, _) =>
-      val legacy = task.asJson.mapObject(o => o.filter { case (key, _) =>
-        Set("taskId", "parentSessionId", "agentName", "prompt", "description", "status", "retryCount", "spawnedAt", "completedAt", "lastError", "source").contains(key)
-      })
+      val legacy = task.asJson.mapObject(o =>
+        o.filter { case (key, _) =>
+          Set(
+            "taskId",
+            "parentSessionId",
+            "agentName",
+            "prompt",
+            "description",
+            "status",
+            "retryCount",
+            "spawnedAt",
+            "completedAt",
+            "lastError",
+            "source"
+          ).contains(key)
+        }
+      )
       for
         decoded <- IO.fromEither(decode[SubAgentTask](legacy.noSpaces))
         _ <- store.recordTask(decoded)
@@ -123,7 +143,8 @@ class SubAgentRunLifecycleSpec extends CatsEffectSuite:
       for
         _ <- store.beginRun(task, "run", "root", "nebflow")
         attempts <- List("finished", "failed", "cancelled").parTraverse(status =>
-          store.completeRun("parent", "task", "run", status))
+          store.completeRun("parent", "task", "run", status)
+        )
         row <- store.findByTaskId("task")
       yield
         assertEquals(attempts.count(_.isRight), 1)

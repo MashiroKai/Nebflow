@@ -46,30 +46,34 @@ object PluginSourceCatalog:
 
   /** 单条源声明（代码内建与用户配置同形）。 */
   final case class SourceDecl(
-      name: String,
-      /** `git`（远端仓）| `local`（本机目录，开发态）——与 `PluginSourceLedger.Kind` 的 closed set 对齐。 */
-      kind: String,
-      /** git 源 = remote URL；local 源 = 绝对目录路径。 */
-      url: String,
-      /** git 分支（默认 `main`）；local 源忽略。 */
-      branch: String,
-      /** git 源 = 仓内包目录（缺省 = 仓根）。 */
-      path: Option[String],
-      /** 缺失即自愈（新装 home / 用户删掉后重启）：只有内建自研包为 true。 */
-      preinstall: Boolean,
-      /** 人读一句话（面板与审计行共用）。 */
-      note: String
+    name: String,
+    /** `git`（远端仓）| `local`（本机目录，开发态）——与 `PluginSourceLedger.Kind` 的 closed set 对齐。 */
+    kind: String,
+    /** git 源 = remote URL；local 源 = 绝对目录路径。 */
+    url: String,
+    /** git 分支（默认 `main`）；local 源忽略。 */
+    branch: String,
+    /** git 源 = 仓内包目录（缺省 = 仓根）。 */
+    path: Option[String],
+    /** 缺失即自愈（新装 home / 用户删掉后重启）：只有内建自研包为 true。 */
+    preinstall: Boolean,
+    /** 人读一句话（面板与审计行共用）。 */
+    note: String
   ):
     def isGit: Boolean = kind == "git"
     def isLocal: Boolean = kind == "local"
+
+  end SourceDecl
 
   object SourceDecl:
     val DefaultBranch = "main"
 
   // ── 代码内建声明（作者令 2026-11-01 22:55「自研插件走远端源，不进 seed」）──
 
-  /** 自研插件仓命名空间（GitHub `MashiroKai/` 名下，单仓单包）。🔴 只在此处出现，禁散落字面。
-    * 正典主页迁移（作者令 2026-11-15，local-coupling 处置a）：随仓库迁移一次性更换。 */
+  /**
+   * 自研插件仓命名空间（GitHub `MashiroKai/` 名下，单仓单包）。🔴 只在此处出现，禁散落字面。
+   * 正典主页迁移（作者令 2026-11-15，local-coupling 处置a）：随仓库迁移一次性更换。
+   */
   val GitBase = "git@github.com:MashiroKai"
 
   /**
@@ -134,8 +138,7 @@ object PluginSourceCatalog:
       val c = json.hcursor
       val kind = c.downField("kind").as[String].toOption.map(_.trim.toLowerCase).getOrElse("git")
       val url = c.downField("url").as[String].toOption.map(_.trim).filter(_.nonEmpty)
-      if !SourceDeclKind.isKnown(kind) then
-        Left(s"unknown source kind '$kind' (expected: git | local)")
+      if !SourceDeclKind.isKnown(kind) then Left(s"unknown source kind '$kind' (expected: git | local)")
       else
         url match
           case None => Left("missing 'url' (git remote URL, or an absolute directory for kind=local)")
@@ -145,13 +148,20 @@ object PluginSourceCatalog:
                 name = name,
                 kind = kind,
                 url = u,
-                branch = c.downField("branch").as[String].toOption.map(_.trim).filter(_.nonEmpty)
+                branch = c
+                  .downField("branch")
+                  .as[String]
+                  .toOption
+                  .map(_.trim)
+                  .filter(_.nonEmpty)
                   .getOrElse(SourceDecl.DefaultBranch),
                 path = c.downField("path").as[String].toOption.map(_.trim).filter(_.nonEmpty),
                 preinstall = c.downField("preinstall").as[Boolean].toOption.getOrElse(false),
                 note = c.downField("note").as[String].toOption.getOrElse("user-declared plugin source")
               )
             )
+
+      end if
 
   /** 闭集：本件认得的两态（与 `PluginSourceLedger.Kind` 的 git/local 同域，禁第二套判据）。 */
   private object SourceDeclKind:
@@ -189,8 +199,10 @@ object PluginSourceCatalog:
     if !d.isGit then d.url
     else
       val hostPath = d.url
-        .stripPrefix("git@").replace(':', '/')
-        .stripPrefix("https://").stripPrefix("http://")
+        .stripPrefix("git@")
+        .replace(':', '/')
+        .stripPrefix("https://")
+        .stripPrefix("http://")
         .stripSuffix(".git")
       s"git · $hostPath @${d.branch}"
 

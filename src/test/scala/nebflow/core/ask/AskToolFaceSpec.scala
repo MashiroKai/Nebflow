@@ -1,17 +1,19 @@
 package nebflow.core.ask
 
-/** Ask's independent tool face, shared-tool permissions and prompt contract.
-  * canvas-ask-restricted-edit（CAE-REQ-001/002）：八工具面 → 十工具面
-  * （+ ask_edit/ask_write 提案制受限编辑）；Bash 由普通 shell 换装为
-  * 只读白名单执行器（prompt 同步换装）。
-  *
-  * 工具面同步（2026-11-19，作者裁「同步 spec 到真实工具面」，**产品零改动**）：
-  * 期望值取自**注册表派生的真实工具面单源**，补上两笔早已/新近在册的能力——
-  *   · `PdfPage`（PDF note/ask 批 `858545d9a`：绑定 PDF 的按需取页件，ask 专属；
-  *     该批只改了 `AskSessions`，漏同步本 spec ⇒ 本 spec 在 `feat/base` 上即为红）；
-  *   · `Card`（card-tool-revive 批 2026-11-18：从 git 历史复活，**仅**授 Canvas Ask）。
-  * 断言强度只增不减：除了钉住这十二个名字，还钉「面 = 专属 ∪ 共享」的结构式与
-  * 「每个名字都在注册表里」（单源）。 */
+/**
+ * Ask's independent tool face, shared-tool permissions and prompt contract.
+ * canvas-ask-restricted-edit（CAE-REQ-001/002）：八工具面 → 十工具面
+ * （+ ask_edit/ask_write 提案制受限编辑）；Bash 由普通 shell 换装为
+ * 只读白名单执行器（prompt 同步换装）。
+ *
+ * 工具面同步（2026-11-19，作者裁「同步 spec 到真实工具面」，**产品零改动**）：
+ * 期望值取自**注册表派生的真实工具面单源**，补上两笔早已/新近在册的能力——
+ *   · `PdfPage`（PDF note/ask 批 `858545d9a`：绑定 PDF 的按需取页件，ask 专属；
+ *     该批只改了 `AskSessions`，漏同步本 spec ⇒ 本 spec 在 `feat/base` 上即为红）；
+ *   · `Card`（card-tool-revive 批 2026-11-18：从 git 历史复活，**仅**授 Canvas Ask）。
+ * 断言强度只增不减：除了钉住这十二个名字，还钉「面 = 专属 ∪ 共享」的结构式与
+ * 「每个名字都在注册表里」（单源）。
+ */
 final class AskToolFaceSpec extends munit.FunSuite:
 
   /** 共享只读面（非 Ask 专属；Ask 与其他身份的公共底座）。 */
@@ -84,7 +86,9 @@ final class AskToolFaceSpec extends munit.FunSuite:
     assert(!handoff.contains("only outbound action"))
   }
 
-  test("F6 Ask prompt carries the capability boundary: simple edits in scope, complex tasks default to the main session") {
+  test(
+    "F6 Ask prompt carries the capability boundary: simple edits in scope, complex tasks default to the main session"
+  ) {
     val prompt = AskContextAssembler.promptFor("notes.md", "/vault/notes.md", "context")
     // 边界段在场（作者令 2026-11-19「它除了问答，简单的修改文档/文件，复杂的任务要
     // 默认交给主会话」）——删掉该段本用例即红。

@@ -561,7 +561,11 @@ object PluginRegistry:
       if !os.isDir(pluginsDir) then Snapshot(Nil, Nil)
       else
         val removed = PluginRemovePolicy.removedNames()
-        val subDirs = os.list(pluginsDir).filter(os.isDir).toList.sortBy(_.last)
+        val subDirs = os
+          .list(pluginsDir)
+          .filter(os.isDir)
+          .toList
+          .sortBy(_.last)
           .filterNot(d => removed(d.last))
           .filterNot(d => scanExcluded(d.last)) // 备份/点目录整体隐身（先于装载与重名检测）
         val full = treeSig(pluginsDir)
@@ -575,10 +579,12 @@ object PluginRegistry:
             // 同名候选）在身份面升级为全拒；排除先于装载 ⇒ 备份里的同名拷贝不触发本面。
             val loadedPlugins = loaded.collect { case Right(p) => p }
             val ambiguousNames = loadedPlugins.groupBy(_.name).collect { case (n, ps) if ps.size > 1 => n }.toSet
-            val dupRejects = loadedPlugins.filter(p => ambiguousNames.contains(p.name)).groupBy(_.name).toList.sortBy(_._1).map { (name, ps) =>
-              name -> (s"duplicate identity: manifest name '$name' claimed by multiple directories " +
-                s"[${ps.map(p => os.Path(p.dir).last).sorted.mkString(", ")}] — all copies rejected (ambiguous identity, resolve to a single directory)")
-            }
+            val dupRejects =
+              loadedPlugins.filter(p => ambiguousNames.contains(p.name)).groupBy(_.name).toList.sortBy(_._1).map {
+                (name, ps) =>
+                  name -> (s"duplicate identity: manifest name '$name' claimed by multiple directories " +
+                    s"[${ps.map(p => os.Path(p.dir).last).sorted.mkString(", ")}] — all copies rejected (ambiguous identity, resolve to a single directory)")
+              }
             val snap = Snapshot(
               plugins = loadedPlugins.filterNot(p => ambiguousNames.contains(p.name)),
               rejected = loaded.collect { case Left((n, r)) => n -> r } ++ dupRejects
@@ -586,6 +592,7 @@ object PluginRegistry:
             snap.rejected.foreach { case (n, r) => logger.warnSync(s"Plugin '$n' rejected: $r") }
             cache.set(Some(Cache(full, removed, snap)))
             snap
+        end match
     }.flatMap(snap => backfillOnce(snap).as(snap))
 
   /**
@@ -1497,21 +1504,22 @@ object PluginRegistry:
             digest = digest,
             via = PluginSourceLedger.Via.Local,
             meta = PluginSourceLedger.InstallMeta(validationSummary = Some("local-layout@1"))
-          )
-          match
-            case Right(entry) =>
-              // 统一生命周期计划（§6.3/§9 A 行）：planId 返回给成功文案
-              Some(
-                PluginLifecyclePlan.planId(
-                  PluginLifecyclePlan.forInstall(pname, version, digest, entry.updatePolicy)
-                )
+          ) match
+          case Right(entry) =>
+            // 统一生命周期计划（§6.3/§9 A 行）：planId 返回给成功文案
+            Some(
+              PluginLifecyclePlan.planId(
+                PluginLifecyclePlan.forInstall(pname, version, digest, entry.updatePolicy)
               )
-            case Left(err) =>
-              logger.warnSync(
-                s"plugin provenance recording failed for '$pname' ($err) — the package stays installed " +
-                  "(presence = trust); its source query degrades to unknown-source"
-              )
-              None
+            )
+          case Left(err) =>
+            logger.warnSync(
+              s"plugin provenance recording failed for '$pname' ($err) — the package stays installed " +
+                "(presence = trust); its source query degrades to unknown-source"
+            )
+            None
+
+        end match
 
   /**
    * canonical 化后 `src` == cwd 自身或为 cwd 的**祖先** ⇒ true（该源一旦拷贝就是整个 cwd 树）。

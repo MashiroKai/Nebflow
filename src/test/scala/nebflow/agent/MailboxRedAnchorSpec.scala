@@ -52,6 +52,7 @@ class MailboxRedAnchorSpec extends CatsEffectSuite:
 
   private class SilentLlm extends LlmHandle[IO]:
     def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -99,7 +100,7 @@ class MailboxRedAnchorSpec extends CatsEffectSuite:
             def receive(ctx: ActorContext[AgentCommand], msg: AgentCommand): IO[Behavior[AgentCommand]] =
               msg match
                 case AgentCommand.MailboxArrived => gate.complete(ctx).void.as(this)
-                case _                           => IO.pure(this)
+                case _ => IO.pure(this)
           ,
           s"red-anchor-${scala.util.Random.nextInt(100000)}"
         )
@@ -130,7 +131,9 @@ class MailboxRedAnchorSpec extends CatsEffectSuite:
       // 解冻首拍：W4 resumeSweep（AgentFrozen 三条恢复腿的公共体）。
       frozenState = AgentState(sessionId = Some(sid), sessionName = Some("spec parent"))
         .withOutstandingSubagentResults(1)
-      unfrozen <- runInActorContext(system)(ctx => MailboxDrain.resumeSweep(agentDef, resources, 0, frozenState)(using ctx))
+      unfrozen <- runInActorContext(system)(ctx =>
+        MailboxDrain.resumeSweep(agentDef, resources, 0, frozenState)(using ctx)
+      )
       after <- legacyMarkerCount(sid)
       pend <- SessionMailbox.scanPending(sid)
       taken <- SessionMailbox.scanTaken(sid)
@@ -156,6 +159,7 @@ class MailboxRedAnchorSpec extends CatsEffectSuite:
       assertEquals(clue(tomb), Set("delegate-x-abc12345"), "consumption tombstone recorded")
       assertEquals(clue(after), clue(before), "ZERO new legacy markers/receipts — the mailbox path never touches them")
       assertEquals(clue(after._1), false, "legacy delivered-receipts ledger NEVER created by the mailbox path")
+    end for
   }
 
   // ══ 锚②：取走后崩（taken 残差）→ 解冻首拍重注 ≤1 重复零丢失 ═════════════
@@ -177,7 +181,9 @@ class MailboxRedAnchorSpec extends CatsEffectSuite:
       pend <- SessionMailbox.scanPending(sid)
       _ <- SessionMailbox.take(sid, pend)
       frozenState = AgentState(sessionId = Some(sid), sessionName = Some("spec parent"))
-      unfrozen <- runInActorContext(system)(ctx => MailboxDrain.resumeSweep(agentDef, resources, 0, frozenState)(using ctx))
+      unfrozen <- runInActorContext(system)(ctx =>
+        MailboxDrain.resumeSweep(agentDef, resources, 0, frozenState)(using ctx)
+      )
       taken <- SessionMailbox.scanTaken(sid)
     yield
       assert(
@@ -185,6 +191,7 @@ class MailboxRedAnchorSpec extends CatsEffectSuite:
         "taken residual replays into the unfreeze turn — zero loss"
       )
       assertEquals(clue(taken), Nil, "resumeSweep unlinks after a successful replay")
+    end for
   }
 
   // ══ 锚③：空箱解冻 = 逐字现状（零消息零会计）════════════════════════════
@@ -198,7 +205,9 @@ class MailboxRedAnchorSpec extends CatsEffectSuite:
       frozenState = AgentState(sessionId = Some(sid), sessionName = Some("spec parent"))
         .withMessages(List(Message(MessageRole.User, Left("history"))))
         .withOutstandingSubagentResults(2)
-      unfrozen <- runInActorContext(system)(ctx => MailboxDrain.resumeSweep(agentDef, resources, 0, frozenState)(using ctx))
+      unfrozen <- runInActorContext(system)(ctx =>
+        MailboxDrain.resumeSweep(agentDef, resources, 0, frozenState)(using ctx)
+      )
     yield
       assertEquals(clue(unfrozen.messages.map(_.textContent)), List("history"), "no phantom injection")
       assertEquals(clue(unfrozen.execution.outstandingSubagentResults), 2, "zero accounting on an empty box")

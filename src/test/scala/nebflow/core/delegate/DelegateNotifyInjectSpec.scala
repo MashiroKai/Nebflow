@@ -80,6 +80,7 @@ class DelegateNotifyInjectSpec extends CatsEffectSuite:
       assertEquals(got.head.source, Some(DelegateNotify.Source), "T1: the attribution source must be delegate-notify")
       assertEquals(got.head.eventType, Some("flow-notify"), "T1: the turn-boundary event type is flow-notify")
       assertEquals(got.head.fromUser, false, "T1: engine-originated, not a human input")
+    end for
   }
 
   test("T2: a target that is not in the registry yields false and delivers nothing (the caller's park branch)") {
@@ -88,7 +89,14 @@ class DelegateNotifyInjectSpec extends CatsEffectSuite:
       recorded <- Ref.of[IO, List[AgentCommand]](Nil)
       ref <- system.spawn(recorderBehavior(recorded), s"rec-inject2-${scala.util.Random.nextInt(1000000)}")
       registry <- Ref.of[IO, Map[String, AgentRecord]](
-        Map("other-sid" -> AgentRecord(sessionId = "other-sid", ref = ref, kind = AgentKind.Delegate, rootSessionId = "other-sid"))
+        Map(
+          "other-sid" -> AgentRecord(
+            sessionId = "other-sid",
+            ref = ref,
+            kind = AgentKind.Delegate,
+            rootSessionId = "other-sid"
+          )
+        )
       )
       ok <- DelegateNotify.inject(registry, "delegate-general-absent", "should not arrive")
       got <- recorded.get
@@ -96,6 +104,7 @@ class DelegateNotifyInjectSpec extends CatsEffectSuite:
     yield
       assert(!ok, "T2: an absent target must report false so flushBatch parks the件 instead of markSent")
       assertEquals(got, Nil, "T2: nothing may be delivered to any other session")
+    end for
   }
 
 end DelegateNotifyInjectSpec

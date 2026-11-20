@@ -67,6 +67,8 @@ class LegacyRootMigrationSpec extends munit.FunSuite:
     }
     files
 
+  end flatSample
+
   /** 顶层条目名（`projects` / `secrets` / `tasks-v2.json` / …）= `movedEntries` 的比对基准。 */
   private def topLevelNames(sample: Map[String, String]): Set[String] =
     sample.keys.map(_.split('/').head).toSet
@@ -133,6 +135,8 @@ class LegacyRootMigrationSpec extends munit.FunSuite:
       PathUtil.setDataRoot(prev)
       os.remove.all(machineRoot)
 
+    end try
+
   test("V4: 未登录时 migrate ⇒ 落 pending-claim/<ts>/、不写指针、且不被认作生效根"):
     val prev = PathUtil.dataRoot
     val machineRoot = tempRoot()
@@ -189,5 +193,6 @@ class LegacyRootMigrationSpec extends munit.FunSuite:
     finally
       PathUtil.setDataRoot(prev)
       os.remove.all(machineRoot)
+    end try
 
 end LegacyRootMigrationSpec

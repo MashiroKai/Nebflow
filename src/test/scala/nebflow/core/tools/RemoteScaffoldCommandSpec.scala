@@ -1,10 +1,12 @@
 package nebflow.core.tools
 
 class RemoteScaffoldCommandSpec extends munit.FunSuite:
+
   test("missing python fails closed before executing payload") {
     val tmp = java.nio.file.Files.createTempDirectory("scaffold-command-")
     val output = tmp.resolve("payload-ran")
-    val script = s"open(${output.toString.replace("\\", "\\\\").replace("'", "\\'").prepended('\'').appended('\'')},'w').write('bad')"
+    val script =
+      s"open(${output.toString.replace("\\", "\\\\").replace("'", "\\'").prepended('\'').appended('\'')},'w').write('bad')"
     val encoded = java.util.Base64.getEncoder.encodeToString(script.getBytes(java.nio.charset.StandardCharsets.UTF_8))
     val command = RemoteScaffoldCommand.build(encoded, tmp.toString, "test-device")
     val process = new ProcessBuilder("/bin/sh", "-c", command)

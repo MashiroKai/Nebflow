@@ -11,6 +11,7 @@ import nebflow.llm.ModelCandidate
 import nebflow.shared.{PathUtil, ThinkingConfig}
 
 class AskHostToolsSpec extends CatsEffectSuite:
+
   test("AskHost ledger persists pending source/question and accepts one correlated decision") {
     val tmp = os.temp.dir()
     val previous = PathUtil.dataRoot
@@ -30,7 +31,9 @@ class AskHostToolsSpec extends CatsEffectSuite:
       _ = assert(accepted)
       _ = assertEquals(result, "reject: unsafe")
       _ = assert(!repeated)
-      _ = assert(recovered.find(_.pending.correlationId == pending.correlationId).flatMap(_.answer).contains("reject: unsafe"))
+      _ = assert(
+        recovered.find(_.pending.correlationId == pending.correlationId).flatMap(_.answer).contains("reject: unsafe")
+      )
       _ = assert(rows2.exists(_.contains("answered")))
     yield ()
     check.guarantee(IO {
@@ -113,7 +116,8 @@ class AskHostToolsSpec extends CatsEffectSuite:
     val tmp = os.temp.dir()
     val previous = PathUtil.dataRoot
     PathUtil.setDataRoot(tmp)
-    val event = nebflow.actor.AgentCommand.ExternalEvent("askhost", "request", "question", JsonObject.empty, Some("request-a"))
+    val event =
+      nebflow.actor.AgentCommand.ExternalEvent("askhost", "request", "question", JsonObject.empty, Some("request-a"))
     import nebflow.core.mail.SessionMailbox
     (for
       first <- SessionMailbox.mailOnce("root", event, "askhost-request", "request-a", deduplicateReceipts = true)
@@ -134,7 +138,8 @@ class AskHostToolsSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(tmp)
     import nebflow.shared.{Message, MessageRole, ContentBlock}
     import nebflow.core.ResumeHandoff
-    val transcript = List(Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("call-a", "AskHost", JsonObject.empty)))))
+    val transcript =
+      List(Message(MessageRole.Assistant, Right(List(ContentBlock.ToolUse("call-a", "AskHost", JsonObject.empty)))))
     (for
       (request, _) <- AskHostLedger.beginForCall("worker", "root", "agent", "one", "call-a")
       _ <- IO(AskHostLedger.clearForTests())
@@ -157,12 +162,17 @@ class AskHostToolsSpec extends CatsEffectSuite:
       start <- Deferred[IO, Unit]
       firstReady <- Deferred[IO, Unit]
       secondReady <- Deferred[IO, Unit]
-      first <- (firstReady.complete(()) *> start.get *> AskHostLedger.beginForCall("worker", "root", "agent", "first", "call-a")).start
-      second <- (secondReady.complete(()) *> start.get *> AskHostLedger.beginForCall("worker", "root", "agent", "second", "call-b")).start
+      first <- (firstReady
+        .complete(()) *> start.get *> AskHostLedger.beginForCall("worker", "root", "agent", "first", "call-a")).start
+      second <- (secondReady
+        .complete(()) *> start.get *> AskHostLedger.beginForCall("worker", "root", "agent", "second", "call-b")).start
       _ <- firstReady.get *> secondReady.get *> start.complete(())
       (a, wa) <- first.joinWithNever
       (b, wb) <- second.joinWithNever
-      _ <- (AskHostLedger.answer(a.correlationId, "answer-a"), AskHostLedger.answer(b.correlationId, "answer-b")).parTupled
+      _ <- (
+        AskHostLedger.answer(a.correlationId, "answer-a"),
+        AskHostLedger.answer(b.correlationId, "answer-b")
+      ).parTupled
       pair <- (wa.get, wb.get).parTupled
       _ = assertNotEquals(a.correlationId, b.correlationId)
       _ = assertEquals(pair, ("answer-a", "answer-b"))
@@ -307,8 +317,10 @@ class AskHostToolsSpec extends CatsEffectSuite:
         Some(Some(AskHostLedger.Terminal.TimedOut(AskHostLedger.TimeoutOutcome, "root reply timed out"))),
         "a timeout release must record the NEUTRAL outcome, not a substantive default"
       )
-      _ = assert(after.exists(_.pending.workerSession == "worker-x"),
-        "the timed-out row must keep its worker binding so a late reply stays routable")
+      _ = assert(
+        after.exists(_.pending.workerSession == "worker-x"),
+        "the timed-out row must keep its worker binding so a late reply stays routable"
+      )
       _ = assert(recovered.isEmpty, "a released wait must not be replayed as pending at boot")
     yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
@@ -339,8 +351,12 @@ class AskHostToolsSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(tmp)
     import nebflow.core.mail.SessionMailbox
     val worker = "delegate-nebflow-workerlive"
-    val resources = resourcesWith(Map(worker ->
-      AgentRecord(sessionId = worker, ref = liveRef(), kind = AgentKind.Delegate, rootSessionId = worker)))
+    val resources = resourcesWith(
+      Map(
+        worker ->
+          AgentRecord(sessionId = worker, ref = liveRef(), kind = AgentKind.Delegate, rootSessionId = worker)
+      )
+    )
     val ctx = rootCtx(resources)
     (for
       (req, _) <- AskHostLedger.beginForCall(worker, "sid-root", "agent", "q", "call-late")
@@ -354,8 +370,10 @@ class AskHostToolsSpec extends CatsEffectSuite:
       _ = assertEquals(entries.size, 1, "exactly one injected late reply")
       _ = assert(entries.head.event.payload.contains("[ASKHOST-LATE-REPLY]"))
       _ = assert(entries.head.event.payload.contains("use option A"))
-      _ = assert(entries.head.event.payload.contains(AskHostLedger.TimeoutOutcome),
-        "the injected reply must state the neutral outcome it supersedes")
+      _ = assert(
+        entries.head.event.payload.contains(AskHostLedger.TimeoutOutcome),
+        "the injected reply must state the neutral outcome it supersedes"
+      )
       _ = assert(entries.head.identity.startsWith("askhost-late-reply-"))
       _ = assert(entries.head.event.metadata("lateReply").flatMap(_.asBoolean).contains(true))
       _ = assertEquals(state.map(_.lateReplies), Some(List("use option A")))
@@ -395,13 +413,19 @@ class AskHostToolsSpec extends CatsEffectSuite:
       conflict <- AskHostReplyTool.call(replyInput(req.correlationId, "Option B"), ctx)
       same <- AskHostReplyTool.call(replyInput(req.correlationId, "Option A"), ctx)
       unknown <- AskHostReplyTool.call(replyInput("no-such-id", "x"), ctx)
-      _ = assert(conflict.isLeft && conflict.swap.toOption.get.message.contains("ASKHOST_REPLY_CONFLICT"),
-        s"an explicit different decision must be a distinct conflict refusal: $conflict")
+      _ = assert(
+        conflict.isLeft && conflict.swap.toOption.get.message.contains("ASKHOST_REPLY_CONFLICT"),
+        s"an explicit different decision must be a distinct conflict refusal: $conflict"
+      )
       _ = assert(same.toOption.exists(_.contains("already accepted")))
-      _ = assert(unknown.isLeft && unknown.swap.toOption.get.message.contains("ASKHOST_REPLY_UNKNOWN_ID"),
-        s"an unknown id must be an explicit error: $unknown")
-      _ = assert(!unknown.swap.toOption.get.message.contains("unavailable or already answered"),
-        "the three states must never share one indistinguishable message")
+      _ = assert(
+        unknown.isLeft && unknown.swap.toOption.get.message.contains("ASKHOST_REPLY_UNKNOWN_ID"),
+        s"an unknown id must be an explicit error: $unknown"
+      )
+      _ = assert(
+        !unknown.swap.toOption.get.message.contains("unavailable or already answered"),
+        "the three states must never share one indistinguishable message"
+      )
     yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
 
@@ -415,7 +439,11 @@ class AskHostToolsSpec extends CatsEffectSuite:
         sys.props.update(key, "1200000")
         assertEquals(AskHostTool.waitWindowMs, 1200000L)
         sys.props.update(key, "0")
-        assertEquals(AskHostTool.waitWindowMs, AskHostTool.DefaultWaitWindowMs, "<= 0 must fall back, never an infinite wait")
+        assertEquals(
+          AskHostTool.waitWindowMs,
+          AskHostTool.DefaultWaitWindowMs,
+          "<= 0 must fall back, never an infinite wait"
+        )
         sys.props.update(key, "nonsense")
         assertEquals(AskHostTool.waitWindowMs, AskHostTool.DefaultWaitWindowMs)
       finally
@@ -436,14 +464,20 @@ class AskHostToolsSpec extends CatsEffectSuite:
       released <- AskHostLedger.requestState(req.correlationId)
       releasedAdmission = released.map(AskHostClarifyTool.admission)
       note = releasedAdmission.flatMap(_.toOption).flatten.getOrElse("")
-      _ = assert(pending.exists(s => AskHostClarifyTool.admission(s) == Right(None)),
-        "a still-pending request clarifies plainly (behaviour unchanged)")
-      _ = assert(releasedAdmission.exists(_.isRight),
-        s"a timed-out request must stay clarifiable, got: $releasedAdmission")
+      _ = assert(
+        pending.exists(s => AskHostClarifyTool.admission(s) == Right(None)),
+        "a still-pending request clarifies plainly (behaviour unchanged)"
+      )
+      _ = assert(
+        releasedAdmission.exists(_.isRight),
+        s"a timed-out request must stay clarifiable, got: $releasedAdmission"
+      )
       _ = assert(note.contains("[ASKHOST-LATE-REPLY]"), s"late-reply contract missing: $note")
       _ = assert(note.contains(AskHostLedger.TimeoutOutcome), s"neutral outcome missing: $note")
-      _ = assert(!releasedAdmission.exists(_.swap.toOption.exists(_.message.contains("pending correlation unavailable"))),
-        "the old recover-based refusal must be gone")
+      _ = assert(
+        !releasedAdmission.exists(_.swap.toOption.exists(_.message.contains("pending correlation unavailable"))),
+        "the old recover-based refusal must be gone"
+      )
     yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
 
@@ -462,15 +496,25 @@ class AskHostToolsSpec extends CatsEffectSuite:
       answeredAdmission = answered.map(AskHostClarifyTool.admission)
       releasedAdmission = released.map(AskHostClarifyTool.admission)
       unknown <- AskHostClarifyTool.call(
-        JsonObject("correlationId" -> "no-such-id".asJson, "questions" -> io.circe.Json.arr()), ctx)
-      _ = assert(answeredAdmission.exists(_.swap.toOption.exists(_.message.contains("ASKHOST_CLARIFY_ALREADY_ANSWERED"))),
-        s"an answered request must be refused distinctly: $answeredAdmission")
-      _ = assert(releasedAdmission.exists(_.swap.toOption.exists(_.message.contains("ASKHOST_CLARIFY_RELEASED_UNANSWERABLE"))),
-        s"a never-answerable request must be refused distinctly: $releasedAdmission")
-      _ = assert(unknown.swap.toOption.exists(_.message.contains("ASKHOST_CLARIFY_UNKNOWN_ID")),
-        s"an unknown id must be explicit: $unknown")
-      _ = assert(!unknown.swap.toOption.exists(_.message.contains("pending correlation unavailable")),
-        "the old conflated refusal must be gone")
+        JsonObject("correlationId" -> "no-such-id".asJson, "questions" -> io.circe.Json.arr()),
+        ctx
+      )
+      _ = assert(
+        answeredAdmission.exists(_.swap.toOption.exists(_.message.contains("ASKHOST_CLARIFY_ALREADY_ANSWERED"))),
+        s"an answered request must be refused distinctly: $answeredAdmission"
+      )
+      _ = assert(
+        releasedAdmission.exists(_.swap.toOption.exists(_.message.contains("ASKHOST_CLARIFY_RELEASED_UNANSWERABLE"))),
+        s"a never-answerable request must be refused distinctly: $releasedAdmission"
+      )
+      _ = assert(
+        unknown.swap.toOption.exists(_.message.contains("ASKHOST_CLARIFY_UNKNOWN_ID")),
+        s"an unknown id must be explicit: $unknown"
+      )
+      _ = assert(
+        !unknown.swap.toOption.exists(_.message.contains("pending correlation unavailable")),
+        "the old conflated refusal must be gone"
+      )
     yield ()).guarantee(IO { PathUtil.setDataRoot(previous); AskHostLedger.clearForTests(); os.remove.all(tmp) })
   }
 

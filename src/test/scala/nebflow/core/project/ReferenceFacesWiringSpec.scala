@@ -410,7 +410,13 @@ class ReferenceFacesWiringSpec extends CatsEffectSuite:
       obs <- rt.store.chainLedgerStore.reconcile(Nil, Set.empty, Map.empty, Set.empty, 10L)
       after <- ledgerOf(rt)
       // R3 续批（批化落盘）：离场行先入待落批，龄期到才整批落轮 —— 补一拍过龄期再读轮。
-      _ <- rt.store.chainLedgerStore.reconcile(Nil, Set.empty, Map.empty, Set.empty, 10L + ChainLedger.OfflineFlushAgeMs + 1L)
+      _ <- rt.store.chainLedgerStore.reconcile(
+        Nil,
+        Set.empty,
+        Map.empty,
+        Set.empty,
+        10L + ChainLedger.OfflineFlushAgeMs + 1L
+      )
       rounds <- rt.store.chainLedgerStore.readRounds
       noted <- rt.store.chainLedgerStore.noteTextReferences(s"本条引用 $canon（已退役号）", "board-usage")
       afterNote <- ledgerOf(rt)

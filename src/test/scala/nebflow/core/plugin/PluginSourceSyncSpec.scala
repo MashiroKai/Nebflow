@@ -51,8 +51,10 @@ class PluginSourceSyncSpec extends FunSuite:
   private def ledgerPath: os.Path = home / "plugin-sources" / s"$Target.json"
   private def auditPath: os.Path = home / "logs" / "plugin-source-sync.jsonl"
 
-  /** 本 spec 的受测包名（真名 `stand-dev`——与内建声明的名字一致，避免「测试专用名」造成
-    * 第二套形态；`plugins.sources.stand-dev` 在这条 home 上被重指到临时 local 源）。 */
+  /**
+   * 本 spec 的受测包名（真名 `stand-dev`——与内建声明的名字一致，避免「测试专用名」造成
+   * 第二套形态；`plugins.sources.stand-dev` 在这条 home 上被重指到临时 local 源）。
+   */
   private val Target = "stand-dev"
 
   /**
@@ -86,6 +88,8 @@ class PluginSourceSyncSpec extends FunSuite:
     )
     dir
 
+  end makePackage
+
   /** 把 `nebflow.json` 的 `plugins.sources.<Target>` 写成一条 local 源声明。 */
   private def declareLocalSource(url: String, preinstall: Boolean = true, enabled: Boolean = true): Unit =
     writeSourceDecl("local", url, preinstall, enabled)
@@ -95,11 +99,11 @@ class PluginSourceSyncSpec extends FunSuite:
     writeSourceDecl("git", url, preinstall, enabled = true, branch = branch)
 
   private def writeSourceDecl(
-      kind: String,
-      url: String,
-      preinstall: Boolean,
-      enabled: Boolean,
-      branch: String = "main"
+    kind: String,
+    url: String,
+    preinstall: Boolean,
+    enabled: Boolean,
+    branch: String = "main"
   ): Unit =
     val cfg = home / nebflow.shared.Branding.configFileName
     val decl = Json.obj(
@@ -109,35 +113,41 @@ class PluginSourceSyncSpec extends FunSuite:
       "preinstall" -> Json.fromBoolean(preinstall),
       "enabled" -> Json.fromBoolean(enabled)
     )
-    val json = if os.exists(cfg) then
-      io.circe.parser
-        .parse(os.read(cfg))
-        .toOption
-        .getOrElse(Json.obj())
-        .mapObject(_.add("plugins", Json.obj("sources" -> Json.obj(Target -> decl))))
-    else Json.obj("plugins" -> Json.obj("sources" -> Json.obj(Target -> decl)))
+    val json =
+      if os.exists(cfg) then
+        io.circe.parser
+          .parse(os.read(cfg))
+          .toOption
+          .getOrElse(Json.obj())
+          .mapObject(_.add("plugins", Json.obj("sources" -> Json.obj(Target -> decl))))
+      else Json.obj("plugins" -> Json.obj("sources" -> Json.obj(Target -> decl)))
     os.write.over(cfg, json.noSpaces)
+
+  end writeSourceDecl
 
   /** 造一个**真 git 仓**（本机路径，无网络）：一次提交在 `main` 上，返回仓路径。 */
   private def makeGitRepo(scratch: os.Path, version: String, marker: String): os.Path =
     val repo = makePackage(scratch / "repo", version, marker)
     def gitx(args: String*): Unit =
-      os.proc(("git" :: args.toList).map(a => a: os.Shellable)*).call(
-        cwd = repo,
-        check = true,
-        env = Map(
-          "GIT_AUTHOR_NAME" -> "spec",
-          "GIT_AUTHOR_EMAIL" -> "spec@example.invalid",
-          "GIT_COMMITTER_NAME" -> "spec",
-          "GIT_COMMITTER_EMAIL" -> "spec@example.invalid"
-        ),
-        stdout = os.Pipe,
-        stderr = os.Pipe
-      )
+      os.proc(("git" :: args.toList).map(a => a: os.Shellable)*)
+        .call(
+          cwd = repo,
+          check = true,
+          env = Map(
+            "GIT_AUTHOR_NAME" -> "spec",
+            "GIT_AUTHOR_EMAIL" -> "spec@example.invalid",
+            "GIT_COMMITTER_NAME" -> "spec",
+            "GIT_COMMITTER_EMAIL" -> "spec@example.invalid"
+          ),
+          stdout = os.Pipe,
+          stderr = os.Pipe
+        )
     gitx("init", "--quiet", "--initial-branch", "main", ".")
     gitx("add", "-A")
     gitx("commit", "--quiet", "-m", s"v$version")
     repo
+
+  end makeGitRepo
 
   private def installedVersion: String =
     io.circe.parser
@@ -159,7 +169,9 @@ class PluginSourceSyncSpec extends FunSuite:
 
   // ── ① 声明面 ────────────────────────────────────────────────
 
-  test("①a builtin catalog declares stand-dev as a preinstall git source (self-authored packages ride the remote, not the seed)"):
+  test(
+    "①a builtin catalog declares stand-dev as a preinstall git source (self-authored packages ride the remote, not the seed)"
+  ):
     val decl = PluginSourceCatalog.declaration("stand-dev")
     assert(decl.isDefined, "stand-dev must be a source-managed builtin")
     val d = decl.get
@@ -201,7 +213,9 @@ class PluginSourceSyncSpec extends FunSuite:
 
   // ── ② 热更新链（零重启）─────────────────────────────────────
 
-  test("②a local source v1 → v2: the swap lands new bytes, refreshes the ledger pin, writes an audit line and keeps a backup"):
+  test(
+    "②a local source v1 → v2: the swap lands new bytes, refreshes the ledger pin, writes an audit line and keeps a backup"
+  ):
     val v1 = makePackage(os.Path(Files.createTempDirectory("nb-src-v1").toString), "1.0.0", "V1-BODY")
     val v2 = makePackage(os.Path(Files.createTempDirectory("nb-src-v2").toString), "2.0.0", "V2-BODY")
 
@@ -393,7 +407,11 @@ class PluginSourceSyncSpec extends FunSuite:
         .obj(
           "plugins" -> Json.obj(
             "sources" -> Json.obj(
-              Target -> Json.obj("kind" -> Json.fromString("local"), "url" -> Json.fromString(v1.toString), "preinstall" -> Json.fromBoolean(true))
+              Target -> Json.obj(
+                "kind" -> Json.fromString("local"),
+                "url" -> Json.fromString(v1.toString),
+                "preinstall" -> Json.fromBoolean(true)
+              )
             ),
             "removed" -> Json.obj(Target -> Json.obj("at" -> Json.fromLong(1L), "by" -> Json.fromString("spec")))
           )
@@ -401,7 +419,10 @@ class PluginSourceSyncSpec extends FunSuite:
         .noSpaces
     )
     val report = PluginSourceSync.selfHeal().unsafeRunSync()
-    assert(report.exists((n, r) => n == Target && r.exists(_.contains("uninstalled"))), s"removal marker respected, got: $report")
+    assert(
+      report.exists((n, r) => n == Target && r.exists(_.contains("uninstalled"))),
+      s"removal marker respected, got: $report"
+    )
     assert(!os.isDir(target), "the package stays uninstalled (no silent resurrection)")
 
   test("④c self-heal never overwrites an already-present package directory"):
@@ -420,7 +441,10 @@ class PluginSourceSyncSpec extends FunSuite:
         )
         .noSpaces
     )
-    os.write.over(target / "skills" / "stand-dev" / "SKILL.md", "---\nname: stand-dev\ndescription: user\n---\nUSER-BODY\n")
+    os.write.over(
+      target / "skills" / "stand-dev" / "SKILL.md",
+      "---\nname: stand-dev\ndescription: user\n---\nUSER-BODY\n"
+    )
     val before = treeAsText(target)
 
     val report = PluginSourceSync.selfHeal().unsafeRunSync()
@@ -448,16 +472,37 @@ class PluginSourceSyncSpec extends FunSuite:
     assertEquals(out.remoteVersion, Some("2.0.0"))
 
     val json = PluginSourceSync.statusJson(out)
-    for key <- List("name", "state", "kind", "source", "installedVersion", "installedCommit",
-                    "remoteVersion", "remoteCommit", "updateAvailable", "checkedAt", "detail")
+    for key <- List(
+        "name",
+        "state",
+        "kind",
+        "source",
+        "installedVersion",
+        "installedCommit",
+        "remoteVersion",
+        "remoteCommit",
+        "updateAvailable",
+        "checkedAt",
+        "detail"
+      )
     do assert(json.hcursor.downField(key).focus.isDefined, s"status payload carries '$key'")
 
   test("⑤b a name with no declaration is 'unknown', not an error (seed packages are legitimately unknown here)"):
     val st = PluginSourceSync.check("visual-report").unsafeRunSync()
     assertEquals(st.state, PluginSourceSync.State.Unknown)
-    assertEquals(PluginSourceSync.update("visual-report", None, "spec").unsafeRunSync().left.toOption.map(_.contains(PluginSourceSync.CodeUnknownName)), Some(true))
+    assertEquals(
+      PluginSourceSync
+        .update("visual-report", None, "spec")
+        .unsafeRunSync()
+        .left
+        .toOption
+        .map(_.contains(PluginSourceSync.CodeUnknownName)),
+      Some(true)
+    )
 
-  test("②d the git leg really shells out to `git` (a path-backed repo clones, pins its commit, then updates to a newer commit)"):
+  test(
+    "②d the git leg really shells out to `git` (a path-backed repo clones, pins its commit, then updates to a newer commit)"
+  ):
     // 🔴 回归锚：本批 boot 实测抓到过「`git()` 把子命令当可执行文件」的 bug
     // （`Cannot run program "clone"`）。local 源的测试全走不到那条腿，只有真 git 源能钉住它，
     // 所以这条用**本机路径的真仓**（零网络、确定性）覆盖 clone / rev-parse / checkout 三个调用点。
@@ -484,15 +529,19 @@ class PluginSourceSyncSpec extends FunSuite:
     )
     os.write.over(repo / "skills" / "stand-dev" / "SKILL.md", "# fixture v4.0.0\nG4\n")
     def gitx(args: String*): Unit =
-      os.proc(("git" :: args.toList).map(a => a: os.Shellable)*).call(
-        cwd = repo,
-        check = true,
-        env = Map(
-          "GIT_AUTHOR_NAME" -> "spec", "GIT_AUTHOR_EMAIL" -> "spec@example.invalid",
-          "GIT_COMMITTER_NAME" -> "spec", "GIT_COMMITTER_EMAIL" -> "spec@example.invalid"
-        ),
-        stdout = os.Pipe, stderr = os.Pipe
-      )
+      os.proc(("git" :: args.toList).map(a => a: os.Shellable)*)
+        .call(
+          cwd = repo,
+          check = true,
+          env = Map(
+            "GIT_AUTHOR_NAME" -> "spec",
+            "GIT_AUTHOR_EMAIL" -> "spec@example.invalid",
+            "GIT_COMMITTER_NAME" -> "spec",
+            "GIT_COMMITTER_EMAIL" -> "spec@example.invalid"
+          ),
+          stdout = os.Pipe,
+          stderr = os.Pipe
+        )
     gitx("add", "-A")
     gitx("commit", "--quiet", "-m", "v4.0.0")
 

@@ -33,11 +33,9 @@ class DbCorruptionSpec extends CatsEffectSuite:
     val h = openDb(root)
     try
       // 缺 = Absent（新档，不隔离不告警）。
-      assertEquals(h.readNotifyGuard("dispatch-notify:failed").unsafeRunSync(),
-        ReadResult.Absent())
+      assertEquals(h.readNotifyGuard("dispatch-notify:failed").unsafeRunSync(), ReadResult.Absent())
       // 好档 = Present。
-      h.writeNotifyGuard(GuardDocsTest.notify("dispatch-notify:failed",
-        List(1L), 99L, 100L)).unsafeRunSync()
+      h.writeNotifyGuard(GuardDocsTest.notify("dispatch-notify:failed", List(1L), 99L, 100L)).unsafeRunSync()
       h.readNotifyGuard("dispatch-notify:failed").unsafeRunSync() match
         case ReadResult.Present(_) => ()
         case other => fail(s"expected Present, got $other")
@@ -52,6 +50,8 @@ class DbCorruptionSpec extends CatsEffectSuite:
         case other => fail(s"expected Corrupt, got $other")
     finally h.close()
 
+    end try
+
   test("V2: Corrupt has .corrupt-<ts> copy with original bytes; read flips to Absent; stats count"):
     val root = Files.createTempDirectory("db-corrupt-quarantine")
     val h = openDb(root)
@@ -62,16 +62,19 @@ class DbCorruptionSpec extends CatsEffectSuite:
       val garbage = "<<<garbage-bytes>>>"
       Files.writeString(f, garbage)
       val before = h.stats.quarantined
-      val q = h.quarantineGuardDoc("dispatch-notify:failed", now = 1762224999999L)
-        .unsafeRunSync().get
+      val q = h
+        .quarantineGuardDoc("dispatch-notify:failed", now = 1762224999999L)
+        .unsafeRunSync()
+        .get
       assert(q.getFileName.toString.endsWith(".corrupt-1762224999999"), s"name=${q.getFileName}")
       assert(Files.exists(q), "隔离副本在场")
       assertEquals(Files.readString(q), garbage, "原值全字节可查（隔离不删除）")
       assert(!Files.exists(f), "正名让位（消费面只认正名）")
-      assertEquals(h.readNotifyGuard("dispatch-notify:failed").unsafeRunSync(),
-        ReadResult.Absent())
+      assertEquals(h.readNotifyGuard("dispatch-notify:failed").unsafeRunSync(), ReadResult.Absent())
       assertEquals(h.stats.quarantined, before + 1L, "计数上报")
     finally h.close()
+
+    end try
 
   test("V3: guard write refused while corrupt doc in place; proceeds after quarantine"):
     val root = Files.createTempDirectory("db-corrupt-v3-guard")
@@ -96,6 +99,8 @@ class DbCorruptionSpec extends CatsEffectSuite:
         case other => fail(s"unexpected $other")
     finally h.close()
 
+    end try
+
   test("V1/V2: injected half-line JSONL (kill-9 tear) — no half line enters the db, tail repaired"):
     val root = Files.createTempDirectory("db-corrupt-torn")
     val h = openDb(root)
@@ -104,8 +109,11 @@ class DbCorruptionSpec extends CatsEffectSuite:
       val f = root.resolve("db").resolve("events").resolve("events.1.jsonl")
       h.flush().unsafeRunSync()
       // kill-9 撕裂窗：直写半行（无换行）。
-      Files.writeString(f, """{"seq":2,"checksum":"sha256:ab""", // torn append
-        java.nio.file.StandardOpenOption.APPEND)
+      Files.writeString(
+        f,
+        """{"seq":2,"checksum":"sha256:ab""", // torn append
+        java.nio.file.StandardOpenOption.APPEND
+      )
       val goodBytes = h.readEvents(0L, Int.MaxValue, logical = false).unsafeRunSync() match
         case ReadResult.Present(sr) =>
           assertEquals(sr.records.size, 1, "半行不入库")
@@ -121,6 +129,8 @@ class DbCorruptionSpec extends CatsEffectSuite:
         case other => fail(s"unexpected $other")
       assertEquals(h.stats.tornTailsRepaired, 1L, "修复计数")
     finally h.close()
+
+    end try
 
   test("V3: event append refused on bad framed tail (complete-but-invalid last line)"):
     val root = Files.createTempDirectory("db-corrupt-badtail")
@@ -140,6 +150,8 @@ class DbCorruptionSpec extends CatsEffectSuite:
         case ReadResult.Present(sr) => assertEquals(sr.records.size, 1, "隔离片按缺席处理（取证面②）")
         case other => fail(s"unexpected $other")
     finally h.close()
+
+    end try
 
   test("V2: corrupt mid-frame in events shard surfaces as Corrupt on read (never empty list)"):
     val root = Files.createTempDirectory("db-corrupt-midframe")
@@ -170,10 +182,14 @@ class DbCorruptionSpec extends CatsEffectSuite:
         h.recoverPendingD8().unsafeRunSync()
       }
       // 已隔离：原值可查，读面回 Absent（处置权在调用方）。
-      val quarantined = pendingDir.toFile.listFiles()
-        .map(_.getName).filter(_.contains(".corrupt-")).toList
+      val quarantined = pendingDir.toFile
+        .listFiles()
+        .map(_.getName)
+        .filter(_.contains(".corrupt-"))
+        .toList
       assertEquals(quarantined.size, 1, s"quarantined files: $quarantined")
       assert(!Files.exists(pendingDir.resolve("ask.jsonl")))
     finally h.close()
+    end try
 
 end DbCorruptionSpec

@@ -23,30 +23,41 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
   private val isolatedRoot: os.Path = os.temp.dir(prefix = "canvas-writer-spec-")
 
   override def beforeAll(): Unit = PathUtil.setDataRoot(isolatedRoot)
+
   override def afterAll(): Unit =
     PathUtil.setDataRoot(originalRoot)
-    try os.remove.all(isolatedRoot) catch case _: Throwable => ()
+    try os.remove.all(isolatedRoot)
+    catch case _: Throwable => ()
+
   test("concurrent claims with the same observed epoch have one winner") {
     val token = "canvas-writer-test-token"
     val routes = new RestApiRoutes(
       tokenRef = Ref.unsafe[IO, String](token),
-      configRef = Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
-      sharedResources = null, sessionStore = null, wsRoutes = null
+      configRef =
+        Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+      sharedResources = null,
+      sessionStore = null,
+      wsRoutes = null
     ).routes
     def claim(tab: String): IO[Status] =
       val body = Json.obj("clientId" -> "browser-a".asJson, "tabInstanceId" -> tab.asJson, "expectedEpoch" -> 0.asJson)
       val req = Request[IO](Method.POST, Uri.unsafeFromString("/canvas-writer/claim"))
-        .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, token))).withEntity(body)
+        .putHeaders(Authorization(Credentials.Token(AuthScheme.Bearer, token)))
+        .withEntity(body)
       routes(req).value.map(_.getOrElse(fail("route fell through")).status)
     (claim("a"), claim("b")).parTupled.map { case (a, b) =>
       assertEquals(List(a, b).count(_ == Status.Ok), 1)
       assertEquals(List(a, b).count(_ == Status.Conflict), 1)
     }
   }
+
   test("a single browser instance never triggers a console takeover prompt (zero false positives)") {
     for
       sent <- Ref.of[IO, Vector[(String, Json)]](Vector.empty)
-      takeover = new ConsoleTakeover((id, frame) => sent.update(_ :+ (id -> frame)), nebflow.shared.NebflowLogger.forName("test"))
+      takeover = new ConsoleTakeover(
+        (id, frame) => sent.update(_ :+ (id -> frame)),
+        nebflow.shared.NebflowLogger.forName("test")
+      )
       meta = ConsoleTakeover.ClientMeta(
         clientId = Some("client-a"),
         ua = Some("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Safari/604.1"),
@@ -96,28 +107,40 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
       secondEpoch = secondBody.hcursor.get[Long]("epoch").toOption.get
       _ = assertEquals(secondEpoch, firstEpoch + 1L)
       // 新写者照常写穿（并把权威存档落到隔离根）。
-      writer <- call(Method.PUT, "/canvas-tabs", identity("tab-b").deepMerge(
-        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> secondEpoch.asJson)
-      ))
+      writer <- call(
+        Method.PUT,
+        "/canvas-tabs",
+        identity("tab-b").deepMerge(
+          Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> secondEpoch.asJson)
+        )
+      )
       _ = assertEquals(writer.status, Status.Ok)
       // 只读可看：GET 照常返回权威存档。
       stored <- call(Method.GET, "/canvas-tabs", Json.obj())
       _ = assertEquals(stored.status, Status.Ok)
       // 服务端写栅栏：被顶下的旧写者拿自己的旧 epoch 写穿一律落栅栏外。
-      oldWriterPut <- call(Method.PUT, "/canvas-tabs", identity("tab-a").deepMerge(
-        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> firstEpoch.asJson)
-      ))
+      oldWriterPut <- call(
+        Method.PUT,
+        "/canvas-tabs",
+        identity("tab-a").deepMerge(
+          Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> firstEpoch.asJson)
+        )
+      )
       _ = assertEquals(oldWriterPut.status, Status.Conflict)
       oldBody <- oldWriterPut.as[Json]
       _ = assertEquals(oldBody.hcursor.get[String]("error").toOption, Some("stale_writer_epoch"))
       _ = assertEquals(oldBody.hcursor.get[String]("message").toOption, Some("保存失败，本次修改未保存到服务器。"))
     yield ()
+    end for
   }
 
   test("a canvas seat claim is silent: control ownership untouched, only the seat-change frame is emitted") {
     for
       sent <- Ref.of[IO, Vector[(String, Json)]](Vector.empty)
-      takeover = new ConsoleTakeover((id, frame) => sent.update(_ :+ (id -> frame)), nebflow.shared.NebflowLogger.forName("test"))
+      takeover = new ConsoleTakeover(
+        (id, frame) => sent.update(_ :+ (id -> frame)),
+        nebflow.shared.NebflowLogger.forName("test")
+      )
       _ <- takeover.onConnect("session-a", "conn-a", Some("client-a"))
       _ <- takeover.claimCanvas("principal-a", "client-a", "tab-a")
       ownerAfterFirst <- takeover.owner
@@ -192,13 +215,23 @@ class CanvasWriterLegacyPutSpec extends CatsEffectSuite:
       eB = bodyB.hcursor.get[Long]("epoch").toOption.get
       _ = assert(eA != eB, "并发申请必须各拿一枚不同的 epoch（CAS 自增只有一个赢家）")
       (winTab, winE, loseTab, loseE) = if eA > eB then ("tab-a", eA, "tab-b", eB) else ("tab-b", eB, "tab-a", eA)
-      loserPut <- call(Method.PUT, "/canvas-tabs", identity(loseTab).deepMerge(
-        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> loseE.asJson)
-      ))
+      loserPut <- call(
+        Method.PUT,
+        "/canvas-tabs",
+        identity(loseTab).deepMerge(
+          Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> loseE.asJson)
+        )
+      )
       _ = assertEquals(loserPut.status, Status.Conflict)
-      winnerPut <- call(Method.PUT, "/canvas-tabs", identity(winTab).deepMerge(
-        Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> winE.asJson)
-      ))
+      winnerPut <- call(
+        Method.PUT,
+        "/canvas-tabs",
+        identity(winTab).deepMerge(
+          Json.obj("v" -> 2.asJson, "tabs" -> Json.arr(), "epoch" -> winE.asJson)
+        )
+      )
       _ = assertEquals(winnerPut.status, Status.Ok)
     yield ()
+    end for
   }
+end CanvasWriterLegacyPutSpec

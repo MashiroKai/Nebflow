@@ -56,8 +56,8 @@ class ExternalOpenRoutesSpec extends CatsEffectSuite:
 
   private def routesWith(
     policy: NfFilePolicy.NfPathPolicy,
-    fetchImpl: (String, Path) => IO[Either[ExternalOpenPolicy.Refusal, ExternalFetch.Outcome]] =
-      (_, _) => IO.pure(Left(ExternalOpenPolicy.Refusal(500, "unused", "stub")))
+    fetchImpl: (String, Path) => IO[Either[ExternalOpenPolicy.Refusal, ExternalFetch.Outcome]] = (_, _) =>
+      IO.pure(Left(ExternalOpenPolicy.Refusal(500, "unused", "stub")))
   ): org.http4s.HttpRoutes[IO] =
     ExternalOpenRoutes.externalOpenRoutes(TokenRef, Sessions, policy, fetchImpl)
 
@@ -79,7 +79,10 @@ class ExternalOpenRoutesSpec extends CatsEffectSuite:
   test("exactly one of path / url is required"):
     val (_, policy) = tempPolicy()
     for
-      both <- post(routesWith(policy), Json.obj("path" -> Json.fromString("/tmp/a"), "url" -> Json.fromString("https://x.example/a")))
+      both <- post(
+        routesWith(policy),
+        Json.obj("path" -> Json.fromString("/tmp/a"), "url" -> Json.fromString("https://x.example/a"))
+      )
       neither <- post(routesWith(policy), Json.obj())
     yield
       assertEquals(both.status, Status.BadRequest)
@@ -184,7 +187,15 @@ class ExternalOpenRoutesSpec extends CatsEffectSuite:
         IO.blocking {
           Files.createDirectories(tmp.getParent)
           Files.write(tmp, body)
-          Right(ExternalFetch.Outcome(new java.net.URI("https://example.com/a/pic.png"), sha, body.length.toLong, body, "image/png"))
+          Right(
+            ExternalFetch.Outcome(
+              new java.net.URI("https://example.com/a/pic.png"),
+              sha,
+              body.length.toLong,
+              body,
+              "image/png"
+            )
+          )
         }
     val policy = NfFilePolicy.NfPathPolicy(root, root.resolve("ws").resolve(".nebflow"), Set.empty)
     val prog =
@@ -195,7 +206,10 @@ class ExternalOpenRoutesSpec extends CatsEffectSuite:
           val dir = fetchRoot.resolve("0000000000000000")
           Files.createDirectories(dir)
           Files.writeString(dir.resolve("old.png"), "old")
-          Files.setLastModifiedTime(dir, java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 72L * 3600 * 1000))
+          Files.setLastModifiedTime(
+            dir,
+            java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 72L * 3600 * 1000)
+          )
           dir
         }
         resp <- post(routesWith(policy, stub), Json.obj("url" -> Json.fromString("https://example.com/a/pic.png")))

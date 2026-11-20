@@ -1132,8 +1132,12 @@ final class WeixinIlinkBridgePlugin(
   def onAgentEvent(sessionId: String, event: Json): IO[Unit] =
     val c = event.hcursor
     val rememberSource =
-      c.downField("isRoot").as[Boolean].toOption.fold(IO.unit)(root =>
-        sourceRootRef.update(m => if m.get(sessionId).contains(root) then m else m.updated(sessionId, root)))
+      c.downField("isRoot")
+        .as[Boolean]
+        .toOption
+        .fold(IO.unit)(root =>
+          sourceRootRef.update(m => if m.get(sessionId).contains(root) then m else m.updated(sessionId, root))
+        )
     rememberSource *> (c.downField("type").as[String].getOrElse("") match
       case "textDelta" =>
         c.downField("delta").as[String].getOrElse("") match
@@ -1204,18 +1208,20 @@ final class WeixinIlinkBridgePlugin(
    * 弹窗互不吞段。
    */
   private def flushSegment(sessionId: String): IO[Unit] =
-    isRootSource(sessionId).flatMap(root => pendingRef.modify { m =>
-      val text = m.getOrElse(sessionId, "")
-      OutputBlock.extractGated(text, root) match
-        case OutputBlock.Unbalanced => (m, IO.unit)
-        case OutputBlock.NoBlocks   => (m - sessionId, IO.unit)
-        case OutputBlock.Extracted(inner) =>
-          (
-            m - sessionId,
-            if inner.trim.isEmpty then IO.unit
-            else pacer.enqueueAsync(reply(sessionId, inner, isSegment = true))
-          )
-    }.flatten)
+    isRootSource(sessionId).flatMap(root =>
+      pendingRef.modify { m =>
+        val text = m.getOrElse(sessionId, "")
+        OutputBlock.extractGated(text, root) match
+          case OutputBlock.Unbalanced => (m, IO.unit)
+          case OutputBlock.NoBlocks => (m - sessionId, IO.unit)
+          case OutputBlock.Extracted(inner) =>
+            (
+              m - sessionId,
+              if inner.trim.isEmpty then IO.unit
+              else pacer.enqueueAsync(reply(sessionId, inner, isSegment = true))
+            )
+      }.flatten
+    )
 
   /**
    * 逐段即时推送批：段级失败的「注明」腿。既有频控/重发边界不动——ret=-2
@@ -1425,8 +1431,10 @@ final class WeixinIlinkBridgePlugin(
           else if bothGreen then None
           else flap
         val closedFlap = if bothGreen then flap else None
-        (((tNext, mNext), newAlerted, flapNext),
-        (if shouldFire then Some(math.max(tNext, mNext)) else None, alerted, bothGreen, closedFlap))
+        (
+          ((tNext, mNext), newAlerted, flapNext),
+          (if shouldFire then Some(math.max(tNext, mNext)) else None, alerted, bothGreen, closedFlap)
+        )
       }
     fire.flatMap { case (alert, wasAlerted, bothGreen, closedFlap) =>
       alert.fold(IO.unit)(streak => alertBridgeDead(sender, streak)) *>
@@ -1577,7 +1585,7 @@ final class WeixinIlinkBridgePlugin(
   private def flushTurnEndScoped(sessionId: String, text: String, richs: List[RichProduct], root: Boolean): IO[Unit] =
     val visible = OutputBlock.extractGated(text, root) match
       case OutputBlock.Extracted(inner) => inner
-      case _                            => ""
+      case _ => ""
     if richs.isEmpty then
       val textLeg = if visible.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, visible))
       textLeg
@@ -1617,6 +1625,10 @@ final class WeixinIlinkBridgePlugin(
               textLeg *> mediaLeg
             }
       }
+
+    end if
+
+  end flushTurnEndScoped
 
   /**
    * The turn's media runs, in payload order, inside ONE pacer slot — the whole

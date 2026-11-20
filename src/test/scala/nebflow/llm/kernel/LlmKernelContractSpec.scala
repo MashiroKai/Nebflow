@@ -76,7 +76,9 @@ class LlmKernelContractSpec extends FunSuite:
 
   // ── K1 唯一调用入口 ──────────────────────────────────────────────────────
 
-  test("K1: .sendMessage/.sendMessageStream production call sites live only in interface.scala + the kernel (+ the throttle decorator)"):
+  test(
+    "K1: .sendMessage/.sendMessageStream production call sites live only in interface.scala + the kernel (+ the throttle decorator)"
+  ):
     val hits = scanMain(List(".sendMessage(", ".sendMessageStream("))
     val allowed = Set(
       "nebflow/llm/interface.scala",
@@ -134,7 +136,7 @@ class LlmKernelContractSpec extends FunSuite:
   private def userText(t: String): Message = Message(MessageRole.User, Left(t))
 
   test("K4: the assembly point keeps request-level ephmera out of `messages` and puts them on the ephemeral tail"):
-    val c        = cand("p", "m")
+    val c = cand("p", "m")
     val persisted = userText("persistent")
     val call = LlmKernel.KernelCall(
       site = KernelCallSites.PluginAlloc,
@@ -153,7 +155,7 @@ class LlmKernelContractSpec extends FunSuite:
     assertEquals(params.agentId, Some("plugin-alloc"))
 
   test("K4: two kernel-assembled calls differing only in the ephemeral tail keep `messages` byte-identical"):
-    val c        = cand("p", "m")
+    val c = cand("p", "m")
     val persisted = userText("persistent body")
     def params(turn: Int) =
       LlmKernel.assemble(
@@ -230,12 +232,14 @@ class LlmKernelContractSpec extends FunSuite:
 
   private class ScriptedAdapter(reply: String, usage: Option[TokenUsage], boom: Boolean) extends ProviderAdapter[IO]:
     val calls = new AtomicReference(0)
+
     def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
       IO {
         calls.updateAndGet(_ + 1)
         if boom then throw new RuntimeException("transport down")
         AdapterResponse(reply = reply, toolCalls = Nil, usage = usage)
       }
+
     def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.raiseError[IO](new RuntimeException("stream face not expected in this spec"))
 
@@ -261,11 +265,14 @@ class LlmKernelContractSpec extends FunSuite:
 
   test("K6: a successful auxiliary-leg response reaches all three accounts (stats + attribution + usage row)"):
     withCleanAccounts {
-      val usage = TokenUsage(inputTokens = 1200, outputTokens = 10, cacheReadTokens = Some(900), cacheWriteTokens = Some(0))
+      val usage =
+        TokenUsage(inputTokens = 1200, outputTokens = 10, cacheReadTokens = Some(900), cacheWriteTokens = Some(0))
       val adapter = new ScriptedAdapter("ok", Some(usage), boom = false)
       val rows = new AtomicReference(List.empty[LlmUsageRecord])
       LlmKernel.UsageSink.install(r => IO(rows.updateAndGet(_ :+ r)))
-      val out = LlmKernel.run(new StubRegistry(adapter), kernelCall(LlmKernel.Gating.Throttled, LlmKernel.MeterKind.Business)).unsafeRunSync()
+      val out = LlmKernel
+        .run(new StubRegistry(adapter), kernelCall(LlmKernel.Gating.Throttled, LlmKernel.MeterKind.Business))
+        .unsafeRunSync()
       assertEquals(out.map(_.reply), Some("ok"))
       assertEquals(CacheStats.totalSnapshot.requests, 1L, "the aux leg must enter the cache-hit aggregate")
       assertEquals(CacheStats.totalSnapshot.cacheRead, 900L)
@@ -280,7 +287,12 @@ class LlmKernelContractSpec extends FunSuite:
     withCleanAccounts {
       val rows = new AtomicReference(List.empty[LlmUsageRecord])
       LlmKernel.UsageSink.install(r => IO(rows.updateAndGet(_ :+ r)))
-      val out = LlmKernel.run(new StubRegistry(new ScriptedAdapter("", None, boom = true)), kernelCall(LlmKernel.Gating.Throttled, LlmKernel.MeterKind.Business)).unsafeRunSync()
+      val out = LlmKernel
+        .run(
+          new StubRegistry(new ScriptedAdapter("", None, boom = true)),
+          kernelCall(LlmKernel.Gating.Throttled, LlmKernel.MeterKind.Business)
+        )
+        .unsafeRunSync()
       assertEquals(out, None, "exhausted chain = None")
       assertEquals(rows.get(), Nil, "no usage ⇒ no zero-token row (the row carries information only when usage exists)")
       assert(
@@ -333,7 +345,10 @@ class LlmKernelContractSpec extends FunSuite:
     ).foreach { f =>
       val text = os.read(repoRoot / "src" / "main" / "scala" / os.RelPath(f))
       assert(text.contains("LlmKernel.KernelCall("), s"$f must declare its calls as a KernelCall (K7)")
-      assert(text.contains("source = LlmKernel.CandidateSource."), s"$f must state its candidate source explicitly (K7)")
+      assert(
+        text.contains("source = LlmKernel.CandidateSource."),
+        s"$f must state its candidate source explicitly (K7)"
+      )
     }
 
   test("K7: CandidateSource has no implicit default — every leg states its source (compile-time, pinned here)"):

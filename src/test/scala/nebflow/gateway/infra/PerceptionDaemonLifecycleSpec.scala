@@ -67,8 +67,11 @@ class PerceptionDaemonLifecycleSpec extends FunSuite:
 
   test("buildCommand: java -cp 主类 + --home/--port/--engine-port + L1 kill-switch 透传") {
     val cmd = PerceptionDaemonDock.buildCommand(
-      home = os.Path("/tmp/stand-home"), port = 4567, enginePort = 6138,
-      llmEnabled = false, classPath = "/libs/stand-assembly.jar"
+      home = os.Path("/tmp/stand-home"),
+      port = 4567,
+      enginePort = 6138,
+      llmEnabled = false,
+      classPath = "/libs/stand-assembly.jar"
     )
     val Some(c) = cmd: @unchecked
     assert(c(0).endsWith("/bin/java"), s"java bin first: ${c(0)}")
@@ -139,7 +142,7 @@ class PerceptionDaemonLifecycleSpec extends FunSuite:
         PerceptionDaemonDock.awaitHandshake(port, token, budgetMs = 5000).unsafeRunSync()
         PerceptionClient.current.unsafeRunSync() match
           case Some(ep) => assertEquals(ep.port, port)
-          case None     => fail("expected docked endpoint")
+          case None => fail("expected docked endpoint")
         // dock 后客户端腿可用（health 路径 200）。
         val call = PerceptionClient.call("GET", "/health", None, timeoutSec = Some(3)).unsafeRunSync()
         assertEquals(call.map(_._1), Some(200))
@@ -151,13 +154,12 @@ class PerceptionDaemonLifecycleSpec extends FunSuite:
   test("awaitHandshake: 停机窗 = 有界超时 WARN-only（不抛、不 bind）") {
     withDispatcher { _ =>
       // 无任何服务在场的端口——轮询到预算耗尽，走 WARN 路径正常返回。
-      val freePort = {
+      val freePort =
         val s = new java.net.ServerSocket()
         try
           s.bind(new java.net.InetSocketAddress(java.net.InetAddress.getLoopbackAddress, 0))
           s.getLocalPort
         finally s.close()
-      }
       PerceptionClient.unbind().unsafeRunSync()
       PerceptionDaemonDock.awaitHandshake(freePort, "tok", budgetMs = 600).unsafeRunSync() // 不抛即过
       assertEquals(PerceptionClient.current.unsafeRunSync(), None, "超时不得 bind")
@@ -214,10 +216,14 @@ class PerceptionDaemonLifecycleSpec extends FunSuite:
       // 干净停：DaemonService.stop（SIGTERM 腿）⇒ 进程收尸。
       val stopped = svc.stop(PerceptionDaemonDock.EntryId).unsafeRunSync()
       assertEquals(stopped.map(_.status), Some(DaemonStatus.Stopped))
-      assert(await(!Option(java.lang.ProcessHandle.of(pid).orElse(null)).exists(_.isAlive), timeoutMs = 15000),
-        s"daemon pid $pid still alive after stop")
+      assert(
+        await(!Option(java.lang.ProcessHandle.of(pid).orElse(null)).exists(_.isAlive), timeoutMs = 15000),
+        s"daemon pid $pid still alive after stop"
+      )
     }
   }
+
+end PerceptionDaemonLifecycleSpec
 
 /** 假 daemon：裸 ServerSocket 最小 /health 面（token 门；HTTP/1.0 逐字应答）。 */
 private object FakeDaemon:
@@ -243,7 +249,8 @@ private object FakeDaemon:
               while {
                 val n = in.read(b)
                 if n < 0 then false
-                else { buf += b(0); !acc.endsWith("\r\n\r\n") }
+                else
+                  buf += b(0); !acc.endsWith("\r\n\r\n")
               } do ()
               val head = acc
               val ok = head.contains(s"X-Nf-Perception-Token: $token")
@@ -258,6 +265,7 @@ private object FakeDaemon:
           )
           worker.setDaemon(true)
           worker.start()
+        end if
     )
     t.setDaemon(true)
     t.start()
@@ -265,4 +273,5 @@ private object FakeDaemon:
     finally
       running = false
       ss.close()
-
+  end withHealth
+end FakeDaemon

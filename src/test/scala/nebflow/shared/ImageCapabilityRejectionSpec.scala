@@ -61,10 +61,12 @@ class ImageCapabilityRejectionSpec extends FunSuite:
     NebflowError.toUserMessage(NebflowError.llmFailure(e, hadImage = e.hadImage))
 
   test("mixed authentication and timeout remains an authentication issue") {
-    val e = FallbackExhaustedError(List(
-      attempt("p", "m", FailoverReason.Auth),
-      attempt("q", "n", FailoverReason.Timeout)
-    ))
+    val e = FallbackExhaustedError(
+      List(
+        attempt("p", "m", FailoverReason.Auth),
+        attempt("q", "n", FailoverReason.Timeout)
+      )
+    )
     val message = userMessage(e)
     assert(message.contains("凭据"))
     assert(message.contains("权限"))
@@ -130,3 +132,4 @@ class ImageCapabilityRejectionSpec extends FunSuite:
     assert(!msg.contains("image-capability"), s"普通 400 被误标成能力问题：\n${e.getMessage}")
     assert(!msg.contains("不支持图片"), s"普通 400 被误标成能力问题：\n$msg")
   }
+end ImageCapabilityRejectionSpec

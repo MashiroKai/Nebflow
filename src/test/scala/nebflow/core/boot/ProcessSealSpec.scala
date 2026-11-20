@@ -64,8 +64,8 @@ class ProcessSealSpec extends FunSuite:
   test("B · 关态零注册：两族经 RecordingRegistrar 记账，launchedNames 全空、sealedNames 逐条在场"):
     val reg = new ProcessSeal.RecordingRegistrar
     val names = List(
-      ProcessSeal.Realm.Mail      -> "perception-daemon dock",
-      ProcessSeal.Realm.Mail      -> "HeldDeliveryWatchdog",
+      ProcessSeal.Realm.Mail -> "perception-daemon dock",
+      ProcessSeal.Realm.Mail -> "HeldDeliveryWatchdog",
       ProcessSeal.Realm.Heartbeat -> "DaemonService.autoStart"
     )
     names.foldLeft(IO.unit)((acc, na) => acc *> ProcessSeal.launchWith(reg, na._1, na._2)(IO.unit)).unsafeRunSync()
@@ -226,8 +226,10 @@ class ProcessSealSpec extends FunSuite:
     try
       f
       val events = appender.list.toArray(Array.empty[ILoggingEvent]).toList
-      (events.filter(_.getLevel.isGreaterOrEqual(ch.qos.logback.classic.Level.WARN)).map(_.getFormattedMessage),
-       events.filter(_.getLevel == ch.qos.logback.classic.Level.INFO).map(_.getFormattedMessage))
+      (
+        events.filter(_.getLevel.isGreaterOrEqual(ch.qos.logback.classic.Level.WARN)).map(_.getFormattedMessage),
+        events.filter(_.getLevel == ch.qos.logback.classic.Level.INFO).map(_.getFormattedMessage)
+      )
     finally lb.detachAppender(appender)
 
 end ProcessSealSpec

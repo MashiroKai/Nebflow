@@ -83,14 +83,13 @@ private[gateway] object AssetStampRoutes:
 
   def routes(ctx: RestApiCtx): HttpRoutes[IO] =
     import ctx.*
-    HttpRoutes.of[IO] {
-      case req @ GET -> Root / "nf-asset-stamp" =>
-        withAuth(req) {
-          stampPayload.flatMap {
-            case Json.Null => NotFound(Json.obj("error" -> "asset stamp unavailable".asJson))
-            case payload => Ok(payload)
-          }
+    HttpRoutes.of[IO] { case req @ GET -> Root / "nf-asset-stamp" =>
+      withAuth(req) {
+        stampPayload.flatMap {
+          case Json.Null => NotFound(Json.obj("error" -> "asset stamp unavailable".asJson))
+          case payload => Ok(payload)
         }
+      }
     }
 
 end AssetStampRoutes

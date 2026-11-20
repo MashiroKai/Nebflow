@@ -83,6 +83,7 @@ class BgTaskCancelSpec extends CatsEffectSuite:
             ShellSession.destroySession(sid).attempt.void
         )
       yield result
+      end for
     }
   }
 
@@ -91,10 +92,23 @@ class BgTaskCancelSpec extends CatsEffectSuite:
       for
         frames <- Ref.of[IO, List[Json]](Nil)
         calls <- Ref.of[IO, List[(String, String)]](Nil)
-        _ <- BgTaskRegistry.register("r1", "sid-r", "remote task", "remote", rootSessionId = "sid-r", deviceName = "KAI")
+        _ <- BgTaskRegistry.register(
+          "r1",
+          "sid-r",
+          "remote task",
+          "remote",
+          rootSessionId = "sid-r",
+          deviceName = "KAI"
+        )
         stub = (device: String, jobId: String) =>
           calls.update(_ :+ ((device, jobId))).as(Right("local wait interrupted; peer confirmed: cancelled"))
-        r <- BgTaskCancel.cancelOne("r1", by = "spec", wsSend = Some(f => frames.update(_ :+ f)), agentRef = None, remoteCancel = stub)
+        r <- BgTaskCancel.cancelOne(
+          "r1",
+          by = "spec",
+          wsSend = Some(f => frames.update(_ :+ f)),
+          agentRef = None,
+          remoteCancel = stub
+        )
         _ <- IO(assert(r.isRight, s"remote cancel must land locally: $r"))
         cs <- calls.get
         _ <- IO(assertEquals(cs, List(("KAI", "r1")), "传输桩必须收到精确的 (deviceName, jobId)"))
@@ -115,7 +129,14 @@ class BgTaskCancelSpec extends CatsEffectSuite:
   test("remote 腿：传输 Left ⇒ 整体 Left 且行保留（未落终态）") {
     withDataRoot {
       for
-        _ <- BgTaskRegistry.register("r2", "sid-r2", "remote task", "remote", rootSessionId = "sid-r2", deviceName = "KAI")
+        _ <- BgTaskRegistry.register(
+          "r2",
+          "sid-r2",
+          "remote task",
+          "remote",
+          rootSessionId = "sid-r2",
+          deviceName = "KAI"
+        )
         stub = (_: String, _: String) => IO.pure(Left("device offline"))
         r <- BgTaskCancel.cancelOne("r2", by = "spec", wsSend = None, agentRef = None, remoteCancel = stub)
         _ <- IO {

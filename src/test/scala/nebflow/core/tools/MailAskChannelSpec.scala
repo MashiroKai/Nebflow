@@ -59,8 +59,10 @@ class MailAskChannelSpec extends FunSuite:
     JsonObject.fromIterable(fields.map((k, v) => k -> Json.fromString(v)))
 
   private class StubLlm extends LlmHandle[IO]:
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[nebflow.shared.FallbackAttempt => IO[Unit]] = None
@@ -137,9 +139,11 @@ class MailAskChannelSpec extends FunSuite:
       Behaviors.receiveMessage[AgentCommand](cmd => record.update(_ :+ cmd).as(loop))
     loop
 
-  /** 建一个 ask 绑定（可问 .md 文件 + 注册表安装到服务定位）。doc 名每次唯一：
+  /**
+   * 建一个 ask 绑定（可问 .md 文件 + 注册表安装到服务定位）。doc 名每次唯一：
    * sid 由绑定路径哈希派生 ⇒ 每例独立 ask 会话与邮箱目录，前例的 pending 条目
-   * 不会泄漏进后例的零残留断言（round1 红 2 根因 = 固定路径让全 suite 共享 sid）。 */
+   * 不会泄漏进后例的零残留断言（round1 红 2 根因 = 固定路径让全 suite 共享 sid）。
+   */
   private def mountAskFace(): (AskSessionRegistry, String, os.Path) =
     val docName = s"spec-doc-${java.util.UUID.randomUUID().toString.take(8)}.md"
     val doc = tempRoot / "docs" / docName
@@ -165,7 +169,12 @@ class MailAskChannelSpec extends FunSuite:
           resources <- mkResources(system)
           probe <- system.spawn(mkProbe(record), s"probe-$askId")
           _ <- resources.agentRegistry.update(
-            _ + (askId -> AgentRecord(sessionId = askId, ref = probe, kind = AgentKind.SubTask, rootSessionId = "nebula-root"))
+            _ + (askId -> AgentRecord(
+              sessionId = askId,
+              ref = probe,
+              kind = AgentKind.SubTask,
+              rootSessionId = "nebula-root"
+            ))
           )
           res <- MailTool.call(
             qIn("address" -> s"ask:$askId", "message" -> "follow-up from the orchestrator"),
@@ -194,12 +203,14 @@ class MailAskChannelSpec extends FunSuite:
             "the structured address chain starts here (web chip reads this field)"
           )
         case other => fail(s"expected ExternalEvent, got: $other")
-    finally
-      system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    finally system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    end try
 
   // ── 2. 不 live：落会话邮箱（下次 askOpen/askQuestion 排干）────
 
-  test("root → ask session not live: message persists in the session mailbox (drained at the next askOpen/askQuestion)"):
+  test(
+    "root → ask session not live: message persists in the session mailbox (drained at the next askOpen/askQuestion)"
+  ):
     val system = ActorSystem(s"mail-ask-queue-${java.util.UUID.randomUUID().toString.take(6)}")
     try
       val (_, askId, _) = mountAskFace()
@@ -245,8 +256,8 @@ class MailAskChannelSpec extends FunSuite:
         Some(s"ask:$askId"),
         "drain leg forwards this metadata into the askAddress UI chain"
       )
-    finally
-      system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    finally system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    end try
 
   // ── 3. 未知 ask id：显式 NOT_FOUND，零排队 ────────────────────
 
@@ -269,8 +280,8 @@ class MailAskChannelSpec extends FunSuite:
           assert(err.message.contains(MailTool.ErrAskNotFound), s"must carry NOT_FOUND, got: ${err.message}")
         case Right(v) => fail(s"unknown ask id must be refused, got: $v")
       assertEquals(pendingFiles(sid), Nil, "no mailbox entry may be created for an unknown id")
-    finally
-      system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    finally system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    end try
 
   // ── 4. 非授权发送方：EXCLUSIVE（delegate 续聊同面）───────────
 
@@ -298,8 +309,8 @@ class MailAskChannelSpec extends FunSuite:
             assert(err.message.contains(MailTool.ErrAskExclusive), s"$label: must carry EXCLUSIVE, got: ${err.message}")
           case Right(v) => fail(s"$label: must be refused, got: $v")
       assertEquals(pendingFiles(askId), Nil, "a refused sender must leave no mailbox entry")
-    finally
-      system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    finally system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    end try
 
   // ── 5. 绑定文件失联：NOT_ROUTABLE（不静默积压邮箱）────────────
 
@@ -322,8 +333,8 @@ class MailAskChannelSpec extends FunSuite:
           assert(err.message.contains(MailTool.ErrAskNotRoutable), s"must carry NOT_ROUTABLE, got: ${err.message}")
         case Right(v) => fail(s"an unroutable ask session must be refused, got: $v")
       assertEquals(pendingFiles(askId), Nil, "an unroutable session must not accumulate mailbox entries")
-    finally
-      system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    finally system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    end try
 
   // ── 6. ask 面未装配：UNAVAILABLE ─────────────────────────────
 
@@ -344,8 +355,8 @@ class MailAskChannelSpec extends FunSuite:
         case Left(err) =>
           assert(err.message.contains(MailTool.ErrAskUnavailable), s"must carry UNAVAILABLE, got: ${err.message}")
         case Right(v) => fail(s"a missing ask face must be refused, got: $v")
-    finally
-      system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    finally system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    end try
 
   // ── 7. 空目标：显式 Malformed（不猜、不兜底）─────────────────
 
@@ -366,7 +377,7 @@ class MailAskChannelSpec extends FunSuite:
         case Left(err) =>
           assert(err.message.contains("Malformed address"), s"must say Malformed, got: ${err.message}")
         case Right(v) => fail(s"an empty ask target must be refused, got: $v")
-    finally
-      system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    finally system.stopAll.handleErrorWith(_ => IO.unit).unsafeRunSync()
+    end try
 
 end MailAskChannelSpec

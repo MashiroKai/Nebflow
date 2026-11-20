@@ -96,13 +96,17 @@ object SecretsCatalog:
 
   // ── Keyword tags（可查询批 2026-11-18）──────────────────────────────────
 
-  /** Tag contract: lowercase start, `[a-z0-9._-]`, 1-32 chars — the same
-    * charset shape as a secret NAME, one size down. */
+  /**
+   * Tag contract: lowercase start, `[a-z0-9._-]`, 1-32 chars — the same
+   * charset shape as a secret NAME, one size down.
+   */
   val TagPattern: java.util.regex.Pattern =
     java.util.regex.Pattern.compile("^[a-z0-9][a-z0-9._-]{0,31}$")
 
-  /** Hard cap on how many tags one secret may carry (a query facet, not a
-    *  free-form label bag). */
+  /**
+   * Hard cap on how many tags one secret may carry (a query facet, not a
+   *  free-form label bag).
+   */
   val MaxTags: Int = 16
 
   private val MaxTagLen: Int = 32
@@ -118,7 +122,9 @@ object SecretsCatalog:
    * left folds to the empty string and is dropped by [[normalizeTags]].
    */
   def normalizeTag(raw: String): String =
-    val folded = raw.trim.toLowerCase.map(c => if (c.isLetterOrDigit && c < 128) || c == '-' || c == '.' || c == '_' then c else '-')
+    val folded = raw.trim.toLowerCase.map(c =>
+      if (c.isLetterOrDigit && c < 128) || c == '-' || c == '.' || c == '_' then c else '-'
+    )
     folded.take(MaxTagLen).dropWhile(_ == '-').reverse.dropWhile(_ == '-').reverse
 
   /**
@@ -248,6 +254,7 @@ object SecretsCatalog:
     val payload =
       Json.obj("version" -> Json.fromInt(SidecarVersion), "secrets" -> Json.fromJsonObject(obj))
     writeAtomically(metaPath(dataRoot), payload.spaces2 + "\n")
+  end save
 
   // ── Catalogue rendering ────────────────────────────────────────────────
 

@@ -93,7 +93,8 @@ final class RestApiCtx(
     checkAuth(req).flatMap(ok => if ok then f else authRejected)
 
   private[gateway] def withRecoveryPrincipal(req: Request[IO])(f: String => IO[Response[IO]]): IO[Response[IO]] =
-    tokenRef.get.flatMap(token => GatewayAuth.authenticate(req, token, sessions, GatewayAuth.Rails.ApiFull))
+    tokenRef.get
+      .flatMap(token => GatewayAuth.authenticate(req, token, sessions, GatewayAuth.Rails.ApiFull))
       .flatMap {
         case Some(credential) => RecoveryPrincipal.fromCredential(credential).fold(authRejected)(f)
         case None => authRejected

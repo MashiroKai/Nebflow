@@ -62,6 +62,7 @@ object WireShape:
   enum Block:
     case Text(text: String)
     case Thinking(text: String, signature: Option[String])
+
     /** 判不出来、也不带文本——只计数，用于诊断。 */
     case Opaque(kind: String)
   end Block
@@ -104,7 +105,11 @@ object WireShape:
         str("text")
           .map(Block.Text.apply)
           .orElse {
-            hc.downField("content").focus.filter(_.isString).flatMap(_.asString).filter(_.nonEmpty)
+            hc.downField("content")
+              .focus
+              .filter(_.isString)
+              .flatMap(_.asString)
+              .filter(_.nonEmpty)
               .map(Block.Text.apply)
           }
           .orElse(
@@ -114,16 +119,18 @@ object WireShape:
               .map(t => Block.Thinking(t, str("signature")))
           )
           .getOrElse(Block.Opaque(kind.getOrElse("unknown")))
+    end match
+  end classifyBlock
 
   // ── ② 诊断词汇 ──────────────────────────────────────────────────────
 
   /** 消息块的类型字母表（诊断用短名）——一眼看出"我们发出去的是什么形状"。 */
   private def blockTag(b: ContentBlock): String = b match
-    case ContentBlock.Text(_)             => "t"
-    case ContentBlock.Image(_, _)         => "i"
-    case ContentBlock.ToolUse(_, _, _)    => "u"
+    case ContentBlock.Text(_) => "t"
+    case ContentBlock.Image(_, _) => "i"
+    case ContentBlock.ToolUse(_, _, _) => "u"
     case ContentBlock.ToolResult(_, _, _) => "r"
-    case ContentBlock.Thinking(_, _)      => "k"
+    case ContentBlock.Thinking(_, _) => "k"
 
   /**
    * 请求侧形状指纹：每条消息 `role:tags`，逗号分隔，最多 `maxMsgs` 条
@@ -133,18 +140,20 @@ object WireShape:
   def requestShape(messages: List[Message], maxMsgs: Int = 12): String =
     val tags = messages.map { m =>
       val role = m.role match
-        case MessageRole.User      => "u"
+        case MessageRole.User => "u"
         case MessageRole.Assistant => "a"
-        case MessageRole.System    => "s"
-        case null                  => "?"
+        case MessageRole.System => "s"
+        case null => "?"
       val body = m.content match
-        case Left(_)       => "t"
+        case Left(_) => "t"
         case Right(blocks) => blocks.map(blockTag).mkString
       s"$role:${if body.isEmpty then "-" else body}"
     }
     val shown = tags.take(maxMsgs)
     val tail = if tags.size > maxMsgs then s",+${tags.size - maxMsgs}" else ""
     shown.mkString(",") + tail
+
+  end requestShape
 
   /**
    * 响应侧形状序列：把"对方到底回了什么类型"压成一行。
@@ -174,9 +183,14 @@ object WireShape:
             }
           val err = hc.downField("error")
           if err.succeeded then
-            val t = err.downField("type").as[String].toOption.orElse {
-              err.as[String].toOption.map(_ => "string")
-            }.getOrElse("?")
+            val t = err
+              .downField("type")
+              .as[String]
+              .toOption
+              .orElse {
+                err.as[String].toOption.map(_ => "string")
+              }
+              .getOrElse("?")
             val code = err.downField("code").as[String].toOption.getOrElse("-")
             s"error/$t(code=$code)"
           else
@@ -188,14 +202,18 @@ object WireShape:
               val delta = choice.downField("delta")
               val msgKeys =
                 if msg.succeeded then
-                  msg.as[Json].toOption
+                  msg
+                    .as[Json]
+                    .toOption
                     .flatMap(_.asObject)
                     .map(_.keys.toList.filter(k => k != "role" && k != "content").sorted)
                     .getOrElse(Nil)
                 else Nil
               val deltaKeys =
                 if delta.succeeded then
-                  delta.as[Json].toOption
+                  delta
+                    .as[Json]
+                    .toOption
                     .flatMap(_.asObject)
                     .map(_.keys.toList.filter(k => k != "role").sorted)
                     .getOrElse(Nil)
@@ -203,6 +221,8 @@ object WireShape:
               if msg.succeeded then s"message:${("content" :: msgKeys).mkString("+")}"
               else if delta.succeeded then s"delta:${deltaKeys.mkString("+")}"
               else json.asObject.map(_.keys.toList.sorted.mkString("|")).getOrElse("scalar")
+            end if
+          end if
       end match
 
   /**
@@ -232,7 +252,11 @@ object WireShape:
     else
       parse(body) match
         case Right(json) =>
-          val msg = json.hcursor.downField("error").downField("message").as[String].toOption
+          val msg = json.hcursor
+            .downField("error")
+            .downField("message")
+            .as[String]
+            .toOption
             .orElse(json.hcursor.downField("message").as[String].toOption)
             .getOrElse(json.noSpaces)
           msg.replaceAll("\\s+", " ").take(max)
@@ -251,7 +275,7 @@ object WireShape:
     else
       val low = Option(body).getOrElse("").toLowerCase
       (low.contains("thinking") || low.contains("reasoning")) &&
-        (low.contains("must be passed back") || low.contains("passed back to the api") ||
-          low.contains("content[].thinking") || low.contains("reasoning_content"))
+      (low.contains("must be passed back") || low.contains("passed back to the api") ||
+        low.contains("content[].thinking") || low.contains("reasoning_content"))
 
 end WireShape

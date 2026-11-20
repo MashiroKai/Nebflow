@@ -48,7 +48,9 @@ class StuckTimeBaseSpec extends FunSuite:
     assert(TaskStuckWatcher.waitingForAskHost(exact, Set(("s-timebase", "call-1"))))
     assert(!TaskStuckWatcher.waitingForAskHost(exact, Set(("s-timebase", "other"))))
     assert(!TaskStuckWatcher.waitingForAskHost(waiting, Set(("s-timebase", "call-1"))))
-    assert(!TaskStuckWatcher.waitingForAskHost(exact.copy(currentToolName = Some("Bash")), Set(("s-timebase", "call-1"))))
+    assert(
+      !TaskStuckWatcher.waitingForAskHost(exact.copy(currentToolName = Some("Bash")), Set(("s-timebase", "call-1")))
+    )
   }
 
   // ── 口径 1：空窗集 ⇒ 判词与 reason 文案逐字不变 ─────────────────────────────

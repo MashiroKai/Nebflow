@@ -110,23 +110,28 @@ final class NfObjStore private (
             if Files.isRegularFile(p, LinkOption.NOFOLLOW_LINKS) then
               Some((Files.size(p), Files.getLastModifiedTime(p, LinkOption.NOFOLLOW_LINKS).toMillis))
             else None
-          }.attempt.map {
-            case Right(Some((sz, mt))) if sz == e.size && mt == e.mtimeMs => Some(e)
-            case _ => None
-          }
+          }.attempt
+            .map {
+              case Right(Some((sz, mt))) if sz == e.size && mt == e.mtimeMs => Some(e)
+              case _ => None
+            }
       }
     }
 
   /** 读数面（诊断/规格）：在场条目数。 */
   def size: IO[Int] = ref.get.map(_.byCid.size)
 
+end NfObjStore
+
 object NfObjStore:
 
-  /** cid 位数：sha256 前 32 hex = 128 bit。理由：URL 与 ETag 都要短到可读，
+  /**
+   * cid 位数：sha256 前 32 hex = 128 bit。理由：URL 与 ETag 都要短到可读，
    *  而 128 bit 的碰撞界（生日界 ≈ 2^64 件）远超任何本地对象池规模；16 hex
    *  （64 bit）在同一台机器的重活场景已可接受，但 32 hex 是零成本的安全余量
    *  （只多 16 个字符，且与磁盘对象路径 `objects/<前2>/<sha256>` 的前两级切分
-   *  天然对齐）。 */
+   *  天然对齐）。
+   */
   val CidHexChars: Int = 32
 
   /** cid 形态（路由只认这一种；不匹配 = 统一 404，不做存在性 oracle）。 */
@@ -164,3 +169,4 @@ object NfObjStore:
 
   /** 记忆化实例（缺省注入缝；测试与既有构造点零改动）。 */
   lazy val memoized: NfObjStore = unsafeCreate()
+end NfObjStore

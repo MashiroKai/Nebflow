@@ -11,7 +11,8 @@ import nebflow.shared.{Config, Defaults, Message, MessageRole, NebflowLogger}
 
 import scala.concurrent.duration.*
 
-/** Terminal judgment using the existing utility-model candidate chain.
+/**
+ * Terminal judgment using the existing utility-model candidate chain.
  * An unavailable judgment returns None so the caller can use its self-report fallback.
  *
  * kernel-spec 批（2026-11-19）：本腿不再自建 `SendMessageParams`、不再自写候选链遍历

@@ -113,7 +113,9 @@ class FreezeReplaySilenceSpec extends CatsEffectSuite:
   // 注入的父可见件 ⇒ 该面退役；collapseSilentReceipts 改为**整段丢弃**静默回执，
   // 生产路径零 frozen-waiting 行，呈现面只有子 agent 面板。原断言逐字见 git 历史。
 
-  test("A(重写). recoverable freeze replay: ZERO user-facing receipts AND zero status rows — silent receipts dropped wholesale, panel is the only surface") {
+  test(
+    "A(重写). recoverable freeze replay: ZERO user-facing receipts AND zero status rows — silent receipts dropped wholesale, panel is the only surface"
+  ) {
     val parent = freshParent("a")
     val llmFails = (1 to 12).toList.map(i =>
       receipt(
@@ -146,7 +148,11 @@ class FreezeReplaySilenceSpec extends CatsEffectSuite:
       val (after, dropped) = afterTried
       // ① 用户面零冻结回执：逐条回执一条不冒泡。
       val receipts = after.filter(e => e.eventType == "frozen")
-      assertEquals(receipts.size, 0, s"no per-delegate frozen receipt may bubble, got ${receipts.map(_.payload.take(60))}")
+      assertEquals(
+        receipts.size,
+        0,
+        s"no per-delegate frozen receipt may bubble, got ${receipts.map(_.payload.take(60))}"
+      )
       // ② fallback 废除批：静默回执**整段丢弃**——15 条全丢，连状态行也不产（状态行
       //    本身是父可见件，随批退役）。原「collapsed == 13（折成 2 行）」面退役。
       assertEquals(dropped, 15, "all 15 silent receipts are dropped wholesale (no per-family folding anymore)")
@@ -208,12 +214,16 @@ class FreezeReplaySilenceSpec extends CatsEffectSuite:
       val silent = FreezeNotice.tierOfReason(r) == FreezeNotice.Tier.Silent
       assertEquals(silent, fd.autoRecoverable, s"$line: tier must follow FreezeDisplay.autoRecoverable")
     }
-    assert(FreezeNotice.receiptSilent(
-      DelegateFreeze.receiptText("d", "x", DelegateFreeze.Reason.LlmFailure, "All providers failed", "/w")
-    ))
-    assert(!FreezeNotice.receiptSilent(
-      DelegateFreeze.receiptText("d", "x", DelegateFreeze.Reason.ToolFailure, "ToolPipeline threw", "/w")
-    ))
+    assert(
+      FreezeNotice.receiptSilent(
+        DelegateFreeze.receiptText("d", "x", DelegateFreeze.Reason.LlmFailure, "All providers failed", "/w")
+      )
+    )
+    assert(
+      !FreezeNotice.receiptSilent(
+        DelegateFreeze.receiptText("d", "x", DelegateFreeze.Reason.ToolFailure, "ToolPipeline threw", "/w")
+      )
+    )
   }
 
   /** 面板判据（与前端 `freezeState.freezeKindOf` 同一张表；门禁另有 node 侧真跑）。 */

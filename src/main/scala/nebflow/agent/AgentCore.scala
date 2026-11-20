@@ -148,6 +148,7 @@ object AgentCore:
   enum PermissionWaitOutcome:
     /** 用户真实答复（approved=true 允许 / false 拒绝——#12 劝停计数只对这条腿生效）。 */
     case Answered(approved: Boolean)
+
     /** 有界截止到期：等待期间无任何可达窗口作答 ⇒ 调用方按拒绝收口并写明原因。 */
     case TimedOut(afterMs: Long)
 
@@ -155,7 +156,7 @@ object AgentCore:
    * permission-landing 批 P1：**有界**权限等待原语（取代 R1 的无界
    * `deferred.get`——2026-11-18 重派裁定推翻「等待无超时」口径：等待方必须有
    * 超时）。等待期内用户作答 ⇒ [[PermissionWaitOutcome.Answered]] 如实返回
-   *（迟到回答照常生效，R1 的「人能答时不抢先拒绝」语义保留）；到期 ⇒ 先执行
+   * （迟到回答照常生效，R1 的「人能答时不抢先拒绝」语义保留）；到期 ⇒ 先执行
    * `withdraw`（调用方用 InteractionHubCommand.CloseRequest 精确回收槽位 + 广播
    * 关卡帧，卡片不再挂在没人听的位置）再以 [[PermissionWaitOutcome.TimedOut]]
    * 返回——由调用方写一条可读的失败关闭结论（不计入 #12 用户拒绝计数）。

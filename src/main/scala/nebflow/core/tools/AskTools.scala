@@ -73,9 +73,11 @@ object AskTools:
 
 end AskTools
 
-/** 单向信使（机制稿 §7：`send_message_to_main_chat`；ask-scope 批 2026-11-18 改为
-  * **结构化转交请求**——作者令「复杂任务转交主会话：做什么、涉及哪些路径、为什么
-  * 需要主会话、期望产出」）。 */
+/**
+ * 单向信使（机制稿 §7：`send_message_to_main_chat`；ask-scope 批 2026-11-18 改为
+ * **结构化转交请求**——作者令「复杂任务转交主会话：做什么、涉及哪些路径、为什么
+ * 需要主会话、期望产出」）。
+ */
 object SendMessageToMainChatTool extends Tool:
 
   val Name: String = "send_message_to_main_chat"
@@ -126,11 +128,19 @@ object SendMessageToMainChatTool extends Tool:
     if result.length > 160 then result.take(157) + "..." else result
 
   override def call(input: JsonObject, ctx: ToolContext): IO[Either[ToolError, String]] =
-    val task = input("task").flatMap(_.asString).map(_.trim)
+    val task = input("task")
+      .flatMap(_.asString)
+      .map(_.trim)
       .filter(_.nonEmpty)
       .orElse(input("question").flatMap(_.asString).map(_.trim).filter(_.nonEmpty))
       .getOrElse("")
-    val paths = input("paths").flatMap(_.asArray).getOrElse(Vector.empty).toList.flatMap(_.asString).map(_.trim).filter(_.nonEmpty)
+    val paths = input("paths")
+      .flatMap(_.asArray)
+      .getOrElse(Vector.empty)
+      .toList
+      .flatMap(_.asString)
+      .map(_.trim)
+      .filter(_.nonEmpty)
     val reason = input("reason").flatMap(_.asString).map(_.trim).getOrElse("")
     val expected = input("expected").flatMap(_.asString).map(_.trim).getOrElse("")
     val refs = input("context_refs").flatMap(_.asArray).getOrElse(Vector.empty).toList
@@ -145,8 +155,7 @@ object SendMessageToMainChatTool extends Tool:
           )
         )
       )
-    else if task.isEmpty then
-      IO.pure(Left(ToolError("send_message_to_main_chat: `task` must be a non-empty string.")))
+    else if task.isEmpty then IO.pure(Left(ToolError("send_message_to_main_chat: `task` must be a non-empty string.")))
     else if ctx.agentDef.isEmpty then
       IO.pure(
         Left(ToolError("send_message_to_main_chat: no agent context — handoff unavailable. (ASK_HANDOFF_FORBIDDEN)"))
@@ -204,7 +213,12 @@ object SendMessageToMainChatTool extends Tool:
                     case left @ Left(err) =>
                       AskTools.pushHandoffFrame(sid, req, ctx, ok = false, error = err.message) *> IO.pure(left)
                   }
-                  .map(_.map(_ => s"已转交主会话（结构化请求）：${task.take(80)}${if paths.isEmpty then "" else s"（涉及 ${paths.length} 个路径）"}（它可回问，你仍在本窗继续服务）"))
+                  .map(
+                    _.map(_ =>
+                      s"已转交主会话（结构化请求）：${task
+                          .take(80)}${if paths.isEmpty then "" else s"（涉及 ${paths.length} 个路径）"}（它可回问，你仍在本窗继续服务）"
+                    )
+                  )
               end if
         yield result
       flow.handleErrorWith(e => IO.pure(Left(ToolError(s"send_message_to_main_chat failed: ${e.getMessage}"))))

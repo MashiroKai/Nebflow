@@ -137,14 +137,15 @@ object ProjectUnmount:
             rt.store.chainMembersOf(cid).map(cm => cm.exists(_.members.size >= 2))
           }
           // 计入 chains 的链，其成员由链腿级联停——不再重复计入 runningNodes
-          //（单成员链不在 chains，其 Running 成员仍走节点腿 = 保留在 runningNodes）
+          // （单成员链不在 chains，其 Running 成员仍走节点腿 = 保留在 runningNodes）
           chainMemberIds <- chains.flatTraverse { cid =>
             rt.store.chainMembersOf(cid).map(_.fold(List.empty[String])(_.members.map(_.id)))
           }
           snap <- rt.store.snapshot
           running = snap.nodes.values
             .filter(n => n.status == NodeLifecycle.Running && !chainMemberIds.contains(n.id))
-            .map(_.id).toList
+            .map(_.id)
+            .toList
           recs <- agentRegistry.get
           dispatchers = recs.values
             .filter(r =>
@@ -162,6 +163,7 @@ object ProjectUnmount:
             .map(_.sessionId)
             .toList
         yield Some(InFlight(canonical, chains, running, dispatchers, delegates))
+        end for
     }
 
   /**

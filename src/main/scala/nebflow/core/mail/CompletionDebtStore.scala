@@ -73,20 +73,29 @@ object CompletionDebtStore:
   private val debtLock = new Object
 
   final case class ManagedDebt(parent: String, task: String, run: String, source: String, messages: List[Message])
+
   private given Encoder[ManagedDebt] = Encoder.forProduct5("parent", "task", "run", "source", "messages")(d =>
-    (d.parent, d.task, d.run, d.source, d.messages))
-  private given Decoder[ManagedDebt] = Decoder.forProduct5("parent", "task", "run", "source", "messages")(ManagedDebt.apply)
+    (d.parent, d.task, d.run, d.source, d.messages)
+  )
+
+  private given Decoder[ManagedDebt] =
+    Decoder.forProduct5("parent", "task", "run", "source", "messages")(ManagedDebt.apply)
 
   private def managedFile(task: String, run: String): os.Path =
-    val encoded = java.util.Base64.getUrlEncoder.withoutPadding().encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+    val encoded = java.util.Base64.getUrlEncoder
+      .withoutPadding()
+      .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))
     PathUtil.dataRoot / "sessions" / SessionMailbox.safeId(task) / s"completion-debt-$encoded.json"
 
   /** Caller holds task row lock. Never acquire it from this store: row lock → debtLock only. */
   private[nebflow] def recordManagedSync(debt: ManagedDebt): Boolean = debtLock.synchronized {
-    require(debt.parent.nonEmpty && debt.task.nonEmpty && debt.run.nonEmpty && Set("subtask", "subagent").contains(debt.source))
+    require(
+      debt.parent.nonEmpty && debt.task.nonEmpty && debt.run.nonEmpty && Set("subtask", "subagent").contains(
+        debt.source
+      )
+    )
     val p = managedFile(debt.task, debt.run)
-    if os.exists(p) then
-      decode[ManagedDebt](os.read(p)).contains(debt)
+    if os.exists(p) then decode[ManagedDebt](os.read(p)).contains(debt)
     else
       os.makeDir.all(p / os.up)
       AtomicJson.writeSync(p, debt.asJson.noSpaces)
@@ -97,8 +106,10 @@ object CompletionDebtStore:
     debtLock.synchronized {
       val p = managedFile(task, run)
       if !os.exists(p) then None
-      else decode[ManagedDebt](os.read(p)).toOption.filter(d =>
-        d.parent == parent && d.task == task && d.run == run && d.source == source)
+      else
+        decode[ManagedDebt](os.read(p)).toOption.filter(d =>
+          d.parent == parent && d.task == task && d.run == run && d.source == source
+        )
     }
   }
 

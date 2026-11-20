@@ -736,129 +736,100 @@ object TaskStuckWatcher:
     // 再扫本轮卡死候选（顺序无关，但先复查可让同轮内「复查发现失效 → 下一轮的
     // 恢复动作」时序更直观）。
     verifyL3Outcomes(resources, pendingL3, now, l3VerifyDelayMs) *>
-      (resources.agentRegistry.get, nebflow.core.tools.AskHostLedger.recover).tupled.flatMap { (registry, askHostRequests) =>
-        val waitingCalls = askHostRequests.filter(r => r.answer.isEmpty && r.pending.toolCallId.nonEmpty)
-          .map(r => (r.pending.workerSession, r.pending.toolCallId)).toSet
-        // ── D3-④（steward 批 2026-10-23）：Waiting 停靠态的活性看护 ────────────
-        // 旧整族豁免 ⇒ 停靠会话的死亡（registry 行残留、actor 已退出）永无人管，
-        // 合并队列被尸体持窗整队陪站。判据 = 活性/事件（actor 注册表在否），零时间
-        // 判据——活停靠零动作，死停靠由下方 IO 链首环 careWaitingDock 处置（释放
-        // 合并队列窗 + 台账翻 failed + 事件升级）。
-        val candidates = registry.values.toList
-          .filter(rec => scannedKinds.contains(rec.kind))
-          .filter(rec => rec.status == AgentStatus.Processing)
-          // R2 (wait-timeout-fix, 2026-09-03 作者裁定): WaitingForUser is a
-          // first-class human-in-the-loop wait (AskUser pending / permission
-          // card) — a person, not the process, is the progress driver. Never a
-          // stuck candidate: this exclusion (paired with the status wiring)
-          // kills all 116/day taskStuck false positives (audit 20260903) and
-          // the destructive Stop→hard-cancel chain that killed sub-agents'
-          // pending questions. Behaviorally subsumed by the Processing filter
-          // above; kept as an explicit guard so a future widening of the scan
-          // condition can never silently re-include human-in-the-loop waits.
-          // Coverage resumes the moment the answer lands (paired restore to
-          // Processing with a fresh lastActivityMs — AgentActor AskUser handler
-          // / AgentCore.askUserPermission), so true hangs stay reachable.
-          .filter(rec => rec.status != AgentStatus.WaitingForUser)
-          .filterNot(rec => waitingForAskHost(rec, waitingCalls))
-        // 显式等待停靠态（平台修复批 fix 4，2026-10-21；steward 批 D3-④
-        // 2026-10-23 改判据）：Waiting = 引擎停靠（standby 申报待命等事件）——
-        // 推进者 = 下一封 Mail / 作者续聊，不是本会话进程。Waiting 仍不进
-        // 「无进展卡死」候选（上方 Processing 过滤已排除——等待期没有 agent 侧
-        // 活动是合法态，时间判据禁用），但死亡停靠不再无人管：改由本拍 IO 链
-        // 首环 careWaitingDock 以**活性/事件判据**单列看护（registry 行在、
-        // actor 已死 = 明确死亡事件 ⇒ 台账翻 failed + 升级上报）；
-        // alive 停靠零动作（等待屏障语义保持）。
-        // 2026-09-10 换轴：判据收敛到 assess（agent 侧事件停滞 ∪ 工具相位超时，
-        // 二者都不引用进程 CPU）。旧行 `now - rec.lastActivityMs > thresholdMs`
-        // 保留为 assess 的判据 ①，其余语义不变。
-        // R8 ①：改用详情版（assess 的投影），事件面取分支身份与原始读数。
-        val stuck = candidates.flatMap(rec => assessDetailed(rec, now, thresholdMs).map((rec, _)))
-        val stuckIds = stuck.map(_._1.sessionId).toSet
-        // ── 类③ 环境失效探针（wtsurv 批，2026-09-14；#159/#176）───────────────────
-        // 取数面收窄（成本纪律）：只对**已静默满 [[EnvLostGraceMs]]** 的候选探一次
-        // cwd。理由：目录消失的**唯一终局形态**就是「之后静默」（命令 spawn 不出来 ⇒
-        // 零 agent 侧事件），故静默窗之外的会话不需要探；这同时避开「每一轮对全部
-        // Processing 会话各探一次」的常态开销。
-        val silent = candidates.filter(rec => rec.lastActivityMs > 0 && now - rec.lastActivityMs > EnvLostGraceMs)
-        silent
-          .traverse(rec => cwdProbe(rec.sessionId).map(rec.sessionId -> _))
-          .map(_.toMap)
-          .flatMap { cwdBySid =>
-            def aliveOf(rec: AgentRecord): Option[Boolean] = cwdBySid.getOrElse(rec.sessionId, None)
-            // Drop counters for sessions that recovered (fresh activity / different
-            // status / gone) so a future stuck episode starts from Stop attempt 1.
-            // D3-④ 首环：Waiting 死停靠看护（活性/事件判据，见上方头注）。
-            careWaitingDock(resources, wsHub, registry, now) *>
-              stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
-              // P3（§3.3）：**episode 边界** —— 离开 stuck 候选集的扫描轮复位「本代次恢复
-              // 预算」（与 stopCounts 同点、同纪律）；全链预算 / 冷却窗 / 互斥点 2 状态
-              // **保留**（它们的语义是跨代次的）。
-              ledger.update(m =>
-                m.view.map { case (k, l) => (k, if stuckIds.contains(k) then l else l.copy(genAttempts = 0)) }.toMap
-              ) *>
-              // ── node-stuck 通报（node-stuck-notify 批，2026-09-11）──────────────────
-              // 排在恢复链**之前**：先在**同一拍**里把「这个节点卡了/挂了多久、你有哪些
-              // 选项」送到 dispatcher（缺席则 root），再走既有 L1→L4 恢复动作。通报本身
-              // 非破坏、零新判据——判据复用 assessDetailed ∪ 挂等轴，且只对
-              // **已经命中阈值**的候选做一次 flow-map 定位（取数面窄化同 probeEnvLost）。
-              // fail-soft：通报面任何故障只 WARN，绝不改变本拍的识别/恢复语义。
-              NodeStuckNotify
-                .sweep(
-                  resources,
-                  registry,
-                  now,
-                  noProgressThresholdMs = thresholdMs,
-                  waitingThresholdMs = notifyWaitingMs,
-                  sent = notifySent,
-                  nodeProbe = nodeProbe
-                )
-                .handleErrorWith(e =>
-                  logger.warn(s"TaskStuckWatcher: node-stuck notify sweep failed: ${e.getMessage}")
+      (resources.agentRegistry.get, nebflow.core.tools.AskHostLedger.recover).tupled.flatMap {
+        (registry, askHostRequests) =>
+          val waitingCalls = askHostRequests
+            .filter(r => r.answer.isEmpty && r.pending.toolCallId.nonEmpty)
+            .map(r => (r.pending.workerSession, r.pending.toolCallId))
+            .toSet
+          // ── D3-④（steward 批 2026-10-23）：Waiting 停靠态的活性看护 ────────────
+          // 旧整族豁免 ⇒ 停靠会话的死亡（registry 行残留、actor 已退出）永无人管，
+          // 合并队列被尸体持窗整队陪站。判据 = 活性/事件（actor 注册表在否），零时间
+          // 判据——活停靠零动作，死停靠由下方 IO 链首环 careWaitingDock 处置（释放
+          // 合并队列窗 + 台账翻 failed + 事件升级）。
+          val candidates = registry.values.toList
+            .filter(rec => scannedKinds.contains(rec.kind))
+            .filter(rec => rec.status == AgentStatus.Processing)
+            // R2 (wait-timeout-fix, 2026-09-03 作者裁定): WaitingForUser is a
+            // first-class human-in-the-loop wait (AskUser pending / permission
+            // card) — a person, not the process, is the progress driver. Never a
+            // stuck candidate: this exclusion (paired with the status wiring)
+            // kills all 116/day taskStuck false positives (audit 20260903) and
+            // the destructive Stop→hard-cancel chain that killed sub-agents'
+            // pending questions. Behaviorally subsumed by the Processing filter
+            // above; kept as an explicit guard so a future widening of the scan
+            // condition can never silently re-include human-in-the-loop waits.
+            // Coverage resumes the moment the answer lands (paired restore to
+            // Processing with a fresh lastActivityMs — AgentActor AskUser handler
+            // / AgentCore.askUserPermission), so true hangs stay reachable.
+            .filter(rec => rec.status != AgentStatus.WaitingForUser)
+            .filterNot(rec => waitingForAskHost(rec, waitingCalls))
+          // 显式等待停靠态（平台修复批 fix 4，2026-10-21；steward 批 D3-④
+          // 2026-10-23 改判据）：Waiting = 引擎停靠（standby 申报待命等事件）——
+          // 推进者 = 下一封 Mail / 作者续聊，不是本会话进程。Waiting 仍不进
+          // 「无进展卡死」候选（上方 Processing 过滤已排除——等待期没有 agent 侧
+          // 活动是合法态，时间判据禁用），但死亡停靠不再无人管：改由本拍 IO 链
+          // 首环 careWaitingDock 以**活性/事件判据**单列看护（registry 行在、
+          // actor 已死 = 明确死亡事件 ⇒ 台账翻 failed + 升级上报）；
+          // alive 停靠零动作（等待屏障语义保持）。
+          // 2026-09-10 换轴：判据收敛到 assess（agent 侧事件停滞 ∪ 工具相位超时，
+          // 二者都不引用进程 CPU）。旧行 `now - rec.lastActivityMs > thresholdMs`
+          // 保留为 assess 的判据 ①，其余语义不变。
+          // R8 ①：改用详情版（assess 的投影），事件面取分支身份与原始读数。
+          val stuck = candidates.flatMap(rec => assessDetailed(rec, now, thresholdMs).map((rec, _)))
+          val stuckIds = stuck.map(_._1.sessionId).toSet
+          // ── 类③ 环境失效探针（wtsurv 批，2026-09-14；#159/#176）───────────────────
+          // 取数面收窄（成本纪律）：只对**已静默满 [[EnvLostGraceMs]]** 的候选探一次
+          // cwd。理由：目录消失的**唯一终局形态**就是「之后静默」（命令 spawn 不出来 ⇒
+          // 零 agent 侧事件），故静默窗之外的会话不需要探；这同时避开「每一轮对全部
+          // Processing 会话各探一次」的常态开销。
+          val silent = candidates.filter(rec => rec.lastActivityMs > 0 && now - rec.lastActivityMs > EnvLostGraceMs)
+          silent
+            .traverse(rec => cwdProbe(rec.sessionId).map(rec.sessionId -> _))
+            .map(_.toMap)
+            .flatMap { cwdBySid =>
+              def aliveOf(rec: AgentRecord): Option[Boolean] = cwdBySid.getOrElse(rec.sessionId, None)
+              // Drop counters for sessions that recovered (fresh activity / different
+              // status / gone) so a future stuck episode starts from Stop attempt 1.
+              // D3-④ 首环：Waiting 死停靠看护（活性/事件判据，见上方头注）。
+              careWaitingDock(resources, wsHub, registry, now) *>
+                stopCounts.modify(m => (m.view.filterKeys(stuckIds.contains).toMap, ())) *>
+                // P3（§3.3）：**episode 边界** —— 离开 stuck 候选集的扫描轮复位「本代次恢复
+                // 预算」（与 stopCounts 同点、同纪律）；全链预算 / 冷却窗 / 互斥点 2 状态
+                // **保留**（它们的语义是跨代次的）。
+                ledger.update(m =>
+                  m.view.map { case (k, l) => (k, if stuckIds.contains(k) then l else l.copy(genAttempts = 0)) }.toMap
                 ) *>
-              stuck.traverse_ { (rec, assessment) =>
-                // 判据序（P1）：先分流根因类别，再进恢复链。`inflightFor` 是**只读**在飞
-                // 计数（设计 §6.1 未证项 6 的补齐）——此前判「本会话是否有在飞 LLM」只能
-                // 靠破坏性的 cancelInflightFor 反推。stopAttempts 取当轮值（内存态）。
-                LlmRuntimePort.inflightFor(rec.sessionId).flatMap { inflight =>
-                  recover(
+                // ── node-stuck 通报（node-stuck-notify 批，2026-09-11）──────────────────
+                // 排在恢复链**之前**：先在**同一拍**里把「这个节点卡了/挂了多久、你有哪些
+                // 选项」送到 dispatcher（缺席则 root），再走既有 L1→L4 恢复动作。通报本身
+                // 非破坏、零新判据——判据复用 assessDetailed ∪ 挂等轴，且只对
+                // **已经命中阈值**的候选做一次 flow-map 定位（取数面窄化同 probeEnvLost）。
+                // fail-soft：通报面任何故障只 WARN，绝不改变本拍的识别/恢复语义。
+                NodeStuckNotify
+                  .sweep(
                     resources,
-                    wsHub,
-                    rec,
-                    assessment,
-                    classify(rec, assessment, now, inflight, cwdAlive = aliveOf(rec)),
-                    stopCounts,
-                    pendingL3,
-                    l3VerifyDelayMs,
-                    ledger,
-                    hardRecovery
+                    registry,
+                    now,
+                    noProgressThresholdMs = thresholdMs,
+                    waitingThresholdMs = notifyWaitingMs,
+                    sent = notifySent,
+                    nodeProbe = nodeProbe
                   )
-                }
-              } *>
-              // 类③ **快速失败**面：cwd 已失 ∧ 静默满 EnvLostGraceMs ∧ 尚未到判死阈值
-              // （已在 `stuck` 里的由上面的 classify 归为类③，不重复动作）。
-              // 走的仍是 [[recover]]（同一判据序闸门 / 账本 / 留痕），只是判据由本批的
-              // 环境探针给出、且不必等 600s 阈值。
-              silent
-                .filter(rec => !stuckIds.contains(rec.sessionId) && aliveOf(rec).contains(false))
-                .traverse_ { rec =>
+                  .handleErrorWith(e =>
+                    logger.warn(s"TaskStuckWatcher: node-stuck notify sweep failed: ${e.getMessage}")
+                  ) *>
+                stuck.traverse_ { (rec, assessment) =>
+                  // 判据序（P1）：先分流根因类别，再进恢复链。`inflightFor` 是**只读**在飞
+                  // 计数（设计 §6.1 未证项 6 的补齐）——此前判「本会话是否有在飞 LLM」只能
+                  // 靠破坏性的 cancelInflightFor 反推。stopAttempts 取当轮值（内存态）。
                   LlmRuntimePort.inflightFor(rec.sessionId).flatMap { inflight =>
-                    val idleMs = now - rec.lastActivityMs
-                    val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
-                    val assessment = StuckAssessment(
-                      secs = idleMs / 1000,
-                      reason = s"runtime cwd gone, session silent for ${idleMs / 1000}s (env-lost probe; class 3)",
-                      branch = BranchEnvLost,
-                      agentIdleMs = idleMs,
-                      toolPhaseMs = toolPhaseMs,
-                      toolName = rec.currentToolName
-                    )
                     recover(
                       resources,
                       wsHub,
                       rec,
                       assessment,
-                      classify(rec, assessment, now, inflight, cwdAlive = Some(false)),
+                      classify(rec, assessment, now, inflight, cwdAlive = aliveOf(rec)),
                       stopCounts,
                       pendingL3,
                       l3VerifyDelayMs,
@@ -866,39 +837,71 @@ object TaskStuckWatcher:
                       hardRecovery
                     )
                   }
-                }
-          } *>
-          // ── 台账 #896（交通引导员制 2026-10-26）：合并队列扫描拍驱动面 ────────
-          // 持窗尸体判死（turn-granted 属主 actor 已退 ⇒ owner-gone 关账，窗绝不
-          // 许尸体持死）+ 每个有开放成员的 project 补一拍放行（净空转洁/阻碍消除
-          // 后自然推进）。搭本既有扫描拍，零新增定时器；幂等。重试合并轮与复活轮
-          // 已整体退役（owner-gone / failed 关账后处置归 dispatcher，绝不静默 park）。
-          IO.unit *>
-          // ── 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）──────
-          // delegate 终态交付回执的「父未确认」重投监测：超龄未 ack ⇒ 父活直投 /
-          // 父死持久收件箱；父已删 ⇒ 删回执 + 响亮 WARN。搭本既有扫描拍，零新增
-          // 定时器；幂等（ack 即跳过；重投达上限停投留痕）。
-          nebflow.core.delegate.DelegateDeliveryReceipts
-            .sweep(resources)
-            .handleErrorWith(e => logger.warn(s"[delegate-delivery] sweep failed: ${e.getMessage}").void)
-            .void *>
-          // ── 引擎会话治理专项 · 缺陷七 ②（2026-11-03 作者报障「你杀掉父会话，
-          // 子会话也应该一并关闭，但是现在好像是只会清理父会话，子会话变成孤儿」）：
-          // 孤儿子会话检测。判据 = **在案事实**（父取消墓碑 / 归档旗在案）∧ 子仍在
-          // 注册表里活；处置按 `nebflow.session.orphan.action`（默认 cancel ⇒ 墓碑 +
-          // Cancelled/Stop + 任务行终态化，面板不再有「运行中」残留；report ⇒ 只留
-          // 审计 + 通知根会话）。搭本既有扫描拍，零新增定时器；幂等（子行消失后不再命中）。
-          nebflow.core.delegate.ChildOrphanWatch
-            .scan(resources)
-            .handleErrorWith(e => logger.warn(s"[child-orphan-watch] sweep failed: ${e.getMessage}").void)
-            .void *>
-          // ── merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么
-          // 还没收到通知」）：合并队列**活性守卫**。入队只在回合终态腿发生，任何让
-          // 那条腿没跑成的路径（重启打断 / 判定降级 / 提前收尾）都会让有交付提交
-          // 的分支永远不进队——本拍把「Idle + 有未并交付 + 任务行 running/restarting
-          // + 账本无开放条目 + 静默够久」的漏网成员补进队并通知（幂等：账本有开放
-          // 条目即零动作）。搭本既有扫描拍，零新增定时器。
-          IO.unit // Development completion never creates a merge request.
+                } *>
+                // 类③ **快速失败**面：cwd 已失 ∧ 静默满 EnvLostGraceMs ∧ 尚未到判死阈值
+                // （已在 `stuck` 里的由上面的 classify 归为类③，不重复动作）。
+                // 走的仍是 [[recover]]（同一判据序闸门 / 账本 / 留痕），只是判据由本批的
+                // 环境探针给出、且不必等 600s 阈值。
+                silent
+                  .filter(rec => !stuckIds.contains(rec.sessionId) && aliveOf(rec).contains(false))
+                  .traverse_ { rec =>
+                    LlmRuntimePort.inflightFor(rec.sessionId).flatMap { inflight =>
+                      val idleMs = now - rec.lastActivityMs
+                      val toolPhaseMs = if rec.currentToolStartedAt > 0 then now - rec.currentToolStartedAt else 0L
+                      val assessment = StuckAssessment(
+                        secs = idleMs / 1000,
+                        reason = s"runtime cwd gone, session silent for ${idleMs / 1000}s (env-lost probe; class 3)",
+                        branch = BranchEnvLost,
+                        agentIdleMs = idleMs,
+                        toolPhaseMs = toolPhaseMs,
+                        toolName = rec.currentToolName
+                      )
+                      recover(
+                        resources,
+                        wsHub,
+                        rec,
+                        assessment,
+                        classify(rec, assessment, now, inflight, cwdAlive = Some(false)),
+                        stopCounts,
+                        pendingL3,
+                        l3VerifyDelayMs,
+                        ledger,
+                        hardRecovery
+                      )
+                    }
+                  }
+            } *>
+            // ── 台账 #896（交通引导员制 2026-10-26）：合并队列扫描拍驱动面 ────────
+            // 持窗尸体判死（turn-granted 属主 actor 已退 ⇒ owner-gone 关账，窗绝不
+            // 许尸体持死）+ 每个有开放成员的 project 补一拍放行（净空转洁/阻碍消除
+            // 后自然推进）。搭本既有扫描拍，零新增定时器；幂等。重试合并轮与复活轮
+            // 已整体退役（owner-gone / failed 关账后处置归 dispatcher，绝不静默 park）。
+            IO.unit *>
+            // ── 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）──────
+            // delegate 终态交付回执的「父未确认」重投监测：超龄未 ack ⇒ 父活直投 /
+            // 父死持久收件箱；父已删 ⇒ 删回执 + 响亮 WARN。搭本既有扫描拍，零新增
+            // 定时器；幂等（ack 即跳过；重投达上限停投留痕）。
+            nebflow.core.delegate.DelegateDeliveryReceipts
+              .sweep(resources)
+              .handleErrorWith(e => logger.warn(s"[delegate-delivery] sweep failed: ${e.getMessage}").void)
+              .void *>
+            // ── 引擎会话治理专项 · 缺陷七 ②（2026-11-03 作者报障「你杀掉父会话，
+            // 子会话也应该一并关闭，但是现在好像是只会清理父会话，子会话变成孤儿」）：
+            // 孤儿子会话检测。判据 = **在案事实**（父取消墓碑 / 归档旗在案）∧ 子仍在
+            // 注册表里活；处置按 `nebflow.session.orphan.action`（默认 cancel ⇒ 墓碑 +
+            // Cancelled/Stop + 任务行终态化，面板不再有「运行中」残留；report ⇒ 只留
+            // 审计 + 通知根会话）。搭本既有扫描拍，零新增定时器；幂等（子行消失后不再命中）。
+            nebflow.core.delegate.ChildOrphanWatch
+              .scan(resources)
+              .handleErrorWith(e => logger.warn(s"[child-orphan-watch] sweep failed: ${e.getMessage}").void)
+              .void *>
+            // ── merge-fifo 批 2026-11-03（作者报障「两个会话都已经报了 merge，为什么
+            // 还没收到通知」）：合并队列**活性守卫**。入队只在回合终态腿发生，任何让
+            // 那条腿没跑成的路径（重启打断 / 判定降级 / 提前收尾）都会让有交付提交
+            // 的分支永远不进队——本拍把「Idle + 有未并交付 + 任务行 running/restarting
+            // + 账本无开放条目 + 静默够久」的漏网成员补进队并通知（幂等：账本有开放
+            // 条目即零动作）。搭本既有扫描拍，零新增定时器。
+            IO.unit // Development completion never creates a merge request.
 
       }
 
@@ -946,13 +949,18 @@ object TaskStuckWatcher:
                           completedAt = Some(now),
                           lastError = Some(detail)
                         )
-                        .handleErrorWith(e => logger.warn(s"[waiting-dock-care] task store write failed: ${e.getMessage}"))
+                        .handleErrorWith(e =>
+                          logger.warn(s"[waiting-dock-care] task store write failed: ${e.getMessage}")
+                        )
                     )
                     .void *>
                   broadcastStuck(wsHub, rec, idleSecs = 0L, action = "waiting-dock-dead", reason = detail) *>
                   escalateDockDeath(resources, rec, detail)
             }
-          case _ => logger.warn(s"TaskStuckWatcher: protected or unknown waiting session ${rec.sessionId}; automatic settlement deferred")
+          case _ =>
+            logger.warn(
+              s"TaskStuckWatcher: protected or unknown waiting session ${rec.sessionId}; automatic settlement deferred"
+            )
         }
       }
 
@@ -1048,8 +1056,20 @@ object TaskStuckWatcher:
   ): IO[Unit] =
     resources.executionProtection(rec.sessionId).flatMap {
       case nebflow.shared.ExecutionProtection.Unprotected =>
-        recoverLegacy(resources, wsHub, rec, assessment, cls, stopCounts, pendingL3, l3VerifyDelayMs, ledger, hardRecovery)
-      case _ => logger.warn(s"TaskStuckWatcher: protected or unknown execution ${rec.sessionId}; automatic recovery deferred")
+        recoverLegacy(
+          resources,
+          wsHub,
+          rec,
+          assessment,
+          cls,
+          stopCounts,
+          pendingL3,
+          l3VerifyDelayMs,
+          ledger,
+          hardRecovery
+        )
+      case _ =>
+        logger.warn(s"TaskStuckWatcher: protected or unknown execution ${rec.sessionId}; automatic recovery deferred")
     }
 
   private def recoverLegacy(

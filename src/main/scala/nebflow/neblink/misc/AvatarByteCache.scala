@@ -37,11 +37,11 @@ import scala.concurrent.duration.*
  * 引入 `Deferred` 表会带来「求值异常卡死后续等待者」的新失败面。
  */
 final class AvatarByteCache private (
-    val ttl: FiniteDuration,
-    val maxEntries: Int,
-    val maxTotalBytes: Long,
-    val maxEntryBytes: Long,
-    ref: Ref[IO, Map[String, AvatarByteCache.Entry]]
+  val ttl: FiniteDuration,
+  val maxEntries: Int,
+  val maxTotalBytes: Long,
+  val maxEntryBytes: Long,
+  ref: Ref[IO, Map[String, AvatarByteCache.Entry]]
 ):
   import AvatarByteCache.Entry
 
@@ -66,7 +66,7 @@ final class AvatarByteCache private (
    * `fetch` 的 `Left` 不写缓存（失败不污染既有条目）。
    */
   def getOrFetch(key: String)(
-      fetch: IO[Either[String, (String, Array[Byte])]]
+    fetch: IO[Either[String, (String, Array[Byte])]]
   ): IO[Either[String, Entry]] =
     get(key).flatMap {
       case Some(hit) => IO.pure(Right(hit))
@@ -96,6 +96,8 @@ final class AvatarByteCache private (
       total -= v.bytes.length.toLong
     kept
 
+end AvatarByteCache
+
 object AvatarByteCache:
 
   /** 一条被缓存的头像字节；`sha256` 随条目存 ⇒ 304 判定无需回源。 */
@@ -106,15 +108,16 @@ object AvatarByteCache:
   val DefaultTtl: FiniteDuration = 10.minutes
   val DefaultMaxEntries: Int = 64
   val DefaultMaxTotalBytes: Long = 16L * 1024 * 1024
+
   /** 与 web 侧 `avatarCache.js` 的 `MAX_BYTES`（1.5 MB）同数量级，略宽。 */
   val DefaultMaxEntryBytes: Long = 2L * 1024 * 1024
 
   /** 独立实例（测试用：与生产共享实例隔离）。 */
   def create(
-      ttl: FiniteDuration = DefaultTtl,
-      maxEntries: Int = DefaultMaxEntries,
-      maxTotalBytes: Long = DefaultMaxTotalBytes,
-      maxEntryBytes: Long = DefaultMaxEntryBytes
+    ttl: FiniteDuration = DefaultTtl,
+    maxEntries: Int = DefaultMaxEntries,
+    maxTotalBytes: Long = DefaultMaxTotalBytes,
+    maxEntryBytes: Long = DefaultMaxEntryBytes
   ): IO[AvatarByteCache] =
     Ref
       .of[IO, Map[String, Entry]](Map.empty)

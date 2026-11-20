@@ -274,8 +274,8 @@ object Fallback:
     error match
       case e: FallbackExhaustedError =>
         e.attempts.nonEmpty && e.attempts.exists(isUpstreamUnavailableAttempt) &&
-          !e.attempts.exists(isExplicitRejectionAttempt) &&
-          e.attempts.forall(a => isUpstreamUnavailableAttempt(a) || isNetworkClassAttempt(a))
+        !e.attempts.exists(isExplicitRejectionAttempt) &&
+        e.attempts.forall(a => isUpstreamUnavailableAttempt(a) || isNetworkClassAttempt(a))
       case _ => false
 
   /**

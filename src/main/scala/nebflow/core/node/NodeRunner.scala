@@ -167,17 +167,21 @@ object NodeRunner:
     else
       p.resources.executionProtection(admission.ownerBinding).flatMap {
         case nebflow.shared.ExecutionProtection.Unprotected =>
-          nebflow.core.ExecutionCommitPort.admitHandle(p.resources.executionCommitPort, admission)
+          nebflow.core.ExecutionCommitPort
+            .admitHandle(p.resources.executionCommitPort, admission)
             .map(_.map(handle => p.copy(protectedExecution = Some(handle))))
         case _ => IO.pure(Left("unsupported-protected-parent"))
       }
 
+  end admitProtected
+
   def spawnAgentActor(system: ActorSystem, p: SpawnParams): IO[ActorRef[AgentCommand]] =
     if p.protectedExecution.nonEmpty then p.resources.spawnAgentActor(system, p)
-    else p.resources.executionProtection(p.sessionId).flatMap {
-      case nebflow.shared.ExecutionProtection.Unprotected => p.resources.spawnAgentActor(system, p)
-      case _ => IO.raiseError(new IllegalStateException("protected-or-unknown-execution-requires-recovery"))
-    }
+    else
+      p.resources.executionProtection(p.sessionId).flatMap {
+        case nebflow.shared.ExecutionProtection.Unprotected => p.resources.spawnAgentActor(system, p)
+        case _ => IO.raiseError(new IllegalStateException("protected-or-unknown-execution-requires-recovery"))
+      }
 
   /**
    * 子会话 WS 路由包装（node/dispatcher 会话进 subagent 面板的接线点，#28

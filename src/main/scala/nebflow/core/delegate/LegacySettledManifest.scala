@@ -29,38 +29,49 @@ object LegacySettledManifest:
     val p = path
     val stamp = if os.exists(p) then s"${os.mtime(p)}:${os.size(p)}" else "missing"
     if cachedPath != p.toString || cachedStamp != stamp then
-      cachedIds = try
-        if !os.exists(p) then Set.empty
-        else
-          io.circe.parser
-            .parse(os.read(p))
-            .toOption
-            .flatMap(_.hcursor.get[List[String]]("ids").toOption)
-            .getOrElse(Nil)
-            .toSet
-      catch case _: Throwable => Set.empty
+      cachedIds =
+        try
+          if !os.exists(p) then Set.empty
+          else
+            io.circe.parser
+              .parse(os.read(p))
+              .toOption
+              .flatMap(_.hcursor.get[List[String]]("ids").toOption)
+              .getOrElse(Nil)
+              .toSet
+        catch case _: Throwable => Set.empty
       cachedPath = p.toString
       cachedStamp = stamp
+
+  end refresh
 
   /** Explicit invocation only: data root must be an offline isolated root. */
   def generate(): (Int, Boolean) =
     val records = DelegateRegistry.list()
-    val ids = records.filter(r => DelegateRoundLedger.currentRounds(r.id).isEmpty && DelegateVisibility.readOf(r.id).settled)
-      .map(_.id).sorted
+    val ids = records
+      .filter(r => DelegateRoundLedger.currentRounds(r.id).isEmpty && DelegateVisibility.readOf(r.id).settled)
+      .map(_.id)
+      .sorted
     val p = path
     val existing = if os.exists(p) then io.circe.parser.parse(os.read(p)).toOption else None
-    val same = existing.exists(j => j.hcursor.get[Int]("version").toOption.contains(1) &&
-      j.hcursor.get[List[String]]("ids").toOption.contains(ids))
+    val same = existing.exists(j =>
+      j.hcursor.get[Int]("version").toOption.contains(1) &&
+        j.hcursor.get[List[String]]("ids").toOption.contains(ids)
+    )
     if same then (ids.size, false)
     else
       os.makeDir.all(p / os.up)
-      val body = Json.obj("version" -> 1.asJson, "generatedAt" -> System.currentTimeMillis().asJson, "ids" -> ids.asJson).noSpaces
+      val body = Json
+        .obj("version" -> 1.asJson, "generatedAt" -> System.currentTimeMillis().asJson, "ids" -> ids.asJson)
+        .noSpaces
       val tmp = Files.createTempFile((p / os.up).toNIO, ".legacy-settled-", ".tmp")
       try
         Files.write(tmp, body.getBytes(StandardCharsets.UTF_8))
         Files.move(tmp, p.toNIO, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
       finally Files.deleteIfExists(tmp)
       (ids.size, true)
+
+  end generate
 
   def main(args: Array[String]): Unit =
     require(args.length == 1, "usage: LegacySettledManifest <isolated-data-root>")

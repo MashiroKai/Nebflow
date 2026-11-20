@@ -6,9 +6,9 @@ import nebflow.shared.{Message, MessageRole}
 
 /** Isolated regressions for run ownership, raw evidence and chunk reconstruction. */
 class ExternalRunFailureSpec extends CatsEffectSuite:
+
   private def temporaryDirectory: Resource[IO, os.Path] =
-    Resource.make(IO.blocking(os.temp.dir(prefix = "external-run-failure-")))(path =>
-      IO.blocking(os.remove.all(path)))
+    Resource.make(IO.blocking(os.temp.dir(prefix = "external-run-failure-")))(path => IO.blocking(os.remove.all(path)))
 
   private def message(id: String, text: String, run: String = "run"): Message =
     Message(MessageRole.Assistant, Left(text), messageId = Some(id), runId = Some(run))
@@ -35,8 +35,11 @@ class ExternalRunFailureSpec extends CatsEffectSuite:
           assertEquals(os.size(file), ExternalSessionRunner.RawLimitBytes.toLong)
           assert(os.read(file).endsWith("[Raw output truncated at 8 MiB; assistant history is retained separately.]\n"))
           if java.nio.file.Files.getFileStore(file.toNIO).supportsFileAttributeView("posix") then
-            assertEquals(java.nio.file.attribute.PosixFilePermissions.toString(
-              java.nio.file.Files.getPosixFilePermissions(file.toNIO)), "rw-------")
+            assertEquals(
+              java.nio.file.attribute.PosixFilePermissions
+                .toString(java.nio.file.Files.getPosixFilePermissions(file.toNIO)),
+              "rw-------"
+            )
         }
       yield ()
     }
@@ -75,7 +78,8 @@ class ExternalRunFailureSpec extends CatsEffectSuite:
       override def waitFor(timeout: Long, unit: java.util.concurrent.TimeUnit): Boolean = !alive.get()
       override def exitValue(): Int = if alive.get() then throw new IllegalThreadStateException() else 0
       override def isAlive(): Boolean = alive.get()
-      override def destroy(): Unit = { destroys.incrementAndGet(); () }
+      override def destroy(): Unit =
+        destroys.incrementAndGet(); ()
       override def destroyForcibly(): Process =
         forces.incrementAndGet()
         alive.set(false)
@@ -108,5 +112,6 @@ class ExternalRunFailureSpec extends CatsEffectSuite:
       terminal <- ExternalOutputStore.read(id, 0L)
       _ <- IO(assertEquals(terminal.map(_.status), Some("cancelled")))
     yield ()
+    end for
   }
 end ExternalRunFailureSpec

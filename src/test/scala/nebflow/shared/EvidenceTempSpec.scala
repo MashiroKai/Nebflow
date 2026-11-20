@@ -21,14 +21,20 @@ class EvidenceTempSpec extends FunSuite:
   test("shared legacy namespace is never swept") {
     val foreign = isolatedTemp.resolve("stand-evidence").resolve("foreign").resolve("batch").resolve("20200101")
     Files.createDirectories(foreign)
-    Files.writeString(foreign.resolve("manifest.json"),
-      s"""{"createdAt":"${Instant.EPOCH}","project":"foreign","batch":"batch"}""")
+    Files.writeString(
+      foreign.resolve("manifest.json"),
+      s"""{"createdAt":"${Instant.EPOCH}","project":"foreign","batch":"batch"}"""
+    )
     Files.writeString(foreign.resolve("payload"), "other process")
-    val observed = List("imagegen-probe", "office-preview", "orbit-anim", "plugin-install", "turn-terminal-replay", "unit-sweep")
+    val observed =
+      List("imagegen-probe", "office-preview", "orbit-anim", "plugin-install", "turn-terminal-replay", "unit-sweep")
     observed.foreach { name =>
       val other = isolatedTemp.resolve("stand-evidence").resolve(name).resolve("batch").resolve("20200101")
       Files.createDirectories(other)
-      Files.writeString(other.resolve("manifest.json"), s"""{"createdAt":"${Instant.EPOCH}","project":"$name","batch":"batch"}""")
+      Files.writeString(
+        other.resolve("manifest.json"),
+        s"""{"createdAt":"${Instant.EPOCH}","project":"$name","batch":"batch"}"""
+      )
       Files.writeString(other.resolve("payload"), name)
     }
     assertEquals(EvidenceTemp.sweep(System.currentTimeMillis()), 0)
@@ -46,8 +52,14 @@ class EvidenceTempSpec extends FunSuite:
     EvidenceTemp.finishBatch(b)
     val manifestA = io.circe.parser.parse(Files.readString(a.resolve("manifest.json"))).toOption.get
     val manifestB = io.circe.parser.parse(Files.readString(b.resolve("manifest.json"))).toOption.get
-    Files.writeString(a.resolve("manifest.json"), manifestA.mapObject(_.add("project", io.circe.Json.fromString("other"))).noSpaces)
-    Files.writeString(b.resolve("manifest.json"), manifestB.mapObject(_.add("owner", io.circe.Json.fromString("other"))).noSpaces)
+    Files.writeString(
+      a.resolve("manifest.json"),
+      manifestA.mapObject(_.add("project", io.circe.Json.fromString("other"))).noSpaces
+    )
+    Files.writeString(
+      b.resolve("manifest.json"),
+      manifestB.mapObject(_.add("owner", io.circe.Json.fromString("other"))).noSpaces
+    )
     assertEquals(EvidenceTemp.sweep(System.currentTimeMillis() + 8L * 24 * 60 * 60 * 1000), 0)
     assert(Files.exists(a) && Files.exists(b))
   }

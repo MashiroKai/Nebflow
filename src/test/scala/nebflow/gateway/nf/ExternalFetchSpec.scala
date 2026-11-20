@@ -52,6 +52,7 @@ class ExternalFetchSpec extends FunSuite:
     private val socket = new ServerSocket(0, 16, ip("127.0.0.1"))
     val port: Int = socket.getLocalPort
     @volatile var served: Int = 0
+
     private val thread = new Thread(
       () =>
         responses.foreach { resp =>
@@ -75,7 +76,12 @@ class ExternalFetchSpec extends FunSuite:
     )
     thread.setDaemon(true)
     thread.start()
-    def close(): Unit = try socket.close() catch case _: Throwable => ()
+
+    def close(): Unit =
+      try socket.close()
+      catch case _: Throwable => ()
+
+  end Server
 
   private def readHead(in: InputStream): Unit =
     var state = 0
@@ -119,7 +125,7 @@ class ExternalFetchSpec extends FunSuite:
       assertEquals(P.sha256Hex(Files.readAllBytes(tmp)), o.sha256)
     }
 
-  test("a chunked response is assembled"): 
+  test("a chunked response is assembled"):
     val body = "0123456789abcdef".getBytes(StandardCharsets.US_ASCII)
     val chunked =
       response("200 OK", Seq("Transfer-Encoding: chunked", "Content-Type: text/plain"), Array.emptyByteArray) ++

@@ -26,9 +26,11 @@ import org.http4s.dsl.io.*
  */
 private[gateway] object PerceptionRoutes:
 
-  /** 代理覆盖的面板路径（相对 /perception 前缀；与 daemon 权威表一一对应）。
-    * 草稿族（GET/PUT /mail/drafts/:id、POST /mail/drafts/:id/abandon）带 id
-    * 段，在 [[isProxied]] 内单独判。 */
+  /**
+   * 代理覆盖的面板路径（相对 /perception 前缀；与 daemon 权威表一一对应）。
+   * 草稿族（GET/PUT /mail/drafts/:id、POST /mail/drafts/:id/abandon）带 id
+   * 段，在 [[isProxied]] 内单独判。
+   */
   private val ProxiedSubpaths: List[(Method, List[String])] =
     List(
       (GET, List("entries")),
@@ -55,13 +57,17 @@ private[gateway] object PerceptionRoutes:
             "recognized" -> preset.isDefined.asJson,
             "provider" -> preset.map(_.provider).getOrElse("").asJson,
             "authCodeHint" -> preset.exists(_.authCodeHint).asJson
-          ) ++ preset.map(p => Vector(
-            "imapHost" -> p.imapHost.asJson,
-            "imapPort" -> p.imapPort.asJson,
-            "smtpHost" -> p.smtpHost.asJson,
-            "smtpPort" -> p.smtpPort.asJson,
-            "smtpImplicitTls" -> p.smtpImplicitTls.asJson
-          )).getOrElse(Vector.empty)
+          ) ++ preset
+            .map(p =>
+              Vector(
+                "imapHost" -> p.imapHost.asJson,
+                "imapPort" -> p.imapPort.asJson,
+                "smtpHost" -> p.smtpHost.asJson,
+                "smtpPort" -> p.smtpPort.asJson,
+                "smtpImplicitTls" -> p.smtpImplicitTls.asJson
+              )
+            )
+            .getOrElse(Vector.empty)
           Ok(Json.fromJsonObject(io.circe.JsonObject.fromIterable(fields)))
         }
 
@@ -70,8 +76,10 @@ private[gateway] object PerceptionRoutes:
         withAuth(req) { proxy(req) }
     }
 
+  end routes
+
   /** 代理判据（面板路径族；preset 除外——见类注）。 */
-  private[gateway] def isProxied(req: Request[IO]): Boolean = {
+  private[gateway] def isProxied(req: Request[IO]): Boolean =
     // renderString 分段（版本无感的取段法；感知域段均为 URL 安全字符面）。
     val segs = req.pathInfo.renderString.split("/").filter(_.nonEmpty).toList
     // pathInfo 已剥离挂载前缀（/api）——首段应为 perception。
@@ -81,14 +89,15 @@ private[gateway] object PerceptionRoutes:
           case List("mail", "preset") => false
           case List("mail", "drafts", _*) =>
             req.method == Method.GET || req.method == Method.PUT ||
-              (req.method == Method.POST && (segs.last == "abandon"))
+            (req.method == Method.POST && (segs.last == "abandon"))
           case _ => ProxiedSubpaths.exists((m, p) => m == req.method && p == rest)
       case _ => false
-  }
 
-  /** 逐字转发：method/path/query/body 原样；status/body 原样回 relay。
-    * daemon 面板面挂 `/api/perception/…`  全路径（本侧 pathInfo 已剥离 /api
-    * 挂载前缀——转发时补回）。 */
+  /**
+   * 逐字转发：method/path/query/body 原样；status/body 原样回 relay。
+   * daemon 面板面挂 `/api/perception/…`  全路径（本侧 pathInfo 已剥离 /api
+   * 挂载前缀——转发时补回）。
+   */
   private def proxy(req: Request[IO]): IO[Response[IO]] =
     val query = req.uri.query.renderString
     val path = s"/api${req.pathInfo.renderString}" + (if query.isEmpty then "" else s"?$query")
@@ -98,7 +107,7 @@ private[gateway] object PerceptionRoutes:
         case Some((status, respBody)) =>
           val ct = io.circe.parser.parse(respBody) match
             case Right(_) => headers.`Content-Type`(org.http4s.MediaType.application.json)
-            case Left(_)  => headers.`Content-Type`(org.http4s.MediaType.text.plain)
+            case Left(_) => headers.`Content-Type`(org.http4s.MediaType.text.plain)
           Response[IO](org.http4s.Status.fromInt(status).getOrElse(Status.InternalServerError))
             .withEntity(respBody)
             .putHeaders(ct)
@@ -107,10 +116,14 @@ private[gateway] object PerceptionRoutes:
       }
     }
 
+  end proxy
+
   private def daemonUnavailable: IO[Response[IO]] =
-    ServiceUnavailable(Json.obj(
-      "ok" -> false.asJson,
-      "error" -> "感知守护进程未运行 · 稍候自动恢复（daemon-unavailable）".asJson
-    ))
+    ServiceUnavailable(
+      Json.obj(
+        "ok" -> false.asJson,
+        "error" -> "感知守护进程未运行 · 稍候自动恢复（daemon-unavailable）".asJson
+      )
+    )
 
 end PerceptionRoutes

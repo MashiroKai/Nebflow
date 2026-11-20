@@ -107,7 +107,9 @@ class LogoutNotifyOutboxSpec extends CatsEffectSuite:
       _ <- LogoutNotifyOutbox.enqueue("first", "", "test")
       _ <- LogoutNotifyOutbox.enqueue("second", "", "test")
       called <- cats.effect.Ref.of[IO, List[String]](Nil)
-      report <- LogoutNotifyOutbox.drain(e => called.update(_ :+ e.accountSub) *> IO.raiseError(new Exception("offline")))
+      report <- LogoutNotifyOutbox.drain(e =>
+        called.update(_ :+ e.accountSub) *> IO.raiseError(new Exception("offline"))
+      )
       seen <- called.get
       rows <- LogoutNotifyOutbox.pending
       _ = assertEquals(seen, List("first"))
@@ -119,11 +121,19 @@ class LogoutNotifyOutboxSpec extends CatsEffectSuite:
     for
       _ <- LogoutNotifyOutbox.enqueue("first", "", "test")
       lockPath = LogoutNotifyOutbox.dir / ".drain-lock"
-      process <- IO.blocking(new ProcessBuilder("python3", "-u", "-c",
-        "import fcntl,sys; f=open(sys.argv[1], 'w'); fcntl.lockf(f, fcntl.LOCK_EX); print('locked',flush=True); sys.stdin.read()",
-        lockPath.toString).start())
+      process <- IO.blocking(
+        new ProcessBuilder(
+          "python3",
+          "-u",
+          "-c",
+          "import fcntl,sys; f=open(sys.argv[1], 'w'); fcntl.lockf(f, fcntl.LOCK_EX); print('locked',flush=True); sys.stdin.read()",
+          lockPath.toString
+        ).start()
+      )
       result <- (for
-        line <- IO.blocking(new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream)).readLine())
+        line <- IO.blocking(
+          new java.io.BufferedReader(new java.io.InputStreamReader(process.getInputStream)).readLine()
+        )
         _ = assertEquals(line, "locked")
         blocked <- LogoutNotifyOutbox.drain(_ => IO.unit).attempt
         _ = assert(blocked.isLeft)
@@ -166,8 +176,10 @@ class LogoutNotifyOutboxSpec extends CatsEffectSuite:
     val fakeRoot = os.Path(tmpDir, os.pwd) / "machine-root-as-file"
     os.write.over(fakeRoot, "not a dir", createFolders = true)
     PathUtil.setMachineRoot(fakeRoot)
-    LogoutNotifyOutbox.enqueue("logto|user-A", "a@example.com", LogoutNotifyOutbox.ReasonNoLiveClient)
-      .attempt.map(result => assert(result.isLeft))
+    LogoutNotifyOutbox
+      .enqueue("logto|user-A", "a@example.com", LogoutNotifyOutbox.ReasonNoLiveClient)
+      .attempt
+      .map(result => assert(result.isLeft))
 
   test("交叉钉：排队点目录名与 route 级 spec 的盘面读数字面同源（logout-notify-pending）"):
     // LogoutAccountSurfaceSpec 按契约字面读盘（零符号引用以承载行为红）；

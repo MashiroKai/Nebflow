@@ -48,8 +48,10 @@ object AskBashGuard:
   val MaxPipelineSegments: Int = 8
   val MaxTokensPerSegment: Int = 64
 
-  /** 原始扫描即拒的字符（任何位置、含引号内；fail-closed）。
-   * `$` 反引号 = 替换/展开；`;` `&` = 组合；`>` `<` = 重定向；`\n` = 多行。 */
+  /**
+   * 原始扫描即拒的字符（任何位置、含引号内；fail-closed）。
+   * `$` 反引号 = 替换/展开；`;` `&` = 组合；`>` `<` = 重定向；`\n` = 多行。
+   */
   private val RawForbiddenChars: Set[Char] = Set('$', '`', ';', '&', '>', '<', '\n', '\r')
 
   /** 校验产物：argv 管道（每段 = 命令 + 参数，无任何 shell 解释）。 */
@@ -61,8 +63,7 @@ object AskBashGuard:
   def validate(command: String): Either[String, Validated] =
     if command == null then Left("empty command")
     else if command.trim.isEmpty then Left("empty command")
-    else if command.length > MaxCommandChars then
-      Left(s"command longer than $MaxCommandChars chars")
+    else if command.length > MaxCommandChars then Left(s"command longer than $MaxCommandChars chars")
     else if command.exists(RawForbiddenChars.apply) then
       Left(
         "write/expansion metacharacter refused (allowlist is query-only: no $, backtick, ;, &, >, < or newlines)"
@@ -74,8 +75,7 @@ object AskBashGuard:
           .collectFirst { case Left(why) => Left(why) }
           .getOrElse {
             if segments.isEmpty then Left("empty command")
-            else if segments.size > MaxPipelineSegments then
-              Left(s"more than $MaxPipelineSegments pipeline segments")
+            else if segments.size > MaxPipelineSegments then Left(s"more than $MaxPipelineSegments pipeline segments")
             else Right(Validated(segments))
           }
       }
@@ -96,8 +96,7 @@ object AskBashGuard:
       endToken()
       val toks = tokens.result()
       if toks.isEmpty then Left("empty pipeline segment")
-      else if toks.size > MaxTokensPerSegment then
-        Left(s"segment has more than $MaxTokensPerSegment tokens")
+      else if toks.size > MaxTokensPerSegment then Left(s"segment has more than $MaxTokensPerSegment tokens")
       else
         segments += toks
         tokens.clear()
@@ -128,6 +127,7 @@ object AskBashGuard:
             i += 1
           case ch if ch.isWhitespace => endToken(); i += 1
           case ch => cur.append(ch); i += 1
+      end if
     end while
     if inSingle || inDouble then Left("unterminated quote")
     else endSegment()
@@ -140,21 +140,31 @@ object AskBashGuard:
     if head == "git" then
       val sub = tokens.drop(1).headOption.getOrElse("")
       if !GitSubcommands.contains(sub) then
-        forbid(s"git is limited to read-only subcommands (${GitSubcommands.toList.sorted.mkString("/")}): refused `git ${sub.trim}`".trim)
+        forbid(
+          s"git is limited to read-only subcommands (${GitSubcommands.toList.sorted.mkString("/")}): refused `git ${sub.trim}`".trim
+        )
       else Right(tokens)
     else if ReadCommands.contains(head) || UtilityCommands.contains(head) then
       val argFault: Option[String] = head match
         case "find" =>
-          tokens.drop(1).find(t => t.startsWith("-exec") || t.startsWith("-ok"))
+          tokens
+            .drop(1)
+            .find(t => t.startsWith("-exec") || t.startsWith("-ok"))
             .map(t => s"find argument refused: $t (no -exec/-execdir/-ok/-okdir)")
         case "rg" =>
-          tokens.drop(1).find(t => t == "--pre" || t.startsWith("--pre=") || t == "--pre-command" || t.startsWith("--pre-command="))
+          tokens
+            .drop(1)
+            .find(t => t == "--pre" || t.startsWith("--pre=") || t == "--pre-command" || t.startsWith("--pre-command="))
             .map(t => s"rg argument refused: $t (no --pre/--pre-command)")
         case _ => None
       argFault match
         case Some(why) => forbid(why)
         case None => Right(tokens)
-    else forbid(s"command not in the query-only allowlist (grep/rg/ls/cat/head/tail/find/wc, git log/show/diff/status, stand-recall, stand-messages): refused `${head}`")
+    else
+      forbid(
+        s"command not in the query-only allowlist (grep/rg/ls/cat/head/tail/find/wc, git log/show/diff/status, stand-recall, stand-messages): refused `${head}`"
+      )
+    end if
   end validateSegment
 
 end AskBashGuard
@@ -199,8 +209,7 @@ object AskBashExecutor:
           carried = res.out.text()
           lastErr = res.err.text()
           lastCode = res.exitCode
-          if lastCode != 0 then
-            throw new RuntimeException(s"segment `${segment.head}` exited ${lastCode}")
+          if lastCode != 0 then throw new RuntimeException(s"segment `${segment.head}` exited ${lastCode}")
         }
         val out = cap(carried)
         val err = cap(lastErr)
@@ -221,13 +230,15 @@ object AskBashExecutor:
 
 end AskBashExecutor
 
-/** post-hook pre-routing 边界的 ask Bash 单点（AgentSessionExecution 消费）。
-  *
-  * ask-scope 批（2026-11-18）：本面是**只读执行器**，不是写通道（无 shell ⇒ 无
-  * 重定向/无替换/无组合），因此不参与 AskPathBoundary 的路径判决；但**每一次拒绝
-  * 都落 [[AskWriteAudit]]**（身份 / 工具 / 原始命令 / 时间 / 结果 / 理由）——
-  * 「用 shell 试写别的文件」是有审计留痕的越权尝试，不是无声失败。放行不记账
-  * （只读查询是正常业务，记账会把审计面灌成流水；判决面仍逐条可复核）。 */
+/**
+ * post-hook pre-routing 边界的 ask Bash 单点（AgentSessionExecution 消费）。
+ *
+ * ask-scope 批（2026-11-18）：本面是**只读执行器**，不是写通道（无 shell ⇒ 无
+ * 重定向/无替换/无组合），因此不参与 AskPathBoundary 的路径判决；但**每一次拒绝
+ * 都落 [[AskWriteAudit]]**（身份 / 工具 / 原始命令 / 时间 / 结果 / 理由）——
+ * 「用 shell 试写别的文件」是有审计留痕的越权尝试，不是无声失败。放行不记账
+ * （只读查询是正常业务，记账会把审计面灌成流水；判决面仍逐条可复核）。
+ */
 object AskBashFace:
 
   /** 入参抽取 + 校验 + 执行。返回 (result, isError)。 */
@@ -251,8 +262,7 @@ object AskBashFace:
       )
       IO.pure((msg, true))
     if command.trim.isEmpty then IO.pure((refusalPrefix + "empty command", true))
-    else if background then
-      refused("background execution is not available on the query-only face")
+    else if background then refused("background execution is not available on the query-only face")
     else
       AskBashGuard.validate(command) match
         case Left(why) => refused(why)
@@ -261,7 +271,7 @@ object AskBashFace:
             .run(validated, ctx.sessionCwd, timeoutMs)
             .map {
               case Right(out) => (out, false)
-              case Left(why)  => (refusalPrefix + why, true)
+              case Left(why) => (refusalPrefix + why, true)
             }
   end runAskBash
 

@@ -188,7 +188,9 @@ class SeedManifestCoverageSpec extends FunSuite:
    * 且 seed 那份永远滞后于仓里那一份——这正是本批要消除的病灶。往 seed 里加回一个自研包
    * ⇒ 本条即红，且错误信息点名「走源、别走 seed」。
    */
-  test("K9-d: source-managed builtins never appear in the seed tree or the seed manifest (self-authored packages ride the remote source)"):
+  test(
+    "K9-d: source-managed builtins never appear in the seed tree or the seed manifest (self-authored packages ride the remote source)"
+  ):
     val sourced = nebflow.core.plugin.PluginSourceCatalog.builtinNames
     assert(sourced.nonEmpty, "PluginSourceCatalog.Builtins must declare at least the self-authored packages")
     val inTree = sourced.intersect(seedPluginNames())

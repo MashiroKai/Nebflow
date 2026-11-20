@@ -66,7 +66,7 @@ private[gateway] object SessionRoutes:
       case req @ GET -> Root / "sessions" =>
         withAuth(req) {
           val includeUnindexed = req.params.get("includeUnindexed").contains("1")
-          val includeBgAgents  = req.params.get("includeBgAgents").contains("1")
+          val includeBgAgents = req.params.get("includeBgAgents").contains("1")
           val list =
             if includeUnindexed && includeBgAgents then sessionStore.listSessionsIncludeUnindexed
             else if includeUnindexed then sessionStore.listSearchScopeSessions
@@ -113,7 +113,7 @@ private[gateway] object SessionRoutes:
               )
               sessionStore.getSessionMeta(m.sessionId).flatMap {
                 case Some(meta) => Ok(base.deepMerge(Json.obj("sessionName" -> meta.name.asJson)))
-                case None       => Ok(base.deepMerge(Json.obj("sessionName" -> "".asJson)))
+                case None => Ok(base.deepMerge(Json.obj("sessionName" -> "".asJson)))
               }
           }
         }

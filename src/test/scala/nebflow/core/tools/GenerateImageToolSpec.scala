@@ -42,6 +42,7 @@ class GenerateImageToolSpec extends munit.FunSuite:
   private final class Stub(delayMs: Int, fail: Boolean):
     val hits = AtomicInteger(0)
     private val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
+
     server.createContext("/").setHandler { (ex: HttpExchange) =>
       hits.incrementAndGet()
       if delayMs > 0 then Thread.sleep(delayMs)
@@ -57,6 +58,8 @@ class GenerateImageToolSpec extends munit.FunSuite:
     server.start()
     def port: Int = server.getAddress.getPort
     def stop(): Unit = server.stop(0)
+
+  end Stub
 
   private def withStub[A](delayMs: Int = 0, fail: Boolean = false)(f: Stub => A): A =
     val stub = new Stub(delayMs, fail)
@@ -79,6 +82,7 @@ class GenerateImageToolSpec extends munit.FunSuite:
     s"""{"imagegen":{"enabled":true,"defaultProvider":"stub","providers":{"stub":{"type":"cogview","model":"cogview-3-flash","baseUrl":"http://127.0.0.1:__PORT__"}}}}"""
 
   private val frames = new AtomicReference[List[Json]](Nil)
+
   private def rootCtx(sessionId: String = "sess-genimg"): ToolContext =
     ToolContext(
       projectRoot = os.pwd.toString,
@@ -106,8 +110,10 @@ class GenerateImageToolSpec extends munit.FunSuite:
         assert(result.isRight, s"expected Pop payload, got $result")
         val content = result.toOption.get
         assert(content.startsWith("___POP_JSON___"), "result must ride the Pop payload sentinel")
-        assert(!content.contains("\"running\"") && !content.contains("jobId"),
-          "non-blocking job-handle shape must never come back (double-render root cause)")
+        assert(
+          !content.contains("\"running\"") && !content.contains("jobId"),
+          "non-blocking job-handle shape must never come back (double-render root cause)"
+        )
 
         val payload = io.circe.parser.parse(content.stripPrefix("___POP_JSON___")).toOption.get
         val cursor = payload.hcursor
@@ -128,8 +134,10 @@ class GenerateImageToolSpec extends munit.FunSuite:
         // T3b：台账翻转 Completed（REST 查询腿仍在消费）。
         val jobId = name.stripSuffix(".png")
         val job = ImageGenJobs.get(jobId)
-        assert(job.isDefined && job.get.status == ImageGenJobs.Status.Completed && job.get.path.contains(path),
-          s"ledger must flip to Completed with path, got $job")
+        assert(
+          job.isDefined && job.get.status == ImageGenJobs.Status.Completed && job.get.path.contains(path),
+          s"ledger must flip to Completed with path, got $job"
+        )
       }
     }
   }
@@ -197,8 +205,10 @@ class GenerateImageToolSpec extends munit.FunSuite:
   // ── T7 摘要面 ─────────────────────────────────────────────────────────────
 
   test("T7 summarize / summarizeResult 面") {
-    assertEquals(GenerateImageTool.summarize(input("a red apple on a wooden table, painted in oils, warm light")),
-      """GenerateImage("a red apple on a wooden table, painted in oils, warm light")""")
+    assertEquals(
+      GenerateImageTool.summarize(input("a red apple on a wooden table, painted in oils, warm light")),
+      """GenerateImage("a red apple on a wooden table, painted in oils, warm light")"""
+    )
     assertEquals(
       GenerateImageTool.summarizeResult(input("x"), "___POP_JSON___{\"items\":[]}"),
       "image shown in chat"

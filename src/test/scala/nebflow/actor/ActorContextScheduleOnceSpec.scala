@@ -26,7 +26,7 @@ class ActorContextScheduleOnceSpec extends CatsEffectSuite:
   /** 有界等待取一条消息：超窗返回 None（用于「截止前必须为空」这一腿）。 */
   private def tryTake(q: Queue[IO, Probe], within: FiniteDuration): IO[Option[Probe]] =
     IO.race(IO.sleep(within), q.take).map {
-      case Left(_)  => None
+      case Left(_) => None
       case Right(m) => Some(m)
     }
 
@@ -41,7 +41,9 @@ class ActorContextScheduleOnceSpec extends CatsEffectSuite:
       // 行为：把每次 receive 的到达时刻记进 inbox；**自身零 sleep、零轮询**。
       behavior = Behaviors.setup[Probe] { ctx =>
         ctxRef.complete(ctx) *> IO.pure(Behaviors.receiveMessage { msg =>
-          inbox.offer(msg) *> handled.update(_ + 1) *> IO.pure(Behaviors.receiveMessage(_ => IO.pure(Behaviors.stopped)))
+          inbox.offer(msg) *> handled.update(_ + 1) *> IO.pure(
+            Behaviors.receiveMessage(_ => IO.pure(Behaviors.stopped))
+          )
         })
       }
       ref <- system.spawn(behavior, "sched-once-target")
@@ -70,6 +72,7 @@ class ActorContextScheduleOnceSpec extends CatsEffectSuite:
       _ <- IO(assertEquals(again, None, "scheduleOnce 是一次性的——到点投一条后不得重复投递"))
       _ <- system.stopAll
     yield ()
+    end for
   }
 
   test("scheduleOnce 对已停的 actor 不投递、不抛错（探活 + fail-soft）") {

@@ -41,28 +41,33 @@ class NfOfficeRoutesSpec extends CatsEffectSuite:
     def count: Int = calls.get()
 
   private def pdfLeg(ledger: Ledger, tag: String = "fake-pdf"): NfOfficeRoutes.Leg =
-    NfOfficeRoutes.Leg(tag, (src, outDir) =>
-      IO {
-        ledger.calls.incrementAndGet()
-        val out = outDir / "out.pdf"
-        os.write(out, "%PDF-1.4 fake-bytes".getBytes(StandardCharsets.UTF_8))
-        out
-      }
+    NfOfficeRoutes.Leg(
+      tag,
+      (src, outDir) =>
+        IO {
+          ledger.calls.incrementAndGet()
+          val out = outDir / "out.pdf"
+          os.write(out, "%PDF-1.4 fake-bytes".getBytes(StandardCharsets.UTF_8))
+          out
+        }
     )
 
   private def pngLeg(ledger: Ledger, tag: String = "fake-png"): NfOfficeRoutes.Leg =
-    NfOfficeRoutes.Leg(tag, (src, outDir) =>
-      IO {
-        ledger.calls.incrementAndGet()
-        val out = outDir / "thumb.png"
-        os.write(out, Array[Byte](0x89.toByte, 0x50, 0x4e, 0x47))
-        out
-      }
+    NfOfficeRoutes.Leg(
+      tag,
+      (src, outDir) =>
+        IO {
+          ledger.calls.incrementAndGet()
+          val out = outDir / "thumb.png"
+          os.write(out, Array[Byte](0x89.toByte, 0x50, 0x4e, 0x47))
+          out
+        }
     )
 
   private def failingLeg(ledger: Ledger, tag: String = "failing"): NfOfficeRoutes.Leg =
-    NfOfficeRoutes.Leg(tag, (src, outDir) =>
-      IO(ledger.calls.incrementAndGet()) *> IO.raiseError(new java.io.IOException("boom"))
+    NfOfficeRoutes.Leg(
+      tag,
+      (src, outDir) => IO(ledger.calls.incrementAndGet()) *> IO.raiseError(new java.io.IOException("boom"))
     )
 
   private def legsOf(ls: List[NfOfficeRoutes.Leg]): NfOfficeRoutes.Legs = new NfOfficeRoutes.Legs:
@@ -71,12 +76,14 @@ class NfOfficeRoutesSpec extends CatsEffectSuite:
   private def noLegs: NfOfficeRoutes.Legs = new NfOfficeRoutes.Legs:
     def probe: IO[List[NfOfficeRoutes.Leg]] = IO.pure(Nil)
 
-  /** One seeded source file; the suite hands its realpath-bound ticket to `test`.
+  /**
+   * One seeded source file; the suite hands its realpath-bound ticket to `test`.
    *  复活批对齐：test 体按普通断言代码写（与 withTempCache 同风格），此处统一
-   *  lift 进 IO 再跑——省掉每个用例的 IO{} 包装，语义不变（IO{} 延迟执行）。 */
+   *  lift 进 IO 再跑——省掉每个用例的 IO{} 包装，语义不变（IO{} 延迟执行）。
+   */
   private def withSeedFile(name: String, bytes: Array[Byte])(test: (Path, String) => Any): Unit =
-    val tmp   = Files.createTempDirectory("nf-office-test")
-    val file  = tmp.resolve(name)
+    val tmp = Files.createTempDirectory("nf-office-test")
+    val file = tmp.resolve(name)
     Files.write(file, bytes)
     val ticket = store.issue("spec", file.toRealPath().toString).unsafeRunSync().token
     try IO(test(file, ticket)).unsafeRunSync()
@@ -228,9 +235,11 @@ class NfOfficeRoutesSpec extends CatsEffectSuite:
       val out = os.Path(dir) / "out"
       os.makeDir.all(out)
       // produced-in-time path
-      val leg = NfOfficeRoutes.Leg("poll", (src, outDir) =>
-        IO { os.write(outDir / "late.pdf", "x".getBytes) } *>
-          NfOfficeRoutes.Legs.pollFor(outDir, "pdf", 10.seconds)
+      val leg = NfOfficeRoutes.Leg(
+        "poll",
+        (src, outDir) =>
+          IO { os.write(outDir / "late.pdf", "x".getBytes) } *>
+            NfOfficeRoutes.Legs.pollFor(outDir, "pdf", 10.seconds)
       )
       val got = leg.run(os.Path(dir) / "s.pptx", out).unsafeRunSync()
       assertEquals(got.ext, "pdf")

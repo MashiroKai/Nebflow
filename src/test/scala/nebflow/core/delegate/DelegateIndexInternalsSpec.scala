@@ -46,6 +46,7 @@ class DelegateIndexInternalsSpec extends FunSuite:
     )
     DelegateRegistry.put(rec)
     rec
+  end mkRecord
 
   private def root: os.Path = PathUtil.dataRoot
 
@@ -161,7 +162,8 @@ class DelegateIndexInternalsSpec extends FunSuite:
     assertEquals(DelegateRegistry.unpin(pinned).isRight, true)
     assert(
       DelegateTerminalTtl.verdict(DelegateRegistry.find(pinned).get, None, now).isExpired,
-      "unpinning returns the identity to the normal 7-day clock")
+      "unpinning returns the identity to the normal 7-day clock"
+    )
   }
 
   // ── G6 撤销：索引是可丢的派生层，源码读面照旧 ───────────────────────────

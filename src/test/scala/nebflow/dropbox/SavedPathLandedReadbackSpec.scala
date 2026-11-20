@@ -75,7 +75,10 @@ class SavedPathLandedReadbackSpec extends CatsEffectSuite:
         tmp <- IO.blocking(os.temp.dir(prefix = "nb-nfpath-"))
         _ <- IO(PathUtil.setDataRoot(tmp))
         _ <- IO.blocking(
-          os.write.over(tmp / nebflow.shared.Branding.configFileName, s"""{"dropbox":{"allowTargetDirRoots":["$allowRoot"]}}""")
+          os.write.over(
+            tmp / nebflow.shared.Branding.configFileName,
+            s"""{"dropbox":{"allowTargetDirRoots":["$allowRoot"]}}"""
+          )
         )
         ms <- NeblinkService.create(0, dispatcher)
         seen <- Ref.of[IO, List[Json]](Nil)

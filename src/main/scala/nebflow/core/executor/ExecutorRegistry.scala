@@ -68,8 +68,11 @@ object ExecutorRegistry:
   final case class Settings(default: Option[String], disabled: List[String], models: Map[String, String] = Map.empty)
 
   def configuredModel(id: String): Option[String] =
-    Option.when(Set("claude-code", "codex").contains(id))(id)
-      .flatMap(readSettings.models.get).map(_.trim).filter(_.nonEmpty)
+    Option
+      .when(Set("claude-code", "codex").contains(id))(id)
+      .flatMap(readSettings.models.get)
+      .map(_.trim)
+      .filter(_.nonEmpty)
 
   /** 内置执行器永远在册且可用（不可 disabled——它是唯一的零依赖兜底面）。 */
   val DefaultId: String = "nebflow"

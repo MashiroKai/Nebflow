@@ -308,7 +308,10 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     val program = for
       res <- mkResources(system, llm.handle)
       rt <- mountProject("bcr-manual-hold", ws, system, res)
-      _ = seedTranscript(sid, List(msg(MessageRole.User, "original task"), msg(MessageRole.Assistant, "SAVED-CHECKPOINT")))
+      _ = seedTranscript(
+        sid,
+        List(msg(MessageRole.User, "original task"), msg(MessageRole.Assistant, "SAVED-CHECKPOINT"))
+      )
       _ <- seedRunning(rt, "n-manual", "manual-worker", "continue task", sessionRef = Some(sid))
       (notices, trigger) <- triggerRecorder
       held <- ProjectCrashRecovery.recoverProject(rt, trigger = trigger, manual = true)
@@ -343,7 +346,11 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       res <- mkResources(system, llm.handle)
       rt <- mountProject("bcr-manual-pending", ws, system, res)
       _ <- seedRunning(rt, "n-pending-hold", "held-pending", "pending work", sessionRef = None)
-      _ <- rt.store.mutate(s => s.copy(nodes = s.nodes.updated("n-pending-hold", s.nodes("n-pending-hold").copy(status = NodeLifecycle.Pending))))
+      _ <- rt.store.mutate(s =>
+        s.copy(nodes =
+          s.nodes.updated("n-pending-hold", s.nodes("n-pending-hold").copy(status = NodeLifecycle.Pending))
+        )
+      )
       _ <- ProjectCrashRecovery.recoverProject(rt, manual = true)
       _ <- rt.engine.startNode("n-pending-hold")
       _ <- rt.engine.settleRunnableSweep()
@@ -386,16 +393,22 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       res <- mkResources(system, llm.handle)
       recorded <- Ref.of[IO, List[AgentCommand]](Nil)
       delivered <- cats.effect.Deferred[IO, Unit]
-      recorder <- system.spawn({
-        lazy val behavior: nebflow.actor.Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand] { msg =>
-          recorded.update(_ :+ msg) *> (msg match
-            case m: AgentCommand.ImmediateInput if m.text.contains("[Node 'rec-a' completed]") => delivered.complete(()).void
-            case _ => IO.unit
-          ).as(behavior)
-        }
-        behavior
-      }, s"rec-c1-${scala.util.Random.nextInt(1000000)}")
-      _ <- res.agentRegistry.update(_ + ("nebula-root" -> AgentRecord("nebula-root", recorder, AgentKind.Root, "nebula-root")))
+      recorder <- system.spawn(
+        {
+          lazy val behavior: nebflow.actor.Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand] { msg =>
+            recorded.update(_ :+ msg) *> (msg match
+              case m: AgentCommand.ImmediateInput if m.text.contains("[Node 'rec-a' completed]") =>
+                delivered.complete(()).void
+              case _ => IO.unit
+            ).as(behavior)
+          }
+          behavior
+        },
+        s"rec-c1-${scala.util.Random.nextInt(1000000)}"
+      )
+      _ <- res.agentRegistry.update(
+        _ + ("nebula-root" -> AgentRecord("nebula-root", recorder, AgentKind.Root, "nebula-root"))
+      )
       rt <- mountProject("bcr-c1", ws, system, res)
       _ = seedTranscript(
         sid,

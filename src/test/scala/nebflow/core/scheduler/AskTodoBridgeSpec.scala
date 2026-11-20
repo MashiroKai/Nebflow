@@ -50,6 +50,7 @@ class AskTodoBridgeSpec extends CatsEffectSuite:
       val task = created.head.hcursor.downField("task")
       assertEquals(task.downField("name").as[String], Right("ask-asknb-deadbeef"))
       assertEquals(task.downField("kind").as[String], Right("todo"))
+    end for
   }
 
   test("attach 幂等：同 requestId 重放 = 单份替换") {

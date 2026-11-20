@@ -47,18 +47,25 @@ class AdapterWireContentTypeSpec extends CatsEffectSuite:
   private val anthropicJson =
     """{"id":"m","type":"message","role":"assistant","content":[{"type":"text","text":"OK"}],""" +
       """"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}"""
+
   private val openAiJson =
     """{"id":"c","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"OK"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1}}"""
+
   private val anthropicSse =
     "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"m\",\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n" +
       "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"OK\"}}\n\n" +
       "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"
+
   private val openAiSse =
     "data: {\"id\":\"c\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"OK\"}}]}\n\n" +
       "data: [DONE]\n\n"
 
   /** 收一份请求头快照，回一个固定响应。 */
-  private def serve(path: String, body: String, sse: Boolean): (HttpServer, java.util.concurrent.atomic.AtomicReference[List[String]]) =
+  private def serve(
+    path: String,
+    body: String,
+    sse: Boolean
+  ): (HttpServer, java.util.concurrent.atomic.AtomicReference[List[String]]) =
     val seen = new java.util.concurrent.atomic.AtomicReference[List[String]](Nil)
     val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
     server.createContext(
@@ -80,6 +87,8 @@ class AdapterWireContentTypeSpec extends CatsEffectSuite:
     )
     server.start()
     (server, seen)
+
+  end serve
 
   private def backend =
     sttp.client4.httpclient.fs2.HttpClientFs2Backend
@@ -113,8 +122,15 @@ class AdapterWireContentTypeSpec extends CatsEffectSuite:
       backend = backend,
       providerHeaders = None
     )
-    adapter.sendMessage(params).attempt
-      .map(r => (assert(r.isRight, s"mock must answer 200, got $r"), assertSingleJsonContentType(seen.get(), "anthropic non-stream")))
+    adapter
+      .sendMessage(params)
+      .attempt
+      .map(r =>
+        (
+          assert(r.isRight, s"mock must answer 200, got $r"),
+          assertSingleJsonContentType(seen.get(), "anthropic non-stream")
+        )
+      )
       .guarantee(IO(server.stop(0)))
   }
 
@@ -127,8 +143,17 @@ class AdapterWireContentTypeSpec extends CatsEffectSuite:
       backend = backend,
       providerHeaders = None
     )
-    adapter.sendMessageStream(params).compile.toList.attempt
-      .map(r => (assert(r.isRight, s"mock must stream 200, got ${r.left.map(_.toString)}"), assertSingleJsonContentType(seen.get(), "anthropic stream")))
+    adapter
+      .sendMessageStream(params)
+      .compile
+      .toList
+      .attempt
+      .map(r =>
+        (
+          assert(r.isRight, s"mock must stream 200, got ${r.left.map(_.toString)}"),
+          assertSingleJsonContentType(seen.get(), "anthropic stream")
+        )
+      )
       .guarantee(IO(server.stop(0)))
   }
 
@@ -141,8 +166,15 @@ class AdapterWireContentTypeSpec extends CatsEffectSuite:
       backend = backend,
       providerHeaders = None
     )
-    adapter.sendMessage(params).attempt
-      .map(r => (assert(r.isRight, s"mock must answer 200, got $r"), assertSingleJsonContentType(seen.get(), "openai non-stream")))
+    adapter
+      .sendMessage(params)
+      .attempt
+      .map(r =>
+        (
+          assert(r.isRight, s"mock must answer 200, got $r"),
+          assertSingleJsonContentType(seen.get(), "openai non-stream")
+        )
+      )
       .guarantee(IO(server.stop(0)))
   }
 
@@ -155,8 +187,17 @@ class AdapterWireContentTypeSpec extends CatsEffectSuite:
       backend = backend,
       providerHeaders = None
     )
-    adapter.sendMessageStream(params).compile.toList.attempt
-      .map(r => (assert(r.isRight, s"mock must stream 200, got ${r.left.map(_.toString)}"), assertSingleJsonContentType(seen.get(), "openai stream")))
+    adapter
+      .sendMessageStream(params)
+      .compile
+      .toList
+      .attempt
+      .map(r =>
+        (
+          assert(r.isRight, s"mock must stream 200, got ${r.left.map(_.toString)}"),
+          assertSingleJsonContentType(seen.get(), "openai stream")
+        )
+      )
       .guarantee(IO(server.stop(0)))
   }
 end AdapterWireContentTypeSpec

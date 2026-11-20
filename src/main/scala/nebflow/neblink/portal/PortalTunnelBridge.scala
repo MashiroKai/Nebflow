@@ -441,7 +441,12 @@ private[neblink] final class PortalTunnelBridge(
   ): IO[Unit] =
     sender.send(
       PortalWireCodec.encode(
-        PortalWireCodec.HttpResponse(requestId, status, Vector("content-type" -> contentType) ++ extraHeaders, Vector.empty)
+        PortalWireCodec.HttpResponse(
+          requestId,
+          status,
+          Vector("content-type" -> contentType) ++ extraHeaders,
+          Vector.empty
+        )
       )
     ) *>
       // Every cycle ends with a `more=false` frame — empty body included; the

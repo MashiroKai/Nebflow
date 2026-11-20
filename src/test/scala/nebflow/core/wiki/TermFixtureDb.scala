@@ -103,9 +103,12 @@ object TermFixtureDb:
       ps.executeBatch()
     }
 
-    Using.resource(conn.prepareStatement(
-      "INSERT INTO documents (id, project, rel, abs_path, title, doc_type, status, mtime, size, term_count, scanned_at)"
-        + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) { ps =>
+    Using.resource(
+      conn.prepareStatement(
+        "INSERT INTO documents (id, project, rel, abs_path, title, doc_type, status, mtime, size, term_count, scanned_at)"
+          + " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+      )
+    ) { ps =>
       List(
         (1L, "stand", "glossary.md", "/vault/stand/.stand/docs/glossary.md", "词汇表", "glossary", "current", 2),
         (2L, "stand", "index.md", "/vault/stand/.stand/docs/index.md", "索引说明", "note", "current", 1)
@@ -119,16 +122,25 @@ object TermFixtureDb:
       ps.executeBatch()
     }
 
-    Using.resource(conn.prepareStatement(
-      "INSERT INTO terms (id, doc_id, name, name_key, anchor, line, end_line, definition, source, raw_name, updated_at)"
-        + " VALUES (?,?,?,?,?,?,?,?,?,?,?)")) { ps =>
+    Using.resource(
+      conn.prepareStatement(
+        "INSERT INTO terms (id, doc_id, name, name_key, anchor, line, end_line, definition, source, raw_name, updated_at)"
+          + " VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+      )
+    ) { ps =>
       val rows = List(
-        (1L, 1L, "词条索引库（term index db）", "词条索引库（term index db）", "#^term-index-db", 9,
-          "词条抽取后的可查询派生物。", "glossary"),
-        (2L, 1L, "图谱投影（graph projection）", "图谱投影（graph projection）", "#^term-graph-projection", 11,
-          "图谱视图里的节点与边。", "glossary"),
-        (3L, 2L, "查询面（query face）", "查询面（query face）", "#^term-query-face", 12,
-          "对外暴露的词条查询接口。", "doc")
+        (1L, 1L, "词条索引库（term index db）", "词条索引库（term index db）", "#^term-index-db", 9, "词条抽取后的可查询派生物。", "glossary"),
+        (
+          2L,
+          1L,
+          "图谱投影（graph projection）",
+          "图谱投影（graph projection）",
+          "#^term-graph-projection",
+          11,
+          "图谱视图里的节点与边。",
+          "glossary"
+        ),
+        (3L, 2L, "查询面（query face）", "查询面（query face）", "#^term-query-face", 12, "对外暴露的词条查询接口。", "doc")
       )
       rows.foreach { case (id, docId, name, key, anchor, line, defn, source) =>
         ps.setLong(1, id); ps.setLong(2, docId); ps.setString(3, name); ps.setString(4, key)
@@ -140,12 +152,14 @@ object TermFixtureDb:
       ps.executeBatch()
     }
 
-    Using.resource(conn.prepareStatement(
-      "INSERT INTO term_aliases (term_id, alias, alias_key) VALUES (?,?,?)")) { ps =>
+    Using.resource(conn.prepareStatement("INSERT INTO term_aliases (term_id, alias, alias_key) VALUES (?,?,?)")) { ps =>
       List(
-        (1L, "词条索引库"), (1L, "term index db"),
-        (2L, "图谱投影"), (2L, "graph projection"),
-        (3L, "查询面"), (3L, "query face")
+        (1L, "词条索引库"),
+        (1L, "term index db"),
+        (2L, "图谱投影"),
+        (2L, "graph projection"),
+        (3L, "查询面"),
+        (3L, "query face")
       ).foreach { case (id, alias) =>
         ps.setLong(1, id); ps.setString(2, alias); ps.setString(3, alias.toLowerCase)
         ps.addBatch()
@@ -153,13 +167,17 @@ object TermFixtureDb:
       ps.executeBatch()
     }
 
-    Using.resource(conn.prepareStatement(
-      "INSERT INTO term_tags (term_id, facet, value) VALUES (?,?,?)")) { ps =>
+    Using.resource(conn.prepareStatement("INSERT INTO term_tags (term_id, facet, value) VALUES (?,?,?)")) { ps =>
       List(
-        (1L, "project", "stand"), (1L, "topic", "term-index"),
-        (2L, "project", "stand"), (2L, "topic", "graph"), (2L, "topic", "term-index"),
+        (1L, "project", "stand"),
+        (1L, "topic", "term-index"),
+        (2L, "project", "stand"),
+        (2L, "topic", "graph"),
+        (2L, "topic", "term-index"),
         (2L, "extra", "ctx/engine"),
-        (3L, "project", "stand"), (3L, "topic", "term-index"), (3L, "extra", "ctx/http")
+        (3L, "project", "stand"),
+        (3L, "topic", "term-index"),
+        (3L, "extra", "ctx/http")
       ).foreach { case (id, facet, value) =>
         ps.setLong(1, id); ps.setString(2, facet); ps.setString(3, value)
         ps.addBatch()
@@ -167,8 +185,11 @@ object TermFixtureDb:
       ps.executeBatch()
     }
 
-    Using.resource(conn.prepareStatement(
-      "INSERT INTO term_refs (id, term_id, from_doc_id, from_rel, line, raw, resolved) VALUES (?,?,?,?,?,?,?)")) { ps =>
+    Using.resource(
+      conn.prepareStatement(
+        "INSERT INTO term_refs (id, term_id, from_doc_id, from_rel, line, raw, resolved) VALUES (?,?,?,?,?,?,?)"
+      )
+    ) { ps =>
       List(
         (1L, 1L, 2L, "index.md", 8, "词条索引库", 1),
         (2L, 2L, 2L, "index.md", 8, "图谱投影", 0)
@@ -179,3 +200,5 @@ object TermFixtureDb:
       }
       ps.executeBatch()
     }
+  end insert
+end TermFixtureDb

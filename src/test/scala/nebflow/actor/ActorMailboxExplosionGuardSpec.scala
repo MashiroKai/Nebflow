@@ -51,10 +51,12 @@ class ActorMailboxExplosionGuardSpec extends CatsEffectSuite:
 
   /** 有界等待（不是无限轮询）：最多 30s，超时即以当前值返回由断言判红。 */
   private def awaitProcessed(processed: Ref[IO, Int], target: Int): IO[Int] =
-    processed.get.flatMap { n =>
-      if n >= target then IO.pure(n)
-      else IO.sleep(50.millis) *> awaitProcessed(processed, target)
-    }.timeoutTo(30.seconds, processed.get)
+    processed.get
+      .flatMap { n =>
+        if n >= target then IO.pure(n)
+        else IO.sleep(50.millis) *> awaitProcessed(processed, target)
+      }
+      .timeoutTo(30.seconds, processed.get)
 
   test("stopping an older actor must not unregister its same-path replacement") {
     val system = ActorSystem(s"actor-incarnation-${scala.util.Random.nextInt(100000)}")
@@ -69,7 +71,9 @@ class ActorMailboxExplosionGuardSpec extends CatsEffectSuite:
       .guarantee(system.stopAll)
   }
 
-  test("K1/K2/K3: filling the kernel box to capacity + 1 records exactly ONE dead letter, keeps the actor alive, loses no queued message") {
+  test(
+    "K1/K2/K3: filling the kernel box to capacity + 1 records exactly ONE dead letter, keeps the actor alive, loses no queued message"
+  ) {
     val cap = ActorSystem.DefaultMailboxCapacity
     val system = ActorSystem(s"deadletter-spec-${scala.util.Random.nextInt(100000)}")
     val program = for
@@ -99,7 +103,11 @@ class ActorMailboxExplosionGuardSpec extends CatsEffectSuite:
       )
       assert(aliveWhileFull, "the dead-letter path must not kill the actor")
       // K2 —— 已入队的 capacity 条一条不丢
-      assertEquals(clue(drained), cap, s"every one of the $cap queued messages must still be processed once the box drains")
+      assertEquals(
+        clue(drained),
+        cap,
+        s"every one of the $cap queued messages must still be processed once the box drains"
+      )
       // K3 —— 风暴后照常
       assertEquals(clue(afterOneMore), cap + 1, "a message sent after the storm must be handled normally")
       assert(alive, "the actor must still be alive after the storm")

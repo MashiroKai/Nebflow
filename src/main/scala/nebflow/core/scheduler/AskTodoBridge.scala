@@ -36,9 +36,11 @@ final class AskTodoBridge(
 
   import AskTodoBridge.*
 
-  /** 挂起即入：幂等 upsert（同 requestId 重放/多端重复 attach 收敛单份）。
+  /**
+   * 挂起即入：幂等 upsert（同 requestId 重放/多端重复 attach 收敛单份）。
    *  改版批追加令：project = 事项归属标签（取 askUser payload 的 project 字段，
-   *  AgentActor buildAskUserJson 既有来源）。 */
+   *  AgentActor buildAskUserJson 既有来源）。
+   */
   def attach(
     rootSessionId: String,
     requestId: String,
@@ -61,8 +63,12 @@ final class AskTodoBridge(
     sourceAgent: String
   ): IO[Unit] =
     upsert(
-      rootSessionId, requestId, permNameOf(requestId),
-      permContent(payload, sourceAgent), payloadProject(payload), "attach-perm"
+      rootSessionId,
+      requestId,
+      permNameOf(requestId),
+      permContent(payload, sourceAgent),
+      payloadProject(payload),
+      "attach-perm"
     )
 
   /**
@@ -152,9 +158,7 @@ final class AskTodoBridge(
             )
           )
         )
-      yield ()).handleErrorWith(e =>
-        logger.warn(s"ask-todo retire failed requestId=$requestId: ${e.getMessage}")
-      )
+      yield ()).handleErrorWith(e => logger.warn(s"ask-todo retire failed requestId=$requestId: ${e.getMessage}"))
 
 end AskTodoBridge
 
@@ -184,12 +188,15 @@ object AskTodoBridge:
     val agent = Option(sourceAgent).map(_.trim).filter(_.nonEmpty)
     agent.fold(s"[待答] $q")(a => s"[待答] $q — $a")
 
-  /** 镜像 project 提取单点：优先 payload.project（askUser 卡），回落 sourceFlow
-   *  （permission enrichment，AgentSessionExecution）。空串视同未分组。 */
+  /**
+   * 镜像 project 提取单点：优先 payload.project（askUser 卡），回落 sourceFlow
+   *  （permission enrichment，AgentSessionExecution）。空串视同未分组。
+   */
   def payloadProject(payload: Json): Option[String] =
     List("project", "sourceFlow").toList
       .flatMap(k => payload.hcursor.downField(k).as[String].toOption)
-      .map(_.trim).filter(_.nonEmpty)
+      .map(_.trim)
+      .filter(_.nonEmpty)
       .headOption
 
   /**
@@ -201,8 +208,11 @@ object AskTodoBridge:
    */
   def permContent(payload: Json, sourceAgent: String): String =
     def field(keys: String*): Option[String] =
-      keys.toList.flatMap(k => payload.hcursor.downField(k).as[String].toOption).headOption
-        .map(_.trim).filter(_.nonEmpty)
+      keys.toList
+        .flatMap(k => payload.hcursor.downField(k).as[String].toOption)
+        .headOption
+        .map(_.trim)
+        .filter(_.nonEmpty)
     val tool = field("toolName", "serverId", "server", "plugin").getOrElse("approval")
     val summary = field("summary", "inputSummary")
     val body = summary.fold(tool)(s => s"$tool · $s")

@@ -165,7 +165,9 @@ object PdfNotes:
                   catch
                     case scala.util.control.NonFatal(e) =>
                       WriteResult.Failed(s"cannot write the note at $path: ${e.getMessage}")
+              end match
             }
+        end match
     }.handleErrorWith(e => IO.pure(WriteResult.Failed(s"note write failed: ${e.getMessage}")))
 
   private def lockOf(path: os.Path): Object = locks.computeIfAbsent(path.toString, _ => new Object)
@@ -198,3 +200,4 @@ object PdfNotes:
         "out_of_range" -> pageCount.exists(page > _).asJson
       )
     yield out
+end PdfNotes

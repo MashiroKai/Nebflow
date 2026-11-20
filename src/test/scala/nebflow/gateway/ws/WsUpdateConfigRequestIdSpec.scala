@@ -141,6 +141,8 @@ class WsUpdateConfigRequestIdSpec extends CatsEffectSuite:
       }
     )
 
+  end updateConfig
+
   private def frameOfType(frames: List[Json], tpe: String): Json =
     frames
       .find(_.hcursor.get[String]("type").toOption.contains(tpe))

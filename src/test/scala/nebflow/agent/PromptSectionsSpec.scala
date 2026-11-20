@@ -402,7 +402,10 @@ class PromptSectionsSpec extends munit.FunSuite:
       assert(joined.contains(nebflow.shared.Defaults.OutputBlockRule), "order-375 section in the assembly")
       assert(joined.contains("User-visible output: wrap everything"), "Voice bullet in the base prompt")
       assert(joined.contains("<report>...</report>"), "the paired report tag is the only taught form")
-      assert(!joined.contains("<output>"), s"the retired tag must not be taught anywhere: ${joined.linesIterator.filter(_.contains("output")).mkString("\n")}")
+      assert(
+        !joined.contains("<output>"),
+        s"the retired tag must not be taught anywhere: ${joined.linesIterator.filter(_.contains("output")).mkString("\n")}"
+      )
     }
 
   test("MountedProjectList.renderLines renders empty list as the explicit placeholder"):

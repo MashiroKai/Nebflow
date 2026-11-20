@@ -8,19 +8,34 @@ import munit.CatsEffectSuite
 import java.nio.file.Files
 
 class OwnerStoreSpec extends CatsEffectSuite:
+
   test("temporary owner registry persists trusted owners and leaves legacy resources unknown"):
     val dir = Files.createTempDirectory("owner-store-spec-")
     val file = dir.resolve("owners.json")
     val store = OwnerStore.at(file)
     for
       before <- store.resolve("legacy/session/file")
-      ownerSession <- GatewaySessionStore.create().flatMap(_.create("account-A", GatewaySessionStore.OriginRelayMint, "test"))
-      otherSession <- GatewaySessionStore.create().flatMap(_.create("account-B", GatewaySessionStore.OriginRelayMint, "test"))
+      ownerSession <- GatewaySessionStore
+        .create()
+        .flatMap(_.create("account-A", GatewaySessionStore.OriginRelayMint, "test"))
+      otherSession <- GatewaySessionStore
+        .create()
+        .flatMap(_.create("account-B", GatewaySessionStore.OriginRelayMint, "test"))
       created <- store.createResource("attachment", "resource-1", Credential.ViaSession(ownerSession))
       owner <- store.resolveResource("attachment", "resource-1")
       conflict <- store.createResource("attachment", "resource-1", Credential.ViaSession(otherSession))
-      copiedUnknown <- store.copyResource("attachment", "legacy-id", "copy-unknown", Credential.ViaSession(ownerSession))
-      copiedWrongOwner <- store.copyResource("attachment", "resource-1", "copy-wrong", Credential.ViaSession(otherSession))
+      copiedUnknown <- store.copyResource(
+        "attachment",
+        "legacy-id",
+        "copy-unknown",
+        Credential.ViaSession(ownerSession)
+      )
+      copiedWrongOwner <- store.copyResource(
+        "attachment",
+        "resource-1",
+        "copy-wrong",
+        Credential.ViaSession(otherSession)
+      )
       copiedKnown <- store.copyResource("attachment", "resource-1", "copy", Credential.ViaSession(ownerSession))
       copyOwner <- store.resolveResource("attachment", "copy")
       invalidKey <- store.createResource("attachment", " ", Credential.ViaSession(ownerSession))
@@ -40,6 +55,8 @@ class OwnerStoreSpec extends CatsEffectSuite:
       _ = assert(!rejected)
     yield ()
 
+    end for
+
   test("owner identity rejects unknown placeholder and bearer credentials"):
     val dir = Files.createTempDirectory("owner-store-auth-spec-")
     val store = OwnerStore.at(dir.resolve("owners.json"))
@@ -52,3 +69,4 @@ class OwnerStoreSpec extends CatsEffectSuite:
       _ = assert(!bearerOwnerCreated)
       _ = assertEquals(missing, None)
     yield ()
+end OwnerStoreSpec

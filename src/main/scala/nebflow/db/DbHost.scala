@@ -53,16 +53,19 @@ object DbHost:
             handles.put(dataRoot, h)
             sweepers.put(dataRoot, RetentionSweeper.arm(h))
             installShutdownHook()
-            log.info("db handle opened for data root {} (generation {})", dataRoot,
-              h.instanceLockGeneration)
+            log.info("db handle opened for data root {} (generation {})", dataRoot, h.instanceLockGeneration)
             h
           }
         )
         Some(opened)
     catch
       case e: Throwable =>
-        log.warn("db handle open failed for data root {} — host wiring degrades to legacy " +
-          "in-memory/file behavior (best-effort): {}", dataRoot, e.toString)
+        log.warn(
+          "db handle open failed for data root {} — host wiring degrades to legacy " +
+            "in-memory/file behavior (best-effort): {}",
+          dataRoot,
+          e.toString
+        )
         None
 
   /** 该根是否已持有句柄（测试/诊断面）。 */

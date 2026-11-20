@@ -42,8 +42,7 @@ class HistoryArchiverDbSpec extends FunSuite:
       assert(db.isDefined, "前置：共享句柄在场")
       val archiver = HistoryArchiver.fileSystem(root / "sessions", db)
       for
-        res <- archiver.archiveCompaction("s-arc", Some("名字"), "agent-x",
-          msgs("b", 3), msgs("a", 1), "auto")
+        res <- archiver.archiveCompaction("s-arc", Some("名字"), "agent-x", msgs("b", 3), msgs("a", 1), "auto")
         arc = res.getOrElse(fail(s"旧档腿必成：$res"))
         // 旧档零改动：两文件在场、内容 = asJson.spaces2。
         _ = assert(os.exists(os.Path(arc.beforeJsonPath)), "before.json 在场")
@@ -66,10 +65,10 @@ class HistoryArchiverDbSpec extends FunSuite:
         _ = assertEquals(recs.size, 1, "点位行恰一")
         _ = assertEquals(recs.head.kind, "compact-point")
         p = recs.head.payload.hcursor
-        _ = assertEquals(p.downField("beforeRef").as[String].toOption, Some("snapshots/1.json"),
-          "refs 指 db 快照位")
+        _ = assertEquals(p.downField("beforeRef").as[String].toOption, Some("snapshots/1.json"), "refs 指 db 快照位")
         _ = assertEquals(p.downField("afterRef").as[String].toOption, Some("snapshots/2.json"))
       yield ()
+      end for
     }
 
   test("C7-2 best-effort：句柄关闭后旧档照常、返回值语义不变"):
@@ -78,8 +77,7 @@ class HistoryArchiverDbSpec extends FunSuite:
       val archiver = HistoryArchiver.fileSystem(root / "sessions", db)
       for
         _ <- IO(db.get.close())
-        res <- archiver.archiveCompaction("s-dead", None, "agent-y",
-          msgs("b", 2), msgs("a", 1), "manual")
+        res <- archiver.archiveCompaction("s-dead", None, "agent-y", msgs("b", 2), msgs("a", 1), "manual")
         arc = res.getOrElse(fail(s"句柄关闭不阻断旧档：$res"))
         _ = assert(os.exists(os.Path(arc.afterJsonPath)), "after.json 照常落盘")
       yield ()
@@ -103,5 +101,6 @@ class HistoryArchiverDbSpec extends FunSuite:
           case other => fail(s"生产形态快照应 Present，got $other")
         _ <- IO(DbHost.release(root.toNIO))
       yield ()
+      end for
     }
 end HistoryArchiverDbSpec

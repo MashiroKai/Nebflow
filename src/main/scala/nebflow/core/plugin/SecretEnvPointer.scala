@@ -18,8 +18,10 @@ package nebflow.core.plugin
  */
 object SecretEnvPointer:
 
-  /** 指针正则：全串 `${secret:<name>}`；name = SecretsStore.validateName 同款字符面
-   *  （`^[a-z0-9][a-z0-9._-]{0,63}$`）。 */
+  /**
+   * 指针正则：全串 `${secret:<name>}`；name = SecretsStore.validateName 同款字符面
+   *  （`^[a-z0-9][a-z0-9._-]{0,63}$`）。
+   */
   private val pattern = """^\$\{secret:([a-z0-9][a-z0-9._-]{0,63})\}$""".r
 
   /** 完整合法指针 ⇒ Some(secret 名)。 */

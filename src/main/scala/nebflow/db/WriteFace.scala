@@ -5,8 +5,14 @@ import org.slf4j.LoggerFactory
 import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.channels.FileChannel
-import java.nio.file.{AccessDeniedException, AtomicMoveNotSupportedException, Files, Path,
-  StandardCopyOption, StandardOpenOption}
+import java.nio.file.{
+  AccessDeniedException,
+  AtomicMoveNotSupportedException,
+  Files,
+  Path,
+  StandardCopyOption,
+  StandardOpenOption
+}
 import java.util.UUID
 import scala.annotation.tailrec
 import scala.jdk.CollectionConverters.*
@@ -36,14 +42,16 @@ object WriteFace:
   enum FsyncTier:
     /** 事实面（事件流 / llm 消息 / 待审单 / 调度）：每条 force(true) —— 「已 ack 即已落盘」。 */
     case PerRecord
+
     /** 渲染/ui 面：批量（rotate / close / 显式 flush 时 force）——ack 先于落盘，崩窗丢批可接受。 */
     case Batched
 
   object FsyncTier:
+
     /** D-4 工作默认的分派单点：`ui` 渲染面批量，其余（事实面）每条。 */
     def defaultFor(stream: String): FsyncTier = stream match
       case "ui" => Batched
-      case _    => PerRecord
+      case _ => PerRecord
 
   // ── 测试专用崩溃注入（V1：rename 前后各相位边界的撕裂窗注入）────────────────
   /** 五步序的相位边界。hook 在该点抛 [[SimulatedCrash]] = 进程死在该相位（tmp 不清——真崩溃也清不了）。 */
@@ -51,8 +59,7 @@ object WriteFace:
     case AfterTmpWrite, AfterTmpForce, AfterRename, AfterDirForce
 
   /** 模拟 kill：抛出点 = 崩溃点；与真异常的区别 = 失败路径不清 tmp（清扫归启动扫）。 */
-  private[db] final class SimulatedCrash(val at: CrashPoint)
-    extends RuntimeException(s"simulated crash at $at")
+  private[db] final class SimulatedCrash(val at: CrashPoint) extends RuntimeException(s"simulated crash at $at")
 
   private[db] type CrashHook = CrashPoint => Unit
   private[db] val NoHook: CrashHook = _ => ()
@@ -101,8 +108,7 @@ object WriteFace:
   /** ④ 步单点：ATOMIC_MOVE + Windows 句柄竞态退避（`AtomicJson.writeSync` 37-54 形逐字保留）。 */
   private def moveTo(target: Path, tmp: Path): Unit =
     @tailrec def attempt(n: Int, backoffMs: Long): Unit =
-      try
-        Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
+      try Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
       catch
         case _: AccessDeniedException if n > 0 =>
           Thread.sleep(backoffMs)
@@ -129,7 +135,9 @@ object WriteFace:
     val existed = Files.exists(target)
     val ch = FileChannel.open(
       target,
-      StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND
+      StandardOpenOption.CREATE,
+      StandardOpenOption.WRITE,
+      StandardOpenOption.APPEND
     )
     try
       val buf = ByteBuffer.wrap((line + "\n").getBytes("UTF-8"))
@@ -175,8 +183,9 @@ object WriteFace:
             try
               Files.delete(p)
               out += p
-            catch case e: Exception =>
-              log.warn("orphan tmp sweep failed at {}: {}", p, e.getMessage)
+            catch
+              case e: Exception =>
+                log.warn("orphan tmp sweep failed at {}: {}", p, e.getMessage)
         }
       finally walk.close()
       out.result()
@@ -186,11 +195,14 @@ object WriteFace:
 
   /** 追加前置检的三态结果。 */
   sealed trait TailState
+
   object TailState:
     /** 干净（含：文件缺 / 0 长——从未写或崩溃在建档与首写之间，皆无残可修）。 */
     case object Clean extends TailState
+
     /** 撕裂尾已修复：崩溃窗残段（从未 ack 的字节）已截断回最后一个换行；bytes = 截掉的字节数。 */
     final case class RepairedTornTail(bytes: Long) extends TailState
+
     /** 尾帧（最后一条完整行）校验失败 ⇒ 追加拒绝（读失败不参与下一次写，V3）——先隔离再写。 */
     final case class BadTail(reason: String) extends TailState
 
@@ -212,8 +224,7 @@ object WriteFace:
       val tornBytes = size - (lastNl + 1)
       if tornBytes > 0 then
         raf.setLength(lastNl + 1)
-        log.warn("torn tail repaired at {}: {} unacked byte(s) truncated (crash-window artifact)",
-          target, tornBytes)
+        log.warn("torn tail repaired at {}: {} unacked byte(s) truncated (crash-window artifact)", target, tornBytes)
       if lastNl <= 0 then
         // 无完整帧（整文件皆残段）或唯一帧为空行：无尾帧可校。
         return if tornBytes > 0 then TailState.RepairedTornTail(tornBytes) else TailState.Clean
@@ -225,6 +236,7 @@ object WriteFace:
         case Left(why) =>
           TailState.BadTail(why)
     finally raf.close()
+    end try
   end prepareAppend
 
   /** 反向扫描 `[0, limit)` 内最后一个 `\n` 的位置；无则 -1（分块回扫，避免整读大分片）。 */

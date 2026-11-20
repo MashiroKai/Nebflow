@@ -244,7 +244,7 @@ object NfFileRoutes:
       // 出向统一补是唯一不会在某条错误腿上断直传的面。
       val corsWrap = (io: IO[Response[IO]]) => io.map(_.putHeaders(NfFileCorsHeaders*))
       corsWrap(
-          if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
+        if rawPath.isEmpty then BadRequest("Missing 'path' parameter")
         else if ticket.isEmpty then
           // Not the DSL `Unauthorized`: that constructor demands a
           // WWW-Authenticate challenge, and this route has no auth scheme to
@@ -320,7 +320,7 @@ object NfFileRoutes:
                   case Right(resp) => IO.pure(resp.withBodyStream(resp.body.onFinalize(gate.release)))
                 }
           }
-    ) // corsWrap(…) — 全出向补 CORS/PNA 头（LAN 直传腿）
+      ) // corsWrap(…) — 全出向补 CORS/PNA 头（LAN 直传腿）
   }
 
   // ── 内容寻址取字节出口（按对象复用批 2026-11-18 · 第 1 件）──────────────
@@ -433,7 +433,7 @@ object NfFileRoutes:
       case Some(w) =>
         serveThumb(req, entry, name, w, thumbCacheDir).flatMap {
           case Some(resp) => IO.pure(resp)
-          case None       => serveFull(req, entry, name)
+          case None => serveFull(req, entry, name)
         }
       case None => serveFull(req, entry, name)
 
@@ -475,11 +475,14 @@ object NfFileRoutes:
   ): IO[Option[Response[IO]]] =
     val tc = NfThumb.thumbCid(entry.cid, w)
     val etag = "\"" + tc + "\""
-    if etagMatches(req, etag) then IO.pure(Some(Response[IO](Status.NotModified).putHeaders(thumbValidators(tc, entry)*)))
+    if etagMatches(req, etag) then
+      IO.pure(Some(Response[IO](Status.NotModified).putHeaders(thumbValidators(tc, entry)*)))
     else
       NfThumb.cached(cacheDir, tc) match
         case Some((file, ext)) =>
-          val size = try os.size(file) catch case _: Throwable => 0L
+          val size =
+            try os.size(file)
+            catch case _: Throwable => 0L
           IO.pure(
             Some(
               Response[IO](Status.Ok)
@@ -495,16 +498,21 @@ object NfFileRoutes:
           NfThumb.render(java.nio.file.Paths.get(entry.realPath), w).flatMap {
             case None => IO.pure(None)
             case Some((bytes, ext)) =>
-              IO.blocking(NfThumb.store(cacheDir, tc, bytes, ext)).as(
-                Some(
-                  Response[IO](Status.Ok)
-                    .putHeaders(thumbValidators(tc, entry)*)
-                    .putHeaders(Header.Raw(org.typelevel.ci.CIString("Content-Length"), bytes.length.toString))
-                    .putHeaders(thumbContentType(ext))
-                    .withBodyStream(fs2.Stream.chunk(fs2.Chunk.array(bytes)).covary[IO])
+              IO.blocking(NfThumb.store(cacheDir, tc, bytes, ext))
+                .as(
+                  Some(
+                    Response[IO](Status.Ok)
+                      .putHeaders(thumbValidators(tc, entry)*)
+                      .putHeaders(Header.Raw(org.typelevel.ci.CIString("Content-Length"), bytes.length.toString))
+                      .putHeaders(thumbContentType(ext))
+                      .withBodyStream(fs2.Stream.chunk(fs2.Chunk.array(bytes)).covary[IO])
+                  )
                 )
-              )
           }
+
+    end if
+
+  end serveThumb
 
   /** 原答腿（无 `?w=` 的逐字既有行为）：强 ETag = cid + immutable 缓存 + 条件 304。 */
   private def serveFull(req: Request[IO], entry: NfObjEntry, name: String): IO[Response[IO]] =
@@ -512,7 +520,10 @@ object NfFileRoutes:
     val validators: List[Header.ToRaw] = List(
       Header.Raw(org.typelevel.ci.CIString("ETag"), etag),
       Header.Raw(org.typelevel.ci.CIString("Cache-Control"), NfObjCacheControl),
-      Header.Raw(org.typelevel.ci.CIString("Last-Modified"), HttpDateFormat.format(java.time.Instant.ofEpochMilli(entry.mtimeMs)))
+      Header.Raw(
+        org.typelevel.ci.CIString("Last-Modified"),
+        HttpDateFormat.format(java.time.Instant.ofEpochMilli(entry.mtimeMs))
+      )
     )
     val notModified = etagMatches(req, etag)
     val real = fs2.io.file.Path(entry.realPath)
@@ -529,9 +540,14 @@ object NfFileRoutes:
         val dotted = fs2.io.file.Path(entry.realPath)
         val byName =
           val dot = name.lastIndexOf('.')
-          if dot < 0 then None else MediaType.forExtension(name.substring(dot + 1).toLowerCase).map(mt => `Content-Type`(mt))
+          if dot < 0 then None
+          else MediaType.forExtension(name.substring(dot + 1).toLowerCase).map(mt => `Content-Type`(mt))
         byName.orElse(contentTypeFor(dotted)).fold(base)(base.putHeaders(_))
       }
+
+    end if
+
+  end serveFull
 
   /**
    * LAN 直传腿的 CORS/PNA 头集（console-fastpath 批 2026-10-23·腿③）：
@@ -685,11 +701,13 @@ object NfFileRoutes:
                 nebflow.shared.TunnelOriginMark.isMarked(req)
             val slid = cred match
               case Credential.ViaSession(rec) => Some(GatewaySessionStore.newCookie(rec.sessionId, secure = secure))
-              case _                          => None
+              case _ => None
             NoContent().map(resp =>
-              slid.fold(resp)(resp.addCookie).putHeaders(
-                Header.Raw(org.typelevel.ci.CIString(GatewayAuth.CredentialHeader), cred.railName)
-              )
+              slid
+                .fold(resp)(resp.addCookie)
+                .putHeaders(
+                  Header.Raw(org.typelevel.ci.CIString(GatewayAuth.CredentialHeader), cred.railName)
+                )
             )
         }
     }

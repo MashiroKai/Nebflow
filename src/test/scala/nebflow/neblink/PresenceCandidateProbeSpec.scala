@@ -285,3 +285,4 @@ class PresenceCandidateProbeSpec extends munit.FunSuite:
     val got = PresenceCandidateProbe.sanitizeReported(List(publicV6, lanV4))
     assertEquals(got.map(_.address), List("192.168.1.145"), "utun 上的普通公网 v6 属于隧道污染面，必须丢")
   }
+end PresenceCandidateProbeSpec

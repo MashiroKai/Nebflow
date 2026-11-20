@@ -94,7 +94,9 @@ class Phase2dToolRefactorSpec extends FunSuite:
     // imagegen 双层批（2026-10-24）：GenerateImage 的编译期 seal 剥离面与
     // friendseal 同消费点条件化——本锚的期望值一并扣除（静态集不动）。
     val imageGenStrip =
-      if nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace then Set.empty[String] else Set("GenerateImage")
+      if nebflow.core.ImageGenSeal.CompiledIn && nebflow.service.ConfigService.imagegenEnabledForToolFace then
+        Set.empty[String]
+      else Set("GenerateImage")
     // resume 合入适配（2026-10-25）：CompiledIn=true 形态下 fixed 交付面**加入**
     // GenerateImage（镜像 strip：关⇒剥、开⇒在场；自静态集单点派生，字面集不动；
     // 静态集超出字面集者仅此一件——MemoryNote 已在字面集内）。原批 seal=ON 只跑

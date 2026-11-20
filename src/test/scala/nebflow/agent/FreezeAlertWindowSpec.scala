@@ -254,7 +254,11 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
 
   test("merge key = one error-type family (reason-code family), never provider+model, never per-delegate") {
     val now = 10_000_000L
-    def fam(detail: String, tier: FreezeNotice.Tier = FreezeNotice.Tier.Silent, reason: String = "delegate-frozen:llm-failure") =
+    def fam(
+      detail: String,
+      tier: FreezeNotice.Tier = FreezeNotice.Tier.Silent,
+      reason: String = "delegate-frozen:llm-failure"
+    ) =
       FreezeNotice.familyOfItem(mkItem("x", detail, now, now, reason = reason, tier = tier))
     // provider 可恢复族逐类 → 族线值（判据读 ProviderFault.Table，不另写分类）。
     assertEquals(fam("kimi/k3: HTTP 403 no subscription"), "auth-subscription")
@@ -265,7 +269,11 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
     assertEquals(fam("zhipu/glm: 429 rate limit exceeded"), "rate-limited")
     // 真失败 → 确定性缺陷族（不进合并窗）。
     assertEquals(
-      fam("tool pipeline crashed: NullPointerException in render step", FreezeNotice.Tier.Escalate, "delegate-frozen:tool-failure"),
+      fam(
+        "tool pipeline crashed: NullPointerException in render step",
+        FreezeNotice.Tier.Escalate,
+        "delegate-frozen:tool-failure"
+      ),
       "deterministic-defect"
     )
     // 未命中判据表：原因码兜底（额度族 / 未知形状桶），不并进任何已知族。
@@ -370,7 +378,11 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
       assertEquals(afterSecond, Nil, "repeated sweep stays silent")
       assertEquals(afterFourth, Nil, "another parent and same family still produce no upward digest")
       assertEquals(afterSecondType, Nil, "a different provider family also produces no upward digest")
-      assertEquals(windowAfterFourth.map(_.affected), Some(4), "non-notifying panel statistics still track all four auth sessions")
+      assertEquals(
+        windowAfterFourth.map(_.affected),
+        Some(4),
+        "non-notifying panel statistics still track all four auth sessions"
+      )
       assert(digest.total >= 5, s"all freezes remain on the panel: ${digest.total}")
       stamp(
         "final",
@@ -383,7 +395,9 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
 
   // ── ④（重写）曾用时限前后都零 provider 通知 ───────────────────────────────
 
-  test("empirical (重写): a provider freeze sends ZERO messages both younger and older than the former 30-minute horizon") {
+  test(
+    "empirical (重写): a provider freeze sends ZERO messages both younger and older than the former 30-minute horizon"
+  ) {
     val system = ActorSystem(s"faw-4-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-faw4-")
     val parentSid = "faw-parent-h"
@@ -412,7 +426,10 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
       _ <- FreezeAlertSweep.alertTick(resources)
       insideAlerts <- alertsOf(List(parentSid))
       insideAge = FreezeNotice.fullDigest(DelegateRegistry.list(), System.currentTimeMillis()).items.map(_.ageMs)
-      _ = stamp("inside-horizon", s"三拍后倒数：${insideAlerts.size} 条汇报（冻龄 ${insideAge.mkString(",")} ms，时限 ${Defaults.DelegateFreezeEscalateAfterMs} ms）")
+      _ = stamp(
+        "inside-horizon",
+        s"三拍后倒数：${insideAlerts.size} 条汇报（冻龄 ${insideAge.mkString(",")} ms，时限 ${Defaults.DelegateFreezeEscalateAfterMs} ms）"
+      )
       // 把这条冻结的起点倒推到 31 分钟前（真实缺省参数，不改判据）⇒ 只剩「超过时限」一个变量。
       _ <- IO {
         val rec = DelegateRegistry.find(childSid).get
@@ -476,7 +493,9 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
 
   // ── ⑥ 真失败不被吞 ──────────────────────────────────────────────────────
 
-  test("deterministic-defect still notifies immediately; provider family stays silent even after the former horizon (重写)") {
+  test(
+    "deterministic-defect still notifies immediately; provider family stays silent even after the former horizon (重写)"
+  ) {
     val system = ActorSystem(s"faw-6-${scala.util.Random.nextInt(100000)}")
     val tmp = os.temp.dir(prefix = "nb-faw6-")
     val parentSid = "faw-parent-d"
@@ -621,7 +640,10 @@ class FreezeAlertWindowSpec extends CatsEffectSuite:
     assertEquals(Defaults.DelegateFreezeAlertReArmMs, 30L * min)
     val digest = FreezeNotice.fullDigest(List.empty, now)
     assertEquals(digest.total, 0, "empty registry has no panel entries")
-    assert(FreezeNotice.windowOf("upstream-5xx").exists(_.firstFrozenAt <= old + 1), "non-notifying statistics retain earliest freeze")
+    assert(
+      FreezeNotice.windowOf("upstream-5xx").exists(_.firstFrozenAt <= old + 1),
+      "non-notifying statistics retain earliest freeze"
+    )
   }
 
 end FreezeAlertWindowSpec

@@ -659,8 +659,11 @@ object SeedService:
       logger.infoSync(
         s"Seed: plugin '$name' marked user-removed (uninstall flow) — the seed self-heal will not reinstall it"
       )
-    catch case e: Exception =>
-      logger.warnSync(s"Seed: user-removed marker write failed for '$name': ${e.getMessage} (uninstall itself is unaffected)")
+    catch
+      case e: Exception =>
+        logger.warnSync(
+          s"Seed: user-removed marker write failed for '$name': ${e.getMessage} (uninstall itself is unaffected)"
+        )
   }
 
   /** 默认集插件名集合（manifest `plugins:` 项；读取失败 ⇒ 空集 = 集合语义安全侧）。 */
@@ -718,7 +721,10 @@ object SeedService:
               )
           }
         }
+      end if
     }
+
+  end defaultSetDriftLines
 
   /** 漂移摘要输出记账（与 `PluginRegistry.healthLogState` 同款：同状态只出一次）。 */
   private val driftLogState =

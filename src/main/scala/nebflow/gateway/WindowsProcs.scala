@@ -93,6 +93,8 @@ object WindowsProcs:
     }
     ports.distinct.toList
 
+  end parseNetstatListenerPorts
+
   /** Pids LISTENING on `port`, the netstat counterpart of the above. */
   def parseNetstatListenerPids(rows: Vector[String], port: Int): List[Long] =
     val pids = ListBuffer.empty[Long]

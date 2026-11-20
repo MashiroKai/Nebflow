@@ -30,7 +30,10 @@ class AgentIdentityStoreSpec extends CatsEffectSuite:
       IO.blocking {
         val dir = tempRoot / "agents" / "writer"
         os.makeDir.all(dir)
-        os.write(dir / "agent.json", Json.obj("name" -> "writer".asJson, "model" -> Json.obj("preset" -> "balanced".asJson)).noSpaces)
+        os.write(
+          dir / "agent.json",
+          Json.obj("name" -> "writer".asJson, "model" -> Json.obj("preset" -> "balanced".asJson)).noSpaces
+        )
       } *>
       AgentIdentityStore.writeDisplayName("writer", "小雨").map { _ =>
         val j = agentJson("writer")
@@ -61,8 +64,7 @@ class AgentIdentityStoreSpec extends CatsEffectSuite:
       _ = assertEquals(rec2.avatarSha256, None)
       _ = assertEquals(rec2.displayName, Some("诗人")) // 清头像不动名字
       _ <- IO(assert(os.exists(tempRoot / "agents" / "Nebula" / "avatar") == false))
-    yield
-      ()
+    yield ()
 
   // ── 收敛面：LWW applyRemote ──────────────────────────────────────────────────
 
@@ -81,8 +83,7 @@ class AgentIdentityStoreSpec extends CatsEffectSuite:
       _ = assertEquals(rec.displayName, Some("新名"))
       _ = assertEquals(rec.avatarSha256, Some(AgentIdentityStore.sha256Hex(Array[Byte](9))))
       _ = assertEquals(rec.updatedAt, 1000L) // 远端戳落盘（不取本地时钟）
-    yield
-      ()
+    yield ()
 
   test("applyRemote: displayName=None removes the key (total-state convergence)"):
     for
@@ -93,8 +94,7 @@ class AgentIdentityStoreSpec extends CatsEffectSuite:
       _ = assertEquals(applied, true)
       j = agentJson("writer")
       _ = assertEquals(j.hcursor.downField("displayName").as[Option[String]], Right(None)) // 键被摘除
-    yield
-      ()
+    yield ()
 
   // ── 提示词自我认知段 ─────────────────────────────────────────────────────────
 
@@ -119,8 +119,8 @@ class AgentIdentityStoreSpec extends CatsEffectSuite:
       _ = assertEquals(absent, false) // 无 Soul.md ⇒ 跳过（不凭空造）
       _ <- IO.blocking {
         os.write(
-            tempRoot / "Soul.md",
-            """# Soul.md
+          tempRoot / "Soul.md",
+          """# Soul.md
               |> 未设置 · 诞生于 2026-10-04 的 Onboarding 问卷
               |
               |## 自我认知
@@ -142,8 +142,7 @@ class AgentIdentityStoreSpec extends CatsEffectSuite:
       // 幂等：同值再跑不再落盘。
       again <- AgentIdentityStore.touchSoulIdentity("Nebula", Some("小雨"), avatarSet = true)
       _ = assertEquals(again, false)
-    yield
-      ()
+    yield ()
 
   test("touchSoulIdentity: appends a minimal section when the section is absent"):
     for
@@ -154,10 +153,12 @@ class AgentIdentityStoreSpec extends CatsEffectSuite:
       soul = os.read(tempRoot / "Soul.md")
       _ = assert(soul.startsWith("# Soul.md")) // 原文在前
       _ = assert(soul.contains(s"${AgentIdentityStore.SoulSectionTitle}\n- 名字：Nebula\n- 头像：未设置"))
-    yield
-      ()
+    yield ()
 
   test("touchSoulIdentity ignores non-root agents"):
     reset() *>
       IO.blocking(os.write(tempRoot / "Soul.md", "x")) *>
-      AgentIdentityStore.touchSoulIdentity("someOtherAgent", Some("n"), avatarSet = true).map(b => assertEquals(b, false))
+      AgentIdentityStore
+        .touchSoulIdentity("someOtherAgent", Some("n"), avatarSet = true)
+        .map(b => assertEquals(b, false))
+end AgentIdentityStoreSpec

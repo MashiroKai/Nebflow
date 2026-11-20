@@ -181,7 +181,7 @@ class DeletedToolGuardSpec extends FunSuite:
     // 现役入口）并说清 agentflow 只是模式名——三件缺一件，模型只能瞎猜。
     val receipt = nebflow.agent.AgentCore.RetiredToolGuides.get("AgentFlow") match
       case Some(guide) => s"Tool 'AgentFlow' is not available. $guide"
-      case None        => fail("AgentFlow must carry a retirement guide")
+      case None => fail("AgentFlow must carry a retirement guide")
     println(s"[TOMBSTONE-RECEIPT] $receipt")
     assert(receipt.startsWith("Tool 'AgentFlow' is not available."), receipt)
     assert(receipt.contains("retired"), s"the receipt must say the tool is retired: $receipt")

@@ -30,6 +30,8 @@ final class OwnerAccess private (private val credential: Credential, private val
   def ownsSession(requestedSessionId: String): IO[Boolean] =
     store.ownsSession(credential, requestedSessionId)
 
+end OwnerAccess
+
 object OwnerAccess:
 
   /** Mint from a credential already validated by GatewayAuth at a WS handshake. */

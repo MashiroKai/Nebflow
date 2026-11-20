@@ -50,25 +50,35 @@ object ProviderFault:
      * ⇒ 冻结后无限自动重试，作者看到的就是「一直卡住没跑完」。
      */
     case ModelUnavailable
+
     /** 鉴权 / 订阅（401 / 403 / 无订阅 / 无效 key）——充值或换链即恢复。 */
     case AuthSubscription
+
     /** 配额 / 余额（402 / 429+额度码 / insufficient_quota / 余额不足）——等重置或充值。 */
     case QuotaBalance
+
     /** 上游 5xx（含实测非标准码 550 / 529 过载）——供应商此刻供不出服务。 */
     case Upstream5xx
+
     /** 连接失败 / 超时（重置、拒绝、DNS、无路由、超时）——等网络自己好。 */
     case ConnectTimeout
+
     /** 请求被上游按格式退回（400 / 上下文超长 / input too long）——等模型侧放宽或换链。 */
     case FormatRejected
+
     /** 频率闸（429 无配额码）——滑动窗自愈。 */
     case RateLimited
+
     /** 确定性缺陷（代码 bug / 越权 / 数据损坏 / 显式业务失败）——**真失败**。 */
     case DeterministicDefect
+
+  end Family
 
   /** 分类裁定：可恢复（原地冻结 + 静默 + 自动续跑）还是真失败（照常通知）。 */
   enum Verdict:
     /** provider 侧可恢复故障：零通知、原地冻结、退避重试至恢复。 */
     case Recoverable
+
     /**
      * **配置失效**（model-404-freeze 批 2026-11-07）：这句正文说的是「你指的模型在
      * 这个供应商/分组里不存在」，重试一百次也是同一个 404 —— 既不是 provider 挂了
@@ -77,8 +87,11 @@ object ProviderFault:
      * 配置**，并照常通知（人来换模型）。
      */
     case ConfigInvalid
+
     /** 真失败：照常通知作者（判据代码 bug / 越权 / 数据损坏 / 显式业务失败）。 */
     case RealFailure
+
+  end Verdict
 
   /** 线值（日志/审计行）。 */
   def familyWire(f: Family): String = f match

@@ -4,7 +4,13 @@ import cats.effect.IO
 import cats.syntax.all.*
 import nebflow.actor.AgentCommand
 import nebflow.core.mail.{InputMailbox, InputPayload}
-import nebflow.shared.{ExecutionChainObservation, ExecutionCommitResult, ExecutionEvent, ExecutionTransition, NebflowLogger}
+import nebflow.shared.{
+  ExecutionChainObservation,
+  ExecutionCommitResult,
+  ExecutionEvent,
+  ExecutionTransition,
+  NebflowLogger
+}
 import io.circe.syntax.*
 
 /**
@@ -52,8 +58,14 @@ private[agent] object InputLanding:
           if state.attemptId == admission.attemptId && state.incarnationId == admission.incarnationId =>
         val id = java.util.UUID.randomUUID().toString
         val command = ExecutionTransition(
-          admission.sessionId, admission.executionId, id, id, state.ref,
-          state.attemptId, state.incarnationId, ExecutionEvent.InputAccepted(identity, payload.asJson)
+          admission.sessionId,
+          admission.executionId,
+          id,
+          id,
+          state.ref,
+          state.attemptId,
+          state.incarnationId,
+          ExecutionEvent.InputAccepted(identity, payload.asJson)
         )
         handle.authority.acceptInput(command).map {
           case ExecutionCommitResult.Committed(_) => Right(true)
@@ -63,6 +75,7 @@ private[agent] object InputLanding:
         }
       case _ => IO.pure(Left("execution-review-required"))
     }
+  end acceptProtected
 
   final case class ProtectedInputReceipt(identity: String, accepted: Boolean)
 
@@ -82,12 +95,17 @@ private[agent] object InputLanding:
     val identity = msg.clientMessageId.getOrElse(java.util.UUID.randomUUID().toString)
     acceptProtected(handle, InputPayload.ofImmediate(msg), identity).map(_.map(ProtectedInputReceipt(identity, _)))
 
-  def protectedUser(handle: nebflow.core.ProtectedExecutionHandle, msg: AgentCommand.UserInput): IO[Either[String, Boolean]] =
+  def protectedUser(
+    handle: nebflow.core.ProtectedExecutionHandle,
+    msg: AgentCommand.UserInput
+  ): IO[Either[String, Boolean]] =
     protectedUserReceipt(handle, msg).map(_.map(_.accepted))
 
-  def protectedImmediate(handle: nebflow.core.ProtectedExecutionHandle, msg: AgentCommand.ImmediateInput): IO[Either[String, Boolean]] =
+  def protectedImmediate(
+    handle: nebflow.core.ProtectedExecutionHandle,
+    msg: AgentCommand.ImmediateInput
+  ): IO[Either[String, Boolean]] =
     protectedImmediateReceipt(handle, msg).map(_.map(_.accepted))
-
 
   /** 刚落地/命中的身份（`None` = 无会话身份 or 落盘失败 ⇒ turn 照旧执行）。 */
   type Landed = Option[String]
@@ -104,11 +122,14 @@ private[agent] object InputLanding:
    * 为免调用方误判，返回值用 [[LandOutcome]] 显式三态。
    */
   sealed trait LandOutcome extends Product with Serializable
+
   object LandOutcome:
     /** 新件已落盘并取走：正常开 turn，turn 成功后必须 `consume(identity)`。 */
     final case class Landed(identity: String) extends LandOutcome
+
     /** 幂等键已执行过或已在箱：**跳过本 turn**（不得重复执行）。 */
     case object Duplicate extends LandOutcome
+
     /** 无 sid / 落盘失败：**照旧开 turn**（不因邮箱故障阻断用户输入）。 */
     final case class Passthrough(cause: String) extends LandOutcome
 
@@ -150,8 +171,7 @@ private[agent] object InputLanding:
         "(D3 consume not reached); replayed at next boot; until then every resend of this key is Duplicate"
     else if delivered then
       s"identity=$identity already executed (delivered-inputs tombstone) — client resend / crash replay (expected idempotent skip)"
-    else
-      s"identity=$identity no pending/taken copy to re-take (concurrent consume or cleanup race)"
+    else s"identity=$identity no pending/taken copy to re-take (concurrent consume or cleanup race)"
 
   /**
    * 用户输入（`UserInput`）落盘门。
@@ -174,36 +194,44 @@ private[agent] object InputLanding:
     sid.filter(_.trim.nonEmpty) match
       case None => IO.pure(LandOutcome.Passthrough("no-session-id"))
       case Some(s) =>
-        InputMailbox.enqueue(s, payload, identity, producer = producer).flatMap {
-          case InputMailbox.InputMailResult.Enqueued(entry) =>
-            // 立刻取走：条目从 pending-input 迁到 taken-input，**在 turn 执行期间仍在盘上**
-            // （D3：turn 成功后才 unlink；崩在 turn 中途 ⇒ 恢复点扫 taken-input 重投）。
-            InputMailbox.take(s, List(entry)).map {
-              case taken if taken.nonEmpty => LandOutcome.Landed(identity)
-              // 取走失败（并发/IO）：条目仍在 pending-input ⇒ 恢复点同样会扫到，按已落地处理
-              case _ => LandOutcome.Landed(identity)
-            }
-          case InputMailbox.InputMailResult.AlreadyPresent =>
-            // A producer may have durably accepted the input before sending the actor command.
-            InputMailbox.scanPending(s).flatMap { pending =>
-              pending.find(e => e.identity == identity && e.producer == nebflow.core.mail.ProducerInput.Producer &&
-                (e.payload == payload || (e.payload.kind == nebflow.core.mail.InputPayload.KindImmediate &&
-                  e.payload.copy(kind = payload.kind) == payload))) match
-                case Some(entry) => InputMailbox.take(s, List(entry)).map {
-                  case entries if entries.nonEmpty => LandOutcome.Landed(identity)
-                  case _ => LandOutcome.Duplicate
-                }
-                case None => IO.pure(LandOutcome.Duplicate)
-            }
-          case InputMailbox.InputMailResult.Failed(cause) =>
+        InputMailbox
+          .enqueue(s, payload, identity, producer = producer)
+          .flatMap {
+            case InputMailbox.InputMailResult.Enqueued(entry) =>
+              // 立刻取走：条目从 pending-input 迁到 taken-input，**在 turn 执行期间仍在盘上**
+              // （D3：turn 成功后才 unlink；崩在 turn 中途 ⇒ 恢复点扫 taken-input 重投）。
+              InputMailbox.take(s, List(entry)).map {
+                case taken if taken.nonEmpty => LandOutcome.Landed(identity)
+                // 取走失败（并发/IO）：条目仍在 pending-input ⇒ 恢复点同样会扫到，按已落地处理
+                case _ => LandOutcome.Landed(identity)
+              }
+            case InputMailbox.InputMailResult.AlreadyPresent =>
+              // A producer may have durably accepted the input before sending the actor command.
+              InputMailbox.scanPending(s).flatMap { pending =>
+                pending.find(e =>
+                  e.identity == identity && e.producer == nebflow.core.mail.ProducerInput.Producer &&
+                    (e.payload == payload || (e.payload.kind == nebflow.core.mail.InputPayload.KindImmediate &&
+                      e.payload.copy(kind = payload.kind) == payload))
+                ) match
+                  case Some(entry) =>
+                    InputMailbox.take(s, List(entry)).map {
+                      case entries if entries.nonEmpty => LandOutcome.Landed(identity)
+                      case _ => LandOutcome.Duplicate
+                    }
+                  case None => IO.pure(LandOutcome.Duplicate)
+              }
+            case InputMailbox.InputMailResult.Failed(cause) =>
+              logger
+                .warn(
+                  s"[input-landing] disk landing failed sid='$s' identity='$identity' cause=$cause — turn proceeds (mailbox is extra insurance, never a blocker)"
+                )
+                .as(LandOutcome.Passthrough(cause))
+          }
+          .handleErrorWith(t =>
             logger
-              .warn(s"[input-landing] disk landing failed sid='$s' identity='$identity' cause=$cause — turn proceeds (mailbox is extra insurance, never a blocker)")
-              .as(LandOutcome.Passthrough(cause))
-        }.handleErrorWith(t =>
-          logger
-            .warn(s"[input-landing] unexpected failure sid='$s': ${t.getMessage} — turn proceeds")
-            .as(LandOutcome.Passthrough(Option(t.getMessage).getOrElse("unknown")))
-        )
+              .warn(s"[input-landing] unexpected failure sid='$s': ${t.getMessage} — turn proceeds")
+              .as(LandOutcome.Passthrough(Option(t.getMessage).getOrElse("unknown")))
+          )
 
   /**
    * turn **成功后**回收（D3 锚点）：unlink `taken-input/` 条目 + 写墓碑。
@@ -225,15 +253,18 @@ private[agent] object InputLanding:
   ): IO[Unit] =
     val wanted = identities.filter(id => nebflow.core.mail.ProducerInput.isProducerIdentity(Some(id)))
     if wanted.isEmpty then IO.unit
-    else sid.filter(_.nonEmpty).fold(IO.unit) { session =>
-      (InputMailbox.scanPending(session), InputMailbox.scanTaken(session)).tupled.flatMap { (pending, taken) =>
-        val owned = (pending ++ taken).filter(e => e.producer == nebflow.core.mail.ProducerInput.Producer && wanted(e.identity))
-        if owned.isEmpty then IO.unit
-        else
-          resources.sessionStore.durableSwapMessages(session, messages) *>
-            InputMailbox.take(session, pending.filter(e => owned.exists(_.identity == e.identity))) *>
-            InputMailbox.unlinkTaken(session, owned.map(_.identity))
+    else
+      sid.filter(_.nonEmpty).fold(IO.unit) { session =>
+        (InputMailbox.scanPending(session), InputMailbox.scanTaken(session)).tupled.flatMap { (pending, taken) =>
+          val owned =
+            (pending ++ taken).filter(e => e.producer == nebflow.core.mail.ProducerInput.Producer && wanted(e.identity))
+          if owned.isEmpty then IO.unit
+          else
+            resources.sessionStore.durableSwapMessages(session, messages) *>
+              InputMailbox.take(session, pending.filter(e => owned.exists(_.identity == e.identity))) *>
+              InputMailbox.unlinkTaken(session, owned.map(_.identity))
+        }
       }
-    }
+  end checkpointProducerInputs
 
 end InputLanding

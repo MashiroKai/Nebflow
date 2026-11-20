@@ -107,6 +107,7 @@ class ActorWatchPersistenceSpec extends CatsEffectSuite:
         got <- awaitSeen(seen, "t-boot")
         _ <- secondWorld.stopAll
       yield assertEquals(got, List("t-boot"), s"重放后的订阅没有送出 Terminated，实得 $got")
+      end for
     }
   }
 

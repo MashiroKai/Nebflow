@@ -90,8 +90,7 @@ object DoneRecordStore:
   /** 磁盘位置：`~/.stand/checkin-records/done-records.jsonl`。 */
   def apply(dataRoot: os.Path): DoneRecordStore =
     new DoneRecordStore(
-      (dataRoot / "checkin-records" / "done-records.jsonl").toNIO,
-      {
+      (dataRoot / "checkin-records" / "done-records.jsonl").toNIO, {
         import cats.effect.unsafe.implicits.global
         Mutex[IO].unsafeRunSync()
       }

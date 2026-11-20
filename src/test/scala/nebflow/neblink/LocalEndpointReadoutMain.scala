@@ -35,17 +35,17 @@ object LocalEndpointReadoutMain:
     // 改前语义（只取 Inet4Address）的等价读数：v4 条数与顺序。
     val asBefore = v4
     println(
-      s"MEASURE ipv6 ${
-          io.circe.Json
-            .obj(
-              "reported" -> list.map(e => s"${e.address}:${e.port}#${e.kind}@${e.label}").asJson,
-              "v6Count" -> v6.size.asJson,
-              "v4Count" -> v4.size.asJson,
-              "v6First" -> (if v6.isEmpty || v4.isEmpty then "n/a" else list.headOption.exists(v6.contains).toString).asJson,
-              "preV6Behaviour" -> asBefore.map(_.address).asJson,
-              "noV6EnvIdentity" -> (PresenceCandidateProbe.preferV6(v4) == v4).asJson,
-              "maxV6Slots" -> PresenceCandidateProbe.MaxV6Slots.asJson
-            )
-            .noSpaces
-        }"
+      s"MEASURE ipv6 ${io.circe.Json
+          .obj(
+            "reported" -> list.map(e => s"${e.address}:${e.port}#${e.kind}@${e.label}").asJson,
+            "v6Count" -> v6.size.asJson,
+            "v4Count" -> v4.size.asJson,
+            "v6First" -> (if v6.isEmpty || v4.isEmpty then "n/a" else list.headOption.exists(v6.contains).toString).asJson,
+            "preV6Behaviour" -> asBefore.map(_.address).asJson,
+            "noV6EnvIdentity" -> (PresenceCandidateProbe.preferV6(v4) == v4).asJson,
+            "maxV6Slots" -> PresenceCandidateProbe.MaxV6Slots.asJson
+          )
+          .noSpaces}"
     )
+  end main
+end LocalEndpointReadoutMain

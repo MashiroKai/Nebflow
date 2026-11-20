@@ -44,10 +44,16 @@ class ExternalExecutorSpec extends CatsEffectSuite:
 
   test("maximum thinking reaches the model's highest advertised effort") {
     val levels = List("low", "medium", "high", "xhigh", "max", "ultra")
-    val decision = ExternalReasoning.decide(nebflow.shared.ThinkingConfig(effort = Some(nebflow.shared.ThinkingEffort.Max)),
-      Some("gpt-6.1-terra"), Some(ExternalReasoning.Catalog(levels, "runtime", "stamp")))
+    val decision = ExternalReasoning.decide(
+      nebflow.shared.ThinkingConfig(effort = Some(nebflow.shared.ThinkingEffort.Max)),
+      Some("gpt-6.1-terra"),
+      Some(ExternalReasoning.Catalog(levels, "runtime", "stamp"))
+    )
     for resume <- List(None, Some("thread")) do
-      val args = ExternalReasoning.argv(ExternalExecutor.Codex.launchArgsWithModel("task", resume, Some("gpt-6.1-terra")), decision)
+      val args = ExternalReasoning.argv(
+        ExternalExecutor.Codex.launchArgsWithModel("task", resume, Some("gpt-6.1-terra")),
+        decision
+      )
       assert(args.containsSlice(List("-c", "model_reasoning_effort=ultra")), args.toString)
     assert(decision.trace.contains("requested=max actual=ultra direction=up source=runtime timestamp=stamp"))
   }
@@ -72,8 +78,13 @@ class ExternalExecutorSpec extends CatsEffectSuite:
   test("direction identifies exact and upward intermediate remapping") {
     import nebflow.shared.{ThinkingConfig, ThinkingEffort}
     def direction(levels: List[String], effort: ThinkingEffort) =
-      ExternalReasoning.decide(ThinkingConfig(effort = Some(effort)), Some("model"),
-        Some(ExternalReasoning.Catalog(levels, "test", "stamp"))).direction
+      ExternalReasoning
+        .decide(
+          ThinkingConfig(effort = Some(effort)),
+          Some("model"),
+          Some(ExternalReasoning.Catalog(levels, "test", "stamp"))
+        )
+        .direction
     val six = List("low", "medium", "high", "xhigh", "max", "ultra")
     val five = List("low", "medium", "high", "xhigh", "max")
     assertEquals(direction(six, ThinkingEffort.Medium), "exact")
@@ -87,19 +98,26 @@ class ExternalExecutorSpec extends CatsEffectSuite:
   test("runtime catalog protocol and fresh/resume traces from a fake CLI") {
     val dir = os.temp.dir(prefix = "codex-catalog-test-")
     val bin = dir / "codex"
-    os.write(bin, """#!/bin/sh
+    os.write(
+      bin,
+      """#!/bin/sh
 read first
 printf '%s\n' '{"id":1,"result":{}}'
 read initialized
 read list
 printf '%s\n' '{"id":2,"result":{"data":[{"model":"m","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"ultra"}]}],"nextCursor":null}}'
-""")
+"""
+    )
     os.perms.set(bin, java.nio.file.attribute.PosixFilePermissions.fromString("rwxr-xr-x"))
     val catalog = ExternalReasoning.runtime(bin.toString, "m")
     assertEquals(catalog.map(_.levels), Some(List("low", "ultra")))
     assertEquals(catalog.map(_.source), Some("runtime"))
     assert(catalog.exists(_.timestamp.nonEmpty))
-    val decision = ExternalReasoning.decide(nebflow.shared.ThinkingConfig(effort = Some(nebflow.shared.ThinkingEffort.Max)), Some("m"), catalog)
+    val decision = ExternalReasoning.decide(
+      nebflow.shared.ThinkingConfig(effort = Some(nebflow.shared.ThinkingEffort.Max)),
+      Some("m"),
+      catalog
+    )
     assert(decision.trace.contains("requested=max actual=ultra direction=up source=runtime timestamp="))
   }
 
@@ -135,14 +153,27 @@ printf '%s\n' '{"id":2,"result":{"data":[{"model":"m","supportedReasoningEfforts
 
   test("external model selection round trips through delegate records") {
     val record = nebflow.core.delegate.DelegateRegistry.Record(
-      "external-codex-x", "codex", "/tmp", None, None, "parent", "title", 1L, externalModel = Some("model-a")
+      "external-codex-x",
+      "codex",
+      "/tmp",
+      None,
+      None,
+      "parent",
+      "title",
+      1L,
+      externalModel = Some("model-a")
     )
     assertEquals(
       record.asJson.as[nebflow.core.delegate.DelegateRegistry.Record].toOption.flatMap(_.externalModel),
       Some("model-a")
     )
     assertEquals(
-      record.copy(externalModel = None).asJson.as[nebflow.core.delegate.DelegateRegistry.Record].toOption.flatMap(_.externalModel),
+      record
+        .copy(externalModel = None)
+        .asJson
+        .as[nebflow.core.delegate.DelegateRegistry.Record]
+        .toOption
+        .flatMap(_.externalModel),
       None
     )
   }

@@ -117,3 +117,4 @@ object TimeAnchor:
    */
   def userLine(at: ZonedDateTime = now()): String =
     s"Now: ${StampFormatter.format(at)} ${ZhWeekday.getOrElse(at.getDayOfWeek, "")} | epoch_ms ${at.toInstant.toEpochMilli}"
+end TimeAnchor

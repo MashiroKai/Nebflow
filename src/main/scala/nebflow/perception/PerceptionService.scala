@@ -40,18 +40,23 @@ object PerceptionService:
   val BillingDigestHour: Int = 9
   val PollIntervalIdleSec: Int = 60
   val PollIntervalWindowSec: Int = 15
+
   /** 退避序列（r1 §4.2：1s → 2s → 4s → … 上限 5min，±20% 抖动防惊群）。 */
   val BackoffBaseSec: Int = 1
   val BackoffMaxSec: Int = 300
   val BackoffJitterRatio: Double = 0.2
+
   /** L1 kill-switch（r1 §5.2 旁路开关；false = L1 整层跳过，行为=LLM 持续不可用）。 */
   val LlmJudgeEnabled: Boolean =
     sys.props.getOrElse("nebflow.perception.llm.enabled", "true").equalsIgnoreCase("true")
+
   /** IDLE 重续节奏（r1 §4.1：每 25 分钟主动终止并重发；留 30s 余量）。 */
   val IdleRenewMs: Long = 25L * 60L * 1000L + 30L * 1000L
+
   /** 静默掐断容忍（r1 §4.3：连续 ≥3 次 → 退化轮询，冷却 10min 后再试）。 */
   val IdleSilentCutLimit: Int = 3
   val IdleCooldownMs: Long = 10L * 60L * 1000L
+
   /** UIDVALIDITY 重建时的补拉上限（r1 §4.1：全量拉最近 N=200 封）。 */
   val RebuildFetchCap: Int = 200
 
@@ -71,10 +76,14 @@ object PerceptionService:
   //   ③ 非首连的基线丢失态（lastSeenUid=0）补拉同受 RebuildFetchCap 上限。
   val ConnectDialTimeoutMs: Int = 4000
   val ConnectSoTimeoutMs: Int = 3000
-  /** 后台腿（轮询/IDLE）不在任何 HTTP 周期预算里：读上限放宽到 30s，压「IMAP
-    * 响应超时」误报（state.json 实录：QQ 服务器偶发 >15s 停顿）。 */
+
+  /**
+   * 后台腿（轮询/IDLE）不在任何 HTTP 周期预算里：读上限放宽到 30s，压「IMAP
+   * 响应超时」误报（state.json 实录：QQ 服务器偶发 >15s 停顿）。
+   */
   val PollDialTimeoutMs: Int = 15000
   val PollSoTimeoutMs: Int = 30000
+
   /** 连接中重复点击的幂等面（按地址在飞单飞；不叠连接、不叠拨号）。 */
   val ConnectInFlightMsg: String =
     "正在连接该邮箱 · 请勿重复点击（connection already in progress）"
@@ -92,7 +101,12 @@ object PerceptionService:
    * `UID SEARCH UID 1:*` 逐封回填，数千封分钟级——曾在 connect 周期内拖爆
    * 隧道中转 15s 预算（「Host did not answer in time」根因链③）。
    */
-  def backfillSelection(uidReset: Boolean, lastSeenUid: Long, uids: List[Long], cap: Int = RebuildFetchCap): List[Long] =
+  def backfillSelection(
+    uidReset: Boolean,
+    lastSeenUid: Long,
+    uids: List[Long],
+    cap: Int = RebuildFetchCap
+  ): List[Long] =
     if uidReset || lastSeenUid <= 0 then uids.takeRight(cap) else uids
 
   /**
@@ -108,56 +122,58 @@ object PerceptionService:
    *   "login"=登录认证 / "select"=打开收件箱(SELECT INBOX)。
    */
   def readableConnectError(
-      err: String,
-      imapHost: String,
-      imapPort: Int,
-      authCode: String = "",
-      stage: String = ""
+    err: String,
+    imapHost: String,
+    imapPort: Int,
+    authCode: String = "",
+    stage: String = ""
   ): String =
     val scrubbed = if authCode.nonEmpty && err.contains(authCode) then err.replace(authCode, "••••") else err
     val e = scrubbed.toLowerCase
     val at = s"$imapHost:$imapPort"
     def stageZh: String = stage match
-      case "connect"  => "建立连接"
+      case "connect" => "建立连接"
       case "greeting" => "等待服务器问候"
-      case "login"    => "登录认证"
-      case "select"   => "打开收件箱"
-      case _          => ""
+      case "login" => "登录认证"
+      case "select" => "打开收件箱"
+      case _ => ""
     def stageEn: String = stage match
-      case "connect"  => "tcp/tls dial"
+      case "connect" => "tcp/tls dial"
       case "greeting" => "greeting"
-      case "login"    => "login"
-      case "select"   => "select inbox"
-      case _          => ""
+      case "login" => "login"
+      case "select" => "select inbox"
+      case _ => ""
     def stageSuffix: String =
       if stage.isEmpty then "" else s"（阶段：$stageZh · $stageEn）"
     if scrubbed.contains("AUTHENTICATIONFAILED") || scrubbed.contains("LOGIN")
-      || e.contains("invalid") || scrubbed.contains("AUTH") then
-      "授权码无效 · 请确认已在邮箱设置开启 IMAP 服务并使用授权码（非登录密码）(authentication failed)"
+      || e.contains("invalid") || scrubbed.contains("AUTH")
+    then "授权码无效 · 请确认已在邮箱设置开启 IMAP 服务并使用授权码（非登录密码）(authentication failed)"
     else if e.contains("ssl") || e.contains("handshake") then
       s"TLS 握手失败 · $at 的加密方式或端口可能不匹配（阶段：TLS 握手 · tls handshake failed）· 请核对高级设置中的端口"
     else if e.contains("超时") || e.contains("timeout") || e.contains("timed out") then
       stage match
         // connect 腿内再分：「connect timed out」= TCP/TLS 拨号未通；
-        //「read timed out」= 已连上但 greeting/握手读超时（JVM 两种消息面）。
+        // 「read timed out」= 已连上但 greeting/握手读超时（JVM 两种消息面）。
         case "connect" if e.contains("read timed out") =>
           s"已连上 $at，但服务器迟迟不应答（阶段：等待问候 · greeting timeout）· 请稍后重试"
         case "connect" =>
           s"连接 $at 超时：服务器未应答（阶段：建立连接 · dial timeout）· 请检查网络后重试"
-        case "login"  => s"登录 $at 超时：服务器响应缓慢（阶段：登录认证 · login timeout）· 请重试"
+        case "login" => s"登录 $at 超时：服务器响应缓慢（阶段：登录认证 · login timeout）· 请重试"
         case "select" => s"登录成功，打开收件箱超时（阶段：SELECT INBOX · select timeout）· 请重试"
-        case _        => s"连接 $at 响应超时 · 请检查网络后重试"
+        case _ => s"连接 $at 响应超时 · 请检查网络后重试"
     else if e.contains("unknownhost") || e.contains("unreachable") || e.contains("connect") then
       s"无法连接 $at（域名解析失败或网络不可达 · dns/network unreachable）$stageSuffix · 请检查网络与服务器设置"
     else if e.contains("imap no") || e.contains("imap bad") || e.contains("响应不完整") then
       "邮箱服务器拒绝了该操作 · 请确认已开启 IMAP 服务后重试"
-    else
-      "连接失败 · 请检查邮箱地址、授权码与服务器设置"
+    else "连接失败 · 请检查邮箱地址、授权码与服务器设置"
+    end if
+  end readableConnectError
 
   // ── singleton runtime ─────────────────────────────────────────────────
 
   private sealed trait Phase
   private case object Cold extends Phase
+
   private case class Hot(
     core: PerceptionCore,
     loops: List[cats.effect.Fiber[IO, Throwable, Unit]]
@@ -177,7 +193,7 @@ object PerceptionService:
   ): IO[Unit] =
     phase.get.flatMap:
       case Hot(_, _) => IO.unit
-      case Cold      => doBoot(broadcast, deliverEnvelope, judge).void
+      case Cold => doBoot(broadcast, deliverEnvelope, judge).void
 
   /** Routes-side defensive idempotent boot; returns the live core. */
   def ensureBoot(
@@ -187,7 +203,7 @@ object PerceptionService:
   ): IO[PerceptionCore] =
     phase.get.flatMap:
       case Hot(core, _) => IO.pure(core)
-      case Cold         => doBoot(broadcast, deliverEnvelope, judge)
+      case Cold => doBoot(broadcast, deliverEnvelope, judge)
 
   private def doBoot(
     broadcast: Json => IO[Unit],
@@ -211,11 +227,13 @@ object PerceptionService:
       _ <- logger.info("perception daemon booted (poll/sweep/digest/spool/idle loops live)")
     yield core
 
+  end doBoot
+
   /** Test/panel access to the live core (None before boot). */
   def coreNow: IO[Option[PerceptionCore]] =
     phase.get.map:
       case Hot(core, _) => Some(core)
-      case Cold         => None
+      case Cold => None
 
 end PerceptionService
 
@@ -256,12 +274,14 @@ class PerceptionCore(
   val windows: Ref[IO, Map[String, OtpWindow]] = Ref.unsafe(Map.empty)
   val drafts: Ref[IO, List[DraftRecord]] = Ref.unsafe(Nil)
   private val booted = Ref.unsafe[IO, Boolean](false)
+
   /**
    * 连接在飞闸（幂等批 2026-11-01）：按地址单飞——connectAccount check-and-set
    * 原子占位，guarantee 释放；同地址连接中重复点击得 [[ConnectInFlightMsg]]，
    * 不叠连接不叠拨号。
    */
   private val connecting: Ref[IO, Set[String]] = Ref.unsafe(Set.empty)
+
   /**
    * IDLE→轮询即取踢门槽（idleWatch 命中 EXISTS 时 complete；pollLoop 每轮放入
    * 新 Deferred 并限时等待——等待被提前唤醒 = 推送即取，轮询退化为兜底）。
@@ -270,6 +290,7 @@ class PerceptionCore(
    */
   private val kickSlot: Ref[IO, Option[Deferred[IO, Unit]]] = Ref.unsafe(None)
   def kickPoll: IO[Unit] = kickSlot.getAndSet(None).flatMap(_.traverse_(_.complete(())))
+
   /** IDLE 监视腿的每账户运行态（跨轮存活的会话 + 静默掐断计数 + 冷却/不支持期限）。 */
   val idleState: Ref[IO, Map[String, IdleRuntime]] = Ref.unsafe(Map.empty)
 
@@ -325,7 +346,7 @@ class PerceptionCore(
       _ <- latch.get.timeoutTo(FiniteDuration(sec.toLong, "seconds"), IO.unit)
       _ <- kickSlot.update {
         case Some(l) if l eq latch => None
-        case other                 => other
+        case other => other
       }
       _ <- pollLoop
     yield ()
@@ -487,9 +508,9 @@ class PerceptionCore(
       rt <- accountRuntime.get
       now <- IO(System.currentTimeMillis())
       due = accs.filter(a => a.enabled && rt.get(a.id).forall(r => now >= r.nextAttemptAt))
-      _ <- due.traverse_(a => pollAccount(a).handleErrorWith(e =>
-        logger.warn(s"poll ${a.address}: ${e.getMessage}").void
-      ))
+      _ <- due.traverse_(a =>
+        pollAccount(a).handleErrorWith(e => logger.warn(s"poll ${a.address}: ${e.getMessage}").void)
+      )
     yield ()
 
   private def pollAccount(account: MailAccount): IO[Unit] =
@@ -498,59 +519,61 @@ class PerceptionCore(
         case Some(v) => IO.pure(v)
         case None => IO.raiseError(new java.lang.IllegalStateException("auth code missing"))
       }
-      result <- IO.blocking {
-        // 后台腿宽预算：拨 15s / 读 30s（不在任何 HTTP 周期预算里；压 QQ 服务器
-        // 偶发 >15s 停顿的「IMAP 响应超时」误报——state.json 2026-11-01 实录）。
-        val conn = imapConnect(account.imapHost, account.imapPort, PollDialTimeoutMs, PollSoTimeoutMs)
-        conn.flatMap { session =>
-          // pure Either flow inside the blocking lane (session is synchronous)
-          val stateMap = store.loadState()
-          val st0 = stateMap.getOrElse(account.id, PerceptionStore.AccountState())
-          val flow: Either[String, (List[IncomingMail], PerceptionStore.AccountState, Boolean)] = for
-            _ <- session.login(account.address, authCode)
-            stats <- session.selectInbox()
-            // UIDVALIDITY 守卫（r1 §4.1）：文件夹重建 → UID 空间重排 ⇒ 重置
-            // lastSeenUid 并走「最近 N=200 封 + Message-ID 台账去重」补拉。
-            (uidReset, st1) = stats.uidValidity match
-              case Some(vw) if st0.uidvalidity > 0 && vw != st0.uidvalidity =>
-                (true, st0.copy(uidvalidity = vw, lastSeenUid = 0L))
-              case Some(vw) => (false, st0.copy(uidvalidity = vw))
-              case None     => (false, st0)
-            _ = store.saveState(stateMap + (account.id -> st1))
-            uids <- session.searchUids(st1.lastSeenUid)
-            // 首连（无 UIDVALIDITY 基线）只记 maxUID 不回填历史（既有语义）；
-            // 重建/基线丢失的补拉上限见 backfillSelection（纯函数，spec 直测）。
-            firstSync = st0.lastSeenUid <= 0 && st0.uidvalidity == 0L
-            selected = backfillSelection(uidReset, st1.lastSeenUid, uids)
-            toFetch = if firstSync then Nil else selected
-            mails <- toFetch.foldLeft[Either[String, List[IncomingMail]]](Right(Nil)) { (acc, uid) =>
-              acc.flatMap(list => session.fetchMessage(uid).map(raw => list :+ MailClient.toIncomingMail(uid, raw)))
-            }
-            _ = session.logout()
-          yield (mails, st1, firstSync)
-          flow match
-            case Right((mails, st1, firstSync)) =>
-              session.close(); Right((mails, firstSync))
-            case Left(err) =>
-              session.close(); Left(err)
-        }
-      }.flatMap {
-        case Right((mails, firstSync)) =>
-          val firstSyncWrite: IO[Unit] =
-            if firstSync then
-              // 首连：记录当前 maxUID 作基线（历史不回填），不进管线。
-              IO.blocking {
-                val cur = store.loadState().getOrElse(account.id, PerceptionStore.AccountState())
-                val maxUid = mails.map(_.uid).appended(cur.lastSeenUid).maxOption.getOrElse(cur.lastSeenUid)
-                store.saveState(store.loadState() + (account.id -> cur.copy(lastSeenUid = maxUid)))
-                ()
+      result <- IO
+        .blocking {
+          // 后台腿宽预算：拨 15s / 读 30s（不在任何 HTTP 周期预算里；压 QQ 服务器
+          // 偶发 >15s 停顿的「IMAP 响应超时」误报——state.json 2026-11-01 实录）。
+          val conn = imapConnect(account.imapHost, account.imapPort, PollDialTimeoutMs, PollSoTimeoutMs)
+          conn.flatMap { session =>
+            // pure Either flow inside the blocking lane (session is synchronous)
+            val stateMap = store.loadState()
+            val st0 = stateMap.getOrElse(account.id, PerceptionStore.AccountState())
+            val flow: Either[String, (List[IncomingMail], PerceptionStore.AccountState, Boolean)] = for
+              _ <- session.login(account.address, authCode)
+              stats <- session.selectInbox()
+              // UIDVALIDITY 守卫（r1 §4.1）：文件夹重建 → UID 空间重排 ⇒ 重置
+              // lastSeenUid 并走「最近 N=200 封 + Message-ID 台账去重」补拉。
+              (uidReset, st1) = stats.uidValidity match
+                case Some(vw) if st0.uidvalidity > 0 && vw != st0.uidvalidity =>
+                  (true, st0.copy(uidvalidity = vw, lastSeenUid = 0L))
+                case Some(vw) => (false, st0.copy(uidvalidity = vw))
+                case None => (false, st0)
+              _ = store.saveState(stateMap + (account.id -> st1))
+              uids <- session.searchUids(st1.lastSeenUid)
+              // 首连（无 UIDVALIDITY 基线）只记 maxUID 不回填历史（既有语义）；
+              // 重建/基线丢失的补拉上限见 backfillSelection（纯函数，spec 直测）。
+              firstSync = st0.lastSeenUid <= 0 && st0.uidvalidity == 0L
+              selected = backfillSelection(uidReset, st1.lastSeenUid, uids)
+              toFetch = if firstSync then Nil else selected
+              mails <- toFetch.foldLeft[Either[String, List[IncomingMail]]](Right(Nil)) { (acc, uid) =>
+                acc.flatMap(list => session.fetchMessage(uid).map(raw => list :+ MailClient.toIncomingMail(uid, raw)))
               }
-            else IO.unit
-          firstSyncWrite *> recordOk(account) *>
-            (if mails.isEmpty || firstSync then IO.unit else processMails(account, mails))
-        case Left(err) =>
-          recordFailure(account, err)
-      }
+              _ = session.logout()
+            yield (mails, st1, firstSync)
+            flow match
+              case Right((mails, st1, firstSync)) =>
+                session.close(); Right((mails, firstSync))
+              case Left(err) =>
+                session.close(); Left(err)
+          }
+        }
+        .flatMap {
+          case Right((mails, firstSync)) =>
+            val firstSyncWrite: IO[Unit] =
+              if firstSync then
+                // 首连：记录当前 maxUID 作基线（历史不回填），不进管线。
+                IO.blocking {
+                  val cur = store.loadState().getOrElse(account.id, PerceptionStore.AccountState())
+                  val maxUid = mails.map(_.uid).appended(cur.lastSeenUid).maxOption.getOrElse(cur.lastSeenUid)
+                  store.saveState(store.loadState() + (account.id -> cur.copy(lastSeenUid = maxUid)))
+                  ()
+                }
+              else IO.unit
+            firstSyncWrite *> recordOk(account) *>
+              (if mails.isEmpty || firstSync then IO.unit else processMails(account, mails))
+          case Left(err) =>
+            recordFailure(account, err)
+        }
     yield ()
 
   /**
@@ -567,10 +590,15 @@ class PerceptionCore(
       _ <- ordered.traverse_ { mail =>
         val uidKey = account.id
         for
-          _ <- audit("L0", s"mail-from:${mail.fromDomain}", s"uid=${mail.uid} subjectMasked=${maskSubject(mail.subject)}")
+          _ <- audit(
+            "L0",
+            s"mail-from:${mail.fromDomain}",
+            s"uid=${mail.uid} subjectMasked=${maskSubject(mail.subject)}"
+          )
           decided <- isAlreadyDecided(account, mail.messageId)
           continue <-
-            if decided then audit("L0", "duplicate-skip", s"uid=${mail.uid} mid=${maskSubject(mail.messageId)}").as(false)
+            if decided then
+              audit("L0", "duplicate-skip", s"uid=${mail.uid} mid=${maskSubject(mail.messageId)}").as(false)
             else IO.pure(true)
           _ <-
             if !continue then IO.unit
@@ -591,22 +619,27 @@ class PerceptionCore(
                           case v if v.isBilling =>
                             for
                               today <- IO(LocalDate.now().toString)
-                              _ <- IO.blocking(store.billingAppend(today, PerceptionStore.BillingLine(
-                                ts = System.currentTimeMillis(),
-                                messageId = mail.messageId,
-                                fromDomain = mail.fromDomain,
-                                subject = mail.subject.take(120),
-                                amountSample = v.amountSample.take(40),
-                                matchedBy = v.matchedBy
-                              )))
+                              _ <- IO.blocking(
+                                store.billingAppend(
+                                  today,
+                                  PerceptionStore.BillingLine(
+                                    ts = System.currentTimeMillis(),
+                                    messageId = mail.messageId,
+                                    fromDomain = mail.fromDomain,
+                                    subject = mail.subject.take(120),
+                                    amountSample = v.amountSample.take(40),
+                                    matchedBy = v.matchedBy
+                                  )
+                                )
+                              )
                               _ <- audit("L0", "billing-buffered", s"uid=${mail.uid} by=${v.matchedBy}")
                             yield ()
                           case _ =>
                             judge match
                               case None =>
                                 // L1 关（kill-switch/未装配）＝ LLM 持续不可用：搁置待恢复。
-                                spoolForJudge(mail).flatMap(_ =>
-                                  audit("L1", "held-spooled", s"uid=${mail.uid} reason=llm-off"))
+                                spoolForJudge(mail)
+                                  .flatMap(_ => audit("L1", "held-spooled", s"uid=${mail.uid} reason=llm-off"))
                               case Some(j) =>
                                 j(mail).flatMap {
                                   case L1Verdict.Deliver =>
@@ -615,12 +648,13 @@ class PerceptionCore(
                                   case L1Verdict.Drop =>
                                     audit("L1", "dropped", s"uid=${mail.uid}")
                                   case L1Verdict.Unavailable =>
-                                    spoolForJudge(mail).flatMap(_ =>
-                                      audit("L1", "held-spooled", s"uid=${mail.uid} reason=unavailable"))
+                                    spoolForJudge(mail)
+                                      .flatMap(_ => audit("L1", "held-spooled", s"uid=${mail.uid} reason=unavailable"))
                                 }
                 decision *> recordDecided(account, mail.messageId) *> advanceUid(account, mail.uid)
               }
         yield ()
+        end for
       }
     yield ()
 
@@ -652,7 +686,10 @@ class PerceptionCore(
     IO.blocking {
       val st = store.loadState()
       val cur = st.getOrElse(account.id, PerceptionStore.AccountState())
-      store.saveState(st + (account.id -> cur.copy(lastSeenUid = math.max(cur.lastSeenUid, uid), lastOkAt = System.currentTimeMillis())))
+      store.saveState(
+        st + (account.id -> cur
+          .copy(lastSeenUid = math.max(cur.lastSeenUid, uid), lastOkAt = System.currentTimeMillis()))
+      )
       ()
     }
 
@@ -678,8 +715,10 @@ class PerceptionCore(
         val attempt = cur.backoffAttempt + 1
         // r1 §4.2：1s→2s→4s…上限 5min，±20% 抖动防惊群。
         val delaySec = backoffDelaySec(attempt, java.util.concurrent.ThreadLocalRandom.current().nextDouble())
-        val state = if err.toLowerCase.contains("auth") || err.contains("LOGIN") || err.contains("INVALID") then EntryState.AuthFailed
-        else EntryState.Backoff
+        val state =
+          if err.toLowerCase.contains("auth") || err.contains("LOGIN") || err.contains("INVALID") then
+            EntryState.AuthFailed
+          else EntryState.Backoff
         m + (account.id -> cur.copy(
           state = state,
           lastError = err.take(200),
@@ -704,7 +743,9 @@ class PerceptionCore(
     else
       val from = mail.from.toLowerCase
       val dom = mail.fromDomain.toLowerCase
-      trusted.exists(t => from == t || from.endsWith("<" + t) || dom == t.stripPrefix("@") || (t.startsWith("@") && dom == t.drop(1)))
+      trusted.exists(t =>
+        from == t || from.endsWith("<" + t) || dom == t.stripPrefix("@") || (t.startsWith("@") && dom == t.drop(1))
+      )
 
   /**
    * 黑名单判定（r1 §5.1 判定 0.1：`perception/blacklist.json` 用户可编辑，域或
@@ -741,15 +782,17 @@ class PerceptionCore(
       text = s"""[感知 · 邮件] from: ${mail.from} · $time
 主题: ${mail.subject}
 分类: ${via match
-        case "whitelist" => "白名单直通"
-        case "llm"       => "LLM 判定 · 投递"
-        case other       => other
-      }
+          case "whitelist" => "白名单直通"
+          case "llm" => "LLM 判定 · 投递"
+          case other => other
+        }
 优先级: normal
 ——— 正文 ———
 $clipped"""
     )
     injectEnvelope(envelope, s"mail:${mail.messageId}").void
+
+  end deliverMail
 
   def deliverOtpHit(live: List[OtpWindow], mail: IncomingMail, cand: OtpExtractor.OtpCandidate): IO[Unit] =
     for
@@ -761,16 +804,22 @@ $clipped"""
           acc + (w.windowId -> nid)
         }
       }
-      _ <- audit("otp", "hit", s"windowCount=${live.size} codeMasked=${OtpExtractor.mask(cand.code)} from=${mail.fromDomain}")
+      _ <- audit(
+        "otp",
+        "hit",
+        s"windowCount=${live.size} codeMasked=${OtpExtractor.mask(cand.code)} from=${mail.fromDomain}"
+      )
       _ <- live.traverse_(w =>
-        broadcast(Json.obj(
-          "type" -> "perception.otp.code".asJson,
-          "windowId" -> w.windowId.asJson,
-          "requestId" -> w.requestId.asJson,
-          "from" -> mail.from.asJson,
-          "fromDomain" -> mail.fromDomain.asJson,
-          "receivedAt" -> now.asJson
-        ))
+        broadcast(
+          Json.obj(
+            "type" -> "perception.otp.code".asJson,
+            "windowId" -> w.windowId.asJson,
+            "requestId" -> w.requestId.asJson,
+            "from" -> mail.from.asJson,
+            "fromDomain" -> mail.fromDomain.asJson,
+            "receivedAt" -> now.asJson
+          )
+        )
       )
     yield ()
 
@@ -801,7 +850,10 @@ $clipped"""
                 j(mail).flatMap {
                   case L1Verdict.Deliver =>
                     audit("L1", "spool-rejudged", s"spoolId=$id verdict=deliver") *>
-                      injectEnvelope(DeliveryEnvelope(priority = "normal", text = envelopeTextOf(mail), pendingMail = None), s"spool-judged:$id")
+                      injectEnvelope(
+                        DeliveryEnvelope(priority = "normal", text = envelopeTextOf(mail), pendingMail = None),
+                        s"spool-judged:$id"
+                      )
                         .flatMap(ok => IO.whenA(ok)(IO.blocking(store.spoolRemove(id))))
                   case L1Verdict.Drop =>
                     audit("L1", "spool-rejudged", s"spoolId=$id verdict=drop") *> IO.blocking(store.spoolRemove(id))
@@ -809,7 +861,7 @@ $clipped"""
                 }
           case None =>
             injectEnvelope(env, s"spool:$id").flatMap {
-              case true  => IO.blocking(store.spoolRemove(id)) *> audit("deliver", "spool-replayed", s"spoolId=$id")
+              case true => IO.blocking(store.spoolRemove(id)) *> audit("deliver", "spool-replayed", s"spoolId=$id")
               case false => IO.unit
             }
       }
@@ -818,7 +870,9 @@ $clipped"""
   /** 补判后的注入文本（与 deliverMail 同一信封口径）。 */
   private def envelopeTextOf(mail: IncomingMail): String =
     val body = Option(mail.bodyText).getOrElse("")
-    val clipped = if body.length > EnvelopeBodyCapChars then body.take(EnvelopeBodyCapChars) + s"\n[正文超长已截断：原文 ${body.length} 字符]" else body
+    val clipped =
+      if body.length > EnvelopeBodyCapChars then body.take(EnvelopeBodyCapChars) + s"\n[正文超长已截断：原文 ${body.length} 字符]"
+      else body
     s"""[感知 · 邮件] from: ${mail.from}（恢复补判）
 主题: ${mail.subject}
 分类: LLM 判定 · 投递
@@ -845,7 +899,11 @@ $clipped"""
             openedAt = now,
             expiresAt = now + windowSec * 1000L
           )
-          windows.update(m => m + (nw.windowId -> nw)) *> audit("otp", "window-open", s"requestId=$requestId sec=$windowSec").as(nw)
+          windows.update(m => m + (nw.windowId -> nw)) *> audit(
+            "otp",
+            "window-open",
+            s"requestId=$requestId sec=$windowSec"
+          ).as(nw)
     yield w
 
   def consumeOtp(windowId: String): IO[Option[OtpHit]] =
@@ -894,7 +952,10 @@ $clipped"""
       files <- IO.blocking {
         try
           import scala.jdk.CollectionConverters.*
-          java.nio.file.Files.list(store.billingDir.toNIO).iterator().asScala
+          java.nio.file.Files
+            .list(store.billingDir.toNIO)
+            .iterator()
+            .asScala
             .map(p => os.Path(p))
             .filter(_.ext == "jsonl")
             .filter(n => n.last.stripSuffix(".jsonl") <= today)
@@ -907,23 +968,29 @@ $clipped"""
         if lines.isEmpty then audit("digest", "empty-skip", "no billing lines")
         else
           for
-            _ <- injectEnvelope(DeliveryEnvelope(
-              priority = "billing",
-              text = billingDigestText(lines)
-            ), s"digest:$today")
+            _ <- injectEnvelope(
+              DeliveryEnvelope(
+                priority = "billing",
+                text = billingDigestText(lines)
+              ),
+              s"digest:$today"
+            )
             _ <- files.traverse_(f => IO.blocking(store.billingClear(f.last.stripSuffix(".jsonl"))))
             _ <- audit("digest", "injected", s"day=$today count=${lines.size}")
           yield ()
     yield ()
 
   private def billingDigestText(lines: List[PerceptionStore.BillingLine]): String =
-    val byDay = lines.groupBy(l => java.time.Instant.ofEpochMilli(l.ts).atZone(java.time.ZoneId.systemDefault()).toLocalDate.toString)
+    val byDay = lines.groupBy(l =>
+      java.time.Instant.ofEpochMilli(l.ts).atZone(java.time.ZoneId.systemDefault()).toLocalDate.toString
+    )
     val sb = new StringBuilder
     sb.append(s"【感知 · 账单日结】共 ${lines.size} 封账单类邮件\n")
     byDay.toSeq.sortBy(_._1).foreach { (day, ls) =>
       sb.append(s"\n— $day（${ls.size} 封）—\n")
       ls.take(50).foreach { l =>
-        sb.append(s"· ${l.fromDomain} · ${l.subject.take(60)}${if l.amountSample.nonEmpty then s" · ${l.amountSample}" else ""}\n")
+        sb.append(s"· ${l.fromDomain} · ${l.subject
+            .take(60)}${if l.amountSample.nonEmpty then s" · ${l.amountSample}" else ""}\n")
       }
     }
     sb.toString
@@ -964,15 +1031,26 @@ $clipped"""
     else if authCode.isBlank then IO.pure(Left("请填写授权码"))
     else
       // 幂等在飞闸：check-and-set 原子（modify），guarantee 释放（失败/异常/取消均泄闸）。
-      connecting.modify(s =>
-        if s.contains(addr) then (s, false) else (s + addr, true)
-      ).flatMap { acquired =>
+      connecting.modify(s => if s.contains(addr) then (s, false) else (s + addr, true)).flatMap { acquired =>
         if !acquired then IO.pure(Left(ConnectInFlightMsg))
         else
-          connectAccountOnce(addr, authCode, imapHost, imapPort, smtpHost, smtpPort,
-            smtpImplicitTls, displayName, trustedSenders)
+          connectAccountOnce(
+            addr,
+            authCode,
+            imapHost,
+            imapPort,
+            smtpHost,
+            smtpPort,
+            smtpImplicitTls,
+            displayName,
+            trustedSenders
+          )
             .guarantee(connecting.update(_ - addr))
       }
+
+    end if
+
+  end connectAccount
 
   private def connectAccountOnce(
     addr: String,
@@ -1048,6 +1126,10 @@ $clipped"""
           IO.pure(Left(readableConnectError(err, imapH, imapP, authCode, stage = stage)))
       }
 
+    end if
+
+  end connectAccountOnce
+
   private def accountIdFor(address: String): String =
     address.toLowerCase.replaceAll("[^a-z0-9]", "").take(24)
 
@@ -1057,18 +1139,21 @@ $clipped"""
       val st = new nebflow.core.secrets.SecretsStore(PathUtil.dataRoot / "secrets")
       val existing = os.exists(PathUtil.dataRoot / "secrets" / name)
       if existing then st.overwrite(name, value) else st.create(name, value)
-    }.flatten.attempt.map {
-      case Right(Right(_)) => Right(())
-      case Right(Left(f))  => Left(s"secrets: ${f}")
-      case Left(e)         => Left(s"secrets: ${e.getMessage}")
-    }
+    }.flatten
+      .attempt
+      .map {
+        case Right(Right(_)) => Right(())
+        case Right(Left(f)) => Left(s"secrets: ${f}")
+        case Left(e) => Left(s"secrets: ${e.getMessage}")
+      }
 
   def readAuthCode(account: MailAccount): IO[Option[String]] =
     IO.blocking {
       val p = PathUtil.dataRoot / "secrets" / account.authCodeSecret
       if account.authCodeSecret.nonEmpty && os.exists(p) then Some(os.read(p).trim)
       else None
-    }.attempt.map(_.toOption.flatten)
+    }.attempt
+      .map(_.toOption.flatten)
 
   def toggleAccount(id: String, enabled: Boolean): IO[Either[String, Unit]] =
     for
@@ -1076,7 +1161,8 @@ $clipped"""
       accs <- accounts.get
       _ <- IO.blocking(store.saveAccounts(accs))
       _ <- accountRuntime.update(m =>
-        m.get(id).map(r => m + (id -> r.copy(state = if enabled then EntryState.Connecting else EntryState.Paused)))
+        m.get(id)
+          .map(r => m + (id -> r.copy(state = if enabled then EntryState.Connecting else EntryState.Paused)))
           .getOrElse(m)
       )
       _ <- audit("state", if enabled then "resumed" else "paused", s"id=$id")
@@ -1093,7 +1179,8 @@ $clipped"""
           if a.authCodeSecret.nonEmpty && os.exists(p) then
             new nebflow.core.secrets.SecretsStore(PathUtil.dataRoot / "secrets").delete(a.authCodeSecret)
           ()
-        }.attempt.void
+        }.attempt
+          .void
       )
       _ <- accounts.update(_.filterNot(_.id == id))
       accs2 <- accounts.get
@@ -1129,16 +1216,17 @@ $clipped"""
         val r = rt.getOrElse(a.id, AccountRuntime())
         val (state, summary, notice): (EntryState, String, String) =
           if !a.enabled then (EntryState.Paused, s"${a.address} · 已暂停", "")
-          else r.state match
-            case EntryState.AuthFailed =>
-              (EntryState.AuthFailed, s"${a.address} · 授权失效", "授权码已失效，请重新连接邮箱")
-            case EntryState.Backoff =>
-              // r3 裁决 2（过程态全隐）：无次数、无倒计时、无转轮询——只说人话给动作。
-              (EntryState.Backoff, s"${a.address} · 正在自动恢复", "正在自动恢复，新邮件先存本机，恢复后即刻补上")
-            case EntryState.Connecting =>
-              (EntryState.Connecting, s"${a.address} · 连接中", "")
-            case _ =>
-              (EntryState.Idle, s"${a.address} · 已连接", "")
+          else
+            r.state match
+              case EntryState.AuthFailed =>
+                (EntryState.AuthFailed, s"${a.address} · 授权失效", "授权码已失效，请重新连接邮箱")
+              case EntryState.Backoff =>
+                // r3 裁决 2（过程态全隐）：无次数、无倒计时、无转轮询——只说人话给动作。
+                (EntryState.Backoff, s"${a.address} · 正在自动恢复", "正在自动恢复，新邮件先存本机，恢复后即刻补上")
+              case EntryState.Connecting =>
+                (EntryState.Connecting, s"${a.address} · 连接中", "")
+              case _ =>
+                (EntryState.Idle, s"${a.address} · 已连接", "")
         MailEntry(
           id = a.id,
           icon = "mail",
@@ -1175,8 +1263,10 @@ $clipped"""
       // snapshotAt = 落盘后文件 mtime（快照基线与文件状态严格对齐——严格式
       // stale 判据 `mtime > snapshotAt` 在创建时刻恒 false，编辑后才置真）。
       snapshotAt = pathE.toOption
-        .flatMap(p => try Some(java.nio.file.Files.getLastModifiedTime(java.nio.file.Path.of(p)).toMillis)
-        catch case _: Throwable => None)
+        .flatMap(p =>
+          try Some(java.nio.file.Files.getLastModifiedTime(java.nio.file.Path.of(p)).toMillis)
+          catch case _: Throwable => None
+        )
         .getOrElse(now)
       rec = DraftRecord(
         draftId = draftId,
@@ -1194,7 +1284,14 @@ $clipped"""
       _ <- audit("send", "draft-created", s"draftId=$draftId to=${rec.toSummary}")
     yield pathE.map(_ => rec)
 
-  case class DraftView(record: DraftRecord, content: String, mtimeMs: Long, stale: Boolean, doc: Either[String, DraftCodec.DraftDoc], attachmentStats: List[AttachmentStat] = Nil)
+  case class DraftView(
+    record: DraftRecord,
+    content: String,
+    mtimeMs: Long,
+    stale: Boolean,
+    doc: Either[String, DraftCodec.DraftDoc],
+    attachmentStats: List[AttachmentStat] = Nil
+  )
 
   /** 附件卡面统计（路径在位性 + 人读大小；快照卡/画布 chip 的数据源）。 */
   case class AttachmentStat(path: String, name: String, exists: Boolean, sizeBytes: Long)
@@ -1208,7 +1305,11 @@ $clipped"""
       val exists =
         try java.nio.file.Files.isRegularFile(f)
         catch case _: Throwable => false
-      val size = if exists then (try java.nio.file.Files.size(f) catch case _: Throwable => 0L) else 0L
+      val size =
+        if exists then
+          (try java.nio.file.Files.size(f)
+          catch case _: Throwable => 0L)
+        else 0L
       AttachmentStat(p, p.replaceAll(".*/", ""), exists, size)
     }
 
@@ -1240,8 +1341,9 @@ $clipped"""
           IO.blocking(store.writeDraftFile(r.draftId, content)).flatMap {
             case Left(err) => IO.pure(Left(err))
             case Right(_) =>
-              val mtime = try java.nio.file.Files.getLastModifiedTime(java.nio.file.Path.of(r.path)).toMillis
-              catch case _: Throwable => System.currentTimeMillis()
+              val mtime =
+                try java.nio.file.Files.getLastModifiedTime(java.nio.file.Path.of(r.path)).toMillis
+                catch case _: Throwable => System.currentTimeMillis()
               IO.pure(Right(mtime))
           }
       _ <- res.traverse_(_ =>
@@ -1274,12 +1376,14 @@ $clipped"""
                   upd <- drafts.get
                   _ <- IO.blocking(store.saveDrafts(upd))
                   _ <- audit("send", "sent", s"draftId=$draftId mid=${sent.messageId.take(80)}")
-                  _ <- broadcast(Json.obj(
-                    "type" -> "perception.draft.sent".asJson,
-                    "draftId" -> draftId.asJson,
-                    "messageId" -> sent.messageId.asJson,
-                    "sentAt" -> sent.sentAt.asJson
-                  ))
+                  _ <- broadcast(
+                    Json.obj(
+                      "type" -> "perception.draft.sent".asJson,
+                      "draftId" -> draftId.asJson,
+                      "messageId" -> sent.messageId.asJson,
+                      "sentAt" -> sent.sentAt.asJson
+                    )
+                  )
                 yield Right(sent)
               case Left(f) =>
                 audit("send", "failed", s"draftId=$draftId reason=${SendFailure.readable(f)}").as(Left(f))
@@ -1291,7 +1395,9 @@ $clipped"""
    * 附件组装（r2 §7.2「发送时按行解析」+ §7.3 校验）：路径逐个读盘；任一不存在
    * ⇒ MissingAttachment（逐路径列出，发送前置拒绝——服务端兜底，UI 侧同判据）。
    */
-  def prepareAttachments(paths: List[String]): Either[PerceptionModel.SendFailure.MissingAttachment, List[(String, Array[Byte])]] =
+  def prepareAttachments(
+    paths: List[String]
+  ): Either[PerceptionModel.SendFailure.MissingAttachment, List[(String, Array[Byte])]] =
     val stats = attachmentStats(paths)
     val missing = stats.filterNot(_.exists).map(_.path)
     if missing.nonEmpty then Left(PerceptionModel.SendFailure.MissingAttachment(missing))
@@ -1315,30 +1421,33 @@ $clipped"""
                   readAuthCode(account).flatMap {
                     case None => IO.pure(Left(SendFailure.AuthFailed))
                     case Some(code) =>
-                      IO.blocking(MailClient.send(
-                        smtpHost = account.smtpHost,
-                        smtpPort = account.smtpPort,
-                        implicitTls = account.smtpImplicitTls,
-                        user = account.address,
-                        authCode = code,
-                        mail = MailClient.OutgoingMail(
-                          from = account.address,
-                          fromName = account.displayName.getOrElse(""),
-                          to = d.to,
-                          cc = d.cc,
-                          bcc = d.bcc,
-                          subject = d.subject,
-                          bodyHtml = d.bodyHtml,
-                          attachments = atts,
-                          inReplyTo = d.replyToMessageId
+                      IO.blocking(
+                        MailClient.send(
+                          smtpHost = account.smtpHost,
+                          smtpPort = account.smtpPort,
+                          implicitTls = account.smtpImplicitTls,
+                          user = account.address,
+                          authCode = code,
+                          mail = MailClient.OutgoingMail(
+                            from = account.address,
+                            fromName = account.displayName.getOrElse(""),
+                            to = d.to,
+                            cc = d.cc,
+                            bcc = d.bcc,
+                            subject = d.subject,
+                            bodyHtml = d.bodyHtml,
+                            attachments = atts,
+                            inReplyTo = d.replyToMessageId
+                          )
                         )
-                      )).map {
+                      ).map {
                         case Right(mid) =>
                           Right(r.copy(state = "sent", sentAt = System.currentTimeMillis(), messageId = mid))
                         case Left(f) => Left(f)
                       }
                   }
               }
+        end match
       }
     }
 
@@ -1354,7 +1463,13 @@ $clipped"""
             upd <- drafts.get
             _ <- IO.blocking(store.saveDrafts(upd))
             _ <- audit("send", "abandoned", s"draftId=$draftId")
-            _ <- broadcast(Json.obj("type" -> "perception.draft.updated".asJson, "draftId" -> draftId.asJson, "state" -> "abandoned".asJson))
+            _ <- broadcast(
+              Json.obj(
+                "type" -> "perception.draft.updated".asJson,
+                "draftId" -> draftId.asJson,
+                "state" -> "abandoned".asJson
+              )
+            )
           yield Right(())
     }
 

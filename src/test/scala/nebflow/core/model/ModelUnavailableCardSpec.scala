@@ -65,10 +65,18 @@ class ModelUnavailableCardSpec extends CatsEffectSuite:
 
   test("① switch action carries the selectable model/provider list (the switch entry point)") {
     val report = ModelUnavailableCard.reportFor(
-      "small-llm", "zhipu", "glm-5.3-flash", ModelUnavailableCard.FailureClass.HttpStatus(503), "HTTP 503: upstream down"
+      "small-llm",
+      "zhipu",
+      "glm-5.3-flash",
+      ModelUnavailableCard.FailureClass.HttpStatus(503),
+      "HTTP 503: upstream down"
     )
     val card = ModelUnavailableCard.cardPayload(report, List("openai/gpt-6-luna", "anthropic/claude-opus-5"))
-    val opts = card.hcursor.downField("actions").values.toList.flatMap(_.toList)
+    val opts = card.hcursor
+      .downField("actions")
+      .values
+      .toList
+      .flatMap(_.toList)
       .find(_.hcursor.downField("id").as[String].toOption.contains("switch"))
       .flatMap(_.hcursor.downField("options").as[List[String]].toOption)
     IO(assertEquals(opts, Some(List("openai/gpt-6-luna", "anthropic/claude-opus-5"))))
@@ -93,13 +101,27 @@ class ModelUnavailableCardSpec extends CatsEffectSuite:
   // ── ③ 测试 LLM：成功与失败两条路径的回报体 ────────────────────────────────────
 
   test("③ test-llm result: success carries latency; failure carries class + code + detail") {
-    val report = ModelUnavailableCard.reportFor("node", "zhipu", "glm-5.3-flash", ModelUnavailableCard.FailureClass.Timeout, "timeout")
+    val report = ModelUnavailableCard.reportFor(
+      "node",
+      "zhipu",
+      "glm-5.3-flash",
+      ModelUnavailableCard.FailureClass.Timeout,
+      "timeout"
+    )
     val ok = ModelUnavailableCard.cardPayload(
-      report, Nil, state = "tested", test = Some(ModelUnavailableCard.TestResult.Ok(412L, "pong"))
+      report,
+      Nil,
+      state = "tested",
+      test = Some(ModelUnavailableCard.TestResult.Ok(412L, "pong"))
     )
     val bad = ModelUnavailableCard.cardPayload(
-      report, Nil, state = "tested",
-      test = Some(ModelUnavailableCard.TestResult.Failed(ModelUnavailableCard.FailureClass.ProviderCode("1308"), "HTTP 429: [1308] cap", 180L))
+      report,
+      Nil,
+      state = "tested",
+      test = Some(
+        ModelUnavailableCard.TestResult
+          .Failed(ModelUnavailableCard.FailureClass.ProviderCode("1308"), "HTTP 429: [1308] cap", 180L)
+      )
     )
     IO {
       val o = ok.hcursor.downField("test")
@@ -140,7 +162,8 @@ class ModelUnavailableCardSpec extends CatsEffectSuite:
       .withUnavailableCard[Either[String, Int]](
         attempt,
         _.left.toOption.map(d =>
-          ModelUnavailableCard.reportFor("small-llm", "zhipu", "glm-5.3-flash", ModelUnavailableCard.FailureClass.ProviderCode("1308"), d)
+          ModelUnavailableCard
+            .reportFor("small-llm", "zhipu", "glm-5.3-flash", ModelUnavailableCard.FailureClass.ProviderCode("1308"), d)
         )
       )
       .map(r => assert(r.isLeft, "fail-closed result must stand when the card path is unwired"))
@@ -163,7 +186,7 @@ class ModelUnavailableCardSpec extends CatsEffectSuite:
       // restore
       backup match
         case Some(text) => os.write.over(dir / "agent.json", text)
-        case None       => if os.exists(dir / "agent.json") then os.remove(dir / "agent.json")
+        case None => if os.exists(dir / "agent.json") then os.remove(dir / "agent.json")
     }
   }
 
@@ -172,3 +195,4 @@ class ModelUnavailableCardSpec extends CatsEffectSuite:
       assert(r.isLeft, "non-settable slot must not accept a model write")
     }
   }
+end ModelUnavailableCardSpec

@@ -26,25 +26,25 @@ object PluginSourceSpec:
 
   // ── 错误码（稳定常量；🔴 禁改名——CLI/REST/测试逐字断言）────────────────
 
-  val CodeUnparseable          = "SPEC_UNPARSEABLE"            // 不是合法 JSON
-  val CodeNotObject            = "SPEC_NOT_OBJECT"             // 顶层不是 object
-  val CodeKindMissing          = "SPEC_KIND_MISSING"           // kind 缺失/非字符串
-  val CodeKindUnknown          = "SPEC_KIND_UNKNOWN"           // kind 不在三态内
-  val CodeOfficialIdMissing    = "SPEC_OFFICIAL_ID_MISSING"    // official: id 缺失/空白
-  val CodeOfficialIdInvalid    = "SPEC_OFFICIAL_ID_INVALID"    // official: id 违反 §5.5 名约束
+  val CodeUnparseable = "SPEC_UNPARSEABLE" // 不是合法 JSON
+  val CodeNotObject = "SPEC_NOT_OBJECT" // 顶层不是 object
+  val CodeKindMissing = "SPEC_KIND_MISSING" // kind 缺失/非字符串
+  val CodeKindUnknown = "SPEC_KIND_UNKNOWN" // kind 不在三态内
+  val CodeOfficialIdMissing = "SPEC_OFFICIAL_ID_MISSING" // official: id 缺失/空白
+  val CodeOfficialIdInvalid = "SPEC_OFFICIAL_ID_INVALID" // official: id 违反 §5.5 名约束
   val CodeOfficialIndexInvalid = "SPEC_OFFICIAL_INDEX_INVALID" // official: index 缺失形态违规/非 http(s)
-  val CodeGitUrlMissing        = "SPEC_GIT_URL_MISSING"        // git: url 缺失/空白
-  val CodeGitUrlInvalid        = "SPEC_GIT_URL_INVALID"        // git: url 不像 git remote
-  val CodePathInvalid          = "SPEC_PATH_INVALID"           // git: path 非仓内相对子目录
-  val CodePinMissing           = "SPEC_PIN_MISSING"            // git: pin 缺失/非 object（禁浮动 HEAD）
-  val CodePinCommitInvalid     = "SPEC_PIN_COMMIT_INVALID"     // git: pin.commit 缺失/非 40-hex
-  val CodePinTagInvalid        = "SPEC_PIN_TAG_INVALID"        // git: pin.tag 空白/非字符串
-  val CodeArchiveMissing       = "SPEC_ARCHIVE_MISSING"        // https: archive 缺失/空白
-  val CodeArchiveInvalid       = "SPEC_ARCHIVE_INVALID"        // https: archive 非 http(s) URL
-  val CodeSha256Missing        = "SPEC_SHA256_MISSING"         // https: sha256 缺失/空白
-  val CodeSha256Invalid        = "SPEC_SHA256_INVALID"         // https: sha256 非 64-hex
-  val CodeDigestInvalid        = "SPEC_DIGEST_INVALID"         // https: digest 非 64-hex
-  val CodeSizeInvalid          = "SPEC_SIZE_INVALID"           // https: sizeBytes 非非负整数
+  val CodeGitUrlMissing = "SPEC_GIT_URL_MISSING" // git: url 缺失/空白
+  val CodeGitUrlInvalid = "SPEC_GIT_URL_INVALID" // git: url 不像 git remote
+  val CodePathInvalid = "SPEC_PATH_INVALID" // git: path 非仓内相对子目录
+  val CodePinMissing = "SPEC_PIN_MISSING" // git: pin 缺失/非 object（禁浮动 HEAD）
+  val CodePinCommitInvalid = "SPEC_PIN_COMMIT_INVALID" // git: pin.commit 缺失/非 40-hex
+  val CodePinTagInvalid = "SPEC_PIN_TAG_INVALID" // git: pin.tag 空白/非字符串
+  val CodeArchiveMissing = "SPEC_ARCHIVE_MISSING" // https: archive 缺失/空白
+  val CodeArchiveInvalid = "SPEC_ARCHIVE_INVALID" // https: archive 非 http(s) URL
+  val CodeSha256Missing = "SPEC_SHA256_MISSING" // https: sha256 缺失/空白
+  val CodeSha256Invalid = "SPEC_SHA256_INVALID" // https: sha256 非 64-hex
+  val CodeDigestInvalid = "SPEC_DIGEST_INVALID" // https: digest 非 64-hex
+  val CodeSizeInvalid = "SPEC_SIZE_INVALID" // https: sizeBytes 非非负整数
 
   /** 解析错误：稳定错误码 + 人读原因（同官方闸「只产原因字符串」纪律，不抛异常）。 */
   final case class Error(code: String, message: String):
@@ -94,24 +94,36 @@ object PluginSourceSpec:
       val c = json.hcursor
       c.downField("kind").as[String] match
         case Left(_) =>
-          Left(Error(CodeKindMissing, "source spec is missing the required string field 'kind' (official | git | https)"))
+          Left(
+            Error(CodeKindMissing, "source spec is missing the required string field 'kind' (official | git | https)")
+          )
         case Right(rawKind) =>
           rawKind.trim.toLowerCase match
             case "official" => parseOfficial(c)
-            case "git"      => parseGit(c)
-            case "https"    => parseHttps(c)
+            case "git" => parseGit(c)
+            case "https" => parseHttps(c)
             case other =>
               Left(Error(CodeKindUnknown, s"source spec kind '$other' is not one of: official | git | https"))
 
   private def parseOfficial(c: HCursor): Either[Error, Spec] =
     for
-      id <- requiredString(c, "id", CodeOfficialIdMissing, "official source needs the package id (the official index id)")
+      id <- requiredString(
+        c,
+        "id",
+        CodeOfficialIdMissing,
+        "official source needs the package id (the official index id)"
+      )
       _ <- ensure(
         PluginRegistry.validPluginName(id),
         CodeOfficialIdInvalid,
         s"official id '$id' violates the §5.5 plugin name constraints — the index id must be an installable package name"
       )
-      index <- optionalString(c, "index", CodeOfficialIndexInvalid, "official source field 'index' must be a string URL when present")
+      index <- optionalString(
+        c,
+        "index",
+        CodeOfficialIndexInvalid,
+        "official source field 'index' must be a string URL when present"
+      )
       _ <- ensure(
         index.forall(isHttpUrl),
         CodeOfficialIndexInvalid,
@@ -147,7 +159,8 @@ object PluginSourceSpec:
     yield GitSpec(url, path, pin)
 
   private def parsePin(p: Json): Either[Error, GitPin] =
-    if !p.isObject then Left(Error(CodePinMissing, "git source field 'pin' must be an object ({\"commit\"[, \"tag\"]})"))
+    if !p.isObject then
+      Left(Error(CodePinMissing, "git source field 'pin' must be an object ({\"commit\"[, \"tag\"]})"))
     else
       val pc = p.hcursor
       for
@@ -166,10 +179,16 @@ object PluginSourceSpec:
         _ <- ensure(tag.forall(_.nonEmpty), CodePinTagInvalid, "pin.tag must be non-empty when present")
       yield GitPin(tag, commit.toLowerCase)
 
+      end for
+
   private def parseHttps(c: HCursor): Either[Error, Spec] =
     for
       archive <- requiredString(c, "archive", CodeArchiveMissing, "https source needs the archive URL")
-      _ <- ensure(isHttpUrl(archive), CodeArchiveInvalid, s"https source field 'archive' must be an http(s) URL ('$archive')")
+      _ <- ensure(
+        isHttpUrl(archive),
+        CodeArchiveInvalid,
+        s"https source field 'archive' must be an http(s) URL ('$archive')"
+      )
       sha <- requiredString(c, "sha256", CodeSha256Missing, "https source needs the archive-bytes sha256 (64 hex)")
       _ <- ensure(isHex(sha, 64), CodeSha256Invalid, s"sha256 must be 64 hex, got '${sha.take(12)}…'")
       digest <- optionalString(c, "digest", CodeDigestInvalid, "field 'digest' must be a string when present")
@@ -206,7 +225,7 @@ object PluginSourceSpec:
     case None => true
     case Some(v) =>
       !v.startsWith("/") && !v.contains("\\") &&
-        v.split('/').forall(seg => seg.nonEmpty && seg != "." && seg != "..")
+      v.split('/').forall(seg => seg.nonEmpty && seg != "." && seg != "..")
 
   def isHttpUrl(s: String): Boolean =
     (s.startsWith("https://") || s.startsWith("http://")) &&
@@ -217,8 +236,8 @@ object PluginSourceSpec:
 
   private def requiredString(c: HCursor, field: String, code: String, hint: String): Either[Error, String] =
     c.downField(field).as[Option[String]] match
-      case Left(_)      => Left(Error(code, s"source spec field '$field' must be a string ($hint)"))
-      case Right(None)  => Left(Error(code, s"source spec is missing the required field '$field' ($hint)"))
+      case Left(_) => Left(Error(code, s"source spec field '$field' must be a string ($hint)"))
+      case Right(None) => Left(Error(code, s"source spec is missing the required field '$field' ($hint)"))
       case Right(Some(v)) =>
         val t = v.trim
         if t.isEmpty then Left(Error(code, s"source spec field '$field' must be non-empty ($hint)"))
@@ -232,7 +251,7 @@ object PluginSourceSpec:
    */
   private def optionalString(c: HCursor, field: String, code: String, hint: String): Either[Error, Option[String]] =
     c.downField(field).as[Option[String]] match
-      case Left(_)  => Left(Error(code, hint))
+      case Left(_) => Left(Error(code, hint))
       case Right(o) => Right(o.map(_.trim))
 
   private def ensure(cond: Boolean, code: String, message: String): Either[Error, Unit] =

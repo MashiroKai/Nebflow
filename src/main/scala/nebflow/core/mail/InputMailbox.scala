@@ -62,6 +62,7 @@ object InputMailbox:
   )
 
   object InputEntry:
+
     given Encoder[InputEntry] = Encoder.instance { e =>
       Json.obj(
         "seq" -> e.seq.asJson,
@@ -71,6 +72,7 @@ object InputMailbox:
         "payload" -> e.payload.asJson
       )
     }
+
     given Decoder[InputEntry] = Decoder.instance { c =>
       for
         seq <- c.get[Long]("seq")
@@ -84,8 +86,10 @@ object InputMailbox:
 
   /** 入队结果（生产者职责止于 Enqueued；Failed = 显式失败，绝不静默）。 */
   sealed trait InputMailResult extends Product with Serializable
+
   object InputMailResult:
     final case class Enqueued(entry: InputEntry) extends InputMailResult
+
     /** 同 identity 已在 `pending-input/`（或已执行过）——幂等 no-op。 */
     case object AlreadyPresent extends InputMailResult
     final case class Failed(cause: String) extends InputMailResult
@@ -105,8 +109,12 @@ object InputMailbox:
     if cleaned.isEmpty then "unnamed" else cleaned.take(120)
 
   private def seqOf(e: InputEntry): String = f"${e.seq}%012d"
-  private def pendingFileOf(sid: String, e: InputEntry): os.Path = pendingDir(sid) / s"${seqOf(e)}-${safeId(e.identity)}.json"
-  private def takenFileOf(sid: String, e: InputEntry): os.Path = takenDir(sid) / s"${seqOf(e)}-${safeId(e.identity)}.json"
+
+  private def pendingFileOf(sid: String, e: InputEntry): os.Path =
+    pendingDir(sid) / s"${seqOf(e)}-${safeId(e.identity)}.json"
+
+  private def takenFileOf(sid: String, e: InputEntry): os.Path =
+    takenDir(sid) / s"${seqOf(e)}-${safeId(e.identity)}.json"
 
   private val lock = new Object
 
@@ -123,10 +131,8 @@ object InputMailbox:
     identity: String,
     producer: String = ""
   ): IO[InputMailResult] =
-    if sid == null || sid.trim.isEmpty then
-      IO.pure(InputMailResult.Failed("empty-session-id"))
-    else if identity == null || identity.trim.isEmpty then
-      IO.pure(InputMailResult.Failed("empty-identity"))
+    if sid == null || sid.trim.isEmpty then IO.pure(InputMailResult.Failed("empty-session-id"))
+    else if identity == null || identity.trim.isEmpty then IO.pure(InputMailResult.Failed("empty-identity"))
     else
       IO.blocking {
         lock.synchronized {
@@ -190,18 +196,14 @@ object InputMailbox:
   /** `pending-input/` 全量（FIFO = seq 名字序）。坏形件移 quarantine，不阻断 FIFO。 */
   def scanPending(sid: String): IO[List[InputEntry]] =
     IO.blocking(scanPendingSync(sid))
-      .handleErrorWith(e =>
-        logger.warn(s"InputMailbox.scanPending failed for '$sid': ${e.getMessage}").as(Nil)
-      )
+      .handleErrorWith(e => logger.warn(s"InputMailbox.scanPending failed for '$sid': ${e.getMessage}").as(Nil))
 
   def scanPendingSync(sid: String): List[InputEntry] = scanDir(pendingDir(sid))
 
   /** `taken-input/` 全量（重放面：取走后未执行 / 已执行未清 的残差）。 */
   def scanTaken(sid: String): IO[List[InputEntry]] =
     IO.blocking(scanTakenSync(sid))
-      .handleErrorWith(e =>
-        logger.warn(s"InputMailbox.scanTaken failed for '$sid': ${e.getMessage}").as(Nil)
-      )
+      .handleErrorWith(e => logger.warn(s"InputMailbox.scanTaken failed for '$sid': ${e.getMessage}").as(Nil))
 
   def scanTakenSync(sid: String): List[InputEntry] = scanDir(takenDir(sid))
 
@@ -209,7 +211,8 @@ object InputMailbox:
     lock.synchronized {
       if !os.exists(dir) then Nil
       else
-        os.list(dir).toList
+        os.list(dir)
+          .toList
           .filter(p => p.ext == "json" && parseSeq(p.last).isDefined)
           .sortBy(p => (parseSeq(p.last).getOrElse(0L), p.last))
           .flatMap { p =>
@@ -235,9 +238,7 @@ object InputMailbox:
   /** 取走一批：逐条 `rename` 进 `taken-input/`；单条失败 = 留 pending（安全侧）。 */
   def take(sid: String, entries: List[InputEntry]): IO[List[InputEntry]] =
     IO.blocking(takeSync(sid, entries))
-      .handleErrorWith(e =>
-        logger.warn(s"InputMailbox.take failed for '$sid': ${e.getMessage}").as(Nil)
-      )
+      .handleErrorWith(e => logger.warn(s"InputMailbox.take failed for '$sid': ${e.getMessage}").as(Nil))
 
   def takeSync(sid: String, entries: List[InputEntry]): List[InputEntry] =
     lock.synchronized {
@@ -267,9 +268,7 @@ object InputMailbox:
    */
   def unlinkTaken(sid: String, identities: List[String]): IO[Unit] =
     IO.blocking(unlinkTakenSync(sid, identities))
-      .handleErrorWith(e =>
-        logger.warn(s"InputMailbox.unlinkTaken failed for '$sid': ${e.getMessage}")
-      )
+      .handleErrorWith(e => logger.warn(s"InputMailbox.unlinkTaken failed for '$sid': ${e.getMessage}"))
 
   def unlinkTakenSync(sid: String, identities: List[String]): Unit =
     val clean = identities.filter(_.nonEmpty).toSet
@@ -291,8 +290,10 @@ object InputMailbox:
   val MaxDeliveredEntries: Int = 1024
 
   final case class DeliveredInputs(v: Int = 1, ids: List[String] = Nil)
+
   object DeliveredInputs:
     given Encoder[DeliveredInputs] = Encoder.instance(d => Json.obj("v" -> d.v.asJson, "ids" -> d.ids.asJson))
+
     given Decoder[DeliveredInputs] = Decoder.instance { c =>
       for
         v <- c.get[Option[Int]]("v")
@@ -326,7 +327,7 @@ object InputMailbox:
     else
       decode[DeliveredInputs](os.read(f)) match
         case Right(d) => d.ids.toSet.intersect(identities)
-        case Left(_)  => Set.empty[String]
+        case Left(_) => Set.empty[String]
 
   // ── tmp 残片清理（boot）──────────────────────────────────────────────
 
@@ -348,7 +349,10 @@ object InputMailbox:
             if !os.exists(d) then Nil
             else
               val tmps = os.list(d).toList.filter(_.last.contains(".tmp."))
-              tmps.foreach(t => try os.remove(t) catch case _: Throwable => ())
+              tmps.foreach(t =>
+                try os.remove(t)
+                catch case _: Throwable => ()
+              )
               tmps.map(_.last)
           }
         }

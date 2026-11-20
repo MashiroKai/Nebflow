@@ -132,21 +132,35 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
   test("public protected Delegate admits a local leaf and delivers its terminal result") {
     val capture = TrieMap.empty[String, LlmRequest]
     val system = ActorSystem("protected-public-delegate")
-    (Dispatcher.parallel[IO],
+    (
+      Dispatcher.parallel[IO],
       cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "sessions"))) *>
-        ExecutionCommitStore.resource((tempRoot / "sessions").toNIO)).tupled.use { (dispatcher, authority) =>
+        ExecutionCommitStore.resource((tempRoot / "sessions").toNIO)
+    ).tupled.use { (dispatcher, authority) =>
       (for
         base <- mkResources(new RecordingLlm(capture), Some(dispatcher))
-        resources = base.copy(executionCommitPort = authority, delegateRecoveryMode = Some("local-leaf-b1"),
-          actorSystem = system)
+        resources = base.copy(
+          executionCommitPort = authority,
+          delegateRecoveryMode = Some("local-leaf-b1"),
+          actorSystem = system
+        )
         before <- resources.subAgentTaskStore.findAllTasks()
-        context = ToolContext(projectRoot = (tempRoot / "general").toString, sessionId = Some("root-x"),
-          actorSystem = Some(system), sharedResources = Some(resources))
-        result <- DelegateTool.call(io.circe.JsonObject("task" -> "Complete this local read-only task".asJson,
-          "mode" -> "kernel".asJson), context)
+        context = ToolContext(
+          projectRoot = (tempRoot / "general").toString,
+          sessionId = Some("root-x"),
+          actorSystem = Some(system),
+          sharedResources = Some(resources)
+        )
+        result <- DelegateTool.call(
+          io.circe.JsonObject("task" -> "Complete this local read-only task".asJson, "mode" -> "kernel".asJson),
+          context
+        )
         _ = assert(result.isRight, s"supported protected Delegate must be admitted: $result")
-        _ <- waitUntil(30.seconds)(resources.subAgentTaskStore.findAllTasks().map(_.exists(row =>
-          !before.exists(_.taskId == row.taskId) && row.executionStatus.contains("finished"))))
+        _ <- waitUntil(30.seconds)(
+          resources.subAgentTaskStore
+            .findAllTasks()
+            .map(_.exists(row => !before.exists(_.taskId == row.taskId) && row.executionStatus.contains("finished")))
+        )
         after <- resources.subAgentTaskStore.findAllTasks()
         fresh = after.filterNot(row => before.exists(_.taskId == row.taskId))
         _ = assertEquals(fresh.size, 1)
@@ -168,14 +182,24 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
 
   test("protected Delegate admission binds the durable candidate and refuses unintegrated spawn") {
     val admission = ExecutionAdmission(
-      "candidate", "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-      Json.obj("text" -> "initial".asJson), "input"
+      "candidate",
+      "run",
+      "commit",
+      "request",
+      "attempt",
+      "incarnation",
+      "owner",
+      "business",
+      "audit",
+      Json.obj("text" -> "initial".asJson),
+      "input"
     )
     val capture = TrieMap.empty[String, LlmRequest]
-    (Dispatcher.parallel[IO],
+    (
+      Dispatcher.parallel[IO],
       cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "protected-sessions"))) *>
-        ExecutionCommitStore.resource((tempRoot / "protected-sessions").toNIO)).tupled.use {
-      (dispatcher, authority) =>
+        ExecutionCommitStore.resource((tempRoot / "protected-sessions").toNIO)
+    ).tupled.use { (dispatcher, authority) =>
       for
         base <- mkResources(new RecordingLlm(capture), Some(dispatcher))
         resources = base.copy(executionCommitPort = authority, delegateRecoveryMode = Some("local-leaf-b1"))
@@ -192,8 +216,9 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
         before <- authority.observe(admission.sessionId, admission.executionId)
         bound <- DelegateTool.admitProtectedCandidate(params, admission)
         observed <- authority.observe(admission.sessionId, admission.executionId)
-        spawned <- bound.fold(reason => IO.raiseError(new IllegalStateException(reason)), p =>
-          NodeRunner.spawnAgentActor(null, p).attempt
+        spawned <- bound.fold(
+          reason => IO.raiseError(new IllegalStateException(reason)),
+          p => NodeRunner.spawnAgentActor(null, p).attempt
         )
         carrierOff = resources.copy(delegateRecoveryMode = Some("off"))
         protection <- carrierOff.executionProtection(admission.sessionId)
@@ -215,9 +240,11 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
 
   test("protected Delegate spawn records the admitted run as interrupted without executing") {
     val capture = TrieMap.empty[String, LlmRequest]
-    (Dispatcher.parallel[IO],
+    (
+      Dispatcher.parallel[IO],
       cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "candidate-sessions"))) *>
-        ExecutionCommitStore.resource((tempRoot / "candidate-sessions").toNIO)).tupled.use { (dispatcher, authority) =>
+        ExecutionCommitStore.resource((tempRoot / "candidate-sessions").toNIO)
+    ).tupled.use { (dispatcher, authority) =>
       val system = ActorSystem("protected-delegate-preparation")
       (for
         base <- mkResources(new RecordingLlm(capture), Some(dispatcher))
@@ -238,14 +265,17 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
         assertEquals(row.executionStatus, Some("interrupted"))
         assertEquals(row.notificationPending, Some(false))
         assertEquals(candidates.toOption.get.map(_.sessionId), List(row.taskId))
-        assertEquals(candidates.toOption.get.head.protection,
-          nebflow.shared.ExecutionProtection.Protected(List(row.runId.get)))
+        assertEquals(
+          candidates.toOption.get.head.protection,
+          nebflow.shared.ExecutionProtection.Protected(List(row.runId.get))
+        )
         val record = binding.asInstanceOf[ExecutionAdmissionObservation.Verified].record
         assertEquals(record.sessionId, row.taskId)
         assertEquals(record.executionId, row.runId.get)
         assertEquals(record.ownerBinding, "root-x")
         assertEquals(record.businessBinding, row.runId.get)
-        assertEquals(capture.size, 0)).guarantee(system.stopAll)
+        assertEquals(capture.size, 0)
+      ).guarantee(system.stopAll)
     }
   }
 
@@ -331,34 +361,34 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
     val capture = TrieMap[String, LlmRequest]()
     (cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "sessions"))) *>
       ExecutionCommitStore.resource((tempRoot / "sessions").toNIO)).use { authority =>
-    for
-      base <- mkResources(new RecordingLlm(capture))
-      res = base.copy(executionCommitPort = authority)
-      // 桩装在 mkResources 之后（生产 face 构造即装配，先装会被覆盖——见 installStub 注）。
-      calls = installStub(List("p1"))
-      (spawned, shutdown) <- spawn(res, "ship the report")
-      (sid, ack) = spawned.toOption.get
-      // brief 到达是异步的（adapter→actor→LLM）：轮询到 capture 非空再取。
-      _ <- waitUntil(30.seconds)(IO(capture.nonEmpty))
-      req = capture.values.head
-      rec = DelegateRegistry.find(sid)
-      key = ChainStore.keyFor(None, sid)
-      line = ChainStore.readSync(key).flatMap(_.entries.find(_.kind == "delegate-spawn"))
-      holds <- res.pluginMcp.sessionHolds
-      _ <- IO.sleep(200.millis) *> shutdown
-    yield
-      assert(calls.exists(_.startsWith("delegate-")), s"the stub was consulted with the delegate subject: $calls")
-      val first = req.messages.head.textContent
-      assert(first.contains("<injected-plugins>"), s"injected block missing from the brief:\n$first")
-      assert(first.contains("DELEGATE-ALLOC-MARKER"), "the skill body reached the delegate brief")
-      assert(first.startsWith("[workspace]"), "the brief keeps its workspace header above the injection")
-      assertEquals(rec.flatMap(_.plugins), Some(List("p1")), "the registry record carries the allocated set")
-      val payload = line.map(_.payload).getOrElse(fail("delegate-spawn line missing"))
-      assertEquals(payload.hcursor.get[List[String]]("plugins").toOption, Some(List("p1")))
-      assertEquals(payload.hcursor.get[String]("allocation").toOption, Some("jev"))
-      assertEquals(holds.get(sid), None, "a skills-only package holds no MCP server")
-      assert(ack.contains(sid), "the ack carries the continuation address payload")
-    end for
+      for
+        base <- mkResources(new RecordingLlm(capture))
+        res = base.copy(executionCommitPort = authority)
+        // 桩装在 mkResources 之后（生产 face 构造即装配，先装会被覆盖——见 installStub 注）。
+        calls = installStub(List("p1"))
+        (spawned, shutdown) <- spawn(res, "ship the report")
+        (sid, ack) = spawned.toOption.get
+        // brief 到达是异步的（adapter→actor→LLM）：轮询到 capture 非空再取。
+        _ <- waitUntil(30.seconds)(IO(capture.nonEmpty))
+        req = capture.values.head
+        rec = DelegateRegistry.find(sid)
+        key = ChainStore.keyFor(None, sid)
+        line = ChainStore.readSync(key).flatMap(_.entries.find(_.kind == "delegate-spawn"))
+        holds <- res.pluginMcp.sessionHolds
+        _ <- IO.sleep(200.millis) *> shutdown
+      yield
+        assert(calls.exists(_.startsWith("delegate-")), s"the stub was consulted with the delegate subject: $calls")
+        val first = req.messages.head.textContent
+        assert(first.contains("<injected-plugins>"), s"injected block missing from the brief:\n$first")
+        assert(first.contains("DELEGATE-ALLOC-MARKER"), "the skill body reached the delegate brief")
+        assert(first.startsWith("[workspace]"), "the brief keeps its workspace header above the injection")
+        assertEquals(rec.flatMap(_.plugins), Some(List("p1")), "the registry record carries the allocated set")
+        val payload = line.map(_.payload).getOrElse(fail("delegate-spawn line missing"))
+        assertEquals(payload.hcursor.get[List[String]]("plugins").toOption, Some(List("p1")))
+        assertEquals(payload.hcursor.get[String]("allocation").toOption, Some("jev"))
+        assertEquals(holds.get(sid), None, "a skills-only package holds no MCP server")
+        assert(ack.contains(sid), "the ack carries the continuation address payload")
+      end for
     }
   }
 
@@ -386,24 +416,28 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
     val capture = TrieMap[String, LlmRequest]()
     (cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "sessions"))) *>
       ExecutionCommitStore.resource((tempRoot / "sessions").toNIO)).use { authority =>
-    for
-      base <- mkResources(new RecordingLlm(capture))
-      res = base.copy(executionCommitPort = authority)
-      // 全败桩（显式模拟两臂全败：Jev 腿败 + LLM 兜底败 → 端口 Failure fail-open）。
-      // 不能靠「端口未注册」模拟——mkResources 已装生产 face，桩必须在其后覆盖。
-      calls = installFailingStub()
-      (spawned, shutdown) <- spawn(res, "plain task")
-      (sid, _) = spawned.toOption.get
-      _ <- waitUntil(30.seconds)(IO(capture.nonEmpty))
-      rec = DelegateRegistry.find(sid)
-      _ <- IO.sleep(200.millis) *> shutdown
-    yield
-      assert(spawned.isRight, s"fail-open never blocks the spawn: $spawned")
-      assert(calls.exists(_.startsWith("delegate-")), s"the stub was consulted (catalog non-empty): $calls")
-      val first = capture.values.head.messages.head.textContent
-      assert(!first.contains("<injected-plugins>"), "an empty allocation ⇒ byte-identical legacy brief")
-      assertEquals(rec.flatMap(_.plugins), Some(Nil), "fail-open is an explicit empty allocation (Some(Nil), not None)")
-    end for
+      for
+        base <- mkResources(new RecordingLlm(capture))
+        res = base.copy(executionCommitPort = authority)
+        // 全败桩（显式模拟两臂全败：Jev 腿败 + LLM 兜底败 → 端口 Failure fail-open）。
+        // 不能靠「端口未注册」模拟——mkResources 已装生产 face，桩必须在其后覆盖。
+        calls = installFailingStub()
+        (spawned, shutdown) <- spawn(res, "plain task")
+        (sid, _) = spawned.toOption.get
+        _ <- waitUntil(30.seconds)(IO(capture.nonEmpty))
+        rec = DelegateRegistry.find(sid)
+        _ <- IO.sleep(200.millis) *> shutdown
+      yield
+        assert(spawned.isRight, s"fail-open never blocks the spawn: $spawned")
+        assert(calls.exists(_.startsWith("delegate-")), s"the stub was consulted (catalog non-empty): $calls")
+        val first = capture.values.head.messages.head.textContent
+        assert(!first.contains("<injected-plugins>"), "an empty allocation ⇒ byte-identical legacy brief")
+        assertEquals(
+          rec.flatMap(_.plugins),
+          Some(Nil),
+          "fail-open is an explicit empty allocation (Some(Nil), not None)"
+        )
+      end for
     }
   }
 
@@ -412,21 +446,21 @@ class DelegatePluginAllocationSpec extends CatsEffectSuite:
     val capture = TrieMap[String, LlmRequest]()
     (cats.effect.Resource.eval(IO.blocking(os.makeDir.all(tempRoot / "sessions"))) *>
       ExecutionCommitStore.resource((tempRoot / "sessions").toNIO)).use { authority =>
-    for
-      base <- mkResources(new RecordingLlm(capture))
-      res = base.copy(executionCommitPort = authority)
-      // mkResources 之后 clear：拆走生产 face = 端口未注册 = Off（分配动作未发生）。
-      _ = PluginAllocator.clear()
-      (spawned, shutdown) <- spawn(res, "plain task")
-      (sid, _) = spawned.toOption.get
-      _ <- waitUntil(30.seconds)(IO(capture.nonEmpty))
-      rec = DelegateRegistry.find(sid)
-      _ <- IO.sleep(200.millis) *> shutdown
-    yield
-      assert(spawned.isRight, "Off never blocks the spawn")
-      val first = capture.values.head.messages.head.textContent
-      assert(!first.contains("<injected-plugins>"), "Off ⇒ byte-identical legacy brief")
-      assertEquals(rec.flatMap(_.plugins), None, "an allocation that never ran records no set (None)")
+      for
+        base <- mkResources(new RecordingLlm(capture))
+        res = base.copy(executionCommitPort = authority)
+        // mkResources 之后 clear：拆走生产 face = 端口未注册 = Off（分配动作未发生）。
+        _ = PluginAllocator.clear()
+        (spawned, shutdown) <- spawn(res, "plain task")
+        (sid, _) = spawned.toOption.get
+        _ <- waitUntil(30.seconds)(IO(capture.nonEmpty))
+        rec = DelegateRegistry.find(sid)
+        _ <- IO.sleep(200.millis) *> shutdown
+      yield
+        assert(spawned.isRight, "Off never blocks the spawn")
+        val first = capture.values.head.messages.head.textContent
+        assert(!first.contains("<injected-plugins>"), "Off ⇒ byte-identical legacy brief")
+        assertEquals(rec.flatMap(_.plugins), None, "an allocation that never ran records no set (None)")
     }
   }
 

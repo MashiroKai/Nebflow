@@ -51,9 +51,7 @@ class TransportLogSpec extends FunSuite:
     TransportLog.setModeForTest(Some(TransportLog.Mode.Aggregate))
     var pendingBeforeFlush = -1L
     val events = capture("nebflow.neblink.presence") {
-      (1 to 1000).foreach(_ =>
-        TransportLog.presenceSendData(presenceLog, "6a64d249-iso", "agent-session", true)
-      )
+      (1 to 1000).foreach(_ => TransportLog.presenceSendData(presenceLog, "6a64d249-iso", "agent-session", true))
       pendingBeforeFlush = TransportLog.pendingCounts("presence")
       TransportLog.flushNow()
     }
@@ -73,12 +71,8 @@ class TransportLogSpec extends FunSuite:
   test("aggregate：session-sync 摘要带会话数/状态分布/目标均值/载荷均值"):
     TransportLog.setModeForTest(Some(TransportLog.Mode.Aggregate))
     val events = capture("nebflow.neblink.session-sync") {
-      (1 to 30).foreach(i =>
-        TransportLog.sessionSyncPush(syncLog, "delegate-alpha", "running", 1000L + i, 800, 2)
-      )
-      (1 to 20).foreach(i =>
-        TransportLog.sessionSyncPush(syncLog, "subagent-beta", "completed", 1000L + i, 400, 0)
-      )
+      (1 to 30).foreach(i => TransportLog.sessionSyncPush(syncLog, "delegate-alpha", "running", 1000L + i, 800, 2))
+      (1 to 20).foreach(i => TransportLog.sessionSyncPush(syncLog, "subagent-beta", "completed", 1000L + i, 400, 0))
       TransportLog.flushNow()
     }
     val info = messages(events, Level.INFO)
@@ -143,9 +137,7 @@ class TransportLogSpec extends FunSuite:
   test("debug（保留形态）：逐条 DEBUG，INFO 面零行"):
     TransportLog.setModeForTest(Some(TransportLog.Mode.Debug))
     val events = capture("nebflow.neblink.presence") {
-      (1 to 5).foreach(_ =>
-        TransportLog.presenceSendData(presenceLog, "dev-x", "agent-session", true)
-      )
+      (1 to 5).foreach(_ => TransportLog.presenceSendData(presenceLog, "dev-x", "agent-session", true))
     }
     assertEquals(messages(events, Level.INFO).size, 0)
     val dbg = events.filter(_.getLevel == Level.DEBUG).map(_.getMessage)
@@ -185,9 +177,7 @@ class TransportLogSpec extends FunSuite:
   test("gate 只产 INFO 摘要，绝不把失败面降级/提升（WARN/ERROR 零行）"):
     TransportLog.setModeForTest(Some(TransportLog.Mode.Aggregate))
     val events = capture("nebflow.neblink.session-sync") {
-      (1 to 50).foreach(_ =>
-        TransportLog.sessionSyncPush(syncLog, "s-1", "failed", 1L, 100, 0)
-      )
+      (1 to 50).foreach(_ => TransportLog.sessionSyncPush(syncLog, "s-1", "failed", 1L, 100, 0))
       TransportLog.flushNow()
     }
     assertEquals(messages(events, Level.WARN).size, 0)
@@ -213,3 +203,4 @@ class TransportLogSpec extends FunSuite:
     assertEquals(TransportLog.Mode.parse("debug"), Some(TransportLog.Mode.Debug))
     assertEquals(TransportLog.Mode.parse("bogus"), None)
     assertEquals(TransportLog.Mode.parse(null), None)
+end TransportLogSpec

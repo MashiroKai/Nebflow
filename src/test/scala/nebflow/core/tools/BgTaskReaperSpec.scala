@@ -51,8 +51,10 @@ class BgTaskReaperSpec extends CatsEffectSuite:
 
   private val alwaysDead: BgTaskRegistry.ActiveTask => IO[BgTaskLiveness.Verdict] =
     _ => IO.pure(BgTaskLiveness.Dead("process dead"))
+
   private val alwaysAlive: BgTaskRegistry.ActiveTask => IO[BgTaskLiveness.Verdict] =
     _ => IO.pure(BgTaskLiveness.Alive)
+
   private val alwaysUnknown: BgTaskRegistry.ActiveTask => IO[BgTaskLiveness.Verdict] =
     _ => IO.pure(BgTaskLiveness.Unknown)
 
@@ -188,9 +190,9 @@ class BgTaskReaperSpec extends CatsEffectSuite:
   test("BgTaskLiveness 词表钉子：Alive/Dead/Unknown 封闭集与 Dead reason 承载") {
     val v: BgTaskLiveness.Verdict = BgTaskLiveness.Dead("r")
     v match
-      case BgTaskLiveness.Alive          => fail("unexpected")
-      case BgTaskLiveness.Dead(reason)   => assertEquals(reason, "r")
-      case BgTaskLiveness.Unknown        => fail("unexpected")
+      case BgTaskLiveness.Alive => fail("unexpected")
+      case BgTaskLiveness.Dead(reason) => assertEquals(reason, "r")
+      case BgTaskLiveness.Unknown => fail("unexpected")
   }
 
 end BgTaskReaperSpec

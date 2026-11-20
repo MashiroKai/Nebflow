@@ -78,3 +78,4 @@ object RemoteExecCancelRegistry:
 
   /** 清空（spec 固件用——neblink 包 BgCancelActionSpec 跨包访问；正常路径绝不调用——零删除纪律）。 */
   private[nebflow] def clear(): IO[Unit] = IO(procs.clear()).void
+end RemoteExecCancelRegistry

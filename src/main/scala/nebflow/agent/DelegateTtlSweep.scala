@@ -102,32 +102,39 @@ object DelegateTtlSweep:
               case expired: nebflow.core.delegate.DelegateTerminalTtl.Expired =>
                 // ③ 清理动作（任务行剪行 → 登记移除；fail-soft）。工作区/分支一律
                 // 不动（引擎不再回收座位——需要隔离检出时 delegate 自建自管）。
-                resources.executionCommitPort.withUnprotectedSession(rec.id) {
-                  for
-                    _ <- rowsById.get(rec.id).traverse_ { t =>
-                      resources.subAgentTaskStore.removeTask(t.parentSessionId, t.taskId)
-                    }
-                    rm <- IO(nebflow.core.delegate.DelegateRegistry.remove(rec.id)).attempt
-                    _ = logger.info(
-                      s"[delegate-ttl] '${rec.id}' expired the " +
-                        s"${nebflow.core.delegate.DelegateTerminalTtl.TtlMs / 86400000L}-day terminal TTL " +
-                        s"(anchor=${expired.anchorName} age=${(now - expired.anchorMs) / 86400000L}d) — " +
-                        s"taskRow=${if rowsById.contains(rec.id) then "pruned" else "none"} " +
-                        s"record=${rm.fold(err => s"kept($err)", _ => "removed")}"
-                    )
-                    _ <- ref.update { r =>
-                      r.copy(
-                        expired = r.expired :+ rec.id,
-                        taskRowsPruned = if rowsById.contains(rec.id) then r.taskRowsPruned :+ rec.id else r.taskRowsPruned,
-                        recordsRemoved = if rm.isRight then r.recordsRemoved :+ rec.id else r.recordsRemoved,
-                        keptOnError = rm.fold(err => r.keptOnError :+ (rec.id -> err.getMessage), _ => r.keptOnError)
+                resources.executionCommitPort
+                  .withUnprotectedSession(rec.id) {
+                    for
+                      _ <- rowsById.get(rec.id).traverse_ { t =>
+                        resources.subAgentTaskStore.removeTask(t.parentSessionId, t.taskId)
+                      }
+                      rm <- IO(nebflow.core.delegate.DelegateRegistry.remove(rec.id)).attempt
+                      _ = logger.info(
+                        s"[delegate-ttl] '${rec.id}' expired the " +
+                          s"${nebflow.core.delegate.DelegateTerminalTtl.TtlMs / 86400000L}-day terminal TTL " +
+                          s"(anchor=${expired.anchorName} age=${(now - expired.anchorMs) / 86400000L}d) — " +
+                          s"taskRow=${if rowsById.contains(rec.id) then "pruned" else "none"} " +
+                          s"record=${rm.fold(err => s"kept($err)", _ => "removed")}"
                       )
-                    }
-                  yield ()
-                }.handleErrorWith(e =>
-                  ref.update(r => r.copy(keptOnError = r.keptOnError :+ (rec.id ->
-                    s"cleanup-unconfirmed: ${e.getClass.getSimpleName}")))
-                )
+                      _ <- ref.update { r =>
+                        r.copy(
+                          expired = r.expired :+ rec.id,
+                          taskRowsPruned =
+                            if rowsById.contains(rec.id) then r.taskRowsPruned :+ rec.id else r.taskRowsPruned,
+                          recordsRemoved = if rm.isRight then r.recordsRemoved :+ rec.id else r.recordsRemoved,
+                          keptOnError = rm.fold(err => r.keptOnError :+ (rec.id -> err.getMessage), _ => r.keptOnError)
+                        )
+                      }
+                    yield ()
+                  }
+                  .handleErrorWith(e =>
+                    ref.update(r =>
+                      r.copy(keptOnError =
+                        r.keptOnError :+ (rec.id ->
+                          s"cleanup-unconfirmed: ${e.getClass.getSimpleName}")
+                      )
+                    )
+                  )
         }
       }
       report <- ref.get
@@ -163,8 +170,9 @@ object DelegateTtlSweep:
   ): IO[Report] =
     val orphans = rowsById.values.toList.filter { t =>
       !recordIds.contains(t.taskId) && !live.contains(t.taskId) &&
-        !nebflow.core.delegate.DelegateTerminalTtl.rowVerdict(t, now).equals(
-          nebflow.core.delegate.DelegateTerminalTtl.InFlight)
+      !nebflow.core.delegate.DelegateTerminalTtl
+        .rowVerdict(t, now)
+        .equals(nebflow.core.delegate.DelegateTerminalTtl.InFlight)
     }
     if orphans.isEmpty then IO.pure(Report())
     else
@@ -172,23 +180,27 @@ object DelegateTtlSweep:
         orphans.traverse_ { t =>
           resources.executionProtection(t.taskId).flatMap {
             case nebflow.shared.ExecutionProtection.Unprotected =>
-              resources.executionCommitPort.withUnprotectedSession(t.taskId) {
-                val v = nebflow.core.delegate.DelegateTerminalTtl.rowVerdict(t, now)
-                if !v.isExpired then IO.unit
-                else
-                  resources.subAgentTaskStore.removeTask(t.parentSessionId, t.taskId) *>
-                    ref.update(r => r.copy(orphanRowsPruned = r.orphanRowsPruned :+ t.taskId)) *>
-                    logger
-                      .info(
-                        s"[delegate-ttl] orphan task row '${t.taskId}' (parent=${t.parentSessionId}, " +
-                          s"status=${t.status}) expired the terminal TTL with no registry record — pruned"
-                      )
-                      .as(())
-              }.handleErrorWith(e =>
-                logger.warn(s"[delegate-ttl] orphan prune failed for ${t.taskId}: ${e.getMessage}").as(())
-              )
-            case _ => IO.unit   // 保护态/未知：留现场
+              resources.executionCommitPort
+                .withUnprotectedSession(t.taskId) {
+                  val v = nebflow.core.delegate.DelegateTerminalTtl.rowVerdict(t, now)
+                  if !v.isExpired then IO.unit
+                  else
+                    resources.subAgentTaskStore.removeTask(t.parentSessionId, t.taskId) *>
+                      ref.update(r => r.copy(orphanRowsPruned = r.orphanRowsPruned :+ t.taskId)) *>
+                      logger
+                        .info(
+                          s"[delegate-ttl] orphan task row '${t.taskId}' (parent=${t.parentSessionId}, " +
+                            s"status=${t.status}) expired the terminal TTL with no registry record — pruned"
+                        )
+                        .as(())
+                }
+                .handleErrorWith(e =>
+                  logger.warn(s"[delegate-ttl] orphan prune failed for ${t.taskId}: ${e.getMessage}").as(())
+                )
+            case _ => IO.unit // 保护态/未知：留现场
           }
         } *> ref.get
       }
+    end if
+  end sweepOrphanRows
 end DelegateTtlSweep

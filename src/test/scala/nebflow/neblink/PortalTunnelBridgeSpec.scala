@@ -71,22 +71,29 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
   private final class FakeWebSocket extends WebSocket:
     val sent = new ConcurrentLinkedQueue[String]()
     @volatile var aborted = false
+
     override def sendText(data: CharSequence, last: Boolean): CompletableFuture[WebSocket] =
       sent.add(data.toString)
       CompletableFuture.completedFuture(this)
+
     override def sendBinary(data: java.nio.ByteBuffer, last: Boolean): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
+
     override def sendClose(code: Int, reason: String): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
-    override def request(n: Long): Unit  = ()
+    override def request(n: Long): Unit = ()
+
     override def sendPing(data: java.nio.ByteBuffer): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
+
     override def sendPong(data: java.nio.ByteBuffer): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
-    override def getSubprotocol: String  = ""
+    override def getSubprotocol: String = ""
     override def isOutputClosed: Boolean = false
-    override def isInputClosed: Boolean  = false
-    override def abort(): Unit           = aborted = true
+    override def isInputClosed: Boolean = false
+    override def abort(): Unit = aborted = true
+
+  end FakeWebSocket
 
   private def sentTexts(fake: FakeWebSocket): List[String] =
     val out = scala.collection.mutable.ListBuffer.empty[String]
@@ -138,9 +145,9 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
     )
 
   private def withBridge[A](
-      app: HttpApp[IO],
-      guard: Option[PortalHostFaces.TunnelGuard] = None,
-      nfRevocations: ConcurrentLinkedQueue[Integer] = new ConcurrentLinkedQueue[Integer]()
+    app: HttpApp[IO],
+    guard: Option[PortalHostFaces.TunnelGuard] = None,
+    nfRevocations: ConcurrentLinkedQueue[Integer] = new ConcurrentLinkedQueue[Integer]()
   )(body: (PortalTunnelBridge, FakeWebSocket, PortalTunnelDeps) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
@@ -189,6 +196,7 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         _ = assertEquals(frames.map(f => (f.seq, f.more)).toList, List((0, false)))
         _ = assertEquals(new String(frames.head.data, UTF_8), "ok")
       yield ()
+      end for
     }
 
   test("empty response body still terminates the cycle with one empty more=false body_frame"):
@@ -221,22 +229,32 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       bridge = new PortalTunnelBridge(deps, new RelayFrameSender(fake))
       // Enqueue everything BEFORE the consumer starts.
       _ = bridge.enqueueFrame(
-            HttpRequest(Rid, "POST", "/api/echo", Vector("x-forwarded-for" -> "203.0.113.9", "content-type" -> "text/plain"))
-          )
+        HttpRequest(
+          Rid,
+          "POST",
+          "/api/echo",
+          Vector("x-forwarded-for" -> "203.0.113.9", "content-type" -> "text/plain")
+        )
+      )
       _ = bridge.enqueueFrame(BodyFrame(Rid, 0, more = false, "hello".getBytes(UTF_8)))
       fiber <- bridge.run.start
       _ <- IO.sleep(1.seconds)
       _ = assert(
-            new String(assembledBody(fake, Rid), UTF_8) == "hello",
-            s"the body must reach the app via its registered cycle; sent=${sentTexts(fake)}"
-          )
+        new String(assembledBody(fake, Rid), UTF_8) == "hello",
+        s"the body must reach the app via its registered cycle; sent=${sentTexts(fake)}"
+      )
       _ <- bridge.teardown() *> fiber.cancel
     yield ()
 
   test("http_request POST: request body streams through the channel and echoes back byte-exactly"):
     withBridge(echoApp) { (bridge, fake, _) =>
       bridge.enqueueFrame(
-        HttpRequest(Rid, "POST", "/api/echo", Vector("x-forwarded-for" -> "203.0.113.9", "content-type" -> "text/plain"))
+        HttpRequest(
+          Rid,
+          "POST",
+          "/api/echo",
+          Vector("x-forwarded-for" -> "203.0.113.9", "content-type" -> "text/plain")
+        )
       )
       bridge.enqueueFrame(BodyFrame(Rid, 0, more = true, "hel".getBytes(UTF_8)))
       bridge.enqueueFrame(BodyFrame(Rid, 1, more = false, "lo".getBytes(UTF_8)))
@@ -339,6 +357,7 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         // Cleanup the deliberately-uncanceled fibers.
         _ <- downFiber.cancel *> upFiber.cancel *> downFiber2.cancel
       yield ()
+      end for
     }
 
   test("response body larger than the chunk constant slices into ordered body_frames (seq 0..n, more=false last)"):
@@ -392,7 +411,10 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         response = decodeSent(fake).collectFirst { case r: HttpResponse if r.requestId == Rid => r }.get
         _ = assertEquals(response.status, 429)
         _ = assert(response.headers.exists { case (k, v) => k.equalsIgnoreCase("retry-after") && v == "60" })
-        _ = assertEquals(new String(assembledBody(fake, Rid), UTF_8), """{"error":"rate_limited","reason":"tunnel-per-ip-cap"}""")
+        _ = assertEquals(
+          new String(assembledBody(fake, Rid), UTF_8),
+          """{"error":"rate_limited","reason":"tunnel-per-ip-cap"}"""
+        )
         _ = assert(observedIps.contains("203.0.113.9"), s"guard must observe the ENVELOPE IP; observed=$observedIps")
         _ = assert(!observedIps.contains("unknown"), "a present XFF must not degrade to the unknown bucket")
         _ = assert(!httpCycles(fake).contains((Rid, 200)), "a rejected request must never reach the lifted app")
@@ -417,7 +439,8 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
             IO(bridge.enqueueFrame(HttpRequest(rid(id), "GET", path, ip)))
           for
             _ <- (1 to rate * 4).toList.traverse_(i =>
-              send(s"$rate-chain-$i", "/api/chains/x") *> IO.sleep((1000 / rate).millis))
+              send(s"$rate-chain-$i", "/api/chains/x") *> IO.sleep((1000 / rate).millis)
+            )
             _ <- send(s"$rate-file", "/api/nf-file")
             _ <- send(s"$rate-api", "/api/search")
             done <- waitUntil(5.seconds)(IO(httpCycles(fake).exists(_._1 == rid(s"$rate-api"))))
@@ -453,7 +476,10 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       IO(
         Response[IO](status = Status.Ok).withHeaders(
           Headers(
-            Header.Raw(CIString("Set-Cookie"), "nebflow_session=s3cr3t; Max-Age=43200; Path=/; SameSite=Lax; Secure; HttpOnly"),
+            Header.Raw(
+              CIString("Set-Cookie"),
+              "nebflow_session=s3cr3t; Max-Age=43200; Path=/; SameSite=Lax; Secure; HttpOnly"
+            ),
             Header.Raw(CIString("Set-Cookie"), "theme=dark; Path=/"),
             Header.Raw(CIString("X-Other"), "v1"),
             Header.Raw(CIString("X-Other"), "v2")
@@ -471,12 +497,12 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         // order (the redemption 303 face: a comma-joined Set-Cookie would
         // forge one merged cookie and break the browser jar).
         _ = assertEquals(
-              head.setCookie,
-              Vector(
-                "nebflow_session=s3cr3t; Max-Age=43200; Path=/; SameSite=Lax; Secure; HttpOnly",
-                "theme=dark; Path=/"
-              )
-            )
+          head.setCookie,
+          Vector(
+            "nebflow_session=s3cr3t; Max-Age=43200; Path=/; SameSite=Lax; Secure; HttpOnly",
+            "theme=dark; Path=/"
+          )
+        )
         _ = assert(!head.headers.exists(_._1 == "set-cookie"), s"set-cookie must never ride headers: ${head.headers}")
         // Non-Set-Cookie multi-valued headers keep the v1 conservative comma-join.
         _ = assertEquals(head.headers.find(_._1 == "x-other").map(_._2), Some("v1, v2"))
@@ -484,10 +510,11 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         // object carries no set-cookie key.
         raw = sentTexts(fake).find(_.contains("http_response")).get
         _ = assert(
-              raw.contains("\"headers\":{\"x-other\":\"v1, v2\"},\"setCookie\":["),
-              s"wire order/setCookie face drifted: $raw"
-            )
+          raw.contains("\"headers\":{\"x-other\":\"v1, v2\"},\"setCookie\":["),
+          s"wire order/setCookie face drifted: $raw"
+        )
       yield ()
+      end for
     }
 
   /**
@@ -503,6 +530,7 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
     private val server = new java.net.ServerSocket(0, 8, java.net.InetAddress.getByName("127.0.0.1"))
     private val sockets = new ConcurrentLinkedQueue[java.net.Socket]()
     @volatile private var stopped = false
+
     private val acceptor = new Thread(() =>
       while !stopped do
         try
@@ -537,8 +565,9 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
           line = reader.readLine()
         handshakes.add(head.mkString("\r\n"))
         val key = head
-          .collectFirst { case l if l.toLowerCase(java.util.Locale.ROOT).startsWith("sec-websocket-key:") =>
-            l.dropWhile(_ != ':').drop(1).trim
+          .collectFirst {
+            case l if l.toLowerCase(java.util.Locale.ROOT).startsWith("sec-websocket-key:") =>
+              l.dropWhile(_ != ':').drop(1).trim
           }
           .getOrElse("")
         val accept = java.util.Base64.getEncoder.encodeToString(
@@ -570,19 +599,22 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         }
       catch case _: Exception => ()
 
-
     def close(): Unit =
       stopped = true
       try server.close()
       catch case _: Exception => ()
-      sockets.forEach(s => try s.close() catch case _: Exception => ())
+      sockets.forEach(s =>
+        try s.close()
+        catch case _: Exception => ()
+      )
   end WsHandshakeCapture
 
   test("ws_open with headers injects the cookie into the loopback handshake verbatim (v1.1 D9)"):
     val capture = new WsHandshakeCapture
     // The capture's lifetime rides the returned IO (a Scala try/finally around
     // an IO DESCRIPTION would run close() before munit ever runs the IO).
-    Dispatcher.parallel[IO]
+    Dispatcher
+      .parallel[IO]
       .use { _ =>
         val faces = new PortalHostFaces(gatewayPort = capture.port)
         val deps = mkDeps(faces)
@@ -591,28 +623,32 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         for
           fiber <- bridge.run.start
           _ = bridge.enqueueFrame(
-                WsOpen(
-                  Rid,
-                  "/ws",
-                  None,
-                  Some(
-                    Vector(
-                      "cookie" -> "nebflow_session=abc123; theme=dark",
-                      "x-portal-face" -> "console",
-                      // Hop-face / upgrade-owned heads must NOT be injected.
-                      "host" -> "evil.example",
-                      "upgrade" -> "websocket",
-                      "sec-websocket-protocol" -> "nebflow.chat"
-                    )
-                  )
+            WsOpen(
+              Rid,
+              "/ws",
+              None,
+              Some(
+                Vector(
+                  "cookie" -> "nebflow_session=abc123; theme=dark",
+                  "x-portal-face" -> "console",
+                  // Hop-face / upgrade-owned heads must NOT be injected.
+                  "host" -> "evil.example",
+                  "upgrade" -> "websocket",
+                  "sec-websocket-protocol" -> "nebflow.chat"
                 )
               )
+            )
+          )
           ok <- waitUntil(5.seconds)(
-                  IO(decodeSent(fake).collectFirst { case r: WsOpenResult => r }.isDefined)
-                ).guarantee(fiber.cancel *> bridge.teardown())
+            IO(decodeSent(fake).collectFirst { case r: WsOpenResult => r }.isDefined)
+          ).guarantee(fiber.cancel *> bridge.teardown())
           _ = assert(ok, s"no ws_open_result; sent=${sentTexts(fake)}")
           result = decodeSent(fake).collectFirst { case r: WsOpenResult => r }.get
-          _ = assertEquals((result.accepted, result.status), (true, 101), s"loopback upgrade failed; sent=${sentTexts(fake)}")
+          _ = assertEquals(
+            (result.accepted, result.status),
+            (true, 101),
+            s"loopback upgrade failed; sent=${sentTexts(fake)}"
+          )
           // The cookie head crosses VERBATIM (the GatewayAuth session-track
           // face); the ordinary bridge head rides along.
           _ = assertEquals(capture.headerValues("cookie"), List("nebflow_session=abc123; theme=dark"))
@@ -625,12 +661,14 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
           _ = assertEquals(capture.headerValues("upgrade").length, 1)
           _ = assertEquals(capture.headerValues("sec-websocket-protocol"), Nil)
         yield ()
+        end for
       }
       .guarantee(IO(capture.close()))
 
   test("ws_open without headers keeps the v1 handshake shape (no cookie head injected)"):
     val capture = new WsHandshakeCapture
-    Dispatcher.parallel[IO]
+    Dispatcher
+      .parallel[IO]
       .use { _ =>
         val faces = new PortalHostFaces(gatewayPort = capture.port)
         val deps = mkDeps(faces)
@@ -640,21 +678,29 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
           fiber <- bridge.run.start
           _ = bridge.enqueueFrame(WsOpen(Rid, "/ws", None, None))
           ok <- waitUntil(5.seconds)(
-                  IO(decodeSent(fake).collectFirst { case r: WsOpenResult => r }.isDefined)
-                ).guarantee(fiber.cancel *> bridge.teardown())
+            IO(decodeSent(fake).collectFirst { case r: WsOpenResult => r }.isDefined)
+          ).guarantee(fiber.cancel *> bridge.teardown())
           _ = assert(ok, s"no ws_open_result; sent=${sentTexts(fake)}")
           result = decodeSent(fake).collectFirst { case r: WsOpenResult => r }.get
-          _ = assertEquals((result.accepted, result.status), (true, 101), s"loopback upgrade failed; sent=${sentTexts(fake)}")
+          _ = assertEquals(
+            (result.accepted, result.status),
+            (true, 101),
+            s"loopback upgrade failed; sent=${sentTexts(fake)}"
+          )
           _ = assertEquals(capture.headerValues("cookie"), Nil, "a headers-less ws_open must not grow a cookie head")
         yield ()
+        end for
       }
       .guarantee(IO(capture.close()))
 
   test("fragmented large config crosses the real JDK listener as one complete browser JSON message"):
-    val payload = io.circe.Json.obj(
-      "type" -> io.circe.Json.fromString("configData"),
-      "config" -> io.circe.Json.fromString("配置😀" * 12000)
-    ).noSpaces.getBytes(UTF_8)
+    val payload = io.circe.Json
+      .obj(
+        "type" -> io.circe.Json.fromString("configData"),
+        "config" -> io.circe.Json.fromString("配置😀" * 12000)
+      )
+      .noSpaces
+      .getBytes(UTF_8)
     val capture = new WsHandshakeCapture(Some(payload))
     val faces = new PortalHostFaces(gatewayPort = capture.port)
     val fake = new FakeWebSocket
@@ -696,6 +742,7 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
         again <- deps.consoleTickets.verifyAndConsume(result.ticket.get)
         _ = assert(again == Left("invalid-ticket"), s"redeemed-then-destroyed: second attempt=$again")
       yield ()
+      end for
     }
 
   test("ConsoleTicketMint: budget exhaustion answers rate_limited"):
@@ -756,11 +803,16 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       bridge.enqueueFrame(BindingControl("revoked", None, None))
       for
         ok <- waitUntil(5.seconds)(IO(observed.size() == 1 && nfRevocations.size() == 1))
-        _ = assert(ok, s"session and bound nf-ticket revocation ports must each fire once; observed=$observed nf=$nfRevocations")
+        _ = assert(
+          ok,
+          s"session and bound nf-ticket revocation ports must each fire once; observed=$observed nf=$nfRevocations"
+        )
       yield ()
     }
 
-  test("revoked × real GatewaySessionStore: relay-mint sessions die, local-ticket survives (origin filter, criterion 9 in-repo half)"):
+  test(
+    "revoked × real GatewaySessionStore: relay-mint sessions die, local-ticket survives (origin filter, criterion 9 in-repo half)"
+  ):
     // The bridge and the REAL session store, wired the way GatewayMain wires
     // them (faces.sessionRevocation = store.revokeRelayMinted) — no relay, no
     // ember: enqueue the frame and observe the store.
@@ -791,8 +843,9 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       yield ()
     }
 
-
-  test("mintConsoleTicket gate split: the local break-glass mint is binding-gate EXEMPT in the revoked state while the relay mint stays gated (review pin T-8-1)"):
+  test(
+    "mintConsoleTicket gate split: the local break-glass mint is binding-gate EXEMPT in the revoked state while the relay mint stays gated (review pin T-8-1)"
+  ):
     val faces = new PortalHostFaces(gatewayPort = 1)
     val deps = mkDeps(faces)
     for
@@ -810,10 +863,13 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
     yield
       assert(local.isRight, s"the escape face must mint in the revoked state, got $local")
       assertEquals(relay, Left("unbound"))
+    end for
 
   // ── stage C: the tunnel-origin mark rides every bridged request ────────
 
-  test("stage C: the bridge injects the armed tunnel mark on in-process HTTP requests; a client-supplied same-named header is dropped first"):
+  test(
+    "stage C: the bridge injects the armed tunnel mark on in-process HTTP requests; a client-supplied same-named header is dropped first"
+  ):
     TunnelOriginMark.arm()
     val markName = TunnelOriginMark.headerName
     val markValue = TunnelOriginMark.armedValue.getOrElse(sys.error("mark failed to arm"))
@@ -826,7 +882,9 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       // The browser frame carries a same-named GARBAGE header under an
       // uppercased name (headers are case-insensitive on the wire); drop-
       // then-inject must leave exactly one mark header — the armed value.
-      bridge.enqueueFrame(HttpRequest(Rid, "GET", "/api/echo", Vector(markName.toUpperCase -> "client-supplied-garbage")))
+      bridge.enqueueFrame(
+        HttpRequest(Rid, "GET", "/api/echo", Vector(markName.toUpperCase -> "client-supplied-garbage"))
+      )
       for
         ok <- waitUntil(5.seconds)(IO(bodyFrames(fake, Rid).nonEmpty))
         _ = assert(ok, s"no complete answer; sent=${sentTexts(fake)}")
@@ -835,7 +893,9 @@ class PortalTunnelBridgeSpec extends CatsEffectSuite:
       yield ()
     }
 
-  test("stage C: wsHandshakeHeaders drops the tunnel mark name (the bridge re-injects the armed value after filtering)"):
+  test(
+    "stage C: wsHandshakeHeaders drops the tunnel mark name (the bridge re-injects the armed value after filtering)"
+  ):
     TunnelOriginMark.arm()
     val filtered = PortalTunnelBridge.wsHandshakeHeaders(
       Vector("cookie" -> "sid=1", TunnelOriginMark.headerName -> "client-garbage")

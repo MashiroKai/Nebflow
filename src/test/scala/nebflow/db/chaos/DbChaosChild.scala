@@ -25,9 +25,7 @@ object DbChaosChild:
     Files.createDirectories(dir)
     val tmp = dir.resolve(s"$name.mkr")
     Files.writeString(tmp, content)
-    try
-      Files.move(tmp, dir.resolve(name), StandardCopyOption.REPLACE_EXISTING,
-        StandardCopyOption.ATOMIC_MOVE)
+    try Files.move(tmp, dir.resolve(name), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE)
     catch
       case _: java.nio.file.AtomicMoveNotSupportedException =>
         Files.move(tmp, dir.resolve(name), StandardCopyOption.REPLACE_EXISTING)
@@ -53,10 +51,14 @@ object DbChaosChild:
             val count = rest.headOption.map(_.toInt).getOrElse(100000)
             val h = openOrDie(root)
             // 崩前事实面：guard 档 + 两类待审单（V8/V6 进程级不丢断言的输入）。
-            h.writeAvoidGuard(GuardDocs.AvoidGuardDoc(
-              version = 1, source = Db.AvoidGuardSource,
-              avoidUntil = Map("chaos/p1" -> (System.currentTimeMillis() + 3_600_000L)),
-              updatedAt = System.currentTimeMillis())).unsafeRunSync()
+            h.writeAvoidGuard(
+              GuardDocs.AvoidGuardDoc(
+                version = 1,
+                source = Db.AvoidGuardSource,
+                avoidUntil = Map("chaos/p1" -> (System.currentTimeMillis() + 3_600_000L)),
+                updatedAt = System.currentTimeMillis()
+              )
+            ).unsafeRunSync()
             h.openPending(PendingRecordTest.card("chaos-perm-1", kind = "Permission"))
               .unsafeRunSync()
             h.openPending(PendingRecordTest.card("chaos-ask-1", kind = "AskUser"))
@@ -81,12 +83,12 @@ object DbChaosChild:
                 val gen = h.instanceLockGeneration
                 h.close()
                 s"OK $gen"
-              catch
-                case e: Throwable => s"REFUSED ${e.getClass.getSimpleName}: ${e.getMessage}"
+              catch case e: Throwable => s"REFUSED ${e.getClass.getSimpleName}: ${e.getMessage}"
             writeMarker(markers, "result", outcome)
           case other =>
             System.err.println(s"unknown mode: $other")
             sys.exit(2)
+        end match
       case _ =>
         System.err.println("usage: DbChaosChild <writer|hold|tryopen> <dataRoot> <markerDir> [count]")
         sys.exit(2)

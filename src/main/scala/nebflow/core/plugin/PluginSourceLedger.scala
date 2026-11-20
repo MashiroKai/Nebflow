@@ -81,6 +81,7 @@ object PluginSourceLedger:
     case Seed extends Via("seed")
     case Official extends Via("official")
     case Git extends Via("git")
+
     /** 直链归档安装（P2 https 腿；additive——旧读端遇该值按闭合枚举降级 unknown-source，诚实不猜）。 */
     case Https extends Via("https")
     case Hub extends Via("hub")
@@ -109,11 +110,11 @@ object PluginSourceLedger:
    * None——既有 7 参调用点不破）。逐事件字段：描述本次落盘世代，不跨世代保留。
    */
   final case class InstallMeta(
-      distributionId: Option[String] = None,
-      publisherKeyId: Option[String] = None,
-      artifactSha256: Option[String] = None,
-      validationSummary: Option[String] = None,
-      transactionId: Option[String] = None
+    distributionId: Option[String] = None,
+    publisherKeyId: Option[String] = None,
+    artifactSha256: Option[String] = None,
+    validationSummary: Option[String] = None,
+    transactionId: Option[String] = None
   )
 
   /**
@@ -122,23 +123,23 @@ object PluginSourceLedger:
    * [[PluginDistributionTrust]]——作者所有字段跨世代保留，事件字段随重记更新。
    */
   final case class Entry(
-      name: String,
-      kind: Kind,
-      url: Option[String],
-      pin: Option[Pin],
-      version: String,
-      digest: String,
-      installedAt: Long,
-      via: Via,
-      distribution: Distribution,
-      updatePolicy: UpdatePolicy,
-      pinned: Boolean,
-      distributionId: Option[String],
-      publisherKeyId: Option[String],
-      artifactSha256: Option[String],
-      validationSummary: Option[String],
-      transactionId: Option[String],
-      previousGeneration: Option[PreviousGeneration]
+    name: String,
+    kind: Kind,
+    url: Option[String],
+    pin: Option[Pin],
+    version: String,
+    digest: String,
+    installedAt: Long,
+    via: Via,
+    distribution: Distribution,
+    updatePolicy: UpdatePolicy,
+    pinned: Boolean,
+    distributionId: Option[String],
+    publisherKeyId: Option[String],
+    artifactSha256: Option[String],
+    validationSummary: Option[String],
+    transactionId: Option[String],
+    previousGeneration: Option[PreviousGeneration]
   )
 
   /** 查询结果：Known = 有账本；UnknownSource = 明确「来源不可知」（缺账本/损坏/名实不符）。 */
@@ -167,15 +168,15 @@ object PluginSourceLedger:
    * origin / trustLevel 与 §5.4 事件字段（version/digest/url/pin/meta）随本次事件重记。
    */
   def recordInstall(
-      name: String,
-      kind: Kind,
-      url: Option[String],
-      pin: Option[Pin],
-      version: String,
-      digest: String,
-      via: Via,
-      meta: InstallMeta = InstallMeta(),
-      publisherClass: Option[PublisherClass] = None
+    name: String,
+    kind: Kind,
+    url: Option[String],
+    pin: Option[Pin],
+    version: String,
+    digest: String,
+    via: Via,
+    meta: InstallMeta = InstallMeta(),
+    publisherClass: Option[PublisherClass] = None
   ): Either[String, Entry] =
     if !PluginRegistry.validPluginName(name) then Left(s"invalid plugin name '$name' — ledger entry refused")
     else if digest.trim.isEmpty then Left(s"empty digest for '$name' — ledger entry refused")
@@ -219,7 +220,7 @@ object PluginSourceLedger:
     else
       readEntry(path) match
         case Right(e) if e.name == name => Some(e)
-        case _                          => None
+        case _ => None
 
   /** 唯一的字节写实现（recordInstall 与 backfill 共用；原子替换 + 审计行）。 */
   private def writeEntry(entry: Entry): Unit =
@@ -261,9 +262,20 @@ object PluginSourceLedger:
     ).flatten
     val withEnums = optionalEnums.foldLeft(withOpt)((o, kv) => o.add(kv._1, kv._2))
     val withTime = e.distribution.lastCheckedAt.fold(withEnums)(t => withEnums.add("lastCheckedAt", t.asJson))
-    Json.fromJsonObject(e.previousGeneration.fold(withTime)(g => withTime.add("previousGeneration", Json.obj(
-      "version" -> g.version.asJson, "digest" -> g.digest.asJson, "switchedAt" -> g.switchedAt.asJson
-    ))))
+    Json.fromJsonObject(
+      e.previousGeneration.fold(withTime)(g =>
+        withTime.add(
+          "previousGeneration",
+          Json.obj(
+            "version" -> g.version.asJson,
+            "digest" -> g.digest.asJson,
+            "switchedAt" -> g.switchedAt.asJson
+          )
+        )
+      )
+    )
+
+  end entryJson
 
   private def pinJson(p: Pin): Json = p match
     case Pin.Commit(tag, commit) =>
@@ -304,8 +316,8 @@ object PluginSourceLedger:
   private def readEntry(path: os.Path): Either[String, Entry] =
     try
       io.circe.parser.parse(os.read(path)) match
-        case Left(err)    => Left(s"ledger file unparseable: ${err.message}")
-        case Right(json)  => decodeEntry(json)
+        case Left(err) => Left(s"ledger file unparseable: ${err.message}")
+        case Right(json) => decodeEntry(json)
     catch case NonFatal(e) => Left(s"ledger file unreadable (${e.getClass.getSimpleName}: ${e.getMessage})")
 
   /**
@@ -325,12 +337,16 @@ object PluginSourceLedger:
           case None | Some(Json.Null) => Right(()) // 无 schema 历史中间态：视作 1 升档，宽容不炸
           case Some(j) =>
             j.as[Int].left.map(_ => "field 'schema' must be an integer").flatMap {
-              case 1 | 2  => Right(())
-              case other  => Left(s"unknown ledger schema $other (expected: 1 | 2)")
+              case 1 | 2 => Right(())
+              case other => Left(s"unknown ledger schema $other (expected: 1 | 2)")
             }
         name <- requiredStr(c, "name")
-        kind <- requiredStr(c, "kind").flatMap(l => Kind.fromLabel(l).toRight(s"unknown ledger kind '$l' (expected: official | git | https | local)"))
-        via <- requiredStr(c, "via").flatMap(l => Via.fromLabel(l).toRight(s"unknown ledger via '$l' (expected: seed | official | git | https | local)"))
+        kind <- requiredStr(c, "kind").flatMap(l =>
+          Kind.fromLabel(l).toRight(s"unknown ledger kind '$l' (expected: official | git | https | local)")
+        )
+        via <- requiredStr(c, "via").flatMap(l =>
+          Via.fromLabel(l).toRight(s"unknown ledger via '$l' (expected: seed | official | git | https | local)")
+        )
         version <- requiredStr(c, "version")
         digest <- requiredStr(c, "digest")
         _ <- Either.cond(digest.matches(Hex64), (), s"digest must be 64-hex, got '${digest.take(12)}…'")
@@ -339,24 +355,44 @@ object PluginSourceLedger:
         pin <- decodePin(json)
         // §12.1 三轴 + 作者所有两位（闭合枚举；缺位 ⇒ via 迁移映射/默认升档）
         origin <- optionalLabel(c, "origin", Origin.fromLabel, "seed | hub | local-import | git-pinned")
-        trustLevel <- optionalLabel(c, "trustLevel", TrustLevel.fromLabel, "official-verified | catalog-signed | local-import | unknown")
+        trustLevel <- optionalLabel(
+          c,
+          "trustLevel",
+          TrustLevel.fromLabel,
+          "official-verified | catalog-signed | local-import | unknown"
+        )
         owner <- optionalLabel(c, "distributionOwner", DistributionOwner.fromLabel, "seed | hub | local")
         policy <- optionalLabel(c, "updatePolicy", UpdatePolicy.fromLabel, "check | minor | all")
         pinned <- c.downField("pinned").focus match
           case None | Some(Json.Null) => Right(false)
-          case Some(j)                => j.asBoolean.toRight("field 'pinned' must be a boolean")
+          case Some(j) => j.asBoolean.toRight("field 'pinned' must be a boolean")
         // §12.1 预留空值族 + §5.4 A 期地基字段（缺席 ≠ null）
-        publisherClass <- optionalLabel(c, "publisherClass", PublisherClass.fromLabel, "official | verified | community")
-        submissionStatus <- optionalLabel(c, "submissionStatus", SubmissionStatus.fromLabel, "published | pending-review | rejected")
+        publisherClass <- optionalLabel(
+          c,
+          "publisherClass",
+          PublisherClass.fromLabel,
+          "official | verified | community"
+        )
+        submissionStatus <- optionalLabel(
+          c,
+          "submissionStatus",
+          SubmissionStatus.fromLabel,
+          "published | pending-review | rejected"
+        )
         hubReviewId <- optionalStr(c, "hubReviewId")
         distributionId <- optionalStr(c, "distributionId")
         publisherKeyId <- optionalStr(c, "publisherKeyId")
         validationSummary <- optionalStr(c, "validationSummary")
         transactionId <- optionalStr(c, "transactionId")
-        lastCheckedAt <- c.downField("lastCheckedAt").as[Option[Long]].left.map(_ => "field 'lastCheckedAt' must be an epoch-seconds integer")
+        lastCheckedAt <- c
+          .downField("lastCheckedAt")
+          .as[Option[Long]]
+          .left
+          .map(_ => "field 'lastCheckedAt' must be an epoch-seconds integer")
         artifactSha256 <- optionalStr(c, "artifactSha256").flatMap {
-          case None    => Right(None)
-          case Some(h) => Either.cond(h.matches(Hex64), Some(h.toLowerCase), s"artifactSha256 must be 64-hex, got '${h.take(12)}…'")
+          case None => Right(None)
+          case Some(h) =>
+            Either.cond(h.matches(Hex64), Some(h.toLowerCase), s"artifactSha256 must be 64-hex, got '${h.take(12)}…'")
         }
         previousGeneration <- decodePreviousGeneration(json)
       yield
@@ -389,6 +425,8 @@ object PluginSourceLedger:
           previousGeneration = previousGeneration
         )
 
+      end for
+
   /** 可选字符串位（缺席/null ⇒ None；在位必须字符串，trim 后空串视作缺席）。 */
   private def optionalStr(c: io.circe.HCursor, field: String): Either[String, Option[String]] =
     c.downField(field).focus match
@@ -396,17 +434,18 @@ object PluginSourceLedger:
       case Some(j) =>
         j.as[String]
           .map(v => Option(v.trim).filter(_.nonEmpty))
-          .left.map(_ => s"field '$field' must be a string")
+          .left
+          .map(_ => s"field '$field' must be a string")
 
   /** 可选闭合枚举位（缺席 ⇒ None 升档；在位必须枚举内取值，否则指名 corrupt）。 */
   private def optionalLabel[T](
-      c: io.circe.HCursor,
-      field: String,
-      parse: String => Option[T],
-      expected: String
+    c: io.circe.HCursor,
+    field: String,
+    parse: String => Option[T],
+    expected: String
   ): Either[String, Option[T]] =
     optionalStr(c, field).flatMap {
-      case None    => Right(None)
+      case None => Right(None)
       case Some(l) => parse(l).toRight(s"unknown ledger $field '$l' (expected: $expected)").map(v => Some(v))
     }
 
@@ -421,7 +460,11 @@ object PluginSourceLedger:
             v <- requiredStr(gc, "version")
             d <- requiredStr(gc, "digest")
             _ <- Either.cond(d.matches(Hex64), (), s"previousGeneration.digest must be 64-hex, got '${d.take(12)}…'")
-            t <- gc.downField("switchedAt").as[Long].left.map(_ => "previousGeneration.switchedAt must be an epoch-seconds integer")
+            t <- gc
+              .downField("switchedAt")
+              .as[Long]
+              .left
+              .map(_ => "previousGeneration.switchedAt must be an epoch-seconds integer")
           yield Some(PreviousGeneration(v, d.toLowerCase, t))
 
   private def decodePin(json: Json): Either[String, Option[Pin]] =
@@ -445,13 +488,17 @@ object PluginSourceLedger:
                   )
                 )
               else Left("pin.commit must be 40-hex")
-            case (None, Some(d)) => if d.matches(Hex64) then Right(Some(Pin.DigestBasis(d.toLowerCase))) else Left("pin.digest must be 64-hex")
-            case (None, None)    => Left("pin object must carry 'commit' (git pin) or 'digest' (seed baseline pin)")
+            case (None, Some(d)) =>
+              if d.matches(Hex64) then Right(Some(Pin.DigestBasis(d.toLowerCase)))
+              else Left("pin.digest must be 64-hex")
+            case (None, None) => Left("pin object must carry 'commit' (git pin) or 'digest' (seed baseline pin)")
+
+          end match
 
   private def requiredStr(c: io.circe.HCursor, field: String): Either[String, String] =
     c.downField(field).as[Option[String]] match
-      case Left(_)      => Left(s"field '$field' must be a string")
-      case Right(None)  => Left(s"field '$field' is missing")
+      case Left(_) => Left(s"field '$field' must be a string")
+      case Right(None) => Left(s"field '$field' is missing")
       case Right(Some(v)) =>
         val t = v.trim
         if t.isEmpty then Left(s"field '$field' is empty") else Right(t)
@@ -493,6 +540,12 @@ object PluginSourceLedger:
         try
           val seedMember = seedNames.contains(p.name)
           val via = if seedMember then Via.Seed else Via.Local
+          // 从 Entry(...) 的具名实参里提出来（格式批 2026-11-21）：`installedAt =` 的实参是
+          // try/catch 时，scalafmt 3.8.6 会把 `catch case …` 与后继的 `, via = via,` 折到同一行，
+          // 产出的文本它自己也无法再解析（check 直接 parse error）。提为局部 val 后两侧都稳定。
+          val installedAt =
+            try os.mtime(os.Path(p.dir)) / 1000L
+            catch case NonFatal(_) => System.currentTimeMillis() / 1000L
           val entry = Entry(
             name = p.name,
             kind = if seedMember then Kind.Official else Kind.Local,
@@ -500,9 +553,7 @@ object PluginSourceLedger:
             pin = if seedMember then Some(Pin.DigestBasis(p.digest)) else None,
             version = p.version,
             digest = p.digest,
-            installedAt =
-              try os.mtime(os.Path(p.dir)) / 1000L
-              catch case NonFatal(_) => System.currentTimeMillis() / 1000L,
+            installedAt = installedAt,
             via = via,
             distribution = factsForLegacyVia(via),
             updatePolicy = UpdatePolicy.Check,
@@ -519,8 +570,11 @@ object PluginSourceLedger:
         catch
           case NonFatal(e) =>
             val reason = s"${e.getClass.getSimpleName}: ${e.getMessage}"
-            logger.warnSync(s"[plugin-sources] backfill failed for '${p.name}' ($reason) — stays unknown-source until re-recorded")
+            logger.warnSync(
+              s"[plugin-sources] backfill failed for '${p.name}' ($reason) — stays unknown-source until re-recorded"
+            )
             failed += (p.name -> reason)
+      end if
     }
     val report = BackfillReport(written.toList, skipped.toList, failed.toList)
     if !report.isIdle then
@@ -529,5 +583,6 @@ object PluginSourceLedger:
           s"${report.failed.size} failed — package directories untouched"
       )
     report
+  end backfill
 
 end PluginSourceLedger

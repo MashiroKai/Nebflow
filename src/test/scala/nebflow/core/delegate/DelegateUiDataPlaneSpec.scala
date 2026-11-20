@@ -189,7 +189,9 @@ class DelegateUiDataPlaneSpec extends FunSuite:
     assert(!obj.toOption.get.contains("mergeQueuePos"), "rows must not carry the retired mergeQueuePos key")
   }
 
-  test("G6: rows default window excludes history rows; ?archived=1 window is exactly the history set (state-derived settlement)") {
+  test(
+    "G6: rows default window excludes history rows; ?archived=1 window is exactly the history set (state-derived settlement)"
+  ) {
     put("delegate-nebflow-g6live001")
     // 存量归档旗 = 旧世界「已归档」的**只读兼容证据** ⇒ 状态派生读为收口 ⇒ 落历史窗。
     val ts = Some(System.currentTimeMillis())

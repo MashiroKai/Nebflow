@@ -34,21 +34,41 @@ class ProtectedStuckWatcherSpec extends CatsEffectSuite:
     val llm = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] =
         IO.raiseError(new IllegalStateException("protected watchdog must not call the model"))
-      def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None):
-          Stream[IO, StreamChunk] =
+      def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None): Stream[IO, StreamChunk] =
         Stream.raiseError[IO](new IllegalStateException("protected watchdog must not call the model"))
     for
       root <- IO.blocking(os.temp.dir(prefix = "protected-stuck-"))
       _ <- (IO.blocking(os.makeDir.all(root / "sessions")) *>
         ExecutionCommitStore.resource((root / "sessions").toNIO).use { store =>
           val session = "protected-stuck"
-          val admission = ExecutionAdmission(session, "run", "commit", "request", "attempt", "incarnation",
-            "owner", "business", "audit", Json.fromString("initial"), "input")
+          val admission = ExecutionAdmission(
+            session,
+            "run",
+            "commit",
+            "request",
+            "attempt",
+            "incarnation",
+            "owner",
+            "business",
+            "audit",
+            Json.fromString("initial"),
+            "input"
+          )
           for
             bound <- ExecutionCommitPort.admitHandle(store, admission)
             handle = bound.toOption.get
-            _ <- store.transition(ExecutionTransition(session, "run", "start", "start", handle.ref,
-              "attempt", "incarnation", ExecutionEvent.AttemptStarted))
+            _ <- store.transition(
+              ExecutionTransition(
+                session,
+                "run",
+                "start",
+                "start",
+                handle.ref,
+                "attempt",
+                "incarnation",
+                ExecutionEvent.AttemptStarted
+              )
+            )
             received <- Ref.of[IO, List[AgentCommand]](Nil)
             actor <- system.spawn(recordingLoop(received), "protected-stuck-actor")
             dispatcher <- Dispatcher.parallel[IO].allocated.map(_._1)
@@ -59,22 +79,38 @@ class ProtectedStuckWatcherSpec extends CatsEffectSuite:
             overrides <- Ref.of[IO, Map[String, ModelCandidate]](Map.empty)
             muted <- Ref.of[IO, Boolean](false)
             resources = SharedResources(
-              llm = llm, dispatcher = dispatcher,
+              llm = llm,
+              dispatcher = dispatcher,
               sessionStore = SessionStore(root / "sessions", root / "tasks"),
-              projectRoot = root, thinkingConfigRef = thinking, rateLimiter = limiter,
-              fileChangeTracker = tracker, contextWindow = 100_000, agentLibrary = new AgentLibrary(root / "agents"),
-              taskStore = FileTaskStore, historyArchiver = null, fileLockManager = locks,
-              sessionModelOverrides = overrides, providerRegistry = null,
-              healthMonitor = ProviderHealthMonitor(null), actorSystem = system, voiceMutedRef = muted,
-              executionCommitPort = store)
+              projectRoot = root,
+              thinkingConfigRef = thinking,
+              rateLimiter = limiter,
+              fileChangeTracker = tracker,
+              contextWindow = 100_000,
+              agentLibrary = new AgentLibrary(root / "agents"),
+              taskStore = FileTaskStore,
+              historyArchiver = null,
+              fileLockManager = locks,
+              sessionModelOverrides = overrides,
+              providerRegistry = null,
+              healthMonitor = ProviderHealthMonitor(null),
+              actorSystem = system,
+              voiceMutedRef = muted,
+              executionCommitPort = store
+            )
             now = System.currentTimeMillis()
             threshold = 10 * 60 * 1000L
-            record = AgentRecord(sessionId = session, ref = actor, kind = AgentKind.Delegate,
-              rootSessionId = "root", status = AgentStatus.Processing,
-              startedAt = now - 2 * threshold, lastActivityMs = now - threshold - 1000)
+            record = AgentRecord(
+              sessionId = session,
+              ref = actor,
+              kind = AgentKind.Delegate,
+              rootSessionId = "root",
+              status = AgentStatus.Processing,
+              startedAt = now - 2 * threshold,
+              lastActivityMs = now - threshold - 1000
+            )
             _ <- resources.agentRegistry.set(Map(session -> record))
-            _ <- TaskStuckWatcher.scan(resources, new WsHub(), threshold,
-              cwdProbe = _ => IO.pure(Some(true)))
+            _ <- TaskStuckWatcher.scan(resources, new WsHub(), threshold, cwdProbe = _ => IO.pure(Some(true)))
             commands <- received.get
             chain <- store.observeChain(session, "run")
             _ <- system.stopAll
@@ -84,6 +120,9 @@ class ProtectedStuckWatcherSpec extends CatsEffectSuite:
               case ExecutionChainObservation.Verified(state) =>
                 assertEquals(state.phase, "active", "the authority keeps the existing attempt")
               case other => fail(s"unexpected chain: $other")
+          end for
         }).guarantee(system.stopAll *> IO.blocking(os.remove.all(root)))
     yield ()
+    end for
   }
+end ProtectedStuckWatcherSpec

@@ -141,8 +141,10 @@ class MountedProjectsWiringSpec extends CatsEffectSuite:
   private def textOf(req: LlmRequest): String =
     req.messages.map(_.textContent).mkString("\n")
 
-  /** cache-warmup 批（2026-11-06）：REQUEST-ONLY 提醒段走 requestOnlyContext
-    * （适配器排在持久历史断点之后上线）——不再出现在 messages 里。 */
+  /**
+   * cache-warmup 批（2026-11-06）：REQUEST-ONLY 提醒段走 requestOnlyContext
+   * （适配器排在持久历史断点之后上线）——不再出现在 messages 里。
+   */
   private def contextTextOf(req: LlmRequest): String =
     req.requestOnlyContext.map(_.textContent).mkString("\n")
 
@@ -201,9 +203,18 @@ class MountedProjectsWiringSpec extends CatsEffectSuite:
         // Mid-session mount → non-lifecycle delta → projects reminder rides in
         // REQUEST-ONLY assembly segment (requestOnlyContext), NEVER in the
         // persisted messages (cache-warmup 批：断点只钉持久历史，临时段排断点后)。
-        assert(contextTextOf(req2).contains("Mounted projects changed"), s"expected projects reminder in requestOnlyContext:\n${contextTextOf(req2)}")
-        assert(contextTextOf(req2).contains("+ voice-recognition-test: STT"), s"expected + delta line:\n${contextTextOf(req2)}")
-        assert(!textOf(req2).contains("Mounted projects changed"), "projects reminder must NOT leak into persisted messages")
+        assert(
+          contextTextOf(req2).contains("Mounted projects changed"),
+          s"expected projects reminder in requestOnlyContext:\n${contextTextOf(req2)}"
+        )
+        assert(
+          contextTextOf(req2).contains("+ voice-recognition-test: STT"),
+          s"expected + delta line:\n${contextTextOf(req2)}"
+        )
+        assert(
+          !textOf(req2).contains("Mounted projects changed"),
+          "projects reminder must NOT leak into persisted messages"
+        )
       program.unsafeRunSync()
     finally
       ProjectRuntimeRegistry.clear.unsafeRunSync()

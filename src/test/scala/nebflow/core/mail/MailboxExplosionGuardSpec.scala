@@ -98,10 +98,13 @@ class MailboxExplosionGuardSpec extends CatsEffectSuite:
       )
       os.write.over(dir / f"$i%012d-$id.json", e.asJson.noSpaces)
     }
+  end seedFull
 
   // ── G1：满箱后第 N+1 条新条目被拒 ───────────────────────────────────────
 
-  test("G1: at pending depth == MaxPending the NEXT new entry is Failed(\"mailbox-full\") — not on disk, depth unchanged, never silent") {
+  test(
+    "G1: at pending depth == MaxPending the NEXT new entry is Failed(\"mailbox-full\") — not on disk, depth unchanged, never silent"
+  ) {
     seedFull
     for
       depthBefore <- SessionMailbox.depth(fullSid)
@@ -110,7 +113,11 @@ class MailboxExplosionGuardSpec extends CatsEffectSuite:
       names <- pendingNames(fullSid)
     yield
       // 非空洞前置：「满了」这件事本身必须先为真
-      assertEquals(SessionMailbox.maxPending, seedCount, "the live gate value must equal the seeded depth (else 'full' is meaningless)")
+      assertEquals(
+        SessionMailbox.maxPending,
+        seedCount,
+        "the live gate value must equal the seeded depth (else 'full' is meaningless)"
+      )
       assertEquals(depthBefore, seedCount, "precondition: the pending depth must sit exactly at MaxPending")
       assertEquals(
         clue(res),
@@ -123,11 +130,14 @@ class MailboxExplosionGuardSpec extends CatsEffectSuite:
         s"the rejected entry must NOT be on disk (explosion guard never half-writes), got ${names.count(_.contains("overflow"))} hits"
       )
       assertEquals(clue(names.size), seedCount, "no file added, none removed")
+    end for
   }
 
   // ── G2：满箱时合条 / 幂等仍在闸之前生效（闸不误伤）─────────────────────
 
-  test("G2: while the box is FULL, Coalesced (merge) and AlreadyPresent still reach their old outcomes — the gate must not misfire") {
+  test(
+    "G2: while the box is FULL, Coalesced (merge) and AlreadyPresent still reach their old outcomes — the gate must not misfire"
+  ) {
     seedFull
     for
       depthBefore <- SessionMailbox.depth(fullSid)
@@ -136,11 +146,16 @@ class MailboxExplosionGuardSpec extends CatsEffectSuite:
       depthAfter <- SessionMailbox.depth(fullSid)
       pending <- SessionMailbox.scanPending(fullSid)
     yield
-      assertEquals(SessionMailbox.maxPending, seedCount, "the live gate value must equal the seeded depth (the box is genuinely FULL)")
+      assertEquals(
+        SessionMailbox.maxPending,
+        seedCount,
+        "the live gate value must equal the seeded depth (the box is genuinely FULL)"
+      )
       assertEquals(depthBefore, seedCount, "precondition: the box is FULL before the merge attempt")
       val c = merged match
         case SessionMailbox.MailResult.Coalesced(e) => e
-        case other => fail(
+        case other =>
+          fail(
             s"a full box must still coalesce (already-present entries return BEFORE the depth gate), got $other"
           )
       assertEquals(clue(c.seq), 1L, "merge rewrites the existing entry in place (seq/FIFO position unchanged)")
@@ -152,11 +167,14 @@ class MailboxExplosionGuardSpec extends CatsEffectSuite:
       )
       assertEquals(depthAfter, seedCount, "neither branch adds an entry (nothing was dropped either)")
       assertEquals(clue(pending.size), seedCount, "one entry mutated in place, zero added, zero lost")
+    end for
   }
 
   // ── G3：-D 调到不可达 ⇒ 常规三路径与今日一致 ────────────────────────────
 
-  test("G3: with -D nebflow.mailbox.maxPending set unreachable, Enqueued / AlreadyPresent / Coalesced behave exactly as before the gate") {
+  test(
+    "G3: with -D nebflow.mailbox.maxPending set unreachable, Enqueued / AlreadyPresent / Coalesced behave exactly as before the gate"
+  ) {
     val had = sys.props.get(limitKey)
     // 只**调大**（对并行套件只会更宽松），测后逐字还原。
     sys.props(limitKey) = "1000000"

@@ -1820,29 +1820,38 @@ final class FriendService(
   ): IO[Either[String, List[MessageSummary]]] =
     withClient(_.listMessages(conversationId, after, limit))
 
-  private val socialSearchCache = Ref.unsafe[IO, Map[(String, String, List[String]), (Long, SocialSearchScan.Result)]](Map.empty)
+  private val socialSearchCache =
+    Ref.unsafe[IO, Map[(String, String, List[String]), (Long, SocialSearchScan.Result)]](Map.empty)
 
   private[nebflow] def searchSocial(query: String, ids: List[String]): IO[Either[String, SocialSearchScan.Result]] =
     currentClient.flatMap {
       case None => IO.pure(Left("Not logged in"))
-      case Some(client) => client.currentSessionToken match
-        case None => IO.pure(Left("Not logged in"))
-        case Some(token) =>
-          val sessionKey = java.util.Base64.getEncoder.encodeToString(
-            java.security.MessageDigest.getInstance("SHA-256").digest(token.getBytes(java.nio.charset.StandardCharsets.UTF_8)))
-          val key = (sessionKey, query, ids.distinct.take(24))
-          IO.monotonic.map(_.toMillis).flatMap { now =>
-            socialSearchCache.get.flatMap { cache =>
-              cache.get(key).filter(_._1 > now) match
-                case Some((_, result)) => IO.pure(Right(result))
-                case None =>
-                  SocialSearchScan.search(ids, query, (id, after, limit) => client.listMessages(id, after, limit)).flatMap { result =>
-                    if result.failed then IO.pure(Right(result))
-                    else socialSearchCache.update(m => (m.filter(_._2._1 > now).take(63) + (key -> (now + 30000L, result))))
-                      .as(Right(result))
-                  }
+      case Some(client) =>
+        client.currentSessionToken match
+          case None => IO.pure(Left("Not logged in"))
+          case Some(token) =>
+            val sessionKey = java.util.Base64.getEncoder.encodeToString(
+              java.security.MessageDigest
+                .getInstance("SHA-256")
+                .digest(token.getBytes(java.nio.charset.StandardCharsets.UTF_8))
+            )
+            val key = (sessionKey, query, ids.distinct.take(24))
+            IO.monotonic.map(_.toMillis).flatMap { now =>
+              socialSearchCache.get.flatMap { cache =>
+                cache.get(key).filter(_._1 > now) match
+                  case Some((_, result)) => IO.pure(Right(result))
+                  case None =>
+                    SocialSearchScan
+                      .search(ids, query, (id, after, limit) => client.listMessages(id, after, limit))
+                      .flatMap { result =>
+                        if result.failed then IO.pure(Right(result))
+                        else
+                          socialSearchCache
+                            .update(m => (m.filter(_._2._1 > now).take(63) + (key -> (now + 30000L, result))))
+                            .as(Right(result))
+                      }
+              }
             }
-          }
     }
 
   def lookupUser(q: String): IO[Either[String, Json]] = withClient(_.lookupUser(q))

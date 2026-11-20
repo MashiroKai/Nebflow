@@ -3,6 +3,7 @@ package nebflow.core.tools
 import nebflow.actor.RootAgentIdentity
 
 class ToolExecutionIdentitySpec extends munit.FunSuite:
+
   test("identity is absent by default and a minted root identity is recognized") {
     val plain = ToolContext(projectRoot = "/tmp")
     val rootDef = nebflow.actor.AgentDef(name = RootAgentIdentity.Name, description = "", tools = Nil)
@@ -34,3 +35,4 @@ class ToolExecutionIdentitySpec extends munit.FunSuite:
     intercept[IllegalArgumentException](ToolExecutionIdentity.issue("Nebula", "agent"))
     intercept[IllegalArgumentException](ToolExecutionIdentity.issue("worker", "root"))
   }
+end ToolExecutionIdentitySpec

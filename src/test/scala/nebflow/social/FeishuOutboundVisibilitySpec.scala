@@ -48,6 +48,7 @@ class FeishuOutboundVisibilitySpec extends CatsEffectSuite:
     )
 
   private final class RecordingCtx(sessions: List[nebflow.shared.SessionMeta]) extends nebflow.bridge.BridgeContext:
+
     def injectMessage(
       sessionId: String,
       content: String,
@@ -62,6 +63,7 @@ class FeishuOutboundVisibilitySpec extends CatsEffectSuite:
   /** 记下每次 send 的 `(chatId, text)`；读数由 `answer(第 n 次调用)` 决定。 */
   private final class RecordingSend(answer: Int => FeishuChannel.SendResult):
     val calls: Ref[IO, List[(String, String)]] = Ref.unsafe[IO, List[(String, String)]](Nil)
+
     val fn: FeishuBridgePlugin.Send = (_, _, _, chatId, text) =>
       calls.modify(cs => (cs :+ ((chatId, text)), cs.size + 1)).map(answer)
 
@@ -128,10 +130,10 @@ class FeishuOutboundVisibilitySpec extends CatsEffectSuite:
         _ <- p.onAgentEvent("s1", done("s1"))
         cs <- rec.calls.get
       yield cs).unsafeRunSync()
-      assertEquals(calls, Nil,
-        "无块 ⇒ 一条都不发（作者令：不要回退成发全文，线上语义一字不改）")
+      assertEquals(calls, Nil, "无块 ⇒ 一条都不发（作者令：不要回退成发全文，线上语义一字不改）")
       val fired = errors(appender)
-      val line = fired.find(_.contains("turn text suppressed"))
+      val line = fired
+        .find(_.contains("turn text suppressed"))
         .getOrElse(fail(s"作者实证的那次静默丢失必须有 ERROR，got $fired"))
       assert(line.contains("channel=feishu"), s"ERROR 必带渠道：$line")
       assert(line.contains("to=oc_1"), s"ERROR 必带投递目标：$line")
@@ -188,7 +190,7 @@ class FeishuOutboundVisibilitySpec extends CatsEffectSuite:
         calls <- rec.calls.get
       yield calls).unsafeRunSync() match
         case (_, text) :: Nil => assertEquals(text, "普通会话的全文")
-        case other            => fail(s"非主会话应原文直通，got $other")
+        case other => fail(s"非主会话应原文直通，got $other")
       assert(!errors(appender).exists(_.contains("turn text suppressed")), s"${errors(appender)}")
     }
   }

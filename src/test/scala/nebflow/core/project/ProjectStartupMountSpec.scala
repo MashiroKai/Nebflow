@@ -64,14 +64,25 @@ class ProjectStartupMountSpec extends CatsEffectSuite:
     assert(localMount >= 0 && localChain > localMount, "local startup order must be preserved")
     assert(executor > localChain && wired > executor, "device executor and resource wiring follow local recovery")
     assert(remoteMount > wired, "remote mounts must receive the wired resources")
-    assertEquals(flat.sliding("mountStartupProjects(sharedResourcesWithBridge, remote = true)".length)
-      .count(_ == "mountStartupProjects(sharedResourcesWithBridge, remote = true)"), 1, "remote phase runs once")
+    assertEquals(
+      flat
+        .sliding("mountStartupProjects(sharedResourcesWithBridge, remote = true)".length)
+        .count(_ == "mountStartupProjects(sharedResourcesWithBridge, remote = true)"),
+      1,
+      "remote phase runs once"
+    )
     assert(flat.contains("ProjectStore.deviceOrigin(pd).isDefined == remote"), "phases must be disjoint")
     assert(flat.contains("if bootRoot.id.isEmpty then"), "both phases must reject an empty root")
     assert(flat.contains("bootRoot.id, actorSystem, resources,"), "mount uses the boot root and phase resources")
     assert(flat.contains("startupProjectWake(remote = false)"), "early wake must only visit local projects")
-    assert(flat.contains("startupRemoteRecovery *> startupProjectWake(remote = true)"), "remote recovery precedes remote wake")
-    assert(flat.contains("startupRemoteMount *> projectTtlScanner *>"), "periodic scanning waits for both mount/recovery phases")
+    assert(
+      flat.contains("startupRemoteRecovery *> startupProjectWake(remote = true)"),
+      "remote recovery precedes remote wake"
+    )
+    assert(
+      flat.contains("startupRemoteMount *> projectTtlScanner *>"),
+      "periodic scanning waits for both mount/recovery phases"
+    )
     assertEquals("\\*> projectTtlScanner \\*>".r.findAllIn(flat).length, 1, "periodic scanner starts exactly once")
   }
 

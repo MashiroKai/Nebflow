@@ -55,13 +55,15 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
 
   /** Query a job through the tool face (same face the model uses). */
   private def query(jobId: String): IO[String] =
-    BashTool.call(
-      JsonObject("background_job_id" -> jobId.asJson, "timeout" -> 1.asJson),
-      ToolContext(projectRoot = "/tmp")
-    ).map {
-      case Right(out) => out
-      case Left(e) => fail(s"background query failed: ${e.message}")
-    }
+    BashTool
+      .call(
+        JsonObject("background_job_id" -> jobId.asJson, "timeout" -> 1.asJson),
+        ToolContext(projectRoot = "/tmp")
+      )
+      .map {
+        case Right(out) => out
+        case Left(e) => fail(s"background query failed: ${e.message}")
+      }
 
   /** Poll the query face until `want` appears or the deadline passes. */
   private def pollUntil(jobId: String, want: String, deadline: FiniteDuration): IO[String] =
@@ -93,7 +95,9 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
     }
   }
 
-  test("N-2+N-4 today's clone regression: SILENT no-output command auto-backgrounds at the 2s budget (not stall-killed), receipt carries job id + query hint, result delivered on completion") {
+  test(
+    "N-2+N-4 today's clone regression: SILENT no-output command auto-backgrounds at the 2s budget (not stall-killed), receipt carries job id + query hint, result delivered on completion"
+  ) {
     // 克隆形态：运行期零输出零 CPU（python sleep = poll 等待，进程字符串**不含**
     // `sleep <数字>`，不享受 SleepCommandRe 的 ceiling 豁免——真刀真枪过 ceiling 面；
     // 子进程 stdin=/dev/null，故不用 `read -t`——它会瞬间 EOF）。
@@ -133,7 +137,9 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
     yield ())
   }
 
-  test("N-3 OLD-face control (对照): same silent command with NO budget hits the 600s-class ceiling kill — the incident path") {
+  test(
+    "N-3 OLD-face control (对照): same silent command with NO budget hits the 600s-class ceiling kill — the incident path"
+  ) {
     // 压缩 ceiling（4000ms 判死 / 1s 采样），预算保持缺省（300s 未到）⇒
     // 旧面行为 = 前台阶段被 ceiling 杀。这就是当日事故的精确复现形态
     // （预算从未到点、停滞阈值先到、结果 = 杀）。
@@ -211,7 +217,9 @@ class BashForegroundBudgetSpec extends CatsEffectSuite:
     yield ())
   }
 
-  test("N-6 explicit timeout is honored as-is and may exceed the configured budget (foreground completion past the budget; auto-background still the only deadline outcome)") {
+  test(
+    "N-6 explicit timeout is honored as-is and may exceed the configured budget (foreground completion past the budget; auto-background still the only deadline outcome)"
+  ) {
     // 预算 2s + 显式 timeout 60min + 4s 命令 ⇒ 不再被 min 钳到 2s：前台等满
     // ~4s 真结果返回（绝无 [Background job started]）。
     val input = JsonObject(

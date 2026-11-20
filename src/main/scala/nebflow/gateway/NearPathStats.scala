@@ -57,11 +57,14 @@ object NearPathStats:
   private val hitCount = new AtomicLong(0L)
   private val missCount = new AtomicLong(0L)
   private val redeemedCount = new AtomicLong(0L)
+
   /** 最近一次同向事件的时间戳（epoch ms；0 = 从无）。 */
   private val hitLastAt = new AtomicLong(0L)
   private val missLastAt = new AtomicLong(0L)
+
   /** 归一化原因 → 次数（hit/miss 合并在同一张表：作者要的是「为什么没走上去」的分布）。 */
   private val reasons = new ConcurrentHashMap[String, AtomicLong]()
+
   /** per-IP 滑动分钟窗：值 = `minute * 1000 + count`（count 上限 999，锁自由）。 */
   private val windows = new ConcurrentHashMap[String, AtomicLong]()
 
@@ -100,6 +103,10 @@ object NearPathStats:
                 Response[IO](Status.NoContent)
       }
 
+    end if
+
+  end event
+
   /** 计数 + INFO 行（单增量；日志是同步面，不改变应答语义）。 */
   private def accept(event: String, reason: String, port: Option[Int]): Unit =
     val now = System.currentTimeMillis()
@@ -116,6 +123,8 @@ object NearPathStats:
     // 路由（已经在线程池里），用 `unsafeRunAndForget` 之外的唯一零风险选择是同步版
     // `infoSync`（同 ConnGuard/GatewayMain 既有的同步日志面）。
     logger.infoSync(line)
+
+  end accept
 
   private def bumpReason(reason: String): Unit =
     val key =

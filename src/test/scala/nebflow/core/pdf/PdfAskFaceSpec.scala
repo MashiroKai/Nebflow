@@ -24,7 +24,9 @@ class PdfAskFaceSpec extends CatsEffectSuite:
 
   private def pythonReady: Boolean =
     os.exists(fixtureScript) &&
-      scala.util.Try(os.proc(python, "-c", "import pdfplumber, pypdf").call(check = false).exitCode == 0).getOrElse(false)
+      scala.util
+        .Try(os.proc(python, "-c", "import pdfplumber, pypdf").call(check = false).exitCode == 0)
+        .getOrElse(false)
 
   private lazy val fixtureDir: os.Path =
     val dir = os.temp.dir(prefix = "pdf-fx-face-")
@@ -93,7 +95,10 @@ class PdfAskFaceSpec extends CatsEffectSuite:
         _ = assert(nonAsk.left.toOption.exists(_.message.contains("PDF_PAGE_FORBIDDEN")))
         noBinding <- PdfPageTool.call(JsonObject("page" -> 1.asJson), ctxOf("ask-deadbeef"))
         _ = assert(noBinding.isLeft)
-        _ = assert(noBinding.left.toOption.exists(_.message.contains("no file binding")), s"expected no-binding refusal, got: $noBinding")
+        _ = assert(
+          noBinding.left.toOption.exists(_.message.contains("no file binding")),
+          s"expected no-binding refusal, got: $noBinding"
+        )
         wrongType <- PdfPageTool.call(JsonObject("page" -> 1.asJson), ctxOf(mdBinding.id))
         _ = assert(wrongType.isLeft)
         _ = assert(wrongType.left.toOption.exists(_.message.contains("not a PDF")))
@@ -150,3 +155,4 @@ class PdfAskFaceSpec extends CatsEffectSuite:
       io.unsafeRunSync()
     }
   }
+end PdfAskFaceSpec

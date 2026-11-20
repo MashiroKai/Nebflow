@@ -53,7 +53,9 @@ class DelegateDeviceRoutingSpec extends CatsEffectSuite:
     assert(r.fold(_.message, _ => "").contains("DELEGATE_PROJECT_UNMOUNTED"))
   }
 
-  test("remote-origin definition (unmounted = expected) routes to the origin device; no device network = DELEGATE_DEVICE_OFFLINE, never a silent local seat") {
+  test(
+    "remote-origin definition (unmounted = expected) routes to the origin device; no device network = DELEGATE_DEVICE_OFFLINE, never a silent local seat"
+  ) {
     val ws = "/remote-machines/kaiyu/repo"
     val defJson = s"""{
       |"name": "cross-dev",

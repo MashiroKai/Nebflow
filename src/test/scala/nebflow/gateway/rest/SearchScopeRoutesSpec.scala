@@ -50,12 +50,12 @@ class SearchScopeRoutesSpec extends CatsEffectSuite:
   os.makeDir.all(tempRoot / "sessions")
 
   private val sessionsDir = tempRoot / "sessions"
-  private val store       = SessionStore(sessionsDir, tempRoot / "tasks")
-  private val adapter     = new ChatSearchAdapter(sessionsDir)
+  private val store = SessionStore(sessionsDir, tempRoot / "tasks")
+  private val adapter = new ChatSearchAdapter(sessionsDir)
 
   /** 两只关键词：分开种在主会话 / 后台 agent 会话里，互不交叉。 */
   private val MainKw = "主会专属词灯塔"
-  private val BgKw   = "后台专属词流星"
+  private val BgKw = "后台专属词流星"
 
   private val NullBackend =
     null.asInstanceOf[sttp.client4.StreamBackend[IO, sttp.capabilities.fs2.Fs2Streams[IO]]]
@@ -76,8 +76,8 @@ class SearchScopeRoutesSpec extends CatsEffectSuite:
       fileLockManager = FileLockManager.create.unsafeRunSync(),
       sessionModelOverrides = cats.effect.Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
       providerRegistry = new nebflow.llm.ProviderRegistry(
-        cats.effect.Ref.unsafe[IO, NebflowServiceConfig](
-          NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+        cats.effect.Ref
+          .unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
         NullBackend
       ),
       healthMonitor = nebflow.llm.ProviderHealthMonitor(null),
@@ -114,28 +114,46 @@ class SearchScopeRoutesSpec extends CatsEffectSuite:
     val meta = store.createSession("收窄批主会话").unsafeRunSync()
     mainId = meta.id
     store
-      .appendUiMessages(mainId, List(
-        UiMessage.User(text = s"更早批次的历史行：$MainKw", timestamp = 1000L),
-        UiMessage.Ai(text = "主会话回答", timestamp = 1100L)
-      ))
+      .appendUiMessages(
+        mainId,
+        List(
+          UiMessage.User(text = s"更早批次的历史行：$MainKw", timestamp = 1000L),
+          UiMessage.Ai(text = "主会话回答", timestamp = 1100L)
+        )
+      )
       .unsafeRunSync()
     store.flushPendingUiWrites.unsafeRunSync()
     // 后台 agent 会话：只写 .ui.json（索引从不登记——生产同形）
     bgIds.foreach { sid =>
-      os.write(sessionsDir / s"$sid.ui.json",
-        List(UiMessage.User(text = s"后台过程行：$BgKw", timestamp = 2000L),
-             UiMessage.Ai(text = "后台回答", timestamp = 2100L)).asJson.noSpaces)
+      os.write(
+        sessionsDir / s"$sid.ui.json",
+        List(
+          UiMessage.User(text = s"后台过程行：$BgKw", timestamp = 2000L),
+          UiMessage.Ai(text = "后台回答", timestamp = 2100L)
+        ).asJson.noSpaces
+      )
     }
     // 索引入口：注册真 adapter（tempRoot 下落 search-index/chat.db）
     SearchIndexService.unsafeResetForTests()
     SearchIndexService.register(adapter, tempRoot).unsafeRunSync()
     // 旧库残留：本批之前入库的后台会话文档（直接灌库 = 模拟改前索引）
-    SearchIndexService.unsafeInsertDocs("chat", bgIds.map { sid =>
-      SearchIndexService.IndexDoc(sid = sid, ord = 0, kind = "message", ts = 2000L,
-        text = s"旧库残留 $BgKw", extra = """{"role":"ai"}""")
-    })
+    SearchIndexService.unsafeInsertDocs(
+      "chat",
+      bgIds.map { sid =>
+        SearchIndexService.IndexDoc(
+          sid = sid,
+          ord = 0,
+          kind = "message",
+          ts = 2000L,
+          text = s"旧库残留 $BgKw",
+          extra = """{"role":"ai"}"""
+        )
+      }
+    )
     // 主会话入索引（真 rebuild 路径 —— A2 的前提）
     SearchIndexService.fullRebuild("chat", List(mainId)).unsafeRunSync()
+
+  end beforeAll
 
   override def afterAll(): Unit =
     SearchIndexService.unsafeResetForTests()
@@ -159,7 +177,10 @@ class SearchScopeRoutesSpec extends CatsEffectSuite:
     (h.flatMap(_.hcursor.downField("sid").as[String].toOption), j.hcursor.downField("total").as[Int].getOrElse(-1))
 
   private def sessionIds(path: String): List[String] =
-    serve(path).hcursor.downField("sessions").as[List[Json]].getOrElse(Nil)
+    serve(path).hcursor
+      .downField("sessions")
+      .as[List[Json]]
+      .getOrElse(Nil)
       .flatMap(_.hcursor.downField("id").as[String].toOption)
 
   // ── 引擎甲：索引查询 API ──────────────────────────────────────────────────
@@ -232,20 +253,22 @@ class SearchScopeRoutesSpec extends CatsEffectSuite:
       app(req(path)).unsafeRunSync().bodyText.compile.string.unsafeRunSync()
     val files = Map(
       "sessions-search-scope.json" -> raw("/api/sessions?includeUnindexed=1"),
-      "sessions-full.json"         -> raw("/api/sessions?includeUnindexed=1&includeBgAgents=1"),
-      "history-main.json"          -> raw(s"/api/sessions/${enc(mainId)}/history"),
-      "search-main.json"           -> raw(s"/api/search/chat?q=${enc(MainKw)}&kinds=message&limit=200"),
-      "search-bg.json"             -> raw(s"/api/search/chat?q=${enc(BgKw)}&kinds=message&limit=200")
+      "sessions-full.json" -> raw("/api/sessions?includeUnindexed=1&includeBgAgents=1"),
+      "history-main.json" -> raw(s"/api/sessions/${enc(mainId)}/history"),
+      "search-main.json" -> raw(s"/api/search/chat?q=${enc(MainKw)}&kinds=message&limit=200"),
+      "search-bg.json" -> raw(s"/api/search/chat?q=${enc(BgKw)}&kinds=message&limit=200")
     )
     files.foreach { case (name, body) => os.write.over(dir / name, body) }
     // 摘要读数：实拍脚本据此断言（与上面 A/B 组同源）
-    os.write.over(dir / "README.txt",
+    os.write.over(
+      dir / "README.txt",
       s"""# 会话搜索范围收窄批 · 真响应体（由 SearchScopeRoutesSpec E1 导出）
          |主会话 id = $mainId
          |主会话关键词 = $MainKw（search-main.json 命中数 = 1）
          |后台 agent 关键词 = $BgKw（search-bg.json 命中数 = 0）
          |后台 agent 会话（只在 sessions-full.json 里出现）= ${bgIds.mkString(", ")}
-         |""".stripMargin)
+         |""".stripMargin
+    )
     assert(os.exists(dir / "search-bg.json"))
   }
 

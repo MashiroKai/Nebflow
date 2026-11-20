@@ -163,7 +163,9 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
       assert(ns.exists(_.contains("Downloads")), "and it must not have been renamed away")
     }
 
-  test("HOUSE-deep. a REAL deep directory is no longer cut at 200 (in-flight reading pinned)".tag(munit.Tag("host-smoke"))):
+  test(
+    "HOUSE-deep. a REAL deep directory is no longer cut at 200 (in-flight reading pinned)".tag(munit.Tag("host-smoke"))
+  ):
     assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for real-home smoke")
     // The heaviest REAL directory this host reaches from the picker (measured:
     // 855 dirs). At the old cap this frame held 200 of 855 and said nothing.

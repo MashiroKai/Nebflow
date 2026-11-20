@@ -81,8 +81,7 @@ object ExternalOpenRoutes:
     tokenRef: Ref[IO, String],
     sessions: GatewaySessionStore,
     policy: NfPathPolicy = NfPathPolicy.memoized(),
-    fetchImpl: (String, Path) => IO[Either[Refusal, ExternalFetch.Outcome]] = (u, tmp) =>
-      ExternalFetch.fetch(u, tmp)
+    fetchImpl: (String, Path) => IO[Either[Refusal, ExternalFetch.Outcome]] = (u, tmp) => ExternalFetch.fetch(u, tmp)
   ): HttpRoutes[IO] = HttpRoutes.of[IO] { case req @ POST -> Root / "api" / "nf-external" / "open" =>
     tokenRef.get
       .flatMap(t => GatewayAuth.authenticate(req, t, sessions, GatewayAuth.Rails.WsAuth))
@@ -158,6 +157,7 @@ object ExternalOpenRoutes:
                 ).map(_.putHeaders(Header.Raw(CIString("Cache-Control"), "no-store")))
             }
     }
+  end localLeg
 
   // ────────────────────────────────────────────────────────────────────────
   // URL 腿
@@ -206,13 +206,18 @@ object ExternalOpenRoutes:
             )
           )
         yield resp.putHeaders(Header.Raw(CIString("Cache-Control"), "no-store"))
+        end for
     }
 
-  /** TTL 清账（best effort：失败只记一行 warn，绝不影响本次打开）。
-    *
-    * 顺序有坑：`Files.walk` 的流必须在**删除之前**关闭——边遍历边删同一个目录，
-    * macOS 上会拿到 `DirectoryNotEmptyException`（懒遍历仍持着目录句柄）。所以先
-    * 收成清单、关流，再深→浅删。 */
+  end urlLeg
+
+  /**
+   * TTL 清账（best effort：失败只记一行 warn，绝不影响本次打开）。
+   *
+   * 顺序有坑：`Files.walk` 的流必须在**删除之前**关闭——边遍历边删同一个目录，
+   * macOS 上会拿到 `DirectoryNotEmptyException`（懒遍历仍持着目录句柄）。所以先
+   * 收成清单、关流，再深→浅删。
+   */
   private def sweepExpired(root: Path): IO[Int] =
     IO.blocking {
       val now = System.currentTimeMillis()

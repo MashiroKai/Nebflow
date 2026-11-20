@@ -94,6 +94,8 @@ object FriendsSeal:
       s"[friends-seal] features.friends latch: $state (startup latch — a config edit takes effect on restart)"
     )
 
+  end initFromDisk
+
   /**
    * Pure config-parse half of the latch (spec-visible; `initFromDisk` is its
    * only production caller): POST-FLIP semantics — ONLY the literal boolean

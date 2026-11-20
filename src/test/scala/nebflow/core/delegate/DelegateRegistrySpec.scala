@@ -107,10 +107,17 @@ class DelegateRegistrySpec extends CatsEffectSuite:
       )
       assertEquals(DelegateWorkReport.mergeDiffStat(rec), None)
     finally os.remove.all(repo)
+    end try
   }
 
   test("aggregateDiffStat counts duplicate merge OIDs once and preserves each child detail") {
-    val first = DelegateWorkReport.MergeDiffStat("abc1234", 10, 4, "a" * 40, List(DelegateWorkReport.FileDiffStat("same.scala", 10, 4)))
+    val first = DelegateWorkReport.MergeDiffStat(
+      "abc1234",
+      10,
+      4,
+      "a" * 40,
+      List(DelegateWorkReport.FileDiffStat("same.scala", 10, 4))
+    )
     val duplicate = first.copy(commit = "abc1234")
     val children = List(
       DelegateWorkReport.ChildDiffStat("child-a", "root", "/a", None, Some(first), partial = false),
@@ -123,8 +130,20 @@ class DelegateRegistrySpec extends CatsEffectSuite:
   }
 
   test("aggregateDiffStat counts same file once across distinct merge commits") {
-    val a = DelegateWorkReport.MergeDiffStat("aaa1111", 8, 2, "a" * 40, List(DelegateWorkReport.FileDiffStat("shared.scala", 8, 2)))
-    val b = DelegateWorkReport.MergeDiffStat("bbb2222", 3, 7, "b" * 40, List(DelegateWorkReport.FileDiffStat("shared.scala", 3, 7)))
+    val a = DelegateWorkReport.MergeDiffStat(
+      "aaa1111",
+      8,
+      2,
+      "a" * 40,
+      List(DelegateWorkReport.FileDiffStat("shared.scala", 8, 2))
+    )
+    val b = DelegateWorkReport.MergeDiffStat(
+      "bbb2222",
+      3,
+      7,
+      "b" * 40,
+      List(DelegateWorkReport.FileDiffStat("shared.scala", 3, 7))
+    )
     val childA = DelegateWorkReport.ChildDiffStat("writer-a", "root", "/a", None, Some(a), partial = false)
     val childB = DelegateWorkReport.ChildDiffStat("writer-b", "root", "/b", None, Some(b), partial = false)
     val aggregate = DelegateWorkReport.aggregateChildren(List(childA, childB))
@@ -134,16 +153,30 @@ class DelegateRegistrySpec extends CatsEffectSuite:
   }
 
   test("aggregateDiffStat sums disjoint files, resolves ties deterministically, and retains opaque legacy totals") {
-    val a = DelegateWorkReport.MergeDiffStat("aaa1111", 10, 0, "a" * 40, List(
-      DelegateWorkReport.FileDiffStat("shared.scala", 5, 0),
-      DelegateWorkReport.FileDiffStat("only-a.scala", 5, 0)
-    ))
-    val b = DelegateWorkReport.MergeDiffStat("bbb2222", 10, 0, "b" * 40, List(
-      DelegateWorkReport.FileDiffStat("shared.scala", 5, 0),
-      DelegateWorkReport.FileDiffStat("only-b.scala", 5, 0)
-    ))
+    val a = DelegateWorkReport.MergeDiffStat(
+      "aaa1111",
+      10,
+      0,
+      "a" * 40,
+      List(
+        DelegateWorkReport.FileDiffStat("shared.scala", 5, 0),
+        DelegateWorkReport.FileDiffStat("only-a.scala", 5, 0)
+      )
+    )
+    val b = DelegateWorkReport.MergeDiffStat(
+      "bbb2222",
+      10,
+      0,
+      "b" * 40,
+      List(
+        DelegateWorkReport.FileDiffStat("shared.scala", 5, 0),
+        DelegateWorkReport.FileDiffStat("only-b.scala", 5, 0)
+      )
+    )
     val opaque = DelegateWorkReport.MergeDiffStat("ccc3333", 2, 3, "c" * 40)
-    val rows = List(a, b, opaque).map(s => DelegateWorkReport.ChildDiffStat(s.commit, "root", "/ws", None, Some(s), partial = false))
+    val rows = List(a, b, opaque).map(s =>
+      DelegateWorkReport.ChildDiffStat(s.commit, "root", "/ws", None, Some(s), partial = false)
+    )
     val aggregate = DelegateWorkReport.aggregateChildren(rows)
     // Tie on shared.scala uses the lexicographically smaller OID; distinct paths add.
     assertEquals((aggregate.added, aggregate.removed), (17L, 3L))
@@ -176,7 +209,10 @@ class DelegateRegistrySpec extends CatsEffectSuite:
         DelegateRegistry.put(rec("delegate-under-node").copy(parentSessionId = "dag-nested-node"))
 
         val aggregate = DelegateWorkReport.aggregateDiffStat(DelegateRegistry.find("root").get)
-        assertEquals(aggregate.children.map(_.delegateId).toSet, Set("dag-root-node", "dag-nested-node", "delegate-under-node"))
+        assertEquals(
+          aggregate.children.map(_.delegateId).toSet,
+          Set("dag-root-node", "dag-nested-node", "delegate-under-node")
+        )
         assertEquals(aggregate.children.map(_.parentSessionId).toSet, Set("root", "dag-root-node", "dag-nested-node"))
         assert(aggregate.children.forall(_.partial))
         assert(aggregate.partial)
@@ -237,7 +273,8 @@ class DelegateRegistrySpec extends CatsEffectSuite:
       IO {
         // 旧盘面形：无 name 键（手工 Decoder 缺键容忍——deriveDecoder 会让存量
         // 记录静默消失，禁）。
-        val legacy = """{"id":"d-legacy","executor":"nebflow","cwd":"/tmp/ws","project":null,"taskId":null,"parentSessionId":"root-1","title":"t","createdAt":1}"""
+        val legacy =
+          """{"id":"d-legacy","executor":"nebflow","cwd":"/tmp/ws","project":null,"taskId":null,"parentSessionId":"root-1","title":"t","createdAt":1}"""
         val decoded = decode[DelegateRegistry.Record](legacy)
         assertEquals(decoded.map(_.name), Right(None))
         assertEquals(decoded.map(_.id), Right("d-legacy"))

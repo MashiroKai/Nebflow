@@ -7,7 +7,15 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import io.circe.syntax.*
 import munit.CatsEffectSuite
-import nebflow.actor.{AskOrigin, ActorSystem, InteractionAnswered, InteractionHubCommand, InteractionKind, InteractionReply, InteractionRequest}
+import nebflow.actor.{
+  AskOrigin,
+  ActorSystem,
+  InteractionAnswered,
+  InteractionHubCommand,
+  InteractionKind,
+  InteractionReply,
+  InteractionRequest
+}
 import nebflow.agent.InteractionHub
 import nebflow.core.SessionStore
 import nebflow.shared.UiMessage
@@ -71,8 +79,10 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
       if Files.exists(tmp) then
         Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
 
-  /** hub 的 Request/Answered 都经 `forkTurn` 异步落地（`!` 返回的 IO 只负责入队），
-    * 故读数面一律轮询到条件成立（AskConcurrencyReworkSpec.awaitCond 同款）。 */
+  /**
+   * hub 的 Request/Answered 都经 `forkTurn` 异步落地（`!` 返回的 IO 只负责入队），
+   * 故读数面一律轮询到条件成立（AskConcurrencyReworkSpec.awaitCond 同款）。
+   */
   private def awaitCond(
     cond: IO[Boolean],
     label: String,
@@ -89,6 +99,8 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
+  end awaitCond
+
   // ============================================================
   // ① 归属读数：hub AskOriginOf（生产行为，forkTurn 路）
   // ============================================================
@@ -101,7 +113,8 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
           InteractionRequest(
             requestId = "asknb-place000000001",
             kind = InteractionKind.AskUser,
-            payload = Json.obj("type" -> "askUser".asJson, "items" -> askItems.asJson)
+            payload = Json
+              .obj("type" -> "askUser".asJson, "items" -> askItems.asJson)
               .deepMerge(Json.obj("agentName" -> "subagent · 修落库归属".asJson)),
             reply = InteractionReply.AskUserReply(None),
             rootSessionId = "root-1",
@@ -115,8 +128,7 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
         )
         origin <- hub.?[Option[AskOrigin]](r => InteractionHubCommand.AskOriginOf("asknb-place000000001", r))
         gone <- hub.?[Option[AskOrigin]](r => InteractionHubCommand.AskOriginOf("asknb-missing0000001", r))
-      yield (origin, gone)
-      ).unsafeRunSync() match
+      yield (origin, gone)).unsafeRunSync() match
         case (origin, gone) =>
           val o = origin.getOrElse(fail("AskOriginOf 必须回在册委托卡"))
           assertEquals(o.isSelfAsk, false, "委托提问绝不是自问")
@@ -125,6 +137,7 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
           assertEquals(o.askerLabel, "subagent · 修落库归属", "payload 显式标注优先（U3 内核标签链同源）")
           assertEquals(gone, None, "不在册的 requestId ⇒ None（网关回落改前路径）")
     finally system.stopAll
+    end try
   }
 
   test("①b AskOrigin.isSelfAsk：根自问（sourceSession=root）/ 空归属 ⇒ true；委托 ⇒ false") {
@@ -226,6 +239,7 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
     finally
       if Files.exists(tmp) then
         Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
+    end try
   }
 
   test("⑤b 根自问的落盘形态与改前逐字同路径（单会话单行，无痕迹行）") {
@@ -251,6 +265,7 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
     finally
       if Files.exists(tmp) then
         Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
+    end try
   }
 
   // ============================================================
@@ -290,8 +305,9 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
       try
         (for
           hub <- system.spawn(InteractionHub(), "hub-askplace-complete")
-          _ <- hub ! InteractionHubCommand.RegisterRoot("root-c", (j: Json) =>
-            IO.delay(frames.updateAndGet(_ :+ j)).void
+          _ <- hub ! InteractionHubCommand.RegisterRoot(
+            "root-c",
+            (j: Json) => IO.delay(frames.updateAndGet(_ :+ j)).void
           )
           // 先注册**在册槽位**（Request 腿——没有槽位的 Answered 走的是 unknown-reject 路，
           // 钉不到 complete），等槽位可读再作答。
@@ -327,8 +343,7 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
             "complete 关卡帧广播落地"
           )
           after <- store.getUiMessages("root-c", 0, 100)
-        yield (before, after, frames.get)
-        ).unsafeRunSync() match
+        yield (before, after, frames.get)).unsafeRunSync() match
           case (before, after, framesSent) =>
             assertEquals(after._2, before._2, "🔴 hub complete 不得产生任何新 UiMessage 行（作答全文落库只在网关裁决腿）")
             assert(
@@ -336,10 +351,12 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
               "complete 仍广播关卡帧（前端翻面语义保全）"
             )
       finally system.stopAll
+      end try
       ()
     finally
       if Files.exists(tmp) then
         Files.walk(tmp).sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
+    end try
   }
 
   // ============================================================
@@ -358,7 +375,10 @@ class AskAnswerPlacementSpec extends CatsEffectSuite:
     )
     assert(handlers.contains("AskAnswerPlacement.originOf"), "web 腿必须先查 hub 归属读数")
     // 桥腿必须走裁决单点（rowFor 之后不再直接 appendUiMessages(rootSid, List(row))）
-    assert(routes.contains("AskAnswerPlacement.persist"), "桥腿（forwardBridgeInteractionAnswer）必须走 AskAnswerPlacement.persist")
+    assert(
+      routes.contains("AskAnswerPlacement.persist"),
+      "桥腿（forwardBridgeInteractionAnswer）必须走 AskAnswerPlacement.persist"
+    )
     assert(
       !routes.contains(".appendUiMessages(rootSid, List(row))"),
       "桥腿裸 append 回潮 = 泄漏复活（作答全文直接落 root）"

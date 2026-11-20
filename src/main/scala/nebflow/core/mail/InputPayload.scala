@@ -206,8 +206,8 @@ object InputPayload:
       intake <- c.get[Option[String]]("intake")
       project <- c.get[Option[String]]("project")
       queuedAtMs <- c.get[Option[Long]]("queuedAtMs")
-      windowItems <- c.get[Option[List[AgentCommand.WindowItem]]]("windowItems")(
-        using Decoder.decodeOption(Decoder.decodeList(windowItemDecoder))
+      windowItems <- c.get[Option[List[AgentCommand.WindowItem]]]("windowItems")(using
+        Decoder.decodeOption(Decoder.decodeList(windowItemDecoder))
       )
       replyToSessionId <- c.get[Option[String]]("replyToSessionId")
     yield InputPayload(

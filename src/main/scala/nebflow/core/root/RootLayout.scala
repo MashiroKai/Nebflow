@@ -75,7 +75,8 @@ object RootLayout:
     val entries: List[os.Path] =
       if !os.exists(machineRoot) then Nil
       else
-        os.list(machineRoot).toList
+        os.list(machineRoot)
+          .toList
           // 布局本体绝不自迁：accounts/ · unauthenticated/ · pending-claim/ · 标记 · 指针 · 记账。
           .filterNot(p => managedNames.contains(p.last))
           .sortBy(_.last)
@@ -131,9 +132,7 @@ object RootLayout:
         )
         .asJson,
       "files" -> files.toList
-        .map(f =>
-          Json.obj("path" -> f.path.asJson, "bytes" -> f.bytes.asJson, "sha256" -> f.sha256.asJson)
-        )
+        .map(f => Json.obj("path" -> f.path.asJson, "bytes" -> f.bytes.asJson, "sha256" -> f.sha256.asJson))
         .asJson
     )
     AtomicJson.writeSyncRestricted(reportPath, reportJson.spaces2)
@@ -146,6 +145,8 @@ object RootLayout:
       movedEntries = entryRecords.map(_.name),
       reportPath = reportPath
     )
+
+  end migrate
 
   /**
    * 退回平铺布局（契约 §4.3）：按 manifest 逐条校验**副本**摘要，一致才删；不一致 ⇒ 拒删并点名
@@ -179,8 +180,7 @@ object RootLayout:
     }
     if report.pendingClaim then
       val container = report.machineRoot / PendingClaimDirName
-      if os.exists(report.accountRoot) && os.list(report.accountRoot).isEmpty then
-        os.remove(report.accountRoot)
+      if os.exists(report.accountRoot) && os.list(report.accountRoot).isEmpty then os.remove(report.accountRoot)
       if os.exists(container) && os.list(container).isEmpty then os.remove(container)
     AccountRoot.clearPointer(report.machineRoot)
     val layout = AccountRoot.layoutMarkerPath(report.machineRoot)
@@ -188,6 +188,7 @@ object RootLayout:
     logger.infoSync(
       s"[rollback] flat layout restored (originals untouched); report kept at ${report.reportPath}"
     )
+  end rollback
 
   // ── 内部 ───────────────────────────────────────────────────────────────
 
@@ -210,8 +211,7 @@ object RootLayout:
     fromPointer.orElse {
       val base = AccountRoot.accountsDir(machineRoot)
       if !os.exists(base) then None
-      else
-        os.list(base).filter(os.isDir).toList.sortBy(_.last).find(AccountRoot.isAccountRoot)
+      else os.list(base).filter(os.isDir).toList.sortBy(_.last).find(AccountRoot.isAccountRoot)
     }
 
   /**

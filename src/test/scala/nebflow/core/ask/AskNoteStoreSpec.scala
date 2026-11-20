@@ -239,13 +239,16 @@ final class AskNoteStoreSpec extends munit.FunSuite:
     val second = new AskNoteStore(root) // the gateway builds an instance per call
     for round <- 1 to 25 do
       val base = first.read(Sid).unsafeRunSync().version
-      val results = List(first.put(Sid, s"A$round", Some(base)), second.put(Sid, s"B$round", Some(base))).parSequence.unsafeRunSync()
+      val results = List(first.put(Sid, s"A$round", Some(base)), second.put(Sid, s"B$round", Some(base))).parSequence
+        .unsafeRunSync()
       assertEquals(results.count(_.isInstanceOf[AskNoteWrite.Ok]), 1, clue((round, results)))
       assertEquals(results.count(_.isInstanceOf[AskNoteWrite.Conflict]), 1, clue((round, results)))
       assert(Set(s"A$round", s"B$round").contains(first.read(Sid).unsafeRunSync().text))
   }
 
-  test("FDC-SCN-029 the size limit is 256 KiB of UTF-8 bytes: exact accepted, one more refused, for ASCII, Chinese and emoji") {
+  test(
+    "FDC-SCN-029 the size limit is 256 KiB of UTF-8 bytes: exact accepted, one more refused, for ASCII, Chinese and emoji"
+  ) {
     val (s, _) = store()
     val limit = s.MaxBytes
     val texts = List(
@@ -316,7 +319,9 @@ final class AskNoteStoreSpec extends munit.FunSuite:
     assert(put(s, Sid, "x", Some(0L)).isInstanceOf[AskNoteWrite.ReadFailed])
   }
 
-  test("FDC-SCN-030 a note written before versioning reads with its modification time and migrates on the first accepted write") {
+  test(
+    "FDC-SCN-030 a note written before versioning reads with its modification time and migrates on the first accepted write"
+  ) {
     val (s, root) = store()
     val notes = root / "ask" / "notes"
     os.makeDir.all(notes)
@@ -342,3 +347,4 @@ final class AskNoteStoreSpec extends munit.FunSuite:
     assert(s.read(OtherSid).unsafeRunSync().cleared)
     assert(!os.read(notes / s"$OtherSid.json").contains("to be cleared"))
   }
+end AskNoteStoreSpec

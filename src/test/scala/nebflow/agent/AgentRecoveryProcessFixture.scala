@@ -42,30 +42,56 @@ object AgentRecoveryProcessFixture:
     ).unsafeRunSync()
 
   private def seedTaskRow(taskStore: SubAgentTaskStore): Unit =
-    val row = SubAgentTask(Session, Parent, nebflow.core.entity.BuiltinAgents.ExecutorName, "seed brief",
-      "seed task", "running", 0, System.currentTimeMillis(), None, None, "delegate")
+    val row = SubAgentTask(
+      Session,
+      Parent,
+      nebflow.core.entity.BuiltinAgents.ExecutorName,
+      "seed brief",
+      "seed task",
+      "running",
+      0,
+      System.currentTimeMillis(),
+      None,
+      None,
+      "delegate"
+    )
     taskStore.beginRun(row, Run, Root, nebflow.core.executor.ExecutorRegistry.DefaultId).unsafeRunSync() match
       case Left(reason) => throw new IllegalStateException(reason)
       case Right(_) => ()
-    taskStore.completeRun(Parent, Session, Run, "interrupted", reason = Some("fixture-exit"),
-      notifyParent = false).unsafeRunSync() match
+    taskStore
+      .completeRun(Parent, Session, Run, "interrupted", reason = Some("fixture-exit"), notifyParent = false)
+      .unsafeRunSync() match
       case Left(reason) => throw new IllegalStateException(reason)
       case Right(_) => ()
+
+  end seedTaskRow
 
   private def seed(root: os.Path): IO[Unit] =
     ExecutionCommitStore.resource((root / "sessions").toNIO).use { store =>
       for
         bound <- ExecutionCommitPort.admitHandle(store, admissionFor())
         handle = bound.toOption.get
-        _ <- store.transition(ExecutionTransition(Session, Run, "start", "start", handle.ref,
-          "attempt", "incarnation", ExecutionEvent.AttemptStarted))
+        _ <- store.transition(
+          ExecutionTransition(
+            Session,
+            Run,
+            "start",
+            "start",
+            handle.ref,
+            "attempt",
+            "incarnation",
+            ExecutionEvent.AttemptStarted
+          )
+        )
         _ <- store.registerRunner(ExecutionRunner.Attempt(Session, Run, "attempt", "incarnation")).use { registered =>
           val runner = registered.toOption.get
           for
-            _ <- ProtectedAgentExecution.model(handle, runner, Json.fromString("request"), 0)(
-              IO.pure("seed-decision"))(value => ExecutionModelDecision(Json.fromString(value), Nil))
-            state = AgentState(messages = List(
-              Message(MessageRole.User, Left("seed prompt"), messageId = Some("input"))))
+            _ <- ProtectedAgentExecution.model(handle, runner, Json.fromString("request"), 0)(IO.pure("seed-decision"))(
+              value => ExecutionModelDecision(Json.fromString(value), Nil)
+            )
+            state = AgentState(messages =
+              List(Message(MessageRole.User, Left("seed prompt"), messageId = Some("input")))
+            )
             _ <- ProtectedAgentExecution.commitRound(handle, state, List("input"))
             _ <- ProtectedAgentExecution.suspendOwned(handle, runner, "fixture-exit")
           yield ()
@@ -78,22 +104,45 @@ object AgentRecoveryProcessFixture:
       for
         bound <- ExecutionCommitPort.admitHandle(store, admissionFor())
         handle = bound.toOption.get
-        _ <- store.transition(ExecutionTransition(Session, Run, "start", "start", handle.ref,
-          "attempt", "incarnation", ExecutionEvent.AttemptStarted))
+        _ <- store.transition(
+          ExecutionTransition(
+            Session,
+            Run,
+            "start",
+            "start",
+            handle.ref,
+            "attempt",
+            "incarnation",
+            ExecutionEvent.AttemptStarted
+          )
+        )
         _ <- store.registerRunner(ExecutionRunner.Attempt(Session, Run, "attempt", "incarnation")).use { registered =>
           val runner = registered.toOption.get
           for
-            _ <- ProtectedAgentExecution.model(handle, runner, Json.fromString("request"), 0)(
-              IO.pure("seed-decision"))(value => ExecutionModelDecision(Json.fromString(value), Nil))
-            state = AgentState(messages = List(
-              Message(MessageRole.User, Left("seed prompt"), messageId = Some("input"))))
+            _ <- ProtectedAgentExecution.model(handle, runner, Json.fromString("request"), 0)(IO.pure("seed-decision"))(
+              value => ExecutionModelDecision(Json.fromString(value), Nil)
+            )
+            state = AgentState(messages =
+              List(Message(MessageRole.User, Left("seed prompt"), messageId = Some("input")))
+            )
             _ <- ProtectedAgentExecution.commitRound(handle, state, List("input"))
             calls <- Ref.of[IO, Int](0)
-            result <- ProtectedAgentExecution.modelRound(handle, runner,
-              LlmRequest(Nil, Session, "agent", searchAllowed = false), 0) {
-              calls.update(_ + 1).as(nebflow.actor.ConsumeResult("tool round",
-                List(ToolCall("tool-1", "Read", io.circe.JsonObject("file_path" -> Json.fromString("seed.txt")))),
-                Nil, None))
+            result <- ProtectedAgentExecution.modelRound(
+              handle,
+              runner,
+              LlmRequest(Nil, Session, "agent", searchAllowed = false),
+              0
+            ) {
+              calls
+                .update(_ + 1)
+                .as(
+                  nebflow.actor.ConsumeResult(
+                    "tool round",
+                    List(ToolCall("tool-1", "Read", io.circe.JsonObject("file_path" -> Json.fromString("seed.txt")))),
+                    Nil,
+                    None
+                  )
+                )
             }
             _ = assert(result.text == "tool round")
             current <- store.observeChain(Session, Run).map {
@@ -101,14 +150,23 @@ object AgentRecoveryProcessFixture:
               case other => throw new IllegalStateException(s"unverified: $other")
             }
             intent = current.intents.values.head
-            command = ExecutionTransition(Session, Run, "started", "started", current.ref,
-              current.attemptId, current.incarnationId, ExecutionEvent.ToolStarted(intent.operationId))
+            command = ExecutionTransition(
+              Session,
+              Run,
+              "started",
+              "started",
+              current.ref,
+              current.attemptId,
+              current.incarnationId,
+              ExecutionEvent.ToolStarted(intent.operationId)
+            )
             dispatched <- runner.dispatch(command, intent)(IO.unit)
             _ <- dispatched match
               case Right((_, receipt)) => receipt.await.void
               case Left(error) => IO.raiseError(new IllegalStateException(s"dispatch: $error"))
             _ <- ProtectedAgentExecution.suspendOwned(handle, runner, "fixture-exit-started")
           yield ()
+          end for
         }
       yield ()
     }
@@ -121,8 +179,10 @@ object AgentRecoveryProcessFixture:
         llm = new LlmHandle[IO]:
           def send(req: LlmRequest): IO[LlmResponse] =
             IO.raiseError(new IllegalStateException("unexpected send"))
-          def sendStream(req: LlmRequest, onAttempt: Option[FallbackAttempt => IO[Unit]] = None):
-              Stream[IO, StreamChunk] =
+          def sendStream(
+            req: LlmRequest,
+            onAttempt: Option[FallbackAttempt => IO[Unit]] = None
+          ): Stream[IO, StreamChunk] =
             Stream.eval(counter).flatMap { n =>
               Stream(StreamChunk.TextDelta(s"recovered-$n"), StreamChunk.Done(None, None))
             }
@@ -137,13 +197,27 @@ object AgentRecoveryProcessFixture:
             muted <- Ref.of[IO, Boolean](false)
             sessionStore = new SessionStore(root / "sessions", root / "tasks")
             library = new AgentLibrary(root / "agents")
-            resources = SharedResources(llm = llm, dispatcher = dispatcher, sessionStore = sessionStore,
-              projectRoot = root, thinkingConfigRef = thinking, rateLimiter = limiter,
-              fileChangeTracker = tracker, contextWindow = 100000, agentLibrary = library,
-              taskStore = FileTaskStore, historyArchiver = null, fileLockManager = locks,
-              sessionModelOverrides = overrides, providerRegistry = null, healthMonitor = null,
-              actorSystem = system, voiceMutedRef = muted, executionCommitPort = store,
-              subAgentTaskStore = taskStore)
+            resources = SharedResources(
+              llm = llm,
+              dispatcher = dispatcher,
+              sessionStore = sessionStore,
+              projectRoot = root,
+              thinkingConfigRef = thinking,
+              rateLimiter = limiter,
+              fileChangeTracker = tracker,
+              contextWindow = 100000,
+              agentLibrary = library,
+              taskStore = FileTaskStore,
+              historyArchiver = null,
+              fileLockManager = locks,
+              sessionModelOverrides = overrides,
+              providerRegistry = null,
+              healthMonitor = null,
+              actorSystem = system,
+              voiceMutedRef = muted,
+              executionCommitPort = store,
+              subAgentTaskStore = taskStore
+            )
             agentDef <- library.get(nebflow.core.entity.BuiltinAgents.ExecutorName).flatMap {
               case Some(value) => IO.pure(value)
               case None => IO.raiseError(new IllegalStateException("agent definition unavailable"))
@@ -168,15 +242,22 @@ object AgentRecoveryProcessFixture:
             after <- calls.get
             finalChain <- store.observeChain(Session, Run)
             status <- taskStore.findByTaskId(Session).map(_.flatMap(_.executionStatus).getOrElse(""))
-            _ <- IO.blocking(os.write.over(root / "result.json", Json.obj(
-              "bootCalls" -> bootCalls.asJson,
-              "afterResumeCalls" -> after.asJson,
-              "outcome" -> outcomeText.asJson,
-              "status" -> status.asJson,
-              "attemptId" -> (finalChain match
-                case ExecutionChainObservation.Verified(state) => state.attemptId.asJson
-                case _ => Json.Null)
-            ).noSpaces))
+            _ <- IO.blocking(
+              os.write.over(
+                root / "result.json",
+                Json
+                  .obj(
+                    "bootCalls" -> bootCalls.asJson,
+                    "afterResumeCalls" -> after.asJson,
+                    "outcome" -> outcomeText.asJson,
+                    "status" -> status.asJson,
+                    "attemptId" -> (finalChain match
+                      case ExecutionChainObservation.Verified(state) => state.attemptId.asJson
+                      case _ => Json.Null)
+                  )
+                  .noSpaces
+              )
+            )
             _ <- resources.releaseProtectedRecoveries().handleErrorWith(_ => IO.unit)
             _ <- system.stopAll
           yield ()).guarantee(system.stopAll)
@@ -191,8 +272,23 @@ object AgentRecoveryProcessFixture:
     }
 
   private def admissionFor(): ExecutionAdmission =
-    val definition = nebflow.core.entity.BuiltinAgents.entry(nebflow.core.entity.BuiltinAgents.ExecutorName)
-      .map(_.toAgentDef).getOrElse(throw new IllegalStateException("executor definition unavailable"))
+    val definition = nebflow.core.entity.BuiltinAgents
+      .entry(nebflow.core.entity.BuiltinAgents.ExecutorName)
+      .map(_.toAgentDef)
+      .getOrElse(throw new IllegalStateException("executor definition unavailable"))
     val binding = ProtectedAgentExecution.configBinding(definition)
-    ExecutionAdmission(Session, Run, "admission", "request", "attempt", "incarnation",
-      Parent, "business", binding, Json.fromString("initial"), "input")
+    ExecutionAdmission(
+      Session,
+      Run,
+      "admission",
+      "request",
+      "attempt",
+      "incarnation",
+      Parent,
+      "business",
+      binding,
+      Json.fromString("initial"),
+      "input"
+    )
+  end admissionFor
+end AgentRecoveryProcessFixture

@@ -38,7 +38,11 @@ class CompletionDebtStoreSpec extends CatsEffectSuite:
       assert(!wrongTarget && !wrongResult, "wrong receiver or result cannot acknowledge debt")
       assert(stillPending.toOption.flatten.isDefined)
       assert(accepted)
-      assertEquals(cleared.toOption.flatten.map(_.phase), Some("settled"), "ack persists a terminal settlement tombstone")
+      assertEquals(
+        cleared.toOption.flatten.map(_.phase),
+        Some("settled"),
+        "ack persists a terminal settlement tombstone"
+      )
   }
 
   test("missing target remains a durable obligation; explicit cancellation fences later completion") {
@@ -56,7 +60,13 @@ class CompletionDebtStoreSpec extends CatsEffectSuite:
   }
 
   test("durable terminal receiver accepts exact duplicate once and refuses conflicting outcome") {
-    val event = nebflow.actor.AgentCommand.ExternalEvent("delegate", "completed", "done", io.circe.JsonObject.empty, Some("child"))
+    val event = nebflow.actor.AgentCommand.ExternalEvent(
+      "delegate",
+      "completed",
+      "done",
+      io.circe.JsonObject.empty,
+      Some("child")
+    )
     val conflict = event.copy(eventType = "cancelled", payload = "cancelled")
     for
       first <- CompletionDebtStore.acceptOnce("child", "parent", event)
@@ -65,7 +75,11 @@ class CompletionDebtStoreSpec extends CatsEffectSuite:
     yield
       assertEquals(first, CompletionDebtStore.Acceptance.New)
       assertEquals(duplicate, CompletionDebtStore.Acceptance.Duplicate)
-      assertEquals(mismatch, CompletionDebtStore.Acceptance.Conflict, "a conflicting status/result cannot be accepted as the prior terminal")
+      assertEquals(
+        mismatch,
+        CompletionDebtStore.Acceptance.Conflict,
+        "a conflicting status/result cannot be accepted as the prior terminal"
+      )
   }
 
   test("generation identity: same-generation replay dedups, cross-generation rounds re-report (#2178)") {
@@ -85,13 +99,28 @@ class CompletionDebtStoreSpec extends CatsEffectSuite:
       nextReplay <- CompletionDebtStore.acceptOnce("child", "parent", event("gen-2", "round two"))
     yield
       assertEquals(first, CompletionDebtStore.Acceptance.New)
-      assertEquals(replay, CompletionDebtStore.Acceptance.Duplicate, "same-generation duplicate is accepted exactly once")
-      assertEquals(drift, CompletionDebtStore.Acceptance.Conflict, "payload drift inside one generation is a conflict, not a new report")
-      assertEquals(nextRound, CompletionDebtStore.Acceptance.New, "a Mail-continuation round is NOT swallowed by the prior generation's row")
+      assertEquals(
+        replay,
+        CompletionDebtStore.Acceptance.Duplicate,
+        "same-generation duplicate is accepted exactly once"
+      )
+      assertEquals(
+        drift,
+        CompletionDebtStore.Acceptance.Conflict,
+        "payload drift inside one generation is a conflict, not a new report"
+      )
+      assertEquals(
+        nextRound,
+        CompletionDebtStore.Acceptance.New,
+        "a Mail-continuation round is NOT swallowed by the prior generation's row"
+      )
       assertEquals(nextReplay, CompletionDebtStore.Acceptance.Duplicate)
+    end for
   }
 
-  test("record: in-flight same-content re-declaration keeps the generation; settled debt re-opens as a NEW generation") {
+  test(
+    "record: in-flight same-content re-declaration keeps the generation; settled debt re-opens as a NEW generation"
+  ) {
     val msgs = List(Message(MessageRole.Assistant, Left("round result")))
     val msgs2 = List(Message(MessageRole.Assistant, Left("continuation result")))
     def ev(gen: String, payload: String) =
@@ -104,14 +133,22 @@ class CompletionDebtStoreSpec extends CatsEffectSuite:
       )
     for
       _ <- CompletionDebtStore.record("delegate-session-gen", "parent-session", msgs)
-      gen1 <- CompletionDebtStore.pending("delegate-session-gen").map(_.toOption.flatten.map(_.generation).getOrElse(""))
+      gen1 <- CompletionDebtStore
+        .pending("delegate-session-gen")
+        .map(_.toOption.flatten.map(_.generation).getOrElse(""))
       _ <- CompletionDebtStore.record("delegate-session-gen", "parent-session", msgs) // 同完成重声明
-      gen1b <- CompletionDebtStore.pending("delegate-session-gen").map(_.toOption.flatten.map(_.generation).getOrElse(""))
+      gen1b <- CompletionDebtStore
+        .pending("delegate-session-gen")
+        .map(_.toOption.flatten.map(_.generation).getOrElse(""))
       _ <- CompletionDebtStore.acknowledge("delegate-session-gen", "parent-session", msgs, gen1) // 第一轮交付确认
       again <- CompletionDebtStore.record("delegate-session-gen", "parent-session", msgs) // Mail 续轮（内容相同）
-      gen2 <- CompletionDebtStore.pending("delegate-session-gen").map(_.toOption.flatten.map(_.generation).getOrElse(""))
+      gen2 <- CompletionDebtStore
+        .pending("delegate-session-gen")
+        .map(_.toOption.flatten.map(_.generation).getOrElse(""))
       _ <- CompletionDebtStore.record("delegate-session-gen", "parent-session", msgs2) // 另一轮（内容不同）
-      gen3 <- CompletionDebtStore.pending("delegate-session-gen").map(_.toOption.flatten.map(_.generation).getOrElse(""))
+      gen3 <- CompletionDebtStore
+        .pending("delegate-session-gen")
+        .map(_.toOption.flatten.map(_.generation).getOrElse(""))
       phase <- CompletionDebtStore.pending("delegate-session-gen").map(_.toOption.flatten.map(_.phase).getOrElse(""))
       acceptance <- CompletionDebtStore.acceptOnce("delegate-session-gen", "parent-session", ev(gen2, "x"))
     yield
@@ -122,6 +159,7 @@ class CompletionDebtStoreSpec extends CatsEffectSuite:
       assert(gen3.nonEmpty && gen3 != gen2)
       assertEquals(phase, "deliverable")
       assertEquals(acceptance, CompletionDebtStore.Acceptance.New, "the new round is accepted fresh")
+    end for
   }
 
   test("stale acknowledgement after a concurrent new generation retains the new debt") {
@@ -131,7 +169,8 @@ class CompletionDebtStoreSpec extends CatsEffectSuite:
       old <- CompletionDebtStore.pending(owner).map(_.toOption.flatten.get.generation)
       checked <- cats.effect.Deferred[IO, Unit]
       release <- cats.effect.Deferred[IO, Unit]
-      stale <- (checked.complete(()) *> release.get *> CompletionDebtStore.acknowledge(owner, "parent", result, old)).start
+      stale <- (checked
+        .complete(()) *> release.get *> CompletionDebtStore.acknowledge(owner, "parent", result, old)).start
       _ <- checked.get
       _ <- CompletionDebtStore.acknowledge(owner, "parent", result, old)
       _ <- CompletionDebtStore.record(owner, "parent", result)
@@ -143,6 +182,7 @@ class CompletionDebtStoreSpec extends CatsEffectSuite:
       assertNotEquals(fresh, old)
       assert(!accepted)
       assertEquals(after.toOption.flatten.map(d => (d.generation, d.phase)), Some((fresh, "deliverable")))
+    end for
   }
 
   test("malformed debt is surfaced and original bytes are preserved; legacy owner/messages/phase decodes") {
@@ -167,5 +207,6 @@ class CompletionDebtStoreSpec extends CatsEffectSuite:
       assert(malformed.isLeft, "corruption cannot collapse into missing debt")
       assertEquals(preserved.toList, raw.toList)
       assertEquals(legacy.toOption.flatten.map(_.phase), Some("deliverable"))
+    end for
   }
 end CompletionDebtStoreSpec

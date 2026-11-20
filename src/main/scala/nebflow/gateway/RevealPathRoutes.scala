@@ -153,7 +153,9 @@ private[gateway] object RevealPathRoutes:
                                 )
                               )
                           }
+                        end if
                 }
+            end match
           }
         }
     }

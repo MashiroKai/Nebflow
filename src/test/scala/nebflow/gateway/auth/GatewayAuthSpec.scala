@@ -402,11 +402,17 @@ class GatewayAuthSpec extends CatsEffectSuite:
       _ = assert(GatewayOwnership.owns(a, Some("account-A")))
       _ = assert(!GatewayOwnership.owns(a, Some("account-B")), "A must not access B")
       _ = assert(!GatewayOwnership.owns(b, Some("account-A")), "B must not access A")
-      _ = assert(!GatewayOwnership.owns(Credential.ViaSession(unknown), Some("account-A")), "unknown sessions grant no owner")
+      _ = assert(
+        !GatewayOwnership.owns(Credential.ViaSession(unknown), Some("account-A")),
+        "unknown sessions grant no owner"
+      )
       _ = assert(!GatewayOwnership.owns(a, None), "legacy/unknown target owner is isolated")
       _ = assert(!GatewayOwnership.owns(bearer, Some("account-A")), "Bearer/PAT has no trusted owner mapping")
       _ = assert(GatewayOwnership.ownsSession(a, owner.sessionId, owner))
-      _ = assert(!GatewayOwnership.ownsSession(a, other.sessionId, other), "client sid cannot substitute for target ownership")
+      _ = assert(
+        !GatewayOwnership.ownsSession(a, other.sessionId, other),
+        "client sid cannot substitute for target ownership"
+      )
       _ = assert(!GatewayOwnership.ownsSession(a, "forged-session-id", owner), "forged sid is not accepted")
     yield ()
 

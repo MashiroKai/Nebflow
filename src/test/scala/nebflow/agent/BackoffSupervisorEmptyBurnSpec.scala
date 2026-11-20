@@ -247,7 +247,7 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
         "eb-supervisor-1"
       )
       // 空烧 ×3：第 1/2 次吃掉重启预算，第 3 次预算耗尽 → 显式标注的完成交付
-      //（第二波：空回执显式非静默）
+      // （第二波：空回执显式非静默）
       _ <- supervisor ! AgentEvent.Completed(childSid, thinkingOnlyMessages)
       _ <- waitUntil(10.seconds)(spawned.get.map(_ == 1))
       _ <- supervisor ! AgentEvent.Completed(childSid, stubMessages)
@@ -298,7 +298,7 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
         s"delegate terminal MUST NOT ride the legacy push chain, got: $refEvents"
       )
       // 任务行：completed + 诊断落盘（面板 L3 warn 面）+ lastError 恒 None
-      //（「干了活没说话 / 空烧」≠「失败」——面板一眼分得清）。
+      // （「干了活没说话 / 空烧」≠「失败」——面板一眼分得清）。
       val task = tasks.find(_.taskId == childSid).get
       assertEquals(task.retryCount, 2, "two empty-burn restarts must be counted")
       assertEquals(task.status, "completed", "the budget-exhausted empty burn settles completed (explicitly marked)")
@@ -398,7 +398,8 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       supervisor <- system.spawn(
         BackoffSupervisor(
           childRef = firstChild,
-          childSpawnFn = (_, _) => system.spawn(mkRecordingChild(childCmds), s"eb3-child-${scala.util.Random.nextInt(100000)}"),
+          childSpawnFn =
+            (_, _) => system.spawn(mkRecordingChild(childCmds), s"eb3-child-${scala.util.Random.nextInt(100000)}"),
           childName = childSid,
           parentRef = Some(parentRef),
           description = "silent refactor",
@@ -442,7 +443,9 @@ class BackoffSupervisorEmptyBurnSpec extends CatsEffectSuite:
       assertEquals(task.status, "completed")
       assertEquals(task.lastError, None, "worked-silently must not read as failed")
       assert(
-        task.diagnostic.exists(d => d.contains("no-final-text") && d.contains("toolCalls=2") && !d.contains("empty-run")),
+        task.diagnostic.exists(d =>
+          d.contains("no-final-text") && d.contains("toolCalls=2") && !d.contains("empty-run")
+        ),
         s"store row diagnostic must be explicit, got: ${task.diagnostic}"
       )
     end for

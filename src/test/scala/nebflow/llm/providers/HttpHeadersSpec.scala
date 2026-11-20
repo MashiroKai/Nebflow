@@ -45,3 +45,4 @@ class HttpHeadersSpec extends FunSuite:
     assert(!HttpHeaders.isEdgeBlock(403, """{"error":{"message":"permission denied"}}"""))
     assertEquals(HttpHeaders.edgeBlockHint(200, ""), "")
   }
+end HttpHeadersSpec

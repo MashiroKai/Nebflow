@@ -1367,6 +1367,7 @@ class NodeAcceptanceSpec extends CatsEffectSuite:
         s"error must be the demolition refusal, got: $r"
       )
       assert(r.left.exists(_.message.contains("Delegate")), s"error must point at Delegate, got: $r")
+    end for
   }
 
   test("Task③（拆除后）: same-name collision — Mail(project:) 一律显式拒绝（不因同名团队而翻转）") {

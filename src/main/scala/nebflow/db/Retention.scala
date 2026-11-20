@@ -56,14 +56,14 @@ object Retention:
 
   /** 判定（四支，供体形：Keep 两因 + 两刀；采样刀施于年龄刀幸存者）。 */
   enum Decision:
-    case KeepDebt       // 欠债豁免（两刀皆不适用——失败样本不可丢）
-    case KeepSampled    // 采样刀命中保留（含 ratio=10000 恒留）
-    case DropByAge      // 年龄刀
+    case KeepDebt // 欠债豁免（两刀皆不适用——失败样本不可丢）
+    case KeepSampled // 采样刀命中保留（含 ratio=10000 恒留）
+    case DropByAge // 年龄刀
     case DropBySampling // 采样刀
 
   final case class Config(
-    maxAgeMs: Option[Long],        // None = 年龄刀不生效
-    sampleRatioPer10k: Long        // ≥10000 ⇒ 恒留；0 ⇒ 恒删（非欠债面）
+    maxAgeMs: Option[Long], // None = 年龄刀不生效
+    sampleRatioPer10k: Long // ≥10000 ⇒ 恒留；0 ⇒ 恒删（非欠债面）
   )
 
   /** 豁免族默认集（D-9 三域的字段级落点；可注入覆写）。 */
@@ -78,8 +78,11 @@ object Retention:
    *  - PendingReview / Snapshot / Quarantined：整域豁免（未闭合待审单、压缩取证、隔离档）；
    *  - EventStream：type ∈ audit/escalate/budget 族（域①）或 failed 族（域③失败取证）。
    */
-  def hasDebt(c: Candidate, auditFamily: Set[String] = DefaultAuditFamily,
-    failureFamily: Set[String] = DefaultFailureFamily): Boolean =
+  def hasDebt(
+    c: Candidate,
+    auditFamily: Set[String] = DefaultAuditFamily,
+    failureFamily: Set[String] = DefaultFailureFamily
+  ): Boolean =
     c.domain match
       case Domain.PendingReview | Domain.Snapshot | Domain.Quarantined => true
       case Domain.EventStream =>
@@ -99,7 +102,8 @@ object Retention:
       if hasDebt(c) then Decision.KeepDebt
       else if ageThreshold.exists(c.ts < _) then Decision.DropByAge
       else if cfg.sampleRatioPer10k >= SampleDenominator
-        || sampleBucket(c.unitId) < cfg.sampleRatioPer10k then Decision.KeepSampled
+        || sampleBucket(c.unitId) < cfg.sampleRatioPer10k
+      then Decision.KeepSampled
       else Decision.DropBySampling
     }
 
@@ -109,12 +113,14 @@ object Retention:
   final case class TombstoneRow(unitId: String, at: Long, revived: Boolean)
 
   object TombstoneRow:
+
     given Encoder[TombstoneRow] = r =>
       Json.obj(
         "unitId" -> Json.fromString(r.unitId),
         "at" -> Json.fromLong(r.at),
         "revived" -> Json.fromBoolean(r.revived)
       )
+
     given Decoder[TombstoneRow] = c =>
       for
         unitId <- c.downField("unitId").as[String]
@@ -127,16 +133,23 @@ object Retention:
    * ⇒ 已遗忘（逻辑视图过滤其行；revive 行回滚遗忘）。命名口径：forgotten = 逻辑死者。
    */
   def forgottenUnits(rows: List[TombstoneRow]): Set[String] =
-    rows.foldLeft(Map.empty[String, TombstoneRow]) { (acc, r) =>
-      acc.updated(r.unitId, r)
-    }.collect { case (id, r) if !r.revived => id }.toSet
+    rows
+      .foldLeft(Map.empty[String, TombstoneRow]) { (acc, r) =>
+        acc.updated(r.unitId, r)
+      }
+      .collect { case (id, r) if !r.revived => id }
+      .toSet
 
   // ── 后台物化 sweep：接口 + 默认调度位（D-9 最小面）─────────────────────────
 
   /** 一轮 sweep 的纯计数报告（算术恒等：scanned == kept + dropped）。 */
   final case class SweepReport(
-    scanned: Long, keepDebt: Long, keepSampled: Long,
-    dropByAge: Long, dropBySampling: Long, tombstonesAppended: Long
+    scanned: Long,
+    keepDebt: Long,
+    keepSampled: Long,
+    dropByAge: Long,
+    dropBySampling: Long,
+    tombstonesAppended: Long
   ):
     def kept: Long = keepDebt + keepSampled
     def dropped: Long = dropByAge + dropBySampling

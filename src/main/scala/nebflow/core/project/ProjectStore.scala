@@ -68,8 +68,10 @@ object ProjectStore:
   /** 文档库附件目录（vault 约定：`attachments/` 挂在 vault 根下）。 */
   def ledgerDocsAttachments(name: String): os.Path = ledgerDocsDir(name) / "attachments"
 
-  /** 目录下是否有 ≥1 篇文档（`.md/.markdown/.html`，递归；不存在 = false）。
-    * 早退语义：命中第一篇即真 ⇒ 大 vault 上也可当廉价探针用。 */
+  /**
+   * 目录下是否有 ≥1 篇文档（`.md/.markdown/.html`，递归；不存在 = false）。
+   * 早退语义：命中第一篇即真 ⇒ 大 vault 上也可当廉价探针用。
+   */
   def hasDocs(dir: os.Path): Boolean =
     os.isDir(dir) && os.walk.stream(dir).exists { p =>
       if !os.isFile(p) then false
@@ -161,7 +163,9 @@ project's OWN registration dir, not in this workspace:
    * [[displayDevice]] 对名册现查（core.device 不持有名册）。
    */
   def effectiveDevice(pd: ProjectDef): String =
-    pd.device.map(_.trim).filter(_.nonEmpty)
+    pd.device
+      .map(_.trim)
+      .filter(_.nonEmpty)
       .orElse(pd.origin.filter(o => !ProjectOrigin.isSelfLiteral(o.device)).map(_.device))
       .getOrElse(ProjectOrigin.Self)
 
@@ -243,6 +247,7 @@ project's OWN registration dir, not in this workspace:
               logger.warnSync(s"Failed to parse project '$name': $e")
               None
         else None
+        end if
     }
 
   /**
@@ -449,7 +454,9 @@ project's OWN registration dir, not in this workspace:
                   case Some(d) => json.deepMerge(io.circe.Json.obj("description" -> io.circe.Json.fromString(d)))
                   case None =>
                     // 清空 = 删键（吸收既有 null/空串形态；json deepMerge 无法删键，手工重建对象）
-                    io.circe.Json.fromJsonObject(json.asObject.getOrElse(io.circe.JsonObject.empty).remove("description"))
+                    io.circe.Json.fromJsonObject(
+                      json.asObject.getOrElse(io.circe.JsonObject.empty).remove("description")
+                    )
                 AtomicJson.writeSync(p, updated.noSpaces)
                 logger.infoSync(s"Project '$name': description updated (${target.fold("<cleared>")(_.take(60))})")
                 Right("updated")

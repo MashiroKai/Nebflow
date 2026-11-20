@@ -578,9 +578,16 @@ private[gateway] object WsSessionChatHandlers:
       case nebflow.shared.ExecutionProtection.Unprotected =>
         maybeSessionKick(intSessionId, "interrupt") *>
           logger.info("User interrupted") *> ensureAgent(intSessionId)(ref => ref ! AgentCommand.Interrupt())
-      case _ => wsSend(Json.obj("type" -> "error".asJson,
-        "message" -> "Protected or unknown execution requires authority-routed interruption.".asJson))
+      case _ =>
+        wsSend(
+          Json.obj(
+            "type" -> "error".asJson,
+            "message" -> "Protected or unknown execution requires authority-routed interruption.".asJson
+          )
+        )
     }
+
+  end handleInterrupt
 
   private def handleRestartAgent(
     ctx: WsDispatchCtx,
@@ -601,8 +608,13 @@ private[gateway] object WsSessionChatHandlers:
         case nebflow.shared.ExecutionProtection.Unprotected =>
           logger.info(s"Restart agent (level=$rLevel) for session $rSessionId") *>
             ensureAgent(rSessionId)(ref => ref ! nebflow.actor.AgentCommand.RestartAgent(rLevel))
-        case _ => wsSend(Json.obj("type" -> "error".asJson,
-          "message" -> "Protected or unknown execution requires exact-ref recovery.".asJson))
+        case _ =>
+          wsSend(
+            Json.obj(
+              "type" -> "error".asJson,
+              "message" -> "Protected or unknown execution requires exact-ref recovery.".asJson
+            )
+          )
       }
     else IO.unit
   end handleRestartAgent
@@ -801,66 +813,67 @@ private[gateway] object WsSessionChatHandlers:
     else
       sharedResources.executionProtection(prSessionId).flatMap {
         case nebflow.shared.ExecutionProtection.Unprotected =>
-          logger.info(s"parentRestart (error-recovery) for session $prSessionId") *> sharedResources.agentRegistry.get.flatMap { registry =>
-          registry.get(prSessionId) match
-            case None =>
-              prReply(
-                ok = false,
-                "error" ->
-                  s"No live agent with sessionId='$prSessionId' (registry is in-memory; stale ids vanish after restart)".asJson
-              )
-            case Some(rec)
-                if rec.status != nebflow.actor.AgentStatus.Frozen ||
-                  !rec.frozenReason.exists(_ != "schedule") =>
-              val notFrozenErr =
-                s"Session '$prSessionId' is not in error-frozen state (status=${rec.status}, " +
-                  s"frozenReason=${rec.frozenReason.getOrElse("none")}) — parentRestart only applies to frozen-error agents"
-              prReply(ok = false, "error" -> notFrozenErr.asJson)
-            case Some(rec) if rec.kind == nebflow.actor.AgentKind.Root =>
-              // Root agent：现有 restartAgent soft 语义（冻结中 RestartAgent
-              // 镜像 processing——cancelCurrentTurn + restartStateFor + 续跑）
-              // v2 反推送风暴批（2026-10-28，修复面①销账）：父裁定 restart 即关闭
-              // 其未决升级事件（registry escalation 快照清 None）——裁定后不再重投。
-              (rec.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
-                nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, rec.sessionId) *>
-                prReply(
-                  ok = true,
-                  "message" -> "Root restart (soft) sent; frozen turn will resume from checkpoint".asJson
-                )
-            case Some(rec) if rec.kind == nebflow.actor.AgentKind.Flow =>
-              // Project flow 会话（node-/dispatcher-）：单次会话，supervisor
-              // 是观察桥（不 respawn）——restart 语义不成立，且 raw Stop 会
-              // 杀 agent 而不发终态事件（node engine fiber 挂死）。拒绝并指路。
-              prReply(
-                ok = false,
-                "error" ->
-                  "Project node/dispatcher sessions are single-shot — restart not supported. Cancel it and re-trigger the work.".asJson
-              )
-            case Some(rec) if rec.supervisorRef.isDefined =>
-              // Delegate/SubTask：Stop → BackoffSupervisor respawn（断点续跑）
-              // v2 反推送风暴批（2026-10-28，修复面①销账）：裁定即销账（同上）。
-              (rec.ref ! nebflow.actor.AgentCommand.Stop(s"parent-restart")) *>
-                nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, rec.sessionId) *>
-                prReply(
-                  ok = true,
-                  "message" ->
-                    "Restart sent: the supervisor will respawn from the last persisted checkpoint after a short backoff".asJson
-                )
-            case Some(rec) =>
-              // Team 成员：Stop + Mail 激活（history 重建）——复用 AgentControl 工具链路
-              val toolCtx = ToolContext(
-                projectRoot = "",
-                sessionId = None,
-                sharedResources = Some(sharedResources),
-                actorSystem = Some(sharedResources.actorSystem)
-              )
-              nebflow.core.tools.AgentControlTool
-                .doRestart(sharedResources, toolCtx, rec, "parent-restart (WS)")
-                .flatMap {
-                  case Right(msg) => prReply(ok = true, "message" -> msg.asJson)
-                  case Left(err) => prReply(ok = false, "error" -> err.message.asJson)
-                }
-        }
+          logger.info(s"parentRestart (error-recovery) for session $prSessionId") *> sharedResources.agentRegistry.get
+            .flatMap { registry =>
+              registry.get(prSessionId) match
+                case None =>
+                  prReply(
+                    ok = false,
+                    "error" ->
+                      s"No live agent with sessionId='$prSessionId' (registry is in-memory; stale ids vanish after restart)".asJson
+                  )
+                case Some(rec)
+                    if rec.status != nebflow.actor.AgentStatus.Frozen ||
+                      !rec.frozenReason.exists(_ != "schedule") =>
+                  val notFrozenErr =
+                    s"Session '$prSessionId' is not in error-frozen state (status=${rec.status}, " +
+                      s"frozenReason=${rec.frozenReason.getOrElse("none")}) — parentRestart only applies to frozen-error agents"
+                  prReply(ok = false, "error" -> notFrozenErr.asJson)
+                case Some(rec) if rec.kind == nebflow.actor.AgentKind.Root =>
+                  // Root agent：现有 restartAgent soft 语义（冻结中 RestartAgent
+                  // 镜像 processing——cancelCurrentTurn + restartStateFor + 续跑）
+                  // v2 反推送风暴批（2026-10-28，修复面①销账）：父裁定 restart 即关闭
+                  // 其未决升级事件（registry escalation 快照清 None）——裁定后不再重投。
+                  (rec.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
+                    nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, rec.sessionId) *>
+                    prReply(
+                      ok = true,
+                      "message" -> "Root restart (soft) sent; frozen turn will resume from checkpoint".asJson
+                    )
+                case Some(rec) if rec.kind == nebflow.actor.AgentKind.Flow =>
+                  // Project flow 会话（node-/dispatcher-）：单次会话，supervisor
+                  // 是观察桥（不 respawn）——restart 语义不成立，且 raw Stop 会
+                  // 杀 agent 而不发终态事件（node engine fiber 挂死）。拒绝并指路。
+                  prReply(
+                    ok = false,
+                    "error" ->
+                      "Project node/dispatcher sessions are single-shot — restart not supported. Cancel it and re-trigger the work.".asJson
+                  )
+                case Some(rec) if rec.supervisorRef.isDefined =>
+                  // Delegate/SubTask：Stop → BackoffSupervisor respawn（断点续跑）
+                  // v2 反推送风暴批（2026-10-28，修复面①销账）：裁定即销账（同上）。
+                  (rec.ref ! nebflow.actor.AgentCommand.Stop(s"parent-restart")) *>
+                    nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, rec.sessionId) *>
+                    prReply(
+                      ok = true,
+                      "message" ->
+                        "Restart sent: the supervisor will respawn from the last persisted checkpoint after a short backoff".asJson
+                    )
+                case Some(rec) =>
+                  // Team 成员：Stop + Mail 激活（history 重建）——复用 AgentControl 工具链路
+                  val toolCtx = ToolContext(
+                    projectRoot = "",
+                    sessionId = None,
+                    sharedResources = Some(sharedResources),
+                    actorSystem = Some(sharedResources.actorSystem)
+                  )
+                  nebflow.core.tools.AgentControlTool
+                    .doRestart(sharedResources, toolCtx, rec, "parent-restart (WS)")
+                    .flatMap {
+                      case Right(msg) => prReply(ok = true, "message" -> msg.asJson)
+                      case Left(err) => prReply(ok = false, "error" -> err.message.asJson)
+                    }
+            }
         case _ => prReply(ok = false, "error" -> "Protected or unknown execution requires exact-ref recovery.".asJson)
       }
     end if
@@ -979,33 +992,38 @@ private[gateway] object WsSessionChatHandlers:
             else
               // Actor-level wake must not bypass protected recovery classification.
               sharedResources.executionProtection(wid).flatMap {
-                case nebflow.shared.ExecutionProtection.Unprotected => live match
-                  case Some(l) =>
-                    (l.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
-                      nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, wid) *>
-                      wokenFrame("restarting", "panel-restart") *>
+                case nebflow.shared.ExecutionProtection.Unprotected =>
+                  live match
+                    case Some(l) =>
+                      (l.ref ! nebflow.actor.AgentCommand.RestartAgent(nebflow.actor.RestartLevel.Soft)) *>
+                        nebflow.core.tools.AgentControlTool.clearRegistryEscalation(sharedResources, wid) *>
+                        wokenFrame("restarting", "panel-restart") *>
+                        wReply(
+                          ok = true,
+                          mode = "restart",
+                          "actualStatus" -> "restarting".asJson,
+                          "freeze" -> nebflow.actor.FreezeTruth.running("restarting", System.currentTimeMillis()).json,
+                          "message" -> (
+                            "Restart sent: the frozen turn is terminated now and the session resumes from the last " +
+                              "persisted checkpoint in the SAME session (finished work is not redone)."
+                          ).asJson
+                        )
+                    case None =>
                       wReply(
-                        ok = true,
-                        mode = "restart",
-                        "actualStatus" -> "restarting".asJson,
-                        "freeze" -> nebflow.actor.FreezeTruth.running("restarting", System.currentTimeMillis()).json,
-                        "message" -> (
-                          "Restart sent: the frozen turn is terminated now and the session resumes from the last " +
-                            "persisted checkpoint in the SAME session (finished work is not redone)."
-                        ).asJson
+                        ok = false,
+                        mode = "none",
+                        detail(
+                          "unknown",
+                          s"'$wid' is frozen in the record but has no live agent to continue (status=unknown, " +
+                            s"reason=${truth.reasonWire}) — re-delegate the work or cancel the task."
+                        )*
                       )
-                  case None =>
-                    wReply(
-                      ok = false,
-                      mode = "none",
-                      detail(
-                        "unknown",
-                        s"'$wid' is frozen in the record but has no live agent to continue (status=unknown, " +
-                          s"reason=${truth.reasonWire}) — re-delegate the work or cancel the task."
-                      )*
-                    )
-                case _ => wReply(ok = false, mode = "recovery-rejected",
-                  detail(truth.status, "Protected or unknown execution requires exact-ref recovery.")*)
+                case _ =>
+                  wReply(
+                    ok = false,
+                    mode = "recovery-rejected",
+                    detail(truth.status, "Protected or unknown execution requires exact-ref recovery.")*
+                  )
               }
             end if
           }
@@ -1204,10 +1222,12 @@ private[gateway] object WsSessionChatHandlers:
     val sessionId = inboundEnvelope(text).sessionId
     if sessionId.nonEmpty then
       // Get agent name before deleting so we can send filtered list
-      sharedResources.executionProtection(sessionId).flatMap {
-        case nebflow.shared.ExecutionProtection.Unprotected => sessionStore.getSessionMeta(sessionId)
-        case _ => IO.raiseError(new IllegalStateException("protected-or-unknown-session-requires-review"))
-      }
+      sharedResources
+        .executionProtection(sessionId)
+        .flatMap {
+          case nebflow.shared.ExecutionProtection.Unprotected => sessionStore.getSessionMeta(sessionId)
+          case _ => IO.raiseError(new IllegalStateException("protected-or-unknown-session-requires-review"))
+        }
         .flatMap { metaOpt =>
           val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
           // Clean up text buffers for deleted session to prevent memory leak
@@ -1239,11 +1259,13 @@ private[gateway] object WsSessionChatHandlers:
     import ctx.*
     val sessionIds = parse(text).flatMap(_.hcursor.downField("sessionIds").as[List[String]]).getOrElse(Nil)
     if sessionIds.nonEmpty then
-      sessionIds.traverse(sharedResources.executionProtection).flatMap { protections =>
-        if protections.forall(_ == nebflow.shared.ExecutionProtection.Unprotected) then
-          sessionStore.getSessionMeta(sessionIds.head)
-        else IO.raiseError(new IllegalStateException("protected-or-unknown-session-requires-review"))
-      }
+      sessionIds
+        .traverse(sharedResources.executionProtection)
+        .flatMap { protections =>
+          if protections.forall(_ == nebflow.shared.ExecutionProtection.Unprotected) then
+            sessionStore.getSessionMeta(sessionIds.head)
+          else IO.raiseError(new IllegalStateException("protected-or-unknown-session-requires-review"))
+        }
         .flatMap { metaOpt =>
           val agentName = metaOpt.flatMap(_.agentName).getOrElse(RootAgentIdentity.Name)
           sessionIds

@@ -83,24 +83,30 @@ private[gateway] object PerceptionIngestRoutes:
         }
       case _ => NotFound(Json.obj("error" -> "not found".asJson))
 
+    end match
+
+  end handle
+
   /**
    * 投递注入（原 injectEnvelope 引擎半边逐字）：唯一根（Nebula 判据）⇒ 注入
    * ImmediateInput；零根/多根 ⇒ `delivered:false`（daemon spool，回放腿补投
    * ——多根从不臆测，同原语义）。
    */
   private def deliverEnvelope(ctx: RestApiCtx, text: String, priority: String): IO[Response[IO]] =
-    nebflow.core.tools.MailTool.resolveRoots(ctx.sharedResources, senderSessionId = "", preferredRootSid = None).flatMap {
-      case List((sid, ref)) =>
-        (ref ! nebflow.actor.AgentCommand.ImmediateInput(
-          text = text,
-          source = Some("perception"),
-          eventType = Some(s"perception.$priority"),
-          sender = Some("感知"),
-          fromUser = false
-        )).flatMap(_ => Ok(Json.obj("delivered" -> true.asJson)))
-      case _ =>
-        Ok(Json.obj("delivered" -> false.asJson))
-    }
+    nebflow.core.tools.MailTool
+      .resolveRoots(ctx.sharedResources, senderSessionId = "", preferredRootSid = None)
+      .flatMap {
+        case List((sid, ref)) =>
+          (ref ! nebflow.actor.AgentCommand.ImmediateInput(
+            text = text,
+            source = Some("perception"),
+            eventType = Some(s"perception.$priority"),
+            sender = Some("感知"),
+            fromUser = false
+          )).flatMap(_ => Ok(Json.obj("delivered" -> true.asJson)))
+        case _ =>
+          Ok(Json.obj("delivered" -> false.asJson))
+      }
 
   private def str(j: Json, k: String): String =
     j.hcursor.downField(k).as[String].getOrElse("")

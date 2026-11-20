@@ -22,9 +22,24 @@ object OtpExtractor:
 
   /** 意图词（中英），命中面加权：subject 命中比正文命中更可信。 */
   private val intentWords: List[String] = List(
-    "验证码", "校验码", "确认码", "动态码", "安全码", "登录码", "一次性密码", "动态密码",
-    "verification code", "verify code", "security code", "one-time password",
-    "one time password", "one-time", "otp", "login code", "confirmation code", "passcode"
+    "验证码",
+    "校验码",
+    "确认码",
+    "动态码",
+    "安全码",
+    "登录码",
+    "一次性密码",
+    "动态密码",
+    "verification code",
+    "verify code",
+    "security code",
+    "one-time password",
+    "one time password",
+    "one-time",
+    "otp",
+    "login code",
+    "confirmation code",
+    "passcode"
   )
 
   /** 独立 4-8 位数字段：前后不是数字/字母（排除订单号、金额、年份串）。 */
@@ -78,6 +93,10 @@ object OtpExtractor:
         .sortBy(-_.confidence)
         .take(3)
 
+    end if
+
+  end extract
+
   private def looksLikeYear(s: String): Boolean =
     val n = s.toIntOption.getOrElse(0)
     n >= 1900 && n <= 2100
@@ -105,3 +124,4 @@ object OtpExtractor:
   /** 与前端 OTP_INTENT_RE 同语义（中英意图词；词表与 [[intentWords]] 对齐；大小写不敏感——2FA/OTP/Passcode 大写形常见）。 */
   private val OtpIntentRe: scala.util.matching.Regex =
     "(?i)(验证码|校验码|确认码|动态码|安全码|登录码|verification\\s*code|verify\\s*code|security\\s*code|one[-\\s]?time|otp\\b|passcode|login\\s*code|2fa)".r.unanchored
+end OtpExtractor

@@ -19,15 +19,16 @@ object PerceptionModel:
 
   object EntryState:
     given Encoder[EntryState] = Encoder.encodeString.contramap(_.toString)
+
     given Decoder[EntryState] = Decoder.decodeString.emap(s =>
       EntryState.values.find(_.toString.equalsIgnoreCase(s)).toRight(s"unknown entry state: $s")
     )
 
     /** 四色投影：ok / warn / bad / dim（面板只认这四色，语义色只上载体）。 */
     def colorOf(s: EntryState): String = s match
-      case Idle                              => "ok"
-      case Degraded | Backoff                => "warn"
-      case AuthFailed | Error                => "bad"
+      case Idle => "ok"
+      case Degraded | Backoff => "warn"
+      case AuthFailed | Error => "bad"
       case Unconfigured | Connecting | Paused => "dim"
 
   /** 一个邮箱账户的配置（授权码不入此结构——授权码只进 secrets）。 */
@@ -52,7 +53,10 @@ object PerceptionModel:
   ):
     def secretName: String = MailAccount.secretNameFor(address)
 
+  end MailAccount
+
   object MailAccount:
+
     def secretNameFor(address: String): String =
       val safe = address.toLowerCase.replaceAll("[^a-z0-9._-]", "-").take(40).stripSuffix("-")
       // SecretsStore 命名 ^[a-z0-9][a-z0-9._-]{0,63}$
@@ -179,14 +183,15 @@ object PerceptionModel:
 
   /** L1（LLM 重要性判定）裁决（r2 §5.2 三值；deliver-digest 为 P3 预留不实现）。 */
   enum L1Verdict:
-    case Deliver   // 投递全文
-    case Drop      // 丢弃
+    case Deliver // 投递全文
+    case Drop // 丢弃
     case Unavailable // LLM 不可用/超时/不可解析 → 搁置 spool 待恢复
 
   object L1Verdict:
+
     def readable(v: L1Verdict): String = v match
-      case Deliver     => "deliver-full"
-      case Drop        => "drop"
+      case Deliver => "deliver-full"
+      case Drop => "drop"
       case Unavailable => "unavailable"
 
   /** 发送请求结果（REST 面的语义化失败，回执卡直接可用）。 */
@@ -199,17 +204,19 @@ object PerceptionModel:
     case NoAccount
     case Invalid(msg: String)
     // 报障 2026-10-31（「Host did not answer in time」怒评批）新增两态：
-    case Timeout   // 服务器超时未响应（DATA 写出之前——绝无已投递风险，可安全自动重试）
+    case Timeout // 服务器超时未响应（DATA 写出之前——绝无已投递风险，可安全自动重试）
     case Ambiguous // 投递结果不明（DATA 已写出但未获服务器最终回执——可能已投递，禁盲重试防重复）
 
   object SendFailure:
+
     def readable(f: SendFailure): String = f match
-      case AuthFailed              => "授权码已失效 · 需重新连接邮箱"
-      case Network(m)              => s"网络连接异常 · 请检查网络后重发（$m）"
-      case Rejected(_)             => "收件方拒收 · 地址可能已失效"
-      case Timeout                 => "发送超时：服务器长时间未响应（大附件或慢网络时常见）· 已自动重试仍未成功，请稍后重发"
-      case Ambiguous               => "发送结果不明：未收到服务器最终确认，邮件可能已发出 · 请勿立即重发，请先确认收件人是否收到"
-      case Stale                   => "草稿已在 Canvas 中修改，请以画布内容发送"
+      case AuthFailed => "授权码已失效 · 需重新连接邮箱"
+      case Network(m) => s"网络连接异常 · 请检查网络后重发（$m）"
+      case Rejected(_) => "收件方拒收 · 地址可能已失效"
+      case Timeout => "发送超时：服务器长时间未响应（大附件或慢网络时常见）· 已自动重试仍未成功，请稍后重发"
+      case Ambiguous => "发送结果不明：未收到服务器最终确认，邮件可能已发出 · 请勿立即重发，请先确认收件人是否收到"
+      case Stale => "草稿已在 Canvas 中修改，请以画布内容发送"
       case MissingAttachment(paths) => s"附件不存在：${paths.mkString("、")}"
-      case NoAccount               => "尚未连接邮箱"
-      case Invalid(m)              => m
+      case NoAccount => "尚未连接邮箱"
+      case Invalid(m) => m
+end PerceptionModel

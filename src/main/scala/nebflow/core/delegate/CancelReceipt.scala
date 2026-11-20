@@ -38,7 +38,10 @@ object CancelReceipt:
   val DefaultVerifyBudgetMs: Long = 5000L
 
   def verifyBudgetMs: Long =
-    sys.props.get("nebflow.agentcontrol.cancelVerifyMs").flatMap(v => scala.util.Try(v.toLong).toOption).getOrElse(DefaultVerifyBudgetMs)
+    sys.props
+      .get("nebflow.agentcontrol.cancelVerifyMs")
+      .flatMap(v => scala.util.Try(v.toLong).toOption)
+      .getOrElse(DefaultVerifyBudgetMs)
 
   /**
    * 轮询任务行翻 `cancelled`（R1-A 确认判据）。返回 true = 窗内确认；
@@ -50,20 +53,23 @@ object CancelReceipt:
       store
         .findByTaskId(sessionId)
         .map {
-          case None    => false // 行缺席（尚未写/已被清）——继续轮询到超窗
+          case None => false // 行缺席（尚未写/已被清）——继续轮询到超窗
           case Some(t) => t.status == "cancelled"
         }
         .handleErrorWith(e =>
           logger
-            .warn(s"[cancel-receipt] task-row probe failed for '$sessionId' (treating as not-yet-settled): ${e.getMessage}")
+            .warn(
+              s"[cancel-receipt] task-row probe failed for '$sessionId' (treating as not-yet-settled): ${e.getMessage}"
+            )
             .as(false)
         )
     def go: IO[Boolean] =
       attempt.flatMap {
-        case true  => IO.pure(true)
+        case true => IO.pure(true)
         case false =>
           if System.currentTimeMillis() >= deadline then IO.pure(false)
           else IO.sleep(pollMs.millis) >> go
       }
     go
+  end awaitTerminal
 end CancelReceipt

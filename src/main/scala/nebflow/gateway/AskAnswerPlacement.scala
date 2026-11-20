@@ -114,6 +114,8 @@ private[gateway] object AskAnswerPlacement:
         // 自己问自己 / 归属未知 ⇒ 改前路径逐字不变（全文落帧内 sessionId）。
         Plan(List(frameSessionId -> List(fullRow)), delegated = false, ownerSessionId = frameSessionId)
 
+  end plan
+
   /**
    * IO 连接件①：hub 只读归属查询（`AskOriginOf`）。hub 未装配 / 查询失败 ⇒
    * `None`（回落改前落库路径；与 `secretSlotsFor` 同款降级方向）。

@@ -147,7 +147,11 @@ class McpPermissionReplaySpec extends FunSuite:
     val byType = frames.map(f => f.hcursor.downField("type").as[String].toOption.getOrElse("") -> f).toMap
     assertEquals(byType.keySet, Set("askUser", "mcpPermission"))
     assert(frames.forall(_.hcursor.downField("replayed").as[Boolean].toOption.contains(true)), "重放标记")
-    assertEquals(frames.head.hcursor.downField("type").as[String].toOption, Some("askUser"), "fifoSeq 升序（= 邮箱到达序，取代原 createdAt）")
+    assertEquals(
+      frames.head.hcursor.downField("type").as[String].toOption,
+      Some("askUser"),
+      "fifoSeq 升序（= 邮箱到达序，取代原 createdAt）"
+    )
     val mcpFrame = byType("mcpPermission")
     assertEquals(mcpFrame.hcursor.downField("requestId").as[String].toOption, Some("req-mcp"), "requestId 绑定保留")
     assertEquals(mcpFrame.hcursor.downField("sessionId").as[String].toOption, Some("root-1"))

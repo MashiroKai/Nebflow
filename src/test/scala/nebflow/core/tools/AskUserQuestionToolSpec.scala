@@ -280,7 +280,8 @@ class AskUserQuestionToolSpec extends FunSuite:
   }
 
   test("parseItems: video preview is decoded (type + src + poster)") {
-    val pv = previewOf(Json.obj("type" -> "video".asJson, "src" -> "/tmp/a.mp4".asJson, "poster" -> "/tmp/a.jpg".asJson))
+    val pv =
+      previewOf(Json.obj("type" -> "video".asJson, "src" -> "/tmp/a.mp4".asJson, "poster" -> "/tmp/a.jpg".asJson))
     assertEquals(pv.map(_.`type`), Some("video"))
     assertEquals(pv.flatMap(_.src), Some("/tmp/a.mp4"))
     assertEquals(pv.flatMap(_.poster), Some("/tmp/a.jpg"))
@@ -293,7 +294,11 @@ class AskUserQuestionToolSpec extends FunSuite:
         "type" -> "media".asJson,
         "items" -> Json.arr(
           Json.obj("kind" -> "image".asJson, "src" -> "https://example.com/a.png".asJson, "name" -> "a.png".asJson),
-          Json.obj("kind" -> "video".asJson, "src" -> "/tmp/b.mp4".asJson, "poster" -> "https://example.com/b.jpg".asJson),
+          Json.obj(
+            "kind" -> "video".asJson,
+            "src" -> "/tmp/b.mp4".asJson,
+            "poster" -> "https://example.com/b.jpg".asJson
+          ),
           Json.obj("kind" -> "image".asJson), // no src/path ⇒ dropped
           "not-an-object".asJson // non-object ⇒ dropped
         )
@@ -358,8 +363,10 @@ class AskUserQuestionToolSpec extends FunSuite:
   private def multiItem(q: String, labels: String*): AskItem =
     AskItem(q, labels.map(l => AskOption(l)).toList, multiple = true)
 
-  /** 期望串归一 LF：三引号字面量在 CRLF checkout（Windows autocrlf）下带 \r，
-    * 引擎 formatAnswer 以显式 "\n" 构造 ⇒ 逐字比较在 Windows 假红；归一后契约不变。 */
+  /**
+   * 期望串归一 LF：三引号字面量在 CRLF checkout（Windows autocrlf）下带 \r，
+   * 引擎 formatAnswer 以显式 "\n" 构造 ⇒ 逐字比较在 Windows 假红；归一后契约不变。
+   */
   private def lf(s: String): String = s.replace("\r\n", "\n")
 
   private def singleItem(q: String, labels: String*): AskItem =

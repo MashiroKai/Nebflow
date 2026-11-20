@@ -278,9 +278,11 @@ class AskDeathExitCleanupSpec extends CatsEffectSuite:
       .getOrElse(throw new AssertionError("无 askUser 帧可取 requestId"))
 
   private def snapshotIds(hub: ActorRef[InteractionHubCommand]): IO[List[String]] =
-    hub.?[List[Json]](reply => InteractionHubCommand.ListAllPendingAsks(reply)).map(
-      _.flatMap(_.hcursor.get[String]("requestId").toOption)
-    )
+    hub
+      .?[List[Json]](reply => InteractionHubCommand.ListAllPendingAsks(reply))
+      .map(
+        _.flatMap(_.hcursor.get[String]("requestId").toOption)
+      )
 
   // ── D1：Stop ──────────────────────────────────────────────────────────────
   test("D1 Stop：pending 期间 Stop → askUserClosed(reason=source-stopped) + 槽回收，旁观者不误伤") {

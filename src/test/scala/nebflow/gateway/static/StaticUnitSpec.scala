@@ -76,10 +76,9 @@ class StaticUnitSpec extends CatsEffectSuite:
     }
 
   test("conditionalOk: cacheControl override is written verbatim"):
-    HttpCache.conditionalOk(Get.putHeaders(hdr("If-None-Match", Etag)), Body, Etag, "private, max-age=60").map {
-      resp =>
-        assertEquals(resp.status, Status.NotModified)
-        assertEquals(header(resp, "Cache-Control"), Some("private, max-age=60"))
+    HttpCache.conditionalOk(Get.putHeaders(hdr("If-None-Match", Etag)), Body, Etag, "private, max-age=60").map { resp =>
+      assertEquals(resp.status, Status.NotModified)
+      assertEquals(header(resp, "Cache-Control"), Some("private, max-age=60"))
     }
 
   // ── GzipMiddleware：只包 GET + 可压缩类型 + 非 /ws ─────────────────────
@@ -87,7 +86,8 @@ class StaticUnitSpec extends CatsEffectSuite:
   private val routes: HttpRoutes[IO] = HttpRoutes.of[IO] {
     case GET -> Root / "ok" =>
       IO.pure(
-        Response[IO](Status.Ok).withEntity("<html/>")
+        Response[IO](Status.Ok)
+          .withEntity("<html/>")
           .putHeaders(hdr("Content-Type", "text/html; charset=utf-8"), hdr("ETag", "\"abc\""))
       )
     case GET -> Root / "bin" =>
@@ -164,4 +164,3 @@ class StaticUnitSpec extends CatsEffectSuite:
     )
 
 end StaticUnitSpec
-

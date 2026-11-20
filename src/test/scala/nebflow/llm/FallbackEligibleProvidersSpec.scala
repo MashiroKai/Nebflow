@@ -90,7 +90,7 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
           mode match
             case "fail404" => sendBody(exchange, 404, notFoundBody)
             case "auth403" => sendBody(exchange, 403, auth403Body)
-            case _         => sendBody(exchange, 200, anthropicJson)
+            case _ => sendBody(exchange, 200, anthropicJson)
       )
       server.start()
       server
@@ -153,9 +153,11 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
       _ <- release
     yield (res, chain.map(c => s"${c.providerId}/${c.model}"))
 
-  /** 跑一次**流面**（`sendStream`）调用（模型路由记账批 2026-11-18：流面账本 parity
+  /**
+   * 跑一次**流面**（`sendStream`）调用（模型路由记账批 2026-11-18：流面账本 parity
    *  的读数腿）——装配与 [[runOnce]] 逐字相同，差别只在出口是流编译成 List。
-   *  返回 (错误面, 链 refs)：失败用 .left（本 spec 的断言全在终局处置表上）。 */
+   *  返回 (错误面, 链 refs)：失败用 .left（本 spec 的断言全在终局处置表上）。
+   */
   private def runStreamOnce(
     cfg: NebflowServiceConfig,
     r: LlmRequest
@@ -185,8 +187,7 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
           List("p1/m1"),
           "候选链必须恰 = preferred 单根（fallbacks 数组退役，不追加任何候选）"
         )
-        val err = res.left.getOrElse(fail(s"A1 必须失败（唯一候选必败且无 fallback 可换），实际 = ${res}")
-        )
+        val err = res.left.getOrElse(fail(s"A1 必须失败（唯一候选必败且无 fallback 可换），实际 = ${res}"))
         val msg = err.getMessage
         assert(msg.startsWith("All providers failed"), s"唯一根被真实试过且全败才允许这句话：\n$msg")
         assert(msg.contains("reason: all-providers-failed"), msg)
@@ -255,22 +256,21 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
   test("A3: 全部候选都被跳过（provider 全 disabled）⇒ all-skipped，且不许说 All providers failed") {
     val spec = List("d1" -> "ok", "d2" -> "ok")
     withFarm(spec) { (ports, hits) =>
-      runOnce(mkConfig(ports, disabled = Set("d1", "d2")), req("eligible-a3", None)).map {
-        case (res, chainRefs) =>
-          assertEquals(chainRefs, Nil, "全 disabled ⇒ 候选链必须为空")
-          val err = res.left.getOrElse(fail("A3 必须失败（一个候选都不可入选）"))
-          val msg = err.getMessage
-          assert(err.isInstanceOf[FallbackExhaustedError], s"必须抛 FallbackExhaustedError，实际 $err")
-          assert(
-            msg.contains("all-skipped") || msg.contains("no-eligible-providers"),
-            s"必须报 all-skipped / no-eligible-providers，实际:\n$msg"
-          )
-          assert(
-            !msg.contains("All providers failed"),
-            s"一个候选都没试时**不许**说 All providers failed（配置问题不是供应商问题）:\n$msg"
-          )
-          assert(msg.contains("[skipped] d1/m1 — not-configured (provider disabled)"), msg)
-          assertEquals(hits("d1").get(), 0, "disabled 的 provider 一根请求都不该收到")
+      runOnce(mkConfig(ports, disabled = Set("d1", "d2")), req("eligible-a3", None)).map { case (res, chainRefs) =>
+        assertEquals(chainRefs, Nil, "全 disabled ⇒ 候选链必须为空")
+        val err = res.left.getOrElse(fail("A3 必须失败（一个候选都不可入选）"))
+        val msg = err.getMessage
+        assert(err.isInstanceOf[FallbackExhaustedError], s"必须抛 FallbackExhaustedError，实际 $err")
+        assert(
+          msg.contains("all-skipped") || msg.contains("no-eligible-providers"),
+          s"必须报 all-skipped / no-eligible-providers，实际:\n$msg"
+        )
+        assert(
+          !msg.contains("All providers failed"),
+          s"一个候选都没试时**不许**说 All providers failed（配置问题不是供应商问题）:\n$msg"
+        )
+        assert(msg.contains("[skipped] d1/m1 — not-configured (provider disabled)"), msg)
+        assertEquals(hits("d1").get(), 0, "disabled 的 provider 一根请求都不该收到")
       }
     }
   }
@@ -380,10 +380,12 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
         assert(table.contains("2 SILENTLY EXCLUDED"), table)
         assert(table.contains("this is a bug, not provider failure"), table)
         // 反向：记了原因就不算静默（不许误报合法跳过）
-        val explained = excluded.copy(skipped = List(
-          "s2/m1" -> CandidateSkipCause.HealthDown("statusCode: 429"),
-          "s3/m1" -> CandidateSkipCause.ScheduleWindow("14:00-18:00")
-        ))
+        val explained = excluded.copy(skipped =
+          List(
+            "s2/m1" -> CandidateSkipCause.HealthDown("statusCode: 429"),
+            "s3/m1" -> CandidateSkipCause.ScheduleWindow("14:00-18:00")
+          )
+        )
         assertEquals(explained.silentExclusions, Nil)
         assert(!explained.render().contains("SILENTLY EXCLUDED"), explained.render())
     }
@@ -502,3 +504,4 @@ class FallbackEligibleProvidersSpec extends CatsEffectSuite:
   // A7（派发钉链剔除）：pin 路径记录的候选若不在该 agent 的授权链中，
   // 仅保留排除原因，不可通过储备层回补为请求候选。
   // ==============================================================end FallbackEligibleProvidersSpec
+end FallbackEligibleProvidersSpec

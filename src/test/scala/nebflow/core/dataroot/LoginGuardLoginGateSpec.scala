@@ -73,21 +73,25 @@ class LoginGuardLoginGateSpec extends munit.FunSuite:
    */
   private def withFakeLiveInstance[T](port: Int)(f: => T): T =
     val server = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0)
-    server.createContext("/api/health", exchange =>
-      val body =
-        s"""{"product":"${Branding.lowerName}","status":"ok","version":"b1-guards-spec"}""".getBytes("UTF-8")
-      exchange.getResponseHeaders.add("Content-Type", "application/json")
-      exchange.sendResponseHeaders(200, body.length.toLong)
-      val out = exchange.getResponseBody
-      try out.write(body)
-      finally
-        out.close()
-        exchange.close()
+    server.createContext(
+      "/api/health",
+      exchange =>
+        val body =
+          s"""{"product":"${Branding.lowerName}","status":"ok","version":"b1-guards-spec"}""".getBytes("UTF-8")
+        exchange.getResponseHeaders.add("Content-Type", "application/json")
+        exchange.sendResponseHeaders(200, body.length.toLong)
+        val out = exchange.getResponseBody
+        try out.write(body)
+        finally
+          out.close()
+          exchange.close()
     )
     server.setExecutor(null)
     server.start()
     try f
     finally server.stop(0)
+
+  end withFakeLiveInstance
 
   /** 预置「机器已登录 A」：机器层指针 = A（登录腿 writePointer 的等价面）。 */
   private def signedInAs(root: os.Path, sub: String, email: String): Unit =

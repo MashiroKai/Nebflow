@@ -2,14 +2,15 @@ package nebflow.pilogic
 
 import scala.concurrent.duration.FiniteDuration
 
-/** 策略位（设计 §Ⅱ.2，L-10 三元全 Option）：上限的唯一来源是构造参数，缺省无帽；
-  * 引擎触及上限的唯一方式 = 每轮循环头对本对象做谓词查询。
-  * 模块内零硬编码数字上限（验收 A-3 grep 门：pilogic 源码无数字字面量上限）。
-  */
+/**
+ * 策略位（设计 §Ⅱ.2，L-10 三元全 Option）：上限的唯一来源是构造参数，缺省无帽；
+ * 引擎触及上限的唯一方式 = 每轮循环头对本对象做谓词查询。
+ * 模块内零硬编码数字上限（验收 A-3 grep 门：pilogic 源码无数字字面量上限）。
+ */
 final case class LoopPolicy(
   maxTurns: Option[TurnNumber] = None,
   tokenBudget: Option[TokenBudget] = None,
-  wallClock: Option[FiniteDuration] = None,
+  wallClock: Option[FiniteDuration] = None
 ):
 
   /** nextTurn = 即将开跑的轮号（从 1 起）。maxTurns=Some(3) ⇒ 第 4 轮开跑前命中 ⇒ 恰停 3 轮（A-2）。 */
@@ -29,12 +30,16 @@ object LoopPolicy:
   /** 缺省无帽策略。 */
   val none: LoopPolicy = LoopPolicy()
 
-/** 失败重试预算——与轮数预算是两个类型分离的独立位（病灶 #5 的结构性拆分：
-  * 轮数预算数每一轮；重试预算只数失败重投。pilogic 只承载策略位，不内建数字）。 */
+/**
+ * 失败重试预算——与轮数预算是两个类型分离的独立位（病灶 #5 的结构性拆分：
+ * 轮数预算数每一轮；重试预算只数失败重投。pilogic 只承载策略位，不内建数字）。
+ */
 final case class RetryPolicy(maxAttempts: Option[Int] = None):
 
-  /** 已失败的 attempt 数是否仍在预算内（接线点 3：主链 per-turn LLM 重试闸的
-    * 策略位谓词——`attemptsDone < maxAttempts`。None = 无帽恒允许）。 */
+  /**
+   * 已失败的 attempt 数是否仍在预算内（接线点 3：主链 per-turn LLM 重试闸的
+   * 策略位谓词——`attemptsDone < maxAttempts`。None = 无帽恒允许）。
+   */
   def allows(attemptsDone: Int): Boolean =
     maxAttempts.forall(attemptsDone < _)
 

@@ -66,7 +66,9 @@ class SecretKeysSpec extends FunSuite:
     assert(!out.contains(FakeDeviceToken), s"deviceToken 值仍可见：$out")
     assert(out.contains("<redacted>"), s"必须留下掩码痕迹：$out")
     assert(out.contains("link.example.space"), s"非凭据字段必须逐字保留：$out")
-    println(s"[item1] fake-deviceToken masked: raw-visible=false masked-visible=true len ${config.length} -> ${out.length}")
+    println(
+      s"[item1] fake-deviceToken masked: raw-visible=false masked-visible=true len ${config.length} -> ${out.length}"
+    )
   }
 
   test("text leg: fake apiKey / clientSecret / password / authorization are masked") {

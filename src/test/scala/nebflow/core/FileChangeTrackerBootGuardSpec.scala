@@ -34,7 +34,10 @@ class FileChangeTrackerBootGuardSpec extends CatsEffectSuite:
     val home = Paths.get(System.getProperty("user.home"))
     assert(FileChangeTracker.isUnscannableRoot(home), "user.home must be refused")
     assert(FileChangeTracker.isUnscannableRoot(Paths.get("/")), "filesystem root must be refused")
-    assert(!FileChangeTracker.isUnscannableRoot(home.resolve("Documents")), "a home SUBDIR is a legitimate root (budget caps it)")
+    assert(
+      !FileChangeTracker.isUnscannableRoot(home.resolve("Documents")),
+      "a home SUBDIR is a legitimate root (budget caps it)"
+    )
     IO.blocking(Files.createTempDirectory("fct-guard")).flatMap { tmp =>
       IO(assert(!FileChangeTracker.isUnscannableRoot(tmp), "a temp project root must stay scannable"))
     }
@@ -47,7 +50,9 @@ class FileChangeTrackerBootGuardSpec extends CatsEffectSuite:
       tracker.checkChanges().map(result => assert(result.isEmpty))
     }
 
-  test("walk budget: a scan over a tree larger than the cap is discarded (fail-soft), and rescans normally once the cap lifts"):
+  test(
+    "walk budget: a scan over a tree larger than the cap is discarded (fail-soft), and rescans normally once the cap lifts"
+  ):
     val prop = "nebflow.filewalk.maxFiles"
     IO.blocking {
       val root = Files.createTempDirectory("fct-budget")
@@ -68,3 +73,4 @@ class FileChangeTrackerBootGuardSpec extends CatsEffectSuite:
         assert(breached.isEmpty, s"breached scan should be discarded, got ${breached.size} entries")
         assert(full.size == 200, s"capped-off rescan should see all files, got ${full.size}")
     }
+end FileChangeTrackerBootGuardSpec

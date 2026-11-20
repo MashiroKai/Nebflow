@@ -31,6 +31,7 @@ private[project] trait NodeRecovery:
   /** 回放计划（纯函数——spec 可直接单测，无 IO）。 */
   private[project] object ReplayPlan:
     final case class Item(entry: NodeMessageLedger.Entry, why: String)
+
     /**
      * @param items 需要回放进 resume prompt 的条目
      * @param consumedIds 台账未终态、但**转录已含标记**的条目（crash 落在「已消费未记账」
@@ -83,7 +84,7 @@ private[project] trait NodeRecovery:
         val readTranscript: IO[List[nebflow.shared.Message]] =
           node.sessionRef match
             case Some(sid) => resources.sessionStore.loadMessagesForSession(sid).attempt.map(_.getOrElse(Nil))
-            case None      => IO.pure(Nil)
+            case None => IO.pure(Nil)
         readTranscript.flatMap { transcript =>
           val plan = ReplayPlan.of(nodeId, rows, id => NodeMessageLedger.inMessages(transcript, id))
           val byId = rows.groupBy(_.id)
@@ -97,7 +98,9 @@ private[project] trait NodeRecovery:
                   r.copy(
                     event = NodeMessageLedger.Consumed,
                     ts = System.currentTimeMillis(),
-                    detail = Some("transcript already carries the message marker (consumed before the crash; ledger closed at boot)")
+                    detail = Some(
+                      "transcript already carries the message marker (consumed before the crash; ledger closed at boot)"
+                    )
                   )
                 )
               )
@@ -143,6 +146,7 @@ private[project] trait NodeRecovery:
                     "以下消息在你的上次会话里已投递但**未被消费**（不在恢复的历史里）——按已收到的指令执行，勿重做已完成步骤。\n" +
                     lines.mkString("\n")
                 )
+          end if
         }
       }
       .handleErrorWith(e =>
@@ -185,7 +189,12 @@ private[project] trait NodeRecovery:
                         .as(n)
                     case Some(node) if NodeLifecycle.Terminal.contains(node.status) =>
                       NodeMessageLedger
-                        .transition(workspace, e, NodeMessageLedger.Dead, Some(s"node terminal (${node.status}) at boot"))
+                        .transition(
+                          workspace,
+                          e,
+                          NodeMessageLedger.Dead,
+                          Some(s"node terminal (${node.status}) at boot")
+                        )
                         .as(n)
                     case Some(node) =>
                       if NodeMessageLedger.inText(node.task.getOrElse(""), e.id) then
@@ -224,9 +233,10 @@ private[project] trait NodeRecovery:
                               )
                               .as(n + 1)
                           }
+                }
               }
-            }
           }
+        end if
       }
       .handleErrorWith(e =>
         logger
@@ -245,7 +255,8 @@ private[project] trait NodeRecovery:
               NodeMessageLedger.entries(workspace).flatMap { entries =>
                 entries
                   .filter(e =>
-                    e.nodeId == nodeId && e.event == NodeMessageLedger.Replayed && NodeMessageLedger.inMessages(msgs, e.id)
+                    e.nodeId == nodeId && e.event == NodeMessageLedger.Replayed && NodeMessageLedger
+                      .inMessages(msgs, e.id)
                   )
                   .traverse_(e =>
                     NodeMessageLedger.transition(
@@ -316,35 +327,48 @@ private[project] trait NodeRecovery:
 
   /** Save restart residue without starting actors, replaying tools or notifying a parent. */
   def holdForManualRecovery(): IO[Int] =
-    store.mutateWithResult { st =>
-      val ids = st.nodes.values.filterNot(n => NodeLifecycle.Terminal.contains(n.status)).map(_.id).toSet
-      val nodes = st.nodes.map { (id, n) =>
-        id -> (if n.status == NodeLifecycle.Running then n.copy(status = NodeLifecycle.Interrupted) else n)
+    store
+      .mutateWithResult { st =>
+        val ids = st.nodes.values.filterNot(n => NodeLifecycle.Terminal.contains(n.status)).map(_.id).toSet
+        val nodes = st.nodes.map { (id, n) =>
+          id -> (if n.status == NodeLifecycle.Running then n.copy(status = NodeLifecycle.Interrupted) else n)
+        }
+        (st.copy(nodes = nodes, manualRecoveryNodes = st.manualRecoveryNodes ++ ids), ids.size)
       }
-      (st.copy(nodes = nodes, manualRecoveryNodes = st.manualRecoveryNodes ++ ids), ids.size)
-    }.flatMap { (snap, count) =>
-      snap.manualRecoveryNodes.toList.traverse_(id => snap.nodes.get(id).traverse_(n =>
-        emitWithChain("nodeUpdated", id, NodePayload.buildNodeJson(n, System.currentTimeMillis()))
-      )).as(count)
-    }
+      .flatMap { (snap, count) =>
+        snap.manualRecoveryNodes.toList
+          .traverse_(id =>
+            snap.nodes
+              .get(id)
+              .traverse_(n =>
+                emitWithChain("nodeUpdated", id, NodePayload.buildNodeJson(n, System.currentTimeMillis()))
+              )
+          )
+          .as(count)
+      }
 
   /** Explicit user recovery, preserving checkpoint-based execution for interrupted nodes. */
   def resumeSavedNodes(ids: Set[String]): IO[Int] =
     store.snapshot.flatMap { snap =>
       val selected = ids.intersect(snap.manualRecoveryNodes).toList.flatMap(snap.nodes.get)
-      selected.traverse { n =>
-        val release = store.mutate(st => st.copy(manualRecoveryNodes = st.manualRecoveryNodes - n.id)).void
-        if n.status == NodeLifecycle.Interrupted || n.status == NodeLifecycle.Running then
-          bootRecoveryClaim(n).flatMap {
-            case Some(Right(ctx)) =>
-              (release *> bootRecoveryStart(n.id, ctx)).handleErrorWith { e =>
-                store.mutate(st => st.copy(manualRecoveryNodes = st.manualRecoveryNodes + n.id)).void *>
-                  logger.error(s"manual node recovery failed for ${n.id}; execution remains held: ${e.getMessage}")
-              }.start.as(1)
-            case _ => IO.pure(0)
-          }
-        else release.as(1)
-      }.map(_.sum)
+      selected
+        .traverse { n =>
+          val release = store.mutate(st => st.copy(manualRecoveryNodes = st.manualRecoveryNodes - n.id)).void
+          if n.status == NodeLifecycle.Interrupted || n.status == NodeLifecycle.Running then
+            bootRecoveryClaim(n).flatMap {
+              case Some(Right(ctx)) =>
+                (release *> bootRecoveryStart(n.id, ctx))
+                  .handleErrorWith { e =>
+                    store.mutate(st => st.copy(manualRecoveryNodes = st.manualRecoveryNodes + n.id)).void *>
+                      logger.error(s"manual node recovery failed for ${n.id}; execution remains held: ${e.getMessage}")
+                  }
+                  .start
+                  .as(1)
+              case _ => IO.pure(0)
+            }
+          else release.as(1)
+        }
+        .map(_.sum)
     }
 
   def bootRecoveryClaim(n: NodeDef): IO[Option[Either[String, NodeEngine.ResumeContext]]] =

@@ -463,7 +463,9 @@ class RootDeliveryRedeliverySpec extends FunSuite:
     }
   }
 
-  test("failed terminalization re-land is idempotent: duplicate failNodeR keeps one failed record, no blockCount side effects") {
+  test(
+    "failed terminalization re-land is idempotent: duplicate failNodeR keeps one failed record, no blockCount side effects"
+  ) {
     withFixture("failed-duplicate") { (store, engine, _, _, _, _, _) =>
       val node = completedNode("n-fail", NodeLifecycle.Running, "")
       val io = for
@@ -488,11 +490,15 @@ class RootDeliveryRedeliverySpec extends FunSuite:
     withFixture("empty-result") { (store, engine, resources, _, _, rootSid, rootRef) =>
       val io = for
         _ <- registerRoot(resources, rootSid, rootRef)
-        _ <- store.mutate(s => s.copy(nodes = Map(
-          "empty" -> completedNode("empty", NodeLifecycle.Completed, ""),
-          "blank" -> completedNode("blank", NodeLifecycle.Completed, "  \n"),
-          "absent" -> completedNode("absent", NodeLifecycle.Completed, "").copy(result = None)
-        )))
+        _ <- store.mutate(s =>
+          s.copy(nodes =
+            Map(
+              "empty" -> completedNode("empty", NodeLifecycle.Completed, ""),
+              "blank" -> completedNode("blank", NodeLifecycle.Completed, "  \n"),
+              "absent" -> completedNode("absent", NodeLifecycle.Completed, "").copy(result = None)
+            )
+          )
+        )
         count <- engine.redeliverUnconsumedRootResults()
         _ <- engine.flushRootNotify()
         snapshot <- store.snapshot

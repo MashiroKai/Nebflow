@@ -1025,6 +1025,7 @@ Example (render a card from a file on disk — including one you saved earlier a
                                     FileRefs.servabilityHint("credential-hardlink")
                                 )
                               else None
+                      end match
                     catch
                       case e: Throwable =>
                         Some(
@@ -1047,10 +1048,19 @@ Example (render a card from a file on disk — including one you saved earlier a
                             java.nio.charset.StandardCharsets.UTF_8
                           )
                         )
+                  end match
+                end if
+              end if
           catch
             case e: Throwable =>
               val message = Option(e.getMessage).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
               refuse(s"the source could not be read (${e.getClass.getSimpleName}: $message)")
+
+      end match
+
+    end if
+
+  end readCardSource
 
   /**
    * card-tool-revive batch (2026-11-18): Canvas-Ask-only identity gate.
@@ -1135,6 +1145,10 @@ Example (render a card from a file on disk — including one you saved earlier a
               )
             )
 
+    end match
+
+  end renderCard
+
   /**
    * The card payload object. Field order is a contract with the guard
    *  (fileRefs/warnings lead so a >50K card's 2048-char preview keeps the
@@ -1159,6 +1173,8 @@ Example (render a card from a file on disk — including one you saved earlier a
         "persist" -> persist
       )
       .noSpaces
+
+  end cardPayload
 
   /**
    * Try to extract valid HTML from the input with multi-level fallback:

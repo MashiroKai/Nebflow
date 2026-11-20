@@ -66,7 +66,8 @@ object KernelCallSites:
     id = "delegate-judge",
     logName = "nebflow.llm.delegate-judge",
     logTag = "delegate-judge",
-    systemPrefix = "Stable(DelegateJudgeMachine.JudgeSystemTemplate) — the constant judging template; the delegate state stays in the user message"
+    systemPrefix =
+      "Stable(DelegateJudgeMachine.JudgeSystemTemplate) — the constant judging template; the delegate state stays in the user message"
   )
 
   /** 健康探针腿（`HealthMonitor.probe`；K6 = 计量但不过闸）。 */
@@ -74,7 +75,8 @@ object KernelCallSites:
     id = "health-check",
     logName = "nebflow.llm.health",
     logTag = "health-check",
-    systemPrefix = "Absent(HealthProbeAbsence) — a byte-frozen single-token probe body has no shared system prefix to reuse"
+    systemPrefix =
+      "Absent(HealthProbeAbsence) — a byte-frozen single-token probe body has no shared system prefix to reuse"
   )
 
   /** 主 agent 腿「本例无稳定 system 前缀」的白名单理由（K2 登记项）。 */

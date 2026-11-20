@@ -42,19 +42,20 @@ object CacheStats:
     def hitPct: Double = if inputTokens <= 0L then 0.0 else cacheRead * 100.0 / inputTokens
 
   private final class Domain:
-    val requests    = new AtomicLong(0L)
+    val requests = new AtomicLong(0L)
     val inputTokens = new AtomicLong(0L)
-    val cacheRead   = new AtomicLong(0L)
-    val cacheWrite  = new AtomicLong(0L)
+    val cacheRead = new AtomicLong(0L)
+    val cacheWrite = new AtomicLong(0L)
+
     def snap: DomainSnapshot =
       DomainSnapshot(requests.get, inputTokens.get, cacheRead.get, cacheWrite.get)
 
-  private val total   = new Domain
+  private val total = new Domain
   private val domains = new ConcurrentHashMap[String, Domain]()
 
   // 聚合行发射状态（只在 lock 内读写）。
-  private val lock                  = new Object
-  private var lastEmitAtMs: Long    = 0L
+  private val lock = new Object
+  private var lastEmitAtMs: Long = 0L
   private var lastEmittedRequests: Long = 0L
   private var windowCheckpoint: DomainSnapshot = DomainSnapshot(0L, 0L, 0L, 0L)
 
@@ -66,7 +67,7 @@ object CacheStats:
     case None => ()
     case Some(u) =>
       val key = s"$providerId/$model"
-      val d   = domains.computeIfAbsent(key, _ => new Domain)
+      val d = domains.computeIfAbsent(key, _ => new Domain)
       d.requests.incrementAndGet()
       d.inputTokens.addAndGet(u.inputTokens.toLong)
       d.cacheRead.addAndGet(u.cacheReadTokens.getOrElse(0).toLong)
@@ -83,7 +84,7 @@ object CacheStats:
    */
   def maybeEmit(force: Boolean = false): Unit = lock.synchronized {
     val now = clockMs()
-    val n   = total.requests.get()
+    val n = total.requests.get()
     // 冷启动锚（2026-11-06 小修批）：lastEmitAtMs 初始 0L 时时间窗腿带
     // `lastEmitAtMs > 0L` 前置 ⇒ 首次发射前永不激活 → 实例生命周期内总请求
     // <200（低峰期/刚重启）一条聚合行都不发，可观测面自哑。修法：首单落账时
@@ -113,12 +114,14 @@ object CacheStats:
           s"cumulative(n=${cum.requests}) input=${compact(cum.inputTokens)} read=${compact(cum.cacheRead)} " +
           s"hit=${fmt1(cum.hitPct)}% | domains: $top"
       )
-      lastEmitAtMs        = now
+      lastEmitAtMs = now
       lastEmittedRequests = n
-      windowCheckpoint    = cum
+      windowCheckpoint = cum
+    end if
   }
 
   def totalSnapshot: DomainSnapshot = total.snap
+
   def domainSnapshots: Map[String, DomainSnapshot] =
     domains.asScala.toList.map { case (k, d) => k -> d.snap }.toMap
 
@@ -135,3 +138,4 @@ object CacheStats:
     else v.toString
 
   private def fmt1(v: Double): String = f"$v%.1f"
+end CacheStats

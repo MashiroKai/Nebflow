@@ -93,18 +93,21 @@ class DispatchNotifyGuardPersistenceSpec extends FunSuite:
         dn2 = mkNotify(store, wsDir.toString, "guard-proj", triggered, Some(db))
         _ <- fail(dn2, store, "n-4")
         t3 <- triggered.get
-        _ = assert(clue(t3.size) == 2,
-          "RESTART must NOT resend: cooldown recovered from db guard doc (V8 判据)")
+        _ = assert(clue(t3.size) == 2, "RESTART must NOT resend: cooldown recovered from db guard doc (V8 判据)")
         // guard 档在盘上且冷却在未来。
         doc <- db.readNotifyGuard(s"dispatch-notify:failed:guard-proj")
         _ = doc match
           case ReadResult.Present(d) =>
-            assert(clue(d.cooldownUntil) > System.currentTimeMillis(),
-              "persisted cooldownUntil must still be in the future")
+            assert(
+              clue(d.cooldownUntil) > System.currentTimeMillis(),
+              "persisted cooldownUntil must still be in the future"
+            )
           case other => fail(s"expected Present guard doc, got $other")
       yield ()
       io.unsafeRunSync()
     finally db.close()
+
+    end try
 
   test("C2: without db wiring the same restart RESENDS (control — 主链行为差异证据)"):
     val wsDir = tempDir("ws-nodb")
@@ -122,8 +125,7 @@ class DispatchNotifyGuardPersistenceSpec extends FunSuite:
       dn2 = mkNotify(store, wsDir.toString, "guard-nodb", triggered, None)
       _ <- fail(dn2, store, "n-4")
       t2 <- triggered.get
-      _ = assert(clue(t2.size) == 3,
-        "control: in-memory guard resets on restart ⇒ resend (今天的既有行为)")
+      _ = assert(clue(t2.size) == 3, "control: in-memory guard resets on restart ⇒ resend (今天的既有行为)")
     yield ()
     io.unsafeRunSync()
 
@@ -153,6 +155,8 @@ class DispatchNotifyGuardPersistenceSpec extends FunSuite:
       io.unsafeRunSync()
     finally db.close()
 
+    end try
+
   test("C2: corrupt guard doc recovers conservative (all-cooling) + quarantined"):
     val dbRoot = tempDir("corrupt")
     val wsDir = tempDir("ws3")
@@ -163,21 +167,26 @@ class DispatchNotifyGuardPersistenceSpec extends FunSuite:
         triggered <- Ref.of[IO, List[String]](Nil)
         _ <- seedFailed(store, "c-1")
         // 注入坏 guard 档（writeGuardDoc 的 V3 拒写 ⇒ 只能直写文件模拟盘上损坏）。
-        _ = {
+        _ =
           val guardDir = dbRoot.resolve("db").resolve("guard")
           Files.createDirectories(guardDir)
-          Files.writeString(guardDir.resolve("notify-dispatch-notify-failed-corrupt-proj.json"),
-            "{\"version\":1,\"source\":\"x\",\"failedAt\":[NOT-JSON")
-        }
+          Files.writeString(
+            guardDir.resolve("notify-dispatch-notify-failed-corrupt-proj.json"),
+            "{\"version\":1,\"source\":\"x\",\"failedAt\":[NOT-JSON"
+          )
         dn = mkNotify(store, wsDir.toString, "corrupt-proj", triggered, Some(db))
         _ <- fail(dn, store, "c-1")
         t <- triggered.get
         _ = assert(clue(t.isEmpty), "corrupt guard ⇒ conservative all-cooling ⇒ suppressed")
-        quarantined = Files.list(dbRoot.resolve("db").resolve("guard")).toArray
-          .map(_.toString).count(_.contains(".corrupt-"))
+        quarantined = Files
+          .list(dbRoot.resolve("db").resolve("guard"))
+          .toArray
+          .map(_.toString)
+          .count(_.contains(".corrupt-"))
         _ = assert(clue(quarantined) >= 1, "corrupt guard doc must be quarantined (.corrupt-<ts>)")
       yield ()
       io.unsafeRunSync()
     finally db.close()
+    end try
 
 end DispatchNotifyGuardPersistenceSpec

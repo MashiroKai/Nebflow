@@ -153,8 +153,7 @@ object NodeStuckNotify:
 
   /** 注入文本里的状态行（state 事实，非判据）。 */
   def stateLine(rec: AgentRecord, cause: String): String =
-    if cause == CauseWaiting then
-      s"WaitingForUser (parked on a human answer — AskUser / permission card)"
+    if cause == CauseWaiting then s"WaitingForUser (parked on a human answer — AskUser / permission card)"
     else
       val tool = rec.currentToolName.map(t => s"tool '$t' in flight").getOrElse("no tool in flight")
       s"Processing ($tool)"
@@ -177,7 +176,9 @@ object NodeStuckNotify:
       assessment match
         case Some(a) if a.branch != BranchWaiting =>
           val progress =
-            val ago = if rec.lastProgressSignalAt > 0 then (System.currentTimeMillis() - rec.lastProgressSignalAt) / 1000 else -1L
+            val ago =
+              if rec.lastProgressSignalAt > 0 then (System.currentTimeMillis() - rec.lastProgressSignalAt) / 1000
+              else -1L
             if ago < 0 then "no progress signal (never seen)" else s"no fresh progress signal (last ${ago}s ago)"
           s"agent-side event ${a.agentIdleMs / 1000}s ago; ${progress}; tool phase ${a.toolPhaseMs / 1000}s " +
             s"(authorised ${TaskStuckJudgementLabel.effectiveToolPhaseSecs(rec)}s); branch=${a.branch}"
@@ -188,14 +189,20 @@ object NodeStuckNotify:
         case Some(t) if t.viaRoot => s"${t.sessionId} (root fallback: no live dispatcher for this node)"
         case Some(t) => t.sessionId
         case None => "(none — no live dispatcher and no live root; audit event written, delivery skipped)"
-    s"""[node-stuck] cause=$cause node=${nodeRef.nodeId} project=${nodeRef.project} session=${rec.sessionId} — no progress for ${humanDuration(ageMs)}.
+    s"""[node-stuck] cause=$cause node=${nodeRef.nodeId} project=${nodeRef.project} session=${rec.sessionId} — no progress for ${humanDuration(
+        ageMs
+      )}.
        |state: ${stateLine(rec, cause)}
        |duration: ${humanDuration(ageMs)} (> threshold ${humanDuration(thresholdMs)})
        |activity: $activity
        |notified: ${targetLine}
        |options: (1) steer the node — reply to it with guidance (it resumes the moment it gets your message);
        |         (2) intervene — stop the node (AgentControl stop) and re-dispatch it from the flow map;
-       |         (3) accept the wait — no action; this notice repeats at most every ${humanDuration(cooldownMs)}.""".stripMargin
+       |         (3) accept the wait — no action; this notice repeats at most every ${humanDuration(
+        cooldownMs
+      )}.""".stripMargin
+
+  end renderNotice
 
   /** 审计行 summary：机器可读（gate 按 `cause=` / `target=` / `delivered=` 记账）。 */
   def renderEventSummary(
@@ -206,7 +213,8 @@ object NodeStuckNotify:
     target: Option[Target],
     delivered: Boolean
   ): String =
-    val tgt = target.map(t => s"${t.sessionId}${if t.viaRoot then ":root-fallback" else ":dispatcher"}").getOrElse("none")
+    val tgt =
+      target.map(t => s"${t.sessionId}${if t.viaRoot then ":root-fallback" else ":dispatcher"}").getOrElse("none")
     s"cause=$cause state=${rec.status} duration=${ageMs / 1000}s target=$tgt delivered=$delivered " +
       s"session=${rec.sessionId} node=${nodeRef.nodeId}"
 
@@ -309,7 +317,9 @@ object NodeStuckNotify:
           if delivered then
             logger.warn(
               s"node-stuck-notify: node=${nodeRef.nodeId} session=${rec.sessionId} cause=$cause " +
-                s"age=${ageMs / 1000}s → notified ${target.map(t => t.sessionId + (if t.viaRoot then " (root fallback)" else "")).getOrElse("?")}"
+                s"age=${ageMs / 1000}s → notified ${target
+                    .map(t => t.sessionId + (if t.viaRoot then " (root fallback)" else ""))
+                    .getOrElse("?")}"
             )
           else
             logger.warn(
@@ -318,6 +328,7 @@ object NodeStuckNotify:
             )
       yield Some(Outcome(rec.sessionId, cause, ageMs, target, delivered, accounted))
       end for
+    end notice
 
     candidates
       .flatTraverse { rec =>
@@ -347,6 +358,7 @@ object NodeStuckNotify:
    * 单点，避免文案与判据两套口径）。
    */
   private object TaskStuckJudgementLabel:
+
     def effectiveToolPhaseSecs(rec: AgentRecord): Long =
       ToolStuckJudgment.effectiveToolPhaseMs(
         Defaults.ToolPhaseStuckMs,

@@ -45,6 +45,7 @@ class DispatcherNotifyP0P1Spec extends CatsEffectSuite:
   PathUtil.setDataRoot(tempRoot)
   os.remove.all(tempRoot)
   os.makeDir.all(tempRoot / "agents" / "general")
+
   os.write.over(
     tempRoot / "agents" / "general" / "agent.json",
     """{"name":"general","description":"p0p1 wiring spec agent","tools":[],"category":"standalone"}"""
@@ -111,8 +112,7 @@ class DispatcherNotifyP0P1Spec extends CatsEffectSuite:
   private def readEvents(ws: os.Path): IO[List[Json]] =
     IO.blocking {
       val f = ws / ".nebflow" / FlowMapEventLog.FileName
-      if os.exists(f) then
-        os.read(f).linesIterator.toList.filter(_.trim.nonEmpty).flatMap(l => jsonParse(l).toOption)
+      if os.exists(f) then os.read(f).linesIterator.toList.filter(_.trim.nonEmpty).flatMap(l => jsonParse(l).toOption)
       else Nil
     }
 
@@ -170,6 +170,8 @@ class DispatcherNotifyP0P1Spec extends CatsEffectSuite:
         )
       )
       .void
+
+  end seedDeadRunning
 
   private def child(nodeId: String, name: String, upstream: String, chainId: Option[String]): NodeDef =
     NodeDef(
@@ -284,13 +286,22 @@ class DispatcherNotifyP0P1Spec extends CatsEffectSuite:
       val text = got.head.text
       assert(text.contains("[dispatch-notify]"), s"D1: notify text must carry the marker, got: ${text.take(300)}")
       assert(text.contains("D1-node"), s"D1: notify text must name the node, got: ${text.take(300)}")
-      assertEquals(got.head.source, Some("delegate-notify"), "D1: delivery must ride DelegateNotify.inject (turn-boundary channel)")
+      assertEquals(
+        got.head.source,
+        Some("delegate-notify"),
+        "D1: delivery must ride DelegateNotify.inject (turn-boundary channel)"
+      )
       assert(
         delivered.exists(j => summary(j).contains(s"target=${DispatchNotify.delegateCreatorLabel(delegateId)}")),
         s"D1: the delivery row must name the creator target, got ${delivered.map(j => summary(j))}"
       )
-      assertEquals(bypass, Nil, s"D1: ZERO bypass — the project dispatcher leg must never fire for a scope node, got $bypass")
+      assertEquals(
+        bypass,
+        Nil,
+        s"D1: ZERO bypass — the project dispatcher leg must never fire for a scope node, got $bypass"
+      )
       assertEquals(decoyGot, Nil, "D1: no stray delegate injection")
+    end for
   }
 
   // ══ D2 ═════════════════════════════════════════════════════════════════════
@@ -312,10 +323,19 @@ class DispatcherNotifyP0P1Spec extends CatsEffectSuite:
       decoyImms <- imms(decoy)
       _ <- system.stopAll.handleErrorWith(_ => IO.unit)
     yield
-      assertEquals(texts.size, 1, s"D2: the project dispatcher leg must fire exactly once (unchanged), got ${texts.size}")
+      assertEquals(
+        texts.size,
+        1,
+        s"D2: the project dispatcher leg must fire exactly once (unchanged), got ${texts.size}"
+      )
       assert(texts.head.contains("[dispatch-notify]"), s"D2: text must carry the marker, got: ${texts.head.take(200)}")
       assert(texts.head.contains("D2-node"), "D2: text must name the node")
-      assertEquals(decoyImms, Nil, s"D2: the project face must never deliver to a delegate, got ${decoyImms.map(_.text.take(80))}")
+      assertEquals(
+        decoyImms,
+        Nil,
+        s"D2: the project face must never deliver to a delegate, got ${decoyImms.map(_.text.take(80))}"
+      )
+    end for
   }
 
   // ══ D3 ═════════════════════════════════════════════════════════════════════
@@ -346,19 +366,21 @@ class DispatcherNotifyP0P1Spec extends CatsEffectSuite:
       // 上游 failed（有链归属）→ 两个同链下游 pending 被永久闸死
       _ <- host.store
         .mutate(s =>
-          s.copy(nodes = s.nodes.updated(
-            "n-up",
-            NodeDef(
-              id = "n-up",
-              name = "UP",
-              agent = "general",
-              status = NodeLifecycle.Failed,
-              result = Some("boom"),
-              out = List(OutEdge("n-dn1"), OutEdge("n-dn2")),
-              createdAt = System.currentTimeMillis() - 900_000L,
-              completedAt = Some(System.currentTimeMillis() - 800_000L)
+          s.copy(nodes =
+            s.nodes.updated(
+              "n-up",
+              NodeDef(
+                id = "n-up",
+                name = "UP",
+                agent = "general",
+                status = NodeLifecycle.Failed,
+                result = Some("boom"),
+                out = List(OutEdge("n-dn1"), OutEdge("n-dn2")),
+                createdAt = System.currentTimeMillis() - 900_000L,
+                completedAt = Some(System.currentTimeMillis() - 800_000L)
+              )
             )
-          ))
+          )
         )
         .void
       _ <- seedChild(host.store, child("n-dn1", "DN1", "n-up", Some("c-d3")))
@@ -374,7 +396,7 @@ class DispatcherNotifyP0P1Spec extends CatsEffectSuite:
       assertEquals(wedged.size, 1, s"D3: exactly one chain-wedged event, got ${events.map(typ)}")
       val s0 = summary(wedged.head)
       assert(s0.contains("chain=c-d3"), s"D3: summary must carry chain=<id>: $s0")
-      assert(s0.contains("node=n-dn") , s"D3: summary must name the wedged downstream: $s0")
+      assert(s0.contains("node=n-dn"), s"D3: summary must name the wedged downstream: $s0")
       assert(s0.contains("wedgedBy=n-up"), s"D3: summary must name the terminal upstream: $s0")
       assert(
         wedged.head.hcursor.get[String]("chainId").toOption.contains("c-d3"),
@@ -393,6 +415,7 @@ class DispatcherNotifyP0P1Spec extends CatsEffectSuite:
       )
       // 零回归面：barrier-blocked 每被闸死下游各一条（与改前一致）
       assertEquals(events.count(j => typ(j) == "barrier-blocked"), 2, "D3: barrier-blocked emission is unchanged")
+    end for
   }
 
   // ══ D4 ═════════════════════════════════════════════════════════════════════
@@ -429,6 +452,7 @@ class DispatcherNotifyP0P1Spec extends CatsEffectSuite:
       // ⑬ 断言的实证：改后 `prompt.contains("`AskUserQuestion`") && ...("`TaskBoard`")` 为真，
       // 且 `!prompt.contains("自动投递 Nebula")` 为真 —— 两者都由本条生产路径文本机器验证。
       assert(t.contains("上报"), "D4: the escalate semantics survive (the ⑬ assertion's unchanged half)")
+    end for
   }
 
 end DispatcherNotifyP0P1Spec

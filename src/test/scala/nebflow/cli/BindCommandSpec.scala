@@ -36,7 +36,8 @@ class BindCommandSpec extends FunSuite:
     Json.obj(("kind" -> Json.fromString(kind)) +: fields*)
 
   test("kind=pending: the code is printed as the single payload, with validity + invalidation note"):
-    val r = BindConfirm.render(body("pending", "code" -> Json.fromString("012345"), "expiresInSec" -> Json.fromLong(900L)))
+    val r =
+      BindConfirm.render(body("pending", "code" -> Json.fromString("012345"), "expiresInSec" -> Json.fromLong(900L)))
     r match
       case CliResult.Text(lines) =>
         assert(lines.contains("012345"), "the code itself is the human payload")
@@ -50,7 +51,8 @@ class BindCommandSpec extends FunSuite:
     // Review round 3: between the guard landing and the phase-5 staging face,
     // a printed code can never match — the copy must say so, not promise the
     // portal will take it.
-    val r = BindConfirm.render(body("pending", "code" -> Json.fromString("012345"), "expiresInSec" -> Json.fromLong(900L)))
+    val r =
+      BindConfirm.render(body("pending", "code" -> Json.fromString("012345"), "expiresInSec" -> Json.fromLong(900L)))
     r match
       case CliResult.Text(lines) =>
         val joined = lines.mkString("\n")
@@ -76,7 +78,8 @@ class BindCommandSpec extends FunSuite:
     )
 
   test("kind=offline: routes the operator to the portal (the 72h grace branch); no code anywhere"):
-    val r = BindConfirm.render(body("offline", "reason" -> Json.fromString("no live relay tunnel to the NebLink server")))
+    val r =
+      BindConfirm.render(body("offline", "reason" -> Json.fromString("no live relay tunnel to the NebLink server")))
     r match
       case CliResult.Text(lines) =>
         val joined = lines.mkString("\n")

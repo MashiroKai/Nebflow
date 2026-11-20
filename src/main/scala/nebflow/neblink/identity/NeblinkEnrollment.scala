@@ -46,25 +46,34 @@ object NeblinkEnrollment:
    *    修前该分支不分层一刀切，把配对码入网连同登出重登一起锁死（2bc597e62 回归）。
    *  - 自动路径（`explicit = false`）无 `sub` ⇒ 放行（静默续登/设备码遗产路径，不变）。
    */
-  private[nebflow] def accountCutoverRefusal(layer: RootLayer, incomingSub: Option[String], explicit: Boolean): Option[String] =
-    incomingSub.flatMap { sub =>
-      layer match
-        case RootLayer.Account(_, owner, _) if owner == sub => None
-        case RootLayer.Account(_, _, _) => Some("account-switch-requires-logout: this engine serves a different account")
-        case RootLayer.Flat(_, _) => None
-        case RootLayer.Unauthenticated(_, _) =>
-          Some("enroll-refused-no-account-root: the unauthenticated layer has no account root; device registration is not available in this state")
-    }.orElse {
-      // 平铺档：无身份的显式入网（配对码腿，无 Logto 令牌面）放行 —— 平铺根没有账号
-      // 归属可串，凭据只落本机平铺根。有主根（账号档 / 未登录层）fail-closed：
-      // 无主凭据落进有主根 = 串号面。
-      val ownedLayer = layer match
-        case RootLayer.Flat(_, _) => false
-        case _                    => true
-      Option.when(explicit && incomingSub.isEmpty && ownedLayer)(
-        "account-identity-missing: cannot safely establish account root"
-      )
-    }
+  private[nebflow] def accountCutoverRefusal(
+    layer: RootLayer,
+    incomingSub: Option[String],
+    explicit: Boolean
+  ): Option[String] =
+    incomingSub
+      .flatMap { sub =>
+        layer match
+          case RootLayer.Account(_, owner, _) if owner == sub => None
+          case RootLayer.Account(_, _, _) =>
+            Some("account-switch-requires-logout: this engine serves a different account")
+          case RootLayer.Flat(_, _) => None
+          case RootLayer.Unauthenticated(_, _) =>
+            Some(
+              "enroll-refused-no-account-root: the unauthenticated layer has no account root; device registration is not available in this state"
+            )
+      }
+      .orElse {
+        // 平铺档：无身份的显式入网（配对码腿，无 Logto 令牌面）放行 —— 平铺根没有账号
+        // 归属可串，凭据只落本机平铺根。有主根（账号档 / 未登录层）fail-closed：
+        // 无主凭据落进有主根 = 串号面。
+        val ownedLayer = layer match
+          case RootLayer.Flat(_, _) => false
+          case _ => true
+        Option.when(explicit && incomingSub.isEmpty && ownedLayer)(
+          "account-identity-missing: cannot safely establish account root"
+        )
+      }
 
   /**
    * Persist the EnrollResponse fields. `logtoRefresh` carries the provider
@@ -106,7 +115,8 @@ object NeblinkEnrollment:
     explicitUserAction: Boolean = false
   ): IO[Either[String, String]] =
     val incomingSub = logtoIdToken.flatMap(t =>
-      LogtoAuthCode.decodeIdTokenClaims(t, Seq("sub")).get("sub").map(_.trim).filter(_.nonEmpty))
+      LogtoAuthCode.decodeIdTokenClaims(t, Seq("sub")).get("sub").map(_.trim).filter(_.nonEmpty)
+    )
     val cutoverRefusal = accountCutoverRefusal(RootLadder.current, incomingSub, explicitUserAction)
     cutoverRefusal.orElse(EnrollGuard.enrollRefusal(resolvedUrl, explicitUserAction)) match
       case Some(reason) =>
@@ -123,6 +133,10 @@ object NeblinkEnrollment:
           logtoIdToken,
           explicitUserAction
         )
+
+    end match
+
+  end persist
 
   /**
    * Pre-guard implementation — see [[persist]] for the entry point.
@@ -373,6 +387,10 @@ object NeblinkEnrollment:
         // 账号档（二次登录 / 换号）/ 未登录档（首次登录晋升）：无平铺数据可迁，直接就位
         establishPointerAndProfile(machineRoot, acct, writePointer)
 
+    end match
+
+  end establishAccountRootAfterSignIn
+
   /** 账号根就位 + profile（幂等：同 sub 的既有档案原样保留）。**不写 layout 与指针**。 */
   private def establishAccountDirAndProfile(machineRoot: os.Path, acct: ActiveAccount): os.Path =
     val dir = AccountRoot.ensureAccountDir(machineRoot, acct.accountSub)
@@ -413,9 +431,9 @@ object NeblinkEnrollment:
       val sub = incomingIdToken
         .flatMap(t => LogtoAuthCode.decodeIdTokenClaims(t, Seq("sub")).get("sub").map(_.trim).filter(_.nonEmpty))
         .orElse(
-          storedBlock.flatMap(_.idToken).flatMap(t =>
-            LogtoAuthCode.decodeIdTokenClaims(t, Seq("sub")).get("sub").map(_.trim).filter(_.nonEmpty)
-          )
+          storedBlock
+            .flatMap(_.idToken)
+            .flatMap(t => LogtoAuthCode.decodeIdTokenClaims(t, Seq("sub")).get("sub").map(_.trim).filter(_.nonEmpty))
         )
       sub match
         case None =>
@@ -447,6 +465,7 @@ object NeblinkEnrollment:
               s"[root] root layer=${RootLadder.current.name}: credential-only login — no root-layer " +
                 "writes (account root cutover is a separate batch)"
             )
+      end match
     }
 
   /**

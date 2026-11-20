@@ -83,7 +83,8 @@ object ModelChainMigration:
    * 链缺失的 preset 条目不进注册表（与角色引用解析同一过滤，报 WARN）。
    */
   private def migrateCatalogToRegistry(presetsFile: os.Path, entries: Map[String, ModelPreset]): Unit =
-    val (chained, chainless) = entries.partition((_, p) => SchemePolicy.hasChain(AgentModelConfig(p.preferred, p.fallbacks)))
+    val (chained, chainless) =
+      entries.partition((_, p) => SchemePolicy.hasChain(AgentModelConfig(p.preferred, p.fallbacks)))
     chainless.foreach { (name, _) =>
       logger.warnSync(s"model-chain migration: preset '$name' carries no chain; not migrated to registry")
     }
@@ -96,6 +97,8 @@ object ModelChainMigration:
         )
       }
     sealCatalog(presetsFile)
+
+  end migrateCatalogToRegistry
 
   /** Read {presetName -> entry} from the catalog file, tolerating absence. */
   private def readCatalogEntries(presetsFile: os.Path): Map[String, ModelPreset] =

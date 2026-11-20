@@ -72,6 +72,7 @@ class SessionStoreHistorySpec extends CatsEffectSuite:
         val walk = Files.walk(tmp)
         try walk.sorted(java.util.Comparator.reverseOrder()).iterator().asScala.foreach(Files.deleteIfExists)
         finally walk.close()
+    end try
   }
 
   // ===== getHistoryPage — initial load (beforeIndex = None) =====

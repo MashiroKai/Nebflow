@@ -161,11 +161,13 @@ class BashOverhaulNotifySpec extends CatsEffectSuite:
         events.head.payload.contains("T2-OUTPUT-TAIL"),
         s"the completion payload rides the marker: ${events.head.payload.take(120)}"
       )
+    end for
   }
 
   test("T2: targetRef=None + targetSessionId=None ⇒ still no crash (nothing to address, must stay a no-op)") {
-    deliver(system = None, registry = None, targetRef = None, targetSessionId = None, jobId = "job-t2b").attempt.map { r =>
-      assert(r.isRight, s"a completion event with no addressing at all must not throw: $r")
+    deliver(system = None, registry = None, targetRef = None, targetSessionId = None, jobId = "job-t2b").attempt.map {
+      r =>
+        assert(r.isRight, s"a completion event with no addressing at all must not throw: $r")
     }
   }
 
@@ -218,6 +220,7 @@ class BashOverhaulNotifySpec extends CatsEffectSuite:
         s"the ledger row must still be written for an awaited completion (ledger=${ledger.map(_.jobId)})"
       )
       assert(output.isDefined, "output retention must still be finalized for an awaited completion")
+    end for
   }
 
   test("T2(b) — makeNotifyCallback with agentActorRef=None returns a real callback (D5: no silent absence)") {
@@ -233,7 +236,10 @@ class BashOverhaulNotifySpec extends CatsEffectSuite:
       ledger <- BgTaskLedger.pending(sid)
       output <- BgTaskOutputStore.read(jobId, 0L)
     yield
-      assert(ledger.exists(_.jobId == jobId), s"ledger row must exist without an agent ref (ledger=${ledger.map(_.jobId)})")
+      assert(
+        ledger.exists(_.jobId == jobId),
+        s"ledger row must exist without an agent ref (ledger=${ledger.map(_.jobId)})"
+      )
       assert(output.isDefined, "output retention must exist without an agent ref")
       assertEquals(output.map(_.status), Some("completed"), "the retained output must be finalized as completed")
     )
@@ -247,12 +253,14 @@ class BashOverhaulNotifySpec extends CatsEffectSuite:
       resources <- mkResources(system)
       _ <- resources.sessionStore.createSession(sid)
       seenLedgerFirst <- Ref.of[IO, Boolean](false)
-      _ = BgInboxPort.install(new BgInboxPort.Face:
-        def append(sessionId: String, event: AgentCommand.ExternalEvent): IO[Unit] =
-          BgTaskLedger
-            .pending(sid)
-            .flatMap(es => seenLedgerFirst.set(es.exists(_.jobId == jobId)))
-            .as(()))
+      _ = BgInboxPort.install(
+        new BgInboxPort.Face:
+          def append(sessionId: String, event: AgentCommand.ExternalEvent): IO[Unit] =
+            BgTaskLedger
+              .pending(sid)
+              .flatMap(es => seenLedgerFirst.set(es.exists(_.jobId == jobId)))
+              .as(())
+      )
       ctx = ToolContext(projectRoot = "/tmp", sessionId = Some(sid), agentActorRef = None)
       cb <- IO(
         BashTool
@@ -268,6 +276,7 @@ class BashOverhaulNotifySpec extends CatsEffectSuite:
     yield
       assert(ledgerFirst, "the ledger row must ALREADY exist when the delivery leg runs (先落账再投递)")
       assert(ledger.exists(_.jobId == jobId), "the ledger row survives whatever the delivery leg does")
+    end for
   }
 
 end BashOverhaulNotifySpec

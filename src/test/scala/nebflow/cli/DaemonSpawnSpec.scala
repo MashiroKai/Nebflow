@@ -19,11 +19,11 @@ class DaemonSpawnSpec extends FunSuite:
   // ── decide matrix ──────────────────────────────────────────────────────
 
   private def decide(
-      cmdArgs: List[String],
-      succeed: Option[os.Path] = None,
-      daemonChild: Boolean = false,
-      foreground: Boolean = false,
-      spawnable: Boolean = true
+    cmdArgs: List[String],
+    succeed: Option[os.Path] = None,
+    daemonChild: Boolean = false,
+    foreground: Boolean = false,
+    spawnable: Boolean = true
   ): Dispatch =
     MainDispatch.decide(cmdArgs, succeed, daemonChild, foreground, spawnable)
 
@@ -91,7 +91,9 @@ class DaemonSpawnSpec extends FunSuite:
     assertEquals(MainDispatch.strictRefusalMessage(SingleInstanceGuard.PortFree, 8080), None)
   }
 
-  test("strictRefusalMessage names the OTHER instance brand (dual-instance batch 2026-10-30; port source 双生分家批 2026-10-31)") {
+  test(
+    "strictRefusalMessage names the OTHER instance brand (dual-instance batch 2026-10-30; port source 双生分家批 2026-10-31)"
+  ) {
     // 端口被 legacy `nebflow` 命令线占用: 报错必须点名「占口的是另一实例」、给出其
     // 默认家/口（分家批后 nebflow 品牌缺省口 = 6140，经 Defaults.legacyPortOf 读出），
     // 并指路 coexist（'nebflow stop' 或换口）—— 绝不能 focus 对家。

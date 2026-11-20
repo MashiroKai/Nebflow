@@ -95,6 +95,7 @@ final class GitVizAskScopeSpec extends CatsEffectSuite:
       old <- new AskSessionRegistry(dataRoot).byId("ask-deadbeef")
       _ = assert(old.exists(!_.isGitViz), "无 kind 字段的存量记录必须读回 file 域")
     yield ()
+    end for
   }
 
   // ── G4 交办出口 ──────────────────────────────────────────────────────────
@@ -132,7 +133,10 @@ final class GitVizAskScopeSpec extends CatsEffectSuite:
       assertEquals(g.downField("source").as[String].toOption, Some(source), "入口来源必须可分辨，但结构同一份")
       // 面板帧（askHandoffAck）与注入 metadata 同一份 json
       val ack = AskHandoffWire.ackFrame("ask-gv-1234abcd", ok = true, "", h)
-      assertEquals(ack.hcursor.downField("handoff").downField("git").focus, Some(AskHandoffWire.gitJson(gitRequest(source))))
+      assertEquals(
+        ack.hcursor.downField("handoff").downField("git").focus,
+        Some(AskHandoffWire.gitJson(gitRequest(source)))
+      )
       // 人读面：摘要与注入正文都要说清「哪几支 → 哪条线」
       val summary = AskHandoffWire.summary(h)
       assert(summary.contains("feat/a") && summary.contains("feat/base"), summary)

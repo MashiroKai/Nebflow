@@ -60,13 +60,15 @@ class PendingAskLedger(
   import PendingAskLedger.*
 
   private val logger = NebflowLogger.forName("nebflow.agent.interaction")
-  private val audit  = NebflowLogger.forName("nebflow.audit")
+  private val audit = NebflowLogger.forName("nebflow.audit")
 
   /** db 待审单面句柄（构造期定值；None = 未接线/自开失败 ⇒ 全部腿 no-op）。 */
   private val dbHandle: Option[DbHandle] = db.orElse(
-    Option.when(path == nebflow.shared.PathUtil.dataRoot / "pending-asks.json")(
-      DbHost.openBestEffort(nebflow.shared.PathUtil.dataRoot.toNIO)
-    ).flatten
+    Option
+      .when(path == nebflow.shared.PathUtil.dataRoot / "pending-asks.json")(
+        DbHost.openBestEffort(nebflow.shared.PathUtil.dataRoot.toNIO)
+      )
+      .flatten
   )
 
   /**
@@ -87,8 +89,7 @@ class PendingAskLedger(
         val current = readEntries()
         writeEntries(current :+ entry)
       }
-    }
-      .handleErrorWith(e => logger.warn(s"PendingAskLedger.record failed requestId=${entry.requestId}: ${e.getMessage}"))
+    }.handleErrorWith(e => logger.warn(s"PendingAskLedger.record failed requestId=${entry.requestId}: ${e.getMessage}"))
       .*>(openInDb(entry))
 
   /** 任一收口路径（answered / cleanup / close / cancel）随行销账。幂等。 */
@@ -99,8 +100,7 @@ class PendingAskLedger(
         if current.exists(_.requestId == requestId) then writeEntries(current.filterNot(_.requestId == requestId))
         else ()
       }
-    }
-      .handleErrorWith(e => logger.warn(s"PendingAskLedger.remove failed requestId=$requestId: ${e.getMessage}"))
+    }.handleErrorWith(e => logger.warn(s"PendingAskLedger.remove failed requestId=$requestId: ${e.getMessage}"))
       .*>(closeInDb(requestId))
 
   // ── db 待审面（第一阶：写穿 + D-8 重水合）───────────────────────────────
@@ -109,16 +109,20 @@ class PendingAskLedger(
   private def openInDb(entry: Entry): IO[Unit] =
     dbHandle match
       case Some(h) =>
-        h.openPending(PendingRecord.PendingCard(
-          requestId = entry.requestId,
-          kind = entry.kind,
-          rootSessionId = entry.rootSessionId,
-          sourceSession = entry.sourceSession,
-          sourceAgent = entry.sourceAgent,
-          firstQuestion = entry.firstQuestion,
-          payload = entry.payload
-        )).void.handleErrorWith(e =>
-          logger.warn(s"PendingAskLedger db openPending failed requestId=${entry.requestId}: ${e.getMessage}"))
+        h.openPending(
+          PendingRecord.PendingCard(
+            requestId = entry.requestId,
+            kind = entry.kind,
+            rootSessionId = entry.rootSessionId,
+            sourceSession = entry.sourceSession,
+            sourceAgent = entry.sourceAgent,
+            firstQuestion = entry.firstQuestion,
+            payload = entry.payload
+          )
+        ).void
+          .handleErrorWith(e =>
+            logger.warn(s"PendingAskLedger db openPending failed requestId=${entry.requestId}: ${e.getMessage}")
+          )
       case None => IO.unit
 
   /** db 闭单（追加决议事件行；两流都试——remove 不携带 kind，幂等命中即闭）。 */
@@ -126,12 +130,17 @@ class PendingAskLedger(
     dbHandle match
       case Some(h) =>
         val now = System.currentTimeMillis()
-        (h.closePending(PendingStream.Permission, requestId, closedBy = "hub",
-          closeReason = "slot-closed", now = now) *>
-          h.closePending(PendingStream.Ask, requestId, closedBy = "hub",
-            closeReason = "slot-closed", now = now))
-          .void.handleErrorWith(e =>
-            logger.warn(s"PendingAskLedger db closePending failed requestId=$requestId: ${e.getMessage}"))
+        (h.closePending(
+          PendingStream.Permission,
+          requestId,
+          closedBy = "hub",
+          closeReason = "slot-closed",
+          now = now
+        ) *>
+          h.closePending(PendingStream.Ask, requestId, closedBy = "hub", closeReason = "slot-closed", now = now)).void
+          .handleErrorWith(e =>
+            logger.warn(s"PendingAskLedger db closePending failed requestId=$requestId: ${e.getMessage}")
+          )
       case None => IO.unit
 
   /** 只读清点（boot 对账 / 诊断）。 */
@@ -147,21 +156,19 @@ class PendingAskLedger(
 
   private def writeEntries(entries: List[Entry]): Unit =
     val payload = Json.obj(
-      "version"   -> Json.fromInt(1),
+      "version" -> Json.fromInt(1),
       "updatedAt" -> Json.fromLong(System.currentTimeMillis()),
-      "asks"      -> entries
-        .map { e =>
-          Json.obj(
-            "requestId"     -> e.requestId.asJson,
-            "kind"          -> e.kind.asJson,
-            "rootSessionId" -> e.rootSessionId.asJson,
-            "sourceSession" -> e.sourceSession.asJson,
-            "sourceAgent"   -> e.sourceAgent.asJson,
-            "firstQuestion" -> e.firstQuestion.asJson,
-            "createdAt"     -> e.createdAt.asJson
-          )
-        }
-        .asJson
+      "asks" -> entries.map { e =>
+        Json.obj(
+          "requestId" -> e.requestId.asJson,
+          "kind" -> e.kind.asJson,
+          "rootSessionId" -> e.rootSessionId.asJson,
+          "sourceSession" -> e.sourceSession.asJson,
+          "sourceAgent" -> e.sourceAgent.asJson,
+          "firstQuestion" -> e.firstQuestion.asJson,
+          "createdAt" -> e.createdAt.asJson
+        )
+      }.asJson
     )
     val tmp = path / os.up / s".${path.last}.tmp-${java.util.UUID.randomUUID().toString.take(8)}"
     try
@@ -170,6 +177,7 @@ class PendingAskLedger(
     finally
       try Files.deleteIfExists(tmp.toNIO)
       catch case _: Throwable => ()
+  end writeEntries
 
   // ── boot 对账（GatewayMain boot 链，listen 前恰一次）────────────────────
 
@@ -198,11 +206,11 @@ class PendingAskLedger(
         //    旧前端忽略未知 reason 键，回落来源关闭文案，兼容矩阵不破）。
         broadcast(
           Json.obj(
-            "type"          -> "askUserClosed".asJson,
-            "sessionId"     -> e.rootSessionId.asJson,
-            "requestId"     -> e.requestId.asJson,
+            "type" -> "askUserClosed".asJson,
+            "sessionId" -> e.rootSessionId.asJson,
+            "requestId" -> e.requestId.asJson,
             "sourceSession" -> e.sourceSession.asJson,
-            "reason"        -> "expired-orphan".asJson
+            "reason" -> "expired-orphan".asJson
           )
         ) *>
           // ② 持久回执行：历史重载的 pending 判据结构性失效（askUser 行不再是
@@ -240,8 +248,12 @@ class PendingAskLedger(
               s"db face (D-8): reinstalled=${dbPlan.reinstalled} permission card(s), ask-expired=${dbPlan.askExpired}"
           )
         else logger.info("Pending-ask boot reconcile: 0 leftover(s)")
-    yield Report(inspected = entries.size, closed = legacy.size,
-      dbReinstalled = dbPlan.reinstalled, dbAskExpired = dbPlan.askExpired)
+    yield Report(
+      inspected = entries.size,
+      closed = legacy.size,
+      dbReinstalled = dbPlan.reinstalled,
+      dbAskExpired = dbPlan.askExpired
+    )
 
   // ── D-8 db 重水合执行腿 ─────────────────────────────────────────────────
 
@@ -266,19 +278,21 @@ class PendingAskLedger(
         h.recoverPendingD8().attempt.flatMap {
           case Left(e) =>
             logger
-              .warn(s"db pending recovery (D-8) failed — pending 面不可再生，单留库待核" +
-                s"（若已隔离见 .corrupt-* 旁档）: ${e.getMessage}")
+              .warn(
+                s"db pending recovery (D-8) failed — pending 面不可再生，单留库待核" +
+                  s"（若已隔离见 .corrupt-* 旁档）: ${e.getMessage}"
+              )
               .as(DbBootPlan(Set.empty, 0, 0))
           case Right(plan) =>
             val askExpired = plan.expiredAsks.traverse_ { row =>
               val ageH = "%.1f".format((System.currentTimeMillis() - row.createdAt) / 3600000.0)
               broadcast(
                 Json.obj(
-                  "type"          -> "askUserClosed".asJson,
-                  "sessionId"     -> row.rootSessionId.asJson,
-                  "requestId"     -> row.requestId.asJson,
+                  "type" -> "askUserClosed".asJson,
+                  "sessionId" -> row.rootSessionId.asJson,
+                  "requestId" -> row.requestId.asJson,
                   "sourceSession" -> row.sourceSession.asJson,
-                  "reason"        -> "expired-orphan".asJson
+                  "reason" -> "expired-orphan".asJson
                 )
               ) *>
                 appendReceipt(
@@ -308,7 +322,8 @@ class PendingAskLedger(
                 case Some(sink) =>
                   (sink ! InteractionHubCommand.Request(rebuiltRequest(row))).void
                     .handleErrorWith(err =>
-                      logger.warn(s"db pending reinstall tell failed requestId=${row.requestId}: ${err.getMessage}"))
+                      logger.warn(s"db pending reinstall tell failed requestId=${row.requestId}: ${err.getMessage}")
+                    )
                 case None =>
                   logger.warn(
                     s"db pending reinstall skipped (hub sink 未注册——InteractionHub 未装配): 单留库不丢 requestId=${row.requestId}"
@@ -316,12 +331,17 @@ class PendingAskLedger(
             }
             (askExpired *> reinstall) *>
               logger
-                .info(s"db pending recovery (D-8): reinstalled=${plan.reinstall.size} permission card(s), " +
-                  s"ask-expired-closed=${plan.expiredAsks.size}")
-                .as(DbBootPlan(
-                  plan.reinstall.map(_.requestId).toSet ++ plan.expiredAsks.map(_.requestId).toSet,
-                  plan.reinstall.size, plan.expiredAsks.size
-                ))
+                .info(
+                  s"db pending recovery (D-8): reinstalled=${plan.reinstall.size} permission card(s), " +
+                    s"ask-expired-closed=${plan.expiredAsks.size}"
+                )
+                .as(
+                  DbBootPlan(
+                    plan.reinstall.map(_.requestId).toSet ++ plan.expiredAsks.map(_.requestId).toSet,
+                    plan.reinstall.size,
+                    plan.expiredAsks.size
+                  )
+                )
         }
 
   /**
@@ -333,7 +353,7 @@ class PendingAskLedger(
   private def rebuiltRequest(row: PendingRecord): InteractionRequest =
     val kind = row.kind match
       case PendingRecord.KindMcpPermission => InteractionKind.McpPermission
-      case _                               => InteractionKind.Permission
+      case _ => InteractionKind.Permission
     InteractionRequest(
       requestId = row.requestId,
       kind = kind,
@@ -349,6 +369,7 @@ class PendingAskLedger(
       sourceAgent = row.sourceAgent,
       sourceSession = row.sourceSession
     )
+  end rebuiltRequest
 
 end PendingAskLedger
 
@@ -371,8 +392,11 @@ object PendingAskLedger:
   )
 
   object Entry:
-    /** hub `Request` 处的单一构造点（excerpt 由调用方给——InteractionHub 已有
-     *  `firstQuestionExcerpt` 单点）。 */
+
+    /**
+     * hub `Request` 处的单一构造点（excerpt 由调用方给——InteractionHub 已有
+     *  `firstQuestionExcerpt` 单点）。
+     */
     def of(req: InteractionRequest, firstQuestion: String): Entry =
       Entry(
         requestId = req.requestId,
@@ -391,11 +415,13 @@ object PendingAskLedger:
         rid <- c.downField("requestId").as[String].toOption
         kind = c.downField("kind").as[String].toOption.getOrElse("")
         root = c.downField("rootSessionId").as[String].toOption.getOrElse("")
-        src  = c.downField("sourceSession").as[String].toOption.getOrElse("")
-        agent    = c.downField("sourceAgent").as[String].toOption.getOrElse("")
+        src = c.downField("sourceSession").as[String].toOption.getOrElse("")
+        agent = c.downField("sourceAgent").as[String].toOption.getOrElse("")
         question = c.downField("firstQuestion").as[String].toOption.getOrElse("")
         createdAt = c.downField("createdAt").as[Long].toOption.getOrElse(0L)
       yield Entry(rid, kind, root, src, agent, question, createdAt)
+
+  end Entry
 
   final case class Report(
     inspected: Int,
@@ -405,8 +431,10 @@ object PendingAskLedger:
     /** db 面 D-8：过期关闭的 ask 数（终态行已入库，V6 孤儿 ask==0）。 */
     dbAskExpired: Int = 0
   ):
+
     def summary: String =
       s"inspected=$inspected expiredClosed=$closed dbReinstalled=$dbReinstalled dbAskExpired=$dbAskExpired"
+
     /**
      * 相等语义按**旧两字段面**比较（db 面读数经 `summary` 暴露）：既有机械
      * `assertEquals(report, Report(inspected=2, closed=2))` 在 db 腿产出增量时
@@ -414,8 +442,10 @@ object PendingAskLedger:
      */
     override def equals(other: Any): Boolean = other match
       case r: Report => inspected == r.inspected && closed == r.closed
-      case _         => false
+      case _ => false
     override def hashCode(): Int = (inspected, closed).hashCode()
+
+  end Report
 
   /** 文件形状解析（纯函数，spec 可直接消费）。 */
   def fromJsonList(j: Json): List[Entry] =

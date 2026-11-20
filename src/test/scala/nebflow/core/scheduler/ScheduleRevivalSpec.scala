@@ -79,6 +79,7 @@ class ScheduleRevivalSpec extends CatsEffectSuite:
       sessionStore = fakeSessionStore(metaIds, activeId, uiMessages),
       bootAtMs = bootAtMs
     )
+  end mkService
 
   private def events: List[AgentCommand.ExternalEvent] = routed.map(_._2).toList
 
@@ -100,9 +101,14 @@ class ScheduleRevivalSpec extends CatsEffectSuite:
       // 创建后可见：addTask 返回即 list 面（getAllPendingTasks）必须含全部
       pending <- taskStore.getAllPendingTasks
     yield
-      assertEquals(stored.map(_.id).sorted, incidentTasks.map(_.id).sorted,
-        "no create may be silently clobbered by a concurrent write")
+      assertEquals(
+        stored.map(_.id).sorted,
+        incidentTasks.map(_.id).sorted,
+        "no create may be silently clobbered by a concurrent write"
+      )
       assertEquals(pending.map(_.id).toSet, stored.map(_.id).toSet, "created => immediately visible in list")
+
+    end for
 
   test("concurrent create + markTriggered + reschedule interleaving keeps every task row"):
     for
@@ -248,23 +254,27 @@ class ScheduleRevivalSpec extends CatsEffectSuite:
       assert(evs.head.payload.contains("条件满足后触发"), evs.head.payload)
       assertEquals(after, Nil, "one-shot watcher consumed after firing")
 
+    end for
+
   test("task-terminal sentinel E2E: running node waits; terminal status fires"):
     val project = "revival-proj"
     val mapDir = tempRoot / "projects" / project / ".nebflow"
-    def writeMap(status: String): Unit = {
+    def writeMap(status: String): Unit =
       os.makeDir.all(mapDir)
       os.write.over(
         mapDir / "flow-map.json",
-        Json.obj(
-          "v" -> 1.asJson,
-          "project" -> project.asJson,
-          "nodes" -> Json.obj(
-            "nodeA" -> Json.obj("id" -> "nodeA".asJson, "name" -> "批次A".asJson, "status" -> status.asJson),
-            "nodeB" -> Json.obj("id" -> "nodeB".asJson, "name" -> "批次B".asJson, "status" -> "running".asJson)
+        Json
+          .obj(
+            "v" -> 1.asJson,
+            "project" -> project.asJson,
+            "nodes" -> Json.obj(
+              "nodeA" -> Json.obj("id" -> "nodeA".asJson, "name" -> "批次A".asJson, "status" -> status.asJson),
+              "nodeB" -> Json.obj("id" -> "nodeB".asJson, "name" -> "批次B".asJson, "status" -> "running".asJson)
+            )
           )
-        ).noSpaces
+          .noSpaces
       )
-    }
+    end writeMap
     for
       _ <- reset()
       _ <- IO.blocking(writeMap("running"))
@@ -280,6 +290,7 @@ class ScheduleRevivalSpec extends CatsEffectSuite:
       assertEquals(routed.size, 1, "fires when the node reaches a terminal state")
       assert(routed.head._2.payload.contains("条件满足后触发"), routed.head._2.payload)
       assertEquals(stillWaiting.size, 1, "running status keeps waiting silently")
+    end for
 
   // ==================================================================
   // ❹ 例程自检降频：空转达阈值 → 降频 + 待审查；活动清零；无证据保持；粘性
@@ -453,7 +464,7 @@ class ScheduleRevivalSpec extends CatsEffectSuite:
     import nebflow.core.compact.HistoryArchiver
     import nebflow.core.task.FileTaskStore
     import nebflow.llm.ModelCandidate
-    import nebflow.shared.{ThinkingConfig}
+    import nebflow.shared.ThinkingConfig
     val sr = SharedResources(
       llm = null,
       dispatcher = null,
@@ -481,5 +492,6 @@ class ScheduleRevivalSpec extends CatsEffectSuite:
       sharedResources = Some(sr),
       wsSend = None
     )
+  end mkCtx
 
 end ScheduleRevivalSpec

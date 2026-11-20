@@ -64,7 +64,10 @@ class WsAskNoteFramesSpec extends FunSuite:
     assertEquals(lng(ack, "ts"), Some(version), "ts stays equal to the version for older readers")
     assertEquals(bool(ack, "overwritten"), Some(false))
     val state = get()
-    assertEquals((str(state, "text"), lng(state, "version"), bool(state, "exists"), bool(state, "cleared")), (Some("one"), Some(version), Some(true), Some(false)))
+    assertEquals(
+      (str(state, "text"), lng(state, "version"), bool(state, "exists"), bool(state, "cleared")),
+      (Some("one"), Some(version), Some(true), Some(false))
+    )
     assertEquals(lng(state, "ts"), Some(version))
   }
 
@@ -75,13 +78,19 @@ class WsAskNoteFramesSpec extends FunSuite:
     assertEquals(bool(ack, "ok"), Some(false))
     assertEquals(str(ack, "error"), Some("conflict"))
     assertEquals(lng(ack, "writeId"), Some(9L))
-    assertEquals((str(ack, "text"), lng(ack, "version"), bool(ack, "exists"), bool(ack, "cleared")), (Some("two"), Some(second), Some(true), Some(false)))
+    assertEquals(
+      (str(ack, "text"), lng(ack, "version"), bool(ack, "exists"), bool(ack, "cleared")),
+      (Some("two"), Some(second), Some(true), Some(false))
+    )
     assertEquals(str(get(), "text"), Some("two"))
   }
 
   test("FDC-SCN-005 a write that names no version is refused with version-required and writes nothing") {
     val missing = put("blind", None, Some(3))
-    assertEquals((bool(missing, "ok"), str(missing, "error"), lng(missing, "writeId")), (Some(false), Some("version-required"), Some(3L)))
+    assertEquals(
+      (bool(missing, "ok"), str(missing, "error"), lng(missing, "writeId")),
+      (Some(false), Some("version-required"), Some(3L))
+    )
     assertEquals(bool(get(), "exists"), Some(false))
     val version = lng(put("kept", Some(0L)), "version").get
     // Older pages sent `baseTs` only, and a non-numeric or negative base counts as none.
@@ -102,7 +111,10 @@ class WsAskNoteFramesSpec extends FunSuite:
     val v1 = lng(put("text", Some(0L)), "version").get
     val v2 = lng(put("", Some(v1)), "version").get
     val state = get()
-    assertEquals((str(state, "text"), bool(state, "exists"), bool(state, "cleared"), lng(state, "version"), lng(state, "ts")), (Some(""), Some(false), Some(true), Some(v2), Some(v2)))
+    assertEquals(
+      (str(state, "text"), bool(state, "exists"), bool(state, "cleared"), lng(state, "version"), lng(state, "ts")),
+      (Some(""), Some(false), Some(true), Some(v2), Some(v2))
+    )
     assert(v2 > v1)
     assertEquals(str(put("old edit", Some(v1)), "error"), Some("conflict"))
   }
@@ -114,15 +126,25 @@ class WsAskNoteFramesSpec extends FunSuite:
     val state = get()
     assertEquals(str(state, "type"), Some("askNoteState"))
     assertEquals(str(state, "error"), Some("read-failed"))
-    assert(state.hcursor.downField("text").focus.isEmpty && state.hcursor.downField("exists").focus.isEmpty, clue(state))
+    assert(
+      state.hcursor.downField("text").focus.isEmpty && state.hcursor.downField("exists").focus.isEmpty,
+      clue(state)
+    )
     val ack = put("overwrite", Some(0L), Some(5))
-    assertEquals((bool(ack, "ok"), str(ack, "error"), lng(ack, "writeId")), (Some(false), Some("read-failed"), Some(5L)))
+    assertEquals(
+      (bool(ack, "ok"), str(ack, "error"), lng(ack, "writeId")),
+      (Some(false), Some("read-failed"), Some(5L))
+    )
     assertEquals(os.read(dir / s"$Sid.json"), "{not json")
   }
 
   test("FDC-SCN-029 an oversized text and a bad session id are refused with their own errors") {
     val big = put("a" * (256 * 1024 + 1), Some(0L))
-    assertEquals((bool(big, "ok"), str(big, "error"), lng(big, "bytes"), lng(big, "limit")), (Some(false), Some("too-large"), Some(256L * 1024 + 1), Some(256L * 1024)))
+    assertEquals(
+      (bool(big, "ok"), str(big, "error"), lng(big, "bytes"), lng(big, "limit")),
+      (Some(false), Some("too-large"), Some(256L * 1024 + 1), Some(256L * 1024))
+    )
     val bad = exchange("askNotePut", """{"type":"askNotePut","sessionId":"x","text":"t","baseVersion":0}""").head
     assertEquals(str(bad, "type"), Some("askError"))
   }
+end WsAskNoteFramesSpec

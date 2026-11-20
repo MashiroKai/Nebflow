@@ -99,6 +99,8 @@ object RouteReason:
   /** 退化输入：候选集为空（既无直拨候选也无 tailnet 候选）。 */
   val NoCandidate = "no-candidate-endpoint"
 
+end RouteReason
+
 /**
  * 一次探测的判决。
  *
@@ -126,12 +128,12 @@ object TailnetVerdict:
   /** 判决是否「可用」——只有 [[Ready]] 是。 */
   def usable(v: TailnetVerdict): Boolean = v match
     case Ready(_, _, _) => true
-    case _              => false
+    case _ => false
 
   /** 不可用的原因码（`Ready`/`Unprobed` ⇒ None）。 */
   def reasonOf(v: TailnetVerdict): Option[String] = v match
     case Unavailable(r, _) => Some(r)
-    case _                 => None
+    case _ => None
 
 /**
  * 一次探测的**读数**（判决 + 是否命中缓存 + 耗时）。
@@ -246,6 +248,10 @@ object TailnetProbe:
         List("/usr/bin/tailscale", "/usr/local/bin/tailscale", "tailscale")
       case _ => Nil
 
+    end match
+
+  end binaryCandidates
+
   /** 第一个存在的候选（没有 ⇒ None = 未安装；不抛异常）。 */
   def resolveBinary(
     candidates: List[String],
@@ -254,6 +260,8 @@ object TailnetProbe:
     // 裸名（无分隔符）是「交给 PATH 解析」的哨兵：不 stat，直接交出去（spawn 失败会被
     // SystemTailnetProbe 兜成 not-installed）。
     candidates.find(c => (!c.contains("/") && !c.contains("\\")) || exists(c))
+
+end TailnetProbe
 
 /**
  * `tailscale status --json` 的解析（**纯函数**，spec 直测；不碰进程、不碰网络）。
@@ -280,10 +288,13 @@ object Parse:
             val selfIps = stringSet(m.get("Self"))
             val peers = m.get("Peer").flatMap(_.asObject).map(o => normalizePeers(o.toMap)).getOrElse(Set.empty)
             if selfIps.isEmpty then
-              TailnetVerdict.Unavailable(RouteReason.TailscaleNoAddress, "BackendState=Running, Self.TailscaleIPs empty")
+              TailnetVerdict.Unavailable(
+                RouteReason.TailscaleNoAddress,
+                "BackendState=Running, Self.TailscaleIPs empty"
+              )
             else TailnetVerdict.Ready(selfIps, peers, "Running")
           case Some(state) => TailnetVerdict.Unavailable(codeForState(state), s"BackendState=$state")
-          case None        => TailnetVerdict.Unavailable(RouteReason.ProbeError, "no BackendState in JSON")
+          case None => TailnetVerdict.Unavailable(RouteReason.ProbeError, "no BackendState in JSON")
       case None =>
         val detail = firstLine(stderr).orElse(firstLine(out)).getOrElse(s"exit=$exitCode")
         val lowered = detail.toLowerCase
@@ -294,33 +305,35 @@ object Parse:
           else RouteReason.ProbeError
         TailnetVerdict.Unavailable(reason, detail)
 
+    end match
+
+  end parse
+
   /** `BackendState` → 原因码（两个「交互登录」态单列，其余归 stopped 家族）。 */
   def codeForState(state: String): String = state match
     case "Stopped" | "NoState" | "Starting" | "Stopping" => RouteReason.TailscaleStopped
-    case "NeedsLogin" | "NeedsMachineAuth"               => RouteReason.TailscaleNeedsLogin
-    case other                                           => s"tailscale-${other.toLowerCase}"
+    case "NeedsLogin" | "NeedsMachineAuth" => RouteReason.TailscaleNeedsLogin
+    case other => s"tailscale-${other.toLowerCase}"
 
   /** 只取 `Online == true` 的 peer，并合并其 `TailscaleIPs`（v4/v6 都收）。 */
   private def normalizePeers(peers: Map[String, Json]): Set[String] =
-    peers.values
-      .flatMap { v =>
-        val online = v.asObject.flatMap(o => o.toMap.get("Online")).flatMap(_.asBoolean).getOrElse(false)
-        if online then stringSet(Some(v)) else Nil
-      }
-      .toSet
+    peers.values.flatMap { v =>
+      val online = v.asObject.flatMap(o => o.toMap.get("Online")).flatMap(_.asBoolean).getOrElse(false)
+      if online then stringSet(Some(v)) else Nil
+    }.toSet
 
   /** 一个节点的 `TailscaleIPs`（数组）→ 字符串集合；缺失/空 ⇒ 空集。 */
   private def stringSet(node: Option[Json]): Set[String] =
     node.flatMap(_.asObject).flatMap(o => o.toMap.get("TailscaleIPs")).flatMap(_.asArray) match
       case Some(arr) => arr.flatMap(_.asString).map(_.trim).filter(_.nonEmpty).toSet
-      case None      => Set.empty
+      case None => Set.empty
 
   private def firstLine(s: String): Option[String] =
     Option(s).map(_.trim).filter(_.nonEmpty).map(_.linesIterator.next().take(120))
 
-/**
- * 缓存实现（正 TTL / 负退避 / single-flight）。线程安全：全部状态在 `lock` 的临界区里读写。
- */
+end Parse
+
+/** 缓存实现（正 TTL / 负退避 / single-flight）。线程安全：全部状态在 `lock` 的临界区里读写。 */
 private final class CachedTailnetProbe(
   inner: TailnetProbe,
   clock: () => Long,
@@ -349,10 +362,10 @@ private final class CachedTailnetProbe(
           cachedAt = clock()
           // 正/负证据的阶数只由**真探测**驱动：命中缓存的正判决不再刷失败计数（否则一次
           // 失败会被无限续期），命中缓存的负判决也不再加一阶（否则窗口无界增长）。
-          consecutiveFailures =
-            if TailnetVerdict.usable(fresh.verdict) then 0 else consecutiveFailures + 1
+          consecutiveFailures = if TailnetVerdict.usable(fresh.verdict) then 0 else consecutiveFailures + 1
           spawns.incrementAndGet()
           ProbeResult(fresh.verdict, cached = false, ms = ms)
+      end match
     }
 
   /** 读数面（报告/spec 取数）：`(真探测次数, 缓存命中次数)`。 */
@@ -362,6 +375,8 @@ private final class CachedTailnetProbe(
     if v == TailnetVerdict.Unprobed then 0L
     else if TailnetVerdict.usable(v) then positiveTtlMs
     else math.max(P2pProbePolicy.negativeWindowMs(consecutiveFailures), P2pProbePolicy.NegativeTtlBaseMs)
+
+end CachedTailnetProbe
 
 /**
  * 真机探测器（spawn `tailscale status --json`）。
@@ -417,6 +432,8 @@ private final class SystemTailnetProbe(budgetMs: Long, env: Map[String, String])
                   .parse(out.toString(StandardCharsets.UTF_8), err.toString(StandardCharsets.UTF_8), proc.exitValue())
             finally if proc.isAlive then proc.destroyForcibly()
 
+        end match
+
   /** 守护线程读一条流（避免进程输出大于管道缓冲时双向死锁）。 */
   private def drain(in: java.io.InputStream, sink: java.io.ByteArrayOutputStream): Thread =
     val t = new Thread(
@@ -427,13 +444,15 @@ private final class SystemTailnetProbe(budgetMs: Long, env: Map[String, String])
           while n >= 0 && sink.size() < (1 << 20) do
             sink.write(buf, 0, n)
             n = in.read(buf)
-        catch case _: Throwable => ()
-      ,
-      "tailnet-probe-reader"
+        catch case _: Throwable => (), "tailnet-probe-reader"
     )
     t.setDaemon(true)
     t.start()
     t
+
+  end drain
+
+end SystemTailnetProbe
 
 /**
  * ② 档预留槽（自研 P2P）——**未实现的显式占位**。
@@ -464,6 +483,7 @@ object SelfP2pSlot:
 
 /** 单档读数（`selected` + 原因码 + 该档探测耗时 + 可读细节）。 */
 final case class TierTrace(tier: RouteTier, selected: Boolean, reason: String, detail: String, probeMs: Long):
+
   def render: String =
     val mark = if selected then "select" else "skip"
     val d = if detail.isEmpty then "" else s" $detail"
@@ -515,9 +535,9 @@ final case class RoutePlan(
    */
   def logLine(device: String): String = s"[route] device=$device $summary"
 
-/**
- * 选路判据点（**纯逻辑** + 一个注入的探测器；IO 只出现在 [[DirectRoute.plan]] 的阻塞包装里）。
- */
+end RoutePlan
+
+/** 选路判据点（**纯逻辑** + 一个注入的探测器；IO 只出现在 [[DirectRoute.plan]] 的阻塞包装里）。 */
 object DirectRoute:
 
   private val logger = NebflowLogger.forName("nebflow.route")
@@ -577,14 +597,12 @@ object DirectRoute:
     val result = probe.probe
     val (keptTailnet, tailTrace) = gateTailnet(tailnet, result)
     val selfP2pTrace =
-      if selfP2pImplemented then
-        TierTrace(RouteTier.SelfP2p, selected = false, "self-p2p-ready", "", 0L)
+      if selfP2pImplemented then TierTrace(RouteTier.SelfP2p, selected = false, "self-p2p-ready", "", 0L)
       else TierTrace(RouteTier.SelfP2p, selected = false, RouteReason.P2pNotImplemented, "", 0L)
     val attempt = keptTailnet ++ others
     val via = attempt.headOption.map(viaOf).getOrElse(RouteTier.Relay.label)
     val relayTrace =
-      if attempt.isEmpty then
-        TierTrace(RouteTier.Relay, selected = true, RouteReason.RelayAlwaysAvailable, "", 0L)
+      if attempt.isEmpty then TierTrace(RouteTier.Relay, selected = true, RouteReason.RelayAlwaysAvailable, "", 0L)
       else TierTrace(RouteTier.Relay, selected = false, RouteReason.RelayAlwaysAvailable, "fallback-only", 0L)
     RoutePlan(
       attempt = attempt,
@@ -594,6 +612,8 @@ object DirectRoute:
       probeMs = result.ms,
       probeCached = result.cached
     )
+
+  end planSync
 
   /**
    * ① 档的门（唯一判据）：**测得可用才选**。
@@ -645,7 +665,10 @@ object DirectRoute:
               )
             )
 
+          end if
+
   /** 落一行结构化选路日志（每次选路一次；失败不影响选路）。 */
   def logPlan(device: String, plan: RoutePlan): Unit =
     try logger.info(plan.logLine(device))
     catch case _: Throwable => ()
+end DirectRoute

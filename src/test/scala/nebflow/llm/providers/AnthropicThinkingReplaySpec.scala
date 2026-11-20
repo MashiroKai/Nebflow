@@ -192,6 +192,7 @@ class AnthropicThinkingReplaySpec extends CatsEffectSuite:
         s"passback strip must express an explicit off state, got: ${body.noSpaces.take(400)}"
       )
     finally if server != null then server.stop(0)
+    end try
   }
 
   test("T6: E2E — deepseek-native history (unsigned thinking) keeps thinking param AND replays blocks") {

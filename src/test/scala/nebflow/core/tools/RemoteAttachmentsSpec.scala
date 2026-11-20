@@ -155,6 +155,7 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
           beforePut(chunkIndex) *> IO {
             pushedChunks += chunkIndex
           } *> FileTransferAction.handle(params)
+  end LoopbackPeer
 
   // ============================================================
   // ① 成功路径（多块 + 图片 + 清单区分两侧 + delegate 真能 Read）
@@ -198,10 +199,16 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
     assert(manifest.contains("ON DEVICE KAI"), manifest.take(400))
     delivered.entries.foreach { e =>
       assert(manifest.contains(s"copy: ${e.remoteCopy.get}"), s"manifest must carry the device path:\n$manifest")
-      assert(manifest.contains(s"host: ${e.stableCopy}"), s"manifest must keep the local copy as provenance:\n$manifest")
+      assert(
+        manifest.contains(s"host: ${e.stableCopy}"),
+        s"manifest must keep the local copy as provenance:\n$manifest"
+      )
       assert(manifest.contains(e.sha256), manifest)
     }
-    assert(!manifest.contains(s"copy: ${delivered.entries.head.stableCopy}"), "a LOCAL path must never pose as the copy")
+    assert(
+      !manifest.contains(s"copy: ${delivered.entries.head.stableCopy}"),
+      "a LOCAL path must never pose as the copy"
+    )
     assert(manifest.contains("image=yes"), manifest)
 
     // 终局消费者：delegate 用 Read 打开清单里那条**对端路径**，图片回来的是视觉内容
@@ -237,7 +244,9 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
   // ② 六类失败面（全部：整批失败 + 点名 + reason code）
   // ============================================================
 
-  test("① device offline ⇒ the whole dispatch fails, names the device and the file (DELEGATE_ATTACHMENT_REMOTE_OFFLINE)"):
+  test(
+    "① device offline ⇒ the whole dispatch fails, names the device and the file (DELEGATE_ATTACHMENT_REMOTE_OFFLINE)"
+  ):
     val src = tempDir("off-src")
     val data = tempDir("off-data")
     val peerWs = tempDir("off-peer")
@@ -248,14 +257,21 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
         Left("p2p: Cannot reach KAI at http://192.168.1.9:6138: Connection refused; relay: Relay failed: timeout")
       )
     )
-    val err = RemoteAttachments.deliver(plan, targetFor(peerWs), peer).unsafeRunSync().swap.getOrElse(
-      fail("an unreachable device must FAIL the dispatch")
-    )
+    val err = RemoteAttachments
+      .deliver(plan, targetFor(peerWs), peer)
+      .unsafeRunSync()
+      .swap
+      .getOrElse(
+        fail("an unreachable device must FAIL the dispatch")
+      )
     assert(err.message.contains(RemoteAttachments.CodeOffline), err.message)
     assert(err.message.contains("'KAI'"), err.message)
     assert(err.message.contains(f.toString), err.message)
     assert(err.message.contains("Nothing was dispatched"), err.message)
-    assert(!Files.exists(Path.of(peerWs.resolve("a.txt").toString)), "no bytes may be written when the device is unreachable")
+    assert(
+      !Files.exists(Path.of(peerWs.resolve("a.txt").toString)),
+      "no bytes may be written when the device is unreachable"
+    )
     rm(src, data, peerWs)
 
   test("② device refuses (real receiver's structured refusal) ⇒ refused code, nothing spawned"):
@@ -277,9 +293,13 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
           }
         else IO.unit
     )
-    val err = RemoteAttachments.deliver(plan, targetFor(peerWs), peer).unsafeRunSync().swap.getOrElse(
-      fail("a receiver-side refusal must FAIL the dispatch")
-    )
+    val err = RemoteAttachments
+      .deliver(plan, targetFor(peerWs), peer)
+      .unsafeRunSync()
+      .swap
+      .getOrElse(
+        fail("a receiver-side refusal must FAIL the dispatch")
+      )
     assert(err.message.contains(RemoteAttachments.CodeRefused), err.message)
     assert(err.message.contains(AttachContract.Codes.FileExistsRefusingAppend), err.message)
     assert(err.message.contains("Nothing was dispatched"), err.message)
@@ -348,9 +368,13 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
     val peer = new LoopbackPeer(
       failPut = _ => Some(Left("java.io.IOException: No space left on device"))
     )
-    val err = RemoteAttachments.deliver(plan, targetFor(peerWs), peer).unsafeRunSync().swap.getOrElse(
-      fail("a disk-full device must FAIL the dispatch")
-    )
+    val err = RemoteAttachments
+      .deliver(plan, targetFor(peerWs), peer)
+      .unsafeRunSync()
+      .swap
+      .getOrElse(
+        fail("a disk-full device must FAIL the dispatch")
+      )
     assert(err.message.contains(RemoteAttachments.CodeDiskFull), err.message)
     assert(err.message.contains("insufficient disk space"), err.message)
     assert(err.message.contains("Nothing was dispatched"), err.message)
@@ -363,9 +387,13 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
     val f = writeBytes(src, "e.bin", 4096)
     val plan = stagePlan(List(f), data, "t-old")
     val peer = new LoopbackPeer(probeOverride = Some(Left("Remote error: Unknown direction: probe")))
-    val err = RemoteAttachments.deliver(plan, targetFor(peerWs), peer).unsafeRunSync().swap.getOrElse(
-      fail("an engine that cannot probe must FAIL the dispatch")
-    )
+    val err = RemoteAttachments
+      .deliver(plan, targetFor(peerWs), peer)
+      .unsafeRunSync()
+      .swap
+      .getOrElse(
+        fail("an engine that cannot probe must FAIL the dispatch")
+      )
     assert(err.message.contains(RemoteAttachments.CodeTooOld), err.message)
     assert(err.message.contains("upgrade the engine on that device"), err.message)
     assertEquals(peer.pushedChunks.toList, Nil, "no chunk may be pushed to an engine that cannot probe")
@@ -379,9 +407,13 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
     val plan = stagePlan(List(f), data, "t-old2")
     // 旧接收端：不认分块键 ⇒ 按 legacy 整件 put 处理，回执只有 {"size": n}（无任何自算摘要）
     val peer = new LoopbackPeer(legacyReceiver = true)
-    val err = RemoteAttachments.deliver(plan, targetFor(peerWs), peer).unsafeRunSync().swap.getOrElse(
-      fail("an ack without receiver-computed digests must FAIL the dispatch")
-    )
+    val err = RemoteAttachments
+      .deliver(plan, targetFor(peerWs), peer)
+      .unsafeRunSync()
+      .swap
+      .getOrElse(
+        fail("an ack without receiver-computed digests must FAIL the dispatch")
+      )
     assert(err.message.contains(RemoteAttachments.CodeTooOld), err.message)
     assert(err.message.contains("self-computed chunkSha256") || err.message.contains("predates"), err.message)
     rm(src, data, peerWs)
@@ -397,9 +429,13 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
     Files.createDirectories(landed.getParent)
     Files.write(landed, Array.fill[Byte](32)(2))
     val peer = new LoopbackPeer()
-    val err = RemoteAttachments.deliver(plan, targetFor(peerWs), peer).unsafeRunSync().swap.getOrElse(
-      fail("pre-existing foreign bytes must FAIL the dispatch")
-    )
+    val err = RemoteAttachments
+      .deliver(plan, targetFor(peerWs), peer)
+      .unsafeRunSync()
+      .swap
+      .getOrElse(
+        fail("pre-existing foreign bytes must FAIL the dispatch")
+      )
     assert(err.message.contains(RemoteAttachments.CodePartial), err.message)
     assert(err.message.contains("does not own"), err.message)
     assert(err.message.contains("Nothing was dispatched"), err.message)
@@ -432,7 +468,10 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
 
   test("classify: each device-side failure face maps to its own reason code (nothing flattened)"):
     def code(msg: String): String = RemoteAttachments.classify(msg)._1
-    assertEquals(code("p2p: Cannot reach KAI at http://x: Connection refused (no relay client)"), RemoteAttachments.CodeOffline)
+    assertEquals(
+      code("p2p: Cannot reach KAI at http://x: Connection refused (no relay client)"),
+      RemoteAttachments.CodeOffline
+    )
     assertEquals(code("Relay failed: timeout"), RemoteAttachments.CodeOffline)
     assertEquals(code("java.io.IOException: No space left on device"), RemoteAttachments.CodeDiskFull)
     assertEquals(code("Remote error: Unknown direction: probe"), RemoteAttachments.CodeTooOld)
@@ -477,7 +516,10 @@ class RemoteAttachmentsSpec extends CatsEffectSuite:
     assertEquals(plan.device, None)
     assert(section.contains(s"copy: ${plan.entries.head.stableCopy}"), section)
     // 回执同样是旧文案（没有 device 那句）
-    assert(!DelegateAttachments.receiptLine(plan).contains("delivered to device"), DelegateAttachments.receiptLine(plan))
+    assert(
+      !DelegateAttachments.receiptLine(plan).contains("delivered to device"),
+      DelegateAttachments.receiptLine(plan)
+    )
     rm(src, data)
 
   test("source pin: the old blanket refusal is gone — no DELEGATE_ATTACHMENTS_REMOTE on the dispatch path"):

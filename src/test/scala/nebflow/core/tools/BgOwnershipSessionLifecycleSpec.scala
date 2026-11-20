@@ -62,18 +62,18 @@ class BgOwnershipSessionLifecycleSpec extends CatsEffectSuite:
 
   test("① 全链：delegate 起后台任务 → 回合 idle 超 TTL → 下回合 forSession 会话续命，death-watch 不误埋") {
     withDataRoot {
-      val sid  = newSid("renew")
-      val job  = s"job-${java.util.UUID.randomUUID().toString.take(8)}"
+      val sid = newSid("renew")
+      val job = s"job-${java.util.UUID.randomUUID().toString.take(8)}"
       val prog = "sleep 45"
       (for
         s1 <- ShellSession.forSession(sid)
-        _  <- s1.executeBackground(prog, description = Some("own-1193-long-regression"), jobIdOverride = Some(job))
-        _  <- BgTaskRegistry.register(job, sid, "own-1193-long-regression", "local")
-        _  <- pollUntil(s1.getBackgroundJobHealth(job).map(_.exists(_.isAlive)))
+        _ <- s1.executeBackground(prog, description = Some("own-1193-long-regression"), jobIdOverride = Some(job))
+        _ <- BgTaskRegistry.register(job, sid, "own-1193-long-regression", "local")
+        _ <- pollUntil(s1.getBackgroundJobHealth(job).map(_.exists(_.isAlive)))
         // 回合 idle：零 Bash 调用，TTL 超时（回拨模拟 31 分钟）。
         _ <- s1.backdateLastAccessedForSpec(31.minutes.toMillis)
         stale <- s1.isStale
-        live  <- s1.hasLiveBackgroundWork
+        live <- s1.hasLiveBackgroundWork
         _ <- IO {
           assertEquals(stale, true, "回拨后必须判陈旧")
           assertEquals(live, true, "在飞任务 ⇒ 有在飞工作")
@@ -99,7 +99,7 @@ class BgOwnershipSessionLifecycleSpec extends CatsEffectSuite:
           assertEquals(report.remaining >= 1, true)
         }
         row <- BgTaskRegistry.find(job)
-        _   <- IO(assert(row.isDefined, "registry 行必须原样在册"))
+        _ <- IO(assert(row.isDefined, "registry 行必须原样在册"))
       yield ()).guarantee(
         ShellSession.destroySession(sid).attempt.void *>
           BgTaskRegistry.unregister(job).attempt.void
@@ -111,7 +111,7 @@ class BgOwnershipSessionLifecycleSpec extends CatsEffectSuite:
     withDataRoot {
       val sid = newSid("replace")
       (for
-        s1  <- ShellSession.forSession(sid)
+        s1 <- ShellSession.forSession(sid)
         job <- s1.executeBackground("echo own-1193-quick", description = Some("quick"))
         // 等任务终落并被消费（getBackgroundResult 完成为取走行）。
         _ <- pollUntil(
@@ -120,7 +120,7 @@ class BgOwnershipSessionLifecycleSpec extends CatsEffectSuite:
         )
         _ <- s1.backdateLastAccessedForSpec(31.minutes.toMillis)
         stale1 <- s1.isStale
-        live1  <- s1.hasLiveBackgroundWork
+        live1 <- s1.hasLiveBackgroundWork
         _ <- IO {
           assertEquals(stale1, true)
           assertEquals(live1, false, "终落并消费后 ⇒ 无在飞工作")
@@ -132,7 +132,7 @@ class BgOwnershipSessionLifecycleSpec extends CatsEffectSuite:
           assertEquals(s2Stale, false)
         }
         gone <- s2.getBackgroundResult(job)
-        _    <- IO(assertEquals(gone, None, "新会话任务图为空"))
+        _ <- IO(assertEquals(gone, None, "新会话任务图为空"))
       yield ()).guarantee(ShellSession.destroySession(sid).attempt.void)
     }
   }
@@ -143,12 +143,12 @@ class BgOwnershipSessionLifecycleSpec extends CatsEffectSuite:
       val job = s"job-${java.util.UUID.randomUUID().toString.take(8)}"
       (for
         s1 <- ShellSession.forSession(sid)
-        _  <- s1.executeBackground("sleep 45", description = Some("own-1193-reclaim"), jobIdOverride = Some(job))
-        _  <- BgTaskRegistry.register(job, sid, "own-1193-reclaim", "local")
-        _  <- pollUntil(s1.getBackgroundJobHealth(job).map(_.exists(_.isAlive)))
-        _  <- BgTaskRegistry.reclaimSession(Some(sid), _ => IO.unit, rootSessionId = "")
+        _ <- s1.executeBackground("sleep 45", description = Some("own-1193-reclaim"), jobIdOverride = Some(job))
+        _ <- BgTaskRegistry.register(job, sid, "own-1193-reclaim", "local")
+        _ <- pollUntil(s1.getBackgroundJobHealth(job).map(_.exists(_.isAlive)))
+        _ <- BgTaskRegistry.reclaimSession(Some(sid), _ => IO.unit, rootSessionId = "")
         peeked <- ShellSession.peekSession(sid)
-        row    <- BgTaskRegistry.find(job)
+        row <- BgTaskRegistry.find(job)
         _ <- IO {
           assertEquals(peeked, None, "真终态收殓：会话出册且已死")
           assertEquals(row, None, "真终态收殓：在飞行一并注销")
@@ -208,3 +208,4 @@ class BgOwnershipSessionLifecycleSpec extends CatsEffectSuite:
       yield ()).guarantee(ShellSession.destroySession(sid).attempt.void)
     }
   }
+end BgOwnershipSessionLifecycleSpec

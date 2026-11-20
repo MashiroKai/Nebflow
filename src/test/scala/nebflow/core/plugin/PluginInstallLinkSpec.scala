@@ -37,7 +37,7 @@ class PluginInstallLinkSpec extends FunSuite:
   override val munitTimeout: FiniteDuration = Duration(180, "s")
 
   private var prevRoot: os.Path = os.Path("/tmp")
-  private var home: os.Path     = os.Path("/tmp")
+  private var home: os.Path = os.Path("/tmp")
 
   override def beforeAll(): Unit =
     prevRoot = PathUtil.dataRoot
@@ -91,8 +91,8 @@ class PluginInstallLinkSpec extends FunSuite:
 
   /** 目录源夹具：签名目录 + 真实 zip 制品；返回 (link, 目录源 dir)。 */
   private def materializeCatalog(sourceId: String, packages: List[Json]): (String, os.Path) =
-    val dir  = home / s"cat-$sourceId"
-    val kp   = genKey()
+    val dir = home / s"cat-$sourceId"
+    val kp = genKey()
     val keyId = "acme-release-1"
     val catalogJson = Json.obj(
       "protocolVersion" -> 1.asJson,
@@ -108,6 +108,8 @@ class PluginInstallLinkSpec extends FunSuite:
     os.write.over(dir / "catalog.json", Json.obj("catalog" -> catalogJson, "signature" -> signature).noSpaces)
     configureDirSource(sourceId, dir, keyId, pubHex(kp))
     (sourceId, dir)
+
+  end materializeCatalog
 
   private def pkgJson(id: String, versions: List[Json], publisherClass: Option[String] = None): Json =
     val base = List("id" -> id.asJson, "publisherKeyId" -> "acme-release-1".asJson, "versions" -> versions.asJson)
@@ -165,23 +167,23 @@ class PluginInstallLinkSpec extends FunSuite:
     rejects.foreach { (label, r) =>
       PluginInstallLink.parse(r) match
         case Left(err) => assert(err.contains(PluginInstallLink.CodeLinkUnparseable), s"$label: $err")
-        case Right(_)  => fail(s"$label must be rejected")
+        case Right(_) => fail(s"$label must be rejected")
     }
 
     List(s"$raw&futureFlag=1", s"$raw&id=evil.demo-kit").foreach { invalid =>
       PluginInstallLink.parse(invalid) match
         case Left(err) => assert(err.contains(PluginInstallLink.CodeLinkUnparseable))
-        case Right(_)  => fail("unknown and duplicate parameters must be rejected")
+        case Right(_) => fail("unknown and duplicate parameters must be rejected")
     }
   }
 
   // ── 反钓鱼 resolve 面 ──────────────────────────────────────
 
   private def singlePkgCatalog(
-      sourceId: String,
-      id: String,
-      versions: List[Json],
-      publisherClass: Option[String] = None
+    sourceId: String,
+    id: String,
+    versions: List[Json],
+    publisherClass: Option[String] = None
   ): os.Path =
     materializeCatalog(sourceId, List(pkgJson(id, versions, publisherClass)))._2
 
@@ -191,10 +193,14 @@ class PluginInstallLinkSpec extends FunSuite:
       case Left(err) => fail(s"fixture catalog must load: $err")
 
   test("resolveLink: full identity match resolves; version/sha/yanked mismatch blocks") {
-    singlePkgCatalog("acme", "acme.demo-kit", List(
-      verJson("1.5.0", GoodSha, 1L, artifact = "artifacts/a.zip"),
-      verJson("1.4.0", "b".repeat(64), 1L, yanked = true, artifact = "artifacts/b.zip")
-    ))
+    singlePkgCatalog(
+      "acme",
+      "acme.demo-kit",
+      List(
+        verJson("1.5.0", GoodSha, 1L, artifact = "artifacts/a.zip"),
+        verJson("1.4.0", "b".repeat(64), 1L, yanked = true, artifact = "artifacts/b.zip")
+      )
+    )
     val vc = PluginDistributionCatalog.loadVerified("acme").unsafeRunSync().toOption.get
 
     PluginInstallLink.resolveLink(PluginInstallLink.InstallLink("acme.demo-kit", "1.5.0", GoodSha), vc) match
@@ -203,15 +209,15 @@ class PluginInstallLinkSpec extends FunSuite:
 
     PluginInstallLink.resolveLink(PluginInstallLink.InstallLink("acme.demo-kit", "9.9.9", GoodSha), vc) match
       case Left(err) => assert(err.contains(PluginInstallLink.CodeLinkNotInCatalog))
-      case Right(_)  => fail("version not in catalog must block")
+      case Right(_) => fail("version not in catalog must block")
 
     PluginInstallLink.resolveLink(PluginInstallLink.InstallLink("acme.demo-kit", "1.5.0", "c".repeat(64)), vc) match
       case Left(err) => assert(err.contains(PluginInstallLink.CodeLinkNotInCatalog))
-      case Right(_)  => fail("sha mismatch must block")
+      case Right(_) => fail("sha mismatch must block")
 
     PluginInstallLink.resolveLink(PluginInstallLink.InstallLink("acme.demo-kit", "1.4.0", "b".repeat(64)), vc) match
       case Left(err) => assert(err.contains(PluginInstallLink.CodeLinkNotInCatalog))
-      case Right(_)  => fail("yanked version must block")
+      case Right(_) => fail("yanked version must block")
   }
 
   test("resolveLink: short name is rejected even when unambiguous") {
@@ -222,14 +228,17 @@ class PluginInstallLinkSpec extends FunSuite:
       case Right(_) => fail("short names must be rejected")
 
     // 同一目录内两个发布者都用短名 demo-kit ⇒ 冲突
-    materializeCatalog("clash", List(
-      pkgJson("acme.demo-kit", List(verJson("1.5.0", GoodSha, 1L, artifact = "artifacts/a.zip"))),
-      pkgJson("beta.demo-kit", List(verJson("1.5.0", GoodSha, 1L, artifact = "artifacts/a2.zip")))
-    ))
+    materializeCatalog(
+      "clash",
+      List(
+        pkgJson("acme.demo-kit", List(verJson("1.5.0", GoodSha, 1L, artifact = "artifacts/a.zip"))),
+        pkgJson("beta.demo-kit", List(verJson("1.5.0", GoodSha, 1L, artifact = "artifacts/a2.zip")))
+      )
+    )
     val clash = PluginDistributionCatalog.loadVerified("clash").unsafeRunSync().toOption.get
     PluginInstallLink.resolveLink(PluginInstallLink.InstallLink("demo-kit", "1.5.0", GoodSha), clash) match
       case Left(err) => assert(err.contains(PluginInstallLink.CodeLinkShortName))
-      case Right(_)  => fail("short-name conflict must demand full identity")
+      case Right(_) => fail("short-name conflict must demand full identity")
   }
 
   test("resolveAcrossConfigured: no configured catalogs ⇒ refuse (link is not a trust entry)") {
@@ -238,14 +247,15 @@ class PluginInstallLinkSpec extends FunSuite:
       .resolveAcrossConfigured(PluginInstallLink.InstallLink("acme.demo-kit", "1.5.0", GoodSha))
       .unsafeRunSync() match
       case Left(err) => ()
-      case Right(_)  => fail("with no verified catalog the link must not resolve")
+      case Right(_) => fail("with no verified catalog the link must not resolve")
   }
 
   // ── classifyArg：stand:// 不再误判 git ──────────────────────
 
   test("classifyArg: stand:// link routes to the Link leg (not git despite '://')") {
     PluginSourceInstall.classifyArg(s"stand://plugin/install?id=acme.demo-kit&v=1.5.0&s=$GoodSha") match
-      case Right(PluginSourceInstall.ArgClass.Link(raw)) => assertEquals(raw, s"stand://plugin/install?id=acme.demo-kit&v=1.5.0&s=$GoodSha")
+      case Right(PluginSourceInstall.ArgClass.Link(raw)) =>
+        assertEquals(raw, s"stand://plugin/install?id=acme.demo-kit&v=1.5.0&s=$GoodSha")
       case other => fail(s"stand:// link must classify as Link, got $other")
     // 既有三态零变化：git 标记仍优先生效
     PluginSourceInstall.classifyArg("https://github.com/o/r.git#v1.2.0") match
@@ -257,10 +267,15 @@ class PluginInstallLinkSpec extends FunSuite:
 
   test("installFromLink: verified catalog install lands via=hub with full provenance") {
     val zip = pluginZip("demo-kit")
-    val sha  = sha256Hex(zip)
-    val dir  = singlePkgCatalog("install-src", "acme.demo-kit", List(
-      verJson("1.5.0", sha, zip.length.toLong, artifact = "artifacts/demo-kit-1.5.0.zip")
-    ), publisherClass = Some("verified"))
+    val sha = sha256Hex(zip)
+    val dir = singlePkgCatalog(
+      "install-src",
+      "acme.demo-kit",
+      List(
+        verJson("1.5.0", sha, zip.length.toLong, artifact = "artifacts/demo-kit-1.5.0.zip")
+      ),
+      publisherClass = Some("verified")
+    )
     os.write.over(dir / "artifacts" / "demo-kit-1.5.0.zip", zip)
 
     PluginSourceInstall
@@ -291,38 +306,48 @@ class PluginInstallLinkSpec extends FunSuite:
         // digest 硬不变量：账本值 == 现算值
         PluginRegistry.computeDigest(installed) match
           case Right((d, _)) => assertEquals(e.digest, d)
-          case Left(err)     => fail(s"digest recomputation failed: $err")
+          case Left(err) => fail(s"digest recomputation failed: $err")
       case other => fail(s"ledger must record the catalog install, got $other")
+    end match
   }
 
   test("installFromLink: anti-phishing rejection installs nothing (version not in catalog)") {
     val zip = pluginZip("block-kit")
-    val sha  = sha256Hex(zip)
-    val dir  = singlePkgCatalog("block-src", "acme.block-kit", List(
-      verJson("1.5.0", sha, zip.length.toLong, artifact = "artifacts/block-kit.zip")
-    ))
+    val sha = sha256Hex(zip)
+    val dir = singlePkgCatalog(
+      "block-src",
+      "acme.block-kit",
+      List(
+        verJson("1.5.0", sha, zip.length.toLong, artifact = "artifacts/block-kit.zip")
+      )
+    )
     os.write.over(dir / "artifacts" / "block-kit.zip", zip)
 
     PluginSourceInstall
       .installFromLink(s"stand://plugin/install?id=acme.block-kit&v=9.9.9&s=$sha")
       .unsafeRunSync() match
       case Left(err) => assert(err.contains(PluginInstallLink.CodeLinkNotInCatalog))
-      case Right(_)  => fail("version not in catalog must block the install")
+      case Right(_) => fail("version not in catalog must block the install")
     assertEquals(os.exists(home / "plugins" / "block-kit"), false, "no plugin directory may appear on a blocked link")
   }
 
   test("installFromLink: unsigned catalog refuses before install (link is not a trust entry)") {
     // 目录内容合法但信任根登记的是另一把键 ⇒ 验签拒 ⇒ 安装拒
     val zip = pluginZip("ghost-kit")
-    val sha  = sha256Hex(zip)
-    val kp   = genKey()
-    val dir  = home / "cat-unsigned"
+    val sha = sha256Hex(zip)
+    val kp = genKey()
+    val dir = home / "cat-unsigned"
     val catalogJson = Json.obj(
       "protocolVersion" -> 1.asJson,
       "catalogRevision" -> 1.asJson,
-      "packages" -> List(pkgJson("acme.ghost-kit", List(
-        verJson("1.5.0", sha, zip.length.toLong, artifact = "artifacts/ghost-kit.zip")
-      ))).asJson
+      "packages" -> List(
+        pkgJson(
+          "acme.ghost-kit",
+          List(
+            verJson("1.5.0", sha, zip.length.toLong, artifact = "artifacts/ghost-kit.zip")
+          )
+        )
+      ).asJson
     )
     val signature = Json.obj(
       "algorithm" -> "ed25519".asJson,
@@ -345,7 +370,7 @@ class PluginInstallLinkSpec extends FunSuite:
       .installFromLink(s"stand://plugin/install?id=acme.ghost-kit&v=1.5.0&s=$sha")
       .unsafeRunSync() match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogUntrusted))
-      case Right(_)  => fail("untrusted catalog must refuse the install")
+      case Right(_) => fail("untrusted catalog must refuse the install")
     assertEquals(os.exists(home / "plugins" / "ghost-kit"), false, "untrusted catalog must not install anything")
   }
 

@@ -27,19 +27,27 @@ object EvidenceTemp:
     val tmp = tempRoot
     ownedRoots.get(tmp) match
       case Some((root, key)) =>
-        val attrs = scala.util.Try(Files.readAttributes(root, classOf[java.nio.file.attribute.BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)).toOption
+        val attrs = scala.util
+          .Try(
+            Files.readAttributes(root, classOf[java.nio.file.attribute.BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
+          )
+          .toOption
         attrs.filter(a => a.isDirectory && a.fileKey() != null && a.fileKey() == key).map(_ => root)
       case None if create =>
         Files.createDirectories(tmp)
         val root = Files.createTempDirectory(tmp, s"$Namespace-process-").toRealPath()
-        val key = Files.readAttributes(root, classOf[java.nio.file.attribute.BasicFileAttributes], LinkOption.NOFOLLOW_LINKS).fileKey()
+        val key = Files
+          .readAttributes(root, classOf[java.nio.file.attribute.BasicFileAttributes], LinkOption.NOFOLLOW_LINKS)
+          .fileKey()
         require(key != null, "evidence root identity unavailable")
         ownedRoots.put(tmp, (root, key))
         Some(root)
       case None => None
+    end match
   }
 
-  private def namespacePath: Path = ownedRoot(false).getOrElse(throw new IllegalArgumentException("no owned evidence root"))
+  private def namespacePath: Path =
+    ownedRoot(false).getOrElse(throw new IllegalArgumentException("no owned evidence root"))
 
   /** Create a unique batch under the process platform temp directory. */
   def createBatch(project: String, task: String): Path =
@@ -58,10 +66,22 @@ object EvidenceTemp:
     Files.createDirectories(day)
     val dayReal = day.toRealPath()
     require(dayReal.startsWith(projectReal) && dayReal != projectReal, "evidence batch escaped namespace")
-    val manifest = Json.obj("createdAt" -> Instant.now().toString.asJson, "project" -> project.asJson, "batch" -> batch.asJson, "owner" -> owner.asJson)
-    Files.writeString(dayReal.resolve("manifest.json"), manifest.noSpaces + "\n", StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+    val manifest = Json.obj(
+      "createdAt" -> Instant.now().toString.asJson,
+      "project" -> project.asJson,
+      "batch" -> batch.asJson,
+      "owner" -> owner.asJson
+    )
+    Files.writeString(
+      dayReal.resolve("manifest.json"),
+      manifest.noSpaces + "\n",
+      StandardOpenOption.CREATE_NEW,
+      StandardOpenOption.WRITE
+    )
     Files.writeString(dayReal.resolve(".active"), "active\n", StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
     dayReal
+
+  end createBatch
 
   /** Mark a completed batch inactive. A missing/invalid manifest is never eligible for sweep. */
   def finishBatch(batchDir: Path): Unit =
@@ -86,8 +106,15 @@ object EvidenceTemp:
       "promotedAt" -> Instant.now().toString.asJson,
       "retentionReason" -> retentionReason.trim.asJson
     )
-    Files.writeString(Path.of(target.toString + ".meta.json"), metadata.noSpaces + "\n", StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)
+    Files.writeString(
+      Path.of(target.toString + ".meta.json"),
+      metadata.noSpaces + "\n",
+      StandardOpenOption.CREATE_NEW,
+      StandardOpenOption.WRITE
+    )
     target
+
+  end promote
 
   private def checkedBatch(batchDir: Path): Path =
     val base = batchDir.toAbsolutePath.normalize().toRealPath()
@@ -96,12 +123,17 @@ object EvidenceTemp:
     val manifest = base.resolve("manifest.json")
     require(Files.isRegularFile(manifest, LinkOption.NOFOLLOW_LINKS), "batch manifest missing")
     val cursor = parse(Files.readString(manifest)).toOption.map(_.hcursor)
-    require(base.getNameCount == root.getNameCount + 3 && cursor.exists(c =>
-      c.get[String]("project").toOption.contains(base.getParent.getParent.getFileName.toString) &&
-      c.get[String]("batch").toOption.contains(base.getParent.getFileName.toString) &&
-      c.get[String]("owner").toOption.contains(owner)
-    ), "batch ownership mismatch")
+    require(
+      base.getNameCount == root.getNameCount + 3 && cursor.exists(c =>
+        c.get[String]("project").toOption.contains(base.getParent.getParent.getFileName.toString) &&
+          c.get[String]("batch").toOption.contains(base.getParent.getFileName.toString) &&
+          c.get[String]("owner").toOption.contains(owner)
+      ),
+      "batch ownership mismatch"
+    )
     base
+
+  end checkedBatch
 
   private def checkedFile(batchDir: Path, relativeName: String): Path =
     val rel = Path.of(relativeName)
@@ -110,7 +142,10 @@ object EvidenceTemp:
     val target = base.resolve(rel).normalize()
     require(target.startsWith(base) && target != base, "evidence path escaped batch")
     val real = target.toRealPath()
-    require(real.startsWith(base) && Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS), "evidence target is not a contained regular file")
+    require(
+      real.startsWith(base) && Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS),
+      "evidence target is not a contained regular file"
+    )
     real
 
   /** Best-effort, fail-closed cleanup of old, inactive batches with valid manifests. */
@@ -120,45 +155,89 @@ object EvidenceTemp:
     else
       val root = namespace.get
       val stream = Files.list(root)
-      try stream.iterator().asScala.filter(p => Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS)).map { project =>
-        try
-          val projectReal = project.toRealPath()
-          if projectReal.getParent != root then 0
-          else
-            val batches = Files.list(projectReal)
-            try batches.iterator().asScala.map { batch =>
-              try
-                if !Files.isDirectory(batch, LinkOption.NOFOLLOW_LINKS) then 0
-                else
-                  val batchReal = batch.toRealPath()
-                  if batchReal.getParent != projectReal then 0
-                  else
-                    val dates = Files.list(batchReal)
-                    try dates.iterator().asScala.map { date =>
+      try
+        stream
+          .iterator()
+          .asScala
+          .filter(p => Files.isDirectory(p, LinkOption.NOFOLLOW_LINKS))
+          .map { project =>
+            try
+              val projectReal = project.toRealPath()
+              if projectReal.getParent != root then 0
+              else
+                val batches = Files.list(projectReal)
+                try
+                  batches
+                    .iterator()
+                    .asScala
+                    .map { batch =>
                       try
-                        if !Files.isDirectory(date, LinkOption.NOFOLLOW_LINKS) || Files.exists(date.resolve(".active"), LinkOption.NOFOLLOW_LINKS) then 0
+                        if !Files.isDirectory(batch, LinkOption.NOFOLLOW_LINKS) then 0
                         else
-                          val dateReal = date.toRealPath()
-                          val manifest = dateReal.resolve("manifest.json")
-                          if dateReal.getParent != batchReal || !Files.isRegularFile(manifest, LinkOption.NOFOLLOW_LINKS) then 0
+                          val batchReal = batch.toRealPath()
+                          if batchReal.getParent != projectReal then 0
                           else
-                            val json = parse(Files.readString(manifest)).toOption.map(_.hcursor)
-                            val belongs = json.exists(c =>
-                              c.get[String]("project").toOption.contains(projectReal.getFileName.toString) &&
-                              c.get[String]("batch").toOption.contains(batchReal.getFileName.toString) &&
-                              c.get[String]("owner").toOption.contains(owner)
-                            )
-                            val created = json.flatMap(_.get[String]("createdAt").toOption).flatMap(s => scala.util.Try(Instant.parse(s).toEpochMilli).toOption)
-                            created.filter(t => belongs && t <= nowMillis - TtlMillis && t <= nowMillis).map { _ => deleteTree(dateReal); 1 }.getOrElse(0)
+                            val dates = Files.list(batchReal)
+                            try
+                              dates
+                                .iterator()
+                                .asScala
+                                .map { date =>
+                                  try
+                                    if !Files.isDirectory(date, LinkOption.NOFOLLOW_LINKS) || Files.exists(
+                                        date.resolve(".active"),
+                                        LinkOption.NOFOLLOW_LINKS
+                                      )
+                                    then 0
+                                    else
+                                      val dateReal = date.toRealPath()
+                                      val manifest = dateReal.resolve("manifest.json")
+                                      if dateReal.getParent != batchReal || !Files.isRegularFile(
+                                          manifest,
+                                          LinkOption.NOFOLLOW_LINKS
+                                        )
+                                      then 0
+                                      else
+                                        val json = parse(Files.readString(manifest)).toOption.map(_.hcursor)
+                                        val belongs = json.exists(c =>
+                                          c.get[String]("project")
+                                            .toOption
+                                            .contains(projectReal.getFileName.toString) &&
+                                            c.get[String]("batch").toOption.contains(batchReal.getFileName.toString) &&
+                                            c.get[String]("owner").toOption.contains(owner)
+                                        )
+                                        val created = json
+                                          .flatMap(_.get[String]("createdAt").toOption)
+                                          .flatMap(s => scala.util.Try(Instant.parse(s).toEpochMilli).toOption)
+                                        created
+                                          .filter(t => belongs && t <= nowMillis - TtlMillis && t <= nowMillis)
+                                          .map { _ =>
+                                            deleteTree(dateReal); 1
+                                          }
+                                          .getOrElse(0)
+                                      end if
+                                  catch case NonFatal(_) => 0
+                                }
+                                .sum
+                            finally dates.close()
+                            end try
+                          end if
                       catch case NonFatal(_) => 0
-                    }.sum
-                    finally dates.close()
-              catch case NonFatal(_) => 0
-            }.sum
-            finally batches.close()
-        catch case NonFatal(_) => 0
-      }.sum
+                    }
+                    .sum
+                finally batches.close()
+                end try
+              end if
+            catch case NonFatal(_) => 0
+          }
+          .sum
       finally stream.close()
+
+      end try
+
+    end if
+
+  end sweep
 
   private def deleteTree(root: Path): Unit =
     val walk = Files.walk(root)

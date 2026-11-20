@@ -125,10 +125,12 @@ private[gateway] object ConfigRoutes:
 
       case req @ GET -> Root / "canvas-writer" =>
         withRecoveryPrincipal(req) { principal =>
-          canvasTakeover.canvasRole(principal, req.params.getOrElse("clientId", ""), req.params.getOrElse("tabInstanceId", "")).flatMap {
-            case Some(epoch) => Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson))
-            case None => Ok(Json.obj("role" -> "reader".asJson, "epoch" -> Json.Null))
-          }
+          canvasTakeover
+            .canvasRole(principal, req.params.getOrElse("clientId", ""), req.params.getOrElse("tabInstanceId", ""))
+            .flatMap {
+              case Some(epoch) => Ok(Json.obj("role" -> "writer".asJson, "epoch" -> epoch.asJson))
+              case None => Ok(Json.obj("role" -> "reader".asJson, "epoch" -> Json.Null))
+            }
         }
 
       case req @ POST -> Root / "canvas-writer" / action if action == "claim" || action == "release" =>
@@ -149,20 +151,24 @@ private[gateway] object ConfigRoutes:
                       // 唯一拒绝面 = `expectedEpoch` 不匹配（严格 compare-and-set）。正常 claim
                       // 不带 expectedEpoch ⇒ 恒授予（静默抢占，2026-11-19 作者令）；这里仍是
                       // 真实「保存失败」文案，不含任何接管/让出措辞。
-                      Conflict(Json.obj(
-                        "error" -> "writer_already_held".asJson,
-                        "message" -> "保存失败，本次修改未保存到服务器。".asJson,
-                        "role" -> "reader".asJson
-                      ))
+                      Conflict(
+                        Json.obj(
+                          "error" -> "writer_already_held".asJson,
+                          "message" -> "保存失败，本次修改未保存到服务器。".asJson,
+                          "role" -> "reader".asJson
+                        )
+                      )
                   }
                 case (Some(id), Some(t)) =>
                   c.get[Long]("epoch").toOption match
-                    case Some(epoch) => canvasTakeover.releaseCanvas(principal, id, t, epoch).flatMap {
-                      case true => Ok(Json.obj("role" -> "reader".asJson))
-                      case false => Conflict(Json.obj("error" -> "stale_writer_epoch".asJson))
-                    }
+                    case Some(epoch) =>
+                      canvasTakeover.releaseCanvas(principal, id, t, epoch).flatMap {
+                        case true => Ok(Json.obj("role" -> "reader".asJson))
+                        case false => Conflict(Json.obj("error" -> "stale_writer_epoch".asJson))
+                      }
                     case None => BadRequest(Json.obj("error" -> "invalid_epoch".asJson))
                 case _ => BadRequest(Json.obj("error" -> "invalid_writer_identity".asJson))
+              end match
           }
         }
 
@@ -172,52 +178,80 @@ private[gateway] object ConfigRoutes:
           val maxBytes = CanvasTabs.MaxBodyBytes
           req.body.take(maxBytes.toLong + 1).compile.toVector.flatMap { bytes =>
             val raw = bytes.toArray
-            val parsed = if raw.length <= maxBytes then io.circe.parser.parse(new String(raw, java.nio.charset.StandardCharsets.UTF_8)).toOption else None
+            val parsed =
+              if raw.length <= maxBytes then
+                io.circe.parser.parse(new String(raw, java.nio.charset.StandardCharsets.UTF_8)).toOption
+              else None
             val cursor = parsed.map(_.hcursor)
-            val client = cursor.flatMap(_.get[String]("clientId").toOption).filter(s => s.trim.nonEmpty && s.length <= 128)
-            val tab = cursor.flatMap(_.get[String]("tabInstanceId").toOption).filter(s => s.trim.nonEmpty && s.length <= 128)
+            val client =
+              cursor.flatMap(_.get[String]("clientId").toOption).filter(s => s.trim.nonEmpty && s.length <= 128)
+            val tab =
+              cursor.flatMap(_.get[String]("tabInstanceId").toOption).filter(s => s.trim.nonEmpty && s.length <= 128)
             val epoch = cursor.flatMap(_.get[Long]("epoch").toOption)
             val operation = parsed.filter(_.hcursor.downField("operationId").succeeded)
             def save: IO[Response[IO]] = if operation.nonEmpty then
               val json = operation.get
               new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json").applyOperation(json).flatMap {
                 case Left(reason) =>
-                  logger.warn(s"canvas tab operation rejected: $reason source=${req.remoteAddr} operationId=${json.hcursor.get[String]("operationId").getOrElse("invalid")}") *>
+                  logger.warn(
+                    s"canvas tab operation rejected: $reason source=${req.remoteAddr} operationId=${json.hcursor.get[String]("operationId").getOrElse("invalid")}"
+                  ) *>
                     BadRequest(Json.obj("error" -> reason.asJson))
                 case Right((result, duplicate)) =>
-                  val ack = Json.obj("ok" -> true.asJson, "operationId" -> result.hcursor.downField("operationId").focus.getOrElse(Json.Null), "writeVersion" -> result.hcursor.downField("writeVersion").focus.getOrElse(Json.Null))
-                  (if duplicate then IO.unit else wsHub.broadcast(result.deepMerge(Json.obj("type" -> "canvasTabsChanged".asJson)))) *> Ok(ack)
+                  val ack = Json.obj(
+                    "ok" -> true.asJson,
+                    "operationId" -> result.hcursor.downField("operationId").focus.getOrElse(Json.Null),
+                    "writeVersion" -> result.hcursor.downField("writeVersion").focus.getOrElse(Json.Null)
+                  )
+                  (if duplicate then IO.unit
+                   else wsHub.broadcast(result.deepMerge(Json.obj("type" -> "canvasTabsChanged".asJson)))) *> Ok(ack)
               }
-            else CanvasTabs.parseBody(raw, maxBytes) match
-              case Left((status, msg)) =>
-                val st = org.http4s.Status.fromInt(status).getOrElse(Status.BadRequest)
-                IO.pure(Response[IO](status = st).withEntity(Json.obj("error" -> msg.asJson)))
-              case Right(json) =>
-                (logger.warn(s"canvas tabs legacy PUT deprecated; missing tabs ignored, source=${req.remoteAddr}") *>
-                  new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
-                    .mergeSave(json, source = req.remoteAddr.fold("unknown")(_.toString)))
-                  .flatMap { merged =>
-                    // 写穿即外推（canvas-tab-sync 批 2026-11-17）：合并后的权威
-                    // 存档广播给全部已连端，他端开/关/切/排序即时跟随，不等刷新。
-                    // 帧载荷 = GET 同构（v/tabs/tombstones/activeTabId）+ type 键。
-                    wsHub.broadcast(
-                      merged.deepMerge(Json.obj("type" -> "canvasTabsChanged".asJson))
-                    ) *> Ok(ApiJson.ok)
-                  }
-                  .handleErrorWith { e =>
-                    logger.error(s"canvas tabs save failed: ${e.getMessage}") *>
-                      IO.pure(
-                        Response[IO](status = Status.InternalServerError)
-                          .withEntity(Json.obj("error" -> s"save failed: ${e.getMessage}".asJson))
-                      )
-                  }
+            else
+              CanvasTabs.parseBody(raw, maxBytes) match
+                case Left((status, msg)) =>
+                  val st = org.http4s.Status.fromInt(status).getOrElse(Status.BadRequest)
+                  IO.pure(Response[IO](status = st).withEntity(Json.obj("error" -> msg.asJson)))
+                case Right(json) =>
+                  (logger.warn(s"canvas tabs legacy PUT deprecated; missing tabs ignored, source=${req.remoteAddr}") *>
+                    new CanvasTabStore(PathUtil.dataRoot / "canvas_tabs.json")
+                      .mergeSave(json, source = req.remoteAddr.fold("unknown")(_.toString)))
+                    .flatMap { merged =>
+                      // 写穿即外推（canvas-tab-sync 批 2026-11-17）：合并后的权威
+                      // 存档广播给全部已连端，他端开/关/切/排序即时跟随，不等刷新。
+                      // 帧载荷 = GET 同构（v/tabs/tombstones/activeTabId）+ type 键。
+                      wsHub.broadcast(
+                        merged.deepMerge(Json.obj("type" -> "canvasTabsChanged".asJson))
+                      ) *> Ok(ApiJson.ok)
+                    }
+                    .handleErrorWith { e =>
+                      logger.error(s"canvas tabs save failed: ${e.getMessage}") *>
+                        IO.pure(
+                          Response[IO](status = Status.InternalServerError)
+                            .withEntity(Json.obj("error" -> s"save failed: ${e.getMessage}".asJson))
+                        )
+                    }
             (client, tab, epoch) match
               case (Some(id), Some(t), Some(e)) =>
                 canvasTakeover.withCanvasWriter(principal, id, t, e)(save).flatMap {
                   case Some(response) => IO.pure(response)
-                  case None => Conflict(Json.obj("error" -> "stale_writer_epoch".asJson, "message" -> "保存失败，本次修改未保存到服务器。".asJson, "role" -> "reader".asJson))
+                  case None =>
+                    Conflict(
+                      Json.obj(
+                        "error" -> "stale_writer_epoch".asJson,
+                        "message" -> "保存失败，本次修改未保存到服务器。".asJson,
+                        "role" -> "reader".asJson
+                      )
+                    )
                 }
-              case _ => Conflict(Json.obj("error" -> "canvas_read_only".asJson, "message" -> "保存失败，本次修改未保存到服务器。".asJson, "role" -> "reader".asJson))
+              case _ =>
+                Conflict(
+                  Json.obj(
+                    "error" -> "canvas_read_only".asJson,
+                    "message" -> "保存失败，本次修改未保存到服务器。".asJson,
+                    "role" -> "reader".asJson
+                  )
+                )
+            end match
           }
         }
 
@@ -236,11 +270,15 @@ private[gateway] object ConfigRoutes:
           if !nebflow.core.executor.ExecutorRegistry.defs.exists(d => d.id == id && d.external) then
             NotFound(Json.obj("error" -> "unknown executor".asJson))
           else
-            Ok(Json.obj(
-              "model" -> nebflow.core.executor.ExecutorRegistry.configuredModel(id).asJson,
-              "supported" -> supported.asJson,
-              "suggestions" -> (if id == "claude-code" then List("sonnet", "opus") else if id == "codex" then List("o3") else Nil).asJson
-            ))
+            Ok(
+              Json.obj(
+                "model" -> nebflow.core.executor.ExecutorRegistry.configuredModel(id).asJson,
+                "supported" -> supported.asJson,
+                "suggestions" -> (if id == "claude-code" then List("sonnet", "opus")
+                                  else if id == "codex" then List("o3")
+                                  else Nil) .asJson
+              )
+            )
         }
 
       case req @ PUT -> Root / "executors" / id / "model" =>
@@ -282,16 +320,23 @@ private[gateway] object ConfigRoutes:
       // Single-provider explicit reveal. Audit the event without logging caller-controlled text.
       case req @ GET -> Root / "config" / "provider-keys" / id =>
         withAuth(req) {
-          ConfigService.revealProviderApiKey(id).flatMap {
-            case Some(value) =>
-              nebflow.shared.NebflowLogger.forName("nebflow.gateway.config")
-                .info("Provider credential revealed").flatMap { _ =>
-                  Ok(Json.obj("value" -> value.asJson)).map(_.putHeaders(
-                    Header.Raw(org.typelevel.ci.CIString("Cache-Control"), "no-store")
-                  ))
-                }
-            case None => NotFound(Json.obj("error" -> "Provider credential not found".asJson))
-          }.handleErrorWith(_ => BadRequest(Json.obj("error" -> "Provider credential unavailable".asJson)))
+          ConfigService
+            .revealProviderApiKey(id)
+            .flatMap {
+              case Some(value) =>
+                nebflow.shared.NebflowLogger
+                  .forName("nebflow.gateway.config")
+                  .info("Provider credential revealed")
+                  .flatMap { _ =>
+                    Ok(Json.obj("value" -> value.asJson)).map(
+                      _.putHeaders(
+                        Header.Raw(org.typelevel.ci.CIString("Cache-Control"), "no-store")
+                      )
+                    )
+                  }
+              case None => NotFound(Json.obj("error" -> "Provider credential not found".asJson))
+            }
+            .handleErrorWith(_ => BadRequest(Json.obj("error" -> "Provider credential unavailable".asJson)))
         }
 
       // GET /api/config/provider-keys —— 设置页 apikey 明文回读（作者令

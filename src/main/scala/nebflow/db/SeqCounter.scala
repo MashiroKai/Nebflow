@@ -20,8 +20,8 @@ final class SeqCounter private[db] (
   file: Path,
   interval: Long,
   private var nextUnclaimed: Long, // 已持久化的最低未领取号
-  private var base: Long,          // 当前区间基（0 = 尚未领取区间）
-  private var limit: Long,         // 当前区间上界（exclusive）
+  private var base: Long, // 当前区间基（0 = 尚未领取区间）
+  private var limit: Long // 当前区间上界（exclusive）
 ):
 
   require(interval >= 1, "seq interval must be >= 1")
@@ -75,9 +75,12 @@ object SeqCounter:
   ): Either[DbError.RefuseStart, SeqCounter] =
     if !Files.exists(file) then
       if treeHasData then
-        Left(DbError.RefuseStart(
-          s"seq counter MISSING at $file while the db tree carries data — refusing to start " +
-            "(renumber-from-zero forbidden; design §3.6)"))
+        Left(
+          DbError.RefuseStart(
+            s"seq counter MISSING at $file while the db tree carries data — refusing to start " +
+              "(renumber-from-zero forbidden; design §3.6)"
+          )
+        )
       else
         // 全新数据根：初始化权威面（首个区间仍是发号时才领——档先在、号后发）。
         WriteFace.writeFiveStepText(file, encode(1L))
@@ -87,15 +90,20 @@ object SeqCounter:
         case Right(next) =>
           Right(new SeqCounter(file, interval, next, 0L, 0L))
         case Left(why) =>
-          Left(DbError.RefuseStart(
-            s"seq counter CORRUPT at $file ($why) — refusing to start (renumber-from-zero " +
-              "forbidden; design §3.6)"))
+          Left(
+            DbError.RefuseStart(
+              s"seq counter CORRUPT at $file ($why) — refusing to start (renumber-from-zero " +
+                "forbidden; design §3.6)"
+            )
+          )
 
   def encode(next: Long): String =
-    (Json.obj(
-      "version" -> Json.fromInt(Version),
-      "next" -> Json.fromLong(next)
-    ).noSpaces) + "\n"
+    (Json
+      .obj(
+        "version" -> Json.fromInt(Version),
+        "next" -> Json.fromLong(next)
+      )
+      .noSpaces) + "\n"
 
   private def decode(text: String): Either[String, Long] =
     if text.trim.isEmpty then Left("empty")

@@ -466,7 +466,9 @@ object ProjectCrashRecovery:
     else
       val text =
         s"[chain-orphaned] parent dispatcher session '$scope' died across restart (not in the delegate registry). " +
-          s"Chain(s) ${if chains.isEmpty then "(no chain ids)" else chains.mkString(", ")} are PAUSED with $remaining " +
+          s"Chain(s) ${
+              if chains.isEmpty then "(no chain ids)" else chains.mkString(", ")
+            } are PAUSED with $remaining " +
           "non-terminal node(s) — dispatch is gated, nothing advances. Resume via NodeCancel resume, or re-dispatch."
       nebflow.core.tools.BgNotifyDelivery
         .deliverToRootOrInbox(
@@ -482,6 +484,10 @@ object ProjectCrashRecovery:
         )
         .void
         .handleErrorWith(e => logger.warn(s"[orphan-chain] root notify failed: ${e.getMessage}"))
+
+    end if
+
+  end notifyRootOfOrphan
 
   private def recoverDelegateScopeOn(
     baseWorkspace: String,

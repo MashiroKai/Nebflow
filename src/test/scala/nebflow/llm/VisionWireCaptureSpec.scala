@@ -186,9 +186,15 @@ class VisionWireCaptureSpec extends CatsEffectSuite:
     PathUtil.setDataRoot(root)
     nebflow.core.delegate.DelegateRegistry.put(
       nebflow.core.delegate.DelegateRegistry.Record(
-        id = "delegate-unconfigured", executor = "nebflow", cwd = root.toString,
-        project = None, taskId = None, parentSessionId = "parent", title = "unconfigured model",
-        createdAt = 0L, mode = Some("subagent")
+        id = "delegate-unconfigured",
+        executor = "nebflow",
+        cwd = root.toString,
+        project = None,
+        taskId = None,
+        parentSessionId = "parent",
+        title = "unconfigured model",
+        createdAt = 0L,
+        mode = Some("subagent")
       )
     )
     os.write(

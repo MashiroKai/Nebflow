@@ -78,7 +78,7 @@ object MdHtmlGate:
    */
   def rejectReason(path: String): String =
     val ext = extOf(path) match
-      case ""    => "<none>"
+      case "" => "<none>"
       case other => other
     s"$RejectPrefix (ext=$ext, allowed=${Extensions.toList.sorted.mkString(",")})"
 

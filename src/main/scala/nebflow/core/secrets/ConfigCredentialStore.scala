@@ -54,3 +54,4 @@ object ConfigCredentialStore:
           throw new IllegalStateException("Credential reference is missing")
         case _: java.nio.file.AccessDeniedException =>
           throw new IllegalStateException("Credential reference is unreadable")
+end ConfigCredentialStore

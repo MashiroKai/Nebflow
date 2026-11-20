@@ -3,8 +3,12 @@ package nebflow.social.outbound
 import munit.FunSuite
 
 class ReportBlockSpec extends FunSuite:
+
   test("only report bodies are extracted on the root face, independent of the retired gate") {
-    assertEquals(OutputBlock.extractGated("secret <report> A </report> middle <report>B</report>", rootSession = true), OutputBlock.Extracted("A\n\nB"))
+    assertEquals(
+      OutputBlock.extractGated("secret <report> A </report> middle <report>B</report>", rootSession = true),
+      OutputBlock.Extracted("A\n\nB")
+    )
     assertEquals(OutputBlock.extract("<output>old</output>"), OutputBlock.NoBlocks)
     assertEquals(OutputBlock.extract("<report></report>"), OutputBlock.Extracted(""))
   }
@@ -21,6 +25,12 @@ class ReportBlockSpec extends FunSuite:
   }
 
   test("quoted and code examples are not structural tags") {
-    assertEquals(OutputBlock.extract("> <report>quoted</report>\n`<report>inline</report>`\n```html\n<report>fenced</report>\n```"), OutputBlock.NoBlocks)
+    assertEquals(
+      OutputBlock.extract(
+        "> <report>quoted</report>\n`<report>inline</report>`\n```html\n<report>fenced</report>\n```"
+      ),
+      OutputBlock.NoBlocks
+    )
     assertEquals(OutputBlock.extract("`<report>x</report>` <report>visible</report>"), OutputBlock.Extracted("visible"))
   }
+end ReportBlockSpec

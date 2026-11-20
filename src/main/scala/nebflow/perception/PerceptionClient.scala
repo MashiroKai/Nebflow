@@ -57,7 +57,8 @@ object PerceptionClient:
         .GET()
         .build()
       http.send(req, HttpResponse.BodyHandlers.ofString()).statusCode() == 200
-    }.attempt.map(_.getOrElse(false))
+    }.attempt
+      .map(_.getOrElse(false))
 
   /** 裸调用：Some = daemon 应答（statusCode+body）；None = 未 docked/传输失败。 */
   def call(
@@ -73,7 +74,9 @@ object PerceptionClient:
           val b = HttpRequest.newBuilder
             .uri(URI.create(s"${ep.base}$path"))
             .header("X-Nf-Perception-Token", ep.token)
-          body.foreach(bb => { b.header("Content-Type", "application/json"); () })
+          body.foreach(bb =>
+            b.header("Content-Type", "application/json"); ()
+          )
           timeoutSec.foreach(s => b.timeout(Duration.ofSeconds(s)))
           b.method(
             method,
@@ -81,49 +84,69 @@ object PerceptionClient:
           )
           val resp = http.send(b.build(), HttpResponse.BodyHandlers.ofString())
           (resp.statusCode(), resp.body())
-        }.attempt.map {
-          case Right(ok)                      => Some(ok)
-          case Left(e: InterruptedException)  => None
-          case Left(_)                        =>
-            // 传输失败 = daemon 停机窗（watchdog 秒级拉回）——调用方降级。
-            None
-        }
+        }.attempt
+          .map {
+            case Right(ok) => Some(ok)
+            case Left(e: InterruptedException) => None
+            case Left(_) =>
+              // 传输失败 = daemon 停机窗（watchdog 秒级拉回）——调用方降级。
+              None
+          }
     }
 
   // ── 工具腿（引擎 agent 工具面；5s 有界 + 降级）────────────────────────
 
   /** AskUser 发射点开窗（幂等 by requestId，daemon 侧收敛）。降级 = 静默 no-op。 */
   def openOtpWindow(requestId: String): IO[Unit] =
-    call("POST", "/api/perception/otp/window/open",
-      Some(Json.obj("requestId" -> requestId.asJson).noSpaces), timeoutSec = Some(5)).void
+    call(
+      "POST",
+      "/api/perception/otp/window/open",
+      Some(Json.obj("requestId" -> requestId.asJson).noSpaces),
+      timeoutSec = Some(5)
+    ).void
 
   /** EmailSend 工具腿：是否有已连接账户。降级 None ⇒ 调用方报未连接。 */
   def hasAccount: IO[Option[Boolean]] =
     call("POST", "/internal/perception/has-account", None, timeoutSec = Some(5))
-      .map(_.map((code, body) =>
-        code == 200 && io.circe.parser.parse(body).toOption
-          .exists(_.hcursor.downField("hasAccount").as[Boolean].toOption.contains(true))))
+      .map(
+        _.map((code, body) =>
+          code == 200 && io.circe.parser
+            .parse(body)
+            .toOption
+            .exists(_.hcursor.downField("hasAccount").as[Boolean].toOption.contains(true))
+        )
+      )
 
   /** EmailSend 工具腿：落草稿。Some(Right(rec)) = 成功；Some(Left(err)) = daemon 业务拒绝；None = 未 docked。 */
-  def createDraft(doc: nebflow.perception.DraftCodec.DraftDoc): IO[Option[Either[String, PerceptionModel.DraftRecord]]] =
+  def createDraft(
+    doc: nebflow.perception.DraftCodec.DraftDoc
+  ): IO[Option[Either[String, PerceptionModel.DraftRecord]]] =
     call("POST", "/internal/perception/create-draft", Some(docJson(doc).noSpaces), timeoutSec = Some(5)).map {
       case None => None
       case Some((200, body)) =>
         Some(io.circe.parser.decode[PerceptionModel.DraftRecord](body) match
           case Right(rec) => Right(rec)
-          case Left(e)    => Left(s"daemon 草稿应答不可解析: ${e.getMessage.take(80)}")
-        )
+          case Left(e) => Left(s"daemon 草稿应答不可解析: ${e.getMessage.take(80)}"))
       case Some((_, body)) =>
-        Some(Left(io.circe.parser.parse(body).toOption
-          .flatMap(j => j.hcursor.downField("error").as[String].toOption)
-          .getOrElse("daemon 拒绝（见 daemon 日志）")))
+        Some(
+          Left(
+            io.circe.parser
+              .parse(body)
+              .toOption
+              .flatMap(j => j.hcursor.downField("error").as[String].toOption)
+              .getOrElse("daemon 拒绝（见 daemon 日志）")
+          )
+        )
     }
 
   /** EmailSend 工具腿：草稿↔ask 卡绑定（快照/画布回执路由判据）。降级静默。 */
   def attachRequest(draftId: String, requestId: String): IO[Unit] =
-    call("POST", "/internal/perception/attach-request",
+    call(
+      "POST",
+      "/internal/perception/attach-request",
       Some(Json.obj("draftId" -> draftId.asJson, "requestId" -> requestId.asJson).noSpaces),
-      timeoutSec = Some(5)).void
+      timeoutSec = Some(5)
+    ).void
 
   private def docJson(doc: DraftCodec.DraftDoc): Json =
     Json.obj(

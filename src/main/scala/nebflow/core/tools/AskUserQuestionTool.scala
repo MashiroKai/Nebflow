@@ -284,14 +284,14 @@ Behavior:
             "description" -> "Local file path — absolute, ~/…, or space/%20-encoded form; judged like Pop's file face (credential locations refused). Unregistered types download on click.".asJson
           )
         )
-        ),
-        "otpWindow" -> io.circe.Json.obj(
-          "type" -> "boolean".asJson,
-          "description" ->
-            "Set true when the user is about to receive a one-time verification code by email (perception mail): the engine opens the OTP detection window NOW (T0 = ask emission). Codes arriving in the window surface as a click-to-fill chip under the secret input. Implied automatically when a secret question's text mentions a verification code.".asJson
-        ),
-        "required" -> io.circe.Json.arr("questions".asJson)
-      )
+      ),
+      "otpWindow" -> io.circe.Json.obj(
+        "type" -> "boolean".asJson,
+        "description" ->
+          "Set true when the user is about to receive a one-time verification code by email (perception mail): the engine opens the OTP detection window NOW (T0 = ask emission). Codes arriving in the window surface as a click-to-fill chip under the secret input. Implied automatically when a secret question's text mentions a verification code.".asJson
+      ),
+      "required" -> io.circe.Json.arr("questions".asJson)
+    )
   )
 
   // ============================================================
@@ -393,6 +393,7 @@ Behavior:
                       .filter(_.nonEmpty)
                   )
                   Some(AskOption(label, desc, preview))
+                end if
               }
           Some(
             AskItem(
@@ -480,15 +481,16 @@ Behavior:
     // schema modes, or caller-provided context. Refuse before all side effects.
     trustedIdentityError(ctx) match
       case Some(err) => IO.pure(Left(err))
-      case None => askGuard() match
-        // Headless benchmark mode: fail fast at the entry — no AskUser dispatch,
-        // no wait; the error message pushes the agent to proceed on its own.
-        case Some(err) => IO.pure(Left(err))
-        case None =>
-          // 面外参数闸（纯函数，先于任何副作用）。
-          rejectRetiredModeParam(input) match
-            case Some(err) => IO.pure(Left(err))
-            case None => askUser(input, ctx)
+      case None =>
+        askGuard() match
+          // Headless benchmark mode: fail fast at the entry — no AskUser dispatch,
+          // no wait; the error message pushes the agent to proceed on its own.
+          case Some(err) => IO.pure(Left(err))
+          case None =>
+            // 面外参数闸（纯函数，先于任何副作用）。
+            rejectRetiredModeParam(input) match
+              case Some(err) => IO.pure(Left(err))
+              case None => askUser(input, ctx)
 
   /** 入参校验（错误文案与历史逐字节一致）。 */
   private def parseOrError(input: JsonObject): Either[ToolError, List[AskItem]] =
@@ -545,7 +547,9 @@ Behavior:
    */
   private def perceptionOtpAsk(input: JsonObject, items: List[AskItem]): Boolean =
     val explicit = input("otpWindow").flatMap(_.asBoolean).getOrElse(false)
-    explicit || items.exists(i => i.secret && (i.ephemeral || nebflow.perception.OtpExtractor.questionLooksLikeOtp(i.question)))
+    explicit || items.exists(i =>
+      i.secret && (i.ephemeral || nebflow.perception.OtpExtractor.questionLooksLikeOtp(i.question))
+    )
 
   /**
    * 非阻塞 ack（唯一回执面）：机器可读（requestId + 问题数 + 附件数）+ 明确

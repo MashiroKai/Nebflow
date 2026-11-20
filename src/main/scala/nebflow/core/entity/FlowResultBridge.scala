@@ -40,13 +40,16 @@ private[entity] object FlowResultBridge:
         val path = ActorPath(system.localDevice, List("native", native.ref.path.name))
         def !(event: AgentEvent): IO[Unit] = IO(native.ref ! Event(event))
         def ?[Reply](makeMsg: ActorRef[Reply] => AgentEvent, timeout: Option[FiniteDuration]): IO[Reply] =
-          IO.raiseError(new UnsupportedOperationException("Flow result bridges accept terminal events, not ask requests"))
+          IO.raiseError(
+            new UnsupportedOperationException("Flow result bridges accept terminal events, not ask requests")
+          )
       val awaitResult = IO.race(result.get, native.terminated).flatMap {
         case Left(value) => IO.fromEither(value)
         case Right(_) =>
           result.tryGet.flatMap {
             case Some(value) => IO.fromEither(value)
-            case None => IO.raiseError(new IllegalStateException("Flow result bridge stopped before publishing a result"))
+            case None =>
+              IO.raiseError(new IllegalStateException("Flow result bridge stopped before publishing a result"))
           }
       }
       Handle(adapter, awaitResult, native.terminated)
@@ -78,3 +81,4 @@ private[entity] object FlowResultBridge:
         }
       receive(publishing = false)
     }
+end FlowResultBridge

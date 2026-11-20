@@ -6,6 +6,7 @@ import nebflow.shared.ImageCapabilityRejection
 enum NebflowError:
   case ToolFailed(toolName: String, message: String)
   case PathViolation(path: String, reason: String)
+
   /**
    * LLM 链失败。`imageRejectedModels` = 链上**明确拒绝接收图片**的 `provider/model`
    * 列表（flysin 收口批 2026-11-04）：非空 ⇒ 这是能力不匹配，不是抖动，文案必须
@@ -20,6 +21,8 @@ enum NebflowError:
   case AuthFailed(reason: String)
   case RateLimited(source: String)
   case Internal(message: String)
+
+end NebflowError
 
 object NebflowError:
 

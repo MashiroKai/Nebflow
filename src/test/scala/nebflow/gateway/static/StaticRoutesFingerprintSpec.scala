@@ -39,3 +39,4 @@ class StaticRoutesFingerprintSpec extends FunSuite:
     val fp = StaticRoutes.webFingerprint
     assertEquals(tag, s"""<script>window.__WEB_FINGERPRINT__="$fp";</script>""", "注入形态钉死（与 ws/main 消费面配对）")
   }
+end StaticRoutesFingerprintSpec

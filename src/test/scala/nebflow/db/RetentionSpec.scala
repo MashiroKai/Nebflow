@@ -27,9 +27,11 @@ class RetentionSpec extends CatsEffectSuite:
     assert(Retention.fnv1a64("节点-3f2a") != Retention.fnv1a64("节点-3f2b"))
 
   test("V10: same input ⇒ same retention plan (deterministic sampling, replayable)"):
-    val candidates = (1 to 50).map(i =>
-      Retention.Candidate(s"unit-$i", ts = 1000L, domain = Retention.Domain.EventStream,
-        eventType = "node-completed")).toList
+    val candidates = (1 to 50)
+      .map(i =>
+        Retention.Candidate(s"unit-$i", ts = 1000L, domain = Retention.Domain.EventStream, eventType = "node-completed")
+      )
+      .toList
     val cfg = Retention.Config(maxAgeMs = None, sampleRatioPer10k = 3000)
     val p1 = Retention.plan(candidates, cfg, nowMs = 999999L)
     val p2 = Retention.plan(candidates, cfg, nowMs = 999999L)
@@ -54,8 +56,7 @@ class RetentionSpec extends CatsEffectSuite:
     )
     debtCases.foreach { c =>
       assertEquals(Retention.hasDebt(c), true, s"$c must be debt-exempt")
-      assertEquals(Retention.plan(List(c), old, now), List(Retention.Decision.KeepDebt),
-        s"$c: has_debt ⇒ Keep（两刀皆不适用）")
+      assertEquals(Retention.plan(List(c), old, now), List(Retention.Decision.KeepDebt), s"$c: has_debt ⇒ Keep（两刀皆不适用）")
     }
     // 非豁免面在最狠档下被两刀收走。
     val normal = Retention.Candidate("u8", 1000L, Retention.Domain.EventStream, "node-completed")
@@ -65,8 +66,11 @@ class RetentionSpec extends CatsEffectSuite:
     val c = Retention.Candidate("u", ts = 500L, domain = Retention.Domain.EventStream)
     // 供体刀序：年龄刀幸存者落采样刀——ratio=10000 恒留 ⇒ KeepSampled（年龄刀未误杀）。
     val cfg = Retention.Config(maxAgeMs = Some(10_000L), sampleRatioPer10k = 10_000L)
-    assertEquals(Retention.plan(List(c), cfg, nowMs = 1000L), List(Retention.Decision.KeepSampled),
-      "饱和减 ⇒ 阈值 0 ⇒ 年龄刀不生效；采样恒留 ⇒ 保留")
+    assertEquals(
+      Retention.plan(List(c), cfg, nowMs = 1000L),
+      List(Retention.Decision.KeepSampled),
+      "饱和减 ⇒ 阈值 0 ⇒ 年龄刀不生效；采样恒留 ⇒ 保留"
+    )
     // 对照：同样的记录一旦到龄（maxAge 很小）⇒ DropByAge。
     val cfgOld = Retention.Config(maxAgeMs = Some(100L), sampleRatioPer10k = 10_000L)
     assertEquals(Retention.plan(List(c), cfgOld, nowMs = 1000L), List(Retention.Decision.DropByAge))
@@ -78,16 +82,19 @@ class RetentionSpec extends CatsEffectSuite:
       def ev(n: Int, typ: String, subject: String) = Json.obj(
         "type" -> Json.fromString(typ),
         "occurredAt" -> Json.fromLong(1762224000000L + n),
-        "sessionId" -> Json.Null, "seqInSession" -> Json.Null,
-        "payload" -> Json.obj(), "subject" -> Json.fromString(subject))
+        "sessionId" -> Json.Null,
+        "seqInSession" -> Json.Null,
+        "payload" -> Json.obj(),
+        "subject" -> Json.fromString(subject)
+      )
       h.appendEvent(ev(1, "node-completed", "node-a"), None).unsafeRunSync()
       h.appendEvent(ev(2, "node-completed", "node-b"), None).unsafeRunSync()
       h.appendEvent(ev(3, "node-failed", "node-c"), None).unsafeRunSync() // 失败取证（欠债）
       val shardFile = root.resolve("db").resolve("events").resolve("events.1.jsonl")
       val rawBefore = Files.readString(shardFile)
       // sweep：全老 + 全采样删 ⇒ 非欠债面标记遗忘（node-a/node-b），node-failed 全留。
-      val report = h.retentionSweep(
-        Retention.Config(maxAgeMs = Some(1L), sampleRatioPer10k = 0L), now = 1762300000000L)
+      val report = h
+        .retentionSweep(Retention.Config(maxAgeMs = Some(1L), sampleRatioPer10k = 0L), now = 1762300000000L)
         .unsafeRunSync()
       assertEquals(report.dropByAge, 2L)
       assertEquals(report.keepDebt >= 1L, true, "node-failed 计入欠债豁免")
@@ -107,10 +114,11 @@ class RetentionSpec extends CatsEffectSuite:
       assertEquals(rawAfterRevive, rawBefore, "复活同样零改写")
       h.readEvents(0L, Int.MaxValue, logical = true).unsafeRunSync() match
         case ReadResult.Present(sr) =>
-          assertEquals(sr.records.map(r => unitType(h, r)).sorted,
-            List("node-completed", "node-failed"))
+          assertEquals(sr.records.map(r => unitType(h, r)).sorted, List("node-completed", "node-failed"))
         case other => fail(s"unexpected $other")
     finally h.close()
+
+    end try
 
   test("purgeTombstonedEvents (explicit verb): physically drops tombstoned non-debt rows only"):
     val root = Files.createTempDirectory("db-retention-purge")
@@ -119,39 +127,52 @@ class RetentionSpec extends CatsEffectSuite:
       def ev(n: Int, typ: String, subject: String) = Json.obj(
         "type" -> Json.fromString(typ),
         "occurredAt" -> Json.fromLong(1762224000000L + n),
-        "sessionId" -> Json.Null, "seqInSession" -> Json.Null,
-        "payload" -> Json.obj(), "subject" -> Json.fromString(subject))
-      (1 to 2).foreach(n => h.appendEvent(ev(n, "node-completed", s"node-$n"), None)
-        .unsafeRunSync())
+        "sessionId" -> Json.Null,
+        "seqInSession" -> Json.Null,
+        "payload" -> Json.obj(),
+        "subject" -> Json.fromString(subject)
+      )
+      (1 to 2).foreach(n =>
+        h.appendEvent(ev(n, "node-completed", s"node-$n"), None)
+          .unsafeRunSync()
+      )
       h.appendEvent(ev(3, "audit-boot", "sys"), None).unsafeRunSync() // 欠债（audit 族）
-      h.retentionSweep(Retention.Config(maxAgeMs = Some(1L), sampleRatioPer10k = 0L),
-        now = 1762300000000L).unsafeRunSync()
+      h.retentionSweep(Retention.Config(maxAgeMs = Some(1L), sampleRatioPer10k = 0L), now = 1762300000000L)
+        .unsafeRunSync()
       val dropped = h.purgeTombstonedEvents().unsafeRunSync()
       assertEquals(dropped, 2L, "两行 node-completed 物理删除")
       h.readEvents(0L, Int.MaxValue, logical = false).unsafeRunSync() match
         case ReadResult.Present(sr) =>
-          assertEquals(sr.records.map(r => unitType(h, r)), List("audit-boot"),
-            "欠债行物理保留（失败样本不可丢）")
+          assertEquals(sr.records.map(r => unitType(h, r)), List("audit-boot"), "欠债行物理保留（失败样本不可丢）")
         case other => fail(s"unexpected $other")
       h.verify().unsafeRunSync() match
         case r if r.ok => ()
         case r => fail(s"verify after purge: $r")
     finally h.close()
 
+    end try
+
   test("sweep arithmetic identity: scanned == kept + dropped"):
     val root = Files.createTempDirectory("db-retention-math")
     val h = Db.open(DbConfig(root)).unsafeRunSync()
     try
-      def ev(n: Int) = Json.obj("type" -> Json.fromString("node-completed"),
-        "occurredAt" -> Json.fromLong(1762224000000L + n), "sessionId" -> Json.Null,
-        "seqInSession" -> Json.Null, "payload" -> Json.obj(),
-        "subject" -> Json.fromString(s"n$n"))
+      def ev(n: Int) = Json.obj(
+        "type" -> Json.fromString("node-completed"),
+        "occurredAt" -> Json.fromLong(1762224000000L + n),
+        "sessionId" -> Json.Null,
+        "seqInSession" -> Json.Null,
+        "payload" -> Json.obj(),
+        "subject" -> Json.fromString(s"n$n")
+      )
       (1 to 10).foreach(n => h.appendEvent(ev(n), None).unsafeRunSync())
-      val r = h.retentionSweep(Retention.Config(maxAgeMs = Some(1L), sampleRatioPer10k = 5000L),
-        now = 1762300000000L).unsafeRunSync()
+      val r = h
+        .retentionSweep(Retention.Config(maxAgeMs = Some(1L), sampleRatioPer10k = 5000L), now = 1762300000000L)
+        .unsafeRunSync()
       assertEquals(r.scanned, r.kept + r.dropped, "算术恒等式")
       assert(r.dropped >= 0 && r.kept >= 0)
     finally h.close()
+
+    end try
 
   private def unitType(h: DbHandle, e: nebflow.db.format.EventEnvelope): String =
     e.event.hcursor.downField("type").as[String].toOption.getOrElse("?")

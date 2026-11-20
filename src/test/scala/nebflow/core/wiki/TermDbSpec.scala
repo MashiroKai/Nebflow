@@ -59,9 +59,11 @@ class TermDbSpec extends FunSuite:
     val res = db(path).terms().unsafeRunSync()
     assertEquals(res.available, true)
     assertEquals(res.total, 3)
-    assertEquals(res.terms.map(_.name),
+    assertEquals(
+      res.terms.map(_.name),
       List("图谱投影（graph projection）", "查询面（query face）", "词条索引库（term index db）"),
-      "顺序 = name_key 的 BINARY 序（与 CLI list 同序）")
+      "顺序 = name_key 的 BINARY 序（与 CLI list 同序）"
+    )
     val idx = res.terms.find(_.name.startsWith("词条索引库")).get
     assertEquals(idx.doc.project, "stand")
     assertEquals(idx.doc.rel, "glossary.md")
@@ -88,8 +90,10 @@ class TermDbSpec extends FunSuite:
     val byName = d.termByName("词条索引库（term index db）").unsafeRunSync()
     assertEquals(byName.map(_.term.name), List("词条索引库（term index db）"))
     assertEquals(byName.head.term.aliases, List("term index db", "词条索引库"), "别名面（库里 term_aliases 全量）")
-    assertEquals(byName.head.refs.map(r => (r.fromRel, r.line, r.raw, r.resolved)),
-      List(("index.md", 8, "词条索引库", true)))
+    assertEquals(
+      byName.head.refs.map(r => (r.fromRel, r.line, r.raw, r.resolved)),
+      List(("index.md", 8, "词条索引库", true))
+    )
 
     val byAlias = d.termByName("graph projection").unsafeRunSync()
     assertEquals(byAlias.map(_.term.name), List("图谱投影（graph projection）"), "别名精确命中要回退到词条")
@@ -113,8 +117,11 @@ class TermDbSpec extends FunSuite:
     assertEquals(d.terms(topic = Some("term-index")).unsafeRunSync().total, 3)
     assertEquals(d.terms(topic = Some("#topic/graph")).unsafeRunSync().total, 1)
     assertEquals(d.terms(topic = Some("nonexistent")).unsafeRunSync().total, 0)
-    assertEquals(d.terms(project = Some("stand"), topic = Some("graph")).unsafeRunSync()
-      .terms.map(_.name), List("图谱投影（graph projection）"), "两个标签是 AND")
+    assertEquals(
+      d.terms(project = Some("stand"), topic = Some("graph")).unsafeRunSync().terms.map(_.name),
+      List("图谱投影（graph projection）"),
+      "两个标签是 AND"
+    )
   }
 
   test("TD-6 子串检索：主名与别名双命中，标签过滤可叠加") {
@@ -123,8 +130,11 @@ class TermDbSpec extends FunSuite:
     val d = db(path)
 
     assertEquals(d.terms(q = Some("索引")).unsafeRunSync().total, 1)
-    assertEquals(d.terms(q = Some("query")).unsafeRunSync().terms.map(_.name),
-      List("查询面（query face）"), "别名子串也要命中（q 不是只有主名）")
+    assertEquals(
+      d.terms(q = Some("query")).unsafeRunSync().terms.map(_.name),
+      List("查询面（query face）"),
+      "别名子串也要命中（q 不是只有主名）"
+    )
     assertEquals(d.terms(q = Some("TERM INDEX")).unsafeRunSync().total, 1, "大小写不敏感")
     assertEquals(d.terms(q = Some("投影"), topic = Some("graph")).unsafeRunSync().total, 1)
     assertEquals(d.terms(q = Some("索引"), topic = Some("graph")).unsafeRunSync().total, 0, "交集为空")
@@ -183,3 +193,4 @@ class TermDbSpec extends FunSuite:
     assertEquals(TermDb.tagValue("#topic/term-index", "topic"), "term-index")
     assertEquals(TermDb.SupportedSchemas, Set("1"))
   }
+end TermDbSpec

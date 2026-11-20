@@ -85,8 +85,8 @@ class ProviderRegistry(
     // openai 面收到同样配置（cmdcode 就显式写了 requireThinkingPassback:true）
     // 时是个哑开关——配置说了要回传，代码从不回传。
     val passback = ThinkingFamily.requiresPassback(providerId, provider)
-    val apiKey = nebflow.core.secrets.ConfigCredentialStore.resolveManaged(
-      nebflow.shared.PathUtil.dataRoot, provider.apiKey, "provider-runtime")
+    val apiKey = nebflow.core.secrets.ConfigCredentialStore
+      .resolveManaged(nebflow.shared.PathUtil.dataRoot, provider.apiKey, "provider-runtime")
     provider.protocol match
       case LlmProtocol.OpenAI =>
         OpenAiAdapter(
@@ -568,9 +568,9 @@ class ProviderRegistry(
         case Left(e) =>
           IO.delay(logger.warnSync(s"Candidate-chain snapshot after reload failed: ${e.getMessage}")).attempt.void
       }
-      // Preserve explicit choices even when a provider disappears. The request
-      // eligibility gate reports the missing provider instead of silently
-      // reverting the session to its role model.
+    // Preserve explicit choices even when a provider disappears. The request
+    // eligibility gate reports the missing provider instead of silently
+    // reverting the session to its role model.
     yield Nil
 
   /**

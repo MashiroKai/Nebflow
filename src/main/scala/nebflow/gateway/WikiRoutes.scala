@@ -111,11 +111,13 @@ private[gateway] object WikiRoutes:
           else
             service.term(name, project, doc).flatMap {
               case Left(err) if err.startsWith(nebflow.core.wiki.MdHtmlGate.RejectPrefix) =>
-                BadRequest(Json.obj(
-                  "error" -> err.asJson,
-                  "reason" -> "not-md-html".asJson,
-                  "doc" -> doc.getOrElse("").asJson
-                ))
+                BadRequest(
+                  Json.obj(
+                    "error" -> err.asJson,
+                    "reason" -> "not-md-html".asJson,
+                    "doc" -> doc.getOrElse("").asJson
+                  )
+                )
               case Left(err) => NotFound(Json.obj("error" -> err.asJson))
               case Right(json) => Ok(json)
             }
@@ -136,32 +138,39 @@ private[gateway] object WikiRoutes:
                 // 降级与「确实没有」必须分得开：降级时库根本没打开，不能报 404。
                 db.stats.flatMap {
                   case None =>
-                    Ok(Json.obj(
-                      "available" -> false.asJson,
-                      "db" -> db.dbPath.toString.asJson,
-                      "name" -> name.asJson,
-                      "count" -> 0.asJson,
-                      "results" -> Json.arr()
-                    ))
+                    Ok(
+                      Json.obj(
+                        "available" -> false.asJson,
+                        "db" -> db.dbPath.toString.asJson,
+                        "name" -> name.asJson,
+                        "count" -> 0.asJson,
+                        "results" -> Json.arr()
+                      )
+                    )
                   case Some(_) =>
-                    NotFound(Json.obj(
-                      "available" -> true.asJson,
-                      "db" -> db.dbPath.toString.asJson,
-                      "name" -> name.asJson,
-                      "count" -> 0.asJson,
-                      "results" -> Json.arr(),
-                      "error" -> s"term '$name' not found in term index".asJson
-                    ))
+                    NotFound(
+                      Json.obj(
+                        "available" -> true.asJson,
+                        "db" -> db.dbPath.toString.asJson,
+                        "name" -> name.asJson,
+                        "count" -> 0.asJson,
+                        "results" -> Json.arr(),
+                        "error" -> s"term '$name' not found in term index".asJson
+                      )
+                    )
                 }
               case hits =>
-                Ok(Json.obj(
-                  "available" -> true.asJson,
-                  "db" -> db.dbPath.toString.asJson,
-                  "name" -> name.asJson,
-                  "count" -> hits.size.asJson,
-                  "results" -> hits.map(_.asJson).asJson
-                ))
+                Ok(
+                  Json.obj(
+                    "available" -> true.asJson,
+                    "db" -> db.dbPath.toString.asJson,
+                    "name" -> name.asJson,
+                    "count" -> hits.size.asJson,
+                    "results" -> hits.map(_.asJson).asJson
+                  )
+                )
             }
+          end if
         }
 
       case req @ GET -> Root / "wiki" / "terms" / "stats" =>
@@ -170,11 +179,13 @@ private[gateway] object WikiRoutes:
           db.stats.flatMap {
             case Some(s) => Ok(s.asJson)
             case None =>
-              Ok(Json.obj(
-                "available" -> false.asJson,
-                "db" -> db.dbPath.toString.asJson,
-                "error" -> "term index unavailable (missing db or unknown schema_version)".asJson
-              ))
+              Ok(
+                Json.obj(
+                  "available" -> false.asJson,
+                  "db" -> db.dbPath.toString.asJson,
+                  "error" -> "term index unavailable (missing db or unknown schema_version)".asJson
+                )
+              )
           }
         }
 
@@ -187,16 +198,20 @@ private[gateway] object WikiRoutes:
           val doc = req.params.get("doc").map(_.trim).filter(_.nonEmpty)
           val limit = req.params.get("limit").flatMap(_.trim.toIntOption).getOrElse(TermDb.DefaultLimit)
           db.terms(q, project, topic, doc, limit).flatMap { res =>
-            Ok(res.asJson.deepMerge(Json.obj(
-              "db" -> db.dbPath.toString.asJson,
-              "filters" -> Json.obj(
-                "q" -> q.map(_.asJson).getOrElse(Json.Null),
-                "project" -> project.map(_.asJson).getOrElse(Json.Null),
-                "topic" -> topic.map(_.asJson).getOrElse(Json.Null),
-                "doc" -> doc.map(_.asJson).getOrElse(Json.Null),
-                "limit" -> limit.asJson
+            Ok(
+              res.asJson.deepMerge(
+                Json.obj(
+                  "db" -> db.dbPath.toString.asJson,
+                  "filters" -> Json.obj(
+                    "q" -> q.map(_.asJson).getOrElse(Json.Null),
+                    "project" -> project.map(_.asJson).getOrElse(Json.Null),
+                    "topic" -> topic.map(_.asJson).getOrElse(Json.Null),
+                    "doc" -> doc.map(_.asJson).getOrElse(Json.Null),
+                    "limit" -> limit.asJson
+                  )
+                )
               )
-            )))
+            )
           }
         }
 

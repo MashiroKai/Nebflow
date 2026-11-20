@@ -1351,7 +1351,9 @@ class NodeEngine(
                                     s"nonTerminal=${nonTerminal.map(n => s"${n.name}(${n.status})").mkString(",")} " +
                                     s"terminal=${terminal.map(n => s"${n.name}(${n.status})").mkString(",")} — no chain advance after all watchdog wakes; nudging stops here, manual attention may be required"
                                 dispatcherWakeWatchdogState.update(_.copy(concluded = true)) *>
-                                  logger.warn(s"[dispatcher-wake-watchdog] exhausted for '$rootSessionId': quietMs=$quiet wakes=${wd.wakes}/$maxWakes") *>
+                                  logger.warn(
+                                    s"[dispatcher-wake-watchdog] exhausted for '$rootSessionId': quietMs=$quiet wakes=${wd.wakes}/$maxWakes"
+                                  ) *>
                                   FlowMapEventLog
                                     .append(
                                       notifyAuditWorkspace.getOrElse(workspace),
@@ -1361,13 +1363,15 @@ class NodeEngine(
                                       conclusion
                                     )
                                     .handleErrorWith(e =>
-                                      logger.warn(s"[dispatcher-wake-watchdog] conclusion append failed: ${e.getMessage}")
+                                      logger
+                                        .warn(s"[dispatcher-wake-watchdog] conclusion append failed: ${e.getMessage}")
                                     )
                             else
                               val wakeNo = wd.wakes + 1
                               val maxWakes_ = maxWakes
                               val nodeLine =
-                                (nonTerminal.map(n => s"${n.name}(${n.status})") ++ terminal.map(n => s"${n.name}(${n.status})"))
+                                (nonTerminal.map(n => s"${n.name}(${n.status})") ++ terminal
+                                  .map(n => s"${n.name}(${n.status})"))
                                   .mkString(", ")
                               val text =
                                 s"[dispatcher-wake-watchdog wake #$wakeNo/$maxWakes_] No chain advance for ${quiet / 1000}s and the dispatcher " +
@@ -1396,16 +1400,19 @@ class NodeEngine(
                                             s"terminal=${terminal.map(n => s"${n.name}(${n.status})").mkString(",")}"
                                         )
                                         .handleErrorWith(e =>
-                                          logger.warn(s"[dispatcher-wake-watchdog] event append failed: ${e.getMessage}")
+                                          logger
+                                            .warn(s"[dispatcher-wake-watchdog] event append failed: ${e.getMessage}")
                                         )
                                   case false => IO.unit
                                 }
+                            end if
                           }
-                      }
+                        }
                   }
             yield ()
           case _ => IO.unit
       }
+    end if
   end dispatcherWakeWatchdog
 
   // `deliverDispatcherOutputToNebula` 已删净（R2「一个 Mail 统一」批 2026-09-12，

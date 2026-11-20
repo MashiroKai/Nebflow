@@ -339,7 +339,10 @@ private[gateway] object WsTasksWorkspaceHandlers:
     val json = parsedJson(text)
     val hc = json.hcursor
     val crSessionId = hc.downField("sessionId").as[String].getOrElse("")
-    val createRequestId = hc.downField("requestId").as[Option[String]].getOrElse(None)
+    val createRequestId = hc
+      .downField("requestId")
+      .as[Option[String]]
+      .getOrElse(None)
       .filter(_.matches("[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"))
     val crContent = hc.downField("content").as[String].getOrElse("")
     val crTriggerAt = hc.downField("triggerAt").as[Long].getOrElse(0L)
@@ -353,14 +356,26 @@ private[gateway] object WsTasksWorkspaceHandlers:
     // 无固定触发时间，triggerAt 由引擎侧固定策略算（下一次 09:00 浮出），客户端
     // 时间不采信；repeat 无待办语义。缺省/其它值 = 定时任务面（现状逐字节不变）。
     // 改版批追加令（2026-10-31 23:14）：project = 事项归属标签（UI 分组/筛选维度）。
-    val crKindTodo = hc.downField("kind").as[Option[String]].getOrElse(None)
-      .map(_.trim.toLowerCase).contains(nebflow.core.scheduler.ScheduledTask.KindTodo)
-    val crProject = hc.downField("project").as[Option[String]].getOrElse(None)
-      .map(_.trim).filter(_.nonEmpty)
+    val crKindTodo = hc
+      .downField("kind")
+      .as[Option[String]]
+      .getOrElse(None)
+      .map(_.trim.toLowerCase)
+      .contains(nebflow.core.scheduler.ScheduledTask.KindTodo)
+    val crProject = hc
+      .downField("project")
+      .as[Option[String]]
+      .getOrElse(None)
+      .map(_.trim)
+      .filter(_.nonEmpty)
     // 待办体系统一批（2026-11-04）：priority 0..3（缺键/null/非数字 = 0；越界钳位
     // 在 ScheduledTask.clampPriority 单点，库内不出现 4/‑1）。定时任务面不消费。
-    val crPriority = hc.downField("priority").as[Int].toOption
-      .map(nebflow.core.scheduler.ScheduledTask.clampPriority).getOrElse(0)
+    val crPriority = hc
+      .downField("priority")
+      .as[Int]
+      .toOption
+      .map(nebflow.core.scheduler.ScheduledTask.clampPriority)
+      .getOrElse(0)
     // 待办数据模型与命名规范批（2026-11-18）：可选 decision（选项集）。
     // 🔴 本腿恒为**作者自建**（服务端记 source="user"）⇒ 判定 = 提醒（选项不必备）；
     //    带了 decision 则形态必须成立（≥1 选项、逐条 title 非空白、媒体引用成形），
@@ -391,12 +406,21 @@ private[gateway] object WsTasksWorkspaceHandlers:
       )
     else if crKindTodo && crSessionId.nonEmpty && crContent.nonEmpty then
       val surfaceAt = nebflow.core.scheduler.ScheduledTask.nextTodoSurfaceAt(
-        System.currentTimeMillis(), java.time.ZoneId.systemDefault()
+        System.currentTimeMillis(),
+        java.time.ZoneId.systemDefault()
       )
       val todo = nebflow.core.scheduler.ScheduledTask.create(
-        crSessionId, crContent, surfaceAt, None, None, crName,
-        Some(nebflow.core.scheduler.ScheduledTask.KindTodo), None, crProject,
-        crPriority, crDetail,
+        crSessionId,
+        crContent,
+        surfaceAt,
+        None,
+        None,
+        crName,
+        Some(nebflow.core.scheduler.ScheduledTask.KindTodo),
+        None,
+        crProject,
+        crPriority,
+        crDetail,
         crDecision.toOption.flatten.map(nebflow.core.scheduler.TodoTaxonomy.normalizeDecision)
       )
       val userTodo = todo.copy(
@@ -445,19 +469,22 @@ private[gateway] object WsTasksWorkspaceHandlers:
               // 待办数据模型批（2026-11-18）：类判（reminder/todo/task/engine_mirror）
               // 与决策选项集——同一判定函数 classify，各入口不再各判各的。
               "todoClass" -> nebflow.core.scheduler.TodoClass
-                .wire(nebflow.core.scheduler.TodoTaxonomy.classify(saved)).asJson,
+                .wire(nebflow.core.scheduler.TodoTaxonomy.classify(saved))
+                .asJson,
               "decision" -> saved.decision.asJson
             )
           )
         )
       yield ()).handleErrorWith(e =>
         logger.warn(s"createScheduledTask(kind=todo) failed: ${e.getMessage}") *>
-          wsSend(io.circe.Json.obj(
-            "type" -> "error".asJson,
-            "msgType" -> "createScheduledTask".asJson,
-            "requestId" -> createRequestId.asJson,
-            "message" -> "Unable to confirm todo creation".asJson
-          ))
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "error".asJson,
+              "msgType" -> "createScheduledTask".asJson,
+              "requestId" -> createRequestId.asJson,
+              "message" -> "Unable to confirm todo creation".asJson
+            )
+          )
       )
     else if crSessionId.nonEmpty && crContent.nonEmpty && crTriggerAt > System.currentTimeMillis() then
       // 定时任务两段化（schedule-todo-unify 批 2026-11-06 作者令「定时任务也要按
@@ -466,7 +493,12 @@ private[gateway] object WsTasksWorkspaceHandlers:
       // 径由本批扩大：行为可逆——旧调用方不传 detail，detail 恒 None，逐字节不变）。
       // name 仍是 upsert 键（不参与展示），不在此设。
       val task = nebflow.core.scheduler.ScheduledTask.create(
-        crSessionId, crContent, crTriggerAt, crRefPath, crRepeat, detail = crDetail
+        crSessionId,
+        crContent,
+        crTriggerAt,
+        crRefPath,
+        crRepeat,
+        detail = crDetail
       )
       sharedResources.scheduledTaskStore.addTask(task).flatMap { _ =>
         // Creation audit trail: without this line a lost WS create (fire-and-forget
@@ -519,7 +551,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
     end if
   end handleCreateScheduledTask
 
-  /** `listScheduledTasks` — 单会话全量（现状）+ 改版批（2026-10-31）`scope:"all"`
+  /**
+   * `listScheduledTasks` — 单会话全量（现状）+ 改版批（2026-10-31）`scope:"all"`
    *  跨会话待办收件箱（仅 kind=todo 语义，用户面聚合，数据源 =
    *  store.getAllTodos）。all 路径逐行带 sessionId（行级操作帧 completeTodo /
    *  deleteScheduledTask 据此跨会话寻址；completeTodo 后端按 id 查库取真值，
@@ -530,7 +563,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
    *  （`ScheduledTask.todoSortKey`：未完成优先 → priority 降序 → triggerAt 升序）；
    *  ② 已完成行的返回策略 = **默认不出**（收件箱语义，等价改前「删行即消失」），
    *  需要看归档/撤销面时帧内显式传 `includeCompleted:true` opt-in（默认路径一字
-   *  不改）。行 JSON 增 priority / completed / completedAt 三键（纯增量）。 */
+   *  不改）。行 JSON 增 priority / completed / completedAt 三键（纯增量）。
+   */
   private def handleListScheduledTasks(
     ctx: WsDispatchCtx,
     text: String,
@@ -540,10 +574,17 @@ private[gateway] object WsTasksWorkspaceHandlers:
     import ctx.*
     val lrSessionId = inboundEnvelope(text).sessionId
     val json = parsedJson(text)
-    val scopeAll = json.hcursor.downField("scope").as[String].toOption
-      .map(_.trim.equalsIgnoreCase("all")).getOrElse(false)
+    val scopeAll = json.hcursor
+      .downField("scope")
+      .as[String]
+      .toOption
+      .map(_.trim.equalsIgnoreCase("all"))
+      .getOrElse(false)
     if scopeAll then
-      val includeCompleted = json.hcursor.downField("includeCompleted").as[Boolean].toOption
+      val includeCompleted = json.hcursor
+        .downField("includeCompleted")
+        .as[Boolean]
+        .toOption
         .getOrElse(false)
       val todosIO =
         if includeCompleted then sharedResources.scheduledTaskStore.getAllTodosIncludingCompleted
@@ -580,8 +621,10 @@ private[gateway] object WsTasksWorkspaceHandlers:
     end if
   end handleListScheduledTasks
 
-  /** 列表行 JSON 单点（两条 list 路共用）：字段 = 现状全集 + 改版批行级
-   *  sessionId（跨会话收件箱寻址面；单会话路径同帧回带，纯增量）。 */
+  /**
+   * 列表行 JSON 单点（两条 list 路共用）：字段 = 现状全集 + 改版批行级
+   *  sessionId（跨会话收件箱寻址面；单会话路径同帧回带，纯增量）。
+   */
   private def listTaskJson(t: nebflow.core.scheduler.ScheduledTask): io.circe.Json =
     io.circe.Json.obj(
       "id" -> t.id.asJson,
@@ -619,7 +662,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
       // 用户面显示为「待办」）——前端据 `todoClass` 分流文案与入口，不再自己从
       // kind+source 推。纯增量键，老前端零感知。
       "todoClass" -> nebflow.core.scheduler.TodoClass
-        .wire(nebflow.core.scheduler.TodoTaxonomy.classify(t)).asJson,
+        .wire(nebflow.core.scheduler.TodoTaxonomy.classify(t))
+        .asJson,
       "decision" -> t.decision.asJson
     )
 
@@ -697,20 +741,33 @@ private[gateway] object WsTasksWorkspaceHandlers:
     val json = parsedJson(text)
     val upId = json.hcursor.downField("id").as[String].getOrElse("").trim
     val upSessionId = json.hcursor.downField("sessionId").as[String].getOrElse("")
-    val contentOpt = json.hcursor.downField("content").as[String].toOption
-      .map(_.trim).filter(_.nonEmpty)
+    val contentOpt = json.hcursor
+      .downField("content")
+      .as[String]
+      .toOption
+      .map(_.trim)
+      .filter(_.nonEmpty)
     // project 提供即生效（"" 清空）；缺席不改。
     val projectOpt: Option[Option[String]] =
       json.hcursor.downField("project").as[String].toOption.map(raw => Some(raw.trim).filter(_.nonEmpty))
     // priority 提供即生效（钳位 0..3；0 = 清空重要度）；缺席不改。
-    val priorityOpt: Option[Int] = json.hcursor.downField("priority").as[Int].toOption
+    val priorityOpt: Option[Int] = json.hcursor
+      .downField("priority")
+      .as[Int]
+      .toOption
       .map(nebflow.core.scheduler.ScheduledTask.clampPriority)
     // 两段化批（2026-11-05）：name / detail 进 patch 面（detail 传 "" = 清空）。
     val nameOpt: Option[Option[String]] =
-      json.hcursor.downField("name").as[Option[String]].toOption
+      json.hcursor
+        .downField("name")
+        .as[Option[String]]
+        .toOption
         .map(raw => Option(raw.map(_.trim).filter(_.nonEmpty)).flatten)
     val detailOpt: Option[Option[String]] =
-      json.hcursor.downField("detail").as[Option[String]].toOption
+      json.hcursor
+        .downField("detail")
+        .as[Option[String]]
+        .toOption
         .map(raw => Option(raw.map(_.trim).filter(_.nonEmpty)).flatten)
     // schedule-created-card 批（2026-11-05 作者令「卡片上能原地改、能取消」）：
     // 定时任务面的**时间维度**进 patch —— triggerAt（触发时间）与 repeat（重复）。
@@ -722,14 +779,19 @@ private[gateway] object WsTasksWorkspaceHandlers:
     //   · repeat："" = 改回一次性（clear）；其余必须命中 ScheduleTool.validRepeat
     //     同一白名单（单源引用，不复制字符串）。
     val triggerAtRaw: Option[String] =
-      json.hcursor.downField("triggerAt").as[BigDecimal].toOption.map(_.toBigInt.toString)
+      json.hcursor
+        .downField("triggerAt")
+        .as[BigDecimal]
+        .toOption
+        .map(_.toBigInt.toString)
         .orElse(json.hcursor.downField("triggerAt").as[String].toOption.map(_.trim))
         .filter(_.nonEmpty)
     val triggerAtOpt: Either[String, Option[Long]] = triggerAtRaw match
       case None => Right(None)
-      case Some(raw) => raw.toLongOption match
-        case Some(ms) => Right(Some(ms))
-        case None => Left(s"triggerAt must be an epoch-ms integer (got \"$raw\") — send the absolute time in ms.")
+      case Some(raw) =>
+        raw.toLongOption match
+          case Some(ms) => Right(Some(ms))
+          case None => Left(s"triggerAt must be an epoch-ms integer (got \"$raw\") — send the absolute time in ms.")
     // repeat 提供即生效；"" = 一次性（clear）；缺席不改。
     val repeatOpt: Either[String, Option[Option[String]]] =
       json.hcursor.downField("repeat").as[String].toOption match
@@ -762,14 +824,26 @@ private[gateway] object WsTasksWorkspaceHandlers:
             case Left(msg) => failUpdate(msg)
             case Right(rp) =>
               applyUpdate(
-                sharedResources, upId, upSessionId, contentOpt, projectOpt, priorityOpt,
-                nameOpt, detailOpt, ta, rp, failUpdate, wsSend
+                sharedResources,
+                upId,
+                upSessionId,
+                contentOpt,
+                projectOpt,
+                priorityOpt,
+                nameOpt,
+                detailOpt,
+                ta,
+                rp,
+                failUpdate,
+                wsSend
               )
     end if
   end handleUpdateScheduledTask
 
-  /** `updateScheduledTask` 的应用半步（单点：校验 → 寻址 → patch → 通知 → 广播）。
-   *  校验失败一律走 failUpdate 错误帧 —— 调用方零重复。 */
+  /**
+   * `updateScheduledTask` 的应用半步（单点：校验 → 寻址 → patch → 通知 → 广播）。
+   *  校验失败一律走 failUpdate 错误帧 —— 调用方零重复。
+   */
   private def applyUpdate(
     sharedResources: SharedResources,
     upId: String,
@@ -842,6 +916,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
             s"No entry with id \"$upId\" — it was cancelled or completed elsewhere; nothing was saved."
           )
       }
+    end if
   end applyUpdate
 
   /**
@@ -879,30 +954,34 @@ private[gateway] object WsTasksWorkspaceHandlers:
       sharedResources.scheduledTaskStore.findTaskById(cpId).flatMap {
         case Some(t) if t.isTodo && t.decision.nonEmpty =>
           // Fail closed until validation, secret storage and durable delivery are wired.
-          wsSend(io.circe.Json.obj(
-            "type" -> "error".asJson,
-            "msgType" -> "completeTodo".asJson,
-            "message" -> "Decision answers are not supported yet; the todo was not completed.".asJson
-          ))
+          wsSend(
+            io.circe.Json.obj(
+              "type" -> "error".asJson,
+              "msgType" -> "completeTodo".asJson,
+              "message" -> "Decision answers are not supported yet; the todo was not completed.".asJson
+            )
+          )
         case Some(t) if t.isTodo =>
           val now = System.currentTimeMillis()
           // 幂等：已完成的再次打卡沿用首次完成时刻，不重复写 done 痕（周报不虚涨）。
           val completedAt = t.completedAt.getOrElse(now)
           for
-            _ <- if t.isCompleted then IO.unit
-                 else
-                   sharedResources.doneRecordStore.record(
-                     nebflow.core.scheduler.DoneRecord(
-                       taskId = t.id,
-                       name = t.name,
-                       content = t.content,
-                       sessionId = t.sessionId,
-                       doneAt = now,
-                       via = nebflow.core.scheduler.DoneRecord.ViaWs
-                     )
-                   )
+            _ <-
+              if t.isCompleted then IO.unit
+              else
+                sharedResources.doneRecordStore.record(
+                  nebflow.core.scheduler.DoneRecord(
+                    taskId = t.id,
+                    name = t.name,
+                    content = t.content,
+                    sessionId = t.sessionId,
+                    doneAt = now,
+                    via = nebflow.core.scheduler.DoneRecord.ViaWs
+                  )
+                )
             _ <- sharedResources.scheduledTaskStore
-              .updateTask(t.sessionId, t.id)(_.copy(completedAt = Some(completedAt))).void
+              .updateTask(t.sessionId, t.id)(_.copy(completedAt = Some(completedAt)))
+              .void
             completed = t.copy(completedAt = Some(completedAt))
             _ <- sharedResources.scheduledTaskService.traverse_(_.notifyTaskChange())
             // 新帧（完成语义，可撤销）
@@ -924,6 +1003,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
               )
             )
           yield ()
+          end for
         case Some(t) =>
           wsSend(
             io.circe.Json.obj(
@@ -943,6 +1023,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
           )
       }
     else IO.unit
+    end if
   end handleCompleteTodo
 
   /**
@@ -983,7 +1064,8 @@ private[gateway] object WsTasksWorkspaceHandlers:
           else
             for
               _ <- sharedResources.scheduledTaskStore
-                .updateTask(t.sessionId, t.id)(_.copy(completedAt = None)).void
+                .updateTask(t.sessionId, t.id)(_.copy(completedAt = None))
+                .void
               _ <- sharedResources.doneRecordStore.record(
                 nebflow.core.scheduler.DoneRecord(
                   taskId = t.id,
@@ -1003,6 +1085,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
                 )
               )
             yield ()
+          end if
         case Some(t) =>
           wsSend(
             io.circe.Json.obj(
@@ -1021,6 +1104,7 @@ private[gateway] object WsTasksWorkspaceHandlers:
           )
       }
     else IO.unit
+    end if
   end handleUncompleteTodo
 
   private def handleGetTaskList(

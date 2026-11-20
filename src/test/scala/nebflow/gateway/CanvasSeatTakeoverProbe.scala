@@ -35,7 +35,9 @@ object CanvasSeatTakeoverProbe:
 
   private val token = "canvas-seat-takeover-probe-token"
   private val Ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/151.0 Safari/537.36"
-  private val RivalUa = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1"
+
+  private val RivalUa =
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1"
 
   private def say(line: String): Unit = println(s"[seat-takeover-probe] $line")
 
@@ -133,6 +135,7 @@ object CanvasSeatTakeoverProbe:
         )
       yield ()
     }
+  end armTakeover
 
   // ── 臂 B：定向静默通知（被顶下的活写者收到既有帧型的席位变更帧）────────────
 
@@ -152,13 +155,15 @@ object CanvasSeatTakeoverProbe:
         _ <- IO(
           say(
             "[B-verdict] " +
-              (if frames.nonEmpty && frames.forall(_._1 == "conn-live") && frames.forall(f => frameType(f._2.noSpaces) == "canvasWriterChanged")
+              (if frames.nonEmpty && frames.forall(_._1 == "conn-live") && frames
+                   .forall(f => frameType(f._2.noSpaces) == "canvasWriterChanged")
                then s"NOTIFY=delivered(被顶下写者收到 canvasWriterChanged, epoch=$e2)"
                else "NOTIFY=MISSING")
           )
         )
       yield ()
     }
+  end armNotify
 
   // ── 臂 C：死端（占位者消失后同刻即授予；死端无接收方、零出帧）──────────────
 
@@ -182,13 +187,14 @@ object CanvasSeatTakeoverProbe:
         _ <- IO(
           say(
             s"[C-verdict] 同刻申请=${r2._1} epoch=${e1}->${e2} 死端出帧=${frames.size} ⇒ " +
-              (if r2._1 == 200 && e2 == e1 + 1 && frames.isEmpty then
-                 "DEAD_END=instant-takeover(旧活性腿已移除，死端零接收方)"
+              (if r2._1 == 200 && e2 == e1 + 1 && frames.isEmpty then "DEAD_END=instant-takeover(旧活性腿已移除，死端零接收方)"
                else "DEAD_END=VIOLATED")
           )
         )
       yield ()
     }
+
+  end armDeadEnd
 
   def main(argv: Array[String]): Unit =
     val isolated = os.temp.dir(prefix = "canvas-seat-takeover-probe-")
@@ -203,7 +209,8 @@ object CanvasSeatTakeoverProbe:
       say("== end (exit 0) ==")
     finally
       PathUtil.setDataRoot(original)
-      try os.remove.all(isolated) catch case _: Throwable => ()
+      try os.remove.all(isolated)
+      catch case _: Throwable => ()
     sys.exit(0)
   end main
 end CanvasSeatTakeoverProbe

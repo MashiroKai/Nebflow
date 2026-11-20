@@ -38,25 +38,45 @@ class ProtectedExecutionFilesSpec extends CatsEffectSuite:
         assert(guard.checkWrite((workspace / "new.txt").toNIO).isRight)
 
         os.symlink(workspace / "engine-link", engine)
-        assert(guard.checkWrite((workspace / "engine-link" / "commit.json").toNIO).isLeft,
-          "symlink components resolve before the engine-root comparison")
+        assert(
+          guard.checkWrite((workspace / "engine-link" / "commit.json").toNIO).isLeft,
+          "symlink components resolve before the engine-root comparison"
+        )
 
         os.write(workspace / "plain.txt", "plain")
         Files.createLink((workspace / "plain-link.txt").toNIO, (workspace / "plain.txt").toNIO)
-        assert(guard.checkWrite((workspace / "plain-link.txt").toNIO).isLeft,
-          "a multiply linked file is rejected conservatively")
+        assert(
+          guard.checkWrite((workspace / "plain-link.txt").toNIO).isLeft,
+          "a multiply linked file is rejected conservatively"
+        )
 
-        val context = ToolContext(projectRoot = workspace.toString,
-          protectedExecutionRoots = List(engine.toNIO, tasks.toNIO))
-        assert(WriteTool.call(JsonObject(
-          "file_path" -> (authority / "commit.json").toString.asJson,
-          "content" -> "{\"changed\":true}".asJson), context).unsafeRunSync().isLeft,
-          "WriteTool must reject engine state even with the legacy sandbox off")
-        assert(WriteTool.call(JsonObject(
-          "file_path" -> (workspace / "written.txt").toString.asJson,
-          "content" -> "business".asJson), context).unsafeRunSync().isRight,
-          "WriteTool must keep ordinary workspace writes available")
+        val context =
+          ToolContext(projectRoot = workspace.toString, protectedExecutionRoots = List(engine.toNIO, tasks.toNIO))
+        assert(
+          WriteTool
+            .call(
+              JsonObject(
+                "file_path" -> (authority / "commit.json").toString.asJson,
+                "content" -> "{\"changed\":true}".asJson
+              ),
+              context
+            )
+            .unsafeRunSync()
+            .isLeft,
+          "WriteTool must reject engine state even with the legacy sandbox off"
+        )
+        assert(
+          WriteTool
+            .call(
+              JsonObject("file_path" -> (workspace / "written.txt").toString.asJson, "content" -> "business".asJson),
+              context
+            )
+            .unsafeRunSync()
+            .isRight,
+          "WriteTool must keep ordinary workspace writes available"
+        )
         assertEquals(os.read(authority / "commit.json"), "{}", "engine bytes stayed unchanged")
       }).guarantee(IO.blocking(os.remove.all(root)))
     yield ()
   }
+end ProtectedExecutionFilesSpec

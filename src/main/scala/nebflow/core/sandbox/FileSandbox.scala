@@ -102,6 +102,7 @@ object FileSandbox:
           else Right(canonical)
 
           end if
+        end if
 
     end match
 

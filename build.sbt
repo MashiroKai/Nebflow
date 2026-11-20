@@ -73,7 +73,6 @@ lazy val root = (project in file("."))
       else Seq.empty
     },
     scalaVersion := "3.5.2",
-
     libraryDependencies ++= Seq(
       // CLI
       scopt,
@@ -108,14 +107,14 @@ lazy val root = (project in file("."))
       slf4jApi,
       // Browser automation (optional — not bundled in distribution, detected at runtime)
       playwright % "provided",
-    // Diff
-    diffUtils,
-    // Search data layer (datalayer-spec 批)：SQLite FTS5 分片索引（设计稿 §4.1）
-    sqliteJdbc,
+      // Diff
+      diffUtils,
+      // Search data layer (datalayer-spec 批)：SQLite FTS5 分片索引（设计稿 §4.1）
+      sqliteJdbc,
       // Testing
       munit,
       munitCatsEffect,
-      catsEffectTestkit,
+      catsEffectTestkit
     ),
 
     // Compiler options
@@ -151,15 +150,15 @@ lazy val root = (project in file("."))
       // 会让 17 侧的人话报错重新不可达 —— 那是回退，不是修复。
       // 详见 CONTRIBUTING.md「Prerequisites」与 scripts/check-jdk-baseline.sh 文件头。
       "-release:17",
-      "-encoding", "utf8",
+      "-encoding",
+      "utf8",
       "-deprecation",
       "-feature",
       "-unchecked",
       "-language:implicitConversions",
       "-language:higherKinds",
-      "-Xfatal-warnings",
+      "-Xfatal-warnings"
     ),
-
     Compile / run / mainClass := Some("nebflow.Main"),
     run / fork := true,
     run / connectInput := true,
@@ -186,7 +185,9 @@ lazy val root = (project in file("."))
       // Picker temporarily changes JVM user.home; isolate it from in-process background fibers.
       val picker = tests.filter(_.name == "nebflow.gateway.ws.PickerBrowseFrameSpec")
       val nfPathProbe = tests.filter(_.name == "nebflow.gateway.nf.NfPathEncodingProbeSpec")
-      val rest = tests.filterNot(t => t.name == "nebflow.db.chaos.DbKill9ChaosSpec" || t.name == "nebflow.agent.TaskLedgerPassiveReminderSpec" || t.name == "nebflow.gateway.ws.PickerBrowseFrameSpec" || t.name == "nebflow.gateway.nf.NfPathEncodingProbeSpec")
+      val rest = tests.filterNot(t =>
+        t.name == "nebflow.db.chaos.DbKill9ChaosSpec" || t.name == "nebflow.agent.TaskLedgerPassiveReminderSpec" || t.name == "nebflow.gateway.ws.PickerBrowseFrameSpec" || t.name == "nebflow.gateway.nf.NfPathEncodingProbeSpec"
+      )
       Seq(
         Tests.Group("in-process-suites", rest, Tests.InProcess),
         Tests.Group("picker-home-isolated", picker, Tests.SubProcess(ForkOptions())),
@@ -203,7 +204,8 @@ lazy val root = (project in file("."))
     javaOptions ++= {
       IO.createDirectory(baseDirectory.value / ".nebflow" / "logs" / "jvm")
       Seq(
-        "--add-opens", "java.base/java.lang=ALL-UNNAMED",
+        "--add-opens",
+        "java.base/java.lang=ALL-UNNAMED",
         "-XX:+UseZGC",
         "-XX:+ZGenerational",
         "-Xms512m",
@@ -225,7 +227,7 @@ lazy val root = (project in file("."))
         // 进程树形态零变化），产品面（assembly jar）不设此属性 ⇒ 走 daemon 分支。
         // 刻意加在本裸块 Seq 末尾（同一机制同一路径，零新 scope —— 新开
         // `(Compile, run) / javaOptions` scope 有委托链断链风险）。
-        "-Dnebflow.start.foreground=true",
+        "-Dnebflow.start.foreground=true"
       )
     },
 
@@ -249,6 +251,6 @@ lazy val root = (project in file("."))
         val oldStrategy = (assembly / assemblyMergeStrategy).value
         oldStrategy(x)
     },
-    assembly / mainClass := Some("nebflow.Main"),
+    assembly / mainClass := Some("nebflow.Main")
   )
   .enablePlugins(AssemblyPlugin)

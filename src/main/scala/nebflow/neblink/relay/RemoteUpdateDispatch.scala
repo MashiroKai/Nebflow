@@ -98,13 +98,18 @@ object RemoteUpdateDispatch:
             val refused = bodyOpt.flatMap { j =>
               val c = j.hcursor
               if c.downField("ok").as[Boolean].toOption.contains(false) then
-                Some(c.downField("error").as[String].toOption.orElse(c.downField("message").as[String].toOption)
-                  .getOrElse("device refused the update"))
+                Some(
+                  c.downField("error")
+                    .as[String]
+                    .toOption
+                    .orElse(c.downField("message").as[String].toOption)
+                    .getOrElse("device refused the update")
+                )
               else None
             }
             refused match
               case Some(err) => IO.pure(Left(err))
-              case None      => IO.pure(Right("Update installed, device is restarting..."))
+              case None => IO.pure(Right("Update installed, device is restarting..."))
         }.handleErrorWith { e =>
           relayFallback(ns, peer, beta, s"P2P unreachable: ${e.getMessage}")
         }

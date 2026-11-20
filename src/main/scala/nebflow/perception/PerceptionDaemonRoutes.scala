@@ -59,7 +59,7 @@ object PerceptionDaemonRoutes:
         "/internal/perception" -> internalLegs(resolve),
         "" -> HttpRoutes.of[IO] {
           case GET -> Root / "health" => Ok(health)
-          case _                      => NotFound(Json.obj("error" -> "not found".asJson))
+          case _ => NotFound(Json.obj("error" -> "not found".asJson))
         }
       )
     )
@@ -70,7 +70,7 @@ object PerceptionDaemonRoutes:
 
       case POST -> Root / "has-account" =>
         resolve.flatMap {
-          case None       => daemonDown
+          case None => daemonDown
           case Some(core) => core.hasAccount.flatMap(h => Ok(Json.obj("hasAccount" -> h.asJson)))
         }
 
@@ -81,22 +81,24 @@ object PerceptionDaemonRoutes:
             req.as[Json].flatMap { body =>
               body.as[DraftDocWire].toOption match
                 case Some(wire) =>
-                  core.createDraft(
-                    DraftCodec.DraftDoc(
-                      draftId = "",
-                      to = wire.to,
-                      cc = wire.cc,
-                      bcc = wire.bcc,
-                      subject = wire.subject,
-                      bodyHtml = wire.bodyHtml,
-                      attachments = wire.attachments,
-                      replyToMessageId = wire.replyToMessageId,
-                      quoteHtml = wire.quoteHtml
+                  core
+                    .createDraft(
+                      DraftCodec.DraftDoc(
+                        draftId = "",
+                        to = wire.to,
+                        cc = wire.cc,
+                        bcc = wire.bcc,
+                        subject = wire.subject,
+                        bodyHtml = wire.bodyHtml,
+                        attachments = wire.attachments,
+                        replyToMessageId = wire.replyToMessageId,
+                        quoteHtml = wire.quoteHtml
+                      )
                     )
-                  ).flatMap {
-                    case Right(rec) => Ok(rec.asJson)
-                    case Left(err)  => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
-                  }
+                    .flatMap {
+                      case Right(rec) => Ok(rec.asJson)
+                      case Left(err) => BadRequest(Json.obj("ok" -> false.asJson, "error" -> err.asJson))
+                    }
                 case None => BadRequest(Json.obj("ok" -> false.asJson, "error" -> "draft doc required".asJson))
             }
         }
@@ -132,6 +134,7 @@ object PerceptionDaemonRoutes:
     replyToMessageId: Option[String],
     quoteHtml: Option[String]
   )
+
   private object DraftDocWire:
     given Encoder[DraftDocWire] = deriveEncoder
     given Decoder[DraftDocWire] = deriveDecoder

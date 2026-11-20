@@ -25,26 +25,34 @@ class AgentRecoveryProcessSpec extends CatsEffectSuite:
     while loader != null do
       loader match
         case urlLoader: java.net.URLClassLoader =>
-          loaderUrls ++= urlLoader.getURLs.toList.filter(_.getProtocol == "file").map(url =>
-            Paths.get(url.toURI).toString)
+          loaderUrls ++= urlLoader.getURLs.toList
+            .filter(_.getProtocol == "file")
+            .map(url => Paths.get(url.toURI).toString)
         case _ => ()
       loader = loader.getParent
-    val codeSources = List(AgentRecoveryProcessFixture.getClass, classOf[cats.effect.IO[?]],
-      classOf[io.circe.Json], classOf[os.Path]).flatMap { clazz =>
-      Option(clazz.getProtectionDomain).flatMap(domain => Option(domain.getCodeSource))
-        .map(source => Paths.get(source.getLocation.toURI).toString)
-    }
+    val codeSources =
+      List(AgentRecoveryProcessFixture.getClass, classOf[cats.effect.IO[?]], classOf[io.circe.Json], classOf[os.Path])
+        .flatMap { clazz =>
+          Option(clazz.getProtectionDomain)
+            .flatMap(domain => Option(domain.getCodeSource))
+            .map(source => Paths.get(source.getLocation.toURI).toString)
+        }
     (loaderUrls.result() ::: codeSources ::: fromProperty).distinct.mkString(java.io.File.pathSeparator)
+
+  end subprocessClasspath
 
   private def runFixture(root: os.Path, mode: String): IO[Option[FixtureResult]] =
     IO.blocking {
       val javaBin = Paths.get(System.getProperty("java.home"), "bin", "java").toString
       val log = root / s"fixture-$mode.log"
       val process = new ProcessBuilder(
-        javaBin, "-cp", subprocessClasspath,
+        javaBin,
+        "-cp",
+        subprocessClasspath,
         s"-Duser.home=${root}",
         "nebflow.agent.AgentRecoveryProcessFixture",
-        root.toString, mode
+        root.toString,
+        mode
       ).redirectErrorStream(true).redirectOutput(log.toIO).start()
       val finished = process.waitFor(90, java.util.concurrent.TimeUnit.SECONDS)
       val output = if os.exists(log) then os.read(log) else ""
@@ -96,3 +104,4 @@ class AgentRecoveryProcessSpec extends CatsEffectSuite:
         }).guarantee(IO.blocking(os.remove.all(root)))
     yield ()
   }
+end AgentRecoveryProcessSpec

@@ -96,3 +96,4 @@ class TermParitySpec extends FunSuite:
     assertEquals(bulleted.head.aliases, List("词条索引库", "term index db"), "别名 = 尾部括注拆出的两组，保声明序")
     assert(!bulleted.head.name.startsWith("- "), "Scala 侧名字不带列表符号")
   }
+end TermParitySpec

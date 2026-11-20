@@ -706,10 +706,15 @@ class AgentControlToolSpec extends CatsEffectSuite:
       res <- IO(call(resources, "root-p2s", "cancel", target = sid))
       _ <- IO(assert(res.isRight, s"session cancel unchanged: $res"))
       evts <- record.get
-      _ <- IO(assert(evts.exists {
-        case AgentEvent.Cancelled(id, _) => id == sid
-        case _                           => false
-      }, s"supervisor got Cancelled: $evts"))
+      _ <- IO(
+        assert(
+          evts.exists {
+            case AgentEvent.Cancelled(id, _) => id == sid
+            case _ => false
+          },
+          s"supervisor got Cancelled: $evts"
+        )
+      )
     yield ()
     program.guarantee(system.stopAll.attempt.void)
   }

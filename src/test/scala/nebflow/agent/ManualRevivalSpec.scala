@@ -138,16 +138,17 @@ class ManualRevivalSpec extends FunSuite:
           subAgentTaskStore = store,
           voiceMutedRef = voiceMuted
         )
-        _ <- if verifiedLegacy then
-          IO.blocking(os.makeDir.all(tmp / "sessions")) *>
-            ExecutionCommitStore.resource((tmp / "sessions").toNIO).use { authority =>
-              val verified = resources.copy(executionCommitPort = authority)
-              val deps = DelegateRevival.Deps(verified, system, None)
-              body(Fx(store, sessionStore, verified, deps, system, tmp, seat))
-            }
-        else
-          val deps = DelegateRevival.Deps(resources, system, None)
-          body(Fx(store, sessionStore, resources, deps, system, tmp, seat))
+        _ <-
+          if verifiedLegacy then
+            IO.blocking(os.makeDir.all(tmp / "sessions")) *>
+              ExecutionCommitStore.resource((tmp / "sessions").toNIO).use { authority =>
+                val verified = resources.copy(executionCommitPort = authority)
+                val deps = DelegateRevival.Deps(verified, system, None)
+                body(Fx(store, sessionStore, verified, deps, system, tmp, seat))
+              }
+          else
+            val deps = DelegateRevival.Deps(resources, system, None)
+            body(Fx(store, sessionStore, resources, deps, system, tmp, seat))
       yield ()
     try io.unsafeRunSync()
     finally
@@ -298,8 +299,17 @@ class ManualRevivalSpec extends FunSuite:
       val id = "delegate-protected"
       val sessions = fx.tmp / "authority-sessions"
       val admission = nebflow.shared.ExecutionAdmission(
-        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        io.circe.Json.fromString("task"), "input"
+        id,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        io.circe.Json.fromString("task"),
+        "input"
       )
       for
         _ <- IO.blocking(os.makeDir.all(sessions))
@@ -310,8 +320,12 @@ class ManualRevivalSpec extends FunSuite:
           for
             restored <- ManualRevival.restoreOne(fx.deps.copy(resources = resources), fx.store, id)
             wake <- DelegateWakeLeg.wake(resources, None, id, "", "self-heal")
-            record = nebflow.actor.AgentRecord(sessionId = id, ref = null,
-              kind = nebflow.actor.AgentKind.Delegate, rootSessionId = "parent")
+            record = nebflow.actor.AgentRecord(
+              sessionId = id,
+              ref = null,
+              kind = nebflow.actor.AgentKind.Delegate,
+              rootSessionId = "parent"
+            )
             cancelled <- nebflow.core.tools.AgentControlTool.doCancel(resources, record, "operator")
             observed <- authority.observeChain(id, "run")
           yield (restored, wake, cancelled, observed)
@@ -322,9 +336,13 @@ class ManualRevivalSpec extends FunSuite:
         assert(results._1.left.toOption.exists(_.contains("exact-ref recovery")))
         assert(results._2.left.toOption.exists(_.contains("exact-ref recovery")))
         assert(results._3.toOption.exists(_.contains("prior runner stop unconfirmed")))
-        assertEquals(results._4.asInstanceOf[nebflow.shared.ExecutionChainObservation.Verified].state.phase, "cancelled")
+        assertEquals(
+          results._4.asInstanceOf[nebflow.shared.ExecutionChainObservation.Verified].state.phase,
+          "cancelled"
+        )
         assertEquals(row.map(_.status), Some("pending-recovery"))
         assert(!live.contains(id))
+      end for
     }
   }
 
@@ -333,8 +351,17 @@ class ManualRevivalSpec extends FunSuite:
       val id = "delegate-protected-restore-all"
       val sessions = fx.tmp / "authority-sessions"
       val admission = nebflow.shared.ExecutionAdmission(
-        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        io.circe.Json.fromString("task"), "input"
+        id,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        io.circe.Json.fromString("task"),
+        "input"
       )
       for
         _ <- IO.blocking(os.makeDir.all(sessions))
@@ -356,6 +383,7 @@ class ManualRevivalSpec extends FunSuite:
         assertEquals(after, before)
         assert(!live.contains(id))
         assertEquals(events, Nil)
+      end for
     }
   }
 
@@ -364,8 +392,17 @@ class ManualRevivalSpec extends FunSuite:
       val id = "delegate-no-resource-protected"
       val sessions = fx.tmp / "sessions"
       val admission = nebflow.shared.ExecutionAdmission(
-        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        io.circe.Json.fromString("task"), "input"
+        id,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        io.circe.Json.fromString("task"),
+        "input"
       )
       for
         _ <- IO.blocking(os.makeDir.all(sessions))
@@ -387,8 +424,17 @@ class ManualRevivalSpec extends FunSuite:
       val legacyId = "delegate-mixed-legacy"
       val sessions = fx.tmp / "sessions"
       val admission = nebflow.shared.ExecutionAdmission(
-        protectedId, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        io.circe.Json.fromString("task"), "input"
+        protectedId,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        io.circe.Json.fromString("task"),
+        "input"
       )
       for
         _ <- IO.blocking(os.makeDir.all(sessions))
@@ -404,10 +450,11 @@ class ManualRevivalSpec extends FunSuite:
           yield
             assertEquals(report.pended, List(legacyId))
             assertEquals(protectedRow.map(_.status), Some("running"))
-            assertEquals(legacyRow.map(_.status), Some("pending-recovery"))
-          )).guarantee(IO(fx.sessionStore.releaseExecutionAuthority(authority)))
+            assertEquals(legacyRow.map(_.status), Some("pending-recovery"))))
+            .guarantee(IO(fx.sessionStore.releaseExecutionAuthority(authority)))
         }
       yield ()
+      end for
     }
   }
 
@@ -415,8 +462,17 @@ class ManualRevivalSpec extends FunSuite:
     withFx("mismatched-live-authority") { fx =>
       val id = "delegate-live-mismatch"
       val admission = nebflow.shared.ExecutionAdmission(
-        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        io.circe.Json.fromString("task"), "input"
+        id,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        io.circe.Json.fromString("task"),
+        "input"
       )
       val other = admission.copy(sessionId = "delegate-other-candidate", executionId = "other-run")
       for
@@ -425,21 +481,30 @@ class ManualRevivalSpec extends FunSuite:
           os.makeDir.all(fx.tmp / "authority-a")
           os.makeDir.all(fx.tmp / "authority-b")
         }
-        _ <- (ExecutionCommitStore.resource((fx.tmp / "authority-a").toNIO),
-          ExecutionCommitStore.resource((fx.tmp / "authority-b").toNIO)).tupled.use { (live, configured) =>
+        _ <- (
+          ExecutionCommitStore.resource((fx.tmp / "authority-a").toNIO),
+          ExecutionCommitStore.resource((fx.tmp / "authority-b").toNIO)
+        ).tupled.use { (live, configured) =>
           for
             bound <- nebflow.core.ExecutionCommitPort.admitHandle(live, admission)
             _ <- configured.admit(other)
-            resources = fx.resources.copy(executionCommitPort = configured,
-              protectedExecutions = Map(id -> bound.toOption.get))
-            report <- SubAgentStartupRecovery.sweep(fx.store, fx.sessionStore,
-              Some(SubAgentStartupRecovery.RevivalDeps(resources, fx.system, None)), manual = true)
+            resources = fx.resources.copy(
+              executionCommitPort = configured,
+              protectedExecutions = Map(id -> bound.toOption.get)
+            )
+            report <- SubAgentStartupRecovery.sweep(
+              fx.store,
+              fx.sessionStore,
+              Some(SubAgentStartupRecovery.RevivalDeps(resources, fx.system, None)),
+              manual = true
+            )
             row <- fx.store.findByTaskId(id)
           yield
             assertEquals(report.pended, Nil)
             assertEquals(row.map(_.status), Some("running"))
         }
       yield ()
+      end for
     }
   }
 
@@ -448,8 +513,17 @@ class ManualRevivalSpec extends FunSuite:
       val id = "delegate-installed-authority"
       val sessions = fx.tmp / "sessions"
       val admission = nebflow.shared.ExecutionAdmission(
-        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        io.circe.Json.fromString("task"), "input"
+        id,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        io.circe.Json.fromString("task"),
+        "input"
       )
       for
         _ <- IO.blocking(os.makeDir.all(sessions))
@@ -463,10 +537,11 @@ class ManualRevivalSpec extends FunSuite:
           yield
             assertEquals(recovery.terminalized, Nil)
             assertEquals(reaped, Nil)
-            assertEquals(row.map(_.status), Some("running"))
-          )).guarantee(IO(fx.sessionStore.releaseExecutionAuthority(authority)))
+            assertEquals(row.map(_.status), Some("running"))))
+            .guarantee(IO(fx.sessionStore.releaseExecutionAuthority(authority)))
         }
       yield ()
+      end for
     }
   }
 
@@ -475,8 +550,17 @@ class ManualRevivalSpec extends FunSuite:
       val id = "delegate-watchdog-protected"
       val sessions = fx.tmp / "authority-sessions"
       val admission = nebflow.shared.ExecutionAdmission(
-        id, "run", "commit", "request", "attempt", "incarnation", "owner", "business", "audit",
-        io.circe.Json.fromString("task"), "input"
+        id,
+        "run",
+        "commit",
+        "request",
+        "attempt",
+        "incarnation",
+        "owner",
+        "business",
+        "audit",
+        io.circe.Json.fromString("task"),
+        "input"
       )
       for
         _ <- IO.blocking(os.makeDir.all(sessions))
@@ -649,7 +733,11 @@ class ManualRevivalSpec extends FunSuite:
         yield
           assertEquals(report.revived, Nil, s"auto leg must stay off under the production wiring: ${report.summary}")
           assertEquals(report.terminalized, Nil, s"manual mode never terminalizes: ${report.summary}")
-          assertEquals(report.pended, List(orphan), s"the in-flight orphan is saved as pending-recovery: ${report.summary}")
+          assertEquals(
+            report.pended,
+            List(orphan),
+            s"the in-flight orphan is saved as pending-recovery: ${report.summary}"
+          )
           assertEquals(
             row.map(_.status),
             Some(SubAgentStartupRecovery.PendingRecoveryStatus),
@@ -674,13 +762,18 @@ class ManualRevivalSpec extends FunSuite:
           row <- fx.store.findByTaskId(orphan)
         yield
           assertEquals(report.pended, Nil, s"with the auto leg on nothing is left pending: ${report.summary}")
-          assertEquals(report.terminalized, List(orphan), s"the auto leg salvages the ineligible orphan: ${report.summary}")
+          assertEquals(
+            report.terminalized,
+            List(orphan),
+            s"the auto leg salvages the ineligible orphan: ${report.summary}"
+          )
           assert(row.exists(_.status == "failed"), s"control row terminalized failed, got ${row.map(_.status)}")
       }
     finally
       before match
         case Some(v) => System.setProperty(prop, v)
         case None => System.clearProperty(prop)
+    end try
   }
 
 end ManualRevivalSpec

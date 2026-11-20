@@ -46,27 +46,49 @@ object CacheWarming:
 
   sealed trait Role:
     def name: String
-  case object MainOrKernel      extends Role { val name = "main-or-kernel" }
-  case object Dispatcher        extends Role { val name = "dispatcher" }
-  case object ParentAwaitingChild extends Role { val name = "parent-awaiting-child" }
-  case object SubagentOrNode    extends Role { val name = "subagent-or-node" }
+
+  case object MainOrKernel extends Role:
+    val name = "main-or-kernel"
+
+  case object Dispatcher extends Role:
+    val name = "dispatcher"
+
+  case object ParentAwaitingChild extends Role:
+    val name = "parent-awaiting-child"
+
+  case object SubagentOrNode extends Role:
+    val name = "subagent-or-node"
 
   sealed trait SessionState:
     def name: String
+
   /** 活跃工具往返——真实请求已在续租供应商 KV。 */
-  case object ActiveToolRoundTrip  extends SessionState { val name = "active-tool-roundtrip" }
+  case object ActiveToolRoundTrip extends SessionState:
+    val name = "active-tool-roundtrip"
+
   /** 用户纯空闲（无活任务、无可预测回报）。 */
-  case object IdleUser             extends SessionState { val name = "idle-user" }
+  case object IdleUser extends SessionState:
+    val name = "idle-user"
+
   /** 等待活跃子任务返回（大上下文、回报可预测）。 */
-  case object WaitingChildReturn   extends SessionState { val name = "waiting-child-return" }
+  case object WaitingChildReturn extends SessionState:
+    val name = "waiting-child-return"
+
   /** blocked / frozen / owner-gone。 */
-  case object BlockedOrFrozen      extends SessionState { val name = "blocked-or-frozen" }
+  case object BlockedOrFrozen extends SessionState:
+    val name = "blocked-or-frozen"
+
   /** 终态（完成/取消）——立即取消计划，零补发。 */
-  case object Terminal             extends SessionState { val name = "terminal" }
+  case object Terminal extends SessionState:
+    val name = "terminal"
+
   /** 新建短叶子会话（输入快速增长中）。 */
-  case object FreshShortLeaf       extends SessionState { val name = "fresh-short-leaf" }
+  case object FreshShortLeaf extends SessionState:
+    val name = "fresh-short-leaf"
+
   /** 长 Bash/人工等待，但预计会恢复的活跃节点。 */
-  case object LongWaitExpectedResume extends SessionState { val name = "long-wait-expected-resume" }
+  case object LongWaitExpectedResume extends SessionState:
+    val name = "long-wait-expected-resume"
 
   final case class Candidate(
     sessionId: String,
@@ -93,17 +115,23 @@ object CacheWarming:
     safetyMargin: Double = 0.5,
     /** 每域每会话保温预算（$）。None = 不限但保守面已由其余闸兜住。 */
     budgetUsd: Option[BigDecimal] = None,
-    /** 每会话最大保温次数。**0 = 显式禁保温**（NoWarm warming-disabled-zero-cap）；
-      * 缺省 4 = 保守小额上限（启用批再按域配置）。 */
+    /**
+     * 每会话最大保温次数。**0 = 显式禁保温**（NoWarm warming-disabled-zero-cap）；
+     * 缺省 4 = 保守小额上限（启用批再按域配置）。
+     */
     maxWarmsPerSession: Int = 4
   )
 
   sealed trait Decision:
     def reason: String
+
   /** 不保温（含终态/真实流量已续用/负收益/预算触顶等）。 */
   final case class NoWarm(reason: String) extends Decision
+
   /** shadow：只出决策与预计费用，不发额外请求。 */
-  final case class WarmShadow(reason: String, estimatedCostUsd: BigDecimal, estimatedAvoidableUsd: BigDecimal) extends Decision
+  final case class WarmShadow(reason: String, estimatedCostUsd: BigDecimal, estimatedAvoidableUsd: BigDecimal)
+      extends Decision
+
   /** 预留：本批 evaluate 结构性不产（无发送器；启用面留后续批）。 */
   final case class WarmSend(reason: String) extends Decision
 
@@ -112,21 +140,22 @@ object CacheWarming:
   /** 角色×状态硬闸：返回 Some(NoWarm 理由) = 该会话在**任何经济参数**下都不保温。 */
   def hardGate(cand: Candidate): Option[String] =
     cand.state match
-      case Terminal          => Some("terminal-state-zero-reissue") // 终态立即取消，重启不复活
-      case BlockedOrFrozen   => Some("blocked-frozen-owner-gone")
+      case Terminal => Some("terminal-state-zero-reissue") // 终态立即取消，重启不复活
+      case BlockedOrFrozen => Some("blocked-frozen-owner-gone")
       case ActiveToolRoundTrip => Some("real-traffic-renews") // 频繁真实调用已续用 ⇒ 零额外保温
-      case FreshShortLeaf    => Some("fresh-short-leaf-no-warm") // 几秒内 miss/内容快速增长不用心跳掩盖
+      case FreshShortLeaf => Some("fresh-short-leaf-no-warm") // 几秒内 miss/内容快速增长不用心跳掩盖
       case IdleUser if cand.role == MainOrKernel => Some("idle-main-default-zero") // 主会话/kernel 纯空闲不花钱
-      case IdleUser          => Some("idle-no-pending-work")
-      case _                 => None // WaitingChildReturn / LongWaitExpectedResume：进收益门
+      case IdleUser => Some("idle-no-pending-work")
+      case _ => None // WaitingChildReturn / LongWaitExpectedResume：进收益门
 
   // ── 账本（进程内存活；重启清零 ⇒ 不复活过期保温）─────────────────────
 
   final class Ledger:
     private val warmsPerSession = mutable.Map.empty[String, Int]
-    private var totalCostUsd    = BigDecimal(0)
+    private var totalCostUsd = BigDecimal(0)
+
     /** 业务让位闸的观测：本批无发送器，账本只记录决策面消耗。 */
-    private val entries         = mutable.ArrayDeque.empty[(String, Long, BigDecimal)] // (sessionId, atMs, cost)
+    private val entries = mutable.ArrayDeque.empty[(String, Long, BigDecimal)] // (sessionId, atMs, cost)
 
     def recordWarm(sessionId: String, atMs: Long, costUsd: BigDecimal): Unit = synchronized {
       warmsPerSession.update(sessionId, warmsPerSession.getOrElse(sessionId, 0) + 1)
@@ -138,17 +167,18 @@ object CacheWarming:
     def warmCount(sessionId: String): Int = synchronized(warmsPerSession.getOrElse(sessionId, 0))
     def spentUsd: BigDecimal = synchronized(totalCostUsd)
     def entryCount: Int = synchronized(entries.length)
+  end Ledger
 
   // ── 收益门 + 决策（纯函数；nowMs 虚拟时钟注入，零 sleep）────────────
 
   /** 单次保温的预计全成本（输入写 + 读 + 输出；价格未知 ⇒ None）。 */
   def warmCostUsd(contextTokens: Long, econ: Economics): Option[BigDecimal] =
     for
-      inW  <- econ.inputPerMTok      // 保温请求的输入按 cache-write 价落账
+      inW <- econ.inputPerMTok // 保温请求的输入按 cache-write 价落账
       outW <- econ.outputPerMTok
     yield
       val write = BigDecimal(contextTokens) / 1_000_000 * econ.cacheWritePerMTok.getOrElse(inW)
-      val out   = BigDecimal(64) / 1_000_000 * outW // 保温用最小安全输出预算（不做 1-token 假设，64 为保守小额）
+      val out = BigDecimal(64) / 1_000_000 * outW // 保温用最小安全输出预算（不做 1-token 假设，64 为保守小额）
       write + out
 
   /** 单次冷读的可避免额外成本（全前缀按 input 价重算 vs cache-read 价）。 */
@@ -165,13 +195,11 @@ object CacheWarming:
       case None =>
         // ② 预算/次数上限触顶 ⇒ 停止（0 = 显式禁保温）
         if econ.maxWarmsPerSession <= 0 then NoWarm("warming-disabled-zero-cap")
-        else if ledger.warmCount(cand.sessionId) >= econ.maxWarmsPerSession then
-          NoWarm("session-warm-count-cap")
-        else if econ.budgetUsd.exists(_ <= ledger.spentUsd) then
-          NoWarm("budget-exhausted")
+        else if ledger.warmCount(cand.sessionId) >= econ.maxWarmsPerSession then NoWarm("session-warm-count-cap")
+        else if econ.budgetUsd.exists(_ <= ledger.spentUsd) then NoWarm("budget-exhausted")
         else
           // ③ 未知价格/TTL ⇒ shadow（不伪称省钱；补充令 §四.10）
-          val cost   = warmCostUsd(cand.contextTokens, econ)
+          val cost = warmCostUsd(cand.contextTokens, econ)
           val saving = coldReadExtraUsd(cand.contextTokens, econ)
           (cost, saving, econ.ttlSec) match
             case (Some(c), Some(s), Some(_)) =>
@@ -179,7 +207,8 @@ object CacheWarming:
               val marginFactor = BigDecimal(1.0 + econ.safetyMargin)
               if s <= c * marginFactor then NoWarm("negative-expected-value")
               // ⑤ 累计保温比一次冷读更贵 ⇒ 拒绝
-              else if c * (ledger.warmCount(cand.sessionId) + 1) >= s then NoWarm("cumulative-warming-costlier-than-cold")
+              else if c * (ledger.warmCount(cand.sessionId) + 1) >= s then
+                NoWarm("cumulative-warming-costlier-than-cold")
               // ⑥ 发送器能力缺席（本批结构性）⇒ shadow 交付
               else WarmShadow("send-capability-absent-shadow-only", c, s)
             case _ =>
@@ -187,9 +216,10 @@ object CacheWarming:
 
   // ── 请求构造器（为启用批预置；本批不发送）────────────────────────────
 
-  /** 影响前缀的配置必须原样保留（tools/system/thinking/tool 顺序）；输出上限与
-    * thinking 预算不兼容/不支持安全低输出 ⇒ 拒绝构造（不盲用 max_tokens=1）。
-    */
+  /**
+   * 影响前缀的配置必须原样保留（tools/system/thinking/tool 顺序）；输出上限与
+   * thinking 预算不兼容/不支持安全低输出 ⇒ 拒绝构造（不盲用 max_tokens=1）。
+   */
   def buildWarmingPlan(
     sessionId: String,
     providerId: String,

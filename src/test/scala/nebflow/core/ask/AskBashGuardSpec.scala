@@ -5,8 +5,10 @@ import munit.CatsEffectSuite
 
 import scala.concurrent.duration.*
 
-/** canvas-ask-restricted-edit（CAE-REQ-002）绿面：只读白名单校验器 + argv 直执行器
-  * 的穷举判定。每类危险命令一名代表 + 每类白名单绿样本；解析失败一律拒绝。 */
+/**
+ * canvas-ask-restricted-edit（CAE-REQ-002）绿面：只读白名单校验器 + argv 直执行器
+ * 的穷举判定。每类危险命令一名代表 + 每类白名单绿样本；解析失败一律拒绝。
+ */
 final class AskBashGuardSpec extends CatsEffectSuite:
 
   override def munitIOTimeout: FiniteDuration = 30.seconds
@@ -67,7 +69,15 @@ final class AskBashGuardSpec extends CatsEffectSuite:
   }
 
   test("validator refuses git write subcommands") {
-    List("git push", "git add .", "git commit -m x", "git checkout main", "git clean -fd", "git", "git config user.name x")
+    List(
+      "git push",
+      "git add .",
+      "git commit -m x",
+      "git checkout main",
+      "git clean -fd",
+      "git",
+      "git config user.name x"
+    )
       .foreach { cmd =>
         AskBashGuard.validate(cmd) match
           case Right(_) => fail(s"[$cmd] must be refused")

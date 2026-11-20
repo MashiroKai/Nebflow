@@ -144,7 +144,8 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
               chunks <- handle
                 .sendStream(request("s1"), onAttempt = Some(a => attempts.update(_ :+ a)))
                 .compile
-                .toList.attempt
+                .toList
+                .attempt
               elapsed <- IO.monotonic.map(_ - t0)
               remaining <- overrides.get
               _ <- release
@@ -198,7 +199,8 @@ class ReloadStaleSessionModelSpec extends CatsEffectSuite:
             chunks <- handle
               .sendStream(request("s1"), onAttempt = Some(a => attempts.update(_ :+ a)))
               .compile
-              .toList.attempt
+              .toList
+              .attempt
             elapsed <- IO.monotonic.map(_ - t0)
             _ <- release
           yield (chunks, elapsed)

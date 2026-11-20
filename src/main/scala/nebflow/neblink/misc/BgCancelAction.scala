@@ -39,16 +39,15 @@ object BgCancelAction:
 
   def handle(params: JsonObject): IO[Either[String, Json]] =
     val jobId = params("jobId").flatMap(_.asString).getOrElse("")
-    if jobId.trim.isEmpty then
-      IO.pure(Left("BgCancel requires a non-empty 'jobId' parameter (host-issued bgJobId)"))
+    if jobId.trim.isEmpty then IO.pure(Left("BgCancel requires a non-empty 'jobId' parameter (host-issued bgJobId)"))
     else
       RemoteExecCancelRegistry.isLive(jobId).flatMap { aliveBefore =>
         RemoteExecCancelRegistry.cancel(jobId).map {
           case true =>
             Right(
               Json.obj(
-                "jobId"          -> jobId.asJson,
-                "cancelled"      -> true.asJson,
+                "jobId" -> jobId.asJson,
+                "cancelled" -> true.asJson,
                 "aliveBeforeCancel" -> aliveBefore.asJson
               )
             )
@@ -59,3 +58,6 @@ object BgCancelAction:
             )
         }
       }
+    end if
+  end handle
+end BgCancelAction

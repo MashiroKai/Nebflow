@@ -35,3 +35,4 @@ class LoopContractSpec extends CatsEffectSuite:
     assertEquals(evs.size, 2)
     assert(evs.last.isInstanceOf[LoopEvent.RunEnded])
     assertEquals(EventSink.synthesizeTruncatedEvents(None, aborted = true).size, 1)
+end LoopContractSpec

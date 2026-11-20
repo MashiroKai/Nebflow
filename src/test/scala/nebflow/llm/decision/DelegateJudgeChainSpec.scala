@@ -93,10 +93,13 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
         case Some(a) => IO.pure(a)
         case None => IO.raiseError(new RuntimeException(s"unknown provider: $providerId"))
     override def getCandidates(): IO[List[ModelCandidate]] = IO.pure(chain)
+
     override def getCandidatesForAgent(agentModel: Option[nebflow.shared.AgentModelConfig]): IO[List[ModelCandidate]] =
       IO.pure(chain)
+
     override private[llm] def decisionRoute(callType: String): IO[Option[nebflow.shared.AgentModelConfig]] =
       IO.pure(None)
+
     override private[nebflow] def currentConfig: IO[nebflow.shared.NebflowServiceConfig] =
       IO(nebflow.shared.Config.loadServiceConfig())
 
@@ -127,7 +130,8 @@ class DelegateJudgeChainSpec extends CatsEffectSuite:
       selfReport = None
     )
 
-  private val VerdictJson = """{"verdict":"completed","reason":"work complete on the branch; integration is a merger request"}"""
+  private val VerdictJson =
+    """{"verdict":"completed","reason":"work complete on the branch; integration is a merger request"}"""
 
   // ── chainCall：整链遍历调用缝（判定机同族刀） ─────────────────────────────
 

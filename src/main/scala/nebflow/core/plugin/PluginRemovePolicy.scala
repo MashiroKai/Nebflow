@@ -100,14 +100,16 @@ object PluginRemovePolicy:
           catch case _: Exception => 0
         val now = System.currentTimeMillis()
         mutateRemoved(name)(
-          Some(Json.obj(
-            "at" -> now.asJson,
-            "by" -> by.asJson,
-            "reason" -> reason.asJson,
-            "deleteDir" -> deleteDir.asJson,
-            "digestAtRemove" -> digest.asJson,
-            "fileCount" -> fileCount.asJson
-          ))
+          Some(
+            Json.obj(
+              "at" -> now.asJson,
+              "by" -> by.asJson,
+              "reason" -> reason.asJson,
+              "deleteDir" -> deleteDir.asJson,
+              "digestAtRemove" -> digest.asJson,
+              "fileCount" -> fileCount.asJson
+            )
+          )
         ).flatMap { _ =>
           val deleted: Either[String, Unit] =
             if !deleteDir then Right(())
@@ -115,16 +117,18 @@ object PluginRemovePolicy:
               try
                 os.remove.all(dir)
                 Right(())
-              catch
-                case e: Exception => Left(s"its directory could not be deleted: ${e.getMessage}")
-          deleted.map { _ =>
-            s"Plugin '$name' removed from the registry" +
-              (if deleteDir then s" and its directory deleted ($fileCount file(s), digest ${digest.take(12)}…)"
-               else " (directory KEPT — 'disable-only' leg; the package stays on disk but out of the registry)") +
-              ". The seed will not reinstall it. Reinstall with 'stand plugin add' to bring it back."
-          }.left.map { err =>
-            s"Plugin '$name' is REMOVED from the registry but $err — inspect $dir"
-          }
+              catch case e: Exception => Left(s"its directory could not be deleted: ${e.getMessage}")
+          deleted
+            .map { _ =>
+              s"Plugin '$name' removed from the registry" +
+                (if deleteDir then s" and its directory deleted ($fileCount file(s), digest ${digest.take(12)}…)"
+                 else " (directory KEPT — 'disable-only' leg; the package stays on disk but out of the registry)") +
+                ". The seed will not reinstall it. Reinstall with 'stand plugin add' to bring it back."
+            }
+            .left
+            .map { err =>
+              s"Plugin '$name' is REMOVED from the registry but $err — inspect $dir"
+            }
         }
     }.flatMap {
       case Right(msg) =>

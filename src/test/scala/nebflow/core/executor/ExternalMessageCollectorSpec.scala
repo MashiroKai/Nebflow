@@ -5,6 +5,7 @@ import munit.FunSuite
 import nebflow.core.executor.ExternalExecutor.Frame
 
 class ExternalMessageCollectorSpec extends FunSuite:
+
   private def fixture(name: String): List[String] =
     val stream = Option(getClass.getResourceAsStream(s"/external-message-collector/$name.jsonl"))
       .getOrElse(fail(s"Missing fixture: $name"))
@@ -110,9 +111,11 @@ class ExternalMessageCollectorSpec extends FunSuite:
 
   test("Transport error envelopes remain metadata rather than assistant output") {
     val collector = new ExternalMessageCollector("transport-error")
-    ExternalExecutor.Codex.parseLine(
-      """{"type":"turn.failed","error":{"message":"secret transport error"}}"""
-    ).foreach(collector.accept)
+    ExternalExecutor.Codex
+      .parseLine(
+        """{"type":"turn.failed","error":{"message":"secret transport error"}}"""
+      )
+      .foreach(collector.accept)
     assert(collector.failed)
     assert(collector.hasTerminal)
     assertEquals(collector.allTexts, Nil)
@@ -159,7 +162,12 @@ class ExternalMessageCollectorSpec extends FunSuite:
     assertEquals(collector.flush(), Nil)
     assert(!collector.hasTerminal)
     val finalFrame = Frame.Final("done", failed = false)
-    assertEquals(finalFrame match { case Frame.Final(text, _) => text }, "done")
+    assertEquals(
+      finalFrame match
+        case Frame.Final(text, _) => text
+      ,
+      "done"
+    )
     collector.accept(finalFrame)
     assert(collector.hasTerminal)
   }

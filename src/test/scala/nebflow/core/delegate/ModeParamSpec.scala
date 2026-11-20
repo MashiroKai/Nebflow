@@ -99,7 +99,9 @@ class ModeParamSpec extends FunSuite:
     // 3007e48da 后 merger 不再是合法 mode 词——resolve 必须显式拒绝（分配器
     // 退役同款口径：不静默映射、不按旧词表分叉）。
     val resolved = ModeParam.resolve(Some("merger"))
-    assert(resolved.isLeft || resolved.map(_.mode) != Right(DualModeConfig.ModeMerger),
-      s"merger must not resolve to a legal mode any more: $resolved")
+    assert(
+      resolved.isLeft || resolved.map(_.mode) != Right(DualModeConfig.ModeMerger),
+      s"merger must not resolve to a legal mode any more: $resolved"
+    )
   }
 end ModeParamSpec

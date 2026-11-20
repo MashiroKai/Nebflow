@@ -35,6 +35,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
   // 鉴权夹具随之从 Bearer 翻到 session cookie（GatewayAuthSpec 同款铸造法）；
   // bearerProbe 负控腿钉「有效文件 token 恒 401」。
   private val sessions = GatewaySessionStore.unsafeCreate()
+
   private lazy val fixtureSid: String =
     sessions
       .create("logto|shim-user", GatewaySessionStore.OriginRelayMint, "net-1")
@@ -577,9 +578,7 @@ class OpenAiChatShimSpec extends CatsEffectSuite:
       case None => fail("the alias route fell through")
       case Some(resp) =>
         assertEquals(resp.status, Status.Unauthorized)
-        respJson(resp).map(json =>
-          assertEquals(json.hcursor.downField("error").as[String], Right("Invalid token"))
-        )
+        respJson(resp).map(json => assertEquals(json.hcursor.downField("error").as[String], Right("Invalid token")))
     }
   }
 

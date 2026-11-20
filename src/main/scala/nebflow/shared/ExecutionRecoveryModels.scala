@@ -18,11 +18,13 @@ final case class ExecutionAdmission(
   initialInput: Json,
   initialInputId: String
 )
+
 object ExecutionAdmission:
   given Encoder[ExecutionAdmission] = deriveEncoder
   given Decoder[ExecutionAdmission] = deriveDecoder
 
 final case class ExecutionCommitRef(revision: Long, recordHash: String)
+
 object ExecutionCommitRef:
   given Encoder[ExecutionCommitRef] = deriveEncoder
   given Decoder[ExecutionCommitRef] = deriveDecoder
@@ -46,16 +48,19 @@ final case class ExecutionAdmissionRecord(
   payloadLength: Long,
   recordHash: String
 )
+
 object ExecutionAdmissionRecord:
   given Encoder[ExecutionAdmissionRecord] = deriveEncoder
   given Decoder[ExecutionAdmissionRecord] = deriveDecoder
 
 final case class ExecutionToolIntent(operationId: String, modelCallId: String, tool: String, arguments: Json)
+
 object ExecutionToolIntent:
   given Encoder[ExecutionToolIntent] = deriveEncoder
   given Decoder[ExecutionToolIntent] = deriveDecoder
 
 final case class ExecutionModelDecision(message: Json, calls: List[ExecutionToolIntent])
+
 object ExecutionModelDecision:
   given Encoder[ExecutionModelDecision] = deriveEncoder
   given Decoder[ExecutionModelDecision] = deriveDecoder
@@ -77,6 +82,8 @@ enum ExecutionEvent:
   case RunnerStopped
   case ResumeAuthorized(newAttemptId: String, newIncarnationId: String, principal: String)
 
+end ExecutionEvent
+
 object ExecutionEvent:
   given Encoder[ExecutionEvent] = deriveEncoder
   given Decoder[ExecutionEvent] = deriveDecoder
@@ -91,6 +98,7 @@ final case class ExecutionTransition(
   incarnationId: String,
   event: ExecutionEvent
 )
+
 object ExecutionTransition:
   given Encoder[ExecutionTransition] = deriveEncoder
   given Decoder[ExecutionTransition] = deriveDecoder
@@ -116,11 +124,13 @@ final case class ExecutionChainState(
 )
 
 sealed trait ExecutionChainObservation
+
 object ExecutionChainObservation:
   final case class Verified(state: ExecutionChainState) extends ExecutionChainObservation
   final case class ReviewRequired(prefix: Option[ExecutionChainState], reason: String) extends ExecutionChainObservation
 
 sealed trait ExecutionCommitResult
+
 object ExecutionCommitResult:
   final case class Committed(ref: ExecutionCommitRef) extends ExecutionCommitResult
   final case class Duplicate(ref: ExecutionCommitRef) extends ExecutionCommitResult
@@ -139,6 +149,7 @@ final case class ProtectedRecoveryRequest(
   principal: String,
   input: Option[String] = None
 )
+
 object ProtectedRecoveryRequest:
   given Encoder[ProtectedRecoveryRequest] = deriveEncoder
   given Decoder[ProtectedRecoveryRequest] = deriveDecoder
@@ -152,17 +163,20 @@ final case class ProtectedRecoveryResult(
   ref: ExecutionCommitRef,
   duplicate: Boolean
 )
+
 object ProtectedRecoveryResult:
   given Encoder[ProtectedRecoveryResult] = deriveEncoder
   given Decoder[ProtectedRecoveryResult] = deriveDecoder
 
 sealed trait ExecutionProtection
+
 object ExecutionProtection:
   case object Unprotected extends ExecutionProtection
   final case class Protected(executionIds: List[String]) extends ExecutionProtection
   final case class Unknown(reason: String) extends ExecutionProtection
 
 sealed trait ExecutionAdmissionObservation
+
 object ExecutionAdmissionObservation:
   case object Missing extends ExecutionAdmissionObservation
   final case class Verified(record: ExecutionAdmissionRecord, initialInput: Json) extends ExecutionAdmissionObservation

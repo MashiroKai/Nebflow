@@ -60,8 +60,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
     def delegates = reads.update(_ + 1).as(recs)
     def liveSessionIds = IO.pure(live)
     def worktreePresent(p: String) = !missingTrees.contains(p)
+
     def treeRead(p: String, base: String, branch: String) =
       if unreadable.contains(p) then None else trees.get(p)
+
     def branchMerged(ws: String, baseBranch: String, branch: String) =
       Some(merged.getOrElse(branch, false))
     def notifyRoot(sessionId: String, text: String) = sent.update(_ :+ (sessionId, text)).as(true)
@@ -108,7 +110,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       p1 = FakePort(
         recs = List(rec("d1", worktree = Some("/tmp/wt-fresh"), createdAt = Now)),
         trees = Map("/tmp/wt-fresh" -> clean(Now - 2 * H)),
-        state = st1, sent = sent1, clock = clock1, reads = reads1
+        state = st1,
+        sent = sent1,
+        clock = clock1,
+        reads = reads1
       )
       _ <- DoneBoardWatch.scan(p1)
       freshSent <- sent1.get
@@ -117,7 +122,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       p2 = FakePort(
         recs = List(rec("d1", worktree = Some("/tmp/wt-dirty"), createdAt = Now - 30 * H)),
         trees = Map("/tmp/wt-dirty" -> DoneBoardWatch.TreeRead(3, 0, Now - 30 * H)),
-        state = st2, sent = sent2, clock = clock2, reads = reads2
+        state = st2,
+        sent = sent2,
+        clock = clock2,
+        reads = reads2
       )
       _ <- DoneBoardWatch.scan(p2)
       dirtySent <- sent2.get
@@ -136,7 +144,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
         recs = List(rec("d1", worktree = Some("/tmp/wt-live"), createdAt = Now - 30 * H)),
         live = Set("d1"),
         trees = Map("/tmp/wt-live" -> clean(Now - 30 * H)),
-        state = st, sent = sent, clock = clock, reads = reads
+        state = st,
+        sent = sent,
+        clock = clock,
+        reads = reads
       )
       _ <- DoneBoardWatch.scan(port)
       liveSent <- sent.get
@@ -145,7 +156,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       port2 = FakePort(
         recs = List(rec("d2", worktree = Some("/tmp/wt-unreadable"), createdAt = Now - 30 * H)),
         unreadable = Set("/tmp/wt-unreadable"),
-        state = st2, sent = sent2, clock = clock2, reads = reads2
+        state = st2,
+        sent = sent2,
+        clock = clock2,
+        reads = reads2
       )
       _ <- DoneBoardWatch.scan(port2)
       unreadableSent <- sent2.get
@@ -164,7 +178,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
         recs = List(rec("d1", worktree = Some("/tmp/gone-wt"))),
         missingTrees = Set("/tmp/gone-wt"),
         merged = Map("delegate/x" -> true),
-        state = st, sent = sent, clock = clock, reads = reads
+        state = st,
+        sent = sent,
+        clock = clock,
+        reads = reads
       )
       _ <- DoneBoardWatch.scan(port)
       firstSent <- sent.get
@@ -187,7 +204,12 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       Now - 30 * H,
       Map(
         "branch:d1" -> DoneBoardWatch.Entry(
-          "branch", "d1", "delegate/x", "main", "t", "root-x",
+          "branch",
+          "d1",
+          "delegate/x",
+          "main",
+          "t",
+          "root-x",
           "fully merged into main, worktree removed, observed lingering 30h",
           Now - 30 * H
         )
@@ -199,7 +221,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
         recs = List(rec("d1", worktree = Some("/tmp/gone-wt"))),
         missingTrees = Set("/tmp/gone-wt"),
         merged = Map("delegate/x" -> false),
-        state = st, sent = sent, clock = clock, reads = reads
+        state = st,
+        sent = sent,
+        clock = clock,
+        reads = reads
       )
       _ <- DoneBoardWatch.scan(port)
       msgs <- sent.get
@@ -207,6 +232,7 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
     yield
       assertEquals(msgs, Nil)
       assertEquals(s.entries, Map.empty)
+    end for
   }
 
   test("notify window throttles repeat notices") {
@@ -215,7 +241,12 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       Now - 2 * H,
       Map(
         "tree:d1" -> DoneBoardWatch.Entry(
-          "tree", "d1", "delegate/x", "main", "t", "root-x",
+          "tree",
+          "d1",
+          "delegate/x",
+          "main",
+          "t",
+          "root-x",
           "worktree wt-x clean, 0 commits ahead of main, idle 30h",
           Now - 30 * H,
           Now - 1 * H
@@ -227,7 +258,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       port = FakePort(
         recs = List(rec("d1", worktree = Some("/tmp/wt-x"), createdAt = Now - 30 * H)),
         trees = Map("/tmp/wt-x" -> clean(Now - 30 * H)),
-        state = st, sent = sent, clock = clock, reads = reads
+        state = st,
+        sent = sent,
+        clock = clock,
+        reads = reads
       )
       _ <- DoneBoardWatch.scan(port)
       msgs <- sent.get
@@ -235,6 +269,7 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
     yield
       assertEquals(msgs, Nil)
       assertEquals(s.entries.get("tree:d1").map(_.lastNotifyMs), Some(Now - 1 * H))
+    end for
   }
 
   test("sweep throttle: within MinScanIntervalMs no delegate reads happen") {
@@ -243,7 +278,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       port = FakePort(
         recs = List(rec("d1")),
         trees = Map("/tmp/wt-x" -> clean(Now - 30 * H)),
-        state = st, sent = sent, clock = clock, reads = reads
+        state = st,
+        sent = sent,
+        clock = clock,
+        reads = reads
       )
       out <- DoneBoardWatch.scan(port)
       n <- reads.get
@@ -260,10 +298,24 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       Now - 30 * H,
       Map(
         "tree:d1" -> DoneBoardWatch.Entry(
-          "tree", "d1", "delegate/x", "main", "t", "root-x", "detail", Now - 30 * H
+          "tree",
+          "d1",
+          "delegate/x",
+          "main",
+          "t",
+          "root-x",
+          "detail",
+          Now - 30 * H
         ),
         "branch:d2" -> DoneBoardWatch.Entry(
-          "branch", "d2", "delegate/y", "main", "t", "root-x", "detail", Now - 30 * H
+          "branch",
+          "d2",
+          "delegate/y",
+          "main",
+          "t",
+          "root-x",
+          "detail",
+          Now - 30 * H
         )
       )
     )
@@ -273,7 +325,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       port = FakePort(
         recs = List(rec("d1", worktree = Some("/tmp/wt-x"), createdAt = Now - 30 * H)),
         trees = Map("/tmp/wt-x" -> DoneBoardWatch.TreeRead(2, 0, Now - 30 * H)),
-        state = st, sent = sent, clock = clock, reads = reads
+        state = st,
+        sent = sent,
+        clock = clock,
+        reads = reads
       )
       _ <- DoneBoardWatch.scan(port)
       s <- st.get
@@ -287,7 +342,12 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       0L,
       Map(
         "branch:d2" -> DoneBoardWatch.Entry(
-          "branch", "d2", "delegate/y", "main", "task y", "root-x",
+          "branch",
+          "d2",
+          "delegate/y",
+          "main",
+          "task y",
+          "root-x",
           "fully merged into main, worktree removed, observed lingering 30h",
           Now - 30 * H
         )
@@ -303,7 +363,10 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
         trees = Map("/tmp/wt-x" -> clean(Now - 30 * H)),
         missingTrees = Set("/tmp/gone-y"),
         merged = Map("delegate/y" -> true),
-        state = st, sent = sent, clock = clock, reads = reads
+        state = st,
+        sent = sent,
+        clock = clock,
+        reads = reads
       )
       _ <- DoneBoardWatch.scan(port)
       msgs <- sent.get
@@ -312,6 +375,7 @@ class DoneBoardWatchSpec extends CatsEffectSuite:
       assert(msgs.head._2.contains("delegate/x"))
       assert(msgs.head._2.contains("delegate/y"))
       assert(msgs.head._2.contains("2 finished delegate item(s)"))
+    end for
   }
 
 end DoneBoardWatchSpec

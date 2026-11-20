@@ -18,13 +18,14 @@ object GuardDocs:
 
   final case class NotifyGuardDoc(
     version: Int,
-    source: String,        // 如 "dispatch-notify:failed" / "dispatch-notify:cancelled"
-    failedAt: List[Long],  // 滚动窗口时间戳（现状 2 字段之一）
-    cooldownUntil: Long,   // 冷却截止 epoch ms（现状 2 字段之二）
+    source: String, // 如 "dispatch-notify:failed" / "dispatch-notify:cancelled"
+    failedAt: List[Long], // 滚动窗口时间戳（现状 2 字段之一）
+    cooldownUntil: Long, // 冷却截止 epoch ms（现状 2 字段之二）
     updatedAt: Long
   )
 
   object NotifyGuardDoc:
+
     given Encoder[NotifyGuardDoc] = d =>
       Json.obj(
         "version" -> Json.fromInt(d.version),
@@ -33,6 +34,7 @@ object GuardDocs:
         "cooldownUntil" -> Json.fromLong(d.cooldownUntil),
         "updatedAt" -> Json.fromLong(d.updatedAt)
       )
+
     given Decoder[NotifyGuardDoc] = c =>
       for
         version <- c.downField("version").as[Int]
@@ -40,14 +42,19 @@ object GuardDocs:
         rawFailedAt <- c.downField("failedAt").as[Option[List[Long]]]
         rawCooldown <- c.downField("cooldownUntil").as[Option[Long]]
         updatedAt <- c.downField("updatedAt").as[Long]
-      yield NotifyGuardDoc(version, source,
+      yield NotifyGuardDoc(
+        version,
+        source,
         rawFailedAt match
           case Some(xs) => xs
           case None => Nil,
         rawCooldown match
           case Some(v) => v
           case None => 0L,
-        updatedAt)
+        updatedAt
+      )
+
+  end NotifyGuardDoc
 
   final case class AvoidGuardDoc(
     version: Int,
@@ -64,6 +71,7 @@ object GuardDocs:
   )
 
   object AvoidGuardDoc:
+
     given Encoder[AvoidGuardDoc] = d =>
       Json.obj(
         "version" -> Json.fromInt(d.version),
@@ -72,6 +80,7 @@ object GuardDocs:
         "updatedAt" -> Json.fromLong(d.updatedAt),
         "down" -> d.down.asJson
       )
+
     given Decoder[AvoidGuardDoc] = c =>
       for
         version <- c.downField("version").as[Int]
@@ -79,7 +88,9 @@ object GuardDocs:
         rawAvoid <- c.downField("avoidUntil").as[Option[Map[String, Long]]]
         updatedAt <- c.downField("updatedAt").as[Long]
         rawDown <- c.downField("down").as[Option[Map[String, Long]]]
-      yield AvoidGuardDoc(version, source,
+      yield AvoidGuardDoc(
+        version,
+        source,
         rawAvoid match
           case Some(m) => m
           case None => Map.empty,
@@ -88,5 +99,6 @@ object GuardDocs:
           case Some(m) => m
           case None => Map.empty
       )
+  end AvoidGuardDoc
 
 end GuardDocs

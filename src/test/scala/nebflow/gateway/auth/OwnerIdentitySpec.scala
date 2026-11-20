@@ -39,7 +39,9 @@ class OwnerIdentitySpec extends FunSuite:
   // ── ① anchorFromIdToken：纯函数面 ──────────────────────────────────────
 
   test("anchorFromIdToken: sub present ⇒ OwnerAnchor with the name-claim label (sub never leaks into the label)") {
-    val anchor = OwnerIdentity.anchorFromIdToken(idToken(claimsJson("sub" -> "sub-owner-1", "name" -> "Mashiro", "email" -> "kaimashiro@qq.com")))
+    val anchor = OwnerIdentity.anchorFromIdToken(
+      idToken(claimsJson("sub" -> "sub-owner-1", "name" -> "Mashiro", "email" -> "kaimashiro@qq.com"))
+    )
     assertEquals(anchor, Some(OwnerAnchor("sub-owner-1", "Mashiro")))
   }
 
@@ -90,7 +92,9 @@ class OwnerIdentitySpec extends FunSuite:
       .save(DeviceCredential("https://neblink.example", "n-1", "d-1", "tok", Some(LogtoRefresh("", 0L, idToken))))
       .unsafeRunSync()
 
-  test("localAnchor: reads the persisted id_token → anchor; token change ⇒ re-decode (token-keyed cache); no credential ⇒ None") {
+  test(
+    "localAnchor: reads the persisted id_token → anchor; token change ⇒ re-decode (token-keyed cache); no credential ⇒ None"
+  ) {
     persist(Some(idToken(claimsJson("sub" -> "sub-A", "name" -> "Mashiro"))))
     assertEquals(OwnerIdentity.localAnchor.unsafeRunSync(), Some(OwnerAnchor("sub-A", "Mashiro")), "首读：解码落锚")
 
@@ -108,20 +112,29 @@ class OwnerIdentitySpec extends FunSuite:
 
   // ── ③ 真实凭据文件形态下的 owner 等值链 ────────────────────────────────
 
-  test("end-to-end anchor → resolve: persisted id_token owner sub matches the session ⇒ 已认证 marker; other sub ⇒ default") {
+  test(
+    "end-to-end anchor → resolve: persisted id_token owner sub matches the session ⇒ 已认证 marker; other sub ⇒ default"
+  ) {
     persist(Some(idToken(claimsJson("sub" -> "sub-real-owner", "name" -> "Mashiro"))))
     val anchor = OwnerIdentity.localAnchor.unsafeRunSync().getOrElse(fail("expected anchor"))
     val client = nebflow.bridge.ClientDevice("c", Some("mac"), Some("Safari"), None)
     val ownerRead = nebflow.bridge.DeviceProvenance.resolve(
-      client, None, Nil,
-      Some(nebflow.bridge.SessionIdentity("sub-real-owner", "relay-mint", "s1")), Some(anchor)
+      client,
+      None,
+      Nil,
+      Some(nebflow.bridge.SessionIdentity("sub-real-owner", "relay-mint", "s1")),
+      Some(anchor)
     )
     assertEquals(ownerRead.sessionAuthenticated, true)
     assert(nebflow.bridge.DeviceProvenance.marker(ownerRead).contains("Mashiro · Safari（经官网）（已认证）"))
 
     val otherRead = nebflow.bridge.DeviceProvenance.resolve(
-      client, None, Nil,
-      Some(nebflow.bridge.SessionIdentity("sub-other", "relay-mint", "s2")), Some(anchor)
+      client,
+      None,
+      Nil,
+      Some(nebflow.bridge.SessionIdentity("sub-other", "relay-mint", "s2")),
+      Some(anchor)
     )
     assertEquals(otherRead.display, "未登记-Mac Safari", "非 owner sub ⇒ 默认名兜底逐字")
   }
+end OwnerIdentitySpec

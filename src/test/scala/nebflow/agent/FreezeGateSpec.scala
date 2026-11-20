@@ -191,14 +191,26 @@ class FreezeGateSpec extends CatsEffectSuite:
         schedRef <- IO.ref(openConfig)
         resources <- mkResources(system, tmp, CountingLlm(counter, requests), schedRef)
         sid = "blocks-idle-agent"
-        ref <- system.spawn(AgentActor(agentDef = rootDef(), resources = resources,
-          wsSend = _ => IO.unit, depth = 0, sessionId = Some(sid), sessionName = Some(sid)), sid)
+        ref <- system.spawn(
+          AgentActor(
+            agentDef = rootDef(),
+            resources = resources,
+            wsSend = _ => IO.unit,
+            depth = 0,
+            sessionId = Some(sid),
+            sessionName = Some(sid)
+          ),
+          sid
+        )
         _ <- resources.agentRegistry.update(_ + (sid -> AgentRecord(sid, ref, AgentKind.Root, sid, None)))
         image = ContentBlock.Image("QUJD", "image/png")
         _ <- ref ! AgentCommand.ExternalEvent("bridge", "user-message", "idle image", blocks = Some(List(image)))
         _ <- waitUntil(System.currentTimeMillis() + 30000)(requests.get.map(_.nonEmpty))
         reqs <- requests.get
-        _ = assert(reqs.exists(_.messages.exists(_.content.fold(_ => false, _.contains(image)))), "idle image missing from model input")
+        _ = assert(
+          reqs.exists(_.messages.exists(_.content.fold(_ => false, _.contains(image)))),
+          "idle image missing from model input"
+        )
       yield ()
       program.unsafeRunSync()
     finally
@@ -206,6 +218,7 @@ class FreezeGateSpec extends CatsEffectSuite:
       PathUtil.setDataRoot(prevRoot)
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
+    end try
   }
 
   // ── B3/B4: gate 拦截，零 LLM 调用 ──────────────────────────
@@ -506,14 +519,24 @@ class FreezeGateSpec extends CatsEffectSuite:
         _ <- waitUntil(System.currentTimeMillis() + 15000)(counter.get.map(_ >= 1))
         processingImage = ContentBlock.Image("UFJPQw==", "image/png")
         frozenImage = ContentBlock.Image("RlJPWg==", "image/png")
-        _ <- ref ! AgentCommand.ExternalEvent("bridge", "user-message", "processing image", blocks = Some(List(processingImage)))
+        _ <- ref ! AgentCommand.ExternalEvent(
+          "bridge",
+          "user-message",
+          "processing image",
+          blocks = Some(List(processingImage))
+        )
         _ <- schedRef.set(frozenConfig())
         // 关窗已落定 → 放行 Done（工具结果冻结在 gate 前，唤醒语义有据可依）
         _ <- doneGate.complete(()).attempt.void
         _ <- waitUntil(System.currentTimeMillis() + 30000)(
           resources.agentRegistry.get.map(_.get(sid).exists(_.status == AgentStatus.Frozen))
         )
-        _ <- ref ! AgentCommand.ExternalEvent("bridge", "user-message", "frozen image", blocks = Some(List(frozenImage)))
+        _ <- ref ! AgentCommand.ExternalEvent(
+          "bridge",
+          "user-message",
+          "frozen image",
+          blocks = Some(List(frozenImage))
+        )
         // 冻结中：用户消息唤醒（clientMessageId=Some）→ 工具结果 + 用户新指令同轮
         _ <- schedRef.set(openConfig)
         _ <- ref ! AgentCommand.UserInput("WAKE_UP_NOW continue with this", None, Some("b5-wake"))
@@ -521,10 +544,17 @@ class FreezeGateSpec extends CatsEffectSuite:
         _ <- IO.sleep(300.millis)
         reqs <- requests.get
         wakeReq = reqs.last
-        _ = if frozen then
-          assert(reqs.exists(_.messages.exists(_.content.fold(_ => false, _.contains(frozenImage)))), "frozen image missing from model input")
-        else
-          assert(wakeReq.messages.exists(_.content.fold(_ => false, _.contains(processingImage))), "processing image missing from model input")
+        _ =
+          if frozen then
+            assert(
+              reqs.exists(_.messages.exists(_.content.fold(_ => false, _.contains(frozenImage)))),
+              "frozen image missing from model input"
+            )
+          else
+            assert(
+              wakeReq.messages.exists(_.content.fold(_ => false, _.contains(processingImage))),
+              "processing image missing from model input"
+            )
         // 注：turn 管线会在末条用户消息后追加 task-list/env-change reminder（缓存
         // 优化既有行为），故断言「wake 消息存在且位于冻结工具结果之后」而非严格末条。
         wakeIdx = wakeReq.messages.lastIndexWhere(_.textContent.contains("WAKE_UP_NOW"))
@@ -547,6 +577,8 @@ class FreezeGateSpec extends CatsEffectSuite:
       system.stopAll.attempt.void.unsafeRunSync()
       os.remove.all(tmp)
     end try
+
+  end checkWakeEventBlocks
 
   test("B5: system input while frozen is queued, not dispatched; drained after resume") {
     val system = ActorSystem("freeze-b5-sys")
@@ -1175,7 +1207,9 @@ class FreezeGateSpec extends CatsEffectSuite:
     end try
   }
 
-  test("ER-3: same-reason consecutive provider-family freezes ≥3 stay QUIET — still Frozen, no escalation, nothing sent to the parent") {
+  test(
+    "ER-3: same-reason consecutive provider-family freezes ≥3 stay QUIET — still Frozen, no escalation, nothing sent to the parent"
+  ) {
     val system = ActorSystem("freeze-er3")
     val tmp = os.temp.dir()
     val prevRoot = PathUtil.dataRoot

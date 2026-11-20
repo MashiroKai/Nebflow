@@ -62,12 +62,14 @@ class MailClientSendSpec extends FunSuite:
     @volatile var dataReceived: String = ""
     @volatile var ehloCount: Int = 0
     private val stopped = AtomicBoolean(false)
+
     private val thread = new Thread(() =>
       try
         val conn = server.accept()
         try
           val out = PrintStream(new BufferedOutputStream(conn.getOutputStream), true, "ISO-8859-1")
-          def send(s: String): Unit = { out.print(s + "\r\n"); out.flush() }
+          def send(s: String): Unit =
+            out.print(s + "\r\n"); out.flush()
           send(greeting)
           val reader = BufferedReader(new InputStreamReader(conn.getInputStream, "ISO-8859-1"))
           val sb = new StringBuilder
@@ -87,24 +89,35 @@ class MailClientSendSpec extends FunSuite:
             else
               val u = line.toUpperCase
               val reply: String =
-                if u.startsWith("EHLO") then { ehloCount += 1; ehlo }
+                if u.startsWith("EHLO") then
+                  ehloCount += 1; ehlo
                 else if u.startsWith("AUTH") then auth
                 else if u.startsWith("MAIL") then mail
                 else if u.startsWith("RCPT") then rcpt
-                else if u.startsWith("DATA") then { inData = true; dataCmd }
+                else if u.startsWith("DATA") then
+                  inData = true; dataCmd
                 else if u.startsWith("QUIT") then quit
                 else "502 Command not implemented"
               if reply == null then alive = false // 断连哨兵
               else if reply.nonEmpty then send(reply)
               if u.startsWith("QUIT") then alive = false
-        finally try conn.close() catch case _: Throwable => ()
+            end if
+          end while
+        finally
+          try conn.close()
+          catch case _: Throwable => ()
+        end try
       catch case _: Throwable => ()
     )
     thread.setDaemon(true)
     thread.start()
+
     def stop(): Unit =
       stopped.set(true)
-      try server.close() catch case _: Throwable => ()
+      try server.close()
+      catch case _: Throwable => ()
+
+  end MockSmtp
 
   /** 客户端腿：真实 loopback socket + 小超时，DATA 阶段经 onDataPhase 切大超时。 */
   private def transact(
@@ -126,8 +139,11 @@ class MailClientSendSpec extends FunSuite:
         onDataPhase = () => sock.setSoTimeout(dataTimeoutMs)
       )
     finally
-      try sock.close() catch case _: Throwable => ()
+      try sock.close()
+      catch case _: Throwable => ()
       server.stop()
+    end try
+  end transact
 
   // ════════ ① 成功链路 ════════
 
@@ -145,14 +161,16 @@ class MailClientSendSpec extends FunSuite:
 
   test("session: DATA 回执慢（1.2s）但落在分级窗口内 ⇒ 成功——旧统一短超时在此必败") {
     // 验红实证：握手超时仅 400ms——若 onDataPhase 未把 DATA 阶段切到大超时
-    //（或旧版统一超时语义），等待最终回执 1.2s 必撞 400ms SoTimeout。
-    val server = new MockSmtp(dataFinal = () => { Thread.sleep(1200); "250 OK slow-scan-done" })
+    // （或旧版统一超时语义），等待最终回执 1.2s 必撞 400ms SoTimeout。
+    val server = new MockSmtp(dataFinal = () =>
+      Thread.sleep(1200); "250 OK slow-scan-done")
     val res = transact(server, handshakeTimeoutMs = 400, dataTimeoutMs = 5000)
     assert(res.isRight, s"分级超时应放行慢回执: ${res.left.toOption.get}")
   }
 
   test("session: DATA 回执超出分级窗口 ⇒ Ambiguous（可能已投递，禁盲重试）") {
-    val server = new MockSmtp(dataFinal = () => { Thread.sleep(3000); "250 OK too-late" })
+    val server = new MockSmtp(dataFinal = () =>
+      Thread.sleep(3000); "250 OK too-late")
     val res = transact(server, handshakeTimeoutMs = 400, dataTimeoutMs = 800)
     assertEquals(res.left.toOption.get, SendFailure.Ambiguous)
     assert(!MailClient.isSendRetryable(res.left.toOption.get), "Ambiguous 盲重试 = 重复投递，绝不可重试")
@@ -194,8 +212,10 @@ class MailClientSendSpec extends FunSuite:
 
   test("session: RCPT 550 ⇒ Rejected 不重试；RCPT 451 ⇒ Rejected 可重试") {
     val hard = new MockSmtp(rcpt = "550 Mailbox unavailable")
-    assertEquals(transact(hard, handshakeTimeoutMs = 400).left.toOption.get,
-      SendFailure.Rejected("550 Mailbox unavailable"))
+    assertEquals(
+      transact(hard, handshakeTimeoutMs = 400).left.toOption.get,
+      SendFailure.Rejected("550 Mailbox unavailable")
+    )
     assert(!MailClient.isSendRetryable(SendFailure.Rejected("550 Mailbox unavailable")))
 
     val soft = new MockSmtp(rcpt = "451 Local error, try later")

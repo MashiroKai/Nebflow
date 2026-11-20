@@ -73,8 +73,13 @@ object GitVizGraphTool extends Tool:
 
     // 身份闸（工具内侧那一层）：非 gitviz ask 会话（含 REST 直调 / 其余一切身份）拒绝。
     if !AskSessions.isGitVizSession(sid) then
-      IO.pure(Left(ToolError(
-        "gitviz_graph: permission denied — this tool is exclusive to branch-management ask sessions (ask-gv-*). (GITVIZ_FORBIDDEN)")))
+      IO.pure(
+        Left(
+          ToolError(
+            "gitviz_graph: permission denied — this tool is exclusive to branch-management ask sessions (ask-gv-*). (GITVIZ_FORBIDDEN)"
+          )
+        )
+      )
     else
       AskGatewayServices.instance.map(_.registry) match
         case None =>
@@ -84,21 +89,27 @@ object GitVizGraphTool extends Tool:
             case None =>
               IO.pure(Left(ToolError(s"gitviz_graph: ask session $sid has no binding. (GITVIZ_NO_SCOPE)")))
             case Some(binding) if !binding.isGitViz =>
-              IO.pure(Left(ToolError(s"gitviz_graph: binding for $sid is not a branch-management scope. (GITVIZ_NO_SCOPE)")))
+              IO.pure(
+                Left(ToolError(s"gitviz_graph: binding for $sid is not a branch-management scope. (GITVIZ_NO_SCOPE)"))
+              )
             case Some(binding) =>
               IO.blocking {
                 val limit = clamp(intOf(input, "limit").getOrElse(400), 1, 4000)
                 val lanes = clamp(intOf(input, "lanes").getOrElse(8), 1, 24)
                 val heatDays = clamp(intOf(input, "heatDays").getOrElse(84), 7, 400)
                 // 唯一取数口：既有只读数据面（与面板端点同一个 build）。
-                nebflow.core.project.GitGraph.build(
-                  project = binding.fileName,
-                  workspace = binding.file,
-                  limit = limit,
-                  lanes = lanes,
-                  heatDays = heatDays
-                ).asJson.noSpaces
+                nebflow.core.project.GitGraph
+                  .build(
+                    project = binding.fileName,
+                    workspace = binding.file,
+                    limit = limit,
+                    lanes = lanes,
+                    heatDays = heatDays
+                  )
+                  .asJson
+                  .noSpaces
               }.map(Right(_))
           }
+    end if
   end call
 end GitVizGraphTool

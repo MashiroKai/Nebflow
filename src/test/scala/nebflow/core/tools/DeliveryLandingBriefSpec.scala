@@ -63,7 +63,10 @@ class DeliveryLandingBriefSpec extends FunSuite:
     assert(plain.endsWith(NodeEngine.ProtocolFootnote), "identity pin intact")
     val verifier = NodeEngine.protocolFootnoteFor(Some("verifier"))
     assert(verifier.contains(line), "verifier footnote carries it too")
-    assert(verifier.endsWith(NodeEngine.ProtocolFootnote + "\n" + NodeEngine.VerifierVerdictFootnote), "verifier appendix unchanged")
+    assert(
+      verifier.endsWith(NodeEngine.ProtocolFootnote + "\n" + NodeEngine.VerifierVerdictFootnote),
+      "verifier appendix unchanged"
+    )
   }
 
 end DeliveryLandingBriefSpec

@@ -14,7 +14,19 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{BgTaskRegistry, FileLockManager, ShellSession}
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.llm.{ModelCandidate, ProviderHealthMonitor}
-import nebflow.shared.{Defaults, FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, ThinkingConfig, SubAgentTask}
+import nebflow.shared.{
+  Defaults,
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  ThinkingConfig,
+  SubAgentTask
+}
 
 import scala.concurrent.duration.*
 
@@ -114,9 +126,10 @@ class BackoffSupervisorSupervisionCheckSpec extends CatsEffectSuite:
   private def waitUntil(timeout: FiniteDuration, every: Long = 20L)(cond: IO[Boolean]): IO[Unit] =
     def go(deadline: Long): IO[Unit] =
       cond.flatMap {
-        case true  => IO.unit
+        case true => IO.unit
         case false =>
-          if System.currentTimeMillis() >= deadline then IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
+          if System.currentTimeMillis() >= deadline then
+            IO.raiseError(new AssertionError("waitUntil: condition not met in time"))
           else IO.sleep(every.millis) >> go(deadline)
       }
     go(System.currentTimeMillis() + timeout.toMillis)
@@ -130,12 +143,10 @@ class BackoffSupervisorSupervisionCheckSpec extends CatsEffectSuite:
     yield ()
 
   private def cleanupJobs(sessionId: String, jobIds: List[String]): IO[Unit] =
-    jobIds
-      .traverse { j =>
-        ShellSession.peekSession(sessionId).flatMap(_.fold(IO.unit)(s => s.cancelBackgroundJob(j).attempt.void)) *>
-          BgTaskRegistry.unregister(j).attempt.void
-      }
-      .void *>
+    jobIds.traverse { j =>
+      ShellSession.peekSession(sessionId).flatMap(_.fold(IO.unit)(s => s.cancelBackgroundJob(j).attempt.void)) *>
+        BgTaskRegistry.unregister(j).attempt.void
+    }.void *>
       ShellSession.destroySession(sessionId).attempt.void *>
       BgTaskRegistry.unregisterSession(Some(sessionId)).attempt.void
 
@@ -180,20 +191,54 @@ class BackoffSupervisorSupervisionCheckSpec extends CatsEffectSuite:
     assertEquals(BackoffSupervisor.supervisionCheckIntervalMs(List(600000L, 1800000L, 3600000L), 0L), Some(600000L))
     assertEquals(BackoffSupervisor.supervisionCheckIntervalMs(List(600000L, 1800000L, 3600000L), 1L), Some(1800000L))
     assertEquals(BackoffSupervisor.supervisionCheckIntervalMs(List(600000L, 1800000L, 3600000L), 2L), Some(3600000L))
-    assertEquals(BackoffSupervisor.supervisionCheckIntervalMs(List(600000L, 1800000L, 3600000L), 3L), Some(3600000L), "ladder caps at the last rung (60min)")
+    assertEquals(
+      BackoffSupervisor.supervisionCheckIntervalMs(List(600000L, 1800000L, 3600000L), 3L),
+      Some(3600000L),
+      "ladder caps at the last rung (60min)"
+    )
     assertEquals(BackoffSupervisor.supervisionCheckIntervalMs(List(600000L, 1800000L, 3600000L), 99L), Some(3600000L))
     assertEquals(BackoffSupervisor.supervisionCheckIntervalMs(Nil, 0L), None, "empty ladder = check leg disabled")
-    assertEquals(BackoffSupervisor.supervisionCheckIntervalMs(List(0L, -1L), 0L), None, "non-positive rungs = check leg disabled")
+    assertEquals(
+      BackoffSupervisor.supervisionCheckIntervalMs(List(0L, -1L), 0L),
+      None,
+      "non-positive rungs = check leg disabled"
+    )
   }
 
   test("P1 supervision-check wakes the held delegate session back to the supervisor (Completed回流)") {
     assert(
-      AgentIdle.wakeContinuationApplies(isFlowNode = false, sessionId = Some("delegate-x"), eventSource = "supervision-check", isDelegateSession = true),
+      AgentIdle.wakeContinuationApplies(
+        isFlowNode = false,
+        sessionId = Some("delegate-x"),
+        eventSource = "supervision-check",
+        isDelegateSession = true
+      ),
       "supervision-check must re-arm the supervisorRef replyTo or the supervisor is stranded in hold"
     )
-    assert(AgentIdle.wakeContinuationApplies(isFlowNode = false, sessionId = Some("delegate-x"), eventSource = "background-task", isDelegateSession = true))
-    assert(!AgentIdle.wakeContinuationApplies(isFlowNode = false, sessionId = Some("delegate-x"), eventSource = "supervision-check", isDelegateSession = false))
-    assert(!AgentIdle.wakeContinuationApplies(isFlowNode = false, sessionId = Some("delegate-x"), eventSource = "mail", isDelegateSession = true))
+    assert(
+      AgentIdle.wakeContinuationApplies(
+        isFlowNode = false,
+        sessionId = Some("delegate-x"),
+        eventSource = "background-task",
+        isDelegateSession = true
+      )
+    )
+    assert(
+      !AgentIdle.wakeContinuationApplies(
+        isFlowNode = false,
+        sessionId = Some("delegate-x"),
+        eventSource = "supervision-check",
+        isDelegateSession = false
+      )
+    )
+    assert(
+      !AgentIdle.wakeContinuationApplies(
+        isFlowNode = false,
+        sessionId = Some("delegate-x"),
+        eventSource = "mail",
+        isDelegateSession = true
+      )
+    )
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -242,7 +287,7 @@ class BackoffSupervisorSupervisionCheckSpec extends CatsEffectSuite:
       checks = checkTimes(records)
       gaps = checks match
         case h :: t => (h :: t).sliding(2).map(p => p(1) - p(0)).toList
-        case Nil    => Nil
+        case Nil => Nil
       firstDelay = checks.headOption.map(_ - t0).getOrElse(0L)
       tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
       _ <- cleanupJobs(childSid, List(jobA))
@@ -250,11 +295,22 @@ class BackoffSupervisorSupervisionCheckSpec extends CatsEffectSuite:
     yield
       assertEquals(checks.length, 3, s"exactly the three ladder checks fired (t=$checks)")
       assert(math.abs(firstDelay - 300L) <= 160L, s"first check ~300ms after hold, got $firstDelay")
-      assert(gaps.length == 2 && math.abs(gaps(0) - 500L) <= 160L && math.abs(gaps(1) - 700L) <= 160L, s"ladder gaps must be 500/700, got $gaps")
+      assert(
+        gaps.length == 2 && math.abs(gaps(0) - 500L) <= 160L && math.abs(gaps(1) - 700L) <= 160L,
+        s"ladder gaps must be 500/700, got $gaps"
+      )
       assertEquals(mails.size, 0, "final settlement is suppressed while the child has in-flight background work")
-      assertEquals(tasks.find(_.taskId == childSid).map(_.status), Some("running"), "the task row stays running — the parent keeps its supervision obligation")
+      assertEquals(
+        tasks.find(_.taskId == childSid).map(_.status),
+        Some("running"),
+        "the task row stays running — the parent keeps its supervision obligation"
+      )
       val injected = records.collect { case (_, e: AgentCommand.ExternalEvent) => e }
-      assert(injected.forall(_.metadata("targetSessionId").flatMap(_.asString).contains(childSid)), "every check is traceable to its target session")
+      assert(
+        injected.forall(_.metadata("targetSessionId").flatMap(_.asString).contains(childSid)),
+        "every check is traceable to its target session"
+      )
+    end for
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -308,13 +364,17 @@ class BackoffSupervisorSupervisionCheckSpec extends CatsEffectSuite:
       gapAfterWake = checks.lift(1).map(_ - tWake).getOrElse(-1L)
       gap3 = checks match
         case a :: b :: c :: _ => c - b
-        case _                => -1L
+        case _ => -1L
       _ <- cleanupJobs(childSid, List(jobA, jobB))
       _ <- system.stopAll
     yield
       assert(checks.length >= 3, s"three checks expected (t=$checks)")
-      assert(math.abs(gapAfterWake - 300L) <= 170L, s"after real progress the NEXT check returns to rung 1 (~300ms), got $gapAfterWake (ladder would be 500)")
+      assert(
+        math.abs(gapAfterWake - 300L) <= 170L,
+        s"after real progress the NEXT check returns to rung 1 (~300ms), got $gapAfterWake (ladder would be 500)"
+      )
       assert(math.abs(gap3 - 500L) <= 190L, s"the ladder then backs off again (~500ms), got $gap3")
+    end for
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -369,9 +429,17 @@ class BackoffSupervisorSupervisionCheckSpec extends CatsEffectSuite:
       _ <- system.stopAll
     yield
       assertEquals(checks.count(_ < tCancel - 60L), 1, "exactly the pre-cancel ladder check fired")
-      assert(checks.forall(_ <= tCancel + 60L), s"no check may fire after cancel (t=$checks, cancel=$tCancel) — the cancelled generation must not revive")
+      assert(
+        checks.forall(_ <= tCancel + 60L),
+        s"no check may fire after cancel (t=$checks, cancel=$tCancel) — the cancelled generation must not revive"
+      )
       assertEquals(mails.count(_.event.eventType == "cancelled"), 1, "the cancelled terminal is delivered exactly once")
-      assertEquals(debt.toOption.flatten.map(_.phase), Some("cancelled"), "cancellation writes the durable debt tombstone")
+      assertEquals(
+        debt.toOption.flatten.map(_.phase),
+        Some("cancelled"),
+        "cancellation writes the durable debt tombstone"
+      )
+    end for
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -455,11 +523,26 @@ class BackoffSupervisorSupervisionCheckSpec extends CatsEffectSuite:
     yield
       assert(seededGen.nonEmpty, "the durable generation was minted at record time")
       assertEquals(mailsAfterRelease.size, 1, "the final synthesis settles exactly once")
-      assert(mailsAfterRelease.head.event.payload.contains("final synthesized report"), "the delivered payload is the real report, not an intermediate summary")
-      assert(mailsAfterRelease.head.identity.startsWith(s"$childSid#"), s"terminal identity carries the generation: ${mailsAfterRelease.head.identity}")
-      assertEquals(mailsAfterRebuild.size, 1, "the rebuilt supervisor replays the SAME generation — no second copy, no re-synthesis")
-      assertEquals(debt.toOption.flatten.map(_.phase), Some("settled"), "the replay confirms and settles the debt via the acceptance path")
+      assert(
+        mailsAfterRelease.head.event.payload.contains("final synthesized report"),
+        "the delivered payload is the real report, not an intermediate summary"
+      )
+      assert(
+        mailsAfterRelease.head.identity.startsWith(s"$childSid#"),
+        s"terminal identity carries the generation: ${mailsAfterRelease.head.identity}"
+      )
+      assertEquals(
+        mailsAfterRebuild.size,
+        1,
+        "the rebuilt supervisor replays the SAME generation — no second copy, no re-synthesis"
+      )
+      assertEquals(
+        debt.toOption.flatten.map(_.phase),
+        Some("settled"),
+        "the replay confirms and settles the debt via the acceptance path"
+      )
       assertEquals(checkTimes(records).length, 0, "a clean release injects no supervision checks")
       assert(rebuild != null)
+    end for
   }
 end BackoffSupervisorSupervisionCheckSpec

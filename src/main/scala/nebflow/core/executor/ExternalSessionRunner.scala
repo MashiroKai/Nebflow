@@ -256,8 +256,15 @@ You will be notified when it completes via a system message. Do NOT duplicate th
     resources: AgentRuntimePort,
     messageId: String = java.util.UUID.randomUUID().toString
   ): IO[Either[String, String]] =
-    continueExternalResolved(record, message, parentRef, wsSend, resources, messageId,
-      id => ExecutorRegistry.resolveRequested(Some(id)))
+    continueExternalResolved(
+      record,
+      message,
+      parentRef,
+      wsSend,
+      resources,
+      messageId,
+      id => ExecutorRegistry.resolveRequested(Some(id))
+    )
 
   private[executor] def continueExternalResolved(
     record: DelegateRegistry.Record,
@@ -308,22 +315,41 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               sessionGate(sid).flatMap(_.lock.surround {
                 import nebflow.core.mail.{InputMailbox, InputPayload}
                 for
-                  result <- InputMailbox.enqueue(sid, InputPayload(InputPayload.KindUser, message), messageId, continuationProducer)
+                  result <- InputMailbox.enqueue(
+                    sid,
+                    InputPayload(InputPayload.KindUser, message),
+                    messageId,
+                    continuationProducer
+                  )
                   response <- result match
-                    case InputMailbox.InputMailResult.Failed(cause) => IO.pure(Left(s"External mail was not queued: $cause"))
+                    case InputMailbox.InputMailResult.Failed(cause) =>
+                      IO.pure(Left(s"External mail was not queued: $cause"))
                     case InputMailbox.InputMailResult.AlreadyPresent =>
-                      IO.pure(Right(s"[delegate #$sid] Duplicate message id already present or delivered; no new turn was started."))
+                      IO.pure(
+                        Right(
+                          s"[delegate #$sid] Duplicate message id already present or delivered; no new turn was started."
+                        )
+                      )
                     case _ =>
                       executions.get.flatMap { current =>
                         if current.contains(sid) then
-                          IO.pure(Right(s"[delegate #$sid] Message durably queued; it will be delivered after the current turn ends."))
+                          IO.pure(
+                            Right(
+                              s"[delegate #$sid] Message durably queued; it will be delivered after the current turn ends."
+                            )
+                          )
                         else
                           drainContinuationsLocked(record, ex, spec).attempt.map {
-                            case Right(_) => Right(s"[delegate #$sid] Message durably queued; continuation processing has started.")
-                            case Left(error) => Left(s"Message was durably queued, but continuation requires recovery: ${error.getMessage}")
+                            case Right(_) =>
+                              Right(s"[delegate #$sid] Message durably queued; continuation processing has started.")
+                            case Left(error) =>
+                              Left(
+                                s"Message was durably queued, but continuation requires recovery: ${error.getMessage}"
+                              )
                           }
                       }
                 yield response
+                end for
               })
             case Right(ExecutorRegistry.ResolvedSelection.Internal) =>
               IO.pure(
@@ -348,10 +374,19 @@ You will be notified when it completes via a system message. Do NOT duplicate th
         for
           claimed <- InputMailbox.take(record.id, List(entry))
           _ <- IO.raiseWhen(claimed.isEmpty)(new IllegalStateException("External continuation could not be claimed"))
-          _ <- startResumeTurn(record, ex, entry.payload.text, spec.copy(task = entry.payload.text, continuationInputId = Some(entry.identity)))
+          _ <- startResumeTurn(
+            record,
+            ex,
+            entry.payload.text,
+            spec.copy(task = entry.payload.text, continuationInputId = Some(entry.identity))
+          )
         yield ()
       }
     yield ()
+
+    end for
+
+  end drainContinuationsLocked
 
   /** 终态后续起的 turn：CLI resume（cliSessionId 在手）或带前文的续聊 brief。 */
   private def startResumeTurn(
@@ -822,9 +857,8 @@ You will be notified when it completes via a system message. Do NOT duplicate th
                 .acknowledgeNotification(spec.parentSessionId, sessionId, run.runId, s"$sessionId#${run.runId}")
                 .flatMap(requireCommit)
             )
-            _ <- spec.continuationInputId.traverse_(id =>
-              IO.blocking(nebflow.core.mail.InputMailbox.unlinkTakenSync(sessionId, List(id)))
-            )
+            _ <- spec.continuationInputId
+              .traverse_(id => IO.blocking(nebflow.core.mail.InputMailbox.unlinkTakenSync(sessionId, List(id))))
             _ <- emitFrame(spec.wsSend, spec.rootSessionId, spec.parentSessionId, sessionId)(
               Json.obj(
                 "type" -> "agentDone".asJson,
@@ -841,13 +875,17 @@ You will be notified when it completes via a system message. Do NOT duplicate th
               )
             }
             .guarantee(releaseExecution(sessionId, run, spec)) *>
-            IO.blocking(DelegateRegistry.find(sessionId)).flatMap {
-              case Some(record) =>
-                ExternalExecutor.forId(record.executor).fold(IO.unit)(ex =>
-                  drainContinuationsLocked(record, ex, spec.copy(continuationInputId = None))
-                )
-              case None => IO.unit
-            }.handleErrorWith(error => logger.warn(s"External continuation remains pending for $sessionId: ${error.getMessage}"))
+            IO.blocking(DelegateRegistry.find(sessionId))
+              .flatMap {
+                case Some(record) =>
+                  ExternalExecutor
+                    .forId(record.executor)
+                    .fold(IO.unit)(ex => drainContinuationsLocked(record, ex, spec.copy(continuationInputId = None)))
+                case None => IO.unit
+              }
+              .handleErrorWith(error =>
+                logger.warn(s"External continuation remains pending for $sessionId: ${error.getMessage}")
+              )
       }
 
   private[executor] def reconstructRunText(messages: List[Message], runId: String): String =

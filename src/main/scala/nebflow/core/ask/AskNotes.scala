@@ -77,6 +77,8 @@ enum AskNoteWrite:
   /** The stored record cannot be read, so it must not be overwritten. Nothing written. */
   case ReadFailed(message: String)
 
+end AskNoteWrite
+
 final class AskNoteStore(dataRoot: os.Path):
   import AskNoteStore.*
 
@@ -118,6 +120,8 @@ final class AskNoteStore(dataRoot: os.Path):
       case NonFatal(e) =>
         logger.warn(s"ask note read failed: $sid: ${e.getMessage}")
         Stored.Unreadable(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
+
+  end readStored
 
   /** Read one note. A missing note is an empty snapshot; an unreadable one carries `error` and no text. */
   def read(sid: String): IO[AskNoteSnapshot] =
@@ -181,6 +185,7 @@ final class AskNoteStore(dataRoot: os.Path):
       case NonFatal(e) =>
         logger.warn(s"ask note write failed: $sid: ${e.getMessage}")
         AskNoteWrite.Failed(Option(e.getMessage).getOrElse(e.getClass.getSimpleName))
+  end store
 end AskNoteStore
 
 object AskNoteStore:

@@ -36,7 +36,11 @@ class DelegateIndexStage3Spec extends FunSuite:
     PathUtil.setDataRoot(originalRoot)
     os.remove.all(tmp)
 
-  private def mkRecord(id: String, createdAt: Long = System.currentTimeMillis(), archivedAt: Option[Long] = None): DelegateRegistry.Record =
+  private def mkRecord(
+    id: String,
+    createdAt: Long = System.currentTimeMillis(),
+    archivedAt: Option[Long] = None
+  ): DelegateRegistry.Record =
     val rec = DelegateRegistry.Record(
       id = id,
       executor = "nebflow",
@@ -50,6 +54,7 @@ class DelegateIndexStage3Spec extends FunSuite:
     )
     DelegateRegistry.put(rec)
     rec
+  end mkRecord
 
   private def indexDb: os.Path = PathUtil.dataRoot / "delegate-index" / "delegates.db"
 
@@ -71,7 +76,8 @@ class DelegateIndexStage3Spec extends FunSuite:
 
     assert(
       os.exists(indexDb),
-      "the load path must persist the corpus into <root>/delegate-index/delegates.db (indexed persistence)")
+      "the load path must persist the corpus into <root>/delegate-index/delegates.db (indexed persistence)"
+    )
     assertEquals(indexRowCount(indexDb), ids.size, "the index must hold one row per identity")
   }
 
@@ -99,7 +105,8 @@ class DelegateIndexStage3Spec extends FunSuite:
     assert(!os.exists(record), "the identity record is physically cleaned")
     assert(
       !os.exists(ledger),
-      "the append-only round ledger must be physically cleaned with its identity — a retained ledger is an orphan ledger")
+      "the append-only round ledger must be physically cleaned with its identity — a retained ledger is an orphan ledger"
+    )
     assertEquals(DelegateRegistry.list().map(_.id), Nil)
   }
 

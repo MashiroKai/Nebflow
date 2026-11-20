@@ -137,7 +137,10 @@ class DeviceCredentialIdentitySpec extends FunSuite:
     assert(decode[DeviceCredential](os.read(target / "neblink" / "device.json")).isRight)
     assert(decode[nebflow.neblink.core.NeblinkConfig](os.read(target / "neblink" / "config.json")).isRight)
     if !scala.util.Properties.isWin then
-      assertEquals(Files.getPosixFilePermissions((target / "neblink" / "device.json").toNIO), PosixFilePermissions.fromString("rw-------"))
+      assertEquals(
+        Files.getPosixFilePermissions((target / "neblink" / "device.json").toNIO),
+        PosixFilePermissions.fromString("rw-------")
+      )
   }
 
   // ── R1 身份面 ──────────────────────────────────────────────────────────

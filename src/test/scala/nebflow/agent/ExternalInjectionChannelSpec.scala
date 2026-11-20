@@ -101,8 +101,7 @@ class ExternalInjectionChannelSpec extends FunSuite:
       InjectionChannel.resetForTest()
       val frames = new AtomicInteger(0)
       var lastFrame: Option[Json] = None
-      val send: InjectionChannel.Send = j =>
-        IO { frames.incrementAndGet(); lastFrame = Some(j) }
+      val send: InjectionChannel.Send = j => IO { frames.incrementAndGet(); lastFrame = Some(j) }
 
       val body = "[bg-lifecycle] background job 'x' has been idle for a while: nudge"
       val out = InjectionChannel.deliver(store, send, Sid, row(body, "bg-lifecycle"), dedup = true).unsafeRunSync()
@@ -128,7 +127,8 @@ class ExternalInjectionChannelSpec extends FunSuite:
       InjectionChannel.resetForTest()
       val body = "[bg-lifecycle] job 123 is still running"
       val store1 = new SessionStore(root / "sessions", root / "tasks")
-      InjectionChannel.deliver(store1, _ => IO.unit, Sid, row(body, "bg-lifecycle", "nudge"), dedup = true)
+      InjectionChannel
+        .deliver(store1, _ => IO.unit, Sid, row(body, "bg-lifecycle", "nudge"), dedup = true)
         .unsafeRunSync()
       store1.flushPendingUiWrites.unsafeRunSync()
       // 新实例 = 刷新后的进程视图（缓存清空，只能从盘上读）。
@@ -141,10 +141,13 @@ class ExternalInjectionChannelSpec extends FunSuite:
       try os.remove.all(root)
       catch case _: Throwable => ()
 
+    end try
+
   test("failed broadcast is not reported as emitted"):
     withStore { (store, _) =>
-      val result = InjectionChannel.deliver(store, _ => IO.raiseError(new RuntimeException("fixture")), Sid,
-        row("failure fixture", "delegate")).unsafeRunSync()
+      val result = InjectionChannel
+        .deliver(store, _ => IO.raiseError(new RuntimeException("fixture")), Sid, row("failure fixture", "delegate"))
+        .unsafeRunSync()
       assertNotEquals(result, InjectionChannel.Outcome.Emitted, "failed broadcast must be observable")
     }
 

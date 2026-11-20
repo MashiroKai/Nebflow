@@ -74,10 +74,14 @@ object PendingRecord:
     )
 
   /** 闭单行（追加的决议事件：同 requestId 新行，state=closed——原行字节不动）。 */
-  def closeRow(base: PendingRecord, seq: Long, closedAt: Long, closedBy: String,
-    closeReason: String): PendingRecord =
-    base.copy(seq = seq, state = StateClosed, closedAt = Some(closedAt),
-      closedBy = Some(closedBy), closeReason = Some(closeReason))
+  def closeRow(base: PendingRecord, seq: Long, closedAt: Long, closedBy: String, closeReason: String): PendingRecord =
+    base.copy(
+      seq = seq,
+      state = StateClosed,
+      closedAt = Some(closedAt),
+      closedBy = Some(closedBy),
+      closeReason = Some(closeReason)
+    )
 
   // 字段序 = 设计 §3.4(c) 样例序（对拍面）。
   given Encoder[PendingRecord] = r =>
@@ -112,7 +116,20 @@ object PendingRecord:
       closedAt <- c.downField("closedAt").as[Option[Long]]
       closedBy <- c.downField("closedBy").as[Option[String]]
       closeReason <- c.downField("closeReason").as[Option[String]]
-    yield PendingRecord(seq, requestId, kind, root, source, agent, question, digest, createdAt,
-      state, closedAt, closedBy, closeReason)
+    yield PendingRecord(
+      seq,
+      requestId,
+      kind,
+      root,
+      source,
+      agent,
+      question,
+      digest,
+      createdAt,
+      state,
+      closedAt,
+      closedBy,
+      closeReason
+    )
 
 end PendingRecord

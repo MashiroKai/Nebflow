@@ -47,7 +47,7 @@ class NfThumbSweepSpec extends FunSuite:
     mk(dir, thumb("4" * 32, 480) + ".jpg", 100, now - 1 * Day)
     mk(dir, thumb("5" * 32, 480) + ".jpg", 100, now - 2 * Hour)
     val before = names(dir)
-    NfThumb.store(dir, thumb(Cid, 1280), Array.fill[Byte](50)(0x42), "jpg")   // 落盘 + 顺手清扫
+    NfThumb.store(dir, thumb(Cid, 1280), Array.fill[Byte](50)(0x42), "jpg") // 落盘 + 顺手清扫
     val after = names(dir)
     println(s"[T1] 年龄腿 before=${before.size} after=${after.size}（3 过期 + 2 新 + 本次 1）")
     assertEquals(after.size, 3, s"过期件应删净，新件与本次落盘应留：$after")
@@ -68,12 +68,18 @@ class NfThumbSweepSpec extends FunSuite:
     val n0 = thumb(f"${0}%032x", 480) + ".jpg"
     val n249 = thumb(f"${249}%032x", 480) + ".jpg"
     val kept = os.list(dir)
-    println(s"[T2-diag] kept=${after.size} minMtime=${kept.map(os.mtime).min - now}ms maxMtime=${kept.map(os.mtime).max - now}ms "
-      + s"oldest_kept=${if after.contains(n0) then "在" else "无"} newest_kept=${if after.contains(n249) then "在" else "无"} "
-      + s"head=${after.head.take(12)} tail=${after.last.take(12)}")
+    println(
+      s"[T2-diag] kept=${after.size} minMtime=${kept.map(os.mtime).min - now}ms maxMtime=${kept.map(os.mtime).max - now}ms "
+        + s"oldest_kept=${if after.contains(n0) then "在" else "无"} newest_kept=${
+            if after.contains(n249) then "在" else "无"
+          } "
+        + s"head=${after.head.take(12)} tail=${after.last.take(12)}"
+    )
     val oldestKilled = !after.contains(n0)
-    println(s"[T2] 容量腿 before=$before after=${after.size} 最旧被清=$oldestKilled "
-      + s"（上限 200 ⇒ 应留 200：最新 200 条 = 本轮 1 件 + 上一轮最新 199 件）")
+    println(
+      s"[T2] 容量腿 before=$before after=${after.size} 最旧被清=$oldestKilled "
+        + s"（上限 200 ⇒ 应留 200：最新 200 条 = 本轮 1 件 + 上一轮最新 199 件）"
+    )
     assert(after.size <= 200, s"不得超过上限：${after.size}")
     assertEquals(after.size, 200, s"上限内不得过度淘汰：${after.size}（应恰好 200）")
     assert(oldestKilled, "最旧的条目必须被清")
@@ -120,3 +126,4 @@ class NfThumbSweepSpec extends FunSuite:
     println(s"[T5] 边界腿 before=200 after=${after.size}（应留 200：最新 200 条）")
     assertEquals(after.size, 200, s"恰好上限时不得清空（应留最新 200）：${after.size}")
   }
+end NfThumbSweepSpec

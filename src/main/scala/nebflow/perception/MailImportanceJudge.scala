@@ -76,7 +76,7 @@ $clipped"""
     (hasD, hasX) match
       case (true, false) => L1Verdict.Deliver
       case (false, true) => L1Verdict.Drop
-      case _             => L1Verdict.Unavailable
+      case _ => L1Verdict.Unavailable
 
   /**
    * 生产判定腿：resources.llm.send 一次调用（AgentPingpong `.send.attempt` 同形）
@@ -84,16 +84,17 @@ $clipped"""
    * （搁置 spool）。挂在 PerceptionCore 的 judge seam 后面。
    */
   def judgeViaLlm(
-      send: LlmRequest => IO[LlmRespLike]
+    send: LlmRequest => IO[LlmRespLike]
   )(mail: IncomingMail): IO[L1Verdict] =
     send(promptFor(mail))
       .timeout(TimeoutSec.seconds)
       .attempt
       .map {
         case Right(resp) => parseVerdict(resp.reply)
-        case Left(_)     => L1Verdict.Unavailable
+        case Left(_) => L1Verdict.Unavailable
       }
 
   /** 结构最小面（避开 shared LlmResponse 的重依赖，spec 桩可直构）。 */
   trait LlmRespLike:
     def reply: String
+end MailImportanceJudge

@@ -67,9 +67,17 @@ object AskPathBoundary:
         val resolved = resolveSpelling(bound, raw)
         if !Files.exists(resolved) then
           // 断链软链 / 不存在的硬拼写同落此处：ask 面永不创建文件。
-          Decision(false, resolved.toString, refusal(s"the requested path does not exist (${resolved.toString}) — the ask face never creates files"))
+          Decision(
+            false,
+            resolved.toString,
+            refusal(s"the requested path does not exist (${resolved.toString}) — the ask face never creates files")
+          )
         else if Files.isDirectory(resolved) then
-          Decision(false, resolved.toString, refusal(s"the requested path is a directory, not a document (${resolved.toString})"))
+          Decision(
+            false,
+            resolved.toString,
+            refusal(s"the requested path is a directory, not a document (${resolved.toString})")
+          )
         else if !Files.exists(bound) then
           Decision(false, resolved.toString, refusal(s"the bound document no longer exists (${bound.toString})"))
         else
@@ -86,6 +94,7 @@ object AskPathBoundary:
                   s"(requested ${resolved.toString} → ${requestedReal.toString}; bound ${boundReal.toString})"
               )
             )
+        end if
       catch
         case NonFatal(e) =>
           Decision(
@@ -95,6 +104,10 @@ object AskPathBoundary:
               s"the requested path could not be resolved (${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)})"
             )
           )
+
+    end if
+
+  end decideSync
 
   /**
    * 拼写归一：绝对拼写直接用；相对拼写按**绑定文件的父目录**解析（该会话 cwd 的

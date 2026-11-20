@@ -103,7 +103,8 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
         hotAfter = ChainLedger.Totals(),
         entries = List(ChainLedger.Entry(s"chain-$n", s"node-$n", t0, List(s"node-$n"), 1))
       )
-    val payloadNames = List("round-1.json", "round-2.json.gz", "bundle.jsonl", "bundle.jsonl.gz", "chain-ledger-rounds-copy.jsonl")
+    val payloadNames =
+      List("round-1.json", "round-2.json.gz", "bundle.jsonl", "bundle.jsonl.gz", "chain-ledger-rounds-copy.jsonl")
     def write(name: String, text: String): Unit =
       val file = arch / name
       if name.endsWith(".gz") then
@@ -127,10 +128,17 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
       expectedBytes <- IO.blocking((payloadNames :+ "damaged.json").map(name => os.size(arch / name)).sum)
       resolved <- store.resolveDeep("chain-4")
     yield
-      assertEquals(rounds.map(_.round), List(1, 2, 3, 4, 5), "all payload formats and non-reserved names remain visible")
+      assertEquals(
+        rounds.map(_.round),
+        List(1, 2, 3, 4, 5),
+        "all payload formats and non-reserved names remain visible"
+      )
       assertEquals(bytes, expectedBytes, "only payload files consume the cold-read budget")
       assertEquals(resolved, Some("chain-4"), "deep resolution still reads compressed payload bundles")
-      assert(!warnings.exists(_.contains("cold bundle chain-ledger-rounds.jsonl")), "manifest rows are not corrupt payloads")
+      assert(
+        !warnings.exists(_.contains("cold bundle chain-ledger-rounds.jsonl")),
+        "manifest rows are not corrupt payloads"
+      )
       assert(warnings.exists(_.contains("cold file corrupt: damaged.json")), "genuine corrupt payloads still warn")
     run.guarantee(IO.blocking(os.remove.all(d)))
   }

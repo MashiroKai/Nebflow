@@ -87,8 +87,9 @@ object BgTaskReaper:
 
   private[core] def broadcast(frame: Json): IO[Unit] =
     sinkRef.get match
-      case None    => IO.unit
-      case Some(s) => s.broadcast(frame).handleErrorWith(e => logger.warn(s"bg-reaper broadcast failed: ${e.getMessage}"))
+      case None => IO.unit
+      case Some(s) =>
+        s.broadcast(frame).handleErrorWith(e => logger.warn(s"bg-reaper broadcast failed: ${e.getMessage}"))
 
   /**
    * 默认收割面：探 [[BgTaskLiveness.probe]] 全等待集，Dead 即收。
@@ -149,10 +150,13 @@ object BgTaskReaper:
           .traverse(row => probe(row).map(v => (row, v)))
           .flatMap { probed =>
             val dead = probed.collect { case (row, BgTaskLiveness.Dead(reason)) => (row, reason) }
-            dead.traverse_ { case (row, reason) => reapOne(row, reason, system, registry, nowMs) }
+            dead
+              .traverse_ { case (row, reason) => reapOne(row, reason, system, registry, nowMs) }
               .as(ReapReport(dead.map { case (row, reason) => (row.jobId, reason) }, probed.size - dead.size))
           }
-          .handleErrorWith(e => logger.warn(s"bg-reaper scan failed (best-effort): ${e.getMessage}").as(ReapReport(Nil, 0)))
+          .handleErrorWith(e =>
+            logger.warn(s"bg-reaper scan failed (best-effort): ${e.getMessage}").as(ReapReport(Nil, 0))
+          )
     }
 
   /** 单行收割（取走式——行不在册 ⇒ no-op，竞速输家零副作用）。 */
@@ -174,24 +178,26 @@ object BgTaskReaper:
             .read(taken.jobId, 0L)
             .map(out => out.map(o => o.output.takeRight(2000)).filter(_.trim.nonEmpty))
             .handleErrorWith(_ => IO.pure(Option.empty[String]))
-          _ <- BgTaskLedger.recordCompletion(taken.sessionId, taken.jobId, taken.description, "failed", payload)
+          _ <- BgTaskLedger
+            .recordCompletion(taken.sessionId, taken.jobId, taken.description, "failed", payload)
             .handleErrorWith(e => logger.warn(s"bg-reaper ledger record failed for ${taken.jobId}: ${e.getMessage}"))
           _ <- BgTaskOutputStore
             .finalizeTask(taken.jobId, "cancelled", None, Some(s"owner lost: $reason"))
             .handleErrorWith(_ => IO.unit)
           _ <- broadcast(
             Json.obj(
-              "type"           -> "backgroundTaskUpdate".asJson,
-              "sessionId"      -> taken.sessionId.asJson,
-              "rootSessionId"  -> taken.rootSessionId.asJson,
-              "taskId"         -> taken.jobId.asJson,
-              "description"    -> taken.description.asJson,
-              "status"         -> "cancelled".asJson,
-              "finishedAt"     -> nowMs.asJson
+              "type" -> "backgroundTaskUpdate".asJson,
+              "sessionId" -> taken.sessionId.asJson,
+              "rootSessionId" -> taken.rootSessionId.asJson,
+              "taskId" -> taken.jobId.asJson,
+              "description" -> taken.description.asJson,
+              "status" -> "cancelled".asJson,
+              "finishedAt" -> nowMs.asJson
             )
           )
           _ <- injectAlongChain(taken, payload, system, registry)
-        yield ()).handleErrorWith(e => logger.warn(s"bg-reaper reap of ${taken.jobId} partially failed: ${e.getMessage}"))
+        yield ())
+          .handleErrorWith(e => logger.warn(s"bg-reaper reap of ${taken.jobId} partially failed: ${e.getMessage}"))
     }
 
   /**
@@ -275,6 +281,10 @@ object BgTaskReaper:
         }
       yield ()
 
+    end if
+
+  end injectAlongChain
+
   /** 「上级知情」一跳载荷（标注 owner 身份：读的人立刻知道不是自己的作业）。 */
   def ownerUnreachableNote(row: BgTaskRegistry.ActiveTask, owner: String, parent: String): String =
     s"[Background task terminated · owner-unreachable] '${row.description}' (jobId=${row.jobId}) belongs to session " +
@@ -306,7 +316,7 @@ object BgTaskReaper:
     sessionId: String
   ): IO[Option[ActorRef[AgentCommand]]] =
     registry match
-      case None      => IO.pure(None)
+      case None => IO.pure(None)
       case Some(reg) => reg.get.map(_.get(sessionId).map(_.ref))
 
   /**
@@ -322,7 +332,7 @@ object BgTaskReaper:
       case None => IO.pure(false)
       case Some(ref) =>
         system match
-          case None      => IO.pure(true)
+          case None => IO.pure(true)
           case Some(sys) => sys.isAlive(ref.path).handleErrorWith(_ => IO.pure(true))
     }
 

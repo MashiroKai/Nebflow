@@ -142,7 +142,11 @@ class DelegateAutoArchiveSpec extends CatsEffectSuite:
       // 零删除纪律：记录本体原样（title/branch 原值留存——历史窗读的是全记录）。
       assertEquals(rec1.map(_.title), Some("seeded"))
       assertEquals(rec1.flatMap(_.branch), Some("delegate/delegate-nebflow-aa1"))
-      assertEquals(rec1.map(_.createdAt), rec2.map(_.createdAt), "idempotent: the record body is untouched across reruns")
+      assertEquals(
+        rec1.map(_.createdAt),
+        rec2.map(_.createdAt),
+        "idempotent: the record body is untouched across reruns"
+      )
       assert(os.exists(tempRoot / "delegates" / "delegate-nebflow-aa1.json"), "zero deletion: the record file stays")
     end for
   }
@@ -170,7 +174,11 @@ class DelegateAutoArchiveSpec extends CatsEffectSuite:
           .flatMap(_.payload.hcursor.get[String]("verdict").toOption)
           .lastOption
       assertEquals(verdictOf("delegate-nebflow-aa3"), Some("failed"), "engine verdict rows carry true terminal values")
-      assertEquals(verdictOf("delegate-nebflow-aa4"), Some("cancelled"), "engine verdict rows carry true terminal values")
+      assertEquals(
+        verdictOf("delegate-nebflow-aa4"),
+        Some("cancelled"),
+        "engine verdict rows carry true terminal values"
+      )
       // 引擎不再写任何归档旗（#566 的「blocked 判词豁免」随归档腿整体退役而失去意义）。
       assertEquals(archivedAt("delegate-nebflow-aa2"), None, "a legacy blocked verdict row triggers no archive write")
     end for
@@ -199,14 +207,23 @@ class DelegateAutoArchiveSpec extends CatsEffectSuite:
     // 非破坏性对偶面：清旗回现役（零删除、历史不变）。
     assertEquals(DelegateRegistry.clearDisposition("delegate-nebflow-aa5"), Right(()), "clear removes the flag")
     assertEquals(DelegateRegistry.dispositionOf("delegate-nebflow-aa5"), None, "the flag is gone")
-    assertEquals(DelegateRegistry.clearDisposition("delegate-nebflow-aa5"), Right(()), "clearing again is a zero-write no-op")
-    assert(DelegateRegistry.setDisposition("delegate-nebflow-unknown", DelegateRegistry.DispositionIgnored).isLeft, "unknown id = Left")
+    assertEquals(
+      DelegateRegistry.clearDisposition("delegate-nebflow-aa5"),
+      Right(()),
+      "clearing again is a zero-write no-op"
+    )
+    assert(
+      DelegateRegistry.setDisposition("delegate-nebflow-unknown", DelegateRegistry.DispositionIgnored).isLeft,
+      "unknown id = Left"
+    )
     assert(DelegateRegistry.setDisposition("bad id!", DelegateRegistry.DispositionIgnored).isLeft, "invalid id = Left")
     assert(DelegateRegistry.clearDisposition("delegate-nebflow-unknown").isLeft, "clear on an unknown id = Left")
     assertEquals(DelegateRegistry.find("delegate-nebflow-aa5").map(_.title), Some("seeded"), "zero delete throughout")
   }
 
-  test("④ state-derived windows: settlement alone stays ACTIVE; settlement + marker (legacy flag or disposition) ⇒ history") {
+  test(
+    "④ state-derived windows: settlement alone stays ACTIVE; settlement + marker (legacy flag or disposition) ⇒ history"
+  ) {
     // (a) 存量归档旗、无轮次台账 ⇒ 收口（旧记录观感零变化）。
     seed("delegate-nebflow-aa6", Some("86"), archivedAt = Some(now))
     // (b) 轮次已结算、未表态 ⇒ **活动窗**（新制：用户尚未表态）。
@@ -234,7 +251,10 @@ class DelegateAutoArchiveSpec extends CatsEffectSuite:
     assertEquals(DelegateRegistry.clearDisposition("delegate-nebflow-aa8"), Right(()))
     val active2 = windowIds(archived = false)
     val history2 = windowIds(archived = true)
-    assert(active2.contains("delegate-nebflow-aa8"), s"clearing the flag returns it to the active window; active=$active2")
+    assert(
+      active2.contains("delegate-nebflow-aa8"),
+      s"clearing the flag returns it to the active window; active=$active2"
+    )
     assert(!history2.contains("delegate-nebflow-aa8"), s"and out of the history window; history=$history2")
   }
 
@@ -255,7 +275,10 @@ class DelegateAutoArchiveSpec extends CatsEffectSuite:
       "the row carries the state-derived settled reading"
     )
     // chainJson 双向键（台账号/ delegateId）对历史窗键照常可读。
-    assert(ChainsReadFace.chainJson("810", Map.empty).unsafeRunSync().isDefined, "chainJson by ledger taskNo stays readable")
+    assert(
+      ChainsReadFace.chainJson("810", Map.empty).unsafeRunSync().isDefined,
+      "chainJson by ledger taskNo stays readable"
+    )
     assert(
       ChainsReadFace.chainJson("delegate-nebflow-aa10", Map.empty).unsafeRunSync().isDefined,
       "chainJson by delegateId stays readable (keyFor two-way face)"

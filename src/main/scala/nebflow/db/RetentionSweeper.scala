@@ -56,15 +56,23 @@ object RetentionSweeper:
 
   /** 一轮 sweep；返回 false = 应终止（ReadOnly），true = 续跑。 */
   private def sweepOnce(handle: DbHandle, cfg: Retention.Config): IO[Boolean] =
-    handle.retentionSweep(cfg, System.currentTimeMillis())
+    handle
+      .retentionSweep(cfg, System.currentTimeMillis())
       .flatMap { report =>
         if report.dropped > 0 then
-          IO(log.info(
-            "retention sweep: scanned={} kept={} dropped(age={}, sampling={}) tombstones={} (logical track only)",
-            report.scanned, report.kept, report.dropByAge, report.dropBySampling,
-            report.tombstonesAppended))
+          IO(
+            log.info(
+              "retention sweep: scanned={} kept={} dropped(age={}, sampling={}) tombstones={} (logical track only)",
+              report.scanned,
+              report.kept,
+              report.dropByAge,
+              report.dropBySampling,
+              report.tombstonesAppended
+            )
+          )
         else IO.unit
-      }.as(true)
+      }
+      .as(true)
       .recoverWith {
         case e: DbError.ReadOnly =>
           IO(log.warn("retention sweeper stopping: {}", e.toString)).as(false)

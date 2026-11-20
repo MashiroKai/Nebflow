@@ -138,3 +138,4 @@ class TermIndexSpec extends FunSuite:
     assertEquals(sel, WikiIndex.TermSelection.NotFound)
     assertEquals(reparsed, 0)
   }
+end TermIndexSpec

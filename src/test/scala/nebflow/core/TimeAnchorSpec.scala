@@ -170,7 +170,8 @@ class TimeAnchorSpec extends FunSuite:
 
   test("userLine is not recognized as a legacy prunable time reminder (append-only contract)"):
     val line = nebflow.shared.TimeAnchor.userLine(fixed(SampleMs, ZoneId.of("Asia/Shanghai")))
-    val msg = nebflow.shared.Message(nebflow.shared.MessageRole.User, Left(s"<system-reminder>\n$line\n</system-reminder>"))
+    val msg =
+      nebflow.shared.Message(nebflow.shared.MessageRole.User, Left(s"<system-reminder>\n$line\n</system-reminder>"))
     assert(!SystemReminders.isTimeReminderMessage(msg), "新形态必须不被识别 ⇒ 永不裁剪")
     // 旧形态仍被识别（旧会话历史的裁剪契约不变）
     val legacy = nebflow.shared.TimeAnchor.line(fixed(SampleMs, ZoneId.of("Asia/Shanghai")))

@@ -95,7 +95,10 @@ class PluginRemoveSpec extends FunSuite:
     assert(!os.exists(pluginDir("gx-a")), "① 目录已删除")
     assert(removedTable.contains("gx-a"), "① plugins.removed.<name> 在位")
     assert(removedTable("gx-a").hcursor.downField("deleteDir").as[Boolean].toOption.contains(true), "① 记录 deleteDir 腿")
-    assert(auditLines.exists(line => line.contains("\"removed\"") && line.contains("gx-a")), "① 审计行落 plugin-remove.jsonl")
+    assert(
+      auditLines.exists(line => line.contains("\"removed\"") && line.contains("gx-a")),
+      "① 审计行落 plugin-remove.jsonl"
+    )
 
     val (plugins, rejected) = registryFace
     assert(!plugins.contains("gx-a"), "① 出册：不在 plugins")
@@ -128,7 +131,13 @@ class PluginRemoveSpec extends FunSuite:
     val cfg = PathUtil.configJsonReadPath(home)
     val json = io.circe.parser.parse(os.read(cfg)).toOption.get
     assert(
-      json.hcursor.downField("plugins").downField("revoked").as[Map[String, Json]].toOption.getOrElse(Map.empty).isEmpty,
+      json.hcursor
+        .downField("plugins")
+        .downField("revoked")
+        .as[Map[String, Json]]
+        .toOption
+        .getOrElse(Map.empty)
+        .isEmpty,
       "④ revoked 表零触碰（封禁语义归 PluginBlockPolicy，卸载不越界）"
     )
 

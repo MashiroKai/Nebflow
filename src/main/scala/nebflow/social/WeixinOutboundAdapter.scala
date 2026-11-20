@@ -277,10 +277,10 @@ object WeixinOutboundAdapter:
    * [[buildSendJson]]).
    */
   def buildMediaGroupSendJson(
-      to: String,
-      images: List[String],
-      caption: Option[String] = None,
-      account: Option[String] = None
+    to: String,
+    images: List[String],
+    caption: Option[String] = None,
+    account: Option[String] = None
   ): Json =
     val base = List("to" -> to.asJson, "images" -> images.asJson) ++
       caption.map(c => "text" -> c.asJson).toList ++
@@ -556,6 +556,9 @@ object WeixinOutboundAdapter:
   /** 同 [[sendLive]]：合并图组腿的有界退避重载。 */
   def sendMediaGroupLive(root: os.Path, policy: RetryPolicy): SendGroup =
     (to, images, caption) =>
-      postLive(root, groupReadTimeout(images.size), policy)(to, hint => buildMediaGroupSendJson(to, images, caption, hint))
+      postLive(root, groupReadTimeout(images.size), policy)(
+        to,
+        hint => buildMediaGroupSendJson(to, images, caption, hint)
+      )
 
 end WeixinOutboundAdapter

@@ -69,7 +69,8 @@ object ImageCapabilityRejection:
       .distinct
 
   /** [[rejectingModels]] 的 Boolean 短路形（调用点只想分流时用）。 */
-  def anyRejection(attempts: List[FallbackAttempt]): Boolean = attempts.exists(a => isRejection(a.message.getOrElse("")))
+  def anyRejection(attempts: List[FallbackAttempt]): Boolean =
+    attempts.exists(a => isRejection(a.message.getOrElse("")))
 
   /**
    * 日志侧留痕（**provider/model 字段必带**）：接在既有 permanent-error WARN 行

@@ -57,7 +57,7 @@ class DeviceDelegateBroadcastSpec extends CatsEffectSuite:
       else
         io.circe.parser.parse(os.read(f)) match
           case Right(json) => json.asArray.get.toList
-          case Left(_)     => List.empty[Json]
+          case Left(_) => List.empty[Json]
     }
 
   /** 未接线桩（DeviceDelegateSpawnTrustSpec 的 neverResources 同款：触到即炸——本 spec 只允许碰 neblinkService）。 */
@@ -132,6 +132,8 @@ class DeviceDelegateBroadcastSpec extends CatsEffectSuite:
       def agentRegistry: Ref[IO, Map[String, AgentRecord]] = throw new IllegalStateException("not expected")
       def processingSessionIds: IO[List[String]] = throw new IllegalStateException("not expected")
     end new
+
+  end stubResources
 
   override def afterEach(context: munit.AfterEach): Unit =
     // 复位对象级广播面（跨测试隔离；None = 逐字旧形态）。
@@ -210,7 +212,13 @@ class DeviceDelegateBroadcastSpec extends CatsEffectSuite:
       _ <- hub.registerListener(j => live.update(_ :+ j))
       // 本行即腿⑥帧出 DeviceDelegate 后的链路：spawnBackground 的 routeWsSend 盖章。
       childWsSend = DelegateTool.routeWsSendFor(sid, Some(parent), Some(broadcast))
-      _ <- childWsSend(Json.obj("type" -> "agentTextDelta".asJson, "agentId" -> "nebflow/delegate".asJson, "delta" -> "device leg text".asJson))
+      _ <- childWsSend(
+        Json.obj(
+          "type" -> "agentTextDelta".asJson,
+          "agentId" -> "nebflow/delegate".asJson,
+          "delta" -> "device leg text".asJson
+        )
+      )
       _ <- childWsSend(Json.obj("type" -> "agentDone".asJson, "model" -> "claude-x".asJson))
       _ <- store.flushPendingUiWrites
       frames <- live.get

@@ -125,7 +125,8 @@ class RequestContextAssemblySpec extends CatsEffectSuite:
   /** 恰一条极简时钟行（`Now: … 周X | epoch_ms …`，无旧裸块的推导段）。 */
   private def clockLineCount(text: String): Int =
     raw"<system-reminder>Now: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{2}:\d{2} 周[一二三四五六日] \| epoch_ms \d+</system-reminder>".r
-      .findAllIn(text).size
+      .findAllIn(text)
+      .size
 
   /** 种一个真实 pending 定时任务 ⇒ 真用户轮 `collectAllIO` 产 schedule 类提醒。 */
   private def seedPendingSchedule(resources: SharedResources, sid: String): IO[Unit] =
@@ -182,10 +183,14 @@ class RequestContextAssemblySpec extends CatsEffectSuite:
       yield
         val req2 = reqs(1)
         // C-CHAIN-1: schedule 提醒绝不进持久历史（两轮）
-        assert(!textOf(req1).contains("Pending schedules"),
-          s"turn1: request-only schedule reminder leaked into persisted messages:\n${textOf(req1).take(800)}")
-        assert(!textOf(req2).contains("Pending schedules"),
-          s"turn2: request-only schedule reminder leaked into persisted messages:\n${textOf(req2).take(800)}")
+        assert(
+          !textOf(req1).contains("Pending schedules"),
+          s"turn1: request-only schedule reminder leaked into persisted messages:\n${textOf(req1).take(800)}"
+        )
+        assert(
+          !textOf(req2).contains("Pending schedules"),
+          s"turn2: request-only schedule reminder leaked into persisted messages:\n${textOf(req2).take(800)}"
+        )
         // C-CHAIN-1': 它必须走 requestOnlyContext（本轮真在场——种了 pending 任务）
         assert(
           req1.requestOnlyContext.map(_.textContent).mkString("\n").contains("Pending schedules"),
@@ -197,10 +202,26 @@ class RequestContextAssemblySpec extends CatsEffectSuite:
         )
         // C-CHAIN-2: 持久历史不变量——最后一条 user = 前置时钟行 + 本轮输入
         // （时钟简化批：时钟随用户消息持久化，append-only）；上一轮输入仍在。
-        assertEquals(stripClock(lastUserText(req1)), "first turn", "turn1: last user message must be the trigger input (modulo clock line)")
-        assertEquals(stripClock(lastUserText(req2)), "second turn", "turn2: last user message must be the trigger input (modulo clock line)")
-        assertEquals(clockLineCount(lastUserText(req1)), 1, "turn1: exactly ONE minimal clock line rides the real-user input")
-        assertEquals(clockLineCount(lastUserText(req2)), 1, "turn2: exactly ONE minimal clock line rides the real-user input")
+        assertEquals(
+          stripClock(lastUserText(req1)),
+          "first turn",
+          "turn1: last user message must be the trigger input (modulo clock line)"
+        )
+        assertEquals(
+          stripClock(lastUserText(req2)),
+          "second turn",
+          "turn2: last user message must be the trigger input (modulo clock line)"
+        )
+        assertEquals(
+          clockLineCount(lastUserText(req1)),
+          1,
+          "turn1: exactly ONE minimal clock line rides the real-user input"
+        )
+        assertEquals(
+          clockLineCount(lastUserText(req2)),
+          1,
+          "turn2: exactly ONE minimal clock line rides the real-user input"
+        )
         assert(!lastUserText(req1).contains("── Clock"), "旧裸块（── Clock 分隔块）必须零残留")
         assert(!lastUserText(req1).contains("Derive every relative date"), "旧裸块推导段必须零残留")
         assert(stripClock(textOf(req2)).contains("first turn"), "turn2: persisted history must retain turn1 input")
@@ -211,7 +232,9 @@ class RequestContextAssemblySpec extends CatsEffectSuite:
           "turn1: systemDynamic must carry NO clock (retired, never proactively injected)"
         )
         assert(
-          !req1.requestOnlyContext.exists(m => m.textContent.contains("epoch_ms") || m.textContent.contains("Current time")),
+          !req1.requestOnlyContext.exists(m =>
+            m.textContent.contains("epoch_ms") || m.textContent.contains("Current time")
+          ),
           "turn1: requestOnlyContext must carry NO clock"
         )
       program.unsafeRunSync()

@@ -64,7 +64,9 @@ class SingleInstanceGuardSpec extends FunSuite:
     assertEquals(st, SingleInstanceGuard.PortFree)
   }
 
-  test("other KNOWN brand health (nebflow product marker, zero path evidence) classifies OtherInstance — never focused") {
+  test(
+    "other KNOWN brand health (nebflow product marker, zero path evidence) classifies OtherInstance — never focused"
+  ) {
     // 双生分家批 2026-10-31 红线：健康面品牌词是权威身份，已知异品牌 ⇒ 拒启点名，
     // 绝不 focus。本用例的 occupant 是本测试 JVM 内嵌 HTTP server（命令行无任何
     // 品牌根证据）——正是 10-30 批会误判 focus 的场景。
@@ -207,14 +209,17 @@ class SingleInstanceGuardSpec extends FunSuite:
       val start = System.currentTimeMillis()
       val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 60_000).unsafeRunSync()
       val elapsed = System.currentTimeMillis() - start
-      assert(st.isInstanceOf[SingleInstanceGuard.OtherInstance], s"cross-brand occupant must be refused, not focused, got $st")
+      assert(
+        st.isInstanceOf[SingleInstanceGuard.OtherInstance],
+        s"cross-brand occupant must be refused, not focused, got $st"
+      )
       assert(elapsed < 5_000, s"live occupant must classify instantly, not drain-wait (elapsed=$elapsed)")
     }
 
   // ── 双实例并存批 2026-10-30 立类；判据换代为双生分家批 2026-10-31 ──────────
   // 判据 = **品牌+自己的端口+自己的 home** 三元组，且**绝不跨品牌 focus**：健康面
   // `product` 是 [[SingleInstanceGuard.KnownBrands]] 成员且 ≠ 本构建品牌 ⇒ OtherInstance
-  //（零路径证据要求 —— 10-18 的 rename 兼容腿「无路径证据的 nebflow 词当自家人 focus」
+  // （零路径证据要求 —— 10-18 的 rename 兼容腿「无路径证据的 nebflow 词当自家人 focus」
   // 退役）。路径证据只在同品牌词场景兜底升级（家腿）：listener 命令行落对家品牌根
   // ⇒ OtherInstance。端口腿恒成立（被探口即冲突口）。
 
@@ -234,7 +239,10 @@ class SingleInstanceGuardSpec extends FunSuite:
     // 无 product 字段的 legacy 形态（老构建）：也 focus（ occupant 命令行无品牌根证据时）。
     withHttpServer("""{"status":"ok","version":"1.4.0-beta.48","providers":{}}""") { p =>
       val st = SingleInstanceGuard.checkPort("127.0.0.1", p, drainWaitMs = 0).unsafeRunSync()
-      assert(st.isInstanceOf[SingleInstanceGuard.NebflowInstance], s"legacy shape stays focusable (no brand-root evidence), got $st")
+      assert(
+        st.isInstanceOf[SingleInstanceGuard.NebflowInstance],
+        s"legacy shape stays focusable (no brand-root evidence), got $st"
+      )
     }
   }
 

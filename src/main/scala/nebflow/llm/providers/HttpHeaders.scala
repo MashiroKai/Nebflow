@@ -87,8 +87,11 @@ object HttpHeaders:
         "this is a REQUEST-HEADER problem, not a dead credential; set the provider's `headers` " +
         "(at least user-agent) in the config file. Measured: same key+URL+body returns 200 with an honest UA."
 
+end HttpHeaders
+
 /** 版本串（避免在 providers 包里引 core；缺省回落）。 */
 private[providers] object VersionString:
+
   val value: String =
     try
       Option(getClass.getClassLoader.getResourceAsStream("VERSION"))

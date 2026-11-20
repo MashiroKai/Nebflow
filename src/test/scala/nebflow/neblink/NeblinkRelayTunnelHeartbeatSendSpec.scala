@@ -70,9 +70,11 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
     os.remove.all(os.Path(tmpDir, os.pwd))
     super.afterEach(context)
 
-  /** 可编程假 socket：同步抛出 / 异步失败 / 正常完成，出向开关联动。
-    * Q 段新增 `failFirstN`：前 N 次 sendText 回携 ISE("Send pending") 失败 future
-    * 且**不入队**（JDK 语义：单发位被占 = 帧没上线），之后恢复入队成功。 */
+  /**
+   * 可编程假 socket：同步抛出 / 异步失败 / 正常完成，出向开关联动。
+   * Q 段新增 `failFirstN`：前 N 次 sendText 回携 ISE("Send pending") 失败 future
+   * 且**不入队**（JDK 语义：单发位被占 = 帧没上线），之后恢复入队成功。
+   */
   private final class FakeWebSocket(
     syncThrow: Option[Throwable] = None,
     asyncFail: Option[Throwable] = None,
@@ -82,6 +84,7 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
     val sent = new ConcurrentLinkedQueue[String]()
     @volatile var aborted = false
     private var remainingRejections = failFirstN
+
     override def sendText(data: CharSequence, last: Boolean): CompletableFuture[WebSocket] =
       syncThrow.foreach(t => throw t)
       if remainingRejections > 0 then
@@ -91,20 +94,26 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
         sent.add(data.toString)
         asyncFail match
           case Some(t) => CompletableFuture.failedFuture(t)
-          case None    => CompletableFuture.completedFuture(this)
+          case None => CompletableFuture.completedFuture(this)
+
     override def sendBinary(data: java.nio.ByteBuffer, last: Boolean): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
+
     override def sendClose(code: Int, reason: String): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
     override def request(n: Long): Unit = ()
+
     override def sendPing(data: java.nio.ByteBuffer): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
+
     override def sendPong(data: java.nio.ByteBuffer): CompletableFuture[WebSocket] =
       CompletableFuture.completedFuture(this)
     override def getSubprotocol: String = ""
     override def isOutputClosed: Boolean = outputClosed
     override def isInputClosed: Boolean = false
     override def abort(): Unit = aborted = true
+
+  end FakeWebSocket
 
   /**
    * 真 RFC 6455 夹具（只绑 127.0.0.1 临时端口）：完成真 101 握手后**永不读**对端
@@ -140,6 +149,8 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
       t.start()
       t
 
+    end acceptor
+
     private def serve(s: Socket): Unit =
       try
         val request = readHeaders(s.getInputStream)
@@ -149,7 +160,9 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
         // 其 JDK transport 停在「写不动」的在飞态，pendingTextOrBinary 恒真。
         while !stopped do Thread.sleep(200)
       catch case _: Throwable => ()
-      finally try s.close() catch case _: Throwable => ()
+      finally
+        try s.close()
+        catch case _: Throwable => ()
 
     private def readHeaders(in: java.io.InputStream): String =
       val sb = new StringBuilder
@@ -163,7 +176,7 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
           case (1, '\n') => 2
           case (2, '\r') => 3
           case (3, '\n') => 4
-          case _         => 0
+          case _ => 0
         if state < 4 then b = in.read()
       sb.toString
 
@@ -186,7 +199,10 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
       stopped = true
       try serverSocket.close()
       catch case _: Throwable => ()
-      clients.forEach(s => try s.close() catch case _: Throwable => ())
+      clients.forEach(s =>
+        try s.close()
+        catch case _: Throwable => ()
+      )
 
   end NeverReadWsFixture
 
@@ -293,7 +309,9 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
           )
           assert(!bulkFut.isDone, "bulk 大帧仍在飞（饱和持续，与生产洪峰同形态）")
         finally ws.abort()
+        end try
       finally fix.close()
+      end try
     }
   }
 
@@ -321,7 +339,9 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
               "跳拍必须回滚 lastPingSentAt —— 这一拍没上线，不得伪造 D3 的「问出去过」前提"
             )
           finally ws.abort()
+          end try
         finally fix.close()
+        end try
       }
     }
   }
@@ -398,6 +418,7 @@ class NeblinkRelayTunnelHeartbeatSendSpec extends CatsEffectSuite:
         assert(!bulkFut.isDone, "bulk 在飞发送必须毫发无损")
       finally ws.abort()
     finally fix.close()
+    end try
   }
 
 end NeblinkRelayTunnelHeartbeatSendSpec

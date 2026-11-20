@@ -418,20 +418,22 @@ private[gateway] object SecretsRoutes:
         withAuth(req) {
           secretsStore.show(secretName).flatMap {
             case Right(e) =>
-              Ok(Json.obj(
-                "name" -> e.name.asJson,
-                "variableName" -> e.variableName.asJson,
-                "description" -> e.description.asJson,
-                "tags" -> e.tags.asJson,
-                "size" -> e.size.asJson,
-                "mtime" -> e.mtime.asJson,
-                "mode" -> e.mode.asJson,
-                "refs" -> e.refs.asJson,
-                "location" -> nebflow.core.secrets.SecretsCatalog
-                  .renderedLocation(PathUtil.dataRoot, secretsStore.secretsDir, e.name)
-                  .asJson,
-                "stored" -> e.stored.asJson
-              ))
+              Ok(
+                Json.obj(
+                  "name" -> e.name.asJson,
+                  "variableName" -> e.variableName.asJson,
+                  "description" -> e.description.asJson,
+                  "tags" -> e.tags.asJson,
+                  "size" -> e.size.asJson,
+                  "mtime" -> e.mtime.asJson,
+                  "mode" -> e.mode.asJson,
+                  "refs" -> e.refs.asJson,
+                  "location" -> nebflow.core.secrets.SecretsCatalog
+                    .renderedLocation(PathUtil.dataRoot, secretsStore.secretsDir, e.name)
+                    .asJson,
+                  "stored" -> e.stored.asJson
+                )
+              )
             case Left(err) => secretsErrorResponse(err)
           }
         }

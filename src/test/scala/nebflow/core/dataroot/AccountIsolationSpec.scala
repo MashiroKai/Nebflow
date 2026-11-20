@@ -73,7 +73,7 @@ class AccountIsolationSpec extends munit.FunSuite:
   private def secretNames(accountRoot: os.Path): List[String] =
     secretsStore(accountRoot).list().unsafeRunSync() match
       case Right(entries) => entries.map(_.name).sorted
-      case Left(failure)  => fail(s"SecretsStore.list 读取失败（$accountRoot）：$failure")
+      case Left(failure) => fail(s"SecretsStore.list 读取失败（$accountRoot）：$failure")
 
   private def projectNames(): List[String] =
     ProjectStore.listAll().unsafeRunSync().map(_.name).sorted
@@ -159,6 +159,8 @@ class AccountIsolationSpec extends munit.FunSuite:
       PathUtil.setDataRoot(prev)
       os.remove.all(machineRoot)
 
+    end try
+
   test("V3: 账号根目录名映射不同（'|' 形态与可读形态）时同样隔离，且两个根互不为前缀"):
     val prev = PathUtil.dataRoot
     val machineRoot = tempRoot()
@@ -188,5 +190,6 @@ class AccountIsolationSpec extends munit.FunSuite:
     finally
       PathUtil.setDataRoot(prev)
       os.remove.all(machineRoot)
+    end try
 
 end AccountIsolationSpec

@@ -60,8 +60,13 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
   private def inScope(sid: String): Boolean = SessionScope.isMainSession(sid)
 
   override def sessionIdsForReconcile: Option[List[String]] =
-    Some(os.list(sessionsDir).filter(_.last.endsWith(".ui.json"))
-      .map(_.last.stripSuffix(".ui.json")).filter(inScope).toList)
+    Some(
+      os.list(sessionsDir)
+        .filter(_.last.endsWith(".ui.json"))
+        .map(_.last.stripSuffix(".ui.json"))
+        .filter(inScope)
+        .toList
+    )
 
   private def uiFile(sid: String): os.Path = sessionsDir / s"$sid.ui.json"
 
@@ -107,7 +112,7 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
         case None => ""
         case Some(ms) =>
           val now = LocalDate.now()
-          val d   = LocalDate.ofInstant(Instant.ofEpochMilli(ms), ZoneId.systemDefault())
+          val d = LocalDate.ofInstant(Instant.ofEpochMilli(ms), ZoneId.systemDefault())
           if d.getYear == now.getYear && d.getMonth == now.getMonth then "current"
           else f"${d.getYear}%04d${d.getMonthValue}%02d"
 
@@ -127,7 +132,7 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
         // 归档快照也进指纹（检索全覆盖批）：归档新增/更新 ⇒ 指纹变 ⇒ 重建。
         val arch = archiveStamp(sid) match
           case Some((mt, sz)) => s"$mt:$sz"
-          case None           => "-"
+          case None => "-"
         Some(s"v2:${os.mtime(f)}:${os.size(f)}:$arch")
 
   override def extractSession(sid: String, forceFull: Boolean): Option[List[SearchIndexService.IndexDoc]] =
@@ -136,7 +141,8 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
       val f = uiFile(sid)
       if !os.exists(f) then None
       else
-        val msgs = decode[List[UiMessage]](os.read(f)).fold(_ => throw new IllegalStateException("Invalid UI session JSON"), identity)
+        val msgs = decode[List[UiMessage]](os.read(f))
+          .fold(_ => throw new IllegalStateException("Invalid UI session JSON"), identity)
         if msgs.isEmpty then None
         else Some(extractDocs(sid, msgs) ++ extractArchiveDocs(sid, msgs))
 
@@ -154,44 +160,79 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
           val injected = u.injected
           if !injected then
             val attNames = u.attachments.flatMap(attName)
-            val attText  =
+            val attText =
               if attNames.isEmpty then ""
               else "\n" + attNames.map(n => s"📎 $n").filter(_.trim.length > 2).mkString("\n")
             docs += SearchIndexService.IndexDoc(
-              sid = sid, ord = ord, kind = "message", ts = u.timestamp,
+              sid = sid,
+              ord = ord,
+              kind = "message",
+              ts = u.timestamp,
               text = u.text + attText,
-              extra = roleExtra("user", u.sender.getOrElse("")))
+              extra = roleExtra("user", u.sender.getOrElse(""))
+            )
           else
             docs += SearchIndexService.IndexDoc(
-              sid = sid, ord = ord, kind = "message", ts = u.timestamp,
-              text = u.text, extra = roleExtra("agent", u.sender.getOrElse("")))
+              sid = sid,
+              ord = ord,
+              kind = "message",
+              ts = u.timestamp,
+              text = u.text,
+              extra = roleExtra("agent", u.sender.getOrElse(""))
+            )
+          end if
         case a: UiMessage.Ai =>
           docs += SearchIndexService.IndexDoc(
-            sid = sid, ord = ord, kind = "message", ts = a.timestamp,
-            text = a.text + a.thinking.fold("")(th => "\n" + th), extra = roleExtra("ai"))
+            sid = sid,
+            ord = ord,
+            kind = "message",
+            ts = a.timestamp,
+            text = a.text + a.thinking.fold("")(th => "\n" + th),
+            extra = roleExtra("ai")
+          )
         case g: UiMessage.Agent =>
           docs += SearchIndexService.IndexDoc(
-            sid = sid, ord = ord, kind = "message", ts = ts, text = g.text, extra = roleExtra("ai"))
+            sid = sid,
+            ord = ord,
+            kind = "message",
+            ts = ts,
+            text = g.text,
+            extra = roleExtra("ai")
+          )
         case q: UiMessage.Ask =>
           docs += SearchIndexService.IndexDoc(
-            sid = sid, ord = ord, kind = "message", ts = ts,
-            text = List(q.question, q.answer).filter(_.nonEmpty).mkString("\n"), extra = roleExtra("ai"))
+            sid = sid,
+            ord = ord,
+            kind = "message",
+            ts = ts,
+            text = List(q.question, q.answer).filter(_.nonEmpty).mkString("\n"),
+            extra = roleExtra("ai")
+          )
         // 聊天记录搜索优化批 2026-10-30 作者令①：tool call/result 行不入索引
         // （搜索结果只搜对话）。Pop 载荷/media 条目在下面 mediaEntriesOf 照产。
         case _: UiMessage.Tool => ()
         case _ => () // system/askUser/askPermission 不入索引（与前端口径一致）
+      end match
       // media/file/link 条目（Pop 载荷 + user 附件——indexMedia 同源）
       mediaEntriesOf(sid, m, ord, ts).foreach { e =>
         docs += SearchIndexService.IndexDoc(
-          sid = sid, ord = ord, kind = e.entryType, ts = e.ts, text = e.searchText, extra = e.json)
+          sid = sid,
+          ord = ord,
+          kind = e.entryType,
+          ts = e.ts,
+          text = e.searchText,
+          extra = e.json
+        )
       }
     }
     docs.toList
 
+  end extractDocs
+
   private def msgTs(m: UiMessage): Long = m match
     case u: UiMessage.User => u.timestamp
-    case a: UiMessage.Ai   => a.timestamp
-    case _                 => 0L
+    case a: UiMessage.Ai => a.timestamp
+    case _ => 0L
 
   /**
    * 压缩前归档段抽取（检索全覆盖批 2026-11-07，作者报障「搜索为什么不是搜全部的
@@ -219,53 +260,63 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
   private def extractArchiveDocs(sid: String, replay: List[UiMessage]): List[SearchIndexService.IndexDoc] =
     val cutoff = replay.flatMap(m => Option(msgTs(m)).filter(_ > 0L)).minOption
     cutoff match
-      case None => Nil   // 回放无时间锚：无从判定「窗口外」，不冒险重复入库
+      case None => Nil // 回放无时间锚：无从判定「窗口外」，不冒险重复入库
       case Some(cut) =>
         archiveFile(sid) match
           case None => Nil
           case Some(f) =>
-            val raw = io.circe.parser.parse(os.read(f))
+            val raw = io.circe.parser
+              .parse(os.read(f))
               .fold(_ => throw new IllegalStateException("Invalid archive JSON"), identity)
-              .asArray.getOrElse(throw new IllegalStateException("Invalid archive array"))
+              .asArray
+              .getOrElse(throw new IllegalStateException("Invalid archive array"))
             val out = scala.collection.mutable.ListBuffer.empty[SearchIndexService.IndexDoc]
             raw.foreach { j =>
-              val c      = j.hcursor
-              val ts     = c.downField("timestamp").as[Long].toOption.getOrElse(0L)
-              val role   = c.downField("role").as[String].getOrElse("")
-              val text   = c.downField("content").as[String].getOrElse("")
+              val c = j.hcursor
+              val ts = c.downField("timestamp").as[Long].toOption.getOrElse(0L)
+              val role = c.downField("role").as[String].getOrElse("")
+              val text = c.downField("content").as[String].getOrElse("")
               val mapped = role match
-                case "user"      => Some("user")
+                case "user" => Some("user")
                 case "assistant" => Some("ai")
-                case _           => None   // tool / system：不入对话检索
+                case _ => None // tool / system：不入对话检索
               mapped match
                 case Some(r) if ts > 0L && ts < cut && text.trim.nonEmpty =>
                   out += SearchIndexService.IndexDoc(
-                    sid      = sid,
-                    ord      = -(out.size + 1),
-                    kind     = "message",
-                    ts       = ts,
-                    text     = text,
-                    extra    = archiveExtra(r),
-                    monthKey = Some("")   // 旧桶行：查询侧粗筛恒保留
+                    sid = sid,
+                    ord = -(out.size + 1),
+                    kind = "message",
+                    ts = ts,
+                    text = text,
+                    extra = archiveExtra(r),
+                    monthKey = Some("") // 旧桶行：查询侧粗筛恒保留
                   )
                 case _ => ()
             }
             out.toList
 
+    end match
+
+  end extractArchiveDocs
+
   /** 归档段角色投影（含 origin 标记——前端据此区分「归档命中」与回放命中）。 */
   private def archiveExtra(role: String): String =
-    io.circe.Json.obj(
-      "role"   -> io.circe.Json.fromString(role),
-      "origin" -> io.circe.Json.fromString("archive")
-    ).noSpaces
+    io.circe.Json
+      .obj(
+        "role" -> io.circe.Json.fromString(role),
+        "origin" -> io.circe.Json.fromString("archive")
+      )
+      .noSpaces
 
-  /** message 片的角色投影：前端 messageKind 同款词汇（user|agent|ai——
+  /**
+   * message 片的角色投影：前端 messageKind 同款词汇（user|agent|ai——
    *  浮窗 (sid,ord) 直定位的 typeMatches 快路靠它对齐；injected user ⇒
-   *  agent，ai/agent/ask 三类 ⇒ ai）。 */
+   *  agent，ai/agent/ask 三类 ⇒ ai）。
+   */
   private def roleExtra(role: String, agent: String = ""): String =
     val base = io.circe.Json.obj("role" -> io.circe.Json.fromString(role))
-    (if agent.nonEmpty then base.deepMerge(
-      io.circe.Json.obj("agent" -> io.circe.Json.fromString(agent))) else base).noSpaces
+    (if agent.nonEmpty then base.deepMerge(io.circe.Json.obj("agent" -> io.circe.Json.fromString(agent)))
+     else base).noSpaces
 
   private def attName(a: Json): Option[String] =
     a.hcursor.downField("name").as[String].toOption.filter(_.nonEmpty)
@@ -273,17 +324,17 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
   // ── 媒体条目（popMediaIndex.indexMedia 的同源移植——返回形状直接作 extra）──
 
   private final case class MediaEntry(
-    entryType: String,   // media|file|link（doc.kind 用）
+    entryType: String, // media|file|link（doc.kind 用）
     ts: Long,
-    searchText: String,  // name + ext + ref（entryMatchesKeyword 同款字段面）
-    json: String         // popMediaIndex 条目形状（前端免重抽）
+    searchText: String, // name + ext + ref（entryMatchesKeyword 同款字段面）
+    json: String // popMediaIndex 条目形状（前端免重抽）
   )
 
   private def mediaEntriesOf(sid: String, m: UiMessage, ord: Int, ts: Long): List[MediaEntry] =
     m match
       case u: UiMessage.User =>
         u.attachments.flatMap { a =>
-          val tpe  = a.hcursor.downField("type").as[String].getOrElse("")
+          val tpe = a.hcursor.downField("type").as[String].getOrElse("")
           val name = a.hcursor.downField("name").as[String].getOrElse("")
           val path = a.hcursor.downField("path").as[String].getOrElse("")
           if tpe == "ref" || tpe == "taskRef" then None
@@ -299,46 +350,88 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
           val itemType = item.hcursor.downField("itemType").as[String].getOrElse("")
           if itemType == "url" || url.isDefined then
             val u = url.getOrElse("")
-            Some(mkEntry(sid, ord, ts, "link", "agent",
-              item.hcursor.downField("title").as[String]
-                .orElse(item.hcursor.downField("name").as[String]).getOrElse(baseName(u)),
-              u, item, itemType = "link"))
+            Some(
+              mkEntry(
+                sid,
+                ord,
+                ts,
+                "link",
+                "agent",
+                item.hcursor
+                  .downField("title")
+                  .as[String]
+                  .orElse(item.hcursor.downField("name").as[String])
+                  .getOrElse(baseName(u)),
+                u,
+                item,
+                itemType = "link"
+              )
+            )
           else
             val path = item.hcursor.downField("path").as[String].getOrElse("")
             if path.isEmpty then None
             else
               val kind = item.hcursor.downField("kind").as[String].getOrElse("")
               val tpe = if kind == "image" || kind == "video" then "media" else "file"
-              Some(mkEntry(sid, ord, ts, tpe, "agent",
-                item.hcursor.downField("name").as[String].getOrElse(baseName(path)),
-                path, item, itemType = kind))
+              Some(
+                mkEntry(
+                  sid,
+                  ord,
+                  ts,
+                  tpe,
+                  "agent",
+                  item.hcursor.downField("name").as[String].getOrElse(baseName(path)),
+                  path,
+                  item,
+                  itemType = kind
+                )
+              )
+            end if
+          end if
         }
       case _ => Nil
 
   private def mkEntry(
-    sid: String, ord: Int, ts: Long, entryType: String, source: String,
-    name: String, ref: String, raw: Json, itemType: String
+    sid: String,
+    ord: Int,
+    ts: Long,
+    entryType: String,
+    source: String,
+    name: String,
+    ref: String,
+    raw: Json,
+    itemType: String
   ): MediaEntry =
     val ext = extOf(name)
-    val size = raw.hcursor.downField("size").as[Long].toOption
-      .orElse(raw.hcursor.downField("size").as[Int].toOption.map(_.toLong)).getOrElse(0L)
+    val size = raw.hcursor
+      .downField("size")
+      .as[Long]
+      .toOption
+      .orElse(raw.hcursor.downField("size").as[Int].toOption.map(_.toLong))
+      .getOrElse(0L)
     // thumbRef：data URI 内联缩略图原样引用（引用非拷贝——popMediaIndex 同款纪律）
-    val thumbRef = raw.hcursor.downField("preview").as[String]
+    val thumbRef = raw.hcursor
+      .downField("preview")
+      .as[String]
       .orElse(raw.hcursor.downField("src").as[String])
-      .toOption.filter(_.startsWith("data:")).getOrElse("")
-    val entryJson = Json.obj(
-      "id"           -> Json.fromString(s"$sid:$ord"),
-      "sessionId"    -> Json.fromString(sid),
-      "msgOrd"       -> Json.fromInt(ord),
-      "ts"           -> Json.fromLong(ts),
-      "type"         -> Json.fromString(itemType),
-      "source"       -> Json.fromString(source),
-      "name"         -> Json.fromString(name),
-      "ext"          -> Json.fromString(ext),
-      "size"         -> Json.fromLong(size),
-      "ref"          -> Json.fromString(ref),
-      "thumbRef"     -> Json.fromString(thumbRef)
-    ).noSpaces
+      .toOption
+      .filter(_.startsWith("data:"))
+      .getOrElse("")
+    val entryJson = Json
+      .obj(
+        "id" -> Json.fromString(s"$sid:$ord"),
+        "sessionId" -> Json.fromString(sid),
+        "msgOrd" -> Json.fromInt(ord),
+        "ts" -> Json.fromLong(ts),
+        "type" -> Json.fromString(itemType),
+        "source" -> Json.fromString(source),
+        "name" -> Json.fromString(name),
+        "ext" -> Json.fromString(ext),
+        "size" -> Json.fromLong(size),
+        "ref" -> Json.fromString(ref),
+        "thumbRef" -> Json.fromString(thumbRef)
+      )
+      .noSpaces
     MediaEntry(
       entryType = entryType,
       ts = ts,
@@ -346,8 +439,12 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
       json = entryJson
     )
 
-  /** Pop 载荷解析：___POP_JSON___ 标记 + 尾段 JSON 数组（tolerant——与
-   *  popArtifacts.isPopPayload/parsePopPayload 同口径的宽松版；非 Pop 行 ⇒ Nil）。 */
+  end mkEntry
+
+  /**
+   * Pop 载荷解析：___POP_JSON___ 标记 + 尾段 JSON 数组（tolerant——与
+   *  popArtifacts.isPopPayload/parsePopPayload 同口径的宽松版；非 Pop 行 ⇒ Nil）。
+   */
   private def popItems(content: String): List[Json] =
     if content == null || !content.startsWith("___") || !content.contains("_JSON___") then Nil
     else

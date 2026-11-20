@@ -169,9 +169,11 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
         // Delegate terminal delivery moved from parentRef push to the parent's durable
         // SessionMailbox. Wait on the authoritative event row, not the legacy actor spy.
         _ <- waitUntil(20.seconds)(
-          SessionMailbox.scanPending(s"$testName-parent-session").map(
-            _.exists(_.event.eventType == "completed")
-          )
+          SessionMailbox
+            .scanPending(s"$testName-parent-session")
+            .map(
+              _.exists(_.event.eventType == "completed")
+            )
         )
         events <- SessionMailbox.scanPending(s"$testName-parent-session")
       yield events.find(_.event.eventType == "completed").get.event.payload
@@ -199,7 +201,7 @@ class EmptyShellNotifySpec extends CatsEffectSuite:
     )
     val payload = runCompletedPayload("ws", messages)
     // 空回执显式化（P5 第二波重钉现行语义）：空烧终态 = 完成回执 + 结构化诊断行
-    //（空烧 → empty-run 标记在场）；trim guard 面与 blocked 退役面保持。
+    // （空烧 → empty-run 标记在场）；trim guard 面与 blocked 退役面保持。
     assert(
       payload.contains("(no text output)"),
       s"trim-guard face must survive, got: ${payload.take(200)}"

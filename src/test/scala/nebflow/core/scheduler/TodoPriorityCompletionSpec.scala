@@ -156,6 +156,7 @@ class TodoPriorityCompletionSpec extends CatsEffectSuite:
       assertEquals(openIncluding.map(_.id).sorted, List("a", "b"), "opt-in 视图含已完成")
       assertEquals(pending.map(_.id), List("b"), "已完成不算 pending")
       assertEquals(count, 1, "getPendingCount 不算已完成")
+    end for
   }
 
   // ==================================================================
@@ -245,7 +246,6 @@ class TodoPriorityCompletionSpec extends CatsEffectSuite:
     )
   }
 
-
   test("FDC-SCN-007 tool rearm keeps user and unknown-origin todos") {
     val root = os.Path(java.nio.file.Files.createTempDirectory("data-owner-test"))
     val ledger = new ScheduledTaskStore(root)
@@ -276,7 +276,9 @@ class TodoPriorityCompletionSpec extends CatsEffectSuite:
     val root = os.Path(java.nio.file.Files.createTempDirectory("data-cross-test"))
     val ledger = new ScheduledTaskStore(root)
     val old = ScheduledTask.create("old", "before", 1000L, name = Some("routine")).copy(source = Some("tool"))
-    val fresh = ScheduledTask.create("new", "after", 2000L, name = Some("routine")).copy(id = "requested-id", source = Some("tool"))
+    val fresh = ScheduledTask
+      .create("new", "after", 2000L, name = Some("routine"))
+      .copy(id = "requested-id", source = Some("tool"))
     val result = (for
       _ <- ledger.addTask(old)
       rearm <- ledger.upsertTaskByName(fresh, ScheduledTaskStore.toolOwnsLegacyNamedTask)

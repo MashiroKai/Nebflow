@@ -56,6 +56,7 @@ object DelegateRoundLedger:
   )
 
   object RoundRow:
+
     given Encoder[RoundRow] = Encoder.instance { r =>
       Json.obj(
         "kind" -> r.kind.asJson,
@@ -72,6 +73,7 @@ object DelegateRoundLedger:
         "detail" -> r.detail.asJson
       )
     }
+
     given Decoder[RoundRow] = Decoder.instance { c =>
       for
         kind <- c.get[Option[String]]("kind")
@@ -111,8 +113,7 @@ object DelegateRoundLedger:
     try
       val p = fileOf(id)
       if !os.exists(p) then Nil
-      else
-        os.read.lines(p).flatMap(line => decode[RoundRow](line.trim).toOption).toList
+      else os.read.lines(p).flatMap(line => decode[RoundRow](line.trim).toOption).toList
     catch case _: Throwable => Nil
 
   /**
@@ -207,6 +208,10 @@ object DelegateRoundLedger:
         )
         try appendSync(id, row)
         catch case e: Throwable => logger.warnSync(s"round ledger settle append failed for '$id': ${e.getMessage}")
+
+    end match
+
+  end settleRound
 
   /**
    * 取消结算：把**所有**未结算轮次标记 `cancelled` 终值（墓碑压过一切；append-only，

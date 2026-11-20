@@ -120,7 +120,13 @@ class BgDeadLetterIdentitySpec extends CatsEffectSuite:
           _ + (ownerSid -> rec(ownerSid, ownerRef, rootSid, AgentKind.Flow)) +
             (rootSid -> rec(rootSid, rootRef, rootSid, AgentKind.Root))
         )
-        _ <- BgTaskRegistry.register("dl-2", ownerSid, "Re-download full Chinese PDF part1", "local", rootSessionId = rootSid)
+        _ <- BgTaskRegistry.register(
+          "dl-2",
+          ownerSid,
+          "Re-download full Chinese PDF part1",
+          "local",
+          rootSessionId = rootSid
+        )
         report <- BgTaskReaper.reapWith(Some(system), Some(registry), System.currentTimeMillis())(alwaysDead)
         _ <- IO.sleep(200.millis)
         ownerGot <- ownerSink.get
@@ -142,6 +148,7 @@ class BgDeadLetterIdentitySpec extends CatsEffectSuite:
           "事件标注属主身份（身份绑定面）"
         )
         assertEquals(eventsOf(rootGot).size, 0, "🔴 无关的根会话**零收件**（作者报障「怎么失败了到处通知」的机械防线）")
+      end for
     }
   }
 
@@ -185,10 +192,16 @@ class BgDeadLetterIdentitySpec extends CatsEffectSuite:
         // Isolate the process-global activator from unrelated WebSocketRoutes fixtures.
         // UnknownSession models an absent owner without claiming persistence or activation.
         previousActivator <- IO(BgSessionActivator.get)
-        report <- (IO(BgSessionActivator.install(new BgSessionActivator.Face:
-          def activate(sessionId: String, event: AgentCommand.ExternalEvent): IO[BgSessionActivator.ActivationResult] =
-            IO.pure(BgSessionActivator.UnknownSession)
-        )) *> BgTaskReaper.reapWith(Some(system), Some(registry), System.currentTimeMillis())(alwaysDead))
+        report <- (IO(
+          BgSessionActivator.install(
+            new BgSessionActivator.Face:
+              def activate(
+                sessionId: String,
+                event: AgentCommand.ExternalEvent
+              ): IO[BgSessionActivator.ActivationResult] =
+                IO.pure(BgSessionActivator.UnknownSession)
+          )
+        ) *> BgTaskReaper.reapWith(Some(system), Some(registry), System.currentTimeMillis())(alwaysDead))
           .guarantee(IO(previousActivator.fold(BgSessionActivator.clear())(BgSessionActivator.install)))
         _ <- IO.sleep(200.millis)
         parentGot <- parentSink.get
@@ -214,6 +227,7 @@ class BgDeadLetterIdentitySpec extends CatsEffectSuite:
           "元数据标注 owner 不可达"
         )
         assertEquals(eventsOf(rootGot).size, 0, "根会话仍零收件（死信绝不广播）")
+      end for
     }
   }
 

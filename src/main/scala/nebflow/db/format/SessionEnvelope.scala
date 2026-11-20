@@ -16,7 +16,7 @@ final case class SessionEnvelope(
   ts: Long,
   sessionId: String,
   stream: String, // "llm" | "ui"
-  kind: String,   // "message.append" | "compact-point"
+  kind: String, // "message.append" | "compact-point"
   payload: Json
 )
 
@@ -32,12 +32,14 @@ object SessionEnvelope:
   final case class CompactPoint(beforeRef: String, afterRef: String, tokens: Long)
 
   object CompactPoint:
+
     given Encoder[CompactPoint] = cp =>
       Json.obj(
         "beforeRef" -> Json.fromString(cp.beforeRef),
         "afterRef" -> Json.fromString(cp.afterRef),
         "tokens" -> Json.fromLong(cp.tokens)
       )
+
     given Decoder[CompactPoint] = c =>
       for
         before <- c.downField("beforeRef").as[String]

@@ -88,6 +88,7 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
           text.contains("never veto it"),
           s"the skip must document that this is a delay, not a permanent veto: $text"
         )
+      end for
     }
   }
 
@@ -101,7 +102,11 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
       val cs = List(candidate("flaky", "m1"))
 
       for
-        _ <- monitor.markDown("flaky", "m1", "Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages")
+        _ <- monitor.markDown(
+          "flaky",
+          "m1",
+          "Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages"
+        )
         (blocked, skipBlocked) <- monitor.filterCandidatesDetailed(cs)
         _ <- monitor.ageHalfOpenForTest("flaky", "m1", 60_000L) // 窗到期
         // 并发 8 路同时抢这一次放行：必须**恰好一路**拿到（原子记账）
@@ -123,6 +128,7 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
           skippedSecond.head._2.describe.contains("half-open trial #2 in 120s"),
           s"the ladder must be visible on the skip line, got ${skippedSecond.head._2.describe}"
         )
+      end for
     }
   }
 
@@ -144,7 +150,11 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
         // 到了窗的候选在两个面上**都算可用**（「下一次真实请求会试它」是事实）：
         // 唯一区别是读面不记账。这一点对 [[waitForAnyUp]] 尤其重要——全 DOWN 链的
         // 等待者必须被「窗已到」唤醒，否则又退回「等 120s 探测」的老坑。
-        assertEquals(upRead.map(_.providerId), List("flaky"), "a window-expired candidate is available to the read face")
+        assertEquals(
+          upRead.map(_.providerId),
+          List("flaky"),
+          "a window-expired candidate is available to the read face"
+        )
         assertEquals(downRead, Nil)
         assertEquals(
           trialsAfterRead.get("flaky/m1").map(_.trials),
@@ -152,6 +162,7 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
           "a panel render must never claim the trial (otherwise a render would veto the next real attempt)"
         )
         assertEquals(admitted.map(_.providerId), List("flaky"), "the real request still gets its trial")
+      end for
     }
   }
 
@@ -195,6 +206,7 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
           Some("auth (trial #1 really failed)"),
           "the Down reason must be the LATEST failure (the old fossil reason is a diagnosability bug)"
         )
+      end for
     }
   }
 
@@ -228,6 +240,7 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
           skipped.head._2.describe.contains("half-open trial #1 in 60s"),
           s"first trial of the new episode must be base-later, got ${skipped.head._2.describe}"
         )
+      end for
     }
   }
 
@@ -237,16 +250,21 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
 
   /** Registry resolving only a whitelist of refs (simulates config hot-reload dropping one). */
   private class WhitelistRegistry(known: Set[String]) extends ProviderRegistry(null, null):
+
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] =
       IO.raiseError(new RuntimeException("not needed in this spec"))
+
     override def getAdapterRaw(providerId: String): IO[ProviderAdapter[IO]] =
       IO.raiseError(new RuntimeException("not needed in this spec"))
+
     override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
       if known.contains(ref) then
         ref.split("/").toList match
           case pid :: m :: Nil =>
-            IO.pure(Some(ModelCandidate(pid, ProviderConfig("http://x", "k", LlmProtocol.OpenAI, List(ModelConfig(m))), m)))
-          case _               => IO.pure(None)
+            IO.pure(
+              Some(ModelCandidate(pid, ProviderConfig("http://x", "k", LlmProtocol.OpenAI, List(ModelConfig(m))), m))
+            )
+          case _ => IO.pure(None)
       else IO.pure(None)
 
   test("T5: DOWN entries whose ref left the config are dropped (phantom DOWN must not accumulate)") {
@@ -271,8 +289,10 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
   // ============================================================
 
   private class FailingAdapter(err: Throwable) extends ProviderAdapter[IO]:
+
     def sendMessage(params: SendMessageParams): IO[AdapterResponse] =
       IO.raiseError(new RuntimeException("probe must use the streaming face"))
+
     def sendMessageStream(params: SendMessageParams): fs2.Stream[IO, StreamChunk] =
       fs2.Stream.raiseError[IO](err)
 
@@ -282,11 +302,18 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
 
   test("T6: a probe failure REFRESHES the Down reason and carries the full cause chain (class names included)") {
     val root = new java.net.SocketException("Connection reset")
-    val wrapped = new java.io.IOException("Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages", root)
+    val wrapped = new java.io.IOException(
+      "Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages",
+      root
+    )
     val monitor = ProviderHealthMonitor(AdapterRegistry(FailingAdapter(wrapped)))
     for
       // 化石原因：现场表里那条 20:04 的包装句
-      _ <- monitor.markDown("Deepseek", "deepseek-flash", "Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages")
+      _ <- monitor.markDown(
+        "Deepseek",
+        "deepseek-flash",
+        "Exception when sending request: POST https://api.deepseek.com/anthropic/v1/messages"
+      )
       _ <- monitor.probe(candidate("Deepseek", "deepseek-flash"))
       reason <- downKey(monitor, "Deepseek/deepseek-flash")
     yield
@@ -301,10 +328,13 @@ class HealthHalfOpenSpec extends CatsEffectSuite:
   // ============================================================
 
   private class ExplodingRegistry extends ProviderRegistry(null, null):
+
     override def getAdapter(providerId: String): IO[ProviderAdapter[IO]] =
       IO.raiseError(new RuntimeException("boom"))
+
     override def getAdapterRaw(providerId: String): IO[ProviderAdapter[IO]] =
       IO.raiseError(new RuntimeException("boom"))
+
     override def getCandidateForRef(ref: String): IO[Option[ModelCandidate]] =
       IO.raiseError(new RuntimeException("config ref resolution exploded"))
 

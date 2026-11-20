@@ -207,15 +207,15 @@ class ModelChainMigrationSpec extends FunSuite:
       // 模拟「写后封存前进程死」：注册表已迁移、目录文件仍在 ⇒ 重放合并
       // 既有条目恒胜 —— 用户后编辑的链不被陈旧目录覆盖。
       val edited = io.circe.Json.obj(
-        "version"    -> 1.asJson,
+        "version" -> 1.asJson,
         "migratedAt" -> "2026-10-30T08:29:00+08:00".asJson,
         "defaultPreset" -> "general".asJson,
         "chains" -> io.circe.Json.obj(
           "general" -> io.circe.Json.obj(
-            "name"        -> "general".asJson,
+            "name" -> "general".asJson,
             "description" -> "user edit after migration".asJson,
-            "preferred"   -> "kimi/kimi-for-coding".asJson,
-            "fallbacks"   -> io.circe.Json.arr()
+            "preferred" -> "kimi/kimi-for-coding".asJson,
+            "fallbacks" -> io.circe.Json.arr()
           )
         )
       )

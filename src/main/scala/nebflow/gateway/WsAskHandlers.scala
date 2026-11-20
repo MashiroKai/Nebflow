@@ -101,7 +101,12 @@ private[gateway] object WsAskHandlers:
               case Some(pd) =>
                 val root = nebflow.core.project.ProjectStore.brainWorkspace(pd)
                 for
-                  binding <- svc.registry.bind(root, projectReq, explicitId = sid0, kind = nebflow.core.ask.AskBinding.KindGitViz)
+                  binding <- svc.registry.bind(
+                    root,
+                    projectReq,
+                    explicitId = sid0,
+                    kind = nebflow.core.ask.AskBinding.KindGitViz
+                  )
                   sid = binding.id
                   _ <- if mainSessionId.nonEmpty then svc.registry.refreshMainSession(sid, mainSessionId) else IO.unit
                   msgs <- sessionStore.getUiMessages(sid, 0, 200).map(_._1)
@@ -121,6 +126,7 @@ private[gateway] object WsAskHandlers:
                 yield ()
                 end for
             }
+      end if
     else if absPath.trim.isEmpty then askError(wsSend, "", "askOpen: file.absPath is required")
     else
       AskGatewayServices.instance match
@@ -168,6 +174,7 @@ private[gateway] object WsAskHandlers:
               )
             yield ()
             end for
+          end if
       end match
     end if
   end handleAskOpen
@@ -212,6 +219,7 @@ private[gateway] object WsAskHandlers:
       case _ => () // tool / agent / ask / system：dock 透明纪律（live 腿同样不进泡列）
     }
     rows.toList
+  end encodeTranscript
 
   // ── askQuestion：真实用户文本链路（与输入框同腿 dispatchUserText）────────
 
@@ -289,8 +297,12 @@ private[gateway] object WsAskHandlers:
   ): IO[Unit] =
     val raw = WsDispatch.parsedJson(text)
     val sid = raw.hcursor.downField("sessionId").as[String].getOrElse("")
-    val task = raw.hcursor.downField("task").as[String].toOption
-      .map(_.trim).filter(_.nonEmpty)
+    val task = raw.hcursor
+      .downField("task")
+      .as[String]
+      .toOption
+      .map(_.trim)
+      .filter(_.nonEmpty)
       .orElse(raw.hcursor.downField("question").as[String].toOption.map(_.trim).filter(_.nonEmpty))
       .getOrElse("")
     val paths = raw.hcursor.downField("paths").as[List[String]].toOption.getOrElse(Nil).map(_.trim).filter(_.nonEmpty)
@@ -337,9 +349,17 @@ private[gateway] object WsAskHandlers:
               )
               AskHandoffPort.deliver(req).flatMap {
                 case Right(_) =>
-                  send(wsSend, nebflow.core.ask.AskHandoffWire.ackFrame(sid, ok = true, "", nebflow.core.ask.AskHandoffWire.of(req)))
+                  send(
+                    wsSend,
+                    nebflow.core.ask.AskHandoffWire
+                      .ackFrame(sid, ok = true, "", nebflow.core.ask.AskHandoffWire.of(req))
+                  )
                 case Left(err) =>
-                  send(wsSend, nebflow.core.ask.AskHandoffWire.ackFrame(sid, ok = false, err.message, nebflow.core.ask.AskHandoffWire.of(req)))
+                  send(
+                    wsSend,
+                    nebflow.core.ask.AskHandoffWire
+                      .ackFrame(sid, ok = false, err.message, nebflow.core.ask.AskHandoffWire.of(req))
+                  )
               }
           }
     end if
@@ -387,28 +407,35 @@ private[gateway] object WsAskHandlers:
   //   error?, review?}——review 为余下审阅态（了结时 null）；error（stale 等）
   // 时审阅保持，前端冲突条给重试/保留现状二路。
 
-  /** 在列审阅态 wire 形（与 AskEditTools.reviewJson 同构；gateway 不引 tools
-    * 的私有伴生，此处独立编码保持层界）。 */
+  /**
+   * 在列审阅态 wire 形（与 AskEditTools.reviewJson 同构；gateway 不引 tools
+   * 的私有伴生，此处独立编码保持层界）。
+   */
   private def encodePendingReview(sid: String): Json =
     nebflow.core.ask.AskEditReviews.reviewFor(sid) match
       case None => Json.Null
-      case Some(r) => Json.obj(
-        "path" -> r.path.asJson,
-        "fileName" -> r.fileName.asJson,
-        "baseText" -> r.baseText.asJson,
-        "currentText" -> r.currentText.asJson,
-        "hunks" -> r.hunks.map(hu => Json.obj(
-          "id" -> hu.id.asJson,
-          "oldStart" -> hu.oldStart.asJson,
-          "oldCount" -> hu.oldCount.asJson,
-          "newStart" -> hu.newStart.asJson,
-          "newCount" -> hu.newCount.asJson,
-          "added" -> hu.added.asJson,
-          "removed" -> hu.removed.asJson
-        )).asJson,
-        "count" -> r.changes.length.asJson,
-        "updatedAt" -> r.updatedAt.asJson
-      )
+      case Some(r) =>
+        Json.obj(
+          "path" -> r.path.asJson,
+          "fileName" -> r.fileName.asJson,
+          "baseText" -> r.baseText.asJson,
+          "currentText" -> r.currentText.asJson,
+          "hunks" -> r.hunks
+            .map(hu =>
+              Json.obj(
+                "id" -> hu.id.asJson,
+                "oldStart" -> hu.oldStart.asJson,
+                "oldCount" -> hu.oldCount.asJson,
+                "newStart" -> hu.newStart.asJson,
+                "newCount" -> hu.newCount.asJson,
+                "added" -> hu.added.asJson,
+                "removed" -> hu.removed.asJson
+              )
+            )
+            .asJson,
+          "count" -> r.changes.length.asJson,
+          "updatedAt" -> r.updatedAt.asJson
+        )
 
   private def handleAskEditResolve(
     action: String,
@@ -421,28 +448,33 @@ private[gateway] object WsAskHandlers:
     if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askEdit: sessionId must be an ask- session")
     else
       val outcome: IO[Either[String, nebflow.core.ask.AskEditReviews.ResolveResult]] = action match
-        case "accept"  => nebflow.core.ask.AskEditReviews.accept(sid, hunkId)
-        case "reject"  => nebflow.core.ask.AskEditReviews.reject(sid, hunkId)
+        case "accept" => nebflow.core.ask.AskEditReviews.accept(sid, hunkId)
+        case "reject" => nebflow.core.ask.AskEditReviews.reject(sid, hunkId)
         case "dismiss" => nebflow.core.ask.AskEditReviews.dismiss(sid)
       outcome.flatMap {
         case Right(_) =>
-          wsSend(Json.obj(
-            "type" -> "askEditResolved".asJson,
-            "sessionId" -> sid.asJson,
-            "action" -> action.asJson,
-            "outcome" -> "done".asJson,
-            "review" -> encodePendingReview(sid)
-          ))
+          wsSend(
+            Json.obj(
+              "type" -> "askEditResolved".asJson,
+              "sessionId" -> sid.asJson,
+              "action" -> action.asJson,
+              "outcome" -> "done".asJson,
+              "review" -> encodePendingReview(sid)
+            )
+          )
         case Left(err) =>
-          wsSend(Json.obj(
-            "type" -> "askEditResolved".asJson,
-            "sessionId" -> sid.asJson,
-            "action" -> action.asJson,
-            "outcome" -> "error".asJson,
-            "error" -> err.asJson,
-            "review" -> encodePendingReview(sid)
-          ))
+          wsSend(
+            Json.obj(
+              "type" -> "askEditResolved".asJson,
+              "sessionId" -> sid.asJson,
+              "action" -> action.asJson,
+              "outcome" -> "error".asJson,
+              "error" -> err.asJson,
+              "review" -> encodePendingReview(sid)
+            )
+          )
       }
+    end if
   end handleAskEditResolve
 
   private def handleAskEditAccept(
@@ -524,6 +556,10 @@ private[gateway] object WsAskHandlers:
       case AskNoteWrite.Failed(msg) =>
         ack("ok" -> false.asJson, "error" -> "write-failed".asJson, "detail" -> String.valueOf(msg).asJson)
 
+    end match
+
+  end noteAckFrame
+
   private def handleAskNoteGet(
     ctx: WsDispatchCtx,
     text: String,
@@ -548,9 +584,10 @@ private[gateway] object WsAskHandlers:
     val baseVersion = raw.hcursor.downField("baseVersion").as[Long].toOption.filter(_ >= 0L)
     val writeId = raw.hcursor.downField("writeId").focus
     if !AskSessions.isAskSession(sid) then askError(wsSend, sid, "askNotePut: sessionId must be an ask- session")
-    else body match
-      case None => send(wsSend, noteAckFrame(sid, writeId, AskNoteWrite.Failed("text is required")))
-      case Some(value) =>
-        AskNoteStore.current.put(sid, value, baseVersion).map(noteAckFrame(sid, writeId, _)).flatMap(send(wsSend, _))
+    else
+      body match
+        case None => send(wsSend, noteAckFrame(sid, writeId, AskNoteWrite.Failed("text is required")))
+        case Some(value) =>
+          AskNoteStore.current.put(sid, value, baseVersion).map(noteAckFrame(sid, writeId, _)).flatMap(send(wsSend, _))
   end handleAskNotePut
 end WsAskHandlers

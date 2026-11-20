@@ -72,8 +72,10 @@ object P2pProbePolicy:
     else
       val uri = URI.create(if endpoint.contains("://") then endpoint else s"http://$endpoint")
       Option(uri.getHost).filter(_.nonEmpty) match
-        case None    => Left(s"endpoint has no host: $endpoint")
+        case None => Left(s"endpoint has no host: $endpoint")
         case Some(h) => Right((h, if uri.getPort > 0 then uri.getPort else 6138))
+
+end P2pProbePolicy
 
 object P2pReachability:
 
@@ -130,6 +132,10 @@ object P2pReachability:
         IO.race(firstWin, allDone).map(_.merge)
       }
 
+    end if
+
+  end probeConcurrently
+
   /**
    * 单端点在活性探测 = **一次有界的 HTTP GET**（`/api/health`，既有只读端点；看到任何
    * HTTP 应答即算在线，含 4xx —— 应答本身就证明对端在服务）。
@@ -170,6 +176,8 @@ object P2pReachability:
   /** 进程内账本（`RemoteExecutor` 消费；spec 可 new 独立实例直测）。 */
   def current: P2pReachability = ledger
 
+end P2pReachability
+
 /**
  * 负证据账本（设备 × 地址集 → 失败计数与窗口）。线程安全：`ConcurrentHashMap` +
  * `compute`，读写都在一次原子操作里完成（禁「读-改-写」三拍）。
@@ -202,7 +210,8 @@ final class P2pReachability:
     negativeRemainingMs(deviceId, addressKey, nowMs).isDefined
 
   /** 记一次旁路（读数面）。 */
-  def noteSkip(): Unit = { skipCount.incrementAndGet(); () }
+  def noteSkip(): Unit =
+    skipCount.incrementAndGet(); ()
 
   /** 记一次真实失败（探测全不通 / 连接级下发失败）；返回累计连续失败次数。 */
   def noteFailure(deviceId: String, addressKey: String, nowMs: Long): Int =
@@ -211,7 +220,7 @@ final class P2pReachability:
       (_, prev) =>
         Option(prev) match
           case Some(f) if f.addressKey == addressKey => P2pReachability.Failure(nowMs, f.consecutive + 1, addressKey)
-          case _                                    => P2pReachability.Failure(nowMs, 1, addressKey)
+          case _ => P2pReachability.Failure(nowMs, 1, addressKey)
     )
     entry.consecutive
 
@@ -229,4 +238,6 @@ final class P2pReachability:
   def stats: (Int, Long, Long) = (failures.size, probeCount.get(), skipCount.get())
 
   /** 记一次探测（供读数面；`RemoteExecutor` 每次真拨前调用）。 */
-  def noteProbeAttempt(): Unit = { probeCount.incrementAndGet(); () }
+  def noteProbeAttempt(): Unit =
+    probeCount.incrementAndGet(); ()
+end P2pReachability

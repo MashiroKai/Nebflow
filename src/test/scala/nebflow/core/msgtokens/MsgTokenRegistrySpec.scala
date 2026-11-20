@@ -70,6 +70,7 @@ class MsgTokenRegistrySpec extends CatsEffectSuite:
         none <- reg.reminderFor(Sid1, "一条没有铸过牌的旧消息")
         _ = assert(none.isEmpty)
       yield ()
+      end for
     }
   }
 
@@ -91,6 +92,7 @@ class MsgTokenRegistrySpec extends CatsEffectSuite:
         m3 <- reg2.mint(Some(Sid1), "压缩后的新消息")
         _ = assertEquals(m3.get.token, s"{{msg:${reg2.shortCode(Sid1)}-000002}}")
       yield ()
+      end for
     }
   }
 
@@ -165,6 +167,7 @@ class MsgTokenRegistrySpec extends CatsEffectSuite:
         m3 <- reg2.mint(Some(keep), "对账后的新消息")
         _ = assertEquals(m3.get.token, s"{{msg:${reg2.shortCode(keep)}-000003}}")
       yield ()
+      end for
     }
   }
 
@@ -231,6 +234,7 @@ class MsgTokenRegistrySpec extends CatsEffectSuite:
         _ = assert(out2.contains(userText) && out2.contains("第二条消息"))
         _ = assert(!out2.contains("{{msg:"), "两种形态都不残留牌面")
       yield ()
+      end for
     }
   }
 
@@ -249,38 +253,39 @@ class MsgTokenRegistrySpec extends CatsEffectSuite:
     withRegistry() { (reg, _) =>
       // 判据③（msgcard-agent-expand 批 2026-11-05）：写坏的牌一律替换成 [引用未能解析：…]
       val malformed = List(
-        "{{msg:zzzzzzzz-000001|坏sid8}}",            // sid8 非 hex
-        s"{{msg:${reg.shortCode(Sid1)}-0001|短序号}}",   // seq 非 6 位
-        s"{{msg:${reg.shortCode(Sid1)}-000001|}}",       // 空短名
+        "{{msg:zzzzzzzz-000001|坏sid8}}", // sid8 非 hex
+        s"{{msg:${reg.shortCode(Sid1)}-0001|短序号}}", // seq 非 6 位
+        s"{{msg:${reg.shortCode(Sid1)}-000001|}}", // 空短名
         s"{{msg:${reg.shortCode(Sid1)}-000001|${"长" * 41}}}", // 超 40 字
-        s"{{msg:${reg.shortCode(Sid1)}-0001}}",          // 裸形态短序号
-        "{{msg:abc-1|x}}"                                // 坏核裸牌
+        s"{{msg:${reg.shortCode(Sid1)}-0001}}", // 裸形态短序号
+        "{{msg:abc-1|x}}" // 坏核裸牌
       )
       for
         outs <- malformed.map(s => reg.resolveForAgent(s"保持${s}原样")).sequence
         _ = outs.zip(malformed).foreach { case (out, raw) =>
-              assert(
-                out.contains(s"[引用未能解析：$raw]"),
-                s"畸形牌必须被替换为显式标记（不许原样递送）: $raw → $out"
-              )
-              assert(!out.replace(s"[引用未能解析：$raw]", "").contains(raw), s"标记之外不许残留原串: $raw")
-            }
+          assert(
+            out.contains(s"[引用未能解析：$raw]"),
+            s"畸形牌必须被替换为显式标记（不许原样递送）: $raw → $out"
+          )
+          assert(!out.replace(s"[引用未能解析：$raw]", "").contains(raw), s"标记之外不许残留原串: $raw")
+        }
         // 与牌无关的花括号文本（模板/代码片段）——零噪声逐字节原样
         plains = List("{{user.name}}", "{{ foo-bar }}", "{{msg|无核心}}", "{{msg.body}}", "{{#if x}}y{{/if}}")
         pouts <- plains.map(p => reg.resolveForAgent(s"代码：$p 结束")).sequence
         _ = pouts.zip(plains).foreach { case (out, raw) =>
-              assertEquals(out, s"代码：$raw 结束", s"非牌文本必须原样: $raw")
-            }
+          assertEquals(out, s"代码：$raw 结束", s"非牌文本必须原样: $raw")
+        }
       yield ()
+      end for
     }
   }
 
   test("畸形诊断计数：malformedSeen / missingSeen 如实计数（可观测面）") {
     withRegistry() { (reg, _) =>
       for
-        _ <- reg.resolveForAgent("{{11111111-000101}}")            // 缺 msg: 前缀
-        _ <- reg.resolveForAgent("{{msg:bad-1}}")                  // 坏核
-        miss <- reg.resolveForAgent("{{msg:deadbeef-000001}}")     // 合法牌面但映射缺失
+        _ <- reg.resolveForAgent("{{11111111-000101}}") // 缺 msg: 前缀
+        _ <- reg.resolveForAgent("{{msg:bad-1}}") // 坏核
+        miss <- reg.resolveForAgent("{{msg:deadbeef-000001}}") // 合法牌面但映射缺失
         _ = assertEquals(reg.malformedSeen, 2L)
         _ = assertEquals(reg.missingSeen, 1L)
         _ = assert(miss.contains("[引用未能解析：{{msg:deadbeef-000001}}]"))
@@ -322,3 +327,4 @@ class MsgTokenRegistrySpec extends CatsEffectSuite:
       yield ()
     }
   }
+end MsgTokenRegistrySpec

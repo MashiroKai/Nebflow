@@ -55,7 +55,11 @@ object PdfPageTool extends Tool:
     // 身份双保险之工具内侧：非 ask 会话（含 REST 直调 / 其余一切身份）拒绝。
     if !AskSessions.isAskSession(sid) then
       IO.pure(
-        Left(ToolError("PdfPage: permission denied — this tool is exclusive to file-ask sessions bound to a PDF. (PDF_PAGE_FORBIDDEN)"))
+        Left(
+          ToolError(
+            "PdfPage: permission denied — this tool is exclusive to file-ask sessions bound to a PDF. (PDF_PAGE_FORBIDDEN)"
+          )
+        )
       )
     else
       page match
@@ -73,7 +77,9 @@ object PdfPageTool extends Tool:
                 case Some(binding) =>
                   if !AskSessions.isPdf(binding.file) then
                     IO.pure(
-                      Left(ToolError(s"PdfPage: the bound file is not a PDF: ${binding.fileName}. (PDF_PAGE_FORBIDDEN)"))
+                      Left(
+                        ToolError(s"PdfPage: the bound file is not a PDF: ${binding.fileName}. (PDF_PAGE_FORBIDDEN)")
+                      )
                     )
                   else
                     val file = os.Path(binding.file, os.pwd)
@@ -86,12 +92,20 @@ object PdfPageTool extends Tool:
                       cache.ensure(file, binding.fileName).flatMap {
                         case Left(f) =>
                           IO.pure(
-                            Left(ToolError(s"PdfPage: the PDF could not be parsed (${f.code}): ${f.message}. Answer honestly that the document is unreadable."))
+                            Left(
+                              ToolError(
+                                s"PdfPage: the PDF could not be parsed (${f.code}): ${f.message}. Answer honestly that the document is unreadable."
+                              )
+                            )
                           )
                         case Right(manifest: PdfManifest) =>
                           if p > manifest.pageCount then
                             IO.pure(
-                              Left(ToolError(s"PdfPage: page $p is outside 1..${manifest.pageCount} (the document has ${manifest.pageCount} pages)."))
+                              Left(
+                                ToolError(
+                                  s"PdfPage: page $p is outside 1..${manifest.pageCount} (the document has ${manifest.pageCount} pages)."
+                                )
+                              )
                             )
                           else
                             cache.readPage(manifest.sourceSha256, p).map {
@@ -103,9 +117,13 @@ object PdfPageTool extends Tool:
                                   else (md.take(PdfAsk.MaxCharsPerPage), true)
                                 val head =
                                   s"[PDF ${binding.fileName} · 第 $p 页 / p.$p of ${manifest.pageCount} · sha256 ${manifest.sourceSha256.take(12)}…]" +
-                                    (if truncated then s"\n[page truncated at ${PdfAsk.MaxCharsPerPage} characters]" else "")
+                                    (if truncated then s"\n[page truncated at ${PdfAsk.MaxCharsPerPage} characters]"
+                                     else "")
                                 Right(head + "\n" + body)
                             }
                       }
+                    end if
               }
+    end if
+  end call
 end PdfPageTool

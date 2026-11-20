@@ -61,3 +61,5 @@ object AskGitVizPrompt:
 - 回答用用户的语言（中文问题用中文答）。读数带证据（sha 前缀 / 分支名 / 日期），
   不确定就说不确定。
 """
+  end build
+end AskGitVizPrompt

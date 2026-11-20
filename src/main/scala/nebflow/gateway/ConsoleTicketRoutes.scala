@@ -51,91 +51,112 @@ object ConsoleTicketRoutes:
     networkIdNow: IO[String],
     logger: NebflowLogger
   ): HttpRoutes[IO] =
-    HttpRoutes.of[IO] { case req @ GET -> Root if req.params.get("ticket").exists(_.nonEmpty) =>
-      val ticket = req.params.get("ticket").getOrElse("")
-      faces.consoleTicketFace match
-        case None =>
-          // Tunnel not assembled (pre-assembly / test shape): a readable 503
-          // result page, never a bare 500 (the browser shows this page).
-          IO.pure(resultPage(Status.ServiceUnavailable, "Console unavailable",
-            "The console ticket service is not assembled on this instance. Open the local URL instead."))
-        case Some(face) =>
-          face.verifyAndConsume(ticket).flatMap {
-            case Left(reason) =>
-              val (headline, detail) = reason match
-                case "expired" => ("Ticket expired", "This one-time ticket's validity window elapsed. Mint a fresh ticket and try again.")
-                case "invalid-ticket" => ("Ticket rejected", "The ticket is unknown, already used, or revoked. Mint a fresh ticket and try again.")
-                case other => ("Ticket rejected", s"The ticket was refused ($other). Mint a fresh ticket and try again.")
-              IO.pure(resultPage(Status.Forbidden, headline, detail))
-            case Right(t) =>
-              val isRelayMint = t.origin == GatewaySessionStore.OriginRelayMint
-              def refuseUnbound: IO[Response[IO]] =
-                IO.pure(resultPage(Status.Forbidden, "Binding revoked",
-                  "This host's account binding was revoked, so portal-minted tickets are no longer accepted. " +
-                    "Use a locally minted ticket (stand token) to reach the console."))
-              (if isRelayMint then face.isUnbound else IO.pure(false)).flatMap { unbound =>
-                if unbound then refuseUnbound
-                else
-                  networkIdNow.flatMap { nid =>
-                    sessions.create(t.accountSub, t.origin, nid).flatMap { rec =>
-                      // #522: Secure rides the consuming browser origin, not the
-                      // server's preference — https and tunnel-marked legs (the
-                      // relay console behind the HTTPS ingress) keep `Secure`;
-                      // a plain-http DIRECT leg (the local console) must NOT
-                      // carry it: WebKit refuses to store Secure cookies over
-                      // plain http (no localhost exemption), which silently
-                      // dropped every local session seating — WS handshake and
-                      // REST then answered 403 behind a "please log in" loop.
-                      // A direct client cannot forge the mark (boot-armed
-                      // 256-bit in-process value, client-supplied copies of the
-                      // header are dropped by the bridge before injection), so
-                      // "marked" is exactly "the cookie will be consumed at an
-                      // HTTPS origin".
-                      val secure =
-                        req.uri.scheme.exists(_.value.equalsIgnoreCase("https")) ||
-                          nebflow.shared.TunnelOriginMark.isMarked(req)
-                      // `*>` 绑进链：裸 logger.info 是孤儿 IO（构造即丢弃，永不执行
-                      // ——兑换已发生而日志零痕迹的存量缺陷，2026-10-29 随门户身份
-                      // 透传批 e2e 取证修正）。
-                      // 近路批·正交计数（best-effort，2026-11-04）：本机票在**环回腿**
-                      // 兑换成功 = 「近路真的走通了」的最硬证据（浏览器自报的 hit 是自
-                      // 申报值，本机票的 socket 腿是服务端事实）。判据复用 LoopbackLeg
-                      // 单点；只加一，**不参与任何判定/拒绝语义**（拒绝分支在更上层，
-                      // 已经返回，到不了这里）。
-                      val redeemedOnLoopback = LoopbackLeg.isLoopback(req)
-                      logger.info(
-                        s"console ticket redeemed: session established (accountSub=${t.accountSub}, " +
-                          s"origin=${t.origin}, sid=${rec.sessionId.take(8)}…, networkId=${nid.take(24)})" +
-                          // 新标签页归因批（2026-11-05）：兑换行原先只记账号/来源/sid ——
-                          // 「谁打开了这个页面」无从对账（同一时刻冒出第二个控制台时，
-                          // 分不清是门户自动进、前端重座腿、还是某个外部 open）。三个
-                          // 只读面各自带答案：referer = 发起导航的页面 origin+path
-                          // （**去 query**：重座腿的 referer 就带着已花掉的一次性票，
-                          // 票值绝不进日志）、ua = 浏览器/内嵌壳签名、loopback = 这条
-                          // 兑换的 socket 腿（环回腿 = 本机直连腿）。全部 best-effort。
-                          s" [attribution ${Attribution.describe(req, redeemedOnLoopback)}]"
-                      ) *>
-                        // 控制台在用判据（2026-11-05 · 工作过程中开新标签页批）：
-                        // 兑换成功 = 页面刚落地 = 「控制台在用」的服务端事实。
-                        ConsoleActivity.touch("ticket-redeemed") *> IO.pure({
-                        if redeemedOnLoopback then NearPathStats.noteRedeemedLoopback()
-                        // 独立窗口本机加速批（2026-10-29）：兑换 303 保留 ticket 之外的
-                        // 全部 query（card-window=1&path=…&title=…&cwpo=…）—— 直连卡窗
-                        // 深链 `http://<本机>:<port>/?card-window=1&path=…&ticket=…`
-                        // 兑换落地后必须还是**同一张卡窗页**；恒定 `Location: /` 会把
-                        // 弹窗重定向成全功能控制台（独立窗承载全壳 = 内容物收口批
-                        // 明令禁止形态）。无其余参数 ⇒ 载荷逐字节 = 既有 "/"（spec 钉）。
-                        // ticket 永不回传（一次性凭据不进重定向 URL，语义不变）。
-                        val carried = Query(req.uri.query.toList.filterNot(_._1 == "ticket")*)
-                        val loc = Uri(path = Uri.Path.unsafeFromString("/"), query = carried)
-                        Response[IO](Status.SeeOther)
-                          .putHeaders(Location(loc))
-                          .addCookie(GatewaySessionStore.newCookie(rec.sessionId, secure = secure))
-                      })
+    HttpRoutes.of[IO] {
+      case req @ GET -> Root if req.params.get("ticket").exists(_.nonEmpty) =>
+        val ticket = req.params.get("ticket").getOrElse("")
+        faces.consoleTicketFace match
+          case None =>
+            // Tunnel not assembled (pre-assembly / test shape): a readable 503
+            // result page, never a bare 500 (the browser shows this page).
+            IO.pure(
+              resultPage(
+                Status.ServiceUnavailable,
+                "Console unavailable",
+                "The console ticket service is not assembled on this instance. Open the local URL instead."
+              )
+            )
+          case Some(face) =>
+            face.verifyAndConsume(ticket).flatMap {
+              case Left(reason) =>
+                val (headline, detail) = reason match
+                  case "expired" =>
+                    (
+                      "Ticket expired",
+                      "This one-time ticket's validity window elapsed. Mint a fresh ticket and try again."
+                    )
+                  case "invalid-ticket" =>
+                    (
+                      "Ticket rejected",
+                      "The ticket is unknown, already used, or revoked. Mint a fresh ticket and try again."
+                    )
+                  case other =>
+                    ("Ticket rejected", s"The ticket was refused ($other). Mint a fresh ticket and try again.")
+                IO.pure(resultPage(Status.Forbidden, headline, detail))
+              case Right(t) =>
+                val isRelayMint = t.origin == GatewaySessionStore.OriginRelayMint
+                def refuseUnbound: IO[Response[IO]] =
+                  IO.pure(
+                    resultPage(
+                      Status.Forbidden,
+                      "Binding revoked",
+                      "This host's account binding was revoked, so portal-minted tickets are no longer accepted. " +
+                        "Use a locally minted ticket (stand token) to reach the console."
+                    )
+                  )
+                (if isRelayMint then face.isUnbound else IO.pure(false)).flatMap { unbound =>
+                  if unbound then refuseUnbound
+                  else
+                    networkIdNow.flatMap { nid =>
+                      sessions.create(t.accountSub, t.origin, nid).flatMap { rec =>
+                        // #522: Secure rides the consuming browser origin, not the
+                        // server's preference — https and tunnel-marked legs (the
+                        // relay console behind the HTTPS ingress) keep `Secure`;
+                        // a plain-http DIRECT leg (the local console) must NOT
+                        // carry it: WebKit refuses to store Secure cookies over
+                        // plain http (no localhost exemption), which silently
+                        // dropped every local session seating — WS handshake and
+                        // REST then answered 403 behind a "please log in" loop.
+                        // A direct client cannot forge the mark (boot-armed
+                        // 256-bit in-process value, client-supplied copies of the
+                        // header are dropped by the bridge before injection), so
+                        // "marked" is exactly "the cookie will be consumed at an
+                        // HTTPS origin".
+                        val secure =
+                          req.uri.scheme.exists(_.value.equalsIgnoreCase("https")) ||
+                            nebflow.shared.TunnelOriginMark.isMarked(req)
+                        // `*>` 绑进链：裸 logger.info 是孤儿 IO（构造即丢弃，永不执行
+                        // ——兑换已发生而日志零痕迹的存量缺陷，2026-10-29 随门户身份
+                        // 透传批 e2e 取证修正）。
+                        // 近路批·正交计数（best-effort，2026-11-04）：本机票在**环回腿**
+                        // 兑换成功 = 「近路真的走通了」的最硬证据（浏览器自报的 hit 是自
+                        // 申报值，本机票的 socket 腿是服务端事实）。判据复用 LoopbackLeg
+                        // 单点；只加一，**不参与任何判定/拒绝语义**（拒绝分支在更上层，
+                        // 已经返回，到不了这里）。
+                        val redeemedOnLoopback = LoopbackLeg.isLoopback(req)
+                        logger.info(
+                          s"console ticket redeemed: session established (accountSub=${t.accountSub}, " +
+                            s"origin=${t.origin}, sid=${rec.sessionId.take(8)}…, networkId=${nid.take(24)})" +
+                            // 新标签页归因批（2026-11-05）：兑换行原先只记账号/来源/sid ——
+                            // 「谁打开了这个页面」无从对账（同一时刻冒出第二个控制台时，
+                            // 分不清是门户自动进、前端重座腿、还是某个外部 open）。三个
+                            // 只读面各自带答案：referer = 发起导航的页面 origin+path
+                            // （**去 query**：重座腿的 referer 就带着已花掉的一次性票，
+                            // 票值绝不进日志）、ua = 浏览器/内嵌壳签名、loopback = 这条
+                            // 兑换的 socket 腿（环回腿 = 本机直连腿）。全部 best-effort。
+                            s" [attribution ${Attribution.describe(req, redeemedOnLoopback)}]"
+                        ) *>
+                          // 控制台在用判据（2026-11-05 · 工作过程中开新标签页批）：
+                          // 兑换成功 = 页面刚落地 = 「控制台在用」的服务端事实。
+                          ConsoleActivity.touch("ticket-redeemed") *> IO.pure({
+                            if redeemedOnLoopback then NearPathStats.noteRedeemedLoopback()
+                            // 独立窗口本机加速批（2026-10-29）：兑换 303 保留 ticket 之外的
+                            // 全部 query（card-window=1&path=…&title=…&cwpo=…）—— 直连卡窗
+                            // 深链 `http://<本机>:<port>/?card-window=1&path=…&ticket=…`
+                            // 兑换落地后必须还是**同一张卡窗页**；恒定 `Location: /` 会把
+                            // 弹窗重定向成全功能控制台（独立窗承载全壳 = 内容物收口批
+                            // 明令禁止形态）。无其余参数 ⇒ 载荷逐字节 = 既有 "/"（spec 钉）。
+                            // ticket 永不回传（一次性凭据不进重定向 URL，语义不变）。
+                            val carried = Query(req.uri.query.toList.filterNot(_._1 == "ticket")*)
+                            val loc = Uri(path = Uri.Path.unsafeFromString("/"), query = carried)
+                            Response[IO](Status.SeeOther)
+                              .putHeaders(Location(loc))
+                              .addCookie(GatewaySessionStore.newCookie(rec.sessionId, secure = secure))
+                          })
+                      }
                     }
-                  }
-              }
-          }
+                }
+            }
+        end match
     }
 
   /**
@@ -183,5 +204,6 @@ object ConsoleTicketRoutes:
     Response[IO](status)
       .putHeaders(org.http4s.headers.`Content-Type`(MediaType.text.html, Charset.`UTF-8`))
       .withBodyStream(fs2.Stream.emit(body).through(fs2.text.utf8.encode))
+  end resultPage
 
 end ConsoleTicketRoutes

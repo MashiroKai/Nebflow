@@ -62,6 +62,7 @@ object LlmKernel:
     case DecisionRoute(name: String)
     case NebulaChain
     case Slot(agentModel: Option[AgentModelConfig])
+
     /** 调用方已解析好的候选（健康探针逐候选——它手里只有一个候选，不是一条链）。 */
     case Explicit(candidates: List[ModelCandidate])
 
@@ -108,7 +109,8 @@ object LlmKernel:
     attemptBackend: Option[sttp.client4.StreamBackend[IO, sttp.capabilities.fs2.Fs2Streams[IO]]] = None
   ):
     def purpose: String = site.id
-    def logTag: String  = site.logTag
+    def logTag: String = site.logTag
+  end KernelCall
 
   // ── K6：usage 落账点（进程内单点；生产由 GatewayMain 装 store，测试可装 recording sink）──
 
@@ -120,12 +122,15 @@ object LlmKernel:
   object UsageSink:
     private val ref = new AtomicReference[Option[LlmUsageRecord => IO[Unit]]](None)
 
-    def install(sink: LlmUsageRecord => IO[Unit]): Unit = { ref.set(Some(sink)); () }
-    def clear(): Unit = { ref.set(None); () }
+    def install(sink: LlmUsageRecord => IO[Unit]): Unit =
+      ref.set(Some(sink)); ()
+
+    def clear(): Unit =
+      ref.set(None); ()
 
     def emit(record: LlmUsageRecord): IO[Unit] =
       ref.get() match
-        case None       => IO.unit
+        case None => IO.unit
         case Some(sink) => sink(record).handleErrorWith(_ => IO.unit)
 
   // ── K2 前缀门（主腿用：把「本请求没有稳定前缀」变成登记过的白名单理由）──────
@@ -134,7 +139,7 @@ object LlmKernel:
   def declaredPrefix(stable: Option[String]): SystemPrefix =
     stable.filter(_.nonEmpty) match
       case Some(text) => SystemPrefix.Stable(text)
-      case None       => SystemPrefix.Absent(KernelCallSites.MainLegAbsence)
+      case None => SystemPrefix.Absent(KernelCallSites.MainLegAbsence)
 
   // ── 装配单点（B1–B4）─────────────────────────────────────────────────────
 
@@ -214,6 +219,7 @@ object LlmKernel:
               }
           }
         case None => mainRoute
+      end match
     }
 
   // ── K5 整链遍历单点 ──────────────────────────────────────────────────────
@@ -223,9 +229,13 @@ object LlmKernel:
   private def adapterFor(registry: ProviderRegistry, call: KernelCall, providerId: String): IO[ProviderAdapter[IO]] =
     call.gating match
       case Gating.Throttled => registry.getAdapter(providerId)
-      case Gating.Ungated   => registry.getAdapterRaw(providerId)
+      case Gating.Ungated => registry.getAdapterRaw(providerId)
 
-  private def oneShot(call: KernelCall, adapter: ProviderAdapter[IO], cand: ModelCandidate): IO[Either[Throwable, KernelReply]] =
+  private def oneShot(
+    call: KernelCall,
+    adapter: ProviderAdapter[IO],
+    cand: ModelCandidate
+  ): IO[Either[Throwable, KernelReply]] =
     val send: IO[Either[Throwable, KernelReply]] =
       adapter.sendMessage(assemble(call, cand)).attempt.map {
         // 空回文（HTTP 200 但 body 空）= provider 侧故障，与传输错同侧处理：试下一
@@ -233,9 +243,11 @@ object LlmKernel:
         case Right(resp) if resp.reply.trim.isEmpty =>
           Left(new RuntimeException("empty reply (HTTP 200, empty body)"))
         case Right(resp) => Right(KernelReply(resp.reply, resp.usage, cand.providerId, cand.model))
-        case Left(e)     => Left(e)
+        case Left(e) => Left(e)
       }
     call.timeout.fold(send)(d => send.timeout(d))
+
+  end oneShot
 
   /**
    * **整链遍历单点**（K5）：逐候选 `sendMessage`——某候选传输/适配层失败 ⇒ WARN 落
@@ -297,6 +309,8 @@ object LlmKernel:
     }
     traversal.flatTap(outcome => meter(call, outcome, candidates.lastOption.map(c => (c.providerId, c.model))))
 
+  end chainCall
+
   /** 解析候选（K7）后整链遍历（K5）——辅腿的常规入口。 */
   def run(registry: ProviderRegistry, call: KernelCall): IO[Option[KernelReply]] =
     candidates(registry, call.source).flatMap(cs => chainCall(registry, cs, call))
@@ -322,7 +336,7 @@ object LlmKernel:
     val (providerId, model) = domain
     val usage = outcome.flatMap(_.usage)
     val kind = call.meterKind match
-      case MeterKind.Probe    => "warmup"
+      case MeterKind.Probe => "warmup"
       case MeterKind.Business => "business"
     val sessionId = call.sessionId.orElse(Some(call.purpose)).getOrElse(call.purpose)
     val accounts = IO {
@@ -346,6 +360,8 @@ object LlmKernel:
           )
         )
     accounts *> storeRow
+
+  end meter
 
   /**
    * 流式腿的单候选入口（健康探针）：解析候选 → 取**闸视图**（[[Gating.Ungated]] =

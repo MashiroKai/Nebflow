@@ -32,7 +32,7 @@ class PluginDistributionCatalogSpec extends FunSuite:
   override val munitTimeout: FiniteDuration = Duration(120, "s")
 
   private var prevRoot: os.Path = os.Path("/tmp")
-  private var home: os.Path     = os.Path("/tmp")
+  private var home: os.Path = os.Path("/tmp")
 
   override def beforeAll(): Unit =
     prevRoot = PathUtil.dataRoot
@@ -70,11 +70,11 @@ class PluginDistributionCatalogSpec extends FunSuite:
   // ── 夹具：目录文件 ─────────────────────────────────────────
 
   private def verJson(
-      v: String,
-      sha: String,
-      size: Long,
-      yanked: Boolean = false,
-      artifact: String = "artifacts/demo-kit.zip"
+    v: String,
+    sha: String,
+    size: Long,
+    yanked: Boolean = false,
+    artifact: String = "artifacts/demo-kit.zip"
   ): Json =
     Json.obj(
       "version" -> v.asJson,
@@ -87,10 +87,10 @@ class PluginDistributionCatalogSpec extends FunSuite:
     )
 
   private def pkgJson(
-      id: String,
-      keyId: String,
-      versions: List[Json],
-      publisherClass: Option[String] = None
+    id: String,
+    keyId: String,
+    versions: List[Json],
+    publisherClass: Option[String] = None
   ): Json =
     val base = List(
       "id" -> id.asJson,
@@ -101,15 +101,15 @@ class PluginDistributionCatalogSpec extends FunSuite:
 
   /** 构建签名目录信封并落盘 `<dir>/catalog.json`；返回 noSpaces 原文。 */
   private def writeCatalog(
-      dir: os.Path,
-      revision: Long,
-      packages: List[Json],
-      keyPair: KeyPair,
-      keyId: String,
-      validUntil: Option[Long] = None,
-      catalogExtras: List[(String, Json)] = Nil,
-      signatureOverride: Option[Json] = None,
-      protocolVersion: Int = 1
+    dir: os.Path,
+    revision: Long,
+    packages: List[Json],
+    keyPair: KeyPair,
+    keyId: String,
+    validUntil: Option[Long] = None,
+    catalogExtras: List[(String, Json)] = Nil,
+    signatureOverride: Option[Json] = None,
+    protocolVersion: Int = 1
   ): String =
     val catalogJson = Json.obj(
       (
@@ -126,6 +126,8 @@ class PluginDistributionCatalogSpec extends FunSuite:
     os.makeDir.all(dir)
     os.write.over(dir / "catalog.json", raw)
     raw
+
+  end writeCatalog
 
   /** 配置一个 dir 目录源 + 信任根（键 id → raw hex 公钥）。 */
   private def configureDirSource(sourceId: String, dir: os.Path, keyId: String, hex: String): Unit =
@@ -149,10 +151,22 @@ class PluginDistributionCatalogSpec extends FunSuite:
   // ── 解码宽严面 ─────────────────────────────────────────────
 
   test("decode: valid envelope decodes with all schema v1 fields") {
-    val raw = writeCatalog(home / "cat-tmp", 42L, List(pkgJson("acme.demo-kit", "acme-release-1",
-      List(verJson("1.5.0", ShaA, 123L)), publisherClass = Some("verified"))), genKey(), "acme-release-1")
+    val raw = writeCatalog(
+      home / "cat-tmp",
+      42L,
+      List(
+        pkgJson(
+          "acme.demo-kit",
+          "acme-release-1",
+          List(verJson("1.5.0", ShaA, 123L)),
+          publisherClass = Some("verified")
+        )
+      ),
+      genKey(),
+      "acme-release-1"
+    )
     PluginDistributionCatalog.decodeSigned(raw) match
-      case Left(err)      => fail(s"valid catalog rejected: $err")
+      case Left(err) => fail(s"valid catalog rejected: $err")
       case Right(signed) =>
         assertEquals(signed.doc.protocolVersion, 1)
         assertEquals(signed.doc.catalogRevision, 42L)
@@ -170,88 +184,136 @@ class PluginDistributionCatalogSpec extends FunSuite:
   test("decode: unknown fields tolerated (§12.2 forward compat), publisherClass absent = no assertion") {
     val withExtras = pkgJson("acme.demo-kit", "acme-release-1", List(verJson("1.5.0", ShaA, 1L)))
       .deepMerge(Json.obj("futureField" -> Json.obj("x" -> 1.asJson)))
-    val raw = writeCatalog(home / "cat-tmp", 1L, List(withExtras), genKey(), "acme-release-1",
-      catalogExtras = List("hubProvenance" -> "later-phase".asJson))
+    val raw = writeCatalog(
+      home / "cat-tmp",
+      1L,
+      List(withExtras),
+      genKey(),
+      "acme-release-1",
+      catalogExtras = List("hubProvenance" -> "later-phase".asJson)
+    )
     PluginDistributionCatalog.decodeSigned(raw) match
-      case Left(err)      => fail(s"unknown fields must be tolerated: $err")
+      case Left(err) => fail(s"unknown fields must be tolerated: $err")
       case Right(signed) =>
         assertEquals(signed.doc.packages.head.publisherClass, None, "absent optional field must not imply identity")
         assertEquals(signed.doc.packages.head.reviewId, None)
   }
 
   test("decode: known security field violations reject the whole catalog") {
-    val kp   = genKey()
+    val kp = genKey()
     val good = pkgJson("acme.demo-kit", "acme-release-1", List(verJson("1.5.0", ShaA, 1L)))
     def rawWith(pkg: Json): String = writeCatalog(home / "cat-tmp", 1L, List(pkg), kp, "acme-release-1")
     val cases: List[(String, String)] = List(
       ("sha256 not hex", rawWith(pkgJson("acme.demo-kit", "acme-release-1", List(verJson("1.5.0", "short", 1L))))),
       ("negative size", rawWith(pkgJson("acme.demo-kit", "acme-release-1", List(verJson("1.5.0", ShaA, -1L))))),
-      ("yanked non-bool", rawWith(pkgJson("acme.demo-kit", "acme-release-1",
-        List(verJson("1.5.0", ShaA, 1L).deepMerge(Json.obj("yanked" -> "yes".asJson)))))),
-      ("publisherClass outside closed set", rawWith(pkgJson("acme.demo-kit", "acme-release-1",
-        List(verJson("1.5.0", ShaA, 1L)), publisherClass = Some("wizard")))),
+      (
+        "yanked non-bool",
+        rawWith(
+          pkgJson(
+            "acme.demo-kit",
+            "acme-release-1",
+            List(verJson("1.5.0", ShaA, 1L).deepMerge(Json.obj("yanked" -> "yes".asJson)))
+          )
+        )
+      ),
+      (
+        "publisherClass outside closed set",
+        rawWith(
+          pkgJson("acme.demo-kit", "acme-release-1", List(verJson("1.5.0", ShaA, 1L)), publisherClass = Some("wizard"))
+        )
+      ),
       ("missing publisherKeyId", rawWith(good.deepMerge(Json.obj("publisherKeyId" -> Json.Null)))),
-      ("protocolVersion != 1", writeCatalog(home / "cat-tmp", 1L, List(good), kp, "acme-release-1",
-        protocolVersion = 2))
+      (
+        "protocolVersion != 1",
+        writeCatalog(home / "cat-tmp", 1L, List(good), kp, "acme-release-1", protocolVersion = 2)
+      )
     )
     cases.foreach { (label, raw) =>
       PluginDistributionCatalog.decodeSigned(raw) match
-        case Left(_)  => () // expected
+        case Left(_) => () // expected
         case Right(_) => fail(s"$label must be rejected")
     }
   }
 
   // ── Ed25519 验签面 ─────────────────────────────────────────
 
-  test("signature: correct root verifies; tampered / wrong key / unknown keyId / bad algorithm / bad base64 all reject") {
-    val dir   = home / "cat-sig"
+  test(
+    "signature: correct root verifies; tampered / wrong key / unknown keyId / bad algorithm / bad base64 all reject"
+  ) {
+    val dir = home / "cat-sig"
     val kpGood = genKey()
-    val kpBad  = genKey()
-    val raw    = writeCatalog(dir, 7L, List(pkgJson("acme.demo-kit", "acme-release-1",
-      List(verJson("1.5.0", ShaA, 1L)))), kpGood, "acme-release-1")
+    val kpBad = genKey()
+    val raw = writeCatalog(
+      dir,
+      7L,
+      List(pkgJson("acme.demo-kit", "acme-release-1", List(verJson("1.5.0", ShaA, 1L)))),
+      kpGood,
+      "acme-release-1"
+    )
     val signed = PluginDistributionCatalog.decodeSigned(raw).toOption.get
     val rootsGood = Map("acme-release-1" -> pubHex(kpGood))
 
     // 正确根键
     PluginDistributionCatalog.verifySignature(signed, rootsGood) match
       case Right(doc) => assertEquals(doc.catalogRevision, 7L)
-      case Left(err)  => fail(s"correct root must verify: $err")
+      case Left(err) => fail(s"correct root must verify: $err")
 
     // 错键（信任根是另一把）
     PluginDistributionCatalog.verifySignature(signed, Map("acme-release-1" -> pubHex(kpBad))) match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogUntrusted))
-      case Right(_)  => fail("wrong root key must be rejected")
+      case Right(_) => fail("wrong root key must be rejected")
 
     // keyId 不在信任根
     PluginDistributionCatalog.verifySignature(signed, Map("other-key" -> pubHex(kpGood))) match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogUntrusted))
-      case Right(_)  => fail("keyId absent from trust roots must be rejected")
+      case Right(_) => fail("keyId absent from trust roots must be rejected")
 
     val prevSig = signatureJson("acme-release-1", signatureValueOf(raw))
 
     // 篡改：目录内容与签名时的字节不一致（同键同 keyId）
-    val tamperedRaw = writeCatalog(dir, 8L, List(pkgJson("acme.demo-kit", "acme-release-1",
-      List(verJson("9.9.9", ShaA, 1L)))), kpGood, "acme-release-1", signatureOverride = Some(prevSig))
-    PluginDistributionCatalog.decodeSigned(tamperedRaw)
+    val tamperedRaw = writeCatalog(
+      dir,
+      8L,
+      List(pkgJson("acme.demo-kit", "acme-release-1", List(verJson("9.9.9", ShaA, 1L)))),
+      kpGood,
+      "acme-release-1",
+      signatureOverride = Some(prevSig)
+    )
+    PluginDistributionCatalog
+      .decodeSigned(tamperedRaw)
       .flatMap(PluginDistributionCatalog.verifySignature(_, rootsGood)) match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogUntrusted))
-      case Right(_)  => fail("tampered catalog must be rejected")
+      case Right(_) => fail("tampered catalog must be rejected")
 
     // 算法非 ed25519
-    val badAlgoRaw = writeCatalog(dir, 8L, Nil, kpGood, "acme-release-1",
-      signatureOverride = Some(prevSig.deepMerge(Json.obj("algorithm" -> "rsa-4096".asJson))))
-    PluginDistributionCatalog.decodeSigned(badAlgoRaw)
+    val badAlgoRaw = writeCatalog(
+      dir,
+      8L,
+      Nil,
+      kpGood,
+      "acme-release-1",
+      signatureOverride = Some(prevSig.deepMerge(Json.obj("algorithm" -> "rsa-4096".asJson)))
+    )
+    PluginDistributionCatalog
+      .decodeSigned(badAlgoRaw)
       .flatMap(PluginDistributionCatalog.verifySignature(_, rootsGood)) match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogUntrusted))
-      case Right(_)  => fail("non-ed25519 algorithm must be rejected")
+      case Right(_) => fail("non-ed25519 algorithm must be rejected")
 
     // 签名值非 base64
-    val badB64Raw = writeCatalog(dir, 8L, Nil, kpGood, "acme-release-1",
-      signatureOverride = Some(prevSig.deepMerge(Json.obj("value" -> "!!!not-base64!!!".asJson))))
-    PluginDistributionCatalog.decodeSigned(badB64Raw)
+    val badB64Raw = writeCatalog(
+      dir,
+      8L,
+      Nil,
+      kpGood,
+      "acme-release-1",
+      signatureOverride = Some(prevSig.deepMerge(Json.obj("value" -> "!!!not-base64!!!".asJson)))
+    )
+    PluginDistributionCatalog
+      .decodeSigned(badB64Raw)
       .flatMap(PluginDistributionCatalog.verifySignature(_, rootsGood)) match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogUntrusted))
-      case Right(_)  => fail("non-base64 signature value must be rejected")
+      case Right(_) => fail("non-base64 signature value must be rejected")
   }
 
   // ── 取回面：白名单 / 过期 / 防回滚 / 大小上限 ───────────────
@@ -262,22 +324,22 @@ class PluginDistributionCatalogSpec extends FunSuite:
     configureDirSource("known", dir, "acme-release-1", pubHex(genKey()))
     PluginDistributionCatalog.loadVerified("not-configured").unsafeRunSync() match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogSourceUnknown))
-      case Right(_)  => fail("unregistered catalog source must be refused")
+      case Right(_) => fail("unregistered catalog source must be refused")
   }
 
   test("loadVerified: expired validUntil is refused (no silent downgrade)") {
     val dir = home / "cat-src"
-    val kp  = genKey()
+    val kp = genKey()
     writeCatalog(dir, 1L, Nil, kp, "acme-release-1", validUntil = Some(System.currentTimeMillis() / 1000L - 60))
     configureDirSource("acme-expired", dir, "acme-release-1", pubHex(kp))
     PluginDistributionCatalog.loadVerified("acme-expired").unsafeRunSync() match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogExpired))
-      case Right(_)  => fail("expired catalog must be refused")
+      case Right(_) => fail("expired catalog must be refused")
   }
 
   test("loadVerified: catalogRevision never rolls back; equal is idempotent") {
     val dir = home / "cat-src"
-    val kp  = genKey()
+    val kp = genKey()
     configureDirSource("acme", dir, "acme-release-1", pubHex(kp))
 
     writeCatalog(dir, 42L, Nil, kp, "acme-release-1")
@@ -288,7 +350,7 @@ class PluginDistributionCatalogSpec extends FunSuite:
     writeCatalog(dir, 41L, Nil, kp, "acme-release-1")
     PluginDistributionCatalog.loadVerified("acme").unsafeRunSync() match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogStale))
-      case Right(_)  => fail("rollback to an older catalogRevision must be rejected")
+      case Right(_) => fail("rollback to an older catalogRevision must be rejected")
 
     writeCatalog(dir, 42L, Nil, kp, "acme-release-1")
     PluginDistributionCatalog.loadVerified("acme").unsafeRunSync() match
@@ -315,18 +377,24 @@ class PluginDistributionCatalogSpec extends FunSuite:
 
   test("loadVerified: catalog file above the size cap is refused") {
     val dir = home / "cat-src"
-    val kp  = genKey()
-    writeCatalog(dir, 1L, Nil, kp, "acme-release-1",
-      catalogExtras = List("pad" -> ("x" * (PluginDistributionCatalog.MaxCatalogBytes.toInt + 1024)).asJson))
+    val kp = genKey()
+    writeCatalog(
+      dir,
+      1L,
+      Nil,
+      kp,
+      "acme-release-1",
+      catalogExtras = List("pad" -> ("x" * (PluginDistributionCatalog.MaxCatalogBytes.toInt + 1024)).asJson)
+    )
     configureDirSource("acme-big", dir, "acme-release-1", pubHex(kp))
     PluginDistributionCatalog.loadVerified("acme-big").unsafeRunSync() match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogOversize))
-      case Right(_)  => fail("oversize catalog must be refused")
+      case Right(_) => fail("oversize catalog must be refused")
   }
 
   test("loadVerified: url-form source fetches through the same code path (file:// fixture, zero real network)") {
     val dir = home / "cat-url-src"
-    val kp  = genKey()
+    val kp = genKey()
     writeCatalog(dir, 5L, Nil, kp, "acme-release-1")
     writeConfig(
       Json.obj(
@@ -345,13 +413,13 @@ class PluginDistributionCatalogSpec extends FunSuite:
 
   test("loadVerified: wrongly-signed catalog is refused before any state write") {
     val dir = home / "cat-src"
-    val kp  = genKey()
+    val kp = genKey()
     writeCatalog(dir, 1L, Nil, kp, "acme-release-1")
     // keyId 与信任根登记不一致 ⇒ 验签拒绝（状态文件不得写出）
     configureDirSource("acme-mis", dir, "someone-else", pubHex(kp))
     PluginDistributionCatalog.loadVerified("acme-mis").unsafeRunSync() match
       case Left(err) => assert(err.contains(PluginDistributionCatalog.CodeCatalogUntrusted))
-      case Right(_)  => fail("signature failure must refuse the catalog")
+      case Right(_) => fail("signature failure must refuse the catalog")
     assertEquals(os.exists(home / "plugin-catalog-state" / "acme-mis.json"), false, "no state write on refusal")
   }
 
@@ -359,13 +427,23 @@ class PluginDistributionCatalogSpec extends FunSuite:
 
   test("resolve: exact id+version+sha matches; version / sha / yanked / unknown-id mismatch rejects") {
     val dir = home / "cat-src"
-    val kp  = genKey()
-    writeCatalog(dir, 1L, List(
-      pkgJson("acme.demo-kit", "acme-release-1", List(
-        verJson("1.5.0", ShaA, 123L),
-        verJson("1.4.0", ShaB, 100L, yanked = true)
-      ))
-    ), kp, "acme-release-1")
+    val kp = genKey()
+    writeCatalog(
+      dir,
+      1L,
+      List(
+        pkgJson(
+          "acme.demo-kit",
+          "acme-release-1",
+          List(
+            verJson("1.5.0", ShaA, 123L),
+            verJson("1.4.0", ShaB, 100L, yanked = true)
+          )
+        )
+      ),
+      kp,
+      "acme-release-1"
+    )
     configureDirSource("acme-res", dir, "acme-release-1", pubHex(kp))
     val doc = PluginDistributionCatalog.loadVerified("acme-res").unsafeRunSync().toOption.get.doc
 
@@ -378,18 +456,18 @@ class PluginDistributionCatalogSpec extends FunSuite:
 
     PluginDistributionCatalog.resolve(doc, "acme.demo-kit", "9.9.9", ShaA) match
       case Left(err) => assert(err.contains("9.9.9"))
-      case Right(_)  => fail("version not in catalog must be rejected")
+      case Right(_) => fail("version not in catalog must be rejected")
 
     PluginDistributionCatalog.resolve(doc, "acme.demo-kit", "1.5.0", "c".repeat(64)) match
-      case Left(_)  => ()
+      case Left(_) => ()
       case Right(_) => fail("sha256 mismatch must be rejected")
 
     PluginDistributionCatalog.resolve(doc, "acme.demo-kit", "1.4.0", ShaB) match
-      case Left(_)  => () // yanked ⇒ 拒绝新分发
+      case Left(_) => () // yanked ⇒ 拒绝新分发
       case Right(_) => fail("yanked version must be rejected")
 
     PluginDistributionCatalog.resolve(doc, "other.unknown", "1.5.0", ShaA) match
-      case Left(_)  => ()
+      case Left(_) => ()
       case Right(_) => fail("unknown id must be rejected")
   }
 

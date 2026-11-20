@@ -80,7 +80,10 @@ object MailClient:
             sb.append(new String(bytes, StandardCharsets.UTF_8)).append("\r\n")
           case None => ()
         done = line.startsWith(tag + " ")
+      end while
       sb.toString
+
+    end readUntilTag
 
     private def literalLen(line: String): Option[Int] =
       LiteralPattern.findAllMatchIn(line).toList.lastOption.map(_.group(1).toInt)
@@ -115,6 +118,8 @@ object MailClient:
           case e: Throwable =>
             Left(s"IMAP 会话异常：${e.getClass.getSimpleName}")
       read.flatMap(resp => MailClient.imapVerdict(tag, resp))
+
+    end command
 
     /** Consume the greeting (`* OK` / `* PREAUTH`). */
     def readGreeting(): Either[String, Unit] =
@@ -192,12 +197,14 @@ object MailClient:
           while !settled do
             try
               val line = readLine()
-              if line == null then { event = IdleEvent.ConnectionLost; settled = true }
-              else if line.toUpperCase.contains("EXISTS") then { event = IdleEvent.Exists; settled = true }
+              if line == null then
+                event = IdleEvent.ConnectionLost; settled = true
+              else if line.toUpperCase.contains("EXISTS") then
+                event = IdleEvent.Exists; settled = true
               // 其余 untagged（EXPUNGE/FETCH/RECENT…）：继续等
             catch
               case _: java.net.SocketTimeoutException => settled = true // Renew 到点
-              case _: java.io.IOException             => event = IdleEvent.ConnectionLost; settled = true
+              case _: java.io.IOException => event = IdleEvent.ConnectionLost; settled = true
           socket.setSoTimeout(DefaultSoTimeoutMs)
           try
             out.write("DONE\r\n".getBytes(StandardCharsets.UTF_8))
@@ -205,18 +212,21 @@ object MailClient:
             readUntilTag(tag) // 消费 tagged 完成行（失败尽力而为）
           catch case _: Throwable => ()
           Right(event)
+        end if
       catch
         case _: java.net.SocketTimeoutException => Right(IdleEvent.ConnectionLost)
         case e: java.io.IOException =>
           Left(s"IDLE: ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}")
+      end try
+    end idleOnce
   end ImapSession
 
   private val DefaultSoTimeoutMs: Int = 15000
 
   /** IDLE 一拍结局（idleOnce 的返回面）。 */
   enum IdleEvent:
-    case Exists         // `* n EXISTS`：有新信 → 调用方踢轮询即取
-    case Renew          // 重续点到（默认 25min）→ 原连接重发 IDLE
+    case Exists // `* n EXISTS`：有新信 → 调用方踢轮询即取
+    case Renew // 重续点到（默认 25min）→ 原连接重发 IDLE
     case ConnectionLost // 静默断连（NAT/防火墙特征，连续 ≥3 次 → 退化轮询）
 
   /** CAPABILITY 响应是否含 IDLE（词元级匹配，非子串——防 `XIDLE` 类误判）。 */
@@ -313,6 +323,8 @@ object MailClient:
       }
       (headers.toMap, body)
 
+    end parse
+
     /** Extract readable text from a (possibly multipart) body. */
     def bodyText(headers: Map[String, String], body: String): String =
       val cte = headers.getOrElse("content-transfer-encoding", "").toLowerCase
@@ -329,7 +341,8 @@ object MailClient:
             val parts = splitMultipart(body, b)
             val isPlain = (h: Map[String, String]) => h.getOrElse("content-type", "").toLowerCase.contains("text/plain")
             val isHtml = (h: Map[String, String]) => h.getOrElse("content-type", "").toLowerCase.contains("text/html")
-            val isNested = (h: Map[String, String]) => h.getOrElse("content-type", "").toLowerCase.contains("multipart/")
+            val isNested = (h: Map[String, String]) =>
+              h.getOrElse("content-type", "").toLowerCase.contains("multipart/")
             val plain = parts.find(p => isPlain(p._1))
             val html = parts.find(p => isHtml(p._1))
             val nested = parts.find(p => isNested(p._1))
@@ -342,6 +355,10 @@ object MailClient:
       else if ctype.contains("text/html") then DraftCodec.htmlToText(decoded)
       else decoded
 
+      end if
+
+    end bodyText
+
     private def splitMultipart(body: String, boundary: String): List[(Map[String, String], String)] =
       val delim = "--" + boundary
       body.split(java.util.regex.Pattern.quote(delim)).toList.drop(1).takeWhile(c => !c.startsWith("--")).map { c =>
@@ -350,6 +367,7 @@ object MailClient:
 
     def firstAddress(value: String): String =
       AngleAddr.findFirstMatchIn(value).map(_.group(1)).getOrElse(value.trim)
+  end Rfc822
 
   private val BoundaryPattern: Regex = """(?i)boundary="?([^";]+)"?""".r
   private val AngleAddr: Regex = """<([^>]+)>""".r
@@ -382,12 +400,14 @@ object MailClient:
     private val EncodedWord: Regex = """=\?([^?]+)\?([bBqQ])\?([^?]*)\?=""".r
 
     def decode(value: String): String =
-      EncodedWord.replaceAllIn(value, m =>
-        val charset = m.group(1)
-        val enc = m.group(2).toLowerCase
-        val payload = m.group(3)
-        val text = if enc == "b" then b64DecodeText(payload) else qpDecode(payload.replace('_', ' '))
-        reencode(text, charset)
+      EncodedWord.replaceAllIn(
+        value,
+        m =>
+          val charset = m.group(1)
+          val enc = m.group(2).toLowerCase
+          val payload = m.group(3)
+          val text = if enc == "b" then b64DecodeText(payload) else qpDecode(payload.replace('_', ' '))
+          reencode(text, charset)
       )
 
     private def reencode(text: String, charset: String): String =
@@ -395,6 +415,7 @@ object MailClient:
         if charset.toLowerCase.contains("utf-8") then text
         else new String(text.getBytes("ISO-8859-1"), java.nio.charset.Charset.forName(charset))
       catch case _: Throwable => text
+  end HeaderCodec
 
   // ═════════════════ IncomingMail 组装 ═════════════════
 
@@ -435,25 +456,28 @@ object MailClient:
       val altBoundary = s"=_alt_${rand6()}"
       val sb = new StringBuilder
       val fromAddr = addrOnly(mail.from)
-      if mail.fromName.nonEmpty then
-        sb.append(s"From: =?UTF-8?B?${b64(mail.fromName)}?= <$fromAddr>\r\n")
+      if mail.fromName.nonEmpty then sb.append(s"From: =?UTF-8?B?${b64(mail.fromName)}?= <$fromAddr>\r\n")
       else sb.append(s"From: <$fromAddr>\r\n")
       sb.append(s"To: ${mail.to.map(addrOnly).mkString(", ")}\r\n")
       if mail.cc.nonEmpty then sb.append(s"Cc: ${mail.cc.map(addrOnly).mkString(", ")}\r\n")
       if mail.bcc.nonEmpty then sb.append(s"Bcc: ${mail.bcc.map(addrOnly).mkString(", ")}\r\n")
       mail.inReplyTo.foreach(r => sb.append(s"In-Reply-To: $r\r\n"))
       sb.append(s"Subject: =?UTF-8?B?${b64(mail.subject)}?=\r\n")
-      sb.append(s"Date: ${java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now())}\r\n")
+      sb.append(
+        s"Date: ${java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME.format(java.time.ZonedDateTime.now())}\r\n"
+      )
       sb.append(s"Message-ID: <${System.currentTimeMillis()}.$boundary@perception.local>\r\n")
       sb.append("MIME-Version: 1.0\r\n")
       sb.append(s"Content-Type: multipart/mixed; boundary=\"$boundary\"\r\n\r\n")
       sb.append(s"--$boundary\r\n")
       sb.append(s"Content-Type: multipart/alternative; boundary=\"$altBoundary\"\r\n\r\n")
       val textPlain = DraftCodec.htmlToText(mail.bodyHtml)
-      sb.append("--").append(altBoundary)
+      sb.append("--")
+        .append(altBoundary)
         .append("\r\nContent-Type: text/plain; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n")
       sb.append(wrap76(Base64.getEncoder.encodeToString(textPlain.getBytes(StandardCharsets.UTF_8)))).append("\r\n")
-      sb.append("--").append(altBoundary)
+      sb.append("--")
+        .append(altBoundary)
         .append("\r\nContent-Type: text/html; charset=UTF-8\r\nContent-Transfer-Encoding: base64\r\n\r\n")
       sb.append(wrap76(Base64.getEncoder.encodeToString(mail.bodyHtml.getBytes(StandardCharsets.UTF_8)))).append("\r\n")
       sb.append(s"--$altBoundary--\r\n")
@@ -466,6 +490,8 @@ object MailClient:
       }
       sb.append(s"--$boundary--\r\n")
       dotStuff(sb.toString)
+
+    end buildData
 
     private def addrOnly(s: String): String =
       AngleAddr.findFirstMatchIn(s).map(_.group(1)).getOrElse(s.trim)
@@ -484,6 +510,7 @@ object MailClient:
     def messageIdOf(data: String): String =
       val (headers, _) = Rfc822.parse(data)
       headers.getOrElse("message-id", "")
+  end SmtpCodec
 
   def rand6(): String = f"${java.util.concurrent.ThreadLocalRandom.current().nextLong(0xffffffL)}%06x"
 
@@ -504,10 +531,10 @@ object MailClient:
    * 盲重试 = 重复投递，是幂等红线。
    */
   def isSendRetryable(f: PerceptionModel.SendFailure): Boolean = f match
-    case PerceptionModel.SendFailure.Timeout          => true
-    case PerceptionModel.SendFailure.Network(_)       => true
-    case PerceptionModel.SendFailure.Rejected(m)      => m.trim.startsWith("4")
-    case _                                            => false
+    case PerceptionModel.SendFailure.Timeout => true
+    case PerceptionModel.SendFailure.Network(_) => true
+    case PerceptionModel.SendFailure.Rejected(m) => m.trim.startsWith("4")
+    case _ => false
 
   /** 重试外壳：至多 maxAttempts 次（新鲜连接），重试判据见 isSendRetryable。 */
   private[perception] def sendWithRetry(maxAttempts: Int)(
@@ -565,6 +592,7 @@ object MailClient:
         else if resp.startsWith("535") || resp.startsWith("534") || resp.startsWith("530")
         then Left(PerceptionModel.SendFailure.AuthFailed)
         else Left(PerceptionModel.SendFailure.Rejected(resp.trim.take(200)))
+      end readReply
 
       def cmd(c: String): Either[PerceptionModel.SendFailure, String] =
         writer.write(c.getBytes(StandardCharsets.UTF_8))
@@ -573,9 +601,8 @@ object MailClient:
         readReply()
 
       val fromAddr = AngleAddr.findFirstMatchIn(mail.from).map(_.group(1)).getOrElse(mail.from.trim)
-      val recipients = (mail.to ++ mail.cc ++ mail.bcc).map(r =>
-        AngleAddr.findFirstMatchIn(r).map(_.group(1)).getOrElse(r.trim)
-      )
+      val recipients =
+        (mail.to ++ mail.cc ++ mail.bcc).map(r => AngleAddr.findFirstMatchIn(r).map(_.group(1)).getOrElse(r.trim))
 
       val result = for
         _ <- readReply() // 220 greeting
@@ -584,31 +611,39 @@ object MailClient:
           if startTlsUpgrade.isEmpty then Right("tls-already")
           else
             cmd("STARTTLS").flatMap { _ =>
-              startTlsUpgrade.map { upgrade =>
-                val (rin, wout) = upgrade()
-                reader = rin
-                writer = wout
-                cmd("EHLO perception.local")
-              }.getOrElse(Left(PerceptionModel.SendFailure.Network("STARTTLS unavailable")))
+              startTlsUpgrade
+                .map { upgrade =>
+                  val (rin, wout) = upgrade()
+                  reader = rin
+                  writer = wout
+                  cmd("EHLO perception.local")
+                }
+                .getOrElse(Left(PerceptionModel.SendFailure.Network("STARTTLS unavailable")))
             }
-        _ <- cmd("AUTH PLAIN " + Base64.getEncoder.encodeToString(s"\u0000$user\u0000$authCode".getBytes(StandardCharsets.UTF_8)))
+        _ <- cmd(
+          "AUTH PLAIN " + Base64.getEncoder.encodeToString(
+            s"\u0000$user\u0000$authCode".getBytes(StandardCharsets.UTF_8)
+          )
+        )
         _ <- cmd(s"MAIL FROM:<$fromAddr>")
         _ <- recipients.foldLeft[Either[PerceptionModel.SendFailure, Unit]](Right(())) { (acc, r) =>
           acc.flatMap(_ => cmd(s"RCPT TO:<$r>").map(_ => ()))
         }
         _ <- cmd("DATA")
         _ = onDataPhase() // 调用方在此把 socket 读超时切到 dataTimeoutMsFor 分级值
-        _ = {
+        _ =
           dataSent = true // 写出即视为可能已投递——此后网络失败一律 Ambiguous
           writer.write(data.getBytes(StandardCharsets.UTF_8))
           writer.write(".\r\n".getBytes(StandardCharsets.ISO_8859_1))
           writer.flush()
-        }
         fin <- readReply() // DATA 最终回执（旧版丢弃——服务器拒收被报成成功，已修）
         _ <-
           if fin.startsWith("2") then Right(())
           else Left(PerceptionModel.SendFailure.Rejected(fin.trim.take(200)))
-        _ = try { val _q = cmd("QUIT"); () } catch case _: Throwable => ()
+        _ =
+          try
+            val _q = cmd("QUIT"); ()
+          catch case _: Throwable => ()
       yield SmtpCodec.messageIdOf(data)
       result
     catch
@@ -616,15 +651,24 @@ object MailClient:
         Left(if dataSent then PerceptionModel.SendFailure.Ambiguous else PerceptionModel.SendFailure.Timeout)
       case e: java.io.IOException =>
         if dataSent then Left(PerceptionModel.SendFailure.Ambiguous)
-        else Left(PerceptionModel.SendFailure.Network(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
+        else
+          Left(
+            PerceptionModel.SendFailure.Network(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+          )
       case e: Throwable =>
         Left(PerceptionModel.SendFailure.Network(e.getClass.getSimpleName))
 
-  /** Send via SMTP. Right(messageId) or Left(readable failure).
-    *
-    * 拨号/读上限分离（根治批 2026-11-01）：拨号 5s（正常 <0.3s；坏 host 快速
-    * 回报，不再让 20s 拨号撞隧道中转 15s 周期预算）、握手期读 12s；DATA 阶段
-    * 仍按 dataTimeoutMsFor 分级切换（语义不变）。 */
+    end try
+
+  end smtpTransact
+
+  /**
+   * Send via SMTP. Right(messageId) or Left(readable failure).
+   *
+   * 拨号/读上限分离（根治批 2026-11-01）：拨号 5s（正常 <0.3s；坏 host 快速
+   * 回报，不再让 20s 拨号撞隧道中转 15s 周期预算）、握手期读 12s；DATA 阶段
+   * 仍按 dataTimeoutMsFor 分级切换（语义不变）。
+   */
   def send(
     smtpHost: String,
     smtpPort: Int,
@@ -643,39 +687,53 @@ object MailClient:
     def attempt(): Either[PerceptionModel.SendFailure, String] =
       var socket: Socket = null
       try
-        socket =
-          if implicitTls then
-            val s = tlsFactory.createSocket()
-            s.setSoTimeout(timeoutMs)
-            s.connect(new InetSocketAddress(smtpHost, smtpPort), connectTimeoutMs)
-            s
-          else
-            val s = new Socket()
-            s.setSoTimeout(timeoutMs)
-            s.connect(new InetSocketAddress(smtpHost, smtpPort), connectTimeoutMs)
-            s
+        socket = if implicitTls then
+          val s = tlsFactory.createSocket()
+          s.setSoTimeout(timeoutMs)
+          s.connect(new InetSocketAddress(smtpHost, smtpPort), connectTimeoutMs)
+          s
+        else
+          val s = new Socket()
+          s.setSoTimeout(timeoutMs)
+          s.connect(new InetSocketAddress(smtpHost, smtpPort), connectTimeoutMs)
+          s
         val in = new BufferedReader(new InputStreamReader(socket.getInputStream, StandardCharsets.ISO_8859_1))
         val upgrade =
           if implicitTls then None
-          else Some(() =>
-            val ssl = tlsFactory.createSocket(socket, smtpHost, smtpPort, true).asInstanceOf[SSLSocket]
-            ssl.setSoTimeout(timeoutMs)
-            socket = ssl
-            (new BufferedReader(new InputStreamReader(ssl.getInputStream, StandardCharsets.ISO_8859_1)),
-              ssl.getOutputStream: OutputStream)
-          )
+          else
+            Some(() =>
+              val ssl = tlsFactory.createSocket(socket, smtpHost, smtpPort, true).asInstanceOf[SSLSocket]
+              ssl.setSoTimeout(timeoutMs)
+              socket = ssl
+              (
+                new BufferedReader(new InputStreamReader(ssl.getInputStream, StandardCharsets.ISO_8859_1)),
+                ssl.getOutputStream: OutputStream
+              )
+            )
         smtpTransact(
-          in, socket.getOutputStream, user, authCode, mail, data,
+          in,
+          socket.getOutputStream,
+          user,
+          authCode,
+          mail,
+          data,
           startTlsUpgrade = upgrade,
           onDataPhase = () => socket.setSoTimeout(dataTimeout)
         )
       catch
         case e: Throwable =>
-          Left(PerceptionModel.SendFailure.Network(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"))
+          Left(
+            PerceptionModel.SendFailure.Network(s"${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}")
+          )
       finally
-        if socket != null then try socket.close() catch case _: Throwable => ()
+        if socket != null then
+          try socket.close()
+          catch case _: Throwable => ()
+      end try
+    end attempt
 
     sendWithRetry(maxAttempts = 2)(attempt())
+  end send
 
   // ════════════════════════ TLS ════════════════════════
 

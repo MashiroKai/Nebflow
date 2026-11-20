@@ -269,7 +269,10 @@ class SeedPluginReconcileSpec extends FunSuite:
   test("reserved namespace has no builtin package: allowlist is reserved-name-free, admits refuses any reserved name"):
     makeIsolatedHome()
     assert(
-      nebflow.core.plugin.OfficialPackages.allowlist().keySet.forall(n => !nebflow.core.plugin.OfficialPackages.isReserved(n)),
+      nebflow.core.plugin.OfficialPackages
+        .allowlist()
+        .keySet
+        .forall(n => !nebflow.core.plugin.OfficialPackages.isReserved(n)),
       "builtin seed tree carries zero 'nebflow-'-prefixed package (stand-dev merge batch)"
     )
     assert(

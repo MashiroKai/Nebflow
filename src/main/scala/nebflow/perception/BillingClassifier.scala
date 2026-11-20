@@ -14,18 +14,49 @@ import scala.util.matching.Regex
 object BillingClassifier:
 
   private val billingDomains: Set[String] = Set(
-    "wx.tenpay.com", "pay.weixin.qq.com", "tenpay.com", // 微信支付
-    "alipay.com", "alipaymail.com", // 支付宝
-    "cmbchina.com", "icbc.com.cn", "ccb.com", "abchina.com", "boc.cn", "boc.com",
-    "psbc.com", "bankcomm.com", "cgbchina.com.cn", "cebbank.com", "spdb.com.cn",
-    "citicbank.com", "ccb.com.cn", "hsbc.com", "paypal.com",
+    "wx.tenpay.com",
+    "pay.weixin.qq.com",
+    "tenpay.com", // 微信支付
+    "alipay.com",
+    "alipaymail.com", // 支付宝
+    "cmbchina.com",
+    "icbc.com.cn",
+    "ccb.com",
+    "abchina.com",
+    "boc.cn",
+    "boc.com",
+    "psbc.com",
+    "bankcomm.com",
+    "cgbchina.com.cn",
+    "cebbank.com",
+    "spdb.com.cn",
+    "citicbank.com",
+    "ccb.com.cn",
+    "hsbc.com",
+    "paypal.com",
     "apple.com", // App Store 收据
-    "bill.microsoft.com", "aws.amazon.com", "cloud.tencent.com", "aliyun.com"
+    "bill.microsoft.com",
+    "aws.amazon.com",
+    "cloud.tencent.com",
+    "aliyun.com"
   )
 
   private val keywords: List[String] = List(
-    "账单", "对账单", "消费", "交易", "支付成功", "付款", "扣款", "发票",
-    "invoice", "receipt", "payment", "billing", "statement", "transaction", "order confirmed"
+    "账单",
+    "对账单",
+    "消费",
+    "交易",
+    "支付成功",
+    "付款",
+    "扣款",
+    "发票",
+    "invoice",
+    "receipt",
+    "payment",
+    "billing",
+    "statement",
+    "transaction",
+    "order confirmed"
   )
 
   /** 金额形：¥12.34 / ￥1,234.00 / 12.34元 / CNY 12.34 / $12.34。 */
@@ -48,3 +79,4 @@ object BillingClassifier:
           if amt.nonEmpty then Verdict(true, s"keyword:$k+amount", amt.trim)
           else Verdict(false, s"keyword:$k-no-amount", "")
         case None => Verdict(false, "", "")
+end BillingClassifier

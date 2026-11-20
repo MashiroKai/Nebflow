@@ -102,7 +102,18 @@ class UiMessageToolTerminalSpec extends CatsEffectSuite:
   test("③c 不越段：上一轮的行零改写（旧全局版会把新时值盖到上一轮末条 ai 行）"):
     val program =
       store.appendUiMessages(sid, List(UiMessage.User("第一轮"))) *>
-        store.appendUiMessages(sid, List(UiMessage.Ai("第一轮完成。", durationMs = Some(5000L), model = Some("model-a"), timestamp = 900L, terminal = Some(true)))) *>
+        store.appendUiMessages(
+          sid,
+          List(
+            UiMessage.Ai(
+              "第一轮完成。",
+              durationMs = Some(5000L),
+              model = Some("model-a"),
+              timestamp = 900L,
+              terminal = Some(true)
+            )
+          )
+        ) *>
         store.appendUiMessages(sid, List(UiMessage.User("第二轮（全工具）"))) *>
         store.appendUiMessages(sid, List(UiMessage.Tool("Mail", "→ delegate", "ok"))) *>
         store.markRoundTerminal(sid, Some(8000L), Some("model-b"), 2000L)
@@ -150,3 +161,4 @@ class UiMessageToolTerminalSpec extends CatsEffectSuite:
         case _ => false
       }
       assertEquals(terminalCarrier, 1, "每轮恰一个 terminal 载体（append 直写分支不受本批影响）")
+end UiMessageToolTerminalSpec

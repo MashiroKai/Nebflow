@@ -88,6 +88,7 @@ class HealthMonitorSpec extends CatsEffectSuite:
           "since stays the FIRST down moment (how long has it been broken is a fact, not a retry timer)"
         )
       }
+    end for
   }
 
   // ============================================================

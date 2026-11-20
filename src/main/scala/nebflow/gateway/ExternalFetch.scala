@@ -57,8 +57,10 @@ object ExternalFetch:
   // ── 内部失败形态（统一收敛成 Refusal，不向路由泄漏异常分类）─────────────
   private final case class TooLarge(limit: Long) extends NoStackTrace:
     override def getMessage: String = s"the response exceeds the ${limit} byte limit"
+
   private final case class Deadline(limitMs: Long) extends NoStackTrace:
     override def getMessage: String = s"the fetch exceeded the ${limitMs / 1000}s deadline"
+
   private final case class BadResponse(detail: String) extends NoStackTrace:
     override def getMessage: String = detail
 
@@ -173,6 +175,7 @@ object ExternalFetch:
     finally
       try socket.close()
       catch case _: Throwable => ()
+    end try
   end transferOnce
 
   private def openSocket(scheme: String, host: String, addr: InetAddress, port: Int): java.net.Socket =
@@ -199,6 +202,10 @@ object ExternalFetch:
         catch case _: Throwable => ()
         throw e
 
+    end try
+
+  end openSocket
+
   private def requestBytes(uri: URI, host: String, port: Int, defaultPort: Int): Array[Byte] =
     val path = Option(uri.getRawPath).filter(_.nonEmpty).getOrElse("/")
     val query = Option(uri.getRawQuery).map(q => if q.isEmpty then "" else "?" + q).getOrElse("")
@@ -214,8 +221,10 @@ object ExternalFetch:
         "Connection: close\r\n\r\n"
     text.getBytes(StandardCharsets.ISO_8859_1)
 
-  /** 读响应头：状态行 + 逐行头（空行结束）。行读用同一个 [[readLine]]，
-    * 避免「按字节扫 \r\n\r\n」在边界上多吃/少吃一截（吃少 = 头字节混进 body）。 */
+  /**
+   * 读响应头：状态行 + 逐行头（空行结束）。行读用同一个 [[readLine]]，
+   * 避免「按字节扫 \r\n\r\n」在边界上多吃/少吃一截（吃少 = 头字节混进 body）。
+   */
   private def readHead(input: InputStream): (Int, Map[String, String]) =
     val statusLine = readLine(input)
     val parts = statusLine.split(" ").filter(_.nonEmpty)
@@ -291,6 +300,8 @@ object ExternalFetch:
           append(buf, n)
           left -= n
         readLine(input) // CRLF after the chunk
+    end while
+  end readChunked
 
   private def readFixed(input: InputStream, declared: Long, append: (Array[Byte], Int) => Unit): Unit =
     val buf = new Array[Byte](64 * 1024)

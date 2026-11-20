@@ -561,7 +561,9 @@ class ProjectUnmountSpec extends CatsEffectSuite:
     val f = ws / ".nebflow" / "flow-map-events.jsonl"
     if os.exists(f) then os.read.lines(f).toList else Nil
 
-  test("remount roundtrip: unmount → remount clears the keys and mounts again (list + registry + auto-mount eligible)") {
+  test(
+    "remount roundtrip: unmount → remount clears the keys and mounts again (list + registry + auto-mount eligible)"
+  ) {
     val ws = tempRoot / "ws-remount"
     val system = ActorSystem(s"um-remount-${scala.util.Random.nextInt(100000)}")
     val res = minimalResources(ws)
@@ -628,7 +630,10 @@ class ProjectUnmountSpec extends CatsEffectSuite:
         s"remount audit line with actor expected, got: ${remountLines.mkString("|")}"
       )
       // 帧单点：projectRemounted 且 row 与 GET /api/projects 行同构（含 device 存储值）
-      assert(framesGot.exists(_.hcursor.downField("type").as[String].toOption.contains("projectRemounted")), s"remount frame expected: $framesGot")
+      assert(
+        framesGot.exists(_.hcursor.downField("type").as[String].toOption.contains("projectRemounted")),
+        s"remount frame expected: $framesGot"
+      )
       assert(
         framesGot.exists(f =>
           f.hcursor.downField("row").downField("name").as[String].toOption.contains("p-remount") &&
@@ -637,6 +642,7 @@ class ProjectUnmountSpec extends CatsEffectSuite:
         "remount frame row must carry the GET /projects row shape"
       )
       assertEquals(mountedAgain, 0, "remount already mounted it — startupMount over list() is idempotent")
+    end for
   }
 
   test("remount refuses archived and unknown names (archive stays single-way; zero writes)") {
@@ -659,6 +665,7 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       assert(unknown.swap.toOption.get.contains("not found"), s"refusal must name the miss: $unknown")
       assert(mounted.isEmpty, "refused remount mounts nothing")
       assertEquals(after, before, "refusals write nothing")
+    end for
   }
 
   test("remount is idempotent when the project is already mounted (no-op, keys untouched, no frame)") {
@@ -687,6 +694,7 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       assertEquals(after, before, "no-op writes nothing (marker keys absent both sides)")
       assertEquals(framesGot, Nil, "no-op emits no frame")
       assert(stillMounted.isDefined, "no-op keeps the runtime")
+    end for
   }
 
   test("clearUnmounted is surgical: only the two keys disappear, everything else byte-stable") {
@@ -703,9 +711,11 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       _ <- ProjectStore.markUnmounted("p-clear") // 打标面在摘键后照常可用（对称往返）
       remarked = projectJson("p-clear")
     yield
-      val at = cleared.getOrElse(throw new AssertionError(s"clear must succeed: $cleared")).getOrElse(
-        throw new AssertionError("marked project must clear with a timestamp")
-      )
+      val at = cleared
+        .getOrElse(throw new AssertionError(s"clear must succeed: $cleared"))
+        .getOrElse(
+          throw new AssertionError("marked project must clear with a timestamp")
+        )
       assert(at > 0, "clear returns a timestamp")
       assert(unknown.isLeft, "clearing an unknown project is a Left")
       // 摘键后 = 打标态 − 恰两键（strip 对账面与本文件 unmount 断言同款）
@@ -713,7 +723,12 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       val s2 = second.getOrElse(throw new AssertionError("second clear must succeed"))
       assert(s2.isEmpty, "second clear = Right(None) idempotent zero-write leg")
       assert(stillEligible, "cleared project is back on the list face")
-      assertEquals(remarked.hcursor.downField("unmounted").as[Boolean].toOption, Some(true), "re-mark works after clear")
+      assertEquals(
+        remarked.hcursor.downField("unmounted").as[Boolean].toOption,
+        Some(true),
+        "re-mark works after clear"
+      )
+    end for
   }
 
   test("unmount appends a project-unmounted audit line naming the actor (tool leg default)") {
@@ -782,14 +797,22 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       assertEquals(f.runningNodes.toSet, Set("n-solo"), "unchained Running counted (chain member rides the chain leg)")
       assert(f.dispatcherSessions.contains("dispatcher-infl"), "dispatcher session counted")
       assertEquals(f.delegateSessions, List("delegate-infl"), "attributed delegate session counted")
-      assertEquals(f.total, 4, "total = chains + unchained nodes + sessions (chain member rides the chain leg, no double count)")
+      assertEquals(
+        f.total,
+        4,
+        "total = chains + unchained nodes + sessions (chain member rides the chain leg, no double count)"
+      )
       assert(unknown.isEmpty, "unmounted/unknown project = None (REST 404 leg)")
       assertEquals(
         snapAfter.nodes("n-f1").status,
         NodeLifecycle.Running,
         "inFlight is read-only: node untouched"
       )
-      assert(regAfter.contains("dispatcher-infl") && regAfter.contains("delegate-infl"), "inFlight is read-only: sessions untouched")
+      assert(
+        regAfter.contains("dispatcher-infl") && regAfter.contains("delegate-infl"),
+        "inFlight is read-only: sessions untouched"
+      )
+    end for
   }
 
   // 归档态卸载定义的拒挂（create 面）不受 remount 引入影响 —— 单程语义的回归锚点
@@ -819,6 +842,7 @@ class ProjectUnmountSpec extends CatsEffectSuite:
       assert(result.isLeft, "archived create/remount-via-create must stay refused")
       assert(result.swap.toOption.get.message.contains("archived"), s"refusal names the state: $result")
       assert(mounted.isEmpty, "refusal mounts nothing")
+    end for
   }
 
 end ProjectUnmountSpec

@@ -132,7 +132,7 @@ class PresetStore(
   def load(): PresetFile =
     registryRoot match
       case Some(root) => ModelChainRegistry.load(root).map(repair).getOrElse(loadLegacy())
-      case None       => loadLegacy()
+      case None => loadLegacy()
 
   private def loadLegacy(): PresetFile =
     if !os.exists(configPath) then
@@ -179,7 +179,7 @@ class PresetStore(
   def save(f: PresetFile): Unit =
     registryRoot match
       case Some(root) => ModelChainRegistry.save(f, root)
-      case None       => AtomicJson.writeSync(configPath, f.asJson.noSpaces)
+      case None => AtomicJson.writeSync(configPath, f.asJson.noSpaces)
 
   /**
    * Resolve an agent's model configuration given its preset reference and

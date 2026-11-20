@@ -53,8 +53,10 @@ class CallSuccessRecoverySpec extends CatsEffectSuite:
     """{"id":"msg_1","type":"message","role":"assistant","content":[{"type":"text","text":"OK"}],""" +
       """"stop_reason":"end_turn","usage":{"input_tokens":5,"output_tokens":2}}"""
 
-  /** 200-OK mock that parks `delayMs` before the FIRST byte (the winner moment
-    * of the real path), then answers the streaming or the non-streaming face. */
+  /**
+   * 200-OK mock that parks `delayMs` before the FIRST byte (the winner moment
+   * of the real path), then answers the streaming or the non-streaming face.
+   */
   private def startMock(streaming: Boolean, delayMs: Long): IO[HttpServer] =
     IO.blocking {
       val server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0)
@@ -141,8 +143,7 @@ class CallSuccessRecoverySpec extends CatsEffectSuite:
           _ <- release
         yield (chunks, midFlight, statesAfter)).guarantee(IO.blocking(serverB.stop(0)))
       yield result
-      val (chunks, midFlight, statesAfter)
-        : (List[StreamChunk], Map[String, HealthState], Map[String, HealthState]) =
+      val (chunks, midFlight, statesAfter): (List[StreamChunk], Map[String, HealthState], Map[String, HealthState]) =
         program.unsafeRunSync()
       // The request actually WON on b (winner moment fired). Errors surface
       // through join's Errored arm as a thrown exception.
@@ -157,8 +158,7 @@ class CallSuccessRecoverySpec extends CatsEffectSuite:
         !isDown(statesAfter, "b/m1"),
         s"the win must clear the mid-flight Down marker (调用成功即清除), got ${statesAfter.get("b/m1")}"
       )
-    finally
-      if serverB != null then serverB.stop(0)
+    finally if serverB != null then serverB.stop(0)
     end try
   }
 
@@ -206,8 +206,7 @@ class CallSuccessRecoverySpec extends CatsEffectSuite:
         !isDown(statesAfter, "b/m1"),
         s"the successful send must clear the mid-flight Down marker, got ${statesAfter.get("b/m1")}"
       )
-    finally
-      if serverB != null then serverB.stop(0)
+    finally if serverB != null then serverB.stop(0)
     end try
   }
 

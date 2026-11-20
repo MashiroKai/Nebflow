@@ -5,12 +5,13 @@ import nebflow.core.executor.ExternalExecutor.Frame
 import scala.collection.mutable
 
 object ExternalMessageCollector:
+
   /** One committed text block, or one bounded chunk of a streamed message. */
   final case class CollectedMessage(
-      id: String,
-      text: String,
-      protocolMessageId: Option[String],
-      blockIndex: Int
+    id: String,
+    text: String,
+    protocolMessageId: Option[String],
+    blockIndex: Int
   )
 
 /** Collects one execution attempt. Callers serialize access with stdout ingestion. */
@@ -114,7 +115,9 @@ final class ExternalMessageCollector(runId: String):
     terminalSeen = true
     failureSeen ||= end.failed
     endings += end
-    val resultId = end.metadata.hcursor.get[String]("uuid").toOption
+    val resultId = end.metadata.hcursor
+      .get[String]("uuid")
+      .toOption
       .orElse(end.metadata.hcursor.get[String]("eventId").toOption)
     val repeated = resultId.exists(resultIds.contains)
     resultId.foreach(resultIds.add)
@@ -132,6 +135,8 @@ final class ExternalMessageCollector(runId: String):
       }
     // A result can echo its immediately preceding assistant message, not an arbitrary older result.
     adjacent = None
+
+  end finish
 
   /** Flush EOF text; absence of a protocol terminal is diagnostic, not inferred success. */
   def flush(): List[CollectedMessage] = newlyCommitted {

@@ -61,8 +61,10 @@ class ThinkingInheritanceSpec extends FunSuite:
     val g = ThinkingConfig(enabled = true, budgetTokens = 32000, effort = Some(ThinkingEffort.Medium))
     val p = ThinkingLayerConfig(effort = Some(ThinkingEffort.High))
     assertEquals(ThinkingMode.resolveEffective(None, Some(p), g).effort, Some(ThinkingEffort.High))
-    assertEquals(ThinkingMode.resolveEffective(Some(ThinkingLayerConfig(effort = Some(ThinkingEffort.Max))), Some(p), g).effort,
-      Some(ThinkingEffort.Max))
+    assertEquals(
+      ThinkingMode.resolveEffective(Some(ThinkingLayerConfig(effort = Some(ThinkingEffort.Max))), Some(p), g).effort,
+      Some(ThinkingEffort.Max)
+    )
     assertEquals(ThinkingMode.resolveEffective(None, None, g).effort, Some(ThinkingEffort.Medium))
   }
 
@@ -98,8 +100,8 @@ class ThinkingInheritanceSpec extends FunSuite:
   }
 
   test("I3c: new fields decode when present and encode only-when-set") {
-    val node = parse("""{"enabled":true,"budgetTokens":4096,"effort":"max","clearThinking":false}""")
-      .toOption.getOrElse(fail("parse"))
+    val node = parse("""{"enabled":true,"budgetTokens":4096,"effort":"max","clearThinking":false}""").toOption
+      .getOrElse(fail("parse"))
     val tc = node.as[ThinkingConfig].toOption.getOrElse(fail("decode"))
     assertEquals(tc.effort, Some(ThinkingEffort.Max))
     assertEquals(tc.clearThinking, Some(false))
@@ -111,16 +113,22 @@ class ThinkingInheritanceSpec extends FunSuite:
     val mc = bare.as[ModelConfig].toOption.getOrElse(fail("decode"))
     assertEquals(mc.thinking, None)
     assertEquals(mc.thinkingKind, None)
-    val rich = parse("""{"id":"m","contextWindow":100000,"thinking":{"effort":"high"},"thinkingKind":"toggle"}""")
-      .toOption.getOrElse(fail("parse"))
+    val rich = parse(
+      """{"id":"m","contextWindow":100000,"thinking":{"effort":"high"},"thinkingKind":"toggle"}"""
+    ).toOption.getOrElse(fail("parse"))
     val mc2 = rich.as[ModelConfig].toOption.getOrElse(fail("decode"))
     assertEquals(mc2.thinking, Some(ThinkingLayerConfig(effort = Some(ThinkingEffort.High))))
     assertEquals(mc2.thinkingKind, Some(ThinkingKind.Toggle))
   }
 
   test("provider config decodes an explicit model and tier effort allowlist") {
-    val json = parse("""{"baseUrl":"https://example.invalid","apiKey":"test","protocol":"openai","models":[],"effortAllowlist":{"https://example.invalid/chat/completions":{"model":["high"]}}}""").toOption.get
-    assertEquals(json.as[ProviderConfig].toOption.flatMap(_.effortAllowlist), Some(Map("https://example.invalid/chat/completions" -> Map("model" -> List(ThinkingEffort.High)))))
+    val json = parse(
+      """{"baseUrl":"https://example.invalid","apiKey":"test","protocol":"openai","models":[],"effortAllowlist":{"https://example.invalid/chat/completions":{"model":["high"]}}}"""
+    ).toOption.get
+    assertEquals(
+      json.as[ProviderConfig].toOption.flatMap(_.effortAllowlist),
+      Some(Map("https://example.invalid/chat/completions" -> Map("model" -> List(ThinkingEffort.High))))
+    )
   }
 
   // ── I4：per-model 层定点 patch ───────────────────────────────────────────
@@ -132,16 +140,28 @@ class ThinkingInheritanceSpec extends FunSuite:
   ).toOption.getOrElse(fail("parse"))
 
   test("I4: patch sets the effort key at the targeted model node only") {
-    val patched = ThinkingMode.patchLayerIntoConfig(
-      configFixture, "kimi", "k3.1-pro-highspeed",
-      ThinkingMode.ThinkingLayerPatch(effort = Some(Some(ThinkingEffort.High)))
-    ).toOption.getOrElse(fail("patch"))
-    val models = patched.hcursor.downField("llm").downField("providers").downField("kimi")
-      .downField("models").as[List[Json]].toOption.getOrElse(fail("models"))
-    val k31 = models.find(_.hcursor.downField("id").as[String].toOption.contains("k3.1-pro-highspeed")).getOrElse(fail("model"))
-    val kfc = models.find(_.hcursor.downField("id").as[String].toOption.contains("kimi-for-coding")).getOrElse(fail("model"))
-    assertEquals(k31.hcursor.downField("thinking").focus,
-      Some(Json.obj("effort" -> "high".asJson)))
+    val patched = ThinkingMode
+      .patchLayerIntoConfig(
+        configFixture,
+        "kimi",
+        "k3.1-pro-highspeed",
+        ThinkingMode.ThinkingLayerPatch(effort = Some(Some(ThinkingEffort.High)))
+      )
+      .toOption
+      .getOrElse(fail("patch"))
+    val models = patched.hcursor
+      .downField("llm")
+      .downField("providers")
+      .downField("kimi")
+      .downField("models")
+      .as[List[Json]]
+      .toOption
+      .getOrElse(fail("models"))
+    val k31 =
+      models.find(_.hcursor.downField("id").as[String].toOption.contains("k3.1-pro-highspeed")).getOrElse(fail("model"))
+    val kfc =
+      models.find(_.hcursor.downField("id").as[String].toOption.contains("kimi-for-coding")).getOrElse(fail("model"))
+    assertEquals(k31.hcursor.downField("thinking").focus, Some(Json.obj("effort" -> "high".asJson)))
     assertEquals(kfc.hcursor.downField("thinking").focus, None, "sibling model untouched")
   }
 
@@ -150,13 +170,25 @@ class ThinkingInheritanceSpec extends FunSuite:
       """{"llm":{"providers":{"kimi":{"protocol":"anthropic","apiKey":"k","models":[
         {"id":"k3.1-pro-highspeed","thinking":{"effort":"high","enabled":true}}]}}}}"""
     ).toOption.getOrElse(fail("parse"))
-    val cleared = ThinkingMode.patchLayerIntoConfig(
-      withLayer, "kimi", "k3.1-pro-highspeed",
-      ThinkingMode.ThinkingLayerPatch(effort = Some(None), enabled = Some(None))
-    ).toOption.getOrElse(fail("patch"))
-    val node = cleared.hcursor.downField("llm").downField("providers").downField("kimi")
-      .downField("models").as[List[Json]].toOption.getOrElse(fail("models"))
-      .find(_.hcursor.downField("id").as[String].toOption.contains("k3.1-pro-highspeed")).getOrElse(fail("model"))
+    val cleared = ThinkingMode
+      .patchLayerIntoConfig(
+        withLayer,
+        "kimi",
+        "k3.1-pro-highspeed",
+        ThinkingMode.ThinkingLayerPatch(effort = Some(None), enabled = Some(None))
+      )
+      .toOption
+      .getOrElse(fail("patch"))
+    val node = cleared.hcursor
+      .downField("llm")
+      .downField("providers")
+      .downField("kimi")
+      .downField("models")
+      .as[List[Json]]
+      .toOption
+      .getOrElse(fail("models"))
+      .find(_.hcursor.downField("id").as[String].toOption.contains("k3.1-pro-highspeed"))
+      .getOrElse(fail("model"))
     assertEquals(node.hcursor.downField("thinking").focus, None, "empty layer node must be removed entirely")
   }
 
@@ -165,12 +197,25 @@ class ThinkingInheritanceSpec extends FunSuite:
       """{"llm":{"providers":{"kimi":{"protocol":"anthropic","apiKey":"k","models":[
         {"id":"k3.1-pro-highspeed","thinking":{"effort":"low"}}]}}}}"""
     ).toOption.getOrElse(fail("parse"))
-    val cleared = ThinkingMode.patchLayerIntoConfig(
-      withLayer, "kimi", "k3.1-pro-highspeed", ThinkingMode.ThinkingLayerPatch()
-    ).toOption.getOrElse(fail("patch"))
-    val node = cleared.hcursor.downField("llm").downField("providers").downField("kimi")
-      .downField("models").as[List[Json]].toOption.getOrElse(fail("models"))
-      .find(_.hcursor.downField("id").as[String].toOption.contains("k3.1-pro-highspeed")).getOrElse(fail("model"))
+    val cleared = ThinkingMode
+      .patchLayerIntoConfig(
+        withLayer,
+        "kimi",
+        "k3.1-pro-highspeed",
+        ThinkingMode.ThinkingLayerPatch()
+      )
+      .toOption
+      .getOrElse(fail("patch"))
+    val node = cleared.hcursor
+      .downField("llm")
+      .downField("providers")
+      .downField("kimi")
+      .downField("models")
+      .as[List[Json]]
+      .toOption
+      .getOrElse(fail("models"))
+      .find(_.hcursor.downField("id").as[String].toOption.contains("k3.1-pro-highspeed"))
+      .getOrElse(fail("model"))
     assertEquals(node.hcursor.downField("thinking").focus, None)
   }
 
@@ -184,29 +229,48 @@ class ThinkingInheritanceSpec extends FunSuite:
     val bad = parse("""{"effort":"ultra"}""").toOption.getOrElse(fail("parse"))
     assert(bad.as[ThinkingMode.ThinkingLayerPatch].isLeft)
     val nullEffort = parse("""{"effort":null}""").toOption.getOrElse(fail("parse"))
-    assertEquals(nullEffort.as[ThinkingMode.ThinkingLayerPatch].toOption,
-      Some(ThinkingMode.ThinkingLayerPatch(effort = Some(None))))
+    assertEquals(
+      nullEffort.as[ThinkingMode.ThinkingLayerPatch].toOption,
+      Some(ThinkingMode.ThinkingLayerPatch(effort = Some(None)))
+    )
   }
 
   // ── I5：passback 族判定 ──────────────────────────────────────────────────
 
   test("I5: passback default = providerId OR any model id hits the deepseek family") {
-    val ds = ProviderConfig("https://x", "k", LlmProtocol.Anthropic,
-      models = List(ModelConfig("deepseek/deepseek-v4.1-flash")))
+    val ds = ProviderConfig(
+      "https://x",
+      "k",
+      LlmProtocol.Anthropic,
+      models = List(ModelConfig("deepseek/deepseek-v4.1-flash"))
+    )
     assertEquals(ThinkingFamily.requiresPassback("cmdcode", ds), true, "model-family fix: cmdcode serving deepseek")
-    assertEquals(ThinkingFamily.requiresPassback("deepseek",
-      ProviderConfig("https://x", "k", LlmProtocol.Anthropic, models = Nil)), true)
-    val kimiOnly = ProviderConfig("https://x", "k", LlmProtocol.Anthropic,
-      models = List(ModelConfig("kimi-for-coding")))
+    assertEquals(
+      ThinkingFamily
+        .requiresPassback("deepseek", ProviderConfig("https://x", "k", LlmProtocol.Anthropic, models = Nil)),
+      true
+    )
+    val kimiOnly =
+      ProviderConfig("https://x", "k", LlmProtocol.Anthropic, models = List(ModelConfig("kimi-for-coding")))
     assertEquals(ThinkingFamily.requiresPassback("cmdcode", kimiOnly), false)
   }
 
   test("I5b: explicit requireThinkingPassback always wins") {
-    val over = ProviderConfig("https://x", "k", LlmProtocol.Anthropic,
-      models = List(ModelConfig("kimi-for-coding")), requireThinkingPassback = Some(true))
+    val over = ProviderConfig(
+      "https://x",
+      "k",
+      LlmProtocol.Anthropic,
+      models = List(ModelConfig("kimi-for-coding")),
+      requireThinkingPassback = Some(true)
+    )
     assertEquals(ThinkingFamily.requiresPassback("cmdcode", over), true)
-    val under = ProviderConfig("https://x", "k", LlmProtocol.Anthropic,
-      models = List(ModelConfig("deepseek/deepseek-v4.1-flash")), requireThinkingPassback = Some(false))
+    val under = ProviderConfig(
+      "https://x",
+      "k",
+      LlmProtocol.Anthropic,
+      models = List(ModelConfig("deepseek/deepseek-v4.1-flash")),
+      requireThinkingPassback = Some(false)
+    )
     assertEquals(ThinkingFamily.requiresPassback("cmdcode", under), false)
   }
 end ThinkingInheritanceSpec

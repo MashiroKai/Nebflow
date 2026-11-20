@@ -106,7 +106,9 @@ class ExternalEventIntakeDedupSpec extends CatsEffectSuite:
     )
   }
 
-  test("③ partitionDelivered: both copies of a double-delivery are identity-blocked when the ORIGINAL id is delivered-marked (restart replay gate)") {
+  test(
+    "③ partitionDelivered: both copies of a double-delivery are identity-blocked when the ORIGINAL id is delivered-marked (restart replay gate)"
+  ) {
     val original = ev(Some("d-2"))
     val redelivery = redeliveredOf("d-2")
     val unrelated = ev(Some("d-3"))
@@ -166,8 +168,14 @@ class ExternalEventIntakeDedupSpec extends CatsEffectSuite:
     // 零回退面：无代际 delegate 终态 + 携代际元数据的非 delegate 源——恒裸 id
     assertEquals(DeliveredReceiptLedger.identityKeys(ev(Some("d-legacy"))), List("d-legacy"))
     assertEquals(
-      DeliveredReceiptLedger.identityKeys(ev(Some("bg-1"), source = "background-task", eventType = "completed",
-        metadata = JsonObject("completionGeneration" -> "gen-7".asJson))),
+      DeliveredReceiptLedger.identityKeys(
+        ev(
+          Some("bg-1"),
+          source = "background-task",
+          eventType = "completed",
+          metadata = JsonObject("completionGeneration" -> "gen-7".asJson)
+        )
+      ),
       List("bg-1"),
       "代际后缀只作用于 delegate 终态——其余源保持裸 id（行为零回退）"
     )

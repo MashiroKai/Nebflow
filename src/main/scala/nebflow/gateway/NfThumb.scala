@@ -91,6 +91,7 @@ object NfThumb:
             try ImageIO.write(out, ext, bos)
             catch case _: Throwable => false
           if !written || bos.size() == 0 then None else Some((bos.toByteArray, ext))
+        end if
     }.handleError(_ => None)
 
   /** 缓存命中：`<cacheDir>/<thumbCid>.<ext>`（返回文件与 ext）。 */
@@ -115,7 +116,7 @@ object NfThumb:
   private def sweep(cacheDir: os.Path): Unit =
     try
       if os.exists(cacheDir) then
-        val entries = os.list(cacheDir).sortBy(f => os.mtime(f))   // 最旧在前
+        val entries = os.list(cacheDir).sortBy(f => os.mtime(f)) // 最旧在前
         val now = System.currentTimeMillis()
         entries.filter(f => os.mtime(f) < now - SweepAgeMs).foreach(os.remove.all)
         // 容量腿：保留**最新** SweepCap 条 ⇒ 删最旧的 (n - SweepCap) 条。

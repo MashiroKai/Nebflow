@@ -182,6 +182,7 @@ final class AskWriteScopeSpec extends munit.FunSuite:
     finally
       AskWriteAudit.injectTargetForTest(None)
       AskEditReviews.resetForTest(sid)
+    end try
   }
 
   // ── 第二条通道（shell）不是写通道，但越权尝试必须留痕 ────────────────────
@@ -202,10 +203,14 @@ final class AskWriteScopeSpec extends munit.FunSuite:
       val rows = AskWriteAudit.readAll(auditFile)
       assertEquals(rows.length, 1, s"the refused shell attempt must be audited: ${rows.mkString(" | ")}")
       assert(rows.head.contains("\"tool\":\"Bash\""), s"the audit row must name the Bash face: ${rows.head}")
-      assert(rows.head.contains("\"identity\":\"ask-deadbeef\""), s"the audit row must carry the identity: ${rows.head}")
+      assert(
+        rows.head.contains("\"identity\":\"ask-deadbeef\""),
+        s"the audit row must carry the identity: ${rows.head}"
+      )
       assert(rows.head.contains("\"result\":\"deny\""), s"the audit row must be a deny: ${rows.head}")
       assert(!Files.exists(Path.of("/tmp/ask-scope-hack.md")), "the shell must not have created the file")
     finally AskWriteAudit.injectTargetForTest(None)
+    end try
   }
 
   // ── 第三条：提示词两条硬约束 + 清单派生（无手抄第二份）────────────────────
@@ -253,9 +258,14 @@ final class AskWriteScopeSpec extends munit.FunSuite:
     val frame = AskHandoffWire.ackFrame("ask-12345678", ok = true, "", h)
     assertEquals(frame.hcursor.downField("type").as[String].toOption, Some("askHandoffAck"))
     assertEquals(frame.hcursor.downField("ok").as[Boolean].toOption, Some(true))
-    assert(frame.hcursor.downField("summary").as[String].toOption.exists(_.contains("把三个文件都改一遍")),
-      s"the panel summary must carry the task: ${frame.noSpaces}")
-    assert(frame.hcursor.downField("handoff").focus.isDefined, "the panel frame must carry the machine-readable handoff")
+    assert(
+      frame.hcursor.downField("summary").as[String].toOption.exists(_.contains("把三个文件都改一遍")),
+      s"the panel summary must carry the task: ${frame.noSpaces}"
+    )
+    assert(
+      frame.hcursor.downField("handoff").focus.isDefined,
+      "the panel frame must carry the machine-readable handoff"
+    )
     val body = AskHandoffWire.injectedBody(h, "ask:ask-12345678")
     List("做什么", "涉及路径", "为什么需要主会话", "期望产出").foreach { k =>
       assert(body.contains(k), s"the injected main-session body must carry `$k`: $body")

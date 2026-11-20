@@ -91,6 +91,7 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
     // 循环依赖解法（handle 需 res，mkResources 需 handle）：spec 在 mkResources
     // 后回填 res；首轮 LLM 请求发生在回填之后，时序安全。
     @volatile var res: SharedResources = null
+
     /** death-watch 批 fixture 收尾：行对应真进程——杀后台进程 + 毁会话（幂等）。 */
     def cleanupBg: IO[Unit] =
       for
@@ -103,7 +104,6 @@ class NodeBgCompletionGateSpec extends CatsEffectSuite:
             ShellSession.destroySession(sid).attempt.void
         }
       yield ()
-
 
     def handle: LlmHandle[IO] = new LlmHandle[IO]:
       def send(req: LlmRequest): IO[LlmResponse] = IO.raiseError(new RuntimeException("send not expected"))

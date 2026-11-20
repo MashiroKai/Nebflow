@@ -70,9 +70,21 @@ class GatewayPortDefaultSpec extends FunSuite:
 
   test("resolvePort skips illegal legs (non-numeric env, out-of-range/zero values) to the next leg"):
     val d = Defaults.brandDefaultPort
-    assertEquals(GatewayConfig.resolvePort(None, Some("abc"), Some(7003)).value, 7003, "non-numeric env skips to config")
-    assertEquals(GatewayConfig.resolvePort(Some(70000), None, Some(7003)).value, 7003, "out-of-range --port skips to config")
-    assertEquals(GatewayConfig.resolvePort(None, None, Some(0)).value, d, "port 0 (ephemeral) is not bindable — falls to default")
+    assertEquals(
+      GatewayConfig.resolvePort(None, Some("abc"), Some(7003)).value,
+      7003,
+      "non-numeric env skips to config"
+    )
+    assertEquals(
+      GatewayConfig.resolvePort(Some(70000), None, Some(7003)).value,
+      7003,
+      "out-of-range --port skips to config"
+    )
+    assertEquals(
+      GatewayConfig.resolvePort(None, None, Some(0)).value,
+      d,
+      "port 0 (ephemeral) is not bindable — falls to default"
+    )
     assertEquals(GatewayConfig.resolvePort(None, Some("0"), Some(7003)).value, 7003, "zero env skips to config")
     assertEquals(GatewayConfig.resolvePort(None, Some("-1"), None).value, d, "negative env falls to default")
 
@@ -98,5 +110,6 @@ class GatewayPortDefaultSpec extends FunSuite:
     finally
       nebflow.shared.PathUtil.setDataRoot(savedRoot)
       os.remove.all(tmp)
+    end try
 
 end GatewayPortDefaultSpec

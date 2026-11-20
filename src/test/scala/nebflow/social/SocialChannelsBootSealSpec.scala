@@ -244,7 +244,11 @@ class SocialChannelsBootSealSpec extends FunSuite:
       Some(true),
       "the stored switch is reported as-is"
     )
-    assertEquals(os.read(root / nebflow.shared.Branding.configFileName), before, "零配置改写：读一次 connection face 不得动盘上任何字节（更不得写 enabled=false）")
+    assertEquals(
+      os.read(root / nebflow.shared.Branding.configFileName),
+      before,
+      "零配置改写：读一次 connection face 不得动盘上任何字节（更不得写 enabled=false）"
+    )
     assertEquals(enabledOf(root, "feishu"), Some(true))
   }
 end SocialChannelsBootSealSpec

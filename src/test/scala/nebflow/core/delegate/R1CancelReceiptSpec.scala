@@ -102,7 +102,8 @@ class R1CancelReceiptSpec extends FunSuite:
       ): IO[Unit] = IO.unit
       def findRunningTasks: IO[List[SubAgentTask]] = IO.pure(Nil)
       def findByTaskId(taskId: String): IO[Option[SubAgentTask]] = IO.raiseError(new RuntimeException("boom"))
-    val verified = CancelReceipt.awaitTerminal(exploding, "delegate-nebflow-c5", budgetMs = 350, pollMs = 100).unsafeRunSync()
+    val verified =
+      CancelReceipt.awaitTerminal(exploding, "delegate-nebflow-c5", budgetMs = 350, pollMs = 100).unsafeRunSync()
     assertEquals(verified, false, "probe failure must degrade to not-settled, never throw")
   }
 end R1CancelReceiptSpec

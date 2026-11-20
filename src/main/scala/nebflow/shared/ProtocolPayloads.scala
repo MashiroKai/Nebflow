@@ -185,16 +185,18 @@ object ModelUnavailableAction:
   /** Lenient wire parse (frontend sends lowercase ids; unknown => None: card retained). */
   def parse(s: String): Option[ModelUnavailableAction] =
     Option(s).map(_.trim.toLowerCase).collect {
-      case "test"    => Test
-      case "switch"  => Switch
+      case "test" => Test
+      case "switch" => Switch
       case "dismiss" => Dismiss
     }
 
   /** Wire id (single spelling shared by card payload + answer frame). */
   def wire(a: ModelUnavailableAction): String = a match
-    case Test    => "test"
-    case Switch  => "switch"
+    case Test => "test"
+    case Switch => "switch"
     case Dismiss => "dismiss"
+
+end ModelUnavailableAction
 
 /**
  * Answer payload for the unified model-unavailable card.
@@ -237,3 +239,4 @@ object ModelUnavailableAnswer:
       .deepMerge(a.testOk.fold(Json.obj())(v => Json.obj("testOk" -> Json.fromBoolean(v))))
       .deepMerge(a.testLatencyMs.fold(Json.obj())(v => Json.obj("testLatencyMs" -> Json.fromLong(v))))
       .deepMerge(a.testFailure.fold(Json.obj())(v => Json.obj("testFailure" -> Json.fromString(v))))
+end ModelUnavailableAnswer

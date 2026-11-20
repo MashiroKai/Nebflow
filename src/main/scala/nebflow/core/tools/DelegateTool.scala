@@ -488,8 +488,7 @@ Advance: the chain's nodes run in THIS session's workspace by default (that is s
   ): IO[Either[ToolError, String]] =
     mode match
       case None | Some("") | Some("off") => callLegacy(input, ctx)
-      case Some("local-leaf-b1")
-          if !ctx.sharedResources.exists(_.executionCommitPort.supportsProtectedExecution) =>
+      case Some("local-leaf-b1") if !ctx.sharedResources.exists(_.executionCommitPort.supportsProtectedExecution) =>
         IO.pure(Left(ToolError("Delegate recovery B1 is unavailable; admission is disabled (unsupported-boundary).")))
       case Some("local-leaf-b1") => callLegacy(input, ctx)
       case Some(_) => IO.pure(Left(ToolError("Invalid Delegate recovery mode; admission is disabled.")))
@@ -1359,90 +1358,146 @@ You will be notified when it completes via a system message. Do NOT duplicate th
       )
       val attempt = for
         resolvedBrief <- resources.msgTokens.resolveForAgent(brief)
-        prepared <- if !protectedMode then IO.pure(PreparedSpawn(params, Nil, continueOnSpawn = false))
+        prepared <-
+          if !protectedMode then IO.pure(PreparedSpawn(params, Nil, continueOnSpawn = false))
           else
             val admission = nebflow.shared.ExecutionAdmission(
-              subagentId, spawnRunId, java.util.UUID.randomUUID().toString, java.util.UUID.randomUUID().toString,
-              java.util.UUID.randomUUID().toString, java.util.UUID.randomUUID().toString,
-              parentSessionId.getOrElse(resolvedRoot), spawnRunId,
+              subagentId,
+              spawnRunId,
+              java.util.UUID.randomUUID().toString,
+              java.util.UUID.randomUUID().toString,
+              java.util.UUID.randomUUID().toString,
+              java.util.UUID.randomUUID().toString,
+              parentSessionId.getOrElse(resolvedRoot),
+              spawnRunId,
               ProtectedAgentExecution.configBinding(agentDef),
-              Json.obj("text" -> resolvedBrief.asJson), java.util.UUID.randomUUID().toString
+              Json.obj("text" -> resolvedBrief.asJson),
+              java.util.UUID.randomUUID().toString
             )
             admitProtectedCandidate(params, admission).flatMap {
               case Left(reason) => IO.raiseError[PreparedSpawn](new IllegalStateException(reason))
               case Right(bound) =>
-                val handle = bound.protectedExecution.getOrElse(
-                  throw new IllegalStateException("protected-handle-unavailable"))
-                val startCommand = nebflow.shared.ExecutionTransition(admission.sessionId, admission.executionId,
-                  java.util.UUID.randomUUID().toString, java.util.UUID.randomUUID().toString,
-                  handle.ref, admission.attemptId, admission.incarnationId,
-                  nebflow.shared.ExecutionEvent.AttemptStarted)
+                val handle =
+                  bound.protectedExecution.getOrElse(throw new IllegalStateException("protected-handle-unavailable"))
+                val startCommand = nebflow.shared.ExecutionTransition(
+                  admission.sessionId,
+                  admission.executionId,
+                  java.util.UUID.randomUUID().toString,
+                  java.util.UUID.randomUUID().toString,
+                  handle.ref,
+                  admission.attemptId,
+                  admission.incarnationId,
+                  nebflow.shared.ExecutionEvent.AttemptStarted
+                )
                 for
                   shared <- resources match
                     case value: SharedResources => IO.pure(value)
-                    case _ => IO.raiseError[SharedResources](
-                      new IllegalStateException("protected-execution-requires-shared-resources"))
+                    case _ =>
+                      IO.raiseError[SharedResources](
+                        new IllegalStateException("protected-execution-requires-shared-resources")
+                      )
                   started <- handle.authority.transition(startCommand)
                   startRef <- started match
                     case nebflow.shared.ExecutionCommitResult.Committed(ref) => IO.pure(ref)
                     case nebflow.shared.ExecutionCommitResult.Duplicate(ref) => IO.pure(ref)
-                    case other => IO.raiseError[nebflow.shared.ExecutionCommitRef](
-                      new IllegalStateException(s"attempt-start-unconfirmed: $other"))
+                    case other =>
+                      IO.raiseError[nebflow.shared.ExecutionCommitRef](
+                        new IllegalStateException(s"attempt-start-unconfirmed: $other")
+                      )
                   registered <- resources.executionCommitPort match
                     case store: ExecutionCommitStore =>
-                      store.registerRunner(ExecutionRunner.Attempt(admission.sessionId,
-                        admission.executionId, admission.attemptId, admission.incarnationId)).allocated
-                    case _ => IO.raiseError[(Either[String, ExecutionCommitStore#RunnerHandle], IO[Unit])](
-                      new IllegalStateException("protected-authority-unavailable"))
+                      store
+                        .registerRunner(
+                          ExecutionRunner.Attempt(
+                            admission.sessionId,
+                            admission.executionId,
+                            admission.attemptId,
+                            admission.incarnationId
+                          )
+                        )
+                        .allocated
+                    case _ =>
+                      IO.raiseError[(Either[String, ExecutionCommitStore#RunnerHandle], IO[Unit])](
+                        new IllegalStateException("protected-authority-unavailable")
+                      )
                   (runnerResult, release) = registered
                   runner <- runnerResult match
                     case Right(value) => IO.pure(value)
-                    case Left(reason) => release *> IO.raiseError[ExecutionCommitStore#RunnerHandle](
-                      new IllegalStateException(s"runner-registration-failed: $reason"))
+                    case Left(reason) =>
+                      release *> IO.raiseError[ExecutionCommitStore#RunnerHandle](
+                        new IllegalStateException(s"runner-registration-failed: $reason")
+                      )
                   runtime = shared.copy(
                     protectedExecutions = shared.protectedExecutions.updated(subagentId, handle),
-                    protectedRunners = shared.protectedRunners.updated(subagentId, runner))
-                  _ <- runtime.retainProtectedExecution(handle, runner, release,
-                    nebflow.shared.ProtectedRecoveryResult(admission.sessionId, admission.executionId,
-                      admission.attemptId, admission.incarnationId, startRef, duplicate = false))
+                    protectedRunners = shared.protectedRunners.updated(subagentId, runner)
+                  )
+                  _ <- runtime.retainProtectedExecution(
+                    handle,
+                    runner,
+                    release,
+                    nebflow.shared.ProtectedRecoveryResult(
+                      admission.sessionId,
+                      admission.executionId,
+                      admission.attemptId,
+                      admission.incarnationId,
+                      startRef,
+                      duplicate = false
+                    )
+                  )
                   _ <- cleanup.update(previous => release *> previous)
                   taskRow = SubAgentTask(
-                    taskId = subagentId, parentSessionId = parentSessionId.getOrElse(""), agentName = agentName,
-                    prompt = task, description = description, status = "running", retryCount = 0,
-                    spawnedAt = System.currentTimeMillis(), completedAt = None, lastError = None,
-                    source = "delegate", mode = Some(modeDecision.mode))
+                    taskId = subagentId,
+                    parentSessionId = parentSessionId.getOrElse(""),
+                    agentName = agentName,
+                    prompt = task,
+                    description = description,
+                    status = "running",
+                    retryCount = 0,
+                    spawnedAt = System.currentTimeMillis(),
+                    completedAt = None,
+                    lastError = None,
+                    source = "delegate",
+                    mode = Some(modeDecision.mode)
+                  )
                   _ <- resources.subAgentTaskStore
                     .beginRun(taskRow, spawnRunId, resolvedRoot, ExecutorRegistry.DefaultId)
                     .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), IO.pure))
-                yield PreparedSpawn(bound.copy(resources = runtime),
+                yield PreparedSpawn(
+                  bound.copy(resources = runtime),
                   List(Message(MessageRole.User, Left(resolvedBrief), messageId = Some(admission.initialInputId))),
-                  continueOnSpawn = true)
+                  continueOnSpawn = true
+                )
+                end for
             }
-        _ <- if protectedMode then IO.unit else resources.subAgentTaskStore
-          .beginRun(
-            SubAgentTask(
-              taskId = subagentId,
-              parentSessionId = parentSessionId.getOrElse(""),
-              agentName = agentName,
-              prompt = task,
-              description = description,
-              status = "running",
-              retryCount = 0,
-              spawnedAt = System.currentTimeMillis(),
-              completedAt = None,
-              lastError = None,
-              source = "delegate",
-              // 执行形态随行落任务行（参数决定，恒有值）。
-              mode = Some(modeDecision.mode)
-            ),
-            spawnRunId,
-            resolvedRoot,
-            ExecutorRegistry.DefaultId
-          )
-          .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
-        subagentRef <- NodeRunner.spawnAgentActor(system, prepared.params.copy(
-          initialMessages = prepared.initialMessages,
-          continueOnSpawn = prepared.continueOnSpawn))
+        _ <-
+          if protectedMode then IO.unit
+          else
+            resources.subAgentTaskStore
+              .beginRun(
+                SubAgentTask(
+                  taskId = subagentId,
+                  parentSessionId = parentSessionId.getOrElse(""),
+                  agentName = agentName,
+                  prompt = task,
+                  description = description,
+                  status = "running",
+                  retryCount = 0,
+                  spawnedAt = System.currentTimeMillis(),
+                  completedAt = None,
+                  lastError = None,
+                  source = "delegate",
+                  // 执行形态随行落任务行（参数决定，恒有值）。
+                  mode = Some(modeDecision.mode)
+                ),
+                spawnRunId,
+                resolvedRoot,
+                ExecutorRegistry.DefaultId
+              )
+              .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+        subagentRef <- NodeRunner.spawnAgentActor(
+          system,
+          prepared.params.copy(initialMessages = prepared.initialMessages, continueOnSpawn = prepared.continueOnSpawn)
+        )
         _ <- cleanup.update(previous => system.stop(subagentRef).attempt.void *> previous)
         adapterRef <- NodeRunner.spawnSupervisedAdapter(
           system = system,
@@ -1597,56 +1652,66 @@ You will be notified when it completes via a system message. Do NOT duplicate th
             ).attempt
               .void
           case None => IO.unit
-        _ <- if protectedMode then IO.unit
-          else resources.subAgentTaskStore
-            .updateRun(parentSessionId.getOrElse(""), subagentId, spawnRunId, executionStatus = Some("running"))
-            .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
-        _ <- if protectedMode then IO.unit
+        _ <-
+          if protectedMode then IO.unit
+          else
+            resources.subAgentTaskStore
+              .updateRun(parentSessionId.getOrElse(""), subagentId, spawnRunId, executionStatus = Some("running"))
+              .flatMap(_.fold(reason => IO.raiseError(new IllegalStateException(reason)), _ => IO.unit))
+        _ <-
+          if protectedMode then IO.unit
           else subagentRef ! AgentCommand.UserInput(resolvedBrief, Some(adapterRef))
       yield Right((subagentId, ack))
       attempt
         .onError { case error =>
           val protectedFailure =
             if !protectedMode then IO.unit
-            else resources match
-              case shared: SharedResources =>
-                val reason = s"spawn failed: ${Option(error.getMessage).getOrElse(error.getClass.getSimpleName)}"
-                shared.activeProtectedAttempt(subagentId).flatMap {
-                  case Some((handle, runner)) =>
-                    ProtectedAgentExecution.suspendOwned(handle, runner, reason).attempt *>
-                      shared.subAgentTaskStore.projectProtectedInterrupted(
-                        parentSessionId.getOrElse(""), subagentId, spawnRunId, reason).attempt.void
-                  case None => IO.unit
-                }
-              case _ => IO.unit
+            else
+              resources match
+                case shared: SharedResources =>
+                  val reason = s"spawn failed: ${Option(error.getMessage).getOrElse(error.getClass.getSimpleName)}"
+                  shared.activeProtectedAttempt(subagentId).flatMap {
+                    case Some((handle, runner)) =>
+                      ProtectedAgentExecution.suspendOwned(handle, runner, reason).attempt *>
+                        shared.subAgentTaskStore
+                          .projectProtectedInterrupted(parentSessionId.getOrElse(""), subagentId, spawnRunId, reason)
+                          .attempt
+                          .void
+                    case None => IO.unit
+                  }
+                case _ => IO.unit
           (if protectedMode then protectedFailure
-           else resources.subAgentTaskStore
-            .completeRun(
-              parentSessionId.getOrElse(""),
-              subagentId,
-              spawnRunId,
-              "failed",
-              reason = Some(s"spawn failed: ${error.getMessage}"),
-              incomplete = true,
-              notifyParent = false
-            )
-            .attempt
-            .void) *> cleanup.get.flatten.void
+           else
+             resources.subAgentTaskStore
+               .completeRun(
+                 parentSessionId.getOrElse(""),
+                 subagentId,
+                 spawnRunId,
+                 "failed",
+                 reason = Some(s"spawn failed: ${error.getMessage}"),
+                 incomplete = true,
+                 notifyParent = false
+               )
+               .attempt
+               .void
+          ) *> cleanup.get.flatten.void
         }
         .onCancel(
           (if protectedMode then IO.unit
-           else resources.subAgentTaskStore
-            .completeRun(
-              parentSessionId.getOrElse(""),
-              subagentId,
-              spawnRunId,
-              "failed",
-              reason = Some("Spawn admission cancelled"),
-              incomplete = true,
-              notifyParent = false
-            )
-            .attempt
-            .void) *> cleanup.get.flatten.void
+           else
+             resources.subAgentTaskStore
+               .completeRun(
+                 parentSessionId.getOrElse(""),
+                 subagentId,
+                 spawnRunId,
+                 "failed",
+                 reason = Some("Spawn admission cancelled"),
+                 incomplete = true,
+                 notifyParent = false
+               )
+               .attempt
+               .void
+          ) *> cleanup.get.flatten.void
         )
     }
 

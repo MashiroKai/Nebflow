@@ -35,7 +35,12 @@ class FallbackExhaustedMessageSpec extends FunSuite:
   test("F2: a format failure is labelled and points at the [wire] diagnostic") {
     val e = FallbackExhaustedError(
       List(
-        attempt("deepseek", "deepseek-flash", FailoverReason.Format, Some("The `content[].thinking` ... must be passed back"))
+        attempt(
+          "deepseek",
+          "deepseek-flash",
+          FailoverReason.Format,
+          Some("The `content[].thinking` ... must be passed back")
+        )
       )
     )
     val msg = e.getMessage
@@ -62,3 +67,4 @@ class FallbackExhaustedMessageSpec extends FunSuite:
     val e = FallbackExhaustedError(List(FallbackAttempt("p", "m", None, None, 0L, 0, "t")))
     assert(e.getMessage.contains("[unknown] p/m: unknown"))
   }
+end FallbackExhaustedMessageSpec

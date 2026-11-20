@@ -61,25 +61,25 @@ object TodoClass:
 
   /** wire 名（机器读面唯一来源；`todoClass` 字段取值）。 */
   def wire(c: TodoClass): String = c match
-    case Reminder      => "reminder"
-    case Todo          => "todo"
+    case Reminder => "reminder"
+    case Todo => "todo"
     case ScheduledTask => "task"
-    case EngineMirror  => "engine_mirror"
+    case EngineMirror => "engine_mirror"
 
   /** 用户可见名（中文，改名收敛的唯一定名）。 */
   def zhLabel(c: TodoClass): String = c match
-    case Reminder      => "提醒"
-    case Todo          => "待办"
+    case Reminder => "提醒"
+    case Todo => "待办"
     case ScheduledTask => "定时任务"
-    case EngineMirror  => "待办"
+    case EngineMirror => "待办"
 
   def fromWire(s: String): Option[TodoClass] =
     Option(s).map(_.trim.toLowerCase) match
-      case Some("reminder")      => Some(Reminder)
-      case Some("todo")          => Some(Todo)
-      case Some("task")          => Some(ScheduledTask)
+      case Some("reminder") => Some(Reminder)
+      case Some("todo") => Some(Todo)
+      case Some("task") => Some(ScheduledTask)
       case Some("engine_mirror") => Some(EngineMirror)
-      case _                     => None
+      case _ => None
 
 end TodoClass
 
@@ -111,9 +111,9 @@ object TodoTaxonomy:
     if !k.contains(ScheduledTask.KindTodo) then TodoClass.ScheduledTask
     else
       source.map(_.trim.toLowerCase).filter(_.nonEmpty) match
-        case Some(s) if s == SourceUser   => TodoClass.Reminder
+        case Some(s) if s == SourceUser => TodoClass.Reminder
         case Some(s) if s == SourceEngine => TodoClass.EngineMirror
-        case _                            => TodoClass.Todo
+        case _ => TodoClass.Todo
 
   def classify(t: ScheduledTask): TodoClass = classify(t.kind, t.source)
 
@@ -162,9 +162,13 @@ object TodoTaxonomy:
     /** 单选项媒体条数超上限。 */
     val MediaLimit = "TODO_MEDIA_LIMIT"
 
-    /** `decision` 在场但解不出（JSON 形态错）——与「缺 decision」必须区分，否则会把
-     *  「写错了」误报成「没写」。 */
+    /**
+     * `decision` 在场但解不出（JSON 形态错）——与「缺 decision」必须区分，否则会把
+     *  「写错了」误报成「没写」。
+     */
     val DecisionMalformed = "TODO_DECISION_MALFORMED"
+
+  end Codes
 
   /**
    * 从工具入参解出 `decision`：`None`/`null` ⇒ `Right(None)`（合法缺席）；
@@ -173,11 +177,11 @@ object TodoTaxonomy:
    */
   def decodeDecision(container: io.circe.Json): Either[Violation, Option[TodoDecision]] =
     container.asObject.flatMap(_("decision")) match
-      case None                              => Right(None)
-      case Some(j) if j.isNull               => Right(None)
+      case None => Right(None)
+      case Some(j) if j.isNull => Right(None)
       case Some(j) =>
         j.as[TodoDecision] match
-          case Right(d)  => Right(Some(d))
+          case Right(d) => Right(Some(d))
           case Left(err) =>
             Left(
               Violation(
@@ -230,6 +234,10 @@ object TodoTaxonomy:
       case Some(d) =>
         validateDecision(d)
 
+    end match
+
+  end validateCreate
+
   /**
    * 决策形态校验（选项 ≥1 + 逐条 title/media 校验）。
    * `decision` 在场即必须成形——空决策（options 为空）与「无决策」不是同一个意思，
@@ -253,40 +261,42 @@ object TodoTaxonomy:
         )
       )
     else
-      d.options.zipWithIndex.collectFirst {
-        case (o, i) if o.title.trim.isEmpty =>
-          Violation(
-            Codes.OptionTitleRequired,
-            s"decision.options[$i]（id=\"${o.id}\"）的 title 是空的 — title 是选项**唯一必填**的内容面" +
-              s"（媒体可空、可多张；标题不可空）。 (${Codes.OptionTitleRequired})"
-          )
-        case (o, i) if o.media.size > MaxMediaPerOption =>
-          Violation(
-            Codes.MediaLimit,
-            s"decision.options[$i]（\"${o.title.trim}\"）挂了 ${o.media.size} 张媒体 — 每选项上限 $MaxMediaPerOption 张。" +
-              s"叠卡最多这么多张；多余的改成 detail 里的文字。 (${Codes.MediaLimit})"
-          )
-        case (o, i) if o.media.exists(m => !DecisionMedia.Kinds.contains(m.kind.trim.toLowerCase)) =>
-          val bad = o.media.find(m => !DecisionMedia.Kinds.contains(m.kind.trim.toLowerCase)).get
-          Violation(
-            Codes.MediaKind,
-            s"decision.options[$i] 的媒体 kind=\"${bad.kind}\" 非法 — 只接受 ${DecisionMedia.Kinds.toList.sorted.mkString(" | ")}。" +
-              s" (${Codes.MediaKind})"
-          )
-        case (o, i) if o.media.exists(_.ref.trim.isEmpty) =>
-          Violation(
-            Codes.MediaRef,
-            s"decision.options[$i] 的某张媒体 ref 是空的 — 媒体是**引用**（attachment id / 绝对路径 / URL），" +
-              s"不给引用就不要挂这张。 (${Codes.MediaRef})"
-          )
-        case (o, i) if o.media.exists(m => !DecisionMedia.RefTypes.contains(m.refType.trim.toLowerCase)) =>
-          val bad = o.media.find(m => !DecisionMedia.RefTypes.contains(m.refType.trim.toLowerCase)).get
-          Violation(
-            Codes.MediaRefType,
-            s"decision.options[$i] 的媒体 refType=\"${bad.refType}\" 非法 — 只接受 " +
-              s"${DecisionMedia.RefTypes.toList.sorted.mkString(" | ")}（attachment / path / url）。 (${Codes.MediaRefType})"
-          )
-      }.toLeft(())
+      d.options.zipWithIndex
+        .collectFirst {
+          case (o, i) if o.title.trim.isEmpty =>
+            Violation(
+              Codes.OptionTitleRequired,
+              s"decision.options[$i]（id=\"${o.id}\"）的 title 是空的 — title 是选项**唯一必填**的内容面" +
+                s"（媒体可空、可多张；标题不可空）。 (${Codes.OptionTitleRequired})"
+            )
+          case (o, i) if o.media.size > MaxMediaPerOption =>
+            Violation(
+              Codes.MediaLimit,
+              s"decision.options[$i]（\"${o.title.trim}\"）挂了 ${o.media.size} 张媒体 — 每选项上限 $MaxMediaPerOption 张。" +
+                s"叠卡最多这么多张；多余的改成 detail 里的文字。 (${Codes.MediaLimit})"
+            )
+          case (o, i) if o.media.exists(m => !DecisionMedia.Kinds.contains(m.kind.trim.toLowerCase)) =>
+            val bad = o.media.find(m => !DecisionMedia.Kinds.contains(m.kind.trim.toLowerCase)).get
+            Violation(
+              Codes.MediaKind,
+              s"decision.options[$i] 的媒体 kind=\"${bad.kind}\" 非法 — 只接受 ${DecisionMedia.Kinds.toList.sorted.mkString(" | ")}。" +
+                s" (${Codes.MediaKind})"
+            )
+          case (o, i) if o.media.exists(_.ref.trim.isEmpty) =>
+            Violation(
+              Codes.MediaRef,
+              s"decision.options[$i] 的某张媒体 ref 是空的 — 媒体是**引用**（attachment id / 绝对路径 / URL），" +
+                s"不给引用就不要挂这张。 (${Codes.MediaRef})"
+            )
+          case (o, i) if o.media.exists(m => !DecisionMedia.RefTypes.contains(m.refType.trim.toLowerCase)) =>
+            val bad = o.media.find(m => !DecisionMedia.RefTypes.contains(m.refType.trim.toLowerCase)).get
+            Violation(
+              Codes.MediaRefType,
+              s"decision.options[$i] 的媒体 refType=\"${bad.refType}\" 非法 — 只接受 " +
+                s"${DecisionMedia.RefTypes.toList.sorted.mkString(" | ")}（attachment / path / url）。 (${Codes.MediaRefType})"
+            )
+        }
+        .toLeft(())
 
   /**
    * 归一化（工厂侧单点）：补空白选项 id（`o1`, `o2`… 按位置）、丢弃 title 为空的
@@ -309,6 +319,8 @@ object TodoTaxonomy:
     }
     d.copy(question = d.question.trim, options = opts)
 
+  end normalizeDecision
+
   private def normalizeMedia(m: DecisionMedia): Option[DecisionMedia] =
     val ref = m.ref.trim
     if ref.isEmpty then None
@@ -324,6 +336,7 @@ object TodoTaxonomy:
           role = m.role.map(_.trim.toLowerCase).filter(_.nonEmpty)
         )
       )
+  end normalizeMedia
 
   /** 选项计数（列表/组装面便利读口）。 */
   def optionCount(t: ScheduledTask): Int = t.decision.map(_.options.size).getOrElse(0)

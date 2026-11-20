@@ -53,10 +53,10 @@ class WeeklyReportSpec extends CatsEffectSuite:
     val prevWeekBase = mondayAfter.minus(java.time.Duration.ofDays(14)) // 上上周周一 09:00
     val prevWeek = mondayAfter.minus(java.time.Duration.ofDays(7))
     val records = List(
-      rec(prevWeekBase),                                   // 上上周周一
+      rec(prevWeekBase), // 上上周周一
       rec(prevWeekBase.plus(java.time.Duration.ofDays(1))),
       rec(prevWeekBase.plus(java.time.Duration.ofDays(3))),
-      rec(prevWeek),                                       // 上周周一
+      rec(prevWeek), // 上周周一
       rec(prevWeek.plus(java.time.Duration.ofDays(1)))
     )
     val stats = WeeklyReport.aggregate(records, openTodoCount = 3, mondayAfter, zone)
@@ -137,6 +137,7 @@ class WeeklyReportSpec extends CatsEffectSuite:
       frames2 <- broadcasted.get
       _ = assertEquals(frames2.length, 1)
     yield ()
+    end for
   }
 
   test("生成器：停机错过 ⇒ 下次 tick 补生成（catch-up）") {
@@ -151,7 +152,8 @@ class WeeklyReportSpec extends CatsEffectSuite:
       (tempRoot / "weekly-report-2" / "state.json").toNIO
     )
     // marker 空 + 本周三（错过周一）⇒ 仍生成上一完整周。
-    gen.tick(mondayAfter.plus(java.time.Duration.ofDays(2)), zone)
+    gen
+      .tick(mondayAfter.plus(java.time.Duration.ofDays(2)), zone)
       .map(_ => assertEquals(os.list(ws / "reports").length, 1))
   }
 
@@ -223,8 +225,11 @@ class WeeklyReportSpec extends CatsEffectSuite:
       reportPath = (ws / "reports" / "20261102_weekly-checkin" / "REPORT.md").toString
       _ = assertEquals(t.referencePath, Some(reportPath), "referencePath 落报告现场")
       _ = assert(t.content.contains(reportPath), "content 内嵌报告路径")
-      _ = assertEquals(t.triggerAt, ScheduledTask.nextTodoSurfaceAt(mondayAfter.toEpochMilli, zone),
-        "浮出节奏 = 聚合（下一 09:00 汇总，接 todo digest 面）")
+      _ = assertEquals(
+        t.triggerAt,
+        ScheduledTask.nextTodoSurfaceAt(mondayAfter.toEpochMilli, zone),
+        "浮出节奏 = 聚合（下一 09:00 汇总，接 todo digest 面）"
+      )
       _ = assert(t.enabled && !t.triggered && t.repeat.isEmpty, "待办语义：enabled/未触发/无 repeat")
       // weeklyReportReady 广播保留（多窗同步 + 前端收件箱刷新信号）
       frames <- broadcasted.get
@@ -236,6 +241,7 @@ class WeeklyReportSpec extends CatsEffectSuite:
       todos2 <- taskStore.getAllTodos
       _ = assertEquals(todos2.length, 1, "重复生成同名 upsert ⇒ 仍单份")
     yield ()
+    end for
   }
 
   test("生成器：无活跃会话 ⇒ 跳过收件箱入账（报告与广播不受影响）") {
@@ -262,5 +268,6 @@ end WeeklyReportSpec
 
 /** 测试小件：某周周一 09:00（本地 zone）的 Instant。 */
 private object ZonedDateTimeHelper:
+
   def mondayAt9(year: Int, month: Int, day: Int, zone: ZoneId): Instant =
     java.time.ZonedDateTime.of(year, month, day, 9, 0, 0, 0, zone).toInstant

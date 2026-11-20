@@ -246,7 +246,13 @@ class PerceptionCoreSpec extends FunSuite:
     store.ensureDirs()
 
     // accounts
-    val acc = MailAccount(id = "qqcom", address = "i@qq.com", imapHost = "imap.qq.com", smtpHost = "smtp.qq.com", authCodeSecret = "perception-i-qq-com")
+    val acc = MailAccount(
+      id = "qqcom",
+      address = "i@qq.com",
+      imapHost = "imap.qq.com",
+      smtpHost = "smtp.qq.com",
+      authCodeSecret = "perception-i-qq-com"
+    )
     assert(store.saveAccounts(List(acc)).isRight)
     val loaded = store.loadAccounts()
     assertEquals(loaded.map(_.address), List("i@qq.com"))
@@ -279,7 +285,11 @@ class PerceptionCoreSpec extends FunSuite:
     assertEquals(store.spoolList(), Nil)
 
     // billing buffer
-    assert(store.billingAppend("2026-10-25", PerceptionStore.BillingLine(1L, "<m>", "alipay.com", "s", "¥1.00", "domain")).isRight)
+    assert(
+      store
+        .billingAppend("2026-10-25", PerceptionStore.BillingLine(1L, "<m>", "alipay.com", "s", "¥1.00", "domain"))
+        .isRight
+    )
     assertEquals(store.billingRead("2026-10-25").size, 1)
     store.billingClear("2026-10-25")
     assertEquals(store.billingRead("2026-10-25"), Nil)
@@ -464,7 +474,10 @@ class PerceptionCoreSpec extends FunSuite:
 
   // ── L1 判定腿（作者构想 1 + r2 §5.2：缺省流量经 LLM 三值判定，降级搁置）──
 
-  private def judgeCore(verdict: L1Verdict, calls: java.util.concurrent.atomic.AtomicInteger): (PerceptionCore, os.Path) =
+  private def judgeCore(
+    verdict: L1Verdict,
+    calls: java.util.concurrent.atomic.AtomicInteger
+  ): (PerceptionCore, os.Path) =
     val tmp = Files.createTempDirectory("perception-l1-spec")
     val store = new PerceptionStore(os.Path(tmp))
     val events = new scala.collection.mutable.ArrayBuffer[io.circe.Json]
@@ -520,8 +533,10 @@ class PerceptionCoreSpec extends FunSuite:
   }
 
   private type LlmRequest2IO = nebflow.shared.LlmRequest => IO[MailImportanceJudge.LlmRespLike]
+
   private def respLike(r: String): MailImportanceJudge.LlmRespLike =
-    new MailImportanceJudge.LlmRespLike { def reply = r }
+    new MailImportanceJudge.LlmRespLike:
+      def reply = r
 
   // ── L0 黑名单 / 白名单（判定 0.1 / 0.2 三形态）────────────────────────
 
@@ -631,15 +646,17 @@ class PerceptionCoreSpec extends FunSuite:
     PerceptionModel.IncomingMail(uid, "s@x.com", "x.com", List("me@qq.com"), "您的验证码", "", s"<m$uid@x>", "code 111222")
 
   extension (core: PerceptionCore)
+
     /** Test seam: register an account WITHOUT touching real IMAP/secrets. */
     def connectForTest(address: String): IO[Unit] =
-      for
-        _ <- core.testInjectAccount(MailAccount(
-          id = address.replaceAll("[^a-z0-9]", ""),
-          address = address,
-          imapHost = "imap.test",
-          smtpHost = "smtp.test",
-          authCodeSecret = ""
-        ))
+      for _ <- core.testInjectAccount(
+          MailAccount(
+            id = address.replaceAll("[^a-z0-9]", ""),
+            address = address,
+            imapHost = "imap.test",
+            smtpHost = "smtp.test",
+            authCodeSecret = ""
+          )
+        )
       yield ()
 end PerceptionCoreSpec

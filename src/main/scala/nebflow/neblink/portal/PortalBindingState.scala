@@ -34,10 +34,13 @@ object PortalBindingState:
   private def stateFile: os.Path = PathUtil.dataRoot / "neblink" / "binding-state.json"
 
   private final case class Persisted(status: String, updatedAt: Long)
+
   private object Persisted:
+
     // Hand-rolled codec (two fields) — no circe-generic derivation needed.
     def toJson(p: Persisted): io.circe.Json =
       io.circe.Json.obj("status" -> p.status.asJson, "updatedAt" -> p.updatedAt.asJson)
+
     def fromJson(j: io.circe.Json): Option[Persisted] =
       for
         status <- j.hcursor.get[String]("status").toOption
@@ -51,7 +54,7 @@ object PortalBindingState:
       if os.exists(f) then
         decode[io.circe.Json](os.read(f)).toOption.flatMap(Persisted.fromJson) match
           case Some(p) if p.status == "unbound" => Unbound
-          case _                                => Bound
+          case _ => Bound
       else Bound
     catch
       case _: Exception =>
@@ -81,12 +84,14 @@ class PortalBindingState private (statusRef: Ref[IO, PortalBindingState.Status])
    * state still flips, and the next transition retries the write.
    */
   def markUnbound(): IO[Boolean] =
-    statusRef.modify {
-      case Unbound => (Unbound, false)
-      case Bound   => (Unbound, true)
-    }.flatMap { transitioned =>
-      IO.whenA(transitioned)(persist("unbound")).as(transitioned)
-    }
+    statusRef
+      .modify {
+        case Unbound => (Unbound, false)
+        case Bound => (Unbound, true)
+      }
+      .flatMap { transitioned =>
+        IO.whenA(transitioned)(persist("unbound")).as(transitioned)
+      }
 
   /**
    * Row 4: a successful upgrade (101, no terminal code) clears the terminal
@@ -97,20 +102,25 @@ class PortalBindingState private (statusRef: Ref[IO, PortalBindingState.Status])
    * the gate lands before / with this row.
    */
   def clearTerminal(): IO[Boolean] =
-    statusRef.modify {
-      case Bound   => (Bound, false)
-      case Unbound => (Bound, true)
-    }.flatMap { cleared =>
-      IO.whenA(cleared)(persist("bound")).as(cleared)
-    }
+    statusRef
+      .modify {
+        case Bound => (Bound, false)
+        case Unbound => (Bound, true)
+      }
+      .flatMap { cleared =>
+        IO.whenA(cleared)(persist("bound")).as(cleared)
+      }
 
   private def persist(statusValue: String): IO[Unit] =
-    IO.realTime.map(_.toMillis).flatMap { now =>
-      AtomicJson.write(stateFile, Persisted.toJson(Persisted(statusValue, now)).spaces2)
-    }.handleErrorWith { e =>
-      logger.warn(
-        s"binding state persistence failed (status=$statusValue): ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
-      )
-    }
+    IO.realTime
+      .map(_.toMillis)
+      .flatMap { now =>
+        AtomicJson.write(stateFile, Persisted.toJson(Persisted(statusValue, now)).spaces2)
+      }
+      .handleErrorWith { e =>
+        logger.warn(
+          s"binding state persistence failed (status=$statusValue): ${Option(e.getMessage).getOrElse(e.getClass.getSimpleName)}"
+        )
+      }
 
 end PortalBindingState

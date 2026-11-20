@@ -54,6 +54,7 @@ class WeixinInboundSeamSpec extends CatsEffectSuite:
    * "landed on the wrong seam" defect is red by construction.
    */
   private final class SeamCtx(sessions: List[SessionMeta]) extends BridgeContext:
+
     val textSeam: Ref[IO, List[(String, String, Option[String], Option[BridgeOrigin])]] =
       Ref.unsafe(Nil)
     val mediaSeam: Ref[IO, List[(String, String, List[BridgeAttachment])]] = Ref.unsafe(Nil)
@@ -77,6 +78,8 @@ class WeixinInboundSeamSpec extends CatsEffectSuite:
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
+
+  end SeamCtx
 
   private def plugin(): WeixinIlinkBridgePlugin =
     new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = Some(Nil), rootSessionGate = Some(_ => true))
@@ -121,9 +124,14 @@ class WeixinInboundSeamSpec extends CatsEffectSuite:
       // 两个面由网关唯一注入点分离（BridgeOrigin.faces）：渠道只交原文 + 来源描述，
       // 「<system-reminder> 以下消息来自…」标记是网关注入点按 origin 合成的——所以
       // 这里断言原文逐字到达，且来源描述确实在场（标记本身在网关侧，spec 不重复造）。
-      assertEquals(origin.map(_.channelId), Some(WeixinIlinkBridgePlugin.Name), "the source is announced to the gateway")
+      assertEquals(
+        origin.map(_.channelId),
+        Some(WeixinIlinkBridgePlugin.Name),
+        "the source is announced to the gateway"
+      )
       assertEquals(content, "在吗", s"the body must reach the agent verbatim, got: $content")
       assertEquals(media, Nil, "a text frame must NOT touch the media seam")
+    end for
   }
 
   // ───────────────────────── WS-2 带图帧走媒体缝 ─────────────────────────
@@ -151,6 +159,7 @@ class WeixinInboundSeamSpec extends CatsEffectSuite:
       assertEquals(attachments.head.name, Some("IMG_1.jpg"))
       assertEquals(attachments.head.mime, Some("image/jpeg"))
       assertEquals(content, "", "the side-car placeholder label is filtered — the caption slot stays empty")
+    end for
   }
 
   // ───────────────────────── WS-3 没有静默丢弃 ─────────────────────────
@@ -187,7 +196,11 @@ class WeixinInboundSeamSpec extends CatsEffectSuite:
             // no-text-body: a frame that DID carry text must never be dropped
             // under that reason (the canonical "改缝后纯文本也被判废" regression).
             if label != "no-text" then
-              assertNotEquals(r, WeixinIlinkBridgePlugin.ReasonNoText, s"$label: a text-bearing frame must not be dropped as $r")
+              assertNotEquals(
+                r,
+                WeixinIlinkBridgePlugin.ReasonNoText,
+                s"$label: a text-bearing frame must not be dropped as $r"
+              )
           case other => fail(s"$label: unexpected verdict $other")
       }
       assertEquals(
@@ -203,6 +216,7 @@ class WeixinInboundSeamSpec extends CatsEffectSuite:
         "a vanished media pointer degrades to the placeholder and is STILL delivered"
       )
       assertEquals(byLabel("no-text"), WeixinIlinkBridgePlugin.Verdict.Dropped(WeixinIlinkBridgePlugin.ReasonNoText))
+    end for
   }
 
   // ───────────────────────── WS-4 跨版本字段兼容 ─────────────────────────
@@ -223,3 +237,4 @@ class WeixinInboundSeamSpec extends CatsEffectSuite:
       assertEquals(a.text, b.text)
       assertEquals(a.routeKey, "wx_alice")
   }
+end WeixinInboundSeamSpec

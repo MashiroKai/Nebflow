@@ -61,7 +61,7 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
 
   // ── 脚本化 LLM（calls/requests 都是可读事实面）────────────────────────────
   private class ScriptedLlm(streams: Ref[IO, List[Stream[IO, StreamChunk]]]) extends LlmHandle[IO]:
-    val calls    = Ref.unsafe[IO, Int](0)
+    val calls = Ref.unsafe[IO, Int](0)
     val requests = Ref.unsafe[IO, List[LlmRequest]](Nil) // append 序：lift(1) = 第 2 次 call
 
     def send(req: LlmRequest): IO[LlmResponse] =
@@ -98,11 +98,12 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
     req.messages
       .map(_.content)
       .flatMap {
-        case Right(blocks) => blocks.collect {
-          case ContentBlock.Text(t)                   => t
-          case ContentBlock.ToolResult(_, content, _) => content
-          case use: ContentBlock.ToolUse              => use.input.toString
-        }
+        case Right(blocks) =>
+          blocks.collect {
+            case ContentBlock.Text(t) => t
+            case ContentBlock.ToolResult(_, content, _) => content
+            case use: ContentBlock.ToolUse => use.input.toString
+          }
         case Left(t) => List(t)
       }
       .mkString("\n")
@@ -121,7 +122,7 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
       }
     go(System.currentTimeMillis() + timeout.toMillis)
 
-  private val tempRoot: os.Path     = os.pwd / "target" / "test-midturn-injection-timing"
+  private val tempRoot: os.Path = os.pwd / "target" / "test-midturn-injection-timing"
   private val originalRoot: os.Path = PathUtil.dataRoot
 
   override def afterAll(): Unit = PathUtil.setDataRoot(originalRoot)
@@ -265,6 +266,7 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
           s"L1 VIOLATED — 用户腿必须在工具边界并入本回合续轮请求（不是下一回合）。second=$second"
         )
         assertEquals(rc, 0, "L1: 边界注入不得伴随 roundComplete（回合未结束）——出现即证明落到了回合末")
+      end for
     }
 
   // ══════════════ L1b 用户腿的第二承载形（附件/引用/队列 drain 帧）═════════════
@@ -306,6 +308,7 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
         "L1b VIOLATED — typeless 帧（附件/引用/队列 drain）的用户输入必须在工具边界并入本回合续轮请求；" +
           s"实际落在 turn 之后（landingIndex=${afterTurn.zipWithIndex.filter((t, _) => t.contains(body)).map((_, i) => i).mkString(",")}）= 回合末 head-forward。"
       )
+      end for
     }
 
   // ══════════════ L2 Mail delegate 腿（DelegateNotify.inject）══════════════
@@ -330,6 +333,7 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
           second.contains(body),
           s"L2 VIOLATED — delegate-notify 注入必须在工具边界并入本回合续轮请求。second=$second"
         )
+      end for
     }
 
   // ══════════════ L2b Mail 补充件腿（MailTool 的 UserInput(source=mail) 承载形）═════════════
@@ -353,6 +357,7 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
         second.contains(body),
         s"L2b VIOLATED — mail 补充件必须在工具边界并入本回合续轮请求（mail-injected-at-tools-complete 面）。second=$second"
       )
+      end for
     }
 
   // ══════════════ L3 node 腿（NodeEngine.sendNodeMessage → running 会话）═════════════
@@ -363,15 +368,17 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
       for
         store <- FlowMapStore.open("midturn-l3", fx.ws.toString)
         _ <- store.mutate(s =>
-          s.copy(nodes = s.nodes + (nodeId -> NodeDef(
-            id = nodeId,
-            name = "n-l3",
-            agent = "general",
-            status = NodeLifecycle.Running,
-            sessionRef = Some(fx.sid),
-            task = Some("l3 probe"),
-            createdAt = System.currentTimeMillis() - 1000L
-          )))
+          s.copy(nodes =
+            s.nodes + (nodeId -> NodeDef(
+              id = nodeId,
+              name = "n-l3",
+              agent = "general",
+              status = NodeLifecycle.Running,
+              sessionRef = Some(fx.sid),
+              task = Some("l3 probe"),
+              createdAt = System.currentTimeMillis() - 1000L
+            ))
+          )
         )
         engine = new NodeEngine(
           store,
@@ -400,6 +407,7 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
           second.contains(body),
           s"L3 VIOLATED — node 消息必须在工具边界并入本回合续轮请求。second=$second"
         )
+      end for
     }
 
   // ══════════════ L4 幂等：跨两个工具边界只注入一次 ══════════════
@@ -431,6 +439,7 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
           1,
           s"L4 VIOLATED — 跨第二个边界不得重复注入（转录里必须恰一次，实际见日志）。calls=${after.size}"
         )
+      end for
     }
 
   // ══════════════ L5 回落：回合已结束（idle）时送达且只送达一次 ══════════════
@@ -468,6 +477,7 @@ class MidTurnInjectionTimingSpec extends CatsEffectSuite:
           s"L5 VIOLATED — 回合结束后到达的消息必须送达到下一次请求且恰一次。calls=${reqs.size}"
         )
         assertEquals(reqs.size, 4, "L5: 不得出现第 5 次 LLM call（重复投递）")
+      end for
     }
 
   // ══════════════ G 组：判据层的机械读数（解释「落到回合末」的两个门）══════════════

@@ -195,9 +195,14 @@ private[project] trait NodeStarter:
         done <- Deferred[IO, Unit]
         id <- IO(detachedStartIds.incrementAndGet())
         _ <- detachedStarts.update(_ + (id -> done))
-        _ <- io.handleErrorWith(e =>
-          logger.error(s"[$projectName] detached trigger '$what' failed: ${Option(e.getMessage).getOrElse(e.toString)}")
-        ).guarantee(detachedStarts.update(_ - id) *> done.complete(()).void).start
+        _ <- io
+          .handleErrorWith(e =>
+            logger.error(
+              s"[$projectName] detached trigger '$what' failed: ${Option(e.getMessage).getOrElse(e.toString)}"
+            )
+          )
+          .guarantee(detachedStarts.update(_ - id) *> done.complete(()).void)
+          .start
           .onError { case _ => detachedStarts.update(_ - id) *> done.complete(()).void }
       yield ()
     }
@@ -431,7 +436,14 @@ private[project] trait NodeStarter:
                   case (Right(wGrant), Right(vGrant)) =>
                     for
                       cancelSig <- Deferred[IO, Unit]
-                      runIdentity <- flipToRunning(node, cancelSig, workerSessionId, nodeId, node.name, Some(verifySessionId))
+                      runIdentity <- flipToRunning(
+                        node,
+                        cancelSig,
+                        workerSessionId,
+                        nodeId,
+                        node.name,
+                        Some(verifySessionId)
+                      )
                       worker <- spawnLoopSession(
                         workerBase,
                         prepared,
@@ -1321,7 +1333,6 @@ end NodeStarter
 
 private[project] object NodeStarter:
   private[project] def bridgeName(sessionId: String): String = s"nodebridge-$sessionId"
-
 
   /** Bounded grace for a deferred-cancelled session to stop itself (see [[NodeStarter.settleDeferredCancel]]). */
   val DeferredStopGraceMs: Long = 60_000L

@@ -87,3 +87,4 @@ class RevealPathSpec extends munit.FunSuite:
     for p <- List(RevealPath.Platform.MacOS, RevealPath.Platform.Linux) do
       RevealPath.opener(p).foreach(bin => assert(bin.nonEmpty && !bin.contains("\u0000")))
   }
+end RevealPathSpec

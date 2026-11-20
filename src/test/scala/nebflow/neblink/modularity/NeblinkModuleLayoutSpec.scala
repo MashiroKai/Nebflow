@@ -65,13 +65,12 @@ class NeblinkModuleLayoutSpec extends FunSuite:
     val parent = Option(p.getParent).map(neblinkDir.relativize).map(_.toString.replace('\\', '/'))
     parent match
       case Some("") | None => RootPackage
-      case Some(rel)       => RootPackage + "." + rel.replace('/', '.')
+      case Some(rel) => RootPackage + "." + rel.replace('/', '.')
 
   test("每个源文件的 package 与其目录一一对应") {
     val files = scalaFiles(neblinkDir)
     assert(files.nonEmpty, "neblink 目录下应至少有一个源文件")
-    for p <- files do
-      assertEquals(declaredPackage(p), expectedPackage(p), s"包名与目录不一致: ${relative(p)}")
+    for p <- files do assertEquals(declaredPackage(p), expectedPackage(p), s"包名与目录不一致: ${relative(p)}")
   }
 
   test("根包不再有平铺源文件（模块化完成判据）") {
@@ -83,7 +82,9 @@ class NeblinkModuleLayoutSpec extends FunSuite:
     val stream = Files.list(neblinkDir)
     val actual =
       try
-        stream.iterator().asScala
+        stream
+          .iterator()
+          .asScala
           .filter(Files.isDirectory(_))
           .map(_.getFileName.toString)
           .toSet

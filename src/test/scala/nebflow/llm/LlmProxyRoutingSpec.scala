@@ -75,3 +75,4 @@ class LlmProxyRoutingSpec extends FunSuite:
   test("Defaults.LlmDirectConnect default is true (direct is the new default)") {
     assert(Defaults.LlmDirectConnect)
   }
+end LlmProxyRoutingSpec

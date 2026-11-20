@@ -47,53 +47,62 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
     body: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent] => A,
     loggerNames: List[String] = List("nebflow.social.weixin-outbound")
   ): A =
-    val lbs = loggerNames.map(n =>
-      org.slf4j.LoggerFactory.getLogger(n).asInstanceOf[ch.qos.logback.classic.Logger])
+    val lbs = loggerNames.map(n => org.slf4j.LoggerFactory.getLogger(n).asInstanceOf[ch.qos.logback.classic.Logger])
     val appender = new ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
     appender.start()
     lbs.foreach(_.addAppender(appender))
     try body(appender)
     finally lbs.foreach(_.detachAppender(appender))
 
-  /** The formatted lines the appender captured (ANSI prefix included by
-    * NebflowLogger — assertions match the clean kv tail after `" - "`). */
+  /**
+   * The formatted lines the appender captured (ANSI prefix included by
+   * NebflowLogger — assertions match the clean kv tail after `" - "`).
+   */
   private def lines(
     appender: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent]
   ): List[String] =
     appender.list.asScala.toList.map(_.getFormattedMessage)
 
-  /** The failure-level lines captured AFTER the given snapshot index. Slice
-    * FIRST, then filter: `before` is counted on the UNfiltered list, so a
-    * mint/start INFO inside the snapshot must never eat a post-snapshot
-    * failure line (the off-by-one the first draft had — WL2 proved it: the line
-    * fired and was captured, the drop ate it).
-    *
-    * 社交出站 P0 批（2026-11-21，作者铁律②「出站失败绝不静默——每次发送失败
-    * 必须 ERROR 级日志」）：本腿的失败行从 **WARN 升到 ERROR**，所以过滤面是
-    * WARN∪ERROR（不再只有 WARN）。级别本身由 [[newErrors]] 单独钉住，升级若被
-    * 悄悄回退，那条钉子会红。 */
+  /**
+   * The failure-level lines captured AFTER the given snapshot index. Slice
+   * FIRST, then filter: `before` is counted on the UNfiltered list, so a
+   * mint/start INFO inside the snapshot must never eat a post-snapshot
+   * failure line (the off-by-one the first draft had — WL2 proved it: the line
+   * fired and was captured, the drop ate it).
+   *
+   * 社交出站 P0 批（2026-11-21，作者铁律②「出站失败绝不静默——每次发送失败
+   * 必须 ERROR 级日志」）：本腿的失败行从 **WARN 升到 ERROR**，所以过滤面是
+   * WARN∪ERROR（不再只有 WARN）。级别本身由 [[newErrors]] 单独钉住，升级若被
+   * 悄悄回退，那条钉子会红。
+   */
   private def newWarns(
     appender: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent],
     before: Int
   ): List[String] =
-    appender.list.asScala.toList.drop(before)
-      .filter(e =>
-        e.getLevel == ch.qos.logback.classic.Level.WARN || e.getLevel == ch.qos.logback.classic.Level.ERROR)
+    appender.list.asScala.toList
+      .drop(before)
+      .filter(e => e.getLevel == ch.qos.logback.classic.Level.WARN || e.getLevel == ch.qos.logback.classic.Level.ERROR)
       .map(_.getFormattedMessage)
 
-  /** The ERROR-level lines captured after the snapshot index — the level pin
-    * (铁律②: 发送失败是 ERROR，不是提醒)。 */
+  /**
+   * The ERROR-level lines captured after the snapshot index — the level pin
+   * (铁律②: 发送失败是 ERROR，不是提醒)。
+   */
   private def newErrors(
     appender: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent],
     before: Int
   ): List[String] =
-    appender.list.asScala.toList.drop(before)
+    appender.list.asScala.toList
+      .drop(before)
       .filter(_.getLevel == ch.qos.logback.classic.Level.ERROR)
       .map(_.getFormattedMessage)
 
-  /** A loopback stub answering EVERY request with the fixed status + body
-    * (drain-first, the JDK handler rule). */
+  /**
+   * A loopback stub answering EVERY request with the fixed status + body
+   * (drain-first, the JDK handler rule).
+   */
   private final class StubHandler(status: Int, responseBody: String) extends HttpHandler:
+
     def handle(exchange: HttpExchange): Unit =
       exchange.getRequestBody.readAllBytes() // drain
       val bytes = responseBody.getBytes(StandardCharsets.UTF_8)
@@ -109,17 +118,21 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
     try f(server, server.getAddress.getPort)
     finally server.stop(0)
 
-  /** A dead loopback port: bind-0, take the number, close. Connecting to it
-    * refuses — the same containment arm (`sidecar_unreachable`) a timeout
-    * takes, offline and instant. */
+  /**
+   * A dead loopback port: bind-0, take the number, close. Connecting to it
+   * refuses — the same containment arm (`sidecar_unreachable`) a timeout
+   * takes, offline and instant.
+   */
   private def deadPort(): Int =
     val s = new ServerSocket(0)
     val p = s.getLocalPort
     s.close()
     p
 
-  /** Mint the send token into the temp root (the real mint — the spec never
-    * fakes the credential face), then point the stored card at the stub. */
+  /**
+   * Mint the send token into the temp root (the real mint — the spec never
+   * fakes the credential face), then point the stored card at the stub.
+   */
   private def armLeg(root: os.Path, port: Int): IO[Unit] =
     for
       _ <- WeixinOutboundAdapter.ensureToken(root)
@@ -146,15 +159,21 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
 
   /** Minimal recording BridgeContext (the WeixinOutboundSpec shape). */
   private def recordingCtx(sessions: List[SessionMeta]) = new BridgeContext:
-    def injectMessage(sessionId: String, content: String, senderId: Option[String],
-        origin: Option[nebflow.bridge.BridgeOrigin] = None): IO[Unit] = IO.unit
+    def injectMessage(
+      sessionId: String,
+      content: String,
+      senderId: Option[String],
+      origin: Option[nebflow.bridge.BridgeOrigin] = None
+    ): IO[Unit] = IO.unit
     def interruptAgent(sessionId: String): IO[Unit] = IO.unit
     def sessionMeta(sessionId: String): IO[Option[SessionMeta]] = IO.none
     def listSessions: IO[List[SessionMeta]] = IO.pure(sessions)
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
 
-  /** The shim's own refusal shape (the incident's wire body): ret≠0 surfaces
-    * verbatim inside the stable `delivery_failed:` vocabulary. */
+  /**
+   * The shim's own refusal shape (the incident's wire body): ret≠0 surfaces
+   * verbatim inside the stable `delivery_failed:` vocabulary.
+   */
   private val ret502Body =
     """{"error":"delivery_failed: sendmessage ret=-2 errmsg=prepare failed","client_id":"stub"}"""
 
@@ -261,8 +280,9 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
       armLeg(root, port).unsafeRunSync()
       withAppender { appender =>
         val before = lines(appender).length
-        val r = WeixinOutboundAdapter.sendMediaLive(root)(
-          "wx_alice", WeixinOutboundAdapter.WeixinMedia.image("/tmp/pop.png")).unsafeRunSync()
+        val r = WeixinOutboundAdapter
+          .sendMediaLive(root)("wx_alice", WeixinOutboundAdapter.WeixinMedia.image("/tmp/pop.png"))
+          .unsafeRunSync()
         val fired = newWarns(appender, before)
         assertEquals(r.ok, false)
         assertEquals(fired.length, 1, s"exactly ONE WARN for the media leg too, got $fired")
@@ -282,24 +302,33 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
       // BOTH loggers: the adapter's canonical line lands on
       // `nebflow.social.weixin-outbound`, the bridge's per-leg context line on
       // `nebflow.social.weixin-ilink-bridge` — one appender hears both.
-      withAppender({ appender =>
-        val before = lines(appender).length
-        (for
-          _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-          _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>这条回复会丢</report>".asJson))
-          _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
-        yield ()).unsafeRunSync()
-        val fired = newWarns(appender, before)
-        val outboundLine = fired.find(_.contains("weixin outbound send failed"))
-          .getOrElse(fail(s"the adapter's failure WARN must fire for a dropped reply, got $fired"))
-        assert(outboundLine.contains("to=wx_alice") && outboundLine.contains("code=502")
-          && outboundLine.contains("digest=这条回复会丢") && outboundLine.contains("attempts=1"),
-          s"the canonical line carries the full field set: $outboundLine")
-        // the bridge keeps its per-leg context line (which leg died) — the
-        // failure is spoken twice, once per layer, never zero times
-        assert(fired.exists(_.contains("weixin-ilink bridge: reply send failed")),
-          s"the bridge's own context WARN still fires: $fired")
-      }, loggerNames = List("nebflow.social.weixin-outbound", "nebflow.social.weixin-ilink-bridge"))
+      withAppender(
+        { appender =>
+          val before = lines(appender).length
+          (for
+            _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
+            _ <- p
+              .onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>这条回复会丢</report>".asJson))
+            _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
+          yield ()).unsafeRunSync()
+          val fired = newWarns(appender, before)
+          val outboundLine = fired
+            .find(_.contains("weixin outbound send failed"))
+            .getOrElse(fail(s"the adapter's failure WARN must fire for a dropped reply, got $fired"))
+          assert(
+            outboundLine.contains("to=wx_alice") && outboundLine.contains("code=502")
+              && outboundLine.contains("digest=这条回复会丢") && outboundLine.contains("attempts=1"),
+            s"the canonical line carries the full field set: $outboundLine"
+          )
+          // the bridge keeps its per-leg context line (which leg died) — the
+          // failure is spoken twice, once per layer, never zero times
+          assert(
+            fired.exists(_.contains("weixin-ilink bridge: reply send failed")),
+            s"the bridge's own context WARN still fires: $fired"
+          )
+        },
+        loggerNames = List("nebflow.social.weixin-outbound", "nebflow.social.weixin-ilink-bridge")
+      )
     }
   }
 
