@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "change": "report-block-visibility",
+  "mappings": [
+    {
+      "requirement": "RV-REQ-001",
+      "scenario": "RV-SCN-001",
+      "implementation": ["src/main/scala/nebflow/social/outbound/OutputBlock.scala", "src/main/resources/web/js/outputTag.js"],
+      "tests": [{"path": "src/test/scala/nebflow/social/outbound/ReportBlockSpec.scala", "name": "only report bodies are extracted, independent of the retired gate"}],
+      "manual": {"reason": "Parser unit tests do not verify root routing, social delivery or badge presentation.", "steps": "Exercise root and non-root live and history views and both social channels.", "expected": "Only root blocks appear publicly; other messages retain their prior presentation and process remains available in the existing badge."}
+    },
+    {
+      "requirement": "RV-REQ-002",
+      "scenario": "RV-SCN-002",
+      "implementation": ["src/main/scala/nebflow/agent/ChildReport.scala", "src/main/scala/nebflow/agent/AgentFinishTurn.scala"],
+      "tests": [{"path": "src/test/scala/nebflow/agent/ChildReportSpec.scala", "name": "final report is left exclusively to the existing final result"}],
+      "manual": {"reason": "Helper tests do not establish actor delivery or durable retry identity.", "steps": "Run end-to-end parent-child cases including retries, boundary queue and final completion.", "expected": "Intermediate progress reaches the parent, and final text is delivered only through the result channel."}
+    }
+  ]
+}
