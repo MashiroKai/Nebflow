@@ -164,6 +164,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
             completedAt = None,
             lastError = None,
             diagnostic = None,
+            suspectedLostTerminal = None,
             activityAt = None,
             activityKind = None,
             activityLabel = None,
@@ -344,6 +345,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
             resultRef = resultRef,
             incomplete = Some(incomplete),
             diagnostic = diagnostic.orElse(row.diagnostic),
+            suspectedLostTerminal = None,
             notificationId =
               if executionStatus == "interrupted" || !notifyParent then None
               else Some(notificationId.getOrElse(s"$taskId#$runId")),
@@ -631,7 +633,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
             row.toolCallId.contains(toolCallId) =>
           val now = System.currentTimeMillis()
           val updated = row.copy(status = "completed", completedAt = Some(now), statusAt = Some(now),
-            committedRevision = Some(nextRevision(row)))
+            suspectedLostTerminal = None, committedRevision = Some(nextRevision(row)))
           writeTasksSync(parent, rows.map(t => if t.taskId == taskId then updated else t))
           Some(updated)
         case _ => None
