@@ -230,6 +230,40 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("interrupted managed row without completion evidence remains unchanged") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("interrupted-no-evidence", agentName = Some("worker"))
+        task = SubAgentTask("subtask-interrupted-no-evidence", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "interrupted")
+        before <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        after <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield assertEquals(after, before)
+    }
+  }
+
+  test("interrupted legacy managed row with completion evidence remains interrupted and is marked for review") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("interrupted-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-interrupted-review", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "interrupted")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "finished",
+          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("interrupted"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
+    }
+  }
+
   test("recovery does not infer completion from a parked subtask transcript") {
     fixture.use { case (resources, _, _, _) =>
       for

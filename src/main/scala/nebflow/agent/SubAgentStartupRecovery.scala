@@ -496,9 +496,20 @@ object SubAgentStartupRecovery:
     val markUnresolved = store.findAllTasks().flatMap(_.filter(isReconciliationRow).traverse_ { row =>
       (rs.executionProtection(row.taskId), rs.agentRegistry.get).tupled.flatMap {
         case (nebflow.shared.ExecutionProtection.Unprotected, registry) if !registry.contains(row.taskId) =>
-          store.markSuspectedLostTerminal(row).flatMap { marked =>
-            if marked then logger.warn(s"[suspected-lost-terminal] ${row.parentSessionId}/${row.taskId}: no authoritative completion evidence; manual review required")
-            else IO.unit
+          val mayMark = if row.executionStatus.contains("interrupted") then
+            row.runId.fold(IO.pure(false)) { run =>
+              sessionStore.loadTerminalEnvelope(row.taskId, run).map(_.exists(event =>
+                event.source == "subtask" && event.eventType == "completed" &&
+                  event.correlationId.contains(row.taskId) &&
+                  event.metadata("parentSessionId").flatMap(_.asString).contains(row.parentSessionId)))
+            }
+          else IO.pure(true)
+          mayMark.flatMap { yes =>
+            if !yes then IO.unit
+            else store.markSuspectedLostTerminal(row).flatMap { marked =>
+              if marked then logger.warn(s"[suspected-lost-terminal] ${row.parentSessionId}/${row.taskId}: manual review required")
+              else IO.unit
+            }
           }
         case _ => IO.unit
       }
