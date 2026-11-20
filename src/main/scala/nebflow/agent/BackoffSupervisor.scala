@@ -839,12 +839,34 @@ object BackoffSupervisor:
                 .map(_.filter(t => t.parentSessionId == subagentId && InFlightChildStatuses.contains(t.status)))
                 .flatMap { inflight =>
                   if inflight.nonEmpty then
-                    IO.pure(
-                      Some(
-                        s"${inflight.size} child task row(s) in flight: " +
-                          inflight.map(t => s"${t.taskId}(${t.status})").take(5).mkString(", ")
-                      )
-                    )
+                    // Bounded escalation: a child row with no live actor and no progress beyond the
+                    // escalation window is flagged (never terminalized); a parked child keeps its
+                    // registry entry and therefore stays a legitimate hold.
+                    val escalationMs = Defaults.DelegateDescendantHoldEscalationMs
+                    val description =
+                      s"${inflight.size} child task row(s) in flight: " +
+                        inflight.map(t => s"${t.taskId}(${t.status})").take(5).mkString(", ")
+                    if escalationMs <= 0L then IO.pure(Some(description))
+                    else
+                      resources.agentRegistry.get.flatMap { registry =>
+                        val now = System.currentTimeMillis()
+                        val (live, orphaned) = inflight.partition(t => registry.contains(t.taskId))
+                        val stalled = orphaned.filter { t =>
+                          val since = t.activityAt.orElse(t.statusAt).getOrElse(t.spawnedAt)
+                          now - since >= escalationMs
+                        }
+                        if live.isEmpty && stalled.nonEmpty && stalled.size == inflight.size then
+                          stalled.traverse_(t => resources.subAgentTaskStore.markSuspectedLostTerminal(t)) *>
+                            logger
+                              .warn(
+                                s"BackoffSupervisor: delegate $subagentId descendant hold escalated — " +
+                                  s"${stalled.size} child row(s) have no live actor after ${escalationMs}ms " +
+                                  s"(${stalled.map(t => s"${t.taskId}(${t.status})").mkString(", ")}); " +
+                                  "flagged for manual review, completion released instead of held silently"
+                              )
+                              .as(None)
+                        else IO.pure(Some(description))
+                      }
                   else if nebflow.core.delegate.SessionStartLease.isHeld(subagentId) then
                     IO.pure(Some("session start lease held (revival/continuation in progress)"))
                   else IO.pure(None)

@@ -240,6 +240,15 @@ object Defaults:
     sys.props.getOrElse("nebflow.delegate.completionHold.enabled", "true").toBoolean
 
   /**
+   * Bounded escalation for the trusted-descendant hold: after this long without progress, a
+   * stalled child row with no live actor is flagged for manual review instead of being held
+   * silently forever. A legitimate parked child keeps a live registry entry, so it is never
+   * flagged and never terminalized. 0/negative disables the leg (old silent behaviour).
+   */
+  def DelegateDescendantHoldEscalationMs: Long =
+    sys.props.getOrElse("nebflow.delegate.descendantHoldEscalationMs", (30 * 60 * 1000L).toString).toLong
+
+  /**
    * 诊断修复批 2026-10-24（delegate-nebflow-52308ee4 投递丢失）：delegate 终态
    * 交付回执的确认宽限——首投/每次重投后 `now - deliveredAt` 超本值仍无父会话
    * ack ⇒ 重投一拍（节拍 = 本值；重投达 3 次停投留痕）。默认 **10 分钟**；

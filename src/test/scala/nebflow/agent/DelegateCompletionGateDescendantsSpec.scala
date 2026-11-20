@@ -8,6 +8,7 @@ import io.circe.syntax.*
 import munit.CatsEffectSuite
 import nebflow.actor.{ActorSystem, Behavior, Behaviors}
 import nebflow.actor.{AgentCommand, AgentEvent}
+import nebflow.actor.{AgentKind, AgentRecord}
 import nebflow.core.FileChangeTracker
 import nebflow.core.compact.HistoryArchiver
 import nebflow.core.task.FileTaskStore
@@ -374,6 +375,151 @@ class DelegateCompletionGateDescendantsSpec extends CatsEffectSuite:
       assertEquals(terminal.size, 1)
       assert(terminal.head.event.payload.contains("helper returned"))
     end for
+  }
+
+  // ── H-e bounded escalation of the trusted-descendant hold ─────────────────
+  //
+  // ②b has no force-terminal cap by design (a real descendant must never be
+  // terminalized by wallclock). The failure mode it leaves open is the ORPHAN
+  // row: in flight, no actor in the registry, no progress — held silently
+  // forever. The escalation leg flags exactly those rows for manual review and
+  // releases the completion; a parked child keeps its registry entry, so it is
+  // neither flagged nor terminalized (the legit-hold contrast below).
+
+  private val EscalationProp = "nebflow.delegate.descendantHoldEscalationMs"
+
+  private def withEscalationMs[A](ms: String)(body: IO[A]): IO[A] =
+    val prev = sys.props.remove(EscalationProp)
+    val set = IO(sys.props(EscalationProp) = ms)
+    val restore = IO {
+      prev.fold(sys.props.remove(EscalationProp))(v => sys.props(EscalationProp) = v)
+      ()
+    }
+    set *> body.guarantee(restore)
+
+  test("H-e1 a stalled child row with no live actor escalates: flagged for review, completion released") {
+    val system = ActorSystem("gate-desc-he1")
+    val tmp = os.temp.dir()
+    val childSid = "delegate-gate-he1"
+    withEscalationMs("60000") {
+      for
+        resources <- mkResources(system, tmp)
+        parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
+        parentSid = parent.id
+        _ = mkDelegateRecord(childSid, parentSid)
+        _ <- resources.subAgentTaskStore.recordTask(
+          mkChildRow(childSid, childSid, "running").copy(parentSessionId = parentSid)
+        )
+        // the CHILD row: in flight on disk, absent from the registry (no actor), and its
+        // status has not moved for 120s — well past the 60s window.
+        _ <- resources.subAgentTaskStore.recordTask(
+          mkChildRow(childSid, "subchild-he1", "running").copy(spawnedAt = System.currentTimeMillis() - 120_000L)
+        )
+        parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+        parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-he1")
+        supervisor <- spawnSupervisor(system, resources, parentRef, childSid, parentSid)
+        _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("spawned a helper; it is still running")))
+        _ <- waitUntil(10.seconds)(mails(parentSid, "delegate-terminal").map(_.nonEmpty))
+        terminal <- mails(parentSid, "delegate-terminal")
+        rows <- resources.subAgentTaskStore.loadTasks(childSid)
+        parentRows <- resources.subAgentTaskStore.loadTasks(parentSid)
+        _ <- system.stopAll
+      yield
+        assertEquals(terminal.size, 1, "escalation releases the completion instead of holding it silently forever")
+        val child = rows.find(_.taskId == "subchild-he1").getOrElse(fail("child row missing"))
+        assertEquals(
+          child.suspectedLostTerminal,
+          Some(true),
+          "the stalled orphan is flagged for manual review (flag ≠ terminalization)"
+        )
+        assertEquals(child.status, "running", "flagging must not terminalize the row")
+        assertEquals(
+          parentRows.find(_.taskId == childSid).map(_.status),
+          Some("completed"),
+          "the delegate's own row settles (the completion was released, not held)"
+        )
+      end for
+    }
+  }
+
+  test("H-e2 a child row cancelled before the gate read neither holds the completion nor gets flagged") {
+    val system = ActorSystem("gate-desc-he2")
+    val tmp = os.temp.dir()
+    val childSid = "delegate-gate-he2"
+    withEscalationMs("60000") {
+      for
+        resources <- mkResources(system, tmp)
+        parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
+        parentSid = parent.id
+        _ = mkDelegateRecord(childSid, parentSid)
+        _ <- resources.subAgentTaskStore.recordTask(
+          mkChildRow(childSid, "subchild-he2", "running").copy(spawnedAt = System.currentTimeMillis() - 120_000L)
+        )
+        // cancellation wins the race: the row leaves the in-flight set before the gate reads it
+        cancelled <- resources.subAgentTaskStore.cancelRunningForParent(childSid, "parent deleted")
+        parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+        parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-he2")
+        supervisor <- spawnSupervisor(system, resources, parentRef, childSid, parentSid)
+        _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("helper cancelled underneath me")))
+        _ <- waitUntil(10.seconds)(mails(parentSid, "delegate-terminal").map(_.nonEmpty))
+        terminal <- mails(parentSid, "delegate-terminal")
+        rows <- resources.subAgentTaskStore.loadTasks(childSid)
+        _ <- system.stopAll
+      yield
+        assertEquals(cancelled, List("subchild-he2"), "the cancel leg cancelled the child row")
+        assertEquals(terminal.size, 1, "a cancelled child is not in flight — the completion must settle")
+        val child = rows.find(_.taskId == "subchild-he2").getOrElse(fail("child row missing"))
+        assertEquals(child.status, "cancelled", "escalation never overwrites the cancellation")
+        assertEquals(child.suspectedLostTerminal, None, "a cancelled row is not a candidate for flagging")
+      end for
+    }
+  }
+
+  test("H-e3 a legitimate parked child (live registry row) stays a hold and is never flagged") {
+    val system = ActorSystem("gate-desc-he3")
+    val tmp = os.temp.dir()
+    val childSid = "delegate-gate-he3"
+    withEscalationMs("60000") {
+      for
+        resources <- mkResources(system, tmp)
+        parent <- resources.sessionStore.createSession("Nebula-root", agentName = Some("Nebula"))
+        parentSid = parent.id
+        _ = mkDelegateRecord(childSid, parentSid)
+        // same stalled-on-paper row as H-e1, but the actor IS parked and registered
+        _ <- resources.subAgentTaskStore.recordTask(
+          mkChildRow(childSid, "subchild-he3", "running").copy(spawnedAt = System.currentTimeMillis() - 120_000L)
+        )
+        parkedEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+        parkedRef <- system.spawn(mkRecordingCmd(parkedEvents), "parked-child-he3")
+        _ <- resources.agentRegistry.update(
+          _.updated(
+            "subchild-he3",
+            AgentRecord(
+              sessionId = "subchild-he3",
+              ref = parkedRef,
+              kind = AgentKind.Delegate,
+              rootSessionId = childSid,
+              parentSessionId = childSid
+            )
+          )
+        )
+        parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
+        parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-he3")
+        supervisor <- spawnSupervisor(system, resources, parentRef, childSid, parentSid)
+        _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("helper is parked on a question")))
+        _ <- IO.sleep(800.millis)
+        heldTerminal <- mails(parentSid, "delegate-terminal")
+        heldProgress <- mails(parentSid, "delegate-progress")
+        rows <- resources.subAgentTaskStore.loadTasks(childSid)
+        _ <- system.stopAll
+      yield
+        assertEquals(heldTerminal, Nil, "a parked child with a live actor is a legitimate hold — no release")
+        assertEquals(heldProgress.size, 1, "the held turn still reports progress")
+        val child = rows.find(_.taskId == "subchild-he3").getOrElse(fail("child row missing"))
+        assertEquals(child.suspectedLostTerminal, None, "escalation must never flag a legitimately parked child")
+        assertEquals(child.status, "running", "the parked child keeps its in-flight row")
+      end for
+    }
   }
 
   // ── G-c session start lease ───────────────────────────────────────────────
