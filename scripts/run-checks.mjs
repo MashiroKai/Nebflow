@@ -137,6 +137,14 @@ export const CHECKS = [
   // 引用 chip → 提交帧 refs 上（另含无 composer 明确提示 / 不误触 / 桌面不回归）。
   { name: 'canvas-tab-reference', profiles: ['frontend'], timeoutMs: 300_000,
     argv: [process.execPath, 'tests/canvas-tab-reference.spec.mjs'] },
+  // 桌面端 canvas 页签右键「在访达/资源管理器/文件管理器中打开」闸
+  // （canvas-reveal-in-finder 批 2026-11-19，作者令 19:39「电脑端的canvas标签页右键，
+  // 多一个选项，在访达/文件浏览器打开」）。为什么必须真右键 + 真请求：文案若被搬回
+  // 前端猜平台、菜单项长到 diff/URL/面板页签上、文件删了还能点、或为了弹菜单把
+  // document 级 contextmenu 吃掉，四种错法都能在「只读一个按钮文案」的断言下全绿
+  // ⇒ 本闸逐平台验文案、验非文件页签零命中、验置灰+原因、验空白处右键不被拦截。
+  { name: 'canvas-reveal-in-finder', profiles: ['frontend'], timeoutMs: 240_000,
+    argv: [process.execPath, 'tests/canvas-reveal-in-finder.spec.mjs'] },
   // 转回合圆钮「主会话 ⇄ Canvas Ask 同源」闸（ask-button-unify 2026-11-18；作者令
   // 「Ask 的中止按钮中间的方框应该和主会话的一致 发送按钮也和主会话一致吧」）：
   // 逐值同源 + 主会话冻结常数 + 源码消重（C 腿）+ 真状态机（busy 臂/点停帧）。

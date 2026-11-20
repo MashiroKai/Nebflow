@@ -95,6 +95,10 @@ class RestApiRoutes(
       PdfRoutes.routes(ctx) <+>
       ConfigRoutes.routes(ctx) <+>
       ProjectsRoutes.routes(ctx) <+> WikiRoutes.routes(ctx) <+> RegistryRoutes.routes(ctx) <+>
+      // canvas-reveal-in-finder 批（2026-11-19，作者令「电脑端的canvas标签页右键，
+      // 多一个选项，在访达/文件浏览器打开」）：GET = 平台能力（前端据它挑文案），
+      // POST = 动作 / dryRun 探测。同族先例 = projects/<name>/open-in-app。
+      RevealPathRoutes.routes(ctx) <+>
       NeblinkRoutes.routes(ctx) <+>
       // 热更新地基（台账 #919 2026-10-27）：asset stamp 指纹单点——前端
       // hotStamp.js 轮询自愈的数据源（与 StaticRoutes.indexResponse 三静态面同源）。

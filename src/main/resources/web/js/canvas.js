@@ -327,6 +327,165 @@ function refForTab(tab) {
   return input ? makeReference(input) : null;
 }
 
+// ── 在访达 / 文件浏览器中显示（canvas-reveal-in-finder 批 2026-11-19）──────────
+// 作者令逐字（19:39）：「电脑端的canvas标签页右键，多一个选项，在访达/文件浏览器
+// 打开。」契约（逐条 = 任务书）：
+//   ① 平台由**引擎**判定（`GET /api/reveal-path` 的 platform/target），前端不猜
+//      `navigator.platform`；文案按引擎给的 target 挑 i18n 键（finder / explorer /
+//      file-manager ≡「在访达中显示 / 在资源管理器中显示 / 在文件管理器中打开」）；
+//   ② 只在**文件类**页签出现：diff 阅读面（type 'filechanges'，虚拟件、无 absPath）、
+//      URL 页签、面板/欢迎等非文件页签一律不出现；
+//   ③ 文件不存在 / 已被删除 ⇒ **置灰 + 可见原因**（副行 + title），点了给同一原因
+//      的提示（不静默失效）；「还在不在」由服务端 dryRun 判据回答（前端拿不到 stat）；
+//   ④ 只在页签元素自己的 contextmenu 里处理（唯一入口 = showCanvasRefMenu 这枚
+//      菜单），零全局 contextmenu 监听、零 document 级拦截 ⇒ 不污染浏览器默认菜单；
+//   ⑤ 手机层零改动：窄屏没有右键，需求明确不做 ⇒ 本项在 mobile-layer 下不挂。
+const REVEAL_ENDPOINT = '/api/reveal-path';
+/** 背后不是「一个真实文件」的页签类型：diff 阅读面（虚拟件）与 URL 页签。 */
+const REVEAL_EXCLUDED_TYPES = new Set(['url', 'filechanges']);
+/** 引擎侧 target → i18n 键（引擎只有这三档；未知档回落 file-manager 文案）。 */
+const REVEAL_LABEL_KEY = {
+  finder: 'canvas.revealInFinder',
+  explorer: 'canvas.revealInExplorer',
+  'file-manager': 'canvas.revealInFileManager',
+};
+/** @type {Promise<{supported: boolean, platform?: string, target?: string}>|null} */
+let _revealCapability = null;   // 平台能力（进程内取一次；失败可重试）
+let _revealSeq = 0;             // 每开一次菜单自增：晚到的应答不得插进下一代菜单
+
+/** 手机层判据（与各手势腿同一口径；本批只用来让手机端**一律不挂**本项）。 */
+function mobileLayerActive() {
+  return document.body.classList.contains('mobile-layer');
+}
+
+/** 引擎侧平台能力（GET，无路径参数、零执行）。 */
+function revealCapability() {
+  if (!_revealCapability) {
+    _revealCapability = fetch(REVEAL_ENDPOINT, { headers: authHeaders() })
+      .then((r) => (r && r.ok ? r.json() : { supported: false }))
+      .then((c) => (c && c.supported ? c : { supported: false }))
+      .catch(() => {
+        _revealCapability = null;   // 引擎暂不可达：下一次开菜单再问，绝不当成「不支持」记住
+        return { supported: false };
+      });
+  }
+  return _revealCapability;
+}
+
+/** 该页签可定位的绝对路径；不是文件类页签 ⇒ null（本项不出现）。 */
+function revealPathForTab(entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const type = typeof entry.type === 'string' ? entry.type : '';
+  if (!type || REVEAL_EXCLUDED_TYPES.has(type)) return null;
+  const p = typeof entry.absPath === 'string' ? entry.absPath.trim() : '';
+  // 只接受绝对路径（POSIX `/…` 或 Windows `C:\…` / `C:/…`）：相对路径在服务端没有
+  // 意义，出现相对路径也说明这个页签背后不是一个真实文件。
+  if (!p || !(p.startsWith('/') || /^[A-Za-z]:[\\/]/.test(p))) return null;
+  return p;
+}
+
+/** 菜单贴边修正（插入前后各跑一次：本项是异步追加的，可能把菜单顶出视口下沿）。 */
+function clampCanvasMenu(menu, x, y) {
+  const rect = menu.getBoundingClientRect();
+  if (rect.right > window.innerWidth) menu.style.left = Math.max(0, x - rect.width) + 'px';
+  if (rect.bottom > window.innerHeight) menu.style.top = Math.max(0, y - rect.height) + 'px';
+}
+
+/** 服务端 code → 屏上文案（未知 code 用通用失败文案，绝不静默）。 */
+function revealRefusalText(v) {
+  const code = (v && v.code) || '';
+  if (code === 'not-found' || code === 'not-a-file' || code === 'missing-path') return t('canvas.revealMissing');
+  if (code === 'path-refused') return t('canvas.revealRefused');
+  return t('canvas.revealFailed');
+}
+
+/** 动作腿：POST { path } ⇒ 引擎执行（argv、无 shell）。失败一律可见。 */
+function revealNow(path) {
+  fetch(REVEAL_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ path }),
+  })
+    .then((r) => (r && r.json ? r.json() : { ok: false, code: 'bad-response' }))
+    .then((v) => { if (!v || !v.ok) window.__showToast?.(revealRefusalText(v), 'error'); })
+    .catch(() => window.__showToast?.(t('canvas.revealFailed'), 'error'));
+}
+
+/** 存在性探测（POST dryRun：服务端同一份判据，零执行零副作用）。 */
+function revealProbe(path) {
+  return fetch(REVEAL_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ path, dryRun: true }),
+  })
+    .then((r) => (r && r.json ? r.json() : { ok: false, code: 'bad-response' }))
+    .catch(() => ({ ok: false, code: 'network' }));
+}
+
+/** 置灰 + 可见原因（副行 + title）—— 与既有 disabled 菜单项同一形态/同一份 CSS。 */
+function markRevealMissing(btn, verdict) {
+  if (!btn || btn.dataset.revealState === 'missing') return;
+  btn.dataset.revealState = 'missing';
+  btn.dataset.revealCode = (verdict && verdict.code) || 'unavailable';
+  btn.classList.add('disabled');
+  btn.setAttribute('aria-disabled', 'true');
+  const reason = t('canvas.revealMissing');
+  btn.title = reason;
+  const sub = document.createElement('span');
+  sub.className = 'ctm-reason';
+  sub.textContent = reason;
+  btn.appendChild(sub);
+}
+
+/**
+ * 把「在访达/文件管理器中显示」插进已打开的页签菜单。
+ * 平台能力未就绪时等一次再插（菜单已经显示，插项是增强，不拖延右键响应）。
+ * @param {HTMLElement} menu @param {Object} entry @param {number} x @param {number} y
+ */
+function appendRevealItem(menu, entry, x, y) {
+  const path = revealPathForTab(entry);
+  if (!path || mobileLayerActive()) return;   // 非文件页签 / 手机层 ⇒ 本项不出现
+  const seq = ++_revealSeq;
+  revealCapability().then((cap) => {
+    if (seq !== _revealSeq || !cap || !cap.supported) return;
+    if (!menu.isConnected) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.dataset.reveal = '1';
+    btn.dataset.revealPath = path;
+    btn.textContent = t(REVEAL_LABEL_KEY[cap.target] || REVEAL_LABEL_KEY['file-manager']);
+    // 存在性探测先发、不等：探测回来再定稿（在 = 可点；不在 = 置灰 + 原因）。
+    const probe = revealProbe(path);
+    probe.then((v) => {
+      if (!btn.isConnected) return;
+      if (v && v.ok) { btn.dataset.revealState = 'ok'; return; }
+      markRevealMissing(btn, v);
+      clampCanvasMenu(menu, x, y);   // 副行让条目变高，重跑一次贴边
+    });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const runNow = () => {
+        if (btn.dataset.revealState === 'missing') {
+          // 置灰项点了不静默：给出与副行同一句原因（与既有 disabled 项同法，菜单留着）
+          window.__showToast?.(t('canvas.revealMissing'), 'info');
+          return;
+        }
+        hideCanvasRefMenu();
+        revealNow(path);
+      };
+      if (btn.dataset.revealState === 'ok' || btn.dataset.revealState === 'missing') { runNow(); return; }
+      // 探测还没回来：等探测（同一份判据）再决定「执行」还是「置灰 + 提示」。
+      Promise.resolve(probe).then((v) => {
+        if (v && v.ok) btn.dataset.revealState = 'ok';
+        else markRevealMissing(btn, v);
+        runNow();
+      });
+    });
+    menu.appendChild(btn);
+    clampCanvasMenu(menu, x, y);
+  });
+}
+
 // ── Canvas tab context menu (「引用当前页/选区」) ──
 // canvas-stack：叠卡右键菜单在同一张玻璃菜单里追加「关闭 / 关闭其他」（v5 菜单语义，
 // 样张 ctx-menu 三项），经 actions 回调接线到叠卡引擎；标签条旧入口不传 actions，
@@ -362,6 +521,10 @@ function showCanvasRefMenu(x, y, entry, actions = null) {
     import('./input.js').then(({ appendRefToActiveView }) => appendRefToActiveView(ref));
   });
   menu.appendChild(refBtn);
+  // 文件页签：追加「在访达/资源管理器/文件管理器中显示」（作者令 2026-11-19）。
+  // 非文件页签（diff 阅读面 / URL / 面板 / 欢迎页）在这里被 revealPathForTab 挡掉，
+  // 手机层被 mobileLayerActive 挡掉 ⇒ 两档的菜单项集合零变化。
+  appendRevealItem(menu, entry, x, y);
   if (actions) {
     const hr = document.createElement('hr');
     menu.appendChild(hr);
@@ -410,9 +573,7 @@ function showCanvasRefMenu(x, y, entry, actions = null) {
   document.body.appendChild(menu);
   _canvasCtxMenu = menu;
   // Adjust if off-screen
-  const rect = menu.getBoundingClientRect();
-  if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
-  if (rect.bottom > window.innerHeight) menu.style.top = (y - rect.height) + 'px';
+  clampCanvasMenu(menu, x, y);
 }
 
 /** 胶囊右键 actions 组装（标题头与胶囊环共用一份菜单语义——作者令 2026-10-22：

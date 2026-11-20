@@ -149,6 +149,18 @@
   }
 }
 
+/* 菜单条目副行 — canvas-reveal-in-finder 批（2026-11-19，作者令「在访达/文件浏览器
+   打开」）：禁用项必须**看得见原因**（任务书「置灰并带原因」）。副行继承条目自身
+   颜色（muted 档由上面 .disabled 定），字号走 meta 档、间距走栅格 token ⇒ 零新色值
+   零新字面量；只有本菜单用，别族菜单不加 span 即零变化。 */
+.canvas-tab-context-menu button .ctm-reason {
+  display: block;
+  margin-top: var(--ds-space-half);
+  font-size: var(--ds-fs-meta);
+  font-weight: 400;
+  opacity: 0.9;
+}
+
 /* 危险菜单项 — 2026-09-16 按钮批：本节原字面量红退役，改 `--btn-danger-*`
    具名 token（同语义唯一：红值集合大小 = 1）；描边走 inset 环（本节条目
    `border-width: 0` ⇒ 不引入几何漂移）。 */

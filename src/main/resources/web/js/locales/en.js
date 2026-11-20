@@ -2235,6 +2235,14 @@ export default {
   'canvas.closeTab': 'Close tab',
   'canvas.stackToggle': 'Stacked cards (wheel / vertical drag to switch · click front card to bring in · swipe away to close)',
   'canvas.noRef': 'This tab cannot be referenced',
+  // canvas-reveal-in-finder (2026-11-19): label follows the ENGINE-reported platform
+  // (finder / explorer / file-manager) plus the greyed-out reason when the file is gone.
+  'canvas.revealInFinder': 'Show in Finder',
+  'canvas.revealInExplorer': 'Show in Explorer',
+  'canvas.revealInFileManager': 'Open in File Manager',
+  'canvas.revealMissing': 'The file no longer exists',
+  'canvas.revealRefused': 'This location cannot be revealed in the file manager',
+  'canvas.revealFailed': 'Could not open the file manager',
   // canvas-tab-reference (2026-11-18): explicit notice when the reference cannot
   // reach a composer (this leg used to fail silently).
   'canvas.refNoComposer': 'The reference did not reach the input box (the chat composer is not ready yet). Open the chat and tap Quote again.',
