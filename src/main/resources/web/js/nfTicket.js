@@ -482,9 +482,16 @@ export function objNameOf(path) {
 /** `/api/nf-obj/<cid>/<name>`（凭据走 cookie/Authorization 头，绝不进 URL）。
  *  模板字面量形态是**有意的**：`check-api-routes.mjs` 只对模板插值做段归一
  *  （整段插值 ⇒ `:` 通配段），拼接式写法会被抽成缺段的路径而与该闸
- *  「前端调用必有后端承接」判据失配。 */
-export function objUrl(path, cid) {
-  return `/api/nf-obj/${encodeURIComponent(cid)}/${encodeURIComponent(objNameOf(path))}`;
+ *  「前端调用必有后端承接」判据失配。
+ *
+ *  `width`（媒体加载慢批 2026-11-19 · 作者裁定 D5-A）：> 0 ⇒ 请求服务端的缩略腿
+ *  `?w=<px>`（同 cid 同宽第二次是浏览器缓存命中）；缺席 / 非正 ⇒ 原图腿（点开取
+ *  原图、老调用点行为逐字不变）。URL 仍是内容身份 —— 缩略图由 (cid, w) 决定，
+ *  服务端给 `"<thumbCid>"` 强 ETag + immutable。 */
+export function objUrl(path, cid, width) {
+  const w = Number(width);
+  const q = Number.isFinite(w) && w > 0 ? `?w=${Math.round(w)}` : '';
+  return `/api/nf-obj/${encodeURIComponent(cid)}/${encodeURIComponent(objNameOf(path))}${q}`;
 }
 
 /**
@@ -493,13 +500,14 @@ export function objUrl(path, cid) {
  * 合帧铸票后：cid 在场且非流式件 ⇒ `/api/nf-obj/<cid>/<name>`；否则逐字回落
  * `urlWithTicket`（= `queuedTicketUrl` 的 URL 形状）。绝不 reject（与
  * `queuedTicketUrl` 同失败契约）。
- * @param {string} path @returns {Promise<string>}
+ * `@param {string} path @param {number} [width] 预览目标宽（见 [[objUrl]]；缺席 = 原图腿）
+ * @returns {Promise<string>}
  */
-export async function contentAddressedUrl(path) {
+export async function contentAddressedUrl(path, width) {
   const map = await mintTicketsQueued([path]);
   const ticket = map.get(path) || '';
   const cid = cidOf(path);
-  if (cid && !isStreamingPath(path)) return objUrl(path, cid);
+  if (cid && !isStreamingPath(path)) return objUrl(path, cid, width);
   return urlWithTicket(path, ticket);
 }
 

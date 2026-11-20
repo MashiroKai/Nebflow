@@ -2166,6 +2166,11 @@ export default {
   'canvas.imgFailTitle': '图片加载失败',
   'canvas.imgFailMissing': '文件不存在（HTTP {status}）',
   'canvas.imgFailDenied': '无权读取，票据被拒（HTTP {status}）',
+  // 401 / 403 **分叉**（作者裁 2026-11-19：「区分」）：401 = 请求根本没带票
+  // （铸票面没给票 / 退避窗内无票），真因是「没有凭据」而不是「凭据被拒」；
+  // 403 = 带了票但票被判据拒绝（`X-Nf-Reason`：invalid-ticket/expired/path-mismatch…）。
+  // 两态共用一句会把「没有票」误报成「票被拒」，故拆键。
+  'canvas.imgFailNoCredential': '未取得读取凭据（HTTP {status}）',
   'canvas.imgFailBusy': '服务繁忙（HTTP {status}）',
   'canvas.imgFailBadPath': '路径不合法（HTTP {status}）',
   'canvas.imgFailUnsupported': '这个类型不供图片取字节（HTTP {status}）',

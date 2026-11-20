@@ -324,8 +324,35 @@ export async function nfCachePut(cacheKey, blob, version, opts) {
   const prev = index.meta[cacheKey];
   const cid = (opts && opts.hash) || (prev && prev.cid) || cacheKey;
   const existing = index.contents[cid];
+  // ── 写前可见（媒体加载慢批 2026-11-19 · 作者裁定真活①）────────────────────
+  // 账本条目必须在**任何 await 之前**落账。修前顺序是「先 `await cacheStore()`
+  // → `await store.put(字节)` → 才写 index.contents/index.meta/memoryBlobs」，而
+  // 唯一调用点是 `void nfCachePut(...)`（[[nfViewerSource]] 不 await）⇒ 紧随其后
+  // 的同键 `nfCachedBlob` 看到的仍是**空账本** ⇒ 判未命中 ⇒ 整件重传（实测：6 图
+  // 消息在首取完成后 20 ms 内重渲，账本仍 miss，6 张全重传 4.72 MB）。
+  // 把同步记账 + 内存面前置，字节落 Cache Storage 与预算淘汰仍走异步：未 await 的
+  // 调用方在 put 返回前就能命中（内存面兜住「字节尚未落盘」的窗口，语义零新增）。
   if (!existing) {
-    // 新内容：写字节（Cache Storage，失败退化内存面）+ 记账（refs = 本键 1 个引用）。
+    // 新内容：记账（refs = 本键 1 个引用）+ 内存面（命中第二读数 / 无 caches 退化面）。
+    index.contents[cid] = { size: blob.size, refs: 1 };
+    index.bytes += blob.size;
+    bucketBytesMap[bucket] = (bucketBytesMap[bucket] || 0) + blob.size;
+    memoryBlobs.set(cid, blob);
+  } else if (!prev || prev.cid !== cid) {
+    // 既有内容被一个**新键**链接：引用加一（同键重放同内容 = 已计过，不重复加）。
+    index.contents[cid].refs += 1;
+  }
+  index.meta[cacheKey] = {
+    size: blob.size, at: now, last: now, ver: String(version || ''),
+    hash: (opts && opts.hash) || '', cid, bucket, srcPath: (opts && opts.srcPath) || '',
+  };
+  const i = index.order.indexOf(cacheKey);
+  if (i >= 0) index.order.splice(i, 1);
+  index.order.push(cacheKey);
+  if (prev && prev.cid && prev.cid !== cid) await unrefContent(prev.cid); // 键换内容：旧引用减一
+  saveIndex();
+  // 字节落盘仍异步（写前可见之后，它不再是本会话命中的前提）；失败退化内存面。
+  if (!existing) {
     const store = await cacheStore();
     if (store) {
       try {
@@ -335,23 +362,7 @@ export async function nfCachePut(cacheKey, blob, version, opts) {
         );
       } catch { /* Cache 写失败 ⇒ 退化到内存面 */ }
     }
-    index.contents[cid] = { size: blob.size, refs: 1 };
-    index.bytes += blob.size;
-    bucketBytesMap[bucket] = (bucketBytesMap[bucket] || 0) + blob.size;
-  } else if (!prev || prev.cid !== cid) {
-    // 既有内容被一个**新键**链接：引用加一（同键重放同内容 = 已计过，不重复加）。
-    index.contents[cid].refs += 1;
   }
-  if (prev && prev.cid && prev.cid !== cid) await unrefContent(prev.cid); // 键换内容：旧引用减一
-  index.meta[cacheKey] = {
-    size: blob.size, at: now, last: now, ver: String(version || ''),
-    hash: (opts && opts.hash) || '', cid, bucket, srcPath: (opts && opts.srcPath) || '',
-  };
-  const i = index.order.indexOf(cacheKey);
-  if (i >= 0) index.order.splice(i, 1);
-  index.order.push(cacheKey);
-  if (!existing) memoryBlobs.set(cid, blob); // 内存面恒有（命中第二读数 + 无 caches 引擎的退化面）
-  saveIndex();
   await evictToBudget(cacheKey, bucket);
 }
 
@@ -552,10 +563,17 @@ function trackViewerUrl(pane, url) {
  *   账本命中新建 / 票据腿取回新建）；`cached` = 本次是否走了账本字节（诊断读数）。
  */
 export async function nfViewerSource(p) {
-  const { absPath, objectUrl, onProgress, pane } = p || {};
+  const { absPath, objectUrl, onProgress, pane, width } = p || {};
   if (objectUrl) return { url: objectUrl, cached: false };
   if (!absPath) return { url: '', cached: false };
-  const cacheKey = 'nf:' + absPath;
+  // 预览腿（媒体加载慢批 2026-11-19 · 作者裁定 D5-A）：调用方给 `width` ⇒ 取
+  // **缩略**（服务端 `/api/nf-obj/<cid>/<name>?w=<px>`；同 (cid,w) 第二次是浏览器
+  // 缓存命中）。预览与原件是**两个不同的账本键**（`nf:<path>@w<w>` vs `nf:<path>`）：
+  // 媒体脸只落预览字节，点开（灯箱/查看器不带 width）仍走原件键 ⇒ 首屏只取预览、
+  // 点开才取原图，互不串味。`width` 缺席 = 逐字既有行为。
+  const wNum = Number(width);
+  const previewW = Number.isFinite(wNum) && wNum > 0 ? Math.round(wNum) : 0;
+  const cacheKey = 'nf:' + absPath + (previewW ? '@w' + previewW : '');
   const hit = await nfCachedBlob(cacheKey);
   if (hit) {
     const typed = ensureBlobType(hit, absPath);
@@ -581,8 +599,10 @@ export async function nfViewerSource(p) {
       // `/api/nf-obj/<cid>/<name>`，与 Card/iframe 腿（injectTickets 同一升级）
       // **逐字同 URL** ⇒ 第二条腿是浏览器 HTTP 缓存命中（零字节、零请求）。
       // cid 缺席（旧 mock / 大件）⇒ 逐字回落既有票据 URL，行为零差异。
-      const ticketedUrl = await nfTicket.contentAddressedUrl(absPath);
-      let url = (await nfTicket.largeFileDirectUrl(absPath)) || ticketedUrl;
+      const ticketedUrl = await nfTicket.contentAddressedUrl(absPath, previewW || undefined);
+      // 预览腿**不**走大件 LAN 直传（那是整件直取的腿）：预览字节小，走近路无所得，
+      // 且直传 URL 不带 `w` ⇒ 会把整件取回（正好是本腿要避免的）。
+      let url = (previewW ? null : await nfTicket.largeFileDirectUrl(absPath)) || ticketedUrl;
       // ── 票链自愈 + 升级路径（Pop 图片 403 批 2026-10-24）────────────────────
       // 修前形态：取数腿 401/403 直抛「HTTP 403」进各 viewer 终态错误面板——无重试
       // 无提示升级路径（<img> onerror 腿的 reMint 自愈对本腿不可达：失败是 fetch

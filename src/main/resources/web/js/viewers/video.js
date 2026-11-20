@@ -42,7 +42,7 @@
 
 import { h } from '../dom.js';
 import { reMint } from '../nfTicket.js';
-import { nfViewerUrl } from '../nfFileCache.js';
+import { nfViewerUrl, nfCacheDrop } from '../nfFileCache.js';
 import { t } from '../i18n.js';
 import { createIconsIn } from '../utils.js';
 import { KEYS, provideContextKey } from '../keyContext.js';
@@ -377,17 +377,25 @@ async function viewVideo(pane, { absPath, fileName, size, objectUrl }) {
   };
   video.addEventListener('loadedmetadata', onMeta);
 
-  // 载入失败 → 恰好一次重铸票据重试，再失败就落终止错误面板
-  // （viewers/image.js T3/T4 纪律：第二次失败是确定性的）。
-  let retried = false;
-  const onError = () => {
-    if (!retried && absPath) {
-      retried = true;
-      reMint(absPath).then((next) => {
-        if (pane.isConnected) video.src = next;
-      });
-      return;
-    }
+  // 元素腿票据自愈（B1 **同构**批 2026-11-19 · 作者令「判据与 <img> 同一套；先建控制组再修」）：
+  //   ① **只对票因动手**：`<video>` 的 error 不带 HTTP 状态，用一次 **Range 单字节探针**
+  //      （`bytes=0-0`）读状态；401/403 ⇒ 票因（含 invalid-ticket / expired / path-mismatch
+  //      全部 reason，不筛 reason）。非票因（404/400/415/编解码/网络）⇒ **逐字交回既有
+  //      终局面**（不白发铸票）。
+  //   ② **硬闸：每次失败至多重铸 3 次**（`rerolls`，替代旧形态的 `retried` 一生一次 ——
+  //      第二次重启/过期后旧形态直接停在对不起来的错误面）。
+  //   ③ **流式腿专有闸**：已经起播 / 已有播放位（`currentTime > 0 || !paused`）时
+  //      **绝不重铸** —— 重铸 = 换 `src` = 打断 Range 续传并把播放位打回 0（作者点名的
+  //      等价陷阱：`<img>` 那轮的「无条件重铸截断候选链」在流式腿的同构体）。
+  // 服务端票仓语义与校验强度**一个字不动**。
+  const started = () => video.currentTime > 0 || !video.paused;
+  const probeAuth = (url) => {
+    if (!url || url.startsWith('blob:')) return Promise.resolve(0);
+    return fetch(url, {
+      method: 'GET', headers: { Range: 'bytes=0-0' }, credentials: 'same-origin', cache: 'no-store',
+    }).then((r) => r.status).catch(() => 0);
+  };
+  const fatal = () => {
     if (!pane.isConnected) return; // 页签在错误落定前已关闭
     controls.destroy();
     if (cover) cover.destroy();
@@ -398,6 +406,35 @@ async function viewVideo(pane, { absPath, fileName, size, objectUrl }) {
       h('div', { text: 'Cannot play video: the file may be corrupted or the browser lacks a codec for it.' }),
       h('div', { text: `Path: ${absPath || fileName || ''}` }),
     ]));
+  };
+  let rerolls = 0;
+  const onError = () => {
+    // 起播后（`currentTime > 0 || !paused`）一律**不动元素**：既不重铸换 src（打断
+    // Range 续传 + 播放位打回 0），也不落 fatal 面板（那会连播放面一起抹掉，比错误
+    // 本身更重）。已起播 ⇒ 文件本来是可播的，此处多为瞬时网络/Range 抖动，交给元素
+    // 自身错误态与用户操作。
+    if (started()) return;
+    if (pane.isConnected && absPath && rerolls < 3) {
+      const failing = video.getAttribute('src') || '';
+      rerolls += 1;
+      const retryWithFreshTicket = () => reMint(absPath).then((next) => {
+        if (pane.isConnected && !started()) video.src = next;
+      }).catch(() => fatal());
+      // 账本 blob 腿（≤64MiB）：坏字节 ⇒ **先逐出该账本键**再换票 URL 重试 ——
+      // 与 `<img>` ①（markdown.js）**同构**。不逐出的话，账本里那份解不开的字节会在
+      // TTL 内被每次渲染命中 ⇒ 每次开都「先失败一次」（作者报障的粘滞形态）。
+      if (failing.startsWith('blob:')) {
+        nfCacheDrop('nf:' + absPath).then(() => retryWithFreshTicket()).catch(() => fatal());
+        return;
+      }
+      probeAuth(failing).then((st) => {
+        if (!pane.isConnected) return;
+        if (st === 401 || st === 403) { retryWithFreshTicket(); return; }
+        fatal();   // 非票因 ⇒ 既有终局面逐字不动
+      }).catch(() => fatal());
+      return;
+    }
+    fatal();
   };
   video.addEventListener('error', onError);
 
