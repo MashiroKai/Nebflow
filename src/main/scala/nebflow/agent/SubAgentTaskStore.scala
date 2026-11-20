@@ -322,7 +322,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
   def recordManagedCompletionDebt(parent: String, task: String, run: String,
     messages: List[nebflow.shared.Message]): IO[Boolean] = withLock {
     readTasksSync(parent).find(_.taskId == task) match
-      case Some(row) if row.source == "subtask" && row.runId.contains(run) && row.status == "running" &&
+      case Some(row) if Set("subtask", "subagent").contains(row.source) && row.runId.contains(run) && row.status == "running" &&
           !row.executionStatus.exists(terminalExecutions.contains) =>
         nebflow.core.mail.CompletionDebtStore.recordManagedSync(
           nebflow.core.mail.CompletionDebtStore.ManagedDebt(parent, task, run, row.source, messages))

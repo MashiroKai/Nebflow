@@ -83,7 +83,7 @@ object CompletionDebtStore:
 
   /** Caller holds task row lock. Never acquire it from this store: row lock → debtLock only. */
   private[nebflow] def recordManagedSync(debt: ManagedDebt): Boolean = debtLock.synchronized {
-    require(debt.parent.nonEmpty && debt.task.nonEmpty && debt.run.nonEmpty && debt.source == "subtask")
+    require(debt.parent.nonEmpty && debt.task.nonEmpty && debt.run.nonEmpty && Set("subtask", "subagent").contains(debt.source))
     val p = managedFile(debt.task, debt.run)
     if os.exists(p) then
       decode[ManagedDebt](os.read(p)).contains(debt)
@@ -93,12 +93,12 @@ object CompletionDebtStore:
       true
   }
 
-  def pendingManaged(parent: String, task: String, run: String): IO[Option[ManagedDebt]] = IO.blocking {
+  def pendingManaged(parent: String, task: String, run: String, source: String): IO[Option[ManagedDebt]] = IO.blocking {
     debtLock.synchronized {
       val p = managedFile(task, run)
       if !os.exists(p) then None
       else decode[ManagedDebt](os.read(p)).toOption.filter(d =>
-        d.parent == parent && d.task == task && d.run == run && d.source == "subtask")
+        d.parent == parent && d.task == task && d.run == run && d.source == source && Set("subtask", "subagent").contains(source))
     }
   }
 

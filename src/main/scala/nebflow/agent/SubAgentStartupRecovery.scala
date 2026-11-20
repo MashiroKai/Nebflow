@@ -475,14 +475,14 @@ object SubAgentStartupRecovery:
       }.handleErrorWith(e => logger.warn(s"[startup-recovery] legacy delivery check failed for ${task.taskId}: ${e.getMessage}"))
     })
     val recoverActiveEnvelopes = store.findAllTasks().flatMap(_.filter(t =>
-      isReconciliationRow(t) && t.source == "subtask" && t.executor.contains("nebflow") && t.runId.nonEmpty &&
+      isReconciliationRow(t) && t.executor.contains("nebflow") && t.runId.nonEmpty &&
         !t.executionStatus.contains("interrupted")
     ).traverse_ { task =>
       val run = task.runId.get
       rs.executionProtection(task.taskId).flatMap {
         case nebflow.shared.ExecutionProtection.Unprotected =>
           sessionStore.loadTerminalEnvelope(task.taskId, run).flatMap {
-            case Some(event) if event.source == "subtask" && event.eventType == "completed" &&
+            case Some(event) if event.source == task.source && event.eventType == "completed" &&
                 event.correlationId.contains(task.taskId) &&
                 event.metadata("parentSessionId").flatMap(_.asString).contains(task.parentSessionId) =>
               sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap { ref =>
@@ -490,12 +490,12 @@ object SubAgentStartupRecovery:
                   notificationId = Some(s"${task.taskId}#$run")).void
               }
             case None =>
-              nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run).flatMap {
+              nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run, task.source).flatMap {
                 case Some(debt) =>
                   val text = debt.messages.reverse.find(_.role == MessageRole.Assistant).map(_.textContent.trim).getOrElse("")
                   val payload = if text.nonEmpty && text != Defaults.MaxTokensStubText then s"\"${task.description}\":\n$text"
                     else s"\"${task.description}\" (no text output)"
-                  val event = AgentCommand.ExternalEvent("subtask", "completed", payload,
+                  val event = AgentCommand.ExternalEvent(task.source, "completed", payload,
                     JsonObject("parentSessionId" -> task.parentSessionId.asJson,
                       "taskRunId" -> run.asJson, "description" -> task.description.asJson,
                       "agentName" -> task.agentName.asJson, "completionMessages" -> debt.messages.asJson,
