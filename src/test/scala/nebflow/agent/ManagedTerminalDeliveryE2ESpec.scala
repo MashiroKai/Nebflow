@@ -13,7 +13,18 @@ import nebflow.core.tools.FileLockManager
 import nebflow.core.{RateLimiter, SessionStore}
 import nebflow.core.mail.{CompletionDebtStore, SessionMailbox}
 import nebflow.llm.ModelCandidate
-import nebflow.shared.{FallbackAttempt, LlmHandle, LlmRequest, LlmResponse, Message, MessageRole, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig}
+import nebflow.shared.{
+  FallbackAttempt,
+  LlmHandle,
+  LlmRequest,
+  LlmResponse,
+  Message,
+  MessageRole,
+  PathUtil,
+  StreamChunk,
+  SubAgentTask,
+  ThinkingConfig
+}
 
 import scala.concurrent.duration.*
 
@@ -60,8 +71,10 @@ class ManagedTerminalDeliveryE2ESpec extends CatsEffectSuite:
   /** One assistant turn of plain text — enough to finish the turn with a real answer. */
   private class TextLlm extends LlmHandle[IO]:
     val calls = Ref.unsafe[IO, Int](0)
+
     def send(req: LlmRequest): IO[LlmResponse] =
       IO.raiseError(new RuntimeException("send not expected"))
+
     def sendStream(
       req: LlmRequest,
       onAttempt: Option[FallbackAttempt => IO[Unit]] = None
@@ -141,7 +154,8 @@ class ManagedTerminalDeliveryE2ESpec extends CatsEffectSuite:
     for
       agent <- system.spawn(
         AgentActor(
-          agentDef = AgentDef(name = "ManagedWorker", description = "e2e managed worker", tools = Nil, systemPrompt = ""),
+          agentDef =
+            AgentDef(name = "ManagedWorker", description = "e2e managed worker", tools = Nil, systemPrompt = ""),
           resources = resources,
           wsSend = (_: Json) => IO.unit,
           depth = 0,
@@ -216,16 +230,27 @@ class ManagedTerminalDeliveryE2ESpec extends CatsEffectSuite:
       _ <- system.stopAll
     yield
       assertEquals(sendAttempts, 1, "the completion signal was attempted exactly once and failed")
-      assertEquals(stranded.flatMap(_.executionStatus), Some("starting"),
-        "a failed send must NOT terminalize the row on the child side")
-      assertEquals(mailboxBefore.filter(_.identity == s"${admitted.taskId}#run-1"), Nil,
-        "nothing was delivered by the failed send")
-      assertEquals(after.flatMap(_.executionStatus), Some("finished"),
-        "boot reconciliation terminalizes from the debt alone")
+      assertEquals(
+        stranded.flatMap(_.executionStatus),
+        Some("starting"),
+        "a failed send must NOT terminalize the row on the child side"
+      )
+      assertEquals(
+        mailboxBefore.filter(_.identity == s"${admitted.taskId}#run-1"),
+        Nil,
+        "nothing was delivered by the failed send"
+      )
+      assertEquals(
+        after.flatMap(_.executionStatus),
+        Some("finished"),
+        "boot reconciliation terminalizes from the debt alone"
+      )
       val notices = mailboxAfter.filter(_.identity == s"${admitted.taskId}#run-1")
       assertEquals(notices.size, 1, "exactly one parent notice, minted from the debt")
-      assert(notices.head.event.payload.contains("E2E-FINAL-TEXT"),
-        s"the recovered notice carries the real final text: ${notices.head.event.payload}")
+      assert(
+        notices.head.event.payload.contains("E2E-FINAL-TEXT"),
+        s"the recovered notice carries the real final text: ${notices.head.event.payload}"
+      )
       assertEquals(notices.head.event.source, "subtask", "the notice keeps the row source")
     program
   }
@@ -259,18 +284,32 @@ class ManagedTerminalDeliveryE2ESpec extends CatsEffectSuite:
       mailboxAfter <- mails(parent.id)
       _ <- system.stopAll
     yield
-      assertEquals(swallowed.count(_.isInstanceOf[AgentEvent.Completed]), 1,
-        "the completion was accepted by a mailbox with no consumer")
-      assertEquals(stranded.flatMap(_.executionStatus), Some("starting"),
-        "an unprocessed completion leaves the run unresolved on the row")
-      assertEquals(mailboxBefore.filter(_.identity == s"${admitted.taskId}#run-1"), Nil,
-        "an unprocessed completion delivers nothing")
-      assertEquals(after.flatMap(_.executionStatus), Some("finished"),
-        "boot reconciliation closes the run from the debt")
+      assertEquals(
+        swallowed.count(_.isInstanceOf[AgentEvent.Completed]),
+        1,
+        "the completion was accepted by a mailbox with no consumer"
+      )
+      assertEquals(
+        stranded.flatMap(_.executionStatus),
+        Some("starting"),
+        "an unprocessed completion leaves the run unresolved on the row"
+      )
+      assertEquals(
+        mailboxBefore.filter(_.identity == s"${admitted.taskId}#run-1"),
+        Nil,
+        "an unprocessed completion delivers nothing"
+      )
+      assertEquals(
+        after.flatMap(_.executionStatus),
+        Some("finished"),
+        "boot reconciliation closes the run from the debt"
+      )
       val notices = mailboxAfter.filter(_.identity == s"${admitted.taskId}#run-1")
       assertEquals(notices.size, 1, "exactly one parent notice after recovery")
-      assert(notices.head.event.payload.contains("E2E-FINAL-TEXT"),
-        s"the recovered notice carries the real final text: ${notices.head.event.payload}")
+      assert(
+        notices.head.event.payload.contains("E2E-FINAL-TEXT"),
+        s"the recovered notice carries the real final text: ${notices.head.event.payload}"
+      )
     program
   }
 
