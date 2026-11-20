@@ -53,6 +53,14 @@ private[agent] final class ChildReportJournal private (root: Path, session: Stri
     }
   }
 
+  def closeNoReport(slot: Long): Unit = ChildReportJournal.synchronized {
+    val state = readProtocol()
+    val entries = state.hcursor.get[io.circe.JsonObject]("entries").fold(throw _, identity)
+    val entry = entries(slot.toString).getOrElse(throw new IllegalArgumentException("unknown slot"))
+    require(entry.hcursor.get[String]("status").toOption.contains("open"), "only open requests can close without report")
+    writeProtocol(state.mapObject(_.add("entries", io.circe.Json.fromJsonObject(entries.add(slot.toString, entry.mapObject(_.add("status", "no-report".asJson)))))))
+  }
+
   def markFlushed(slot: Long): Unit = ChildReportJournal.synchronized {
     val state = readProtocol()
     val entries = state.hcursor.get[io.circe.JsonObject]("entries").fold(throw _, identity)

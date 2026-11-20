@@ -4,6 +4,14 @@ import munit.FunSuite
 import java.nio.file.Files
 
 class ChildReportRecoveryProtocolSpec extends FunSuite:
+  test("no-response request can be durably closed before a new request") {
+    val root = Files.createTempDirectory("child-no-response-")
+    val first = ChildReportJournal.open(root, "child")
+    val slot = first.beginRequest()
+    ChildReportJournal.open(root, "child").closeNoReport(slot)
+    assertNotEquals(ChildReportJournal.open(root, "child").beginRequest(), slot)
+  }
+
   test("interrupted delivery flushes persisted old report before new request") {
     val root = Files.createTempDirectory("child-recovery-")
     val first = ChildReportJournal.open(root, "child")
