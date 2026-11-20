@@ -112,6 +112,16 @@ export function addAskFrameSink(fn) {
   return () => { askFrameSinks.delete(fn); };
 }
 
+// ── fm session bridge fan-out (registered by messages/fmChatBridge.js) ───
+// P12 阶段 1 铺垫件：`friend_event` 帧（好友/群/设备会话域，GLOBAL、无
+// sessionId）镜像派发进对应会话的桥视图（fmChatBridge 按 conversationId 找
+// ChatView）。与 askFrameSink 的**关键差异**：非独占 —— 本通道不 return，
+// friend_event 的既有数据腿（messages.js onFriendEvent：未读 / fmMessageCache /
+// 开窗 DOM）原样照跑；桥视图不接 DOM 渲染（阶段 1 = 行为不变纯增件）。
+// setter 注入规避 ws→messages 循环 import（flowStepInterceptor 同律）。
+let fmFrameSink = null;
+export function setFmFrameSink(fn) { fmFrameSink = fn; }
+
 // ── Hidden-view render gating ─────────────────────────────────────────────
 // Popup ChatViews (flow / bg-agent / team) have visible === false while their
 // popup is closed. Streaming events for hidden views are dispatched with
@@ -1572,6 +1582,16 @@ export function connect() {
         }
         setActiveView(savedView);
         return;
+      }
+
+      // ── fm session bridge: friend_event fan-out to the conv's ChatView ──
+      // P12 阶段 1（纯增件）：帧镜像投给会话桥视图后**继续走既有路由**——
+      // friend_event 是 GLOBAL 帧（无 sessionId），下面 :1584 起的 view 路由对它
+      // 本来就是「view=null + 保 activeView」，数据腿（handlers.friend_event →
+      // messages.js onFriendEvent）不在这里 return 的前提下原样执行。桥通道
+      // 自带 try/catch（bridge 侧异常不得拖垮数据腿），且不碰 activeView。
+      if (msg.type === 'friend_event' && fmFrameSink) {
+        try { fmFrameSink(msg); } catch (e) { console.error('[ws] fm bridge error for', msg.event, ':', e.message); }
       }
 
       // ── Message filtering ────────────────────────────────────────────
