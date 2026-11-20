@@ -308,12 +308,16 @@ test.describe('思考单行揭示 (2026-10-03 stream-ux redesign)', () => {
     expect(mid.rowTucked).toBe(true);
     expect(mid.label).toBe('思考过程'); // done label, pre-#345 design
     expect(mid.collapsible).toBe(true); // label stays clickable — 可重开
-    // stream-ux A3 (§二.1.2): the assistant bubble does NOT render per-delta.
-    // Deltas accumulate off-DOM; the whole text lands in ONE paint at
-    // finishAi(). At this mid point (deltas landed, finishAi not called yet)
-    // the bubble is therefore EMPTY by design — the text is asserted after the
-    // terminal in the next test (terminal tuck → 'ai:思考后的答案。').
-    expect(mid.aiText).toBe('');
+    // stream-latency 批（2026-11-19 **有意契约变更**）：主窗正文改「边流边显」。
+    // 旧契约（stream-ux §二.1.2 / 原文 A3：气泡流式期保持空、整条在 finishAi() 一次
+    // 画出）下这里断言 `mid.aiText === ''`；新契约下 delta 到达后经 rAF 合批立刻落进
+    // 气泡，`__thinkingStreamMid` 尾部的 `raf2()` 已让那一帧跑完 ⇒ 中途就应看得见文本
+    // ——这正是本批要的观感（旧→新映射见 tests/stream-ux.spec.mjs 的 A3/A7 块头注；
+    // 新契约的正向 + 关腿负控双闸 = tests/main-stream-render.spec.mjs）。
+    // 终态文本仍由下一块的 `ai:思考后的答案。` 序列断言。
+    expect(mid.aiText,
+      'the reply text is already visible mid-stream (旧值 \'\'；契约变更：边流边显)')
+      .toBe('思考后的答案。');
 
     await context.close();
   });

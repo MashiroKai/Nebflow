@@ -146,7 +146,13 @@ final class LocalActorContext[Msg](
    *   - **异常只 WARN**：计时器绝不让 actor 因定时投递失败而崩（fail-soft）。
    */
   def scheduleOnce(delay: FiniteDuration, msg: Msg): IO[Unit] =
-    system.scheduleOnce(delay, system.isAlive(self.path).flatMap { alive =>
-      if alive then self ! msg else IO.unit
-    }.handleErrorWith(err => log.warn(s"scheduleOnce delivery failed: ${err.getMessage}").void))
+    system.scheduleOnce(
+      delay,
+      system
+        .isAlive(self.path)
+        .flatMap { alive =>
+          if alive then self ! msg else IO.unit
+        }
+        .handleErrorWith(err => log.warn(s"scheduleOnce delivery failed: ${err.getMessage}").void)
+    )
 end LocalActorContext

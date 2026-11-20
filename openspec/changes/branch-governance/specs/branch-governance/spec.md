@@ -27,3 +27,24 @@ The author SHALL derive every release branch — release/beta, release/stable, a
 
 - **WHEN** stable release automation runs
 - **THEN** it does not commit or push version changes to main.
+
+### Requirement: [BG-REQ-003] Worktree lifecycle: one creation entry and reclamation on landing
+
+A development worktree SHALL be created only through the unified entry `scripts/stand-wt.py new <wtname>`, which SHALL place it at `<project>/.stand/worktrees/<wtname>/`; a dispatch brief or a batch MUST NOT hand-write `git worktree add` with a self-chosen path. As soon as a branch has landed on an integration line — its tip is an ancestor of `feat/base` or `main` — its worktree SHALL be reclaimed as part of that landing action, by `git worktree remove <path>` without `--force`. Reclamation SHALL be skipped and the tree named in the landing report when any precondition fails: the tree's `git status --porcelain` is not empty, a process holds it (`lsof +D <path>` returns results), or it carries `MERGE_HEAD`, `rebase-*` or `CHERRY_PICK_HEAD`. The branch SHALL always be kept; `git branch -d` is a separate retirement decision and is not part of this rule. The landing report SHALL record which worktrees were removed, how much was reclaimed, and which were skipped with the reason.
+
+**Verification**: `scripts/check-worktree-cleanup.mjs` judges every linked worktree from `git worktree list --porcelain` against `main` and `feat/base` and reports each merged-but-hanging tree as path, branch and merge criterion; `scripts/merge-sink.py` performs the reclamation under the three preconditions and keeps the branch.
+
+#### Scenario: [BG-SCN-005] One creation entry
+
+- **WHEN** a worktree is needed for a batch
+- **THEN** it is created by `scripts/stand-wt.py new` and lives under `<project>/.stand/worktrees/<wtname>/`, and a hand-written `git worktree add <arbitrary path>` is not used.
+
+#### Scenario: [BG-SCN-006] Reclamation on landing
+
+- **WHEN** a branch has been merged into the integration line and its worktree is clean, unheld and free of an in-flight operation
+- **THEN** the landing action removes that worktree with `git worktree remove` and keeps the branch, and when a precondition fails it skips the removal, names the tree and the reason in the landing report, and never forces the deletion.
+
+#### Scenario: [BG-SCN-007] Merged branch still holding a worktree
+
+- **WHEN** the worktree-cleanup gate runs in a checkout that has linked worktrees
+- **THEN** every worktree whose HEAD is an ancestor of `main` or `feat/base` is reported as a violation with path, branch and merge criterion and the gate exits 1, while a checkout with no judgeable worktree — a CI or hosted primary checkout, or an unavailable integration ref — passes with an explicit statement that there was nothing to judge and is never reported as either a residual or a clean claim.

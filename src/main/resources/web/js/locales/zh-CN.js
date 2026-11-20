@@ -3470,5 +3470,34 @@ export default {
   'profile.githubUnavailable': '账号服务未返回 GitHub 绑定用户名（该读数来自登录时下发的 GitHub 账号）。',
   'profile.googleUnavailable': 'Google 绑定只在官网账号页维护，本机账号服务与登录凭据都不含该读数。',
   'profile.signedIn': '已登录',
+
+  // external-open 批（2026-11-19，作者令「支持外部文件拉取进 canvas 打开」）：
+  // 外部文件 / URL 对话框的文案 + 服务端各拒因的**用户可读**说法（拒因词表
+  // 与 ExternalOpenRoutes / ExternalOpenPolicy 的 reason 逐键对应）。
+  'externalOpen.title': '打开外部文件',
+  'externalOpen.hint': '粘贴本机任意可读文件的绝对路径，或一个 http(s) 链接；远程内容按内容嗅探类型后落盘再打开。',
+  'externalOpen.placeholder': '/Users/…/报告.pdf 或 https://example.com/pic.png',
+  'externalOpen.open': '打开',
+  'externalOpen.cancel': '取消',
+  'externalOpen.paste': '粘贴',
+  'externalOpen.busy': '正在打开…',
+  'externalOpen.empty': '请先粘贴一个绝对路径或链接。',
+  'externalOpen.clipboardEmpty': '剪贴板里没有文本。',
+  'externalOpen.clipboardBlocked': '浏览器不允许直接读剪贴板；请在输入框里按 ⌘V / Ctrl+V 粘贴。',
+  'externalOpen.failed': '没能打开：{msg}',
+  'externalOpen.err.credentialPath': '这是凭据位置或凭据形态的文件（~/.ssh、~/.aws、secrets 子树、auth.json、*.pem 等）——本入口一律拒绝。',
+  'externalOpen.err.credentialHardlink': '这个文件与凭据文件是同一个 inode（硬链接），本入口拒绝。',
+  'externalOpen.err.credentialRequired': '登录状态已失效，请重新登录后再试。',
+  'externalOpen.err.privateAddress': '这个链接指向本机 / 私网 / 链路本地 / 元数据地址，出于安全考虑拒绝拉取。',
+  'externalOpen.err.scheme': '只允许 http 与 https 链接。',
+  'externalOpen.err.host': '这个链接没有可用的主机名。',
+  'externalOpen.err.malformed': '这不是一个合法的链接。',
+  'externalOpen.err.unresolved': '这个域名解析不出任何地址。',
+  'externalOpen.err.redirects': '跳转次数超过上限（跳去私网的跳转同样会被拒绝）。',
+  'externalOpen.err.tooLarge': '文件超过本入口的大小上限。',
+  'externalOpen.err.timeout': '拉取超时（连接或总时限）。',
+  'externalOpen.err.fetchFailed': '拉取失败（对端返回错误或连接中断）。',
+  'externalOpen.err.notFound': '这个路径下没有可读的普通文件。',
+  'externalOpen.err.notAbsolute': '请给出绝对路径（以 / 开头，或 ~/ 开头）。',
 };
 

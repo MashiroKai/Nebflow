@@ -4534,6 +4534,29 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
   color: var(--color-frame-text-muted);
 }
 
+/* ── external-open 批（2026-11-19）：打开外部文件 / URL 对话框 ──────────────
+   壳与控件**零新形**：`.wsp-overlay`/`.ds-overlay`（遮罩形）+ `.wsp-panel`/
+   `.ds-layer`（玻璃卡壳与入场）+ `.wsp-title` + `.wsp-foot`/`.wsp-cancel`/
+   `.wsp-pick` + `.modal-input`（蚀刻输入）全部复用上一段与 modal.css 既有族；
+   本段只补本面独有的两个量：面板宽度（一行绝对路径要放得下 → 560px，仍受
+   `.wsp-panel` 的 `max-width: calc(100vw - 48px)` 约束，手机端自然收窄）与
+   输入框/提示行的下边距（`.modal-input` 自身零外边距，行距由容器给）。 */
+.xopen-panel {
+  width: 560px;
+}
+.xopen-panel .xopen-input {
+  margin-bottom: var(--ds-space-3);
+}
+.xopen-panel .xopen-hint {
+  margin-bottom: var(--ds-space-3);
+}
+/* [hidden] 守卫（与 .wsp-err[hidden] 同族）：`.wsp-overlay { display:flex }` 按
+   级联来源压过 UA 的 `[hidden]{display:none}` —— 少了这一条，关闭对话只是把
+   hidden 属性挂上、面板照旧在场（本批第一次截图证据就是这样露馅的）。 */
+.xopen-overlay[hidden] {
+  display: none;
+}
+
 /* ── pickeruni: goto direct-entry row + server-side search row ────────────
    Two rows, one each: the jump (locating action) above the filter (narrowing
    action), full list width, no change to the 520px panel layout. All material
@@ -5082,10 +5105,16 @@ body:not(.mobile-layer) #bg-dropdown.bg-view-agents .bg-section-tasks { display:
    right, assistant bottom-left). */
 .bubble.user { transform-origin: 100% 100%; }
 .bubble.ai { transform-origin: 0% 100%; }
-/* An assistant bubble stays invisible until its single whole-message paint —
-   the streaming path creates the row/bubble up front but paints only in
-   finishAi() (appendAiText accumulates off-DOM). */
+/* An assistant bubble stays invisible only until it has CONTENT: the row/bubble
+   is created up front, and it is filled either by the first streamed frame
+   (stream-latency 批 2026-11-19 — 正文「边流边显」, appendAiText 每帧排一次增量
+   渲染) or by finishAi()'s single whole-message paint (关腿负控 / 段短到 rAF 还没跑
+   就收口). The rule therefore covers only the „built, first frame not painted yet“
+   window. */
 .bubble.ai:empty { display: none; }
+/* 入场动画 = 「**整条一次性画出**」的标记（stream-latency 批 2026-11-19 有意契约
+   变更：正文已逐帧长出时 chat.js/finishAi 不再补这一类，见 `_nfStreamed` 判据；
+   关腿负控与单帧收口两条路径照旧入场）。 */
 .bubble.nf-pop { animation: nf-pop-in 0.4s cubic-bezier(0.2, 1.1, 0.35, 1) both; }
 @keyframes nf-pop-in {
   0% { opacity: 0; transform: translateY(16px) scale(0.82); }

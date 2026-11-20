@@ -151,6 +151,25 @@ try {
   for (const r of c1.rows) assert.ok(r.hitSelf, `C2 ${r.n} 中心点必须命中自己（实际命中 ${r.hitTag}）`);
   // C3 互不压
   assert.deepEqual(c1.overlaps, [], `C3 角钮不得互相压: ${c1.overlaps.join(',')}`);
+  // During scrolling the overlay is allowed to overlap content: its button
+  // must own its centre, while the transparent host must not intercept the
+  // uncovered content between the controls.
+  await dark.page.evaluate(() => { const main = document.querySelector('.gitviz-main'); main.scrollTop = main.scrollHeight / 2; });
+  const mid = await corners(dark.page);
+  assert.ok(mid.rows.every(r => r.hitSelf), 'scrolling: each corner owns its centre hit');
+  const clearance = await dark.page.evaluate(() => {
+    const owner = document.querySelector('.gitviz-main');
+    const r = owner.getBoundingClientRect();
+    const controls = [...document.querySelectorAll('.gitviz-corner--bl, .gitviz-corner--br')];
+    const visible = controls.map(c => c.getBoundingClientRect()).filter(c => c.top < r.bottom && c.bottom > r.top);
+    const stored = parseFloat(getComputedStyle(owner).getPropertyValue('--gitviz-bottom-clearance'));
+    const needed = visible.length ? r.bottom - Math.min(...visible.map(c => Math.max(r.top, c.top))) + 12 : 0;
+    const x = r.left + r.width / 2, y = r.top + r.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    return { stored, needed, hitHost: !!hit && hit.classList.contains('gitviz-corners') };
+  });
+  assert.ok(clearance.stored + 1 >= clearance.needed, `measured scroll clearance must cover visible controls: ${JSON.stringify(clearance)}`);
+  assert.equal(clearance.hitHost, false, 'transparent corner host must not intercept content');
 
   const c4 = await lanes(dark.page);
   report.checks.C4 = c4;

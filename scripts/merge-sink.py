@@ -2,7 +2,8 @@
 """merge-sink — 参数化合并 sink 驱动（**模板**；合并节点专用，见 `.nebflow/Spec/20260907_merge-node-design-guide.md`）
 
 把一次「先验后合」的合并事务按设计指南 §1-§6 的判据机械化：**串行锁 → 锁后复读 → 与在飞
-sbt 错峰 → 预门禁 → `merge --no-ff` → 双父核验 → 合并态后门禁 → worktree/分支清理**，
+sbt 错峰 → 预门禁 → `merge --no-ff` → 双父核验 → 合并态后门禁 → 合并就清树（只回收工作树，
+分支一律保留）**，
 全程**零 push / 零 tag / 零 VERSION 改动 / 零重启 / 零信号**（脚本内不含 push/tag/kill/pkill）。
 
 ## 为什么要在飞 sbt 判据（本脚本的由来，2026-09-12 R4）
@@ -17,7 +18,7 @@ sbt 错峰 → 预门禁 → `merge --no-ff` → 双父核验 → 合并态后�
 ## 用法
 
 ```
-# 完整体（合并 + 清理）
+# 完整体（合并 + 清树）
 python3 scripts/merge-sink.py --branch wd-fix-impl \
     --specs "nebflow.core.processor.TaskStuckWatcherSpec nebflow.core.tools.ToolPhaseStuckAxisSpec"
 
@@ -35,7 +36,7 @@ python3 scripts/merge-sink.py --selftest
 | `--branch B` | （必需，`--selftest` 除外） | 待合并的特性分支 |
 | `--into` | `main` | 合并目标分支（只读用，`--into` 的 tip 会前后复核） |
 | `--repo` | `git rev-parse --show-toplevel`（当前目录） | 主仓路径（合并节点沙箱 = 主仓工作区） |
-| `--worktree` | `<repo>/.nebflow/worktrees/<branch>`（存在才清） | 该分支的 worktree，清理用 |
+| `--worktree` | `<repo>/.stand/worktrees/<name>`（存在才清） | 该分支的 worktree，清理用 |
 | `--specs` | 空 = 只跑 `compile`（头部打 `NOTE:`） | 空格分隔的 suite 全名 |
 | `--specs-file` | 无 | 每行一个 suite（批自己的清单放批内文件，别写进脚本） |
 | `--merge-msg` | `merge(<branch>) into <into>` | 合并提交信息 |
@@ -45,7 +46,7 @@ python3 scripts/merge-sink.py --selftest
 | `--merge-attempts` | `5` | 瞬时 `index.lock` 的有界前台重试次数（每次退避 20s） |
 | `--dir` | 脚本所在仓根 | 报告日志目录（缺省 `<repo>/.nebflow/tmp/`，gitignore 面） |
 | `--dry-run` | 关 | 预检 + 预门禁通过后**停手**（不 merge、不清场） |
-| `--no-cleanup` | 关 | 合并后保留 worktree / 分支（默认清理） |
+| `--no-cleanup` | 关 | 合并后保留工作树（默认按「合并就清树」回收；分支任何时候都保留） |
 | `--selftest` | 关 | 只跑在飞判据自测（合成命令行），不碰 git / sbt |
 
 退出码：`0` 成功；`1` 工作区脏（锁后复读）；`2` 预门禁红（未合并）；`3` 合并失败/冲突（已
@@ -56,7 +57,10 @@ python3 scripts/merge-sink.py --selftest
 
 - **零 push / 零 tag / 零 VERSION 改动**：脚本不调 `git push`、不调 `git tag`、不写 `VERSION`
   （前后各打印一次 `VERSION` 读数供对账）；合并目标分支只被 `merge --no-ff` 推进。
-- **`--no-ff` 无条件**、最小写 `-d` 自证全合并（拒 = 未完全合并 ⇒ 留置上报，脚本不 `-D`）。
+- **`--no-ff` 无条件**。合并就清树：落地后只 `git worktree remove`（**不加 `--force`**），
+  三个前置条件（`status` 空 / `lsof +D` 无占用 / 无 `MERGE_HEAD`·`rebase-*`·`CHERRY_PICK_HEAD`）
+  缺一即 `SKIP-RECLAIM:` 点名跳过；**分支一律保留**（`git branch -d` 属分支退役，另行裁定，
+  本脚本不做）。回收结果（删了哪棵树、多少 KiB、跳过了哪棵及原因）写进本脚本的落支报告日志。
 - **宿主安全**：脚本**不含** kill/pkill/信号；只读 `lsof` 记录 8080 监听集合，前后不一致即
   打 `VIOLATION:` 并停手（AGENTS.md「隔离实例标准启动配方」的 post-flight 判据）。
 - **有界等待**：等锁 / 等 sbt / 合并重试都有上限，超时一律「打印原因 + 明确退出码」或
@@ -210,7 +214,7 @@ def main() -> int:
     ap.add_argument("--branch", help="待合并的特性分支")
     ap.add_argument("--into", default="main", help="合并目标分支（缺省 main）")
     ap.add_argument("--repo", help="主仓路径（缺省 = git rev-parse --show-toplevel）")
-    ap.add_argument("--worktree", help="该分支的 worktree 路径（缺省 .nebflow/worktrees/<branch>）")
+    ap.add_argument("--worktree", help="该分支的 worktree 路径（缺省 .stand/worktrees/<name>，name=branch 的 / 换 -）")
     ap.add_argument("--specs", default="", help="空格分隔的门禁 suite 全名（缺省只跑 compile）")
     ap.add_argument("--specs-file", help="每行一个 suite 的文件（与 --specs 合并）")
     ap.add_argument("--merge-msg", help="合并提交信息")
@@ -234,7 +238,9 @@ def main() -> int:
         print("BLOCKED: 无法定位仓根（--repo 指错或不在 git 仓内）")
         return 9
     B, INTO = a.branch, a.into
-    WT = a.worktree or os.path.join(repo, ".nebflow", "worktrees", B)
+    # 统一树路径（作者令 2026-11-19 20:33「统一路径」）：工作树一律 <repo>/.stand/worktrees/<name>，
+    # name = 分支名把 `/` 换成 `-`（与 scripts/stand-wt.py 的建树口径一致；旧缺省 .nebflow/worktrees 已废止）。
+    WT = a.worktree or os.path.join(repo, ".stand", "worktrees", B.replace("/", "-"))
     LOCKP = a.lock or os.path.join(repo, ".nebflow", "tmp", "merge-gate.lock")
     LOGDIR = a.dir or os.path.join(repo, ".nebflow", "tmp")
     os.makedirs(LOGDIR, exist_ok=True)
@@ -363,17 +369,39 @@ def main() -> int:
         if run(sbt_cmd, repo, label="post-gate") != 0:
             log("ALERT: 合并态后门禁红（**合并已落地**；不做破坏性回滚，交合并节点/分发器处置）")
             return 5
-        # ── ⑧ 清场（worktree remove + branch -d 自证）──
+        # ── ⑧ 清场（合并就清树：只回收工作树，分支一律保留 —— 作者裁定 2026-11-19 20:31）──
+        # 回收动作 = git worktree remove，**不加 --force**；三个前置条件缺一即跳过并点名（不硬删）。
         if a.no_cleanup:
-            log("NOTE: --no-cleanup ⇒ 保留 worktree / 分支")
+            log("NOTE: --no-cleanup ⇒ 保留工作树（不回收）；分支照旧保留")
+        elif not os.path.isdir(WT):
+            log(f"NOTE: {WT} 不存在 ⇒ 跳过回收（无树可清）")
         else:
-            if os.path.isdir(WT) and not gout(["git", "status", "--porcelain"], WT):
-                run(["git", "worktree", "remove", WT], repo, label="wt-remove")
-            elif os.path.isdir(WT):
-                log(f"NOTE: {WT} 工作区脏 ⇒ 不做 worktree remove（留置上报）")
+            blocked = []
+            dirty = gout(["git", "status", "--porcelain"], WT)
+            if dirty:
+                blocked.append(f"工作树脏 [{dirty[:200]}]")
+            try:
+                busy = gout(["lsof", "+D", WT], repo)
+            except OSError as exc:  # lsof 不在 ⇒ 无法证明「无占用」⇒ 不删
+                busy = ""
+                blocked.append(f"无法核验进程占用（lsof 不可用：{exc}）")
+            if busy:
+                blocked.append(f"有进程占用 [{busy.splitlines()[0][:160]}…]")
+            gitdir = gout(["git", "rev-parse", "--absolute-git-dir"], WT)
+            inflight = [n for n in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "rebase-merge", "rebase-apply")
+                        if gitdir and os.path.exists(os.path.join(gitdir, n))]
+            if inflight:
+                blocked.append(f"未完成的操作 [{', '.join(inflight)}]")
+            if blocked:
+                log(f"SKIP-RECLAIM: {WT} 未回收 —— " + "；".join(blocked))
             else:
-                log(f"NOTE: {WT} 不存在 ⇒ 跳过 worktree remove")
-            run(["git", "branch", "-d", B], repo, label="branch-del")
+                size_kb = gout(["du", "-sk", WT], repo).split()[0] if os.path.isdir(WT) else "?"
+                run(["git", "worktree", "remove", WT], repo, label="wt-remove")
+                if os.path.isdir(WT):
+                    log(f"ALERT: RECLAIM 后 {WT} 仍存在 —— 交合并节点/分发器处置")
+                else:
+                    log(f"RECLAIM: 已删 {WT}（约 {size_kb} KiB）；分支 {B} 保留")
+        log(f"BRANCH KEPT: {B}（清树只清树；git branch -d 属分支退役，另行裁定）")
         # ── ⑨ 对账 ──
         log(f"git log --oneline {INTO}..{B} = [{gout(['git', 'log', '--oneline', f'{INTO}..{B}'], repo)}]")
         log(f"git branch --list {B} = [{gout(['bash', '-c', f"git branch --list '{B}' | tr '\\n' ' '"], repo)}]")

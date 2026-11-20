@@ -91,7 +91,7 @@ object GitVizGraphTool extends Tool:
                 val lanes = clamp(intOf(input, "lanes").getOrElse(8), 1, 24)
                 val heatDays = clamp(intOf(input, "heatDays").getOrElse(84), 7, 400)
                 // 唯一取数口：既有只读数据面（与面板端点同一个 build）。
-                nebflow.gateway.GitGraph.build(
+                nebflow.core.project.GitGraph.build(
                   project = binding.fileName,
                   workspace = binding.file,
                   limit = limit,

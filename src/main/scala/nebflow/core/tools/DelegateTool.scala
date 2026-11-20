@@ -92,7 +92,7 @@ object DelegateTool extends Tool:
 - The ack is not the result.
 - Landing discipline (KG audit ①, author ruling 2026-11-03): when the task produces knowledge documents (designs, audits, research, conclusions), state in the brief that they land in the project's REGISTRATION dir vault `<dataRoot>/projects/<project>/.stand/docs/` — next to `project.json`, NOT in the project workspace repo's `docs/` (Obsidian format: frontmatter + ≥1 wikilink); `reports/` is for pure process files (batch run reports) only. Validation command for the closing report: `python3 <dataRoot>/plugins/visual-report/skills/wiki-docs/scripts/check_wiki_docs.py --project <project>`.
 - **Limits:** No hard concurrency limit — in-flight delegates run concurrently.
-- **Safety**: Never directly signal or kill sbt/java engine processes; read-only `ps` is fine. Only with explicit user authorization, higher-priority runtime/tool permission, verified instance/port/data root and trusted script, a guarded restart may use `~/.stand/bin/stand-restart.sh --canary` with compile, isolated canary, idle/observation and final idle checks intact. Check in-flight work; idle checks are not a guarantee. Never use `--hot`, `--force`, `--no-compile` or bypass safeguards. Otherwise stop and ask the user to run it manually; existing session instructions remain binding until replaced."""
+- **Safety**: Protect running instances: identify them by PID, port and data root; do not kill them; restart them only with explicit user authorization and the safeguards below. Never use broad process kills such as `pkill -f java`, `killall java` or `pkill sbt`. For an isolated instance you created, record its exact PID, use `kill -TERM <pid>`, verify the PID is gone and the port has no listener, then if necessary use `kill -KILL <pid>` and verify again; retain the verification output as evidence. Read-only `ps` is fine. Only with explicit user authorization, higher-priority runtime/tool permission, verified instance/port/data root and trusted script, a guarded restart may use `~/.stand/bin/stand-restart.sh --canary` with compile, isolated canary, idle/observation and final idle checks intact. Check in-flight work; idle checks are not a guarantee. Never use `--hot`, `--force`, `--no-compile` or bypass safeguards. Otherwise stop and ask the user to run it manually; existing session instructions remain binding until replaced."""
 
   def inputSchema = JsonObject.fromIterable(
     List(
@@ -169,7 +169,8 @@ object DelegateTool extends Tool:
   /**
    * delegate brief 装配单点（sleep-poll 禁令批 C 段抽纯函数——spec 判红锚）。
    * 布局：工作座行（+ 绑定行）→ reset 警示行（D12-b）→ 终态语义行
-   * （[[BriefReportLine]]）→ 等待纪律铁律（[[Defaults.NoSleepPollRule]]）→
+   * （[[BriefReportLine]]）→ 交付落点纪律行（[[Defaults.DeliveryLandingLine]]，
+   * worktree/tmp 落点批 2026-11-19）→ 等待纪律铁律（[[Defaults.NoSleepPollRule]]）→
    * 插件能力查询行（[[Defaults.PluginDiscoveryLine]]，stand-plugins 批）→
    * output 块纪律行（[[Defaults.OutputBlockRule]]，作者令 2026-10-31）→
    * 空行 → 任务全文（→ 插件注入块）。
@@ -206,6 +207,8 @@ object DelegateTool extends Tool:
 ${ResetHazardLine}
 
 ${reportLine}
+
+${Defaults.DeliveryLandingLine}
 
 ${Defaults.NoSleepPollRule}
 

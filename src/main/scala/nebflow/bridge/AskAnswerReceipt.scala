@@ -98,15 +98,18 @@ object AskAnswerReceipt:
   def sendLine(requestId: String, line: String, peekFirst: Boolean = false): IO[Boolean] =
     (if peekFirst then peek(requestId) else take(requestId)).flatMap {
       case None =>
-        logger.warn(s"ask-answer receipt: no channel registered for requestId=$requestId — receipt line not sent")
+        logger
+          .warn(s"ask-answer receipt: no channel registered for requestId=$requestId — receipt line not sent")
           .as(false)
       case Some(e) =>
         e.send(line)
           .as(true)
           .handleErrorWith(err =>
-            logger.warn(
-              s"ask-answer receipt: channel=${e.channel} route=${e.routeKey} send failed: ${err.getMessage}"
-            ).as(false)
+            logger
+              .warn(
+                s"ask-answer receipt: channel=${e.channel} route=${e.routeKey} send failed: ${err.getMessage}"
+              )
+              .as(false)
           )
     }
 

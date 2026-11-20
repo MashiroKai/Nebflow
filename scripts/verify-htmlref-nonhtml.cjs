@@ -9,7 +9,7 @@
 //   URL tab   → no .canvas-ref-select (crossorigin call removed)
 //
 // The three viewer render functions are imported directly; /api/nf-file is
-// route-mocked (a tiny PNG for image, a real 6-page PDF for pdf). usage: 
+// route-mocked (a tiny PNG for image, a real 6-page PDF for pdf). usage:
 //   node scripts/verify-htmlref-nonhtml.cjs [port]  (default 8197)
 const { chromium } = require('playwright');
 const fs = require('fs');

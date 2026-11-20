@@ -55,6 +55,12 @@ import { armMathHydrate } from './mathRender.js';
 // human-face batch (2026-10-30): ```human 卡内 [[词条]] 短形引用 → hover 气泡
 // （termTip.js 共享件，API 兜底腿）。同一 body 级 MutationObserver 先例。
 import { armTermCiteAutoHydrate } from './termCite.js';
+// 图/视频票链自愈批（作者 2026-11-19「图片加载不出来」裁定 B1）：已渲染元素
+// 携带的失效票（网关重启清空票仓 / 票过期）在 error 时重铸恰一次 —— 文档级
+// capture 监听，一张网盖住既有 HTML 注入面（历史行 / markdown 文档 / 卡片
+// srcdoc / canvas HTML 交付物）。重铸复用 nfTicket.reMint（单源，零新协议）。
+import { installTicketSelfHeal } from './nfTicketSelfHeal.js';
+installTicketSelfHeal();
 import { registerActionableProvider, notifyActionableChanged } from './actionable.js';
 import { getProjectsSnapshot, getProjectsListGen, preheatProjects, onProjectsArrival } from './mentionComplete.js';
 // 待办引用面（待办结构化批 2026-11-05）：`#` 待办引用补全 provider + 渲染侧待办

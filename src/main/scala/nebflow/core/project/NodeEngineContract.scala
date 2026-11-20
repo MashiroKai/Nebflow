@@ -533,6 +533,10 @@ private[project] object NodeEngineContract:
    * `nebflow.shared.OutputBlockGate.enabled()`（每次节点 spawn 求值，翻闸后新
    * 节点即翻面）；离线 spec 注入常值与机器配置解耦（渠道面 outputBlockGate
    * 构造缝同款形态）。
+   *
+   * 交付落点纪律行（worktree/tmp 落点批 2026-11-19，作者 2026-11-16 令）：查询行
+   * 之后、output 纪律行之前同缝注入（[[Defaults.DeliveryLandingLine]]），使**节点
+   * brief 文本**与 delegate brief 逐字同源——`endsWith` 身份断言零波及。
    */
   def protocolFootnoteFor(
     role: Option[String],
@@ -544,7 +548,8 @@ private[project] object NodeEngineContract:
         ProtocolFootnote + "\n" + VerifierVerdictFootnote
       else ProtocolFootnote
     val outputRuleBlock = if includeOutputRule then "\n\n" + Defaults.OutputBlockRule else ""
-    Defaults.NoSleepPollRule + "\n\n" + Defaults.PluginDiscoveryLine + outputRuleBlock + "\n\n" + base
+    Defaults.NoSleepPollRule + "\n\n" + Defaults.PluginDiscoveryLine + "\n\n" + Defaults.DeliveryLandingLine +
+      outputRuleBlock + "\n\n" + base
 
   // ── 链级抽象 P2：链上下文透传（过程文档溯源 §9.2）──
 

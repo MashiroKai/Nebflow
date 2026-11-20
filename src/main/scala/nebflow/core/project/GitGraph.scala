@@ -20,7 +20,7 @@
  *   ③ 逐个 ref tip 兜底补取：多支共用 `-n` 时窗口按提交时间切，tip 更旧的支会被整段
  *      切掉 ⇒ 图上画不出那条支（实测过的真实缺陷，禁止删掉这段兜底）。
  */
-package nebflow.gateway
+package nebflow.core.project
 
 import io.circe.Json
 import io.circe.syntax.*

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import pathlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -58,6 +59,76 @@ class DeliveryTest(unittest.TestCase):
         self.assertEqual(self.check().returncode, 0)
         self.base = 'not-a-ref'
         self.assertEqual(self.check().returncode, 2)
+
+
+class ArtifactDirShape(unittest.TestCase):
+    """The tmp-directory shape criterion of check-delivery.py (relaxed 2026-11-19).
+
+    A batch may legitimately own only ONE face: a pure-audit batch ships nothing
+    (evidence/ alone), a shipping batch may carry delivery/ alone. The criterion is
+    therefore "at least one of delivery/ and evidence/ exists as a real directory".
+    The negative control below (neither present) must still be red, and an entry
+    that exists as a symlink or as a plain file must still be refused — the
+    relaxation is scoped to presence, not to safety.
+    """
+
+    EMPTY_MANIFEST = '# Artifact manifest\n\n| Relative path | Bytes | mtime | Status |\n| --- | ---: | --- | --- |\n'
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = pathlib.Path(self.tmp.name)
+        subprocess.check_output(['git', 'init', '-q'], cwd=self.repo)
+        subprocess.check_output(['git', 'config', 'user.email', 'fixture@example.invalid'], cwd=self.repo)
+        subprocess.check_output(['git', 'config', 'user.name', 'Fixture'], cwd=self.repo)
+        (self.repo / 'README').write_text('base')
+        subprocess.check_output(['git', 'add', '.'], cwd=self.repo)
+        subprocess.check_output(['git', 'commit', '-qm', 'fixture'], cwd=self.repo)
+        self.artifacts = self.repo / '.stand' / 'tmp' / 'demo'
+        self.artifacts.mkdir(parents=True)
+
+    def check(self):
+        return subprocess.run(['python3', str(CHECK), '--manifest-only', '--tmp', str(self.artifacts)],
+                              cwd=self.repo, capture_output=True, text=True)
+
+    def test_neither_face_is_red(self):
+        (self.artifacts / 'MANIFEST.md').write_text(self.EMPTY_MANIFEST)
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('missing or unsafe artifact directory', result.stderr)
+
+    def test_either_face_alone_is_green(self):
+        for name in ('evidence', 'delivery'):
+            with self.subTest(face=name):
+                for stale in ('evidence', 'delivery'):
+                    shutil.rmtree(self.artifacts / stale, ignore_errors=True)
+                (self.artifacts / name).mkdir()
+                (self.artifacts / 'MANIFEST.md').write_text(self.EMPTY_MANIFEST)
+                result = self.check()
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_both_faces_are_green(self):
+        for name in ('evidence', 'delivery'):
+            (self.artifacts / name).mkdir()
+        (self.artifacts / 'MANIFEST.md').write_text(self.EMPTY_MANIFEST)
+        self.assertEqual(self.check().returncode, 0)
+
+    def test_symlinked_face_is_still_red(self):
+        real = self.repo / 'elsewhere'
+        real.mkdir()
+        (self.artifacts / 'evidence').symlink_to(real)
+        (self.artifacts / 'MANIFEST.md').write_text(self.EMPTY_MANIFEST)
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('missing or unsafe artifact directory', result.stderr)
+
+    def test_face_that_is_a_plain_file_is_still_red(self):
+        (self.artifacts / 'delivery').write_text('not a directory')
+        (self.artifacts / 'evidence').mkdir()
+        (self.artifacts / 'MANIFEST.md').write_text(self.EMPTY_MANIFEST)
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn('missing or unsafe artifact directory', result.stderr)
 
 
 if __name__ == '__main__':

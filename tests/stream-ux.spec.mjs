@@ -17,10 +17,13 @@
 //
 // A1 工具运行期 badge 行含 Spinner + 工具名 / 完成瞬间打勾 / 切换淡出过渡（UI-C 纯文本化后：无变换类滚动）
 // A2 思考期单行流式揭示 → 完成打勾
-// A3 助手回复整条出现 + 回复 DOM 内零逐字流式渲染（帧级读数）
+// A3 正文**边流边显**：流式期气泡逐帧长出（帧级读数）— **2026-11-19 有意契约变更**，
+//    原文为「助手回复整条出现 + 回复 DOM 内零逐字流式渲染」；重锚理由与旧→新映射
+//    见下方 A3/A7 块头注（作者令 + 诊断档 stream-latency-four-leg-diagnosis__20261119_145015）
 // A4 用户输入气泡入场动画
 // A5 终态：工作行交还给既有 `.turn-header` 展开面（与现状一致）
-// A7 长回复不再逐帧 markdown 重排（mutation 读数）
+// A7 流式仍按帧合批：同一任务内 12 个 delta ⇒ **恰 1 次渲染**（「防 O(n²) 逐帧全量
+//    markdown 重排」的原意图以新判据保留）+ 帧预算读数；原文为「流式期气泡子树零 mutation」
 //
 // The static server is spawned and killed by this spec; the host :8080 is never
 // touched (asserted by port, and by construction: the root is the tree this
@@ -460,65 +463,154 @@ test.describe('A2 — 思考 = 单行流式揭示 → 打勾', () => {
   });
 });
 
-test.describe('A3/A7 — 助手回复整条出现，气泡内零逐字渲染', () => {
-  test('the reply bubble stays EMPTY for every streaming frame, then paints once', async ({ browser }) => {
+/* ═══════════ A3/A7 — 正文「边流边显」（**有意契约变更**）═══════════════
+ *
+ * 【为什么这条判据翻了 —— 2026-11-19 作者令 + 四腿诊断】
+ * 原文（2026-10-02 stream-ux 批）钉的是：助手正文**流式期气泡保持空、段末整段一次
+ * 画出**（A3：mid.textLen===0 / 非空帧数===0），且流式期气泡子树**零 DOM mutation**
+ * （A7）。它当时对治的是「逐字**全量** markdown 重解析」的 O(n²) 自旋，代价是主窗
+ * 正文不逐块渲染。
+ *
+ * 2026-11-19 LLM 流式慢四腿诊断（作者侧文档
+ * `~/.stand/projects/stand/.stand/docs/stream-latency-four-leg-diagnosis__20261119_145015.md`）
+ * 判定：慢的主因在供应商首字 TTFT（~3–5s，Stand 侧不可直降），但**最容易被读成
+ * 「流得慢」的是这条可见性缺口** —— 主窗助手正文不逐块渲染（`scheduleStreamRender`
+ * 无 'ai' 键、唯一渲染点在 `finishAi`），长纯文本回复「等到结尾才出现」。作者令本批
+ * 把正文改成**边流边显**（复用既有 `renderStreamMarkdown` + `scheduleStreamRender`
+ * 的 rAF 合批，不新增第二套渲染路径）。
+ *
+ * ⇒ 本块是**有意契约变更**：不是修既有 red、不是放宽阈值，而是把判据搬到新契约上。
+ *    断言条数不减（A3 8 条 → 11 条，A7 2 条 → 8 条），A7 的**原始意图**（防 O(n²)
+ *    逐帧全量 markdown 重排）以新判据保留：**每帧至多 1 次渲染（rAF 合批）** +
+ *    帧预算读数。
+ *
+ * 旧 → 新（同一断言槽位；新契约的正向 + 关腿负控双闸 = tests/main-stream-render.spec.mjs）：
+ *  ┌ A3-1 `mid.found === true`                → 原样保留（行在场）
+ *  ├ A3-2 `mid.textLen === 0`                 → `> 0`      反向：正文逐帧推进
+ *  ├ A3-3 `mid.childElems === 0`              → `> 0`      反向：同上（已渲染子元素）
+ *  ├ A3-4 `frames.length > 3`                 → 原样保留（采样器真采到帧）
+ *  ├ A3-5 `非空帧数 === 0`                    → `=== frames.length` 反向：**每一**采样帧都有正文
+ *  ├ A3-6 `after.textLen > 10`                → 原样保留（终态整条在场）
+ *  ├ A3-7 `after.htmlLen > 0`                 → 原样保留（终态已画）
+ *  └ A3-8 `终态 animNames.length > 0`         → `=== 0`    反向：入场 pop 是「整条一次画出」
+ *                                                               的标记，正文已逐帧长出时不再补
+ *  ┌ A7-1 `mutation count === 0`              → `burst 同任务 12 delta ⇒ 渲染恰 1 次` +
+ *  │                                            `mutation count > 0`（等价意图换新判据：
+ *  │                                            合批仍在，只是从「零渲染」变「每帧至多 1 次」）
+ *  ├ A7-2 `pageErrors === []`                 → 原样保留
+ *  └ A7-3..8 新增读数：per-frame 渲染耗时 + 逐帧一 delta 时渲染数 ≤ 帧数 + `_nfStreamed`
+ */
+
+test.describe('A3/A7 — 正文「边流边显」（2026-11-19 有意契约变更；原文：整条出现 / 气泡内零逐字）', () => {
+  test('the reply bubble grows PROGRESSIVELY across the streaming frames, then settles in one whole-message paint', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
     await page.evaluate(() => window.__startAiSampler());
     await page.evaluate(() => window.__aiStream());
 
-    // Frame-level reading #1: the bubble was alive across all the delta frames
-    // (a row exists) but NEVER received per-token content.
+    // Frame-level reading #1 (契约变更：反向): the bubble is alive across all the
+    // delta frames AND carries rendered markdown — from the first streamed frame.
     const mid = await aiFrameStats(page);
     expect(mid.found, 'the assistant row exists while its text streams').toBe(true);
-    expect(mid.textLen, 'zero per-token text in the reply bubble (frame-level)').toBe(0);
-    expect(mid.childElems, 'and zero per-token child elements').toBe(0);
+    expect(mid.textLen, 'streamed frames already carry text (边流边显；旧值 0)').toBeGreaterThan(0);
+    expect(mid.childElems, 'and rendered child elements (旧值 0)').toBeGreaterThan(0);
 
     const frames = await page.evaluate(() => window.__stopAiSampler());
     expect(frames.length, 'the sampler actually sampled frames').toBeGreaterThan(3);
-    const nonEmpty = frames.filter(f => f.htmlLen > 0);
-    expect(nonEmpty.length, 'NO frame of the streaming window held rendered markdown').toBe(0);
+    // 只统计「气泡已在场」的帧（气泡未建时 htmlLen 为 -1）。契约变更后的形状：
+    // **至多一帧**（首个绘制帧之前那一拍）可以是空的，其后每一帧都带正文；
+    // 旧契约（流式期每一帧都空、唯一渲染在段末）下 nonEmpty 恒为 0。
+    const withBubble = frames.filter(f => f.childElems >= 0);
+    const nonEmpty = withBubble.filter(f => f.htmlLen > 0);
+    const emptyWithBubble = withBubble.filter(f => f.htmlLen === 0);
+    expect(withBubble.length, 'the reply bubble was on screen across the stream').toBeGreaterThan(3);
+    expect(emptyWithBubble.length,
+      'at most the pre-first-paint frame is empty (旧契约：流式期每一帧都空，nonEmpty === 0)')
+      .toBeLessThanOrEqual(1);
+    expect(nonEmpty.length, 'the streamed frames carry rendered markdown (旧值 0；不再段末整段弹出)')
+      .toBeGreaterThanOrEqual(3);
+    // 「逐帧推进」不许是空话：文本只增不减，且取样到 >1 个不同长度档。
+    const monotone = frames.every((f, i) => i === 0 || f.textLen >= frames[i - 1].textLen);
+    expect(monotone, 'and the text only ever grew across the stream (逐帧推进)').toBe(true);
+    expect(new Set(nonEmpty.map(f => f.textLen)).size,
+      'with more than one size across the painted frames (真的在推进，不是只有最后一帧才有正文)')
+      .toBeGreaterThan(1);
 
-    // Frame-level reading #2: the single paint happens at the end.
+    // Frame-level reading #2: the single TERMINAL paint still happens (one
+    // whole-message render at the segment end) — without the whole-message
+    // entrance pop, which is the marker of the retired 「整条一次画出」.
     await page.evaluate(() => window.__aiStreamFinish());
     expect(pageErrors).toEqual([]);
     const after = await aiFrameStats(page);
-    expect(after.textLen, 'the whole reply appears at once').toBeGreaterThan(10);
-    expect(after.htmlLen, 'and the bubble was painted (single render)').toBeGreaterThan(0);
+    expect(after.textLen, 'the whole reply is present at the terminal').toBeGreaterThan(10);
+    expect(after.htmlLen, 'and the bubble was painted (single terminal render)').toBeGreaterThan(0);
     expect(after.animNames.length,
-      'and it enters with an entrance animation (whole-message, not per-token)').toBeGreaterThan(0);
+      'and NO whole-message entrance pop on a bubble that already streamed in (旧值 > 0；契约变更)').toBe(0);
     await page.screenshot({ path: path.join(SHOT_DIR, 'streamux-a3-reply.png') });
     await context.close();
   });
 
-  test('A7: zero DOM mutations inside the reply bubble while the text streams', async ({ browser }) => {
+  test('A7: the stream is rAF-batched — 12 deltas in ONE task render ONCE (the O(n²) ban, re-expressed)', async ({ browser }) => {
     const { context, page, pageErrors } = await newPage(browser);
-    await page.evaluate(() => {
-      window.__mut = { count: 0, kinds: [] };
-      window.__startMut = () => {
-        window.__mut = { count: 0, kinds: [] };
+    const read = await page.evaluate(async () => {
+      const chatMod = await import('/src/main/resources/web/js/chat.js');
+      const { activeView } = await import('/src/main/resources/web/js/chatView.js');
+      const raf = () => new Promise(r => requestAnimationFrame(r));
+      // The OLD A7 reading (mutation count inside the reply-bubble subtree) is
+      // kept and now EXPECTED > 0 — the new contract streams into the bubble.
+      let mut = 0;
+      const chat = document.getElementById('chat');
+      const obs = new MutationObserver((recs) => {
+        for (const r of recs) {
+          const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+          if (!t) continue;
+          const row = t.closest('.row.ai');
+          if (row && !row.classList.contains('thinking-row')) mut++;
+        }
+      });
+      obs.observe(chat, { childList: true, subtree: true, characterData: true });
+      // Frame-budget counters straight out of the production render path
+      // (chat.js enableAiStreamStats — flowAnim.js's exposed-stats pattern).
+      const stats = chatMod.enableAiStreamStats();
+      chatMod.renderUserBubble('把结论写给我', [], Date.now());
+      // (b) BURST: twelve deltas inside ONE task — no animation frame in between.
+      for (let i = 0; i < 12; i++) chatMod.appendAiText(`段${i} `);
+      const rendersBeforeFrame = stats.frames;
+      await raf(); await raf();
+      const rendersAfterBurst = stats.frames;
+      const mutAfterBurst = mut;
+      // (c) STEADY: one delta per frame ⇒ never more than one render per frame.
+      const before = stats.frames;
+      for (let i = 0; i < 4; i++) { chatMod.appendAiText(`逐帧${i} `); await raf(); }
+      await raf();
+      obs.disconnect();
+      return {
+        rendersBeforeFrame,
+        rendersAfterBurst,
+        mutAfterBurst,
+        steadyRenders: stats.frames - before,
+        totalRenders: stats.frames,
+        maxMs: stats.maxMs,
+        meanMs: stats.frames ? stats.totalMs / stats.frames : -1,
+        msSamples: stats.msSamples.slice(),
+        streamedFlag: !!(activeView.stream.currentAiBubble && activeView.stream.currentAiBubble._nfStreamed),
       };
-      window.__observe = () => {
-        const chat = document.getElementById('chat');
-        const obs = new MutationObserver((recs) => {
-          for (const r of recs) {
-            const t = r.target.nodeType === 1 ? r.target : r.target.parentElement;
-            if (!t) continue;
-            const row = t.closest('.row.ai');
-            if (row && !row.classList.contains('thinking-row')) {
-              window.__mut.count++;
-              window.__mut.kinds.push(r.type);
-            }
-          }
-        });
-        obs.observe(chat, { childList: true, subtree: true, characterData: true });
-        window.__obs = obs;
-      };
-      window.__stopObs = () => { if (window.__obs) window.__obs.disconnect(); return window.__mut; };
     });
-    await page.evaluate(() => { window.__startMut(); window.__observe(); });
-    await page.evaluate(() => window.__aiStream());
-    const mut = await page.evaluate(() => window.__stopObs());
-    expect(mut.count, 'the streaming window never touches the reply bubble subtree').toBe(0);
+    // 合批判据（确定性，与机器快慢无关）：12 个 delta 落在同一任务 ⇒ rAF 还没跑
+    // ⇒ 期间零渲染；两帧后**恰 1 次**渲染（不是 12 次）——这就是 A7 原意图
+    // （防逐帧全量重排）在新契约下的判据。
+    expect(read.rendersBeforeFrame, 'no render happens before the scheduled rAF (deltas coalesce)').toBe(0);
+    expect(read.rendersAfterBurst, 'twelve deltas in one task coalesce into EXACTLY ONE render').toBe(1);
+    expect(read.steadyRenders, 'one-delta-per-frame renders at least once per frame').toBeGreaterThanOrEqual(3);
+    expect(read.steadyRenders, 'and NEVER more than one render per frame (rAF batching)').toBeLessThanOrEqual(5);
+    // 反向的旧读数（A7 原文 === 0）：新契约下流式期**必须**触到气泡子树。
+    expect(read.mutAfterBurst, 'the streaming window DOES touch the reply bubble subtree (旧值 0；契约变更)')
+      .toBeGreaterThan(0);
+    expect(read.streamedFlag, 'and the bubble is marked as streamed (the entrance-pop ownership flag)').toBe(true);
+    // 帧预算读数（记录本次实测；断言只设一条灾难上界，不做机器速度断言）。
+    console.log(`[A7 frame budget] renders=${read.totalRenders} maxMs=${read.maxMs.toFixed(2)} `
+      + `meanMs=${read.meanMs.toFixed(2)} samples=[${read.msSamples.map(v => v.toFixed(2)).join(', ')}]`);
+    expect(read.maxMs, 'per-frame render stays inside a generous frame budget (no O(n²) blow-up)')
+      .toBeLessThan(50);
     expect(pageErrors).toEqual([]);
     await context.close();
   });

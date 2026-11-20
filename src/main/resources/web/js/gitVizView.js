@@ -389,7 +389,7 @@ function renderTreeMobile(host, g, state) {
   const rowPitch = 14;
   const h = Math.max(rowPitch, rows.length * rowPitch);
 
-  const thumbWrap = el('div', 'gitviz-tree gitviz-thumb');
+  const thumbWrap = el('div', 'gitviz-tree gitviz-mini-graph');
   const canvas = el('div', 'gitviz-canvas');
   canvas.style.setProperty('--gitviz-lane-w', `${laneW}px`);
   canvas.style.setProperty('--gitviz-row', `${rowPitch}px`);
@@ -900,6 +900,38 @@ function defaultTarget(g) {
   return headRef?.name || names[0] || '';
 }
 
+// Measure visible overlays against the actual scroll owner, as canvas does for
+// its bottom chrome. Re-evaluate on resize and when either dismissible panel
+// opens or closes; ignore disconnected views instead of retaining observers.
+function observeGitVizClearance(root, owner) {
+  const controls = [...root.querySelectorAll('.gitviz-corner--tl, .gitviz-corner--tr, .gitviz-corner--bl, .gitviz-corner--br, .gitviz-ask-dock, .gitviz-sheet')];
+  let frame = 0;
+  const sync = () => {
+    frame = 0;
+    if (!root.isConnected) { resize.disconnect(); mutation.disconnect(); return; }
+    const bounds = owner.getBoundingClientRect();
+    if (bounds.width < 1 || bounds.height < 1) return;
+    let top = Infinity;
+    for (const control of controls) {
+      const style = getComputedStyle(control);
+      const rect = control.getBoundingClientRect();
+      if (control.hidden || style.display === 'none' || style.visibility === 'hidden' || rect.width < 1 || rect.height < 1) continue;
+      if (rect.right <= bounds.left || rect.left >= bounds.right || rect.top >= bounds.bottom || rect.bottom <= bounds.top) continue;
+      if (control.matches('.gitviz-corner--tl, .gitviz-corner--tr')) continue;
+      top = Math.min(top, Math.max(bounds.top, rect.top));
+    }
+    const next = `${Number.isFinite(top) ? Math.round((bounds.bottom - top + 12) * 100) / 100 : 0}px`;
+    if (owner.style.getPropertyValue('--gitviz-bottom-clearance') !== next) owner.style.setProperty('--gitviz-bottom-clearance', next);
+  };
+  const schedule = () => { if (!frame) frame = requestAnimationFrame(sync); };
+  const resize = new ResizeObserver(schedule);
+  resize.observe(owner);
+  controls.forEach(control => resize.observe(control));
+  const mutation = new MutationObserver(schedule);
+  controls.forEach(control => mutation.observe(control, { attributes: true, attributeFilter: ['hidden', 'class', 'style'] }));
+  schedule();
+}
+
 // ── 组装一次视图（数据到达后）──────────────────────────────────────────────
 function paint(pane, g, opts = {}) {
   const root = pane.querySelector('.gitviz');
@@ -1011,6 +1043,7 @@ function paint(pane, g, opts = {}) {
   LIVE.set(gvSessionId(g.project), gvState);
 
   root.appendChild(buildCorners(gvState, opts.onBack));
+  observeGitVizClearance(root, main);
   repaint();
 
   // 初次进入：默认聚焦 HEAD 的提交行（有内容可见，不是空详情）

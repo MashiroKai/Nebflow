@@ -121,6 +121,7 @@ case class ToolPipelineError(message: String) extends RuntimeException(message)
  * notify / team 成员父 ExternalEvent(failed, retryable=true) / 持久化）。
  */
 final case class LoopDetectedError(message: String, salvagedText: String = "") extends RuntimeException(message):
+
   /**
    * 交付面文本 = 终止原因 + 被终止那一轮**已产出**的助手输出。
    *
@@ -139,6 +140,8 @@ final case class LoopDetectedError(message: String, salvagedText: String = "") e
          |
          |[salvaged: last-turn output of the terminated session — this work is NOT lost; it was never persisted to the transcript, so it is carried here]
          |${s.take(LoopDetectedError.SalvageMaxChars)}""".stripMargin
+
+end LoopDetectedError
 
 object LoopDetectedError:
   /** 抢救段最大字符数（节点 result 文件 / 父通知载荷的体量闸）。 */
@@ -171,6 +174,8 @@ object AgentEvent:
    */
   case class BgCompletionCapTick(sessionId: String, heldSinceMs: Long, arm: Long, snapshot: List[Message] = Nil)
       extends AgentEvent
+
+end AgentEvent
 
 /**
  * 冻结原因（v2 冻结式错误恢复，§3.1）：统一「暂停在 dispatch 边界」的语义，
@@ -493,6 +498,7 @@ object FreezeDisplay:
           ManualHintZh,
           ManualHintEn
         )
+      end if
     else
       w match
         case "schedule" => of(FreezeReason.Schedule, resumeAt, None, now)

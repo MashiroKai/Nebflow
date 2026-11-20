@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<!-- main-stream-render/harness.html — 主窗正文「边流边显」专项闸的静态夹具
+     （stream-latency 批 2026-11-19）。
+
+     与 tests/fixtures/stream-ux/harness.html 的关系：那条夹具**不装载 vendor/marked**，
+     因此 renderMarkdownWithMath 走 escapeHtml 纯文本回落（对它的判据够用，不动它）。
+     本夹具装载真 marked（与 index.html 的 `vendor/marked.min.js` 同源同版本），
+     让 markdown 渲染链是真的——这样「终帧 DOM 与一次性全量重渲逐字节等价」这条
+     判据才非空泛（参考产物里必须真的有 <h1>/<ul>/<pre> 结构）。
+
+     真前端：只 import 真模块（chatView.js / state.js / chat.js），不 stub、不打包；
+     重放的是应用在 WS 事件上做的同一串调用。
+
+       window.__aiStream(parts)      → renderUserBubble + appendAiText ×N（段间 raf2）
+       window.__aiStreamFinish()     → finishAi(4200, 'test-model')
+       window.__startAiSampler() / window.__stopAiSampler() → 逐帧气泡读数
+       window.__reset()              → 清空 #chat
+
+     静态服务器由 spec 自起自杀（宿主 :8080 永不触碰）。
+-->
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>main-stream-render harness</title>
+  <link rel="stylesheet" href="/src/main/resources/web/css/base.css">
+  <link rel="stylesheet" href="/src/main/resources/web/css/chat.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: var(--color-bg, #101418); }
+    #chat {
+      position: absolute; top: 0; bottom: 0; left: 50%; transform: translateX(-50%);
+      width: 680px; max-width: 96vw; margin: 0; padding: 16px 0 36px;
+      overflow-y: auto;
+    }
+  </style>
+  <!-- 真 markdown 渲染链（同 index.html 的 defer + 同源 vendor 路径）。 -->
+  <script defer src="/src/main/resources/web/vendor/marked.min.js"></script>
+</head>
+<body>
+  <div id="chat"></div>
+  <script type="module">
+    const WEB = '/src/main/resources/web/js';
+
+    const { chatViews, ChatView, setActiveView } = await import(`${WEB}/chatView.js`);
+    const state = (await import(`${WEB}/state.js`)).default;
+
+    const chatEl = document.getElementById('chat');
+    chatViews.primary = new ChatView('primary', { chat: chatEl });
+    setActiveView(chatViews.primary);
+    state.activeSessionId = 'main-stream-render-session';
+    state.ws = { readyState: 1, send: () => {} };
+
+    const chatMod = await import(`${WEB}/chat.js`);
+    const raf2 = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+    /** 逐帧读回复气泡：子元素数 / markup 长度 / 文本长度。 */
+    window.__aiStreamFrames = [];
+    let aiSampler = null;
+    function aiBubble() {
+      const rows = Array.from(document.querySelectorAll('#chat .row.ai'))
+        .filter(r => !r.classList.contains('thinking-row'));
+      const row = rows[rows.length - 1];
+      return row ? row.querySelector('.bubble.ai') : null;
+    }
+    window.__startAiSampler = () => {
+      window.__aiStreamFrames = [];
+      const tick = () => {
+        const b = aiBubble();
+        window.__aiStreamFrames.push(b ? {
+          childElems: b.children.length,
+          htmlLen: b.innerHTML.length,
+          textLen: (b.textContent || '').length,
+        } : { childElems: -1, htmlLen: -1, textLen: -1 });
+        aiSampler = requestAnimationFrame(tick);
+      };
+      aiSampler = requestAnimationFrame(tick);
+    };
+    window.__stopAiSampler = () => {
+      if (aiSampler) cancelAnimationFrame(aiSampler);
+      aiSampler = null;
+      return window.__aiStreamFrames;
+    };
+
+    window.__aiStream = async (parts) => {
+      const list = parts && parts.length ? parts : ['mergeQueue ', '用 ConcurrentHashMap ', '维护等待中的合并节点。'];
+      chatMod.renderUserBubble('把结论写给我', [], Date.now());
+      for (const p of list) {
+        chatMod.appendAiText(p);
+        await raf2();
+      }
+      await raf2();
+    };
+    window.__aiStreamFinish = async () => {
+      chatMod.finishAi(4200, 'test-model');
+      await raf2();
+    };
+
+    window.__reset = async () => {
+      chatEl.innerHTML = '';
+      await raf2();
+    };
+
+    // 真 markdown 链的就位读数（判据只作前置：非空泛化的前提）。
+    window.__markedLoaded = typeof window.marked !== 'undefined';
+    window.__ready = true;
+  </script>
+</body>
+</html>

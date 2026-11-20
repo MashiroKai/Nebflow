@@ -219,9 +219,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
   font-size: var(--ds-fs-meta);
   line-height: 1;
   cursor: pointer;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .gitviz-lane-tag.is-head { border-color: rgb(var(--sapphire) / 0.9); background: rgb(var(--sapphire) / 0.22); font-weight: 600; }
 .gitviz-lane-tag i {
@@ -263,9 +262,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 .gitviz-subject {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .gitviz-meta {
   flex: 0 0 auto;
@@ -287,9 +285,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
   font-size: var(--ds-fs-meta);
   cursor: pointer;
   max-width: 190px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 .gitviz-ref-chip.is-head { border-color: rgb(var(--sapphire) / 1); background: rgb(var(--sapphire) / 0.24); font-weight: 600; }
 
@@ -331,7 +328,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 .gitviz-ref-name {
   flex: 1 1 auto; min-width: 0;
   font-size: var(--ds-fs-meta);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  overflow-wrap: anywhere; white-space: normal;
   cursor: pointer;
 }
 .gitviz-ref-ab { flex: 0 0 auto; color: var(--color-text-muted); font-size: var(--ds-fs-meta); font-variant-numeric: tabular-nums; }
@@ -487,7 +484,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
     padding-top: calc(var(--mtap-lg, var(--ds-hit-tap-lg, 44px)) + var(--ds-space-4));
   }
   body.mobile-layer .gitviz-main {
-    padding-bottom: calc(var(--mtap-lg, var(--ds-hit-tap-lg, 44px)) + var(--ds-space-4));
+    padding-bottom: max(calc(var(--mtap-lg, var(--ds-hit-tap-lg, 44px)) + var(--ds-space-4)), var(--gitviz-bottom-clearance, 0px));
+    scroll-padding-bottom: var(--gitviz-bottom-clearance, 0px);
   }
   body.mobile-layer .gitviz-corner--tl,
   body.mobile-layer .gitviz-corner--tr {
@@ -525,9 +523,8 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
      不设死宽时长分支名（feat/gitviz-mvp-20261119）会把整列撑到 40% 视口，把右侧泳道挤出去。 */
   .gitviz-lane-labels { max-width: calc(var(--ds-space-12) * 2); }
   .gitviz-lane-tag span {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    white-space: normal;
   }
 }
 
@@ -579,7 +576,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
 .gitviz-lane-body-list { list-style: none; margin: 0; padding: 0; }
 /* 手机缩略泳道图：高度上限让「结构」与「条目」同屏（不是把图裁掉——图内容仍全量，
    超出部分由 .gitviz-tree 自己的滚动承担） */
-.gitviz-thumb { max-height: 40vh; flex: 0 0 auto; }
+.gitviz-mini-graph { max-height: 40vh; overflow-y: auto; flex: 0 0 auto; }
 
 /* ══ 分支管理问答窗（第二轮 ③）══════════════════════════════════════════════
    座位 = 右下角 FAB 之上（与 .ask-dock 同一落位公式：right/bottom 各自一把尺），
@@ -658,6 +655,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
   min-width: 0;
   min-height: var(--ds-space-8);
   max-height: 96px;
+  overflow-y: auto;
   resize: none;
   padding: var(--ds-space-1) var(--ds-space-1h);
   border: 1px solid var(--color-border);

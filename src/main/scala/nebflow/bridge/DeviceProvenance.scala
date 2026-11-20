@@ -57,12 +57,12 @@ object ClientDevice:
   /** 平台端别的可读名；未知/缺席不猜具体端别。 */
   def platformDisplay(platform: Option[String]): String =
     platform.map(_.trim.toLowerCase).filter(_.nonEmpty).getOrElse("") match
-      case "phone"   => "手机"
-      case "tablet"  => "平板"
-      case "mac"     => "Mac"
+      case "phone" => "手机"
+      case "tablet" => "平板"
+      case "mac" => "Mac"
       case "windows" => "Windows"
-      case "linux"   => "Linux"
-      case _         => "未知设备"
+      case "linux" => "Linux"
+      case _ => "未知设备"
 
   /**
    * 未登记设备的默认名：`未登记-手机 Chrome`（作者令原文示例）。浏览器缺席省略
@@ -72,7 +72,7 @@ object ClientDevice:
     val base = platformDisplay(client.platform)
     client.browser.map(_.trim).filter(_.nonEmpty) match
       case Some(b) => s"未登记-$base $b"
-      case None    => s"未登记-$base"
+      case None => s"未登记-$base"
 
   /**
    * 帧解析面：从消息帧的 `device` 键防御解码。`clientId` 是身份主键——键缺席、
@@ -97,6 +97,10 @@ object ClientDevice:
       browser = str(device.hcursor, "browser"),
       boundDeviceId = str(device.hcursor, "boundDeviceId")
     )
+
+    end for
+
+  end fromFrame
 
   /** 取一个 trim 后非空的字符串字段；缺席/非串/空白 = None。 */
   private def str(c: io.circe.HCursor, key: String): Option[String] =
@@ -237,16 +241,20 @@ object DeviceProvenance:
           case None =>
             ResolvedDevice(display = ClientDevice.defaultName(client), enrolled = false)
 
+    end match
+
+  end resolve
+
   /** 「已认证」级显示名：`<账号标签> · <浏览器>（经官网|本机票）`（括注按票来源）。 */
   private def authenticatedDisplay(client: ClientDevice, session: SessionIdentity, label: String): String =
     val browser = client.browser.map(_.trim).filter(_.nonEmpty)
     val originTag = session.origin match
-      case OriginRelayMint   => "（经官网）"
+      case OriginRelayMint => "（经官网）"
       case OriginLocalTicket => "（本机票）"
-      case _                 => ""
+      case _ => ""
     browser match
       case Some(b) => s"$label · $b$originTag"
-      case None    => s"$label$originTag"
+      case None => s"$label$originTag"
 
   /**
    * 渲染来源设备标记块。骨架与社交渠道头同构（「以下消息来自 X（渠道 Y）· 标注段」）；

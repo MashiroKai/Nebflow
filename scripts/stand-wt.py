@@ -12,6 +12,13 @@ import sys
 import time
 
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+
+# Temporary artifacts carry a seven-day TTL (author ruling 2026-11-16). One named
+# constant, shared by the routine audit red and the cleaner's default window.
+TTL_DAYS = 7
+
+
 def git(*args, cwd=None):
     return subprocess.check_output(['git', *map(str, args)], cwd=cwd, stderr=subprocess.PIPE).decode().strip()
 
@@ -41,7 +48,7 @@ def inventory(directory):
     return result
 
 
-def audit(project, wt):
+def audit(project, wt, ttl_days=TTL_DAYS):
     directory = project / '.stand' / 'tmp' / name(wt)
     if directory.is_symlink() or (directory / 'MANIFEST.md').is_symlink() or not directory.is_dir():
         raise ValueError(f'not a safe tmp directory: {directory}')
@@ -50,6 +57,8 @@ def audit(project, wt):
     checkout = checkout if (checkout / '.git').is_file() else project
     lines = ['# Artifact manifest', '', '| Relative path | Bytes | mtime | Status |', '| --- | ---: | --- | --- |']
     counts = [0, 0]
+    expired = []
+    now = time.time()
     for path in inventory(directory):
         rel = path.relative_to(directory).as_posix()
         if '|' in rel or '\n' in rel or '\r' in rel:
@@ -68,8 +77,16 @@ def audit(project, wt):
         counts[status != '未入库'] += 1
         stat = path.stat()
         mtime = dt.datetime.fromtimestamp(stat.st_mtime).isoformat(timespec='seconds')
+        # The routine red: an uncommitted artifact past the TTL is a delivery
+        # defect, not merely old scratch (author ruling 2026-11-16).
+        if status == '未入库' and now - stat.st_mtime > ttl_days * 86400:
+            expired.append((rel, mtime))
         lines.append(f'| {rel} | {stat.st_size} | {mtime} | {status} |')
     (directory / 'MANIFEST.md').write_text('\n'.join(lines) + '\n', encoding='utf-8')
+    for rel, mtime in expired:
+        print(f'RED {directory.name}: uncommitted and past the {ttl_days}-day TTL ({mtime}): {rel}')
+    if expired:
+        print(f'RED {directory.name}: {len(expired)} uncommitted file(s) past the {ttl_days}-day TTL')
     return counts
 
 
@@ -80,7 +97,7 @@ def main():
     p = sub.add_parser('new'); p.add_argument('name', type=name); p.add_argument('--branch'); p.add_argument('--base', default='feat/base'); p.add_argument('--target', default='feat/base')
     sub.add_parser('list')
     p = sub.add_parser('audit'); p.add_argument('name', nargs='?', type=name)
-    p = sub.add_parser('clean'); p.add_argument('--ttl-days', type=float, default=7); p.add_argument('--apply', action='store_true'); p.add_argument('--force', action='store_true'); p.add_argument('--dry-run', action='store_true')
+    p = sub.add_parser('clean'); p.add_argument('--ttl-days', type=float, default=TTL_DAYS); p.add_argument('--apply', action='store_true'); p.add_argument('--force', action='store_true'); p.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     if args.root is not None:
         os.chdir(args.root)
@@ -144,7 +161,13 @@ def main():
             entries = [directory] + [p for p in directory.rglob('*') if p != directory / 'MANIFEST.md']
             if any(p.is_symlink() for p in entries):
                 print(f'WARNING unsafe symlink: {directory}'); continue
-            latest = max(p.stat().st_mtime for p in entries)
+            # Only artifact timestamps age a directory. The directory's OWN mtime
+            # is not one: `audit` rewrites the generated MANIFEST.md on every run,
+            # and that bumps the parent directory's mtime — counting it would let
+            # the routine audit reset the TTL clock and the clean would never fire
+            # (author ruling 2026-11-16/11-19: past the TTL it must really delete).
+            stamps = [p.stat().st_mtime for p in entries if p != directory]
+            latest = max(stamps) if stamps else directory.stat().st_mtime
             if time.time() - latest <= args.ttl_days * 86400:
                 continue
             uncommitted, _ = audit(project, directory.name)
@@ -153,6 +176,8 @@ def main():
             candidates.append(directory)
         for directory in candidates:
             print(f'{"DELETE" if args.apply else "DRY-RUN"} {directory}')
+        print(f'{"cleaned" if args.apply else "would clean"} {len(candidates)} director(ies) past the {args.ttl_days}-day TTL'
+              + ('' if args.apply else ' (dry-run: pass --apply to delete)'))
         if args.apply and candidates:
             audit_base = tmp / 'worktree-audit'
             if audit_base.is_symlink():

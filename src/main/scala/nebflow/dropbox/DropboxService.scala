@@ -1129,20 +1129,23 @@ final class DropboxService private (
             )
           finally java.nio.file.Files.deleteIfExists(staged)
           val entries = java.nio.file.Files.list(dir)
-          val used = try
-            val it = entries.iterator()
-            var total = 0L
-            while it.hasNext do
-              val entry = it.next()
-              if java.nio.file.Files.isRegularFile(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS) then
-                total = Math.addExact(total, java.nio.file.Files.size(entry))
-            total
-          finally entries.close()
+          val used =
+            try
+              val it = entries.iterator()
+              var total = 0L
+              while it.hasNext do
+                val entry = it.next()
+                if java.nio.file.Files.isRegularFile(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS) then
+                  total = Math.addExact(total, java.nio.file.Files.size(entry))
+              total
+            finally entries.close()
           (target.toString, used)
         }.flatMap { (path, used) =>
           val warning =
             if DropboxService.imageCopyLimitReached(used) then
-              logger.warn(s"Dropbox image copies use $used bytes, at or above the ${DropboxService.ImageCopyWarningBytes} byte warning limit; no images were deleted")
+              logger.warn(
+                s"Dropbox image copies use $used bytes, at or above the ${DropboxService.ImageCopyWarningBytes} byte warning limit; no images were deleted"
+              )
             else IO.unit
           warning *> messagesRef.update { messages =>
             messages.updated(
@@ -2095,7 +2098,6 @@ object DropboxService:
   /** Warning threshold only: retained images are never deleted to enforce it. */
   private[dropbox] val ImageCopyWarningBytes: Long = 10L * 1024 * 1024 * 1024
   private[dropbox] def imageCopyLimitReached(used: Long): Boolean = used >= ImageCopyWarningBytes
-
 
   /**
    * 单条消息里的一件附件（名字 / 字节数 / MIME + **发送端本机真实路径**）。

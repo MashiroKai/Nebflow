@@ -3347,7 +3347,7 @@ body.mobile-layer #mobile-pages .wx-zoom {
 /* ── P10 插件：插件卡全宽单列 + 封禁整卡降透明 ────────────────────────── */
 body.mobile-layer #mobile-pages #plugins-content {
   /* 手机档只缩左右与底（12 / 安全区底垫）——**顶部让位不在这里写**：canvas 正文
-     顶垫统一归 .canvas-safe-top（split.css「统一布局层」块，手机档值 = 
+     顶垫统一归 .canvas-safe-top（split.css「统一布局层」块，手机档值 =
      --cv-safe-top = --mchrome-clear 72）。canvas-overlap-fix 批 2026-11-05 前
      此处写 `var(--ds-space-3)` = 12px 顶垫，首块整条压在环标签带（0..72）底下，
      与本批报障的桌面形态同一个病（各面板各写裸顶垫）。 */

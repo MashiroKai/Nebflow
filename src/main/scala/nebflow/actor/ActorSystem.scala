@@ -39,6 +39,7 @@ trait ActorSystem:
    * messages sent to it vanish silently. This checks the live registry.
    */
   def isAlive(path: ActorPath): IO[Boolean]
+
   /** Snapshot of actor incarnations currently owned by this system. */
   def ownedActors: IO[Map[String, ActorRef[?]]] = IO.pure(Map.empty)
   def watch(watcher: ActorPath, target: ActorPath): IO[Unit]
