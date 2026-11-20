@@ -192,7 +192,7 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
         running <- resources.subAgentTaskStore.updateRun(parent.id, task.taskId, "run-1", executionStatus = Some("running"))
         _ = assert(running.isRight)
         event = AgentCommand.ExternalEvent("subtask", "completed", "result from completed worker",
-          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
         _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
         _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
         _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
@@ -202,6 +202,24 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
       yield
         assertEquals(row.flatMap(_.executionStatus), Some("finished"))
         assertEquals((pending ++ taken).count(e => e.identity == s"${task.taskId}#run-1" && e.event == event), 1)
+    }
+  }
+
+  test("missing run identity in terminal envelope is held for manual review") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("missing-run-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-missing-run", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "answer",
+          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("starting"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
     }
   }
 
@@ -274,7 +292,7 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
           runId = Some("run-1"), executor = Some("nebflow"), executionStatus = Some("running"))
         _ <- IO.blocking(os.write.over(root / "subagent-tasks" / s"${parent.id}.json", List(task).asJson.noSpaces, createFolders = true))
         event = AgentCommand.ExternalEvent("subtask", "completed", "finished",
-          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
         _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
         _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
         row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
@@ -332,7 +350,7 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
         _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
         _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "interrupted")
         event = AgentCommand.ExternalEvent("subtask", "completed", "finished",
-          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
         _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
         receipt <- SessionMailbox.deliveredContains(parent.id, Set(s"${task.taskId}#run-1"))
         _ = assertEquals(receipt, Set.empty[String])
@@ -353,7 +371,7 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
         _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
         _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "interrupted")
         event = AgentCommand.ExternalEvent("subtask", "completed", "finished",
-          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
         _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
         _ <- IO.blocking(os.write.over(root / "sessions" / parent.id / "mailbox" / "delivered.json", "broken", createFolders = true))
         receipt <- SessionMailbox.deliveredContains(parent.id, Set(s"${task.taskId}#run-1"))
