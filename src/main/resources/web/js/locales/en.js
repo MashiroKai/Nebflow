@@ -2280,6 +2280,14 @@ export default {
   'canvas.conflictDirty': 'This file changed on disk while you have unsaved edits here.',
   'canvas.conflictKeep': 'Keep mine',
   'canvas.conflictReload': 'Reload from disk',
+  // Displaced-writer draft (silent-takeover batch 2026-11-19): when the seat is
+  // silently taken over, the losing window quietly stashes its edit buffer as an
+  // unmerged draft; this non-blocking chip is the after-the-fact retrieval entry.
+  'canvas.draftAvailable': 'This window\u2019s edits were stashed as an unmerged draft (the seat was taken over elsewhere).',
+  'canvas.draftRestore': 'Restore draft',
+  'canvas.draftDismiss': 'Dismiss',
+  'canvas.draftConflict': 'The draft could not be re-applied: the file on disk changed in another window (or the body exceeded the stored prefix). It is kept here so nobody else\u2019s edits get overwritten.',
+  'canvas.draftConflictKeep': 'Keep draft',
   // B7-4 explorer tree search + sort (client-side; server order untouched)
   'explorer.searchPlaceholder': 'Search files…',
   'explorer.sortDefault': 'Default order',

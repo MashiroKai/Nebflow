@@ -114,7 +114,13 @@ let localUnsynced = false;
 function writerChanged(role, lost = false) {
   // A writer transition is not proof of another console. Preserve local data
   // without presenting the console conflict dialog.
-  if (lost) localUnsynced = true;
+  if (lost) {
+    localUnsynced = true;
+    // 静默接管批（2026-11-19）：失权端**零用户可见通知**地把当前编辑缓冲落成
+    // 未合并草稿（这里就是「从写者掉到只读」的唯一时刻），事后由非阻断的取回
+    // 入口呈现。绝不弹阻断式通知（作者原话「现在通知很烦」）。
+    captureSeatDraft();
+  }
   if (role !== 'writer') {
     if (serverPersistTimer) clearTimeout(serverPersistTimer);
     serverPersistTimer = null;
@@ -195,6 +201,231 @@ const canvasWriter = createCanvasWriterClient({
     } catch { /* 卸载路径：让位尽力而为，失败交给服务端陈旧清扫 */ }
   },
 });
+
+// ── 失权端草稿（静默接管批 2026-11-19）────────────────────────────────────
+// 席位改为**静默抢占**后，「丢掉写权」是常态事件：别的窗口一申请就接管，本窗口当场
+// 失权。作者裁定（2026-11-19 08:05「直接静默吧 交给主会话实现」）= **静默 + 不丢**
+// 两条都要。三条结构性事实决定了唯一可行的形态：
+//   · 未保存的字节**从未上过服务端**（界面停在本轮未保存的状态上）⇒ 服务端无物可存，
+//     「保存上一个的更改」只能由失权端自己做；
+//   · 失权端可能**已经死了**（强杀 / 后台冻结 / 换设备）⇒ 它收不到信号、也写不出自己
+//     的内存；那部分字节物理上找不回（本设计如实承认，不假装找回）；
+//   · 「不弹通知」+「不丢改动」要同时成立 ⇒ 只剩一条路：失权端**零用户可见通知**地把
+//     当前编辑缓冲落成一份「未合并草稿」（静默发生），事后以一个**非阻断的取回入口**
+//     呈现（下面的 chip）。
+// 触发信号**复用既有消息通道**：席位变更帧 `canvasWriterChanged`（服务端静默接管时
+// 定向送达被顶下的写者，并广播全端）；本模块按 `msg.epoch > 自己的 epoch` 判「我丢了
+// 席位」——见 bindPersistReconnect 的 onMessage 处理器。**不新增第二套草稿/席位协议。**
+// 三条边界：
+//   ① 何时落：本窗口**从写者掉到只读**的那一刻（`writerChanged(role, lost=true)`），
+//      落一次；正常卸载的主动 release 不落（那条路 flushPendingPersist 已写穿）。
+//   ② 落在哪：**本浏览器** localStorage 的**单槽**（`key('canvas_seat_draft')`，最新
+//      覆盖最旧）。草稿天然是失权端自己的东西，不占用服务端任何共享面、不跨设备。
+//   ③ 边界·不覆盖他人正在写的内容：落草稿**不写服务端、不发任何共享帧**；取回时只把
+//      草稿里缺的页签**补开**进本地视图（并集，绝不删本地已有），再走正常写路径
+//      （写路径会按需静默接管席位）。草稿永远不会盖掉别的窗口正在写的内容。
+const LS_DRAFT_KEY = key('canvas_seat_draft');
+const DRAFT_CHIP_CLASS = 'canvas-draft-chip';
+
+/** 读回本机的未合并草稿（无/坏体 ⇒ null，绝不清空既有）。 */
+function readSeatDraft() {
+  try {
+    const raw = localStorage.getItem(LS_DRAFT_KEY);
+    if (!raw) return null;
+    const rec = JSON.parse(raw);
+    if (!rec || rec.v !== 2 || !Array.isArray(rec.tabs) || rec.tabs.length === 0) return null;
+    return rec;
+  } catch { return null; }
+}
+
+/** 单文件草稿正文上限（字符）。超过只存前缀并标 truncated —— 宁可留下「有未保存改动」
+ *  的事实与前缀，也不因一条巨型缓冲把整个单槽撑爆（撑爆 = 什么草稿都没有）。 */
+const SEAT_DRAFT_BUFFER_MAX_CHARS = 400_000;
+
+/** 待落回的草稿正文（absPath → {text, truncated, baseVer}）。取回是**异步**的：
+ *  页签要等 readFile 应答、编辑器要等查看器挂载，所以先暂存、由 flush 逐次尝试。 */
+const pendingSeatDraftBuffers = new Map();
+
+/** 收集**未保存的正文**（数据保护门 2026-11-21 要求项一）。
+ *  为什么必须收：落草稿的唯一目的就是「静默 + 不丢」，而页签快照只记「开了哪些文件」——
+ *  被顶下那一端真正会丢的是**编辑器里还没落盘的正文**。只存页签等于假保护。
+ *  只收「有编辑器句柄且判定为脏」的页签：干净页签的正文磁盘上就有，收进来只是放大单槽。 */
+function collectSeatDraftBuffers() {
+  const out = [];
+  for (const [, t] of tabs) {
+    if (!t.absPath) continue;
+    if (!isTabDirty(t)) continue;
+    const handle = t.paneEl?._editorHandle;
+    const text = handle?.model?.getValue?.();
+    if (typeof text !== 'string' || text === '') continue;
+    const truncated = text.length > SEAT_DRAFT_BUFFER_MAX_CHARS;
+    const buf = {
+      id: t.id,
+      absPath: t.absPath,
+      text: truncated ? text.slice(0, SEAT_DRAFT_BUFFER_MAX_CHARS) : text,
+      truncated,
+    };
+    // 落草稿那一刻的磁盘版本读数（entry._fileVer = "size:mtimeMs"）。取回时比它判冲突。
+    if (t._fileVer) buf.baseVer = t._fileVer;
+    out.push(buf);
+  }
+  return out;
+}
+
+/** 静默落草稿：把当前编辑缓冲（可持久化页签快照 + 激活签 + 关闭意图账 + **未保存正文**）
+ *  写进本机单槽。纯本地、零网络、零通知；空集不落（无可失之物 ⇒ 不留空条）。 */
+function captureSeatDraft() {
+  try {
+    const snapshot = collectSerializableTabs();
+    if (snapshot.length === 0) return;
+    const rec = { v: 2, at: Date.now(), tabs: snapshot, activeTabId: activeTabId || null };
+    if (sessionTombstones.size > 0) rec.tombstones = [...sessionTombstones.values()];
+    const buffers = collectSeatDraftBuffers();
+    if (buffers.length > 0) rec.buffers = buffers;
+    localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(rec));
+    renderDraftEntry();
+  } catch { /* storage 满/不可用：草稿尽力而为，绝不阻断 */ }
+}
+
+/** 清掉本机草稿（取回成功 / 用户忽略）。 */
+function clearSeatDraft() {
+  try { localStorage.removeItem(LS_DRAFT_KEY); } catch { /* ignore */ }
+}
+
+/** 草稿条的取回入口（非阻断、不抢焦点、不进层栈）：挂在**激活页签的滚动面**里。
+ *  手机层会把激活 pane 收编进全屏画布页 ⇒ 同一条桌面/手机都可见（单一落点）。
+ *  **落点判据（铁律 9：编辑面可滚不静默裁切）**：md/txt 族查看器的滚动面是 pane 内
+ *  `position:absolute; inset:0` 的 `.canvas-md-scroll / .canvas-txt-scroll`——把条目
+ *  `prepend` 进 pane 静态流会被滚动面盖住、压住正文首行（既有 `.canvas-update-hint`
+ *  就是这么浮着的）。故这里挂进滚动面**自身的文档流**（正文整体下移，零遮挡、零裁切），
+ *  并 `position:sticky; top:0` —— 静置时条目占着自己那一格（绝不压住正文首行），
+ *  滚动时才贴着滚动口上缘停靠（不会被滚走）。**不许**写 `top:<滚动面顶垫>`：
+ *  滚动口上缘 ≠ 宿主上缘，那样 sticky 会把条目往下顶进正文（实测遮过 H1）。
+ *  样式**全走既有 token**（不新增第二套颜色/尺寸/圆角）。 */
+function renderDraftEntry() {
+  const rec = readSeatDraft();
+  const pane = activeTabId ? tabs.get(activeTabId)?.paneEl : null;
+  // 撤掉不在当前激活 pane 上的旧条（换签/取回/忽略后不留残影）。
+  for (const e of tabs.values()) {
+    if (e.paneEl && e.paneEl !== pane) e.paneEl.querySelector?.('.' + DRAFT_CHIP_CLASS)?.remove();
+  }
+  if (!rec) { pane?.querySelector?.('.' + DRAFT_CHIP_CLASS)?.remove?.(); return; }
+  if (!pane || !pane.isConnected) return;
+  if (pane.querySelector('.' + DRAFT_CHIP_CLASS)) return;  // 幂等：已在场
+  const host = pane.querySelector('.canvas-md-scroll, .canvas-txt-scroll') || pane;
+  const inScrollFace = host !== pane;
+  const chip = document.createElement('div');
+  chip.className = DRAFT_CHIP_CLASS;
+  chip.setAttribute('role', 'status');
+  chip.setAttribute('style', [
+    ...(inScrollFace
+      ? ['position:sticky', 'top:0', 'z-index:6',
+        'margin:0 var(--ds-space-indent-x) var(--ds-space-2)']
+      : ['position:relative', 'z-index:5',
+        'margin:var(--cv-safe-top, 56px) var(--ds-space-indent-x) var(--ds-space-2)']),
+    'display:flex', 'align-items:center', 'gap:var(--ds-space-inline-gap)',
+    'padding:var(--ds-space-2) var(--ds-space-inline-x)',
+    'border-radius:var(--ds-radius-button)',
+    'background:var(--st-control-bg)', 'color:var(--st-text)',
+    'font:var(--ds-fs-hint)/1.4 -apple-system,"Segoe UI",sans-serif',
+    'border:1px solid var(--st-control-border)',
+    'box-shadow:var(--st-control-shadow)',
+  ].join(';'));
+  const text = document.createElement('span');
+  text.className = 'canvas-draft-chip-text';
+  // 有落不回的正文 ⇒ 文案改成冲突说明（零通知仍成立：这是取回条自身的状态，
+  // 不是弹窗/toast；不给用户留一条「点了取回但其实没回来」的静默假象）。
+  const conflicted = [...pendingSeatDraftBuffers.values()].some((b) => b.verdict);
+  text.textContent = conflicted ? t('canvas.draftConflict') : t('canvas.draftAvailable');
+  text.setAttribute('style', 'flex:1 1 auto;');
+  const restore = document.createElement('button');
+  restore.className = 'canvas-draft-chip-restore';
+  restore.type = 'button';
+  restore.textContent = t('canvas.draftRestore');
+  restore.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid var(--st-control-border);background:var(--st-control-bg-hover);color:inherit;font:inherit;');
+  restore.onclick = () => { restoreSeatDraft(); };
+  const dismiss = document.createElement('button');
+  dismiss.className = 'canvas-draft-chip-dismiss';
+  dismiss.type = 'button';
+  dismiss.textContent = t('canvas.draftDismiss');
+  dismiss.setAttribute('style', 'flex:0 0 auto;cursor:pointer;padding:var(--ds-space-1) var(--ds-space-inline-x);border-radius:var(--ds-radius-input);border:1px solid var(--st-control-border);background:transparent;color:inherit;font:inherit;');
+  dismiss.onclick = () => { clearSeatDraft(); renderDraftEntry(); };
+  chip.append(text, restore, dismiss);
+  host.prepend(chip);
+}
+
+/** 试着把暂存的草稿正文写回落回的页签（一 tick 一次；由 restoreSeatDraft 循环驱动）。
+ *  三条硬判据：
+ *   ① **冲突不覆盖**：落草稿时记了磁盘版本读数，回来时若磁盘已变（baseVer ≠ 现读数），
+ *      不写回、记一条冲突——那说明别的窗口/别的机器已经把文件改成另一份内容，
+ *      拿旧草稿盖上去就是数据损失。
+ *   ② **截断不静默**：正文超上限只存了前缀，写回等于悄悄截断用户的编辑 ⇒ 不写回、记冲突。
+ *   ③ 页签/编辑器未就绪就下一 tick 再试（取回是异步的：readFile 应答 + 编辑器挂载）。
+ *  返回本 tick 的冲突清单（absPath 数组）。 */
+function flushSeatDraftBuffers() {
+  const conflicts = [];
+  for (const [absPath, buf] of [...pendingSeatDraftBuffers]) {
+    const entry = [...tabs.values()].find((t) => t.absPath === absPath);
+    if (!entry) continue;                       // 页签还没回来 —— 下一 tick
+    if (buf.verdict) continue;                  // 已判定冲突，等用户决定
+    if (buf.truncated) { buf.verdict = 'truncated'; conflicts.push(absPath); continue; }
+    if (buf.baseVer && entry._fileVer && entry._fileVer !== buf.baseVer) {
+      buf.verdict = 'conflict'; conflicts.push(absPath); continue;
+    }
+    let handle = entry.paneEl?._editorHandle;
+    if (!handle?.model?.setValue) {
+      // 渲染态查看器（md/html）：源码态才能落回正文 ⇒ 点一次既有源码开关，
+      // 编辑器下一 tick 挂上（不新造第二套入口，走单源 addSourceToggle）。
+      const toggle = entry.paneEl?.querySelector?.('.canvas-source-toggle');
+      if (toggle && !entry.paneEl.dataset.sourceMode) toggle.click();
+      continue;
+    }
+    try {
+      handle.model.setValue(buf.text);
+      handle.markDirty?.();
+      pendingSeatDraftBuffers.delete(absPath);
+    } catch { /* 下一 tick 再试 */ }
+  }
+  return conflicts;
+}
+
+/** 取回草稿：只把草稿里**缺**的页签补开进本地视图（并集，绝不删本地已有），把**未保存
+ *  正文**写回编辑器缓冲，再走正常写路径（写路径按需静默接管席位）。
+ *  **确认后清槽**：只有全部正文都落回（或本来就没有正文）才清本机草稿；有一条落不回去
+ *  （冲突/截断/页签始终没回来）就**留着**草稿与取回条，让人还能再试一次。 */
+async function restoreSeatDraft() {
+  const rec = readSeatDraft();
+  if (!rec) return;
+  pendingSeatDraftBuffers.clear();
+  for (const b of rec.buffers || []) {
+    if (b && typeof b.absPath === 'string') pendingSeatDraftBuffers.set(b.absPath, b);
+  }
+  try {
+    reconcileFromServer(rec);   // 「只补开缺失、不强制关闭」= 正是草稿的并集语义
+    if (rec.activeTabId && tabs.has(rec.activeTabId)) setActiveTab(rec.activeTabId);
+  } catch { /* 坏体/缺渲染器：取回尽力而为 */ }
+  // 有界重试：页签靠 readFile 应答回来、编辑器靠查看器异步挂载，最多等 ~4 秒。
+  for (let i = 0; i < 40 && pendingSeatDraftBuffers.size > 0; i++) {
+    flushSeatDraftBuffers();
+    const waiting = [...pendingSeatDraftBuffers.values()].some((b) => !b.verdict);
+    if (!waiting) break;                      // 只剩冲突项：不再空转
+    await new Promise((r) => setTimeout(r, 100));
+  }
+  const stuck = [...pendingSeatDraftBuffers.values()].filter((b) => !b.verdict).length;
+  const blocked = [...pendingSeatDraftBuffers.values()].filter((b) => b.verdict).length;
+  if (stuck === 0) {
+    clearSeatDraft();                          // 确认后清槽：正文都回家了
+  } else if (blocked > 0) {
+    // 有冲突：草稿留着（别让「取回」变成「丢草稿」），取回条改成冲突提示。
+    try {
+      const keep = { ...rec, buffers: rec.buffers };
+      localStorage.setItem(LS_DRAFT_KEY, JSON.stringify(keep));
+    } catch { /* ignore */ }
+  }
+  renderDraftEntry();
+  if (stuck === 0) persistTabs();              // 写穿；席位由写路径按需静默接管
+}
+
 function allowCanvasMutation() {
   return applyingLiveTabsFrame || (canvasWriter.role() === 'writer' && !localUnsynced);
 }
@@ -2693,6 +2924,9 @@ function renderCanvasHeader() {
   deckTitleEl.classList.toggle('is-dirty', !!(entry && isTabDirty(entry)));
   syncHeaderActions();
   syncRefBackButton();   // F5 返回原文档：随激活页签重sync可见性/座位
+  // 失权端草稿取回入口（静默接管批 2026-11-19）：随激活页签/页签集变化在这里对齐
+  // （幂等；草稿缺席即无动作）。
+  renderDraftEntry();
   // 触屏常驻横向档同步（作者令 2026-11-05 12:10）：本函数是「页签集 / 激活签 /
   // 脏标记」三处变化的公共出口 ⇒ 横排胶囊环在这里对齐新状态（桌面腿 no-op）。
   if (ringSyncFn) ringSyncFn();
@@ -5950,6 +6184,40 @@ function recordTombstone(id) {
   }
 }
 
+// 页签存档的**唯一序列化核**（persistTabs 与失权端草稿共用；纯函数、零副作用）。
+// 过滤规则集中一处，禁第二份（第二份 = 漂移源：草稿与服务端存档的页签集合必须逐条同口径）。
+function collectSerializableTabs() {
+  const serializable = [];
+  for (const [, t] of tabs) {
+    if (readerLocalTabs.has(t.id)) continue;
+    // Skip runtime flow-run tabs — their instanceId is invalid after a
+    // restart, so restoring them would leave dead tabs.
+    if (t.type === 'flow-run') continue;
+    // Skip URL tabs — they have no absPath and restoreTabs' panel-tab
+    // branch would re-open them as empty dead panes (canvas-tab-restore
+    // has no renderer for type 'url'). Losing URL tabs across a reload is
+    // acceptable per spec.
+    if (t.type === 'url') continue;
+    // Skip retired panel tabs (2026-09-05 旧 UI 退役): the legacy
+    // Teams/Flows panels no longer exist client-side — persisting them
+    // would re-open dead panes on every reload.
+    if (t.type === 'teams' || t.type === 'flows') continue;
+    // Skip delegate-diff tabs (2026-10-10 裁定): their payload lives in the
+    // chat card (click re-opens the view); a restored pane would be empty —
+    // canvas-tab-restore has no renderer that can refetch a batch payload.
+    if (t.type === 'filechanges') continue;
+    serializable.push({
+      id: t.id,
+      title: t.title,
+      type: t.type,
+      absPath: t.absPath || null,   // null for panel tabs (Teams/Flows)
+      pinned: t.pinned,
+      closable: t.closable !== false,  // default true
+    });
+  }
+  return serializable;
+}
+
 function persistTabs() {
   // Adopting a remote snapshot is not a new local intent; never echo it back.
   if (applyingLiveTabsFrame) return;
@@ -5962,34 +6230,7 @@ function persistTabs() {
   // （定案 A6 缺口 A）。空存档语义 = 不恢复：restoreFromData / restoreTabs
   // 均有 tabs.length > 0 守卫，故写空集不会造成「关不掉的标签」。
   try {
-    const serializable = [];
-    for (const [, t] of tabs) {
-      if (readerLocalTabs.has(t.id)) continue;
-      // Skip runtime flow-run tabs — their instanceId is invalid after a
-      // restart, so restoring them would leave dead tabs.
-      if (t.type === 'flow-run') continue;
-      // Skip URL tabs — they have no absPath and restoreTabs' panel-tab
-      // branch would re-open them as empty dead panes (canvas-tab-restore
-      // has no renderer for type 'url'). Losing URL tabs across a reload is
-      // acceptable per spec.
-      if (t.type === 'url') continue;
-      // Skip retired panel tabs (2026-09-05 旧 UI 退役): the legacy
-      // Teams/Flows panels no longer exist client-side — persisting them
-      // would re-open dead panes on every reload.
-      if (t.type === 'teams' || t.type === 'flows') continue;
-      // Skip delegate-diff tabs (2026-10-10 裁定): their payload lives in the
-      // chat card (click re-opens the view); a restored pane would be empty —
-      // canvas-tab-restore has no renderer that can refetch a batch payload.
-      if (t.type === 'filechanges') continue;
-      serializable.push({
-        id: t.id,
-        title: t.title,
-        type: t.type,
-        absPath: t.absPath || null,   // null for panel tabs (Teams/Flows)
-        pinned: t.pinned,
-        closable: t.closable !== false,  // default true
-      });
-    }
+    const serializable = collectSerializableTabs();
     // canvas-tab-sync 批（2026-11-17）：activeTabId 随载荷上服务端（schema 早支持，
     // 服务端 merge 命中生效墓碑即丢弃）——激活页签是跨设备同步面的一部分，
     // 此前只进 localStorage 缓存，他端无从跟随。null 序列化为缺省（服务端沿用
