@@ -414,6 +414,38 @@ object ChainsReadFace:
     )
 
   /**
+   * 批量链摘要面（`GET /api/chain-digests`·重启重连风暴修复批 2026-11-21）：**一次
+   * 请求**给出全部链键的内容摘要，取代「逐键 `GET /api/chains/:key`」的 N+1 重放。
+   *
+   * 语义：`digests` = 键 → 摘要（[[ChainStore.digestsSync]] sha256 前 16 位——只作
+   * **变更检测器**，不是读面权威，前端据此决定「哪几个键要取详情」）；`fingerprint`
+   * = 全部 (key,digest) 的排序摘要。请求带 `since=<上次 fingerprint>` 且未变 ⇒
+   * 只回 `{v,fingerprint,unchanged:true}`（零 digests 体——重连稳态的零增量路径）。
+   *
+   * 纪律：**零解析**（只读字节算 hash，坏/超大文件跳过，见 [[ChainStore.digestsSync]]）、
+   * 零写盘、零新权威——摘要变了只意味着「取一次详情」，绝不据摘要删改任何视图。
+   */
+  def chainDigestsJson(since: Option[String] = None): IO[Json] =
+    IO.blocking {
+      val entries = ChainStore.digestsSync().map((k, d) => k -> d.take(16))
+      val fingerprint = ChainStore
+        .sha256Hex(entries.map((k, d) => s"$k:$d").mkString("\n").getBytes("UTF-8"))
+        .take(16)
+      if since.contains(fingerprint) then
+        Json.obj("v" -> DigestFaceVersion.asJson, "fingerprint" -> fingerprint.asJson, "unchanged" -> true.asJson)
+      else
+        Json.obj(
+          "v" -> DigestFaceVersion.asJson,
+          "fingerprint" -> fingerprint.asJson,
+          "count" -> entries.size.asJson,
+          "digests" -> Json.fromFields(entries.map((k, d) => k -> d.asJson))
+        )
+    }
+
+  /** 摘要面载荷版本（前端按此判形状；旧引擎无此路由 = 404 ⇒ 前端回落到逐键腿）。 */
+  val DigestFaceVersion: Int = 1
+
+  /**
    * per-task 链视图投影（chains/:key 臂）。`None` = 查无 delegate 记录（HTTP 404 面）；
    * `Some` 的 `chain` 字段可为 null（作用域图不存在 = 三行族降级投影）。
    */

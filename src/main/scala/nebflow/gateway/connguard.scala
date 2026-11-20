@@ -52,6 +52,12 @@ final case class ConnGuardConfig(
   tunnelTotalCap: Int = ConnGuardConfig.DefaultTunnelTotalCap,
   /** Tunnel face: fixed-window length. */
   tunnelWindowSec: Int = 60,
+  /**
+   * Route-class override for `chains`. `None` = 无按类覆盖、回落 [[tunnelPerIpCap]]
+   * （显式构造的语义：调用方说了算）。**生产默认**由
+   * [[ConnGuardConfig.fromEnv]] 供给（[[ConnGuardConfig.DefaultTunnelChainsPerIpCap]]）
+   * —— 只有一条装配入口，不在 case class 默认值里再造一个第二真源。
+   */
   tunnelChainsPerIpCap: Option[Int] = None,
   tunnelFilesPerIpCap: Option[Int] = None,
   tunnelOtherPerIpCap: Option[Int] = None
@@ -64,8 +70,23 @@ object ConnGuardConfig:
   // A console cold load includes modules, editor preload, assets and API reads.
   // Admit two full asset trees plus bootstrap/retry traffic in the same window.
   // Keep both per-IP and process-wide limits finite, including loopback envelopes.
-  val DefaultTunnelPerIpCap: Int = 1024
-  val DefaultTunnelTotalCap: Int = 10240
+  //
+  // 重启重连风暴修复批（2026-11-21）：上一版 1024/60s 是按「两棵静态资源树」校准
+  // 的，对**数据面**已偏紧 —— 生产盘面实测 delegates 记录 1108 条 / chains 文件
+  // 2328 个，一次冷启的合法读量就能贴到 1024 上沿（作者手机端 01:38 那窗
+  // tunnelReq=1431 即被整桶拒掉 691 条，见 /tmp/nebflow-sbt-restart.log）。默认
+  // 抬到 4096/窗（≈68 rps 的稳态上限，仍有限、仍计数、环回照旧不豁免），并为
+  // `chains` 类单列 2048 的更紧默认（该类的读量是客户端可收敛的——前端已改为
+  // 一次性列表面 + 活跃行增量，见 delegateChainProvider.js）。
+  val DefaultTunnelPerIpCap: Int = 4096
+  val DefaultTunnelTotalCap: Int = 40960
+
+  /**
+   * `chains` 路由类的默认每 IP/窗预算。该类请求单条成本最高（registry 全表读 +
+   * 作用域 FlowMap 探针），故值低于通用预算：既容得下收敛后的合法首屏（数十条），
+   * 又比通用桶早一步挡住逐链风暴。env 覆盖：`…_TUNNEL_CHAINS_PER_IP_CAP`。
+   */
+  val DefaultTunnelChainsPerIpCap: Int = 2048
 
   val DefaultTrustedIps: Set[String] = Set("127.0.0.1", "::1", "0:0:0:0:0:0:0:1")
 
@@ -112,7 +133,7 @@ object ConnGuardConfig:
       tunnelPerIpCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_PER_IP_CAP", DefaultTunnelPerIpCap, 1),
       tunnelTotalCap = intEnv("GATEWAY_CONN_GUARD_TUNNEL_TOTAL_CAP", DefaultTunnelTotalCap, 1),
       tunnelWindowSec = intEnv("GATEWAY_CONN_GUARD_TUNNEL_WINDOW_SEC", 60, 1),
-      tunnelChainsPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_CHAINS_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1),
+      tunnelChainsPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_CHAINS_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1).orElse(Some(DefaultTunnelChainsPerIpCap)),
       tunnelFilesPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_FILES_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1),
       tunnelOtherPerIpCap = lookup("GATEWAY_CONN_GUARD_TUNNEL_OTHER_PER_IP_CAP").flatMap(_.trim.toIntOption).map(_ max 1)
     )
@@ -170,6 +191,15 @@ object ConnGuard:
     tunnelPerIpCap: Int = ConnGuardConfig.DefaultTunnelPerIpCap,
     /** Tunnel face: cross-IP total budget per window. */
     tunnelTotalCap: Int = ConnGuardConfig.DefaultTunnelTotalCap,
+    /**
+     * Tunnel face: **effective** per-IP budgets per route class (window) —— 重启重连
+     * 风暴修复批（2026-11-21）：按类桶此前只在 checkTunnel 内部生效、读数面不可见，
+     * 「到底哪个类打满」只能靠路径聚合日志反推。这里把三个类的生效值随快照下传
+     * （未单独配置的类 = 通用桶 [[tunnelPerIpCap]]）。
+     */
+    tunnelChainsPerIpCap: Int = ConnGuardConfig.DefaultTunnelChainsPerIpCap,
+    tunnelFilesPerIpCap: Int = ConnGuardConfig.DefaultTunnelPerIpCap,
+    tunnelOtherPerIpCap: Int = ConnGuardConfig.DefaultTunnelPerIpCap,
     wsPerIpCap: Int,
     wsTotalCap: Int,
     maxTrackedIps: Int,
@@ -211,7 +241,14 @@ object ConnGuard:
       logger.info(
         s"conn-guard enabled=${cfg.enabled} wsPerIpCap=${cfg.wsPerIpCap} " +
           s"wsTotalCap=${cfg.wsTotalCap} warnPct=${cfg.warnPct} snapshotSec=${cfg.snapshotSec} " +
-          s"trusted=[${cfg.trustedIps.mkString(",")}]"
+          s"trusted=[${cfg.trustedIps.mkString(",")}] " +
+          // 重启重连风暴修复批（2026-11-21）：tunnel 面的上限此前**从不打印**（作者
+          // 排障时只能从 healthJson 反推），这里补齐：通用桶 + 三个按类桶 + 窗口长。
+          s"tunnelPerIpCap=${cfg.tunnelPerIpCap} tunnelTotalCap=${cfg.tunnelTotalCap} " +
+          s"tunnelWindowSec=${cfg.tunnelWindowSec} tunnelChainsPerIpCap=${
+            cfg.tunnelChainsPerIpCap.getOrElse(cfg.tunnelPerIpCap)
+          } tunnelFilesPerIpCap=${cfg.tunnelFilesPerIpCap.getOrElse(cfg.tunnelPerIpCap)} " +
+          s"tunnelOtherPerIpCap=${cfg.tunnelOtherPerIpCap.getOrElse(cfg.tunnelPerIpCap)}"
       )
     }
 
@@ -265,7 +302,9 @@ object ConnGuard:
       s"trackedIps=${s.trackedIps}/${s.maxTrackedIps} overflow=${s.overflowConns} " +
       s"accepted=${s.acceptedTotal} rejected=${s.rejectedTotal} reqTotal=${s.reqTotal} " +
       s"reqUntracked=${s.reqUntrackedTotal} top=[$top] " +
-      s"tunnelReq=${s.tunnelReqTotal} tunnelRejected=${s.tunnelRejectedTotal}"
+      s"tunnelReq=${s.tunnelReqTotal} tunnelRejected=${s.tunnelRejectedTotal} " +
+      // 重启重连风暴修复批：快照行带按类上限（对照日志时不必再翻启动行）。
+      s"tunnelCaps=${s.tunnelPerIpCap}/${s.tunnelChainsPerIpCap}/${s.tunnelFilesPerIpCap}/${s.tunnelOtherPerIpCap}"
 
   /** 预警腿①（§C④-5）：WS 会话总量达 warnPct ⇒ 提前处置窗口（不再是静默失联）。 */
   def warnLine(s: Snapshot): Option[String] =
@@ -330,7 +369,12 @@ object ConnGuard:
         "reqTotal" -> s.tunnelReqTotal.asJson,
         "rejectedTotal" -> s.tunnelRejectedTotal.asJson,
         "perIpCap" -> s.tunnelPerIpCap.asJson,
-        "totalCap" -> s.tunnelTotalCap.asJson
+        "totalCap" -> s.tunnelTotalCap.asJson,
+        // 重启重连风暴修复批（2026-11-21）：按类预算随读数面下传（归因「到底是
+        // 哪个类别的桶打满」不再靠猜——作者 01:38 那窗全部落在 chains 类）。
+        "chainsPerIpCap" -> s.tunnelChainsPerIpCap.asJson,
+        "filesPerIpCap" -> s.tunnelFilesPerIpCap.asJson,
+        "otherPerIpCap" -> s.tunnelOtherPerIpCap.asJson
       ),
       "ember" -> Json.obj(
         "idleTimeout" -> ConnGuardConfig.IdleTimeout.toString.asJson,
@@ -568,6 +612,9 @@ class ConnGuard private (
         tunnelRejectedTotal = st.tunnelRejectedTotal,
         tunnelPerIpCap = config.tunnelPerIpCap,
         tunnelTotalCap = config.tunnelTotalCap,
+        tunnelChainsPerIpCap = config.tunnelChainsPerIpCap.getOrElse(config.tunnelPerIpCap),
+        tunnelFilesPerIpCap = config.tunnelFilesPerIpCap.getOrElse(config.tunnelPerIpCap),
+        tunnelOtherPerIpCap = config.tunnelOtherPerIpCap.getOrElse(config.tunnelPerIpCap),
         wsPerIpCap = config.wsPerIpCap,
         wsTotalCap = config.wsTotalCap,
         maxTrackedIps = config.maxTrackedIps,

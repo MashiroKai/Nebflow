@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "change": "restart-reconnect-storm",
+  "mappings": [
+    {
+      "requirement": "CDP-REQ-001",
+      "scenario": "CDP-SCN-001",
+      "implementation": [
+        "openspec/changes/restart-reconnect-storm/proposal.md",
+        "openspec/changes/restart-reconnect-storm/design.md",
+        "openspec/changes/restart-reconnect-storm/tasks.md",
+        "openspec/changes/restart-reconnect-storm/trace.json",
+        "openspec/changes/restart-reconnect-storm/specs/console-data-plane/spec.md",
+        "src/main/scala/nebflow/core/delegate/ChainStore.scala",
+        "src/main/scala/nebflow/core/project/ChainsReadFace.scala",
+        "src/main/scala/nebflow/gateway/PresenceRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/project/ChainsReadFaceSpec.scala",
+          "name": "chain digests: one call covers every key, the fingerprint is idempotent, only the touched key moves"
+        }
+      ]
+    },
+    {
+      "requirement": "CDP-REQ-001",
+      "scenario": "CDP-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/core/project/ChainsReadFace.scala",
+        "src/main/scala/nebflow/gateway/PresenceRoutes.scala",
+        "src/main/scala/nebflow/gateway/HttpCache.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/project/ChainsReadFaceSpec.scala",
+          "name": "chain digests: one call covers every key, the fingerprint is idempotent, only the touched key moves"
+        }
+      ],
+      "manual": {
+        "reason": "The 304 branch is the shared HttpCache conditional-request discipline, already covered by its own route families; here only the `?since=` reply is pinned mechanically.",
+        "steps": "GET /api/chain-digests, take `fingerprint`, then GET /api/chain-digests?since=<fingerprint> and GET /api/chain-digests with If-None-Match set to the first response's ETag on an isolated instance.",
+        "expected": "The first reply carries the digest map; the since-call answers {v,fingerprint,unchanged:true} in 57 bytes; the conditional call answers 304 with no body."
+      }
+    },
+    {
+      "requirement": "CDP-REQ-001",
+      "scenario": "CDP-SCN-003",
+      "implementation": [
+        "src/main/scala/nebflow/core/delegate/ChainStore.scala",
+        "src/main/scala/nebflow/core/project/ChainsReadFace.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/core/project/ChainsReadFaceSpec.scala",
+          "name": "chain digests: one call covers every key, the fingerprint is idempotent, only the touched key moves"
+        }
+      ]
+    },
+    {
+      "requirement": "CDP-REQ-002",
+      "scenario": "CDP-SCN-004",
+      "implementation": [
+        "src/main/resources/web/js/delegateChainProvider.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/delegate-chain-bulk-load.test.mjs",
+          "name": "delegate-chain-bulk-load"
+        }
+      ],
+      "manual": {
+        "reason": "The regression that motivated this change is a request-count shape across a whole console session; a deterministic replay counter reproduces the old and the new provider on the production row/key counts.",
+        "steps": "Run evidence/replay-count.mjs against the main provider and against the branch provider (fixture: 1108 delegate rows, 2328 chain keys) and compare the boot and reconnect totals.",
+        "expected": "Before: 2217 requests per round (1108 detail + 1108 children). After: 42 per round (1 row + 1 digest + 24 details + 16 child legs), and zero detail requests once the mirror is warm and the digest is unchanged."
+      }
+    },
+    {
+      "requirement": "CDP-REQ-002",
+      "scenario": "CDP-SCN-005",
+      "implementation": [
+        "src/main/resources/web/js/delegateChainProvider.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/delegate-chain-bulk-load.test.mjs",
+          "name": "delegate-chain-bulk-load"
+        }
+      ]
+    },
+    {
+      "requirement": "CDP-REQ-002",
+      "scenario": "CDP-SCN-006",
+      "implementation": [
+        "src/main/resources/web/js/delegateChainProvider.js"
+      ],
+      "tests": [
+        {
+          "path": "scripts/tests/subagent-visibility.test.mjs",
+          "name": "unchanged historical snapshots neither notify nor replace projected rows"
+        }
+      ]
+    },
+    {
+      "requirement": "CDP-REQ-003",
+      "scenario": "CDP-SCN-007",
+      "implementation": [
+        "src/main/resources/web/js/delegateChainProvider.js",
+        "src/main/scala/nebflow/neblink/portal/PortalTunnelBridge.scala"
+      ],
+      "tests": [
+        {
+          "path": "tests/delegate-chain-bulk-load.test.mjs",
+          "name": "delegate-chain-bulk-load"
+        },
+        {
+          "path": "tests/delegate-chain-throttle.test.mjs",
+          "name": "requests during first 5s="
+        }
+      ]
+    },
+    {
+      "requirement": "CDP-REQ-004",
+      "scenario": "CDP-SCN-008",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/connguard.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/infra/ConnGuardSpec.scala",
+          "name": "production tunnel budget is calibrated for the data-plane console load"
+        },
+        {
+          "path": "src/test/scala/nebflow/gateway/infra/ConnGuardSpec.scala",
+          "name": "tunnel face: per-class budgets surface in snapshotLine and healthJson"
+        }
+      ]
+    },
+    {
+      "requirement": "CDP-REQ-004",
+      "scenario": "CDP-SCN-009",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/connguard.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/infra/ConnGuardSpec.scala",
+          "name": "tunnel face: the chains class budget is its own bucket, not the general one"
+        }
+      ]
+    }
+  ]
+}

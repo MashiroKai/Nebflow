@@ -131,6 +131,37 @@ object ChainStore:
           .sortBy(_.entries.headOption.map(-_.at).getOrElse(Long.MaxValue))
     catch case _: Throwable => Nil
 
+  /**
+   * 全量**内容摘要**（重启重连风暴修复批 2026-11-21 · 批量摘要面供给）：键 →
+   * sha256(文件字节)。单遍扫盘、不解析 JSON——调用方（[[nebflow.core.project.ChainsReadFace]]
+   * 的批量摘要臂）只需要「这键变没变」，读面权威仍是 [[readSync]]。
+   *
+   * 纪律：坏文件/超限文件跳过（该键在摘要面缺席 ⇒ 调用方按「未知/需取详情」
+   * 处理，绝不据此删数据）；目录不存在 = 空表。`maxBytes` 防单个超大文件把一次
+   * 摘要扫盘拖成长尾（> 阈值的键恒报告为「变」——取详情兜底，语义安全）。
+   */
+  def digestsSync(maxBytes: Long = 8L * 1024 * 1024): List[(String, String)] =
+    try
+      if !os.exists(dir) then Nil
+      else
+        os.list(dir)
+          .filter(_.ext == "json")
+          .toList
+          .flatMap { p =>
+            try
+              val key = p.baseName
+              if !validKey(key) || os.size(p) > maxBytes then None
+              else Some(key -> sha256Hex(os.read.bytes(p)))
+            catch case _: Throwable => None
+          }
+          .sortBy(_._1)
+    catch case _: Throwable => Nil
+
+  /** sha256 十六进制（摘要面单点；无副作用）。 */
+  def sha256Hex(bytes: Array[Byte]): String =
+    val md = java.security.MessageDigest.getInstance("SHA-256")
+    md.digest(bytes).map(b => f"${b & 0xff}%02x").mkString
+
   // ── circe 编解码（字段即 case class 形态；Entry.kind/at 是承重字段） ──
   given io.circe.Encoder[Entry] = io.circe.generic.semiauto.deriveEncoder
   given io.circe.Decoder[Entry] = io.circe.generic.semiauto.deriveDecoder

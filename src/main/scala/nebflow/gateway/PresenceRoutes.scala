@@ -661,6 +661,23 @@ private[gateway] object PresenceRoutes:
           }
         }
 
+      // GET /api/chain-digests —— 批量链摘要面（重启重连风暴修复批 2026-11-21）。
+      // 问题（作者手机端实测 01:38）：控制台重连时对每个行键各发一次
+      // `GET /api/chains/:key`（N+1 重放，单窗上千条）⇒ tunnel guard 的
+      // tunnel-per-ip-cap 整桶拒掉 691 条 429，面板永远加载不齐。修法 = 让客户端
+      // 用**一次**请求拿到「全部链键变没变」，只对变了的键取详情。
+      // 形状：{v, fingerprint, count, digests:{key: sha16}}；`?since=<上次 fingerprint>`
+      // 未变 ⇒ {v, fingerprint, unchanged:true}（重连稳态零增量体）。
+      // 内容摘要 = chains 目录逐文件 sha256 前 16 位（只做变更检测，读面权威仍是
+      // /api/chains/:key）。独立路径（不挤在 /chains 下）以免与 :key 段互相遮蔽。
+      case req @ GET -> Root / "chain-digests" =>
+        withAuth(req) {
+          val since = req.params.get("since").map(_.trim).filter(_.nonEmpty)
+          ChainsReadFace.chainDigestsJson(since).flatMap { body =>
+            HttpCache.conditionalOk(req, body, HttpCache.ofJson(body))
+          }
+        }
+
       // GET /api/chains/:key — per-task 链视图（A8 读面下半）：record = ChainStore
       // 三行族原样（前端既有 chainFromStoreRecord 适配层的直接输入——接口形状零改动）
       // + chain = delegate 作用域 FlowMap 衍生投影（已挂载现读 / 未挂载盘面探针 / 无
