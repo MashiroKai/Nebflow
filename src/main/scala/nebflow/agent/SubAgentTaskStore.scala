@@ -164,6 +164,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
             completedAt = None,
             lastError = None,
             diagnostic = None,
+            suspectedLostTerminal = None,
             activityAt = None,
             activityKind = None,
             activityLabel = None,
@@ -315,6 +316,19 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
     case Right(row) => fireWriteHook(row).as(Right(row))
   }
 
+  /** Lock order is row lock → debtLock; CompletionDebtStore must never acquire a row lock.
+    * Only current, active managed runs may persist their first completion evidence.
+    */
+  def recordManagedCompletionDebt(parent: String, task: String, run: String,
+    messages: List[nebflow.shared.Message]): IO[Boolean] = withLock {
+    readTasksSync(parent).find(_.taskId == task) match
+      case Some(row) if Set("subtask", "subagent").contains(row.source) && row.runId.contains(run) && row.status == "running" &&
+          !row.executionStatus.exists(terminalExecutions.contains) =>
+        nebflow.core.mail.CompletionDebtStore.recordManagedSync(
+          nebflow.core.mail.CompletionDebtStore.ManagedDebt(parent, task, run, row.source, messages))
+      case _ => false
+  }
+
   /** First terminal commit wins; a process exit never asserts business success. */
   override def completeRun(
     parentSessionId: String,
@@ -344,6 +358,7 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
             resultRef = resultRef,
             incomplete = Some(incomplete),
             diagnostic = diagnostic.orElse(row.diagnostic),
+            suspectedLostTerminal = None,
             notificationId =
               if executionStatus == "interrupted" || !notifyParent then None
               else Some(notificationId.getOrElse(s"$taskId#$runId")),
@@ -607,16 +622,67 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
       case None => IO.unit
     }
 
+  /** Manual disposal of a flagged orphan only; a resolved or unflagged row is refused. */
+  def forceTerminalizeFlagged(parent: String, taskId: String, reason: String): IO[Either[String, SubAgentTask]] =
+    withLock {
+      val rows = readTasksSync(parent)
+      rows.find(_.taskId == taskId) match
+        case None => Left("task-not-found")
+        case Some(row) if !row.suspectedLostTerminal.contains(true) => Left("not-flagged")
+        case Some(row) if Set("completed", "failed", "cancelled").contains(row.status) => Left("already-terminal")
+        case Some(row) =>
+          val now = System.currentTimeMillis()
+          val updated = row.copy(status = "failed", executionStatus = Some("failed"),
+            lastError = Some(reason), terminalReason = Some(s"[manual force-terminalize] $reason"),
+            incomplete = Some(true), completedAt = Some(now), statusAt = Some(now),
+            committedRevision = Some(nextRevision(row)))
+          writeTasksSync(parent, rows.map(t => if t.taskId == taskId then updated else t))
+          Right(updated)
+    }.flatMap {
+      case Left(reason) => IO.pure(Left(reason))
+      case Right(row) => fireWriteHook(row).as(Right(row))
+    }
+
+  /** Mark an invalid protected terminal projection without altering its execution outcome. */
+  def markInvalidTerminalEnvelope(observed: SubAgentTask): IO[Boolean] = withLock {
+    val rows = readTasksSync(observed.parentSessionId)
+    rows.find(_.taskId == observed.taskId) match
+      case Some(row) if row.runId == observed.runId && row.committedRevision == observed.committedRevision &&
+          row.executionStatus.contains("finished") && !row.suspectedLostTerminal.contains(true) =>
+        val updated = row.copy(suspectedLostTerminal = Some(true), committedRevision = Some(nextRevision(row)))
+        writeTasksSync(row.parentSessionId, rows.map(t => if t.taskId == row.taskId then updated else t))
+        Some(updated)
+      case _ => None
+  }.flatMap {
+    case Some(row) => fireWriteHook(row).as(true)
+    case None => IO.pure(false)
+  }
+
+  /** Mark only an unchanged unresolved execution; first mark emits the alert. */
+  def markSuspectedLostTerminal(observed: SubAgentTask): IO[Boolean] = withLock {
+    val rows = readTasksSync(observed.parentSessionId)
+    rows.find(_.taskId == observed.taskId) match
+      case Some(row) if row.runId == observed.runId && row.committedRevision == observed.committedRevision &&
+          Set("running", "pending-recovery").contains(row.status) && !row.suspectedLostTerminal.contains(true) =>
+        val updated = row.copy(suspectedLostTerminal = Some(true), committedRevision = Some(nextRevision(row)))
+        writeTasksSync(row.parentSessionId, rows.map(t => if t.taskId == row.taskId then updated else t))
+        Some(updated)
+      case _ => None
+  }.flatMap {
+    case Some(row) => fireWriteHook(row).as(true)
+    case None => IO.pure(false)
+  }
+
   /** Reconcile only the unchanged legacy row; never overwrite cancellation or another run. */
   def completeDeliveredLegacy(parent: String, taskId: String, toolCallId: String): IO[Boolean] =
     withLock {
       val rows = readTasksSync(parent)
       rows.find(_.taskId == taskId) match
-        case Some(row) if row.source == "subagent" && row.runId.isEmpty && row.status == "running" &&
-            row.toolCallId.contains(toolCallId) =>
+        case Some(row) if row.source == "subagent" && row.runId.isEmpty &&
+            Set("running", "pending-recovery").contains(row.status) && row.toolCallId.contains(toolCallId) =>
           val now = System.currentTimeMillis()
           val updated = row.copy(status = "completed", completedAt = Some(now), statusAt = Some(now),
-            committedRevision = Some(nextRevision(row)))
+            suspectedLostTerminal = None, committedRevision = Some(nextRevision(row)))
           writeTasksSync(parent, rows.map(t => if t.taskId == taskId then updated else t))
           Some(updated)
         case _ => None

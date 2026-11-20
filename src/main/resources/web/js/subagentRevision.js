@@ -1,5 +1,9 @@
 /** Precise durable phase labels; an interrupted run is not a business failure. */
 export function taskExecutionPresentation(task) {
+  if (task?.suspectedLostTerminal === true) {
+    return { label: '疑似丢终态 · 需要人工处理', state: 'error',
+      reason: '未找到可信完成证据，任务未自动终态化。', phase: task.executionStatus || task.status || 'unknown' };
+  }
   if (!task?.executionStatus) return null;
   const phase = String(task.executionStatus);
   const interrupted = phase === 'interrupted' || phase === 'pending-recovery';

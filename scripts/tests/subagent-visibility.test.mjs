@@ -67,6 +67,16 @@ const row = (revision, extra = {}) => ({
   executionStatus: 'starting', runId: 'run-a', committedRevision: revision, ...extra,
 });
 
+test('suspected lost terminal is prominently visible for legacy and managed rows', () => {
+  const f = fixture();
+  for (const task of [{ status: 'running' }, { status: 'pending-recovery', executionStatus: 'interrupted' }]) {
+    f.context.input = { ...task, suspectedLostTerminal: true };
+    const presentation = vm.runInContext('taskExecutionPresentation(input)', f.context);
+    assert.match(presentation.label, /疑似丢终态/);
+    assert.equal(presentation.state, 'error');
+  }
+});
+
 test('durable discovery does not require a live parent or agentStart and retains terminal rows', async () => {
   const f = fixture();
   f.snapshot([row(1)]);

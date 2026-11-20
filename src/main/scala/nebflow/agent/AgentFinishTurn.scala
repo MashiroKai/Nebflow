@@ -363,6 +363,15 @@ private[agent] object AgentFinishTurn:
             val persistDebt: IO[Unit] = state.sessionId.fold(IO.unit) { sid =>
               resources.agentRegistry.get.flatMap { registry =>
                 registry.get(sid) match
+                  case Some(rec) if rec.kind == AgentKind.SubTask && rec.parentSessionId.nonEmpty =>
+                    resources.subAgentTaskStore.findByTaskId(sid).flatMap {
+                      case Some(row) if Set("subtask", "subagent").contains(row.source) && row.parentSessionId == rec.parentSessionId && row.runId.nonEmpty =>
+                        def persist(attempts: Int): IO[Unit] =
+                          resources.subAgentTaskStore.recordManagedCompletionDebt(row.parentSessionId, sid, row.runId.get, msgs).void
+                            .handleErrorWith(e => if attempts > 1 then persist(attempts - 1) else IO.raiseError(e))
+                        persist(3)
+                      case _ => IO.unit
+                    }
                   case Some(rec) if rec.kind == AgentKind.Delegate && rec.parentSessionId.nonEmpty =>
                     nebflow.core.mail.CompletionDebtStore.record(sid, rec.parentSessionId, msgs).void
                   case Some(rec) if rec.kind == AgentKind.Delegate =>

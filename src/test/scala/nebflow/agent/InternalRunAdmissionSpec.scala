@@ -14,6 +14,7 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.FileLockManager
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{Branding, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig, *}
+import nebflow.shared.given
 
 import scala.concurrent.duration.*
 
@@ -94,7 +95,8 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
             admission.executionId, id, id, ref, admission.attemptId, admission.incarnationId, event)
           def ref(result: ExecutionCommitResult) = result.asInstanceOf[ExecutionCommitResult.Committed].ref
           val envelope = Json.obj("source" -> "delegate".asJson, "eventType" -> "completed".asJson,
-            "payload" -> "done".asJson, "metadata" -> Json.obj(), "correlationId" -> admission.sessionId.asJson,
+            "payload" -> "done".asJson, "metadata" -> Json.obj("parentSessionId" -> parent.id.asJson,
+              "taskRunId" -> "run".asJson), "correlationId" -> admission.sessionId.asJson,
             "blocks" -> Json.Null)
           val resources = base.copy(executionCommitPort = authority)
           for
@@ -135,6 +137,103 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("supervisor refuses delivery of committed protected envelope with wrong source") {
+    fixture.use { case (base, system, _, root) =>
+      for
+        parent <- base.sessionStore.createSession("supervisor-invalid-parent", agentName = Some("worker"))
+        _ <- ExecutionCommitStore.resource((root / "sessions").toNIO).use { authority =>
+          val admission = ExecutionAdmission("supervisor-invalid-child", "run", "admission", "request", "attempt", "incarnation",
+            parent.id, "business", "audit", Json.fromString("initial"), "input")
+          val task = SubAgentTask(admission.sessionId, parent.id, "worker", "initial", "test", "running", 0,
+            System.currentTimeMillis(), None, None, "delegate")
+          def cmd(ref: ExecutionCommitRef, id: String, event: ExecutionEvent) = ExecutionTransition(admission.sessionId,
+            admission.executionId, id, id, ref, admission.attemptId, admission.incarnationId, event)
+          def ref(result: ExecutionCommitResult) = result.asInstanceOf[ExecutionCommitResult.Committed].ref
+          val envelope = Json.obj("source" -> "wrong-source".asJson, "eventType" -> "completed".asJson,
+            "payload" -> "done".asJson, "metadata" -> Json.obj("parentSessionId" -> parent.id.asJson,
+              "taskRunId" -> "run".asJson), "correlationId" -> admission.sessionId.asJson, "blocks" -> Json.Null)
+          val resources = base.copy(executionCommitPort = authority)
+          def idle: nebflow.actor.Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand](_ => IO.pure(idle))
+          for
+            _ <- base.subAgentTaskStore.beginRun(task, "run", parent.id, "nebflow")
+            admitted <- authority.admit(admission)
+            started <- authority.transition(cmd(ref(admitted), "start", ExecutionEvent.AttemptStarted))
+            _ <- authority.registerRunner(ExecutionRunner.Attempt(admission.sessionId, "run", "attempt", "incarnation")).use { registered =>
+              val runner = registered.toOption.get
+              for
+                model <- runner.startModel(cmd(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))(IO.unit)
+                (modelRef, receipt) = model.toOption.get
+                decision <- runner.modelDecision(cmd(modelRef, "decision", ExecutionEvent.ModelDecided(
+                  ExecutionModelDecision(Json.Null, Nil))), receipt)
+                checkpoint <- authority.commitRound(cmd(ref(decision), "round", ExecutionEvent.RoundCommitted(List("input"), Json.obj())))
+                _ <- runner.installTerminal(cmd(ref(checkpoint), "terminal", ExecutionEvent.TerminalInstallPrepared("", envelope)), envelope)
+                chain <- authority.observeChain(admission.sessionId, "run")
+                resultRef = chain.asInstanceOf[ExecutionChainObservation.Verified].state.terminalResultRef.get
+                _ <- runner.projectTerminal(base.subAgentTaskStore, resultRef)
+              yield ()
+            }
+            child <- system.spawn(idle, "supervisor-invalid-child")
+            supervisor <- system.spawn(BackoffSupervisor(childRef = child, childSpawnFn = (_, _) => IO.pure(child),
+              childName = admission.sessionId, parentRef = None, description = "initial", agentName = "worker",
+              subagentId = admission.sessionId, parentSessionId = parent.id, resources = resources,
+              initialPrompt = "initial", source = "delegate"), "supervisor-invalid")
+            _ <- supervisor ! nebflow.actor.AgentEvent.Completed(admission.sessionId, List(Message(MessageRole.Assistant, Left("done"))))
+            _ <- IO.sleep(500.millis)
+            pending <- SessionMailbox.scanPending(parent.id)
+          yield assertEquals(pending.count(_.identity == s"${admission.sessionId}#run"), 0)
+        }
+      yield ()
+    }
+  }
+
+  test("protected delegate with unbound envelope is marked for manual review without delivery") {
+    fixture.use { case (base, system, _, root) =>
+      for
+        parent <- base.sessionStore.createSession("unbound-protected-parent", agentName = Some("worker"))
+        _ <- ExecutionCommitStore.resource((root / "sessions").toNIO).use { authority =>
+          val admission = ExecutionAdmission("unbound-protected-child", "run", "admission", "request", "attempt", "incarnation",
+            parent.id, "business", "audit", Json.fromString("initial"), "input")
+          val task = SubAgentTask(admission.sessionId, parent.id, "worker", "initial", "test", "running", 0,
+            System.currentTimeMillis(), None, None, "delegate")
+          def cmd(ref: ExecutionCommitRef, id: String, event: ExecutionEvent) = ExecutionTransition(admission.sessionId,
+            admission.executionId, id, id, ref, admission.attemptId, admission.incarnationId, event)
+          def ref(result: ExecutionCommitResult) = result.asInstanceOf[ExecutionCommitResult.Committed].ref
+          val envelope = Json.obj("source" -> "delegate".asJson, "eventType" -> "completed".asJson,
+            "payload" -> "done".asJson, "metadata" -> Json.obj(), "correlationId" -> admission.sessionId.asJson,
+            "blocks" -> Json.Null)
+          val resources = base.copy(executionCommitPort = authority)
+          for
+            _ <- base.subAgentTaskStore.beginRun(task, "run", parent.id, "nebflow")
+            admitted <- authority.admit(admission)
+            started <- authority.transition(cmd(ref(admitted), "start", ExecutionEvent.AttemptStarted))
+            _ <- authority.registerRunner(ExecutionRunner.Attempt(admission.sessionId, "run", "attempt", "incarnation")).use { registered =>
+              val runner = registered.toOption.get
+              for
+                model <- runner.startModel(cmd(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))(IO.unit)
+                (modelRef, receipt) = model.toOption.get
+                decision <- runner.modelDecision(cmd(modelRef, "decision", ExecutionEvent.ModelDecided(
+                  ExecutionModelDecision(Json.Null, Nil))), receipt)
+                checkpoint <- authority.commitRound(cmd(ref(decision), "round", ExecutionEvent.RoundCommitted(List("input"), Json.obj())))
+                _ <- runner.installTerminal(cmd(ref(checkpoint), "terminal", ExecutionEvent.TerminalInstallPrepared("", envelope)), envelope)
+                chain <- authority.observeChain(admission.sessionId, "run")
+                resultRef = chain.asInstanceOf[ExecutionChainObservation.Verified].state.terminalResultRef.get
+                _ <- runner.projectTerminal(base.subAgentTaskStore, resultRef)
+              yield ()
+            }
+            before <- base.subAgentTaskStore.findByTaskId(admission.sessionId)
+            _ <- SubAgentStartupRecovery.sweep(base.subAgentTaskStore, base.sessionStore,
+              Some(SubAgentStartupRecovery.RevivalDeps(resources, system, None)), manual = true)
+            after <- base.subAgentTaskStore.findByTaskId(admission.sessionId)
+            pending <- SessionMailbox.scanPending(parent.id)
+          yield
+            assertEquals(after.flatMap(_.executionStatus), before.flatMap(_.executionStatus))
+            assertEquals(after.flatMap(_.suspectedLostTerminal), Some(true))
+            assertEquals(pending.count(_.identity == s"${admission.sessionId}#run"), 0)
+        }
+      yield ()
+    }
+  }
+
   test("recovery commits and delivers a saved terminal envelope for an active subtask run") {
     fixture.use { case (resources, _, _, _) =>
       for
@@ -146,7 +245,7 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
         running <- resources.subAgentTaskStore.updateRun(parent.id, task.taskId, "run-1", executionStatus = Some("running"))
         _ = assert(running.isRight)
         event = AgentCommand.ExternalEvent("subtask", "completed", "result from completed worker",
-          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
         _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
         _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
         _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
@@ -159,6 +258,275 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("notification replay refuses wrong-source saved envelope") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("bad-replay-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-bad-replay", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        event = AgentCommand.ExternalEvent("wrong-source", "completed", "untrusted",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
+        ref <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "finished", resultRef = Some(ref))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        pending <- SessionMailbox.scanPending(parent.id)
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(pending.count(_.identity == s"${task.taskId}#run-1"), 0)
+        assertEquals(row.flatMap(_.notificationPending), Some(true))
+    }
+  }
+
+  test("missing run identity in terminal envelope is held for manual review") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("missing-run-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-missing-run", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "answer",
+          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("starting"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
+    }
+  }
+
+  test("invalid envelope identity with matching debt requires manual review") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("invalid-evidence-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-invalid-evidence", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        messages = List(Message(MessageRole.Assistant, Left("answer")))
+        _ <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1", messages)
+        event = AgentCommand.ExternalEvent("wrong-source", "completed", "answer",
+          JsonObject("parentSessionId" -> parent.id.asJson, "completionMessages" -> messages.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.map(_.status), Some("running"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
+    }
+  }
+
+  test("consistent debt and envelope terminalize the managed row") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("consistent-evidence-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-consistent", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        messages = List(Message(MessageRole.Assistant, Left("same answer")))
+        _ <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1", messages)
+        event = AgentCommand.ExternalEvent("subtask", "completed", "same answer",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson,
+            "completionMessages" -> messages.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), None)
+    }
+  }
+
+  test("subagent debt whose source disagrees with the row is refused") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("subagent-mismatch-parent", agentName = Some("worker"))
+        task = SubAgentTask("subagent-debt-mismatch", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subagent")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        messages = List(Message(MessageRole.Assistant, Left("answer")))
+        _ <- IO.blocking(assert(nebflow.core.mail.CompletionDebtStore.recordManagedSync(
+          nebflow.core.mail.CompletionDebtStore.ManagedDebt(parent.id, task.taskId, "run-1", "subtask", messages))))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("starting"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
+    }
+  }
+
+  test("managed subagent row recovers from its own run-bound debt") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("subagent-debt-parent", agentName = Some("worker"))
+        task = SubAgentTask("subagent-debt-ok", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subagent")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1",
+          List(Message(MessageRole.Assistant, Left("answer"))))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+    }
+  }
+
+  test("first committed evidence wins and later debt cannot reopen a managed run") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("first-evidence-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-first-evidence", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "first answer",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
+        ref <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "finished", resultRef = Some(ref))
+        debtAccepted <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1",
+          List(Message(MessageRole.Assistant, Left("second answer"))))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(debtAccepted, false)
+        assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+        assertEquals(row.flatMap(_.resultRef), Some(ref))
+    }
+  }
+
+  test("cancelled managed run refuses stale completion debt") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("cancelled-debt-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-cancelled-debt", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "cancelled")
+        debtAccepted <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1",
+          List(Message(MessageRole.Assistant, Left("late answer"))))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(debtAccepted, false)
+        assertEquals(row.flatMap(_.executionStatus), Some("cancelled"))
+    }
+  }
+
+  test("debt write racing a cancel or a new run never binds the old run") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("race-debt-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-debt-race", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        results <- (resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1",
+            List(Message(MessageRole.Assistant, Left("late answer")))),
+          resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "cancelled")).parTupled
+        (debtAccepted, cancelled) = results
+        _ = assert(cancelled.isRight)
+        _ <- resources.subAgentTaskStore.acknowledgeNotification(parent.id, task.taskId, "run-1", s"${task.taskId}#run-1")
+        next <- resources.subAgentTaskStore.beginRun(
+          task.copy(status = "running", executionStatus = Some("starting")), "run-2", parent.id, "nebflow")
+        _ = assertEquals(next.map(_.runId), Right(Some("run-2")))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+        pending <- SessionMailbox.scanPending(parent.id)
+      yield
+        assertEquals(row.flatMap(_.runId), Some("run-2"))
+        assertEquals(row.flatMap(_.executionStatus), Some("starting"))
+        assertEquals(pending.count(_.identity == s"${task.taskId}#run-1"), 0)
+    }
+  }
+
+  test("resource-free recovery reconciles an active run from its saved terminal envelope") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("resource-free-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-resource-free", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "answer",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.reconcileWithoutResources(resources.subAgentTaskStore, resources.sessionStore)
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+    }
+  }
+
+  test("manual force-terminalize only disposes flagged orphan rows") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("force-terminalize-parent", agentName = Some("worker"))
+        flagged = SubAgentTask("subtask-force-flagged", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask", suspectedLostTerminal = Some(true))
+        healthy = flagged.copy(taskId = "subtask-force-healthy", suspectedLostTerminal = None, committedRevision = Some(1L))
+        _ <- resources.subAgentTaskStore.recordTask(flagged)
+        _ <- resources.subAgentTaskStore.recordTask(healthy)
+        refused <- resources.subAgentTaskStore.forceTerminalizeFlagged(parent.id, healthy.taskId, "reviewed")
+        disposed <- resources.subAgentTaskStore.forceTerminalizeFlagged(parent.id, flagged.taskId, "reviewed")
+        row <- resources.subAgentTaskStore.findByTaskId(flagged.taskId)
+      yield
+        assertEquals(refused, Left("not-flagged"))
+        assert(disposed.isRight)
+        assertEquals(row.map(_.status), Some("failed"))
+    }
+  }
+
+  test("conflicting completion debt and envelope require manual review") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("conflicting-evidence-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-conflict", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        debtMessages = List(Message(MessageRole.Assistant, Left("debt answer")))
+        _ <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1", debtMessages)
+        event = AgentCommand.ExternalEvent("subtask", "completed", "different answer",
+          JsonObject("parentSessionId" -> parent.id.asJson,
+            "completionMessages" -> List(Message(MessageRole.Assistant, Left("different answer"))).asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.map(_.status), Some("running"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
+    }
+  }
+
+  test("recovery consumes run-bound managed completion debt without an envelope") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("debt-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-debt-recovery", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        recorded <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1",
+          List(Message(MessageRole.Assistant, Left("finished"))))
+        _ = assert(recorded)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+        pending <- SessionMailbox.scanPending(parent.id)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+        assertEquals(pending.count(_.identity == s"${task.taskId}#run-1"), 1)
+    }
+  }
+
+  test("recovery processes a pending managed row with a saved terminal envelope") {
+    fixture.use { case (resources, _, _, root) =>
+      for
+        parent <- resources.sessionStore.createSession("pending-managed-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-pending-managed", parent.id, "worker", "inspect", "test",
+          "pending-recovery", 0, System.currentTimeMillis(), None, None, "subtask",
+          runId = Some("run-1"), executor = Some("nebflow"), executionStatus = Some("running"))
+        _ <- IO.blocking(os.write.over(root / "subagent-tasks" / s"${parent.id}.json", List(task).asJson.noSpaces, createFolders = true))
+        event = AgentCommand.ExternalEvent("subtask", "completed", "finished",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+    }
+  }
+
   test("legacy subagent recovery requires a matching parent tool result") {
     fixture.use { case (resources, _, _, _) =>
       for
@@ -166,16 +534,99 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
         task = SubAgentTask("subagent-legacy", parent.id, "worker", "inspect", "test", "running", 0,
           System.currentTimeMillis(), None, None, "subagent", toolCallId = Some("call-1"))
         other = task.copy(taskId = "subagent-other", toolCallId = Some("call-2"))
+        pending = task.copy(taskId = "subagent-pending", status = "pending-recovery", toolCallId = Some("call-3"))
         _ <- resources.subAgentTaskStore.recordTask(task)
         _ <- resources.subAgentTaskStore.recordTask(other)
+        _ <- resources.subAgentTaskStore.recordTask(pending)
         _ <- resources.sessionStore.saveMessagesForSession(parent.id,
-          List(Message(MessageRole.User, Right(List(nebflow.shared.ContentBlock.ToolResult("call-1", "result", Some(false)))), source = Some("tool-boundary")),
-            Message(MessageRole.User, Right(List(nebflow.shared.ContentBlock.ToolResult("call-2", "synthetic", Some(true)))), source = Some("future-synthetic"))))
+          List(Message(MessageRole.User, Right(List(
+            nebflow.shared.ContentBlock.ToolResult("call-1", "result", Some(false)),
+            nebflow.shared.ContentBlock.ToolResult("call-2", "synthetic", Some(true)),
+            nebflow.shared.ContentBlock.ToolResult("call-3", "pending result", Some(false))
+          )), source = Some("subagent-tool-returns:call-1,call-3"))))
         _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
         rows <- resources.subAgentTaskStore.loadTasks(parent.id)
       yield
         assertEquals(rows.find(_.taskId == task.taskId).map(_.status), Some("completed"))
         assertEquals(rows.find(_.taskId == other.taskId).map(_.status), Some("running"))
+        assertEquals(rows.find(_.taskId == other.taskId).flatMap(_.suspectedLostTerminal), Some(true))
+        assertEquals(rows.find(_.taskId == pending.taskId).map(_.status), Some("completed"))
+    }
+  }
+
+  test("interrupted row rejects completed envelope with missing run identity") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("interrupted-invalid-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-interrupted-invalid", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "interrupted")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "answer",
+          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        before <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        after <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield assertEquals(after, before)
+    }
+  }
+
+  test("interrupted managed row without completion evidence remains unchanged") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("interrupted-no-evidence", agentName = Some("worker"))
+        task = SubAgentTask("subtask-interrupted-no-evidence", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "interrupted")
+        before <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        after <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield assertEquals(after, before)
+    }
+  }
+
+  test("interrupted legacy managed row with completion evidence remains interrupted and is marked for review") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("interrupted-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-interrupted-review", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "interrupted")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "finished",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        receipt <- SessionMailbox.deliveredContains(parent.id, Set(s"${task.taskId}#run-1"))
+        _ = assertEquals(receipt, Set.empty[String])
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("interrupted"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
+    }
+  }
+
+  test("corrupt mailbox receipt cannot prove interrupted result was undelivered") {
+    fixture.use { case (resources, _, _, root) =>
+      for
+        parent <- resources.sessionStore.createSession("broken-receipt-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-corrupt-receipt", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "interrupted")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "finished",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- IO.blocking(os.write.over(root / "sessions" / parent.id / "mailbox" / "delivered.json", "broken", createFolders = true))
+        receipt <- SessionMailbox.deliveredContains(parent.id, Set(s"${task.taskId}#run-1"))
+        _ = assertEquals(receipt, Set.empty[String])
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("interrupted"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
     }
   }
 
