@@ -61,7 +61,7 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
    * legacyFixedTools 的 category=team 分支产物（逐字抄自实现：BaseTools + Mail
    *  + SubTask ++ TeamTaskTools）——用常量拼装，不写裸清单。
    */
-  private val LegacyTeamFace: Set[String] = AgentCore.BaseTools + "Mail" + "SubTask" ++ AgentCore.TeamTaskTools
+  private val LegacyTeamFace: Set[String] = AgentCore.BaseTools + "Mail" ++ AgentCore.TeamTaskTools
 
   /**
    * team 面**独有**件（相对 BaseTools 的增量：SubTask / TeamTask 三件）。

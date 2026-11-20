@@ -932,7 +932,7 @@ object AgentCore:
       // 全体 team 成员（照 #381 SubTask 先例；ctx.teamName 把写域钉死在
       // 自己的 team，无跨 team 面）。FlowExecute 移出固定面（2026-09-06
       // 工具面裁撤批）。
-      case "team" => BaseTools + "Mail" + "SubTask" ++ AgentCore.TeamTaskTools
+      case "team" => BaseTools + "Mail" ++ AgentCore.TeamTaskTools
       // FlowReport 移出固定面（2026-09-06 裁撤批）——flow 节点文本输出即结果。
       case "flow" => BaseTools
       case _ => BaseTools

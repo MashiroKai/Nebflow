@@ -120,7 +120,6 @@ object ToolRegistry:
       // 退役，全仓零生产调用点；FlowReportStore（FlowDagExecutor 消费的 verdict
       // 数据面）抽出为独立文件保留至阶段 3。
       // Team-member task delegation (self-clone + ephemeral worker, no Mail identity)
-      "SubTask" -> SubTaskTool,
       // TransferFile retired 2026-09-14 (#145): cross-device file moves moved into
       // SendMessage's `device:` attachment leg (Dropbox chunked channel); local
       // copies = SendMessage `to="local"`. Migration guide: AgentCore.RetiredToolGuides.

@@ -2948,7 +2948,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     val withDelegateMail = if delegateSession then withDelegateFace + "Mail" else withDelegateFace
     // Strip only the two Ask-exclusive message/history tools from other roles.
     // Shared lookup tools and Bash retain their existing role permissions.
-    withDelegateMail -- nebflow.core.ask.AskSessions.AskExclusiveTools
+    (withDelegateMail - "SubTask") -- nebflow.core.ask.AskSessions.AskExclusiveTools
 
   end buildAllowedToolSet
 
