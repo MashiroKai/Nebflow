@@ -14,6 +14,7 @@ import nebflow.social.outbound.{
   OutputBlock,
   PromptAction,
   PromptView,
+  RetryPolicy,
   RichDegrade,
   RichKind,
   RichProduct
@@ -107,27 +108,35 @@ final class WeixinIlinkBridgePlugin(
   rootSessionGate: Option[String => Boolean] = None,
   /**
    * Outbound send seam factory (weixin-outbound batch, 2026-10-07). Production
-   * = [[WeixinOutboundAdapter.sendLive]] (the authenticated side-car `POST
-   * /send` face); the offline spec injects a recorder so no test opens a
-   * socket. Takes the root so the production leg cold-reads the stored card
-   * and the shared token per send.
+   * = [[WeixinIlinkBridgePlugin.DefaultSend]] — the authenticated side-car
+   * `POST /send` face carrying the production retry policy
+   * （[[RetryPolicy.Bounded]]，社交出站 P0 批 2026-11-21 作者令③）; the offline
+   * spec injects a recorder so no test opens a socket. Takes the root so the
+   * production leg cold-reads the stored card and the shared token per send.
+   *
+   * 🔴 为什么策略装在这里而不是一个独立的 `retryPolicy` 构造参数：重试必须
+   * 发生在 [[WeixinOutboundAdapter]] **内部**，`attempts=` 字段才拿得到真实
+   * 次数（在桥这一层包装重试会让每一行都写 `attempts=1`，那是假话）。而
+   * Scala 的默认实参不能引用同一参数列表里的另一个参数，所以策略随工厂一起
+   * 出厂：[[WeixinIlinkBridgePlugin.DefaultSend]] 等三个默认值就是「生产面 +
+   * 有界退避」。要单次面（既有测试口径）就显式传 `WeixinOutboundAdapter.sendLive`。
    */
-  send: (os.Path => WeixinIlinkBridgePlugin.Send) = WeixinOutboundAdapter.sendLive,
+  send: (os.Path => WeixinIlinkBridgePlugin.Send) = WeixinIlinkBridgePlugin.DefaultSend,
   /**
    * Outbound MEDIA send seam factory (weixin-media batch, 2026-10-08).
-   * Production = [[WeixinOutboundAdapter.sendMediaLive]] (the same side-car
-   * face, the body carrying `image_path` / `file_path`); the offline spec
-   * injects a recorder. Same root-passing shape as [[send]].
+   * Production = [[WeixinIlinkBridgePlugin.DefaultSendMedia]] (the same
+   * side-car face, the body carrying `image_path` / `file_path`); the offline
+   * spec injects a recorder. Same root-passing shape as [[send]].
    */
-  sendMedia: (os.Path => WeixinIlinkBridgePlugin.SendMedia) = WeixinOutboundAdapter.sendMediaLive,
+  sendMedia: (os.Path => WeixinIlinkBridgePlugin.SendMedia) = WeixinIlinkBridgePlugin.DefaultSendMedia,
   /**
    * Outbound image-GROUP send seam factory (媒体合并批, 2026-10-22, 台账 #756).
-   * Production = [[WeixinOutboundAdapter.sendMediaGroupLive]] (the side-car
+   * Production = [[WeixinIlinkBridgePlugin.DefaultSendGroup]] (the side-car
    * group face: N images + an optional caption → one group message, automatic
    * per-item fallback server-side); the offline spec injects a recorder. Same
    * root-passing shape as [[send]].
    */
-  sendMediaGroup: (os.Path => WeixinIlinkBridgePlugin.SendGroup) = WeixinOutboundAdapter.sendMediaGroupLive,
+  sendMediaGroup: (os.Path => WeixinIlinkBridgePlugin.SendGroup) = WeixinIlinkBridgePlugin.DefaultSendGroup,
   /**
    * The DOCUMENT extension authority for the rich classification — the
    * single-authority rule ([[RichKind]]'s file header): the table is NEVER
@@ -1277,7 +1286,14 @@ final class WeixinIlinkBridgePlugin(
               // names) — the reason the 2026-10-08 21:52–22:51 incident (9
               // replies dead on the shim's ret=-2 502) produced zero engine
               // logs. Sequenced directly now — the drop actually logs.
-              logger.warn(s"weixin-ilink bridge: reply send failed code=${res.code} reason=${res.reason}") *>
+              // 出站失败绝不静默（社交出站 P0 批 2026-11-21，作者铁律②）：这一行
+              // 是**桥这一层**的上下文（哪条会话的哪次 flush 死了），与适配器
+              // chokepoint 的结构化 ERROR（渠道/to/code/reason/digest/attempts）
+              // 配对出现——失败被说两次，一次也不许沉默。级别同为 ERROR：作者要
+              // 的是「出站失败是错误事实」，不是提醒。
+              logger.error(
+                s"weixin-ilink bridge: reply send failed code=${res.code} reason=${res.reason}"
+              ) *>
                 // 逐段即时批：段级失败不补发（重发边界不变），注明一条。
                 (if isSegment then noteSegmentFailure(sessionId, res) else IO.unit)
           }
@@ -1730,20 +1746,16 @@ final class WeixinIlinkBridgePlugin(
       )
       .flatMap {
         case res if res.ok =>
-          IO(
-            logger.info(
-              s"weixin-ilink bridge: image group delivered to sender $sender (${paths.size} images, id=${res.messageId.getOrElse("-")})"
-            )
+          logger.info(
+            s"weixin-ilink bridge: image group delivered to sender $sender (${paths.size} images, id=${res.messageId.getOrElse("-")})"
           )
         case res =>
           val recover = caption.fold(IO.unit) { t =>
             deliverText(sender, t).flatMap { r =>
               if r.ok then IO.unit
               else
-                IO(
-                  logger.warn(
-                    s"weixin-ilink bridge: caption recovery send failed code=${r.code} reason=${r.reason}"
-                  )
+                logger.warn(
+                  s"weixin-ilink bridge: caption recovery send failed code=${r.code} reason=${r.reason}"
                 )
             }
           }
@@ -1782,10 +1794,8 @@ final class WeixinIlinkBridgePlugin(
   private def deliverLongShotMedia(sender: String, p: os.Path): IO[Unit] =
     IO(FileLongShot.Dedup.keyOf(p)).flatMap {
       case Some(key) if FileLongShot.Dedup.seen(key) =>
-        IO(
-          logger.info(
-            s"weixin-ilink bridge: long-shot duplicate suppressed for $p — same bytes already pushed (dedup)"
-          )
+        logger.info(
+          s"weixin-ilink bridge: long-shot duplicate suppressed for $p — same bytes already pushed (dedup)"
         )
       case keyOpt =>
         val out = root / "tmp" / "outbound-render" /
@@ -1798,15 +1808,11 @@ final class WeixinIlinkBridgePlugin(
                 outbound(sender, RichDegrade.originalNote(p)).flatMap { r2 =>
                   if r2.ok then IO.unit
                   else
-                    IO(
-                      logger.warnSync(
-                        s"weixin-ilink bridge: long-shot note send failed code=${r2.code} reason=${r2.reason}"
-                      )
+                    logger.warn(
+                      s"weixin-ilink bridge: long-shot note send failed code=${r2.code} reason=${r2.reason}"
                     )
-                } *> IO(
-                  logger.info(
-                    s"weixin-ilink bridge: file long-shot delivered to sender $sender (id=${res.messageId.getOrElse("-")})"
-                  )
+                } *> logger.info(
+                  s"weixin-ilink bridge: file long-shot delivered to sender $sender (id=${res.messageId.getOrElse("-")})"
                 )
               case res =>
                 val line = s"[图片发送失败 code=${res.code}] ${res.reason}"
@@ -1857,10 +1863,8 @@ final class WeixinIlinkBridgePlugin(
   private def deliverFileMedia(sender: String, p: os.Path): IO[Unit] =
     IO(FileLongShot.Dedup.keyOf(p)).flatMap {
       case Some(key) if FileLongShot.Dedup.seen(key) =>
-        IO(
-          logger.info(
-            s"weixin-ilink bridge: file-leg duplicate suppressed for $p — same bytes already pushed (dedup)"
-          )
+        logger.info(
+          s"weixin-ilink bridge: file-leg duplicate suppressed for $p — same bytes already pushed (dedup)"
         )
       case keyOpt =>
         val oversize: Option[String] = FileLeg.sizeOf(p) match
@@ -1907,11 +1911,11 @@ final class WeixinIlinkBridgePlugin(
   ): IO[WeixinOutboundAdapter.SendResult] =
     outboundMedia(sender, media).flatMap { res =>
       if res.ok then
-        IO(
-          logger.info(
+        logger
+          .info(
             s"weixin-ilink bridge: rich media delivered to sender $sender kind=$kindLabel (id=${res.messageId.getOrElse("-")})"
           )
-        ).as(res)
+          .as(res)
       else
         // 通知面文件名取段前先归一反斜杠：Windows 原生路径 split('/') 切不动
         // （通知会带全路径），归一后两种检出形态同取末段。
@@ -1963,6 +1967,26 @@ object WeixinIlinkBridgePlugin:
    * caller-side fallback).
    */
   type SendGroup = (String, List[String], Option[String]) => IO[WeixinOutboundAdapter.SendResult]
+
+  // ───────── 生产出站面的默认装配（社交出站 P0 批 2026-11-21，作者令③）─────────
+  //
+  // 三条默认工厂 = 「生产发送面 + 有界退避」：一次失败不再等于放弃（微信 iLink
+  // 腿实证：重启后 `ret=-2 prepare failed` 在 attempts=1 后就弃）。重试发生在
+  // [[WeixinOutboundAdapter.postLive]] 内部（因此 `attempts=` 是真实次数），判定
+  // 见 [[WeixinOutboundAdapter.retryableFailure]]——超时类中立失败仍然**不重试**
+  // （design §0.4 的重发边界不变）。
+  //
+  // 注入 recorder 的离线 spec 完全不受影响（它们显式传 `send = ...`）；要单次面
+  // 的调用方显式传 `WeixinOutboundAdapter.sendLive`（默认 Single）。
+
+  /** 文本腿生产默认：[[WeixinOutboundAdapter.sendLive]] + [[RetryPolicy.Bounded]]。 */
+  val DefaultSend: os.Path => Send = r => WeixinOutboundAdapter.sendLive(r, RetryPolicy.Bounded)
+
+  /** 媒体腿生产默认（同上）。 */
+  val DefaultSendMedia: os.Path => SendMedia = r => WeixinOutboundAdapter.sendMediaLive(r, RetryPolicy.Bounded)
+
+  /** 合并图组腿生产默认（同上）。 */
+  val DefaultSendGroup: os.Path => SendGroup = r => WeixinOutboundAdapter.sendMediaGroupLive(r, RetryPolicy.Bounded)
 
   /**
    * The outbound drop reason for a session with no bound sender: stable

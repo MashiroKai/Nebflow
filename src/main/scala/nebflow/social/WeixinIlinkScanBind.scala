@@ -210,7 +210,7 @@ final class WeixinIlinkScanBind(
     ev match
       case LoginEvent.Qr(url, code, expireIn) =>
         val expireAt = System.currentTimeMillis() + expireIn * 1000L
-        IO(logger.info(s"weixin scan-bind [$scanId]: qr ready (expireIn=$expireIn s)")) *>
+        logger.info(s"weixin scan-bind [$scanId]: qr ready (expireIn=$expireIn s)") *>
           advance(scanId) {
             case State.Starting => State.QrReady(url, code, expireAt)
             case q: State.QrReady if q.qrUrl != url || q.userCode != code =>
@@ -238,7 +238,7 @@ final class WeixinIlinkScanBind(
       case Right(_) =>
         activate.attempt.flatMap {
           case Right(_) =>
-            IO(logger.info(s"weixin scan-bind [$scanId]: bot ${creds.botId} stored and bridge sync fired")) *>
+            logger.info(s"weixin scan-bind [$scanId]: bot ${creds.botId} stored and bridge sync fired") *>
               statesRef.update(m => m.updated(scanId, State.Done(creds.botId)))
           case Left(e) =>
             // bind-transactional 批 (2026-10-20): the reason now carries the
@@ -247,12 +247,12 @@ final class WeixinIlinkScanBind(
             // names the exact failed steps; the panel's failed-state error must
             // say where the bind died (面板通道态显式报错，错误含具体失败步).
             val why = Option(e.getMessage).map(_.trim).filter(_.nonEmpty).getOrElse(e.getClass.getSimpleName)
-            IO(logger.warn(s"weixin scan-bind [$scanId]: bridge sync failed: $why")) *>
+            logger.warn(s"weixin scan-bind [$scanId]: bridge sync failed: $why") *>
               statesRef.update(m => m.updated(scanId, State.Failed(s"bridge sync failed: $why")))
         }
       case Left(err) =>
         val reason = renderSaveFailure(err)
-        IO(logger.warn(s"weixin scan-bind [$scanId]: credential persistence failed ($reason)")) *>
+        logger.warn(s"weixin scan-bind [$scanId]: credential persistence failed ($reason)") *>
           statesRef.update(m => m.updated(scanId, State.Failed(reason)))
     }
 
@@ -269,11 +269,11 @@ final class WeixinIlinkScanBind(
     case SocialChannels.Failure.UnknownChannel(id) => s"unknown channel $id"
 
   private def fail(scanId: String, kind: String, e: Throwable): IO[Unit] =
-    IO(logger.warn(s"weixin scan-bind [$scanId]: failed ($kind: ${e.getClass.getSimpleName})")) *>
+    logger.warn(s"weixin scan-bind [$scanId]: failed ($kind: ${e.getClass.getSimpleName})") *>
       statesRef.update(m => m.updated(scanId, State.Failed(kind)))
 
   private def fail(scanId: String, reason: String): IO[Unit] =
-    IO(logger.warn(s"weixin scan-bind [$scanId]: failed ($reason)")) *>
+    logger.warn(s"weixin scan-bind [$scanId]: failed ($reason)") *>
       statesRef.update(m => m.updated(scanId, State.Failed(reason)))
 
 end WeixinIlinkScanBind

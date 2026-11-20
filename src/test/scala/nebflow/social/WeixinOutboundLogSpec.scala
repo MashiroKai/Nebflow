@@ -62,17 +62,33 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
   ): List[String] =
     appender.list.asScala.toList.map(_.getFormattedMessage)
 
-  /** The WARN-level lines captured AFTER the given snapshot index. Slice
+  /** The failure-level lines captured AFTER the given snapshot index. Slice
     * FIRST, then filter: `before` is counted on the UNfiltered list, so a
-    * mint/start INFO inside the snapshot must never eat a post-snapshot WARN
-    * (the off-by-one the first draft had — WL2 proved it: the WARN fired and
-    * was captured, the drop ate it). */
+    * mint/start INFO inside the snapshot must never eat a post-snapshot
+    * failure line (the off-by-one the first draft had — WL2 proved it: the line
+    * fired and was captured, the drop ate it).
+    *
+    * 社交出站 P0 批（2026-11-21，作者铁律②「出站失败绝不静默——每次发送失败
+    * 必须 ERROR 级日志」）：本腿的失败行从 **WARN 升到 ERROR**，所以过滤面是
+    * WARN∪ERROR（不再只有 WARN）。级别本身由 [[newErrors]] 单独钉住，升级若被
+    * 悄悄回退，那条钉子会红。 */
   private def newWarns(
     appender: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent],
     before: Int
   ): List[String] =
     appender.list.asScala.toList.drop(before)
-      .filter(_.getLevel == ch.qos.logback.classic.Level.WARN)
+      .filter(e =>
+        e.getLevel == ch.qos.logback.classic.Level.WARN || e.getLevel == ch.qos.logback.classic.Level.ERROR)
+      .map(_.getFormattedMessage)
+
+  /** The ERROR-level lines captured after the snapshot index — the level pin
+    * (铁律②: 发送失败是 ERROR，不是提醒)。 */
+  private def newErrors(
+    appender: ch.qos.logback.core.read.ListAppender[ch.qos.logback.classic.spi.ILoggingEvent],
+    before: Int
+  ): List[String] =
+    appender.list.asScala.toList.drop(before)
+      .filter(_.getLevel == ch.qos.logback.classic.Level.ERROR)
       .map(_.getFormattedMessage)
 
   /** A loopback stub answering EVERY request with the fixed status + body
@@ -153,7 +169,13 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
         val r = WeixinOutboundAdapter.sendLive(root)("wx_alice", "你好，世界").unsafeRunSync()
         val fired = newWarns(appender, before)
         assertEquals(r.ok, false, "the send itself still fails contained (behaviour unchanged)")
-        assertEquals(fired.length, 1, s"exactly ONE WARN per failed send, got $fired")
+        assertEquals(fired.length, 1, s"exactly ONE line per failed send, got $fired")
+        // 铁律②（社交出站 P0 批 2026-11-21）：级别是 ERROR，不是提醒。
+        assertEquals(
+          newErrors(appender, before).count(_.contains("weixin outbound send failed")),
+          1,
+          "发送失败必须是 ERROR 级（作者铁律②）"
+        )
         val line = fired.headOption.getOrElse(fail(s"no WARN fired: $fired"))
         assert(line.contains("weixin outbound send failed"), s"the WARN stem is missing: $line")
         assert(line.contains("channel=weixin-ilink"), s"the channel is missing: $line")
