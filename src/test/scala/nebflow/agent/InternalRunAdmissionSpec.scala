@@ -140,7 +140,8 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
             admission.executionId, id, id, ref, admission.attemptId, admission.incarnationId, event)
           def ref(result: ExecutionCommitResult) = result.asInstanceOf[ExecutionCommitResult.Committed].ref
           val envelope = Json.obj("source" -> "delegate".asJson, "eventType" -> "completed".asJson,
-            "payload" -> "done".asJson, "metadata" -> Json.obj(), "correlationId" -> admission.sessionId.asJson,
+            "payload" -> "done".asJson, "metadata" -> Json.obj("parentSessionId" -> parent.id.asJson,
+              "taskRunId" -> "run".asJson), "correlationId" -> admission.sessionId.asJson,
             "blocks" -> Json.Null)
           val resources = base.copy(executionCommitPort = authority)
           for
@@ -202,6 +203,26 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
       yield
         assertEquals(row.flatMap(_.executionStatus), Some("finished"))
         assertEquals((pending ++ taken).count(e => e.identity == s"${task.taskId}#run-1" && e.event == event), 1)
+    }
+  }
+
+  test("notification replay refuses wrong-source saved envelope") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("bad-replay-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-bad-replay", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        event = AgentCommand.ExternalEvent("wrong-source", "completed", "untrusted",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
+        ref <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "finished", resultRef = Some(ref))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        pending <- SessionMailbox.scanPending(parent.id)
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(pending.count(_.identity == s"${task.taskId}#run-1"), 0)
+        assertEquals(row.flatMap(_.notificationPending), Some(true))
     }
   }
 

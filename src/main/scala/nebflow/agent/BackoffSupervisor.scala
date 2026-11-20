@@ -336,7 +336,8 @@ object BackoffSupervisor:
                         .encodeToString(run.getBytes(java.nio.charset.StandardCharsets.UTF_8))}.json").toString) &&
                     task.notificationId.contains(s"$subagentId#$run") =>
                   resources.sessionStore.loadTerminalEnvelope(subagentId, run).flatMap {
-                    case Some(saved) if Json.obj("source" -> saved.source.asJson, "eventType" -> saved.eventType.asJson,
+                    case Some(saved) if SubAgentStartupRecovery.validTerminalEnvelope(task, run, saved) &&
+                        Json.obj("source" -> saved.source.asJson, "eventType" -> saved.eventType.asJson,
                         "payload" -> saved.payload.asJson, "metadata" -> Json.fromJsonObject(saved.metadata),
                         "correlationId" -> saved.correlationId.asJson, "blocks" -> saved.blocks.asJson) == confirmed =>
                       (nebflow.core.delegate.DelegateTerminal.onTerminalCleanup(resources, subagentId,

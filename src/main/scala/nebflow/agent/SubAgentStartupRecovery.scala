@@ -179,6 +179,11 @@ object SubAgentStartupRecovery:
    * 逐个或一键全部复活。冻结行维持既有「原样保留」处置；完成未报告收尾腿
    * （finalizeCompletedUnreported）保留——完成交付不是错误通知。
    */
+  private[agent] def validTerminalEnvelope(task: SubAgentTask, run: String, event: AgentCommand.ExternalEvent): Boolean =
+    task.runId.contains(run) && event.source == task.source && event.correlationId.contains(task.taskId) &&
+      event.metadata("parentSessionId").flatMap(_.asString).contains(task.parentSessionId) &&
+      event.metadata("taskRunId").flatMap(_.asString).contains(run)
+
   private def isReconciliationRow(t: SubAgentTask): Boolean =
     Set("subagent", "subtask").contains(t.source) && Set("running", "pending-recovery").contains(t.status)
 
@@ -483,17 +488,11 @@ object SubAgentStartupRecovery:
         case nebflow.shared.ExecutionProtection.Unprotected =>
           (sessionStore.loadTerminalEnvelope(task.taskId, run),
             nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run, task.source)).tupled.flatMap {
-            case (Some(event), Some(debt)) if event.source != task.source || event.eventType != "completed" ||
-                !event.correlationId.contains(task.taskId) ||
-                !event.metadata("parentSessionId").flatMap(_.asString).contains(task.parentSessionId) ||
-                !event.metadata("taskRunId").flatMap(_.asString).contains(run) ||
+            case (Some(event), Some(debt)) if !validTerminalEnvelope(task, run, event) || event.eventType != "completed" ||
                 !event.metadata("completionMessages").contains(debt.messages.asJson) =>
               store.markSuspectedLostTerminal(task).void *>
                 logger.warn(s"[startup-recovery] conflicting terminal evidence for ${task.taskId}; manual review required")
-            case (Some(event), _) if event.source == task.source && event.eventType == "completed" &&
-                event.correlationId.contains(task.taskId) &&
-                event.metadata("taskRunId").flatMap(_.asString).contains(run) &&
-                event.metadata("parentSessionId").flatMap(_.asString).contains(task.parentSessionId) =>
+            case (Some(event), _) if event.eventType == "completed" && validTerminalEnvelope(task, run, event) =>
               sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap { ref =>
                 store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
                   notificationId = Some(s"${task.taskId}#$run")).void
@@ -526,10 +525,7 @@ object SubAgentStartupRecovery:
           val mayMark = if row.executionStatus.contains("interrupted") then
             row.runId.fold(IO.pure(false)) { run =>
               sessionStore.loadTerminalEnvelope(row.taskId, run).map(_.exists(event =>
-                event.source == row.source && event.eventType == "completed" &&
-                  event.metadata("taskRunId").flatMap(_.asString).contains(run) &&
-                  event.correlationId.contains(row.taskId) &&
-                  event.metadata("parentSessionId").flatMap(_.asString).contains(row.parentSessionId)))
+                event.eventType == "completed" && validTerminalEnvelope(row, run, event)))
             }
           else IO.pure(true)
           mayMark.flatMap { yes =>
@@ -563,7 +559,7 @@ object SubAgentStartupRecovery:
                     Some(task.taskId)
                   )
                 )
-                saved.orElse(fallback).fold(IO.unit) { event =>
+                saved.filter(validTerminalEnvelope(task, task.runId.get, _)).orElse(Option.when(saved.isEmpty)(fallback).flatten).fold(IO.unit) { event =>
                   val identity = task.notificationId.get
                   MailboxProducer
                     .deliver(
@@ -592,7 +588,7 @@ object SubAgentStartupRecovery:
               else rs.executionCommitPort.committedTerminal(task.taskId, run).flatMap {
                 case Left(_) => IO.unit
                 case Right(confirmed) => sessionStore.loadTerminalEnvelope(task.taskId, run).flatMap {
-                  case Some(event) if Json.obj("source" -> event.source.asJson, "eventType" -> event.eventType.asJson,
+                  case Some(event) if validTerminalEnvelope(task, run, event) && Json.obj("source" -> event.source.asJson, "eventType" -> event.eventType.asJson,
                       "payload" -> event.payload.asJson, "metadata" -> Json.fromJsonObject(event.metadata),
                       "correlationId" -> event.correlationId.asJson, "blocks" -> event.blocks.asJson) == confirmed =>
                     MailboxProducer.deliver(rs, task.parentSessionId, event,
