@@ -204,6 +204,25 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("legacy subagent recovery requires a matching parent tool result") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("legacy-parent", agentName = Some("worker"))
+        task = SubAgentTask("subagent-legacy", parent.id, "worker", "inspect", "test", "running", 0,
+          System.currentTimeMillis(), None, None, "subagent", toolCallId = Some("call-1"))
+        other = task.copy(taskId = "subagent-other", toolCallId = Some("call-2"))
+        _ <- resources.subAgentTaskStore.recordTask(task)
+        _ <- resources.subAgentTaskStore.recordTask(other)
+        _ <- resources.sessionStore.saveMessagesForSession(parent.id,
+          List(Message(MessageRole.User, Right(List(nebflow.shared.ContentBlock.ToolResult("call-1", "result", Some(false)))))))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        rows <- resources.subAgentTaskStore.loadTasks(parent.id)
+      yield
+        assertEquals(rows.find(_.taskId == task.taskId).map(_.status), Some("completed"))
+        assertEquals(rows.find(_.taskId == other.taskId).map(_.status), Some("running"))
+    }
+  }
+
   test("recovery does not infer completion from a parked subtask transcript") {
     fixture.use { case (resources, _, _, _) =>
       for

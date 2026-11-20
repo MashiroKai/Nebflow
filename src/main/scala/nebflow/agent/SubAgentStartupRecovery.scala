@@ -454,6 +454,22 @@ object SubAgentStartupRecovery:
     sessionStore: SessionStore,
     resources: Option[SharedResources]
   ): IO[Unit] = resources.fold(IO.unit) { rs =>
+    val recoverDeliveredLegacy = store.findRunningTasks.flatMap(_.filter(t =>
+      t.source == "subagent" && t.runId.isEmpty && t.toolCallId.exists(_.nonEmpty)
+    ).traverse_ { task =>
+      sessionStore.loadMessagesForSession(task.parentSessionId).flatMap { messages =>
+        val delivered = messages.exists {
+          case Message(MessageRole.User, Right(blocks), _, source, _, _) if !source.contains("crash-recovery") =>
+            blocks.exists {
+              case ContentBlock.ToolResult(id, _, _) => task.toolCallId.contains(id)
+              case _ => false
+            }
+          case _ => false
+        }
+        if delivered then store.completeDeliveredLegacy(task.parentSessionId, task.taskId, task.toolCallId.get).void
+        else IO.unit
+      }.handleErrorWith(e => logger.warn(s"[startup-recovery] legacy delivery check failed for ${task.taskId}: ${e.getMessage}"))
+    })
     val recoverActiveEnvelopes = store.findRunningTasks.flatMap(_.filter(t =>
       t.source == "subtask" && t.executor.contains("nebflow") && t.runId.nonEmpty
     ).traverse_ { task =>
@@ -473,7 +489,7 @@ object SubAgentStartupRecovery:
         case _ => IO.unit
       }.handleErrorWith(e => logger.warn(s"[startup-recovery] terminal envelope recovery failed for ${task.taskId}: ${e.getMessage}"))
     })
-    repairCommittedProjections(store, rs.executionCommitPort) *> recoverActiveEnvelopes *> store
+    repairCommittedProjections(store, rs.executionCommitPort) *> recoverDeliveredLegacy *> recoverActiveEnvelopes *> store
       .findAllTasks()
       .flatMap(
         _.filter(t =>
