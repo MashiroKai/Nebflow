@@ -87,22 +87,38 @@ private[agent] final class ChildReportJournal private (root: Path, session: Stri
     )
   }
 
-  def closeNoReport(slot: Long): Unit = ChildReportJournal.synchronized {
+  def closeNoReport(slot: Long): Unit = closeNoReportIfOpen(slot)
+
+  /**
+   * 幂等收口：槽仍 open 才落 `no-report`，已落终态（或此刻已被并发收口）则什么都不做。
+   *
+   * 为什么需要（child-report 双收口批 2026-11-21）：一个 turn 的收尾路径会**两处**收口
+   * 同一个槽 —— [[nebflow.agent.AgentFinishTurn]] 的 `routeChildProgress`（正文不是进度件
+   * ⇒ 本 turn 无报告）与 `handleLlmCompleteBranch` 的文本收尾分支（再收一次）。旧实现
+   * 第二处直接抛 `only open requests can close without report`，把本已正常的 turn 打成
+   * 「Agent error in processing, returning to idle」——现象正是：LoopGuard 的 turn 2 永远
+   * 等不到冻结、wake 轮永远少一次 LLM 调用、AgentRoundRecovery 30s 超时，
+   * **四条基线红同一根因**（base 实测日志逐条命中该 require 文本）。
+   * 收口语义面本身是幂等的（终态之后没有第二个终态），故以本方法为唯一收口入口。
+   */
+  def closeNoReportIfOpen(slot: Long): Boolean = ChildReportJournal.synchronized {
     val state = readProtocol()
     val entries = state.hcursor.get[io.circe.JsonObject]("entries").fold(throw _, identity)
-    val entry = entries(slot.toString).getOrElse(throw new IllegalArgumentException("unknown slot"))
-    require(
-      entry.hcursor.get[String]("status").toOption.contains("open"),
-      "only open requests can close without report"
-    )
-    writeProtocol(
-      state.mapObject(
-        _.add(
-          "entries",
-          io.circe.Json.fromJsonObject(entries.add(slot.toString, entry.mapObject(_.add("status", "no-report".asJson))))
+    entries(slot.toString) match
+      case Some(entry) if entry.hcursor.get[String]("status").toOption.contains("open") =>
+        writeProtocol(
+          state.mapObject(
+            _.add(
+              "entries",
+              io.circe.Json.fromJsonObject(
+                entries.add(slot.toString, entry.mapObject(_.add("status", "no-report".asJson)))
+              )
+            )
+          )
         )
-      )
-    )
+        true
+      case Some(_) => false // 已落终态：幂等，什么都不做
+      case None => throw new IllegalArgumentException("unknown slot")
   }
 
   def markFlushed(slot: Long): Unit = ChildReportJournal.synchronized {

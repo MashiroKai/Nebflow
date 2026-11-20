@@ -31,7 +31,7 @@ private[agent] object AgentFinishTurn:
       case (Some(sid), Some(slot)) =>
         val journal = ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid)
         ChildReport.body(text, continues = true) match
-          case None => IO.blocking(journal.closeNoReport(slot))
+          case None => IO.blocking(journal.closeNoReportIfOpen(slot)).void
           case Some(body) =>
             // 身份 = journal 里**已持久预留**的那个 id（write-ahead）——重派同一
             // 逻辑槽复用它，父端按既有 DeliveredReceiptLedger 折叠去重，绝不因
@@ -170,7 +170,7 @@ private[agent] object AgentFinishTurn:
             IO.blocking(
               ChildReportJournal
                 .open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid)
-                .closeNoReport(slot)
+                .closeNoReportIfOpen(slot)
             )
           case _ => IO.unit
         closeSlot *> finishTurn(

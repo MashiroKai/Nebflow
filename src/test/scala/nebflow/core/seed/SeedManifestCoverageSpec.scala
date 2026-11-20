@@ -75,6 +75,17 @@ class SeedManifestCoverageSpec extends FunSuite:
   /**
    * 种子树「目录名 → 是否含 plugin.json」对照表（file 与 jar 双协议，与
    * `SeedService.resourceDirList` 的协议判定同口径：sbt test = file，assembly = jar）。
+   *
+   * **空目录不算种子包**（陈旧构件批 2026-11-21）：`target/` 不是干净构建面——
+   * sbt 的 copyResources 只做增量拷贝，**从不删除**源侧已退役的目录。`design-language`
+   * 种子包由 af404938c 退役后，`target/scala-3.5.2/classes/seed/plugins/design-language/`
+   * 只剩一棵 0 文件的空壳（实测 `find -type f` = 0），于是 K9-b 在**任何保留旧 target
+   * 的开发机/CI 缓存**上恒红，而它报的并不是源码缺陷：`src/main/resources/seed/plugins/`
+   * 下面每个目录都有 plugin.json。
+   *
+   * 判据收窄到「**含文件的**目录」：空目录恰恰是 `SeedService.resourceDirList` 会
+   * 自然跳过的形态（没有任何资源可枚举），把它当「畸形种子包」是假阳；真畸形
+   * （有文件、无 plugin.json）仍然逐条报红，方向未放宽。
    */
   private def seedTreeDirs(): Map[String, Boolean] =
     val url = Option(getClass.getClassLoader.getResource(SeedPluginsResource)).getOrElse(
@@ -83,7 +94,11 @@ class SeedManifestCoverageSpec extends FunSuite:
     url.getProtocol match
       case "file" =>
         val dir = os.Path(java.nio.file.Paths.get(url.toURI))
-        os.list(dir).filter(os.isDir).map(d => d.last -> os.exists(d / "plugin.json")).toMap
+        os.list(dir)
+          .filter(os.isDir)
+          .filter(d => os.walk(d).nonEmpty)
+          .map(d => d.last -> os.exists(d / "plugin.json"))
+          .toMap
       case "jar" =>
         // jar 未必带目录条目 ⇒ 目录名从条目名首段归并，合法性 = 存在 `<name>/plugin.json` 条目
         val entries = jarSeedEntries(url)
