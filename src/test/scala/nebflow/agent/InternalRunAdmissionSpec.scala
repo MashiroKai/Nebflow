@@ -415,6 +415,71 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("first committed evidence wins and later debt cannot reopen a managed run") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("first-evidence-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-first-evidence", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "first answer",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
+        ref <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "finished", resultRef = Some(ref))
+        debtAccepted <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1",
+          List(Message(MessageRole.Assistant, Left("second answer"))))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(debtAccepted, false)
+        assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+        assertEquals(row.flatMap(_.resultRef), Some(ref))
+    }
+  }
+
+  test("cancelled managed run refuses stale completion debt") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("cancelled-debt-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-cancelled-debt", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "cancelled")
+        debtAccepted <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1",
+          List(Message(MessageRole.Assistant, Left("late answer"))))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(debtAccepted, false)
+        assertEquals(row.flatMap(_.executionStatus), Some("cancelled"))
+    }
+  }
+
+  test("debt write racing a cancel or a new run never binds the old run") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("race-debt-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-debt-race", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        results <- (resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1",
+            List(Message(MessageRole.Assistant, Left("late answer")))),
+          resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "cancelled")).parTupled
+        (debtAccepted, cancelled) = results
+        _ = assert(cancelled.isRight)
+        _ <- resources.subAgentTaskStore.acknowledgeNotification(parent.id, task.taskId, "run-1", s"${task.taskId}#run-1")
+        next <- resources.subAgentTaskStore.beginRun(
+          task.copy(status = "running", executionStatus = Some("starting")), "run-2", parent.id, "nebflow")
+        _ = assertEquals(next.map(_.runId), Right(Some("run-2")))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+        pending <- SessionMailbox.scanPending(parent.id)
+      yield
+        assertEquals(row.flatMap(_.runId), Some("run-2"))
+        assertEquals(row.flatMap(_.executionStatus), Some("starting"))
+        assertEquals(pending.count(_.identity == s"${task.taskId}#run-1"), 0)
+    }
+  }
+
   test("conflicting completion debt and envelope require manual review") {
     fixture.use { case (resources, _, _, _) =>
       for
