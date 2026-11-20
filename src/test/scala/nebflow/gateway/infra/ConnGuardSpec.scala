@@ -498,6 +498,52 @@ class ConnGuardSpec extends CatsEffectSuite:
     assertEquals(o.tunnelTotalCap, 1200)
     assertEquals(o.tunnelWindowSec, 60) // junk falls back
 
+  // ── 重启重连风暴修复批（2026-11-21）：默认预算与按类桶 ─────────────────────
+
+  /**
+   * 生产默认值必须容得下**数据面**的一次重启冷启：作者手机端 01:38 那窗实测
+   * tunnelReq=1431 / 被拒 691（/tmp/nebflow-sbt-restart.log），而盘面规模是
+   * delegates 1108 行 / chains 2328 文件——旧默认 1024/窗 贴在被防对象的上沿。
+   * 这里的断言是「校准下限」而非精确值：低于它 = 合法冷启就会被自己拒。
+   */
+  test("production tunnel budget is calibrated for the data-plane console load"):
+    val cfg = ConnGuardConfig.fromEnv(_ => None)
+    assert(cfg.tunnelPerIpCap >= 4096, s"per-IP budget too tight for a cold console load: ${cfg.tunnelPerIpCap}")
+    assert(cfg.tunnelTotalCap >= cfg.tunnelPerIpCap, "the cross-IP total must not be below one IP's budget")
+    assertEquals(cfg.tunnelChainsPerIpCap, Some(ConnGuardConfig.DefaultTunnelChainsPerIpCap),
+      "fromEnv supplies the chains-class production default")
+    assert(cfg.tunnelChainsPerIpCap.exists(_ >= 1024), "the chains class must admit a bounded bulk load")
+    assert(cfg.tunnelChainsPerIpCap.exists(_ < cfg.tunnelPerIpCap),
+      "the chains class stays tighter than the general bucket (per-request cost is the highest)")
+
+  test("tunnel face: the chains class budget is its own bucket, not the general one"):
+    val ip = "198.51.100.11"
+    def request(g: ConnGuard, path: String): IO[Option[String]] =
+      g.observeTunnelRequest(ip, path) *> g.checkTunnel(ip, path)
+    for
+      g <- guard(ConnGuardConfig(tunnelPerIpCap = 2, tunnelChainsPerIpCap = Some(3), tunnelTotalCap = 1000))
+      chains <- (1 to 4).toList.traverse(_ => request(g, "/api/chains/t1"))
+      files <- (1 to 3).toList.traverse(_ => request(g, "/api/nf-file"))
+    yield
+      assertEquals(chains.take(3), List(None, None, None), "the chains bucket admits its own cap")
+      assertEquals(chains(3), Some("tunnel-per-ip-cap"), "cap+1 on the chains bucket is rejected")
+      assertEquals(files.take(2), List(None, None))
+      assertEquals(files(2), Some("tunnel-per-ip-cap"), "the files bucket keeps the general budget")
+
+  test("tunnel face: per-class budgets surface in snapshotLine and healthJson"):
+    for
+      g <- guard(ConnGuardConfig(tunnelPerIpCap = 2, tunnelChainsPerIpCap = Some(3), tunnelTotalCap = 1000))
+      s <- g.snapshot
+    yield
+      assertEquals(s.tunnelChainsPerIpCap, 3)
+      assertEquals(s.tunnelFilesPerIpCap, 2, "an unconfigured class reports the general budget")
+      assertEquals(s.tunnelOtherPerIpCap, 2)
+      assert(ConnGuard.snapshotLine(s).contains("tunnelCaps=2/3/2/2"),
+        s"the snapshot line must carry the per-class caps: ${ConnGuard.snapshotLine(s)}")
+      val tunnel = ConnGuard.healthJson(s, 0L).hcursor.downField("tunnel")
+      assertEquals(tunnel.get[Int]("chainsPerIpCap").toOption, Some(3))
+      assertEquals(tunnel.get[Int]("filesPerIpCap").toOption, Some(2))
+
   test("healthJson exposes both warn calibers and the bounded-table readings"):
     val s = ConnGuard.Snapshot(
       enabled = true,

@@ -42,6 +42,11 @@ export const CHAINS_API = {
   // 旧端点 /api/chains 保留（归档窗与既有消费面不动），行集权威自此单缝走本端点。
   rows: () => '/api/delegates',
   chain: (key) => `/api/chains/${encodeURIComponent(String(key || ''))}`,
+  // 批量摘要面（重启重连风暴修复批 2026-11-21）：**一次请求**拿到全部链键的内容
+  // 摘要（`{v,fingerprint,digests:{key:sha16}}`），取代逐键 /api/chains/<key> 的
+  // N+1 重放。`?since=<上次 fingerprint>` 未变 ⇒ `{unchanged:true}`（零增量体）。
+  digests: (since) =>
+    since ? `/api/chain-digests?since=${encodeURIComponent(String(since))}` : '/api/chain-digests',
 };
 
 /** 行键（taskNo ‖ delegateId——ChainStore.keyFor 同口径，与 taskList.delegateRowKey 一致）。 */
@@ -159,29 +164,117 @@ const childrenMirror = new Map();
 const childrenFetchedAt = new Map();
 /** 在飞父（防同一父并发打点；同 refreshChildren 的单飞闸门）。 */
 const childrenInflight = new Set();
+/** 链视图取回时刻（重启重连风暴修复批：活跃行的最小重取间隔 + 轮转顺序判据）。 */
+const chainFetchedAt = new Map();
+/** 链摘要镜像（key → 内容摘要 16 位）：**变更检测器**，不是读面权威——摘要变了
+ *  只意味着「取一次详情」（读面恒为 /api/chains/<key>）。 */
+const chainDigests = new Map();
+/** 上一次摘要面的 fingerprint（`?since=` 零增量判据；空串 = 首次全量）。 */
+let digestsFingerprint = '';
+/** 按需补拉队列（行键）与出队定时器：渲染面真用到某键时才排队，逐条、有间隔。 */
+const lazyQueue = [];
+const lazyQueued = new Set();
+let lazyTimer = null;
 
-// Each chain URL has its own rate-limit state; no request is queued or delayed.
-const chainBackoff = new Map();
-const CHAIN_RATE_LIMITED = Symbol('chain-rate-limited');
-async function fetchJson(url) {
-  const isChain = url === '/api/chains' || url.startsWith('/api/chains/');
-  const previous = isChain ? chainBackoff.get(url) : null;
-  if (previous && Date.now() < previous.until) return CHAIN_RATE_LIMITED;
-  const r = await fetch(url, { headers: authHeaders() });
-  if (isChain && r.status === 429) {
-    const current = chainBackoff.get(url);
-    const attempts = (current?.attempts || 0) + 1;
-    const value = r.headers.get('Retry-After');
-    const seconds = value === null ? NaN : Number(value);
-    const serverDelay = Number.isFinite(seconds) ? Math.max(0, seconds * 1000) : 0;
-    const delay = Math.max(serverDelay, Math.min(60000, 1000 * 2 ** Math.min(attempts - 1, 6)));
-    chainBackoff.set(url, { attempts, until: Math.max(current?.until || 0, Date.now() + delay) });
-    return CHAIN_RATE_LIMITED;
-  }
-  if (isChain && r.ok && (!previous || chainBackoff.get(url) === previous)) chainBackoff.delete(url);
-  if (!r.ok) return null; // 404/5xx 都不是崩面——调用方按「无读数」降级
-  return await r.json();
+// ── 取数闸（重启重连风暴修复批 2026-11-21）─────────────────────────────────
+// 事故（作者手机端 01:38 实测 /tmp/nebflow-sbt-restart.log）：重连时对**每个行键**
+// 各发一次 GET /api/chains/<key>（N+1 重放；生产盘 1108 行 ⇒ 单次重连即上千并发），
+// tunnel guard 按 tunnel-per-ip-cap 整桶 429（一窗 691 条），面板永远加载不齐、
+// 视图反复重建 ⇒ 加载慢 + 操作卡顿。本段是**唯一的请求咽喉**，四条纪律：
+//   ① 单飞：同一时刻只有一轮刷新在飞，期间的新触发并成「再来一轮」（不叠加）；
+//   ② 并发上限：详情腿与子代理腿共用同一个信号量（MAX_INFLIGHT=4）；
+//   ③ 429 ⇒ 按**端点类**（不是逐 URL：逐 URL 的表会随键数涨）指数退避 + **抖动**，
+//      尊重 Retry-After，窗口内零重试（禁紧循环）；
+//   ④ 一轮内一旦撞 429，本轮后续详情请求直接放弃（让位给下一轮退避窗）。
+const MAX_INFLIGHT = 4;
+/** 一轮刷新最多发多少条详情/子代理请求（余量交给下一轮 + 按需补拉队列）。 */
+const DETAIL_BUDGET = 24;
+const CHILD_BUDGET = 16;
+/** 活跃行链视图的最小重取间隔（活跃行的节点状态要新，但不必每帧都取）。 */
+const DETAIL_TTL_MS = 5000;
+/** 按需补拉的起始间隔（渲染面逐个真用到时才排队，绝不整批打点）。 */
+const LAZY_GAP_MS = 50;
+const MAX_BACKOFF_MS = 60000;
+/** 任务行「活跃」值域（与 taskList.js:130 ACTIVE_ROW_STATUSES 同集：面板行渲染
+ *  只需要这些行的链视图；终态行的链视图按需补拉）。 */
+const ACTIVE_STATUSES = new Set(['pending', 'running', 'ready-to-merge', 'interrupted']);
+/** 退避桶（类 → {attempts, until}）。 */
+const backoff = new Map();
+const RATE_LIMITED = Symbol('rate-limited');
+/** 本轮刷新已撞 429（门只拦详情/子代理腿——行面与摘要面各有自己的桶）。 */
+let stormOpen = false;
+
+function backoffClassOf(url) {
+  if (url.startsWith('/api/chain-digests')) return 'digests';
+  if (url === '/api/delegates' || url === '/api/chains') return 'rows';
+  if (url.startsWith('/api/chains/')) return 'chain';
+  return 'children';
 }
+
+/** 429 记账：类内指数退避（500ms 起、上限 60s）+ ±25% 抖动，serverDelay 下限。 */
+function noteRateLimited(cls, retryAfterHeader) {
+  const prev = backoff.get(cls);
+  const attempts = ((prev && prev.attempts) || 0) + 1;
+  const value = retryAfterHeader === null || retryAfterHeader === undefined ? NaN : Number(retryAfterHeader);
+  const serverDelay = Number.isFinite(value) ? Math.max(0, value * 1000) : 0;
+  const exp = Math.min(MAX_BACKOFF_MS, 500 * 2 ** Math.min(attempts - 1, 7));
+  // 抖动：多端同时被限流时不会在同一毫秒一起醒来（正是紧循环放大的那一步）。
+  const jittered = exp * (0.75 + Math.random() * 0.5);
+  const delay = Math.max(serverDelay, Math.min(MAX_BACKOFF_MS, jittered));
+  const until = Math.max((prev && prev.until) || 0, Date.now() + delay);
+  backoff.set(cls, { attempts, until });
+}
+
+/**
+ * 取 JSON（全模块唯一出口）。返回 JSON | null（404/5xx/网络错，按「无读数」降级）
+ * | [[RATE_LIMITED]]（桶内退避中或本轮已撞 429，**未发请求**）。
+ */
+async function fetchJson(url) {
+  const cls = backoffClassOf(url);
+  const gate = backoff.get(cls);
+  if (gate && Date.now() < gate.until) return RATE_LIMITED;
+  if (stormOpen && (cls === 'chain' || cls === 'children')) return RATE_LIMITED;
+  let r;
+  try {
+    r = await fetch(url, { headers: authHeaders() });
+  } catch (_) {
+    return null; // 网络抖动不是崩面——调用方保旧值
+  }
+  if (r.status === 429) {
+    noteRateLimited(cls, r.headers && typeof r.headers.get === 'function' ? r.headers.get('Retry-After') : null);
+    // 只有详情/子代理腿撞 429 才收本轮的门：行面与摘要面各有自己的桶，不该互相
+    // 连坐（摘要面 429 时，活跃行的详情刷新照样该继续）。
+    if (cls === 'chain' || cls === 'children') stormOpen = true;
+    return RATE_LIMITED;
+  }
+  if (r.ok) backoff.delete(cls);
+  if (!r.ok) return null; // 404/5xx 都不是崩面——调用方按「无读数」降级
+  try {
+    return await r.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+/** 并发信号量（详情/子代理腿共用；MAX_INFLIGHT 就是「绝不一次性放 N 个」）。 */
+let inflightSlots = 0;
+const slotWaiters = [];
+async function withSlot(fn) {
+  if (inflightSlots >= MAX_INFLIGHT) await new Promise((resolve) => slotWaiters.push(resolve));
+  inflightSlots++;
+  try {
+    return await fn();
+  } finally {
+    inflightSlots--;
+    const next = slotWaiters.shift();
+    if (next) next();
+  }
+}
+
+function uniq(list) {
+  return Array.from(new Set(list));
+}
+
 
 /** 行投影：record×live×verdict → rowFromRegistry（原样）→ ready-to-merge 覆写单点
  *  → 全景载荷加宽（delegate 视图重设计实施批 2026-10-21）：全景视图需要的原始键
@@ -266,18 +359,84 @@ function projectChain(body) {
   return view;
 }
 
-/** 拉某键链视图入镜像（fail-soft：任何失败不动现值）。 */
+/** 拉某键链视图入镜像（fail-soft：任何失败不动现值）。返回「镜像是否真的变了」
+ *  —— 广播判据（零增量轮次不重渲面板，见 [[refresh]] 尾注）。 */
 async function refreshChain(key) {
   const body = await fetchJson(CHAINS_API.chain(key));
-  if (body === CHAIN_RATE_LIMITED) return;
+  if (body === RATE_LIMITED) return false; // 退避窗内：**不记时刻**（下一轮照常到期）
+  chainFetchedAt.set(key, Date.now());
+  const had = mirror.chains.has(key);
+  const prev = mirror.chains.get(key);
   if (!body) {
     // 404 = 查无记录：镜像置 null（视图走 fail-soft 重试态），记空键防打点。
     mirror.chains.set(key, null);
     emptyKeys.add(key);
-    return;
+    return !had || prev !== null;
   }
   emptyKeys.delete(key);
-  mirror.chains.set(key, projectChain(body));
+  const next = projectChain(body);
+  mirror.chains.set(key, next);
+  return !had || JSON.stringify(prev) !== JSON.stringify(next);
+}
+
+/**
+ * 批量摘要（一次请求）：返回**内容变了的键集**。摘要面不可用（旧引擎 404 / 429 /
+ * 坏形）⇒ 空集 = 只按「缺/活跃到期」两条判据取详情（旧行为的安全子集）。
+ */
+async function refreshDigests() {
+  const body = await fetchJson(CHAINS_API.digests(digestsFingerprint));
+  if (body === RATE_LIMITED || !body || typeof body !== 'object') return new Set();
+  const fingerprint = String(body.fingerprint || '');
+  if (body.unchanged === true) {
+    if (fingerprint) digestsFingerprint = fingerprint;
+    return new Set();
+  }
+  const map = body.digests && typeof body.digests === 'object' && !Array.isArray(body.digests) ? body.digests : null;
+  if (!map) return new Set();
+  const changed = new Set();
+  for (const [k, d] of Object.entries(map)) {
+    const next = String(d || '');
+    if (chainDigests.get(k) !== next) changed.add(k);
+    chainDigests.set(k, next);
+  }
+  // 盘面上已消失的键从摘要镜像里剪掉（键集有界：不留无主条目）。
+  for (const k of Array.from(chainDigests.keys())) {
+    if (!Object.prototype.hasOwnProperty.call(map, k)) chainDigests.delete(k);
+  }
+  if (fingerprint) digestsFingerprint = fingerprint;
+  return changed;
+}
+
+/** 按需补拉出队（单飞 + LAZY_GAP_MS 间隔：渲染面逐个真用到时才补，绝不成批打点）。 */
+function drainLazy() {
+  if (lazyTimer) return;
+  const key = lazyQueue.shift();
+  if (key === undefined) return;
+  lazyQueued.delete(key);
+  lazyTimer = setTimeout(() => {
+    lazyTimer = null;
+    if (!key || emptyKeys.has(key) || mirror.chains.has(key)) {
+      drainLazy();
+      return;
+    }
+    withSlot(() => refreshChain(key).catch(() => false)).then((ok) => {
+      if (ok) dispatchMirrorUpdated();
+      drainLazy();
+    });
+  }, LAZY_GAP_MS);
+}
+
+function enqueueLazy(key) {
+  if (!key || emptyKeys.has(key) || lazyQueued.has(key)) return;
+  lazyQueued.add(key);
+  lazyQueue.push(key);
+  drainLazy();
+}
+
+function dispatchMirrorUpdated() {
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
+  }
 }
 
 /** 星型子代理条目归一（G3 children[]；缺键容忍，零臆造——形状源 = SubAgentTask）。 */
@@ -311,20 +470,23 @@ function projectChild(c) {
   };
 }
 
-/** 拉某父的星型子代理入镜像（fail-soft：任何失败保留旧值；404 = 父无记录 → 清空）。 */
+/** 拉某父的星型子代理入镜像（fail-soft：任何失败保留旧值；404 = 父无记录 → 清空）。
+ *  返回是否写入了新读数（广播判据：零增量的轮次不该触发面板重渲）。 */
 async function refreshChildren(delegateId) {
   const url = /^(node-|dispatcher-)/.test(delegateId)
     ? `/api/session-children/${encodeURIComponent(delegateId)}`
     : DELEGATE_API.children(delegateId);
   const body = await fetchJson(url);
+  if (body === RATE_LIMITED) return false; // 退避窗内：不记时刻（下一次再试，别把「限流」当「没有子」）
   if (!body) {
     if (!childrenMirror.has(delegateId)) childrenMirror.set(delegateId, []);
     childrenFetchedAt.set(delegateId, Date.now());
-    return;
+    return false;
   }
   const kids = Array.isArray(body.children) ? body.children.map(projectChild) : [];
   childrenMirror.set(delegateId, kids);
   childrenFetchedAt.set(delegateId, Date.now());
+  return true;
 }
 
 /**
@@ -348,7 +510,7 @@ export function ensureChildren(id, ttlMs = 60000) {
   if (at && (Date.now() - at) < ttlMs) return Promise.resolve();
   if (childrenInflight.has(key)) return Promise.resolve();
   childrenInflight.add(key);
-  return refreshChildren(key)
+  return withSlot(() => refreshChildren(key))
     .catch(() => { childrenFetchedAt.set(key, Date.now()); })
     .then(() => {
       childrenInflight.delete(key);
@@ -358,13 +520,20 @@ export function ensureChildren(id, ttlMs = 60000) {
     });
 }
 
-/** 全量刷新：行投影 + 各行键链视图（并发逐键、单键失败不连累）＋ G3 星型子代理
- *  逐父刷新（仅内部行——外部执行器零平台工具，children 恒空集，免打点）。
- *  刷新完成即广播 delegate-chain-mirror-updated（#56 残项 · 换源即切 UI 承接位，
- *  晨裁② 2026-10-07）：面板渲染层监听此事件重渲——数据权威恒在本镜像（REST），
- *  事件零载荷、零帧解读（「帧只当触发器」纪律不变）。 */
+/**
+ * 一轮刷新（重连风暴修复后的形状）：
+ *   1. **一次**行面请求（/api/delegates，ETag 已服务端就位 ⇒ 未变即 304）；
+ *   2. **一次**批量摘要请求（/api/chain-digests，`?since=` 未变即零增量体）；
+ *   3. 只对「缺缓存 ∨ 摘要变了 ∨ 活跃行到期」的键取详情，且**一轮有预算**
+ *      （DETAIL_BUDGET），余量交给下一轮与按需补拉队列；
+ *   4. 并发上限 MAX_INFLIGHT；429 即按类退避（本轮剩下的详情腿直接放弃）。
+ * 稳态（重连且盘面未变）⇒ 2 个请求、零详情重放——这正是事故前做不到的。
+ * 刷新完成即广播 delegate-chain-mirror-updated（面板渲染层监听此事件重渲）：
+ * 数据权威恒在本镜像（REST），事件零载荷、零帧解读（「帧只当触发器」纪律不变）。
+ */
 async function refresh() {
   const seq = ++mirror.seq;
+  stormOpen = false;
   let body = await fetchJson(CHAINS_API.rows());
   // 形状判据：行面载荷必须带 rows 数组——404/空壳 200（旧引擎无 /api/delegates 路由，
   // 或同前缀异面响应）一律回落 /api/chains（行投影同源；缺 topology/merging 两键，
@@ -391,32 +560,94 @@ async function refresh() {
       }
     }
   }
+  const prevRows = mirror.rows;
+  const rowsChanged = prevRows.length !== rows.length ||
+    rows.some((r, i) => JSON.stringify(r) !== JSON.stringify(prevRows[i]));
   mirror.rows = rows;
   emptyKeys.clear();
-  const keys = Array.from(new Set(rows.map(rowKey).filter(Boolean)));
-  const childIds = Array.from(new Set(
-    rows.filter((r) => !r.external && r.delegateId).map((r) => r.delegateId),
-  ));
-  await Promise.all([
-    ...keys.map((k) => refreshChain(k).catch(() => {})),
-    ...childIds.map((id) => refreshChildren(id).catch(() => {})),
+  const keys = new Set(rows.map(rowKey).filter(Boolean));
+  // 视图缓存剪枝：行集里已无此键 ⇒ 丢掉（再需要时按需补拉）。**连带剪摘要**——
+  // 否则摘要镜像会随历史累积成无主表。
+  for (const k of Array.from(mirror.chains.keys())) {
+    if (!keys.has(k)) {
+      mirror.chains.delete(k);
+      chainDigests.delete(k);
+      chainFetchedAt.delete(k);
+    }
+  }
+
+  const changed = await refreshDigests();
+
+  const now = Date.now();
+  const priority = [];
+  const rest = [];
+  const activeChildIds = [];
+  const otherChildIds = [];
+  for (const row of rows) {
+    const k = rowKey(row);
+    const active = ACTIVE_STATUSES.has(String(row.status || ''));
+    if (k) {
+      const cached = mirror.chains.has(k);
+      const due = !cached || changed.has(k) ||
+        (active && now - (chainFetchedAt.get(k) || 0) > DETAIL_TTL_MS);
+      if (due) (active ? priority : rest).push(k);
+    }
+    // 子代理腿同一条纪律：TTL 到期（或从未取过）才取（旧行为是每轮对每个内部行
+    // 全量重取——那同样是重连风暴的一半体量）。
+    if (!row.external && row.delegateId &&
+      (!childrenFetchedAt.has(row.delegateId) || now - childrenFetchedAt.get(row.delegateId) > DETAIL_TTL_MS)) {
+      (active ? activeChildIds : otherChildIds).push(row.delegateId);
+    }
+  }
+  // 非活跃键按「最久没取过」轮转（对象属性序不可依赖；这一序保证不饿死尾部行）。
+  rest.sort((a, b) => (chainFetchedAt.get(a) || 0) - (chainFetchedAt.get(b) || 0));
+  const batch = uniq(priority.concat(rest)).slice(0, DETAIL_BUDGET);
+  // 子代理腿：活跃行优先，其余按最久未取轮转，一轮上限 CHILD_BUDGET。
+  otherChildIds.sort((a, b) => (childrenFetchedAt.get(a) || 0) - (childrenFetchedAt.get(b) || 0));
+  const childBatch = uniq(activeChildIds.concat(otherChildIds)).slice(0, CHILD_BUDGET);
+  const results = await Promise.all([
+    ...batch.map((k) => withSlot(() => refreshChain(k).catch(() => false))),
+    ...childBatch.map((id) => withSlot(() => refreshChildren(id).catch(() => false))),
   ]);
   if (seq !== mirror.seq) return; // 刷新期间又有更新在途——广播交给最新一轮
-  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
-    window.dispatchEvent(new CustomEvent(EVENTS.DELEGATE_CHAIN_MIRROR_UPDATED));
+  // 广播判据（既有契约不变：零增量的轮次不重渲面板——「未变 ⇒ 无事件」正是
+  // subagent-visibility 的既有断言）。修复前 refresh 只在行面形状通过时广播且
+  // 详情腿全量重写，故「有请求 ⇒ 有事件」；现在请求被预算压到 24 条，必须显式
+  // 判「这一轮到底改了什么」：行变了 ∨ 摘要变了 ∨ 任一详情腿真的写了新读数。
+  if (rowsChanged || changed.size > 0 || results.some((ok) => ok === true)) dispatchMirrorUpdated();
+}
+
+/** 单飞闸：同一时刻只有一轮刷新在飞；期间的新触发并成「再来一轮」（不叠加）。 */
+let refreshInFlight = null;
+let refreshAgain = false;
+function requestRefresh() {
+  if (refreshInFlight) {
+    refreshAgain = true;
+    return refreshInFlight;
   }
+  refreshInFlight = refresh()
+    .catch(() => {})
+    .then(() => {
+      refreshInFlight = null;
+      if (refreshAgain) {
+        refreshAgain = false;
+        return requestRefresh();
+      }
+      return undefined;
+    });
+  return refreshInFlight;
 }
 
 /** 归档动作后的镜像即时对账（bgAgentPopup 归档入口回调；fire-and-forget fail-soft
  *  ——归档行移历史窗，在册窗重刷后行自然退场）。 */
 export function refreshMirror() {
-  refresh().catch(() => {});
+  requestRefresh();
 }
 
-/** 按需补拉（getChainByTask 未命中键；fire-and-forget，读口本调用仍返回 null）。 */
+/** 按需补拉（getChainByTask 未命中键）：排队 + 间隔 + 并发闸，本次调用仍返回 null。 */
 function fetchChainLazy(key) {
   if (!key || emptyKeys.has(key)) return;
-  refreshChain(key).catch(() => {});
+  enqueueLazy(key);
 }
 
 // ── read port（setSource 契约形；夹具缝在 stub 读取口——夹具在场时本源不被读）────
@@ -445,7 +676,9 @@ setChildrenSource({
 
 // ── 镜像驱动：boot 首刷 ＋ WS 触发防抖刷 ＋ 重连对账 ─────────────────────────
 
-refresh().catch(() => {}); // boot 首刷（fail-soft：失败 = 空镜像，下轮 WS/重连再试）
+// boot 首刷（fail-soft：失败 = 空镜像，下轮 WS/重连再试）。走单飞闸——首屏与
+// 紧随其后的重连触发不会各发一套全量。
+requestRefresh();
 
 const DEBOUNCE_MS = 500;
 let debounceTimer = null;
@@ -453,7 +686,7 @@ function scheduleRefresh() {
   if (debounceTimer) return;
   debounceTimer = setTimeout(() => {
     debounceTimer = null;
-    refresh().catch(() => {});
+    requestRefresh(); // 单飞：在飞的那一轮之后只再补一轮（不叠加、不成风暴）
   }, DEBOUNCE_MS);
 }
 
@@ -483,7 +716,11 @@ for (const evt of ['agentStart', 'agentDone', 'agentEnd']) {
   onMessage(evt, onDelegateLifecycle);
 }
 onReconnect(() => {
-  refresh().catch(() => {});
+  // 重连 = 新网络路径：清掉退避桶（否则重连后还要白等一个 Retry-After 窗口），
+  // 但**不清**镜像与摘要——视图复用缓存，只刷新增量（正是本次修复的目标）。
+  backoff.clear();
+  stormOpen = false;
+  requestRefresh();
   refreshScopedTasks();
 });
 if (typeof window !== 'undefined') {

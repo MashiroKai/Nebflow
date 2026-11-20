@@ -278,6 +278,12 @@ export const CHECKS = [
   // 不是测试缺陷）。
   { name: 'delegate-chain-throttle', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, '--experimental-vm-modules', 'tests/delegate-chain-throttle.test.mjs'] },
+  // delegate-chain-bulk-load（重启重连风暴修复批 2026-11-21）：锁住「一轮刷新 = 1 行面
+  // + 1 批量摘要 + 有预算的详情腿」「缓存复用（同 TTL 窗内不重放）」「稳态重连零详情
+  // 请求」「429 退避不成紧循环」四条不变量。不注册 = 这条事故防线等于没有闸。
+  // 与上面同因：顶层用 vm.SourceTextModule ⇒ 必须带 --experimental-vm-modules。
+  { name: 'delegate-chain-bulk-load', profiles: ['static'], timeoutMs: 120_000,
+    argv: [process.execPath, '--experimental-vm-modules', 'tests/delegate-chain-bulk-load.test.mjs'] },
   // 未读计数单源（fix/unread-count-unify 独立审查 2026-11-20）：该支的实现在内核抽取批
   // （2026-11-18）之后已被 base 完整吸收（unreadCount.js 同字节、utils.rec.unreadRows、
   // askDialog.settleCol 同式），唯独验收件仍锚在已搬空的 askDock.js ⇒ 长期红着没人跑、

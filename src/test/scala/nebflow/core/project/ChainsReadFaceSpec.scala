@@ -711,4 +711,44 @@ class ChainsReadFaceSpec extends CatsEffectSuite:
     end for
   }
 
+  // ── 批量摘要面（`GET /api/chain-digests`·重启重连风暴修复批 2026-11-21）──────
+  //
+  // 事故：控制台重连对每个行键各发一次 /api/chains/<key>（生产盘 1108 行 ⇒ 单窗
+  // 上千并发 ⇒ tunnel guard 整桶 429 691 条）。修法 = 一次请求拿到全部链键摘要，
+  // 只对变了的键取详情。本测试锁摘要面的三条语义：全键覆盖、指纹幂等（`since`
+  // 未变 ⇒ 零 digests 体）、以及「只有被改写的那个键摘要变」。
+  test("chain digests: one call covers every key, the fingerprint is idempotent, only the touched key moves") {
+    ChainStore.appendSync("900", "delegate-spawn", io.circe.Json.obj("delegateId" -> "d-900".asJson))
+    ChainStore.appendSync("delegate-900", "terminal-verdict", io.circe.Json.obj("verdict" -> "completed".asJson))
+    def digestsOf(body: io.circe.Json): Map[String, String] =
+      body.hcursor.downField("digests").focus.flatMap(_.asObject).map { obj =>
+        obj.toMap.map((k, v) => k -> v.asString.getOrElse(""))
+      }.getOrElse(Map.empty)
+    for
+      first <- ChainsReadFace.chainDigestsJson()
+      second <- ChainsReadFace.chainDigestsJson()
+    yield
+      val digests = digestsOf(first)
+      assertEquals(digests.keySet, Set("900", "delegate-900"), "every chain key is summarised in one payload")
+      assertEquals(first.hcursor.get[Int]("v").toOption, Some(ChainsReadFace.DigestFaceVersion))
+      assertEquals(first.hcursor.get[Int]("count").toOption, Some(2))
+      assert(digests.values.forall(d => d.nonEmpty && d.length <= 16), s"digests are short change detectors: $digests")
+      val fp = first.hcursor.get[String]("fingerprint").toOption.getOrElse("")
+      assert(fp.nonEmpty, "a fingerprint must be supplied")
+      assertEquals(second.hcursor.get[String]("fingerprint").toOption, Some(fp), "the fingerprint is stable while nothing moves")
+      assertEquals(digestsOf(second), digests)
+      // `?since=<上次 fingerprint>` 未变 ⇒ 零 digests 体 = 重连稳态的零增量路径。
+      val unchanged = ChainsReadFace.chainDigestsJson(Some(fp)).unsafeRunSync()
+      assertEquals(unchanged.hcursor.get[Boolean]("unchanged").toOption, Some(true))
+      assert(unchanged.hcursor.downField("digests").focus.isEmpty, "the unchanged reply carries no digest body")
+      // 改写其中一个键 ⇒ 只有它（和指纹）变。
+      ChainStore.appendSync("900", "terminal-verdict", io.circe.Json.obj("verdict" -> "ready-to-merge".asJson))
+      val after = ChainsReadFace.chainDigestsJson(Some(fp)).unsafeRunSync()
+      val afterDigests = digestsOf(after)
+      assert(afterDigests.nonEmpty, "a changed tree answers a full digest body (no `unchanged` flag)")
+      assertNotEquals(afterDigests.get("900"), digests.get("900"), "the touched key's digest must move")
+      assertEquals(afterDigests.get("delegate-900"), digests.get("delegate-900"), "untouched keys keep their digest")
+    end for
+  }
+
 end ChainsReadFaceSpec
