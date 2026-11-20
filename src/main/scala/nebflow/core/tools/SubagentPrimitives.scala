@@ -145,9 +145,16 @@ object SubagentPrimitives:
     completed: Boolean
   ): IO[Unit] =
     val status = if completed then "completed" else "cancelled"
-    val taskUpdate = resources.subAgentTaskStore
-      .updateStatus(parentSessionId, childId, status, completedAt = Some(System.currentTimeMillis()))
-      .handleErrorWith(e => logger.warn(s"subagent $childId taskStore terminalize failed: ${e.getMessage}"))
+    def updateTask(attemptsLeft: Int): IO[Unit] =
+      resources.subAgentTaskStore
+        .updateStatus(parentSessionId, childId, status, completedAt = Some(System.currentTimeMillis()))
+        .handleErrorWith { e =>
+          if attemptsLeft > 1 then
+            logger.warn(s"subagent $childId taskStore terminalize failed; retrying: ${e.getMessage}") *>
+              updateTask(attemptsLeft - 1)
+          else logger.warn(s"subagent $childId taskStore terminalize failed after retries: ${e.getMessage}")
+        }
+    val taskUpdate = updateTask(3)
     val registryRemove = resources.agentRegistry
       .update(_ - childId)
       .handleErrorWith(e => logger.warn(s"subagent $childId registry remove failed: ${e.getMessage}"))
