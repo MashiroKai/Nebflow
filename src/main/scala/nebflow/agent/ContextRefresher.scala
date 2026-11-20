@@ -559,7 +559,7 @@ object ContextRefresher:
       flowCatalog = ""
       teamCatalog <- buildTeamCatalogForSession(state.sessionId)
       // Memory: only Nebula (2026-08-31 裁定①). Team agents, standalone
-      // agents and SubTask workers get no memory block — clean context.
+      // agents get no memory block — clean context.
       // Headless (NEBFLOW_HEADLESS=1): none at all — benchmark determinism.
       // personal-agent 批 ⑥：注入预算随**生效**上下文窗口联动——窗口源 =
       // state.contextWindow（链 = ProviderRegistry.effectiveContextWindow →

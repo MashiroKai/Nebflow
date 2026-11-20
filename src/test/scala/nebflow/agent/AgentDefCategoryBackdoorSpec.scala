@@ -58,13 +58,12 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
     else face
 
   /**
-   * legacyFixedTools 的 category=team 分支产物（逐字抄自实现：BaseTools + Mail
-   *  + SubTask ++ TeamTaskTools）——用常量拼装，不写裸清单。
+   * legacyFixedTools 的 category=team 分支产物：BaseTools + Mail ++ TeamTaskTools。
    */
   private val LegacyTeamFace: Set[String] = AgentCore.BaseTools + "Mail" ++ AgentCore.TeamTaskTools
 
   /**
-   * team 面**独有**件（相对 BaseTools 的增量：SubTask / TeamTask 三件）。
+   * TeamTask 三件与已退役的 SubTask 名称共同组成负向守卫。
    * 收敛名的机制固定集与 BaseTools 有正当交集（Read/Glob/Grep 等），故「遗留件
    * 零出现」只能按 team 面独有件判定，不能拿整集求交。
    * R2「一个 Mail 统一」（2026-09-12）后 `Mail` 从本集合摘除——它已是 Nebula
@@ -106,7 +105,7 @@ class AgentDefCategoryBackdoorSpec extends CatsEffectSuite:
 
   /**
    * order-395 段（身份段载体）在 buildConditionalBlocks 同款 filter+render 下的产物。
-   * 条件 `guardrailsOn && !isSubTaskWorker`（:281）；渲染体内层 `agentCategory == "team"`（:284）。
+   * 条件 `guardrailsOn`（:281）；渲染体内层 `agentCategory == "team"`（:284）。
    */
   private def identitySectionOutput(defn: AgentDef, guardrailsOn: Boolean = true, isTeamLead: Boolean = false): String =
     val ctx = PromptSections.PromptContext(

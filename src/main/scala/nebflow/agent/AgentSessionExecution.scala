@@ -748,8 +748,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // identity-sync 批（2026-10-23）：展示身份现读（displayName + 头像 sha）——
           // `## Self` 段体（order 396）与 identity 变更提醒的唯一数据源。空 = 该
           // agent 无非默认身份（未起名且无自定义头像）= 段不注入、提醒不产生 =
-          // 既有会话字节零变化。SubTask worker 是剥净上下文的叶子管道（同 skill
-          // 目录等其它上下文段的停注判据），不注入。
+          // 既有会话字节零变化。
           identitySelfText <- nebflow.core.entity.AgentIdentityStore.readSelfSection(freshDef.name, freshDef.displayName)
           // 时间锚闸（时间感知修复批 2026-11-05）：见 `TimeAnchorInjection` 头注——
           // 起始轮一律注入，不再有 1 小时 gap；工具往返轮靠请求级 systemDynamic 锚。
@@ -2852,19 +2851,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           !t.startsWith("mcp__") || t.startsWith(agentOwnPrefix) || prefixes.exists(t.startsWith) ||
             pluginPrefixes.exists(t.startsWith)
         )
-    // SubTask workers are leaf agents: no Mail / no further delegation (a
-    // self-cloned team member would otherwise inherit Mail via fixedToolsFor).
-    // Delegate is Nebula-exclusive (filtered above for everyone else); these
-    // strips also defend against a worker whose agent.json explicitly lists
-    // the tools. FlowTrigger/FlowExecute names left the strip sets at the
-    // 2026-09-06 retirement (unregistered tools have no schema — the tool
-    // name IS the permission boundary and the registry is now the wall).
-    // Mail stays for team-category nodes (they may Mail the caller's team).
-    // Team Manager task tools (#D, 2026-08-25): workers/flow nodes never
-    // mutate or even read the team task board — a SubTask worker self-cloned
-    // from a Manager would otherwise inherit TeamTask* via the isTeamLead
-    // grant. Flow-node stripping is generic leaf isolation (U5 裁定: 安全
-    // 隔离, not a flow↔task coupling design).
+    // Flow nodes are isolated leaves: no delegation or team task-board tools.
+    // Mail stays available to team-category nodes. SubTask is retired globally.
     val categoryFiltered =
       if isFlowNode then
         val leafStripped = mcpFiltered -- (Set("SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
@@ -3084,10 +3072,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     ctx: PromptContext
   ): String =
     val rawPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
-    // SubTask workers inherit the parent's system.md for domain knowledge but
-    // team interaction content is stripped (no team / no Mail / no reporting).
-    val base = rawPrompt
-    val cleanedPrompt = PromptSections.stripAllMigrated(base)
+    val cleanedPrompt = PromptSections.stripAllMigrated(rawPrompt)
     val conditionalBlocks = PromptSections.buildConditionalBlocks(ctx)
     // 数据根占位符渲染（home 硬编码 → 运行时动态化批 2026-09-11）：插在
     // stripAllMigrated 之后、assembleSystemPrompt 之前 —— 默认 home 下渲染值

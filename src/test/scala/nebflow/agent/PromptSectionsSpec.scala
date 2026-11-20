@@ -682,20 +682,15 @@ class PromptSectionsSpec extends munit.FunSuite:
       )
     }
 
-  test("文档溯源段不被剥离路径剥掉（stripAllMigrated / SubTaskPrompt.stripTeamContent）"):
+  test("文档溯源段不被 stripAllMigrated 剥掉"):
     withIsolatedDataRoot {
       // CRLF 无关化：Windows checkout（autocrlf=true）会让源码三引号串携带 \r，
       // linesIterator 系剥离会归一掉 \r —— 测的是「段不被剥」，不是行尾字节。
       val trace = PromptSections.traceSection.replace("\r\n", "\n")
-      // 文本级剥离对整段无效：stripAllMigrated 只剥 Voice Output；
-      // stripTeamContent 剥 Teams & Flows / Team Catalog 块 + 团队交互模式行，
-      // 溯源段的段头与正文行都不匹配任何 stripPattern。
+      // stripAllMigrated 不剥离文档溯源段。
       assertEquals(stripAllMigrated(trace), trace)
 
-      // 实证：复现 AgentCore.buildSystemPrompt 的剥离顺序
-      // （rawPrompt → isSubTaskWorker 则 stripTeamContent → stripAllMigrated
-      //  → 拼 buildConditionalBlocks）——剥离只作用于 agent system.md，
-      // 条件块（含 order 350）在剥离之后拼接，故必达。
+      // 条件块在 stripAllMigrated 之后拼接，故溯源段必达。
       val rawSystemMd =
         """## Team Workflow
           |

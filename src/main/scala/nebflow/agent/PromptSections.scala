@@ -442,8 +442,7 @@ object PromptSections:
     // output comes first). Only when dedicatedAgents guardrails are enabled:
     // T1 flow nodes get the strict machine-consumer clause (or its
     // userFacing dual-audience variant); T2 team members (non-lead,
-    // non-fork) get the Mail-report variant. SubTask workers keep their own
-    // Worker Identity Block (order 999).
+    // non-fork) get the Mail-report variant.
     PromptSection.dynamic(
       395,
       condition = ctx => ctx.guardrailsOn,
@@ -565,8 +564,7 @@ External executors receive the task text only — no platform tools or plugins a
     )
     // --- 阶段 2d（§D.1-14/§D.2）：原 order 999 Worker Identity Block 注入已
     // 删除——worker 身份由 general 模版 §C.4 第 4 节（无团队上下文）取代；
-    // 新模型 node 会话自带该节，legacy SubTask worker 的硬边界仍由
-    // buildAllowedToolSet 的 isSubTaskWorker 机制剥离保证（提示词段仅余冗余）。
+    // 新模型 node 会话自带该节；SubTask 工具与其 worker 路径已退役。
   )
 
   // ============================================================

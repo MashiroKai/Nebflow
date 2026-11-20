@@ -425,10 +425,8 @@ case class SessionContext(
   /**
    * #406: true when this agent is a one-shot FlowExecute node (spawned by
    * FlowDagExecutor.executeAgent with isFlowNode=true). Flow nodes are leaf
-   * agents: FlowExecute/FlowTrigger/SubTask/Delegate are stripped to prevent
-   * recursive flow-in-flow explosions — the same leaf rule SubTask workers
-   * get. Differs from isSubTaskWorker in that Mail stays available for
-   * team-category node agents (flow nodes may Mail the caller's team).
+   * agents: delegation and team task tools are stripped to prevent recursion.
+   * Mail stays available for team-category node agents.
    */
   isFlowNode: Boolean = false,
   /**
