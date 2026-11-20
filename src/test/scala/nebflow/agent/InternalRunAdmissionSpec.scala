@@ -14,6 +14,7 @@ import nebflow.core.task.FileTaskStore
 import nebflow.core.tools.{FileLockManager, SubTaskTool, ToolContext}
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{Branding, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig, *}
+import nebflow.shared.given
 
 import scala.concurrent.duration.*
 
@@ -201,6 +202,27 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
       yield
         assertEquals(row.flatMap(_.executionStatus), Some("finished"))
         assertEquals((pending ++ taken).count(e => e.identity == s"${task.taskId}#run-1" && e.event == event), 1)
+    }
+  }
+
+  test("conflicting completion debt and envelope require manual review") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("conflicting-evidence-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-conflict", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        debtMessages = List(Message(MessageRole.Assistant, Left("debt answer")))
+        _ <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1", debtMessages)
+        event = AgentCommand.ExternalEvent("subtask", "completed", "different answer",
+          JsonObject("parentSessionId" -> parent.id.asJson,
+            "completionMessages" -> List(Message(MessageRole.Assistant, Left("different answer"))).asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.map(_.status), Some("running"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
     }
   }
 

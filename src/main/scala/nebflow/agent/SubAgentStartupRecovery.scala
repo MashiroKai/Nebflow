@@ -481,15 +481,19 @@ object SubAgentStartupRecovery:
       val run = task.runId.get
       rs.executionProtection(task.taskId).flatMap {
         case nebflow.shared.ExecutionProtection.Unprotected =>
-          sessionStore.loadTerminalEnvelope(task.taskId, run).flatMap {
-            case Some(event) if event.source == task.source && event.eventType == "completed" &&
+          (sessionStore.loadTerminalEnvelope(task.taskId, run),
+            nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run, task.source)).tupled.flatMap {
+            case (Some(event), Some(debt)) if !event.metadata("completionMessages").contains(debt.messages.asJson) =>
+              store.markSuspectedLostTerminal(task).void *>
+                logger.warn(s"[startup-recovery] conflicting terminal evidence for ${task.taskId}; manual review required")
+            case (Some(event), _) if event.source == task.source && event.eventType == "completed" &&
                 event.correlationId.contains(task.taskId) &&
                 event.metadata("parentSessionId").flatMap(_.asString).contains(task.parentSessionId) =>
               sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap { ref =>
                 store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
                   notificationId = Some(s"${task.taskId}#$run")).void
               }
-            case None =>
+            case (None, _) =>
               nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run, task.source).flatMap {
                 case Some(debt) =>
                   val text = debt.messages.reverse.find(_.role == MessageRole.Assistant).map(_.textContent.trim).getOrElse("")
