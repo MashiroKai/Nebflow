@@ -8,6 +8,12 @@ Only root-session messages expose paired `<report>...</report>` bodies on the us
 
 The root-only prompt is assembled in the `isRootAgent` section, not the shared prefix. Events must carry `isRoot` stamped by the emitting actor using `RootAgentIdentity.isRootAgent(agentDef, depth)`, never inferred from window, channel or ID. Persist the emitting identity on history messages and propagate it to all live and replay rendering paths. Social bridges must select filtering using the bound emitting session's authoritative source flag; unknown identity must not be guessed. Existing historical messages without flags require an explicit migration or conservative handling. The actor stamp is a draft; history, UI, and channel consumers are not yet wired, and its coverage of all emitters remains unverified.
 
+## Child-to-parent reporting (separate leg)
+
+Background child reports are addressed to their parent, independently of the root-only user-facing flag. A completed intermediate assistant message with tool calls is a candidate progress message; extract paired report bodies and send via a dedicated non-terminal notification, never via the final result or its barrier accounting. The final assistant message remains intact in the existing result delivery and must not be emitted again on the report channel. Empty or absent blocks produce no progress delivery. Compaction, ask and stale completions are excluded. No result channel changes are authorized.
+
+Coverage still to implement and verify: blocking Subagent must reach the parent while it is awaiting the tool; background SubTask and delegate need parent routing and retry-safe message identifiers. External executors and chain-node out-edge recipients require separate lifecycle analysis; no support is claimed for them. A completed tool-call message is not the only possible nonterminal path (mail-reminder retries can continue without tools), so candidate routing alone is insufficient.
+
 ## Parsing and acceptance
 
 Trim each block and join multiple blocks in order with a blank line. Empty blocks produce no channel message. Ignore tag-looking text in fenced code, inline code, and Markdown blockquotes. Unclosed, stray or nested tags fail closed: do not expose any content; streaming channels hold malformed or partial segments until completion. Test parser parity, both channel seams, streaming and history console display, badge reuse, and prompt assembly. Capture light/dark GUI evidence for report and zero-report turns; compile and run the static gates.
