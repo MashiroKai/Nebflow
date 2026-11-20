@@ -90,7 +90,7 @@ async function corners(page) {
  *  「一泳道一列、列距 ≥ 最小泳道间距」——压成一条线时列距必然塌到 0。 */
 async function lanes(page) {
   return page.evaluate(() => {
-    const svg = document.querySelector('.gitviz-thumb .gitviz-svg');
+    const svg = document.querySelector('.gitviz-mini-graph .gitviz-svg');
     const circles = svg ? [...svg.querySelectorAll('circle')] : [];
     const xs = [...new Set(circles.map((c) => Math.round(Number(c.getAttribute('cx')))))].sort((a, b) => a - b);
     const gaps = xs.slice(1).map((x, i) => x - xs[i]);
@@ -262,7 +262,7 @@ try {
 
   // ── 负控 N2：泳道压成一条线 ⇒ C4 必须红 ──────────────────────────────────
   await dark.page.evaluate(() => {
-    const svg = document.querySelector('.gitviz-thumb .gitviz-svg');
+    const svg = document.querySelector('.gitviz-mini-graph .gitviz-svg');
     if (svg) for (const c of svg.querySelectorAll('circle')) c.setAttribute('cx', '30');
   });
   const n2 = await lanes(dark.page);
