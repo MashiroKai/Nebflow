@@ -34,10 +34,16 @@ private[agent] object AgentFinishTurn:
           case None => IO.blocking(journal.closeNoReport(slot))
           case Some(event) =>
             IO.blocking(journal.prepareReport(slot, event.payload)).flatMap { identity =>
-              (sessionIdOfRef(resources, parentRef), resources.agentRegistry.get).mapN { (byRef, registry) =>
-                byRef.orElse(registry.get(sid).flatMap(r => Option(r.parentSessionId).filter(_.nonEmpty)))
-              }.flatMap {
-              case None => IO.unit // Retained for the next supervisor restart; no in-process retry is scheduled.
+              def findParent(attempt: Int): IO[Option[String]] =
+                (sessionIdOfRef(resources, parentRef), resources.agentRegistry.get).mapN { (byRef, registry) =>
+                  byRef.orElse(registry.get(sid).flatMap(r => Option(r.parentSessionId).filter(_.nonEmpty)))
+                }.flatMap {
+                  case found @ Some(_) => IO.pure(found)
+                  case None if attempt < 5 => IO.sleep(scala.concurrent.duration.DurationInt(1 << (attempt - 1)).seconds) *> findParent(attempt + 1)
+                  case None => IO.pure(None)
+                }
+              findParent(1).flatMap {
+              case None => IO.blocking(journal.park(slot)) *> nebflow.shared.NebflowLogger.forName("nebflow.agent").warn(s"[child-report-parked] session=$sid slot=$slot parent identity unavailable after 5 attempts")
               case Some(parentSid) =>
                   MailboxProducer.deliver(resources, parentSid, event.copy(correlationId = Some(identity)), identity, "child-report", producer = "child-report")
                     .flatMap {

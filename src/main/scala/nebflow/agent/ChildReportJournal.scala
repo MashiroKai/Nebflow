@@ -52,10 +52,18 @@ private[agent] final class ChildReportJournal private (root: Path, session: Stri
     val entries = readProtocol().hcursor.get[io.circe.JsonObject]("entries").fold(throw _, identity)
     entries.toList.sortBy(_._1.toLong).flatMap { case (_, entry) =>
       val c = entry.hcursor
-      if c.get[String]("status").toOption.contains("prepared") then
+      if c.get[String]("status").toOption.exists(s => s == "prepared" || s == "parked") then
         Some((c.get[String]("id").fold(throw _, identity), c.get[String]("body").fold(throw _, identity)))
       else None
     }
+  }
+
+  def park(slot: Long): Unit = ChildReportJournal.synchronized {
+    val state = readProtocol()
+    val entries = state.hcursor.get[io.circe.JsonObject]("entries").fold(throw _, identity)
+    val entry = entries(slot.toString).getOrElse(throw new IllegalArgumentException("unknown slot"))
+    require(entry.hcursor.get[String]("status").toOption.contains("prepared"), "only prepared reports may park")
+    writeProtocol(state.mapObject(_.add("entries", io.circe.Json.fromJsonObject(entries.add(slot.toString, entry.mapObject(_.add("status", "parked".asJson)))))))
   }
 
   def closeNoReport(slot: Long): Unit = ChildReportJournal.synchronized {
@@ -71,7 +79,7 @@ private[agent] final class ChildReportJournal private (root: Path, session: Stri
     val entries = state.hcursor.get[io.circe.JsonObject]("entries").fold(throw _, identity)
     val entry = entries(slot.toString).getOrElse(throw new IllegalArgumentException("unknown slot"))
     val status = entry.hcursor.get[String]("status").fold(throw _, identity)
-    require(status == "prepared" || status == "flushed", "only prepared reports may be flushed")
+    require(status == "prepared" || status == "parked" || status == "flushed", "only prepared reports may be flushed")
     writeProtocol(state.mapObject(_.add("entries", io.circe.Json.fromJsonObject(entries.add(slot.toString, entry.mapObject(_.add("status", "flushed".asJson)))))))
   }
 
