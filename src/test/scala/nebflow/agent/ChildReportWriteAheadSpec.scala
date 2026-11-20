@@ -10,7 +10,10 @@ class ChildReportWriteAheadSpec extends FunSuite:
     val first = a.reserve("logical-1", "progress")
     val retry = a.reserve("logical-1", "progress")
     assertEquals(first, retry)
-    assertEquals(List(first, retry).distinct.size, 1)
+    val firstEvent = ChildReport.event("<report>progress</report>", true, "child", Some("child"), 100).get
+    val redispatched = ChildReport.event("<report>progress</report>", true, "child", Some("child"), 101).get
+    assertEquals(firstEvent.correlationId, redispatched.correlationId, "redispatch of the same transcript slot must preserve identity")
+    assert(nebflow.core.processor.DeliveredReceiptLedger.isDuplicateIdentity(Set.empty, List(firstEvent), redispatched))
   }
   test("crash after persistence reopens with the same identity") {
     val path = Files.createTempDirectory("report-wal-")
