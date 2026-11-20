@@ -60,7 +60,7 @@
 | [`PerceptionMailTool.scala`](PerceptionMailTool.scala) | `EmailSend` 工具（r2 §7 / §13 agent 工具面，r3+ 增强）：感知邮件发送的 拟稿入口。**工具只负责「落草稿 + 弹快照卡」**——发送动作永远由用户在 |
 | [`PointerPickup.scala`](PointerPickup.scala) | PointerPickup —— 浏览面单件取件的本地落盘（v2.1 阶段 1 §C.2「按需取件」的 落位单点；产物指针登记不迁移语义的本地读数端）。 |
 | [`PopTool.scala`](PopTool.scala) | Pop tool — shows finished artifacts to the user (pop-upgrade batch, 2026-10-03). == 2026-10-03 author ruling ( |
-| [`PresetResolver.scala`](PresetResolver.scala) | Tool-level preset override for sub-agent spawning (Delegate/SubTask `preset` param). |
+| [`PresetResolver.scala`](PresetResolver.scala) | Preset resolution helper; the former Delegate/SubTask per-call preset parameters are historical. |
 | [`ProjectTool.scala`](ProjectTool.scala) | 前端卡片取消哨兵（chat.js 取消按钮回填 answers=['__cancelled__']）。 |
 | [`ReadTool.scala`](ReadTool.scala) | Supported image extensions → MIME type mapping. |
 | [`RelayExecAudit.scala`](RelayExecAudit.scala) | relay/P2P 远端执行审计（Q3 裁定批 T4，2026-09-11）。 WHY：`dangerLevel` 只在 confirm-edits / auto-edits 下渲染权限卡；**auto-all 下 |
