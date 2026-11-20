@@ -454,7 +454,26 @@ object SubAgentStartupRecovery:
     sessionStore: SessionStore,
     resources: Option[SharedResources]
   ): IO[Unit] = resources.fold(IO.unit) { rs =>
-    repairCommittedProjections(store, rs.executionCommitPort) *> store
+    val recoverActiveEnvelopes = store.findRunningTasks.flatMap(_.filter(t =>
+      t.source == "subtask" && t.executor.contains("nebflow") && t.runId.nonEmpty
+    ).traverse_ { task =>
+      val run = task.runId.get
+      rs.executionProtection(task.taskId).flatMap {
+        case nebflow.shared.ExecutionProtection.Unprotected =>
+          sessionStore.loadTerminalEnvelope(task.taskId, run).flatMap {
+            case Some(event) if event.source == "subtask" && event.eventType == "completed" &&
+                event.correlationId.contains(task.taskId) &&
+                event.metadata("parentSessionId").flatMap(_.asString).contains(task.parentSessionId) =>
+              sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap { ref =>
+                store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
+                  notificationId = Some(s"${task.taskId}#$run")).void
+              }
+            case _ => IO.unit
+          }
+        case _ => IO.unit
+      }.handleErrorWith(e => logger.warn(s"[startup-recovery] terminal envelope recovery failed for ${task.taskId}: ${e.getMessage}"))
+    })
+    repairCommittedProjections(store, rs.executionCommitPort) *> recoverActiveEnvelopes *> store
       .findAllTasks()
       .flatMap(
         _.filter(t =>
