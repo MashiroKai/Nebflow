@@ -664,7 +664,15 @@ object SubAgentStartupRecovery:
       .findAllTasks()
       .flatMap(
         _.filter(t =>
-          !isReconciliationRow(t) && t.runId.nonEmpty && t.executor.exists(_ != "nebflow") &&
+          // Managed rows (executor `nebflow`) never reach this leg — the clause below already
+          // requires a foreign executor, and evidence reconciliation owns every `nebflow` row.
+          // A subtask/subagent projection written by a FOREIGN executor carries no envelope and
+          // no run-bound debt, so monitoring loss is genuinely all we know about it: keep the
+          // interrupt leg for it instead of silently leaving it running (the blanket
+          // `!isReconciliationRow` exclusion introduced in 5b9245509 suppressed exactly that
+          // leg and left such rows unresolved forever).
+          t.runId.nonEmpty &&
+            t.executor.exists(_ != "nebflow") &&
             t.executionStatus.exists(Set("starting", "running", "waiting-input").contains)
         ).traverseFilter { task =>
           store
