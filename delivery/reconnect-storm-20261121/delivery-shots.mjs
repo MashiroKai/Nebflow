@@ -15,7 +15,7 @@
 // 请求数——即本批要修的可见差异。
 //
 // 用法：node delivery-shots.mjs <baseUrl> <fileToken> <baseProvider> <branchProvider> <outDir>
-import { chromium } from '/Users/kaiyu/Claude code/Stand/node_modules/playwright/index.mjs';
+import { chromium } from 'playwright';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 
