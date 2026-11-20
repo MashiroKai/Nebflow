@@ -629,8 +629,8 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
     withLock {
       val rows = readTasksSync(parent)
       rows.find(_.taskId == taskId) match
-        case Some(row) if row.source == "subagent" && row.runId.isEmpty && row.status == "running" &&
-            row.toolCallId.contains(toolCallId) =>
+        case Some(row) if row.source == "subagent" && row.runId.isEmpty &&
+            Set("running", "pending-recovery").contains(row.status) && row.toolCallId.contains(toolCallId) =>
           val now = System.currentTimeMillis()
           val updated = row.copy(status = "completed", completedAt = Some(now), statusAt = Some(now),
             suspectedLostTerminal = None, committedRevision = Some(nextRevision(row)))

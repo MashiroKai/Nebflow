@@ -457,8 +457,8 @@ object SubAgentStartupRecovery:
     sessionStore: SessionStore,
     resources: Option[SharedResources]
   ): IO[Unit] = resources.fold(IO.unit) { rs =>
-    val recoverDeliveredLegacy = store.findRunningTasks.flatMap(_.filter(t =>
-      t.source == "subagent" && t.runId.isEmpty && t.toolCallId.exists(_.nonEmpty)
+    val recoverDeliveredLegacy = store.findAllTasks().flatMap(_.filter(t =>
+      isReconciliationRow(t) && t.source == "subagent" && t.runId.isEmpty && t.toolCallId.exists(_.nonEmpty)
     ).traverse_ { task =>
       sessionStore.loadMessagesForSession(task.parentSessionId).flatMap { messages =>
         val delivered = messages.exists {

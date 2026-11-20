@@ -211,18 +211,22 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
         task = SubAgentTask("subagent-legacy", parent.id, "worker", "inspect", "test", "running", 0,
           System.currentTimeMillis(), None, None, "subagent", toolCallId = Some("call-1"))
         other = task.copy(taskId = "subagent-other", toolCallId = Some("call-2"))
+        pending = task.copy(taskId = "subagent-pending", status = "pending-recovery", toolCallId = Some("call-3"))
         _ <- resources.subAgentTaskStore.recordTask(task)
         _ <- resources.subAgentTaskStore.recordTask(other)
+        _ <- resources.subAgentTaskStore.recordTask(pending)
         _ <- resources.sessionStore.saveMessagesForSession(parent.id,
           List(Message(MessageRole.User, Right(List(
             nebflow.shared.ContentBlock.ToolResult("call-1", "result", Some(false)),
-            nebflow.shared.ContentBlock.ToolResult("call-2", "synthetic", Some(true))
-          )), source = Some("subagent-tool-returns:call-1"))))
+            nebflow.shared.ContentBlock.ToolResult("call-2", "synthetic", Some(true)),
+            nebflow.shared.ContentBlock.ToolResult("call-3", "pending result", Some(false))
+          )), source = Some("subagent-tool-returns:call-1,call-3"))))
         _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
         rows <- resources.subAgentTaskStore.loadTasks(parent.id)
       yield
         assertEquals(rows.find(_.taskId == task.taskId).map(_.status), Some("completed"))
         assertEquals(rows.find(_.taskId == other.taskId).map(_.status), Some("running"))
+        assertEquals(rows.find(_.taskId == pending.taskId).map(_.status), Some("completed"))
     }
   }
 
