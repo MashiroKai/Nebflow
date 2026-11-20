@@ -47,9 +47,22 @@ private[gateway] object ChatSearchRoutes:
           val until  = params.get("until").flatMap(v => scala.util.Try(v.toLong).toOption)
           val limit  = params.get("limit").flatMap(v => scala.util.Try(v.toInt).toOption).getOrElse(50)
           val offset = params.get("offset").flatMap(v => scala.util.Try(v.toInt).toOption).getOrElse(0)
-
-          SearchIndexService
-            .query("chat", SearchIndexService.Query(q, kinds, sid, since, until, limit, offset))
+          val cursor = params.get("cursor").flatMap { raw =>
+            scala.util.Try(new String(java.util.Base64.getUrlDecoder.decode(raw), "UTF-8")).toOption
+              .flatMap(io.circe.parser.parse(_).toOption).flatMap { j =>
+                val c = j.hcursor
+                for
+                  ts <- c.get[Long]("ts").toOption
+                  id <- c.get[String]("stableId").toOption
+                  gen <- c.get[String]("indexGeneration").toOption
+                  if id.matches("[0-9a-f]{64}") && gen.nonEmpty
+                yield SearchIndexService.Cursor(ts, id, gen)
+              }
+          }
+          if params.get("offset").exists(v => v != "0") then BadRequest(Json.obj("error" -> "offset pagination is unsupported; upgrade to cursor pagination".asJson))
+          else if params.contains("cursor") && cursor.isEmpty then BadRequest(Json.obj("error" -> "invalid cursor".asJson))
+          else SearchIndexService
+            .query("chat", SearchIndexService.Query(q, kinds, sid, since, until, limit, offset, cursor))
             .flatMap {
               case Left(reason) =>
                 // 降级面：索引未就绪/谓词缺失/查询失败 ⇒ 503 + 理由，
@@ -65,9 +78,17 @@ private[gateway] object ChatSearchRoutes:
                 val payload = Json.obj(
                   "hits"     -> hits.map(hitJson).asJson,
                   "total"    -> total.asJson,
-                  "degraded" -> result.degraded.asJson
+                  "degraded" -> result.degraded.asJson,
+                  "indexGeneration" -> result.indexGeneration.asJson,
+                  "generationChanged" -> result.generationChanged.asJson,
+                  "nextCursor" -> result.nextCursor.map { c =>
+                    val json = Json.obj("ts" -> c.ts.asJson, "stableId" -> c.stableId.asJson,
+                      "indexGeneration" -> c.generation.asJson).noSpaces
+                    java.util.Base64.getUrlEncoder.withoutPadding().encodeToString(json.getBytes("UTF-8"))
+                  }.asJson
                 )
-                HttpCache.conditionalOk(req, payload, result.etag)
+                if result.generationChanged then Ok(payload)
+                else HttpCache.conditionalOk(req, payload, result.etag)
             }
         }
     }
@@ -79,6 +100,8 @@ private[gateway] object ChatSearchRoutes:
       "kind"    -> h.kind.asJson,
       "ts"      -> h.ts.asJson,
       "snippet" -> h.snippet.asJson,
+      "stableId" -> h.stableId.asJson,
+      "occurrenceCount" -> h.occurrenceCount.asJson,
       "extra"   -> parseExtra(h.extra)
     )
 

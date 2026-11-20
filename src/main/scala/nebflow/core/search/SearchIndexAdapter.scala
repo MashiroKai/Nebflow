@@ -52,3 +52,6 @@ trait SearchIndexAdapter:
    * 这一处谓词，前端零事后剔除。
    */
   def excludedSidPrefixes: List[String] = Nil
+
+  /** Enumerate authoritative session IDs when all-session queries require reconciliation. */
+  def sessionIdsForReconcile: Option[List[String]] = None

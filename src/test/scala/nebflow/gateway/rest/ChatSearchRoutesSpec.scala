@@ -183,6 +183,11 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
     assertEquals(json.hcursor.downField("total").as[Int].toOption, Some(0))
   }
 
+  test("legacy nonzero offset is explicitly rejected") {
+    val resp = serve(req("/api/search/chat?q=delegate&kinds=message&offset=50"))
+    assertEquals(resp.status, Status.BadRequest)
+  }
+
   test("鉴权：无 Bearer ⇒ 403") {
     val resp = app(Request[IO](Method.GET, Uri.unsafeFromString("/api/search/chat?q=x&kinds=message"))).unsafeRunSync()
     assertEquals(resp.status, Status.Forbidden)
@@ -202,8 +207,10 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
         1_760_000_000_000L + i * 1_000L, s"pagewalk hit $i")
     }
     SearchIndexService.unsafeInsertDocs("chat", docs)
-    def page(offset: Int): (Int, List[(String, Int)]) =
-      val resp = serve(req(s"/api/search/chat?q=pagewalk&kinds=message&limit=200&offset=$offset"))
+    var cursor = ""
+    def page(): (Int, List[(String, Int)]) =
+      val suffix = if cursor.isEmpty then "" else s"&cursor=$cursor"
+      val resp = serve(req(s"/api/search/chat?q=pagewalk&kinds=message&limit=200$suffix"))
       assertEquals(resp.status, Status.Ok)
       val json = bodyJson(resp)
       val hits = json.hcursor.downField("hits").as[List[Json]].getOrElse(Nil)
@@ -211,12 +218,13 @@ class ChatSearchRoutesSpec extends CatsEffectSuite:
         (h.hcursor.downField("sid").as[String].getOrElse(""),
          h.hcursor.downField("ord").as[Int].getOrElse(-1))
       }
+      cursor = json.hcursor.downField("nextCursor").as[Option[String]].toOption.flatten.getOrElse("")
       (json.hcursor.downField("total").as[Int].getOrElse(-1), keys)
 
-    val (t0, p0) = page(0)
-    val (t1, p1) = page(200)
-    val (t2, p2) = page(400)
-    val (t3, p3) = page(600)
+    val (t0, p0) = page()
+    val (t1, p1) = page()
+    val (t2, p2) = page()
+    val (t3, p3) = page()
     assertEquals(List(t0, t1, t2, t3), List(total, total, total, total), "total 逐页恒定（不随页缩水）")
     assertEquals(List(p0.length, p1.length, p2.length, p3.length), List(200, 200, 200, 20))
     val all = p0 ++ p1 ++ p2 ++ p3

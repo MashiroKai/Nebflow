@@ -5,7 +5,6 @@ import cats.effect.unsafe.implicits.global
 import nebflow.shared.NebflowLogger
 
 import java.sql.{Connection, DriverManager, PreparedStatement}
-import java.time.{Instant, LocalDate, ZoneId}
 
 /**
  * SearchIndexService —— 数据层检索骨架的索引服务单例（设计稿 §4.1-4.4；
@@ -73,8 +72,12 @@ object SearchIndexService:
     kind: String,
     ts: Long,
     snippet: String,
-    extra: String
+    extra: String,
+    stableId: String = "",
+    occurrenceCount: Int = 1
   )
+
+  final case class Cursor(ts: Long, stableId: String, generation: String)
 
   /** 查询参数。谓词纪律：kinds/sid/since/until 至少一个。 */
   final case class Query(
@@ -84,14 +87,18 @@ object SearchIndexService:
     since: Option[Long] = None,
     until: Option[Long] = None,
     limit: Int = 50,
-    offset: Int = 0
+    offset: Int = 0,
+    cursor: Option[Cursor] = None
   )
 
   final case class QueryResult(
     hits: List[Hit],
     total: Int,
     etag: String,
-    degraded: Boolean = false   // true = 走了 LIKE 兜底，调用方只作读数
+    degraded: Boolean = false,
+    indexGeneration: String = "",
+    nextCursor: Option[Cursor] = None,
+    generationChanged: Boolean = false
   )
 
   // ── 常量 ────────────────────────────────────────────────────────────────
@@ -103,6 +110,12 @@ object SearchIndexService:
 
   /** snippet 投影长度（返回面摘录）。 */
   val SnippetChars: Int = 160
+
+  /** 单次查询的候选行扫描上限（SQL 有界面；去重与游标分页在其后统一做）。
+   *  为什么需要：分页与去重都在**后置**统一做（stableId 归并 + (ts,stableId) 定序），
+   *  SQL 侧若也减 offset 会双重扣减而跳行；但完全不设上限则大库查询会把整表拉进内存。
+   *  2000 远高于单页可见量（limit ≤ 200），也覆盖「同一条消息多副本」的膨胀倍数。 */
+  val RowScanCap: Int = 2000
 
   /** 全部已知类型片。 */
   val AllKinds: Set[String] = Set("message", "tool", "media", "file", "link")
@@ -147,6 +160,14 @@ object SearchIndexService:
           val rs = st.executeQuery("SELECT COUNT(*) FROM docs_fts")
           if rs.next() then rs.getInt(1) else -1
         finally st.close()
+
+  private[nebflow] def unsafeExecuteForTests(face: String, sql: String): Unit =
+    val conn = faceOf(face).get.conn
+    val st = conn.createStatement()
+    try
+      st.execute(sql)
+      conn.commit()
+    finally st.close()
 
   /** 测试缝：直接灌文档（绕过 adapter——纯结构测试用）。 */
   private[nebflow] def unsafeInsertDocs(face: String, docs: List[IndexDoc]): Unit =
@@ -293,6 +314,20 @@ object SearchIndexService:
     mtime: Long,
     docsOpt: Option[List[IndexDoc]]
   ): Unit =
+    try replaceSessionDocsTransaction(fs, sid, fingerprint, mtime, docsOpt)
+    catch
+      case scala.util.control.NonFatal(e) =>
+        try fs.conn.rollback()
+        catch case scala.util.control.NonFatal(rollbackError) => e.addSuppressed(rollbackError)
+        throw e
+
+  private def replaceSessionDocsTransaction(
+    fs: FaceState,
+    sid: String,
+    fingerprint: String,
+    mtime: Long,
+    docsOpt: Option[List[IndexDoc]]
+  ): Unit =
     val conn = fs.conn
     // 1) 删旧（内容表 + FTS 影子行）
     val del = conn.prepareStatement("DELETE FROM docs WHERE sid=?")
@@ -356,7 +391,33 @@ object SearchIndexService:
       up.setLong(3, mtime)
       up.executeUpdate()
     finally up.close()
+    bumpGeneration(conn)
     conn.commit()
+
+  /** Canonical identity for both live results and future materialized hits. */
+  private[search] def stableId(sid: String, kind: String, ts: Long, text: String, extra: String): String =
+    val role = io.circe.parser.parse(extra).toOption.flatMap(_.hcursor.downField("role").as[String].toOption).getOrElse("")
+    val normalized = java.text.Normalizer.normalize(text, java.text.Normalizer.Form.NFC)
+    val semanticExtra = io.circe.parser.parse(extra).toOption.map { j =>
+      List("type", "source", "name", "ext", "ref").map(k => j.hcursor.get[String](k).getOrElse(""))
+        .map(s => s"${s.length}:$s").mkString
+    }.getOrElse("")
+    val content = if kind == "message" then normalized else normalized + "\u0000" + semanticExtra
+    val material = List(sid, role, ts.toString, kind, content).map(s => s"${s.length}:$s").mkString
+    java.security.MessageDigest.getInstance("SHA-256").digest(material.getBytes("UTF-8"))
+      .map(b => f"${b & 0xff}%02x").mkString
+
+  private def bumpGeneration(conn: Connection): Unit =
+    val st = conn.createStatement()
+    try st.executeUpdate("INSERT OR REPLACE INTO meta(key,value) VALUES('index_generation', lower(hex(randomblob(16))))")
+    finally st.close()
+
+  private def generation(conn: Connection): String =
+    val st = conn.createStatement()
+    try
+      val rs = st.executeQuery("SELECT value FROM meta WHERE key='index_generation'")
+      if rs.next() then rs.getString(1) else "initial"
+    finally st.close()
 
   /** 月时间片键（会话桶）：当月 = "current"，历史 = yyyymm（§4.2）。 */
   private def monthKeyOf(a: SearchIndexAdapter, sid: String): String =
@@ -373,20 +434,48 @@ object SearchIndexService:
       case None =>
         IO.pure(Left(disabledReason.filter(_.startsWith(face)).getOrElse(s"face '$face' not registered")))
       case Some(fs) =>
-        (reconcileBeforeQuery(fs, q.sid) *> IO.blocking(runQuery(fs, q))).attempt.map {
+        (reconcileBeforeQuery(fs, q.sid) *> IO.blocking {
+          workPermit.acquire()
+          try runQuery(fs, q) finally workPermit.release()
+        }).attempt.map {
           case Right(r) => r
           case Left(e)  =>
             logger.warnSync(s"search-index query failed (${e.getClass.getSimpleName}: ${e.getMessage})")
             Left(s"index query failed: ${e.getClass.getSimpleName}")
         }
 
-  /** 惰性对账（§4.3 兜底）：指定会话（current 档）查询前顺手重建；
-   *  scope=all 不逐会话预检——冷启动由 boot 后台 fiber 负责，查询读最后
-   *  同步快照，可接受（索引陈旧 = 慢，不是错）。 */
+  /** Reconcile enumerated sources before querying; failures trigger the caller's fallback. */
   private def reconcileBeforeQuery(fs: FaceState, sid: Option[String]): IO[Unit] =
-    sid.fold(IO.unit)(s => syncSessionIO(fs, s, forceFull = false).attempt.as(()))
+    sid match
+      case Some(s) => syncSessionIO(fs, s, forceFull = false)
+      case None => IO.blocking(fs.adapter.sessionIdsForReconcile).flatMap {
+        case Some(sids) => sids.foldLeft(IO.unit)((io, s) => io *> syncSessionIO(fs, s, forceFull = false))
+        case None => IO.unit
+      }
+
+  /** Do not expose an incomplete or unimplemented projection as an active search result. */
+  private def projectionReady(conn: Connection): Boolean =
+    val st = conn.createStatement()
+    try
+      val exists = st.executeQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name='search_index_meta'")
+      val present = exists.next()
+      exists.close()
+      if !present then false
+      else
+        val rs = st.executeQuery("SELECT key,value FROM search_index_meta WHERE key IN ('phase','active_generation')")
+        var phase = ""
+        var active = ""
+        while rs.next() do
+          if rs.getString(1) == "phase" then phase = rs.getString(2)
+          else active = rs.getString(2)
+        phase == "done" && active.nonEmpty && active != "legacy"
+    finally st.close()
 
   private def runQuery(fs: FaceState, q: Query): Either[String, QueryResult] =
+    if projectionReady(fs.conn) then Left("inverted search projection is not yet implemented")
+    else runLegacyQuery(fs, q)
+
+  private def runLegacyQuery(fs: FaceState, q: Query): Either[String, QueryResult] =
     val hasPredicate = q.kinds.nonEmpty || q.sid.isDefined || q.since.isDefined || q.until.isDefined
     if q.text.trim.isEmpty then Left("query text must be non-empty")
     else if !hasPredicate then Left("query must carry a shard predicate (kinds/sid/since/until)")
@@ -411,11 +500,6 @@ object SearchIndexService:
           where.append(" AND d.sid NOT LIKE ? ESCAPE '\\'")
           params += (escapeLike(prefix) + "%")
         }
-        monthPreFilter(q).foreach { mk =>
-          // 粗筛保守：空 month_key = 未知/旧桶行，保留（精确 ts 谓词收口正确性）。
-          where.append(" AND (d.month_key=? OR d.month_key='current' OR d.month_key='')")
-          params += mk
-        }
 
         /** 谓词参数绑到 [start+1 .. start+params.size]（MATCH 参数占首位时 start=1）。 */
         def bindBase(ps: PreparedStatement, start: Int): Unit =
@@ -434,125 +518,109 @@ object SearchIndexService:
             val rs = ps.executeQuery()
             val buf = scala.collection.mutable.ListBuffer.empty[Hit]
             while rs.next() do
-              buf += Hit(
-                sid     = rs.getString(1),
-                ord     = rs.getInt(2),
-                kind    = rs.getString(3),
-                ts      = rs.getLong(4),
-                snippet = rs.getString(5).take(SnippetChars),
-                extra   = rs.getString(6)
-              )
+              val sid = rs.getString(1)
+              val kind = rs.getString(3)
+              val ts = rs.getLong(4)
+              val text = rs.getString(5)
+              val extra = rs.getString(6)
+              val id = stableId(sid, kind, ts, text, extra)
+              buf += Hit(sid, rs.getInt(2), kind, ts, text.take(SnippetChars), extra, id)
             buf.toList
           finally ps.close()
 
-        def fetchCount(sql: String, bindExtra: PreparedStatement => Unit): Int =
-          val ps = fs.conn.prepareStatement(sql)
-          try
-            bindExtra(ps)
-            val rs = ps.executeQuery()
-            if rs.next() then rs.getInt(1) else 0
-          finally ps.close()
-
-        def execMatch(expr: String): (List[Hit], Int) =
+        def execMatch(expr: String): List[Hit] =
           // FTS5 MATCH 谓词 = 表级约束，必须直接挂在 docs_fts 后，普通谓词
           // 以 AND 追加（SQL 序：docs_fts MATCH ? AND d.kind IN …）；绑定序同 SQL 序。
+          // **不在这里分页**：stableId 归并 + (ts,stableId) 游标是唯一分页单点，
+          // SQL 只取有界候选集（RowScanCap）——两处各减一次 offset 会跳行。
           val w = s" WHERE docs_fts MATCH ?${where.toString.replace(" WHERE 1=1", "")}"
-          val total = fetchCount(
-            s"SELECT COUNT(*) FROM docs d JOIN docs_fts f ON f.rowid=d.rowid$w",
-            ps => {
-              ps.setString(1, expr)
-              bindBase(ps, 1)
-            })
-          val hits = fetch(
+          fetch(
             s"""SELECT d.sid,d.ord,d.kind,d.ts,d.text,d.extra FROM docs d
                |JOIN docs_fts f ON f.rowid=d.rowid$w
-               |ORDER BY d.ts DESC, d.ord DESC LIMIT ? OFFSET ?""".stripMargin,
+               |ORDER BY d.ts DESC, d.ord DESC LIMIT ?""".stripMargin,
             ps => {
               ps.setString(1, expr)
               bindBase(ps, 1)
-              ps.setInt(params.size + 2, math.max(1, math.min(q.limit, 200)))
-              ps.setInt(params.size + 3, math.max(0, q.offset))
+              ps.setInt(params.size + 2, RowScanCap)
             })
-          (hits, total)
 
-        def execLike(pattern: String): (List[Hit], Int) =
+        def execLike(pattern: String): List[Hit] =
           // pattern 来自 CjkBigram.ftsQuery 的 likePattern（"%单字%"，% 是通配）。
           // 只转义字面段、保留 % 通配——整串 escapeLike 会把通配吃掉（曾致
           // LIKE 退化为整串等值匹配，单字 CJK 永远 0 命中）。
           val likeParam = pattern.split("%", -1).map(escapeLike).mkString("%")
           val w = s"${where} AND d.text LIKE ? ESCAPE '\\'"
-          val total = fetchCount(
-            s"SELECT COUNT(*) FROM docs d$w",
-            ps => {
-              bindBase(ps, 0)
-              ps.setString(params.size + 1, likeParam)
-            })
-          val hits = fetch(
+          fetch(
             s"""SELECT d.sid,d.ord,d.kind,d.ts,d.text,d.extra FROM docs d$w
-               |ORDER BY d.ts DESC, d.ord DESC LIMIT ? OFFSET ?""".stripMargin,
+               |ORDER BY d.ts DESC, d.ord DESC LIMIT ?""".stripMargin,
             ps => {
               bindBase(ps, 0)
               ps.setString(params.size + 1, likeParam)
-              ps.setInt(params.size + 2, math.max(1, math.min(q.limit, 200)))
-              ps.setInt(params.size + 3, math.max(0, q.offset))
+              ps.setInt(params.size + 2, RowScanCap)
             })
-          (hits, total)
 
-        val (hits, total, degraded) =
-          if andExpr.nonEmpty then
-            val (h, t) = execMatch(andExpr)
-            if t > 0 then (h, t, false)
-            else if orExpr.nonEmpty then
-              val (h2, t2) = execMatch(orExpr)
-              (h2, t2, h2.nonEmpty)
-            else if likePattern.nonEmpty then
-              val (h3, t3) = execLike(likePattern)
-              (h3, t3, true)
-            else (Nil, 0, false)
-          else
-            val (h3, t3) = execLike(likePattern)
-            (h3, t3, true)
-
-        // Merge by row identity in SQL before counting and pagination: a MATCH
-        // hit must not hide other rows whose bigram is joined to ASCII.
-        val (finalHits, finalTotal, finalDegraded) =
-          if q.text.exists(CjkBigram.isCjk) && andExpr.nonEmpty then
-            val expr = if total == 0 && orExpr.nonEmpty then orExpr else andExpr
-            val w = s"${where} AND (d.rowid IN (SELECT rowid FROM docs_fts WHERE docs_fts MATCH ?) OR d.text LIKE ? ESCAPE '\\')"
-            val pattern = "%" + escapeLike(q.text.trim) + "%"
-            def bindUnion(ps: PreparedStatement): Unit =
+        /** FTS 全零时的**原文子串**腿（不是并集，只在前腿零命中时单独跑一次）。
+         *  为什么必须有：ftsQuery 把 ASCII 非字母数字一律剥掉（`cursor-race` →
+         *  `cursorrace`），而入库文本里的连字符仍在 unicode61 的词里 ⇒ FTS 零命中，
+         *  用户搜原文却什么都拿不到。这里用**已转义**的整串作单参数 LIKE，只转义
+         *  字面段、不拆 % 通配（与 execLike 区分，避免二次转义）。 */
+        def execLiteral(text: String): List[Hit] =
+          val likeParam = "%" + escapeLike(text) + "%"
+          val w = s"${where} AND d.text LIKE ? ESCAPE '\\'"
+          fetch(
+            s"""SELECT d.sid,d.ord,d.kind,d.ts,d.text,d.extra FROM docs d$w
+               |ORDER BY d.ts DESC, d.ord DESC LIMIT ?""".stripMargin,
+            ps => {
               bindBase(ps, 0)
-              ps.setString(params.size + 1, expr)
-              ps.setString(params.size + 2, pattern)
-            val n = fetchCount(s"SELECT COUNT(*) FROM docs d$w", bindUnion)
-            val rows = fetch(
-              s"""SELECT d.sid,d.ord,d.kind,d.ts,d.text,d.extra FROM docs d$w
-                 |ORDER BY d.ts DESC, d.ord DESC LIMIT ? OFFSET ?""".stripMargin,
-              ps => {
-                bindUnion(ps)
-                ps.setInt(params.size + 3, math.max(1, math.min(q.limit, 200)))
-                ps.setInt(params.size + 4, math.max(0, q.offset))
-              })
-            (rows, n, degraded || n > total)
-          else (hits, total, degraded)
+              ps.setString(params.size + 1, likeParam)
+              ps.setInt(params.size + 2, RowScanCap)
+            })
 
-        Right(QueryResult(
-          finalHits, finalTotal,
-          etagOf(q, finalHits, versionsOf(fs.conn, finalHits.map(_.sid).distinct)),
-          finalDegraded))
+        // 检索阶梯（作者 2026-11-21 晨间裁定「速度优先、废除并集」）：
+        // FTS 全词 AND → FTS 放宽 OR → 单字 CJK 的 LIKE 兜底 → 原文子串腿。
+        // **不做并集**——并集要把 MATCH 与 LIKE 两腿在同一 SQL 里 OR 起来，大库上
+        // 等于整表 LIKE 扫，与「速度优先」相悖；FTS 有命中的前提下一律以 FTS 为准
+        // （词边界语义），只有 FTS 整条阶梯零命中才下探到原文子串一次。
+        val (candidates, degraded) =
+          if andExpr.nonEmpty then
+            val h1 = execMatch(andExpr)
+            if h1.nonEmpty then (h1, false)
+            else if orExpr.nonEmpty then
+              val h2 = execMatch(orExpr)
+              if h2.nonEmpty then (h2, false)
+              else if likePattern.nonEmpty then (execLike(likePattern), true)
+              else (execLiteral(q.text.trim), true)
+            else if likePattern.nonEmpty then (execLike(likePattern), true)
+            else (execLiteral(q.text.trim), true)
+          else if likePattern.nonEmpty then (execLike(likePattern), true)
+          else (execLiteral(q.text.trim), true)
+
+        // 消息级归并（stableId 相同 = 同一条消息的多份副本）+ 代际游标分支：
+        // occurrenceCount 记副本份数，对外 total 报**消息级**条数。
+        val unique = candidates.groupBy(_.stableId).values.map { copies =>
+          val representative = copies.minBy(h => (h.sid, h.ord, h.extra))
+          representative.copy(occurrenceCount = copies.size)
+        }.toList.sortBy(h => (-BigInt(h.ts), h.stableId))
+        val gen = generation(fs.conn)
+        val changed = q.cursor.exists(_.generation != gen)
+        val remaining =
+          if changed then unique
+          else q.cursor.fold(unique) { c =>
+            unique.dropWhile(h => h.ts > c.ts || (h.ts == c.ts && h.stableId <= c.stableId))
+          }
+        // 显式 offset 只在「无游标且游标未失效」时参与（游标面自带位次，重复减会跳行）。
+        val window = if q.cursor.isEmpty && !changed then remaining.drop(math.max(0, q.offset)) else remaining
+        val limit = math.max(1, math.min(q.limit, 200))
+        val pageHits = window.take(limit)
+        val next = if window.size > limit then pageHits.lastOption.map(h => Cursor(h.ts, h.stableId, gen)) else None
+        Right(QueryResult(pageHits, unique.size,
+          etagOf(q, pageHits, versionsOf(fs.conn, pageHits.map(_.sid).distinct), gen),
+          degraded, gen, next, changed))
       end if
-  end runQuery
+  end runLegacyQuery
 
   private def escapeLike(s: String): String =
     s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-
-  /** 时间窗的月桶粗筛键（窗口起点所在月；窗口跨多月靠 ts 精确谓词收口，
-   *  粗筛只砍历史桶——current 桶恒保留）。 */
-  private def monthPreFilter(q: Query): Option[String] =
-    q.since.orElse(q.until).map { ms =>
-      val d = LocalDate.ofInstant(Instant.ofEpochMilli(ms), ZoneId.systemDefault())
-      f"${d.getYear}%04d${d.getMonthValue}%02d"
-    }
 
   /**
    * 查询凭证 ETag（§4.4）：结构键 = face + 规范化参数 + Σ(命中会话 version)。
@@ -560,16 +628,16 @@ object SearchIndexService:
    *  零命中时退化为参数键（新数据进索引后 version 从 0→1，Σ 变化仍触发失效——
    *  由 reconcileBeforeQuery 的 meta 行保证：新会话首 sync 即建 meta）。
    */
-  private def etagOf(q: Query, hits: List[Hit], versions: List[Long]): String =
+  private def etagOf(q: Query, hits: List[Hit], versions: List[Long], generation: String): String =
     val norm =
       s"v1|${q.text.trim.toLowerCase}|${q.kinds.sorted.mkString(",")}|${q.sid.getOrElse("")}|" +
         s"${q.since.getOrElse(0L)}|${q.until.getOrElse(0L)}"
     val seed =
       if hits.nonEmpty then
-        norm + "|" + hits.map(_.sid).distinct.sorted.mkString(";") + "|" + versions.mkString(",")
-      else norm
+        norm + "|" + q.cursor.toString + "|" + q.offset + "|" + hits.map(_.stableId).mkString(";") + "|" + versions.mkString(",")
+      else norm + "|" + versions.mkString(",") + "|" + q.cursor.toString + "|" + q.offset
     val sha = java.security.MessageDigest.getInstance("SHA-256")
-      .digest(seed.getBytes("UTF-8"))
+      .digest((seed + "|" + generation).getBytes("UTF-8"))
       .map(b => f"${b & 0xff}%02x").mkString.take(32)
     "\"" + sha + "\""
 
@@ -628,7 +696,13 @@ object SearchIndexService:
               delm.setString(1, sid)
               delm.executeUpdate()
             finally delm.close()
+            bumpGeneration(fs.conn)
             fs.conn.commit()
+          catch
+            case scala.util.control.NonFatal(e) =>
+              try fs.conn.rollback()
+              catch case scala.util.control.NonFatal(rollbackError) => e.addSuppressed(rollbackError)
+              throw e
           finally workPermit.release()
         }.attempt.flatMap {
           case Right(_) => IO.unit

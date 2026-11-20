@@ -1,6 +1,7 @@
 package nebflow.core.search
 
 import cats.effect.IO
+import cats.effect.unsafe.implicits.global
 import munit.CatsEffectSuite
 
 /**
@@ -107,14 +108,37 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     }
   }
 
-  test("CJK 邻接 ASCII 时零 MATCH 回落原文子串并遵守会话过滤") {
+  /**
+   * 作者 2026-11-21 晨间裁定「速度优先、废除并集」后的语义：FTS 有命中就以 FTS
+   * （bigram 词边界）为准，**不再**把 MATCH 与 LIKE 两腿 OR 成并集。
+   *  - "语音识别" 的索引形态 = `语音 音识 识别` ⇒ bigram 词 "语音" 命中；
+   *  - "语音abc识别" 的索引形态 = `语音abc 识别` ⇒ 中文与 ASCII 粘连成一个词，
+   *    "语音" 不是独立词 ⇒ **不命中**（并集废除后这正是预期，不再回落并入）。
+   * 同 sid/ts/kind/正文 的行是**同一条消息的多副本** ⇒ 归并为 1 条、occurrenceCount 记份数。
+   */
+  test("CJK 邻接 ASCII：bigram 词边界命中，并集已废除（不并入粘连形态）") {
     seed((0 until 800).map(i => doc("mixed-a", i, "message", 1000L, if i < 400 then "语音识别" else "语音abc识别")).toList :+
       doc("mixed-b", 0, "message", 2000L, "语音abc识别"))
     SearchIndexService.query(face, q("语音", kinds = List("message"), sid = Some("mixed-a"))).map { r =>
       val res = r.toOption.get
-      assertEquals(res.total, 800)
-      assertEquals(res.hits.size, 50)
-      assert(res.hits.forall(_.sid == "mixed-a"))
+      assertEquals(res.total, 1, "只有 bigram 可命中的那 400 份副本归并成 1 条消息")
+      assertEquals(res.hits.map(_.occurrenceCount), List(400))
+      assert(res.hits.forall(_.sid == "mixed-a"), "会话过滤仍然生效")
+      assert(!res.degraded, "FTS 命中 ⇒ 不是降级面")
+    }
+  }
+
+  /** 并集废除后**保留**的兜底腿：FTS 整条阶梯零命中时按原文子串再试一次
+   *  （ftsQuery 把非字母数字剥掉，`cursor-race` → `cursorrace` 必然零命中）。 */
+  test("FTS 零命中 ⇒ 原文子串兜底（degraded=true）") {
+    seed(List(
+      doc("literal", 0, "message", 1000L, "dash-token guard"),
+      doc("literal", 1, "message", 2000L, "unrelated text")
+    ))
+    SearchIndexService.query(face, q("dash-token", kinds = List("message"))).map { r =>
+      val res = r.toOption.get
+      assertEquals(res.total, 1)
+      assertEquals(res.hits.head.sid, "literal")
       assert(res.degraded)
     }
   }
@@ -220,16 +244,7 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     }
   }
 
-  /**
-   * 压缩前归档段（`monthKey=Some("")`）不得被时间窗月桶粗筛误杀：查询带 since 时
-   * 服务端的 monthPreFilter 只保留「窗口月 / current / 空桶」三档，归档行落在空桶
-   * ⇒ 恒保留（这正是 adapter 里归档行写空桶的原因）。
-   */
-  test("月桶覆盖：归档行（空桶）在带时间窗的查询里不被粗筛误杀") {
-    // 三行 ts 都在查询窗口内（since 之下），差别只在月桶：
-    //   ord 0 = 归档行，显式空桶（''）⇒ 粗筛「未知/旧桶，保留」⇒ 必须命中；
-    //   ord 1 = 会话桶（默认 current）⇒ 保留 ⇒ 命中；
-    //   ord 2 = 显式非窗口月桶 ⇒ 被粗筛砍掉（证明粗筛确实在工作，不是恒真）。
+  test("time filtering does not discard matches based on session month") {
     SearchIndexService.unsafeInsertDocs(face, List(
       SearchIndexService.IndexDoc("arc", 0, "message", 1_795_000_000_000L, "archived needle", "", Some("")),
       SearchIndexService.IndexDoc("arc", 1, "message", 1_796_000_000_000L, "archived needle", "", None),
@@ -237,8 +252,85 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     ))
     SearchIndexService.query(face, q("archived", kinds = List("message"), since = Some(1_790_000_000_000L))).map { r =>
       val res = r.toOption.get
-      assertEquals(res.hits.map(_.ord).sorted, List(0, 1))
+      assertEquals(res.hits.map(_.ord).sorted, List(0, 1, 2))
     }
+  }
+
+  /** 并集废除后的词边界语义（作者 2026-11-21 晨间裁定）：FTS 有命中就以 FTS 为准，
+   *  「session」不再额外把「multisession」并入结果——要搜子串请改查更长的原文。 */
+  test("word-boundary FTS: a whole-word hit does not pull in the compound word") {
+    seed(List(doc("substring", 0, "message", 1L, "session"),
+      doc("substring", 1, "message", 2L, "multisession")))
+    SearchIndexService.query(face, q("session", kinds = List("message"))).map { r =>
+      val res = r.toOption.get
+      assertEquals(res.total, 1)
+      assertEquals(res.hits.head.snippet, "session")
+      assert(!res.degraded)
+    }
+  }
+
+  test("cursor detects changes and returns a fresh first page") {
+    val ds = (0 until 101).toList.map(i => doc("cursor-race", i, "message", i + 1L, s"cursor-race-$i"))
+    SearchIndexService.unsafeInsertDocs(face, ds.take(100))
+    def run(cursor: Option[SearchIndexService.Cursor]) =
+      SearchIndexService.query(face, SearchIndexService.Query("cursor-race", kinds = List("message"), limit = 50, cursor = cursor)).unsafeRunSync().toOption.get
+    val first = run(None)
+    assertEquals(first.hits.size, 50)
+    SearchIndexService.unsafeInsertDocs(face, ds)
+    val changed = run(first.nextCursor)
+    assert(changed.generationChanged)
+    assertEquals(changed.total, 101)
+    assertEquals(changed.hits.head.ts, 101L)
+    assertEquals(changed.hits.map(_.stableId).distinct.size, 50)
+    SearchIndexService.unsafeInsertDocs(face, ds.drop(10) ++ List(doc("cursor-race", 200, "message", 200L, "cursor-race-new")))
+    val changedAgain = run(changed.nextCursor)
+    assert(changedAgain.generationChanged)
+    assertEquals(changedAgain.total, 92)
+    assertEquals(changedAgain.hits.head.ts, 200L)
+  }
+
+  test("identical hits collapse while distinct same-row attachments remain pageable") {
+    val distinct = (0 until 15).toList.map(i => doc("attachments-page", 0, "file", 1L, s"attachment needle $i"))
+    SearchIndexService.unsafeInsertDocs(face, distinct ++ List.fill(3)(doc("attachments-page", 1, "file", 1L, "attachment repeated needle")))
+    def run(cursor: Option[SearchIndexService.Cursor]) = SearchIndexService.query(face,
+      SearchIndexService.Query("attachment", kinds = List("file"), limit = 5, cursor = cursor)).unsafeRunSync().toOption.get
+    var cursor: Option[SearchIndexService.Cursor] = None
+    var collected = List.empty[SearchIndexService.Hit]
+    var more = true
+    while more do
+      val page = run(cursor)
+      assertEquals(page.total, 16)
+      collected = collected ++ page.hits
+      cursor = page.nextCursor
+      more = cursor.nonEmpty
+    assertEquals(collected.size, 16)
+    assertEquals(collected.map(_.stableId).distinct.size, 16)
+    assertEquals(collected.map(_.occurrenceCount).sum, 18)
+    assertEquals(collected.count(_.occurrenceCount == 3), 1)
+  }
+
+  test("failed replacement rolls back before an unrelated successful write") {
+    val original = doc("rollback-target", 0, "message", 1L, "rollbackoriginal")
+    SearchIndexService.unsafeInsertDocs(face, List(original))
+    intercept[Exception] {
+      SearchIndexService.unsafeInsertDocs(face, List(doc("rollback-target", 0, "message", 2L, null)))
+    }
+    SearchIndexService.unsafeInsertDocs(face, List(doc("rollback-other", 0, "message", 3L, "unrelated")))
+    val result = SearchIndexService.query(face, q("rollbackoriginal", kinds = List("message"))).unsafeRunSync().toOption.get
+    assertEquals(result.total, 1)
+    assertEquals(result.hits.head.sid, "rollback-target")
+  }
+
+  test("failed deletion rolls back before another write commits") {
+    SearchIndexService.unsafeInsertDocs(face, List(doc("delete-rollback", 0, "message", 1L, "deletepreserved")))
+    SearchIndexService.unsafeExecuteForTests(face,
+      "CREATE TEMP TRIGGER reject_meta_delete BEFORE DELETE ON sessions_meta WHEN OLD.sid = 'delete-rollback' BEGIN SELECT RAISE(ABORT, 'fixture'); END")
+    try
+      SearchIndexService.removeSession(face, "delete-rollback").unsafeRunSync()
+      SearchIndexService.unsafeInsertDocs(face, List(doc("delete-other", 0, "message", 1L, "other")))
+      val result = SearchIndexService.query(face, q("deletepreserved", kinds = List("message"))).unsafeRunSync().toOption.get
+      assertEquals(result.total, 1)
+    finally SearchIndexService.unsafeExecuteForTests(face, "DROP TRIGGER reject_meta_delete")
   }
 
 end SearchIndexServiceSpec

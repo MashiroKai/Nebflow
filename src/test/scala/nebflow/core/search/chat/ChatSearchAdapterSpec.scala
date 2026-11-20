@@ -73,6 +73,21 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
     assert(media.extra.contains("photo.png"))
   }
 
+  test("distinct attachments on one message retain separate searchable entries") {
+    writeUi("attachments", List(UiMessage.User(
+      text = "files", timestamp = 1000L,
+      attachments = List(
+        io.circe.Json.obj("name" -> io.circe.Json.fromString("alpha.txt"), "path" -> io.circe.Json.fromString("/tmp/alpha.txt")),
+        io.circe.Json.obj("name" -> io.circe.Json.fromString("beta.txt"), "path" -> io.circe.Json.fromString("/tmp/beta.txt"))
+      )
+    )))
+    val files = adapter.extractSession("attachments").getOrElse(Nil).filter(_.kind == "file")
+    assertEquals(files.length, 2)
+    assertEquals(files.map(_.ord).distinct, List(0))
+    assert(files.exists(_.text.contains("alpha.txt")))
+    assert(files.exists(_.text.contains("beta.txt")))
+  }
+
   test("tool 行不入索引（作者令①）：summary/input/content 不产生 kind=\"tool\" 文档；Pop 载荷媒体条目照产") {
     writeUi("s3", List(
       UiMessage.User(text = "run it", timestamp = 1000L),
@@ -213,6 +228,36 @@ class ChatSearchAdapterSpec extends CatsEffectSuite:
     assert(fpBefore.isDefined && fpAfter.isDefined)
     assert(fpBefore != fpAfter, s"归档快照进指纹（$fpBefore → $fpAfter）")
     assert(adapter.sessionMtimeOpt("s11").getOrElse(0L) >= mtBefore.getOrElse(0L))
+  }
+
+  test("archive text remains searchable beyond the former cap") {
+    writeUi("long-archive", List(UiMessage.User(text = "recent", timestamp = 9000L)))
+    writeArchive("long-archive", "001", List((1000L, "user", "x" * 2100 + "needleaftercap")))
+    val docs = adapter.extractSession("long-archive").getOrElse(Nil)
+    assert(docs.exists(_.text.contains("needleaftercap")))
+  }
+
+  test("all-session search finds records written after the previous index snapshot") {
+    SearchIndexService.unsafeResetForTests()
+    SearchIndexService.unsafeRegisterInMemory(adapter)
+    for
+      before <- SearchIndexService.query("chat", SearchIndexService.Query("freshnessneedle", kinds = List("message")))
+      _ = assertEquals(before.toOption.get.total, 0)
+      _ = writeUi("freshness-new", List(UiMessage.User(text = "freshnessneedle", timestamp = 1000L)))
+      after <- SearchIndexService.query("chat", SearchIndexService.Query("freshnessneedle", kinds = List("message")))
+    yield assertEquals(after.toOption.get.total, 1)
+  }
+
+  test("all-session search reconciles newly written source and exposes malformed source") {
+    writeUi("freshness", List(UiMessage.User(text = "freshneedle", timestamp = 1000L)))
+    SearchIndexService.unsafeResetForTests()
+    SearchIndexService.unsafeRegisterInMemory(adapter)
+    for
+      found <- SearchIndexService.query("chat", SearchIndexService.Query("freshneedle", kinds = List("message")))
+      _ = assertEquals(found.toOption.get.total, 1)
+      _ = os.write.over(dir / "freshness.ui.json", "not json")
+      failed <- SearchIndexService.query("chat", SearchIndexService.Query("freshneedle", kinds = List("message")))
+    yield assert(failed.isLeft)
   }
 
 end ChatSearchAdapterSpec

@@ -59,6 +59,10 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
   /** 检索面准入（主会话才入库；判据单点见 [[SessionScope]]）。 */
   private def inScope(sid: String): Boolean = SessionScope.isMainSession(sid)
 
+  override def sessionIdsForReconcile: Option[List[String]] =
+    Some(os.list(sessionsDir).filter(_.last.endsWith(".ui.json"))
+      .map(_.last.stripSuffix(".ui.json")).filter(inScope).toList)
+
   private def uiFile(sid: String): os.Path = sessionsDir / s"$sid.ui.json"
 
   def sessionMtime(sid: String): Option[Long] =
@@ -124,7 +128,7 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
         val arch = archiveStamp(sid) match
           case Some((mt, sz)) => s"$mt:$sz"
           case None           => "-"
-        Some(s"${os.mtime(f)}:${os.size(f)}:$arch")
+        Some(s"v2:${os.mtime(f)}:${os.size(f)}:$arch")
 
   override def extractSession(sid: String, forceFull: Boolean): Option[List[SearchIndexService.IndexDoc]] =
     if !inScope(sid) then None
@@ -132,7 +136,7 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
       val f = uiFile(sid)
       if !os.exists(f) then None
       else
-        val msgs = decode[List[UiMessage]](os.read(f)).getOrElse(Nil)
+        val msgs = decode[List[UiMessage]](os.read(f)).fold(_ => throw new IllegalStateException("Invalid UI session JSON"), identity)
         if msgs.isEmpty then None
         else Some(extractDocs(sid, msgs) ++ extractArchiveDocs(sid, msgs))
 
@@ -208,8 +212,7 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
    *     `origin:"archive"`（前端据此把定位失败报成「压缩前归档」而不是「没找到」）；
    *   - 行号取**负值**：与回放行（ord ≥ 0）天然不撞键，前端 (sid,ord) 定位/键值
    *     不受影响；排序仍按 ts，负行号只作身份位；
-   *   - 文本按 [[SearchIndexService.IndexTextCapChars]] 截断（老消息常含整段
-   *     上下文注入，全量入索引会把库撑爆；回放腿**不**截断，行为不变）；
+   *   - Archive text is indexed in full so suffix matches remain searchable;
    *   - month_key 留空（''）：查询侧时间窗粗筛把 '' 当「未知/旧桶」保留，否则归档
    *     行会因会话桶月份与查询窗口不符而被粗筛误杀（SearchIndexService 同注）。
    */
@@ -221,8 +224,9 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
         archiveFile(sid) match
           case None => Nil
           case Some(f) =>
-            val raw = io.circe.parser.parse(os.read(f)).toOption
-              .flatMap(_.asArray).getOrElse(Vector.empty)
+            val raw = io.circe.parser.parse(os.read(f))
+              .fold(_ => throw new IllegalStateException("Invalid archive JSON"), identity)
+              .asArray.getOrElse(throw new IllegalStateException("Invalid archive array"))
             val out = scala.collection.mutable.ListBuffer.empty[SearchIndexService.IndexDoc]
             raw.foreach { j =>
               val c      = j.hcursor
@@ -240,7 +244,7 @@ final class ChatSearchAdapter(sessionsDir: os.Path) extends SearchIndexAdapter:
                     ord      = -(out.size + 1),
                     kind     = "message",
                     ts       = ts,
-                    text     = text.take(SearchIndexService.IndexTextCapChars),
+                    text     = text,
                     extra    = archiveExtra(r),
                     monthKey = Some("")   // 旧桶行：查询侧粗筛恒保留
                   )
