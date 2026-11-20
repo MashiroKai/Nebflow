@@ -483,7 +483,11 @@ object SubAgentStartupRecovery:
         case nebflow.shared.ExecutionProtection.Unprotected =>
           (sessionStore.loadTerminalEnvelope(task.taskId, run),
             nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run, task.source)).tupled.flatMap {
-            case (Some(event), Some(debt)) if !event.metadata("completionMessages").contains(debt.messages.asJson) =>
+            case (Some(event), Some(debt)) if event.source != task.source || event.eventType != "completed" ||
+                !event.correlationId.contains(task.taskId) ||
+                !event.metadata("parentSessionId").flatMap(_.asString).contains(task.parentSessionId) ||
+                event.metadata("taskRunId").flatMap(_.asString).exists(_ != run) ||
+                !event.metadata("completionMessages").contains(debt.messages.asJson) =>
               store.markSuspectedLostTerminal(task).void *>
                 logger.warn(s"[startup-recovery] conflicting terminal evidence for ${task.taskId}; manual review required")
             case (Some(event), _) if event.source == task.source && event.eventType == "completed" &&

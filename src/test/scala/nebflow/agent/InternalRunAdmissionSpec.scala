@@ -205,6 +205,26 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("invalid envelope identity with matching debt requires manual review") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("invalid-evidence-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-invalid-evidence", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        messages = List(Message(MessageRole.Assistant, Left("answer")))
+        _ <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1", messages)
+        event = AgentCommand.ExternalEvent("wrong-source", "completed", "answer",
+          JsonObject("parentSessionId" -> parent.id.asJson, "completionMessages" -> messages.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.map(_.status), Some("running"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
+    }
+  }
+
   test("conflicting completion debt and envelope require manual review") {
     fixture.use { case (resources, _, _, _) =>
       for
