@@ -204,6 +204,29 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("recovery does not infer completion from a parked subtask transcript") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("parked-parent", agentName = Some("worker"))
+        child <- resources.sessionStore.createSession("parked-child", agentName = Some("worker"))
+        task = SubAgentTask(child.id, parent.id, "worker", "investigate", "test", "running", 0,
+          System.currentTimeMillis(), None, None, "subtask")
+        admitted <- resources.subAgentTaskStore.beginRun(task, "run-parked", parent.id, "nebflow")
+        _ = assert(admitted.isRight)
+        running <- resources.subAgentTaskStore.updateRun(parent.id, child.id, "run-parked", executionStatus = Some("running"))
+        _ = assert(running.isRight)
+        _ <- resources.sessionStore.saveMessagesForSession(child.id,
+          List(Message(MessageRole.Assistant, Left("interim text while awaiting child"))))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(child.id)
+        pending <- SessionMailbox.scanPending(parent.id)
+        taken <- SessionMailbox.scanTaken(parent.id)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("running"))
+        assertEquals((pending ++ taken).size, 0)
+    }
+  }
+
   test("startup delivers a reason-only failed run without a transcript and unblocks the next run") {
     fixture.use { case (resources, _, calls, _) =>
       val reason = "Actor construction failed before the first session checkpoint"
