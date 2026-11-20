@@ -259,6 +259,12 @@ export const CHECKS = [
     argv: ['python3', '-B', 'scripts/tests/test-visual-report-paths.py'] },
   { name: 'stand-wt-tests', profiles: ['static'], timeoutMs: 120_000,
     argv: ['python3', '-B', 'scripts/tests/test_stand_wt.py'] },
+  // 隔离启动守卫（panel-glass-align 落支批 2026-11-20 残差移植）：本仓的隔离跑法全靠
+  // 约定（--home / 环境变量 / JVM 属性三处必须同指一个隔离根），漏一处就把日志与数据
+  // 写进生产 ~/.stand 而无人发现。该守卫在 Java（进而 Logback）启动前拒掉越界组合，
+  // 单测覆盖四类拒绝面；不注册则等于没有这道闸。
+  { name: 'isolated-java-launch-tests', profiles: ['static'], timeoutMs: 120_000,
+    argv: ['python3', '-B', 'scripts/tests/test-isolated-java-launch.py'] },
   // 微信侧车单测（九个 *.test.mjs）按目录点名收集，防目录新增文件漏跑。
   { name: 'weixin-sidecar-tests', profiles: ['static'], timeoutMs: 180_000,
     argv: [process.execPath, '--test', ...weixinTests] },
@@ -267,6 +273,13 @@ export const CHECKS = [
   // 不是测试缺陷）。
   { name: 'delegate-chain-throttle', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, '--experimental-vm-modules', 'tests/delegate-chain-throttle.test.mjs'] },
+  // 未读计数单源（fix/unread-count-unify 独立审查 2026-11-20）：该支的实现在内核抽取批
+  // （2026-11-18）之后已被 base 完整吸收（unreadCount.js 同字节、utils.rec.unreadRows、
+  // askDialog.settleCol 同式），唯独验收件仍锚在已搬空的 askDock.js ⇒ 长期红着没人跑、
+  // 也没注册成闸。本处补两件：把断言重锚到 askDialog.js 的 settleCol（同一份源码切片，
+  // 无二次书写），并把这条测试注册进 static 档 —— 不注册就等于没有这道闸。
+  { name: 'unread-count', profiles: ['static'], timeoutMs: 120_000,
+    argv: [process.execPath, '--test', 'tests/unread-count.test.mjs'] },
   nodeCheck('sdd', 'check-sdd', ['static']),
   nodeCheck('sdd-changed', 'check-sdd', ['sdd-changed']),
 ];

@@ -6,13 +6,26 @@ const base = new URL('../src/main/resources/web/js/', import.meta.url);
 const source = await readFile(new URL('unreadCount.js', base), 'utf8');
 const { countUnread } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const mainSrc = await readFile(new URL('utils.js', base), 'utf8');
-const askSrc = await readFile(new URL('askDock.js', base), 'utf8');
+// 内核抽取批（2026-11-18）后 settleCol / countUnread 单点在 askDialog.js（canvas 档与
+// 选区档共用内核）；askDock.js 只剩画布侧脚手架，不再自持落列计数。
+const askSrc = await readFile(new URL('askDialog.js', base), 'utf8');
 function extract(src, start, end) { const a = src.indexOf(start), b = src.indexOf(end, a); assert.ok(a >= 0 && b > a); return src.slice(a, b).replace(/^export /, '') + '\n}'; }
 const isReal = vm.runInNewContext('(' + extract(mainSrc, 'export function countsAsRealMessage(', '\n}\n') + ')');
 function row(role) { const classes = ['row', role === 'sys' ? 'system' : role]; return { classList: { contains: x => classes.includes(x) }, querySelector: () => null }; }
 function askPath(messages, initial = 0, atBottom = false) {
-  const ctx = { el: {}, colUnseen: initial, colSnapped: false, colFollows: () => atBottom, askPillSync() {}, requestAnimationFrame() {}, countUnread, messages };
-  vm.runInNewContext(extract(askSrc, 'function settleCol(', '\n}\n') + '\nsettleCol(messages)', ctx);
+  const ctx = {
+    colUnseen: initial, colSnapped: false, countUnread, messages,
+    dlg: { colFollows: () => atBottom, askPillSync() {} },
+    requestAnimationFrame() {},
+  };
+  // settleCol 在 askDialog.js 里是**对象方法的简写形态**（`settleCol(arrived = []) {`），
+  // 不是顶层函数 ⇒ 不能直接当脚本求值；这里按方法切片装进一个对象再调用，
+  // 语义与内核实例上的同名方法逐字一致（同一份源码切片，无二次书写）。
+  const a = askSrc.indexOf('settleCol(arrived = []) {');
+  assert.ok(a >= 0, 'askDialog.js 应仍定义 settleCol 方法');
+  const b = askSrc.indexOf('\n    },', a);
+  assert.ok(b > a, 'settleCol 方法体应以 `    },` 收尾');
+  vm.runInNewContext(`const __m = {\n${askSrc.slice(a, b)}\n    }\n};\n__m.settleCol(messages);`, ctx);
   return ctx.colUnseen;
 }
 function mainPath(messages, initial = 0, atBottom = false) {
