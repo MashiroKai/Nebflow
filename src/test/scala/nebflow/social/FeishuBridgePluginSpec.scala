@@ -152,7 +152,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       send = send,
       pinnedAllowedOpenIds = allowed,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       fetchResource = fetch
     )
 
@@ -250,7 +250,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       root,
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       fetchResource = fetch.fn
     )
     val image = inbound("oc_bound", None, messageType = "image", contentRaw = """{"image_key":"img_v3_abc"}""")
@@ -290,7 +290,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       root,
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       fetchResource = fetch.fn
     )
     for
@@ -323,7 +323,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       root,
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       fetchResource = fetch.fn
     )
     for
@@ -349,7 +349,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       root,
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       fetchResource = fetch.fn
     )
     for
@@ -495,8 +495,8 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     val p = plugin(send.fn)
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>he"))
-      _ <- p.onAgentEvent("s1", delta("s1", "llo</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>he"))
+      _ <- p.onAgentEvent("s1", delta("s1", "llo</report>"))
       _ <- p.onAgentEvent("s1", done("s1"))
       _ <- p.onAgentEvent("s1", done("s1")) // a second done must not re-send
       got <- send.calls.get
@@ -535,7 +535,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     val p = plugin(send.fn)
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>hello</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>hello</report>"))
       _ <- p.onAgentEvent("s1", done("s1"))
       got <- send.calls.get
     yield assertEquals(got, List(("oc_bound", "hello")))
@@ -547,7 +547,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
   // `roundComplete` | `done` 帧 flush textBuf）——桥接腿接同一源：一条消息对应
   // 一条渠道消息，一条一条即时推送（作者 2026-10-09 原话）。
   //
-  // output 块纪律渠道接线批（2026-11-01）：渠道出站只投 `<output>` 块内拼接
+  // output 块纪律渠道接线批（2026-11-01）：渠道出站只投 `<report>` 块内拼接
   // （作者令「不要回退成发全文」）——本节夹具的段文本一律裹块，块内内容即
   // 断言值；裸叙述夹具在改后是零出站，钉不住推送/节流机器。
 
@@ -560,12 +560,12 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     val p = plugin(send.fn)
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>第一段"))
-      _ <- p.onAgentEvent("s1", delta("s1", "①</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>第一段"))
+      _ <- p.onAgentEvent("s1", delta("s1", "①</report>"))
       _ <- p.onAgentEvent("s1", fbToolStart) // 分段提交边界 1：第一段即推
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>第二段</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>第二段</report>"))
       _ <- p.onAgentEvent("s1", fbRoundComplete) // 分段提交边界 2：第二段即推
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>第三段</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>第三段</report>"))
       _ <- p.onAgentEvent("s1", done("s1")) // 只补发尾段
       got <- send.calls.get
       after <- p.pendingRef.get
@@ -591,9 +591,9 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     val p = plugin(sendFn)
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>seg one</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>seg one</report>"))
       _ <- p.onAgentEvent("s1", fbToolStart)
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>seg two</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>seg two</report>"))
       _ <- p.onAgentEvent("s1", done("s1"))
       ss <- stamps.get
     yield
@@ -611,11 +611,11 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     val p = plugin(send.fn)
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>第一段</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>第一段</report>"))
       _ <- p.onAgentEvent("s1", fbToolStart)
       _ <- p.onAgentEvent("s1", fbToolStart) // 空缓冲：纯工具过程不推
       _ <- p.onAgentEvent("s1", fbRoundComplete) // 仍空：不推
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>尾段</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>尾段</report>"))
       _ <- p.onAgentEvent("s1", done("s1"))
       got <- send.calls.get
     yield assertEquals(
@@ -641,9 +641,9 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
     val p = plugin(send.fn)
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>段一</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>段一</report>"))
       _ <- p.onAgentEvent("s1", fbToolStart) // 段一失败 → 注明 #1
-      _ <- p.onAgentEvent("s1", delta("s1", "<output>段二</output>"))
+      _ <- p.onAgentEvent("s1", delta("s1", "<report>段二</report>"))
       _ <- p.onAgentEvent("s1", fbRoundComplete) // 段二失败 → 连续失败只注明一次
       _ <- p.onAgentEvent("s1", done("s1")) // 尾失败：轮终腿保持既有仅 WARN
       got <- awaitCalls(send.calls, 3).timeout(10.seconds)
@@ -706,7 +706,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       tmpRoot(),
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       readDefaultSession = _ => Some("s_default")
     )
     for
@@ -739,7 +739,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       tmpRoot(),
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       readDefaultSession = _ => None
     )
     for
@@ -760,7 +760,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       send = RecordingSend().fn,
       pinnedAllowedOpenIds = Some(List("ou_member")),
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       readDefaultSession = _ => Some("s_default")
     )
     val (ctxMember, injMember) = newCtx(Nil)
@@ -795,7 +795,7 @@ class FeishuBridgePluginSpec extends CatsEffectSuite:
       root,
       send = RecordingSend().fn,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       readDefaultSession = _ => Some("s_default"),
       fetchResource = fetch.fn
     )

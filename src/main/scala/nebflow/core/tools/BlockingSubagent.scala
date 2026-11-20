@@ -170,21 +170,14 @@ object BlockingSubagent:
     ctx.rootSessionId.orElse(ctx.sessionId).getOrElse("")
 
   /**
-   * 步/子会话首条消息铁律包装（sleep-poll 禁令批 C 段单点 + output 块语法批
-   * 追加；spec 判红锚）——铁律前缀 + output 块纪律 + 空行 + 原始任务文本
+   * 步/子会话首条消息铁律包装（sleep-poll 禁令批 C 段单点 + report 块语法批
+   * 追加；spec 判红锚）——铁律前缀 + report 块纪律 + 空行 + 原始任务文本
    * （子会话无历史，首条即全部上下文）。
    *
-   * output 块总闸·提示词面（prompt-face 补批 2026-11-01，作者令「把 output 块
-   * 相关的内容先关闭」）：`includeOutputRule=false` ⇒ 铁律后不追 output 块纪律，
-   * 首条消息 = 铁律 + 空行 + 任务原文。生产缺省 = **组装期热读**
-   * `nebflow.shared.OutputBlockGate.enabled()`（每次包装求值，翻闸后新派发即
-   * 翻面）；离线 spec 注入常值与机器配置解耦。
+   * report 块可见性批（2026-11-20）：旧的 `outputBlock.enabled` 总闸整体退役
+   * （设计稿 proposal 逐字：kill switch retired，不留「关 = 全文泄漏」回退面）
+   * ——纪律行**恒注入**，无闸态分支。
    */
-  private[tools] def promptWithRule(
-    prompt: String,
-    /** output 块总闸（prompt-face 补批）：true = 包装携带 OutputBlockRule。 */
-    includeOutputRule: Boolean = nebflow.shared.OutputBlockGate.enabled()
-  ): String =
-    if includeOutputRule then s"${Defaults.NoSleepPollRule}\n\n${Defaults.OutputBlockRule}\n\n$prompt"
-    else s"${Defaults.NoSleepPollRule}\n\n$prompt"
+  private[tools] def promptWithRule(prompt: String): String =
+    s"${Defaults.NoSleepPollRule}\n\n${Defaults.OutputBlockRule}\n\n$prompt"
 end BlockingSubagent

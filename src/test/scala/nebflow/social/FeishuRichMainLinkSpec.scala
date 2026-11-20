@@ -170,7 +170,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
       send = send.fn,
       pinnedAllowedOpenIds = None,
       pinnedCreds = Some(FeishuCredentials.Credential("test-app", "test-secret", "spec")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       buildRichAdapter = (_, _, _) =>
         new RichFeishuAdapter(
           rec.uploadImage,
@@ -260,7 +260,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", "<output>here is the card</output>"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", "<report>here is the card</report>"))
       _ <- p.onAgentEvent("s1", toolEnd("s1", cardPayload()))
       _ <- p.onAgentEvent("s1", done("s1"))
       imgs <- rec.images.get
@@ -429,7 +429,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", "<output>failed</output>"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", "<report>failed</report>"))
       _ <- p.onAgentEvent("s1", toolEnd("s1", cardPayload(), isError = true))
       _ <- p.onAgentEvent("s1", done("s1"))
       imgs <- rec.images.get
@@ -452,7 +452,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", s"<output>$raw</output>"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", s"<report>$raw</report>"))
       _ <- p.onAgentEvent("s1", done("s1"))
       calls <- renderer.calls.get
       imgs <- rec.images.get
@@ -479,7 +479,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", "<output>done</output>"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", "<report>done</report>"))
       _ <- p.onAgentEvent("s1", toolEnd("s1", s"file at $odd", Some(Json.obj("path" -> odd.toString.asJson))))
       _ <- p.onAgentEvent("s1", done("s1"))
       imgs <- rec.images.get
@@ -674,7 +674,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", "<output>两张图如下</output>"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", "<report>两张图如下</report>"))
       _ <- p.onAgentEvent("s1", toolEnd("s1", popPayload(item("image", "a.png", a), item("image", "b.png", b))))
       _ <- p.onAgentEvent("s1", done("s1"))
       order <- wire.get
@@ -702,7 +702,7 @@ class FeishuRichMainLinkSpec extends CatsEffectSuite:
 
     for
       _ <- p.rebuildRoutes(ctx)
-      _ <- p.onAgentEvent("s1", textDelta("s1", "<output>正文照发</output>"))
+      _ <- p.onAgentEvent("s1", textDelta("s1", "<report>正文照发</report>"))
       _ <- p.onAgentEvent(
         "s1",
         toolEnd("s1", popPayload(item("image", "a.png", a), item("image", "bad.png", bad), item("image", "c.png", c)))

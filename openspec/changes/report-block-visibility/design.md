@@ -6,7 +6,11 @@ Only the root session uses report blocks as the user-visible face. The actor sta
 
 ## User face
 
-Paired `<report>...</report>` blocks yield their trimmed bodies in order separated by blank lines. Empty and absent blocks produce no visible text; process content is folded into the existing tool badge. A turn without report blocks reuses the badge rather than adding a second badge. Quoted text, inline code and fenced code do not define blocks. Nested, stray or unclosed tags fail closed. Old `<output>` tags are ordinary text for root; no alias or full-text kill-switch is proposed.
+Paired `<report>...</report>` blocks yield their trimmed bodies in order separated by blank lines. Empty and absent blocks produce no visible text; process content is folded into the existing tool badge. A turn without report blocks reuses the badge rather than adding a second badge. Quoted text, inline code and fenced code do not define blocks. Nested, stray or unclosed tags fail closed. Old `<output>` tags are ordinary text for root; no alias is proposed.
+
+## Retired kill switch
+
+`outputBlock.enabled` and its three-sided reader (`nebflow.shared.OutputBlockGate`, `OutputBlock.enabledFromConfig`, `web/js/featureFlags.js outputBlockEnabled`) are deleted, not merely defaulted off. The prompt discipline line, the protocol footnote, the delegate brief and the subagent wrapper inject unconditionally: a "gate off ⇒ full text" fallback would be exactly the leak this change removes. Surviving pins: `SleepPollStartupRuleSpec` (four injection faces), `NebulaPromptOutputStyleGateRetiredSpec` (writing the retired key changes the root prompt by zero bytes), `PromptSectionsSpec` (order-375 section presents regardless of config), `OutputBlockSpec` OB-G3 (channel verdicts are a pure function of text and root session).
 
 ## Parent face
 

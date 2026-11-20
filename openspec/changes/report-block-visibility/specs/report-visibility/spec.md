@@ -18,3 +18,13 @@ Child intermediate report blocks SHALL use a nonterminal parent progress channel
 
 - **WHEN** a child message is final
 - **THEN** its report block is not separately delivered on the progress channel
+
+### Requirement: [RV-REQ-003] Retire the output block kill switch
+
+The `outputBlock.enabled` switch, its shared reader and its web flag SHALL be removed rather than defaulted. Prompt discipline surfaces SHALL inject unconditionally so that no configuration state can produce a full-text fallback.
+
+#### Scenario: [RV-SCN-003] A retired key cannot change any face
+
+- **WHEN** any configuration value is written under `outputBlock.enabled`
+- **THEN** the root prompt, the delegate brief, the node footnote, the subagent wrapper and the channel verdict are byte-identical to the no-configuration case
+- **AND** the report discipline line is still present on every one of those faces

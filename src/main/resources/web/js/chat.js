@@ -839,7 +839,12 @@ export function appendAiText(text, mark) {
         if (!target.bubble.isConnected) return;
         const stats = _aiStreamStats;
         const t0 = stats ? performance.now() : 0;
-        const visible = target.bubble._nfIsRoot === false ? (target.bubble._nfText || '') : (extractOutputInner(target.bubble._nfText || '') || '');
+        // Report face is opt-in by POSITIVE source stamp (author ruling
+        // 2026-11-20: root-only, unknown identity is never guessed). Only a frame
+        // that said `isRoot: true` gets the extracted body; anything else —
+        // `false`, or an unstamped legacy frame — renders its full text exactly
+        // as before (the tags then stay literal: no `opts.report` below).
+        const visible = target.bubble._nfIsRoot === true ? (extractOutputInner(target.bubble._nfText || '') || '') : (target.bubble._nfText || '');
         target.bubble.hidden = !visible;
         renderStreamMarkdown(target.bubble, visible, true,
           imgKeepFor(target.bubble), false, target.mark || null);
@@ -884,10 +889,13 @@ export function finishAi(durationMs, model) {
     if (askBox) askBox.remove();
     const bubble = activeView.stream.currentAiBubble;
     const firstPaint = !bubble._nfRendered;
-    // output 块语法批：源文本有平衡 <output> 对 ⇒ 正常态只渲染块内内容（摘除
-    // 框外正文）；无块零改动（旧内容照常全显）。展开面在 turnGroup 角标 toggle。
-    if (bubble._nfIsRoot === false || !applyOutputFace(bubble, activeView.stream.aiText || '')) {
-      bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
+    // report 块可见性批（作者令 2026-11-20）：可见性只作用于**源头身份为 root**
+    // 的那条消息——帧上 `isRoot === true` 才走摘除面；`false` 或旧帧（无戳）一律
+    // 全文渲染，与改前逐字一致。无平衡块 ⇒ 全文渲染，但 root 面仍以 `report:true`
+    // 过管线（散标签转义为字面文本，防被当成 HTML 块吞文）。
+    const rootFace = bubble._nfIsRoot === true;
+    if (!rootFace || !applyOutputFace(bubble, activeView.stream.aiText || '')) {
+      bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '', true, rootFace ? { report: true } : undefined);
     }
     bubble._nfText = activeView.stream.aiText || '';
     bubble._nfRendered = true;

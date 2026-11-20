@@ -1631,8 +1631,10 @@ object BackoffSupervisor:
             IO.blocking((journal.openRequests(), journal.pendingRecovery())).flatMap { case (open, prepared) =>
               open.traverse_(slot => IO.blocking(journal.closeNoReport(slot))) *>
                 prepared.traverse_ { case (id, body) =>
-                  val event = AgentCommand.ExternalEvent("child-report", "progress", body,
-                    JsonObject("agentName" -> agentName.asJson), Some(id))
+                  // 恢复重投 = 同一构造点（[[ChildReport.event]]）+ 同一持久身份：
+                  // 崩溃前已投过的进度按原 id 重投，父端既有判重把它折叠成一件
+                  // （at-least-once + 父端按 correlation id 折叠，不做父端事务确认）。
+                  val event = ChildReport.event(id, body, agentName)
                   MailboxProducer.deliver(resources, parentSessionId, event, id, "child-report", producer = "child-report-recovery").flatMap {
                     case nebflow.core.mail.SessionMailbox.MailResult.Failed(reason) =>
                       IO.raiseError(new IllegalStateException(s"child report recovery delivery failed: $reason"))

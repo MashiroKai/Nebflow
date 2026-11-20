@@ -117,13 +117,14 @@ final class FeishuBridgePlugin(
    */
   fetchResource: FeishuBridgePlugin.FetchResource = FeishuBridgePlugin.defaultFetchResource,
   /**
-   * output 块总闸缝（output-block-gate 批，作者令「把 output 块相关的内容先
-   * 关闭……」）：每次出站 flush 执行期求值。生产缺省 = 热读 nebflow.json 顶层
-   * `outputBlock.enabled`（缺席 = 关 ⇒ 渠道回全量原样）；离线 spec 注入常值
-   * （true = 剥离行为，false = 原文直出），与机器上的真实配置解耦。微信腿
-   * 同款缝，同一实现源 [[OutputBlock.extractGated]]。
+   * Root-session scope seam for the report face (author ruling 2026-11-20:
+   * the visibility rule is root-only). The bridge remembers the source flag
+   * carried by each event and asks this seam per outbound flush; `false` =
+   * NOT root ⇒ full text (the previous behavior for every other session).
+   * Production default reads that remembered flag; specs inject a constant.
+   * 微信腿同款缝，同一实现源 [[OutputBlock.extractGated]]。
    */
-  outputBlockGate: () => Boolean = OutputBlock.enabledFromConfig
+  rootSessionGate: Option[String => Boolean] = None
 ) extends BridgePlugin:
 
   private val logger = NebflowLogger.forName("nebflow.social.feishu-bridge")
@@ -170,6 +171,14 @@ final class FeishuBridgePlugin(
    * done 腿 await 自己的排队任务 ⇒ 先于它的段必然全部出网（结构保证轮终不重发）。
    */
   private[social] val pacer = nebflow.social.outbound.SegmentPacer.unsafe()
+
+  /** Source identity carried by this session's frames (stamped by the emitting actor). */
+  private[social] val sourceRootRef = cats.effect.Ref.unsafe[IO, Map[String, Boolean]](Map.empty)
+
+  private[social] def isRootSource(sessionId: String): IO[Boolean] =
+    rootSessionGate match
+      case Some(injected) => IO.pure(injected(sessionId))
+      case None => sourceRootRef.get.map(_.getOrElse(sessionId, false))
 
   /**
    * 逐段即时推送批：失败段的「注明」闸——sessionId 已注明 ⇒ true。同一段
@@ -721,7 +730,10 @@ final class FeishuBridgePlugin(
    */
   def onAgentEvent(sessionId: String, event: Json): IO[Unit] =
     val c = event.hcursor
-    c.downField("type").as[String].getOrElse("") match
+    val rememberSource =
+      c.downField("isRoot").as[Boolean].toOption.fold(IO.unit)(root =>
+        sourceRootRef.update(m => if m.get(sessionId).contains(root) then m else m.updated(sessionId, root)))
+    rememberSource *> (c.downField("type").as[String].getOrElse("") match
       case "textDelta" =>
         c.downField("delta").as[String].getOrElse("") match
           case "" => IO.unit
@@ -759,11 +771,13 @@ final class FeishuBridgePlugin(
           // 源 [[OutputBlock.extractGated]]（output-block-gate 批起闸感知——闸开
           // =提取，闸关=原文直通）的块内拼接——块外叙述不出站；无块/散标签
           // 轮 ⇒ 无可投递文本，文字腿熄灭（**不回退成发全文**）。
-          val visible = OutputBlock.extractGated(text, outputBlockGate()) match
-            case OutputBlock.Extracted(inner) => inner
-            case _ => ""
-          val textLeg = if visible.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, visible))
-          richLeg *> textLeg
+          isRootSource(sessionId).flatMap { root =>
+            val visible = OutputBlock.extractGated(text, root) match
+              case OutputBlock.Extracted(inner) => inner
+              case _ => ""
+            val textLeg = if visible.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, visible))
+            richLeg *> textLeg
+          }
         }
       // 逐段即时批：分段提交边界——缓冲段即推即清（空段不推），后台排队不
       // 阻塞流式事件面。
@@ -786,8 +800,7 @@ final class FeishuBridgePlugin(
         // PATCH-based disable is a P2 candidate, not taken here).
         val rid = c.downField("requestId").as[String].toOption.map(_.trim).filter(_.nonEmpty)
         rid.fold(IO.unit)(r => askChatRef.update(_ - r) *> permissionRoutes.update(_ - r))
-      case _ => IO.unit
-    end match
+      case _ => IO.unit)
   end onAgentEvent
 
   private[social] def onPermissionFrame(
@@ -1366,9 +1379,9 @@ final class FeishuBridgePlugin(
    * 语义，同一实现源。
    */
   private def flushSegment(sessionId: String): IO[Unit] =
-    pendingRef.modify { m =>
+    isRootSource(sessionId).flatMap(root => pendingRef.modify { m =>
       val text = m.getOrElse(sessionId, "")
-      OutputBlock.extractGated(text, outputBlockGate()) match
+      OutputBlock.extractGated(text, root) match
         case OutputBlock.Unbalanced => (m, IO.unit)
         case OutputBlock.NoBlocks => (m - sessionId, IO.unit)
         case OutputBlock.Extracted(inner) =>
@@ -1377,7 +1390,7 @@ final class FeishuBridgePlugin(
             if inner.trim.isEmpty then IO.unit
             else pacer.enqueueAsync(reply(sessionId, inner, isSegment = true))
           )
-    }.flatten
+    }.flatten)
 
   /**
    * 逐段即时推送批：段级失败的「注明」腿——失败的段不补发（超时可能已送达，

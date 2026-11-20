@@ -10,7 +10,7 @@ import munit.FunSuite
   * 节的防回退锚。
   *
   * 断言面 = `entry("Nebula")` 公开读路（与 [[NebulaPromptVoiceRoutingSpec]] /
-  * [[NebulaPromptOutputGateSpec]] 同一单点）——不是读源文件文本：断言必须证明**加载
+  * [[NebulaPromptOutputStyleGateRetiredSpec]] 同一单点）——不是读源文件文本：断言必须证明**加载
   * 路径上的那份提示词**真的带着这些句子，否则「写进提示词」只是改了一个文件。
   *
   * 两处刻意的**反向**断言（作者 09:01 修正令的机械形态）：

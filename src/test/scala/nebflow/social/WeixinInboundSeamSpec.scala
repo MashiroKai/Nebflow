@@ -79,7 +79,7 @@ class WeixinInboundSeamSpec extends CatsEffectSuite:
     def updateBridgeConfig(sessionId: String, platform: String, config: Option[Json]): IO[Unit] = IO.unit
 
   private def plugin(): WeixinIlinkBridgePlugin =
-    new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = Some(Nil), outputBlockGate = () => true)
+    new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = Some(Nil), rootSessionGate = Some(_ => true))
 
   /** The route's parse step, lifted into IO (a parse failure IS a test failure). */
   private def parse(body: Json): IO[WeixinIlinkBridgePlugin.Inbound] =

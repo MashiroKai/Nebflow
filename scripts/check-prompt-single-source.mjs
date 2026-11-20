@@ -88,11 +88,11 @@ const RULES = [
     why: '装插件查询行单源（挂载权仍在派发侧）。',
   },
   {
-    id: 'S3 output 块纪律',
-    literal: '── Output discipline ──',
+    id: 'S3 report 块纪律',
+    literal: '── Report discipline ──',
     expectIn: { [CATALOG]: 1 },
     allowOther: [],
-    why: '`<output>` 包裹纪律单源；多面注入（brief / 脚注 / subagent / root 两条）。',
+    why: '`<report>` 包裹纪律单源；多面注入（brief / 脚注 / subagent / root 两条）。',
   },
   {
     id: 'S4 SendMessage 边界',

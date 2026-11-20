@@ -760,8 +760,13 @@ export function restoreFromStorage(opts = {}) {
         if (m.text) {
           const bubble = document.createElement('div');
           bubble.className = 'bubble ai';
-          if (m.isRoot !== true || !applyOutputFace(bubble, m.text || '')) {
-            bubble.innerHTML = renderMarkdownWithMath(m.text || '');
+          // report 块可见性批（作者令 2026-11-20）：只对**源头身份为 root** 的行
+          // 摘除面生效（`m.isRoot === true`，缺席 = 旧存量/子会话 ⇒ 全文渲染，
+          // 与改前逐字一致）。无平衡块 ⇒ 全文，但 root 面照过 `report:true` 管线
+          // （散标签转义字面，防 marked 当 HTML 块吞文）。
+          const rootFace = m.isRoot === true;
+          if (!rootFace || !applyOutputFace(bubble, m.text || '')) {
+            bubble.innerHTML = renderMarkdownWithMath(m.text || '', true, rootFace ? { report: true } : undefined);
           }
           row.appendChild(bubble);
         }
@@ -1229,9 +1234,10 @@ function buildHistoryRow(m, i, ctx) {
           });
           const bubble = document.createElement('div');
           bubble.className = 'bubble ai';
-          // output 面标记：升级批渲染时走 applyOutputFace（与 live/sync 两腿同面）。
+          // report 面标记：升级批渲染时走 applyOutputFace（与 live/sync 两腿同面）。
+          // 只对源头身份为 root 的行落标（非 root / 旧存量行逐字保留原展示）。
           if (m.isRoot === true && hasOutputBlock(m.text || '')) bubble.dataset.nfDeferOutput = '1';
-          deferMd(bubble, m.text || '');
+          deferMd(bubble, m.text || '', true, m.isRoot === true ? { report: true } : undefined);
           row.appendChild(bubble);
         }
         if (isTurnTerminal) {
@@ -1596,9 +1602,13 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   // Defer expensive markdown+KaTeX rendering into post-append batches.
   // DOM elements are created synchronously with plain text; innerHTML is upgraded via rAF.
   const pendingRenders = [];
-  const deferMd = (el, text, parseVoice = true) => {
+  /** `opts` rides along to `renderMarkdownWithMath` in the rAF batch — the report
+   *  block visibility batch passes `{ report: true }` for root-source rows only,
+   *  so the transparent face reads blocks for root and leaves tags literal for
+   *  every other session. */
+  const deferMd = (el, text, parseVoice = true, opts) => {
     el.textContent = text;
-    pendingRenders.push({ el, text, parseVoice });
+    pendingRenders.push({ el, text, parseVoice, opts });
   };
   const rowCtx = { msgs, fragment, deferMd, chatEl: chat, ownerSessionId, skip: false };
   rowCtx.markSkip = () => { rowCtx.skip = true; };
@@ -1642,11 +1652,12 @@ export function restoreFromBackendHistory(msgs, opts = {}) {
   function upgradeBatch() {
     const end = Math.min(ri + BATCH_SIZE, pendingRenders.length);
     for (; ri < end; ri++) {
-      const { el, text, parseVoice } = pendingRenders[ri];
+      const { el, text, parseVoice, opts } = pendingRenders[ri];
       try {
-        // output 块语法批：标记泡走 output 面（只显块内；角标展开在 turnGroup）。
+        // report 块可见性批：root 源行优先走摘除面（只显块内；角标展开在
+        // turnGroup），无平衡块则按 `opts.report` 过透明面（散标签字面化）。
         if (el.dataset && el.dataset.nfDeferOutput === '1') applyOutputFace(el, text);
-        else el.innerHTML = renderMarkdownWithMath(text, parseVoice);
+        else el.innerHTML = renderMarkdownWithMath(text, parseVoice, opts);
       } catch (e) {
         el.textContent = text; // 回落纯文本（renderer 自身另有永不抛护栏，双保险）
       }
@@ -1753,9 +1764,10 @@ export async function mountHistoryPageChunked(msgs, opts = {}, hooks = {}) {
     const jobs = [];
     for (const j of pendingToolBodies) jobs.push(() => { j.el.innerHTML = j.build(); });
     for (const j of pendingRenders) jobs.push(() => {
-      // output 块语法批：标记泡走 output 面（与 upgradeBatch 同处置）。
+      // report 块可见性批：标记泡走摘除面（与 upgradeBatch 同处置）；其余按行
+      // 自己的 opts 过透明面（root 源行 = `{report:true}`，非 root = 无选项）。
       if (j.el.dataset && j.el.dataset.nfDeferOutput === '1') applyOutputFace(j.el, j.text);
-      else j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice);
+      else j.el.innerHTML = renderMarkdownWithMath(j.text, j.parseVoice, j.opts);
     });
     for (let ji = 0; ji < jobs.length; ji += MOUNT_UPGRADE_BATCH) {
       const end = Math.min(ji + MOUNT_UPGRADE_BATCH, jobs.length);

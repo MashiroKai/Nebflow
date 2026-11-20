@@ -6,10 +6,6 @@ import { currentSelfDeviceName } from './deviceRoster.js';
 // 一起封存，漏网」）：<voice> TTS 输出族与全双工同 flag（voiceEnabled，缺席封存）。
 // featureFlags 只依赖 state.js，无导入环。
 import { voiceEnabled } from './featureFlags.js';
-// output-block-gate 批（作者令「把 output 块相关的内容先关闭……」）：
-// outputBlockEnabled 读 nebflow.json `outputBlock.enabled`（缺席 = 关），
-// 与渠道剥离面同一键。同模块、无导入环。
-import { outputBlockEnabled } from './featureFlags.js';
 // 胶囊单实现批 2026-11-06（作者令「回到底部的按钮不要自己造，要跟新消息通知/
 // 搜索聊天记录跳转使用同一套」）：↓N / 回到底部 / 搜索回跳 = 同一工厂、同一类名
 // `.scroll-new-pill`、同一形态声明（css/chat.css）。
@@ -522,12 +518,14 @@ function restoreTodoRefs(html, blocks) {
 // Bounded LRU cache for rendered markdown HTML. History restore and session
 // switching re-render identical content; caching avoids repeated
 // marked.parse + KaTeX.renderToString work.
-// - Key: `${parseVoice}${markedLoaded}${katexLoaded}${locale}|${outputBlock}${mentionGen}|${text}` —
+// - Key: `${parseVoice}${markedLoaded}${katexLoaded}${locale}|${mentionGen}|${safe}|${stream}|${reportFace}|${text}` —
 //   captures every factor that changes the output (voice parsing, library
-//   load state, i18n locale used by the copy button, the output-block gate
-//   (output-block-gate 批: a gate flip must not serve pre-flip cached HTML),
-//   the @-mention project list generation (mention-render batch: a list change must not let cached
-//   HTML contradict the current list), and the raw text).
+//   load state, i18n locale used by the copy button, the @-mention project
+//   list generation (mention-render batch: a list change must not let cached
+//   HTML contradict the current list), the sandbox and streaming modes, the
+//   report-block face (report 块可见性批 2026-11-20: a root row and a non-root
+//   row render the SAME text differently, so the face must be part of the key),
+//   and the raw text).
 // - Capacity: 200 entries. Map preserves insertion order; on get we
 //   delete+set to move the entry to the end (most recent); on set we evict
 //   the first (least recently used) key when over capacity.
@@ -639,19 +637,23 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   // 见 _renderMarkdownInternal 的 allowDiagram）。判据单点在管道里，调用点只报
   // 事实（自己是否流式中），不做任何围栏语法判断。
   const stream = !!(opts && opts.stream);
+  // Report face is opt-in: only the chat face for root-owned messages asks
+  // for it. Every other surface keeps its previous literal-tag rendering
+  // (the retired gate defaulted off => tags stayed literal text).
+  const reportFace = !!(opts && opts.report);
   // Streaming bypass (mem-diagnosis 20260907 D3): per-frame stream renders
   // re-parse the SAME growing text — every intermediate snapshot used to
   // enter this LRU and evict real entries until the hit rate hit 0. Stream
   // renderers pass { cache:false } and go straight to the parser; only
   // finish*/history renders (stable text) populate the cache.
-  if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice, safe, stream);
+  if (opts && opts.cache === false) return _renderMarkdownWithMath(text, parseVoice, safe, stream, reportFace);
   // 🔴 safe 是 key 的一部分：同一段文本在两条信任档下产物不同，混键会把
   // 「agent 面可信渲染」与「外部消息安全渲染」互相串味（缓存投毒面）。
   // stream 同理（同名文本在流式档下不产图围栏占位，终态档产）——混键会让
   // 图片在流式中途借缓存漏出。
   // `#` 待办引用代次（待办结构化批 2026-11-05）同理：待办清单变了，已缓存 HTML
   // 里的 chip 就可能指向改名/删除前的旧名 ⇒ 代次进键。
-  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${outputBlockEnabled() ? 1 : 0}${mentionListState().gen}.${todoListState().gen}|${safe ? 'S' : 'T'}|${stream ? 'S' : 'F'}|${text}`;
+  const key = `${parseVoice ? 1 : 0}${typeof marked !== 'undefined' ? 1 : 0}${typeof katex !== 'undefined' ? 1 : 0}${getLocale()}|${mentionListState().gen}.${todoListState().gen}|${safe ? 'S' : 'T'}|${stream ? 'S' : 'F'}|${reportFace ? 'R' : 'r'}|${text}`;
   const hit = _mdCache.get(key);
   if (hit !== undefined) {
     _mdCache.delete(key);
@@ -665,7 +667,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   // escapeHtml 纯文本（安全、可读、绝不整行消失，也区别于编辑态显源码）。
   let html;
   try {
-    html = _renderMarkdownWithMath(text, parseVoice, safe, stream);
+    html = _renderMarkdownWithMath(text, parseVoice, safe, stream, reportFace);
   } catch (e) {
     html = escapeHtml(text);
   }
@@ -676,7 +678,7 @@ export function renderMarkdownWithMath(text, parseVoice = true, opts) {
   return html;
 }
 
-function _renderMarkdownWithMath(text, parseVoice, safe, stream) {
+function _renderMarkdownWithMath(text, parseVoice, safe, stream, reportFace) {
   if (typeof marked === 'undefined') return escapeHtml(text);
   // safe 档（外部消息面）：渲染器形态不可用 ⇒ **整段回落转义纯文本**（fail
   // closed），绝不落到可信腿上——外部输入不接受「降级但仍可信」。
@@ -699,12 +701,11 @@ function _renderMarkdownWithMath(text, parseVoice, safe, stream) {
   // 成对闭合才提取，散标签（流式中间态/手误）转义为字面文本：marked 会把裸
   // `<report>` 当 HTML 块把后续内容整段吞掉，必须先行掐断。无标签文本零改动
   // （降级语义：未包裹的旧内容照常全显，不吞历史消息）。
-  // output-block-gate 批（作者令「把 output 块相关的内容先关闭……」）：总闸
-  // `outputBlock.enabled`（缺席 = 关）关闭 ⇒ 提取分支整体旁路，全部标签走
-  // 散标签同一转义腿（字面现形，内容零丢失）＝全文直出，无掩码；与渠道剥离
-  // 面同一键（scala OutputBlock.enabledFromConfig）。闸一开提取路径原样回归。
+  // report 块可见性批（2026-11-20）：`opts.report` 由**发射会话身份**决定
+  // （root 面 true / 非 root 逐字旧面 false），总闸 `outputBlock.enabled` 已退役
+  // ——非 root 面连这一个分支都不进，标签按普通文本透传。
   const outputBlocks = [];
-  if (outputBlockEnabled() && (text.indexOf('<report>') !== -1 || text.indexOf('</report>') !== -1)) {
+  if (reportFace && (text.indexOf('<report>') !== -1 || text.indexOf('</report>') !== -1)) {
     // 围栏安全批（作者令：块形态就是为了避开 md 语法冲突，提取器不能反被
     // 围栏骗了）：扫描/提取都先过 _maskCodeFences 掩码——围栏内的字面标签
     // 是代码内容，不触发剥离，也吃不到转义（转义会腐蚀围栏体）。与渠道侧
@@ -826,9 +827,9 @@ function _maskCodeFences(text) {
 /** Shared inner-content joiner: every balanced pair's body, blank-line joined —
  *  the chat face (outputTag.js) renders this as the whole visible message.
  *  围栏安全：对掩码串找对、按偏移回原文切片（围栏内的字面标签永不入块）。
- *  output-block-gate 批：总闸关闭 ⇒ null（=「无平衡块」）——hasOutputBlock /
- *  applyOutputFace / defer-output 标记整条链随之熄灭，聊天气泡回全文渲染；
- *  与管线提取面（renderMarkdownWithMath）同一开关。 */
+ *  report 块可见性批（2026-11-20）：总闸 `outputBlock.enabled` 已退役，本提取器
+ *  不再读任何开关——调用面（outputTag.hasOutputBlock / applyOutputFace /
+ *  defer-output 标记）由**发射会话身份**决定是否呼它，非 root 面根本不进来。 */
 export function extractOutputInner(text) {
   const masked = _maskCodeFences(text);
   if (!_outputTagsBalancedOn(masked)) return null;

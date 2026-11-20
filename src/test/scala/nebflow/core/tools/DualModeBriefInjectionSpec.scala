@@ -78,8 +78,7 @@ class DualModeBriefInjectionSpec extends FunSuite:
       bindingLine = None,
       task = "Inspect the code, then delegate the implementation.",
       injectedBlock = "",
-      dispatcherDiscipline = Some(line),
-      includeOutputRule = false
+      dispatcherDiscipline = Some(line)
     )
     assert(brief.contains("use Subagent for blocking lookups and analysis"))
     assert(brief.contains("Read/Glob/Grep/WebSearch/WebFetch/Bash"))

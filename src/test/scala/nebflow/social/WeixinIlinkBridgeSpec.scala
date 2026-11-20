@@ -130,7 +130,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   end OriginRecordingCtx
 
   private def plugin(allowed: Option[List[String]] = None, root: os.Path = tmpRoot()): WeixinIlinkBridgePlugin =
-    new WeixinIlinkBridgePlugin(root, pinnedAllowedIlinkUserIds = allowed, outputBlockGate = () => true)
+    new WeixinIlinkBridgePlugin(root, pinnedAllowedIlinkUserIds = allowed, rootSessionGate = Some(_ => true))
 
   /** bring the seam up over a recording context (armed gate + routing table). */
   private def started(p: WeixinIlinkBridgePlugin, ctx: BridgeContext): IO[Unit] =
@@ -705,7 +705,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
@@ -744,7 +744,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
@@ -885,7 +885,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
       _ <- IO(SocialChannels.setDefaultSessionId(root, WeixinIlinkBridgePlugin.Name, Some("s_default")))
       _ <- p.start(c)
       _ <- p.intake(c, inbound(Some("wx_new"))) // auto-binds + injects
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>hi</output>".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>hi</report>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       got <- calls.get
     yield assertEquals(
@@ -905,7 +905,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
   // a never-served session's drop stays quiet (it is not weixin traffic —
   // dispatchAgentEvent fans every session to every plugin).
   //
-  // output 块纪律渠道接线批（2026-11-01）：轮文本夹具裹 `<output>` 块——只有
+  // output 块纪律渠道接线批（2026-11-01）：轮文本夹具裹 `<report>` 块——只有
   // 块内内容出站/入死信（作者令「不要回退成发全文」）；断言值 = 块内内容。
 
   /**
@@ -952,7 +952,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>the answer</output>".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>the answer</report>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       got <- calls.get
       _ = assertEquals(got, Nil, "no route, no send — the drop stands")
@@ -1001,7 +1001,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>the answer</output>".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>the answer</report>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       before <- calls.get
       _ = assertEquals(before, Nil)
@@ -1026,12 +1026,12 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>lost</output>".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>lost</report>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       _ = assertEquals(strikesOf(root).size, 1, "precondition: the strike is on")
       // the return address appears (a manual binding face) and the next flush lands
       _ <- p.routesRef.update(_.updated("wx_carol", "s_default"))
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>found</output>".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>found</report>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       got <- calls.get
       _ = assertEquals(got, List(("wx_carol", "found")), "the reply goes out")
@@ -1092,10 +1092,10 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val root = tmpRoot()
     for
       p <- servedDropFixture(root, calls)
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>first</output>".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>first</report>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       first :: Nil = strikesOf(root): @unchecked
-      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>second</output>".asJson))
+      _ <- p.onAgentEvent("s_default", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>second</report>".asJson))
       _ <- p.onAgentEvent("s_default", Json.obj("type" -> "done".asJson))
       second :: Nil = strikesOf(root): @unchecked
       _ = assertEquals(second.hcursor.downField("count").as[Long].toOption, Some(2L), "the count accumulates")
@@ -1423,7 +1423,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       tmpRoot(),
       pinnedAllowedIlinkUserIds = None,
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
@@ -1469,7 +1469,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       tmpRoot(),
       pinnedAllowedIlinkUserIds = None,
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
@@ -1518,7 +1518,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       tmpRoot(),
       pinnedAllowedIlinkUserIds = Some(List("wx_alice")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           calls.update(_ :+ ((to, text))).as(WeixinOutboundAdapter.SendResult(true, true, None, 200, "delivered"))
@@ -1592,7 +1592,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ =>
         (to, text) =>
           n.modify(i => (i + 1, i))
@@ -1678,7 +1678,7 @@ class WeixinIlinkBridgeSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ => (to, text) => IO.pure(okResult), // the ask text cards succeed — only the MEDIA leg dies
       sendMedia =
         _ => (to, media) => n.modify(i => (i + 1, i)).flatMap(i => IO.pure(if i + 1 <= 5 then fail else okResult)),

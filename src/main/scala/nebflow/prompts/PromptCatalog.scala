@@ -382,8 +382,8 @@ Read / Glob / Grep / WebSearch / WebFetch / Bash. Bash uses the normal shell exe
       "[plugin discovery] Query installed plugin capabilities anytime (read-only, zero side effects): `tools/stand-plugins list` / `tools/stand-plugins search <keyword>` / `tools/stand-plugins mounts [--project <name>]` (repo-root CLI). If the current task lacks a capability, declare the needed plugin(s) and the intended use in your result — mounting authority stays with the dispatch side (you cannot hot-mount plugins yourself)."
 
     val OutputBlockRule: String =
-      """── Output discipline ──
-      |ONLY the content you wrap in paired `<output>...</output>` tags is shown to the user — write it WeChat-style: short direct paragraphs, conclusion first, zero filler. Everything outside the tags (reasoning, tool narration, machine detail) stays in your message but is stripped from display; the user expands a badge to see the full raw text. Adjust tone/length to the user's profile (their `~/.stand/User.md` communication-style answers); with no profile, default to concise direct Chinese.""".stripMargin
+      """── Report discipline ──
+      |ONLY content wrapped in paired `<report>...</report>` tags is shown to the user. Zero blocks is allowed; process detail outside is folded into the existing turn badge. Multiple blocks appear in order. Agent-to-agent handoffs stay complete and unfiltered — the rule shapes the user-facing face only.""".stripMargin
 
     val SendMessageScopeRule: String =
       """── SendMessage scope ──
