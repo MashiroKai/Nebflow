@@ -189,6 +189,16 @@ def main() -> int:
             failures.append(f"⑤ 豁免理由/悬空标注未显形：{human.stdout[-400:]}")
         if exit_code != 0:
             failures.append(f"⑤ 豁免后不应致红：exit={exit_code} {violations}")
+
+        # ── ⑥ HTTP(S) 外链不计断链（vault-r13 批残差移植）────────────────
+        # 外链不是 vault 内目标，本地判必为假阳；内部断链仍须报。
+        root = min_vault(tmp / "c6" / "docs",
+                         "[外部文档](https://github.com/example/DESIGN.md)\n"
+                         "[内部缺失](missing.md)\n")
+        _, violations, _ = run_json(root)
+        broken = [v for v in violations or [] if v["rule"] == "broken-link" and v["file"] == "probe.md"]
+        if [v["line"] for v in broken] != [9]:
+            failures.append(f"⑥ 应仅报内部断链行 9，实得 {[(v['line'], v['detail'][:40]) for v in broken]}")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
@@ -199,7 +209,7 @@ def main() -> int:
         return 1
     print(f"GREEN — 引用门禁（R13/R14/R15）验收通过（被测脚本：{SCRIPT}；夹具：{FIXTURE}）："
           "反向验红 doc-reference/bare-image-path/dangling-term 各 1 条、删三行转绿、"
-          "已注册词条通过、行内代码不算、行内豁免计数显形。")
+          "已注册词条通过、行内代码不算、行内豁免计数显形、外链不计断链。")
     return 0
 
 

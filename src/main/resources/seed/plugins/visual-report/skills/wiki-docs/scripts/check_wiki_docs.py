@@ -2236,6 +2236,9 @@ def check(root, docs, resolve, glossary_rel, exclude_glossary_check, terms_by_re
     # dangling-term，同一行不双报；带路径/带扩展名的断链仍留在这里。
     for rel, doc in sorted(docs.items()):
         for target, anchor, kind, line_no in doc.links:
+            # HTTP(S) 外链不是 vault 内目标，不进行本地断链或在线检查。
+            if re.match(r"https?://", target, re.IGNORECASE):
+                continue
             resolved = resolve(target, from_rel=rel)
             if resolved is None:
                 thit = resolve_term(target) if (anchor is None and resolve_term) else None
