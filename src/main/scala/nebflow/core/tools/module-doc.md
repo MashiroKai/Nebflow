@@ -73,7 +73,7 @@
 | [`ScriptTool.scala`](ScriptTool.scala) | 定义: ScriptTool |
 | [`SleepPollGuard.scala`](SleepPollGuard.scala) | SleepPollGuard —— sleep-poll 轮询护栏（sleep-poll 禁令批 B 段，作者令 2026-10-20「明令禁止使用 sleep 或轮询的方式等待后台任务完成」）。 |
 | [`StringMatcher.scala`](StringMatcher.scala) | Normalize curly quotes to straight quotes for comparison. |
-| [`SubTaskTool.scala`](SubTaskTool.scala) | SubTaskTool — team-agent task delegation (Delegate split, 方案 A). Lets a team member spawn a self-cloned, ephem |
+| SubTask (retired) | The SubTask tool is retired; the Subagent primitive provides the corresponding reconnaissance capability. Historical task records remain readable. |
 | [`SubagentTool.scala`](SubagentTool.scala) | SubagentTool —— 只读侦察子代理入口（builtin-merge 批 2026-10-03，Explore 同型）。挂载面 = 合并执行 agent `nebflow`（[[nebflow.agent.Ag |
 | [`TaskBoardTool.scala`](TaskBoardTool.scala) | TaskBoard 工具（TaskBoard 批 2 接线，规格 project-task-board 规格件 §1b/§1d/§1e/§2，2026-09-08）——项目内共享工作项看板的工具面。 |
 | [`TaskListHistory.scala`](TaskListHistory.scala) | TaskList 变更史 —— 独立 append-only JSONL 数据面（TaskList 升级批）。 动机：`tasks.json` 是整库覆盖写（read-modify-write），前后值即弃；定案口径： |

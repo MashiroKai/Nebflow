@@ -596,7 +596,7 @@ private[agent] object AgentIdle:
               s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
                 s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
                 s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
-                s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
+                s" the same task with an available Delegate or Subagent tool.\n</system-reminder>"
             else ""
           val injectionText = payload + reminderText
           // Receive-time visibility (stream event + bubble) — mirrors the

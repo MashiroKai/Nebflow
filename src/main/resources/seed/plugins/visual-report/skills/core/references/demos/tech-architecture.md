@@ -25,7 +25,7 @@ Stand 是单 JVM 自托管的 AI agent 编排平台：`nebflow start` 起一个�
 | Actor 系统 | `scala/nebflow/actor`（12 文件） | 自研 Actor：ActorSystem / Behavior / 信封 / 状态 | `ActorSystem.scala`、`Behavior.scala` |
 | Agent 运行时 | `scala/nebflow/agent`（32 文件） | AgentActor 状态机（Idle/Processing/Frozen）、会话执行、子代理 SubAgentTaskStore、InteractionHub、流式管线 | `AgentActor.scala`、`AgentSession.scala`、`InteractionHub.scala` |
 | 上下文压缩 | `scala/nebflow/core/compact`（12 文件） | 压缩队列、压缩恢复 | `CompactService.scala` |
-| 工具层 | `scala/nebflow/core/tools`（61 文件） | Bash/Read/Edit/Glob/Grep/Mail/SubTask/NodeEdit/Workflow/ProjectCreate 等工具；worktree 约束落在工具实现内 | `BashTool.scala`、`NodeEditTool.scala`、`SubTaskTool.scala` |
+| 工具层 | `scala/nebflow/core/tools`（历史示例） | Bash/Read/Edit/Glob/Grep/Mail/Subagent/NodeEdit 等工具；SubTask 已退役，对应能力为 Subagent 原语 | `BashTool.scala`、`NodeEditTool.scala`、`BlockingSubagent.scala` |
 | 插件与技能 | `core/plugin`（7）+ `core/skill`（2） | 插件 / 技能装载；seed 预装 12 插件（`resources/seed/plugins`） | plugin 包 + seed 目录 |
 | MCP 客户端 | `scala/nebflow/core/mcp`（5 文件） | 外部工具接入：McpClient/McpManager、JSON-RPC、transports | `McpClient.scala`、`JsonRpc.scala` |
 | 控制 | `core/hooks` · `core/ask` · `core/sandbox` · `core/secrets` | 前后置钩子、AskUser 通道（经网关 `WsSkillsAsksHandlers` 弹卡）、文件沙箱策略、秘钥 | `FileSandbox.scala`、`SandboxPolicy.scala` |
