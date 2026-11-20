@@ -2900,6 +2900,22 @@ export default {
   'usage.weekLabel': '{dir}{pct}% vs last week',
   'usage.noData': '—',
   'perm.retargetNote': 'target session {from} was unreachable — rerouted here',
+  // Approval-card three elements (defect batch 2026-11-19): the command body,
+  // why it is flagged, and the scope. Reason/level are copied from the engine's
+  // own verdict — the UI never guesses.
+  'perm.detail.command': 'Command to run',
+  'perm.detail.reason': 'Why this is flagged',
+  'perm.detail.scope': 'Scope',
+  'perm.detail.expand': 'Expand all ({lines} lines)',
+  'perm.detail.collapse': 'Collapse',
+  'perm.detail.device': 'Device',
+  'perm.detail.cwd': 'Working directory',
+  'perm.detail.target': 'Target path',
+  'perm.detail.gate': 'gate',
+  'perm.detail.rule': 'rule',
+  'perm.detail.level': 'risk L{level}',
+  'perm.detail.remoteExec': '(remote-exec)',
+  'perm.detail.noRule': 'fixed confirmation of this gate (no rule hit)',
 
   // === UI remnant localization (activity bar / panel titles / empty states) ===
   'activity.login': 'Login',

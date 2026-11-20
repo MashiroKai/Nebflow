@@ -306,7 +306,7 @@ export function replayHistoryPageInitialLoad(msg, view) {
     activeView.dom.chat.querySelectorAll('.row.ai').forEach(row => {
       if (row.querySelector('.permission-pending-box')) row.remove();
     });
-    renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession, lastHistMsg.sourceTeam, lastHistMsg.requestId, lastHistMsg.safetyMode);
+    renderPermissionPrompt(lastHistMsg.toolName, lastHistMsg.summary, lastHistMsg.input, sid, lastHistMsg.dangerLevel, lastHistMsg.sourceAgent, lastHistMsg.sourceSession, lastHistMsg.sourceTeam, lastHistMsg.requestId, lastHistMsg.safetyMode, undefined, lastHistMsg.permDetail);
   }
 
   // Final scroll-to-bottom: after all rendering (history + streaming bubbles + pending tools)

@@ -198,10 +198,12 @@ export const CHECKS = [
     ['delegate-mode-slot', 'check-delegate-mode-slot'],
     ['perm-presentation', 'check-perm-presentation'],
     ['permission-gate', 'check-permission-gate'],
-    // ask 写面收窄闸（ask-scope 批 2026-11-18）：ask 身份只能编辑它绑定的那份文档
-    // ——判决单点唯一（身份归一）、每次判决留痕、工具面无直写、转交结构化。
+    // ask 写面收窄闸：ask 身份只能编辑它绑定的那份文档。
     ['ask-write-scope', 'check-ask-write-scope'],
   ].map(([name, script, options]) => nodeCheck(name, script, ['static'], options)),
+  // 审批卡三要素前端闸；负控验证断言有效。
+  { name: 'perm-card-detail', profiles: ['frontend'], timeoutMs: 180_000,
+    argv: [process.execPath, 'tests/perm-card-detail.spec.mjs'] },
   { name: 'tooling-lint', profiles: ['static'], timeoutMs: 120_000,
     argv: [process.execPath, 'node_modules/eslint/bin/eslint.js', 'eslint.config.mjs',
       'scripts/check-js-types.mjs', 'scripts/run-checks.mjs', 'scripts/check-sdd.mjs', 'scripts/check-openspec.mjs', 'scripts/check-message-item-unify.mjs',

@@ -2075,21 +2075,33 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             Some(deferred),
             IO {
               val summary = nebflow.core.summarizeToolCall(call)
-              val dangerLevel =
-                if call.name == "Bash" then
-                  call.input("command").flatMap(_.asString).map(nebflow.core.tools.BashTool.dangerLevel).getOrElse(0)
-                else if call.name == "Curl" then
-                  call.input("method").flatMap(_.asString).map(_.toUpperCase) match
-                    case Some(m) if !Set("GET", "HEAD", "OPTIONS").contains(m) => 2
-                    case _ => 0
-                else 1
+              // 三要素载荷（报障批 2026-11-19）：命令正文 / 为什么危险 / 作用域。
+              // 理由与档位**同源**于判定闸（ToolReversibility.askReason 与
+              // BashTool.dangerVerdict 各自的命中规则）——本处不再自己判一次危险，
+              // 只把既有判定投影成卡面可读的形状。
+              val detail = nebflow.core.PermissionCardDetail
+              val askReason =
+                if nebflow.core.tools.AgentInstructionWriteGate
+                    .requiresConfirmation(call, isAgent = toolCtx.agentDef.isDefined)
+                then
+                  Some(
+                    nebflow.core.ToolReversibility
+                      .AskReason("AgentInstructionWriteGate", "policy.agents-md", "改 AGENTS.md（人类权威文件，agent 不得自改）")
+                  )
+                else nebflow.core.ToolReversibility.askReason(call.name, call.input, effectiveMode)
+              val dangerLevel = detail.levelOf(call).value
+              val deviceName =
+                try nebflow.neblink.core.DeviceIdentity.selfDeviceNameOrHost
+                catch case _: Throwable => ""
+              val permDetail = detail.build(call, toolCtx.projectRoot, effectiveMode, askReason, toolCtx.isRemoteExec, deviceName)
               Json.obj(
                 "type" -> "askPermission".asJson,
                 "toolName" -> call.name.asJson,
                 "summary" -> summary.asJson,
                 "input" -> call.input.asJson,
                 "dangerLevel" -> dangerLevel.asJson,
-                "safetyMode" -> currentMode.asJson
+                "safetyMode" -> currentMode.asJson,
+                "permDetail" -> permDetail.asJson
               )
             }.flatMap { permJson =>
               // P2: every agent (root or sub-agent) sends the request straight to

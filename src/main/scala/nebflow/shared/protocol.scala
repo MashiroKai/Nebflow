@@ -547,7 +547,13 @@ object UiMessage:
     summary: String,
     input: String,
     sourceAgent: Option[String] = None,
-    sourceSession: Option[String] = None
+    sourceSession: Option[String] = None,
+    /**
+     * 卡片三要素载荷（报障批 2026-11-19）：命令正文 / 为什么危险 / 作用域。
+     * 缺席 = 旧行（解码回落 None，编码不落键 ⇒ 旧 `.ui.json` 行逐字节不变）；
+     * 旧前端不认识本键 ⇒ 忽略（纯加法，缺省即改前形态）。
+     */
+    permDetail: Option[Json] = None
   ) extends UiMessage:
     val typeName = "askPermission"
 
@@ -669,7 +675,9 @@ object UiMessage:
         "input" -> m.input.asJson
       )
       val withSource = m.sourceAgent.fold(base)(sa => base.deepMerge(Json.obj("sourceAgent" -> sa.asJson)))
-      m.sourceSession.fold(withSource)(ss => withSource.deepMerge(Json.obj("sourceSession" -> ss.asJson)))
+      val withSession = m.sourceSession.fold(withSource)(ss => withSource.deepMerge(Json.obj("sourceSession" -> ss.asJson)))
+      // permDetail：缺席即不落键（与 answerOf/quote 同款兼容纪律 ⇒ 旧行形态零变化）。
+      m.permDetail.fold(withSession)(d => withSession.deepMerge(Json.obj("permDetail" -> d)))
     case m: System =>
       val base = Json.obj("type" -> "system".asJson, "content" -> m.content.asJson)
       val withKey = m.i18nKey.fold(base)(k => base.deepMerge(Json.obj("i18nKey" -> k.asJson)))
@@ -793,7 +801,9 @@ object UiMessage:
           input <- cursor.downField("input").as[String]
           sourceAgent <- cursor.downField("sourceAgent").as[Option[String]]
           sourceSession <- cursor.downField("sourceSession").as[Option[String]]
-        yield AskPermission(toolName, summary, input, sourceAgent, sourceSession)
+          // 三要素载荷：旧行无本键 ⇒ None；形态不合同样回落 None（宽松透传）
+          permDetail <- cursor.downField("permDetail").as[Option[Json]]
+        yield AskPermission(toolName, summary, input, sourceAgent, sourceSession, permDetail)
       case "system" =>
         for
           content <- cursor.downField("content").as[String]

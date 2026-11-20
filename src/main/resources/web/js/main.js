@@ -2094,10 +2094,10 @@ onMessage('askPermission', (msg, view) => {
   // disabled because answeredPermissions still holds this sid.
   if (sid) state.answeredPermissions.delete(sid);
   if (view) {
-    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId, msg.safetyMode, msg.retargetedFrom);
+    renderPermissionPrompt(msg.toolName, msg.summary, msg.input, msg.sessionId, msg.dangerLevel, msg.sourceAgent, msg.sourceSession, msg.sourceTeam, msg.requestId, msg.safetyMode, msg.retargetedFrom, msg.permDetail);
   } else if (sid) {
     // Non-active session: persist so it can be restored on session switch
-    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId, safetyMode: msg.safetyMode, retargetedFrom: msg.retargetedFrom }, sid);
+    saveMsg({ type: 'askPermission', toolName: msg.toolName, summary: msg.summary, input: msg.input, dangerLevel: msg.dangerLevel, sourceAgent: msg.sourceAgent, sourceSession: msg.sourceSession, sourceTeam: msg.sourceTeam, requestId: msg.requestId, safetyMode: msg.safetyMode, retargetedFrom: msg.retargetedFrom, permDetail: msg.permDetail }, sid);
   }
 });
 

@@ -25,6 +25,8 @@ import { renderWithRegistry, cleanupCardIframes } from './cardRegistry.js';
 // schedule-created-card 批（2026-11-05）：历史重放两腿与 live renderTool 共用
 // 同一个卡片行 builder（零第二套判据）。
 import { scheduleCardRowForTool } from './scheduleCard.js';
+// 审批卡三要素（命令正文 / 为什么危险 / 作用域）：历史重放两腿与 live 腿同点渲染。
+import { permDetailFrom, renderPermDetail } from './permDetail.js';
 import { createDurationBadgeElement, createMsgFooterBadge, buildInjectedRow, bindCollapsibleToggle, renderAskUserHistory, buildCompactCardRow, sameAskCards, applyThinkingWindowCap } from './chat.js';
 // pop-upgrade 批(2026-10-03):Pop 工件载荷面(叠卡/文件卡片)单一真源——live
 // (chat.js renderTool)与两条历史重放路共用本模块;popArtifacts 不 import chat.js
@@ -936,18 +938,24 @@ export function restoreFromStorage(opts = {}) {
         3: { cls: 'perm-critical', key: 'chat.permLevel.critical' }
       };
       const dInfo = dangerI18nKeys[level];
+      // 三要素块（报障批 2026-11-19）：两条历史重放腿与 live 腿共用同一 builder
+      // ⇒ 刷新/重开后的卡上，命令正文、为什么危险、作用域一处不少。
+      // 落点同 live 腿（视觉返工批 2026-11-19 19:38）：卡盒建好、贴上泡之后再插到
+      // 问句之前 —— 三要素是**原卡内容流的前几行**，不是卡外的新框。
+      const histDetail = permDetailFrom({ toolName: m.toolName, input: m.input, permDetail: m.permDetail });
       if (dInfo) {
         bubble.classList.add(dInfo.cls);
         const banner = document.createElement('div');
         banner.className = 'perm-danger-banner';
-        banner.innerHTML = '<span>' + escapeHtml(t(dInfo.key, { detail: '' })) + '</span>';
+        const riskLabel = (histDetail.reason && (histDetail.reason.label || histDetail.reason.levelLabel)) || '';
+        banner.innerHTML = '<span>' + escapeHtml(t(dInfo.key, { detail: riskLabel })) + '</span>';
         bubble.appendChild(banner);
       }
       row.appendChild(bubble);
       chat.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
-      box.appendChild(permissionDetails(m.toolName, m.input));
+      if (m.toolName === 'Edit' || m.toolName === 'Write') box.appendChild(permissionDetails(m.toolName, m.input));
       const q = document.createElement('div');
       q.className = 'option-q';
       q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
@@ -964,6 +972,7 @@ export function restoreFromStorage(opts = {}) {
       });
       box.appendChild(optsDiv);
       bubble.appendChild(box);
+      renderPermDetail(box, histDetail, t, { level, before: q });
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');
@@ -1434,18 +1443,24 @@ function buildHistoryRow(m, i, ctx) {
         3: { cls: 'perm-critical', key: 'chat.permLevel.critical' }
       };
       const dInfo = dangerI18nKeys[level];
+      // 三要素块（报障批 2026-11-19）：两条历史重放腿与 live 腿共用同一 builder
+      // ⇒ 刷新/重开后的卡上，命令正文、为什么危险、作用域一处不少。
+      // 落点同 live 腿（视觉返工批 2026-11-19 19:38）：卡盒建好、贴上泡之后再插到
+      // 问句之前 —— 三要素是**原卡内容流的前几行**，不是卡外的新框。
+      const histDetail = permDetailFrom({ toolName: m.toolName, input: m.input, permDetail: m.permDetail });
       if (dInfo) {
         bubble.classList.add(dInfo.cls);
         const banner = document.createElement('div');
         banner.className = 'perm-danger-banner';
-        banner.innerHTML = '<span>' + escapeHtml(t(dInfo.key, { detail: '' })) + '</span>';
+        const riskLabel = (histDetail.reason && (histDetail.reason.label || histDetail.reason.levelLabel)) || '';
+        banner.innerHTML = '<span>' + escapeHtml(t(dInfo.key, { detail: riskLabel })) + '</span>';
         bubble.appendChild(banner);
       }
       row.appendChild(bubble);
       fragment.appendChild(row);
       const box = document.createElement('div');
       box.className = 'permission-pending-box option-box';
-      box.appendChild(permissionDetails(m.toolName, m.input));
+      if (m.toolName === 'Edit' || m.toolName === 'Write') box.appendChild(permissionDetails(m.toolName, m.input));
       const q = document.createElement('div');
       q.className = 'option-q';
       q.textContent = t('chat.allowTool', { tool: m.toolName || '?' });
@@ -1462,6 +1477,7 @@ function buildHistoryRow(m, i, ctx) {
       });
       box.appendChild(optsDiv);
       bubble.appendChild(box);
+      renderPermDetail(box, histDetail, t, { level, before: q });
     } else if (m.type === 'ask') {
       // Ask question (user side)
       const qRow = document.createElement('div');
