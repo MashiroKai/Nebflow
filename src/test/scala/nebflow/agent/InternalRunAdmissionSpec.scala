@@ -204,6 +204,25 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("recovery consumes run-bound managed completion debt without an envelope") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("debt-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-debt-recovery", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        recorded <- resources.subAgentTaskStore.recordManagedCompletionDebt(parent.id, task.taskId, "run-1",
+          List(Message(MessageRole.Assistant, Left("finished"))))
+        _ = assert(recorded)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+        pending <- SessionMailbox.scanPending(parent.id)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+        assertEquals(pending.count(_.identity == s"${task.taskId}#run-1"), 1)
+    }
+  }
+
   test("recovery processes a pending managed row with a saved terminal envelope") {
     fixture.use { case (resources, _, _, root) =>
       for

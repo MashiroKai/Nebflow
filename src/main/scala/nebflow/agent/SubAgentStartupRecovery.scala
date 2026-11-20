@@ -489,6 +489,23 @@ object SubAgentStartupRecovery:
                 store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
                   notificationId = Some(s"${task.taskId}#$run")).void
               }
+            case None =>
+              nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run).flatMap {
+                case Some(debt) =>
+                  val text = debt.messages.reverse.find(_.role == MessageRole.Assistant).map(_.textContent.trim).getOrElse("")
+                  val payload = if text.nonEmpty && text != Defaults.MaxTokensStubText then s"\"${task.description}\":\n$text"
+                    else s"\"${task.description}\" (no text output)"
+                  val event = AgentCommand.ExternalEvent("subtask", "completed", payload,
+                    JsonObject("parentSessionId" -> task.parentSessionId.asJson,
+                      "taskRunId" -> run.asJson, "description" -> task.description.asJson,
+                      "agentName" -> task.agentName.asJson, "completionMessages" -> debt.messages.asJson,
+                      "completionGeneration" -> run.asJson), Some(task.taskId))
+                  sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap { ref =>
+                    store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
+                      notificationId = Some(s"${task.taskId}#$run")).void
+                  }
+                case None => IO.unit
+              }
             case _ => IO.unit
           }
         case _ => IO.unit
