@@ -33,10 +33,10 @@ private[agent] object AgentFinishTurn:
         ChildReport.event(text, continues = true, agentDef.name, Some(sid), slot) match
           case None => IO.blocking(journal.closeNoReport(slot))
           case Some(event) =>
-            sessionIdOfRef(resources, parentRef).flatMap {
-              case None => IO.raiseError(new IllegalStateException("child-report parent session unavailable"))
+            IO.blocking(journal.prepareReport(slot, event.payload)).flatMap { identity =>
+              sessionIdOfRef(resources, parentRef).flatMap {
+              case None => IO.unit // Prepared report remains durable for recovery; do not fail the turn.
               case Some(parentSid) =>
-                IO.blocking(journal.prepareReport(slot, event.payload)).flatMap { identity =>
                   MailboxProducer.deliver(resources, parentSid, event.copy(correlationId = Some(identity)), identity, "child-report", producer = "child-report")
                     .flatMap {
                       case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) => IO.raiseError(new IllegalStateException(s"child-report delivery failed: $cause"))

@@ -43,6 +43,11 @@ private[agent] final class ChildReportJournal private (root: Path, session: Stri
     id
   }
 
+  def openRequests(): List[Long] = ChildReportJournal.synchronized {
+    val entries = readProtocol().hcursor.get[io.circe.JsonObject]("entries").fold(throw _, identity)
+    entries.toList.collect { case (key, entry) if entry.hcursor.get[String]("status").toOption.contains("open") => key.toLong }.sorted
+  }
+
   def pendingRecovery(): List[(String, String)] = ChildReportJournal.synchronized {
     val entries = readProtocol().hcursor.get[io.circe.JsonObject]("entries").fold(throw _, identity)
     entries.toList.sortBy(_._1.toLong).flatMap { case (_, entry) =>

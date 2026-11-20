@@ -1625,6 +1625,22 @@ object BackoffSupervisor:
           // 预算：旧通道释放（respawn 视为一次新的执行窗口 → 重新计时）。
           _ <- DelegateBudget.release(subagentId)
           oldRecord <- resources.agentRegistry.get.map(_.get(subagentId))
+          // Flush prepared child progress before the recovered actor can dispatch a new request.
+          _ <- {
+            val journal = ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, subagentId)
+            IO.blocking((journal.openRequests(), journal.pendingRecovery())).flatMap { case (open, prepared) =>
+              open.traverse_(slot => IO.blocking(journal.closeNoReport(slot))) *>
+                prepared.traverse_ { case (id, body) =>
+                  val event = AgentCommand.ExternalEvent("child-report", "progress", body,
+                    JsonObject("agentName" -> agentName.asJson), Some(id))
+                  MailboxProducer.deliver(resources, parentSessionId, event, id, "child-report", producer = "child-report-recovery").flatMap {
+                    case nebflow.core.mail.SessionMailbox.MailResult.Failed(reason) =>
+                      IO.raiseError(new IllegalStateException(s"child report recovery delivery failed: $reason"))
+                    case _ => IO.blocking(journal.markFlushed(id.substring(id.lastIndexOf(':') + 1).toLong))
+                  }
+                }
+            }
+          }
           // Crash recovery: load persisted messages from the session store
           // so the child can resume from where it left off (断点续跑).
           // If no messages are found (e.g. first turn crashed before any
