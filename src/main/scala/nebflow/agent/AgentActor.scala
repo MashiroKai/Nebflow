@@ -1205,6 +1205,34 @@ object AgentActor extends AgentCore with AgentSession:
         (if continueOnSpawn && sessionId.exists(resources.protectedExecutions.contains) then
            ctx.self ! AgentCommand.ContinueProtectedRun
          else IO.unit) *>
+        // child-report 残槽收口（checkpoint-restart 批 2026-11-21）：**同一 sessionId
+        // 换 actor 实例续跑**时（flow 层 retryable 失败 → FlowDagExecutor 恢复消息后
+        // 派生新 actor；BackoffSupervisor respawn 同形），上一个实例被取消的 turn 若已
+        // 消费过 open 槽就再没人会写报告 ⇒ 槽永久 open ⇒ 本实例首个 turn 的
+        // `ChildReportJournal.beginRequest` 的 require（"open request must be
+        // recovered before allocation"）把它直接打回 idle（实测日志：spawn 后
+        // turn=1 立刻 `Actor error: requirement failed: open request must be
+        // recovered before allocation`，FlowNodeSupervisionSpec P2-1/P1-backoff 120s 超时）。
+        // 判据 = `initialMessages` 非空（恢复续跑；全新派发无残槽）；收口实现单点 =
+        // [[ChildReportJournal.closeAllOpenAsNoReport]]（与 RestartAgent 腿同一幂等口径）。
+        (if initialMessages.nonEmpty then
+           sessionId match
+             case Some(sid) if sid.nonEmpty =>
+               IO.blocking {
+                 val journal = ChildReportJournal.open(
+                   (nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO,
+                   sid
+                 )
+                 val closed = journal.closeAllOpenAsNoReport()
+                 if closed.nonEmpty then
+                   logger.info(
+                     s"child-report: closed ${closed.size} orphan open slot(s) on respawn for $sid: ${closed.mkString(",")}"
+                   )
+               }.handleErrorWith(e =>
+                 logger.warn(s"child-report orphan open-slot close on respawn failed for $sid: ${e.getMessage}")
+               )
+             case _ => IO.unit
+         else IO.unit) *>
         IO.pure(
           idle(
             agentDef,

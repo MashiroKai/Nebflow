@@ -20,6 +20,28 @@ import scala.concurrent.duration.*
  */
 class HealthMonitorGuardPersistenceSpec extends CatsEffectSuite:
 
+  /**
+   * 套件级换根（`QuotaChainSwitchSpec` 既有惯例）。
+   *
+   * B2 坏档保守向用例的前置断言是「registry 派生出非空候选链」。链解析走
+   * `SchemePolicy.resolveFromInputs`，其 `mainModel` 腿 = `nebulaChain()` =
+   * **直读磁盘** `PathUtil.dataRoot/agents/nebula/agent.json`
+   * （`SchemePolicy.scala:97-103`），优先级高于本 spec 的 `llm.fallback`。
+   * 开发机真实根里该文件带 `"preferred":"zhipu/glm-5.3-flash"`（本 spec 未配的
+   * provider）⇒ 候选链解析为空 ⇒ 前置断言红（2026-11-21 实测）。
+   * 钉到临时根（无 agent.json）⇒ 走 `twoProviderRegistry` 自己的 fallback 锚。
+   *
+   * 注意：本套件各用例自己还会 `PathUtil.setDataRoot` 到 per-test 临时根再还原，
+   * 两者兼容（per-test 的在 finally 里还原到本 beforeAll 钉的根）。
+   */
+  private var savedDataRoot: Option[os.Path] = None
+
+  override def beforeAll(): Unit =
+    savedDataRoot = Some(PathUtil.dataRoot)
+    PathUtil.setDataRoot(os.Path(java.nio.file.Files.createTempDirectory("hmguard-spec").toString))
+
+  override def afterAll(): Unit = savedDataRoot.foreach(PathUtil.setDataRoot)
+
   override def munitIOTimeout: FiniteDuration = 60.seconds
 
   private def openDb(root: Path): DbHandle = Db.open(DbConfig(root)).unsafeRunSync()

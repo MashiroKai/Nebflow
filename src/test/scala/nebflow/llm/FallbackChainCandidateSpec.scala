@@ -29,6 +29,27 @@ import sttp.client4.StreamBackend
  */
 class FallbackChainCandidateSpec extends CatsEffectSuite:
 
+  /**
+   * 套件级换根（`QuotaChainSwitchSpec` 既有惯例）——**本 spec 的隔离是判据的一部分**。
+   *
+   * 本 spec 的立身之本就是「config 文件里的 `llm.fallback` 是全局链的唯一真相」。
+   * 但链解析走 `SchemePolicy.resolveFromInputs`，其 `mainModel` 腿 =
+   * `nebulaChain()` = `ownChainOf("Nebula")` = **直读磁盘**
+   * `PathUtil.dataRoot/agents/nebula/agent.json`（`SchemePolicy.scala:97-103`），
+   * 且优先级高于 `globalModel`（本 spec 的 `llm.fallback`）。
+   * 开发机真实根里该文件带 `"preferred":"zhipu/glm-5.3-flash"` ⇒ 磁盘值压过 spec
+   * 构造的配置 ⇒ `getCandidatesForAgentUnfiltered` 解析成 zhipu（spec 未配的
+   * provider）⇒ 空链 ⇒ C-1/C-2/C-3/C-4/C-5b/C-5d/C-6 等 7 条红。
+   * 钉到临时根（无 agent.json）⇒ 走 spec 自己的配置，判据才真正测到被测对象。
+   */
+  private var savedDataRoot: Option[os.Path] = None
+
+  override def beforeAll(): Unit =
+    savedDataRoot = Some(PathUtil.dataRoot)
+    PathUtil.setDataRoot(os.Path(java.nio.file.Files.createTempDirectory("fallbackchain-spec").toString))
+
+  override def afterAll(): Unit = savedDataRoot.foreach(PathUtil.setDataRoot)
+
   private val NullBackend = null.asInstanceOf[StreamBackend[IO, Fs2Streams[IO]]]
 
   private def provider(models: String*): ProviderConfig =

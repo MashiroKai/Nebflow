@@ -25,6 +25,25 @@ import nebflow.shared.*
  */
 class PerModelContextClampSpec extends CatsEffectSuite:
 
+  /**
+   * 套件级换根（`QuotaChainSwitchSpec` / agent 域 prevRoot 既有惯例）。
+   *
+   * 为什么必须换根（2026-11-21 收口实测）：`getCandidatesForAgentUnfiltered(None)`
+   * 与 `getCandidates()` 的链解析走 `SchemePolicy.nebulaChain()`，它**直读磁盘**
+   * `PathUtil.dataRoot/agents/nebula/agent.json`（`SchemePolicy.ownChainOf:97-103`）。
+   * 开发机的真实根里该文件带 `"preferred":"zhipu/glm-5.3-flash"` ⇒ 磁盘值**压过**
+   * 本 spec 构造的 `llm.fallback` ⇒ 全局链解析成 zhipu（本 spec 未配置的 provider）
+   * ⇒ `getCandidates()` 空链 ⇒ T1/T2/T2b/T3 的「两腿读数必须一致」断言红。
+   * 钉到临时根（无 agent.json）⇒ 走 spec 自己的 `llm.fallback`，与设计意图一致。
+   */
+  private var savedDataRoot: Option[os.Path] = None
+
+  override def beforeAll(): Unit =
+    savedDataRoot = Some(PathUtil.dataRoot)
+    PathUtil.setDataRoot(os.Path(java.nio.file.Files.createTempDirectory("clamp-spec").toString))
+
+  override def afterAll(): Unit = savedDataRoot.foreach(PathUtil.setDataRoot)
+
   private def configWith(configured: Int, modelMax: Option[Int]): NebflowServiceConfig =
     NebflowServiceConfig(
       llm = ServiceLlmConfig(

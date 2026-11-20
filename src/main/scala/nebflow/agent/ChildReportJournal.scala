@@ -90,6 +90,30 @@ private[agent] final class ChildReportJournal private (root: Path, session: Stri
   def closeNoReport(slot: Long): Unit = closeNoReportIfOpen(slot)
 
   /**
+   * 收口**本会话全部** open 槽（open ⇒ `no-report`），返回收走的槽号。
+   *
+   * 为什么需要（checkpoint-restart 批 2026-11-21）：同一个 sessionId 上会**换一个
+   * actor 实例**继续跑 —— flow 层 retryable 失败走 checkpoint restart（
+   * `FlowDagExecutor` 恢复消息后 `executeAgent` 派生新 actor）、BackoffSupervisor
+   * respawn、supervisor RestartAgent 皆然。前一个 actor 的 turn 被取消时若已消费过
+   * open 槽，就再没人会为它写报告 ⇒ 槽永久 open ⇒ 新 actor 首个 turn 的
+   * [[beginRequest]] 的 require（"open request must be recovered before allocation"）
+   * 直接把它打回 idle。
+   *
+   * 判据归属：本方法把「已在跑的收口」收成**一处实现**，供两条腿共用 ——
+   * `AgentProcessing.closeAbandonedChildReports`（RestartAgent 腿，重启前收）与
+   * [[nebflow.agent.AgentActor]] 的 spawn 腿（新 actor 起来时收上一个实例的残槽，
+   * `initialMessages` 非空 = 恢复续跑，见该处注释）。逐槽幂等：并发收口时已落终态的
+   * 槽返回 false，不是错误。
+   *
+   * fail-soft：整体异常不阻断重启/续跑（残槽会被下一次 beginRequest 再撞到，
+   * 故调用方须自己决定是否容忍——两处调用点均按「日志后继续」处理）。
+   */
+  def closeAllOpenAsNoReport(): List[Long] = ChildReportJournal.synchronized {
+    openRequests().filter(closeNoReportIfOpen)
+  }
+
+  /**
    * 幂等收口：槽仍 open 才落 `no-report`，已落终态（或此刻已被并发收口）则什么都不做。
    *
    * 为什么需要（child-report 双收口批 2026-11-21）：一个 turn 的收尾路径会**两处**收口

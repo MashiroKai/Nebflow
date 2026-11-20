@@ -11,8 +11,11 @@ package nebflow.core.ask
  *   · `PdfPage`（PDF note/ask 批 `858545d9a`：绑定 PDF 的按需取页件，ask 专属；
  *     该批只改了 `AskSessions`，漏同步本 spec ⇒ 本 spec 在 `feat/base` 上即为红）；
  *   · `Card`（card-tool-revive 批 2026-11-18：从 git 历史复活，**仅**授 Canvas Ask）。
- * 断言强度只增不减：除了钉住这十二个名字，还钉「面 = 专属 ∪ 共享」的结构式与
+ * 断言强度只增不减：除了钉住这十四个名字，还钉「面 = 专属 ∪ 共享」的结构式与
  * 「每个名字都在注册表里」（单源）。
+ *
+ * 十二 → 十四（2026-11-21 收口）：gitviz 分支管理问答批再补 `gitviz_graph` /
+ * `gitviz_handoff` 两件，同一口径（同步 spec 到真实工具面，产品零改动）。
  */
 final class AskToolFaceSpec extends munit.FunSuite:
 
@@ -20,11 +23,29 @@ final class AskToolFaceSpec extends munit.FunSuite:
   private val sharedAskTools =
     Set("Read", "Glob", "Grep", "WebSearch", "WebFetch", "Bash")
 
-  /** Ask 专属面（进 `AskSessions.AskExclusiveTools` ⇒ 从其余一切身份剥净）。 */
+  /**
+   * Ask 专属面（进 `AskSessions.AskExclusiveTools` ⇒ 从其余一切身份剥净）。
+   *
+   * gitviz 分支管理问答批（2026-11-19 第二轮）：再补两笔早已在册的能力——
+   *   · `gitviz_graph`（分支图只读取数件，数据面 = 既有 `GitGraph.build`）；
+   *   · `gitviz_handoff`（分支管理问答的转交件）。
+   * 两者均已在 `AskSessions.AskExclusiveTools` 与 `ToolRegistry` 注册表内
+   * （`registry.scala:63/67`），工具内侧另有 `isGitVizSession` 身份闸兜底。
+   * 该批同样**只改授权面与真实工具面、产品零改动**，本 spec 依旧是滞后一方。
+   */
   private val exclusiveAskTools =
-    Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write", "PdfPage", "Card")
+    Set(
+      "message_record_search",
+      "send_message_to_main_chat",
+      "ask_edit",
+      "ask_write",
+      "PdfPage",
+      "Card",
+      "gitviz_graph",
+      "gitviz_handoff"
+    )
 
-  test("F1 Ask has exactly twelve tools (the registry-derived face)") {
+  test("F1 Ask has exactly fourteen tools (the registry-derived face)") {
     assertEquals(
       AskSessions.AllowedTools,
       exclusiveAskTools ++ sharedAskTools
@@ -54,7 +75,7 @@ final class AskToolFaceSpec extends munit.FunSuite:
     assert(!AskSessions.AllowedTools.contains("Write"))
   }
 
-  test("F4 all twelve Ask tools are registered") {
+  test("F4 all fourteen Ask tools are registered") {
     val registered = nebflow.core.tools.ToolRegistry.ALL_TOOLS.map(_.name).toSet
     AskSessions.AllowedTools.foreach { name =>
       assert(registered.contains(name), clue(name))
