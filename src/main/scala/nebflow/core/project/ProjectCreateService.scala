@@ -246,13 +246,15 @@ object ProjectCreateService:
                         // ③ 远端脚手架（缺件即补、既有永不覆盖——与本地 ensureScaffold 同纪律）。
                         // 复用 ② 的列举（同 peer 同路径二次 list = 一次多余往返 + 一次多余失败面，
                         // 2026-10-26 #901 批去重）。
-                        scaffoldRemote(executor, peer, workspace, resolvedName, listing).flatMap {
+                        executor.ensureRemoteScaffold(peer, workspace).flatMap {
+                          case Left(err) => IO.pure(Left(ToolError(s"Remote scaffold failed: $err")))
+                          case Right(remoteReport) => scaffoldRemote(executor, peer, workspace, resolvedName, listing).flatMap {
                           case Left(err) =>
                             IO.pure(
                               Left(
                                 ToolError(
                                   s"Project '$resolvedName' was NOT created: scaffold write on device '${peer.deviceName}' failed — $err. " +
-                                    "Fix the device-side error and retry (retry is safe: missing pieces are backfilled, existing files are never overwritten). (REMOTE_SCAFFOLD_FAILED)"
+                                    s"Earlier remote scaffold items: $remoteReport. (REMOTE_SCAFFOLD_FAILED)"
                                 )
                               )
                             )
@@ -297,12 +299,13 @@ object ProjectCreateService:
                                                s" Workspace lives on device '${peer.deviceName}' at ${pd.origin.map(_.path).getOrElse(workspace)} " +
                                                  "(file/Bash tools route there via the device channel; this host's data root " +
                                                  s"holds only the brain ledgers under projects/${pd.name}/brain).") +
-                                            scaffoldNote
+                                            scaffoldNote + s" Remote scaffold items: $remoteReport"
                                         )
                                       case l @ Left(_) => l
                                     }
                                 case Left(err) => IO.pure(Left(ToolError(err)))
                               }
+                          }
                         }
                   }
               end match
@@ -329,8 +332,7 @@ object ProjectCreateService:
         e.hcursor.downField("name").as[String].toOption
       }.toSet
     val wanted: List[(String, String)] = List(
-      ("AGENTS.md", AgentMdTemplateFull),
-      (".gitignore", ".nebflow/\n")
+      ("AGENTS.md", AgentMdTemplateFull)
     )
     val missing = wanted.filterNot((name, _) => existing.contains(name))
     if missing.isEmpty then
