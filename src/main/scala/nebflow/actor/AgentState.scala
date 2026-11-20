@@ -423,13 +423,6 @@ case class SessionContext(
   /** Last experience extraction timestamp. */
   lastExperienceAt: Option[Long] = None,
   /**
-   * True when this agent is a SubTask worker (spawned via SubTaskTool).
-   * Workers are leaf agents: no Mail/SubTask/Delegate tools, no team
-   * context injection (categoryPrefix/managerPrefix/memoryBlock/teamCatalog/
-   * flowCatalog stripped), and a fixed Worker Block appended to the prompt.
-   */
-  isSubTaskWorker: Boolean = false,
-  /**
    * #406: true when this agent is a one-shot FlowExecute node (spawned by
    * FlowDagExecutor.executeAgent with isFlowNode=true). Flow nodes are leaf
    * agents: FlowExecute/FlowTrigger/SubTask/Delegate are stripped to prevent
@@ -888,7 +881,6 @@ object AgentState:
     gitBranch: Option[String] = None,
     expectsMail: Boolean = false,
     rootSessionId: String = "",
-    isSubTaskWorker: Boolean = false,
     freezeExempt: Boolean = false,
     isFlowNode: Boolean = false,
     userFacingNode: Boolean = false,
@@ -957,7 +949,6 @@ object AgentState:
         safetyMode = safetyMode,
         expectsMail = expectsMail,
         rootSessionId = rootSessionId,
-        isSubTaskWorker = isSubTaskWorker,
         freezeExempt = freezeExempt,
         isFlowNode = isFlowNode,
         userFacingNode = userFacingNode,
@@ -1124,7 +1115,6 @@ extension (s: AgentState)
   def safetyMode: String = s.session.safetyMode
   def rootSessionId: String = s.session.rootSessionId
   def expectsMail: Boolean = s.session.expectsMail
-  def isSubTaskWorker: Boolean = s.session.isSubTaskWorker
   def isFlowNode: Boolean = s.session.isFlowNode
   def userFacingNode: Boolean = s.session.userFacingNode
   def flowNodeId: Option[String] = s.session.flowNodeId

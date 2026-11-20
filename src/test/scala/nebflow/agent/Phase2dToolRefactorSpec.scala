@@ -28,7 +28,6 @@ class Phase2dToolRefactorSpec extends FunSuite:
     def allowed(
       defn: AgentDef,
       depth: Int = 0,
-      isSubTaskWorker: Boolean = false,
       isFlowNode: Boolean = false,
       isTeamLead: Boolean = false,
       userFacingNode: Boolean = false,
@@ -39,7 +38,6 @@ class Phase2dToolRefactorSpec extends FunSuite:
       buildAllowedToolSet(
         defn,
         depth,
-        isSubTaskWorker,
         isFlowNode,
         isTeamLead,
         userFacingNode,

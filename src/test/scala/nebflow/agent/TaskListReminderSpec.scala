@@ -189,9 +189,8 @@ class TaskListReminderSpec extends FunSuite:
 
   test("门槛：shouldInjectMemory 仅 Nebula——任务提醒不可能出现在其他身份的记忆块"):
     // 提醒挂在 buildMemoryBlock 上，而 buildMemoryBlock 被 shouldInjectMemory 门控
-    assert(ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "Nebula"))
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "general"))
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "project-dispatcher"))
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = true, agentName = "Nebula"), "worker 无记忆")
+    assert(ContextRefresher.shouldInjectMemory(agentName = "Nebula"))
+    assert(!ContextRefresher.shouldInjectMemory(agentName = "general"))
+    assert(!ContextRefresher.shouldInjectMemory(agentName = "project-dispatcher"))
 
 end TaskListReminderSpec

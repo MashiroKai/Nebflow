@@ -68,7 +68,7 @@ class ColdRouteDisciplineSpec extends munit.FunSuite:
           availableTools = Set("NodeEdit")
         ),
         PromptContext(isRootAgent = false, agentName = "Backend", agentCategory = "team"),
-        PromptContext(isRootAgent = false, agentName = "Explorer", isSubTaskWorker = true)
+        PromptContext(isRootAgent = false, agentName = "Explorer")
       )
       nonRootContexts.foreach { ctx =>
         val assembled = assembleSystemPrompt("SYSTEM-MD", buildConditionalBlocks(ctx))

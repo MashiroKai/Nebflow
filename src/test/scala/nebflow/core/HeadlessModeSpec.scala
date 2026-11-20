@@ -43,18 +43,16 @@ class HeadlessModeSpec extends CatsEffectSuite:
     // standalone (the ONLY memory-bearing agent since 2026-08-31 裁定①) —
     // produce no memory block when headless: no cross-run state leaks into a
     // benchmark session.
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "Nebula", headless = true))
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = true, agentName = "Nebula", headless = true))
+    assert(!ContextRefresher.shouldInjectMemory(agentName = "Nebula", headless = true))
   }
 
   test("shouldInjectMemory: headless=false injects ONLY for Nebula") {
     // Eligible since 2026-08-31 裁定①: Nebula (non-worker, non-headless) only.
-    assert(ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "Nebula", headless = false))
+    assert(ContextRefresher.shouldInjectMemory(agentName = "Nebula", headless = false))
     // Team agents no longer inject memory (was eligible pre-redesign)
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "Backend", headless = false))
+    assert(!ContextRefresher.shouldInjectMemory(agentName = "Backend", headless = false))
     // Exclusions unchanged: SubTask workers, standalone non-Nebula
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = true, agentName = "Nebula", headless = false))
-    assert(!ContextRefresher.shouldInjectMemory(isWorker = false, agentName = "Coder", headless = false))
+    assert(!ContextRefresher.shouldInjectMemory(agentName = "Coder", headless = false))
   }
 
   // ============================================================

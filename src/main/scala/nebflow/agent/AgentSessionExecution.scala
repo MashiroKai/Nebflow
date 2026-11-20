@@ -570,7 +570,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         IO.raiseWhen(!state.sessionId.exists(resources.protectedRunners.contains))(
           new IllegalStateException("protected-runner-unavailable")
         ) *> IO.raiseWhen(state.pendingCompaction.nonEmpty || state.askMode.nonEmpty ||
-        state.session.sessionDevice.nonEmpty || state.isDispatcher || state.isFlowNode || state.isSubTaskWorker)(
+        state.session.sessionDevice.nonEmpty || state.isDispatcher || state.isFlowNode)(
         new IllegalStateException("unsupported-execution-boundary")
       )
     }
@@ -591,7 +591,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             buildToolList(
               agentDef,
               depth,
-              state.isSubTaskWorker,
               state.isFlowNode,
               projectBoardSession = state.isDispatcher || state.flowNodeId.isDefined,
               flowNodeSession = state.flowNodeId.isDefined,
@@ -668,7 +667,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           allowedTools = buildAllowedToolSet(
             freshDef,
             depth,
-            stateForLlm.isSubTaskWorker,
             isFlowNode = stateForLlm.isFlowNode,
             isTeamLead = isTeamLead,
             userFacingNode = stateForLlm.userFacingNode,
@@ -752,9 +750,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           // agent 无非默认身份（未起名且无自定义头像）= 段不注入、提醒不产生 =
           // 既有会话字节零变化。SubTask worker 是剥净上下文的叶子管道（同 skill
           // 目录等其它上下文段的停注判据），不注入。
-          identitySelfText <-
-            if stateForLlm.isSubTaskWorker then IO.pure("")
-            else nebflow.core.entity.AgentIdentityStore.readSelfSection(freshDef.name, freshDef.displayName)
+          identitySelfText <- nebflow.core.entity.AgentIdentityStore.readSelfSection(freshDef.name, freshDef.displayName)
           // 时间锚闸（时间感知修复批 2026-11-05）：见 `TimeAnchorInjection` 头注——
           // 起始轮一律注入，不再有 1 小时 gap；工具往返轮靠请求级 systemDynamic 锚。
           // Plugin surface live convergence (plugins-live 批 2026-09-12). The Plugin
@@ -833,7 +829,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             memoryBlock = turnCtx.memoryBlock,
             rulesMd = turnCtx.rulesMd,
             agentsMd = turnCtx.agentsMd,
-            isSubTaskWorker = stateForLlm.isSubTaskWorker,
             guardrailsOn = guardrailsOn,
             isFlowNode = stateForLlm.isFlowNode,
             userFacingNode = stateForLlm.userFacingNode,
@@ -1020,8 +1015,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                 buildToolPlan(
                   freshDef,
                   depth,
-                  stateForLlm.isSubTaskWorker,
-                  stateForLlm.isFlowNode,
+                        stateForLlm.isFlowNode,
                   isTeamLead,
                   userFacingNode = stateForLlm.userFacingNode,
                   guardrailsOn = guardrailsOn,
@@ -1430,7 +1424,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       allowedTools = buildAllowedToolSet(
         effectiveDef,
         depth,
-        state.isSubTaskWorker,
         state.isFlowNode,
         isTeamLead,
         userFacingNode = state.userFacingNode,
@@ -2745,7 +2738,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   protected def buildAllowedToolSet(
     agentDef: AgentDef,
     depth: Int = 0,
-    isSubTaskWorker: Boolean = false,
     isFlowNode: Boolean = false,
     isTeamLead: Boolean = false,
     userFacingNode: Boolean = false,
@@ -2874,8 +2866,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // grant. Flow-node stripping is generic leaf isolation (U5 裁定: 安全
     // 隔离, not a flow↔task coupling design).
     val categoryFiltered =
-      if isSubTaskWorker then mcpFiltered -- (Set("Mail", "SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
-      else if isFlowNode then
+      if isFlowNode then
         val leafStripped = mcpFiltered -- (Set("SubTask", "Delegate") ++ AgentCore.TeamTaskTools)
         // 轨道二 #5（专用化护栏，设计 §C1）：T1 flow worker 默认剥离面向用户
         // 的展示类工具——引擎级剥离而非提示词恳求（deck-v6 实证：提示词约束在
@@ -2955,7 +2946,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   protected def buildToolList(
     agentDef: AgentDef,
     depth: Int = 0,
-    isSubTaskWorker: Boolean = false,
     isFlowNode: Boolean = false,
     isTeamLead: Boolean = false,
     userFacingNode: Boolean = false,
@@ -2975,7 +2965,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       buildToolPlan(
         agentDef,
         depth,
-        isSubTaskWorker,
         isFlowNode,
         isTeamLead,
         userFacingNode,
@@ -3008,7 +2997,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
   protected def buildToolPlan(
     agentDef: AgentDef,
     depth: Int = 0,
-    isSubTaskWorker: Boolean = false,
     isFlowNode: Boolean = false,
     isTeamLead: Boolean = false,
     userFacingNode: Boolean = false,
@@ -3026,7 +3014,6 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     val allowedSet = buildAllowedToolSet(
       agentDef,
       depth,
-      isSubTaskWorker,
       isFlowNode,
       isTeamLead,
       userFacingNode,
@@ -3099,7 +3086,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     val rawPrompt = if agentDef.systemPrompt.nonEmpty then agentDef.systemPrompt else Repl.loadSystemPrompt()
     // SubTask workers inherit the parent's system.md for domain knowledge but
     // team interaction content is stripped (no team / no Mail / no reporting).
-    val base = if ctx.isSubTaskWorker then SubTaskPrompt.stripTeamContent(rawPrompt) else rawPrompt
+    val base = rawPrompt
     val cleanedPrompt = PromptSections.stripAllMigrated(base)
     val conditionalBlocks = PromptSections.buildConditionalBlocks(ctx)
     // 数据根占位符渲染（home 硬编码 → 运行时动态化批 2026-09-11）：插在

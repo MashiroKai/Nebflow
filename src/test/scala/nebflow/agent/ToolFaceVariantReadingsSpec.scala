@@ -29,7 +29,6 @@ class ToolFaceVariantReadingsSpec extends FunSuite:
       buildAllowedToolSet(
         defn,
         depth,
-        isSubTaskWorker = false,
         isFlowNode = false,
         isTeamLead = false,
         userFacingNode = false,

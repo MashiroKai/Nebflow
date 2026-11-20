@@ -1026,7 +1026,6 @@ object AgentActor extends AgentCore with AgentSession:
      * spawn sites still get a sane bucket (P1 best-effort behavior).
      */
     rootSessionId: String = "",
-    isSubTaskWorker: Boolean = false,
     /** D11 交互豁免：freezeExempt 会话不参与冻结。 */
     freezeExempt: Boolean = false,
     /** #406: one-shot FlowExecute node — leaf tools stripped (see SessionContext.isFlowNode). */
@@ -1175,7 +1174,6 @@ object AgentActor extends AgentCore with AgentSession:
                 gitBranch = gitBranch,
                 expectsMail = expectsMail,
                 rootSessionId = effectiveRootSessionId,
-                isSubTaskWorker = isSubTaskWorker,
                 freezeExempt = freezeExempt,
                 isFlowNode = isFlowNode,
                 userFacingNode = userFacingNode,

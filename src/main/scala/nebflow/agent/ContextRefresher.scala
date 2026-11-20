@@ -257,11 +257,10 @@ object ContextRefresher:
    * into a fresh benchmark session.
    */
   def shouldInjectMemory(
-    isWorker: Boolean,
     agentName: String,
     headless: Boolean = HeadlessMode.enabled
   ): Boolean =
-    !headless && !isWorker && agentName == RootAgentIdentity.Name
+    !headless && agentName == RootAgentIdentity.Name
 
   /**
    * Build a memory block string for system prompt injection.
@@ -515,9 +514,6 @@ object ContextRefresher:
       teamNameOpt <- IO.pure(Option.empty[String])
       freshDefOpt <- loadCurrentDef(teamNameOpt, resources, agentDef)
       globalDef = freshDefOpt.getOrElse(agentDef)
-      // SubTask workers are leaf task-execution pipelines: strip all team /
-      // manager / memory context — the prompt is their only context source.
-      isWorker = state.isSubTaskWorker
       // 阶段 2 批 A（2026-09）：systemPrefix 整层退役——四源（for-all/teams/
       // flows/manager + JAR fallback 双兜底链）与三段拼装全部删除；
       // TurnContext.systemPrefix 恒空串（字段保留至阶段 3 随 TurnContext
@@ -561,9 +557,7 @@ object ContextRefresher:
       // nonEmpty）自然不渲染（与 skillCatalog D.1-12 同款先例）；TurnContext
       // 字段保留至阶段 3。
       flowCatalog = ""
-      teamCatalog <-
-        if isWorker then IO.pure("")
-        else buildTeamCatalogForSession(state.sessionId)
+      teamCatalog <- buildTeamCatalogForSession(state.sessionId)
       // Memory: only Nebula (2026-08-31 裁定①). Team agents, standalone
       // agents and SubTask workers get no memory block — clean context.
       // Headless (NEBFLOW_HEADLESS=1): none at all — benchmark determinism.
@@ -572,7 +566,7 @@ object ContextRefresher:
       // ModelCandidate.contextWindow → spawn/update 写入状态；🔴 既有单点链，
       // 不另立旁路，本处只**消费**）。
       memoryBlock =
-        if shouldInjectMemory(isWorker, globalDef.name) then
+        if shouldInjectMemory(globalDef.name) then
           buildMemoryBlock(globalDef.name, teamNameOpt, state.contextWindow)
         else ""
     yield TurnContext(

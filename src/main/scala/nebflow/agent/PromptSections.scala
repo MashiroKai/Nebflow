@@ -95,8 +95,6 @@ object PromptSections:
      * resolved per turn in ContextRefresher.resolveAgentsMd).
      */
     agentsMd: Option[String] = None,
-    /** True when this agent is a SubTask worker (leaf execution pipeline). */
-    isSubTaskWorker: Boolean = false,
     /** 轨道二 #5: dedicatedAgents guardrails flag (hot-read per turn). */
     guardrailsOn: Boolean = false,
     /** 轨道二 #5: true when this agent is a flow DAG node (#406). */
@@ -448,7 +446,7 @@ object PromptSections:
     // Worker Identity Block (order 999).
     PromptSection.dynamic(
       395,
-      condition = ctx => ctx.guardrailsOn && !ctx.isSubTaskWorker,
+      condition = ctx => ctx.guardrailsOn,
       renderer = ctx =>
         if ctx.isFlowNode then flowWorkerIdentityBlock(ctx.userFacingNode)
         else if !ctx.isTeamLead && ctx.agentCategory == "team" then teamMemberIdentityBlock
@@ -942,54 +940,3 @@ object MountedProjectList:
 
 end MountedProjectList
 
-/**
- * Prompt helpers for SubTask workers (Delegate split, 方案 A).
- *
- * A worker inherits its parent's system.md for domain knowledge, but team
- * interaction content must be stripped — the worker has no team, no Mail,
- * no reporting chain. Stripping is heuristic (text level); the hard
- * behavioral guarantees come from the tool-set filtering (AgentCore) and
- * the Worker Identity Block (order 999).
- */
-object SubTaskPrompt:
-
-  /** Line-level patterns (lowercased match, case-insensitive) that remove a line. */
-  private val stripPatterns: List[String] = List(
-    "mail(",
-    "mail the",
-    "mail \"",
-    "mail '",
-    "mail 队友",
-    "notify manager",
-    "report to manager",
-    "escalate to manager",
-    "manager 汇报",
-    "通知 manager",
-    "报告 manager",
-    "向 manager",
-    "联系 manager",
-    "团队汇报",
-    "团队成员",
-    "你的团队",
-    "团队协作",
-    "delegate(",
-    "subtask(" // 子 agent 不需要再委派
-  )
-
-  /**
-   * Strip team interaction content from a team agent's system.md, keeping its
-   * domain knowledge. 1) removes whole `## Section` blocks (Teams & Flows /
-   * Team Catalog); 2) removes individual lines matching team-interaction
-   * patterns (case-insensitive).
-   */
-  def stripTeamContent(prompt: String): String =
-    val s1 = PromptSections.stripSection(prompt, "Teams & Flows")
-    val s2 = PromptSections.stripSection(s1, "Team Catalog")
-    s2.linesIterator
-      .filterNot { line =>
-        val low = line.toLowerCase
-        stripPatterns.exists(p => low.contains(p))
-      }
-      .mkString("\n")
-
-end SubTaskPrompt
