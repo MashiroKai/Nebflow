@@ -264,6 +264,28 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("corrupt mailbox receipt cannot prove interrupted result was undelivered") {
+    fixture.use { case (resources, _, _, root) =>
+      for
+        parent <- resources.sessionStore.createSession("broken-receipt-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-corrupt-receipt", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ <- resources.subAgentTaskStore.completeRun(parent.id, task.taskId, "run-1", "interrupted")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "finished",
+          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- IO.blocking(os.write.over(root / "sessions" / parent.id / "mailbox" / "delivered.json", "broken", createFolders = true))
+        receipt <- SessionMailbox.deliveredContains(parent.id, Set(s"${task.taskId}#run-1"))
+        _ = assertEquals(receipt, Set.empty[String])
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("interrupted"))
+        assertEquals(row.flatMap(_.suspectedLostTerminal), Some(true))
+    }
+  }
+
   test("recovery does not infer completion from a parked subtask transcript") {
     fixture.use { case (resources, _, _, _) =>
       for
