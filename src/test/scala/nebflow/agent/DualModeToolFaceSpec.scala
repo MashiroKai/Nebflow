@@ -46,7 +46,11 @@ class DualModeToolFaceSpec extends FunSuite:
         "Grep",
         "WebSearch",
         "WebFetch",
-        "Bash"
+        "Bash",
+        // gitviz 只读件（分支管理问答批 2026-11-19 第二轮：ask-gv-* 会话专属，
+        // 工具内自带 GITVIZ_FORBIDDEN 作用域闸，故属 Ask 面）
+        "gitviz_graph",
+        "gitviz_handoff"
       )
     )
     assert(!face.contains("GitQuery"))

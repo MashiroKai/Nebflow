@@ -1203,6 +1203,13 @@ private[agent] object AgentProcessing:
             .flatMap(_.replyDeferred)
             .traverse_(d => d.complete(Left("Restarted by supervisor")).void.handleErrorWith(_ => IO.unit))
           _ <- emitStream(state.wsSend, AgentStreamEvent.Interrupted, isSubagent = depth > 0, state.sessionId)
+          // child-report 日志收口（restart-recovery 批 2026-11-21）：被取消的 turn 若已
+          // 消费一个 open 槽，就再没人会为它写报告 ⇒ 槽会永久 open，而 `beginRequest`
+          // 的 require（"open request must be recovered before allocation"）正是这条
+          // 不变式的门 —— 重启腿此前不收口，Soft/Full 重启后**首个** turn 立刻被打回
+          // idle（RestartRecoverySpec #13A/#13B/#13C 三红，实测日志即该 require 文本）。
+          // 口径与 BackoffSupervisor respawn 腿一致：open ⇒ no-report 收口。
+          _ <- closeAbandonedChildReports(state)
           restartState <- restartStateFor(level, state, resources)
           _ <- state
             .wsSend(
@@ -2060,6 +2067,25 @@ private[agent] object AgentProcessing:
   // ============================================================
   // Supervisor restart helpers
   // ============================================================
+
+  /**
+   * 重启/中断收口本会话遗留的 open child-report 槽：被取消的 turn 不会再产出报告，
+   * 槽按 no-report 落终态。不这么做，`ChildReportJournal.beginRequest` 的
+   * require（open 未恢复不得分配）会让重启后的首个 turn 直接失败——重启语义本身
+   * 没有错，缺的是这条收口。与 [[BackoffSupervisor]] respawn 腿同一口径（open ⇒
+   * no-report）；失败只记 WARN：收口失败不该再阻断重启（下一次 respawn 会重试）。
+   */
+  private def closeAbandonedChildReports(state: AgentState): IO[Unit] =
+    state.sessionId.filter(_.nonEmpty) match
+      case None => IO.unit
+      case Some(sid) =>
+        IO.blocking {
+          val journal =
+            ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid)
+          journal.openRequests().foreach(journal.closeNoReport)
+        }.handleErrorWith(e =>
+          logger.warn(s"child-report open-slot close on restart failed for ${sid}: ${e.getMessage}")
+        )
 
   /**
    * Rollback the last tool call: truncate messages from the last ToolUse

@@ -77,7 +77,9 @@ const RE_DEFAULT_REVIVAL_KILL =
   /def DelegateRevivalEnabled: Boolean =\s*\n\s*sys\.props\.getOrElse\("nebflow\.delegate\.revival\.enabled", "true"\)/;
 const RE_MANUAL_FORK = /case Right\(candidates\) if candidates\.nonEmpty && manual =>/;
 const RE_SWEEP_MANUAL_HELPER = /def sweepManualUnprotected\(/;
-const RE_PENDING_STATUS = /transitionObserved\((task|t), PendingRecoveryStatus,/;
+// 换行不敏感：全仓格式化批（2026-11-21）把实参折行，判据改为 \s* 允许换行，
+// 否则闸红的是换行位置而不是契约（实测：scalafmt 把 task, PendingRecoveryStatus, 折成三行）。
+const RE_PENDING_STATUS = /transitionObserved\(\s*(task|t)\s*,\s*PendingRecoveryStatus\s*,/;
 const RE_AUTO_REVIVE_CALL = /DelegateRevival\.reviveAll\(/;
 const RE_ZERO_NOTIFY_RECEIPT = /suppressed:zero-notify-by-author-order/;
 const RE_ZERO_NOTIFY_COPY = /parent NOT notified \(zero-notify by author order/;
