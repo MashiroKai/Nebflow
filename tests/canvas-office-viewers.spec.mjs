@@ -309,6 +309,7 @@ console.log(`[fixtures] xlsx=${sampleXlsx} docx=${sampleDocx} pptx=${PPTX_FIXTUR
 
 const browser = await chromium.launch();
 
+if (process.env.OFFICE_PREVIEW_ONLY !== '1') {
 console.log('\n== ① pptx：renderer 资产腿＋渲染出片（mock 档：vendor 由 web/ 树伺服） ==');
 {
   const h = await boot(browser);
@@ -447,6 +448,49 @@ console.log('\n== ①-D pptx 错误态三态（CFB / 坏 zip / 超限 → 有人
   await h3.ctx.close();
 }
 
+}
+console.log('\n== office docx/xlsx: converted PDF preferred; 502 falls back visibly ==');
+for (const sample of [sampleDocx, sampleXlsx]) {
+  const h = await boot(browser);
+  const pdfObjects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] /Resources << >> /Contents 4 0 R >>',
+    '<< /Length 0 >>\nstream\n\nendstream',
+  ];
+  let pdfText = '%PDF-1.4\n';
+  const offsets = pdfObjects.map((obj, i) => { const offset = Buffer.byteLength(pdfText); pdfText += `${i + 1} 0 obj\n${obj}\nendobj\n`; return offset; });
+  const xref = Buffer.byteLength(pdfText);
+  pdfText += `xref\n0 5\n0000000000 65535 f \n${offsets.map(n => String(n).padStart(10, '0') + ' 00000 n \n').join('')}trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  const pdf = Buffer.from(pdfText);
+  let conversions = 0;
+  await h.page.route('**/api/nf-office?*', route => {
+    conversions++;
+    return route.fulfill({ status: 200, contentType: 'application/pdf', body: pdf });
+  });
+  await openPath(h.page, sample);
+  let pdfVisible = true;
+  try { await h.page.waitForSelector('.canvas-tab-pane.active .pdf-page', { timeout: 15000 }); } catch { pdfVisible = false; }
+  ok(`${extname(sample)} converted PDF shown without source fetch`, pdfVisible && conversions === 1 && h.nfFileReqs.length === 0, `pdf=${pdfVisible} convert=${conversions} source=${h.nfFileReqs.length}`);
+  await h.ctx.close();
+
+  const fallback = await boot(browser);
+  let failures = 0;
+  await fallback.page.route('**/api/nf-office?*', route => { failures++; return route.fulfill({ status: 502, body: 'conversion failed' }); });
+  await openPath(fallback.page, sample);
+  let visible = true;
+  const selector = sample.endsWith('.xlsx') ? '.canvas-xlsx-viewer' : '.canvas-md-viewer';
+  try { await fallback.page.waitForSelector('.canvas-tab-pane.active .office-fallback-notice', { timeout: 15000 }); await fallback.page.waitForSelector('.canvas-tab-pane.active ' + selector); } catch { visible = false; }
+  const text = await paneText(fallback.page);
+  ok(`${extname(sample)} failed conversion visibly falls back`, failures === 1 && visible && text.includes(sample.endsWith('.xlsx') ? 'Widget' : 'NF Office Fix Sample'), `failures=${failures} visible=${visible} text=${text.slice(0, 80)}`);
+  await fallback.ctx.close();
+}
+
+if (process.env.OFFICE_PREVIEW_ONLY === '1') {
+  await browser.close();
+  await new Promise((r) => webServer.close(r));
+  process.exit(results.every(r => r.pass) ? 0 : 1);
+}
 console.log('\n== ② xlsx：自愈档（首轮铸票失败 → 401 → reMint → 重试 → 出表） ==');
 {
   const h = await boot(browser, { failFirstMint: true });

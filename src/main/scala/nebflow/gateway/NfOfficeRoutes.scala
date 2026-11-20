@@ -258,16 +258,20 @@ object NfOfficeRoutes:
   // 缓存
   // ──────────────────────────────────────────────────────────────────────
 
-  /** 缓存键：realpath+size+mtime（+legs 品类签名）→ sha256 前 32 hex。源件一变
-   *  自然换键；转换器阶梯变了也换键（不会拿旧阶梯的产物冒充新阶梯）。 */
+  /** Content-address the complete source; the suffix and converter legs affect
+   *  interpretation, while path and timestamps do not identify its contents. */
   def cacheKey(real: os.Path, legsKind: String): String =
-    val meta =
-      try
-        val st = os.stat(real)
-        s"${real}|${st.size}|${st.mtime.toMillis}|$legsKind"
-      catch case _: Throwable => s"${real}|-|-|$legsKind"
-    val digest = MessageDigest.getInstance("SHA-256").digest(meta.getBytes("UTF-8"))
-    digest.take(16).map("%02x".format(_)).mkString
+    val digest = MessageDigest.getInstance("SHA-256")
+    digest.update(("office-cache-v2\u0000" + legsKind + "\u0000" + real.ext.toLowerCase + "\u0000").getBytes("UTF-8"))
+    val in = java.nio.file.Files.newInputStream(real.toNIO)
+    try
+      val buffer = new Array[Byte](65536)
+      var count = in.read(buffer)
+      while count != -1 do
+        digest.update(buffer, 0, count)
+        count = in.read(buffer)
+    finally in.close()
+    digest.digest().take(16).map("%02x".format(_)).mkString
   end cacheKey
 
   /** 缓存文件名形如 `<key>.<kind>.<ext>`（kind/ext 在转换落盘时定，命中时回读）。 */

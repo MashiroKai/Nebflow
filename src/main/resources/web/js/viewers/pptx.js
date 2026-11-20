@@ -247,7 +247,7 @@ function trackPaneBlobUrl(pane, url) {
   urls.push(url);
   paneBlobUrls.set(pane, urls);
 }
-function revokePaneBlobUrls(pane) {
+export function revokePaneBlobUrls(pane) {
   const urls = paneBlobUrls.get(pane);
   if (!urls) return;
   for (const u of urls) { try { URL.revokeObjectURL(u); } catch (_) { /* 已失效 */ } }
@@ -256,7 +256,7 @@ function revokePaneBlobUrls(pane) {
 
 /** 服务端转换腿。返回 true = pane 已被转换产物接管（PDF 面板/首页卡）；
  *  false = 未转换（调用方落路线 A），失败原因已记 diag.convertSkipped。 */
-async function tryOfficeConvert(pane, ctx, diag) {
+export async function tryOfficeConvert(pane, ctx, diag) {
   const { absPath, fileName } = ctx;
   if (!absPath) { diag.convertSkipped = 'no-absPath'; return false; }
   diag.convertPhase = 'minting-ticket';
