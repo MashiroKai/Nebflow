@@ -1,0 +1,240 @@
+{
+  "version": 1,
+  "change": "subtask-terminal-reconciliation",
+  "mappings": [
+    {
+      "requirement": "STR-REQ-001",
+      "scenario": "STR-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/agent/BackoffSupervisor.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/SubAgentTaskStatusSpec.scala",
+          "name": "managed subtask retries a transient terminal commit failure"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-002",
+      "scenario": "STR-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "missing run identity in terminal envelope is held for manual review"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-002",
+      "scenario": "STR-SCN-003",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "conflicting completion debt and envelope require manual review"
+        },
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "invalid envelope identity with matching debt requires manual review"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-002",
+      "scenario": "STR-SCN-004",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "consistent debt and envelope terminalize the managed row"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-003",
+      "scenario": "STR-SCN-005",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentTaskStore.scala",
+        "src/main/scala/nebflow/core/mail/CompletionDebtStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "first committed evidence wins and later debt cannot reopen a managed run"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-003",
+      "scenario": "STR-SCN-006",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentTaskStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "cancelled managed run refuses stale completion debt"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-003",
+      "scenario": "STR-SCN-007",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentTaskStore.scala",
+        "src/main/scala/nebflow/core/mail/CompletionDebtStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "debt write racing a cancel or a new run never binds the old run"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-004",
+      "scenario": "STR-SCN-008",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala",
+        "src/main/scala/nebflow/agent/SubAgentTaskStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "legacy subagent recovery requires a matching parent tool result"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-004",
+      "scenario": "STR-SCN-009",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentTaskStore.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "manual force-terminalize only disposes flagged orphan rows"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-004",
+      "scenario": "STR-SCN-010",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "recovery does not infer completion from a parked subtask transcript"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-005",
+      "scenario": "STR-SCN-011",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "interrupted legacy managed row with completion evidence remains interrupted and is marked for review"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-005",
+      "scenario": "STR-SCN-012",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "corrupt mailbox receipt cannot prove interrupted result was undelivered"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-006",
+      "scenario": "STR-SCN-013",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala",
+        "src/main/scala/nebflow/agent/AgentProcessing.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "legacy subagent recovery requires a matching parent tool result"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-006",
+      "scenario": "STR-SCN-014",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "interrupted managed row without completion evidence remains unchanged"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-007",
+      "scenario": "STR-SCN-015",
+      "implementation": [
+        "src/main/scala/nebflow/agent/BackoffSupervisor.scala",
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "supervisor refuses delivery of committed protected envelope with wrong source"
+        },
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "protected delegate with unbound envelope is marked for manual review without delivery"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-007",
+      "scenario": "STR-SCN-016",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "notification replay refuses wrong-source saved envelope"
+        }
+      ]
+    },
+    {
+      "requirement": "STR-REQ-008",
+      "scenario": "STR-SCN-017",
+      "implementation": [
+        "src/main/scala/nebflow/agent/SubAgentStartupRecovery.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/agent/InternalRunAdmissionSpec.scala",
+          "name": "resource-free recovery reconciles an active run from its saved terminal envelope"
+        }
+      ]
+    }
+  ]
+}

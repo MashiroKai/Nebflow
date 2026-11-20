@@ -594,6 +594,7 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
       yield
         assertEquals(rows.find(_.taskId == task.taskId).map(_.status), Some("completed"))
         assertEquals(rows.find(_.taskId == other.taskId).map(_.status), Some("running"))
+        assertEquals(rows.find(_.taskId == other.taskId).flatMap(_.suspectedLostTerminal), Some(true))
         assertEquals(rows.find(_.taskId == pending.taskId).map(_.status), Some("completed"))
     }
   }
