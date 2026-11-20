@@ -182,7 +182,14 @@ class BgDeadLetterIdentitySpec extends CatsEffectSuite:
             (rootSid -> rec(rootSid, rootRef, rootSid, AgentKind.Root))
         )
         _ <- BgTaskRegistry.register("dl-3", ownerSid, "stuck recon fetch", "local", rootSessionId = rootSid)
-        report <- BgTaskReaper.reapWith(Some(system), Some(registry), System.currentTimeMillis())(alwaysDead)
+        // Isolate the process-global activator from unrelated WebSocketRoutes fixtures.
+        // UnknownSession models an absent owner without claiming persistence or activation.
+        previousActivator <- IO(BgSessionActivator.get)
+        report <- (IO(BgSessionActivator.install(new BgSessionActivator.Face:
+          def activate(sessionId: String, event: AgentCommand.ExternalEvent): IO[BgSessionActivator.ActivationResult] =
+            IO.pure(BgSessionActivator.UnknownSession)
+        )) *> BgTaskReaper.reapWith(Some(system), Some(registry), System.currentTimeMillis())(alwaysDead))
+          .guarantee(IO(previousActivator.fold(BgSessionActivator.clear())(BgSessionActivator.install)))
         _ <- IO.sleep(200.millis)
         parentGot <- parentSink.get
         rootGot <- rootSink.get

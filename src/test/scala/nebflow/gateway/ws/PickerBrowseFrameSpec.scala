@@ -128,7 +128,22 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
 
   // ── 真实家目录形态（#1031 甲：不得以合成目录代替）─────────────────────────
 
-  test("HOUSE. the signature frame over this host's REAL home (dot dirs included)"):
+  test("HOUSE fixture: dot directories and Downloads remain visible"):
+    withDirs(0) { home =>
+      IO {
+        os.makeDir.all(home / ".nebflow" / "projects" / "example")
+        os.makeDir(home / ".cache")
+        os.makeDir(home / "Downloads")
+        val j = frame(home)
+        assertEquals(names(j).toSet, Set(".nebflow", ".cache", "Downloads"))
+        assertEquals(total(j), 3)
+        assertEquals(truncated(j), false)
+        assertEquals(names(frame(home / ".nebflow" / "projects")), List("example"))
+      }
+    }
+
+  test("HOUSE. the signature frame over this host's REAL home (dot dirs included)".tag(munit.Tag("host-smoke"))):
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for real-home smoke")
     val home = os.Path(sys.props.getOrElse("user.home", "/"))
     assume(os.isDir(home), "no real home on this host")
     IO {
@@ -148,7 +163,8 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
       assert(ns.exists(_.contains("Downloads")), "and it must not have been renamed away")
     }
 
-  test("HOUSE-deep. a REAL deep directory is no longer cut at 200 (in-flight reading pinned)"):
+  test("HOUSE-deep. a REAL deep directory is no longer cut at 200 (in-flight reading pinned)".tag(munit.Tag("host-smoke"))):
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for real-home smoke")
     // The heaviest REAL directory this host reaches from the picker (measured:
     // 855 dirs). At the old cap this frame held 200 of 855 and said nothing.
     realDir("Library/Containers") match
@@ -245,21 +261,27 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
   // ── C. 路径直输：~ 形态 + 非法路径内联报错 ───────────────────────────────
 
   test("C1. `~` and `~/…` resolve to the same directory (shared expandTilde)"):
-    val home = sys.props.getOrElse("user.home", "/")
-    assume(os.isDir(os.Path(home)), "no real home on this host")
-    IO {
-      assertEquals(nebflow.shared.PathUtil.expandTilde("~"), home)
-      // 分隔符无关比较：Windows 上 expandTilde 返回原生反斜杠形态，拼接面用正斜杠
-      // 字面量断言会红（home 本身两端同形，拼接段归一后比）。
-      assertEquals(
-        nebflow.shared.PathUtil.expandTilde("~/Downloads").replace('\\', '/'),
-        home.replace('\\', '/') + "/Downloads"
-      )
-      // and the frame builder reports the RESOLVED path (the breadcrumb feed)
-      val tilde = os.Path(nebflow.shared.PathUtil.expandTilde("~"), os.pwd)
-      val f = frame(tilde)
-      assertEquals(f.hcursor.get[String]("path").toOption, Some(home))
-      assert(names(f).contains(".nebflow"), "~ root still lists dot directories")
+    withDirs(0) { dir =>
+      IO {
+        val previous = sys.props.get("user.home")
+        val home = dir.toString
+        os.makeDir(dir / ".nebflow")
+        sys.props.update("user.home", home)
+        try
+          assertEquals(nebflow.shared.PathUtil.expandTilde("~"), home)
+          assertEquals(
+            nebflow.shared.PathUtil.expandTilde("~/Downloads").replace('\\', '/'),
+            home.replace('\\', '/') + "/Downloads"
+          )
+          val tilde = os.Path(nebflow.shared.PathUtil.expandTilde("~"), os.pwd)
+          val f = frame(tilde)
+          assertEquals(f.hcursor.get[String]("path").toOption, Some(home))
+          assert(names(f).contains(".nebflow"), "fixture home lists dot directories")
+        finally
+          previous match
+            case Some(value) => sys.props.update("user.home", value)
+            case None => sys.props.remove("user.home")
+      }
     }
 
   test("C2. an unusable path answers a TYPED error, never a silent empty list"):
@@ -295,7 +317,8 @@ class PickerBrowseFrameSpec extends CatsEffectSuite:
 
   // ── 反向臂（同帧：点目录可达性不得回归）──────────────────────────────────
 
-  test("REVERSE. ~/.nebflow/projects is STILL enterable and is not empty"):
+  test("REVERSE. ~/.nebflow/projects is STILL enterable and is not empty".tag(munit.Tag("host-smoke"))):
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for real-home smoke")
     val projects = os.Path(sys.props.getOrElse("user.home", "/")) / ".nebflow" / "projects"
     assume(os.isDir(projects), "no ~/.nebflow/projects on this host")
     IO {

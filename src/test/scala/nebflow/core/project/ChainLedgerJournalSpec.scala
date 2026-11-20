@@ -292,10 +292,11 @@ class ChainLedgerJournalSpec extends CatsEffectSuite:
     yield
       // 变异: 让 `loadState` 在 `checkpointError` 分支里也从 journal 拼状态 ⇒ (b) 的
       // 「entries 必须为空」翻红（那正是「拿 journal 片段拼半信状态」的错法）。
-      assertEquals(warnsFresh, Nil, "全新项目：空账起步必须零 WARN（可重建不是异常）")
+      // Logger is process-global; only this project's warnings belong to this fixture.
+      assertEquals(warnsFresh.filter(_.contains("chain-ledger[corrupt]")), Nil, "全新项目：空账起步必须零 WARN（可重建不是异常）")
       assert(fresh.entries.isEmpty, "全新 ⇒ 空账")
       assert(
-        warnsBroken.exists(w => w.contains("corrupt") || w.contains("starting empty")),
+        warnsBroken.exists(w => w.contains("chain-ledger[corrupt]") && w.contains("starting empty")),
         s"损坏的 checkpoint 必须 WARN（绝不静默）：$warnsBroken"
       )
       assert(broken.entries.isEmpty, "损坏 ⇒ 空账起步，**不**采信 journal（权威面不可用即重来）")

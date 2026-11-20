@@ -63,6 +63,51 @@ class ConsoleQuoteDeliverySpec extends CatsEffectSuite:
       assert(texts.exists(_.contains(body)), s"actual agent input: $texts")
     ).guarantee(IO { nebflow.db.DbHost.release(root.toNIO); PathUtil.setDataRoot(previousRoot); os.remove.all(root) })
   }
+  test("immediate input preserves display text while adding device provenance to model input") {
+    val root = os.temp.dir(prefix = "device-delivery-")
+    val previousRoot = PathUtil.dataRoot
+    PathUtil.setDataRoot(root)
+    val store = SessionStore(root / "sessions", root / "tasks")
+    val sid = "device-delivery-test"
+    val body = "original user text"
+    (for
+      received <- Ref.of[IO, List[AgentCommand]](Nil)
+      sink = new ActorRef[AgentCommand]:
+        def path: ActorPath = null
+        def !(msg: AgentCommand): IO[Unit] = received.update(_ :+ msg)
+        def ?[R](f: ActorRef[R] => AgentCommand, timeout: Option[FiniteDuration] = Some(30.seconds)): IO[R] = IO.raiseError(new Exception("not used"))
+      rate <- RateLimiter.create()
+      resources = SharedResources(
+        llm = null, dispatcher = null, sessionStore = store, projectRoot = root,
+        thinkingConfigRef = Ref.unsafe[IO, ThinkingConfig](ThinkingConfig()), rateLimiter = rate,
+        fileChangeTracker = null, contextWindow = 100000, agentLibrary = null, taskStore = FileTaskStore,
+        historyArchiver = null, fileLockManager = null,
+        sessionModelOverrides = Ref.unsafe[IO, Map[String, ModelCandidate]](Map.empty),
+        providerRegistry = null, healthMonitor = null, actorSystem = null,
+        voiceMutedRef = Ref.unsafe[IO, Boolean](false)
+      )
+      _ <- resources.agentRegistry.set(Map(sid -> AgentRecord(sessionId = sid, ref = sink, kind = AgentKind.Root, rootSessionId = sid, status = AgentStatus.Idle)))
+      routes = new WebSocketRoutes(
+        wsb = null, sessionService = null, agentService = null, configService = nebflow.service.ConfigService,
+        configRef = Ref.unsafe[IO, NebflowServiceConfig](NebflowServiceConfig(llm = ServiceLlmConfig(providers = Map.empty))),
+        rateLimiter = rate, tokenRef = Ref.unsafe[IO, String]("test"), sessions = GatewaySessionStore.unsafeCreate(),
+        fileChangeTracker = null, sessionStore = store, wsHub = null, sharedResources = resources, mcpManager = null
+      )
+      frame = Json.obj("type" -> "immediateInput".asJson, "sessionId" -> sid.asJson, "content" -> body.asJson,
+        "device" -> Json.obj("clientId" -> "fixture-client".asJson, "platform" -> "phone".asJson, "browser" -> "Chrome".asJson))
+      _ <- routes.handleMessagePublic(frame.noSpaces, _ => IO.unit)
+      messages <- received.get
+      _ <- store.flushPendingUiWrites
+      rows <- store.getUiMessages(sid, 0, 100)
+    yield
+      val inputs = messages.collect { case msg: AgentCommand.ImmediateInput => msg.text }
+      assertEquals(inputs.size, 1)
+      assert(inputs.head.contains(body))
+      assert(inputs.head != body, "model input must include device marker")
+      assertEquals(rows._1.collect { case u: nebflow.shared.UiMessage.User => u.text }, List(body))
+    ).guarantee(IO { nebflow.db.DbHost.release(root.toNIO); PathUtil.setDataRoot(previousRoot); os.remove.all(root) })
+  }
+
   test("browser sends short long missing and split references through the real websocket") {
     val root = os.temp.dir(prefix = "console-browser-ws-")
     val previousRoot = PathUtil.dataRoot

@@ -87,12 +87,14 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     serverPort: Int,
     budget: DialBudget = DialBudget.Default,
     schedule: PresenceDialSchedule = PresenceDialSchedule.Production,
-    reachLedger: Option[P2pReachability] = None
+    reachLedger: Option[P2pReachability] = None,
+    dialHook: (String, Int, Long) => Unit = (_, _, _) => (),
+    dialResultOverride: Option[(String, Long) => Either[nebflow.neblink.relay.DialFailure, Unit]] = None
   )(use: (NeblinkService, NeblinkPresenceService) => IO[A]): IO[A] =
     Dispatcher.parallel[IO].use { dispatcher =>
       for
         ms <- NeblinkService.createForTest(serverPort, dispatcher, 300.millis)
-        ps = new NeblinkPresenceService(ms, serverPort, budget, EvictionPolicy.Default, schedule, reachLedger)(
+        ps = new NeblinkPresenceService(ms, serverPort, budget, EvictionPolicy.Default, schedule, reachLedger, dialHook, dialResultOverride)(
           dispatcher
         )
         _ = ms.setPresenceService(ps)
@@ -212,7 +214,8 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     )
   }
 
-  test("P1 实拨：并发轮 ≈ max（1×预算），串行对照臂 ≈ Σ（2×预算）——同方法只翻调度开关") {
+  test("P1 实拨：并发轮 ≈ max（1×预算），串行对照臂 ≈ Σ（2×预算）——同方法只翻调度开关".tag(munit.Tag("host-smoke"))) {
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for network timing smoke")
     assume(!windowsBlackholeUnsupported, "Windows 环回无黑洞语义 ⇒ 黑洞对照臂跳过")
     val port = closedPort()
     val eps = List(s"http://127.0.0.2:$port", s"http://127.0.0.3:$port")
@@ -244,6 +247,48 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
         s"并发 ${concurrentMs}ms 必须显著快于串行 ${legacyMs}ms（本批收益的机器可判形式）"
       )
     }
+  }
+
+  test("P1 fake legs: parallel candidates start before release, serial starts after release") {
+    val port = closedPort()
+    val eps = List(s"http://127.0.0.2:$port", s"http://127.0.0.3:$port")
+    def check(schedule: PresenceDialSchedule, parallel: Boolean): IO[Unit] =
+      val first = new java.util.concurrent.CountDownLatch(1)
+      val second = new java.util.concurrent.CountDownLatch(1)
+      val releaseA = new java.util.concurrent.CountDownLatch(1)
+      val releaseB = new java.util.concurrent.CountDownLatch(1)
+      val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+      val hook: (String, Int, Long) => Unit = (host, _, _) =>
+        val a = host.endsWith(".2")
+        events.add(if a then "start-a" else "start-b")
+        (if a then first else second).countDown()
+        if !(if a then releaseA else releaseB).await(8, java.util.concurrent.TimeUnit.SECONDS) then
+          throw new IllegalStateException("test gate timed out")
+        events.add(if a then "release-a" else "release-b")
+        throw new java.util.concurrent.TimeoutException("fake timeout")
+      withStack(port, schedule = schedule, dialHook = hook) { (_, ps) =>
+        (for
+          fiber <- ps.connect(peer("event-order", eps)).start
+          _ <- IO.blocking(assert(first.await(5, java.util.concurrent.TimeUnit.SECONDS), "first leg did not start"))
+          _ <- IO.blocking {
+            if parallel then assert(second.await(5, java.util.concurrent.TimeUnit.SECONDS), "parallel leg did not start")
+            else assertEquals(second.getCount, 1L, "serial second leg cannot start before first releases")
+            releaseA.countDown()
+            assert(second.await(5, java.util.concurrent.TimeUnit.SECONDS), "second leg did not start")
+            releaseB.countDown()
+          }
+          _ <- fiber.joinWithNever
+          round <- IO(roundOf(ps, "event-order"))
+          _ <- IO {
+            import scala.jdk.CollectionConverters.*
+            val seen = events.iterator().asScala.toList
+            if parallel then assert(seen.indexOf("start-b") < seen.indexOf("release-a"))
+            else assert(seen.indexOf("release-a") < seen.indexOf("start-b"))
+            assertEquals(round.failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Timeout, nebflow.neblink.relay.DialFailureClass.Timeout))
+          }
+        yield ()).guarantee(IO { releaseA.countDown(); releaseB.countDown() })
+      }
+    check(PresenceDialSchedule.Production, true) *> check(PresenceDialSchedule.LegacySerial, false)
   }
 
   test("P1 并发度有界：6 候选一轮只拨 4，其余截断留痕（truncated=true）等下一拍") {
@@ -285,9 +330,78 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
     }
   }
 
+  test("gated fake success closes round on selected endpoint without publishing a socket") {
+    val port = closedPort()
+    val ep = s"http://127.0.0.2:$port"
+    val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val started = new java.util.concurrent.CountDownLatch(1)
+    val gate = new java.util.concurrent.CountDownLatch(1)
+    val fake: (String, Long) => Either[nebflow.neblink.relay.DialFailure, Unit] = (endpoint, budget) =>
+      events.add(s"start:$endpoint:$budget")
+      started.countDown()
+      if !gate.await(budget, java.util.concurrent.TimeUnit.MILLISECONDS) then
+        throw new IllegalStateException("fake success gate was not released within budget")
+      events.add("success")
+      Right(())
+    withStack(port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialResultOverride = Some(fake)) { (_, ps) =>
+      (for
+        fiber <- ps.connect(peer("fake-win", List(ep))).start
+        _ <- IO.blocking {
+          assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+          events.add("release")
+          gate.countDown()
+        }
+        _ <- fiber.joinWithNever
+        _ <- IO {
+          import scala.jdk.CollectionConverters.*
+          assertEquals(events.iterator().asScala.toList, List(s"start:$ep:1500", "release", "success"))
+          val round = roundOf(ps, "fake-win")
+          assertEquals(round.attempted, List(ep))
+          assertEquals(round.failures, Nil)
+          assertEquals(ps.chosenEndpoint("fake-win"), Some(ep))
+          assert(!ps.isConnected("fake-win"), "fake result does not publish a socket")
+        }
+      yield ()).guarantee(IO(gate.countDown()))
+    }
+  }
+
+  test("gated real-socket smoke: release live leg before its budget and select it".tag(munit.Tag("host-smoke"))) {
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for real socket smoke")
+    val srv = new NeblinkPresenceDialConcurrencySpec.FixtureServer(handshakeDelayMs = 0L)
+    val entered = new java.util.concurrent.CountDownLatch(1)
+    val gate = new java.util.concurrent.CountDownLatch(1)
+    val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val hook: (String, Int, Long) => Unit = (_, _, budget) =>
+      events.add(s"start:$budget")
+      entered.countDown()
+      if !gate.await(budget, java.util.concurrent.TimeUnit.MILLISECONDS) then
+        throw new java.util.concurrent.TimeoutException("fixture gate budget expired")
+      events.add("released-within-budget")
+    withStack(srv.port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialHook = hook) { (_, ps) =>
+      (for
+        fiber <- ps.connect(peer("gated-success", List(srv.endpoint))).start
+        _ <- IO.blocking {
+          assert(entered.await(5, java.util.concurrent.TimeUnit.SECONDS), "dial leg must start")
+          gate.countDown()
+        }
+        _ <- fiber.joinWithNever
+        _ <- IO {
+          import scala.jdk.CollectionConverters.*
+          assertEquals(events.iterator().asScala.toList, List("start:1500", "released-within-budget"))
+          val round = roundOf(ps, "gated-success")
+          assertEquals(round.attempted, List(srv.endpoint))
+          assertEquals(round.failures, Nil)
+          assert(ps.isConnected("gated-success"))
+          assertEquals(ps.chosenEndpoint("gated-success"), Some(srv.endpoint))
+        }
+      yield ()).guarantee(IO(gate.countDown()))
+    }.guarantee(IO(srv.close()))
+  }
+
   // ===== P2 搬离 compute-blocker =====
 
-  test("C3 收口确定性：并发全败时 dialStatus.endpoint 恒 = 择优序末尾候选（一轮写一次，不是竞速）") {
+  test("C3 收口确定性：并发全败时 dialStatus.endpoint 恒 = 择优序末尾候选（一轮写一次，不是竞速）".tag(munit.Tag("host-smoke"))) {
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for real network smoke")
     assume(!windowsBlackholeUnsupported, "Windows 环回无黑洞语义 ⇒ 本组跳过")
     val port = closedPort()
     val epA = s"http://127.0.0.2:$port"
@@ -306,6 +420,114 @@ class NeblinkPresenceDialConcurrencySpec extends CatsEffectSuite:
         samples.forall(_._2.exists(_.error.exists(_.nonEmpty))),
         "每一拍都必须留下失败原因（C3 归因面不得因并发化而丢）"
       )
+    }
+  }
+
+  test("C3 fake legs: each round closes in candidate order regardless of release order") {
+    val port = closedPort()
+    val epA = s"http://127.0.0.2:$port"
+    val epB = s"http://127.0.0.3:$port"
+    val starts = new java.util.concurrent.LinkedBlockingQueue[String]()
+    val releases = Map("127.0.0.2" -> new java.util.concurrent.Semaphore(0), "127.0.0.3" -> new java.util.concurrent.Semaphore(0))
+    val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val completed = new java.util.concurrent.LinkedBlockingQueue[String]()
+    val hook: (String, Int, Long) => Unit = (host, _, _) =>
+      events.synchronized {
+        events.add(s"start:$host")
+        starts.put(host)
+      }
+      if !releases(host).tryAcquire(8, java.util.concurrent.TimeUnit.SECONDS) then
+        throw new IllegalStateException("C3 gate timed out")
+      events.add(s"complete:$host")
+      completed.put(host)
+      throw new java.util.concurrent.TimeoutException("fixture timeout")
+    withStack(port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialHook = hook) { (_, ps) =>
+      val p = peer("c3-fake", List(epA, epB))
+      (1 to 5).toList.traverse_ { i =>
+        (for
+          fiber <- ps.connect(p).start
+          _ <- IO.blocking {
+            val firstStart = starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+            val secondStart = starts.poll(5, java.util.concurrent.TimeUnit.SECONDS)
+            assertEquals(Set(firstStart, secondStart), Set("127.0.0.2", "127.0.0.3"), s"round $i starts both")
+            // Whichever leg starts first is A: force B to complete before A.
+            events.add(s"release:$secondStart")
+            releases(secondStart).release()
+            assertEquals(completed.poll(5, java.util.concurrent.TimeUnit.SECONDS), secondStart, s"round $i B completed")
+            events.add(s"release:$firstStart")
+            releases(firstStart).release()
+            assertEquals(completed.poll(5, java.util.concurrent.TimeUnit.SECONDS), firstStart, s"round $i A completed")
+          }
+          _ <- fiber.joinWithNever
+          _ <- IO {
+            val round = roundOf(ps, "c3-fake")
+            assertEquals(round.attempted, List(epA, epB))
+            assertEquals(round.failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Timeout, nebflow.neblink.relay.DialFailureClass.Timeout))
+            assertEquals(ps.dialStatus("c3-fake").map(_.endpoint), Some(epB))
+            import scala.jdk.CollectionConverters.*
+            val all = events.iterator().asScala.toList.drop((i - 1) * 6)
+            assertEquals(all.size, 6, s"round $i event count")
+            val a = all.head.stripPrefix("start:")
+            val b = all(1).stripPrefix("start:")
+            assertEquals(all, List(s"start:$a", s"start:$b", s"release:$b", s"complete:$b", s"release:$a", s"complete:$a"))
+          }
+        yield ())
+      }.guarantee(IO { releases.values.foreach(_.release()) })
+    }
+  }
+
+  test("fake leg: refused failure is classified and recorded in the production round") {
+    val port = closedPort()
+    val ep = s"http://127.0.0.2:$port"
+    val started = new java.util.concurrent.CountDownLatch(1)
+    val gate = new java.util.concurrent.CountDownLatch(1)
+    val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val hook: (String, Int, Long) => Unit = (_, _, _) =>
+      events.add("start")
+      started.countDown()
+      if !gate.await(8, java.util.concurrent.TimeUnit.SECONDS) then
+        throw new IllegalStateException("refused gate not released")
+      events.add("refused")
+      throw new java.net.ConnectException("fixture refused")
+    withStack(port, dialHook = hook) { (_, ps) =>
+      (for
+        fiber <- ps.connect(peer("fake-refused", List(ep))).start
+        _ <- IO.blocking {
+          assert(started.await(5, java.util.concurrent.TimeUnit.SECONDS))
+          events.add("release")
+          gate.countDown()
+        }
+        _ <- fiber.joinWithNever
+        _ <- IO {
+          import scala.jdk.CollectionConverters.*
+          assertEquals(events.iterator().asScala.toList, List("start", "release", "refused"))
+          assertEquals(roundOf(ps, "fake-refused").failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Refused))
+          assert(ps.dialStatus("fake-refused").exists(_.error.nonEmpty))
+        }
+      yield ()).guarantee(IO(gate.countDown()))
+    }
+  }
+
+  test("fake leg: budget expires without release and is recorded as timeout") {
+    val port = closedPort()
+    val ep = s"http://127.0.0.2:$port"
+    val events = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    val gate = new java.util.concurrent.CountDownLatch(1)
+    val hook: (String, Int, Long) => Unit = (_, _, budgetMs) =>
+      events.add(s"start:$budgetMs")
+      if gate.await(budgetMs, java.util.concurrent.TimeUnit.MILLISECONDS) then
+        throw new IllegalStateException("gate unexpectedly released")
+      events.add("budget-expired")
+      throw new java.util.concurrent.TimeoutException("fixture budget expired")
+    withStack(port, budget = DialBudget(classify = _ => DialAddressClass.Lan), dialHook = hook) { (_, ps) =>
+      (ps.connect(peer("budget-expiry", List(ep))) *> IO {
+        import scala.jdk.CollectionConverters.*
+        val round = roundOf(ps, "budget-expiry")
+        assertEquals(events.iterator().asScala.toList, List("start:1500", "budget-expired"))
+        assertEquals(round.attempted, List(ep))
+        assertEquals(round.failures.map(_._2), List(nebflow.neblink.relay.DialFailureClass.Timeout))
+        assertEquals(ps.dialStatus("budget-expiry").flatMap(_.error), Some("timeout after 1500ms"))
+      }).guarantee(IO(gate.countDown()))
     }
   }
 

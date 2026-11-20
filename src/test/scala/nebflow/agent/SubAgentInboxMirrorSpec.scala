@@ -401,9 +401,11 @@ class SubAgentInboxMirrorSpec extends FunSuite:
     // AgentProcessing 5 = 16（16 = 15 调用 + 1 def）。本批**零调用点增删**
     // （只加了一个缺省参数 `dedup`，不改 `emitInjectedUserEvent(` 的出现面）
     // ⇒ 改前改后同为 16，纯基线重钉非放宽。
+    // 72d7cde20 added held-receipt and background-ledger replay visibility through
+    // the same emitter; neither call is introduced by the hermetic test merge.
     // Pin each baseline call surface separately so additions and removals cannot cancel out.
     val expectedOccurrences = List(
-      ("AgentActor", agentActor, 3),
+      ("AgentActor", agentActor, 5),
       ("AgentFinishTurn", agentFinishTurn, 2),
       ("AgentFrozen", agentFrozen, 1),
       ("AgentIdle", agentIdle, 4),
@@ -425,8 +427,11 @@ class SubAgentInboxMirrorSpec extends FunSuite:
       "镜像腿未挂在唯一发射点内 —— 11 处调用点的镜像扩展落点漂移"
     )
     assert(
-      emitBody.indexOf("InjectionChannel.deliver(") < emitBody.indexOf("*> inboxMirror"),
-      "镜像腿必须在投递（落盘+广播，InjectionChannel.deliver）之后（live 帧时序逐字不变）"
+      emitBody.contains("ctx.forkTurn(deliver.flatMap {") &&
+        emitBody.contains("case InjectionChannel.Outcome.Collapsed => IO.unit") &&
+        emitBody.contains("case InjectionChannel.Outcome.Failed(true, _) => IO.unit") &&
+        emitBody.contains("case _ => inboxMirror"),
+      "镜像须在投递结果之后运行，折叠或落盘失败时不得镜像"
     )
     assert(
       emitBody.contains("reg.iterator.map((s, rec) => (s, rec.rootSessionId))"),

@@ -19,6 +19,32 @@ class RgHelperSpec extends FunSuite:
 
   private val utf8 = StandardCharsets.UTF_8
 
+  /** Subprocess tests use only the bundled deterministic shim; host rg is reserved for host-smoke. */
+  private def runFixtureRg(
+    args: List[String],
+    workDir: String,
+    processCwd: Option[String] = None,
+    truncateOnOverflow: Boolean = false
+  ): Either[ToolError, (String, String, Int, Boolean)] =
+    val dir = java.nio.file.Files.createTempDirectory("rg-process-shim")
+    try
+      val windows = sys.props.getOrElse("os.name", "").toLowerCase.contains("win")
+      val script = dir.resolve("rg-shim.py")
+      val stream = getClass.getResourceAsStream("/rg-shim.py")
+      require(stream != null, "missing rg shim resource")
+      try java.nio.file.Files.copy(stream, script)
+      finally stream.close()
+      val wrapper = dir.resolve(if windows then "rg.cmd" else "rg")
+      val content =
+        if windows then "@python \"%~dp0rg-shim.py\" %*\r\n"
+        else "#!/bin/sh\nexec /usr/bin/python3 \"$(dirname \"$0\")/rg-shim.py\" \"$@\"\n"
+      java.nio.file.Files.writeString(wrapper, content)
+      wrapper.toFile.setExecutable(true)
+      val argv = if windows then List("/d", "/c", wrapper.toString) ++ args else args
+      val executable = if windows then Option(System.getenv("ComSpec")) else Some(wrapper.toString)
+      RgHelper.runRgWithPath(argv, workDir, processCwd, truncateOnOverflow, executable)
+    finally os.remove.all(os.Path(dir))
+
   /** launchd 最小 PATH（2026-09-21 事发读数，.nebflow/evidence/20260921_env-rg-restore/）。 */
   private val launchdMinimalPath = "/usr/bin:/bin:/usr/sbin:/sbin"
 
@@ -39,7 +65,7 @@ class RgHelperSpec extends FunSuite:
       val probeDir = tmp / "opt-homebrew-bin"
       val seeded = fakeRg(probeDir)
       val r = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath, // dirs exist but carry no rg
+        pathEnv = (tmp / "empty-path").toString, // controlled absent directory, independent of host PATH
         probeDirs = List(probeDir.toString),
         localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString), // nonexistent
         winInstall = Nil
@@ -73,7 +99,7 @@ class RgHelperSpec extends FunSuite:
       val localDir = tmp / "local-bin"
       val local = fakeRg(localDir)
       val r = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = (tmp / "empty-path").toString,
         probeDirs = List(probeDir.toString),
         localPaths = List(local),
         winInstall = Nil
@@ -91,21 +117,21 @@ class RgHelperSpec extends FunSuite:
       val newRg = fakeRg(newBin)
       val legacyRg = fakeRg(legacyBin)
       val both = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = (tmp / "empty-path").toString,
         probeDirs = Nil,
         localPaths = List(newRg, legacyRg),
         winInstall = Nil
       )
       assertEquals(both, Some(newRg), "new default bin position must be probed before the legacy one")
       val legacyOnly = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = (tmp / "empty-path").toString,
         probeDirs = Nil,
         localPaths = List(legacyRg),
         winInstall = Nil
       )
       assertEquals(legacyOnly, Some(legacyRg), "old installs (legacy bin only) must keep resolving rg")
       val none = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = (tmp / "empty-path").toString,
         probeDirs = Nil,
         localPaths = List(newRg, legacyRg).map(p => p + ".missing"),
         winInstall = Nil
@@ -119,7 +145,7 @@ class RgHelperSpec extends FunSuite:
     val tmp = os.Path(java.nio.file.Files.createTempDirectory("nb-rg-none"))
     try
       val r = RgHelper.resolveRgPathFrom(
-        pathEnv = launchdMinimalPath,
+        pathEnv = (tmp / "empty-path").toString,
         probeDirs = Nil, // pre-fix shape: the leg did not exist
         localPaths = List((tmp / "no-home" / ".nebflow" / "bin" / rgName).toString),
         winInstall = Nil
@@ -128,7 +154,8 @@ class RgHelperSpec extends FunSuite:
     finally os.remove.all(tmp)
   }
 
-  test("real host, launchd-minimal PATH: resolution lands on /opt/homebrew/bin/rg when present") {
+  test("real host, launchd-minimal PATH: resolution lands on /opt/homebrew/bin/rg when present".tag(munit.Tag("host-smoke"))) {
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 to run host-dependent smoke")
     val probeDirs = List("/opt/homebrew/bin", "/usr/local/bin", "/snap/bin")
     val expected = probeDirs.map(d => java.nio.file.Path.of(d, rgName)).find(java.nio.file.Files.isRegularFile(_))
     assume(
@@ -180,7 +207,7 @@ class RgHelperSpec extends FunSuite:
       assume(false, "create-process semantics differ on this platform")
     val missing = new java.io.File("Z:" + java.io.File.separator + "nebflow-missing-cwd-267")
     assert(!missing.isDirectory)
-    RgHelper.runRg(List("--version"), missing.getPath) match
+    runFixtureRg(List("--version"), missing.getPath) match
       case Right(_) => () // 修复后：cwd 落父进程，rg 照跑
       case Left(err) => fail(s"a non-directory workDir must not break rg: ${err.message}")
   }
@@ -190,7 +217,7 @@ class RgHelperSpec extends FunSuite:
     try
       os.write(tmp / "one.txt", "1", createFolders = true)
       os.write(tmp / "sub" / "two.txt", "2", createFolders = true)
-      val r = RgHelper.runRg(
+      val r = runFixtureRg(
         List("--files", "--no-ignore", "--no-messages", "."),
         os.pwd.toString,
         processCwd = Some(tmp.toString)
@@ -210,7 +237,7 @@ class RgHelperSpec extends FunSuite:
   test("runRg truncateOnOverflow=false keeps the hard 500KB ToolError (Grep behavior)") {
     val tmp = bigFixture("nb-rghelper-big")
     try
-      val r = RgHelper.runRg(
+      val r = runFixtureRg(
         List("--files", "--glob", "/**", "--sort=modified", "--color=never", "--no-ignore", "--no-messages", "."),
         os.pwd.toString,
         processCwd = Some(tmp.toString),
@@ -224,7 +251,7 @@ class RgHelperSpec extends FunSuite:
   test("runRg truncateOnOverflow=true returns truncated stdout with the flag (Glob behavior)") {
     val tmp = bigFixture("nb-rghelper-trunc")
     try
-      val r = RgHelper.runRg(
+      val r = runFixtureRg(
         List("--files", "--glob", "/**", "--sort=modified", "--color=never", "--no-ignore", "--no-messages", "."),
         os.pwd.toString,
         processCwd = Some(tmp.toString),

@@ -357,6 +357,25 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     program.guarantee(system.stopAll.handleErrorWith(_ => IO.unit))
   }
 
+  test("node bridges with matching session prefixes resolve independently") {
+    val system = ActorSystem("bridge-collision-probe")
+    val sid1 = "node-abc11111"
+    val sid2 = "node-abc22222"
+    (for
+      first <- system.spawn(Behaviors.ignore[String], NodeStarter.bridgeName(sid1))
+      second <- system.spawn(Behaviors.ignore[String], NodeStarter.bridgeName(sid2))
+      _ <- (for
+        resolvedFirst <- system.resolve[String](first.path.toString)
+        resolvedSecond <- system.resolve[String](second.path.toString)
+        _ = assert(resolvedFirst eq first, "first bridge must retain its registry entry")
+        _ = assert(resolvedSecond eq second, "second bridge must retain its registry entry")
+        _ <- system.stop(first)
+        stillResolved <- system.resolve[String](second.path.toString)
+        _ = assert(stillResolved eq second)
+      yield ()).guarantee(system.stop(first) *> system.stop(second))
+    yield ()).guarantee(system.stopAll).timeout(10.seconds)
+  }
+
   test("C1: crashed running node with transcript rehydrates from checkpoint, completes, delivers exactly once") {
     val ws = tempRoot / "ws-c1"
     os.makeDir.all(ws)
@@ -365,7 +384,18 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
     val llm = ScriptLlm(_ => "RECOVERED-DONE")
     for
       res <- mkResources(system, llm.handle)
-      recorded <- registerRecorder(res, system, "nebula-root")
+      recorded <- Ref.of[IO, List[AgentCommand]](Nil)
+      delivered <- cats.effect.Deferred[IO, Unit]
+      recorder <- system.spawn({
+        lazy val behavior: nebflow.actor.Behavior[AgentCommand] = Behaviors.receiveMessage[AgentCommand] { msg =>
+          recorded.update(_ :+ msg) *> (msg match
+            case m: AgentCommand.ImmediateInput if m.text.contains("[Node 'rec-a' completed]") => delivered.complete(()).void
+            case _ => IO.unit
+          ).as(behavior)
+        }
+        behavior
+      }, s"rec-c1-${scala.util.Random.nextInt(1000000)}")
+      _ <- res.agentRegistry.update(_ + ("nebula-root" -> AgentRecord("nebula-root", recorder, AgentKind.Root, "nebula-root")))
       rt <- mountProject("bcr-c1", ws, system, res)
       _ = seedTranscript(
         sid,
@@ -375,6 +405,8 @@ class BootCrashRecoverySpec extends CatsEffectSuite:
       (trig, trigger) <- triggerRecorder
       actions <- ProjectCrashRecovery.recoverProject(rt, trigger = trigger)
       _ <- waitUntil(20.seconds)(byName(rt, "rec-a").map(n => NodeLifecycle.Terminal.contains(n.status)))
+      _ <- delivered.get.timeout(20.seconds)
+      _ <- waitUntil(20.seconds)(byName(rt, "rec-a").map(_.nebulaDeliveredAt.isDefined))
       a <- byName(rt, "rec-a")
       reqs <- llm.fullReqs.get
       turns <- llm.lastTurns.get

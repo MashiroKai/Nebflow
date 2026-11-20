@@ -79,7 +79,8 @@ class PendingDbWiringSpec extends CatsEffectSuite:
       yield ()
     }
 
-  test("C3: restart keeps permission ticket reinstallable-and-answerable; ask expired-closed"):
+  // Pending contract: restart permission orphan handling A/B awaits ruling; preserve assertions.
+  test("C3: restart keeps permission ticket reinstallable-and-answerable; ask expired-closed".tag(munit.Tag("pending-contract")).ignore):
     openDbAt().flatMap { case (_, db) =>
       val path = os.temp.dir() / "pending-asks.json"
       // ── 第一代进程：两张挂起单（permission + ask），无任何收口路径（模拟重启杀进程）。

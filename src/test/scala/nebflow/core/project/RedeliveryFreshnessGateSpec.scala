@@ -154,6 +154,11 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
   private def imms(recorded: Ref[IO, List[AgentCommand]]): IO[List[AgentCommand.ImmediateInput]] =
     recorded.get.map(_.collect { case m: AgentCommand.ImmediateInput => m })
 
+  private def awaitImms(recorded: Ref[IO, List[AgentCommand]], expected: Int): IO[List[AgentCommand.ImmediateInput]] =
+    def loop: IO[List[AgentCommand.ImmediateInput]] =
+      imms(recorded).flatMap(xs => if xs.size >= expected then IO.pure(xs) else IO.sleep(10.millis) *> loop)
+    loop.timeout(10.seconds)
+
   test("F1 GREEN: >24h debts merged into ONE summary; <24h and no-timestamp debts still individual; all marked") {
     withFixture("f1") { (store, engine, resources, recorded, rootSid) =>
       val now = System.currentTimeMillis()
@@ -187,7 +192,7 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
           )
         )
         n <- engine.redeliverUnconsumedRootResults()
-        msgs <- imms(recorded)
+        msgs <- awaitImms(recorded, 3)
         all <- store.snapshot.map(_.nodes)
       yield (n, msgs, all)
       val (n, msgs, all) = io.unsafeRunSync()
@@ -246,7 +251,7 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
           )
         )
         _ <- engine.redeliverUnconsumedRootResults()
-        msgs <- imms(recorded)
+        msgs <- awaitImms(recorded, 1)
       yield msgs
       val msgs = io.unsafeRunSync()
       assertEquals(clue(msgs.size), 1, "one merged summary for the stale batch")
@@ -280,7 +285,7 @@ class RedeliveryFreshnessGateSpec extends FunSuite:
           )
         )
         _ <- engine.redeliverUnconsumedRootResults()
-        msgs <- imms(recorded)
+        msgs <- awaitImms(recorded, 2)
       yield msgs
       val msgs = io.unsafeRunSync()
       assertEquals(clue(msgs.size), 2, "<24h debts must stay one-by-one")

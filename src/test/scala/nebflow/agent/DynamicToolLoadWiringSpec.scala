@@ -19,6 +19,9 @@ import nebflow.shared.AgentModelConfig
  *     不产通告；
  *   · 无插件授予：零变化。
  */
+object PluginExecutionGateProbe extends AgentCore:
+  def allowed(defn: AgentDef): Set[String] = buildAllowedToolSet(defn, isFlowNode = true)
+
 class DynamicToolLoadWiringSpec extends FunSuite:
 
   private object CoreProbe extends AgentCore:

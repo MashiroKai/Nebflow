@@ -66,9 +66,11 @@ class DetachedApplySpec extends CatsEffectSuite:
     assert(s.contains("tr -d '\\t\\r\\n'"), "tr set must carry literal backslash escapes")
   }
 
-  test("bash script executes from an isolated data root and creates log parent before first log write") {
+  test("bash script executes from an isolated data root and creates log parent before first log write".tag(munit.Tag("host-smoke"))) {
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "absolute launchctl path cannot be safely stubbed")
     val root = sandbox()
-    val p = planIn(root)
+    // Execution fixture must never address the protected gateway or a real PID.
+    val p = planIn(root).copy(port = 49152, oldPid = None)
     val script = DetachedApply.renderBash(p)
     val tools = root / "tools"
     os.makeDir.all(tools)

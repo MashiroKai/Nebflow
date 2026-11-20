@@ -393,6 +393,8 @@ class MailDelegateContinuationDeliverySpec extends CatsEffectSuite:
           .loadTasks(parentSid)
           .map(_.exists(t => t.taskId == childSid && t.status == "completed"))
       )
+      // Task completion precedes durable delivery; await the actual mailbox effect before shutdown.
+      _ <- waitUntil(15.seconds)(IO.blocking(SessionMailbox.scanPendingSync(parentSid).exists(_.event.eventType == "completed")))
       frames <- wsFrames.get
       tasks <- resources.subAgentTaskStore.loadTasks(parentSid)
       registryAfter <- resources.agentRegistry.get

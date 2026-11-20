@@ -141,7 +141,7 @@ class ProviderCandidateConfigSyncSpec extends CatsEffectSuite:
     withTempRoot { root =>
       IO {
         writeConfig(root, prodLike)
-        writeNebulaChain(root, "zhipu/glm-5.3-flash", List("kimi/kimi-for-coding"))
+        writeNebulaChain(root, "kimi/kimi-for-coding", Nil)
       } *> mkRegistryFromDisk.flatMap { reg =>
         for
           before <- reg.candidateReport()

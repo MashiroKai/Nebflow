@@ -325,7 +325,7 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
                   messages = List(nebflow.shared.Message(nebflow.shared.MessageRole.User, Left("hi"))),
                   sessionId = "delegate-fixture",
                   agentId = "test",
-                  agentModel = nebflow.core.ModelRoles.slotChainOf(Some("delegate-fixture"))
+                  agentModel = nebflow.core.ModelRoles.slotChainOf(Some("delegate-fixture"), Some("subagent"))
                 )
                 _ <- handle.send(req)
                 _ <- handle.sendStream(req).compile.drain
@@ -370,10 +370,9 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
       .withEntity(body)
     routes(req).value.map(_.getOrElse(fail(s"PUT /agents/$slot/model fell through")))
 
-  test("PUT hot-applies: class change retains matching pins, purges out-of-chain pins; fallback is not a member"):
-    // Main-chain edit. Ordinary main conversations (uuid ids) and ask- sessions own their pins through the main
-    // slot, so a pin outside the new chain is cleared there, and a fallback-only ref counts as outside the chain.
-    // Pins of every other category and of slotless background families are not part of this edit.
+  // Author ruling B: category changes preserve explicit pins (PresenceRoutes.scala:1418–1423).
+  test("PUT main chain preserves all explicit session pins"):
+    // Main-chain edits leave every explicit pin intact, irrespective of category or chain membership.
     withFixture { () =>
       // null provider cast: the purge predicate reads (providerId, model) only, like NullBackend above.
       val nul = null.asInstanceOf[ProviderConfig]
@@ -397,19 +396,12 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         _ = assertEquals(resp.status, Status.Ok)
         overrides <- resources.sessionModelOverrides.get
       yield
-        assert(overrides.contains(mainMatching), s"main pin matching the new chain survives: ${overrides.keys}")
-        assert(!overrides.contains(mainFallbackOnly), s"fallback-only ref is not a member: ${overrides.keys}")
-        assert(!overrides.contains("session-unrelated"), s"main-category out-of-chain pin is purged: ${overrides.keys}")
-        assert(!overrides.contains("ask-verify-001"), s"ask sessions follow the main slot: ${overrides.keys}")
-        assert(overrides.contains("delegate-a"), s"subagent category is not part of a main edit: ${overrides.keys}")
-        assert(overrides.contains("delegate-c"), s"subagent out-of-chain pin survives a main edit: ${overrides.keys}")
-        assert(overrides.contains("delegate-kernel-one"), s"kernel pin survives a main edit: ${overrides.keys}")
-        assert(overrides.contains("dispatcher-1a2b3c4d"), s"dispatcher pin survives a main edit: ${overrides.keys}")
-        assert(overrides.contains("subtask-1a2b3c4d"), s"slotless family is not attributed: ${overrides.keys}")
+        // PresenceRoutes.scala:1418–1423: explicit pins survive category edits.
+        assertEquals(overrides, seeded)
       end for
     }
 
-  test("PUT kernel chain clears only differing kernel pins; main, other-category and unknown-category pins are kept"):
+  test("PUT kernel chain preserves all explicit session pins"):
     withFixture { () =>
       val nul = null.asInstanceOf[ProviderConfig]
       val mainOutOfChain = "d7c3cb54-dd90-4f3f-bbf6-e7898c425cff"
@@ -432,16 +424,13 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
         _ = assertEquals(resp.status, Status.Ok)
         overrides <- resources.sessionModelOverrides.get
       yield
-        assert(!overrides.contains("delegate-kernel-one"), s"differing same-category pin is cleared: ${overrides.keys}")
-        assert(overrides.contains("delegate-kernel-matching"), s"matching kernel pin survives: ${overrides.keys}")
-        val others = seeded.keySet - "delegate-kernel-one"
-        assertEquals(overrides.keySet, others, "every other category and every unknown category keeps its pin")
+        // PresenceRoutes.scala:1418–1423: even differing same-category pins survive.
+        assertEquals(overrides, seeded)
       end for
     }
 
-  test("PUT category chain clears the persisted pin only for that category's sessions"):
-    // Persisted leg: SessionMeta.modelRef of index-registered (main) sessions. The kernel edit must not reach it;
-    // the main edit clears the out-of-chain one and keeps the matching one.
+  test("PUT category chain preserves persisted and in-memory explicit pins"):
+    // Persisted leg: both kernel and main edits preserve explicit SessionMeta.modelRef values.
     withFixture { () =>
       val home = os.temp.dir(prefix = "nb-modelchain-store")
       val store = nebflow.core.SessionStore(home / "sessions", home / "tasks")
@@ -469,7 +458,8 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
           keeperAfterNebula <- store.getSessionMeta(keeper.id)
         yield
           assertEquals(kernelResp.status, Status.Ok)
-          assert(!afterKernelMemory.contains("delegate-kernel-one"), "kernel edit clears the differing kernel pin")
+          // PresenceRoutes.scala:1418–1423: explicit session pins are preserved.
+          assert(afterKernelMemory.contains("delegate-kernel-one"), "kernel edit preserves the differing kernel pin")
           assert(afterKernelMemory.contains(stale.id), "kernel edit keeps a main-category pin in memory")
           assertEquals(
             staleAfterKernel.flatMap(_.modelRef),
@@ -477,9 +467,9 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
             "kernel edit keeps the persisted main pin"
           )
           assertEquals(nebulaResp.status, Status.Ok)
-          assert(!afterNebulaMemory.contains(stale.id), "main edit clears the out-of-chain main pin in memory")
+          assert(afterNebulaMemory.contains(stale.id), "main edit preserves the explicit out-of-chain pin")
           assert(afterNebulaMemory.contains(keeper.id), "main edit keeps the matching main pin in memory")
-          assertEquals(staleAfterNebula.flatMap(_.modelRef), None, "main edit clears the persisted stale pin")
+          assertEquals(staleAfterNebula.flatMap(_.modelRef), Some("anon/anon-gone"), "main edit preserves the persisted pin")
           assertEquals(
             keeperAfterNebula.flatMap(_.modelRef),
             Some("zhipu/GLM-5.3-Flash"),
@@ -488,9 +478,8 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
       program.guarantee(IO.blocking(os.remove.all(home)))
     }
 
-  test("a session choice made after a category update survives until that category is edited again"):
-    // An update applies once, at edit time. A model a session chooses afterwards is not rewritten by it: edits of
-    // other categories leave it alone, and only the next edit of the owning category applies the rule again.
+  test("a session choice survives subsequent category updates"):
+    // Explicit choices remain pinned across subsequent edits, including the owning category.
     withFixture { () =>
       val home = os.temp.dir(prefix = "nb-modelchain-store")
       val store = nebflow.core.SessionStore(home / "sessions", home / "tasks")
@@ -502,7 +491,7 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
           _ <- store.updateSessionModel(session.id, Some("anon/anon-gone"))
           resources = mkResources(Map(session.id -> ModelCandidate("anon", nul, "anon-gone")))
           routes = mkRoutes(resources, Some(store))
-          // 1. The category update clears the stale pin, in memory and as the persisted session model.
+          // 1. The category update preserves the existing pin in memory and on disk.
           firstResp <- putChain(routes, "Nebula", hotApplyChain)
           afterUpdate <- resources.sessionModelOverrides.get
           metaAfterUpdate <- store.getSessionMeta(session.id)
@@ -513,14 +502,15 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
           kernelResp <- putChain(routes, "kernel", hotApplyChain)
           afterOtherCategory <- resources.sessionModelOverrides.get
           metaAfterOtherCategory <- store.getSessionMeta(session.id)
-          // 4. Editing the owning category again applies the rule again: the choice is outside the new preferred model.
+          // 4. Editing the owning category again still leaves the explicit choice intact.
           secondResp <- putChain(routes, "Nebula", hotApplyChain)
           afterSecondUpdate <- resources.sessionModelOverrides.get
           metaAfterSecondUpdate <- store.getSessionMeta(session.id)
         yield
           assertEquals(firstResp.status, Status.Ok)
-          assert(!afterUpdate.contains(session.id), "the update clears the differing pin in memory")
-          assertEquals(metaAfterUpdate.flatMap(_.modelRef), None, "the update clears the persisted session model")
+          // PresenceRoutes.scala:1418–1423: category edits preserve explicit pins.
+          assertEquals(afterUpdate.get(session.id), Some(ModelCandidate("anon", nul, "anon-gone")))
+          assertEquals(metaAfterUpdate.flatMap(_.modelRef), Some("anon/anon-gone"))
           assertEquals(kernelResp.status, Status.Ok)
           assert(
             afterOtherCategory.contains(session.id),
@@ -532,8 +522,8 @@ class ModelChainRoutesSpec extends CatsEffectSuite:
             "an edit of another category keeps the later choice as the persisted session model"
           )
           assertEquals(secondResp.status, Status.Ok)
-          assert(!afterSecondUpdate.contains(session.id), "the next edit of the owning category clears it in memory")
-          assertEquals(metaAfterSecondUpdate.flatMap(_.modelRef), None, "and as the persisted session model")
+          assertEquals(afterSecondUpdate.get(session.id), Some(ModelCandidate("kimi", nul, "kimi-k3")))
+          assertEquals(metaAfterSecondUpdate.flatMap(_.modelRef), Some(chosenLater))
       program.guarantee(IO.blocking(os.remove.all(home)))
     }
 

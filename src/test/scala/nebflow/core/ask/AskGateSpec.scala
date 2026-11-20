@@ -48,6 +48,7 @@ final class AskGateSpec extends munit.FunSuite:
       "/vault/a.markdown", "/vault/a.MARKDOWN",
       "/vault/page.html", "/vault/page.HTML",
       "/vault/page.htm", "/vault/page.HTM",
+      "/vault/paper.pdf", "/vault/paper.PDF",
       "相对/路径.md", "/无目录.md"
     )
     yes.foreach(p => assert(AskSessions.isAskable(p), clue(p)))
@@ -55,7 +56,7 @@ final class AskGateSpec extends munit.FunSuite:
 
   test("G2b 白名单外一律拒（其余类型/伪扩展/无扩展名/空/null）") {
     val no = List(
-      "/vault/notes.txt", "/vault/paper.pdf", "/vault/code.scala",
+      "/vault/notes.txt", "/vault/code.scala",
       "/vault/pic.png", "/vault/data.json", "/vault/noext",
       "/vault/doc.mdx",      // 伪扩展：endsWith(".md") 不得误放
       "/vault/xmd",          // 无点裸名不得误放
@@ -144,7 +145,7 @@ final class AskGateSpec extends munit.FunSuite:
 
   test("G4 assembleNow：缓存缺席直取组装通路复问同判据") {
     val svc = servicesWith(tempRoot())
-    val legacy = svc.registry.bind("/vault/paper.pdf", "paper.pdf").unsafeRunSync()
+    val legacy = svc.registry.bind("/vault/paper.txt", "paper.txt").unsafeRunSync()
     val err = svc.cachedPrompt(legacy.id, legacy).attempt.unsafeRunSync()
     assert(err.isLeft, clue(err))
     assert(err.swap.toOption.get.getMessage.contains("not askable"), clue(err))

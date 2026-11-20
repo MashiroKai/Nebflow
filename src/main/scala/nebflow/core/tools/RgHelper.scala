@@ -197,7 +197,17 @@ object RgHelper:
     processCwd: Option[String] = None,
     truncateOnOverflow: Boolean = false
   ): Either[ToolError, (String, String, Int, Boolean)] =
-    resolveRgPath match
+    runRgWithPath(args, workDir, processCwd, truncateOnOverflow, resolveRgPath)
+
+  /** Test seam: resolve the executable in the caller, leaving production resolution unchanged. */
+  private[tools] def runRgWithPath(
+    args: List[String],
+    workDir: String,
+    processCwd: Option[String],
+    truncateOnOverflow: Boolean,
+    rgPath: Option[String]
+  ): Either[ToolError, (String, String, Int, Boolean)] =
+    rgPath match
       case None => Left(ToolError(notFoundMessage))
       case Some(rgPath) =>
         try

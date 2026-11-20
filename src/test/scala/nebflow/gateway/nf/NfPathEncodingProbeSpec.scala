@@ -75,14 +75,25 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
   // live `~/.nebflow`. See `CardToolFileRefSpec` for the criterion.
   private var savedCardsRoot: os.Path = scala.compiletime.uninitialized
   private var cardsRootIsolation: Path = null
+  private var savedHome: Option[String] = None
+  private var credentialSeed: Path = null
 
   override def beforeAll(): Unit =
     savedCardsRoot = nebflow.shared.PathUtil.dataRoot
+    savedHome = sys.props.get("user.home")
     cardsRootIsolation = Files.createTempDirectory("nfpath-cards-dataroot-")
+    val home = Files.createDirectories(cardsRootIsolation.resolve("isolated-home"))
+    sys.props.update("user.home", home.toString)
+    credentialSeed = cardsRootIsolation.resolve("secrets/fixture.png")
+    Files.createDirectories(credentialSeed.getParent)
+    Files.write(credentialSeed, PngBytes)
     nebflow.shared.PathUtil.setDataRoot(os.Path(cardsRootIsolation, os.pwd))
 
   override def afterAll(): Unit =
     nebflow.shared.PathUtil.setDataRoot(savedCardsRoot)
+    savedHome match
+      case Some(home) => sys.props.update("user.home", home)
+      case None => sys.props.remove("user.home")
     deleteTree(cardsRootIsolation)
 
   private val gatewayToken = "probe-gateway-token"
@@ -295,7 +306,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     // a spec cannot assume which data root the process was launched with; deriving
     // it keeps this spec correct under `NEBFLOW_HOME` / `setDataRoot` redirection
     // too (rework r1, verifier item C4).
-    val policy = NfFilePolicy.NfPathPolicy.memoized() // the tool reads the same value
+    val policy = NfFilePolicy.NfPathPolicy.current() // the tool reads the same value
     val root = policy.dataRoot.resolve("plots/imgref-spec")
     val image = root.resolve("space dir/tool shot.png")
     Files.createDirectories(image.getParent)
@@ -460,36 +471,8 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
   // rejected reason **与工具警告同码**，无票 `GET` ⇒ 401。阳性方向的同款等价性
   // 由 test D 与 test H 共同承担。
 
-  /**
-   * 端点 R2 集是**进程启动时的一次扫描快照**：后造的 credential 文件不在里面，
-   * 所以硬链接腿必须用**既有 seed** 搭 —— data root 的 `auth.json` / `nebflow.json`、
-   * 数据根 `secrets/` 子树、`~/.ssh/` 子树中确实在快照里的那一件。
-   * （注意：Scala 块注释里不能出现「斜杠 + 双星号」的通配写法，那会开一个嵌套注释。）
-   */
-  private def snapshotCredential(policy: NfFilePolicy.NfPathPolicy): Path =
-    val home = Paths.get(sys.props.getOrElse("user.home", "/"))
-    def filesUnder(dir: Path): List[Path] =
-      if !Files.isDirectory(dir) then Nil
-      else
-        val s = Files.walk(dir, 8)
-        try s.iterator().asScala.filter(p => Files.isRegularFile(p)).toList
-        finally s.close()
-    val seeds =
-      List(policy.dataRoot.resolve("auth.json"), policy.dataRoot.resolve(nebflow.shared.Branding.configFileName)) ++
-        filesUnder(policy.dataRoot.resolve("secrets")) ++
-        filesUnder(home.resolve(".ssh"))
-    seeds
-      .filter(p => Files.isRegularFile(p))
-      .find(p => NfFilePolicy.NfPathPolicy.inodeKey(p).exists(policy.credentialInodes.contains))
-      .getOrElse(
-        fail(
-          "no seeded credential file (data-root auth.json / nebflow.json, <dataRoot>/secrets/**, " +
-            s"~/.ssh/**) is present in the startup inode snapshot (size=${policy.credentialInodes.size}) — " +
-            "the hard-link leg needs one to exist"
-        )
-      )
-
-  end snapshotCredential
+  // The synthetic credential seed is created before this root's first inode snapshot.
+  // The suite runs in its own JVM with an isolated home; no real credential is examined.
 
   /** Tool face of ONE reference: (`proxied`, `inlined`, warnings as (reason, detail)). */
   /**
@@ -679,20 +662,25 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
       assertEquals(proxied > 0, get == 200, s"$name: tool-side green and fetch-leg green must agree")
     }
 
+  test("credential host smoke: isolated seed has credential-file shape".tag(munit.Tag("host-smoke"))):
+    assume(sys.env.get("STAND_HOST_SMOKE").contains("1"), "set STAND_HOST_SMOKE=1 for filesystem smoke")
+    IO {
+      assert(Files.isRegularFile(credentialSeed))
+      assert(NfFilePolicy.NfPathPolicy.inodeKey(credentialSeed).nonEmpty)
+      assertEquals(credentialSeed.getParent.getFileName.toString, "secrets")
+    }
+
   test("G. equivalence (refusal leg): a HARD LINK to a credential inode — tool gate and endpoint agree"):
-    val policy = NfFilePolicy.NfPathPolicy.memoized()
-    val target = snapshotCredential(policy)
+    val policy = NfFilePolicy.NfPathPolicy.current()
+    val target = credentialSeed
+    val key = NfFilePolicy.NfPathPolicy.inodeKey(target).getOrElse(fail("fixture filesystem has no inode key"))
+    assert(policy.credentialInodes.contains(key), "synthetic credential must be in the snapshot")
     val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-hardlink")
     val dir = subtree.resolve("space dir")
     val cleanup = IO { deleteTree(subtree); () }
     server(policy).flatMap { (port, stop) =>
       IO {
         Files.createDirectories(dir)
-        println(
-          s"PROBE[leg-inode] target=$target size=${Files.size(target)} inode=" +
-            s"${NfFilePolicy.NfPathPolicy.inodeKey(target)} snapshot=" +
-            s"${NfFilePolicy.NfPathPolicy.inodeKey(target).exists(policy.credentialInodes.contains)}"
-        )
         assertLegRefused(
           leg = "leg-inode",
           names = List(
@@ -720,7 +708,7 @@ class NfPathEncodingProbeSpec extends CatsEffectSuite:
     // servable: the rewrite takes the link and the endpoint serves the
     // target's bytes. Refusal equivalence for an alias stays pinned by G (the
     // credential-inode hard link).
-    val policy = NfFilePolicy.NfPathPolicy.memoized()
+    val policy = NfFilePolicy.NfPathPolicy.current()
     val subtree = policy.dataRoot.resolve("plots/imgref-spec-r1-symlink")
     val dir = subtree.resolve("space dir")
     val cleanup = IO { deleteTree(subtree); () }

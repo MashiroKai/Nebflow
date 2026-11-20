@@ -30,11 +30,11 @@
       "tests": [
         {
           "path": "src/test/scala/nebflow/llm/ReloadStaleSessionModelSpec.scala",
-          "name": "E2E: stale session override after reload gracefully skips to the new chain (#33)"
+          "name": "E2E: stale session override after reload fails without switching (#33)"
         },
         {
           "path": "src/test/scala/nebflow/llm/ReloadStaleSessionModelSpec.scala",
-          "name": "request-time filter: stale override is skipped even without a reload (#33)"
+          "name": "request-time filter: stale explicit pin fails without switching (#33)"
         }
       ]
     }
