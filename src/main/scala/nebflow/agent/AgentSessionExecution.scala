@@ -1190,6 +1190,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
           ctxTriple <- contextIo.timeout(ContextBuildTimeout).attempt
           result <- ctxTriple match
             case Right((turnCtx, request, stateWithReminder)) =>
+              val reportJournal = if depth > 0 && !isCompactTurn && !isAskTurn then
+                sessionIdOpt.map(sid => ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid))
+              else None
               // 审计 20260903 子项⑤：逐事件 SSE 编码器——每个流 chunk 到达即
               // 实时落盘（时间戳=到达时刻），首 token 延迟/chunk 间隙才可实测。
               // 编码器持有单请求的 block index 状态（原批量版 chunksToSseEvents
@@ -1205,6 +1208,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                       case Some(runner) => ProtectedAgentExecution.modelRound(handle, runner, request,
                         math.max(0, nebflow.llm.Fallback.MaxTurnLlmCalls - stateForLlm.execution.llmCallsThisTurn))(work)
                       case None => IO.raiseError(new IllegalStateException("protected-runner-unavailable"))
+              IO.blocking(reportJournal.map(j => state.execution.childReportSlot.getOrElse(j.beginRequest()))).flatMap { reportSlot =>
               ctx
                 .forkTurn(
                   // ── Token 止损（2026-08-18 事故，方案 C）：per-turn LLM 重试预算 ──
@@ -1320,23 +1324,21 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                       }
                 )
                 .map { _ =>
+                  val nextState = (if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
+                    stateWithBranch.withLastMaintenanceDelegateCount(stateWithReminder.delegateCount)
+                  else stateWithBranch).withLastDispatch(Some(LastDispatch(isToolExecution = false)))
                   processing(
                     agentDef,
                     resources,
                     depth,
                     parentRef,
-                    // Update lastMaintenanceDelegateCount if maintenance was triggered this turn
-                    (if MaintenanceService.shouldTrigger(stateWithReminder, depth, isCompactTurn, isAskTurn) then
-                       stateWithBranch.withLastMaintenanceDelegateCount(stateWithReminder.delegateCount)
-                     else stateWithBranch)
-                      .withLastDispatch(Some(LastDispatch(isToolExecution = false)))
-                      // pi-logic 接线点 1：run 账本随 state 值传递（本 dispatch 的推进结果）。
-                      .copy(pilogicLedger = piLedger)
+                    nextState.copy(execution = nextState.execution.copy(childReportSlot = reportSlot), pilogicLedger = piLedger)
                     // 方案 C（2026-08-18 误杀修复）：成功调用不计入预算——llmCallsThisTurn
                     // 仅在 AgentActor 的 LlmFailed 重试分支递增，正常工具循环（读→改→
                     // 编译→再改）每次成功继续调用都不再 +1。
                   )
                 }
+              }
             case Left(e) =>
               // Context build timed out / failed — fail the turn loudly instead
               // of freezing the actor. State must carry the new turnId or the

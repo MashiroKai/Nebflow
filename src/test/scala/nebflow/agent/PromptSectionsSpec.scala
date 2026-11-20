@@ -340,62 +340,48 @@ class PromptSectionsSpec extends munit.FunSuite:
     assert(!blocks.contains("# Mounted Projects"), "non-root agents must not see the mounted-projects section")
 
   // ============================================================
-  // Output block discipline (output 块注入链核验批 2026-10-31):
+  // Report block discipline (output 块注入链核验批 2026-10-31):
   // order-375 独立段，逐字承载 Defaults.OutputBlockRule，root-only。
   // 钉因：注入链核验实证 Voice 节单 bullet 已在根上下文（builtin 代码解析 +
-  // 重启 lifecycle 重建），但根回复零 `<output>` 包裹、模型自述「规则没进我
+  // 重启 lifecycle 重建），但根回复零包裹、模型自述「规则没进我
   // 的上下文」——显著性不足；本段为引擎编译注入的存在性保证。
   //
-  // output 块总闸·提示词面（prompt-face 补批 2026-11-01，同一作者令「把 output
-  // 块相关的内容先关闭」）：段条件加闸 OutputBlockGate.enabled()——闸关（缺席
-  // 配置 = 默认）整段不进组装，闸开恢复今日行为。两态经隔离数据根写键参数化，
-  // 与机器真实配置解耦。
+  // report 块可见性批（作者令 2026-11-20）：`outputBlock.enabled` 总闸**整体
+  // 退役**（设计稿 proposal 逐字「retired ... rather than allowing a full-text
+  // leak」）。判据从「两态参数化」翻转为**恒注入**：段条件只剩 isRootAgent，
+  // 配置里写不写那个键都不影响组装——「关 ⇒ 全文泄漏」的回退面已不存在。
   // ============================================================
 
-  /** 隔离数据根 + 写 `outputBlock.enabled`（OB-G3 同款形态）。 */
-  private def withIsolatedDataRootWithGate[A](enabled: Boolean)(body: => A): A =
+  test("Report discipline section injected for root agent (order 375, verbatim OutputBlockRule)"):
     withIsolatedDataRoot {
-      val cfg = PathUtil.configJsonReadPath(PathUtil.dataRoot)
-      val json = s"""{"outputBlock":{"enabled":$enabled}}"""
-      if os.exists(cfg) then os.write.over(cfg, json) else os.write(cfg, json)
-      body
-    }
-
-  test(
-    "Output block discipline section injected for root agent when the gate is ON (order 375, verbatim OutputBlockRule)"
-  ):
-    withIsolatedDataRootWithGate(enabled = true) {
       val ctx = PromptContext(isRootAgent = true)
       val blocks = buildConditionalBlocks(ctx)
       assert(
         blocks.contains(nebflow.shared.Defaults.OutputBlockRule),
-        "root agent systemStable must carry the output block rule as its own section"
+        "root agent systemStable must carry the report rule as its own section"
       )
-      assert(blocks.contains("<output>...</output>"), "section body is the tag-form rule text")
+      assert(blocks.contains("<report>...</report>"), "section body is the paired-tag rule text")
       // 段序钉：必须排在 order-370 根路由纪律段之后、order-500 voice 段之前
       assert(
-        blocks.indexOf("## Routing discipline (root agent)") < blocks.indexOf("── Output discipline ──"),
-        "output discipline section must follow the root routing discipline section (order 375 > 370)"
+        blocks.indexOf("## Routing discipline (root agent)") < blocks.indexOf("── Report discipline ──"),
+        "report discipline section must follow the root routing discipline section (order 375 > 370)"
       )
     }
 
-  test("Output block gate OFF (default = absent config): root agent systemStable carries NO output-block instruction"):
+  test("Retired kill switch: the section is injected whether or not `outputBlock.enabled` exists in config"):
     withIsolatedDataRoot {
+      val cfg = PathUtil.configJsonReadPath(PathUtil.dataRoot)
+      os.write(cfg, """{"outputBlock":{"enabled":false}}""", createFolders = true)
       val blocks = buildConditionalBlocks(PromptContext(isRootAgent = true))
       assert(
-        !blocks.contains(nebflow.shared.Defaults.OutputBlockRule),
-        "gate off = the whole order-375 section stays out of the assembly"
+        blocks.contains(nebflow.shared.Defaults.OutputBlockRule),
+        "the retired gate key must NOT be able to suppress the section (no full-text-leak fallback face)"
       )
-      assert(
-        !blocks.contains("── Output discipline ──") && !blocks.contains("<output>"),
-        "no output-block instruction text may leak via any other section"
-      )
-      // 邻段零波及
-      assert(blocks.contains("## Routing discipline (root agent)"), "order-370 routing section unaffected")
+      assert(blocks.contains("── Report discipline ──"), "the section header is present regardless of config")
     }
 
-  test("Output block discipline section NOT injected for non-root agents (root scoping holds with the gate ON)"):
-    withIsolatedDataRootWithGate(enabled = true) {
+  test("Report discipline section NOT injected for non-root agents (root scoping holds)"):
+    withIsolatedDataRoot {
       val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
       assert(
         !dispatcher.contains(nebflow.shared.Defaults.OutputBlockRule),
@@ -409,24 +395,14 @@ class PromptSectionsSpec extends munit.FunSuite:
       )
     }
 
-  test("Output block gate OFF: the JOINED root prompt (base + sections) carries no output-block instruction anywhere"):
+  test("joined root prompt carries the report rule once from the section, and teaches no `<output>` tag"):
     withIsolatedDataRoot {
       val base = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
       val joined = PromptSections.assembleSystemPrompt(base, buildConditionalBlocks(PromptContext(isRootAgent = true)))
-      assert(
-        !joined.contains("<output>"),
-        s"no literal tag teaching anywhere: ${joined.linesIterator.filter(_.contains("output")).mkString("\n")}"
-      )
-      assert(!joined.contains("Output discipline"), "no output discipline header anywhere")
-      assert(!joined.contains("wrap everything"), "Voice bullet stripped from the base prompt")
-    }
-
-  test("Output block gate ON: the joined root prompt restores the rule (base Voice bullet + order-375 section)"):
-    withIsolatedDataRootWithGate(enabled = true) {
-      val base = nebflow.core.entity.BuiltinAgents.entry("Nebula").map(_.systemPrompt).getOrElse("")
-      val joined = PromptSections.assembleSystemPrompt(base, buildConditionalBlocks(PromptContext(isRootAgent = true)))
-      assert(joined.contains(nebflow.shared.Defaults.OutputBlockRule), "order-375 section back in the assembly")
-      assert(joined.contains("User-visible output: wrap everything"), "Voice bullet back in the base prompt")
+      assert(joined.contains(nebflow.shared.Defaults.OutputBlockRule), "order-375 section in the assembly")
+      assert(joined.contains("User-visible output: wrap everything"), "Voice bullet in the base prompt")
+      assert(joined.contains("<report>...</report>"), "the paired report tag is the only taught form")
+      assert(!joined.contains("<output>"), s"the retired tag must not be taught anywhere: ${joined.linesIterator.filter(_.contains("output")).mkString("\n")}")
     }
 
   test("MountedProjectList.renderLines renders empty list as the explicit placeholder"):
@@ -489,10 +465,10 @@ class PromptSectionsSpec extends munit.FunSuite:
         "root agent systemStable must carry the SendMessage scope rule as its own section"
       )
       assert(blocks.contains("── SendMessage scope ──"), "section body is the scope-rule text")
-      // 段序钉：必须排在 order-375 output 块纪律段之后
+      // 段序钉：必须排在 order-375 report 块纪律段之后
       assert(
-        blocks.indexOf("── Output discipline ──") < blocks.indexOf("── SendMessage scope ──"),
-        "SendMessage scope section must follow the output discipline section (order 376 > 375)"
+        blocks.indexOf("── Report discipline ──") < blocks.indexOf("── SendMessage scope ──"),
+        "SendMessage scope section must follow the report discipline section (order 376 > 375)"
       )
     }
 

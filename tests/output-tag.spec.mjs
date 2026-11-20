@@ -1,5 +1,5 @@
-// output-tag.spec.mjs — <output> 用户可见块验收（output 块语法批，作者令
-// 2026-10-31 16:13；16:16 修订：标签式 <output>…</output>，非 ```output 围栏）。
+// output-tag.spec.mjs — <report> 用户可见块验收（output 块语法批，作者令
+// 2026-10-31 16:13；16:16 修订：标签式 <report>…</report>，非 ```output 围栏）。
 // 设计稿：docs/design/20261030_human-readable-presentation.zh-CN.md §11。
 //
 // 被测真实链路（照 human-face-render.spec.mjs 同一套替身纪律）：
@@ -7,15 +7,17 @@
 //     占位符 → 恢复渲染；散标签转义字面化；无标签零改动）；
 //   · 聊天摘除面：persistence.restoreFromBackendHistory（历史重建 = 冷启动
 //     真实面）+ outputTag.js（applyOutputFace 只显块内）+ turnGroup.js
-//     （turn-header 角标 toggle：展开 = 原文全量 + <output> 语法原样现形）。
+//     （turn-header 角标 toggle：展开 = 原文全量 + <report> 语法原样现形）。
 //
 // 判据：
-//   R1 摘除：output 气泡正常态只显块内内容；框外正文/思考过程不可见
-//   R2 角标展开：点 turn-header ⇒ 原文全量现形（含字面 <output> 标签）+
+//   R1 摘除：report 气泡正常态只显块内内容；框外正文/思考过程不可见
+//   R2 角标展开：点 turn-header ⇒ 原文全量现形（含字面 <report> 标签）+
 //      思考行揭开；再点收回
-//   R3 降级：无 <output> 块的旧消息照常全显（不吞历史）
-//   R4 零过程行的 output 轮也立 header（角标 = 框外原文唯一展开入口）
-//   R5 管线透明面：标签不现形、内容渲染；散标签（流式中间态）字面化不吞文
+//   R3 降级：无 <report> 块的旧消息照常全显（不吞历史）
+//   R3b 范围：非 root 会话的行逐字保留原展示（全文 + 字面标签，零摘除）
+//   R4 零过程行的 report 轮也立 header（角标 = 框外原文唯一展开入口）
+//   R5 管线透明面：标签不现形、内容渲染；散标签（流式中间态）字面化不吞文；
+//      非 root 面（不传 opts.report）标签保持字面文本
 //   R6 亮暗双主题截图：正常态（摘除）+ 展开态（语法现形）各 ×2
 //   R7 全进程零 console 错误 / 零 pageerror
 //
@@ -44,19 +46,28 @@ const THINKING_TEXT = '让我先想想从哪下手……（思考过程，默认
 const OUTPUT_TEXT = [
   '我先看了下链路，问题找到了。',
   '',
-  '<output>',
+  '<report>',
   '改好了，登录缓存的失效 bug 已修复。',
   '',
   '动了 src/login.ts 一个文件，42 个测试全过，不用你动手。',
-  '</output>',
+  '</report>',
   '',
   OUTER_DETAIL,
 ].join('\n');
-const LEGACY_TEXT = '这是一条没有 output 块的老消息：全文都应该照常可见，一个字不摘。';
+const LEGACY_TEXT = '这是一条没有 report 块的老消息：全文都应该照常可见，一个字不摘。';
+// Non-root contrast: a child session's message. The visibility rule is root-only,
+// so this row must keep its previous presentation — FULL text, tags literal.
+const NONROOT_TEXT = [
+  '子会话过程叙述不应被摘除。',
+  '<report>',
+  '子会话里的 report 块对非 root 面是普通文本。',
+  '</report>',
+  '子会话结尾说明。',
+].join('\n');
 const OUTPUT_ONLY_TEXT = [
-  '<output>',
+  '<report>',
   '结论先行：只包了一块，没有思考过程的一轮。',
-  '</output>',
+  '</report>',
   '',
   OUTER_DETAIL,
 ].join('\n');
@@ -131,16 +142,20 @@ const browser = await chromium.launch();
 try {
   const { page, pageErrors, consoleErrors } = await boot(browser);
 
-  // 历史重建（真实链路：buildHistoryRow → 升级批 → buildTurnSummariesForHistory）
+  // 历史重建（真实链路：buildHistoryRow → 升级批 → buildTurnSummariesForHistory）。
+  // root 行显式 `isRoot: true`（可见性规则按源头身份生效）；最后一条是**非 root**
+  // 对照行（子会话），它必须逐字保留原展示。
   await page.evaluate((msgs) => {
     window.__otMsgs = msgs;
   }, [
     { type: 'user', text: '帮我修登录缓存', timestamp: Date.now() - 30000 },
-    { type: 'ai', text: OUTPUT_TEXT, thinking: THINKING_TEXT, terminal: true, durationMs: 4200, model: 'stub-x', timestamp: Date.now() - 26000 },
+    { type: 'ai', text: OUTPUT_TEXT, thinking: THINKING_TEXT, terminal: true, durationMs: 4200, model: 'stub-x', isRoot: true, timestamp: Date.now() - 26000 },
     { type: 'user', text: '这条是老消息', timestamp: Date.now() - 20000 },
-    { type: 'ai', text: LEGACY_TEXT, terminal: true, durationMs: 800, model: 'stub-x', timestamp: Date.now() - 19000 },
+    { type: 'ai', text: LEGACY_TEXT, terminal: true, durationMs: 800, model: 'stub-x', isRoot: true, timestamp: Date.now() - 19000 },
     { type: 'user', text: '再试一轮', timestamp: Date.now() - 10000 },
-    { type: 'ai', text: OUTPUT_ONLY_TEXT, terminal: true, durationMs: 600, model: 'stub-x', timestamp: Date.now() - 9000 },
+    { type: 'ai', text: OUTPUT_ONLY_TEXT, terminal: true, durationMs: 600, model: 'stub-x', isRoot: true, timestamp: Date.now() - 9000 },
+    { type: 'user', text: '子会话给个进度', timestamp: Date.now() - 5000 },
+    { type: 'ai', text: NONROOT_TEXT, terminal: true, durationMs: 300, model: 'stub-x', isRoot: false, timestamp: Date.now() - 4000 },
   ]);
   await page.evaluate(async () => {
     const { restoreFromBackendHistory } = await import('/js/persistence.js');
@@ -159,7 +174,7 @@ try {
       faced: faced.length,
       innerVisible: b.textContent.includes('改好了，登录缓存的失效 bug 已修复'),
       outerStripped: !b.textContent.includes(outer),
-      tagsInvisible: !b.textContent.includes('<output>'),
+      tagsInvisible: !b.textContent.includes('<report>'),
       thinkingTucked: !!chat.querySelector('.row.thinking-row.nf-tucked'),
     };
   }, OUTER_DETAIL);
@@ -180,14 +195,14 @@ try {
     return {
       header: true,
       state: header.dataset.turnState,
-      rawShown: faced.textContent.includes('<output>') && faced.textContent.includes(outer),
+      rawShown: faced.textContent.includes('<report>') && faced.textContent.includes(outer),
       rawPre: !!faced.querySelector('.nf-output-raw-pre'),
       thinkingVisible: thinking && !thinking.classList.contains('nf-tucked'),
     };
   }, OUTER_DETAIL);
   ok(r2a.header === true, 'R2 turn-header 角标在');
   ok(r2a.state === 'done-expanded', `R2 点开即展开态（${r2a.state}）`);
-  ok(r2a.rawShown === true, 'R2 展开态原文全量（含框外正文与字面 <output> 标签）');
+  ok(r2a.rawShown === true, 'R2 展开态原文全量（含框外正文与字面 <report> 标签）');
   ok(r2a.rawPre === true, 'R2 展开态为原文纯文本面（.nf-output-raw-pre）');
   ok(r2a.thinkingVisible === true, 'R2 思考行随展开揭开');
   const r2b = await page.evaluate(() => {
@@ -199,7 +214,7 @@ try {
     return {
       state: header.dataset.turnState,
       backToInner: faced.textContent.includes('改好了，登录缓存的失效 bug 已修复') &&
-        !faced.textContent.includes('<output>'),
+        !faced.textContent.includes('<report>'),
       thinkingTucked: thinking && thinking.classList.contains('nf-tucked'),
     };
   });
@@ -216,6 +231,29 @@ try {
   });
   ok(r3.count === 1 && r3.full === true, 'R3 无块旧消息全显（不吞历史）');
 
+  // ── R3b 范围对照：非 root 会话的行逐字保留原展示 ──
+  // 原展示 = 管线不吃 report 语义（改造前的缺省面）：标签原样留在 HTML 里（浏览器
+  // 当未知元素解析，不成可见字面文本），正文一个字不摘。
+  const r3b = await page.evaluate(() => {
+    const chat = document.getElementById('chat');
+    const rows = Array.from(chat.querySelectorAll('.bubble.ai:not(.thinking-bubble)'))
+      .filter((b) => b.textContent.includes('子会话过程叙述'));
+    if (!rows.length) return { found: 0 };
+    const b = rows[0];
+    return {
+      found: rows.length,
+      noFace: !b.dataset.nfOutput && !b.dataset.nfDeferOutput,
+      fullText: b.textContent.includes('子会话过程叙述不应被摘除。') && b.textContent.includes('子会话结尾说明。'),
+      tagsRaw: b.innerHTML.includes('<report>') && !b.innerHTML.includes('&lt;report&gt;'),
+      innerText: b.textContent.includes('子会话里的 report 块对非 root 面是普通文本。'),
+    };
+  });
+  ok(r3b.found === 1, `R3b 非 root 对照行在场（=${r3b.found}）`);
+  ok(r3b.noFace === true, 'R3b 非 root 行不带 report 面标记（零摘除）');
+  ok(r3b.fullText === true, 'R3b 非 root 行全文可见（框外叙述不被摘）');
+  ok(r3b.tagsRaw === true, 'R3b 非 root 行标签原样透传（不转义、不成可见语法）');
+  ok(r3b.innerText === true, 'R3b 非 root 行块内文本照常可见');
+
   // ── R4 零过程行的 output 轮也立 header（角标 = 唯一展开入口） ──
   const r4 = await page.evaluate((outer) => {
     const chat = document.getElementById('chat');
@@ -229,44 +267,57 @@ try {
     return {
       headers: headers.length,
       state: last.dataset.turnState,
-      expanded: lastFaced.textContent.includes('<output>') && lastFaced.textContent.includes(outer),
+      expanded: lastFaced.textContent.includes('<report>') && lastFaced.textContent.includes(outer),
     };
   }, OUTER_DETAIL);
   ok(r4.headers === 2, `R4 header 计数（=${r4.headers}：过程轮 + output-only 轮各一；纯文本旧轮不立）`);
   ok(r4.state === 'done-expanded' && r4.expanded === true, 'R4 零过程行 output 轮角标展开 = 原文全量现形');
 
-  // ── R5 管线透明面（非聊天四面共享同 pass）──
+  // ── R5 管线透明面（root 面传 `opts.report`；非 root 面不传 = 改造前缺省）──
   const r5 = await page.evaluate(async () => {
     const { renderMarkdownWithMath } = await import('/js/utils.js');
-    const mk = (md) => {
+    const mk = (md, opts) => {
       const host = document.createElement('div');
       host.className = 'r5-host';
-      host.innerHTML = renderMarkdownWithMath(md, false, { cache: false });
+      host.innerHTML = renderMarkdownWithMath(md, false, Object.assign({ cache: false }, opts));
       document.body.appendChild(host);
       return host;
     };
-    // 5a 平衡对：标签不现形、内容渲染、框外内容仍在（透明面不做摘除——
-    //    摘除是聊天面语义）
-    const a = mk('前置说明。\n\n<output>\n**结论**：管线面内容照常渲染。\n</output>\n\n框外段落。');
-    // 5b 散标签（流式中间态）：字面化、不吞文
-    const b = mk('流式中：<output>半句结论还没闭合');
+    // 5a 平衡对（root 面）：标签不现形、内容渲染、框外内容仍在（透明面不做摘除
+    //    ——摘除是聊天面语义）
+    const a = mk('前置说明。\n\n<report>\n**结论**：管线面内容照常渲染。\n</report>\n\n框外段落。', { report: true });
+    // 5b 散标签（流式中间态，root 面）：字面化、不吞文
+    const b = mk('流式中：<report>半句结论还没闭合', { report: true });
     // 5c 无标签：零改动
-    const c = mk('普通段落，无标签。');
+    const c = mk('普通段落，无标签。', { report: true });
+    // 5d 非 root 面（不传 report）：与改造前逐字一致——标签原样透传（浏览器当
+    //    未知元素解析，不成可见语法），块内文本照常渲染，零转义字符注入正文。
+    const d = mk('前置说明。\n\n<report>\n**结论**：非 root 面照常渲染。\n</report>\n\n框外段落。');
     return {
-      aTagsHidden: !a.textContent.includes('<output>') && a.innerHTML.indexOf('&lt;output&gt;') === -1,
+      aTagsHidden: !a.textContent.includes('<report>') && a.innerHTML.indexOf('&lt;report&gt;') === -1,
       aInner: a.querySelector('strong') !== null && a.textContent.includes('结论'),
       aOuterKept: a.textContent.includes('框外段落'),
-      bLiteral: b.textContent.includes('<output>半句结论'),
+      bLiteral: b.textContent.includes('<report>半句结论'),
       bSwallowSafe: b.textContent.includes('流式中'),
       cPlain: c.textContent.includes('普通段落，无标签。'),
+      dTagsRaw: d.innerHTML.includes('<report>') && !d.innerHTML.includes('&lt;report&gt;'),
+      dInner: d.textContent.includes('非 root 面照常渲染'),
+      // 改造前缺省面逐字保留：未知标签被 marked 当 HTML 块 ⇒ 块内 markdown
+      // **不**加工（这正是既有展示，不是回归）。
+      dNotProcessed: d.querySelector('strong') === null,
+      dNoEscape: !d.textContent.includes('&lt;report&gt;'),
     };
   });
-  ok(r5.aTagsHidden === true, 'R5a 管线面标签不现形');
+  ok(r5.aTagsHidden === true, 'R5a 管线面标签不现形（root 面）');
   ok(r5.aInner === true, 'R5a 块内 markdown 渲染（strong）');
   ok(r5.aOuterKept === true, 'R5a 透明面框外内容保留（非聊天面不摘除）');
-  ok(r5.bLiteral === true, 'R5b 散标签流式中间态字面化可见');
+  ok(r5.bLiteral === true, 'R5b 散标签流式中间态字面化可见（root 面）');
   ok(r5.bSwallowSafe === true, 'R5b 散标签不吞后续文本');
   ok(r5.cPlain === true, 'R5c 无标签文本零改动');
+  ok(r5.dTagsRaw === true, 'R5d 非 root 面标签原样透传（不转义、与改造前逐字一致）');
+  ok(r5.dInner === true, 'R5d 非 root 面块内文本照常可见');
+  ok(r5.dNotProcessed === true, 'R5d 非 root 面块内 markdown 不加工作为既有展示保留');
+  ok(r5.dNoEscape === true, 'R5d 非 root 面正文零转义字符注入');
 
   // ── R6 亮暗双主题截图：正常态（摘除）+ 展开态（语法现形）──
   mkdirSync(SHOTS_DIR, { recursive: true });
@@ -303,6 +354,32 @@ try {
     return { bg: cs.backgroundColor, fg: cs.color };
   });
   ok(!!themed, `R6 双主题截图×4 落盘（展开态 bg=${themed && themed.bg}）`);
+
+  // ── R6b 非 root 对照截图：同一屏里 root 面摘除 vs 非 root 面全文 ──
+  // 先把第一轮收回正常态（摘除面），再把视口滚到非 root 对照行——一张图里同时
+  // 能看到「root 气泡只有块内」与「非 root 气泡全文 + 标签原样」。
+  await page.evaluate(() => {
+    const chat = document.getElementById('chat');
+    const header = chat.querySelector('.turn-header');
+    if (header && header.dataset.turnState === 'done-expanded') header.click();
+    const lastAi = Array.from(chat.querySelectorAll('.row.ai')).pop();
+    if (lastAi) lastAi.scrollIntoView({ block: 'end' });
+  });
+  await sleep(300);
+  await page.screenshot({ path: join(SHOTS_DIR, 'nonroot-light.png') });
+  const r6b = await page.evaluate(() => {
+    const chat = document.getElementById('chat');
+    const rootFaced = !!chat.querySelector('.bubble.ai[data-nf-output]');
+    const nonRootRow = Array.from(chat.querySelectorAll('.bubble.ai'))
+      .find((b) => b.textContent.includes('子会话过程叙述'));
+    return {
+      rootFaced,
+      nonRootPlain: !!nonRootRow && !nonRootRow.dataset.nfOutput && !nonRootRow.dataset.nfDeferOutput,
+      bothInDom: rootFaced && !!nonRootRow,
+    };
+  });
+  ok(r6b.bothInDom === true, 'R6b 同屏对照：root 摘除面 + 非 root 全文行并存（截图 nonroot-light.png）');
+  ok(r6b.nonRootPlain === true, 'R6b 非 root 行零 report 面标记');
 
   // ── R7 零错误铁律 ──
   ok(pageErrors.length === 0, `R7 页面零未捕获异常（${pageErrors.length}${pageErrors.length ? '：' + pageErrors[0] : ''}）`);

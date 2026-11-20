@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "change": "report-block-visibility",
+  "mappings": [
+    {
+      "requirement": "RV-REQ-001",
+      "scenario": "RV-SCN-001",
+      "implementation": ["src/main/scala/nebflow/social/outbound/OutputBlock.scala", "src/main/resources/web/js/outputTag.js"],
+      "tests": [
+        {"path": "src/test/scala/nebflow/social/outbound/OutputBlockSpec.scala", "name": "OB-2 single block ⇒ the trimmed body, nothing else"},
+        {"path": "src/test/scala/nebflow/social/outbound/OutputBlockSpec.scala", "name": "OB-G1 extractGated(false) bypasses the whole face — raw text passes through as Extracted"},
+        {"path": "src/test/scala/nebflow/social/OutputBlockChannelWireSpec.scala", "name": "⑥ stamped frames drive the face: isRoot=true ships the block join, isRoot=false ships the raw text"}
+      ],
+      "manual": {"reason": "Parser and wire unit tests do not verify the rendered console faces.", "steps": "Run tests/output-tag.spec.mjs (R1-R7 + R3b/R5d non-root contrast + R6b dual-theme and non-root screenshots).", "expected": "Only root blocks appear on the console; non-root rows keep the previous presentation verbatim and process detail remains in the existing badge."}
+    },
+    {
+      "requirement": "RV-REQ-002",
+      "scenario": "RV-SCN-002",
+      "implementation": ["src/main/scala/nebflow/agent/ChildReport.scala", "src/main/scala/nebflow/agent/AgentFinishTurn.scala", "src/main/scala/nebflow/agent/ChildReportJournal.scala"],
+      "tests": [
+        {"path": "src/test/scala/nebflow/agent/ChildReportSpec.scala", "name": "final message is structurally excluded from the progress channel"},
+        {"path": "src/test/scala/nebflow/agent/ChildReportWriteAheadSpec.scala", "name": "RED-2 crash recovery redelivers with the ORIGINAL identity and folds"},
+        {"path": "src/test/scala/nebflow/agent/ChildReportRoutingSpec.scala", "name": "E2E final exclusion: only intermediate turns enqueue progress; the final text does not"}
+      ],
+      "manual": {"reason": "Actor delivery and durable retry identity are exercised on the real durable journal + mailbox disk faces, not a full engine run.", "steps": "Run the four ChildReport* specs; the evidence archive records the change-before red state.", "expected": "Intermediate progress reaches the parent exactly once per identity; final text is delivered only through the result channel."}
+    },
+    {
+      "requirement": "RV-REQ-003",
+      "scenario": "RV-SCN-003",
+      "implementation": [
+        "src/main/scala/nebflow/prompts/PromptCatalog.scala",
+        "src/main/scala/nebflow/core/project/NodeEngineContract.scala",
+        "src/main/scala/nebflow/core/tools/DelegateTool.scala",
+        "src/main/scala/nebflow/core/tools/BlockingSubagent.scala",
+        "src/main/scala/nebflow/agent/PromptSections.scala",
+        "src/main/resources/web/js/featureFlags.js"
+      ],
+      "tests": [
+        {"path": "src/test/scala/nebflow/core/tools/SleepPollStartupRuleSpec.scala", "name": "report 块纪律行：退役的闸键写在配置里也压不住 brief（无全文泄漏回退面）"},
+        {"path": "src/test/scala/nebflow/core/entity/NebulaPromptOutputStyleGateRetiredSpec.scala", "name": "退役键写 true / 垃圾类型 / 无键：基座逐字节相同"},
+        {"path": "src/test/scala/nebflow/agent/PromptSectionsSpec.scala", "name": "Retired kill switch: the section is injected whether or not `outputBlock.enabled` exists in config"},
+        {"path": "src/test/scala/nebflow/social/outbound/OutputBlockSpec.scala", "name": "OB-G3 the retired `outputBlock.enabled` key is NOT read by this face any more"}
+      ],
+      "manual": {"reason": "The four prompt faces plus the web flag is a whole-face claim; a single grep cannot prove byte identity.", "steps": "rg -n 'OutputBlockGate|outputBlockEnabled|includeOutputRule' src/main returns no live reader; node scripts/test-output-block.mjs re-asserts the retired key is unread by utils.js.", "expected": "No live reader remains on any side; the discipline line is present regardless of configuration."}
+    }
+  ]
+}

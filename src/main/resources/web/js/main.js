@@ -1207,7 +1207,7 @@ onMessage('textDelta', (msg, view) => {
     // Finish thinking bubble before first text delta
     if (activeView.stream.currentThinkingBubble) finishThinking();
     // B2 (RC-2): hand the frame's identity (round, block) to the renderer.
-    appendAiText(msg.delta, { round: msg.round, block: msg.block });
+    appendAiText(msg.delta, { round: msg.round, block: msg.block, isRoot: msg.isRoot });
   }
 });
 

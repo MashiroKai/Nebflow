@@ -524,30 +524,24 @@ private[project] object NodeEngineContract:
    * 仍前缀注入位形（endsWith 断言零波及）。
    *
    * output 块语法批（作者令 2026-10-31）：查询行之后再同缝注入 output 块纪律行
-   * （[[Defaults.OutputBlockRule]]）——节点终稿亦只显 `<output>` 包裹内容；
+   * （[[Defaults.OutputBlockRule]]）——节点终稿亦只显 `<report>` 包裹内容；
    * 仍前缀注入位形（endsWith 断言零波及）。
    *
-   * output 块总闸·提示词面（prompt-face 补批 2026-11-01，作者令「把 output 块
-   * 相关的内容先关闭」）：`includeOutputRule=false` ⇒ 纪律行整段不进脚注（含其
-   * 前导空行分隔，行距字节零残留）。生产缺省 = **组装期热读**
-   * `nebflow.shared.OutputBlockGate.enabled()`（每次节点 spawn 求值，翻闸后新
-   * 节点即翻面）；离线 spec 注入常值与机器配置解耦（渠道面 outputBlockGate
-   * 构造缝同款形态）。
+   * report 块可见性批（2026-11-20）：旧的 `outputBlock.enabled` 总闸**整体退役**
+   * （设计稿 proposal 逐字：the kill switch is retired rather than allowing a
+   * full-text leak）——纪律行**恒注入**，`includeOutputRule` 参数与它代表的两态
+   * 一并删除（生产侧从无 `false` 调用点）。
    *
    * 交付落点纪律行（worktree/tmp 落点批 2026-11-19，作者 2026-11-16 令）：查询行
    * 之后、output 纪律行之前同缝注入（[[Defaults.DeliveryLandingLine]]），使**节点
    * brief 文本**与 delegate brief 逐字同源——`endsWith` 身份断言零波及。
    */
-  def protocolFootnoteFor(
-    role: Option[String],
-    /** output 块总闸（prompt-face 补批）：true = 脚注携带 OutputBlockRule 行。 */
-    includeOutputRule: Boolean = nebflow.shared.OutputBlockGate.enabled()
-  ): String =
+  def protocolFootnoteFor(role: Option[String]): String =
     val base =
       if NodeRoles.normalize(role.getOrElse("")) == NodeRoles.Verifier then
         ProtocolFootnote + "\n" + VerifierVerdictFootnote
       else ProtocolFootnote
-    val outputRuleBlock = if includeOutputRule then "\n\n" + Defaults.OutputBlockRule else ""
+    val outputRuleBlock = "\n\n" + Defaults.OutputBlockRule
     Defaults.NoSleepPollRule + "\n\n" + Defaults.PluginDiscoveryLine + "\n\n" + Defaults.DeliveryLandingLine +
       outputRuleBlock + "\n\n" + base
 

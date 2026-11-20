@@ -256,7 +256,7 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
     withStub(502, ret502Body) { (_, port) =>
       armLeg(root, port).unsafeRunSync()
       // the PRODUCTION send factory (the constructor default) — no recorder
-      val p = new WeixinIlinkBridgePlugin(root, outputBlockGate = () => true)
+      val p = new WeixinIlinkBridgePlugin(root, rootSessionGate = Some(_ => true))
       // BOTH loggers: the adapter's canonical line lands on
       // `nebflow.social.weixin-outbound`, the bridge's per-leg context line on
       // `nebflow.social.weixin-ilink-bridge` — one appender hears both.
@@ -264,7 +264,7 @@ class WeixinOutboundLogSpec extends CatsEffectSuite:
         val before = lines(appender).length
         (for
           _ <- p.start(recordingCtx(List(meta("s1", Some("wx_alice")))))
-          _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>这条回复会丢</output>".asJson))
+          _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>这条回复会丢</report>".asJson))
           _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
         yield ()).unsafeRunSync()
         val fired = newWarns(appender, before)

@@ -28,9 +28,7 @@ import nebflow.shared.PathUtil
  *   100-199  — fixed foundational sections (env info)
  *   350      — 文档溯源规范（唯一权威面，always）
  *   370      — 根代理路由纪律（Nebula 根会话 only，条件 isRootAgent）
- *   375      — output 块纪律（Nebula 根会话 only，条件 isRootAgent；同源单点
- *              文本 = [[nebflow.shared.Defaults.OutputBlockRule]]）
- *   375      — output 块纪律（Nebula 根会话 only，条件 isRootAgent；同源单点
+ *   375      — report 块纪律（Nebula 根会话 only，条件 isRootAgent；同源单点
  *              文本 = [[nebflow.shared.Defaults.OutputBlockRule]]）
  *   376      — SendMessage/Pop 边界（Nebula 根会话 only，条件 isRootAgent；同源
  *              单点文本 = [[nebflow.shared.Defaults.SendMessageScopeRule]]）
@@ -343,7 +341,7 @@ object PromptSections:
       body = rootRoutingDisciplineSection
     ),
 
-    // --- output 块纪律（output 块注入链核验批 2026-10-31，作者 21:44「怎么没看到
+    // --- report 块纪律（output 块注入链核验批 2026-10-31，作者 21:44「怎么没看到
     // 变化」追批）：条件 isRootAgent ⇒ 唯一注入面 = 根 Nebula 会话。段体**逐字引用**
     // [[nebflow.shared.Defaults.OutputBlockRule]]（同源单点，勿复制改写）。
     //
@@ -352,7 +350,7 @@ object PromptSections:
     // 从代码解析（AgentLibrary.get 不走磁盘）；③ AgentState 不持久化、重启即
     // lifecycle 重建（AgentSessionExecution `isLifecycleRebuild`）——三条链都通，
     // 规则其实自 17:58 重启起就在根会话上下文里；④ 但根会话 17:59 之后的全部回复
-    // 实测零 `<output>` 包裹（sessions/<root>.json 逐条核验），且根自己给出的理由
+    // 实测零块包裹（sessions/<root>.json 逐条核验），且根自己给出的理由
     // 是「我是重启前的老会话、规则没进我的上下文」——证明**单条 bullet 的显著性
     // 不足以让模型感知并遵从**。本段把同一条规则提升为 systemStable 内的独立
     // 段（紧跟根路由纪律段后，段序 375），存在性由引擎编译注入保证（与 order-360
@@ -370,15 +368,13 @@ object PromptSections:
     // DelegateTool brief / ProtocolFootnote / BlockingSubagent 首条消息承载。
     //
     // output 块总闸·提示词面（prompt-face 补批 2026-11-01，同一作者令「把
-    // output 块相关的内容先关闭」）：条件加闸 `nebflow.shared.OutputBlockGate
-    // .enabled()`——闸关 = 本段整段不进组装（`&&` 短路，非根会话连读数都不发生，
-    // 其余段零波及）。组装期求值：段条件在 buildConditionalBlocks（会话
-    // lifecycle 组装点）求值，翻闸后新装配即翻面；已在飞的旧上下文不回改
-    // （下个生命周期节点自然刷新）。与 Voice 节 bullet、brief、脚注、subagent
-    // 包装四处共闸（同一键同一读数）。
+    // output 块相关的内容先关闭」）：**report 块可见性批 2026-11-20 整体退役**
+    // （设计稿 proposal 逐字：the old `outputBlock` kill switch is retired for
+    // root rather than allowing a full-text leak）——本段从此**恒注入**（条件只剩
+    // `isRootAgent`），不再读任何闸读数；「关 = 全文泄漏」的回退面不存在。
     PromptSection(
       375,
-      condition = ctx => ctx.isRootAgent && nebflow.shared.OutputBlockGate.enabled(),
+      condition = ctx => ctx.isRootAgent,
       body = nebflow.shared.Defaults.OutputBlockRule
     ),
 

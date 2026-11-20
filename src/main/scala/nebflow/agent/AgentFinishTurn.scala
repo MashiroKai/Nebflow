@@ -20,6 +20,52 @@ import nebflow.shared.given
 private[agent] object AgentFinishTurn:
   import nebflow.agent.AgentActor.*
 
+  private def routeChildProgress(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    text: String
+  ): IO[Unit] =
+    (state.sessionId, state.execution.childReportSlot) match
+      case (Some(sid), Some(slot)) =>
+        val journal = ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid)
+        ChildReport.body(text, continues = true) match
+          case None => IO.blocking(journal.closeNoReport(slot))
+          case Some(body) =>
+            // 身份 = journal 里**已持久预留**的那个 id（write-ahead）——重派同一
+            // 逻辑槽复用它，父端按既有 DeliveredReceiptLedger 折叠去重，绝不因
+            // 轮次/时间戳变化冒出第二条同正文进度。单一构造点见 [[ChildReport.event]]。
+            IO.blocking(journal.prepareReport(slot, body)).flatMap { identity =>
+              val event = ChildReport.event(identity, body, agentDef.name)
+              def findParent(attempt: Int): IO[Option[String]] =
+                (sessionIdOfRef(resources, parentRef), resources.agentRegistry.get).mapN { (byRef, registry) =>
+                  byRef.orElse(registry.get(sid).flatMap(r => Option(r.parentSessionId).filter(_.nonEmpty)))
+                }.flatMap {
+                  case found @ Some(_) => IO.pure(found)
+                  case None if attempt < 5 => IO.sleep(scala.concurrent.duration.DurationInt(1 << (attempt - 1)).seconds) *> findParent(attempt + 1)
+                  case None => IO.pure(None)
+                }
+              findParent(1).flatMap {
+              case None =>
+                val note = s"Child report parked: parent identity unavailable (slot $slot); retry on supervisor recovery."
+                IO.blocking(journal.park(slot)) *>
+                  resources.subAgentTaskStore.findByTaskId(sid).flatMap {
+                    case Some(row) if row.runId.nonEmpty =>
+                      resources.subAgentTaskStore.updateRun(row.parentSessionId, sid, row.runId.get, diagnostic = Some(note)).void
+                    case Some(row) => resources.subAgentTaskStore.setDiagnostic(row.parentSessionId, sid, Some(note))
+                    case None => IO.unit
+                  } *> nebflow.shared.NebflowLogger.forName("nebflow.agent").warn(s"[child-report-parked] session=$sid slot=$slot parent identity unavailable after 5 attempts")
+              case Some(parentSid) =>
+                  MailboxProducer.deliver(resources, parentSid, event, identity, "child-report", producer = "child-report")
+                    .flatMap {
+                      case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) => IO.raiseError(new IllegalStateException(s"child-report delivery failed: $cause"))
+                      case _ => IO.blocking(journal.markFlushed(slot))
+                    }
+                }
+            }
+      case _ => IO.unit
+
   // ============================================================
   // LlmComplete branch selector
   // ============================================================
@@ -78,12 +124,14 @@ private[agent] object AgentFinishTurn:
     else if state.askMode.isDefined && result.toolCalls.isEmpty then
       handleAskComplete(agentDef, resources, depth, parentRef, state, result.text, result.model)
     else if result.toolCalls.nonEmpty then
-      pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
+      routeChildProgress(agentDef, resources, parentRef, state, result.text) *>
+        pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
     else if result.text.nonEmpty || result.thinking.nonEmpty then
       // Mail check: team members must call Mail before finishing.
       // After MaxMailReminders retries, give up and finishTurn (avoid infinite loop).
       if state.expectsMail && !state.mailUsedThisTurn && state.mailReminders < MaxMailReminders then
-        handleMissingMail(agentDef, resources, depth, parentRef, state, replyTo, result)
+        routeChildProgress(agentDef, resources, parentRef, state, result.text) *>
+          handleMissingMail(agentDef, resources, depth, parentRef, state.copy(execution = state.execution.copy(childReportSlot = None)), replyTo, result)
       else
         if state.expectsMail && !state.mailUsedThisTurn then
           logAgentEvent(
@@ -94,7 +142,10 @@ private[agent] object AgentFinishTurn:
             "mail-give-up",
             s"agent finished without Mail after $MaxMailReminders reminders"
           )
-        finishTurn(
+        val closeSlot = (state.sessionId, state.execution.childReportSlot) match
+          case (Some(sid), Some(slot)) => IO.blocking(ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid).closeNoReport(slot))
+          case _ => IO.unit
+        closeSlot *> finishTurn(
           agentDef,
           resources,
           depth,

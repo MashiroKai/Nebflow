@@ -177,12 +177,10 @@ object DelegateTool extends Tool:
    * 铁律置于任务正文之前：单 turn 会话的第一屏即见（747cd36a 形态的启动面
    * 防线——与其在长轮询后靠 LoopGuard 兜底，不如开局立规）。
    *
-   * output 块总闸·提示词面（prompt-face 补批 2026-11-01，作者令「把 output 块
-   * 相关的内容先关闭」）：`includeOutputRule=false` ⇒ OutputBlockRule 行整行
-   * 不进 brief（含其行首换行，行距字节零残留——plugin 行与任务正文间保持恰一
-   * 空行）。生产缺省 = **组装期热读** `nebflow.shared.OutputBlockGate.enabled()`
-   * （每次派发求值，翻闸后新派发即翻面）；离线 spec 注入常值，与机器真实配置
-   * 解耦（渠道面 outputBlockGate 构造缝同款形态）。
+   * report 块可见性批（2026-11-20）：旧的 `outputBlock.enabled` 总闸**整体退役**
+   * （设计稿 proposal 逐字：the kill switch is retired rather than allowing a
+   * full-text leak）——纪律行**恒注入**，不再有闸态分支（原来那个
+   * `includeOutputRule=false` 口子在生产侧从无调用点，只服务离线两态 spec）。
    */
   private[tools] def assembleBrief(
     workspaceLine: String,
@@ -191,8 +189,6 @@ object DelegateTool extends Tool:
     injectedBlock: String,
     /** 双模式批：dispatcher 腿编排纪律段（None = brief 逐字节不变——spec 判红锚）。 */
     dispatcherDiscipline: Option[String] = None,
-    /** output 块总闸（prompt-face 补批）：true = brief 携带 OutputBlockRule 行。 */
-    includeOutputRule: Boolean = nebflow.shared.OutputBlockGate.enabled(),
     /**
      * 附件清单段（附件传输批 2026-11-05）：非空 ⇒ 追加在 **brief 末尾**（插件注入块
      * 之后）——固定段落，与作者手写的 `task` 正文**结构可分**（作者写在正文里的路径
@@ -201,7 +197,7 @@ object DelegateTool extends Tool:
     attachmentSection: String = "",
     reportLine: String = BriefReportLine
   ): String =
-    val outputRuleBlock = if includeOutputRule then s"\n${Defaults.OutputBlockRule}" else ""
+    val outputRuleBlock = s"\n${Defaults.OutputBlockRule}"
     val attachmentBlock = if attachmentSection.isEmpty then "" else s"\n\n$attachmentSection"
     s"""$workspaceLine${bindingLine.map(l => s"\n$l").getOrElse("")}
 ${ResetHazardLine}

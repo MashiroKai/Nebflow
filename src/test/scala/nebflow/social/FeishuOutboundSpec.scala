@@ -329,7 +329,7 @@ val x = 1
     val sent = new java.util.concurrent.atomic.AtomicReference[List[String]](Nil)
     val p = new FeishuBridgePlugin(
       os.temp.dir(prefix = "nb-socoutbound-bridge-"),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = (_, _, _, receiveId, text) =>
         IO {
           sent.updateAndGet(_ :+ s"$receiveId|$text");
@@ -350,7 +350,7 @@ val x = 1
 
     for
       _ <- p.rebuildRoutes(BridgeCtx(List(boundMeta("s1", "oc_bound"))))
-      _ <- p.onAgentEvent("s1", delta(s"<output>$raw</output>"))
+      _ <- p.onAgentEvent("s1", delta(s"<report>$raw</report>"))
       _ <- p.onAgentEvent("s1", done("s1"))
     yield
       val wire = sent.get().headOption.getOrElse(fail("nothing reached the send seam"))

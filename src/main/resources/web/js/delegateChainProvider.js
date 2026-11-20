@@ -306,6 +306,8 @@ function projectChild(c) {
     resultRef: String(src.resultRef || ''),
     incomplete: src.incomplete === true,
     terminalReason: String(src.terminalReason || ''),
+    // Parked child reports surface through the existing row diagnostic line.
+    diagnostic: String(src.diagnostic || ''),
   };
 }
 

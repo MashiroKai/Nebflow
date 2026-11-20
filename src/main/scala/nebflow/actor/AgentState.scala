@@ -569,6 +569,7 @@ case class ExecutionContext(
   pendingImmediateInputs: List[AgentCommand.ImmediateInput] = Nil,
   emptyResponseRetries: Int = 0,
   lastDispatch: Option[LastDispatch] = None,
+  childReportSlot: Option[Long] = None,
   delegateCount: Int = 0,
   lastMaintenanceDelegateCount: Int = 0,
   // Snapshot of messages.size at turn start. Used to scope the expectsMail

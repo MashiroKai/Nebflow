@@ -22,6 +22,12 @@ object AgentActor extends AgentCore with AgentSession:
 
   private[agent] val MaxEmptyResponseRetries = 5
 
+  private[agent] def stampSourceIdentity(json: Json, agentDef: AgentDef, depth: Int): Json =
+    json.asObject match
+      case Some(obj) if !obj.contains("isRoot") =>
+        Json.fromJsonObject(obj.add("isRoot", RootAgentIdentity.isRootAgent(Some(agentDef), depth).asJson))
+      case _ => json
+
   /** Overload-class reasons: provider saturated, backoff can heal it. */
   def isOverloadReason(r: FailoverReason): Boolean =
     r == FailoverReason.Overloaded || r == FailoverReason.RateLimit
@@ -1200,7 +1206,7 @@ object AgentActor extends AgentCore with AgentSession:
                 latestUsage = None,
                 pendingAskUser = None,
                 pendingPermission = None,
-                wsSend = wsSend,
+                wsSend = json => wsSend(stampSourceIdentity(json, agentDef, depth)),
                 readTracker = readTracker,
                 fileHistory = fileHistory,
                 contextWindow = contextWindow,

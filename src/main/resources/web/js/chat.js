@@ -17,7 +17,7 @@ import { voiceEnabled } from './featureFlags.js';
 // 今天仍为纯时钟（formatHm），更早按本地日历日加日期层（昨天/星期X/M月D日/跨年）。
 import { formatHm, formatFooterTime, toggleTimeFormat, bindTimeToggle } from './timeFormat.js';
 import { activeView, setActiveView, findViewBySessionId, chatViews } from './chatView.js';
-import { renderMarkdownWithMath, escapeHtml, appendTextWithMentions, appendUserTextWithFences, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, foldToolCardMedia, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
+import { renderMarkdownWithMath, extractOutputInner, escapeHtml, appendTextWithMentions, appendUserTextWithFences, buildToolDetail, buildDelegatePromptHtml, attachToolClick, mountToolCardBody, delegatePromptRaw, foldToolCardMedia, smartScroll, playSpinner, stopSpinner, localizeToolLabel, localizeToolSummary, renderHighlightedContent, highlightCode, createMsgCopyButton, createIconsIn, statusIcon, isNearBottom, shouldFollowBottom, NEAR_BOTTOM_PX, deviceTagHtml } from './utils.js';
 import { renderWithRegistry } from './cardRegistry.js';
 // schedule-created-card 批（2026-11-05）：Schedule 工具创建/编辑成功后落卡片行。
 // 单一调用点 = 本文件 renderTool + persistence.js 两条历史重放腿（同一个 builder）。
@@ -822,6 +822,7 @@ export function appendAiText(text, mark) {
   // Deltas 仍旧累积进 view.stream.aiText + 节点 _nfText（bgAgentPopup 的 reopen-adopt
   // 读它），增量渲染只是**多了一条逐帧腿**，终态收口渲染点仍唯一在 finishAi()。
   const bubble = view.stream.currentAiBubble;
+  if (mark && typeof mark.isRoot === 'boolean') bubble._nfIsRoot = mark.isRoot;
   bubble._nfText = view.stream.aiText || '';
   // B2 consumption ②: the bubble carries the identity of the frame that last
   // wrote it. `finishAi`/`finishThinking` clear the mark when the segment ends,
@@ -841,7 +842,14 @@ export function appendAiText(text, mark) {
         if (!target.bubble.isConnected) return;
         const stats = _aiStreamStats;
         const t0 = stats ? performance.now() : 0;
-        renderStreamMarkdown(target.bubble, target.bubble._nfText || '', true,
+        // Report face is opt-in by POSITIVE source stamp (author ruling
+        // 2026-11-20: root-only, unknown identity is never guessed). Only a frame
+        // that said `isRoot: true` gets the extracted body; anything else —
+        // `false`, or an unstamped legacy frame — renders its full text exactly
+        // as before (the tags then stay literal: no `opts.report` below).
+        const visible = target.bubble._nfIsRoot === true ? (extractOutputInner(target.bubble._nfText || '') || '') : (target.bubble._nfText || '');
+        target.bubble.hidden = !visible;
+        renderStreamMarkdown(target.bubble, visible, true,
           imgKeepFor(target.bubble), false, target.mark || null);
         // 流式光标：与思考 / agent / ask 三条腿同源；终态收口渲染整棵换掉它
         // （finalizeStreamingFaces 另有 ·cursor 扫尾兜底）。
@@ -884,10 +892,13 @@ export function finishAi(durationMs, model) {
     if (askBox) askBox.remove();
     const bubble = activeView.stream.currentAiBubble;
     const firstPaint = !bubble._nfRendered;
-    // output 块语法批：源文本有平衡 <output> 对 ⇒ 正常态只渲染块内内容（摘除
-    // 框外正文）；无块零改动（旧内容照常全显）。展开面在 turnGroup 角标 toggle。
-    if (!applyOutputFace(bubble, activeView.stream.aiText || '')) {
-      bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
+    // report 块可见性批（作者令 2026-11-20）：可见性只作用于**源头身份为 root**
+    // 的那条消息——帧上 `isRoot === true` 才走摘除面；`false` 或旧帧（无戳）一律
+    // 全文渲染，与改前逐字一致。无平衡块 ⇒ 全文渲染，但 root 面仍以 `report:true`
+    // 过管线（散标签转义为字面文本，防被当成 HTML 块吞文）。
+    const rootFace = bubble._nfIsRoot === true;
+    if (!rootFace || !applyOutputFace(bubble, activeView.stream.aiText || '')) {
+      bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '', true, rootFace ? { report: true } : undefined);
     }
     bubble._nfText = activeView.stream.aiText || '';
     bubble._nfRendered = true;

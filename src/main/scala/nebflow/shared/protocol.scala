@@ -458,7 +458,8 @@ object UiMessage:
      * 先例同款条件编码 ⇒ 旧 `.ui.json` 行字节形态与旧读法逐字不变；解码宽松
      * 回落 None，新增可选键绝不改变任何既有行的可解析性）。
      */
-    terminal: Option[Boolean] = None
+    terminal: Option[Boolean] = None,
+    isRoot: Option[Boolean] = None
   ) extends UiMessage:
     val typeName = "ai"
 
@@ -639,7 +640,8 @@ object UiMessage:
         if m.timestamp > 0 then withThinking.deepMerge(Json.obj("timestamp" -> m.timestamp.asJson)) else withThinking
       // replay-terminal 批（2026-10-28）：轮终态标记——只在 Some(true) 落键
       // （缺席即不落键 ⇒ 无标记行与旧字节形态逐字相同）。
-      if m.terminal.contains(true) then withTs.deepMerge(Json.obj("terminal" -> true.asJson)) else withTs
+      val withTerminal = if m.terminal.contains(true) then withTs.deepMerge(Json.obj("terminal" -> true.asJson)) else withTs
+      m.isRoot.fold(withTerminal)(root => withTerminal.deepMerge(Json.obj("isRoot" -> root.asJson)))
     case m: Tool =>
       val base = Json.obj(
         "type" -> "tool".asJson,
@@ -749,7 +751,8 @@ object UiMessage:
           // replay-terminal 批：轮终态标记（旧行无本键 ⇒ None；形态不合同样回落
           // None —— 宽松透传，新增可选键绝不改变任何既有行的可解析性）
           terminal <- cursor.downField("terminal").as[Option[Boolean]]
-        yield Ai(text, durationMs, model, thinking, timestamp.getOrElse(0L), terminal)
+          isRoot <- cursor.downField("isRoot").as[Option[Boolean]]
+        yield Ai(text, durationMs, model, thinking, timestamp.getOrElse(0L), terminal, isRoot)
       case "tool" =>
         for
           label <- cursor.downField("label").as[String]

@@ -140,7 +140,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
   private def started(out: Out, sessions: List[SessionMeta]): IO[(WeixinIlinkBridgePlugin, AskCtx)] =
     val ctx = AskCtx(sessions)
     val p = new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = None,
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ => out.seam)
     p.start(ctx).as((p, ctx))
 
@@ -443,7 +443,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val out = Out()
     val ctx = AskCtx(List(meta("wx_a")))
     val p = new WeixinIlinkBridgePlugin(tmpRoot(), pinnedAllowedIlinkUserIds = Some(List("wx_a")),
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ => out.seam)
     for
       _ <- p.start(ctx)
@@ -503,7 +503,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ => out.seam,
       sendMedia = _ => mout.seam
     )
@@ -545,7 +545,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       root,
       pinnedAllowedIlinkUserIds = None,
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ => out.seam,
       sendMedia = _ => mout.seam
     )
@@ -569,7 +569,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val p = new WeixinIlinkBridgePlugin(
       tmpRoot(),
       pinnedAllowedIlinkUserIds = None,
-      outputBlockGate = () => true, // output-block-gate 批：钉住剥离行为（与机器配置解耦）
+      rootSessionGate = Some(_ => true), // 根会话范围缝：钉住剥离行为（与机器配置解耦）
       send = _ => out.seam,
       sendMedia = _ => mout.seam
     )
@@ -616,7 +616,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     for
       (p, ctx) <- started(out, List(meta("wx_a")))
       long = "好" * (WeixinAskLeg.FullTextThreshold + 500)
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> s"<output>$long</output>".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> s"<report>$long</report>".asJson))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       sent <- out.sent.get
       v0 <- p.intake(ctx, WeixinIlinkBridgePlugin.Inbound(Some("wx_a"), Some("随便聊聊"), Some("m0")))
@@ -646,7 +646,7 @@ class WeixinAskLegSpec extends CatsEffectSuite:
     val out = Out()
     for
       (p, _) <- started(out, List(meta("wx_a")))
-      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<output>正常回复</output>".asJson))
+      _ <- p.onAgentEvent("s1", Json.obj("type" -> "textDelta".asJson, "delta" -> "<report>正常回复</report>".asJson))
       _ <- p.onAgentEvent("s1", Json.obj("type" -> "done".asJson))
       sent <- out.sent.get
     yield assertEquals(sent, List(("wx_a", "正常回复")))

@@ -260,7 +260,6 @@ class DelegateAttachmentsSpec extends CatsEffectSuite:
       bindingLine = None,
       task = task,
       injectedBlock = "",
-      includeOutputRule = false,
       attachmentSection = section
     )
     assert(brief.endsWith(section), "the manifest must be the LAST block of the brief")
@@ -269,7 +268,7 @@ class DelegateAttachmentsSpec extends CatsEffectSuite:
     assert(brief.indexOf(task) < brief.indexOf(DelegateAttachments.ManifestHeader))
 
     // 空计划 ⇒ brief 逐字节不变（未带附件的派发零漂移）
-    val plain = DelegateTool.assembleBrief("[workspace] /w", None, task, "", includeOutputRule = false)
+    val plain = DelegateTool.assembleBrief("[workspace] /w", None, task, "")
     assert(!plain.contains(DelegateAttachments.ManifestHeader), "no attachments ⇒ no manifest section")
     assert(plain.endsWith(task), "no attachments ⇒ the brief still ends with the task text")
 
