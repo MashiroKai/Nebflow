@@ -14,8 +14,19 @@
 //   C5  卡行落在流式 ai 泡**之前**：末元素仍是 ai 泡（流式增量腿判据不受影响）
 //   C6  定稿（done → 整列重渲）后卡**仍在**——render() 重建腿认卡行，卡不被抹掉
 //   C7  非卡工具帧仍透明（一条 ___POP_JSON___ 结果不改列结构、不建 iframe）
-//   C8  卡载荷不落本地转录持久面（localStorage 里零 `___CARD_HTML___`）
+//   C8  卡载荷**落**本地转录持久面（localStorage 转录里的 role='card' 行，载荷与到达
+//       帧逐字同一份、落位 user 之后 ai 之前）
 //   C9  手机档 375×812：同一腿在列内显形、iframe 宽不溢出 dock、零 pageerror
+//   C10 转录回看（作者令 2026-11-19「要留存」）：刷新页面 → 重开 dock ⇒ 卡本体仍在
+//       列内且帧内仍是同一份载荷（不是重新渲染成文本/占位）；暗亮两档各一。
+//
+// C8 的口径沿革（同义重锚，断言语义未放松）：
+//   · card-tool-revive 批（2026-11-18 裁定②）原判据 = 「卡载荷**不落** localStorage
+//     转录持久面」（`!persisted.includes('___CARD_HTML___')`，锚点 = 全 localStorage 扫描）。
+//   · 作者令 2026-11-19「要留存」把同一锚点的语义改写为**必须落**：判据从「零命中」
+//     升为「恰一行 card 行 ∧ 载荷逐字等于到达帧 ∧ 落位在 user 之后 ai 之前」——
+//     锚点不变（同一条 localStorage 扫描），语义不放松（更强的正向断言 + 结构化解析，
+//     不是「把断言反过来放行」：写不进去、写歪了、写漏了都红）。
 //
 // 载荷来源：真隔离实例（真引擎 + 真 ask 会话 + 真 CardTool 调用）抓下的 `toolEnd`
 // content 逐字，存 tests/fixtures/card-ask/card-frame-content.txt。
@@ -195,6 +206,39 @@ async function shot(page, name) {
   try { await page.screenshot({ path: join(SHOTS_DIR, name + '.png'), fullPage: false }); } catch { /* ignore */ }
 }
 
+/** ask 会话本地转录（`<brand>_ask:sess:<sid>`）的**逐行**读数：role/text 原样取出，
+ *  按存储顺序拼回（C8/C10 的口径统一走这一条扫描，零第二套解析）。 */
+const readAskTranscript = (page) => page.evaluate(() => {
+  const rows = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i) || '';
+    if (!k.includes('ask:sess:')) continue;
+    let v = null;
+    try { v = JSON.parse(localStorage.getItem(k) || 'null'); } catch { /* 坏行跳过 */ }
+    const list = v && Array.isArray(v.msgs) ? v.msgs : [];
+    for (const m of list) {
+      if (m && typeof m.text === 'string' && typeof m.role === 'string') rows.push({ key: k, role: m.role, text: m.text });
+    }
+  }
+  return rows;
+});
+
+/** 列内卡 iframe 的帧内读数（与 C4 同一判据面：标题 / 表行 / 进度条）。 */
+async function frameRing(page) {
+  const frameEl = await page.$('.ask-dock .ask-col iframe.html-card-iframe');
+  if (!frameEl) return null;
+  const frame = await frameEl.contentFrame();
+  if (!frame) return null;
+  try {
+    return await frame.evaluate(() => ({
+      title: document.querySelector('h3') && document.querySelector('h3').textContent.trim(),
+      rows: Array.from(document.querySelectorAll('table tr')).map((tr) => tr.textContent.replace(/\s+/g, ' ').trim()),
+      bar: !!document.querySelector('.bar'),
+      cap: document.querySelector('.cap') && document.querySelector('.cap').textContent.trim(),
+    }));
+  } catch { return null; }
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 const browser = await chromium.launch();
 try {
@@ -252,13 +296,64 @@ try {
     const p3 = await cardProbe(page);
     ok('C7 非卡工具载荷（___POP_JSON___）不建卡、列结构不变', p3.rowPresent && p3.iframePresent && (await page.$$('.ask-dock .ask-card-row')).length === 1, JSON.stringify({ rows: (await page.$$('.ask-dock .ask-card-row')).length }));
 
-    // C8 卡载荷不落本地转录持久面
-    const persisted = await page.evaluate(() => {
-      const out = [];
-      for (let i = 0; i < localStorage.length; i++) out.push(localStorage.getItem(localStorage.key(i)) || '');
-      return out.join('\n');
-    });
-    ok('C8 卡载荷不落 localStorage（转录持久面只收 user/ai 两族）', !persisted.includes('___CARD_HTML___'), persisted.length + ' bytes scanned');
+    // C8 卡载荷落本地转录持久面（作者令 2026-11-19「要留存」；本节 C8 为同义重锚——
+    //    锚点仍是同一条 localStorage 扫描，判据由「零命中」升为「恰一行 ∧ 逐字同一份
+    //    ∧ 落位正确」）。
+    const persisted = await readAskTranscript(page);
+    const cardRows = persisted.filter((r) => r.role === 'card');
+    ok('C8a 转录持久面带 card 行（卡与 user/ai 同族落盘）', cardRows.length === 1,
+      JSON.stringify(cardRows.map((r) => ({ role: r.role, chars: r.text.length }))));
+    ok('C8b 持久行载荷与到达帧逐字同一份（不是文本化/占位）',
+      cardRows.length === 1 && cardRows[0].text === CARD_CONTENT,
+      cardRows.length === 1 ? `stored=${cardRows[0].text.length} frame=${CARD_CONTENT.length}` : 'no card row');
+    const order = persisted.map((r) => r.role).join('>');
+    ok('C8c 卡行落位 = user 之后、ai 之前（重看列序与首见一致）', order === 'user>card>ai', order);
+
+    // C10 转录回看（作者令 2026-11-19「要留存」）：刷新页面 → 重开 dock ⇒ 卡本体仍在。
+    //     回看腿零 askState 依赖：本地转录注水即出（mock 回放给的是空 messages）。
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await sleep(300);
+    await page.waitForSelector('#activity-bar', { timeout: 15000 });
+    await sleep(600);
+    await openFile(page, 'card-leg-desktop.md');
+    await page.click('.ask-fab');
+    await sleep(700);
+    const p4 = await cardProbe(page);
+    ok('C10a 刷新后重开 dock：卡行仍在列内（本地转录注水）', p4.rowPresent && p4.rowInCol && p4.iframePresent, JSON.stringify(p4));
+    const ring2 = await frameRing(page);
+    ok('C10b 回看帧内仍是同一份载荷（标题 + 4 表行 + 进度条）',
+      !!ring2 && ring2.title === 'CARD-LIVE-OK · 能量谱抽样' && ring2.rows.length === 4 && ring2.bar,
+      JSON.stringify(ring2));
+    ok('C10c 回看：卡壳宽 = 列内容盒宽（重看不动几何）',
+      Math.abs(p4.wrapW - p4.colContentW) <= 1.5 && p4.wrapW > 0, JSON.stringify({ wrapW: p4.wrapW, colContentW: p4.colContentW }));
+    await shot(page, 'replay-dark-1600x1000-ask-dock-card');
+    await page.context().close();
+  }
+
+  // ── 亮档回看腿（作者令 2026-11-19：暗亮各一）──
+  {
+    const { page, errors } = await bootPage(browser, { viewport: { width: 1600, height: 1000 }, colorScheme: 'light' });
+    await openFile(page, 'card-leg-light.md');
+    const sid = await askAndGetSid(page, '画一张能量谱抽样卡');
+    sendCardToolFrames(sid);
+    await page.waitForSelector('.ask-dock .ask-col .ask-card-row iframe.html-card-iframe', { timeout: 5000 }).catch(() => {});
+    wsSend({ type: 'textDelta', sessionId: sid, delta: '已出图。' });
+    await sleep(150);
+    wsSend({ type: 'done', sessionId: sid });
+    await sleep(400);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await sleep(300);
+    await page.waitForSelector('#activity-bar', { timeout: 15000 });
+    await sleep(600);
+    await openFile(page, 'card-leg-light.md');
+    await page.click('.ask-fab');
+    await sleep(700);
+    const p5 = await cardProbe(page);
+    ok('C10d 亮档刷新后重开 dock：卡行仍在列内', p5.rowPresent && p5.rowInCol && p5.iframePresent, JSON.stringify(p5));
+    const ring3 = await frameRing(page);
+    ok('C10e 亮档回看帧内仍是同一份载荷', !!ring3 && ring3.title === 'CARD-LIVE-OK · 能量谱抽样' && ring3.rows.length === 4 && ring3.bar, JSON.stringify(ring3));
+    ok('C10f 亮档回看零 pageerror', errors.length === 0, errors.slice(0, 2).join(' | '));
+    await shot(page, 'replay-light-1600x1000-ask-dock-card');
     await page.context().close();
   }
 
