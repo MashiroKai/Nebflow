@@ -3215,6 +3215,22 @@ body.mobile-layer .cvv-time {
   border-radius: var(--ds-radius-badge);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 4px 12px rgba(0, 0, 0, 0.06);
 }
+/* 文本层批（2026-11-19 作者令「让 canvas 的 note 和 ask 支持 pdf 的阅读」）：
+   每页定位盒。盒结构 = `.pdf-page-wrap`（position:relative，收缩到 canvas 的
+   CSS 盒）> `canvas.pdf-page` + `div.textLayer`（与位图逐像素叠合）。
+   本文件只留**非浮动**的收缩盒；textLayer 的浮动形态（absolute/inset）属
+   **vendored 库资产**（pdf.js v3.11 官方 text_layer_builder.css），随
+   vendor/pdfjs/pdf.min.js 同目录静态交付，见 index.html 的 vendor 样式链 ——
+   本仓三道具名闸（floating-discovery / noclip-floating / mobile-floating-
+   inventory）按仓约一律豁免 `vendor/**`（第三方版本钉死、非本仓视觉语言），
+   故官方 textLayer 的 position:absolute 不落在 app CSS 判区内。
+   零新色值：正文 span 透明着色只作**选中承接**（点得中、看不见），高亮留给
+   浏览器默认 —— 页面白底仍由 .pdf-page 的 `background:#fff` 单源承担。 */
+.pdf-page-wrap {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+}
 
 /* ── Shared viewer zoom bar (viewers/zoom.js) ── */
 /* 六项批（作者令 2026-10-23 六项③④）：右锚回 16 —— 贴齐面板右缘（移位批的

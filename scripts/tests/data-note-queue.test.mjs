@@ -8,7 +8,7 @@ function rig() {
   const section = src.slice(src.indexOf("const NOTE_DRAFT_PREFIX ="), src.indexOf('function isNoteOpen()'));
   const timers = new Map(), sent = [], statuses = [], storage = new Map(), requested = [];
   let next = 0;
-  const ctx = { noteEntries: new Map(), noteWriteSequence: 0, noteSid: 'A', notePath: '/a', noteTimer: 0,
+  const ctx = { pdfMode: false, noteEntries: new Map(), noteWriteSequence: 0, noteSid: 'A', notePath: '/a', noteTimer: 0,
     noteLocalOk: true, el: {noteText: {value: ''}}, NOTE_PUSH_DELAY_MS: 300,
     localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k,v) => storage.set(k,v) }, tt: (_zh,en) => en, document: { createElement: () => ({ addEventListener() {} }) },
     loadNote: () => '', persistNoteLocal: () => true, setNoteStatus: s => statuses.push(s),
