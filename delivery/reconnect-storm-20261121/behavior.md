@@ -67,10 +67,10 @@ the real browser on an isolated instance seeded from the production data):
 
 | Round | Before | After |
 | --- | --- | --- |
-| cold (real browser, isolated instance on the production data) | 603 requests, unbounded concurrency | 122 requests (2 row + 2 digest + 48 details + 32 child legs) |
-| reconnect (same two hops) | 603 requests again | 122 requests; **0** detail replays once warm and unchanged |
-| cold (production row/key counts, deterministic replay) | 2217 requests | 42 requests |
-| 429 window (60 s) | 1108 detail attempts, no spacing | ≤2 bursts of ≤4, spaced by the backoff window |
+| cold (real browser, isolated instance on the production data) | 604 requests, unbounded concurrency (282 details + 282 child legs) | 125 requests (2 row + 2 digest + 48 details + 32 child legs + 41 seed reads) |
+| reconnect (same two hops) | 603 requests again, same fan-out | 125 requests; **0** detail replays once warm and unchanged |
+| cold (production row/key counts, deterministic replay) | 2217 requests (1108 details + 1108 child legs) | 42 requests (1 row + 1 digest + 24 details + 16 child legs) |
+| detail attempts inside one 60 s 429 window | 1108, no spacing | 52 in the deterministic replay (`storm60sDetail`), 8 in the registered gate — spacing enforced by the backoff window |
 
 ## Engine tunnel guard (`connguard.scala`)
 
