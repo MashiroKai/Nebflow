@@ -77,6 +77,38 @@ completed from evidence" branch be enabled. Wire-in point is the interrupted bra
 `SubAgentStartupRecovery.markUnresolved`, which currently returns `IO.pure(false)` for interrupted
 rows.
 
+## Bounded escalation of the trusted-descendant hold
+
+The descendant segment of the completion gate has no wallclock cap by design: a real child must
+never be terminalized because time passed. The failure it leaves open is the *orphan row* — in flight
+on disk, absent from the agent registry (crash before re-registration, hidden row after a hard
+restart), no progress at all. Such a row held the delegate completion forever, and the only visible
+trace was a progress mail every turn.
+
+Escalation leg (`BackoffSupervisor.trustedDescendantHold`,
+`Defaults.DelegateDescendantHoldEscalationMs`, prop `nebflow.delegate.descendantHoldEscalationMs`,
+default 30 min, `<= 0` disables):
+
+1. Partition the delegate's in-flight child rows by presence in the agent registry.
+2. If **every** in-flight row is registry-absent and each has been without progress
+   (`activityAt` / `statusAt` / `spawnedAt`) for the escalation window, flag them
+   (`suspectedLostTerminal = true`) and release the completion.
+3. Otherwise the hold stands, unchanged.
+
+The flag is review material only: escalation never terminalizes anything, and disposal still goes
+through the single manual entrance (`forceTerminalizeFlagged`). A legitimately parked child keeps a
+live registry entry, so the first condition fails and it is neither flagged nor released — the
+"park the child" workflow stays intact. Cancellation wins the race: a row cancelled before the gate
+reads it is out of the in-flight set and is untouched.
+
+## Startup ownership boundaries
+
+`interruptExternalRuns` declares a run `interrupted` only for **foreign-executor** rows: a
+subtask/subagent projection written by another executor has no terminal envelope and no run-bound
+debt, so monitoring loss is genuinely all we know about it. Managed `nebflow` rows never reach that
+leg (its predicate requires `executor != nebflow`); their outcome comes from the evidence
+reconciliation above.
+
 ## Test fixture contract upgrade
 
 Two existing regression fixtures (`InternalRunAdmissionSpec`): the subagent envelope fixture and the

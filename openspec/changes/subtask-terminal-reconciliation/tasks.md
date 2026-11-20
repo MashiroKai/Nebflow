@@ -18,6 +18,14 @@
       `forceTerminalizeFlagged` entry point restricted to flagged rows.
 - [x] Interrupted rows are never auto-repaired; empty or corrupt mailbox receipts are treated as
       unknown (fail-closed), pinned by tests.
+- [x] Descendant hold is bounded: a stalled child row with no live actor is flagged for manual review
+      instead of holding the delegate completion forever; a legitimately parked child keeps the hold.
+      Pinned by `DelegateCompletionGateDescendantsSpec` H-e1/H-e2/H-e3.
+- [x] End-to-end recovery of both lost-completion transports (`ManagedTerminalDeliveryE2ESpec`): a
+      failed `Completed` send and an accepted-but-never-processed `Completed` are each terminalized
+      and delivered from the run-bound debt at boot.
+- [x] Startup ownership boundary: the interrupt leg stays scoped to foreign-executor rows; a managed
+      `nebflow` row is never declared interrupted from monitoring loss.
 
 ## Not implemented
 
