@@ -28,6 +28,17 @@ class PromptSectionsSpec extends munit.FunSuite:
       PathUtil.setDataRoot(prevRoot)
       os.remove.all(tempRoot)
 
+  test("same-order file sections use filename order"):
+    withIsolatedDataRoot {
+      val dir = PathUtil.dataRoot / "prompts" / "sections"
+      os.makeDir.all(dir)
+      os.write(dir / "z.md", "<!-- Order: 42 -->\nZ-section")
+      os.write(dir / "a.md", "<!-- Order: 42 -->\nA-section")
+      val blocks = buildConditionalBlocks(PromptContext())
+      assert(blocks.contains("A-section") && blocks.contains("Z-section"))
+      assert(blocks.indexOf("A-section") < blocks.indexOf("Z-section"))
+    }
+
   test("AskUserQuestion guide section no longer injected even when tool is available (2d §D.2 下迁)"):
     withIsolatedDataRoot {
       val withTool = PromptContext(availableTools = Set("AskUserQuestion", "Read"))

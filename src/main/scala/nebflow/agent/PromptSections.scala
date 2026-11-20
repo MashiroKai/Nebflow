@@ -593,7 +593,8 @@ External executors receive the task text only — no platform tools or plugins a
     val sectionsDir = PathUtil.dataRoot / "prompts" / "sections"
     if !os.exists(sectionsDir) then Nil
     else
-      val entries = os.list(sectionsDir).toList
+      // Stable discovery order prevents equal-order sections from varying by filesystem.
+      val entries = os.list(sectionsDir).toList.sortBy(_.last)
       // Plain .md files
       val mdSections = entries
         .filter(f => f.last.endsWith(".md") && os.isFile(f))
