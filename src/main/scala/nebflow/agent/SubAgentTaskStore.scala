@@ -316,6 +316,19 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
     case Right(row) => fireWriteHook(row).as(Right(row))
   }
 
+  /** Lock order is row lock → debtLock; CompletionDebtStore must never acquire a row lock.
+    * Only current, active managed runs may persist their first completion evidence.
+    */
+  def recordManagedCompletionDebt(parent: String, task: String, run: String,
+    messages: List[nebflow.shared.Message]): IO[Boolean] = withLock {
+    readTasksSync(parent).find(_.taskId == task) match
+      case Some(row) if row.source == "subtask" && row.runId.contains(run) && row.status == "running" &&
+          !row.executionStatus.exists(terminalExecutions.contains) =>
+        nebflow.core.mail.CompletionDebtStore.recordManagedSync(
+          nebflow.core.mail.CompletionDebtStore.ManagedDebt(parent, task, run, row.source, messages))
+      case _ => false
+  }
+
   /** First terminal commit wins; a process exit never asserts business success. */
   override def completeRun(
     parentSessionId: String,
