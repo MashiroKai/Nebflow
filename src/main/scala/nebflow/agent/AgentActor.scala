@@ -295,6 +295,35 @@ object AgentActor extends AgentCore with AgentSession:
     Set("merge-queue", "bg-lifecycle", "waiting-dock-care", "chain-orphan", "team")
 
   /**
+   * **自带显示面的入站腿**（飞书/微信重复气泡批 2026-11-19，作者 12:58 报障逐字
+   * 「飞书消息现在是会重复发送吗 你看 绿色气泡已经有一组内容了 检查同类微信等会
+   * 不会这样」）：这一族 source 的入站**已经有自己的会话显示行**，[[emitInjectedUserEvent]]
+   * 再发一条就是**同一条入站的两个气泡 + 两行 `.ui.json`**。
+   *
+   * 判据与 [[SelfEmittingSources]] **同款**（「这条腿自己就把行落了/播了」），但形态
+   * 不同，故分列两集、不合并：`SelfEmittingSources` 的自带行是**注入泡行**（调度器
+   * 落卡），而本族的自带行是**显示面裸行** —— `source = "bridge"` 的社交通道入站
+   * （`WebSocketRoutes.handleBridgeMessage`，**唯一**发射点）自己就：
+   *   · 落盘一条裸 `UiMessage.User(displayText)`（= 作者自己的消息行），且
+   *   · 广播一帧 `bridgeUser`（前端 `main.js` 渲染成绿色用户气泡）。
+   * 两集都不能用同一个集合承载：[[visibleExternalEventSource]] 的返回值**同时**喂养
+   * 注入泡标签与模型面 `Message.source`（`AgentIdle` / `MailboxDrain` 的
+   * `visSource.orElse(Some("external"))`），把 `bridge` 塞进 `SelfEmittingSources`
+   * 会把模型面的 `source="bridge"` 悄悄改成 `"external"` —— 那是对模型上下文的语义
+   * 改动，超出本批（本批只削**呈现面**）。故本族在**气泡唯一发射点**
+   * [[emitInjectedUserEvent]] 门口收口，模型面逐字不动。
+   *
+   * 为什么必须削：2026-11-05「外部注入统一通道批」把可见性判据从白名单翻成总函数
+   * 后，`bridge` 也发了注入泡；而注入泡正文是**模型面** payload（
+   * `BridgeOrigin.faces(...).modelPayload`，含 `<system-reminder>以下消息来自…`
+   * 来源块）⇒ 折叠摘要（`injectSummaryLine` 跳过 reminder 包裹行后取首条正文行）
+   * 恰好取到那行来源块 = 违反作者早前硬裁定「system reminder 永远不显示在会话中」。
+   * 削掉后：一条入站 = 一行 = 一个气泡；来源块只留在 `ExternalEvent.payload`（模型面）。
+   */
+  private[agent] val SelfDisplayingInboundSources: Set[String] =
+    Set("bridge")
+
+  /**
    * Build the system-reminder message for one or more external events (sub-agent
    * results). Single events produce the existing one-payload reminder; a
    * completed sub-agent batch produces ONE message with all payloads numbered,
@@ -895,7 +924,12 @@ object AgentActor extends AgentCore with AgentSession:
      */
     askAddress: Option[String] = None
   )(using ctx: ActorContext[AgentCommand]): IO[Unit] =
-    sessionId.fold(IO.unit) { sid =>
+    // 自带显示面的入站腿（飞书/微信重复气泡批 2026-11-19）：该腿已自己落显示行 + 广播
+    // （见 [[SelfDisplayingInboundSources]]）⇒ 本门零动作，否则同一条入站会有两个气泡、
+    // 两行 `.ui.json`，且第二行是把模型面 payload（含来源块 marker）当正文渲染。
+    // 注意：本门**只**削呈现面——模型面的 ExternalEvent 注入与 `Message.source` 不受影响。
+    if SelfDisplayingInboundSources.contains(source) then IO.unit
+    else sessionId.fold(IO.unit) { sid =>
       // 气泡四段式统一批（2026-09-15，作者 12:33 令）：**唯一格式化调用点**——
       // `NotificationHeader.header` 是全仓唯一的 header 组装实现（引擎单一来源），
       // 覆盖 `BackendNamedSources` 全部源（含 CHAIN/NODE/MAIL）。产出的 header 同时
