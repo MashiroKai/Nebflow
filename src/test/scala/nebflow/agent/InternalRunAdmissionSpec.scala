@@ -180,6 +180,73 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("recovery commits and delivers a saved terminal envelope for an active subtask run") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("orphan-envelope-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-orphan-envelope", parent.id, "worker", "investigate", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        admitted <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ = assert(admitted.isRight)
+        running <- resources.subAgentTaskStore.updateRun(parent.id, task.taskId, "run-1", executionStatus = Some("running"))
+        _ = assert(running.isRight)
+        event = AgentCommand.ExternalEvent("subtask", "completed", "result from completed worker",
+          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+        pending <- SessionMailbox.scanPending(parent.id)
+        taken <- SessionMailbox.scanTaken(parent.id)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+        assertEquals((pending ++ taken).count(e => e.identity == s"${task.taskId}#run-1" && e.event == event), 1)
+    }
+  }
+
+  test("legacy subagent recovery requires a matching parent tool result") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("legacy-parent", agentName = Some("worker"))
+        task = SubAgentTask("subagent-legacy", parent.id, "worker", "inspect", "test", "running", 0,
+          System.currentTimeMillis(), None, None, "subagent", toolCallId = Some("call-1"))
+        other = task.copy(taskId = "subagent-other", toolCallId = Some("call-2"))
+        _ <- resources.subAgentTaskStore.recordTask(task)
+        _ <- resources.subAgentTaskStore.recordTask(other)
+        _ <- resources.sessionStore.saveMessagesForSession(parent.id,
+          List(Message(MessageRole.User, Right(List(nebflow.shared.ContentBlock.ToolResult("call-1", "result", Some(false)))), source = Some("tool-boundary")),
+            Message(MessageRole.User, Right(List(nebflow.shared.ContentBlock.ToolResult("call-2", "synthetic", Some(true)))), source = Some("future-synthetic"))))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        rows <- resources.subAgentTaskStore.loadTasks(parent.id)
+      yield
+        assertEquals(rows.find(_.taskId == task.taskId).map(_.status), Some("completed"))
+        assertEquals(rows.find(_.taskId == other.taskId).map(_.status), Some("running"))
+    }
+  }
+
+  test("recovery does not infer completion from a parked subtask transcript") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("parked-parent", agentName = Some("worker"))
+        child <- resources.sessionStore.createSession("parked-child", agentName = Some("worker"))
+        task = SubAgentTask(child.id, parent.id, "worker", "investigate", "test", "running", 0,
+          System.currentTimeMillis(), None, None, "subtask")
+        admitted <- resources.subAgentTaskStore.beginRun(task, "run-parked", parent.id, "nebflow")
+        _ = assert(admitted.isRight)
+        running <- resources.subAgentTaskStore.updateRun(parent.id, child.id, "run-parked", executionStatus = Some("running"))
+        _ = assert(running.isRight)
+        _ <- resources.sessionStore.saveMessagesForSession(child.id,
+          List(Message(MessageRole.Assistant, Left("interim text while awaiting child"))))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(child.id)
+        pending <- SessionMailbox.scanPending(parent.id)
+        taken <- SessionMailbox.scanTaken(parent.id)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("running"))
+        assertEquals((pending ++ taken).size, 0)
+    }
+  }
+
   test("startup delivers a reason-only failed run without a transcript and unblocks the next run") {
     fixture.use { case (resources, _, calls, _) =>
       val reason = "Actor construction failed before the first session checkpoint"

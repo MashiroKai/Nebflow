@@ -1999,18 +1999,26 @@ object BackoffSupervisor:
             completionGenerationIO.flatMap { generation =>
               val event = terminalEventFor(generation)
               resources.sessionStore.saveTerminalEnvelope(subagentId, runId, event).flatMap { reference =>
-                resources.subAgentTaskStore
-                  .completeRun(
-                    parentSessionId,
-                    subagentId,
-                    runId,
-                    if taskStatus == "completed" then "finished" else taskStatus,
-                    reason = Option.when(taskStatus != "completed")(payload),
-                    resultRef = Some(reference),
-                    diagnostic = diagnostic,
-                    notificationId = Some(if generation.isEmpty then subagentId else s"$subagentId#$generation")
-                  )
-                  .map(_.isRight)
+                def commit(attemptsLeft: Int): IO[Boolean] =
+                  resources.subAgentTaskStore
+                    .completeRun(
+                      parentSessionId,
+                      subagentId,
+                      runId,
+                      if taskStatus == "completed" then "finished" else taskStatus,
+                      reason = Option.when(taskStatus != "completed")(payload),
+                      resultRef = Some(reference),
+                      diagnostic = diagnostic,
+                      notificationId = Some(if generation.isEmpty then subagentId else s"$subagentId#$generation")
+                    )
+                    .map(_.isRight)
+                    .handleErrorWith { error =>
+                      if attemptsLeft > 1 then
+                        logger.warn(s"terminal commit failed for $subagentId; retrying: ${error.getMessage}") *>
+                          commit(attemptsLeft - 1)
+                      else IO.raiseError(error)
+                    }
+                commit(3)
               }
             }
           case None =>

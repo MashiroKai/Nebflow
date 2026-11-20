@@ -132,7 +132,8 @@ object BlockingSubagent:
                   spawnedAt = System.currentTimeMillis(),
                   completedAt = None,
                   lastError = None,
-                  source = "subagent"
+                  source = "subagent",
+                  toolCallId = Option(ctx.toolCallId).filter(_.nonEmpty)
                 )
               )
               .handleErrorWith(e => logger.warn(s"subAgentTaskStore.recordTask failed: ${e.getMessage}"))

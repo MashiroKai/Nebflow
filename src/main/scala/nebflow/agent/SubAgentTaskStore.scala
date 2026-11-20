@@ -607,6 +607,24 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
       case None => IO.unit
     }
 
+  /** Reconcile only the unchanged legacy row; never overwrite cancellation or another run. */
+  def completeDeliveredLegacy(parent: String, taskId: String, toolCallId: String): IO[Boolean] =
+    withLock {
+      val rows = readTasksSync(parent)
+      rows.find(_.taskId == taskId) match
+        case Some(row) if row.source == "subagent" && row.runId.isEmpty && row.status == "running" &&
+            row.toolCallId.contains(toolCallId) =>
+          val now = System.currentTimeMillis()
+          val updated = row.copy(status = "completed", completedAt = Some(now), statusAt = Some(now),
+            committedRevision = Some(nextRevision(row)))
+          writeTasksSync(parent, rows.map(t => if t.taskId == taskId then updated else t))
+          Some(updated)
+        case _ => None
+    }.flatMap {
+      case Some(row) => fireWriteHook(row).as(true)
+      case None => IO.pure(false)
+    }
+
   /** Remove a task (called after successful completion + grace period). */
   def removeTask(parentSessionId: String, taskId: String): IO[Unit] =
     withLock {
