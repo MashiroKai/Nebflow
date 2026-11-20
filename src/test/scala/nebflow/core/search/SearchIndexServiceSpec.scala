@@ -269,6 +269,24 @@ class SearchIndexServiceSpec extends CatsEffectSuite:
     }
   }
 
+  /**
+   * NFC/NFD 两种书写形态归同一条消息（stableId 归一）。作者 2026-11-21 晨间裁定
+   * 「速度优先、废除并集」后，检索由 FTS5 unicode61 承担，而 unicode61 **折叠变音
+   * 符号**（"é" 与 "e" 落同一 token）⇒ 查询 "e" 两侧都命中，归并为 1 条消息、
+   * occurrenceCount=2（旧并集实现下只有原文含 ASCII "e" 的那份命中 ⇒ 1/1）。
+   */
+  test("canonical equivalents collapse to one message with both occurrences counted") {
+    seed(List(doc("raw-unicode-equivalence", 0, "message", 42L, "é"),
+      doc("raw-unicode-equivalence", 1, "message", 42L, "e\u0301")))
+    val composed = SearchIndexService.stableId("raw-unicode-equivalence", "message", 42L, "é", "")
+    val decomposed = SearchIndexService.stableId("raw-unicode-equivalence", "message", 42L, "e\u0301", "")
+    assertEquals(composed, decomposed, "NFC/NFD 必归同一 stableId")
+    val result = SearchIndexService.query(face, q("e", sid = Some("raw-unicode-equivalence")))
+      .unsafeRunSync().toOption.get
+    assertEquals(result.total, 1, "两种书写形态是同一条消息")
+    assertEquals(result.hits.map(h => (h.occurrenceCount, h.stableId)), List((2, composed)))
+  }
+
   test("cursor detects changes and returns a fresh first page") {
     val ds = (0 until 101).toList.map(i => doc("cursor-race", i, "message", i + 1L, s"cursor-race-$i"))
     SearchIndexService.unsafeInsertDocs(face, ds.take(100))
