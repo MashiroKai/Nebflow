@@ -1712,7 +1712,7 @@ object BackoffSupervisor:
             val journal =
               ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, subagentId)
             IO.blocking((journal.openRequests(), journal.pendingRecovery())).flatMap { case (open, prepared) =>
-              open.traverse_(slot => IO.blocking(journal.closeNoReport(slot))) *>
+              open.traverse_(slot => IO.blocking(journal.closeNoReportIfOpen(slot))) *>
                 prepared.traverse_ { case (id, body) =>
                   // 恢复重投 = 同一构造点（[[ChildReport.event]]）+ 同一持久身份：
                   // 崩溃前已投过的进度按原 id 重投，父端既有判重把它折叠成一件

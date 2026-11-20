@@ -2073,7 +2073,12 @@ private[agent] object AgentProcessing:
    * 槽按 no-report 落终态。不这么做，`ChildReportJournal.beginRequest` 的
    * require（open 未恢复不得分配）会让重启后的首个 turn 直接失败——重启语义本身
    * 没有错，缺的是这条收口。与 [[BackoffSupervisor]] respawn 腿同一口径（open ⇒
-   * no-report）；失败只记 WARN：收口失败不该再阻断重启（下一次 respawn 会重试）。
+   * no-report）。
+   *
+   * 逐槽容错（restart-recovery 批 2026-11-21）：取消是**竞态**的——被取消的 turn 自己
+   * 也在收尾它的槽，于是本腿可能在 `openRequests()` 与收口之间看到槽已被对方关掉。
+   * 故一律走幂等收口 [[ChildReportJournal.closeNoReportIfOpen]]（终态之后再收口是空操作，
+   * 不是错误）；整体失败也不阻断重启（fail-soft）。
    */
   private def closeAbandonedChildReports(state: AgentState): IO[Unit] =
     state.sessionId.filter(_.nonEmpty) match
@@ -2082,7 +2087,7 @@ private[agent] object AgentProcessing:
         IO.blocking {
           val journal =
             ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid)
-          journal.openRequests().foreach(journal.closeNoReport)
+          journal.openRequests().foreach(journal.closeNoReportIfOpen)
         }.handleErrorWith(e =>
           logger.warn(s"child-report open-slot close on restart failed for ${sid}: ${e.getMessage}")
         )
