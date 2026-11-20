@@ -38,8 +38,21 @@ object DelegateTerminalTtl:
   /** 终态 TTL（ms）——唯一定义点在 `Defaults.DelegateTerminalTtlMs`（7 天）。 */
   val TtlMs: Long = Defaults.DelegateTerminalTtlMs
 
-  /** 任务行终态值域（与 MailboxBootSweep.terminalDelegateRows 同族）。 */
-  val TerminalRowStatuses: Set[String] = Set("completed", "failed", "cancelled")
+  /** 任务行终态值域（与 MailboxBootSweep.terminalDelegateRows 同族）。
+   *
+   *  **`pending-recovery` 在册（死行收口批 2026-11-21 · 作者报障「面板大量陈旧
+   *  死 delegate 行，既有两支修复为什么没生效」）：** 三支既有修复
+   *  （fix/agent-panel-stale / -v2 / feat/agent-panel-active-bit）都只在**呈现面**
+   *  补齐了 `pending-recovery` 档位——把行标成「重启中断 · 待恢复」、摘掉运行时钟。
+   *  但**收口面**（本值域）从没把它算作终态 ⇒ [[rowVerdict]] 一律判 InFlight ⇒
+   *  这些行永久在飞：既不被 TTL 清理、也不进任何收殓视野。呈现修好了，行本身没有
+   *  任何出口，于是「标注为待恢复」变成了「永久待恢复」——这就是修复没生效的原因。
+   *
+   *  语义上 `pending-recovery` 就是终态：执行已停（SubAgentStartupRecovery 写它时
+   *  的原话是 "Execution interrupted; manual recovery required"），只是等人来决定
+   *  复活还是放走。给它 7 天 TTL 与 completed/failed/cancelled 同等待遇，超期即清
+   *  ——「待恢复」不能是无限期。 */
+  val TerminalRowStatuses: Set[String] = Set("completed", "failed", "cancelled", "pending-recovery")
 
   sealed trait Verdict:
     /** 命中的终态锚（时刻 + 锚名；InFlight = None）——审计/spec greppable 面。 */

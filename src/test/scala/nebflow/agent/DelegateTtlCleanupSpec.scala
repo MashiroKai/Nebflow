@@ -309,6 +309,23 @@ class DelegateTtlCleanupSpec extends CatsEffectSuite:
       DelegateTerminalTtl.rowVerdict(mkTask("t3", "p", status = "restarting", completedAt = now - 100L * Day), now),
       DelegateTerminalTtl.InFlight
     )
+    // ── 死行收口批（2026-11-21）：pending-recovery 是**终态**，不再永久在飞 ──
+    // 三支既有修复（fix/agent-panel-stale / -v2 / feat/agent-panel-active-bit）只在呈现面
+    // 补了这个档位（标「重启中断 · 待恢复」、摘运行时钟），收口面从没认它 ⇒ 行永久在飞。
+    // 执行已停（写入时的原话 "Execution interrupted; manual recovery required"）⇒ 同享
+    // 7 天 TTL，超期即清，不能是无限期待恢复。
+    assertEquals(
+      DelegateTerminalTtl.rowVerdict(
+        mkTask("t4", "p", status = "pending-recovery", completedAt = now - 100L * Day), now).isExpired,
+      true,
+      "待恢复 100 天 ⇒ 到期（旧口径这里是 InFlight，一行永久挂着）"
+    )
+    assertEquals(
+      DelegateTerminalTtl.rowVerdict(
+        mkTask("t5", "p", status = "pending-recovery", completedAt = now - 60_000L), now).isExpired,
+      false,
+      "待恢复 1 分钟 ⇒ 未到期（刚重启中断的行要留给人决定）"
+    )
   }
 
   // ── 改后绿 E：终态锚解析（保存态 > 任务行 > 登记兜底）─────────────────

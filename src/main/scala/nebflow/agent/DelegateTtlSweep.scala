@@ -49,14 +49,18 @@ object DelegateTtlSweep:
     /** 置顶（阶段③）放行的 delegate id：终态但不许清（七天物理清理零动作）。 */
     pinnedKept: List[String] = Nil,
     /** 到期但清理链部分失败保留现场的 delegate id（fail-soft 留痕）。 */
-    keptOnError: List[(String, String)] = Nil
+    keptOnError: List[(String, String)] = Nil,
+    /** 孤儿任务行已剪行（死行收口批 2026-11-21：无 registry 记录的到期行）。 */
+    orphanRowsPruned: List[String] = Nil
   ):
 
     def hasWork: Boolean =
-      expired.nonEmpty || inFlightKept.nonEmpty || pinnedKept.nonEmpty || keptOnError.nonEmpty
+      expired.nonEmpty || inFlightKept.nonEmpty || pinnedKept.nonEmpty || keptOnError.nonEmpty ||
+        orphanRowsPruned.nonEmpty
 
     def summary: String =
       s"expired=${expired.size} taskRowsPruned=${taskRowsPruned.size} recordsRemoved=${recordsRemoved.size} " +
+        s"orphanRowsPruned=${orphanRowsPruned.size} " +
         s"inFlightKept=${inFlightKept.size} pinnedKept=${pinnedKept.size} keptOnError=${keptOnError.size}"
 
   end Report
@@ -127,8 +131,64 @@ object DelegateTtlSweep:
         }
       }
       report <- ref.get
+      // ── 孤儿任务行收口（死行收口批 2026-11-21）──────────────────────────────
+      // 为什么另立一条腿：上面整条链按 registry 记录编排——**没有登记条目**的任务行
+      // 完全不在它的视野里。落盘实测（2026-11-21）：114 条 pending-recovery 行中有
+      // 93 条的 rootSessionId 为空、且没有任何 registry 记录 ⇒ 这些行既不会被清理、
+      // 也不会进任何收殓视野，只能永久挂在面板上。它们是「行还在、会话早没了」的尸体，
+      // 与 registry 记录是否还在无关，因此必须按**行本身**判到期。
+      // 判据仍是单源 [[nebflow.core.delegate.DelegateTerminalTtl.rowVerdict]]（终态值域
+      // 已含 pending-recovery）＋ 同一把 7 天尺子；保护面（protected/unknown）与活体
+      // actor 照旧零触碰。
+      orphanReport <- sweepOrphanRows(resources, rowsById, records.map(_.id).toSet, live, now)
+      merged = report.copy(orphanRowsPruned = orphanReport.orphanRowsPruned)
       _ <-
-        if report.hasWork then logger.info(s"[delegate-ttl] ${report.summary}")
+        if merged.hasWork then logger.info(s"[delegate-ttl] ${merged.summary}")
         else IO.unit
-    yield report
+    yield merged
+
+  /**
+   * 孤儿任务行收口：到期且**无 registry 记录**的行剪掉。
+   * 三条守卫（任一命中 ⇒ 零触碰）：
+   *   ① 该 id 有登记条目 —— 交给上面的主链（它还要管置顶/工作区/合并队列）；
+   *   ② 活体 actor 在册 —— 在飞会话绝不清理；
+   *   ③ 执行保护未知或为保护态 —— 保守留现场（fail-closed）。
+   */
+  private def sweepOrphanRows(
+    resources: SharedResources,
+    rowsById: Map[String, nebflow.shared.SubAgentTask],
+    recordIds: Set[String],
+    live: Set[String],
+    now: Long
+  ): IO[Report] =
+    val orphans = rowsById.values.toList.filter { t =>
+      !recordIds.contains(t.taskId) && !live.contains(t.taskId) &&
+        !nebflow.core.delegate.DelegateTerminalTtl.rowVerdict(t, now).equals(
+          nebflow.core.delegate.DelegateTerminalTtl.InFlight)
+    }
+    if orphans.isEmpty then IO.pure(Report())
+    else
+      Ref.of[IO, Report](Report()).flatMap { ref =>
+        orphans.traverse_ { t =>
+          resources.executionProtection(t.taskId).flatMap {
+            case nebflow.shared.ExecutionProtection.Unprotected =>
+              resources.executionCommitPort.withUnprotectedSession(t.taskId) {
+                val v = nebflow.core.delegate.DelegateTerminalTtl.rowVerdict(t, now)
+                if !v.isExpired then IO.unit
+                else
+                  resources.subAgentTaskStore.removeTask(t.parentSessionId, t.taskId) *>
+                    ref.update(r => r.copy(orphanRowsPruned = r.orphanRowsPruned :+ t.taskId)) *>
+                    logger
+                      .info(
+                        s"[delegate-ttl] orphan task row '${t.taskId}' (parent=${t.parentSessionId}, " +
+                          s"status=${t.status}) expired the terminal TTL with no registry record — pruned"
+                      )
+                      .as(())
+              }.handleErrorWith(e =>
+                logger.warn(s"[delegate-ttl] orphan prune failed for ${t.taskId}: ${e.getMessage}").as(())
+              )
+            case _ => IO.unit   // 保护态/未知：留现场
+          }
+        } *> ref.get
+      }
 end DelegateTtlSweep
