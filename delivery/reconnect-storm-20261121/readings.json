@@ -1,0 +1,37 @@
+{
+  "baseUrl": "http://127.0.0.1:8177",
+  "before": {
+    "cold": {
+      "rows": 2,
+      "digests": 0,
+      "detail": 282,
+      "children": 282,
+      "total": 604
+    },
+    "reconnect": {
+      "rows": 2,
+      "digests": 0,
+      "detail": 282,
+      "children": 282,
+      "total": 603
+    },
+    "interceptions": 2
+  },
+  "after": {
+    "cold": {
+      "rows": 2,
+      "digests": 2,
+      "detail": 48,
+      "children": 32,
+      "total": 125
+    },
+    "reconnect": {
+      "rows": 2,
+      "digests": 2,
+      "detail": 48,
+      "children": 32,
+      "total": 125
+    },
+    "interceptions": 2
+  }
+}
