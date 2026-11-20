@@ -480,6 +480,22 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("resource-free recovery reconciles an active run from its saved terminal envelope") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("resource-free-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-resource-free", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        _ <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        event = AgentCommand.ExternalEvent("subtask", "completed", "answer",
+          JsonObject("parentSessionId" -> parent.id.asJson, "taskRunId" -> "run-1".asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.reconcileWithoutResources(resources.subAgentTaskStore, resources.sessionStore)
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+    }
+  }
+
   test("conflicting completion debt and envelope require manual review") {
     fixture.use { case (resources, _, _, _) =>
       for

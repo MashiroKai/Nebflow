@@ -257,6 +257,7 @@ object SubAgentStartupRecovery:
       // 完成未报告收尾腿（本批 V5/审计 D8）先于标记/对账：干完不报的会话在
       // 「重启打断旗」落旗之前就被收尾，不会被误标成「中断」。
       recoverPendingInternal(store, sessionStore, revival.map(_.resources)) *>
+        (if revival.isEmpty then reconcileWithoutResources(store, sessionStore) else IO.unit) *>
         finalizeCompletedUnreported(store, sessionStore, revival.map(_.resources)).void *>
         markInterruptedRecords(store).void *>
         nebflow.core.delegate.DelegateLedgerReconcile.reconcileInterruptedRecords(store).void
@@ -457,6 +458,38 @@ object SubAgentStartupRecovery:
       case _ => IO.unit
 
   /** Replay the exact saved terminal envelope; never synthesize a success report. */
+  /** Evidence-only reconciliation for boots without shared resources: no marking, no mailbox work. */
+  private[agent] def reconcileWithoutResources(store: SubAgentTaskStore, sessionStore: SessionStore): IO[Unit] =
+    reconcileWithoutResourcesImpl(store, sessionStore)
+
+  private def reconcileWithoutResourcesImpl(store: SubAgentTaskStore, sessionStore: SessionStore): IO[Unit] =
+    store.findAllTasks().flatMap(_.filter(t =>
+      isReconciliationRow(t) && t.runId.nonEmpty && !t.executionStatus.contains("interrupted")
+    ).traverse_ { task =>
+      val run = task.runId.get
+      val debtOnly = nebflow.core.mail.CompletionDebtStore.pendingManaged(task.parentSessionId, task.taskId, run, task.source)
+        .map(_.map { debt =>
+          val text = debt.messages.reverse.find(_.role == MessageRole.Assistant).map(_.textContent.trim).getOrElse("")
+          val payload = if text.nonEmpty && text != Defaults.MaxTokensStubText then s"\"${task.description}\":\n$text"
+            else s"\"${task.description}\" (no text output)"
+          AgentCommand.ExternalEvent(task.source, "completed", payload,
+            JsonObject("parentSessionId" -> task.parentSessionId.asJson, "taskRunId" -> run.asJson,
+              "description" -> task.description.asJson, "agentName" -> task.agentName.asJson,
+              "completionMessages" -> debt.messages.asJson, "completionGeneration" -> run.asJson), Some(task.taskId))
+        })
+      (sessionStore.loadTerminalEnvelope(task.taskId, run), debtOnly).tupled.flatMap {
+        case (Some(event), _) if event.eventType == "completed" && validTerminalEnvelope(task, run, event) =>
+          sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap(ref =>
+            store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
+              notificationId = Some(s"${task.taskId}#$run")).void)
+        case (None, Some(event)) =>
+          sessionStore.saveTerminalEnvelope(task.taskId, run, event).flatMap(ref =>
+            store.completeRun(task.parentSessionId, task.taskId, run, "finished", resultRef = Some(ref),
+              notificationId = Some(s"${task.taskId}#$run")).void)
+        case _ => IO.unit
+      }.handleErrorWith(e => logger.warn(s"[startup-recovery] resource-free reconciliation failed for ${task.taskId}: ${e.getMessage}"))
+    })
+
   private[agent] def recoverPendingInternal(
     store: SubAgentTaskStore,
     sessionStore: SessionStore,
