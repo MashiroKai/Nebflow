@@ -134,7 +134,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
           parentSessionId = parentSid,
           resources = resources,
           initialPrompt = "do the thing",
-          source = "subtask"
+          source = "delegate"
         ),
         "supervisor-1"
       )
@@ -198,7 +198,7 @@ class SubAgentTaskStatusSpec extends CatsEffectSuite:
     yield assertEquals((pending ++ taken).count(_.identity == s"$childSid#run-1"), 1)).guarantee(system.stopAll)
   }
 
-  test("Failed event marks the task failed under the parent session") {
+  test("historical subtask failed event marks the task failed under the parent session") {
     val system = ActorSystem("subagent-status-test")
     val tmp = os.temp.dir()
     val parentSid = "parent-session-2"

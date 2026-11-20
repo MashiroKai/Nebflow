@@ -589,8 +589,8 @@ class PromptSectionsSpec extends munit.FunSuite:
     withIsolatedDataRoot {
       val root = buildConditionalBlocks(PromptContext(isRootAgent = true))
       val dispatcher = buildConditionalBlocks(PromptContext(isRootAgent = false))
-      val worker = buildConditionalBlocks(PromptContext(isSubTaskWorker = true, depth = 1))
-      for (who, blocks) <- Seq("root" -> root, "dispatcher" -> dispatcher, "subtask-worker" -> worker) do
+      val child = buildConditionalBlocks(PromptContext(depth = 1))
+      for (who, blocks) <- Seq("root" -> root, "dispatcher" -> dispatcher, "child" -> child) do
         assert(
           blocks.contains(nebflow.shared.Defaults.TimeDisciplineRule),
           s"$who session systemStable must carry the time discipline section"
@@ -682,21 +682,15 @@ class PromptSectionsSpec extends munit.FunSuite:
       )
     }
 
-  test("文档溯源段不被剥离路径剥掉（stripAllMigrated / SubTaskPrompt.stripTeamContent）"):
+  test("文档溯源段不被 stripAllMigrated 剥掉"):
     withIsolatedDataRoot {
       // CRLF 无关化：Windows checkout（autocrlf=true）会让源码三引号串携带 \r，
       // linesIterator 系剥离会归一掉 \r —— 测的是「段不被剥」，不是行尾字节。
       val trace = PromptSections.traceSection.replace("\r\n", "\n")
-      // 文本级剥离对整段无效：stripAllMigrated 只剥 Voice Output；
-      // stripTeamContent 剥 Teams & Flows / Team Catalog 块 + 团队交互模式行，
-      // 溯源段的段头与正文行都不匹配任何 stripPattern。
+      // stripAllMigrated 不剥离文档溯源段。
       assertEquals(stripAllMigrated(trace), trace)
-      assertEquals(SubTaskPrompt.stripTeamContent(trace), trace)
 
-      // 实证：复现 AgentCore.buildSystemPrompt 的剥离顺序
-      // （rawPrompt → isSubTaskWorker 则 stripTeamContent → stripAllMigrated
-      //  → 拼 buildConditionalBlocks）——剥离只作用于 agent system.md，
-      // 条件块（含 order 350）在剥离之后拼接，故必达。
+      // 条件块在 stripAllMigrated 之后拼接，故溯源段必达。
       val rawSystemMd =
         """## Team Workflow
           |
@@ -707,11 +701,6 @@ class PromptSectionsSpec extends munit.FunSuite:
           |## Domain Knowledge
           |
           |- 保持最小改动。""".stripMargin
-      val cleanedForWorker = stripAllMigrated(SubTaskPrompt.stripTeamContent(rawSystemMd))
-      val subtaskPrompt = assembleSystemPrompt(
-        cleanedForWorker,
-        buildConditionalBlocks(PromptContext(isSubTaskWorker = true, voiceEnabled = false))
-      )
       val teamPrompt = assembleSystemPrompt(
         stripAllMigrated(rawSystemMd),
         buildConditionalBlocks(
@@ -724,14 +713,8 @@ class PromptSectionsSpec extends munit.FunSuite:
           )
         )
       )
-      assert(subtaskPrompt.contains("## Document provenance"), s"SubTask 路径不得剥掉溯源段：$subtaskPrompt")
-      assert(subtaskPrompt.contains(traceBodyLine), s"SubTask 路径正文行必达：$subtaskPrompt")
       assert(teamPrompt.contains("## Document provenance"), s"team 路径不得剥掉溯源段：$teamPrompt")
       assert(teamPrompt.contains(traceBodyLine), s"team 路径正文行必达：$teamPrompt")
-      // 对照组：剥离确实生效（团队交互内容被移除）——排除「剥离根本没跑」的假绿。
-      assert(!subtaskPrompt.contains("你的团队 Lead 汇报"), "对照组：团队交互行应已剥离")
-      assert(!subtaskPrompt.contains("## Teams & Flows"), "对照组：Teams & Flows 块应已剥离")
-      assert(!rawSystemMd.equals(cleanedForWorker), "对照组：剥离确有差异")
     }
 
   // order-360 段（node terminal report 兜底段）已随终态申报工具通道整体退役删除：

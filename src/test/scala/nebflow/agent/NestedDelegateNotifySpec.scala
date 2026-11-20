@@ -220,8 +220,9 @@ class NestedDelegateNotifySpec extends CatsEffectSuite:
 
   end seedAgents
 
-  // KNOWN-RETIRED (2026-09-06, 作者拍板豁免): 本用例测嵌套 Delegate 完成通知（#25 死信），
-  // Delegate 已架构退役（非 bug），豁免为只报不 fail（保留可观测性）；不改写 fixture、不删用例。
+  // Historical ignored fixture: the nested grandchild is created with the retired
+  // SubTask tool, so this topology is no longer reachable. Delegate itself remains live.
+  // The previous author exemption is retained; this is not active regression evidence.
   test("#25: grandchild result reaches the ROOT session — no dead-letter, debt paid with final text".ignore) {
     val system = ActorSystem("nested-delegate-e2e")
     val tmp = os.temp.dir()

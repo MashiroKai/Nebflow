@@ -108,10 +108,8 @@ object TurnBoundaryDrains:
    */
   def countBarrierIncrements(results: List[(nebflow.shared.ToolCall, nebflow.shared.ToolExecResult)]): Int =
     results.count { (call, r) =>
-      !r.isError && (
-        call.name == "SubTask" ||
-          (call.name == "Delegate" && call.input("lifecycle").flatMap(_.asString).forall(_ != "persistent"))
-      )
+      !r.isError && call.name == "Delegate" &&
+        call.input("lifecycle").flatMap(_.asString).forall(_ != "persistent")
     }
 
   /**

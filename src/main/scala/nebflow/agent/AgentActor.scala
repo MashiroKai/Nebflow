@@ -319,7 +319,7 @@ object AgentActor extends AgentCore with AgentSession:
             s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
               s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
               s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
-              s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
+              s" the same task with an available Delegate or Subagent tool.\n</system-reminder>"
           else ""
         s"${i + 1}. ${e.payload}$hint"
       }
@@ -340,7 +340,7 @@ object AgentActor extends AgentCore with AgentSession:
             s"\n<system-reminder>\nA sub-agent task${if agentName.nonEmpty then s" ($agentName)" else ""}" +
               s"${if failedSession.nonEmpty then s" [session=$failedSession]" else ""} failed" +
               s" (failure type: $failureType). This is a retryable error — consider re-delegating" +
-              s" the same task with the Delegate or SubTask tool.\n</system-reminder>"
+              s" the same task with an available Delegate or Subagent tool.\n</system-reminder>"
           else ""
         ContentBlock.Text(s"<system-reminder>\n${i + 1}. ${e.payload}$hint\n</system-reminder>") :: e.blocks
           .getOrElse(Nil)
@@ -1030,7 +1030,6 @@ object AgentActor extends AgentCore with AgentSession:
      * spawn sites still get a sane bucket (P1 best-effort behavior).
      */
     rootSessionId: String = "",
-    isSubTaskWorker: Boolean = false,
     /** D11 交互豁免：freezeExempt 会话不参与冻结。 */
     freezeExempt: Boolean = false,
     /** #406: one-shot FlowExecute node — leaf tools stripped (see SessionContext.isFlowNode). */
@@ -1179,7 +1178,6 @@ object AgentActor extends AgentCore with AgentSession:
                 gitBranch = gitBranch,
                 expectsMail = expectsMail,
                 rootSessionId = effectiveRootSessionId,
-                isSubTaskWorker = isSubTaskWorker,
                 freezeExempt = freezeExempt,
                 isFlowNode = isFlowNode,
                 userFacingNode = userFacingNode,

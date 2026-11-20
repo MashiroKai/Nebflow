@@ -112,7 +112,7 @@ object AgentDefCategoryBackdoorProbe:
         case None =>
           // 非收敛对照：category=team 必须原样落 legacyFixedTools（parity）
           val ok = defn.category == "team" &&
-            fixed == AgentCore.BaseTools ++ Set("Mail", "SubTask") ++ AgentCore.TeamTaskTools &&
+            fixed == AgentCore.BaseTools ++ Set("Mail") ++ AgentCore.TeamTaskTools &&
             identityOn
           if !ok then red = true
           println(s"   [control]   expected         = category=team, legacyFixedTools(team), identity段非空")

@@ -28,7 +28,6 @@ class Phase2dToolRefactorSpec extends FunSuite:
     def allowed(
       defn: AgentDef,
       depth: Int = 0,
-      isSubTaskWorker: Boolean = false,
       isFlowNode: Boolean = false,
       isTeamLead: Boolean = false,
       userFacingNode: Boolean = false,
@@ -39,7 +38,6 @@ class Phase2dToolRefactorSpec extends FunSuite:
       buildAllowedToolSet(
         defn,
         depth,
-        isSubTaskWorker,
         isFlowNode,
         isTeamLead,
         userFacingNode,
@@ -171,7 +169,7 @@ class Phase2dToolRefactorSpec extends FunSuite:
     // 2026-09-06 工具面裁撤批：FlowExecute（team 固定面）与 FlowReport（flow
     // 固定面）移出——legacy 双轨路径本身保留至阶段 3。
     val team = AgentCore.legacyFixedTools(mkDef("backend").copy(category = "team"))
-    assertEquals(team, AgentCore.BaseTools + "Mail" + "SubTask" ++ AgentCore.TeamTaskTools)
+    assertEquals(team, AgentCore.BaseTools + "Mail" ++ AgentCore.TeamTaskTools)
     val flow = AgentCore.legacyFixedTools(mkDef("node").copy(category = "flow"))
     assertEquals(flow, AgentCore.BaseTools, "flow 固定面零 FlowReport（2026-09-06 裁撤批）")
     val solo = AgentCore.legacyFixedTools(mkDef("Coder"))

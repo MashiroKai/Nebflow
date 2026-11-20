@@ -45,7 +45,7 @@ object AgentControlTool extends Tool:
   val name = "AgentControl"
 
   val description =
-    """Inspect and control background agent sessions — the sub-agents spawned via Delegate/SubTask, ephemeral Mail runners, and other live sessions in this instance.
+    """Inspect and control background agent sessions — Delegate and Subagent sessions, ephemeral Mail runners, and other live sessions in this instance. SubTask is a retained session kind, not an available tool.
 
 Actions:
 - **list**: table of all live background agents (sessionId, address, name, kind, status, stuck?, phase, uptime, idle time, retry count, task). Use this FIRST when a sub-agent is silent or you suspect it is stuck — "stuck?" marks Processing agents that either produced no agent-side event (LLM chunk / tool batch) for >10min, or have a single tool call running for >10min inside an unfinished turn (same judgement as the automatic watcher — process CPU is irrelevant to it). "phase" shows the in-flight tool call (name + elapsed), which is what tells you whether the agent is executing a tool or has gone silent. **"address" is the Mail continuation address of that row** (delegate:<sessionId> / kernel:<id> / node:<nodeName>) — paste it verbatim into Mail(address=…) to hand that agent a supplement; "name" is the batch's short name (the Delegate `name` parameter, same label the console row shows) so you can tell batches apart at a glance.

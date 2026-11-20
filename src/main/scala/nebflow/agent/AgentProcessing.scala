@@ -919,7 +919,7 @@ private[agent] object AgentProcessing:
           ) ++ imageMsgs ++ eventMessages ++ immediateMessages ++ mailMessages ++
             humanFrameMessages ++ loopReminderMsgs
         // Increment delegate count for Delegate/SubTask calls
-        val delegateIncrement = toolCalls.count(c => c.name == "Delegate" || c.name == "SubTask")
+        val delegateIncrement = toolCalls.count(_.name == "Delegate")
         val newDelegateCount = state.delegateCount + delegateIncrement
         // Sub-agent barrier: each SUCCESSFULLY spawned ephemeral Delegate or
         // any SubTask in this turn adds one outstanding result slot. Failed

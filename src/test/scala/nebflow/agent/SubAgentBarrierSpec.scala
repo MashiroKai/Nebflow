@@ -124,9 +124,9 @@ class SubAgentBarrierSpec extends FunSuite:
     assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("Delegate", Some("persistent")) -> ok)), 0)
   }
 
-  test("countBarrierIncrements: SubTask always counts") {
-    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("SubTask") -> ok)), 1)
-    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("SubTask", Some("persistent")) -> ok)), 1)
+  test("countBarrierIncrements: retired SubTask never adds a slot") {
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("SubTask") -> ok)), 0)
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(List(call("SubTask", Some("persistent")) -> ok)), 0)
   }
 
   test("countBarrierIncrements: failed spawns never count") {
@@ -139,11 +139,11 @@ class SubAgentBarrierSpec extends FunSuite:
     val batch = List(
       call("Delegate") -> ok, // 1 (ephemeral)
       call("Delegate", Some("persistent")) -> ok, // 0 (persistent excluded)
-      call("SubTask") -> ok, // 1
+      call("SubTask") -> ok, // 0 (retired)
       call("Delegate") -> err, // 0 (failed)
       call("Read") -> ok // 0 (not a sub-agent)
     )
-    assertEquals(TurnBoundaryDrains.countBarrierIncrements(batch), 2)
+    assertEquals(TurnBoundaryDrains.countBarrierIncrements(batch), 1)
   }
 
 end SubAgentBarrierSpec

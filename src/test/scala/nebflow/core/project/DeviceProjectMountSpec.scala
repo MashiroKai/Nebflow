@@ -126,7 +126,6 @@ class DeviceProjectMountSpec extends CatsEffectSuite:
         gitBranch: Option[String] = None,
         expectsMail: Boolean = false,
         rootSessionId: String = "",
-        isSubTaskWorker: Boolean = false,
         freezeExempt: Boolean = false,
         isFlowNode: Boolean = false,
         userFacingNode: Boolean = false,

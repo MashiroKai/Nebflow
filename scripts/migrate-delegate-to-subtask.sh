@@ -15,6 +15,10 @@
 # 回滚：还原 ~/.nebflow/teams/*/agents/*/agent.json + system.md
 #   （这些文件在 git 中可追踪，用 git checkout 还原）
 
+# Historical migration only: SubTask is retired; use the Subagent primitive.
+printf '%s\n' 'This historical migration is disabled: SubTask is retired; use Subagent.' >&2
+exit 1
+
 set -euo pipefail
 
 NEBFLOW_HOME="${NEBFLOW_HOME:-$HOME/.nebflow}"

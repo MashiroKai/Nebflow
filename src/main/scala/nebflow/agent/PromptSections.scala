@@ -95,8 +95,6 @@ object PromptSections:
      * resolved per turn in ContextRefresher.resolveAgentsMd).
      */
     agentsMd: Option[String] = None,
-    /** True when this agent is a SubTask worker (leaf execution pipeline). */
-    isSubTaskWorker: Boolean = false,
     /** 轨道二 #5: dedicatedAgents guardrails flag (hot-read per turn). */
     guardrailsOn: Boolean = false,
     /** 轨道二 #5: true when this agent is a flow DAG node (#406). */
@@ -444,11 +442,10 @@ object PromptSections:
     // output comes first). Only when dedicatedAgents guardrails are enabled:
     // T1 flow nodes get the strict machine-consumer clause (or its
     // userFacing dual-audience variant); T2 team members (non-lead,
-    // non-fork) get the Mail-report variant. SubTask workers keep their own
-    // Worker Identity Block (order 999).
+    // non-fork) get the Mail-report variant.
     PromptSection.dynamic(
       395,
-      condition = ctx => ctx.guardrailsOn && !ctx.isSubTaskWorker,
+      condition = ctx => ctx.guardrailsOn,
       renderer = ctx =>
         if ctx.isFlowNode then flowWorkerIdentityBlock(ctx.userFacingNode)
         else if !ctx.isTeamLead && ctx.agentCategory == "team" then teamMemberIdentityBlock
@@ -567,8 +564,7 @@ External executors receive the task text only — no platform tools or plugins a
     )
     // --- 阶段 2d（§D.1-14/§D.2）：原 order 999 Worker Identity Block 注入已
     // 删除——worker 身份由 general 模版 §C.4 第 4 节（无团队上下文）取代；
-    // 新模型 node 会话自带该节，legacy SubTask worker 的硬边界仍由
-    // buildAllowedToolSet 的 isSubTaskWorker 机制剥离保证（提示词段仅余冗余）。
+    // 新模型 node 会话自带该节；SubTask 工具与其 worker 路径已退役。
   )
 
   // ============================================================
@@ -941,55 +937,3 @@ object MountedProjectList:
     else (added.map("+ " + _) ++ removed.map("- " + _)).mkString("\n")
 
 end MountedProjectList
-
-/**
- * Prompt helpers for SubTask workers (Delegate split, 方案 A).
- *
- * A worker inherits its parent's system.md for domain knowledge, but team
- * interaction content must be stripped — the worker has no team, no Mail,
- * no reporting chain. Stripping is heuristic (text level); the hard
- * behavioral guarantees come from the tool-set filtering (AgentCore) and
- * the Worker Identity Block (order 999).
- */
-object SubTaskPrompt:
-
-  /** Line-level patterns (lowercased match, case-insensitive) that remove a line. */
-  private val stripPatterns: List[String] = List(
-    "mail(",
-    "mail the",
-    "mail \"",
-    "mail '",
-    "mail 队友",
-    "notify manager",
-    "report to manager",
-    "escalate to manager",
-    "manager 汇报",
-    "通知 manager",
-    "报告 manager",
-    "向 manager",
-    "联系 manager",
-    "团队汇报",
-    "团队成员",
-    "你的团队",
-    "团队协作",
-    "delegate(",
-    "subtask(" // 子 agent 不需要再委派
-  )
-
-  /**
-   * Strip team interaction content from a team agent's system.md, keeping its
-   * domain knowledge. 1) removes whole `## Section` blocks (Teams & Flows /
-   * Team Catalog); 2) removes individual lines matching team-interaction
-   * patterns (case-insensitive).
-   */
-  def stripTeamContent(prompt: String): String =
-    val s1 = PromptSections.stripSection(prompt, "Teams & Flows")
-    val s2 = PromptSections.stripSection(s1, "Team Catalog")
-    s2.linesIterator
-      .filterNot { line =>
-        val low = line.toLowerCase
-        stripPatterns.exists(p => low.contains(p))
-      }
-      .mkString("\n")
-
-end SubTaskPrompt

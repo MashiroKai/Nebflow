@@ -44,8 +44,7 @@ class PromptFaceSplitSpec extends FunSuite:
       nodePrompt,
       delegatePrompt,
       nebflow.prompts.PromptCatalog.Roles.DispatcherPromptTemplate,
-      nebflow.core.tools.DelegateTool.description,
-      nebflow.core.tools.SubTaskTool.description
+      nebflow.core.tools.DelegateTool.description
     )
     for text <- surfaces do
       for required <- Seq(

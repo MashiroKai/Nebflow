@@ -50,7 +50,6 @@ object NodeRunner:
      */
     rootSessionId: String = "",
     initialMessages: List[Message] = Nil,
-    isSubTaskWorker: Boolean = false,
     isFlowNode: Boolean = false,
     expectsMail: Boolean = false,
     userFacingNode: Boolean = false,
@@ -158,7 +157,7 @@ object NodeRunner:
     p: SpawnParams,
     admission: nebflow.shared.ExecutionAdmission
   ): IO[Either[String, SpawnParams]] =
-    val unsupported = p.isDispatcher || p.isFlowNode || p.isSubTaskWorker || p.expectsMail ||
+    val unsupported = p.isDispatcher || p.isFlowNode || p.expectsMail ||
       p.flowNodeId.nonEmpty || p.flowNodeRole.nonEmpty || p.flowChainId.nonEmpty ||
       p.sessionDevice.nonEmpty || p.sessionDeviceWorkspace.nonEmpty || p.projectSession || p.initialMessages.nonEmpty
     if p.sessionId != admission.sessionId || p.protectedExecution.nonEmpty then

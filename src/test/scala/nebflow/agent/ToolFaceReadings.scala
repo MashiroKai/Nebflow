@@ -36,7 +36,6 @@ object ToolFaceReadings:
   final case class Identity(
     label: String,
     defn: AgentDef,
-    isSubTaskWorker: Boolean = false,
     isFlowNode: Boolean = false,
     projectBoardSession: Boolean = false,
     isDispatcher: Boolean = false,
@@ -55,8 +54,7 @@ object ToolFaceReadings:
 
     def allowed(
       defn: AgentDef,
-      isSubTaskWorker: Boolean = false,
-      isFlowNode: Boolean = false,
+        isFlowNode: Boolean = false,
       projectBoardSession: Boolean = false,
       isDispatcher: Boolean = false,
       delegateSession: Boolean = false,
@@ -66,7 +64,6 @@ object ToolFaceReadings:
       buildAllowedToolSet(
         defn,
         depth = 0,
-        isSubTaskWorker = isSubTaskWorker,
         isFlowNode = isFlowNode,
         isTeamLead = false,
         userFacingNode = false,
@@ -125,7 +122,7 @@ object ToolFaceReadings:
     Identity("project node (isFlowNode + projectBoardSession)", mk("nebflow", List("*")),
       isFlowNode = true, projectBoardSession = true),
     Identity("dispatcher session", mk("nebflow", List("*")), isDispatcher = true),
-    Identity("subagent / SubTask worker", mk("nebflow"), isSubTaskWorker = true),
+    Identity("subagent", mk("subagent")),
     Identity("delegate session (dispatcher mode)", mk("nebflow"), delegateSession = true, delegateMode = Some(ModeDispatcher)),
     Identity("delegate session (kernel mode)", mk("nebflow"), delegateSession = true, delegateMode = Some(ModeKernel))
   )
@@ -135,7 +132,7 @@ object ToolFaceReadings:
     Row(
       id.label,
       CoreProbe.allowed(
-        id.defn, id.isSubTaskWorker, id.isFlowNode, id.projectBoardSession,
+        id.defn, id.isFlowNode, id.projectBoardSession,
         id.isDispatcher, id.delegateSession, id.askSession, id.delegateMode
       ),
       CoreProbe.face(

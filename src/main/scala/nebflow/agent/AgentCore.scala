@@ -849,9 +849,7 @@ object AgentCore:
    * （2026-09-11 agentdef-tidy 批，见方法体首段注释）。
    *
    * 双轨期 legacy 路径（legacyFixedTools）保留至阶段 3：
-   * - team 成员：BaseTools + Mail + SubTask + TeamTask 三件（user ruling
-   *   2026-08-24 机制层注入 SubTask；FlowExecute 随 2026-09-06 工具面裁撤批
-   *   移出固定面）
+   * - team 成员：BaseTools + Mail + TeamTask 三件；SubTask 已退役。
    * - flow 节点：BaseTools（FlowReport 随 2026-09-06 裁撤批移出——叶子节点
    *   文本输出即结果，verdict 通道退役）
    * - legacy standalone：BaseTools catch-all——Coder/Explorer/design-engineer
@@ -932,7 +930,7 @@ object AgentCore:
       // 全体 team 成员（照 #381 SubTask 先例；ctx.teamName 把写域钉死在
       // 自己的 team，无跨 team 面）。FlowExecute 移出固定面（2026-09-06
       // 工具面裁撤批）。
-      case "team" => BaseTools + "Mail" + "SubTask" ++ AgentCore.TeamTaskTools
+      case "team" => BaseTools + "Mail" ++ AgentCore.TeamTaskTools
       // FlowReport 移出固定面（2026-09-06 裁撤批）——flow 节点文本输出即结果。
       case "flow" => BaseTools
       case _ => BaseTools

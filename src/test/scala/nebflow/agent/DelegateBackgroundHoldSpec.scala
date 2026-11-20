@@ -287,48 +287,6 @@ class DelegateBackgroundHoldSpec extends CatsEffectSuite:
     end for
   }
 
-  test("A-3 subtask 轨不 hold：有未结后台作业也照旧立即终态（轨道面零扩散）") {
-    val system = ActorSystem("bgwait-3")
-    val tmp = os.temp.dir()
-    val parentSid = "bgwait-parent-3"
-    val childSid = "subtask-bgwait-3"
-    val jobId = "job-bgwait-3"
-    for
-      resources <- mkResources(system, tmp)
-      _ <- resources.subAgentTaskStore.recordTask(mkTask(parentSid, childSid))
-      _ <- registerWaitingTask(childSid, jobId)
-      parentEvents <- Ref.of[IO, List[AgentCommand]](Nil)
-      parentRef <- system.spawn(mkRecordingCmd(parentEvents), "parent-rec-3")
-      childEvents <- Ref.of[IO, List[AgentCommand]](Nil)
-      childRef <- system.spawn(mkStopOnStopProbe(childEvents), "bgwait-child-3")
-      supervisor <- system.spawn(
-        BackoffSupervisor(
-          childRef = childRef,
-          childSpawnFn = (_, _) => IO.raiseError(new RuntimeException("respawn must not happen in this spec")),
-          childName = childSid,
-          parentRef = Some(parentRef),
-          description = "subtask bg test",
-          agentName = "Worker",
-          subagentId = childSid,
-          parentSessionId = parentSid,
-          resources = resources,
-          initialPrompt = "subtask",
-          source = "subtask"
-        ),
-        "supervisor-bgwait-3"
-      )
-      _ <- supervisor ! AgentEvent.Completed(childSid, List(assistantMsg("subtask text output")))
-      _ <- waitUntil(10.seconds)(parentEvents.get.map(_.nonEmpty))
-      events <- parentEvents.get
-      _ <- cleanupWaitingTask(childSid, jobId)
-      _ <- system.stopAll
-    yield
-      val ext = parentEventsNow(events)
-      assertEquals(ext.size, 1, "subtask track terminates immediately even with a pending wait-set task")
-      assertEquals(ext.head.eventType, "completed")
-    end for
-  }
-
   test("A-4 cap 兜底：等待期超 completionCapMs 仍非空 ⇒ 带诚实注记强制终判（绝不悬挂成僵尸）") {
     val system = ActorSystem("bgwait-4")
     val tmp = os.temp.dir()
