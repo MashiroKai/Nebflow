@@ -496,6 +496,25 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("manual force-terminalize only disposes flagged orphan rows") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("force-terminalize-parent", agentName = Some("worker"))
+        flagged = SubAgentTask("subtask-force-flagged", parent.id, "worker", "inspect", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask", suspectedLostTerminal = Some(true))
+        healthy = flagged.copy(taskId = "subtask-force-healthy", suspectedLostTerminal = None, committedRevision = Some(1L))
+        _ <- resources.subAgentTaskStore.recordTask(flagged)
+        _ <- resources.subAgentTaskStore.recordTask(healthy)
+        refused <- resources.subAgentTaskStore.forceTerminalizeFlagged(parent.id, healthy.taskId, "reviewed")
+        disposed <- resources.subAgentTaskStore.forceTerminalizeFlagged(parent.id, flagged.taskId, "reviewed")
+        row <- resources.subAgentTaskStore.findByTaskId(flagged.taskId)
+      yield
+        assertEquals(refused, Left("not-flagged"))
+        assert(disposed.isRight)
+        assertEquals(row.map(_.status), Some("failed"))
+    }
+  }
+
   test("conflicting completion debt and envelope require manual review") {
     fixture.use { case (resources, _, _, _) =>
       for

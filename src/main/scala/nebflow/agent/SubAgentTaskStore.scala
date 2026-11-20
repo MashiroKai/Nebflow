@@ -622,6 +622,27 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
       case None => IO.unit
     }
 
+  /** Manual disposal of a flagged orphan only; a resolved or unflagged row is refused. */
+  def forceTerminalizeFlagged(parent: String, taskId: String, reason: String): IO[Either[String, SubAgentTask]] =
+    withLock {
+      val rows = readTasksSync(parent)
+      rows.find(_.taskId == taskId) match
+        case None => Left("task-not-found")
+        case Some(row) if !row.suspectedLostTerminal.contains(true) => Left("not-flagged")
+        case Some(row) if Set("completed", "failed", "cancelled").contains(row.status) => Left("already-terminal")
+        case Some(row) =>
+          val now = System.currentTimeMillis()
+          val updated = row.copy(status = "failed", executionStatus = Some("failed"),
+            lastError = Some(reason), terminalReason = Some(s"[manual force-terminalize] $reason"),
+            incomplete = Some(true), completedAt = Some(now), statusAt = Some(now),
+            committedRevision = Some(nextRevision(row)))
+          writeTasksSync(parent, rows.map(t => if t.taskId == taskId then updated else t))
+          Right(updated)
+    }.flatMap {
+      case Left(reason) => IO.pure(Left(reason))
+      case Right(row) => fireWriteHook(row).as(Right(row))
+    }
+
   /** Mark an invalid protected terminal projection without altering its execution outcome. */
   def markInvalidTerminalEnvelope(observed: SubAgentTask): IO[Boolean] = withLock {
     val rows = readTasksSync(observed.parentSessionId)
