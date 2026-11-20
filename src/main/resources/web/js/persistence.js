@@ -760,7 +760,7 @@ export function restoreFromStorage(opts = {}) {
         if (m.text) {
           const bubble = document.createElement('div');
           bubble.className = 'bubble ai';
-          if (!applyOutputFace(bubble, m.text || '')) {
+          if (m.isRoot !== true || !applyOutputFace(bubble, m.text || '')) {
             bubble.innerHTML = renderMarkdownWithMath(m.text || '');
           }
           row.appendChild(bubble);
@@ -1230,7 +1230,7 @@ function buildHistoryRow(m, i, ctx) {
           const bubble = document.createElement('div');
           bubble.className = 'bubble ai';
           // output 面标记：升级批渲染时走 applyOutputFace（与 live/sync 两腿同面）。
-          if (hasOutputBlock(m.text || '')) bubble.dataset.nfDeferOutput = '1';
+          if (m.isRoot === true && hasOutputBlock(m.text || '')) bubble.dataset.nfDeferOutput = '1';
           deferMd(bubble, m.text || '');
           row.appendChild(bubble);
         }

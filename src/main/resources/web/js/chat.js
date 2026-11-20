@@ -819,6 +819,7 @@ export function appendAiText(text, mark) {
   // Deltas 仍旧累积进 view.stream.aiText + 节点 _nfText（bgAgentPopup 的 reopen-adopt
   // 读它），增量渲染只是**多了一条逐帧腿**，终态收口渲染点仍唯一在 finishAi()。
   const bubble = view.stream.currentAiBubble;
+  if (mark && typeof mark.isRoot === 'boolean') bubble._nfIsRoot = mark.isRoot;
   bubble._nfText = view.stream.aiText || '';
   // B2 consumption ②: the bubble carries the identity of the frame that last
   // wrote it. `finishAi`/`finishThinking` clear the mark when the segment ends,
@@ -838,7 +839,7 @@ export function appendAiText(text, mark) {
         if (!target.bubble.isConnected) return;
         const stats = _aiStreamStats;
         const t0 = stats ? performance.now() : 0;
-        const visible = extractOutputInner(target.bubble._nfText || '') || '';
+        const visible = target.bubble._nfIsRoot === false ? (target.bubble._nfText || '') : (extractOutputInner(target.bubble._nfText || '') || '');
         target.bubble.hidden = !visible;
         renderStreamMarkdown(target.bubble, visible, true,
           imgKeepFor(target.bubble), false, target.mark || null);
@@ -885,7 +886,7 @@ export function finishAi(durationMs, model) {
     const firstPaint = !bubble._nfRendered;
     // output 块语法批：源文本有平衡 <output> 对 ⇒ 正常态只渲染块内内容（摘除
     // 框外正文）；无块零改动（旧内容照常全显）。展开面在 turnGroup 角标 toggle。
-    if (!applyOutputFace(bubble, activeView.stream.aiText || '')) {
+    if (bubble._nfIsRoot === false || !applyOutputFace(bubble, activeView.stream.aiText || '')) {
       bubble.innerHTML = renderMarkdownWithMath(activeView.stream.aiText || '');
     }
     bubble._nfText = activeView.stream.aiText || '';
@@ -1004,9 +1005,7 @@ export function appendAgentText(agentId, text) {
       if (!target.bubble.isConnected) return;
       // stream:true — 这是逐帧重渲的流式快照：图围栏保持代码块，消息收尾腿才出图
       // （rich-render 批判据，见 utils.js renderMarkdownWithMath 的 opts.stream）。
-      const visible = extractOutputInner(target.bubble._nfText || '') || '';
-      target.bubble.hidden = !visible;
-      target.bubble.innerHTML = renderMarkdownWithMath(visible, true, { cache: false, stream: true }) + '<span class="cursor"></span>';
+      target.bubble.innerHTML = renderMarkdownWithMath(target.bubble._nfText || '', true, { cache: false, stream: true }) + '<span class="cursor"></span>';
       rafScrollChat(target);
     });
 }
@@ -1018,7 +1017,7 @@ export function finishAgent(agentId) {
     if (!a.text || a.text.trim() === '') {
       if (a.row) a.row.remove();
     } else {
-      applyOutputFace(a.bubble, a.text);
+      a.bubble.innerHTML = renderMarkdownWithMath(a.text);
       // v1.2 unified footer (2026-09-06 补齐批): agent rows get time + copy.
       if (a.row) a.row.appendChild(createMsgFooterBadge(Date.now(), a.text));
       // 跟随钉底（2026-10-08，与 finishAi 同族同修）：agent 流式帧经

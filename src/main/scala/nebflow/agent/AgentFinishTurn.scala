@@ -78,7 +78,7 @@ private[agent] object AgentFinishTurn:
     else if state.askMode.isDefined && result.toolCalls.isEmpty then
       handleAskComplete(agentDef, resources, depth, parentRef, state, result.text, result.model)
     else if result.toolCalls.nonEmpty then
-      val progress = ChildReport.event(result.text, continues = true, agentDef.name)
+      val progress = ChildReport.event(result.text, continues = true, agentDef.name, state.sessionId, state.currentTurnId)
       val notify = (parentRef, progress) match
         case (Some(parent), Some(event)) => parent ! event
         case _ => IO.unit
@@ -87,7 +87,11 @@ private[agent] object AgentFinishTurn:
       // Mail check: team members must call Mail before finishing.
       // After MaxMailReminders retries, give up and finishTurn (avoid infinite loop).
       if state.expectsMail && !state.mailUsedThisTurn && state.mailReminders < MaxMailReminders then
-        handleMissingMail(agentDef, resources, depth, parentRef, state, replyTo, result)
+        val progress = ChildReport.event(result.text, continues = true, agentDef.name, state.sessionId, state.currentTurnId)
+        val notify = (parentRef, progress) match
+          case (Some(parent), Some(event)) => parent ! event
+          case _ => IO.unit
+        notify *> handleMissingMail(agentDef, resources, depth, parentRef, state, replyTo, result)
       else
         if state.expectsMail && !state.mailUsedThisTurn then
           logAgentEvent(
