@@ -87,6 +87,8 @@ export default {
   // unmount-console panel batch 2026-11-02: unload button / remount / the "Unloaded"
   // group (visible destination for unmounted projects; same engine path as the tool).
   'project.unmountBtn': 'Unload',
+  // gitviz-mvp batch 2026-11-19: card-header entry to the read-only git visualization
+  'project.gitVizOpen': 'Git graph (read-only)',
   'project.unmountTitle': 'Unload "{name}"?',
   'project.unmountInflight': 'In-flight right now: {chains} chain(s), {nodes} node(s), {sessions} session(s) — unloading stops all of them first.',
   'project.unmountConfirm': 'Once confirmed, "{name}" disappears from the Projects list and the agent context and can no longer receive dispatches; every local file is kept (zero deletion). ',

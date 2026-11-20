@@ -43,7 +43,13 @@ object AskSessions:
     // 既由 [[AllowedTools]] 带上 ask 面，又由 `buildAllowedToolSet` 尾段的
     // `-- AskExclusiveTools` 从其余一切身份剥净；工具内侧另有
     // `isAskSession` 身份闸兜底（ask_edit/ask_write/PdfPage 同款双保险）。
-    Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write", "PdfPage", "Card")
+    // gitviz 分支管理问答批（2026-11-19 第二轮）：gitviz_graph = 分支图只读取数件
+    // （实现在 core/tools/GitVizGraphTool.scala；数据面 = 既有 GitGraph.build）。
+    // 进本集即同时得到两件事：① 授权面由 GitVizAllowedTools 带上；② 由
+    // buildAllowedToolSet 尾段的 `-- AskExclusiveTools` 从其余一切身份剥净；
+    // 工具内侧另有 isGitVizSession 身份闸（双保险，PdfPage 同款）。
+    Set("message_record_search", "send_message_to_main_chat", "ask_edit", "ask_write", "PdfPage", "Card",
+      "gitviz_graph", "gitviz_handoff")
 
   /** Closed Ask face, independent of Subagent and returned before any other role grants. */
   val AllowedTools: Set[String] =
@@ -58,6 +64,14 @@ object AskSessions:
         case Some(r) =>
           r.byId(sessionId).flatMap {
             case None => IO.raiseError(new IllegalArgumentException(s"ask session $sessionId has no file binding"))
+            case Some(binding) if binding.isGitViz =>
+              // gitviz（2026-11-19 第二轮）：作用域 = 项目仓库根本身（git 的 cwd 在仓库里），
+              // 不是「文件所在目录」；文件类型白名单不适用，但仓库必须真实存在（fail-closed）。
+              IO.blocking {
+                val root = os.Path(binding.file)
+                require(os.isDir(root), s"ask session $sessionId: gitviz scope is not a directory")
+                Some(binding.file)
+              }
             case Some(binding) =>
               IO.blocking {
                 val file = os.Path(binding.file)
@@ -133,6 +147,46 @@ object AskSessions:
   def displayKey(canonicalPath: String): String =
     "ask:" + fileHash(canonicalPath).take(4)
 
+  // ── 分支管理问答（gitviz，2026-11-19 第二轮作者令）───────────────────────
+  /**
+   * gitviz 分支管理问答的会话前缀。**故意仍以 [[Prefix]]（`ask-`）起头**：既有
+   * ask 判据（[[isAskSession]]）、WS ask 拦截面（web/js/ws.js 的 `startsWith('ask-')`）、
+   * `askHandoffAck` 回执帧、会话持久化面全部照旧命中——这就是作者要的「复用同一条
+   * 路」，不新造第二套会话族。`-gv-` 段是**项目域**判据（纯前缀，不查表）。
+   */
+  val GitVizPrefix = "ask-gv-"
+
+  /** 判据单点：gitviz 分支管理问答会话（纯前缀，与前端 GV_SID_PREFIX 逐字对齐）。 */
+  def isGitVizSession(sessionId: String): Boolean =
+    sessionId != null && sessionId.startsWith(GitVizPrefix)
+
+  /** Option 面（同 [[isAskSession]] 的双形态）。 */
+  def isGitVizSession(sessionId: Option[String]): Boolean =
+    sessionId.exists(isGitVizSession)
+
+  /** 会话 id 形状闸（gitviz）：`ask-gv-` + 8..16 hex。前端是 id 生成方（确定性键 =
+   *  同项目同会话），后端只校验形状、拒绝夹带任意字符的 id（会话键会进
+   *  `<dataRoot>/ask/index.json` 与日志，不做形状闸等于放行任意键）。 */
+  def isGitVizSessionIdShape(sessionId: String): Boolean =
+    isGitVizSession(sessionId) &&
+      sessionId.drop(GitVizPrefix.length).matches("[0-9a-f]{8,16}")
+
+  /** 后端派生兜底（前端未给合法 id 时）：项目名 → 稳定键。 */
+  def gitVizSessionIdFor(project: String): String =
+    GitVizPrefix + fileHash("gitviz:" + project)
+
+  /**
+   * gitviz 分支管理问答的工具面 —— **比文件 ask 更窄**（作者硬约束「这个 agent
+   * 没有任何 git 写能力」）：
+   *   · 没有 `Bash`（文件 ask 有；Bash 是 git 写的唯一入口，这里整条拿掉）；
+   *   · 没有 `ask_edit` / `ask_write`（零落盘）；
+   *   · 没有 `send_message_to_main_chat`（交办只走 `askHandoff` 的结构化帧）；
+   *   · 数据面 = 唯一一件只读工具 `gitviz_graph`（实现 = 既有 `GitGraph.build`，
+   *     子命令白名单 rev-parse/for-each-ref/log/rev-list/merge-base，越界即拒）。
+   */
+  val GitVizAllowedTools: Set[String] =
+    Set("Read", "Glob", "Grep", "gitviz_graph", "gitviz_handoff")
+
 end AskSessions
 
 /** 一个 ask 绑定：文件 ↔ 会话 ↔ 最近已知的控制台主会话（转交目标，§7）。 */
@@ -142,11 +196,27 @@ final case class AskBinding(
   fileName: String,
   createdAt: Long,
   /** 转交目标主会话（askOpen 时由前端随帧上报刷新；缺省空 = 转交不可用）。 */
-  mainSessionId: String = ""
+  mainSessionId: String = "",
+  /**
+   * 绑定域（gitviz 分支管理问答批，2026-11-19 第二轮）：
+   *   · `"file"` = 既有文件 ask（`file` 是文件绝对路径，`fileName` 是显示名）；
+   *   · `"gitviz"` = 分支管理问答（`file` 是**项目仓库根**，`fileName` 是项目名）。
+   * 同一张绑定表承载两域，是为了让「一域一会话 / 跨重启复现 / 转交目标刷新」这三件
+   * 既有能力零复制地复用（作者令「复用同一条路，不新造第二套」）。缺省 `"file"`
+   * ⇒ 存量 index.json 逐字兼容（无该字段即旧语义）。
+   */
+  kind: String = AskBinding.KindFile
 ):
 
   def displayKey: String = AskSessions.displayKey(file)
+
+  /** 本绑定是不是分支管理问答域（判据单点；禁在别处比较字符串）。 */
+  def isGitViz: Boolean = kind == AskBinding.KindGitViz
 end AskBinding
+
+object AskBinding:
+  val KindFile: String = "file"
+  val KindGitViz: String = "gitviz"
 
 /** 上下文指纹（§3.3 触发源读数）：任一变化 ⇒ 置待重组。 */
 final case class AskFingerprint(
@@ -238,7 +308,10 @@ final class AskSessionRegistry(dataRoot: os.Path):
                       n <- item.hcursor.downField("fileName").as[String].toOption
                       c <- item.hcursor.downField("createdAt").as[Long].toOption
                       m = item.hcursor.downField("mainSessionId").as[String].toOption.getOrElse("")
-                    yield AskBinding(id, f, n, c, m)
+                      k = item.hcursor.downField("kind").as[String].toOption
+                        .filter(AskBinding.KindGitViz == _)
+                        .getOrElse(AskBinding.KindFile)
+                    yield AskBinding(id, f, n, c, m, k)
                   }
                   .map(b => b.id -> b)
                   .toMap
@@ -261,7 +334,8 @@ final class AskSessionRegistry(dataRoot: os.Path):
               "file" -> b.file.asJson,
               "fileName" -> b.fileName.asJson,
               "createdAt" -> b.createdAt.asJson,
-              "mainSessionId" -> b.mainSessionId.asJson
+              "mainSessionId" -> b.mainSessionId.asJson,
+              "kind" -> b.kind.asJson
             )
           )
           .asJson
@@ -269,9 +343,13 @@ final class AskSessionRegistry(dataRoot: os.Path):
       AtomicJson.writeSync(file, json.spaces2)
     catch case NonFatal(e) => logger.warn(s"ask index persist failed (non-fatal): ${e.getMessage}")
 
-  /** 幂等绑定：同文件恒同会话 id（askOpen/askQuestion 前置调用）。 */
-  def bind(canonicalFile: String, fileName: String): IO[AskBinding] =
-    val id = AskSessions.sessionIdFor(canonicalFile)
+  /** 幂等绑定：同文件恒同会话 id（askOpen/askQuestion 前置调用）。
+   *
+   *  gitviz 分支管理问答批（2026-11-19 第二轮）：`explicitId` 存在时用它当会话键
+   *  （前端是 gitviz 域的 id 生成方 —— 确定性键让「同项目重开 = 同一会话」两侧一致），
+   *  `kind` 标出绑定域；两者缺省 = 既有文件 ask 语义逐字不变。 */
+  def bind(canonicalFile: String, fileName: String, explicitId: String = "", kind: String = AskBinding.KindFile): IO[AskBinding] =
+    val id = if explicitId.trim.nonEmpty then explicitId else AskSessions.sessionIdFor(canonicalFile)
     IO {
       bindingsRef.get.get(id) match
         case Some(existing) =>
@@ -283,7 +361,7 @@ final class AskSessionRegistry(dataRoot: os.Path):
             updated
           else existing
         case None =>
-          val fresh = AskBinding(id, canonicalFile, fileName, System.currentTimeMillis())
+          val fresh = AskBinding(id, canonicalFile, fileName, System.currentTimeMillis(), "", kind)
           bindingsRef.set(bindingsRef.get + (id -> fresh))
           persist(bindingsRef.get)
           fresh

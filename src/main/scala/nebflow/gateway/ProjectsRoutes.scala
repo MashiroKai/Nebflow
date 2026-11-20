@@ -290,6 +290,39 @@ private[gateway] object ProjectsRoutes:
           }
         }
 
+      // ── Git 可视化只读数据面（gitviz-mvp 批 2026-11-19 · 设计稿 §七 P0 ①）──
+      // GET /projects/<name>/git-graph?limit&lanes&heatDays
+      //   → 200 {state:'ok'|'not-a-repo', root, head, lanes, refs[], commits[], edges[],
+      //          heatmap, digest}（契约所有者 = GitGraph.build；前端单点 =
+      //          web/js/nodeData.js 的 API.gitGraph）。
+      //   · 需 auth（withAuth）；项目不存在/未挂载 → 404 {error}；
+      //   · **零写面**：实现只跑 git log / for-each-ref / rev-list / merge-base
+      //     （白名单在 GitGraph.ReadOnlySubcommands，越界即拒），不建提交、不 checkout、
+      //     不 merge、不 fetch、不写工作区（设计稿 §七「权限口径」：写操作唯一执行者 = root）；
+      //   · 非 git 工作树 → 200 state='not-a-repo'（前端在视图内给错误态，不是 404）；
+      //   · 非 self 设备（远端项目）→ 409，同 workspaces 腿口径——本机读不到远端仓库。
+      case req @ GET -> Root / "projects" / name / "git-graph" =>
+        withAuth(req) {
+          ProjectStore.load(name).flatMap {
+            case None => NotFound(Json.obj("error" -> "Project not found".asJson))
+            case Some(project) if ProjectStore.effectiveDevice(project) != "self" =>
+              Conflict(Json.obj("error" -> "Remote workspace git graph is not available on this device".asJson))
+            case Some(project) =>
+              val limit = req.params.get("limit").flatMap(_.toIntOption).getOrElse(1200)
+              val lanes = req.params.get("lanes").flatMap(_.toIntOption).getOrElse(8)
+              val heatDays = req.params.get("heatDays").flatMap(_.toIntOption).getOrElse(371)
+              IO.blocking {
+                GitGraph.build(
+                  project = name,
+                  workspace = ProjectStore.brainWorkspace(project),
+                  limit = limit,
+                  lanes = lanes,
+                  heatDays = heatDays,
+                )
+              }.flatMap(Ok(_))
+          }
+        }
+
       // POST /projects/<name>/description — 面板侧描述更新（台账 #920 2026-10-27）：
       // #917 给了 Project 工具 `action="update"`（agent 面），本端点补**面板侧**同一
       // 写穿面（单点 = 既有 ProjectStore.updateDescription：只改 description 一个字段

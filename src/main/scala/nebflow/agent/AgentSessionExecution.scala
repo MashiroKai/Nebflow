@@ -599,6 +599,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
               isDispatcher = state.isDispatcher,
               delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(state.sessionId),
               askSession = nebflow.core.ask.AskSessions.isAskSession(state.sessionId),
+              askGitViz = nebflow.core.ask.AskSessions.isGitVizSession(state.sessionId),
               delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(state.sessionId)
             )
         val isSubagent = depth > 0
@@ -676,6 +677,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
             flowNodeSession = stateForLlm.flowNodeId.isDefined,
             isDispatcher = stateForLlm.isDispatcher,
             delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId),
+            askGitViz = nebflow.core.ask.AskSessions.isGitVizSession(stateForLlm.sessionId),
             delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(stateForLlm.sessionId)
           )
           // #16 observability: one log line per LLM call when MCP tools are
@@ -1029,6 +1031,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
                   isDispatcher = stateForLlm.isDispatcher,
                   delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(stateForLlm.sessionId),
                   askSession = nebflow.core.ask.AskSessions.isAskSession(stateForLlm.sessionId),
+                  askGitViz = nebflow.core.ask.AskSessions.isGitVizSession(stateForLlm.sessionId),
                   delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(stateForLlm.sessionId)
                 )
               )
@@ -1437,6 +1440,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         isDispatcher = state.isDispatcher,
         delegateSession = nebflow.core.delegate.DelegateSessions.isDelegateSession(state.sessionId),
         askSession = nebflow.core.ask.AskSessions.isAskSession(state.sessionId),
+        askGitViz = nebflow.core.ask.AskSessions.isGitVizSession(state.sessionId),
         delegateMode = nebflow.core.delegate.DelegateRegistry.modeFaceOf(state.sessionId)
       )
       // An AskHost must not become externally visible before its original tool-use
@@ -2751,6 +2755,10 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     isDispatcher: Boolean = false,
     delegateSession: Boolean = false,
     askSession: Boolean = false,
+    /** gitviz 分支管理问答批（2026-11-19 第二轮）：`ask-gv-` 会话的**更窄**工具面
+     *  （GitVizAllowedTools = Read/Glob/Grep + gitviz_graph，**没有 Bash**）。判据
+     *  单点 = `AskSessions.isGitVizSession(sessionId)`（纯前缀，调用点三处同形）。 */
+    askGitViz: Boolean = false,
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定——本参数全部分叉即失效）。 */
     delegateMode: Option[String] = None
   ): Set[String] =
@@ -2758,6 +2766,9 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     // ask_edit/ask_write with canvas inline review, canvas-inline-diff-review).
     // Return before definition, fixed-role, plugin or delegate grants can widen
     // that face.
+    // gitviz 分支管理问答（2026-11-19 第二轮）：同一早退点，但工具面**更窄**
+    // （没有 Bash / ask_edit / ask_write ⇒ 没有任何 git 写入口）。
+    if askGitViz then return nebflow.core.ask.AskSessions.GitVizAllowedTools
     if askSession then return nebflow.core.ask.AskSessions.AllowedTools
     // 阶段 2c（§C.1/裁定 11）：收敛三定义（Nebula/project-dispatcher/general）
     // 的 agent.json tools 声明整体失效——工具面全部机制固定，零配置。存量
@@ -2955,6 +2966,8 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     isDispatcher: Boolean = false,
     delegateSession: Boolean = false,
     askSession: Boolean = false,
+    /** gitviz 分支管理问答批（2026-11-19 第二轮）：更窄的 ask 工具面（无 Bash）。 */
+    askGitViz: Boolean = false,
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定）。 */
     delegateMode: Option[String] = None
   ): Option[List[ToolDefinition]] =
@@ -2973,6 +2986,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
         isDispatcher,
         delegateSession,
         askSession,
+        askGitViz,
         delegateMode
       ).wireTools
     )
@@ -3005,6 +3019,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
     isDispatcher: Boolean = false,
     delegateSession: Boolean = false,
     askSession: Boolean = false,
+    askGitViz: Boolean = false,
     /** 双模式批：delegate 会话生效执行形态（None = 总闸关/未判定）。 */
     delegateMode: Option[String] = None
   ): nebflow.llm.DynamicToolLoad.Plan =
@@ -3021,6 +3036,7 @@ private[agent] trait AgentSessionExecution extends AgentRegistryEmit with AgentS
       isDispatcher,
       delegateSession,
       askSession,
+      askGitViz,
       delegateMode
     )
     // 2026-09-06 工具面裁撤批：FlowReport 的 per-node contract describe 注入

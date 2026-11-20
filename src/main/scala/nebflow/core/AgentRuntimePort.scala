@@ -446,7 +446,40 @@ object AskHandoffPort:
     task: String = "",
     paths: List[String] = Nil,
     reason: String = "",
-    expected: String = ""
+    expected: String = "",
+    /**
+     * gitviz 分支管理问答批（2026-11-19 第二轮）· 结构化交办请求的 **git 件**。
+     *
+     * 作者令「做事就转发给主会话，比如不仅可以上面多选进行合并，也可以跟这个 agent
+     * 说，它转交」+「两个入口收敛到同一个出口」。因此面板的「多选 + 合并」钮与问答
+     * agent 的对话交办**产出同一份 request**，区别只在 `source`（`panel` / `ask`）。
+     *
+     * 分支清单 / 目标线 / 意图 / 理由 是固定四件（人读 `task`/`paths`/`reason`/
+     * `expected` 仍照旧携带压扁版，机器读本字段）。`None` = 非 gitviz 交办（既有
+     * 文件 ask 行为逐字不变）。
+     */
+    git: Option[GitRequest] = None
+  )
+
+  /**
+   * gitviz 交办请求的机器可读件（分支清单 · 目标线 · 意图 · 理由 + 逐项备注 + 入口来源）。
+   *
+   * 🔴 它是**请求**，不是执行凭据：本结构不授任何写能力，投递面仍是主会话（Nebula），
+   * 由主会话按落支规则派发执行（作者「写操作唯一执行者 = 主会话」）。
+   */
+  final case class GitRequest(
+    /** 项目名（交办对象的工作区上下文，供主会话定位仓库）。 */
+    project: String,
+    /** 分支清单（精确分支名）。 */
+    branches: List[String],
+    /** 目标线（合并进哪一支）。 */
+    target: String,
+    /** 意图：merge / branch / delete / push / rebase / tag。 */
+    intent: String,
+    /** 逐项备注（面板多选写下的备注，随请求带走）。 */
+    notes: List[String] = Nil,
+    /** 入口来源："panel"（多选+合并钮）/ "ask"（对话里说的）。 */
+    source: String = "panel"
   )
 
   /**

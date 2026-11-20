@@ -40,6 +40,19 @@ export const API = {
   // GET → {batches:[{id,archivedAt,completedAt,members:[NodePayload 元数据]}],ttlMs,count}；
   // 服务端按显示窗（24h）过滤聚合；未挂载 404
   flowMapArchive: (name) => `/api/projects/${encodeURIComponent(name)}/flow-map/archive`,
+  // Git 可视化只读数据面（gitviz-mvp 批 2026-11-19；设计稿 §七 数据来源表
+  // 「端点声明 = nodeData.js API 对象」/「后端挂载点 = ProjectsRoutes.scala:25」）。
+  // GET → {state:'ok', root, head, lanes, refs[], commits[], edges[], heatmap, digest}；
+  // 只读路由，零写面（后端只用 git log / for-each-ref / rev-list / merge-base）。
+  // 未挂载 / 不是 git 工作树 → state:'not-a-repo'（前端在视图内给错误态，不 404）。
+  gitGraph: (name, opts) => {
+    const q = new URLSearchParams();
+    if (opts && Number.isFinite(opts.limit)) q.set('limit', String(opts.limit));
+    if (opts && Number.isFinite(opts.lanes)) q.set('lanes', String(opts.lanes));
+    if (opts && Number.isFinite(opts.heatDays)) q.set('heatDays', String(opts.heatDays));
+    const s = q.toString();
+    return `/api/projects/${encodeURIComponent(name)}/git-graph${s ? `?${s}` : ''}`;
+  },
   // 项目 AGENTS.md（契约 §1）：GET 读 → {content} / PUT 存 → body {content} → {saved:true}；
   // URL 不变，磁盘读写工作区根 AGENTS.md（旧 .nebflow/Agent.md 由后端回落兼容）
   agentFile: (name) => `/api/projects/${encodeURIComponent(name)}/agent.md`,
@@ -423,4 +436,34 @@ export async function fetchProjectWorkspaces(name) {
   const data = await response.json();
   if (!response.ok) throw new Error(data.error || `workspaces ${response.status}`);
   return data;
+}
+
+// ── Git 可视化只读数据面（gitviz-mvp 批 2026-11-19）──────────────────────────
+/** 拉一次只读 git 图（泳道 + 提交 + 热力图）。三态结果对象同族（ok / http / network）：
+ *   · ok      → 后端载荷（state:'ok' 或 'not-a-repo'，两者都是 200 的正常读数）
+ *   · http    → 非 2xx（404 = 项目不存在/未挂载；401/403 走 sessionGate 同族上报）
+ *   · network → fetch 拒绝
+ *  本函数零写请求（GET 单一）。
+ *  @param {string} projectName
+ *  @param {{limit?:number, lanes?:number, heatDays?:number}} [opts]
+ *  @returns {Promise<{state:'ok', data:any}|{state:'http', status:number, data:any}|{state:'network'}>} */
+export async function fetchGitGraphResult(projectName, opts) {
+  try {
+    const r = await fetch(API.gitGraph(projectName, opts), { headers: authHeaders() });
+    if (r.status === 401 || r.status === 403) noteAuthRejected('git-graph');
+    let data = null;
+    try { data = await r.json(); } catch (_) { data = null; }
+    if (!r.ok) return { state: 'http', status: r.status, data };
+    return { state: 'ok', data };
+  } catch (_) {
+    return { state: 'network' };
+  }
+}
+
+/** 便捷形态：直接返回载荷本体（失败时抛出，供视图的错误态消费）。 */
+export async function fetchGitGraph(projectName, opts) {
+  const res = await fetchGitGraphResult(projectName, opts);
+  if (res.state === 'ok') return res.data;
+  if (res.state === 'http') throw new Error(`git-graph ${res.status}${res.data?.error ? `: ${res.data.error}` : ''}`);
+  throw new Error('git-graph 网络不可达');
 }

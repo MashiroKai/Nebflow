@@ -1,0 +1,289 @@
+<!doctype html>
+<!--
+  harness.html — gitviz MVP 本地验收页（**dev-only**；不属于产品运行面）。
+
+  与产品的关系（诚实声明，见同批文档「哪些是 mock」）：
+   · **真**：样式表全部是产品树的真文件（base/design-system/sapphire/stand-tokens/
+     glass/projectPanel/flowMap/split + 本批新增 gitViz.css）；卡片骨架类名与
+     projectTab.js 的 projectCardHtml 同族（.team-card.project-card /
+     .team-card-header / .team-card-title）；**翻转与三区的代码 = 产品模块
+     js/gitVizView.js**（openGitViz）；数据 = 真实 git 读数（server.mjs →
+     git-graph.mjs，同产品路由契约）。
+   · **mock/harness 侧**：本项目列表的取数与卡片 DOM 由 30 行 harness 代码拼装
+     （产品侧走引擎 GET /api/projects + WS 增量 + projectTab.js 全量逻辑）；顶部
+     dev 提示条。落地路径见文档「下一步」。
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Stand · Git 可视化 MVP（dev harness）</title>
+<!-- 与 index.html 同序取用产品真样式表（样式表清单顺序 = 层叠语义，不重排） -->
+<link rel="stylesheet" href="css/base.css">
+<link rel="stylesheet" href="css/nav.css">
+<link rel="stylesheet" href="css/modal.css">
+<link rel="stylesheet" href="css/input.css">
+<link rel="stylesheet" href="css/taskList.css">
+<link rel="stylesheet" href="css/todo-face.css">
+<link rel="stylesheet" href="css/projectPanel.css">
+<link rel="stylesheet" href="css/flowMap.css">
+<link rel="stylesheet" href="css/split.css">
+<link rel="stylesheet" href="css/stand-tokens.css">
+<link rel="stylesheet" href="css/design-system.css">
+<link rel="stylesheet" href="css/sapphire.css">
+<link rel="stylesheet" href="css/glass.css">
+<!-- 第二轮补：四角控件/问答窗的落位吃 ask.css 的 --ask-fab-* 与 mobileLayer.css 的
+     --mtap-lg / --mf-row-bottom / --mchrome-top。证据页必须带上这两张**产品**样式表，
+     否则几何退化成 fallback 值 = 截图不再代表生产。 -->
+<link rel="stylesheet" href="css/ask.css">
+<link rel="stylesheet" href="css/mobileLayer.css">
+<link rel="stylesheet" href="css/gitViz.css">
+<style>
+  /* ── 以下全部是 harness 专属（dev-only），不属产品样式 ── */
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--color-bg, var(--st-bg, #f5f6f8)); color: var(--color-text); }
+  @media (prefers-color-scheme: dark) { body { background: var(--st-bg, #13161c); } }
+  /* body 是产品 CSS 的 row-flex 容器（base.css:132-134）⇒ 壳必须自己吃满主轴宽 */
+  #dev-shell { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; flex-direction: column; min-height: 0; }
+  #dev-bar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
+    padding: 6px 10px; font-size: 11px; color: var(--color-text-muted);
+    border-bottom: 1px solid var(--color-border); background: var(--glass-bg, var(--color-surface));
+  }
+  #dev-bar b { color: var(--color-text); font-weight: 600; }
+  #dev-pane-wrap { flex: 1; min-height: 0; display: flex; }
+  #dev-pane-wrap > .canvas-tab-pane { flex: 1; }
+  /* 卡片上的 git 入口钮：**产品样式**在 css/gitViz.css（.project-gitviz-btn 段），
+     此处不重复声明，一律走产品样式表。 */
+  .team-card-title { cursor: pointer; }
+  @media (max-width: 640px) {
+    #dev-bar { font-size: 10px; }
+  }
+</style>
+</head>
+<body>
+<div id="dev-shell">
+  <div id="dev-bar">
+    <b>Git 可视化 MVP</b>
+    <span>dev harness · 真 git 读数 · 只读</span>
+    <span id="dev-digest"></span>
+    <button id="dev-fullscreen" type="button" style="margin-left:auto;font:inherit">全屏</button>
+  </div>
+  <div id="dev-pane-wrap">
+    <div class="canvas-tab-pane active" data-type="projects" id="pane">
+      <div class="project-live-status" role="status" aria-live="polite"></div>
+      <div class="team-scroll" id="scroll" tabindex="-1"></div>
+    </div>
+  </div>
+</div>
+
+<script type="module">
+import { ensureFlowCss } from '/js/flowCss.js';
+import { ensureGitVizCss, openGitViz } from '/js/gitVizView.js';
+
+// ?mobile=1 ⇒ 挂 body.mobile-layer（产品里窄屏走手机层页面壳）。带上它，
+// projects 页签的「返回条 = 桌面浮层胶囊 + 视图体双行让位」两条规则失效，
+// 次级面板就是手机层里的普通全屏页（证据 06/07 用这一态）。
+if (new URLSearchParams(location.search).get('mobile') === '1') {
+  document.body.classList.add('mobile-layer');
+}
+
+ensureFlowCss();
+ensureGitVizCss();
+
+// ══ dev ask 桥（第二轮专用；**dev-only**，产品运行面零这份代码）════════════════
+// 为什么需要它：分支管理问答的产品腿是「WS 帧 ↔ 引擎 ask 域」，而本 harness 没有引擎
+// （生产 PID 56786 不重启、本批代码不在它的 classpath 上）。桥的做法是把**传输层**
+// 换成一个假的 `state.ws`（readyState=1 + send），于是：
+//   产品 UI → 产品 sendWs()（ws.js 真代码）→ 桥解析帧 → 产品 onGitVizAskFrame()
+//   （gitVizView.js 真代码）→ 产品 UI。
+// 也就是说：**除了 WS 传输与 LLM 推理，链路上每一行都是产品代码**；帧形状逐字照后端
+// （AskHandoffWire.ackFrame / handleAskHandoff 的字段名，见 scala spec GitVizAskScopeSpec）。
+// 桥里的「agent 回答」是确定性规则（真读数取自 /api/projects/<p>/git-graph），不是模型。
+const devBridge = { frames: [], handoffs: [], sessionId: '' };
+window.__gitvizDevBridge = devBridge;
+
+(function installAskBridge() {
+  const LIVE = { sid: '' };
+  const reply = (msg) => {
+    const sid = msg.sessionId || LIVE.sid;
+    const sink = window.__gitvizAskFrameSink;
+    if (!sink) return;
+    sink({ ...msg, sessionId: sid });
+  };
+  window.__gitvizAskTransport = async (raw) => {
+    const msg = JSON.parse(raw);
+    devBridge.frames.push(msg);
+    if (msg.type === 'askOpen') {
+      LIVE.sid = msg.sessionId || 'ask-gv-0000beef';
+      devBridge.sessionId = LIVE.sid;
+      setTimeout(() => reply({ type: 'askState', kind: 'gitviz', project: msg.project, messages: [] }), 10);
+      return;
+    }
+    if (msg.type === 'askHandoff') {
+      // 与后端 AskHandoffWire.ackFrame 同形（字段名逐字）：ok/summary/question/handoff
+      const g = msg.git || {};
+      const summary = `${g.intent === 'merge' ? '合并' : g.intent} ${(g.branches || []).join('、')} → ${g.target}`;
+      devBridge.handoffs.push({ frame: msg, summary });
+      setTimeout(() => reply({
+        type: 'askHandoffAck', ok: true, question: msg.task, summary,
+        handoff: {
+          askSessionId: LIVE.sid, file: '/repo', fileName: g.project || 'stand', leg: 'ask-dock',
+          task: msg.task || '', paths: msg.paths || [], reason: msg.reason || '', expected: msg.expected || '',
+          git: { project: g.project, branches: g.branches || [], target: g.target, intent: g.intent, notes: g.notes || [], source: g.source },
+        },
+      }), 60);
+      return;
+    }
+    if (msg.type === 'askQuestion') {
+      // 确定性「agent」：真读数算出来的回答；动手请求则走结构化交办（同 gitviz_handoff 工具腿）
+      (async () => {
+        const graph = await (await fetch(`/api/projects/${encodeURIComponent(msg.project || 'stand')}/git-graph?heatDays=84&lanes=8&limit=200`)).json();
+        const q = String(msg.content || '');
+        const wants = /合|merge|建支|删|push|推送|变基/i.test(q);
+        if (wants) {
+          const all = (graph.refs || []).map((r) => r.name);
+          const target = all.find((n) => q.includes(n) && n === 'feat/base') || 'feat/base';
+          // 源支 = 问题里点到的真分支（排除目标线自己）；一个都没点到就取前两支真分支
+          const mentioned = all.filter((n) => n !== target && q.includes(n));
+          const branches = mentioned.length ? mentioned : all.filter((n) => n !== target).slice(0, 2);
+          const answer = `收到。我没有 git 写能力，已按结构化四件产出交办请求：\n分支清单：${branches.join('、')}\n目标线：${target}\n意图：merge\n理由：分支管理问答 agent 只读，写操作唯一执行者 = 主会话\n（对应工具腿 = gitviz_handoff）`;
+          reply({ type: 'textDelta', delta: answer });
+          reply({ type: 'done' });
+          // 工具腿等价：产出与面板按钮同一个 askHandoff 帧（同一出口）
+          window.__gitvizAskTransport(JSON.stringify({
+            type: 'askHandoff', sessionId: LIVE.sid,
+            task: `把 ${branches.join('、')} 合进 ${target}`,
+            paths: [target, ...branches],
+            reason: '分支管理问答 agent 只读，写操作唯一执行者 = 主会话',
+            expected: `${target} 上出现这些分支的合并结果（按落支规则）`,
+            git: { project: msg.project || 'stand', branches, target, intent: 'merge', notes: [], source: 'ask' },
+          }));
+        } else {
+          const pending = (graph.refs || []).filter((r) => !r.inGraph).length;
+          reply({ type: 'textDelta', delta: `只读读数（${graph.refsTotal} 支）：图上 ${graph.refsShown} 支、${graph.lanes} 条泳道、${graph.commitsTotal} 个提交；HEAD ${graph.head.sha.slice(0, 8)}「${graph.head.subject || ''}」。图上装不下 ${pending} 支（超出提交窗）。要动手（合并/建支/push）直接说，我转交主会话。` });
+          reply({ type: 'done' });
+        }
+      })();
+    }
+  };
+  // 把产品 sendWs 接到桥上：state.ws 是产品 ws.js 判定的唯一出口。
+  Promise.all([import('/js/state.js'), import('/js/gitVizView.js')]).then(([{ default: state }, m]) => {
+    // 帧消费者 = 产品里那个真 sink（模块加载时已注册进 ws.js 的旁听表；这里取同一
+    // 个函数引用直接喂帧，等价于 ws.js 的分发腿）。
+    window.__gitvizAskFrameSink = m.onGitVizAskFrame;
+    state.ws = { readyState: 1, send: (raw) => { window.__gitvizAskTransport(raw); } };
+    state.activeSessionId = 'dev-main-session';
+    window.__gitvizBridgeReady = true;
+  });
+})();
+
+// harness 侧「转发日志」监听（**dev-only**）：产品模块只派发 `gitviz-forward` 事件
+// （零网络写面，见 gitVizView.js forward()）；把事件载荷落到本地日志是验收动作，
+// 归 harness。生产侧没有监听者 ⇒ 产品面零写请求。
+document.addEventListener('gitviz-forward', async (e) => {
+  try {
+    await fetch('/api/gitviz/forward', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(e.detail || {}),
+    });
+  } catch (_) { /* dev 日志写不进去不阻断视图 */ }
+}, true);
+
+const pane = document.getElementById('pane');
+const scroll = document.getElementById('scroll');
+
+const GIT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="9" r="2.4"/><path d="M6 8.4v7.2M18 11.4c0 3-2.4 4.3-6 4.6"/></svg>';
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+/** harness 侧卡片模板：类名与 projectTab.js:1077-1106 同族，字段取真实 project.json。 */
+function cardHtml(p) {
+  return `
+    <div class="team-card project-card" data-project="${esc(p.name)}" data-running="0">
+      <div class="team-card-header">
+        <div class="team-card-title"><span class="project-card-name">${esc(p.name)}</span></div>
+        <div class="team-card-summary"><span class="dot"></span>${esc(p.mounted ? '已挂载' : '未挂载')}</div>
+        <button class="project-gitviz-btn" data-gitviz-project="${esc(p.name)}" type="button"
+                title="Git 可视化（只读）" aria-label="Git 可视化 ${esc(p.name)}">${GIT_ICON}</button>
+      </div>
+      <div class="project-fields">
+        <div class="project-field" title="${esc(p.workspace)}">
+          <span class="project-field-label">工作区</span>
+          <span class="project-field-value mono">${esc(p.workspace || '—')}</span>
+        </div>
+        <div class="project-field">
+          <span class="project-field-label">设备</span>
+          <span class="project-field-value">${esc(p.device)}</span>
+        </div>
+        <div class="project-field project-desc-row">
+          <span class="project-field-label">描述</span>
+          <span class="project-field-value desc${p.description ? '' : ' is-empty'}">${esc(p.description || '（无描述）')}</span>
+        </div>
+      </div>
+    </div>`;
+}
+
+let backToList = () => {};
+
+function renderList(projects) {
+  scroll.innerHTML = projects.map(cardHtml).join('');
+  for (const card of scroll.querySelectorAll('.project-card')) {
+    const name = card.dataset.project;
+    // 入口 = 卡头（同「项目面板双层入口」设计的 Header 进入语义）+ 卡头 git 钮
+    card.querySelector('.team-card-title')?.addEventListener('click', () => flipIn(card, name));
+    card.querySelector('[data-gitviz-project]')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      flipIn(card, name);
+    });
+  }
+}
+
+function flipIn(card, name) {
+  openGitViz(pane, name, {
+    fromCard: card,
+    onBack: () => backToList(),
+  }).then(() => {
+    const d = pane.querySelector('.flowmap-nav-summary');
+    const g = window.__gitvizLast;
+    void d; void g;
+  });
+}
+
+backToList = () => {
+  pane.dataset.projectsView = 'list';
+  pane.innerHTML = '<div class="project-live-status" role="status" aria-live="polite"></div><div class="team-scroll" tabindex="-1"></div>';
+  window.__scroll = pane.querySelector('.team-scroll');
+  renderListInto(window.__scroll);
+};
+
+async function renderListInto(host) {
+  const rows = await (await fetch('/api/projects')).json().then((r) => r.projects);
+  host.innerHTML = rows.map(cardHtml).join('');
+  for (const card of host.querySelectorAll('.project-card')) {
+    const name = card.dataset.project;
+    card.querySelector('.team-card-title')?.addEventListener('click', () => flipIn(card, name));
+    card.querySelector('[data-gitviz-project]')?.addEventListener('click', (e) => { e.stopPropagation(); flipIn(card, name); });
+  }
+}
+
+document.getElementById('dev-fullscreen')?.addEventListener('click', () => {
+  const el = document.documentElement;
+  if (document.fullscreenElement) document.exitFullscreen();
+  else el.requestFullscreen?.();
+});
+
+const rows = await (await fetch('/api/projects')).json().then((r) => r.projects);
+renderList(rows);
+// 便于验收脚本定位：真实项目行 + 可用项目名
+window.__gitvizHarness = { projects: rows.map((r) => r.name), open: flipIn, back: () => backToList() };
+
+// ?project=<name> = 直接打开该项目的次级面板（验收脚本与手机全屏页用）
+const want = new URLSearchParams(location.search).get('project');
+if (want) {
+  const card = scroll.querySelector(`.project-card[data-project="${CSS.escape(want)}"]`) || scroll.querySelector('.project-card');
+  if (card) flipIn(card, card.dataset.project);
+}
+</script>
+</body>
+</html>

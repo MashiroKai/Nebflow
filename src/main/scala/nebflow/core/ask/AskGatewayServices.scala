@@ -45,6 +45,24 @@ final case class AskServices(
     registry.byId(sessionId).flatMap {
       case None =>
         IO.raiseError(new RuntimeException(s"ask session $sessionId has no file binding"))
+      case Some(binding) if binding.isGitViz =>
+        // 分支管理问答批（2026-11-19 第二轮）：作用域 = 项目仓库，不是文件 ⇒ 文件类型
+        // 白名单（isAskable）不适用；改由「仓库根目录真实存在」把关（fail-closed）。
+        // 提示词 = 只问答 + 交办口径单源（AskGitVizPrompt）；工具面由
+        // buildAllowedToolSet 的 askGitViz 早退集固定（GitVizAllowedTools）。
+        if !new java.io.File(binding.file).isDirectory then
+          IO.raiseError(new RuntimeException(
+            s"ask session $sessionId: gitviz scope is not a directory: ${binding.file}"))
+        else
+          IO.pure(
+            nebflow.actor.AgentDef(
+              name = "ask-gitviz",
+              description = s"分支管理问答分身 · ${binding.fileName}",
+              tools = Nil,
+              systemPrompt = AskGitVizPrompt.build(binding),
+              category = "standalone"
+            )
+          )
       case Some(binding) =>
         if !AskSessions.isAskable(binding.file) then
           IO.raiseError(new RuntimeException(

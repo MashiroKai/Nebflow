@@ -50,6 +50,9 @@ const inventory = [
   // 不变，只是选择器跟着落点走；旧选择器已不存在，留在这里会让这条清单检查一个
   // 已退役的面（假红）。
   ['selection Ask dialog (source occlusion exempt)', 'ask.css', /^\.ask-dock\.selection-dock\s*$/, /position\s*:\s*fixed/, /^\.ask-col\s*$/, /overflow-y\s*:\s*auto/],
+  ['GitViz bottom controls', 'gitViz.css', /^\.gitviz-corner\s*$/, /position\s*:\s*absolute/, /body\.mobile-layer\s+\.gitviz-main\s*$/, /padding-bottom\s*:[^;]*--gitviz-bottom-clearance/],
+  ['GitViz ask', 'gitViz.css', /^\.gitviz-ask-dock\s*$/, /position\s*:\s*absolute/, /body\.mobile-layer\s+\.gitviz-main\s*$/, /scroll-padding-bottom\s*:[^;]*--gitviz-bottom-clearance/],
+  ['GitViz sheet', 'gitViz.css', /^\.gitviz-sheet\s*$/, /position\s*:\s*absolute/, /body\.mobile-layer\s+\.gitviz-main\s*$/, /scroll-padding-bottom\s*:[^;]*--gitviz-bottom-clearance/],
   ['modal drawer', 'mobileLayer.css', /^\.mf-drawer\s*$/, /position\s*:\s*absolute/, /^\.mf-drawer-body\s*$/, /overflow-y\s*:\s*auto/],
 ];
 export function checkInventory(get = css) {

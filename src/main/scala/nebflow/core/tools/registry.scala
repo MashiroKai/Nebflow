@@ -53,6 +53,18 @@ object ToolRegistry:
       // pop-upgrade 批，作者令「去掉card工具,然后对Pop工具进行升级」）退役 →
       // 2026-11-18 本批复活并收窄给 ask。
       "Card" -> CardTool,
+      // 分支管理问答批（gitviz，2026-11-19 第二轮）：gitviz_graph = 项目分支图只读取数件。
+      // 授权面与 Card 同款单点：名字进 `AskSessions.AskExclusiveTools`（因此由
+      // `buildAllowedToolSet` 尾段的 `-- AskExclusiveTools` 从其余一切身份剥净），
+      // 实际挂载面 = `AskSessions.GitVizAllowedTools`（`ask-gv-` 会话专属）；
+      // 工具内侧另有 `isGitVizSession` 身份闸（双保险）。
+      // 🔴 零写面：实现只调用 `GitGraph.build`（子命令白名单 rev-parse/for-each-ref/
+      // log/rev-list/merge-base），不 merge/不 branch/不 push/不改 ref。
+      "gitviz_graph" -> GitVizGraphTool,
+      // 交办腿（同批）：gitviz_handoff = 把「合并/建支/push」表达为**结构化请求**投给
+      // 主会话（AskHandoffPort.deliver，与面板「多选+合并」钮同一个出口）。它不执行
+      // 任何 git 命令 —— 两条入口一个出口的「出口」就是这里。
+      "gitviz_handoff" -> GitVizHandoffTool,
       // User interaction
       "AskUserQuestion" -> AskUserQuestionTool,
       "AskHost" -> AskHostTool,
