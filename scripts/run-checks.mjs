@@ -31,6 +31,7 @@ if (!weixinTests.length) throw new Error('No weixin-sidecar unit tests found; re
 
 // Membership is declared once here, not copied into Make or CI command lists.
 export const CHECKS = [
+  nodeCheck('test-hermetic', 'check-test-hermetic', ['static']),
   nodeCheck('css-structure', 'check-css-structure'),
   nodeCheck('floating-clearance', 'check-floating-clearance'),
   nodeCheck('floating-discovery', 'check-floating-discovery'),
