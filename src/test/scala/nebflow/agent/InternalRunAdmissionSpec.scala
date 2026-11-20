@@ -180,6 +180,30 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("recovery commits and delivers a saved terminal envelope for an active subtask run") {
+    fixture.use { case (resources, _, _, _) =>
+      for
+        parent <- resources.sessionStore.createSession("orphan-envelope-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-orphan-envelope", parent.id, "worker", "investigate", "test",
+          "running", 0, System.currentTimeMillis(), None, None, "subtask")
+        admitted <- resources.subAgentTaskStore.beginRun(task, "run-1", parent.id, "nebflow")
+        _ = assert(admitted.isRight)
+        running <- resources.subAgentTaskStore.updateRun(parent.id, task.taskId, "run-1", executionStatus = Some("running"))
+        _ = assert(running.isRight)
+        event = AgentCommand.ExternalEvent("subtask", "completed", "result from completed worker",
+          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+        pending <- SessionMailbox.scanPending(parent.id)
+        taken <- SessionMailbox.scanTaken(parent.id)
+      yield
+        assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+        assertEquals((pending ++ taken).count(e => e.identity == s"${task.taskId}#run-1" && e.event == event), 1)
+    }
+  }
+
   test("startup delivers a reason-only failed run without a transcript and unblocks the next run") {
     fixture.use { case (resources, _, calls, _) =>
       val reason = "Actor construction failed before the first session checkpoint"
