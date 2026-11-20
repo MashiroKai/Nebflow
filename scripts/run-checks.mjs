@@ -110,6 +110,11 @@ export const CHECKS = [
   nodeCheck('fixture-secrets', 'check-fixture-secrets'),
   nodeCheck('api-routes', 'check-api-routes'),
   nodeCheck('provider-panel', 'check-provider-panel'),
+  // 统一模型不可用卡批（2026-11-18）：一套 kind（InteractionKind.ModelUnavailable）+ 一套
+  // 拼帧点，全槽共用（small-llm/kernel/node/dispatcher/subagent）；切换就地写回槽
+  // model.preferred 并重试原请求；卡内「测试 LLM」真实最小调用；300s（可配置）回报根会话；
+  // fail-closed 缺省不得被本批翻面。前后端两面都断言 ⇒ static + frontend 双 profile。
+  nodeCheck('model-fallback-card', 'check-model-fallback-card'),
   nodeCheck('freeze-state', 'check-freeze-state'),
   nodeCheck('flat-buttons', 'check-flat-buttons', ['static', 'frontend'], SPEC_EXTERNAL),
   nodeCheck('glass', 'check-glass-unify', ['static', 'frontend'], SPEC_EXTERNAL),
