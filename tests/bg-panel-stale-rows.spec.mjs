@@ -57,7 +57,7 @@ function storeTask(taskId, over = {}) {
 }
 
 const TASKS = [
-  storeTask(STALE, { status: 'pending-recovery', executionStatus: '', spawnedAt: STALE_SPAWN, completedAt: T0 - 600 * HOUR, committedRevision: 7, description: '【实施批 · 本地加速 M2 文件分块腿】' }),
+  storeTask(STALE, { diagnostic: 'Child report parked: parent identity unavailable (slot 1); retry on supervisor recovery.', status: 'pending-recovery', executionStatus: '', spawnedAt: STALE_SPAWN, completedAt: T0 - 600 * HOUR, committedRevision: 7, description: '【实施批 · 本地加速 M2 文件分块腿】' }),
   storeTask(STALE2, { status: 'pending-recovery', executionStatus: '', spawnedAt: STALE_SPAWN - 3 * HOUR, committedRevision: 5, description: '【修复批 · 搜索消息记录返回空】' }),
   storeTask(LIVE, { status: 'running', executionStatus: 'running', spawnedAt: LIVE_SPAWN, activityLabel: 'Bash', committedRevision: 9, description: '【在飞批】' }),
   storeTask(DONE, { status: 'completed', executionStatus: 'finished', spawnedAt: T0 - 700 * HOUR, committedRevision: 8, description: '【已完成批】' }),
@@ -189,6 +189,11 @@ async function bootWithRows(page) {
   await inject(page, { type: 'activeAgents', agents: LIVE_SNAPSHOT });
   await openPanel(page);
 }
+
+test('parked report diagnostic is visible on the stored task row', async ({ page }) => {
+  await bootWithRows(page);
+  await expect(page.locator('#bg-dropdown .bg-task-diag').filter({ hasText: 'Child report parked:' })).toBeVisible();
+});
 
 // ── ①③：重启打断的旧 sessionId 不再残留为「活跃」，如实标注 待恢复 ───────────
 test('①③ 重启打断行如实标注待恢复、不再是活跃、不挂 690h 时钟', async ({ page }) => {
