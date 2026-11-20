@@ -209,6 +209,11 @@ export const CHECKS = [
     // 五个成员恰好放宽为 `private[core]` + 本节点零新读者（行为件另派）。
     ['subagent-primitive-visibility', 'check-subagent-primitive-visibility'],
     ['node-stuck-notify', 'check-node-stuck-notify'],
+    // boot 复活只留手动腿（作者令 2026-11-19 10:39「boot 还是手动吧」；延续
+    // 2026-11-06 20:36「不自动恢复、不通知」令）：四个 boot 调用点必须读
+    // Defaults.RestartRecoveryManual（缺省手动），不得写死 manual 字面量；收殓腿
+    // 零通知；手动腿（ManualRevival + REST 臂）必须在场。改回开启（自动）即红。
+    ['boot-revival-manual', 'check-boot-revival-manual'],
     ['delegate-mode-slot', 'check-delegate-mode-slot'],
     ['perm-presentation', 'check-perm-presentation'],
     ['permission-gate', 'check-permission-gate'],
