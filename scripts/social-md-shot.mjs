@@ -11,6 +11,22 @@
 //    发现顺序：环境变量 NEBFLOW_MARKED_JS > 从本脚本所在目录向上 ≤6 级找仓库
 //    vendor 面。找不到 ⇒ exit 3 ⇒ Scala 侧按封闭原因词汇降级文本卡，不会崩。
 //
+// 🔴 mermaid 围栏渲染（feishu-mermaid batch, 2026-11-19；作者报障「飞书 md 会转为
+//    图片发过去，但里面的 mermaid 没渲染」）：marked 只把 ```mermaid 围栏出成普通
+//    fenced code（`<pre><code class="language-mermaid">`），本腿此前**不跑任何
+//    mermaid 渲染器** ⇒ 图在长图里就是一段源码文本。修法 = 复用引擎里既有的
+//    mermaid 渲染管线：同一份 vendored `src/main/resources/web/vendor/mermaid/
+//    mermaid.min.js`（12.2.0，前端 js/mermaidRenderer.js 懒加载的同一库、同一
+//    `mermaid.render` API、同一安全纪律 securityLevel 'strict' + htmlLabels false
+//    + 离屏测量舞台），把每个 `.language-mermaid` 代码块就地换成 SVG 再截图。
+//    零新依赖、零第二份渲染路径。vendored 面找不到 mermaid ⇒ 与 marked 一样的
+//    响亮降级：stderr 记一行、mermaid 块退回源码文本，exit 0（不因缺渲染器崩一枪）。
+//    负控开关 SOCIAL_MD_NO_MERMAID=1：跳过 mermaid pass（出图应退回未渲染态）。
+//    脚本级闸 = scripts/tests/social-md-shot-mermaid.test.mjs（注册进既有 script-tests
+//    腿）：直跑本脚本 + 打开渲染报告（`SOCIAL_MD_RENDER_REPORT=<path>` ⇒ 写一份
+//    截图前 DOM 状态的 JSON，生产默认不落这个文件），断言 mermaid 围栏已换成 SVG、
+//    普通代码块未被误伤，并以 SOCIAL_MD_NO_MERMAID=1 做负控。
+//
 // 契约（与 social-html-shot.mjs 完全同款）：
 //   成功：写 outPng（fullPage 整页截图，尺寸由内容决定），stdout 一行
 //         `ok <outPng>`，exit 0；
@@ -37,10 +53,14 @@ const timeoutMs = Number(process.env.SHOT_TIMEOUT_MS || 25000);
 const parsedWidth = Number.parseInt(widthArg ?? '900', 10);
 const width = Math.min(Math.max(Number.isFinite(parsedWidth) ? parsedWidth : 900, 480), 2400);
 
-function findMarked() {
-  const rel = join('src', 'main', 'resources', 'web', 'vendor', 'marked.min.js');
-  if (process.env.NEBFLOW_MARKED_JS && existsSync(process.env.NEBFLOW_MARKED_JS)) {
-    return process.env.NEBFLOW_MARKED_JS;
+// Same stack as base.css body — diagrams must not introduce a foreign face.
+const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", ' +
+  '"Hiragino Sans GB", "Microsoft YaHei", sans-serif';
+
+/** 在一个仓库 vendor 面里按相对路径找库：env 覆盖 > 从脚本目录向上 ≤6 级。 */
+function findVendor(rel, envVar) {
+  if (process.env[envVar] && existsSync(process.env[envVar])) {
+    return process.env[envVar];
   }
   let dir = dirname(fileURLToPath(import.meta.url)); // <repo>/scripts
   for (let i = 0; i < 6; i++) {
@@ -53,7 +73,8 @@ function findMarked() {
   return null;
 }
 
-const markedPath = findMarked();
+const markedPath = findVendor(join('src', 'main', 'resources', 'web', 'vendor', 'marked.min.js'),
+  'NEBFLOW_MARKED_JS');
 if (!markedPath) {
   console.error('marked.min.js not found (NEBFLOW_MARKED_JS unset; walked up from scripts/)');
   process.exit(3);
@@ -69,8 +90,7 @@ const style = `
   :root { color-scheme: light; }
   * { box-sizing: border-box; }
   body { margin: 0; padding: 32px 36px; background: #ffffff; color: #1f2328;
-         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-                      "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+         font-family: ${FONT};
          font-size: 16px; line-height: 1.65; word-wrap: break-word; }
   h1, h2, h3, h4, h5, h6 { line-height: 1.3; margin: 24px 0 12px; font-weight: 600; }
   h1 { font-size: 28px; padding-bottom: 8px; border-bottom: 1px solid #d1d9e0; }
@@ -93,6 +113,8 @@ const style = `
   hr { border: 0; height: 1px; background: #d1d9e0; margin: 20px 0; }
   ul, ol { margin: 0 0 14px; padding-left: 26px; }
   li { margin: 3px 0; }
+  .mermaid-figure { margin: 0 0 16px; text-align: center; }
+  .mermaid-figure svg { max-width: 100%; height: auto; display: inline-block; }
 `;
 
 const baseHref = `${pathToFileURL(resolve(input)).href}`.replace(/\/[^/]*$/, '/');
@@ -111,10 +133,112 @@ const pageHtml = `<!doctype html>
 const tmpHtml = `${output.replace(/\.png$/i, '')}.auto.html`;
 writeFileSync(tmpHtml, pageHtml);
 
+/** mermaid 围栏 → SVG 的就地渲染（在页面里跑既有 vendored 库）。
+ *  返回 `{ ran, reason? }`：`ran=false` 表示本枪没跑 mermaid pass（禁用 / 缺库 /
+ *  全局缺失），调用方照常出图，原因进渲染报告。 */
+async function renderMermaidFences(page) {
+  if (process.env.SOCIAL_MD_NO_MERMAID === '1') {
+    console.error('mermaid: skipped (SOCIAL_MD_NO_MERMAID=1)');
+    return { ran: false, reason: 'disabled' };
+  }
+  const mermaidPath = findVendor(
+    join('src', 'main', 'resources', 'web', 'vendor', 'mermaid', 'mermaid.min.js'),
+    'NEBFLOW_MERMAID_JS');
+  if (!mermaidPath) {
+    console.error('mermaid.min.js not found (walked up from scripts/); mermaid fences stay as code text');
+    return { ran: false, reason: 'vendor-not-found' };
+  }
+  await page.addScriptTag({ path: mermaidPath });
+  // 页面面：与前端 js/mermaidRenderer.js 同一纪律 —— strict 消毒、无 htmlLabels、
+  // 离屏可布局舞台里 render，产物经 DOMParser 解析后 importNode（不裸 innerHTML）。
+  const stats = await page.evaluate(async ({ contentWidth, fontFamily }) => {
+    const w = /** @type {any} */ (window);
+    if (!w.mermaid) return { ok: false, reason: 'mermaid global missing after load' };
+    w.mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+      htmlLabels: false,
+      flowchart: { htmlLabels: false, useMaxWidth: true },
+      class: { htmlLabels: false },
+      theme: 'neutral',
+      themeVariables: { fontFamily, background: 'transparent' },
+    });
+    const stage = document.createElement('div');
+    stage.setAttribute('aria-hidden', 'true');
+    stage.style.cssText = 'position:fixed;left:-100000px;top:0;width:0;height:0;pointer-events:none;';
+    document.body.appendChild(stage);
+    const blocks = Array.from(document.querySelectorAll('pre > code.language-mermaid'));
+    let rendered = 0;
+    let failed = 0;
+    let seq = 0;
+    for (const code of blocks) {
+      const src = code.textContent || '';
+      const pre = code.closest('pre');
+      const host = document.createElement('div');
+      host.style.cssText = 'width:' + contentWidth + 'px;';
+      stage.appendChild(host);
+      try {
+        const out = await w.mermaid.render('nf-mermaid-shot-' + (++seq), src, host);
+        const doc = new DOMParser().parseFromString(String(out.svg || ''), 'image/svg+xml');
+        if (doc.querySelector('parsererror')) throw new Error('svg parse failed');
+        const fig = document.createElement('div');
+        fig.className = 'mermaid-figure';
+        fig.appendChild(document.importNode(doc.documentElement, true));
+        if (pre && pre.parentNode) pre.parentNode.replaceChild(fig, pre);
+        rendered++;
+      } catch {
+        failed++; // 该块语法不成立：原样保留源码文本（不空白、不吞）
+      } finally {
+        host.remove();
+      }
+    }
+    stage.remove();
+    return { ok: true, total: blocks.length, rendered, failed };
+  }, { contentWidth: Math.max(160, width - 72), fontFamily: FONT });
+  if (stats.ok) {
+    console.error(`mermaid: ${stats.rendered}/${stats.total} block(s) rendered` +
+      (stats.failed ? `, ${stats.failed} failed (source kept)` : ''));
+    return { ran: true };
+  }
+  console.error('mermaid: ' + stats.reason);
+  return { ran: false, reason: String(stats.reason || 'unknown') };
+}
+
+/**
+ * 截图前的页面状态快照（机器可读，闸用）：mermaid 围栏是否已换成 SVG、
+ * 普通代码块是否留存。纯 DOM 读、零改写，不影响产物 PNG。
+ * 仅当 env `SOCIAL_MD_RENDER_REPORT` 指向一个路径时才写出（生产默认不落新产物）；
+ * 闸（scripts/tests/social-md-shot-mermaid.test.mjs）直跑本脚本时打开它。
+ */
+async function collectPageReport(page, pass) {
+  const dom = await page.evaluate(() => {
+    const left = Array.from(document.querySelectorAll('pre > code.language-mermaid'));
+    const figures = Array.from(document.querySelectorAll('.mermaid-figure'))
+      .filter((f) => f.querySelector('svg'));
+    const plain = Array.from(document.querySelectorAll('pre > code'))
+      .filter((c) => !c.classList.contains('language-mermaid'));
+    return {
+      mermaidBlocksTotal: left.length + figures.length,
+      mermaidRendered: figures.length,
+      mermaidRemaining: left.length,
+      plainCodeBlocks: plain.length,
+      plainCodeLanguages: plain.map((c) =>
+        Array.from(c.classList).find((n) => n.startsWith('language-')) || ''),
+    };
+  });
+  return { ...dom, mermaidRan: pass.ran, mermaidSkipReason: pass.reason ?? null };
+}
+
 const browser = await chromium.launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width, height: 900 } });
   await page.goto(pathToFileURL(tmpHtml).href, { waitUntil: 'load', timeout: timeoutMs });
+  const pass = await renderMermaidFences(page);
+  const reportPath = process.env.SOCIAL_MD_RENDER_REPORT;
+  if (reportPath) {
+    writeFileSync(reportPath, JSON.stringify(await collectPageReport(page, pass), null, 2) + '\n');
+  }
   await page.waitForTimeout(250); // 给晚到的布局/字体一拍稳定时间
   await page.screenshot({ path: output, fullPage: true, timeout: timeoutMs });
   console.log(`ok ${output}`);
