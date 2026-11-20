@@ -204,6 +204,23 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("recovery processes a pending managed row with a saved terminal envelope") {
+    fixture.use { case (resources, _, _, root) =>
+      for
+        parent <- resources.sessionStore.createSession("pending-managed-parent", agentName = Some("worker"))
+        task = SubAgentTask("subtask-pending-managed", parent.id, "worker", "inspect", "test",
+          "pending-recovery", 0, System.currentTimeMillis(), None, None, "subtask",
+          runId = Some("run-1"), executor = Some("nebflow"), executionStatus = Some("running"))
+        _ <- IO.blocking(os.write.over(root / "subagent-tasks" / s"${parent.id}.json", List(task).asJson.noSpaces, createFolders = true))
+        event = AgentCommand.ExternalEvent("subtask", "completed", "finished",
+          JsonObject("parentSessionId" -> parent.id.asJson), Some(task.taskId))
+        _ <- resources.sessionStore.saveTerminalEnvelope(task.taskId, "run-1", event)
+        _ <- SubAgentStartupRecovery.recoverPendingInternal(resources.subAgentTaskStore, resources.sessionStore, Some(resources))
+        row <- resources.subAgentTaskStore.findByTaskId(task.taskId)
+      yield assertEquals(row.flatMap(_.executionStatus), Some("finished"))
+    }
+  }
+
   test("legacy subagent recovery requires a matching parent tool result") {
     fixture.use { case (resources, _, _, _) =>
       for

@@ -474,8 +474,9 @@ object SubAgentStartupRecovery:
         else IO.unit
       }.handleErrorWith(e => logger.warn(s"[startup-recovery] legacy delivery check failed for ${task.taskId}: ${e.getMessage}"))
     })
-    val recoverActiveEnvelopes = store.findRunningTasks.flatMap(_.filter(t =>
-      t.source == "subtask" && t.executor.contains("nebflow") && t.runId.nonEmpty
+    val recoverActiveEnvelopes = store.findAllTasks().flatMap(_.filter(t =>
+      isReconciliationRow(t) && t.source == "subtask" && t.executor.contains("nebflow") && t.runId.nonEmpty &&
+        !t.executionStatus.contains("interrupted")
     ).traverse_ { task =>
       val run = task.runId.get
       rs.executionProtection(task.taskId).flatMap {
