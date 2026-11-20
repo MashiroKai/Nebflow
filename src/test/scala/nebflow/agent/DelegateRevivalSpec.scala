@@ -364,7 +364,7 @@ class DelegateRevivalSpec extends CatsEffectSuite:
     }
   }
 
-  test("V6: subtask-source orphan is never revived (existing salvage semantics unchanged)") {
+  test("V6: subtask-source orphan is never revived and is flagged for review, not salvaged") {
     withFx("v6") { fx =>
       for
         parent <- fx.sessionStore.createSession("Nebula", agentName = Some("Nebula"))
@@ -372,11 +372,17 @@ class DelegateRevivalSpec extends CatsEffectSuite:
         _ <- fx.store.recordTask(mkTask(child, parent.id).copy(source = "subtask"))
         _ <- IO(nebflow.core.delegate.DelegateRegistry.put(mkRecord(child, parent.id, fx.seat.toString)))
         report <- sweepWith(fx)
+        row <- fx.store.loadTasks(parent.id).map(_.find(_.taskId == child).get)
         _ = assertEquals(report.revived, Nil)
-        _ = assertEquals(report.terminalized, List(child))
+        // Since the terminal-reconciliation change a subtask/subagent row is never salvaged by
+        // the legacy chain: its outcome must come from authoritative evidence, and a legacy row
+        // without one is surfaced for manual review instead of being terminalized by fiat.
+        _ = assert(!report.terminalized.contains(child), s"salvage must not touch it: ${report.terminalized}")
+        _ = assertEquals(row.status, "running", "the row is neither terminalized nor revived")
+        _ = assertEquals(row.suspectedLostTerminal, Some(true), "no authoritative evidence ⇒ flagged for review")
         _ = assert(
-          report.revivalSkipped.exists((id, r) => id == child && r.contains("subtask")),
-          s"subtask skip reason recorded: ${report.revivalSkipped}"
+          !report.revivalSkipped.exists((id, _) => id == child),
+          s"the row never enters the revival leg at all (reconciliation rows bypass salvage): ${report.revivalSkipped}"
         )
       yield ()
     }
