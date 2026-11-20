@@ -436,16 +436,19 @@ private final class SystemTailnetProbe(budgetMs: Long, env: Map[String, String])
 
   /** 守护线程读一条流（避免进程输出大于管道缓冲时双向死锁）。 */
   private def drain(in: java.io.InputStream, sink: java.io.ByteArrayOutputStream): Thread =
-    val t = new Thread(
-      () =>
-        try
-          val buf = new Array[Byte](8192)
-          var n = in.read(buf)
-          while n >= 0 && sink.size() < (1 << 20) do
-            sink.write(buf, 0, n)
-            n = in.read(buf)
-        catch case _: Throwable => (), "tailnet-probe-reader"
-    )
+    // 读循环先落成具名 Runnable（格式批 2026-11-21）：把 `catch case … => ()` 直接写成
+    // `new Thread(...)` 的实参时，scalafmt 会把线程名实参折进 catch 行
+    // （`catch case _: Throwable => (), "tailnet-probe-reader"`），该形态 scalafmt 自身
+    // 无法再解析 ⇒ 提为局部值，实参与处理器不再相邻。
+    val reader: Runnable = () =>
+      try
+        val buf = new Array[Byte](8192)
+        var n = in.read(buf)
+        while n >= 0 && sink.size() < (1 << 20) do
+          sink.write(buf, 0, n)
+          n = in.read(buf)
+      catch case _: Throwable => ()
+    val t = new Thread(reader, "tailnet-probe-reader")
     t.setDaemon(true)
     t.start()
     t
