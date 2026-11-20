@@ -481,6 +481,7 @@ body:not(.mobile-layer) .canvas-tab-pane[data-type="projects"] .gitviz-view-body
      滚动内容尾部再留一条，滚到底时列表最后几行不被左下/右下钮盖住。
      不留这条的后果有 375 截图：左上钮正压「贡献热力图」四字、右下钮压住末行分支名。 */
   body.mobile-layer .gitviz {
+    --mf-row-bottom: calc(var(--mobile-dock-top, calc(var(--dock-h, 54px) + var(--dock-inset-b, 8px) + env(safe-area-inset-bottom, 0px))) + var(--ds-space-4));
     padding-top: calc(var(--mtap-lg, var(--ds-hit-tap-lg, 44px)) + var(--ds-space-4));
   }
   body.mobile-layer .gitviz-main {

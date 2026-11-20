@@ -833,6 +833,7 @@ function buildCorners(gvState, onBack) {
   ask.setAttribute('aria-haspopup', 'dialog');
   ask.addEventListener('click', () => {
     const open = gvState.ask.dock.hidden;
+    if (open) gvState.sheet.close();
     gvState.ask.dock.hidden = !open;
     gvState.ask.open = open;
     if (open) {
@@ -875,10 +876,17 @@ function buildSheet(gvState, root) {
     heatSeg: seg,
     laneBtn,
     toggle(anchor) {
+      if (sheet.hidden && gvState.ask.dock) {
+        gvState.ask.dock.hidden = true;
+        gvState.ask.open = false;
+      }
       sheet.hidden = !sheet.hidden;
       anchor?.setAttribute('aria-pressed', String(!sheet.hidden));
     },
-    close() { sheet.hidden = true; },
+    close() {
+      sheet.hidden = true;
+      root.querySelector('.gitviz-corner--bl')?.setAttribute('aria-pressed', 'false');
+    },
     syncHeatSeg(days) {
       seg.textContent = '';
       for (const [d, label] of [[HEAT_DAYS_WEEK, '近 12 周'], [HEAT_DAYS_DEFAULT, '近 12 月']]) {
