@@ -622,6 +622,21 @@ class SubAgentTaskStore(val baseDir: os.Path) extends SubAgentTaskStorePort:
       case None => IO.unit
     }
 
+  /** Mark an invalid protected terminal projection without altering its execution outcome. */
+  def markInvalidTerminalEnvelope(observed: SubAgentTask): IO[Boolean] = withLock {
+    val rows = readTasksSync(observed.parentSessionId)
+    rows.find(_.taskId == observed.taskId) match
+      case Some(row) if row.runId == observed.runId && row.committedRevision == observed.committedRevision &&
+          row.executionStatus.contains("finished") && !row.suspectedLostTerminal.contains(true) =>
+        val updated = row.copy(suspectedLostTerminal = Some(true), committedRevision = Some(nextRevision(row)))
+        writeTasksSync(row.parentSessionId, rows.map(t => if t.taskId == row.taskId then updated else t))
+        Some(updated)
+      case _ => None
+  }.flatMap {
+    case Some(row) => fireWriteHook(row).as(true)
+    case None => IO.pure(false)
+  }
+
   /** Mark only an unchanged unresolved execution; first mark emits the alert. */
   def markSuspectedLostTerminal(observed: SubAgentTask): IO[Boolean] = withLock {
     val rows = readTasksSync(observed.parentSessionId)

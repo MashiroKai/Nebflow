@@ -611,6 +611,11 @@ object SubAgentStartupRecovery:
                       case _ => store.acknowledgeNotification(task.parentSessionId, task.taskId, run,
                         task.notificationId.get).void
                     }
+                  case Some(event) if !validTerminalEnvelope(task, run, event) =>
+                    store.markInvalidTerminalEnvelope(task).flatMap { marked =>
+                      if marked then logger.warn(s"[startup-recovery] invalid protected terminal identity for ${task.taskId}; manual review required")
+                      else IO.unit
+                    }
                   case _ => IO.unit
                 }
               }

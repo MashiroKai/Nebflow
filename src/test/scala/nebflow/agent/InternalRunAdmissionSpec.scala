@@ -182,6 +182,54 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
     }
   }
 
+  test("protected delegate with unbound envelope is marked for manual review without delivery") {
+    fixture.use { case (base, system, _, root) =>
+      for
+        parent <- base.sessionStore.createSession("unbound-protected-parent", agentName = Some("worker"))
+        _ <- ExecutionCommitStore.resource((root / "sessions").toNIO).use { authority =>
+          val admission = ExecutionAdmission("unbound-protected-child", "run", "admission", "request", "attempt", "incarnation",
+            parent.id, "business", "audit", Json.fromString("initial"), "input")
+          val task = SubAgentTask(admission.sessionId, parent.id, "worker", "initial", "test", "running", 0,
+            System.currentTimeMillis(), None, None, "delegate")
+          def cmd(ref: ExecutionCommitRef, id: String, event: ExecutionEvent) = ExecutionTransition(admission.sessionId,
+            admission.executionId, id, id, ref, admission.attemptId, admission.incarnationId, event)
+          def ref(result: ExecutionCommitResult) = result.asInstanceOf[ExecutionCommitResult.Committed].ref
+          val envelope = Json.obj("source" -> "delegate".asJson, "eventType" -> "completed".asJson,
+            "payload" -> "done".asJson, "metadata" -> Json.obj(), "correlationId" -> admission.sessionId.asJson,
+            "blocks" -> Json.Null)
+          val resources = base.copy(executionCommitPort = authority)
+          for
+            _ <- base.subAgentTaskStore.beginRun(task, "run", parent.id, "nebflow")
+            admitted <- authority.admit(admission)
+            started <- authority.transition(cmd(ref(admitted), "start", ExecutionEvent.AttemptStarted))
+            _ <- authority.registerRunner(ExecutionRunner.Attempt(admission.sessionId, "run", "attempt", "incarnation")).use { registered =>
+              val runner = registered.toOption.get
+              for
+                model <- runner.startModel(cmd(ref(started), "model", ExecutionEvent.ModelRequested(Json.Null, 0)))(IO.unit)
+                (modelRef, receipt) = model.toOption.get
+                decision <- runner.modelDecision(cmd(modelRef, "decision", ExecutionEvent.ModelDecided(
+                  ExecutionModelDecision(Json.Null, Nil))), receipt)
+                checkpoint <- authority.commitRound(cmd(ref(decision), "round", ExecutionEvent.RoundCommitted(List("input"), Json.obj())))
+                _ <- runner.installTerminal(cmd(ref(checkpoint), "terminal", ExecutionEvent.TerminalInstallPrepared("", envelope)), envelope)
+                chain <- authority.observeChain(admission.sessionId, "run")
+                resultRef = chain.asInstanceOf[ExecutionChainObservation.Verified].state.terminalResultRef.get
+                _ <- runner.projectTerminal(base.subAgentTaskStore, resultRef)
+              yield ()
+            }
+            before <- base.subAgentTaskStore.findByTaskId(admission.sessionId)
+            _ <- SubAgentStartupRecovery.sweep(base.subAgentTaskStore, base.sessionStore,
+              Some(SubAgentStartupRecovery.RevivalDeps(resources, system, None)), manual = true)
+            after <- base.subAgentTaskStore.findByTaskId(admission.sessionId)
+            pending <- SessionMailbox.scanPending(parent.id)
+          yield
+            assertEquals(after.flatMap(_.executionStatus), before.flatMap(_.executionStatus))
+            assertEquals(after.flatMap(_.suspectedLostTerminal), Some(true))
+            assertEquals(pending.count(_.identity == s"${admission.sessionId}#run"), 0)
+        }
+      yield ()
+    }
+  }
+
   test("recovery commits and delivers a saved terminal envelope for an active subtask run") {
     fixture.use { case (resources, _, _, _) =>
       for
