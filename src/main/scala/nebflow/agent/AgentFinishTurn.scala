@@ -20,6 +20,32 @@ import nebflow.shared.given
 private[agent] object AgentFinishTurn:
   import nebflow.agent.AgentActor.*
 
+  private def routeChildProgress(
+    agentDef: AgentDef,
+    resources: SharedResources,
+    parentRef: Option[ActorRef[AgentCommand]],
+    state: AgentState,
+    text: String
+  ): IO[Unit] =
+    (state.sessionId, state.execution.childReportSlot) match
+      case (Some(sid), Some(slot)) =>
+        val journal = ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid)
+        ChildReport.event(text, continues = true, agentDef.name, Some(sid), slot) match
+          case None => IO.blocking(journal.closeNoReport(slot))
+          case Some(event) =>
+            sessionIdOfRef(resources, parentRef).flatMap {
+              case None => IO.raiseError(new IllegalStateException("child-report parent session unavailable"))
+              case Some(parentSid) =>
+                IO.blocking(journal.prepareReport(slot, event.payload)).flatMap { identity =>
+                  MailboxProducer.deliver(resources, parentSid, event.copy(correlationId = Some(identity)), identity, "child-report", producer = "child-report")
+                    .flatMap {
+                      case nebflow.core.mail.SessionMailbox.MailResult.Failed(cause) => IO.raiseError(new IllegalStateException(s"child-report delivery failed: $cause"))
+                      case _ => IO.blocking(journal.markFlushed(slot))
+                    }
+                }
+            }
+      case _ => IO.unit
+
   // ============================================================
   // LlmComplete branch selector
   // ============================================================
@@ -78,20 +104,14 @@ private[agent] object AgentFinishTurn:
     else if state.askMode.isDefined && result.toolCalls.isEmpty then
       handleAskComplete(agentDef, resources, depth, parentRef, state, result.text, result.model)
     else if result.toolCalls.nonEmpty then
-      val progress = ChildReport.event(result.text, continues = true, agentDef.name, state.sessionId, state.currentTurnId)
-      val notify = (parentRef, progress) match
-        case (Some(parent), Some(event)) => parent ! event
-        case _ => IO.unit
-      notify *> pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
+      routeChildProgress(agentDef, resources, parentRef, state, result.text) *>
+        pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
     else if result.text.nonEmpty || result.thinking.nonEmpty then
       // Mail check: team members must call Mail before finishing.
       // After MaxMailReminders retries, give up and finishTurn (avoid infinite loop).
       if state.expectsMail && !state.mailUsedThisTurn && state.mailReminders < MaxMailReminders then
-        val progress = ChildReport.event(result.text, continues = true, agentDef.name, state.sessionId, state.currentTurnId)
-        val notify = (parentRef, progress) match
-          case (Some(parent), Some(event)) => parent ! event
-          case _ => IO.unit
-        notify *> handleMissingMail(agentDef, resources, depth, parentRef, state, replyTo, result)
+        routeChildProgress(agentDef, resources, parentRef, state, result.text) *>
+          handleMissingMail(agentDef, resources, depth, parentRef, state.copy(execution = state.execution.copy(childReportSlot = None)), replyTo, result)
       else
         if state.expectsMail && !state.mailUsedThisTurn then
           logAgentEvent(
@@ -102,7 +122,10 @@ private[agent] object AgentFinishTurn:
             "mail-give-up",
             s"agent finished without Mail after $MaxMailReminders reminders"
           )
-        finishTurn(
+        val closeSlot = (state.sessionId, state.execution.childReportSlot) match
+          case (Some(sid), Some(slot)) => IO.blocking(ChildReportJournal.open((nebflow.shared.PathUtil.dataRoot / "child-report-journal").toNIO, sid).closeNoReport(slot))
+          case _ => IO.unit
+        closeSlot *> finishTurn(
           agentDef,
           resources,
           depth,

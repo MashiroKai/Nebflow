@@ -1085,7 +1085,7 @@ private[agent] object AgentProcessing:
                   // 幂等）；气泡面与既有 drainedEvents 同点补发（邮箱件没有 arrive 时点）。
                   _ <- MailboxDrain.unlinkConsumed(state.sessionId.getOrElse(""), mailboxTaken)
                   _ <- MailboxDrain.notifyBatch(resources, state, mailboxTaken, depth)
-              result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState, tc.replyTo)
+              result <- pipeLlmCall(agentDef, resources, depth, parentRef, updatedState.copy(execution = updatedState.execution.copy(childReportSlot = None)), tc.replyTo)
             yield result
         end match
 
