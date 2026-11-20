@@ -82,12 +82,6 @@ class PresetCatalogInToolDocSpec extends FunSuite:
     // （worktree/force 已随 3007e48da 退役；与 DelegateToolSpec.schema 同钉面）。
     assertEquals(props, Set("task", "name", "project", "executor", "mode", "attachments"))
 
-  test("SubTask inputSchema embeds live catalog from the store"):
-    val doc = presetParamDoc(SubTaskTool.inputSchema)
-    assert(doc.contains("overrides the worker's own preset/model"))
-    val names = PresetStore.catalogLines().map(_.takeWhile(c => c != ' ' && c != '—').trim)
-    names.foreach(n => assert(doc.contains(n), s"preset $n missing from SubTask preset doc"))
-
   test("dynamic: rendering path re-reads the store (fresh per call, val→def)"):
     val dir = os.pwd / "target" / "preset-catalog-test" / "fresh"
     os.makeDir.all(dir)

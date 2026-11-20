@@ -11,7 +11,7 @@ import nebflow.actor.{ActorSystem, AgentCommand, AgentDef, AgentKind, AgentRecor
 import nebflow.core.{FileChangeTracker, RateLimiter, SessionStore}
 import nebflow.core.mail.SessionMailbox
 import nebflow.core.task.FileTaskStore
-import nebflow.core.tools.{FileLockManager, SubTaskTool, ToolContext}
+import nebflow.core.tools.FileLockManager
 import nebflow.llm.ModelCandidate
 import nebflow.shared.{Branding, LlmHandle, LlmRequest, LlmResponse, PathUtil, StreamChunk, SubAgentTask, ThinkingConfig, *}
 
@@ -79,51 +79,6 @@ class InternalRunAdmissionSpec extends CatsEffectSuite:
         )
       }
     yield (resources, system, calls, root)
-
-  test("SubTask spawn refusal after admission terminalizes its run without starting an LLM") {
-    fixture.use { case (resources, system, calls, root) =>
-      val parentId = "delegate-kernel-admission-parent"
-      def idle: nebflow.actor.Behavior[AgentCommand] =
-        Behaviors.receiveMessage[AgentCommand](_ => IO.pure(idle))
-      for
-        parent <- system.spawn(idle, "admission-parent")
-        _ <- resources.agentRegistry.update(_.updated(parentId, AgentRecord(
-          sessionId = parentId,
-          ref = parent,
-          kind = AgentKind.Delegate,
-          rootSessionId = parentId
-        )))
-        result <- SubTaskTool.call(
-          JsonObject("prompt" -> "Inspect a source file".asJson, "description" -> "admission refusal".asJson),
-          ToolContext(
-            sessionId = Some(parentId),
-            rootSessionId = Some(parentId),
-            agentDef = Some(AgentDef(name = "worker", description = "", tools = Nil, systemPrompt = "")),
-            agentActorRef = Some(parent),
-            actorSystem = Some(system),
-            sharedResources = Some(resources),
-            projectRoot = root.toString
-          )
-        ).attempt
-        tasks <- resources.subAgentTaskStore.loadTasks(parentId)
-        registry <- resources.agentRegistry.get
-        llmCalls <- calls.get
-      yield
-        val error = result match
-          case Left(e) => Option(e.getMessage).getOrElse(e.getClass.getSimpleName)
-          case Right(Left(e)) => e.message
-          case Right(Right(value)) => fail(s"The kernel spawn gate must reject this child: $value")
-        assert(error.contains("R-3a"), s"The real spawn gate must cause the failure: $error")
-        assertEquals(tasks.size, 1, "The refusal must happen after durable run admission")
-        val task = tasks.head
-        assert(task.runId.nonEmpty, "The failed attempt must retain its run identity")
-        assertEquals(task.executionStatus, Some("failed"), "No ownerless starting run may survive spawn failure")
-        assert(task.completedAt.nonEmpty, "The rejected run needs a durable terminal timestamp")
-        assert(task.terminalReason.exists(_.contains("R-3a")), "The spawn failure must remain inspectable")
-        assert(!registry.contains(task.taskId), "The rejected child must not remain registered")
-        assertEquals(llmCalls, 0)
-    }
-  }
 
   test("startup reconfirms an acknowledged protected terminal with missing mailbox evidence") {
     fixture.use { case (base, system, calls, root) =>
