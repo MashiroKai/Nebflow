@@ -526,7 +526,8 @@ object SubAgentStartupRecovery:
           val mayMark = if row.executionStatus.contains("interrupted") then
             row.runId.fold(IO.pure(false)) { run =>
               sessionStore.loadTerminalEnvelope(row.taskId, run).map(_.exists(event =>
-                event.source == "subtask" && event.eventType == "completed" &&
+                event.source == row.source && event.eventType == "completed" &&
+                  event.metadata("taskRunId").flatMap(_.asString).contains(run) &&
                   event.correlationId.contains(row.taskId) &&
                   event.metadata("parentSessionId").flatMap(_.asString).contains(row.parentSessionId)))
             }
