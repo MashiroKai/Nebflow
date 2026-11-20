@@ -5,6 +5,7 @@ import io.circe.Json
 import io.circe.syntax.*
 import nebflow.core.CredentialFileAcl
 import nebflow.shared.{NebflowLogger, SharedBackend}
+import nebflow.social.outbound.{OutboundRetry, RetryPolicy}
 import sttp.client4.*
 
 import java.nio.file.{Files, StandardOpenOption}
@@ -38,15 +39,24 @@ import scala.concurrent.duration.*
  *     host account file it already mirrors. This class's zero-secret surface is
  *     one file path and one bearer header; neither value is ever logged,
  *     echoed, or rendered (log lines carry reasons and HTTP codes only).
- *   - Retry boundary: NONE on this side. A timed-out flush may already have
- *     been accepted by iLink, so a re-send could duplicate the reply; the
- *     side-car owns the (network-class-only) retry budget. A failure here is
- *     ONE contained WARN line — never an exception, never a queue (v1). The
- *     send-failure observability batch (2026-10-08) makes that WARN REAL and
- *     SINGLE-SOURCED: every failed send — shim 502 (iLink ret≠0), 401/503,
- *     transport exception/timeout, or the closed (token-less) leg — logs ONE
- *     line at [[postLive]] (the chokepoint both seams share); a successful
- *     send logs nothing. Pinned by `WeixinOutboundLogSpec`.
+ *   - Retry boundary: **有界退避，但重发边界不变**（社交出站 P0 批 2026-11-21，
+ *     作者令③）。原始裁定仍然成立：一次**超时**可能已经被 iLink 接受，重发会
+ *     重复投递 ⇒ 超时类（`sidecar_unreachable`）**永不重试**。改的只是另一半：
+ *     **确定性未送达**（iLink `ret=-2 prepare failed` = 会话尚未就绪、5xx 抖动）
+ *     不再一次即弃——[[RetryPolicy]] 给次数与单次间隔双重上界（生产
+ *     [[RetryPolicy.Bounded]]：3 次、0.5s 起、封顶 8s），判定见
+ *     [[retryableFailure]]。默认 [[RetryPolicy.Single]] 保持历史单次面，既有
+ *     钉子（`attempts=1`）因此逐字不变。
+ *
+ *     A failure here is never an exception and never a queue: the final reading is
+ *     returned and ONE `ERROR` line per failed attempt is written at
+ *     [[postLive]] (the chokepoint both seams share). The send-failure
+ *     observability batch (2026-10-08) made that line REAL and SINGLE-SOURCED
+ *     (every failed send — shim 502 (iLink ret≠0), 401/503, transport
+ *     exception/timeout, or the closed (token-less) leg — logs it); the P0 batch
+ *     (2026-11-21, 作者铁律②) raised it WARN → **ERROR** and put the real attempt
+ *     index in the `attempts=` field. A successful send logs nothing. Pinned by
+ *     `WeixinOutboundLogSpec`.
  *
  * Failure vocabulary (design §0.6, the inbound `sidecar_unreachable` family):
  *   transport error ⇒ `sidecar_unreachable`; HTTP 401 ⇒ `shim_auth_rejected`;
@@ -386,52 +396,89 @@ object WeixinOutboundAdapter:
           .getOrElse("-")
 
   /**
-   * THE failure WARN: one line per failed outbound send, carrying the
-   * channel, the recipient, the error code + stable reason (the iLink
-   * `ret=`/`errmsg=` detail rides inside `reason` verbatim), the message
-   * digest and the attempt count. `attempts=1` is this leg's OWN contract,
-   * not a guess: the engine does not retry (§0.4 — an ambiguous timeout may
-   * already be a delivered message), so the line documents that no engine
-   * retry happened; the side-car's internal retry budget is invisible here.
+   * THE failure line: one line per FAILED ATTEMPT, carrying the channel, the
+   * recipient, the error code + stable reason (the iLink `ret=`/`errmsg=`
+   * detail rides inside `reason` verbatim), the message digest and the attempt
+   * index.
+   *
+   * 社交出站 P0 批（2026-11-21，作者铁律②「出站失败绝不静默——每次发送失败
+   * 必须 ERROR 级日志（渠道/to/原因）并在任务行/面板可见」）：
+   *
+   *   - **WARN → ERROR**：实证 2026-11-21 01:35:01 的失败在 WARN 级被淹没，
+   *     作者的读数只有「飞书收不到」。出站整条消息没送达是 ERROR 事实，不是
+   *     提醒。
+   *   - `attempts=<n>` 从常量 `1` 改为**真实次数**：这一行是第 n 次尝试的失败
+   *     （`RetryPolicy.Single` 下仍是 1——既有钉子逐字不变；生产装配走
+   *     [[RetryPolicy.Bounded]] 时依次是 1、2、3，读者一眼看出是否退避重试过、
+   *     以及最后那次是不是终态）。
+   *   - 每次尝试失败都打一条（不是只打最后一次）：铁律② 说的是「每次发送失败」。
+   *
    * The credential appears only in the Authorization header — never logged.
    */
-  private def logSendFailure(to: String, res: SendResult, digest: String): IO[Unit] =
-    logger.warn(
-      "weixin outbound send failed",
-      "channel" -> "weixin-ilink",
-      "to" -> to,
-      "code" -> res.code.toString,
-      "reason" -> res.reason,
-      "digest" -> digest,
-      "attempts" -> "1"
+  private def logSendFailure(to: String, res: SendResult, digest: String, attempts: Int): IO[Unit] =
+    logger.error(
+      s"weixin outbound send failed channel=weixin-ilink to=$to code=${res.code} " +
+        s"reason=${res.reason} digest=$digest attempts=$attempts"
     )
+
+  /**
+   * 确定性未送达分类（作者令③ 的重试闸）——**只有「再试一次可能就成」的失败
+   * 才吃重试名额**，因为重发边界（design §0.4）没有放宽：
+   *
+   *   - `ret=-2`（iLink `sendmessage prepare failed` = 会话尚未就绪）⇒ 可重试。
+   *     重启之后最常见的就是它：退避几百毫秒后会话多半已就绪。实证
+   *     2026-11-21 01:35:01 那条正是 `ret=-2`，而当时 `attempts=1` 就放弃了。
+   *   - 5xx（502/504…）⇒ 可重试（上游抖动）。**503 除外**：本腿 503 的稳定语义
+   *     是 `shim_token_unconfigured`（side-car 没配 token），重试同一条注定
+   *     同样的拒绝。
+   *   - `sidecar_unreachable`（超时/连接异常）⇒ **不重试**。design §0.4 的原始
+   *     裁定：超时的 flush 可能已经被 iLink 接受，重发就是重复投递。
+   *   - 401 `shim_auth_rejected` / 其它 4xx / 200-未投递 ⇒ 不重试（确定性拒绝）。
+   *
+   * `ret=-2` 只以文本形态出现在 `reason` 里（side-car 原样带回、本对象
+   * [[parseSendResponse]] 原样保留），所以这里做 reason 词表匹配——那是本腿
+   * 唯一的结构化信号，而 `ret=`/`errmsg=` 本就是本仓钉住的稳定词表。
+   * 纯函数、零 IO（[[nebflow.social.WeixinOutboundRetrySpec]] 钉死判定表）。
+   */
+  def retryableFailure(res: SendResult): Boolean =
+    if res.code == -1 && res.reason.startsWith("sidecar_unreachable") then false
+    else if res.reason.contains("ret=-2") then true
+    else res.code >= 500 && res.code != 503
 
   /**
    * The one POST to the side-car shared by the text and media seams: cold token
    * + cold sidecar_url + cold account-hint read (the same beat, in the same
-   * order, as the original sendLive), one attempt, total containment (every
-   * failure is a [[SendResult]] reading — never a raise). `buildBody` receives
-   * the cold account hint; `timeout` selects the text ([[ReadTimeout]]) or
-   * media ([[MediaReadTimeout]]) budget. The credential appears only in the
+   * order, as the original sendLive), total containment (every failure is a
+   * [[SendResult]] reading — never a raise). `buildBody` receives the cold
+   * account hint; `timeout` selects the text ([[ReadTimeout]]) or media
+   * ([[MediaReadTimeout]]) budget. The credential appears only in the
    * Authorization header; nothing here logs or echoes it.
    *
-   * 失败必打日志: EVERY failed result (any `code`, including the token-less
+   * 失败必打日志: EVERY failed attempt (any `code`, including the token-less
    * closed leg where no request is issued at all) emits exactly one
-   * [[logSendFailure]] WARN before the reading is returned; a successful send
-   * emits nothing. The digest is hint-independent (it reads only the
+   * [[logSendFailure]] line before the reading is returned; a successful
+   * attempt emits nothing. The digest is hint-independent (it reads only the
    * `text`/media-path keys), so one body build serves both the wire and the
    * log line.
+   *
+   * 有界退避（社交出站 P0 批 2026-11-21，作者令③「排队出站按有界退避重试
+   * 排空，不许一次失败就放弃」）：`policy` 决定试几次。判定在
+   * [[retryableFailure]]——确定性未送达才吃名额，超时类中立失败立刻返回（重发
+   * 边界不变）。返回最后一次读数，调用侧语义原样保持。
    */
   private def postLive(
     root: os.Path,
-    timeout: FiniteDuration
+    timeout: FiniteDuration,
+    policy: RetryPolicy = RetryPolicy.Single
   )(to: String, buildBody: Option[String] => Json): IO[SendResult] =
     for
       token <- readToken(root)
       hint = accountHint(root) // same cold-read beat as the base below
       body = buildBody(hint)
+      digest = sendDigest(body)
       result <- token match
         case None =>
+          // 配置类失败：确定性，不进重试（重试只是把同一行日志写三遍）。
           val closed = SendResult(
             false,
             false,
@@ -439,40 +486,51 @@ object WeixinOutboundAdapter:
             -1,
             s"shim_token_unconfigured: no token at secrets/$TokenFileName — the outbound leg stays closed"
           )
-          logSendFailure(to, closed, sendDigest(body)).as(closed)
+          logSendFailure(to, closed, digest, 1).as(closed)
         case Some(t) =>
           val base = sidecarBase(root).stripSuffix("/")
-          IO.blocking {
-            val resp = basicRequest
-              .post(uri"$base/send")
-              .header("Content-Type", "application/json")
-              .header("Authorization", s"Bearer $t")
-              .body(body.noSpaces)
-              .readTimeout(timeout)
-              .response(asStringAlways)
-            val r = resp.send(SharedBackend.instance)
-            parseSendResponse(r.code.code, r.body)
-          }.handleErrorWith(e =>
-            // The engine does NOT retry (design §0.4: an ambiguous timeout may
-            // already be a delivered message; a re-send could duplicate it).
-            IO.pure(
-              SendResult(
-                false,
-                false,
-                None,
-                -1,
-                s"sidecar_unreachable: ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
+          def attempt(n: Int): IO[SendResult] =
+            IO.blocking {
+              val resp = basicRequest
+                .post(uri"$base/send")
+                .header("Content-Type", "application/json")
+                .header("Authorization", s"Bearer $t")
+                .body(body.noSpaces)
+                .readTimeout(timeout)
+                .response(asStringAlways)
+              val r = resp.send(SharedBackend.instance)
+              parseSendResponse(r.code.code, r.body)
+            }.handleErrorWith(e =>
+              // 超时/连接异常 ⇒ `sidecar_unreachable`：**不进重试**（重发会重复
+              // 投递，design §0.4），由 [[retryableFailure]] 判定后立即返回。
+              IO.pure(
+                SendResult(
+                  false,
+                  false,
+                  None,
+                  -1,
+                  s"sidecar_unreachable: ${e.getClass.getSimpleName}: ${Option(e.getMessage).getOrElse("")}"
+                )
               )
-            )
-          ).flatTap(res => if res.ok then IO.unit else logSendFailure(to, res, sendDigest(body)))
+            ).flatTap(res => if res.ok then IO.unit else logSendFailure(to, res, digest, n))
+          OutboundRetry.run(policy)(attempt)(ok = _.ok, retryable = retryableFailure)
     yield result
 
   /**
    * The production text send. Byte-identical to the pre-media-batch shape:
-   * same body builder, same [[ReadTimeout]] budget.
+   * same body builder, same [[ReadTimeout]] budget, one attempt
+   * ([[RetryPolicy.Single]] — the historical contract every existing pin reads).
    */
   def sendLive(root: os.Path): Send =
-    (to, text) => postLive(root, ReadTimeout)(to, hint => buildSendJson(to, text, hint))
+    sendLive(root, RetryPolicy.Single)
+
+  /**
+   * 社交出站 P0 批（2026-11-21，作者令③）：同一发送面 + **有界退避**。
+   * 生产装配点（[[WeixinIlinkBridgePlugin.sync]] 的工厂默认值）传
+   * [[RetryPolicy.Bounded]]；`sendLive(root)` 保持 Single，既有钉子逐字不变。
+   */
+  def sendLive(root: os.Path, policy: RetryPolicy): Send =
+    (to, text) => postLive(root, ReadTimeout, policy)(to, hint => buildSendJson(to, text, hint))
 
   /**
    * The production MEDIA send (weixin-media batch): the same side-car face,
@@ -480,7 +538,11 @@ object WeixinOutboundAdapter:
    * [[MediaReadTimeout]] budget (the side-car's CDN upload rides inside).
    */
   def sendMediaLive(root: os.Path): SendMedia =
-    (to, media) => postLive(root, MediaReadTimeout)(to, hint => buildMediaSendJson(to, media, hint))
+    sendMediaLive(root, RetryPolicy.Single)
+
+  /** 同 [[sendLive]]：媒体腿的有界退避重载（同一分类闸，见 [[retryableFailure]]）。 */
+  def sendMediaLive(root: os.Path, policy: RetryPolicy): SendMedia =
+    (to, media) => postLive(root, MediaReadTimeout, policy)(to, hint => buildMediaSendJson(to, media, hint))
 
   /**
    * The production image-GROUP send (媒体合并批): the same side-car face, the
@@ -489,7 +551,11 @@ object WeixinOutboundAdapter:
    * probe adds the whole official per-item fallback on the side-car side).
    */
   def sendMediaGroupLive(root: os.Path): SendGroup =
+    sendMediaGroupLive(root, RetryPolicy.Single)
+
+  /** 同 [[sendLive]]：合并图组腿的有界退避重载。 */
+  def sendMediaGroupLive(root: os.Path, policy: RetryPolicy): SendGroup =
     (to, images, caption) =>
-      postLive(root, groupReadTimeout(images.size))(to, hint => buildMediaGroupSendJson(to, images, caption, hint))
+      postLive(root, groupReadTimeout(images.size), policy)(to, hint => buildMediaGroupSendJson(to, images, caption, hint))
 
 end WeixinOutboundAdapter

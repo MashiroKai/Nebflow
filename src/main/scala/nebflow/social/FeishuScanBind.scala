@@ -235,7 +235,7 @@ final class FeishuScanBind(
     val expireAt = System.currentTimeMillis() + qr.getExpireIn * 1000L
     val url = Option(qr.getUrl).getOrElse("")
     val code = FeishuScanBind.extractUserCode(url)
-    IO(logger.info(s"feishu scan-bind [$scanId]: qr ready (expireIn=${qr.getExpireIn}s)")) *>
+    logger.info(s"feishu scan-bind [$scanId]: qr ready (expireIn=${qr.getExpireIn}s)") *>
       advance(scanId) {
         case State.Starting => State.QrReady(url, code, expireAt)
         case q: State.QrReady if q.qrUrl != url || q.userCode != code =>
@@ -268,15 +268,15 @@ final class FeishuScanBind(
       case Right(_) =>
         activate.attempt.flatMap {
           case Right(_) =>
-            IO(logger.info(s"feishu scan-bind [$scanId]: app $appId stored and bridge sync fired")) *>
+            logger.info(s"feishu scan-bind [$scanId]: app $appId stored and bridge sync fired") *>
               statesRef.update(m => m.updated(scanId, State.Done(appId)))
           case Left(e) =>
-            IO(logger.warn(s"feishu scan-bind [$scanId]: bridge sync failed: ${e.getClass.getSimpleName}")) *>
+            logger.warn(s"feishu scan-bind [$scanId]: bridge sync failed: ${e.getClass.getSimpleName}") *>
               statesRef.update(m => m.updated(scanId, State.Failed(s"bridge sync failed: ${e.getClass.getSimpleName}")))
         }
       case Left(err) =>
         val reason = renderSaveFailure(err)
-        IO(logger.warn(s"feishu scan-bind [$scanId]: credential persistence failed ($reason)")) *>
+        logger.warn(s"feishu scan-bind [$scanId]: credential persistence failed ($reason)") *>
           statesRef.update(m => m.updated(scanId, State.Failed(reason)))
     }
 
@@ -302,7 +302,7 @@ final class FeishuScanBind(
         val d = Option(r.getDescription).getOrElse("")
         if d.isEmpty then kind else s"$kind: $d"
       case _ => kind
-    IO(logger.warn(s"feishu scan-bind [$scanId]: failed ($kind: ${e.getClass.getSimpleName})")) *>
+    logger.warn(s"feishu scan-bind [$scanId]: failed ($kind: ${e.getClass.getSimpleName})") *>
       statesRef.update(m => m.updated(scanId, State.Failed(detail)))
 
 end FeishuScanBind

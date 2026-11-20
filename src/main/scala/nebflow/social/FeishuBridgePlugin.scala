@@ -124,7 +124,23 @@ final class FeishuBridgePlugin(
    * Production default reads that remembered flag; specs inject a constant.
    * 微信腿同款缝，同一实现源 [[OutputBlock.extractGated]]。
    */
-  rootSessionGate: Option[String => Boolean] = None
+  rootSessionGate: Option[String => Boolean] = None,
+  /**
+   * 出站有界退避缝（社交出站 P0 批 2026-11-21，作者令③「排队出站按有界退避
+   * 重试排空，不许一次失败就放弃」）。
+   *
+   * 默认 [[nebflow.social.outbound.RetryPolicy.Single]] = **恰好一次尝试**：
+   * 所有既有钉子（单次调用面、`FeishuBridgePluginSpec` 的 `calls.size` /
+   * `got.size` 计数、`attempts=1` 语义）逐字保持，本批一处不碰。生产装配点
+   * （[[FeishuBridgePlugin.sync]] 的工厂）显式传
+   * [[nebflow.social.outbound.RetryPolicy.Bounded]] 才启用退避重试——判别式
+   * 装配，与两条桥既有的 `rootSessionGate` / `send` 缝同一形状，不是新机制。
+   *
+   * 重试只吃**确定性未送达**的分类（[[FeishuBridgePlugin.retryableFailure]]）：
+   * 鉴权/参数/目标不存在一类的确定性拒绝立刻停手（重试同一条只是拖时间），
+   * 5xx / 限流一类才吃名额。次数与单次间隔都封顶 ⇒ 总等待有界。
+   */
+  retryPolicy: RetryPolicy = RetryPolicy.Single
 ) extends BridgePlugin:
 
   private val logger = NebflowLogger.forName("nebflow.social.feishu-bridge")
@@ -190,6 +206,31 @@ final class FeishuBridgePlugin(
     cats.effect.Ref.unsafe[IO, Set[String]](Set.empty)
 
   /**
+   * 轮尾静默丢失面（社交出站 P0 批，2026-11-21）的两个 per-session 记账：
+   *
+   *   - [[turnTextRef]]：本轮原文**字符数**（`textDelta` 累加）。缓冲会被段级
+   *     flush 逐段消费，所以 `done` 手里的 `text` 只是「最后一个段边界之后的
+   *     尾巴」——光看尾巴无法判断「本轮到底有没有过可投递的文本」。
+   *   - [[turnOutboundRef]]：本轮**是否真的向飞书发起过出站**（任一段或尾段
+   *     交给了 pacer 即为真）。
+   *
+   * `done` 据此回答作者实证的那个问题：本轮有文本、却一次出站都没发起 ⇒
+   * 这条回复被 `<report>` 块闸整条吃掉且不打一行日志——**这就是 2026-11-21
+   * 重启后飞书腿「零出站日志、零报错、消息全无」的静默丢失点**。现在它落一条
+   * ERROR + 一条面板可见的健康 strike，而不是消失。
+   *
+   * 两本账都在 `done` 读后即清（`interrupted`/`retryStatus`/`stop` 同清）：
+   * 撕裂的一轮从来不是一条回复。
+   */
+  private[social] val turnTextRef = cats.effect.Ref.unsafe[IO, Map[String, Int]](Map.empty)
+  private[social] val turnOutboundRef = cats.effect.Ref.unsafe[IO, Set[String]](Set.empty)
+
+  /** 本轮出站已发起——段级/尾段在**入队时刻**记账（异步 runner 完成时刻太晚，
+    * `done` 会读到 0 并误报）。 */
+  private def markTurnOutbound(sessionId: String): IO[Unit] =
+    turnOutboundRef.update(_ + sessionId)
+
+  /**
    * The member allowlist in force; empty = unrestricted (shipped default).
    * The pinned value is the INITIAL state so the gate is armed from
    * construction; start() re-reads the stored card config over it.
@@ -253,13 +294,18 @@ final class FeishuBridgePlugin(
             case Left(reason) =>
               // The config gate (verified) should have caught this; defense in
               // depth — stay registered but unconnected, never throw.
-              IO(
-                logger.warn(
-                  "feishu bridge: no usable credential — registered but unconnected"
-                )
+              //
+              // 社交出站 P0 批（2026-11-21）：原文是 `IO(logger.warn(...))` ——
+              // IO[IO[Unit]] 死日志，内层 logback 永不执行。凭据缺失 ⇒ 桥
+              // 「注册但未连接」⇒ 出站整腿失效，而日志面一个字都没有：这正是
+              // 作者实证「重启后飞书一条都收不到、引擎日志零出站零报错」的
+              // 静默面之一。直落 IO 语法，并按作者铁律②升级 ERROR。
+              logger.error(
+                s"feishu bridge: no usable credential — registered but unconnected ($reason)"
               )
         yield ()
-      body.handleErrorWith(e => IO(logger.error(s"feishu bridge: start failed: ${e.getClass.getSimpleName}"))) *>
+      // 同上：原文 `IO(logger.error(...))` 是死日志（start 失败时零日志）。
+      body.handleErrorWith(e => logger.error(s"feishu bridge: start failed: ${e.getClass.getSimpleName}")) *>
         IO(if listener.isEmpty then starting.set(false)) // failed start ⇒ a later sync may retry
 
   /**
@@ -277,6 +323,8 @@ final class FeishuBridgePlugin(
       starting.set(false)
     } *> pendingRef.set(Map.empty) // a torn turn is never a reply, also across restarts
       *> richRef.set(Map.empty) // …and neither is a rich product from a torn turn
+      *> turnTextRef.set(Map.empty) // …nor a half-counted turn (the loss face reads these)
+      *> turnOutboundRef.set(Set.empty)
       *> askChatRef.set(Map.empty) // askuser-remote P1: a torn ask's routing cache dies with the bridge
       *> permissionRoutes.set(Map.empty)
 
@@ -318,11 +366,12 @@ final class FeishuBridgePlugin(
           // sender identity is as good as a non-member. Ordered FIRST so the
           // allowlist also rules the auto-bind arm below (C6: only a listed
           // member can mint a binding).
-          IO(
-            logger.warn(
-              "feishu bridge: message dropped — sender is not on the member allowlist"
-            )
-          )
+          //
+          // 社交出站 P0 批（2026-11-21）：原 `IO(logger.warn(...))` 是
+          // IO[IO[Unit]] 死日志（内层永不执行）——本批把 social 面整片死日志
+          // 清掉（`scripts/check-dead-logging.sh` 归零），否则「入站被拒」这类
+          // 事实同样只存在于源码里。
+          logger.warn("feishu bridge: message dropped — sender is not on the member allowlist")
         case (_, None, _, _) =>
           autoBind(ctx, in)
         case (_, Some(sessionId), None, true) =>
@@ -332,11 +381,7 @@ final class FeishuBridgePlugin(
           // failure line (never silence, never a fabricated body).
           imageArm(ctx, in, sessionId)
         case (_, _, None, _) =>
-          IO(
-            logger.info(
-              "feishu bridge: message has no readable body — nothing injected"
-            )
-          )
+          logger.info("feishu bridge: message has no readable body — nothing injected")
         case (_, Some(sessionId), Some(text), _) =>
           // askucancel 批（2026-10-08）：取消关键字臂（精确匹配，先于注入）——
           // 在册零问 ⇒ 照旧注入（B-2 聊天透传，关键字不拦截不吞）；恰一问 ⇒ 按
@@ -621,7 +666,7 @@ final class FeishuBridgePlugin(
         )
         ctx.updateBridgeConfig(sessionId, FeishuBridgePlugin.Name, Some(cfg)) *>
           routesRef.update(_ + (in.chatId -> sessionId)) *>
-          IO(logger.info("feishu bridge: chat auto-bound to default session")) *>
+          logger.info("feishu bridge: chat auto-bound to default session") *>
           // feishu-inbound-image batch: the bind tail grew the image arm (the
           // weixin C4 form — a first image BINDS exactly like a first text, and
           // what gets injected is the landed-file media line, never a
@@ -631,11 +676,7 @@ final class FeishuBridgePlugin(
             case None if in.messageType == "image" => imageArm(ctx, in, sessionId)
             case None => IO.unit)
       case None =>
-        IO(
-          logger.info(
-            "feishu bridge: no bound or default session — message dropped"
-          )
-        )
+        logger.info("feishu bridge: no bound or default session — message dropped")
     }
 
   // ───────────────── panel probe face (feishu-bind batch, C1) ─────────────────
@@ -667,10 +708,22 @@ final class FeishuBridgePlugin(
     if res.ok then
       creds = Some(c)
       listener = Some(l)
-      logger.info("feishu bridge: long connection up")
+      // 社交出站 P0 批（2026-11-21）：原文是**裸** `logger.info(...)` ——
+      // NebflowLogger.info 返回 IO[Unit]，本方法返回 Unit，返回的 IO 被直接
+      // 丢弃、内层 logback 永不执行（死日志门禁「已知边界」里的 Unit 语境
+      // 形态，同款病根）。结果：连接建立与否的事实从来没落过盘——「长连接
+      // 到底连上没连上」在日志面全盲。*Sync 变体：在这里才有真实输出。
+      logger.infoSync(
+        s"feishu bridge: long connection up region=$region app=${FeishuCredentials.redacted(c.appId)}"
+      )
     else
       l.stop() // a failed handshake still owns a socket attempt — never leak it
-      logger.warn("feishu bridge: handshake failed — registered but unconnected")
+      // 同上：原文裸 warn，永不执行。握手失败 = 出站整腿不可用（注册但未连接）
+      // ⇒ 按作者铁律②升级 ERROR，并把 SDK 给的 detail 带出来。
+      logger.errorSync(
+        s"feishu bridge: handshake failed — registered but unconnected region=$region " +
+          s"detail=${Option(res.detail).getOrElse("")}"
+      )
 
   end openListener
 
@@ -737,7 +790,10 @@ final class FeishuBridgePlugin(
       case "textDelta" =>
         c.downField("delta").as[String].getOrElse("") match
           case "" => IO.unit
-          case delta => pendingRef.update(m => m.updated(sessionId, m.getOrElse(sessionId, "") + delta))
+          case delta =>
+            pendingRef.update(m => m.updated(sessionId, m.getOrElse(sessionId, "") + delta)) *>
+              // 轮尾静默丢失面的记账（见 [[turnTextRef]]）：本轮有没有过文本。
+              turnTextRef.update(m => m.updated(sessionId, m.getOrElse(sessionId, 0) + delta.length))
       case "toolEnd" =>
         // A tool result is only a rich product when it was NOT an error; an
         // errored tool's content is an error string, never an artifact.
@@ -772,11 +828,32 @@ final class FeishuBridgePlugin(
           // =提取，闸关=原文直通）的块内拼接——块外叙述不出站；无块/散标签
           // 轮 ⇒ 无可投递文本，文字腿熄灭（**不回退成发全文**）。
           isRootSource(sessionId).flatMap { root =>
-            val visible = OutputBlock.extractGated(text, root) match
+            val verdict = OutputBlock.extractGated(text, root)
+            val tail = verdict match
               case OutputBlock.Extracted(inner) => inner
-              case _ => ""
-            val textLeg = if visible.trim.isEmpty then IO.unit else pacer.enqueue(reply(sessionId, visible))
-            richLeg *> textLeg
+              case _                            => ""
+            val textLeg =
+              if tail.trim.isEmpty then IO.unit
+              else markTurnOutbound(sessionId) *> pacer.enqueue(reply(sessionId, tail))
+            // 轮尾静默丢失面（社交出站 P0 批 2026-11-21）：本轮**有过文本**却
+            // 一次出站都没发起 ⇒ 被 `<report>` 块闸整条吃掉。线上行为不变
+            // （不回退成发全文），但这条丢失必须落 ERROR + 面板 strike——否则
+            // 就是作者实证的「等了一小时，引擎日志零出站零报错」。
+            //
+            // 空块（`<report></report>`）不算丢失：那是作者自己的选择（控制台
+            // 同样什么都不渲染），报 ERROR 只是噪音。
+            val lossFace =
+              turnTextRef.getAndUpdate(_ - sessionId).flatMap { chars =>
+                turnOutboundRef.getAndUpdate(_ - sessionId).flatMap { sent =>
+                  val had = chars.getOrElse(sessionId, 0)
+                  if !root || had <= 0 || sent.contains(sessionId) then IO.unit
+                  else
+                    verdict match
+                      case OutputBlock.Extracted(_) => IO.unit // 空块 ⇒ 无话可说，不是丢失
+                      case v                        => noteTurnSuppressed(sessionId, v, had)
+                }
+              }
+            richLeg *> textLeg *> lossFace
           }
         }
       // 逐段即时批：分段提交边界——缓冲段即推即清（空段不推），后台排队不
@@ -785,7 +862,8 @@ final class FeishuBridgePlugin(
       // A retried or interrupted turn re-streams its text; the partial buffer
       // must never flush as a duplicated/garbled reply.
       case "interrupted" | "retryStatus" =>
-        pendingRef.update(_ - sessionId) *> richRef.update(_ - sessionId)
+        pendingRef.update(_ - sessionId) *> richRef.update(_ - sessionId) *>
+          turnTextRef.update(_ - sessionId) *> turnOutboundRef.update(_ - sessionId)
       // askuser-remote P1 (L0, D-2 拍板: each bridge grows its own branch —
       // no second mechanism). The frame reached this bridge already (hub
       // render → rootWsSend → wsHub broadcast); it simply had no arm before.
@@ -885,13 +963,11 @@ final class FeishuBridgePlugin(
           val allViews = AskPromptCodec.viewsFromItemsJson(items)
           (requestId, allViews) match
             case (None, _) =>
-              IO(
-                logger.warn(
-                  s"feishu bridge: askUser frame without requestId — dropped (no answer could ever be routed)"
-                )
+              logger.warn(
+                s"feishu bridge: askUser frame without requestId — dropped (no answer could ever be routed)"
               )
             case (_, Nil) =>
-              IO(logger.warn(s"feishu bridge: askUser frame without a usable question — dropped"))
+              logger.warn(s"feishu bridge: askUser frame without a usable question — dropped")
             case (Some(rid), views) =>
               // D-1 拍板: flatten ONCE — one AskUser = one question set sent in
               // one pass; a question whose dependsOn cannot name a surviving
@@ -902,7 +978,7 @@ final class FeishuBridgePlugin(
               askChatRef.update(_ + (rid -> chatId)).flatMap { _ =>
                 creds match
                   case None =>
-                    IO(logger.warn("feishu bridge: ask card dropped — no credential resolved"))
+                    logger.warn("feishu bridge: ask card dropped — no credential resolved")
                   case Some(cr) =>
                     deliverAskMedia(cr, chatId, attachments).flatMap { undelivered =>
                       if FeishuAskCard.needsTextFallback(flat.views) then
@@ -954,7 +1030,7 @@ final class FeishuBridgePlugin(
       }
       .flatMap { results =>
         val rejected = results.count(!_.ok)
-        if rejected == 0 then IO(logger.info(s"feishu bridge: ask card(s) delivered (cards=${results.size})"))
+        if rejected == 0 then logger.info(s"feishu bridge: ask card(s) delivered (cards=${results.size})")
         else if rejected == results.size then
           sendTextFallback(
             cr,
@@ -964,11 +1040,9 @@ final class FeishuBridgePlugin(
             batch = batch
           )
         else
-          IO(
-            logger.warn(
-              s"feishu bridge: ask cards PARTIALLY delivered " +
-                s"(ok=${results.size - rejected} rejected=$rejected) — no duplicate text card sent"
-            )
+          logger.warn(
+            s"feishu bridge: ask cards PARTIALLY delivered " +
+              s"(ok=${results.size - rejected} rejected=$rejected) — no duplicate text card sent"
           )
         end if
       }
@@ -1016,25 +1090,19 @@ final class FeishuBridgePlugin(
                 )
                 if delivered then IO(failed)
                 else
-                  IO(
-                    logger.warn(
-                      s"feishu bridge: ask attachment media leg did not deliver (${results.count(_.ok)}/${results.size} calls ok) — keeping the path line"
-                    )
+                  logger.warn(
+                    s"feishu bridge: ask attachment media leg did not deliver (${results.count(_.ok)}/${results.size} calls ok) — keeping the path line"
                   ).as(failed :+ p)
               }
           case RichKind.Unknown(reason) =>
-            IO(
-              logger.warn(
-                "feishu bridge: ask attachment not carriable by the media leg — keeping the path line"
-              )
+            logger.warn(
+              "feishu bridge: ask attachment not carriable by the media leg — keeping the path line"
             ).as(failed :+ p)
           case other =>
             // Card cannot occur on an ask attachment (the classification reads
             // an empty content here) — this arm is the total-function backstop.
-            IO(
-              logger.warn(
-                "feishu bridge: ask attachment not delivered — keeping the path line"
-              )
+            logger.warn(
+              "feishu bridge: ask attachment not delivered — keeping the path line"
             ).as(failed :+ p)
         end match
       }
@@ -1064,8 +1132,8 @@ final class FeishuBridgePlugin(
       (if header.isEmpty then "" else header + "\n") +
         FeishuAskCard.renderText(views, reason, attachments)
     send(cr.appId, cr.appSecret, region, chatId, body).flatMap { res =>
-      if res.ok then IO(logger.info("feishu bridge: ask TEXT fallback delivered"))
-      else IO(logger.warn(s"feishu bridge: ask TEXT fallback rejected too code=${res.code}"))
+      if res.ok then logger.info("feishu bridge: ask TEXT fallback delivered")
+      else logger.warn(s"feishu bridge: ask TEXT fallback rejected too code=${res.code}")
     }
   end sendTextFallback
 
@@ -1107,10 +1175,8 @@ final class FeishuBridgePlugin(
       if !gateOpen then
         // Fail-closed, same judge as the text intake: a click from a sender we
         // cannot place on the member list is refused (and logged), never answered.
-        IO(
-          logger.warn(
-            "feishu bridge: card click refused — not on the member allowlist"
-          )
+        logger.warn(
+          "feishu bridge: card click refused — not on the member allowlist"
         ) *>
           refuse(FeishuAskCard.ToastCannotHandle)
       else
@@ -1130,7 +1196,7 @@ final class FeishuBridgePlugin(
             ) match
               case Left(reject) =>
                 // chat-mismatch / expired / duplicate / malformed — each its own toast.
-                IO(logger.info("feishu bridge: card click refused")) *>
+                logger.info("feishu bridge: card click refused") *>
                   refuse(FeishuAskCard.toastFor(reject))
               case Right(action) =>
                 val rid = ridRaw.getOrElse("")
@@ -1180,7 +1246,7 @@ final class FeishuBridgePlugin(
     else
       AskPromptCodec.validate(flat.views, List(action)) match
         case Left(why) =>
-          IO(logger.warn("feishu bridge: card click produced an invalid action — refused")) *> IO.pure(None)
+          logger.warn("feishu bridge: card click produced an invalid action — refused") *> IO.pure(None)
         case Right(_) =>
           val kept = AskPromptCodec.answers(flat.views, List(action))
           val answers = flat.expandAnswerSlots(kept)
@@ -1204,9 +1270,7 @@ final class FeishuBridgePlugin(
             )
           ) *>
             ctx.forwardInteractionAnswer(rid, rootSid, Json.obj("answers" -> answers.asJson)) *>
-            IO(
-              logger.info(s"feishu bridge: card answer forwarded answers=${answers.size}")
-            ) *>
+            logger.info(s"feishu bridge: card answer forwarded answers=${answers.size}") *>
             IO.pure(
               Some(
                 FeishuAskCard.answeredCard(
@@ -1287,7 +1351,7 @@ final class FeishuBridgePlugin(
                       s"[未送达] ${p.last} — 这一项发送时出现异常，其余内容照常（原件在桌面端：$p）"
                     logger.warn(
                       s"feishu bridge: rich item delivery raised (${e.getClass.getSimpleName}) — degrading to a visible line"
-                    ) *> sendVisibleLine(c, chatId, line)
+                    ) *> sendVisibleLine(sessionId, c, chatId, line)
                       .as(
                         List(
                           nebflow.social.outbound.RichLedger.of(
@@ -1320,20 +1384,16 @@ final class FeishuBridgePlugin(
                   }
               legs.flatMap { results =>
                 if results.isEmpty then
-                  IO(
-                    logger.warn(
-                      "feishu bridge: rich reply carried no deliverable media this time " +
-                        "(convertible md/html items may have been suppressed as same-bytes duplicates) — " +
-                        "the text reply carries the turn"
-                    )
+                  logger.warn(
+                    "feishu bridge: rich reply carried no deliverable media this time " +
+                      "(convertible md/html items may have been suppressed as same-bytes duplicates) — " +
+                      "the text reply carries the turn"
                   )
                 else
                   val failed = results.count(!_.ok)
-                  IO(
-                    logger.info(
-                      s"feishu bridge: rich reply items=${rich.media.size} " +
-                        s"calls=${results.size} failed=$failed"
-                    )
+                  logger.info(
+                    s"feishu bridge: rich reply items=${rich.media.size} " +
+                      s"calls=${results.size} failed=$failed"
                   )
               }
     }
@@ -1354,14 +1414,16 @@ final class FeishuBridgePlugin(
    * reaches the seam). Contained: a failing notice degrades to a WARN.
    */
   private def sendVisibleLine(
+    sessionId: String,
     c: FeishuCredentials.Credential,
     chatId: String,
     line: String
   ): IO[Unit] =
     send(c.appId, c.appSecret, region, chatId, line).flatMap { res =>
       if res.ok then IO.unit
-      // 直落 IO 语法（IO[IO[Unit]] 死日志修正——同下 reply 腿）。
-      else logger.warn(s"feishu bridge: rich item degrade line send rejected code=${res.code}")
+      // 社交出站 P0 批（2026-11-21）：降级提示本身也是一次出站发送，失败同样
+      // 绝不静默——按作者铁律②落 ERROR（带渠道/to/code），并记健康 strike。
+      else noteOutboundFailure(sessionId, chatId, res.code, "rich-degrade-line-rejected", 1)
     }
 
   /**
@@ -1388,7 +1450,7 @@ final class FeishuBridgePlugin(
           (
             m - sessionId,
             if inner.trim.isEmpty then IO.unit
-            else pacer.enqueueAsync(reply(sessionId, inner, isSegment = true))
+            else markTurnOutbound(sessionId) *> pacer.enqueueAsync(reply(sessionId, inner, isSegment = true))
           )
     }.flatten)
 
@@ -1407,32 +1469,162 @@ final class FeishuBridgePlugin(
       else (s + sessionId, pacer.enqueueAsync(reply(sessionId, line)))
     }.flatten
 
+  // ────────── 出站失败可见面（社交出站 P0 批，2026-11-21，作者铁律②）──────────
+  //
+  // 实证（2026-11-21 01:26-01:34 canary 重启之后）：飞书腿「出站发送零日志、
+  // 零报错」，作者一条回复都没收到，而引擎日志只有 inbound routed。病根是三个
+  // 静默面叠在一起：(a) 轮尾 `<report>` 块闸把无块的主会话回复整条吃掉且不打
+  // 一行日志（[[onAgentEvent]] 的 done 腿）；(b) 发送失败只有一句不带渠道/to
+  // 的 WARN；(c) 连接态/握手失败的日志本身是死日志（[[openListener]]）。
+  //
+  // 下面两个方法就是 (b) 的堵口：一次失败 = 一条 **ERROR**（渠道/to/码/原因/
+  // 第几次尝试）+ 一条通道健康 strike（`<root>/tmp/social-health/feishu.json`
+  // → 面板 `channels[].health` 标红）。成功一次即清该会话的 strike（回绿）。
+  //
+  // 🔴 零泄漏纪律不变：`SendResult.msg` 可能携带被拒内容的回显（`FeishuBridgePluginSpec`
+  // 的 SENTINEL 钉子钉住了这一点），所以这里只写 `code` 与稳定标签，**永不写 msg**。
+
+  /** 一次失败的可见面（ERROR 日志 + 健康 strike）。`reason` 只吃稳定标签。 */
+  private def noteOutboundFailure(
+    sessionId: String,
+    chatId: String,
+    code: Int,
+    reason: String,
+    attempt: Int,
+    stem: String = OutboundSendStem
+  ): IO[Unit] =
+    logger.error(
+      s"$stem channel=${FeishuBridgePlugin.Name} to=${maskTarget(chatId)} code=$code " +
+        s"reason=$reason attempt=$attempt/${retryPolicy.maxAttempts}"
+    ) *> writeOutboundStrike(sessionId, chatId, code, reason)
+
+  /**
+   * 轮尾静默丢失面（见 [[turnTextRef]]）：本轮有文本、却一次出站都没发起 ⇒
+   * 这条回复**被 `<report>` 块闸整条吃掉**。线上面不做任何回退（作者令
+   * 「不要回退成发全文」逐字有效），但这条丢失必须可见——否则就是 2026-11-21
+   * 实证那次的复查：作者等了一小时，日志里一行都没有。
+   */
+  private[social] def noteTurnSuppressed(
+    sessionId: String,
+    verdict: OutputBlock.Verdict,
+    chars: Int
+  ): IO[Unit] =
+    routesRef.get.flatMap { routes =>
+      routes.collectFirst { case (chatId, sid) if sid == sessionId => chatId } match
+        case None => IO.unit // 不是飞书流量：本就无所欠
+        case Some(chatId) =>
+          val label = verdict match
+            case OutputBlock.NoBlocks   => "no-report-block"
+            case OutputBlock.Unbalanced => "unbalanced-report-block"
+            case _                      => "empty-report-block"
+          noteOutboundFailure(
+            sessionId,
+            chatId,
+            0,
+            s"turn-suppressed:$label chars=$chars",
+            1,
+            SuppressedStem
+          )
+    }
+
+  /**
+   * 通道健康面的一次读-改-写（strike 按 `sessionId` + reason 归并计数，重复
+   * 失败只累加不清零）。TOTAL：写不进去只是降级 WARN，绝不影响发送语义。
+   */
+  private def writeOutboundStrike(sessionId: String, chatId: String, code: Int, reason: String): IO[Unit] =
+    IO.blocking {
+      val now = System.currentTimeMillis()
+      val previous = strikes()
+      val (matching, rest) = previous.partition(isOutboundStrike(sessionId, _))
+      val count = matching.headOption.flatMap(_.hcursor.downField("count").as[Long].toOption).getOrElse(0L) + 1L
+      val firstAt = matching.headOption.flatMap(_.hcursor.downField("firstAt").as[Long].toOption).getOrElse(now)
+      val strike = Json.obj(
+        "reason" -> ReasonOutboundSend.asJson,
+        "sessionId" -> sessionId.asJson,
+        "to" -> chatId.asJson,
+        "code" -> code.asJson,
+        "detail" -> reason.asJson,
+        "count" -> count.asJson,
+        "firstAt" -> firstAt.asJson,
+        "lastAt" -> now.asJson
+      )
+      SocialChannels.writeChannelHealth(
+        root,
+        FeishuBridgePlugin.Name,
+        Json.obj(
+          "channel" -> FeishuBridgePlugin.Name.asJson,
+          "updatedAt" -> now.asJson,
+          "strikes" -> (strike :: rest).asJson
+        )
+      )
+    }.handleError(_ => false)
+      .flatMap {
+        case true => IO.unit
+        case false => logger.warn("feishu bridge: health strike could not be written (face degraded)")
+      }
+
+  /** 该会话的出站 strike 清除（一次成功即回绿）。无可清除项 ⇒ 零写。 */
+  private def clearOutboundStrike(sessionId: String): IO[Unit] =
+    IO.blocking {
+      val previous = strikes()
+      val rest = previous.filterNot(isOutboundStrike(sessionId, _))
+      if rest == previous then false // nothing to clear — no write
+      else
+        SocialChannels.writeChannelHealth(
+          root,
+          FeishuBridgePlugin.Name,
+          Json.obj(
+            "channel" -> FeishuBridgePlugin.Name.asJson,
+            "updatedAt" -> System.currentTimeMillis().asJson,
+            "strikes" -> rest.asJson
+          )
+        )
+    }.handleError(_ => false).as(())
+
+  private def strikes(): List[Json] =
+    SocialChannels
+      .channelHealth(root, FeishuBridgePlugin.Name)
+      .flatMap(_.hcursor.downField("strikes").as[List[Json]].toOption)
+      .getOrElse(Nil)
+
+  private def isOutboundStrike(sessionId: String, s: Json): Boolean =
+    s.hcursor.downField("sessionId").as[String].toOption.contains(sessionId) &&
+      s.hcursor.downField("reason").as[String].toOption.contains(ReasonOutboundSend)
+
   private[social] def reply(sessionId: String, text: String, isSegment: Boolean = false): IO[Unit] =
     routesRef.get.flatMap { routes =>
       routes.collectFirst { case (chatId, sid) if sid == sessionId => chatId } match
         case None => IO.unit // not a feishu-bound session — other events simply pass through
         case Some(chatId) =>
           creds match
-            // 直落 IO 语法（pop multi-group 批顺手修正）：原 `IO(logger.warn/info(...))`
-            // 是 IO[IO[Unit]] 死日志——内层 logback 永不执行（同款隐患
-            // WeixinIlinkBridgeSpec 头注 2026-10-08 已点名词退役），实况即
-            // 2026-10-09 晚飞书腿整晚零出站日志、送达与否全盲的根因面。
-            case None => logger.warn("feishu bridge: reply dropped — no credential resolved")
+            // 出站失败绝不静默（作者铁律②）：一个**已绑定**的会话却没有可用
+            // 凭据 ⇒ 这条回复注定送不出去。原文是一句不带渠道/to 的 WARN。
+            case None => noteOutboundFailure(sessionId, chatId, -1, "no-credential-resolved", 1)
             case Some(c) =>
               // Channel-adapter-side text conversion (socoutbound batch, author
               // ruling #299): the OUTBOUND copy is de-marked-up so Feishu shows
               // no bare markdown syntax and keeps links alive as bare URLs. The
               // in-session original above is never rewritten — only this copy is.
               val outbound = nebflow.social.outbound.OutboundText.toPlain(FeishuTableText.render(text))
-              send(c.appId, c.appSecret, region, chatId, outbound).flatMap { res =>
-                if res.ok then
-                  segmentFailNoted.update(_ - sessionId) *>
-                    logger.info("feishu bridge: reply delivered")
-                else
-                  logger.warn(s"feishu bridge: send rejected code=${res.code}") *>
-                    (if isSegment then noteSegmentFailure(sessionId, s"[上一条推送失败 code=${res.code}]")
-                     else IO.unit)
-              }
+              // 有界退避（作者令③）：`retryPolicy` 默认 Single ⇒ 既有单次调用面
+              // 逐字不变；生产装配点传 Bounded ⇒ 一次失败不再等于放弃。判定只认
+              // 确定性未送达（[[FeishuBridgePlugin.retryableFailure]]）。
+              OutboundRetry
+                .run(retryPolicy) { attempt =>
+                  send(c.appId, c.appSecret, region, chatId, outbound).flatTap { res =>
+                    // 每一次失败都落一条 ERROR（不是只有最后一次）——作者铁律②
+                    // 要的是「每次发送失败」，不是「最终失败」。
+                    if res.ok then IO.unit
+                    else noteOutboundFailure(sessionId, chatId, res.code, "send-rejected", attempt)
+                  }
+                }(ok = _.ok, retryable = res => FeishuBridgePlugin.retryableFailure(res.code))
+                .flatMap { res =>
+                  if res.ok then
+                    segmentFailNoted.update(_ - sessionId) *> clearOutboundStrike(sessionId) *>
+                      logger.info("feishu bridge: reply delivered", "to" -> chatId)
+                  else if isSegment then noteSegmentFailure(sessionId, s"[上一条推送失败 code=${res.code}]")
+                  else IO.unit
+                }
     }
 
 end FeishuBridgePlugin
@@ -1441,6 +1633,51 @@ object FeishuBridgePlugin:
 
   /** BridgePlugin.name — also the platform key in SessionMeta.bridges. */
   val Name = "feishu"
+
+  /** 通道健康面 strike 的稳定 reason 词（出站没送出去的统一键）。 */
+  val ReasonOutboundSend = "outbound-send-failed"
+
+  /** 出站失败 ERROR 行的词头（含 `send rejected`，既有日志钉子逐字保持）。 */
+  val OutboundSendStem = "feishu bridge: send rejected"
+
+  /** 轮尾「有文本、零出站」的 ERROR 词头（与发送失败区分开，便于检索）。 */
+  val SuppressedStem = "feishu bridge: turn text suppressed — nothing sent"
+
+  /**
+   * 生产装配的出站退避策略（社交出站 P0 批 2026-11-21，作者令③）：
+   * [[RetryPolicy.Bounded]] = 3 次、0.5s 起、封顶 8s。[[sync]] 的工厂默认值用它；
+   * 构造函数默认仍是 [[RetryPolicy.Single]]（既有钉子逐字保持）。
+   */
+  val DefaultRetryPolicy: RetryPolicy = RetryPolicy.Bounded
+
+  /**
+   * 投递目标在日志里的形态（社交出站 P0 批 2026-11-21）。
+   *
+   * 作者铁律②要求 ERROR 行带 `to=`；但本桥**不把 chat_id 原样写进日志**——
+   * `FeishuBridgePluginSpec` 的 SENTINEL 钉子（「sensitive transport errors and
+   * identifiers do not reach bridge logs」）把 chat_id 本身当作敏感标识钉住了
+   * 一条既有边界，本批不放宽它。折中形态：**首 6 + 尾 4**（与
+   * [[FeishuCredentials.redacted]] 同一纪律，留足可辨识度：一个 chat_id 的前缀
+   * 与后 4 位足以在同一条通道内唯一对上，面板里有完整值）。
+   */
+  def maskTarget(chatId: String): String =
+    if chatId.length <= 10 then chatId
+    else s"${chatId.take(6)}…${chatId.takeRight(4)}"
+
+  /**
+   * 一次发送失败的**确定性未送达**分类（社交出站 P0 批 2026-11-21，作者令③
+   * 的重试闸）：只有「再试一次可能就成」的失败才吃重试名额。
+   *
+   *   - 5xx（500–599：网关/飞书侧抖动）⇒ 可重试。
+   *   - 429 与 99991400（飞书 im 限流的两个公开读数）⇒ 可重试：退避正是它的解法。
+   *   - 其余（1xx/2xx-未送达、4xx、飞书业务码如 230002「chat 不存在」、`-1` =
+   *     未拿到读数）⇒ **不重试**：那是确定性拒绝，重发只是把同一份拒绝多写两行
+   *     ERROR。业务码不能按「数字大就是 5xx」推断——230002 > 500 但它是终态。
+   *
+   * 纯函数、零 IO（[[nebflow.social.OutboundRetrySpec]] 钉死判定表）。
+   */
+  def retryableFailure(code: Int): Boolean =
+    (code >= 500 && code <= 599) || code == 429 || code == 99991400
 
   /**
    * Rich-content plumbing of the main link (richcontent main-link batch,
@@ -1714,7 +1951,10 @@ object FeishuBridgePlugin:
   def sync(
     manager: BridgeManager,
     root: os.Path,
-    factory: os.Path => BridgePlugin = (r => new FeishuBridgePlugin(r))
+    // 社交出站 P0 批（2026-11-21，作者令③）：**生产装配点**显式装有界退避
+    // （3 次、0.5s 起、封顶 8s）。构造函数默认仍是 Single ⇒ 每一个直接 `new
+    // FeishuBridgePlugin(...)` 的测试实例保持单次调用面；重试只在生产启用。
+    factory: os.Path => BridgePlugin = (r => new FeishuBridgePlugin(r, retryPolicy = DefaultRetryPolicy))
   ): IO[Unit] =
     val want = IO.blocking(SocialChannels.isEnabled(root, Name) && SocialChannels.verified(root, Name))
     want.flatMap {
@@ -1774,19 +2014,15 @@ object FeishuBridgePlugin:
     val verdict = fingerprintVerdict(stored, fb.liveAppId)
     verdict match
       case "match" =>
-        IO(
-          log.info(
-            s"feishu bridge: fingerprint guard ok — the live connection matches the stored app_id (fp=${FeishuCredentials.fingerprint(stored.getOrElse(""))})"
-          )
+        log.info(
+          s"feishu bridge: fingerprint guard ok — the live connection matches the stored app_id (fp=${FeishuCredentials.fingerprint(stored.getOrElse(""))})"
         )
       case other =>
-        IO(
-          log.warn(
-            s"feishu bridge: FINGERPRINT GUARD $other — the live connection's app does not correspond to the stored app_id " +
-              s"(storedFp=${stored.map(FeishuCredentials.fingerprint).getOrElse("-")} " +
-              s"liveFp=${fb.liveAppId.map(FeishuCredentials.fingerprint).getOrElse("-")}); " +
-              s"the connection face answers fingerprintMatch=$other"
-          )
+        log.warn(
+          s"feishu bridge: FINGERPRINT GUARD $other — the live connection's app does not correspond to the stored app_id " +
+            s"(storedFp=${stored.map(FeishuCredentials.fingerprint).getOrElse("-")} " +
+            s"liveFp=${fb.liveAppId.map(FeishuCredentials.fingerprint).getOrElse("-")}); " +
+            s"the connection face answers fingerprintMatch=$other"
         )
 
     end match
