@@ -704,7 +704,7 @@ function _renderMarkdownWithMath(text, parseVoice, safe, stream) {
   // 散标签同一转义腿（字面现形，内容零丢失）＝全文直出，无掩码；与渠道剥离
   // 面同一键（scala OutputBlock.enabledFromConfig）。闸一开提取路径原样回归。
   const outputBlocks = [];
-  if (text.indexOf('<report>') !== -1 || text.indexOf('</report>') !== -1) {
+  if (outputBlockEnabled() && (text.indexOf('<report>') !== -1 || text.indexOf('</report>') !== -1)) {
     // 围栏安全批（作者令：块形态就是为了避开 md 语法冲突，提取器不能反被
     // 围栏骗了）：扫描/提取都先过 _maskCodeFences 掩码——围栏内的字面标签
     // 是代码内容，不触发剥离，也吃不到转义（转义会腐蚀围栏体）。与渠道侧
