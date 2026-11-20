@@ -78,7 +78,11 @@ private[agent] object AgentFinishTurn:
     else if state.askMode.isDefined && result.toolCalls.isEmpty then
       handleAskComplete(agentDef, resources, depth, parentRef, state, result.text, result.model)
     else if result.toolCalls.nonEmpty then
-      pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
+      val progress = ChildReport.event(result.text, continues = true, agentDef.name)
+      val notify = (parentRef, progress) match
+        case (Some(parent), Some(event)) => parent ! event
+        case _ => IO.unit
+      notify *> pipeToolExecutions(agentDef, resources, depth, parentRef, state.withEmptyResponseRetries(0), result, replyTo)
     else if result.text.nonEmpty || result.thinking.nonEmpty then
       // Mail check: team members must call Mail before finishing.
       // After MaxMailReminders retries, give up and finishTurn (avoid infinite loop).
