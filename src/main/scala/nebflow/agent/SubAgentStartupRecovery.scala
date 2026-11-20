@@ -494,8 +494,8 @@ object SubAgentStartupRecovery:
       }.handleErrorWith(e => logger.warn(s"[startup-recovery] terminal envelope recovery failed for ${task.taskId}: ${e.getMessage}"))
     })
     val markUnresolved = store.findAllTasks().flatMap(_.filter(isReconciliationRow).traverse_ { row =>
-      rs.executionProtection(row.taskId).flatMap {
-        case nebflow.shared.ExecutionProtection.Unprotected =>
+      (rs.executionProtection(row.taskId), rs.agentRegistry.get).tupled.flatMap {
+        case (nebflow.shared.ExecutionProtection.Unprotected, registry) if !registry.contains(row.taskId) =>
           store.markSuspectedLostTerminal(row).flatMap { marked =>
             if marked then logger.warn(s"[suspected-lost-terminal] ${row.parentSessionId}/${row.taskId}: no authoritative completion evidence; manual review required")
             else IO.unit
