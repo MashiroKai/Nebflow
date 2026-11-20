@@ -43,7 +43,15 @@ private[agent] object AgentFinishTurn:
                   case None => IO.pure(None)
                 }
               findParent(1).flatMap {
-              case None => IO.blocking(journal.park(slot)) *> nebflow.shared.NebflowLogger.forName("nebflow.agent").warn(s"[child-report-parked] session=$sid slot=$slot parent identity unavailable after 5 attempts")
+              case None =>
+                val note = s"Child report parked: parent identity unavailable (slot $slot); retry on supervisor recovery."
+                IO.blocking(journal.park(slot)) *>
+                  resources.subAgentTaskStore.findByTaskId(sid).flatMap {
+                    case Some(row) if row.runId.nonEmpty =>
+                      resources.subAgentTaskStore.updateRun(row.parentSessionId, sid, row.runId.get, diagnostic = Some(note)).void
+                    case Some(row) => resources.subAgentTaskStore.setDiagnostic(row.parentSessionId, sid, Some(note))
+                    case None => IO.unit
+                  } *> nebflow.shared.NebflowLogger.forName("nebflow.agent").warn(s"[child-report-parked] session=$sid slot=$slot parent identity unavailable after 5 attempts")
               case Some(parentSid) =>
                   MailboxProducer.deliver(resources, parentSid, event.copy(correlationId = Some(identity)), identity, "child-report", producer = "child-report")
                     .flatMap {
