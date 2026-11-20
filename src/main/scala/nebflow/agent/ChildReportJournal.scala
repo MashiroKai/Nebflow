@@ -23,7 +23,7 @@ private[agent] final class ChildReportJournal private (root: Path, session: Stri
     val state = readProtocol()
     val next = state.hcursor.get[Long]("next").fold(throw _, identity)
     val entries = state.hcursor.get[io.circe.JsonObject]("entries").fold(throw _, identity)
-    require(!entries.values.exists(_.hcursor.get[String]("status").toOption.exists(s => s == "prepared" || s == "open")), "unresolved request must be recovered before allocation")
+    require(!entries.values.exists(_.hcursor.get[String]("status").toOption.contains("open")), "open request must be recovered before allocation")
     val entry = io.circe.Json.obj("status" -> "open".asJson)
     writeProtocol(io.circe.Json.obj("next" -> (next + 1).asJson, "entries" -> io.circe.Json.fromJsonObject(entries.add(next.toString, entry))))
     next

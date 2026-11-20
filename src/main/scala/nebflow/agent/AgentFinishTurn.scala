@@ -34,8 +34,10 @@ private[agent] object AgentFinishTurn:
           case None => IO.blocking(journal.closeNoReport(slot))
           case Some(event) =>
             IO.blocking(journal.prepareReport(slot, event.payload)).flatMap { identity =>
-              sessionIdOfRef(resources, parentRef).flatMap {
-              case None => IO.unit // Prepared report remains durable for recovery; do not fail the turn.
+              (sessionIdOfRef(resources, parentRef), resources.agentRegistry.get).mapN { (byRef, registry) =>
+                byRef.orElse(registry.get(sid).flatMap(r => Option(r.parentSessionId).filter(_.nonEmpty)))
+              }.flatMap {
+              case None => IO.unit // Retained for the next supervisor restart; no in-process retry is scheduled.
               case Some(parentSid) =>
                   MailboxProducer.deliver(resources, parentSid, event.copy(correlationId = Some(identity)), identity, "child-report", producer = "child-report")
                     .flatMap {
