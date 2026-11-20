@@ -1343,12 +1343,12 @@ async function viewMarkdown(pane, { content, absPath, fileName, anchor: jumpAnch
                   if (!img.isConnected) return;
                   const next = String(url || '');
                   if (next && next !== img.getAttribute('src')) img.src = next; // 新票 ⇒ 再试
-                  else if (window.__nfMdImgFail) window.__nfMdImgFail(img);      // 拿不到新票 ⇒ 走 ②/③
+                  else if (/** @type {any} */ (window).__nfMdImgFail) /** @type {any} */ (window).__nfMdImgFail(img); // 拿不到新票 ⇒ 走 ②/③
                 })
-                .catch(() => { if (window.__nfMdImgFail) window.__nfMdImgFail(img); });
+                .catch(() => { if (/** @type {any} */ (window).__nfMdImgFail) /** @type {any} */ (window).__nfMdImgFail(img); });
             }
             if (st) ds.nfMdErr = String(st);            // 回填（③ 不再白探）
-            if (window.__nfMdImgFail) window.__nfMdImgFail(img);   // 非票因 ⇒ 交回 ②/③
+            if (/** @type {any} */ (window).__nfMdImgFail) /** @type {any} */ (window).__nfMdImgFail(img); // 非票因 ⇒ 交回 ②/③
           });
           return;
         }

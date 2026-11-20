@@ -480,7 +480,7 @@ for (const sample of [sampleDocx, sampleXlsx]) {
   await openPath(fallback.page, sample);
   let visible = true;
   const selector = sample.endsWith('.xlsx') ? '.canvas-xlsx-viewer' : '.canvas-md-viewer';
-  try { await fallback.page.waitForSelector('.canvas-tab-pane.active .office-fallback-notice', { timeout: 15000 }); await fallback.page.waitForSelector('.canvas-tab-pane.active ' + selector); } catch { visible = false; }
+  try { await fallback.page.waitForSelector('.canvas-tab-pane.active .notice-card.notice-info', { timeout: 15000 }); await fallback.page.waitForSelector('.canvas-tab-pane.active ' + selector); } catch { visible = false; }
   const text = await paneText(fallback.page);
   ok(`${extname(sample)} failed conversion visibly falls back`, failures === 1 && visible && text.includes(sample.endsWith('.xlsx') ? 'Widget' : 'NF Office Fix Sample'), `failures=${failures} visible=${visible} text=${text.slice(0, 80)}`);
   await fallback.ctx.close();

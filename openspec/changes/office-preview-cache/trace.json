@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "change": "office-preview-cache",
+  "mappings": [
+    {
+      "requirement": "OF-REQ-001",
+      "scenario": "OF-SCN-001",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/NfOfficeRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/nf/NfOfficeRoutesSpec.scala",
+          "name": "cacheKey follows bytes and converter legs, not path or mtime"
+        }
+      ]
+    },
+    {
+      "requirement": "OF-REQ-001",
+      "scenario": "OF-SCN-002",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/NfOfficeRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/nf/NfOfficeRoutesSpec.scala",
+          "name": "timestamp-only change reuses cached conversion"
+        }
+      ]
+    },
+    {
+      "requirement": "OF-REQ-001",
+      "scenario": "OF-SCN-003",
+      "implementation": [
+        "src/main/scala/nebflow/gateway/NfOfficeRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "src/test/scala/nebflow/gateway/nf/NfOfficeRoutesSpec.scala",
+          "name": "cacheKey follows bytes and converter legs, not path or mtime"
+        }
+      ]
+    },
+    {
+      "requirement": "OF-REQ-002",
+      "scenario": "OF-SCN-004",
+      "implementation": [
+        "src/main/resources/web/js/viewers/docx.js",
+        "src/main/resources/web/js/viewers/xlsx.js",
+        "src/main/resources/web/js/viewers/pptx.js",
+        "src/main/scala/nebflow/gateway/NfOfficeRoutes.scala"
+      ],
+      "tests": [
+        {
+          "path": "tests/canvas-office-viewers.spec.mjs",
+          "name": "converted PDF shown without source fetch"
+        }
+      ]
+    },
+    {
+      "requirement": "OF-REQ-002",
+      "scenario": "OF-SCN-005",
+      "implementation": [
+        "src/main/resources/web/js/viewers/docx.js",
+        "src/main/resources/web/js/viewers/xlsx.js",
+        "src/main/resources/web/js/viewers/pptx.js"
+      ],
+      "tests": [
+        {
+          "path": "tests/canvas-office-viewers.spec.mjs",
+          "name": "failed conversion visibly falls back"
+        }
+      ]
+    }
+  ]
+}

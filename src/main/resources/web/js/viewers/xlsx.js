@@ -75,7 +75,7 @@ async function viewXlsx(pane, { absPath, fileName, objectUrl }) {
       `<button class="canvas-button xlsx-sheet-tab ${i === 0 ? 'active' : ''}" data-sheet="${escapeHtml(name)}">${escapeHtml(name)}</button>`
     ).join('');
     pane.innerHTML = `
-      ${fallback ? '<div class="office-fallback-notice" role="status">PDF preview unavailable; showing simplified spreadsheet view.</div>' : ''}
+      ${fallback ? '<div class="notice-card notice-info" role="status">PDF preview unavailable; showing simplified spreadsheet view.</div>' : ''}
       <div class="canvas-xlsx-viewer">
         <div class="xlsx-sheet-bar">${sheetTabs}</div>
         <div class="xlsx-sheet-content">${html}</div>

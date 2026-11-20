@@ -558,7 +558,7 @@ function trackViewerUrl(pane, url) {
 
 /**
  * viewer 取数单点（**字节路由零新增**：票据腿仍走 `/api/nf-file?path&ticket`）。
- * @param {{ absPath: ?string, objectUrl: ?string, onProgress?: ((loaded: number, total: number) => void)|null, pane?: Element }} p
+ * @param {{ absPath: ?string, objectUrl: ?string, onProgress?: ((loaded: number, total: number) => void)|null, pane?: Element, width?: number }} p
  * @returns {Promise<{ url: string, cached: boolean }>} `url` = objectUrl（腿A 原样 /
  *   账本命中新建 / 票据腿取回新建）；`cached` = 本次是否走了账本字节（诊断读数）。
  */
@@ -665,7 +665,7 @@ export async function nfViewerSource(p) {
  * 阈值 64 MiB 与 96MiB device 桶/128MiB local 桶留距，超预算本也不可缓存）。
  * `onProgress` 原样透传 [[nfViewerSource]]（#815 收口批：pptx 大件取数进度读数；
  * objectUrl 腿/账本命中不触发——字节已在本地，无可报）。
- * @param {{ absPath: ?string, objectUrl: ?string, onProgress?: ((loaded: number, total: number) => void)|null, pane?: Element, size?: number, maxBytes?: number }} p
+ * @param {{ absPath: ?string, objectUrl: ?string, onProgress?: ((loaded: number, total: number) => void)|null, pane?: Element, size?: number, maxBytes?: number, width?: number }} p
  * @returns {Promise<string>}
  */
 export async function nfViewerUrl(p) {

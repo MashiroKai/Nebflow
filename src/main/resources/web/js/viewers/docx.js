@@ -90,7 +90,7 @@ async function viewDocx(pane, { absPath, fileName, objectUrl }) {
       }
     );
     const html = result.value || '<p style="color:var(--color-text-muted)">Document is empty.</p>';
-    pane.innerHTML = `${fallback ? '<div class="office-fallback-notice" role="status">PDF preview unavailable; showing simplified document view.</div>' : ''}<div class="canvas-md-viewer">${html}</div>`;
+    pane.innerHTML = `${fallback ? '<div class="notice-card notice-info" role="status">PDF preview unavailable; showing simplified document view.</div>' : ''}<div class="canvas-md-viewer">${html}</div>`;
     pane.classList.add('scrollable');
   } catch (err) {
     pane.innerHTML = `<div class="canvas-error">Failed to render DOCX: ${escapeHtml(err.message)}</div>`;
